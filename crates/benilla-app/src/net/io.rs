@@ -462,6 +462,8 @@ fn run(
             &world_addr,
             &req.user,
             logon.session_key,
+            // No realm list means no realm id; only 3.3.5a sends it, and its server refuses 0.
+            realm.as_ref().map_or(0, |r| r.id),
             &mut on_queue,
         ) {
             Ok(s) => s,

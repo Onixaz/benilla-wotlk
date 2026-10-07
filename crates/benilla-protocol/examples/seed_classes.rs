@@ -158,7 +158,12 @@ fn connect(o: &Opts) -> Result<WorldSession> {
         .first()
         .map(|r| r.address.clone())
         .unwrap_or_else(|| format!("{}:{WORLD_PORT}", o.host));
-    WorldSession::connect(&addr, &o.user, l.session_key)
+    WorldSession::connect(
+        &addr,
+        &o.user,
+        l.session_key,
+        l.realms.first().map_or(0, |r| r.id),
+    )
 }
 
 /// Read for `window`, printing every system-chat line, the server's reply to a dot-command.

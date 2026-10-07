@@ -2,17 +2,20 @@
 //!
 //! `SMSG_AUTH_CHALLENGE` (server seed) and `CMSG_AUTH_SESSION` (build, uppercased account, client
 //! seed, SHA1 over key and seeds) travel plain; every header after them is encrypted (4-byte
-//! server, 6-byte client), bodies never, starting with `SMSG_AUTH_RESPONSE`.
+//! server, 6-byte client), bodies never, starting with `SMSG_AUTH_RESPONSE`. 3.3.5a keeps that
+//! shape with its own cipher and layouts ([`cipher`]).
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::OnceLock;
 
 use anyhow::{anyhow, Result};
-use benilla_srp::vanilla_header::{DecrypterHalf, EncrypterHalf};
 
 use crate::messages::{self, ServerPacket};
 
+use cipher::{Decrypter, Encrypter};
+
+mod cipher;
 mod movement;
 mod reader;
 mod session;
@@ -25,26 +28,27 @@ pub use writer::WorldWriter;
 /// The stock `mangosd` port, for probes that dial the world server without a realm list.
 pub const WORLD_PORT: u16 = 8085;
 
-/// Read, decrypt and parse one packet; `decrypter` is `None` only for `SMSG_AUTH_CHALLENGE`.
-pub(super) fn recv_packet(
+/// Read and decrypt one packet, unparsed: its opcode and body. `decrypter` is `None` only for
+/// `SMSG_AUTH_CHALLENGE`.
+pub(super) fn recv_raw(
     stream: &mut TcpStream,
-    decrypter: Option<&mut DecrypterHalf>,
-) -> Result<ServerPacket> {
-    let mut header = [0u8; 4];
-    stream
-        .read_exact(&mut header)
+    decrypter: Option<&mut Decrypter>,
+) -> Result<(u16, Vec<u8>)> {
+    let (body_len, opcode) = cipher::read_server_header(stream, decrypter)
         .map_err(|e| anyhow!("reading world header: {e}"))?;
-    if let Some(d) = decrypter {
-        d.decrypt(&mut header);
-    }
-    // size is big-endian and counts the opcode (2) but not the size field; opcode is little-endian.
-    let size = u16::from_be_bytes([header[0], header[1]]);
-    let opcode = u16::from_le_bytes([header[2], header[3]]);
-    let body_len = size.saturating_sub(2) as usize;
     let mut body = vec![0u8; body_len];
     stream
         .read_exact(&mut body)
         .map_err(|e| anyhow!("reading world body (opcode {opcode:#x}, {body_len} bytes): {e}"))?;
+    Ok((opcode, body))
+}
+
+/// Read, decrypt and parse one packet; `decrypter` is `None` only for `SMSG_AUTH_CHALLENGE`.
+pub(super) fn recv_packet(
+    stream: &mut TcpStream,
+    decrypter: Option<&mut Decrypter>,
+) -> Result<ServerPacket> {
+    let (opcode, body) = recv_raw(stream, decrypter)?;
     messages::parse_server(opcode, &body).map_err(|e| anyhow!("parsing opcode {opcode:#x}: {e}"))
 }
 
@@ -65,7 +69,7 @@ pub fn observe_sends(observer: SendObserver) {
 /// The sole write path of the world socket, so the one place [`observe_sends`] reports from.
 pub(super) fn send_packet(
     stream: &mut TcpStream,
-    encrypter: Option<&mut EncrypterHalf>,
+    encrypter: Option<&mut Encrypter>,
     opcode: u16,
     body: &[u8],
 ) -> Result<()> {

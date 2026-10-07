@@ -21,7 +21,12 @@ fn connect(user: &str, pass: &str) -> anyhow::Result<WorldSession> {
         .first()
         .map(|r| r.address.clone())
         .unwrap_or_else(|| format!("localhost:{WORLD_PORT}"));
-    WorldSession::connect(&addr, user, l.session_key)
+    WorldSession::connect(
+        &addr,
+        user,
+        l.session_key,
+        l.realms.first().map_or(0, |r| r.id),
+    )
 }
 
 fn main() -> anyhow::Result<()> {

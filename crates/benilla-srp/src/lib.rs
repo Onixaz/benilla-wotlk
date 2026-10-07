@@ -1,6 +1,6 @@
 //! SRP6 client and world-header crypto for 1.12.1 (build 5875): the client side of the realmd
-//! handshake and the world server's header obfuscation. Every byte array is little endian, as on
-//! the wire.
+//! handshake and the world server's header obfuscation, with 3.3.5a's header cipher in
+//! [`wotlk_header`]. Every byte array is little endian, as on the wire.
 //!
 //! # Encoding-unambiguous handshakes
 //!
@@ -20,8 +20,10 @@ use rand::{thread_rng, RngCore};
 use sha1::{Digest, Sha1};
 
 pub mod vanilla_header;
+pub mod wotlk_header;
 
 pub use vanilla_header::{DecrypterHalf, EncrypterHalf, HeaderCrypto, ProofSeed};
+pub use wotlk_header::WotlkHeaderCrypto;
 
 /// Session-key length in bytes: two interleaved SHA-1 digests.
 pub const SESSION_KEY_LENGTH: usize = 40;

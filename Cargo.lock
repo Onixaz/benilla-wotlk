@@ -627,6 +627,7 @@ name = "benilla-protocol"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "benilla-expansions",
  "benilla-srp",
  "clap",
  "flate2",

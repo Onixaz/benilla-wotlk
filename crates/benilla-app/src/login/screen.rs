@@ -219,7 +219,7 @@ fn spawn_screen(
         // filled with versionType, version, internalVersion, buildType and date.
         let version = {
             let template = strings.text("VERSION_TEMPLATE", "%s %s (%s) (%s)\n%s");
-            let build = benilla_protocol::CLIENT_BUILD.to_string();
+            let build = benilla_protocol::client_build().to_string();
             let mut out = template.to_string();
             for piece in [
                 "Version",

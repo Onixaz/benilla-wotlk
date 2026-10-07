@@ -7,6 +7,9 @@
 //! With no secure addons the client appends nothing. Both emulators refuse a zero size: vmangos
 //! then skips `SMSG_ADDON_INFO` (`WorldSocket.cpp:447`), cmangos-classic kicks the session
 //! (`WorldSocket.cpp:562`).
+//!
+//! 3.3.5a frames the same records with a `u32` count before them and a `u32` after them, the time
+//! of the last banned-addon list the server sent (AzerothCore `WorldSession::ReadAddonsInfo`).
 
 /// CRC-32 of the stock Blizzard public-key modulus, the emulators' "standard addon CRC"; a server
 /// seeing it does not send the 256-byte modulus back in `SMSG_ADDON_INFO`.
@@ -67,6 +70,35 @@ pub const STOCK_SECURE_ADDONS: [SecureAddon<'static>; 12] = [
     SecureAddon::stock("Blizzard_TrainerUI"),
 ];
 
+/// The 23 `Blizzard_*` built-ins of a stock 3.3.5a install, each with a stock-signed `.pub`
+/// (`Interface\AddOns\Blizzard_*\*.pub`: byte 0 is 1, the modulus CRC [`STANDARD_MODULUS_CRC`]),
+/// in ascending ASCII order as 1.12.1 sends its own.
+pub const STOCK_SECURE_ADDONS_WOTLK: [SecureAddon<'static>; 23] = [
+    SecureAddon::stock("Blizzard_AchievementUI"),
+    SecureAddon::stock("Blizzard_ArenaUI"),
+    SecureAddon::stock("Blizzard_AuctionUI"),
+    SecureAddon::stock("Blizzard_BarbershopUI"),
+    SecureAddon::stock("Blizzard_BattlefieldMinimap"),
+    SecureAddon::stock("Blizzard_BindingUI"),
+    SecureAddon::stock("Blizzard_Calendar"),
+    SecureAddon::stock("Blizzard_CombatLog"),
+    SecureAddon::stock("Blizzard_CombatText"),
+    SecureAddon::stock("Blizzard_DebugTools"),
+    SecureAddon::stock("Blizzard_GMChatUI"),
+    SecureAddon::stock("Blizzard_GMSurveyUI"),
+    SecureAddon::stock("Blizzard_GlyphUI"),
+    SecureAddon::stock("Blizzard_GuildBankUI"),
+    SecureAddon::stock("Blizzard_InspectUI"),
+    SecureAddon::stock("Blizzard_ItemSocketingUI"),
+    SecureAddon::stock("Blizzard_MacroUI"),
+    SecureAddon::stock("Blizzard_RaidUI"),
+    SecureAddon::stock("Blizzard_TalentUI"),
+    SecureAddon::stock("Blizzard_TimeManager"),
+    SecureAddon::stock("Blizzard_TokenUI"),
+    SecureAddon::stock("Blizzard_TradeSkillUI"),
+    SecureAddon::stock("Blizzard_TrainerUI"),
+];
+
 /// The uncompressed addon buffer: the records concatenated, nothing else.
 pub fn addon_block(addons: &[SecureAddon]) -> Vec<u8> {
     let mut out = Vec::with_capacity(addons.iter().map(|a| a.name.len() + 10).sum());
@@ -85,12 +117,25 @@ pub fn addon_tail(addons: &[SecureAddon]) -> Vec<u8> {
     if addons.is_empty() {
         return Vec::new();
     }
-    let plain = addon_block(addons);
+    compressed(&addon_block(addons))
+}
+
+/// 3.3.5a's block on the wire: `u32` size, then the zlib stream of the count, the records and
+/// `last_banned_addon_time`.
+pub fn addon_tail_wotlk(addons: &[SecureAddon], last_banned_addon_time: u32) -> Vec<u8> {
+    let mut plain = (addons.len() as u32).to_le_bytes().to_vec();
+    plain.extend_from_slice(&addon_block(addons));
+    plain.extend_from_slice(&last_banned_addon_time.to_le_bytes());
+    compressed(&plain)
+}
+
+/// `u32` uncompressed size, then `plain` as one zlib stream.
+fn compressed(plain: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(plain.len() / 2 + 8);
     out.extend_from_slice(&(plain.len() as u32).to_le_bytes());
     let mut encoder =
         flate2::write::ZlibEncoder::new(out, flate2::Compression::default() /* level 6 */);
-    std::io::Write::write_all(&mut encoder, &plain).expect("zlib write to a Vec cannot fail");
+    std::io::Write::write_all(&mut encoder, plain).expect("zlib write to a Vec cannot fail");
     encoder.finish().expect("zlib finish on a Vec cannot fail")
 }
 
@@ -149,5 +194,27 @@ mod tests {
     #[test]
     fn no_secure_addons_appends_nothing() {
         assert!(addon_tail(&[]).is_empty());
+    }
+
+    /// Inflated, the 3.3.5a block is count, the 1.12.1 record shape, then the trailing time.
+    #[test]
+    fn the_wotlk_block_frames_the_records_with_a_count_and_a_time() {
+        let tail = addon_tail_wotlk(&STOCK_SECURE_ADDONS_WOTLK, 0x0102_0304);
+        let size = u32::from_le_bytes(tail[0..4].try_into().unwrap()) as usize;
+        let mut plain = Vec::new();
+        std::io::Read::read_to_end(&mut flate2::read::ZlibDecoder::new(&tail[4..]), &mut plain)
+            .unwrap();
+        assert_eq!(plain.len(), size);
+        assert_eq!(&plain[..4], &23u32.to_le_bytes());
+        assert_eq!(
+            &plain[4..size - 4],
+            &addon_block(&STOCK_SECURE_ADDONS_WOTLK)[..]
+        );
+        assert_eq!(&plain[size - 4..], &0x0102_0304u32.to_le_bytes());
+
+        let names: Vec<_> = STOCK_SECURE_ADDONS_WOTLK.iter().map(|a| a.name).collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted);
     }
 }

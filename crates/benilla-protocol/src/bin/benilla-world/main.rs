@@ -215,8 +215,10 @@ fn main() -> Result<()> {
     };
 
     // 3. World handshake (CMSG_AUTH_SESSION + header obfuscation).
-    let mut session = WorldSession::connect(&world_addr, &cli.username, logon.session_key)
-        .with_context(|| format!("world handshake with {world_addr}"))?;
+    let realm_id = logon.realms.first().map_or(0, |r| r.id);
+    let mut session =
+        WorldSession::connect(&world_addr, &cli.username, logon.session_key, realm_id)
+            .with_context(|| format!("world handshake with {world_addr}"))?;
     println!("world handshake OK ({world_addr}) — header obfuscation active");
 
     // 4. Character list; create one if empty.

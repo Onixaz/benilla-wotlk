@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+benilla-expansions = { path = "../benilla-expansions" }
 benilla-srp = { path = "../benilla-srp" }
 flate2 = "1.0"
 sha1.workspace = true

@@ -1,6 +1,6 @@
 //! Client packet body builders: plain body bytes, framed and encrypted elsewhere.
 
-use super::addons::{addon_tail, SecureAddon};
+use super::addons::{addon_tail, addon_tail_wotlk, SecureAddon};
 use super::{CharCreateReq, MovementInfo};
 
 /// `CMSG_AUTH_SESSION` body: build, server id, account, seed, proof, then the addon block's
@@ -19,6 +19,36 @@ pub fn auth_session(
     body.extend_from_slice(username.as_bytes());
     body.push(0);
     body.extend_from_slice(&client_seed.to_le_bytes());
+    body.extend_from_slice(client_proof);
+    body.extend_from_slice(&tail);
+    body
+}
+
+/// 3.3.5a's `CMSG_AUTH_SESSION` body: build, login server id, account, login server type, seed,
+/// region, battlegroup and realm ids, the `u64` DoS response, proof, then the count-framed addon
+/// block (AzerothCore `WorldSocket::HandleAuthSession`). The realm id is the realm list's; the
+/// server refuses one that is not its own. Login server id and type, region, battlegroup and DoS
+/// response are 0, as the emulators ignore them; the reference's values are not established.
+pub fn auth_session_wotlk(
+    build: u32,
+    username: &str,
+    client_seed: u32,
+    realm_id: u32,
+    client_proof: &[u8; 20],
+    addons: &[SecureAddon],
+) -> Vec<u8> {
+    let tail = addon_tail_wotlk(addons, 0);
+    let mut body = Vec::with_capacity(58 + username.len() + tail.len());
+    body.extend_from_slice(&build.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes()); // login server id
+    body.extend_from_slice(username.as_bytes());
+    body.push(0);
+    body.extend_from_slice(&0u32.to_le_bytes()); // login server type
+    body.extend_from_slice(&client_seed.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes()); // region id
+    body.extend_from_slice(&0u32.to_le_bytes()); // battlegroup id
+    body.extend_from_slice(&realm_id.to_le_bytes());
+    body.extend_from_slice(&0u64.to_le_bytes()); // DoS response
     body.extend_from_slice(client_proof);
     body.extend_from_slice(&tail);
     body

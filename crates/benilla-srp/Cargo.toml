@@ -3,7 +3,7 @@ name = "benilla-srp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "WoW 1.12.1 (build 5875) SRP6 client and world-header crypto"
+description = "WoW SRP6 client and world-header crypto (1.12.1 and 3.3.5a)"
 
 [lints]
 workspace = true

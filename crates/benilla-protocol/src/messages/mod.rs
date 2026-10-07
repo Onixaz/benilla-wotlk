@@ -60,7 +60,10 @@ pub use action_bar::{
     set_action_button, set_actionbar_toggles, ActionButton, ACTION_KIND_ITEM, ACTION_KIND_MACRO,
     ACTION_KIND_SPELL,
 };
-pub use addons::{hidden_from_reply, SecureAddon, STANDARD_MODULUS_CRC, STOCK_SECURE_ADDONS};
+pub use addons::{
+    hidden_from_reply, SecureAddon, STANDARD_MODULUS_CRC, STOCK_SECURE_ADDONS,
+    STOCK_SECURE_ADDONS_WOTLK,
+};
 pub use area_trigger::area_trigger;
 pub use attack::{attack_swing, AttackSwingError, AttackerState};
 pub use auction::{
@@ -90,13 +93,13 @@ pub use chat::{
     CHAT_MSG_WHISPER_INFORM, CHAT_MSG_YELL, MACRO_EXPANDED_TYPES,
 };
 pub use client::{
-    auth_session, channel_announcements, channel_ban, channel_invite, channel_kick, channel_list,
-    channel_moderate, channel_moderator, channel_mute, channel_owner, channel_password,
-    channel_set_owner, channel_unban, channel_unmoderator, channel_unmute, char_create,
-    creature_query, force_speed_ack, full_guid, join_channel, knock_back_ack, leave_channel,
-    messagechat, messagechat_channel, messagechat_kind, messagechat_whisper, move_flag_ack,
-    move_spline_done, move_time_skipped, movement, pet_name_query, ping, played_time, query_time,
-    random_roll, teleport_ack, text_emote,
+    auth_session, auth_session_wotlk, channel_announcements, channel_ban, channel_invite,
+    channel_kick, channel_list, channel_moderate, channel_moderator, channel_mute, channel_owner,
+    channel_password, channel_set_owner, channel_unban, channel_unmoderator, channel_unmute,
+    char_create, creature_query, force_speed_ack, full_guid, join_channel, knock_back_ack,
+    leave_channel, messagechat, messagechat_channel, messagechat_kind, messagechat_whisper,
+    move_flag_ack, move_spline_done, move_time_skipped, movement, pet_name_query, ping,
+    played_time, query_time, random_roll, teleport_ack, text_emote,
 };
 pub use combat_log::{
     DamageShield, DispelFailed, EnchantmentLog, EnvironmentalDamageLog, ExecuteLog, PartyKillLog,
@@ -172,7 +175,7 @@ pub use movement::{
 pub use opcode_names::opcode_name;
 pub use packet::{CreatureQueryInfo, MonsterMoveFacing, ServerPacket};
 pub use page_text::page_text_query;
-pub use parse::{parse_server, parse_server_with_tail};
+pub use parse::{parse_auth_response_wotlk, parse_server, parse_server_with_tail};
 pub use pet::{
     pet_abandon, pet_action, pet_cancel_aura, pet_rename, pet_set_action, pet_spell_autocast,
     pet_stop_attack, pet_tame_failure_key, pet_unlearn, PetActionEntry, PetMode, PetSpellCooldown,

@@ -25,7 +25,12 @@ fn main() -> Result<()> {
         .first()
         .map(|r| r.address.clone())
         .unwrap_or_else(|| format!("{host}:{WORLD_PORT}"));
-    let mut session = WorldSession::connect(&world_addr, &user, logon.session_key)?;
+    let mut session = WorldSession::connect(
+        &world_addr,
+        &user,
+        logon.session_key,
+        logon.realms.first().map_or(0, |r| r.id),
+    )?;
     let characters = session.char_enum()?;
     let character = characters.first().context("no characters")?;
     let self_guid = character.guid;

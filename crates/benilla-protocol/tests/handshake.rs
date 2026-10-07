@@ -70,7 +70,7 @@ fn fake_server(pre: Vec<(u16, Vec<u8>)>) -> String {
 #[test]
 fn auth_response_alone_completes_the_handshake() {
     let addr = fake_server(vec![]);
-    assert!(WorldSession::connect(&addr, "one", SESSION_KEY).is_ok());
+    assert!(WorldSession::connect(&addr, "one", SESSION_KEY, 0).is_ok());
 }
 
 /// The server interleaves its own packets ahead of the auth response.
@@ -80,13 +80,13 @@ fn packets_ahead_of_the_auth_response_are_skipped() {
         (opcode::SMSG_LOGIN_VERIFY_WORLD, vec![0u8; 20]),
         (opcode::SMSG_SET_FACTION_STANDING, vec![0u8; 12]),
     ]);
-    assert!(WorldSession::connect(&addr, "one", SESSION_KEY).is_ok());
+    assert!(WorldSession::connect(&addr, "one", SESSION_KEY, 0).is_ok());
 }
 
 #[test]
 fn a_warden_server_is_refused_at_the_handshake() {
     let addr = fake_server(vec![(opcode::SMSG_WARDEN_DATA, vec![0u8; 16])]);
-    let Err(err) = WorldSession::connect(&addr, "one", SESSION_KEY) else {
+    let Err(err) = WorldSession::connect(&addr, "one", SESSION_KEY, 0) else {
         panic!("a Warden server must not yield a session");
     };
     assert!(
@@ -112,7 +112,7 @@ fn record(opcode: u16, len: usize) {
 fn sends_before_the_split_are_observed_in_order() {
     benilla_protocol::observe_sends(record);
     let addr = fake_server(vec![]);
-    let mut session = WorldSession::connect(&addr, "one", SESSION_KEY).unwrap();
+    let mut session = WorldSession::connect(&addr, "one", SESSION_KEY, 0).unwrap();
     session.player_login(0x2a).unwrap();
     let (_reader, mut writer) = session.into_split().unwrap();
     writer.complete_cinematic().unwrap();
@@ -125,7 +125,7 @@ fn sends_before_the_split_are_observed_in_order() {
         .map(|&(_, op, len)| (op, len))
         .collect();
     let auth_len = messages::auth_session(
-        u32::from(benilla_protocol::CLIENT_BUILD),
+        u32::from(benilla_protocol::client_build()),
         "ONE",
         0,
         &[0; 20],

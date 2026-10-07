@@ -3,8 +3,8 @@
 
 use std::net::TcpStream;
 
+use super::cipher::Encrypter;
 use anyhow::Result;
-use benilla_srp::vanilla_header::EncrypterHalf;
 
 use super::send_packet;
 
@@ -59,7 +59,7 @@ mod vendor;
 /// WoW yards; `orientation` is radians.
 pub struct WorldWriter {
     pub(super) stream: TcpStream,
-    pub(super) encrypter: EncrypterHalf,
+    pub(super) encrypter: Encrypter,
     /// The character's faction language, set at login from its race, which a chat send naming no
     /// language carries. vmangos drops the whole message, dot-commands included, when the
     /// character does not know the language.

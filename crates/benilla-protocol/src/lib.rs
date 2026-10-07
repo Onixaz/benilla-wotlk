@@ -1,5 +1,7 @@
 //! The WoW 1.12.1 (build 5875) wire protocol: [`auth`] for realmd (login protocol version 3),
 //! [`world`] and [`events`] for the world server. SRP6 and the header crypto are `benilla-srp`'s.
+//! The 3.3.5a (build 12340) logon and world handshake take their own paths where the wire differs,
+//! selected by the active [`Expansion`].
 
 pub mod auth;
 pub mod events;
@@ -27,12 +29,15 @@ pub use world::{
 use std::net::TcpStream;
 
 use anyhow::{anyhow, Context, Result};
+use benilla_expansions::Expansion;
 use benilla_srp::{NormalizedString, PublicKey, SrpClientChallenge, SESSION_KEY_LENGTH};
 
 /// The port a stock vmangos `realmd` listens on.
 pub const AUTH_PORT: u16 = 3724;
-/// The 1.12.1 client build we present to the server.
-pub const CLIENT_BUILD: u16 = 5875;
+/// The client build we present to the server: the active expansion's.
+pub fn client_build() -> u16 {
+    Expansion::active().profile().build
+}
 /// Challenges [`logon`] draws for an unambiguous `B`; one in ~137 is not, so all 8 fail ~10⁻¹⁷.
 const MAX_CHALLENGE_DIALS: u32 = 8;
 
@@ -120,7 +125,7 @@ pub struct RealmInfo {
     pub flags: u8,
     /// The category (timezone) byte the list's tabs group on, matched by equality, not an index.
     pub category: u8,
-    /// The wire's realm id.
+    /// The wire's realm id, which 3.3.5a's `CMSG_AUTH_SESSION` names back to the world server.
     pub id: u8,
 }
 
@@ -131,6 +136,8 @@ pub struct Logon {
     pub realms: Vec<RealmInfo>,
     /// `None` once a refresh has failed; the held list is then final.
     stream: Option<TcpStream>,
+    /// The client whose realm-list layout the refreshes read.
+    expansion: Expansion,
 }
 
 impl Logon {
@@ -143,7 +150,7 @@ impl Logon {
         let refreshed = (|| -> Result<Vec<RealmInfo>> {
             stream.set_read_timeout(Some(timeout))?;
             auth::write_realm_list_request(stream).context("requesting realm list")?;
-            auth::read_realm_list(stream).context("reading realm list")
+            auth::read_realm_list(stream, self.expansion).context("reading realm list")
         })();
         match refreshed {
             Ok(realms) => {
@@ -163,8 +170,9 @@ impl Logon {
     }
 }
 
-/// The full SRP6 logon against a vanilla `realmd`, then the realm list.
+/// The full SRP6 logon against a `realmd`, then the realm list, as the active expansion's client.
 pub fn logon(host: &str, username: &str, password: &str) -> Result<Logon> {
+    let expansion = Expansion::active();
     let (host, port) = host_port(host, AUTH_PORT);
 
     let username_n =
@@ -179,7 +187,7 @@ pub fn logon(host: &str, username: &str, password: &str) -> Result<Logon> {
         let mut dialed = None;
         for _ in 0..MAX_CHALLENGE_DIALS {
             let mut stream = dial(host, port)?;
-            auth::write_logon_challenge(&mut stream, &username.to_uppercase(), CLIENT_BUILD)
+            auth::write_logon_challenge(&mut stream, &username.to_uppercase(), expansion)
                 .context("sending logon challenge")?;
             let reply =
                 auth::read_challenge_reply(&mut stream).context("reading logon challenge reply")?;
@@ -209,22 +217,25 @@ pub fn logon(host: &str, username: &str, password: &str) -> Result<Logon> {
         challenge.client_public_key(),
         challenge.client_proof(),
         &reply.crc_salt,
+        expansion,
     )
     .context("sending logon proof")?;
 
-    let server_proof = auth::read_proof_reply(&mut stream).context("reading logon proof reply")?;
+    let server_proof =
+        auth::read_proof_reply(&mut stream, expansion).context("reading logon proof reply")?;
     let client = challenge
         .verify_server_proof(server_proof)
         .map_err(|e| anyhow!("server proof mismatch (wrong password?): {e}"))?;
     let session_key = *client.session_key();
 
     auth::write_realm_list_request(&mut stream).context("requesting realm list")?;
-    let realms = auth::read_realm_list(&mut stream).context("reading realm list")?;
+    let realms = auth::read_realm_list(&mut stream, expansion).context("reading realm list")?;
 
     Ok(Logon {
         session_key,
         realms,
         stream: Some(stream),
+        expansion,
     })
 }
 

@@ -2,16 +2,16 @@ use std::io::Read;
 use std::net::TcpStream;
 
 use anyhow::{anyhow, Result};
-use benilla_srp::vanilla_header::DecrypterHalf;
 
 use crate::messages::{self, ServerPacket};
 
+use super::cipher::{read_server_header, Decrypter};
 use super::recv_packet;
 
 /// The read half of a split [`WorldSession`](super::WorldSession): cloned socket and decrypter.
 pub struct WorldReader {
     pub(super) stream: TcpStream,
-    pub(super) decrypter: DecrypterHalf,
+    pub(super) decrypter: Decrypter,
 }
 
 impl WorldReader {
@@ -23,14 +23,8 @@ impl WorldReader {
     /// Read one packet and decode it into a [`crate::Poll`]; errors only when the socket fails. The
     /// whole body is read before parsing, so an unparseable packet is skipped, the stream aligned.
     pub fn poll(&mut self) -> Result<crate::Poll> {
-        let mut header = [0u8; 4];
-        if let Err(e) = self.stream.read_exact(&mut header) {
-            return Err(anyhow!("world stream closed: {e}"));
-        }
-        self.decrypter.decrypt(&mut header);
-        let size = u16::from_be_bytes([header[0], header[1]]);
-        let opcode = u16::from_le_bytes([header[2], header[3]]);
-        let body_len = size.saturating_sub(2) as usize;
+        let (body_len, opcode) = read_server_header(&mut self.stream, Some(&mut self.decrypter))
+            .map_err(|e| anyhow!("world stream closed: {e}"))?;
         let mut body = vec![0u8; body_len];
         if let Err(e) = self.stream.read_exact(&mut body) {
             return Err(anyhow!("world stream closed: {e}"));

@@ -200,6 +200,32 @@ pub fn parse_server(opcode: u16, body: &[u8]) -> io::Result<ServerPacket> {
     parse_server_with_tail(opcode, body).map(|(packet, _)| packet)
 }
 
+/// 3.3.5a's `SMSG_AUTH_RESPONSE`: `u8 code`; then, in a full reply, `u32 billingTimeRemaining,
+/// u8 billingPlanFlags, u32 billingTimeRested, u8 expansion`; then, for WAIT_QUEUE, `u32 position,
+/// u8 freeCharacterMigration` (AzerothCore `WorldSession::SendAuthResponse`). A refusal may be
+/// the code alone (`WorldSocket::SendAuthResponseError`).
+pub fn parse_auth_response_wotlk(body: &[u8]) -> io::Result<ServerPacket> {
+    let mut r = body;
+    let result = read_u8(&mut r)?;
+    let queued = result == super::AUTH_WAIT_QUEUE;
+    let mut billing_time_rested = None;
+    let mut queue_position = None;
+    if r.len() >= 10 {
+        let _billing_time_remaining = read_u32_le(&mut r)?;
+        let _billing_plan_flags = read_u8(&mut r)?;
+        billing_time_rested = Some(read_u32_le(&mut r)?);
+        let _expansion = read_u8(&mut r)?;
+        if queued {
+            queue_position = read_u32_le(&mut r).ok();
+        }
+    }
+    Ok(ServerPacket::AuthResponse {
+        result,
+        queue_position,
+        billing_time_rested,
+    })
+}
+
 /// [`parse_server`], plus how many body bytes the decoder left unread: a count, never a failure,
 /// that exposes a decoder shorter than the server's layout. [`ServerPacket::Other`] reports `0`.
 pub fn parse_server_with_tail(opcode: u16, body: &[u8]) -> io::Result<(ServerPacket, usize)> {
