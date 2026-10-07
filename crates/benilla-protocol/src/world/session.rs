@@ -185,7 +185,7 @@ impl WorldSession {
         loop {
             let packet = match expansion {
                 Expansion::Classic => session.recv()?,
-                Expansion::Wotlk => session.recv_wotlk_handshake()?,
+                Expansion::Wotlk => session.recv_wotlk_glue()?,
             };
             match packet {
                 ServerPacket::AuthResponse {
@@ -249,15 +249,18 @@ impl WorldSession {
             .context("setting world socket read timeout")
     }
 
-    /// One 3.3.5a packet of the handshake: the auth response parsed, every other packet left as
-    /// [`ServerPacket::Other`], since 1.12.1's decoders do not read 3.3.5a's bodies.
-    fn recv_wotlk_handshake(&mut self) -> Result<ServerPacket> {
+    /// One 3.3.5a packet of the handshake or the roster: the auth response and the character list
+    /// parsed, every other packet left as [`ServerPacket::Other`], since 1.12.1's decoders do not
+    /// read 3.3.5a's bodies.
+    fn recv_wotlk_glue(&mut self) -> Result<ServerPacket> {
         let (opcode, body) = recv_raw(&mut self.stream, Some(&mut self.crypto.decrypter))?;
-        if opcode == opcode::SMSG_AUTH_RESPONSE {
-            return messages::parse_auth_response_wotlk(&body)
-                .map_err(|e| anyhow!("parsing SMSG_AUTH_RESPONSE: {e}"));
+        match opcode {
+            opcode::SMSG_AUTH_RESPONSE => messages::parse_auth_response_wotlk(&body)
+                .map_err(|e| anyhow!("parsing SMSG_AUTH_RESPONSE: {e}")),
+            opcode::SMSG_CHAR_ENUM => messages::parse_char_enum_wotlk(&body)
+                .map_err(|e| anyhow!("parsing SMSG_CHAR_ENUM: {e}")),
+            _ => Ok(ServerPacket::Other { opcode }),
         }
-        Ok(ServerPacket::Other { opcode })
     }
 
     /// Read + decrypt + parse one server packet.
@@ -290,7 +293,11 @@ impl WorldSession {
     pub fn char_enum(&mut self) -> Result<Vec<Character>> {
         self.send(opcode::CMSG_CHAR_ENUM, &[])?;
         loop {
-            match self.recv()? {
+            let packet = match Expansion::active() {
+                Expansion::Classic => self.recv()?,
+                Expansion::Wotlk => self.recv_wotlk_glue()?,
+            };
+            match packet {
                 ServerPacket::CharEnum { characters } => {
                     self.roster_races = characters.iter().map(|c| (c.guid, c.race)).collect();
                     return Ok(characters);

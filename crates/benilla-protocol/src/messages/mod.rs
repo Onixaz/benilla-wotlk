@@ -175,7 +175,9 @@ pub use movement::{
 pub use opcode_names::opcode_name;
 pub use packet::{CreatureQueryInfo, MonsterMoveFacing, ServerPacket};
 pub use page_text::page_text_query;
-pub use parse::{parse_auth_response_wotlk, parse_server, parse_server_with_tail};
+pub use parse::{
+    parse_auth_response_wotlk, parse_char_enum_wotlk, parse_server, parse_server_with_tail,
+};
 pub use pet::{
     pet_abandon, pet_action, pet_cancel_aura, pet_rename, pet_set_action, pet_spell_autocast,
     pet_stop_attack, pet_tame_failure_key, pet_unlearn, PetActionEntry, PetMode, PetSpellCooldown,

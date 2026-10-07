@@ -3,6 +3,8 @@
 
 use std::io::{self, Read};
 
+use benilla_expansions::Expansion;
+
 use crate::wire::{read_cstring, read_u32_le, read_u64_le, read_u8, Vector3d};
 
 /// `WorldResult::CharCreateSuccess` / `CharCreateNameInUse` (`SMSG_CHAR_CREATE`).
@@ -87,7 +89,9 @@ pub struct Character {
 }
 
 impl Character {
-    pub(super) fn read(r: &mut impl Read) -> io::Result<Self> {
+    /// One entry in `expansion`'s layout: the two clients share every field through the character
+    /// flags and differ after them.
+    pub(super) fn read(r: &mut impl Read, expansion: Expansion) -> io::Result<Self> {
         let guid = read_u64_le(r)?;
         let name = read_cstring(r)?;
         let race = read_u8(r)?;
@@ -104,17 +108,40 @@ impl Character {
         let position = Vector3d::read(r)?;
         let _guild_id = read_u32_le(r)?;
         let flags = read_u32_le(r)?;
+        // 3.3.5a sends `u32 customizeFlags` here (AzerothCore `Player::BuildEnumData`).
+        if expansion == Expansion::Wotlk {
+            let _customize_flags = read_u32_le(r)?;
+        }
         let _first_login = read_u8(r)?;
         let pet_display_id = read_u32_le(r)?;
         let pet_level = read_u32_le(r)?;
         let pet_family = read_u32_le(r)?;
         let mut equipment = [CharEnumItem::default(); 19];
-        for slot in &mut equipment {
-            slot.display_id = read_u32_le(r)?;
-            slot.inventory_type = read_u8(r)?;
+        match expansion {
+            // 19 `(u32 display, u8 inventoryType)` slots, then the first bag's.
+            Expansion::Classic => {
+                for slot in &mut equipment {
+                    slot.display_id = read_u32_le(r)?;
+                    slot.inventory_type = read_u8(r)?;
+                }
+                let _first_bag_display_id = read_u32_le(r)?;
+                let _first_bag_inventory_id = read_u8(r)?;
+            }
+            // 19 equipment slots then the four bags, each `(u32 display, u8 inventoryType,
+            // u32 enchantVisual)`; the select preview does not draw the enchant visual.
+            Expansion::Wotlk => {
+                for slot in &mut equipment {
+                    slot.display_id = read_u32_le(r)?;
+                    slot.inventory_type = read_u8(r)?;
+                    let _enchant_visual = read_u32_le(r)?;
+                }
+                for _bag in 0..4 {
+                    let _display_id = read_u32_le(r)?;
+                    let _inventory_type = read_u8(r)?;
+                    let _enchant_visual = read_u32_le(r)?;
+                }
+            }
         }
-        let _first_bag_display_id = read_u32_le(r)?;
-        let _first_bag_inventory_id = read_u8(r)?;
         Ok(Self {
             guid,
             name,

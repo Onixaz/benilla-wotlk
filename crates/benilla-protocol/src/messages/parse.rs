@@ -2,6 +2,8 @@
 
 use std::io::{self, Read};
 
+use benilla_expansions::Expansion;
+
 use crate::wire::{
     capacity_hint, read_cstring, read_f32_le, read_packed_guid, read_u16_le, read_u32_le,
     read_u64_le, read_u8, Vector3d,
@@ -226,6 +228,17 @@ pub fn parse_auth_response_wotlk(body: &[u8]) -> io::Result<ServerPacket> {
     })
 }
 
+/// 3.3.5a's `SMSG_CHAR_ENUM`: `u8 count`, then each entry in 3.3.5a's layout ([`Character`]).
+pub fn parse_char_enum_wotlk(body: &[u8]) -> io::Result<ServerPacket> {
+    let mut r = body;
+    let count = read_u8(&mut r)?;
+    let mut characters = Vec::with_capacity(capacity_hint(count, 10));
+    for _ in 0..count {
+        characters.push(Character::read(&mut r, Expansion::Wotlk)?);
+    }
+    Ok(ServerPacket::CharEnum { characters })
+}
+
 /// [`parse_server`], plus how many body bytes the decoder left unread: a count, never a failure,
 /// that exposes a decoder shorter than the server's layout. [`ServerPacket::Other`] reports `0`.
 pub fn parse_server_with_tail(opcode: u16, body: &[u8]) -> io::Result<(ServerPacket, usize)> {
@@ -278,7 +291,7 @@ fn parse_server_body(
             // vmangos clamps `CharactersPerRealm` to 10 (`World.cpp:629`).
             let mut characters = Vec::with_capacity(capacity_hint(count, 10));
             for _ in 0..count {
-                characters.push(Character::read(&mut r)?);
+                characters.push(Character::read(&mut r, Expansion::Classic)?);
             }
             ServerPacket::CharEnum { characters }
         }
