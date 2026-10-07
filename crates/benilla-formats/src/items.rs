@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use crate::Chain;
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, RecordSet, Schema, SchemaField};
+use benilla_expansions::dbc as dbc_layout;
 
 use crate::dbc::{parse, str_at, u32_at};
 use crate::models::model_path;
@@ -99,8 +100,8 @@ impl ItemDisplayCatalog {
     }
 }
 
-/// All 23 columns, the unread ones included, so the field-count check against the header is exact.
-pub(crate) fn item_display_info_schema() -> Schema {
+/// Every column, the unread ones included, so the field-count check against the header is exact.
+pub(crate) fn item_display_info_schema(l: &dbc_layout::ItemDisplayInfo) -> Schema {
     let mut s = Schema::new("ItemDisplayInfo");
     for (name, ty) in [
         ("ID", FieldType::UInt32),
@@ -109,39 +110,47 @@ pub(crate) fn item_display_info_schema() -> Schema {
         ("ModelTextureLeft", FieldType::String),
         ("ModelTextureRight", FieldType::String),
         ("Icon", FieldType::String),
-        ("GeosetGroup0", FieldType::UInt32),
-        ("GeosetGroup1", FieldType::UInt32),
-        ("GeosetGroup2", FieldType::UInt32),
     ] {
         s.add_field(SchemaField::new(name, ty));
     }
-    for name in [
-        "Flags",
-        "SpellVisualID",
-        "ItemGroupSoundsID",
-        "HelmVisMale",
-        "HelmVisFemale",
-    ] {
-        s.add_field(SchemaField::new(name, FieldType::UInt32));
+    let named = |i: usize| -> Option<(String, FieldType)> {
+        const REGIONS: [&str; 8] = [
+            "ArmUpperTexture",
+            "ArmLowerTexture",
+            "HandTexture",
+            "TorsoUpperTexture",
+            "TorsoLowerTexture",
+            "LegUpperTexture",
+            "LegLowerTexture",
+            "FootTexture",
+        ];
+        let int = |name: &str| Some((name.to_string(), FieldType::UInt32));
+        match i {
+            _ if (l.geoset_group..l.geoset_group + 3).contains(&i) => Some((
+                format!("GeosetGroup{}", i - l.geoset_group),
+                FieldType::UInt32,
+            )),
+            _ if i == l.flags => int("Flags"),
+            _ if i == l.spell_visual => int("SpellVisualID"),
+            _ if i == l.group_sound => int("ItemGroupSoundsID"),
+            _ if i == l.helmet_geoset_vis => int("HelmVisMale"),
+            _ if i == l.helmet_geoset_vis + 1 => int("HelmVisFemale"),
+            _ if (l.textures..l.textures + 8).contains(&i) => {
+                Some((REGIONS[i - l.textures].to_string(), FieldType::String))
+            }
+            _ if i == l.item_visual => int("ItemVisualID"),
+            _ => None,
+        }
+    };
+    for i in s.fields.len()..l.fields {
+        let (name, ty) = named(i).unwrap_or_else(|| (format!("c{i}"), FieldType::UInt32));
+        s.add_field(SchemaField::new(name, ty));
     }
-    for name in [
-        "ArmUpperTexture",
-        "ArmLowerTexture",
-        "HandTexture",
-        "TorsoUpperTexture",
-        "TorsoLowerTexture",
-        "LegUpperTexture",
-        "LegLowerTexture",
-        "FootTexture",
-    ] {
-        s.add_field(SchemaField::new(name, FieldType::String));
-    }
-    s.add_field(SchemaField::new("ItemVisualID", FieldType::UInt32));
     s
 }
 
-/// The catalog from a parsed record set, testable without a chain.
-fn catalog_from_records(rs: RecordSet) -> ItemDisplayCatalog {
+/// The catalog from a record set parsed with `l`'s schema, testable without a chain.
+fn catalog_from_records(rs: RecordSet, l: &dbc_layout::ItemDisplayInfo) -> ItemDisplayCatalog {
     let mut displays = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
@@ -150,18 +159,14 @@ fn catalog_from_records(rs: RecordSet) -> ItemDisplayCatalog {
             str_at(&rs, r, 2).map(|s| model_path(&s)),
         ];
         let model_texture = [str_at(&rs, r, 3), str_at(&rs, r, 4)];
-        let geoset_groups = [
-            u32_at(r, 6).unwrap_or(0),
-            u32_at(r, 7).unwrap_or(0),
-            u32_at(r, 8).unwrap_or(0),
-        ];
-        let region_textures = std::array::from_fn(|i| str_at(&rs, r, 14 + i));
-        let helmet_vis = [u32_at(r, 12).unwrap_or(0), u32_at(r, 13).unwrap_or(0)];
+        let geoset_groups = std::array::from_fn(|i| u32_at(r, l.geoset_group + i).unwrap_or(0));
+        let region_textures = std::array::from_fn(|i| str_at(&rs, r, l.textures + i));
+        let helmet_vis = std::array::from_fn(|i| u32_at(r, l.helmet_geoset_vis + i).unwrap_or(0));
         let icon = str_at(&rs, r, 5).map(|i| format!("Interface\\Icons\\{i}"));
-        let group_sounds = u32_at(r, 11).unwrap_or(0);
-        let spell_visual = u32_at(r, 10).unwrap_or(0);
-        let flags = u32_at(r, 9).unwrap_or(0);
-        let item_visual = u32_at(r, 22).unwrap_or(0) as i32;
+        let group_sounds = u32_at(r, l.group_sound).unwrap_or(0);
+        let spell_visual = u32_at(r, l.spell_visual).unwrap_or(0);
+        let flags = u32_at(r, l.flags).unwrap_or(0);
+        let item_visual = u32_at(r, l.item_visual).unwrap_or(0) as i32;
         displays.insert(
             id,
             ItemDisplay {
@@ -186,8 +191,9 @@ pub fn load_item_display_catalog(chain: &mut Chain) -> Result<ItemDisplayCatalog
     let bytes = chain
         .read_file(ITEM_DISPLAY_INFO)
         .with_context(|| format!("reading {ITEM_DISPLAY_INFO}"))?;
-    let rs = parse(&bytes, item_display_info_schema(), "ItemDisplayInfo")?;
-    Ok(catalog_from_records(rs))
+    let l = &chain.expansion().profile().dbc.item_display_info;
+    let rs = parse(&bytes, item_display_info_schema(l), "ItemDisplayInfo")?;
+    Ok(catalog_from_records(rs, l))
 }
 
 #[cfg(test)]
@@ -216,6 +222,13 @@ mod tests {
     const FIELD_COUNT: u32 = 23;
     const RECORD_SIZE: u32 = FIELD_COUNT * 4;
     const OFF_EMPTY: u32 = 0;
+
+    fn classic() -> &'static dbc_layout::ItemDisplayInfo {
+        &benilla_expansions::Expansion::Classic
+            .profile()
+            .dbc
+            .item_display_info
+    }
 
     fn u32le(v: u32) -> [u8; 4] {
         v.to_le_bytes()
@@ -292,8 +305,9 @@ mod tests {
         assert_eq!(rec.len(), RECORD_SIZE as usize);
 
         let bytes = build_wdbc(1, FIELD_COUNT, RECORD_SIZE, &rec, &strings.0);
-        let rs = parse(&bytes, item_display_info_schema(), "test").expect("synthetic DBC parses");
-        let catalog = catalog_from_records(rs);
+        let rs = parse(&bytes, item_display_info_schema(classic()), "test")
+            .expect("synthetic DBC parses");
+        let catalog = catalog_from_records(rs, classic());
 
         assert_eq!(catalog.len(), 1);
         let display = catalog.get(18730).expect("displayId 18730 present");
@@ -325,12 +339,52 @@ mod tests {
         );
     }
 
+    /// A 3.3.5a row: the second icon at column 6 moves every later column by one, and
+    /// `ParticleColorID` closes the 25-column record.
+    #[test]
+    fn a_wotlk_row_reads_through_its_own_layout() {
+        let l = &benilla_expansions::Expansion::Wotlk
+            .profile()
+            .dbc
+            .item_display_info;
+        let mut strings = StringBlock::new();
+        let icon = strings.push("INV_Boots_01");
+        let foot = strings.push("Generic_HuMa_01_Boot_FO");
+        let mut cols = [0u32; 25];
+        cols[0] = 222;
+        cols[5] = icon;
+        cols[7] = 2; // GeosetGroup0
+        cols[10] = 0x10; // Flags
+        cols[11] = 41; // SpellVisualID
+        cols[12] = 7; // ItemGroupSoundsID
+        cols[14] = 3; // HelmVisFemale
+        cols[22] = foot; // FootTexture
+        cols[23] = 9; // ItemVisualID
+        cols[24] = 5; // ParticleColorID, unread
+        let rec: Vec<u8> = cols.iter().flat_map(|c| c.to_le_bytes()).collect();
+        let bytes = build_wdbc(1, 25, 100, &rec, &strings.0);
+        let rs = parse(&bytes, item_display_info_schema(l), "test").expect("synthetic DBC parses");
+        let d = catalog_from_records(rs, l).get(222).cloned().expect("row");
+        assert_eq!(d.icon.as_deref(), Some("Interface\\Icons\\INV_Boots_01"));
+        assert_eq!(d.geoset_groups, [2, 0, 0]);
+        assert_eq!((d.flags, d.spell_visual, d.group_sounds), (0x10, 41, 7));
+        assert_eq!(d.helmet_vis, [0, 3]);
+        assert_eq!(
+            d.region_textures[7].as_deref(),
+            Some("Generic_HuMa_01_Boot_FO")
+        );
+        assert_eq!(d.item_visual, 9);
+        // The 1.12.1 layout refuses the 25-column file rather than misread it.
+        assert!(parse(&bytes, item_display_info_schema(classic()), "test").is_err());
+    }
+
     #[test]
     fn unknown_display_id_misses() {
         let rec = vec![0u8; RECORD_SIZE as usize]; // ID 0, everything else empty or zero
         let bytes = build_wdbc(1, FIELD_COUNT, RECORD_SIZE, &rec, &StringBlock::new().0);
-        let rs = parse(&bytes, item_display_info_schema(), "test").expect("synthetic DBC parses");
-        let catalog = catalog_from_records(rs);
+        let rs = parse(&bytes, item_display_info_schema(classic()), "test")
+            .expect("synthetic DBC parses");
+        let catalog = catalog_from_records(rs, classic());
         assert_eq!(catalog.len(), 1);
         assert!(catalog.get(999).is_none());
     }

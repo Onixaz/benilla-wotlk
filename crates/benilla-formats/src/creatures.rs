@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use crate::Chain;
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
+use benilla_expansions::dbc as dbc_layout;
 
 use crate::dbc::{f32_at, parse, str_at, u32_at};
 
@@ -272,8 +273,9 @@ impl CreatureCatalog {
     }
 }
 
-/// CreatureModelData.dbc: 16 fields in build 5875 (no `mountHeight`).
-pub(crate) fn creature_model_data_schema() -> Schema {
+/// CreatureModelData.dbc: 16 fields in build 5875 (no `mountHeight`); 3.3.5a's further columns
+/// are unread.
+pub(crate) fn creature_model_data_schema(l: &dbc_layout::CreatureModelData) -> Schema {
     let mut s = Schema::new("CreatureModelData");
     for (name, ty) in [
         ("ID", FieldType::UInt32),
@@ -295,11 +297,14 @@ pub(crate) fn creature_model_data_schema() -> Schema {
     ] {
         s.add_field(SchemaField::new(name, ty));
     }
+    for i in s.fields.len()..l.fields {
+        s.add_field(SchemaField::new(format!("c{i}"), FieldType::UInt32));
+    }
     s
 }
 
-/// CreatureDisplayInfo.dbc: 12 fields in build 5875.
-pub(crate) fn creature_display_info_schema() -> Schema {
+/// CreatureDisplayInfo.dbc: 12 fields in build 5875, 16 in 12340.
+pub(crate) fn creature_display_info_schema(l: &dbc_layout::CreatureDisplayInfo) -> Schema {
     let mut s = Schema::new("CreatureDisplayInfo");
     for (name, ty) in [
         ("ID", FieldType::UInt32),
@@ -311,20 +316,28 @@ pub(crate) fn creature_display_info_schema() -> Schema {
         ("TextureVariation0", FieldType::String),
         ("TextureVariation1", FieldType::String),
         ("TextureVariation2", FieldType::String),
-        // Not `PortraitTextureName` (absent in 5875): a signed size class, tested for -1 at
-        // `0x625509`.
-        ("SizeClass", FieldType::UInt32),
-        ("BloodLevel", FieldType::UInt32),
-        // Some maps label this BloodID, but its 5875 values (33..188) are NPC sound ids.
-        ("NPCSoundID", FieldType::UInt32),
     ] {
         s.add_field(SchemaField::new(name, ty));
+    }
+    for i in s.fields.len()..l.fields {
+        let name = match i {
+            // 5875 has no `PortraitTextureName` here: a signed size class, tested for -1 at
+            // `0x625509`.
+            _ if i == l.size_class => "SizeClass".into(),
+            _ if i == l.blood_level => "BloodLevel".into(),
+            // Some maps label this BloodID, but its 5875 values (33..188) are NPC sound ids.
+            _ if i == l.npc_sound => "NPCSoundID".into(),
+            _ => format!("c{i}"),
+        };
+        s.add_field(SchemaField::new(name, FieldType::UInt32));
     }
     s
 }
 
 /// CreatureDisplayInfoExtra.dbc: 19 fields, 76-byte records in 5875 (vmangos `DBCStructure.h`).
-pub(crate) fn creature_display_info_extra_schema() -> Schema {
+pub(crate) fn creature_display_info_extra_schema(
+    l: &dbc_layout::CreatureDisplayInfoExtra,
+) -> Schema {
     let mut s = Schema::new("CreatureDisplayInfoExtra");
     for (name, ty) in [
         ("ID", FieldType::UInt32),
@@ -338,20 +351,31 @@ pub(crate) fn creature_display_info_extra_schema() -> Schema {
     ] {
         s.add_field(SchemaField::new(name, ty));
     }
-    for i in 0..10 {
+    for i in 0..l.equipment_slots {
         s.add_field(SchemaField::new(format!("Equipment{i}"), FieldType::UInt32));
     }
-    s.add_field(SchemaField::new("BakeName", FieldType::String));
+    for i in s.fields.len()..l.fields {
+        if i == l.bake_name {
+            s.add_field(SchemaField::new("BakeName", FieldType::String));
+        } else {
+            s.add_field(SchemaField::new(format!("c{i}"), FieldType::UInt32));
+        }
+    }
     s
 }
 
 /// Load the creature DBCs from the patch chain into a [`CreatureCatalog`].
 pub fn load_creature_catalog(chain: &mut Chain) -> Result<CreatureCatalog> {
+    let layouts = &chain.expansion().profile().dbc;
     let models = {
         let bytes = chain
             .read_file(CREATURE_MODEL_DATA)
             .with_context(|| format!("reading {CREATURE_MODEL_DATA}"))?;
-        let rs = parse(&bytes, creature_model_data_schema(), "CreatureModelData")?;
+        let rs = parse(
+            &bytes,
+            creature_model_data_schema(&layouts.creature_model_data),
+            "CreatureModelData",
+        )?;
         let mut m = HashMap::with_capacity(rs.records().len());
         for r in rs.records() {
             if let (Some(id), Some(name)) = (u32_at(r, 0), str_at(&rs, r, 2)) {
@@ -381,9 +405,10 @@ pub fn load_creature_catalog(chain: &mut Chain) -> Result<CreatureCatalog> {
         let bytes = chain
             .read_file(CREATURE_DISPLAY_INFO)
             .with_context(|| format!("reading {CREATURE_DISPLAY_INFO}"))?;
+        let l = &layouts.creature_display_info;
         let rs = parse(
             &bytes,
-            creature_display_info_schema(),
+            creature_display_info_schema(l),
             "CreatureDisplayInfo",
         )?;
         let mut d = HashMap::with_capacity(rs.records().len());
@@ -396,8 +421,8 @@ pub fn load_creature_catalog(chain: &mut Chain) -> Result<CreatureCatalog> {
                         extended_id: u32_at(r, 3).unwrap_or(0),
                         scale: f32_at(r, 4).unwrap_or(1.0),
                         textures: [str_at(&rs, r, 6), str_at(&rs, r, 7), str_at(&rs, r, 8)],
-                        blood_level: u32_at(r, 10).unwrap_or(0),
-                        size_class: u32_at(r, 9).map_or(-1, |v| v as i32),
+                        blood_level: u32_at(r, l.blood_level).unwrap_or(0),
+                        size_class: u32_at(r, l.size_class).map_or(-1, |v| v as i32),
                         model_alpha: u32_at(r, 5).unwrap_or(255),
                     },
                 );
@@ -421,9 +446,10 @@ fn load_creature_display_info_extra(chain: &mut Chain) -> Result<HashMap<u32, Np
     let bytes = chain
         .read_file(CREATURE_DISPLAY_INFO_EXTRA)
         .with_context(|| format!("reading {CREATURE_DISPLAY_INFO_EXTRA}"))?;
+    let l = &chain.expansion().profile().dbc.creature_display_info_extra;
     let rs = parse(
         &bytes,
-        creature_display_info_extra_schema(),
+        creature_display_info_extra_schema(l),
         "CreatureDisplayInfoExtra",
     )?;
     let mut e = HashMap::with_capacity(rs.records().len());
@@ -439,8 +465,10 @@ fn load_creature_display_info_extra(chain: &mut Chain) -> Result<HashMap<u32, Np
                     hair_style: u32_at(r, 5).unwrap_or(0) as u8,
                     hair_color: u32_at(r, 6).unwrap_or(0) as u8,
                     facial_hair: u32_at(r, 7).unwrap_or(0) as u8,
-                    equipment: std::array::from_fn(|i| u32_at(r, 8 + i).unwrap_or(0)),
-                    bake_name: str_at(&rs, r, 18),
+                    // 1.12.1's ten slots lead in both clients; 3.3.5a's eleventh, the cape, is
+                    // not read yet.
+                    equipment: std::array::from_fn(|i| u32_at(r, l.equipment + i).unwrap_or(0)),
+                    bake_name: str_at(&rs, r, l.bake_name),
                 },
             );
         }

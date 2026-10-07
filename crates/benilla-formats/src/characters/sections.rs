@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
+use benilla_expansions::dbc as dbc_layout;
 
 use crate::dbc::{parse, str_at, u32_at};
 use crate::items::ItemDisplay;
@@ -234,26 +235,23 @@ impl CharSections {
         let bytes = chain
             .read_file(CHAR_SECTIONS)
             .with_context(|| format!("reading {CHAR_SECTIONS}"))?;
-        let rs = parse(&bytes, char_sections_schema(), "CharSections")?;
+        let l = &chain.expansion().profile().dbc.char_sections;
+        let rs = parse(&bytes, char_sections_schema(l), "CharSections")?;
         let mut sections = HashMap::with_capacity(rs.records().len());
         for r in rs.records() {
-            // fields: ID, Race, Sex, SectionType, Variation, Color, Tex0, Tex1, Tex2, Flags.
             if let (Some(race), Some(sex), Some(ty), Some(var), Some(color)) = (
                 u32_at(r, 1),
                 u32_at(r, 2),
                 u32_at(r, 3),
-                u32_at(r, 4),
-                u32_at(r, 5),
+                u32_at(r, l.variation),
+                u32_at(r, l.color),
             ) {
-                let texs = [
-                    str_at(&rs, r, 6).unwrap_or_default(),
-                    str_at(&rs, r, 7).unwrap_or_default(),
-                    str_at(&rs, r, 8).unwrap_or_default(),
-                ];
+                let texs =
+                    std::array::from_fn(|i| str_at(&rs, r, l.textures + i).unwrap_or_default());
                 let key = (race as u8, sex as u8, ty as u8, var as u8, color as u8);
-                // A row flagged `0x1` can share its key with a standard row (Human male skin 0 has
-                // `…Skin00_00` and `…_100`); the standard row wins in either order.
-                let extra = u32_at(r, 9).unwrap_or(0) & 0x1 != 0;
+                // An extra row can share its key with a standard one (1.12.1's Human male skin 0
+                // has `…Skin00_00` and `…_100`); the standard row wins in either order.
+                let extra = !l.offered(u32_at(r, l.flags).unwrap_or(0));
                 if extra {
                     sections.entry(key).or_insert(texs);
                 } else {
@@ -578,20 +576,22 @@ fn blit_over(dst: &mut BlpMipChain, src: &BlpMipChain, tile: Tile) {
 }
 
 /// CharSections.dbc: 10 fields, three of them texture names.
-pub(crate) fn char_sections_schema() -> Schema {
+pub(crate) fn char_sections_schema(l: &dbc_layout::CharSections) -> Schema {
     let mut s = Schema::new("CharSections");
-    for (name, ty) in [
-        ("ID", FieldType::UInt32),
-        ("RaceID", FieldType::UInt32),
-        ("SexID", FieldType::UInt32),
-        ("SectionType", FieldType::UInt32),
-        ("VariationIndex", FieldType::UInt32),
-        ("ColorIndex", FieldType::UInt32),
-        ("TextureName0", FieldType::String),
-        ("TextureName1", FieldType::String),
-        ("TextureName2", FieldType::String),
-        ("Flags", FieldType::UInt32),
-    ] {
+    for i in 0..l.fields {
+        let (name, ty) = match i {
+            0 => ("ID".into(), FieldType::UInt32),
+            1 => ("RaceID".into(), FieldType::UInt32),
+            2 => ("SexID".into(), FieldType::UInt32),
+            3 => ("SectionType".into(), FieldType::UInt32),
+            _ if i == l.variation => ("VariationIndex".into(), FieldType::UInt32),
+            _ if i == l.color => ("ColorIndex".into(), FieldType::UInt32),
+            _ if (l.textures..l.textures + 3).contains(&i) => {
+                (format!("TextureName{}", i - l.textures), FieldType::String)
+            }
+            _ if i == l.flags => ("Flags".into(), FieldType::UInt32),
+            _ => (format!("c{i}"), FieldType::UInt32),
+        };
         s.add_field(SchemaField::new(name, ty));
     }
     s

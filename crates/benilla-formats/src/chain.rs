@@ -20,6 +20,8 @@ pub struct ChainEntry {
 pub struct Chain {
     /// Ascending priority: later archives win.
     archives: Vec<Archive>,
+    /// The client whose layouts the chain's files are read in.
+    expansion: Expansion,
 }
 
 /// Whether `path` matches `pattern` as the reference's `FindFirstFileW` glob does (1.12.1 wrapper
@@ -173,13 +175,21 @@ impl Chain {
                 Archive::open(path).with_context(|| format!("opening MPQ {}", path.display()))?,
             );
         }
-        Ok(Self { archives })
+        Ok(Self {
+            archives,
+            expansion,
+        })
     }
 
     /// The highest-priority archive with an entry for `name`, a delete marker included, as a
     /// tombstone shadows every lower copy: check [`Archive::is_delete_marker`] for a readable file.
     fn resolve(&self, name: &str) -> Option<&Archive> {
         self.archives.iter().rev().find(|a| a.contains(name))
+    }
+
+    /// The client whose data this is: its tables are read in that client's layouts.
+    pub fn expansion(&self) -> Expansion {
+        self.expansion
     }
 
     /// The mounted archives' paths, lowest priority first.

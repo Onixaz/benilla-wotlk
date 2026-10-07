@@ -575,28 +575,48 @@ pub fn blp_bytes_to_native_chain(bytes: &[u8]) -> Result<BlpMipChain> {
 fn schema_for(dbc_name: &str) -> Option<Schema> {
     let base = dbc_name.rsplit(['/', '\\']).next().unwrap_or(dbc_name);
 
-    // A table with a typed loader reuses its schema, so a dump reads what the loader reads.
-    for (name, ctor) in [
+    // A table with a typed loader reuses its schema, so a dump reads what the loader reads; one
+    // whose layout differs between clients is dumped in the active client's.
+    let dbc = &benilla_expansions::Expansion::active().profile().dbc;
+    for (name, schema) in [
         (
             "CreatureDisplayInfo.dbc",
-            creatures::creature_display_info_schema as fn() -> Schema,
+            creatures::creature_display_info_schema(&dbc.creature_display_info),
         ),
         (
             "CreatureDisplayInfoExtra.dbc",
-            creatures::creature_display_info_extra_schema,
+            creatures::creature_display_info_extra_schema(&dbc.creature_display_info_extra),
         ),
         (
             "CreatureModelData.dbc",
-            creatures::creature_model_data_schema,
+            creatures::creature_model_data_schema(&dbc.creature_model_data),
         ),
-        ("CharHairGeosets.dbc", characters::char_hair_geosets_schema),
         (
             "CharacterFacialHairStyles.dbc",
-            characters::char_facial_hair_schema,
+            characters::char_facial_hair_schema(&dbc.character_facial_hair_styles),
         ),
-        ("HelmetGeosetVisData.dbc", characters::helmet_vis_schema),
-        ("CharSections.dbc", characters::char_sections_schema),
-        ("ItemDisplayInfo.dbc", items::item_display_info_schema),
+        (
+            "CharSections.dbc",
+            characters::char_sections_schema(&dbc.char_sections),
+        ),
+        (
+            "HelmetGeosetVisData.dbc",
+            characters::helmet_vis_schema(&dbc.helmet_geoset_vis_data),
+        ),
+        (
+            "ItemDisplayInfo.dbc",
+            items::item_display_info_schema(&dbc.item_display_info),
+        ),
+    ] {
+        if base.eq_ignore_ascii_case(name) {
+            return Some(schema);
+        }
+    }
+    for (name, ctor) in [
+        (
+            "CharHairGeosets.dbc",
+            characters::char_hair_geosets_schema as fn() -> Schema,
+        ),
         ("ItemVisuals.dbc", item_visuals::item_visuals_schema),
         (
             "ItemVisualEffects.dbc",

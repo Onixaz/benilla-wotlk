@@ -5,6 +5,10 @@
 use std::fmt;
 use std::sync::OnceLock;
 
+pub mod dbc;
+
+pub use dbc::DbcLayouts;
+
 /// A supported reference client.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Expansion {
@@ -80,6 +84,9 @@ pub struct ExpansionProfile {
     pub logon: LogonFacts,
     pub archives: ArchiveLayout,
     pub glue: GlueScreens,
+    pub dbc: DbcLayouts,
+    /// The `ChrRaces` ids a player can create, ascending.
+    pub playable_races: &'static [u8],
 }
 
 /// What the client tells realmd about itself.
@@ -205,6 +212,9 @@ static CLASSIC: ExpansionProfile = ExpansionProfile {
         login_scene: "MainMenu",
         logo: "Interface\\Glues\\Common\\Glues-WoW-Logo",
     },
+    dbc: dbc::CLASSIC,
+    // Human through Troll; Goblin (9) and above are not creatable.
+    playable_races: &[1, 2, 3, 4, 5, 6, 7, 8],
 };
 
 /// 3.3.5a, when `Data\common.MPQ` exists (`0x402b90`; without it the client falls back to the
@@ -256,6 +266,9 @@ static WOTLK: ExpansionProfile = ExpansionProfile {
         login_scene: "MainMenu_Northrend",
         logo: "Interface\\Glues\\Common\\Glues-WoW-WotLKLogo",
     },
+    dbc: dbc::WOTLK,
+    // 1.12.1's eight, Blood Elf and Draenei; the shipped `CharBaseInfo` lists exactly these.
+    playable_races: &[1, 2, 3, 4, 5, 6, 7, 8, 10, 11],
 };
 
 #[cfg(test)]

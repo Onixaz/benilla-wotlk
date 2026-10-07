@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
+use benilla_expansions::dbc as dbc_layout;
 
 use crate::dbc::{parse, u32_at};
 use crate::Chain;
@@ -203,22 +204,20 @@ impl CharacterGeosets {
             let bytes = chain
                 .read_file(CHAR_FACIAL_HAIR)
                 .with_context(|| format!("reading {CHAR_FACIAL_HAIR}"))?;
+            let l = &chain.expansion().profile().dbc.character_facial_hair_styles;
             let rs = parse(
                 &bytes,
-                char_facial_hair_schema(),
+                char_facial_hair_schema(l),
                 "CharacterFacialHairStyles",
             )?;
             let mut m = HashMap::with_capacity(rs.records().len());
             for r in rs.records() {
-                // fields: RaceID, SexID, VariationID(facialHair), 3×unused, Geoset100/300/200.
+                // RaceID, SexID, VariationID (facialHair), then Geoset100/300/200 at `l.geosets`.
                 if let (Some(race), Some(sex), Some(var)) =
                     (u32_at(r, 0), u32_at(r, 1), u32_at(r, 2))
                 {
-                    let g = [
-                        u32_at(r, 6).unwrap_or(0),
-                        u32_at(r, 7).unwrap_or(0),
-                        u32_at(r, 8).unwrap_or(0),
-                    ];
+                    let g: [u32; 3] =
+                        std::array::from_fn(|i| u32_at(r, l.geosets + i).unwrap_or(0));
                     // The first row wins.
                     m.entry((race as u8, sex as u8, var as u8)).or_insert(g);
                 }
@@ -228,7 +227,8 @@ impl CharacterGeosets {
         // HelmetGeosetVisData, the helm hide-masks: without the file, helms hide nothing.
         let helmet_vis = match chain.read_file(HELMET_GEOSET_VIS) {
             Ok(bytes) => {
-                let rs = parse(&bytes, helmet_vis_schema(), "HelmetGeosetVisData")?;
+                let l = &chain.expansion().profile().dbc.helmet_geoset_vis_data;
+                let rs = parse(&bytes, helmet_vis_schema(l), "HelmetGeosetVisData")?;
                 let mut m = HashMap::with_capacity(rs.records().len());
                 for r in rs.records() {
                     if let Some(id) = u32_at(r, 0) {
@@ -263,38 +263,40 @@ pub(crate) fn char_hair_geosets_schema() -> Schema {
     s
 }
 
-/// HelmetGeosetVisData.dbc: 6 fields, 0x18-byte records (loader `0x546f00`); the five masks are
-/// race bitmasks (`0x4799a0`).
-pub(crate) fn helmet_vis_schema() -> Schema {
+/// HelmetGeosetVisData.dbc: 6 fields, 0x18-byte records in 5875 (loader `0x546f00`); the five masks
+/// are race bitmasks (`0x4799a0`). 12340's two further masks are unread.
+pub(crate) fn helmet_vis_schema(l: &dbc_layout::HelmetGeosetVisData) -> Schema {
     let mut s = Schema::new("HelmetGeosetVisData");
-    for (name, ty) in [
-        ("ID", FieldType::UInt32),
-        ("HideHair", FieldType::UInt32),
-        ("HideFacial1", FieldType::UInt32),
-        ("HideFacial2", FieldType::UInt32),
-        ("HideFacial3", FieldType::UInt32),
-        ("HideEars", FieldType::UInt32),
+    for name in [
+        "ID",
+        "HideHair",
+        "HideFacial1",
+        "HideFacial2",
+        "HideFacial3",
+        "HideEars",
     ] {
-        s.add_field(SchemaField::new(name, ty));
+        s.add_field(SchemaField::new(name, FieldType::UInt32));
+    }
+    for i in s.fields.len()..l.fields {
+        s.add_field(SchemaField::new(format!("c{i}"), FieldType::UInt32));
     }
     s
 }
 
-/// CharacterFacialHairStyles.dbc: 9 fields, no ID column.
-pub(crate) fn char_facial_hair_schema() -> Schema {
+/// CharacterFacialHairStyles.dbc: no ID column; 9 fields in 5875, 8 in 12340.
+pub(crate) fn char_facial_hair_schema(l: &dbc_layout::CharacterFacialHairStyles) -> Schema {
     let mut s = Schema::new("CharacterFacialHairStyles");
-    for (name, ty) in [
-        ("RaceID", FieldType::UInt32),
-        ("SexID", FieldType::UInt32),
-        ("VariationID", FieldType::UInt32),
-        ("Unused3", FieldType::UInt32),
-        ("Unused4", FieldType::UInt32),
-        ("Unused5", FieldType::UInt32),
-        ("Geoset100", FieldType::UInt32),
-        ("Geoset300", FieldType::UInt32),
-        ("Geoset200", FieldType::UInt32),
-    ] {
-        s.add_field(SchemaField::new(name, ty));
+    for i in 0..l.fields {
+        let name = match i {
+            0 => "RaceID".into(),
+            1 => "SexID".into(),
+            2 => "VariationID".into(),
+            _ if i == l.geosets => "Geoset100".into(),
+            _ if i == l.geosets + 1 => "Geoset300".into(),
+            _ if i == l.geosets + 2 => "Geoset200".into(),
+            _ => format!("c{i}"),
+        };
+        s.add_field(SchemaField::new(name, FieldType::UInt32));
     }
     s
 }
