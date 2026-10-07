@@ -87,6 +87,9 @@ pub struct ExpansionProfile {
     pub dbc: DbcLayouts,
     /// The `ChrRaces` ids a player can create, ascending.
     pub playable_races: &'static [u8],
+    /// The highest geoset id the character compositor selects; a character model's higher ids
+    /// keep the visibility they load with.
+    pub character_geosets_through: u16,
 }
 
 /// What the client tells realmd about itself.
@@ -215,6 +218,8 @@ static CLASSIC: ExpansionProfile = ExpansionProfile {
     dbc: dbc::CLASSIC,
     // Human through Troll; Goblin (9) and above are not creatable.
     playable_races: &[1, 2, 3, 4, 5, 6, 7, 8],
+    // `0x477520` disables 0..=1700 (`0x6a4`) before enabling its picks.
+    character_geosets_through: 1700,
 };
 
 /// 3.3.5a, when `Data\common.MPQ` exists (`0x402b90`; without it the client falls back to the
@@ -269,6 +274,9 @@ static WOTLK: ExpansionProfile = ExpansionProfile {
     dbc: dbc::WOTLK,
     // 1.12.1's eight, Blood Elf and Draenei; the shipped `CharBaseInfo` lists exactly these.
     playable_races: &[1, 2, 3, 4, 5, 6, 7, 8, 10, 11],
+    // Groups 17 (eye glow) and 18 (belt) join the selection; WowUnreal's 3.3.5a builder defaults
+    // both to variant 1 and picks 18 from the belt.
+    character_geosets_through: 1899,
 };
 
 #[cfg(test)]
