@@ -78,3 +78,16 @@ pub(super) fn shipped(expansion: Expansion) -> &'static Shipped {
         Expansion::Wotlk => &SHIPPED_WOTLK,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_client_ships_a_chr_races_file_for_exactly_its_playable_races() {
+        for e in Expansion::ALL {
+            let ids: Vec<u8> = shipped(e).files.iter().map(|&(id, _)| id).collect();
+            assert_eq!(ids, e.profile().playable_races, "{e}");
+        }
+    }
+}
