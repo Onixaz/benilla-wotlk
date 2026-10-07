@@ -14,6 +14,33 @@ pub struct DbcLayouts {
     pub creature_display_info: CreatureDisplayInfo,
     pub creature_display_info_extra: CreatureDisplayInfoExtra,
     pub item_display_info: ItemDisplayInfo,
+    pub map: Map,
+}
+
+/// `Map.dbc`; the id and `Directory` are columns 0 and 1, `InstanceType` 2, in both clients.
+#[derive(Debug)]
+pub struct Map {
+    pub fields: usize,
+    /// `MapName_lang`, its enUS column.
+    pub map_name: usize,
+    pub loading_screen: usize,
+    /// The battleground columns 1.12.1 keeps here; 3.3.5a moved them to `BattlemasterList.dbc`
+    /// and `PvpDifficulty.dbc`.
+    pub battleground: Option<MapBattleground>,
+}
+
+/// 1.12.1's battleground columns of `Map.dbc`; the descriptions are their enUS columns.
+#[derive(Debug)]
+pub struct MapBattleground {
+    pub min_level: usize,
+    pub max_level: usize,
+    pub max_players: usize,
+    /// Columns 16, 17 and 18, an `i32` and two `f32`, unnamed.
+    pub unnamed: usize,
+    pub descriptions: [usize; 2],
+    pub bracket_span: usize,
+    pub group_queue: usize,
+    pub minimap_icon_scale: usize,
 }
 
 /// `ChrRaces.dbc`; the body displays are columns 4 and 5 in both clients.
@@ -173,6 +200,22 @@ pub(crate) const CLASSIC: DbcLayouts = DbcLayouts {
         textures: 14,
         item_visual: 22,
     },
+    // Nine-column localized strings.
+    map: Map {
+        fields: 42,
+        map_name: 4,
+        loading_screen: 38,
+        battleground: Some(MapBattleground {
+            min_level: 13,
+            max_level: 14,
+            max_players: 15,
+            unnamed: 16,
+            descriptions: [20, 29],
+            bracket_span: 39,
+            group_queue: 40,
+            minimap_icon_scale: 41,
+        }),
+    },
 };
 
 /// Build 12340, each checked against the shipped files row for row with 1.12.1's.
@@ -236,6 +279,14 @@ pub(crate) const WOTLK: DbcLayouts = DbcLayouts {
         textures: 15,
         item_visual: 23,
     },
+    // `Flags` and `PVP` at 3 and 4 put the seventeen-column `MapName_lang` at 5; `AreaTableID`
+    // at 22 and the two descriptions take it to `LoadingScreenID` at 57.
+    map: Map {
+        fields: 66,
+        map_name: 5,
+        loading_screen: 57,
+        battleground: None,
+    },
 };
 
 #[cfg(test)]
@@ -281,6 +332,11 @@ mod tests {
             let i = &l.item_display_info;
             assert!(i.textures + 8 <= i.item_visual && i.item_visual < i.fields);
             assert!(l.creature_model_data.fields >= 16 && l.helmet_geoset_vis_data.fields >= 6);
+            let m = &l.map;
+            assert!(m.map_name > 2 && m.loading_screen < m.fields);
+            if let Some(b) = &m.battleground {
+                assert!(b.minimap_icon_scale < m.fields && b.unnamed + 2 < b.descriptions[0]);
+            }
         }
     }
 }
