@@ -18,7 +18,7 @@
 - **benilla-m2** (no Bevy) — M2 (MD20) model reader for WoW 1.12.1 (build 5875)
 - **benilla-mpq** (no Bevy) — Read-only MPQ archive reader for WoW 1.12.1 (build 5875)
 - **benilla-protocol** (no Bevy) — WoW 1.12.1 auth (SRP6) + world wire protocol and the benilla-auth CLI
-- **benilla-srp** (no Bevy) — WoW 1.12.1 (build 5875) SRP6 client and world-header crypto
+- **benilla-srp** (no Bevy) — WoW SRP6 client and world-header crypto (1.12.1 and 3.3.5a)
 - **benilla-ui** (no Bevy) — Engine-free WoW UI engine core: TOC and FrameXML parsing, templates, anchors, z-order
 - **benilla-visual** (no Bevy) — Perceptual image diff for the visual A/B render harness
 - **benilla-wdt** (no Bevy) — WDT map tile-table reader and tile/world coordinates for WoW 1.12.1 (build 5875)
@@ -105,11 +105,12 @@
 - **benilla-adt** (lib.rs): combined_alpha 
 - **benilla-app** (lib.rs): addon_harness area area_poi area_trigger asset_churn aura_visual bindings blob_shadow bowstring camera_shake capture char_create char_select chat_bubble chr_classes cinematic combat_log combat_text console crash creature_anim creature_type cursor cvars death debug_panel dev doodad_events entities fishing_line footprints game_plugins game_tip glue glue_strings go_anim go_templates hover_log items loading_screen local_state login minimap name_persist nameplates names net npc_text opaque2d pending_item_ops perf pipe_warm player poi_marker portrait preflight probe_shield query_cache quest_markers raid_marks ranged_flex realm_select realmlist run_mode screen_fade screenshot script_calls shaders shutdown smart_rect sound spell swing_refusal target test_support text_filter text_reshape textinput transport tutorial ui_action ui_auction ui_aura ui_bank ui_battlefield ui_battlefield_positions ui_battlefield_score ui_bind_confirm ui_binder ui_cast ui_char ui_chat ui_craft ui_dialog_verbs ui_dressup ui_duel ui_follow ui_gamma ui_gm_ticket ui_gossip ui_guild ui_honor ui_inspect ui_instance ui_item_text ui_items ui_layout ui_logout ui_loot ui_loot_roll ui_macro ui_mail ui_merchant ui_mirror ui_models ui_net ui_party ui_pass ui_pet ui_pet_book ui_pet_doll ui_pet_stats ui_petition ui_quest ui_quest_log ui_quest_share ui_reputation ui_saved ui_script ui_session ui_shapeshift ui_social ui_spellbook ui_stable ui_summon ui_tabard ui_talent ui_talent_wipe ui_taxi ui_text ui_tooltip ui_trade ui_tradeskill ui_trainer ui_unit ui_world_map video vplates weapon_trail world_backdrop world_state world_state_ui 
 - **benilla-assets** (lib.rs): adt anim_rng blp column_grid coords gpu_blp m2 materials minimap_grid model spatial_cache terrain tex_filter trace wdt wmo world_assets 
+- **benilla-expansions** (lib.rs): dbc update_fields 
 - **benilla-formats** (lib.rs): anim_data area_poi area_sound area_table area_trigger auction_house bank_bag_slot_prices camera_shakes cfg_categories chain characters chat_channels chr_classes cinematics creature_families creature_sound creature_types creatures dbc death_thud durability elevators emit_timing emote_text emotes environmental_damage exhaustion factions footsteps game_tips gameobjects garble gm_ticket_category ground_effects install item_random_properties item_sounds item_visuals itembagfamily itemclass items itemsets itemsubclass languages light liquid loading_screen lock lock_type macro_icons maps material minimap_translate models npc_greeting packages page_text_material particles pet_stats quest_headers quest_info race_creature_type race_pvp_team race_sound ribbons server_messages sheathe skill_lines sound_entries sound_provider sound_water spell_focus spell_mechanic spell_visual spells stable_slot_prices stationery talents taxi taxi_nodes taxi_path terrain text_filter_lists tga transport_period transports unit_blood value_track vocal_ui_sounds wdl weapon_impact weapon_swing wmo_area world_map_area world_map_continent world_map_overlay world_state_ui wow_ini zone_map 
-- **benilla-m2** (lib.rs): error model skin tests track 
+- **benilla-m2** (lib.rs): error model relayout skin tests track 
 - **benilla-mpq** (lib.rs): crypto 
 - **benilla-protocol** (lib.rs): auth events guid messages wire world 
-- **benilla-srp** (lib.rs): vanilla_header 
+- **benilla-srp** (lib.rs): vanilla_header wotlk_header 
 - **benilla-ui** (lib.rs): bindings_xml civil framexml justify layout loader markup messages order script source status strings toc widget 
 - **benilla-visual** (lib.rs): relight 
 - **benilla-world** (lib.rs): art_scope assets bgwin billboard boot build_id clouds clutter collision decal dev_state doodad_anim entity_shade exterior_cull ffx_glow final_pass frame_pace ground_fx instance_tint interact interior layout_keys lighting liquid log_ring mac_quit map_proj mat_anim_table mesh_tag model_fade model_forms model_render modkeys particles ribbons ride_frame rig_anim rig_palette rig_rider schedule shaders sky sky_order skybox static_gx static_merge straddle sun surface terrain_stream thread_qos view vis_chain water_fx wdl weather wmo_portal world_census world_map world_plugins world_point world_unit worldview zfill 
@@ -276,7 +277,7 @@
 - `WOW_GX_FADE_TRACE` — benilla-world/src/static_gx/cull.rs
 - `WOW_GX_PERF` — benilla-world/src/static_gx/mod.rs
 - `WOW_HIT_COST` — benilla-app/src/ui_script/input.rs
-- `WOW_HOST` — benilla-app/src/cvars/mod.rs, benilla-app/src/realmlist.rs
+- `WOW_HOST` — benilla-app/src/cvars/mod.rs, benilla-app/src/realmlist.rs, benilla-protocol/src/bin/benilla-world/main.rs
 - `WOW_HOVER_LOG` — benilla-app/src/hover_log.rs
 - `WOW_HOVER_LOG_REPORT` — benilla-app/src/lib.rs
 - `WOW_HOVER_PROBE` — benilla-app/src/target/hover_probe.rs

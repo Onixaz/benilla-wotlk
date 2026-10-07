@@ -2,6 +2,9 @@
 //! updates it pushes; the `--<probe>` flags live-verify one wire each.
 //!
 //! Example: `cargo run -p benilla-protocol --bin benilla-world -- <account> <password> localhost`
+//! On PowerShell, a remote WotLK server can instead be selected for the session with
+//! `$env:WOW_EXPANSION="wotlk"; $env:WOW_HOST="192.168.1.89"` before running the same command
+//! without its final host argument.
 //!
 //! An account with no character gets a Human Warrior (`--create <name>`). The world address
 //! defaults to the realm list's (`--world` overrides).
@@ -35,9 +38,8 @@ struct Cli {
     username: String,
     /// Account password.
     password: String,
-    /// Auth (realmd) server host.
-    #[arg(default_value = "localhost")]
-    host: String,
+    /// Auth (realmd) server host. Defaults to WOW_HOST, then localhost.
+    host: Option<String>,
     /// World server address (`host:port`). Defaults to the realm list's advertised address.
     #[arg(long)]
     world: Option<String>,
@@ -199,9 +201,11 @@ fn parse_slot_pair(s: &str) -> Result<(u8, u8), String> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let wow_host = std::env::var("WOW_HOST").ok();
+    let host = selected_auth_host(cli.host.as_deref(), wow_host.as_deref());
 
     // 1. realmd logon: session key and realm list.
-    let logon = benilla_protocol::logon(&cli.host, &cli.username, &cli.password)?;
+    let logon = benilla_protocol::logon(&host, &cli.username, &cli.password)?;
     println!("authenticated as '{}'", cli.username);
 
     // 2. The world address: the override, else the first realm's, else the auth host's.
@@ -211,7 +215,7 @@ fn main() -> Result<()> {
             println!("realm '{}' @ {}", realm.name, realm.address);
             realm.address.clone()
         }
-        (None, None) => format!("{}:{}", cli.host, WORLD_PORT),
+        (None, None) => format!("{host}:{WORLD_PORT}"),
     };
 
     // 3. World handshake (CMSG_AUTH_SESSION + header obfuscation).
@@ -509,6 +513,15 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// Match the player's realmlist precedence: a command-line host owns this invocation, then
+/// `$WOW_HOST` owns the session, and an absent or empty environment value means localhost.
+fn selected_auth_host(cli_host: Option<&str>, wow_host: Option<&str>) -> String {
+    cli_host
+        .or_else(|| wow_host.filter(|host| !host.trim().is_empty()))
+        .unwrap_or("localhost")
+        .to_string()
+}
+
 /// Walk `yards` forward as start, heartbeats and stop at run speed, returning the destination.
 /// Orientation 0 faces +X, so forward is `(cos o, sin o, 0)`, in raw WoW yards.
 fn walk_forward(
@@ -541,4 +554,32 @@ fn walk_forward(
     let end = pos_at(STEPS);
     session.stop(end, orientation)?;
     Ok(end)
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::selected_auth_host;
+
+    #[test]
+    fn an_explicit_probe_host_wins() {
+        assert_eq!(
+            selected_auth_host(Some("192.168.1.89"), Some("other.example")),
+            "192.168.1.89"
+        );
+    }
+
+    #[test]
+    fn wow_host_selects_a_remote_probe_server() {
+        assert_eq!(
+            selected_auth_host(None, Some("192.168.1.89")),
+            "192.168.1.89"
+        );
+    }
+
+    #[test]
+    fn localhost_remains_the_portable_default() {
+        assert_eq!(selected_auth_host(None, None), "localhost");
+        assert_eq!(selected_auth_host(None, Some("")), "localhost");
+        assert_eq!(selected_auth_host(None, Some("  ")), "localhost");
+    }
 }
