@@ -251,10 +251,8 @@ pub fn parse_server_with_tail(opcode: u16, body: &[u8]) -> io::Result<(ServerPac
 
 /// The opcodes whose 3.3.5a body is known to differ from 1.12.1's and has no 3.3.5a decoder yet:
 /// each failed or left bytes unread when read in 1.12.1's layout against AzerothCore, and
-/// `SMSG_COMPRESSED_MOVES` carries monster moves.
-const WOTLK_UNDECODED: [u16; 13] = [
-    opcode::SMSG_MONSTER_MOVE,
-    opcode::SMSG_MONSTER_MOVE_TRANSPORT,
+/// `SMSG_COMPRESSED_MOVES`, which AzerothCore never sends, frames its records unverified.
+const WOTLK_UNDECODED: [u16; 11] = [
     opcode::SMSG_NAME_QUERY_RESPONSE,
     opcode::SMSG_ACTION_BUTTONS,
     opcode::SMSG_INITIAL_SPELLS,
@@ -384,8 +382,13 @@ fn parse_server_body(
             let (guid, lag_ms) = movement::read_move_time_skipped(&mut r)?;
             ServerPacket::MoveTimeSkipped { guid, lag_ms }
         }
-        opcode::SMSG_MONSTER_MOVE => monster_move::read_monster_move(&mut r, false)?,
-        opcode::SMSG_MONSTER_MOVE_TRANSPORT => monster_move::read_monster_move(&mut r, true)?,
+        opcode::SMSG_MONSTER_MOVE | opcode::SMSG_MONSTER_MOVE_TRANSPORT => {
+            let on_transport = opcode == opcode::SMSG_MONSTER_MOVE_TRANSPORT;
+            match expansion {
+                Expansion::Classic => monster_move::read_monster_move(&mut r, on_transport)?,
+                Expansion::Wotlk => monster_move::read_monster_move_wotlk(&mut r, on_transport)?,
+            }
+        }
         opcode::MSG_MOVE_TELEPORT_ACK => {
             let guid = read_packed_guid(&mut r)?;
             let counter = read_u32_le(&mut r)?;

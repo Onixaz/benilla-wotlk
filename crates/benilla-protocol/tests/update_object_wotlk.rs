@@ -309,7 +309,7 @@ fn a_3_3_5a_move_relay_carries_its_pitch_and_1_12_1_flags() {
 #[test]
 fn a_3_3_5a_body_with_no_decoder_yet_is_refused_not_read_as_1_12_1() {
     for op in [
-        opcode::SMSG_MONSTER_MOVE,
+        opcode::SMSG_GUILD_ROSTER,
         opcode::SMSG_MESSAGECHAT,
         opcode::SMSG_SPELL_GO,
     ] {
