@@ -14,6 +14,10 @@ use benilla_expansions::Expansion;
 use crate::dbc::{parse, str_at, u32_at};
 use crate::Chain;
 
+#[cfg(test)]
+use super::shipped::SHIPPED_CLASSIC;
+use super::shipped::{shipped, Shipped};
+
 const CHR_RACES: &str = "DBFilesClient\\ChrRaces.dbc";
 const CHAR_BASE_INFO: &str = "DBFilesClient\\CharBaseInfo.dbc";
 const CHAR_START_OUTFIT: &str = "DBFilesClient\\CharStartOutfit.dbc";
@@ -28,81 +32,6 @@ const SECTION_HAIR: u8 = 3;
 
 /// A CharSections availability key: `(race, sex, sectionType, variation, color)`.
 type SectionKey = (u8, u8, u8, u8, u8);
-
-/// One client's shipped rows, the load-time guards against a misparse.
-struct Shipped {
-    /// The ChrRaces fileStrings, guarding [`load_races`]' string columns.
-    files: &'static [(u8, &'static str)],
-    /// The `CharBaseInfo` rows by race, guarding the 2-byte parse: each must be present, and a
-    /// patch may add more, as the class-list builder `0x4706b0` lists every row for the race.
-    combos: &'static [(u8, &'static [u8])],
-    /// The Human Warrior male's start outfit, (display, InventoryType), guarding the packed
-    /// CharStartOutfit layout.
-    human_warrior: &'static [(u32, u8)],
-}
-
-const SHIPPED_CLASSIC: Shipped = Shipped {
-    files: &[
-        (1, "Human"),
-        (2, "Orc"),
-        (3, "Dwarf"),
-        (4, "NightElf"),
-        (5, "Scourge"),
-        (6, "Tauren"),
-        (7, "Gnome"),
-        (8, "Troll"),
-    ],
-    // Not the playable set, as it holds the dead Dwarf-Mage row ([`UNUSED_COMBOS`]).
-    combos: &[
-        (1, &[1, 2, 4, 5, 8, 9]), // Human
-        (2, &[1, 3, 4, 7, 9]),    // Orc
-        (3, &[1, 2, 3, 4, 5, 8]), // Dwarf; 8 (Mage) is the dead row
-        (4, &[1, 3, 4, 5, 11]),   // Night Elf
-        (5, &[1, 4, 5, 8, 9]),    // Undead
-        (6, &[1, 3, 7, 11]),      // Tauren
-        (7, &[1, 4, 8, 9]),       // Gnome
-        (8, &[1, 3, 4, 5, 7, 8]), // Troll
-    ],
-    // The shirt, pants, boots, shortsword and shield.
-    human_warrior: &[(9891, 4), (9892, 7), (10141, 8), (1542, 21), (18730, 14)],
-};
-
-const SHIPPED_WOTLK: Shipped = Shipped {
-    files: &[
-        (1, "Human"),
-        (2, "Orc"),
-        (3, "Dwarf"),
-        (4, "NightElf"),
-        (5, "Scourge"),
-        (6, "Tauren"),
-        (7, "Gnome"),
-        (8, "Troll"),
-        (10, "BloodElf"),
-        (11, "Draenei"),
-    ],
-    // Every race offers the Death Knight (6); no dead Dwarf-Mage row.
-    combos: &[
-        (1, &[1, 2, 4, 5, 6, 8, 9]),
-        (2, &[1, 3, 4, 6, 7, 9]),
-        (3, &[1, 2, 3, 4, 5, 6]),
-        (4, &[1, 3, 4, 5, 6, 11]),
-        (5, &[1, 4, 5, 6, 8, 9]),
-        (6, &[1, 3, 6, 7, 11]),
-        (7, &[1, 4, 6, 8, 9]),
-        (8, &[1, 3, 4, 5, 6, 7, 8]),
-        (10, &[2, 3, 4, 5, 6, 8, 9]),
-        (11, &[1, 2, 3, 5, 6, 7, 8]),
-    ],
-    // The shirt, pants, boots and a two-handed sword.
-    human_warrior: &[(9891, 4), (9892, 7), (10141, 8), (2380, 17)],
-};
-
-fn shipped(expansion: Expansion) -> &'static Shipped {
-    match expansion {
-        Expansion::Classic => &SHIPPED_CLASSIC,
-        Expansion::Wotlk => &SHIPPED_WOTLK,
-    }
-}
 
 /// `CharBaseInfo` pairs the client never offers: 1.12.1's class-list builder `0x4706b0` skips the
 /// literal `race == 3 && class == 8` (Dwarf-Mage), though the row and its outfit are populated.

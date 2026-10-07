@@ -11,6 +11,7 @@
 mod customization;
 mod geosets;
 mod sections;
+mod shipped;
 
 pub use customization::{CharCreateCatalog, DialRanges, StartOutfitItem};
 pub use geosets::{CharacterGeosets, EquipGeosets, VisibleGeosets};
