@@ -49,7 +49,8 @@ pub(super) fn recv_packet(
     decrypter: Option<&mut Decrypter>,
 ) -> Result<ServerPacket> {
     let (opcode, body) = recv_raw(stream, decrypter)?;
-    messages::parse_server(opcode, &body).map_err(|e| anyhow!("parsing opcode {opcode:#x}: {e}"))
+    messages::parse_server_as(benilla_expansions::Expansion::active(), opcode, &body)
+        .map_err(|e| anyhow!("parsing opcode {opcode:#x}: {e}"))
 }
 
 /// What [`observe_sends`] takes: called with a sent packet's opcode and body length.

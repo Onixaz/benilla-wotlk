@@ -6,8 +6,10 @@ use std::fmt;
 use std::sync::OnceLock;
 
 pub mod dbc;
+pub mod update_fields;
 
 pub use dbc::DbcLayouts;
+pub use update_fields::UpdateFieldLayout;
 
 /// A supported reference client.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -85,6 +87,7 @@ pub struct ExpansionProfile {
     pub archives: ArchiveLayout,
     pub glue: GlueScreens,
     pub dbc: DbcLayouts,
+    pub update_fields: &'static UpdateFieldLayout,
     /// The `ChrRaces` ids a player can create, ascending.
     pub playable_races: &'static [u8],
     /// The highest geoset id the character compositor selects; a character model's higher ids
@@ -216,6 +219,7 @@ static CLASSIC: ExpansionProfile = ExpansionProfile {
         logo: "Interface\\Glues\\Common\\Glues-WoW-Logo",
     },
     dbc: dbc::CLASSIC,
+    update_fields: &update_fields::CLASSIC,
     // Human through Troll; Goblin (9) and above are not creatable.
     playable_races: &[1, 2, 3, 4, 5, 6, 7, 8],
     // `0x477520` disables 0..=1700 (`0x6a4`) before enabling its picks.
@@ -272,6 +276,7 @@ static WOTLK: ExpansionProfile = ExpansionProfile {
         logo: "Interface\\Glues\\Common\\Glues-WoW-WotLKLogo",
     },
     dbc: dbc::WOTLK,
+    update_fields: &update_fields::WOTLK,
     // 1.12.1's eight, Blood Elf and Draenei; the shipped `CharBaseInfo` lists exactly these.
     playable_races: &[1, 2, 3, 4, 5, 6, 7, 8, 10, 11],
     // Groups 17 (eye glow) and 18 (belt) join the selection; WowUnreal's 3.3.5a builder defaults

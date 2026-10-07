@@ -1,0 +1,743 @@
+//! Where each client keeps the object update fields benilla reads. An update field's index counts
+//! from the start of its object's descriptor, so the same index names different fields on a unit
+//! and a corpse; each place names its [`Block`]. A [`Field`] names a value's meaning, not its
+//! encoding: where a client packs a value its own way, that client's decoder in `benilla-protocol`
+//! converts it. Classic's table is every field benilla reads, in the index space the shared
+//! `ObjectFields` keeps; a field missing from another client's table is not read there.
+
+/// A descriptor block. An object's descriptor is its blocks in order: a player is
+/// `Object, Unit, Player`, a container `Object, Item, Container`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Block {
+    Object,
+    Item,
+    Container,
+    Unit,
+    Player,
+    GameObject,
+    DynamicObject,
+    Corpse,
+}
+
+/// An update field benilla reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Field {
+    ObjectGuid,
+    ObjectType,
+    ObjectEntry,
+    ObjectScaleX,
+
+    ItemOwner,
+    ItemContained,
+    ItemCreator,
+    ItemGiftCreator,
+    ItemStackCount,
+    ItemDuration,
+    ItemSpellCharges,
+    ItemFlags,
+    /// The permanent and temporary enchant triples (id, duration, charges).
+    ItemEnchantPermTemp,
+    /// The random-property enchant triples.
+    ItemEnchantProps,
+    ItemPropertySeed,
+    ItemRandomPropertiesId,
+    ItemTextId,
+    ItemDurability,
+    ItemMaxDurability,
+    ContainerNumSlots,
+    ContainerSlots,
+
+    UnitCharm,
+    UnitSummon,
+    UnitCharmedBy,
+    UnitSummonedBy,
+    UnitCreatedBy,
+    UnitTarget,
+    UnitChannelObject,
+    UnitHealth,
+    /// Mana, rage, focus, energy and happiness.
+    UnitPower,
+    UnitMaxHealth,
+    UnitMaxPower,
+    UnitLevel,
+    UnitFactionTemplate,
+    UnitBytes0,
+    /// A creature's weapon display ids.
+    UnitVirtualItemDisplay,
+    UnitVirtualItemInfo,
+    UnitFlags,
+    UnitAura,
+    UnitAuraFlags,
+    UnitAuraLevels,
+    UnitAuraApplications,
+    UnitAuraState,
+    UnitBaseAttackTime,
+    UnitRangedAttackTime,
+    UnitBoundingRadius,
+    UnitCombatReach,
+    UnitDisplayId,
+    UnitNativeDisplayId,
+    UnitMountDisplayId,
+    UnitMinDamage,
+    UnitMaxDamage,
+    UnitMinOffhandDamage,
+    UnitMaxOffhandDamage,
+    UnitBytes1,
+    UnitPetNumber,
+    UnitPetNameTimestamp,
+    UnitPetExperience,
+    UnitPetNextLevelExp,
+    UnitDynamicFlags,
+    UnitChannelSpell,
+    UnitModCastSpeed,
+    UnitCreatedBySpell,
+    UnitNpcFlags,
+    UnitNpcEmoteState,
+    UnitTrainingPoints,
+    UnitStat,
+    UnitResistances,
+    UnitBaseMana,
+    UnitBaseHealth,
+    UnitBytes2,
+    UnitAttackPower,
+    UnitAttackPowerMods,
+    UnitAttackPowerMultiplier,
+    UnitRangedAttackPower,
+    UnitRangedAttackPowerMods,
+    UnitRangedAttackPowerMultiplier,
+    UnitMinRangedDamage,
+    UnitMaxRangedDamage,
+    /// The positive and negative stat and resistance buffs: a player block in 1.12.1, a unit
+    /// block in 3.3.5a.
+    PosStat,
+    NegStat,
+    ResistanceBuffModsPositive,
+    ResistanceBuffModsNegative,
+
+    PlayerDuelArbiter,
+    PlayerFlags,
+    PlayerGuildId,
+    PlayerGuildRank,
+    PlayerBytes,
+    PlayerBytes2,
+    PlayerBytes3,
+    PlayerDuelTeam,
+    PlayerQuestLog,
+    /// Each equipment slot's broadcast item entry.
+    PlayerVisibleItemEntry,
+    /// Each equipment slot's broadcast enchants.
+    PlayerVisibleItemEnchants,
+    PlayerVisibleItemProperties,
+    PlayerInvSlots,
+    PlayerPackSlots,
+    PlayerBankSlots,
+    PlayerBankBagSlots,
+    PlayerVendorBuybackSlots,
+    PlayerKeyringSlots,
+    PlayerFarsight,
+    PlayerComboTarget,
+    PlayerXp,
+    PlayerNextLevelXp,
+    PlayerSkillInfo,
+    PlayerCharacterPoints1,
+    PlayerCharacterPoints2,
+    PlayerTrackCreatures,
+    PlayerTrackResources,
+    PlayerBlockPercentage,
+    PlayerDodgePercentage,
+    PlayerParryPercentage,
+    PlayerCritPercentage,
+    PlayerRangedCritPercentage,
+    PlayerExploredZones,
+    PlayerRestStateExperience,
+    PlayerCoinage,
+    PlayerModDamageDonePos,
+    PlayerModDamageDoneNeg,
+    PlayerModDamageDonePct,
+    PlayerFieldBytes,
+    PlayerAmmoId,
+    PlayerSelfResSpell,
+    PlayerPvpMedals,
+    PlayerBuybackPrice,
+    PlayerBuybackTimestamp,
+    PlayerSessionKills,
+    PlayerYesterdayKills,
+    PlayerLastWeekKills,
+    PlayerThisWeekKills,
+    PlayerThisWeekContribution,
+    PlayerLifetimeHonorableKills,
+    PlayerLifetimeDishonorableKills,
+    PlayerYesterdayContribution,
+    PlayerLastWeekContribution,
+    PlayerLastWeekRank,
+    PlayerFieldBytes2,
+    PlayerWatchedFactionIndex,
+
+    GameObjectCreatedBy,
+    GameObjectDisplayId,
+    GameObjectFlags,
+    /// The spawn's own rotation quaternion `(x, y, z, w)`. 3.3.5a sends it packed in the movement
+    /// block (`UPDATEFLAG_ROTATION`) instead.
+    GameObjectRotation,
+    GameObjectState,
+    GameObjectPosition,
+    GameObjectDynFlags,
+    GameObjectFaction,
+    GameObjectTypeId,
+    GameObjectLevel,
+    GameObjectArtKit,
+    GameObjectAnimProgress,
+    /// 3.3.5a's `GAMEOBJECT_DYNAMIC`: the dynamic flags in the low half, path progress above.
+    GameObjectDynamic,
+    /// 3.3.5a's `GAMEOBJECT_BYTES_1`: state, type, art kit and anim progress, bytes 0 to 3.
+    GameObjectBytes1,
+
+    DynamicObjectCaster,
+    DynamicObjectBytes,
+    DynamicObjectSpellId,
+    DynamicObjectRadius,
+    /// x, y, z and facing. 3.3.5a sends them in the movement block (`UPDATEFLAG_STATIONARY_POSITION`).
+    DynamicObjectPosition,
+
+    CorpseOwner,
+    CorpseDisplayId,
+    CorpseItems,
+    CorpseBytes1,
+    CorpseBytes2,
+    CorpseGuild,
+    CorpseFlags,
+    CorpseDynamicFlags,
+}
+
+/// Where one [`Field`] lives: `count` elements, element `i` at `index + i * stride`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FieldPlace {
+    pub field: Field,
+    pub block: Block,
+    pub index: u16,
+    pub count: u16,
+    pub stride: u16,
+}
+
+impl FieldPlace {
+    /// The index of element `i`, `None` past the last.
+    pub fn element(&self, i: u16) -> Option<u16> {
+        (i < self.count).then(|| self.index + i * self.stride)
+    }
+}
+
+/// Each object type's descriptor length in dwords, the `*_END` of its innermost block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DescriptorEnds {
+    pub object: u16,
+    pub item: u16,
+    pub container: u16,
+    pub unit: u16,
+    pub player: u16,
+    pub gameobject: u16,
+    pub dynamicobject: u16,
+    pub corpse: u16,
+}
+
+/// One client's update-field layout.
+#[derive(Debug)]
+pub struct UpdateFieldLayout {
+    pub ends: DescriptorEnds,
+    pub places: &'static [FieldPlace],
+}
+
+impl UpdateFieldLayout {
+    /// Where this client keeps `field`, `None` when it has no such field.
+    pub fn place(&self, field: Field) -> Option<&FieldPlace> {
+        self.places.iter().find(|p| p.field == field)
+    }
+}
+
+const fn run(field: Field, block: Block, index: u16, count: u16) -> FieldPlace {
+    FieldPlace {
+        field,
+        block,
+        index,
+        count,
+        stride: 1,
+    }
+}
+
+const fn one(field: Field, block: Block, index: u16) -> FieldPlace {
+    run(field, block, index, 1)
+}
+
+const fn strided(field: Field, block: Block, index: u16, count: u16, stride: u16) -> FieldPlace {
+    FieldPlace {
+        field,
+        block,
+        index,
+        count,
+        stride,
+    }
+}
+
+use Block::{Container, Corpse, DynamicObject, GameObject, Item, Object, Player, Unit};
+use Field as F;
+
+/// 1.12.1 (5875): vmangos `UpdateFields_1_12_1.h`.
+pub(crate) static CLASSIC: UpdateFieldLayout = UpdateFieldLayout {
+    ends: DescriptorEnds {
+        object: 6,
+        item: 48,
+        container: 122,
+        unit: 188,
+        player: 1282,
+        gameobject: 26,
+        dynamicobject: 16,
+        corpse: 38,
+    },
+    places: &[
+        run(F::ObjectGuid, Object, 0, 2),
+        one(F::ObjectType, Object, 2),
+        one(F::ObjectEntry, Object, 3),
+        one(F::ObjectScaleX, Object, 4),
+        run(F::ItemOwner, Item, 6, 2),
+        run(F::ItemContained, Item, 8, 2),
+        run(F::ItemCreator, Item, 10, 2),
+        run(F::ItemGiftCreator, Item, 12, 2),
+        one(F::ItemStackCount, Item, 14),
+        one(F::ItemDuration, Item, 15),
+        run(F::ItemSpellCharges, Item, 16, 5),
+        one(F::ItemFlags, Item, 21),
+        // `ITEM_FIELD_ENCHANTMENT`, 7 triples: slots 0 and 1, then the props at 3..=6.
+        run(F::ItemEnchantPermTemp, Item, 22, 6),
+        run(F::ItemEnchantProps, Item, 31, 12),
+        one(F::ItemPropertySeed, Item, 43),
+        one(F::ItemRandomPropertiesId, Item, 44),
+        one(F::ItemTextId, Item, 45),
+        one(F::ItemDurability, Item, 46),
+        one(F::ItemMaxDurability, Item, 47),
+        one(F::ContainerNumSlots, Container, 48),
+        run(F::ContainerSlots, Container, 50, 72),
+        run(F::UnitCharm, Unit, 6, 2),
+        run(F::UnitSummon, Unit, 8, 2),
+        run(F::UnitCharmedBy, Unit, 10, 2),
+        run(F::UnitSummonedBy, Unit, 12, 2),
+        run(F::UnitCreatedBy, Unit, 14, 2),
+        run(F::UnitTarget, Unit, 16, 2),
+        run(F::UnitChannelObject, Unit, 20, 2),
+        one(F::UnitHealth, Unit, 22),
+        run(F::UnitPower, Unit, 23, 5),
+        one(F::UnitMaxHealth, Unit, 28),
+        run(F::UnitMaxPower, Unit, 29, 5),
+        one(F::UnitLevel, Unit, 34),
+        one(F::UnitFactionTemplate, Unit, 35),
+        one(F::UnitBytes0, Unit, 36),
+        run(F::UnitVirtualItemDisplay, Unit, 37, 3),
+        run(F::UnitVirtualItemInfo, Unit, 40, 6),
+        one(F::UnitFlags, Unit, 46),
+        run(F::UnitAura, Unit, 47, 48),
+        run(F::UnitAuraFlags, Unit, 95, 6),
+        run(F::UnitAuraLevels, Unit, 101, 12),
+        run(F::UnitAuraApplications, Unit, 113, 12),
+        one(F::UnitAuraState, Unit, 125),
+        run(F::UnitBaseAttackTime, Unit, 126, 2),
+        one(F::UnitRangedAttackTime, Unit, 128),
+        one(F::UnitBoundingRadius, Unit, 129),
+        one(F::UnitCombatReach, Unit, 130),
+        one(F::UnitDisplayId, Unit, 131),
+        one(F::UnitNativeDisplayId, Unit, 132),
+        one(F::UnitMountDisplayId, Unit, 133),
+        one(F::UnitMinDamage, Unit, 134),
+        one(F::UnitMaxDamage, Unit, 135),
+        one(F::UnitMinOffhandDamage, Unit, 136),
+        one(F::UnitMaxOffhandDamage, Unit, 137),
+        one(F::UnitBytes1, Unit, 138),
+        one(F::UnitPetNumber, Unit, 139),
+        one(F::UnitPetNameTimestamp, Unit, 140),
+        one(F::UnitPetExperience, Unit, 141),
+        one(F::UnitPetNextLevelExp, Unit, 142),
+        one(F::UnitDynamicFlags, Unit, 143),
+        one(F::UnitChannelSpell, Unit, 144),
+        one(F::UnitModCastSpeed, Unit, 145),
+        one(F::UnitCreatedBySpell, Unit, 146),
+        one(F::UnitNpcFlags, Unit, 147),
+        one(F::UnitNpcEmoteState, Unit, 148),
+        one(F::UnitTrainingPoints, Unit, 149),
+        run(F::UnitStat, Unit, 150, 5),
+        run(F::UnitResistances, Unit, 155, 7),
+        one(F::UnitBaseMana, Unit, 162),
+        one(F::UnitBaseHealth, Unit, 163),
+        one(F::UnitBytes2, Unit, 164),
+        one(F::UnitAttackPower, Unit, 165),
+        one(F::UnitAttackPowerMods, Unit, 166),
+        one(F::UnitAttackPowerMultiplier, Unit, 167),
+        one(F::UnitRangedAttackPower, Unit, 168),
+        one(F::UnitRangedAttackPowerMods, Unit, 169),
+        one(F::UnitRangedAttackPowerMultiplier, Unit, 170),
+        one(F::UnitMinRangedDamage, Unit, 171),
+        one(F::UnitMaxRangedDamage, Unit, 172),
+        run(F::PlayerDuelArbiter, Player, 188, 2),
+        one(F::PlayerFlags, Player, 190),
+        one(F::PlayerGuildId, Player, 191),
+        one(F::PlayerGuildRank, Player, 192),
+        one(F::PlayerBytes, Player, 193),
+        one(F::PlayerBytes2, Player, 194),
+        one(F::PlayerBytes3, Player, 195),
+        one(F::PlayerDuelTeam, Player, 196),
+        // 20 slots of (quest id, counters and state, timer).
+        run(F::PlayerQuestLog, Player, 198, 60),
+        // 19 slots of 12: creator guid, entry, 7 enchants, properties, pad.
+        strided(F::PlayerVisibleItemEntry, Player, 260, 19, 12),
+        strided(F::PlayerVisibleItemEnchants, Player, 261, 19, 12),
+        strided(F::PlayerVisibleItemProperties, Player, 268, 19, 12),
+        run(F::PlayerInvSlots, Player, 486, 46),
+        run(F::PlayerPackSlots, Player, 532, 32),
+        run(F::PlayerBankSlots, Player, 564, 48),
+        run(F::PlayerBankBagSlots, Player, 612, 12),
+        run(F::PlayerVendorBuybackSlots, Player, 624, 24),
+        run(F::PlayerKeyringSlots, Player, 648, 64),
+        run(F::PlayerFarsight, Player, 712, 2),
+        run(F::PlayerComboTarget, Player, 714, 2),
+        one(F::PlayerXp, Player, 716),
+        one(F::PlayerNextLevelXp, Player, 717),
+        run(F::PlayerSkillInfo, Player, 718, 384),
+        one(F::PlayerCharacterPoints1, Player, 1102),
+        one(F::PlayerCharacterPoints2, Player, 1103),
+        one(F::PlayerTrackCreatures, Player, 1104),
+        one(F::PlayerTrackResources, Player, 1105),
+        one(F::PlayerBlockPercentage, Player, 1106),
+        one(F::PlayerDodgePercentage, Player, 1107),
+        one(F::PlayerParryPercentage, Player, 1108),
+        one(F::PlayerCritPercentage, Player, 1109),
+        one(F::PlayerRangedCritPercentage, Player, 1110),
+        run(F::PlayerExploredZones, Player, 1111, 64),
+        one(F::PlayerRestStateExperience, Player, 1175),
+        one(F::PlayerCoinage, Player, 1176),
+        run(F::PosStat, Player, 1177, 5),
+        run(F::NegStat, Player, 1182, 5),
+        run(F::ResistanceBuffModsPositive, Player, 1187, 7),
+        run(F::ResistanceBuffModsNegative, Player, 1194, 7),
+        run(F::PlayerModDamageDonePos, Player, 1201, 7),
+        run(F::PlayerModDamageDoneNeg, Player, 1208, 7),
+        run(F::PlayerModDamageDonePct, Player, 1215, 7),
+        one(F::PlayerFieldBytes, Player, 1222),
+        one(F::PlayerAmmoId, Player, 1223),
+        one(F::PlayerSelfResSpell, Player, 1224),
+        one(F::PlayerPvpMedals, Player, 1225),
+        run(F::PlayerBuybackPrice, Player, 1226, 12),
+        run(F::PlayerBuybackTimestamp, Player, 1238, 12),
+        one(F::PlayerSessionKills, Player, 1250),
+        one(F::PlayerYesterdayKills, Player, 1251),
+        one(F::PlayerLastWeekKills, Player, 1252),
+        one(F::PlayerThisWeekKills, Player, 1253),
+        one(F::PlayerThisWeekContribution, Player, 1254),
+        one(F::PlayerLifetimeHonorableKills, Player, 1255),
+        one(F::PlayerLifetimeDishonorableKills, Player, 1256),
+        one(F::PlayerYesterdayContribution, Player, 1257),
+        one(F::PlayerLastWeekContribution, Player, 1258),
+        one(F::PlayerLastWeekRank, Player, 1259),
+        one(F::PlayerFieldBytes2, Player, 1260),
+        one(F::PlayerWatchedFactionIndex, Player, 1261),
+        run(F::GameObjectCreatedBy, GameObject, 6, 2),
+        one(F::GameObjectDisplayId, GameObject, 8),
+        one(F::GameObjectFlags, GameObject, 9),
+        run(F::GameObjectRotation, GameObject, 10, 4),
+        one(F::GameObjectState, GameObject, 14),
+        run(F::GameObjectPosition, GameObject, 15, 4),
+        one(F::GameObjectDynFlags, GameObject, 19),
+        one(F::GameObjectFaction, GameObject, 20),
+        one(F::GameObjectTypeId, GameObject, 21),
+        one(F::GameObjectLevel, GameObject, 22),
+        one(F::GameObjectArtKit, GameObject, 23),
+        one(F::GameObjectAnimProgress, GameObject, 24),
+        run(F::DynamicObjectCaster, DynamicObject, 6, 2),
+        one(F::DynamicObjectBytes, DynamicObject, 8),
+        one(F::DynamicObjectSpellId, DynamicObject, 9),
+        one(F::DynamicObjectRadius, DynamicObject, 10),
+        run(F::DynamicObjectPosition, DynamicObject, 11, 4),
+        run(F::CorpseOwner, Corpse, 6, 2),
+        one(F::CorpseDisplayId, Corpse, 12),
+        run(F::CorpseItems, Corpse, 13, 19),
+        one(F::CorpseBytes1, Corpse, 32),
+        one(F::CorpseBytes2, Corpse, 33),
+        one(F::CorpseGuild, Corpse, 34),
+        one(F::CorpseFlags, Corpse, 35),
+        one(F::CorpseDynamicFlags, Corpse, 36),
+    ],
+};
+
+/// 3.3.5a (12340): AzerothCore `UpdateFields.h`. Not here, so not read on 3.3.5a: the auras
+/// (`SMSG_AURA_UPDATE` carries them), the virtual items (item entries, where 1.12.1 sends display
+/// ids), the item text id, training points, the combo target and the 1.12.1 honor fields, which
+/// 3.3.5a replaced; and, not yet converted, the quest log (25 slots of 5) and
+/// `PLAYER_FIELD_BYTES2`, whose meaning changed.
+pub(crate) static WOTLK: UpdateFieldLayout = UpdateFieldLayout {
+    ends: DescriptorEnds {
+        object: 6,
+        item: 64,
+        container: 138,
+        unit: 148,
+        player: 1326,
+        gameobject: 18,
+        dynamicobject: 12,
+        corpse: 36,
+    },
+    places: &[
+        run(F::ObjectGuid, Object, 0, 2),
+        one(F::ObjectType, Object, 2),
+        one(F::ObjectEntry, Object, 3),
+        one(F::ObjectScaleX, Object, 4),
+        run(F::ItemOwner, Item, 6, 2),
+        run(F::ItemContained, Item, 8, 2),
+        run(F::ItemCreator, Item, 10, 2),
+        run(F::ItemGiftCreator, Item, 12, 2),
+        one(F::ItemStackCount, Item, 14),
+        one(F::ItemDuration, Item, 15),
+        run(F::ItemSpellCharges, Item, 16, 5),
+        one(F::ItemFlags, Item, 21),
+        // `ITEM_FIELD_ENCHANTMENT`, 12 triples: permanent and temporary, three sockets, bonus,
+        // prismatic, then five props at 7..=11 (`EnchantmentSlot`), the first four read.
+        run(F::ItemEnchantPermTemp, Item, 22, 6),
+        run(F::ItemEnchantProps, Item, 43, 12),
+        one(F::ItemPropertySeed, Item, 58),
+        one(F::ItemRandomPropertiesId, Item, 59),
+        one(F::ItemDurability, Item, 60),
+        one(F::ItemMaxDurability, Item, 61),
+        one(F::ContainerNumSlots, Container, 64),
+        run(F::ContainerSlots, Container, 66, 72),
+        run(F::UnitCharm, Unit, 6, 2),
+        run(F::UnitSummon, Unit, 8, 2),
+        run(F::UnitCharmedBy, Unit, 12, 2),
+        run(F::UnitSummonedBy, Unit, 14, 2),
+        run(F::UnitCreatedBy, Unit, 16, 2),
+        run(F::UnitTarget, Unit, 18, 2),
+        run(F::UnitChannelObject, Unit, 20, 2),
+        one(F::UnitChannelSpell, Unit, 22),
+        one(F::UnitBytes0, Unit, 23),
+        one(F::UnitHealth, Unit, 24),
+        // Seven powers; runes and runic power (5, 6) are past 1.12.1's five.
+        run(F::UnitPower, Unit, 25, 5),
+        one(F::UnitMaxHealth, Unit, 32),
+        run(F::UnitMaxPower, Unit, 33, 5),
+        one(F::UnitLevel, Unit, 54),
+        one(F::UnitFactionTemplate, Unit, 55),
+        one(F::UnitFlags, Unit, 59),
+        one(F::UnitAuraState, Unit, 61),
+        run(F::UnitBaseAttackTime, Unit, 62, 2),
+        one(F::UnitRangedAttackTime, Unit, 64),
+        one(F::UnitBoundingRadius, Unit, 65),
+        one(F::UnitCombatReach, Unit, 66),
+        one(F::UnitDisplayId, Unit, 67),
+        one(F::UnitNativeDisplayId, Unit, 68),
+        one(F::UnitMountDisplayId, Unit, 69),
+        one(F::UnitMinDamage, Unit, 70),
+        one(F::UnitMaxDamage, Unit, 71),
+        one(F::UnitMinOffhandDamage, Unit, 72),
+        one(F::UnitMaxOffhandDamage, Unit, 73),
+        one(F::UnitBytes1, Unit, 74),
+        one(F::UnitPetNumber, Unit, 75),
+        one(F::UnitPetNameTimestamp, Unit, 76),
+        one(F::UnitPetExperience, Unit, 77),
+        one(F::UnitPetNextLevelExp, Unit, 78),
+        one(F::UnitDynamicFlags, Unit, 79),
+        one(F::UnitModCastSpeed, Unit, 80),
+        one(F::UnitCreatedBySpell, Unit, 81),
+        one(F::UnitNpcFlags, Unit, 82),
+        one(F::UnitNpcEmoteState, Unit, 83),
+        run(F::UnitStat, Unit, 84, 5),
+        run(F::PosStat, Unit, 89, 5),
+        run(F::NegStat, Unit, 94, 5),
+        run(F::UnitResistances, Unit, 99, 7),
+        run(F::ResistanceBuffModsPositive, Unit, 106, 7),
+        run(F::ResistanceBuffModsNegative, Unit, 113, 7),
+        one(F::UnitBaseMana, Unit, 120),
+        one(F::UnitBaseHealth, Unit, 121),
+        one(F::UnitBytes2, Unit, 122),
+        one(F::UnitAttackPower, Unit, 123),
+        one(F::UnitAttackPowerMods, Unit, 124),
+        one(F::UnitAttackPowerMultiplier, Unit, 125),
+        one(F::UnitRangedAttackPower, Unit, 126),
+        one(F::UnitRangedAttackPowerMods, Unit, 127),
+        one(F::UnitRangedAttackPowerMultiplier, Unit, 128),
+        one(F::UnitMinRangedDamage, Unit, 129),
+        one(F::UnitMaxRangedDamage, Unit, 130),
+        run(F::PlayerDuelArbiter, Player, 148, 2),
+        one(F::PlayerFlags, Player, 150),
+        one(F::PlayerGuildId, Player, 151),
+        one(F::PlayerGuildRank, Player, 152),
+        one(F::PlayerBytes, Player, 153),
+        one(F::PlayerBytes2, Player, 154),
+        one(F::PlayerBytes3, Player, 155),
+        one(F::PlayerDuelTeam, Player, 156),
+        // 19 slots of 2: entry, then the permanent and temporary enchant as two `u16`.
+        strided(F::PlayerVisibleItemEntry, Player, 283, 19, 2),
+        strided(F::PlayerVisibleItemEnchants, Player, 284, 19, 2),
+        run(F::PlayerInvSlots, Player, 324, 46),
+        run(F::PlayerPackSlots, Player, 370, 32),
+        // 28 bank slots and 7 bank bags; the first 24 and 6 are 1.12.1's.
+        run(F::PlayerBankSlots, Player, 402, 48),
+        run(F::PlayerBankBagSlots, Player, 458, 12),
+        run(F::PlayerVendorBuybackSlots, Player, 472, 24),
+        run(F::PlayerKeyringSlots, Player, 496, 64),
+        run(F::PlayerFarsight, Player, 624, 2),
+        one(F::PlayerXp, Player, 634),
+        one(F::PlayerNextLevelXp, Player, 635),
+        run(F::PlayerSkillInfo, Player, 636, 384),
+        one(F::PlayerCharacterPoints1, Player, 1020),
+        one(F::PlayerCharacterPoints2, Player, 1021),
+        one(F::PlayerTrackCreatures, Player, 1022),
+        one(F::PlayerTrackResources, Player, 1023),
+        one(F::PlayerBlockPercentage, Player, 1024),
+        one(F::PlayerDodgePercentage, Player, 1025),
+        one(F::PlayerParryPercentage, Player, 1026),
+        one(F::PlayerCritPercentage, Player, 1029),
+        one(F::PlayerRangedCritPercentage, Player, 1030),
+        // 128 words; the first 64 are 1.12.1's.
+        run(F::PlayerExploredZones, Player, 1041, 64),
+        one(F::PlayerRestStateExperience, Player, 1169),
+        one(F::PlayerCoinage, Player, 1170),
+        run(F::PlayerModDamageDonePos, Player, 1171, 7),
+        run(F::PlayerModDamageDoneNeg, Player, 1178, 7),
+        run(F::PlayerModDamageDonePct, Player, 1185, 7),
+        one(F::PlayerFieldBytes, Player, 1197),
+        one(F::PlayerAmmoId, Player, 1198),
+        one(F::PlayerSelfResSpell, Player, 1199),
+        one(F::PlayerPvpMedals, Player, 1200),
+        run(F::PlayerBuybackPrice, Player, 1201, 12),
+        run(F::PlayerBuybackTimestamp, Player, 1213, 12),
+        one(F::PlayerYesterdayContribution, Player, 1227),
+        one(F::PlayerLifetimeHonorableKills, Player, 1228),
+        one(F::PlayerWatchedFactionIndex, Player, 1230),
+        run(F::GameObjectCreatedBy, GameObject, 6, 2),
+        one(F::GameObjectDisplayId, GameObject, 8),
+        one(F::GameObjectFlags, GameObject, 9),
+        one(F::GameObjectDynamic, GameObject, 14),
+        one(F::GameObjectFaction, GameObject, 15),
+        one(F::GameObjectLevel, GameObject, 16),
+        one(F::GameObjectBytes1, GameObject, 17),
+        run(F::DynamicObjectCaster, DynamicObject, 6, 2),
+        one(F::DynamicObjectBytes, DynamicObject, 8),
+        one(F::DynamicObjectSpellId, DynamicObject, 9),
+        one(F::DynamicObjectRadius, DynamicObject, 10),
+        run(F::CorpseOwner, Corpse, 6, 2),
+        one(F::CorpseDisplayId, Corpse, 10),
+        run(F::CorpseItems, Corpse, 11, 19),
+        one(F::CorpseBytes1, Corpse, 30),
+        one(F::CorpseBytes2, Corpse, 31),
+        one(F::CorpseGuild, Corpse, 32),
+        one(F::CorpseFlags, Corpse, 33),
+        one(F::CorpseDynamicFlags, Corpse, 34),
+    ],
+};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn block_end(layout: &UpdateFieldLayout, block: Block) -> u16 {
+        let e = &layout.ends;
+        match block {
+            Block::Object => e.object,
+            Block::Item => e.item,
+            Block::Container => e.container,
+            Block::Unit => e.unit,
+            Block::Player => e.player,
+            Block::GameObject => e.gameobject,
+            Block::DynamicObject => e.dynamicobject,
+            Block::Corpse => e.corpse,
+        }
+    }
+
+    fn block_start(layout: &UpdateFieldLayout, block: Block) -> u16 {
+        let e = &layout.ends;
+        match block {
+            Block::Object => 0,
+            Block::Item | Block::Unit | Block::GameObject | Block::DynamicObject => e.object,
+            Block::Corpse => e.object,
+            Block::Container => e.item,
+            Block::Player => e.unit,
+        }
+    }
+
+    #[test]
+    fn every_place_lies_inside_its_block_and_names_its_field_once() {
+        for layout in [&CLASSIC, &WOTLK] {
+            for (i, p) in layout.places.iter().enumerate() {
+                let last = p.element(p.count - 1).unwrap();
+                assert!(
+                    p.index >= block_start(layout, p.block) && last < block_end(layout, p.block),
+                    "{:?} outside {:?}",
+                    p.field,
+                    p.block
+                );
+                assert!(
+                    layout.places[..i].iter().all(|q| q.field != p.field),
+                    "{:?} twice",
+                    p.field
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_two_places_of_one_block_overlap() {
+        for layout in [&CLASSIC, &WOTLK] {
+            let mut taken = std::collections::HashMap::new();
+            for p in layout.places {
+                for i in 0..p.count {
+                    let index = p.element(i).unwrap();
+                    if let Some(other) = taken.insert((p.block, index), p.field) {
+                        panic!("{:?} and {:?} share {index}", other, p.field);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shared_fields_keep_their_element_count_where_the_meaning_does() {
+        // A field both clients carry maps element for element, so the counts must agree.
+        for p in WOTLK.places {
+            if let Some(c) = CLASSIC.place(p.field) {
+                assert_eq!(p.count, c.count, "{:?}", p.field);
+            }
+        }
+    }
+
+    #[test]
+    fn each_client_keeps_health_and_the_player_block_where_its_header_says() {
+        assert_eq!(CLASSIC.place(Field::UnitHealth).unwrap().index, 22);
+        assert_eq!(WOTLK.place(Field::UnitHealth).unwrap().index, 24);
+        assert_eq!(CLASSIC.ends.unit, 188);
+        assert_eq!(WOTLK.ends.unit, 148);
+        assert_eq!(WOTLK.ends.player, 1326);
+        assert_eq!(
+            WOTLK
+                .place(Field::PlayerVisibleItemEntry)
+                .unwrap()
+                .element(18),
+            Some(319)
+        );
+        assert_eq!(
+            CLASSIC
+                .place(Field::PlayerVisibleItemEntry)
+                .unwrap()
+                .element(1),
+            Some(272)
+        );
+    }
+
+    #[test]
+    fn fields_3_3_5a_moved_out_of_update_fields_are_missing_not_borrowed() {
+        for f in [
+            Field::UnitAura,
+            Field::UnitVirtualItemDisplay,
+            Field::PlayerComboTarget,
+            Field::GameObjectRotation,
+            Field::GameObjectPosition,
+            Field::DynamicObjectPosition,
+        ] {
+            assert!(CLASSIC.place(f).is_some(), "{f:?}");
+            assert!(WOTLK.place(f).is_none(), "{f:?}");
+        }
+        assert!(CLASSIC.place(Field::GameObjectBytes1).is_none());
+        assert_eq!(WOTLK.place(Field::GameObjectBytes1).unwrap().index, 17);
+    }
+}

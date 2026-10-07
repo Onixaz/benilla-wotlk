@@ -663,6 +663,7 @@ impl ObjectFields {
 
 mod player;
 mod unit;
+mod wotlk;
 
 pub use unit::{power_display_scale, OwnerFallback};
 

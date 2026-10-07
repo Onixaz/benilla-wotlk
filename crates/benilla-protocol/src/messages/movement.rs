@@ -70,6 +70,128 @@ pub(super) fn read_movement_info(r: &mut impl Read) -> io::Result<MovementInfo> 
     })
 }
 
+/// A `MovementInfo` in `expansion`'s layout.
+pub(super) fn read_movement_info_as(
+    expansion: benilla_expansions::Expansion,
+    r: &mut impl Read,
+) -> io::Result<MovementInfo> {
+    match expansion {
+        benilla_expansions::Expansion::Classic => read_movement_info(r),
+        benilla_expansions::Expansion::Wotlk => read_movement_info_wotlk(r),
+    }
+}
+
+/// 3.3.5a's `MovementFlags` (AzerothCore `UnitDefines.h`), where its bit differs from 1.12.1's.
+mod wotlk_flag {
+    pub const ON_TRANSPORT: u32 = 0x200;
+    pub const DISABLE_GRAVITY: u32 = 0x400;
+    pub const ROOT: u32 = 0x800;
+    pub const FALLING: u32 = 0x1000;
+    pub const SWIMMING: u32 = 0x20_0000;
+    pub const FLYING: u32 = 0x200_0000;
+    pub const SPLINE_ELEVATION: u32 = 0x400_0000;
+    pub const SPLINE_ENABLED: u32 = 0x800_0000;
+    /// `MovementFlags2`: the transport tail carries a second time.
+    pub const FLAG2_INTERPOLATED_MOVEMENT: u16 = 0x400;
+    /// `MovementFlags2`: pitch is on the wire without swimming or flying.
+    pub const FLAG2_ALWAYS_ALLOW_PITCHING: u16 = 0x20;
+}
+
+/// 3.3.5a's movement flags in 1.12.1's bits. 3.3.5a moved transport to `0x200` and spline to
+/// `0x0800_0000`, shifted root through the pending bits down by one and added ascending,
+/// descending, can-fly and pending-root, which 1.12.1 has no bit for and are dropped. Its gravity
+/// off is 1.12.1's levitating and its flying 1.12.1's `0x0100_0000`.
+pub(crate) fn classic_flags_from_wotlk(flags: u32) -> u32 {
+    // Forward through walking, and swimming, spline elevation, water walk, safe fall and hover,
+    // keep their bit.
+    let mut classic = flags & (0x1ff | 0x20_0000 | 0x400_0000 | 0x7000_0000);
+    let moved: [(u32, u32); 13] = [
+        (wotlk_flag::ON_TRANSPORT, MOVEMENT_FLAG_ON_TRANSPORT),
+        (wotlk_flag::DISABLE_GRAVITY, 0x400),
+        (wotlk_flag::ROOT, 0x1000),
+        (wotlk_flag::FALLING, MOVEMENT_FLAG_JUMPING),
+        (0x2000, 0x4000),      // falling far
+        (0x4000, 0x8000),      // pending stop
+        (0x8000, 0x1_0000),    // pending strafe stop
+        (0x1_0000, 0x2_0000),  // pending forward
+        (0x2_0000, 0x4_0000),  // pending backward
+        (0x4_0000, 0x8_0000),  // pending strafe left
+        (0x8_0000, 0x10_0000), // pending strafe right
+        (wotlk_flag::FLYING, 0x100_0000),
+        (wotlk_flag::SPLINE_ENABLED, MOVEMENT_FLAG_SPLINE_ENABLED),
+    ];
+    for (wotlk, shared) in moved {
+        if flags & wotlk != 0 {
+            classic |= shared;
+        }
+    }
+    classic
+}
+
+/// 3.3.5a's `MovementInfo` (AzerothCore `Unit::BuildMovementPacket`): `u32` flags, `u16` extra
+/// flags, time, position, facing; with `ONTRANSPORT` a packed transport guid, its local pose, a
+/// `u32` transport time, the `i8` seat, and a second time under `INTERPOLATED_MOVEMENT`; pitch when
+/// swimming, flying or `ALWAYS_ALLOW_PITCHING`; fall time; the jump under `FALLING` as `zspeed,
+/// sin, cos, xyspeed`; the spline elevation. The flags come back in 1.12.1's bits
+/// ([`classic_flags_from_wotlk`]); the extra flags, transport time and seat are read and dropped.
+pub(crate) fn read_movement_info_wotlk(r: &mut impl Read) -> io::Result<MovementInfo> {
+    use crate::wire::{read_packed_guid, read_u16_le, read_u8};
+    let flags = read_u32_le(r)?;
+    let flags2 = read_u16_le(r)?;
+    let timestamp = read_u32_le(r)?;
+    let position = Vector3d::read(r)?;
+    let orientation = read_f32_le(r)?;
+    let transport = if flags & wotlk_flag::ON_TRANSPORT != 0 {
+        let pose = TransportPose {
+            guid: read_packed_guid(r)?,
+            pos: Vector3d::read(r)?,
+            orientation: read_f32_le(r)?,
+        };
+        let _transport_time = read_u32_le(r)?;
+        let _seat = read_u8(r)?;
+        if flags2 & wotlk_flag::FLAG2_INTERPOLATED_MOVEMENT != 0 {
+            let _transport_time_2 = read_u32_le(r)?;
+        }
+        Some(pose)
+    } else {
+        None
+    };
+    let pitch = if flags & (wotlk_flag::SWIMMING | wotlk_flag::FLYING) != 0
+        || flags2 & wotlk_flag::FLAG2_ALWAYS_ALLOW_PITCHING != 0
+    {
+        read_f32_le(r)?
+    } else {
+        0.0
+    };
+    let fall_time = read_u32_le(r)?;
+    let jump = if flags & wotlk_flag::FALLING != 0 {
+        let zspeed = read_f32_le(r)?;
+        let sin_angle = read_f32_le(r)?;
+        let cos_angle = read_f32_le(r)?;
+        Some(JumpInfo {
+            zspeed,
+            cos_angle,
+            sin_angle,
+            xy_speed: read_f32_le(r)?,
+        })
+    } else {
+        None
+    };
+    if flags & wotlk_flag::SPLINE_ELEVATION != 0 {
+        let _ = read_f32_le(r)?;
+    }
+    Ok(MovementInfo {
+        flags: classic_flags_from_wotlk(flags),
+        timestamp,
+        position,
+        orientation,
+        transport,
+        pitch,
+        fall_time,
+        jump,
+    })
+}
+
 // --- movement vocabulary ---
 
 /// A mover speed, each with its own force-change opcode pair; the order is the `LIVING` block's

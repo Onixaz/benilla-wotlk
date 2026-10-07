@@ -3,10 +3,13 @@
 
 use std::io::{self, Read};
 
+use benilla_expansions::Expansion;
+
 use crate::wire::{capacity_hint, read_packed_guid, read_u32_le, read_u8};
 
 mod fields;
 mod movement;
+mod wotlk;
 
 pub use fields::field;
 pub use fields::{
@@ -93,8 +96,19 @@ fn read_guid_list(r: &mut impl Read) -> io::Result<Vec<u64>> {
     Ok(guids)
 }
 
-/// Parse an `SMSG_UPDATE_OBJECT` body: the count, the has-transport byte, then each `Object`.
-pub(super) fn read_update_object(r: &mut impl Read) -> io::Result<Vec<Object>> {
+/// Parse an `SMSG_UPDATE_OBJECT` body in `expansion`'s layout.
+pub(super) fn read_update_object(
+    r: &mut impl Read,
+    expansion: Expansion,
+) -> io::Result<Vec<Object>> {
+    match expansion {
+        Expansion::Classic => read_update_object_classic(r),
+        Expansion::Wotlk => wotlk::read_update_object(r),
+    }
+}
+
+/// 1.12.1's body: the count, the has-transport byte, then each `Object`.
+fn read_update_object_classic(r: &mut impl Read) -> io::Result<Vec<Object>> {
     let amount_of_objects = read_u32_le(r)?;
     let _has_transport = read_u8(r)?;
     let mut objects = Vec::with_capacity(capacity_hint(amount_of_objects, 0xFFFF));

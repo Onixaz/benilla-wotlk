@@ -2,6 +2,7 @@ use std::io::Read;
 use std::net::TcpStream;
 
 use anyhow::{anyhow, Result};
+use benilla_expansions::Expansion;
 
 use crate::messages::{self, ServerPacket};
 
@@ -29,7 +30,7 @@ impl WorldReader {
         if let Err(e) = self.stream.read_exact(&mut body) {
             return Err(anyhow!("world stream closed: {e}"));
         }
-        match messages::parse_server_with_tail(opcode, &body) {
+        match messages::parse_server_with_tail_as(Expansion::active(), opcode, &body) {
             Ok((packet, tail)) => Ok(crate::Poll::Events {
                 opcode,
                 events: crate::decode(packet),
