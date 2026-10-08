@@ -1212,7 +1212,8 @@ impl UiScript {
     /// through the `geterrorhandler` global; FrameXML installs `_ERRORMESSAGE`, the ScriptErrors
     /// dialog (`BasicControls.xml:16`). With none installed the error stays on the host channel,
     /// [`UiScript::errors`], alone; a handler that raises is recorded there only and stops the
-    /// batch, so the path cannot recurse.
+    /// batch, so the path cannot recurse. The call is [`stdlib::protected_call`]'s, so a raising
+    /// handler costs no `_G` search.
     pub fn dispatch_script_errors_to_handler(&mut self) {
         let pending = std::mem::take(&mut self.model_mut().pending_error_dispatch);
         if pending.is_empty() {
@@ -1222,7 +1223,14 @@ impl UiScript {
             return;
         };
         for msg in pending {
-            if let Err(e) = handler.call::<()>(msg) {
+            let arg = match self.lua.create_string(&msg) {
+                Ok(s) => mlua::MultiValue::from_vec(vec![mlua::Value::String(s)]),
+                Err(e) => {
+                    self.push_error(e);
+                    break;
+                }
+            };
+            if let Err(e) = stdlib::protected_call(&self.lua, &handler, arg) {
                 self.model_mut()
                     .errors
                     .push(format!("error handler itself failed: {e}"));
