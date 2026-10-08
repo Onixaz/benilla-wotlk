@@ -92,7 +92,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "UnitIsPartyLeader",
         lua.create_function(|lua, token: Option<String>| {
-            check_unit_token(&token)?;
+            check_unit_token(lua, &token)?;
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             let by_flag = token
                 .as_ref()
@@ -175,7 +175,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 token,
                 r#"Usage: UnitLevel("unit")"#,
             )?);
-            check_unit_token(&token)?;
+            check_unit_token(lua, &token)?;
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             let Some(u) = token.as_ref().and_then(|t| model.unit(t)) else {
                 return Ok(0i64);
@@ -403,8 +403,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 r#"Usage: UnitIsUnit("unit", "otherUnit")"#,
             )?);
             // Both go through the resolver, so either one unrecognised raises.
-            check_unit_token(&a)?;
-            check_unit_token(&b)?;
+            check_unit_token(lua, &a)?;
+            check_unit_token(lua, &b)?;
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             let (Some(a), Some(b)) = (a, b) else {
                 return Ok(Value::Nil);
@@ -457,7 +457,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, token: Option<String>| {
-                check_unit_token(&token)?;
+                check_unit_token(lua, &token)?;
                 let model = lua.app_data_ref::<Model>().expect("model app_data");
                 let Some(u) = token.as_ref().and_then(|t| model.unit(t)) else {
                     return Ok(Value::Nil);
@@ -491,7 +491,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "UnitInRaid",
         lua.create_function(|lua, token: Option<String>| {
-            check_unit_token(&token)?;
+            check_unit_token(lua, &token)?;
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             let hit = token
                 .as_ref()
@@ -512,7 +512,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "UnitInParty",
         lua.create_function(|lua, token: Option<String>| {
-            check_unit_token(&token)?;
+            check_unit_token(lua, &token)?;
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             let Some(t) = token else {
                 return Ok(Value::Nil);
@@ -1092,7 +1092,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             {
                 return Ok(());
             }
-            check_unit_token(&Some(token.clone()))?;
+            check_unit_token(lua, &Some(token.clone()))?;
             let mut model = lua.app_data_mut::<Model>().expect("model app_data");
             model.script_calls.push(ScriptCall::SpellTargetUnit(token));
             Ok(())

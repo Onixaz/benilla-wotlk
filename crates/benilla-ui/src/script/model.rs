@@ -63,6 +63,9 @@ impl<T: Copy> IdMap<T> {
 pub(crate) struct Model {
     /// How a handler receives its frame and arguments: the target client's, fixed for the VM.
     pub(crate) script_args: benilla_expansions::ScriptArgs,
+    /// Whether an unrecognised unit token raises `Unknown unit name` or names nobody: the target
+    /// client's resolver.
+    pub(crate) unknown_unit_token_raises: bool,
     /// Every discovered addon in load order: the AddOn API's registry, filled at world entry.
     pub(crate) addons: Vec<super::addon::AddOnInfo>,
     /// The Lua index space into `addons`, a title-sorted, hidden-filtered list (`0x51da70`).
@@ -1036,6 +1039,7 @@ impl Model {
     pub(crate) fn new(client: &benilla_expansions::ExpansionProfile) -> Model {
         Model {
             script_args: client.script_args,
+            unknown_unit_token_raises: client.unknown_unit_token_raises,
             addons: Vec::new(),
             addon_index: Vec::new(),
             addon_info_hidden: None,

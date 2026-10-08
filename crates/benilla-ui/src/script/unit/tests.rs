@@ -1978,3 +1978,31 @@ fn an_unseeded_player_record_answers_the_references_four_ways() {
         "…which for UnitSex is the same 2, by the binding's own unresolved-token default"
     );
 }
+
+/// 3.3.5a's resolver raises for no token: `focus` and `boss1`..`boss4`, which it knows, and any
+/// other read as nobody until the app pushes them. 1.12.1's raises `Unknown unit name`.
+#[test]
+fn a_wotlk_unit_token_the_resolver_lacks_reads_empty_and_classic_still_raises() {
+    let probe = "local out = {} \
+        for _, u in ipairs({ 'focus', 'boss1', 'boss2', 'boss3', 'boss4', 'focustarget', 'bogus' }) do \
+            if UnitExists(u) or UnitHealth(u) ~= 0 or UnitName(u) ~= nil or UnitBuff(u, 1) ~= nil \
+                or SpellCanTargetUnit(u) then out[#out + 1] = u end \
+        end \
+        return table.concat(out, ',')";
+    let wotlk = UiScript::new_for(benilla_expansions::Expansion::Wotlk).unwrap();
+    assert_eq!(
+        wotlk.eval::<String>(probe).unwrap(),
+        "",
+        "every one reads empty"
+    );
+
+    let classic = UiScript::new_for(benilla_expansions::Expansion::Classic).unwrap();
+    for call in [
+        "UnitExists('focus')",
+        "UnitBuff('boss1', 1)",
+        "SpellCanTargetUnit('focus')",
+    ] {
+        let err = classic.run(call).unwrap_err().to_string();
+        assert!(err.contains("Unknown unit name: "), "{call}: {err}");
+    }
+}

@@ -477,17 +477,25 @@ fn pick_unit_token(a: &Option<String>, b: &Option<String>) -> Option<String> {
 
 use resolve::token_recognised;
 
-/// The resolver's token check: an unrecognised token raises `Unknown unit name`, as `0x515970`
-/// ends in `luaL_error`; `""`, an absent token and a recognised one naming nothing pass. Whether
-/// nil arrives is per binding: of the 83 in the table at `0x850438`, 53 raise `Usage:` first and
-/// 13 unit-token bindings take nil with no gate.
-pub(crate) fn check_unit_token(token: &Option<String>) -> mlua::Result<()> {
+/// The resolver's token check: an unrecognised token raises `Unknown unit name`, as 1.12.1's
+/// `0x515970` ends in `luaL_error`; `""`, an absent token and a recognised one naming nothing pass.
+/// Whether nil arrives is per binding: of the 83 in the table at `0x850438`, 53 raise `Usage:`
+/// first and 13 unit-token bindings take nil with no gate. A client whose resolver does not raise
+/// (3.3.5a) passes every token.
+pub(crate) fn check_unit_token(lua: &Lua, token: &Option<String>) -> mlua::Result<()> {
     match token {
-        Some(t) if !t.is_empty() && !token_recognised(t) => {
-            Err(mlua::Error::runtime(format!("Unknown unit name: {t}")))
+        Some(t) if !t.is_empty() && !token_recognised(t) && unknown_unit_token_raises(lua) => {
+            Err(resolve::unknown_unit(t))
         }
         _ => Ok(()),
     }
+}
+
+/// The VM's [`Model::unknown_unit_token_raises`], the target client's.
+fn unknown_unit_token_raises(lua: &Lua) -> bool {
+    lua.app_data_ref::<Model>()
+        .expect("model app_data set")
+        .unknown_unit_token_raises
 }
 
 /// Map a token's snapshot through `f` under a short model borrow, or answer `default` for an
@@ -498,7 +506,7 @@ fn with_unit<T>(
     default: T,
     f: impl FnOnce(&UnitState) -> T,
 ) -> mlua::Result<T> {
-    check_unit_token(token)?;
+    check_unit_token(lua, token)?;
     let model = lua.app_data_ref::<Model>().expect("model app_data");
     Ok(match token.as_ref().and_then(|t| model.unit(t)) {
         Some(u) => f(u),

@@ -93,13 +93,15 @@ fn returns(lua: &Lua, a: &AuraState, with_dispel_type: bool) -> mlua::Result<Mul
 /// unit with no list. A token the resolver does not recognise raises `Unknown unit name`.
 pub(crate) fn auras_of<'m>(model: &'m Model, token: &str) -> mlua::Result<Option<&'m [AuraState]>> {
     let guids = &model.unit_guids;
-    Ok(guids.guid_of(token)?.and_then(|g| {
-        if g == guids.player {
-            Some(model.player_auras.as_slice())
-        } else {
-            model.unit_auras.get(&g).map(Vec::as_slice)
-        }
-    }))
+    Ok(guids
+        .guid_of(token, model.unknown_unit_token_raises)?
+        .and_then(|g| {
+            if g == guids.player {
+                Some(model.player_auras.as_slice())
+            } else {
+                model.unit_auras.get(&g).map(Vec::as_slice)
+            }
+        }))
 }
 
 /// The `index`-th (1-based) buff (`helpful`) or debuff of `token`, in pushed order; out of range

@@ -208,7 +208,7 @@ fn team_arg(lua: &Lua, v: Value) -> mlua::Result<i64> {
         return Ok(model.unit("player").map_or(0, team_of));
     };
     let token = Some(token.to_str()?.to_owned());
-    check_unit_token(&token)?;
+    check_unit_token(lua, &token)?;
     let model = lua.app_data_ref::<Model>().expect("model app_data");
     Ok(token
         .as_ref()
@@ -486,7 +486,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "UnitPVPRank",
         lua.create_function(|lua, token: Value| {
             let token = Some(string_arg(lua, token, "Usage: UnitPVPRank(\"unit\")")?);
-            check_unit_token(&token)?;
+            check_unit_token(lua, &token)?;
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             Ok(token
                 .as_ref()
@@ -513,7 +513,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "UnitPVPName",
         lua.create_function(|lua, token: Value| {
             let token = Some(string_arg(lua, token, "Usage: UnitPVPName(\"unit\")")?);
-            check_unit_token(&token)?;
+            check_unit_token(lua, &token)?;
             let (unit, player_level) = {
                 let model = lua.app_data_ref::<Model>().expect("model app_data");
                 (
