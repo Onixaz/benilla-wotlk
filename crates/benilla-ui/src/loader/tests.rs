@@ -2489,3 +2489,104 @@ fn join_ref_resolves_relative_framexml_paths() {
     // A leading `/` re-roots rather than meaning the filesystem root.
     assert_eq!(join_ref("a/b", "/c.xml"), "c.xml");
 }
+
+/// The handler calling convention of each client (`benilla_expansions::ScriptArgs`).
+mod script_args_tests {
+    use crate::framexml;
+    use crate::loader::load;
+    use crate::script::UiScript;
+    use benilla_expansions::Expansion;
+
+    fn no_files(_: &str) -> Option<Vec<u8>> {
+        None
+    }
+
+    const DOC: &str = r#"<Ui>
+        <Button name="ArgsProbe">
+            <Size><AbsDimension x="10" y="10"/></Size>
+            <Anchors><Anchor point="CENTER"/></Anchors>
+            <Scripts>
+                <OnLoad>LoadSelf = self; LoadThis = this; this:RegisterEvent("ARGS_PROBE")</OnLoad>
+                <OnEvent>EventSelf = self; EventName = event; EventArg = ...; EventArg1 = arg1</OnEvent>
+                <OnUpdate>UpdateSelf = self; UpdateElapsed = elapsed</OnUpdate>
+                <OnClick>ClickSelf = self; ClickButton = button</OnClick>
+            </Scripts>
+        </Button>
+    </Ui>"#;
+
+    fn loaded(expansion: Expansion) -> UiScript {
+        let mut s = UiScript::new_for(expansion).unwrap();
+        s.set_screen_size(800.0, 600.0);
+        let doc = framexml::parse(DOC).expect("valid FrameXML");
+        let report = load(&s, &doc, &no_files);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        s.fire_event(
+            "ARGS_PROBE",
+            vec![crate::script::ScriptValue::Str("payload".into())],
+        );
+        s.tick(0.25);
+        s.run("ArgsProbe:Click()").unwrap();
+        s
+    }
+
+    #[test]
+    fn a_wotlk_xml_handler_gets_self_and_its_named_arguments() {
+        let s = loaded(Expansion::Wotlk);
+        assert!(s.errors().is_empty(), "{:?}", s.errors());
+        let is_probe = |g: &str| s.eval::<bool>(&format!("return {g} == ArgsProbe")).unwrap();
+        for g in [
+            "LoadSelf",
+            "LoadThis",
+            "EventSelf",
+            "UpdateSelf",
+            "ClickSelf",
+        ] {
+            assert!(is_probe(g), "{g} is the frame");
+        }
+        assert_eq!(s.eval::<String>("return EventName").unwrap(), "ARGS_PROBE");
+        assert_eq!(s.eval::<String>("return EventArg").unwrap(), "payload");
+        assert!(
+            s.eval::<bool>("return EventArg1 == nil").unwrap(),
+            "3.3.5a sets no argN global"
+        );
+        assert_eq!(s.eval::<f64>("return UpdateElapsed").unwrap(), 0.25);
+        assert_eq!(
+            s.eval::<String>("return ClickButton").unwrap(),
+            "LeftButton"
+        );
+    }
+
+    #[test]
+    fn a_wotlk_set_script_function_gets_self_and_its_arguments() {
+        let mut s = UiScript::new_for(Expansion::Wotlk).unwrap();
+        s.run(
+            "local f = CreateFrame('Frame', 'SetScriptProbe') f:RegisterEvent('ARGS_PROBE') \
+             f:SetScript('OnEvent', function(self, event, a) Got = { self, event, a } end)",
+        )
+        .unwrap();
+        s.fire_event(
+            "ARGS_PROBE",
+            vec![crate::script::ScriptValue::Str("x".into())],
+        );
+        assert!(s
+            .eval::<bool>(
+                "return Got[1] == SetScriptProbe and Got[2] == 'ARGS_PROBE' and Got[3] == 'x'"
+            )
+            .unwrap());
+    }
+
+    #[test]
+    fn a_classic_handler_reads_this_and_the_arg_globals_and_self_stays_a_global() {
+        let s = loaded(Expansion::Classic);
+        assert!(s.errors().is_empty(), "{:?}", s.errors());
+        assert!(s.eval::<bool>("return LoadThis == ArgsProbe").unwrap());
+        assert!(
+            s.eval::<bool>("return LoadSelf == nil and EventSelf == nil")
+                .unwrap(),
+            "1.12.1 passes nothing: `self` is an ordinary, unset global"
+        );
+        assert_eq!(s.eval::<String>("return EventName").unwrap(), "ARGS_PROBE");
+        assert_eq!(s.eval::<String>("return EventArg1").unwrap(), "payload");
+        assert!(s.eval::<bool>("return EventArg == nil").unwrap());
+    }
+}

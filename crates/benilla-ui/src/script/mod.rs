@@ -485,10 +485,16 @@ pub fn addon_chunk_name(folder: &str, file: &str) -> String {
 }
 
 impl UiScript {
-    /// Build a fully sandboxed, stdlib- and object-model-equipped host.
+    /// Build a fully sandboxed, stdlib- and object-model-equipped host for the process's target
+    /// client ([`benilla_expansions::Expansion::active`]).
     pub fn new() -> mlua::Result<UiScript> {
+        Self::new_for(benilla_expansions::Expansion::active())
+    }
+
+    /// [`UiScript::new`] for `expansion`'s client, whatever the process's target.
+    pub fn new_for(expansion: benilla_expansions::Expansion) -> mlua::Result<UiScript> {
         let lua = Lua::new();
-        lua.set_app_data(Model::new());
+        lua.set_app_data(Model::new(expansion.profile()));
         // Before anything can fire a handler and while no app-data borrow is held, as the
         // profiler's slot requires.
         handler_prof::install(&lua);

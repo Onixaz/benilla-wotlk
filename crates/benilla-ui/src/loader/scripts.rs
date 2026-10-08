@@ -77,9 +77,11 @@ impl Loader<'_> {
         onload
     }
 
-    /// Compile a handler body as the chunk itself, as the reference loads it (`0x704c70`): it takes
-    /// no arguments and reads its frame from `this`, so a `self` in it is an ordinary global. The
-    /// loader reads no other attribute of the element (no `function=`).
+    /// Compile a handler body as the target client does. 1.12.1 loads the body as the chunk itself
+    /// (`0x704c70`): it takes no arguments and reads its frame from `this`, so a `self` in it is an
+    /// ordinary global. 3.3.5a formats it into `return function(<params>) %s end` and keeps the
+    /// function the chunk returns, the body on the template's first line so its line numbers hold.
+    /// The loader reads no other attribute of the element (no `function=`).
     pub(super) fn compile_handler(
         &mut self,
         handler: &Element,
@@ -92,13 +94,22 @@ impl Loader<'_> {
         if body.is_empty() {
             return None;
         }
-        match self
+        let params = crate::script::event::script_args(self.lua()).parameters(name);
+        let source = match params {
+            Some(p) => std::borrow::Cow::Owned(format!("return function({p}) {body} end")),
+            None => std::borrow::Cow::Borrowed(body),
+        };
+        let compiled = self
             .lua()
-            .load(body)
+            .load(source.as_ref())
             .set_name(format!("{owner}:{name}"))
             .set_mode(mlua::ChunkMode::Text)
             .into_function()
-        {
+            .and_then(|chunk| match params {
+                Some(_) => chunk.call::<Function>(()),
+                None => Ok(chunk),
+            });
+        match compiled {
             Ok(f) => Some(f),
             Err(e) => {
                 self.report

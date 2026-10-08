@@ -431,3 +431,42 @@ fn a_runscript_error_reaches_the_handler_and_not_the_caller() {
         "a compile failure is reported under the same name, undecorated: {errs:?}"
     );
 }
+
+// ── Handler errors ──
+
+/// A handler's error carries its message and a traceback named from call sites, 5.1's way, and
+/// an error raised from the host keeps its own text.
+#[test]
+fn a_handler_error_carries_a_call_site_traceback_and_a_host_error_its_cause() {
+    let mut s = script();
+    s.run(
+        "function BenillaFaultingGlobal(t) return t.x end \
+         local f = CreateFrame('Frame') f:RegisterEvent('FAULT_PROBE') \
+         f:SetScript('OnEvent', function() BenillaFaultingGlobal(nil) end) \
+         local g = CreateFrame('Frame') g:RegisterEvent('HOST_FAULT_PROBE') \
+         g:SetScript('OnEvent', function() this:SetScript('OnNoSuchScript', nil) end)",
+    )
+    .unwrap();
+    s.fire_event("FAULT_PROBE", vec![]);
+    let errors = s.take_errors();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    let e = &errors[0];
+    assert!(e.contains("attempt to index local 't'"), "the message: {e}");
+    assert!(
+        e.contains("stack traceback:\n\t"),
+        "a traceback follows: {e}"
+    );
+    assert!(
+        e.contains("in function `BenillaFaultingGlobal'"),
+        "the frame is named from its call site: {e}"
+    );
+
+    s.fire_event("HOST_FAULT_PROBE", vec![]);
+    let errors = s.take_errors();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].contains("SetScript: unsupported script 'OnNoSuchScript'"),
+        "the host's error text survives: {}",
+        errors[0]
+    );
+}

@@ -86,7 +86,85 @@ pub(super) fn sandbox(lua: &Lua) -> mlua::Result<()> {
     )?;
     g.set("loadstring", loadstring)?;
 
+    // Captured before any interface file runs, so an addon's own `xpcall` never stands in. 5.1's
+    // `xpcall` passes no arguments, so a call with some closes over them.
+    let handler = lua.create_function(error_with_traceback)?;
+    let pcall: mlua::Function = lua
+        .load(
+            "local xpcall, select, unpack, handler = xpcall, select, unpack, ...
+             return function(f, ...)
+                 local n = select('#', ...)
+                 if n == 0 then return xpcall(f, handler) end
+                 local args = { ... }
+                 return xpcall(function() return f(unpack(args, 1, n)) end, handler)
+             end",
+        )
+        .set_name(PCALL_CHUNK)
+        .call(handler)?;
+    lua.set_named_registry_value(REG_HANDLER_PCALL, pcall)?;
+
     Ok(())
+}
+
+/// The registry slot of [`protected_call`]'s `xpcall` wrapper.
+const REG_HANDLER_PCALL: &str = "benilla.handler_pcall";
+
+/// The wrapper's chunk name; its frames, and the `xpcall` between them, end a handler's traceback.
+const PCALL_CHUNK: &str = "=handler_pcall";
+
+/// Call a script handler protected, its error carrying a traceback as `Function::call`'s does.
+/// mlua's own handler names each frame by searching `_G` for the function (5.3's
+/// `pushglobalfuncname`), which stock 5.1 never does; under FrameXML's tens of thousands of
+/// globals that search costs milliseconds per error.
+pub(super) fn protected_call(
+    lua: &Lua,
+    f: &mlua::Function,
+    args: mlua::MultiValue,
+) -> mlua::Result<()> {
+    let pcall: mlua::Function = lua.named_registry_value(REG_HANDLER_PCALL)?;
+    let call: mlua::MultiValue = std::iter::once(Value::Function(f.clone()))
+        .chain(args)
+        .collect();
+    let (ok, err): (bool, Value) = pcall.call(call)?;
+    if ok {
+        return Ok(());
+    }
+    Err(match err {
+        Value::Error(e) => *e,
+        Value::String(s) => mlua::Error::RuntimeError(s.to_string_lossy()),
+        other => mlua::Error::RuntimeError(
+            other
+                .to_string()
+                .unwrap_or_else(|_| "<unprintable error>".into()),
+        ),
+    })
+}
+
+/// The `xpcall` message handler: the stack as stock 5.1's traceback walks it, from the frame that
+/// raised (level 1, the handler being level 0), call-site names only, down to the handler.
+fn error_with_traceback(lua: &Lua, e: Value) -> mlua::Result<Value> {
+    let frames = traceback_frames(lua, 1, 12, 10);
+    let plumbing = &PCALL_CHUNK[1..];
+    let mut frames: Vec<&str> = frames
+        .lines()
+        .take_while(|l| !l.starts_with(plumbing))
+        .collect();
+    if frames.last().is_some_and(|l| l.ends_with("`xpcall'")) {
+        frames.pop();
+    }
+    let traceback = format!("stack traceback:\n\t{}", frames.join("\n\t"));
+    Ok(match e {
+        Value::Error(cause) => {
+            // mlua's own field type: `CallbackError::cause` is an `Arc<Error>`.
+            #[allow(clippy::arc_with_non_send_sync)]
+            let cause = std::sync::Arc::new(*cause);
+            Value::Error(Box::new(mlua::Error::CallbackError { traceback, cause }))
+        }
+        Value::String(s) => {
+            Value::String(lua.create_string(format!("{}\n{traceback}", s.to_string_lossy()))?)
+        }
+        other => other,
+    })
 }
 
 /// Install the stdlib layer: the bare globals, `time`/`date` and the positional `format`.

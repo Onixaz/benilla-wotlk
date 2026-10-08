@@ -229,9 +229,18 @@ fn arg_name(i: usize) -> Cow<'static, str> {
     }
 }
 
-/// The calling convention, shared by [`fire`] and the loader's `OnLoad`: sets `this`, `event` and
-/// `arg1..argN` and calls the handler with no arguments, as `0x705199` calls `lua_pcall` with
-/// zero; the globals are restored after the call, even on error, so nested fires are safe.
+/// The VM's handler calling convention, the target client's.
+pub(crate) fn script_args(lua: &Lua) -> benilla_expansions::ScriptArgs {
+    lua.app_data_ref::<Model>()
+        .expect("model app_data set")
+        .script_args
+}
+
+/// The calling convention, shared by [`fire`] and the loader's `OnLoad`, the target client's
+/// ([`benilla_expansions::ScriptArgs`]). 1.12.1 sets `this`, `event` and `arg1..argN` and calls
+/// the handler with no arguments, as `0x705199` calls `lua_pcall` with zero. 3.3.5a calls it with
+/// `self`, then `event` for `OnEvent`, then the arguments, and still sets `this` and `event`, but
+/// no `argN`. The globals are restored after the call, even on error, so nested fires are safe.
 pub(crate) fn invoke_with_globals(
     lua: &Lua,
     wrapper: Table,
@@ -240,25 +249,42 @@ pub(crate) fn invoke_with_globals(
     extra: Vec<Value>,
 ) -> mlua::Result<()> {
     let g = lua.globals();
+    let convention = script_args(lua);
+    let arg_globals = if convention.sets_arg_globals() {
+        extra.len()
+    } else {
+        0
+    };
 
     let saved_this: Value = g.get("this")?;
     let saved_event: Value = g.get("event")?;
-    let n = extra.len();
-    let mut saved_args: Vec<Value> = Vec::with_capacity(n);
-    for i in 1..=n {
+    let mut saved_args: Vec<Value> = Vec::with_capacity(arg_globals);
+    for i in 1..=arg_globals {
         saved_args.push(g.get::<Value>(arg_name(i).as_ref())?);
     }
 
     g.set("this", wrapper.clone())?;
-    if let Some(ev) = event_name {
-        g.set("event", lua.create_string(ev)?)?;
+    let event_value = match event_name {
+        Some(ev) => Some(Value::String(lua.create_string(ev)?)),
+        None => None,
+    };
+    if let Some(ev) = &event_value {
+        g.set("event", ev.clone())?;
     }
-    for (i, v) in extra.iter().enumerate() {
+    for (i, v) in extra.iter().take(arg_globals).enumerate() {
         g.set(arg_name(i + 1).as_ref(), v.clone())?;
     }
 
+    let args = if convention.sets_arg_globals() {
+        mlua::MultiValue::new()
+    } else {
+        std::iter::once(Value::Table(wrapper))
+            .chain(event_value)
+            .chain(extra)
+            .collect()
+    };
     // A protected call; the globals are restored before its outcome returns.
-    let outcome = func.call::<()>(());
+    let outcome = super::stdlib::protected_call(lua, func, args);
 
     g.set("this", saved_this)?;
     g.set("event", saved_event)?;
