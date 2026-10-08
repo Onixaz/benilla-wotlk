@@ -1,10 +1,11 @@
 
 
- <h1>benilla</h1>
-  <p><b>A complete World of Warcraft 1.12.1 client, written from scratch in Rust and <a href="https://bevy.org">Bevy</a></b></p>
-
 Launch: $env:WOW_EXPANSION="wotlk"; $env:WOW_HOST="192.168.1.89"; $env:WOW_DATA="E:\Games2\WoW Private Server Stuff\wotlk-original\Data"
-cmd /c "cargo run --release -p benilla 2>&1" | Tee-Object benilla-config\wotlk-enter-world-3.log
+cargo build --release -p benilla
+cmd /c "cargo run --release -p benilla > benilla-config\wotlk-enter-world-3.log 2>&1"
+
+Follow the log from a second terminal (a console in the pipe blocks the client on every write):
+Get-Content benilla-config\wotlk-enter-world-3.log -Wait -Tail 50
 
 benilla plays the whole game: character creation, questing and professions, dungeons and raids,
 battlegrounds and honor, groups, guilds, trade, mail and the auction house, on the stock 1.12
