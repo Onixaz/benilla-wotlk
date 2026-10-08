@@ -238,7 +238,7 @@ fn quoted(text: &str, name: &str) -> bool {
 }
 
 fn short(p: &std::path::Path) -> String {
-    let s = p.to_string_lossy();
+    let s = p.to_string_lossy().replace('\\', "/");
     s.split_once("/crates/")
         .map_or(s.to_string(), |(_, t)| t.to_string())
 }
@@ -324,7 +324,7 @@ fn the_declared_rows_are_still_true() {
         }
         let named: Vec<&(PathBuf, String)> = src
             .iter()
-            .filter(|(p, _)| p.to_string_lossy().ends_with(file))
+            .filter(|(p, _)| short(p).ends_with(file))
             .collect();
         if named.is_empty() {
             wrong.push(format!(
