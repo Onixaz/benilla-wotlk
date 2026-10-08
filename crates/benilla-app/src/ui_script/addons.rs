@@ -2650,9 +2650,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(home.parent().unwrap());
     }
 
-    /// The reference writer's grammar (`0x7043f0`/`0x704480`): `NAME = value`, bracketed keys, TAB
-    /// indent, a trailing comma on every entry, a bracketed key for a list entry too (`[1] = 1,`),
-    /// and the file split by scope. Asserted as bytes, not by reloading.
+    /// The reference writer's grammar: `NAME = value`, bracketed keys, TAB indent, a trailing comma
+    /// on every entry, the run from `[1]` as list items (`1, -- [1]`, as 3.3.5a's own
+    /// `SavedVariables` files write it), and the file split by scope. Asserted as bytes, not by
+    /// reloading.
     #[test]
     fn the_saved_file_bytes_match_the_recorded_grammar() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -2684,10 +2685,10 @@ mod tests {
              \t[\"on\"] = true,\n\
              \t[\"s\"] = \"a\\\"b\",\n\
              \t[\"t\"] = {\n\
-             \t\t[1] = 1,\n\
+             \t\t1, -- [1]\n\
              \t},\n\
              }",
-            "keys always bracketed and quoted, TAB indent per level, trailing comma on every \
+            "keys bracketed and quoted, list items unbracketed, TAB indent per level, trailing comma on every \
              entry, `\\\"` escaped — the recorded grammar\nGOT:\n{account}"
         );
         assert!(!account.contains("GramChar"), "account file: {account}");
