@@ -10,5 +10,5 @@ workspace = true
 
 [dependencies]
 roxmltree = "0.20"
-# The script host's Lua 5.1; `vendored` builds it from the workspace's patched `lua-src`.
+# The script host's Lua 5.1; `vendored` builds it from the workspace's `lua-src`.
 mlua = { version = "0.11", features = ["lua51", "vendored"] }

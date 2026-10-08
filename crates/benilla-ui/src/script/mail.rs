@@ -1218,8 +1218,8 @@ mod tests {
         s.run(
             r#"FIRED = {}
                local f = CreateFrame("Frame")
-               for _, e in { "ITEM_LOCK_CHANGED", "SEND_MAIL_MONEY_CHANGED",
-                             "SEND_MAIL_COD_CHANGED", "MAIL_SEND_SUCCESS" } do
+               for _, e in ipairs({ "ITEM_LOCK_CHANGED", "SEND_MAIL_MONEY_CHANGED",
+                                    "SEND_MAIL_COD_CHANGED", "MAIL_SEND_SUCCESS" }) do
                    f:RegisterEvent(e)
                end
                f:SetScript("OnEvent", function() table.insert(FIRED, event) end)"#,

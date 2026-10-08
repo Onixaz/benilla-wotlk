@@ -874,7 +874,7 @@
             if key ~= "Audio" then return end
             -- SoundOptionsFrame_UpdateDependencies; Enable Music stays live, as in 1.12.
             local on = GetCVar("MasterSoundEffects") ~= "0"
-            for _, row in {"RowEnableAmbience", "RowEnableErrorSpeech"} do
+            for _, row in ipairs({"RowEnableAmbience", "RowEnableErrorSpeech"}) do
                 local box = getglobal("BenillaOptionsFrameContainerBodyAudio"..row.."Check")
                 local label = getglobal("BenillaOptionsFrameContainerBodyAudio"..row.."Label")
                 if on then
@@ -1997,7 +1997,7 @@
                                          an addon's write lands. -->
                                     <Scripts>
                                         <OnShow>
-                                            for i, name in BENILLA_GRAPHICS_SLIDER_ROWS do
+                                            for i, name in ipairs(BENILLA_GRAPHICS_SLIDER_ROWS) do
                                                 local info = OptionsFrameSliders[i]
                                                 local row = getglobal(this:GetName() .. name)
                                                 if ( info and row ) then

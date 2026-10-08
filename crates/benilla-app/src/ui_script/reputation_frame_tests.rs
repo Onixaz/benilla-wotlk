@@ -146,7 +146,7 @@ fn the_reputation_page_opens_on_the_windows_third_tab() {
     // page missing from it is never hidden.
     assert!(
         s.eval::<bool>(
-            "for _, v in CHARACTERFRAME_SUBFRAMES do if v == \"ReputationFrame\" then return true end end return false"
+            "for _, v in ipairs(CHARACTERFRAME_SUBFRAMES) do if v == \"ReputationFrame\" then return true end end return false"
         )
         .unwrap(),
         "the hide-all list names this page"

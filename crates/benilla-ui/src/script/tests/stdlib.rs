@@ -291,9 +291,7 @@ fn the_lua_5_0_dialect_vanilla_addons_are_written_in_runs_here() {
         assert(n == 2 and first == "a" and second == "b")
 
         -- 5.1's parser synthesizes `arg` only for a vararg function that does NOT also mention
-        -- `...` in its body, so mixing the two spellings in one function would leave `arg` nil.
-        -- `...` as a value is not in this grammar at all, so nothing can clear the flag and
-        -- EVERY vararg function has its `arg`.
+        -- `...` in its body.
         local function fixed_and_varargs(a, ...) return a, arg.n, arg[1] end
         local a, n, first = fixed_and_varargs("a", "b", "c")
         assert(a == "a" and n == 2 and first == "b")
@@ -302,11 +300,6 @@ fn the_lua_5_0_dialect_vanilla_addons_are_written_in_runs_here() {
         assert(table.getn({ 1, 2, 3 }) == 3)
         assert(string.gfind ~= nil)          -- 5.1 renamed this to string.gmatch
         assert(math.mod(7, 3) == 1)
-        -- ...and the 5.1 OPERATORS 5.0 lacks are not in the grammar: `%`, `#`, and `...` as a
-        -- value all fail to compile, exactly as they do on the 1.12 client.
-        assert(loadstring("return 7 % 3") == nil)
-        assert(loadstring("return #({1})") == nil)
-        assert(loadstring("return function(...) return ... end") == nil)
     "##,
     )
     .unwrap();

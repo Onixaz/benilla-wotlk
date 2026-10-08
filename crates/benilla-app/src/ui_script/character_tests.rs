@@ -917,7 +917,7 @@ fn a_keybind_page_switch_moves_the_tab_row_with_it() {
         // In the list `CharacterFrame_ShowSubFrame` sweeps (`CharacterFrame.lua:25-33`).
         assert!(
             s.eval::<bool>(&format!(
-                "for _, v in CHARACTERFRAME_SUBFRAMES do if v == \"{page}\" then return true end \
+                "for _, v in ipairs(CHARACTERFRAME_SUBFRAMES) do if v == \"{page}\" then return true end \
                  end return false"
             ))
             .unwrap(),

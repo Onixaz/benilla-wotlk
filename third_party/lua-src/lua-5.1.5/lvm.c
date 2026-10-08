@@ -680,40 +680,6 @@ void luaV_execute (lua_State *L, int nexeccalls) {
       }
       case OP_TFORLOOP: {
         StkId cb = ra + 3;  /* call base */
-        /* BENILLA: Lua 5.0's OP_TFORPREP, folded into the loop opcode (see
-        ** third_party/lua-src/BENILLA.md).
-        **
-        ** 5.0 ran this once at loop entry in its own opcode (index 30, 157 bytes, at
-        ** 0x6f94a2 in the 1.12.1 client): when a generic-for's generator is a table, the
-        ** table becomes the STATE and the generator becomes the global `next`. 5.1 deleted
-        ** the opcode, so `for k, v in someTable do`, which most 1.12 addons use, raised
-        ** "attempt to call a table value".
-        **
-        ** The top of TFORLOOP is 5.0's prep point exactly: 5.1's parser emits a JMP straight
-        ** to this instruction, before the first call. The check is self-clearing, since after
-        ** one pass `ra` holds a function, so an entry-only rule is safe as a per-iteration
-        ** test.
-        **
-        ** Three details are the client's, each byte-read there:
-        **   - the test is a BARE TYPE TAG equality. The handler makes no metatable access, so
-        **     a table carrying __call still gets `next` and never reaches tryfuncTM.
-        **   - the callee is the GLOBAL `next`, read raw (no __index) from the thread's own
-        **     globals table, fetched fresh at every loop entry. An addon that assigns
-        **     `next = myfn` therefore changes every later generic-for in the session.
-        **   - userdata is NOT substituted (tag mismatch), so it still reaches __call, and a
-        **     nil/string/number generator still raises on iteration 1, not at entry.
-        **
-        ** Deviation from 1.12 this does not close: 5.0's generic-for has two hidden locals,
-        ** not three, so ra+2 is the first user variable AND the control, and assigning to it
-        ** inside the body changes what the next iteration asks for. 5.1 gives the control its
-        ** own slot, a register-layout property of the code generator, not of this handler.
-        ** 95 corpus addons contain the shape, concentrated in Dewdrop-2.0.lua (123 sites) and
-        ** AceEvent-2.0.lua (113).
-        */
-        if (ttistable(ra)) {
-          setobjs2s(L, ra+1, ra);
-          setobj2s(L, ra, luaH_getstr(hvalue(gt(L)), luaS_new(L, "next")));
-        }
         setobjs2s(L, cb+2, ra+2);
         setobjs2s(L, cb+1, ra+1);
         setobjs2s(L, cb, ra);

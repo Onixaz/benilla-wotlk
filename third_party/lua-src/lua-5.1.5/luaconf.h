@@ -200,24 +200,7 @@
 @@ LUA_QL describes how error messages quote program elements.
 ** CHANGE it if you want a different appearance.
 */
-/*
-** BENILLA: 1.12's Lua is 5.0, which quotes every program element in an error
-** message with a BACKQUOTE and an apostrophe. 5.1 introduced this macro and made it two
-** apostrophes. Read out of WoW.exe's own .rdata, which carries all five of the formats this macro
-** feeds, in the 5.0 spelling:
-**
-**   bad argument #%d to `%s' (%s)          lauxlib.c luaL_argerror
-**   calling `%s' on bad self (%s)          lauxlib.c luaL_argerror's method arm
-**   attempt to %s %s `%s' (a %s value)     ldebug.c  luaG_typeerror
-**   %s:%d: %s near `%s'                    llex.c    luaX_lexerror (the client's own 0x87217c)
-**    in function `%s'                      ldblib.c  the traceback line debugstack renders
-**
-** The last one is not cosmetic: 80+ corpus addons ship AceLibrary, whose argCheck reads its own
-** caller back out of `debugstack()` with the pattern "`argCheck'.-([`<].-['>])", a pattern
-** cannot match 5.1's quoting, so the nil it gets is then passed to a %s and raises inside the
-** error path.
-*/
-#define LUA_QL(x)	"`" x "'"
+#define LUA_QL(x)	"'" x "'"
 #define LUA_QS		LUA_QL("%s")
 
 
@@ -367,11 +350,7 @@
 ** CHANGE it to 2 if you want the old behaviour, or undefine it to turn
 ** off the advisory error when nesting [[...]].
 */
-/* BENILLA: 2, the 5.0 behaviour. 1.12.1 ships Lua 5.0, where `[[ ... [[ ... ]] ... ]]`
-** nests; 5.1 kept the machinery and put an advisory error in front of it, on which two
-** corpus addons stop loading ("nesting of [[...]] is deprecated").
-*/
-#define LUA_COMPAT_LSTR		2
+#define LUA_COMPAT_LSTR		1
 
 /*
 @@ LUA_COMPAT_GFIND controls compatibility with old 'string.gfind' name.

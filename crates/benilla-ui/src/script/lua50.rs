@@ -3,12 +3,10 @@
 //! The reference embeds Lua 5.0 (`$Lua: Lua 5.0` at `0x811b30`), and `InitLua 0x7039e0` opens
 //! five libraries: base (`0x811e28`, 36 entries), `string` (`0x822d88`, 12), `table`
 //! (`0x822d40`, 8), `math` (`0x822c60`, 24) and `bit` (`0x822c18`, 8), with no `os`, `io`,
-//! `debug` or `coroutine`. The grammar is the Lua fork's, in `third_party/lua-src`.
+//! `debug` or `coroutine`.
 //!
-//! `...` is a parameter-list token only: a vararg function reads its arguments through 5.0's
-//! `arg` table (`arg.n`, `unpack(arg)`). So Lua written here forwards an unknown argument list
-//! only through a table, and a verb whose arity matters (`GetPoint()` against `GetPoint(nil)`)
-//! stays in Rust.
+//! The grammar is not this layer's: the VM is stock Lua 5.1, which is what 3.3.5a embeds
+//! (`$Lua: Lua 5.1.1` at `0xa470a0`), so `...`, `#` and `%` parse (`third_party/lua-src`).
 
 use mlua::{Lua, Table, Value};
 
@@ -386,7 +384,7 @@ mod tests {
             .eval(r#"local f, e = loadstring("return 1+") return tostring(e)"#)
             .unwrap();
         assert_eq!(
-            e, "[string \"return 1+\"]:1: unexpected symbol near `<eof>'",
+            e, "[string \"return 1+\"]:1: unexpected symbol near '<eof>'",
             "the second return is the message verbatim, with no mlua decoration"
         );
     }
@@ -526,25 +524,6 @@ mod tests {
         assert_eq!(s.eval::<f64>("return floor(2.7)").unwrap(), 2.0);
     }
 
-    /// `...` parses in a parameter list and nowhere else; `arg` carries the arguments.
-    #[test]
-    fn vararg_is_a_declaration_only() {
-        let s = UiScript::new().unwrap();
-        let parses = |src: &str| s.run(src).is_ok();
-        // Declaration, and 5.0's way to read what it captured.
-        assert!(parses("return function(x, ...) return x end"));
-        assert!(parses("return function(x, ...) return arg.n end"));
-        assert!(parses(
-            "local f = tostring return function(x, ...) return f(x, unpack(arg)) end"
-        ));
-        // Every use of `...` as an expression fails, at chunk level too, where 5.1 allows it.
-        assert!(!parses("return function(x, ...) return ... end"));
-        assert!(!parses(
-            "local f = tostring return function(x, ...) return f(x, ...) end"
-        ));
-        assert!(!parses("local a = ... return a"));
-    }
-
     #[test]
     fn sort_foreach_and_foreachi_are_bare_globals_like_the_reference() {
         let s = UiScript::new().unwrap();
@@ -604,95 +583,6 @@ mod tests {
         assert_eq!(s.eval::<f64>("return __pow(2, 10)").unwrap(), 1024.0);
     }
 
-    /// Ace2's `lua51` probe, `loadstring("return function(...) return ... end")`, fails as on
-    /// 1.12: the reference's `simpleexp` (`0x6fd240`) has no `...` arm.
-    #[test]
-    fn the_vararg_expression_is_a_syntax_error_as_it_is_on_1_12() {
-        let s = UiScript::new().unwrap();
-        assert!(
-            s.eval::<bool>(
-                r#"return (loadstring("return function(...) return ... end") and true or false) == false"#
-            )
-            .unwrap(),
-            "the Ace2 lua51 probe must answer false, as it does on the 1.12 client"
-        );
-        // `prefixexp` then accepts only `(` or a name, so this is 5.0's own `unexpected symbol`.
-        let msg: String = s
-            .eval(r#"local f, e = loadstring("return ...") return tostring(e)"#)
-            .unwrap();
-        assert!(
-            msg.contains("unexpected symbol"),
-            "5.0's own message for this, not a bespoke one: {msg}"
-        );
-        // The 5.0 half of the question: `arg`.
-        assert_eq!(
-            s.eval::<i64>("local f = function(...) return arg.n end return f(1, 2, 3)")
-                .unwrap(),
-            3,
-            "`arg` is 5.1's compat-vararg table, which is the form all of 1.12 FrameXML uses"
-        );
-        // Every vararg function gets `arg`, 5.0's rule: without that arm nothing clears
-        // `VARARG_NEEDSARG`.
-        assert_eq!(
-            s.eval::<i64>("local f = function(a, ...) return arg.n end return f(1, 2, 3)")
-                .unwrap(),
-            2
-        );
-        // A `...` in a parameter list still parses: the deletion is `simpleexp`'s arm, not
-        // `parlist`'s.
-        assert!(s
-            .eval::<bool>(r#"return loadstring("return function(...) return arg.n end") ~= nil"#)
-            .unwrap());
-    }
-
-    /// The reference's `getunopr` (`0x6fe0a0`) knows only `-` and `not`, its `getbinopr`
-    /// (`0x6fe0c0`) has no `%`, and its metamethod names (`0x871896`) have no `__len` or `__mod`.
-    #[test]
-    fn the_length_and_modulo_operators_are_not_in_the_grammar() {
-        let s = UiScript::new().unwrap();
-        for probe in ["return #t", "return 7 % 3", "local n = #({1,2}) return n"] {
-            assert!(
-                s.eval::<bool>(&format!("return loadstring({:?}) == nil", probe))
-                    .unwrap(),
-                "{probe} is 5.1-only syntax; 1.12's parser rejects it"
-            );
-        }
-        // 5.0's spellings of both.
-        assert_eq!(s.eval::<i64>("return table.getn({1,2,3})").unwrap(), 3);
-        assert_eq!(s.eval::<i64>("return getn({1,2,3})").unwrap(), 3);
-        assert_eq!(s.eval::<f64>("return math.mod(7, 3)").unwrap(), 1.0);
-        assert_eq!(s.eval::<i64>("return string.len('abcd')").unwrap(), 4);
-    }
-
-    /// The 5.0 grammar the stock files use still parses, including the three constructs the fork
-    /// restores: the iterator-less generic-for, nested long strings (`LUA_COMPAT_LSTR`) and the
-    /// constructor's extra semicolon.
-    #[test]
-    fn the_5_0_grammar_the_reference_writes_still_parses() {
-        let s = UiScript::new().unwrap();
-        s.run(
-            r#"
-            -- 5.0 varargs: the implicit `arg` table, the form all of 1.12 FrameXML uses.
-            local function count(...) local n = 0 for i = 1, arg.n do n = n + arg[i] end return n end
-            -- the iterator-less generic-for
-            local sum = 0
-            for k, v in { 3, 4 } do sum = sum + v end
-            -- a table constructor with 5.0's compat semicolon
-            local t = { a = 1; b = 2; }
-            -- nesting long strings (LUA_COMPAT_LSTR = 2)
-            local s2 = [[outer [[inner]] outer]]
-            -- 5.0's own spellings for what `#`/`%` would say
-            BENILLA_GRAMMAR_OK = count(1, 2, 3) + sum + t.a + t.b
-                + table.getn({ 1, 2 }) + math.mod(7, 3) + string.len(s2)
-            "#,
-        )
-        .expect("the reference's own grammar must still load");
-        assert_eq!(
-            s.eval::<i64>("return BENILLA_GRAMMAR_OK").unwrap(),
-            6 + 7 + 3 + 2 + 1 + 21
-        );
-    }
-
     /// Six of the reference's eight `debug*` functions (`[0x7027e0, 0x702840)`) are
     /// `xor eax,eax; ret`, returning nothing; only `debugprofilestart`/`stop` are real.
     #[test]
@@ -731,104 +621,11 @@ mod tests {
             "5.0's insert writes index getn+1, which after setn(t, 0) is index 1"
         );
     }
-
-    /// A `{ [1] = a, [2] = b }` constructor builds an array part, so `pairs` walks it in index
-    /// order. The reference's `recfield` credits no size hint for a `[expr] =` field (its
-    /// `TK_NAME` test at `0x6fd5a4`), so the table starts on the dummy node and the first store's
-    /// rehash sizes an array part, which `luaH_next` walks before the hash. Saved variables are
-    /// written in this form, as the reference writes them, so a saved list reloads in order.
-    #[test]
-    fn a_bracketed_key_constructor_is_an_array_and_walks_in_index_order() {
-        let s = UiScript::new().unwrap();
-        // Bagnon's own table, as its saved-variables file spells it.
-        assert_eq!(
-            s.eval::<String>(
-                "local t = { [1] = 0, [2] = 1, [3] = 2, [4] = 3, [5] = 4, [6] = -2 }
-                 local out = '' for _, v in pairs(t) do out = out .. v .. ',' end return out"
-            )
-            .unwrap(),
-            "0,1,2,3,4,-2,",
-            "the keyring (-2) is LAST — the order Bagnon's grid shows"
-        );
-        // The order the fields are written in does not change it.
-        assert_eq!(
-            s.eval::<String>(
-                "local t = { [3] = 'c', [1] = 'a', [2] = 'b' }
-                 local out = '' for k in pairs(t) do out = out .. k .. ',' end return out"
-            )
-            .unwrap(),
-            "1,2,3,"
-        );
-        // A key the array part cannot hold comes after the run, in hash order.
-        assert_eq!(
-            s.eval::<String>(
-                "local t = { ['a'] = 1, [1] = 10, [2] = 20, [3] = 30 }
-                 local out = '' for k in pairs(t) do out = out .. tostring(k) .. ',' end return out"
-            )
-            .unwrap(),
-            "1,2,3,a,"
-        );
-        // Control: the positional spelling is an array too.
-        assert_eq!(
-            s.eval::<String>(
-                "local t = { 0, 1, 2, 3, 4, -2 }
-                 local out = '' for _, v in pairs(t) do out = out .. v .. ',' end return out"
-            )
-            .unwrap(),
-            "0,1,2,3,4,-2,"
-        );
-    }
 }
 
 #[cfg(test)]
 mod error_quoting_tests {
     use crate::script::UiScript;
-
-    /// Error messages quote a program element as the reference does, `` `x' ``: the fork's
-    /// `luaconf.h` restores 5.0's `LUA_QL`, and `debugstack` renders its own frames the same way
-    /// (`0x703760`).
-    #[test]
-    fn errors_quote_program_elements_the_way_lua_5_0_does() {
-        let s = UiScript::new().unwrap();
-        let err = |lua: &str| {
-            s.eval::<String>(&format!(
-                "local ok, e = pcall(function() {lua} end) return tostring(e)"
-            ))
-            .unwrap()
-        };
-
-        // luaG_typeerror.
-        let e = err("local t = nil return t.x");
-        assert!(
-            e.contains("attempt to index local `t' (a nil value)"),
-            "typeerror keeps 5.1's quoting: {e}"
-        );
-        // luaL_argerror, through a library function that raises one.
-        let e = err(r#"return string.rep(nil, 2)"#);
-        assert!(
-            e.contains("bad argument #1 to `rep'"),
-            "argerror keeps 5.1's quoting: {e}"
-        );
-        // luaX_lexerror, the client's `0x87217c` format.
-        let e = s
-            .eval::<String>(r#"local f, e = loadstring("return 1 +") return tostring(e)"#)
-            .unwrap();
-        assert!(
-            e.contains("near `<eof>'"),
-            "the lexer keeps 5.1's quoting: {e}"
-        );
-        // No message opens a quote with an apostrophe; the closing quote is one in both dialects.
-        for e in [
-            err("local t = nil return t.x"),
-            err("return nosuchfn()"),
-            err("return string.rep(nil, 2)"),
-        ] {
-            assert!(
-                !e.contains(" '") && !e.contains("('"),
-                "a 5.1-quoted element survives in: {e}"
-            );
-        }
-    }
 
     /// `select` is 5.1's; 5.0 counts arguments with `arg.n`, and the host with
     /// [`UiScript::arity`]. Both must tell zero returns from one `nil`, or an arity check passes a
@@ -859,9 +656,9 @@ mod error_quoting_tests {
         assert_eq!(s.arity("ShowNameplates()").unwrap(), 0, "and zero is zero");
     }
 
-    /// 1.12's string type has no metatable, so a method call on a string raises, in the
-    /// reference's words: ``attempt to %s a %s value`` (`0x871c10`) and
-    /// ``attempt to %s %s `%s' (a %s value)`` (`0x871c2c`).
+    /// 1.12's string type has no metatable, so a method call on a string raises
+    /// ``attempt to %s a %s value`` or, named, ``attempt to %s %s '%s' (a %s value)`` in 3.3.5a's
+    /// quoting (`0xa474c4`).
     #[test]
     fn the_string_type_has_no_metatable() {
         let s = UiScript::new().unwrap();
@@ -886,8 +683,8 @@ mod error_quoting_tests {
             )
             .unwrap();
         assert!(
-            named.contains("attempt to index local `v' (a string value)"),
-            "the named form, with 5.0's backtick-apostrophe quoting: {named:?}"
+            named.contains("attempt to index local 'v' (a string value)"),
+            "the named form: {named:?}"
         );
 
         // Only the method dispatch goes: the string library and its bare aliases still work.

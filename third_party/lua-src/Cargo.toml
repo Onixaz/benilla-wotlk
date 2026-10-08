@@ -1,15 +1,7 @@
 # A fork of the `lua-src` crate (MIT, github.com/mlua-rs/lua-src-rs), pinned to the version mlua
-# 0.11 asks for, carrying one deliberate change to the Lua 5.1.5 sources it compiles.
-#
-# Why it exists: the 1.12 addon corpus is written for Lua 5.0 and uses the iterator-less
-# generic-for (`for k, v in someTable do`) in 183 of 218 addons. Lua 5.1 deleted the opcode that
-# made it work, so on stock 5.1 it raises `attempt to call a table value`, the first error for 60 of
-# 218 addons. No Lua-side shim can restore an opcode. The fork stays on 5.1.5 and restores that one
-# opcode's 5.0 behaviour, which Lua shipped as "for compatibility only", so every other 5.1 fix and
-# mlua's whole surface stay intact.
-#
-# What changes: `BENILLA.md` lists every hunk against upstream's `lua-5.1.5/` tree
-# (eight, in three files) and the one command that verifies the sources against the registry copy.
+# 0.11 asks for. Its Lua 5.1.5 sources are upstream's unchanged: 3.3.5a embeds stock Lua 5.1.
+# `BENILLA.md` gives the reference facts and the one command that verifies the sources against the
+# registry copy; a change the reference's VM makes to stock 5.1 lands here as a listed hunk.
 #
 # The crate's own `src/lib.rs` is upstream's, with Lua 5.2 to 5.5 stripped from the `Version` enum
 # and their trees deleted, so asking for another version is a compile error here rather than a

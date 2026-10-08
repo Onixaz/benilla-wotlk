@@ -133,10 +133,10 @@ fn quote(s: &[u8]) -> Vec<u8> {
     out
 }
 
-/// A table constructor, `{\n<tabs>[key] = value,\n<tabs-1>}`: every key bracketed, as the
-/// reference writes for every table shape (`[0x704607, 0x704989)`), integer keys ascending, then
-/// strings. It reloads a list as a list through the 1.12 parser: `recfield` gives a `[k] = v` field
-/// no size hint, so dense integer keys land in the array part, which `next` walks in order.
+/// A table constructor: the run of keys `1..=n` as list items, `<tabs>value, -- [i]`, then every
+/// other key bracketed, `<tabs>[key] = value,`, integers ascending, then strings. 3.3.5a's own
+/// `SavedVariables` files write the list this way, and it reloads as a list: a 5.1 `[k] = v` field
+/// sizes the hash part, so bracketed dense keys would come back walking in hash order.
 fn table(t: &Table, depth: usize, seen: &mut HashSet<*const c_void>) -> Option<Vec<u8>> {
     if depth > MAX_DEPTH || !seen.insert(t.to_pointer()) {
         return None;
@@ -164,6 +164,19 @@ fn table(t: &Table, depth: usize, seen: &mut HashSet<*const c_void>) -> Option<V
     let indent = "\t".repeat(depth);
     let close = "\t".repeat(depth.saturating_sub(1));
     let mut out = b"{\n".to_vec();
+    // `ints` is ascending, so the run starts where the keys reach 1.
+    let start = ints.partition_point(|(k, _)| *k < 1);
+    let end = start
+        + ints[start..]
+            .iter()
+            .zip(1..)
+            .take_while(|((k, _), i)| k == i)
+            .count();
+    for (k, v) in &ints[start..end] {
+        out.extend_from_slice(indent.as_bytes());
+        out.extend_from_slice(v);
+        out.extend_from_slice(format!(", -- [{k}]\n").as_bytes());
+    }
     let mut entry = |key: &[u8], value: &[u8]| {
         out.extend_from_slice(indent.as_bytes());
         out.push(b'[');
@@ -172,8 +185,8 @@ fn table(t: &Table, depth: usize, seen: &mut HashSet<*const c_void>) -> Option<V
         out.extend_from_slice(value);
         out.extend_from_slice(b",\n");
     };
-    for (k, v) in ints {
-        entry(k.to_string().as_bytes(), &v);
+    for (k, v) in ints[..start].iter().chain(&ints[end..]) {
+        entry(k.to_string().as_bytes(), v);
     }
     for (k, v) in strs {
         entry(&quote(&k), &v);
@@ -237,6 +250,25 @@ mod tests {
         );
     }
 
+    /// Only the run from `[1]` is written as list items; a key past a gap, `0` or a negative stays
+    /// bracketed, as in 3.3.5a's `Blizzard_CombatLog.lua` (`}, -- [4]` then `[16] = {`).
+    #[test]
+    fn only_the_run_from_one_is_written_as_list_items() {
+        let s = UiScript::new().unwrap();
+        s.run(r#"T = { "a", "b", [4] = "d", [0] = "z", [-1] = "m" } RegisterForSave("T")"#)
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(s.saved_variables_bytes()).unwrap(),
+            "T = {\n\
+             \t\"a\", -- [1]\n\
+             \t\"b\", -- [2]\n\
+             \t[-1] = \"m\",\n\
+             \t[0] = \"z\",\n\
+             \t[4] = \"d\",\n\
+             }\n"
+        );
+    }
+
     #[test]
     fn the_declared_globals_round_trip_through_a_fresh_vm() {
         let mut s = UiScript::new().unwrap();
@@ -280,10 +312,10 @@ mod tests {
              CHAT_LABEL = \"say \\\"hi\\\"\\nnow\"\n\
              OPACITY = 0.5\n\
              SPELLBOOK_PAGENUMBERS = {\n\
-             \t[1] = 1,\n\
-             \t[2] = 3,\n\
+             \t1, -- [1]\n\
+             \t3, -- [2]\n\
              \t[\"odd key\"] = {\n\
-             \t\t[1] = true,\n\
+             \t\ttrue, -- [1]\n\
              \t},\n\
              }\n",
             "got:\n{text}"

@@ -78,7 +78,7 @@ fn assert_clean(s: &UiScript, step: &str) {
 fn boxes(s: &UiScript) -> Vec<(String, String, bool, bool)> {
     s.eval::<Vec<String>>(
         r#"local out = {}
-        for _, v in OptionsFrameCheckButtons do
+        for _, v in pairs(OptionsFrameCheckButtons) do
             local b = getglobal("OptionsFrameCheckButton"..v.index)
             local bit = function(x) if x then return "1" else return "0" end end
             table.insert(out, v.cvar.."|"..(GetCVar(v.cvar) or "nil").."|"..bit(b:GetChecked())
