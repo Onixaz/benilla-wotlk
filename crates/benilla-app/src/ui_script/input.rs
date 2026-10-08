@@ -96,6 +96,7 @@ pub(super) fn feed_ui_input(
     layout: Res<crate::bindings::LayoutNames>,
     // The uiScale dial folded into the seam scale.
     ui_scale: Res<super::UiScaleCvar>,
+    mut error_tally: Local<super::VmMemo<super::ScriptErrorTally>>,
 ) {
     let (keyboard, keys, capture, clipboard) = (&mut kbd.0, &kbd.1, &mut kbd.2, &mut kbd.3);
     let world_pick = pointer.world_pick();
@@ -336,8 +337,10 @@ pub(super) fn feed_ui_input(
     // Send-side view the world-click deselect gates on.
     payload_held.0 = script.cursor_payload().is_some();
 
-    for err in script.take_errors() {
-        warn!("ui_script(input): {err}");
+    let errors = script.take_errors();
+    let tally = error_tally.get(&script);
+    for err in errors {
+        tally.log("ui_script(input)", err);
     }
 }
 

@@ -428,6 +428,7 @@ pub(super) fn tick_script(
     ui_scale: Res<super::UiScaleCvar>,
     mut ui_cost: ResMut<super::UiFrameCost>,
     mut pass: ResMut<super::UiPassState>,
+    mut error_tally: Local<super::VmMemo<super::ScriptErrorTally>>,
 ) {
     pass.live = false;
     let Some(mut script) = script else {
@@ -551,8 +552,10 @@ pub(super) fn tick_script(
     // Script errors reach the Lua handler (`_ERRORMESSAGE`, `BasicControls.xml:16`) before the
     // log, so a failing handler lands in this frame's drain.
     script.dispatch_script_errors_to_handler();
-    for err in script.take_errors() {
-        warn!("ui_script: {err}");
+    let errors = script.take_errors();
+    let tally = error_tally.get(&script);
+    for err in errors {
+        tally.log("ui_script", err);
     }
     for w in script.take_warnings() {
         warn!("ui_script: {w}");

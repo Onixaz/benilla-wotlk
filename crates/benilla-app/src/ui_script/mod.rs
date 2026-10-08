@@ -126,6 +126,85 @@ pub(crate) struct PlayerUiClickConsumed(pub(crate) bool);
 #[derive(Resource, Default)]
 pub(crate) struct CursorPayloadHeld(pub(crate) bool);
 
+/// The host log's script-error tally: a distinct error is logged once, traceback and all, and its
+/// repeats are counted, a line at each power of ten. 3.3.5a's ScriptErrorsFrame keys on message
+/// and stack and counts a repeat in place (`Blizzard_DebugTools.lua:390`); a handler that raises
+/// every frame keeps raising (the handler still sees each one), only the log stops repeating it.
+#[derive(Default)]
+pub(super) struct ScriptErrorTally(std::collections::HashMap<String, u64>);
+
+impl ScriptErrorTally {
+    /// Past this many distinct errors a new one is logged whole and not tallied, so a message
+    /// that embeds a changing value cannot grow the map without bound.
+    const DISTINCT_CAP: usize = 4096;
+
+    pub(super) fn log(&mut self, channel: &str, err: String) {
+        if let Some(line) = self.line(err) {
+            warn!("{channel}: {line}");
+        }
+    }
+
+    /// The log line for one more occurrence of `err`, or `None` for a repeat that stays quiet.
+    fn line(&mut self, err: String) -> Option<String> {
+        if let Some(n) = self.0.get_mut(&err) {
+            *n += 1;
+            let head = err.lines().next().unwrap_or_default();
+            return (*n >= 10 && 10u64.pow(n.ilog10()) == *n)
+                .then(|| format!("repeated {n} times: {head}"));
+        }
+        let line = format!("{err} (first occurrence; tallying)");
+        if self.0.len() < Self::DISTINCT_CAP {
+            self.0.insert(err, 1);
+        }
+        Some(line)
+    }
+}
+
+#[cfg(test)]
+mod script_error_tally_tests {
+    use super::ScriptErrorTally;
+
+    const ERR: &str = "ActionButton1:OnUpdate: attempt to index local 'self' (a nil value)\n\
+                       stack traceback:\n\t[C]: in ?";
+
+    #[test]
+    fn a_repeat_is_logged_once_then_at_each_power_of_ten() {
+        let mut t = ScriptErrorTally::default();
+        let logged: Vec<(u64, String)> = (1..=1000)
+            .filter_map(|i| t.line(ERR.to_string()).map(|l| (i, l)))
+            .collect();
+        let at: Vec<u64> = logged.iter().map(|(i, _)| *i).collect();
+        assert_eq!(at, [1, 10, 100, 1000]);
+        assert!(
+            logged[0].1.contains("stack traceback"),
+            "the first carries the traceback"
+        );
+        assert_eq!(
+            logged[1].1,
+            "repeated 10 times: ActionButton1:OnUpdate: attempt to index local 'self' (a nil value)",
+            "a repeat line is one line"
+        );
+    }
+
+    #[test]
+    fn distinct_errors_each_get_their_first_line() {
+        let mut t = ScriptErrorTally::default();
+        assert!(t.line("a".into()).is_some());
+        assert!(t.line("b".into()).is_some());
+        assert!(t.line("a".into()).is_none());
+    }
+
+    #[test]
+    fn past_the_cap_a_new_error_is_logged_every_time() {
+        let mut t = ScriptErrorTally::default();
+        for i in 0..ScriptErrorTally::DISTINCT_CAP {
+            t.line(i.to_string());
+        }
+        assert!(t.line("late".into()).is_some());
+        assert!(t.line("late".into()).is_some(), "untallied, never silenced");
+    }
+}
+
 /// What [`extract::tick_script`] hands [`extract::paint_script`]; with `live` false (no VM or
 /// window) the paint does nothing.
 #[derive(Resource, Default)]
