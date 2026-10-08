@@ -1,12 +1,10 @@
-<div align="center">
-  <h1>benilla</h1>
+
+
+ <h1>benilla</h1>
   <p><b>A complete World of Warcraft 1.12.1 client, written from scratch in Rust and <a href="https://bevy.org">Bevy</a></b></p>
-  <p>
-    <a href="https://discord.gg/wJSJx467G4"><img src="https://img.shields.io/discord/1529280129518538922?style=for-the-badge&logo=discord&logoColor=white&label=discord&color=5865F2" alt="Discord"></a>
-    <a href="https://www.youtube.com/playlist?list=PLdCnpZNKxyb8"><img src="https://img.shields.io/badge/devlog-youtube-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube devlog"></a>
-    <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue?style=for-the-badge" alt="License"></a>
-  </p>
-</div>
+
+Launch: $env:WOW_EXPANSION="wotlk"; $env:WOW_HOST="192.168.1.89"; $env:WOW_DATA="E:\Games2\WoW Private Server Stuff\wotlk-original\Data"
+cmd /c "cargo run --release -p benilla 2>&1" | Tee-Object benilla-config\wotlk-enter-world-3.log
 
 benilla plays the whole game: character creation, questing and professions, dungeons and raids,
 battlegrounds and honor, groups, guilds, trade, mail and the auction house, on the stock 1.12
