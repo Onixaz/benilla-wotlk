@@ -589,7 +589,7 @@ mod tests {
 #[cfg(test)]
 mod real_data {
     use super::LiquidKind;
-    use benilla_formats::{parse_wmo_root, wmo_group_liquid_mesh};
+    use benilla_formats::{parse_wmo_root, wmo_group_liquid_mesh, WmoLiquidRule};
     use std::collections::HashMap;
 
     /// The scroll gate over the shipped pools, where both behaviours share buildings: Ironforge has
@@ -603,6 +603,7 @@ mod real_data {
         let mut census = |root_path: &str| -> HashMap<(u8, LiquidKind), usize> {
             let bytes = chain.read_file(root_path).expect("root readable");
             let root = parse_wmo_root(&bytes).expect("parse root");
+            let rule = WmoLiquidRule::for_root(chain.expansion(), &root);
             let stem = root_path
                 .strip_suffix(".wmo")
                 .unwrap_or(root_path)
@@ -612,7 +613,7 @@ mod real_data {
                 let Ok(gb) = chain.read_file(&format!("{stem}_{gi:03}.wmo")) else {
                     continue;
                 };
-                if let Some(m) = wmo_group_liquid_mesh(&gb) {
+                if let Some(m) = wmo_group_liquid_mesh(&gb, rule) {
                     *tally.entry((m.sound_nibble, m.kind)).or_default() += 1;
                 }
             }
@@ -683,6 +684,7 @@ mod real_data {
         let liquid_groups = |chain: &mut benilla_formats::Chain, root_path: &str| {
             let bytes = chain.read_file(root_path).expect("root readable");
             let root = parse_wmo_root(&bytes).expect("parse root");
+            let rule = WmoLiquidRule::for_root(chain.expansion(), &root);
             let stem = root_path
                 .strip_suffix(".wmo")
                 .unwrap_or(root_path)
@@ -690,7 +692,7 @@ mod real_data {
             (0..root.group_count() as usize)
                 .filter_map(|gi| {
                     let gb = chain.read_file(&format!("{stem}_{gi:03}.wmo")).ok()?;
-                    wmo_group_liquid_mesh(&gb)?;
+                    wmo_group_liquid_mesh(&gb, rule)?;
                     Some((gi, root.group_infos().get(gi).is_some_and(|g| g.interior)))
                 })
                 .collect::<Vec<_>>()

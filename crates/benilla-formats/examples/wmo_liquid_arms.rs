@@ -48,7 +48,10 @@ fn main() -> anyhow::Result<()> {
         let Ok(bytes) = reader.read(&name) else {
             continue;
         };
-        let Some(mesh) = wmo_group_liquid_mesh(&bytes) else {
+        let Some(rule) = benilla_formats::WmoLiquidRule::for_group_path(&reader, &name) else {
+            continue;
+        };
+        let Some(mesh) = wmo_group_liquid_mesh(&bytes, rule) else {
             continue;
         };
         let Some(header) = wmo_group_header(&bytes) else {

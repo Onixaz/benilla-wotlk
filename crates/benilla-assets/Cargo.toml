@@ -17,6 +17,7 @@ dev = ["benilla-formats/dev"]
 [dependencies]
 anyhow.workspace = true
 bevy.workspace = true
+benilla-expansions = { path = "../benilla-expansions" }
 benilla-formats = { path = "../benilla-formats", default-features = false }
 # Nearest-neighbour resize of layer BLPs smaller than `LAYER_TEX_SIZE`: texel replication in gamma
 # bytes, with no averaging to darken mid-tones.

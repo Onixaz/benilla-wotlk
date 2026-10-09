@@ -59,6 +59,7 @@ pub struct WmoRoot {
     portals: WmoPortals,
     fogs: Vec<WmoFog>,
     skybox: Option<String>,
+    flags: u16,
 }
 
 impl WmoRoot {
@@ -125,6 +126,11 @@ impl WmoRoot {
         &self.fogs
     }
 
+    /// MOHD `flags` at `0x3c`; 0 if MOHD is short.
+    pub fn flags(&self) -> u16 {
+        self.flags
+    }
+
     /// The MOSB skybox model a [`WmoGroupInfo::show_skybox`] group draws; five 5875 roots have one.
     pub fn skybox(&self) -> Option<&str> {
         self.skybox.as_deref()
@@ -143,6 +149,9 @@ pub fn parse_wmo_root(bytes: &[u8]) -> Result<WmoRoot> {
     let portals = parse_wmo_portals(bytes);
     let fogs = parse_wmo_fogs(bytes);
     let skybox = parse_skybox(bytes);
+    let flags = find_wmo_chunk(bytes, b"DHOM") // MOHD
+        .and_then(|m| m.get(0x3c..0x3e))
+        .map_or(0, |f| u16::from_le_bytes([f[0], f[1]]));
     Ok(WmoRoot {
         parsed,
         doodads,
@@ -151,6 +160,7 @@ pub fn parse_wmo_root(bytes: &[u8]) -> Result<WmoRoot> {
         portals,
         fogs,
         skybox,
+        flags,
     })
 }
 

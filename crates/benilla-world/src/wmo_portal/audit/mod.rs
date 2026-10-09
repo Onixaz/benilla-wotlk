@@ -156,6 +156,7 @@ fn load_subject(internal: &str, site: Option<&Site>) -> Subject {
     let placed = site.map(|s| load_placement(&mut chain, s));
     let root_bytes = chain.read(internal).expect("read root wmo");
     let root = parse_wmo_root(&root_bytes).expect("parse root");
+    let liquid_rule = benilla_formats::WmoLiquidRule::for_root(chain.expansion(), &root);
     let stem = internal.strip_suffix(".wmo").unwrap_or(internal);
 
     let n = root.group_count() as usize;
@@ -194,7 +195,7 @@ fn load_subject(internal: &str, site: Option<&Site>) -> Subject {
             continue;
         };
         // The MLIQ surface as the asset loader stores it, for the down-ray's liquid leg.
-        group_liquids[gi] = benilla_formats::wmo_group_liquid_mesh(&gbytes);
+        group_liquids[gi] = benilla_formats::wmo_group_liquid_mesh(&gbytes, liquid_rule);
         group_footprints[gi] = wmo_group_footprint_tris(&gbytes);
         if let (Some(h), Some(nav)) = (wmo_group_header(&gbytes), group_nav.get_mut(gi)) {
             nav.flags = h.flags;

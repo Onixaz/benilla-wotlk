@@ -1,7 +1,17 @@
 //! WMO MLIQ liquid surfaces: an `xverts × yverts` grid with one tile fewer each way, and a per-tile
 //! type nibble where `0xf` is a hole and 4 is lake_a.
 
-use benilla_formats::{wmo_group_liquid_mesh, Chain, LiquidKind};
+use benilla_expansions::Expansion;
+use benilla_formats::{
+    parse_wmo_root, wmo_group_header, wmo_group_liquid_mesh, Chain, LiquidKind, WmoLiquidRule,
+    NO_GROUP_LIQUID,
+};
+
+/// The target client's liquid rule for a group file, read off its root.
+fn rule(chain: &Chain, group_path: &str) -> WmoLiquidRule {
+    WmoLiquidRule::for_group_path(chain, group_path)
+        .unwrap_or_else(|| panic!("{group_path}: root unreadable"))
+}
 
 #[test]
 fn stormwind_canal_group_builds_still_water() {
@@ -12,7 +22,14 @@ fn stormwind_canal_group_builds_still_water() {
     let g099 = reader
         .read("World\\wmo\\Azeroth\\Buildings\\Stormwind\\Stormwind_099.wmo")
         .expect("read Stormwind_099.wmo");
-    let mesh = wmo_group_liquid_mesh(&g099).expect("group 099 carries water");
+    let mesh = wmo_group_liquid_mesh(
+        &g099,
+        rule(
+            &reader,
+            r"World\wmo\Azeroth\Buildings\Stormwind\Stormwind_099.wmo",
+        ),
+    )
+    .expect("group 099 carries water");
     assert_eq!(mesh.kind, LiquidKind::Still, "canal water is lake_a/still");
     assert_eq!(mesh.positions.len(), 12 * 9, "full 12×9 grid emitted");
     assert_eq!(mesh.uvs.len(), 12 * 9);
@@ -37,7 +54,14 @@ fn stormwind_canal_group_builds_still_water() {
         .read("World\\wmo\\Azeroth\\Buildings\\Stormwind\\Stormwind_000.wmo")
         .expect("read Stormwind_000.wmo");
     assert!(
-        wmo_group_liquid_mesh(&g000).is_none(),
+        wmo_group_liquid_mesh(
+            &g000,
+            rule(
+                &reader,
+                r"World\wmo\Azeroth\Buildings\Stormwind\Stormwind_000.wmo"
+            ),
+        )
+        .is_none(),
         "a masonry group carries no liquid"
     );
 }
@@ -63,7 +87,8 @@ fn hole_corner_heights_never_reach_the_mesh_bounds() {
         let group = reader
             .read(path)
             .unwrap_or_else(|e| panic!("read {path}: {e}"));
-        let mesh = wmo_group_liquid_mesh(&group).unwrap_or_else(|| panic!("{path} carries water"));
+        let mesh = wmo_group_liquid_mesh(&group, rule(&reader, path))
+            .unwrap_or_else(|| panic!("{path} carries water"));
 
         // Both pools are flat, so every vertex, drawn or not, sits on the sheet.
         let (lo, hi) = mesh
@@ -121,7 +146,8 @@ fn the_two_water_arms_carry_their_own_inputs() {
             header.flags
         );
 
-        let mesh = wmo_group_liquid_mesh(&bytes).unwrap_or_else(|| panic!("{path} carries water"));
+        let mesh = wmo_group_liquid_mesh(&bytes, rule(&reader, path))
+            .unwrap_or_else(|| panic!("{path} carries water"));
         assert_eq!(
             mesh.material_id,
             Some(material_id),
@@ -154,7 +180,14 @@ fn wmo_water_repeats_once_per_grid_cell() {
     let g099 = reader
         .read("World\\wmo\\Azeroth\\Buildings\\Stormwind\\Stormwind_099.wmo")
         .expect("read Stormwind_099.wmo");
-    let mesh = wmo_group_liquid_mesh(&g099).expect("group 099 carries water");
+    let mesh = wmo_group_liquid_mesh(
+        &g099,
+        rule(
+            &reader,
+            r"World\wmo\Azeroth\Buildings\Stormwind\Stormwind_099.wmo",
+        ),
+    )
+    .expect("group 099 carries water");
     // The grid is 12 vertices wide, so index 12 starts the next row.
     let du = mesh.uvs[1][0] - mesh.uvs[0][0];
     assert!(
@@ -166,4 +199,88 @@ fn wmo_water_repeats_once_per_grid_cell() {
         (dv - 1.0).abs() < 1e-4,
         "one repeat per cell: adjacent rows differ by {dv} in v, expected 1.0"
     );
+}
+
+/// 3.3.5a's Stormwind root sets MOHD `0x4`, so `groupLiquid` 0 on its streets is no liquid: none
+/// of its groups without an MLIQ is flooded, and its canals keep their water.
+#[test]
+fn wotlk_stormwind_streets_are_dry_and_its_canals_wet() {
+    let data = benilla_formats::wow_data_or_skip!();
+    let reader = Chain::open(&data).expect("open patch chain");
+    if reader.expansion() != Expansion::Wotlk {
+        return; // 1.12.1 reads `groupLiquid` raw: `classic_reads_group_liquid_as_a_type_nibble`
+    }
+    let stem = r"world\wmo\azeroth\buildings\stormwind\stormwind";
+    let root = parse_wmo_root(&reader.read(&format!("{stem}.wmo")).expect("read root"))
+        .expect("parse root");
+    let rule = WmoLiquidRule::for_root(Expansion::Wotlk, &root);
+    assert_eq!(rule, WmoLiquidRule::LiquidTypeId { mohd_ids: true });
+
+    let (mut flooded, mut pools) = (Vec::new(), 0);
+    for gi in 0..root.group_count() {
+        let bytes = reader
+            .read(&format!("{stem}_{gi:03}.wmo"))
+            .expect("read group");
+        let header = wmo_group_header(&bytes).expect("group header");
+        let own = rule.group_liquid(header.group_liquid, header.flags);
+        match wmo_group_liquid_mesh(&bytes, rule) {
+            Some(mesh) => {
+                pools += 1;
+                assert_eq!(mesh.kind, LiquidKind::Still, "group {gi:03}: canal water");
+            }
+            None if own != NO_GROUP_LIQUID => flooded.push(gi),
+            None => {}
+        }
+    }
+    assert!(flooded.is_empty(), "wholly submerged groups: {flooded:?}");
+    assert!(pools > 0, "the canals carry water");
+}
+
+/// Every 3.3.5a `LiquidType` id a group stores under MOHD `0x4` is one the client maps to a WMO
+/// kind itself (1..=20); a higher id's class lives in `LiquidType.dbc`, which is not read.
+#[test]
+fn wotlk_group_liquid_ids_stay_in_the_wmo_range() {
+    let data = benilla_formats::wow_data_or_skip!();
+    let reader = Chain::open(&data).expect("open patch chain");
+    if reader.expansion() != Expansion::Wotlk {
+        return;
+    }
+    let mut checked = 0;
+    for entry in reader.list().expect("list") {
+        let lower = entry.name.to_ascii_lowercase();
+        let Some(stem) = lower.strip_suffix(".wmo") else {
+            continue;
+        };
+        if stem
+            .rsplit('_')
+            .next()
+            .is_some_and(|t| t.len() == 3 && t.bytes().all(|b| b.is_ascii_digit()))
+        {
+            continue; // a group file
+        }
+        let Ok(root) = reader.read(&entry.name).map(|b| parse_wmo_root(&b)) else {
+            continue;
+        };
+        let Ok(root) = root else { continue };
+        if WmoLiquidRule::for_root(Expansion::Wotlk, &root)
+            != (WmoLiquidRule::LiquidTypeId { mohd_ids: true })
+        {
+            continue;
+        }
+        for gi in 0..root.group_count() {
+            let Ok(bytes) = reader.read(&format!("{stem}_{gi:03}.wmo")) else {
+                continue;
+            };
+            let Some(header) = wmo_group_header(&bytes) else {
+                continue;
+            };
+            assert!(
+                header.group_liquid <= 20,
+                "{stem}_{gi:03}: LiquidType id {}",
+                header.group_liquid
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 3000, "only {checked} groups under MOHD 0x4");
 }

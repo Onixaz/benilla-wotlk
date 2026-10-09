@@ -108,6 +108,10 @@ pub struct ExpansionProfile {
     /// The highest geoset id the character compositor selects; a character model's higher ids
     /// keep the visibility they load with.
     pub character_geosets_through: u16,
+    /// Whether a WMO's liquid resolves to a `LiquidType` id rather than reading as a type nibble:
+    /// MOGP `groupLiquid` is that id (0 none) under root MOHD flag `0x4`, else the nibble + 1
+    /// (`0xf` none), and an MLIQ tile nibble becomes its id the same way.
+    pub wmo_liquid_type_ids: bool,
 }
 
 /// What the client tells realmd about itself.
@@ -248,6 +252,8 @@ static CLASSIC: ExpansionProfile = ExpansionProfile {
     playable_races: &[1, 2, 3, 4, 5, 6, 7, 8],
     // `0x477520` disables 0..=1700 (`0x6a4`) before enabling its picks.
     character_geosets_through: 1700,
+    // `0x6b9f10` reads `groupLiquid` as the type nibble, `0xf` none; MOHD is not consulted.
+    wmo_liquid_type_ids: false,
 };
 
 /// 3.3.5a, when `Data\common.MPQ` exists (`0x402b90`; without it the client falls back to the
@@ -316,6 +322,8 @@ static WOTLK: ExpansionProfile = ExpansionProfile {
     // Groups 17 (eye glow) and 18 (belt) join the selection; WowUnreal's 3.3.5a builder defaults
     // both to variant 1 and picks 18 from the belt.
     character_geosets_through: 1899,
+    // The group loader (`0x7d8390`) tests MOHD `0x4` and converts through `0x7d7310`.
+    wmo_liquid_type_ids: true,
 };
 
 #[cfg(test)]

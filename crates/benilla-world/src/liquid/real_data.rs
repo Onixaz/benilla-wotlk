@@ -8,7 +8,9 @@ use super::query::{
 };
 use crate::wmo_portal::WmoRoom;
 use benilla_assets::coords::{bevy_to_wow, placement_rotation, wow_to_bevy};
-use benilla_formats::{parse_wmo_root, wmo_group_liquid_mesh, LiquidMesh, Submersion};
+use benilla_formats::{
+    parse_wmo_root, wmo_group_liquid_mesh, LiquidMesh, Submersion, WmoLiquidRule,
+};
 
 /// The world-placed, owner-tagged liquid around a position: its tiles' MCLQ and every WMO
 /// placement's MLIQ, each placement under a synthetic instance id for the app's entity.
@@ -111,11 +113,12 @@ fn liquid_scene(map: &str, wow: [f32; 3]) -> Option<LiquidScene> {
                         .collect(),
                 });
                 let stem = root_path.strip_suffix(".wmo").unwrap_or(&root_path);
+                let rule = WmoLiquidRule::for_root(chain.expansion(), &root);
                 for gi in 0..root.group_count() {
                     let Ok(gb) = chain.read_file(&format!("{stem}_{gi:03}.wmo")) else {
                         continue;
                     };
-                    if let Some(lq) = wmo_group_liquid_mesh(&gb) {
+                    if let Some(lq) = wmo_group_liquid_mesh(&gb, rule) {
                         scene.surfaces.push(wet_footprint(
                             lq_ref(&lq),
                             &transform,

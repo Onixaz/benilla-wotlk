@@ -555,6 +555,7 @@ name = "benilla-assets"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "benilla-expansions",
  "benilla-formats",
  "bevy",
  "image",

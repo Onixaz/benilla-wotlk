@@ -260,9 +260,9 @@ pub use models::{
     M2Light, M2PaneCamera, M2PortraitCamera, ModelAnimation, ModelBlend, ParentArm, ParentBasis,
     PlayableAnim, Relayout, RenderSubmesh, RgbAnim, ScalarAnim, SeqLoops, ShippedGlueScene,
     Skeleton, SkeletonBone, StringAnchors, UvAnim, UvRotAnim, WmoBatchClass, WmoDoodad,
-    WmoDoodadSet, WmoFog, WmoGroupHeader, WmoGroupInfo, WmoLight, WmoPortalInfo, WmoPortalRef,
-    WmoPortals, WmoRoot, ALPHA_KEY_REF, DEGENERATE_RING_FOOTPRINT, GLUE_AUTHORED_ASPECT,
-    NO_GROUP_LIQUID, OWNER_RUNG_BUCKETS, SHIPPED_GLUE_SCENES, VERSION_264,
+    WmoDoodadSet, WmoFog, WmoGroupHeader, WmoGroupInfo, WmoLight, WmoLiquidRule, WmoPortalInfo,
+    WmoPortalRef, WmoPortals, WmoRoot, ALPHA_KEY_REF, DEGENERATE_RING_FOOTPRINT,
+    GLUE_AUTHORED_ASPECT, NO_GROUP_LIQUID, OWNER_RUNG_BUCKETS, SHIPPED_GLUE_SCENES, VERSION_264,
 };
 mod terrain;
 pub use terrain::{

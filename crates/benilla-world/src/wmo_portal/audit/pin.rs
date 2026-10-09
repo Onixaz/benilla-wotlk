@@ -75,10 +75,12 @@ fn wmo_group_census() {
     let data = benilla_formats::wow_data().expect("no WoW install found (set $WOW_DATA)");
     let chain = benilla_formats::open_chain(&data).expect("open MPQ chain (set WOW_DATA)");
     let stem = site.wmo.strip_suffix(".wmo").unwrap_or(site.wmo);
+    let rule = benilla_formats::WmoLiquidRule::for_group_path(&chain, &format!("{stem}_000.wmo"))
+        .expect("the root reads");
     let liquid: Vec<Option<(f32, f32)>> = (0..subject.model.group_nav.len())
         .map(|gi| {
             let bytes = chain.read(&format!("{stem}_{gi:03}.wmo")).ok()?;
-            let mesh = benilla_formats::wmo_group_liquid_mesh(&bytes)?;
+            let mesh = benilla_formats::wmo_group_liquid_mesh(&bytes, rule)?;
             let zs = mesh.positions.iter().map(|p| p[2]);
             let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
             for z in zs {

@@ -5,24 +5,25 @@
 //! - OVERHANG: how far wet cells reach past their own group's XY box, up to 25 yd, which is why
 //!   benilla bounds a pool by that box's Z floor only where the reference tests the whole box
 //!   (`0x6a4e00`).
-//! - DRY-GROUP: a group with a `groupLiquid` other than `0xf` and no MLIQ, which the reference
-//!   answers with an unconditional hit at height `FLT_MAX` (`0x6b9f10`).
+//! - DRY-GROUP: a group whose `groupLiquid` names a liquid under the target's
+//!   [`benilla_formats::WmoLiquidRule`] and no MLIQ, which the reference answers with an
+//!   unconditional hit at height `FLT_MAX` (1.12.1 `0x6b9f10`, 3.3.5a `0x7c8360`).
 //!
 //! Output is Blizzard data: never commit it.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
-use benilla_formats::LiquidMesh;
-
-/// MOGP `groupLiquid` (`+0x34`) for a group holding no liquid.
-const NO_LIQUID: u32 = 0xf;
+use benilla_formats::{LiquidMesh, WmoLiquidRule, NO_GROUP_LIQUID};
 
 /// Half the 34133⅓-yard map (32 tiles × 533⅓), the MODF-to-world origin shift.
 const MAP_CENTER: f32 = 17066.666;
 
 struct Group {
+    /// MOGP `groupLiquid` (`+0x34`), raw.
     liquid_type: u32,
+    /// [`Self::liquid_type`] read by the target's rule, [`NO_GROUP_LIQUID`] for none.
+    own_liquid: u32,
     liquid: Option<LiquidMesh>,
     /// MOGP bounding box in model space, at `+0x0c`.
     lo: [f32; 3],
@@ -60,15 +61,17 @@ fn chunk<'a>(bytes: &'a [u8], magic: &[u8; 4]) -> Option<&'a [u8]> {
     None
 }
 
-fn read_group(bytes: &[u8]) -> Option<Group> {
+fn read_group(bytes: &[u8], rule: WmoLiquidRule) -> Option<Group> {
     let mogp = chunk(bytes, b"PGOM")?; // MOGP
     if mogp.len() < 0x44 {
         return None;
     }
     let corner = |i: usize| Some([f32_at(mogp, i)?, f32_at(mogp, i + 4)?, f32_at(mogp, i + 8)?]);
+    let liquid_type = u32_at(mogp, 0x34)?;
     Some(Group {
-        liquid_type: u32_at(mogp, 0x34)?,
-        liquid: benilla_formats::wmo_group_liquid_mesh(bytes),
+        liquid_type,
+        own_liquid: rule.group_liquid(liquid_type, u32_at(mogp, 0x08)?),
+        liquid: benilla_formats::wmo_group_liquid_mesh(bytes, rule),
         lo: corner(0x0c)?,
         hi: corner(0x18)?,
     })
@@ -238,18 +241,23 @@ fn main() -> anyhow::Result<()> {
 
     for (model, sites) in &placed {
         let stem = model.strip_suffix(".wmo").unwrap_or(model);
+        let Some(rule) = WmoLiquidRule::for_group_path(&chain, &format!("{stem}_000.wmo")) else {
+            continue;
+        };
         let mut groups: Vec<Group> = Vec::new();
         for gi in 0.. {
             let Ok(gb) = chain.read_file(&format!("{stem}_{gi:03}.wmo")) else {
                 break;
             };
-            let Some(g) = read_group(&gb) else { break };
+            let Some(g) = read_group(&gb, rule) else {
+                break;
+            };
             let e = type_census.entry(g.liquid_type).or_default();
             if has_mliq(&gb) {
                 e.0 += 1;
             } else {
                 e.1 += 1;
-                if g.liquid_type != NO_LIQUID {
+                if g.own_liquid != NO_GROUP_LIQUID {
                     // Aim at the room's box centre, just off its floor, not the placement origin.
                     let mid = |a: usize| (g.lo[a] + g.hi[a]) * 0.5;
                     dry_groups.push(format!(
@@ -354,7 +362,10 @@ fn main() -> anyhow::Result<()> {
         let Ok(bytes) = chain.read_file(&name) else {
             continue;
         };
-        let Some(g) = read_group(&bytes) else {
+        let Some(rule) = WmoLiquidRule::for_group_path(&chain, &lower) else {
+            continue;
+        };
+        let Some(g) = read_group(&bytes, rule) else {
             continue;
         };
         let mliq = has_mliq(&bytes);
@@ -364,7 +375,7 @@ fn main() -> anyhow::Result<()> {
         } else {
             e.1 += 1;
         }
-        if g.liquid_type != NO_LIQUID {
+        if g.own_liquid != NO_GROUP_LIQUID {
             odd.push(format!(
                 "  {lower}  liquidType {}  {}",
                 g.liquid_type,
@@ -376,7 +387,10 @@ fn main() -> anyhow::Result<()> {
     for (ty, (with, without)) in &all_census {
         println!("  {ty:>5} -> {with:>5} with MLIQ, {without:>5} without");
     }
-    println!("\n  every non-0xf group in the archive ({}):", odd.len());
+    println!(
+        "\n  every group with liquid of its own in the archive ({}):",
+        odd.len()
+    );
     for line in &odd {
         println!("{line}");
     }
@@ -387,7 +401,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     println!(
-        "\n=== DRY-GROUP: groupLiquid != 0xf but no MLIQ chunk ({}) ===",
+        "\n=== DRY-GROUP: liquid of its own but no MLIQ chunk ({}) ===",
         dry_groups.len()
     );
     for line in &dry_groups {

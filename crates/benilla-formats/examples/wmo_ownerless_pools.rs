@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 use benilla_formats::{
-    parse_wmo_portals, parse_wmo_root, wmo_group_liquid_mesh, wmo_root_id, Chain,
+    parse_wmo_portals, parse_wmo_root, wmo_group_liquid_mesh, wmo_root_id, Chain, WmoLiquidRule,
 };
 
 /// What one root says about the two axes.
@@ -139,6 +139,7 @@ fn main() -> anyhow::Result<()> {
             continue;
         };
         let portals = parse_wmo_portals(&bytes);
+        let rule = WmoLiquidRule::for_root(chain.expansion(), &root);
         let stem = k.strip_suffix(".wmo").unwrap_or(k).to_string();
         let mut row = Root {
             wmo_id: wmo_root_id(&bytes),
@@ -152,7 +153,7 @@ fn main() -> anyhow::Result<()> {
             let Ok(gbytes) = chain.read(&format!("{stem}_{gi:03}.wmo")) else {
                 continue;
             };
-            let Some(mesh) = wmo_group_liquid_mesh(&gbytes) else {
+            let Some(mesh) = wmo_group_liquid_mesh(&gbytes, rule) else {
                 continue;
             };
             row.liquid_groups += 1;
