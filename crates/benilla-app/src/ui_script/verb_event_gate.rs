@@ -217,7 +217,10 @@ fn sources() -> Vec<(PathBuf, String)> {
             {
                 continue;
             }
-            let whole = std::fs::read_to_string(&p).unwrap_or_default();
+            // A CRLF checkout (`core.autocrlf` on Windows) would hide the cut below.
+            let whole = std::fs::read_to_string(&p)
+                .unwrap_or_default()
+                .replace("\r\n", "\n");
             let head = whole
                 .rfind("#[cfg(test)]\nmod ")
                 .map_or(whole.as_str(), |i| &whole[..i]);
