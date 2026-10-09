@@ -925,7 +925,17 @@ fn writer_loop(
                         target,
                         text,
                         language,
-                    } => w.send_message_chat(kind.chat_type(), language, target.as_deref(), &text),
+                    } => match kind.chat_type() {
+                        Some(chat_type) => {
+                            w.send_message_chat(chat_type, language, target.as_deref(), &text)
+                        }
+                        None => {
+                            bevy::log::warn!(
+                                "net: {kind:?} chat has no wire type on this client; not sent"
+                            );
+                            Ok(())
+                        }
+                    },
                     // The distribution is an enum, so its map to a chat type is total.
                     ClientCommand::AddonMessage { distribution, text } => {
                         w.send_addon_message(super::addon_wire_chat_type(distribution), &text)

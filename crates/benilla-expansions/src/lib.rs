@@ -5,10 +5,12 @@
 use std::fmt;
 use std::sync::OnceLock;
 
+pub mod chat;
 pub mod dbc;
 pub mod ui;
 pub mod update_fields;
 
+pub use chat::ChatTypes;
 pub use dbc::DbcLayouts;
 pub use ui::ScriptArgs;
 pub use update_fields::UpdateFieldLayout;
@@ -90,6 +92,8 @@ pub struct ExpansionProfile {
     pub glue: GlueScreens,
     pub dbc: DbcLayouts,
     pub update_fields: &'static UpdateFieldLayout,
+    /// `CMSG_MESSAGECHAT`'s `type` per chat lane.
+    pub chat_types: &'static ChatTypes,
     /// How a script handler receives its frame and arguments.
     pub script_args: ScriptArgs,
     /// Whether the unit-token resolver raises `Unknown unit name: %s` for a token it does not
@@ -235,6 +239,7 @@ static CLASSIC: ExpansionProfile = ExpansionProfile {
     },
     dbc: dbc::CLASSIC,
     update_fields: &update_fields::CLASSIC,
+    chat_types: &chat::CLASSIC,
     script_args: ScriptArgs::Globals,
     // `0x515970` ends in `luaL_error` at `0x515c14`.
     unknown_unit_token_raises: true,
@@ -301,6 +306,7 @@ static WOTLK: ExpansionProfile = ExpansionProfile {
     },
     dbc: dbc::WOTLK,
     update_fields: &update_fields::WOTLK,
+    chat_types: &chat::WOTLK,
     script_args: ScriptArgs::Parameters,
     // `Wow.exe` holds no unit-name error string at all; its resolver also takes `focus`, `boss%d`,
     // `vehicle`, `arenapet`, `questnpc` and `commentator` (the token strings at `0x62156c`).

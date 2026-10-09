@@ -234,14 +234,14 @@ impl ChatLog {
             Some(i) => (text[..i].to_string(), text[i + 1..].to_string()),
             None => (text.to_string(), String::new()),
         };
-        // The protocol's constants, the same ones `crate::net::addon_wire_chat_type` sends.
+        // The target's numbering, the same one `crate::net::addon_wire_chat_type` sends.
         let distribution = {
-            use benilla_protocol::messages as m;
+            let t = crate::net::chat_types();
             match u32::from(chat_type) {
-                m::CHAT_TYPE_PARTY => "PARTY",
-                m::CHAT_TYPE_RAID => "RAID",
-                m::CHAT_TYPE_GUILD => "GUILD",
-                m::CHAT_TYPE_BATTLEGROUND => "BATTLEGROUND",
+                n if n == t.party => "PARTY",
+                n if n == t.raid => "RAID",
+                n if n == t.guild => "GUILD",
+                n if n == t.battleground => "BATTLEGROUND",
                 _ => "UNKNOWN",
             }
         }
