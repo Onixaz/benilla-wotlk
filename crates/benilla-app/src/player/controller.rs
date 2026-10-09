@@ -499,6 +499,11 @@ pub(super) fn control(
         let surface_y = swim::surface_over_feet(world, player.pos);
         // For the camera's water corridor, which reads it a frame late, as `0x670630` does.
         player.liquid_surface = surface_y;
+        if benilla_assets::trace::enabled() {
+            let claim = world.claim(benilla_world::world_point::Subject::Player);
+            let wow = benilla_assets::coords::bevy_to_wow(player.pos);
+            move_trace::liquid_claim(&format!("{claim:?}"), wow, surface_y);
+        }
         let swimming = swim::update_swimming(&mut player, surface_y, time.elapsed_secs());
         if let Some(surface) = surface_y {
             move_trace::swim(player.pos.y, surface, swimming, player.collision_height.0);

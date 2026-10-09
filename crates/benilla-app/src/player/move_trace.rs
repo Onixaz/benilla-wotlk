@@ -4,6 +4,7 @@
 //! - `move`: an interesting frame of the player mover ([`frame`]): a step-down snap, a grounded
 //!   flip, an airborne frame or a sizeable vertical delta. The walk arm alone emits it.
 //! - `swim`: a frame over liquid ([`swim`]): the depth against the two latch thresholds.
+//! - `liq`: the player's liquid claim when it changes ([`liquid_claim`]): which room's water answers.
 //! - `mvr`: a mover-claim packet ([`mover_claim`]), which decides whether the server accepts `snd`.
 //! - `sit`: a stand-state decision ([`posture`]), committed or refused, from `X` or `/sit`.
 //! - `gait`: a walk/run toggle decision ([`gait`]), committed or refused.
@@ -123,6 +124,31 @@ pub(super) fn mover_claim(what: &str, guid: u64) {
         return;
     }
     trace::line("mvr", &format!("{what} guid={guid:#x}"));
+}
+
+/// One `liq` line whenever the player's liquid claim, or whether a surface answers it, changes:
+/// the claim names the room whose MLIQ the swim query reads, so a dry verdict in visible water
+/// reads apart into a wrong room and a missing surface. `wow` is the feet in WoW coordinates.
+pub(super) fn liquid_claim(claim: &str, wow: [f32; 3], surface_y: Option<f32>) {
+    static LAST: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+    if !trace::enabled() {
+        return;
+    }
+    let key = format!("{claim} wet={}", surface_y.is_some());
+    let Ok(mut last) = LAST.lock() else {
+        return;
+    };
+    if *last == key {
+        return;
+    }
+    trace::line(
+        "liq",
+        &format!(
+            "feet [{:.2} {:.2} {:.2}] {claim} surface={surface_y:?}",
+            wow[0], wow[1], wow[2]
+        ),
+    );
+    *last = key;
 }
 
 /// One `swim` line per frame over liquid: waterline, feet, depth, the two latch thresholds and the
