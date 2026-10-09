@@ -15,6 +15,20 @@ pub struct DbcLayouts {
     pub creature_display_info_extra: CreatureDisplayInfoExtra,
     pub item_display_info: ItemDisplayInfo,
     pub map: Map,
+    pub loading_screens: LoadingScreens,
+    pub game_tips: GameTips,
+}
+
+/// `LoadingScreens.dbc`; `ID`, `Name` and `FileName` are columns 0, 1 and 2 in both clients.
+#[derive(Debug)]
+pub struct LoadingScreens {
+    pub fields: usize,
+}
+
+/// `GameTips.dbc`: `ID`, then `Text_lang` (its enUS column 1 in both clients), then its mask.
+#[derive(Debug)]
+pub struct GameTips {
+    pub fields: usize,
 }
 
 /// `Map.dbc`; the id and `Directory` are columns 0 and 1, `InstanceType` 2, in both clients.
@@ -216,6 +230,9 @@ pub(crate) const CLASSIC: DbcLayouts = DbcLayouts {
             minimap_icon_scale: 41,
         }),
     },
+    loading_screens: LoadingScreens { fields: 3 },
+    // Eight locales and the mask.
+    game_tips: GameTips { fields: 10 },
 };
 
 /// Build 12340, each checked against the shipped files row for row with 1.12.1's.
@@ -287,6 +304,11 @@ pub(crate) const WOTLK: DbcLayouts = DbcLayouts {
         loading_screen: 57,
         battleground: None,
     },
+    // `HasWideScreen` closes the record: 1 on the continents, which ship a `…Wide.blp` beside the
+    // art.
+    loading_screens: LoadingScreens { fields: 4 },
+    // Sixteen locales and the mask.
+    game_tips: GameTips { fields: 18 },
 };
 
 #[cfg(test)]
@@ -334,6 +356,7 @@ mod tests {
             assert!(l.creature_model_data.fields >= 16 && l.helmet_geoset_vis_data.fields >= 6);
             let m = &l.map;
             assert!(m.map_name > 2 && m.loading_screen < m.fields);
+            assert!(l.loading_screens.fields >= 3 && l.game_tips.fields > 2);
             if let Some(b) = &m.battleground {
                 assert!(b.minimap_icon_scale < m.fields && b.unnamed + 2 < b.descriptions[0]);
             }

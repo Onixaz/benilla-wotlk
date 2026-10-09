@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
+use benilla_expansions::dbc::GameTips as GameTipsLayout;
 
 use crate::chain::Chain;
 use crate::dbc::{parse, str_at};
@@ -38,10 +39,15 @@ impl GameTipsCatalog {
     }
 }
 
-fn schema() -> Schema {
+/// `ID`, the localized text in the layout's locale count, then its mask.
+fn schema(l: &GameTipsLayout) -> Schema {
     let mut s = Schema::new("GameTips");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
-    s.add_field(SchemaField::new_array("Text", FieldType::String, 8));
+    s.add_field(SchemaField::new_array(
+        "Text",
+        FieldType::String,
+        l.fields - 2,
+    ));
     s.add_field(SchemaField::new("TextMask", FieldType::UInt32));
     s.set_key_field("ID");
     s
@@ -49,7 +55,11 @@ fn schema() -> Schema {
 
 pub fn load_game_tips(chain: &mut Chain) -> Result<GameTipsCatalog> {
     let bytes = chain.read_file(GAME_TIPS).context("reading GameTips.dbc")?;
-    let rs = parse(&bytes, schema(), "GameTips")?;
+    let rs = parse(
+        &bytes,
+        schema(&chain.expansion().profile().dbc.game_tips),
+        "GameTips",
+    )?;
     let mut tips = Vec::with_capacity(rs.records().len());
     for r in rs.records() {
         // A row with an empty text slot is dropped, not shown blank; the shipped file has none.
@@ -69,6 +79,9 @@ mod tests {
     fn the_real_table_is_seventy_four_tips_in_file_order() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
+        if chain.expansion() != benilla_expansions::Expansion::Classic {
+            return; // 3.3.5a's table: the next test
+        }
         let cat = load_game_tips(&mut chain).expect("load GameTips");
         assert_eq!(cat.len(), 74, "the 5875 enGB chain ships 74 tips");
         assert!(
@@ -85,5 +98,22 @@ mod tests {
             cat.get(74).is_none(),
             "one past the end is None, not a panic"
         );
+    }
+
+    #[test]
+    fn a_3_3_5a_table_reads_its_enus_column() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        if chain.expansion() != benilla_expansions::Expansion::Wotlk {
+            return; // 1.12.1's table: the test above
+        }
+        let cat = load_game_tips(&mut chain).expect("load GameTips");
+        assert_eq!(cat.len(), 142, "the 12340 chain ships 142 tips");
+        assert!(
+            cat.get(0).unwrap().starts_with("|cffffd100"),
+            "{:?}",
+            cat.get(0)
+        );
+        assert!(cat.get(142).is_none());
     }
 }
