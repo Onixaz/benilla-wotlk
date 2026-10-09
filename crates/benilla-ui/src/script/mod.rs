@@ -536,7 +536,7 @@ impl UiScript {
         worn_display::install(&lua)?;
         death::install(&lua)?;
         aura::install(&lua)?;
-        cvars::install(&lua)?;
+        cvars::install(&lua, expansion.profile())?;
         nameplate::install_verbs(&lua)?;
         saved::install(&lua)?;
         keybind::install(&lua)?;

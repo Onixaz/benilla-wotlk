@@ -363,12 +363,27 @@ pub fn sstr_to_int(s: &str) -> i32 {
     }
 }
 
+/// How 3.3.5a reads a CVar value as a boolean (`0x815400`, default false): by its first byte, a
+/// digit other than `0` or one of `tTyY` is true and `0` or one of `fFnN` false; any other first
+/// byte, the empty string included, is false unless the whole value is `on` or `enabled`, in any
+/// case (`off` and `disabled` are tested first, also false).
+fn cvar_truth(value: &str) -> bool {
+    match value.as_bytes().first() {
+        Some(b'0' | b'f' | b'F' | b'n' | b'N') => false,
+        Some(b'1'..=b'9' | b't' | b'T' | b'y' | b'Y') => true,
+        _ => value.eq_ignore_ascii_case("on") || value.eq_ignore_ascii_case("enabled"),
+    }
+}
+
 /// What `SetCVar` and `RegisterCVar` store for a value with no string form (`0x82e570`, loaded
 /// at `0x488c98` and `0x488b6f`).
 const NO_STRING_FORM: &str = "0";
 
 /// `0x84235c`, verbatim, the unbalanced parenthesis included.
 const USAGE_SET_CVAR: &str = "Usage: SetCVar(\"cvar\", value [, \"scriptCvar\")";
+
+/// 3.3.5a `0x9f5758`, verbatim.
+const USAGE_GET_CVAR_BOOL: &str = "Usage: GetCVarBool(\"cvar\")";
 
 /// `0x8422e8`, verbatim.
 const USAGE_REGISTER_CVAR: &str = "Usage: RegisterCVar(\"cvar\" [, default])";
@@ -379,7 +394,10 @@ const USAGE_REGISTER_CVAR: &str = "Usage: RegisterCVar(\"cvar\" [, default])";
 /// `InitializeGame` does before `UI_Init`.
 pub const IN_WORLD_READ_ONLY_CVARS: [&str; 3] = ["realmList", "realmName", "scriptMemory"];
 
-pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
+pub(super) fn install(
+    lua: &Lua,
+    client: &benilla_expansions::ExpansionProfile,
+) -> mlua::Result<()> {
     // `RegisterCVar(name, value)` (`0x488b00`) declares a CVar the client does not ship, which is
     // how an addon persists a setting. Re-declaring a live name is a no-op: the reference never
     // resets a live value on re-registration (`0x488b7d`).
@@ -441,6 +459,31 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
         })?,
     )?;
+    if client.get_cvar_bool {
+        // 3.3.5a's `GetCVarBool(name)` (world `0x5100c0`): 1 when the value reads as true, else
+        // nil. A name `lua_isstring` refuses raises the usage; an unknown name is nil, unraised.
+        lua.globals().set(
+            "GetCVarBool",
+            lua.create_function(|lua, args: mlua::MultiValue| {
+                let Some(name) = cvar_arg(args.front()) else {
+                    return Err(mlua::Error::runtime(USAGE_GET_CVAR_BOOL));
+                };
+                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let truth = match model.cvars.get(&name.to_ascii_lowercase()) {
+                    Some(slot) => cvar_truth(&slot.value),
+                    None => {
+                        warn_unknown(&mut model, &name);
+                        false
+                    }
+                };
+                Ok(if truth {
+                    Value::Number(1.0)
+                } else {
+                    Value::Nil
+                })
+            })?,
+        )?;
+    }
     // ── The Video options Multisampling dropdown ──────────────────────────────────────────────
     // As `OptionsFrame.lua` drives it: `_OnLoad` seeds the selection from
     // `GetCurrentMultisampleFormat()`, `_Initialize` walks `GetMultisampleFormats()` three values
@@ -1202,5 +1245,61 @@ mod tests {
             .eval(r#"return string.gsub(GetCVar("realmName"), "^%s*", "")"#)
             .unwrap();
         assert_eq!(trimmed, "Archimonde");
+    }
+
+    #[test]
+    fn get_cvar_bool_is_a_wotlk_global_only() {
+        let classic = UiScript::new_for(benilla_expansions::Expansion::Classic).unwrap();
+        assert!(classic.eval::<bool>("return GetCVarBool == nil").unwrap());
+        let wotlk = UiScript::new_for(benilla_expansions::Expansion::Wotlk).unwrap();
+        assert!(wotlk
+            .eval::<bool>(r#"return type(GetCVarBool) == "function""#)
+            .unwrap());
+    }
+
+    /// `0x815400` by the first byte, then `on`/`enabled` whole and in any case.
+    #[test]
+    fn get_cvar_bool_reads_the_value_as_wotlk_does() {
+        let s = UiScript::new_for(benilla_expansions::Expansion::Wotlk).unwrap();
+        let rows = [
+            ("1", true),
+            ("10", true),
+            ("9", true),
+            ("0", false),
+            ("0.5", false),
+            ("", false),
+            ("-1", false),
+            ("true", true),
+            ("Yes", true),
+            ("false", false),
+            ("no", false),
+            ("ON", true),
+            ("Enabled", true),
+            ("off", false),
+            ("disabled", false),
+            ("onward", false),
+            ("x", false),
+        ];
+        let names: Vec<String> = (0..rows.len()).map(|i| format!("Bool{i}")).collect();
+        s.register_cvars(names.iter().zip(rows).map(|(n, (v, _))| (n.as_str(), v)));
+        for (name, (value, want)) in names.iter().zip(rows) {
+            let got = s
+                .eval::<Option<f64>>(&format!("return GetCVarBool({name:?})"))
+                .unwrap();
+            assert_eq!(got, want.then_some(1.0), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn get_cvar_bool_answers_nil_for_an_unknown_name_and_raises_on_no_name() {
+        let s = UiScript::new_for(benilla_expansions::Expansion::Wotlk).unwrap();
+        let out: mlua::MultiValue = s
+            .lua()
+            .load(r#"return GetCVarBool("noSuchCVar")"#)
+            .eval()
+            .unwrap();
+        assert!(matches!(out.into_vec().as_slice(), [mlua::Value::Nil]));
+        let err = s.run("GetCVarBool()").unwrap_err().to_string();
+        assert!(err.contains(r#"Usage: GetCVarBool("cvar")"#), "{err}");
     }
 }

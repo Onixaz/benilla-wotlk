@@ -95,6 +95,8 @@ pub struct ExpansionProfile {
     /// Whether the unit-token resolver raises `Unknown unit name: %s` for a token it does not
     /// recognise, rather than naming nobody.
     pub unknown_unit_token_raises: bool,
+    /// Whether the Lua API has `GetCVarBool`, a CVar's value read as a boolean.
+    pub get_cvar_bool: bool,
     /// The `ChrRaces` ids a player can create, ascending.
     pub playable_races: &'static [u8],
     /// The highest geoset id the character compositor selects; a character model's higher ids
@@ -230,6 +232,8 @@ static CLASSIC: ExpansionProfile = ExpansionProfile {
     script_args: ScriptArgs::Globals,
     // `0x515970` ends in `luaL_error` at `0x515c14`.
     unknown_unit_token_raises: true,
+    // No 1.12.1 registration table names it (`reference/1.12-shapes.tsv`).
+    get_cvar_bool: false,
     // Human through Troll; Goblin (9) and above are not creatable.
     playable_races: &[1, 2, 3, 4, 5, 6, 7, 8],
     // `0x477520` disables 0..=1700 (`0x6a4`) before enabling its picks.
@@ -291,6 +295,8 @@ static WOTLK: ExpansionProfile = ExpansionProfile {
     // `Wow.exe` holds no unit-name error string at all; its resolver also takes `focus`, `boss%d`,
     // `vehicle`, `arenapet`, `questnpc` and `commentator` (the token strings at `0x62156c`).
     unknown_unit_token_raises: false,
+    // Both registration tables bind it: glue `0x4ddd90`, world `0x5100c0`.
+    get_cvar_bool: true,
     // 1.12.1's eight, Blood Elf and Draenei; the shipped `CharBaseInfo` lists exactly these.
     playable_races: &[1, 2, 3, 4, 5, 6, 7, 8, 10, 11],
     // Groups 17 (eye glow) and 18 (belt) join the selection; WowUnreal's 3.3.5a builder defaults
