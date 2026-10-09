@@ -392,6 +392,9 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
             let f: Value = m.get(*name)?;
             leaf.set(*name, f)?;
         }
+        if key == REG_FONTSTRING_METHODS {
+            text::install_formatted(lua, &leaf)?;
+        }
         lua.set_named_registry_value(key, leaf)?;
     }
     for (meta_key, methods_key) in [

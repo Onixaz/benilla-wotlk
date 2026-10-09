@@ -458,6 +458,16 @@ fn texture_pair(lua: &Lua, m: &Table, name: &str, slot: Slot) -> mlua::Result<()
     Ok(())
 }
 
+/// `text` into the button's label, created on first use.
+fn set_label(lua: &Lua, this: &Table, text: String) -> mlua::Result<()> {
+    let id = ensure_slot(lua, this, Slot::Text)?;
+    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let rh = *model.id_to_region.get(&id).expect("text region id");
+    model.region_data.entry(rh).or_default().text = Some(text);
+    model.touch_measure(rh);
+    Ok(())
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
 
@@ -474,14 +484,27 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             // A nil returns at once (`0x778dcc`): no clear, no label created. The guard is the
             // button's own; `FontString:SetText(nil)` clears (`0x771d80`).
             let Some(text) = text else { return Ok(()) };
-            let id = ensure_slot(lua, &this, Slot::Text)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
-            let rh = *model.id_to_region.get(&id).expect("text region id");
-            model.region_data.entry(rh).or_default().text = Some(text);
-            model.touch_measure(rh);
-            Ok(())
+            set_label(lua, &this, text)
         })?,
     )?;
+    if lua
+        .app_data_ref::<Model>()
+        .expect("model app_data")
+        .set_formatted_text
+    {
+        // 3.3.5a's `Button:SetFormattedText(fmt, ...)` (`0x9779b0`). Its setter (`0x96f860`)
+        // creates no label for an empty string.
+        m.set(
+            "SetFormattedText",
+            lua.create_function(|lua, (this, args): (Table, MultiValue)| {
+                let text = super::formatted_text::format(lua, &args)?;
+                if text.is_empty() && with_button(lua, &this, |bs| bs.text)?.is_none() {
+                    return Ok(());
+                }
+                set_label(lua, &this, text)
+            })?,
+        )?;
+    }
     // GetText (`0x780e10`): nil for no label, and for an empty one (`0x780ec5`).
     m.set(
         "GetText",

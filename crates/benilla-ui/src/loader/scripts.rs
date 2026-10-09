@@ -29,7 +29,9 @@ impl Loader<'_> {
                 // (`0x7025f8`), and nothing trims the body (`0x6f29d0`). The stock blanks
                 // (`BuffFrame.xml:101`) are whitespace, so their `GetScript` answers a function.
                 let cleared = handler.body.is_empty();
-                let func = if cleared {
+                let func = if let Some(global) = self.function_attribute(handler) {
+                    self.named_handler(&global, &name, &owner)
+                } else if cleared {
                     None
                 } else {
                     match self.compile_handler(handler, &name, &owner, dbg) {
@@ -77,11 +79,38 @@ impl Loader<'_> {
         onload
     }
 
+    /// The non-empty `function=` of a handler element, on a target whose loader reads it.
+    fn function_attribute(&self, handler: &Element) -> Option<String> {
+        if !self.model().script_function_attribute {
+            return None;
+        }
+        handler
+            .attr("function")
+            .filter(|f| !f.is_empty())
+            .map(str::to_string)
+    }
+
+    /// 3.3.5a's `function="Name"` (`0x490009`): `_G[Name]`, read raw (`0x84e600`) once at load,
+    /// is the handler and the body is unused. A nil logs `"Frame %s: Unknown function %s in
+    /// element %s"` (`0x9eb7f0`) and clears the handler. Deviation: a non-function value, which
+    /// the reference keeps until a call fails, is logged the same way and cleared.
+    fn named_handler(&mut self, global: &str, name: &str, owner: &str) -> Option<Function> {
+        match self.lua().globals().raw_get::<mlua::Value>(global) {
+            Ok(mlua::Value::Function(f)) => Some(f),
+            _ => {
+                self.report.warnings.push(format!(
+                    "Frame {owner}: Unknown function {global} in element {name}"
+                ));
+                None
+            }
+        }
+    }
+
     /// Compile a handler body as the target client does. 1.12.1 loads the body as the chunk itself
     /// (`0x704c70`): it takes no arguments and reads its frame from `this`, so a `self` in it is an
     /// ordinary global. 3.3.5a formats it into `return function(<params>) %s end` and keeps the
     /// function the chunk returns, the body on the template's first line so its line numbers hold.
-    /// The loader reads no other attribute of the element (no `function=`).
+    /// A 3.3.5a `function=` replaces the body before this is reached ([`Self::named_handler`]).
     pub(super) fn compile_handler(
         &mut self,
         handler: &Element,

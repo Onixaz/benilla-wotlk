@@ -66,6 +66,10 @@ pub(crate) struct Model {
     /// Whether an unrecognised unit token raises `Unknown unit name` or names nobody: the target
     /// client's resolver.
     pub(crate) unknown_unit_token_raises: bool,
+    /// Whether FontString and Button carry `SetFormattedText`: the target client's method tables.
+    pub(crate) set_formatted_text: bool,
+    /// Whether an XML handler's `function=` names its handler: the target client's loader.
+    pub(crate) script_function_attribute: bool,
     /// Every discovered addon in load order: the AddOn API's registry, filled at world entry.
     pub(crate) addons: Vec<super::addon::AddOnInfo>,
     /// The Lua index space into `addons`, a title-sorted, hidden-filtered list (`0x51da70`).
@@ -1040,6 +1044,8 @@ impl Model {
         Model {
             script_args: client.script_args,
             unknown_unit_token_raises: client.unknown_unit_token_raises,
+            set_formatted_text: client.set_formatted_text,
+            script_function_attribute: client.script_function_attribute,
             addons: Vec::new(),
             addon_index: Vec::new(),
             addon_info_hidden: None,

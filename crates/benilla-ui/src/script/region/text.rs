@@ -8,6 +8,40 @@ use crate::script::Model;
 
 use super::region_handle_of;
 
+/// The string `SetText` (`0x771d80`) stores.
+fn set_text(lua: &Lua, this: &Table, text: Option<String>) -> mlua::Result<()> {
+    let rh = region_handle_of(lua, this)?;
+    let mut model = lua.app_data_mut::<Model>().expect("model");
+    let data = model.region_data.entry(rh).or_default();
+    data.text = text;
+    // Fresh text draws whole: an armed write-on gradient belongs to the old string.
+    data.alpha_gradient = None;
+    // SetText must not touch the layout, since the extent has not moved yet; it names itself on
+    // the measure ledger.
+    model.touch_measure(rh);
+    Ok(())
+}
+
+/// 3.3.5a's `FontString:SetFormattedText(fmt, ...)` (`0x48d800`) into the FontString `leaf`, when
+/// the target client has it: the formatted text through `SetText`'s own store (`0x483910`), so
+/// never nil.
+pub(super) fn install_formatted(lua: &Lua, leaf: &Table) -> mlua::Result<()> {
+    if !lua
+        .app_data_ref::<Model>()
+        .expect("model")
+        .set_formatted_text
+    {
+        return Ok(());
+    }
+    leaf.set(
+        "SetFormattedText",
+        lua.create_function(|lua, (this, args): (Table, mlua::MultiValue)| {
+            let text = crate::script::formatted_text::format(lua, &args)?;
+            set_text(lua, &this, Some(text))
+        })?,
+    )
+}
+
 /// Install the FontString methods into `m`.
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
@@ -15,20 +49,11 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, text): (Table, Option<mlua::Value>)| {
             // `text_arg`, since a Lua string is bytes and a slice of one need not be valid UTF-8.
             let text = crate::script::binding_abi::text_arg(lua, text)?;
-            let rh = region_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
-            let data = model.region_data.entry(rh).or_default();
-            data.text = text;
-            // Fresh text draws whole: an armed write-on gradient belongs to the old string.
-            data.alpha_gradient = None;
-            // SetText must not touch the layout, since the extent has not moved yet; it names
-            // itself on the measure ledger.
-            model.touch_measure(rh);
-            Ok(())
+            set_text(lua, &this, text)
         })?,
     )?;
 
-    // No `SetFormattedText`: not a 1.12 verb; 1.12 writes `SetText(format(fmt, ...))`.
+    // No `SetFormattedText` here: not a 1.12 verb; 1.12 writes `SetText(format(fmt, ...))`.
 
     // GetText answers nil for "" (`0x79d690`, its first-byte test at `0x79d73b`), though `SetText`
     // (`0x771d80`) keeps a non-NULL empty buffer (`0x771e7e`). The rule is per binding, not per

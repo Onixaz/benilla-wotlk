@@ -2447,11 +2447,11 @@ mod chunk_name_tests {
         assert_eq!(s.eval::<String>("return SEEN").unwrap(), "Hooked");
     }
 
-    /// The loader reads no `function=` attribute: a handler element with no body clears the
+    /// 1.12.1's loader reads no `function=` attribute: a handler element with no body clears the
     /// handler, whatever global the attribute names.
     #[test]
     fn a_function_attribute_binds_nothing() {
-        let s = UiScript::new().unwrap();
+        let s = UiScript::new_for(benilla_expansions::Expansion::Classic).unwrap();
         s.run("function NamedHandler() RAN = true end").unwrap();
         let doc = parse(
             r#"<Ui>
@@ -2588,5 +2588,64 @@ mod script_args_tests {
         assert_eq!(s.eval::<String>("return EventName").unwrap(), "ARGS_PROBE");
         assert_eq!(s.eval::<String>("return EventArg1").unwrap(), "payload");
         assert!(s.eval::<bool>("return EventArg == nil").unwrap());
+    }
+
+    const NAMED_DOC: &str = r#"<Ui>
+        <Script>
+            function Named_OnUpdate(self, elapsed) NamedSelf = self; NamedElapsed = elapsed end
+            function Named_OnLoad(self) NamedLoaded = self end
+        </Script>
+        <Frame name="NamedProbe">
+            <Scripts>
+                <OnLoad function="Named_OnLoad"/>
+                <OnUpdate function="Named_OnUpdate">BodyRan = true</OnUpdate>
+                <OnShow function="NoSuchFunction"/>
+                <OnHide function="">EmptyNameBodyRan = true</OnHide>
+            </Scripts>
+        </Frame>
+    </Ui>"#;
+
+    fn named() -> (UiScript, crate::loader::LoadReport) {
+        let mut s = UiScript::new_for(Expansion::Wotlk).unwrap();
+        s.set_screen_size(800.0, 600.0);
+        let doc = framexml::parse(NAMED_DOC).expect("valid FrameXML");
+        let report = load(&s, &doc, &no_files);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        s.tick(0.25);
+        (s, report)
+    }
+
+    /// `WorldFrame.xml`'s `<OnUpdate function="WorldFrame_OnUpdate"/>`: the global is the
+    /// handler, called with the script's own arguments, and it wins over a body.
+    #[test]
+    fn a_wotlk_function_attribute_binds_the_global_over_the_body() {
+        let (s, _) = named();
+        assert!(s.errors().is_empty(), "{:?}", s.errors());
+        assert!(s.eval::<bool>("return NamedLoaded == NamedProbe").unwrap());
+        assert!(s.eval::<bool>("return NamedSelf == NamedProbe").unwrap());
+        assert_eq!(s.eval::<f64>("return NamedElapsed").unwrap(), 0.25);
+        assert!(s.eval::<bool>("return BodyRan == nil").unwrap());
+        assert!(s
+            .eval::<bool>("return NamedProbe:GetScript('OnUpdate') == Named_OnUpdate")
+            .unwrap());
+        // An empty name is no name: the body stands.
+        s.run("NamedProbe:Hide()").unwrap();
+        assert!(s.eval::<bool>("return EmptyNameBodyRan == true").unwrap());
+    }
+
+    #[test]
+    fn a_wotlk_function_attribute_naming_nothing_logs_and_clears() {
+        let (s, report) = named();
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w == "Frame NamedProbe: Unknown function NoSuchFunction in element OnShow"),
+            "{:?}",
+            report.warnings
+        );
+        assert!(s
+            .eval::<bool>("return NamedProbe:GetScript('OnShow') == nil")
+            .unwrap());
     }
 }

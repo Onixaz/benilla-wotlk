@@ -97,6 +97,12 @@ pub struct ExpansionProfile {
     pub unknown_unit_token_raises: bool,
     /// Whether the Lua API has `GetCVarBool`, a CVar's value read as a boolean.
     pub get_cvar_bool: bool,
+    /// Whether FontString and Button have `SetFormattedText(fmt, ...)`, which sets the text
+    /// through the client's own formatter.
+    pub set_formatted_text: bool,
+    /// Whether an XML `<Scripts>` handler's `function="Name"` binds the global `Name` as the
+    /// handler, in place of its body.
+    pub script_function_attribute: bool,
     /// The `ChrRaces` ids a player can create, ascending.
     pub playable_races: &'static [u8],
     /// The highest geoset id the character compositor selects; a character model's higher ids
@@ -234,6 +240,10 @@ static CLASSIC: ExpansionProfile = ExpansionProfile {
     unknown_unit_token_raises: true,
     // No 1.12.1 registration table names it (`reference/1.12-shapes.tsv`).
     get_cvar_bool: false,
+    // No 1.12.1 registration table names it (`reference/1.12-shapes.tsv`).
+    set_formatted_text: false,
+    // The handler loader reads only the element's body (`0x704c70`); the schema has no attribute.
+    script_function_attribute: false,
     // Human through Troll; Goblin (9) and above are not creatable.
     playable_races: &[1, 2, 3, 4, 5, 6, 7, 8],
     // `0x477520` disables 0..=1700 (`0x6a4`) before enabling its picks.
@@ -297,6 +307,10 @@ static WOTLK: ExpansionProfile = ExpansionProfile {
     unknown_unit_token_raises: false,
     // Both registration tables bind it: glue `0x4ddd90`, world `0x5100c0`.
     get_cvar_bool: true,
+    // FontString's table binds it at `0x48d800`, Button's at `0x9779b0`.
+    set_formatted_text: true,
+    // `CSimpleFrame`'s script loader reads `function` (`0x490009`) after compiling any body.
+    script_function_attribute: true,
     // 1.12.1's eight, Blood Elf and Draenei; the shipped `CharBaseInfo` lists exactly these.
     playable_races: &[1, 2, 3, 4, 5, 6, 7, 8, 10, 11],
     // Groups 17 (eye glow) and 18 (belt) join the selection; WowUnreal's 3.3.5a builder defaults

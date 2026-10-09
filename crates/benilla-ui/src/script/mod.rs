@@ -46,6 +46,7 @@ mod cursor;
 mod death;
 pub mod diagnostics;
 mod editbox;
+mod formatted_text;
 pub mod instance;
 pub(crate) use editbox::{adopt_text_region, editbox_text_region_wrapper};
 pub(crate) mod addon;
@@ -336,7 +337,8 @@ pub(crate) const TEXTURE_ONLY_METHODS: [&str; 12] = [
 ];
 
 /// FontString-only: the font, text, justify and shadow block and the string metrics.
-/// `GetStringHeight`, `SetFormattedText` and `SetSize` are not 1.12 FontString methods.
+/// `GetStringHeight`, `SetFormattedText` and `SetSize` are not 1.12 FontString methods; 3.3.5a's
+/// `SetFormattedText` goes into the leaf alone (`region::text::install_formatted`).
 pub(crate) const FONTSTRING_ONLY_METHODS: [&str; 21] = [
     "SetFont",
     "GetFont",
