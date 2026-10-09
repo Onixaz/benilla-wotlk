@@ -18,6 +18,8 @@ pub(crate) use resolve::DressKey;
 pub(super) use resolve::{resolve_corpse_equipment, resolve_equipment};
 mod spawn;
 pub(super) use spawn::attach_held_items;
+mod wait;
+pub(super) use wait::warn_unsettled_equipment;
 
 /// The held-item descriptor slots, in vmangos `WeaponAttackType` order: mainhand, offhand, ranged.
 const HELD_SLOTS: usize = 3;

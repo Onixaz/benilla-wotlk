@@ -38,7 +38,9 @@ use carried_light::spawn_carried_lights;
 
 /// Equipment from the descriptor and `ItemDisplayInfo`: armour, held items, helm and shoulders.
 mod equipment;
-use equipment::{attach_held_items, resolve_corpse_equipment, resolve_equipment};
+use equipment::{
+    attach_held_items, resolve_corpse_equipment, resolve_equipment, warn_unsettled_equipment,
+};
 
 /// Item and enchant glows, hung on the item's own attachment points.
 mod item_glow;
@@ -614,6 +616,8 @@ impl Plugin for EntitiesPlugin {
         // After the net stage, whose Commands create the entity; until then its readers take the
         // constructor default.
         .add_systems(Update, stamp_collision_heights.after(WorldStage::Net))
+        // Reads the `Equipment` this frame's resolve wrote.
+        .add_systems(Update, warn_unsettled_equipment.after(resolve_equipment))
         // Display models resolve and build before attach, all after `WorldStage::Net` spawns the
         // entities, or attach would meet an unresolved display and lock in a cube.
         .add_systems(
