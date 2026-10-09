@@ -51,10 +51,11 @@ pub struct ItemInfo {
     pub stackable: u32,
     /// Slots a bag grants; 0 for anything else.
     pub container_slots: u32,
-    /// The 10-slot `ItemStat` block as `(type, value)`, all-zero slots dropped, in wire order
+    /// The `ItemStat` block (10 slots in 1.12.1, `StatsCount` in 3.3.5a) as `(type, value)`,
+    /// all-zero slots dropped, in wire order
     /// (`ItemModType`: 0 mana, 1 health, 3 agility, 4 strength, 5 intellect, 6 spirit, 7 stamina).
     pub stats: Vec<(u32, i32)>,
-    /// The 5-slot `Damage` block, entries with `max > 0` only, in wire order.
+    /// The `Damage` block (5 slots in 1.12.1, 2 in 3.3.5a), entries with `max > 0` only, in wire order.
     pub damages: Vec<ItemDamage>,
     /// Damage block 0's minimum, whether or not block 0 is in [`Self::damages`].
     pub dmg_min: f32,
@@ -306,6 +307,89 @@ pub(super) fn read_item_query_response(r: &mut &[u8]) -> io::Result<(u32, Option
     let ranged_mod_range = read_f32_le(r)?;
 
     // 5 spell blocks of six words (`ItemHandler.cpp:354-391`); an empty block is 0,0,0,-1,0,-1.
+    let (spells, spell_charges_0, use_spell) = read_spell_blocks(r)?;
+
+    let bonding = read_u32_le(r)?;
+    let description = read_cstring(r)?;
+    let page_text = read_u32_le(r)?;
+    let language_id = read_u32_le(r)?;
+    let page_material = read_u32_le(r)?;
+    let start_quest = read_u32_le(r)?;
+    let lock_id = read_u32_le(r)?;
+    let material = read_u32_le(r)?;
+    let sheath = read_u32_le(r)?;
+    let random_property = read_u32_le(r)?;
+    let block = read_u32_le(r)?;
+    let item_set = read_u32_le(r)?;
+    let max_durability = read_u32_le(r)?;
+    let area = read_u32_le(r)?;
+    let map = read_u32_le(r)?;
+    let bag_family = read_u32_le(r)?;
+
+    Ok((
+        entry,
+        Some(ItemInfo {
+            class,
+            subclass,
+            name,
+            display_info_id,
+            quality,
+            flags,
+            buy_price,
+            sell_price,
+            inventory_type,
+            allowable_class,
+            allowable_race,
+            item_level,
+            required_level,
+            required_skill,
+            required_skill_rank,
+            required_spell,
+            required_honor_rank,
+            required_city_rank,
+            required_rep_faction,
+            required_rep_rank,
+            max_count,
+            stackable,
+            container_slots,
+            stats,
+            damages,
+            dmg_min,
+            dmg_max,
+            dmg_type,
+            armor,
+            resistances,
+            delay_ms,
+            ammo_type,
+            ranged_mod_range,
+            spells,
+            spell_charges_0,
+            use_spell,
+            bonding,
+            description,
+            page_text,
+            language_id,
+            page_material,
+            start_quest,
+            lock_id,
+            material,
+            sheath,
+            random_property,
+            block,
+            item_set,
+            max_durability,
+            area,
+            map,
+            bag_family,
+        }),
+    ))
+}
+
+/// The 5 template spell blocks, six words each in 1.12.1 and 3.3.5a alike: the kept blocks,
+/// block 0's charges unfiltered, and the first ON_USE block.
+type SpellBlocks = (Vec<ItemSpellEntry>, i32, Option<ItemUseSpell>);
+
+fn read_spell_blocks(r: &mut &[u8]) -> io::Result<SpellBlocks> {
     let mut spells = Vec::new();
     let mut use_spell = None;
     // Kept even when block 0 has no spell: the reference's charge test reads it regardless.
@@ -340,6 +424,99 @@ pub(super) fn read_item_query_response(r: &mut &[u8]) -> io::Result<(u32, Option
             }
         }
     }
+    Ok((spells, spell_charges_0, use_spell))
+}
+
+/// Read 3.3.5a's `SMSG_ITEM_QUERY_SINGLE_RESPONSE` (AzerothCore `ItemHandler.cpp`
+/// `HandleItemQuerySingleOpcode`, build 12340) into the shared [`ItemInfo`]. Against 1.12.1 it
+/// adds `SoundOverrideSubclass` after the subclass, `Flags2` after the flags, a `StatsCount` ahead
+/// of a stat run that long, `ScalingStatDistribution` and `ScalingStatValue` after it,
+/// `RandomSuffix` after the random property and a 14-word trailer after the bag family, and it
+/// carries 2 damage blocks, not 5. The added fields have no shared place and are read past.
+pub(super) fn read_item_query_response_wotlk(r: &mut &[u8]) -> io::Result<(u32, Option<ItemInfo>)> {
+    let entry = read_u32_le(r)?;
+    if entry & 0x8000_0000 != 0 {
+        return Ok((entry & 0x7FFF_FFFF, None));
+    }
+    let class = read_u32_le(r)?;
+    let subclass = read_u32_le(r)?;
+    let _sound_override_subclass = read_i32_le(r)?;
+    let name = read_cstring(r)?;
+    for _ in 0..3 {
+        let _ = read_cstring(r)?; // name2..name4, always sent empty
+    }
+    let display_info_id = read_u32_le(r)?;
+    let quality = read_u32_le(r)?;
+    let flags = read_u32_le(r)?;
+    let _flags2 = read_u32_le(r)?;
+    let buy_price = read_u32_le(r)?;
+    let sell_price = read_u32_le(r)?;
+    let inventory_type = read_u32_le(r)?;
+    let allowable_class = read_i32_le(r)?;
+    let allowable_race = read_i32_le(r)?;
+    let item_level = read_u32_le(r)?;
+    let required_level = read_u32_le(r)?;
+    let required_skill = read_u32_le(r)?;
+    let required_skill_rank = read_u32_le(r)?;
+    let required_spell = read_u32_le(r)?;
+    let required_honor_rank = read_u32_le(r)?;
+    let required_city_rank = read_u32_le(r)?;
+    let required_rep_faction = read_u32_le(r)?;
+    let required_rep_rank = read_u32_le(r)?;
+    let max_count = read_u32_le(r)?;
+    let stackable = read_u32_le(r)?;
+    let container_slots = read_u32_le(r)?;
+
+    // `StatsCount` ItemStat { type, value } pairs; the template holds at most 10.
+    let stats_count = read_u32_le(r)?;
+    if stats_count > 10 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "item StatsCount above 10",
+        ));
+    }
+    let mut stats = Vec::new();
+    for _ in 0..stats_count {
+        let stat_type = read_u32_le(r)?;
+        let stat_value = read_i32_le(r)?;
+        if stat_type != 0 || stat_value != 0 {
+            stats.push((stat_type, stat_value));
+        }
+    }
+    let _scaling_stat_distribution = read_u32_le(r)?;
+    let _scaling_stat_value = read_u32_le(r)?;
+
+    // 2 Damage { min f32, max f32, type u32 }; block 0 also fills dmg_* unfiltered.
+    let dmg_min = read_f32_le(r)?;
+    let dmg_max = read_f32_le(r)?;
+    let dmg_type = read_u32_le(r)?;
+    let mut damages = Vec::new();
+    if dmg_max > 0.0 {
+        damages.push(ItemDamage {
+            min: dmg_min,
+            max: dmg_max,
+            school: dmg_type,
+        });
+    }
+    let min = read_f32_le(r)?;
+    let max = read_f32_le(r)?;
+    let school = read_u32_le(r)?;
+    if max > 0.0 {
+        damages.push(ItemDamage { min, max, school });
+    }
+
+    let armor = read_u32_le(r)?;
+    // Holy, fire, nature, frost, shadow, arcane.
+    let mut resistances = [0i32; 6];
+    for res in &mut resistances {
+        *res = read_i32_le(r)?;
+    }
+
+    let delay_ms = read_u32_le(r)?;
+    let ammo_type = read_u32_le(r)?;
+    let ranged_mod_range = read_f32_le(r)?;
+
+    let (spells, spell_charges_0, use_spell) = read_spell_blocks(r)?;
 
     let bonding = read_u32_le(r)?;
     let description = read_cstring(r)?;
@@ -351,12 +528,19 @@ pub(super) fn read_item_query_response(r: &mut &[u8]) -> io::Result<(u32, Option
     let material = read_u32_le(r)?;
     let sheath = read_u32_le(r)?;
     let random_property = read_u32_le(r)?;
+    let _random_suffix = read_u32_le(r)?;
     let block = read_u32_le(r)?;
     let item_set = read_u32_le(r)?;
     let max_durability = read_u32_le(r)?;
     let area = read_u32_le(r)?;
     let map = read_u32_le(r)?;
     let bag_family = read_u32_le(r)?;
+
+    // TotemCategory, 3 sockets { color, content }, socketBonus, GemProperties,
+    // RequiredDisenchantSkill, ArmorDamageModifier (f32), Duration, ItemLimitCategory, HolidayId.
+    for _ in 0..14 {
+        let _ = read_u32_le(r)?;
+    }
 
     Ok((
         entry,

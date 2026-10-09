@@ -641,7 +641,10 @@ fn parse_server_body(
             ServerPacket::Emote { guid, emote_id }
         }
         opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE => {
-            let (entry, info) = items::read_item_query_response(&mut r)?;
+            let (entry, info) = match expansion {
+                Expansion::Classic => items::read_item_query_response(&mut r)?,
+                Expansion::Wotlk => items::read_item_query_response_wotlk(&mut r)?,
+            };
             ServerPacket::ItemQueryResponse {
                 entry,
                 info: info.map(Box::new),
