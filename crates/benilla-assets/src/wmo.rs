@@ -10,9 +10,10 @@ use benilla_expansions::Expansion;
 use benilla_formats::{
     accumulate_wmo_group_camera_collision, accumulate_wmo_group_camera_only_collision,
     accumulate_wmo_group_collision, parse_wmo_lights, parse_wmo_root, wmo_group_doodad_refs,
-    wmo_group_footprint_tris, wmo_group_header, wmo_group_light_refs, wmo_group_liquid_mesh,
-    wmo_group_submeshes, CollisionMesh, FootprintTris, LiquidMesh, WmoDoodad, WmoDoodadSet, WmoFog,
-    WmoGroupInfo, WmoLight, WmoLiquidRule, WmoPortalInfo, WmoPortalRef,
+    wmo_group_footprint_tris, wmo_group_has_liquid_grid, wmo_group_header, wmo_group_light_refs,
+    wmo_group_liquid_mesh, wmo_group_submeshes, CollisionMesh, FootprintTris, LiquidMesh,
+    WmoDoodad, WmoDoodadSet, WmoFog, WmoGroupInfo, WmoLight, WmoLiquidRule, WmoPortalInfo,
+    WmoPortalRef,
 };
 use bevy::asset::io::Reader;
 use bevy::asset::{Asset, AssetLoader, LoadContext};
@@ -34,9 +35,9 @@ pub struct WmoGroupNav {
     pub area_table_id: u32,
     /// MOGP fog indices (disk `+0x30`) into [`WmoModel::fogs`], for the fog selector (`0x69de20`).
     pub fog_indices: [u8; 4],
-    /// MOGP `groupLiquid` resolved to a type nibble by the target's
-    /// [`benilla_formats::WmoLiquidRule`] (`0xf` = none): when set, the whole group reads submerged
-    /// at every Z.
+    /// The kind the whole group is submerged in, a type nibble from the target's
+    /// [`benilla_formats::WmoLiquidRule::flood`] (`0xf` = none): when set, it reads submerged at
+    /// every Z.
     pub group_liquid: u32,
 }
 
@@ -432,7 +433,8 @@ impl AssetLoader for WmoModelLoader {
                 nav.ref_count = h.portal_ref_count;
                 nav.area_table_id = h.area_table_id;
                 nav.fog_indices = h.fog_indices;
-                nav.group_liquid = liquid_rule.group_liquid(h.group_liquid, h.flags);
+                nav.group_liquid =
+                    liquid_rule.flood(h.group_liquid, h.flags, wmo_group_has_liquid_grid(&gbytes));
             }
             // One walking gather feeds both the per-group faces and the flat collider.
             let mut gpos: Vec<[f32; 3]> = Vec::new();

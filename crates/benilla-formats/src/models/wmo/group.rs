@@ -91,6 +91,18 @@ impl WmoLiquidRule {
         }
     }
 
+    /// The kind a group is wholly submerged in, as a type nibble, [`NO_GROUP_LIQUID`] when it is
+    /// not; `has_grid` is [`wmo_group_has_liquid_grid`]. 1.12.1's point query `0x6b9f10` floods on
+    /// the group liquid alone; 3.3.5a's `0x7c8360` floods only a group with no MLIQ grid, and tests
+    /// a gridded group's surface height instead.
+    pub fn flood(self, group_liquid: u32, mogp_flags: u32, has_grid: bool) -> u32 {
+        match self {
+            WmoLiquidRule::TypeNibble => group_liquid,
+            WmoLiquidRule::LiquidTypeId { .. } if has_grid => NO_GROUP_LIQUID,
+            WmoLiquidRule::LiquidTypeId { .. } => self.group_liquid(group_liquid, mogp_flags),
+        }
+    }
+
     /// An MLIQ tile's type nibble as this client reads it; the 3.3.5a tile id is the nibble + 1
     /// (`0x7c8d80`).
     fn tile_nibble(self, nibble: u8, mogp_flags: u32) -> Option<u8> {
@@ -271,6 +283,18 @@ pub fn wmo_group_light_refs(group_bytes: &[u8]) -> Vec<u16> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Whether a group carries an MLIQ grid: an MLIQ chunk whose `xverts` and `yverts` are both
+/// non-zero, the test 3.3.5a's point query `0x7c8360` makes before sampling it.
+pub fn wmo_group_has_liquid_grid(group_bytes: &[u8]) -> bool {
+    find_mogp_subchunk(group_bytes, b"QILM").is_some_and(|m| {
+        let u32_at = |i: usize| {
+            m.get(i..i + 4)
+                .map_or(0, |s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+        };
+        u32_at(0) != 0 && u32_at(4) != 0
+    })
 }
 
 /// A group's MLIQ surface as a [`LiquidMesh`] in WMO model space, as the reference's dispatch
@@ -879,6 +903,24 @@ mod tests {
             2,
             "0xf is id 15, magma"
         );
+    }
+
+    /// A 3.3.5a group with an MLIQ grid is never flooded, whatever its id (Stormwind's canals, id
+    /// 5); 1.12.1 floods on the group liquid alone.
+    #[test]
+    fn only_a_gridless_group_floods_on_wotlk() {
+        let ids = WmoLiquidRule::LiquidTypeId { mohd_ids: true };
+        assert_eq!(
+            ids.flood(5, 0, true),
+            NO_GROUP_LIQUID,
+            "a canal is not a flood"
+        );
+        assert_eq!(ids.flood(1, 0, false), 0, "Gundrak's gridless water floods");
+        assert_eq!(ids.flood(0, 0, false), NO_GROUP_LIQUID);
+        let classic = WmoLiquidRule::TypeNibble;
+        assert_eq!(classic.flood(0, 0, false), 0);
+        assert_eq!(classic.flood(0, 0, true), 0);
+        assert_eq!(classic.flood(NO_GROUP_LIQUID, 0, true), NO_GROUP_LIQUID);
     }
 
     /// 3.3.5a without MOHD `0x4`: the 1.12.1 nibble, shifted to an id, with `0xf` still dry.

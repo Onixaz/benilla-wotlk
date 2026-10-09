@@ -3,8 +3,8 @@
 
 use benilla_expansions::Expansion;
 use benilla_formats::{
-    parse_wmo_root, wmo_group_header, wmo_group_liquid_mesh, Chain, LiquidKind, WmoLiquidRule,
-    NO_GROUP_LIQUID,
+    parse_wmo_root, wmo_group_has_liquid_grid, wmo_group_header, wmo_group_liquid_mesh, Chain,
+    LiquidKind, WmoLiquidRule, NO_GROUP_LIQUID,
 };
 
 /// The target client's liquid rule for a group file, read off its root.
@@ -201,8 +201,9 @@ fn wmo_water_repeats_once_per_grid_cell() {
     );
 }
 
-/// 3.3.5a's Stormwind root sets MOHD `0x4`, so `groupLiquid` 0 on its streets is no liquid: none
-/// of its groups without an MLIQ is flooded, and its canals keep their water.
+/// 3.3.5a's Stormwind root sets MOHD `0x4`, so `groupLiquid` 0 on its streets is no liquid, and
+/// its canal groups (id 5) test their MLIQ height rather than flood: no group is flooded, and the
+/// canals keep their water.
 #[test]
 fn wotlk_stormwind_streets_are_dry_and_its_canals_wet() {
     let data = benilla_formats::wow_data_or_skip!();
@@ -222,14 +223,17 @@ fn wotlk_stormwind_streets_are_dry_and_its_canals_wet() {
             .read(&format!("{stem}_{gi:03}.wmo"))
             .expect("read group");
         let header = wmo_group_header(&bytes).expect("group header");
-        let own = rule.group_liquid(header.group_liquid, header.flags);
-        match wmo_group_liquid_mesh(&bytes, rule) {
-            Some(mesh) => {
-                pools += 1;
-                assert_eq!(mesh.kind, LiquidKind::Still, "group {gi:03}: canal water");
-            }
-            None if own != NO_GROUP_LIQUID => flooded.push(gi),
-            None => {}
+        let flood = rule.flood(
+            header.group_liquid,
+            header.flags,
+            wmo_group_has_liquid_grid(&bytes),
+        );
+        if flood != NO_GROUP_LIQUID {
+            flooded.push(gi);
+        }
+        if let Some(mesh) = wmo_group_liquid_mesh(&bytes, rule) {
+            pools += 1;
+            assert_eq!(mesh.kind, LiquidKind::Still, "group {gi:03}: canal water");
         }
     }
     assert!(flooded.is_empty(), "wholly submerged groups: {flooded:?}");
