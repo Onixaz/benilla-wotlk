@@ -429,11 +429,12 @@ fn measure() -> BTreeMap<String, BTreeSet<String>> {
     let src = app.join("src");
     let tests = test_module_files(&src);
     for file in rs_files(&src) {
+        // `/`-separated on every platform: the module roots are split off on `/`.
         let rel = file
             .strip_prefix(&src)
             .unwrap()
             .to_string_lossy()
-            .to_string();
+            .replace(std::path::MAIN_SEPARATOR, "/");
         // Without the world crate the file's module decides its side; with it, every file here
         // is on the game side.
         if (!split && is_engine(&rel)) || tests.contains(&rel) {
@@ -480,7 +481,7 @@ fn measure_back() -> BTreeMap<String, BTreeSet<String>> {
             .strip_prefix(&src)
             .unwrap()
             .to_string_lossy()
-            .to_string();
+            .replace(std::path::MAIN_SEPARATOR, "/");
         if tests.contains(&rel) {
             continue;
         }
@@ -532,7 +533,7 @@ fn test_module_files(src: &Path) -> BTreeSet<String> {
                                 cand.strip_prefix(src)
                                     .unwrap()
                                     .to_string_lossy()
-                                    .to_string(),
+                                    .replace(std::path::MAIN_SEPARATOR, "/"),
                             );
                         }
                     }
