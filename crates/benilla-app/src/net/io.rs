@@ -940,10 +940,16 @@ fn writer_loop(
                     ClientCommand::AddonMessage { distribution, text } => {
                         w.send_addon_message(super::addon_wire_chat_type(distribution), &text)
                     }
-                    ClientCommand::JoinChannel { name, password } => {
-                        w.join_channel(&name, &password)
+                    ClientCommand::JoinChannel {
+                        name,
+                        password,
+                        channel_id,
+                        auto_joined,
+                        voice,
+                    } => w.join_channel(&name, &password, channel_id, auto_joined, voice),
+                    ClientCommand::LeaveChannel { name, channel_id } => {
+                        w.leave_channel(&name, channel_id)
                     }
-                    ClientCommand::LeaveChannel { name } => w.leave_channel(&name),
                     ClientCommand::ChannelList { name } => w.channel_list(&name),
                     ClientCommand::RandomRoll { min, max } => w.random_roll(min, max),
                     ClientCommand::ChannelOwner { name } => w.channel_owner(&name),

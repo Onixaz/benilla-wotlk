@@ -154,6 +154,33 @@ pub(crate) fn zone_bit(id: u32) -> u32 {
 }
 
 impl ChannelState {
+    /// The `CMSG_JOIN_CHANNEL` ask for `name`, carrying the `ChatChannels.dbc` id the name
+    /// resolves to as the server resolves it (0 for a custom channel). `auto_joined` is the
+    /// client's own join, the zone walk's and the login re-join's.
+    pub(crate) fn join_command(
+        &self,
+        name: String,
+        password: String,
+        auto_joined: bool,
+        voice: bool,
+    ) -> crate::net::ClientCommand {
+        crate::net::ClientCommand::JoinChannel {
+            channel_id: self.channels.zone_channel_id(&name),
+            name,
+            password,
+            auto_joined,
+            voice,
+        }
+    }
+
+    /// The `CMSG_LEAVE_CHANNEL` ask for `name`, with its `ChatChannels.dbc` id.
+    pub(crate) fn leave_command(&self, name: String) -> crate::net::ClientCommand {
+        crate::net::ClientCommand::LeaveChannel {
+            channel_id: self.channels.zone_channel_id(&name),
+            name,
+        }
+    }
+
     /// A confirmed join sets the channel's mask bit (`0x49bbaf`, in the `YOU_JOINED` arm).
     pub(crate) fn note_zone_channel_joined(&mut self, name: &str) {
         let bit = zone_bit(self.channels.zone_channel_id(name));

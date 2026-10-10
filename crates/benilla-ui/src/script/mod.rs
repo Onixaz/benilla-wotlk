@@ -17,8 +17,10 @@ mod action_bar_toggles;
 mod addon_message;
 mod auction;
 mod aura;
+mod autocomplete;
 mod backdrop;
 mod bank;
+mod battle_net;
 mod battlefield_positions;
 mod battlefield_queue;
 mod battlefield_score;
@@ -26,6 +28,7 @@ mod bind_confirm;
 mod binder;
 mod binding_abi;
 mod dialog_verbs;
+mod secure_call;
 mod tutorial;
 mod worldmap_arrow;
 // `camera_view`: the five camera views and `FlipCameraYaw`, the reference's `UIUtil\Camera.cpp`.
@@ -85,6 +88,7 @@ mod layout_cache;
 mod loot;
 mod loot_roll;
 mod lua50;
+mod lua51;
 mod macros;
 mod mail;
 mod measure;
@@ -512,8 +516,15 @@ impl UiScript {
         screenshot::install(&lua)?;
         stdlib::sandbox(&lua)?;
         // Before the stdlib layer, so its aliases bind the 5.0-shaped functions.
-        lua50::install(&lua)?;
+        if expansion.profile().lua_50 {
+            lua50::install(&lua)?;
+        } else {
+            lua50::install_bit(&lua)?;
+        }
         stdlib::install(&lua)?;
+        if !expansion.profile().lua_50 {
+            lua51::install(&lua)?;
+        }
         object::install(&lua)?;
         frame_enum::install(&lua)?;
         // After `object`, whose `publish_global` it reuses, and before any FrameXML loads:
@@ -539,6 +550,9 @@ impl UiScript {
         death::install(&lua)?;
         aura::install(&lua)?;
         cvars::install(&lua, expansion.profile())?;
+        battle_net::install(&lua, expansion.profile())?;
+        secure_call::install(&lua, expansion.profile())?;
+        autocomplete::install(&lua, expansion.profile())?;
         nameplate::install_verbs(&lua)?;
         saved::install(&lua)?;
         keybind::install(&lua)?;

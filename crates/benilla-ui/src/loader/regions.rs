@@ -57,6 +57,7 @@ impl Loader<'_> {
                                 continue;
                             }
                         };
+                    self.bind_parent_key(region, wrapper, &region_wrapper);
                     if region.attr_bool("hidden") {
                         if let Err(e) = region_wrapper.call_method::<()>("Hide", ()) {
                             self.report.errors.push(format!("{dbg}: region Hide: {e}"));
@@ -310,8 +311,7 @@ impl Loader<'_> {
         let model = self.model();
         let fonts = model.framexml_fonts.borrow();
         let templates = model.framexml_templates.borrow();
-        // One name, not a comma list: 1.12's lookup has no splitter.
-        for entry in [inherits] {
+        for entry in crate::framexml::inherit_names(inherits, model.inherits_list) {
             let mut name = entry.to_string();
             for _ in 0..MAX_HOPS {
                 if fonts.contains_key(&name) || fonts.keys().any(|k| k.eq_ignore_ascii_case(&name))

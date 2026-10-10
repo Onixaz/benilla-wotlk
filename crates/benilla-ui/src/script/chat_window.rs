@@ -23,11 +23,9 @@ use mlua::{Lua, MultiValue, Value};
 use super::channel::ZoneChannelRow;
 use super::Model;
 
-/// The reference's record slots (`0xb4fe50`); FrameXML builds only [`NUM_CHAT_WINDOWS`] frames.
+/// The reference's record slots (`0xb4fe50`); FrameXML builds only the target's
+/// `NUM_CHAT_WINDOWS` frames ([`benilla_expansions::ExpansionProfile::chat_windows`]).
 pub(super) const ENGINE_CHAT_WINDOW_SLOTS: usize = 10;
-
-/// `NUM_CHAT_WINDOWS = 7` (ChatFrame.lua:5), the frames `ChatFrame1`..`ChatFrame7`.
-pub(super) const NUM_CHAT_WINDOWS: usize = 7;
 
 /// `CHATMSGGROUP`, the client's 68-entry message-group table (`0x805fb0`, stride 0xc):
 /// `(name, defaultOn, addedVersion)` in the order of the record's `+0x20` flags. Not the 94-entry
@@ -135,6 +133,9 @@ pub struct ChatWindowLook {
     pub messages: Vec<String>,
     /// `+0x64`/`+0x74`: `(name, zone channel id)` pairs, the `CHANNELS … END` block.
     pub channels: Vec<(String, u32)>,
+    /// 3.3.5a's uninteractable flag (`+0x94` of its 0x100-byte record), off at boot. Not written
+    /// to the cache, whose layout is 1.12.1's.
+    pub uninteractable: bool,
 }
 
 impl Default for ChatWindowLook {
@@ -157,6 +158,7 @@ impl ChatWindowLook {
         shown: false,
         messages: Vec::new(),
         channels: Vec::new(),
+        uninteractable: false,
     };
 
     /// Window `index`'s (0-based) record at boot (`0x4982c0`), what a client with no
@@ -239,15 +241,20 @@ fn from_byte(b: u8) -> f64 {
     f64::from(b) / 255.0
 }
 
-/// The 0-based index of a Lua window id. Deviation: an id outside the seven built windows raises,
-/// where the reference serves ten records and silently ignores any other id (`0x4a0be1`), because
-/// benilla keeps only the seven and every caller loops `1, NUM_CHAT_WINDOWS`.
-fn window_index(id: i64) -> mlua::Result<usize> {
-    if id < 1 || id as usize > NUM_CHAT_WINDOWS {
+/// The 0-based index of a Lua window id. Deviation: an id outside the built windows raises, where
+/// the reference serves ten records and silently ignores any other id (`0x4a0be1`), because
+/// benilla keeps only the target's `NUM_CHAT_WINDOWS` and every caller loops `1, NUM_CHAT_WINDOWS`.
+fn window_index(lua: &Lua, id: i64) -> mlua::Result<usize> {
+    let built = lua
+        .app_data_ref::<Model>()
+        .expect("model app_data")
+        .chat_window_looks
+        .len();
+    if id < 1 || id as usize > built {
         return Err(mlua::Error::runtime(format!(
-            "chat window {id} out of range — benilla builds ChatFrame1..ChatFrame{NUM_CHAT_WINDOWS} \
+            "chat window {id} out of range — benilla builds ChatFrame1..ChatFrame{built} \
              (the client's settings array holds {ENGINE_CHAT_WINDOW_SLOTS} slots, but only \
-             {NUM_CHAT_WINDOWS} have frames)"
+             {built} have frames)"
         )));
     }
     Ok(id as usize - 1)
@@ -332,11 +339,16 @@ impl super::UiScript {
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
-    // GetChatWindowInfo(id) → name, fontSize, r, g, b, a, shown, locked, docked.
+    // GetChatWindowInfo(id) → name, fontSize, r, g, b, a, shown, locked, docked; 3.3.5a adds
+    // uninteractable, 1 or nil.
+    let uninteractable = lua
+        .app_data_ref::<Model>()
+        .expect("model app_data")
+        .chat_window_uninteractable;
     lua.globals().set(
         "GetChatWindowInfo",
-        lua.create_function(|lua, id: i64| {
-            let i = window_index(id)?;
+        lua.create_function(move |lua, id: i64| {
+            let i = window_index(lua, id)?;
             let look = lua
                 .app_data_ref::<Model>()
                 .expect("model app_data")
@@ -348,7 +360,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some(n) => Value::Integer(n),
                 None => Value::Nil,
             };
-            Ok(MultiValue::from_vec(vec![
+            let mut values = vec![
                 Value::String(lua.create_string(&look.name)?),
                 Value::Integer(i64::from(look.font_size)),
                 Value::Number(from_byte(look.r)),
@@ -363,16 +375,43 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Value::Nil
                 },
                 num(docked), // the dock position or nil
-            ]))
+            ];
+            if uninteractable {
+                values.push(num(look.uninteractable.then_some(1)));
+            }
+            Ok(MultiValue::from_vec(values))
         })?,
     )?;
+    if uninteractable {
+        // SetChatWindowUninteractable(id, flag) (`0x4fc6e0`): a non-number id raises the usage
+        // (`0x9fbbdc`); the flag is Lua truthiness (`0x815500`).
+        lua.globals().set(
+            "SetChatWindowUninteractable",
+            lua.create_function(|lua, (id, flag): (Value, Value)| {
+                let id = match id {
+                    Value::Integer(n) => n,
+                    Value::Number(n) => n.trunc() as i64,
+                    _ => {
+                        return Err(mlua::Error::runtime(
+                            "Usage: SetChatWindowUninteractable(index, uninteractable)",
+                        ))
+                    }
+                };
+                let i = window_index(lua, id)?;
+                let flag = !matches!(flag, Value::Nil | Value::Boolean(false));
+                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                model.chat_window_looks[i].uninteractable = flag;
+                Ok(())
+            })?,
+        )?;
+    }
 
     // SetChatWindowColor(id, r, g, b) (`0x4a14f0`) only stores: `FCF_SetWindowColor`
     // (FloatingChatFrame.lua:699) tints the textures itself.
     lua.globals().set(
         "SetChatWindowColor",
         lua.create_function(|lua, (id, r, g, b): (i64, f64, f64, f64)| {
-            let i = window_index(id)?;
+            let i = window_index(lua, id)?;
             let mut model = lua.app_data_mut::<Model>().expect("model app_data");
             let look = &mut model.chat_window_looks[i];
             let next = ChatWindowLook {
@@ -393,7 +432,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "SetChatWindowAlpha",
         lua.create_function(|lua, (id, alpha): (i64, f64)| {
-            let i = window_index(id)?;
+            let i = window_index(lua, id)?;
             let mut model = lua.app_data_mut::<Model>().expect("model app_data");
             let look = &mut model.chat_window_looks[i];
             let a = to_byte(alpha);
@@ -412,7 +451,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "SetChatWindowLocked",
         lua.create_function(|lua, (id, locked): (i64, bool)| {
-            let i = window_index(id)?;
+            let i = window_index(lua, id)?;
             let mut model = lua.app_data_mut::<Model>().expect("model app_data");
             let look = &mut model.chat_window_looks[i];
             if locked != look.locked {
@@ -428,7 +467,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "SetChatWindowDocked",
         lua.create_function(|lua, (id, position): (i64, Option<i64>)| {
-            let i = window_index(id)?;
+            let i = window_index(lua, id)?;
             let position = position
                 .filter(|p| *p > 0)
                 .and_then(|p| u8::try_from(p).ok());
@@ -445,7 +484,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "SetChatWindowSize",
         lua.create_function(|lua, (id, size): (i64, f64)| {
-            let i = window_index(id)?;
+            let i = window_index(lua, id)?;
             let mut model = lua.app_data_mut::<Model>().expect("model app_data");
             let look = &mut model.chat_window_looks[i];
             // A size `<= 0` after truncation is dropped (`0x4a14bc jle`). Deviation: one past
@@ -474,7 +513,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         id: i64,
         f: impl FnOnce(&mut ChatWindowLook) -> T,
     ) -> mlua::Result<T> {
-        let i = window_index(id)?;
+        let i = window_index(lua, id)?;
         let mut model = lua.app_data_mut::<Model>().expect("model app_data");
         let before = model.chat_window_looks[i].clone();
         let out = f(&mut model.chat_window_looks[i]);
@@ -571,7 +610,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetChatWindowMessages",
         lua.create_function(|lua, id: i64| {
-            let i = window_index(id)?;
+            let i = window_index(lua, id)?;
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             let mut out = Vec::new();
             for name in &model.chat_window_looks[i].messages {
@@ -663,7 +702,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetChatWindowChannels",
         lua.create_function(|lua, id: i64| {
-            let i = window_index(id)?;
+            let i = window_index(lua, id)?;
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             let mut out = Vec::new();
             for (name, zone_id) in &model.chat_window_looks[i].channels {
@@ -683,8 +722,31 @@ mod tests {
 
     #[test]
     fn get_chat_window_info_answers_the_nine_value_tuple() {
-        let s = UiScript::new().unwrap();
+        let s = UiScript::new_for(benilla_expansions::Expansion::Classic).unwrap();
         assert_eq!(s.arity("GetChatWindowInfo(1)").unwrap(), 9);
+        assert!(
+            s.run("GetChatWindowInfo(8)").is_err(),
+            "1.12.1 builds seven"
+        );
+        assert!(s
+            .eval::<bool>("return SetChatWindowUninteractable == nil")
+            .unwrap());
+    }
+
+    #[test]
+    fn a_3_3_5a_window_answers_ten_values_over_ten_windows() {
+        let s = UiScript::new_for(benilla_expansions::Expansion::Wotlk).unwrap();
+        assert_eq!(s.arity("GetChatWindowInfo(10)").unwrap(), 10);
+        assert!(s
+            .eval::<bool>("return select(10, GetChatWindowInfo(3)) == nil")
+            .unwrap());
+        s.run("SetChatWindowUninteractable(3, true)").unwrap();
+        assert_eq!(
+            s.eval::<i64>("return select(10, GetChatWindowInfo(3))")
+                .unwrap(),
+            1
+        );
+        assert!(s.run("SetChatWindowUninteractable('x', true)").is_err());
     }
 
     #[test]

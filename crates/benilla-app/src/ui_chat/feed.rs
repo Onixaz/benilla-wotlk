@@ -481,7 +481,10 @@ pub(super) fn notice_event(
         | n::NOT_OWNER
         | n::MUTED
         | n::BANNED
-        | n::THROTTLED => ChatEventKind::ChannelNotice,
+        | n::THROTTLED
+        // 3.3.5a's two refusals fire the same event (`esi = 0x15`, `0x50e927`, `0x50e942`).
+        | n::NOT_IN_AREA
+        | n::NOT_IN_LFG => ChatEventKind::ChannelNotice,
         n::PASSWORD_CHANGED
         | n::OWNER_CHANGED
         | n::PLAYER_NOT_FOUND
@@ -501,7 +504,10 @@ pub(super) fn notice_event(
         | n::INVALID_NAME
         | n::NOT_MODERATED
         | n::PLAYER_INVITED
-        | n::PLAYER_INVITE_BANNED => ChatEventKind::ChannelNoticeUser,
+        | n::PLAYER_INVITE_BANNED
+        // 3.3.5a's voice toggles name their actor (`esi = 0x16`, `0x50e980`, `0x50ea21`).
+        | n::VOICE_ON
+        | n::VOICE_OFF => ChatEventKind::ChannelNoticeUser,
         _ => ChatEventKind::System,
     };
     Some(ChatEvent {
@@ -570,6 +576,13 @@ pub(super) fn deliver(
     }
     // The wire name, kept before `stamp_channel` decorates arg4 with the slot number.
     let leaving = (notice == Some(channel_notice::YOU_LEFT)).then(|| event.channel.clone());
+    // 3.3.5a drops the record after a `NOT_IN_AREA` or `NOT_IN_LFG` refusal (`0x507a30` at
+    // `0x50eaa5`), so the refused channel gives its number back.
+    let refused = matches!(
+        notice,
+        Some(channel_notice::NOT_IN_AREA | channel_notice::NOT_IN_LFG)
+    )
+    .then(|| event.channel.clone());
     // The channel renders numbered when its slot is known.
     channels.stamp_channel(event);
     route(script, windows, event);
@@ -584,6 +597,11 @@ pub(super) fn deliver(
             debug!("chat: server confirms channel {name:?} left (slot {freed:?} now free)");
             script.set_joined_channels(channels.names());
         }
+    }
+    if let Some(name) = refused {
+        let freed = channels.free_slot(&name);
+        debug!("chat: server refused channel {name:?} (slot {freed:?} now free)");
+        script.set_joined_channels(channels.names());
     }
 }
 
@@ -756,6 +774,7 @@ pub(super) fn feed_chat(
                     language: language_name(language).to_string(),
                     channel: channel_base,
                     flag: flag_of_tag(msg.chat_tag).to_string(),
+                    sender_guid: msg.sender_guid,
                     ..Default::default()
                 };
                 channels.stamp_channel(&mut event);

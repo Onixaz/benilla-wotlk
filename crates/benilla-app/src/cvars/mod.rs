@@ -30,7 +30,7 @@ use benilla_ui::script::{SeededCvar, UiScript};
 mod table;
 #[cfg(test)]
 use table::Reference;
-pub(crate) use table::{registered_pairs, REGISTERED};
+pub(crate) use table::{registered_pairs, registered_rows, REGISTERED};
 
 /// `config.toml`: a `[cvars]` table of `Name = "value"` strings, sorted so every save is stable.
 #[derive(serde::Serialize, serde::Deserialize, Default)]
@@ -146,7 +146,7 @@ impl Default for Cvars {
             dirty: false,
             last_change: None,
         };
-        for r in REGISTERED {
+        for r in registered_rows() {
             cvars.insert_row(Row {
                 name: r.name.to_string(),
                 default: r.default.to_string(),
@@ -905,7 +905,7 @@ mod tests {
                 _ => ours == theirs,
             }
         }
-        for row in REGISTERED {
+        for row in REGISTERED.iter().chain(table::REGISTERED_WOTLK) {
             let name = row.name;
             match &row.reference {
                 Reference::Same(value) => assert!(

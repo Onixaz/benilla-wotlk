@@ -1052,11 +1052,13 @@ fn a_session_end_empties_the_window_and_the_boxs_memory() {
 }
 
 /// Each token names a `CHAT_<X>_NOTICE` string (`ChatFrame.lua:1416`, `:1424`); the tokenless bytes
-/// are MODE_CHANGE (`0x0C`), which fires nothing, and the member lines JOINED and LEFT.
+/// are MODE_CHANGE (`0x0C`), which fires nothing, and the member lines JOINED and LEFT. 1.12.1's
+/// bytes end at THROTTLED (`0x1F`): its reader refuses the rest, and 3.3.5a's four past it are
+/// checked against 3.3.5a's strings, not these.
 #[test]
 fn every_notice_token_resolves_and_the_tokenless_bytes_stay_silent() {
     let _data = benilla_formats::wow_data_or_skip!();
-    for byte in 0x00u8..=0x21 {
+    for byte in 0x00u8..=benilla_protocol::messages::channel_notice::THROTTLED {
         let mut e = ChatEvent::text_only(K::ChannelNotice, String::new());
         e.channel = "World".into();
         e.notice = byte.to_string();

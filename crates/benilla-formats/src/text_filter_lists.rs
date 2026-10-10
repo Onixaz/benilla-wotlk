@@ -24,19 +24,23 @@ pub struct FilterPattern {
     pub pattern: String,
 }
 
-fn schema(name: &str) -> Schema {
+/// `ID` and `Pattern`, then any trailing columns of a `fields`-wide row, unread.
+fn schema(name: &str, fields: usize) -> Schema {
     let mut s = Schema::new(name);
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("Pattern", FieldType::String));
+    for i in 2..fields {
+        s.add_field(SchemaField::new(format!("Unread{i}"), FieldType::UInt32));
+    }
     s.set_key_field("ID");
     s
 }
 
-fn load(chain: &mut Chain, path: &str, name: &str) -> Result<Vec<FilterPattern>> {
+fn load(chain: &mut Chain, path: &str, name: &str, fields: usize) -> Result<Vec<FilterPattern>> {
     let bytes = chain
         .read_file(path)
         .with_context(|| format!("reading {name}.dbc"))?;
-    let rs = parse(&bytes, schema(name), name)?;
+    let rs = parse(&bytes, schema(name, fields), name)?;
     let mut out = Vec::with_capacity(rs.records().len());
     for r in rs.records() {
         // File order is the list order, which masking depends on: patterns apply in list order,
@@ -54,13 +58,15 @@ fn load(chain: &mut Chain, path: &str, name: &str) -> Result<Vec<FilterPattern>>
 
 /// `ChatProfanity.dbc`, the masker's list, in file order.
 pub fn load_chat_profanity(chain: &mut Chain) -> Result<Vec<FilterPattern>> {
-    load(chain, CHAT_PROFANITY, "ChatProfanity")
+    let fields = chain.expansion().profile().dbc.chat_profanity.fields;
+    load(chain, CHAT_PROFANITY, "ChatProfanity", fields)
 }
 
 /// `SpamMessages.dbc`, the spam predicate's list, in file order. The reference then scans a
 /// second list the server can push (SMSG `0x332`, handler `0x49e6e0`); vmangos never sends one.
 pub fn load_spam_messages(chain: &mut Chain) -> Result<Vec<FilterPattern>> {
-    load(chain, SPAM_MESSAGES, "SpamMessages")
+    // Two fields in both clients.
+    load(chain, SPAM_MESSAGES, "SpamMessages", 2)
 }
 
 #[cfg(test)]
@@ -72,12 +78,16 @@ mod tests {
     fn the_lists_come_off_the_priority_walk_at_their_patched_sizes() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
+        // 1.12.1: patch.MPQ's 2289 rows, where dbc.MPQ's 1512 would be the base copy; 3.3.5a's
+        // three-column table holds 5222 rows and its SpamMessages 133.
+        let classic = chain.expansion() == benilla_expansions::Expansion::Classic;
+        let (profanity_rows, spam_rows) = if classic { (2289, 28) } else { (5222, 133) };
 
         let profanity = load_chat_profanity(&mut chain).expect("load ChatProfanity");
         assert_eq!(
             profanity.len(),
-            2289,
-            "2289 is patch.MPQ's copy; 1512 would mean we read dbc.MPQ"
+            profanity_rows,
+            "the patched copy, not the base archive's"
         );
         assert!(
             profanity.iter().any(|p| p.pattern == r"\<twat\>"),
@@ -89,9 +99,10 @@ mod tests {
         );
 
         let spam = load_spam_messages(&mut chain).expect("load SpamMessages");
-        assert_eq!(spam.len(), 28, "dbc.MPQ has no SpamMessages at all");
+        assert_eq!(spam.len(), spam_rows, "dbc.MPQ has no SpamMessages at all");
+        // 1.12.1's rows only: 3.3.5a's list also holds plain-text rows.
         assert!(
-            spam.iter().all(|p| p.pattern.contains(r"\s*")),
+            !classic || spam.iter().all(|p| p.pattern.contains(r"\s*")),
             "every shipped spam row spaces its letters to defeat spacing"
         );
     }

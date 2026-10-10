@@ -111,9 +111,9 @@ impl AreaTableCatalog {
     }
 }
 
-fn schema() -> Schema {
+fn schema(l: &benilla_expansions::dbc::AreaTable) -> Schema {
     let mut s = Schema::new("AreaTable");
-    for i in 0..25 {
+    for i in 0..l.fields {
         match i {
             11 => s.add_field(SchemaField::new("AreaName", FieldType::String)),
             _ => s.add_field(SchemaField::new(format!("c{i}"), FieldType::UInt32)),
@@ -127,7 +127,8 @@ pub fn load_area_table_catalog(chain: &mut Chain) -> Result<AreaTableCatalog> {
     let bytes = chain
         .read_file(AREA_TABLE)
         .context("reading AreaTable.dbc")?;
-    let rs = parse(&bytes, schema(), "AreaTable")?;
+    let layout = &chain.expansion().profile().dbc.area_table;
+    let rs = parse(&bytes, schema(layout), "AreaTable")?;
     let mut by_id = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
         let (Some(id), Some(map_id), Some(zone_id), Some(explore_flag), Some(flags), Some(name)) = (
@@ -140,7 +141,7 @@ pub fn load_area_table_catalog(chain: &mut Chain) -> Result<AreaTableCatalog> {
         ) else {
             continue;
         };
-        let faction_group_mask = u32_at(r, 20).unwrap_or(0);
+        let faction_group_mask = u32_at(r, layout.faction_group_mask).unwrap_or(0);
         // Signed; an absent column reads as `-1`, no exploration gate.
         let exploration_level = u32_at(r, 10).map_or(-1, |v| v as i32);
         by_id.insert(

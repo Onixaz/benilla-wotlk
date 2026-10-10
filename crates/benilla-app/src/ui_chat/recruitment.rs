@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use benilla_ui::script::UiScript;
 
 use crate::area::AreaTableRes;
-use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
+use crate::net::{NetCommands, ObjectStore, SelfPlayer};
 
 use super::channels::{city_word, ZoneChannelWalk};
 use super::edit::ChannelState;
@@ -159,10 +159,10 @@ pub(super) fn guild_recruitment_cascade(
                 ),
             }
             script.register_chat_window_channel(0, &row.shortcut, row.id);
-            let _ = commands.0.send(ClientCommand::JoinChannel {
-                name,
-                password: String::new(),
-            });
+            // The client's own join (`0x49eb70`).
+            let _ = commands
+                .0
+                .send(channels.join_command(name, String::new(), true, false));
         }
         Cascade::Deferred => {}
     }
@@ -174,9 +174,7 @@ pub(super) fn guild_recruitment_cascade(
 /// Leave by the full name (`0x49ee70`): the packet and the mask bit (`0x49f10a`/`0x49f11a`). No
 /// window loses its entry: the strip matches that name verbatim (`0x49f017`), which none holds.
 fn cascade_leave(channels: &mut ChannelState, commands: &NetCommands, name: String) {
-    let _ = commands
-        .0
-        .send(ClientCommand::LeaveChannel { name: name.clone() });
+    let _ = commands.0.send(channels.leave_command(name.clone()));
     channels.note_zone_channel_left(&name);
 }
 
@@ -230,7 +228,7 @@ mod tests {
         );
 
         assert!(
-            matches!(rx.try_recv(), Ok(ClientCommand::LeaveChannel { name }) if name == "GuildRecruitment - City"),
+            matches!(rx.try_recv(), Ok(crate::net::ClientCommand::LeaveChannel { name, .. }) if name == "GuildRecruitment - City"),
             "the CMSG_LEAVE_CHANNEL goes out"
         );
         assert_eq!(channels.zone_mask, Some(0), "the mask bit clears");

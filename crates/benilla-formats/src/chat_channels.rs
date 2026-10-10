@@ -4,6 +4,7 @@
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
+use benilla_expansions::dbc::ChatChannels as ChatChannelsLayout;
 
 use crate::chain::Chain;
 use crate::dbc::{parse, str_at, u32_at};
@@ -132,14 +133,21 @@ impl ChatChannelsCatalog {
     }
 }
 
-fn schema() -> Schema {
+/// The id, flags and faction group, then Name and Shortcut, each over the layout's locales and a
+/// mask.
+fn schema(l: &ChatChannelsLayout) -> Schema {
+    let locales = (l.fields - 5) / 2;
     let mut s = Schema::new("ChatChannels");
     s.add_field(SchemaField::new("ChannelID", FieldType::UInt32));
     s.add_field(SchemaField::new("Flags", FieldType::UInt32));
     s.add_field(SchemaField::new("FactionGroup", FieldType::UInt32));
-    s.add_field(SchemaField::new_array("Name", FieldType::String, 8));
+    s.add_field(SchemaField::new_array("Name", FieldType::String, locales));
     s.add_field(SchemaField::new("NameMask", FieldType::UInt32));
-    s.add_field(SchemaField::new_array("Shortcut", FieldType::String, 8));
+    s.add_field(SchemaField::new_array(
+        "Shortcut",
+        FieldType::String,
+        locales,
+    ));
     s.add_field(SchemaField::new("ShortcutMask", FieldType::UInt32));
     s.set_key_field("ChannelID");
     s
@@ -149,7 +157,8 @@ pub fn load_chat_channels_catalog(chain: &mut Chain) -> Result<ChatChannelsCatal
     let bytes = chain
         .read_file(CHAT_CHANNELS)
         .context("reading ChatChannels.dbc")?;
-    let rs = parse(&bytes, schema(), "ChatChannels")?;
+    let layout = &chain.expansion().profile().dbc.chat_channels;
+    let rs = parse(&bytes, schema(layout), "ChatChannels")?;
     let mut rows = Vec::with_capacity(rs.records().len());
     for r in rs.records() {
         let (Some(id), Some(flags), Some(pattern)) =
@@ -161,7 +170,7 @@ pub fn load_chat_channels_catalog(chain: &mut Chain) -> Result<ChatChannelsCatal
             id,
             flags,
             pattern,
-            shortcut: str_at(&rs, r, 12).unwrap_or_default(),
+            shortcut: str_at(&rs, r, layout.shortcut).unwrap_or_default(),
         });
     }
     Ok(ChatChannelsCatalog { rows })
@@ -175,6 +184,9 @@ mod tests {
     fn the_real_table_is_the_six_documented_rows() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
+        if chain.expansion() != benilla_expansions::Expansion::Classic {
+            return; // 3.3.5a's table: the next test
+        }
         let cat = load_chat_channels_catalog(&mut chain).expect("load ChatChannels");
 
         let got: Vec<(u32, u32, &str, &str)> = cat
@@ -197,6 +209,34 @@ mod tests {
         // The auto-join set is the reference's `chat-cache.txt` `ZONECHANNELS` mask.
         let mask: u32 = cat.auto_join_rows().map(|r| 1 << (r.id - 1)).sum();
         assert_eq!(mask, 0x0020_0003, "General + Trade + LocalDefense");
+    }
+
+    /// 3.3.5a's rows: General gains `0x80000`, and LookingForGroup is id 26, joined initially in
+    /// a capital, where 1.12.1's id 24 has no flags.
+    #[test]
+    fn a_3_3_5a_table_reads_its_six_rows() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        if chain.expansion() != benilla_expansions::Expansion::Wotlk {
+            return; // 1.12.1's table: the test above
+        }
+        let cat = load_chat_channels_catalog(&mut chain).expect("load ChatChannels");
+        let got: Vec<(u32, u32, &str, &str)> = cat
+            .rows()
+            .iter()
+            .map(|r| (r.id, r.flags, r.pattern.as_str(), r.shortcut.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (1, 0x80003, "General - %s", "General"),
+                (2, 0x0003B, "Trade - %s", "Trade"),
+                (22, 0x10003, "LocalDefense - %s", "LocalDefense"),
+                (23, 0x10004, "WorldDefense", "WorldDefense"),
+                (25, 0x20032, "GuildRecruitment - %s", "GuildRecruitment"),
+                (26, 0x40039, "LookingForGroup", "LookingForGroup"),
+            ]
+        );
     }
 
     #[test]

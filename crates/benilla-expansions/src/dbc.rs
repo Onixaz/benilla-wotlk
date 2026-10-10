@@ -17,6 +17,41 @@ pub struct DbcLayouts {
     pub map: Map,
     pub loading_screens: LoadingScreens,
     pub game_tips: GameTips,
+    pub server_messages: LocalizedTable,
+    pub emotes_text_data: LocalizedTable,
+    pub chat_profanity: ChatProfanity,
+    pub chat_channels: ChatChannels,
+    pub area_table: AreaTable,
+}
+
+/// `AreaTable.dbc`; the id, map, parent, explore bit, flags and exploration level are columns 0
+/// to 4 and 10, and `AreaName_lang`'s enUS column is 11, in both clients.
+#[derive(Debug)]
+pub struct AreaTable {
+    pub fields: usize,
+    pub faction_group_mask: usize,
+}
+
+/// A table of `ID`, one localized string (its enUS column 1 in both clients) and its mask or
+/// flags: `ServerMessages.dbc`, `EmotesTextData.dbc`.
+#[derive(Debug)]
+pub struct LocalizedTable {
+    pub fields: usize,
+}
+
+/// `ChatProfanity.dbc`; `ID` and the pattern are columns 0 and 1 in both clients.
+#[derive(Debug)]
+pub struct ChatProfanity {
+    pub fields: usize,
+}
+
+/// `ChatChannels.dbc`; `ID`, `Flags`, `FactionGroup` and `Name_lang`'s enUS column are columns 0
+/// to 3 in both clients.
+#[derive(Debug)]
+pub struct ChatChannels {
+    pub fields: usize,
+    /// `Shortcut_lang`, its enUS column.
+    pub shortcut: usize,
 }
 
 /// `LoadingScreens.dbc`; `ID`, `Name` and `FileName` are columns 0, 1 and 2 in both clients.
@@ -233,6 +268,18 @@ pub(crate) const CLASSIC: DbcLayouts = DbcLayouts {
     loading_screens: LoadingScreens { fields: 3 },
     // Eight locales and the mask.
     game_tips: GameTips { fields: 10 },
+    server_messages: LocalizedTable { fields: 10 },
+    emotes_text_data: LocalizedTable { fields: 10 },
+    chat_profanity: ChatProfanity { fields: 2 },
+    // Name and Shortcut each over eight locales and a mask.
+    chat_channels: ChatChannels {
+        fields: 21,
+        shortcut: 12,
+    },
+    area_table: AreaTable {
+        fields: 25,
+        faction_group_mask: 20,
+    },
 };
 
 /// Build 12340, each checked against the shipped files row for row with 1.12.1's.
@@ -309,6 +356,21 @@ pub(crate) const WOTLK: DbcLayouts = DbcLayouts {
     loading_screens: LoadingScreens { fields: 4 },
     // Sixteen locales and the mask.
     game_tips: GameTips { fields: 18 },
+    // Sixteen locales and a mask: 9 rows x 18 and 1327 x 18 in the shipped files.
+    server_messages: LocalizedTable { fields: 18 },
+    emotes_text_data: LocalizedTable { fields: 18 },
+    // A third column, 1 in the shipped rows, which benilla does not read.
+    chat_profanity: ChatProfanity { fields: 3 },
+    // Name and Shortcut each over sixteen locales and a mask: 6 rows x 37.
+    chat_channels: ChatChannels {
+        fields: 37,
+        shortcut: 20,
+    },
+    // The name over sixteen locales moves the faction mask from 20 to 28: 2307 rows x 36.
+    area_table: AreaTable {
+        fields: 36,
+        faction_group_mask: 28,
+    },
 };
 
 #[cfg(test)]

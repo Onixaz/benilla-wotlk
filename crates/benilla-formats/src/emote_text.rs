@@ -10,6 +10,7 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
+use benilla_expansions::dbc::LocalizedTable;
 
 use crate::dbc::{parse, str_at, u32_at};
 use crate::Chain;
@@ -20,16 +21,14 @@ const EMOTES_TEXT_DATA: &str = "DBFilesClient\\EmotesTextData.dbc";
 /// `EmoteText[]`'s width, which the 4-bit selector indexes.
 const FORMS: usize = 16;
 
-/// Locale columns per `EmotesTextData.dbc` row: id, 8 strings and flags make the 10 fields the
-/// loader checks (`0x544579`); the client reads the slot named in `[0xc0e080]`.
-const LOCALES: usize = 8;
-
 /// The joined text-emote sentence tables.
 #[derive(Debug, Default, Clone)]
 pub struct EmoteTextCatalog {
     /// `EmotesText.dbc` id to its 16 `EmoteText[]` columns, each an `EmotesTextData` id or 0.
     forms: HashMap<u32, [u32; FORMS]>,
-    data: HashMap<u32, [Option<String>; LOCALES]>,
+    /// `EmotesTextData.dbc` id to its text per locale column; the client reads the slot named
+    /// in `[0xc0e080]`.
+    data: HashMap<u32, Vec<Option<String>>>,
 }
 
 /// The facts `0x49b200` branches on. A self-emote never names you as its target: the sending
@@ -143,12 +142,12 @@ fn emotes_text_schema() -> Schema {
     s
 }
 
-/// `EmotesTextData.dbc`: a 1.12 `LocalizedString` block, the 40-byte record the reader checks
-/// (`cmp eax,0x28`).
-fn emotes_text_data_schema() -> Schema {
+/// `EmotesTextData.dbc`: an id, a `LocalizedString` block and its flags. In 1.12.1 the block is
+/// 8 locales, the 40-byte record the reader checks (`cmp eax,0x28`, `0x544579`); 3.3.5a's is 16.
+fn emotes_text_data_schema(l: &LocalizedTable) -> Schema {
     let mut s = Schema::new("EmotesTextData");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
-    for i in 0..LOCALES {
+    for i in 0..l.fields - 2 {
         s.add_field(SchemaField::new(format!("Text{i}"), FieldType::String));
     }
     s.add_field(SchemaField::new("Flags", FieldType::UInt32));
@@ -174,16 +173,21 @@ pub fn load_emote_text_catalog(chain: &mut Chain) -> Result<EmoteTextCatalog> {
     let bytes = chain
         .read_file(EMOTES_TEXT_DATA)
         .with_context(|| format!("reading {EMOTES_TEXT_DATA}"))?;
-    let rs = parse(&bytes, emotes_text_data_schema(), "EmotesTextData.dbc")?;
+    let layout = &chain.expansion().profile().dbc.emotes_text_data;
+    let locales = layout.fields - 2;
+    let rs = parse(
+        &bytes,
+        emotes_text_data_schema(layout),
+        "EmotesTextData.dbc",
+    )?;
     let mut data = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
-        let mut texts: [Option<String>; LOCALES] = Default::default();
-        for (locale, slot) in texts.iter_mut().enumerate() {
-            // `str_at` answers `None` for an empty string: the reference's blank-means-next-rung
-            // test (`cmpb $0,(%edx)`).
-            *slot = str_at(&rs, r, 1 + locale);
-        }
+        // `str_at` answers `None` for an empty string: the reference's blank-means-next-rung
+        // test (`cmpb $0,(%edx)`).
+        let texts = (0..locales)
+            .map(|locale| str_at(&rs, r, 1 + locale))
+            .collect();
         data.insert(id, texts);
     }
 
@@ -224,7 +228,12 @@ mod tests {
         let data = crate::wow_data_or_skip!();
         let mut chain = Chain::open(&data).expect("open patch chain");
         let cat = load_emote_text_catalog(&mut chain).expect("load");
-        assert_eq!(cat.len(), 169, "one form table per EmotesText row");
+        // 169 rows in 5875, 252 in 12340.
+        let rows = match chain.expansion() {
+            benilla_expansions::Expansion::Classic => 169,
+            benilla_expansions::Expansion::Wotlk => 252,
+        };
+        assert_eq!(cat.len(), rows, "one form table per EmotesText row");
 
         // ctx 0: someone else waves at someone else.
         assert_eq!(
@@ -351,6 +360,11 @@ mod tests {
             }
         }
         silent.dedup();
-        assert_eq!(silent, [86, 141, 264], "the silent set is SIT/STAND/TRAIN");
+        // 12340 adds two more rows with no sentence in any form.
+        let expected: &[u32] = match chain.expansion() {
+            benilla_expansions::Expansion::Classic => &[86, 141, 264],
+            benilla_expansions::Expansion::Wotlk => &[86, 141, 264, 366, 414],
+        };
+        assert_eq!(silent, expected, "the silent set is SIT/STAND/TRAIN");
     }
 }

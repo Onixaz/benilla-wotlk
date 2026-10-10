@@ -137,7 +137,7 @@ pub fn apply_template(lua: &mlua::Lua, wrapper: &Table, kind: &str, template: &s
         let model = loader.model();
         let templates = model.framexml_templates.borrow();
         // Looked up as `framexml::expand` looks it up (exact, then case-folded); keep them in step.
-        for name in [template].into_iter().filter(|s| !s.is_empty()) {
+        for name in framexml::inherit_names(template, model.inherits_list) {
             let Some(el) = templates.get(name).or_else(|| {
                 templates
                     .iter()
@@ -459,7 +459,7 @@ impl Loader<'_> {
         let font_names: std::collections::HashSet<&str> =
             fonts.keys().map(|k| k.as_str()).collect();
         let mut warns = Vec::new();
-        let out = framexml::expand_known(el, &view, &font_names, &mut warns);
+        let out = framexml::expand_known(el, &view, &font_names, model.inherits_list, &mut warns);
         drop(font_names);
         drop(fonts);
         drop(view);
@@ -472,13 +472,16 @@ impl Loader<'_> {
     /// [`Loader::expand`] for a region, only when `inherits=` names a registered element template:
     /// a FontString's `inherits=` usually names a font object, which passes through unwarned.
     pub(super) fn expand_region(&mut self, el: &Element) -> Element {
-        // One verbatim name, matched case-insensitively, as `framexml::expand` looks it up.
-        let hit = el.attr("inherits").is_some_and(|name| {
+        // Each name matched case-insensitively, as `framexml::expand` looks it up.
+        let hit = el.attr("inherits").is_some_and(|inherits| {
             let model = self.model();
             let templates = model.framexml_templates.borrow();
-            !name.is_empty()
-                && (templates.contains_key(name)
-                    || templates.keys().any(|k| k.eq_ignore_ascii_case(name)))
+            framexml::inherit_names(inherits, model.inherits_list)
+                .into_iter()
+                .any(|name| {
+                    templates.contains_key(name)
+                        || templates.keys().any(|k| k.eq_ignore_ascii_case(name))
+                })
         });
         if hit {
             self.expand(el)
@@ -621,6 +624,9 @@ impl Loader<'_> {
                 }
             };
         self.report.frames += 1;
+        if let Some(p) = parent {
+            self.bind_parent_key(el, p, &wrapper);
+        }
 
         let dbg_name = resolved_name
             .clone()
@@ -716,6 +722,20 @@ impl Loader<'_> {
         // 8 · this frame's OnLoad, now that its subtree is complete (bottom-up).
         if let Some(func) = onload {
             self.fire_onload(wrapper, &func, dbg_name);
+        }
+    }
+
+    /// `parentKey="k"`: `parent.k = child`, set at creation, so the child's `OnLoad` and every
+    /// ancestor's, which fire later, read it. Only on a target whose loader reads the attribute.
+    pub(super) fn bind_parent_key(&mut self, el: &Element, parent: &Table, child: &Table) {
+        let Some(key) = el.attr("parentKey").filter(|k| !k.is_empty()) else {
+            return;
+        };
+        if !self.model().parent_key {
+            return;
+        }
+        if let Err(e) = parent.set(key, child) {
+            self.report.errors.push(format!("parentKey=\"{key}\": {e}"));
         }
     }
 

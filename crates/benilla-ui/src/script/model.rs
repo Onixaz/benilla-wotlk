@@ -70,6 +70,20 @@ pub(crate) struct Model {
     pub(crate) set_formatted_text: bool,
     /// Whether an XML handler's `function=` names its handler: the target client's loader.
     pub(crate) script_function_attribute: bool,
+    /// Whether `inherits=` is a comma-separated template list: the target client's loader.
+    pub(crate) inherits_list: bool,
+    /// Whether XML `parentKey=` names a field on the parent: the target client's loader.
+    pub(crate) parent_key: bool,
+    /// Whether frames carry the attribute store: the target client's method table.
+    pub(crate) frame_attributes: bool,
+    /// The script names accepted beyond [`super::SCRIPT_KINDS`]: the target client's.
+    pub(crate) extra_script_kinds: &'static [&'static str],
+    /// Whether chat window records carry the uninteractable flag: the target client's.
+    pub(crate) chat_window_uninteractable: bool,
+    /// Whether the joins are 3.3.5a's temporary and permanent pair: the target client's.
+    pub(crate) permanent_channels: bool,
+    /// Whether frames carry `IsMouseOver`: the target client's method table.
+    pub(crate) is_mouse_over: bool,
     /// Every discovered addon in load order: the AddOn API's registry, filled at world entry.
     pub(crate) addons: Vec<super::addon::AddOnInfo>,
     /// The Lua index space into `addons`, a title-sorted, hidden-filtered list (`0x51da70`).
@@ -311,7 +325,8 @@ pub(crate) struct Model {
     /// Charter calls (`BuyGuildCharter`, `SignPetition`, `TurnInGuildCharter`, …) queued.
     pub(crate) petition_requests: Vec<petition::PetitionRequest>,
     /// Per chat window from `ChatFrame1`, the tint, alpha and font size its tab menu can change.
-    pub(crate) chat_window_looks: [chat_window::ChatWindowLook; chat_window::NUM_CHAT_WINDOWS],
+    /// One per frame the target's FrameXML builds (`NUM_CHAT_WINDOWS`).
+    pub(crate) chat_window_looks: Vec<chat_window::ChatWindowLook>,
     /// 0-based windows whose look Lua changed, the persist cue.
     pub(crate) chat_window_changes: HashSet<usize>,
     /// Chat-type colours (`0xb4e518`): 94 fixed and 10 `CHANNELn`, overlaid by `chat-cache.txt`.
@@ -1046,6 +1061,13 @@ impl Model {
             unknown_unit_token_raises: client.unknown_unit_token_raises,
             set_formatted_text: client.set_formatted_text,
             script_function_attribute: client.script_function_attribute,
+            inherits_list: client.inherits_list,
+            parent_key: client.parent_key,
+            frame_attributes: client.frame_attributes,
+            extra_script_kinds: client.extra_script_kinds,
+            chat_window_uninteractable: client.chat_window_uninteractable,
+            permanent_channels: client.permanent_channels,
+            is_mouse_over: client.is_mouse_over,
             addons: Vec::new(),
             addon_index: Vec::new(),
             addon_info_hidden: None,
@@ -1148,7 +1170,9 @@ impl Model {
             petition: petition::PetitionState::default(),
             petition_requests: Vec::new(),
             // Per window, as the stock dock differs: 1 and 2 are the dock, the rest undocked.
-            chat_window_looks: std::array::from_fn(chat_window::ChatWindowLook::stock),
+            chat_window_looks: (0..client.chat_windows)
+                .map(chat_window::ChatWindowLook::stock)
+                .collect(),
             chat_window_changes: HashSet::new(),
             chat_colors: super::chat_types::seed(),
             chat_colors_changed: false,

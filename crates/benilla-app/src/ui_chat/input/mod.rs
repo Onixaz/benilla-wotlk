@@ -887,9 +887,13 @@ pub(super) fn drain_chat_input(
             ParsedChat::Channel(cmd) => {
                 use benilla_ui::script::ChannelCommand as C;
                 let cmd = match cmd {
-                    C::Join { name, password } => {
+                    C::Join {
+                        name,
+                        password,
+                        voice,
+                    } => {
                         manual_join_or_leave(&channels, &mut script, &name);
-                        ClientCommand::JoinChannel { name, password }
+                        channels.join_command(name, password, false, voice)
                     }
                     C::Leave { name } => {
                         // `LeaveChannelByName` (`0x4a0000` → `0x49ee70`): a number names a
@@ -901,7 +905,7 @@ pub(super) fn drain_chat_input(
                         manual_join_or_leave(&channels, &mut script, &name);
                         channels.note_zone_channel_left(&name);
                         channels.note_custom_channel_left(&name);
-                        ClientCommand::LeaveChannel { name }
+                        channels.leave_command(name)
                     }
                     C::List { name } => ClientCommand::ChannelList { name },
                     // `ListChannels()`: the joined roster, numbered as `/N` addresses it.

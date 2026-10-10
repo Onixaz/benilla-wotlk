@@ -96,6 +96,10 @@ pub struct ExpansionProfile {
     pub chat_types: &'static ChatTypes,
     /// How a script handler receives its frame and arguments.
     pub script_args: ScriptArgs,
+    /// Whether the UI's Lua answers as Lua 5.0: no `select`, `coroutine`, `string.match` or string
+    /// metatable, an `n`-based table library and 5.0's `collectgarbage(limit)`. Otherwise it is
+    /// stock Lua 5.1 plus the client's `bit` library.
+    pub lua_50: bool,
     /// Whether the unit-token resolver raises `Unknown unit name: %s` for a token it does not
     /// recognise, rather than naming nobody.
     pub unknown_unit_token_raises: bool,
@@ -107,6 +111,38 @@ pub struct ExpansionProfile {
     /// Whether an XML `<Scripts>` handler's `function="Name"` binds the global `Name` as the
     /// handler, in place of its body.
     pub script_function_attribute: bool,
+    /// Whether XML `inherits=` (and `CreateFrame`'s template argument) is a comma-separated list
+    /// of templates applied left to right, each name trimmed, rather than one verbatim name.
+    pub inherits_list: bool,
+    /// Whether an XML frame or layer region's `parentKey="k"` stores the new object as its
+    /// parent's field `k`.
+    pub parent_key: bool,
+    /// Whether frames carry `SetAttribute`/`GetAttribute`, a case-insensitive name-to-value store
+    /// whose change fires `OnAttributeChanged`.
+    pub frame_attributes: bool,
+    /// The script names `SetScript` and XML `<Scripts>` accept beyond 1.12.1's.
+    pub extra_script_kinds: &'static [&'static str],
+    /// `NUM_CHAT_WINDOWS`, the chat frames the stock FrameXML builds; the engine's settings array
+    /// holds ten records in both clients.
+    pub chat_windows: usize,
+    /// Whether the Lua API has the Battle.net verbs (`BNConnected`, `BNGetNumFriends`, …).
+    pub battle_net_api: bool,
+    /// Whether the base library has `securecall`, a protected call through the error handler.
+    pub secure_call: bool,
+    /// Whether a chat window's record carries an uninteractable flag: `SetChatWindowUninteractable`
+    /// stores it and `GetChatWindowInfo` answers it tenth.
+    pub chat_window_uninteractable: bool,
+    /// Whether the channel joins are `JoinTemporaryChannel` and `JoinPermanentChannel` (with
+    /// `JoinChannelByName` the temporary one), taking `hasVoice`, and `CMSG_JOIN_CHANNEL` and
+    /// `CMSG_LEAVE_CHANNEL` lead with the channel's `ChatChannels.dbc` id.
+    pub permanent_channels: bool,
+    /// Whether a `CHAT_MSG_*` event carries arg11 (the line id), arg12 (a player sender's guid
+    /// string) and arg13 (a Battle.net presence id) after 1.12.1's ten.
+    pub chat_msg_line_args: bool,
+    /// Whether frames carry `IsMouseOver(top, bottom, left, right)`.
+    pub is_mouse_over: bool,
+    /// Whether the Lua API has `GetAutoCompleteResults`, the name lookup behind whisper targets.
+    pub auto_complete: bool,
     /// The `ChrRaces` ids a player can create, ascending.
     pub playable_races: &'static [u8],
     /// The highest geoset id the character compositor selects; a character model's higher ids
@@ -245,6 +281,8 @@ static CLASSIC: ExpansionProfile = ExpansionProfile {
     update_fields: &update_fields::CLASSIC,
     chat_types: &chat::CLASSIC,
     script_args: ScriptArgs::Globals,
+    // `$Lua: Lua 5.0` at `0x811b30`; `InitLua 0x7039e0` opens base, string, table, math and bit.
+    lua_50: true,
     // `0x515970` ends in `luaL_error` at `0x515c14`.
     unknown_unit_token_raises: true,
     // No 1.12.1 registration table names it (`reference/1.12-shapes.tsv`).
@@ -253,6 +291,29 @@ static CLASSIC: ExpansionProfile = ExpansionProfile {
     set_formatted_text: false,
     // The handler loader reads only the element's body (`0x704c70`); the schema has no attribute.
     script_function_attribute: false,
+    // The inherit lookup (`0x6ee6f0`) takes the attribute whole; it has no splitter.
+    inherits_list: false,
+    // The 1.12 schema has no such attribute; `LoadXML` reads no field of that name.
+    parent_key: false,
+    // No method table binds `SetAttribute` (`reference/1.12-shapes.tsv`).
+    frame_attributes: false,
+    extra_script_kinds: &[],
+    // `NUM_CHAT_WINDOWS = 7` (`ChatFrame.lua:5`).
+    chat_windows: 7,
+    // No 1.12.1 registration table names a `BN` verb (`reference/1.12-shapes.tsv`).
+    battle_net_api: false,
+    // Not among the 36 base-library entries (`0x811e28`).
+    secure_call: false,
+    // `GetChatWindowInfo` (`0x4a0ba0`) answers nine values.
+    chat_window_uninteractable: false,
+    // `JoinChannelByName` (`0x49ff00`) is the one join; the body is two cstrings.
+    permanent_channels: false,
+    // The fire format `%s%s%s%s%s%s%d%d%s%d` (`0x844608`).
+    chat_msg_line_args: false,
+    // No 1.12.1 method table binds it (`reference/1.12-shapes.tsv`).
+    is_mouse_over: false,
+    // No 1.12.1 registration table names it (`reference/1.12-shapes.tsv`).
+    auto_complete: false,
     // Human through Troll; Goblin (9) and above are not creatable.
     playable_races: &[1, 2, 3, 4, 5, 6, 7, 8],
     // `0x477520` disables 0..=1700 (`0x6a4`) before enabling its picks.
@@ -314,6 +375,10 @@ static WOTLK: ExpansionProfile = ExpansionProfile {
     update_fields: &update_fields::WOTLK,
     chat_types: &chat::WOTLK,
     script_args: ScriptArgs::Parameters,
+    // `$Lua: Lua 5.1.1` at `0xa470a0`; the base and library tables bind `select`, `coroutine`,
+    // `string.match`/`gmatch`/`reverse`, `table.maxn` and `math.fmod`/`modf`
+    // (`reference/3.3.5a-shapes.tsv`).
+    lua_50: false,
     // `Wow.exe` holds no unit-name error string at all; its resolver also takes `focus`, `boss%d`,
     // `vehicle`, `arenapet`, `questnpc` and `commentator` (the token strings at `0x62156c`).
     unknown_unit_token_raises: false,
@@ -323,6 +388,32 @@ static WOTLK: ExpansionProfile = ExpansionProfile {
     set_formatted_text: true,
     // `CSimpleFrame`'s script loader reads `function` (`0x490009`) after compiling any body.
     script_function_attribute: true,
+    // The shipped FrameXML names lists both ways, `"ChatFrameTemplate,FloatingBorderedFrame"`
+    // and `"SecureActionButtonTemplate, ActionButtonTemplate"`, and the client builds both.
+    inherits_list: true,
+    // The shipped FrameXML reads such keys from `OnLoad`s: `GeneralDockManager`'s reads the
+    // `overflowButton` its XML child declares (`FloatingChatFrame.lua:2048`).
+    parent_key: true,
+    // Frame's method table binds both (`0x49f610`, `0x49f2d0`).
+    frame_attributes: true,
+    // Both have parameter templates in the script compiler (`ScriptArgs::parameters`).
+    extra_script_kinds: &["OnAttributeChanged", "OnInputLanguageChanged"],
+    // `NUM_CHAT_WINDOWS = 10` (`ChatFrame.lua:5`).
+    chat_windows: 10,
+    // The world table binds them, `BNGetNumFriends` at `0x534590`.
+    battle_net_api: true,
+    // The FrameScript base library binds it at `0x816f30`.
+    secure_call: true,
+    // The setter `0x4fc6e0` stores `+0x94` of a 0x100-byte record; `0x4fbd90` pushes it tenth.
+    chat_window_uninteractable: true,
+    // `0x50daa0`/`0x50dac0` over `0x50d900`; the builders `0x507c58`, `0x5095ca`.
+    permanent_channels: true,
+    // The fire format `%s%s%s%s%s%s%d%d%s%d%d%s%u` (`0x9fbe64`, helper `0x4fdc00`).
+    chat_msg_line_args: true,
+    // Frame's method table binds it at `0x49e100`.
+    is_mouse_over: true,
+    // The world table binds it at `0x57b3a0`.
+    auto_complete: true,
     // 1.12.1's eight, Blood Elf and Draenei; the shipped `CharBaseInfo` lists exactly these.
     playable_races: &[1, 2, 3, 4, 5, 6, 7, 8, 10, 11],
     // Groups 17 (eye glow) and 18 (belt) join the selection; WowUnreal's 3.3.5a builder defaults

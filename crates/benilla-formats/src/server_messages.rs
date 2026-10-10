@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
+use benilla_expansions::dbc::LocalizedTable;
 
 use crate::chain::Chain;
 use crate::dbc::{parse, str_at, u32_at};
@@ -54,10 +55,15 @@ impl ServerMessagesCatalog {
     }
 }
 
-fn schema() -> Schema {
+/// `ID`, the text over the layout's locales, then its mask.
+fn schema(l: &LocalizedTable) -> Schema {
     let mut s = Schema::new("ServerMessages");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
-    s.add_field(SchemaField::new_array("Text", FieldType::String, 8));
+    s.add_field(SchemaField::new_array(
+        "Text",
+        FieldType::String,
+        l.fields - 2,
+    ));
     s.add_field(SchemaField::new("TextMask", FieldType::UInt32));
     s.set_key_field("ID");
     s
@@ -67,7 +73,11 @@ pub fn load_server_messages_catalog(chain: &mut Chain) -> Result<ServerMessagesC
     let bytes = chain
         .read_file(SERVER_MESSAGES)
         .context("reading ServerMessages.dbc")?;
-    let rs = parse(&bytes, schema(), "ServerMessages")?;
+    let rs = parse(
+        &bytes,
+        schema(&chain.expansion().profile().dbc.server_messages),
+        "ServerMessages",
+    )?;
     let mut rows = Vec::with_capacity(rs.records().len());
     for r in rs.records() {
         let (Some(id), Some(text)) = (u32_at(r, 0), str_at(&rs, r, 1)) else {
@@ -86,6 +96,9 @@ mod tests {
     fn the_real_table_is_the_five_documented_rows() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
+        if chain.expansion() != benilla_expansions::Expansion::Classic {
+            return; // 3.3.5a's table: the next test
+        }
         let cat = load_server_messages_catalog(&mut chain).expect("load ServerMessages");
         let got: Vec<(u32, &str)> = cat.rows.iter().map(|(i, t)| (*i, t.as_str())).collect();
         assert_eq!(
@@ -98,6 +111,21 @@ mod tests {
                 (5, "[SERVER] Restart cancelled"),
             ]
         );
+    }
+
+    /// 3.3.5a's sixteen-locale table keeps the five and adds the battleground and instance rows.
+    #[test]
+    fn a_3_3_5a_table_reads_its_nine_rows() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        if chain.expansion() != benilla_expansions::Expansion::Wotlk {
+            return; // 1.12.1's table: the test above
+        }
+        let cat = load_server_messages_catalog(&mut chain).expect("load ServerMessages");
+        assert_eq!(cat.len(), 9);
+        assert_eq!(cat.text(1), Some("[SERVER] Shutdown in %s"));
+        assert_eq!(cat.text(5), Some("[SERVER] Restart cancelled"));
+        assert_eq!(cat.text(9), Some("[SERVER] Instance restart in %s"));
     }
 
     fn shipped() -> ServerMessagesCatalog {

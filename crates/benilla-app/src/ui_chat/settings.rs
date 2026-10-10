@@ -507,11 +507,16 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
         );
     }
     // The header's `CHANNELS` re-join at login, as in the reference; zone channels are the walk's.
+    // The list holds custom channels only, so each carries id 0; 3.3.5a's re-join (`0x50819c`)
+    // is the client's own, auto 1.
     if let Some(commands) = commands {
         for name in parsed.joined {
             let _ = commands.send(ClientCommand::JoinChannel {
                 name,
                 password: String::new(),
+                channel_id: 0,
+                auto_joined: true,
+                voice: false,
             });
         }
     }

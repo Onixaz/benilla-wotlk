@@ -1,6 +1,7 @@
 //! The channel sends: join, leave, list and moderation, all with cstring-only bodies.
 
 use anyhow::Result;
+use benilla_expansions::Expansion;
 
 use crate::messages::{self, opcode};
 
@@ -8,16 +9,32 @@ use super::WorldWriter;
 
 impl WorldWriter {
     /// Join a channel; the 1.12 client joins zone channels this way ("General - Elwynn Forest").
-    pub fn join_channel(&mut self, name: &str, password: &str) -> Result<()> {
-        self.send(
-            opcode::CMSG_JOIN_CHANNEL,
-            &messages::join_channel(name, password),
-        )
+    /// `channel_id`, `auto_joined` and `voice` ride only 3.3.5a's body
+    /// ([`messages::join_channel_wotlk`]).
+    pub fn join_channel(
+        &mut self,
+        name: &str,
+        password: &str,
+        channel_id: u32,
+        auto_joined: bool,
+        voice: bool,
+    ) -> Result<()> {
+        let body = match Expansion::active() {
+            Expansion::Classic => messages::join_channel(name, password),
+            Expansion::Wotlk => {
+                messages::join_channel_wotlk(channel_id, auto_joined, voice, name, password)
+            }
+        };
+        self.send(opcode::CMSG_JOIN_CHANNEL, &body)
     }
 
-    /// Leave a channel (`CMSG_LEAVE_CHANNEL`).
-    pub fn leave_channel(&mut self, name: &str) -> Result<()> {
-        self.send(opcode::CMSG_LEAVE_CHANNEL, &messages::leave_channel(name))
+    /// Leave a channel (`CMSG_LEAVE_CHANNEL`); `channel_id` rides only 3.3.5a's body.
+    pub fn leave_channel(&mut self, name: &str, channel_id: u32) -> Result<()> {
+        let body = match Expansion::active() {
+            Expansion::Classic => messages::leave_channel(name),
+            Expansion::Wotlk => messages::leave_channel_wotlk(channel_id, name),
+        };
+        self.send(opcode::CMSG_LEAVE_CHANNEL, &body)
     }
 
     /// Ask a channel's members (`CMSG_CHANNEL_LIST`, `/chatlist`), answered by `SMSG_CHANNEL_LIST`.

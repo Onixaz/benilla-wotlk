@@ -130,6 +130,32 @@ pub fn leave_channel(name: &str) -> Vec<u8> {
     cstrings_body(&[name])
 }
 
+/// 3.3.5a's `CMSG_JOIN_CHANNEL` body, as the 12340 client builds it (`0x507c58`): `u32` the
+/// `ChatChannels.dbc` id of a built-in channel (0 for a custom one), `u8` 1 when the client joins
+/// on its own (the zone walk and the login re-join, `0x508139`, `0x50819c`) and 0 for a Lua join,
+/// `u8` the voice flag, then the name and password.
+pub fn join_channel_wotlk(
+    channel_id: u32,
+    auto_joined: bool,
+    voice: bool,
+    name: &str,
+    password: &str,
+) -> Vec<u8> {
+    let mut body = channel_id.to_le_bytes().to_vec();
+    body.push(u8::from(auto_joined));
+    body.push(u8::from(voice));
+    body.extend(cstrings_body(&[name, password]));
+    body
+}
+
+/// 3.3.5a's `CMSG_LEAVE_CHANNEL` body (`0x5095ca`): `u32` the channel's id (0 for a custom one),
+/// then its name.
+pub fn leave_channel_wotlk(channel_id: u32, name: &str) -> Vec<u8> {
+    let mut body = channel_id.to_le_bytes().to_vec();
+    body.extend(cstrings_body(&[name]));
+    body
+}
+
 /// `CMSG_CHANNEL_LIST` body, the member-roster request: the channel name (`Channel.cpp:14-17`).
 pub fn channel_list(name: &str) -> Vec<u8> {
     cstrings_body(&[name])

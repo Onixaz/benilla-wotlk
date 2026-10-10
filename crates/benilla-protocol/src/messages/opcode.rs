@@ -332,6 +332,9 @@ pub const CMSG_AREATRIGGER: u16 = 0x00B4; // 180
 pub const SMSG_AREA_TRIGGER_MESSAGE: u16 = 0x02B8; // 696
 pub const CMSG_MESSAGECHAT: u16 = 0x0095;
 pub const SMSG_MESSAGECHAT: u16 = 0x0096;
+/// 3.3.5a only: a chat line from a GM-tagged speaker, `SMSG_MESSAGECHAT`'s body with the sender's
+/// name inline (handler `0x50ebc0`).
+pub const SMSG_GM_MESSAGECHAT: u16 = 0x03B3;
 // Channels: every CMSG is `cstring channelName` [+ `cstring playerName`]; 1.12 has no channel id.
 pub const CMSG_JOIN_CHANNEL: u16 = 0x0097; // 151
 pub const CMSG_LEAVE_CHANNEL: u16 = 0x0098; // 152

@@ -3,7 +3,7 @@
 //! 1-based slot or by name and returns three values: the slot (`CHAT_MSG_*` arg8), the name and
 //! `instanceID` (arg10).
 
-use mlua::{Lua, MultiValue, Value};
+use mlua::{IntoLuaMulti, Lua, MultiValue, Value};
 
 use super::Model;
 
@@ -22,10 +22,12 @@ pub struct ZoneChannelRow {
 /// handlers' calls, one variant each.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChannelCommand {
-    /// `JoinChannelByName(name, password)`, sent on both non-nil legs.
+    /// `JoinChannelByName(name, password)`, sent on both non-nil legs; `voice` is 3.3.5a's
+    /// `hasVoice` argument, false in 1.12.1.
     Join {
         name: String,
         password: String,
+        voice: bool,
     },
     /// `LeaveChannelByName(name)`.
     Leave {
@@ -301,67 +303,68 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // with a space, or a row whose zone text is empty, answers nil and sends nothing. A `frameId`
     // that truncates to 1..=10 registers the channel in that window's list, deduplicated by name
     // (`0x49ec24`), which is what brings a `/leave`-stripped channel's lines back to the window.
-    g.set(
-        "JoinChannelByName",
-        lua.create_function(
-            |lua, (name, password, frame): (Option<String>, Option<String>, Value)| {
-                let Some(name) = non_empty(name) else {
-                    return Ok(MultiValue::from_vec(vec![Value::Nil]));
-                };
-                if name.contains(' ') {
-                    return Ok(MultiValue::from_vec(vec![Value::Nil]));
-                }
-                let row = {
-                    let model = lua.app_data_ref::<Model>().expect("model app_data");
-                    model
-                        .zone_channel_catalog
-                        .iter()
-                        .find(|r| r.shortcut.eq_ignore_ascii_case(&name))
-                        .cloned()
-                };
-                let (id, resolved, listed_as) = match row {
-                    None => (0, None, name.clone()),
-                    Some(ZoneChannelRow { resolved: None, .. }) => {
-                        return Ok(MultiValue::from_vec(vec![Value::Nil]))
+    let wotlk_joins = lua
+        .app_data_ref::<Model>()
+        .expect("model app_data")
+        .permanent_channels;
+    if !wotlk_joins {
+        g.set(
+            "JoinChannelByName",
+            lua.create_function(
+                |lua, (name, password, frame): (Option<String>, Option<String>, Value)| {
+                    let Some(name) = non_empty(name) else {
+                        return Ok(MultiValue::from_vec(vec![Value::Nil]));
+                    };
+                    let password = password.unwrap_or_default();
+                    match join_by_name(lua, name, password, frame, false, false)? {
+                        Some(answer) => answer.into_lua_multi(lua),
+                        None => Ok(MultiValue::from_vec(vec![Value::Nil])),
                     }
-                    Some(ZoneChannelRow {
-                        id,
-                        resolved,
-                        shortcut,
-                        ..
-                    }) => (id, resolved, shortcut),
-                };
-                // `0x49ff6b edi = -1` / `0x49ff8a dec edi`; `0x49ec27 cmp esi,0xa; jae` skips.
-                let window = match frame {
-                    Value::Integer(n) => Some(n as f64),
-                    Value::Number(n) => Some(n),
-                    _ => None,
-                }
-                .map(|n| n.trunc() as i64 - 1)
-                .and_then(|i| usize::try_from(i).ok())
-                .filter(|i| *i < 10);
-                if let Some(i) = window {
-                    lua.app_data_mut::<Model>()
-                        .expect("model app_data")
-                        .register_window_channel(i, listed_as, id);
-                }
-                push(
-                    lua,
-                    ChannelCommand::Join {
-                        name: resolved.clone().unwrap_or_else(|| name.clone()),
-                        password: password.unwrap_or_default(),
+                },
+            )?,
+        )?;
+    } else {
+        // 3.3.5a's three (`0x50d900`): `JoinTemporaryChannel` and `JoinChannelByName` are one
+        // binding (`0x50daa0`), `JoinPermanentChannel` (`0x50dac0`) the same with the permanent
+        // flag, each `(name [, password [, frameId [, hasVoice]]])`. A non-string name raises the
+        // usage; a space, or a name or password of 128 bytes or more, answers nothing. A matched
+        // row's password is dropped (`0x507bdd`). Deviation, as in 1.12.1's verb: the profanity
+        // refusal (`0x509a50`, `ERR_PROFANE_CHAT_NAME`) is not built, and the permanent flag,
+        // which only marks the channel for the client's own re-join, is not kept.
+        for verb in [
+            "JoinChannelByName",
+            "JoinTemporaryChannel",
+            "JoinPermanentChannel",
+        ] {
+            g.set(
+                verb,
+                lua.create_function(
+                    move |lua, (name, password, frame, voice): (Value, Value, Value, Value)| {
+                        let text = |v: &Value| match v {
+                            Value::String(s) => Some(s.to_string_lossy()),
+                            Value::Integer(n) => Some(n.to_string()),
+                            Value::Number(n) => Some(n.to_string()),
+                            _ => None,
+                        };
+                        let Some(name) = text(&name) else {
+                            return Err(mlua::Error::runtime(format!(
+                                "Usage: {verb}(\"name\" [,\"password\"] [,index] [,hasVoice])"
+                            )));
+                        };
+                        let password = text(&password).unwrap_or_default();
+                        if name.is_empty() || name.len() >= 0x80 || password.len() >= 0x80 {
+                            return Ok(MultiValue::new());
+                        }
+                        let voice = !matches!(voice, Value::Nil | Value::Boolean(false));
+                        match join_by_name(lua, name, password, frame, voice, true)? {
+                            Some(answer) => answer.into_lua_multi(lua),
+                            None => Ok(MultiValue::new()),
+                        }
                     },
-                );
-                Ok(MultiValue::from_vec(vec![
-                    Value::Integer(i64::from(id)),
-                    match resolved {
-                        Some(r) => Value::String(lua.create_string(&r)?),
-                        None => Value::Nil,
-                    },
-                ]))
-            },
-        )?,
-    )?;
+                )?,
+            )?;
+        }
+    }
 
     // EnumerateServerChannels() (`0x4a1790`): the `ChatChannels.dbc` Shortcuts in row order, never
     // the composed names, a `flags & 0x10` row only in a city (`AreaTable.Flags & 0x8`); zero
@@ -528,6 +531,68 @@ impl super::UiScript {
     }
 }
 
+/// The join both clients' verbs share: `name` resolved against the zone catalog by Shortcut, the
+/// window registration and the queued [`ChannelCommand::Join`]. `None` is a refusal that sends
+/// nothing: a space in the name, or a row with no zone text. `drop_row_password` is 3.3.5a's.
+fn join_by_name(
+    lua: &Lua,
+    name: String,
+    password: String,
+    frame: Value,
+    voice: bool,
+    drop_row_password: bool,
+) -> mlua::Result<Option<(i64, Option<String>)>> {
+    if name.contains(' ') {
+        return Ok(None);
+    }
+    let row = {
+        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        model
+            .zone_channel_catalog
+            .iter()
+            .find(|r| r.shortcut.eq_ignore_ascii_case(&name))
+            .cloned()
+    };
+    let (id, resolved, listed_as) = match row {
+        None => (0, None, name.clone()),
+        Some(ZoneChannelRow { resolved: None, .. }) => return Ok(None),
+        Some(ZoneChannelRow {
+            id,
+            resolved,
+            shortcut,
+            ..
+        }) => (id, resolved, shortcut),
+    };
+    // `0x49ff6b edi = -1` / `0x49ff8a dec edi`; `0x49ec27 cmp esi,0xa; jae` skips.
+    let window = match frame {
+        Value::Integer(n) => Some(n as f64),
+        Value::Number(n) => Some(n),
+        _ => None,
+    }
+    .map(|n| n.trunc() as i64 - 1)
+    .and_then(|i| usize::try_from(i).ok())
+    .filter(|i| *i < 10);
+    if let Some(i) = window {
+        lua.app_data_mut::<Model>()
+            .expect("model app_data")
+            .register_window_channel(i, listed_as, id);
+    }
+    let password = if drop_row_password && id != 0 {
+        String::new()
+    } else {
+        password
+    };
+    push(
+        lua,
+        ChannelCommand::Join {
+            name: resolved.clone().unwrap_or_else(|| name.clone()),
+            password,
+            voice,
+        },
+    );
+    Ok(Some((i64::from(id), resolved)))
+}
+
 #[cfg(test)]
 mod command_tests {
     use super::{ChannelCommand, ZoneChannelRow};
@@ -548,6 +613,46 @@ mod command_tests {
                 listed: false,
             },
         ]
+    }
+
+    /// 3.3.5a's verbs: the same row and custom legs, `hasVoice` carried, a row's password
+    /// dropped, a refusal answering nothing and a non-string name raising.
+    #[test]
+    fn the_3_3_5a_joins_carry_voice_and_answer_nothing_on_a_refusal() {
+        let mut s = UiScript::new_for(benilla_expansions::Expansion::Wotlk).unwrap();
+        s.set_zone_channel_catalog(catalog());
+        s.run(
+            "A = {JoinPermanentChannel('General', 'pw', 1, 1)} \
+             B = {JoinTemporaryChannel('MyChan', 'secret')} \
+             N = select('#', JoinChannelByName('two words'))",
+        )
+        .unwrap();
+        assert_eq!(
+            s.eval::<(i64, String)>("return A[1], A[2]").unwrap(),
+            (1, "General - Elwynn Forest".to_string())
+        );
+        assert!(s.eval::<bool>("return B[1] == 0").unwrap());
+        assert_eq!(s.eval::<i64>("return N").unwrap(), 0);
+        assert!(s.run("JoinPermanentChannel(nil)").is_err());
+        assert_eq!(
+            s.take_channel_commands(),
+            vec![
+                ChannelCommand::Join {
+                    name: "General - Elwynn Forest".into(),
+                    password: String::new(),
+                    voice: true,
+                },
+                ChannelCommand::Join {
+                    name: "MyChan".into(),
+                    password: "secret".into(),
+                    voice: false,
+                },
+            ]
+        );
+        let classic = UiScript::new_for(benilla_expansions::Expansion::Classic).unwrap();
+        assert!(classic
+            .eval::<bool>("return JoinPermanentChannel == nil")
+            .unwrap());
     }
 
     /// The row, custom-channel and nil legs, and that 0 is truthy.
@@ -579,11 +684,13 @@ mod command_tests {
             vec![
                 ChannelCommand::Join {
                     name: "General - Elwynn Forest".into(),
-                    password: "pw".into()
+                    password: "pw".into(),
+                    voice: false,
                 },
                 ChannelCommand::Join {
                     name: "MyChan".into(),
-                    password: String::new()
+                    password: String::new(),
+                    voice: false,
                 },
             ],
             "sent on both non-nil legs, the resolved name for a row"

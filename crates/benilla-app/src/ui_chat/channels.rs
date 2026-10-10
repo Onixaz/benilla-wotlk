@@ -12,7 +12,7 @@ use benilla_assets::LockRecover;
 use benilla_formats::ChatChannelsCatalog;
 
 use crate::area::AreaTableRes;
-use crate::net::{ClientCommand, NetCommands};
+use crate::net::NetCommands;
 
 use super::edit::{ChannelState, SlotState};
 use super::recruitment::GuildRecruitmentCascade;
@@ -310,16 +310,17 @@ fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, commands: &NetCom
         match step {
             WalkStep::Leave(name) => {
                 debug!("chat: leaving zone channel {name:?}");
-                let _ = commands
-                    .0
-                    .send(ClientCommand::LeaveChannel { name: name.clone() });
+                let _ = commands.0.send(channels.leave_command(name.clone()));
             }
             WalkStep::Join(name) => {
                 debug!("chat: joining zone channel {name:?}");
-                let _ = commands.0.send(ClientCommand::JoinChannel {
-                    name: name.clone(),
-                    password: String::new(),
-                });
+                // The walk's own join: 3.3.5a's `0x508139` passes auto 1, voice 0.
+                let _ = commands.0.send(channels.join_command(
+                    name.clone(),
+                    String::new(),
+                    true,
+                    false,
+                ));
             }
             WalkStep::Rename { old, new } => {
                 if let Some(n) = channels.rename_slot(old, new) {

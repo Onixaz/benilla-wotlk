@@ -38,6 +38,11 @@ pub mod channel_notice {
     pub const PLAYER_INVITED: u8 = 0x1D;
     pub const PLAYER_INVITE_BANNED: u8 = 0x1E;
     pub const THROTTLED: u8 = 0x1F;
+    /// 3.3.5a only, from here: the 12340 client's arms `0x50e916`-`0x50ea05`.
+    pub const NOT_IN_AREA: u8 = 0x20;
+    pub const NOT_IN_LFG: u8 = 0x21;
+    pub const VOICE_ON: u8 = 0x22;
+    pub const VOICE_OFF: u8 = 0x23;
 }
 
 /// What follows the notice byte and channel name, by notice (`Chat/Channel.cpp:804-1008`).
@@ -129,6 +134,51 @@ pub(super) fn read_channel_notify(r: &mut &[u8]) -> io::Result<ChannelNotify> {
         notice,
         channel,
         tail,
+    })
+}
+
+/// 3.3.5a's `SMSG_CHANNEL_NOTIFY` (AzerothCore `Channel::Make*`, the 12340 client's `0x50e120`):
+/// 1.12.1's tails, but `YOU_JOINED` is `u8 flags, u32 channelId, u32 0` and `YOU_LEFT` is
+/// `u32 channelId, u8 isConstant`. Of the notices past `THROTTLED`, `NOT_IN_AREA` and
+/// `NOT_IN_LFG` carry nothing and `VOICE_ON` and `VOICE_OFF` the actor's guid; `0x24`, which the
+/// client reads a guid for and prints nothing, is refused.
+pub(super) fn read_channel_notify_wotlk(r: &mut &[u8]) -> io::Result<ChannelNotify> {
+    use channel_notice as n;
+
+    let mut body = *r;
+    let notice = read_u8(&mut body)?;
+    let tail = match notice {
+        n::YOU_JOINED => {
+            let channel = read_cstring(&mut body)?;
+            let flags = u32::from(read_u8(&mut body)?);
+            let _channel_id = read_u32_le(&mut body)?;
+            let _reserved = read_u32_le(&mut body)?;
+            (channel, ChannelNoticeTail::YouJoined { flags })
+        }
+        n::YOU_LEFT => {
+            let channel = read_cstring(&mut body)?;
+            let _channel_id = read_u32_le(&mut body)?;
+            let _is_constant = read_u8(&mut body)?;
+            (channel, ChannelNoticeTail::Empty)
+        }
+        n::NOT_IN_AREA | n::NOT_IN_LFG => (read_cstring(&mut body)?, ChannelNoticeTail::Empty),
+        n::VOICE_ON | n::VOICE_OFF => {
+            let channel = read_cstring(&mut body)?;
+            (channel, ChannelNoticeTail::Actor(read_u64_le(&mut body)?))
+        }
+        0x24 => {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("3.3.5a channel notice {notice:#04x} has no shared notice yet"),
+            ))
+        }
+        _ => return read_channel_notify(r),
+    };
+    *r = body;
+    Ok(ChannelNotify {
+        notice,
+        channel: tail.0,
+        tail: tail.1,
     })
 }
 

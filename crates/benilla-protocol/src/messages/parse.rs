@@ -232,6 +232,38 @@ pub fn parse_auth_response_wotlk(body: &[u8]) -> io::Result<ServerPacket> {
     })
 }
 
+/// 3.3.5a's `SMSG_NAME_QUERY_RESPONSE`, as the 12340 client reads it (`0x6357d0`): a packed
+/// guid, `u8` status, then on status 0 the name, the realm name (empty on one realm), `u8` race,
+/// gender and class, and a `u8` flag that adds the five declined-name cstrings. Any other status
+/// carries no name and is refused.
+fn read_name_query_response_wotlk(r: &mut &[u8]) -> io::Result<ServerPacket> {
+    let guid = crate::wire::read_packed_guid(r)?;
+    let status = read_u8(r)?;
+    if status != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("name query for {guid:#x} answered status {status}, no name"),
+        ));
+    }
+    let name = read_cstring(r)?;
+    let _realm = read_cstring(r)?;
+    let race = u32::from(read_u8(r)?);
+    let gender = u32::from(read_u8(r)?);
+    let class = u32::from(read_u8(r)?);
+    if read_u8(r)? != 0 {
+        for _ in 0..5 {
+            let _declined = read_cstring(r)?;
+        }
+    }
+    Ok(ServerPacket::NameQueryResponse {
+        guid,
+        name,
+        race,
+        gender,
+        class,
+    })
+}
+
 /// 3.3.5a's `SMSG_CHAR_ENUM`: `u8 count`, then each entry in 3.3.5a's layout ([`Character`]).
 pub fn parse_char_enum_wotlk(body: &[u8]) -> io::Result<ServerPacket> {
     let mut r = body;
@@ -252,8 +284,7 @@ pub fn parse_server_with_tail(opcode: u16, body: &[u8]) -> io::Result<(ServerPac
 /// The opcodes whose 3.3.5a body is known to differ from 1.12.1's and has no 3.3.5a decoder yet:
 /// each failed or left bytes unread when read in 1.12.1's layout against AzerothCore, and
 /// `SMSG_COMPRESSED_MOVES`, which AzerothCore never sends, frames its records unverified.
-const WOTLK_UNDECODED: [u16; 11] = [
-    opcode::SMSG_NAME_QUERY_RESPONSE,
+const WOTLK_UNDECODED: [u16; 9] = [
     opcode::SMSG_ACTION_BUTTONS,
     opcode::SMSG_INITIAL_SPELLS,
     opcode::SMSG_SPELL_START,
@@ -262,7 +293,6 @@ const WOTLK_UNDECODED: [u16; 11] = [
     opcode::SMSG_WEATHER,
     opcode::SMSG_FRIEND_LIST,
     opcode::SMSG_GUILD_ROSTER,
-    opcode::SMSG_MESSAGECHAT,
     opcode::SMSG_COMPRESSED_MOVES,
 ];
 
@@ -650,10 +680,18 @@ fn parse_server_body(
                 info: info.map(Box::new),
             }
         }
-        opcode::SMSG_MESSAGECHAT => ServerPacket::MessageChat(chat::read_message_chat(&mut r)?),
-        opcode::SMSG_CHANNEL_NOTIFY => {
-            ServerPacket::ChannelNotify(channel::read_channel_notify(&mut r)?)
+        opcode::SMSG_MESSAGECHAT => ServerPacket::MessageChat(match expansion {
+            Expansion::Classic => chat::read_message_chat(&mut r)?,
+            Expansion::Wotlk => chat::read_message_chat_wotlk(&mut r, false)?,
+        }),
+        // A GM-tagged speaker's line; 1.12.1 has no such opcode.
+        opcode::SMSG_GM_MESSAGECHAT if expansion == Expansion::Wotlk => {
+            ServerPacket::MessageChat(chat::read_message_chat_wotlk(&mut r, true)?)
         }
+        opcode::SMSG_CHANNEL_NOTIFY => ServerPacket::ChannelNotify(match expansion {
+            Expansion::Classic => channel::read_channel_notify(&mut r)?,
+            Expansion::Wotlk => channel::read_channel_notify_wotlk(&mut r)?,
+        }),
         opcode::SMSG_CHANNEL_LIST => {
             let (name, flags, members) = channel::read_channel_list(&mut r)?;
             ServerPacket::ChannelList {
@@ -1230,6 +1268,9 @@ fn parse_server_body(
         opcode::SMSG_SET_FACTION_VISIBLE => ServerPacket::SetFactionVisible {
             list_id: read_u32_le(&mut r)?,
         },
+        opcode::SMSG_NAME_QUERY_RESPONSE if expansion == Expansion::Wotlk => {
+            read_name_query_response_wotlk(&mut r)?
+        }
         opcode::SMSG_NAME_QUERY_RESPONSE => {
             let guid = read_u64_le(&mut r)?;
             let name = read_cstring(&mut r)?;

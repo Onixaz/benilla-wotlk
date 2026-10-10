@@ -17,6 +17,8 @@ pub(crate) struct ChatWindows {
     pub default_language: String,
     /// The `LoggingChat`/`LoggingCombat` files, teed in [`route`].
     pub logs: super::logging::ChatLogFiles,
+    /// 3.3.5a's line id, the last one handed out as a fire's arg11.
+    pub line_id: u32,
 }
 
 /// Fire one event's `CHAT_MSG_*` at the VM, where the stock `ChatFrame_OnEvent` prints it, and
@@ -37,7 +39,16 @@ pub(crate) fn route(
     }) {
         windows.logs.record(kind.is_combat_log(), &line);
     }
-    script.fire_event(event_name(kind), event.script_args());
+    let args = if benilla_expansions::Expansion::active()
+        .profile()
+        .chat_msg_line_args
+    {
+        windows.line_id = windows.line_id.wrapping_add(1);
+        event.script_args_with_line(windows.line_id)
+    } else {
+        event.script_args()
+    };
+    script.fire_event(event_name(kind), args);
 }
 
 /// `ChatFrame_OnEvent`'s composition (`ChatFrame.lua:1369-1468`); `None` for a notice the 1.12 UI

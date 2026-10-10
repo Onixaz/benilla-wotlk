@@ -323,6 +323,8 @@ pub(crate) struct ChatEvent {
     pub channel_number: u32,
     pub channel_base: String,
     pub notice: String,
+    /// The speaker's guid on a wire line, 0 otherwise: 3.3.5a's arg12.
+    pub sender_guid: u64,
     /// Our slot's state for this channel as the notice arrived (`None`: no slot), set before
     /// [`super::feed::deliver`] changes it: the reference's notice arms read `slot+0x9c` for the
     /// token (`0x49c0c2`) before they write it (`0x49bb20`).
@@ -368,6 +370,24 @@ impl ChatEvent {
             // arg10: always 0, see the struct doc.
             ScriptValue::Int(0),
         ]
+    }
+
+    /// 3.3.5a's thirteen: [`Self::script_args`], then arg11 the line id, arg12 the sender's guid
+    /// as `0x` and sixteen upper-case hex digits (`0x74d0d0`) when it is a player's (high nibble
+    /// clear, `0x4fdc1b`) and else empty, and arg13 the Battle.net presence id, 0 for a realm
+    /// line.
+    pub(crate) fn script_args_with_line(&self, line_id: u32) -> Vec<ScriptValue> {
+        let guid = self.sender_guid;
+        let player = guid >> 60 == 0 && guid & 0xf07f_ffff_ffff_ffff != 0;
+        let mut args = self.script_args();
+        args.push(ScriptValue::Int(i64::from(line_id)));
+        args.push(ScriptValue::Str(if player {
+            format!("0x{guid:016X}")
+        } else {
+            String::new()
+        }));
+        args.push(ScriptValue::Int(0));
+        args
     }
 }
 
@@ -517,6 +537,11 @@ pub(crate) fn notice_token(
         n::PLAYER_INVITED => "PLAYER_INVITED",
         n::PLAYER_INVITE_BANNED => "PLAYER_INVITE_BANNED",
         n::THROTTLED => "THROTTLED",
+        // 3.3.5a's tokens (`0x9fcfb8`, `0x9fcfac`, `0x9fcfa0`, `0x9fcf94`).
+        n::NOT_IN_AREA => "NOT_IN_AREA",
+        n::NOT_IN_LFG => "NOT_IN_LFG",
+        n::VOICE_ON => "VOICE_ON",
+        n::VOICE_OFF => "VOICE_OFF",
         _ => return None,
     })
 }
@@ -683,5 +708,37 @@ pub(crate) fn language_name(id: u32) -> &'static str {
         14 => "Troll",
         33 => "Gutterspeak",
         _ => "", // 0, Universal, and unknown ids: no header
+    }
+}
+
+#[cfg(test)]
+mod line_args_tests {
+    use super::*;
+
+    fn say(sender_guid: u64) -> ChatEvent {
+        ChatEvent {
+            sender_guid,
+            ..ChatEvent::text_only(ChatEventKind::Say, "hello".into())
+        }
+    }
+
+    /// 1.12.1 fires ten; 3.3.5a appends the line id, the player's guid string and presence 0.
+    #[test]
+    fn a_3_3_5a_fire_appends_the_line_id_guid_and_presence() {
+        assert_eq!(say(0x21).script_args().len(), 10);
+        let args = say(0x21).script_args_with_line(7);
+        assert_eq!(args.len(), 13);
+        assert_eq!(args[10], ScriptValue::Int(7));
+        assert_eq!(args[11], ScriptValue::Str("0x0000000000000021".into()));
+        assert_eq!(args[12], ScriptValue::Int(0));
+    }
+
+    /// A creature's or a system line's guid stays out of arg12.
+    #[test]
+    fn only_a_player_guid_fills_arg12() {
+        let creature = say(0xF130_0000_0001_0002).script_args_with_line(1);
+        assert_eq!(creature[11], ScriptValue::Str(String::new()));
+        let system = say(0).script_args_with_line(1);
+        assert_eq!(system[11], ScriptValue::Str(String::new()));
     }
 }

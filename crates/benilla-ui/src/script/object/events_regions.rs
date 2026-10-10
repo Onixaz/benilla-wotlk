@@ -90,9 +90,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // reference's tables are per widget type (base `0x76a0d0`; a plain Frame has no `OnClick`).
     m.set(
         "HasScript",
-        lua.create_function(|_, (_this, name): (Table, String)| {
+        lua.create_function(|lua, (_this, name): (Table, String)| {
             Ok(crate::script::binding_abi::flag(
-                SCRIPT_KINDS.iter().any(|k| k.eq_ignore_ascii_case(&name)),
+                script_kind(lua, &name).is_some(),
             ))
         })?,
     )?;
@@ -213,12 +213,10 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 /// `SetScript(name, func)`: stores the closure under one of [`SCRIPT_KINDS`], else raises.
 /// Deviation: real 1.12 kinds nothing fires yet raise too (`OnHyperlinkEnter`, `OnHyperlinkLeave`,
 /// `OnMessageScrollChanged`, `OnInputLanguageChanged`, the movie frame's), because an accepted
-/// handler that never runs fails silently. `OnAttributeChanged` is 2.0's, with no 1.12 slot.
+/// handler that never runs fails silently. `OnAttributeChanged` is 2.0's, with no 1.12 slot; the
+/// target's own extra kinds are accepted on that target alone.
 fn set_script(lua: &Lua, this: &Table, name: &str, func: Option<Function>) -> mlua::Result<()> {
-    let kind = SCRIPT_KINDS
-        .iter()
-        .copied()
-        .find(|&k| k.eq_ignore_ascii_case(name))
+    let kind = script_kind(lua, name)
         .ok_or_else(|| mlua::Error::runtime(format!("SetScript: unsupported script '{name}'")))?;
     let h = frame_handle_of(lua, this)?;
     let id = lua.app_data_mut::<Model>().expect("model").frame_id(h);
@@ -267,14 +265,23 @@ fn set_script(lua: &Lua, this: &Table, name: &str, func: Option<Function>) -> ml
     Ok(())
 }
 
-fn get_script(lua: &Lua, this: &Table, name: &str) -> mlua::Result<Value> {
-    let kind = match SCRIPT_KINDS
+/// The canonical spelling of script kind `name`, case-insensitively, from [`SCRIPT_KINDS`] and
+/// the target's extra kinds; `None` for a name the target's frames do not carry.
+fn script_kind(lua: &Lua, name: &str) -> Option<&'static str> {
+    let extra = lua
+        .app_data_ref::<Model>()
+        .expect("model")
+        .extra_script_kinds;
+    SCRIPT_KINDS
         .iter()
+        .chain(extra)
         .copied()
         .find(|&k| k.eq_ignore_ascii_case(name))
-    {
-        Some(k) => k,
-        None => return Ok(Value::Nil),
+}
+
+fn get_script(lua: &Lua, this: &Table, name: &str) -> mlua::Result<Value> {
+    let Some(kind) = script_kind(lua, name) else {
+        return Ok(Value::Nil);
     };
     let id = decode_id(this)?;
     let scripts: Table = lua.named_registry_value(REG_SCRIPTS)?;

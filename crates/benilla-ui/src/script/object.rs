@@ -18,9 +18,11 @@ use crate::widget::{FrameHandle, FrameKind};
 
 // The frame method clusters, split out for size.
 pub(crate) mod anchor_args;
+mod attributes;
 mod events_regions;
 mod frame_state;
 mod layout_methods;
+mod mouse_over;
 pub(crate) use layout_methods::eff_scale;
 pub(crate) mod movable;
 pub(crate) mod toplevel;
@@ -564,13 +566,19 @@ pub(super) fn create_frame(
     // leaves no partial widget and no global. The raise never returns and `pcall` catches it, as
     // the widget dispatcher (`0x704f10`) does for every handler.
     if let Some(t) = template.as_deref().filter(|t| !t.is_empty()) {
-        let known = {
+        let missing = {
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             let templates = model.framexml_templates.borrow();
-            // One name, verbatim, case-folded, as `framexml::expand` resolves it.
-            templates.contains_key(t) || templates.keys().any(|k| k.eq_ignore_ascii_case(t))
+            // Each name case-folded, as `framexml::expand` resolves it.
+            crate::framexml::inherit_names(t, model.inherits_list)
+                .into_iter()
+                .find(|n| {
+                    !(templates.contains_key(*n)
+                        || templates.keys().any(|k| k.eq_ignore_ascii_case(n)))
+                })
+                .map(str::to_string)
         };
-        if !known {
+        if let Some(t) = missing {
             return Err(mlua::Error::runtime(format!(
                 "CreateFrame(): Couldn't find inherited node \"{t}\""
             )));
@@ -630,6 +638,8 @@ fn install_frame_methods(lua: &Lua) -> mlua::Result<()> {
     frame_state::install(lua, &m)?;
     layout_methods::install(lua, &m)?;
     events_regions::install(lua, &m)?;
+    attributes::install(lua, &m)?;
+    mouse_over::install(lua, &m)?;
     movable::install(lua, &m)?;
     toplevel::install(lua, &m)?;
     lua.set_named_registry_value(REG_FRAME_METHODS, m)?;

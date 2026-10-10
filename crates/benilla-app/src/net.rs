@@ -1603,14 +1603,20 @@ pub(crate) enum ClientCommand {
     Logout,
     /// `CMSG_LOGOUT_CANCEL`; acked by `SMSG_LOGOUT_CANCEL_ACK`.
     LogoutCancel,
-    /// `CMSG_JOIN_CHANNEL`: `/join` and the zone auto-join.
+    /// `CMSG_JOIN_CHANNEL`: `/join` and the zone auto-join. `channel_id` (the name's
+    /// `ChatChannels.dbc` row, 0 for a custom channel), `auto_joined` and `voice` ride only
+    /// 3.3.5a's body; [`crate::ui_chat::ChannelState::join_command`] fills them.
     JoinChannel {
         name: String,
         password: String,
+        channel_id: u32,
+        auto_joined: bool,
+        voice: bool,
     },
-    /// `CMSG_LEAVE_CHANNEL`.
+    /// `CMSG_LEAVE_CHANNEL`; `channel_id` rides only 3.3.5a's body.
     LeaveChannel {
         name: String,
+        channel_id: u32,
     },
     /// `CMSG_CHANNEL_LIST`.
     ChannelList {

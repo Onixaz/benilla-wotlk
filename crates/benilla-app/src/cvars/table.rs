@@ -106,8 +106,35 @@ const fn ours(name: &'static str, default: &'static str, why: &'static str) -> R
 
 /// The table as the script VM's registrar wants it: `(name, default)` pairs in table order.
 pub(crate) fn registered_pairs() -> impl Iterator<Item = (&'static str, &'static str)> {
-    REGISTERED.iter().map(|r| (r.name, r.default))
+    registered_rows().map(|r| (r.name, r.default))
 }
+
+/// [`REGISTERED`], then the active target's own rows ([`REGISTERED_WOTLK`] on 3.3.5a).
+pub(crate) fn registered_rows() -> impl Iterator<Item = &'static Registered> {
+    let extra: &[Registered] = match benilla_expansions::Expansion::active() {
+        benilla_expansions::Expansion::Classic => &[],
+        benilla_expansions::Expansion::Wotlk => REGISTERED_WOTLK,
+    };
+    REGISTERED.iter().chain(extra)
+}
+
+/// The rows 3.3.5a registers and 1.12.1 has no name for, each with a reader in the 3.3.5a stock
+/// chat code. Their register sites sit in one run (`0x51e2d8`-`0x51f2d2`, `CVar::Register`
+/// `0x767fc0`).
+pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
+    // "The style of Edit Boxes for the ChatFrame" (`0x51e2d8`, "im"); `ChatFrame.lua` hides the
+    // edit box between lines in "im" and keeps it in "classic".
+    same("chatStyle", "im"),
+    // `0x51e2fb`, "1": a click on the window focuses the edit box, in "im" style only.
+    same("wholeChatWindowClickable", "1"),
+    // `0x51e31b`, "popout": where a new Real ID conversation opens.
+    same("conversationMode", "popout"),
+    // `0x51e35e`, "1": the mouse wheel scrolls a chat window (`FloatingChatFrame.lua`).
+    same("chatMouseScroll", "1"),
+    // `0x51f2d2`, "": the GM a reload should reopen the GM chat window for; UIParent's
+    // `VARIABLES_LOADED` arm loads `Blizzard_GMChatUI` when it is not "".
+    same("lastTalkedToGM", ""),
+];
 
 /// The host-backed CVars, one row per knob that has a reader: a host knob, or a Lua consumer
 /// such as the stock Video Options window's verbs.

@@ -164,6 +164,181 @@ pub(super) fn read_message_chat(r: &mut &[u8]) -> io::Result<ChatMessage> {
     })
 }
 
+/// 3.3.5a's own `ChatMsg` numbering of the inbound `u8 type` (AzerothCore `SharedDefines.h`
+/// `ChatMsg`, matching the outbound lanes the 12340 client's `SendChatMessage` table sends).
+pub mod wotlk_chat_type {
+    pub const SYSTEM: u8 = 0x00;
+    pub const SAY: u8 = 0x01;
+    pub const PARTY: u8 = 0x02;
+    pub const RAID: u8 = 0x03;
+    pub const GUILD: u8 = 0x04;
+    pub const OFFICER: u8 = 0x05;
+    pub const YELL: u8 = 0x06;
+    pub const WHISPER: u8 = 0x07;
+    pub const WHISPER_FOREIGN: u8 = 0x08;
+    pub const WHISPER_INFORM: u8 = 0x09;
+    pub const EMOTE: u8 = 0x0A;
+    pub const MONSTER_SAY: u8 = 0x0C;
+    pub const MONSTER_PARTY: u8 = 0x0D;
+    pub const MONSTER_YELL: u8 = 0x0E;
+    pub const MONSTER_WHISPER: u8 = 0x0F;
+    pub const MONSTER_EMOTE: u8 = 0x10;
+    pub const CHANNEL: u8 = 0x11;
+    pub const AFK: u8 = 0x17;
+    pub const DND: u8 = 0x18;
+    pub const IGNORED: u8 = 0x19;
+    pub const BG_SYSTEM_NEUTRAL: u8 = 0x24;
+    pub const BG_SYSTEM_ALLIANCE: u8 = 0x25;
+    pub const BG_SYSTEM_HORDE: u8 = 0x26;
+    pub const RAID_LEADER: u8 = 0x27;
+    pub const RAID_WARNING: u8 = 0x28;
+    pub const RAID_BOSS_EMOTE: u8 = 0x29;
+    pub const RAID_BOSS_WHISPER: u8 = 0x2A;
+    pub const FILTERED: u8 = 0x2B;
+    pub const BATTLEGROUND: u8 = 0x2C;
+    pub const BATTLEGROUND_LEADER: u8 = 0x2D;
+    pub const BATTLENET: u8 = 0x2F;
+    pub const ACHIEVEMENT: u8 = 0x30;
+    pub const GUILD_ACHIEVEMENT: u8 = 0x31;
+}
+
+/// The shared [`ChatMessage::chat_type`], 1.12.1's numbering, of a 3.3.5a type byte; `None` for a
+/// 3.3.5a lane with no 1.12.1 counterpart (`PARTY_LEADER`, `ACHIEVEMENT`, `WHISPER_FOREIGN`, …).
+pub fn wotlk_chat_type_shared(wire: u8) -> Option<u8> {
+    use wotlk_chat_type as w;
+    Some(match wire {
+        w::SYSTEM => CHAT_MSG_SYSTEM,
+        w::SAY => CHAT_MSG_SAY,
+        w::PARTY => CHAT_MSG_PARTY,
+        w::RAID => CHAT_MSG_RAID,
+        w::GUILD => CHAT_MSG_GUILD,
+        w::OFFICER => CHAT_MSG_OFFICER,
+        w::YELL => CHAT_MSG_YELL,
+        w::WHISPER => CHAT_MSG_WHISPER,
+        w::WHISPER_INFORM => CHAT_MSG_WHISPER_INFORM,
+        w::EMOTE => CHAT_MSG_EMOTE,
+        w::MONSTER_SAY => CHAT_MSG_MONSTER_SAY,
+        w::MONSTER_YELL => CHAT_MSG_MONSTER_YELL,
+        w::MONSTER_WHISPER => CHAT_MSG_MONSTER_WHISPER,
+        w::MONSTER_EMOTE => CHAT_MSG_MONSTER_EMOTE,
+        w::CHANNEL => CHAT_MSG_CHANNEL,
+        w::AFK => CHAT_MSG_AFK,
+        w::DND => CHAT_MSG_DND,
+        w::IGNORED => CHAT_MSG_IGNORED,
+        w::BG_SYSTEM_NEUTRAL => CHAT_MSG_BG_SYSTEM_NEUTRAL,
+        w::BG_SYSTEM_ALLIANCE => CHAT_MSG_BG_SYSTEM_ALLIANCE,
+        w::BG_SYSTEM_HORDE => CHAT_MSG_BG_SYSTEM_HORDE,
+        w::RAID_LEADER => CHAT_MSG_RAID_LEADER,
+        w::RAID_WARNING => CHAT_MSG_RAID_WARNING,
+        w::RAID_BOSS_EMOTE => CHAT_MSG_RAID_BOSS_EMOTE,
+        w::RAID_BOSS_WHISPER => CHAT_MSG_RAID_BOSS_WHISPER,
+        w::FILTERED => CHAT_MSG_FILTERED,
+        w::BATTLEGROUND => CHAT_MSG_BATTLEGROUND,
+        w::BATTLEGROUND_LEADER => CHAT_MSG_BATTLEGROUND_LEADER,
+        _ => return None,
+    })
+}
+
+/// Read a 3.3.5a `SMSG_MESSAGECHAT` body, or with `gm` an `SMSG_GM_MESSAGECHAT` one: the 12340
+/// client parses both in `0x50be70` (wrappers `0x50eba0`, `0x50ebc0`), as AzerothCore's
+/// `ChatHandler::BuildChatPacket` writes them. `u8 type`, `u32 language`, `u64 sender`, `u32`
+/// flags, a per-type middle, `u32 len` (NUL included), the text, `u8 chatTag`, then
+/// `u32 achievementId` on the two achievement types. The middle is
+///
+/// - the monster and boss shapes: the sender's length-prefixed name and the receiver guid, then the
+///   receiver's length-prefixed name when that guid is neither 0, a player nor a pet (`0x50c28e`);
+/// - `WHISPER_FOREIGN`: the sender's name and the receiver guid;
+/// - the battleground system lines: the receiver guid, then its name unless it is 0 or a player
+///   (`0x50c210`);
+/// - the achievement types: the receiver guid (`0x50c1cd`);
+/// - every other type: with `gm`, the sender's length-prefixed name; the channel name (cstring)
+///   on `CHANNEL`; then the receiver guid.
+///
+/// 1.12.1's per-type sender prefix and channel `playerRank` are gone. The type is returned in
+/// the shared numbering ([`wotlk_chat_type_shared`]); a lane with none is an `Unsupported` error.
+pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<ChatMessage> {
+    use wotlk_chat_type as w;
+    let wire_type = read_u8(r)?;
+    let language = read_u32_le(r)?;
+    let sender_guid = read_u64_le(r)?;
+    let _flags = read_u32_le(r)?;
+    let mut sender_name = None;
+    let mut channel = None;
+    let target_guid;
+    match wire_type {
+        w::MONSTER_SAY
+        | w::MONSTER_PARTY
+        | w::MONSTER_YELL
+        | w::MONSTER_WHISPER
+        | w::MONSTER_EMOTE
+        | w::RAID_BOSS_EMOTE
+        | w::RAID_BOSS_WHISPER
+        | w::BATTLENET => {
+            sender_name = Some(read_len_string(r)?);
+            target_guid = read_u64_le(r)?;
+            if names_receiver(target_guid) {
+                let _receiver_name = read_len_string(r)?;
+            }
+        }
+        w::WHISPER_FOREIGN => {
+            sender_name = Some(read_len_string(r)?);
+            target_guid = read_u64_le(r)?;
+        }
+        w::BG_SYSTEM_NEUTRAL | w::BG_SYSTEM_ALLIANCE | w::BG_SYSTEM_HORDE => {
+            target_guid = read_u64_le(r)?;
+            if target_guid != 0 && !client_is_player(target_guid) {
+                let _receiver_name = read_len_string(r)?;
+            }
+        }
+        w::ACHIEVEMENT | w::GUILD_ACHIEVEMENT => {
+            target_guid = read_u64_le(r)?;
+        }
+        _ => {
+            if gm {
+                sender_name = Some(read_len_string(r)?);
+            }
+            if wire_type == w::CHANNEL {
+                channel = Some(read_cstring(r)?);
+            }
+            target_guid = read_u64_le(r)?;
+        }
+    }
+    let text = read_len_string(r)?;
+    let chat_tag = read_u8(r)?;
+    if matches!(wire_type, w::ACHIEVEMENT | w::GUILD_ACHIEVEMENT) {
+        let _achievement_id = read_u32_le(r)?;
+    }
+    let Some(chat_type) = wotlk_chat_type_shared(wire_type) else {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("3.3.5a chat type {wire_type:#04x} has no shared chat lane yet"),
+        ));
+    };
+    Ok(ChatMessage {
+        chat_type,
+        language,
+        sender_guid,
+        target_guid,
+        sender_name,
+        channel,
+        text,
+        chat_tag,
+    })
+}
+
+/// Whether a monster-shape receiver guid is followed by its name: set, and neither a player nor
+/// a pet (`0x50c2c3`-`0x50c2ef`).
+fn names_receiver(guid: u64) -> bool {
+    let high = (guid >> 32) as u32;
+    guid != 0 && !client_is_player(guid) && high & 0xf0f0_0000 != 0xf040_0000
+}
+
+/// The 12340 client's player test on a guid: the high nibble clear and the rest, bar bits 55 and
+/// 54 to 52 of the high word, non-zero (`and 0xf0000000`, `and 0xf07fffff`).
+fn client_is_player(guid: u64) -> bool {
+    guid >> 60 == 0 && guid & 0xf07f_ffff_ffff_ffff != 0
+}
+
 /// Read `SMSG_CHAT_PLAYER_NOT_FOUND`: one cstring, the unnormalized name of an offline or
 /// misspelled whisper target (vmangos `Server/Packets/Chat.cpp:26-29`).
 pub(super) fn read_chat_player_not_found(r: &mut &[u8]) -> io::Result<String> {
