@@ -64,6 +64,8 @@ pub struct WorldWriter {
     /// language carries. vmangos drops the whole message, dot-commands included, when the
     /// character does not know the language.
     pub(super) chat_language: u32,
+    /// The `castCount` each `CMSG_CAST_SPELL` carries.
+    pub(super) cast_counter: crate::messages::CastCounter,
 }
 
 impl WorldWriter {

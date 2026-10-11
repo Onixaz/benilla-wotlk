@@ -5,12 +5,13 @@
 use std::io::{self, Read};
 
 use crate::wire::{
-    capacity_hint, read_cstring, read_i32_le, read_packed_guid, read_u16_le, read_u32_le,
-    read_u64_le, read_u8, Vector3d,
+    capacity_hint, read_cstring, read_i32_le, read_packed_guid, read_u32_le, read_u64_le, read_u8,
+    Vector3d,
 };
 
-/// `SMSG_CAST_RESULT`'s verdict: status 0 (`OKAY`) ends the packet; status 2 (`FAIL`) adds a `u8`
-/// reason and up to two argument words (vmangos `CastResult::AppendBodyTo`).
+/// The verdict on our cast. 12340's `SMSG_CAST_FAILED` (0x130, the opcode benilla names
+/// `SMSG_CAST_RESULT`) only ever carries a failure; a cast that goes ahead is answered by its
+/// `SMSG_SPELL_START`. `Ok` is kept for the pet's 1.12.1-shaped reader.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CastOutcome {
     Ok,
@@ -23,43 +24,270 @@ pub enum CastOutcome {
     },
 }
 
-/// Read `SMSG_CAST_RESULT` (client `0x6e7330`). Each argument word is read only while bytes
-/// remain, never keyed on the reason, because vmangos omits a zero argument. `None` stands for
-/// the client's absent value, -1 (`0x6e736e`). The second word, sent only for 0x19-0x1b, is
+/// The 12340 client's `SPELL_FAILED_*` key for each wire reason, its switch `0x7fcca0` (jump table
+/// `0x7fd11c`); a reason past it reads `SPELL_FAILED_UNKNOWN` (`0x7fd114`).
+pub const WOTLK_CAST_FAIL_KEYS: [&str; 187] = [
+    "SPELL_FAILED_SUCCESS",
+    "SPELL_FAILED_AFFECTING_COMBAT",
+    "SPELL_FAILED_ALREADY_AT_FULL_HEALTH",
+    "SPELL_FAILED_ALREADY_AT_FULL_MANA",
+    "SPELL_FAILED_ALREADY_AT_FULL_POWER",
+    "SPELL_FAILED_ALREADY_BEING_TAMED",
+    "SPELL_FAILED_ALREADY_HAVE_CHARM",
+    "SPELL_FAILED_ALREADY_HAVE_SUMMON",
+    "SPELL_FAILED_ALREADY_OPEN",
+    "SPELL_FAILED_AURA_BOUNCED",
+    "SPELL_FAILED_AUTOTRACK_INTERRUPTED",
+    "SPELL_FAILED_BAD_IMPLICIT_TARGETS",
+    "SPELL_FAILED_BAD_TARGETS",
+    "SPELL_FAILED_CANT_BE_CHARMED",
+    "SPELL_FAILED_CANT_BE_DISENCHANTED",
+    "SPELL_FAILED_CANT_BE_DISENCHANTED_SKILL",
+    "SPELL_FAILED_CANT_BE_MILLED",
+    "SPELL_FAILED_CANT_BE_PROSPECTED",
+    "SPELL_FAILED_CANT_CAST_ON_TAPPED",
+    "SPELL_FAILED_CANT_DUEL_WHILE_INVISIBLE",
+    "SPELL_FAILED_CANT_DUEL_WHILE_STEALTHED",
+    "SPELL_FAILED_CANT_STEALTH",
+    "SPELL_FAILED_CASTER_AURASTATE",
+    "SPELL_FAILED_CASTER_DEAD",
+    "SPELL_FAILED_CHARMED",
+    "SPELL_FAILED_CHEST_IN_USE",
+    "SPELL_FAILED_CONFUSED",
+    "SPELL_FAILED_DONT_REPORT",
+    "SPELL_FAILED_EQUIPPED_ITEM",
+    "SPELL_FAILED_EQUIPPED_ITEM_CLASS",
+    "SPELL_FAILED_EQUIPPED_ITEM_CLASS_MAINHAND",
+    "SPELL_FAILED_EQUIPPED_ITEM_CLASS_OFFHAND",
+    "SPELL_FAILED_ERROR",
+    "SPELL_FAILED_FIZZLE",
+    "SPELL_FAILED_FLEEING",
+    "SPELL_FAILED_FOOD_LOWLEVEL",
+    "SPELL_FAILED_HIGHLEVEL",
+    "SPELL_FAILED_HUNGER_SATIATED",
+    "SPELL_FAILED_IMMUNE",
+    "SPELL_FAILED_INCORRECT_AREA",
+    "SPELL_FAILED_INTERRUPTED",
+    "SPELL_FAILED_INTERRUPTED_COMBAT",
+    "SPELL_FAILED_ITEM_ALREADY_ENCHANTED",
+    "SPELL_FAILED_ITEM_GONE",
+    "SPELL_FAILED_ITEM_NOT_FOUND",
+    "SPELL_FAILED_ITEM_NOT_READY",
+    "SPELL_FAILED_LEVEL_REQUIREMENT",
+    "SPELL_FAILED_LINE_OF_SIGHT",
+    "SPELL_FAILED_LOWLEVEL",
+    "SPELL_FAILED_LOW_CASTLEVEL",
+    "SPELL_FAILED_MAINHAND_EMPTY",
+    "SPELL_FAILED_MOVING",
+    "SPELL_FAILED_NEED_AMMO",
+    "SPELL_FAILED_NEED_AMMO_POUCH",
+    "SPELL_FAILED_NEED_EXOTIC_AMMO",
+    "SPELL_FAILED_NEED_MORE_ITEMS",
+    "SPELL_FAILED_NOPATH",
+    "SPELL_FAILED_NOT_BEHIND",
+    "SPELL_FAILED_NOT_FISHABLE",
+    "SPELL_FAILED_NOT_FLYING",
+    "SPELL_FAILED_NOT_HERE",
+    "SPELL_FAILED_NOT_INFRONT",
+    "SPELL_FAILED_NOT_IN_CONTROL",
+    "SPELL_FAILED_NOT_KNOWN",
+    "SPELL_FAILED_NOT_MOUNTED",
+    "SPELL_FAILED_NOT_ON_TAXI",
+    "SPELL_FAILED_NOT_ON_TRANSPORT",
+    "SPELL_FAILED_NOT_READY",
+    "SPELL_FAILED_NOT_SHAPESHIFT",
+    "SPELL_FAILED_NOT_STANDING",
+    "SPELL_FAILED_NOT_TRADEABLE",
+    "SPELL_FAILED_NOT_TRADING",
+    "SPELL_FAILED_NOT_UNSHEATHED",
+    "SPELL_FAILED_NOT_WHILE_GHOST",
+    "SPELL_FAILED_NOT_WHILE_LOOTING",
+    "SPELL_FAILED_NO_AMMO",
+    "SPELL_FAILED_NO_CHARGES_REMAIN",
+    "SPELL_FAILED_NO_CHAMPION",
+    "SPELL_FAILED_NO_COMBO_POINTS",
+    "SPELL_FAILED_NO_DUELING",
+    "SPELL_FAILED_NO_ENDURANCE",
+    "SPELL_FAILED_NO_FISH",
+    "SPELL_FAILED_NO_ITEMS_WHILE_SHAPESHIFTED",
+    "SPELL_FAILED_NO_MOUNTS_ALLOWED",
+    "SPELL_FAILED_NO_PET",
+    "SPELL_FAILED_NO_POWER",
+    "SPELL_FAILED_NOTHING_TO_DISPEL",
+    "SPELL_FAILED_NOTHING_TO_STEAL",
+    "SPELL_FAILED_ONLY_ABOVEWATER",
+    "SPELL_FAILED_ONLY_DAYTIME",
+    "SPELL_FAILED_ONLY_INDOORS",
+    "SPELL_FAILED_ONLY_MOUNTED",
+    "SPELL_FAILED_ONLY_NIGHTTIME",
+    "SPELL_FAILED_ONLY_OUTDOORS",
+    "SPELL_FAILED_ONLY_SHAPESHIFT",
+    "SPELL_FAILED_ONLY_STEALTHED",
+    "SPELL_FAILED_ONLY_UNDERWATER",
+    "SPELL_FAILED_OUT_OF_RANGE",
+    "SPELL_FAILED_PACIFIED",
+    "SPELL_FAILED_POSSESSED",
+    "SPELL_FAILED_REAGENTS",
+    "SPELL_FAILED_REQUIRES_AREA",
+    "SPELL_FAILED_REQUIRES_SPELL_FOCUS",
+    "SPELL_FAILED_ROOTED",
+    "SPELL_FAILED_SILENCED",
+    "SPELL_FAILED_SPELL_IN_PROGRESS",
+    "SPELL_FAILED_SPELL_LEARNED",
+    "SPELL_FAILED_SPELL_UNAVAILABLE",
+    "SPELL_FAILED_STUNNED",
+    "SPELL_FAILED_TARGETS_DEAD",
+    "SPELL_FAILED_TARGET_AFFECTING_COMBAT",
+    "SPELL_FAILED_TARGET_AURASTATE",
+    "SPELL_FAILED_TARGET_DUELING",
+    "SPELL_FAILED_TARGET_ENEMY",
+    "SPELL_FAILED_TARGET_ENRAGED",
+    "SPELL_FAILED_TARGET_FRIENDLY",
+    "SPELL_FAILED_TARGET_IN_COMBAT",
+    "SPELL_FAILED_TARGET_IS_PLAYER",
+    "SPELL_FAILED_TARGET_IS_PLAYER_CONTROLLED",
+    "SPELL_FAILED_TARGET_NOT_DEAD",
+    "SPELL_FAILED_TARGET_NOT_IN_PARTY",
+    "SPELL_FAILED_TARGET_NOT_LOOTED",
+    "SPELL_FAILED_TARGET_NOT_PLAYER",
+    "SPELL_FAILED_TARGET_NO_POCKETS",
+    "SPELL_FAILED_TARGET_NO_WEAPONS",
+    "SPELL_FAILED_TARGET_NO_RANGED_WEAPONS",
+    "SPELL_FAILED_TARGET_UNSKINNABLE",
+    "SPELL_FAILED_THIRST_SATIATED",
+    "SPELL_FAILED_TOO_CLOSE",
+    "SPELL_FAILED_TOO_MANY_OF_ITEM",
+    "SPELL_FAILED_TOTEM_CATEGORY",
+    "SPELL_FAILED_TOTEMS",
+    "SPELL_FAILED_TRY_AGAIN",
+    "SPELL_FAILED_UNIT_NOT_BEHIND",
+    "SPELL_FAILED_UNIT_NOT_INFRONT",
+    "SPELL_FAILED_WRONG_PET_FOOD",
+    "SPELL_FAILED_NOT_WHILE_FATIGUED",
+    "SPELL_FAILED_TARGET_NOT_IN_INSTANCE",
+    "SPELL_FAILED_NOT_WHILE_TRADING",
+    "SPELL_FAILED_TARGET_NOT_IN_RAID",
+    "SPELL_FAILED_TARGET_FREEFORALL",
+    "SPELL_FAILED_NO_EDIBLE_CORPSES",
+    "SPELL_FAILED_ONLY_BATTLEGROUNDS",
+    "SPELL_FAILED_TARGET_NOT_GHOST",
+    "SPELL_FAILED_TRANSFORM_UNUSABLE",
+    "SPELL_FAILED_WRONG_WEATHER",
+    "SPELL_FAILED_DAMAGE_IMMUNE",
+    "SPELL_FAILED_PREVENTED_BY_MECHANIC",
+    "SPELL_FAILED_PLAY_TIME",
+    "SPELL_FAILED_REPUTATION",
+    "SPELL_FAILED_MIN_SKILL",
+    "SPELL_FAILED_NOT_IN_ARENA",
+    "SPELL_FAILED_NOT_ON_SHAPESHIFT",
+    "SPELL_FAILED_NOT_ON_STEALTHED",
+    "SPELL_FAILED_NOT_ON_DAMAGE_IMMUNE",
+    "SPELL_FAILED_NOT_ON_MOUNTED",
+    "SPELL_FAILED_TOO_SHALLOW",
+    "SPELL_FAILED_TARGET_NOT_IN_SANCTUARY",
+    "SPELL_FAILED_TARGET_IS_TRIVIAL",
+    "SPELL_FAILED_BM_OR_INVISGOD",
+    "SPELL_FAILED_EXPERT_RIDING_REQUIREMENT",
+    "SPELL_FAILED_ARTISAN_RIDING_REQUIREMENT",
+    "SPELL_FAILED_NOT_IDLE",
+    "SPELL_FAILED_NOT_INACTIVE",
+    "SPELL_FAILED_PARTIAL_PLAYTIME",
+    "SPELL_FAILED_NO_PLAYTIME",
+    "SPELL_FAILED_NOT_IN_BATTLEGROUND",
+    "SPELL_FAILED_NOT_IN_RAID_INSTANCE",
+    "SPELL_FAILED_ONLY_IN_ARENA",
+    "SPELL_FAILED_TARGET_LOCKED_TO_RAID_INSTANCE",
+    "SPELL_FAILED_ON_USE_ENCHANT",
+    "SPELL_FAILED_NOT_ON_GROUND",
+    "SPELL_FAILED_CUSTOM_ERROR",
+    "SPELL_FAILED_CANT_DO_THAT_RIGHT_NOW",
+    "SPELL_FAILED_TOO_MANY_SOCKETS",
+    "SPELL_FAILED_INVALID_GLYPH",
+    "SPELL_FAILED_UNIQUE_GLYPH",
+    "SPELL_FAILED_GLYPH_SOCKET_LOCKED",
+    "SPELL_FAILED_NO_VALID_TARGETS",
+    "SPELL_FAILED_ITEM_AT_MAX_CHARGES",
+    "SPELL_FAILED_NOT_IN_BARBERSHOP",
+    "SPELL_FAILED_FISHING_TOO_LOW",
+    "SPELL_FAILED_ITEM_ENCHANT_TRADE_WINDOW",
+    "SPELL_FAILED_SUMMON_PENDING",
+    "SPELL_FAILED_MAX_SOCKETS",
+    "SPELL_FAILED_PET_CAN_RENAME",
+    "SPELL_FAILED_TARGET_CANNOT_BE_RESURRECTED",
+];
+
+/// [`WOTLK_CAST_FAIL_KEYS`] in benilla's shared reason numbering: 1.12.1's, then 3.3.5a's own
+/// reasons appended in wire order. Generated by key name.
+const WOTLK_CAST_FAIL_SHARED: [u8; 187] = [
+    0x92, 0x00, 0x01, 0x93, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x94,
+    0x95, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
+    0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x96, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a,
+    0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x97, 0x32, 0x33, 0x34, 0x98, 0x35, 0x36, 0x37, 0x38,
+    0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x99, 0x43, 0x44, 0x45, 0x46, 0x47,
+    0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57,
+    0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67,
+    0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x9a, 0x6e, 0x6f, 0x70, 0x71, 0x72, 0x73, 0x9b, 0x74, 0x75,
+    0x76, 0x77, 0x9c, 0x78, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f, 0x80, 0x81, 0x85, 0x86, 0x87, 0x88,
+    0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f, 0x90, 0x9d, 0x9e, 0x9f, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5,
+    0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5,
+    0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf, 0xc0,
+];
+
+/// The shared `SpellCastResult` of a 3.3.5a wire reason, the numbering the cast-failure display
+/// is keyed on; a reason past the 12340 table is `SPELL_FAILED_UNKNOWN`, shared 0x91.
+pub fn wotlk_cast_fail_shared(wire: u8) -> u8 {
+    WOTLK_CAST_FAIL_SHARED
+        .get(usize::from(wire))
+        .copied()
+        .unwrap_or(SHARED_CAST_FAIL_UNKNOWN)
+}
+
+/// `SPELL_FAILED_UNKNOWN` in the shared numbering.
+const SHARED_CAST_FAIL_UNKNOWN: u8 = 0x91;
+
+/// Read `SMSG_CAST_FAILED` as the 12340 handler does (`0x809af0`): `u8 castCount`, `u32 spellId`,
+/// `u8 reason`, then up to two argument words, each read only while bytes remain (`0x809b35`,
+/// `0x809b48`). There is no status byte. The reason comes back in the shared numbering
+/// ([`wotlk_cast_fail_shared`]). `None` stands for an absent argument. The second word is
 /// dropped: the client fills that message from the spell's own `EquippedItem*` columns.
 pub(super) fn read_cast_result(r: &mut &[u8]) -> io::Result<(u32, CastOutcome)> {
+    let _cast_count = read_u8(r)?;
     let spell_id = read_u32_le(r)?;
-    let status = read_u8(r)?;
-    let outcome = if status == 2 {
-        let reason = read_u8(r)?;
-        let arg = (r.len() >= 4).then(|| read_u32_le(r)).transpose()?;
-        let _arg2 = (r.len() >= 4).then(|| read_u32_le(r)).transpose()?;
-        CastOutcome::Failed { reason, arg }
-    } else {
-        CastOutcome::Ok
-    };
-    Ok((spell_id, outcome))
+    let reason = wotlk_cast_fail_shared(read_u8(r)?);
+    let arg = (r.len() >= 4).then(|| read_u32_le(r)).transpose()?;
+    let _arg2 = (r.len() >= 4).then(|| read_u32_le(r)).transpose()?;
+    Ok((spell_id, CastOutcome::Failed { reason, arg }))
 }
 
 // --- Start and go --------------------------------------------------------------------------------
 //
-// vmangos `SpellCastTargetFlags` (`SpellDefines.h:96-113`).
-const TARGET_FLAG_UNIT: u16 = 0x0002;
-const TARGET_FLAG_ITEM: u16 = 0x0010;
-const TARGET_FLAG_SOURCE_LOCATION: u16 = 0x0020;
-const TARGET_FLAG_DEST_LOCATION: u16 = 0x0040;
-const TARGET_FLAG_CORPSE_ENEMY: u16 = 0x0200;
-const TARGET_FLAG_GAMEOBJECT: u16 = 0x0800;
-const TARGET_FLAG_TRADE_ITEM: u16 = 0x1000;
-const TARGET_FLAG_STRING: u16 = 0x2000;
-const TARGET_FLAG_CORPSE_ALLY: u16 = 0x8000;
+// The `SpellCastTargets` mask bits, a `u32` on 12340.
+const TARGET_FLAG_UNIT: u32 = 0x0002;
+const TARGET_FLAG_ITEM: u32 = 0x0010;
+const TARGET_FLAG_SOURCE_LOCATION: u32 = 0x0020;
+const TARGET_FLAG_DEST_LOCATION: u32 = 0x0040;
+const TARGET_FLAG_CORPSE_ENEMY: u32 = 0x0200;
+const TARGET_FLAG_GAMEOBJECT: u32 = 0x0800;
+const TARGET_FLAG_TRADE_ITEM: u32 = 0x1000;
+const TARGET_FLAG_STRING: u32 = 0x2000;
+const TARGET_FLAG_CORPSE_ALLY: u32 = 0x8000;
+const TARGET_FLAG_UNIT_MINIPET: u32 = 0x1_0000;
+/// Extra targets, read only by `SMSG_SPELL_GO`'s tail (`0x80e44f`).
+const TARGET_FLAG_EXTRA_TARGETS: u32 = 0x8_0000;
+/// The bits one packed guid answers, as the 12340 reader and writer test them (`0x9ab8c9`).
+const TARGET_GUID_BITS: u32 = TARGET_FLAG_UNIT
+    | TARGET_FLAG_CORPSE_ENEMY
+    | TARGET_FLAG_GAMEOBJECT
+    | TARGET_FLAG_CORPSE_ALLY
+    | TARGET_FLAG_UNIT_MINIPET;
 
-/// A decoded `SpellCastTargets` in the server's write order (`SpellCastTargetsInfo.cpp:180-234`),
-/// not its read order: any mix of UNIT, GAMEOBJECT and CORPSE_* bits yields one packed guid.
-/// Item, corpse, source and string targets are read and dropped.
+/// A decoded `SpellCastTargets` as the 12340 client reads it (`0x9ab9c0`): a `u32` mask; one packed
+/// guid for any of [`TARGET_GUID_BITS`]; a packed item guid for ITEM or TRADE_ITEM; for SOURCE and
+/// DEST each, a packed transport guid and three `f32`s; a string. Item, corpse, source, transport
+/// and string targets are read and dropped.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpellCastTargets {
-    pub mask: u16,
+    pub mask: u32,
     pub unit_target: Option<u64>,
     /// The `TARGET_FLAG_GAMEOBJECT` target, such as the chest an open-lock cast opens.
     pub go_target: Option<u64>,
@@ -67,19 +295,13 @@ pub struct SpellCastTargets {
 }
 
 fn read_spell_cast_targets(r: &mut impl Read) -> io::Result<SpellCastTargets> {
-    let mask = read_u16_le(r)?;
+    let mask = read_u32_le(r)?;
     let mut unit_target = None;
     let mut go_target = None;
-    if mask
-        & (TARGET_FLAG_UNIT
-            | TARGET_FLAG_GAMEOBJECT
-            | TARGET_FLAG_CORPSE_ENEMY
-            | TARGET_FLAG_CORPSE_ALLY)
-        != 0
-    {
-        // One packed guid; the server's priority is UNIT, then GAMEOBJECT, then CORPSE_*.
+    if mask & TARGET_GUID_BITS != 0 {
+        // One packed guid; UNIT (or a minipet) first, then GAMEOBJECT, then CORPSE_*.
         let guid = read_packed_guid(r)?;
-        if mask & TARGET_FLAG_UNIT != 0 {
+        if mask & (TARGET_FLAG_UNIT | TARGET_FLAG_UNIT_MINIPET) != 0 {
             unit_target = Some(guid);
         } else if mask & TARGET_FLAG_GAMEOBJECT != 0 {
             go_target = Some(guid);
@@ -89,9 +311,11 @@ fn read_spell_cast_targets(r: &mut impl Read) -> io::Result<SpellCastTargets> {
         let _item_guid = read_packed_guid(r)?;
     }
     if mask & TARGET_FLAG_SOURCE_LOCATION != 0 {
+        let _transport = read_packed_guid(r)?;
         let _src = Vector3d::read(r)?;
     }
     let dest = if mask & TARGET_FLAG_DEST_LOCATION != 0 {
+        let _transport = read_packed_guid(r)?;
         Some(Vector3d::read(r)?)
     } else {
         None
@@ -107,46 +331,80 @@ fn read_spell_cast_targets(r: &mut impl Read) -> io::Result<SpellCastTargets> {
     })
 }
 
-/// vmangos `Spell.h:53`: set on START and GO for every ranged spell; gates the ammo block.
-const CAST_FLAG_AMMO: u16 = 0x0020;
+// The `castFlags` bits that gate the START and GO tails, in the 12340 handlers' read order.
+const CAST_FLAG_AMMO: u32 = 0x20;
+const CAST_FLAG_POWER_LEFT_SELF: u32 = 0x800;
+const CAST_FLAG_ADJUST_MISSILE: u32 = 0x2_0000;
+const CAST_FLAG_VISUAL_CHAIN: u32 = 0x8_0000;
+const CAST_FLAG_RUNE_LIST: u32 = 0x20_0000;
+const CAST_FLAG_IMMUNITY: u32 = 0x400_0000;
 
-/// Read the ammo block (`Spell.cpp:4540-4606`): `u32 displayId`, `u32 inventoryType` (dropped).
+/// Read the ammo block: `u32 displayId`, `u32 inventoryType` (dropped).
 fn read_ammo(r: &mut impl Read) -> io::Result<u32> {
     let display_id = read_u32_le(r)?;
     let _inventory_type = read_u32_le(r)?;
     Ok(display_id)
 }
 
-/// `SMSG_SPELL_START` (vmangos `Spell.cpp:4468-4503`): a non-triggered cast began, instants
+/// The rune block (`0x80677e`, `0x80e353`): the rune masks before and after, then one byte for
+/// each of the six runes the cast spent.
+fn skip_runes(r: &mut impl Read) -> io::Result<()> {
+    let before = read_u8(r)?;
+    let after = read_u8(r)?;
+    for i in 0..6 {
+        let bit = 1u8 << i;
+        if before & bit != 0 && after & bit == 0 {
+            let _ = read_u8(r)?;
+        }
+    }
+    Ok(())
+}
+
+/// `SMSG_SPELL_START` (handlers `0x80fee0`, `0x806700`): a non-triggered cast began, instants
 /// included (`cast_time_ms == 0`). `item_or_caster` is the cast item's guid if any, else the
-/// caster's; `caster` is 0 for a GameObject caster. `cast_flags` is always 0x2, plus
-/// `CAST_FLAG_AMMO` for a ranged spell.
+/// caster's; `caster` is 0 for a GameObject caster.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpellStart {
     pub item_or_caster: u64,
     pub caster: u64,
+    /// The `castCount` of our `CMSG_CAST_SPELL` this answers; the client's pending-cast key.
+    pub cast_count: u8,
     pub spell_id: u32,
-    pub cast_flags: u16,
+    pub cast_flags: u32,
     pub cast_time_ms: u32,
     pub targets: SpellCastTargets,
     pub ammo_display_id: Option<u32>,
 }
 
+/// Read `SMSG_SPELL_START`: the shared head (`0x80fef4`-`0x80ff22`), `u32 castTime`, the targets,
+/// then the tail `0x806742`-`0x8067ff` reads by `castFlags`: power, runes, ammo, immunity.
 pub(super) fn read_spell_start(r: &mut impl Read) -> io::Result<SpellStart> {
     let item_or_caster = read_packed_guid(r)?;
     let caster = read_packed_guid(r)?;
+    let cast_count = read_u8(r)?;
     let spell_id = read_u32_le(r)?;
-    let cast_flags = read_u16_le(r)?;
+    let cast_flags = read_u32_le(r)?;
     let cast_time_ms = read_u32_le(r)?;
     let targets = read_spell_cast_targets(r)?;
+    if cast_flags & CAST_FLAG_POWER_LEFT_SELF != 0 {
+        let _power = read_u32_le(r)?;
+    }
+    if cast_flags & CAST_FLAG_RUNE_LIST != 0 {
+        skip_runes(r)?;
+    }
     let ammo_display_id = if cast_flags & CAST_FLAG_AMMO != 0 {
         Some(read_ammo(r)?)
     } else {
         None
     };
+    if cast_flags & CAST_FLAG_IMMUNITY != 0 {
+        let _school_immunities = read_u32_le(r)?;
+        let _mechanic_immunities = read_u32_le(r)?;
+    }
     Ok(SpellStart {
         item_or_caster,
         caster,
+        cast_count,
         spell_id,
         cast_flags,
         cast_time_ms,
@@ -155,20 +413,19 @@ pub(super) fn read_spell_start(r: &mut impl Read) -> io::Result<SpellStart> {
     })
 }
 
-/// vmangos `SpellDefines.h:173`: the one `SpellMissInfo` followed by a byte, the reflected
-/// spell's outcome against its new target.
+/// The one `SpellMissInfo` followed by a byte, the reflected spell's outcome against its new
+/// target.
 const SPELL_MISS_REFLECT: u8 = 11;
 
-/// `SMSG_SPELL_GO` (vmangos `Spell.cpp:4505-4538, 4608-4659`): the cast launched. Guids and spell
-/// as in [`SpellStart`]; `cast_flags` is always 0x100, plus `CAST_FLAG_AMMO` for a ranged spell.
-/// Sent at launch: the server times the impact from `Spell.dbc` Speed, so no missile travel data
-/// rides it.
+/// `SMSG_SPELL_GO` (handlers `0x80fee0`, `0x80e1b0`): the cast launched. Guids, count and spell as
+/// in [`SpellStart`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpellGo {
     pub item_or_caster: u64,
     pub caster: u64,
+    pub cast_count: u8,
     pub spell_id: u32,
-    pub cast_flags: u16,
+    pub cast_flags: u32,
     pub hits: Vec<u64>,
     /// `(guid, SpellMissInfo)`; a reflect's trailing outcome byte is dropped.
     pub misses: Vec<(u64, u8)>,
@@ -176,17 +433,22 @@ pub struct SpellGo {
     pub ammo_display_id: Option<u32>,
 }
 
+/// Read `SMSG_SPELL_GO`: the shared head, `u32` timestamp, the hit and miss lists, the targets,
+/// then the tail `0x80e30c`-`0x80e463` reads: power, runes, missile, ammo, visual chain, a dest
+/// byte and extra targets.
 pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
     let item_or_caster = read_packed_guid(r)?;
     let caster = read_packed_guid(r)?;
+    let cast_count = read_u8(r)?;
     let spell_id = read_u32_le(r)?;
-    let cast_flags = read_u16_le(r)?;
+    let cast_flags = read_u32_le(r)?;
+    let _timestamp = read_u32_le(r)?;
 
-    // Both counts are `u8`s the server backfills (`Spell.cpp:4657-4658`); no tighter bound.
+    // Both counts are `u8`s; no tighter bound.
     let hit_count = read_u8(r)?;
     let mut hits = Vec::with_capacity(capacity_hint(hit_count, usize::from(u8::MAX)));
     for _ in 0..hit_count {
-        hits.push(read_u64_le(r)?); // raw guid, never packed (Spell.cpp:4627,4635)
+        hits.push(read_u64_le(r)?); // raw guid, never packed
     }
     let miss_count = read_u8(r)?;
     let mut misses = Vec::with_capacity(capacity_hint(miss_count, usize::from(u8::MAX)));
@@ -200,14 +462,39 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
     }
 
     let targets = read_spell_cast_targets(r)?;
+    if cast_flags & CAST_FLAG_POWER_LEFT_SELF != 0 {
+        let _power = read_u32_le(r)?;
+    }
+    if cast_flags & CAST_FLAG_RUNE_LIST != 0 {
+        skip_runes(r)?;
+    }
+    if cast_flags & CAST_FLAG_ADJUST_MISSILE != 0 {
+        let _elevation = read_u32_le(r)?;
+        let _delay_ms = read_u32_le(r)?;
+    }
     let ammo_display_id = if cast_flags & CAST_FLAG_AMMO != 0 {
         Some(read_ammo(r)?)
     } else {
         None
     };
+    if cast_flags & CAST_FLAG_VISUAL_CHAIN != 0 {
+        let _ = read_u32_le(r)?;
+        let _ = read_u32_le(r)?;
+    }
+    if targets.mask & TARGET_FLAG_DEST_LOCATION != 0 {
+        let _dest_byte = read_u8(r)?;
+    }
+    if targets.mask & TARGET_FLAG_EXTRA_TARGETS != 0 {
+        // `u32` count of a point and a raw guid each; unbounded, so nothing is pre-allocated.
+        for _ in 0..read_u32_le(r)? {
+            let _point = Vector3d::read(r)?;
+            let _guid = read_u64_le(r)?;
+        }
+    }
     Ok(SpellGo {
         item_or_caster,
         caster,
+        cast_count,
         spell_id,
         cast_flags,
         hits,
@@ -276,37 +563,67 @@ pub(super) fn read_play_spell_visual(r: &mut impl Read) -> io::Result<(u64, u32)
     Ok((unit, kit_id))
 }
 
-/// Body of `CMSG_CAST_SPELL` for a self or unit target. `None` sends mask 0 (`TARGET_FLAG_SELF`)
-/// and the server applies the spell's implicit targeting; `Some` sends `TARGET_FLAG_UNIT` and the
-/// packed guid.
-pub fn cast_spell(spell_id: u32, target: Option<u64>) -> Vec<u8> {
-    let mut body = Vec::with_capacity(16);
+/// The client's `castCount`, which keys a sent cast to the server's answer: 12340 hands out 1 to
+/// 255 and never 0, wrapping to 1 (`0x8050dc`-`0x8050ec`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct CastCounter(u8);
+
+impl CastCounter {
+    /// The count the next cast carries; advances the counter.
+    pub fn take(&mut self) -> u8 {
+        let count = self.0.max(1);
+        self.0 = count.wrapping_add(1);
+        count
+    }
+}
+
+/// The head of a 12340 `CMSG_CAST_SPELL` (sender `0x80b2f5`): `u8 castCount`, `u32 spellId`,
+/// `u8 castFlags` (0: no trajectory block), then the targets' `u32` mask (`0x9ab8c4`).
+fn cast_head(cast_count: u8, spell_id: u32, mask: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(24);
+    body.push(cast_count);
     body.extend_from_slice(&spell_id.to_le_bytes());
-    match target {
-        None => body.extend_from_slice(&0u16.to_le_bytes()),
-        Some(guid) => {
-            body.extend_from_slice(&2u16.to_le_bytes());
-            crate::wire::write_packed_guid(guid, &mut body).expect("vec write");
-        }
+    body.push(0);
+    body.extend_from_slice(&mask.to_le_bytes());
+    body
+}
+
+/// A guid-target body: the head and one packed guid.
+fn cast_at_guid(cast_count: u8, spell_id: u32, mask: u32, guid: u64) -> Vec<u8> {
+    let mut body = cast_head(cast_count, spell_id, mask);
+    crate::wire::write_packed_guid(guid, &mut body).expect("vec write");
+    body
+}
+
+/// A point-target body: the head, a packed transport guid (0, none) and three `f32` WoW world
+/// coords, as the writer puts them for SOURCE and DEST (`0x9ab924`, `0x9ab96c`).
+fn cast_at_point(cast_count: u8, spell_id: u32, mask: u32, point: [f32; 3]) -> Vec<u8> {
+    let mut body = cast_head(cast_count, spell_id, mask);
+    crate::wire::write_packed_guid(0, &mut body).expect("vec write");
+    for c in point {
+        body.extend_from_slice(&c.to_le_bytes());
     }
     body
 }
 
-/// Body of `CMSG_CAST_SPELL` at a GameObject: the open-lock cast on a locked chest, vein or herb
-/// (instead of `CMSG_GAMEOBJ_USE`), or a targeting-cursor commit. The mask is `GAMEOBJECT` alone:
-/// the 1.12 client never puts `TARGET_FLAG_LOCKED` (0x4000) on the wire; `BindTarget` (`0x6e5b40`)
-/// consumes it from the targeting word, and no write to the wire mask (`0xceac5c`) sets it.
-pub fn cast_spell_gameobject(spell_id: u32, go_guid: u64) -> Vec<u8> {
-    let mut body = Vec::with_capacity(16);
-    body.extend_from_slice(&spell_id.to_le_bytes());
-    body.extend_from_slice(&TARGET_FLAG_GAMEOBJECT.to_le_bytes());
-    crate::wire::write_packed_guid(go_guid, &mut body).expect("vec write");
-    body
+/// Body of `CMSG_CAST_SPELL` for a self or unit target. `None` sends mask 0 (`TARGET_FLAG_SELF`)
+/// and the server applies the spell's implicit targeting; `Some` sends `TARGET_FLAG_UNIT` and the
+/// packed guid.
+pub fn cast_spell(cast_count: u8, spell_id: u32, target: Option<u64>) -> Vec<u8> {
+    match target {
+        None => cast_head(cast_count, spell_id, 0),
+        Some(guid) => cast_at_guid(cast_count, spell_id, TARGET_FLAG_UNIT, guid),
+    }
 }
 
-/// The corpse bit a corpse cast carries: `BindTarget 0x6e5b40`'s corpse arm writes `0x8000` for a
-/// corpse its caster's reaction toward is friendly (`0x6e5fc7`), `0x200` for one it is not
-/// (`0x6e600c`).
+/// Body of `CMSG_CAST_SPELL` at a GameObject: the open-lock cast on a locked chest, vein or herb
+/// (instead of `CMSG_GAMEOBJ_USE`), or a targeting-cursor commit. The mask is `GAMEOBJECT` alone.
+pub fn cast_spell_gameobject(cast_count: u8, spell_id: u32, go_guid: u64) -> Vec<u8> {
+    cast_at_guid(cast_count, spell_id, TARGET_FLAG_GAMEOBJECT, go_guid)
+}
+
+/// The corpse bit a corpse cast carries: `0x8000` for a corpse its caster's reaction toward is
+/// friendly, `0x200` for one it is not.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CorpseTarget {
     /// `TARGET_FLAG_CORPSE_ALLY`, a resurrection's.
@@ -317,7 +634,7 @@ pub enum CorpseTarget {
 
 impl CorpseTarget {
     /// The wire mask bit, which is also the flag-word bit the bind clears.
-    pub const fn target_flag(self) -> u16 {
+    pub const fn target_flag(self) -> u32 {
         match self {
             Self::Ally => TARGET_FLAG_CORPSE_ALLY,
             Self::Enemy => TARGET_FLAG_CORPSE_ENEMY,
@@ -325,51 +642,31 @@ impl CorpseTarget {
     }
 }
 
-/// Body of `CMSG_CAST_SPELL` at a corpse: the corpse bit and the corpse's packed guid. The client's
-/// targets writer `0x7e4e10` puts the guid for any mask bit in `0x8a02`; vmangos reads it for
-/// either corpse bit (`SpellCastTargetsInfo.cpp:156-157`).
-pub fn cast_spell_corpse(spell_id: u32, target: CorpseTarget, corpse_guid: u64) -> Vec<u8> {
-    let mut body = Vec::with_capacity(16);
-    body.extend_from_slice(&spell_id.to_le_bytes());
-    body.extend_from_slice(&target.target_flag().to_le_bytes());
-    crate::wire::write_packed_guid(corpse_guid, &mut body).expect("vec write");
-    body
+/// Body of `CMSG_CAST_SPELL` at a corpse: the corpse bit and the corpse's packed guid.
+pub fn cast_spell_corpse(
+    cast_count: u8,
+    spell_id: u32,
+    target: CorpseTarget,
+    corpse_guid: u64,
+) -> Vec<u8> {
+    cast_at_guid(cast_count, spell_id, target.target_flag(), corpse_guid)
 }
 
 /// Body of `CMSG_CAST_SPELL` at an item, such as an enchant or poison: `TARGET_FLAG_ITEM` and the
-/// item's packed guid (`SpellCastTargetsInfo.cpp:159-160`).
-pub fn cast_spell_item(spell_id: u32, item_guid: u64) -> Vec<u8> {
-    let mut body = Vec::with_capacity(16);
-    body.extend_from_slice(&spell_id.to_le_bytes());
-    body.extend_from_slice(&TARGET_FLAG_ITEM.to_le_bytes());
-    crate::wire::write_packed_guid(item_guid, &mut body).expect("vec write");
-    body
+/// item's packed guid.
+pub fn cast_spell_item(cast_count: u8, spell_id: u32, item_guid: u64) -> Vec<u8> {
+    cast_at_guid(cast_count, spell_id, TARGET_FLAG_ITEM, item_guid)
 }
 
-/// Body of `CMSG_CAST_SPELL` at a ground point, for a `Targets & 0x40` spell such as Blizzard:
-/// `DEST_LOCATION` and three `f32` WoW world coords (`SpellCastTargetsInfo.cpp:169-174`; client
-/// `BindLocation` `0x6e60f0`).
-pub fn cast_spell_at_dest(spell_id: u32, dest: [f32; 3]) -> Vec<u8> {
-    let mut body = Vec::with_capacity(18);
-    body.extend_from_slice(&spell_id.to_le_bytes());
-    body.extend_from_slice(&TARGET_FLAG_DEST_LOCATION.to_le_bytes());
-    for c in dest {
-        body.extend_from_slice(&c.to_le_bytes());
-    }
-    body
+/// Body of `CMSG_CAST_SPELL` at a ground point, for a `Targets & 0x40` spell such as Blizzard.
+pub fn cast_spell_at_dest(cast_count: u8, spell_id: u32, dest: [f32; 3]) -> Vec<u8> {
+    cast_at_point(cast_count, spell_id, TARGET_FLAG_DEST_LOCATION, dest)
 }
 
-/// Body of `CMSG_CAST_SPELL` at a source point, for a `Targets & 0x20` spell: `SOURCE_LOCATION`
-/// and three `f32` WoW world coords (client `0x6e60f0`, `SpellCastTargetsInfo.cpp:161-167`). The
-/// server centres the AoE there (`TARGET_ENUM_UNITS_ENEMY_AOE_AT_SRC_LOC`, `Spell.cpp:2265`).
-pub fn cast_spell_at_source(spell_id: u32, src: [f32; 3]) -> Vec<u8> {
-    let mut body = Vec::with_capacity(18);
-    body.extend_from_slice(&spell_id.to_le_bytes());
-    body.extend_from_slice(&TARGET_FLAG_SOURCE_LOCATION.to_le_bytes());
-    for c in src {
-        body.extend_from_slice(&c.to_le_bytes());
-    }
-    body
+/// Body of `CMSG_CAST_SPELL` at a source point, for a `Targets & 0x20` spell; the server centres
+/// the area effect there.
+pub fn cast_spell_at_source(cast_count: u8, spell_id: u32, src: [f32; 3]) -> Vec<u8> {
+    cast_at_point(cast_count, spell_id, TARGET_FLAG_SOURCE_LOCATION, src)
 }
 
 /// Body of `CMSG_CANCEL_AURA`: by spell id, not slot. `HandleCancelAuraOpcode`
@@ -384,78 +681,148 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cast_spell_gameobject_body_golden() {
-        // spell 1, mask 0x0800 (no LOCKED 0x4000), packed guid 0x1234 (mask 0x03, bytes 34 12).
-        assert_eq!(
-            cast_spell_gameobject(1, 0x1234),
-            [0x01, 0x00, 0x00, 0x00, 0x00, 0x08, 0x03, 0x34, 0x12],
-            "CMSG_CAST_SPELL (GameObject/OPEN_LOCK) body"
-        );
-        // The self-cast shape stays distinct: mask 0, no guid.
-        assert_eq!(cast_spell(1, None), [0x01, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    fn wire_reasons_map_onto_the_shared_numbering() {
+        // NOT_READY: the failure handler's own special case (`0x809bd5 cmp 0x43`), 1.12.1's 0x3c.
+        assert_eq!(WOTLK_CAST_FAIL_KEYS[0x43], "SPELL_FAILED_NOT_READY");
+        assert_eq!(wotlk_cast_fail_shared(0x43), 0x3c);
+        // DONT_REPORT, 1.12.1's 0x17.
+        assert_eq!(wotlk_cast_fail_shared(0x1b), 0x17);
+        // 3.3.5a's first own reasons land past 1.12.1's 0x91.
+        assert_eq!(wotlk_cast_fail_shared(0), 0x92, "SUCCESS");
+        assert_eq!(wotlk_cast_fail_shared(3), 0x93, "ALREADY_AT_FULL_MANA");
+        // Past the table: UNKNOWN.
+        assert_eq!(wotlk_cast_fail_shared(0xbb), 0x91);
+        assert_eq!(wotlk_cast_fail_shared(0xff), 0x91);
     }
 
-    /// Resurrection (2006) at a released player's corpse, `HIGHGUID_CORPSE` 0xF101
-    /// (vmangos `ObjectGuid.h:76`), counter 0x2A.
+    #[test]
+    fn the_cast_counter_runs_one_to_255_and_skips_zero() {
+        let mut c = CastCounter::default();
+        assert_eq!((c.take(), c.take()), (1, 2));
+        let mut c = CastCounter(255);
+        assert_eq!((c.take(), c.take()), (255, 1), "0 is never handed out");
+    }
+
+    #[test]
+    fn cast_spell_gameobject_body_golden() {
+        // count 3, spell 1, flags 0, mask 0x800, packed guid 0x1234 (mask 0x03, bytes 34 12).
+        assert_eq!(
+            cast_spell_gameobject(3, 1, 0x1234),
+            [3, 0x01, 0, 0, 0, 0, 0x00, 0x08, 0, 0, 0x03, 0x34, 0x12],
+            "CMSG_CAST_SPELL (GameObject/OPEN_LOCK) body"
+        );
+        // The self-cast shape: mask 0, no guid.
+        assert_eq!(cast_spell(1, 1, None), [1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    /// Resurrection (2006) at a released player's corpse, high guid 0xF101, counter 0x2A.
     #[test]
     fn cast_spell_corpse_body_golden() {
         const CORPSE: u64 = 0xF101_0000_0000_002A;
         assert_eq!(
-            cast_spell_corpse(2006, CorpseTarget::Ally, CORPSE),
+            cast_spell_corpse(7, 2006, CorpseTarget::Ally, CORPSE),
             [
+                7, // castCount
                 0xD6, 0x07, 0x00, 0x00, // spell id 2006
-                0x00, 0x80, // TARGET_FLAG_CORPSE_ALLY
+                0,    // castFlags
+                0x00, 0x80, 0x00, 0x00, // TARGET_FLAG_CORPSE_ALLY
                 0xC1, 0x2A, 0x01, 0xF1, // packed guid: bytes 0, 6 and 7
             ],
             "CMSG_CAST_SPELL (ally corpse) body"
         );
-        // The enemy arm differs only in the mask.
         assert_eq!(
-            cast_spell_corpse(2006, CorpseTarget::Enemy, CORPSE),
-            [0xD6, 0x07, 0x00, 0x00, 0x00, 0x02, 0xC1, 0x2A, 0x01, 0xF1],
-            "CMSG_CAST_SPELL (enemy corpse) body"
+            cast_spell_corpse(7, 2006, CorpseTarget::Enemy, CORPSE)[7],
+            0x02,
+            "the enemy arm differs only in the mask"
         );
     }
 
     #[test]
-    fn cast_spell_at_dest_body_golden() {
-        // Spell 10 is Blizzard.
+    fn cast_spell_at_points_golden() {
+        // Spell 10 is Blizzard: the mask, a packed transport guid of 0, then x, y, z.
         assert_eq!(
-            cast_spell_at_dest(10, [1.0, -2.5, 3.0]),
+            cast_spell_at_dest(2, 10, [1.0, -2.5, 3.0]),
             [
-                0x0A, 0x00, 0x00, 0x00, // spell id
-                0x40, 0x00, // TARGET_FLAG_DEST_LOCATION
+                2, 0x0A, 0x00, 0x00, 0x00, 0, // count, spell, flags
+                0x40, 0x00, 0x00, 0x00, // TARGET_FLAG_DEST_LOCATION
+                0x00, // transport guid, none
                 0x00, 0x00, 0x80, 0x3F, // x = 1.0
                 0x00, 0x00, 0x20, 0xC0, // y = -2.5
                 0x00, 0x00, 0x40, 0x40, // z = 3.0
             ],
             "CMSG_CAST_SPELL (ground dest) body"
         );
-    }
-
-    #[test]
-    fn cast_spell_at_source_body_golden() {
-        // Spell 265 is Area Death (TEST), Martin Fury's on-use.
-        assert_eq!(
-            cast_spell_at_source(265, [1.0, -2.5, 3.0]),
-            [
-                0x09, 0x01, 0x00, 0x00, // spell id 265
-                0x20, 0x00, // TARGET_FLAG_SOURCE_LOCATION
-                0x00, 0x00, 0x80, 0x3F, // x = 1.0
-                0x00, 0x00, 0x20, 0xC0, // y = -2.5
-                0x00, 0x00, 0x40, 0x40, // z = 3.0
-            ],
-            "CMSG_CAST_SPELL (ground source) body"
-        );
         let (src, dest) = (
-            cast_spell_at_source(265, [1.0, -2.5, 3.0]),
-            cast_spell_at_dest(265, [1.0, -2.5, 3.0]),
+            cast_spell_at_source(2, 265, [1.0, -2.5, 3.0]),
+            cast_spell_at_dest(2, 265, [1.0, -2.5, 3.0]),
         );
         assert_eq!(src.len(), dest.len());
         assert_eq!(
             src.iter().zip(&dest).filter(|(a, b)| a != b).count(),
             1,
             "source and dest bodies differ only in the mask"
+        );
+    }
+
+    /// AzerothCore's login `SMSG_SPELL_GO` for spell 836, captured live: self-cast, one hit,
+    /// a unit mask with an empty guid.
+    #[test]
+    fn spell_go_reads_a_live_body() {
+        let body = [
+            0x03, 0xee, 0x03, 0x03, 0xee, 0x03, 0x00, 0x44, 0x03, 0x00, 0x00, 0x01, 0x01, 0x04,
+            0x00, 0x5d, 0x45, 0xef, 0x13, 0x01, 0xee, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let mut r = &body[..];
+        let go = read_spell_go(&mut r).unwrap();
+        assert!(r.is_empty(), "{} bytes left", r.len());
+        assert_eq!((go.item_or_caster, go.caster), (0x3ee, 0x3ee));
+        assert_eq!(
+            (go.cast_count, go.spell_id, go.cast_flags),
+            (0, 836, 0x40101)
+        );
+        assert_eq!(go.hits, vec![0x3ee]);
+        assert!(go.misses.is_empty());
+        assert_eq!(go.targets.mask, TARGET_FLAG_UNIT);
+        assert_eq!(go.targets.unit_target, Some(0));
+    }
+
+    #[test]
+    fn spell_start_reads_power_and_ammo_tails() {
+        // Auto Shot (75), count 4, flags POWER_LEFT_SELF | AMMO, 0 ms, at unit 0x10.
+        let mut body = vec![0x01, 0x05, 0x01, 0x05, 4];
+        body.extend(75u32.to_le_bytes());
+        body.extend((CAST_FLAG_POWER_LEFT_SELF | CAST_FLAG_AMMO).to_le_bytes());
+        body.extend(0u32.to_le_bytes());
+        body.extend(TARGET_FLAG_UNIT.to_le_bytes());
+        body.extend([0x01, 0x10]);
+        body.extend(100u32.to_le_bytes()); // power left
+        body.extend(5996u32.to_le_bytes()); // ammo display
+        body.extend(24u32.to_le_bytes()); // inventory type
+        let mut r = &body[..];
+        let start = read_spell_start(&mut r).unwrap();
+        assert!(r.is_empty());
+        assert_eq!((start.cast_count, start.spell_id), (4, 75));
+        assert_eq!(start.targets.unit_target, Some(0x10));
+        assert_eq!(start.ammo_display_id, Some(5996));
+    }
+
+    #[test]
+    fn cast_failed_has_no_status_byte() {
+        // count 9, Raptor Strike, wire 0x0c BAD_TARGETS (AzerothCore, no target): shared 0x0a.
+        let body = [9, 0x9d, 0x0b, 0, 0, 0x0c];
+        let mut r = &body[..];
+        let failed = |reason, arg| CastOutcome::Failed { reason, arg };
+        assert_eq!(
+            read_cast_result(&mut r).unwrap(),
+            (2973, failed(0x0a, None))
+        );
+        assert!(r.is_empty());
+        // Wire 0x66 REQUIRES_SPELL_FOCUS with its focus id: shared 0x5e.
+        let body = [9, 133, 0, 0, 0, 0x66, 3, 0, 0, 0];
+        assert_eq!(
+            read_cast_result(&mut &body[..]).unwrap(),
+            (133, failed(0x5e, Some(3)))
         );
     }
 

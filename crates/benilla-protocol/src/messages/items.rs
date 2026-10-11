@@ -517,7 +517,7 @@ pub fn use_item(bag_index: u8, slot: u8, spell_slot: u8, target: UseItemTarget) 
             guid
         }
         UseItemTarget::Corpse(corpse, guid) => {
-            body.extend_from_slice(&corpse.target_flag().to_le_bytes());
+            body.extend_from_slice(&(corpse.target_flag() as u16).to_le_bytes());
             guid
         }
         UseItemTarget::Dest(dest) => {

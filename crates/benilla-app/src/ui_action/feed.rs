@@ -1,4 +1,4 @@
-//! The action bar's identity feed: each of the 120 slots' icon and count, pushed to the VM with
+//! The action bar's identity feed: each of the action slots' icon and count, pushed to the VM with
 //! `ACTIONBAR_SLOT_CHANGED` per changed slot. [`feed_actions`] also drains the UI error queues
 //! and feeds the stance page (`GetBonusBarOffset`: the form's `SpellShapeshiftForm.dbc`
 //! BonusActionBar column, `0x4e4fc0`).

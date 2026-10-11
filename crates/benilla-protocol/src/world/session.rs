@@ -73,6 +73,8 @@ pub struct WorldSession {
     tutorial_flags: Option<Vec<u8>>,
     /// `SMSG_ADDON_INFO`'s per-record status bytes in order; `None` until the server answers.
     addon_info: Option<Vec<u8>>,
+    /// The `castCount` each `CMSG_CAST_SPELL` carries, handed on to the split writer.
+    cast_counter: messages::CastCounter,
 }
 
 /// The server seed of `SMSG_AUTH_CHALLENGE`, whose body is `u32 1`, the seed, then 32 bytes of
@@ -155,6 +157,7 @@ impl WorldSession {
             billing_time_rested: 0,
             tutorial_flags: None,
             addon_info: None,
+            cast_counter: Default::default(),
         };
 
         // AUTH_RESPONSE is not always first, so others are skipped; Warden data ends the connect.
@@ -396,27 +399,30 @@ impl WorldSession {
         )
     }
 
-    /// Cast a spell (`CMSG_CAST_SPELL`), `None` targeting self; answered by `SMSG_CAST_RESULT`.
+    /// Cast a spell (`CMSG_CAST_SPELL`), `None` targeting self; a refusal is `SMSG_CAST_RESULT`.
     pub fn cast_spell(&mut self, spell_id: u32, target: Option<u64>) -> Result<()> {
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_CAST_SPELL,
-            &messages::cast_spell(spell_id, target),
+            &messages::cast_spell(count, spell_id, target),
         )
     }
 
     /// Cast a spell at a ground point in world coords (`TARGET_FLAG_DEST_LOCATION`).
     pub fn cast_spell_at_dest(&mut self, spell_id: u32, dest: [f32; 3]) -> Result<()> {
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_CAST_SPELL,
-            &messages::cast_spell_at_dest(spell_id, dest),
+            &messages::cast_spell_at_dest(count, spell_id, dest),
         )
     }
 
     /// Cast an OPEN_LOCK spell (e.g. 3365 Opening, 2575 Mining) at a GameObject.
     pub fn cast_spell_gameobject(&mut self, spell_id: u32, go_guid: u64) -> Result<()> {
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_CAST_SPELL,
-            &messages::cast_spell_gameobject(spell_id, go_guid),
+            &messages::cast_spell_gameobject(count, spell_id, go_guid),
         )
     }
 
@@ -816,6 +822,7 @@ impl WorldSession {
                 stream: self.stream,
                 encrypter,
                 chat_language: self.chat_language,
+                cast_counter: self.cast_counter,
             },
         ))
     }

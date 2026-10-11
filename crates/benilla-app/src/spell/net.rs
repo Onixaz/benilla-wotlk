@@ -35,6 +35,8 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::SpellSuperceded, on_spell_superceded)
         .net_handler(K::CastResult, on_cast_result)
         .net_handler(K::SpellStart, on_spell_start)
+        // Before `on_spell_go`, which clears the in-flight guard the chain tests.
+        .net_handler(K::SpellGo, on_own_spell_go)
         .net_handler(K::SpellGo, on_spell_go)
         .net_handler(K::SpellChainTargets, on_spell_chain_targets)
         .net_handler(K::SpellFailedOther, on_spell_failed_other)
@@ -205,6 +207,51 @@ fn on_cast_result(
             let ctx = targeting.context();
             ladder.send(next, &ctx, CastCommit::Spell);
         }
+    }
+}
+
+/// Our own `SMSG_SPELL_GO` as the cast's success. 12340 sends no success verdict
+/// (`SMSG_CAST_FAILED` carries refusals only); its GO handler runs the `modalNextSpell` chain
+/// (`0x80e666 call 0x8054f0`) that 1.12.1 ran from the verdict, so the success arm of
+/// [`cast_result`] runs here, ahead of [`on_spell_go`].
+fn on_own_spell_go(
+    In(ev): In<SessionEvent>,
+    mut ladder: CastLadder,
+    targeting: CastTargeting,
+    mut r: Reply,
+) {
+    let SessionEvent::SpellGo {
+        caster, spell_id, ..
+    } = ev
+    else {
+        return;
+    };
+    if r.self_guid.0 != Some(caster) {
+        return;
+    }
+    let chained = cast_result(
+        spell_id,
+        true,
+        None,
+        None,
+        &mut ladder.ecs,
+        &r.self_guid,
+        &r.index,
+        &mut ladder.cast_errors,
+        &r.casting,
+        &mut r.cast_events,
+        &mut r.cast_bar,
+        &mut ladder.pending,
+        &mut ladder.queued_melee,
+        &mut ladder.cooldowns,
+        &mut ladder.auto_repeat,
+        ladder.spells.as_deref(),
+        &ladder.commands,
+        r.play_seq.next(),
+    );
+    if let Some(next) = chained {
+        let ctx = targeting.context();
+        ladder.send(next, &ctx, CastCommit::Spell);
     }
 }
 
@@ -573,7 +620,8 @@ fn superceded_spell(
     tab_flash.0.push(new_spell_id);
 }
 
-/// The server's verdict on our cast (`SMSG_CAST_RESULT`).
+/// The verdict on our cast: a refusal (`SMSG_CAST_FAILED`, benilla's `SMSG_CAST_RESULT`), or
+/// with `success` our own `SMSG_SPELL_GO` ([`on_own_spell_go`]).
 fn cast_result(
     spell_id: u32,
     success: bool,
@@ -700,7 +748,7 @@ fn cast_result(
 fn spell_start(
     caster: u64,
     spell_id: u32,
-    cast_flags: u16,
+    cast_flags: u32,
     cast_time_ms: u32,
     target: Option<u64>,
     ammo_display_id: Option<u32>,
@@ -796,7 +844,7 @@ const GO_TYPE_CHEST: i32 = 3;
 fn spell_go(
     caster: u64,
     spell_id: u32,
-    cast_flags: u16,
+    cast_flags: u32,
     hits: Vec<u64>,
     misses: Vec<(u64, u8)>,
     target: Option<u64>,

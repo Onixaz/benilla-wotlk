@@ -282,10 +282,7 @@ pub fn parse_server_with_tail(opcode: u16, body: &[u8]) -> io::Result<(ServerPac
 /// The opcodes whose 3.3.5a body is known to differ from the layout their arm reads and has no
 /// 3.3.5a decoder yet: each failed or left bytes unread against AzerothCore, and
 /// `SMSG_COMPRESSED_MOVES`, which AzerothCore never sends, frames its records unverified.
-const UNDECODED: [u16; 8] = [
-    opcode::SMSG_ACTION_BUTTONS,
-    opcode::SMSG_SPELL_START,
-    opcode::SMSG_SPELL_GO,
+const UNDECODED: [u16; 5] = [
     opcode::SMSG_INIT_WORLD_STATES,
     opcode::SMSG_WEATHER,
     opcode::SMSG_FRIEND_LIST,
@@ -711,8 +708,9 @@ fn parse_server_body(
                 cooldowns,
             }
         }
-        opcode::SMSG_ACTION_BUTTONS => ServerPacket::ActionButtons {
-            buttons: action_bar::read_action_buttons(&mut r)?,
+        opcode::SMSG_ACTION_BUTTONS => match action_bar::read_action_buttons(&mut r)? {
+            Some(buttons) => ServerPacket::ActionButtons { buttons },
+            None => ServerPacket::Other { opcode },
         },
         opcode::SMSG_LEARNED_SPELL => ServerPacket::LearnedSpell {
             spell_id: spellbook::read_learned_spell(&mut r)?,

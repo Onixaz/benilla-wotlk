@@ -547,7 +547,7 @@ pub enum SessionEvent {
     SpellStart {
         caster: u64,
         spell_id: u32,
-        cast_flags: u16,
+        cast_flags: u32,
         cast_time_ms: u32,
         target: Option<u64>,
         /// The `CAST_FLAG_AMMO` tail: nocked ammo for any caster (`0x60ba30` from `0x6e78b6`).
@@ -557,7 +557,7 @@ pub enum SessionEvent {
     SpellGo {
         caster: u64,
         spell_id: u32,
-        cast_flags: u16,
+        cast_flags: u32,
         hits: Vec<u64>,
         misses: Vec<(u64, u8)>,
         target: Option<u64>,

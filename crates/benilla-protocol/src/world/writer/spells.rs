@@ -9,11 +9,12 @@ use super::WorldWriter;
 
 impl WorldWriter {
     /// `CMSG_CAST_SPELL`: `None` is a self or implicit cast, `Some` a unit target; answered by
-    /// `SMSG_CAST_RESULT`.
+    /// `SMSG_SPELL_START`, or `SMSG_CAST_FAILED` (benilla's `SMSG_CAST_RESULT`) on a refusal.
     pub fn cast_spell(&mut self, spell_id: u32, target: Option<u64>) -> Result<()> {
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_CAST_SPELL,
-            &messages::cast_spell(spell_id, target),
+            &messages::cast_spell(count, spell_id, target),
         )
     }
 
@@ -26,9 +27,10 @@ impl WorldWriter {
     /// `CMSG_CAST_SPELL` at a GameObject: the open-lock cast on a chest, vein or herb. The server
     /// checks the skill, and a chest answers with its loot.
     pub fn cast_spell_gameobject(&mut self, spell_id: u32, go_guid: u64) -> Result<()> {
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_CAST_SPELL,
-            &messages::cast_spell_gameobject(spell_id, go_guid),
+            &messages::cast_spell_gameobject(count, spell_id, go_guid),
         )
     }
 
@@ -40,36 +42,40 @@ impl WorldWriter {
         target: messages::CorpseTarget,
         corpse_guid: u64,
     ) -> Result<()> {
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_CAST_SPELL,
-            &messages::cast_spell_corpse(spell_id, target, corpse_guid),
+            &messages::cast_spell_corpse(count, spell_id, target, corpse_guid),
         )
     }
 
     /// `CMSG_CAST_SPELL` with `TARGET_FLAG_ITEM` and the item's packed guid: an enchant on the item
     /// picked in the craft frame.
     pub fn cast_spell_item(&mut self, spell_id: u32, item_guid: u64) -> Result<()> {
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_CAST_SPELL,
-            &messages::cast_spell_item(spell_id, item_guid),
+            &messages::cast_spell_item(count, spell_id, item_guid),
         )
     }
 
     /// `CMSG_CAST_SPELL` with `TARGET_FLAG_DEST_LOCATION`: a ground-targeted spell at a world
     /// point; the server checks range and line of sight (`Spell::CheckCast`).
     pub fn cast_spell_at_dest(&mut self, spell_id: u32, dest: [f32; 3]) -> Result<()> {
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_CAST_SPELL,
-            &messages::cast_spell_at_dest(spell_id, dest),
+            &messages::cast_spell_at_dest(count, spell_id, dest),
         )
     }
 
     /// `CMSG_CAST_SPELL` with `TARGET_FLAG_SOURCE_LOCATION`, for a `Targets & 0x20` spell; the
     /// server centres the area effect on `src`, a world point.
     pub fn cast_spell_at_source(&mut self, spell_id: u32, src: [f32; 3]) -> Result<()> {
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_CAST_SPELL,
-            &messages::cast_spell_at_source(spell_id, src),
+            &messages::cast_spell_at_source(count, spell_id, src),
         )
     }
 

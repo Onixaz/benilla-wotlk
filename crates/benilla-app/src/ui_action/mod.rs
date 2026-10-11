@@ -49,7 +49,7 @@ pub(crate) use weapon_icon::{melee_auto_attack_icon, ranged_weapon_icon};
 /// keys on this id; the icon keys on `SPELL_EFFECT_ATTACK`, which only 6603 carries.
 pub(crate) const SPELL_ATTACK: u32 = 6603;
 
-/// The action slots (wire 0..119) and the known spells. The bar is client-authoritative:
+/// The action slots (wire 0..143) and the known spells. The bar is client-authoritative:
 /// [`drain::drain_action_sets`] writes it directly, and vmangos stores a slot without a reply
 /// (`MasterPlayer::addActionButton`).
 #[derive(Resource, Default)]

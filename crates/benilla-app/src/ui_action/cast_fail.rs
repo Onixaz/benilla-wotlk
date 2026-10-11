@@ -21,9 +21,10 @@ use benilla_formats::{
 
 use super::Caster;
 
-/// Wire reason to its `SPELL_FAILED_*` GlobalStrings key: the reference's table `0x6e23e0`, in
-/// vmangos `SpellCastResult` order (`SpellDefines.h:350`).
-pub(super) const CAST_FAIL_KEYS: [&str; 146] = [
+/// A shared reason to its `SPELL_FAILED_*` GlobalStrings key: 1.12.1's numbering (its table
+/// `0x6e23e0`), then the reasons only 3.3.5a has. A 3.3.5a wire reason reaches this numbering
+/// through `benilla_protocol::messages::wotlk_cast_fail_shared`.
+pub(super) const CAST_FAIL_KEYS: [&str; 193] = [
     "SPELL_FAILED_AFFECTING_COMBAT",             // 0x00
     "SPELL_FAILED_ALREADY_AT_FULL_HEALTH",       // 0x01
     "SPELL_FAILED_ALREADY_AT_FULL_POWER",        // 0x02
@@ -170,6 +171,55 @@ pub(super) const CAST_FAIL_KEYS: [&str; 146] = [
     "SPELL_FAILED_REPUTATION",                   // 0x8f
     "SPELL_FAILED_MIN_SKILL",                    // 0x90
     "SPELL_FAILED_UNKNOWN",                      // 0x91
+    // 3.3.5a's own reasons, appended past 1.12.1's: the shared numbering of
+    // `benilla_protocol::messages::wotlk_cast_fail_shared`.
+    "SPELL_FAILED_SUCCESS",                        // 0x92
+    "SPELL_FAILED_ALREADY_AT_FULL_MANA",           // 0x93
+    "SPELL_FAILED_CANT_BE_DISENCHANTED_SKILL",     // 0x94
+    "SPELL_FAILED_CANT_BE_MILLED",                 // 0x95
+    "SPELL_FAILED_INCORRECT_AREA",                 // 0x96
+    "SPELL_FAILED_NEED_MORE_ITEMS",                // 0x97
+    "SPELL_FAILED_NOT_FLYING",                     // 0x98
+    "SPELL_FAILED_NOT_WHILE_LOOTING",              // 0x99
+    "SPELL_FAILED_TARGET_IS_PLAYER_CONTROLLED",    // 0x9a
+    "SPELL_FAILED_TARGET_NO_RANGED_WEAPONS",       // 0x9b
+    "SPELL_FAILED_TOTEM_CATEGORY",                 // 0x9c
+    "SPELL_FAILED_NOT_IN_ARENA",                   // 0x9d
+    "SPELL_FAILED_NOT_ON_SHAPESHIFT",              // 0x9e
+    "SPELL_FAILED_NOT_ON_STEALTHED",               // 0x9f
+    "SPELL_FAILED_NOT_ON_DAMAGE_IMMUNE",           // 0xa0
+    "SPELL_FAILED_NOT_ON_MOUNTED",                 // 0xa1
+    "SPELL_FAILED_TOO_SHALLOW",                    // 0xa2
+    "SPELL_FAILED_TARGET_NOT_IN_SANCTUARY",        // 0xa3
+    "SPELL_FAILED_TARGET_IS_TRIVIAL",              // 0xa4
+    "SPELL_FAILED_BM_OR_INVISGOD",                 // 0xa5
+    "SPELL_FAILED_EXPERT_RIDING_REQUIREMENT",      // 0xa6
+    "SPELL_FAILED_ARTISAN_RIDING_REQUIREMENT",     // 0xa7
+    "SPELL_FAILED_NOT_IDLE",                       // 0xa8
+    "SPELL_FAILED_NOT_INACTIVE",                   // 0xa9
+    "SPELL_FAILED_PARTIAL_PLAYTIME",               // 0xaa
+    "SPELL_FAILED_NO_PLAYTIME",                    // 0xab
+    "SPELL_FAILED_NOT_IN_BATTLEGROUND",            // 0xac
+    "SPELL_FAILED_NOT_IN_RAID_INSTANCE",           // 0xad
+    "SPELL_FAILED_ONLY_IN_ARENA",                  // 0xae
+    "SPELL_FAILED_TARGET_LOCKED_TO_RAID_INSTANCE", // 0xaf
+    "SPELL_FAILED_ON_USE_ENCHANT",                 // 0xb0
+    "SPELL_FAILED_NOT_ON_GROUND",                  // 0xb1
+    "SPELL_FAILED_CUSTOM_ERROR",                   // 0xb2
+    "SPELL_FAILED_CANT_DO_THAT_RIGHT_NOW",         // 0xb3
+    "SPELL_FAILED_TOO_MANY_SOCKETS",               // 0xb4
+    "SPELL_FAILED_INVALID_GLYPH",                  // 0xb5
+    "SPELL_FAILED_UNIQUE_GLYPH",                   // 0xb6
+    "SPELL_FAILED_GLYPH_SOCKET_LOCKED",            // 0xb7
+    "SPELL_FAILED_NO_VALID_TARGETS",               // 0xb8
+    "SPELL_FAILED_ITEM_AT_MAX_CHARGES",            // 0xb9
+    "SPELL_FAILED_NOT_IN_BARBERSHOP",              // 0xba
+    "SPELL_FAILED_FISHING_TOO_LOW",                // 0xbb
+    "SPELL_FAILED_ITEM_ENCHANT_TRADE_WINDOW",      // 0xbc
+    "SPELL_FAILED_SUMMON_PENDING",                 // 0xbd
+    "SPELL_FAILED_MAX_SOCKETS",                    // 0xbe
+    "SPELL_FAILED_PET_CAN_RENAME",                 // 0xbf
+    "SPELL_FAILED_TARGET_CANNOT_BE_RESURRECTED",   // 0xc0
 ];
 
 /// A power type (`SpellRec+0x7c`) to its NO_POWER key (the reference's table `0x8118dc`) and
@@ -475,6 +525,25 @@ fn strip_tokens(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every 12340 wire reason, through the shared numbering, shows the key the reference's
+    /// switch `0x7fcca0` names for it.
+    #[test]
+    fn each_3_3_5a_reason_reaches_the_reference_key() {
+        use benilla_protocol::messages::{wotlk_cast_fail_shared, WOTLK_CAST_FAIL_KEYS};
+        for (wire, key) in WOTLK_CAST_FAIL_KEYS.iter().enumerate() {
+            let shared = wotlk_cast_fail_shared(wire as u8);
+            assert_eq!(
+                CAST_FAIL_KEYS[usize::from(shared)],
+                *key,
+                "wire reason {wire:#x}"
+            );
+        }
+        assert_eq!(
+            CAST_FAIL_KEYS[usize::from(wotlk_cast_fail_shared(0xff))],
+            "SPELL_FAILED_UNKNOWN"
+        );
+    }
     use std::collections::HashMap;
 
     /// Shipped 1.12 `GlobalStrings.lua` values.
@@ -876,7 +945,8 @@ mod tests {
     /// The `0x6e23e0` table's anchors.
     #[test]
     fn the_key_table_holds_the_verified_anchors() {
-        assert_eq!(CAST_FAIL_KEYS.len(), 146);
+        // 1.12.1's 146, then the 47 only 3.3.5a has.
+        assert_eq!(CAST_FAIL_KEYS.len(), 146 + 47);
         assert_eq!(CAST_FAIL_KEYS[0x43], "SPELL_FAILED_NO_AMMO");
         assert_eq!(CAST_FAIL_KEYS[0x59], "SPELL_FAILED_OUT_OF_RANGE");
         assert_eq!(CAST_FAIL_KEYS[0x76], "SPELL_FAILED_TOO_CLOSE");
@@ -974,10 +1044,10 @@ mod tests {
             None
         );
         assert_eq!(
-            cast_fail_text(Caster::Player, 0x92, None, FailArgs::default(), &g)
+            cast_fail_text(Caster::Player, 0xC1, None, FailArgs::default(), &g)
                 .unwrap()
                 .text,
-            "Spell failed (0x92)"
+            "Spell failed (0xc1)"
         );
         assert_eq!(
             cast_fail_text(Caster::Player, 0x5C, None, FailArgs::default(), &g)

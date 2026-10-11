@@ -135,7 +135,7 @@ pub(super) fn bind_target_corpse(
     let Some(bit) = checks.corpse_facts(entity).and_then(|f| bind_arm(word, f)) else {
         return;
     };
-    if word & !bit.target_flag() != 0 {
+    if u32::from(word) & !bit.target_flag() != 0 {
         return;
     }
     let range = checks.corpse_range_refusal(spell_id, entity);
