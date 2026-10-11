@@ -212,9 +212,12 @@ impl SpellRangeCatalog {
 }
 
 const SPELL_RANGE: &str = "DBFilesClient\\SpellRange.dbc";
-const SPELL_RANGE_FIELDS: usize = 22;
+/// 12340: `ID`, the hostile and friendly minimums (1, 2), the hostile and friendly maximums (3,
+/// 4), `Flags` (5), then two localized names.
+const SPELL_RANGE_FIELDS: usize = 40;
 
-/// Load `SpellRange.dbc` off the patch chain.
+/// Load `SpellRange.dbc` off the patch chain. Only the hostile pair is read: the friendly pair
+/// differs on five rows, among them 161 (20 hostile, 40 friendly), and is not modelled yet.
 pub fn load_spell_ranges(chain: &mut Chain) -> Result<SpellRangeCatalog> {
     let bytes = chain
         .read_file(SPELL_RANGE)
@@ -222,8 +225,7 @@ pub fn load_spell_ranges(chain: &mut Chain) -> Result<SpellRangeCatalog> {
     let mut schema = Schema::new("SpellRange");
     for i in 0..SPELL_RANGE_FIELDS {
         match i {
-            1 => schema.add_field(SchemaField::new("MinRange", FieldType::Float32)),
-            2 => schema.add_field(SchemaField::new("MaxRange", FieldType::Float32)),
+            1..=4 => schema.add_field(SchemaField::new(format!("Range{i}"), FieldType::Float32)),
             _ => schema.add_field(SchemaField::new(format!("F{i}"), FieldType::UInt32)),
         }
     }
@@ -235,8 +237,8 @@ pub fn load_spell_ranges(chain: &mut Chain) -> Result<SpellRangeCatalog> {
             id,
             SpellRange {
                 min: f32_at(r, 1).unwrap_or(0.0),
-                max: f32_at(r, 2).unwrap_or(0.0),
-                flags: u32_at(r, 3).unwrap_or(0),
+                max: f32_at(r, 3).unwrap_or(0.0),
+                flags: u32_at(r, 5).unwrap_or(0),
             },
         );
     }

@@ -1262,43 +1262,37 @@ fn real_spell_catalog_cost_columns() {
 }
 
 /// A chat language reaches its skill only through the spell whose `Effect_1` is
-/// `SPELL_EFFECT_LANGUAGE` (`0x4b2656`). On 5875, 813-817 all declare Common (7), so Demonic,
-/// Titan, Thalassian and Kalimag garble for everyone, and a language-to-spell map would resolve
-/// Common to Old Tongue; vmangos's `lang_description[]` (`ObjectMgr.cpp:84`) gives them their own.
+/// `SPELL_EFFECT_LANGUAGE`. On 12340, Demon Tongue (815) and Old Tongue (817) still declare Common
+/// (7), so Demonic and Kalimag garble for everyone; Thalassian, Draconic and Titan declare their own.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn the_language_declaring_spells_cover_nine_of_thirteen_languages() {
+fn the_language_declaring_spells_cover_twelve_of_seventeen_languages() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
     let spells = load_spell_catalog(&mut chain).expect("load Spell/SpellIcon");
     let skills = crate::skill_lines::load_skill_line_catalog(&mut chain).expect("load skill lines");
 
-    // (spell, declared language, SkillLine.dbc id): every SPELL_EFFECT_LANGUAGE row but 25674.
+    // (spell, declared language, SkillLine.dbc id): every SPELL_EFFECT_LANGUAGE row.
     const DECLARED: &[(u32, u32, u32)] = &[
         (668, 7, 98),     // Common
         (669, 1, 109),    // Orcish
         (670, 3, 115),    // Taurahe
         (671, 2, 113),    // Darnassian
         (672, 6, 111),    // Dwarvish
-        (813, 7, 137),    // "Thalassian (NYI)", declaring Common
-        (814, 7, 138),    // "Draconic (NYI)", declaring Common
+        (813, 10, 137),   // Thalassian
+        (814, 11, 138),   // Draconic
         (815, 7, 139),    // Demon Tongue, declaring Common
-        (816, 7, 140),    // "Titan (NYI)", declaring Common
+        (816, 9, 140),    // Titan
         (817, 7, 141),    // "Old Tongue (NYI)", declaring Common
         (7340, 13, 313),  // Gnomish
         (7341, 14, 315),  // Troll
         (17737, 33, 673), // Gutterspeak
+        (29932, 35, 759), // Draenei
     ];
-
-    // The fourteenth, "Lesser Draconic (Language)", declares Draconic (11) but has no
-    // `SkillLineAbility` row, so the gate's second hop dead-ends and Draconic always garbles.
-    assert_eq!(spells.declared_language(25674), Some(11));
-    assert_eq!(skills.spell_to_line(25674), None);
 
     assert_eq!(
         spells.declared_languages().count(),
-        DECLARED.len() + 1,
-        "every SPELL_EFFECT_LANGUAGE row is accounted for (the +1 is 25674, below)"
+        DECLARED.len(),
+        "every SPELL_EFFECT_LANGUAGE row is accounted for"
     );
     for &(spell, language, line) in DECLARED {
         assert_eq!(
@@ -1314,7 +1308,7 @@ fn the_language_declaring_spells_cover_nine_of_thirteen_languages() {
         );
     }
 
-    // Both hops walked, only the eight player languages can ever be understood.
+    // Both hops walked, these are the languages a character can ever understand.
     let understandable: std::collections::BTreeSet<u32> = spells
         .declared_languages()
         .filter(|(spell, _)| skills.spell_to_line(*spell).is_some())
@@ -1322,8 +1316,10 @@ fn the_language_declaring_spells_cover_nine_of_thirteen_languages() {
         .collect();
     assert_eq!(
         understandable,
-        [1, 2, 3, 6, 7, 13, 14, 33].into_iter().collect(),
-        "only the eight player languages have both a declaring spell and a skill line"
+        [1, 2, 3, 6, 7, 9, 10, 11, 13, 14, 33, 35]
+            .into_iter()
+            .collect(),
+        "twelve languages have both a declaring spell and a skill line"
     );
 
     // An ordinary ability declares nothing.

@@ -72,22 +72,22 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             spell_ids,
             cooldowns,
         } => vec![SessionEvent::SpellBook {
-            spell_ids: spell_ids.into_iter().map(u32::from).collect(),
+            spell_ids,
             cooldowns,
         }],
         ServerPacket::ActionButtons { buttons } => vec![SessionEvent::ActionButtons { buttons }],
-        ServerPacket::LearnedSpell { spell_id } => vec![SessionEvent::SpellLearned {
-            spell_id: u32::from(spell_id),
-        }],
-        ServerPacket::RemovedSpell { spell_id } => vec![SessionEvent::SpellRemoved {
-            spell_id: u32::from(spell_id),
-        }],
+        ServerPacket::LearnedSpell { spell_id } => {
+            vec![SessionEvent::SpellLearned { spell_id }]
+        }
+        ServerPacket::RemovedSpell { spell_id } => {
+            vec![SessionEvent::SpellRemoved { spell_id }]
+        }
         ServerPacket::SupercededSpell {
             old_spell_id,
             new_spell_id,
         } => vec![SessionEvent::SpellSuperceded {
-            old_spell_id: u32::from(old_spell_id),
-            new_spell_id: u32::from(new_spell_id),
+            old_spell_id,
+            new_spell_id,
         }],
         ServerPacket::CastResult { spell_id, outcome } => vec![SessionEvent::CastResult {
             spell_id,

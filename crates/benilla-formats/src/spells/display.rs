@@ -17,191 +17,194 @@ pub struct SpellDisplay {
     /// `0x6e3130` (`0x6e384b`).
     pub id: u32,
     pub name: String,
-    /// `SpellNameSubtext` enUS (column 129): "Rank N", even "Rank 1", or a word such as "Racial".
+    /// `SpellNameSubtext` enUS (column 153): "Rank N", even "Rank 1", or a word such as "Racial".
     pub rank: Option<String>,
     /// The icon's MPQ path, without extension; `None` for icon 0 or an id not in `SpellIcon.dbc`.
     pub icon: Option<String>,
-    /// `SpellVisual.dbc` id (column 115); 0 is a silent cast.
+    /// `SpellVisual.dbc` id (column 131, the first of two); 0 is a silent cast.
     pub visual: u32,
-    /// Projectile speed (column 37) in world units per second; 0 is an instant impact.
+    /// Projectile speed (column 47) in world units per second; 0 is an instant impact.
     pub speed: f32,
-    /// `Attributes` (column 6).
+    /// `Attributes` (column 4).
     pub attributes: u32,
-    /// `School` (column 1): an index; immunity tests `1 << School` against a school mask.
-    pub school: u32,
-    /// `Mechanic` (column 5): the whole spell's `SpellMechanic.dbc` id.
+    /// `SchoolMask` (column 225): one bit per school, Fireball `0x4`; immunity tests it against a
+    /// school-immunity mask.
+    pub school_mask: u32,
+    /// `Mechanic` (column 3): the whole spell's `SpellMechanic.dbc` id.
     pub mechanic: u32,
-    /// `AttributesEx` (column 7).
+    /// `AttributesEx` (column 5).
     pub attributes_ex: u32,
-    /// `AttributesEx2` (column 8).
+    /// `AttributesEx2` (column 6).
     pub attributes_ex2: u32,
-    /// `AttributesEx3` (column 9). Bits `0x400` and `0x1000000` limit the equipped-item search to
+    /// `AttributesEx3` (column 7). Bits `0x400` and `0x1000000` limit the equipped-item search to
     /// the main or the off hand (`0x5f0c50`).
     pub attributes_ex3: u32,
-    /// `AttributesEx4` (column 10, `+0x28`).
+    /// `AttributesEx4` (column 8, `+0x20`).
     pub attributes_ex4: u32,
-    /// `SpellFamilyName` (column 160): `GetSpellModifiers` (`0x6e6b30`) applies nothing unless it
+    /// `SpellFamilyName` (column 208): `GetSpellModifiers` (`0x6e6b30`) applies nothing unless it
     /// is nonzero and equals the local player's class family (`[0xcecaac]`, `0x6e6b46`).
     pub spell_family: u32,
-    /// `SpellFamilyFlags` (columns 161-162, low dword first): the modifier rows that apply, one
+    /// `SpellFamilyFlags` (columns 209-210 of three, low dword first): the modifier rows that apply, one
     /// summed cell per set bit over all 64; Cleanse 4987 sets bits 12 and 33.
     pub spell_family_flags: u64,
-    /// `PreventionType` (column 165): 1 silence, 2 pacify, 0 neither; the crowd control that
+    /// `PreventionType` (column 214): 1 silence, 2 pacify, 0 neither; the crowd control that
     /// refuses the spell locally (`0x6094f0`, from `TryCast` `0x6e4b60`). A stun refuses all.
     pub prevention_type: u32,
-    /// `modalNextSpell` (column 38): cast by the client itself (`0x6e74aa`), at no target, when
+    /// `modalNextSpell` (column 48): cast by the client itself (`0x6e74aa`), at no target, when
     /// `SMSG_CAST_RESULT` for this in-flight spell arrives, success or failure (`0x6e7330`); if
     /// it is the running auto-repeat, that is only re-armed (`0x6e745d`). Every hunter shot
     /// names 75, Auto Shot: that is how shooting starts.
     pub modal_next_spell: u32,
     /// `Attributes & 0x40`, `SPELL_ATTR_PASSIVE`: the spellbook grays it.
     pub passive: bool,
-    /// `castUI` (column 3): nonzero keeps the spell out of the spellbook; 0 on ordinary spells.
+    /// `castUI`, a 1.12.1 column 12340 dropped: nonzero keeps the spell out of the spellbook; 0 on
+    /// every 3.3.5a spell.
     pub cast_ui: u32,
-    /// `Effect[3]` (columns 61-63); the trainer's icon scans all three (`0x4d8fed`).
+    /// `Effect[3]` (columns 71-73); the trainer's icon scans all three (`0x4d8fed`).
     pub effects: [u32; 3],
     /// The `SPELL_EFFECT_OPEN_LOCK` effect the GameObject interact-cast matches against a lock.
     pub open_lock: Option<OpenLock>,
-    /// `baseLevel` (column 28, not `spellLevel`): the level effect values are quoted at, read by
+    /// `baseLevel` (column 38, not `spellLevel`): the level effect values are quoted at, read by
     /// the effect-value walk (`0x6e3854`) and the cast-time scaling (`0x6e3340`).
     pub base_level: u32,
-    /// `maxLevel` (column 27): caps an opener's skill at `maxLevel × 5`, unless 0 (`0x5ea6e3`).
+    /// `maxLevel` (column 37): caps an opener's skill at `maxLevel × 5`, unless 0 (`0x5ea6e3`).
     pub max_level: u32,
-    /// `spellLevel` (column 29), read only by the Beast Training rank comparator.
+    /// `spellLevel` (column 39), read only by the Beast Training rank comparator.
     pub spell_level: u32,
-    /// `Dispel` (column 4): the `SpellDispelType.dbc` id, as `UnitDebuff`'s third return.
+    /// `Dispel` (column 2): the `SpellDispelType.dbc` id, as `UnitDebuff`'s third return.
     pub dispel: u32,
-    /// `Category` (column 2): the shared-cooldown category; 0 is none.
+    /// `Category` (column 1): the shared-cooldown category; 0 is none.
     pub category: u32,
     /// The category's `SpellCategory.dbc` flags carry `0x2`, matching every cooldown query
     /// (`GetCooldownInfo` `0x6e13e0`); true only for wand Shoot's 351, whose swing sweeps the bar.
     pub category_wildcard: bool,
-    /// `RecoveryTime` (column 19): the spell's own cooldown in ms.
+    /// `RecoveryTime` (column 29): the spell's own cooldown in ms.
     pub recovery_ms: u32,
-    /// `InterruptFlags` (column 21): what breaks the cast; `0xf` on timed casts, `0x1` movement.
+    /// `InterruptFlags` (column 31): what breaks the cast; `0xf` on timed casts, `0x1` movement.
     pub interrupt_flags: u32,
-    /// `AuraInterruptFlags` (column 22): what breaks the applied aura, such as food's sit-still
+    /// `AuraInterruptFlags` (column 32): what breaks the applied aura, such as food's sit-still
     /// bits. The cast-start moving gate reads its `0x18`, moving or turning (`0x609de3`).
     pub aura_interrupt_flags: u32,
-    /// `ChannelInterruptFlags` (column 23): what breaks the channel, in aura-interrupt bits.
+    /// `ChannelInterruptFlags` (column 33): what breaks the channel, in aura-interrupt bits.
     pub channel_interrupt_flags: u32,
-    /// `CategoryRecoveryTime` (column 20): the category's shared cooldown in ms.
+    /// `CategoryRecoveryTime` (column 30): the category's shared cooldown in ms.
     pub category_recovery_ms: u32,
-    /// `StartRecoveryCategory` (column 157): the global cooldown's category, usually 133.
+    /// `StartRecoveryCategory` (column 205): the global cooldown's category, usually 133.
     pub start_recovery_category: u32,
-    /// `StartRecoveryTime` (column 158): the global cooldown in ms, usually 1500; 0 for none.
+    /// `StartRecoveryTime` (column 206): the global cooldown in ms, usually 1500; 0 for none.
     pub start_recovery_ms: u32,
-    /// `powerType` (column 31): 0 mana, 1 rage, 3 energy; health is -2, stored as `0xFFFFFFFE`
+    /// `powerType` (column 41): 0 mana, 1 rage, 3 energy; health is -2, stored as `0xFFFFFFFE`
     /// (Life Tap, Health Funnel), and the reference reads negative, or 5 and up, as health.
     pub power_type: u32,
-    /// `manaCost` (column 32): the flat cost in `power_type`'s unit.
+    /// `manaCost` (column 42): the flat cost in `power_type`'s unit.
     pub mana_cost: u32,
-    /// `ManaCostPercentage` (column 156): percent of base mana added to the flat cost.
+    /// `ManaCostPercentage` (column 204): percent of base mana added to the flat cost.
     pub mana_cost_pct: u32,
-    /// `manaCostPerlevel` (column 33): the per-level cost term of `GetPowerCost` (`0x6e31b0`).
+    /// `manaCostPerlevel` (column 43): the per-level cost term of `GetPowerCost` (`0x6e31b0`).
     pub mana_cost_per_level: u32,
-    /// `manaPerSecond` (column 34): the tooltip's "plus N per sec"; column 35 is 0 on every row.
+    /// `manaPerSecond` (column 44): the tooltip's "plus N per sec".
     pub mana_per_second: u32,
-    /// `rangeIndex` (column 36): the `SpellRange.dbc` row.
+    /// `rangeIndex` (column 46): the `SpellRange.dbc` row.
     pub range_index: u32,
-    /// `Targets` (column 13): the `TARGET_FLAG_*` seed of the cast arm's targeting word.
+    /// `Targets` (column 16): the `TARGET_FLAG_*` seed of the cast arm's targeting word.
     pub targets: u32,
-    /// `TargetCreatureType` (column 14): the creature types the spell may target, bit `type - 1`
+    /// `TargetCreatureType` (column 17): the creature types the spell may target, bit `type - 1`
     /// each; 0 is any. Hibernate takes Beast and Dragonkin, Banish Demon and Elemental.
     pub target_creature_type: u32,
-    /// `EffectImplicitTargetA[0]` (column 82): the cast arm's switch adjusts the targeting word
+    /// `EffectImplicitTargetA[0]` (column 86): the cast arm's switch adjusts the targeting word
     /// by it, and the usable walk's target-aura-state leg forks on it (6 enemy, 21 friend).
     pub implicit_target_a1: u32,
-    /// `EffectImplicitTargetA[3]` (columns 82-84), then `EffectImplicitTargetB[3]` (85-87).
+    /// `EffectImplicitTargetA[3]` (columns 86-88), then `EffectImplicitTargetB[3]` (89-91).
     pub effect_implicit_target_a: [u32; 3],
     pub effect_implicit_target_b: [u32; 3],
-    /// `Stances` (column 11): forms the spell may be cast in, `1 << (form - 1)` each; 0 is none.
+    /// `Stances` (column 12, the low dword of a 64-bit mask): forms the spell may be cast in, `1 << (form - 1)` each; 0 is none.
     pub stances: u32,
-    /// `StancesNot` (column 12): forms the spell may not be cast in.
+    /// `StancesNot` (column 14, likewise): forms the spell may not be cast in.
     pub stances_not: u32,
-    /// `CasterAuraState` (column 16): state n needs bit `1 << (n - 1)` of the caster's
+    /// `CasterAuraState` (column 20): state n needs bit `1 << (n - 1)` of the caster's
     /// `UNIT_FIELD_AURASTATE`; 0 is none.
     pub caster_aura_state: u32,
-    /// `TargetAuraState` (column 17): the current target's required aura state (`0x6e3f58`).
+    /// `TargetAuraState` (column 21): the current target's required aura state (`0x6e3f58`).
     pub target_aura_state: u32,
-    /// `Totem[2]` (columns 40-41): tools that must be carried, not consumed, such as a hammer.
+    /// `Totem[2]` (columns 50-51): tools that must be carried, not consumed, such as a hammer.
     pub totems: [u32; 2],
-    /// `Reagent[8]` and `ReagentCount[8]` (columns 42-49, 50-57): consumed items and counts.
+    /// `Reagent[8]` and `ReagentCount[8]` (columns 52-59, 60-67): consumed items and counts.
     pub reagents: [(u32, u32); 8],
-    /// `EquippedItemClass` (column 58, signed): the item class a worn item must be; -1 is none.
+    /// `EquippedItemClass` (column 68, signed): the item class a worn item must be; -1 is none.
     pub equipped_item_class: i32,
-    /// `EquippedItemSubClassMask` (column 59): the allowed subclasses, `1 << subclass` each.
+    /// `EquippedItemSubClassMask` (column 69): the allowed subclasses, `1 << subclass` each.
     pub equipped_item_subclass_mask: u32,
-    /// `EquippedItemInventoryTypeMask` (column 60): `1 << InventoryType` each; the item-target
+    /// `EquippedItemInventoryTypeMask` (column 70): `1 << InventoryType` each; the item-target
     /// gate's last leg (`0x495d60`), whose mismatch is the local "Invalid target" (`0x0a`).
     pub equipped_item_inventory_type_mask: u32,
-    /// `RequiresSpellFocus` (column 15): the `SpellFocusObject.dbc` object needed nearby.
+    /// `RequiresSpellFocus` (column 18): the `SpellFocusObject.dbc` object needed nearby.
     pub requires_spell_focus: u32,
     /// The `SpellShapeshiftForm.dbc` form: the first `SPELL_AURA_MOD_SHAPESHIFT` effect's
     /// `EffectMiscValue`, which the stance bar keys on (`0x4b2810`, `0x4b475c`).
     pub shapeshift_form: Option<u32>,
-    /// `StanceBarOrder` (column 166, signed): the stance bar's sort key, negative last.
+    /// `StanceBarOrder` (column 215, signed): the stance bar's sort key, negative last.
     pub stance_bar_order: i32,
     /// `ActiveIconID`'s texture, shown on the stance button while the form is active.
     pub active_icon: Option<String>,
-    /// `ActiveIconID` (column 118) as stored: nonzero makes a second press cancel the spell's
+    /// `ActiveIconID` (column 134) as stored: nonzero makes a second press cancel the spell's
     /// live aura. The client tests the id, not the texture (`0x4e55f0`, `0x4b36f0`).
     pub active_icon_id: u32,
-    /// `Description` enUS (column 138): the tooltip body, its `$` tokens unsubstituted.
+    /// `Description` enUS (column 170): the tooltip body, its `$` tokens unsubstituted.
     pub description: Option<String>,
-    /// `AuraDescription` enUS (column 147): the buff or debuff icon's tooltip.
+    /// `AuraDescription` enUS (column 187): the buff or debuff icon's tooltip.
     pub aura_description: Option<String>,
-    /// `DurationIndex` (column 30): the `SpellDuration.dbc` row; 0 for no duration.
+    /// `DurationIndex` (column 40): the `SpellDuration.dbc` row; 0 for no duration.
     pub duration_index: u32,
-    /// `CastingTimeIndex` (column 18): the `SpellCastTimes.dbc` row; row 1 is instant.
+    /// `CastingTimeIndex` (column 28): the `SpellCastTimes.dbc` row; row 1 is instant.
     pub casting_time_index: u32,
-    /// `ProcFlags` (column 24, `SpellRec+0x60`): bit 0 makes the description's `$t` a fixed five
+    /// `ProcFlags` (column 34, `SpellRec+0x88`): bit 0 makes the description's `$t` a fixed five
     /// seconds.
     pub proc_flags: u32,
-    /// `ProcChance` (column 25): percent; vmangos reads 101 as always, with no roll.
+    /// `ProcChance` (column 35): percent; vmangos reads 101 as always, with no roll.
     pub proc_chance: u32,
-    /// `ProcCharges` (column 26): the description expander's `$n` value before op 4.
+    /// `ProcCharges` (column 36): the description expander's `$n` value before op 4.
     pub proc_charges: u32,
-    /// `StackAmount` (column 39): the description expander's `$u` (`507ef1`).
+    /// `StackAmount` (column 49): the description expander's `$u` (`507ef1`).
     pub stack_amount: u32,
-    /// `MaxTargetLevel` (column 159): the description expander's `$v` (`507f4f`).
+    /// `MaxTargetLevel` (column 207): the description expander's `$v` (`507f4f`).
     pub max_target_level: u32,
-    /// `MaxAffectedTargets` (column 163): the description expander's `$i` (`507fc3`).
+    /// `MaxAffectedTargets` (column 212): the description expander's `$i` (`507fc3`).
     pub max_affected_targets: u32,
-    /// `EffectBasePoints[3]` (columns 76-78, signed): each roll's floor; -1 on weapon damage.
+    /// `EffectBasePoints[3]` (columns 80-82, signed): each roll's floor; -1 on weapon damage.
     pub effect_base_points: [i32; 3],
-    /// `EffectDieSides[3]` (columns 64-66, signed): with n dice, the value runs base + n to
-    /// base + sides × n (`0x6e3800`), n being `EffectBaseDice` plus its per-level term.
+    /// `EffectDieSides[3]` (columns 74-76, signed): with n dice, the value runs base + n to
+    /// base + sides × n, n being [`Self::effect_base_dice`] plus its per-level term.
     pub effect_die_sides: [i32; 3],
-    /// `EffectBaseDice[3]` (columns 67-69).
+    /// The dice count, 1 on every 12340 row: that client dropped `EffectBaseDice` and rolls
+    /// `BasePoints + 1` to `BasePoints + DieSides` (`0x7ff7e6`, `0x7ff82a`).
     pub effect_base_dice: [i32; 3],
-    /// `EffectAmplitude[3]` (columns 94-96): a periodic effect's tick in ms; 0 is not periodic.
+    /// `EffectAmplitude[3]` (columns 98-100): a periodic effect's tick in ms; 0 is not periodic.
     pub effect_amplitude: [u32; 3],
-    /// `EffectApplyAuraName[3]` (columns 91-93): each effect's aura type; 0 is not an aura.
+    /// `EffectApplyAuraName[3]` (columns 95-97): each effect's aura type; 0 is not an aura.
     pub effect_apply_aura: [u32; 3],
-    /// `EffectMechanic[3]` (columns 79-81): each effect's `SpellMechanic.dbc` id. Immunity
+    /// `EffectMechanic[3]` (columns 83-85): each effect's `SpellMechanic.dbc` id. Immunity
     /// matches it or [`Self::mechanic`]; the `0x8d` "Can't do that while %s" line prefers it.
     pub effect_mechanic: [u32; 3],
-    /// `EffectRadiusIndex[3]` (columns 88-90): each effect's `SpellRadius.dbc` row; 0 is none.
+    /// `EffectRadiusIndex[3]` (columns 92-94): each effect's `SpellRadius.dbc` row; 0 is none.
     pub effect_radius_index: [u32; 3],
-    /// `EffectChainTarget[3]` (columns 100-102): extra chain targets beyond the first.
+    /// `EffectChainTarget[3]` (columns 104-106): extra chain targets beyond the first.
     pub effect_chain_targets: [u32; 3],
-    /// `EffectMultipleValue[3]` (columns 97-99, float): the chain or multi-target falloff.
+    /// `EffectMultipleValue[3]` (columns 101-103, float): the chain or multi-target falloff.
     pub effect_multiple_value: [f32; 3],
-    /// `DmgMultiplier[3]` (columns 167-169, float): `$f`/`$F` print it scaled (`507ff7`, `508025`).
+    /// `DmgMultiplier[3]` (columns 216-218, float): `$f`/`$F` print it scaled (`507ff7`, `508025`).
     pub damage_multiplier: [f32; 3],
-    /// `EffectPointsPerComboPoint[3]` (columns 112-114, float): `$b` prints it chopped (`507ed4`).
+    /// `EffectPointsPerComboPoint[3]` (columns 119-121, float): `$b` prints it chopped (`507ed4`).
     pub effect_points_per_combo_point: [f32; 3],
-    /// `EffectTriggerSpell[3]` (columns 109-111): each effect's triggered spell, 0 for none.
+    /// `EffectTriggerSpell[3]` (columns 116-118): each effect's triggered spell, 0 for none.
     pub effect_trigger_spell: [u32; 3],
-    /// `EffectItemType[3]` (columns 103-105): the item a `SPELL_EFFECT_CREATE_ITEM` effect makes.
+    /// `EffectItemType[3]` (columns 107-109): the item a `SPELL_EFFECT_CREATE_ITEM` effect makes.
     pub effect_item_type: [u32; 3],
-    /// `EffectMiscValue[3]` (columns 106-108, signed). On a trade-skill opener (effect 47),
+    /// `EffectMiscValue[3]` (columns 110-112, signed). On a trade-skill opener (effect 47),
     /// slot 0 picks the window: nonzero the CraftFrame, 0 the TradeSkillFrame (`0x6e4bd7`).
     pub effect_misc_value: [i32; 3],
-    /// `EffectDicePerLevel[3]` (columns 70-72): the integer per-level term (`0x6e3871`).
+    /// The integer per-level dice term, 0 on every 12340 row, which dropped `EffectDicePerLevel`.
     pub effect_dice_per_level: [i32; 3],
-    /// `EffectRealPointsPerLevel[3]` (columns 73-75): the float per-level term (`0x6e3889`); 5.0
+    /// `EffectRealPointsPerLevel[3]` (columns 77-79): the float per-level term (`0x6e3889`); 5.0
     /// on Pick Lock, Mining and Herb Gathering, so the skill they provide tracks the player's.
     pub effect_real_points_per_level: [f32; 3],
 }
@@ -217,7 +220,7 @@ impl Default for SpellDisplay {
             visual: 0,
             speed: 0.0,
             attributes: 0,
-            school: 0,
+            school_mask: 0,
             mechanic: 0,
             attributes_ex: 0,
             attributes_ex2: 0,

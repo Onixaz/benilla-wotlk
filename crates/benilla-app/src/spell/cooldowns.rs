@@ -473,7 +473,8 @@ impl Cooldowns {
     }
 
     /// One `SMSG_INITIAL_SPELLS` cooldown: the wire carries the remainder, so the record starts
-    /// now. A permanent cooldown (the category word's top bit) arrives as 1 ms and is kept.
+    /// now. A permanent cooldown arrives as 1 ms with the category time's top bit set, which the
+    /// client masks off (`0x6df16d`).
     pub(crate) fn seed_initial(
         &mut self,
         cd: &benilla_protocol::messages::SpellCooldown,
@@ -481,18 +482,18 @@ impl Cooldowns {
     ) {
         self.add(
             now,
-            u32::from(cd.spell_id),
+            cd.spell_id,
             u32::from(cd.item_id),
             Timer {
                 start: now,
                 duration: Duration::from_millis(u64::from(cd.spell_cd_ms)),
             },
-            u32::from(cd.category & 0x7FFF),
+            u32::from(cd.category),
             // No catalog here; the wildcard category 351 never arrives in this list.
             false,
             Timer {
                 start: now,
-                duration: Duration::from_millis(u64::from(cd.category_cd_ms)),
+                duration: Duration::from_millis(u64::from(cd.category_cd_ms & 0x7FFF_FFFF)),
             },
             false,
             0,

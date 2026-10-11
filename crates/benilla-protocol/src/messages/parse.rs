@@ -282,9 +282,8 @@ pub fn parse_server_with_tail(opcode: u16, body: &[u8]) -> io::Result<(ServerPac
 /// The opcodes whose 3.3.5a body is known to differ from the layout their arm reads and has no
 /// 3.3.5a decoder yet: each failed or left bytes unread against AzerothCore, and
 /// `SMSG_COMPRESSED_MOVES`, which AzerothCore never sends, frames its records unverified.
-const UNDECODED: [u16; 9] = [
+const UNDECODED: [u16; 8] = [
     opcode::SMSG_ACTION_BUTTONS,
-    opcode::SMSG_INITIAL_SPELLS,
     opcode::SMSG_SPELL_START,
     opcode::SMSG_SPELL_GO,
     opcode::SMSG_INIT_WORLD_STATES,

@@ -1,16 +1,14 @@
 //! `Spell.dbc` joined with `SpellIcon.dbc`: a spell id resolves to the display record the action
 //! bar, spellbook, tooltips and cast gates read.
 //!
-//! A `Spell.dbc` record is 173 fields, 692 bytes (the loader's header checks, `0x55007e`,
-//! `0x5500bb`), and the client's `SpellRec` holds the row as stored: offset = column × 4, so
-//! `SpellVisual` is `+0x1cc` (column 115) and the name `+0x1e0` (column 120). The client's reads
-//! agree, such as Speed `+0x94` at `0x6e814b`, `Attributes` and `AttributesEx2` at `0x6e5922` and
-//! `0x6e591c`, `castUI` at `0x4b29bf`. Most columns were also matched by value against the
-//! vmangos `spell_template` of build 5875: only column 115 equals `spellVisual1` on 1309 rows.
+//! A 12340 `Spell.dbc` record is 234 fields, 936 bytes, held as stored: offset = column × 4, as
+//! the effect-value walk's reads show (`Effect` `+0x11c`, `DieSides` `+0x128`, `BasePoints`
+//! `+0x140`, `baseLevel` `+0x98`, `0x7ff793`-`0x7ff82a`). Every column read was matched by value
+//! on Fireball (133), Language Common (668) and Battle Stance (2457).
 //!
-//! A localized string is eight locale dwords and a flags dword: name 120-128, subtext 129-137,
-//! description 138-146, aura description 147-155, then `ManaCostPercentage` at 156. The
-//! per-effect fields are `[3]` arrays in consecutive columns from `Effect` at 61.
+//! A localized string is sixteen locale dwords and a flags dword: name 136-152, subtext 153-169,
+//! description 170-186, aura description 187-203, then `ManaCostPercentage` at 204. The
+//! per-effect fields are `[3]` arrays in consecutive columns from `Effect` at 71.
 //! `SpellIcon.dbc` is `ID`, `TextureFilename` (no extension).
 
 mod cast_times;
@@ -49,74 +47,74 @@ use crate::dbc::{f32_at, i32_at, parse, str_at, u32_at};
 
 const SPELL: &str = "DBFilesClient\\Spell.dbc";
 
-const SPELL_FIELDS: usize = 173;
-/// `Category` (`+0x8`): the shared-cooldown `SpellCategory.dbc` id, such as potions 4.
-const COL_CATEGORY: usize = 2;
-const COL_CAST_UI: usize = 3;
-/// `RecoveryTime` (`+0x4c`) and `CategoryRecoveryTime` (`+0x50`), in ms, read by `StartCooldown`
+const SPELL_FIELDS: usize = 234;
+/// `Category` (`+0x4`): the shared-cooldown `SpellCategory.dbc` id, such as potions 4.
+const COL_CATEGORY: usize = 1;
+/// `RecoveryTime` (`+0x74`) and `CategoryRecoveryTime` (`+0x78`), in ms, read by `StartCooldown`
 /// (`0x6e2c60`) and the `SMSG_SPELL_COOLDOWN` handler (`0x6e9460`).
-const COL_RECOVERY_TIME: usize = 19;
-const COL_CATEGORY_RECOVERY_TIME: usize = 20;
-/// The three interrupt masks (`+0x54`, `+0x58`, `+0x5c`): cast, applied aura, running channel.
-const COL_INTERRUPT_FLAGS: usize = 21;
-const COL_AURA_INTERRUPT_FLAGS: usize = 22;
-const COL_CHANNEL_INTERRUPT_FLAGS: usize = 23;
+const COL_RECOVERY_TIME: usize = 29;
+const COL_CATEGORY_RECOVERY_TIME: usize = 30;
+/// The three interrupt masks (`+0x7c`, `+0x80`, `+0x84`): cast, applied aura, running channel.
+const COL_INTERRUPT_FLAGS: usize = 31;
+const COL_AURA_INTERRUPT_FLAGS: usize = 32;
+const COL_CHANNEL_INTERRUPT_FLAGS: usize = 33;
 /// The cost triple (`powerType`, `manaCost`, `ManaCostPercentage`) `IsUsableAction` checks.
-const COL_POWER_TYPE: usize = 31;
-const COL_MANA_COST: usize = 32;
-const COL_MANA_COST_PCT: usize = 156;
-const COL_MANA_COST_PER_LEVEL: usize = 33;
-const COL_MANA_PER_SECOND: usize = 34;
-/// `rangeIndex` (`+0x90`), resolved by `GetMinMaxRange` (`0x6e3480`).
-const COL_RANGE_INDEX: usize = 36;
-/// `modalNextSpell` (`+0x98`): 52 of its 57 nonzero rows are hunter shots naming Auto Shot.
-const COL_MODAL_NEXT_SPELL: usize = 38;
-/// `StartRecoveryCategory` (`+0x274`) and `StartRecoveryTime` (`+0x278`): the global cooldown
+const COL_POWER_TYPE: usize = 41;
+const COL_MANA_COST: usize = 42;
+const COL_MANA_COST_PCT: usize = 204;
+const COL_MANA_COST_PER_LEVEL: usize = 43;
+const COL_MANA_PER_SECOND: usize = 44;
+/// `rangeIndex` (`+0xb8`), resolved by `GetMinMaxRange` (`0x6e3480`).
+const COL_RANGE_INDEX: usize = 46;
+/// `modalNextSpell` (`+0xc0`): 52 of its 57 nonzero rows are hunter shots naming Auto Shot.
+const COL_MODAL_NEXT_SPELL: usize = 48;
+/// `StartRecoveryCategory` (`+0x334`) and `StartRecoveryTime` (`+0x338`): the global cooldown
 /// `StartGlobalCooldown` (`0x6e2de0`) starts at the cast send (`0x6e58fb`).
-const COL_START_RECOVERY_CATEGORY: usize = 157;
-const COL_START_RECOVERY_TIME: usize = 158;
-const COL_PREVENTION_TYPE: usize = 165;
-const COL_SPELL_FAMILY_NAME: usize = 160;
-const COL_SPELL_FAMILY_FLAGS_LOW: usize = 161;
-/// `Targets` (`+0x34`): the seed the cast arm loads into its targeting word (`0x6e525a`).
-const COL_TARGETS: usize = 13;
-/// `TargetCreatureType` (`+0x38`): the creature-type mask `BindTarget` (`0x6e5c26`) and
+const COL_START_RECOVERY_CATEGORY: usize = 205;
+const COL_START_RECOVERY_TIME: usize = 206;
+const COL_PREVENTION_TYPE: usize = 214;
+const COL_SPELL_FAMILY_NAME: usize = 208;
+const COL_SPELL_FAMILY_FLAGS_LOW: usize = 209;
+/// `Targets` (`+0x40`): the seed the cast arm loads into its targeting word (`0x6e525a`).
+const COL_TARGETS: usize = 16;
+/// `TargetCreatureType` (`+0x44`): the creature-type mask `BindTarget` (`0x6e5c26`) and
 /// `SpellCanTargetUnit`'s mirror (`0x6e6544`) test the unit's type against, bit `type - 1`.
-const COL_TARGET_CREATURE_TYPE: usize = 14;
-/// `EffectImplicitTargetA[0]` (`+0x148`), the key of the cast arm's 62-case switch (`0x6e5484`).
-const COL_IMPLICIT_TARGET_A1: usize = 82;
-/// `EffectImplicitTargetB[0]` (`+0x154`), walked beside A by the classifier `0x6ea280`.
-const COL_IMPLICIT_TARGET_B1: usize = 85;
+const COL_TARGET_CREATURE_TYPE: usize = 17;
+/// `EffectImplicitTargetA[0]` (`+0x158`), the key of the cast arm's 62-case switch (`0x6e5484`).
+const COL_IMPLICIT_TARGET_A1: usize = 86;
+/// `EffectImplicitTargetB[0]` (`+0x164`), walked beside A by the classifier `0x6ea280`.
+const COL_IMPLICIT_TARGET_B1: usize = 89;
 /// The usable walk's gate columns (`IsSpellUsableNow` `0x6e3d60`).
-const COL_STANCES: usize = 11;
-const COL_STANCES_NOT: usize = 12;
-const COL_CASTER_AURA_STATE: usize = 16;
-const COL_TARGET_AURA_STATE: usize = 17;
-const COL_TOTEM_1: usize = 40;
-const COL_REAGENT_1: usize = 42;
-const COL_REAGENT_COUNT_1: usize = 50;
-const COL_EQUIPPED_ITEM_CLASS: usize = 58;
-const COL_EQUIPPED_ITEM_SUBCLASS_MASK: usize = 59;
-/// `EquippedItemInventoryTypeMask` (`+0xf0`), read by the item-target gate `0x495d60`.
-const COL_EQUIPPED_ITEM_INVENTORY_TYPE_MASK: usize = 60;
-const COL_REQUIRES_SPELL_FOCUS: usize = 15;
-const COL_DISPEL: usize = 4;
-const COL_SCHOOL: usize = 1;
-const COL_MECHANIC: usize = 5;
-const COL_EFFECT_MECHANIC_1: usize = 79;
-const COL_ATTRIBUTES: usize = 6;
-const COL_ATTRIBUTES_EX: usize = 7;
-const COL_ATTRIBUTES_EX2: usize = 8;
-const COL_ATTRIBUTES_EX3: usize = 9;
-/// `AttributesEx4` (`+0x28`), the dword after `AttributesEx3`: the pet-bar spell arm tests its
+const COL_STANCES: usize = 12;
+const COL_STANCES_NOT: usize = 14;
+const COL_CASTER_AURA_STATE: usize = 20;
+const COL_TARGET_AURA_STATE: usize = 21;
+const COL_TOTEM_1: usize = 50;
+const COL_REAGENT_1: usize = 52;
+const COL_REAGENT_COUNT_1: usize = 60;
+const COL_EQUIPPED_ITEM_CLASS: usize = 68;
+const COL_EQUIPPED_ITEM_SUBCLASS_MASK: usize = 69;
+/// `EquippedItemInventoryTypeMask` (`+0x118`), read by the item-target gate `0x495d60`.
+const COL_EQUIPPED_ITEM_INVENTORY_TYPE_MASK: usize = 70;
+const COL_REQUIRES_SPELL_FOCUS: usize = 18;
+const COL_DISPEL: usize = 2;
+/// `SchoolMask`: 3.3.5a carries the school as a mask, Fireball 4, not 1.12.1's enum.
+const COL_SCHOOL_MASK: usize = 225;
+const COL_MECHANIC: usize = 3;
+const COL_EFFECT_MECHANIC_1: usize = 83;
+const COL_ATTRIBUTES: usize = 4;
+const COL_ATTRIBUTES_EX: usize = 5;
+const COL_ATTRIBUTES_EX2: usize = 6;
+const COL_ATTRIBUTES_EX3: usize = 7;
+/// `AttributesEx4` (`+0x20`), the dword after `AttributesEx3`: the pet-bar spell arm tests its
 /// `0x20` at `0x4bd355`.
-const COL_ATTRIBUTES_EX4: usize = 10;
-const COL_SPEED: usize = 37;
-const COL_EFFECT_1: usize = 61;
-/// `EffectMiscValue[0]`, `61 + 15 × 3`: the 16th `[3]` array from `Effect`.
-const COL_EFFECT_MISC_1: usize = 106;
-/// `EffectTriggerSpell[0]`, `61 + 16 × 3`.
-const COL_EFFECT_TRIGGER_1: usize = 109;
+const COL_ATTRIBUTES_EX4: usize = 8;
+const COL_SPEED: usize = 47;
+const COL_EFFECT_1: usize = 71;
+/// `EffectMiscValue[0]`, `71 + 13 × 3`: the 14th `[3]` array from `Effect`.
+const COL_EFFECT_MISC_1: usize = 110;
+/// `EffectTriggerSpell[0]`, `71 + 15 × 3`, after `EffectMiscValueB`.
+const COL_EFFECT_TRIGGER_1: usize = 116;
 /// `SPELL_EFFECT_LEARN_SPELL`: teaches its `EffectTriggerSpell`, as a trainer's wrapper does.
 pub const SPELL_EFFECT_LEARN_SPELL: u32 = 36;
 
@@ -140,51 +138,51 @@ pub const SPELL_EFFECT_SKILL_STEP: u32 = 44;
 
 /// `SPELL_EFFECT_OPEN_LOCK`, which the GameObject interact-cast matches (`0x5f84a1`).
 const SPELL_EFFECT_OPEN_LOCK: u32 = 0x21;
-/// `baseLevel` (`+0x70`, not `spellLevel`), read by the effect-value walk at `0x6e3854`.
-const COL_BASE_LEVEL: usize = 28;
-/// `maxLevel` (`+0x6c`): 0 is uncapped, as on the profession openers, not a cap of 0.
-const COL_MAX_LEVEL: usize = 27;
-const COL_SPELL_LEVEL: usize = 29;
-/// `EffectApplyAuraName[0]`, `61 + 10 × 3`; the stance bar admits by it (`0x4b2810`).
-const COL_EFFECT_APPLY_AURA_1: usize = 91;
+/// `baseLevel` (`+0x98`, not `spellLevel`), read by the effect-value walk at `0x6e3854`.
+const COL_BASE_LEVEL: usize = 38;
+/// `maxLevel` (`+0x94`): 0 is uncapped, as on the profession openers, not a cap of 0.
+const COL_MAX_LEVEL: usize = 37;
+const COL_SPELL_LEVEL: usize = 39;
+/// `EffectApplyAuraName[0]`, `71 + 8 × 3`; the stance bar admits by it (`0x4b2810`).
+const COL_EFFECT_APPLY_AURA_1: usize = 95;
 /// `SPELL_AURA_MOD_SHAPESHIFT`: its `EffectMiscValue` is the `SpellShapeshiftForm.dbc` id.
 const SPELL_AURA_MOD_SHAPESHIFT: u32 = 36;
-const COL_ICON_ID: usize = 117;
-/// `ActiveIconID` (`+0x1d8`, read at `0x4b4754`): druid forms carry 122, the dismiss paw.
-const COL_ACTIVE_ICON_ID: usize = 118;
-/// `StanceBarOrder` (`+0x298`, signed): `0x4b2bb0` sorts ascending, -1 last, ties by spell id;
+const COL_ICON_ID: usize = 133;
+/// `ActiveIconID` (`+0x218`, read at `0x4b4754`): druid forms carry 122, the dismiss paw.
+const COL_ACTIVE_ICON_ID: usize = 134;
+/// `StanceBarOrder` (`+0x35c`, signed): `0x4b2bb0` sorts ascending, -1 last, ties by spell id;
 /// Stealth is -1.
-const COL_STANCE_BAR_ORDER: usize = 166;
-const COL_VISUAL_ID: usize = 115;
-const COL_NAME_ENUS: usize = 120;
-const COL_NAME_SUBTEXT_ENUS: usize = 129;
-const COL_DESCRIPTION_ENUS: usize = 138;
-const COL_AURA_DESCRIPTION_ENUS: usize = 147;
+const COL_STANCE_BAR_ORDER: usize = 215;
+const COL_VISUAL_ID: usize = 131;
+const COL_NAME_ENUS: usize = 136;
+const COL_NAME_SUBTEXT_ENUS: usize = 153;
+const COL_DESCRIPTION_ENUS: usize = 170;
+const COL_AURA_DESCRIPTION_ENUS: usize = 187;
 
-/// `DurationIndex` (`+0x78`): `Spell_C::GetSpellDuration` (`0x6ea000`) looks it up at `0xc0d828`.
-const COL_DURATION_INDEX: usize = 30;
-/// `CastingTimeIndex` (`+0x48`): `Spell_C::GetCastTime` (`0x6e3340`) looks it up at `0xc0d878`.
-const COL_CASTING_TIME_INDEX: usize = 18;
-const COL_PROC_FLAGS: usize = 24;
-const COL_PROC_CHANCE: usize = 25;
-const COL_PROC_CHARGES: usize = 26;
-const COL_STACK_AMOUNT: usize = 39;
-const COL_MAX_TARGET_LEVEL: usize = 159;
-const COL_MAX_AFFECTED_TARGETS: usize = 163;
-const COL_DAMAGE_MULTIPLIER_1: usize = 167;
-const COL_EFFECT_POINTS_PER_COMBO_POINT_1: usize = 112;
+/// `DurationIndex` (`+0xa0`): `Spell_C::GetSpellDuration` (`0x6ea000`) looks it up at `0xc0d828`.
+const COL_DURATION_INDEX: usize = 40;
+/// `CastingTimeIndex` (`+0x70`): `Spell_C::GetCastTime` (`0x6e3340`) looks it up at `0xc0d878`.
+const COL_CASTING_TIME_INDEX: usize = 28;
+const COL_PROC_FLAGS: usize = 34;
+const COL_PROC_CHANCE: usize = 35;
+const COL_PROC_CHARGES: usize = 36;
+const COL_STACK_AMOUNT: usize = 49;
+const COL_MAX_TARGET_LEVEL: usize = 207;
+const COL_MAX_AFFECTED_TARGETS: usize = 212;
+const COL_DAMAGE_MULTIPLIER_1: usize = 216;
+const COL_EFFECT_POINTS_PER_COMBO_POINT_1: usize = 119;
 
 /// The per-effect `[3]` arrays, each constant slot 0; die sides and base points are signed.
-const COL_EFFECT_DIE_SIDES_1: usize = 64;
-const COL_EFFECT_BASE_DICE_1: usize = 67;
-const COL_EFFECT_DICE_PER_LEVEL_1: usize = 70;
-const COL_EFFECT_REAL_POINTS_PER_LEVEL_1: usize = 73;
-const COL_EFFECT_BASE_POINTS_1: usize = 76;
-const COL_EFFECT_RADIUS_INDEX_1: usize = 88;
-const COL_EFFECT_AMPLITUDE_1: usize = 94;
-const COL_EFFECT_MULTIPLE_VALUE_1: usize = 97;
-const COL_EFFECT_CHAIN_TARGETS_1: usize = 100;
-const COL_EFFECT_ITEM_TYPE_1: usize = 103;
+/// 12340 dropped `EffectBaseDice` and `EffectDicePerLevel`: the effect value is `BasePoints + 1`
+/// to `BasePoints + DieSides` (`0x7ff7e6`, `0x7ff82a`), a base dice of 1 that never scales.
+const COL_EFFECT_DIE_SIDES_1: usize = 74;
+const COL_EFFECT_REAL_POINTS_PER_LEVEL_1: usize = 77;
+const COL_EFFECT_BASE_POINTS_1: usize = 80;
+const COL_EFFECT_RADIUS_INDEX_1: usize = 92;
+const COL_EFFECT_AMPLITUDE_1: usize = 98;
+const COL_EFFECT_MULTIPLE_VALUE_1: usize = 101;
+const COL_EFFECT_CHAIN_TARGETS_1: usize = 104;
+const COL_EFFECT_ITEM_TYPE_1: usize = 107;
 
 /// `SPELL_ATTR3_NORMAL_RANGED_ATTACK`: damage floats melee white (`0x6128b0`).
 const ATTR_EX3_NORMAL_RANGED_ATTACK: u32 = 0x8000;
@@ -346,9 +344,8 @@ impl SpellCatalog {
 
     /// The `Languages.dbc` id a spell declares: `EffectMiscValue_1` when `Effect_1` is 39. The
     /// client fills its language table (`0xb700ac`) on spell add (`0x4b25b0`), a later learn
-    /// overwriting, so fold this over the known spells. Five language spells (813-817) declare
-    /// Common (7): languages 8, 9, 10 and 12 are always garbled, and a warlock's Demon Tongue
-    /// takes Common's entry. Both are 1.12.1 behaviour.
+    /// overwriting, so fold this over the known spells. On 12340 Demon Tongue (815) and Old Tongue
+    /// (817) declare Common (7), so Demonic (8) and Kalimag (12) are always garbled.
     pub fn declared_language(&self, spell: u32) -> Option<u32> {
         self.declared_language.get(&spell).copied()
     }
@@ -367,7 +364,7 @@ impl SpellCatalog {
     }
 }
 
-/// 173 fields, `u32` but for `Speed`, the four float effect arrays and the four enUS string heads;
+/// 234 fields, `u32` but for `Speed`, the four float effect arrays and the four enUS string heads;
 /// the signed columns stay `u32`, as [`i32_at`] reads the same bits.
 fn spell_schema() -> Schema {
     let mut s = Schema::new("Spell");
@@ -520,7 +517,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 attributes_ex2: u32_at(r, COL_ATTRIBUTES_EX2).unwrap_or(0),
                 attributes_ex3: u32_at(r, COL_ATTRIBUTES_EX3).unwrap_or(0),
                 attributes_ex4: u32_at(r, COL_ATTRIBUTES_EX4).unwrap_or(0),
-                school: u32_at(r, COL_SCHOOL).unwrap_or(0),
+                school_mask: u32_at(r, COL_SCHOOL_MASK).unwrap_or(0),
                 mechanic: u32_at(r, COL_MECHANIC).unwrap_or(0),
                 effect_mechanic: std::array::from_fn(|i| {
                     u32_at(r, COL_EFFECT_MECHANIC_1 + i).unwrap_or(0)
@@ -531,7 +528,8 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 spell_family_flags: u64::from(u32_at(r, COL_SPELL_FAMILY_FLAGS_LOW).unwrap_or(0))
                     | u64::from(u32_at(r, COL_SPELL_FAMILY_FLAGS_LOW + 1).unwrap_or(0)) << 32,
                 passive: attributes & ATTR_PASSIVE != 0,
-                cast_ui: u32_at(r, COL_CAST_UI).unwrap_or(0),
+                // 12340 has no `castUI` column.
+                cast_ui: 0,
                 effects: [0, 1, 2].map(|i| u32_at(r, COL_EFFECT_1 + i).unwrap_or(0)),
                 base_level: u32_at(r, COL_BASE_LEVEL).unwrap_or(0),
                 max_level: u32_at(r, COL_MAX_LEVEL).unwrap_or(0),
@@ -614,12 +612,8 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 effect_die_sides: std::array::from_fn(|i| {
                     i32_at(r, COL_EFFECT_DIE_SIDES_1 + i).unwrap_or(0)
                 }),
-                effect_base_dice: std::array::from_fn(|i| {
-                    i32_at(r, COL_EFFECT_BASE_DICE_1 + i).unwrap_or(0)
-                }),
-                effect_dice_per_level: std::array::from_fn(|i| {
-                    i32_at(r, COL_EFFECT_DICE_PER_LEVEL_1 + i).unwrap_or(0)
-                }),
+                effect_base_dice: [1; 3],
+                effect_dice_per_level: [0; 3],
                 effect_real_points_per_level: std::array::from_fn(|i| {
                     f32_at(r, COL_EFFECT_REAL_POINTS_PER_LEVEL_1 + i).unwrap_or(0.0)
                 }),

@@ -1,15 +1,15 @@
 //! The skill tables: a spell's skill line, a line's name and icon, and the per-race/class routing
-//! the spellbook tabs and the skills pane read. Columns follow vmangos `DBCfmt.h`/`DBCStructure.h`,
-//! which parse the same 5875 files.
+//! the spellbook tabs and the skills pane read, in their 12340 layouts, each column matched by value.
 //!
-//! - `SkillLine.dbc`, `SkillLinefmt = "nixssssssssxxxxxxxxxxi"`.
-//! - `SkillLineAbility.dbc`, `SkillLineAbilityfmt = "niiiixxiiiiixxi"`: one row per spell, the
-//!   first in file order, except `forward_spellid`, the first non-zero across the spell's rows as
-//!   in vmangos's `SpellMgr::GetSpellBookSuccessorSpellId`.
+//! - `SkillLine.dbc`, 56 fields: `ID`, `categoryId`, `skillCostID`, the name (3-19), the
+//!   description (20-36), `spellIcon` (37), the alternate verb (38-54) and `canLink`.
+//! - `SkillLineAbility.dbc`, 14 fields: one row per spell, the first in file order, except
+//!   `forward_spellid`, the first non-zero across the spell's rows as in vmangos's
+//!   `SpellMgr::GetSpellBookSuccessorSpellId`.
 //! - `SkillRaceClassInfo.dbc`, `SkillRaceClassInfofmt = "diiiiiix"`: the row admitting the
 //!   player's race and class, which the reference resolves at `0x6ddf90`; here the first such row.
 //!   With flag `0x80`, or with no such row, a spell's tab is General.
-//! - `SkillLineCategory.dbc`, 11 fields read off the raw file: the skills-pane headers in
+//! - `SkillLineCategory.dbc`, 19 fields read off the raw file: the skills-pane headers in
 //!   `displayOrder`. `Not Displayed` (12) is an ordinary header; the reference hides
 //!   `GENERIC (DND)` by `SkillRaceClassInfo.flags & 0x2`, not by category.
 
@@ -25,12 +25,12 @@ const SKILL_LINE: &str = "DBFilesClient\\SkillLine.dbc";
 const SKILL_LINE_ABILITY: &str = "DBFilesClient\\SkillLineAbility.dbc";
 const SKILL_RACE_CLASS_INFO: &str = "DBFilesClient\\SkillRaceClassInfo.dbc";
 
-const SKILL_LINE_FIELDS: usize = 22;
+const SKILL_LINE_FIELDS: usize = 56;
 const COL_SL_NAME_ENUS: usize = 3;
-const COL_SL_DESC_ENUS: usize = 12;
-const COL_SL_SPELL_ICON: usize = 21;
+const COL_SL_DESC_ENUS: usize = 20;
+const COL_SL_SPELL_ICON: usize = 37;
 
-const SKILL_LINE_ABILITY_FIELDS: usize = 15;
+const SKILL_LINE_ABILITY_FIELDS: usize = 14;
 const COL_SLA_SKILL_ID: usize = 1;
 const COL_SLA_SPELL_ID: usize = 2;
 const COL_SLA_REQ_SKILL_VALUE: usize = 7;
@@ -38,13 +38,14 @@ const COL_SLA_FORWARD_SPELL: usize = 8;
 const COL_SLA_TRIVIAL_HIGH: usize = 10;
 const COL_SLA_TRIVIAL_LOW: usize = 11;
 
-/// Cap on a rank-chain walk; the 5875 data is acyclic, 9 hops at most, so only a bad DBC hits it.
+/// Cap on a rank-chain walk; the shipped data is acyclic, so only a bad DBC hits it.
 const MAX_RANK_CHAIN: usize = 16;
 
 const SKILL_LINE_CATEGORY: &str = "DBFilesClient\\SkillLineCategory.dbc";
-const SKILL_LINE_CATEGORY_FIELDS: usize = 11;
+/// `ID`, the name over sixteen locales and a mask, then `displayOrder`.
+const SKILL_LINE_CATEGORY_FIELDS: usize = 19;
 const COL_SLC_NAME_ENUS: usize = 1;
-const COL_SLC_ORDER: usize = 10;
+const COL_SLC_ORDER: usize = 18;
 
 const SKILL_RACE_CLASS_INFO_FIELDS: usize = 8;
 const COL_SRCI_SKILL_ID: usize = 1;
@@ -82,9 +83,9 @@ pub struct SkillLineInfo {
     pub name: String,
     /// `categoryId`, column 1: the skills-pane group ([`SkillLineCatalog::category`]).
     pub category_id: u32,
-    /// The tab icon's extensionless path (`Interface\Icons\…`), from `spellIcon`, column 21.
+    /// The tab icon's extensionless path (`Interface\Icons\…`), from `spellIcon`, column 37.
     pub icon: Option<String>,
-    /// enUS `description_lang`, column 12: `GetSkillLineInfo`'s 13th return.
+    /// enUS `description_lang`, column 20: `GetSkillLineInfo`'s 13th return.
     pub description: String,
 }
 

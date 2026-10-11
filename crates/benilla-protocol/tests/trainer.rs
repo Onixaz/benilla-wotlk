@@ -188,21 +188,25 @@ fn trainer_buy_result_wire() {
 
 #[test]
 fn learned_and_superceded_spell_wire() {
-    // SMSG_LEARNED_SPELL: u16 spellId + u16 actionBarSlot, the slot unused by the client and
-    // dropped (vmangos `Packets/Spell.cpp:175-179`).
-    match messages::parse_server(messages::opcode::SMSG_LEARNED_SPELL, &hx("cb19aaaa")).unwrap() {
+    // SMSG_LEARNED_SPELL: u32 spellId + a u16 the client does not use (`0x6e7d60`).
+    match messages::parse_server(messages::opcode::SMSG_LEARNED_SPELL, &hx("cb190000aaaa")).unwrap()
+    {
         ServerPacket::LearnedSpell { spell_id } => assert_eq!(spell_id, 6603),
         other => panic!("learned spell, got {}", other.name()),
     }
     let packet =
-        messages::parse_server(messages::opcode::SMSG_LEARNED_SPELL, &hx("cb19aaaa")).unwrap();
+        messages::parse_server(messages::opcode::SMSG_LEARNED_SPELL, &hx("cb190000aaaa")).unwrap();
     match decode(packet).pop().unwrap() {
         SessionEvent::SpellLearned { spell_id } => assert_eq!(spell_id, 6603u32),
         other => panic!("spell learned event, got {other:?}"),
     }
 
-    // SMSG_SUPERCEDED_SPELL: u16 oldSpellId + u16 newSpellId (vmangos `Packets/Spell.cpp:169-173`).
-    match messages::parse_server(messages::opcode::SMSG_SUPERCEDED_SPELL, &hx("cb19cc19")).unwrap()
+    // SMSG_SUPERCEDED_SPELL: u32 oldSpellId + u32 newSpellId (`0x6e7e00`).
+    match messages::parse_server(
+        messages::opcode::SMSG_SUPERCEDED_SPELL,
+        &hx("cb190000cc190000"),
+    )
+    .unwrap()
     {
         ServerPacket::SupercededSpell {
             old_spell_id,
@@ -210,8 +214,11 @@ fn learned_and_superceded_spell_wire() {
         } => assert_eq!((old_spell_id, new_spell_id), (6603, 6604)),
         other => panic!("superceded spell, got {}", other.name()),
     }
-    let packet =
-        messages::parse_server(messages::opcode::SMSG_SUPERCEDED_SPELL, &hx("cb19cc19")).unwrap();
+    let packet = messages::parse_server(
+        messages::opcode::SMSG_SUPERCEDED_SPELL,
+        &hx("cb190000cc190000"),
+    )
+    .unwrap();
     match decode(packet).pop().unwrap() {
         SessionEvent::SpellSuperceded {
             old_spell_id,

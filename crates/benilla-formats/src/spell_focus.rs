@@ -11,7 +11,8 @@ use crate::dbc::{parse, str_at, u32_at};
 use crate::Chain;
 
 const SPELL_FOCUS_OBJECT: &str = "DBFilesClient\\SpellFocusObject.dbc";
-const SPELL_FOCUS_FIELDS: usize = 10;
+/// `ID`, then the name over sixteen locales and a mask.
+const SPELL_FOCUS_FIELDS: usize = 18;
 const COL_NAME_ENUS: usize = 1;
 
 /// `SpellFocusObject` id → its enUS name.

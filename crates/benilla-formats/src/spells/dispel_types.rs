@@ -1,8 +1,9 @@
-//! `SpellDispelType.dbc`: the dispel class name the aura tooltip (`0x52f880`) shows and
-//! `UnitDebuff` returns as its `dispelType`, which FrameXML's `DebuffTypeColor` keys the
-//! debuff border on. A row is named only when column 10 (`+0x28`) is nonzero (`0x52f906`): on 5875
-//! that is ids 1-4, so Stealth and Invisibility carry names that never print. Column 11 repeats
-//! the name on those four rows; the tooltip does not read it.
+//! `SpellDispelType.dbc`: the dispel class name `UnitAura` returns as its `dispelType`, which
+//! FrameXML's `DebuffTypeColor` keys the debuff border on. A 12340 row is `ID`, the localized name
+//! (sixteen locales and a mask, 1-17), `Mask` (18), a gate (19) and the unlocalized internal name
+//! (20). `UnitAura` (`0x6148ab`-`0x6148c2`) returns the internal name only when the gate is
+//! nonzero; the client keeps one pointer per locstring, so it reads them at `+0xc` and `+0x10`. The
+//! gate passes 1-4 and Enrage (9), whose internal name is empty.
 
 use std::collections::HashMap;
 
@@ -40,21 +41,22 @@ pub fn load_spell_dispel_types(chain: &mut Chain) -> Result<SpellDispelTypes> {
         .context("reading SpellDispelType.dbc")?;
     let mut schema = Schema::new("SpellDispelType");
     schema.add_field(SchemaField::new("ID", FieldType::UInt32));
-    for i in 0..8 {
+    for i in 0..16 {
         schema.add_field(SchemaField::new(format!("Name{i}"), FieldType::String));
     }
     schema.add_field(SchemaField::new("NameFlags", FieldType::UInt32));
+    schema.add_field(SchemaField::new("Mask", FieldType::UInt32));
     schema.add_field(SchemaField::new("Named", FieldType::UInt32));
-    schema.add_field(SchemaField::new("Unknown11", FieldType::String));
+    schema.add_field(SchemaField::new("InternalName", FieldType::String));
     let set = parse(&bytes, schema, "SpellDispelType.dbc")?;
     let mut names = HashMap::new();
     for r in set.records() {
         let Some(id) = u32_at(r, 0) else { continue };
         // The gate first: a 0 here withholds the name however good the string is (Stealth, id 5).
-        if u32_at(r, 10).unwrap_or(0) == 0 {
+        if u32_at(r, 19).unwrap_or(0) == 0 {
             continue;
         }
-        if let Some(name) = str_at(&set, r, 1).filter(|n| !n.is_empty()) {
+        if let Some(name) = str_at(&set, r, 20).filter(|n| !n.is_empty()) {
             names.insert(id, name);
         }
     }
@@ -66,7 +68,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_dispel_types_name_only_what_the_gate_allows() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -78,7 +79,11 @@ mod tests {
         // Named in the file, withheld by the gate.
         assert_eq!(types.name(5), None, "Stealth");
         assert_eq!(types.name(6), None, "Invisibility");
-        assert_eq!(types.name(9), None, "Frenzy");
+        assert_eq!(
+            types.name(9),
+            None,
+            "Enrage: gated in, but no internal name"
+        );
         assert_eq!(types.name(0), None, "no dispel class");
         assert_eq!(types.len(), 4, "exactly the four the gate allows");
     }

@@ -27,7 +27,7 @@ const AURA_DISPEL_IMMUNITY: u32 = 41;
 const AURA_MECHANIC_IMMUNITY: u32 = 77;
 
 /// The matcher (`0x6e9d70`): does `cast` grant immunity to effect `aura_effect` of `aura`? The
-/// school arm shifts because `School` is an index and `EffectMiscValue` a mask.
+/// school arm intersects two masks: 3.3.5a's `SchoolMask` and `EffectMiscValue`.
 pub fn grants_immunity(cast: &SpellDisplay, aura: &SpellDisplay, aura_effect: usize) -> bool {
     if cast.attributes_ex & ATTR_EX_DISPELS_ON_IMMUNITY == 0 {
         return false;
@@ -48,8 +48,7 @@ pub fn grants_immunity(cast: &SpellDisplay, aura: &SpellDisplay, aura_effect: us
             AURA_STATE_IMMUNITY => misc_u == aura.effect_apply_aura[i],
             AURA_SCHOOL_IMMUNITY => {
                 aura.attributes_ex2 & ATTR_EX2_NO_SCHOOL_IMMUNITY == 0
-                    && aura.school < 32
-                    && misc_u & (1 << aura.school) != 0
+                    && misc_u & aura.school_mask != 0
             }
             AURA_DISPEL_IMMUNITY => misc_u == aura.dispel,
             AURA_MECHANIC_IMMUNITY => misc_u == aura.mechanic || misc_u == aura.effect_mechanic[i],
@@ -114,11 +113,11 @@ pub fn cc_exemption<'a>(
 mod tests {
     use super::*;
 
-    /// A blocking aura: one effect of `aura_type`, with a mechanic and a school.
-    fn aura(aura_type: u32, mechanic: u32, effect_mechanic: u32, school: u32) -> SpellDisplay {
+    /// A blocking aura: one effect of `aura_type`, with a mechanic and a school mask.
+    fn aura(aura_type: u32, mechanic: u32, effect_mechanic: u32, school_mask: u32) -> SpellDisplay {
         let mut d = SpellDisplay {
             mechanic,
-            school,
+            school_mask,
             ..Default::default()
         };
         d.effect_apply_aura[0] = aura_type;
@@ -198,8 +197,8 @@ mod tests {
             0
         ));
 
-        // 39 SCHOOL: a frost aura (school 4) is covered by mask bit 4, not by the value 4.
-        let frost = aura(12, 12, 0, 4);
+        // 39 SCHOOL: a frost aura (mask 0x10) is covered by a mask sharing its bit.
+        let frost = aura(12, 12, 0, 1 << 4);
         assert!(grants_immunity(
             &immunity(AURA_SCHOOL_IMMUNITY, 1 << 4),
             &frost,
@@ -207,7 +206,7 @@ mod tests {
         ));
         assert!(
             !grants_immunity(&immunity(AURA_SCHOOL_IMMUNITY, 4), &frost, 0),
-            "the raw index must not match — that is the bug this shift exists to avoid"
+            "a fire-only immunity does not cover frost"
         );
         let unschooled = SpellDisplay {
             attributes_ex2: ATTR_EX2_NO_SCHOOL_IMMUNITY,

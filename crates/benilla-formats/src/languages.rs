@@ -1,10 +1,10 @@
 //! `Languages.dbc` joined with `ChrRaces.dbc` for `GetDefaultLanguage()`, and the
 //! `LanguageWords.dbc` substitution pools.
 //!
-//! The binding (`0x49fcd0`) is a two-hop walk: the race's `ChrRaces` record (`[0xc0dee0]`) at
-//! `+0x20`, field 8, names a language, whose `Languages` record (`[0xc0db48]`) holds the name at
-//! `+4 + 4 * locale` (`[0xc0e080]`). Field 8 is the faction language, Common or Orcish, never the
-//! racial one: Darnassian and Gutterspeak are extra languages `GetLanguageByIndex` lists.
+//! The binding (`0x500910`) is a two-hop walk: the race's `ChrRaces` record at `+0x1c`, field 7
+//! (`0x6d5e9b`), names a language, whose `Languages` record holds the client locale's name at
+//! `+4` (`0x50095a`). Field 7 is the faction language, Common or Orcish, never the racial one:
+//! Darnassian and Gutterspeak are extra languages `GetLanguageByIndex` lists.
 
 use std::collections::HashMap;
 
@@ -18,8 +18,8 @@ const LANGUAGES: &str = "DBFilesClient\\Languages.dbc";
 const CHR_RACES: &str = "DBFilesClient\\ChrRaces.dbc";
 const LANGUAGE_WORDS: &str = "DBFilesClient\\LanguageWords.dbc";
 
-/// Locale columns in a 5875 `Name_lang` block.
-const LOCALES: usize = 8;
+/// Locale columns in a 12340 `Name_lang` block.
+const LOCALES: usize = 16;
 
 /// Race id to its base language's name, per locale column.
 #[derive(Debug, Default, Clone)]
@@ -50,18 +50,19 @@ fn languages_schema() -> Schema {
     s
 }
 
-/// `ChrRaces.dbc`, 29 fields in 5875, all read as dwords: only the count must match the header,
-/// and only field 8 is used.
+/// `ChrRaces.dbc`, all read as dwords: only the count must match the header, and only field 7 is
+/// used.
 fn chr_races_schema() -> Schema {
     let mut s = Schema::new("ChrRaces");
-    for i in 0..29 {
+    for i in 0..crate::dbc_layout::LAYOUTS.chr_races.fields {
         s.add_field(SchemaField::new(format!("f{i}"), FieldType::UInt32));
     }
     s
 }
 
-/// `BaseLanguage`, which the binding reads at `record + 0x20`.
-const CHR_RACES_BASE_LANGUAGE: usize = 8;
+/// `BaseLanguage`, which the binding reads at `record + 0x1c`: 7 on the Alliance races, 1 on the
+/// Horde's. Field 8 beside it is the creature type, 7 on every playable race.
+const CHR_RACES_BASE_LANGUAGE: usize = 7;
 
 /// `Languages.dbc` in row order, the order `GetNumLanguages` and `GetLanguageByIndex` count in
 /// (`0x49fb30`, `0x49fbe0`).
@@ -259,19 +260,18 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_tables_join_to_two_faction_languages() {
         let data = crate::wow_data_or_skip!();
         let mut chain = Chain::open(&data).expect("open patch chain");
         let langs = load_default_languages(&mut chain).expect("load");
 
-        // All nine `ChrRaces` rows resolve: the eight playable races and the Goblin.
-        assert_eq!(langs.len(), 9, "one entry per ChrRaces row");
+        // Every `ChrRaces` row names a language that resolves.
+        assert_eq!(langs.len(), 21, "one entry per ChrRaces row");
         // Alliance speaks Common, Horde Orcish; the racial language would give Darnassian.
-        for race in [1, 3, 4, 7] {
+        for race in [1, 3, 4, 7, 11] {
             assert_eq!(langs.name(race, 0), Some("Common"), "race {race}");
         }
-        for race in [2, 5, 6, 8] {
+        for race in [2, 5, 6, 8, 10] {
             assert_eq!(langs.name(race, 0), Some("Orcish"), "race {race}");
         }
         // No such race: the reference's no-record edge.

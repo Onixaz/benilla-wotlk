@@ -5,33 +5,35 @@ use std::io::{self, Read};
 
 use crate::wire::{capacity_hint, read_u16_le, read_u32_le, read_u64_le, read_u8};
 
-/// One active cooldown from `SMSG_INITIAL_SPELLS` (vmangos `SendInitialSpells`). A permanent one,
-/// re-armed by the server, is `spell_cd_ms == 1` with the category word's top bit set.
+/// One active cooldown from `SMSG_INITIAL_SPELLS`. A permanent one, re-armed by the server, is
+/// `spell_cd_ms == 1` with `category_cd_ms`'s top bit set, which the client masks off
+/// (`0x6df16d`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpellCooldown {
-    pub spell_id: u16,
+    pub spell_id: u32,
     pub item_id: u16,
     pub category: u16,
     pub spell_cd_ms: u32,
     pub category_cd_ms: u32,
 }
 
-/// Read `SMSG_INITIAL_SPELLS` (vmangos `Player::SendInitialSpells`): `u8 0`, a `u16` count of
-/// `{u16 spellId, u16 0}`, then a `u16` count of [`SpellCooldown`]s.
-pub(super) fn read_initial_spells(r: &mut impl Read) -> io::Result<(Vec<u16>, Vec<SpellCooldown>)> {
+/// Read `SMSG_INITIAL_SPELLS` as the 12340 handler does (`0x6df050`): `u8`, a `u16` count of
+/// `{u32 spellId, u16}`, then a `u16` count of [`SpellCooldown`]s, each `u32` spell, `u16` item,
+/// `u16` category and two `u32` times.
+pub(super) fn read_initial_spells(r: &mut impl Read) -> io::Result<(Vec<u32>, Vec<SpellCooldown>)> {
     let _ = read_u8(r)?;
     let n = read_u16_le(r)?;
-    // No protocol bound on either list; a 1.12 spellbook holds a few hundred spells.
-    let mut spells = Vec::with_capacity(capacity_hint(n, 1024));
+    // No protocol bound on either list; a 3.3.5a spellbook holds several hundred spells.
+    let mut spells = Vec::with_capacity(capacity_hint(n, 2048));
     for _ in 0..n {
-        spells.push(read_u16_le(r)?);
+        spells.push(read_u32_le(r)?);
         let _ = read_u16_le(r)?;
     }
     let m = read_u16_le(r)?;
     let mut cooldowns = Vec::with_capacity(capacity_hint(m, 1024));
     for _ in 0..m {
         cooldowns.push(SpellCooldown {
-            spell_id: read_u16_le(r)?,
+            spell_id: read_u32_le(r)?,
             item_id: read_u16_le(r)?,
             category: read_u16_le(r)?,
             spell_cd_ms: read_u32_le(r)?,
@@ -41,24 +43,23 @@ pub(super) fn read_initial_spells(r: &mut impl Read) -> io::Result<(Vec<u16>, Ve
     Ok((spells, cooldowns))
 }
 
-/// Read `SMSG_LEARNED_SPELL` (vmangos `Server/Packets/Spell.cpp:175-179`): `u16 spellId`, then
-/// an action-bar slot the client does not use. The one message that adds to the book after login.
-pub(super) fn read_learned_spell(r: &mut impl Read) -> io::Result<u16> {
-    let spell_id = read_u16_le(r)?;
-    let _action_bar_slot = read_u16_le(r)?;
+/// Read `SMSG_LEARNED_SPELL` (`0x6e7d60`): `u32 spellId`, then a `u16` the book does not use. The
+/// one message that adds to the book after login.
+pub(super) fn read_learned_spell(r: &mut impl Read) -> io::Result<u32> {
+    let spell_id = read_u32_le(r)?;
+    let _ = read_u16_le(r)?;
     Ok(spell_id)
 }
 
-/// Read `SMSG_REMOVED_SPELL` (vmangos `Server/Packets/Spell.cpp:181`): a bare `u16 spellId`, no
-/// action-bar slot.
-pub(super) fn read_removed_spell(r: &mut impl Read) -> io::Result<u16> {
-    read_u16_le(r)
+/// Read `SMSG_REMOVED_SPELL` (`0x6e7840`): a bare `u32 spellId`.
+pub(super) fn read_removed_spell(r: &mut impl Read) -> io::Result<u32> {
+    read_u32_le(r)
 }
 
-/// Read `SMSG_SUPERCEDED_SPELL` (vmangos `Server/Packets/Spell.cpp:169-173`): `(oldSpellId,
-/// newSpellId)`; a rank-up replaces the old spell in both the book and the action bar.
-pub(super) fn read_superceded_spell(r: &mut impl Read) -> io::Result<(u16, u16)> {
-    Ok((read_u16_le(r)?, read_u16_le(r)?))
+/// Read `SMSG_SUPERCEDED_SPELL` (`0x6e7e00`): `(oldSpellId, newSpellId)`, two `u32`s; a rank-up
+/// replaces the old spell in both the book and the action bar.
+pub(super) fn read_superceded_spell(r: &mut impl Read) -> io::Result<(u32, u32)> {
+    Ok((read_u32_le(r)?, read_u32_le(r)?))
 }
 
 /// Read `SMSG_SPELL_COOLDOWN` (vmangos `Server/Packets/Spell.cpp:142-150`, client `0x6e9460`): a
@@ -103,19 +104,52 @@ mod tests {
 
     #[test]
     fn the_three_book_deltas_have_three_different_bodies() {
-        // SMSG_LEARNED_SPELL: u16 spell + u16 slot (dropped).
-        let body: Vec<u8> = [1752u16.to_le_bytes(), 0u16.to_le_bytes()].concat();
-        assert_eq!(read_learned_spell(&mut &body[..]).unwrap(), 1752);
+        // SMSG_LEARNED_SPELL: u32 spell + u16 (dropped).
+        let body: Vec<u8> = [&1752u32.to_le_bytes()[..], &0u16.to_le_bytes()].concat();
+        let mut r = &body[..];
+        assert_eq!(read_learned_spell(&mut r).unwrap(), 1752);
+        assert!(r.is_empty());
 
-        // SMSG_REMOVED_SPELL: the bare u16, and nothing after it.
-        let body = 1752u16.to_le_bytes().to_vec();
+        // SMSG_REMOVED_SPELL: the bare u32, and nothing after it.
+        let body = 1752u32.to_le_bytes().to_vec();
         let mut r = &body[..];
         assert_eq!(read_removed_spell(&mut r).unwrap(), 1752);
-        assert!(r.is_empty(), "the removal body is two bytes, full stop");
+        assert!(r.is_empty(), "the removal body is four bytes, full stop");
 
         // SMSG_SUPERCEDED_SPELL: the pair.
-        let body: Vec<u8> = [1752u16.to_le_bytes(), 1757u16.to_le_bytes()].concat();
+        let body: Vec<u8> = [1752u32.to_le_bytes(), 1757u32.to_le_bytes()].concat();
         assert_eq!(read_superceded_spell(&mut &body[..]).unwrap(), (1752, 1757));
+    }
+
+    #[test]
+    fn initial_spells_reads_u32_ids_and_cooldowns() {
+        // Two spells (668 Language Common, 49576 Death Grip), one category cooldown.
+        let mut body = vec![0u8];
+        body.extend(2u16.to_le_bytes());
+        for id in [668u32, 49576] {
+            body.extend(id.to_le_bytes());
+            body.extend(0u16.to_le_bytes());
+        }
+        body.extend(1u16.to_le_bytes());
+        body.extend(49576u32.to_le_bytes());
+        body.extend(0u16.to_le_bytes());
+        body.extend(1173u16.to_le_bytes());
+        body.extend(0u32.to_le_bytes());
+        body.extend(25_000u32.to_le_bytes());
+        let mut r = &body[..];
+        let (spells, cooldowns) = read_initial_spells(&mut r).unwrap();
+        assert!(r.is_empty());
+        assert_eq!(spells, vec![668, 49576]);
+        assert_eq!(
+            cooldowns,
+            vec![SpellCooldown {
+                spell_id: 49576,
+                item_id: 0,
+                category: 1173,
+                spell_cd_ms: 0,
+                category_cd_ms: 25_000,
+            }]
+        );
     }
 
     #[test]

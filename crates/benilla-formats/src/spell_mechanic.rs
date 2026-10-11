@@ -11,7 +11,8 @@ use crate::dbc::{parse, str_at, u32_at};
 use crate::Chain;
 
 const SPELL_MECHANIC: &str = "DBFilesClient\\SpellMechanic.dbc";
-const SPELL_MECHANIC_FIELDS: usize = 10;
+/// `ID`, then the name over sixteen locales and a mask.
+const SPELL_MECHANIC_FIELDS: usize = 18;
 const COL_NAME_ENUS: usize = 1;
 
 /// Mechanic id → name, lower-case in the data ("stunned") and left so, as the reference does.

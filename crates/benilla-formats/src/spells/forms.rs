@@ -1,5 +1,6 @@
 //! `SpellShapeshiftForm.dbc`: the per-form rows the action bar, the form gate, the spell tooltip
-//! and tracking read.
+//! and tracking read. A 12340 row is 35 fields: the name spans sixteen locales and a mask (2-18),
+//! and `flags1`, `creatureType` and `AttackIconID` follow at 19, 20 and 21.
 
 use std::collections::HashMap;
 
@@ -19,13 +20,13 @@ pub struct ShapeshiftForm {
     /// The enUS name (column 2), the tooltip's `SPELL_REQUIRED_FORM` "Requires %s"
     /// (`0x52f10a`-`0x52f2ae`).
     pub name: String,
-    /// `flags1` (column 11): bit 0 marks a stance, bit 1 blocks cancelling the active form.
+    /// `flags1` (column 19): bit 0 marks a stance, bit 1 blocks cancelling the active form.
     pub flags: u32,
-    /// `creatureType` (column 12): the form's creature-type override, which the resolver
+    /// `creatureType` (column 20): the form's creature-type override, which the resolver
     /// (`0x605570`) reads before the creature template or race, so a cat-form druid tracks as a
     /// Beast; `<= 0` is no override, and the template or race answers.
     pub creature_type: i32,
-    /// `AttackIconID` (column 13) through `SpellIcon.dbc`: the Attack action shows the current
+    /// `AttackIconID` (column 21) through `SpellIcon.dbc`: the Attack action shows the current
     /// form's icon before the main-hand weapon's (`0x4e6870`); `None` falls through to the weapon.
     pub attack_icon: Option<String>,
 }
@@ -53,9 +54,9 @@ pub fn load_shapeshift_forms(chain: &mut Chain) -> Result<HashMap<u32, Shapeshif
         .read_file(SHAPESHIFT_FORM)
         .context("reading SpellShapeshiftForm.dbc")?;
     let mut schema = Schema::new("SpellShapeshiftForm");
-    for i in 0..14 {
+    for i in 0..35 {
         match i {
-            // Column 2: the enUS slot of the name locstring (2..10, eight locales and a flag word).
+            // Column 2: the enUS slot of the name locstring.
             2 => schema.add_field(SchemaField::new("Name", FieldType::String)),
             _ => schema.add_field(SchemaField::new(format!("F{i}"), FieldType::UInt32)),
         }
@@ -71,9 +72,9 @@ pub fn load_shapeshift_forms(chain: &mut Chain) -> Result<HashMap<u32, Shapeshif
                 ShapeshiftForm {
                     bonus_bar: u32_at(r, 1).unwrap_or(0),
                     name: str_at(&set, r, 2).unwrap_or_default(),
-                    flags: u32_at(r, 11).unwrap_or(0),
-                    creature_type: i32_at(r, 12).unwrap_or(0),
-                    attack_icon: u32_at(r, 13)
+                    flags: u32_at(r, 19).unwrap_or(0),
+                    creature_type: i32_at(r, 20).unwrap_or(0),
+                    attack_icon: u32_at(r, 21)
                         .filter(|&i| i != 0)
                         .and_then(|i| icons.get(&i).cloned()),
                 },

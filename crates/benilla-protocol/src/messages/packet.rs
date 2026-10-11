@@ -463,7 +463,7 @@ pub enum ServerPacket {
     },
     /// `SMSG_INITIAL_SPELLS`: the spell book and active cooldowns, once at login.
     InitialSpells {
-        spell_ids: Vec<u16>,
+        spell_ids: Vec<u32>,
         cooldowns: Vec<SpellCooldown>,
     },
     /// `SMSG_ACTION_BUTTONS` (login): the occupied slots of the 120-slot action bar array.
@@ -472,16 +472,16 @@ pub enum ServerPacket {
     },
     /// `SMSG_LEARNED_SPELL`: a spell joined the book after login.
     LearnedSpell {
-        spell_id: u16,
+        spell_id: u32,
     },
     /// `SMSG_REMOVED_SPELL`: one spell left the book; a talent wipe sends one per rank per talent.
     RemovedSpell {
-        spell_id: u16,
+        spell_id: u32,
     },
     /// `SMSG_SUPERCEDED_SPELL`: a rank-up replaced its predecessor in the book and action bar.
     SupercededSpell {
-        old_spell_id: u16,
-        new_spell_id: u16,
+        old_spell_id: u32,
+        new_spell_id: u32,
     },
     /// `SMSG_CAST_RESULT`: the server's verdict on our `CMSG_CAST_SPELL`.
     CastResult {
