@@ -39,7 +39,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::SpellGo, on_own_spell_go)
         .net_handler(K::SpellGo, on_spell_go)
         .net_handler(K::SpellChainTargets, on_spell_chain_targets)
-        .net_handler(K::SpellFailedOther, on_spell_failed_other)
+        .net_handler(K::SpellFailed, on_spell_failed)
         .net_handler(K::SpellDelayed, on_spell_delayed)
         .net_handler(K::CancelAutoRepeat, on_cancel_auto_repeat)
         .net_handler(K::SpellCooldowns, on_cooldown_packet)
@@ -177,12 +177,22 @@ fn on_cast_result(
     mut r: Reply,
 ) {
     if let SessionEvent::CastResult {
+        cast_count,
         spell_id,
         success,
         reason,
         arg,
     } = ev
     {
+        // `SMSG_CAST_FAILED` ends our cast through `0x808200` -> `0x7fecc0` with its reason.
+        if let (false, Some(reason), Some(caster)) = (success, reason, r.self_guid.0) {
+            r.cast_bar.0.push(CastBarEdge::Failed {
+                caster,
+                spell_id,
+                cast_count,
+                reason,
+            });
+        }
         let chained = cast_result(
             spell_id,
             success,
@@ -194,7 +204,6 @@ fn on_cast_result(
             &mut ladder.cast_errors,
             &r.casting,
             &mut r.cast_events,
-            &mut r.cast_bar,
             &mut ladder.pending,
             &mut ladder.queued_melee,
             &mut ladder.cooldowns,
@@ -240,7 +249,6 @@ fn on_own_spell_go(
         &mut ladder.cast_errors,
         &r.casting,
         &mut r.cast_events,
-        &mut r.cast_bar,
         &mut ladder.pending,
         &mut ladder.queued_melee,
         &mut ladder.cooldowns,
@@ -258,6 +266,7 @@ fn on_own_spell_go(
 fn on_spell_start(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
     if let SessionEvent::SpellStart {
         caster,
+        cast_count,
         spell_id,
         cast_flags,
         cast_time_ms,
@@ -267,6 +276,7 @@ fn on_spell_start(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
     {
         spell_start(
             caster,
+            cast_count,
             spell_id,
             cast_flags,
             cast_time_ms,
@@ -287,6 +297,7 @@ fn on_spell_start(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
 fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
     if let SessionEvent::SpellGo {
         caster,
+        cast_count,
         spell_id,
         cast_flags,
         hits,
@@ -301,6 +312,7 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
         let engaged = !sc.engaged_self.is_empty();
         spell_go(
             caster,
+            cast_count,
             spell_id,
             cast_flags,
             hits,
@@ -349,9 +361,25 @@ fn on_spell_chain_targets(In(ev): In<SessionEvent>, l: Lifecycle, mut sc: Scene)
     }
 }
 
-fn on_spell_failed_other(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
-    if let SessionEvent::SpellFailedOther { caster, spell_id } = ev {
+fn on_spell_failed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
+    if let SessionEvent::SpellFailed {
+        other,
+        caster,
+        cast_count,
+        spell_id,
+        reason,
+    } = ev
+    {
+        // Both handlers end the cast through `0x7fecc0` with the packet's reason (`0x809db3`,
+        // `0x806bb0`).
+        l.cast_bar.0.push(CastBarEdge::Failed {
+            caster,
+            spell_id,
+            cast_count,
+            reason,
+        });
         spell_failed_other(
+            other,
             caster,
             spell_id,
             &mut sc.commands,
@@ -359,7 +387,6 @@ fn on_spell_failed_other(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Sce
             &sc.casting,
             &mut sc.cast_events,
             &l.self_guid,
-            &mut l.cast_bar,
             &mut l.pending,
             &mut l.queued_melee,
             l.play_seq.next(),
@@ -441,11 +468,26 @@ fn on_item_cooldown(In(ev): In<SessionEvent>, mut l: Lifecycle, sc: Scene) {
 fn on_channel(In(ev): In<SessionEvent>, mut l: Lifecycle) {
     match ev {
         SessionEvent::ChannelStart {
+            caster,
             spell_id,
             duration_ms,
-        } => channel_start(spell_id, duration_ms, &mut l.channel, &mut l.cast_bar),
-        SessionEvent::ChannelUpdate { remaining_ms } => {
-            channel_update(remaining_ms, &mut l.channel, &mut l.cast_bar)
+        } => {
+            let own = l.self_guid.0 == Some(caster);
+            channel_start(
+                caster,
+                own,
+                spell_id,
+                duration_ms,
+                &mut l.channel,
+                &mut l.cast_bar,
+            );
+        }
+        SessionEvent::ChannelUpdate {
+            caster,
+            remaining_ms,
+        } => {
+            let own = l.self_guid.0 == Some(caster);
+            channel_update(caster, own, remaining_ms, &mut l.channel, &mut l.cast_bar);
         }
         _ => {}
     }
@@ -633,7 +675,6 @@ fn cast_result(
     cast_errors: &mut CastErrors,
     casting: &Query<&Casting>,
     cast_events: &mut MessageWriter<CastEvent>,
-    cast_bar: &mut CastBarFeed,
     pending: &mut PendingCast,
     queued_melee: &mut QueuedMeleeSpell,
     cooldowns: &mut Cooldowns,
@@ -700,10 +741,6 @@ fn cast_result(
                 });
             }
         }
-        // The bar's red "Failed", for the showing cast only.
-        if fails_our_cast {
-            cast_bar.0.push(CastBarEdge::Failed);
-        }
         // Our cast died (vmangos never sends `SMSG_SPELL_FAILURE`): end the self avatar's cast
         // state and precast hold, keyed by spell id.
         if let Some(e) = self_e {
@@ -747,6 +784,7 @@ fn cast_result(
 /// `SMSG_SPELL_START`: a unit began a non-triggered cast, instants included (`cast_time_ms == 0`).
 fn spell_start(
     caster: u64,
+    cast_count: u8,
     spell_id: u32,
     cast_flags: u32,
     cast_time_ms: u32,
@@ -788,10 +826,8 @@ fn spell_start(
             }
         }
     }
-    // SPELLCAST_START fires only on `cast_time > 0 && !(SpellRec+0x18 & 2)` (`0x6e7700`): a
-    // ranged-slot spell never opens a bar. vmangos pads a non-auto-repeat ranged cast by 500 ms
-    // (`SpellEntry::GetCastTime`), so Throw arrives as a 500 ms cast with no bar. An unknown spell
-    // keeps the bar.
+    // A ranged-slot spell (`Attributes & 2`) never opens a bar ([`crate::ui_cast`]'s gate); the
+    // trace says so here.
     let ranged_slot = spells
         .and_then(|s| s.catalog.get(spell_id))
         .is_some_and(|d| d.ranged_slot());
@@ -807,13 +843,14 @@ fn spell_start(
         );
     }
     // Our own timed cast opens the bar.
+    // Every caster's start reaches the unit-cast feed, which applies the event gate.
+    cast_bar.0.push(CastBarEdge::Start {
+        caster,
+        spell_id,
+        cast_count,
+        cast_time_ms,
+    });
     if self_guid.0 == Some(caster) && cast_time_ms > 0 {
-        if !ranged_slot {
-            cast_bar.0.push(CastBarEdge::Start {
-                spell_id,
-                cast_time_ms,
-            });
-        }
         // The real cast time replaces the guard's send-time deadline, ranged casts included.
         pending.refine(cast_time_ms, Instant::now());
     }
@@ -843,6 +880,7 @@ const GO_TYPE_CHEST: i32 = 3;
 /// the same Speed column ([`SpellGoTargets`]).
 fn spell_go(
     caster: u64,
+    cast_count: u8,
     spell_id: u32,
     cast_flags: u32,
     hits: Vec<u64>,
@@ -894,6 +932,13 @@ fn spell_go(
         hits.len(),
         misses.len()
     );
+    // Every caster's launch reaches the unit-cast feed (`0x80e763`).
+    cast_bar.0.push(CastBarEdge::Go {
+        caster,
+        spell_id,
+        cast_count,
+        cast_flags,
+    });
     // The `use` trace's third link, after `target::click`: a caster we never streamed drops every
     // visual below. A SPELLCASTER GameObject (type 22) is its own caster; vmangos writes that guid
     // as 0 and the decode resolves it (`benilla_protocol::events`' `spell_caster`).
@@ -949,9 +994,6 @@ fn spell_go(
             .is_some_and(|&e| casting.get(e).is_ok_and(|c| c.spell_id == spell_id));
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV SPELL_GO — spell {spell_id} (self); completes_bar={completes_our_cast}");
-        }
-        if completes_our_cast {
-            cast_bar.0.push(CastBarEdge::Stop);
         }
         pending.clear_if(spell_id);
         // The queued strike fired on this swing: the queue opens here, like the in-flight finish.
@@ -1139,6 +1181,7 @@ fn spell_go(
 /// `SMSG_SPELL_FAILED_OTHER`: a cast was interrupted; ends the caster's `Casting` as [`spell_go`]
 /// does.
 fn spell_failed_other(
+    other: bool,
     caster: u64,
     spell_id: u32,
     commands: &mut Commands,
@@ -1146,12 +1189,11 @@ fn spell_failed_other(
     casting: &Query<&Casting>,
     cast_events: &mut MessageWriter<CastEvent>,
     self_guid: &SelfGuid,
-    cast_bar: &mut CastBarFeed,
     pending: &mut PendingCast,
     queued_melee: &mut QueuedMeleeSpell,
     seq: u64,
 ) {
-    debug!("net: spell failed (other) {spell_id} by {caster:#x}");
+    debug!("net: spell failed (other={other}) {spell_id} by {caster:#x}");
     // Only the cast the bar shows turns it red "Interrupted" (keyed to `Casting`); the guard opens
     // either way.
     if self_guid.0 == Some(caster) {
@@ -1161,9 +1203,6 @@ fn spell_failed_other(
             .is_some_and(|&e| casting.get(e).is_ok_and(|c| c.spell_id == spell_id));
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV SPELL_FAILED_OTHER — spell {spell_id} (self); interrupts_bar={interrupts_our_cast}");
-        }
-        if interrupts_our_cast {
-            cast_bar.0.push(CastBarEdge::Interrupted);
         }
         pending.clear_if(spell_id);
         // The melee-slot interrupt's other half, beside the failing CAST_RESULT.
@@ -1183,9 +1222,8 @@ fn spell_failed_other(
     }
 }
 
-/// `SMSG_SPELL_DELAYED`: pushback. A hit on our cast extends its timer by `delay_ms` (vmangos
-/// `Spell::Delayed`), and the bar's window slides out by the same (`SPELLCAST_DELAYED`). Sent
-/// only to the caster, but gated on the caster guid like every own-cast edge.
+/// `SMSG_SPELL_DELAYED`: pushback. Any caster's reaches the unit-cast feed, which slides the
+/// cast's window (`UNIT_SPELLCAST_DELAYED`); our own also holds the in-flight guard longer.
 fn spell_delayed(
     caster: u64,
     delay_ms: u32,
@@ -1194,11 +1232,11 @@ fn spell_delayed(
     pending: &mut PendingCast,
 ) {
     debug!("net: spell delayed by {caster:#x} (+{delay_ms}ms pushback)");
+    cast_bar.0.push(CastBarEdge::Delayed { caster, delay_ms });
     if self_guid.0 == Some(caster) {
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV SPELL_DELAYED — +{delay_ms}ms pushback (bar extends, does NOT vanish)");
         }
-        cast_bar.0.push(CastBarEdge::Delayed { delay_ms });
         // The in-flight guard holds past the stretched end.
         pending.delay(delay_ms, Instant::now());
     }
@@ -1313,25 +1351,41 @@ fn cooldown_cheat(caster: u64, cooldowns: &mut Cooldowns) {
     cooldowns.wipe();
 }
 
-/// `MSG_CHANNEL_START`: self-only on the wire (no guid), so it goes straight to the cast bar; the
-/// channel animation rides the unit-field pair instead.
+/// `MSG_CHANNEL_START` (`0x801c90`): any caster's channel reaches the unit-cast feed; our own also
+/// arms [`ActiveChannel`]. The channel animation rides the unit-field pair instead.
 fn channel_start(
+    caster: u64,
+    own: bool,
     spell_id: u32,
     duration_ms: u32,
     channel: &mut ActiveChannel,
     feed: &mut CastBarFeed,
 ) {
-    channel.start(spell_id, duration_ms, Instant::now());
+    if own {
+        channel.start(spell_id, duration_ms, Instant::now());
+    }
     feed.0.push(CastBarEdge::ChannelStart {
+        caster,
         spell_id,
         duration_ms,
     });
 }
 
-/// `MSG_CHANNEL_UPDATE`: the running channel's remaining time (`0` is its stop edge).
-fn channel_update(remaining_ms: u32, channel: &mut ActiveChannel, feed: &mut CastBarFeed) {
-    channel.update(remaining_ms, Instant::now());
-    feed.0.push(CastBarEdge::ChannelUpdate { remaining_ms });
+/// `MSG_CHANNEL_UPDATE` (`0x801db0`): a channel's remaining time (`0` is its stop edge).
+fn channel_update(
+    caster: u64,
+    own: bool,
+    remaining_ms: u32,
+    channel: &mut ActiveChannel,
+    feed: &mut CastBarFeed,
+) {
+    if own {
+        channel.update(remaining_ms, Instant::now());
+    }
+    feed.0.push(CastBarEdge::ChannelUpdate {
+        caster,
+        remaining_ms,
+    });
 }
 
 /// `SMSG_UPDATE_AURA_DURATION`: one of our auras' remaining time, by raw slot, stamped with the
@@ -1633,7 +1687,7 @@ mod tests {
     /// A proc landing mid-cast (Chilled, 6136) is our own cast, but its GO must not finish the
     /// running Fireball bar: the edge is keyed to our `Casting`.
     #[test]
-    fn a_proc_go_mid_cast_does_not_finish_the_running_bar() {
+    fn every_go_reaches_the_unit_cast_feed() {
         use crate::combat_text::CombatTextSpawn;
         use crate::creature_anim::Casting;
         use crate::go_anim::GoLidOpen;
@@ -1700,8 +1754,9 @@ mod tests {
                         let net_commands = crate::net::NetCommands(tx.clone());
                         spell_go(
                             10,
+                           0,
                             go_spell,
-                            0,
+                           0,
                             vec![],
                             vec![],
                             None,
@@ -1743,116 +1798,64 @@ mod tests {
                 .unwrap();
         };
 
-        // The proc's self-GO must not touch the bar.
+        // Every GO reaches the feed, a proc's (6136) too; the feed ends only the running cast,
+        // keyed by spell and castCount (`0x7fee38`).
         fire_go(&mut app, 6136);
-        assert!(
-            app.world().resource::<CastBarFeed>().0.is_empty(),
-            "a proc's self-GO (6136) mid-cast must not push a bar edge"
-        );
-
-        // The cast the bar is showing (133) finishes it with one STOP.
         fire_go(&mut app, 133);
-        let feed = &app.world().resource::<CastBarFeed>().0;
+        let go = |spell_id| CastBarEdge::Go {
+            caster: 10,
+            spell_id,
+            cast_count: 0,
+            cast_flags: 0,
+        };
         assert_eq!(
-            feed.len(),
-            1,
-            "the in-flight cast's own GO finishes the bar"
+            app.world().resource::<CastBarFeed>().0,
+            vec![go(6136), go(133)]
         );
-        assert!(matches!(feed[0], CastBarEdge::Stop), "…with a STOP");
     }
 
-    /// A cancelled channel flashes green and fades, never red. vmangos `Spell::cancel` sends
-    /// `MSG_CHANNEL_UPDATE(0)` then `SMSG_SPELL_FAILED_OTHER`, which reaches the caster too; the
-    /// reference's handler for it (`0x6e8e40`, opcode `0x2a6`: `0x60d040` + `0x614150`) fires no
-    /// UI event. Ours holds because [`spell_failed_other`]'s red edge needs a live `Casting`, which
-    /// a channel never has: it is inserted only for `cast_time_ms > 0`, and the GO that precedes
-    /// `MSG_CHANNEL_START` removes it.
+    /// Our channel's start and its server end (`MSG_CHANNEL_UPDATE(0)`) arm and close
+    /// [`ActiveChannel`] and reach the unit-cast feed with our guid; another caster's channel
+    /// reaches the feed and leaves our mirror alone.
     #[test]
-    fn a_cancelled_channel_never_turns_the_bar_red() {
-        use crate::creature_anim::Casting;
-        use crate::net::{Guid, SelfPlayer};
-        use bevy::ecs::system::RunSystemOnce;
-
+    fn a_channel_arms_the_mirror_and_feeds_its_edges() {
         const BLIZZARD: u32 = 10;
         let t0 = Instant::now();
-
-        let mut app = App::new();
-        app.add_message::<CastEvent>()
-            .init_resource::<GuidIndex>()
-            .init_resource::<SelfGuid>()
-            .init_resource::<CastBarFeed>()
-            .init_resource::<PendingCast>()
-            .init_resource::<QueuedMeleeSpell>()
-            .init_resource::<ActiveChannel>();
-        let self_e = app.world_mut().spawn((Guid(10), SelfPlayer)).id();
-        app.world_mut()
-            .resource_mut::<GuidIndex>()
-            .0
-            .insert(10, self_e);
-        app.world_mut().resource_mut::<SelfGuid>().0 = Some(10);
-
-        // 1-2. MSG_CHANNEL_START, then the server's own end: MSG_CHANNEL_UPDATE(0).
-        {
-            let world = app.world_mut();
-            let mut feed = world.remove_resource::<CastBarFeed>().unwrap();
-            let mut channel = world.remove_resource::<ActiveChannel>().unwrap();
-            channel_start(BLIZZARD, 8_000, &mut channel, &mut feed);
-            assert_eq!(
-                channel.current(t0 + Duration::from_secs(1)),
-                Some(BLIZZARD),
-                "the mirror is armed while the channel runs"
-            );
-            channel_update(0, &mut channel, &mut feed);
-            assert_eq!(
-                channel.current(t0 + Duration::from_secs(1)),
-                None,
-                "update 0 closes the mirror, so the action button unlights"
-            );
-            world.insert_resource(feed);
-            world.insert_resource(channel);
-        }
-
-        // 3. SendInterrupted(0): SMSG_SPELL_FAILED_OTHER, addressed to us, for the channel's id.
-        app.world_mut()
-            .run_system_once(
-                move |mut commands: Commands,
-                      index: Res<GuidIndex>,
-                      casting: Query<&Casting>,
-                      mut cast_events: MessageWriter<CastEvent>,
-                      self_guid: Res<SelfGuid>,
-                      mut cast_bar: ResMut<CastBarFeed>,
-                      mut pending: ResMut<PendingCast>,
-                      mut queued_melee: ResMut<QueuedMeleeSpell>| {
-                    spell_failed_other(
-                        10,
-                        BLIZZARD,
-                        &mut commands,
-                        &index,
-                        &casting,
-                        &mut cast_events,
-                        &self_guid,
-                        &mut cast_bar,
-                        &mut pending,
-                        &mut queued_melee,
-                        1,
-                    );
-                },
-            )
-            .unwrap();
-
-        let feed = &app.world().resource::<CastBarFeed>().0;
-        assert!(
-            !feed
-                .iter()
-                .any(|e| matches!(e, CastBarEdge::Interrupted | CastBarEdge::Failed)),
-            "a cancelled channel pushes NO red edge — the bar flashes green and fades"
+        let mut feed = CastBarFeed::default();
+        let mut channel = ActiveChannel::default();
+        channel_start(10, true, BLIZZARD, 8_000, &mut channel, &mut feed);
+        assert_eq!(
+            channel.current(t0 + Duration::from_secs(1)),
+            Some(BLIZZARD),
+            "the mirror is armed while the channel runs"
         );
-        assert_eq!(feed.len(), 2, "exactly the two channel edges");
-        assert!(matches!(feed[0], CastBarEdge::ChannelStart { .. }));
-        assert!(matches!(
-            feed[1],
-            CastBarEdge::ChannelUpdate { remaining_ms: 0 }
-        ));
+        channel_update(10, true, 0, &mut channel, &mut feed);
+        assert_eq!(
+            channel.current(t0 + Duration::from_secs(1)),
+            None,
+            "update 0 closes the mirror, so the action button unlights"
+        );
+        channel_start(0x42, false, BLIZZARD, 8_000, &mut channel, &mut feed);
+        assert_eq!(channel.current(t0 + Duration::from_secs(1)), None);
+        assert_eq!(
+            feed.0,
+            vec![
+                CastBarEdge::ChannelStart {
+                    caster: 10,
+                    spell_id: BLIZZARD,
+                    duration_ms: 8_000
+                },
+                CastBarEdge::ChannelUpdate {
+                    caster: 10,
+                    remaining_ms: 0
+                },
+                CastBarEdge::ChannelStart {
+                    caster: 0x42,
+                    spell_id: BLIZZARD,
+                    duration_ms: 8_000
+                },
+            ]
+        );
     }
 
     /// The GO's inline miss word is spell gold (`0x6e7d73`/`0x6e7dcc`), printed only for a
@@ -1956,8 +1959,9 @@ mod tests {
                         let net_commands = crate::net::NetCommands(tx.clone());
                         spell_go(
                             10,
-                            spell,
                             0,
+                            spell,
+                           0,
                             vec![],
                             vec![(20, 1)], // one MISS
                             Some(20),
@@ -2122,8 +2126,9 @@ mod tests {
                     let net_commands = crate::net::NetCommands(tx.clone());
                     spell_go(
                         caster,
-                        SPELL,
                         0,
+                        SPELL,
+                       0,
                         vec![],
                         vec![],
                         None,
@@ -2330,8 +2335,9 @@ mod tests {
                     let net_commands = crate::net::NetCommands(tx.clone());
                     spell_go(
                         10,
-                        421, // Chain Lightning
                         0,
+                        421, // Chain Lightning
+                       0,
                         vec![10, 20, 40, 30],
                         vec![],
                         None,
@@ -2439,7 +2445,6 @@ mod tests {
                           mut cast_errors: ResMut<CastErrors>,
                           casting: Query<&Casting>,
                           mut cast_events: MessageWriter<CastEvent>,
-                          mut cast_bar: ResMut<CastBarFeed>,
                           mut pending: ResMut<PendingCast>,
                           mut queued_melee: ResMut<QueuedMeleeSpell>,
                           mut cooldowns: ResMut<Cooldowns>,
@@ -2456,7 +2461,6 @@ mod tests {
                             &mut cast_errors,
                             &casting,
                             &mut cast_events,
-                            &mut cast_bar,
                             &mut pending,
                             &mut queued_melee,
                             &mut cooldowns,
@@ -2716,8 +2720,9 @@ mod tests {
                         let net_commands = crate::net::NetCommands(tx.clone());
                         spell_go(
                             caster,
-                            spell_id,
                             0,
+                            spell_id,
+                           0,
                             vec![20],
                             vec![],
                             // A different guid from `hits[0]`, which the arm must take.
@@ -2878,7 +2883,6 @@ mod tests {
                           mut cast_errors: ResMut<CastErrors>,
                           casting: Query<&Casting>,
                           mut cast_events: MessageWriter<CastEvent>,
-                          mut cast_bar: ResMut<CastBarFeed>,
                           mut pending: ResMut<PendingCast>,
                           mut queued_melee: ResMut<QueuedMeleeSpell>,
                           mut cooldowns: ResMut<Cooldowns>,
@@ -2895,7 +2899,6 @@ mod tests {
                             &mut cast_errors,
                             &casting,
                             &mut cast_events,
-                            &mut cast_bar,
                             &mut pending,
                             &mut queued_melee,
                             &mut cooldowns,

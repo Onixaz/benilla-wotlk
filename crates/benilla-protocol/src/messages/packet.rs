@@ -485,6 +485,8 @@ pub enum ServerPacket {
     },
     /// `SMSG_CAST_RESULT`: the server's verdict on our `CMSG_CAST_SPELL`.
     CastResult {
+        /// The `castCount` of the send it answers.
+        cast_count: u8,
         spell_id: u32,
         outcome: CastOutcome,
     },
@@ -550,12 +552,17 @@ pub enum ServerPacket {
     /// missile travel is not on the wire, the server times impact off `Spell.dbc` Speed.
     SpellGo(SpellGo),
     SpellChainTargets(SpellChainTargets),
-    /// `SMSG_SPELL_FAILED_OTHER`: an observed cast was interrupted; ours is [`Self::CastResult`].
-    SpellFailedOther {
+    /// `SMSG_SPELL_FAILED_OTHER` (`0x806ad0`) or, `other` false, `SMSG_SPELL_FAILURE`
+    /// (`0x809c70`): a unit's cast failed or was interrupted. The reason is in the shared
+    /// numbering ([`super::spells::wotlk_cast_fail_shared`]).
+    SpellFailed {
+        other: bool,
         caster: u64,
+        cast_count: u8,
         spell_id: u32,
+        reason: u8,
     },
-    /// `SMSG_SPELL_DELAYED`: pushback; a hit extended our cast by `delay_ms` (`Spell::Delayed`).
+    /// `SMSG_SPELL_DELAYED`: pushback; a hit extended the caster's cast by `delay_ms`.
     SpellDelayed {
         caster: u64,
         delay_ms: u32,
@@ -613,13 +620,16 @@ pub enum ServerPacket {
     CooldownCheat {
         caster: u64,
     },
-    /// `MSG_CHANNEL_START`: our own channel opened (self-only, no guid on the wire).
+    /// `MSG_CHANNEL_START` (`0x801c90`): a unit's channel opened.
     ChannelStart {
+        caster: u64,
         spell_id: u32,
         duration_ms: u32,
     },
-    /// `MSG_CHANNEL_UPDATE` (self-only): our channel's time left; `0` ends it, end or interrupt.
+    /// `MSG_CHANNEL_UPDATE` (`0x801db0`): a unit's channel time left; `0` ends it, end or
+    /// interrupt.
     ChannelUpdate {
+        caster: u64,
         remaining_ms: u32,
     },
     /// `SMSG_UPDATE_AURA_DURATION` (self-only, never for a permanent aura): one aura slot's time
@@ -1393,7 +1403,8 @@ impl ServerPacket {
             ServerPacket::SpellStart(_) => "SMSG_SPELL_START".into(),
             ServerPacket::SpellGo(_) => "SMSG_SPELL_GO".into(),
             ServerPacket::SpellChainTargets(_) => "SMSG_SPELL_UPDATE_CHAIN_TARGETS".into(),
-            ServerPacket::SpellFailedOther { .. } => "SMSG_SPELL_FAILED_OTHER".into(),
+            ServerPacket::SpellFailed { other: true, .. } => "SMSG_SPELL_FAILED_OTHER".into(),
+            ServerPacket::SpellFailed { other: false, .. } => "SMSG_SPELL_FAILURE".into(),
             ServerPacket::SpellDelayed { .. } => "SMSG_SPELL_DELAYED".into(),
             ServerPacket::CancelAutoRepeat => "SMSG_CANCEL_AUTO_REPEAT".into(),
             ServerPacket::SpellCooldownList { .. } => "SMSG_SPELL_COOLDOWN".into(),

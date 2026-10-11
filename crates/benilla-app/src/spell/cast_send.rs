@@ -176,6 +176,13 @@ impl CastLadder<'_, '_> {
                 },
             },
         };
+        if !commit.is_item() {
+            let target = match bound {
+                TargetedBind::Unit(guid) => Some(guid),
+                _ => None,
+            };
+            crate::ui_cast::queue_sent(&mut self.ecs, spell_id, target);
+        }
         let _ = self.commands.0.send(cmd);
         let now = Instant::now();
         if commit.is_item() {
@@ -695,6 +702,9 @@ fn send_spell_cast(
                 crate::creature_anim::stop_attack_local(engaged, queued_melee, commands);
             }
         }
+    }
+    if matches!(commit, CastCommit::Spell) {
+        crate::ui_cast::queue_sent(ecs, spell_id, target);
     }
     // `SendCast 0x6e54f0`: one targets block, two opcodes.
     let _ = commands.0.send(match commit {

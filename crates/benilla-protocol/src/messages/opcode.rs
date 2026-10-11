@@ -203,6 +203,8 @@ pub const SMSG_AI_REACTION: u16 = 0x013C; // 316
 
 pub const SMSG_SPELL_START: u16 = 0x0131; // 305
 pub const SMSG_SPELL_GO: u16 = 0x0132; // 306
+/// A cast failed or was interrupted, sent to the caster and its observers (handler `0x809c70`).
+pub const SMSG_SPELL_FAILURE: u16 = 0x0133; // 307
 pub const SMSG_PLAY_SPELL_VISUAL: u16 = 0x01F3; // 499
 /// Save the tabard design, both ways; the reply is one of six results.
 pub const MSG_SAVE_GUILD_EMBLEM: u16 = 0x01F1; // 497

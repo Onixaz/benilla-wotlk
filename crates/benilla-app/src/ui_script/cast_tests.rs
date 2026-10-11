@@ -2,7 +2,7 @@
 //! flash and fade, red Failed with its 1 s hold, the channel bar draining. The state tests read the
 //! Lua back, which cannot see what paints; the draw-list tests below see the flash.
 
-use benilla_ui::script::{ExtractedQuad, QuadContent, ScriptValue, UiScript};
+use benilla_ui::script::{ExtractedQuad, QuadContent, ScriptValue, UiScript, UnitCast, UnitGuids};
 
 use super::test_ui::load_ui as load_xml;
 
@@ -21,6 +21,12 @@ fn bar_value(s: &UiScript) -> f64 {
 }
 
 fn bar_color(s: &UiScript) -> (f64, f64, f64) {
+    let round = |v: f64| (v * 100.0).round() / 100.0;
+    let (r, g, b) = bar_color_raw(s);
+    (round(r), round(g), round(b))
+}
+
+fn bar_color_raw(s: &UiScript) -> (f64, f64, f64) {
     s.eval::<(f64, f64, f64)>("local r, g, b = CastingBarFrame:GetStatusBarColor(); return r, g, b")
         .unwrap()
 }
@@ -341,24 +347,88 @@ fn the_flash_blooms_from_zero_only_on_completion() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// Only `SPELLCAST_STOP` and `SPELLCAST_CHANNEL_STOP` arm the ramp (`CastingBarFrame.lua:35-54`).
+/// Lesser Heal (1.5 s) as our cast, pushed as the unit-cast feed pushes it, then its
+/// `UNIT_SPELLCAST_START` with `castCount`.
+fn start_heal(s: &mut UiScript, cast_count: u8) {
+    let now_ms = s.now() * 1000.0;
+    s.set_unit_cast(
+        ME,
+        false,
+        Some(UnitCast {
+            name: "Lesser Heal".into(),
+            rank: "Rank 1".into(),
+            text: "Lesser Heal".into(),
+            texture: None,
+            start_ms: now_ms,
+            end_ms: now_ms + 1500.0,
+            trade_skill: false,
+            cast_count,
+        }),
+    );
+    s.fire_event("UNIT_SPELLCAST_START", heal_args(cast_count));
+}
+
+const ME: u64 = 0x10;
+
+fn heal_args(cast_count: u8) -> Vec<ScriptValue> {
+    vec![
+        ScriptValue::Str("player".into()),
+        ScriptValue::Str("Lesser Heal".into()),
+        ScriptValue::Str("Rank 1".into()),
+        ScriptValue::Int(i64::from(cast_count)),
+    ]
+}
+
+/// 3.3.5a's bar (`CastingBarFrame.lua:68-112`): START opens it orange from `UnitCastingInfo`,
+/// the fill tracks the clock, and STOP with the same `castID` turns it green.
 #[test]
-fn a_failed_cast_never_flashes() {
+fn the_stock_bar_opens_on_start_and_completes_on_stop() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
-    s.fire_event(
-        "SPELLCAST_START",
-        vec![ScriptValue::Str("Frostbolt".into()), ScriptValue::Int(3000)],
+    s.set_unit_guids(&UnitGuids {
+        player: ME,
+        ..Default::default()
+    });
+    assert!(!s.eval::<bool>("return CastingBarFrame:IsShown()").unwrap());
+    start_heal(&mut s, 7);
+    assert!(s.eval::<bool>("return CastingBarFrame:IsShown()").unwrap());
+    assert_eq!(
+        s.eval::<String>("return CastingBarFrameText:GetText()")
+            .unwrap(),
+        "Lesser Heal"
     );
-    frame(&mut s, 0.1);
-    s.fire_event("SPELLCAST_FAILED", vec![]);
-    for i in 0..25 {
-        let quads = frame(&mut s, 0.1);
-        assert!(
-            tex_quad(&quads, FLASH).is_none(),
-            "tick {i}: a failed cast must not bloom"
-        );
-    }
+    assert_eq!(bar_color(&s), (1.0, 0.7, 0.0));
+    frame(&mut s, 0.5);
+    assert!((bar_value(&s) - 0.5).abs() < 0.05, "{}", bar_value(&s));
+    s.fire_event("UNIT_SPELLCAST_SUCCEEDED", heal_args(7));
+    s.fire_event("UNIT_SPELLCAST_STOP", heal_args(7));
+    assert_eq!(bar_color(&s), (0.0, 1.0, 0.0), "completed green");
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+}
+
+/// A refusal fails the bar only with the running cast's `castID`; another cast's is ignored.
+#[test]
+fn the_stock_bar_fails_only_its_own_cast() {
+    benilla_formats::wow_data_or_skip!();
+    let mut s = harness();
+    s.set_unit_guids(&UnitGuids {
+        player: ME,
+        ..Default::default()
+    });
+    start_heal(&mut s, 8);
+    s.fire_event("UNIT_SPELLCAST_FAILED", heal_args(9));
+    assert_eq!(
+        bar_color(&s),
+        (1.0, 0.7, 0.0),
+        "another castID: still casting"
+    );
+    s.fire_event("UNIT_SPELLCAST_FAILED", heal_args(8));
+    assert_eq!(bar_color(&s), (1.0, 0.0, 0.0), "red");
+    assert_eq!(
+        s.eval::<String>("return CastingBarFrameText:GetText()")
+            .unwrap(),
+        s.eval::<String>("return FAILED").unwrap()
+    );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 

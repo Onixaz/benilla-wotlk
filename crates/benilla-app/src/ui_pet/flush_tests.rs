@@ -55,6 +55,7 @@ fn growl_rig() -> Rig {
 fn go(caster: u64, spell_id: u32) -> SessionEvent {
     SessionEvent::SpellGo {
         caster,
+        cast_count: 0,
         spell_id,
         cast_flags: 0,
         hits: vec![],

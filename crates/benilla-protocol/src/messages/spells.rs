@@ -250,13 +250,13 @@ const SHARED_CAST_FAIL_UNKNOWN: u8 = 0x91;
 /// `0x809b48`). There is no status byte. The reason comes back in the shared numbering
 /// ([`wotlk_cast_fail_shared`]). `None` stands for an absent argument. The second word is
 /// dropped: the client fills that message from the spell's own `EquippedItem*` columns.
-pub(super) fn read_cast_result(r: &mut &[u8]) -> io::Result<(u32, CastOutcome)> {
-    let _cast_count = read_u8(r)?;
+pub(super) fn read_cast_result(r: &mut &[u8]) -> io::Result<(u8, u32, CastOutcome)> {
+    let cast_count = read_u8(r)?;
     let spell_id = read_u32_le(r)?;
     let reason = wotlk_cast_fail_shared(read_u8(r)?);
     let arg = (r.len() >= 4).then(|| read_u32_le(r)).transpose()?;
     let _arg2 = (r.len() >= 4).then(|| read_u32_le(r)).transpose()?;
-    Ok((spell_id, CastOutcome::Failed { reason, arg }))
+    Ok((cast_count, spell_id, CastOutcome::Failed { reason, arg }))
 }
 
 // --- Start and go --------------------------------------------------------------------------------
@@ -504,35 +504,37 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
     })
 }
 
-/// Read `SMSG_SPELL_FAILED_OTHER` (vmangos `Spell.cpp:4780-4789`): an observer's cast-cancel
-/// notice, raw `u64` caster then spell id. Our own failure rides `SMSG_CAST_RESULT`; vmangos never
-/// sends `SMSG_SPELL_FAILURE`.
-pub(super) fn read_spell_failed_other(r: &mut impl Read) -> io::Result<(u64, u32)> {
-    let caster = read_u64_le(r)?;
+/// Read `SMSG_SPELL_FAILURE` or `SMSG_SPELL_FAILED_OTHER` as their 12340 handlers do
+/// (`0x809c70`, `0x806ad0`): packed caster, `u8 castCount`, `u32 spell`, `u8 reason`, the reason
+/// returned in the shared numbering.
+pub(super) fn read_spell_failed(r: &mut &[u8]) -> io::Result<(u64, u8, u32, u8)> {
+    let caster = read_packed_guid(r)?;
+    let cast_count = read_u8(r)?;
     let spell_id = read_u32_le(r)?;
-    Ok((caster, spell_id))
+    let reason = wotlk_cast_fail_shared(read_u8(r)?);
+    Ok((caster, cast_count, spell_id, reason))
 }
 
-/// Read `SMSG_SPELL_DELAYED` (vmangos `Spell.cpp:7472`): raw `u64` caster, `u32` pushback ms. Sent
-/// to the caster when damage pushes back a cast; the server extends its own cast timer by as much.
+/// Read `SMSG_SPELL_DELAYED` (`0x801b80`): packed caster, `u32` pushback ms.
 pub(super) fn read_spell_delayed(r: &mut impl Read) -> io::Result<(u64, u32)> {
-    let caster = read_u64_le(r)?;
+    let caster = read_packed_guid(r)?;
     let delay_ms = read_u32_le(r)?;
     Ok((caster, delay_ms))
 }
 
-/// Read `MSG_CHANNEL_START` (vmangos `Spell.cpp:4963-4966`): `(spell_id, duration_ms)`, sent only
-/// to the caster, so no guid.
-pub(super) fn read_channel_start(r: &mut impl Read) -> io::Result<(u32, u32)> {
+/// Read `MSG_CHANNEL_START` (`0x801c90`): packed caster, `u32 spell`, `u32 duration`.
+pub(super) fn read_channel_start(r: &mut impl Read) -> io::Result<(u64, u32, u32)> {
+    let caster = read_packed_guid(r)?;
     let spell_id = read_u32_le(r)?;
     let duration_ms = read_u32_le(r)?;
-    Ok((spell_id, duration_ms))
+    Ok((caster, spell_id, duration_ms))
 }
 
-/// Read `MSG_CHANNEL_UPDATE` (vmangos `Player.cpp:21141-21146`): ms left, caster only; 0 ends the
-/// channel, whether it finished or was interrupted.
-pub(super) fn read_channel_update(r: &mut impl Read) -> io::Result<u32> {
-    read_u32_le(r)
+/// Read `MSG_CHANNEL_UPDATE` (`0x801db0`): packed caster, ms left; 0 ends the channel, whether it
+/// finished or was interrupted.
+pub(super) fn read_channel_update(r: &mut impl Read) -> io::Result<(u64, u32)> {
+    let caster = read_packed_guid(r)?;
+    Ok((caster, read_u32_le(r)?))
 }
 
 /// Read `SMSG_SET_FLAT_SPELL_MODIFIER` / `SMSG_SET_PCT_SPELL_MODIFIER`: a `u8` `SpellFamilyFlags`
@@ -807,6 +809,29 @@ mod tests {
         assert_eq!(start.ammo_display_id, Some(5996));
     }
 
+    /// The four observer packets lead with a packed caster guid (mask `0x01`, one byte `0x10`).
+    #[test]
+    fn the_observer_packets_carry_a_packed_caster() {
+        // Count 5, Lesser Heal, wire 0x28 INTERRUPTED: shared 0x23.
+        let body = [0x01, 0x10, 5, 0x02, 0x08, 0, 0, 0x28];
+        let mut r = &body[..];
+        let (caster, count, spell, reason) = read_spell_failed(&mut r).unwrap();
+        assert!(r.is_empty());
+        assert_eq!((caster, count, spell), (0x10, 5, 2050));
+        assert_eq!(WOTLK_CAST_FAIL_KEYS[0x28], "SPELL_FAILED_INTERRUPTED");
+        assert_eq!(reason, wotlk_cast_fail_shared(0x28));
+
+        let body = [0x01, 0x10, 0xf4, 0x01, 0, 0];
+        assert_eq!(read_spell_delayed(&mut &body[..]).unwrap(), (0x10, 500));
+        let body = [0x01, 0x10, 0x0a, 0, 0, 0, 0x40, 0x1f, 0, 0];
+        assert_eq!(
+            read_channel_start(&mut &body[..]).unwrap(),
+            (0x10, 10, 8000)
+        );
+        let body = [0x01, 0x10, 0, 0, 0, 0];
+        assert_eq!(read_channel_update(&mut &body[..]).unwrap(), (0x10, 0));
+    }
+
     #[test]
     fn cast_failed_has_no_status_byte() {
         // count 9, Raptor Strike, wire 0x0c BAD_TARGETS (AzerothCore, no target): shared 0x0a.
@@ -815,14 +840,14 @@ mod tests {
         let failed = |reason, arg| CastOutcome::Failed { reason, arg };
         assert_eq!(
             read_cast_result(&mut r).unwrap(),
-            (2973, failed(0x0a, None))
+            (9, 2973, failed(0x0a, None))
         );
         assert!(r.is_empty());
         // Wire 0x66 REQUIRES_SPELL_FOCUS with its focus id: shared 0x5e.
         let body = [9, 133, 0, 0, 0, 0x66, 3, 0, 0, 0];
         assert_eq!(
             read_cast_result(&mut &body[..]).unwrap(),
-            (133, failed(0x5e, Some(3)))
+            (9, 133, failed(0x5e, Some(3)))
         );
     }
 

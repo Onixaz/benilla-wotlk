@@ -451,6 +451,8 @@ pub enum SessionEvent {
     /// Our cast's verdict (`SMSG_CAST_RESULT`); `arg` fills its `%s`: a `SpellFocusObject.dbc` id
     /// for `REQUIRES_SPELL_FOCUS`, an `AreaTable.dbc` id for `REQUIRES_AREA`.
     CastResult {
+        /// The `castCount` of the send it answers.
+        cast_count: u8,
         spell_id: u32,
         success: bool,
         reason: Option<u8>,
@@ -546,6 +548,8 @@ pub enum SessionEvent {
     /// A non-triggered cast began (`SMSG_SPELL_START`), instants included with `cast_time_ms` 0.
     SpellStart {
         caster: u64,
+        /// The caster's `castCount` for this cast, the `UNIT_SPELLCAST_*` events' fourth argument.
+        cast_count: u8,
         spell_id: u32,
         cast_flags: u32,
         cast_time_ms: u32,
@@ -556,6 +560,7 @@ pub enum SessionEvent {
     /// The cast launched (`SMSG_SPELL_GO`); the server times impact off `Spell.dbc` Speed itself.
     SpellGo {
         caster: u64,
+        cast_count: u8,
         spell_id: u32,
         cast_flags: u32,
         hits: Vec<u64>,
@@ -577,9 +582,17 @@ pub enum SessionEvent {
         spell_id: u32,
         targets: Vec<u64>,
     },
-    /// An observed cast was interrupted or cancelled (`SMSG_SPELL_FAILED_OTHER`).
-    SpellFailedOther { caster: u64, spell_id: u32 },
-    /// Our cast was pushed back by damage (`SMSG_SPELL_DELAYED`); its end moves out by `delay_ms`.
+    /// A unit's cast failed or was interrupted (`SMSG_SPELL_FAILURE`, or `SMSG_SPELL_FAILED_OTHER`
+    /// with `other`); the reason in the shared numbering.
+    SpellFailed {
+        other: bool,
+        caster: u64,
+        cast_count: u8,
+        spell_id: u32,
+        reason: u8,
+    },
+    /// A unit's cast was pushed back by damage (`SMSG_SPELL_DELAYED`); its end moves out by
+    /// `delay_ms`.
     SpellDelayed { caster: u64, delay_ms: u32 },
     /// Stop our own ranged auto-repeat (`SMSG_CANCEL_AUTO_REPEAT`, self-only).
     CancelAutoRepeat,
@@ -616,10 +629,14 @@ pub enum SessionEvent {
     ClearCooldown { spell_id: u32, caster: u64 },
     /// Wipe every cooldown for `caster` (`SMSG_COOLDOWN_CHEAT`, the GM reset).
     CooldownCheat { caster: u64 },
-    /// Our own channel opened (`MSG_CHANNEL_START`, self-only, no guid on the wire).
-    ChannelStart { spell_id: u32, duration_ms: u32 },
-    /// A channel's time left (`MSG_CHANNEL_UPDATE`, self-only); 0 is over, natural or interrupted.
-    ChannelUpdate { remaining_ms: u32 },
+    /// A unit's channel opened (`MSG_CHANNEL_START`).
+    ChannelStart {
+        caster: u64,
+        spell_id: u32,
+        duration_ms: u32,
+    },
+    /// A unit's channel time left (`MSG_CHANNEL_UPDATE`); 0 is over, natural or interrupted.
+    ChannelUpdate { caster: u64, remaining_ms: u32 },
     /// Time left on one of our auras by `UNIT_FIELD_AURA` slot (`SMSG_UPDATE_AURA_DURATION`),
     /// never for a permanent one. It arrives before the delta naming the slot's spell.
     AuraDuration { slot: u8, remaining_ms: u32 },

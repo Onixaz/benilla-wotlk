@@ -218,6 +218,42 @@ impl UnitGuids {
         self.resolve(token).unwrap_or(None)
     }
 
+    /// Every token naming `guid`, in the order 12340's unit-event fan-out lists them (`0x60bb70`):
+    /// `player`, `pet`, `partyN`, `partypetN`, `raidN`, `raidpetN`, `target`, `npc`. No `target`
+    /// hop and no `mouseover`. The reference also lists `vehicle`, `arenaN`, `arenapetN`, `bossN`
+    /// and `focus`, which this resolver has no base for.
+    pub(crate) fn tokens_naming(&self, guid: u64) -> Vec<String> {
+        let mut out = Vec::new();
+        if guid == 0 {
+            return out;
+        }
+        if self.player == guid {
+            out.push("player".into());
+        }
+        if self.player != 0 && self.pet == guid {
+            out.push("pet".into());
+        }
+        for (prefix, table) in [
+            ("party", &self.party[..]),
+            ("partypet", &self.party_pets[..]),
+            ("raid", &self.raid[..]),
+            ("raidpet", &self.raid_pets[..]),
+        ] {
+            for (i, &g) in table.iter().enumerate() {
+                if g == guid {
+                    out.push(format!("{prefix}{}", i + 1));
+                }
+            }
+        }
+        if self.target == guid {
+            out.push("target".into());
+        }
+        if self.npc == guid {
+            out.push("npc".into());
+        }
+        out
+    }
+
     /// The `target` loop (`0x5159d3`-`0x515a2c`): nobody stays nobody, and each hop goes to the held
     /// unit's `UNIT_FIELD_TARGET`; a hop off a unit not held is a quiet nobody (`0x515a16`).
     fn follow(&self, mut guid: u64, hops: usize) -> Option<u64> {

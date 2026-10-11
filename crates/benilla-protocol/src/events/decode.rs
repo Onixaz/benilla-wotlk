@@ -89,7 +89,12 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             old_spell_id,
             new_spell_id,
         }],
-        ServerPacket::CastResult { spell_id, outcome } => vec![SessionEvent::CastResult {
+        ServerPacket::CastResult {
+            cast_count,
+            spell_id,
+            outcome,
+        } => vec![SessionEvent::CastResult {
+            cast_count,
             spell_id,
             success: outcome == CastOutcome::Ok,
             reason: match outcome {
@@ -205,6 +210,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         }
         ServerPacket::SpellStart(s) => vec![SessionEvent::SpellStart {
             caster: spell_caster(s.item_or_caster, s.caster),
+            cast_count: s.cast_count,
             spell_id: s.spell_id,
             cast_flags: s.cast_flags,
             cast_time_ms: s.cast_time_ms,
@@ -215,6 +221,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             let caster = spell_caster(s.item_or_caster, s.caster);
             vec![SessionEvent::SpellGo {
                 caster,
+                cast_count: s.cast_count,
                 spell_id: s.spell_id,
                 cast_flags: s.cast_flags,
                 hits: s.hits,
@@ -235,9 +242,19 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::SpellDelayed { caster, delay_ms } => {
             vec![SessionEvent::SpellDelayed { caster, delay_ms }]
         }
-        ServerPacket::SpellFailedOther { caster, spell_id } => {
-            vec![SessionEvent::SpellFailedOther { caster, spell_id }]
-        }
+        ServerPacket::SpellFailed {
+            other,
+            caster,
+            cast_count,
+            spell_id,
+            reason,
+        } => vec![SessionEvent::SpellFailed {
+            other,
+            caster,
+            cast_count,
+            spell_id,
+            reason,
+        }],
         ServerPacket::CancelAutoRepeat => vec![SessionEvent::CancelAutoRepeat],
         ServerPacket::SpellCooldownList { caster, cooldowns } => {
             vec![SessionEvent::SpellCooldowns { caster, cooldowns }]
@@ -280,15 +297,21 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         }
         ServerPacket::CooldownCheat { caster } => vec![SessionEvent::CooldownCheat { caster }],
         ServerPacket::ChannelStart {
+            caster,
             spell_id,
             duration_ms,
         } => vec![SessionEvent::ChannelStart {
+            caster,
             spell_id,
             duration_ms,
         }],
-        ServerPacket::ChannelUpdate { remaining_ms } => {
-            vec![SessionEvent::ChannelUpdate { remaining_ms }]
-        }
+        ServerPacket::ChannelUpdate {
+            caster,
+            remaining_ms,
+        } => vec![SessionEvent::ChannelUpdate {
+            caster,
+            remaining_ms,
+        }],
         ServerPacket::UpdateAuraDuration { slot, remaining_ms } => {
             vec![SessionEvent::AuraDuration { slot, remaining_ms }]
         }

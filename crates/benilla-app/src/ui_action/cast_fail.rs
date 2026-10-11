@@ -24,7 +24,7 @@ use super::Caster;
 /// A shared reason to its `SPELL_FAILED_*` GlobalStrings key: 1.12.1's numbering (its table
 /// `0x6e23e0`), then the reasons only 3.3.5a has. A 3.3.5a wire reason reaches this numbering
 /// through `benilla_protocol::messages::wotlk_cast_fail_shared`.
-pub(super) const CAST_FAIL_KEYS: [&str; 193] = [
+pub(crate) const CAST_FAIL_KEYS: [&str; 193] = [
     "SPELL_FAILED_AFFECTING_COMBAT",             // 0x00
     "SPELL_FAILED_ALREADY_AT_FULL_HEALTH",       // 0x01
     "SPELL_FAILED_ALREADY_AT_FULL_POWER",        // 0x02

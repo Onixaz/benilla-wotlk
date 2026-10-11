@@ -726,8 +726,12 @@ fn parse_server_body(
             }
         }
         opcode::SMSG_CAST_RESULT => {
-            let (spell_id, outcome) = spells::read_cast_result(&mut r)?;
-            ServerPacket::CastResult { spell_id, outcome }
+            let (cast_count, spell_id, outcome) = spells::read_cast_result(&mut r)?;
+            ServerPacket::CastResult {
+                cast_count,
+                spell_id,
+                outcome,
+            }
         }
         opcode::SMSG_PET_SPELLS => ServerPacket::PetSpells(pet::read_pet_spells(&mut r)?),
         opcode::SMSG_PET_MODE => ServerPacket::PetMode(pet::read_pet_mode(&mut r)?),
@@ -786,9 +790,15 @@ fn parse_server_body(
         opcode::SMSG_SPELL_UPDATE_CHAIN_TARGETS => {
             ServerPacket::SpellChainTargets(spells::read_spell_chain_targets(&mut r)?)
         }
-        opcode::SMSG_SPELL_FAILED_OTHER => {
-            let (caster, spell_id) = spells::read_spell_failed_other(&mut r)?;
-            ServerPacket::SpellFailedOther { caster, spell_id }
+        opcode::SMSG_SPELL_FAILED_OTHER | opcode::SMSG_SPELL_FAILURE => {
+            let (caster, cast_count, spell_id, reason) = spells::read_spell_failed(&mut r)?;
+            ServerPacket::SpellFailed {
+                other: opcode == opcode::SMSG_SPELL_FAILED_OTHER,
+                caster,
+                cast_count,
+                spell_id,
+                reason,
+            }
         }
         opcode::SMSG_SPELL_DELAYED => {
             let (caster, delay_ms) = spells::read_spell_delayed(&mut r)?;
@@ -840,15 +850,20 @@ fn parse_server_body(
             caster: spellbook::read_cooldown_cheat(&mut r)?,
         },
         opcode::MSG_CHANNEL_START => {
-            let (spell_id, duration_ms) = spells::read_channel_start(&mut r)?;
+            let (caster, spell_id, duration_ms) = spells::read_channel_start(&mut r)?;
             ServerPacket::ChannelStart {
+                caster,
                 spell_id,
                 duration_ms,
             }
         }
-        opcode::MSG_CHANNEL_UPDATE => ServerPacket::ChannelUpdate {
-            remaining_ms: spells::read_channel_update(&mut r)?,
-        },
+        opcode::MSG_CHANNEL_UPDATE => {
+            let (caster, remaining_ms) = spells::read_channel_update(&mut r)?;
+            ServerPacket::ChannelUpdate {
+                caster,
+                remaining_ms,
+            }
+        }
         opcode::SMSG_UPDATE_AURA_DURATION => {
             let (slot, remaining_ms) = spells::read_update_aura_duration(&mut r)?;
             ServerPacket::UpdateAuraDuration { slot, remaining_ms }

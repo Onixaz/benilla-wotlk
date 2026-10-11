@@ -102,6 +102,7 @@ mod modelframe;
 mod modified_click;
 mod net_stats;
 pub(crate) mod object;
+mod unit_cast;
 pub use object::frame_kind_from_tag;
 mod party;
 mod pet;
@@ -212,6 +213,7 @@ pub use tabard::{
     emblem_mask_path, TabardHost, TabardIntent, EMBLEM_MASK_TOKEN, TABARD_COUNTS,
     TABARD_CREATION_COST,
 };
+pub use unit_cast::UnitCast;
 pub use video_pairs::VIDEO_PAIR_CVARS;
 pub use worldmap_arrow::ARROW_MODEL;
 
@@ -550,6 +552,7 @@ impl UiScript {
         saved::install(&lua)?;
         keybind::install(&lua)?;
         modified_click::install(&lua)?;
+        unit_cast::install(&lua)?;
         sound::install(&lua)?;
         ui_errors::install(&lua)?;
         pointer::install(&lua)?;

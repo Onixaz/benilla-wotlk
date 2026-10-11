@@ -430,6 +430,7 @@ impl World {
                 success,
                 reason,
                 arg,
+                ..
             } => {
                 println!(
                     "SMSG_CAST_RESULT: spell {spell_id} success={success} reason={reason:?} arg={arg:?}"

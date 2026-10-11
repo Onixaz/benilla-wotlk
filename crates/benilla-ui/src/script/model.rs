@@ -246,6 +246,8 @@ pub(crate) struct Model {
     pub(crate) unit_auras: HashMap<u64, Vec<AuraState>>,
     /// The unit-token resolver's inputs (`0x515970`), which the aura bindings resolve through.
     pub(crate) unit_guids: super::UnitGuids,
+    /// Each unit's running cast and channel, for `UnitCastingInfo` and `UnitChannelInfo`.
+    pub(crate) unit_casts: super::unit_cast::UnitCasts,
     /// Spell ids the cancel verbs queued (`CancelPlayerBuff`, `CancelTrackingBuff`, …), one
     /// `CMSG_CANCEL_AURA` each.
     pub(crate) cancel_aura_requests: Vec<u32>,
@@ -1116,6 +1118,7 @@ impl Model {
             player_auras: Vec::new(),
             unit_auras: HashMap::new(),
             unit_guids: Default::default(),
+            unit_casts: Default::default(),
             cancel_aura_requests: Vec::new(),
             tracking: None,
             script_calls: Vec::new(),
