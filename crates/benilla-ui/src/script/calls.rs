@@ -33,15 +33,22 @@ pub enum ScriptCall {
     SpellStopTargeting,
     /// `SpellStopCasting()` (`0x6e6e80`), made with something to stop.
     SpellStopCasting,
-    /// `CastSpell(id, "spell", onSelf)` and `CastSpellByName(name, onSelf)`, through `0x4b3300`'s
-    /// player leg; `onSelf` swaps the target guid for the active player's (`0x4b4afa`, `0x4b4345`).
-    CastSpell { spell_id: u32, on_self: bool },
+    /// `CastSpell(index, "spell" [, onSelf])` (`0x541250`), `CastSpellByName(name [, unit])`
+    /// (`0x540310`) and `CastSpellByID(id [, unit])` (`0x53e060`), aimed at `at`. `via_book`: the
+    /// book's dispatcher `0x53bc40`, whose cancel forks a re-press runs into; a `!name` and
+    /// `CastSpellByID` cast through `0x80da40` past them (`0x5403cc`, `0x53e177`).
+    CastSpell {
+        spell_id: u32,
+        at: CastAt,
+        via_book: bool,
+    },
     /// `CastSpell(id, "pet", onSelf)`, `0x4b3300`'s `CMSG_PET_ACTION` fork (`0x4b34ce`), with the
     /// same guid swap.
     CastPetSpell { spell_id: u32, on_self: bool },
     /// `CastShapeshiftForm(index)` (`0x4b4810`), as the form's spell.
     CastShapeshiftForm(u32),
-    /// `UseAction(slot, …)` (`0x4e7140` → `0x4e5ee0`); a macro slot runs its lines inside it.
+    /// `UseAction(slot [, unit [, button]])` (`0x5ac000` → `0x5abbc0`); a macro slot runs its
+    /// lines inside it.
     UseAction(ActionUse),
     /// `UseContainerItem(bag, slot)` outside repair mode.
     UseContainerItem { bag: i64, slot: u32 },
@@ -51,6 +58,46 @@ pub enum ScriptCall {
     PetAction(u32),
     /// `PetAttack` and the other one-shot orders, as their bar slot's packed word.
     PetOrder(u32),
+}
+
+/// The unit a cast verb aims at, the guid its target argument leaves for the cast
+/// (`0x80da40`'s guid pair).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum CastAt {
+    /// No target: the selection (`[0xbd07b0]`), what an absent or empty unit argument reads
+    /// (`0x60b029`) and what `CastSpell` passes without `onSelf` (`0x541279`).
+    #[default]
+    Selection,
+    /// The active player: `CastSpell`'s `onSelf` (`0x541296`).
+    Player,
+    /// A token the resolver knows, resolved where the call takes effect, after the calls before
+    /// it: `/target Bob` then `/cast [target=target] Heal` heals Bob. One naming nobody leaves
+    /// guid `0xffffffff_fffffffe` (`0x60b00c`), which no object answers, so the cast binds no unit.
+    Unit(String),
+}
+
+/// A cast verb's unit argument as `0x60abf0` reads it, `lua_tolstring` first (`0x84e0e0`): a
+/// value with no string form, an absent one or `""` is the selection (`0x60b029`). `None` is a
+/// token the resolver does not know, where the verb casts nothing (`0x54037b`, `0x5ac043`,
+/// `0x53e0cb`).
+pub(crate) fn cast_at_arg(lua: &mlua::Lua, v: Option<&mlua::Value>) -> Option<CastAt> {
+    let token = match v {
+        Some(v @ (mlua::Value::String(_) | mlua::Value::Integer(_) | mlua::Value::Number(_))) => {
+            lua.coerce_string(v.clone())
+                .ok()
+                .flatten()
+                .map(|s| s.to_string_lossy())
+                .unwrap_or_default()
+        }
+        _ => String::new(),
+    };
+    if token.is_empty() {
+        return Some(CastAt::Selection);
+    }
+    match super::parse_unit_token(&token) {
+        super::UnitTokenParse::Unknown => None,
+        _ => Some(CastAt::Unit(token)),
+    }
 }
 
 /// The mode the four `TargetNearest*` shims hand the TAB cycler `0x493f60`, the only byte that

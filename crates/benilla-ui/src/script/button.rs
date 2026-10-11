@@ -1012,11 +1012,26 @@ pub(super) fn click_button(lua: &Lua, id: u32, button: &str, down: bool, scripte
         Ok(s) => Value::String(s),
         Err(_) => return,
     };
-    if let Err(e) = event::fire_widget_handler(lua, id, "OnClick", vec![btn]) {
-        lua.app_data_mut::<Model>()
-            .expect("model app_data")
-            .record_script_error(e.to_string());
+    // `PreClick`, `OnClick`, `PostClick`, each `(button, down)`, the secure bar's order: its
+    // `OnClick` casts and its `PostClick` re-checks the button (`ActionBarFrame.xml:15-17`). The
+    // click's button stands for the three, which `IsModifiedClick` reads.
+    let outer = lua
+        .app_data_mut::<Model>()
+        .expect("model app_data")
+        .click_button
+        .replace(button.to_string());
+    for script in ["PreClick", "OnClick", "PostClick"] {
+        if let Err(e) =
+            event::fire_widget_handler(lua, id, script, vec![btn.clone(), Value::Boolean(down)])
+        {
+            lua.app_data_mut::<Model>()
+                .expect("model app_data")
+                .record_script_error(e.to_string());
+        }
     }
+    lua.app_data_mut::<Model>()
+        .expect("model app_data")
+        .click_button = outer;
     // A nameplate click selects its unit, from the pointer or `Click()` alike (the plate's
     // override `0x7cb910` chains the base), after the handler so an erroring hook cannot eat it. A
     // press selects nothing: the plate registers Up clicks only (`0x7cb637`).

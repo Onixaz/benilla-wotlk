@@ -65,6 +65,7 @@ fn shipped_action_bar_drives_end_to_end() {
             action: 100,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.set_action(
@@ -75,6 +76,7 @@ fn shipped_action_bar_drives_end_to_end() {
             action: 101,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -220,6 +222,7 @@ fn state_feedback_drives_cooldown_checked_and_usable_through_the_xml() {
             action: 133,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -341,6 +344,7 @@ fn a_start_behind_the_clocks_epoch_hides_the_stock_sweep() {
             action: 133,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -408,6 +412,7 @@ fn the_cooldown_sweep_paints_over_the_buttons_icon_and_ring() {
             action: 133,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -470,6 +475,7 @@ fn a_cooldown_count_addons_hook_leaves_the_sweep_running() {
             action: 133,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -587,6 +593,7 @@ fn a_cooldown_count_draws_over_the_bonus_bars_sweep() {
             action: 2687,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -645,6 +652,7 @@ fn a_right_click_on_an_action_button_uses_the_action() {
             action: 4540,
             count: 5,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -696,6 +704,7 @@ fn shift_click_picks_up_not_uses() {
             action: 111,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -754,6 +763,7 @@ fn the_action_bar_lock_stops_the_drag_and_leaves_shift_click_alone() {
             action: 111,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -820,6 +830,7 @@ fn drag_drop_onto_another_button_hops_the_displaced_action() {
             action: 111,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.set_action(
@@ -830,6 +841,7 @@ fn drag_drop_onto_another_button_hops_the_displaced_action() {
             action: 222,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -881,6 +893,7 @@ fn count_fontstring_follows_is_consumable_action_not_the_bag_count() {
             action: 111,
             count: 42, // the app never sets this for a spell; the XML must ignore it
             consumable: false,
+            stackable: false,
         }),
     );
     s.set_action(
@@ -891,6 +904,7 @@ fn count_fontstring_follows_is_consumable_action_not_the_bag_count() {
             action: 117,
             count: 15,
             consumable: true,
+            stackable: false,
         }),
     );
     // A mount: an ITEM held eleven times that is not consumable.
@@ -902,6 +916,7 @@ fn count_fontstring_follows_is_consumable_action_not_the_bag_count() {
             action: 13332,
             count: 11,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -943,6 +958,7 @@ fn count_fontstring_follows_is_consumable_action_not_the_bag_count() {
             action: 117,
             count: 0,
             consumable: true,
+            stackable: false,
         }),
     );
     s.fire_event("ACTIONBAR_SLOT_CHANGED", vec![ScriptValue::Int(2)]);
@@ -983,6 +999,7 @@ fn macro_name_line_follows_get_action_text_through_the_xml() {
             action: 1,  // macro index 1
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.set_action(
@@ -993,6 +1010,7 @@ fn macro_name_line_follows_get_action_text_through_the_xml() {
             action: 111,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -1199,6 +1217,7 @@ fn state_events_leave_empty_wells_untinted() {
             action: 133,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.set_action_state(
@@ -1263,6 +1282,7 @@ fn an_occupied_slot_going_empty_leaves_no_white_plate() {
             action: 5185,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.set_action_state(
@@ -1353,6 +1373,7 @@ fn the_bonus_action_bar_exists_hidden_and_takes_layout_calls() {
             action: 100,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("ACTIONBAR_SLOT_CHANGED", vec![ScriptValue::Int(1)]);
@@ -1707,7 +1728,7 @@ fn bonus_bar_slides_up_with_sound_and_down_without() {
     assert_eq!(
         s.take_action_uses()
             .into_iter()
-            .map(|u| (u.action, u.on_self))
+            .map(|u| (u.action, u.at == benilla_ui::script::CastAt::Player))
             .collect::<Vec<_>>(),
         vec![(73, false)],
         "the BONUS branch of stock ActionButtonUp passes a literal 0 for onSelf (ActionButton.lua:38) \
@@ -1719,7 +1740,7 @@ fn bonus_bar_slides_up_with_sound_and_down_without() {
     assert_eq!(
         s.take_action_uses()
             .into_iter()
-            .map(|u| (u.action, u.on_self))
+            .map(|u| (u.action, u.at == benilla_ui::script::CastAt::Player))
             .collect::<Vec<_>>(),
         vec![(1, true)],
         "on the main-bar branch onSelf reaches UseAction's third argument (ActionButton.lua:51)"

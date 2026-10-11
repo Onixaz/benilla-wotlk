@@ -205,7 +205,12 @@ pub(super) fn load_core_bindings(script: &UiScript) -> Vec<String> {
         );
         return Vec::new();
     };
-    match benilla_ui::bindings_xml::parse(&benilla_ui::source::decode(&bytes)) {
+    let text = benilla_ui::source::decode(&bytes);
+    // The same file's `<ModifiedClick>` rows (`SELFCAST` and kin), at their defaults.
+    if let Ok(clicks) = benilla_ui::bindings_xml::parse_modified_clicks(&text) {
+        script.register_modified_clicks(&clicks);
+    }
+    match benilla_ui::bindings_xml::parse(&text) {
         Ok(bindings) => {
             script.register_bindings(&bindings);
             info!(

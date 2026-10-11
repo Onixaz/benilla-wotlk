@@ -44,7 +44,6 @@ const BEYOND_REFERENCE: &[&str] = &[
     "GetLookingForGroup",
     "GetMeetingStoneStatusText",
     "GetNumCrafts",
-    "GetNumLaguages",
     "GetPVPLastWeekStats",
     "GetPVPThisWeekStats",
     "GetPetLoyalty",

@@ -96,23 +96,29 @@ impl super::UiScript {
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
-    // GetNumLaguages(), `0x49fb30`: one number, the known languages. The misspelling is the
-    // reference's registered name (`0x843628`); the correct spelling is nowhere in the binary.
+    // GetNumLanguages() (`0x500760`): one number, the known languages (`0x6e0640` over
+    // `Languages.dbc`). 1.12.1 registered it misspelled, `GetNumLaguages`; 12340 has only this.
     lua.globals().set(
-        "GetNumLaguages",
+        "GetNumLanguages",
         lua.create_function(|lua, _ignored: MultiValue| {
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             Ok(model.known_languages.len() as i64)
         })?,
     )?;
-    // GetLanguageByIndex(i), `0x49fbe0`: the `Name_lang` of the i-th known language, positional,
-    // never a row number or a language id; past the end it pushes nothing.
+    // GetLanguageByIndex(index) (`0x500810`): the `Name_lang` of the index-th known language,
+    // positional, never a row number or a language id; past the end it pushes nothing. The index
+    // is a number or `Usage:` (`0x500829`), truncated (`0x500889`).
     lua.globals().set(
         "GetLanguageByIndex",
-        lua.create_function(|lua, index: Option<i64>| {
+        lua.create_function(|lua, index: Value| {
+            let index = crate::script::binding_abi::number_arg(
+                lua,
+                index,
+                "Usage: GetLanguageByIndex(index)",
+            )?;
             let model = lua.app_data_ref::<Model>().expect("model app_data");
-            let name = index
-                .and_then(|i| usize::try_from(i).ok())
+            let name = usize::try_from(index)
+                .ok()
                 .and_then(|i| i.checked_sub(1))
                 .and_then(|i| model.known_languages.get(i));
             Ok(match name {
@@ -340,7 +346,7 @@ mod language_tests {
     #[test]
     fn the_language_walk_is_positional_over_the_known_rows() {
         let mut s = UiScript::new().unwrap();
-        assert_eq!(s.eval::<i64>("return GetNumLaguages()").unwrap(), 0);
+        assert_eq!(s.eval::<i64>("return GetNumLanguages()").unwrap(), 0);
         assert_eq!(
             s.arity("GetLanguageByIndex(1)").unwrap(),
             0,
@@ -353,11 +359,18 @@ mod language_tests {
         .unwrap();
         s.set_known_languages(vec!["Orcish".into(), "Common".into()]);
         s.set_known_languages(vec!["Orcish".into(), "Common".into()]);
-        assert_eq!(s.eval::<i64>("return GetNumLaguages()").unwrap(), 2);
+        assert_eq!(s.eval::<i64>("return GetNumLanguages()").unwrap(), 2);
         assert_eq!(
             s.eval::<String>("return GetLanguageByIndex(2)").unwrap(),
             "Common"
         );
+        assert_eq!(
+            s.eval::<String>("return GetLanguageByIndex(1.9)").unwrap(),
+            "Orcish",
+            "truncated (0x500889)"
+        );
+        let err = s.run("GetLanguageByIndex()").unwrap_err().to_string();
+        assert!(err.contains("Usage: GetLanguageByIndex(index)"), "{err}");
         assert_eq!(
             s.eval::<i64>("return FIRED").unwrap(),
             1,

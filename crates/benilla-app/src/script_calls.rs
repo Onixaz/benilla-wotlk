@@ -49,8 +49,12 @@ pub(crate) fn apply_script_calls(
             ScriptCall::SpellTargetUnit(token) => appliers.p1().spell_target_unit(&token),
             ScriptCall::SpellStopTargeting => appliers.p1().stop_targeting(),
             ScriptCall::SpellStopCasting => appliers.p2().stop_casting(),
-            ScriptCall::CastSpell { spell_id, on_self } => {
-                crate::ui_spellbook::cast_spell(&mut appliers.p3(), spell_id, on_self);
+            ScriptCall::CastSpell {
+                spell_id,
+                at,
+                via_book,
+            } => {
+                crate::ui_spellbook::cast_spell(&mut appliers.p3(), spell_id, at, via_book);
             }
             ScriptCall::CastShapeshiftForm(spell_id) => {
                 crate::ui_shapeshift::cast_form(&mut appliers.p3(), spell_id);
@@ -352,30 +356,31 @@ mod tests {
             .collect()
     }
 
-    /// `CastSpellByName(name, onSelf)` (`0x4b4ab0`) and `CastSpell(slot, book, onSelf)` (`0x4b42f0`)
-    /// swap the target guid for the active player's (`0x4b4afa`, `0x4b4345`) when
-    /// `GetBoolOrDefault` reads the flag true, so the cast goes to us whoever is selected, and the
-    /// selection stays where it was. Without the flag it goes to the selection.
+    /// `CastSpellByName(name, unit)` (`0x540310`) casts at the unit its token names and
+    /// `CastSpell(slot, book, onSelf)` (`0x541250`) at the active player under the flag, whoever is
+    /// selected, and the selection stays where it was. Without either it goes to the selection; a
+    /// token the resolver does not know casts nothing.
     #[test]
-    fn on_self_casts_at_the_player_and_leaves_the_selection() {
+    fn a_unit_argument_aims_the_cast_and_leaves_the_selection() {
         for (lua, target, selection) in [
-            (r#"CastSpellByName("Heal", 1)"#, ME, OLD),
-            (r#"CastSpellByName("Heal", "yes")"#, ME, OLD),
-            (r#"CastSpell(1, "spell", 1)"#, ME, OLD),
+            (r#"CastSpellByName("Heal", "player")"#, Some(ME), OLD),
+            (r#"CastSpell(1, "spell", 1)"#, Some(ME), OLD),
+            (r#"CastSpellByName("Heal", "party1")"#, Some(NEW), OLD),
             (
-                r#"TargetUnit("party1") CastSpellByName("Heal", 1)"#,
-                ME,
+                r#"TargetUnit("party1") CastSpellByName("Heal", "player")"#,
+                Some(ME),
                 NEW,
             ),
-            (r#"CastSpellByName("Heal")"#, OLD, OLD),
-            (r#"CastSpellByName("Heal", 0.5)"#, OLD, OLD),
-            (r#"CastSpellByName("Heal", "false")"#, OLD, OLD),
-            (r#"CastSpell(1, "spell")"#, OLD, OLD),
-            (r#"CastSpell(1, "spell", "0")"#, OLD, OLD),
+            (r#"CastSpellByName("Heal")"#, Some(OLD), OLD),
+            (r#"CastSpellByName("Heal", "")"#, Some(OLD), OLD),
+            (r#"CastSpellByName("Heal", 1)"#, None, OLD),
+            (r#"CastSpell(1, "spell")"#, Some(OLD), OLD),
+            (r#"CastSpell(1, "spell", "0")"#, Some(OLD), OLD),
         ] {
             let mut f = frame(true);
             run(&mut f, lua);
-            assert_eq!(casts(&f), vec![(HEAL, Some(target))], "{lua}");
+            let sent: Vec<_> = target.into_iter().map(|t| (HEAL, Some(t))).collect();
+            assert_eq!(casts(&f), sent, "{lua}");
             assert_eq!(selected(&f), Some(selection), "{lua}");
         }
     }
@@ -412,24 +417,43 @@ mod tests {
     }
 
     /// The bind runs the ordinary relation chain over the player: with a unit we cannot assist
-    /// selected and `autoSelfCast` off, the plain call binds nothing (the cursor comes up), while
-    /// `onSelf` binds us; with a friendly player selected the plain call binds that player.
+    /// selected, the plain call binds us behind `autoSelfCast` (12340's default on) and nothing
+    /// with it off (the cursor comes up), and `"player"` binds us either way; with a friendly
+    /// player selected the plain call binds that player.
     #[test]
-    fn on_self_binds_the_player_where_the_selection_is_not_assistable() {
-        for (selected_template, lua, target) in [
-            (FOE, r#"CastSpellByName("Fortitude")"#, None),
-            (FOE, r#"CastSpellByName("Fortitude", 1)"#, Some(ME)),
-            (FOE, r#"CastSpell(1, "spell", 1)"#, Some(ME)),
-            (FRIEND, r#"CastSpellByName("Fortitude")"#, Some(OLD)),
-            (FRIEND, r#"CastSpellByName("Fortitude", 1)"#, Some(ME)),
+    fn the_player_binds_where_the_selection_is_not_assistable() {
+        for (selected_template, auto, lua, target) in [
+            (FOE, true, r#"CastSpellByName("Fortitude")"#, Some(ME)),
+            (FOE, false, r#"CastSpellByName("Fortitude")"#, None),
+            (
+                FOE,
+                false,
+                r#"CastSpellByName("Fortitude", "player")"#,
+                Some(ME),
+            ),
+            (FOE, false, r#"CastSpell(1, "spell", 1)"#, Some(ME)),
+            (FRIEND, true, r#"CastSpellByName("Fortitude")"#, Some(OLD)),
+            (
+                FRIEND,
+                true,
+                r#"CastSpellByName("Fortitude", "player")"#,
+                Some(ME),
+            ),
         ] {
             let mut f = frame(true);
+            f.app
+                .world_mut()
+                .insert_resource(crate::spell::AutoSelfCast(auto));
             // `CanAssist` passes a friendly player-controlled unit (`UNIT_FLAG_PLAYER_CONTROLLED`).
             with_factions(&mut f, selected_template, &[(FLAGS, 0x8)]);
             with_fortitude(&mut f);
             run(&mut f, lua);
             let sent: Vec<_> = target.into_iter().map(|t| (FORTITUDE, Some(t))).collect();
-            assert_eq!(casts(&f), sent, "{lua} at template {selected_template}");
+            assert_eq!(
+                casts(&f),
+                sent,
+                "{lua} at template {selected_template}, autoSelfCast {auto}"
+            );
             assert_eq!(selected(&f), Some(OLD), "{lua}");
         }
     }
@@ -794,7 +818,7 @@ mod tests {
         let mut f = frame(false);
         spawn_mob(&mut f, &[]);
         with_strike(&mut f);
-        run(&mut f, "UseAction(1, 0, 1)");
+        run(&mut f, r#"UseAction(1, "player")"#);
         assert_eq!(
             strike_wire(&f),
             vec![("select", MOB), ("cast", MOB), ("swing", MOB)]

@@ -49,6 +49,8 @@ pub(crate) use targeting::{
 pub(crate) struct ScriptCast<'w, 's> {
     pub(crate) targeting: cast_target::CastTargeting<'w, 's>,
     pub(crate) ladder: CastLadder<'w, 's>,
+    /// Resolves a cast verb's unit token where the call takes effect.
+    pub(crate) tokens: crate::ui_unit::UnitTokens<'w, 's>,
 }
 
 /// The local self-cancel's set: a reader of the in-flight state orders `.after(LocalCancel)` so a

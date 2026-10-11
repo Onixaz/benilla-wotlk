@@ -87,6 +87,7 @@ pub(crate) fn place_action(model: &mut Model, id: u32) -> bool {
             // Count and consumable wait for the app's next-frame re-feed, which knows the item.
             count: 0,
             consumable: false,
+            stackable: false,
         },
     );
     model.action_sets.push((id, pack(kind, action)));
@@ -136,6 +137,7 @@ mod tests {
             action,
             count: 0,
             consumable: false,
+            stackable: false,
         }
     }
 

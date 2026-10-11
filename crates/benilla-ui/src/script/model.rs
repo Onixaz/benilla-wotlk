@@ -426,6 +426,8 @@ pub(crate) struct Model {
     /// Per action, its usable, range, current and cooldown state; an absent one reads cold.
     pub(crate) action_states: HashMap<u32, super::action::StoredActionState>,
     pub(crate) bonus_bar_offset: u8,
+    /// The main bar's page, 0-based (`[0xc1e598]`): `GetActionBarPage` answers it plus one.
+    pub(crate) action_bar_page: u8,
     /// `(action id, packed)` per slot `PickupAction`/`PlaceAction` changed, 0 clearing it: one
     /// `CMSG_SET_ACTION_BUTTON` each, so a drag swap is two sends.
     pub(crate) action_sets: Vec<(u32, u32)>,
@@ -959,6 +961,11 @@ pub(crate) struct Model {
     pub(crate) framerate: f64,
     /// `(shift, ctrl, alt)` for `Is*KeyDown`, pushed before the frame's mouse events.
     pub(crate) modifiers: (bool, bool, bool),
+    /// The `<ModifiedClick>` table, `(action, binding)` in registration order.
+    pub(crate) modified_clicks: Vec<(String, String)>,
+    /// The button of the click whose `PreClick`/`OnClick`/`PostClick` is running, which a
+    /// button-qualified modified click compares (`[0xb499a8]+0x1234`).
+    pub(crate) click_button: Option<String>,
 }
 
 impl Model {
@@ -1192,6 +1199,7 @@ impl Model {
             actions: HashMap::new(),
             action_states: HashMap::new(),
             bonus_bar_offset: 0,
+            action_bar_page: 0,
             action_sets: Vec::new(),
             ui_errors: Vec::new(),
             spellbook: spellbook::SpellBookState::default(),
@@ -1416,6 +1424,8 @@ impl Model {
             summon_confirms: 0,
             framerate: 0.0,
             modifiers: (false, false, false),
+            modified_clicks: Vec::new(),
+            click_button: None,
             money: 0,
             net_latency_ms: 0,
             player_xp: 0,

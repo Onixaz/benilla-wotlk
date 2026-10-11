@@ -110,7 +110,10 @@ fn attributes_of(lua: &Lua, id: u32, create: bool) -> mlua::Result<Option<Table>
     }
 }
 
-/// Store `value` under `name` and fire `OnAttributeChanged(self, lowercased name, value)`.
+/// Store `value` under `name` and fire `OnAttributeChanged(self, lowercased name, value)`. The
+/// handler runs as every engine-fired script does: its error is reported and `SetAttribute`
+/// returns as usual, so `ActionButton_OnLoad` (`ActionButton.lua:83-88`) sets each attribute even
+/// when the update its first store triggers fails.
 fn set_attribute(lua: &Lua, this: &Table, name: &str, value: Value) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     let id = lua.app_data_mut::<Model>().expect("model").frame_id(h);
@@ -119,7 +122,12 @@ fn set_attribute(lua: &Lua, this: &Table, name: &str, value: Value) -> mlua::Res
         t.set(lower.as_str(), value.clone())?;
     }
     let name = Value::String(lua.create_string(&lower)?);
-    event::fire_widget_handler(lua, id, "OnAttributeChanged", vec![name, value])
+    if let Err(e) = event::fire_widget_handler(lua, id, "OnAttributeChanged", vec![name, value]) {
+        lua.app_data_mut::<Model>()
+            .expect("model")
+            .record_script_error(e.to_string());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -177,6 +185,18 @@ mod tests {
         assert!(ui.eval::<bool>("return SELF").unwrap());
         assert_eq!(ui.eval::<String>("return NAME").unwrap(), "panel-show");
         assert_eq!(ui.eval::<f64>("return VALUE").unwrap(), 7.0);
+    }
+
+    /// A failing handler is reported, and the caller runs on to its next statement.
+    #[test]
+    fn a_handler_error_does_not_abort_the_store_that_fired_it() {
+        let ui = ui("local f = CreateFrame('Frame')
+             f:SetScript('OnAttributeChanged', function() error('boom') end)
+             f:SetAttribute('a', 1)
+             f:SetAttribute('b', 2)
+             B = f:GetAttribute('b')");
+        assert_eq!(ui.eval::<i64>("return B").unwrap(), 2);
+        assert_eq!(ui.errors().len(), 2, "{:?}", ui.errors());
     }
 
     #[test]

@@ -99,6 +99,7 @@ pub mod nameplate;
 pub use nameplate::{PlateBitWrites, PlateGeometry, PlateState, PLATE_BIT_ENEMY, PLATE_BIT_FRIEND};
 mod model;
 mod modelframe;
+mod modified_click;
 mod net_stats;
 pub(crate) mod object;
 pub use object::frame_kind_from_tag;
@@ -164,7 +165,7 @@ pub use battlefield_positions::{BattlefieldFlagView, BattlefieldPositionView};
 pub use battlefield_queue::{BattlefieldListView, BattlefieldMapInfo, BattlefieldQueueSlot};
 pub use battlefield_score::{BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn};
 pub use bind_confirm::PendingEquipAnswer;
-pub use calls::{NearestMode, ScriptCall};
+pub use calls::{CastAt, NearestMode, ScriptCall};
 pub use camera_view::{CameraViewRequest, CAMERA_VIEW_COUNT};
 pub use channel::{ChannelCommand, ZoneChannelRow};
 pub use char_stats::{
@@ -405,7 +406,7 @@ pub const SCREEN: crate::layout::Handle = 0;
 /// ScrollFrame's three scroll kinds are `+0x32c`/`+0x334`/`+0x33c` (script-name map `0x786c40`).
 /// The EditBox's vtable (`0x81c910`) replaces the key and char slots: an EditBox never fires
 /// `OnKeyDown`, and fires `OnChar` only from `Insert`, with the inserted text (`0x77c13c`).
-const SCRIPT_KINDS: [&str; 41] = [
+const SCRIPT_KINDS: [&str; 43] = [
     "OnLoad",
     "OnEvent",
     "OnUpdate",
@@ -415,7 +416,9 @@ const SCRIPT_KINDS: [&str; 41] = [
     "OnAnimFinished",
     "OnShow",
     "OnHide",
+    "PreClick",
     "OnClick",
+    "PostClick",
     "OnEnter",
     "OnLeave",
     "OnMouseDown",
@@ -546,6 +549,7 @@ impl UiScript {
         nameplate::install_verbs(&lua)?;
         saved::install(&lua)?;
         keybind::install(&lua)?;
+        modified_click::install(&lua)?;
         sound::install(&lua)?;
         ui_errors::install(&lua)?;
         pointer::install(&lua)?;

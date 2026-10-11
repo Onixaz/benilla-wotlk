@@ -30,6 +30,9 @@ pub struct ActionSlot {
     /// `IsConsumableAction`: `0x4e5250` reads only the slot's item template, so this rides the
     /// icon's push, not [`ActionState`]'s.
     pub consumable: bool,
+    /// `IsStackableAction`: an item slot whose template stacks past one (`0x5a8470`, record
+    /// `+0x5c`); it rides the icon's push as [`Self::consumable`] does.
+    pub stackable: bool,
 }
 
 /// One action's per-frame state, read by `IsUsableAction`, `IsActionInRange`, `GetActionCooldown`
@@ -65,13 +68,13 @@ pub(crate) struct StoredActionState {
 }
 
 /// One queued `UseAction` press.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActionUse {
     /// The 1-based Lua action id, as `UseAction` was given it.
     pub action: u32,
-    /// `UseAction`'s third argument, which only the self-cast bindings (`SELFACTIONBUTTON1`-`12`)
-    /// pass, through `ActionButtonUp(id, 1)`.
-    pub on_self: bool,
+    /// `UseAction`'s unit argument: `SecureActionButton_OnClick` passes `"player"` under the
+    /// self-cast modifier (`SecureTemplates.lua:207-210`), else nil, the selection.
+    pub at: super::CastAt,
 }
 
 impl super::UiScript {
@@ -119,7 +122,7 @@ impl super::UiScript {
     /// Take the `UseAction` presses out of the call stream.
     pub fn take_action_uses(&mut self) -> Vec<ActionUse> {
         self.take_calls_where(|c| match c {
-            super::ScriptCall::UseAction(press) => Some(*press),
+            super::ScriptCall::UseAction(press) => Some(press.clone()),
             _ => None,
         })
     }
@@ -245,24 +248,69 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UseAction(action [, checkCursor [, onSelf]]): a nonzero `checkCursor` while the cursor holds
-    // a payload places it, as `PlaceAction` does; otherwise the press is queued with `onSelf`, the
-    // self-cast flag. FrameXML passes 1 from a click and 0 from a keybind; the binding's own test
-    // of it is untraced, and place-on-click is the reading that split implies.
+    // GetActionInfo(slot) (`0x5a8f10`): the slot is a number or `Usage:` (`0x5a91a6`). A spell
+    // answers `"spell", bookIndex, "spell", spellId`, the index 1-based in the book `0x53b4e0`
+    // searches and 0 for a spell not in it (`0x5a9049`); an item `"item", itemId`; a macro
+    // `"macro", index` (`0x5a9133`); an empty slot nothing.
+    //
+    // Deviation: a companion spell answers as a spell, where the reference answers `"companion",
+    // index, "CRITTER"|"MOUNT", spellId` (`0x5a8fa8`), and an equipment-set slot answers nothing
+    // for `"equipmentset", name` (`0x5a9178`): benilla keeps no companion list and no equipment
+    // sets.
+    g.set(
+        "GetActionInfo",
+        lua.create_function(|lua, slot: Value| {
+            let slot = super::binding_abi::number_arg(lua, slot, "Usage: GetActionInfo(slot)")?;
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let Some(a) = u32::try_from(slot).ok().and_then(|s| model.actions.get(&s)) else {
+                return Ok(MultiValue::new());
+            };
+            let str = |s: &str| lua.create_string(s).map(Value::String);
+            Ok(MultiValue::from_vec(match a.kind & 0xf0 {
+                ACTION_KIND_ITEM => vec![str("item")?, Value::Integer(i64::from(a.action))],
+                ACTION_KIND_MACRO => vec![str("macro")?, Value::Integer(i64::from(a.action))],
+                0x00 => {
+                    let index = model
+                        .spellbook
+                        .slots
+                        .iter()
+                        .position(|s| s.spell_id == a.action)
+                        .map_or(0, |i| i as i64 + 1);
+                    vec![
+                        str("spell")?,
+                        Value::Integer(index),
+                        str("spell")?,
+                        Value::Integer(i64::from(a.action)),
+                    ]
+                }
+                _ => Vec::new(),
+            }))
+        })?,
+    )?;
+
+    // UseAction(slot [, unit [, button]]) (`0x5ac000`): the slot is a number or `Usage:`
+    // (`0x5ac06f`), and the unit goes through the cast target parse (`0x5ac043`), where a token
+    // the resolver does not know uses nothing. The button string reaches only the possess-bar and
+    // macro arms of `0x5abbc0`. Nothing here reads the cursor: the stock bar places a payload
+    // through `OnReceiveDrag` (`ActionBarFrame.xml:25-29`).
     g.set(
         "UseAction",
-        lua.create_function(|lua, (action, rest): (u32, MultiValue)| {
+        lua.create_function(|lua, (action, rest): (Value, MultiValue)| {
+            let action = super::binding_abi::number_arg(
+                lua,
+                action,
+                "Usage: UseAction(slot, [, target] [, button])",
+            )?;
+            let Some(at) = super::calls::cast_at_arg(lua, rest.front()) else {
+                return Ok(());
+            };
+            let Ok(action) = u32::try_from(action) else {
+                return Ok(());
+            };
             let mut model = lua.app_data_mut::<Model>().expect("model app_data");
-            let mut rest = rest.iter();
-            let check_cursor = rest.next().is_some_and(truthy_nonzero);
-            let on_self = rest.next().is_some_and(truthy_nonzero);
-            if check_cursor && model.cursor.is_some() {
-                super::cursor::place_action(&mut model, action);
-            } else {
-                model
-                    .script_calls
-                    .push(super::ScriptCall::UseAction(ActionUse { action, on_self }));
-            }
+            model
+                .script_calls
+                .push(super::ScriptCall::UseAction(ActionUse { action, at }));
             Ok(())
         })?,
     )?;
@@ -287,12 +335,38 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // ChangeActionBarPage(): fires `ACTIONBAR_PAGE_CHANGED` synchronously and returns nothing
-    // (`0x4e7650`); the page itself is FrameXML's `CURRENT_ACTIONBAR_PAGE`.
+    // GetActionBarPage() (`0x5a7fd0`): the main bar's page, 1..6. A vehicle or possess bar pins it
+    // to 1 (`[0xc1e5a0]`), which benilla never raises.
+    g.set(
+        "GetActionBarPage",
+        lua.create_function(|lua, ()| {
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            Ok(i64::from(model.action_bar_page) + 1)
+        })?,
+    )?;
+
+    // ChangeActionBarPage(page) (`0x5a7f60`): the page is `lua_tonumber` truncated, so nil is 0,
+    // and outside 1..6 raises (`0x5a7fb5`). A new page is stored and fires `ACTIONBAR_PAGE_CHANGED`
+    // synchronously (`0x5a7fa7`); the same page does nothing. The protected-call check
+    // (`0x5191c0`) answers only tainted code, which benilla does not track.
     g.set(
         "ChangeActionBarPage",
-        lua.create_function(|lua, ()| {
-            super::tick::fire_event_into(lua, "ACTIONBAR_PAGE_CHANGED", Vec::new());
+        lua.create_function(|lua, page: Value| {
+            let page = super::binding_abi::coerced_number(lua, Some(page)) as i64;
+            let Some(index) = page.checked_sub(1).filter(|i| (0..6).contains(i)) else {
+                return Err(mlua::Error::runtime(
+                    "ChangeActionBarPage() needs a page in the range 1 to 6.",
+                ));
+            };
+            let changed = {
+                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let changed = i64::from(model.action_bar_page) != index;
+                model.action_bar_page = index as u8;
+                changed
+            };
+            if changed {
+                super::tick::fire_event_into(lua, "ACTIONBAR_PAGE_CHANGED", Vec::new());
+            }
             Ok(())
         })?,
     )?;
@@ -363,6 +437,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
         })?,
     )?;
+    // IsStackableAction(slot) (`0x5a8720`): 1 or nil; a non-number raises (`0x5a877d`).
+    g.set(
+        "IsStackableAction",
+        lua.create_function(|lua, slot: Value| {
+            let slot = super::binding_abi::number_arg(lua, slot, "Usage: IsStackableAction(slot)")?;
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            Ok(flag(
+                u32::try_from(slot)
+                    .ok()
+                    .and_then(|s| model.actions.get(&s))
+                    .is_some_and(|a| a.stackable),
+            ))
+        })?,
+    )?;
     g.set(
         "IsEquippedAction",
         lua.create_function(|lua, action: u32| Ok(state_flag(lua, action, |s| s.equipped)))?,
@@ -393,6 +481,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::ActionSlot;
+    use crate::script::CastAt;
     use crate::script::UiScript;
 
     /// `GetActionAutocast` answers a pet spell's two bits only for a macro bound out of the pet's
@@ -474,45 +563,101 @@ mod tests {
         assert!(err.contains("Usage: GetActionAutocast(slot)"), "{err}");
     }
 
-    fn uses(s: &mut UiScript) -> Vec<(u32, bool)> {
+    fn uses(s: &mut UiScript) -> Vec<(u32, CastAt)> {
         s.take_action_uses()
             .into_iter()
-            .map(|u| (u.action, u.on_self))
+            .map(|u| (u.action, u.at))
             .collect()
     }
 
-    /// The numeric test: `0` is not the modifier, though Lua would call it true.
-    #[test]
-    fn use_actions_third_argument_is_the_self_cast_modifier() {
+    const ME: u64 = 0x10;
+    const MOB: u64 = 0xF130_0000_0000_0001;
+
+    fn with_units() -> UiScript {
         let mut s = UiScript::new().unwrap();
-        s.run("UseAction(1)").unwrap();
-        s.run("UseAction(2, 0)").unwrap();
-        s.run("UseAction(3, 0, 0)").unwrap();
-        s.run("UseAction(4, 0, 1)").unwrap();
-        s.run("UseAction(5, nil, 1)").unwrap();
+        s.set_unit_guids(&crate::script::UnitGuids {
+            player: ME,
+            target: MOB,
+            ..Default::default()
+        });
+        s
+    }
+
+    /// The second argument is a unit token (`0x5ac043`): nil or `""` is the selection, a token
+    /// its unit, a token naming nobody the sentinel, and one the resolver does not know uses
+    /// nothing. The third, the mouse button, never aims the press.
+    #[test]
+    fn use_actions_second_argument_is_the_unit() {
+        let mut s = with_units();
+        for lua in [
+            "UseAction(1)",
+            "UseAction(2, nil, 'LeftButton')",
+            "UseAction(3, '')",
+            "UseAction(4, 'player', 'LeftButton')",
+            "UseAction(5, 'target')",
+            "UseAction(6, 'party1')",
+            "UseAction(7, 'nosuchunit')",
+            "UseAction(8, 1)",
+            "UseAction(9, true)",
+        ] {
+            s.run(lua).unwrap();
+        }
         assert_eq!(
             uses(&mut s),
-            vec![(1, false), (2, false), (3, false), (4, true), (5, true)],
-            "only a numeric-nonzero third argument is the modifier"
+            vec![
+                (1, CastAt::Selection),
+                (2, CastAt::Selection),
+                (3, CastAt::Selection),
+                (4, CastAt::Unit("player".into())),
+                (5, CastAt::Unit("target".into())),
+                (6, CastAt::Unit("party1".into())),
+                // 7 and 8: tokens the resolver does not know. A boolean has no string form, so
+                // `lua_tolstring` reads it as absent.
+                (9, CastAt::Selection),
+            ],
+        );
+        let err = s.run("UseAction()").unwrap_err().to_string();
+        assert!(
+            err.contains("Usage: UseAction(slot, [, target] [, button])"),
+            "{err}"
         );
     }
 
+    /// The page is the engine's (`0x5a7f60`): stored, read back by `GetActionBarPage`, and the
+    /// event fires synchronously on a change only.
     #[test]
-    fn change_action_bar_page_fires_the_event_and_nothing_else() {
+    fn change_action_bar_page_stores_the_page_and_fires_on_a_change() {
         let s = UiScript::new().unwrap();
+        assert_eq!(s.eval::<i64>("return GetActionBarPage()").unwrap(), 1);
         s.run(
-            "CURRENT_ACTIONBAR_PAGE = 3 \
-             local f = CreateFrame('Frame') f:RegisterEvent('ACTIONBAR_PAGE_CHANGED') \
-             f:SetScript('OnEvent', function() SEEN = event .. ':' .. CURRENT_ACTIONBAR_PAGE end) \
-             N = table.getn({ChangeActionBarPage()})",
+            "FIRED = 0 local f = CreateFrame('Frame') f:RegisterEvent('ACTIONBAR_PAGE_CHANGED') \
+             f:SetScript('OnEvent', function() FIRED = FIRED + 1 SEEN = GetActionBarPage() end) \
+             N = table.getn({ChangeActionBarPage(3)}) ChangeActionBarPage(3)",
         )
         .unwrap();
         assert_eq!(
-            s.eval::<String>("return SEEN").unwrap(),
-            "ACTIONBAR_PAGE_CHANGED:3",
-            "the event fires synchronously, and the page is whatever FrameXML wrote"
+            s.eval::<i64>("return SEEN").unwrap(),
+            3,
+            "stored before it fires"
+        );
+        assert_eq!(
+            s.eval::<i64>("return FIRED").unwrap(),
+            1,
+            "the same page is silent"
         );
         assert_eq!(s.eval::<i64>("return N").unwrap(), 0, "zero return values");
+        for bad in [
+            "ChangeActionBarPage(7)",
+            "ChangeActionBarPage(0)",
+            "ChangeActionBarPage()",
+        ] {
+            let err = s.run(bad).unwrap_err().to_string();
+            assert!(
+                err.contains("needs a page in the range 1 to 6"),
+                "{bad}: {err}"
+            );
+        }
+        assert_eq!(s.eval::<i64>("return GetActionBarPage()").unwrap(), 3);
     }
 
     #[test]
@@ -532,6 +677,7 @@ mod tests {
                 action: 133,
                 count: 0,
                 consumable: false,
+                stackable: false,
             }),
         );
         s.set_bonus_bar_offset(1);
@@ -543,8 +689,12 @@ mod tests {
         assert_eq!(s.eval::<i64>("return GetBonusBarOffset()").unwrap(), 1);
 
         s.run("UseAction(73)").unwrap();
-        s.run("UseAction(74, 0, 1)").unwrap();
-        assert_eq!(uses(&mut s), vec![(73, false), (74, true)]);
+        s.run("UseAction(74, 'player')").unwrap();
+        assert_eq!(
+            uses(&mut s),
+            vec![(73, CastAt::Selection), (74, CastAt::Unit("player".into()))],
+            "the token rides to the app, which resolves it in call order"
+        );
         assert!(s.take_action_uses().is_empty());
 
         s.set_action(73, None);
@@ -563,14 +713,88 @@ mod tests {
                 action: 117,
                 count: 4,
                 consumable: false,
+                stackable: false,
             }),
         );
         assert_eq!(s.eval::<i64>("return GetActionCount(5)").unwrap(), 4);
     }
 
-    /// A place needs a nonzero `checkCursor` and a held payload; a keybind's `0` queues the use.
+    /// `IsStackableAction` (`0x5a8720`) reads the pushed flag; an empty slot is nil.
     #[test]
-    fn use_action_check_cursor_routes_to_place_or_use() {
+    fn is_stackable_action_reads_the_slot() {
+        let mut s = UiScript::new().unwrap();
+        s.set_action(
+            3,
+            Some(ActionSlot {
+                kind: super::ACTION_KIND_ITEM,
+                action: 117,
+                stackable: true,
+                ..Default::default()
+            }),
+        );
+        assert_eq!(
+            s.eval::<Option<i64>>("return IsStackableAction(3)")
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            s.eval::<Option<i64>>("return IsStackableAction(4)")
+                .unwrap(),
+            None
+        );
+        let err = s.run("IsStackableAction()").unwrap_err().to_string();
+        assert!(err.contains("Usage: IsStackableAction(slot)"), "{err}");
+    }
+
+    /// `GetActionInfo` (`0x5a8f10`): four values for a spell, two for an item or a macro, none for
+    /// an empty slot.
+    #[test]
+    fn get_action_info_answers_by_kind() {
+        use crate::script::{SpellBookState, SpellSlotView};
+        let mut s = UiScript::new().unwrap();
+        s.set_spellbook(SpellBookState {
+            tabs: Vec::new(),
+            slots: [6603, 2973, 75]
+                .into_iter()
+                .map(|spell_id| SpellSlotView {
+                    spell_id,
+                    ..Default::default()
+                })
+                .collect(),
+        });
+        let slot = |kind, action| ActionSlot {
+            kind,
+            action,
+            ..Default::default()
+        };
+        s.set_action(1, Some(slot(super::ACTION_KIND_SPELL, 2973)));
+        s.set_action(2, Some(slot(super::ACTION_KIND_SPELL, 2050)));
+        s.set_action(3, Some(slot(super::ACTION_KIND_ITEM, 117)));
+        s.set_action(4, Some(slot(super::ACTION_KIND_MACRO, 2)));
+        let info = |s: &UiScript, n: u32| {
+            s.eval::<String>(&format!(
+                "local t = {{GetActionInfo({n})}} \
+                 for i = 1, table.getn(t) do t[i] = tostring(t[i]) end \
+                 return table.concat(t, ',')"
+            ))
+            .unwrap()
+        };
+        assert_eq!(info(&s, 1), "spell,2,spell,2973", "the 1-based book index");
+        assert_eq!(
+            info(&s, 2),
+            "spell,0,spell,2050",
+            "not in the book: index 0"
+        );
+        assert_eq!(info(&s, 3), "item,117");
+        assert_eq!(info(&s, 4), "macro,2");
+        assert_eq!(s.arity("GetActionInfo(5)").unwrap(), 0, "an empty slot");
+        let err = s.run("GetActionInfo()").unwrap_err().to_string();
+        assert!(err.contains("Usage: GetActionInfo(slot)"), "{err}");
+    }
+
+    /// `UseAction` reads no cursor (`0x5abbc0`): a held payload stays held and the press queues.
+    #[test]
+    fn use_action_never_places_the_cursor() {
         use crate::script::cursor::{CursorAction, CursorPayload};
 
         let mut s = UiScript::new().unwrap();
@@ -580,18 +804,10 @@ mod tests {
             action: 111,
             texture: Some("Interface\\Icons\\Spell_A".into()),
         }));
-
-        s.run("UseAction(9, 0)").unwrap();
-        assert_eq!(uses(&mut s), vec![(9, false)]);
-        assert!(s.cursor_payload().is_some(), "checkCursor 0 never places");
-
-        s.run("UseAction(9, 1)").unwrap();
-        assert!(s.take_action_uses().is_empty(), "routed to place, not use");
-        assert!(s.cursor_payload().is_none(), "empty destination clears");
-        assert_eq!(s.take_action_sets(), vec![(9, 111)]);
-
-        s.run("UseAction(10, 1)").unwrap();
-        assert_eq!(uses(&mut s), vec![(10, false)]);
+        s.run("UseAction(9, nil, 'LeftButton')").unwrap();
+        assert_eq!(uses(&mut s), vec![(9, CastAt::Selection)]);
+        assert!(s.cursor_payload().is_some());
+        assert!(s.take_action_sets().is_empty());
     }
 
     // ── `GetActionText` (`0x4e7050`) ──
@@ -621,6 +837,7 @@ mod tests {
                 action,
                 count: 0,
                 consumable: false,
+                stackable: false,
             })
         };
         s.set_action(1, slot(0x40, 1)); // macro "Pull"

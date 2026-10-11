@@ -420,15 +420,25 @@ fn leading_number(s: &str) -> u32 {
         .unwrap_or(0)
 }
 
-/// `CastSpell(id, "spell", onSelf)` and `CastSpellByName(name, onSelf)` (`0x4b3300`'s player leg),
-/// through the cast tail the action bar uses, at the selection as the calls before it left it, or
-/// with `onSelf` at the caster.
-pub(crate) fn cast_spell(cast: &mut crate::spell::ScriptCast, spell_id: u32, on_self: bool) {
-    let crate::spell::ScriptCast { targeting, ladder } = cast;
+/// `CastSpell`, `CastSpellByName` and `CastSpellByID`, through the cast tail the action bar uses,
+/// at the unit the verb named, else the selection as the calls before it left it. `via_book`: the
+/// book's dispatcher, with its cancel forks; a `!name` or an id goes past them.
+pub(crate) fn cast_spell(
+    cast: &mut crate::spell::ScriptCast,
+    spell_id: u32,
+    at: benilla_ui::script::CastAt,
+    via_book: bool,
+) {
+    let crate::spell::ScriptCast {
+        targeting,
+        ladder,
+        tokens,
+    } = cast;
     // `CastSpell`'s two cancel forks (`0x4b3300`), in order: the active-action toggle
     // (`0x4b36f0`), then the form match (`0x4b348b`), which `UseAction` lacks, with its silent
     // no-op (`0x4b35cf`).
-    if let (Some(sp), Some(store)) = (ladder.spells.as_ref(), targeting.self_store.iter().next()) {
+    let forks = via_book.then(|| (ladder.spells.as_ref(), targeting.self_store.iter().next()));
+    if let Some((Some(sp), Some(store))) = forks {
         if let Some(d) = sp.catalog.get(spell_id) {
             if crate::ui_action::toggle::active_action_toggle(spell_id, d, store) {
                 debug!("ui_spellbook: cast {spell_id} re-pressed — aura cancels");
@@ -458,11 +468,11 @@ pub(crate) fn cast_spell(cast: &mut crate::spell::ScriptCast, spell_id: u32, on_
         }
     }
     debug!(
-        "ui_spellbook: cast {spell_id} (target {:?}{})",
-        targeting.selection.guid,
-        if on_self { ", on self" } else { "" }
+        "ui_spellbook: cast {spell_id} at {at:?} (selection {:?})",
+        targeting.selection.guid
     );
-    ladder.send_spell(spell_id, &targeting.context().self_bound(on_self), on_self);
+    let aim = targeting.aim(tokens, &at);
+    ladder.send_spell(spell_id, &targeting.context_at(aim), aim.passed());
 }
 
 #[cfg(test)]

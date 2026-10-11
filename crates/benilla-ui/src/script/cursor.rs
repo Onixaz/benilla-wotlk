@@ -14,7 +14,6 @@ mod drag;
 pub(crate) mod money;
 mod pet;
 
-pub(crate) use bar::place_action;
 pub(crate) use drag::{
     abandon_drag, arm_drag, maybe_start_drag, take_drag, DragGesture, DragRelease,
 };

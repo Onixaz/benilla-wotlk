@@ -232,10 +232,9 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // `BlockTrades` (`0x842fbc`), `UIOptionsFrame.lua:11`: the refusal leg `0x4bf7bc` fires only
     // when it is set. The knob is [`crate::ui_trade::BlockTrades`].
     same("BlockTrades", "0"),
-    // `autoSelfCast` (register site `0x6e731d`, record `[0xceac34]`, read at `0x6e53d7`; `0x870dc0`
-    // is its name string): a friendly cast that binds nothing falls back to the caster.
-    // `TOGGLEAUTOSELFCAST` toggles it.
-    same("autoSelfCast", "0"),
+    // `autoSelfCast` (register site `0x51dbee`, name `0xa025e4`, default `0x9e1464` "1"): a
+    // friendly cast that binds nothing falls back to the caster. `TOGGLEAUTOSELFCAST` toggles it.
+    same("autoSelfCast", "1"),
     // The five saved camera views and the live index, at the reference's names and default strings;
     // owned by [`crate::player::camera_view`]. Registered so a `SaveView` persists.
     same(

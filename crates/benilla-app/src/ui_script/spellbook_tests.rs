@@ -1,6 +1,6 @@
 //! The stock spellbook window (`SpellBookFrame.xml`) over a small synthetic book, engine only.
 
-use benilla_ui::script::{SpellBookState, SpellSlotView, SpellTabView, UiScript};
+use benilla_ui::script::{CastAt, SpellBookState, SpellSlotView, SpellTabView, UiScript};
 
 use super::test_ui::load_ui as load_xml;
 
@@ -197,7 +197,7 @@ fn shipped_spellbook_drives_end_to_end() {
     s.mouse_button(x1, y1, "LeftButton", true);
     s.mouse_button(x1, y1, "LeftButton", false);
     assert!(s.errors().is_empty(), "click errors: {:?}", s.errors());
-    assert_eq!(s.take_spell_casts(), vec![(133, false)]);
+    assert_eq!(s.take_spell_casts(), vec![(133, CastAt::Selection)]);
     assert!(s.cursor_payload().is_none(), "a cast never picks up");
 
     s.set_modifiers(true, false, false);
@@ -719,7 +719,7 @@ fn the_macro_editor_takes_a_shift_click_and_only_a_shift_click() {
     );
     assert_eq!(
         s.take_spell_casts(),
-        vec![(133, false)],
+        vec![(133, CastAt::Selection)],
         "a right-click casts"
     );
     assert_eq!(
@@ -730,7 +730,7 @@ fn the_macro_editor_takes_a_shift_click_and_only_a_shift_click() {
     assert!(s.cursor_payload().is_none());
 
     click(&mut s, "SpellButton1", "LeftButton");
-    assert_eq!(s.take_spell_casts(), vec![(133, false)]);
+    assert_eq!(s.take_spell_casts(), vec![(133, CastAt::Selection)]);
     assert_eq!(body(&s), "");
 
     // ── Shift-click appends a whole `/cast` line and never casts ──────────────────────────────

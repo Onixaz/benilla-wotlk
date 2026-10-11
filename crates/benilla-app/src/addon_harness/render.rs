@@ -125,6 +125,7 @@ pub(super) fn measure_render(
             action: 403,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     script.set_action_state(

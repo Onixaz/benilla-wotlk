@@ -185,7 +185,7 @@ impl Plugin for UiUnitPlugin {
 #[derive(Resource)]
 pub(crate) struct DefaultLanguagesRes(pub(crate) benilla_formats::DefaultLanguages);
 
-/// `Languages.dbc` in row order, the walk behind `GetNumLaguages`/`GetLanguageByIndex`.
+/// `Languages.dbc` in row order, the walk behind `GetNumLanguages`/`GetLanguageByIndex`.
 #[derive(Resource)]
 pub(crate) struct LanguagesRes(pub(crate) benilla_formats::Languages);
 

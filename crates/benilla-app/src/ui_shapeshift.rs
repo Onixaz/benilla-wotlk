@@ -243,7 +243,9 @@ fn feed_shapeshift_bar(
 /// warrior stances); a force-admitted spell whose aura is up cancels, with no DBC guard since it
 /// has no form id. Anything else casts.
 pub(crate) fn cast_form(cast: &mut crate::spell::ScriptCast, spell_id: u32) {
-    let crate::spell::ScriptCast { targeting, ladder } = cast;
+    let crate::spell::ScriptCast {
+        targeting, ladder, ..
+    } = cast;
     let store = targeting.self_store.iter().next();
     let form_byte = store.map(|s| s.0.unit_shapeshift_form()).unwrap_or(0);
     let d = ladder.spells.as_ref().and_then(|s| s.catalog.get(spell_id));

@@ -19,6 +19,7 @@
 //! unmodeled and refuses locally with "Invalid target".
 
 use benilla_formats::SpellDisplay;
+use benilla_ui::script::CastAt;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
@@ -182,21 +183,6 @@ pub(crate) struct CastContext<'a> {
     pub(crate) self_move_flags: u32,
 }
 
-impl CastContext<'_> {
-    /// Applies the self-cast modifier, `onSelf`: the caster replaces the selection as the bind
-    /// candidate, guid and store both, the pair the autoSelfCast fallback swaps (`0x6e53d7`). It
-    /// is the explicit guid `CastSpell` and `CastSpellByName` hand `ArmCast 0x6e5250` (`0x4b4345`,
-    /// `0x4b4afa`, bound at `0x6e5393`); where `UseAction 0x4e5ee0` applies its own is untraced.
-    pub(crate) fn self_bound(mut self, on_self: bool) -> Self {
-        if on_self {
-            self.selection_guid = self.self_guid;
-            self.rel.target_store = self.rel.self_store;
-            self.rel.group.target_guid = self.self_guid;
-        }
-        self
-    }
-}
-
 /// Positions and the two units for the pre-send range refusal: the client's cast runs
 /// `CanTargetUnit 0x6e4440` and `IsTargetInRange 0x6e47b0` before the commit, so an out-of-range
 /// press refuses locally and none of the commit tail runs.
@@ -312,14 +298,72 @@ impl CastTargeting<'_, '_> {
             self_move_flags: self.player.as_deref().map_or(0, |p| p.move_flags()),
         }
     }
+
+    /// This frame's [`CastContext`] aimed where a cast verb's target argument points: the guid
+    /// pair `UseAction`, `CastSpell`, `CastSpellByName` and `CastSpellByID` hand the cast entry
+    /// `0x80da40` replaces the selection as the bind candidate, with its store, position and reach.
+    /// A token naming nobody leaves no candidate, as the sentinel guid `0x60b00c` writes finds no
+    /// object; the `autoSelfCast` fallback still applies after it.
+    pub(crate) fn context_at(&self, aim: Aim) -> CastContext<'_> {
+        let mut ctx = self.context();
+        let Aim::Unit(guid) = aim else {
+            return ctx;
+        };
+        let entity = guid.and_then(|g| self.index.as_deref()?.0.get(&g).copied());
+        let store = entity.and_then(|e| self.stores.get(e).ok());
+        ctx.selection_guid = guid;
+        ctx.rel.target_store = store;
+        ctx.rel.target_owner_store = owner_store(store, self.index.as_deref(), &self.stores);
+        ctx.rel.group.target_guid = guid;
+        ctx.range.target_pos = entity
+            .and_then(|e| self.transforms.get(e).ok())
+            .map(|t| t.translation);
+        ctx.range.target = entity.and_then(|e| self.range_units.unit(e));
+        ctx
+    }
+
+    /// Resolve a cast verb's target where its call takes effect, after the calls before it
+    /// committed: the selection, the active player, or the unit a token names (`None`, nobody).
+    pub(crate) fn aim(&self, tokens: &crate::ui_unit::UnitTokens, at: &CastAt) -> Aim {
+        match at {
+            CastAt::Selection => Aim::Selection,
+            CastAt::Player => Aim::Unit(self.self_guid.0),
+            CastAt::Unit(token) => Aim::Unit(tokens.resolve(token, &self.selection).map(|u| u.1)),
+        }
+    }
+}
+
+/// Where a cast is aimed once its target argument is resolved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Aim {
+    /// The selection as it stands.
+    Selection,
+    /// An explicit guid, `None` for a token naming nobody.
+    Unit(Option<u64>),
+}
+
+impl Aim {
+    /// TryCast's guid argument, which the attack pick tries before the selection.
+    pub(crate) fn passed(self) -> Option<u64> {
+        match self {
+            Aim::Selection => None,
+            Aim::Unit(guid) => guid,
+        }
+    }
 }
 
 /// `EQUIPMENT_SLOT_MAINHAND` (the client reads it at `0x6e538b`, offset `0x78 == 15 * 8`).
 const EQUIPMENT_SLOT_MAINHAND: u8 = 15;
 
-/// The `autoSelfCast` CVar (name `0x870dc0`, read at `0x6e53d7`; reference default `"0"`).
-#[derive(bevy::prelude::Resource, Default)]
+/// The `autoSelfCast` CVar, on by default as 12340 registers it (`0x51dbee`, default `"1"`).
+#[derive(bevy::prelude::Resource)]
 pub(crate) struct AutoSelfCast(pub(crate) bool);
+
+impl Default for AutoSelfCast {
+    fn default() -> Self {
+        Self(true)
+    }
+}
 
 /// `autoSelfCast`'s change callback: a flag.
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut auto: ResMut<AutoSelfCast>) {
@@ -526,8 +570,8 @@ mod tests {
     #[test]
     fn auto_self_cast_boots_at_the_reference_default() {
         assert!(
-            !AutoSelfCast::default().0,
-            "autoSelfCast defaults to the reference's disabled state"
+            AutoSelfCast::default().0,
+            "autoSelfCast defaults to 12340's \"1\" (0x51dbee)"
         );
     }
 

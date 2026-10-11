@@ -100,6 +100,39 @@ pub fn parse(text: &str) -> Result<Vec<Binding>, Error> {
     Ok(out)
 }
 
+/// One `<ModifiedClick action="X" default="Y"/>`: the modifier set `IsModifiedClick("X")` tests
+/// until `SetModifiedClick` rebinds it. The stock file declares sixteen (`SELFCAST` is `ALT`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModifiedClick {
+    pub action: String,
+    /// The binding string, `ALT`, `SHIFT-BUTTON1` or `NONE`.
+    pub default: String,
+}
+
+/// The root's `<ModifiedClick>` children in document order, the tag matched case-insensitively
+/// as `<Binding>` is. A row missing either attribute is skipped; the stock file has none.
+pub fn parse_modified_clicks(text: &str) -> Result<Vec<ModifiedClick>, Error> {
+    let repaired;
+    let doc = match roxmltree::Document::parse(text) {
+        Ok(doc) => doc,
+        Err(roxmltree::Error::UnknownNamespace(..)) => {
+            repaired = crate::framexml::bind_undeclared_prefixes(text);
+            roxmltree::Document::parse(&repaired).map_err(Error::Xml)?
+        }
+        Err(e) => return Err(Error::Xml(e)),
+    };
+    Ok(doc
+        .root_element()
+        .children()
+        .filter(|n| n.is_element() && n.tag_name().name().eq_ignore_ascii_case("ModifiedClick"))
+        .filter_map(|n| {
+            let action = attr_ci(n, "action").filter(|a| !a.is_empty())?;
+            let default = attr_ci(n, "default")?;
+            Some(ModifiedClick { action, default })
+        })
+        .collect())
+}
+
 /// Case-insensitive attribute lookup, as the reference's `GetAttribute 0x6f2cf0` folds case.
 fn attr_ci(node: roxmltree::Node, name: &str) -> Option<String> {
     node.attributes()

@@ -111,8 +111,7 @@ impl AttackPress<'_, '_> {
     /// ([`crate::spell::HeldForPick`]): the validator alone, with no swing after it. Whether the
     /// cast goes on, at the unit the pick left selected.
     pub(crate) fn pick_for_cast(&mut self, held: crate::spell::HeldCast) -> bool {
-        let caster = self.pick.player().1.filter(|_| held.on_self);
-        self.validate(caster).is_some()
+        self.validate(held.passed).is_some()
     }
 
     /// The attack validator `0x612df0`: its actor checks, then its target pick.
@@ -187,6 +186,8 @@ pub(crate) struct ActionPress<'w, 's> {
     ui_errors: ResMut<'w, UiErrorKeys>,
     ladder: CastLadder<'w, 's>,
     gate: crate::ui_bind_confirm::BindGate<'w>,
+    /// Resolves the press's unit token where it takes effect.
+    tokens: crate::ui_unit::UnitTokens<'w, 's>,
 }
 
 /// What a `UseAction` press leaves to another applier.
@@ -213,6 +214,7 @@ pub(crate) fn use_action(
         ui_errors,
         ladder,
         gate,
+        tokens,
     } = p;
     let selection = &targeting.selection;
     let action = press.action;
@@ -257,16 +259,11 @@ pub(crate) fn use_action(
                 }
             }
             debug!(
-                "ui_action: cast {} (target {:?}{})",
-                b.action,
-                selection.guid,
-                if press.on_self { ", on self" } else { "" }
+                "ui_action: cast {} at {:?} (selection {:?})",
+                b.action, press.at, selection.guid
             );
-            ladder.send_spell(
-                b.action,
-                &targeting.context().self_bound(press.on_self),
-                press.on_self,
-            );
+            let aim = targeting.aim(tokens, &press.at);
+            ladder.send_spell(b.action, &targeting.context_at(aim), aim.passed());
         }
         // An item action names an entry, so the click finds a copy. A miss only logs, with no
         // red error line: nothing was attempted.

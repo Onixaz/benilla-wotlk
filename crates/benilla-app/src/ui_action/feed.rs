@@ -351,7 +351,7 @@ pub(super) fn feed_actions(
         // pushed and fires `ACTIONBAR_SLOT_CHANGED` with its Lua action id.
         let mut fresh: HashMap<u32, ActionSlot> = HashMap::new();
         for (slot, button) in &actions.buttons {
-            let (texture, count, consumable) = match button.kind {
+            let (texture, count, consumable, stackable) = match button.kind {
                 ACTION_KIND_SPELL => {
                     let icon = spells.as_ref().and_then(|sp| {
                         let d = sp.catalog.get(button.action)?;
@@ -366,7 +366,7 @@ pub(super) fn feed_actions(
                             &commands,
                         )
                     });
-                    (icon, 0, false)
+                    (icon, 0, false, false)
                 }
                 ACTION_KIND_ITEM => {
                     // Never nil: the reference's resolver `0x5d88b0` returns the question mark,
@@ -382,7 +382,9 @@ pub(super) fn feed_actions(
                     // The Count gate (`0x4e5250`, [`ItemInfo::is_consumable`]) reads the icon's
                     // template, so it rides the same push.
                     let consumable = template.as_ref().is_some_and(|t| t.is_consumable());
-                    (Some(texture), count, consumable)
+                    // `IsStackableAction` (`0x5a8470`): the same template stacks past one.
+                    let stackable = template.as_ref().is_some_and(|t| t.stackable > 1);
+                    (Some(texture), count, consumable, stackable)
                 }
                 // A macro slot shows the macro's own icon (`0x4e6bf9` calls `0x4f0fd0`), never its
                 // bound spell's, though its state follows the bound spell.
@@ -392,8 +394,9 @@ pub(super) fn feed_actions(
                         .and_then(|m| m.texture.clone()),
                     0,
                     false,
+                    false,
                 ),
-                _ => (None, 0, false),
+                _ => (None, 0, false, false),
             };
             fresh.insert(
                 u32::from(*slot) + 1,
@@ -403,6 +406,7 @@ pub(super) fn feed_actions(
                     action: button.action,
                     count,
                     consumable,
+                    stackable,
                 },
             );
         }

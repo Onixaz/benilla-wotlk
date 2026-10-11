@@ -96,6 +96,7 @@ fn shipped_multibars_drive_end_to_end() {
             action: 100,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.set_action(
@@ -106,6 +107,7 @@ fn shipped_multibars_drive_end_to_end() {
             action: 200,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.set_action(
@@ -116,6 +118,7 @@ fn shipped_multibars_drive_end_to_end() {
             action: 300,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -452,6 +455,7 @@ fn multibar_hover_renders_the_buttons_own_action() {
                 action: spell,
                 count: 0,
                 consumable: false,
+                stackable: false,
             }),
         );
         s.set_spell_tooltip(
@@ -794,6 +798,7 @@ fn a_held_payload_ghosts_the_empty_wells_it_opens() {
             action: 100,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     // Raise after PLAYER_ENTERING_WORLD: its arm re-reads the server's toggle byte and would lower
@@ -860,6 +865,7 @@ fn a_held_payload_ghosts_the_empty_wells_it_opens() {
             action: 101,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     s.fire_event("ACTIONBAR_SLOT_CHANGED", vec![ScriptValue::Number(2.0)]);
@@ -1230,6 +1236,7 @@ fn an_extra_bars_empty_well_keeps_its_bound_hotkey_label() {
             action: 200,
             count: 0,
             consumable: false,
+            stackable: false,
         }),
     );
     // An occupied well and two empty ones, all bound, held open so the empty ones show.
