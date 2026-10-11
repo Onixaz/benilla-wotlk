@@ -4,7 +4,6 @@
 use std::io::Cursor;
 
 use anyhow::Result;
-use benilla_expansions::Expansion;
 use benilla_wmo::{parse_wmo, Color, ParsedWmo, WmoGroup, WmoLiquid};
 
 use super::{find_wmo_chunk, parse_wmo_root, WmoRoot};
@@ -35,87 +34,70 @@ fn wmo_water_alpha_v(opacity_byte: u8) -> f32 {
 /// the whole-group submersion override. [`WmoLiquidRule::group_liquid`] resolves to this form.
 pub const NO_GROUP_LIQUID: u32 = 0xf;
 
-/// Root MOHD flag: the WMO's liquid is stored as `LiquidType` ids (read by 3.3.5a only).
+/// Root MOHD flag: the WMO's liquid is stored as `LiquidType` ids.
 const MOHD_LIQUID_TYPE_IDS: u16 = 0x4;
 
-/// MOGP flag making a 3.3.5a water liquid the ocean kind (`0x7d7331`).
+/// MOGP flag making a water liquid the ocean kind (`0x7d7331`).
 const MOGP_WATER_IS_OCEAN: u32 = 0x80000;
 
-/// How the target client reads a WMO's liquid type, MOGP `groupLiquid` and the MLIQ tile nibbles:
-/// one rule per root, from [`WmoLiquidRule::for_root`].
+/// How the client reads a WMO's liquid type, MOGP `groupLiquid` and the MLIQ tile nibbles: both
+/// become a `LiquidType` id (`0x7d8390`, `0x7d7dbb`). Under root MOHD flag `0x4` `groupLiquid` is
+/// the id itself, 0 none; otherwise it is the nibble + 1, `0xf` none. One rule per root, from
+/// [`WmoLiquidRule::for_root`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WmoLiquidRule {
-    /// 1.12.1: `groupLiquid` is a type nibble, [`NO_GROUP_LIQUID`] none, and a nibble names its
-    /// kind directly ([`LiquidKind::from_nibble`]).
-    TypeNibble,
-    /// 3.3.5a: both become a `LiquidType` id (`0x7d8390`, `0x7d7dbb`). Under root MOHD flag `0x4`
-    /// `groupLiquid` is the id itself, 0 none; otherwise it is the nibble + 1, `0xf` none.
-    LiquidTypeId { mohd_ids: bool },
+pub struct WmoLiquidRule {
+    /// Root MOHD flag `0x4`: `groupLiquid` is a `LiquidType` id.
+    pub mohd_ids: bool,
 }
 
 impl WmoLiquidRule {
-    /// The rule `expansion` reads `root`'s liquid with.
-    pub fn for_root(expansion: Expansion, root: &WmoRoot) -> Self {
-        if expansion.profile().wmo_liquid_type_ids {
-            WmoLiquidRule::LiquidTypeId {
-                mohd_ids: root.flags() & MOHD_LIQUID_TYPE_IDS != 0,
-            }
-        } else {
-            WmoLiquidRule::TypeNibble
+    /// The rule `root`'s liquid is read with.
+    pub fn for_root(root: &WmoRoot) -> Self {
+        WmoLiquidRule {
+            mohd_ids: root.flags() & MOHD_LIQUID_TYPE_IDS != 0,
         }
     }
 
     /// The rule for the group file `group_path` (`<stem>_NNN.wmo`) on `chain`, read off its root
-    /// `<stem>.wmo` against the chain's client; `None` if the root cannot be read.
+    /// `<stem>.wmo`; `None` if the root cannot be read.
     pub fn for_group_path(chain: &Chain, group_path: &str) -> Option<Self> {
         let stem = group_path.get(..group_path.len().checked_sub(8)?)?;
         let root = parse_wmo_root(&chain.read(&format!("{stem}.wmo")).ok()?).ok()?;
-        Some(Self::for_root(chain.expansion(), &root))
+        Some(Self::for_root(&root))
     }
 
     /// A group's own liquid as a type nibble, [`NO_GROUP_LIQUID`] when it has none, from its MOGP
     /// `groupLiquid` and flags.
     pub fn group_liquid(self, group_liquid: u32, mogp_flags: u32) -> u32 {
-        match self {
-            WmoLiquidRule::TypeNibble => group_liquid,
-            WmoLiquidRule::LiquidTypeId { mohd_ids } => {
-                let id = if mohd_ids {
-                    group_liquid
-                } else if group_liquid == NO_GROUP_LIQUID {
-                    0
-                } else {
-                    group_liquid.wrapping_add(1)
-                };
-                liquid_type_nibble(id, mogp_flags).map_or(NO_GROUP_LIQUID, u32::from)
-            }
-        }
+        let id = if self.mohd_ids {
+            group_liquid
+        } else if group_liquid == NO_GROUP_LIQUID {
+            0
+        } else {
+            group_liquid.wrapping_add(1)
+        };
+        liquid_type_nibble(id, mogp_flags).map_or(NO_GROUP_LIQUID, u32::from)
     }
 
     /// The kind a group is wholly submerged in, as a type nibble, [`NO_GROUP_LIQUID`] when it is
-    /// not; `has_grid` is [`wmo_group_has_liquid_grid`]. 1.12.1's point query `0x6b9f10` floods on
-    /// the group liquid alone; 3.3.5a's `0x7c8360` floods only a group with no MLIQ grid, and tests
-    /// a gridded group's surface height instead.
+    /// not; `has_grid` is [`wmo_group_has_liquid_grid`]. The point query `0x7c8360` floods only a
+    /// group with no MLIQ grid, and tests a gridded group's surface height instead.
     pub fn flood(self, group_liquid: u32, mogp_flags: u32, has_grid: bool) -> u32 {
-        match self {
-            WmoLiquidRule::TypeNibble => group_liquid,
-            WmoLiquidRule::LiquidTypeId { .. } if has_grid => NO_GROUP_LIQUID,
-            WmoLiquidRule::LiquidTypeId { .. } => self.group_liquid(group_liquid, mogp_flags),
+        if has_grid {
+            NO_GROUP_LIQUID
+        } else {
+            self.group_liquid(group_liquid, mogp_flags)
         }
     }
 
-    /// An MLIQ tile's type nibble as this client reads it; the 3.3.5a tile id is the nibble + 1
+    /// An MLIQ tile's type nibble as the client reads it; the tile id is the nibble + 1
     /// (`0x7c8d80`).
     fn tile_nibble(self, nibble: u8, mogp_flags: u32) -> Option<u8> {
-        match self {
-            WmoLiquidRule::TypeNibble => Some(nibble),
-            WmoLiquidRule::LiquidTypeId { .. } => {
-                liquid_type_nibble(u32::from(nibble) + 1, mogp_flags)
-            }
-        }
+        liquid_type_nibble(u32::from(nibble) + 1, mogp_flags)
     }
 }
 
-/// A 3.3.5a `LiquidType` id as the type nibble of its WMO kind, `None` for 0 (no liquid). The
+/// A `LiquidType` id as the type nibble of its WMO kind, `None` for 0 (no liquid). The
 /// client maps ids 1..=20 by `(id − 1) & 3` (`0x7d7310`): water (13, or ocean 14 under MOGP
 /// `0x80000`), ocean (14), magma (19), slime (20). A higher id is kept as a `LiquidType` row whose
 /// class benilla does not read; no 12340 group or tile carries one (`tests/wmo_liquid.rs`).
@@ -144,11 +126,9 @@ pub struct WmoGroupHeader {
     /// reference's interior-fog selector `0x69de20`; the offset is fixed empirically
     /// (`tests/wmo_fogs.rs`). Zero if the header is short.
     pub fog_indices: [u8; 4],
-    /// MOGP `groupLiquid` at `0x34`, raw; [`WmoLiquidRule::group_liquid`] reads it. On 1.12.1 it is
-    /// [`NO_GROUP_LIQUID`] on all but 13 of the 5220 shipped group files. A group with liquid of
-    /// its own but no MLIQ is wholly submerged: the reference's point query (1.12.1 `0x6b9f10`,
-    /// 3.3.5a `0x7c8360`) answers it at height `FLT_MAX` with no Z test. A short header reads as no
-    /// liquid.
+    /// MOGP `groupLiquid` at `0x34`, raw; [`WmoLiquidRule::group_liquid`] reads it. A group with
+    /// liquid of its own but no MLIQ is wholly submerged: the reference's point query (`0x7c8360`)
+    /// answers it at height `FLT_MAX` with no Z test. A short header reads as no liquid.
     pub group_liquid: u32,
 }
 
@@ -718,6 +698,9 @@ mod tests {
     use super::super::test_bytes::chunk;
     use super::*;
 
+    /// A root without MOHD `0x4`: `groupLiquid` and the tiles carry the type nibble.
+    const LEGACY: WmoLiquidRule = WmoLiquidRule { mohd_ids: false };
+
     #[test]
     fn builds_wmo_water_mesh_skipping_holes() {
         // A 3×2-vertex grid (2×1 tiles): left tile wet (lake_a, nibble 4), right tile a hole (0xf).
@@ -733,7 +716,7 @@ mod tests {
             opacity: vec![0, 51, 102, 153, 204, 255],
             tile_flags: vec![0x44, 0x0f], // wet (type 4 + fishable), hole
         };
-        let m = build_wmo_liquid_mesh(&lq, WmoLiquidRule::TypeNibble, 0xf, 0).expect("a wet mesh");
+        let m = build_wmo_liquid_mesh(&lq, LEGACY, 0xf, 0).expect("a wet mesh");
         assert_eq!(m.kind, LiquidKind::Still);
         assert_eq!(m.positions.len(), 6); // full 3×2 grid emitted
         assert_eq!(m.indices.len(), 6); // one wet tile → 2 tris → 6 indices
@@ -777,8 +760,8 @@ mod tests {
             opacity: Vec::new(),
             tile_flags: vec![0x44, 0x44],
         };
-        let ma = build_wmo_liquid_mesh(&a, WmoLiquidRule::TypeNibble, 0xf, 0).unwrap();
-        let mb = build_wmo_liquid_mesh(&b, WmoLiquidRule::TypeNibble, 0xf, 0).unwrap();
+        let ma = build_wmo_liquid_mesh(&a, LEGACY, 0xf, 0).unwrap();
+        let mb = build_wmo_liquid_mesh(&b, LEGACY, 0xf, 0).unwrap();
         // A's vertex (2, 0) and B's (0, 0) are the same point.
         let (ua, ub) = (ma.uvs[2], mb.uvs[0]);
         assert!(
@@ -803,7 +786,7 @@ mod tests {
             opacity: Vec::new(),
             tile_flags: vec![0x40], // nibble 0 (would be Still), but the override wins
         };
-        let m = build_wmo_liquid_mesh(&lq, WmoLiquidRule::TypeNibble, 2, 0).expect("magma mesh");
+        let m = build_wmo_liquid_mesh(&lq, LEGACY, 2, 0).expect("magma mesh");
         assert_eq!(m.kind, LiquidKind::Magma);
         assert!(m.depths.iter().all(|&v| v == 0.0)); // fullbright ⇒ depth V unused
 
@@ -811,7 +794,7 @@ mod tests {
             tile_flags: vec![0x0f],
             ..lq
         };
-        assert!(build_wmo_liquid_mesh(&all_holes, WmoLiquidRule::TypeNibble, 0xf, 0).is_none());
+        assert!(build_wmo_liquid_mesh(&all_holes, LEGACY, 0xf, 0).is_none());
     }
 
     #[test]
@@ -874,20 +857,11 @@ mod tests {
         );
     }
 
-    /// 1.12.1 reads `groupLiquid` raw: `0xf` is dry and every other value floods the group.
-    #[test]
-    fn classic_reads_group_liquid_as_a_type_nibble() {
-        let rule = WmoLiquidRule::TypeNibble;
-        for raw in [0, 1, 2, 3, NO_GROUP_LIQUID] {
-            assert_eq!(rule.group_liquid(raw, MOGP_WATER_IS_OCEAN), raw);
-        }
-    }
-
-    /// 3.3.5a under MOHD `0x4`: `groupLiquid` is a `LiquidType` id, 0 dry. The ids are the shipped
+    /// Under MOHD `0x4`: `groupLiquid` is a `LiquidType` id, 0 dry. The ids are the shipped
     /// ones: Stormwind's canals 5, Ironforge's forge 3, Naxxramas 4, Blackrock Depths 7.
     #[test]
     fn wotlk_reads_group_liquid_as_a_liquid_type_id_under_mohd_0x4() {
-        let rule = WmoLiquidRule::LiquidTypeId { mohd_ids: true };
+        let rule = WmoLiquidRule { mohd_ids: true };
         assert_eq!(rule.group_liquid(0, 0), NO_GROUP_LIQUID, "0 is no liquid");
         assert_eq!(rule.group_liquid(1, 0), 0);
         assert_eq!(rule.group_liquid(5, 0), 0, "slow water is water");
@@ -905,11 +879,10 @@ mod tests {
         );
     }
 
-    /// A 3.3.5a group with an MLIQ grid is never flooded, whatever its id (Stormwind's canals, id
-    /// 5); 1.12.1 floods on the group liquid alone.
+    /// A group with an MLIQ grid is never flooded, whatever its id (Stormwind's canals, id 5).
     #[test]
-    fn only_a_gridless_group_floods_on_wotlk() {
-        let ids = WmoLiquidRule::LiquidTypeId { mohd_ids: true };
+    fn only_a_gridless_group_floods() {
+        let ids = WmoLiquidRule { mohd_ids: true };
         assert_eq!(
             ids.flood(5, 0, true),
             NO_GROUP_LIQUID,
@@ -917,16 +890,12 @@ mod tests {
         );
         assert_eq!(ids.flood(1, 0, false), 0, "Gundrak's gridless water floods");
         assert_eq!(ids.flood(0, 0, false), NO_GROUP_LIQUID);
-        let classic = WmoLiquidRule::TypeNibble;
-        assert_eq!(classic.flood(0, 0, false), 0);
-        assert_eq!(classic.flood(0, 0, true), 0);
-        assert_eq!(classic.flood(NO_GROUP_LIQUID, 0, true), NO_GROUP_LIQUID);
     }
 
-    /// 3.3.5a without MOHD `0x4`: the 1.12.1 nibble, shifted to an id, with `0xf` still dry.
+    /// Without MOHD `0x4`: the type nibble, shifted to an id, with `0xf` still dry.
     #[test]
     fn wotlk_reads_a_legacy_group_liquid_as_the_nibble() {
-        let rule = WmoLiquidRule::LiquidTypeId { mohd_ids: false };
+        let rule = LEGACY;
         assert_eq!(rule.group_liquid(NO_GROUP_LIQUID, 0), NO_GROUP_LIQUID);
         assert_eq!(rule.group_liquid(0, 0), 0);
         assert_eq!(rule.group_liquid(0, MOGP_WATER_IS_OCEAN), 1);
@@ -935,7 +904,7 @@ mod tests {
         }
     }
 
-    /// A 3.3.5a MLIQ under MOHD `0x4` carries tile nibble 0 and its kind in `groupLiquid`; with
+    /// An MLIQ under MOHD `0x4` carries tile nibble 0 and its kind in `groupLiquid`; with
     /// none there, the first wet tile names it, by class.
     #[test]
     fn wotlk_mliq_kind_comes_from_the_liquid_type_id() {
@@ -950,20 +919,20 @@ mod tests {
             opacity: Vec::new(),
             tile_flags: vec![0x00],
         };
-        let ids = WmoLiquidRule::LiquidTypeId { mohd_ids: true };
+        let ids = WmoLiquidRule { mohd_ids: true };
         let mesh =
             |rule, group_liquid, flags| build_wmo_liquid_mesh(&lq, rule, group_liquid, flags);
         assert_eq!(mesh(ids, 3, 0).expect("forge").kind, LiquidKind::Magma);
         assert_eq!(mesh(ids, 5, 0).expect("canal").kind, LiquidKind::Still);
         assert_eq!(mesh(ids, 0, 0).expect("tile").kind, LiquidKind::Still);
-        let legacy = WmoLiquidRule::LiquidTypeId { mohd_ids: false };
+        let legacy = LEGACY;
         assert_eq!(
             mesh(legacy, NO_GROUP_LIQUID, MOGP_WATER_IS_OCEAN)
                 .expect("ocean")
                 .kind,
             LiquidKind::Ocean
         );
-        // 1.12.1's rapids nibble 8 is class 0 on 3.3.5a.
+        // The old rapids nibble 8 is class 0.
         let eight = WmoLiquid {
             tile_flags: vec![0x08],
             ..lq
@@ -973,12 +942,6 @@ mod tests {
                 .expect("water")
                 .kind,
             LiquidKind::Still
-        );
-        assert_eq!(
-            build_wmo_liquid_mesh(&eight, WmoLiquidRule::TypeNibble, NO_GROUP_LIQUID, 0)
-                .expect("rapids")
-                .kind,
-            LiquidKind::Rapids
         );
     }
 }

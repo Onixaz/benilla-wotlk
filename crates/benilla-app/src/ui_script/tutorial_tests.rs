@@ -39,6 +39,7 @@ fn trigger(s: &mut UiScript, published: i64) {
 
 /// The click's `FlagTutorial` takes the published id; the app drains it 0-based.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_trigger_queues_an_alert_whose_click_opens_the_window_and_flags_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = session();
@@ -91,6 +92,7 @@ fn a_trigger_queues_an_alert_whose_click_opens_the_window_and_flags_it() {
 
 /// Hiding with "Display Tips" unticked clears every tutorial (`TutorialFrame.lua:7`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_unticked_checkbox_clears_the_tutorials_on_hide() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = session();
@@ -110,6 +112,7 @@ fn an_unticked_checkbox_clears_the_tutorials_on_hide() {
 /// `CINEMATIC_STOP` clicks a queued Welcome alert, id 42, and centres the window
 /// (`TutorialFrame.lua:104`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn cinematic_stop_opens_the_welcome_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = session();

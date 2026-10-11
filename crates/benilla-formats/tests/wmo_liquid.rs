@@ -1,7 +1,6 @@
 //! WMO MLIQ liquid surfaces: an `xverts × yverts` grid with one tile fewer each way, and a per-tile
 //! type nibble where `0xf` is a hole and 4 is lake_a.
 
-use benilla_expansions::Expansion;
 use benilla_formats::{
     parse_wmo_root, wmo_group_has_liquid_grid, wmo_group_header, wmo_group_liquid_mesh, Chain,
     LiquidKind, WmoLiquidRule, NO_GROUP_LIQUID,
@@ -14,6 +13,7 @@ fn rule(chain: &Chain, group_path: &str) -> WmoLiquidRule {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn stormwind_canal_group_builds_still_water() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");
@@ -70,6 +70,7 @@ fn stormwind_canal_group_builds_still_water() {
 /// at `0.0`; the builder gives every undrawn vertex the lowest drawn height, so the mesh bounds
 /// stay on the sheet (186 of 868 such vertices in Blackfathom's pool, 36 of 108 in the canal).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hole_corner_heights_never_reach_the_mesh_bounds() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");
@@ -117,6 +118,7 @@ fn hole_corner_heights_never_reach_the_mesh_bounds() {
 /// `MapObjExtWater0.bls` and lights a vertex normal; the interior arm is fixed-function, unlit, and
 /// takes its body colour from `MOMT[materialId].diffColor`. Each pool carries a per-vertex opacity.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_two_water_arms_carry_their_own_inputs() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");
@@ -174,6 +176,7 @@ fn the_two_water_arms_carry_their_own_inputs() {
 /// WMO water repeats its texture once per 4.167-yd grid cell: `0x6b6630` writes `u = i, v = j`
 /// from loop counters that start at 0.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn wmo_water_repeats_once_per_grid_cell() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");
@@ -201,21 +204,18 @@ fn wmo_water_repeats_once_per_grid_cell() {
     );
 }
 
-/// 3.3.5a's Stormwind root sets MOHD `0x4`, so `groupLiquid` 0 on its streets is no liquid, and
+/// Stormwind's root sets MOHD `0x4`, so `groupLiquid` 0 on its streets is no liquid, and
 /// its canal groups (id 5) test their MLIQ height rather than flood: no group is flooded, and the
 /// canals keep their water.
 #[test]
 fn wotlk_stormwind_streets_are_dry_and_its_canals_wet() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open patch chain");
-    if reader.expansion() != Expansion::Wotlk {
-        return; // 1.12.1 reads `groupLiquid` raw: `classic_reads_group_liquid_as_a_type_nibble`
-    }
     let stem = r"world\wmo\azeroth\buildings\stormwind\stormwind";
     let root = parse_wmo_root(&reader.read(&format!("{stem}.wmo")).expect("read root"))
         .expect("parse root");
-    let rule = WmoLiquidRule::for_root(Expansion::Wotlk, &root);
-    assert_eq!(rule, WmoLiquidRule::LiquidTypeId { mohd_ids: true });
+    let rule = WmoLiquidRule::for_root(&root);
+    assert_eq!(rule, WmoLiquidRule { mohd_ids: true });
 
     let (mut flooded, mut pools) = (Vec::new(), 0);
     for gi in 0..root.group_count() {
@@ -240,15 +240,12 @@ fn wotlk_stormwind_streets_are_dry_and_its_canals_wet() {
     assert!(pools > 0, "the canals carry water");
 }
 
-/// Every 3.3.5a `LiquidType` id a group stores under MOHD `0x4` is one the client maps to a WMO
+/// Every `LiquidType` id a group stores under MOHD `0x4` is one the client maps to a WMO
 /// kind itself (1..=20); a higher id's class lives in `LiquidType.dbc`, which is not read.
 #[test]
 fn wotlk_group_liquid_ids_stay_in_the_wmo_range() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open patch chain");
-    if reader.expansion() != Expansion::Wotlk {
-        return;
-    }
     let mut checked = 0;
     for entry in reader.list().expect("list") {
         let lower = entry.name.to_ascii_lowercase();
@@ -266,9 +263,7 @@ fn wotlk_group_liquid_ids_stay_in_the_wmo_range() {
             continue;
         };
         let Ok(root) = root else { continue };
-        if WmoLiquidRule::for_root(Expansion::Wotlk, &root)
-            != (WmoLiquidRule::LiquidTypeId { mohd_ids: true })
-        {
+        if !WmoLiquidRule::for_root(&root).mohd_ids {
             continue;
         }
         for gi in 0..root.group_count() {

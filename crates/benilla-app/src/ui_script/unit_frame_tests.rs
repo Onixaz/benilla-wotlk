@@ -42,6 +42,7 @@ fn load_unit_frames_with(s: &UiScript, extra: &[&str]) {
 
 /// The stock unit frames driven by snapshots: bar fill, the target's hide and show, a late name.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_unit_frames_drive_end_to_end() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -258,6 +259,7 @@ fn extracted_text_height(s: &mut UiScript, text: &str) -> Option<f32> {
 /// spell crit yellow at ×1.5, an absorb's word at ×0.75, faded 0.2 s in, held 0.7 s, 0.3 s out
 /// (`CombatFeedback.lua:2-4`). The frame takes only `arg1 == "player"` (`PlayerFrame.lua:88-91`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn unit_combat_drives_the_player_hit_indicator() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -352,6 +354,7 @@ fn unit_combat_drives_the_player_hit_indicator() {
 /// Stock `PlayerFrame_OnClick` (`PlayerFrame.lua:156-172`) targets the player on a left click and
 /// opens the SELF popup on a right click: no menu solo, the leader's rows in a party.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn left_clicking_the_player_frame_targets_self() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -456,6 +459,7 @@ fn left_clicking_the_player_frame_targets_self() {
 /// A leader opens the SELF popup, hovers Raid Target Icon (a `hasArrow` row's OnEnter opens
 /// `DropDownList2`) and clicks Skull; the mark queues against the menu's unit.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn raid_mark_clicks_through_the_nested_level() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -561,6 +565,7 @@ fn raid_mark_clicks_through_the_nested_level() {
 /// (`QuestLogFrame.lua:14-20`, `:585-599`): an attackable target's number takes its difficulty
 /// colour, and a corpse or `UnitLevel` −1 (hostile, 10+ up) shows the skull instead.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_target_frame_runs_the_level_law() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::PlayerReqState;
@@ -744,6 +749,7 @@ fn shipped_target_frame_runs_the_level_law() {
 /// The PvP icon's three branches (`PlayerFrame.lua:55-79`): FFA outranks the faction flag, which
 /// needs a side, and `igPVPUpdate` sounds on `UNIT_FACTION`, not on every repaint.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn pvp_icon_follows_the_three_branch_law() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -860,6 +866,7 @@ fn plate_color(s: &mut UiScript) -> [f32; 4] {
 
 /// A friendly player's plate is green when PvP-flagged, else blue (`TargetFrame.lua:163-172`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn flagged_friendly_player_plate_is_green() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -903,6 +910,7 @@ fn flagged_friendly_player_plate_is_green() {
 /// binding adds one (`0x51683e`), so `UnitReaction` answers 7 and stock `TargetFrame_CheckFaction`
 /// finds the last of `UnitReactionColor`'s seven entries (`TargetFrame.lua:6-14`, `:183`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_exalted_npc_target_reads_revered_and_its_plate_is_green() {
     use crate::net::ObjectStore;
     use crate::target::{stormwind_fixture, HUMAN_WARRIOR};
@@ -962,6 +970,7 @@ fn an_exalted_npc_target_reads_revered_and_its_plate_is_green() {
 /// quads: elite, rare-elite and world boss share the Elite art (1.12 ships no rare-elite border),
 /// and `UNIT_CLASSIFICATION_CHANGED` alone repaints it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn target_frame_border_follows_the_classification_law() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1079,6 +1088,7 @@ fn target_frame_border_follows_the_classification_law() {
 /// so BACKGROUND art clears ARTWORK fills only from a higher level: the player's art hangs two
 /// frames down (`PlayerFrame.xml:50-55`), the target's bars drop one (`TargetFrame.lua:32-34`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_ring_art_paints_over_the_bars() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1141,6 +1151,7 @@ fn the_ring_art_paints_over_the_bars() {
 
 /// The same on the party member frames, which reach it through their own template.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_party_art_paints_over_the_bars() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1260,6 +1271,7 @@ fn the_party_art_paints_over_the_bars() {
 /// the maxima (`UnitHealthMax`, `0x5175b0`), so both bars run empty over a full track and the dead
 /// text lights on `UnitHealth("target") <= 0` (`TargetFrame.lua:221`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_feigning_target_paints_empty_bars_and_the_dead_text() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1353,6 +1365,7 @@ fn a_feigning_target_paints_empty_bars_and_the_dead_text() {
 /// zzz and its glow, pulsed on a 0.5 s wave by `PlayerFrame_OnUpdate`; auto-attack shows the red
 /// ring, swords and disc; resting wins when both hold, and neither clears them all.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_player_frame_flashes_zzz_while_resting() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1450,6 +1463,7 @@ fn the_player_frame_flashes_zzz_while_resting() {
 /// (`PlayerFrame.xml:70`) and the badge in OVERLAY (`:171`), and text never ducks under a texture
 /// of its own layer.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_rest_badge_covers_the_level_number() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1503,6 +1517,7 @@ fn the_rest_badge_covers_the_level_number() {
 /// (`PlayerFrame.xml:302`, `:330`), the pet's two and the XP bar. The target's bars have no text
 /// region (`TargetFrame.xml:486-487` names undeclared ones); a hover there shows the unit tooltip.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn status_bar_text_paints_the_player_numerals_but_not_the_targets() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1638,6 +1653,7 @@ fn status_bar_text_paints_the_player_numerals_but_not_the_targets() {
 /// (47,-29), a 7px pitch, so its mana text drops clear to (82,-38) under a bar that ends at -37
 /// (`PetFrame.xml:87-104`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn no_two_numeral_strings_overlap_on_any_frame() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1708,6 +1724,7 @@ fn no_two_numeral_strings_overlap_on_any_frame() {
 /// Addons hook `UnitFrame_OnEnter` by capturing and replacing the global
 /// (`TipBuddy.lua:2770-2773`), so the stock `this`-shaped names must exist.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_unit_frame_hover_hooks_carry_the_references_names() {
     benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();
@@ -1751,6 +1768,7 @@ fn the_unit_frame_hover_hooks_carry_the_references_names() {
 /// Stock `SetRaidTargetIconTexture` (`TargetFrame.lua:475-484`) puts each mark on its cell of the
 /// 4×4 sheet; its row divides by `ROWS`, not `COLUMNS`, which is harmless at 4×4.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_raid_mark_helper_maps_each_index_to_its_cell() {
     benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();
@@ -1789,6 +1807,7 @@ fn the_raid_mark_helper_maps_each_index_to_its_cell() {
 /// `IsPartyLeader()`, the master icon asks that `GetLootMethod`'s party index is 0, the player's
 /// own seat, and that we are grouped.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_player_frame_wears_the_leader_and_master_looter_icons() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::{PartyMemberInfo, PartyState};
@@ -1866,6 +1885,7 @@ fn the_player_frame_wears_the_leader_and_master_looter_icons() {
 /// `PowerBar`: addons read them unguarded (ShaguTweaks' `health-numbers.lua:22`). The list is the
 /// reference's own, so additions pass and only an absence fails.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_unit_frames_publish_every_name_the_reference_declares() {
     benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();
@@ -1966,6 +1986,7 @@ fn the_unit_frames_publish_every_name_the_reference_declares() {
 /// leader crown (1.12 has no AFK or DND badge on a unit frame), so leadership passing to the held
 /// target shows without a re-target.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_target_leader_crown_follows_player_flags_changed() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

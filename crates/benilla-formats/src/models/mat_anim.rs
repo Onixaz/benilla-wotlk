@@ -153,6 +153,7 @@ mod tests {
 
     /// The Stormwind mage portal's shimmer is transparency weight, 3 of its 4 tracks time-varying.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn mage_portal_bakes_a_time_varying_weight_loop() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -187,6 +188,7 @@ mod tests {
     /// `M2Color` alpha keys are `0x7fff` (+1.0) on the copy a sequence shows and `0x8001` (−1.0) on
     /// the one it hides; only a signed decode lets the `A ≤ 0` cull hide it.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn troll_gate_never_draws_its_burnt_twin_at_the_same_time() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -256,6 +258,7 @@ mod tests {
     /// Battle Shout's six additive crescents: staggered alpha pulses, dimming weight constants
     /// (0.2 to 0.4), and RGB tracks cooling from white to red over the 0.9 s clip.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn battle_shout_base_bakes_alpha_and_rgb_loops() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -302,6 +305,7 @@ mod tests {
     /// The voidwalker's skin batches 0 and 1, two shoulder pieces above the body, have weight 0 in
     /// every ordinary sequence and 1 only in Death/131/132; their twins on the body always draw.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn voidwalker_hides_its_death_only_armour_in_every_other_sequence() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -365,6 +369,7 @@ mod tests {
     /// Death. Render, not skin, indices (a billboard batch splits per bone; `benilla-extract
     /// m2alpha` shows both), each re-checked by its vertex count.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn banshee_hides_its_death_only_batches() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -628,6 +633,7 @@ mod tests {
 
     /// `AirElemental.m2`'s Death band fades the body to 0, and the parked clock must still read 0.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn air_elemental_death_leaves_no_opaque_body() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

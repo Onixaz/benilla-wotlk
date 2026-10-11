@@ -56,6 +56,7 @@ fn harness(rank: u32) -> UiScript {
 /// `MSG_TABARDVENDOR_ACTIVATE` fires `OPEN_TABARD_FRAME`; the handler seeds the design from the
 /// guild record and shows the panel (`TabardFrame.lua:25`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_open_event_seeds_the_design_paints_the_cells_and_shows_the_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness(0);
@@ -131,6 +132,7 @@ fn the_open_event_seeds_the_design_paints_the_cells_and_shows_the_window() {
 
 /// No guild or a rank above 0: the no-guild greeting and no Save (`TabardFrame.lua:97`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_non_master_gets_the_no_guild_greeting_and_no_save() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness(3);

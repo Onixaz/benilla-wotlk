@@ -434,6 +434,7 @@ mod tests {
     /// The shipped `Spell.dbc`: exactly five rows need water, Aquatic Form among them, while the
     /// water-forbidden bit is broad (mounts, Travel Form, food and drink).
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_water_bits_split_the_5875_data_the_way_the_gate_assumes() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

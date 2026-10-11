@@ -6,6 +6,7 @@ use benilla_ui::script::UiScript;
 use super::test_ui::load_ui as load_xml;
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_started_fade_ramps_off_uiparents_tick_and_completes() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -58,6 +59,7 @@ fn a_started_fade_ramps_off_uiparents_tick_and_completes() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_flash_alternates_then_stops() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

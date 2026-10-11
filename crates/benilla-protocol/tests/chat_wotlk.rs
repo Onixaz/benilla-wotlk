@@ -3,7 +3,6 @@
 
 mod common;
 
-use benilla_expansions::Expansion;
 use benilla_protocol::messages::{
     self, opcode, ChatMessage, CHAT_MSG_MONSTER_SAY, CHAT_MSG_SYSTEM,
 };
@@ -33,9 +32,7 @@ const MOTD: &str = concat!(
 );
 
 fn decode(body: &[u8]) -> (ChatMessage, usize) {
-    match messages::parse_server_with_tail_as(Expansion::Wotlk, opcode::SMSG_MESSAGECHAT, body)
-        .unwrap()
-    {
+    match messages::parse_server_with_tail(opcode::SMSG_MESSAGECHAT, body).unwrap() {
         (ServerPacket::MessageChat(m), tail) => (m, tail),
         (other, _) => panic!("not a chat line: {}", other.name()),
     }
@@ -54,17 +51,6 @@ fn a_captured_system_line_decodes_whole_as_the_shared_system_type() {
     assert_eq!(m.chat_type, CHAT_MSG_SYSTEM);
     assert!(m.text.starts_with("|cff00ff00This server runs with "));
     assert!(m.text.ends_with("mod-playerbots|r"));
-}
-
-#[test]
-fn the_classic_reader_misreads_a_3_3_5a_line() {
-    let body = hx(GPS_OUTDOORS);
-    let classic =
-        messages::parse_server_with_tail_as(Expansion::Classic, opcode::SMSG_MESSAGECHAT, &body);
-    assert!(
-        !matches!(classic, Ok((ServerPacket::MessageChat(ref m), 0)) if m.text == "You are outdoors"),
-        "1.12.1's layout must not read a 3.3.5a body"
-    );
 }
 
 /// A creature's say, built to `BuildChatPacket`'s monster shape: the name rides inline and a
@@ -105,9 +91,7 @@ fn a_lane_without_a_shared_type_fails_visibly() {
     body.extend(b"%s has done\0\0");
     body.push(0);
     body.extend(6u32.to_le_bytes()); // achievement id
-    let Err(err) =
-        messages::parse_server_with_tail_as(Expansion::Wotlk, opcode::SMSG_MESSAGECHAT, &body)
-    else {
+    let Err(err) = messages::parse_server_with_tail(opcode::SMSG_MESSAGECHAT, &body) else {
         panic!("a 3.3.5a-only lane must not decode");
     };
     assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);

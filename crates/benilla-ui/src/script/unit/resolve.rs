@@ -91,11 +91,6 @@ pub enum UnitTokenParse {
     Unit { base: UnitBase, hops: usize },
 }
 
-/// The resolver's raise, `Unknown unit name: %s` (`0x515c14`).
-pub(crate) fn unknown_unit(token: &str) -> mlua::Error {
-    mlua::Error::runtime(format!("Unknown unit name: {token}"))
-}
-
 /// `_strnicmp(s, lit, strlen(lit)) == 0`: ASCII fold only, bytes of 0x80 and up exact.
 fn has_prefix(s: &[u8], lit: &str) -> bool {
     s.len() >= lit.len() && s[..lit.len()].eq_ignore_ascii_case(lit.as_bytes())
@@ -107,12 +102,6 @@ fn base_of(token: &[u8]) -> Option<(Base, usize)> {
         .iter()
         .find(|(p, _)| has_prefix(token, p))
         .map(|&(p, b)| (b, p.len()))
-}
-
-/// Whether the resolver recognises the token, not whether it names a unit: `"party5"` solo is
-/// recognised and answers nil, and only a token none of its nine compares match raises.
-pub(crate) fn token_recognised(token: &str) -> bool {
-    token.eq_ignore_ascii_case("npc") || base_of(token.as_bytes()).is_some()
 }
 
 /// The inline base-10 parse after `party`, `partypet`, `raid` and `raidpet`, then `dec` to a
@@ -223,14 +212,10 @@ impl UnitGuids {
         self.held.values().copied().filter(|&guid| guid != 0)
     }
 
-    /// [`Self::resolve`] with the raise as the Lua error it is, where the client raises
-    /// (`unknown_raises`); elsewhere an unrecognised token names nobody.
-    pub(crate) fn guid_of(&self, token: &str, unknown_raises: bool) -> mlua::Result<Option<u64>> {
-        match self.resolve(token) {
-            Ok(guid) => Ok(guid),
-            Err(()) if !unknown_raises => Ok(None),
-            Err(()) => Err(unknown_unit(token)),
-        }
+    /// [`Self::resolve`], an unrecognised token naming nobody: the client's resolver raises for
+    /// none (`Wow.exe` holds no unit-name error string).
+    pub(crate) fn guid_of(&self, token: &str) -> Option<u64> {
+        self.resolve(token).unwrap_or(None)
     }
 
     /// The `target` loop (`0x5159d3`-`0x515a2c`): nobody stays nobody, and each hop goes to the held

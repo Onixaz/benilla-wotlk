@@ -1,16 +1,14 @@
 //! The channel sends: join, leave, list and moderation, all with cstring-only bodies.
 
 use anyhow::Result;
-use benilla_expansions::Expansion;
 
 use crate::messages::{self, opcode};
 
 use super::WorldWriter;
 
 impl WorldWriter {
-    /// Join a channel; the 1.12 client joins zone channels this way ("General - Elwynn Forest").
-    /// `channel_id`, `auto_joined` and `voice` ride only 3.3.5a's body
-    /// ([`messages::join_channel_wotlk`]).
+    /// Join a channel; the client joins zone channels this way ("General - Elwynn Forest"), with
+    /// its `ChatChannels.dbc` id ([`messages::join_channel_wotlk`]).
     pub fn join_channel(
         &mut self,
         name: &str,
@@ -19,21 +17,13 @@ impl WorldWriter {
         auto_joined: bool,
         voice: bool,
     ) -> Result<()> {
-        let body = match Expansion::active() {
-            Expansion::Classic => messages::join_channel(name, password),
-            Expansion::Wotlk => {
-                messages::join_channel_wotlk(channel_id, auto_joined, voice, name, password)
-            }
-        };
+        let body = messages::join_channel_wotlk(channel_id, auto_joined, voice, name, password);
         self.send(opcode::CMSG_JOIN_CHANNEL, &body)
     }
 
-    /// Leave a channel (`CMSG_LEAVE_CHANNEL`); `channel_id` rides only 3.3.5a's body.
+    /// Leave a channel (`CMSG_LEAVE_CHANNEL`), naming its `ChatChannels.dbc` id.
     pub fn leave_channel(&mut self, name: &str, channel_id: u32) -> Result<()> {
-        let body = match Expansion::active() {
-            Expansion::Classic => messages::leave_channel(name),
-            Expansion::Wotlk => messages::leave_channel_wotlk(channel_id, name),
-        };
+        let body = messages::leave_channel_wotlk(channel_id, name);
         self.send(opcode::CMSG_LEAVE_CHANNEL, &body)
     }
 

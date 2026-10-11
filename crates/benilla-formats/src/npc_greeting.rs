@@ -109,6 +109,7 @@ mod tests {
 
     /// The 5875 join: character displays resolve their kits, a beast display (26) has none.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_npc_greeting_resolves() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

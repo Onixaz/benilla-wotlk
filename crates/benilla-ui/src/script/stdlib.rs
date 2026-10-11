@@ -234,8 +234,7 @@ strchar = string.char
 gsub    = string.gsub
 tinsert = table.insert
 tremove = table.remove
--- `getn`, `sort`, `foreach` and `foreachi` are bound by `lua50`, which owns the
--- 5.0 shapes of `table.getn`/`setn` and must not be shadowed by a second implementation here.
+-- `getn`, `sort`, `foreach` and `foreachi` are bound by `lua51`, from `table`.
 
 -- ── the bare math aliases (the same 1.12 global family; the reference FrameXML uses them
 -- unqualified — WorldMapFrame's overlay pool calls ceil/mod, CooldownFrame floor, …). `mod` is
@@ -246,7 +245,7 @@ abs   = math.abs
 max   = math.max
 min   = math.min
 sqrt  = math.sqrt
-mod   = math.mod        -- 5.0's name for fmod; `math.fmod` is removed by `lua50`
+mod   = math.mod        -- rebound to `math.fmod` by `lua51`, as the client's compat chunk does
 random = math.random
 -- `randomseed` is an ENGINE global in 1.12 exactly like `random` beside it (the captured `_G` types
 -- both `function engine`), and it is the half that was missing: `IgniteStatus` calls it at file
@@ -320,23 +319,15 @@ function setglobal(name, value) _G[name] = value end
 -- ── GetLocale: benilla ships/reads enUS data only (the 5875 MPQs + Spell.dbc enUS column) ──────
 function GetLocale() return "enUS" end
 
--- ── NOT here: wipe / tostringall / strsplit / strjoin / strconcat / strtrim ────────────────────
--- Six 2.0+ names benilla used to define. 1.12 has none of them (absent from
--- `reference/1.12-globals.tsv`, from the stock chain, and from every registrar table), and the
--- reason they were kept — that the vanilla addon ecosystem assumes them — did not survive being
--- checked: the corpus callers are multi-client addons whose vanilla paths raise on a real 1.12
--- client too, or that define the name themselves under their own namespace.
--- An addon reaching for one of these is reaching for a later client's API, and it should find
--- what it would find there: nothing.
+-- ── NOT here: wipe / strsplit / strjoin / strconcat / strtrim ─────────────────────────────────
+-- The client's own bindings, which `lua51.rs` installs after this layer.
 
 -- ── Blizzard's positional string.format (%N$) ──────────────────────────────────────────────────
 do
     -- `_find`/`_sub` are captured for the same reason `_format` is: this wrapper runs on every
     -- `format` call in the UI and must not follow an addon's later replacement of `string.*`.
-    -- They are CALLS and not method syntax because 1.12 installs no string metatable, so
-    -- `fmt:find(...)` raises there, and here too (`lua50::install` removes the metatable). No
-    -- chunk of ours may use what the reference's VM cannot resolve; the parser enforces that
-    -- for the grammar, and this is its runtime twin.
+    -- They are CALLS and not method syntax so the wrapper never resolves through a string
+    -- metatable an addon may have replaced.
     local _format, _find, _sub, _len = string.format, string.find, string.sub, string.len
     local CONV = "diouxXeEfgGqscp"  -- Lua 5.1 conversion letters
 

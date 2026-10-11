@@ -153,7 +153,7 @@ const NPC_FLAG_SPIRITGUIDE: u32 = 1 << 6;
 const EVENT_TAP: &str = r#"
 BenillaBgLog = {};
 BenillaBgTap = CreateFrame("Frame");
-BenillaBgTap:SetScript("OnEvent", function()
+BenillaBgTap:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
     table.insert(BenillaBgLog, event .. "(" .. tostring(arg1) .. ")");
 end);
 BenillaBgTap:RegisterEvent("CHAT_MSG_BG_SYSTEM_NEUTRAL");

@@ -2466,6 +2466,7 @@ mod tests {
     /// A new VM is seeded with the shipped `Languages.dbc`, so each race's own tongue resolves by
     /// name to the id vmangos keys `KnowsLanguage` on (`SharedDefines.h:253-269`).
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_new_vm_resolves_every_racial_language_by_name() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -2501,6 +2502,7 @@ mod tests {
 
     /// [`race_pvp_team`] against the shipped DBCs, walked as `0x5efe00` walks them.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn race_pvp_team_matches_the_shipped_tables() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -2528,7 +2530,7 @@ mod tests {
                 SEEN = {}
                 local f = CreateFrame("Frame")
                 f:RegisterEvent("UNIT_FLAGS")
-                f:SetScript("OnEvent", function() table.insert(SEEN, event .. ":" .. arg1) end)
+                f:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) table.insert(SEEN, event .. ":" .. arg1) end)
             "#,
             )
             .unwrap();
@@ -2729,7 +2731,7 @@ mod tests {
                 SEEN = {}
                 local f = CreateFrame("Frame")
                 f:RegisterEvent("PLAYER_FLAGS_CHANGED")
-                f:SetScript("OnEvent", function() table.insert(SEEN, event .. ":" .. arg1) end)
+                f:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) table.insert(SEEN, event .. ":" .. arg1) end)
             "#,
             )
             .unwrap();
@@ -2790,7 +2792,7 @@ mod tests {
                 SEEN = {}
                 local f = CreateFrame("Frame")
                 f:RegisterEvent("UNIT_DYNAMIC_FLAGS")
-                f:SetScript("OnEvent", function() table.insert(SEEN, event .. ":" .. arg1) end)
+                f:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) table.insert(SEEN, event .. ":" .. arg1) end)
             "#,
             )
             .unwrap();
@@ -3208,6 +3210,7 @@ mod tests {
     /// The entry gate `0x612610` passes with no record; the record's `HIDE_FACTION_TOOLTIP`
     /// (`0x10`) can then take the line away, as in the reference.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_faction_line_does_not_wait_for_the_creature_query() {
         use benilla_protocol::messages::ObjectFields;
 

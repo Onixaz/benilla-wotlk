@@ -99,6 +99,7 @@ mod tests {
     use super::load_auction_houses;
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_houses_carry_the_two_rate_tiers() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

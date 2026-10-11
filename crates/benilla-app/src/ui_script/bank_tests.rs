@@ -36,6 +36,7 @@ fn has_icon(quads: &[ExtractedQuad], needle: &str) -> bool {
 /// The title is `UnitName("npc")`: `BankFrame_OnEvent` reads no event argument (BankFrame.lua:127).
 /// The bank does not open your bags: its OnShow plays `igMainMenuOpen` and nothing else.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bankframe_opened_shows_and_sets_the_title() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -88,6 +89,7 @@ fn bankframe_opened_shows_and_sets_the_title() {
 /// The reference's OnHide order: `CloseBankBagFrames()`, `CloseBankFrame()`, then the close sound
 /// (BankFrame.xml:521-526). A "popout" is a bank bag's `ContainerFrame`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bankframe_closed_queues_close_closes_open_popouts_and_plays_the_close_kit() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -131,6 +133,7 @@ fn bankframe_closed_queues_close_closes_open_popouts_and_plays_the_close_kit() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn item_slot_paints_from_container_minus_one_and_repaints_on_playerbankslots_changed() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -199,6 +202,7 @@ fn item_slot_paints_from_container_minus_one_and_repaints_on_playerbankslots_cha
 
 /// `UpdateBagSlotStatus` tints an unpurchased bag button (1.0, 0.1, 0.1) (BankFrame.lua:96).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bag_buttons_tint_by_purchase_count_and_texture_from_the_bank_bag_band() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -279,6 +283,7 @@ fn bag_buttons_tint_by_purchase_count_and_texture_from_the_bank_bag_band() {
 
 /// The purse is a `SmallMoneyFrameTemplate` (BankFrame.xml:501): a large amount must not truncate.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_purse_row_splits_a_large_amount_across_three_coin_buttons() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -305,6 +310,7 @@ fn the_purse_row_splits_a_large_amount_across_three_coin_buttons() {
 /// and only a top-level element is a template, so the button exists and clicks. The row hides once
 /// `GetNumBankSlots()` reports `full`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn purchase_flow_shows_popup_queues_the_intent_and_the_row_hides_when_full() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -370,6 +376,7 @@ fn purchase_flow_shows_popup_queues_the_intent_and_the_row_hides_when_full() {
 /// and `BankFrameItemButtonBag_OnClick` reads no button. It opens the bag before it plays
 /// `BAGMENUBUTTONPRESS` (BankFrame.lua:193-194), so `igBackPackOpen` leads.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_bank_bag_button_answers_the_right_button_too() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -410,6 +417,7 @@ fn a_bank_bag_button_answers_the_right_button_too() {
 /// Driven through `mouse_button`, not `run()`, so the XML's `OnClick` and `RegisterForClicks`
 /// wiring is under test.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn clicking_item_slot_one_with_an_empty_cursor_queues_the_pickup() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -497,6 +505,7 @@ fn a_bag(locked: bool) -> benilla_ui::script::InvSlotView {
 /// repaint only on `PLAYERBANKSLOTS_CHANGED` or `BANKFRAME_OPENED` (BankFrame.lua:206-212), and
 /// `ITEM_LOCK_CHANGED` repaints the desaturation, never the icon.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_bank_bag_button_paints_the_drop_and_lets_go_of_the_lock() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();

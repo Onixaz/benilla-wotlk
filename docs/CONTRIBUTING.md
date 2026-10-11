@@ -1,14 +1,14 @@
 # Contributing
 
-benilla is a faithful 1.12.1 client. It is the foundation people build on, not the place to get
-creative: a change is accepted when it makes benilla more like 1.12.1 or fixes a bug, with
+benilla is a faithful 3.3.5a client. It is the foundation people build on, not the place to get
+creative: a change is accepted when it makes benilla more like 3.3.5a or fixes a bug, with
 evidence from the reference, in one small piece, with the gates green. Everything else lives on
 top of benilla, in a crate of its own or a fork, and both are welcome.
 
 ## Where to start
 
 The [issues](https://github.com/samwhosung/benilla/issues) the maintainers file are checked
-against 1.12.1 first: each says what 1.12.1 does, what benilla does instead, and where in the
+against 3.3.5a first: each says what 3.3.5a does, what benilla does instead, and where in the
 code, and any of them is a place to start. One labelled `in progress` is taken: someone is
 working on it or a pull request is open for it, so pick another. Once you start one, open a draft
 pull request that says `Fixes #N` as soon as you have a first commit, so the issue shows it is
@@ -17,17 +17,17 @@ taken.
 ## What gets in
 
 - A fix for a bug, with how to see it before and after.
-- A step closer to 1.12.1: a missing packet, verb, window, effect or behaviour, done the way
+- A step closer to 3.3.5a: a missing packet, verb, window, effect or behaviour, done the way
   the real client does it.
 - A correction where benilla and the reference disagree, with the reference fact stated.
-- Whatever the stock 1.12.1 client loads from a patch, benilla loads: models, textures or data
-  rows that 1.12.1 shows and benilla does not are a bug.
+- Whatever the stock 3.3.5a client loads from a patch, benilla loads: models, textures or data
+  rows that 3.3.5a shows and benilla does not are a bug.
 
 ## What does not
 
-- Features 1.12.1 does not have, including what 1.12 client mods add (a new key binding, a spell
-  queue, new Lua functions, graphics past 1.12's), and behaviour changed because it seems better.
-  They live on top of benilla ("Building on top"), so that what benilla does is what 1.12.1 does,
+- Features 3.3.5a does not have, including what client mods add (a new key binding, a spell
+  queue, new Lua functions, graphics past 3.3.5a's), and behaviour changed because it seems better.
+  They live on top of benilla ("Building on top"), so that what benilla does is what 3.3.5a does,
   for everyone who builds on it. A deviation from the reference is the maintainer's call and is
   recorded where it lives; a pull request is not the place to propose one.
 - Anything from a WoW install: art, models, sounds, maps, data, and interface code (FrameXML and
@@ -36,7 +36,7 @@ taken.
 
 ## Building on top
 
-A feature 1.12.1 does not have lives in a crate of its own that adds its Bevy plugins through
+A feature 3.3.5a does not have lives in a crate of its own that adds its Bevy plugins through
 `benilla_app::run_with`, as `crates/benilla-app/examples/extended_launcher.rs` shows, or in a
 fork. A client started through `run_with` says `extended` in its build line, so its reports read
 apart from stock benilla's. The crate keeps its own settings, never rows in benilla's CVar table,
@@ -45,7 +45,7 @@ which every addon reads, and its files go under `benilla_app::config_dir()`, its
 addon does.
 
 Past `run_with` and that folder, benilla opens a piece of itself to such a crate only when its own
-1.12.1 work creates that piece, never for the crate alone, and promises no stable API: a crate
+3.3.5a work creates that piece, never for the crate alone, and promises no stable API: a crate
 pins the benilla revision it builds on. What a crate cannot reach stays a fork's.
 
 ## How a change is judged
@@ -55,10 +55,11 @@ pins the benilla revision it builds on. What a crate cannot reach stays a fork's
    doc-link and render-pass lints, the player build with its own tests, and the engine boot
    checks. A pull request from a fork runs the ones that need neither the install nor a display
    in CI, on Linux; the rest run on the maintainer's machine before it lands.
-2. The reference fact is stated: what 1.12.1 does, and where that is known from (the client's
+2. The reference fact is stated: what 3.3.5a does, and where that is known from (the client's
    behaviour you observed, a DBC field, a FrameXML line, a packet capture). The names and shapes
    under `reference/` are the surface benilla tracks.
-3. A comment where it matters, one line, saying what the code does and the 1.12 fact behind it.
+3. A comment where it matters, one line, saying what the code does and the reference fact behind
+   it.
    No history.
 4. The commit message says what changed, for a player or a developer, in one line.
 
@@ -77,17 +78,17 @@ out of scope is closed with the reason.
   compiler, because the client's Lua is vendored and built from source. On macOS the Xcode
   command line tools, which also supply libclang for the audio bindings; on Linux the ALSA and
   udev development packages and pkg-config. `python3` runs two of the gates.
-- **A 1.12.1 install of your own.** `WOW_DATA=<its Data folder>`, or a `WoW` link at the repo
+- **A 3.3.5a install of your own.** `WOW_DATA=<its Data folder>`, or a `WoW` link at the repo
   root, which only a dev build sees: the player build looks for `Data/` or `WoW/Data/` beside
   the binary. benilla reads the install and never writes into it. `WOW_DATA=` (set, empty)
   means "no install", which is how the no-install boot is tested on a machine that has one.
 - **Without the install, green is hollow.** Well over a thousand tests read the install and skip
-  when it is absent, and a few dozen more read a corpus of vanilla addons
+  when it is absent, and a few dozen more read a corpus of addons
   (`BENILLA_ADDON_CORPUS=<a folder of addons>`, or a `wow-addons-vanilla` link at the root),
   third-party content that is not in this repo. `scripts/gates.sh` and `scripts/check.sh` print
   how many tests skipped and why. Where the data is, `BENILLA_REQUIRE_DATA=1` turns a skip into a
   failure, and the gates set it themselves when the install and the corpus both resolve.
-- **A server to test against.** Any 1.12.1 server; `WOW_HOST` names it (default
+- **A server to test against.** Any 3.3.5a server; `WOW_HOST` names it (default
   `localhost:3724`). A scripted run has no default account: `WOW_USER`, `WOW_PASS` and
   `WOW_CHAR` name a test account on your server whose login kicks nobody, all three, either in
   the environment or in a `.probe-identity` file at the repo root (one per line, never
@@ -118,7 +119,7 @@ out of scope is closed with the reason.
 
 ## Reporting a bug
 
-Open an issue: what you did, what you saw and what 1.12.1 does instead, with the `benilla build`
+Open an issue: what you did, what you saw and what 3.3.5a does instead, with the `benilla build`
 line from the start of the terminal output, your platform and the server you ran on. Questions
 and ideas are welcome there or on the Discord linked from the README.
 

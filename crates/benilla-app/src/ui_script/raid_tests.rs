@@ -104,6 +104,7 @@ fn open_raid_tab(s: &mut UiScript) {
 // ── The tab ──────────────────────────────────────────────────────────────────────────────────────
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_fourth_tab_opens_the_raid_pane() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -131,6 +132,7 @@ fn the_fourth_tab_opens_the_raid_pane() {
 
 /// `FriendsFrame_OnHide` hides `RaidInfoFrame` too (`FriendsFrame.lua:136`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hiding_the_window_closes_the_raid_info_panel() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -149,6 +151,7 @@ fn hiding_the_window_closes_the_raid_info_panel() {
 /// Out of a raid the pane is the blurb and Convert To Raid, live only for a party's leader
 /// (`RaidFrame.lua:62-69`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn convert_to_raid_is_live_only_for_a_party_leader() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -211,6 +214,7 @@ fn convert_to_raid_is_live_only_for_a_party_leader() {
 
 /// Row order and slot order differ; every drag, kick and menu action addresses a row by row index.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_grid_seats_each_row_in_its_own_subgroups_next_free_slot() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -275,6 +279,7 @@ fn the_grid_seats_each_row_in_its_own_subgroups_next_free_slot() {
 /// Offline grey is tested first, then dead red, then the class colour, on all three columns
 /// (`Blizzard_RaidUI.lua:135-152`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_rows_colour_is_offline_then_dead_then_class() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -342,6 +347,7 @@ fn a_rows_colour_is_offline_then_dead_then_class() {
 /// `UNIT_HEALTH` and `UNIT_LEVEL` repaint one `raidN` row without the roster event
 /// (`Blizzard_RaidUI.lua:27-38`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_units_health_and_level_repaint_only_that_row() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -390,6 +396,7 @@ fn a_units_health_and_level_repaint_only_that_row() {
 
 /// Out of a raid both hide, sharing a seat with Convert To Raid (`Blizzard_RaidUI.lua:653-672`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ready_check_is_the_leaders_and_add_member_is_everyones() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -434,6 +441,7 @@ fn ready_check_is_the_leaders_and_add_member_is_everyones() {
 /// An empty slot in another group moves, an occupied one swaps, anything else springs the row home
 /// (`Blizzard_RaidUI.lua:257-273`); `TARGET_RAID_SLOT` stands in for the hover sweep.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn dragging_a_row_moves_swaps_or_springs_back() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -478,6 +486,7 @@ fn dragging_a_row_moves_swaps_or_springs_back() {
 
 /// `OnDragStart` and `OnDragStop` both return for a non-leader (`Blizzard_RaidUI.lua:236`, `:248`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn only_the_leader_may_drag() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -507,6 +516,7 @@ fn only_the_leader_may_drag() {
 // ── The row's click and menu ─────────────────────────────────────────────────────────────────────
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn left_clicking_a_row_targets_its_raid_token() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -521,6 +531,7 @@ fn left_clicking_a_row_targets_its_raid_token() {
 
 /// The RAID menu's rank rules re-read the row's rank by row index (`UnitPopup.lua:382-401`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_row_menu_offers_the_rank_verbs_by_rank() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -566,6 +577,7 @@ fn the_row_menu_offers_the_rank_verbs_by_rank() {
 
 /// Three verbs go by name and the kick by row index (`UnitPopup.lua:624-631`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_menu_verbs_queue_the_right_requests() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -603,6 +615,7 @@ fn the_menu_verbs_queue_the_right_requests() {
 // ── Raid Info ────────────────────────────────────────────────────────────────────────────────────
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_raid_info_panel_lists_the_saved_lockouts() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -671,6 +684,7 @@ fn the_raid_info_panel_lists_the_saved_lockouts() {
 /// An ordinary session gets two empty answers, for `PLAYER_ENTERING_WORLD`'s `RequestRaidInfo` and
 /// the pane's OnShow; the first arms the latch, the second disables the button.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_player_with_no_lockouts_loses_the_raid_info_button_on_the_second_answer() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -723,6 +737,7 @@ fn a_player_with_no_lockouts_loses_the_raid_info_button_on_the_second_answer() {
 /// Past four lockouts `RaidInfoFrame_Update` seats the bar at `(8, -3)` off the scroll frame
 /// (`RaidFrame.lua:108-110`), centred on the trough art, not at the template's `(6, -16)`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_scroll_bar_is_seated_on_the_trough_the_panel_draws_behind_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -774,6 +789,7 @@ fn the_scroll_bar_is_seated_on_the_trough_the_panel_draws_behind_it() {
 /// `READY_CHECK` opens the popup naming the leader; Yes calls `ConfirmReadyCheck(1)`, No calls it
 /// with no argument (`Blizzard_RaidUI.xml:710`, `:728`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_ready_check_popup_opens_and_answers() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -817,6 +833,7 @@ fn the_ready_check_popup_opens_and_answers() {
 /// `UiScript::pointer_left_window` ends the drag: `OnDragStop` runs, the row goes home, and the
 /// next row still drags.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_drag_carried_off_the_window_edge_ends_instead_of_gluing_the_row_to_the_cursor() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -890,6 +907,7 @@ fn a_drag_carried_off_the_window_edge_ends_instead_of_gluing_the_row_to_the_curs
 /// Three whole gestures through the real pointer path, with the roster echo `/partytest raid`
 /// supplies in between.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn one_drag_does_not_cost_the_next_one() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();

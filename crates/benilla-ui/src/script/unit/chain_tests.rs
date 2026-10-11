@@ -216,10 +216,9 @@ fn a_token_without_a_hop_still_reads_its_own_push() {
     ));
 }
 
-/// The junk after a hop and an unknown token behave as the resolver does: the first names
-/// nobody, the second raises.
+/// The junk after a hop and an unknown token both name nobody, as the resolver does.
 #[test]
-fn a_malformed_chain_is_nobody_and_an_unknown_token_raises() {
+fn a_malformed_chain_and_an_unknown_token_are_nobody() {
     let s = world();
     for token in [
         "party1targetfoo",
@@ -232,13 +231,8 @@ fn a_malformed_chain_is_nobody_and_an_unknown_token_raises() {
             "{token}"
         );
     }
-    for chunk in [
-        r#"return UnitName("npctarget")"#,
-        r#"return UnitHealth("bogustarget")"#,
-    ] {
-        let err = s.eval::<mlua::Value>(chunk).expect_err(chunk).to_string();
-        assert!(err.contains("Unknown unit name"), "{chunk}: {err}");
-    }
+    assert!(eval::<bool>(&s, r#"return UnitName("npctarget") == nil"#));
+    assert!(eval::<bool>(&s, r#"return UnitHealth("bogustarget") == 0"#));
 }
 
 /// `UnitInParty` judges a chain by the unit it ends on, not by the `party` in its text.
@@ -301,10 +295,9 @@ fn spell_can_target_unit_answers_the_verdict_of_the_unit_the_token_names() {
     assert!(refused(&s, "raid3target"));
 }
 
-/// The reference gates the argument (`0x6e6d0e`) and resolves through `0x515970`, which raises for
-/// a token it does not know.
+/// The reference gates the argument (`0x6e6d0e`); a token the resolver does not know names nobody.
 #[test]
-fn spell_can_target_unit_raises_as_the_resolver_and_the_gate_do() {
+fn spell_can_target_unit_gates_its_argument() {
     let s = world();
     let err = |chunk: &str| s.eval::<mlua::Value>(chunk).expect_err(chunk).to_string();
     for chunk in [
@@ -317,11 +310,11 @@ fn spell_can_target_unit_raises_as_the_resolver_and_the_gate_do() {
             "{chunk}"
         );
     }
-    for chunk in [
-        r#"return SpellCanTargetUnit("bogus")"#,
-        r#"return SpellCanTargetUnit("npctarget")"#,
-        "return SpellCanTargetUnit(5)",
+    for call in [
+        r#"SpellCanTargetUnit("bogus")"#,
+        r#"SpellCanTargetUnit("npctarget")"#,
+        "SpellCanTargetUnit(5)",
     ] {
-        assert!(err(chunk).contains("Unknown unit name"), "{chunk}");
+        assert!(eval::<bool>(&s, &format!("return {call} == nil")), "{call}");
     }
 }

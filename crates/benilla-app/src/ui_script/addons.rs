@@ -1125,6 +1125,7 @@ mod tests {
     /// Every chain row is LoadOnDemand and chain-sourced, the eight windows the interface opens
     /// through them are rows, and the core, the chain's `FrameXML.toc`, lists none.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_chain_carries_blizzards_load_on_demand_addons_as_registry_rows() {
         let _data = benilla_formats::wow_data_or_skip!();
         let rows = chain_addons();
@@ -1594,7 +1595,7 @@ mod tests {
   <Frame name="EventProbeFrame" parent="UIParent">
     <Scripts>
       <OnLoad>{registers}</OnLoad>
-      <OnEvent>table.insert(EventLog, event .. ":" .. tostring(arg1));</OnEvent>
+      <OnEvent>table.insert(EventLog, event .. ":" .. tostring((...)));</OnEvent>
     </Scripts>
   </Frame>
 </Ui>"#
@@ -2095,7 +2096,7 @@ mod tests {
                 (
                     "late.xml",
                     "<Ui><Frame name=\"DemandFrame\" parent=\"UIParent\"><Scripts>\
-                     <OnEvent>DemandEvent = arg1</OnEvent></Scripts></Frame>\
+                     <OnEvent>DemandEvent = ...</OnEvent></Scripts></Frame>\
                      <Script>DemandFrame:RegisterEvent(\"ADDON_LOADED\")</Script></Ui>",
                 ),
             ],
@@ -2826,7 +2827,7 @@ mod tests {
                 "AddonOrder = '' \
              CycleWatch = CreateFrame('Frame') \
              CycleWatch:RegisterEvent('ADDON_LOADED') \
-             CycleWatch:SetScript('OnEvent', function() \
+             CycleWatch:SetScript('OnEvent', function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) \
                  AddonOrder = AddonOrder .. arg1 .. ',' end)",
             )
             .unwrap();

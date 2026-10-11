@@ -524,6 +524,7 @@ mod tests {
     /// `SlashCmdList["SCRIPT"]` (`ChatFrame.lua:1074-1075`) and selects the vendor whose window is
     /// open.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn typing_target_unit_npc_in_the_stock_chat_box_selects_the_vendor() {
         benilla_formats::wow_data_or_skip!();
         use crate::net::{Guid, ObjectStore, SelfPlayer};

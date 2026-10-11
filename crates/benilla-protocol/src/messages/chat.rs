@@ -113,57 +113,6 @@ fn read_len_string(r: &mut &[u8]) -> io::Result<String> {
     read_cstring(r)
 }
 
-/// Read an `SMSG_MESSAGECHAT` body.
-pub(super) fn read_message_chat(r: &mut &[u8]) -> io::Result<ChatMessage> {
-    let chat_type = read_u8(r)?;
-    let language = read_u32_le(r)?;
-    let mut sender_guid = 0u64;
-    // 0 unless the shape carries an addressee; the macro expander then uses `sender_guid`.
-    let mut target_guid = 0u64;
-    let mut sender_name = None;
-    let mut channel = None;
-    match chat_type {
-        CHAT_MSG_MONSTER_WHISPER
-        | CHAT_MSG_RAID_BOSS_WHISPER
-        | CHAT_MSG_RAID_BOSS_EMOTE
-        | CHAT_MSG_MONSTER_EMOTE => {
-            sender_name = Some(read_len_string(r)?);
-            target_guid = read_u64_le(r)?;
-        }
-        CHAT_MSG_SAY | CHAT_MSG_PARTY | CHAT_MSG_YELL => {
-            sender_guid = read_u64_le(r)?;
-            // vmangos writes the sender's guid into both slots for these three.
-            target_guid = read_u64_le(r)?;
-        }
-        CHAT_MSG_MONSTER_SAY | CHAT_MSG_MONSTER_YELL => {
-            sender_guid = read_u64_le(r)?;
-            sender_name = Some(read_len_string(r)?);
-            target_guid = read_u64_le(r)?;
-        }
-        CHAT_MSG_CHANNEL => {
-            channel = Some(read_cstring(r)?);
-            let _player_rank = read_u32_le(r)?;
-            sender_guid = read_u64_le(r)?;
-        }
-        // Every other type is `BuildChatPacket`'s `default:` shape: one sender guid.
-        _ => {
-            sender_guid = read_u64_le(r)?;
-        }
-    }
-    let text = read_len_string(r)?;
-    let chat_tag = read_u8(r)?;
-    Ok(ChatMessage {
-        chat_type,
-        language,
-        sender_guid,
-        target_guid,
-        sender_name,
-        channel,
-        text,
-        chat_tag,
-    })
-}
-
 /// 3.3.5a's own `ChatMsg` numbering of the inbound `u8 type` (AzerothCore `SharedDefines.h`
 /// `ChatMsg`, matching the outbound lanes the 12340 client's `SendChatMessage` table sends).
 pub mod wotlk_chat_type {

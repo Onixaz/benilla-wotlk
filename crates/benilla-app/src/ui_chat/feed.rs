@@ -234,16 +234,14 @@ impl ChatLog {
             Some(i) => (text[..i].to_string(), text[i + 1..].to_string()),
             None => (text.to_string(), String::new()),
         };
-        // The target's numbering, the same one `crate::net::addon_wire_chat_type` sends.
-        let distribution = {
-            let t = crate::net::chat_types();
-            match u32::from(chat_type) {
-                n if n == t.party => "PARTY",
-                n if n == t.raid => "RAID",
-                n if n == t.guild => "GUILD",
-                n if n == t.battleground => "BATTLEGROUND",
-                _ => "UNKNOWN",
-            }
+        // The inbound line's shared numbering, which the decoder maps the wire's type into.
+        use benilla_protocol::messages as m;
+        let distribution = match chat_type {
+            m::CHAT_MSG_PARTY => "PARTY",
+            m::CHAT_MSG_RAID => "RAID",
+            m::CHAT_MSG_GUILD => "GUILD",
+            m::CHAT_MSG_BATTLEGROUND => "BATTLEGROUND",
+            _ => "UNKNOWN",
         }
         .to_string();
         self.pending.push(Pending::Addon {

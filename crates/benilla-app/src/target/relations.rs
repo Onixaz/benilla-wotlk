@@ -202,6 +202,7 @@ mod tests {
     /// The same gate on the shipped `ChrRaces.dbc` and `FactionTemplate.dbc`: a human (template 1)
     /// stands friendly toward every Alliance race's corpse and not toward a Horde one's.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_corpse_gate_splits_the_sides_on_the_shipped_tables() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

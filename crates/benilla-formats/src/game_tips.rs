@@ -4,9 +4,9 @@
 //! `CGlueMgr::EnterWorld` (`0x46b500`) stores the chosen record index, never an id, in the
 //! `gameTip` CVar. Record order is not id order: the file opens on id 396.
 
+use crate::dbc_layout::GameTips as GameTipsLayout;
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
-use benilla_expansions::dbc::GameTips as GameTipsLayout;
 
 use crate::chain::Chain;
 use crate::dbc::{parse, str_at};
@@ -57,7 +57,7 @@ pub fn load_game_tips(chain: &mut Chain) -> Result<GameTipsCatalog> {
     let bytes = chain.read_file(GAME_TIPS).context("reading GameTips.dbc")?;
     let rs = parse(
         &bytes,
-        schema(&chain.expansion().profile().dbc.game_tips),
+        schema(&crate::dbc_layout::LAYOUTS.game_tips),
         "GameTips",
     )?;
     let mut tips = Vec::with_capacity(rs.records().len());
@@ -76,37 +76,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_real_table_is_seventy_four_tips_in_file_order() {
-        let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        if chain.expansion() != benilla_expansions::Expansion::Classic {
-            return; // 3.3.5a's table: the next test
-        }
-        let cat = load_game_tips(&mut chain).expect("load GameTips");
-        assert_eq!(cat.len(), 74, "the 5875 enGB chain ships 74 tips");
-        assert!(
-            cat.get(0).unwrap().starts_with("|cffffd100"),
-            "the colour prefix is authored INTO the data, not added by the renderer: {:?}",
-            cat.get(0)
-        );
-        assert!(
-            cat.get(0).unwrap().contains("mini-map"),
-            "record order, not id order — record 0 is id 396: {:?}",
-            cat.get(0)
-        );
-        assert!(
-            cat.get(74).is_none(),
-            "one past the end is None, not a panic"
-        );
-    }
-
-    #[test]
     fn a_3_3_5a_table_reads_its_enus_column() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
-        if chain.expansion() != benilla_expansions::Expansion::Wotlk {
-            return; // 1.12.1's table: the test above
-        }
         let cat = load_game_tips(&mut chain).expect("load GameTips");
         assert_eq!(cat.len(), 142, "the 12340 chain ships 142 tips");
         assert!(

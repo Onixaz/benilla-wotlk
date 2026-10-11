@@ -4,10 +4,7 @@
 fn main() -> anyhow::Result<()> {
     let data = benilla_formats::wow_data().expect("no WoW install found (set $WOW_DATA)");
     let chain = benilla_formats::open_chain(&data)?;
-    println!(
-        "{} — lowest priority first:",
-        benilla_expansions::Expansion::active()
-    );
+    println!("3.3.5a (12340) — lowest priority first:");
     for archive in chain.archive_paths() {
         println!("  {}", archive.display());
     }

@@ -80,6 +80,7 @@ fn open_ticket_args(
 
 /// With a ticket the form is an editor (Save Changes, Exit); a bare `arg1 = 0` makes it a form.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_open_ticket_turns_the_form_into_an_editor_and_a_zero_turns_it_back() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -124,6 +125,7 @@ fn an_open_ticket_turns_the_form_into_an_editor_and_a_zero_turns_it_back() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_ticket_toast_follows_the_ticket() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -146,6 +148,7 @@ fn the_ticket_toast_follows_the_ticket() {
 
 /// `TicketStatus_OnUpdate` re-asks every `GMTICKET_CHECK_INTERVAL`, 600 s (`HelpFrame.lua:162`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_toast_repolls_the_server_only_after_the_full_interval() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -172,6 +175,7 @@ fn the_toast_repolls_the_server_only_after_the_full_interval() {
 
 /// `HelpFrame_OnShow` asks the server for the queue status (`HelpFrame.lua:180`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn toggling_the_window_opens_it_and_asks_for_the_queue_status() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -195,6 +199,7 @@ fn toggling_the_window_opens_it_and_asks_for_the_queue_status() {
 /// the 378-tall `HelpFrameOpenTicketScrollFrame`): the box sizes itself to its wrapped text
 /// (`0x77d4d0` @`0x77d8ad`), so `ScrollingEdit_OnTextChanged`'s recompute ranges over all of it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_ticket_text_grows_with_its_lines_and_its_scroll_frame_ranges_over_them() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -269,6 +274,7 @@ impl TextMeasure for Rows {
 /// The ticket text is multi-line: UP moves the caret a row at its letter column (`0x77cb20`), and
 /// Shift+HOME selects back to the line's start (`0x77c980`), not the ticket's.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_ticket_texts_caret_moves_by_rows_and_lines() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();

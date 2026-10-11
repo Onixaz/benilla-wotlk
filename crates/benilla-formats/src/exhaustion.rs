@@ -58,6 +58,7 @@ mod tests {
     use super::load_exhaustion;
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_rest_states_carry_the_rested_double() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

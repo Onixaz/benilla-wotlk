@@ -69,6 +69,7 @@ mod tests {
 
     /// Fear's `Mechanic` is 5, Frost Nova's `EffectMechanic[1]` 7, Polymorph's 17.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_spell_mechanic_names_the_crowd_control_rows() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

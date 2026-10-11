@@ -21,6 +21,7 @@ fn setup() -> UiScript {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_challenge_popup_shows_the_name_and_accept_queues_the_accept() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -48,6 +49,7 @@ fn the_challenge_popup_shows_the_name_and_accept_queues_the_accept() {
 
 /// Escape runs a `hideOnEscape` popup's OnCancel (`StaticPopup.lua:1884`), so it declines too.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn decline_and_escape_both_cancel() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -63,6 +65,7 @@ fn decline_and_escape_both_cancel() {
 
 /// `DUEL_OUTOFBOUNDS` has no buttons and a 10 s timeout; `StaticPopup_OnUpdate` renders the count.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn out_of_bounds_counts_down_and_inbounds_dismisses_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -93,6 +96,7 @@ fn out_of_bounds_counts_down_and_inbounds_dismisses_it() {
 
 /// `DUEL_FINISHED` hides both popups (`UIParent.lua:390`); a hide runs no OnCancel, so no decline.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn finishing_sweeps_both_dialogs_silently() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -116,6 +120,7 @@ fn finishing_sweeps_both_dialogs_silently() {
 
 /// The four 1.12 duel verbs; `StartDuel` and `StartDuelUnit` pass their argument to the app.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_era_globals_queue_their_intents() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();

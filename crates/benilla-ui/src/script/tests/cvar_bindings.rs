@@ -168,7 +168,7 @@ fn set_cvar_fires_cvar_update_inside_the_call_for_every_token() {
         "SEEN = {} \
          f = CreateFrame(\"Frame\") \
          f:RegisterEvent(\"CVAR_UPDATE\") \
-         f:SetScript(\"OnEvent\", function() table.insert(SEEN, arg1 .. \"=\" .. arg2) end)",
+         f:SetScript(\"OnEvent\", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) table.insert(SEEN, arg1 .. \"=\" .. arg2) end)",
     )
     .unwrap();
     let seen = |s: &UiScript| -> Vec<String> { s.eval("return SEEN").unwrap() };

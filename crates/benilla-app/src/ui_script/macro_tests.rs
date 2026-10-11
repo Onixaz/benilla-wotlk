@@ -99,6 +99,7 @@ fn no_errors(s: &UiScript, step: &str) {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn new_then_pick_an_icon_then_okay_creates_the_macro() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -152,6 +153,7 @@ fn new_then_pick_an_icon_then_okay_creates_the_macro() {
 
 /// `MacroFrame_SaveMacro` commits the body from the tab switch, the list click and the OnHide.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn typing_a_body_and_closing_the_window_commits_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -187,6 +189,7 @@ fn typing_a_body_and_closing_the_window_commits_it() {
 /// `MacroFrame.macroBase` is 0 or `MAX_MACROS` (18) and every binding takes `macroBase + i`, so the
 /// character tab starts at 19 (`Blizzard_MacroUI.lua:1`, `:42`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_character_tab_creates_in_the_second_index_range_and_switching_saves() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -235,6 +238,7 @@ fn the_character_tab_creates_in_the_second_index_range_and_switching_saves() {
 /// DELETE re-runs `MacroFrame_OnLoad`, which selects the first macro or, with none left, nothing
 /// (`Blizzard_MacroUI.xml:551-553`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn delete_removes_the_macro_and_re_selects() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -272,6 +276,7 @@ fn delete_removes_the_macro_and_re_selects() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn dragging_a_macro_button_loads_the_cursor_with_the_macro_payload() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -300,6 +305,7 @@ fn dragging_a_macro_button_loads_the_cursor_with_the_macro_payload() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_icon_chooser_shows_the_pushed_list_and_hides_its_tail() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -338,6 +344,7 @@ fn the_icon_chooser_shows_the_pushed_list_and_hides_its_tail() {
 /// Both tabs pass `PanelTemplates_TabResize` a -15 padding and tab 2, whose label carries the
 /// player name, a 150 cap; a short and a long name run both arms of the cap.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_two_tabs_fit_inside_the_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     /// `sideWidths`: twice `TabButtonTemplate`'s 16-unit end slice (`UIPanelTemplates.lua:41`).
@@ -403,6 +410,7 @@ fn the_two_tabs_fit_inside_the_window() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_icon_choosers_scroll_bar_sits_on_the_popup_plate() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -428,6 +436,7 @@ fn the_icon_choosers_scroll_bar_sits_on_the_popup_plate() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_tab_row_settles_and_stays_inside_the_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     // The widths must hold across frames, not just on the first.
@@ -466,6 +475,7 @@ fn the_tab_row_settles_and_stays_inside_the_window() {
 
 /// Tab 2's `150` cap (`Blizzard_MacroUI.xml:511`) holds the row inside the drawn edge for any name.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn no_character_name_can_push_the_tab_row_off_the_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     for name in ["Ai", "Onehunter", "Bartholomewthethird", &"W".repeat(64)] {
@@ -490,6 +500,7 @@ fn no_character_name_can_push_the_tab_row_off_the_window() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_tab_highlight_is_exactly_its_tab() {
     let _data = benilla_formats::wow_data_or_skip!();
     // A name under the stock cap, one over it, and a 40-character one, checked on every frame.
@@ -542,6 +553,7 @@ fn the_tab_highlight_is_exactly_its_tab() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_icon_picker_opens_without_raising() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();

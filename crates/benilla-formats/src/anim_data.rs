@@ -110,6 +110,7 @@ mod tests {
 
     /// The 5875 table: WeaponFlags within the reconcile's three bits, spot rows, fallback chains.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_animation_data_decodes() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

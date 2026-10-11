@@ -1395,6 +1395,7 @@ mod bind_confirm_tests {
     /// (`UIParent.lua:357-359`) would otherwise cancel it unseen: benilla drains a step after the
     /// input pass, where the reference defers inside the call. A later cursor change retires it.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn placing_a_boe_on_the_doll_asks_and_survives_its_own_cursor_update() {
         benilla_formats::wow_data_or_skip!();
         let (mut app, rx) = place_the_axe_on_the_doll();
@@ -1456,6 +1457,7 @@ mod bind_confirm_tests {
 
     /// The accept re-issues the place (1.12 has no confirm opcode); `suppress` stops a second ask.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn accepting_re_issues_the_place_and_does_not_ask_again() {
         benilla_formats::wow_data_or_skip!();
         let (mut app, rx) = place_the_axe_on_the_doll();
@@ -1503,6 +1505,7 @@ mod bind_confirm_tests {
     /// The stock popup cancels twice, from `OnCancel` and `OnHide`; the second finds the record
     /// already free.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn cancelling_sends_nothing_and_the_doubled_cancel_is_harmless() {
         benilla_formats::wow_data_or_skip!();
         let (mut app, rx) = place_the_axe_on_the_doll();
@@ -1529,6 +1532,7 @@ mod bind_confirm_tests {
 
     /// The equip predicate is `bonding == 2` alone, with no quality leg (`0x5e0e54`).
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn only_bind_on_equip_defers_the_place() {
         benilla_formats::wow_data_or_skip!();
         for (bonding, why) in [
@@ -1553,6 +1557,7 @@ mod bind_confirm_tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_white_bind_on_equip_item_still_asks() {
         benilla_formats::wow_data_or_skip!();
         let (mut app, rx) = place_the_axe_with(2, 1, false);
@@ -1568,6 +1573,7 @@ mod bind_confirm_tests {
 
     /// `0x5da2c0`, the predicate the tooltip's Soulbound override also uses.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn an_already_bound_item_places_without_asking() {
         benilla_formats::wow_data_or_skip!();
         let (mut app, rx) = place_the_axe_with(2, 4, true);
@@ -1583,6 +1589,7 @@ mod bind_confirm_tests {
 
     /// The auto-equip arm (`0x5e1480`, event 289): the same predicate and re-issue, its own dialog.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn auto_equipping_a_boe_asks_and_the_accept_re_issues() {
         benilla_formats::wow_data_or_skip!();
         let (tx, rx) = crossbeam_channel::unbounded();
@@ -1670,6 +1677,7 @@ mod bind_confirm_tests {
 
     /// The `0x5ea930` conjunct, driven by its level leg.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn an_unusable_item_is_never_asked_about() {
         benilla_formats::wow_data_or_skip!();
         let (mut app, rx) = place_the_axe_with(2, 4, false);
@@ -1800,6 +1808,7 @@ mod bind_confirm_tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn right_clicking_a_bind_on_use_item_asks_before_using_it() {
         benilla_formats::wow_data_or_skip!();
         let (mut app, rx) = right_click_a_bind_on_use_item(false);
@@ -1837,6 +1846,7 @@ mod bind_confirm_tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_bind_on_use_item_with_no_on_use_spell_still_asks() {
         benilla_formats::wow_data_or_skip!();
         let (mut app, rx) = right_click_a_bind_on_use_item(true);

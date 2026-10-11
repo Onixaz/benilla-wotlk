@@ -110,7 +110,7 @@ fn slider_track_press_seats_the_thumb_and_a_mouseless_slider_ignores_it() {
         bar:SetMinMaxValues(0, 100)
         bar:SetValue(0)
         fired = {}
-        bar:SetScript("OnValueChanged", function() table.insert(fired, arg1) end)
+        bar:SetScript("OnValueChanged", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) table.insert(fired, arg1) end)
     "#,
     )
     .unwrap();
@@ -215,7 +215,7 @@ fn slider_setvalue_fires_onvaluechanged_only_on_change() {
         local sl = CreateFrame("Slider", "SlEvt")
         sl:SetMinMaxValues(0, 10)
         seen = {}
-        sl:SetScript("OnValueChanged", function() local self, value = this, arg1
+        sl:SetScript("OnValueChanged", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, value = this, arg1
             table.insert(seen, value)
             assert(self == sl and arg1 == value, "handler-firing conventions carry the value")
         end)
@@ -288,8 +288,8 @@ fn slider_scrollbar_wiring_does_not_recurse() {
 
         bar = CreateFrame("Slider", "SlSFBar")
         bar:SetMinMaxValues(0, 200)
-        bar:SetScript("OnValueChanged", function() sf:SetVerticalScroll(arg1) end)
-        sf:SetScript("OnVerticalScroll", function() bar:SetValue(arg1) end)
+        bar:SetScript("OnValueChanged", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) sf:SetVerticalScroll(arg1) end)
+        sf:SetScript("OnVerticalScroll", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) bar:SetValue(arg1) end)
     "#,
     )
     .unwrap();
@@ -315,7 +315,7 @@ fn slider_value_bits_gate_the_first_fire_and_the_range_reclamp() {
         r#"
         seen = {}
         local sl = CreateFrame("Slider", "SlBits")
-        sl:SetScript("OnValueChanged", function() table.insert(seen, arg1) end)
+        sl:SetScript("OnValueChanged", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) table.insert(seen, arg1) end)
 
         sl:SetValue(7)                       -- bit1 clear: a complete no-op
         assert(sl:GetValue() == 0, "rangeless SetValue stores nothing: " .. sl:GetValue())

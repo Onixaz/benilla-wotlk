@@ -357,7 +357,7 @@ mod tests {
             local f = CreateFrame("Frame", "WheelProbe")
             f:SetWidth(200) f:SetHeight(200) f:SetPoint("CENTER", nil, "CENTER", 0, 0)
             f:EnableMouseWheel(true)
-            f:SetScript("OnMouseWheel", function()
+            f:SetScript("OnMouseWheel", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
                 WheelCalls = (WheelCalls or 0) + 1
                 WheelSum = (WheelSum or 0) + arg1
             end)

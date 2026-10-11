@@ -283,7 +283,7 @@ mod tests {
         let mut s = UiScript::new().unwrap();
         s.run(
             "local f = CreateFrame('Frame') f:RegisterEvent('UPDATE_CHAT_COLOR') \
-             f:SetScript('OnEvent', function() SEEN = {arg1, arg2, arg3, arg4} end) \
+             f:SetScript('OnEvent', function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) SEEN = {arg1, arg2, arg3, arg4} end) \
              ChangeChatColor('say', 0.5, 1.0, 0.999)",
         )
         .unwrap();

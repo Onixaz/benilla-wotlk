@@ -16,6 +16,7 @@ fn basic_controls() -> UiScript {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn message_shows_the_script_errors_dialog_carrying_its_text() {
     benilla_formats::wow_data_or_skip!();
     let s = basic_controls();
@@ -48,6 +49,7 @@ fn message_shows_the_script_errors_dialog_carrying_its_text() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn error_message_returns_its_argument_and_can_be_replaced() {
     benilla_formats::wow_data_or_skip!();
     let s = basic_controls();
@@ -70,6 +72,7 @@ fn error_message_returns_its_argument_and_can_be_replaced() {
 
 /// `BasicControls.xml:16` installs `_ERRORMESSAGE` as the error handler.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn error_message_is_the_installed_handler_and_the_host_channel_stays_sighted() {
     benilla_formats::wow_data_or_skip!();
     let mut s = basic_controls();

@@ -178,6 +178,7 @@ mod tests {
     /// Grass (`SoundID` 6), 4 Wood, 1 Metallic (`SoundID` 2, water column 0), 10 `"None"`
     /// (`SoundID` 0).
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_three_gates_on_real_tables() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -219,6 +220,7 @@ mod tests {
     /// A floor with no material (`TerrainType 10`) takes a footstep but never a thud; a real
     /// material still thuds. This matches the reference.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn an_unmaterialed_floor_footsteps_but_never_thuds() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

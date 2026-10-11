@@ -870,6 +870,7 @@ mod tests {
     /// bones to the body with 50/50 seam rings: the card split refuses to lift them, and the
     /// palette faces them anyway, since `0x714260` reads no vertex data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_welded_billboard_bone_still_reaches_the_palette_with_its_arm() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -903,6 +904,7 @@ mod tests {
     /// basis replaces the seat's, so the gallop's spine swing reaches the rider as translation
     /// only (the copy-root leg `0x714a18`).
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_riding_horse_seat_bone_carries_the_root_basis_arm() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

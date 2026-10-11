@@ -108,6 +108,7 @@ fn row_bg(s: &mut UiScript, i: u32) -> [f32; 4] {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_single_rank_line_paints_gray_with_no_rank_text() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_skills_page();
@@ -191,6 +192,7 @@ fn a_single_rank_line_paints_gray_with_no_rank_text() {
 /// real DBCs, lists what the reference lists: four headers and fourteen lines, with no
 /// `Dual Wield`, `Tauren Racial` or `GENERIC (DND)`, though the server sends them.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_real_hunters_block_lists_exactly_what_the_reference_client_lists() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -286,6 +288,7 @@ fn a_real_hunters_block_lists_exactly_what_the_reference_client_lists() {
 /// `SkillFrameCancelButton` is live: the XML comment around `SkillFrameAcceptButton` closes just
 /// above it (`SkillFrame.xml:338-339`). It is 80x22, centred at the page's TOPLEFT + (305, -422).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_pages_close_button_sits_where_the_reference_seats_it_and_closes_the_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_skills_page();
@@ -357,6 +360,7 @@ fn the_pages_close_button_sits_where_the_reference_seats_it_and_closes_the_windo
 /// The fold inherits `SkillLabelTemplate`, the row font, and sits at `(-3, -3)` off the left cap's
 /// right edge (`SkillFrame.xml:292-300`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_collapse_all_fold_wears_the_row_font_and_the_references_seat() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = shown_skills_page();
@@ -410,6 +414,7 @@ fn the_collapse_all_fold_wears_the_row_font_and_the_references_seat() {
 /// Stock `SkillFrameExpandButtonFrame` sizes itself once, in `OnLoad`, to the label's width + 45
 /// (`SkillFrame.xml:314`), so the measurer must be seated before the load.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_expand_tab_fits_its_label_at_load() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_skills_page_with(Some(Box::new(super::FixedWidthFont(7.0))));
@@ -446,6 +451,7 @@ fn the_expand_tab_fits_its_label_at_load() {
 /// 40px short of the bar's `(n - 12) * 15`; the reference stores the scroll value unclamped
 /// (`0x786db0`), so the bar's end shows the last line.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_list_reaches_its_last_row_at_the_bars_end() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

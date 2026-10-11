@@ -7,6 +7,7 @@ use benilla_formats::{open_chain, parse_m2_render_submeshes};
 /// sequence. The reference clocks a global sequence on one per-scene ms cursor, so a shared
 /// material is exact.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_creature_scrolls_on_a_global_sequence() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -45,6 +46,7 @@ fn a_creature_scrolls_on_a_global_sequence() {
 /// The corpus's two batches that rotate and never translate, both on GameObjects: `uv_anim` alone
 /// misses them.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_gameobject_batch_rotates_with_no_translation_at_all() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -73,6 +75,7 @@ fn a_gameobject_batch_rotates_with_no_translation_at_all() {
 /// `BloodOfHeroes` authors its five bubble sheets in two slots of one animation id, slot 0 still
 /// and slot 1 sweeping, so each instance needs its own material reading the slot it plays.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_gameobjects_slots_bake_different_loops() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -113,6 +116,7 @@ fn a_gameobjects_slots_bake_different_loops() {
 /// two frequencies are the duty cycle: `roll < 16384` is still, `16384..=32766` bubbles, and the
 /// leftover 32767 exhausts the chain back to the head.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bubbling_take_is_half_the_pools_duty_cycle() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -156,6 +160,7 @@ fn the_bubbling_take_is_half_the_pools_duty_cycle() {
 /// Four of the corpus's five animated entity tints key nothing in slot 0, so `rgb_anim` is `None`:
 /// the hunter's freezing trap pulses its glow card only on the `Custom0` clip the server plays.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_gameobjects_tint_is_keyed_in_a_later_slot_alone() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

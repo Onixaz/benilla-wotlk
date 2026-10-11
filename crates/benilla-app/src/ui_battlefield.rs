@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use benilla_assets::MapCatalogRes;
 use benilla_formats::MapCatalog;
 use benilla_protocol::messages::{BattlefieldList, BattlefieldStatus};
-use benilla_ui::script::{BattlefieldListView, BattlefieldMapInfo, BattlefieldQueueSlot, UiScript};
+use benilla_ui::script::{BattlefieldListView, BattlefieldQueueSlot, UiScript};
 
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, WorldEnterCascadeMessage};
@@ -83,51 +83,25 @@ impl Battlefield {
     }
 }
 
-/// The VM's view of the list, every value off `[0xb6eba4]`'s map row, whatever that id is.
-fn list_view(
-    state: &Battlefield,
-    catalog: Option<&MapCatalog>,
-    faction: Option<&str>,
-) -> BattlefieldListView {
-    let map_id = state.map_id();
-    let row = catalog.and_then(|c| c.battleground(map_id));
-    let (bracket_min, bracket_max) = state
-        .list
-        .as_ref()
-        .zip(row)
-        .map_or((0, 0), |(l, r)| r.bracket_levels(l.bracket));
-    let info = catalog
-        .and_then(|c| c.name(map_id))
-        .zip(row)
-        .map(|(name, r)| BattlefieldMapInfo {
-            name: name.to_string(),
-            // The faction-group index (`0x5efe00`): 0 Horde, 1 Alliance; both columns ship
-            // the same text.
-            description: match faction {
-                Some("Horde") => Some(r.descriptions[0].clone()),
-                Some("Alliance") => Some(r.descriptions[1].clone()),
-                _ => None,
-            },
-            min_level: r.min_level,
-            max_level: r.max_level,
-            field_16: r.field_16,
-            field_17: r.field_17,
-            field_18: r.field_18,
-        });
+/// The VM's view of the list. The map row's bracket, level, description and group-queue columns
+/// are 1.12.1's `Map.dbc` battleground columns; 3.3.5a keeps them in `BattlemasterList.dbc` and
+/// `PvpDifficulty.dbc`, which are not read yet, so none is answered.
+fn list_view(state: &Battlefield) -> BattlefieldListView {
     BattlefieldListView {
         instances: state
             .list
             .as_ref()
             .map_or_else(Vec::new, |l| l.instances.clone()),
-        bracket_min,
-        bracket_max,
-        info,
-        group_queue: row.is_some_and(|r| r.group_queue != 0),
+        bracket_min: 0,
+        bracket_max: 0,
+        info: None,
+        group_queue: false,
     }
 }
 
 /// One slot's VM view at `now`: the three clock getters reduced (`0x4ab620`, `0x4ab790`,
-/// `0x4ab820`) and the bracket levels derived (`0x4aa850`).
+/// `0x4ab820`). The bracket levels are left at 0: their bounds are `PvpDifficulty.dbc`'s, not read
+/// yet ([`list_view`]).
 fn slot_view(
     slot: Option<&(BattlefieldStatus, Instant)>,
     catalog: Option<&MapCatalog>,
@@ -145,9 +119,6 @@ fn slot_view(
     };
     view.status = status.status;
     view.instance_id = status.instance_id;
-    if let Some(row) = catalog.and_then(|c| c.battleground(map_id)) {
-        (view.min_level, view.max_level) = row.bracket_levels(status.bracket);
-    }
     // Status 2: `[slot+0x14] = Δ ? now + Δ : 0`; read as `deadline − now`, 0 once past.
     if let Some(delta) = status.time_ms.filter(|&d| d != 0) {
         let deadline = *at + std::time::Duration::from_millis(u64::from(delta));
@@ -163,13 +134,12 @@ fn slot_view(
     view
 }
 
-/// The as-group refusal (`0x4a9f60`): the map's `MaxPlayers` must cover the party count (the
-/// members besides us, 0..4) and the raid roster count. The raid count here is the wire list in a
-/// raid and 0 in a party; which members the reference's raid roster counts is untraced.
-fn group_fits(catalog: Option<&MapCatalog>, map_id: u32, group: Option<&GroupState>) -> bool {
-    let max = catalog
-        .and_then(|c| c.battleground(map_id))
-        .map_or(0, |r| r.max_players) as usize;
+/// The as-group refusal (`0x4a9f60`): the bracket's player bound must cover the party count (the
+/// members besides us, 0..4) and the raid roster count. The bound is `PvpDifficulty.dbc`'s, not
+/// read yet, so none is known and only an empty group passes. The raid count here is the wire
+/// list in a raid and 0 in a party; which members the reference's raid roster counts is untraced.
+fn group_fits(group: Option<&GroupState>) -> bool {
+    let max = 0;
     let Some(group) = group else {
         return true;
     };
@@ -201,12 +171,7 @@ fn feed_battlefield(
     let now = Instant::now();
 
     if std::mem::take(&mut state.dirty) {
-        // The description's side: the player's faction group (`0x5efe00`).
-        let faction = script
-            .eval::<Option<String>>(r#"return (UnitFactionGroup("player"))"#)
-            .ok()
-            .flatten();
-        let view = list_view(&state, catalog, faction.as_deref());
+        let view = list_view(&state);
         script.set_battlefield_list(view);
     }
 
@@ -266,7 +231,6 @@ fn feed_battlefield(
 fn drain_battlefield(
     script: Option<NonSendMut<UiScript>>,
     state: Res<Battlefield>,
-    maps: Option<Res<MapCatalogRes>>,
     group: Option<Res<GroupState>>,
     commands: Res<NetCommands>,
     mut sink: crate::ui_action::MessageSink,
@@ -274,10 +238,9 @@ fn drain_battlefield(
     let Some(mut script) = script else {
         return;
     };
-    let catalog = maps.as_deref().map(|m| &m.0);
     let map_id = state.map_id();
     for (instance_id, as_group) in script.take_battlefield_join_requests() {
-        if as_group && !group_fits(catalog, map_id, group.as_deref()) {
+        if as_group && !group_fits(group.as_deref()) {
             if let Some(line) =
                 crate::ui_action::keyed_line(&script, "ERR_GROUP_JOIN_BATTLEGROUND_TOO_MANY")
             {
@@ -442,79 +405,6 @@ mod tests {
             (v.map_id, v.status),
             (0, 0),
             "an empty slot: map 0, status none"
-        );
-    }
-
-    #[test]
-    fn the_group_gate_reads_both_counts() {
-        let data = benilla_formats::wow_data_or_skip!();
-        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
-        let catalog = benilla_formats::load_map_catalog(&mut chain).expect("Map.dbc");
-        assert!(group_fits(Some(&catalog), 489, None));
-        let member = |guid: u64| benilla_protocol::messages::GroupMemberEntry {
-            name: format!("m{guid}"),
-            guid,
-            status: 1,
-            flags: 0,
-        };
-        let mut group = GroupState {
-            in_group: true,
-            ..Default::default()
-        };
-        group.members = (1..=4).map(member).collect();
-        assert!(
-            group_fits(Some(&catalog), 489, Some(&group)),
-            "a full party fits WSG's 10"
-        );
-        group.group_type = 1;
-        group.members = (1..=12).map(member).collect();
-        assert!(
-            !group_fits(Some(&catalog), 489, Some(&group)),
-            "a 12-member raid outruns WSG's 10"
-        );
-        assert!(
-            group_fits(Some(&catalog), 30, Some(&group)),
-            "and fits AV's 40"
-        );
-    }
-
-    #[test]
-    fn the_list_view_resolves_the_listed_map_or_map_zero() {
-        let data = benilla_formats::wow_data_or_skip!();
-        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
-        let catalog = benilla_formats::load_map_catalog(&mut chain).expect("Map.dbc");
-        let mut state = Battlefield::default();
-        let v = list_view(&state, Some(&catalog), Some("Horde"));
-        assert!(v.instances.is_empty());
-        assert_eq!(
-            v.info.as_ref().map(|i| i.name.as_str()),
-            Some("Eastern Kingdoms")
-        );
-        assert_eq!((v.bracket_min, v.bracket_max), (0, 0));
-        state.apply_list(BattlefieldList {
-            battlemaster: 0x10,
-            map_id: 529,
-            bracket: 2,
-            instances: vec![4, 9],
-        });
-        let v = list_view(&state, Some(&catalog), Some("Alliance"));
-        assert_eq!(v.instances, vec![4, 9]);
-        assert_eq!((v.bracket_min, v.bracket_max), (40, 49));
-        let info = v.info.expect("Arathi Basin's row");
-        assert_eq!(info.name, "Arathi Basin");
-        assert!(info
-            .description
-            .as_deref()
-            .is_some_and(|d| d.starts_with("The Arathi Basin")));
-        assert_eq!(
-            (info.min_level, info.max_level, info.field_16),
-            (20, 60, -1)
-        );
-        assert!(v.group_queue);
-        let v = list_view(&state, Some(&catalog), None);
-        assert!(
-            v.info.is_some_and(|i| i.description.is_none()),
-            "the -1 faction leg: no description"
         );
     }
 }

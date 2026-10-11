@@ -75,6 +75,7 @@ fn show_bars(s: &UiScript, bars: &[u32]) {
 /// `ActionButton_GetPagedID`'s parent-name fork, ActionButton.lua:455-466), empty wells hidden
 /// unless a payload is held, and ids no bonus page moves.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_multibars_drive_end_to_end() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -245,6 +246,7 @@ fn shipped_multibars_drive_end_to_end() {
 /// The stance bar (`ShapeshiftBarFrame`) over the reference's form list (`0xb71100`): hidden at
 /// zero forms, the active form checked, a non-castable one greyed, a click queuing its spell.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_stance_bar_drives_end_to_end() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ShapeshiftFormView;
@@ -404,6 +406,7 @@ fn shipped_stance_bar_drives_end_to_end() {
 /// A multibar button's tooltip shows its own paged action, not the main bar's slot of the same
 /// index (`ActionButton_SetTooltip`, ActionButton.lua:365-382).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn multibar_hover_renders_the_buttons_own_action() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -510,6 +513,7 @@ fn multibar_hover_renders_the_buttons_own_action() {
 /// 523) whose templates are `hidden="true"` (l.266, 381); Atlas (`Atlas.lua:387`) and Bartender2
 /// (`Bartender2.lua:74`) index them by name.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_vertical_multibars_exist_hidden_on_the_reference_pages() {
     benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();
@@ -550,6 +554,7 @@ fn the_vertical_multibars_exist_hidden_on_the_reference_pages() {
 /// byte is 0, and the bits name bars only in FrameXML (`0x4e76e0`). Bar 4 also needs bar 3
 /// (MultiActionBars.lua:73), since `MultiBarLeft` anchors to `MultiBarRight`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_extra_bar_stays_down_until_its_own_toggle_is_set() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -613,6 +618,7 @@ fn every_extra_bar_stays_down_until_its_own_toggle_is_set() {
 /// after `MultiActionBar_Update`: a variable row, `CONTAINER_OFFSET_Y` (70, +27), and a frame row,
 /// `CastingBarFrame` (60, +40), each with `bottomEither` (UIParent.lua:1580, 1587).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn raising_a_bottom_bar_moves_the_managed_bottom_stack() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -657,6 +663,7 @@ fn raising_a_bottom_bar_moves_the_managed_bottom_stack() {
 /// ActionButton.lua:13 declares all six viewable, and `MultiActionBar_Update` blanks the raised
 /// bars' pages (MultiActionBars.lua:49-80).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn viewable_action_bar_pages_follow_the_bar_toggles() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -705,6 +712,7 @@ fn viewable_action_bar_pages_follow_the_bar_toggles() {
 /// Always Show ActionBars holds every extra bar's empty wells open. `showgrid` is a count
 /// (ActionButton.lua:245, 255), so the option and a held payload are independent askers.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_grid_option_holds_the_extra_bars_empty_wells_open() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -772,6 +780,7 @@ fn the_grid_option_holds_the_extra_bars_empty_wells_open() {
 /// `SetNormalTexture` keeps the region's colour (`0x778f10`) and `ActionButton_HideGrid` sets none,
 /// so a ghosted ring stays dim after the payload goes.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_held_payload_ghosts_the_empty_wells_it_opens() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -881,6 +890,7 @@ fn a_held_payload_ghosts_the_empty_wells_it_opens() {
 /// (`0x4e76e0`); only the server's descriptor push moves the getter, which the
 /// PLAYER_ENTERING_WORLD arm reads once (UIParent.lua:362-365).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_bar_toggle_sends_the_byte_its_globals_pack_to() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -944,6 +954,7 @@ fn a_bar_toggle_sends_the_byte_its_globals_pack_to() {
 /// binding never reads it (`0x4e770e cmp esi,4`) and passing it makes the grid option look
 /// server-backed. A fifth argument is invisible from outside, so a Lua spy replaces the binding.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_shipped_setter_passes_exactly_four_arguments() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -974,6 +985,7 @@ fn the_shipped_setter_passes_exactly_four_arguments() {
 /// The stance bar's seat is the manage pass's `ShapeshiftBarFrame` row (baseY 0, bottomLeft 45,
 /// UIParent.lua:1583), in both bottom-bar states.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stance_bar_sits_where_the_pass_puts_it() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ShapeshiftFormView;
@@ -1019,6 +1031,7 @@ fn the_stance_bar_sits_where_the_pass_puts_it() {
 /// show and the rings are 64; raised over the bottom-left bar, all three strips hide and the rings
 /// drop to 50.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stance_shelf_follows_the_bottom_left_bar() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ShapeshiftFormView;
@@ -1115,6 +1128,7 @@ fn the_stance_shelf_follows_the_bottom_left_bar() {
 /// The strips are declared as the three-form chain, and a hidden middle strip still resolves its
 /// 38 px rect, so the right cap is re-pointed for one and two forms.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stance_shelf_is_as_long_as_the_form_count() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ShapeshiftFormView;
@@ -1199,6 +1213,7 @@ fn the_stance_shelf_is_as_long_as_the_form_count() {
 /// label's colour (ActionButton.lua:172), and `ActionButton_UpdateHotkeys` writes a bound key's
 /// text whether or not the slot has an action (l.141-142).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_extra_bars_empty_well_keeps_its_bound_hotkey_label() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1278,6 +1293,7 @@ fn an_extra_bars_empty_well_keeps_its_bound_hotkey_label() {
 /// middle strip along u only. Wrapping v too would bleed the texture's opaque last row
 /// (`ShapeshiftBarMiddle.blp` row 31) into its transparent top edge as a grey hairline.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_middle_strip_tiles_along_its_length_only() {
     benilla_formats::wow_data_or_skip!();
     use super::extract::tiling_axes;
@@ -1345,6 +1361,7 @@ fn the_middle_strip_tiles_along_its_length_only() {
 /// (BonusActionBarFrame.lua:170, 177), so a state change sent as one would draw the strip over the
 /// raised bar. Driven through [`crate::ui_shapeshift::push_forms`].
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
     benilla_formats::wow_data_or_skip!();
     use crate::ui_shapeshift::{push_forms, FormsEdge, StanceMemory};

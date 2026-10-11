@@ -528,7 +528,7 @@ mod tests {
             r#"
             fired = {}
             cs = CreateFrame("ColorSelect", "TestColorSelect2")
-            cs:SetScript("OnColorSelect", function()
+            cs:SetScript("OnColorSelect", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
                 table.insert(fired, arg1 .. "," .. arg2 .. "," .. arg3)
             end)
         "#,

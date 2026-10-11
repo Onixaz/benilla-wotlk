@@ -165,6 +165,7 @@ fn an_addon_tooltip_from_the_template_gets_the_plate() {
 /// An addon's own `<OnLoad>` calls `GameTooltip_OnLoad()` with no argument (`TipBuddy.xml:1402`);
 /// the stock helper reads `this` (`GameTooltip.lua:79-82`) and tints the plate.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_addon_may_call_gametooltip_onload_the_reference_way_with_no_argument() {
     benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -375,6 +376,7 @@ fn an_instance_attribute_beats_the_templates() {
 /// (`Participant/Resurrection.lua:294`) answers false. A declared pair counts as a line, and adds
 /// size, only once filled.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_tooltip_line_globals_exist_cold_and_do_not_count_as_lines() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();

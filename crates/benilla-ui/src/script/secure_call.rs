@@ -40,25 +40,18 @@ end
 "##;
 
 /// Install `securecall` on a target whose base library has it.
-pub(super) fn install(
-    lua: &Lua,
-    client: &benilla_expansions::ExpansionProfile,
-) -> mlua::Result<()> {
-    if !client.secure_call {
-        return Ok(());
-    }
+pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.load(SECURECALL).set_name("=securecall").exec()
 }
 
 #[cfg(test)]
 mod tests {
-    use benilla_expansions::Expansion;
 
     use crate::script::UiScript;
 
     #[test]
     fn a_call_returns_its_results_and_a_name_reads_the_global() {
-        let ui = UiScript::new_for(Expansion::Wotlk).unwrap();
+        let ui = UiScript::new().unwrap();
         ui.run("function Pair(a, b) return a + b, a * b end")
             .unwrap();
         let (sum, product): (i64, i64) = ui.eval("return securecall(Pair, 3, 4)").unwrap();
@@ -69,7 +62,7 @@ mod tests {
 
     #[test]
     fn an_error_goes_to_the_handler_and_returns_nothing() {
-        let ui = UiScript::new_for(Expansion::Wotlk).unwrap();
+        let ui = UiScript::new().unwrap();
         ui.run(
             "seterrorhandler(function(msg) SEEN = msg end)
              N = select('#', securecall(function() error('boom', 0) end))",
@@ -77,11 +70,5 @@ mod tests {
         .unwrap();
         assert_eq!(ui.eval::<i64>("return N").unwrap(), 0);
         assert_eq!(ui.eval::<String>("return SEEN").unwrap(), "boom");
-    }
-
-    #[test]
-    fn classic_has_no_securecall() {
-        let ui = UiScript::new_for(Expansion::Classic).unwrap();
-        assert!(ui.eval::<bool>("return securecall == nil").unwrap());
     }
 }

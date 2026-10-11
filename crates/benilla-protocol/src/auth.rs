@@ -1,20 +1,23 @@
-//! The realmd (login) wire protocol, version 3 in 1.12.1 and 8 in 3.3.5a: logon challenge, logon
-//! proof and realm list, the three exchanges [`crate::logon`] performs. Login packets are not
+//! The realmd (login) wire protocol, version 8: logon challenge, logon proof and realm list, the three exchanges [`crate::logon`] performs. Login packets are not
 //! header-encrypted and each is self-delimiting, so they are read in request/response order.
 
 use std::io::{Read, Write};
 use std::net::Ipv4Addr;
 
 use anyhow::{bail, Result};
-use benilla_expansions::Expansion;
 use sha1::{Digest, Sha1};
 
 use crate::wire::{read_array, read_cstring, read_f32_le, read_u16_le, read_u32_le, read_u8};
-use crate::RealmInfo;
+use crate::{RealmInfo, CLIENT_BUILD};
 
 const CMD_AUTH_LOGON_CHALLENGE: u8 = 0x00;
 const CMD_AUTH_LOGON_PROOF: u8 = 0x01;
 const CMD_REALM_LIST: u8 = 0x10;
+
+/// The logon challenge's protocol version byte.
+const PROTOCOL_VERSION: u8 = 8;
+/// The logon challenge's major, minor and patch version.
+const CLIENT_VERSION: [u8; 3] = [3, 3, 5];
 
 const GAME_NAME_WOW: u32 = 0x0057_6f57; // "WoW\0" little-endian
 const PLATFORM_X86: u32 = 0x0078_3836; // "x86\0"
@@ -25,7 +28,7 @@ const PLATFORM_X86: u32 = 0x0078_3836; // "x86\0"
 const OS_WINDOWS: u32 = 0x0057_696e; // "Win\0"
 const OS_MACOS: u32 = 0x004F_5358; // "OSX\0"
 
-/// The host's OS tag: `OSX` on macOS, else `Win`, as there was no 1.12 Linux client. Servers act
+/// The host's OS tag: `OSX` on macOS, else `Win`, as there was no 3.3.5a Linux client. Servers act
 /// on it: vmangos picks `WardenWin` or `WardenMac`, and realmd checks the build (`FindBuildInfo`).
 const fn client_os() -> u32 {
     if cfg!(target_os = "macos") {
@@ -63,19 +66,14 @@ pub struct ChallengeReply {
     pub crc_salt: [u8; 16],
 }
 
-/// Send `CMD_AUTH_LOGON_CHALLENGE_Client` as `expansion`'s client does: its protocol version,
-/// version and build. `account_name` must be uppercased, as the SRP6 hashes use it.
-pub fn write_logon_challenge(
-    w: &mut impl Write,
-    account_name: &str,
-    expansion: Expansion,
-) -> std::io::Result<()> {
-    let profile = expansion.profile();
+/// Send `CMD_AUTH_LOGON_CHALLENGE_Client` as the client does: its protocol version, version and
+/// build. `account_name` must be uppercased, as the SRP6 hashes use it.
+pub fn write_logon_challenge(w: &mut impl Write, account_name: &str) -> std::io::Result<()> {
     // Everything after the 2-byte size field, assembled first so we can prefix its length.
     let mut body = Vec::with_capacity(34 + account_name.len());
     body.extend_from_slice(&GAME_NAME_WOW.to_le_bytes());
-    body.extend_from_slice(&profile.logon.version);
-    body.extend_from_slice(&profile.build.to_le_bytes());
+    body.extend_from_slice(&CLIENT_VERSION);
+    body.extend_from_slice(&CLIENT_BUILD.to_le_bytes());
     body.extend_from_slice(&PLATFORM_X86.to_le_bytes());
     body.extend_from_slice(&client_os().to_le_bytes());
     body.extend_from_slice(&LOCALE_EN_US.to_le_bytes());
@@ -86,7 +84,7 @@ pub fn write_logon_challenge(
 
     let mut packet = Vec::with_capacity(4 + body.len());
     packet.push(CMD_AUTH_LOGON_CHALLENGE);
-    packet.push(profile.logon.protocol_version);
+    packet.push(PROTOCOL_VERSION);
     packet.extend_from_slice(&(body.len() as u16).to_le_bytes());
     packet.extend_from_slice(&body);
     w.write_all(&packet)
@@ -139,7 +137,7 @@ pub fn read_challenge_reply(r: &mut impl Read) -> Result<ChallengeReply> {
 
 // --- the version (client-integrity) proof --------------------------------------------------------
 //
-// The proof's `crc_hash` answers the challenge's `crc_salt`: the 1.12 client hashes its own
+// The proof's `crc_hash` answers the challenge's `crc_salt`: the client hashes its own
 // binaries under that salt into a 20-byte digest `H` and sends `SHA1(A ‖ H)`. realmd recomputes it
 // from a stored `H` (`AuthSocket::VerifyVersion`) and, under `StrictVersionCheck = 1` (the shipped
 // `realmd.conf.example` value), refuses a mismatch with `WOW_FAIL_VERSION_INVALID` (0x09).
@@ -150,30 +148,37 @@ const MANGOS_VERSION_CHALLENGE: [u8; 16] = [
     0xba, 0xa3, 0x1e, 0x99, 0xa0, 0x0b, 0x21, 0x57, 0xfc, 0x37, 0x3f, 0xb3, 0x69, 0xcd, 0xd2, 0xf1,
 ];
 
-/// The integrity digest `H` for `crc_salt`, known only for [`MANGOS_VERSION_CHALLENGE`]: the
-/// expansion profile's, the Mac client's on macOS because servers pick `H` by the OS tag.
-/// Deviation: a stored per-OS constant, not the reference's HMAC over its own executables
-/// (`0x5b1170`), because every mangos-family realmd issues this one salt.
-fn integrity_hash(crc_salt: &[u8; 16], expansion: Expansion) -> Option<[u8; 20]> {
+/// The Windows client's integrity digest `H` under [`MANGOS_VERSION_CHALLENGE`]: AzerothCore's
+/// `build_info` row for 12340 (`db_auth/build_info.sql`).
+const INTEGRITY_WINDOWS: [u8; 20] = [
+    0xcd, 0xcb, 0xbd, 0x51, 0x88, 0x31, 0x5e, 0x6b, 0x4d, 0x19, 0x44, 0x9d, 0x49, 0x2d, 0xbc, 0xfa,
+    0xf1, 0x56, 0xa3, 0x47,
+];
+/// The same for the Mac client.
+const INTEGRITY_MACOS: [u8; 20] = [
+    0xb7, 0x06, 0xd1, 0x3f, 0xf2, 0xf4, 0x01, 0x88, 0x39, 0x72, 0x94, 0x61, 0xe3, 0xf8, 0xa0, 0xe2,
+    0xb5, 0xfd, 0xc0, 0x34,
+];
+
+/// The integrity digest `H` for `crc_salt`, known only for [`MANGOS_VERSION_CHALLENGE`]: the Mac
+/// client's on macOS because servers pick `H` by the OS tag. Deviation: a stored per-OS constant,
+/// not the reference's HMAC over its own executables, because every mangos-family realmd issues
+/// this one salt.
+fn integrity_hash(crc_salt: &[u8; 16]) -> Option<[u8; 20]> {
     if *crc_salt != MANGOS_VERSION_CHALLENGE {
         return None;
     }
-    let logon = &expansion.profile().logon;
     Some(if client_os() == OS_MACOS {
-        logon.integrity_macos
+        INTEGRITY_MACOS
     } else {
-        logon.integrity_windows
+        INTEGRITY_WINDOWS
     })
 }
 
 /// The proof's `crc_hash`: `SHA1(A ‖ H)` over `A`'s wire bytes (realmd hashes `lp->A` as
 /// received), or twenty zeros for an unknown salt, which only a strict server refuses.
-pub fn version_proof(
-    crc_salt: &[u8; 16],
-    client_public_key: &[u8; 32],
-    expansion: Expansion,
-) -> [u8; 20] {
-    match integrity_hash(crc_salt, expansion) {
+pub fn version_proof(crc_salt: &[u8; 16], client_public_key: &[u8; 32]) -> [u8; 20] {
+    match integrity_hash(crc_salt) {
         Some(h) => {
             let mut sha = Sha1::new();
             sha.update(client_public_key);
@@ -190,22 +195,20 @@ pub fn write_logon_proof(
     client_public_key: &[u8; 32],
     client_proof: &[u8; 20],
     crc_salt: &[u8; 16],
-    expansion: Expansion,
 ) -> std::io::Result<()> {
     let mut packet = Vec::with_capacity(1 + 32 + 20 + 20 + 1 + 1);
     packet.push(CMD_AUTH_LOGON_PROOF);
     packet.extend_from_slice(client_public_key);
     packet.extend_from_slice(client_proof);
-    packet.extend_from_slice(&version_proof(crc_salt, client_public_key, expansion));
+    packet.extend_from_slice(&version_proof(crc_salt, client_public_key));
     packet.push(0); // number_of_telemetry_keys
     packet.push(0); // security_flag = None
     w.write_all(&packet)
 }
 
-/// Read the proof reply: the server's `M2`, or an [`AuthReject`]. After `M2`, 1.12.1's success
-/// reply carries a `u32` hardware survey id; 3.3.5a's `u32 account_flags, u32 hardware_survey_id,
-/// u16 login_flags`.
-pub fn read_proof_reply(r: &mut impl Read, expansion: Expansion) -> Result<[u8; 20]> {
+/// Read the proof reply: the server's `M2`, or an [`AuthReject`]. After `M2`, the success reply
+/// carries `u32 account_flags, u32 hardware_survey_id, u16 login_flags`.
+pub fn read_proof_reply(r: &mut impl Read) -> Result<[u8; 20]> {
     let opcode = read_u8(r)?;
     if opcode != CMD_AUTH_LOGON_PROOF {
         bail!("expected CMD_AUTH_LOGON_PROOF (0x01), got {opcode:#x}");
@@ -216,16 +219,9 @@ pub fn read_proof_reply(r: &mut impl Read, expansion: Expansion) -> Result<[u8; 
         return Err(AuthReject { code: result }.into());
     }
     let server_proof = read_array::<20>(r)?;
-    match expansion {
-        Expansion::Classic => {
-            let _hardware_survey_id = read_u32_le(r)?;
-        }
-        Expansion::Wotlk => {
-            let _account_flags = read_u32_le(r)?;
-            let _hardware_survey_id = read_u32_le(r)?;
-            let _login_flags = read_u16_le(r)?;
-        }
-    }
+    let _account_flags = read_u32_le(r)?;
+    let _hardware_survey_id = read_u32_le(r)?;
+    let _login_flags = read_u16_le(r)?;
     Ok(server_proof)
 }
 
@@ -236,69 +232,34 @@ pub fn write_realm_list_request(w: &mut impl Write) -> std::io::Result<()> {
     w.write_all(&packet)
 }
 
-/// The magic populations the 1.12 realm-list parser (`0x5b2230`) rewrites, as `(population sent,
-/// population rewritten, flag OR'd)`: Recommended, New and Full travel as these exact float bit
-/// patterns, not as wire flags.
-pub(crate) const MAGIC_POPULATIONS: [(u32, u32, u8); 3] = [
-    (0x4416_0000, 0x0000_0000, 0x20), // 600.0 → 0.0,   Recommended
-    (0x4348_0000, 0x3a83_126f, 0x40), // 200.0 → 0.001, New
-    (0x43c8_0000, 0x4100_0000, 0x80), // 400.0 → 8.0,   Full
-];
-
-/// The 3.3.5a realm flag that appends the realm's version and build to its record.
+/// The realm flag that appends the realm's version and build to its record.
 const REALM_FLAG_SPECIFY_BUILD: u8 = 0x04;
 
-/// Read `CMD_REALM_LIST_Server` into the advertised realms. 1.12.1 counts realms in a `u8` and
-/// types each with a `u32`; 3.3.5a counts in a `u16`, types with a `u8` followed by a `u8` lock,
-/// and appends `u8 major, minor, patch, u16 build` to a realm flagged
-/// [`REALM_FLAG_SPECIFY_BUILD`]. For 1.12.1, [`MAGIC_POPULATIONS`] are rewritten here as its
-/// parser does: the realm-list screen averages every realm's population, and an unswapped
-/// Recommended `600.0` would skew that mean for every row.
-pub fn read_realm_list(r: &mut impl Read, expansion: Expansion) -> Result<Vec<RealmInfo>> {
+/// Read `CMD_REALM_LIST_Server` into the advertised realms: a `u16` count, each realm typed with a
+/// `u8` and a `u8` lock, and `u8 major, minor, patch, u16 build` appended to a realm flagged
+/// [`REALM_FLAG_SPECIFY_BUILD`].
+pub fn read_realm_list(r: &mut impl Read) -> Result<Vec<RealmInfo>> {
     let opcode = read_u8(r)?;
     if opcode != CMD_REALM_LIST {
         bail!("expected CMD_REALM_LIST (0x10), got {opcode:#x}");
     }
     let _size = read_u16_le(r)?;
     let _header_padding = read_u32_le(r)?;
-    let number_of_realms = match expansion {
-        Expansion::Classic => u16::from(read_u8(r)?),
-        Expansion::Wotlk => read_u16_le(r)?,
-    };
+    let number_of_realms = read_u16_le(r)?;
     let mut realms = Vec::with_capacity(usize::from(number_of_realms.min(256)));
     for _ in 0..number_of_realms {
-        let realm_type = match expansion {
-            Expansion::Classic => read_u32_le(r)?,
-            Expansion::Wotlk => {
-                let realm_type = u32::from(read_u8(r)?);
-                let _locked = read_u8(r)?;
-                realm_type
-            }
-        };
-        let mut flags = read_u8(r)?;
+        let realm_type = u32::from(read_u8(r)?);
+        let _locked = read_u8(r)?;
+        let flags = read_u8(r)?;
         let name = read_cstring(r)?;
         let address = read_cstring(r)?;
-        let mut population = read_f32_le(r)?;
+        let population = read_f32_le(r)?;
         let characters = read_u8(r)?;
         let category = read_u8(r)?;
         let id = read_u8(r)?;
-        match expansion {
-            Expansion::Classic => {
-                // The sentinel swap, before anyone can average this number.
-                if let Some(&(_, rewritten, bit)) = MAGIC_POPULATIONS
-                    .iter()
-                    .find(|(magic, _, _)| *magic == population.to_bits())
-                {
-                    population = f32::from_bits(rewritten);
-                    flags |= bit;
-                }
-            }
-            Expansion::Wotlk => {
-                if flags & REALM_FLAG_SPECIFY_BUILD != 0 {
-                    let _version = read_array::<3>(r)?;
-                    let _build = read_u16_le(r)?;
-                }
-            }
+        if flags & REALM_FLAG_SPECIFY_BUILD != 0 {
+            let _version = read_array::<3>(r)?;
+            let _build = read_u16_le(r)?;
         }
         realms.push(RealmInfo {
             name,
@@ -349,15 +310,11 @@ mod tests {
     #[test]
     fn version_proof_matches_the_realmd_expression() {
         let expected = if cfg!(target_os = "macos") {
-            "dccd0e67946fae221451513b1a59724090ff6096"
+            "8d575a807990bf3d47041e02c48311adfb5732c2"
         } else {
-            "9b95cd41edd719fddf237294b8aca17010e71703"
+            "28b5a0305f9754854703c17579b0e7e8c0295184"
         };
-        let got = version_proof(
-            &MANGOS_VERSION_CHALLENGE,
-            &test_public_key(),
-            Expansion::Classic,
-        );
+        let got = version_proof(&MANGOS_VERSION_CHALLENGE, &test_public_key());
         assert_eq!(
             got.iter().map(|b| format!("{b:02x}")).collect::<String>(),
             expected
@@ -368,12 +325,7 @@ mod tests {
     fn an_unknown_version_challenge_is_answered_with_zeros() {
         let mut salt = MANGOS_VERSION_CHALLENGE;
         salt[0] ^= 0xff;
-        for expansion in Expansion::ALL {
-            assert_eq!(
-                version_proof(&salt, &test_public_key(), expansion),
-                [0u8; 20]
-            );
-        }
+        assert_eq!(version_proof(&salt, &test_public_key()), [0u8; 20]);
     }
 
     /// `opcode · A[32] · M1[20] · crc_hash[20] · num_keys · security_flag`, 75 bytes.
@@ -382,14 +334,7 @@ mod tests {
         let a = test_public_key();
         let m1: [u8; 20] = std::array::from_fn(|i| (i as u8).wrapping_mul(13).wrapping_add(4));
         let mut packet = Vec::new();
-        write_logon_proof(
-            &mut packet,
-            &a,
-            &m1,
-            &MANGOS_VERSION_CHALLENGE,
-            Expansion::Classic,
-        )
-        .unwrap();
+        write_logon_proof(&mut packet, &a, &m1, &MANGOS_VERSION_CHALLENGE).unwrap();
 
         assert_eq!(packet.len(), 1 + 32 + 20 + 20 + 1 + 1);
         assert_eq!(packet[0], CMD_AUTH_LOGON_PROOF);
@@ -397,7 +342,7 @@ mod tests {
         assert_eq!(&packet[33..53], &m1);
         assert_eq!(
             &packet[53..73],
-            &version_proof(&MANGOS_VERSION_CHALLENGE, &a, Expansion::Classic)
+            &version_proof(&MANGOS_VERSION_CHALLENGE, &a)
         );
         assert_eq!(&packet[73..], &[0, 0]);
     }
@@ -405,8 +350,9 @@ mod tests {
     #[test]
     fn the_realm_list_keeps_every_field_the_wire_carries() {
         let mut body = Vec::new();
-        body.extend_from_slice(&8u32.to_le_bytes()); // realm_type: RPPVP
-        body.push(0x42); // flags: 0x02 offline | 0x40 sentinel
+        body.push(8); // realm_type: RPPVP
+        body.push(0); // locked
+        body.push(0x42); // flags: 0x02 offline | 0x40
         body.extend_from_slice(b"Onyxia\0");
         body.extend_from_slice(b"127.0.0.1:8085\0");
         body.extend_from_slice(&1.75f32.to_le_bytes()); // population
@@ -415,13 +361,13 @@ mod tests {
         body.push(9); // realm id
 
         let mut packet = vec![CMD_REALM_LIST];
-        packet.extend_from_slice(&(body.len() as u16 + 3).to_le_bytes()); // size
+        packet.extend_from_slice(&(body.len() as u16 + 6).to_le_bytes()); // size
         packet.extend_from_slice(&0u32.to_le_bytes()); // header padding
-        packet.push(1); // number_of_realms
+        packet.extend_from_slice(&1u16.to_le_bytes()); // number_of_realms
         packet.extend_from_slice(&body);
         packet.extend_from_slice(&0u16.to_le_bytes()); // footer padding
 
-        let realms = read_realm_list(&mut packet.as_slice(), Expansion::Classic).unwrap();
+        let realms = read_realm_list(&mut packet.as_slice()).unwrap();
         assert_eq!(realms.len(), 1);
         let r = &realms[0];
         assert_eq!(r.name, "Onyxia");
@@ -432,45 +378,5 @@ mod tests {
         assert_eq!(r.characters, 3);
         assert_eq!(r.category, 2);
         assert_eq!(r.id, 9);
-    }
-
-    /// The rewritten values are the reference parser's own, bit for bit.
-    #[test]
-    fn the_three_magic_populations_become_flags_and_are_rewritten() {
-        let one = |pop: f32| {
-            let mut body = Vec::new();
-            body.extend_from_slice(&0u32.to_le_bytes());
-            body.push(0x02); // a real wire flag, which must survive the OR
-            body.extend_from_slice(b"R\0");
-            body.extend_from_slice(b"h:1\0");
-            body.extend_from_slice(&pop.to_le_bytes());
-            body.extend_from_slice(&[0, 1, 0]);
-            let mut packet = vec![CMD_REALM_LIST];
-            packet.extend_from_slice(&(body.len() as u16 + 3).to_le_bytes());
-            packet.extend_from_slice(&0u32.to_le_bytes());
-            packet.push(1);
-            packet.extend_from_slice(&body);
-            packet.extend_from_slice(&0u16.to_le_bytes());
-            read_realm_list(&mut packet.as_slice(), Expansion::Classic)
-                .unwrap()
-                .remove(0)
-        };
-
-        let recommended = one(600.0);
-        assert_eq!(recommended.flags, 0x02 | 0x20, "the wire flag survives");
-        assert_eq!(recommended.population, 0.0);
-
-        let new = one(200.0);
-        assert_eq!(new.flags, 0x02 | 0x40);
-        assert_eq!(new.population.to_bits(), 0x3a83_126f, "0.001f exactly");
-
-        let full = one(400.0);
-        assert_eq!(full.flags, 0x02 | 0x80);
-        assert_eq!(full.population, 8.0);
-
-        // An ordinary population is left alone, flags and all.
-        let plain = one(1.5);
-        assert_eq!(plain.flags, 0x02);
-        assert_eq!(plain.population, 1.5);
     }
 }

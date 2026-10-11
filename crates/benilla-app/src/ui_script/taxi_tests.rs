@@ -63,6 +63,7 @@ fn menu() -> TaxiUiState {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_taxi_frame_drives_end_to_end() {
     benilla_formats::wow_data_or_skip!();
     let mut s = taxi_script();
@@ -108,6 +109,7 @@ fn shipped_taxi_frame_drives_end_to_end() {
 /// With no reachable node, `DrawOneHopLines` posts `ERR_TAXINOPATHS` and hides the window
 /// (`TaxiFrame.lua:161`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn no_single_hop_destination_posts_the_error_and_closes() {
     benilla_formats::wow_data_or_skip!();
     let mut s = taxi_script();
@@ -145,6 +147,7 @@ fn no_single_hop_destination_posts_the_error_and_closes() {
 
 /// The close button hides the window, whose OnHide calls `CloseTaxiMap()` (`TaxiFrame.xml:167`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn close_button_queues_the_intent_and_hides() {
     benilla_formats::wow_data_or_skip!();
     let mut s = taxi_script();

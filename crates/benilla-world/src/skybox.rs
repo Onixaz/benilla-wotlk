@@ -365,6 +365,7 @@ mod tests {
 
     /// On the real art: the seventeen other batches are wholly on bone 0, which has no track.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn only_the_belt_batches_of_the_caverns_sky_resolve_to_a_spinning_bone() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::Chain::open(&data).expect("open vanilla patch chain");

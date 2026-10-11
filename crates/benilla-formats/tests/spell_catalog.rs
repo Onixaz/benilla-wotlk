@@ -4,6 +4,7 @@
 use benilla_formats::{load_spell_catalog, open_chain};
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn spell_catalog_resolves_known_spells() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -108,6 +109,7 @@ fn spell_catalog_resolves_known_spells() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shapeshift_bonus_bars_match_the_verified_table() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open vanilla patch chain");
@@ -147,6 +149,7 @@ fn shapeshift_bonus_bars_match_the_verified_table() {
 /// The stance bar's Spell.dbc columns: the MOD_SHAPESHIFT form id, the signed StanceBarOrder that
 /// `0x4b2bb0` sorts by (Stealth's -1 last), and the ActiveIconID `0x4b45c0` reads.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn stance_bar_spell_columns_match_the_probed_values() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open vanilla patch chain");
@@ -175,6 +178,7 @@ fn stance_bar_spell_columns_match_the_probed_values() {
 /// AttributesEx3 (column 9) bit 15, `SPELL_ATTR3_NORMAL_RANGED_ATTACK`, turns combat text
 /// melee-white: it is set on the ranged basic shots only.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn melee_white_damage_marks_the_ranged_basic_shots() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

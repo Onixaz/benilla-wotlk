@@ -8,13 +8,7 @@
 use mlua::Lua;
 
 /// Install the verbs on a target whose Lua API has them.
-pub(super) fn install(
-    lua: &Lua,
-    client: &benilla_expansions::ExpansionProfile,
-) -> mlua::Result<()> {
-    if !client.battle_net_api {
-        return Ok(());
-    }
+pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
     // `0x530ec0`: true only in connection states 3, 6 and 7.
     g.set("BNConnected", lua.create_function(|_, ()| Ok(false))?)?;
@@ -39,27 +33,18 @@ pub(super) fn install(
 
 #[cfg(test)]
 mod tests {
-    use benilla_expansions::Expansion;
 
     use crate::script::UiScript;
 
     #[test]
     fn a_3_3_5a_client_without_a_battle_net_session_counts_nothing() {
-        let ui = UiScript::new_for(Expansion::Wotlk).unwrap();
+        let ui = UiScript::new().unwrap();
         let (total, online): (i64, i64) = ui.eval("return BNGetNumFriends()").unwrap();
         assert_eq!((total, online), (0, 0));
         assert_eq!(ui.eval::<i64>("return BNGetNumBlocked()").unwrap(), 0);
         assert!(!ui.eval::<bool>("return BNConnected()").unwrap());
         assert!(!ui
             .eval::<bool>("return BNFeaturesEnabledAndConnected()")
-            .unwrap());
-    }
-
-    #[test]
-    fn classic_has_no_battle_net_verbs() {
-        let ui = UiScript::new_for(Expansion::Classic).unwrap();
-        assert!(ui
-            .eval::<bool>("return BNGetNumFriends == nil and BNConnected == nil")
             .unwrap());
     }
 }

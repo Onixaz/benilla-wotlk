@@ -148,6 +148,7 @@ fn open_window(points_spent: u32) -> UiScript {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn branch_lines_draw_for_a_same_column_prereq() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut script = open_window(10);
@@ -204,6 +205,7 @@ fn branch_lines_draw_for_a_same_column_prereq() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn tooltip_is_complete_on_the_first_hover() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut script = open_window(10);
@@ -223,6 +225,7 @@ fn tooltip_is_complete_on_the_first_hover() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn tooltip_miss_still_shows_the_rank_line() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut script = open_window(10);
@@ -245,6 +248,7 @@ fn tooltip_miss_still_shows_the_rank_line() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_locked_tier_still_draws_the_branch_gray() {
     let _data = benilla_formats::wow_data_or_skip!();
     // 2 points spent, tier 3 locked: the chain still draws, gray (the texcoord tables' `-1` keys).
@@ -265,6 +269,7 @@ fn a_locked_tier_still_draws_the_branch_gray() {
 /// An unavailable talent reaches the renderer desaturated (`Texture:SetDesaturated`, via
 /// `SetItemButtonDesaturated`), not merely tinted; the learned talent is the control.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_unavailable_talent_reaches_the_renderer_desaturated() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut script = open_window(2);
@@ -308,6 +313,7 @@ fn an_unavailable_talent_reaches_the_renderer_desaturated() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_wheel_spin_over_the_grid_scrolls_the_tree() {
     let _data = benilla_formats::wow_data_or_skip!();
     // The whole chain: hit test on a talent button, bubble to the ScrollFrame's OnMouseWheel,

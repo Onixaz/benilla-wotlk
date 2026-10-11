@@ -285,6 +285,7 @@ fn click(s: &mut UiScript, name: &str, button: &str) {
 /// Opening the bags with Bagnon installed draws every live slot. The count is the check: a window
 /// with no slots raises nothing.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bagnon_draws_a_slot_for_every_bag_slot() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();
@@ -328,6 +329,7 @@ fn bagnon_draws_a_slot_for_every_bag_slot() {
 /// The control: seated after the addons load, Bagnon shows its title and money but no slot, and
 /// raises nothing. If this starts drawing slots, the test above has lost its subject.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn without_a_player_at_addon_load_bagnon_draws_an_empty_window() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();
@@ -360,6 +362,7 @@ fn without_a_player_at_addon_load_bagnon_draws_an_empty_window() {
 /// The stock `SetItemButton*` family (`ItemButtonTemplate.lua`), which ends every Bagnon slot
 /// update: a raise there aborts `BagnonFrame_AddBag`'s slot loop and the window never shows.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_item_button_helpers_paint_a_slots_icon_and_count() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().expect("VM");
@@ -470,6 +473,7 @@ fn the_roster_seat_names_the_character_the_addons_will_meet() {
 
 /// `Bagnon_Core/core/Item.lua:136` ends a hover in stock `ContainerFrameItemButton_OnEnter`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hovering_a_bagnon_slot_shows_the_items_tooltip() {
     let root = corpus_and_install_or_skip!();
     let mut s = open_bagnon(&root);
@@ -505,6 +509,7 @@ fn hovering_a_bagnon_slot_shows_the_items_tooltip() {
 /// `Item.lua:105` routes a plain click to the stock `ContainerFrameItemButton_OnClick`, whose left
 /// arm is `PickupContainerItem(this:GetParent():GetID(), this:GetID())`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn left_clicking_a_bagnon_slot_picks_the_item_up() {
     let root = corpus_and_install_or_skip!();
     let mut s = open_bagnon(&root);
@@ -544,6 +549,7 @@ fn left_clicking_a_bagnon_slot_picks_the_item_up() {
 
 /// With no merchant open, the stock right-click arm is `UseContainerItem(bag, slot)`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn right_clicking_a_bagnon_slot_uses_the_item() {
     let root = corpus_and_install_or_skip!();
     let mut s = open_bagnon(&root);
@@ -566,6 +572,7 @@ fn right_clicking_a_bagnon_slot_uses_the_item() {
 /// Bagnon routes `OnDragStart` and `OnReceiveDrag` to `ContainerFrameItemButton_OnClick`'s
 /// `ignoreModifiers` arm; driven as press, move past the threshold, release.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn dragging_a_bagnon_slot_picks_the_item_up() {
     let root = corpus_and_install_or_skip!();
     let mut s = open_bagnon(&root);
@@ -601,6 +608,7 @@ fn dragging_a_bagnon_slot_picks_the_item_up() {
 /// Bagnon calls the backpack button's captured `OnEnter` back with no arguments
 /// (`Bagnon.lua:87`): an XML script body reads its frame off `this`, never an argument.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_backpack_button_still_hovers_with_bagnon_holding_its_script() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();
@@ -633,6 +641,7 @@ fn the_backpack_button_still_hovers_with_bagnon_holding_its_script() {
 /// `Bagnon_Forever/database/ui.lua:61` calls `GetTextWidth` on a CheckButton, a 1.12 Button method
 /// (`0x782290`); Button has no `GetStringWidth`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_button_reports_its_own_label_width() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();
@@ -689,6 +698,7 @@ fn a_button_reports_its_own_label_width() {
 
 /// `Bagnon_Core/core/Item.xml:35` gives every item button a stock `CooldownFrameTemplate` child.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_reference_cooldown_template_resolves() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();
@@ -710,6 +720,7 @@ fn the_reference_cooldown_template_resolves() {
 /// Every gesture a player makes in Bagnon's window, in one VM, with no error at the end: a scan
 /// finds only what it knows to look for, this finds whatever is missing.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_whole_bagnon_window_survives_being_used() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();
@@ -868,6 +879,7 @@ fn text_quad(s: &mut UiScript, owner: &str) -> QuadContent {
 /// reference asks the registry first (`0x783d15` calls `0x783870`). A stack count's dark edge is
 /// `NumberFontNormal`'s outline; it has no `<Shadow>` (`Fonts.xml:150`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_stack_count_wears_the_font_object_its_font_attr_names() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();
@@ -916,6 +928,7 @@ fn a_stack_count_wears_the_font_object_its_font_attr_names() {
 /// `file=` where `<Color>` does not: it writes the vertex colours (`+0xb8`, by `0x77f910`),
 /// `<Color>` the texture (`+0xcc`, by `0x770360`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_texture_gradient_tints_the_art_it_sits_on() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();
@@ -954,6 +967,7 @@ fn a_texture_gradient_tints_the_art_it_sits_on() {
 /// (`MoneyFrame.lua:201-208`); the font measurer answers inside that call, so the first open's
 /// digits are not cramped.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_money_frame_is_the_right_width_on_the_first_open() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();
@@ -1009,6 +1023,7 @@ fn resolved_font(s: &UiScript, lua_expr: &str) -> (String, String) {
 /// `0x783c30` a top-level `<Font>` uses, so `font=` resolves registry-first (`0x783d15`, then
 /// `0x783d22` calls `0x770c60`). 1.12.1 has no `style=` attribute.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_button_state_font_takes_the_font_attribute_not_just_inherits() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();
@@ -1035,6 +1050,7 @@ fn a_button_state_font_takes_the_font_attribute_not_just_inherits() {
 /// jump to `0x771254`. Stock `AutoFollowStatusText` (`ZoneText.xml:172-183`) inherits
 /// `GameFontNormal` (12px) beside a dead `<FontHeight val="20">`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_fontheight_with_no_font_attr_beside_it_is_never_read() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();
@@ -1063,6 +1079,7 @@ impl benilla_ui::script::TextMeasure for BlockFont {
 /// `Bagnon_Forever/database/ui.lua:56-62` sets each row's text and reads `GetTextWidth() + 40` back
 /// in the same tick; a measure that answers a tick late leaves the list 40px wide.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_character_dropdown_is_as_wide_as_the_names_in_it() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();
@@ -1108,6 +1125,7 @@ fn the_character_dropdown_is_as_wide_as_the_names_in_it() {
 /// `SaveBagData` deletes a bag's record when `GetContainerNumSlots` reads 0: the logout despawn
 /// frame, with no self store, must not erase the records before the saved-variables write.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bagnon_forevers_records_survive_the_logout_boundary() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();
@@ -1189,6 +1207,7 @@ fn bagnon_forevers_records_survive_the_logout_boundary() {
 /// (`MainMenuBarBagButtons.lua:3-21`) calls the global `ToggleBag`, then lights the button only for
 /// a shown native container frame, so with Bagnon a slot click toggles Bagnon and stays unlit.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_bag_slot_click_toggles_bagnon_not_the_native_window() {
     // The install too: stock `IsBagOpen` (`ContainerFrame.lua:177`) answers whether a native
     // window shows; the windows are recycled, so none can be named.
@@ -1270,6 +1289,7 @@ fn a_bag_slot_click_toggles_bagnon_not_the_native_window() {
 /// binding's bare `ToggleBackpack()` ends lit; a click ends unlit either way, because stock
 /// `BackpackButton_OnClick` (`MainMenuBarBagButtons.lua:55-68`) rescans the native frames last.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_backpack_button_lit_state_with_bagnon_holding_the_bags() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();

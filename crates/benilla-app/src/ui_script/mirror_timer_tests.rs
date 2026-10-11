@@ -93,6 +93,7 @@ fn tex_quad<'a>(quads: &'a [ExtractedQuad], leaf: &str) -> Option<&'a ExtractedQ
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_three_timers_load_hidden() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -106,6 +107,7 @@ fn the_three_timers_load_hidden() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn breath_takes_the_first_bar_in_the_reference_blue() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -127,6 +129,7 @@ fn breath_takes_the_first_bar_in_the_reference_blue() {
 
 /// The client's key for fatigue is `EXHAUSTION`, not the server's `FATIGUE`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn fatigue_is_the_reference_yellow_under_its_own_caption() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -143,6 +146,7 @@ fn fatigue_is_the_reference_yellow_under_its_own_caption() {
 
 /// The frame integrates `scale * elapsed` per OnUpdate (`MirrorTimer.lua:106`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bar_drains_at_the_servers_signed_rate() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -170,6 +174,7 @@ fn the_bar_drains_at_the_servers_signed_rate() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_paused_timer_holds_its_value() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -216,6 +221,7 @@ fn a_paused_timer_holds_its_value() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn two_timers_stack_and_restate_in_place() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -234,6 +240,7 @@ fn two_timers_stack_and_restate_in_place() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn stop_hides_that_timer_and_frees_its_frame() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -257,6 +264,7 @@ fn stop_hides_that_timer_and_frees_its_frame() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn entering_the_world_clears_every_bar() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -270,6 +278,7 @@ fn entering_the_world_clears_every_bar() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_stop_for_an_idle_timer_touches_nothing() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -283,6 +292,7 @@ fn a_stop_for_an_idle_timer_touches_nothing() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_running_timer_paints_its_chrome_and_fill() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -312,6 +322,7 @@ fn a_running_timer_paints_its_chrome_and_fill() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_stopped_timer_paints_nothing() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -327,6 +338,7 @@ fn a_stopped_timer_paints_nothing() {
 /// The border and caption are `OVERLAY` regions of the timer frame, and the fill a child
 /// StatusBar whose OnLoad drops its frame level by one, so both draw over the fill.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_border_and_caption_draw_over_the_fill() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();

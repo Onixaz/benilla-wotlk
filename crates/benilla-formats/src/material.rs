@@ -91,6 +91,7 @@ mod tests {
     /// The 5875 table, whose ids are the item query's materials (1 metal, 2 wood, 5 chain,
     /// 6 plate, 7 cloth, 8 leather).
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_materials_decode() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -115,6 +116,7 @@ mod tests {
     /// The `Flags` column on 5875; a missing material, as a creature without virtual-item info
     /// has, is not metal.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_flags_column_splits_metal_and_names_the_armor_slot() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

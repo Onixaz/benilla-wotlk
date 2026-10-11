@@ -1,5 +1,5 @@
 //! The patch chain: a priority-ordered set of MPQ archives, read through `benilla-mpq`, composed
-//! from the `Data` folder by the active client's [`ArchiveLayout`]. A read resolves a name to the
+//! from the `Data` folder by the client's [`ArchiveLayout`]. A read resolves a name to the
 //! highest-priority archive holding it, so a patch wins; base archives carry no `(listfile)`, so
 //! resolution is by name hash.
 
@@ -7,8 +7,72 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
-use benilla_expansions::{ArchiveLayout, Expansion, EXPANSION_ENV, LOCALE};
 use benilla_mpq::Archive;
+
+/// How the client composes its patch chain from the `Data` folder. Paths are relative to `Data`,
+/// `/`-separated, matched case-insensitively; [`LOCALE`] is the client's locale code.
+struct ArchiveLayout {
+    /// The base archives, lowest priority first.
+    base: &'static [BaseArchive],
+    /// Patches mounted by name above the base, lowest priority first.
+    patches: &'static [&'static str],
+    /// Patch globs (`?` is exactly one character). Every match mounts above [`Self::patches`],
+    /// ascending by case-folded `\`-separated path.
+    patch_globs: &'static [&'static str],
+    /// Archives the reference mounts with a mechanism benilla does not implement: present, they
+    /// fail the chain rather than be skipped.
+    unsupported: &'static [&'static str],
+}
+
+/// One base archive of an [`ArchiveLayout`].
+struct BaseArchive {
+    path: &'static str,
+    /// The reference fails to start without it.
+    required: bool,
+}
+
+/// The locale placeholder in an [`ArchiveLayout`] path.
+const LOCALE: &str = "{locale}";
+
+const fn optional(path: &'static str) -> BaseArchive {
+    BaseArchive {
+        path,
+        required: false,
+    }
+}
+
+const fn required(path: &'static str) -> BaseArchive {
+    BaseArchive {
+        path,
+        required: true,
+    }
+}
+
+/// The client's layout when `Data\common.MPQ` exists (`0x402b90`; without it the client falls back
+/// to the 1.x names, which no 3.3.5a install ships). The mounter (`0x405dd0`) walks the table at
+/// `0xab6168` from priority 63 down, so the table reads highest first; this list is it reversed,
+/// the entries for that mode only. `common`, `locale-*` and `speech-*` are required ("Failed to
+/// open archive"); the rest are skipped when missing. Patches start at 64 (`0x405ab0`):
+/// `patch-<loc>.MPQ`, `patch.MPQ`, then both globs' matches by full path, sorted descending with
+/// `strnicmp` (`0x401200`) and mounted walking backwards.
+const LAYOUT: ArchiveLayout = ArchiveLayout {
+    base: &[
+        optional("{locale}/lichking-speech-{locale}.MPQ"),
+        optional("{locale}/expansion-speech-{locale}.MPQ"),
+        optional("{locale}/lichking-locale-{locale}.MPQ"),
+        optional("{locale}/expansion-locale-{locale}.MPQ"),
+        required("{locale}/speech-{locale}.MPQ"),
+        required("{locale}/locale-{locale}.MPQ"),
+        optional("common-2.MPQ"),
+        required("common.MPQ"),
+        optional("lichking.MPQ"),
+        optional("expansion.MPQ"),
+    ],
+    patches: &["{locale}/patch-{locale}.MPQ", "patch.MPQ"],
+    patch_globs: &["patch-?.MPQ", "{locale}/patch-{locale}-?.MPQ"],
+    // Mounted above the patches and overlaid into each of them (`0x405f30`).
+    unsupported: &["alternate.MPQ"],
+};
 
 /// One entry from a chain listing: an internal path and its uncompressed size.
 pub struct ChainEntry {
@@ -20,12 +84,9 @@ pub struct ChainEntry {
 pub struct Chain {
     /// Ascending priority: later archives win.
     archives: Vec<Archive>,
-    /// The client whose layouts the chain's files are read in.
-    expansion: Expansion,
 }
 
-/// Whether `path` matches `pattern` as the reference's `FindFirstFileW` glob does (1.12.1 wrapper
-/// `0x42ad10`): any case, `?` exactly one character other than a separator, so `patch-10.MPQ`
+/// Whether `path` matches `pattern` as the reference's `FindFirstFileW` glob does: any case, `?` exactly one character other than a separator, so `patch-10.MPQ`
 /// never matches `patch-?.MPQ`.
 fn glob_match(pattern: &str, path: &str) -> bool {
     pattern.len() == path.len()
@@ -36,19 +97,12 @@ fn glob_match(pattern: &str, path: &str) -> bool {
 }
 
 /// The reference's mount order over a `Data` listing, ascending priority: `layout`'s base
-/// archives, its named patches, every patch-glob match by case-folded `\`-separated path (the
-/// references sort descending with `strnicmp` and walk backwards), then its tail. `files` are
+/// archives, its named patches, then every patch-glob match by case-folded `\`-separated path
+/// (the reference sorts descending with `strnicmp` and walks backwards). `files` are
 /// paths relative to `Data`, `/`-separated; they match case-insensitively and come back as found
 /// on disk. A missing required archive, or a present unsupported one, is an error.
-fn mount_order(
-    layout: &ArchiveLayout,
-    files: &[String],
-    locale: Option<&str>,
-) -> Result<Vec<String>> {
-    let named = |p: &str| match locale {
-        Some(l) => p.replace(LOCALE, l),
-        None => p.to_string(),
-    };
+fn mount_order(layout: &ArchiveLayout, files: &[String], locale: &str) -> Result<Vec<String>> {
+    let named = |p: &str| p.replace(LOCALE, locale);
     let find = |want: &str| {
         let want = named(want);
         files
@@ -76,7 +130,6 @@ fn mount_order(
         .collect();
     patches.sort_by_key(|f| f.replace('/', "\\").to_ascii_lowercase());
     order.extend(patches);
-    order.extend(layout.tail.iter().filter_map(|t| find(t)));
     Ok(order)
 }
 
@@ -124,43 +177,28 @@ fn list(dir: &Path, want_files: bool) -> Result<Vec<String>> {
 }
 
 impl Chain {
-    /// Open a `Data` directory's archives in the active client's [`mount_order`], or a single
-    /// `.MPQ` file.
-    pub fn open(path: &Path) -> Result<Self> {
-        Self::open_for(path, Expansion::active())
-    }
-
-    /// [`Chain::open`] for a named client.
+    /// Open a `Data` directory's archives in the client's [`mount_order`], or a single `.MPQ` file.
     ///
     /// Deviation: an archive that fails to open is an error, where the reference logs
     /// `"Failed to open archive"` and goes on, because a skipped corrupt archive surfaces only as
     /// missing files far downstream.
-    pub fn open_for(path: &Path, expansion: Expansion) -> Result<Self> {
+    pub fn open(path: &Path) -> Result<Self> {
         let mut archives = Vec::new();
         if path.is_dir() {
-            let layout = &expansion.profile().archives;
-            let wrong_install = || {
-                format!(
-                    "{} is not a {expansion} Data folder (${EXPANSION_ENV} selects the client)",
-                    path.display()
-                )
-            };
+            let layout = &LAYOUT;
+            let wrong_install =
+                || format!("{} is not a 3.3.5a (12340) Data folder", path.display());
             let mut files = list(path, true)?;
-            let locale = if layout.uses_locale() {
-                let dirs = list(path, false)?;
-                for dir in &dirs {
-                    files.extend(
-                        list(&path.join(dir), true)?
-                            .into_iter()
-                            .map(|f| format!("{dir}/{f}")),
-                    );
-                }
-                Some(locale_of(layout, &files, &dirs).with_context(wrong_install)?)
-            } else {
-                None
-            };
-            let order =
-                mount_order(layout, &files, locale.as_deref()).with_context(wrong_install)?;
+            let dirs = list(path, false)?;
+            for dir in &dirs {
+                files.extend(
+                    list(&path.join(dir), true)?
+                        .into_iter()
+                        .map(|f| format!("{dir}/{f}")),
+                );
+            }
+            let locale = locale_of(layout, &files, &dirs).with_context(wrong_install)?;
+            let order = mount_order(layout, &files, &locale).with_context(wrong_install)?;
             for name in order {
                 let mpq = path.join(&name);
                 archives.push(
@@ -168,28 +206,20 @@ impl Chain {
                 );
             }
             if archives.is_empty() {
-                bail!("no known {expansion} MPQs found in {}", path.display());
+                bail!("no known 3.3.5a MPQs found in {}", path.display());
             }
         } else {
             archives.push(
                 Archive::open(path).with_context(|| format!("opening MPQ {}", path.display()))?,
             );
         }
-        Ok(Self {
-            archives,
-            expansion,
-        })
+        Ok(Self { archives })
     }
 
     /// The highest-priority archive with an entry for `name`, a delete marker included, as a
     /// tombstone shadows every lower copy: check [`Archive::is_delete_marker`] for a readable file.
     fn resolve(&self, name: &str) -> Option<&Archive> {
         self.archives.iter().rev().find(|a| a.contains(name))
-    }
-
-    /// The client whose data this is: its tables are read in that client's layouts.
-    pub fn expansion(&self) -> Expansion {
-        self.expansion
     }
 
     /// The mounted archives' paths, lowest priority first.
@@ -277,17 +307,8 @@ mod tests {
         names.iter().map(|n| n.to_string()).collect()
     }
 
-    fn classic() -> &'static ArchiveLayout {
-        &Expansion::Classic.profile().archives
-    }
-
     fn wotlk() -> &'static ArchiveLayout {
-        &Expansion::Wotlk.profile().archives
-    }
-
-    /// The Classic order over a flat `Data` listing.
-    fn mount_order_classic(dir: &[String]) -> Vec<String> {
-        mount_order(classic(), dir, None).expect("Classic requires no archive")
+        &LAYOUT
     }
 
     #[test]
@@ -303,53 +324,6 @@ mod tests {
         assert!(!is_patch_glob_match("patch-2.MPQ.bak"));
         assert!(!is_patch_glob_match("mypatch-2.MPQ"));
         assert!(!glob_match("a?b", "a/b"));
-    }
-
-    #[test]
-    fn mount_order_is_the_carved_law() {
-        // base.MPQ is telemetry-only in the reference and never mounts.
-        let dir = owned(&[
-            "patch-2.MPQ",
-            "backup.MPQ",
-            "model.MPQ",
-            "base.MPQ",
-            "dbc.MPQ",
-            "patch.MPQ",
-            "eula.html",
-            "patch-3.MPQ",
-            "speech2.MPQ",
-            "texture.MPQ",
-        ]);
-        assert_eq!(
-            mount_order_classic(&dir),
-            owned(&[
-                "dbc.MPQ",
-                "texture.MPQ",
-                "model.MPQ",
-                "patch.MPQ",
-                "patch-2.MPQ",
-                "patch-3.MPQ",
-                "speech2.MPQ",
-            ])
-        );
-    }
-
-    #[test]
-    fn patch_sort_is_ascending_and_case_folded() {
-        let dir = owned(&["patch-B.MPQ", "patch-3.MPQ", "patch-a.MPQ", "patch-2.MPQ"]);
-        assert_eq!(
-            mount_order_classic(&dir),
-            owned(&["patch-2.MPQ", "patch-3.MPQ", "patch-a.MPQ", "patch-B.MPQ"])
-        );
-    }
-
-    #[test]
-    fn base_archives_are_found_case_insensitively() {
-        let dir = owned(&["DBC.mpq", "Model.MPQ", "PATCH.mpq"]);
-        assert_eq!(
-            mount_order_classic(&dir),
-            owned(&["DBC.mpq", "Model.MPQ", "PATCH.mpq"])
-        );
     }
 
     /// The `wotlk-original` install's `Data` listing, the locale folder's loose files included.
@@ -381,7 +355,7 @@ mod tests {
     fn wotlk_mount_order_is_the_reference_s() {
         let files = wotlk_install();
         assert_eq!(
-            mount_order(wotlk(), &files, Some("enUS")).unwrap(),
+            mount_order(wotlk(), &files, "enUS").unwrap(),
             owned(&[
                 "enUS/lichking-speech-enUS.MPQ",
                 "enUS/expansion-speech-enUS.MPQ",
@@ -414,7 +388,7 @@ mod tests {
             "ruRU/speech-ruRU.MPQ",
             "ruRU/patch-ruRU-2.MPQ",
         ]);
-        let order = mount_order(wotlk(), &files, Some("ruRU")).unwrap();
+        let order = mount_order(wotlk(), &files, "ruRU").unwrap();
         assert_eq!(
             order[order.len() - 2..],
             owned(&["patch-2.MPQ", "ruRU/patch-ruRU-2.MPQ"])
@@ -427,7 +401,7 @@ mod tests {
             .into_iter()
             .filter(|f| f != "common.MPQ")
             .collect();
-        let err = mount_order(wotlk(), &files, Some("enUS")).unwrap_err();
+        let err = mount_order(wotlk(), &files, "enUS").unwrap_err();
         assert!(err.to_string().contains("common.MPQ"), "{err}");
     }
 
@@ -437,7 +411,7 @@ mod tests {
             .into_iter()
             .filter(|f| f != "lichking.MPQ")
             .collect();
-        let order = mount_order(wotlk(), &files, Some("enUS")).unwrap();
+        let order = mount_order(wotlk(), &files, "enUS").unwrap();
         assert!(!order.iter().any(|f| f == "lichking.MPQ"));
     }
 
@@ -445,7 +419,7 @@ mod tests {
     fn wotlk_fails_on_alternate_mpq_rather_than_skip_it() {
         let mut files = wotlk_install();
         files.push("Alternate.MPQ".into());
-        assert!(mount_order(wotlk(), &files, Some("enUS")).is_err());
+        assert!(mount_order(wotlk(), &files, "enUS").is_err());
     }
 
     #[test]
@@ -463,8 +437,8 @@ mod tests {
     }
 
     #[test]
-    fn a_classic_data_folder_is_not_a_wotlk_one() {
+    fn a_1_x_data_folder_is_not_a_3_3_5a_one() {
         let files = owned(&["dbc.MPQ", "patch.MPQ", "patch-2.MPQ"]);
-        assert!(mount_order(wotlk(), &files, Some("enUS")).is_err());
+        assert!(mount_order(wotlk(), &files, "enUS").is_err());
     }
 }

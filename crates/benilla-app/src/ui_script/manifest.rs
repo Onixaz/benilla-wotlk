@@ -450,6 +450,7 @@ mod tests {
     /// `ExhaustionTick` (`MainMenuBar.lua:13`) and `PlayerFrame` (`PlayerFrame.lua:17`) both take
     /// `PLAYER_UPDATE_RESTING`, and the toc lists `MainMenuBar.xml` above `PlayerFrame.xml`.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn two_stock_frames_on_one_event_run_in_the_tocs_order() {
         let _data = benilla_formats::wow_data_or_skip!();
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -589,6 +590,7 @@ mod tests {
     /// are skipped, the Mac rows among them for the Mac build alone; the six `MOVEVIEW*` rows sit
     /// in an XML comment.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_installs_bindings_xml_reads_as_the_loader_reads_it() {
         benilla_formats::wow_data_or_skip!();
         let binds = benilla_ui::bindings_xml::parse(&stock_bindings_file().unwrap()).unwrap();

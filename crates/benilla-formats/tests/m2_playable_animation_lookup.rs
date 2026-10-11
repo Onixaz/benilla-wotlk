@@ -4,6 +4,7 @@
 use benilla_formats::{open_chain, parse_m2_playable_animation_lookup};
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn humanmale_playable_animation_lookup_matches_the_byte_verified_shape() {
     let data = benilla_formats::wow_data_or_skip!();
     let chain = open_chain(&data).expect("open chain");
@@ -33,6 +34,7 @@ fn humanmale_playable_animation_lookup_matches_the_byte_verified_shape() {
 /// a creature authors neither the baked lookup steps them to Walk and Stand, so a prowling druid
 /// cat walks as usual in the reference too.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stealth_clips_are_authored_by_players_and_absent_from_the_druid_cat() {
     let data = benilla_formats::wow_data_or_skip!();
     let chain = open_chain(&data).expect("open chain");

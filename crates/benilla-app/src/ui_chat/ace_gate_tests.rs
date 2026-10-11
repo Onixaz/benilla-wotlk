@@ -53,6 +53,7 @@ fn gate_open(s: &UiScript) -> bool {
 
 /// A zone-channel join's `YOU_JOINED` notice, sent through the real router, opens Ace2's gate.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_you_joined_notice_opens_ace2s_initialisation_gate() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();
@@ -104,6 +105,7 @@ fn a_you_joined_notice_opens_ace2s_initialisation_gate() {
 
 /// The control for the test above: with no notice, nothing else arms the gate.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn without_the_notice_the_gate_stays_shut() {
     benilla_formats::wow_data_or_skip!();
     let root = corpus_or_skip!();

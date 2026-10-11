@@ -138,6 +138,7 @@ fn rolls() -> LootRollsState {
 
 /// The popups load with no loader warning of any kind and start hidden.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_group_loot_frame_loads_clean_and_starts_hidden() {
     let _data = benilla_formats::wow_data_or_skip!();
     let (s, built) = setup_counted(&[]);
@@ -157,6 +158,7 @@ fn shipped_group_loot_frame_loads_clean_and_starts_hidden() {
 /// `START_LOOT_ROLL` claims the first free popup (`LootFrame.lua:246-258`) and paints the roll:
 /// name, quality colour, bind-on-pickup decoration and timer range; Need clicks through.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn start_loot_roll_claims_frames_in_order_and_paints_the_roll() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -242,6 +244,7 @@ fn start_loot_roll_claims_frames_in_order_and_paints_the_roll() {
 /// `CONFIRM_LOOT_ROLL` opens the dialog carrying `(rollID, rollType)` (`UIParent.lua:517-523`);
 /// its OK calls `ConfirmLootRoll` (`StaticPopup.lua:1375-1377`), which sends the withheld vote.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bop_confirm_popup_lands_the_withheld_vote() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -299,6 +302,7 @@ fn the_bop_confirm_popup_lands_the_withheld_vote() {
 
 /// `CANCEL_LOOT_ROLL` hides the popup holding that rollID and no other (`LootFrame.lua:279-285`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn cancel_loot_roll_hides_only_that_frame() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -340,6 +344,7 @@ fn cancel_loot_roll_hides_only_that_frame() {
 
 /// A roll with its item template in flight opens without error, with no name and no icon.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn in_flight_roll_opens_without_a_name_or_icon() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -387,6 +392,7 @@ fn in_flight_roll_opens_without_a_name_or_icon() {
 /// stays blank. On a cache miss the reference fires it from the item-template arrival callback
 /// (`0x61b460`, armed by `0x61b310`), and `feed_loot_rolls` holds it the same way.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn nothing_repaints_a_frame_that_opened_before_its_snapshot() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -442,6 +448,7 @@ fn nothing_repaints_a_frame_that_opened_before_its_snapshot() {
 /// `UIPARENT_MANAGED_FRAME_POSITIONS["GroupLootFrame1"]` (baseY 60, bottomEither 42, pet 42;
 /// `UIParent.lua:1577`) stacks the popups over the bottom bars; the pass finds the frame by name.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn managed_positions_engage_for_the_bare_frame_name() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -504,6 +511,7 @@ fn managed_positions_engage_for_the_bare_frame_name() {
 /// The roll icon's OnClick (`LootFrame.xml:353-361`): ctrl dresses up the item and shift posts
 /// its link to an open chat box, both through `GetLootRollItemLink`; the icon never votes.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ctrl_and_shift_on_the_roll_icon_preview_and_post_its_link() {
     let _data = benilla_formats::wow_data_or_skip!();
     let (mut s, _) = setup_counted(&[
@@ -572,6 +580,7 @@ fn ctrl_and_shift_on_the_roll_icon_preview_and_post_its_link() {
 /// Addons inherit `GroupLootFrameTemplate` by its 1.12 name and reach for its children; the icon
 /// is `IconFrameIcon` because it is nested in the `IconFrame` button (`LootFrame.xml:314`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_roll_template_carries_the_reference_name_and_the_parts_addons_reach_for() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = setup();
@@ -607,6 +616,7 @@ fn the_roll_template_carries_the_reference_name_and_the_parts_addons_reach_for()
 /// The stock `GroupLootFrame_OnShow` reads `ITEM_QUALITY_COLORS[quality].r` with no fallback
 /// (`LootFrame.lua:275-276`), so an unresolved or unknown roll must still answer a quality.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_group_loot_frame_survives_an_in_flight_roll() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

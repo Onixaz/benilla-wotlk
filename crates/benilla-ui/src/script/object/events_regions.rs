@@ -265,16 +265,11 @@ fn set_script(lua: &Lua, this: &Table, name: &str, func: Option<Function>) -> ml
     Ok(())
 }
 
-/// The canonical spelling of script kind `name`, case-insensitively, from [`SCRIPT_KINDS`] and
-/// the target's extra kinds; `None` for a name the target's frames do not carry.
-fn script_kind(lua: &Lua, name: &str) -> Option<&'static str> {
-    let extra = lua
-        .app_data_ref::<Model>()
-        .expect("model")
-        .extra_script_kinds;
+/// The canonical spelling of script kind `name`, case-insensitively, from [`SCRIPT_KINDS`];
+/// `None` for a name the frames do not carry.
+fn script_kind(_lua: &Lua, name: &str) -> Option<&'static str> {
     SCRIPT_KINDS
         .iter()
-        .chain(extra)
         .copied()
         .find(|&k| k.eq_ignore_ascii_case(name))
 }

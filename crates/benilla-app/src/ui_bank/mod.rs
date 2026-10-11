@@ -196,11 +196,11 @@ mod tests {
             None,
             "past the reference's own bound"
         );
-        // The ids the reference's table at `0x80af14` holds; insufficient funds also speaks.
+        // The catalog's rows; insufficient funds also speaks.
         for (key, id) in [
-            ("ERR_BANKSLOT_FAILED_TOO_MANY", 0x100u16),
-            ("ERR_BANKSLOT_INSUFFICIENT_FUNDS", 0x101),
-            ("ERR_BANKSLOT_NOTBANKER", 0x102),
+            ("ERR_BANKSLOT_FAILED_TOO_MANY", 0x10eu16),
+            ("ERR_BANKSLOT_INSUFFICIENT_FUNDS", 0x10f),
+            ("ERR_BANKSLOT_NOTBANKER", 0x110),
         ] {
             let r = benilla_ui::messages::by_key(key).expect("catalog row");
             assert_eq!(r.id, id, "{key}");

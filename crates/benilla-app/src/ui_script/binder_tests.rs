@@ -25,6 +25,7 @@ fn setup() -> UiScript {
 
 /// Accept's one `ConfirmBinder()` becomes `CMSG_BINDER_ACTIVATE`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_confirm_shows_the_area_and_accept_queues_the_bind() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -53,6 +54,7 @@ fn the_confirm_shows_the_area_and_accept_queues_the_bind() {
 
 /// There is no decline opcode: Cancel and Escape send nothing.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn declining_sends_nothing() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -71,6 +73,7 @@ fn declining_sends_nothing() {
 
 /// The popup's OnUpdate hides it once `CheckBinderDist()` fails (`StaticPopup.lua:1329`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn leaving_the_innkeepers_range_hides_the_confirm() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();

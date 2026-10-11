@@ -35,6 +35,7 @@ fn load_ui(script: &UiScript) {
 /// `TabButtonTemplate` (`UIPanelTemplates.xml:303`) exercises every decoration pass at once; an
 /// instance publishes its parts under its own name and nothing under the template's.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_real_template_reaches_an_addon_through_create_frame() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -123,6 +124,7 @@ fn a_real_template_reaches_an_addon_through_create_frame() {
 /// `ScrollFrame_OnLoad` (`UIPanelTemplates.lua:244`), which indexes
 /// `<name>ScrollBarScrollDownButton` first: two levels of `$parent` through a runtime template.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_corpus_favourite_template_composes_parent_two_levels_deep() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

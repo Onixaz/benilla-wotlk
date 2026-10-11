@@ -228,7 +228,7 @@ fn on_size_changed_fires_when_the_text_moves_the_height() {
     s.run(
         r#"
         fires = {}
-        E:SetScript("OnSizeChanged", function() table.insert(fires, { w = arg1, h = arg2 }) end)
+        E:SetScript("OnSizeChanged", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) table.insert(fires, { w = arg1, h = arg2 }) end)
     "#,
     )
     .unwrap();
@@ -273,7 +273,7 @@ fn a_scroll_frame_ranges_over_the_whole_text_of_a_multi_line_box() {
         body:SetWidth(270); body:SetHeight(200)
         body:SetPoint("TOPLEFT", 20, -10)
         body:SetScript("OnTextChanged", function() ScrollingEdit_OnTextChanged(MailScroll) end)
-        sf:SetScript("OnScrollRangeChanged", function() RANGE = arg2 end)
+        sf:SetScript("OnScrollRangeChanged", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) RANGE = arg2 end)
         function ScrollingEdit_OnTextChanged(scrollFrame) scrollFrame:UpdateScrollChildRect() end
     "#,
     )

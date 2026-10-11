@@ -22,6 +22,7 @@ fn setup() -> UiScript {
 
 /// `BIND_ENCHANT` (event 402) has no args; Yes re-enters the gate (`0x495d60`), sending nothing.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bind_confirm_shows_and_its_okay_queues_bind_enchant() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -42,6 +43,7 @@ fn the_bind_confirm_shows_and_its_okay_queues_bind_enchant() {
 
 /// `REPLACE_ENCHANT` pushes the item's current enchant, then the new one; Yes binds outright.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_replace_confirm_names_the_old_enchant_first() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -63,6 +65,7 @@ fn the_replace_confirm_names_the_old_enchant_first() {
 
 /// The gate returned before `BindTarget`, so declining sends nothing and the cursor stays up.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn declining_either_confirm_queues_nothing() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -81,6 +84,7 @@ fn declining_either_confirm_queues_nothing() {
 
 /// `CURRENT_SPELL_CAST_CHANGED` is the confirms' only teardown (`UIParent.lua:449`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_changed_pending_cast_dismisses_both() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();

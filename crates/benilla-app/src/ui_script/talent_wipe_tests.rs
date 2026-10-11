@@ -26,6 +26,7 @@ fn setup() -> UiScript {
 
 /// Accept's one `ConfirmTalentWipe()` becomes the outbound `MSG_TALENT_WIPE_CONFIRM`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_confirm_shows_and_accept_queues_the_wipe() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -51,6 +52,7 @@ fn the_confirm_shows_and_accept_queues_the_wipe() {
 
 /// The cost, `arg1`, goes to the dialog's money frame, not its text (`UIParent.lua:536`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_cost_lands_in_the_money_frame() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -91,6 +93,7 @@ fn the_cost_lands_in_the_money_frame() {
 
 /// There is no decline: `MSG_TALENT_WIPE_CONFIRM` asks one way and answers the other.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn declining_sends_nothing() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -109,6 +112,7 @@ fn declining_sends_nothing() {
 
 /// The popup's OnUpdate hides it once `CheckTalentMasterDist()` fails (`StaticPopup.lua:1297`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn leaving_the_trainers_range_hides_the_confirm() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();

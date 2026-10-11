@@ -113,7 +113,7 @@ fn liquid_scene(map: &str, wow: [f32; 3]) -> Option<LiquidScene> {
                         .collect(),
                 });
                 let stem = root_path.strip_suffix(".wmo").unwrap_or(&root_path);
-                let rule = WmoLiquidRule::for_root(chain.expansion(), &root);
+                let rule = WmoLiquidRule::for_root(&root);
                 for gi in 0..root.group_count() {
                     let Ok(gb) = chain.read_file(&format!("{stem}_{gi:03}.wmo")) else {
                         continue;
@@ -315,6 +315,7 @@ fn undercitys_upper_channels_do_not_submerge_the_rooms_below() {
 /// Undercity's Rogues' Quarter at `1414.08 53.00 -62.26`, 95 yd under Tirisfal's lake: the player,
 /// the camera eye and a unit all ask this one predicate.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_rogues_quarter_is_not_under_tirisfals_lake() {
     let feet = [1414.08_f32, 53.00, -62.26];
     let Some(scene) = liquid_scene("Azeroth", feet) else {

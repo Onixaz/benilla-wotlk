@@ -981,7 +981,7 @@ mod tests {
                 "STARTS = {}\n\
                  local f = CreateFrame(\"Frame\")\n\
                  f:RegisterEvent(\"START_LOOT_ROLL\")\n\
-                 f:SetScript(\"OnEvent\", function()\n\
+                 f:SetScript(\"OnEvent\", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)\n\
                    local _, name = GetLootRollItemInfo(arg1)\n\
                    tinsert(STARTS, arg1 .. \":\" .. arg2 .. \":\" .. (name or \"<blank>\"))\n\
                  end)",

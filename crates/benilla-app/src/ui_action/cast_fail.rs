@@ -989,6 +989,7 @@ mod tests {
 
     /// The shipped `GlobalStrings.lua` run in a real VM and read by the drain's lookup.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_real_boot_resolves_the_real_strings() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

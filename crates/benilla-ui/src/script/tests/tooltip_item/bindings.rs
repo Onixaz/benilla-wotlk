@@ -105,7 +105,7 @@ fn merchant_compare_renders_the_compare_shape_and_no_hover_seats_a_plate() {
         compare_calls = {}
         local watcher = CreateFrame("Frame", "CompareWatcher")
         watcher:RegisterEvent("SHOW_COMPARE_TOOLTIP")
-        watcher:SetScript("OnEvent", function()
+        watcher:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
             table.insert(compare_calls, arg1 .. ":" .. arg2)
         end)
     "#,

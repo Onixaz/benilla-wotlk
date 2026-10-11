@@ -173,6 +173,7 @@ mod tests {
     /// The shipped `SpellShapeshiftForm.dbc` through the resolver: the forms of type 1 name a
     /// Beast, and every other row falls through to the race.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_forms_name_a_beast_or_fall_through_to_the_race() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -234,6 +235,7 @@ mod tests {
 
     /// The frozen race table against the shipped `ChrRaces.dbc`.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn race_creature_type_matches_the_shipped_table() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

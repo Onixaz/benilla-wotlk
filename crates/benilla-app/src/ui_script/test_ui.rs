@@ -848,6 +848,7 @@ mod tests {
     /// The merged kit runs toc rows in the toc's order, a file a row includes just above it and a
     /// layer file after them all, each once.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_merged_kit_takes_the_production_order() {
         let _data = benilla_formats::wow_data_or_skip!();
         assert_eq!(

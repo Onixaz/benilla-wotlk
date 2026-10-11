@@ -39,15 +39,8 @@ pub(crate) fn route(
     }) {
         windows.logs.record(kind.is_combat_log(), &line);
     }
-    let args = if benilla_expansions::Expansion::active()
-        .profile()
-        .chat_msg_line_args
-    {
-        windows.line_id = windows.line_id.wrapping_add(1);
-        event.script_args_with_line(windows.line_id)
-    } else {
-        event.script_args()
-    };
+    windows.line_id = windows.line_id.wrapping_add(1);
+    let args = event.script_args_with_line(windows.line_id);
     script.fire_event(event_name(kind), args);
 }
 

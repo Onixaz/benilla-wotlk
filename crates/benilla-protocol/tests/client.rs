@@ -107,23 +107,23 @@ fn client_bodies_golden() {
         hx("01000000"),
         "CMSG_STANDSTATECHANGE body: one u32 animState (Misc.cpp:35-38)"
     );
-    // The CMSG_MESSAGECHAT type values (vmangos `SharedDefines.h:1194..1202`).
-    assert_eq!(messages::CHAT_TYPE_SAY, 0x0, "ChatMsg::CHAT_MSG_SAY");
-    assert_eq!(messages::CHAT_TYPE_YELL, 0x5, "ChatMsg::CHAT_MSG_YELL");
+    // The CMSG_MESSAGECHAT type values (`SendChatMessage`'s name table, `0x4fbb20`).
+    assert_eq!(messages::CHAT_TYPE_SAY, 0x1, "ChatMsg::CHAT_MSG_SAY");
+    assert_eq!(messages::CHAT_TYPE_YELL, 0x6, "ChatMsg::CHAT_MSG_YELL");
     assert_eq!(
         messages::CHAT_TYPE_WHISPER,
-        0x6,
+        0x7,
         "ChatMsg::CHAT_MSG_WHISPER"
     );
-    assert_eq!(messages::CHAT_TYPE_EMOTE, 0x8, "ChatMsg::CHAT_MSG_EMOTE");
+    assert_eq!(messages::CHAT_TYPE_EMOTE, 0xA, "ChatMsg::CHAT_MSG_EMOTE");
     assert_eq!(
         messages::messagechat(messages::CHAT_TYPE_YELL, 7, "for the horde"),
-        hx("0500000007000000666f722074686520686f72646500"),
+        hx("0600000007000000666f722074686520686f72646500"),
         "CMSG_MESSAGECHAT (yell) body"
     );
     assert_eq!(
         messages::messagechat(messages::CHAT_TYPE_EMOTE, 7, "dances"),
-        hx("080000000700000064616e63657300"),
+        hx("0a0000000700000064616e63657300"),
         "CMSG_MESSAGECHAT (emote) body"
     );
     // A Horde say speaks Orcish (1): vmangos drops a send in an unknown language at its
@@ -134,14 +134,14 @@ fn client_bodies_golden() {
             messages::LANGUAGE_ORCISH,
             "for the horde"
         ),
-        hx("0000000001000000666f722074686520686f72646500"),
+        hx("0100000001000000666f722074686520686f72646500"),
         "CMSG_MESSAGECHAT (say, Orcish) body"
     );
     // Whisper: type, language, then the target and the message cstrings, target first (vmangos
     // `Server/Packets/Chat.cpp:3-12`).
     assert_eq!(
         messages::messagechat_whisper(7, "Bob", "hi there"),
-        hx("0600000007000000426f6200686920746865726500"),
+        hx("0700000007000000426f6200686920746865726500"),
         "CMSG_MESSAGECHAT (whisper) body"
     );
     // CMSG_PLAYER_LOGIN, CMSG_SET_ACTIVE_MOVER and CMSG_SET_SELECTION all read a raw `u64` guid,
@@ -199,101 +199,81 @@ fn client_bodies_golden() {
 /// target (`Server/Packets/Chat.cpp:3-12`).
 #[test]
 fn messagechat_sendable_types_golden() {
-    assert_eq!(messages::CHAT_TYPE_PARTY, 0x1, "ChatMsg::CHAT_MSG_PARTY");
-    assert_eq!(messages::CHAT_TYPE_RAID, 0x2, "ChatMsg::CHAT_MSG_RAID");
-    assert_eq!(messages::CHAT_TYPE_GUILD, 0x3, "ChatMsg::CHAT_MSG_GUILD");
+    assert_eq!(messages::CHAT_TYPE_PARTY, 0x2, "ChatMsg::CHAT_MSG_PARTY");
+    assert_eq!(messages::CHAT_TYPE_RAID, 0x3, "ChatMsg::CHAT_MSG_RAID");
+    assert_eq!(messages::CHAT_TYPE_GUILD, 0x4, "ChatMsg::CHAT_MSG_GUILD");
     assert_eq!(
         messages::CHAT_TYPE_OFFICER,
-        0x4,
+        0x5,
         "ChatMsg::CHAT_MSG_OFFICER"
     );
     assert_eq!(
         messages::CHAT_TYPE_CHANNEL,
-        0xE,
+        0x11,
         "ChatMsg::CHAT_MSG_CHANNEL"
     );
-    assert_eq!(messages::CHAT_TYPE_AFK, 0x14, "ChatMsg::CHAT_MSG_AFK");
-    assert_eq!(messages::CHAT_TYPE_DND, 0x15, "ChatMsg::CHAT_MSG_DND");
-    assert_eq!(
-        messages::CHAT_TYPE_RAID_LEADER,
-        0x57,
-        "ChatMsg::CHAT_MSG_RAID_LEADER"
-    );
+    assert_eq!(messages::CHAT_TYPE_AFK, 0x17, "ChatMsg::CHAT_MSG_AFK");
+    assert_eq!(messages::CHAT_TYPE_DND, 0x18, "ChatMsg::CHAT_MSG_DND");
     assert_eq!(
         messages::CHAT_TYPE_RAID_WARNING,
-        0x58,
+        0x28,
         "ChatMsg::CHAT_MSG_RAID_WARNING"
     );
     assert_eq!(
         messages::CHAT_TYPE_BATTLEGROUND,
-        0x5C,
+        0x2C,
         "ChatMsg::CHAT_MSG_BATTLEGROUND"
-    );
-    assert_eq!(
-        messages::CHAT_TYPE_BATTLEGROUND_LEADER,
-        0x5D,
-        "ChatMsg::CHAT_MSG_BATTLEGROUND_LEADER"
     );
 
     assert_eq!(
         messages::messagechat(messages::CHAT_TYPE_PARTY, 7, "MT is icon 8"),
-        hx("01000000070000004d542069732069636f6e203800"),
+        hx("02000000070000004d542069732069636f6e203800"),
         "CMSG_MESSAGECHAT (party) body"
     );
     assert_eq!(
         messages::messagechat(messages::CHAT_TYPE_RAID, 7, "form up"),
-        hx("0200000007000000666f726d20757000"),
+        hx("0300000007000000666f726d20757000"),
         "CMSG_MESSAGECHAT (raid) body"
     );
     assert_eq!(
         messages::messagechat(messages::CHAT_TYPE_GUILD, 7, "hi guild"),
-        hx("03000000070000006869206775696c6400"),
+        hx("04000000070000006869206775696c6400"),
         "CMSG_MESSAGECHAT (guild) body"
     );
     assert_eq!(
         messages::messagechat(messages::CHAT_TYPE_OFFICER, 7, "officers only"),
-        hx("04000000070000006f66666963657273206f6e6c7900"),
+        hx("05000000070000006f66666963657273206f6e6c7900"),
         "CMSG_MESSAGECHAT (officer) body"
     );
     assert_eq!(
-        messages::messagechat(messages::CHAT_TYPE_RAID_LEADER, 7, "pull in 5"),
-        hx("570000000700000070756c6c20696e203500"),
-        "CMSG_MESSAGECHAT (raid leader) body"
-    );
-    assert_eq!(
         messages::messagechat(messages::CHAT_TYPE_RAID_WARNING, 7, "BLOODLUST NOW"),
-        hx("5800000007000000424c4f4f444c555354204e4f5700"),
+        hx("2800000007000000424c4f4f444c555354204e4f5700"),
         "CMSG_MESSAGECHAT (raid warning) body"
     );
     assert_eq!(
         messages::messagechat(messages::CHAT_TYPE_BATTLEGROUND, 7, "defend flag"),
-        hx("5c00000007000000646566656e6420666c616700"),
+        hx("2c00000007000000646566656e6420666c616700"),
         "CMSG_MESSAGECHAT (battleground) body"
     );
     assert_eq!(
-        messages::messagechat(messages::CHAT_TYPE_BATTLEGROUND_LEADER, 7, "push mid"),
-        hx("5d0000000700000070757368206d696400"),
-        "CMSG_MESSAGECHAT (battleground leader) body"
-    );
-    assert_eq!(
         messages::messagechat(messages::CHAT_TYPE_AFK, 7, "be back soon"),
-        hx("14000000070000006265206261636b20736f6f6e00"),
+        hx("17000000070000006265206261636b20736f6f6e00"),
         "CMSG_MESSAGECHAT (afk) body"
     );
     // A bare `/afk` (no message) still needs the NUL-terminated empty string, not a truncated body.
     assert_eq!(
         messages::messagechat(messages::CHAT_TYPE_AFK, 7, ""),
-        hx("140000000700000000"),
+        hx("170000000700000000"),
         "CMSG_MESSAGECHAT (afk, empty message) body"
     );
     assert_eq!(
         messages::messagechat(messages::CHAT_TYPE_DND, 7, "do not disturb"),
-        hx("1500000007000000646f206e6f74206469737475726200"),
+        hx("1800000007000000646f206e6f74206469737475726200"),
         "CMSG_MESSAGECHAT (dnd) body"
     );
     assert_eq!(
         messages::messagechat_channel(0, "General", "wtb boar livers"),
-        hx("0e0000000000000047656e6572616c0077746220626f6172206c697665727300"),
+        hx("110000000000000047656e6572616c0077746220626f6172206c697665727300"),
         "CMSG_MESSAGECHAT (channel) body"
     );
     assert_eq!(
@@ -327,7 +307,7 @@ fn addon_message_bodies_golden() {
             messages::LANGUAGE_ADDON,
             "CTRA\tstatus"
         ),
-        hx("02000000ffffffff435452410973746174757300"),
+        hx("03000000ffffffff435452410973746174757300"),
         "CMSG_MESSAGECHAT (addon, RAID) body"
     );
 
@@ -338,7 +318,7 @@ fn addon_message_bodies_golden() {
             messages::LANGUAGE_ADDON,
             "oRA\thello"
         ),
-        hx("01000000ffffffff6f52410968656c6c6f00"),
+        hx("02000000ffffffff6f52410968656c6c6f00"),
         "CMSG_MESSAGECHAT (addon, PARTY) body"
     );
     assert_eq!(
@@ -347,7 +327,7 @@ fn addon_message_bodies_golden() {
             messages::LANGUAGE_ADDON,
             "oRA\thello"
         ),
-        hx("03000000ffffffff6f52410968656c6c6f00"),
+        hx("04000000ffffffff6f52410968656c6c6f00"),
         "CMSG_MESSAGECHAT (addon, GUILD) body"
     );
     assert_eq!(
@@ -356,7 +336,7 @@ fn addon_message_bodies_golden() {
             messages::LANGUAGE_ADDON,
             "oRA\thello"
         ),
-        hx("5c000000ffffffff6f52410968656c6c6f00"),
+        hx("2c000000ffffffff6f52410968656c6c6f00"),
         "CMSG_MESSAGECHAT (addon, BATTLEGROUND) body"
     );
 
@@ -368,7 +348,7 @@ fn addon_message_bodies_golden() {
             messages::LANGUAGE_ADDON,
             "LOOT_OPENED\t"
         ),
-        hx("02000000ffffffff4c4f4f545f4f50454e45440900"),
+        hx("03000000ffffffff4c4f4f545f4f50454e45440900"),
         "CMSG_MESSAGECHAT (addon, empty message keeps its TAB) body"
     );
 
@@ -537,9 +517,9 @@ fn name_and_creature_query_roundtrip() {
         "CMSG_NAME_QUERY body"
     );
 
-    // SMSG_NAME_QUERY_RESPONSE (vmangos `NameQueryResponse::AppendBodyTo`): guid, name, an empty
-    // realm cstring, then race, gender and class as `u32`.
-    let body = hx("070000000000000042656e696c6c610000010000000000000001000000");
+    // SMSG_NAME_QUERY_RESPONSE: packed guid, status 0, name, an empty realm cstring, `u8` race,
+    // gender and class, then no declined names.
+    let body = hx("01070042656e696c6c61000001000100");
     match messages::parse_server(messages::opcode::SMSG_NAME_QUERY_RESPONSE, &body).unwrap() {
         ServerPacket::NameQueryResponse {
             guid,

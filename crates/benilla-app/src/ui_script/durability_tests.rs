@@ -75,6 +75,7 @@ const YELLOW: [f32; 4] = [1.0, 0.82, 0.18, 1.0];
 
 /// `DurabilityFrame_SetAlerts`: one body alert shows every body piece, the rest faded white.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn armor_guy_shows_red_broken_yellow_damaged_and_hides_clean() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -147,6 +148,7 @@ fn armor_guy_shows_red_broken_yellow_damaged_and_hides_clean() {
 /// Item flag `0x10` forces red and `0x08` (wrapped) silences the region (`0x4c7faa`, `0x4c7fc8`);
 /// region 12 is low ammo (20 or fewer carried reads 3), which the 1.12 FrameXML never reads.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn flag_bits_and_the_low_ammo_region() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -194,6 +196,7 @@ fn flag_bits_and_the_low_ammo_region() {
 
 /// `SetAlerts`' Shield arm swaps to the off-weapon glyph when `OffhandHasWeapon()` (item class 2).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn off_hand_glyph_follows_what_the_hand_holds() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -243,6 +246,7 @@ fn off_hand_glyph_follows_what_the_hand_holds() {
 /// The manage pass seats `TOPRIGHT` at the cluster's `BOTTOMRIGHT` less `CONTAINER_OFFSET_X`, and
 /// 20 more while the shield, off-weapon or ranged glyph shows (`UIParent.lua:1759`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn manage_pass_seats_the_frame_inside_the_cluster_edge() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -280,6 +284,7 @@ fn manage_pass_seats_the_frame_inside_the_cluster_edge() {
 /// Gear streams in slot by slot at login, so a side glyph can appear while the frame is shown;
 /// the re-seat deviation still pulls it 20 in so the shield's ~17-unit overhang clears the edge.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_late_side_glyph_refreshes_the_seat_while_the_frame_stays_shown() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -345,6 +350,7 @@ fn a_late_side_glyph_refreshes_the_seat_while_the_frame_stays_shown() {
 /// `QuestWatchFrame` is last in the right-side walk, seated at the running `anchorY` after the
 /// durability frame's height (`UIParent.lua:1770`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_quest_tracker_stacks_below_the_durability_guy() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

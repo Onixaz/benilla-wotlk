@@ -423,12 +423,11 @@ fn trim_g(text: Vec<u8>) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use benilla_expansions::Expansion;
 
     use crate::script::UiScript;
 
     fn wotlk() -> UiScript {
-        let s = UiScript::new_for(Expansion::Wotlk).unwrap();
+        let s = UiScript::new().unwrap();
         s.eval::<()>(
             r#"local f = CreateFrame("Frame", "Holder")
                Label = f:CreateFontString("Label", "ARTWORK")
@@ -445,34 +444,6 @@ mod tests {
             "Label:SetFormattedText({args}) return Label:GetText()"
         ))
         .unwrap()
-    }
-
-    #[test]
-    fn set_formatted_text_is_a_wotlk_method_only() {
-        let s = wotlk();
-        for obj in ["Label", "Btn", "Check", "Btn:GetFontString() or Label"] {
-            assert!(
-                s.eval::<bool>(&format!(
-                    "return type(({obj}).SetFormattedText) == 'function'"
-                ))
-                .unwrap(),
-                "{obj}"
-            );
-        }
-        // Not EditBox's: its registrar table (`0xb2d210`) has no such row.
-        assert!(s
-            .eval::<bool>("return CreateFrame('EditBox', 'Box').SetFormattedText == nil")
-            .unwrap());
-
-        let classic = UiScript::new_for(Expansion::Classic).unwrap();
-        assert!(classic
-            .eval::<bool>(
-                r#"local f = CreateFrame("Frame")
-                   local fs = f:CreateFontString(nil, "ARTWORK")
-                   local b = CreateFrame("Button", nil, f)
-                   return fs.SetFormattedText == nil and b.SetFormattedText == nil"#
-            )
-            .unwrap());
     }
 
     /// `WorldFrame_OnUpdate`'s framerate line.
@@ -647,6 +618,24 @@ mod tests {
                    b:SetFormattedText("")
                    return b:GetFontString() == nil"#
             )
+            .unwrap());
+    }
+
+    #[test]
+    fn set_formatted_text_is_a_fontstring_and_button_method() {
+        let s = wotlk();
+        for obj in ["Label", "Btn", "Check", "Btn:GetFontString() or Label"] {
+            assert!(
+                s.eval::<bool>(&format!(
+                    "return type(({obj}).SetFormattedText) == 'function'"
+                ))
+                .unwrap(),
+                "{obj}"
+            );
+        }
+        // Not EditBox's: its registrar table (`0xb2d210`) has no such row.
+        assert!(s
+            .eval::<bool>("return CreateFrame('EditBox', 'Box').SetFormattedText == nil")
             .unwrap());
     }
 }

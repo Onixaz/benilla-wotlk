@@ -9,14 +9,11 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
-use benilla_expansions::Expansion;
 
 use crate::dbc::{parse, str_at, u32_at};
 use crate::Chain;
 
-#[cfg(test)]
-use super::shipped::SHIPPED_CLASSIC;
-use super::shipped::{shipped, Shipped};
+use super::shipped::{Shipped, SHIPPED};
 
 const CHR_RACES: &str = "DBFilesClient\\ChrRaces.dbc";
 const CHAR_BASE_INFO: &str = "DBFilesClient\\CharBaseInfo.dbc";
@@ -33,10 +30,9 @@ const SECTION_HAIR: u8 = 3;
 /// A CharSections availability key: `(race, sex, sectionType, variation, color)`.
 type SectionKey = (u8, u8, u8, u8, u8);
 
-/// `CharBaseInfo` pairs the client never offers: 1.12.1's class-list builder `0x4706b0` skips the
-/// literal `race == 3 && class == 8` (Dwarf-Mage), though the row and its outfit are populated.
-/// 3.3.5a ships no such row.
-const UNUSED_COMBOS: [(u8, u8); 1] = [(3, 8)];
+/// The `ChrRaces` ids a player can create, ascending: the eight original races, Blood Elf and
+/// Draenei; the shipped `CharBaseInfo` lists exactly these.
+pub(super) const PLAYABLE_RACES: [u8; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 10, 11];
 
 /// The `CharBaseInfo` misparse guard: every shipped pair is present; a patch's extra pairs pass.
 fn shipped_combos_present(shipped: &Shipped, combos: &HashSet<(u8, u8)>) -> Result<()> {
@@ -85,8 +81,6 @@ pub struct CharCreateCatalog {
     ranges: HashMap<(u8, u8), DialRanges>,
     /// (race, class, sex) → the worn starting-outfit items.
     start_outfits: HashMap<(u8, u8, u8), Vec<StartOutfitItem>>,
-    /// The client the tables were read from.
-    expansion: Expansion,
 }
 
 impl CharCreateCatalog {
@@ -97,7 +91,7 @@ impl CharCreateCatalog {
             .map(|&(m, f)| if sex == 0 { m } else { f })
     }
 
-    /// Whether a race may be created as a class (CharBaseInfo less `UNUSED_COMBOS`).
+    /// Whether a race may be created as a class (a `CharBaseInfo` row).
     pub fn allows(&self, race: u8, class: u8) -> bool {
         self.combos.contains(&(race, class))
     }
@@ -145,10 +139,8 @@ impl CharCreateCatalog {
             .map_or(&[], Vec::as_slice)
     }
 
-    /// Load the catalog from the patch chain. The misparse guards compare the raw combos, so they
-    /// run before `UNUSED_COMBOS` are stripped.
+    /// Load the catalog from the patch chain, checked against the shipped rows.
     pub fn load(chain: &mut Chain) -> Result<Self> {
-        let expansion = chain.expansion();
         let (displays, files, custom_tokens) = load_races(chain)?;
         let combos = load_combos(chain)?;
         let start_outfits = load_start_outfits(chain)?;
@@ -157,7 +149,7 @@ impl CharCreateCatalog {
         let facial = load_facial_hair_styles(chain)?;
 
         let mut ranges = HashMap::new();
-        for &race in expansion.profile().playable_races {
+        for &race in &PLAYABLE_RACES {
             for sex in [0u8, 1] {
                 ranges.insert(
                     (race, sex),
@@ -166,24 +158,20 @@ impl CharCreateCatalog {
             }
         }
 
-        let mut catalog = Self {
+        let catalog = Self {
             displays,
             files,
             custom_tokens,
             combos,
             ranges,
             start_outfits,
-            expansion,
         };
         catalog.self_check()?;
-        for combo in UNUSED_COMBOS {
-            catalog.combos.remove(&combo);
-        }
         Ok(catalog)
     }
 
     fn self_check(&self) -> Result<()> {
-        let shipped = shipped(self.expansion);
+        let shipped = &SHIPPED;
         shipped_combos_present(shipped, &self.combos)?;
         for &(race, file) in shipped.files {
             if self.race_file(race) != Some(file) {
@@ -206,7 +194,7 @@ impl CharCreateCatalog {
                 );
             }
         }
-        for &race in self.expansion.profile().playable_races {
+        for &race in &PLAYABLE_RACES {
             for sex in [0u8, 1] {
                 if self.body_display(race, sex).unwrap_or(0) == 0 {
                     bail!("ChrRaces: race {race} sex {sex} has no body displayId");
@@ -246,8 +234,7 @@ fn load_races(
     let bytes = chain
         .read_file(CHR_RACES)
         .with_context(|| format!("reading {CHR_RACES}"))?;
-    let profile = chain.expansion().profile();
-    let l = &profile.dbc.chr_races;
+    let l = &crate::dbc_layout::LAYOUTS.chr_races;
     let facial = l.facial_hair_customization;
     let strings = [l.client_file, facial, facial + 1, l.hair_customization];
     let mut schema = Schema::new("ChrRaces");
@@ -266,7 +253,7 @@ fn load_races(
     for r in rs.records() {
         let Some(race) = u32_at(r, 0) else { continue };
         let race = race as u8;
-        if !profile.playable_races.contains(&race) {
+        if !PLAYABLE_RACES.contains(&race) {
             continue;
         }
         if let (Some(male), Some(female)) = (u32_at(r, 4), u32_at(r, 5)) {
@@ -313,8 +300,8 @@ fn load_combos(chain: &mut Chain) -> Result<HashSet<(u8, u8)>> {
 }
 
 /// CharStartOutfit → (race, class, sex) → worn items, parsed by hand: `ID` u32 @0, race/class/gender
-/// u8 @4/5/6, then the item, display and InventoryType arrays at the layout's offsets (1.12.1: 12
-/// slots, displays @56, types @104 in 152 bytes). A slot is kept when both are ≥ 1, dropping the
+/// u8 @4/5/6, then the item, display and InventoryType arrays at the layout's offsets (24 slots,
+/// displays @104, types @200 in 296 bytes). A slot is kept when both are ≥ 1, dropping the
 /// `-1` tail and the InventoryType-0 bags.
 fn load_start_outfits(chain: &mut Chain) -> Result<HashMap<(u8, u8, u8), Vec<StartOutfitItem>>> {
     let bytes = chain
@@ -323,7 +310,7 @@ fn load_start_outfits(chain: &mut Chain) -> Result<HashMap<(u8, u8, u8), Vec<Sta
     if bytes.len() < 20 || &bytes[0..4] != b"WDBC" {
         bail!("CharStartOutfit: not a WDBC file");
     }
-    let l = &chain.expansion().profile().dbc.char_start_outfit;
+    let l = &crate::dbc_layout::LAYOUTS.char_start_outfit;
     let record_count = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
     let field_count = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
     let record_size = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
@@ -361,15 +348,15 @@ fn load_start_outfits(chain: &mut Chain) -> Result<HashMap<(u8, u8, u8), Vec<Sta
     Ok(map)
 }
 
-/// CharSections → the selectable keys, the rows the layout's flags offer: in 1.12.1 those without
-/// `0x1` (`SECTION_FLAG_UNAVAILABLE`), the domain vmangos's `GetCharSectionEntry` searches.
+/// CharSections → the selectable keys, the rows the layout's flags offer
+/// ([`crate::dbc_layout::CharSections::offered`]).
 fn load_available_sections(chain: &mut Chain) -> Result<HashSet<SectionKey>> {
     let bytes = chain
         .read_file(CHAR_SECTIONS)
         .with_context(|| format!("reading {CHAR_SECTIONS}"))?;
     // ID, Race, Sex, SectionType, then the variation, color, textures and flags where the layout
     // puts them; we read the ints.
-    let l = &chain.expansion().profile().dbc.char_sections;
+    let l = &crate::dbc_layout::LAYOUTS.char_sections;
     let rs = parse(
         &bytes,
         all_u32_schema("CharSections", l.fields),
@@ -419,10 +406,7 @@ fn load_facial_hair_styles(chain: &mut Chain) -> Result<HashMap<(u8, u8), HashSe
     let bytes = chain
         .read_file(CHAR_FACIAL_HAIR_STYLES)
         .with_context(|| format!("reading {CHAR_FACIAL_HAIR_STYLES}"))?;
-    let fields = chain
-        .expansion()
-        .profile()
-        .dbc
+    let fields = crate::dbc_layout::LAYOUTS
         .character_facial_hair_styles
         .fields;
     let rs = parse(
@@ -528,28 +512,29 @@ mod tests {
 
     #[test]
     fn a_patched_combo_passes_the_guard_and_a_lost_one_does_not() {
-        let mut combos: HashSet<(u8, u8)> = SHIPPED_CLASSIC
+        let mut combos: HashSet<(u8, u8)> = SHIPPED
             .combos
             .iter()
             .flat_map(|&(r, cs)| cs.iter().map(move |&c| (r, c)))
             .collect();
-        assert!(shipped_combos_present(&SHIPPED_CLASSIC, &combos).is_ok());
-        // A patch that adds Human Hunter: 1.12.1's builder lists it, so the load must go on.
+        assert!(shipped_combos_present(&SHIPPED, &combos).is_ok());
+        // A patch that adds Human Hunter: the builder lists it, so the load must go on.
         combos.insert((1, 3));
-        assert!(shipped_combos_present(&SHIPPED_CLASSIC, &combos).is_ok());
+        assert!(shipped_combos_present(&SHIPPED, &combos).is_ok());
         // A misparse that drops a shipped pair still refuses.
         combos.remove(&(2, 7));
-        assert!(shipped_combos_present(&SHIPPED_CLASSIC, &combos).is_err());
+        assert!(shipped_combos_present(&SHIPPED, &combos).is_err());
     }
 
     #[test]
-    fn char_create_catalog_matches_the_5875_dbcs() {
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+    fn char_create_catalog_matches_the_12340_dbcs() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = CharCreateCatalog::load(&mut chain).expect("load char-create catalog");
         let creatures = crate::load_creature_catalog(&mut chain).expect("load creatures");
 
-        for &race in Expansion::Classic.profile().playable_races {
+        for &race in &PLAYABLE_RACES {
             for sex in [0u8, 1] {
                 let display = cat.body_display(race, sex).expect("has display");
                 let model = creatures.model(display).unwrap_or_else(|| {
@@ -566,25 +551,14 @@ mod tests {
             }
         }
 
-        // The playable sets are the raw table less the dead pairs.
-        for &(race, classes) in SHIPPED_CLASSIC.combos {
-            let playable: Vec<u8> = classes
-                .iter()
-                .copied()
-                .filter(|&c| !UNUSED_COMBOS.contains(&(race, c)))
-                .collect();
+        // The playable sets are the raw table.
+        for &(race, classes) in SHIPPED.combos {
             assert_eq!(
                 cat.classes_for_race(race),
-                playable,
+                classes,
                 "combos for race {race}"
             );
         }
-        assert_eq!(
-            cat.classes_for_race(3),
-            vec![1, 2, 3, 4, 5],
-            "Dwarf offers exactly Warrior/Paladin/Hunter/Rogue/Priest — no Mage (the dead \
-             CharBaseInfo row must not reach the create screen)"
-        );
 
         // The glue tokens against the shipped rows, pinning cols 26/27's male/female order; no
         // shipped row is "NONE".
@@ -612,11 +586,8 @@ mod tests {
         );
 
         // Every creatable combo wears at least one item; the Human Mage wears a robe (inv 20).
-        for &(race, classes) in SHIPPED_CLASSIC.combos {
-            for &class in classes
-                .iter()
-                .filter(|&&c| !UNUSED_COMBOS.contains(&(race, c)))
-            {
+        for &(race, classes) in SHIPPED.combos {
+            for &class in classes {
                 for sex in [0u8, 1] {
                     let out = cat.start_outfit(race, class, sex);
                     assert!(
@@ -640,7 +611,7 @@ mod tests {
         // Every tuple in the dial ranges passes ValidateAppearance.
         let avail = load_available_sections(&mut chain).expect("sections");
         let facial = load_facial_hair_styles(&mut chain).expect("facial hair");
-        for &race in Expansion::Classic.profile().playable_races {
+        for &race in &PLAYABLE_RACES {
             for sex in [0u8, 1] {
                 let r = cat.ranges(race, sex).expect("ranges");
                 for sk in 0..r.skin {

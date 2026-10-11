@@ -171,6 +171,7 @@ fn a_tooltip_content_change_costs_exactly_one_layout_solve() {
 /// shipped handler writing a layout input every frame. `WOW_LAYOUT_TOUCH_TRACE=<secs>:<n>` names
 /// the writer on a live run (`docs/CONTRIBUTING.md`, "Running it unattended").
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_settled_shipped_ui_costs_no_gate_walk_on_a_quiet_frame() {
     benilla_formats::wow_data_or_skip!();
     let mut s = settled_default_ui();

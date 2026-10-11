@@ -279,6 +279,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_subclass_names_resolve_verbose_first() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -296,6 +297,7 @@ mod tests {
 
     /// The requirement lookup's two stages (`0x52eea7`-`0x52f10a`) on the shipped tables.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_requirement_names_take_the_group_before_the_join() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -360,6 +362,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn item_sub_classes_load_from_the_chain() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

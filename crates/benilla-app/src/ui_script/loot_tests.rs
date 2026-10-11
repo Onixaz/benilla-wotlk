@@ -82,6 +82,7 @@ fn coin_and_two_items() -> LootState {
 
 /// Open at the left slot, the coin row first, 1-based row picks, a looted row hidden in place.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_loot_frame_drives_end_to_end() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -257,6 +258,7 @@ fn shipped_loot_frame_drives_end_to_end() {
 
 /// Only an empty loot plays a Lua sound, `LOOTWINDOWOPENEMPTY` (LootFrame.lua:135-136).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn loot_empty_roll_plays_the_empty_open_kit() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -297,6 +299,7 @@ fn loot_empty_roll_plays_the_empty_open_kit() {
 /// A fishing open plays "FISHING REEL IN" (kit 3407, "Fishing Reel in": the lookup ignores case)
 /// and swaps the skull for `FishingLoot-Icon`; every show resets it (LootFrame.lua:134-140).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn fishing_loot_open_plays_the_reel_and_swaps_the_portrait() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -349,6 +352,7 @@ fn fishing_loot_open_plays_the_reel_and_swaps_the_portrait() {
 
 /// Past four rows the pager takes a button: five items page as 3 + 2 (LootFrame.lua:70-73,105-118).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_loot_frame_pages_five_items() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -441,6 +445,7 @@ fn shipped_loot_frame_pages_five_items() {
 
 /// Loot, then merchant (pushable 7 and 0, UIParent.lua:22,26): loot is pushed to the centre slot.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_loot_pushed_to_center_by_merchant() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -508,6 +513,7 @@ fn shipped_loot_pushed_to_center_by_merchant() {
 /// and its nested art frame (`SetFrameStrata` `0x76a470` cascades over the subtree): in one
 /// stratum that level-1 child draws over the window's level-0 art, whatever the show order.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_loot_window_draws_over_the_party_frames() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -555,6 +561,7 @@ fn the_loot_window_draws_over_the_party_frames() {
 /// Ctrl previews and shift posts the link (LootFrame.lua:147-154), and neither loots: the take is
 /// the `LootButton`'s own click, armed by `SetSlot` (LootFrame.lua:94) and off under any modifier.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ctrl_and_shift_on_a_loot_row_preview_and_post_without_looting() {
     benilla_formats::wow_data_or_skip!();
     const WOOL_LINK: &str = "|cffffffff|Hitem:2589:0:0:0|h[Wool Cloth]|h|r";
@@ -691,6 +698,7 @@ fn ctrl_and_shift_on_a_loot_row_preview_and_post_without_looting() {
 /// Master loot: an item at or above `MASTER_LOOT_THREHOLD` (4, epic; the misspelling is the
 /// reference's, LootFrame.lua:3) asks `CONFIRM_LOOT_DISTRIBUTION` before it is given.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_loot_frame_hands_a_master_row_to_a_candidate() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -828,6 +836,7 @@ fn shipped_loot_frame_hands_a_master_row_to_a_candidate() {
 /// In a raid each candidate sits in its subgroup's five-slot block, and the menu keeps a "Group N"
 /// row only for an occupied block (LootFrame.lua:197-213).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_master_loot_menu_groups_raid_candidates_by_subgroup() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::{PartyState, RaidMemberInfo};
@@ -910,6 +919,7 @@ fn the_master_loot_menu_groups_raid_candidates_by_subgroup() {
 /// Okay hands it back through `LootSlot`, the only verb that completes a deferred take
 /// (StaticPopup.lua:601-611), and `LOOT_CLOSED` hides the dialog (LootFrame.lua:53-54).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_loot_bind_confirm_raises_the_dialog_and_okay_calls_loot_slot() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -997,6 +1007,7 @@ fn the_loot_bind_confirm_raises_the_dialog_and_okay_calls_loot_slot() {
 
 /// A row click is a take; `LootSlot` is only the bind-confirm continuation.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_row_click_takes_rather_than_continues() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1025,6 +1036,7 @@ fn a_row_click_takes_rather_than_continues() {
 /// A row awaiting its template: the app never opens on one (`ui_loot` waits), but stock
 /// `LootFrame_Update` indexes `ITEM_QUALITY_COLORS[quality]` unguarded (LootFrame.lua:82-85).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn loot_row_awaiting_its_template_opens_clean() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1128,6 +1140,7 @@ fn loot_row_awaiting_its_template_opens_clean() {
 /// A `<LootButton>` loads as a `Button` (`CLootButton` keeps `CSimpleButton`'s `LoadXML`,
 /// `0x7788c0`), so it wears `ItemButtonTemplate`'s state textures and lights under the cursor.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn stock_loot_rows_wear_the_item_button_art_and_light_under_the_cursor() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

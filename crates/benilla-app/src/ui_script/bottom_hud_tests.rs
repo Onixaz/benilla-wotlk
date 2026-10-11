@@ -163,6 +163,7 @@ const BOTTOM_EXEMPT: &[(&str, &str)] = &[
 /// `UIPARENT_MANAGED_FRAME_POSITIONS` row, seats itself from a managed offset with a listener, or
 /// is listed in `BOTTOM_EXEMPT` with its reason.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_bottom_anchored_top_level_frame_is_accounted_for() {
     // The pass is the stock `UIParent.lua`'s, read off the player's chain.
     let _data = benilla_formats::wow_data_or_skip!();
@@ -250,6 +251,7 @@ const RAISABLE_BARS: &[&str] = &[
 /// With any combination of bars raised, nothing in the bottom band overlaps a raised bar. Runs the
 /// full UI and reruns the pass after each combination, as a live bar change does.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn no_bottom_band_frame_overlaps_a_raised_bar() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -368,6 +370,7 @@ fn overlaps(a: (f32, f32, f32, f32), b: (f32, f32, f32, f32)) -> bool {
 /// twelfth button. At 1600x900 the card peaks at x 1253.7..1298.0, y 48.9..93.1, and the bar
 /// spans x 806..1306, y 57..95.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_item_push_card_shares_the_band_with_a_raised_bar_exactly_as_the_reference_does() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

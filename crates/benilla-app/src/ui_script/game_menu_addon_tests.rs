@@ -123,6 +123,7 @@ fn shagu(root: &Path) {
 /// the button lands 1 under the Options rung, and every rung below moves down by its height and
 /// the gap, 22, as the stock rungs do on the stock menu.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shagutweaks_advanced_options_lands_under_the_options_rung_and_pushes_the_rest_down() {
     let _data = benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
@@ -169,6 +170,7 @@ fn shagutweaks_advanced_options_lands_under_the_options_rung_and_pushes_the_rest
 /// itself without `ClearAllPoints` and grows the menu by 25: Logout's one `TOP` anchor is replaced,
 /// so Logout, Exit Game and Return to Game move down under it, as on the stock menu.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn mcps_addons_button_lands_under_macros_and_pushes_logout_down() {
     let _data = benilla_formats::wow_data_or_skip!();
     let corpus = benilla_formats::addon_corpus_or_skip!();
@@ -258,6 +260,7 @@ end
 "#;
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_pfui_shaped_skin_keeps_every_rung_centred_in_the_narrowed_menu() {
     let _data = benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
@@ -295,6 +298,7 @@ fn a_pfui_shaped_skin_keeps_every_rung_centred_in_the_narrowed_menu() {
 /// Booted without the layer, as `WOW_STOCK_UI=1` does, the ESC menu is the stock one: its eight
 /// rungs at the stock file's geometry (`GameMenuFrame.xml:5-185`), each opening its stock window.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_ui_menu_is_the_stock_menu_and_every_rung_opens_its_stock_window() {
     use benilla_ui::script::SessionRequest;
     let _data = benilla_formats::wow_data_or_skip!();

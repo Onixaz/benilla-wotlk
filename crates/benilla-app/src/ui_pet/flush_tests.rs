@@ -352,6 +352,7 @@ fn the_flush_runs_after_every_feed_that_pushes_a_pet_cooldown() {
 /// `PET_BAR_UPDATE_COOLDOWN`. So the GCD a pet-bar press starts sweeps the pet tab's button
 /// through the flush's `SPELL_UPDATE_COOLDOWN` alone.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_pet_gcd_sweeps_the_spellbooks_pet_tab_button() {
     benilla_formats::wow_data_or_skip!();
     use benilla_protocol::messages::{PetActionEntry, PET_ACT_ENABLED};

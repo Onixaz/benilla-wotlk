@@ -24,6 +24,7 @@ fn frame_rect(quads: &[ExtractedQuad], w: f32, h: f32) -> benilla_ui::layout::Re
 /// Stock `GossipFrame.xml` with a two-option menu: `GOSSIP_SHOW` seats it at the left slot, a row
 /// click queues its select, and the close button vacates the slot.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_gossip_frame_drives_end_to_end() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -193,6 +194,7 @@ fn shipped_gossip_frame_drives_end_to_end() {
 /// Quest rows fill the shared pool first, available before active, then the options
 /// (`GossipFrame.lua:24-29`), all on one static anchor chain.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_gossip_frame_renders_quest_rows_above_options() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -311,6 +313,7 @@ fn shipped_gossip_frame_renders_quest_rows_above_options() {
 /// hangs off the previous one's BOTTOMLEFT (`GossipFrame.xml:267`), so wrapped labels stack
 /// without overlapping. The checks pin that rule, not a glyph metric.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_gossip_rows_grow_to_their_wrapped_labels() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -414,6 +417,7 @@ fn shipped_gossip_rows_grow_to_their_wrapped_labels() {
 
 /// The window's OnShow and OnHide play the kits (`GossipFrame.xml:445`, `:454`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn gossip_show_hide_plays_open_and_close_kits() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -458,6 +462,7 @@ fn gossip_show_hide_plays_open_and_close_kits() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_panel_slot_replaces_gossip_with_merchant() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -543,6 +548,7 @@ fn shipped_panel_slot_replaces_gossip_with_merchant() {
 /// A displaced NPC window's OnHide calls its `CloseX()`, whose intent ends that session; a session
 /// left open keeps its window from reopening.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn displacing_an_npc_window_ends_the_displaced_session() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -596,6 +602,7 @@ fn displacing_an_npc_window_ends_the_displaced_session() {
 /// A left occupant with a higher `pushable` (LootFrame's 7) moves to center when a pushable-0
 /// window arrives (`UIParent.lua:734-741`); a bare 50x50 frame stands in for the loot window.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_panel_slot_pushable_promotes_to_center() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -685,6 +692,7 @@ fn shipped_panel_slot_pushable_promotes_to_center() {
 /// bank (pushable 6) would seat at center, so the app closes gossip itself. Either order ends
 /// with the bank at left; opened first, it slides back when gossip hides (`UIParent.lua:772-783`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn gossip_bank_option_hands_the_left_slot_to_the_bank() {
     let _data = benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::BankState;
@@ -760,6 +768,7 @@ fn gossip_bank_option_hands_the_left_slot_to_the_bank() {
 /// The rows sit in `GossipGreetingScrollFrame` (`GossipFrame.xml:223-436`): a menu taller than the
 /// frame gets a scroll range and a bar, and every row clips to the frame.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_overflowing_gossip_menu_scrolls_instead_of_spilling() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -897,6 +906,7 @@ fn an_overflowing_gossip_menu_scrolls_instead_of_spilling() {
 /// An addon makes its frame a panel with a `UIPanelWindows` row, and it seats where a client
 /// window does.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_addons_own_frame_registered_in_uipanelwindows_takes_the_left_slot() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -965,6 +975,7 @@ fn an_addons_own_frame_registered_in_uipanelwindows_takes_the_left_slot() {
 /// The registry rows as `UIParent.lua:14-50` writes them. An unregistered frame opens with a bare
 /// `Show` and takes no slot (`:658-661`), so a missing row lets the next panel seat over it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_panel_registry_rows_match_the_reference_bytes() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();
@@ -1005,6 +1016,7 @@ fn the_panel_registry_rows_match_the_reference_bytes() {
 
 /// While dead, `ShowUIPanel` opens only a `whileDead` row (`UIParent.lua:663-666`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_dead_player_opens_only_whiledead_windows() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1072,6 +1084,7 @@ fn a_dead_player_opens_only_whiledead_windows() {
 /// `SetCenterFrame` hides every `UIChildWindows` frame (`UIParent.lua:839-846`), but
 /// `MovePanelToCenter` seats by assignment (`:877-885`), so a frame pushed to center leaves them.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_frame_arriving_at_center_puts_the_child_windows_away() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

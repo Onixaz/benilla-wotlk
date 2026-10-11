@@ -4,6 +4,7 @@
 use benilla_formats::{open_chain, parse_m2_animations};
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn stand_sequence_bounds_sphere_is_body_scale() {
     let data = benilla_formats::wow_data_or_skip!();
     let chain = open_chain(&data).expect("open chain");

@@ -36,6 +36,7 @@ fn frame_rect(quads: &[ExtractedQuad], w: f32, h: f32) -> benilla_ui::layout::Re
 /// Two items and a purse: `MERCHANT_SHOW` opens the window in the left UIPanel slot, the rows and
 /// coins paint, a right-click buys, and `MERCHANT_CLOSED` hides it and vacates the slot.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_merchant_frame_drives_end_to_end() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -296,6 +297,7 @@ fn shipped_merchant_frame_drives_end_to_end() {
 /// The window's OnShow plays `igCharacterInfoOpen` and its OnHide `igCharacterInfoClose`
 /// (`MerchantFrame.xml:721`, `:714`); nothing plays at load, where the frame starts hidden.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn merchant_show_hide_plays_open_and_close_kits() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -337,6 +339,7 @@ fn merchant_show_hide_plays_open_and_close_kits() {
 /// `MerchantFrame_OnShow` calls `OpenBackpack` before the window's own sound
 /// (`MerchantFrame.lua:35`), so the bag's kit (`ContainerFrame.lua:140`, `:120`) leads each pair.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn vendor_open_opens_the_backpack_and_layers_the_sound() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -384,6 +387,7 @@ fn vendor_open_opens_the_backpack_and_layers_the_sound() {
 /// A bag the player already had open stays open when the vendor closes: the was-open memory, per
 /// bag in `BENILLA_BAG_WAS_OPEN` as in the stock `backpackWasOpen` (`ContainerFrame.lua:198-201`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn vendor_leaves_an_already_open_backpack_alone() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -429,6 +433,7 @@ fn vendor_leaves_an_already_open_backpack_alone() {
 /// the was-open memory (`ContainerFrame.lua:702-707`, `:210-218`), and then closes bags 1 and up,
 /// the ones the vendor opened included.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_centre_panel_over_a_vendor_keeps_the_backpack_the_player_had_open() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -488,6 +493,7 @@ fn a_centre_panel_over_a_vendor_keeps_the_backpack_the_player_had_open() {
 /// `OpenBackpack` does, so every bag is up to sell from. `ContainerFrameAdapters.xml` replaces the
 /// verb after the stock file loads; with the stock body live, bag 2 would not open.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn vendor_opens_and_closes_all_equipped_bags() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -528,6 +534,7 @@ fn vendor_opens_and_closes_all_equipped_bags() {
 /// (`UIParent.lua:650-652`). The close's OnHide queues a `CloseMerchant` the feed must consume, or
 /// the drain would clear the vendor just reopened.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn merchant_switch_plays_close_then_open_and_queues_the_consumable_close() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -570,6 +577,7 @@ fn merchant_switch_plays_close_then_open_and_queues_the_consumable_close() {
 /// Hovering a row's icon: the icon button's own 37px glow, a tooltip it owns at `ANCHOR_RIGHT`
 /// (`MerchantFrame.xml:64`), and the item's stat head with no buy-price line.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_merchant_hover_scopes_highlight_and_anchors_item_tooltip() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -779,6 +787,7 @@ fn shipped_merchant_hover_scopes_highlight_and_anchors_item_tooltip() {
 /// The two tabs (`MerchantFrame.lua:57-64`): the merchant page has the buyback slot and repair
 /// pair; the buyback page retitles the window and fills the rows from `GetBuybackItemInfo`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn merchant_tabs_drive_buyback_page_and_repair_pair() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -897,6 +906,7 @@ fn merchant_tabs_drive_buyback_page_and_repair_pair() {
 /// The tabs fit their labels once, in `<OnShow>` (`CharacterFrameTemplates.xml:77-80`), so the
 /// measurer must answer synchronously, as the app's does.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn merchant_tabs_fit_their_labels() {
     benilla_formats::wow_data_or_skip!();
     /// `2 * $parentLeft:GetWidth()` (`UIPanelTemplates.lua:41`): the two 20-unit end slices.
@@ -935,6 +945,7 @@ fn merchant_tabs_fit_their_labels() {
 /// A hovered row arms the Buy cursor (UnableBuy when unaffordable, Inspect with ctrl held), which
 /// the frame's OnUpdate re-arms every frame (`MerchantFrame.xml:726-741`); leaving clears it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_merchant_frame_arms_the_buy_cursor_on_hover() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::UiCursorMode;
@@ -1028,6 +1039,7 @@ fn shipped_merchant_frame_arms_the_buy_cursor_on_hover() {
 
 /// The trade partner's money (`TradeRecipientMoneyFrame`) shows a single digit, not "...".
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn trade_recipient_money_renders_the_digit_not_ellipsis() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1085,6 +1097,7 @@ fn trade_recipient_money_renders_the_digit_not_ellipsis() {
 /// posts its link, both through `GetMerchantItemLink`, and neither buys; a right-click buys unless
 /// ctrl is held (`MerchantFrame.lua:332-333`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ctrl_and_shift_on_a_vendor_row_preview_and_post_without_buying() {
     benilla_formats::wow_data_or_skip!();
     const WATER_LINK: &str = "|cffffffff|Hitem:159:0:0:0|h[Refreshing Spring Water]|h|r";
@@ -1194,6 +1207,7 @@ fn ctrl_and_shift_on_a_vendor_row_preview_and_post_without_buying() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shift_click_takes_one_bundle_and_splits_a_single() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

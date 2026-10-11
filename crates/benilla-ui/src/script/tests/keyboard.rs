@@ -10,7 +10,7 @@ fn a_key_script_alone_does_not_put_a_frame_in_the_walk() {
         r#"
         got = nil
         f = CreateFrame("Frame", "KbUnenabled")
-        f:SetScript("OnChar", function() got = arg1 end)
+        f:SetScript("OnChar", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) got = arg1 end)
     "#,
     )
     .unwrap();

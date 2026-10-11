@@ -8,9 +8,9 @@
 
 use std::collections::HashMap;
 
+use crate::dbc_layout::LocalizedTable;
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
-use benilla_expansions::dbc::LocalizedTable;
 
 use crate::dbc::{parse, str_at, u32_at};
 use crate::Chain;
@@ -173,7 +173,7 @@ pub fn load_emote_text_catalog(chain: &mut Chain) -> Result<EmoteTextCatalog> {
     let bytes = chain
         .read_file(EMOTES_TEXT_DATA)
         .with_context(|| format!("reading {EMOTES_TEXT_DATA}"))?;
-    let layout = &chain.expansion().profile().dbc.emotes_text_data;
+    let layout = &crate::dbc_layout::LAYOUTS.emotes_text_data;
     let locales = layout.fields - 2;
     let rs = parse(
         &bytes,
@@ -228,12 +228,7 @@ mod tests {
         let data = crate::wow_data_or_skip!();
         let mut chain = Chain::open(&data).expect("open patch chain");
         let cat = load_emote_text_catalog(&mut chain).expect("load");
-        // 169 rows in 5875, 252 in 12340.
-        let rows = match chain.expansion() {
-            benilla_expansions::Expansion::Classic => 169,
-            benilla_expansions::Expansion::Wotlk => 252,
-        };
-        assert_eq!(cat.len(), rows, "one form table per EmotesText row");
+        assert_eq!(cat.len(), 252, "one form table per EmotesText row");
 
         // ctx 0: someone else waves at someone else.
         assert_eq!(
@@ -360,11 +355,10 @@ mod tests {
             }
         }
         silent.dedup();
-        // 12340 adds two more rows with no sentence in any form.
-        let expected: &[u32] = match chain.expansion() {
-            benilla_expansions::Expansion::Classic => &[86, 141, 264],
-            benilla_expansions::Expansion::Wotlk => &[86, 141, 264, 366, 414],
-        };
-        assert_eq!(silent, expected, "the silent set is SIT/STAND/TRAIN");
+        assert_eq!(
+            silent,
+            [86, 141, 264, 366, 414],
+            "the silent set: SIT, STAND, TRAIN and two rows with no sentence in any form"
+        );
     }
 }

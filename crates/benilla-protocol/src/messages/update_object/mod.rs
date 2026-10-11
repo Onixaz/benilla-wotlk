@@ -3,10 +3,6 @@
 
 use std::io::{self, Read};
 
-use benilla_expansions::Expansion;
-
-use crate::wire::{capacity_hint, read_packed_guid, read_u32_le, read_u8};
-
 mod fields;
 mod movement;
 mod wotlk;
@@ -45,77 +41,9 @@ pub enum Object {
     },
 }
 
-impl Object {
-    fn read(r: &mut impl Read) -> io::Result<Self> {
-        let update_type = read_u8(r)?;
-        Ok(match update_type {
-            0 => Object::Values {
-                guid: read_packed_guid(r)?,
-                mask: ObjectFields::read(r)?,
-            },
-            1 => Object::Movement {
-                guid: read_packed_guid(r)?,
-                movement: MovementBlock::read(r)?,
-            },
-            2 | 3 => {
-                let guid = read_packed_guid(r)?;
-                let object_type = ObjectType::from_u8(read_u8(r)?);
-                let movement = MovementBlock::read(r)?;
-                // A create omits zero fields (vmangos `_SetCreateBits`), so absent reads 0, but
-                // only inside this type's own descriptor.
-                let mask = ObjectFields::read(r)?.into_created(object_type);
-                Object::Create {
-                    guid,
-                    object_type,
-                    movement,
-                    mask,
-                }
-            }
-            4 => Object::OutOfRange {
-                guids: read_guid_list(r)?,
-            },
-            5 => Object::Near {
-                guids: read_guid_list(r)?,
-            },
-            other => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unknown object update_type {other}"),
-                ))
-            }
-        })
-    }
-}
-
-fn read_guid_list(r: &mut impl Read) -> io::Result<Vec<u64>> {
-    let count = read_u32_le(r)?;
-    let mut guids = Vec::with_capacity(capacity_hint(count, 0xFFFF));
-    for _ in 0..count {
-        guids.push(read_packed_guid(r)?);
-    }
-    Ok(guids)
-}
-
-/// Parse an `SMSG_UPDATE_OBJECT` body in `expansion`'s layout.
-pub(super) fn read_update_object(
-    r: &mut impl Read,
-    expansion: Expansion,
-) -> io::Result<Vec<Object>> {
-    match expansion {
-        Expansion::Classic => read_update_object_classic(r),
-        Expansion::Wotlk => wotlk::read_update_object(r),
-    }
-}
-
-/// 1.12.1's body: the count, the has-transport byte, then each `Object`.
-fn read_update_object_classic(r: &mut impl Read) -> io::Result<Vec<Object>> {
-    let amount_of_objects = read_u32_le(r)?;
-    let _has_transport = read_u8(r)?;
-    let mut objects = Vec::with_capacity(capacity_hint(amount_of_objects, 0xFFFF));
-    for _ in 0..amount_of_objects {
-        objects.push(Object::read(r)?);
-    }
-    Ok(objects)
+/// Parse an `SMSG_UPDATE_OBJECT` body.
+pub(super) fn read_update_object(r: &mut impl Read) -> io::Result<Vec<Object>> {
+    wotlk::read_update_object(r)
 }
 
 #[cfg(test)]

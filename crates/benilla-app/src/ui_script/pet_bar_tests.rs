@@ -111,6 +111,7 @@ fn texture_rect(
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_shipped_pet_bar_drives_end_to_end() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -219,6 +220,7 @@ fn the_shipped_pet_bar_drives_end_to_end() {
 /// Left casts, right flips autocast, and a left click on an active Attack calls it off
 /// (`IsPetAttackActive`, PetActionBarFrame.lua:257-265).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn clicks_route_through_the_attack_toggle_fork() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -269,6 +271,7 @@ fn clicks_route_through_the_attack_toggle_fork() {
 /// (`0x4bc940`/`0x4bc960`), not from a refused `TogglePetAutocast` (`0x4bcbf7`), so a right-click
 /// on a token leaves the ring off until something else repaints.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_click_drops_the_ring_and_the_repaint_restores_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -310,6 +313,7 @@ fn a_click_drops_the_ring_and_the_repaint_restores_it() {
 /// An unusable pet's bar (`PetHasActionBar` true, `GetPetActionsUsable` false) still draws, every
 /// icon desaturated (PetActionBarFrame.lua:129-134).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_disabled_bar_greys_rather_than_hides() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -376,6 +380,7 @@ fn pet_bar_row(with_multibar: bool) -> (usize, f32) {
 /// With the bottom-left bar up, `UIParent_ManageFramePositions` raises the pet bar 43 px and hides
 /// its shelf art, which would draw across that row (UIParent.lua:1589,1706-1708).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_pet_bar_rises_and_sheds_its_shelf_over_the_bottom_left_bar() {
     benilla_formats::wow_data_or_skip!();
     let (low_shelf, low_top) = pet_bar_row(false);
@@ -397,6 +402,7 @@ fn the_pet_bar_rises_and_sheds_its_shelf_over_the_bottom_left_bar() {
 /// Both drag ends call `PickupPetAction` (PetActionBarFrame.lua:269-283), a move by the binding's
 /// carrying-cursor fork; meanwhile `PET_BAR_SHOWGRID` shows every slot, the empty ones included.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn dragging_a_pet_spell_between_slots_moves_it_through_the_shipped_handlers() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -449,6 +455,7 @@ fn dragging_a_pet_spell_between_slots_moves_it_through_the_shipped_handlers() {
 /// `LOCK_ACTIONBAR` stops both drag ends (PetActionBarFrame.lua:270,278) but not the shift-click
 /// pick-up (PetActionBarFrame.lua:254-255).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_lock_stops_the_pet_bar_drag_but_not_its_shift_click() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -497,6 +504,7 @@ fn the_lock_stops_the_pet_bar_drag_but_not_its_shift_click() {
 
 /// Shift is tested above the button split (PetActionBarFrame.lua:254): either button picks up.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shift_clicking_a_pet_button_picks_it_up_rather_than_casting() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -528,6 +536,7 @@ fn shift_clicking_a_pet_button_picks_it_up_rather_than_casting() {
 /// bare `CastPetAction` on release. The live Attack is a possess bar's: `0x4bd420` raises the
 /// attack latch only for a possessed unit, so on a hunter's bar key and click agree.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_keybind_pair_pushes_and_casts_without_the_clicks_forks() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -609,6 +618,7 @@ fn tooltip_line1(s: &UiScript) -> String {
 /// branch, colour code before the space: `Attack|cffffd200 (CTRL-1)|r`. The other branch is a
 /// bare `SetPetAction` (PetActionBarFrame.lua:285-305).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn token_tooltips_name_their_binding_and_pet_spells_do_not() {
     benilla_formats::wow_data_or_skip!();
     let mut s = hovered_pet_bar();
@@ -641,6 +651,7 @@ fn token_tooltips_name_their_binding_and_pet_spells_do_not() {
 /// The append is unguarded and `GetBindingText` answers "" for a nil key (UIParent.lua:1819-1821),
 /// so an unbound token shows empty parentheses. Stock binds CTRL-1..CTRL-0, so this unbinds one.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_unbound_token_row_renders_the_references_empty_parentheses() {
     benilla_formats::wow_data_or_skip!();
     let mut s = hovered_pet_bar();
@@ -665,6 +676,7 @@ fn an_unbound_token_row_renders_the_references_empty_parentheses() {
 /// With `UberTooltips` off a pet spell takes the token branch too, binding suffix and all, and the
 /// plate anchors `ANCHOR_RIGHT` of the button (PetActionBarFrame.lua:290-296).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ubertooltips_off_takes_the_spells_through_the_token_branch_and_moves_the_plate() {
     benilla_formats::wow_data_or_skip!();
     let mut s = hovered_pet_bar();

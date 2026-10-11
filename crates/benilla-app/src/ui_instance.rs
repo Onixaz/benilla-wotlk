@@ -866,6 +866,7 @@ mod tests {
     /// Every token this module emits resolves in the shipped `GlobalStrings.lua` with the fills the
     /// composer expects, and matches the copies quoted above. Skips without client data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_lockout_token_resolves_in_the_real_global_strings() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

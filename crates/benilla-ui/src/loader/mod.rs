@@ -137,7 +137,7 @@ pub fn apply_template(lua: &mlua::Lua, wrapper: &Table, kind: &str, template: &s
         let model = loader.model();
         let templates = model.framexml_templates.borrow();
         // Looked up as `framexml::expand` looks it up (exact, then case-folded); keep them in step.
-        for name in framexml::inherit_names(template, model.inherits_list) {
+        for name in framexml::inherit_names(template) {
             let Some(el) = templates.get(name).or_else(|| {
                 templates
                     .iter()
@@ -459,7 +459,7 @@ impl Loader<'_> {
         let font_names: std::collections::HashSet<&str> =
             fonts.keys().map(|k| k.as_str()).collect();
         let mut warns = Vec::new();
-        let out = framexml::expand_known(el, &view, &font_names, model.inherits_list, &mut warns);
+        let out = framexml::expand_known(el, &view, &font_names, &mut warns);
         drop(font_names);
         drop(fonts);
         drop(view);
@@ -476,12 +476,10 @@ impl Loader<'_> {
         let hit = el.attr("inherits").is_some_and(|inherits| {
             let model = self.model();
             let templates = model.framexml_templates.borrow();
-            framexml::inherit_names(inherits, model.inherits_list)
-                .into_iter()
-                .any(|name| {
-                    templates.contains_key(name)
-                        || templates.keys().any(|k| k.eq_ignore_ascii_case(name))
-                })
+            framexml::inherit_names(inherits).into_iter().any(|name| {
+                templates.contains_key(name)
+                    || templates.keys().any(|k| k.eq_ignore_ascii_case(name))
+            })
         });
         if hit {
             self.expand(el)
@@ -731,9 +729,6 @@ impl Loader<'_> {
         let Some(key) = el.attr("parentKey").filter(|k| !k.is_empty()) else {
             return;
         };
-        if !self.model().parent_key {
-            return;
-        }
         if let Err(e) = parent.set(key, child) {
             self.report.errors.push(format!("parentKey=\"{key}\": {e}"));
         }

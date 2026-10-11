@@ -27,6 +27,7 @@ fn fade_census(reader: &Chain, stem: &str, gi: u32) -> (usize, usize, f32, f32) 
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn abbey_matches_the_reference_capture() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");

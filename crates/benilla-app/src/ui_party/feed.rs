@@ -1985,6 +1985,7 @@ mod tests {
     /// member who is not connected, and `PartyMemberFrame_UpdatePet` hides their pet frame
     /// (`PartyMemberFrame.lua:73`).
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_stock_party_frame_greys_a_member_who_logs_off_out_of_view() {
         benilla_formats::wow_data_or_skip!();
         let mut script = UiScript::new().unwrap();

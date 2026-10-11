@@ -1,13 +1,14 @@
-//! The 3.3.5a world handshake over a real socket against a fake server that checks
-//! `CMSG_AUTH_SESSION` as AzerothCore's `WorldSocket::HandleAuthSession` does and answers with
-//! RC4 headers. Its own test binary, since the target is fixed per process.
+//! The world handshake over a real socket against a fake server that checks `CMSG_AUTH_SESSION` as
+//! AzerothCore's `WorldSocket::HandleAuthSession` does and answers with RC4 headers. Packets may
+//! precede `SMSG_AUTH_RESPONSE`. Deviation: `SMSG_WARDEN_DATA` refuses the login, because benilla
+//! cannot answer Warden and the server kicks a client that stays silent about 30 s later.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 
 use benilla_protocol::messages::{self, opcode};
-use benilla_protocol::{WorldAuthReject, WorldSession};
+use benilla_protocol::{WardenRequired, WorldAuthReject, WorldSession};
 use benilla_srp::wotlk_header::WotlkHeaderCrypto;
 use benilla_srp::SESSION_KEY_LENGTH;
 use sha1::{Digest, Sha1};
@@ -17,14 +18,6 @@ const SERVER_SEED: u32 = 0x1234_5678;
 const REALM_ID: u8 = 1;
 /// AzerothCore's `REALM_LIST_REALM_NOT_FOUND`, sent for a realm id that is not its own.
 const REALM_LIST_REALM_NOT_FOUND: u8 = 0x2A;
-
-fn wotlk() {
-    std::env::set_var(benilla_expansions::EXPANSION_ENV, "wotlk");
-    assert_eq!(
-        benilla_expansions::Expansion::active(),
-        benilla_expansions::Expansion::Wotlk
-    );
-}
 
 /// One server packet: a 4-byte header, or 5 bytes past `0x7FFF`, encrypted once `crypto` is set.
 fn send(stream: &mut TcpStream, crypto: Option<&mut WotlkHeaderCrypto>, op: u16, body: &[u8]) {
@@ -166,7 +159,6 @@ fn fake_server(
 
 #[test]
 fn the_server_accepts_the_auth_session_and_answers_through_rc4() {
-    wotlk();
     // A large packet ahead of the response exercises the 5-byte header.
     let (addr, seen) = fake_server(
         vec![
@@ -188,7 +180,6 @@ fn the_server_accepts_the_auth_session_and_answers_through_rc4() {
 /// and enchant visuals were consumed.
 #[test]
 fn the_roster_reads_in_the_wotlk_layout() {
-    wotlk();
     let entry = |guid: u64, name: &str, race: u8| {
         let mut b = guid.to_le_bytes().to_vec();
         b.extend_from_slice(name.as_bytes());
@@ -228,7 +219,6 @@ fn the_roster_reads_in_the_wotlk_layout() {
 
 #[test]
 fn a_wrong_realm_id_is_the_server_s_refusal() {
-    wotlk();
     let (addr, _seen) = fake_server(vec![], vec![]);
     let Err(err) = WorldSession::connect(&addr, "one", SESSION_KEY, REALM_ID + 1) else {
         panic!("a wrong realm id must be refused");
@@ -237,4 +227,77 @@ fn a_wrong_realm_id_is_the_server_s_refusal() {
         .downcast_ref::<WorldAuthReject>()
         .expect("a world refusal");
     assert_eq!(refusal.code, REALM_LIST_REALM_NOT_FOUND);
+}
+
+/// The server interleaves its own packets ahead of the auth response.
+#[test]
+fn packets_ahead_of_the_auth_response_are_skipped() {
+    let (addr, _seen) = fake_server(
+        vec![
+            (opcode::SMSG_LOGIN_VERIFY_WORLD, vec![0u8; 20]),
+            (opcode::SMSG_SET_FACTION_STANDING, vec![0u8; 12]),
+        ],
+        vec![],
+    );
+    assert!(WorldSession::connect(&addr, "one", SESSION_KEY, REALM_ID).is_ok());
+}
+
+#[test]
+fn a_warden_server_is_refused_at_the_handshake() {
+    let (addr, _seen) = fake_server(vec![(opcode::SMSG_WARDEN_DATA, vec![0u8; 16])], vec![]);
+    let Err(err) = WorldSession::connect(&addr, "one", SESSION_KEY, REALM_ID) else {
+        panic!("a Warden server must not yield a session");
+    };
+    assert!(
+        err.downcast_ref::<WardenRequired>().is_some(),
+        "expected WardenRequired, got: {err:#}"
+    );
+}
+
+/// Every packet the observer saw, with the thread that wrote it: the tests of this file share one
+/// process, so each filters for its own thread.
+static SEEN: std::sync::Mutex<Vec<(thread::ThreadId, u16, usize)>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn record(opcode: u16, len: usize) {
+    SEEN.lock()
+        .unwrap()
+        .push((thread::current().id(), opcode, len));
+}
+
+/// A packet sent before the session splits (the handshake's `CMSG_AUTH_SESSION`, the world entry's
+/// `CMSG_PLAYER_LOGIN`) reaches the observer in write order, ahead of the writer's own.
+#[test]
+fn sends_before_the_split_are_observed_in_order() {
+    benilla_protocol::observe_sends(record);
+    let (addr, _seen) = fake_server(vec![], vec![]);
+    let mut session = WorldSession::connect(&addr, "one", SESSION_KEY, REALM_ID).unwrap();
+    session.player_login(0x2a).unwrap();
+    let (_reader, mut writer) = session.into_split().unwrap();
+    writer.complete_cinematic().unwrap();
+    let me = thread::current().id();
+    let mine: Vec<(u16, usize)> = SEEN
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(t, ..)| *t == me)
+        .map(|&(_, op, len)| (op, len))
+        .collect();
+    let auth_len = messages::auth_session_wotlk(
+        u32::from(benilla_protocol::CLIENT_BUILD),
+        "ONE",
+        0,
+        u32::from(REALM_ID),
+        &[0; 20],
+        &messages::STOCK_SECURE_ADDONS_WOTLK,
+    )
+    .len();
+    assert_eq!(
+        mine,
+        [
+            (opcode::CMSG_AUTH_SESSION, auth_len),
+            (opcode::CMSG_PLAYER_LOGIN, messages::full_guid(0x2a).len()),
+            (opcode::CMSG_COMPLETE_CINEMATIC, 0),
+        ]
+    );
 }

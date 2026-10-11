@@ -3,7 +3,6 @@
 //! `Unit::BuildMovementPacket`, `Object::BuildValuesUpdate`) and must decode into the events the
 //! 1.12.1 path gives, with nothing left unread.
 
-use benilla_expansions::Expansion;
 use benilla_protocol::events::{decode, EntityKind, SessionEvent};
 use benilla_protocol::messages::{self, opcode, ServerPacket};
 use benilla_protocol::wire::write_packed_guid;
@@ -72,7 +71,7 @@ impl Body {
 }
 
 fn parse(op: u16, body: &[u8]) -> ServerPacket {
-    let (packet, tail) = messages::parse_server_with_tail_as(Expansion::Wotlk, op, body).unwrap();
+    let (packet, tail) = messages::parse_server_with_tail(op, body).unwrap();
     assert_eq!(tail, 0, "bytes left unread");
     packet
 }
@@ -268,17 +267,6 @@ fn the_compressed_3_3_5a_update_decodes_the_same() {
 }
 
 #[test]
-fn a_3_3_5a_update_read_as_1_12_1_does_not_decode() {
-    // The has-transport byte 1.12.1 expects swallows the first update type.
-    assert!(messages::parse_server_with_tail_as(
-        Expansion::Classic,
-        opcode::SMSG_UPDATE_OBJECT,
-        &world_entry_update()
-    )
-    .map_or(true, |(_, tail)| tail != 0));
-}
-
-#[test]
 fn a_3_3_5a_move_relay_carries_its_pitch_and_1_12_1_flags() {
     // `WriteMovementInfo`: packed guid, then a swimming forward mover with its pitch.
     let mut b = Body::default();
@@ -313,7 +301,7 @@ fn a_3_3_5a_body_with_no_decoder_yet_is_refused_not_read_as_1_12_1() {
         opcode::SMSG_FRIEND_LIST,
         opcode::SMSG_SPELL_GO,
     ] {
-        assert!(messages::parse_server_with_tail_as(Expansion::Wotlk, op, &[0; 64]).is_err());
+        assert!(messages::parse_server_with_tail(op, &[0; 64]).is_err());
     }
 }
 

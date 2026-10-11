@@ -219,13 +219,13 @@ mod tests {
         assert_eq!(r.0, None);
     }
 
-    /// The keys are the reference's error ids, `0xd8`/`0xd7` at `0x5ec9a5`/`0x5ec9b1`.
+    /// The keys are the catalog's error rows `0xe7` and `0xe6`.
     #[test]
     fn the_two_keys_are_the_reference_error_ids() {
-        let pos = benilla_ui::messages::by_key(Latched::NotInRange.key()).expect("0xd8 is a row");
-        let facing = benilla_ui::messages::by_key(Latched::BadFacing.key()).expect("0xd7 is a row");
-        assert_eq!(pos.id, 0xd8);
-        assert_eq!(facing.id, 0xd7);
+        let pos = benilla_ui::messages::by_key(Latched::NotInRange.key()).expect("0xe7 is a row");
+        let facing = benilla_ui::messages::by_key(Latched::BadFacing.key()).expect("0xe6 is a row");
+        assert_eq!(pos.id, 0xe7);
+        assert_eq!(facing.id, 0xe6);
         // Both go to the red error line, by the catalog's own `kind`.
         assert_eq!(pos.kind, benilla_ui::messages::MsgKind::Error);
         assert_eq!(facing.kind, benilla_ui::messages::MsgKind::Error);

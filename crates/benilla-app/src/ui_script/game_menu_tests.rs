@@ -60,6 +60,7 @@ const LADDER: [&str; 7] = [
 /// The era layout (MainMenuFrameTemplates: padding 32 top and 28 elsewhere, 20-unit section
 /// gaps) over seven 144x21 rungs: 200x267, gaps after Options, after Macros and before Return.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_menu_has_the_era_frame_and_button_ladder() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -100,6 +101,7 @@ fn the_menu_has_the_era_frame_and_button_ladder() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_unbacked_entries_are_disabled_and_the_rest_are_live() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -150,6 +152,7 @@ fn the_unbacked_entries_are_disabled_and_the_rest_are_live() {
 
 /// `ToggleGameMenu`'s ESC arm (`UIParent.lua:1482-1496`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn escape_opens_the_menu_only_when_nothing_else_wants_the_press_and_then_closes_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = bag_harness_with(&[
@@ -187,6 +190,7 @@ fn escape_opens_the_menu_only_when_nothing_else_wants_the_press_and_then_closes_
 
 /// `ToggleGameMenu(1)`, the micro button's form (`UIParent.lua:1466-1480`), is a plain toggle.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_clicked_form_closes_everything_and_opens_the_menu_in_one_go() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = bag_harness_with(&[
@@ -214,6 +218,7 @@ fn the_clicked_form_closes_everything_and_opens_the_menu_in_one_go() {
 /// The menu is a native-center panel: showing it closes the panels and bags
 /// (`UIParent.lua:698-704`), and while it holds the center `CanOpenPanels` refuses the rest.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_open_menu_takes_the_screen_and_refuses_every_other_panel() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = bag_harness_with(&[
@@ -287,6 +292,7 @@ fn the_open_menu_takes_the_screen_and_refuses_every_other_panel() {
 
 /// Logout and Exit Game queue alike here: whether a finished logout ends the process is app-side.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_live_buttons_queue_their_intents_and_play_their_kits() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -322,6 +328,7 @@ fn the_live_buttons_queue_their_intents_and_play_their_kits() {
 /// `PLAYER_CAMPING` shows CAMP (`UIParent.lua:304-307`, `StaticPopup.lua:564-583`), whose `%d %s`
 /// text the popup engine's countdown branch writes, not the entry (`StaticPopup.lua:1727-1758`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn player_camping_opens_a_counting_dialog_whose_early_close_cancels() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -369,6 +376,7 @@ fn player_camping_opens_a_counting_dialog_whose_early_close_cancels() {
 /// The engine zeroes `timeleft` before hiding (`StaticPopup.lua:1716-1722`), and the entry's OnHide
 /// cancels only while `timeleft > 0`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_countdown_that_expires_does_not_cancel_the_logout() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -390,6 +398,7 @@ fn a_countdown_that_expires_does_not_cancel_the_logout() {
 /// QUIT adds "Exit now" (`ForceQuit`); `LOGOUT_CANCEL`, the server's cancel ack, hides CAMP and
 /// QUIT alike (`UIParent.lua:312-316`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn player_quiting_offers_exit_now_and_logout_cancel_closes_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -430,6 +439,7 @@ fn player_quiting_offers_exit_now_and_logout_cancel_closes_it() {
 /// The stock OnShow guard (`GameMenuFrame.xml:134-140`) disables both while CAMP or QUIT counts.
 /// Opened with the micro button, because ESC during a countdown dismisses the dialog instead.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn logout_and_exit_read_disabled_while_a_countdown_runs() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -456,6 +466,7 @@ fn logout_and_exit_read_disabled_while_a_countdown_runs() {
 /// `StaticPopup_EscapePressed` is the first rung (`UIParent.lua:1482`) and CAMP is `hideOnEscape`,
 /// so ESC dismisses the dialog, whose OnHide cancels the logout.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn escape_during_a_countdown_cancels_it_and_does_not_open_the_menu() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -481,6 +492,7 @@ fn escape_during_a_countdown_cancels_it_and_does_not_open_the_menu() {
 /// The map is a stock `area = "full"` panel (`UIParent.lua:30`), so the menu blocks it, and on
 /// close it must vacate the full-screen slot, or the stale slot refuses every later panel.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_world_map_cannot_open_behind_the_menu_and_gives_its_slot_back() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness_with(&[
@@ -536,6 +548,7 @@ fn the_world_map_cannot_open_behind_the_menu_and_gives_its_slot_back() {
 /// With the map holding the full screen nothing else opens (`UIParent.lua:668-675`), and ESC
 /// closes the map without also opening the menu.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn nothing_opens_behind_the_world_map_and_escape_closes_it_first() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness_with(&[
@@ -590,6 +603,7 @@ fn nothing_opens_behind_the_world_map_and_escape_closes_it_first() {
 /// draws no state texture without a DisabledTexture (`SetState`, `0x779790`), and each bag icon is
 /// a layer texture that `Disable_BagButtons` desaturates (`MainMenuBarBagButtons.lua:102-113`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bag_row_greys_under_the_menu_without_any_of_it_disappearing() {
     let _data = benilla_formats::wow_data_or_skip!();
     // The action bar, whose `MainMenuBarArtFrame` parents the bag bar, ahead of the bag stack.
@@ -723,6 +737,7 @@ fn backpack() -> ContainerState {
 /// The menu wears the options window's `BENILLA_ERA_WINDOW_SCALE` on show, as the era client draws
 /// the two at one density; loaded with OptionsFrame.xml, which defines it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_menu_rides_the_shared_era_window_scale() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness_with(&[

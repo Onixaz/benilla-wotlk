@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use benilla_expansions::Expansion;
 use benilla_protocol::{auth, host_port, AuthReject, AUTH_PORT};
 use benilla_srp::{NormalizedString, PublicKey, SrpClientChallenge};
 use sha1::{Digest, Sha1};
@@ -51,7 +50,7 @@ fn attempt(host: &str, port: u16, user: &str, pass: &str, arm: Arm) -> Result<Op
         let mut stream = TcpStream::connect((host, port))
             .with_context(|| format!("connecting to {host}:{port}"))?;
         stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-        auth::write_logon_challenge(&mut stream, &user.to_uppercase(), Expansion::active())
+        auth::write_logon_challenge(&mut stream, &user.to_uppercase())
             .context("sending logon challenge")?;
         let reply = auth::read_challenge_reply(&mut stream).context("reading challenge reply")?;
         let b = PublicKey::from_le_bytes(reply.server_public_key)
@@ -77,11 +76,10 @@ fn attempt(host: &str, port: u16, user: &str, pass: &str, arm: Arm) -> Result<Op
             challenge.client_public_key(),
             challenge.client_proof(),
             &salt,
-            Expansion::active(),
         )
         .context("sending logon proof")?;
 
-        return match auth::read_proof_reply(&mut stream, Expansion::active()) {
+        return match auth::read_proof_reply(&mut stream) {
             Ok(_) => Ok(None),
             Err(e) => match e.downcast_ref::<AuthReject>() {
                 Some(r) => Ok(Some(r.code)),
@@ -148,7 +146,7 @@ fn report_install(install_dir: &Path, crc_salt: &[u8; 16]) {
         sha.update(a);
         sha.update(h);
         let derived: [u8; 20] = sha.finalize().into();
-        derived == auth::version_proof(crc_salt, &a, Expansion::active())
+        derived == auth::version_proof(crc_salt, &a)
     };
     println!(
         "    → {}",
@@ -183,14 +181,14 @@ fn main() -> Result<()> {
     let mut stream =
         TcpStream::connect((host, port)).with_context(|| format!("connecting to {host}:{port}"))?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-    auth::write_logon_challenge(&mut stream, &user.to_uppercase(), Expansion::active())?;
+    auth::write_logon_challenge(&mut stream, &user.to_uppercase())?;
     let crc_salt = auth::read_challenge_reply(&mut stream)?.crc_salt;
     drop(stream); // no proof follows, so realmd records nothing for this dial
     let hex: String = crc_salt.iter().map(|b| format!("{b:02x}")).collect();
-    let known = auth::version_proof(&crc_salt, &[0u8; 32], Expansion::active()) != [0u8; 20];
+    let known = auth::version_proof(&crc_salt, &[0u8; 32]) != [0u8; 20];
     println!(
         "{host}:{port} — build {}, crc_salt {hex}",
-        benilla_protocol::client_build()
+        benilla_protocol::CLIENT_BUILD
     );
     println!(
         "  we {} an integrity digest for that challenge\n",

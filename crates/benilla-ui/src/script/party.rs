@@ -1015,12 +1015,11 @@ mod tests {
                 "{call} must answer nil"
             );
         }
-        // A token matching none of the nine prefixes raises `Unknown unit name: %s`, and a number
-        // is coerced to a string first.
+        // A token matching no prefix names nobody, a number coerced to a string first.
         for call in ["UnitInRaid(7)", r#"UnitInRaid("nosuchtoken")"#] {
             assert!(
-                s.run(call).is_err(),
-                "{call} must raise — the token resolves to no prefix at all"
+                s.eval::<bool>(&format!("return {call} == nil")).unwrap(),
+                "{call}"
             );
         }
     }

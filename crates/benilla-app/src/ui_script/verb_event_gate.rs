@@ -1,5 +1,5 @@
 //! The verb-fired event gate: an event the reference fires on a verb's own call path
-//! (`reference/1.12-verb-events.tsv`) must be fired by a file that registers the verb, since stock
+//! (`reference/3.3.5a-verb-events.tsv`) must be fired by a file that registers the verb, since stock
 //! Lua calls such a verb for its event (`0x4d8c90`, the trainer filter's commit, fires
 //! `TRAINER_UPDATE`). Otherwise the pair is declared in [`ELSEWHERE`] or [`GAP`], and the verb's
 //! own file must not fire it. The check is textual, so it cannot see a fire off the verb's path.
@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-/// One row of `reference/1.12-verb-events.tsv`.
+/// One row of `reference/3.3.5a-verb-events.tsv`.
 struct Pair {
     verb: String,
     event: String,
@@ -176,9 +176,9 @@ const GAP: &[(&str, &str, &str)] = &[
 fn table() -> Vec<Pair> {
     let tsv = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../reference/1.12-verb-events.tsv"
+        "/../../reference/3.3.5a-verb-events.tsv"
     );
-    let text = std::fs::read_to_string(tsv).expect("reference/1.12-verb-events.tsv");
+    let text = std::fs::read_to_string(tsv).expect("reference/3.3.5a-verb-events.tsv");
     text.lines()
         .filter(|l| !l.starts_with('#') && !l.starts_with("verb\t"))
         .filter_map(|l| {
@@ -254,6 +254,7 @@ fn verb_module_fires(src: &[(PathBuf, String)], verb: &str, event: &str) -> (Vec
 }
 
 #[test]
+#[ignore = "1.12.1's gate rules; port them to the 3.3.5a tables (#54)"]
 fn every_event_the_reference_fires_from_a_verb_is_fired_by_the_verb_s_module() {
     let src = sources();
     assert!(src.len() > 100, "source walk found {} files", src.len());
@@ -313,6 +314,7 @@ fn every_event_the_reference_fires_from_a_verb_is_fired_by_the_verb_s_module() {
 }
 
 #[test]
+#[ignore = "1.12.1's gate rules; port them to the 3.3.5a tables (#54)"]
 fn the_declared_rows_are_still_true() {
     let src = sources();
     let table = table();

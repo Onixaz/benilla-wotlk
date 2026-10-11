@@ -4,9 +4,9 @@
 //! `0x49dff0`), or copies the row when the text is empty (`0x49dfc8`, `0x64a5a0`). The ids are
 //! vmangos's `ServerMessageType` (`World.h:62`).
 
+use crate::dbc_layout::LocalizedTable;
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
-use benilla_expansions::dbc::LocalizedTable;
 
 use crate::chain::Chain;
 use crate::dbc::{parse, str_at, u32_at};
@@ -75,7 +75,7 @@ pub fn load_server_messages_catalog(chain: &mut Chain) -> Result<ServerMessagesC
         .context("reading ServerMessages.dbc")?;
     let rs = parse(
         &bytes,
-        schema(&chain.expansion().profile().dbc.server_messages),
+        schema(&crate::dbc_layout::LAYOUTS.server_messages),
         "ServerMessages",
     )?;
     let mut rows = Vec::with_capacity(rs.records().len());
@@ -92,35 +92,11 @@ pub fn load_server_messages_catalog(chain: &mut Chain) -> Result<ServerMessagesC
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_real_table_is_the_five_documented_rows() {
-        let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        if chain.expansion() != benilla_expansions::Expansion::Classic {
-            return; // 3.3.5a's table: the next test
-        }
-        let cat = load_server_messages_catalog(&mut chain).expect("load ServerMessages");
-        let got: Vec<(u32, &str)> = cat.rows.iter().map(|(i, t)| (*i, t.as_str())).collect();
-        assert_eq!(
-            got,
-            vec![
-                (1, "[SERVER] Shutdown in %s"),
-                (2, "[SERVER] Restart in %s"),
-                (3, "%s"),
-                (4, "[SERVER] Shutdown cancelled"),
-                (5, "[SERVER] Restart cancelled"),
-            ]
-        );
-    }
-
     /// 3.3.5a's sixteen-locale table keeps the five and adds the battleground and instance rows.
     #[test]
     fn a_3_3_5a_table_reads_its_nine_rows() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
-        if chain.expansion() != benilla_expansions::Expansion::Wotlk {
-            return; // 1.12.1's table: the test above
-        }
         let cat = load_server_messages_catalog(&mut chain).expect("load ServerMessages");
         assert_eq!(cat.len(), 9);
         assert_eq!(cat.text(1), Some("[SERVER] Shutdown in %s"));

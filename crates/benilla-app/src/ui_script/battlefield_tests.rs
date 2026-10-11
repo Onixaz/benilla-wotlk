@@ -72,6 +72,7 @@ fn visible(s: &UiScript, frame: &str) -> bool {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_queue_icon_follows_the_slots_across_update_battlefield_status() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = session();
@@ -136,6 +137,7 @@ fn the_queue_icon_follows_the_slots_across_update_battlefield_status() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_list_window_opens_on_battlefields_show_and_joins_the_selection() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = session();
@@ -217,6 +219,7 @@ fn the_list_window_opens_on_battlefields_show_and_joins_the_selection() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_list_rows_carry_the_queue_status() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = session();
@@ -245,6 +248,7 @@ fn the_list_rows_carry_the_queue_status() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_party_leader_change_before_any_queue_push_updates_the_list_cleanly() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = session();

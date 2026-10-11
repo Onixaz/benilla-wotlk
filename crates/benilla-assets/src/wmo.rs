@@ -6,7 +6,6 @@
 use crate::column_grid::ColumnGrid;
 use std::sync::Arc;
 
-use benilla_expansions::Expansion;
 use benilla_formats::{
     accumulate_wmo_group_camera_collision, accumulate_wmo_group_camera_only_collision,
     accumulate_wmo_group_collision, parse_wmo_lights, parse_wmo_root, wmo_group_doodad_refs,
@@ -373,7 +372,7 @@ impl AssetLoader for WmoModelLoader {
         reader.read_to_end(&mut bytes).await?;
         let to_io = |e: anyhow::Error| std::io::Error::other(format!("{e:#}"));
         let root = parse_wmo_root(&bytes).map_err(to_io)?;
-        let liquid_rule = WmoLiquidRule::for_root(Expansion::active(), &root);
+        let liquid_rule = WmoLiquidRule::for_root(&root);
 
         // Lowercased so the `.wmo` strip matches; MPQ lookup is case-insensitive anyway.
         let root_path = ctx.path().path().to_string_lossy().to_ascii_lowercase();

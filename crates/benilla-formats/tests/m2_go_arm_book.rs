@@ -14,6 +14,7 @@ const CLOSED: u16 = 147;
 const OPEN: u16 = 148;
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_book_idle_resolves_to_closed_not_the_close_motion() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

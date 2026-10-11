@@ -186,6 +186,7 @@ mod tests {
     /// The nine shipped groups, verbatim. The sparse ids expose a wrong column map; the duplicate
     /// slots in groups 4 and 7 show the three are slots, not axes.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_spell_shake_groups_decode_as_shipped() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -222,6 +223,7 @@ mod tests {
 
     /// The check on the column map: a merely plausible one would leave group slots dangling.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_group_slot_resolves_to_a_preset() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

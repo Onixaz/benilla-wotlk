@@ -42,6 +42,7 @@ fn alpha(s: &UiScript) -> f64 {
 
 /// The line appears only on the engine's answer, frames after the capture.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_capture_is_asked_for_silently_and_only_the_answer_speaks() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -67,6 +68,7 @@ fn the_capture_is_asked_for_silently_and_only_the_answer_speaks() {
 
 /// `TakeScreenshot` hides a line still fading before it calls `Screenshot()` (`WorldFrame.lua:47`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_second_press_inside_the_fade_clears_the_line_before_capturing() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -89,6 +91,7 @@ fn a_second_press_inside_the_fade_clears_the_line_before_capturing() {
 
 /// `SCREENSHOT_STATUS_FADETIME` is 1.5 s (`WorldFrame.lua:44`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_line_fades_out_over_the_reference_s_second_and_a_half() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -106,6 +109,7 @@ fn the_line_fades_out_over_the_reference_s_second_and_a_half() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_failed_capture_shows_the_failure_string() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();

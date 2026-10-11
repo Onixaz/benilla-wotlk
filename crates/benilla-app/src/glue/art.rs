@@ -243,8 +243,8 @@ impl GlueArt {
             images,
             add_mats,
         );
-        let logo = benilla_expansions::Expansion::active().profile().glue.logo;
-        self.logo = assets.sprite_texture(logo, images);
+        // `AccountLoginLogo`, `CharacterSelectLogo` and `CharacterCreateLogo` name it.
+        self.logo = assets.sprite_texture("Interface\\Glues\\Common\\Glues-WoW-WotLKLogo", images);
         self.arrow_left = arrow(assets, "Left", images, add_mats);
         self.arrow_right = arrow(assets, "Right", images, add_mats);
         self.button_up = sized(assets, &format!("{GB}Up"), images);

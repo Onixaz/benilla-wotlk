@@ -577,6 +577,7 @@ fn click_first_button(rig: &mut Rig) {
 /// greys, and clicking it sends nothing (`0x4bd1f2`), where the same click on the pet before it was
 /// stunned went out.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_bar_greys_a_stunned_pet_and_its_click_sends_nothing() {
     benilla_formats::wow_data_or_skip!();
     const ICON: &str = "Interface\\Icons\\Ability_Druid_Rake";

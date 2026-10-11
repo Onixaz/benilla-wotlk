@@ -328,6 +328,7 @@ mod tests {
     /// Open-world lava is MCLQ magma: the pin, `.go xyz -7845.99 -1065.50 123.60 0` in Burning
     /// Steppes (tile 33_46), stands on it.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn burning_steppes_lava_builds_a_magma_surface_at_the_reported_pin() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -366,6 +367,7 @@ mod tests {
     /// Lava UVs are authored world-continuously, so a chunk's east edge repeats its neighbour's
     /// west edge; reading the wrong bytes shows as a seam.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn magma_uvs_come_from_the_vertex_and_run_continuous_across_chunks() {
         let data = crate::wow_data_or_skip!();
         if !data.is_dir() {
@@ -414,6 +416,7 @@ mod tests {
     /// An MCNK carries one MCLQ block per set liquid header bit (`0x6af7a3`); a river mouth, as on
     /// Hillsbrad's tile 33_33, carries a stream over the sea.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_river_mouth_chunk_builds_both_its_river_and_its_sea() {
         let data = crate::wow_data_or_skip!();
         if !data.is_dir() {
@@ -491,6 +494,7 @@ mod tests {
     /// The V assertions read the raw depth byte, never one recovered from the mesh's V, which would
     /// pass under any divisor.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn each_liquid_kind_rides_its_own_verified_depth_divisor() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -555,6 +559,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn parses_elwynn_lake_tile() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

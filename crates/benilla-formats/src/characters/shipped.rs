@@ -1,10 +1,7 @@
-//! Each client's shipped character-creation rows, which [`super::customization`]'s load-time
-//! guards compare against to catch a misparse. A new client adds its own [`Shipped`] and an arm in
-//! [`shipped`].
+//! The shipped character-creation rows, which [`super::customization`]'s load-time guards compare
+//! against to catch a misparse.
 
-use benilla_expansions::Expansion;
-
-/// One client's shipped rows, the load-time guards against a misparse.
+/// The shipped rows, the load-time guards against a misparse.
 pub(super) struct Shipped {
     /// The ChrRaces fileStrings, guarding `load_races`' string columns.
     pub(super) files: &'static [(u8, &'static str)],
@@ -16,33 +13,7 @@ pub(super) struct Shipped {
     pub(super) human_warrior: &'static [(u32, u8)],
 }
 
-pub(super) const SHIPPED_CLASSIC: Shipped = Shipped {
-    files: &[
-        (1, "Human"),
-        (2, "Orc"),
-        (3, "Dwarf"),
-        (4, "NightElf"),
-        (5, "Scourge"),
-        (6, "Tauren"),
-        (7, "Gnome"),
-        (8, "Troll"),
-    ],
-    // Not the playable set, as it holds the dead Dwarf-Mage row (`customization::UNUSED_COMBOS`).
-    combos: &[
-        (1, &[1, 2, 4, 5, 8, 9]), // Human
-        (2, &[1, 3, 4, 7, 9]),    // Orc
-        (3, &[1, 2, 3, 4, 5, 8]), // Dwarf; 8 (Mage) is the dead row
-        (4, &[1, 3, 4, 5, 11]),   // Night Elf
-        (5, &[1, 4, 5, 8, 9]),    // Undead
-        (6, &[1, 3, 7, 11]),      // Tauren
-        (7, &[1, 4, 8, 9]),       // Gnome
-        (8, &[1, 3, 4, 5, 7, 8]), // Troll
-    ],
-    // The shirt, pants, boots, shortsword and shield.
-    human_warrior: &[(9891, 4), (9892, 7), (10141, 8), (1542, 21), (18730, 14)],
-};
-
-pub(super) const SHIPPED_WOTLK: Shipped = Shipped {
+pub(super) const SHIPPED: Shipped = Shipped {
     files: &[
         (1, "Human"),
         (2, "Orc"),
@@ -72,22 +43,13 @@ pub(super) const SHIPPED_WOTLK: Shipped = Shipped {
     human_warrior: &[(9891, 4), (9892, 7), (10141, 8), (2380, 17)],
 };
 
-pub(super) fn shipped(expansion: Expansion) -> &'static Shipped {
-    match expansion {
-        Expansion::Classic => &SHIPPED_CLASSIC,
-        Expansion::Wotlk => &SHIPPED_WOTLK,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn each_client_ships_a_chr_races_file_for_exactly_its_playable_races() {
-        for e in Expansion::ALL {
-            let ids: Vec<u8> = shipped(e).files.iter().map(|&(id, _)| id).collect();
-            assert_eq!(ids, e.profile().playable_races, "{e}");
-        }
+    fn the_shipped_chr_races_files_are_exactly_the_playable_races() {
+        let ids: Vec<u8> = SHIPPED.files.iter().map(|&(id, _)| id).collect();
+        assert_eq!(ids, super::super::customization::PLAYABLE_RACES);
     }
 }

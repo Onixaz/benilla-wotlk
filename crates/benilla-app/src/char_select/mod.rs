@@ -1126,6 +1126,7 @@ mod tests {
 
     /// The delete refusals resolve to the sentences 1.12 ships, each off a real key.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_delete_result_resolves_in_the_real_glue_strings() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

@@ -165,6 +165,7 @@ fn num(s: &UiScript, expr: &str) -> f64 {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_addon_loads_on_demand_through_uiparents_own_road() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = session();
@@ -275,6 +276,7 @@ fn the_addon_loads_on_demand_through_uiparents_own_road() {
 /// Overlays are cut into 256-px tiles scaled by `BattlefieldMinimap1:GetWidth()/256` (56/256);
 /// every number below is that arithmetic done by hand from [`catalog`].
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_overlay_textures_are_cut_from_the_revealed_overlays() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = session();
@@ -405,6 +407,7 @@ fn the_overlay_textures_are_cut_from_the_revealed_overlays() {
 /// Each repaint sizes an icon `DEFAULT_POI_ICON_SIZE × GetBattlefieldMapIconScale()`
 /// (`Blizzard_BattlefieldMinimap.lua:111-112`), seated on the 225×150 window.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_poi_pool_grows_from_the_landmarks_and_parks_its_tail() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = session();
@@ -487,6 +490,7 @@ fn the_poi_pool_grows_from_the_landmarks_and_parks_its_tail() {
 /// `GetBattlefieldPosition(i)`: the raid frames double as the battleground roster
 /// (`Blizzard_BattlefieldMinimap.lua:287-301`). `(0, 0)` hides a blip on every position verb.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_battleground_blips_and_the_flag_follow_the_position_family() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = session();
@@ -619,6 +623,7 @@ fn the_battleground_blips_and_the_flag_follow_the_position_family() {
 /// once by its own `Create…` verb. The mini's model scale is `G48 · 10/9` and the world map's
 /// `G48 · 5/3`, with `G48 = 1/√(aspect²+1)`: 0.6667 against 1.0 at 4:3.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_player_arrow_is_the_minis_own_singleton_seated_by_the_update() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = session();
@@ -717,6 +722,7 @@ fn the_player_arrow_is_the_minis_own_singleton_seated_by_the_update() {
 /// stores the cursor in `CURSOR_OLD_X/Y`, never `BattlefieldMinimap.oldX`, so frame 2 misses and
 /// resets `hoverTime`, and `BATTLEFIELD_TAB_SHOW_DELAY` counts from frame 3.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_tab_follows_the_window_fades_in_on_hover_and_gates_its_drag_on_the_lock() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = session();
@@ -853,6 +859,7 @@ fn the_tab_follows_the_window_fades_in_on_hover_and_gates_its_drag_on_the_lock()
 /// border and the twelve tiles take `1 - value`; the overlays, close button and corner take a
 /// further 0.15 off unless the alpha is under 0.15 (`Blizzard_BattlefieldMinimap.lua:376-390`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_dropdown_and_the_opacity_slider_drive_the_saved_options() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = session();

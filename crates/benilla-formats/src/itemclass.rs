@@ -68,6 +68,7 @@ mod tests {
 
     /// Bagnon (`Bagnon_Core/localization.lua:94-95`) expects "Container" and "Quiver" here.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_classes_are_named_as_getiteminfo_returns_them() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

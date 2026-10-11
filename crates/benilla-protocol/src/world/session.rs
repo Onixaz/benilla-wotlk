@@ -1,7 +1,6 @@
 use std::net::{TcpStream, ToSocketAddrs};
 
 use anyhow::{anyhow, bail, Context, Result};
-use benilla_expansions::Expansion;
 use benilla_srp::vanilla_header::ProofSeed;
 use benilla_srp::wotlk_header::WotlkHeaderCrypto;
 use benilla_srp::{NormalizedString, SESSION_KEY_LENGTH};
@@ -76,29 +75,21 @@ pub struct WorldSession {
     addon_info: Option<Vec<u8>>,
 }
 
-/// The server seed of `SMSG_AUTH_CHALLENGE`: 1.12.1's body is the seed alone; 3.3.5a's is `u32 1`,
-/// the seed, then 32 bytes of further seeds.
-fn server_seed(expansion: Expansion, opcode: u16, body: &[u8]) -> Result<u32> {
-    match expansion {
-        Expansion::Classic => match messages::parse_server(opcode, body)? {
-            ServerPacket::AuthChallenge { server_seed } => Ok(server_seed),
-            other => bail!("expected SMSG_AUTH_CHALLENGE, got {}", other.name()),
-        },
-        Expansion::Wotlk => {
-            if opcode != opcode::SMSG_AUTH_CHALLENGE {
-                bail!("expected SMSG_AUTH_CHALLENGE, got opcode {opcode:#06x}");
-            }
-            let seed = body
-                .get(4..8)
-                .ok_or_else(|| anyhow!("SMSG_AUTH_CHALLENGE of {} bytes", body.len()))?;
-            Ok(u32::from_le_bytes(seed.try_into().expect("four bytes")))
-        }
+/// The server seed of `SMSG_AUTH_CHALLENGE`, whose body is `u32 1`, the seed, then 32 bytes of
+/// further seeds.
+fn server_seed(opcode: u16, body: &[u8]) -> Result<u32> {
+    if opcode != opcode::SMSG_AUTH_CHALLENGE {
+        bail!("expected SMSG_AUTH_CHALLENGE, got opcode {opcode:#06x}");
     }
+    let seed = body
+        .get(4..8)
+        .ok_or_else(|| anyhow!("SMSG_AUTH_CHALLENGE of {} bytes", body.len()))?;
+    Ok(u32::from_le_bytes(seed.try_into().expect("four bytes")))
 }
 
 impl WorldSession {
     /// Connect and complete the auth handshake with the logon's account and session key, for the
-    /// realm list's `realm_id` (3.3.5a names it to the world server; 1.12.1 does not).
+    /// realm list's `realm_id`, which `CMSG_AUTH_SESSION` names to the world server.
     pub fn connect(
         addr: impl ToSocketAddrs,
         username: &str,
@@ -118,7 +109,6 @@ impl WorldSession {
         realm_id: u8,
         on_queue: &mut dyn FnMut(Option<u32>) -> bool,
     ) -> Result<Self> {
-        let expansion = Expansion::active();
         let mut queued = false;
         let mut stream = TcpStream::connect(addr).context("connecting to world server")?;
         // Nagle off: the reference sets `TCP_NODELAY` on its game socket (`0x5bca60`).
@@ -131,43 +121,29 @@ impl WorldSession {
             .context("setting handshake read timeout")?;
 
         let (challenge_opcode, challenge) = recv_raw(&mut stream, None)?;
-        let server_seed = server_seed(expansion, challenge_opcode, &challenge)?;
+        let server_seed = server_seed(challenge_opcode, &challenge)?;
 
         let username_n =
             NormalizedString::new(username).map_err(|e| anyhow!("invalid username: {e}"))?;
         let seed = ProofSeed::new();
         let client_seed = seed.seed();
-        // Both clients prove the session key the same way; only the cipher after it differs.
-        let (client_proof, vanilla_crypto) =
+        // The proof is the 1.x one; the header cipher after it is 3.3.5a's own.
+        let (client_proof, _) =
             seed.into_client_header_crypto(&username_n, session_key, server_seed);
-        let build = u32::from(expansion.profile().build);
+        let build = u32::from(crate::CLIENT_BUILD);
         let account = username.to_uppercase();
 
         // Sent plain; header encryption starts right after. The addon block is required (cmangos
-        // kicks a zero-size one); each stock list is what a stock install of that client reports.
-        let (body, crypto) = match expansion {
-            Expansion::Classic => (
-                messages::auth_session(
-                    build,
-                    &account,
-                    client_seed,
-                    &client_proof,
-                    &messages::STOCK_SECURE_ADDONS,
-                ),
-                Crypto::from(vanilla_crypto),
-            ),
-            Expansion::Wotlk => (
-                messages::auth_session_wotlk(
-                    build,
-                    &account,
-                    client_seed,
-                    u32::from(realm_id),
-                    &client_proof,
-                    &messages::STOCK_SECURE_ADDONS_WOTLK,
-                ),
-                Crypto::from(WotlkHeaderCrypto::client(&session_key)),
-            ),
-        };
+        // kicks a zero-size one); the stock list is what a stock install reports.
+        let body = messages::auth_session_wotlk(
+            build,
+            &account,
+            client_seed,
+            u32::from(realm_id),
+            &client_proof,
+            &messages::STOCK_SECURE_ADDONS_WOTLK,
+        );
+        let crypto = Crypto::from(WotlkHeaderCrypto::client(&session_key));
         send_packet(&mut stream, None, opcode::CMSG_AUTH_SESSION, &body)
             .context("sending CMSG_AUTH_SESSION")?;
 
@@ -183,10 +159,7 @@ impl WorldSession {
 
         // AUTH_RESPONSE is not always first, so others are skipped; Warden data ends the connect.
         loop {
-            let packet = match expansion {
-                Expansion::Classic => session.recv()?,
-                Expansion::Wotlk => session.recv_wotlk_glue()?,
-            };
+            let packet = session.recv_glue()?;
             match packet {
                 ServerPacket::AuthResponse {
                     result,
@@ -249,15 +222,14 @@ impl WorldSession {
             .context("setting world socket read timeout")
     }
 
-    /// One 3.3.5a packet of the handshake or the roster: the auth response and the character list
-    /// parsed, every other packet left as [`ServerPacket::Other`], since 1.12.1's decoders do not
-    /// read 3.3.5a's bodies.
-    fn recv_wotlk_glue(&mut self) -> Result<ServerPacket> {
+    /// One packet of the handshake or the roster: the auth response and the character list parsed,
+    /// every other packet left as [`ServerPacket::Other`].
+    fn recv_glue(&mut self) -> Result<ServerPacket> {
         let (opcode, body) = recv_raw(&mut self.stream, Some(&mut self.crypto.decrypter))?;
         match opcode {
             opcode::SMSG_AUTH_RESPONSE => messages::parse_auth_response_wotlk(&body)
                 .map_err(|e| anyhow!("parsing SMSG_AUTH_RESPONSE: {e}")),
-            opcode::SMSG_CHAR_ENUM => messages::parse_char_enum_wotlk(&body)
+            opcode::SMSG_CHAR_ENUM => messages::parse_server(opcode, &body)
                 .map_err(|e| anyhow!("parsing SMSG_CHAR_ENUM: {e}")),
             _ => Ok(ServerPacket::Other { opcode }),
         }
@@ -293,10 +265,7 @@ impl WorldSession {
     pub fn char_enum(&mut self) -> Result<Vec<Character>> {
         self.send(opcode::CMSG_CHAR_ENUM, &[])?;
         loop {
-            let packet = match Expansion::active() {
-                Expansion::Classic => self.recv()?,
-                Expansion::Wotlk => self.recv_wotlk_glue()?,
-            };
+            let packet = self.recv_glue()?;
             match packet {
                 ServerPacket::CharEnum { characters } => {
                     self.roster_races = characters.iter().map(|c| (c.guid, c.race)).collect();

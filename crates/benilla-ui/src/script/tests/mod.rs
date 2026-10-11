@@ -53,7 +53,6 @@ mod tooltip_spell;
 mod tooltip_unit;
 mod toplevel;
 mod visibility;
-mod widget_surface;
 mod worldframe;
 mod worldmap;
 
@@ -137,7 +136,7 @@ fn request_time_played_queues_an_ask_and_the_answer_arrives_as_an_event() {
         TPSeen = nil
         local f = CreateFrame("Frame", "TPWatcher")
         f:RegisterEvent("TIME_PLAYED_MSG")
-        f:SetScript("OnEvent", function() TPSeen = { arg1, arg2 } end)
+        f:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) TPSeen = { arg1, arg2 } end)
         "#,
     )
     .unwrap();

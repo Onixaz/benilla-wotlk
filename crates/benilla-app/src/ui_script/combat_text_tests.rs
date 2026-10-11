@@ -41,6 +41,7 @@ fn load_combat_text() -> UiScript {
 
 /// The stock envelope: height 25, a 1.9 s scroll life, a fade from 1.3 s.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn combat_text_damage_scrolls_and_expires() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_combat_text();
@@ -117,6 +118,7 @@ fn combat_text_damage_scrolls_and_expires() {
 
 /// A crit seeds at 30, peaks at 60 at 0.05 s, is back by 0.2 s, and parks: `endY` is `startY`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn combat_text_crit_pops_and_parks() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_combat_text();
@@ -165,6 +167,7 @@ fn extracted_text_height(s: &mut UiScript, text: &str) -> Option<f32> {
 
 /// Low health is `COMBAT_TEXT_LOW_HEALTH_THRESHOLD` (0.2), latched until health recovers above it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn combat_text_state_and_low_health_triggers() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_combat_text();
@@ -231,6 +234,7 @@ fn combat_text_state_and_low_health_triggers() {
 /// `SetTextHeight` sizes are uncapped, so the pop peaks at 60. The VM's screen is the 768-high
 /// virtual space, so the stock 384/609 locations apply verbatim.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn combat_text_crit_peak_is_uncapped() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_combat_text();
@@ -258,6 +262,7 @@ fn combat_text_crit_peak_is_uncapped() {
 
 /// Walks the switch down from on: a message paints first, so "nothing paints" after is the gate.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn combat_text_master_toggle_unregisters() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_combat_text();

@@ -26,13 +26,6 @@ fn set_text(lua: &Lua, this: &Table, text: Option<String>) -> mlua::Result<()> {
 /// the target client has it: the formatted text through `SetText`'s own store (`0x483910`), so
 /// never nil.
 pub(super) fn install_formatted(lua: &Lua, leaf: &Table) -> mlua::Result<()> {
-    if !lua
-        .app_data_ref::<Model>()
-        .expect("model")
-        .set_formatted_text
-    {
-        return Ok(());
-    }
     leaf.set(
         "SetFormattedText",
         lua.create_function(|lua, (this, args): (Table, mlua::MultiValue)| {

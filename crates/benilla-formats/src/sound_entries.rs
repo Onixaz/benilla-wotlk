@@ -235,6 +235,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_sound_entries_parse_and_resolve() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -279,6 +280,7 @@ mod tests {
     /// where no row is named plain `Ghost` and 4123 `UnderWaterLoop` is a different row of the
     /// same file.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_sound_entries_resolve_the_forced_ambience_beds() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -359,6 +361,7 @@ mod tests {
     /// The `EAXDef` census the reverb send is gated on: 0 is the reference's null slot, a channel
     /// that never gets reverb.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_sound_entries_eaxdef_census() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -420,6 +423,7 @@ mod tests {
     /// would also silence kits 1519, 2988 and 3412, each one variation under a `DirectoryBase`
     /// that ends in `\`.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_sound_entries_paths_resolve_exactly_as_the_reference_s_do() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

@@ -93,15 +93,13 @@ fn returns(lua: &Lua, a: &AuraState, with_dispel_type: bool) -> mlua::Result<Mul
 /// unit with no list. A token the resolver does not recognise raises `Unknown unit name`.
 pub(crate) fn auras_of<'m>(model: &'m Model, token: &str) -> mlua::Result<Option<&'m [AuraState]>> {
     let guids = &model.unit_guids;
-    Ok(guids
-        .guid_of(token, model.unknown_unit_token_raises)?
-        .and_then(|g| {
-            if g == guids.player {
-                Some(model.player_auras.as_slice())
-            } else {
-                model.unit_auras.get(&g).map(Vec::as_slice)
-            }
-        }))
+    Ok(guids.guid_of(token).and_then(|g| {
+        if g == guids.player {
+            Some(model.player_auras.as_slice())
+        } else {
+            model.unit_auras.get(&g).map(Vec::as_slice)
+        }
+    }))
 }
 
 /// The `index`-th (1-based) buff (`helpful`) or debuff of `token`, in pushed order; out of range
@@ -539,7 +537,7 @@ mod tests {
     /// A recognised token naming nobody is nil; a token none of the resolver's nine compares match
     /// raises `Unknown unit name: %s` (`0x515c14`), at any index, as the resolver runs first.
     #[test]
-    fn an_unknown_token_raises_and_a_recognised_empty_one_is_nil() {
+    fn an_unknown_or_empty_token_is_nil() {
         let s = group_script();
         for call in [
             r#"UnitBuff("party2", 1)"#,
@@ -554,14 +552,17 @@ mod tests {
                 "{call}"
             );
         }
+        // An unrecognised token names nobody: the resolver raises for none.
         for call in [
             r#"UnitBuff("bogus", 1)"#,
             r#"UnitDebuff("focus", 1)"#,
             r#"UnitDebuff("npctarget", 1)"#,
             r#"UnitBuff("bogus", 0)"#,
         ] {
-            let err = s.eval::<()>(call).unwrap_err().to_string();
-            assert!(err.contains("Unknown unit name: "), "{call}: {err}");
+            assert!(
+                s.eval::<bool>(&format!("return {call} == nil")).unwrap(),
+                "{call}"
+            );
         }
     }
 
@@ -581,10 +582,6 @@ mod tests {
             s.eval::<String>("return TTTextLeft1:GetText()").unwrap(),
             "on the mouseover"
         );
-        let err = s
-            .run(r#"TT:SetUnitBuff("bogus", 1)"#)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("Unknown unit name: bogus"), "{err}");
+        assert!(s.run(r#"TT:SetUnitBuff("bogus", 1)"#).is_ok());
     }
 }

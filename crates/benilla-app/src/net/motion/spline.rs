@@ -1953,6 +1953,7 @@ mod inside_a_hull {
     /// The shipped `G_Cage.mdx` hull at its spawn (guid 29361), the terrain under it, and a unit
     /// at Galen's spawn. Skips without client data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn galens_cage_from_the_shipped_hull_grounds_him_inside() {
         use benilla_assets::coords::wow_to_bevy;
         let data = benilla_formats::wow_data_or_skip!();

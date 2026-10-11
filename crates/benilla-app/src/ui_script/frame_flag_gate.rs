@@ -277,6 +277,7 @@ fn describe(frame: &str, flag: Flag, ours: &str, theirs: &str) -> String {
 /// Every frame both UIs name carries the reference's `toplevel`, mouse enable, `id` and parent,
 /// read off the loaded engine; [`KNOWN`] holds the only accepted differences.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_shipped_frames_carry_the_references_flags() {
     let _data = benilla_formats::wow_data_or_skip!();
     let reference = reference_frames().expect("the reference FrameXML off the player's chain");

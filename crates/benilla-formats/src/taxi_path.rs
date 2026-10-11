@@ -85,6 +85,7 @@ mod tests {
 
     /// Hop 6 runs Stormwind (node 2) to Sentinel Hill (node 4) for 110 copper.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_taxi_path_layout_sanity() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

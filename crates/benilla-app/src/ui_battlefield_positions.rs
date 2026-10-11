@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 use bevy::prelude::*;
 
 use benilla_assets::coords::bevy_to_wow;
-use benilla_assets::MapCatalogRes;
 use benilla_protocol::messages::{BattlefieldPosition, BattlefieldPositions as PositionsPacket};
 use benilla_ui::script::{BattlefieldFlagView, BattlefieldPositionView, UiScript};
 
@@ -89,7 +88,6 @@ fn feed_battlefield_positions(
     mut state: ResMut<BattlefieldPositions>,
     queue: Res<BattlefieldQueue>,
     data: Option<Res<WorldMapUiData>>,
-    maps: Option<Res<MapCatalogRes>>,
     me: Res<SelfGuid>,
     group: Res<GroupState>,
     guids: Res<GuidIndex>,
@@ -103,11 +101,9 @@ fn feed_battlefield_positions(
         return;
     };
     let active = queue.active_map();
-    // `GetBattlefieldMapIconScale`: the active slot's `Map.dbc` row, map 0's with no slot.
-    let icon_scale = maps
-        .as_deref()
-        .and_then(|m| m.0.battleground(active.unwrap_or(0)))
-        .map_or(1.0, |b| b.minimap_icon_scale);
+    // `GetBattlefieldMapIconScale`: 1.12.1's `Map.dbc` `MinimapIconScale` column, which 3.3.5a's
+    // `Map.dbc` does not carry; its own source is not read yet, so the scale is 1.
+    let icon_scale: f32 = 1.0;
     let BattlefieldPositions {
         packet,
         pending_names,

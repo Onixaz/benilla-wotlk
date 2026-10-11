@@ -33,6 +33,7 @@ fn confirm(s: &mut UiScript, who: &str, quest: &str) {
 
 /// `QUEST_ACCEPT` takes the player's name, then the quest title (`GlobalStrings.lua:3227`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_confirm_names_the_player_first_and_the_quest_second() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -50,6 +51,7 @@ fn the_confirm_names_the_player_first_and_the_quest_second() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn yes_answers_once() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -66,6 +68,7 @@ fn yes_answers_once() {
 /// The entry has no OnCancel (`StaticPopup.lua:727`): the server's pending latch clears on the
 /// next thing that touches it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn no_and_escape_send_nothing() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -83,6 +86,7 @@ fn no_and_escape_send_nothing() {
 /// The entry is `exclusive` (`StaticPopup.lua:735`), matching the server's one share latch per
 /// player: a newer question replaces the older.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_second_confirm_replaces_the_first() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();

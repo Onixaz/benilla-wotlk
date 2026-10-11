@@ -224,12 +224,8 @@ const GLUE_SWAP_HOLD_SECS: f32 = 2.0;
 /// mapping is `GlueParent.lua`'s `SetBackgroundModel`; the main menu is the client's own.
 fn scene_token(scene: GlueScene) -> &'static str {
     match scene {
-        GlueScene::MainMenu => {
-            benilla_expansions::Expansion::active()
-                .profile()
-                .glue
-                .login_scene
-        }
+        // `AccountLogin_OnLoad` sets the Northrend scene (`UI_MainMenu` is the streaming trial's).
+        GlueScene::MainMenu => "MainMenu_Northrend",
         GlueScene::Race(race) => match race {
             2 | 8 => "Orc",   // Troll shares Orc's scene
             3 | 7 => "Dwarf", // Gnome shares Dwarf's

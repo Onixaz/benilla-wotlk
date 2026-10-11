@@ -40,6 +40,7 @@ mod tests {
 
     /// Nine rows, every one Humanoid (7), the rows `race_creature_type` freezes.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_shipped_race_reads_humanoid() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

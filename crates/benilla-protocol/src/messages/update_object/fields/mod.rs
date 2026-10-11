@@ -661,6 +661,7 @@ impl ObjectFields {
     }
 }
 
+mod layout;
 mod player;
 mod unit;
 mod wotlk;

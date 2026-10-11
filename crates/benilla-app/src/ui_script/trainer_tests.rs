@@ -211,6 +211,7 @@ pub(super) fn menu() -> TrainerState {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_trainer_frame_drives_end_to_end() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -307,6 +308,7 @@ fn shipped_trainer_frame_drives_end_to_end() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn clicking_a_header_row_collapses_its_group() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -341,6 +343,7 @@ fn clicking_a_header_row_collapses_its_group() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn filter_hides_a_state_keeping_headers() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -371,6 +374,7 @@ fn filter_hides_a_state_keeping_headers() {
 /// `UIDropDownMenuButton_OnClick` flips a `keepShownOnClick` row's check after running its func:
 /// click, re-click and re-open must agree on screen and in the engine.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn filter_rows_toggle_through_the_dropdown_kit() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -453,6 +457,7 @@ fn long_menu() -> TrainerState {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn wheel_over_a_row_scrolls_the_list() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -516,6 +521,7 @@ fn wheel_over_a_row_scrolls_the_list() {
 /// `LockHighlight()` pins it for the selection (`Blizzard_TrainerUI.lua:183`), while `SetTextColor`
 /// writes only the normal font, so both states read white.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_selected_or_hovered_service_row_paints_its_name_white() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -573,6 +579,7 @@ fn a_selected_or_hovered_service_row_paints_its_name_white() {
 /// The wheel scrolls silently, as the stock `ScrollFrameTemplate_OnMouseWheel` plays no sound; the
 /// arrow buttons play `UChatScrollButton`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn wheel_scroll_is_silent_but_the_arrows_click() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -612,6 +619,7 @@ fn wheel_scroll_is_silent_but_the_arrows_click() {
 /// The arrows step half the bar's height (`UIPanelScrollBarTemplate`,
 /// `UIPanelTemplates.xml:137-149`), several rows at a time, and stop at the top.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_scrollbar_arrows_step_the_list_the_way_they_point() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -647,6 +655,7 @@ fn the_scrollbar_arrows_step_the_list_the_way_they_point() {
 /// A dropdown click writes the global, `## SavedVariables` saves it, and on a restart `LoadAddOn`
 /// runs the files, the saved file, then `ADDON_LOADED`, whose arm pushes it into the engine.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_state_filter_survives_a_restart_through_the_saved_variables_file() {
     let _data = benilla_formats::wow_data_or_skip!();
     let toc =
@@ -738,6 +747,7 @@ fn the_state_filter_survives_a_restart_through_the_saved_variables_file() {
 /// A new list resets the filter mask to 3 (available|unavailable), or 5 (available|used) at a
 /// mount trainer, and clears the collapse set, as the reference's list builder does (`0x4d75d9`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_new_list_packet_resets_the_filter_mask_and_the_collapse_set() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -820,6 +830,7 @@ fn recipe_menu() -> TrainerState {
 /// long name stays on one line in its 16 px row, and the rank is anchored 10 px past the name's
 /// right edge (`Blizzard_TrainerUI.lua:157`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_long_row_name_stays_on_one_line_and_carries_its_rank_along() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -914,6 +925,7 @@ fn a_long_row_name_stays_on_one_line_and_carries_its_rank_along() {
 /// A purchase repaints in place, as the reference's state re-evaluator (`0x4d7d40`) does, so the
 /// player's filter and collapse stand; only a fresh list resets the mask (`0x4d75d9`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn learning_a_spell_keeps_the_filter_and_the_collapse_a_re_open_still_resets() {
     benilla_formats::wow_data_or_skip!();
     use crate::ui_trainer::TrainerOpen;
@@ -1024,6 +1036,7 @@ fn learning_a_spell_keeps_the_filter_and_the_collapse_a_re_open_still_resets() {
 /// 1, and the engine answers the learned service's index in the hidden tail, past
 /// `GetNumTrainerServices()` (`0x4d7520`), so the stock arm hides the pane.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn learning_a_spell_takes_the_detail_pane_with_it_instead_of_stranding_the_last_one() {
     benilla_formats::wow_data_or_skip!();
     use crate::ui_trainer::TrainerOpen;
@@ -1115,6 +1128,7 @@ fn learning_a_spell_takes_the_detail_pane_with_it_instead_of_stranding_the_last_
 /// fires no update, because in the reference the engine's mask-commit thunk fires `TRAINER_UPDATE`
 /// (`0x4d8c90`: `mov ecx,0x136; jmp 0x703e50`), whose arm runs `ClassTrainerFrame_Update`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_filter_click_repaints_the_rows_the_player_is_looking_at() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();

@@ -1,7 +1,5 @@
-//! The WoW 1.12.1 (build 5875) wire protocol: [`auth`] for realmd (login protocol version 3),
+//! The WoW 3.3.5a (build 12340) wire protocol: [`auth`] for realmd (login protocol version 8),
 //! [`world`] and [`events`] for the world server. SRP6 and the header crypto are `benilla-srp`'s.
-//! The 3.3.5a (build 12340) logon and world handshake take their own paths where the wire differs,
-//! selected by the active [`Expansion`].
 
 pub mod auth;
 pub mod events;
@@ -29,15 +27,12 @@ pub use world::{
 use std::net::TcpStream;
 
 use anyhow::{anyhow, Context, Result};
-use benilla_expansions::Expansion;
 use benilla_srp::{NormalizedString, PublicKey, SrpClientChallenge, SESSION_KEY_LENGTH};
 
 /// The port a stock vmangos `realmd` listens on.
 pub const AUTH_PORT: u16 = 3724;
-/// The client build we present to the server: the active expansion's.
-pub fn client_build() -> u16 {
-    Expansion::active().profile().build
-}
+/// The client build we present to the server.
+pub const CLIENT_BUILD: u16 = 12340;
 /// Challenges [`logon`] draws for an unambiguous `B`; one in ~137 is not, so all 8 fail ~10⁻¹⁷.
 const MAX_CHALLENGE_DIALS: u32 = 8;
 
@@ -111,21 +106,20 @@ pub struct RealmInfo {
     pub name: String,
     /// `host:port` of the world server, as the client would connect to it.
     pub address: String,
-    /// The population, sentinels already rewritten as the reference parser does
-    /// ([`auth::MAGIC_POPULATIONS`]); the list shows a band against all realms' mean and deviation.
+    /// The population; the list shows a band against all realms' mean and deviation.
     pub population: f32,
     /// This account's character count there, shown as `"(3)"` (client realm record `+0x130`).
     pub characters: u8,
     /// The realm type (record `+0x04`), a join key, not an enum: `GetRealmInfo` takes `(pvp, rp)`
     /// from the `Cfg_Configs.dbc` row whose `RealmType` equals it.
     pub realm_type: u32,
-    /// The realm flags as the client holds them (record `+0x08`): the wire carries only `0x01`
-    /// invalid, `0x02` offline and `0x04`; `0x20`/`0x40`/`0x80` (Recommended, New, Full) are
-    /// synthesized from the magic populations ([`auth::MAGIC_POPULATIONS`]).
+    /// The realm flags as the wire carries them (AzerothCore `RealmFlags`): `0x01` version
+    /// mismatch, `0x02` offline, `0x04` a build follows, `0x20`/`0x40`/`0x80` Recommended, New and
+    /// Full.
     pub flags: u8,
     /// The category (timezone) byte the list's tabs group on, matched by equality, not an index.
     pub category: u8,
-    /// The wire's realm id, which 3.3.5a's `CMSG_AUTH_SESSION` names back to the world server.
+    /// The wire's realm id, which `CMSG_AUTH_SESSION` names back to the world server.
     pub id: u8,
 }
 
@@ -136,8 +130,6 @@ pub struct Logon {
     pub realms: Vec<RealmInfo>,
     /// `None` once a refresh has failed; the held list is then final.
     stream: Option<TcpStream>,
-    /// The client whose realm-list layout the refreshes read.
-    expansion: Expansion,
 }
 
 impl Logon {
@@ -150,7 +142,7 @@ impl Logon {
         let refreshed = (|| -> Result<Vec<RealmInfo>> {
             stream.set_read_timeout(Some(timeout))?;
             auth::write_realm_list_request(stream).context("requesting realm list")?;
-            auth::read_realm_list(stream, self.expansion).context("reading realm list")
+            auth::read_realm_list(stream).context("reading realm list")
         })();
         match refreshed {
             Ok(realms) => {
@@ -170,9 +162,8 @@ impl Logon {
     }
 }
 
-/// The full SRP6 logon against a `realmd`, then the realm list, as the active expansion's client.
+/// The full SRP6 logon against a `realmd`, then the realm list.
 pub fn logon(host: &str, username: &str, password: &str) -> Result<Logon> {
-    let expansion = Expansion::active();
     let (host, port) = host_port(host, AUTH_PORT);
 
     let username_n =
@@ -187,7 +178,7 @@ pub fn logon(host: &str, username: &str, password: &str) -> Result<Logon> {
         let mut dialed = None;
         for _ in 0..MAX_CHALLENGE_DIALS {
             let mut stream = dial(host, port)?;
-            auth::write_logon_challenge(&mut stream, &username.to_uppercase(), expansion)
+            auth::write_logon_challenge(&mut stream, &username.to_uppercase())
                 .context("sending logon challenge")?;
             let reply =
                 auth::read_challenge_reply(&mut stream).context("reading logon challenge reply")?;
@@ -217,25 +208,22 @@ pub fn logon(host: &str, username: &str, password: &str) -> Result<Logon> {
         challenge.client_public_key(),
         challenge.client_proof(),
         &reply.crc_salt,
-        expansion,
     )
     .context("sending logon proof")?;
 
-    let server_proof =
-        auth::read_proof_reply(&mut stream, expansion).context("reading logon proof reply")?;
+    let server_proof = auth::read_proof_reply(&mut stream).context("reading logon proof reply")?;
     let client = challenge
         .verify_server_proof(server_proof)
         .map_err(|e| anyhow!("server proof mismatch (wrong password?): {e}"))?;
     let session_key = *client.session_key();
 
     auth::write_realm_list_request(&mut stream).context("requesting realm list")?;
-    let realms = auth::read_realm_list(&mut stream, expansion).context("reading realm list")?;
+    let realms = auth::read_realm_list(&mut stream).context("reading realm list")?;
 
     Ok(Logon {
         session_key,
         realms,
         stream: Some(stream),
-        expansion,
     })
 }
 

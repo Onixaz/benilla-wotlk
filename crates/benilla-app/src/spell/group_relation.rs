@@ -635,6 +635,7 @@ mod tests {
     /// The shipped rows the party and raid words serve: each carries its bit, and a party member
     /// selected when the row is pressed is the bound target, a stranger not.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_party_and_raid_spells_bind_a_party_member() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

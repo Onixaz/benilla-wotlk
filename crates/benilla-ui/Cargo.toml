@@ -9,7 +9,6 @@ description = "Engine-free WoW UI engine core: TOC and FrameXML parsing, templat
 workspace = true
 
 [dependencies]
-benilla-expansions = { path = "../benilla-expansions" }
 roxmltree = "0.20"
 # The script host's Lua 5.1; `vendored` builds it from the workspace's `lua-src`.
 mlua = { version = "0.11", features = ["lua51", "vendored"] }

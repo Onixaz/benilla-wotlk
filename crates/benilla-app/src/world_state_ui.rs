@@ -312,6 +312,7 @@ mod tests {
 
     /// Against the install's table: Eastern Plaguelands with and without the defense channel.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_real_table_builds_the_eastern_plaguelands_readout() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("chain");

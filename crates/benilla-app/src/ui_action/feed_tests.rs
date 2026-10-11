@@ -341,7 +341,7 @@ fn a_macro_slot_shows_the_macros_own_icon_and_follows_an_edit() {
             r#"
             local f = CreateFrame("Frame")
             f:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
-            f:SetScript("OnEvent", function()
+            f:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
                 if arg1 == 1 then BENILLA_TEST_SLOT_EVENTS = (BENILLA_TEST_SLOT_EVENTS or 0) + 1 end
             end)
             EditMacro(1, "Shadowstep", nil)
@@ -513,7 +513,7 @@ fn a_tame_failure_composes_the_reason_string_into_err_tame_failed() {
                 BENILLA_TEST_LINES = {};
                 local f = CreateFrame("Frame")
                 f:RegisterEvent("UI_ERROR_MESSAGE")
-                f:SetScript("OnEvent", function()
+                f:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
                     table.insert(BENILLA_TEST_LINES, arg1)
                 end)
                 "#,

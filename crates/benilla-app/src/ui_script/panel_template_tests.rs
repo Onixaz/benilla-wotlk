@@ -51,6 +51,7 @@ fn drawn_textures(s: &mut UiScript) -> Vec<String> {
 /// The label publishes as `MyCheckText`, the global an addon reads next through
 /// `getglobal(this:GetName().."Text")`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_check_button_from_the_template_names_its_label_after_the_caller() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -86,6 +87,7 @@ fn a_check_button_from_the_template_names_its_label_after_the_caller() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_templated_check_button_draws_the_reference_checkbox_art() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -126,6 +128,7 @@ fn the_templated_check_button_draws_the_reference_checkbox_art() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_templated_check_button_toggles_before_its_on_click_runs() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -163,6 +166,7 @@ fn a_templated_check_button_toggles_before_its_on_click_runs() {
 /// Its face is `<NormalTexture inherits="UIPanelButtonUpTexture"/>` (`UIPanelTemplates.xml:23`),
 /// which the loader expands, and its `<ButtonText>` still publishes as `$parentText`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_panel_button_from_the_template_labels_and_paints() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -195,6 +199,7 @@ fn a_panel_button_from_the_template_labels_and_paints() {
 
 /// Its OnClick is `HideUIPanel(this:GetParent())` (`UIPanelTemplates.xml:96-98`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_templated_close_button_hides_the_frame_it_sits_on() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -225,6 +230,7 @@ fn the_templated_close_button_hides_the_frame_it_sits_on() {
 /// Its border slices are named `<Layers>` regions; its direct-child `<FontString>` is the box's
 /// text, not a layer (`UIPanelTemplates.xml:226-278`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_input_box_from_the_template_carries_its_border_and_takes_text() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -259,6 +265,7 @@ fn an_input_box_from_the_template_carries_its_border_and_takes_text() {
 /// by `getglobal(bar:GetName().."ThumbTexture")` (`UIPanelTemplates.lua:244-283`), so a named
 /// `<ThumbTexture>` must publish as a global.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_scroll_frame_from_the_template_wires_its_bar_two_parents_deep() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -335,6 +342,7 @@ fn a_scroll_frame_from_the_template_wires_its_bar_two_parents_deep() {
 /// `OptionsCheckButtonTemplate`'s hit rect and click sound (`OptionsFrameTemplates.xml:40-51`) over
 /// `UICheckButtonTemplate`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_options_check_button_resolves_its_whole_inheritance_chain() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -376,6 +384,7 @@ fn the_options_check_button_resolves_its_whole_inheritance_chain() {
 /// `PanelTemplates_TabResize`'s `tab` defaults to `this` (`UIPanelTemplates.lua:33-38`), and stock
 /// tabs call it without one from `OnLoad` or `OnShow`; a real `OnLoad` is what sets `this`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn tab_resize_falls_back_to_this_when_no_tab_is_passed() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -404,6 +413,7 @@ fn tab_resize_falls_back_to_this_when_no_tab_is_passed() {
 /// text must measure synchronously. Its highlight is anchored 10 in from each side (`:94-107`),
 /// which leaves both `SetWidth` calls on it inert, and nothing caps a tab at its window's edge.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_tab_fits_its_text_on_the_first_show() {
     let _data = benilla_formats::wow_data_or_skip!();
     /// `2 * $parentLeft:GetWidth()`: the template's two 20-unit end slices.

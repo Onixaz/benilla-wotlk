@@ -322,46 +322,37 @@ pub fn expand(
     templates: &HashMap<&str, &Element>,
     warnings: &mut Vec<String>,
 ) -> Element {
-    expand_known(element, templates, &HashSet::new(), false, warnings)
+    expand_known(element, templates, &HashSet::new(), warnings)
 }
 
 /// [`expand`], skipping without a warning an `inherits` that names a font object: a
 /// `<FontString inherits="GameFontNormalSmall">` takes a font, applied later, not a template.
-/// `list` is the target's [`inherit_names`] reading.
 pub fn expand_known(
     element: &Element,
     templates: &HashMap<&str, &Element>,
     fonts: &HashSet<&str>,
-    list: bool,
     warnings: &mut Vec<String>,
 ) -> Element {
     let mut active = HashSet::new();
-    expand_inner(element, templates, fonts, list, warnings, &mut active)
+    expand_inner(element, templates, fonts, warnings, &mut active)
 }
 
-/// The template names an `inherits=` value names, in application order. 1.12.1 reads one name,
-/// not a list: `0x6ee6f0` has no splitter, so `"A, B"` misses. It is used verbatim
-/// (`GetAttribute 0x6f2cf0` does not trim; `""` is skipped, `" "` misses). With `list`, 3.3.5a's
-/// reading, the value is split on commas and each name trimmed, the empty ones skipped. Either
-/// way a name is matched case-insensitively, ASCII only: `_strnicmp` at `0x6ee747`, reached
-/// despite a mis-cased name because `SStrHash 0x64b3f0` uppercases.
-pub fn inherit_names(inherits: &str, list: bool) -> Vec<&str> {
-    if list {
-        inherits
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .collect()
-    } else {
-        [inherits].into_iter().filter(|s| !s.is_empty()).collect()
-    }
+/// The template names an `inherits=` value names, in application order: the value split on
+/// commas and each name trimmed, the empty ones skipped. The shipped FrameXML names lists both
+/// ways, `"ChatFrameTemplate,FloatingBorderedFrame"` and `"SecureActionButtonTemplate,
+/// ActionButtonTemplate"`. A name is matched case-insensitively, ASCII only.
+pub fn inherit_names(inherits: &str) -> Vec<&str> {
+    inherits
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 fn expand_inner(
     element: &Element,
     templates: &HashMap<&str, &Element>,
     fonts: &HashSet<&str>,
-    list: bool,
     warnings: &mut Vec<String>,
     active: &mut HashSet<String>,
 ) -> Element {
@@ -370,7 +361,7 @@ fn expand_inner(
     };
 
     let mut base: Option<Element> = None;
-    for name in inherit_names(inherits, list) {
+    for name in inherit_names(inherits) {
         if !active.insert(name.to_string()) {
             warnings.push(format!(
                 "inheritance cycle detected at template '{name}'; skipping this reference"
@@ -393,7 +384,7 @@ fn expand_inner(
             active.remove(name);
             continue;
         };
-        let expanded_template = expand_inner(template, templates, fonts, list, warnings, active);
+        let expanded_template = expand_inner(template, templates, fonts, warnings, active);
         active.remove(name);
         base = Some(match base {
             None => expanded_template,
@@ -648,59 +639,6 @@ print(x)</Script>
             other => panic!("expected a generic instance, got {other:?}"),
         }
         assert!(doc.warnings.is_empty());
-    }
-
-    /// All eight callers of `0x6ee6f0` pass `GetAttribute`'s pointer as is, and nothing in
-    /// `0x6ed000`–`0x6f6000` examines a comma; the value is not trimmed either.
-    #[test]
-    fn a_comma_list_is_one_literal_name_that_misses_and_applies_neither_template() {
-        let doc = parse(
-            r#"<Ui>
-                <Frame name="A" virtual="true">
-                    <Layers><Layer level="ARTWORK"><Texture name="FromA"/></Layer></Layers>
-                </Frame>
-                <Frame name="B" virtual="true" alpha="0.5">
-                    <Layers><Layer level="ARTWORK"><Texture name="FromB"/></Layer></Layers>
-                </Frame>
-                <Frame name="Inst" inherits="A, B" alpha="1.0">
-                    <Layers><Layer level="ARTWORK"><Texture name="FromInst"/></Layer></Layers>
-                </Frame>
-                <Frame name="Padded" inherits=" A "/>
-            </Ui>"#,
-        )
-        .unwrap();
-        let templates = doc.templates();
-        let TopLevel::Instance(inst) = &doc.items[2] else {
-            panic!("expected instance")
-        };
-        let mut warnings = Vec::new();
-        let expanded = expand(inst, &templates, &mut warnings);
-
-        assert_eq!(warnings.len(), 1, "{warnings:?}");
-        assert!(
-            warnings[0].contains("A, B"),
-            "the warning must name the literal it looked up: {warnings:?}"
-        );
-
-        // The element loads with its own content only.
-        assert_eq!(expanded.attr("alpha"), Some("1.0"));
-        assert_eq!(expanded.children.len(), 1);
-        fn texture_name(el: &Element) -> &str {
-            el.children[0].children[0].attr("name").unwrap()
-        }
-        assert_eq!(texture_name(&expanded.children[0]), "FromInst");
-
-        // A padded name misses: the value is used verbatim.
-        let TopLevel::Instance(padded) = &doc.items[3] else {
-            panic!("expected instance")
-        };
-        let mut w2 = Vec::new();
-        let expanded = expand(padded, &templates, &mut w2);
-        assert_eq!(w2.len(), 1, "{w2:?}");
-        assert!(
-            expanded.children.is_empty(),
-            "picked up A despite the spaces"
-        );
     }
 
     #[test]

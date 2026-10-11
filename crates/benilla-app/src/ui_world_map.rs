@@ -990,6 +990,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_real_table_gates_the_epl_towers_and_the_city_icons() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("chain");
@@ -1070,6 +1071,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_catalog_preserves_dbc_file_order() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("chain");
@@ -1306,6 +1308,7 @@ mod direct_area_tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_real_dbc_carries_exactly_the_three_battleground_orphans() {
         let Some((views, data)) = real_catalog() else {
             return;
@@ -1355,6 +1358,7 @@ mod direct_area_tests {
     /// `GetMapInfo()` must answer `"WarsongGulch"` for `Blizzard_BattlefieldMinimap.lua:83-86` to
     /// draw; the continent reads back -1 (`-2 + 1`) and the zone 0.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_body_in_warsong_gulch_lands_on_the_warsong_gulch_map() {
         let Some((views, data)) = real_catalog() else {
             return;

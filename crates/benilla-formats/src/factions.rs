@@ -574,6 +574,7 @@ mod tests {
     /// Unit templates toward a human player (template 1), the direction `0x7cbaa0` colours by;
     /// ids from vmangos `creature_template.faction`, expected colours from a reference capture.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_dbc_reactions_match_reference_capture() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -668,6 +669,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_gameobject_factions_resolve_toward_both_player_templates() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -689,6 +691,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_faction_group_names_by_mask() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -699,6 +702,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_reputation_factions_group_under_their_team() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

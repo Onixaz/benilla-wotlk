@@ -81,9 +81,6 @@ impl Loader<'_> {
 
     /// The non-empty `function=` of a handler element, on a target whose loader reads it.
     fn function_attribute(&self, handler: &Element) -> Option<String> {
-        if !self.model().script_function_attribute {
-            return None;
-        }
         handler
             .attr("function")
             .filter(|f| !f.is_empty())
@@ -106,11 +103,10 @@ impl Loader<'_> {
         }
     }
 
-    /// Compile a handler body as the target client does. 1.12.1 loads the body as the chunk itself
-    /// (`0x704c70`): it takes no arguments and reads its frame from `this`, so a `self` in it is an
-    /// ordinary global. 3.3.5a formats it into `return function(<params>) %s end` and keeps the
-    /// function the chunk returns, the body on the template's first line so its line numbers hold.
-    /// A 3.3.5a `function=` replaces the body before this is reached ([`Self::named_handler`]).
+    /// Compile a handler body as the client does: formatted into `return function(<params>) %s
+    /// end` ([`crate::script::event::script_parameters`]), keeping the function the chunk returns,
+    /// the body on the template's first line so its line numbers hold. A `function=` replaces the
+    /// body before this is reached ([`Self::named_handler`]).
     pub(super) fn compile_handler(
         &mut self,
         handler: &Element,
@@ -123,21 +119,15 @@ impl Loader<'_> {
         if body.is_empty() {
             return None;
         }
-        let params = crate::script::event::script_args(self.lua()).parameters(name);
-        let source = match params {
-            Some(p) => std::borrow::Cow::Owned(format!("return function({p}) {body} end")),
-            None => std::borrow::Cow::Borrowed(body),
-        };
+        let params = crate::script::event::script_parameters(name);
+        let source = format!("return function({params}) {body} end");
         let compiled = self
             .lua()
-            .load(source.as_ref())
+            .load(source.as_str())
             .set_name(format!("{owner}:{name}"))
             .set_mode(mlua::ChunkMode::Text)
             .into_function()
-            .and_then(|chunk| match params {
-                Some(_) => chunk.call::<Function>(()),
-                None => Ok(chunk),
-            });
+            .and_then(|chunk| chunk.call::<Function>(()));
         match compiled {
             Ok(f) => Some(f),
             Err(e) => {

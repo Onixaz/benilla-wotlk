@@ -263,6 +263,7 @@ mod tests {
     /// Pins [`top_centre_claimed`] against the stock XML. It lives here, not beside the readout,
     /// because a test of a dev instrument belongs in a dev root.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_readout_tells_the_dev_pill_how_much_of_the_top_it_uses() {
         benilla_formats::wow_data_or_skip!();
         // Not 768: a window height other than the UI's virtual one catches mixed units.

@@ -6,6 +6,7 @@
 use benilla_formats::{load_m2_bounds, open_chain};
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ring_footprint_matches_reference_pixels() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open chain");
@@ -37,6 +38,7 @@ fn ring_footprint_matches_reference_pixels() {
 /// `0x3f99999a`): `InvisibleStalker` authors all 135 sequence boxes at zero, so the Naxxramas
 /// weapon mobs on its body (display 15294, scale 2.25) ring at 2.7 yd.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_degenerate_stand_box_rings_at_the_reference_constant() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open chain");

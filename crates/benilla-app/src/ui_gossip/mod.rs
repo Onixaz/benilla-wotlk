@@ -577,6 +577,7 @@ mod tests {
     /// first menu, and the repaint plays no open kit, as `ShowUIPanel` returns early on a visible
     /// frame.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn stock_gossip_frame_stays_visible_through_a_first_visit_submenu() {
         use benilla_ui::script::SoundRequest;
         let _data = benilla_formats::wow_data_or_skip!();

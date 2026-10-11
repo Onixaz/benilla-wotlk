@@ -16,6 +16,7 @@ const OPENED: u16 = 149;
 const LID_BONE: u16 = 8;
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_crate_lid_transition_is_bounded_by_the_window_not_the_loop_bit() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

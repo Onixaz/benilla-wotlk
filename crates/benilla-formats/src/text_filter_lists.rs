@@ -58,14 +58,14 @@ fn load(chain: &mut Chain, path: &str, name: &str, fields: usize) -> Result<Vec<
 
 /// `ChatProfanity.dbc`, the masker's list, in file order.
 pub fn load_chat_profanity(chain: &mut Chain) -> Result<Vec<FilterPattern>> {
-    let fields = chain.expansion().profile().dbc.chat_profanity.fields;
+    let fields = crate::dbc_layout::LAYOUTS.chat_profanity.fields;
     load(chain, CHAT_PROFANITY, "ChatProfanity", fields)
 }
 
 /// `SpamMessages.dbc`, the spam predicate's list, in file order. The reference then scans a
 /// second list the server can push (SMSG `0x332`, handler `0x49e6e0`); vmangos never sends one.
 pub fn load_spam_messages(chain: &mut Chain) -> Result<Vec<FilterPattern>> {
-    // Two fields in both clients.
+    // Two fields.
     load(chain, SPAM_MESSAGES, "SpamMessages", 2)
 }
 
@@ -78,10 +78,8 @@ mod tests {
     fn the_lists_come_off_the_priority_walk_at_their_patched_sizes() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
-        // 1.12.1: patch.MPQ's 2289 rows, where dbc.MPQ's 1512 would be the base copy; 3.3.5a's
-        // three-column table holds 5222 rows and its SpamMessages 133.
-        let classic = chain.expansion() == benilla_expansions::Expansion::Classic;
-        let (profanity_rows, spam_rows) = if classic { (2289, 28) } else { (5222, 133) };
+        // The three-column table holds 5222 rows and SpamMessages 133.
+        let (profanity_rows, spam_rows) = (5222, 133);
 
         let profanity = load_chat_profanity(&mut chain).expect("load ChatProfanity");
         assert_eq!(
@@ -99,11 +97,6 @@ mod tests {
         );
 
         let spam = load_spam_messages(&mut chain).expect("load SpamMessages");
-        assert_eq!(spam.len(), spam_rows, "dbc.MPQ has no SpamMessages at all");
-        // 1.12.1's rows only: 3.3.5a's list also holds plain-text rows.
-        assert!(
-            !classic || spam.iter().all(|p| p.pattern.contains(r"\s*")),
-            "every shipped spam row spaces its letters to defeat spacing"
-        );
+        assert_eq!(spam.len(), spam_rows);
     }
 }

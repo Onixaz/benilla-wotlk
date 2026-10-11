@@ -25,6 +25,7 @@ fn every_shipped_ui_xml_parses() {
 
 /// The whole manifest loads in its real order with zero loader errors, which the app only logs.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_whole_shipped_manifest_loads_without_errors() {
     benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -50,6 +51,7 @@ fn the_whole_shipped_manifest_loads_without_errors() {
 /// and its closing `PlaySound("igMainMenuOpen")` unless `UnitPopup_HideButtons` leaves only CANCEL
 /// for a unit that does not exist (`UnitPopup.lua:115`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn loading_the_shipped_ui_queues_no_sounds() {
     benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -96,6 +98,7 @@ fn pet_bar_vm() -> benilla_ui::script::UiScript {
 /// on 30). Deviation: the spell book takes that ratio (`SpellBookAdapters.xml`), because its stock
 /// brackets (60 × 33/64 = 30.9 on 37) sit three units inside each edge.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_autocast_brackets_reach_each_buttons_corners() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::framexml::{Element, TopLevel};
@@ -184,6 +187,7 @@ fn the_autocast_brackets_reach_each_buttons_corners() {
 /// 1.48 on 37 units (`SpellBookAdapters.xml`), because its stock `scale="1.22"` in 36 units is a
 /// 0.87× rim that floats clear of the edge and washes the icon.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_shine_panes_ask_for_the_rims_we_meant() {
     benilla_formats::wow_data_or_skip!();
     let mut found: Vec<(String, f32, f32)> = Vec::new();
@@ -613,6 +617,7 @@ fn no_shipped_script_sets_a_global_string_key_as_display_text() {
 /// BACKGROUND art. The stock frames spend a level on it (`TargetFrame.lua:32-34`) or nest the art
 /// in anonymous frames (`PlayerFrame.xml:50-52`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_texture_frame_outranks_its_status_bars() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::order::unpack;
@@ -710,6 +715,7 @@ fn every_texture_frame_outranks_its_status_bars() {
 /// The shipped UI takes `VARIABLES_LOADED`, which the saved-variables load fires at every launch
 /// before any window has shown, without a script error.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_shipped_ui_takes_variables_loaded_without_a_script_error() {
     benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -739,6 +745,7 @@ fn the_shipped_ui_takes_variables_loaded_without_a_script_error() {
 /// getters, in the production order: `publish_global` never overwrites, so a same-named frame
 /// loaded first would keep a font unpublished.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_shipped_font_object_is_published_as_a_lua_global() {
     benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -816,6 +823,7 @@ fn every_shipped_font_object_is_published_as_a_lua_global() {
 /// (`MainMenuBarMicroButtons.xml`, 29×58) confer their size, regions and scripts, read back as a
 /// consumer gets them: an unresolved `inherits=` fails silently.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_inheritable_reference_templates_confer_their_shape() {
     benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -871,6 +879,7 @@ fn the_inheritable_reference_templates_confer_their_shape() {
 /// The stock inspect-cursor pair, `CursorUpdate` and `CursorOnUpdate` (`UIParent.lua:1805-1817`),
 /// runs clean on the arms a frame without an item takes.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_inspect_cursor_pair_takes_both_arms() {
     benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -924,6 +933,7 @@ fn the_inspect_cursor_pair_takes_both_arms() {
 /// than a list. The one survivor is `CinematicFrame`, which the reference declares with no parent
 /// and `SetFullScreenFrame` shows as it hides `UIParent` (`UIParent.lua:852`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_cinematic_leaves_nothing_of_the_interface_on_screen() {
     benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -1010,6 +1020,7 @@ fn a_cinematic_leaves_nothing_of_the_interface_on_screen() {
 /// Every `parent=` the shipped tree declares attaches, read off the loaded tree: a parent name that
 /// names nothing only warns, and the loader falls back to the enclosing element.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_declared_parent_really_attaches() {
     benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -1129,6 +1140,7 @@ pub(super) fn shipped_frame_names() -> Vec<String> {
 /// window's `MacroPopupScrollFrame` inherits a template only the manifest's
 /// `ClassTrainerFrameTemplates.xml` row brings.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_shipped_manifest_opens_the_macro_icon_picker() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -1182,6 +1194,7 @@ fn the_shipped_manifest_opens_the_macro_icon_picker() {
 /// ESC menu opens. It loads before `MultiActionBars.lua:10` sets fields on five of its check-button
 /// rows, as in `FrameXML.toc` (lines 21 and 39).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_interface_options_window_loads_hidden_and_ours_is_still_the_players() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -1288,6 +1301,7 @@ fn the_stock_interface_options_window_loads_hidden_and_ours_is_still_the_players
 /// loads later, so an alias would replace the real frame. `SoundOptionsFrame_Load()` runs clean
 /// with every CVar its tables name, and the ESC menu still opens ours.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_sound_options_window_loads_hidden_and_the_alias_is_gone() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -1392,6 +1406,7 @@ fn the_stock_sound_options_window_loads_hidden_and_the_alias_is_gone() {
 /// which is nil once unticked, and `SetCVar` stores that as "0" (`0x488c98`); its sliders write
 /// `GetValue()`, a single-precision number stored as Lua's `%.14g` text (`0x6f7c80`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_sound_window_turns_a_box_off_and_stores_a_slider_as_lua_text() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -1440,6 +1455,7 @@ fn the_stock_sound_window_turns_a_box_off_and_stores_a_slider_as_lua_text() {
 /// name; ours is `BenillaOptionsFrame`, which the ESC menu opens and the stock "options window
 /// open?" consumers see only through the `GameMenuAdapters.xml` wrappers.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_video_options_window_loads_hidden_and_owns_its_own_name() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -1704,6 +1720,7 @@ fn the_stock_video_options_window_loads_hidden_and_owns_its_own_name() {
 /// validating callback `0x689090`), so `SetGamma(5)` stores `"-4.000000"`; benilla clamps only at
 /// the render consumer.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_display_brightness_pair_speaks_the_reference_slider_unit() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -1800,6 +1817,7 @@ fn the_display_brightness_pair_speaks_the_reference_slider_unit() {
 /// (`0x488f00`) and `SetFarclip` (`0x488f30`) miss the row's `"farclip"` only because `getglobal`
 /// is case-sensitive.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_video_windows_ten_composed_names_stay_nil() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();
@@ -1844,6 +1862,7 @@ fn the_video_windows_ten_composed_names_stay_nil() {
 /// around a checkbox write: every slider CVar `_Load` reads is registered, and `Slider:SetValue`
 /// (`0x790980`) raises on nil in the reference too.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_options_windows_load_and_save_are_reachable_for_addons() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = benilla_ui::script::UiScript::new().unwrap();

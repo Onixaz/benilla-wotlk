@@ -686,6 +686,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_waterfall_emitter_is_lit() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -727,6 +728,7 @@ mod tests {
 
     /// `BloodSpurt.m2`, the melee impact flash: emitters 1 to 3 are keyed bursts.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_blood_spurt_emitters_are_keyed_bursts() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -759,6 +761,7 @@ mod tests {
     /// `Feint_Impact_Chest.m2`: the plume (e0) and crescents (e3) set flag 0x8000, one puff at
     /// their 67 ms key; `Eviscerate_Cast_Hands.m2` has the same 1.6 s shape with the flag clear.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_feint_impact_authors_burst_emitters() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -791,6 +794,7 @@ mod tests {
 
     /// `FlameStrike_Area.m2`'s four fire columns: type-3 chains of 16 and 19 points, no spin.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_flamestrike_authors_spline_chains() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -826,6 +830,7 @@ mod tests {
     /// Fireball (spell 133): the cast flash is on for its clip's first 200 ms and the impact plume
     /// ramps 0 → 60 over 133 ms of clip time, though seq 0 spans [1000, 2600] of the file.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_fireball_effects_rebase_to_clip_time() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

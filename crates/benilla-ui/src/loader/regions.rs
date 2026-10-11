@@ -311,7 +311,7 @@ impl Loader<'_> {
         let model = self.model();
         let fonts = model.framexml_fonts.borrow();
         let templates = model.framexml_templates.borrow();
-        for entry in crate::framexml::inherit_names(inherits, model.inherits_list) {
+        for entry in crate::framexml::inherit_names(inherits) {
             let mut name = entry.to_string();
             for _ in 0..MAX_HOPS {
                 if fonts.contains_key(&name) || fonts.keys().any(|k| k.eq_ignore_ascii_case(&name))

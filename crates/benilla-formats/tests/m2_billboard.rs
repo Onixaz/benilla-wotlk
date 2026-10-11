@@ -3,6 +3,7 @@
 use benilla_formats::{load_m2_mesh, open_chain, BillboardKind};
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn lamppost_glow_is_spherical_billboard() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

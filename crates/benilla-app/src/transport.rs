@@ -708,6 +708,7 @@ mod tests {
     /// Path 241's Kalimdor legs are the first frames of the cycle, so crossing to Kalimdor is the
     /// cycle wrap, not an interior map change.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_seam_reanchor_lands_on_the_new_map_and_leaves_an_agreeing_clock_alone() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

@@ -122,6 +122,7 @@ pub(super) fn spellbook_ui_with(w: f32, h: f32, extra: &[&str]) -> UiScript {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_spellbook_loads_clean() {
     benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();
@@ -154,6 +155,7 @@ fn shipped_spellbook_loads_clean() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_spellbook_drives_end_to_end() {
     benilla_formats::wow_data_or_skip!();
     let mut s = spellbook_ui(1024.0, 768.0);
@@ -231,6 +233,7 @@ fn shipped_spellbook_drives_end_to_end() {
 /// A running cooldown arms the button's sweep (`SpellBookFrame.lua:359-360`); an on-hold one
 /// (enable 0, as Stealth until `SMSG_COOLDOWN_EVENT`) draws none and dims the icon (`:361-365`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_spellbook_shows_the_cooldown_pie() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::QuadContent;
@@ -294,6 +297,7 @@ fn shipped_spellbook_shows_the_cooldown_pie() {
 /// `SetState` (`0x779790`) has no step that takes the ring off on `Disable()`. `SetChecked(0)`
 /// unchecks, so there is no `CheckButtonHilight` glow.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_spellbook_empty_slot_draws_its_background_and_socket_ring() {
     benilla_formats::wow_data_or_skip!();
     let mut s = spellbook_ui(640.0, 700.0);
@@ -333,6 +337,7 @@ fn shipped_spellbook_empty_slot_draws_its_background_and_socket_ring() {
 /// `SetChecked`'s coercion over the arguments the stock call sites pass
 /// (`SpellBookFrame.lua:132`, `:134`, `:268`, `:296-303`, `:336`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn set_checked_uses_blizzard_bool_coercion() {
     benilla_formats::wow_data_or_skip!();
     let s = spellbook_ui(1024.0, 768.0);
@@ -396,6 +401,7 @@ fn pet_book() -> benilla_ui::script::PetBookState {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_pet_tab_switches_books_and_renders_the_pets_spells() {
     benilla_formats::wow_data_or_skip!();
     let mut s = spellbook_ui(1024.0, 768.0);
@@ -598,6 +604,7 @@ fn the_pet_tab_switches_books_and_renders_the_pets_spells() {
 /// shift-click writes, appending a whole `/cast <name>[(<rank>)]` line with no separator. The
 /// `/cast` line is 1.12's; the bare-name insert is a later client's.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_macro_editor_takes_a_shift_click_and_only_a_shift_click() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

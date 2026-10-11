@@ -237,6 +237,7 @@ pub(super) mod tests {
 
     /// The US client reads its two categories from the install's own `Cfg_Categories.dbc`.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_us_categories_come_from_the_install() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

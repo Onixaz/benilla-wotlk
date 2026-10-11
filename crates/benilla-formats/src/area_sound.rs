@@ -311,6 +311,7 @@ mod tests {
 
     /// The 5875 tables: Elwynn Forest (area 12) and a subzone inheriting its music.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_area_chain_resolves_elwynn() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

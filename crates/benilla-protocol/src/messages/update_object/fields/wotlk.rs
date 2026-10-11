@@ -1,13 +1,10 @@
-//! 3.3.5a's update fields read into the shared [`ObjectFields`], whose indices are 1.12.1's
-//! (`benilla_expansions::update_fields`). Each 3.3.5a field the shared set reads lands at its
-//! 1.12.1 index; a value 3.3.5a packs another way is converted here; a field with no shared place
-//! is dropped.
+//! 3.3.5a's update fields read into [`ObjectFields`]' shared index space ([`layout::SHARED`]).
+//! Each wire field the shared set reads lands at its shared index; a value the wire packs another
+//! way is converted here; a field with no shared place is dropped.
 
 use std::sync::OnceLock;
 
-use benilla_expansions::update_fields::{Block, Field, FieldPlace, UpdateFieldLayout};
-use benilla_expansions::Expansion;
-
+use super::layout::{self, Block, Field, FieldPlace, UpdateFieldLayout};
 use super::ObjectFields;
 use crate::messages::update_object::ObjectType;
 use crate::wire::Vector3d;
@@ -16,11 +13,11 @@ use crate::wire::Vector3d;
 type Slot = Option<(&'static FieldPlace, u16)>;
 
 fn wotlk() -> &'static UpdateFieldLayout {
-    Expansion::Wotlk.profile().update_fields
+    &layout::WIRE
 }
 
 fn shared() -> &'static UpdateFieldLayout {
-    Expansion::Classic.profile().update_fields
+    &layout::SHARED
 }
 
 /// The blocks of an object's descriptor; a container's item block is the item's.

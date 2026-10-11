@@ -224,6 +224,7 @@ mod tests {
 
     /// Field 17 sits behind locale slots typed as dwords, so a column slip reads an empty path.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_shipped_family_carries_a_pet_icon() {
         let Some(mut chain) = chain() else { return };
         let fams = load_creature_families(&mut chain).expect("families");
@@ -249,6 +250,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_family_size_ramp_reads_off_the_shipped_file() {
         let Some(mut chain) = chain() else { return };
         let fams = load_creature_families(&mut chain).expect("families");
@@ -301,6 +303,7 @@ mod tests {
 
     /// Names are asserted verbatim: a column early reads the food mask, a column late a zero slot.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_real_creature_families_name_every_pet() {
         let Some(mut chain) = chain() else { return };
         let f = load_creature_families(&mut chain).expect("load CreatureFamily.dbc");
@@ -324,6 +327,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_real_pet_food_names_are_the_eight_diets() {
         let Some(mut chain) = chain() else { return };
         let n = load_pet_food_names(&mut chain).expect("load ItemPetFood.dbc");
@@ -347,6 +351,7 @@ mod tests {
     /// Wolf, Bear, Boar and Turtle are the reference's own cases (`0x4bea10`); the rest are
     /// vanilla's documented diets.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_masks_expand_to_vanillas_own_diets() {
         let Some(mut chain) = chain() else { return };
         let fam = load_creature_families(&mut chain).expect("families");

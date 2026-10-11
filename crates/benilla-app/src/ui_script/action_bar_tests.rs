@@ -7,6 +7,7 @@ fn action_ids(s: &mut UiScript) -> Vec<u32> {
 
 /// The stock main bar without Bevy: a stance's bonus page, its icons, a click and a key.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_action_bar_drives_end_to_end() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -203,6 +204,7 @@ fn load_action_bar(s: &UiScript) {
 
 /// The state events through the stock bar: the cooldown, the checked ring and the usable tint.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn state_feedback_drives_cooldown_checked_and_usable_through_the_xml() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ActionState;
@@ -323,6 +325,7 @@ fn state_feedback_drives_cooldown_checked_and_usable_through_the_xml() {
 /// `CooldownFrame_SetTimer` hides the pane unless `start > 0 and duration > 0 and enable > 0`
 /// (Cooldown.lua:3): a running cooldown whose start predates a restarted `GetTime` never draws.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_start_behind_the_clocks_epoch_hides_the_stock_sweep() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ActionState;
@@ -389,6 +392,7 @@ fn a_start_behind_the_clocks_epoch_hides_the_stock_sweep() {
 /// The cooldown child sits at its button's level + 1 and frame level outranks draw layer, so the
 /// sweep paints over the button's icon and ring.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_cooldown_sweep_paints_over_the_buttons_icon_and_ring() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ActionState;
@@ -446,6 +450,7 @@ fn the_cooldown_sweep_paints_over_the_buttons_icon_and_ring() {
 
 /// A cooldown-count addon's wrap of `CooldownFrame_SetTimer` leaves the sweep as it was.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_cooldown_count_addons_hook_leaves_the_sweep_running() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ActionState;
@@ -553,6 +558,7 @@ const COOLDOWN_COUNT_HOOK: &str = r#"
 /// (BonusActionBarFrame.xml:13-15); a script level change carries no children (`0x774560`), so
 /// the cooldown sits one level over its button, under the countdown.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_cooldown_count_draws_over_the_bonus_bars_sweep() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ActionState;
@@ -624,6 +630,7 @@ fn a_cooldown_count_draws_over_the_bonus_bars_sweep() {
 /// `ActionButton_OnLoad` registers left and right clicks (ActionButton.lua:109) over a button's
 /// default of left only, and the OnClick reads no `arg1`: a right-click uses the action too.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_right_click_on_an_action_button_uses_the_action() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -674,6 +681,7 @@ fn a_right_click_on_an_action_button_uses_the_action() {
 
 /// Shift-click runs `PickupAction`, a plain click `UseAction` (ActionBarFrame.xml:12-22).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shift_click_picks_up_not_uses() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -726,6 +734,7 @@ fn shift_click_picks_up_not_uses() {
 /// `LOCK_ACTIONBAR` guards both drag ends (ActionBarFrame.xml:23-38) but not the shift-click
 /// pickup in OnClick (l.12-22), so a locked bar still yields to shift-click.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_action_bar_lock_stops_the_drag_and_leaves_shift_click_alone() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -796,6 +805,7 @@ fn the_action_bar_lock_stops_the_drag_and_leaves_shift_click_alone() {
 
 /// A drag onto an occupied button puts the displaced action on the cursor, in two sends.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn drag_drop_onto_another_button_hops_the_displaced_action() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -855,6 +865,7 @@ fn drag_drop_onto_another_button_hops_the_displaced_action() {
 /// item: zero charges, `InventoryType` 0 (`0x4e5250`). The flag rides the slot, not the state
 /// map: `ACTIONBAR_SLOT_CHANGED` repaints before the state feed writes.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn count_fontstring_follows_is_consumable_action_not_the_bag_count() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -947,6 +958,7 @@ fn count_fontstring_follows_is_consumable_action_not_the_bag_count() {
 /// `ActionButton_Update` writes `GetActionText` into the `$parentName` line unconditionally
 /// (ActionButton.lua:236-238): a macro slot shows its name, a spell slot or an emptied one none.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn macro_name_line_follows_get_action_text_through_the_xml() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::{MacroState, MacroView};
@@ -1014,6 +1026,7 @@ fn macro_name_line_follows_get_action_text_through_the_xml() {
 /// The stock bag bar (`MainMenuBarBagButtons.xml`), which seats on `MainMenuBarArtFrame`: its
 /// toggle opens the backpack, the stack paints in its slot, and the slot's clicks queue intents.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_bag_frame_drives_end_to_end() {
     let _data = benilla_formats::wow_data_or_skip!();
     use super::test_ui::{bag_open, bag_slot_button, centre_of, load_ui, BAG_UI};
@@ -1169,6 +1182,7 @@ fn shipped_bag_frame_drives_end_to_end() {
 /// `ActionButton_Update` registers the state events only while the button has an action
 /// (ActionButton.lua:175-212), so an empty well's texture-less icon never takes a tint.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn state_events_leave_empty_wells_untinted() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ActionState;
@@ -1233,6 +1247,7 @@ fn state_events_leave_empty_wells_untinted() {
 /// A slot going empty draws no plate: the empty arm hides the icon (ActionButton.lua:168), and a
 /// texture-less region never draws, whatever its tint (`0x7706e0` gates on `+0xcc`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_occupied_slot_going_empty_leaves_no_white_plate() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ActionState;
@@ -1296,6 +1311,7 @@ fn an_occupied_slot_going_empty_leaves_no_white_plate() {
 /// `BonusActionBarFrame` is declared hidden (BonusActionBarFrame.xml:54); addons lay out its
 /// buttons before it ever shows (`CT_BarModOptions.lua:154`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bonus_action_bar_exists_hidden_and_takes_layout_calls() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1349,6 +1365,7 @@ fn the_bonus_action_bar_exists_hidden_and_takes_layout_calls() {
 
 /// ActionButton.lua:1-9's constants are globals (`zBar.lua:40` loops to `NUM_ACTIONBAR_BUTTONS`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_reference_action_bar_constants_are_defined() {
     benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();
@@ -1391,6 +1408,7 @@ fn the_reference_action_bar_constants_are_defined() {
 /// `ActionButtonTemplate` is regions only (ActionButtonTemplate.xml:3); `ActionBarButtonTemplate`
 /// adds the handlers (ActionBarFrame.xml:4), and `zBar.xml:7` inherits it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn both_reference_action_button_templates_are_inheritable() {
     benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();
@@ -1462,6 +1480,7 @@ fn both_reference_action_button_templates_are_inheritable() {
 /// Main-bar paging (ActionButton.lua:63-101): page-up past the last viewable page wraps to 1,
 /// page-down below 1 rescans for the last viewable one.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_main_bar_pages_and_a_bonus_page_still_outranks_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1616,6 +1635,7 @@ fn the_main_bar_pages_and_a_bonus_page_still_outranks_it() {
 /// The form swap (BonusActionBarFrame.lua:1-98): the bonus frame slides up and sounds on landing,
 /// stays while the form holds, and slides down silently with the old page.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bonus_bar_slides_up_with_sound_and_down_without() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1826,6 +1846,7 @@ fn bonus_bar_slides_up_with_sound_and_down_without() {
 /// A form dropped mid-rise: `HideBonusActionBar` keeps the running timer
 /// (BonusActionBarFrame.lua:90-92), and the hide arm paints `(1 - timer / 0.15) * 43` (l.48).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bonus_bar_turnaround_continues_from_position() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1895,6 +1916,7 @@ fn bonus_bar_turnaround_continues_from_position() {
 /// (6 each side, 7 top and bottom, ActionBarFrame.xml:170-172) shrink each hit rect to 20x18,
 /// which separates them.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_page_arrows_do_not_steal_each_other_s_clicks() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

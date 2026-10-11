@@ -10,6 +10,7 @@ const JUBIE_DISPLAY: u32 = 7969;
 const AMULET_DISPLAY: u32 = 15676;
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_modelless_head_display_is_not_a_worn_helm() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

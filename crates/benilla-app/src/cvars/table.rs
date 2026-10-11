@@ -109,13 +109,9 @@ pub(crate) fn registered_pairs() -> impl Iterator<Item = (&'static str, &'static
     registered_rows().map(|r| (r.name, r.default))
 }
 
-/// [`REGISTERED`], then the active target's own rows ([`REGISTERED_WOTLK`] on 3.3.5a).
+/// [`REGISTERED`], then [`REGISTERED_WOTLK`].
 pub(crate) fn registered_rows() -> impl Iterator<Item = &'static Registered> {
-    let extra: &[Registered] = match benilla_expansions::Expansion::active() {
-        benilla_expansions::Expansion::Classic => &[],
-        benilla_expansions::Expansion::Wotlk => REGISTERED_WOTLK,
-    };
-    REGISTERED.iter().chain(extra)
+    REGISTERED.iter().chain(REGISTERED_WOTLK)
 }
 
 /// The rows 3.3.5a registers and 1.12.1 has no name for, each with a reader in the 3.3.5a stock

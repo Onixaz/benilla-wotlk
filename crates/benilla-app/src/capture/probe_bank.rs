@@ -188,7 +188,7 @@ fn bank_probe(
                     ProbeBankEvents = {}
                     local f = CreateFrame("Frame")
                     f:RegisterEvent("UI_ERROR_MESSAGE")
-                    f:SetScript("OnEvent", function()
+                    f:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
                         table.insert(ProbeBankEvents, arg1 or "")
                     end)
                 end

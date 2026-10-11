@@ -1609,6 +1609,7 @@ pub(super) mod tests {
     /// whose stereo header stores a mono `nBlockAlign` (2) among them, the inn's `Tavern.wav` too:
     /// symphonia 0.5 sized its frames from that field and counted them twice.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_beds_stream_their_data_chunks_frames() {
         use std::io::Read;
         let data = benilla_formats::wow_data_or_skip!();

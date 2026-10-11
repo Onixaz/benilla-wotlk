@@ -671,6 +671,7 @@ mod learn_effect_tests {
 
     /// A trainer's wrapper carries the learn effect and the step `0x4d7d40` compares.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_openers_skill_steps_read_off_the_real_file() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

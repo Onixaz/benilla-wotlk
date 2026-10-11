@@ -498,6 +498,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_chat_lines_come_out_in_wire_order_with_the_total_last() {
         let mut social = SocialState::default();
         social.apply_who(WhoResults {

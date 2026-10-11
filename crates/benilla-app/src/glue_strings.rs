@@ -207,6 +207,7 @@ end
 
     /// Three keys whose base and patched text differ. Skips without client data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_real_chain_patches_the_login_refusals_and_the_realm_suffixes() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

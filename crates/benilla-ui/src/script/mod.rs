@@ -1,11 +1,11 @@
 //! The Lua scripting host: the engine-free VM that runs FrameXML and addons over the frame arena,
-//! the anchor resolver and the draw order. It embeds mlua's Lua 5.1, reshaped by [`lua50`] to
-//! answer as the 1.12 client's Lua 5.0.
+//! the anchor resolver and the draw order. It embeds mlua's Lua 5.1, the client's own stock Lua,
+//! with the client's `bit` library and base-library helpers ([`lua51`]).
 //!
 //! A frame's Lua value is a table whose `T[0]` lightuserdata (`0x701bd0`) holds a `u32` id where
 //! the reference holds the `CScriptObject*`, with an `__index` metatable (`0x7020b0`). A handler
-//! is `pcall`ed with `this`, `event` and `arg1..argN` set as globals and restored after
-//! (`0x704d50`); it also gets `(self, event, ...)` as arguments, which 1.12 does not pass.
+//! is `pcall`ed with `(self, [event,] ...)` as arguments, `this` and `event` set as globals and
+//! restored after ([`event::script_parameters`]).
 //!
 //! The `LUAI_MAXCSTACK` discipline: Rust holds no persistent Lua handle, since each owned `Table`
 //! or `Function` takes a slot on mlua's reference thread, capped at the vendored 8000. Lua-side
@@ -76,6 +76,7 @@ pub use handler_prof::HandlerRow;
 
 mod surface;
 pub use surface::widget_method_census;
+mod bit;
 mod input_verbs;
 mod inspect;
 mod inventory_verbs;
@@ -87,7 +88,6 @@ mod layout;
 mod layout_cache;
 mod loot;
 mod loot_roll;
-mod lua50;
 mod lua51;
 mod macros;
 mod mail;
@@ -405,7 +405,7 @@ pub const SCREEN: crate::layout::Handle = 0;
 /// ScrollFrame's three scroll kinds are `+0x32c`/`+0x334`/`+0x33c` (script-name map `0x786c40`).
 /// The EditBox's vtable (`0x81c910`) replaces the key and char slots: an EditBox never fires
 /// `OnKeyDown`, and fires `OnChar` only from `Insert`, with the inserted text (`0x77c13c`).
-const SCRIPT_KINDS: [&str; 39] = [
+const SCRIPT_KINDS: [&str; 41] = [
     "OnLoad",
     "OnEvent",
     "OnUpdate",
@@ -461,6 +461,9 @@ const SCRIPT_KINDS: [&str; 39] = [
     "OnChar",
     "OnKeyDown",
     "OnKeyUp",
+    // Both have parameter templates in the script compiler ([`event::script_parameters`]).
+    "OnAttributeChanged",
+    "OnInputLanguageChanged",
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -491,16 +494,10 @@ pub fn addon_chunk_name(folder: &str, file: &str) -> String {
 }
 
 impl UiScript {
-    /// Build a fully sandboxed, stdlib- and object-model-equipped host for the process's target
-    /// client ([`benilla_expansions::Expansion::active`]).
+    /// Build a fully sandboxed, stdlib- and object-model-equipped host.
     pub fn new() -> mlua::Result<UiScript> {
-        Self::new_for(benilla_expansions::Expansion::active())
-    }
-
-    /// [`UiScript::new`] for `expansion`'s client, whatever the process's target.
-    pub fn new_for(expansion: benilla_expansions::Expansion) -> mlua::Result<UiScript> {
         let lua = Lua::new();
-        lua.set_app_data(Model::new(expansion.profile()));
+        lua.set_app_data(Model::new());
         // Before anything can fire a handler and while no app-data borrow is held, as the
         // profiler's slot requires.
         handler_prof::install(&lua);
@@ -515,16 +512,9 @@ impl UiScript {
         client::install(&lua)?;
         screenshot::install(&lua)?;
         stdlib::sandbox(&lua)?;
-        // Before the stdlib layer, so its aliases bind the 5.0-shaped functions.
-        if expansion.profile().lua_50 {
-            lua50::install(&lua)?;
-        } else {
-            lua50::install_bit(&lua)?;
-        }
+        bit::install(&lua)?;
         stdlib::install(&lua)?;
-        if !expansion.profile().lua_50 {
-            lua51::install(&lua)?;
-        }
+        lua51::install(&lua)?;
         object::install(&lua)?;
         frame_enum::install(&lua)?;
         // After `object`, whose `publish_global` it reuses, and before any FrameXML loads:
@@ -549,10 +539,10 @@ impl UiScript {
         worn_display::install(&lua)?;
         death::install(&lua)?;
         aura::install(&lua)?;
-        cvars::install(&lua, expansion.profile())?;
-        battle_net::install(&lua, expansion.profile())?;
-        secure_call::install(&lua, expansion.profile())?;
-        autocomplete::install(&lua, expansion.profile())?;
+        cvars::install(&lua)?;
+        battle_net::install(&lua)?;
+        secure_call::install(&lua)?;
+        autocomplete::install(&lua)?;
         nameplate::install_verbs(&lua)?;
         saved::install(&lua)?;
         keybind::install(&lua)?;

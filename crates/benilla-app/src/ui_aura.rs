@@ -739,6 +739,7 @@ mod tests {
 
     /// Against the real `Spell.dbc`; skips without client data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_aura_display_filter_hides_a_real_battle_stance_but_keeps_battle_shout() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -760,6 +761,7 @@ mod tests {
 
     /// Against the real `Spell.dbc` (`0x4e42d6`-`0x4e4308`); skips without client data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_real_tracking_aura_is_diverted_from_the_bar_to_the_tracking_state() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

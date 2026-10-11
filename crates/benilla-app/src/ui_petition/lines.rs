@@ -155,6 +155,7 @@ mod tests {
     /// Against the shipped `GlobalStrings.lua` and the catalog: a key that resolves to nothing
     /// would silently not print, and a `%s` row must get its argument and a plain row none.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_key_resolves_and_its_arity_matches_the_fill() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

@@ -15,6 +15,7 @@ const DESPAWN: u16 = 157;
 const CLOSED: u16 = 147;
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_rookery_egg_keys_its_hatch_in_despawn_not_in_the_state_family() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

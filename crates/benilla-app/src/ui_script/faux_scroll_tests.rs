@@ -146,6 +146,7 @@ fn a_list_that_exactly_fits_shows_no_bar() {
 /// The clamp lives on the bar: stock `FauxScrollFrame_SetOffset` only stores the offset
 /// (`UIPanelTemplates.lua:239-241`), and a scroll inside the re-ranged bar walks it back.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_shrinking_list_clamps_the_offset_back_into_range() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -247,6 +248,7 @@ fn the_shrink_widen_tail_resizes_the_rows_and_the_highlight() {
 /// Pixels on the bar, rows in the offset, `floor(v / step + 0.5)` between
 /// (`UIPanelTemplates.lua:231`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn dragging_the_bar_steps_the_offset_by_rows_and_repaints() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -305,6 +307,7 @@ fn dragging_the_bar_steps_the_offset_by_rows_and_repaints() {
 /// The addon path end to end: bar value, `SetVerticalScroll`, the frame's `<OnVerticalScroll>`,
 /// then `FauxScrollFrame_OnVerticalScroll`. `SetScrollChild` seats a child by hand, as addons do.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_reference_on_vertical_scroll_path_runs_once_a_scroll_child_exists() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -363,6 +366,7 @@ fn the_reference_on_vertical_scroll_path_runs_once_a_scroll_child_exists() {
 /// With no argument, stock `ScrollingEdit_OnTextChanged` falls back to `this:GetParent()`
 /// (`UIPanelTemplates.lua:307-310`), which addons that wire it bare rely on.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn scrolling_edit_helpers_answer_bare_calls_from_a_handler() {
     benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();

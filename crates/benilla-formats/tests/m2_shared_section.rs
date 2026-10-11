@@ -12,6 +12,7 @@ fn refusable(s: &RenderSubmesh) -> bool {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_ballista_authors_a_coplanar_shine_over_its_bolt_head_and_shields() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -51,6 +52,7 @@ fn the_ballista_authors_a_coplanar_shine_over_its_bolt_head_and_shields() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_plain_doodad_draws_every_section_once() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

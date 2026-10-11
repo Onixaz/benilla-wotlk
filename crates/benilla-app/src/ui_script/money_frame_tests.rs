@@ -58,6 +58,7 @@ fn shown(s: &UiScript, frame: &str) -> (bool, bool, bool) {
 
 /// Both `MoneyFrame_OnLoad` and `SmallMoneyFrame_OnLoad` end in `MoneyFrame_SetType("PLAYER")`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_money_frame_loads_as_the_player_purse_and_splits_the_denominations() {
     benilla_formats::wow_data_or_skip!();
     let s = harness(12_345); // 1g 23s 45c
@@ -84,6 +85,7 @@ fn a_money_frame_loads_as_the_player_purse_and_splits_the_denominations() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn set_type_rewires_the_source_the_mouse_and_the_collapse() {
     benilla_formats::wow_data_or_skip!();
     let s = harness(12_345);
@@ -127,6 +129,7 @@ fn set_type_rewires_the_source_the_mouse_and_the_collapse() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn showsmallercoins_is_what_keeps_the_zero_coins_visible() {
     benilla_formats::wow_data_or_skip!();
     let s = harness(50_000); // exactly 5g
@@ -156,6 +159,7 @@ fn showsmallercoins_is_what_keeps_the_zero_coins_visible() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn update_paints_a_static_frame_by_name_and_resizes_it() {
     benilla_formats::wow_data_or_skip!();
     let s = harness(0);
@@ -189,6 +193,7 @@ fn update_paints_a_static_frame_by_name_and_resizes_it() {
 
 /// `this.small` unset picks `MONEY_ICON_WIDTH` (19) and `MONEY_BUTTON_SPACING` (-4).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_large_template_measures_with_the_nineteen_pixel_icon() {
     benilla_formats::wow_data_or_skip!();
     let s = harness(20_304);
@@ -212,6 +217,7 @@ fn the_large_template_measures_with_the_nineteen_pixel_icon() {
 
 /// `MoneyFrame_SetType` returns on an unknown type before touching anything (`MoneyFrame.lua:144`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_unknown_money_type_leaves_the_frame_on_the_one_it_had() {
     benilla_formats::wow_data_or_skip!();
     let s = harness(12_345);
@@ -231,6 +237,7 @@ fn an_unknown_money_type_leaves_the_frame_on_the_one_it_had() {
 
 /// `SetMoneyFrameColor` sets the three buttons' text colour only (`MoneyFrame.lua:348`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn set_money_frame_color_recolours_the_digits_and_not_the_icons() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness(12_345); // 1g 23s 45c: three distinct digit strings
@@ -284,6 +291,7 @@ fn set_money_frame_color_recolours_the_digits_and_not_the_icons() {
 
 /// Addons read `MoneyTypeInfo` directly; the send-mail rows read their engine getters.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_money_type_table_carries_all_seven_reference_types() {
     benilla_formats::wow_data_or_skip!();
     let s = harness(12_345);

@@ -212,6 +212,7 @@ fn kit_world_effect_joins_effects_at_base() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_visual_chain_resolves_fireball() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -344,6 +345,7 @@ fn real_spell_visual_chain_resolves_fireball() {
 
 /// The lootable-corpse sparkle's row (`0x6005d0`) names a model that ships.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_effect_name_table_resolves_the_loot_art_row() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -358,6 +360,7 @@ fn real_effect_name_table_resolves_the_loot_art_row() {
 
 /// The gate is the client's (`0x5d57c0`); whether each spell passes it is data.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ground_aoe_chain_reads_the_dest_anchored_block() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -433,6 +436,7 @@ fn char_proc_small_int_recovers_the_integer() {
 
 /// Rows 1 (Chain Lightning) and 8 (Drain Life) as the file ships them.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_chain_effects_table() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -483,6 +487,7 @@ fn real_chain_effects_table() {
 
 /// Both chain keys reach their beams; folding type 0 to empty would lose every channel beam.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_chain_procs_resolve_to_their_beams() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -563,6 +568,7 @@ fn real_chain_procs_resolve_to_their_beams() {
 
 /// A texture path that resolves to nothing draws an invisible beam.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_chain_effect_textures_resolve_on_the_patch_chain() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -586,6 +592,7 @@ fn real_chain_effect_textures_resolve_on_the_patch_chain() {
 
 /// A type-0 slot whose `CharParamZero` is 0 is no beam; kit 2089 (Death and Decay) ships four.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_zero_param_chain_slots_are_padding() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -666,6 +673,7 @@ fn the_weapon_merge_fills_only_the_empty_slots() {
 /// Every live hunter shot leaves both body kits empty, so its draw and release clips come from
 /// the bow's visual.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_hunter_shots_take_the_bows_load_and_release_clips() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");

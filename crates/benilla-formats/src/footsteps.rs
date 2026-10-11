@@ -178,6 +178,7 @@ mod tests {
 
     /// The chain on 5875 data: class 8 on Metallic, and the character class on dirt and grass.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_footstep_chain_resolves() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -224,6 +225,7 @@ mod tests {
 
     /// The footprint bit on 5875 data, Snow and Sand only, and the six `FootprintTextures` rows.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn footprint_gate_and_textures_on_real_data() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

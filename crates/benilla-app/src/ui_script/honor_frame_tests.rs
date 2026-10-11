@@ -77,6 +77,7 @@ fn text(s: &mut UiScript, frame: &str) -> String {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_figure_lands_in_its_own_row() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_honor_page();
@@ -102,6 +103,7 @@ fn every_figure_lands_in_its_own_row() {
 
 /// The title is keyed by the internal rank and the badge by the visual one, four lower.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_title_is_the_internal_rank_and_the_badge_is_the_visual_one() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_honor_page();
@@ -123,6 +125,7 @@ fn the_title_is_the_internal_rank_and_the_badge_is_the_visual_one() {
 /// 1.12 has no `PVP_RANK_0_*` string, so the binding answers nil and the page writes `NONE`
 /// (`HonorFrame.lua:44-54`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_unranked_character_reads_none_and_shows_no_badge() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_honor_page();
@@ -155,6 +158,7 @@ fn an_unranked_character_reads_none_and_shows_no_badge() {
 /// `UnitFactionGroup` answers nil; the rank title still resolves, as `0x5efe00` reads the unit's
 /// race, not its faction. The bar keeps the sideless red, so the side must stay gone.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_gm_flagged_player_keeps_his_rank_title_and_loses_only_the_faction_group() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_honor_page();
@@ -203,6 +207,7 @@ fn a_gm_flagged_player_keeps_his_rank_title_and_loses_only_the_faction_group() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bar_takes_the_fraction_and_the_faction_colour() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = shown_honor_page();
@@ -234,6 +239,7 @@ fn the_bar_takes_the_fraction_and_the_faction_colour() {
 /// The weekly sections repaint on world entry only (`HonorFrame.lua:7-33`), so this drives the real
 /// `OnEvent`, where the flag comes from the event name.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_kill_repaints_the_session_but_not_the_week() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_honor_page();
@@ -265,6 +271,7 @@ fn a_kill_repaints_the_session_but_not_the_week() {
 /// The key we build, `PVP_RANK_<internal>_<team>`, against the install's own `GlobalStrings.lua`,
 /// for both teams.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_real_global_strings_name_the_rank() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -388,6 +395,7 @@ fn shown_inspect_honor_page() -> UiScript {
 
 /// The rank block reads the inspected unit, not the player.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_inspect_page_paints_the_reply_it_holds() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_inspect_honor_page();
@@ -425,6 +433,7 @@ fn the_inspect_page_paints_the_reply_it_holds() {
 
 /// Stock `InspectHonorFrame_OnShow` asks only with no reply held (`InspectHonorFrame.lua:11-17`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_page_asks_only_when_it_holds_nothing() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_inspect_honor_page();

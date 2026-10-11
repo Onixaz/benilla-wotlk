@@ -2,9 +2,9 @@
 //! (vmangos's `Player::UpdateLocalChannels`, `Objects/Player.cpp:5121`, is empty): at world entry
 //! and every zone change `0x49a210` sends `CMSG_JOIN_CHANNEL` for each auto-join row.
 
+use crate::dbc_layout::ChatChannels as ChatChannelsLayout;
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
-use benilla_expansions::dbc::ChatChannels as ChatChannelsLayout;
 
 use crate::chain::Chain;
 use crate::dbc::{parse, str_at, u32_at};
@@ -157,7 +157,7 @@ pub fn load_chat_channels_catalog(chain: &mut Chain) -> Result<ChatChannelsCatal
     let bytes = chain
         .read_file(CHAT_CHANNELS)
         .context("reading ChatChannels.dbc")?;
-    let layout = &chain.expansion().profile().dbc.chat_channels;
+    let layout = &crate::dbc_layout::LAYOUTS.chat_channels;
     let rs = parse(&bytes, schema(layout), "ChatChannels")?;
     let mut rows = Vec::with_capacity(rs.records().len());
     for r in rs.records() {
@@ -180,46 +180,12 @@ pub fn load_chat_channels_catalog(chain: &mut Chain) -> Result<ChatChannelsCatal
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_real_table_is_the_six_documented_rows() {
-        let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        if chain.expansion() != benilla_expansions::Expansion::Classic {
-            return; // 3.3.5a's table: the next test
-        }
-        let cat = load_chat_channels_catalog(&mut chain).expect("load ChatChannels");
-
-        let got: Vec<(u32, u32, &str, &str)> = cat
-            .rows()
-            .iter()
-            .map(|r| (r.id, r.flags, r.pattern.as_str(), r.shortcut.as_str()))
-            .collect();
-        assert_eq!(
-            got,
-            vec![
-                (1, 0x00003, "General - %s", "General"),
-                (2, 0x0003B, "Trade - %s", "Trade"),
-                (22, 0x10003, "LocalDefense - %s", "LocalDefense"),
-                (23, 0x10004, "WorldDefense", "WorldDefense"),
-                (24, 0x00000, "LookingForGroup", "LookingForGroup"),
-                (25, 0x20032, "GuildRecruitment - %s", "GuildRecruitment"),
-            ]
-        );
-
-        // The auto-join set is the reference's `chat-cache.txt` `ZONECHANNELS` mask.
-        let mask: u32 = cat.auto_join_rows().map(|r| 1 << (r.id - 1)).sum();
-        assert_eq!(mask, 0x0020_0003, "General + Trade + LocalDefense");
-    }
-
     /// 3.3.5a's rows: General gains `0x80000`, and LookingForGroup is id 26, joined initially in
     /// a capital, where 1.12.1's id 24 has no flags.
     #[test]
     fn a_3_3_5a_table_reads_its_six_rows() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
-        if chain.expansion() != benilla_expansions::Expansion::Wotlk {
-            return; // 1.12.1's table: the test above
-        }
         let cat = load_chat_channels_catalog(&mut chain).expect("load ChatChannels");
         let got: Vec<(u32, u32, &str, &str)> = cat
             .rows()

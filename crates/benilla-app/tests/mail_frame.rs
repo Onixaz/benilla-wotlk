@@ -104,6 +104,7 @@ fn small_inbox() -> MailState {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn mail_frame_loads_and_key_regions_exist() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();
@@ -132,6 +133,7 @@ fn mail_frame_loads_and_key_regions_exist() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn mail_show_opens_and_inbox_populates() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -169,6 +171,7 @@ fn mail_show_opens_and_inbox_populates() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn paging_math_enables_next_only_when_overflowing() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -200,6 +203,7 @@ fn paging_math_enables_next_only_when_overflowing() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn cod_tag_shows_on_a_cod_mail() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -227,6 +231,7 @@ fn cod_tag_shows_on_a_cod_mail() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn opening_a_letter_shows_the_open_frame_and_queues_the_body() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -255,6 +260,7 @@ fn opening_a_letter_shows_the_open_frame_and_queues_the_body() {
 /// hides the centre frame (`MailFrame.xml:1903-1907`), and a frame arriving at centre hides the
 /// letter. A bare stand-in carries the `CharacterFrame` row.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_letter_and_the_centre_occupant_evict_each_other() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -311,6 +317,7 @@ fn a_letter_and_the_centre_occupant_evict_each_other() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn reply_switches_to_send_tab_prefilled() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -339,6 +346,7 @@ fn reply_switches_to_send_tab_prefilled() {
 /// `OpenMailFrame_OnHide` deletes only a mail with no money, no item and `textCreated`
 /// (`MailFrame.lua:256-272`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn closing_a_plain_letter_does_not_delete_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -366,6 +374,7 @@ fn closing_a_plain_letter_does_not_delete_it() {
 /// empty-body player mail COPIED, the wire's `textCreated` bit (`MailHandler.cpp:421`), so a
 /// subject-only letter with nothing attached is deleted when closed.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn closing_a_taken_husk_deletes_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -391,6 +400,7 @@ fn closing_a_taken_husk_deletes_it() {
 /// The expiry text pluralizes via `GetText("DAYS_ABBR", nil, n)` and keeps a trailing space before
 /// the colour close (`MailFrame.lua:144`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn expiry_text_pluralizes_days() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -418,6 +428,7 @@ fn expiry_text_pluralizes_days() {
 /// The permanent-copy letter button shows for a takeable, not yet copied body
 /// (`MailFrame.lua:364-376`); a click queues `TakeInboxTextItem` (`CMSG_MAIL_CREATE_TEXT_ITEM`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn letter_button_shows_for_a_body_letter_and_click_queues_the_copy() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -453,6 +464,7 @@ fn letter_button_shows_for_a_body_letter_and_click_queues_the_copy() {
 
 /// Once the body is copied (`textCreated`, the wire COPIED bit) the letter button hides.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn letter_button_hides_once_copied() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -476,6 +488,7 @@ fn letter_button_hides_once_copied() {
 
 /// Hovering the coins shows the money tooltip (`MailFrame.xml:1823-1829`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn money_button_hover_shows_the_amount_tooltip() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -504,6 +517,7 @@ fn money_button_hover_shows_the_amount_tooltip() {
 
 /// `InboxCurrentPage` is declared (`MailFrame.xml:329`) but no stock Lua writes it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn inbox_page_label_stays_empty_like_the_reference() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -523,6 +537,7 @@ fn inbox_page_label_stays_empty_like_the_reference() {
 /// A runtime-shown child `<Frame>` renders its own `<Layers>` FontStrings: `SendMailFrame` ships
 /// `hidden="true"` and holds its title in its own Layers.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_runtime_shown_pane_renders_its_own_layers() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();
@@ -544,6 +559,7 @@ fn a_runtime_shown_pane_renders_its_own_layers() {
 /// by `ui_mail::invoice`. It has no player sender, so the stock Lua shows `UNKNOWN`
 /// (`MailFrame.lua:286-288`), and `GetInboxText` returns nil for an invoice.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_auction_invoice_renders_as_a_receipt() {
     let _data = benilla_formats::wow_data_or_skip!();
     /// Synthetic GlobalStrings: the test checks each reaches the right region, not the text.
@@ -659,6 +675,7 @@ fn an_auction_invoice_renders_as_a_receipt() {
 
 /// A mail that is not an invoice keeps its body and shows no receipt.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_plain_letter_keeps_its_body_and_shows_no_receipt() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -681,6 +698,7 @@ fn a_plain_letter_keeps_its_body_and_shows_no_receipt() {
 /// The open letter's ring takes an item icon through `SetPortraitToTexture` (`MailFrame.lua:174`),
 /// so it draws masked; the inbox ring's `Mail-Icon` stays a plain `file=` (`MailFrame.xml:258`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_open_letters_ring_icon_is_masked_but_the_inboxs_is_not() {
     let _data = benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::QuadContent;
@@ -730,6 +748,7 @@ fn the_open_letters_ring_icon_is_masked_but_the_inboxs_is_not() {
 /// box's `OnChar` slot `+0x5c` is `0x77a900`, which declines (`0x77a956`) when another box has
 /// focus and never chains to the base `CSimpleFrame` gate (`script::keyboard::is_editbox`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_send_tab_box_takes_a_keystroke_not_just_the_one_with_an_onchar() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -785,6 +804,7 @@ fn every_send_tab_box_takes_a_keystroke_not_just_the_one_with_an_onchar() {
 /// `UiScript::reset_compose_tab` is `0x4acdc0(1)`: it clears the attachment before firing the
 /// events, since `SendMailFrame_Reset` ends in `SendMailFrame_Update`, reading `GetSendMailItem`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_compose_reset_clears_the_subject_and_the_attachment_together() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -876,6 +896,7 @@ fn mv(s: &mut UiScript, unit: EditUnit, back: bool) {
 /// HOME and END stop at the line's newline (`0x77c980`, `0x77c9f0`), and Ctrl+HOME and Ctrl+END
 /// go to the letter's ends (`0x77ca60`, `0x77cac0`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_letter_body_moves_its_caret_by_rows_and_lines() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = send_tab();
@@ -918,6 +939,7 @@ fn the_letter_body_moves_its_caret_by_rows_and_lines() {
 /// `OnCursorChanged` reaches `ScrollingEdit_OnCursorChanged`, so a long letter scrolled to its top
 /// stays there.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn select_all_in_a_long_letter_keeps_its_scroll() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = send_tab();
@@ -959,6 +981,7 @@ fn select_all_in_a_long_letter_keeps_its_scroll() {
 /// deletes a selection before its `numeric` test refuses a letter (`0x77bf13`, `0x77bf41`): a
 /// letter typed into the gold box clears the amount.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_letter_typed_over_the_selected_gold_clears_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = send_tab();

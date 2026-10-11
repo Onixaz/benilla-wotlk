@@ -1427,7 +1427,7 @@ mod tests {
              local f = CreateFrame('Frame') \
              f:RegisterEvent('BAG_OPEN') \
              f:RegisterEvent('BAG_UPDATE') \
-             f:SetScript('OnEvent', function() \
+             f:SetScript('OnEvent', function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) \
                  table.insert(SEEN, event .. ' ' .. tostring(arg1)) end)",
         )
         .unwrap();
@@ -1465,7 +1465,7 @@ mod tests {
             "SEEN = {} \
              local f = CreateFrame('Frame') \
              f:RegisterEvent('PLAYERBANKSLOTS_CHANGED') \
-             f:SetScript('OnEvent', function() \
+             f:SetScript('OnEvent', function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) \
                  table.insert(SEEN, event .. ' ' .. tostring(arg1)) end)",
         )
         .unwrap();
@@ -1596,7 +1596,7 @@ mod tests {
              local f = CreateFrame('Frame') \
              f:RegisterEvent('BAG_CLOSED') \
              f:RegisterEvent('BAG_UPDATE') \
-             f:SetScript('OnEvent', function() \
+             f:SetScript('OnEvent', function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) \
                  table.insert(SEEN, event .. ' ' .. tostring(arg1)) end)",
         )
         .unwrap();
@@ -1792,7 +1792,7 @@ mod tests {
              local f = CreateFrame('Frame') \
              f:RegisterEvent('ITEM_LOCK_CHANGED') \
              f:RegisterEvent('BAG_UPDATE') \
-             f:SetScript('OnEvent', function() \
+             f:SetScript('OnEvent', function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) \
                  table.insert(ORDER, event .. ':' .. tostring(arg1) .. ',' .. tostring(arg2)) \
              end)",
         )
@@ -1936,6 +1936,7 @@ mod tests {
     /// On the real Spell.dbc, an undescribed spell such as a key's `Opening` builds no trigger
     /// line (`0x52da29`-`0x52da31`), and a described one does.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn an_undescribed_spell_prints_no_trigger_line_on_real_data() {
         let Some(spells) = real_spells() else { return };
 
@@ -1970,6 +1971,7 @@ mod tests {
     /// The trigger text's `$g` branch reads the gender handed in (`0x508214`): Conjure Food 587's
     /// "providing the mage and `$ghis:her;` allies" takes "her" on 1, "his" on 0.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_trigger_texts_gender_branch_follows_the_player() {
         let Some(spells) = real_spells() else { return };
         let no_strings = |_: &str| None;

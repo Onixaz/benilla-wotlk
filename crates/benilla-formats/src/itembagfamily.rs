@@ -68,6 +68,7 @@ mod tests {
     use super::load_item_bag_families;
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_families_are_named_as_the_error_line_needs() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

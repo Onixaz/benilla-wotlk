@@ -1162,7 +1162,7 @@ mod tests {
                 "BIND_CONFIRMS = {}\n\
                  local f = CreateFrame(\"Frame\")\n\
                  f:RegisterEvent(\"LOOT_BIND_CONFIRM\")\n\
-                 f:SetScript(\"OnEvent\", function() tinsert(BIND_CONFIRMS, arg1) end)",
+                 f:SetScript(\"OnEvent\", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) tinsert(BIND_CONFIRMS, arg1) end)",
             )
             .unwrap();
         script.set_screen_size(1024.0, 768.0);
@@ -1543,7 +1543,7 @@ mod tests {
                 "BIND_CONFIRMS = {}\n\
                  local f = CreateFrame(\"Frame\")\n\
                  f:RegisterEvent(\"LOOT_BIND_CONFIRM\")\n\
-                 f:SetScript(\"OnEvent\", function() tinsert(BIND_CONFIRMS, arg1) end)",
+                 f:SetScript(\"OnEvent\", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) tinsert(BIND_CONFIRMS, arg1) end)",
             )
             .unwrap();
         app.insert_non_send_resource(script);

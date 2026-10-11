@@ -61,29 +61,6 @@ impl<T: Copy> IdMap<T> {
 /// The Rust-side model behind the Lua VM, in `lua.app_data`. It holds no mlua handles, whose
 /// persistent count the vendored `LUAI_MAXCSTACK` caps.
 pub(crate) struct Model {
-    /// How a handler receives its frame and arguments: the target client's, fixed for the VM.
-    pub(crate) script_args: benilla_expansions::ScriptArgs,
-    /// Whether an unrecognised unit token raises `Unknown unit name` or names nobody: the target
-    /// client's resolver.
-    pub(crate) unknown_unit_token_raises: bool,
-    /// Whether FontString and Button carry `SetFormattedText`: the target client's method tables.
-    pub(crate) set_formatted_text: bool,
-    /// Whether an XML handler's `function=` names its handler: the target client's loader.
-    pub(crate) script_function_attribute: bool,
-    /// Whether `inherits=` is a comma-separated template list: the target client's loader.
-    pub(crate) inherits_list: bool,
-    /// Whether XML `parentKey=` names a field on the parent: the target client's loader.
-    pub(crate) parent_key: bool,
-    /// Whether frames carry the attribute store: the target client's method table.
-    pub(crate) frame_attributes: bool,
-    /// The script names accepted beyond [`super::SCRIPT_KINDS`]: the target client's.
-    pub(crate) extra_script_kinds: &'static [&'static str],
-    /// Whether chat window records carry the uninteractable flag: the target client's.
-    pub(crate) chat_window_uninteractable: bool,
-    /// Whether the joins are 3.3.5a's temporary and permanent pair: the target client's.
-    pub(crate) permanent_channels: bool,
-    /// Whether frames carry `IsMouseOver`: the target client's method table.
-    pub(crate) is_mouse_over: bool,
     /// Every discovered addon in load order: the AddOn API's registry, filled at world entry.
     pub(crate) addons: Vec<super::addon::AddOnInfo>,
     /// The Lua index space into `addons`, a title-sorted, hidden-filtered list (`0x51da70`).
@@ -1055,19 +1032,8 @@ impl Model {
         }
     }
 
-    pub(crate) fn new(client: &benilla_expansions::ExpansionProfile) -> Model {
+    pub(crate) fn new() -> Model {
         Model {
-            script_args: client.script_args,
-            unknown_unit_token_raises: client.unknown_unit_token_raises,
-            set_formatted_text: client.set_formatted_text,
-            script_function_attribute: client.script_function_attribute,
-            inherits_list: client.inherits_list,
-            parent_key: client.parent_key,
-            frame_attributes: client.frame_attributes,
-            extra_script_kinds: client.extra_script_kinds,
-            chat_window_uninteractable: client.chat_window_uninteractable,
-            permanent_channels: client.permanent_channels,
-            is_mouse_over: client.is_mouse_over,
             addons: Vec::new(),
             addon_index: Vec::new(),
             addon_info_hidden: None,
@@ -1170,7 +1136,7 @@ impl Model {
             petition: petition::PetitionState::default(),
             petition_requests: Vec::new(),
             // Per window, as the stock dock differs: 1 and 2 are the dock, the rest undocked.
-            chat_window_looks: (0..client.chat_windows)
+            chat_window_looks: (0..chat_window::ENGINE_CHAT_WINDOW_SLOTS)
                 .map(chat_window::ChatWindowLook::stock)
                 .collect(),
             chat_window_changes: HashSet::new(),

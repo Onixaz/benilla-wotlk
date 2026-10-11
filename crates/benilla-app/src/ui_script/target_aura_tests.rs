@@ -120,6 +120,7 @@ fn size(s: &UiScript, name: &str) -> (f64, f64) {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_hostile_target_draws_debuffs_first_with_tint_and_count() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -199,6 +200,7 @@ fn a_hostile_target_draws_debuffs_first_with_tint_and_count() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_friendly_target_puts_the_buff_row_first() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -227,6 +229,7 @@ fn a_friendly_target_puts_the_buff_row_first() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn reaching_the_wrap_shrinks_the_first_row_to_17px() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -249,6 +252,7 @@ fn reaching_the_wrap_shrinks_the_first_row_to_17px() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn clearing_the_list_or_the_target_hides_the_buttons() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();

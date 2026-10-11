@@ -570,7 +570,7 @@ pub(super) fn create_frame(
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             let templates = model.framexml_templates.borrow();
             // Each name case-folded, as `framexml::expand` resolves it.
-            crate::framexml::inherit_names(t, model.inherits_list)
+            crate::framexml::inherit_names(t)
                 .into_iter()
                 .find(|n| {
                     !(templates.contains_key(*n)

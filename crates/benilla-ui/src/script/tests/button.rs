@@ -333,7 +333,7 @@ fn disabled_button_swallows_clicks_checkbutton_toggles_before_onclick() {
         clicks, seen_checked = 0, nil
         local cb = CreateFrame("CheckButton", "Toggler")
         cb:SetPoint("BOTTOMLEFT", 0, 0); cb:SetWidth(100); cb:SetHeight(100)
-        cb:SetScript("OnClick", function() local self, button, down = this, arg1, arg2
+        cb:SetScript("OnClick", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, button, down = this, arg1, arg2
             clicks = clicks + 1
             seen_checked = self:GetChecked()
         end)
@@ -376,7 +376,7 @@ fn default_registration_is_left_click_only_right_click_reaches_nothing() {
         clicks = 0
         local btn = CreateFrame("Button", "Vendor")
         btn:SetPoint("BOTTOMLEFT", 0, 0); btn:SetWidth(100); btn:SetHeight(100)
-        btn:SetScript("OnClick", function() local self, button, down = this, arg1, arg2 clicks = clicks + 1 end)
+        btn:SetScript("OnClick", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, button, down = this, arg1, arg2 clicks = clicks + 1 end)
     "#,
     )
     .unwrap();
@@ -399,7 +399,7 @@ fn register_for_clicks_grows_right_click_and_carries_the_button_name() {
         local btn = CreateFrame("Button", "Vendor")
         btn:SetPoint("BOTTOMLEFT", 0, 0); btn:SetWidth(100); btn:SetHeight(100)
         btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-        btn:SetScript("OnClick", function() local self, button, down = this, arg1, arg2
+        btn:SetScript("OnClick", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, button, down = this, arg1, arg2
             clicks = clicks + 1
             click_btn = button
             arg1_btn = arg1   -- the 1.12 legacy-global convention, same value
@@ -427,14 +427,13 @@ fn down_registration_fires_on_press_and_toggles_checked_once() {
     s.set_screen_size(800.0, 600.0);
     s.run(
         r#"
-        clicks, seen_button, seen_arg2 = 0, nil, "untouched"
-        arg2 = "untouched"
+        clicks, seen_button = 0, nil
         local cb = CreateFrame("CheckButton", "QuickSell")
         cb:SetPoint("BOTTOMLEFT", 0, 0); cb:SetWidth(100); cb:SetHeight(100)
         cb:RegisterForClicks("LeftButtonDown")
-        cb:SetScript("OnClick", function()
+        cb:SetScript("OnClick", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
             clicks = clicks + 1
-            seen_button, seen_arg2 = arg1, arg2
+            seen_button = arg1
         end)
     "#,
     )
@@ -443,11 +442,10 @@ fn down_registration_fires_on_press_and_toggles_checked_once() {
 
     s.mouse_button(50.0, 50.0, "LeftButton", true);
     assert_eq!(s.eval::<i64>("return clicks").unwrap(), 1);
-    // `0x779540` fires `OnClick` with the format `"%s"`: the button name in `arg1` and no `arg2`.
+    // `OnClick` carries the button name.
     assert_eq!(
-        s.eval::<(String, String)>("return seen_button, seen_arg2")
-            .unwrap(),
-        ("LeftButton".to_string(), "untouched".to_string())
+        s.eval::<String>("return seen_button").unwrap(),
+        "LeftButton"
     );
     assert!(s.eval::<bool>("return QuickSell:GetChecked()").unwrap());
 

@@ -669,7 +669,7 @@ fn typing_fires_the_generic_on_char_with_what_was_inserted() {
         got = {}
         E = CreateFrame("EditBox", "E")
         E:EnableKeyboard(true)
-        E:SetScript("OnChar", function() table.insert(got, arg1) end)
+        E:SetScript("OnChar", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) table.insert(got, arg1) end)
         E:SetFocus()
     "#,
     )
@@ -1570,7 +1570,7 @@ fn the_caret_flush_fires_on_cursor_changed_with_the_references_four_args() {
         E:SetWidth(200); E:SetHeight(64)
         E:SetPoint("BOTTOMLEFT", 100, 50)
         E:SetMultiLine(true)
-        E:SetScript("OnCursorChanged", function()
+        E:SetScript("OnCursorChanged", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
             table.insert(fires, { x = arg1, y = arg2, w = arg3, h = arg4 })
         end)
         E:SetFocus()

@@ -241,6 +241,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_item_visuals_join_their_effect_models() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -295,6 +296,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_displays_carrying_a_visual_all_resolve() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -332,6 +334,7 @@ mod tests {
 
     /// Every shipped field-22 value but one `-1` names an ItemVisuals row, which pins the column.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_enchant_visuals_resolve() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -368,6 +371,7 @@ mod tests {
 
     /// Names are stored in the table's own word order (`"Agility +15"`), glowing or not.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_enchant_names_read_off_the_table() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -389,6 +393,7 @@ mod tests {
 
     /// Both bits' rows are named one by one, so a column slip fails.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_enchant_flags_column() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

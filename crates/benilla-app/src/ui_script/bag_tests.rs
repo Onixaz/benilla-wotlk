@@ -19,6 +19,7 @@ fn window(s: &UiScript, id: i64) -> String {
 
 /// The stock bag buttons are `MainMenuBarArtFrame`'s children, a level above the bar's art.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bag_bar_icons_draw_above_the_action_bar_art() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -52,6 +53,7 @@ fn bag_bar_icons_draw_above_the_action_bar_art() {
 
 /// Stock `ContainerFrame_OnShow` and `OnHide` play the sounds (`ContainerFrame.lua:140`, `:120`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn backpack_toggle_plays_open_and_close_kits() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -97,6 +99,7 @@ fn backpack_toggle_plays_open_and_close_kits() {
 /// Stock `ToggleBackpack` (`ContainerFrame.lua:67-82`): with bag 0 shut it opens bag 0 alone, even
 /// beside another open bag; with bag 0 open it hides every container window.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn b_opens_the_backpack_alone_and_closes_every_bag() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -171,6 +174,7 @@ fn b_opens_the_backpack_alone_and_closes_every_bag() {
 /// Stock `OpenAllBags` (`ContainerFrame.lua:662-700`) toggles by a count: all open closes the lot,
 /// anything less opens it, `forceOpen` always opens; the keyring is swept but never counted.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shift_b_toggles_every_bag_at_once() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -253,6 +257,7 @@ fn shift_b_toggles_every_bag_at_once() {
 /// An open bag lights its bar button and any close clears it: `ContainerFrame_OnShow` and `OnHide`
 /// write the ring (`ContainerFrame.lua:124-131`, `:84-95`), so it tracks every path.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bag_bar_buttons_light_while_their_bag_is_open() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -363,6 +368,7 @@ fn bag_bar_buttons_light_while_their_bag_is_open() {
 /// A slot in the right half of the screen hangs its tooltip left
 /// (`ContainerFrameItemButton_OnEnter`, `ContainerFrame.lua:602-612`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bag_tooltip_hangs_left_when_the_slot_sits_in_the_right_half() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -442,6 +448,7 @@ fn bag_tooltip_hangs_left_when_the_slot_sits_in_the_right_half() {
 /// Stock `ContainerFrameItemButton_OnUpdate` re-runs `OnEnter` while it owns the tooltip
 /// (`ContainerFrame.lua:645-660`); hiding the tooltip drops ownership.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hovered_bag_tooltip_fills_itself_when_the_stats_land() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -547,6 +554,7 @@ fn hovered_bag_tooltip_fills_itself_when_the_stats_land() {
 /// `ITEM_UNSELLABLE` line, and arms the sell cursor (`ShowContainerSellCursor`, `0x4fa460`);
 /// leaving resets it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn vendor_bag_hover_shows_sell_price_and_arms_the_pouch_cursor() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::{MerchantState, ScriptValue, UiCursorMode};
@@ -685,6 +693,7 @@ fn vendor_bag_hover_shows_sell_price_and_arms_the_pouch_cursor() {
 /// A readable bag item (a letter's permanent copy) shows the inspect cursor on hover
 /// (`ContainerFrame.lua:638`, `this.readable`); a plain item does not.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn readable_letter_hover_shows_the_inspect_magnifier() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::UiCursorMode;
@@ -758,6 +767,7 @@ fn readable_letter_hover_shows_the_inspect_magnifier() {
 
 /// Real input, so the template's `RegisterForDrag`/`OnDragStart`/`OnReceiveDrag` wiring runs.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn drag_across_two_slots_queues_the_same_move_a_click_pickup_would() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -844,6 +854,7 @@ fn drag_across_two_slots_queues_the_same_move_a_click_pickup_would() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_second_bag_window_feeds_and_paints_via_the_bag_bar() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -919,6 +930,7 @@ fn a_second_bag_window_feeds_and_paints_via_the_bag_bar() {
 /// `top + ((rows - 1) * 41 - 9) + 10`, where `top` is 72 for a size % 4 == 2 bag, 86 for a single
 /// full row and 94 otherwise, and a one-row bag drops the middle term.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn equipped_bag_window_snug_fits_its_row_count() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1037,6 +1049,7 @@ fn open_backpack_with_a_five_stack(s: &mut UiScript) -> (f32, f32) {
 
 /// The shift fork (`ContainerFrame.lua:567-578`) opens the split frame without a pickup.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shift_click_on_a_stack_opens_the_split_frame() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1065,6 +1078,7 @@ fn shift_click_on_a_stack_opens_the_split_frame() {
 /// with no anchors, and an anchor-less region gets an implicit `SetAllPoints` at creation, its size
 /// unread; the TexCoords crop 172×96 out of the 256×128 art.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_split_frame_plate_fills_the_dialog() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1115,6 +1129,7 @@ fn the_split_frame_plate_fills_the_dialog() {
 /// The split dialog raises over a same-stratum window shown before it, as an addon bag window is
 /// (`frameStrata="HIGH"`, the dialog's own): stock `toplevel="true"` makes its `Show` raise it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_split_frame_raises_over_a_same_stratum_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1177,6 +1192,7 @@ fn the_split_frame_raises_over_a_same_stratum_window() {
 /// Digits reach the dialog's `OnChar` (`enableKeyboard`): the first replaces the seeded 1, later
 /// ones append unless they would exceed the stack, and ENTER commits as Okay does.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn typing_a_number_into_the_split_spinner_sets_the_count() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1233,6 +1249,7 @@ fn typing_a_number_into_the_split_spinner_sets_the_count() {
 /// Okay only picks the split up (`SplitContainerItem` is a pickup); the next placement queues the
 /// move with the split count.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn split_okay_then_a_placement_queues_the_split_move() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1277,6 +1294,7 @@ fn split_okay_then_a_placement_queues_the_split_move() {
 
 /// A plain click hides an open split frame (`ContainerFrame.lua:581`), even on an unrelated slot.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_plain_click_hides_an_open_split_frame() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1300,6 +1318,7 @@ fn a_plain_click_hides_an_open_split_frame() {
 /// Stock `ContainerFrame_UpdateCooldown` reads `GetContainerItemCooldown` into
 /// `CooldownFrame_SetTimer`; a `BAG_UPDATE_COOLDOWN` with the cooldown gone hides the sweep.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bag_slot_cooldown_sweeps_through_the_xml() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1358,6 +1377,7 @@ fn bag_slot_cooldown_sweeps_through_the_xml() {
 /// binding key appended; `TOGGLEBAG` numbers the slots right to left, so the one beside the
 /// backpack is `TOGGLEBAG4` (F11 by default).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bar_bag_buttons_name_themselves_on_hover() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1509,6 +1529,7 @@ fn keyring_surface(s: &UiScript) {
 /// plate and slides the performance meter from -227 to -235 (`MainMenuBar_UpdateKeyRing`,
 /// `MainMenuBar.lua:174-183`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_first_key_puts_the_keyring_on_the_bar() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1590,6 +1611,7 @@ fn the_first_key_puts_the_keyring_on_the_bar() {
 /// The keyring button opens a container titled "Keyring", stitched from the `-Keyring` plate, with
 /// the level-gated slot count and its own sounds (`ContainerFrame.lua:116-138`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_keyring_button_opens_a_keyring_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1651,6 +1673,7 @@ fn the_keyring_button_opens_a_keyring_window() {
 /// (`ContainerFrame.lua:616-619`): `SetInventoryItem("player", KeyRingButtonIDToInvSlotID(id))`,
 /// the key's inventory slot 82 and up, answered from the keyring container.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_hovered_key_shows_its_tooltip_through_its_inventory_slot() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1696,6 +1719,7 @@ fn a_hovered_key_shows_its_tooltip_through_its_inventory_slot() {
 /// Dropping a held key on the button files it in the first free keyring slot (stock
 /// `PutKeyInKeyRing`); a full keyring refuses the drop.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_key_dropped_on_the_button_files_itself() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1779,6 +1803,7 @@ fn a_key_dropped_on_the_button_files_itself() {
 /// plays sequence 0 once; `ItemAnim_OnAnimFinished` hides it. The pane authored no size, so its
 /// rect is the file's bounding box in layout units.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_item_push_drops_its_icon_into_the_bag_that_took_it() {
     use benilla_ui::widget::{ModelFileFacts, SequenceFacts};
 
@@ -1942,6 +1967,7 @@ fn an_item_push_drops_its_icon_into_the_bag_that_took_it() {
 /// An addon that replaces the global `ToggleBackpack`, as Bagnon's `Overrides.lua` does, receives
 /// the backpack button's click and suppresses the stock toggle.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_addon_that_hooks_toggle_backpack_receives_the_click() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1991,6 +2017,7 @@ fn an_addon_that_hooks_toggle_backpack_receives_the_click() {
 /// `CharacterBag0Slot` is bag 1), and their icons the derived `$parentIconTexture`: Bagnon reads
 /// `CharacterBag0Slot`'s `OnClick`, and `Bartender2/Alias.lua:352` takes the icon's name.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bag_slots_carry_the_references_names_and_icon_names() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -2045,6 +2072,7 @@ fn the_bag_slots_carry_the_references_names_and_icon_names() {
 /// `ContainerFrame_OnShow`/`OnHide` write the ring, and stock `BackpackButton_OnClick` re-derives
 /// it after the CheckButton's own flip.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_backpack_buttons_ring_follows_its_own_window_through_real_clicks() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

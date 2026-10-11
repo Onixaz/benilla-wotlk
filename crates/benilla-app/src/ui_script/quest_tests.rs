@@ -7,6 +7,7 @@ use super::test_ui::load_ui as load_xml;
 /// Stock `QuestFrame_OnShow` and `QuestFrame_OnHide` play `igQuestListOpen` and `igQuestListClose`
 /// (`QuestFrame.lua:285`, `:294`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn questgiver_show_hide_plays_open_and_close_kits() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -66,6 +67,7 @@ fn questgiver_show_hide_plays_open_and_close_kits() {
 /// Each stock `QuestFrame*Panel_OnShow` hides its three siblings; only the window's own show and
 /// hide play a sound.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn panel_events_show_exactly_one_child_panel_and_hide_the_others() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -156,6 +158,7 @@ fn panel_events_show_exactly_one_child_panel_and_hide_the_others() {
 /// Stock `QuestFrameItems_Update` fills one pool of 10 per panel: choices, the spell row, then
 /// fixed rewards, so two choices and one reward are `Item1`, `Item2` and `Item3`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn detail_panel_reward_grid_follows_the_refs_two_per_row_layout() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -251,6 +254,7 @@ fn detail_panel_reward_grid_follows_the_refs_two_per_row_layout() {
 
 /// A reward row click selects its choice (`QuestFrame.lua:136-139`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn reward_panel_choice_click_selects_and_completes_with_zero_based_index() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -327,6 +331,7 @@ fn reward_panel_choice_click_selects_and_completes_with_zero_based_index() {
 
 /// Goodbye only hides the window, with no `DeclineQuest()` (`QuestFrame.xml:748-752`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn greeting_goodbye_button_closes_the_window() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -374,6 +379,7 @@ fn greeting_goodbye_button_closes_the_window() {
 /// Accept and Decline keep real on-window rects through the instant-text arm's one frame of
 /// disabled Accept; the test plants `QUEST_FADING_DISABLE = "1"`, the default being `"0"`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn detail_panel_action_buttons_resolve_to_real_onscreen_rects() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -496,6 +502,7 @@ fn detail_panel_action_buttons_resolve_to_real_onscreen_rects() {
 /// With the default `QUEST_FADING_DISABLE = "0"` the text writes on at 40 chars/s, scratching each
 /// tick with Accept disabled, then the block fades in (`QuestFrame.lua:5-6`, `:554-568`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn write_on_still_fades_when_instant_text_is_off() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -569,6 +576,7 @@ fn write_on_still_fades_when_instant_text_is_off() {
 /// Every quest event but `QUEST_FINISHED`, `QUEST_ITEM_UPDATE` over a shown window included,
 /// re-reads `UnitName("npc")` into the title bar (`QuestFrame.lua:26`, `:62-63`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn npc_name_reaches_the_title_bar_on_open_and_on_refresh() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -642,6 +650,7 @@ fn npc_name_reaches_the_title_bar_on_open_and_on_refresh() {
 /// A title that wraps at the row label's 275px (`QuestFrameTemplates.xml:202`) grows its row, or
 /// the rows below overlap it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn greeting_panel_title_rows_grow_to_their_wrapped_titles() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -736,6 +745,7 @@ fn greeting_panel_title_rows_grow_to_their_wrapped_titles() {
 /// link, and only a plain click selects. The ctrl arm runs last: the dressing room takes the
 /// questgiver window's left slot (`UIParent.lua:24`, `:41`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn reward_rows_preview_and_post_without_selecting_the_choice() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

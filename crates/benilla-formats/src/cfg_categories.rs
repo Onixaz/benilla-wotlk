@@ -68,6 +68,7 @@ mod tests {
 
     /// Region 1 is the US client's: "United States" and "Oceanic", ids 1 and 5, in file order.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_us_region_is_united_states_then_oceanic() {
         let Some(us) = rows(1) else { return };
         assert_eq!(
@@ -79,6 +80,7 @@ mod tests {
     /// Region 3 is Europe's four language tabs; the ids are not contiguous, so a category is
     /// matched by id, never by position.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_european_region_is_four_tabs_with_a_gap_in_the_ids() {
         let Some(eu) = rows(3) else { return };
         let ids: Vec<u32> = eu.iter().map(|(id, _)| *id).collect();
@@ -89,6 +91,7 @@ mod tests {
 
     /// No row carries Region 0, the value a client without a `Wow.ini` Region reads.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn region_zero_has_no_categories() {
         let Some(none) = rows(0) else { return };
         assert!(none.is_empty(), "{none:?}");

@@ -664,10 +664,6 @@ fn get_pvp_rank_info_takes_a_second_argument_three_different_ways() {
     assert!(s
         .eval::<bool>(r#"return GetPVPRankInfo(9, "target") == nil"#)
         .unwrap());
-
-    assert!(s
-        .eval::<Option<String>>(r#"return (GetPVPRankInfo(9, "wombat"))"#)
-        .is_err());
 }
 
 /// `0x51a930` tests `lua_isnumber` and raises: not a `(nil, 0)` edge.

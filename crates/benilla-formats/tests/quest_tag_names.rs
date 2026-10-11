@@ -4,6 +4,7 @@
 use benilla_formats::{load_quest_tag_names, open_chain};
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn quest_tag_names_are_the_whole_5875_vocabulary() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

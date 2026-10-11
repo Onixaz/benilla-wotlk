@@ -118,6 +118,7 @@ fn shown(s: &mut UiScript, name: &str) -> bool {
 /// `ToggleCharacter` selects the tab from the page's own `id=` (CharacterFrame.lua:10), and the
 /// tabs open Reputation at 3 and Skills at 4 (CharacterFrame.lua:40-43).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_reputation_page_opens_on_the_windows_third_tab() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_reputation_page();
@@ -170,6 +171,7 @@ fn the_reputation_page_opens_on_the_windows_third_tab() {
 /// the fold binding (ReputationFrame.xml:9-15), which raises `UPDATE_FACTION` as the reference's
 /// does, and that event is the pane's repaint.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_header_row_paints_its_fold_icon_and_folds_on_click() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_reputation_page();
@@ -222,6 +224,7 @@ fn a_header_row_paints_its_fold_icon_and_folds_on_click() {
 /// The bar's range is the rank window normalized, `barMax - barMin` and `barValue - barMin`
 /// (ReputationFrame.lua:79-82), which is why the binding reports all three absolute.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_bar_row_paints_name_standing_and_the_faction_bar_colour() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_reputation_page();
@@ -286,6 +289,7 @@ fn a_bar_row_paints_name_standing_and_the_faction_bar_colour() {
 
 /// The faux scroll kit re-binds the 15 fixed slots to a moving offset; nothing scrolls or clips.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_scroll_offset_rebinds_the_fixed_row_slots() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -344,6 +348,7 @@ fn the_scroll_offset_rebinds_the_fixed_row_slots() {
 /// A peace-forced faction's At War box is disabled and greyed (ReputationFrame.lua:115-121), and
 /// clicking the selected bar again closes the popup (ReputationFrame.lua:152-153).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn clicking_a_bar_opens_the_detail_popup_on_that_faction() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -447,6 +452,7 @@ fn clicking_a_bar_opens_the_detail_popup_on_that_faction() {
 /// peace-forced faction (ReputationFrame.lua:115-120). `SetState` (`0x779790`) hides the old
 /// texture only when the new state has one, so the box stays drawn, under a grey tick at war.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_at_war_box_keeps_its_art_while_it_is_disabled() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -522,6 +528,7 @@ fn the_at_war_box_keeps_its_art_while_it_is_disabled() {
 /// Below 60 the watch bar stacks on the XP bar, 8 px in its own end art; at 60 it replaces it,
 /// 13 px in the dwarf art, and the rested tick hides (ReputationFrame.lua:184-230).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_watch_bar_shows_the_watched_factions_progress_and_swaps_at_max_level() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -633,6 +640,7 @@ fn the_watch_bar_shows_the_watched_factions_progress_and_swaps_at_max_level() {
 /// index is the server field `PLAYER_FIELD_WATCHED_FACTION_INDEX`, with no client mirror
 /// (`0x4d6b60`), so the bar comes up only when the descriptor update lands.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_show_as_experience_bar_box_sends_the_watch_and_the_server_brings_the_bar_up() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_reputation_page();

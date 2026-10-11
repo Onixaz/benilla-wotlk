@@ -331,6 +331,7 @@ mod tests {
 
     /// The `0x67e670` override skip (abbey) and fire (inn) branches on the install's data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn indoor_naming_matches_the_byte_law_on_real_data() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("chain");

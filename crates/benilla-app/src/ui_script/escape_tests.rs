@@ -41,6 +41,7 @@ fn one_item_backpack() -> ContainerState {
 /// `CloseAllWindows` (`UIParent.lua:1491`) closes the bag and the loot panel, whose `OnHide`
 /// releases the loot; with no edit box focused the key is left to the binding.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn escape_closes_bag_and_panel_releases_loot_and_keeps_the_held_item() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -124,6 +125,7 @@ fn escape_closes_bag_and_panel_releases_loot_and_keeps_the_held_item() {
 /// A focused edit box consumes ESC, so the binding never runs; the chat box's `OnEscapePressed`
 /// clears its focus.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn escape_is_consumed_by_a_focused_editbox_and_leaves_windows_open() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -169,6 +171,7 @@ fn escape_is_consumed_by_a_focused_editbox_and_leaves_windows_open() {
 
 /// The options rung (`UIParent.lua:1483-1484`) eats the press, so the menu opens only on the next.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn escape_closes_the_options_window_before_opening_the_menu() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -222,6 +225,7 @@ fn escape_closes_the_options_window_before_opening_the_menu() {
 /// `CloseAllWindows` hides the bag, and the item button's `OnHide` hides the split frame it opened
 /// (`ContainerFrame.xml:35-39`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn escape_closes_an_open_stack_split_frame() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -302,6 +306,7 @@ fn escape_closes_an_open_stack_split_frame() {
 /// One rung eats each press, in stock order (`UIParent.lua:1482-1496`): menus, the cast, the
 /// windows, then the target. Each binding answers 1 only when it acted.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn escape_ladder_cast_then_windows_then_target_one_eater_per_press() {
     use benilla_ui::script::UnitState;
 
@@ -409,6 +414,7 @@ fn escape_ladder_cast_then_windows_then_target_one_eater_per_press() {
 /// The `SpellStopTargeting` rung (`UIParent.lua:1490`) sits after the cast rung and before the
 /// windows; idle, both answer nil.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn escape_ladder_targeting_rung_after_cast_before_windows() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -473,6 +479,7 @@ fn escape_ladder_targeting_rung_after_cast_before_windows() {
 /// `tinsert(UISpecialFrames, name)` is the 1.12 addon idiom for closing on ESC; stock
 /// `CloseWindows` gives each a plain `Hide`, as they hold no panel slot (`UIParent.lua:947-954`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_addon_frame_registered_in_uispecialframes_closes_on_escape() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

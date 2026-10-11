@@ -23,7 +23,7 @@ fn player() -> UnitState {
     }
 }
 
-/// `0x6e6d90`'s order: the `Usage:` check, the not-targeting no-op, the token check, the queue.
+/// `0x6e6d90`'s order: the `Usage:` check, the not-targeting no-op, the queue.
 #[test]
 fn spell_target_unit_checks_in_the_references_order() {
     let mut s = UiScript::new().unwrap();
@@ -42,14 +42,9 @@ fn spell_target_unit_checks_in_the_references_order() {
         .expect("a bad token is no error while not targeting");
     assert!(s.take_spell_target_unit().is_empty(), "and nothing queues");
 
-    // Targeting: an unknown token raises, a known one queues, resolved or not.
+    // Targeting: a known token queues, resolved or not.
     s.set_spell_targeting(true);
     usage(&mut s, "SpellTargetUnit(nil)");
-    let err = s
-        .run(r#"SpellTargetUnit("not-a-unit")"#)
-        .expect_err("an unknown token while targeting")
-        .to_string();
-    assert!(err.contains("Unknown unit name: not-a-unit"), "{err}");
     s.run(r#"SpellTargetUnit("player") SpellTargetUnit("party1")"#)
         .unwrap();
     assert_eq!(
@@ -804,11 +799,10 @@ fn unit_affecting_combat_is_one_or_nil_and_hides_the_missing_unit() {
             .unwrap(),
         "an unresolvable token is the SAME nil a peaceful unit gives"
     );
-    // A number passes the gate (`0x6f3510`) as the token "5", which matches no prefix and raises.
-    assert!(
-        s.run("UnitAffectingCombat(5)").is_err(),
-        "a number is coerced to a token that matches nothing, so it raises"
-    );
+    // A number passes the gate (`0x6f3510`) as the token "5", which matches no prefix: nobody.
+    assert!(s
+        .eval::<bool>("return UnitAffectingCombat(5) == nil")
+        .unwrap());
 }
 
 /// The usage raise is `luaL_error` (`0x6f4940`), which does not return.
@@ -958,8 +952,7 @@ fn unit_is_plus_mob_reads_the_flag_bit_and_not_the_rank() {
         "no bit, no plus mob — a neighbouring flag (player-controlled) must not read as one"
     );
 
-    // One of the 13 with no `lua_isstring` gate: nil is quiet, and an unrecognised token raises
-    // through the resolver (`0x515940`).
+    // One of the 13 with no `lua_isstring` gate: nil is quiet, and so is an unrecognised token.
     assert!(s.run("UnitIsPlusMob()").is_ok(), "nil token stays quiet");
     assert!(
         s.run("UnitIsPlusMob(nil)").is_ok(),
@@ -971,11 +964,9 @@ fn unit_is_plus_mob_reads_the_flag_bit_and_not_the_rank() {
             .is_none(),
         "recognised but naming nothing — nil, not a raise"
     );
-    let err = s.run(r#"UnitIsPlusMob("bogus")"#).unwrap_err().to_string();
-    assert!(
-        err.contains("Unknown unit name: bogus"),
-        "an unrecognised token raises the resolver's own text: {err}"
-    );
+    assert!(s
+        .eval::<bool>(r#"return UnitIsPlusMob("bogus") == nil"#)
+        .unwrap());
 }
 
 /// The resolver (`0x515970`) compares every literal with `_strnicmp`, folding ASCII case.
@@ -1053,24 +1044,20 @@ fn seating_a_token_folds_its_key_too() {
     );
 }
 
-/// `0x515970` ends its nine compares in `luaL_error(L, "Unknown unit name: %s")`.
+/// An unrecognised token names nobody, as a recognised empty one does: the resolver raises for
+/// none.
 #[test]
-fn an_unrecognised_unit_token_raises_and_a_recognised_empty_one_does_not() {
+fn an_unrecognised_unit_token_is_quiet_like_a_recognised_empty_one() {
     let mut s = UiScript::new().unwrap();
     s.set_unit("player", Some(player()));
 
-    for bogus in ["bogus", "focus", "boss1", "arena1"] {
-        let err = s
-            .run(&format!(r#"UnitName("{bogus}")"#))
-            .expect_err(&format!("{bogus} must raise"))
-            .to_string();
+    for bogus in ["bogus", "focus", "boss1", "arena1", "npctarget"] {
         assert!(
-            err.contains(&format!("Unknown unit name: {bogus}")),
-            "the raise carries the client's own text and the offending token: {err}"
+            s.eval::<bool>(&format!(r#"return UnitName("{bogus}") == nil"#))
+                .unwrap(),
+            "{bogus}"
         );
     }
-    // `npc` is the one full-string compare, so a suffix on it matches nothing.
-    assert!(s.run(r#"UnitName("npctarget")"#).is_err());
     assert!(s.run(r#"UnitName("NPC")"#).is_ok());
 
     for absent in [
@@ -1106,9 +1093,9 @@ fn an_unrecognised_unit_token_raises_and_a_recognised_empty_one_does_not() {
     // own gate (`0x517048`).
     assert!(s.run("UnitName()").is_err(), "absent argument raises");
     assert!(s.run("UnitName(nil)").is_err(), "nil argument raises");
-    // A number passes the gate as "5" and raises the resolver's message instead.
+    // A number passes the gate as "5" and names nobody.
     assert!(
-        s.run("UnitName(5)").is_err(),
+        s.run("UnitName(5)").is_ok(),
         "a number reaches the resolver"
     );
 
@@ -1120,28 +1107,25 @@ fn an_unrecognised_unit_token_raises_and_a_recognised_empty_one_does_not() {
         );
     }
 
-    // A two-unit call checks both tokens.
-    assert!(s.run(r#"UnitIsUnit("player", "bogus")"#).is_err());
-    assert!(s.run(r#"UnitIsUnit("bogus", "player")"#).is_err());
+    // A two-unit call with an unknown token names nobody on that side.
+    assert!(s.run(r#"UnitIsUnit("player", "bogus")"#).is_ok());
+    assert!(s.run(r#"UnitIsUnit("bogus", "player")"#).is_ok());
     assert!(s.run(r#"UnitIsUnit("player", "party3")"#).is_ok());
 }
 
 /// The resolver compares bytes with an ASCII fold, so a non-ASCII token matches no prefix and
-/// raises, where slicing it as a `str` would panic mid-character.
+/// names nobody, where slicing it as a `str` would panic mid-character.
 #[test]
-fn a_multibyte_unit_token_raises_rather_than_panicking() {
+fn a_multibyte_unit_token_names_nobody_rather_than_panicking() {
     let mut s = UiScript::new().unwrap();
     s.set_unit("player", Some(player()));
 
     // Each puts a multibyte character across a prefix length: 3, 4, 5 or 6 bytes.
     for token in ["pé", "раid", "playér", "targét", "мышь", "日本語のトークン"] {
-        let err = s
-            .run(&format!(r#"UnitName("{token}")"#))
-            .expect_err("a non-ASCII token matches no prefix, so it raises")
-            .to_string();
         assert!(
-            err.contains("Unknown unit name"),
-            "it must RAISE, not panic and not answer: {err}"
+            s.eval::<bool>(&format!(r#"return UnitName("{token}") == nil"#))
+                .unwrap(),
+            "{token}"
         );
     }
     assert!(s
@@ -1382,7 +1366,7 @@ fn unit_is_party_leader_ors_two_legs_and_answers_one_when_solo() {
         "...and so does a token with no snapshot, by the same route"
     );
 
-    assert!(s.run(r#"UnitIsPartyLeader("notatoken")"#).is_err());
+    assert!(s.run(r#"UnitIsPartyLeader("notatoken")"#).is_ok());
 }
 
 /// `GetDamageBonusStat()` (`0x48b520`) is the player's class row's field 2 plus one, 0 with no
@@ -1979,30 +1963,20 @@ fn an_unseeded_player_record_answers_the_references_four_ways() {
     );
 }
 
-/// 3.3.5a's resolver raises for no token: `focus` and `boss1`..`boss4`, which it knows, and any
-/// other read as nobody until the app pushes them. 1.12.1's raises `Unknown unit name`.
+/// The resolver raises for no token: `focus` and `boss1`..`boss4`, which it knows, and any other
+/// read as nobody until the app pushes them.
 #[test]
-fn a_wotlk_unit_token_the_resolver_lacks_reads_empty_and_classic_still_raises() {
+fn a_unit_token_the_resolver_lacks_reads_empty() {
     let probe = "local out = {} \
         for _, u in ipairs({ 'focus', 'boss1', 'boss2', 'boss3', 'boss4', 'focustarget', 'bogus' }) do \
             if UnitExists(u) or UnitHealth(u) ~= 0 or UnitName(u) ~= nil or UnitBuff(u, 1) ~= nil \
                 or SpellCanTargetUnit(u) then out[#out + 1] = u end \
         end \
         return table.concat(out, ',')";
-    let wotlk = UiScript::new_for(benilla_expansions::Expansion::Wotlk).unwrap();
+    let wotlk = UiScript::new().unwrap();
     assert_eq!(
         wotlk.eval::<String>(probe).unwrap(),
         "",
         "every one reads empty"
     );
-
-    let classic = UiScript::new_for(benilla_expansions::Expansion::Classic).unwrap();
-    for call in [
-        "UnitExists('focus')",
-        "UnitBuff('boss1', 1)",
-        "SpellCanTargetUnit('focus')",
-    ] {
-        let err = classic.run(call).unwrap_err().to_string();
-        assert!(err.contains("Unknown unit name: "), "{call}: {err}");
-    }
 }

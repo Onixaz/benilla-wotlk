@@ -21,7 +21,6 @@ clap.workspace = true
 benilla-adt = { path = "../benilla-adt" }
 benilla-bytes = { path = "../benilla-bytes" }
 benilla-dbc = { path = "../benilla-dbc" }
-benilla-expansions = { path = "../benilla-expansions" }
 benilla-m2 = { path = "../benilla-m2" }
 benilla-mpq = { path = "../benilla-mpq" }
 benilla-blp = { path = "../benilla-blp" }

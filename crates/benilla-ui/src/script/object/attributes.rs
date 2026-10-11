@@ -17,9 +17,6 @@ const REG_ATTRIBUTES: &str = "__benilla_attributes";
 /// Add `SetAttribute` and `GetAttribute` to the shared frame method table `m`, on a target that
 /// has them.
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
-    if !lua.app_data_ref::<Model>().expect("model").frame_attributes {
-        return Ok(());
-    }
     lua.set_named_registry_value(REG_ATTRIBUTES, lua.create_table()?)?;
     // `0x49f610`: a non-string name raises its usage line; any value, nil included, is stored.
     m.set(
@@ -127,35 +124,22 @@ fn set_attribute(lua: &Lua, this: &Table, name: &str, value: Value) -> mlua::Res
 
 #[cfg(test)]
 mod tests {
-    use benilla_expansions::Expansion;
-
     use crate::script::UiScript;
 
-    fn ui(expansion: Expansion, src: &str) -> UiScript {
-        let ui = UiScript::new_for(expansion).unwrap();
+    fn ui(src: &str) -> UiScript {
+        let ui = UiScript::new().unwrap();
         ui.run(src).unwrap();
         ui
     }
 
     #[test]
-    fn classic_frames_have_no_attribute_store() {
-        let ui = ui(Expansion::Classic, "F = CreateFrame('Frame')");
-        assert!(ui
-            .eval::<bool>("return F.SetAttribute == nil and F.GetAttribute == nil")
-            .unwrap());
-    }
-
-    #[test]
     fn a_name_matches_case_insensitively_and_nil_clears() {
-        let ui = ui(
-            Expansion::Wotlk,
-            "local f = CreateFrame('Frame')
+        let ui = ui("local f = CreateFrame('Frame')
              f:SetAttribute('chatType', 'SAY')
              A = f:GetAttribute('CHATTYPE')
              f:SetAttribute('ChatType', nil)
              B = f:GetAttribute('chatType') == nil
-             C = CreateFrame('Frame'):GetAttribute('chatType') == nil",
-        );
+             C = CreateFrame('Frame'):GetAttribute('chatType') == nil");
         assert_eq!(ui.eval::<String>("return A").unwrap(), "SAY");
         assert!(ui.eval::<bool>("return B").unwrap());
         assert!(
@@ -166,11 +150,8 @@ mod tests {
 
     #[test]
     fn the_three_name_form_tries_the_wildcards_in_the_references_order() {
-        let ui = ui(
-            Expansion::Wotlk,
-            "F = CreateFrame('Frame')
-             F:SetAttribute('type', 'plain')",
-        );
+        let ui = ui("F = CreateFrame('Frame')
+             F:SetAttribute('type', 'plain')");
         let get = |src: &str| ui.eval::<Option<String>>(src).unwrap();
         let modified = "return F:GetAttribute('shift-', 'type', '1')";
         assert_eq!(get(modified).as_deref(), Some("plain"));
@@ -188,36 +169,21 @@ mod tests {
 
     #[test]
     fn a_store_fires_on_attribute_changed_with_the_name_lowercased() {
-        let ui = ui(
-            Expansion::Wotlk,
-            "local f = CreateFrame('Frame')
+        let ui = ui("local f = CreateFrame('Frame')
              f:SetScript('OnAttributeChanged', function(self, name, value)
                  SELF = self == f; NAME = name; VALUE = value
              end)
-             f:SetAttribute('Panel-Show', 7)",
-        );
+             f:SetAttribute('Panel-Show', 7)");
         assert!(ui.eval::<bool>("return SELF").unwrap());
         assert_eq!(ui.eval::<String>("return NAME").unwrap(), "panel-show");
         assert_eq!(ui.eval::<f64>("return VALUE").unwrap(), 7.0);
     }
 
     #[test]
-    fn the_extra_script_kinds_are_the_targets_own() {
-        let classic = ui(
-            Expansion::Classic,
-            "local f = CreateFrame('Frame')
-             R = pcall(f.SetScript, f, 'OnAttributeChanged', function() end)",
-        );
-        assert!(
-            !classic.eval::<bool>("return R").unwrap(),
-            "1.12.1 has no such slot"
-        );
-        let wotlk = ui(
-            Expansion::Wotlk,
-            "local e = CreateFrame('EditBox')
+    fn the_extra_script_kinds_take_a_handler() {
+        let ui = ui("local e = CreateFrame('EditBox')
              e:SetScript('OnInputLanguageChanged', function() end)
-             R = e:GetScript('OnInputLanguageChanged') ~= nil",
-        );
-        assert!(wotlk.eval::<bool>("return R").unwrap());
+             R = e:GetScript('OnInputLanguageChanged') ~= nil");
+        assert!(ui.eval::<bool>("return R").unwrap());
     }
 }

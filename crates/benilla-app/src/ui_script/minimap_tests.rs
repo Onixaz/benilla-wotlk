@@ -11,6 +11,7 @@ fn enabled(s: &UiScript, button: &str) -> bool {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn minimap_zoom_buttons_resync_when_switching_inside_and_outside() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -73,6 +74,7 @@ fn minimap_zoom_buttons_resync_when_switching_inside_and_outside() {
 /// Stock `MiniMapTrackingFrame` (`Minimap.xml:109-174`) follows `GetTrackingTexture()` on
 /// `PLAYER_AURAS_CHANGED`, which the aura feed fires beside `UNIT_AURA`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn tracking_frame_follows_get_tracking_texture_across_player_auras_changed() {
     let _data = benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::TrackingState;
@@ -152,6 +154,7 @@ fn tod_window(s: &UiScript) -> (f64, f64, f64, f64) {
 /// Stock `GameTimeFrame_Update` slides the 50px window +0.5 onto the moon when
 /// `time < DAWN or time >= DUSK`, 5:30 and 21:00 (`GameTime.lua:2-18`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn game_time_frame_slides_the_sun_moon_window_on_the_game_clock() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = game_time_session(10, 30);
@@ -178,6 +181,7 @@ fn game_time_frame_slides_the_sun_moon_window_on_the_game_clock() {
 /// `GameTimeFrame` declares no `enableMouse`: its `<Scripts>` enable the mouse, and its
 /// `<HitRectInsets>` trim the hit rect (`GameTime.xml:15-17`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hovering_the_indicator_shows_and_live_updates_the_game_time_tooltip() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = game_time_session(21, 7);
@@ -218,6 +222,7 @@ fn hovering_the_indicator_shows_and_live_updates_the_game_time_tooltip() {
 
 /// A real click reaches `Minimap_OnClick` via `OnMouseUp` and parks centre-relative UI units.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_click_on_the_minimap_parks_a_centre_relative_ping_request() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -265,6 +270,7 @@ fn a_click_on_the_minimap_parks_a_centre_relative_ping_request() {
 /// The reference answers from statics nothing clears (`0x4eefd0`), and stock `Minimap_OnUpdate`
 /// uses the pair with no nil test; here it is the app's last publish, `(0, 0)` before any.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn get_ping_position_answers_two_numbers_always() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -339,6 +345,7 @@ fn get_ping_position_answers_two_numbers_always() {
 
 /// Stock `MiniMapMeetingStoneFrame` follows `IsInMeetingStoneQueue()` on `MEETINGSTONE_CHANGED`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_meeting_stone_icon_follows_the_queue_across_meetingstone_changed() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -402,6 +409,7 @@ fn the_meeting_stone_icon_follows_the_queue_across_meetingstone_changed() {
 /// A shown ping pane publishes one tile request and no quad; once the renderer hands back a cell,
 /// the cell draws every frame in the overlay lane, even when nothing in the interface moves.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_shown_ping_pane_asks_for_a_tile_and_draws_its_cell() {
     use bevy::prelude::*;
     use bevy::window::PrimaryWindow;

@@ -487,24 +487,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             set_label(lua, &this, text)
         })?,
     )?;
-    if lua
-        .app_data_ref::<Model>()
-        .expect("model app_data")
-        .set_formatted_text
-    {
-        // 3.3.5a's `Button:SetFormattedText(fmt, ...)` (`0x9779b0`). Its setter (`0x96f860`)
-        // creates no label for an empty string.
-        m.set(
-            "SetFormattedText",
-            lua.create_function(|lua, (this, args): (Table, MultiValue)| {
-                let text = super::formatted_text::format(lua, &args)?;
-                if text.is_empty() && with_button(lua, &this, |bs| bs.text)?.is_none() {
-                    return Ok(());
-                }
-                set_label(lua, &this, text)
-            })?,
-        )?;
-    }
+    // 3.3.5a's `Button:SetFormattedText(fmt, ...)` (`0x9779b0`). Its setter (`0x96f860`)
+    // creates no label for an empty string.
+    m.set(
+        "SetFormattedText",
+        lua.create_function(|lua, (this, args): (Table, MultiValue)| {
+            let text = super::formatted_text::format(lua, &args)?;
+            if text.is_empty() && with_button(lua, &this, |bs| bs.text)?.is_none() {
+                return Ok(());
+            }
+            set_label(lua, &this, text)
+        })?,
+    )?;
     // GetText (`0x780e10`): nil for no label, and for an empty one (`0x780ec5`).
     m.set(
         "GetText",

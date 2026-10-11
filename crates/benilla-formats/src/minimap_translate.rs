@@ -97,6 +97,7 @@ mod tests {
 
     /// The 5875 file: an Azeroth tile resolves to a hash that reads as a 256×256 BLP.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_md5translate_resolves_azeroth_tile_and_hash_is_readable() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

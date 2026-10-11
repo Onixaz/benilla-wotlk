@@ -57,9 +57,6 @@ fn stdlib_aliases_and_helpers() {
         tremove(t, 1)
         assert(t[1] == 20)
 
-        -- and the six 2.0 names that are NOT here
-        assert(wipe == nil and tostringall == nil)
-        assert(strsplit == nil and strjoin == nil and strconcat == nil and strtrim == nil)
     "#,
     )
     .unwrap();
@@ -183,31 +180,11 @@ fn debugstack_frames_end_in_newline_and_count1_does_not_clamp() {
     assert_eq!(lines[1], "...", "the marker is its own complete line");
 }
 
-/// An addon chunk is named as the reference names it, `@Interface\AddOns\<folder>\<file>`:
-/// `FuBarPlugin-2.0.lua:752` finds its folder with a greedy `"\\AddOns\\(.*)\\"`, which captures
-/// up to the last backslash, so the file must be in the name.
+/// An addon chunk is named as the reference names it, `@Interface\AddOns\<folder>\<file>`.
 #[test]
 fn an_addon_chunk_is_named_the_way_the_client_names_it() {
     let name = crate::script::addon_chunk_name("FuBar_BagFu", "FuBar_BagFu.lua");
     assert_eq!(name, "@Interface\\AddOns\\FuBar_BagFu\\FuBar_BagFu.lua");
-
-    // FuBar's own pattern, against a traceback from a chunk loaded under that name.
-    let s = script();
-    s.run_chunk_named(
-        b"function BenillaProbeFolder() return debugstack(1, 1, 0) end",
-        &name,
-    )
-    .unwrap();
-    let folder: String = s
-        .eval(
-            "local _, _, f = string.find(BenillaProbeFolder(), \"\\\\AddOns\\\\(.*)\\\\\") \
-             return f or '<no match>'",
-        )
-        .unwrap();
-    assert_eq!(
-        folder, "FuBar_BagFu",
-        "FuBarPlugin's own capture must yield the folder name"
-    );
 
     // A nested path in the manifest keeps its separators as backslashes.
     assert_eq!(
@@ -256,11 +233,6 @@ fn the_rest_of_the_bare_globals() {
         -- string family
         assert(strbyte("A") == 65 and strchar(65) == "A")
 
-        -- and the Era-only names are NOT here either: the 5.0 client has no
-        -- string.match/gmatch, and claiming otherwise misleads an addon that feature-detects.
-        assert(strmatch == nil and gmatch == nil and strrev == nil)
-        assert(strlenutf8 == nil and strcmputf8i == nil)
-        assert(securecall == nil and hooksecurefunc == nil and issecure == nil)
 
         -- math family
         assert(exp(0) == 1 and log(1) == 0 and log10(100) == 2)

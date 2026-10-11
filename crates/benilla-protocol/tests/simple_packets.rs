@@ -9,7 +9,9 @@ use common::hx;
 
 #[test]
 fn simple_server_bodies_parse() {
-    match messages::parse_server(messages::opcode::SMSG_AUTH_CHALLENGE, &hx("efbeadde")).unwrap() {
+    let mut challenge = hx("01000000efbeadde");
+    challenge.extend_from_slice(&[0xAB; 32]);
+    match messages::parse_server(messages::opcode::SMSG_AUTH_CHALLENGE, &challenge).unwrap() {
         ServerPacket::AuthChallenge { server_seed } => assert_eq!(server_seed, 0xDEAD_BEEF),
         _ => panic!("auth challenge"),
     }
@@ -28,10 +30,12 @@ fn simple_server_bodies_parse() {
         _ => panic!("new world"),
     }
     // SMSG_LOGIN_SETTIMESPEED: packed date (LSB up: minute:6, hour:5, weekday:3, day:6, month:4,
-    // year:5) then f32 timescale. The day serial counts 31-day months: year·372 + month·31 + day.
+    // year:5), f32 timescale, then a `u32` 0. The day serial counts 31-day months:
+    // year·372 + month·31 + day.
     let datetime: u32 = (26 << 24) | (6 << 20) | (17 << 14) | (14 << 6) | 30;
     let mut ts = datetime.to_le_bytes().to_vec();
     ts.extend_from_slice(&0.0166_6667f32.to_le_bytes());
+    ts.extend_from_slice(&0u32.to_le_bytes());
     match messages::parse_server(messages::opcode::SMSG_LOGIN_SETTIMESPEED, &ts).unwrap() {
         ServerPacket::TimeSpeed {
             hours,
@@ -127,28 +131,6 @@ fn server_sound_trio_parse_and_decode() {
             guid: 0xF110_0000_0000_002A,
         }]
     ));
-}
-
-/// Body per vmangos `Weather::SendWeatherForPlayersInZone`; 8534 is the RainMedium sound loop.
-#[test]
-fn weather_parses_and_decodes() {
-    let mut body = 1u32.to_le_bytes().to_vec(); // WEATHER_TYPE_RAIN
-    body.extend_from_slice(&0.7f32.to_le_bytes());
-    body.extend_from_slice(&8534u32.to_le_bytes());
-    body.push(0);
-    let p = messages::parse_server(messages::opcode::SMSG_WEATHER, &body).unwrap();
-    match decode(p).as_slice() {
-        [SessionEvent::Weather {
-            weather_type,
-            grade,
-            sound_id,
-            instant,
-        }] => {
-            assert_eq!((*weather_type, *sound_id, *instant), (1, 8534, false));
-            assert!((grade - 0.7).abs() < 1e-6);
-        }
-        other => panic!("weather decode: {} events", other.len()),
-    }
 }
 
 /// u8 itemClass + u32 subclass bitmask, per vmangos `Skill.cpp` `AppendBodyTo`.

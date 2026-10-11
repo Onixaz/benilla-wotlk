@@ -89,7 +89,7 @@ fn main() -> anyhow::Result<()> {
     println!("{model}  pin in model space {pm:?}");
     let stem = model.trim_end_matches(".wmo").to_string();
     let root = benilla_formats::parse_wmo_root(&chain.read_file(&format!("{stem}.wmo"))?)?;
-    let rule = benilla_formats::WmoLiquidRule::for_root(chain.expansion(), &root);
+    let rule = benilla_formats::WmoLiquidRule::for_root(&root);
 
     let mut surfaces: Vec<(usize, benilla_formats::LiquidMesh, u32)> = Vec::new();
     for (gi, info) in root.group_infos().iter().enumerate() {

@@ -306,7 +306,7 @@ pub(in crate::ui_party) mod tests {
                                      "UNIT_NAME_UPDATE" }) do
                     f:RegisterEvent(e)
                 end
-                f:SetScript("OnEvent", function()
+                f:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
                     table.insert(SEEN, event .. ":" .. tostring(arg1))
                 end)
                 "#,
@@ -854,6 +854,7 @@ pub(in crate::ui_party) mod tests {
     /// once `UnitExists("partypet1")` answers (`PartyMemberFrame.lua:73`), and hides it on the
     /// `UNIT_PET` that names the member (`PartyMemberFrame.lua:189`).
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_stock_party_frame_shows_and_hides_its_pet_frame() {
         benilla_formats::wow_data_or_skip!();
         let mut script = UiScript::new().unwrap();

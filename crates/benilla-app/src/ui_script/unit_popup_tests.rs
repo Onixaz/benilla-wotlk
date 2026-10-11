@@ -85,6 +85,7 @@ fn bake_strings(s: &UiScript) {
 /// Right-clicking a chat player name opens the FRIEND dropdown (`FriendsFrame_ShowDropdown`),
 /// whose Invite invites by name; a left-click on the name whispers instead.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn chat_name_right_click_opens_the_invite_menu() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -161,6 +162,7 @@ fn chat_name_right_click_opens_the_invite_menu() {
 
 /// Solo, right-clicking a friendly player target opens the PLAYER menu; Invite invites the unit.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn solo_target_right_click_invites_a_player() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -255,6 +257,7 @@ fn solo_target_right_click_invites_a_player() {
 
 /// Clicking the Trade row calls `InitiateTrade("target")` (`UnitPopup.lua:544`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn solo_target_trade_click_queues_an_initiate() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -319,6 +322,7 @@ fn solo_target_trade_click_queues_an_initiate() {
 /// Clicking Follow calls `FollowByName("Ally", 1)` (`UnitPopup.lua:623`): the `1` asks for an
 /// exact match, so the menu never prefix-matches onto a bystander as `/follow rag` may.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn solo_target_follow_click_queues_an_exact_by_name_follow() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -385,6 +389,7 @@ fn solo_target_follow_click_queues_an_exact_by_name_follow() {
 /// Clicking Inspect calls `InspectUnit("target")` (`UnitPopup.lua:552`), stubbed here;
 /// `inspect_tests.rs` covers the window.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn solo_target_inspect_click_reaches_inspect_unit() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -572,6 +577,7 @@ fn right_click_the_pet_frame(s: &mut UiScript) {
 /// A hunter's pet shows Abandon and hides Dismiss, a warlock's demon the reverse:
 /// `PetCanBeAbandoned` forks the menu (`UnitPopup.lua:402-417`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_pet_menu_forks_between_abandon_and_dismiss() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -640,6 +646,7 @@ fn the_pet_menu_forks_between_abandon_and_dismiss() {
 
 /// Dismiss sends at once; Abandon waits behind the `ABANDON_PET` confirm (`UnitPopup.lua:590-593`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn dismiss_sends_immediately_and_abandon_waits_for_the_confirm() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -692,6 +699,7 @@ fn dismiss_sends_immediately_and_abandon_waits_for_the_confirm() {
 /// `:365`), and only the confirm sends. The confirm opens while the name dialog is still up, so
 /// it lands in the second popup instance.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn renaming_a_pet_reads_the_name_back_before_sending_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -743,6 +751,7 @@ fn renaming_a_pet_reads_the_name_back_before_sending_it() {
 
 /// The Pet Details row calls `ToggleCharacter("PetPaperDollFrame")` (`UnitPopup.lua:594-595`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_pet_details_row_opens_the_pet_paper_doll() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

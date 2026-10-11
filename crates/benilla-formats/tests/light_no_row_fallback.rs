@@ -10,6 +10,7 @@ const MAP_DEEPRUN_TRAM: u32 = 369;
 const NOON: u32 = 1440;
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn deeprun_tram_takes_light_record_1_not_an_invented_default() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = Chain::open(&data).expect("open vanilla patch chain");
@@ -78,6 +79,7 @@ fn deeprun_tram_takes_light_record_1_not_an_invented_default() {
 /// Seven maps have positioned rows but no `(0,0,0)` global: the reference fills slots 1.. and
 /// leaves slot 0 unwritten, an effect not traced, so they stay out of the record-1 fallback.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn maps_with_positioned_rows_but_no_global_are_left_alone() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = Chain::open(&data).expect("open vanilla patch chain");

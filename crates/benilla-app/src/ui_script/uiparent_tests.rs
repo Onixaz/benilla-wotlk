@@ -25,6 +25,7 @@ fn ui_parent() -> UiScript {
 /// Stock `MouseIsOver` (`UIParent.lua:1388`) adds each offset to its edge, zeroes all four on a
 /// nil `topOffset`, and tests strictly, so a cursor on an edge is outside.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn mouse_is_over_is_the_references_own_box_test() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui_parent();
@@ -100,6 +101,7 @@ fn raise_and_lower_frame_level_step_the_frames_own_level() {
 
 /// `randomseed` is an engine global in 1.12 beside `random`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn randomseed_is_a_bare_global_like_random() {
     benilla_formats::wow_data_or_skip!();
     let s = ui_parent();
@@ -115,6 +117,7 @@ fn randomseed_is_a_bare_global_like_random() {
 
 /// `MouseIsOver` returns nil for a frame with no `GetLeft()` (`UIParent.lua:1405`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn mouse_is_over_survives_a_frame_with_no_resolved_rect() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui_parent();
@@ -135,6 +138,7 @@ fn mouse_is_over_survives_a_frame_with_no_resolved_rect() {
 /// Addons walk `RAID_CLASS_COLORS` (`Fonts.xml:43`) with `pairs` and index it by the class file
 /// token, `UnitClass`'s second return.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn raid_class_colors_is_the_references_own_nine() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -176,6 +180,7 @@ fn raid_class_colors_is_the_references_own_nine() {
 
 /// The four font-path globals (`Fonts.xml:4-7`) and every other global `Fonts.xml:4-20` assigns.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_font_path_globals_are_the_references_own_four() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -240,6 +245,7 @@ fn the_font_path_globals_are_the_references_own_four() {
 
 /// `MouseIsOver` divides the cursor by the frame's effective scale (`UIParent.lua:1389`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn mouse_is_over_reads_a_scaled_frame_in_its_own_units() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui_parent();

@@ -12,6 +12,7 @@ use benilla_formats::{load_m2_bounds, open_chain};
 const PIVOT_BASE: f32 = 0.0972;
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_swim_preset_is_the_stand_minus_swim_sequence_box_delta() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open chain");
@@ -37,6 +38,7 @@ fn the_swim_preset_is_the_stand_minus_swim_sequence_box_delta() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_drop_is_per_model_and_zero_for_a_body_with_no_swim_sequence() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open chain");

@@ -747,6 +747,7 @@ mod tests {
 
     /// Row 2 is the melee family, 114 Auto Shot's 8-35, 95 Charge's 8-25.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_spell_ranges_read_the_byte_laws_rows() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

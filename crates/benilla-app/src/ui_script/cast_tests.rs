@@ -41,6 +41,7 @@ fn tex_quad<'a>(quads: &'a [ExtractedQuad], leaf: &str) -> Option<&'a ExtractedQ
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn cast_fills_then_completes_green_and_fades() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -89,6 +90,7 @@ fn cast_fills_then_completes_green_and_fades() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_hit_pushes_the_bar_back_it_does_not_cancel() {
     benilla_formats::wow_data_or_skip!();
     // Pushback (`SMSG_SPELL_DELAYED` fires `SPELLCAST_DELAYED`) slides the window out and never
@@ -133,6 +135,7 @@ fn a_hit_pushes_the_bar_back_it_does_not_cancel() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn failed_cast_turns_red_holds_then_fades() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -166,6 +169,7 @@ fn failed_cast_turns_red_holds_then_fades() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn channel_counts_down_not_up() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -229,6 +233,7 @@ fn channel_counts_down_not_up() {
 /// `OnUpdate` clamps at `endTime` and fades with no green flash, and the late stop lands on a
 /// hidden frame, which both stop-arm guards ignore.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_finished_channel_fades_on_its_own_clock_and_the_late_stop_is_inert() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -281,6 +286,7 @@ const FILL: &str = "UI-StatusBar";
 /// The completion flash, an additive texture over the whole frame, stays hidden through the cast:
 /// every casting `OnUpdate` hides it (`CastingBarFrame.lua:109`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_flash_stays_hidden_for_the_whole_cast() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -306,6 +312,7 @@ fn the_flash_stays_hidden_for_the_whole_cast() {
 /// (0.2), once per frame whatever its length (`CastingBarFrame.lua:132-139`). The spark hides, and
 /// the frame stays opaque until the ramp ends.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_flash_blooms_from_zero_only_on_completion() {
     benilla_formats::wow_data_or_skip!();
     const REF_TICK: f32 = 1.0 / 30.0; // any frame time: the ramp steps once per OnUpdate
@@ -358,6 +365,7 @@ fn a_failed_cast_never_flashes() {
 /// `drawLayer="BORDER"` on the `<StatusBar>` (`CastingBarFrame.xml:4`) draws the fill under the
 /// ARTWORK border art.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_fill_draws_beneath_the_border_art() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -379,6 +387,7 @@ fn the_fill_draws_beneath_the_border_art() {
 /// A StatusBar fill crops its texture rather than squeezing it (`0x770410`): at fraction f the
 /// quad is f of the width and samples u in [0, f].
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_fill_crops_its_texture_rather_than_stretching_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -420,6 +429,7 @@ fn bottom(s: &UiScript, name: &str) -> f64 {
 /// XML anchors (55, 85) are pre-pass defaults. Each sum is the stock table's base plus its bar
 /// and `pet` terms, with chat's extra 23 when both apply (`UIParent.lua:1657-1659`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn managed_positions_track_the_bottom_bar_stack() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -490,6 +500,7 @@ fn managed_positions_track_the_bottom_bar_stack() {
 /// (`CastingBarFrame.lua:16`): in 1.12 the casting bar is the StatusBar, with no child. Addons
 /// drive the bar through it, so this asserts identity, not just existence.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_casting_bar_publishes_its_status_bar_alias() {
     benilla_formats::wow_data_or_skip!();
     let s = harness();

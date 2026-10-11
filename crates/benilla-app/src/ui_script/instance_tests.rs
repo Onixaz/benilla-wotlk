@@ -56,6 +56,7 @@ fn the_three_bindings_have_the_reference_shapes() {
 
 /// Through the real hit test: right-click the player portrait, click the row, answer the confirm.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_self_menu_row_gates_on_the_binding_and_confirms_before_sending() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

@@ -8,6 +8,7 @@ const HIP_BONE: u16 = 29;
 const HIP_QUAT: [f32; 4] = [0.382, 0.063, -0.922, 0.0];
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn stow_attach_bones_carry_their_constant_rotation_in_every_sequence() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

@@ -138,6 +138,7 @@ fn resolves(body: &str) -> bool {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn no_user_facing_sentence_is_written_in_rust_when_the_reference_ships_one() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");

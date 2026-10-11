@@ -313,6 +313,7 @@ mod tests {
     /// The minimap streams its tiles with `load_with_settings(Sprite)`; the UI pass wants sRGB, and
     /// the `WorldArt` default would draw every tile about twice as bright.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn minimap_tile_settings_reach_the_async_loader() {
         use bevy::render::render_resource::TextureFormat;
         let data = benilla_formats::wow_data_or_skip!();
@@ -351,6 +352,7 @@ mod tests {
 
     /// Ironforge's interior minimap tile counts per group, against `md5translate.trs`.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn ironforge_group_grid_matches_trs() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut app = App::new();

@@ -115,6 +115,7 @@ fn unit(level: u32, base_mana: u32) -> benilla_protocol::ObjectFields {
 /// rank 1 (7812: 305, 2.3 a level from 16, cap 22) reads 318 at 22 and at 30, and the player's own
 /// view of it, in no line of the player's, reads the floor.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_pet_view_scales_sacrifice_by_the_pets_level() {
     let Some(spells) = real_spells() else { return };
     let mut t = TestCtx::new();
@@ -153,6 +154,7 @@ fn a_pet_view_scales_sacrifice_by_the_pets_level() {
 
 /// Imp Blood Pact rank 1 (6307: 0.1 a level from 4, cap 14) reads 3 on a level-14 imp's bar.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_pet_view_scales_blood_pact_by_the_pets_level() {
     let Some(spells) = real_spells() else { return };
     let mut t = TestCtx::new();
@@ -180,6 +182,7 @@ fn a_pet_view_scales_blood_pact_by_the_pets_level() {
 /// `UNIT_FIELD_BASE_MANA`, as `0x6e31b0` calls `0x612c50` on the pet (`6e327d`): 449 of 1874, not
 /// 329 of the warlock's 1373. No pet unit is `GetPowerCost`'s -1 (`0x6e3233`), no cost cell.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_pet_view_costs_seduction_from_the_pets_base_mana() {
     let Some(spells) = real_spells() else { return };
     let mut t = TestCtx::new();
@@ -210,6 +213,7 @@ fn a_pet_view_costs_seduction_from_the_pets_base_mana() {
 /// (`0x508214`): the first form on 0, the second on anything else. A female player's Conjure Food
 /// and Water (587, 5504) tooltips read "her allies" and Hellfire (1949) "to herself".
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_female_players_spell_tooltips_take_the_second_gender_form() {
     let Some(spells) = real_spells() else { return };
     let mut t = TestCtx::new();
@@ -266,6 +270,7 @@ fn empty_player() -> ObjectStore {
 /// skill in its line over 5 (`0x6e3130`), not the character level: a class line sits at level
 /// × 5 (vmangos `Player::UpdateSkillsForLevel`), so levels 1, 11 and 60 read 15, 20 and 20.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn battle_shout_description_scales_by_the_skill_level() {
     use benilla_protocol::messages::FIELD_PLAYER_SKILL_INFO_1_1;
     let data = benilla_formats::wow_data_or_skip!();
@@ -309,6 +314,7 @@ fn battle_shout_description_scales_by_the_skill_level() {
 
 /// Fireball rank 1 (133) end to end: description 138, cast index 18 (1500 ms), duration 30.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn fireball_view_on_real_data() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -391,6 +397,7 @@ fn fireball_view_on_real_data() {
 /// aura text expands as the aura tooltip `0x52f880` expands it, with the points' modifiers off
 /// (`52f940`), so it keeps 55.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn improved_devotion_aura_updates_the_description_but_not_the_aura_text() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -419,6 +426,7 @@ fn improved_devotion_aura_updates_the_description_but_not_the_aura_text() {
 /// Fire Blast rank 1's 8 s is its category recovery, its own recovery 0; Improved Fire Blast's
 /// flat op 11 shortens the category value, and the cell shows the larger column (`0x52eada`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn improved_fire_blast_shortens_the_cooldown_cell() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -486,6 +494,7 @@ fn the_cast_cell_takes_op_10_unclamped() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn cost_and_cast_cells_on_real_data() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -597,6 +606,7 @@ fn cost_and_cast_cells_on_real_data() {
 /// The range cell (`0x52e9a2`-`0x52ea8c`): the melee row prints a number off the reaches, an
 /// authored row its own, and the on-next-swing and self rows nothing.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn range_cell_on_real_data() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -719,6 +729,7 @@ fn range_cell_on_real_data() {
 
 /// The required-item, chance-to-X and reagents lines on the real data.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_required_item_chance_and_reagent_lines_on_real_data() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");

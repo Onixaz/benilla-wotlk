@@ -1,29 +1,111 @@
-//! The 1.12 surface as a gate: every global the engine puts in a bare VM is one the 1.12.1 client
-//! has (`reference/1.12-globals.tsv`) or a commented entry on [`BEYOND_1_12`], since addons branch
-//! on a global's presence; no prefix excuses an engine name, as a host seam belongs in Rust. The
-//! production load, core and layer, is `benilla-app`'s `ui_script::surface_gate`; what 1.12 has
-//! and benilla lacks is `scripts/api-coverage.sh`'s count.
+//! The reference surface as a gate: every global the engine puts in a bare VM is one the 3.3.5a
+//! client has (`reference/3.3.5a-globals.tsv`) or a commented entry on [`BEYOND_REFERENCE`], since
+//! addons branch on a global's presence; no prefix excuses an engine name, as a host seam belongs
+//! in Rust. The production load, core and layer, is `benilla-app`'s `ui_script::surface_gate`;
+//! what the reference has and benilla lacks is `scripts/api-coverage.sh`'s count.
 
 use std::collections::HashSet;
 
 use super::common::script;
 
-/// Globals the engine exposes that 1.12 does not, each with its reason. The list is exact.
-const BEYOND_1_12: &[&str] = &[
-    // Our Lua runtime is 5.1 where 1.12's is 5.0: 1.12's base library does not export `_G` (an
-    // addon reaches the globals with `getfenv(0)`); ours does, as our `getglobal`/`setglobal` are
-    // written over it.
-    "_G",
+/// Globals the engine exposes that the reference does not, each with its reason. The list is
+/// exact.
+const BEYOND_REFERENCE: &[&str] = &[
+    // 1.12.1 globals 3.3.5a does not have, still installed until each is removed (#52).
+    "__framescript_meta",
+    "AssistByName",
+    "CancelMeetingStoneRequest",
+    "CancelPlayerBuff",
+    "CancelTrackingBuff",
+    "ChannelModerate",
+    "CheckPetUntrainerDist",
+    "CheckReadyCheckTime",
+    "CloseCraft",
+    "CollapseCraftSkillLine",
+    "ConfirmPetUnlearn",
+    "DoCraft",
+    "ExpandCraftSkillLine",
+    "FollowByName",
+    "GetCraftButtonToken",
+    "GetCraftDescription",
+    "GetCraftDisplaySkillLine",
+    "GetCraftIcon",
+    "GetCraftInfo",
+    "GetCraftItemLink",
+    "GetCraftName",
+    "GetCraftNumReagents",
+    "GetCraftReagentInfo",
+    "GetCraftReagentItemLink",
+    "GetCraftSelectionIndex",
+    "GetCraftSpellFocus",
+    "GetDoodadAnim",
+    "GetGuildRecruitmentMode",
+    "GetInspectPVPRankProgress",
+    "GetLookingForGroup",
+    "GetMeetingStoneStatusText",
+    "GetNumCrafts",
+    "GetNumLaguages",
+    "GetPVPLastWeekStats",
+    "GetPVPThisWeekStats",
+    "GetPetLoyalty",
+    "GetPetTrainingPoints",
+    "GetPlayerBuff",
+    "GetPlayerBuffApplications",
+    "GetPlayerBuffDispelType",
+    "GetPlayerBuffTexture",
+    "GetPlayerBuffTimeLeft",
+    "GetWorldDetail",
+    "GetWorldLocMapPosition",
+    "GuildDemoteByName",
+    "GuildInviteByName",
+    "GuildPromoteByName",
+    "GuildSetLeaderByName",
+    "GuildUninviteByName",
+    "HideFriendNameplates",
+    "HideNameplates",
+    "InviteByName",
+    "InviteToParty",
+    "IsCurrentCast",
+    "IsInMeetingStoneQueue",
+    "IsSpellPassive",
+    "IsTalentTrainer",
+    "IsTrainerServiceLearnSpell",
+    "IsTrainerServiceTradeSkill",
+    "Jump",
+    "PlayerHasSpells",
+    "PromoteByName",
+    "PromoteToPartyLeader",
+    "RestoreVideoDefaults",
+    "SelectCraft",
+    "SetBagPortaitTexture",
+    "SetDoodadAnim",
+    "SetGuildRecruitmentMode",
+    "SetInventoryPortaitTexture",
+    "SetLookingForGroup",
+    "SetWorldDetail",
+    "ShowBattlefieldList",
+    "ShowFriendNameplates",
+    "ShowNameplates",
+    "SitOrStand",
+    "StartDuelUnit",
+    "TargetByName",
+    "ToggleMouseMove",
+    "TutorialsEnabled",
+    "UninviteByName",
+    "UninviteFromParty",
+    "UninviteFromRaid",
+    "UnitIsCivilian",
+    "UnitIsPlusMob",
 ];
 
-/// `reference/1.12-globals.tsv`'s names.
+/// `reference/3.3.5a-globals.tsv`'s names.
 fn reference() -> HashSet<String> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../reference/1.12-globals.tsv"
+        "/../../reference/3.3.5a-globals.tsv"
     );
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
-        panic!("reading {path}: {e} — regenerate with scripts/gen-reference-globals.py")
+        panic!("reading {path}: {e} — regenerate with scripts/gen-reference-wotlk-globals.py")
     });
     let names: HashSet<String> = text
         .lines()
@@ -31,7 +113,7 @@ fn reference() -> HashSet<String> {
         .filter_map(|l| l.split('\t').next().map(str::to_string))
         .collect();
     assert!(
-        names.len() > 19_000,
+        names.len() > 40_000,
         "the reference table looks truncated ({} names) — regenerate it",
         names.len()
     );
@@ -51,73 +133,49 @@ fn engine_globals() -> HashSet<String> {
         .collect()
 }
 
-/// Every global the engine exposes is one 1.12 has, or a listed exception.
+/// Every global the engine exposes is one the reference has, or a listed exception.
 #[test]
-fn the_engine_adds_no_global_past_1_12() {
+fn the_engine_adds_no_global_past_the_reference() {
     let known = reference();
     let mut beyond: Vec<String> = engine_globals()
         .into_iter()
-        .filter(|n| !known.contains(n) && !BEYOND_1_12.contains(&n.as_str()))
+        .filter(|n| !known.contains(n) && !BEYOND_REFERENCE.contains(&n.as_str()))
         .collect();
     beyond.sort_unstable();
     assert!(
         beyond.is_empty(),
-        "the engine exposes {} global(s) the 1.12.1 client does not:\n    {}\n\n\
-         1.12 is the target. Give it its 1.12 spelling, move a host seam into Rust, or add it to \
-         `BEYOND_1_12` in this file WITH the reason it has to stay — an addon that \
+        "the engine exposes {} global(s) the 3.3.5a client does not:\n    {}\n\n\
+         Give it the reference's spelling, move a host seam into Rust, or add it to \
+         `BEYOND_REFERENCE` in this file WITH the reason it has to stay — an addon that \
          feature-detects an unexplained superset takes a path we cannot honour.",
         beyond.len(),
         beyond.join(" ")
     );
 }
 
-/// The exception list is exact: no entry outlives its global, and none excuses a 1.12 name.
+/// The exception list is exact: no entry outlives its global, and none excuses a reference name.
 #[test]
 fn the_exception_list_is_exact() {
     let known = reference();
     let ours = engine_globals();
-    let wrong: Vec<&str> = BEYOND_1_12
+    let wrong: Vec<&str> = BEYOND_REFERENCE
         .iter()
         .copied()
         .filter(|n| known.contains(*n) || !ours.contains(*n))
         .collect();
     assert!(
         wrong.is_empty(),
-        "excused as beyond 1.12, but 1.12 has them or the engine no longer exposes them: {wrong:?}"
+        "excused as beyond the reference, but it has them or the engine no longer exposes them: \
+         {wrong:?}"
     );
 }
 
-/// The globals 1.12.1 does not have, each once benilla's: the Era verbs (the 1.12 way in each
-/// comment) and the host hooks with no caller. An addon that tests for one takes a path 1.12 never
-/// does.
+/// The host hooks that were once benilla's globals, with no caller: an addon that tests for one
+/// takes a path the reference never does.
 #[test]
-fn the_era_globals_and_the_uncalled_hooks_are_absent() {
+fn the_uncalled_hooks_are_absent() {
     let s = script();
     for (name, instead) in [
-        (
-            "UnitAura",
-            "UnitBuff/UnitDebuff (0x519500, 0x5198f0), GetPlayerBuff (0x4e45d0)",
-        ),
-        ("CancelUnitBuff", "CancelPlayerBuff (0x4e49a0)"),
-        (
-            "GetCursorInfo",
-            "CursorHasItem/CursorHasSpell/CursorHasMoney (0x4895d0..0x489630)",
-        ),
-        (
-            "GetInventoryItemID",
-            "the id inside GetInventoryItemLink (0x4c8c10)",
-        ),
-        ("GetPlayerFacing", "the minimap arrow model's GetFacing"),
-        (
-            "GetTradePartnerName",
-            r#"UnitName("NPC") (TradeFrame.lua:43)"#,
-        ),
-        (
-            "IsGossipOptionCoded",
-            "GOSSIP_ENTER_CODE, then SelectGossipOption(index, code)",
-        ),
-        ("UnitIsAFK", "no unit AFK predicate"),
-        ("UnitIsDND", "no unit DND predicate"),
         (
             "BenillaGetContainerItemID",
             "the id inside GetContainerItemLink",
@@ -130,7 +188,7 @@ fn the_era_globals_and_the_uncalled_hooks_are_absent() {
     ] {
         assert!(
             s.eval::<bool>(&format!("return {name} == nil")).unwrap(),
-            "{name} is a global; 1.12 has {instead}"
+            "{name} is a global; the reference has {instead}"
         );
     }
 }

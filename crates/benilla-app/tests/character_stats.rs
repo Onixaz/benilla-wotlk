@@ -101,6 +101,7 @@ fn seated() -> UiScript {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_geared_stat_renders_green_and_its_tooltip_names_the_unbuffed_base() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = seated();
@@ -125,6 +126,7 @@ fn a_geared_stat_renders_green_and_its_tooltip_names_the_unbuffed_base() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_debuffed_stat_renders_red_and_an_untouched_one_stays_plain() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = seated();
@@ -155,6 +157,7 @@ fn a_debuffed_stat_renders_red_and_an_untouched_one_stays_plain() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn resistance_rows_colour_by_which_half_is_bigger() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = seated();
@@ -191,6 +194,7 @@ fn resistance_rows_colour_by_which_half_is_bigger() {
 /// seventh. The row shows the raw range floored and ceiled; the tooltip range has the multiplier
 /// divided out and the flat bonuses subtracted (`PaperDollFrame.lua:295-299`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_melee_block_unpacks_seven_values_and_does_the_references_arithmetic() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = seated();
@@ -259,6 +263,7 @@ fn the_melee_block_unpacks_seven_values_and_does_the_references_arithmetic() {
 /// With the ranged slot empty, all three ranged rows read `NOT_APPLICABLE`, carried between them
 /// by the `PaperDollFrame.noRanged` latch (`PaperDollFrame.lua:436-441`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_ranged_rows_fall_back_to_not_applicable_with_an_empty_ranged_slot() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = seated();
@@ -286,6 +291,7 @@ fn the_ranged_rows_fall_back_to_not_applicable_with_an_empty_ranged_slot() {
 
 /// Item armor lands in `UNIT_FIELD_RESISTANCES[0]` itself, not in the buff split.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn armor_with_no_buff_split_renders_plain() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = seated();

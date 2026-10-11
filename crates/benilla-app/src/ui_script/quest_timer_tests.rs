@@ -70,6 +70,7 @@ fn row_text(s: &UiScript, i: u32) -> String {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_window_follows_the_timed_quests() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -112,6 +113,7 @@ fn the_window_follows_the_timed_quests() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_countdown_reaches_the_draw_list() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -141,6 +143,7 @@ fn the_countdown_reaches_the_draw_list() {
 
 /// The window also repaints on `PLAYER_ENTERING_WORLD` (`QuestTimerFrame.lua:3`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_world_entry_paints_a_quest_already_running() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();

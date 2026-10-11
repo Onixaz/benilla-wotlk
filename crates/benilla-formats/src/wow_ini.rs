@@ -94,6 +94,7 @@ mod tests {
 
     /// The install carries a `Wow.ini` in its archives, and its Region names categories.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_install_names_a_region_with_categories() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

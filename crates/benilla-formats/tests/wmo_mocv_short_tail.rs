@@ -31,6 +31,7 @@ fn subchunk(group: &[u8], tag: &[u8; 4]) -> Option<(usize, usize)> {
 
 /// The bake is the warm orange the reference renders, not the white of an absent bake.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn undercity_144_keeps_its_bake_despite_a_short_mocv() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");
@@ -69,6 +70,7 @@ fn undercity_144_keeps_its_bake_despite_a_short_mocv() {
 /// Exactly one group in the corpus has a MOCV that is not whole and parallel to its positions, so
 /// the padding covers that one file.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn only_one_group_in_the_corpus_has_a_short_mocv() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut reader = Chain::open(&data).expect("open vanilla patch chain");

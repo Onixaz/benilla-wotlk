@@ -5,6 +5,7 @@
 use benilla_formats::{load_m2_bounds, open_chain};
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn stand_box_z_is_the_bubble_anchor_height_and_not_the_attachment() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open chain");

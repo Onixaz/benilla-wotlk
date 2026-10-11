@@ -2,7 +2,7 @@
 
 use std::io::{self, Read};
 
-use crate::wire::{read_f32_le, read_u32_le, read_u64_le, Vector3d};
+use crate::wire::{read_f32_le, read_u32_le, Vector3d};
 
 // MovementFlags bits (vmangos `MovementInfo.h`). ON_TRANSPORT is 1.12's 0x0200_0000
 // (`MovementInfo.h:56`), not TBC's 0x200, which 1.12 names `MOVEFLAG_UNUSED10`.
@@ -10,6 +10,7 @@ pub(super) const MOVEMENT_FLAG_ON_TRANSPORT: u32 = 0x0200_0000;
 pub(super) const MOVEMENT_FLAG_JUMPING: u32 = 0x2000;
 pub(super) const MOVEMENT_FLAG_SWIMMING: u32 = 0x20_0000;
 pub(super) const MOVEMENT_FLAG_SPLINE_ENABLED: u32 = 0x40_0000;
+#[cfg(test)]
 pub(super) const MOVEMENT_FLAG_SPLINE_ELEVATION: u32 = 0x400_0000;
 
 /// `MSG_MOVE_TIME_SKIPPED` inbound: a packed guid and the ms that mover's client skipped
@@ -21,9 +22,11 @@ pub(super) fn read_move_time_skipped(r: &mut &[u8]) -> io::Result<(u64, u32)> {
     Ok((guid, lag_ms))
 }
 
-/// vmangos `MovementInfo::Read` order: flags, time, position, facing, the transport pose if
-/// `ON_TRANSPORT` (1.12 has no transport time), the swim pitch if `SWIMMING`, `u32` fall time, the
-/// jump tail if `JUMPING`, then a spline-elevation `f32` if `SPLINE_ELEVATION`, read and dropped.
+/// [`MovementInfo::write`]'s layout read back, vmangos `MovementInfo::Read` order: flags, time,
+/// position, facing, the transport pose if `ON_TRANSPORT` (no transport time), the swim pitch if
+/// `SWIMMING`, `u32` fall time, the jump tail if `JUMPING`, then a spline-elevation `f32` if
+/// `SPLINE_ELEVATION`, read and dropped.
+#[cfg(test)]
 pub(super) fn read_movement_info(r: &mut impl Read) -> io::Result<MovementInfo> {
     let flags = read_u32_le(r)?;
     let timestamp = read_u32_le(r)?;
@@ -32,7 +35,7 @@ pub(super) fn read_movement_info(r: &mut impl Read) -> io::Result<MovementInfo> 
     let transport = if flags & MOVEMENT_FLAG_ON_TRANSPORT != 0 {
         Some(TransportPose {
             // A full u64, not packed (vmangos `ObjectGuid.cpp:180`, `buf.read<uint64>()`).
-            guid: read_u64_le(r)?,
+            guid: crate::wire::read_u64_le(r)?,
             pos: Vector3d::read(r)?,
             orientation: read_f32_le(r)?,
         })
@@ -68,17 +71,6 @@ pub(super) fn read_movement_info(r: &mut impl Read) -> io::Result<MovementInfo> 
         fall_time,
         jump,
     })
-}
-
-/// A `MovementInfo` in `expansion`'s layout.
-pub(super) fn read_movement_info_as(
-    expansion: benilla_expansions::Expansion,
-    r: &mut impl Read,
-) -> io::Result<MovementInfo> {
-    match expansion {
-        benilla_expansions::Expansion::Classic => read_movement_info(r),
-        benilla_expansions::Expansion::Wotlk => read_movement_info_wotlk(r),
-    }
 }
 
 /// 3.3.5a's `MovementFlags` (AzerothCore `UnitDefines.h`), where its bit differs from 1.12.1's.

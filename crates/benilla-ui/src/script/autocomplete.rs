@@ -76,19 +76,12 @@ end
 "##;
 
 /// Install the verb on a target whose API has it.
-pub(super) fn install(
-    lua: &Lua,
-    client: &benilla_expansions::ExpansionProfile,
-) -> mlua::Result<()> {
-    if !client.auto_complete {
-        return Ok(());
-    }
+pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.load(AUTOCOMPLETE).set_name("=autocomplete").exec()
 }
 
 #[cfg(test)]
 mod tests {
-    use benilla_expansions::Expansion;
 
     use crate::script::UiScript;
 
@@ -96,7 +89,7 @@ mod tests {
     /// box falls back to the first word.
     #[test]
     fn a_name_in_no_list_finds_nothing() {
-        let ui = UiScript::new_for(Expansion::Wotlk).unwrap();
+        let ui = UiScript::new().unwrap();
         assert_eq!(
             ui.eval::<i64>(
                 "return select('#', GetAutoCompleteResults('Bob hi', 0xffffffff, 0, 1, nil, true))"
@@ -108,13 +101,5 @@ mod tests {
             ui.run("GetAutoCompleteResults('Bob')").is_err(),
             "the usage"
         );
-    }
-
-    #[test]
-    fn classic_has_no_auto_complete() {
-        let ui = UiScript::new_for(Expansion::Classic).unwrap();
-        assert!(ui
-            .eval::<bool>("return GetAutoCompleteResults == nil")
-            .unwrap());
     }
 }

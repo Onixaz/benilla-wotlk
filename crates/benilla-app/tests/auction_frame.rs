@@ -122,6 +122,7 @@ fn seat_player(s: &mut UiScript, money: u64) {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn auction_frame_loads_and_key_regions_exist() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -168,6 +169,7 @@ fn auction_frame_loads_and_key_regions_exist() {
 
 /// `doublewide` is the only such `UIPanelWindows` row in 1.12 (`Blizzard_AuctionUI.lua:14`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_window_is_registered_doublewide() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -180,6 +182,7 @@ fn the_window_is_registered_doublewide() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn auction_house_show_opens_the_window_on_the_browse_tab() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -240,6 +243,7 @@ fn auction_house_show_opens_the_window_on_the_browse_tab() {
 /// pane's `OnShow` assigns, so `AUCTION_OWNED_LIST_UPDATE` is safe only once the tab has shown.
 /// The reference never sends it earlier: every `GetOwnerAuctionItems` caller lives in that pane.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_auctions_tab_cannot_repaint_before_it_has_been_shown() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -283,6 +287,7 @@ fn the_auctions_tab_cannot_repaint_before_it_has_been_shown() {
 /// `NO_BIDS` in red only for nil (`AuctionFrameAuctions_Update`): a bid-on auction names its
 /// bidder, as the reference answers on the owner list (`0x4cf144`–`0x4cf174`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_auctions_tab_names_the_high_bidder() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -326,6 +331,7 @@ fn the_auctions_tab_names_the_high_bidder() {
 /// `hidden="false"` (`Blizzard_AuctionUI.xml:960`), so it shows with the window on the first
 /// `AUCTION_HOUSE_SHOW` before tab 1 hides it; the Auctions pane has no `page` until tab 3.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn only_the_bids_pane_gets_its_page_without_being_opened() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -379,6 +385,7 @@ fn only_the_bids_pane_gets_its_page_without_being_opened() {
 /// (`0x76aef5`). benilla's is pre-order, a gap in the engine; for this window both orders reach
 /// the same state, so only the `ShowOrder` assertions are benilla's order.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_show_cascade_notifies_the_bids_pane_once_and_keeps_its_page() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -445,6 +452,7 @@ fn the_show_cascade_notifies_the_bids_pane_once_and_keeps_its_page() {
 
 /// A fed snapshot paints the Browse rows.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_browse_list_populates_from_the_fed_snapshot() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -539,6 +547,7 @@ fn the_browse_list_populates_from_the_fed_snapshot() {
 
 /// The bid and buyout gates open only for the selected row, and only when the purse covers it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bid_and_buyout_gates_read_the_purse() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -622,6 +631,7 @@ fn the_bid_and_buyout_gates_read_the_purse() {
 
 /// The one leg of the Browse bid gate that is not about money.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn you_cannot_bid_on_your_own_auction() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -652,6 +662,7 @@ fn you_cannot_bid_on_your_own_auction() {
 
 /// A search reads every filter at once; nothing before Search queues a query.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn search_reads_the_filters_and_nothing_queries_before_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -707,6 +718,7 @@ fn search_reads_the_filters_and_nothing_queries_before_it() {
 /// The create form's gate and the deposit, which the client computes from the stack's vendor
 /// value and the run time, never the asking price.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_create_gate_and_the_deposit() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -851,6 +863,7 @@ fn the_create_gate_and_the_deposit() {
 
 /// Closing the window ends the session client-side and takes both confirmations with it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hiding_the_window_closes_the_session() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -879,6 +892,7 @@ fn hiding_the_window_closes_the_session() {
 /// With more matches than the 50-row page, the turners appear only with the list scrolled to the
 /// bottom; the list is fed one extra row so the bar can get there.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn paging_shows_the_turners_only_at_the_end_of_the_list() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -930,6 +944,7 @@ fn paging_shows_the_turners_only_at_the_end_of_the_list() {
 /// The row and sell-slot hovers call `GameTooltip:SetAuctionItem` and `SetAuctionSellItem`, so an
 /// addon hooking either sees the call.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_row_hover_goes_through_the_reference_tooltip_verb() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

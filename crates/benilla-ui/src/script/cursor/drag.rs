@@ -108,7 +108,7 @@ mod tests {
             local a = CreateFrame("Frame", "A")
             a:SetPoint("BOTTOMLEFT", 0, 0); a:SetWidth(400); a:SetHeight(600); a:EnableMouse(true)
             a:RegisterForDrag("LeftButton")
-            a:SetScript("OnDragStart", function() local self, button = this, arg1 drag_starts = drag_starts + 1; drag_button = button end)
+            a:SetScript("OnDragStart", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, button = this, arg1 drag_starts = drag_starts + 1; drag_button = button end)
             a:SetScript("OnDragStop", function() local self = this drag_stops = drag_stops + 1 end)
             a:SetScript("OnClick", function() local self = this click_a = click_a + 1 end)
             local b = CreateFrame("Frame", "B")
@@ -271,7 +271,7 @@ mod tests {
             heard, name, quality = 0, nil, nil
             local f = CreateFrame("Frame", "Listener")
             f:RegisterEvent("DELETE_ITEM_CONFIRM")
-            f:SetScript("OnEvent", function() local self, event, n, q = this, event, arg1, arg2 heard = heard + 1; name = n; quality = q end)
+            f:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, event, n, q = this, event, arg1, arg2 heard = heard + 1; name = n; quality = q end)
             "#,
         )
         .unwrap();

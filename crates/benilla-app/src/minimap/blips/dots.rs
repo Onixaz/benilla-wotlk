@@ -463,6 +463,7 @@ mod tests {
     /// The tracking spell's `EffectMiscValue`, the server's mask bit and the node's `Lock.dbc`
     /// skill slot, on the install's data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_find_minerals_lights_a_copper_vein_not_an_herb() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

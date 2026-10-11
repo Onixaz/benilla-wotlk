@@ -100,6 +100,7 @@ fn pump(script: &mut UiScript) {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn collapse_all_tab_and_filter_dropdowns_work_end_to_end() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -190,6 +191,7 @@ fn collapse_all_tab_and_filter_dropdowns_work_end_to_end() {
 /// A 1.12 craft list has no headers, so `Blizzard_CraftUI.lua:269-282` always hides the Craft
 /// window's CollapseAll tab.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn craft_collapse_tab_loads_with_text_and_stays_hidden_for_a_flat_list() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -217,6 +219,7 @@ fn craft_collapse_tab_loads_with_text_and_stays_hidden_for_a_flat_list() {
 /// slot, a 39×39 icon, the name plate on the icon's right edge with the name centred on it, and
 /// the count on the icon's bottom-right corner.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn reagent_slots_carry_the_questitemtemplate_shape_in_both_windows() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -343,6 +346,7 @@ fn reagent_slots_carry_the_questitemtemplate_shape_in_both_windows() {
 /// `TradeSkillHighlight` texture (`:200`). A list row has no tooltip: its template overrides
 /// `OnClick` alone, and `ClassTrainerSkillButtonTemplate` only recolours `$parentSubText` on hover.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_row_click_shows_the_selection_glow_and_a_row_hover_shows_nothing() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -423,6 +427,7 @@ fn a_row_click_shows_the_selection_glow_and_a_row_hover_shows_nothing() {
 /// only, then `LockHighlight`s the selection (`Blizzard_TradeSkillUI.lua:113`, `:144`). The colour
 /// is read off the extracted text quad.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_hovered_or_selected_recipe_row_paints_its_label_white() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -529,6 +534,7 @@ fn a_hovered_or_selected_recipe_row_paints_its_label_white() {
 /// The craft list lights the same way: `CraftButtonTemplate` inherits the same base template, and
 /// the update locks the selected row (`Blizzard_CraftUI.lua:234`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_hovered_or_selected_craft_row_paints_its_label_white() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

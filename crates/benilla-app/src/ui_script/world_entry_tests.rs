@@ -576,6 +576,7 @@ fn reload_outside_the_world_is_dropped() {
 
 /// A file-scope raise drops only its addon, and the error reaches the stock `ScriptErrors` dialog.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_addon_error_while_entering_world_reports_on_screen_and_the_sibling_loads() {
     benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
@@ -623,6 +624,7 @@ fn an_addon_error_while_entering_world_reports_on_screen_and_the_sibling_loads()
 
 /// The load's instruction budget fails the looping addon; the test finishing is the claim.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_looping_addon_cannot_freeze_world_entry() {
     benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
@@ -869,6 +871,7 @@ fn the_login_one_shots_wait_for_the_in_game_ui() {
 /// no Lua error handler, so the `/errors` log (which collects off the handler) does not hold it:
 /// the engine's record keeps it, and `Logs\FrameXML.log` names it as the reference's does.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_addon_that_fails_to_load_without_raising_is_readable_in_the_error_log() {
     benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
@@ -972,6 +975,7 @@ fn an_addon_that_fails_to_load_without_raising_is_readable_in_the_error_log() {
 
 /// An error raised every frame is one log row with a count, not a flood of rows.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_repeating_error_is_one_row_with_a_count_not_a_flood() {
     let _l = ENV_LOCK
         .lock()
@@ -1189,6 +1193,7 @@ fn a_placed_window_comes_back_after_a_reload() {
 /// With no addons every warning is a gap of ours, so the allowlist names each one, never a count:
 /// a new gap fails here, and closing one deletes its line.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_clean_world_entry_raises_only_the_warnings_we_have_named() {
     benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK

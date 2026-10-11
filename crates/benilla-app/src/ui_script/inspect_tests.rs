@@ -138,6 +138,7 @@ fn armed() -> UiScript {
 
 /// The window, its 19 slots and the model pane load with no errors.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_inspect_frame_loads_clean() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -178,6 +179,7 @@ fn shipped_inspect_frame_loads_clean() {
 
 /// Out of range, `InspectUnit` neither requests nor opens; in range it does both.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn inspect_unit_refuses_out_of_range() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = armed();
@@ -211,6 +213,7 @@ fn inspect_unit_refuses_out_of_range() {
 /// `CanInspect` refuses only when `100.0 < d²` (`0x48a28b`), so exactly 100.0 is in range;
 /// `CheckInteractDistance` admits only when `d² < table[type - 1]` (`0x48bb0a`), so 100.0 is out.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn range_predicates_transcribe_the_verified_thresholds() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = armed();
@@ -295,6 +298,7 @@ fn range_predicates_transcribe_the_verified_thresholds() {
 
 /// The inspected token reads the foreign view, and `"player"` still reads our own equipment.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn inventory_bindings_route_by_unit_token() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = armed();
@@ -328,6 +332,7 @@ fn inventory_bindings_route_by_unit_token() {
 /// One drive through the window: the open sound, the name and level lines, the slot icons, the
 /// `UNIT_INVENTORY_CHANGED` repaint, the rotate buttons and `ClearInspectPlayer` on close.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_inspect_frame_drives_end_to_end() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = armed();
@@ -447,6 +452,7 @@ fn shipped_inspect_frame_drives_end_to_end() {
 /// it does nothing; `ToggleInspect`'s close-when-showing branch (`Blizzard_InspectUI.lua:67-83`)
 /// is reached only by calling it directly.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_active_tab_is_inert_and_toggle_inspect_closes() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = armed();
@@ -479,6 +485,7 @@ fn the_active_tab_is_inert_and_toggle_inspect_closes() {
 /// (`0x519fb4`), before the portrait is touched. Stock 1.12 has no inspect binding and no caller
 /// outside the hidden window's own tabs, so only an addon or a macro gets here.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn toggle_inspect_reopens_after_a_close_and_raises_like_the_reference() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = armed();

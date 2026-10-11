@@ -4,8 +4,6 @@
 //! same values as `(self, event, ...)` arguments, which 1.12 does not pass.
 //! Handler errors return to the caller, which records them in [`super::Model::errors`].
 
-use std::borrow::Cow;
-
 use mlua::{Function, Lua, Table, Value};
 
 use super::{Model, ScriptValue, REG_SCRIPTS};
@@ -215,32 +213,44 @@ fn fire(
     invoke_with_globals(lua, wrapper, &func, event_name, extra)
 }
 
-/// The `argN` global names, spelled out so the common arities allocate nothing.
-const ARG_NAMES: [&str; 16] = [
-    "arg1", "arg2", "arg3", "arg4", "arg5", "arg6", "arg7", "arg8", "arg9", "arg10", "arg11",
-    "arg12", "arg13", "arg14", "arg15", "arg16",
-];
-
-/// The global name for arg `i`, 1-based like the globals.
-fn arg_name(i: usize) -> Cow<'static, str> {
-    match ARG_NAMES.get(i - 1) {
-        Some(&name) => Cow::Borrowed(name),
-        None => Cow::Owned(format!("arg{i}")),
+/// The parameter list an XML handler body of `script` is compiled under: one of `Wow.exe`'s
+/// `return function(…) %s end` templates (`0x9eb31c`…`0xaa2ae8`), picked by a name compare ahead
+/// of the template's store; any other name takes the bare `self` (`0x9eb868`). Names are matched
+/// as the XML schema spells them.
+pub(crate) fn script_parameters(script: &str) -> &'static str {
+    match script {
+        "OnEvent" => "self,event,...",
+        "OnUpdate" => "self,elapsed",
+        "OnClick" | "PreClick" | "PostClick" => "self,button,down",
+        "OnMouseDown" | "OnMouseUp" | "OnDragStart" | "OnDoubleClick" => "self,button",
+        "OnEnter" | "OnLeave" => "self,motion",
+        "OnMouseWheel" => "self,delta",
+        "OnKeyDown" | "OnKeyUp" => "self,key",
+        "OnChar" | "OnCharComposition" | "OnMovieShowSubtitle" => "self,text",
+        "OnSizeChanged" => "self,w,h",
+        "OnAttributeChanged" => "self,name,value",
+        "OnValueChanged" => "self,value",
+        "OnMinMaxChanged" => "self,min,max",
+        "OnTextChanged" => "self, userInput",
+        "OnInputLanguageChanged" => "self,language",
+        "OnCursorChanged" => "self,x,y,w,h",
+        "OnVerticalScroll" | "OnHorizontalScroll" => "self,offset",
+        "OnScrollRangeChanged" => "self,xrange,yrange",
+        "OnColorSelect" => "self,r,g,b",
+        "OnHyperlinkClick" => "self,link,text,button",
+        "OnHyperlinkEnter" | "OnHyperlinkLeave" => "self,link,text",
+        "OnTooltipAddMoney" => "self,cost,maxcost",
+        // Animation scripts.
+        "OnStop" | "OnFinished" => "self,requested",
+        "OnLoop" => "self,loopState",
+        _ => "self",
     }
 }
 
-/// The VM's handler calling convention, the target client's.
-pub(crate) fn script_args(lua: &Lua) -> benilla_expansions::ScriptArgs {
-    lua.app_data_ref::<Model>()
-        .expect("model app_data set")
-        .script_args
-}
-
-/// The calling convention, shared by [`fire`] and the loader's `OnLoad`, the target client's
-/// ([`benilla_expansions::ScriptArgs`]). 1.12.1 sets `this`, `event` and `arg1..argN` and calls
-/// the handler with no arguments, as `0x705199` calls `lua_pcall` with zero. 3.3.5a calls it with
-/// `self`, then `event` for `OnEvent`, then the arguments, and still sets `this` and `event`, but
-/// no `argN`. The globals are restored after the call, even on error, so nested fires are safe.
+/// The calling convention, shared by [`fire`] and the loader's `OnLoad`: the handler is called
+/// with `self`, then `event` for `OnEvent`, then the arguments. `this` and `event` are still set
+/// as globals and restored after the call, even on error, so nested fires are safe; no `argN` is
+/// (the client has no such name).
 pub(crate) fn invoke_with_globals(
     lua: &Lua,
     wrapper: Table,
@@ -249,19 +259,8 @@ pub(crate) fn invoke_with_globals(
     extra: Vec<Value>,
 ) -> mlua::Result<()> {
     let g = lua.globals();
-    let convention = script_args(lua);
-    let arg_globals = if convention.sets_arg_globals() {
-        extra.len()
-    } else {
-        0
-    };
-
     let saved_this: Value = g.get("this")?;
     let saved_event: Value = g.get("event")?;
-    let mut saved_args: Vec<Value> = Vec::with_capacity(arg_globals);
-    for i in 1..=arg_globals {
-        saved_args.push(g.get::<Value>(arg_name(i).as_ref())?);
-    }
 
     g.set("this", wrapper.clone())?;
     let event_value = match event_name {
@@ -271,26 +270,33 @@ pub(crate) fn invoke_with_globals(
     if let Some(ev) = &event_value {
         g.set("event", ev.clone())?;
     }
-    for (i, v) in extra.iter().take(arg_globals).enumerate() {
-        g.set(arg_name(i + 1).as_ref(), v.clone())?;
-    }
 
-    let args = if convention.sets_arg_globals() {
-        mlua::MultiValue::new()
-    } else {
-        std::iter::once(Value::Table(wrapper))
-            .chain(event_value)
-            .chain(extra)
-            .collect()
-    };
+    let args: mlua::MultiValue = std::iter::once(Value::Table(wrapper))
+        .chain(event_value)
+        .chain(extra)
+        .collect();
     // A protected call; the globals are restored before its outcome returns.
     let outcome = super::stdlib::protected_call(lua, func, args);
 
     g.set("this", saved_this)?;
     g.set("event", saved_event)?;
-    for (i, v) in saved_args.into_iter().enumerate() {
-        g.set(arg_name(i + 1).as_ref(), v)?;
-    }
 
     outcome
+}
+
+#[cfg(test)]
+mod script_parameters_tests {
+    use super::script_parameters as p;
+
+    #[test]
+    fn each_script_takes_its_template_and_the_rest_take_self() {
+        assert_eq!(p("OnEvent"), "self,event,...");
+        assert_eq!(p("OnUpdate"), "self,elapsed");
+        assert_eq!(p("OnClick"), "self,button,down");
+        assert_eq!(p("OnEnter"), "self,motion");
+        assert_eq!(p("OnTextChanged"), "self, userInput");
+        assert_eq!(p("OnLoad"), "self");
+        assert_eq!(p("OnShow"), "self");
+        assert_eq!(p("OnDragStop"), "self");
+    }
 }

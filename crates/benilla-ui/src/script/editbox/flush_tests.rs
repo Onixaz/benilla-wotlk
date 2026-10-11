@@ -57,7 +57,7 @@ fn logged_box(s: &mut UiScript) {
         E:SetPoint("BOTTOMLEFT", 100, 50)
         E:SetWidth(200); E:SetHeight(32)
         E:SetScript("OnUpdate", function() table.insert(LOG, "update") end)
-        E:SetScript("OnCursorChanged", function() table.insert(LOG, "cursor@" .. arg1) end)
+        E:SetScript("OnCursorChanged", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) table.insert(LOG, "cursor@" .. arg1) end)
         E:SetScript("OnTextChanged", function() table.insert(LOG, "text:" .. this:GetText()) end)
         LATE = CreateFrame("Frame", "Late")
         LATE:SetScript("OnUpdate", function() table.insert(LOG, "late") end)
@@ -256,7 +256,7 @@ fn a_caret_moved_by_on_cursor_changed_is_cleared_with_the_bit() {
     logged_box(&mut s);
     s.run(
         r#"
-        E:SetScript("OnCursorChanged", function()
+        E:SetScript("OnCursorChanged", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
             table.insert(LOG, "cursor@" .. arg1)
             if not EDITED then EDITED = true this:Insert("!") end
         end)
@@ -449,7 +449,7 @@ fn up_and_down_move_a_multi_line_boxs_caret_by_rows() {
     logged_box(&mut s);
     s.run(
         r#"
-        E:SetScript("OnCursorChanged", function()
+        E:SetScript("OnCursorChanged", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
             table.insert(LOG, format("cursor@%d,%d", arg1, arg2))
         end)
         E:SetMultiLine(true)
@@ -491,7 +491,7 @@ fn on_cursor_changed_reports_the_first_row_at_plus_zero() {
     logged_box(&mut s);
     s.run(
         r#"
-        E:SetScript("OnCursorChanged", function() table.insert(LOG, tostring(arg2)) end)
+        E:SetScript("OnCursorChanged", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) table.insert(LOG, tostring(arg2)) end)
         E:SetText("ab")
     "#,
     )

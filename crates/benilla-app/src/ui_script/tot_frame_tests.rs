@@ -136,6 +136,7 @@ fn raid(n: usize) -> PartyState {
 
 /// `SHOW_TARGET_OF_TARGET` defaults to `"0"` in 1.12 (`UIOptionsFrame.lua:116`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_frame_ships_off_and_the_switch_is_what_shows_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -157,6 +158,7 @@ fn the_frame_ships_off_and_the_switch_is_what_shows_it() {
 
 /// The four unit gates around the switch (`TargetFrame.lua:504`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_four_unit_gates_each_take_the_frame_down() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -197,6 +199,7 @@ fn the_four_unit_gates_each_take_the_frame_down() {
 /// Mode 3 in a raid reads hidden only because the party step before it hid the frame: that arm
 /// calls neither `Show` nor `Hide` in a raid (`TargetFrame.lua:513-520`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_five_modes_answer_solo_party_and_raid() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -236,6 +239,7 @@ fn the_five_modes_answer_solo_party_and_raid() {
 /// In a raid the mode-3 arm reaches neither `Show` nor `Hide` (`TargetFrame.lua:513-520`), though
 /// `TargetofTarget_OnUpdate` re-asks every frame (`TargetFrame.lua:494-501`), so the frame stays.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_solo_mode_keeps_the_frame_when_a_raid_forms() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -257,6 +261,7 @@ fn the_solo_mode_keeps_the_frame_when_a_raid_forms() {
 /// (`TargetFrame.lua:494-501`), so it waits for a tick. A powerless unit keeps a 0/0 rail:
 /// `UnitFrameManaBar_Update` never hides the bar (`UnitFrame.lua:203-224`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_frame_paints_its_unit() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -305,6 +310,7 @@ fn the_frame_paints_its_unit() {
 /// Zero health shows the dead text only while connected, which tells a corpse from a linkdead
 /// player (`TargetofTarget_CheckDead`, `TargetFrame.lua:559-567`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_dead_word_needs_a_connected_corpse() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -341,6 +347,7 @@ fn the_dead_word_needs_a_connected_corpse() {
 /// The tint (`TargetofTargetHealthCheck`, `TargetFrame.lua:569-585`) runs off the health bar's
 /// `OnValueChanged` (`TargetFrame.xml:604-608`) and only for players.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_portrait_tints_with_a_players_state_and_never_a_creatures() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -376,6 +383,7 @@ fn the_portrait_tints_with_a_players_state_and_never_a_creatures() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_left_click_targets_the_unit() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -396,6 +404,7 @@ fn the_left_click_targets_the_unit() {
 /// `TargetofTarget_Update` (`TargetFrame.lua:538`). The `UNIT_AURA` fire is what the feed does,
 /// but it is inert: `UnitFrame_OnEvent` ignores it, so the `tick` draws the row.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_debuff_row_draws_what_the_unit_carries() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -432,6 +441,7 @@ fn the_debuff_row_draws_what_the_unit_carries() {
 /// (`TargetDebuffButton_Update`, `TargetFrame.lua:312-338`, `:370-385`). They re-lay only on the
 /// way in: the call sits inside `if ( TargetofTargetFrame:IsShown() )` (`TargetFrame.lua:532-539`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_target_rows_wrap_short_while_the_frame_stands_beside_them() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -479,6 +489,7 @@ fn the_target_rows_wrap_short_while_the_frame_stands_beside_them() {
 /// A token going away fires no event, so `TargetFrame_OnUpdate` reconciles it
 /// (`TargetFrame.lua:257-261`); it runs only while you have a target.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_reconcile_takes_the_frame_down_when_the_token_goes_silent() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();

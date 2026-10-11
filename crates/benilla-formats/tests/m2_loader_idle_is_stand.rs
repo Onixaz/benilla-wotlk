@@ -11,6 +11,7 @@ const SPAWN: u16 = 145;
 const PLANTED_Z: f32 = -9.124369;
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_duel_flag_idle_resolves_to_stand_and_sits_planted() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

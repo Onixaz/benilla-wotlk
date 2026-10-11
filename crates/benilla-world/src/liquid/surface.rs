@@ -596,6 +596,7 @@ mod real_data {
     /// 9 static nibble-2 and 2 scrolling nibble-6 magma groups, Blackrock is nibble 6 throughout,
     /// Undercity's 38 slime canals are nibble 3 and still, and Stratholme's are nibble 7 and flow.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn only_the_nibble_six_and_seven_pools_scroll_in_the_shipped_data() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -603,7 +604,7 @@ mod real_data {
         let mut census = |root_path: &str| -> HashMap<(u8, LiquidKind), usize> {
             let bytes = chain.read_file(root_path).expect("root readable");
             let root = parse_wmo_root(&bytes).expect("parse root");
-            let rule = WmoLiquidRule::for_root(chain.expansion(), &root);
+            let rule = WmoLiquidRule::for_root(&root);
             let stem = root_path
                 .strip_suffix(".wmo")
                 .unwrap_or(root_path)
@@ -677,6 +678,7 @@ mod real_data {
     /// A WMO pool's fog block follows its group's `MOGI & 0x48 == 0` class: Undercity's 38 liquid
     /// groups are interior but for group 7, and Stormwind's 22 are all exterior.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_wmo_pools_fog_block_follows_its_groups_interior_class() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -684,7 +686,7 @@ mod real_data {
         let liquid_groups = |chain: &mut benilla_formats::Chain, root_path: &str| {
             let bytes = chain.read_file(root_path).expect("root readable");
             let root = parse_wmo_root(&bytes).expect("parse root");
-            let rule = WmoLiquidRule::for_root(chain.expansion(), &root);
+            let rule = WmoLiquidRule::for_root(&root);
             let stem = root_path
                 .strip_suffix(".wmo")
                 .unwrap_or(root_path)

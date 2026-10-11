@@ -794,7 +794,7 @@ mod loader_tests {
     fn unsupported_script_name_is_a_warning() {
         let s = UiScript::new().unwrap();
         let doc = parse(
-            r#"<Ui><Frame name="Keyed"><Scripts><OnAttributeChanged>x = 1</OnAttributeChanged></Scripts></Frame></Ui>"#,
+            r#"<Ui><Frame name="Keyed"><Scripts><OnMessageScrollChanged>x = 1</OnMessageScrollChanged></Scripts></Frame></Ui>"#,
         );
         let report = load(&s, &doc, &no_files);
         assert_eq!(report.frames, 1);
@@ -802,7 +802,7 @@ mod loader_tests {
         assert!(report
             .warnings
             .iter()
-            .any(|w| w.contains("OnAttributeChanged")));
+            .any(|w| w.contains("OnMessageScrollChanged")));
     }
 
     /// `Instantiate 0x6ee280` logs `"Unknown frame type: %s"` (`0x871124`) and builds nothing for
@@ -1673,10 +1673,10 @@ mod loader_tests {
         let doc = parse(
             r#"<Ui>
                 <Frame name="Hoverable">
-                    <Scripts><OnEnter>-- hover</OnEnter></Scripts>
+                    <Scripts><OnEnter>Hovered = true</OnEnter></Scripts>
                 </Frame>
                 <Frame name="DropTarget">
-                    <Scripts><OnDragStop>-- outside the kind-2 set</OnDragStop></Scripts>
+                    <Scripts><OnDragStop>Dropped = true</OnDragStop></Scripts>
                 </Frame>
             </Ui>"#,
         );
@@ -2408,66 +2408,6 @@ mod chunk_name_tests {
             "the .lua file and its own line: {err}"
         );
     }
-
-    /// A handler body is the chunk itself (`0x704c70`): it takes no arguments and reads its frame
-    /// from `this`, so `self` in it is an ordinary global, and the 1.12 hook idiom (an addon
-    /// captures a handler with `GetScript` and calls it bare) reaches the same frame.
-    #[test]
-    fn a_handler_body_is_the_chunk_and_self_is_a_global() {
-        let s = UiScript::new().unwrap();
-        let doc = parse(
-            r#"<Ui>
-                <Frame name="Hooked" hidden="true">
-                    <Scripts>
-                        <OnShow>SEEN = this:GetName() SELF_SEEN = self</OnShow>
-                    </Scripts>
-                </Frame>
-            </Ui>"#,
-        );
-        let report = load_in(&s, &doc, "Test.xml", &no_files);
-        assert!(report.errors.is_empty(), "{:?}", report.errors);
-
-        s.run("self = 'the global' SEEN = nil Hooked:Show()")
-            .unwrap();
-        assert_eq!(s.eval::<String>("return SEEN").unwrap(), "Hooked");
-        assert_eq!(
-            s.eval::<String>("return SELF_SEEN").unwrap(),
-            "the global",
-            "`self` is no parameter of the body"
-        );
-
-        s.run(
-            "SEEN = nil \
-             local original = Hooked:GetScript(\"OnShow\") \
-             this = Hooked \
-             original() \
-             this = nil",
-        )
-        .unwrap();
-        assert_eq!(s.eval::<String>("return SEEN").unwrap(), "Hooked");
-    }
-
-    /// 1.12.1's loader reads no `function=` attribute: a handler element with no body clears the
-    /// handler, whatever global the attribute names.
-    #[test]
-    fn a_function_attribute_binds_nothing() {
-        let s = UiScript::new_for(benilla_expansions::Expansion::Classic).unwrap();
-        s.run("function NamedHandler() RAN = true end").unwrap();
-        let doc = parse(
-            r#"<Ui>
-                <Frame name="Named" hidden="true">
-                    <Scripts><OnShow function="NamedHandler"/></Scripts>
-                </Frame>
-            </Ui>"#,
-        );
-        let report = load_in(&s, &doc, "Test.xml", &no_files);
-        assert!(report.errors.is_empty(), "{:?}", report.errors);
-        s.run("Named:Show()").unwrap();
-        assert!(s.eval::<bool>("return RAN == nil").unwrap());
-        assert!(s
-            .eval::<bool>("return Named:GetScript(\"OnShow\") == nil")
-            .unwrap());
-    }
 }
 
 #[test]
@@ -2490,12 +2430,11 @@ fn join_ref_resolves_relative_framexml_paths() {
     assert_eq!(join_ref("a/b", "/c.xml"), "c.xml");
 }
 
-/// The handler calling convention of each client (`benilla_expansions::ScriptArgs`).
+/// The handler calling convention (`crate::script::event::script_parameters`).
 mod script_args_tests {
     use crate::framexml;
     use crate::loader::load;
     use crate::script::UiScript;
-    use benilla_expansions::Expansion;
 
     fn no_files(_: &str) -> Option<Vec<u8>> {
         None
@@ -2514,8 +2453,8 @@ mod script_args_tests {
         </Button>
     </Ui>"#;
 
-    fn loaded(expansion: Expansion) -> UiScript {
-        let mut s = UiScript::new_for(expansion).unwrap();
+    fn loaded() -> UiScript {
+        let mut s = UiScript::new().unwrap();
         s.set_screen_size(800.0, 600.0);
         let doc = framexml::parse(DOC).expect("valid FrameXML");
         let report = load(&s, &doc, &no_files);
@@ -2530,8 +2469,8 @@ mod script_args_tests {
     }
 
     #[test]
-    fn a_wotlk_xml_handler_gets_self_and_its_named_arguments() {
-        let s = loaded(Expansion::Wotlk);
+    fn an_xml_handler_gets_self_and_its_named_arguments() {
+        let s = loaded();
         assert!(s.errors().is_empty(), "{:?}", s.errors());
         let is_probe = |g: &str| s.eval::<bool>(&format!("return {g} == ArgsProbe")).unwrap();
         for g in [
@@ -2547,7 +2486,7 @@ mod script_args_tests {
         assert_eq!(s.eval::<String>("return EventArg").unwrap(), "payload");
         assert!(
             s.eval::<bool>("return EventArg1 == nil").unwrap(),
-            "3.3.5a sets no argN global"
+            "the client sets no argN global"
         );
         assert_eq!(s.eval::<f64>("return UpdateElapsed").unwrap(), 0.25);
         assert_eq!(
@@ -2557,8 +2496,8 @@ mod script_args_tests {
     }
 
     #[test]
-    fn a_wotlk_set_script_function_gets_self_and_its_arguments() {
-        let mut s = UiScript::new_for(Expansion::Wotlk).unwrap();
+    fn a_set_script_function_gets_self_and_its_arguments() {
+        let mut s = UiScript::new().unwrap();
         s.run(
             "local f = CreateFrame('Frame', 'SetScriptProbe') f:RegisterEvent('ARGS_PROBE') \
              f:SetScript('OnEvent', function(self, event, a) Got = { self, event, a } end)",
@@ -2573,21 +2512,6 @@ mod script_args_tests {
                 "return Got[1] == SetScriptProbe and Got[2] == 'ARGS_PROBE' and Got[3] == 'x'"
             )
             .unwrap());
-    }
-
-    #[test]
-    fn a_classic_handler_reads_this_and_the_arg_globals_and_self_stays_a_global() {
-        let s = loaded(Expansion::Classic);
-        assert!(s.errors().is_empty(), "{:?}", s.errors());
-        assert!(s.eval::<bool>("return LoadThis == ArgsProbe").unwrap());
-        assert!(
-            s.eval::<bool>("return LoadSelf == nil and EventSelf == nil")
-                .unwrap(),
-            "1.12.1 passes nothing: `self` is an ordinary, unset global"
-        );
-        assert_eq!(s.eval::<String>("return EventName").unwrap(), "ARGS_PROBE");
-        assert_eq!(s.eval::<String>("return EventArg1").unwrap(), "payload");
-        assert!(s.eval::<bool>("return EventArg == nil").unwrap());
     }
 
     const NAMED_DOC: &str = r#"<Ui>
@@ -2606,7 +2530,7 @@ mod script_args_tests {
     </Ui>"#;
 
     fn named() -> (UiScript, crate::loader::LoadReport) {
-        let mut s = UiScript::new_for(Expansion::Wotlk).unwrap();
+        let mut s = UiScript::new().unwrap();
         s.set_screen_size(800.0, 600.0);
         let doc = framexml::parse(NAMED_DOC).expect("valid FrameXML");
         let report = load(&s, &doc, &no_files);

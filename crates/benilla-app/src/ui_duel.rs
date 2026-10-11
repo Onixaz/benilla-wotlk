@@ -522,6 +522,7 @@ mod tests {
     /// 7266 "Duel", which vmangos grants every race and class (`playercreateinfo_spell`), is the
     /// only `SPELL_EFFECT_DUEL` spell in the shipped `Spell.dbc`, so `[0xb71130]` is unambiguous.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_duel_spell_resolves_to_7266_on_real_data() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

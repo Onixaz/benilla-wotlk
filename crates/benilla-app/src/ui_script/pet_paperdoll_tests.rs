@@ -117,6 +117,7 @@ fn take_pet(s: &mut UiScript) {
 
 /// The frame count fingerprints the stock `PetPaperDollFrame.xml`; it moves only with that file.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_pet_page_loads_clean() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();
@@ -137,6 +138,7 @@ fn shipped_pet_page_loads_clean() {
 /// `PetTab_Update` (`PetPaperDollFrame.lua:189-198`) hides the Pet tab and re-anchors tab 3 onto
 /// its spot; the exact position proves the re-anchor ran, where a bare hide would leave a gap.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_pet_tab_rises_and_falls_with_the_pet_and_the_next_tab_closes_the_gap() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_pet_page();
@@ -179,6 +181,7 @@ fn the_pet_tab_rises_and_falls_with_the_pet_and_the_next_tab_closes_the_gap() {
 
 /// Stock `ToggleCharacter`'s guard (`CharacterFrame.lua:4-6`): no open, no close, no page switch.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn asking_for_the_pet_page_without_a_pet_does_nothing() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = load_pet_page();
@@ -199,6 +202,7 @@ fn asking_for_the_pet_page_without_a_pet_does_nothing() {
 
 /// No player combat stats are pushed, so a number read through `"player"` would be zero.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_page_reads_the_pets_own_snapshot() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_pet_page();
@@ -226,6 +230,7 @@ fn the_page_reads_the_pets_own_snapshot() {
 /// The pages share the window's name line: the pet's on show, the player's back on hide
 /// (`PetPaperDollFrame.lua:50-60`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_page_borrows_the_windows_name_line_and_gives_it_back() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_pet_page();
@@ -250,6 +255,7 @@ fn the_page_borrows_the_windows_name_line_and_gives_it_back() {
 /// A pet lost under its open page closes the window before any repaint
 /// (`PetPaperDollFrame.lua:32-37`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_pet_leaving_closes_the_page_under_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_pet_page();
@@ -268,6 +274,7 @@ fn the_pet_leaving_closes_the_page_under_it() {
 /// A warlock's minion passes `HasPetUI` but not its second return, so the three hunter-only pieces
 /// stay down (`PetPaperDollFrame.lua:83-93`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_minion_gets_the_page_without_the_hunter_furniture() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_pet_page();
@@ -302,6 +309,7 @@ fn a_minion_gets_the_page_without_the_hunter_furniture() {
 /// (`PetPaperDollFrame.lua:68-70`), outside the hunter gate, so a minion gets it. The guard skips
 /// the `SetText` without clearing the line, so each half loads its own page.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_level_line_names_the_family_and_is_untouched_without_one() {
     let _data = benilla_formats::wow_data_or_skip!();
     let with_family = |family: Option<String>| {
@@ -346,6 +354,7 @@ fn the_level_line_names_the_family_and_is_untouched_without_one() {
 /// The diet icon's hover shows `format(PET_DIET_TEMPLATE, BuildListString(GetPetFoodTypes()))`
 /// (`PetPaperDollFrame.xml:267-270`), driven through the pointer so the hit test is covered too.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hovering_the_diet_icon_lists_what_the_pet_eats() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_pet_page();
@@ -421,6 +430,7 @@ fn hovering_the_diet_icon_lists_what_the_pet_eats() {
 
 /// Stock `BuildListString` (`UIParent.lua:1051-1057`) joins with ", " and answers nil for nothing.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn build_list_string_is_a_plain_comma_join_that_nils_on_nothing() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = load_pet_page();

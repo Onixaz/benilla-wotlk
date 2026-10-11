@@ -26,6 +26,7 @@ fn blend(cat: &LightCatalog, pos: [f32; 3]) -> benilla_formats::Atmosphere {
 /// Two points 16 yd apart across the Tirisfal-Silverpine border. Light 4 (falloff 985-1437 yd,
 /// `LightParams` 40) enters between them: at the second the eye is 1434 yd out, weight 0.006.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn water_swatch_does_not_snap_at_the_tirisfal_silverpine_border() {
     let Some(cat) = catalog() else { return };
     let a = blend(&cat, [1391.07, 641.39, 35.37]);
@@ -61,6 +62,7 @@ fn water_swatch_does_not_snap_at_the_tirisfal_silverpine_border() {
 /// Inside the nearest sphere's inner radius it merges last at weight 1, a full replace, though two
 /// wider spheres also reach the point (Light 31, `LightParams` 46, at weight 0.195).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_nearest_sphere_dominates_where_it_is_at_full_weight() {
     let Some(cat) = catalog() else { return };
     let pos = [2250.0, -750.0, 50.0];
@@ -84,6 +86,7 @@ fn the_nearest_sphere_dominates_where_it_is_at_full_weight() {
 /// A reference frame capture reads Stranglethorn's river swatch as `LightParams` 26 exactly, alpha
 /// 216/255: Light 9 covers the river at full weight, so the blend commits it whole.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stranglethorn_river_swatch_is_lightparams_26() {
     let Some(cat) = catalog() else { return };
     let stv = blend(&cat, [-13333.3, 0.0, 50.0]);

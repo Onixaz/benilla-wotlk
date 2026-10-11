@@ -189,6 +189,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_real_personality_rows_carry_vanillas_own_happiness_numbers() {
         let Some(mut chain) = chain() else { return };
         let t = load_pet_personalities(&mut chain).expect("load PetPersonality.dbc");
@@ -212,6 +213,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_bucket_loop_counts_thresholds_met() {
         let Some(mut chain) = chain() else { return };
         let t = load_pet_personalities(&mut chain).expect("load");
@@ -252,6 +254,7 @@ mod tests {
 
     /// The paper doll shows the shipped `"(Loyalty Level N) "` prefix: the client never strips it.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_real_loyalty_levels_are_named_verbatim() {
         let Some(mut chain) = chain() else { return };
         let n = load_pet_loyalty_names(&mut chain).expect("load PetLoyalty.dbc");

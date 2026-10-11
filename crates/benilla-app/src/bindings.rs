@@ -885,6 +885,7 @@ mod tests {
     /// armed by a click, a notch over the page (its OnMouseWheel, as 1.12's window binds it), then
     /// the bound chord dispatching the stock JUMP body.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_wheel_notch_binds_through_the_real_page_and_then_dispatches() {
         benilla_formats::wow_data_or_skip!();
         let mut s = crate::ui_script::keybindings_tests::harness();
@@ -1530,6 +1531,7 @@ mod tests {
     /// `ContainerFrame1..12`, recycled across containers, so the test asks `IsBagOpen(id)`; the
     /// interface loads through [`crate::ui_script::load_default_ui`], so it needs client data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn b_opens_the_backpack_and_shift_b_opens_every_bag() {
         let _data = benilla_formats::wow_data_or_skip!();
         let mut script = UiScript::new().expect("VM");

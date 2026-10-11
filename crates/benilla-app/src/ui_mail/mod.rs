@@ -766,25 +766,29 @@ mod tests {
         let id = |key: &str| {
             benilla_ui::messages::by_key(key)
                 .unwrap_or_else(|| panic!("{key} is not a catalog row"))
-                .id
+                .key
         };
         for (code, want) in [
-            (mail_error::CANNOT_SEND_TO_SELF, 0x164u16),
-            (mail_error::NOT_ENOUGH_MONEY, 0x25),
-            (mail_error::RECIPIENT_NOT_FOUND, 0x165),
-            (mail_error::NOT_YOUR_TEAM, 0xff),
-            (mail_error::INTERNAL_ERROR, 0x166),
-            (mail_error::TRIAL_ACCOUNT, 0x1be),
-            (mail_error::TOO_MANY_ATTACHMENTS, 0x1c4),
+            (mail_error::CANNOT_SEND_TO_SELF, "ERR_MAIL_TO_SELF"),
+            (mail_error::NOT_ENOUGH_MONEY, "ERR_NOT_ENOUGH_MONEY"),
+            (mail_error::RECIPIENT_NOT_FOUND, "ERR_MAIL_TARGET_NOT_FOUND"),
+            (mail_error::NOT_YOUR_TEAM, "ERR_PLAYER_WRONG_FACTION"),
+            (mail_error::INTERNAL_ERROR, "ERR_MAIL_DATABASE_ERROR"),
+            (mail_error::TRIAL_ACCOUNT, "ERR_RESTRICTED_ACCOUNT"),
+            (mail_error::TOO_MANY_ATTACHMENTS, "ERR_MAIL_REACHED_CAP"),
         ] {
             assert_eq!(id(mail_refusal(code)), want, "mail error {code}");
         }
         // `ja 0x4ad147` and the index table's `08` run: 7..13 and past 15 share the database error.
         for code in [7, 8, 13, 16, 99, u32::MAX] {
-            assert_eq!(id(mail_refusal(code)), 0x166, "mail error {code}");
+            assert_eq!(
+                id(mail_refusal(code)),
+                "ERR_MAIL_DATABASE_ERROR",
+                "mail error {code}"
+            );
         }
         // A success shows on the yellow info line.
-        assert_eq!(id(MAIL_SENT_KEY), 0x167);
+        assert_eq!(id(MAIL_SENT_KEY), "ERR_MAIL_SENT");
         assert_eq!(
             benilla_ui::messages::by_key(MAIL_SENT_KEY)
                 .expect("row")

@@ -79,6 +79,7 @@ fn eight_entries() -> QuestLogState {
 const HAMMER_LINK: &str = "|cffffffff|Hitem:2024:0:0:0|h[Militia Hammer]|h|r";
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_questlog_frame_loads_clean() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();
@@ -104,6 +105,7 @@ fn shipped_questlog_frame_loads_clean() {
 
 /// Open, read the list and the detail, wheel the list, abandon through the confirm, close.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_questlog_frame_drives_end_to_end() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -280,6 +282,7 @@ fn shipped_questlog_frame_drives_end_to_end() {
 /// With chat closed, a title shift-click toggles the watch (`QuestLogFrame.lua:481-500`): the
 /// row's check and the tracker, `QuestWatchFrame`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shift_click_toggles_the_watch_checkbox_and_the_tracker_hud() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -407,6 +410,7 @@ fn shift_click_toggles_the_watch_checkbox_and_the_tracker_hud() {
 /// A shift-click on a quest with no objectives, or past five watches, refuses the watch with a red
 /// line on `UIErrorsFrame` and returns before selecting the row (`QuestLogFrame.lua:489-497`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn watch_guards_no_op_without_erroring() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -505,6 +509,7 @@ fn watch_guards_no_op_without_erroring() {
 /// Progress arms a 300 s watch (`MAX_QUEST_WATCH_TIMER`, `QuestLogFrame.lua:752-770`), fresh
 /// progress re-arms it, and expiry unwatches and hides the tracker (`:774-786`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn progress_auto_watches_for_five_minutes() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -579,6 +584,7 @@ fn progress_auto_watches_for_five_minutes() {
 /// Deviation: it defaults to the string "1", because 1.12 assigns the number 1
 /// (`UIOptionsFrame.lua:122`), which that `== "1"` check reads as off.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_auto_watch_flag_is_the_references_uvar_and_gates_the_watch() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -630,6 +636,7 @@ fn the_auto_watch_flag_is_the_references_uvar_and_gates_the_watch() {
 /// A row's tag paints in parentheses on its right-flush `$parentTag`, and a Failed or Complete
 /// state replaces it (`QuestLogFrame.lua:188-195`); headers carry none.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_row_tag_is_its_own_right_flush_string_and_the_state_word_wins() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -711,6 +718,7 @@ fn the_row_tag_is_its_own_right_flush_string_and_the_state_word_wins() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn empty_quest_log_hides_rows_and_disables_abandon() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -768,6 +776,7 @@ fn empty_quest_log_hides_rows_and_disables_abandon() {
 /// `QuestFrameItems_Update` lays choices out two per row, anchors "You will also receive:" under
 /// the last choice row's left item, then the reward (`QuestFrame.lua:311-522`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn reward_rows_follow_the_refs_two_per_row_layout() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -954,6 +963,7 @@ fn overflowing_entry() -> QuestLogState {
 /// Quads under the scroll child carry `QuestLogDetailScrollFrame`'s rect as their clip; the
 /// window's own art outside it carries none.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn overflowing_detail_content_clips_to_the_scrollframe_rect() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1021,6 +1031,7 @@ fn overflowing_detail_content_clips_to_the_scrollframe_rect() {
 
 /// The detail pane's scroll frame takes the wheel (`UIPanelTemplates.xml:208-210`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn wheel_over_the_detail_pane_changes_vertical_scroll() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1078,6 +1089,7 @@ fn wheel_over_the_detail_pane_changes_vertical_scroll() {
 /// `QuestLog_UpdateQuestDetails` resets the detail scroll unless given `doNotScroll`
 /// (`QuestLogFrame.lua:348`, `:455-457`), which the `QUEST_LOG_UPDATE` refresh passes (`:62`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn selection_change_resets_detail_scroll_but_a_quest_log_update_refresh_does_not() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1143,6 +1155,7 @@ fn selection_change_resets_detail_scroll_but_a_quest_log_update_refresh_does_not
 /// The reward row's OnEnter calls `SetQuestLogItem` (`QuestLogFrame.xml:113`): a cold store shows
 /// the name and asks once, and after the answer a re-hover shows the full item lines.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn reward_row_hover_serves_the_shared_item_tooltip() {
     let _data = benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ItemTemplateView;
@@ -1235,6 +1248,7 @@ fn reward_row_hover_serves_the_shared_item_tooltip() {
 /// A child takes its parent's strata and level + 1 at creation, so the DIALOG popup's buttons draw
 /// above its own backdrop.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn popup_children_inherit_the_dialog_stratum() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1286,6 +1300,7 @@ fn popup_children_inherit_the_dialog_stratum() {
 /// `QuestLogRewardItem_OnClick` (`QuestLogFrame.lua:542-552`): ctrl tries the reward on, shift
 /// posts its link with chat open, and a plain click does nothing.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn reward_rows_preview_and_post_and_a_plain_click_stays_inert() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1371,6 +1386,7 @@ fn reward_rows_preview_and_post_and_a_plain_click_stays_inert() {
 /// With chat open a title shift-click inserts the quest name, indent trimmed and with no link in
 /// 1.12 (`QuestLogFrame.lua:478-480`); with chat closed it toggles the watch (`:481-500`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shift_click_on_a_title_posts_the_quest_name_with_chat_open_and_watches_with_it_closed() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1466,6 +1482,7 @@ fn entries_sharable(ids: &[u32]) -> QuestLogState {
 /// Share needs both a sharable selection and a party (`QuestLogFrame.lua:299-305`); each half is
 /// moved alone.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn share_quest_needs_both_a_sharable_selection_and_a_party() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1542,6 +1559,7 @@ fn share_quest_needs_both_a_sharable_selection_and_a_party() {
 
 /// An empty log disables Share before either other test (`QuestLogFrame.lua:299-300`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn share_quest_is_dark_on_an_empty_log_even_in_a_party() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1576,6 +1594,7 @@ fn share_quest_is_dark_on_an_empty_log_even_in_a_party() {
 
 /// The click queues the selected quest's id, not the row under the mouse.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn share_quest_click_queues_the_selected_quests_id() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1615,6 +1634,7 @@ fn share_quest_click_queues_the_selected_quests_id() {
 /// declared 10-unit height arms the ellipsis, which `0x771ec0` gates on a box with both width and
 /// height, so the capped title paints as one truncated line.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_title_width_cap_bites_and_is_sticky_per_row_button() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

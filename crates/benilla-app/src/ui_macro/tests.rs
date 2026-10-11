@@ -86,6 +86,7 @@ fn ui() -> UiScript {
 /// sends through the edit box (`ChatFrame.lua:1343-1347`): a macro line lands where a typed one
 /// does.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn running_a_macro_runs_its_lines_through_the_references_edit_box() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui();
@@ -127,6 +128,7 @@ fn running_a_macro_runs_its_lines_through_the_references_edit_box() {
 
 /// Index 19 is the first per-character macro (18 per tab).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_character_macro_runs_by_its_own_index() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui();
@@ -183,6 +185,7 @@ fn the_generation_moves_on_every_write_and_is_not_drained() {
 /// In 1.12 the event is the whole mechanism; `ChatFrame1`'s registration is only the default UI's
 /// use of it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_registered_frame_sees_every_macro_line_as_an_event() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui();
@@ -190,7 +193,7 @@ fn a_registered_frame_sees_every_macro_line_as_an_event() {
         r#"MacroSpy = CreateFrame("Frame")
            MacroSpy.seen = {}
            MacroSpy:RegisterEvent("EXECUTE_CHAT_LINE")
-           MacroSpy:SetScript("OnEvent", function()
+           MacroSpy:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
                table.insert(MacroSpy.seen, arg1)
            end)"#,
     )
@@ -223,6 +226,7 @@ fn a_registered_frame_sees_every_macro_line_as_an_event() {
 
 /// The reference's tokenizer (`0x64ae50`) splits on either `\r` or `\n`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn either_line_ending_splits_a_body() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui();
@@ -245,6 +249,7 @@ fn either_line_ending_splits_a_body() {
 /// one that does not draws as a white square. `Ability_Druid_Mangle.tga` resolves only through the
 /// second `.blp` candidate, since `Ability_Druid_Mangle.tga.blp` is what ships.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_macro_chooser_icon_resolves_in_the_client_archives() {
     /// A stock 5875 install: `patch.MPQ` 77 + `interface.MPQ` 443 = 520 `Spell_`/`Ability_` names
     /// under `Interface\Icons\`, less 3 that differ only by case or extension

@@ -99,6 +99,7 @@ fn boxes(s: &UiScript) -> Vec<(String, String, bool, bool)> {
 /// Each step runs the stock Lua to its end: an aborted `OptionsFrame_Load` leaves
 /// `OptionsFrame.gamma` nil for `OnHide`'s `SetGamma` (`OptionsFrame.lua:260`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_video_window_opens_saves_restores_defaults_and_cancels_clean() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = video_ui();

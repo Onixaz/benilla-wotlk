@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use benilla_protocol::messages::{self, opcode};
 use benilla_protocol::{SessionEvent, WorldWriter};
-use benilla_srp::vanilla_header::HeaderCrypto;
+use benilla_srp::wotlk_header::WotlkHeaderCrypto;
 use benilla_srp::{
     password_verifier, NormalizedString, GENERATOR, LARGE_SAFE_PRIME_LITTLE_ENDIAN,
     SESSION_KEY_LENGTH,
@@ -105,22 +105,23 @@ fn fake_realmd(world: String, keys: Sender<[u8; SESSION_KEY_LENGTH]>) -> String 
         let key = interleave(&le32(&big_s));
         let mut reply = vec![0x01, 0x00];
         reply.extend_from_slice(&sha1(&[a_pub, m1, &key]));
+        reply.extend_from_slice(&0u32.to_le_bytes()); // account_flags
         reply.extend_from_slice(&0u32.to_le_bytes()); // hardware_survey_id
+        reply.extend_from_slice(&0u16.to_le_bytes()); // login_flags
         s.write_all(&reply).unwrap();
         keys.send(key).unwrap();
 
         // CMD_REALM_LIST_Client, answered with the one realm.
         s.read_exact(&mut [0u8; 5]).unwrap();
         let mut realm = Vec::new();
-        realm.extend_from_slice(&0u32.to_le_bytes()); // realm_type
-        realm.push(0); // flags
+        realm.extend_from_slice(&[0, 0, 0]); // realm_type, locked, flags
         realm.extend_from_slice(format!("{REALM}\0{world}\0").as_bytes());
         realm.extend_from_slice(&0f32.to_le_bytes()); // population
         realm.extend_from_slice(&[0, 1, 1]); // characters, category, id
         let mut list = vec![0x10];
-        list.extend_from_slice(&((4 + 1 + realm.len() + 2) as u16).to_le_bytes());
+        list.extend_from_slice(&((4 + 2 + realm.len() + 2) as u16).to_le_bytes());
         list.extend_from_slice(&0u32.to_le_bytes());
-        list.push(1);
+        list.extend_from_slice(&1u16.to_le_bytes());
         list.extend_from_slice(&realm);
         list.extend_from_slice(&0u16.to_le_bytes());
         s.write_all(&list).unwrap();
@@ -132,23 +133,23 @@ fn fake_realmd(world: String, keys: Sender<[u8; SESSION_KEY_LENGTH]>) -> String 
 }
 
 /// A server packet: `u16` BE size counting the opcode, `u16` LE opcode, the body.
-fn send(s: &mut TcpStream, crypto: Option<&mut HeaderCrypto>, op: u16, body: &[u8]) {
+fn send(s: &mut TcpStream, crypto: Option<&mut WotlkHeaderCrypto>, op: u16, body: &[u8]) {
     let size = ((body.len() + 2) as u16).to_be_bytes();
     let op = op.to_le_bytes();
     let mut header = [size[0], size[1], op[0], op[1]];
     if let Some(c) = crypto {
-        c.encrypter().encrypt(&mut header);
+        c.encrypt.apply(&mut header);
     }
     s.write_all(&header).unwrap();
     s.write_all(body).unwrap();
 }
 
 /// A client packet's opcode, reading past its body: `u16` BE size counting the 4-byte opcode.
-fn recv(s: &mut TcpStream, crypto: Option<&mut HeaderCrypto>) -> Option<u16> {
+fn recv(s: &mut TcpStream, crypto: Option<&mut WotlkHeaderCrypto>) -> Option<u16> {
     let mut header = [0u8; 6];
     s.read_exact(&mut header).ok()?;
     if let Some(c) = crypto {
-        c.decrypter().decrypt(&mut header);
+        c.decrypt.apply(&mut header);
     }
     let size = usize::from(u16::from_be_bytes([header[0], header[1]]));
     s.read_exact(&mut vec![0u8; size.saturating_sub(4)]).ok()?;
@@ -166,20 +167,17 @@ fn fake_world(
     let log = Arc::clone(&sent);
     thread::spawn(move || {
         let (mut s, _) = listener.accept().unwrap();
-        send(
-            &mut s,
-            None,
-            opcode::SMSG_AUTH_CHALLENGE,
-            &0xDEAD_BEEFu32.to_le_bytes(),
-        );
+        // `u32 1`, the seed, then 32 bytes of further seeds.
+        let mut challenge = 1u32.to_le_bytes().to_vec();
+        challenge.extend_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
+        challenge.extend_from_slice(&[0xAB; 32]);
+        send(&mut s, None, opcode::SMSG_AUTH_CHALLENGE, &challenge);
         assert_eq!(recv(&mut s, None), Some(opcode::CMSG_AUTH_SESSION));
-        let mut crypto = HeaderCrypto::from_session_key(keys.recv_timeout(WAIT).unwrap());
-        send(
-            &mut s,
-            Some(&mut crypto),
-            opcode::SMSG_AUTH_RESPONSE,
-            &[messages::AUTH_OK],
-        );
+        let mut crypto = WotlkHeaderCrypto::server(&keys.recv_timeout(WAIT).unwrap());
+        // AUTH_OK, billing remaining, plan flags, billing rested, expansion.
+        let mut ok = vec![messages::AUTH_OK];
+        ok.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 2]);
+        send(&mut s, Some(&mut crypto), opcode::SMSG_AUTH_RESPONSE, &ok);
         while let Some(op) = recv(&mut s, Some(&mut crypto)) {
             log.lock().unwrap().push(op);
             match op {

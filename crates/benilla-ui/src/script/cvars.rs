@@ -394,10 +394,7 @@ const USAGE_REGISTER_CVAR: &str = "Usage: RegisterCVar(\"cvar\" [, default])";
 /// `InitializeGame` does before `UI_Init`.
 pub const IN_WORLD_READ_ONLY_CVARS: [&str; 3] = ["realmList", "realmName", "scriptMemory"];
 
-pub(super) fn install(
-    lua: &Lua,
-    client: &benilla_expansions::ExpansionProfile,
-) -> mlua::Result<()> {
+pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // `RegisterCVar(name, value)` (`0x488b00`) declares a CVar the client does not ship, which is
     // how an addon persists a setting. Re-declaring a live name is a no-op: the reference never
     // resets a live value on re-registration (`0x488b7d`).
@@ -459,31 +456,29 @@ pub(super) fn install(
             }
         })?,
     )?;
-    if client.get_cvar_bool {
-        // 3.3.5a's `GetCVarBool(name)` (world `0x5100c0`): 1 when the value reads as true, else
-        // nil. A name `lua_isstring` refuses raises the usage; an unknown name is nil, unraised.
-        lua.globals().set(
-            "GetCVarBool",
-            lua.create_function(|lua, args: mlua::MultiValue| {
-                let Some(name) = cvar_arg(args.front()) else {
-                    return Err(mlua::Error::runtime(USAGE_GET_CVAR_BOOL));
-                };
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
-                let truth = match model.cvars.get(&name.to_ascii_lowercase()) {
-                    Some(slot) => cvar_truth(&slot.value),
-                    None => {
-                        warn_unknown(&mut model, &name);
-                        false
-                    }
-                };
-                Ok(if truth {
-                    Value::Number(1.0)
-                } else {
-                    Value::Nil
-                })
-            })?,
-        )?;
-    }
+    // `GetCVarBool(name)` (world `0x5100c0`): 1 when the value reads as true, else
+    // nil. A name `lua_isstring` refuses raises the usage; an unknown name is nil, unraised.
+    lua.globals().set(
+        "GetCVarBool",
+        lua.create_function(|lua, args: mlua::MultiValue| {
+            let Some(name) = cvar_arg(args.front()) else {
+                return Err(mlua::Error::runtime(USAGE_GET_CVAR_BOOL));
+            };
+            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let truth = match model.cvars.get(&name.to_ascii_lowercase()) {
+                Some(slot) => cvar_truth(&slot.value),
+                None => {
+                    warn_unknown(&mut model, &name);
+                    false
+                }
+            };
+            Ok(if truth {
+                Value::Number(1.0)
+            } else {
+                Value::Nil
+            })
+        })?,
+    )?;
     // ── The Video options Multisampling dropdown ──────────────────────────────────────────────
     // As `OptionsFrame.lua` drives it: `_OnLoad` seeds the selection from
     // `GetCurrentMultisampleFormat()`, `_Initialize` walks `GetMultisampleFormats()` three values
@@ -1247,20 +1242,10 @@ mod tests {
         assert_eq!(trimmed, "Archimonde");
     }
 
-    #[test]
-    fn get_cvar_bool_is_a_wotlk_global_only() {
-        let classic = UiScript::new_for(benilla_expansions::Expansion::Classic).unwrap();
-        assert!(classic.eval::<bool>("return GetCVarBool == nil").unwrap());
-        let wotlk = UiScript::new_for(benilla_expansions::Expansion::Wotlk).unwrap();
-        assert!(wotlk
-            .eval::<bool>(r#"return type(GetCVarBool) == "function""#)
-            .unwrap());
-    }
-
     /// `0x815400` by the first byte, then `on`/`enabled` whole and in any case.
     #[test]
     fn get_cvar_bool_reads_the_value_as_wotlk_does() {
-        let s = UiScript::new_for(benilla_expansions::Expansion::Wotlk).unwrap();
+        let s = UiScript::new().unwrap();
         let rows = [
             ("1", true),
             ("10", true),
@@ -1292,7 +1277,7 @@ mod tests {
 
     #[test]
     fn get_cvar_bool_answers_nil_for_an_unknown_name_and_raises_on_no_name() {
-        let s = UiScript::new_for(benilla_expansions::Expansion::Wotlk).unwrap();
+        let s = UiScript::new().unwrap();
         let out: mlua::MultiValue = s
             .lua()
             .load(r#"return GetCVarBool("noSuchCVar")"#)
@@ -1301,5 +1286,13 @@ mod tests {
         assert!(matches!(out.into_vec().as_slice(), [mlua::Value::Nil]));
         let err = s.run("GetCVarBool()").unwrap_err().to_string();
         assert!(err.contains(r#"Usage: GetCVarBool("cvar")"#), "{err}");
+    }
+
+    #[test]
+    fn get_cvar_bool_is_a_global() {
+        let s = UiScript::new().unwrap();
+        assert!(s
+            .eval::<bool>(r#"return type(GetCVarBool) == "function""#)
+            .unwrap());
     }
 }

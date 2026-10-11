@@ -306,6 +306,7 @@ fn the_sandbox_answers_a_raid_intent_with_a_raid_roster_update() {
 /// re-reads its rows on `RAID_ROSTER_UPDATE` alone (`RaidPullout_OnEvent`); this harness sends no
 /// member stats, so no `UNIT_HEALTH` repaints the row in its place.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_raid_ui_repaints_a_member_who_dies_out_of_view() {
     benilla_formats::wow_data_or_skip!();
     let mut script = UiScript::new().unwrap();

@@ -1,6 +1,6 @@
 //! An M2 through [`read_m2`](benilla_formats::read_m2) and the 1.12.1 readers: what a version-264
 //! model keeps after its relayout, and what it drops. Output is Blizzard data: never commit it.
-//! `WOW_EXPANSION=wotlk cargo run -p benilla-formats --example relayout_m2 -- <m2 path>`
+//! `cargo run -p benilla-formats --example relayout_m2 -- <m2 path>`
 
 fn main() -> anyhow::Result<()> {
     let path = std::env::args()

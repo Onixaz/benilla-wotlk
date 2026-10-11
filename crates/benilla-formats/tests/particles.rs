@@ -5,6 +5,7 @@ use benilla_formats::{
 };
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn campfire_emitters_match_real_bytes() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -231,6 +232,7 @@ fn colour_and_size_ride_the_same_inset() {
 
 /// `DwarvenBrazier01`'s settling flame authors the inverted segment-B pair `(6, 5)`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn inverted_ramp_on_real_data_does_not_panic() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -259,6 +261,7 @@ fn inverted_ramp_on_real_data_does_not_panic() {
 /// The per-segment flipbook repeat count (file `+0x16c`, `+0x172`) cycles the cell ramp by
 /// `fmod(t·repeat, 1.0)`; the 18 shipped emitters that author one are the Insect Swarm visuals.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn repeat_count_cycles_the_flipbook() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -289,6 +292,7 @@ fn repeat_count_cycles_the_flipbook() {
 /// the range is degenerate (`0x7b2a50`), not a spawn-time multiplier: the kobold candle authors
 /// `{0, 0}` and burns in the reference.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn twinkle_fields_gate_not_scale() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -328,6 +332,7 @@ fn twinkle_fields_gate_not_scale() {
 /// space, file 0x20 (runtime 0x200) scales size by the placement. The chandelier's flames (0x11,
 /// 0x15) ride its swing; the campfire (0x21, 0x29) scales.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn flag_remap_reads_the_file_bits() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -366,6 +371,7 @@ fn flag_remap_reads_the_file_bits() {
 /// `G_BarrelExplode.m2` (GameObject 20737): all 7 emitters fire inside the one-shot clips (slot 0,
 /// anim 157; slot 3, anim 150 Destroy) and are off in both idles (slot 1 Stand, slot 2 Closed).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn barrel_explode_emitters_are_off_at_rest_and_fire_in_their_clips() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -408,6 +414,7 @@ fn barrel_explode_emitters_are_off_at_rest_and_fire_in_their_clips() {
 /// 224/255)`, which cuts `PARTROCK.BLP`'s silhouette. The earth elemental is the one creature that
 /// authors it, and nothing in 1.12.1 authors mode 0.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn earth_elemental_debris_is_alphakey_not_opaque() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

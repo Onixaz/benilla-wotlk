@@ -680,7 +680,7 @@ mod tests {
              f:SetPoint('BOTTOMLEFT', 0, 0)\n\
              f:SetWidth(430)\n\
              f:SetHeight(120)\n\
-             f:SetScript('OnHyperlinkClick', function()\n\
+             f:SetScript('OnHyperlinkClick', function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)\n\
                  local link, text, button = arg1, arg2, arg3\n\
                  CLICKED = link .. '#' .. text .. '#' .. button\n\
              end)",

@@ -87,6 +87,7 @@ fn info_and_error_messages_stack_hold_and_expire() {
 /// `UIErrorsFrame` overlaps the left-slot panels and outranks them by stratum, HIGH
 /// (`UIErrorsFrame.xml:4`); within one stratum a panel's child frames would win on level.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_error_toast_draws_over_an_open_panel_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

@@ -145,6 +145,7 @@ mod tests {
 
     /// Field 5 holds the class name, so a one-column slip would blank the spellbook tab silently.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn warlocks_pet_is_a_demon_and_everyone_elses_is_a_pet() {
         let Some(mut chain) = chain() else { return };
         let t = load_chr_classes(&mut chain).expect("load ChrClasses.dbc");
@@ -159,6 +160,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn libram_totem_and_idol_are_the_three_relic_classes() {
         let Some(mut chain) = chain() else { return };
         let t = load_chr_classes(&mut chain).expect("load ChrClasses.dbc");
@@ -182,6 +184,7 @@ mod tests {
 
     /// Hunters and Rogues scale their damage off Agility, everyone else off Strength.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn hunters_and_rogues_take_their_damage_bonus_from_agility() {
         let Some(mut chain) = chain() else { return };
         let t = load_chr_classes(&mut chain).expect("load ChrClasses.dbc");
@@ -205,6 +208,7 @@ mod tests {
     /// The whole column pins field 15: nine distinct values matching vmangos `SpellFamilyNames`
     /// are a shape no neighbour has (field 14 is the class's file name, field 16 the relic flag).
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_class_row_carries_its_vmangos_spell_family() {
         let Some(mut chain) = chain() else { return };
         let t = load_chr_classes(&mut chain).expect("load ChrClasses.dbc");

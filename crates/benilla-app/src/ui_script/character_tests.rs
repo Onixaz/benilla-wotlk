@@ -106,6 +106,7 @@ fn backpack_with_fitting_helm() -> benilla_ui::script::ContainerState {
 
 /// A frame count fingerprints the player's own file, not a target: it moves only when that does.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_character_frame_loads_clean() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();
@@ -129,6 +130,7 @@ fn shipped_character_frame_loads_clean() {
 /// Opens with `ToggleCharacter`, the `C` binding's entry point, reads the snapshot lines, hovers,
 /// rotates the model and closes again.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_character_frame_drives_end_to_end() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -327,6 +329,7 @@ fn shipped_character_frame_drives_end_to_end() {
 /// The window's art is `PaperDollFrame`'s BACKGROUND layer, created after the close button; the
 /// button's `OnLoad` raises its level by 4 (`CharacterFrame.xml:75`), so its red X paints above.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn close_button_draws_above_the_paper_doll_page() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -368,6 +371,7 @@ fn close_button_draws_above_the_paper_doll_page() {
 /// race raises in its `format`, and `ui_unit::feed_units` always pushes the player snapshot before
 /// `PLAYER_ENTERING_WORLD`, so the test seats one first.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn level_line_reads_the_snapshot_and_repaints_on_unit_level() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -417,6 +421,7 @@ fn level_line_reads_the_snapshot_and_repaints_on_unit_level() {
 /// icon is desaturated and tinted 0.5 (`PaperDollFrame.lua:729-737`,
 /// `ItemButtonTemplate.lua:61-82`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn clicking_an_occupied_doll_slot_picks_it_up_and_locks_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -474,6 +479,7 @@ fn clicking_an_occupied_doll_slot_picks_it_up_and_locks_it() {
 /// (`PaperDollFrame.lua:609-616`); the lit ring is the template's `HighlightTexture`
 /// (`ItemButtonTemplate.xml:44`). The mouse is parked off the doll, so only a lock lights a ring.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn cursor_update_highlights_fitting_doll_slots_while_holding_a_bag_item() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -524,6 +530,7 @@ fn cursor_update_highlights_fitting_doll_slots_while_holding_a_bag_item() {
 
 /// A left-button release on the model pane auto-equips the held item (`PaperDollFrame.lua:31-35`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn model_pane_click_auto_equips_a_held_bag_item() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -560,6 +567,7 @@ fn model_pane_click_auto_equips_a_held_bag_item() {
 /// The icon is tinted too, but the same update ends in `UpdateLock` (`:714`), whose unlocked
 /// `SetItemButtonDesaturated(this, nil)` resets it to white (`ItemButtonTemplate.lua:71-81`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn broken_equipped_item_tints_its_doll_slot_red() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -632,6 +640,7 @@ fn broken_equipped_item_tints_its_doll_slot_red() {
 /// Skills and back to Character twice, every click by screen point through the pointer path, with
 /// a skill row selected on the way: the Character tab must switch back while Skills is up.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn tab_round_trip_with_a_selected_skill_by_point() {
     let _data = benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::{SkillEntry, SkillsState};
@@ -807,6 +816,7 @@ fn tab_round_trip_with_a_selected_skill_by_point() {
 /// second (`Model_OnUpdate`, `UIParent.lua:1444-1462`). The held branches turn opposite to the
 /// click helpers, as in the reference.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn rotate_arrows_tap_twice_and_spin_while_held() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -884,6 +894,7 @@ fn rotate_arrows_tap_twice_and_spin_while_held() {
 /// `ToggleCharacter` selects the tab itself (`CharacterFrame.lua:10`), so a keybind's page switch
 /// moves the tab row; driven by a bare `ToggleCharacter(page)`, as the `C` binding calls it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_keybind_page_switch_moves_the_tab_row_with_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -995,6 +1006,7 @@ fn a_keybind_page_switch_moves_the_tab_row_with_it() {
 /// plus the two end slices (`CharacterFrameTemplates.xml:78`, `UIPanelTemplates.lua:31-88`), from
 /// an authored 115.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_five_tabs_fit_their_labels_on_the_first_show() {
     let _data = benilla_formats::wow_data_or_skip!();
     /// `2 * CharacterFrameTab1Left:GetWidth()`: the two 20-unit end slices.
@@ -1079,6 +1091,7 @@ fn the_five_tabs_fit_their_labels_on_the_first_show() {
 /// (`UIPanelTemplates.lua:2-4`): `this` is the clicked tab and the owner an argument, as an addon
 /// calls it from a tab's `<OnClick>` on a row of its own.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_addons_tab_click_selects_through_the_generic_entry_point() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

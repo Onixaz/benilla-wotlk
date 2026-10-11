@@ -40,6 +40,7 @@ fn setup() -> UiScript {
 /// `StaticPopup_Show` writes " " for a countdown kind (`StaticPopup.lua:1567`) and each tick
 /// composes the line; Accept's `ConfirmSummon()` becomes `CMSG_SUMMON_RESPONSE`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_confirm_names_the_summoner_and_accept_queues_the_response() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -73,6 +74,7 @@ fn the_confirm_names_the_summoner_and_accept_queues_the_response() {
 
 /// Under a minute the line counts seconds, singular at one (`StaticPopup.lua:1748`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_countdown_line_switches_to_seconds_and_singularises() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -100,6 +102,7 @@ fn the_countdown_line_switches_to_seconds_and_singularises() {
 
 /// A name still resolving paints blank; the tick re-reads the getters, so it fills in on arrival.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_summoner_whose_name_is_still_resolving_fills_in_on_a_later_tick() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -133,6 +136,7 @@ fn a_summoner_whose_name_is_still_resolving_fills_in_on_a_later_tick() {
 
 /// OnUpdate disables Accept in combat but leaves the dialog up (`StaticPopup.lua:1346`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn combat_locks_accept_without_taking_the_dialog_down() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -179,6 +183,7 @@ fn combat_locks_accept_without_taking_the_dialog_down() {
 
 /// 1.12 has no decline opcode and no `CancelSummon`: only Accept sends.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn declining_and_expiring_both_send_nothing() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();

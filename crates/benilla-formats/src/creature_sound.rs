@@ -184,6 +184,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_creature_voice_resolves() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -207,6 +208,7 @@ mod tests {
     /// Only four rows carry columns 27-29, and their kits are named `_KILL`, `_ORDER` and
     /// `_DISMISS` in column order; a hunter pet's are 0, so it is silent, as in the reference.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn only_the_four_demon_voices_carry_pet_barks() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

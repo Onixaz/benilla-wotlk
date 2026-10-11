@@ -44,6 +44,7 @@ fn resolves_and_reads_across_archive_types() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn culls_constant_zero_alpha_m2_batches() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -71,6 +72,7 @@ fn culls_constant_zero_alpha_m2_batches() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn trigger_creature_models_carry_no_render_geometry() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -100,6 +102,7 @@ fn trigger_creature_models_carry_no_render_geometry() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_trigger_creature_still_carries_the_attachments_its_visible_self_rides() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -138,6 +141,7 @@ fn the_trigger_creature_still_carries_the_attachments_its_visible_self_rides() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn suppresses_white1_invisible_trap_placeholder() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -187,6 +191,7 @@ fn decodes_a_blp_icon_to_png() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn dumps_taxinodes_to_csv() {
     let data = benilla_formats::wow_data_or_skip!();
 
@@ -509,6 +514,7 @@ fn reads_and_decodes_a_terrain_texture() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn resolves_creature_models_from_dbcs() {
     let data = benilla_formats::wow_data_or_skip!();
 
@@ -553,6 +559,7 @@ fn resolves_creature_models_from_dbcs() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn resolves_gameobject_models_from_dbc() {
     let data = benilla_formats::wow_data_or_skip!();
 
@@ -585,6 +592,7 @@ fn resolves_gameobject_models_from_dbc() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn loads_classic_models_with_cosmetic_chunks() {
     let data = benilla_formats::wow_data_or_skip!();
 
@@ -616,6 +624,7 @@ fn span3(ps: &[[f32; 3]]) -> [f32; 3] {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn decodes_m2_collision_hulls() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -776,6 +785,7 @@ fn derives_the_wmo_window_glass_law_from_momt() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn reads_authentic_atmosphere_from_light_dbc() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -840,6 +850,7 @@ fn reads_authentic_atmosphere_from_light_dbc() {
 /// Elwynn's storm param, LightParams 10, at noon. Its fog start fraction is -0.5 and the reference
 /// never clamps it (`0x6cee6d`): the negative start is the constant ~33% near veil under rain.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn reads_elwynn_storm_fog_endpoints() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -946,6 +957,7 @@ fn decodes_azeroth_wdl_against_apitrace_ground_truth() {
 /// Magma and slime submersion read the fixed global `LightParams` rows 7 and 6 (`0x6d2371`), which
 /// no `Light.dbc` row references; they decode to the dense orange and green views.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn magma_and_slime_submersion_read_the_fixed_global_light_params() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -1099,6 +1111,7 @@ fn the_wdl_window_contains_the_cameras_own_tile() {
 /// `patch.MPQ` deletes 26 paths that base archives still carry in full, cut content the 1.12
 /// client never loads; a deleted path must not fall through to the base copy.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn tombstoned_paths_never_fall_through_to_the_base_copy() {
     let data = benilla_formats::wow_data_or_skip!();
 
@@ -1191,6 +1204,7 @@ fn reads_the_skybox_and_its_per_group_gate() {
 /// The Kharanos inn authors `None` on all 20 materials, so a walker there gets the generic dry step
 /// and no footprint, not the snow of the ADT beneath.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn wmo_ground_type_is_a_terrain_type_id() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -1281,6 +1295,7 @@ fn wmo_ground_type_is_a_terrain_type_id() {
 /// 5 of 426 `LightParams` rows carry an id, all 3 (`DeathClouds.mdx`), from param slot 4 of all
 /// 374 `Light` rows, so it resolves the same everywhere, Deeprun Tram's fallback row included.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn resolves_the_ghost_skybox_everywhere() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

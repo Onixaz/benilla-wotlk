@@ -214,6 +214,7 @@ mod tests {
     /// (Human) 4000 and an empty one, so a human starts at 4000, Friendly, from the third slot.
     /// Skips without client data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_stormwind_starts_friendly_for_a_human_and_hidden_factions_never_list() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -261,6 +262,7 @@ mod tests {
     /// mask `0x1df`, no druids, and its second Night Elf and Tauren druids at 2000, so a rule that
     /// stopped at the first match would give a Night Elf druid 0. Skips without client data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_membership_gate_excludes_only_druids_of_the_six_non_druid_races() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -307,6 +309,7 @@ mod tests {
     /// would leave the headers blank. The flags are the DBC defaults a human warrior is seeded with
     /// (`ReputationMgr::GetDefaultStateFlags`). Skips without client data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_header_factions_carry_the_header_bit_and_still_reach_the_engine() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -419,6 +422,7 @@ mod live_wire_tests {
     /// A new human warrior's Reputation tab shows the Alliance header (`0x09`, a header that is
     /// also visible) over its four cities, and nothing else. Skips without client data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_fresh_alliance_characters_pane_off_live_wire_bytes() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

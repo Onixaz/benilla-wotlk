@@ -7,6 +7,7 @@ use benilla_formats::{open_chain, parse_m2_particle_emitters};
 const STRIKE_IMPACT: &str = "Spells\\Strike_Impact_Chest.m2";
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_flare_emitter_never_fires_and_the_plume_fires_once() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

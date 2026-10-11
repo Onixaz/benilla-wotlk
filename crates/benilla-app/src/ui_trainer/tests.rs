@@ -236,6 +236,7 @@ fn trainer_icon_is_nil_until_the_product_template_lands_and_asks_once() {
 /// On the shipped `Spell.dbc`: 2756 is the wrapper a Blacksmithing trainer sends, 2739 the recipe
 /// it teaches, 2847 the sword it makes. Skips without client data.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn trainer_icon_on_real_data_reaches_for_the_crafted_item() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -284,6 +285,7 @@ fn trainer_icon_on_real_data_reaches_for_the_crafted_item() {
 /// On real data: the warrior wrapper 1605 is not in `SkillLineAbility`, so grouping hops to the
 /// taught 78 (Arms, 26) while the buy id stays 1605. Skips without client data.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn resolve_hops_the_learn_wrapper_to_the_taught_ability() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -313,6 +315,7 @@ fn resolve_hops_the_learn_wrapper_to_the_taught_ability() {
 /// Only a profession-learn row tells the two apart: 2020 is "Apprentice Blacksmith" with no rank,
 /// teaching 2018 "Blacksmithing"/"Apprentice". Skips without client data.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn display_name_is_the_wire_spell_not_the_taught_one() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -438,6 +441,7 @@ fn ability_req_met_tracks_known_spells_not_the_service_category() {
 /// On real data the prerequisite reads as the client's `"%s (%s)"`: 78 is Heroic Strike Rank 1.
 /// Skips without client data.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ability_req_shows_the_required_rank_on_real_data() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");

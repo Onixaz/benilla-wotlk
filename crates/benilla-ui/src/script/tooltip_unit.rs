@@ -548,7 +548,6 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, token): (Table, String)| {
             // The token gate every `Unit*` verb uses: an unknown token raises. Not in
             // `render_unit`, which the app calls with canonical tokens.
-            crate::script::unit::check_unit_token(lua, &Some(token.clone()))?;
             let ok = render_unit(lua, &this, &token)?;
             Ok(if ok {
                 mlua::Value::Integer(1)

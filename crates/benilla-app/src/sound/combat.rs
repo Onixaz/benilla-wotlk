@@ -679,6 +679,7 @@ mod tests {
 
     /// `0x623870`'s three answers on the shipped `ItemSubClass.dbc`. Skips without client data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_swing_weight_is_the_dbc_column_not_a_guess() {
         let Some(data) = benilla_formats::wow_data() else {
             eprintln!("skipping: no WoW install found");
@@ -719,6 +720,7 @@ mod tests {
     /// The weight picks the `WeaponSwingSounds2` row and the crit bit its column, on shipped
     /// data. Skips without client data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_weapons_subclass_reaches_its_own_woosh_kit() {
         let Some(data) = benilla_formats::wow_data() else {
             eprintln!("skipping: no WoW install found");
@@ -753,6 +755,7 @@ mod tests {
     /// The stub and miss kits are the `(DONOTRENAME)` rows the startup cache names. Skips without
     /// client data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_deflect_and_absorb_stubs_name_real_kits() {
         let Some(data) = benilla_formats::wow_data() else {
             eprintln!("skipping: no WoW install found");
@@ -802,6 +805,7 @@ mod tests {
 
     /// Skips without client data (the metal test is `Material.dbc`'s).
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn defense_clang_follows_the_defending_items_class_and_material() {
         let Some(data) = benilla_formats::wow_data() else {
             eprintln!("skipping: no WoW install found");
@@ -913,6 +917,7 @@ mod tests {
     /// The chest armor's slot on shipped data, asserted as the kit heard. Skips without client
     /// data.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_players_chest_armor_picks_the_chain_and_plate_columns() {
         let Some(data) = benilla_formats::wow_data() else {
             eprintln!("skipping: no WoW install found");

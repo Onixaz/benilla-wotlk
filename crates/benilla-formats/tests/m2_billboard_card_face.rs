@@ -7,6 +7,7 @@ use benilla_formats::{load_m2_mesh, open_chain, BillboardKind};
 /// The shop sign's two chains are 4-vertex lock-Z billboard cards on a tiled chain texture, each
 /// plane's normal on the −X side; the sign body is ordinary geometry.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_shop_signs_chain_cards_face_away_and_its_body_is_untouched() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
@@ -45,6 +46,7 @@ fn the_shop_signs_chain_cards_face_away_and_its_body_is_untouched() {
 /// The questgiver `?` marker is a lock-Z billboard too, but 3-D, its normals pointing every way:
 /// only a single plane counts as a card.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_questgiver_marker_is_3d_billboard_geometry_not_a_card() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

@@ -323,6 +323,7 @@ mod tests {
     /// Smite's impact slash is two ribbons keyed inside the band [3300, 4433]: height 0 to 0.167
     /// and back over 267 ms, alpha 1 to 0 by 467 ms.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_holy_smite_slash_ribbons_are_keyed_flares() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -351,6 +352,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_thrown_dagger_trail_is_lit_only_in_flight() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -371,6 +373,7 @@ mod tests {
     /// `G_FrostTrap.m2`: four low ribbons light 534 ms into Spawn and stay lit through Closed;
     /// twelve upper ones are dark at rest and light 200 ms into `Custom0`, when the trap springs.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_frost_trap_upper_streamers_light_only_inside_the_trigger() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

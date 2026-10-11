@@ -34,6 +34,7 @@ fn exp_bar_harness() -> UiScript {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_xp_bar_takes_the_mouse_and_explains_itself() {
     benilla_formats::wow_data_or_skip!();
     let mut s = exp_bar_harness();
@@ -83,6 +84,7 @@ fn the_xp_bar_takes_the_mouse_and_explains_itself() {
 /// A 700 rested pool doubles to a 1400 XP span, so at 1000/10000 the tick sits at 2400/10000 of
 /// the strip (`ExhaustionTick_Update`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_exhaustion_tick_marks_where_rested_runs_out() {
     benilla_formats::wow_data_or_skip!();
     let mut s = exp_bar_harness();
@@ -190,6 +192,7 @@ fn the_exhaustion_tick_marks_where_rested_runs_out() {
 /// `ReputationWatchBar_Update` swaps in the rail at `MAX_PLAYER_LEVEL`, read from
 /// `PLAYER_LEVEL_UP`'s arg1; the tick's handler runs first by load order, so the rail's hides it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_max_level_rail_replaces_the_xp_bar_at_60() {
     benilla_formats::wow_data_or_skip!();
     let mut s = exp_bar_harness();
@@ -238,6 +241,7 @@ fn the_max_level_rail_replaces_the_xp_bar_at_60() {
 /// A hidden-to-visible show re-stamps a frame to the tail (`0x76ae10`), but within a
 /// `(strata, level)` bucket the layer outranks every stamp, so the `OVERLAY` caps stay on top.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_gryphons_outrank_the_bars_across_hide_show_cycles() {
     benilla_formats::wow_data_or_skip!();
     let mut s = exp_bar_harness();
@@ -272,6 +276,7 @@ fn the_gryphons_outrank_the_bars_across_hide_show_cycles() {
 
 /// `TextStatusBar.lua`'s `lockShow` count shows the numerals on hover; `statusBarText` is off.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_xp_bar_numerals_show_on_hover() {
     benilla_formats::wow_data_or_skip!();
     let mut s = exp_bar_harness();
@@ -302,6 +307,7 @@ fn the_xp_bar_numerals_show_on_hover() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_rest_state_line_joins_the_held_open_tooltip() {
     benilla_formats::wow_data_or_skip!();
     let mut s = exp_bar_harness();

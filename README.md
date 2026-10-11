@@ -1,16 +1,15 @@
 
 
-Launch: $env:WOW_EXPANSION="wotlk"; $env:WOW_HOST="192.168.1.89"; $env:WOW_DATA="E:\Games2\WoW Private Server Stuff\wotlk-original\Data"
+Launch: $env:WOW_HOST="192.168.1.89"; $env:WOW_DATA="E:\Games2\WoW Private Server Stuff\wotlk-original\Data"
 cargo build --release -p benilla
 cmd /c "cargo run --release -p benilla > benilla-config\wotlk-enter-world-3.log 2>&1"
 
 Follow the log from a second terminal (a console in the pipe blocks the client on every write):
 Get-Content benilla-config\wotlk-enter-world-3.log -Wait -Tail 50
 
-benilla plays the whole game: character creation, questing and professions, dungeons and raids,
-battlegrounds and honor, groups, guilds, trade, mail and the auction house, on the stock 1.12
-interface and with your addons. It connects to a 1.12.1 server over the original protocol and
-reads the game's data from your own 1.12.1 install. Every file format, the network protocol and
+benilla is a from-scratch World of Warcraft client. Upstream targets 1.12.1; this fork targets
+3.3.5a (build 12340) alone. It connects to a 3.3.5a server over the original protocol, reads the
+game's data from your own 3.3.5a install and runs the stock 3.3.5a interface off it. Every file format, the network protocol and
 the interface engine are written from scratch, with no original client code, no third-party WoW
 crates and no bundled game assets.
 
@@ -29,10 +28,8 @@ crates and no bundled game assets.
 - **Networking:** SRP6 auth through world-session crypto and the object mirror into the ECS,
   covering the game from movement and chat through combat, spells, groups and raids, quests,
   trade, mail, the auction house and battlegrounds.
-- **Interface:** a FrameXML and Lua engine that runs the stock 1.12 interface off your install's
-  patch chain, and third-party 1.12 addons: Questie, pfUI, Bagnon, Bartender2 and most others
-  run. By choice, the options window and the ESC menu follow the Classic Era client's rather than
-  1.12's.
+- **Interface:** a FrameXML and Lua engine that runs the stock interface off your install's patch
+  chain, and third-party addons.
 - **Audio:** music, ambience and effects under the client's own selection and crossfade rules,
   with interior and underwater transitions and zone reverb.
 
@@ -42,27 +39,20 @@ generated from the code.
 
 ## Status
 
-Complete and fully playable. What is left:
+The 3.3.5a port is in progress: the client logs in, enters the world and runs the stock 3.3.5a
+interface, and much of the data layer still reads 1.12.1 layouts. Upstream benilla is the
+complete 1.12.1 client this fork builds on.
 
-- The long tail of small features that separates a working client from a finished one, tracked
-  as [issues](https://github.com/samwhosung/benilla/issues).
-- Addons, options and performance, ongoing.
-
-benilla is a faithful 1.12.1 client and the foundation people build on. There are no prebuilt
-downloads: a packaged build, a particular server's changes or anything 1.12.1 never had belongs
-in a fork, and forks are welcome. GitHub lists
-[every public fork](https://github.com/samwhosung/benilla/forks).
-
-Not planned: other expansions or client versions, Warden (anticheat).
+Not planned: other client versions, Warden (anticheat).
 
 ## Running it
 
 benilla builds and runs on macOS, Linux and Windows. You need:
 
-- **An English 1.12.1 client (build 5875)** for the game data. benilla only reads it.
-- **A 1.12.1 server with Warden off.** [vmangos](https://github.com/vmangos/core) is what
-  development runs against, and it ships with Warden off; cMaNGOS and the other 1.12.1 cores speak
-  the same protocol.
+- **An English 3.3.5a client (build 12340)** for the game data. benilla only reads it.
+- **A 3.3.5a server with Warden off.** [AzerothCore](https://github.com/azerothcore/azerothcore-wotlk)
+  is what development runs against; TrinityCore and the other 3.3.5a cores speak the same
+  protocol.
 - **Stable Rust and a C compiler**, because the client's Lua is built from source: on macOS the
   Xcode command line tools, on Linux the ALSA and udev development packages and pkg-config, on
   Windows the MSVC build tools that the Rust installer sets up.
@@ -88,7 +78,7 @@ does the same (`ln -s /path/to/WoW WoW`, or on Windows a junction, which needs n
 screen, which remembers it. Credentials go in at the login screen, or set `WOW_USER` and `WOW_PASS`
 to skip it.
 
-Settings, screenshots and addons live in `benilla-config/` at the repo root: a 1.12 addon goes in
+Settings, screenshots and addons live in `benilla-config/` at the repo root: an addon goes in
 `benilla-config/AddOns/`. [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) has the rest, from the
 player build to the tests.
 
@@ -106,11 +96,11 @@ Early inspiration and file format guidance came from the
 
 benilla is an independent fan project, not affiliated with or endorsed by Blizzard Entertainment.
 It ships **no Blizzard content**: no art, models, sounds, maps, MPQ contents or FrameXML. You
-provide your own legally obtained 1.12.1 client, and the stock interface runs off its FrameXML at
+provide your own legally obtained 3.3.5a client, and the stock interface runs off its FrameXML at
 runtime. The few files under `crates/benilla-app/assets/ui/` are our own, not copies of it:
 adapters over stock files, and the settings windows and script error log benilla draws itself.
 
 World of Warcraft is a trademark of Blizzard Entertainment, Inc. Our own code is licensed under
 [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE), at your option. The two vendored components
-under `third_party/`, the kira audio engine and a Lua 5.1 patched to the 1.12 client's dialect,
-keep their own upstream licenses, alongside each.
+under `third_party/`, the kira audio engine and Lua 5.1, keep their own upstream licenses,
+alongside each.

@@ -329,6 +329,7 @@ mod tests {
     /// On the real DBC data: the training-point word order, the loyalty byte, and a maxed pet's
     /// bucket with 125% damage.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_hunters_boar_reads_every_field() {
         let Some(t) = tables() else { return };
         let (has_ui, s) = stats_for(Some(&boar()), Some(&hunter()), Some(&t), no_family());
@@ -346,6 +347,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn happiness_buckets_the_raw_power() {
         let Some(t) = tables() else { return };
         let at = |raw: u32| {
@@ -364,6 +366,7 @@ mod tests {
 
     /// A warlock's imp has a pet number, so `HasPetUI`'s first return holds, and no stats.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_warlocks_minion_has_a_ui_and_no_stats() {
         let Some(t) = tables() else { return };
         let (has_ui, s) = stats_for(Some(&boar()), Some(&warlock()), Some(&t), no_family());
@@ -380,6 +383,7 @@ mod tests {
 
     /// `PetHasActionBar` is the cached guid alone; the paper doll also needs a pet number.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn no_pet_number_means_no_pet_ui() {
         let Some(t) = tables() else { return };
         let possessed = ObjectStore(ObjectFields::from_pairs(&[(POWER5, 1_000_000)]));
@@ -390,6 +394,7 @@ mod tests {
 
     /// Level 0 is nil, not "Rebellious": the client's own bound.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn loyalty_level_zero_is_nil() {
         let Some(t) = tables() else { return };
         let fresh = ObjectStore(ObjectFields::from_pairs(&[
@@ -414,6 +419,7 @@ mod tests {
 
     /// A missing tooltip key is silent: `getglobal` answers nil and the tooltip loses a line.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_happiness_string_resolves_in_the_real_global_strings() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -453,6 +459,7 @@ mod tests {
     /// On the real DBC data, through the binding's three nil sources; asking by the guid's entry
     /// slot, a pet number, would answer nil forever and silently.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_pets_family_resolves_off_its_descriptor_entry() {
         let Some(t) = family_tables() else { return };
         let (cmds, rx) = commands();
@@ -516,6 +523,7 @@ mod tests {
     /// A boar under a non-hunter (family 5, food mask 63) is the one case that shows the split, as
     /// every warlock minion family ships mask 0.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_charmed_beast_keeps_its_family_word_and_loses_its_diet() {
         let Some(t) = tables() else { return };
         let boar_diet: Vec<String> = ["Meat", "Fish", "Cheese", "Bread", "Fungus", "Fruit"]

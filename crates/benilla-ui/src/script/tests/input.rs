@@ -122,10 +122,10 @@ fn onclick_fires_on_press_release_same_frame_not_when_release_lands_elsewhere() 
         clicks_a, clicks_b, click_btn = 0, 0, nil
         local a = CreateFrame("Frame", "A")   -- left half
         a:SetPoint("BOTTOMLEFT", 0, 0); a:SetWidth(400); a:SetHeight(600); a:EnableMouse(true)
-        a:SetScript("OnClick", function() local self, button, down = this, arg1, arg2 clicks_a = clicks_a + 1; click_btn = button end)
+        a:SetScript("OnClick", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, button, down = this, arg1, arg2 clicks_a = clicks_a + 1; click_btn = button end)
         local b = CreateFrame("Frame", "B")   -- right half
         b:SetPoint("BOTTOMLEFT", 400, 0); b:SetWidth(400); b:SetHeight(600); b:EnableMouse(true)
-        b:SetScript("OnClick", function() local self, button, down = this, arg1, arg2 clicks_b = clicks_b + 1 end)
+        b:SetScript("OnClick", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, button, down = this, arg1, arg2 clicks_b = clicks_b + 1 end)
     "#,
     )
     .unwrap();
@@ -200,7 +200,7 @@ fn mouse_wheel_passes_delta_to_the_captured_frame() {
         -- XML-load-time only), so a runtime-created frame needs this explicitly, exactly as it
         -- needs EnableMouse. Mouse-enablement alone puts nothing in the wheel index.
         a:EnableMouseWheel(true)
-        a:SetScript("OnMouseWheel", function() local self, delta = this, arg1 wheel = delta end)
+        a:SetScript("OnMouseWheel", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, delta = this, arg1 wheel = delta end)
     "#,
     )
     .unwrap();
@@ -344,8 +344,8 @@ fn a_second_fast_click_fires_on_double_click_instead_of_the_second_on_click() {
         clicks, doubles, dblbtn = 0, 0, nil
         local b = CreateFrame("Button", "DblB")
         b:SetPoint("BOTTOMLEFT", 0, 0); b:SetWidth(200); b:SetHeight(200); b:EnableMouse(true)
-        b:SetScript("OnClick", function() local self, button = this, arg1 clicks = clicks + 1 end)
-        b:SetScript("OnDoubleClick", function() local self, button = this, arg1 doubles = doubles + 1 dblbtn = button end)
+        b:SetScript("OnClick", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, button = this, arg1 clicks = clicks + 1 end)
+        b:SetScript("OnDoubleClick", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, button = this, arg1 doubles = doubles + 1 dblbtn = button end)
     "#,
     )
     .unwrap();
@@ -483,7 +483,7 @@ fn a_multi_registered_button_pairs_a_left_click_with_a_right_one() {
         local b = CreateFrame("Button", "MixDbl")
         b:SetPoint("BOTTOMLEFT", 0, 0); b:SetWidth(200); b:SetHeight(200); b:EnableMouse(true)
         b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-        b:SetScript("OnDoubleClick", function() local self, button = this, arg1 doubles = doubles + 1 dblbtn = button end)
+        b:SetScript("OnDoubleClick", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, button = this, arg1 doubles = doubles + 1 dblbtn = button end)
     "#,
     )
     .unwrap();
@@ -565,14 +565,8 @@ fn the_unfired_script_kinds_still_raise_rather_than_silently_accepting() {
     let s = script();
     s.run(r#"Raiser = CreateFrame("EditBox", "RaiserBox")"#)
         .unwrap();
-    for name in [
-        // A 2.0 secure-frame slot; no 1.12 resolver has it.
-        "OnAttributeChanged",
-        // Real 1.12 slots that benilla does not fire.
-        "OnHyperlinkEnter",
-        "OnMessageScrollChanged",
-        "OnInputLanguageChanged",
-    ] {
+    // Real slots that benilla does not fire.
+    for name in ["OnHyperlinkEnter", "OnMessageScrollChanged"] {
         let err = s
             .run(&format!(r#"Raiser:SetScript("{name}", function() end)"#))
             .unwrap_err();

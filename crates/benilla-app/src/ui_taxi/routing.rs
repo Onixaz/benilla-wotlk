@@ -415,6 +415,7 @@ mod tests {
     /// Every node on maps 0 and 1 but id 3 (Programmer Isle, a debug row with no `TaxiPath` edge)
     /// projects inside the map, Ironforge above Stormwind and Menethil Harbor west of Lakeshire.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_taxi_projection_matches_geography() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -465,6 +466,7 @@ mod tests {
     /// The real Stormwind (2) to Sentinel Hill (4) hop, `TaxiPath` id 6 at 110 copper; with every
     /// node known, the ones Stormwind cannot route to are left out.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn build_nodes_classifies_a_real_known_hop() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

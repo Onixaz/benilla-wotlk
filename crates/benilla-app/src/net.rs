@@ -699,28 +699,16 @@ impl MoveKind {
     }
 }
 
-/// The `ChatMsg` type an addon broadcast rides: the client's four-lane whitelist
-/// (`0x49fa3f`-`0x49fa4e`), numbered by the target's [`benilla_expansions::ChatTypes`].
+/// The `ChatMsg` type an addon broadcast rides: the client's four-lane whitelist.
 pub(crate) fn addon_wire_chat_type(distribution: benilla_ui::script::AddonDistribution) -> u32 {
-    addon_wire_chat_type_for(chat_types(), distribution)
-}
-
-fn addon_wire_chat_type_for(
-    t: &benilla_expansions::ChatTypes,
-    distribution: benilla_ui::script::AddonDistribution,
-) -> u32 {
+    use benilla_protocol::messages as m;
     use benilla_ui::script::AddonDistribution as D;
     match distribution {
-        D::Party => t.party,
-        D::Raid => t.raid,
-        D::Guild => t.guild,
-        D::Battleground => t.battleground,
+        D::Party => m::CHAT_TYPE_PARTY,
+        D::Raid => m::CHAT_TYPE_RAID,
+        D::Guild => m::CHAT_TYPE_GUILD,
+        D::Battleground => m::CHAT_TYPE_BATTLEGROUND,
     }
-}
-
-/// The active target's `CMSG_MESSAGECHAT` `type` numbering.
-pub(crate) fn chat_types() -> &'static benilla_expansions::ChatTypes {
-    benilla_expansions::Expansion::active().profile().chat_types
 }
 
 /// The `ChatMsg` type of a chat-bar line: the full sendable set (vmangos
@@ -760,28 +748,24 @@ pub(crate) enum ChatKind {
 }
 
 impl ChatKind {
-    /// The `CMSG_MESSAGECHAT` `type` field on the active target; `None` for a lane it never sends.
+    /// The `CMSG_MESSAGECHAT` `type` field; `None` for a lane the client never sends.
     pub(crate) fn chat_type(self) -> Option<u32> {
-        self.chat_type_for(chat_types())
-    }
-
-    fn chat_type_for(self, t: &benilla_expansions::ChatTypes) -> Option<u32> {
+        use benilla_protocol::messages as m;
         Some(match self {
-            Self::Say => t.say,
-            Self::Yell => t.yell,
-            Self::Emote => t.emote,
-            Self::Whisper => t.whisper,
-            Self::Party => t.party,
-            Self::Raid => t.raid,
-            Self::RaidLeader => return t.raid_leader,
-            Self::RaidWarning => t.raid_warning,
-            Self::Guild => t.guild,
-            Self::Officer => t.officer,
-            Self::Battleground => t.battleground,
-            Self::BattlegroundLeader => return t.battleground_leader,
-            Self::Afk => t.afk,
-            Self::Dnd => t.dnd,
-            Self::Channel => t.channel,
+            Self::Say => m::CHAT_TYPE_SAY,
+            Self::Yell => m::CHAT_TYPE_YELL,
+            Self::Emote => m::CHAT_TYPE_EMOTE,
+            Self::Whisper => m::CHAT_TYPE_WHISPER,
+            Self::Party => m::CHAT_TYPE_PARTY,
+            Self::Raid => m::CHAT_TYPE_RAID,
+            Self::RaidWarning => m::CHAT_TYPE_RAID_WARNING,
+            Self::Guild => m::CHAT_TYPE_GUILD,
+            Self::Officer => m::CHAT_TYPE_OFFICER,
+            Self::Battleground => m::CHAT_TYPE_BATTLEGROUND,
+            Self::Afk => m::CHAT_TYPE_AFK,
+            Self::Dnd => m::CHAT_TYPE_DND,
+            Self::Channel => m::CHAT_TYPE_CHANNEL,
+            Self::RaidLeader | Self::BattlegroundLeader => return None,
         })
     }
 }
@@ -2468,86 +2452,20 @@ mod tests {
             "…and the run arm is untouched by it"
         );
     }
-
-    /// The whitelist at `0x49fa3f`-`0x49fa4e`. vmangos would accept `LANG_ADDON` on the refused
-    /// lanes too; the client never sends on them.
+    /// The four lanes `SendAddonMessage` sends on (`0x4fbb20`'s numbering).
     #[test]
     fn addon_distributions_map_to_the_clients_own_four_wire_types() {
-        use benilla_expansions::Expansion;
         use benilla_ui::script::AddonDistribution as D;
-
-        let classic = Expansion::Classic.profile().chat_types;
-        let lane = |d| addon_wire_chat_type_for(classic, d);
-        assert_eq!(lane(D::Party), 0x01, "CHAT_MSG_PARTY");
-        assert_eq!(lane(D::Raid), 0x02, "CHAT_MSG_RAID");
-        assert_eq!(lane(D::Guild), 0x03, "CHAT_MSG_GUILD");
-        assert_eq!(lane(D::Battleground), 0x5C, "CHAT_MSG_BATTLEGROUND");
-
-        // No distribution reaches a lane the reference refuses.
-        let image: Vec<u32> = [D::Party, D::Raid, D::Guild, D::Battleground]
-            .into_iter()
-            .map(lane)
-            .collect();
-        for refused in [
-            classic.say,
-            classic.yell,
-            classic.whisper,
-            classic.emote,
-            classic.officer,
-            classic.channel,
-            classic.raid_leader.expect("1.12.1 sends RAID_LEADER"),
-            classic.raid_warning,
-            classic
-                .battleground_leader
-                .expect("1.12.1 sends BATTLEGROUND_LEADER"),
-        ] {
-            assert!(
-                !image.contains(&refused),
-                "{refused:#04x} is a lane the client never sends addon data on"
-            );
-        }
-
-        // 3.3.5a numbers the same four lanes its own way (`0x4fbb20`).
-        let wotlk = Expansion::Wotlk.profile().chat_types;
         let lanes: Vec<u32> = [D::Party, D::Raid, D::Guild, D::Battleground]
             .into_iter()
-            .map(|d| addon_wire_chat_type_for(wotlk, d))
+            .map(addon_wire_chat_type)
             .collect();
         assert_eq!(lanes, [0x02, 0x03, 0x04, 0x2C]);
     }
 
-    /// The chat bar's lanes on each client: 1.12.1 keeps vmangos's numbering byte for byte, 3.3.5a
-    /// sends SAY as 1 (`0x50d1d8`) and has no leader lanes.
+    /// The chat bar's lanes: SAY is 1 (`0x50d1d8`) and there are no leader lanes.
     #[test]
-    fn chat_kinds_take_each_clients_own_wire_type() {
-        use benilla_expansions::Expansion;
-        use benilla_protocol::messages as m;
-
-        let classic = Expansion::Classic.profile().chat_types;
-        for (kind, want) in [
-            (ChatKind::Say, m::CHAT_TYPE_SAY),
-            (ChatKind::Yell, m::CHAT_TYPE_YELL),
-            (ChatKind::Emote, m::CHAT_TYPE_EMOTE),
-            (ChatKind::Whisper, m::CHAT_TYPE_WHISPER),
-            (ChatKind::Party, m::CHAT_TYPE_PARTY),
-            (ChatKind::Raid, m::CHAT_TYPE_RAID),
-            (ChatKind::RaidLeader, m::CHAT_TYPE_RAID_LEADER),
-            (ChatKind::RaidWarning, m::CHAT_TYPE_RAID_WARNING),
-            (ChatKind::Guild, m::CHAT_TYPE_GUILD),
-            (ChatKind::Officer, m::CHAT_TYPE_OFFICER),
-            (ChatKind::Battleground, m::CHAT_TYPE_BATTLEGROUND),
-            (
-                ChatKind::BattlegroundLeader,
-                m::CHAT_TYPE_BATTLEGROUND_LEADER,
-            ),
-            (ChatKind::Afk, m::CHAT_TYPE_AFK),
-            (ChatKind::Dnd, m::CHAT_TYPE_DND),
-            (ChatKind::Channel, m::CHAT_TYPE_CHANNEL),
-        ] {
-            assert_eq!(kind.chat_type_for(classic), Some(want), "{kind:?}");
-        }
-
-        let wotlk = Expansion::Wotlk.profile().chat_types;
+    fn chat_kinds_take_the_clients_own_wire_type() {
         for (kind, want) in [
             (ChatKind::Say, Some(0x01)),
             (ChatKind::Party, Some(0x02)),
@@ -2565,7 +2483,7 @@ mod tests {
             (ChatKind::RaidLeader, None),
             (ChatKind::BattlegroundLeader, None),
         ] {
-            assert_eq!(kind.chat_type_for(wotlk), want, "{kind:?}");
+            assert_eq!(kind.chat_type(), want, "{kind:?}");
         }
     }
 

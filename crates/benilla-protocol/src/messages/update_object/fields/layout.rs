@@ -1,9 +1,9 @@
-//! Where each client keeps the object update fields benilla reads. An update field's index counts
-//! from the start of its object's descriptor, so the same index names different fields on a unit
-//! and a corpse; each place names its [`Block`]. A [`Field`] names a value's meaning, not its
-//! encoding: where a client packs a value its own way, that client's decoder in `benilla-protocol`
-//! converts it. Classic's table is every field benilla reads, in the index space the shared
-//! `ObjectFields` keeps; a field missing from another client's table is not read there.
+//! Where the object update fields benilla reads live. An update field's index counts from the
+//! start of its object's descriptor, so the same index names different fields on a unit and a
+//! corpse; each place names its [`Block`]. A [`Field`] names a value's meaning, not its encoding.
+//! [`WIRE`] is 3.3.5a's layout as the server sends it; [`SHARED`] is the index space
+//! [`super::ObjectFields`]' getters read, every field benilla reads, into which the decoder moves
+//! and converts each wire value. A field missing from [`WIRE`] is not read.
 
 /// A descriptor block. An object's descriptor is its blocks in order: a player is
 /// `Object, Unit, Player`, a container `Object, Item, Container`.
@@ -107,8 +107,8 @@ pub enum Field {
     UnitRangedAttackPowerMultiplier,
     UnitMinRangedDamage,
     UnitMaxRangedDamage,
-    /// The positive and negative stat and resistance buffs: a player block in 1.12.1, a unit
-    /// block in 3.3.5a.
+    /// The positive and negative stat and resistance buffs: a unit block on the wire, a player
+    /// block in [`SHARED`].
     PosStat,
     NegStat,
     ResistanceBuffModsPositive,
@@ -176,8 +176,8 @@ pub enum Field {
     GameObjectCreatedBy,
     GameObjectDisplayId,
     GameObjectFlags,
-    /// The spawn's own rotation quaternion `(x, y, z, w)`. 3.3.5a sends it packed in the movement
-    /// block (`UPDATEFLAG_ROTATION`) instead.
+    /// The spawn's own rotation quaternion `(x, y, z, w)`, a [`SHARED`] place only: 3.3.5a sends
+    /// it packed in the movement block (`UPDATEFLAG_ROTATION`).
     GameObjectRotation,
     GameObjectState,
     GameObjectPosition,
@@ -187,16 +187,17 @@ pub enum Field {
     GameObjectLevel,
     GameObjectArtKit,
     GameObjectAnimProgress,
-    /// 3.3.5a's `GAMEOBJECT_DYNAMIC`: the dynamic flags in the low half, path progress above.
+    /// `GAMEOBJECT_DYNAMIC`: the dynamic flags in the low half, path progress above.
     GameObjectDynamic,
-    /// 3.3.5a's `GAMEOBJECT_BYTES_1`: state, type, art kit and anim progress, bytes 0 to 3.
+    /// `GAMEOBJECT_BYTES_1`: state, type, art kit and anim progress, bytes 0 to 3.
     GameObjectBytes1,
 
     DynamicObjectCaster,
     DynamicObjectBytes,
     DynamicObjectSpellId,
     DynamicObjectRadius,
-    /// x, y, z and facing. 3.3.5a sends them in the movement block (`UPDATEFLAG_STATIONARY_POSITION`).
+    /// x, y, z and facing, a [`SHARED`] place only: 3.3.5a sends them in the movement block
+    /// (`UPDATEFLAG_STATIONARY_POSITION`).
     DynamicObjectPosition,
 
     CorpseOwner,
@@ -239,7 +240,7 @@ pub struct DescriptorEnds {
     pub corpse: u16,
 }
 
-/// One client's update-field layout.
+/// An update-field layout.
 #[derive(Debug)]
 pub struct UpdateFieldLayout {
     pub ends: DescriptorEnds,
@@ -247,7 +248,7 @@ pub struct UpdateFieldLayout {
 }
 
 impl UpdateFieldLayout {
-    /// Where this client keeps `field`, `None` when it has no such field.
+    /// Where this layout keeps `field`, `None` when it has no such field.
     pub fn place(&self, field: Field) -> Option<&FieldPlace> {
         self.places.iter().find(|p| p.field == field)
     }
@@ -280,8 +281,9 @@ const fn strided(field: Field, block: Block, index: u16, count: u16, stride: u16
 use Block::{Container, Corpse, DynamicObject, GameObject, Item, Object, Player, Unit};
 use Field as F;
 
-/// 1.12.1 (5875): vmangos `UpdateFields_1_12_1.h`.
-pub(crate) static CLASSIC: UpdateFieldLayout = UpdateFieldLayout {
+/// The index space [`super::ObjectFields`] keeps, 1.12.1's (vmangos `UpdateFields_1_12_1.h`)
+/// numbering, with the places only the movement block fills on the wire.
+pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
     ends: DescriptorEnds {
         object: 6,
         item: 48,
@@ -463,12 +465,11 @@ pub(crate) static CLASSIC: UpdateFieldLayout = UpdateFieldLayout {
     ],
 };
 
-/// 3.3.5a (12340): AzerothCore `UpdateFields.h`. Not here, so not read on 3.3.5a: the auras
-/// (`SMSG_AURA_UPDATE` carries them), the virtual items (item entries, where 1.12.1 sends display
-/// ids), the item text id, training points, the combo target and the 1.12.1 honor fields, which
-/// 3.3.5a replaced; and, not yet converted, the quest log (25 slots of 5) and
-/// `PLAYER_FIELD_BYTES2`, whose meaning changed.
-pub(crate) static WOTLK: UpdateFieldLayout = UpdateFieldLayout {
+/// 3.3.5a (12340): AzerothCore `UpdateFields.h`. Not here, so not read: the auras
+/// (`SMSG_AURA_UPDATE` carries them), the virtual items (item entries, not display ids), the item
+/// text id, training points, the combo target and the old honor fields, which 3.3.5a has not;
+/// and, not yet converted, the quest log (25 slots of 5) and `PLAYER_FIELD_BYTES2`.
+pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
     ends: DescriptorEnds {
         object: 6,
         item: 64,
@@ -512,7 +513,7 @@ pub(crate) static WOTLK: UpdateFieldLayout = UpdateFieldLayout {
         one(F::UnitChannelSpell, Unit, 22),
         one(F::UnitBytes0, Unit, 23),
         one(F::UnitHealth, Unit, 24),
-        // Seven powers; runes and runic power (5, 6) are past 1.12.1's five.
+        // Seven powers; runes and runic power (5, 6) are past the shared five.
         run(F::UnitPower, Unit, 25, 5),
         one(F::UnitMaxHealth, Unit, 32),
         run(F::UnitMaxPower, Unit, 33, 5),
@@ -571,7 +572,7 @@ pub(crate) static WOTLK: UpdateFieldLayout = UpdateFieldLayout {
         strided(F::PlayerVisibleItemEnchants, Player, 284, 19, 2),
         run(F::PlayerInvSlots, Player, 324, 46),
         run(F::PlayerPackSlots, Player, 370, 32),
-        // 28 bank slots and 7 bank bags; the first 24 and 6 are 1.12.1's.
+        // 28 bank slots and 7 bank bags; the shared space keeps the first 24 and 6.
         run(F::PlayerBankSlots, Player, 402, 48),
         run(F::PlayerBankBagSlots, Player, 458, 12),
         run(F::PlayerVendorBuybackSlots, Player, 472, 24),
@@ -589,7 +590,7 @@ pub(crate) static WOTLK: UpdateFieldLayout = UpdateFieldLayout {
         one(F::PlayerParryPercentage, Player, 1026),
         one(F::PlayerCritPercentage, Player, 1029),
         one(F::PlayerRangedCritPercentage, Player, 1030),
-        // 128 words; the first 64 are 1.12.1's.
+        // 128 words; the shared space keeps the first 64.
         run(F::PlayerExploredZones, Player, 1041, 64),
         one(F::PlayerRestStateExperience, Player, 1169),
         one(F::PlayerCoinage, Player, 1170),
@@ -658,7 +659,7 @@ mod tests {
 
     #[test]
     fn every_place_lies_inside_its_block_and_names_its_field_once() {
-        for layout in [&CLASSIC, &WOTLK] {
+        for layout in [&SHARED, &WIRE] {
             for (i, p) in layout.places.iter().enumerate() {
                 let last = p.element(p.count - 1).unwrap();
                 assert!(
@@ -678,7 +679,7 @@ mod tests {
 
     #[test]
     fn no_two_places_of_one_block_overlap() {
-        for layout in [&CLASSIC, &WOTLK] {
+        for layout in [&SHARED, &WIRE] {
             let mut taken = std::collections::HashMap::new();
             for p in layout.places {
                 for i in 0..p.count {
@@ -693,30 +694,29 @@ mod tests {
 
     #[test]
     fn shared_fields_keep_their_element_count_where_the_meaning_does() {
-        // A field both clients carry maps element for element, so the counts must agree.
-        for p in WOTLK.places {
-            if let Some(c) = CLASSIC.place(p.field) {
+        // A wire field maps element for element, so the counts must agree.
+        for p in WIRE.places {
+            if let Some(c) = SHARED.place(p.field) {
                 assert_eq!(p.count, c.count, "{:?}", p.field);
             }
         }
     }
 
     #[test]
-    fn each_client_keeps_health_and_the_player_block_where_its_header_says() {
-        assert_eq!(CLASSIC.place(Field::UnitHealth).unwrap().index, 22);
-        assert_eq!(WOTLK.place(Field::UnitHealth).unwrap().index, 24);
-        assert_eq!(CLASSIC.ends.unit, 188);
-        assert_eq!(WOTLK.ends.unit, 148);
-        assert_eq!(WOTLK.ends.player, 1326);
+    fn each_layout_keeps_health_and_the_player_block_where_its_header_says() {
+        assert_eq!(SHARED.place(Field::UnitHealth).unwrap().index, 22);
+        assert_eq!(WIRE.place(Field::UnitHealth).unwrap().index, 24);
+        assert_eq!(SHARED.ends.unit, 188);
+        assert_eq!(WIRE.ends.unit, 148);
+        assert_eq!(WIRE.ends.player, 1326);
         assert_eq!(
-            WOTLK
-                .place(Field::PlayerVisibleItemEntry)
+            WIRE.place(Field::PlayerVisibleItemEntry)
                 .unwrap()
                 .element(18),
             Some(319)
         );
         assert_eq!(
-            CLASSIC
+            SHARED
                 .place(Field::PlayerVisibleItemEntry)
                 .unwrap()
                 .element(1),
@@ -725,7 +725,7 @@ mod tests {
     }
 
     #[test]
-    fn fields_3_3_5a_moved_out_of_update_fields_are_missing_not_borrowed() {
+    fn fields_the_wire_does_not_carry_are_missing_not_borrowed() {
         for f in [
             Field::UnitAura,
             Field::UnitVirtualItemDisplay,
@@ -734,10 +734,10 @@ mod tests {
             Field::GameObjectPosition,
             Field::DynamicObjectPosition,
         ] {
-            assert!(CLASSIC.place(f).is_some(), "{f:?}");
-            assert!(WOTLK.place(f).is_none(), "{f:?}");
+            assert!(SHARED.place(f).is_some(), "{f:?}");
+            assert!(WIRE.place(f).is_none(), "{f:?}");
         }
-        assert!(CLASSIC.place(Field::GameObjectBytes1).is_none());
-        assert_eq!(WOTLK.place(Field::GameObjectBytes1).unwrap().index, 17);
+        assert!(SHARED.place(Field::GameObjectBytes1).is_none());
+        assert_eq!(WIRE.place(Field::GameObjectBytes1).unwrap().index, 17);
     }
 }

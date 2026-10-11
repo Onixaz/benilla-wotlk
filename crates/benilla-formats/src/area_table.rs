@@ -111,7 +111,7 @@ impl AreaTableCatalog {
     }
 }
 
-fn schema(l: &benilla_expansions::dbc::AreaTable) -> Schema {
+fn schema(l: &crate::dbc_layout::AreaTable) -> Schema {
     let mut s = Schema::new("AreaTable");
     for i in 0..l.fields {
         match i {
@@ -127,7 +127,7 @@ pub fn load_area_table_catalog(chain: &mut Chain) -> Result<AreaTableCatalog> {
     let bytes = chain
         .read_file(AREA_TABLE)
         .context("reading AreaTable.dbc")?;
-    let layout = &chain.expansion().profile().dbc.area_table;
+    let layout = &crate::dbc_layout::LAYOUTS.area_table;
     let rs = parse(&bytes, schema(layout), "AreaTable")?;
     let mut by_id = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {

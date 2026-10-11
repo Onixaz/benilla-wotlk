@@ -42,6 +42,7 @@ fn edges(s: &mut UiScript, name: &str) -> (f32, f32) {
 
 /// Label at the row's left edge, shortcut at its right, so "Macro" and "/macro" never meet.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn chat_menu_rows_left_align_their_label_and_right_align_their_shortcut() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_menu();
@@ -97,6 +98,7 @@ fn chat_menu_rows_left_align_their_label_and_right_align_their_shortcut() {
 
 /// A lazily created label answers the normal font's justify and object (`0x779810`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_menu_rows_label_reports_the_normal_fonts_justify_and_object() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = chat_menu();

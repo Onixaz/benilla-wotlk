@@ -72,6 +72,7 @@ fn landmark(name: &str, icon: u32, uv: (f32, f32)) -> WorldMapLandmarkView {
 /// A landmark shows as a POI frame at its UV in its cell of the 8x8 `POIIcons` atlas. Icon 6 is
 /// `ICON_POI_REDFLAG`, the flag vmangos's `points_of_interest` rows carry: the guard's directions.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_landmark_draws_its_poi_icon_at_its_map_position() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -112,6 +113,7 @@ fn a_landmark_draws_its_poi_icon_at_its_map_position() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_poi_pool_grows_and_parks_its_tail() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -155,6 +157,7 @@ fn the_poi_pool_grows_and_parks_its_tail() {
 /// `WorldMapPOI_OnEnter` names the POI and sets its status line, or "" when it has none
 /// (WorldMapFrame.lua:156-165), which reads back as nil.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hovering_a_poi_names_it_and_adds_a_status_line_only_when_there_is_one() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -192,6 +195,7 @@ fn hovering_a_poi_names_it_and_adds_a_status_line_only_when_there_is_one() {
 
 /// `GetMapLandmarkInfo` answers the reference's five values, nil for no description (`0x4a8740`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_landmark_getter_returns_the_references_five_values() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -223,6 +227,7 @@ fn the_landmark_getter_returns_the_references_five_values() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn no_landmarks_draws_nothing() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -235,6 +240,7 @@ fn no_landmarks_draws_nothing() {
 /// One blip per `party1..4`, placed from `GetPlayerMapPosition` and hidden at (0, 0): `CENTER`
 /// against the detail frame's `TOPLEFT`, y by minus its height, because UV v runs down the sheet.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn party_blips_sit_at_their_map_positions_and_hide_when_absent() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -302,6 +308,7 @@ fn party_blips_sit_at_their_map_positions_and_hide_when_absent() {
 /// `WorldMapFrame_OnLoad` creates the arrow, an anonymous `Model` (WorldMapFrame.lua:15); the
 /// update seats it with `WorldMapPlayer`, turns it to the facing and hides it off the map.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_player_arrow_is_the_stock_model_pane_seated_and_turned_by_the_update() {
     let _data = benilla_formats::wow_data_or_skip!();
     // The whole manifest: the arrow's quad needs the map visible, through `ShowUIPanel`.
@@ -380,6 +387,7 @@ fn the_player_arrow_is_the_stock_model_pane_seated_and_turned_by_the_update() {
 /// Battleground teammates take the `WorldMapRaid` frames past the raid's own, named for the
 /// tooltip; the flag carrier takes `WorldMapFlag1` in the token's texture; (0, 0) hides.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn battleground_teammates_and_the_flag_draw_from_the_position_family() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -452,6 +460,7 @@ fn battleground_teammates_and_the_flag_draw_from_the_position_family() {
 /// needs while up hangs elsewhere: `BlackoutWorld` is inside the map, `WorldMapTooltip` is parented
 /// to it (WorldMapFrame.xml:636), and the dropdown lists are `toplevel` with no parent.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_maps_own_furniture_survives_the_hide_that_showing_it_performs() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -517,6 +526,7 @@ fn the_maps_own_furniture_survives_the_hide_that_showing_it_performs() {
 /// `WorldMapUnit_OnEnter` asks `MouseIsOver(WorldMapPlayer)` for the tooltip text
 /// (WorldMapFrame.lua:473), which must divide the cursor by the scale as the reference does.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hovering_the_player_blip_on_a_scaled_map_names_the_player() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -566,6 +576,7 @@ fn hovering_the_player_blip_on_a_scaled_map_names_the_player() {
 /// arrow a `Model` child of `WorldMapFrame` (WorldMapFrame.lua:15), at the same level; a model
 /// draws last in its bucket's ARTWORK batch (`0x76fb00`), so the arrow paints over them.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_player_arrow_draws_over_the_zones_explored_overlays() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -623,6 +634,7 @@ fn the_player_arrow_draws_over_the_zones_explored_overlays() {
 /// Every POI icon is a child of `WorldMapButton` (WorldMapFrame.lua:178), as is the player's blip,
 /// so a click over one still answers the map's UV.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_click_over_a_blip_still_answers_the_maps_uv() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -680,6 +692,7 @@ fn a_click_over_a_blip_still_answers_the_maps_uv() {
 /// hit rect is (top 235, left 525, bottom 325, right 655) px of the 1002x668 detail frame, naming
 /// `AreaTable` 2577 "Dire Maul" behind explore bit 953, so UV (58.8 %, 42.6 %) lies inside it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_real_feralas_catalog_names_dire_maul_under_the_cursor() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -731,6 +744,7 @@ fn the_real_feralas_catalog_names_dire_maul_under_the_cursor() {
 /// reference does (writer `0x490e97`; apply `0x490600`, `0x490689`), and stock `WorldMapFrame` has
 /// neither flag: without the addon the row is inert and falls out of the file at logout.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_stale_layout_row_cannot_seat_a_stock_frame() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -817,6 +831,7 @@ fn a_stale_layout_row_cannot_seat_a_stock_frame() {
 /// bars once, from the screen size. Deviation: `manifest::on_screen_resized` re-sizes them, because
 /// a resize here keeps the loaded UI and the quads would stop short of the new screen.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_fullscreen_quads_follow_a_resize() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

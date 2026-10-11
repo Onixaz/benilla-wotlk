@@ -114,6 +114,7 @@ impl Feed {
 /// Another member's join, name cached: arg4 `"3. Mychan"`, arg7 0 (a custom channel has no
 /// ChannelID), arg8 3 and arg9 `"Mychan"`, and the stock frame prints the line.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_members_join_reaches_the_stock_frame_numbered() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut f = Feed::new();
@@ -141,6 +142,7 @@ fn a_members_join_reaches_the_stock_frame_numbered() {
 /// A join whose name is not cached waits on the name query, then prints stamped, as the
 /// reference's queued node carries the channel name to the callback (`0x49cfb4`-`0x49cfc1`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_join_resolved_after_its_name_query_is_stamped_too() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut f = Feed::new();
@@ -174,6 +176,7 @@ fn a_join_resolved_after_its_name_query_is_stamped_too() {
 
 /// The owner change and a kick, `CHANNEL_NOTICE_USER` lines of one and two names.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn owner_change_and_kick_notices_print() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut f = Feed::new();
@@ -210,6 +213,7 @@ fn owner_change_and_kick_notices_print() {
 /// An invite names a channel we are not in, so it stays unstamped (the miss leg `0x49aa86`,
 /// `0x49b12f`) and prints only through the stock filter's `INVITE` exemption (`ChatFrame.lua:1374`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_invite_to_a_channel_we_are_not_in_still_prints() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut f = Feed::new();
@@ -231,6 +235,7 @@ fn an_invite_to_a_channel_we_are_not_in_still_prints() {
 
 /// Our own join, a notice with no guid tail, goes the ready-event path and still prints once.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn our_own_join_notice_is_unchanged() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut f = Feed::new();

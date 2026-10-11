@@ -142,6 +142,7 @@ fn seed_items(s: &mut UiScript) {
 
 /// `SetItemRef` shows `ItemRefTooltip` with `ANCHOR_PRESERVE`, keeping its XML seat, `BOTTOM` +80.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn item_ref_tooltip_renders_a_chat_link() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -172,6 +173,7 @@ fn item_ref_tooltip_renders_a_chat_link() {
 /// A doll slot hovers through `SetInventoryItem` (`PaperDollFrame.lua:741`), so it shows the
 /// instance's live durability, not the template's maximum.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn doll_hover_renders_the_live_instance() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness_with_bags();
@@ -242,6 +244,7 @@ fn doll_hover_renders_the_live_instance() {
 /// In repair mode a damaged item's hover adds `REPAIR_COST` and its coins, worn
 /// (`PaperDollFrame.lua:757-760`) or bagged (`ContainerFrame.lua:274-277`); out of it, neither.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn repair_mode_hover_shows_the_items_repair_cost() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness_with_bags();
@@ -349,6 +352,7 @@ fn repair_mode_hover_shows_the_items_repair_cost() {
 /// `TOPRIGHT` (0, -10) and plate 2 off plate 1. The compare call passes p4 = 0, so a plate is the
 /// worn item's ordinary tooltip under a gray `Currently Equipped` line.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_merchant_row_raises_the_compare_plates() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();

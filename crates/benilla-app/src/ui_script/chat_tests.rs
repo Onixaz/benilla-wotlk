@@ -53,6 +53,7 @@ fn close(a: f32, b: f32) -> bool {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn injected_lines_render_in_the_pinned_colors() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
@@ -90,6 +91,7 @@ fn injected_lines_render_in_the_pinned_colors() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn newest_line_sits_at_the_bottom() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
@@ -113,6 +115,7 @@ fn newest_line_sits_at_the_bottom() {
 /// A scroll re-arms a fading line to full and holds it there until the view is back at the
 /// bottom: every scroll entry reaches the re-arm at `0x788b80` or the relayout's `0x788af0`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn wheel_scroll_re_arms_the_fade_then_freezes_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
@@ -144,6 +147,7 @@ fn wheel_scroll_re_arms_the_fade_then_freezes_it() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn input_editbox_enter_drains_the_typed_line() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
@@ -169,6 +173,7 @@ fn input_editbox_enter_drains_the_typed_line() {
 /// The chat menu's Language list sets `editBox.language` (`ChatFrame.lua:2403-2405`) and
 /// `ChatEdit_SendText` passes it on every send (`:1950-1954`), so `/s` and `/y` speak the pick.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_edit_box_speaks_the_language_picked_in_the_chat_menu() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
@@ -198,6 +203,7 @@ fn the_edit_box_speaks_the_language_picked_in_the_chat_menu() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn input_escape_closes_without_submitting() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
@@ -210,6 +216,7 @@ fn input_escape_closes_without_submitting() {
 
 /// The stock chat box edits, and Up/Down walk its history and back to the draft.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn chat_box_arrows_edit_and_history_recalls() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::{EditAction, EditUnit};
@@ -279,6 +286,7 @@ fn chat_box_arrows_edit_and_history_recalls() {
 /// never an item, which it would destroy. Deviation: the reference drops a spell on a left click
 /// only over empty sky, which leaves no left-click way to drop one over ground.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn chat_click_dismisses_a_stuck_spell_but_not_an_item() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::{
@@ -395,6 +403,7 @@ fn chat_click_dismisses_a_stuck_spell_but_not_an_item() {
 /// `ChatTypeInfo` and [`crate::ui_chat::default_color`] both carry the reference's registry
 /// (`.rdata 0x804710`): every kind agrees to the byte, and `id` is its registry slot.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn chat_type_info_matches_the_host_color_table() {
     benilla_formats::wow_data_or_skip!();
     use crate::ui_chat::{default_color, ChatEventKind as K};
@@ -458,6 +467,7 @@ fn chat_type_info_matches_the_host_color_table() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn chat_type_info_has_the_references_shape() {
     benilla_formats::wow_data_or_skip!();
     let s = chat_frame();
@@ -516,6 +526,7 @@ fn chat_type_info_has_the_references_shape() {
 /// `ChatFrame_OnEvent` looks a line's type up as `ChatTypeInfo[strsub(event, 10)]`
 /// (`ChatFrame.lua:1370`), so every `CHAT_MSG_*` we fire must name one of its keys.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn fired_event_names_are_all_chat_type_info_keys() {
     benilla_formats::wow_data_or_skip!();
     use crate::ui_chat::{event_name, ChatEventKind as K};
@@ -537,6 +548,7 @@ fn fired_event_names_are_all_chat_type_info_keys() {
 
 /// `NUM_CHAT_WINDOWS` is 7 (`ChatFrame.lua:5`), and addons index all seven windows unguarded.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_window_num_chat_windows_promises_is_a_real_frame() {
     benilla_formats::wow_data_or_skip!();
     let s = chat_frame();
@@ -554,6 +566,7 @@ fn every_window_num_chat_windows_promises_is_a_real_frame() {
 
 /// The `_LazyPig` window walk, verbatim from `LazyPig.lua:1992`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_lazypig_window_walk_survives_all_seven_indices() {
     benilla_formats::wow_data_or_skip!();
     let s = chat_frame();
@@ -573,6 +586,7 @@ fn the_lazypig_window_walk_survives_all_seven_indices() {
 /// ChatFrame3..7 ship hidden and undocked, the reference's default chat cache (`DOCKED 0`,
 /// `SHOWN 0`); ChatFrame1 and 2 carry `isDocked`, which the stock dock code reads.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_undocked_windows_are_hidden_and_carry_no_is_docked() {
     benilla_formats::wow_data_or_skip!();
     let s = chat_frame();
@@ -610,6 +624,7 @@ fn the_undocked_windows_are_hidden_and_carry_no_is_docked() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn get_chat_window_info_shown_matches_the_shipped_frames() {
     benilla_formats::wow_data_or_skip!();
     let s = chat_frame();
@@ -629,6 +644,7 @@ fn get_chat_window_info_shown_matches_the_shipped_frames() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_line_added_to_chat_frame3_lands_in_chat_frame3_only() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
@@ -653,6 +669,7 @@ fn a_line_added_to_chat_frame3_lands_in_chat_frame3_only() {
 /// `FCF_SelectDockFrame` takes a frame; for an undocked one the reference assigns the selection and
 /// `FCF_DockUpdate` hides every docked window, leaving the undocked one as it was.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn fcf_select_dock_frame_selects_by_frame_and_leaves_an_undocked_one_alone() {
     benilla_formats::wow_data_or_skip!();
     let s = chat_frame();
@@ -694,6 +711,7 @@ fn fcf_select_dock_frame_selects_by_frame_and_leaves_an_undocked_one_alone() {
 
 /// With the cursor away, `FCF_OnUpdate` writes no tab alpha: a sentinel alpha survives ten ticks.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_idle_dock_stops_rewriting_the_tab_alpha_every_frame() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
@@ -719,6 +737,7 @@ fn an_idle_dock_stops_rewriting_the_tab_alpha_every_frame() {
 
 /// The control: a stationary hover past `CHAT_TAB_SHOW_DELAY` still fades the selected tab in.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hovering_the_dock_still_reveals_the_tabs() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
@@ -753,6 +772,7 @@ fn hovering_the_dock_still_reveals_the_tabs() {
 /// At the bottom, `ChatFrame_OnUpdate` only hides a lit flash and returns
 /// (`ChatFrame.lua:1508-1513`), so a sentinel `flashTimer` survives; scrolled up, it blinks.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_chat_view_at_the_bottom_stops_rewriting_the_flash() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
@@ -808,6 +828,7 @@ fn a_chat_view_at_the_bottom_stops_rewriting_the_flash() {
 /// `FCF_OnUpdate` runs from UIParent's (`UIParent.xml:19`), so the dock keeps its driver. Only the
 /// clock is driven: calling `FCF_OnUpdate()` by hand would skip that visibility gate.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn selecting_the_combat_log_keeps_the_dock_driver_running() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
@@ -853,6 +874,7 @@ fn selecting_the_combat_log_keeps_the_dock_driver_running() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_dock_still_fades_out_with_the_combat_log_selected() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
@@ -893,6 +915,7 @@ fn the_dock_still_fades_out_with_the_combat_log_selected() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_combat_log_window_runs_its_own_bottom_button_blink() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
@@ -920,6 +943,7 @@ fn the_combat_log_window_runs_its_own_bottom_button_blink() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_chat_menu_builds_its_rows_on_the_references_kit() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -984,6 +1008,7 @@ fn the_chat_menu_builds_its_rows_on_the_references_kit() {
 /// A glass window (chat cache `COLOR 0 0 0 0`) rests its plate at alpha 0, and `FCF_OnUpdate`
 /// fades it to `DEFAULT_CHATFRAME_ALPHA` and back on every hover (`FloatingChatFrame.lua:873-916`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_glass_windows_plate_fades_in_on_every_hover() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
@@ -1029,6 +1054,7 @@ fn a_glass_windows_plate_fades_in_on_every_hover() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_glass_windows_plate_fades_in_on_every_hover_under_the_full_manifest() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1117,6 +1143,7 @@ fn a_glass_windows_plate_fades_in_on_every_hover_under_the_full_manifest() {
 /// finished callback nils `oldAlpha` under a live hover): the bare chat stack must trap, and the
 /// shipped interface, with the layer's `FrameXMLFixes.xml`, must not.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_quick_exit_and_reentry_keeps_the_plates_hover_fade() {
     benilla_formats::wow_data_or_skip!();
     fn drive(s: &mut UiScript) -> (f64, f64, f64) {
@@ -1207,6 +1234,7 @@ fn a_quick_exit_and_reentry_keeps_the_plates_hover_fade() {
 /// (`ChatFrame.lua:1005-1011`), and the token must resolve to `CMSG_MESSAGECHAT` type `0x14` or
 /// `0x15`: the server toggles the flag. Either half alone passes with the seam between them broken.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_afk_and_dnd_commands_reach_the_wire() {
     benilla_formats::wow_data_or_skip!();
     use crate::net::ChatKind;

@@ -628,7 +628,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             let can = model
                 .unit_guids
-                .guid_of(&token, model.unknown_unit_token_raises)?
+                .guid_of(&token)
                 .is_some_and(|guid| model.spell_targetable_units.contains(&guid));
             Ok(flag(can))
         })?,
@@ -1414,7 +1414,7 @@ mod tests {
             1,
             "UpdateSpells must fire SPELLS_CHANGED synchronously, as SignalEvent does"
         );
-        // Zero returns, `reference/1.12-shapes.tsv`'s `arity = 0 (exact)`.
+        // Zero returns, `reference/3.3.5a-shapes.tsv`'s `arity = 0 (exact)`.
         assert_eq!(s.arity("UpdateSpells()").unwrap(), 0);
         assert!(s.errors().is_empty(), "errors: {:?}", s.errors());
     }

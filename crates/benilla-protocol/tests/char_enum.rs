@@ -5,121 +5,6 @@ use benilla_protocol::events::{decode, SessionEvent};
 use benilla_protocol::messages;
 use benilla_protocol::ServerPacket;
 
-/// One enum entry; the fixed fields hold distinct values so a misaligned parse cannot pass.
-fn enum_entry(
-    guid: u64,
-    name: &str,
-    race: u8,
-    class: u8,
-    gender: u8,
-    level: u8,
-    map: u32,
-    pos: [f32; 3],
-    pet_display: u32,
-) -> Vec<u8> {
-    let mut b = Vec::new();
-    b.extend_from_slice(&guid.to_le_bytes());
-    b.extend_from_slice(name.as_bytes());
-    b.push(0);
-    b.extend_from_slice(&[race, class, gender]);
-    b.extend_from_slice(&[3, 4, 5, 6, 7]); // skin/face/hairStyle/hairColor/facialHair
-    b.push(level);
-    b.extend_from_slice(&12u32.to_le_bytes()); // zone
-    b.extend_from_slice(&map.to_le_bytes());
-    for c in pos {
-        b.extend_from_slice(&c.to_le_bytes());
-    }
-    b.extend_from_slice(&0u32.to_le_bytes()); // guild id
-    b.extend_from_slice(&0x0200_0000u32.to_le_bytes()); // character flags (DECLINED, a junk value)
-    b.push(1); // first login
-    b.extend_from_slice(&pet_display.to_le_bytes()); // pet display id
-    b.extend_from_slice(&7u32.to_le_bytes()); // pet level
-    b.extend_from_slice(&1u32.to_le_bytes()); // pet family
-    for slot in 0..19u32 {
-        b.extend_from_slice(&(1000 + slot).to_le_bytes()); // equipment display id
-        b.push(slot as u8); // inventory type
-    }
-    b.extend_from_slice(&2000u32.to_le_bytes()); // first bag display id
-    b.push(18); // first bag inventory type
-    b
-}
-
-#[test]
-fn char_enum_roster_parses_and_decodes() {
-    let mut body = vec![2u8]; // count
-    body.extend(enum_entry(
-        0x0000_0000_0000_0007,
-        "Two",
-        1, // Human
-        1, // Warrior
-        0,
-        1,
-        0,
-        [-8949.95, -132.493, 83.5312],
-        99, // a pet, which the select screen stands beside this character
-    ));
-    body.extend(enum_entry(
-        0x0000_0000_0000_0009,
-        "Twomage",
-        1, // Human
-        8, // Mage
-        1,
-        60,
-        1,
-        [1.5, -2.5, 3.5],
-        0, // a mage: the server sends the triple zeroed, and no pet renders
-    ));
-
-    let p = messages::parse_server(messages::opcode::SMSG_CHAR_ENUM, &body).unwrap();
-    let ServerPacket::CharEnum { ref characters } = p else {
-        panic!("char enum")
-    };
-    assert_eq!(characters.len(), 2);
-    let c = &characters[0];
-    assert_eq!(
-        (c.guid, c.name.as_str(), c.race, c.class, c.gender),
-        (7, "Two", 1, 1, 0)
-    );
-    assert_eq!(
-        (c.skin, c.face, c.hair_style, c.hair_color, c.facial_hair),
-        (3, 4, 5, 6, 7)
-    );
-    assert_eq!((c.zone, c.flags), (12, 0x0200_0000));
-    // The pet triple sits before the equipment array: a misread slides every display id below.
-    assert_eq!(
-        (c.pet_display_id, c.pet_level, c.pet_family),
-        (99, 7, 1),
-        "the hunter/warlock pet the select screen renders"
-    );
-    assert_eq!((c.level, c.map), (1, 0));
-    assert_eq!((c.position.x, c.position.y), (-8949.95, -132.493));
-    for (slot, item) in c.equipment.iter().enumerate() {
-        assert_eq!(
-            (item.display_id, item.inventory_type),
-            (1000 + slot as u32, slot as u8)
-        );
-    }
-    let c = &characters[1];
-    assert_eq!(
-        (c.guid, c.name.as_str(), c.race, c.class, c.gender),
-        (9, "Twomage", 1, 8, 1)
-    );
-    assert_eq!((c.level, c.map, c.position.z), (60, 1, 3.5));
-    assert_eq!(c.equipment[18].display_id, 1018);
-    // The server zeroes the triple for all but a hunter's or warlock's pet, so display id 0 is the
-    // whole no-pet gate.
-    assert_eq!(c.pet_display_id, 0);
-
-    // The raw decode has no realm; the IO thread's own emit carries the auth realm entry.
-    match &decode(p)[..] {
-        [SessionEvent::CharacterList { characters, realm }] => {
-            assert_eq!(characters.len(), 2);
-            assert!(realm.is_none());
-        }
-        other => panic!("expected CharacterList, got {other:?}"),
-    }
-}
-
 /// One 3.3.5a entry in AzerothCore `Player::BuildEnumData` order: the 1.12.1 fields through the
 /// character flags, `u32 customizeFlags`, then 23 slots each carrying an enchant visual.
 fn enum_entry_wotlk(guid: u64, name: &str, race: u8, class: u8, pet_display: u32) -> Vec<u8> {
@@ -156,7 +41,8 @@ fn a_wotlk_char_enum_roster_parses_in_its_own_layout() {
     body.extend(enum_entry_wotlk(0x11, "Deathknight", 10, 6, 0));
     body.extend(enum_entry_wotlk(0x12, "Hunter", 11, 3, 4449));
 
-    let ServerPacket::CharEnum { characters } = messages::parse_char_enum_wotlk(&body).unwrap()
+    let ServerPacket::CharEnum { characters } =
+        messages::parse_server(messages::opcode::SMSG_CHAR_ENUM, &body).unwrap()
     else {
         panic!("char enum")
     };

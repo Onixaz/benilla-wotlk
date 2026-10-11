@@ -37,6 +37,7 @@ fn start_cinematic(s: &mut UiScript) {
 /// `frame_key_input` returning true keeps the key from its binding and the gameplay readers
 /// ([`super::UiKeyboardCapture`]).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_playing_cinematic_swallows_the_movement_keys() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui_with_the_cinematic_frame();
@@ -64,6 +65,7 @@ fn a_playing_cinematic_swallows_the_movement_keys() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn escape_is_consumed_and_acted_on_rather_than_falling_through() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui_with_the_cinematic_frame();
@@ -105,6 +107,7 @@ fn the_host_has_a_reference_name_for_the_keys_it_now_delivers() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_screenshot_key_is_handed_back_to_its_binding() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui_with_the_cinematic_frame();
@@ -139,6 +142,7 @@ fn the_screenshot_key_is_handed_back_to_its_binding() {
 /// `ShowUIPanel`'s `area = "full"` row (`UIParent.lua:31`) routes to `SetFullScreenFrame`, which
 /// hides `UIParent` and so every frame parented to it; `CinematicFrame` declares no parent.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_cinematic_hides_the_hud_through_uiparent_and_spares_the_cinematic_frame() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui_with_the_cinematic_frame();
@@ -183,6 +187,7 @@ fn a_cinematic_hides_the_hud_through_uiparent_and_spares_the_cinematic_frame() {
 /// `ScreenshotStatus` is a child of `WorldFrame`, whose children stay visible with the UI hidden
 /// (`WorldFrame.xml`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_screenshot_confirmation_shows_during_a_cinematic() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

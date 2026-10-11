@@ -13,6 +13,7 @@ const BREATH_ATTACH: u16 = 0x11;
 const STAND: u16 = 0;
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_idle_player_keys_bth_and_attaches_it_at_the_mouth() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

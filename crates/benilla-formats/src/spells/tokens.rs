@@ -814,6 +814,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn battle_shout_description_uses_modified_duration_from_real_data() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1080,6 +1081,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn scaled_damage_tokens_from_real_spell_data() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1102,6 +1104,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn improved_frostbolt_ranks_display_tenths_from_real_spell_data() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1132,6 +1135,7 @@ mod tests {
     /// (14 + 1d1, 0.5 a level from 1, cap 11), Power Word: Shield rank 1 (43 + 1d1, 0.8 from 6,
     /// cap 11), Fireball rank 1 (13 + 1d9, 0.6 from 1, cap 5, a rounding effect).
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn per_level_terms_scale_by_the_skill_level_from_real_spells() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1221,6 +1225,7 @@ mod tests {
     /// -600000 ms plus 60000 a level, capped at 600000. In no line of the player's its level is 0,
     /// and a duration at or below 0 reads as until cancelled.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_duration_takes_its_per_level_term_from_real_data() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1533,6 +1538,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn shipped_spell_data_tokens_resolve() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

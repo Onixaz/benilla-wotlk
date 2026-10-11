@@ -801,6 +801,7 @@ mod tests {
     /// The reference's gates: the `0x807060` class flag, and `Flags & 0x200` (`0x4cfb63`), which
     /// Shield lacks though it is Armor.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_tree_carries_the_reference_gates() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).unwrap();

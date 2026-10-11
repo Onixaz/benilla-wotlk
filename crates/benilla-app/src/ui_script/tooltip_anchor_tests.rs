@@ -88,6 +88,7 @@ fn world_hover_seats_the_default_corner() {
 /// 1.12 default, leaving hides the plate at once; `FadeOut` is the tips-off arm
 /// (`UnitFrame.lua:84-88`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn unit_frame_hover_takes_the_default_corner_and_drops_on_leave() {
     benilla_formats::wow_data_or_skip!();
     // The dropdown kit and popups precede the unit frames, whose dropdowns initialize at OnLoad.
@@ -186,6 +187,7 @@ fn a_pending_name_hover_titles_the_chains_unknownobject() {
 /// (`UnitFrame.lua:58-66`): your own portrait always, and any other frame but a party member's
 /// while the target is another player-controlled unit.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn your_own_portrait_explains_the_menu_instead_of_showing_your_health() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness(&[
@@ -253,6 +255,7 @@ fn your_own_portrait_explains_the_menu_instead_of_showing_your_health() {
 /// (`ActionButton.lua:366-372`), whose stock default is "1" (`0x48fdd9`, string `0x82e748`). An
 /// empty slot draws nothing, so the anchor is read through `GetPoint`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn action_button_hover_takes_the_default_corner() {
     benilla_formats::wow_data_or_skip!();
     let s = harness(&[
@@ -289,6 +292,7 @@ fn action_button_hover_takes_the_default_corner() {
 /// (`ActionButton.lua:369-373`). `SetOwner` writes `ANCHOR_RIGHT` as the plate's BOTTOMLEFT on the
 /// button's TOPRIGHT, and `ANCHOR_LEFT` as its mirror.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ubertooltips_off_seats_action_bar_plates_beside_the_button() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness(&[
@@ -365,6 +369,7 @@ fn ubertooltips_off_seats_action_bar_plates_beside_the_button() {
 /// The stance buttons' own branch (`BonusActionBarFrame.xml:40-45`): the corner when
 /// `UberTooltips` is on, `ANCHOR_RIGHT` when off.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ubertooltips_off_seats_stance_plates_beside_the_button() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness(&[
@@ -416,6 +421,7 @@ fn ubertooltips_off_seats_stance_plates_beside_the_button() {
 /// Buff hovers hang below the button: `ANCHOR_BOTTOMLEFT` (`BuffFrame.xml:37`) seats the plate's
 /// TOPRIGHT on the button's BOTTOMLEFT.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn buff_hover_hangs_below_left_of_the_button() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness(&[

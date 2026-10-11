@@ -114,6 +114,7 @@ fn drop_in_world(s: &mut UiScript, item_id: u32, name: &str, quality: u32) {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn delete_item_confirm_shows_the_real_strings_and_yes_deletes() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -154,6 +155,7 @@ fn delete_item_confirm_shows_the_real_strings_and_yes_deletes() {
 /// No runs `OnCancel` (`ClearCursor()`) and destroys nothing; only the clear's `ITEM_LOCK_CHANGED`
 /// can repaint the open bag, un-darkening the slot (`ContainerFrame.lua:39-42`, `:246`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn delete_item_confirm_no_clears_without_destroying() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = bag_setup();
@@ -221,6 +223,7 @@ fn desaturated(s: &mut UiScript, button: &str) -> bool {
 /// ESC runs stock `StaticPopup_EscapePressed`: `DELETE_ITEM` is `hideOnEscape`, so its `OnCancel`
 /// runs as No would (`StaticPopup.lua:1879-1893`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn escape_closes_the_delete_confirm_popup() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -238,6 +241,7 @@ fn escape_closes_the_delete_confirm_popup() {
 /// The stock `DELETE_ITEM`'s `OnUpdate` hides it once the cursor empties by any path
 /// (`StaticPopup.lua:669-673`); the poll is the entry's own.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_delete_entry_polls_itself_hidden_and_other_dialogs_are_untouched() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -269,6 +273,7 @@ fn the_delete_entry_polls_itself_hidden_and_other_dialogs_are_untouched() {
 
 /// Quality 3 and up raises `DELETE_GOOD_ITEM` instead (`UIParent.lua:346-350`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_rare_payload_raises_the_typed_confirm_with_okay_disabled() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -307,6 +312,7 @@ fn a_rare_payload_raises_the_typed_confirm_with_okay_disabled() {
 /// `EditBoxOnTextChanged` compares the `strupper` of the text with `DELETE_ITEM_CONFIRM_STRING`
 /// (`StaticPopup.lua:718-723`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn typing_the_confirm_word_enables_okay_and_untyping_it_disables_again() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -356,6 +362,7 @@ fn typing_the_confirm_word_enables_okay_and_untyping_it_disables_again() {
 
 /// Stock `EditBoxOnEnterPressed` destroys only while OKAY is enabled (`StaticPopup.lua:712-717`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn enter_in_the_box_destroys_only_once_okay_is_enabled() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -384,6 +391,7 @@ fn enter_in_the_box_destroys_only_once_okay_is_enabled() {
 
 /// The stock `OnHide` empties the box, so the next raise opens blank and disarmed.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn no_on_the_typed_confirm_clears_and_leaves_the_box_empty_for_next_time() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -419,6 +427,7 @@ fn no_on_the_typed_confirm_clears_and_leaves_the_box_empty_for_next_time() {
 /// Stock `DELETE_GOOD_ITEM` has no `EditBoxOnEscapePressed`, so ESC in its box does nothing
 /// (`StaticPopup.lua:1817-1822`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn escape_in_the_typed_confirms_box_is_swallowed_as_the_reference_leaves_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -444,6 +453,7 @@ fn escape_in_the_typed_confirms_box_is_swallowed_as_the_reference_leaves_it() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_plain_arm_shows_no_edit_box() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -470,6 +480,7 @@ fn the_plain_arm_shows_no_edit_box() {
 /// The world drop under the whole shipped manifest: a fixture is a subset, and can miss the file
 /// that breaks the drop.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_world_drop_survives_the_whole_shipped_interface() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

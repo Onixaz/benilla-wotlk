@@ -175,10 +175,7 @@ pub use movement::{
 pub use opcode_names::opcode_name;
 pub use packet::{CreatureQueryInfo, MonsterMoveFacing, ServerPacket};
 pub use page_text::page_text_query;
-pub use parse::{
-    parse_auth_response_wotlk, parse_char_enum_wotlk, parse_server, parse_server_as,
-    parse_server_with_tail, parse_server_with_tail_as,
-};
+pub use parse::{parse_auth_response_wotlk, parse_server, parse_server_with_tail};
 pub use pet::{
     pet_abandon, pet_action, pet_cancel_aura, pet_rename, pet_set_action, pet_spell_autocast,
     pet_stop_attack, pet_tame_failure_key, pet_unlearn, PetActionEntry, PetMode, PetSpellCooldown,
@@ -318,22 +315,20 @@ pub fn faction_language(race: u8) -> u32 {
         _ => LANGUAGE_COMMON,             // human, dwarf, night elf, gnome
     }
 }
-/// `ChatMsg` values (vmangos `SharedDefines.h:1191-1301`) as `CMSG_MESSAGECHAT`'s `u32` `type`
-/// (`Server/Packets/Chat.h:12`). The inbound `u8` field has its own set, [`CHAT_MSG_SAY`] etc.
-pub const CHAT_TYPE_SAY: u32 = 0x0;
-pub const CHAT_TYPE_PARTY: u32 = 0x1;
-pub const CHAT_TYPE_RAID: u32 = 0x2;
-pub const CHAT_TYPE_GUILD: u32 = 0x3;
-pub const CHAT_TYPE_OFFICER: u32 = 0x4;
-pub const CHAT_TYPE_YELL: u32 = 0x5;
-pub const CHAT_TYPE_WHISPER: u32 = 0x6;
-pub const CHAT_TYPE_EMOTE: u32 = 0x8;
-pub const CHAT_TYPE_CHANNEL: u32 = 0xE;
-pub const CHAT_TYPE_AFK: u32 = 0x14;
-pub const CHAT_TYPE_DND: u32 = 0x15;
-/// `#if SUPPORTED_CLIENT_BUILD > CLIENT_BUILD_1_10_2`: active for 5875.
-pub const CHAT_TYPE_RAID_LEADER: u32 = 0x57;
-pub const CHAT_TYPE_RAID_WARNING: u32 = 0x58;
-/// `#if SUPPORTED_CLIENT_BUILD > CLIENT_BUILD_1_11_2`: active for 5875.
-pub const CHAT_TYPE_BATTLEGROUND: u32 = 0x5C;
-pub const CHAT_TYPE_BATTLEGROUND_LEADER: u32 = 0x5D;
+/// The `ChatMsg` lanes the client sends as `CMSG_MESSAGECHAT`'s `u32` `type`: `SendChatMessage`'s
+/// name table (`0x4fbb20`), whose type defaults to SAY = 1 (`0x50d1d8`). It has no RAID_LEADER or
+/// BATTLEGROUND_LEADER: the client never sends either. The inbound `u8` field has its own set,
+/// [`CHAT_MSG_SAY`] etc.
+pub const CHAT_TYPE_SAY: u32 = 0x01;
+pub const CHAT_TYPE_PARTY: u32 = 0x02;
+pub const CHAT_TYPE_RAID: u32 = 0x03;
+pub const CHAT_TYPE_GUILD: u32 = 0x04;
+pub const CHAT_TYPE_OFFICER: u32 = 0x05;
+pub const CHAT_TYPE_YELL: u32 = 0x06;
+pub const CHAT_TYPE_WHISPER: u32 = 0x07;
+pub const CHAT_TYPE_EMOTE: u32 = 0x0A;
+pub const CHAT_TYPE_CHANNEL: u32 = 0x11;
+pub const CHAT_TYPE_AFK: u32 = 0x17;
+pub const CHAT_TYPE_DND: u32 = 0x18;
+pub const CHAT_TYPE_RAID_WARNING: u32 = 0x28;
+pub const CHAT_TYPE_BATTLEGROUND: u32 = 0x2C;

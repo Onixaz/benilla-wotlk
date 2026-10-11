@@ -343,7 +343,7 @@ mod tests {
                 local f = CreateFrame("Frame")
                 f:RegisterEvent("UNIT_AURA")
                 -- The group's tokens only: the player's list fires on the first frame too.
-                f:SetScript("OnEvent", function()
+                f:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
                     if arg1 ~= "player" then table.insert(SEEN, arg1) end
                 end)
             "#,

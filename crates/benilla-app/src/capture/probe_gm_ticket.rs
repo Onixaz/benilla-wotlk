@@ -242,7 +242,7 @@ fn gm_ticket_probe(
                     local f = CreateFrame("Frame")
                     f:RegisterEvent("UPDATE_TICKET")
                     f:RegisterEvent("UPDATE_GM_STATUS")
-                    f:SetScript("OnEvent", function()
+                    f:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
                         if event == "UPDATE_TICKET" then
                             local c = arg1 or 0
                             table.insert(ProbeGmTicketCat, c)

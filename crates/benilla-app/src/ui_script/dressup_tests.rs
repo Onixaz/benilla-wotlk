@@ -143,6 +143,7 @@ fn backpack_with_jerky(s: &mut UiScript) -> String {
 /// Stock `DressUpItemLink(GetContainerItemLink(...))` (`ContainerFrame.lua:565-566`). `Dress`
 /// must precede `TryOn`, or the room shows the player's own gear instead of the item.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ctrl_click_on_a_bag_item_opens_the_room_wearing_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -175,6 +176,7 @@ fn ctrl_click_on_a_bag_item_opens_the_room_wearing_it() {
 /// Stock shift arm (`ContainerFrame.lua:567-578`): the link with chat open, else the stack
 /// splitter, which calls back through the `this.SplitStack` closure.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shift_click_posts_the_link_with_chat_open_and_splits_with_it_closed() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -215,6 +217,7 @@ fn shift_click_posts_the_link_with_chat_open_and_splits_with_it_closed() {
 /// Stock `SetItemRef`, which a chat frame's `OnHyperlinkClick` calls: ctrl previews the item
 /// (`ItemRef.lua:49-50`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ctrl_clicking_a_chat_link_previews_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -243,6 +246,7 @@ fn ctrl_clicking_a_chat_link_previews_it() {
 /// Stock `PaperDollItemSlotButton_OnClick` (`PaperDollFrame.lua:647-662`) reads
 /// `GetInventoryItemLink("player", slot)` for both the preview and the link.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_paper_doll_slots_preview_and_post_what_you_wear() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_paper_doll();
@@ -295,6 +299,7 @@ fn the_paper_doll_slots_preview_and_post_what_you_wear() {
 /// `EditBox:Insert(nil)` is a no-op, as the reference reads its argument with `lua_tostring`
 /// (`0x7984b0`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shift_clicking_an_unresolved_slot_posts_nothing_and_never_raises() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_paper_doll();
@@ -336,6 +341,7 @@ fn shift_clicking_an_unresolved_slot_posts_nothing_and_never_raises() {
 /// The rotate buttons step 0.03 per `OnClick` (`UIParent.lua:1428`) and register both mouse edges
 /// (`DressUpFrame.xml:220`), so one tap turns 0.06.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn reset_re_dresses_close_empties_and_the_arrows_spin_the_pane() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

@@ -107,6 +107,7 @@ mod tests {
 
     /// The 5875 tables; the spot rows pin the column order, as a swapped pair still counts 45.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_death_thud_chain_resolves() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -143,6 +144,7 @@ mod tests {
     /// The reference joins these tables by array index, so every terrain sound a `TerrainType` or
     /// `DeathThudLookups` row names must be a `TerrainTypeSounds` row, or `0`.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_terrain_axis_agrees_across_the_three_tables() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

@@ -70,6 +70,7 @@ pub(crate) fn push(s: &mut UiScript, rows: Vec<WorldStateUiView>) {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_tower_counters_draw_with_their_icons() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -110,6 +111,7 @@ fn the_tower_counters_draw_with_their_icons() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn leaving_the_zone_clears_the_readout() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -139,6 +141,7 @@ fn leaving_the_zone_clears_the_readout() {
 /// `Icon` and `DynamicIcon` (`0x4c5a70`) feed a 42x42 slot and a 32x32 button off the row's right;
 /// only state 2, flag taken, lights the button (`WorldStateFrame.lua:86`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_dynamic_icon_is_a_second_slot_lit_only_by_the_taken_state() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -224,6 +227,7 @@ fn the_dynamic_icon_is_a_second_slot_lit_only_by_the_taken_state() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_row_without_an_icon_still_shows_its_text() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -242,6 +246,7 @@ fn a_row_without_an_icon_still_shows_its_text() {
 /// The update routes an `ExtendedUI` row to its kit, which builds a capture bar and prints no
 /// text (`WorldStateFrame.lua:44`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_capture_point_row_is_a_bar_not_a_line_of_text() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -268,6 +273,7 @@ fn a_capture_point_row_is_a_bar_not_a_line_of_text() {
 /// An out-of-range index answers the single number 0 and a non-number argument raises
 /// (`0x4c5a40`, `0x4c5a70`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bindings_answer_the_reference_shape() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -341,6 +347,7 @@ fn ink_box(chain: &mut benilla_formats::Chain, path: &str) -> (f32, f32, f32, f3
 /// of 32x32), uncropped; `WorldStateFrame.xml` compensates with a 42x42 slot hung 6 off the row's
 /// left and the label 10 above its centreline. The test pins the outcome: ink beside its label.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_visible_ink_sits_beside_its_label_not_adrift_of_it() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("chain");

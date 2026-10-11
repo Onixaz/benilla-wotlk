@@ -3,6 +3,7 @@
 use benilla_formats::{open_chain, parse_m2_ribbon_emitters};
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ribbon_records_match_real_bytes() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

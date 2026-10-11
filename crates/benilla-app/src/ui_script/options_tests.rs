@@ -61,6 +61,7 @@ fn harness_with(mut s: UiScript, definers: &[&str]) -> UiScript {
 
 /// On the reference's igMainMenuOption kit; the window takes the center slot the menu leaves.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_menu_options_button_swaps_the_menu_for_the_options_window() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -90,6 +91,7 @@ fn the_menu_options_button_swaps_the_menu_for_the_options_window() {
 
 /// The title is the selected row's label, which differs from its key only for ActionBars.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn controls_is_the_default_category_and_the_title_reads_it() {
     benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -116,6 +118,7 @@ fn controls_is_the_default_category_and_the_title_reads_it() {
 
 /// The selection survives a close and reopen: the OnShow re-applies the last category.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn clicking_a_row_moves_the_selection_and_the_page_title() {
     benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -145,6 +148,7 @@ fn clicking_a_row_moves_the_selection_and_the_page_title() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_close_button_hides_the_window() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -169,6 +173,7 @@ fn the_close_button_hides_the_window() {
 /// 1.14's OptionsListButtonTemplate wash: one UI-QuestLogTitleHighlight quad in ADD blend at the
 /// era's 187x21, gold (1,1,0) locked on the selected row, steel blue (.196,.388,.8) on hover.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_selected_row_wears_the_gold_wash_and_hover_runs_blue() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -272,6 +277,7 @@ fn the_selected_row_wears_the_gold_wash_and_hover_runs_blue() {
 /// `UI-DialogBox-Border` are dead from texel 16 of 32 and whose corners' ink ends by 14: an inset
 /// of 14 clears it, where the 11/12 bg insets would not.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_ground_dim_draws_over_the_tile_and_clear_of_the_rope() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -337,6 +343,7 @@ fn the_ground_dim_draws_over_the_tile_and_clear_of_the_rope() {
 /// The era SettingsPanel search: the live rows under a category head, a matched child pulling its
 /// parent in above it; clearing the box lays every row back on its authored XML chain.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn search_reflows_live_rows_and_restores_the_page() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -428,6 +435,7 @@ fn search_reflows_live_rows_and_restores_the_page() {
 /// The era scoring (`MatchesSearchTags`, Blizzard_Settings.lua): the whole query is the first
 /// word tried, so a phrase hit outscores its own words and leads its group.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_phrase_match_outranks_its_words() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -453,6 +461,7 @@ fn the_phrase_match_outranks_its_words() {
 
 /// A head click selects its category and clears the box, as the era's `SelectCategory` does.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_head_click_ends_the_search_and_a_miss_shows_no_results() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -510,6 +519,7 @@ fn a_head_click_ends_the_search_and_a_miss_shows_no_results() {
 
 /// A left press on the track, off the thumb, seats the thumb under the cursor and drags on.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_track_press_seats_the_thumb_and_keeps_dragging() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -574,6 +584,7 @@ fn a_track_press_seats_the_thumb_and_keeps_dragging() {
 /// The readout shares its label's line: the +3 that seats the groove and thumb in the row is on
 /// the art frames, not on the control the readout hangs off.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_slider_rows_readout_sits_on_its_labels_line() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -760,6 +771,7 @@ fn actionbars_harness() -> UiScript {
 
 /// Sliders read the stored value with the era's rounded-percent readout; checkboxes read the flag.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_audio_page_reads_the_cvar_table_on_select() {
     benilla_formats::wow_data_or_skip!();
     let mut s = audio_harness();
@@ -810,6 +822,7 @@ fn the_audio_page_reads_the_cvar_table_on_select() {
 
 /// A move snaps to the era's 5% grid (`obeyStepOnDrag`) and writes a short string.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_slider_move_snaps_and_writes_the_cvar() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -846,6 +859,7 @@ fn a_slider_move_snaps_and_writes_the_cvar() {
 /// The sound panel's inverted click kit (`SoundOptionsFrame.lua:86-90`) and its dependency:
 /// Enable All Sound off greys Enable Ambience but not Enable Music.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_checkbox_rows_write_flags_and_the_master_greys_ambience() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -892,6 +906,7 @@ fn the_checkbox_rows_write_flags_and_the_master_greys_ambience() {
 /// 1.12 has no such checkbox and always goes quiet in the background, so the row ships off; the
 /// master's rule (`SoundOptionsFrame_UpdateDependencies`) names two other rows, not this one.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_background_sound_row_boots_off_and_writes_the_era_cvar() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -929,6 +944,7 @@ fn the_background_sound_row_boots_off_and_writes_the_era_cvar() {
 
 /// Defaults is the era's per-page reset, to the registered defaults.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn defaults_resets_the_audio_page_to_registered_defaults() {
     benilla_formats::wow_data_or_skip!();
     let mut s = audio_harness();
@@ -971,6 +987,7 @@ fn defaults_resets_the_audio_page_to_registered_defaults() {
 /// The two 1.12 sliders read the table: uiScale over 0.64..1.0 in percent, farclip over 177..777
 /// in yards (`OptionsFrame.lua:25-26`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_graphics_page_reads_the_cvar_table_on_select() {
     benilla_formats::wow_data_or_skip!();
     let mut s = audio_harness();
@@ -1041,6 +1058,7 @@ fn the_graphics_page_reads_the_cvar_table_on_select() {
 /// Modern Classic's two-entry Display Mode dropdown over 1.12's `gxWindow`, whose "1" is
 /// windowed: the first entry, the borderless window, is "0".
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_display_mode_dropdown_maps_its_entries_to_the_gx_window_polarity() {
     benilla_formats::wow_data_or_skip!();
     const ROW: &str = "BenillaOptionsFrameContainerBodyGraphicsRowDisplayMode";
@@ -1093,6 +1111,7 @@ fn the_display_mode_dropdown_maps_its_entries_to_the_gx_window_polarity() {
 /// 1.12's Video Options checkbox 5 (`OptionsFrame.lua:9`). Not deferred despite its
 /// `gxRestart = 1`: the present mode changes live.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_vertical_sync_row_reads_and_writes_the_present_mode_cvar() {
     benilla_formats::wow_data_or_skip!();
     let mut s = audio_harness();
@@ -1141,6 +1160,7 @@ fn the_vertical_sync_row_reads_and_writes_the_present_mode_cvar() {
 /// Brightness is an API row over `GetGamma`/`SetGamma`, the reference's slider 6
 /// (`OptionsFrame.lua:30`): a drag writes `gamma`, and a revisit reads it back.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_brightness_slider_writes_through_its_engine_pair_and_survives_a_reopen() {
     benilla_formats::wow_data_or_skip!();
     const ROW: &str = "BenillaOptionsFrameContainerBodyGraphicsRowBrightness";
@@ -1205,6 +1225,7 @@ fn the_brightness_slider_writes_through_its_engine_pair_and_survives_a_reopen() 
 /// Environment Detail over `WorldDetail`: the readout names the stop, and an out-of-range value
 /// shows the nearest one without being written back.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_world_detail_slider_writes_the_cvar_and_the_readout_names_its_stop() {
     benilla_formats::wow_data_or_skip!();
     const ROW: &str = "BenillaOptionsFrameContainerBodyGraphicsRowWorldDetail";
@@ -1275,6 +1296,7 @@ fn the_world_detail_slider_writes_the_cvar_and_the_readout_names_its_stop() {
 /// 1.12's slider 8, Spell Detail Level (`OptionsFrame.lua:32`), over `spellEffectLevel` on its
 /// 0..2 grid, labelled and tipped from the stock GlobalStrings.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_spell_detail_slider_reads_and_writes_the_spell_effect_level() {
     benilla_formats::wow_data_or_skip!();
     const ROW: &str = "BenillaOptionsFrameContainerBodyGraphicsRowSpellDetail";
@@ -1323,6 +1345,7 @@ fn the_spell_detail_slider_reads_and_writes_the_spell_effect_level() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_nameplates_page_toggles_the_unit_name_cvars() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -1436,6 +1459,7 @@ fn the_nameplates_page_toggles_the_unit_name_cvars() {
 /// The era's `CommitFlag.Apply`: a move snaps to 1.12's 0.01 grid and shows, Apply commits it,
 /// and dragging back onto the committed value disarms Apply (`IsModified`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_ui_scale_slider_defers_to_the_apply_button() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -1506,6 +1530,7 @@ fn the_ui_scale_slider_defers_to_the_apply_button() {
 /// Render Scale, benilla's own row: a percentage readout, deferred to Apply because a live write
 /// would rebuild the world render target on every drag tick.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_render_scale_row_shows_a_percentage_and_defers_to_apply() {
     benilla_formats::wow_data_or_skip!();
     let mut s = audio_harness();
@@ -1573,6 +1598,7 @@ fn the_render_scale_row_shows_a_percentage_and_defers_to_apply() {
 /// Pending edits are panel-wide, as the era's modified table: a category switch keeps them, and
 /// hiding the window discards them.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_pending_ui_scale_survives_the_page_switch_and_dies_on_hide() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -1622,6 +1648,7 @@ fn a_pending_ui_scale_survives_the_page_switch_and_dies_on_hide() {
 
 /// A live row on 1.12's grid, 177 + n * 60 (`OptionsFrame.lua:26`), so 300 lands on 297.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_terrain_distance_slider_snaps_to_the_1_12_grid_and_writes_live() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -1661,6 +1688,7 @@ fn the_terrain_distance_slider_snaps_to_the_1_12_grid_and_writes_live() {
 
 /// uiScale back to its registered 0.9, farclip to 350, and a pending uiScale edit dropped.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn defaults_resets_the_graphics_page_to_registered_defaults() {
     benilla_formats::wow_data_or_skip!();
     let mut s = audio_harness();
@@ -1716,6 +1744,7 @@ fn defaults_resets_the_graphics_page_to_registered_defaults() {
 /// Sticky Targeting reads inverted, as 1.12 checks it on `deselectOnClick` "0"
 /// (`UIOptionsFrame.lua:249-252`); the other flags read directly.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_controls_page_reads_flags_with_the_sticky_inversion() {
     benilla_formats::wow_data_or_skip!();
     let mut s = audio_harness();
@@ -1760,6 +1789,7 @@ fn the_controls_page_reads_flags_with_the_sticky_inversion() {
 /// Checked plays CheckBoxOn (`PlayClickSound`, `OptionsFrame.lua:509-515`), and Sticky
 /// Targeting writes inverted, as 1.12 flips it (`UIOptionsFrame.lua:337-343`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_controls_checkboxes_write_flags_with_the_interface_panel_kit() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -1802,6 +1832,7 @@ fn the_controls_checkboxes_write_flags_with_the_interface_panel_kit() {
 /// Click-to-Move (`UIOptionsFrame.lua:7`) moves `AutoInteract`, which boots off as 1.12's Western
 /// client registers it (`0x603374`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_controls_page_offers_click_to_move_on_autointeract() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -1833,6 +1864,7 @@ fn the_controls_page_offers_click_to_move_on_autointeract() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn defaults_resets_the_controls_page_to_registered_defaults() {
     benilla_formats::wow_data_or_skip!();
     let mut s = audio_harness();
@@ -1882,6 +1914,7 @@ fn settle(s: &mut UiScript) {
 /// Results taller than the page grow the scroll body: the bar and its trough appear, and
 /// everything past the fold is clipped to the page rect.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_broad_search_scrolls_the_page_instead_of_overflowing_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -2019,6 +2052,7 @@ fn a_broad_search_scrolls_the_page_instead_of_overflowing_it() {
 /// hang: 31 wide, 8 left of the 16-wide bar, overhanging it 21 above and 20 below, so each arrow
 /// sits in the 16-tall socket the art carries for it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_page_scroll_bar_wears_the_trough_with_its_arrows_in_the_sockets() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -2137,6 +2171,7 @@ fn scroll_into_view(s: &mut UiScript, frame: &str) {
 
 /// The row's key resolves at hover, so a string set after the window loaded still paints.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_hovered_row_raises_its_1_12_description_on_the_era_seat() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -2209,6 +2244,7 @@ fn a_hovered_row_raises_its_1_12_description_on_the_era_seat() {
 /// Auto Loot has no 1.12 setting and so no string: its hover raises nothing, and puts away a
 /// neighbour's plate left standing without an OnLeave.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_row_with_no_1_12_string_raises_no_plate() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -2249,6 +2285,7 @@ fn a_row_with_no_1_12_string_raises_no_plate() {
 /// Every row's key resolves in the player's 1.12 `GlobalStrings.lua`, so a mistyped key cannot
 /// silence a description.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_row_tooltip_key_resolves_in_the_real_global_strings() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -2348,6 +2385,7 @@ fn every_row_tooltip_key_resolves_in_the_real_global_strings() {
 /// Each row template needs its `$parentTip` seat: without it `SetOwner(nil, ...)` errors instead
 /// of raising a plate.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_flavor_of_row_raises_its_plate_from_the_page_it_lives_on() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -2422,6 +2460,7 @@ fn every_flavor_of_row_raises_its_plate_from_the_page_it_lives_on() {
 /// 1.12's AdvancedOptionsCombatText box as saved-global rows: a click writes the global, never a
 /// CVar, and runs the family's apply, `BenillaCombatText_UpdateOrLoad`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_combat_page_writes_saved_variable_globals_and_applies_them() {
     benilla_formats::wow_data_or_skip!();
     let mut s = combat_harness();
@@ -2507,6 +2546,7 @@ fn the_combat_page_writes_saved_variable_globals_and_applies_them() {
 /// 1.12's rule (`UIOptionsFrame.lua:728-763`): the master off greys the floating-text rows and the
 /// dropdown, and Combo Points stays greyed for all but rogues and druids.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_combat_master_greys_the_family_and_combo_points_is_class_gated() {
     benilla_formats::wow_data_or_skip!();
     let mut s = combat_harness();
@@ -2558,6 +2598,7 @@ fn the_combat_master_greys_the_family_and_combo_points_is_class_gated() {
 /// Defaults restores each global to the value captured at its row's OnLoad, before the saved
 /// chunk runs: `UIOptionsFrame_Init`'s, with no second copy in the window.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn defaults_resets_the_combat_page_to_the_shipped_assignments() {
     benilla_formats::wow_data_or_skip!();
     let s = combat_harness();
@@ -2621,6 +2662,7 @@ fn defaults_resets_the_combat_page_to_the_shipped_assignments() {
 
 /// A toggle is saved under its own name, and a fresh VM running the saved text comes up on it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn what_the_combat_page_writes_survives_a_restart() {
     benilla_formats::wow_data_or_skip!();
     let s = combat_harness();
@@ -2686,6 +2728,7 @@ fn what_the_combat_page_writes_survives_a_restart() {
 
 /// The lock row's `LOCK_ACTIONBAR` write reaches the stock bar's drag guard in the same VM.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_action_bars_page_locks_the_real_bar() {
     benilla_formats::wow_data_or_skip!();
     let mut s = actionbars_harness();
@@ -2745,6 +2788,7 @@ fn the_action_bars_page_locks_the_real_bar() {
 /// Three saved-global rows with no apply: each consumer reads its global as it acts, so the write
 /// alone changes behaviour.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_interface_page_writes_the_three_stock_globals() {
     benilla_formats::wow_data_or_skip!();
     let mut s = interface_harness();
@@ -2806,6 +2850,7 @@ fn the_interface_page_writes_the_three_stock_globals() {
 /// The picker is dead while the switch is off (`UIOptionsFrame.lua:697-701`), both rows run
 /// `TargetofTarget_Update` on a write, and the five entries are the reference's, in its order.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_target_of_target_rows_gate_each_other_and_write_their_globals() {
     benilla_formats::wow_data_or_skip!();
     let mut s = interface_harness();
@@ -2904,6 +2949,7 @@ fn the_target_of_target_rows_gate_each_other_and_write_their_globals() {
 /// 1.12's `func`/`setFunc` pair (`UIOptionsFrame.lua:18-19`). The getter follows the click before
 /// the server answers: the wire verb is a blind flip, so a second click must see the new state.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_equipment_display_rows_read_and_write_through_the_api_not_a_store() {
     benilla_formats::wow_data_or_skip!();
     let mut s = interface_harness();
@@ -2977,6 +3023,7 @@ fn the_equipment_display_rows_read_and_write_through_the_api_not_a_store() {
 /// Show Tutorials' entry is a bare `{ index = 28 }` (`UIOptionsFrame.lua:37`): its store is the
 /// special arms, `TutorialsEnabled()` to read and `ClearTutorials()`/`ResetTutorials()` to write.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn show_tutorials_reads_the_bank_and_writes_through_clear_and_reset() {
     benilla_formats::wow_data_or_skip!();
     let mut s = interface_harness();
@@ -3032,6 +3079,7 @@ fn show_tutorials_reads_the_bank_and_writes_through_clear_and_reset() {
 /// The reference's `~=` guard (`UIOptionsFrame.lua:319`): writing the value the row already holds
 /// sends nothing, so Defaults cannot re-arm dismissed tutorials.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_no_op_write_does_not_re_arm_the_tutorials() {
     benilla_formats::wow_data_or_skip!();
     let mut s = interface_harness();
@@ -3055,6 +3103,7 @@ fn a_no_op_write_does_not_re_arm_the_tutorials() {
 
 /// The setter is a set over a wire verb that toggles, so Defaults flips only the row that moved.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn defaults_sends_a_flip_only_for_the_row_that_moved() {
     benilla_formats::wow_data_or_skip!();
     let mut s = interface_harness();
@@ -3087,6 +3136,7 @@ fn defaults_sends_a_flip_only_for_the_row_that_moved() {
 /// Defaults restores what each global's definer assigned, captured at the row's OnLoad, so the
 /// window keeps no second copy of a default.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn defaults_on_the_interface_page_restores_the_definers_own_assignment() {
     benilla_formats::wow_data_or_skip!();
     let s = interface_harness();
@@ -3124,6 +3174,7 @@ fn defaults_on_the_interface_page_restores_the_definers_own_assignment() {
 /// The toggle is saved under the reference's global name, `AUTO_QUEST_WATCH`, and a fresh tree
 /// replaying the text comes up on it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn what_the_interface_page_writes_survives_a_restart() {
     benilla_formats::wow_data_or_skip!();
     let s = interface_harness();
@@ -3171,6 +3222,7 @@ fn what_the_interface_page_writes_survives_a_restart() {
 /// effect through the stock `VARIABLES_LOADED` ladder, which loads `Blizzard_CombatText` for it
 /// (`UIOptionsFrame.lua:204-226`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_saved_switch_with_a_side_effect_is_applied_when_the_variables_land() {
     benilla_formats::wow_data_or_skip!();
     let mut s = combat_harness();
@@ -3200,6 +3252,7 @@ fn a_saved_switch_with_a_side_effect_is_applied_when_the_variables_land() {
 /// second row hangs 15 below the first with timers and 5 without. The click re-runs it, and a
 /// saved value needs the stock `VARIABLES_LOADED` arm (`UIOptionsFrame.lua:206`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_buff_durations_row_repitches_the_bar_and_the_pitch_survives_a_restart() {
     benilla_formats::wow_data_or_skip!();
     let gap = |s: &mut UiScript| -> f64 {
@@ -3263,6 +3316,7 @@ fn the_buff_durations_row_repitches_the_bar_and_the_pitch_survives_a_restart() {
 /// Every category has rows but Keybindings, which runs its own page, and each arms Defaults; a key
 /// with no rows behind it leaves Defaults dead.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_defaults_button_is_armed_by_rows_not_by_a_category() {
     benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -3308,6 +3362,7 @@ fn the_defaults_button_is_armed_by_rows_not_by_a_category() {
 /// `spamFilter` registers "1" and the label says Disable: 1.12 checks the box on "0" and flips the
 /// write (`UIOptionsFrame.lua:253-256`, `:337-343`), so it boots unchecked.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_disable_spam_filter_row_is_inverted() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -3347,6 +3402,7 @@ fn the_disable_spam_filter_row_is_inverted() {
 /// 1.12 files Profanity Filter in the Display box, CheckButton5 under 66
 /// (`UIOptionsFrame.xml:407-409`), not with chat, so the row is on the Interface page.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_profanity_filter_row_sits_on_the_interface_page_and_writes_its_cvar() {
     benilla_formats::wow_data_or_skip!();
     let mut s = interface_harness();
@@ -3374,6 +3430,7 @@ fn the_profanity_filter_row_sits_on_the_interface_page_and_writes_its_cvar() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_chat_page_toggles_the_chat_bubble_cvars() {
     benilla_formats::wow_data_or_skip!();
     // No host override: the page reads the registered pair, bubbles on and party bubbles off.
@@ -3438,6 +3495,7 @@ fn the_chat_page_toggles_the_chat_bubble_cvars() {
 /// Remove Chat Hover Delay is a saved global whose apply moves two fade constants nothing re-reads;
 /// Detailed Loot Information is a CVar the loot-roll composer reads per line, so it needs none.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_chat_page_writes_the_hover_delay_global_and_the_loot_spam_cvar() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_harness();
@@ -3516,6 +3574,7 @@ fn the_chat_page_writes_the_hover_delay_global_and_the_loot_spam_cvar() {
 
 /// A saved "1" takes effect through the stock `VARIABLES_LOADED` arm (`UIOptionsFrame.lua:216`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_saved_hover_delay_is_applied_when_the_variables_land() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_harness();
@@ -3539,6 +3598,7 @@ fn a_saved_hover_delay_is_applied_when_the_variables_land() {
 /// The row's `cvarEvent` is 1.12's third `SetCVar` argument (`UIOptionsFrame.lua:345`), handed
 /// back as `CVAR_UPDATE`'s arg1, so `TextStatusBar.lua:15` shows the numerals on the click.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_status_bar_text_row_pins_the_numerals_the_moment_it_is_clicked() {
     benilla_formats::wow_data_or_skip!();
     let mut s = interface_harness();
@@ -3588,6 +3648,7 @@ fn the_status_bar_text_row_pins_the_numerals_the_moment_it_is_clicked() {
 
 /// 1.12's row (`UIOptionsFrame.lua:87`): 0.5 to 1.5 by 0.05, a multiplier; 1 reads 100%.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_mouse_sensitivity_slider_snaps_to_the_reference_step() {
     benilla_formats::wow_data_or_skip!();
     let mut s = audio_harness();
@@ -3637,6 +3698,7 @@ fn the_mouse_sensitivity_slider_snaps_to_the_reference_step() {
 /// 1.12 stores a factor, 1.0 to 2.0 (`UIOptionsFrame.lua:90`), over `cameraDistanceMax`'s 15 yd
 /// base: the CVar carries the factor and the readout the distance.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_max_camera_distance_slider_stores_a_factor_and_reads_out_yards() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -3708,6 +3770,7 @@ fn the_max_camera_distance_slider_stores_a_factor_and_reads_out_yards() {
 /// terrain-tilt consumer (`0x50dbc0`) reads past its table. The entries carry those values in the
 /// reference's order, a stray 3 reads Never, and the plate follows the selection.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_camera_following_style_dropdown_carries_the_engine_enum_and_plate() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -3823,6 +3886,7 @@ fn the_camera_following_style_dropdown_carries_the_engine_enum_and_plate() {
 /// four arguments; Always Show ActionBars is a saved global, as `SetActionBarToggles` drops a
 /// fifth (`0x4e770e`). The writes move the real bars in the same VM.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_action_bars_page_toggles_the_real_bars() {
     benilla_formats::wow_data_or_skip!();
     let mut s = actionbars_harness();
@@ -3987,6 +4051,7 @@ impl benilla_ui::script::TextMeasure for SteppedFont {
 /// `PanelTemplates_TabResize` is: `GetStringWidth` answers in the region's own units, and the
 /// window's OnShow sets its 0.78 scale after every OnLoad has run.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_two_option_tabs_fit_their_labels_at_the_drawn_scale() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -4050,6 +4115,7 @@ fn the_two_option_tabs_fit_their_labels_at_the_drawn_scale() {
 /// With no measurer a label measures 0 and each tab is the bare 40; the app has seated
 /// `AtlasMeasurer` before any window shows.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn without_a_seated_measurer_the_same_fit_reads_zero() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(UiScript::new().unwrap());
@@ -4080,6 +4146,7 @@ const UNBACKED_REFERENCE_CVARS: &[(&str, &str)] = &[
 /// Checked both ways: an unregistered name missing from the list fails, and so does a listed name
 /// that is registered now.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_cvar_the_reference_table_names_is_registered_or_listed_with_its_blocker() {
     benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -4149,6 +4216,7 @@ fn every_cvar_the_reference_table_names_is_registered_or_listed_with_its_blocker
 /// Every registered CVar the reference's tables name has a row on our window, or a reason on
 /// `UNREACHABLE_REFERENCE_CVARS`: the stock windows load hidden, so ours is the only way in.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_registered_reference_cvar_has_a_row_on_our_own_window() {
     benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -4239,6 +4307,7 @@ fn every_registered_reference_cvar_has_a_row_on_our_own_window() {
 const UNREACHABLE_REFERENCE_CVARS: &[(&str, &str)] = &[];
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_four_camera_toggles_read_their_shipped_defaults_and_write_on_the_click() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -4284,6 +4353,7 @@ fn the_four_camera_toggles_read_their_shipped_defaults_and_write_on_the_click() 
 /// Two rows also write a CVar neither table names, as `UIOptionsFrame_Save`'s special arms do:
 /// `PetSpellDamage` (`UIOptionsFrame.lua:334-336`) and `cameraPitchMoveSpeed` (`:355-356`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_pet_damage_box_and_the_look_slider_each_write_their_unnamed_twin() {
     benilla_formats::wow_data_or_skip!();
     let mut s = combat_harness();
@@ -4330,6 +4400,7 @@ fn the_pet_damage_box_and_the_look_slider_each_write_their_unnamed_twin() {
 /// Two separate masters, as the reference keeps them: CheckButton19 greys 9 and 11, and 52 greys
 /// twelve boxes from 53 to 69 and the dropdown (`UIOptionsFrame.lua:710-716`, `:728-756`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn show_target_damage_greys_its_own_pair_and_the_floating_text_master_leaves_it_alone() {
     benilla_formats::wow_data_or_skip!();
     let mut s = combat_harness();
@@ -4378,6 +4449,7 @@ fn show_target_damage_greys_its_own_pair_and_the_floating_text_master_leaves_it_
 /// The titles box is the guild row's twin: checked and live at the registered defaults (`"1"`),
 /// and a click survives closing and reopening the panel because the CVar is its store.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_titles_box_sticks_across_a_panel_reopen() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());
@@ -4419,6 +4491,7 @@ fn the_titles_box_sticks_across_a_panel_reopen() {
 /// The reference's rules: Player Guild Names and Player Titles are dead while player names are off
 /// (`UIOptionsFrame.lua:703-709`), Auto-Follow Speed while the style is Never (`:717-721`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_guild_line_greys_with_player_names_and_the_follow_speed_with_the_style() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness_on(audio_harness());

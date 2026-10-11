@@ -57,6 +57,7 @@ fn harness() -> UiScript {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn new_area_splashes_zone_pvp_and_subzone_then_fades_out() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -84,6 +85,7 @@ fn new_area_splashes_zone_pvp_and_subzone_then_fades_out() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn subzone_hop_shows_only_the_small_line() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -103,6 +105,7 @@ fn subzone_hop_shows_only_the_small_line() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn plain_zone_changed_recaches_silently_so_new_area_wont_resplash() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -138,6 +141,7 @@ fn plain_zone_changed_recaches_silently_so_new_area_wont_resplash() {
 /// Northshire Abbey is an outdoor subzone of Elwynn (`AreaTable` row 24, parent 12), so entering
 /// it is a plain `ZONE_CHANGED`; the territory line is `ZoneTextFrame`'s child, which stays hidden.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn abbey_grounds_subzone_hop_shows_no_territory_line() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -170,6 +174,7 @@ fn abbey_grounds_subzone_hop_shows_no_territory_line() {
 /// Indoors, the zone-name override skips when the whole-WMO name equals the subzone (`0x67e670`),
 /// so the zone stays and the group's name becomes the subzone: no big splash, no territory line.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn abbey_interior_shows_the_room_in_the_small_line_alone() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -199,6 +204,7 @@ fn abbey_interior_shows_the_room_in_the_small_line_alone() {
 /// An inn's WMO name differs from the street's, so the override makes it the zone. Handlers run in
 /// registration order (`0x702140` appends), so `SubZoneTextFrame`'s `SetZoneText(1)` writes last.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn inn_entry_splashes_the_inn_name_with_territory_line() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -218,6 +224,7 @@ fn inn_entry_splashes_the_inn_name_with_territory_line() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn indoor_exit_returns_the_subzone_line_alone() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -250,6 +257,7 @@ fn indoor_exit_returns_the_subzone_line_alone() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn room_to_room_hop_splashes_the_room_name_alone() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -275,6 +283,7 @@ fn room_to_room_hop_splashes_the_room_name_alone() {
 
 /// An FFA pit: `GetZonePVPInfo`'s isArena, the leaf area's flag `0x80`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn arena_pit_shows_the_ffa_line() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -294,6 +303,7 @@ fn arena_pit_shows_the_ffa_line() {
 
 /// With PvP info showing, `SubZoneTextString`'s `TOP` anchors to `PVPInfoTextString`'s `BOTTOM`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn subzone_seat_hangs_under_the_territory_line_on_new_area() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -322,6 +332,7 @@ fn subzone_seat_hangs_under_the_territory_line_on_new_area() {
 /// `AutoFollowStatus`, all of `ZoneText.lua`: END reuses the name BEGIN latched, so the app fires
 /// END with no argument.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_autofollow_status_line_names_the_followee_and_fades_on_end() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -365,6 +376,7 @@ fn the_autofollow_status_line_names_the_followee_and_fades_on_end() {
 /// A switch of subject fires BEGIN alone, and the stock BEGIN arm clears `fadeTime` and restores
 /// alpha (`ZoneText.lua:11`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_begin_during_the_end_fade_resets_the_line() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();

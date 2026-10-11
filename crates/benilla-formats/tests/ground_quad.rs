@@ -4,6 +4,7 @@
 use benilla_formats::{open_chain, parse_m2_render_submeshes};
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn battle_shout_crescents_detect_as_ground_quads() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open chain");
@@ -34,6 +35,7 @@ fn battle_shout_crescents_detect_as_ground_quads() {
 /// Consecration's burn disc at z = 0.097, its glow at 0.207. Of Flamestrike's batches only the two
 /// flat discs detect.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hovering_discs_detect_as_ground_quads() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open chain");
@@ -71,6 +73,7 @@ fn hovering_discs_detect_as_ground_quads() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn character_model_detects_no_ground_quads() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open chain");
@@ -88,6 +91,7 @@ fn character_model_detects_no_ground_quads() {
 /// two 13.89-yd washes on neutral `GENERICGLOW*` radials are all `(0.992, 0.467, 0.0)`. An animated
 /// colour rides `rgb_anim` and the tint stays white, so the two never double-apply.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ground_quads_carry_their_static_m2color_tint() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open chain");

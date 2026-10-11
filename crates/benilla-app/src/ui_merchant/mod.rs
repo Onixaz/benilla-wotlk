@@ -949,7 +949,7 @@ pub(crate) mod purse_fixture {
                 BENILLA_TEST_LINES = {{}}
                 local f = CreateFrame("Frame")
                 f:RegisterEvent("UI_ERROR_MESSAGE")
-                f:SetScript("OnEvent", function() table.insert(BENILLA_TEST_LINES, arg1) end)
+                f:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) table.insert(BENILLA_TEST_LINES, arg1) end)
                 "#
             ))
             .unwrap();
@@ -993,6 +993,7 @@ mod tests {
     /// at Honored with a PvP-flagged vendor and honor rank byte 8, 0.2 comes off each item before
     /// its rounding, and the undiscounted total is not what the VM reads.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_repair_all_total_takes_the_merchants_discount() {
         use benilla_protocol::field::{
             FIELD_PLAYER_INV_SLOT_HEAD, FIELD_UNIT_FACTIONTEMPLATE, FIELD_UNIT_FLAGS,
@@ -1351,38 +1352,38 @@ mod tests {
         let id = |key: &str| {
             benilla_ui::messages::by_key(key)
                 .unwrap_or_else(|| panic!("{key} is not a catalog row"))
-                .id
+                .key
         };
         // `SMSG_BUY_FAILED`, the switch at `0x5dcdd8`: 1 and 7 share `0x23`, 6 is silent, and
         // codes outside the table fall to `0x17`.
         for (code, want) in [
-            (0u8, Some(0x17u16)),
-            (1, Some(0x23)),
-            (2, Some(0x25)),
-            (3, Some(0x17)),
-            (4, Some(0x22)),
-            (5, Some(0x24)),
+            (0u8, Some("ERR_ITEM_NOT_FOUND")),
+            (1, Some("ERR_VENDOR_SOLD_OUT")),
+            (2, Some("ERR_NOT_ENOUGH_MONEY")),
+            (3, Some("ERR_ITEM_NOT_FOUND")),
+            (4, Some("ERR_VENDOR_HATES_YOU")),
+            (5, Some("ERR_VENDOR_TOO_FAR")),
             (6, None),
-            (7, Some(0x23)),
-            (8, Some(0x12)),
-            (9, Some(0x17)),
-            (10, Some(0x17)),
-            (11, Some(0x05)),
-            (12, Some(0x06)),
-            (13, Some(0x17)),
-            (255, Some(0x17)),
+            (7, Some("ERR_VENDOR_SOLD_OUT")),
+            (8, Some("ERR_ITEM_MAX_COUNT")),
+            (9, Some("ERR_ITEM_NOT_FOUND")),
+            (10, Some("ERR_ITEM_NOT_FOUND")),
+            (11, Some("ERR_CANT_EQUIP_RANK")),
+            (12, Some("ERR_CANT_EQUIP_REPUTATION")),
+            (13, Some("ERR_ITEM_NOT_FOUND")),
+            (255, Some("ERR_ITEM_NOT_FOUND")),
         ] {
             assert_eq!(buy_error_key(code).map(id), want, "buy code {code}");
         }
         // `SMSG_SELL_ITEM`, the switch at `0x5dd22c`, where the default is silence.
         for (code, want) in [
             (0u8, None),
-            (1, Some(0x17u16)),
-            (2, Some(0x21)),
-            (3, Some(0x22)),
-            (4, Some(0x1b)),
+            (1, Some("ERR_ITEM_NOT_FOUND")),
+            (2, Some("ERR_VENDOR_NOT_INTERESTED")),
+            (3, Some("ERR_VENDOR_HATES_YOU")),
+            (4, Some("ERR_NOT_OWNER")),
             (5, None),
-            (6, Some(0x0b)),
+            (6, Some("ERR_DESTROY_NONEMPTY_BAG")),
             (7, None),
             (255, None),
         ] {

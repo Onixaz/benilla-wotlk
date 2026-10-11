@@ -656,6 +656,7 @@ fn own(layout: &Layout, d: &benilla_formats::SpellDisplay) -> Params {
 /// Every view that moves with an input is one the feed re-queues for that input: each cause alone
 /// against the real spell set, and, per view, everything its reads leave out.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_view_that_moves_with_an_input_is_requeued_by_that_input() {
     let Some(mut rig) = Rig::new() else { return };
     let total = rig.ids.len();
@@ -857,6 +858,7 @@ fn every_view_that_moves_with_an_input_is_requeued_by_that_input() {
 /// The reagents line: a name streaming in re-queues every view that lists a reagent, and a count
 /// moving re-queues only the spells that list the entry.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_reagent_moving_requeues_the_views_that_list_it() {
     let Some(mut rig) = Rig::new() else { return };
     let Rig {
@@ -971,6 +973,7 @@ fn a_reagent_moving_requeues_the_views_that_list_it() {
 /// ranged attack time. Its form, level, cost bases and reaches are the pet's own, and it never
 /// searches the player's equipment.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_pet_view_reads_no_player_form_equipment_reach_or_unit_field_but_the_ranged_time() {
     let Some(mut rig) = Rig::new() else { return };
     let Rig {
@@ -1051,6 +1054,7 @@ fn the_pets_cost_bases_are_its_inputs_and_its_max_pools_are_not() {
 /// the pet views on. The fields go 48 at a time; a view that moves without a pet input moving is
 /// then narrowed to the fields that move it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn no_pet_field_moves_a_pet_view_unwatched() {
     let Some(mut rig) = Rig::new() else { return };
     let Rig {
@@ -1131,6 +1135,7 @@ fn no_pet_field_moves_a_pet_view_unwatched() {
 /// the fields go 64 at a time, from a populated player with and without the disarm flag up, and a
 /// view that moves without a change hitting it is narrowed to the fields that move it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn no_player_field_moves_a_view_unwatched() {
     let Some(mut rig) = Rig::new() else { return };
     let mut moved = 0;

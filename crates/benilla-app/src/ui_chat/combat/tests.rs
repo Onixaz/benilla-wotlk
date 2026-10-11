@@ -56,6 +56,7 @@ fn variants_of(family: Family) -> &'static [Variant] {
 /// [`the_reported_sentences_read_correctly`]. An undefined key is skipped: several families have
 /// no `…SELFSELF`, for which the reference's selector returns NULL.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_family_matches_the_shipped_template() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -93,6 +94,7 @@ fn every_family_matches_the_shipped_template() {
 /// Every key but `…SELFSELF` exists, as the reference's selectors always return one: an absent key
 /// is a wrong stem.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_family_has_the_three_core_keys() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -120,6 +122,7 @@ fn every_family_has_the_three_core_keys() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_school_and_power_words_resolve() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -153,6 +156,7 @@ fn the_school_and_power_words_resolve() {
 /// Whole sentences on the real strings, which catch the same-type slot swaps the signature check
 /// cannot.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_reported_sentences_read_correctly() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");

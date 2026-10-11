@@ -564,6 +564,7 @@ mod tests {
     /// The sweep tears down on hostility (`0x5eb143`), the flag deciding only the send; on the real
     /// `FactionTemplate.dbc`.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_hostile_questgiver_is_torn_down_and_never_asked_about() {
         use crate::net::{Guid, NetEntity};
         use benilla_protocol::{EntityKind, ObjectFields};

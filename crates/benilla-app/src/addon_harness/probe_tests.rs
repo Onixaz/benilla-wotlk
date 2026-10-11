@@ -45,6 +45,7 @@ impl Drop for Fixtures {
 /// A file-scope global and a `PLAYER_LOGIN` global are both readable, and a raise comes back as
 /// `ERROR:` without stopping the next eval.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_probe_reads_the_vm_after_the_session_start() {
     let fx = Fixtures::new("after");
     fx.addon(

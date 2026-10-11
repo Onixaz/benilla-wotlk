@@ -184,6 +184,7 @@ mod tests {
     /// (8999) earns nothing, Honored (9000) the 0.1. The player's reaction to the vendor would be
     /// 4 at both (not at war), so the other direction never discounts.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_reputation_term_is_the_vendors_reaction_to_the_player() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

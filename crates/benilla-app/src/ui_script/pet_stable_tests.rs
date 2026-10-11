@@ -81,6 +81,7 @@ fn level_text(s: &UiScript) -> Option<String> {
 /// Call Pet with the stable closed: the paint runs before the name arrives, and a nil name would
 /// raise "attempt to concatenate a nil value" at `PetStable.lua:129`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn call_pet_repaints_the_closed_stable_with_unknownobject_while_the_name_is_in_flight() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_stable();
@@ -126,6 +127,7 @@ fn call_pet_repaints_the_closed_stable_with_unknownobject_while_the_name_is_in_f
 
 /// With no pet and no stable row 0, the paint takes its empty arm (`PetStable.lua:151`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn dismissing_the_pet_empties_the_closed_stable_without_raising() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_stable();

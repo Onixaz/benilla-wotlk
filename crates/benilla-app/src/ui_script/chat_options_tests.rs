@@ -97,6 +97,7 @@ fn left_click(s: &mut UiScript, frame: &str) {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn right_clicking_a_chat_tab_opens_its_options_menu() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_with_menu();
@@ -131,6 +132,7 @@ fn right_clicking_a_chat_tab_opens_its_options_menu() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_left_click_still_selects_the_tab_and_opens_no_menu() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_with_menu();
@@ -160,6 +162,7 @@ fn a_left_click_still_selects_the_tab_and_opens_no_menu() {
 /// The opacity slider is reversed (0 is fully opaque), so it opens at `1 - a` and writes
 /// `1 - value`; the store is a byte, so 0.8 reads back as 204/255.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_background_row_opens_the_picker_and_its_opacity_slider_drives_the_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_with_menu();
@@ -223,6 +226,7 @@ fn the_background_row_opens_the_picker_and_its_opacity_slider_drives_the_window(
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_shipped_window_still_fades_zero_to_a_quarter() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_with_menu();
@@ -247,6 +251,7 @@ fn the_shipped_window_still_fades_zero_to_a_quarter() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_font_size_submenu_resizes_the_window_and_stores_the_pick() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_with_menu();
@@ -298,6 +303,7 @@ fn the_font_size_submenu_resizes_the_window_and_stores_the_pick() {
 
 /// `FCF_GetCurrentChatFrameID` reads the id of the open dropdown's parent, the clicked tab.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn each_tabs_menu_writes_its_own_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_with_menu();
@@ -329,6 +335,7 @@ fn each_tabs_menu_writes_its_own_window() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn cancelling_the_picker_puts_the_window_back() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_with_menu();
@@ -360,6 +367,7 @@ fn cancelling_the_picker_puts_the_window_back() {
 
 /// The host restores saved windows into the engine table, then fires `UPDATE_CHAT_WINDOWS`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_restore_event_repaints_the_window_from_the_store() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_with_menu();

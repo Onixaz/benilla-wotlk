@@ -106,6 +106,7 @@ fn grab_grip(s: &mut UiScript, grip: &str) -> (f32, f32) {
 
 /// The stock chat cache carries `LOCKED 1` for both dock windows.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn both_dock_windows_ship_locked() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = chat_ui();
@@ -132,6 +133,7 @@ fn both_dock_windows_ship_locked() {
 
 /// The lock verb is the menu's first row (`FloatingChatFrame.lua:239`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_tab_menus_lock_row_toggles_the_window_and_flips_its_label() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_ui();
@@ -173,6 +175,7 @@ fn the_tab_menus_lock_row_toggles_the_window_and_flips_its_label() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_locked_window_refuses_a_grip_drag() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_ui();
@@ -197,6 +200,7 @@ fn a_locked_window_refuses_a_grip_drag() {
 
 /// Authored 430x120; `<ResizeBounds>` 296x75 to 608x400 (`FloatingChatFrame.xml`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_unlocked_bottom_right_grip_resizes_and_clamps_at_the_bounds() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_ui();
@@ -238,6 +242,7 @@ fn an_unlocked_bottom_right_grip_resizes_and_clamps_at_the_bounds() {
 
 /// `OnMouseUp` goes to the button that took the press, not to the frame under the cursor.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_release_ends_the_resize_from_anywhere_on_screen() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_ui();
@@ -266,6 +271,7 @@ fn the_release_ends_the_resize_from_anywhere_on_screen() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_tab_drag_moves_an_unlocked_window_and_a_locked_one_stays_put() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_ui();
@@ -300,6 +306,7 @@ fn the_tab_drag_moves_an_unlocked_window_and_a_locked_one_stays_put() {
 /// `UIParent_ManageFramePositions` skips a user-placed frame, the chat frames only outside simple
 /// chat (`UIParent.lua:1690-1692`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_moved_window_is_user_placed_and_the_managed_pass_skips_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_ui();
@@ -331,6 +338,7 @@ fn a_moved_window_is_user_placed_and_the_managed_pass_skips_it() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_geometry_round_trips_through_the_save_file() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_ui();
@@ -390,6 +398,7 @@ fn the_geometry_round_trips_through_the_save_file() {
 
 /// `CHAT_FRAME_TEXTURES` fades and tints the background and the eight grip pieces as one.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_grip_art_follows_the_windows_reveal_and_tint() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_ui();
@@ -426,6 +435,7 @@ fn the_grip_art_follows_the_windows_reveal_and_tint() {
 
 /// `FCF_OnUpdate`'s `or chatFrame.resizing` clause keeps the box open with the cursor off it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_drag_in_flight_holds_the_chrome_visible() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_ui();
@@ -467,6 +477,7 @@ fn a_drag_in_flight_holds_the_chrome_visible() {
 
 /// `FCF_Get_ChatLocked()` is `FCF_Resize`'s first gate, ahead of the window's own lock.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_chat_locked_global_overrides_the_per_window_lock() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_ui();
@@ -493,6 +504,7 @@ fn the_chat_locked_global_overrides_the_per_window_lock() {
 /// A docked non-default window takes its rect from `ChatFrame1`, so `FCF_Resize`'s third gate
 /// (`isDocked and chatFrame ~= DEFAULT_CHAT_FRAME`) refuses it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_docked_combat_log_cannot_be_moved_or_resized_on_its_own() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_ui();

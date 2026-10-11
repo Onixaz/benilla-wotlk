@@ -153,12 +153,11 @@ fn concat_piece(lua: &Lua, v: &Value) -> mlua::Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use benilla_expansions::Expansion;
 
     use crate::script::UiScript;
 
     fn wotlk() -> UiScript {
-        UiScript::new_for(Expansion::Wotlk).unwrap()
+        UiScript::new().unwrap()
     }
 
     #[test]
@@ -231,14 +230,6 @@ mod tests {
             .unwrap());
         assert!(ui
             .eval::<bool>("local t = wipe({1, 2, x = 3}) return next(t) == nil")
-            .unwrap());
-    }
-
-    #[test]
-    fn classic_keeps_its_own_surface() {
-        let ui = UiScript::new_for(Expansion::Classic).unwrap();
-        assert!(ui
-            .eval::<bool>("return strmatch == nil and strsplit == nil and wipe == nil")
             .unwrap());
     }
 }

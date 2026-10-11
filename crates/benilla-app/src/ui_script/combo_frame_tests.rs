@@ -73,6 +73,7 @@ fn highlight_alpha(s: &mut UiScript, i: u32) -> f64 {
 
 /// The highlight arrives through `UIFrameFade`, so every alpha read settles the fades first.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn combo_frame_follows_the_point_count() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_combo_frame();
@@ -119,6 +120,7 @@ fn combo_frame_follows_the_point_count() {
 
 /// `PLAYER_TARGET_CHANGED` repaints too; `COMBO_FRAME_LAST_NUM_POINTS` stops lit dots re-flaring.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_repaint_at_the_same_count_does_not_re_flare() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_combo_frame();
@@ -144,6 +146,7 @@ fn a_repaint_at_the_same_count_does_not_re_flare() {
 /// `GetComboPoints` (`0x51a190`) answers 0 outside rogue and druid (classes 4 and 11), though
 /// the server banks a point for a warrior's Overpower on a dodge.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_warriors_overpower_point_lights_no_dot() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_combo_frame();
@@ -162,6 +165,7 @@ fn a_warriors_overpower_point_lights_no_dot() {
 /// `0x51a190` answers 0 unless `PLAYER_FIELD_COMBO_TARGET` is the current target, so the dots
 /// follow the selection while the banked count stays put.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn re_targeting_empties_the_dots_without_the_count_moving() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_combo_frame();

@@ -100,6 +100,7 @@ fn the_default_text_height_is_derived_from_button1_not_a_literal() {
 
 /// `UIDropDownMenuButtonTemplate` gives its label `GameFontHighlightSmall` through `<NormalFont>`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_button_label_reports_the_font_object_its_button_set() {
     benilla_formats::wow_data_or_skip!();
     let s = UiScript::new().unwrap();

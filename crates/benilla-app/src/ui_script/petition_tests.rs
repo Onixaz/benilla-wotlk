@@ -118,6 +118,7 @@ fn show_registrar(s: &mut UiScript) {
 
 /// Rows 1-2 carry the signers and 3-9 read `<not yet signed>`: `GetPetitionNameInfo` is 1-based.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_signers_charter_shows_the_sign_face_and_nine_rows() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -175,6 +176,7 @@ fn a_signers_charter_shows_the_sign_face_and_nine_rows() {
 
 /// Request and Rename replace Sign; the buttons share one anchor, so both halves are asserted.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_owners_charter_swaps_sign_for_request_and_rename() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -194,6 +196,7 @@ fn the_owners_charter_swaps_sign_for_request_and_rename() {
 /// Request disables at the wire's requirement, 4 here, not at the nine rows
 /// (`PetitionFrame.lua:38`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn request_signature_disables_at_the_wires_requirement_not_at_nine() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -228,6 +231,7 @@ fn request_signature_disables_at_the_wires_requirement_not_at_nine() {
 
 /// A signer's view can still be unsignable: already signed, already guilded, or full.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_sign_button_follows_can_sign_petition() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -252,6 +256,7 @@ fn the_sign_button_follows_can_sign_petition() {
 /// `ClosePetition` rides `OnHide`, so it fires however the window closes
 /// (`PetitionFrame.xml:391-394`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_charter_buttons_reach_their_verbs_and_the_close_clears_the_session() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -274,6 +279,7 @@ fn the_charter_buttons_reach_their_verbs_and_the_close_clears_the_session() {
 
 /// Stock `RENAME_GUILD` caps the name at 24 (`StaticPopup.lua:138`), the server's limit too.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn rename_guild_sends_the_box_text_and_caps_at_twenty_four() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -305,6 +311,7 @@ fn rename_guild_sends_the_box_text_and_caps_at_twenty_four() {
 
 /// Purchase only swaps panels; the buy waits for a typed name.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_registrar_opens_on_services_and_purchase_is_a_local_panel_swap() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -345,6 +352,7 @@ fn the_registrar_opens_on_services_and_purchase_is_a_local_panel_swap() {
 
 /// The stock purchase button closes the window after the buy (`GuildRegistrarFrame.xml:269-270`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn purchase_sends_the_typed_name_and_register_turns_the_charter_in() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -379,6 +387,7 @@ fn purchase_sends_the_typed_name_and_register_turns_the_charter_in() {
 /// Stock `GuildRegistrar_ShowPurchaseFrame` reads `GetGuildCharterCost()`, in copper, at the swap
 /// (`GuildRegistrarFrame.lua:8-11`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_charter_price_is_read_when_the_purchase_panel_opens() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -392,6 +401,7 @@ fn the_charter_price_is_read_when_the_purchase_panel_opens() {
 /// Stock `GuildRegistrar_OnShow` shows the greeting and hides the purchase panel
 /// (`GuildRegistrarFrame.lua:1-3`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn reopening_the_registrar_returns_to_the_services_list() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -409,6 +419,7 @@ fn reopening_the_registrar_returns_to_the_services_list() {
 /// Without a `UIPanelWindows` row, `ShowUIPanel` is a bare `Show()` and the windows overlap
 /// (`UIParent.lua:33-34`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn both_charter_windows_are_registered_left_slot_panels() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();

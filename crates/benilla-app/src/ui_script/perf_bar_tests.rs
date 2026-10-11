@@ -55,6 +55,7 @@ fn bar_quad(s: &mut UiScript) -> (usize, [f32; 4], Option<[f32; 4]>) {
 /// `MainMenuBar.xml:344`: a 16x64 frame at the bar's BOTTOMRIGHT (-227, -10) with a 20x66 texture
 /// off its TOPRIGHT, in the recess between the last micro button and the bags.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_meter_sits_in_the_bar_recess_the_reference_leaves_for_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness(&[]);
@@ -82,6 +83,7 @@ fn the_meter_sits_in_the_bar_recess_the_reference_leaves_for_it() {
 
 /// The meter is LOW strata (`MainMenuBar.xml:344`): it paints under the bar art, through its slot.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_meter_paints_under_the_bar_art_it_shows_through() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness(&[]);
@@ -119,6 +121,7 @@ fn the_meter_paints_under_the_bar_art_it_shows_through() {
 /// `MainMenuBar.xml:375`: every 10 s the poll tints the bar green to 300 ms, yellow to 600, red
 /// beyond; the tint is the whole readout, the bar never changes height.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_meter_tints_by_latency_on_the_reference_thresholds() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness(&[]);
@@ -182,6 +185,7 @@ fn poll_beat(s: &mut UiScript) {
 
 /// The app pushes the averaged RTT; both bandwidth returns stay 0, as benilla counts no throughput.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn get_net_stats_reports_the_pushed_latency() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness(&[]);
@@ -207,6 +211,7 @@ fn get_net_stats_reports_the_pushed_latency() {
 
 /// The hover tooltip is `GameTooltip_AddNewbieTip` (`MainMenuBar.xml:400`); each poll rewrites it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hovering_the_meter_shows_the_live_latency() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness(&[r"Interface\FrameXML\UIParent.xml"]);
@@ -281,6 +286,7 @@ fn hovering_the_meter_shows_the_live_latency() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_meter_adds_its_two_frames_to_the_bar() {
     benilla_formats::wow_data_or_skip!();
     let s = harness(&[]);

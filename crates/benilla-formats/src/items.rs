@@ -7,10 +7,10 @@
 
 use std::collections::HashMap;
 
+use crate::dbc_layout;
 use crate::Chain;
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, RecordSet, Schema, SchemaField};
-use benilla_expansions::dbc as dbc_layout;
 
 use crate::dbc::{parse, str_at, u32_at};
 use crate::models::model_path;
@@ -191,7 +191,7 @@ pub fn load_item_display_catalog(chain: &mut Chain) -> Result<ItemDisplayCatalog
     let bytes = chain
         .read_file(ITEM_DISPLAY_INFO)
         .with_context(|| format!("reading {ITEM_DISPLAY_INFO}"))?;
-    let l = &chain.expansion().profile().dbc.item_display_info;
+    let l = &crate::dbc_layout::LAYOUTS.item_display_info;
     let rs = parse(&bytes, item_display_info_schema(l), "ItemDisplayInfo")?;
     Ok(catalog_from_records(rs, l))
 }
@@ -219,19 +219,11 @@ mod tests {
         b
     }
 
-    const FIELD_COUNT: u32 = 23;
+    const FIELD_COUNT: u32 = 25;
     const RECORD_SIZE: u32 = FIELD_COUNT * 4;
-    const OFF_EMPTY: u32 = 0;
 
-    fn classic() -> &'static dbc_layout::ItemDisplayInfo {
-        &benilla_expansions::Expansion::Classic
-            .profile()
-            .dbc
-            .item_display_info
-    }
-
-    fn u32le(v: u32) -> [u8; 4] {
-        v.to_le_bytes()
+    fn layout() -> &'static dbc_layout::ItemDisplayInfo {
+        &crate::dbc_layout::LAYOUTS.item_display_info
     }
 
     /// A string block whose offset 0 is `""`, where an absent column points.
@@ -277,76 +269,10 @@ mod tests {
         );
     }
 
+    /// A row: the second icon at column 6, and `ParticleColorID` closes the 25-column record.
     #[test]
-    fn parses_model_and_texture_independently_and_skips_empty_columns() {
-        let mut strings = StringBlock::new();
-        let off_model = strings.push("Shield_Round_A_01.mdx");
-        let off_texture = strings.push("Buckler_Damaged_A_01Purple");
-
-        let mut rec = Vec::with_capacity(RECORD_SIZE as usize);
-        rec.extend(u32le(18730)); // ID: the Worn Wooden Shield's displayId
-        rec.extend(u32le(off_model)); // ModelNameLeft
-        rec.extend(u32le(OFF_EMPTY)); // ModelNameRight: absent
-        rec.extend(u32le(off_texture)); // ModelTextureLeft
-        rec.extend(u32le(OFF_EMPTY)); // ModelTextureRight: absent
-        rec.extend(u32le(OFF_EMPTY)); // Icon: absent
-        rec.extend(u32le(1)); // GeosetGroup0
-        rec.extend(u32le(0)); // GeosetGroup1
-        rec.extend(u32le(0)); // GeosetGroup2
-        rec.extend(u32le(0)); // Flags
-        rec.extend(u32le(0)); // SpellVisualID
-        rec.extend(u32le(21)); // ItemGroupSoundsID
-        rec.extend(u32le(0)); // HelmVisMale
-        rec.extend(u32le(0)); // HelmVisFemale
-        for _ in 0..8 {
-            rec.extend(u32le(OFF_EMPTY)); // region textures: none
-        }
-        rec.extend(u32le(0)); // ItemVisualID
-        assert_eq!(rec.len(), RECORD_SIZE as usize);
-
-        let bytes = build_wdbc(1, FIELD_COUNT, RECORD_SIZE, &rec, &strings.0);
-        let rs = parse(&bytes, item_display_info_schema(classic()), "test")
-            .expect("synthetic DBC parses");
-        let catalog = catalog_from_records(rs, classic());
-
-        assert_eq!(catalog.len(), 1);
-        let display = catalog.get(18730).expect("displayId 18730 present");
-
-        // The model normalizer applied: lowercased, `.mdx` to `.m2`.
-        assert_eq!(
-            display.model[0].as_deref(),
-            Some("shield_round_a_01.m2"),
-            "model name normalized like any other model path"
-        );
-        assert_eq!(display.model[1], None, "empty ModelNameRight column ⇒ None");
-
-        // The texture is resolved independently, never derived from the model name.
-        assert_eq!(
-            display.model_texture[0].as_deref(),
-            Some("Buckler_Damaged_A_01Purple"),
-            "model texture is unrelated to the model's own basename"
-        );
-        assert_eq!(display.model_texture[1], None);
-
-        assert_eq!(display.geoset_groups, [1, 0, 0]);
-        assert!(
-            display.region_textures.iter().all(Option::is_none),
-            "a held-item row paints no body regions"
-        );
-        assert_eq!(
-            display.group_sounds, 21,
-            "field 11 is the ItemGroupSounds id"
-        );
-    }
-
-    /// A 3.3.5a row: the second icon at column 6 moves every later column by one, and
-    /// `ParticleColorID` closes the 25-column record.
-    #[test]
-    fn a_wotlk_row_reads_through_its_own_layout() {
-        let l = &benilla_expansions::Expansion::Wotlk
-            .profile()
-            .dbc
-            .item_display_info;
+    fn a_row_reads_through_its_layout() {
+        let l = layout();
         let mut strings = StringBlock::new();
         let icon = strings.push("INV_Boots_01");
         let foot = strings.push("Generic_HuMa_01_Boot_FO");
@@ -362,7 +288,7 @@ mod tests {
         cols[23] = 9; // ItemVisualID
         cols[24] = 5; // ParticleColorID, unread
         let rec: Vec<u8> = cols.iter().flat_map(|c| c.to_le_bytes()).collect();
-        let bytes = build_wdbc(1, 25, 100, &rec, &strings.0);
+        let bytes = build_wdbc(1, FIELD_COUNT, RECORD_SIZE, &rec, &strings.0);
         let rs = parse(&bytes, item_display_info_schema(l), "test").expect("synthetic DBC parses");
         let d = catalog_from_records(rs, l).get(222).cloned().expect("row");
         assert_eq!(d.icon.as_deref(), Some("Interface\\Icons\\INV_Boots_01"));
@@ -374,17 +300,15 @@ mod tests {
             Some("Generic_HuMa_01_Boot_FO")
         );
         assert_eq!(d.item_visual, 9);
-        // The 1.12.1 layout refuses the 25-column file rather than misread it.
-        assert!(parse(&bytes, item_display_info_schema(classic()), "test").is_err());
     }
 
     #[test]
     fn unknown_display_id_misses() {
         let rec = vec![0u8; RECORD_SIZE as usize]; // ID 0, everything else empty or zero
         let bytes = build_wdbc(1, FIELD_COUNT, RECORD_SIZE, &rec, &StringBlock::new().0);
-        let rs = parse(&bytes, item_display_info_schema(classic()), "test")
+        let rs = parse(&bytes, item_display_info_schema(layout()), "test")
             .expect("synthetic DBC parses");
-        let catalog = catalog_from_records(rs, classic());
+        let catalog = catalog_from_records(rs, layout());
         assert_eq!(catalog.len(), 1);
         assert!(catalog.get(999).is_none());
     }

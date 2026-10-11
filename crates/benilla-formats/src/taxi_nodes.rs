@@ -104,6 +104,7 @@ mod tests {
 
     /// The 5875 layout on Stormwind's node, which serves the Alliance only.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_taxi_nodes_layout_sanity() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

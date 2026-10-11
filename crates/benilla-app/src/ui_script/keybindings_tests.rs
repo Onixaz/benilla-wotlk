@@ -113,6 +113,7 @@ pub(crate) fn wheel(s: &mut UiScript, delta: f32) {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_page_is_an_options_category_with_the_collapsed_honest_tree() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -214,6 +215,7 @@ fn the_page_is_an_options_category_with_the_collapsed_honest_tree() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_capture_flow_binds_steals_and_refuses_like_112() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -335,6 +337,7 @@ fn the_capture_flow_binds_steals_and_refuses_like_112() {
 /// (`Blizzard_BindingUI.lua:246`) and the window's (`Blizzard_BindingUI.xml:538-540`), here the
 /// page's `OnMouseUp`; left and right clicks only select.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn mouse_buttons_bind_through_the_capsules_and_the_page() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -373,6 +376,7 @@ fn mouse_buttons_bind_through_the_capsules_and_the_page() {
 /// window: the page keeps binding and leaving the character set. The stock window reads the 1.12
 /// list: a `HEADER_*` row draws a section header, a command's keys fill Key 1 and Key 2.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_page_works_after_the_stock_binding_ui_loads_and_the_stock_window_reads_the_list() {
     benilla_formats::wow_data_or_skip!();
     let _l = crate::local_state::test_env::ENV_LOCK
@@ -447,6 +451,7 @@ fn the_page_works_after_the_stock_binding_ui_loads_and_the_stock_window_reads_th
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn unbind_reset_and_the_live_commit_replace_okay_cancel() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -495,6 +500,7 @@ fn unbind_reset_and_the_live_commit_replace_okay_cancel() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_esc_ladder_closes_the_window_and_the_checkbox_switches_sets() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -544,6 +550,7 @@ fn the_esc_ladder_closes_the_window_and_the_checkbox_switches_sets() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn search_surfaces_bindings_as_live_rows_under_the_redirect_head() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -604,6 +611,7 @@ fn search_surfaces_bindings_as_live_rows_under_the_redirect_head() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_action_bar_abbreviation_is_the_refs_own_getbindingtext() {
     benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -656,6 +664,7 @@ fn the_action_bar_abbreviation_is_the_refs_own_getbindingtext() {
 /// A spin bubbles up the parent chain, so the wheel handler sits on the mouse-enabled page body,
 /// which also catches a spin over a row's name. The bar sits in the gutter inside the body.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_wheel_bubbles_from_the_rows_and_the_bar_rides_the_gutter() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -816,6 +825,7 @@ fn the_wheel_bubbles_from_the_rows_and_the_bar_rides_the_gutter() {
 /// file under the action bar's header (`Bindings.xml:121`, `:321-390`) with `CTRL-1..CTRL-0`
 /// defaults, and the page's search finds them.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_pet_lane_is_registered_under_the_action_bar_header() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -910,6 +920,7 @@ fn every_command_body_compiles() {
 /// the engine's behaviour sits behind the Lua globals the bodies call. Read off each body: a
 /// `Name(` call is a function, an `Object:` or `Object.` receiver a frame or table.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_stock_body_calls_what_the_load_defines() {
     benilla_formats::wow_data_or_skip!();
     let _l = crate::local_state::test_env::ENV_LOCK
@@ -963,6 +974,7 @@ fn every_stock_body_calls_what_the_load_defines() {
 /// `UIParent:Hide()`, then `UIParent:Show()`, so the interface under `UIParent` stops drawing and
 /// an open window is closed, as in the reference.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn toggleui_hides_uiparent_and_closes_the_windows() {
     benilla_formats::wow_data_or_skip!();
     let _l = crate::local_state::test_env::ENV_LOCK

@@ -4,10 +4,10 @@
 
 use std::collections::HashMap;
 
+use crate::dbc_layout;
 use crate::Chain;
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
-use benilla_expansions::dbc as dbc_layout;
 
 use crate::dbc::{f32_at, parse, str_at, u32_at};
 
@@ -366,7 +366,7 @@ pub(crate) fn creature_display_info_extra_schema(
 
 /// Load the creature DBCs from the patch chain into a [`CreatureCatalog`].
 pub fn load_creature_catalog(chain: &mut Chain) -> Result<CreatureCatalog> {
-    let layouts = &chain.expansion().profile().dbc;
+    let layouts = &crate::dbc_layout::LAYOUTS;
     let models = {
         let bytes = chain
             .read_file(CREATURE_MODEL_DATA)
@@ -446,7 +446,7 @@ fn load_creature_display_info_extra(chain: &mut Chain) -> Result<HashMap<u32, Np
     let bytes = chain
         .read_file(CREATURE_DISPLAY_INFO_EXTRA)
         .with_context(|| format!("reading {CREATURE_DISPLAY_INFO_EXTRA}"))?;
-    let l = &chain.expansion().profile().dbc.creature_display_info_extra;
+    let l = &crate::dbc_layout::LAYOUTS.creature_display_info_extra;
     let rs = parse(
         &bytes,
         creature_display_info_extra_schema(l),
@@ -482,6 +482,7 @@ mod tests {
 
     /// `BloodID = −1` is a tier-2 miss, so 595 displays reach tier 3 and bleed red.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn blood_row_tiers_over_the_shipped_displays() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -517,6 +518,7 @@ mod tests {
 
     /// Tier 3 is ordinary fauna, so its records base cannot mean no blood.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_tier_three_fallback_bleeds_red_on_ordinary_creatures() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -567,6 +569,7 @@ mod tests {
     /// Nine models have two `CreatureModelData` rows that disagree about blood, eight with one side
     /// `−1`: the value is unfilled, which tier 3 handles.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_minus_one_blood_id_is_unfilled_data() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -701,6 +704,7 @@ mod tests {
 
     /// The three arms of `0x625500`: an override, a `−1` deferral and an agreeing row.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_size_class_column_resolves_its_three_arms() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -741,6 +745,7 @@ mod tests {
 
     /// Fields 11 and 12 are `CameraShakes.dbc` ids; 25 models, all heavy, carry a footstep shake.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_footstep_shake_columns_are_the_thumping_giants() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -803,6 +808,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_breathless_models_are_the_ones_with_no_breath() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -838,6 +844,7 @@ mod tests {
 
     /// Every shipped model has `FoleyMaterialID` 0; a data file that grows one fails here.
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn no_shipped_model_carries_a_foley() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -865,6 +872,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn collision_height_is_the_m2_collision_box() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -951,6 +959,7 @@ mod tests {
     /// depth lines, where the form's row would move the swim line up to 0.72 yd. A form scales
     /// `SCALE_X` by 1.0 or 0.80 (vmangos `GetShapeshiftDisplayInfo`).
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_shapeshift_moves_the_collision_prism_and_the_native_row_is_what_stops_it() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

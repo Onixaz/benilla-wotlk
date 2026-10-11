@@ -407,7 +407,7 @@ fn auction_probe(
                     f:RegisterEvent("NEW_AUCTION_UPDATE")
                     f:RegisterEvent("UI_ERROR_MESSAGE")
                     f:RegisterEvent("CHAT_MSG_SYSTEM")
-                    f:SetScript("OnEvent", function()
+                    f:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
                         ProbeAuctionEvents[event] = (ProbeAuctionEvents[event] or 0) + 1
                         if event == "UI_ERROR_MESSAGE" then
                             table.insert(ProbeAuctionErrors, arg1 or "")

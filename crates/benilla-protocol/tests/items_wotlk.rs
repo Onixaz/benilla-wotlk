@@ -4,7 +4,6 @@
 
 mod common;
 
-use benilla_expansions::Expansion;
 use benilla_protocol::messages::{self, opcode, ItemDamage, ItemInfo, ItemSpellEntry};
 use benilla_protocol::ServerPacket;
 use common::hx;
@@ -77,12 +76,8 @@ const WAND: &str = concat!(
 );
 
 fn parse_wotlk(body: &[u8]) -> (u32, Option<Box<ItemInfo>>) {
-    let (packet, tail) = messages::parse_server_with_tail_as(
-        Expansion::Wotlk,
-        opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE,
-        body,
-    )
-    .unwrap();
+    let (packet, tail) =
+        messages::parse_server_with_tail(opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE, body).unwrap();
     assert_eq!(tail, 0, "bytes left unread");
     match packet {
         ServerPacket::ItemQueryResponse { entry, info } => (entry, info),
@@ -205,21 +200,7 @@ fn stats_count_above_ten_is_refused() {
     let at = 16 + 23 + 3 + 21 * 4;
     assert_eq!(&body[at..at + 4], &[0, 0, 0, 0]);
     body[at] = 11;
-    assert!(messages::parse_server_with_tail_as(
-        Expansion::Wotlk,
-        opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE,
-        &body
-    )
-    .is_err());
-}
-
-#[test]
-fn a_3_3_5a_answer_is_not_a_1_12_1_one() {
-    // Read in 1.12.1's layout the same bytes fail: the selection is by expansion, not by luck.
-    assert!(messages::parse_server_with_tail_as(
-        Expansion::Classic,
-        opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE,
-        &hx(PANTS)
-    )
-    .is_err());
+    assert!(
+        messages::parse_server_with_tail(opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE, &body).is_err()
+    );
 }

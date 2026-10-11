@@ -156,6 +156,7 @@ fn seat_a_hunter(root: &Path) -> UiScript {
 /// After a hunter's session start `Quiver.CastPetAction` is a function. Asserted on the field
 /// itself, since a raise anywhere in `initSlashCommandsAndModules` loses it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn quiver_publishes_its_global_functions_for_a_hunter() {
     benilla_formats::wow_data_or_skip!();
     let root = quiver_or_skip!();
@@ -201,6 +202,7 @@ fn quiver_publishes_its_global_functions_for_a_hunter() {
 /// A hunter's session start and a second of frames after it raise nothing; a failure here names
 /// the raise.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn quiver_survives_a_hunter_session_start_without_raising() {
     benilla_formats::wow_data_or_skip!();
     let root = quiver_or_skip!();
@@ -262,6 +264,7 @@ fn shot_state(s: &mut UiScript) -> (bool, bool, f64, f64) {
 /// Quiver detects a fired auto shot only by `ITEM_LOCK_CHANGED`, which a spent arrow's stack
 /// write fires; with no such event its 0.5 s aim saturates and the bar stays full.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn auto_shot_bar_saturates_when_no_ammo_lock_event_ever_arrives() {
     benilla_formats::wow_data_or_skip!();
     let root = quiver_or_skip!();
@@ -292,6 +295,7 @@ fn auto_shot_bar_saturates_when_no_ammo_lock_event_ever_arrives() {
 
 /// The same session plus one `ITEM_LOCK_CHANGED`: the reload phase starts at once.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn auto_shot_bar_drains_the_moment_an_ammo_lock_event_arrives() {
     benilla_formats::wow_data_or_skip!();
     let root = quiver_or_skip!();
@@ -366,6 +370,7 @@ fn draws(s: &mut UiScript, leaf: &str) -> bool {
 /// With Aspect of the Cheetah up the tracker draws its icon, found through a scanning tooltip:
 /// `SetPlayerBuff`, then the named `TextLeft1` line compared with the spell name.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn aspect_tracker_draws_the_icon_for_an_active_aspect() {
     benilla_formats::wow_data_or_skip!();
     let root = quiver_or_skip!();
@@ -391,6 +396,7 @@ fn aspect_tracker_draws_the_icon_for_an_active_aspect() {
 /// a reminder while Hawk is missing, and forced on while frames are unlocked, the fresh-profile
 /// default, so the frame can be dragged.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_hawk_reminder_is_suppressed_only_once_frames_are_locked() {
     benilla_formats::wow_data_or_skip!();
     let root = quiver_or_skip!();
@@ -426,6 +432,7 @@ fn the_hawk_reminder_is_suppressed_only_once_frames_are_locked() {
 /// An arrow stack one lighter, pushed through [`crate::ui_items::feed::apply_container_source`]
 /// as a server update is, fires `ITEM_LOCK_CHANGED` and starts Quiver's reload.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn spending_an_arrow_starts_quivers_reload_through_the_real_item_feed() {
     benilla_formats::wow_data_or_skip!();
     use crate::ui_items::feed::{apply_container_source, FeedMemory};

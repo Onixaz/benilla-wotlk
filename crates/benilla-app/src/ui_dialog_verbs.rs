@@ -1220,6 +1220,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_ghost_adopts_a_guide_inside_the_acquire_radius_and_asks_for_the_clock() {
         let catalog = catalog_or_skip!();
         let (mut world, rx) = poll_world(true, true, 19.0, Some(catalog));
@@ -1241,6 +1242,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn an_adopted_guide_is_retained_past_the_acquire_radius_and_dropped_past_the_retain_one() {
         let catalog = catalog_or_skip!();
         let (mut world, rx) = poll_world(true, true, 19.0, Some(catalog));
@@ -1281,6 +1283,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn losing_the_ghost_state_drops_the_guide() {
         let catalog = catalog_or_skip!();
         let (mut world, _rx) = poll_world(true, true, 5.0, Some(catalog));
@@ -1618,6 +1621,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn spell_2584_never_trips_the_cancel_gate() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

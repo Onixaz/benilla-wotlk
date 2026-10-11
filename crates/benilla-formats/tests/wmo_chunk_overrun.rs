@@ -7,6 +7,7 @@ use benilla_formats::{parse_wmo_root, wmo_group_header, Chain};
 /// g144 is the corridor joining g95 and g152, and its portal-ref span (MOGP `+0x24`, `+0x26`) is
 /// the portal flood's only way through.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn undercity_144_mogp_survives_its_one_byte_overrun() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");

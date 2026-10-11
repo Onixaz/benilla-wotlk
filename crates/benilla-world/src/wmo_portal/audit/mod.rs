@@ -156,7 +156,7 @@ fn load_subject(internal: &str, site: Option<&Site>) -> Subject {
     let placed = site.map(|s| load_placement(&mut chain, s));
     let root_bytes = chain.read(internal).expect("read root wmo");
     let root = parse_wmo_root(&root_bytes).expect("parse root");
-    let liquid_rule = benilla_formats::WmoLiquidRule::for_root(chain.expansion(), &root);
+    let liquid_rule = benilla_formats::WmoLiquidRule::for_root(&root);
     let stem = internal.strip_suffix(".wmo").unwrap_or(internal);
 
     let n = root.group_count() as usize;

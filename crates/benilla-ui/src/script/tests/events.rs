@@ -4,42 +4,6 @@
 use super::common::script;
 use crate::script::*;
 
-/// A handler gets no arguments (`0x705199` calls `lua_pcall` with zero); its inputs are the
-/// `this`, `event` and `argN` globals.
-#[test]
-fn an_event_handler_gets_no_arguments_and_reads_the_globals() {
-    let mut s = script();
-    s.run(
-        r#"
-        local f = CreateFrame("Frame", "EF")
-        f:RegisterEvent("UNIT_HEALTH")
-        f:SetScript("OnEvent", function(a, b, c)
-            r_args = (a == nil and b == nil and c == nil)
-            r_this = (this == EF)
-            r_event = event
-            r_arg1 = arg1
-            r_arg2 = arg2
-        end)
-    "#,
-    )
-    .unwrap();
-
-    s.fire_event(
-        "UNIT_HEALTH",
-        vec![ScriptValue::Str("player".into()), ScriptValue::Int(42)],
-    );
-    assert!(s.errors().is_empty(), "{:?}", s.errors());
-
-    assert!(
-        s.eval::<bool>("return r_args").unwrap(),
-        "a declared parameter is nil: no positional argument is passed"
-    );
-    assert!(s.eval::<bool>("return r_this").unwrap());
-    assert_eq!(s.eval::<String>("return r_event").unwrap(), "UNIT_HEALTH");
-    assert_eq!(s.eval::<String>("return r_arg1").unwrap(), "player");
-    assert_eq!(s.eval::<i64>("return r_arg2").unwrap(), 42);
-}
-
 #[test]
 fn globals_are_restored_after_firing_nesting_safe() {
     let mut s = script();

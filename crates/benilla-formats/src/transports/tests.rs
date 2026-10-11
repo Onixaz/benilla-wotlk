@@ -97,6 +97,7 @@ const STEPS_VARIANTS: &[u32] = &[3, 10, 20, 100];
 /// A report of every mode and chord count against the goldens; it only asserts that each path's
 /// best variant is within 5%.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn nine_period_calibration_report() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -189,6 +190,7 @@ fn nine_period_calibration_report() {
 
 /// `transport_period` must reproduce every golden exactly, since `build` pins its period to it.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn client_period_bit_exact() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -218,6 +220,7 @@ fn client_period_bit_exact() {
 
 /// Also proves that at least one live transport crosses continents.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn touches_map_matches_the_paths_map_set() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -250,6 +253,7 @@ fn touches_map_matches_the_paths_map_set() {
 /// From any instant, the answer samples on the asked-for map, on every cross-continent path:
 /// path 241 reaches map 1 only across the cycle wrap.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn first_cycle_on_map_lands_on_that_map() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");

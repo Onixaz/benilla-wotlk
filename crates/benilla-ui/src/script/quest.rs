@@ -528,7 +528,7 @@ mod tests {
         s.run(
             "ERR_QUEST_MUST_CHOOSE = 'Pick one.' \
              local f = CreateFrame('Frame') f:RegisterEvent('UI_ERROR_MESSAGE') \
-             f:SetScript('OnEvent', function() SEEN = arg1 end) \
+             f:SetScript('OnEvent', function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) SEEN = arg1 end) \
              N = table.getn({QuestChooseRewardError()})",
         )
         .unwrap();

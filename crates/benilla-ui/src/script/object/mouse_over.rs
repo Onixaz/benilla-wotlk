@@ -12,9 +12,6 @@ use crate::script::Model;
 
 /// Add `IsMouseOver` to the shared frame method table `m`, on a target that has it.
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
-    if !lua.app_data_ref::<Model>().expect("model").is_mouse_over {
-        return Ok(());
-    }
     m.set(
         "IsMouseOver",
         lua.create_function(
@@ -48,13 +45,12 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use benilla_expansions::Expansion;
 
     use crate::script::UiScript;
 
     #[test]
     fn the_offsets_grow_the_rect_the_cursor_is_tested_against() {
-        let mut ui = UiScript::new_for(Expansion::Wotlk).unwrap();
+        let mut ui = UiScript::new().unwrap();
         ui.run(
             "F = CreateFrame('Frame', nil, UIParent)
              F:SetWidth(100) F:SetHeight(50)
@@ -68,14 +64,6 @@ mod tests {
         assert!(!ui.eval::<bool>("return F:IsMouseOver()").unwrap());
         assert!(ui
             .eval::<bool>("return F:IsMouseOver(28, -2, -2, 2)")
-            .unwrap());
-    }
-
-    #[test]
-    fn classic_frames_have_no_is_mouse_over() {
-        let ui = UiScript::new_for(Expansion::Classic).unwrap();
-        assert!(ui
-            .eval::<bool>("return CreateFrame('Frame').IsMouseOver == nil")
             .unwrap());
     }
 }

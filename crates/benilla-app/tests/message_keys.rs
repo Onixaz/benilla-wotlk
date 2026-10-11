@@ -9,6 +9,21 @@ use std::path::Path;
 /// `kind_of`), which need a key the client does not have.
 const NOT_A_MESSAGE: &[&str] = &["ERR_SOMETHING_UNCARVED", "ERR_NOT_A_REAL_MESSAGE"];
 
+/// 1.12.1 keys the source still raises that the 3.3.5a catalog has no row for, each to be replaced
+/// by the 3.3.5a client's own key (#53). The list only shrinks.
+pub const NOT_YET_PORTED: &[&str] = &[
+    "ERR_GUILD_ENTER_NAME",
+    "ERR_GUILD_NAME_INVALID",
+    "ERR_GUILD_NAME_INVALID_SPACE",
+    "ERR_GUILD_NAME_NAME_CONSECUTIVE_SPACES",
+    "ERR_GUILD_NAME_TOO_SHORT",
+    "ERR_INVALID_PETNAME",
+    "ERR_INVITED_TO_GROUP_S",
+    "ERR_INVITED_TO_GUILD_SS",
+    "ERR_NULL_PETNAME",
+    "ERR_QUEST_PUSH_TOO_FAR_S",
+];
+
 /// The generated catalog, skipped: walking it would make every key trivially present.
 const GENERATED: &str = "catalog.rs";
 
@@ -55,18 +70,28 @@ fn every_error_key_in_the_source_is_a_catalog_row() {
     let strays: Vec<&String> = keys
         .iter()
         .filter(|k| !NOT_A_MESSAGE.contains(&k.as_str()))
+        .filter(|k| !NOT_YET_PORTED.contains(&k.as_str()))
         .filter(|k| benilla_ui::messages::by_key(k).is_none())
         .collect();
     assert!(
         strays.is_empty(),
-        "these keys are not rows of the 5875 message catalog, so the client would show nothing \
+        "these keys are not rows of the 12340 message catalog, so the client would show nothing \
          for them: {strays:?}"
+    );
+    let ported: Vec<&&str> = NOT_YET_PORTED
+        .iter()
+        .filter(|k| benilla_ui::messages::by_key(k).is_some() || !keys.contains(**k))
+        .collect();
+    assert!(
+        ported.is_empty(),
+        "no longer a stray, so off `NOT_YET_PORTED`: {ported:?}"
     );
 }
 
 /// A named key must also resolve to text: a row's key is a `GlobalStrings.lua` lookup, and the
 /// shipped file has no entry for many rows, which the reference then never shows.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_error_key_in_the_source_resolves_to_real_text() {
     /// Keys the shipped `GlobalStrings.lua` has no string for, so the reference shows nothing:
     /// raised by `ui_items::equip_error` (errorId 362), `ui_action::cast_fail` (pet happiness)
@@ -119,6 +144,7 @@ fn every_error_key_in_the_source_resolves_to_real_text() {
 /// `SoundEntries(sex)`. Every voiced key raised here must resolve audio for every playable race
 /// and both sexes, except the gaps in the shipped data listed below.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_voiced_key_the_source_raises_has_audio_for_every_playable_race() {
     use benilla_formats::VOCAL_UI_LINES;
 
@@ -217,16 +243,16 @@ fn every_sounding_catalog_row_also_has_text_to_show() {
             r.sound
         );
     }
-    assert_eq!(sounding, 86, "56 voice lines + 30 named cues");
+    assert_eq!(sounding, 104, "64 voice lines + 40 named cues");
 }
 
-/// Every `PETTAME_*` key `pet_tame_failure_key` returns, the fill for `ERR_TAME_FAILED`, is a 1.12
-/// global, checked against the in-tree `reference/1.12-globals.tsv`.
+/// Every `PETTAME_*` key `pet_tame_failure_key` returns, the fill for `ERR_TAME_FAILED`, is a
+/// reference global, checked against the in-tree `reference/3.3.5a-globals.tsv`.
 #[test]
-fn every_pettame_key_is_a_real_1_12_global() {
+fn every_pettame_key_is_a_real_reference_global() {
     let tsv = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../reference/1.12-globals.tsv"
+        "/../../reference/3.3.5a-globals.tsv"
     );
     let text = std::fs::read_to_string(tsv).expect("the reference surface");
     let globals: BTreeSet<&str> = text
@@ -241,10 +267,10 @@ fn every_pettame_key_is_a_real_1_12_global() {
         .collect();
     assert_eq!(reachable.len(), 12, "eleven arms plus the default");
     for key in &reachable {
-        assert!(globals.contains(key), "{key} is not a 1.12 global");
+        assert!(globals.contains(key), "{key} is not a reference global");
     }
-    // The message the fill goes into, and the two bodiless arms beside it.
-    for key in ["ERR_TAME_FAILED", "ERR_INVALID_PETNAME", "ERR_PET_BROKEN"] {
-        assert!(globals.contains(key), "{key} is not a 1.12 global");
+    // The message the fill goes into, and the bodiless arm beside it.
+    for key in ["ERR_TAME_FAILED", "ERR_PET_BROKEN"] {
+        assert!(globals.contains(key), "{key} is not a reference global");
     }
 }

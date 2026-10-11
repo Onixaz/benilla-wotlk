@@ -62,6 +62,7 @@ fn left_of(s: &UiScript, name: &str) -> f64 {
 /// chained at -3 for a 26 px stride; `UpdateTalentButton` re-seats the quest log at -2
 /// (`MainMenuBarMicroButtons.lua:139`), so past its first pass at 10+ the tail sits 1 px right.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_micro_row_sits_where_the_reference_puts_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -96,6 +97,7 @@ fn the_micro_row_sits_where_the_reference_puts_it() {
 
 /// `HitRectInsets top="18"` (`MainMenuBarMicroButtons.xml:8`): the art fills the lower 40 of 58.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_transparent_top_of_a_micro_button_does_not_capture_the_mouse() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -118,6 +120,7 @@ fn the_transparent_top_of_a_micro_button_does_not_capture_the_mouse() {
 /// `MicroButtonPortrait` samples the `"player"` portrait through a crop window, so the 18x25
 /// region shows a face; pushing swaps the window and dims it (`MainMenuBarMicroButtons.lua:109`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_character_button_carries_the_player_portrait_through_the_reference_crop() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -175,6 +178,7 @@ fn the_character_button_carries_the_player_portrait_through_the_reference_crop()
 /// Under level 10 `UpdateTalentButton` hides the talent button and seats the quest log on its
 /// anchor (`MainMenuBarMicroButtons.lua:133`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_talent_button_appears_at_level_ten_and_the_row_closes_up_below_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -212,6 +216,7 @@ fn the_talent_button_appears_at_level_ten_and_the_row_closes_up_below_it() {
 /// The template's `OnEnter` (`MainMenuBarMicroButtons.xml:12`) reads `this`, so the hover goes
 /// through the engine; a bound label gains its key on `UPDATE_BINDINGS`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_micro_button_hovers_with_its_reference_explanation() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -310,6 +315,7 @@ fn every_micro_button_hovers_with_its_reference_explanation() {
 /// The whole manifest, since `UpdateMicroButtons` reads every panel. A ding pulses the talent
 /// button for 60 s unless the character sheet is open (`MainMenuBarMicroButtons.lua:120`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_micro_button_pushes_while_its_panel_is_open_and_the_talent_button_pulses_on_a_ding() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();

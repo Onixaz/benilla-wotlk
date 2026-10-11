@@ -2,8 +2,6 @@
 
 use std::io::{self, Read};
 
-use benilla_expansions::Expansion;
-
 use crate::wire::{
     capacity_hint, read_cstring, read_f32_le, read_packed_guid, read_u16_le, read_u32_le,
     read_u64_le, read_u8, Vector3d,
@@ -93,13 +91,9 @@ fn read_spline_speed(kind: SpeedKind, r: &mut impl Read) -> io::Result<ServerPac
 
 /// Read a `MSG_MOVE_SET_*_SPEED` body: `[packed guid][MovementInfo][f32 speed]`, no ack
 /// (vmangos `SendSpeedChangeToObservers`).
-fn read_move_set_speed(
-    kind: SpeedKind,
-    r: &mut impl Read,
-    expansion: Expansion,
-) -> io::Result<ServerPacket> {
+fn read_move_set_speed(kind: SpeedKind, r: &mut impl Read) -> io::Result<ServerPacket> {
     let guid = read_packed_guid(r)?;
-    let info = movement::read_movement_info_as(expansion, r)?;
+    let info = movement::read_movement_info_wotlk(r)?;
     Ok(ServerPacket::MoveSetSpeed {
         guid,
         kind,
@@ -264,27 +258,31 @@ fn read_name_query_response_wotlk(r: &mut &[u8]) -> io::Result<ServerPacket> {
     })
 }
 
-/// 3.3.5a's `SMSG_CHAR_ENUM`: `u8 count`, then each entry in 3.3.5a's layout ([`Character`]).
-pub fn parse_char_enum_wotlk(body: &[u8]) -> io::Result<ServerPacket> {
-    let mut r = body;
-    let count = read_u8(&mut r)?;
-    let mut characters = Vec::with_capacity(capacity_hint(count, 10));
-    for _ in 0..count {
-        characters.push(Character::read(&mut r, Expansion::Wotlk)?);
-    }
-    Ok(ServerPacket::CharEnum { characters })
-}
-
 /// [`parse_server`], plus how many body bytes the decoder left unread: a count, never a failure,
 /// that exposes a decoder shorter than the server's layout. [`ServerPacket::Other`] reports `0`.
+/// A body with no 3.3.5a decoder yet ([`UNDECODED`]) is an error.
 pub fn parse_server_with_tail(opcode: u16, body: &[u8]) -> io::Result<(ServerPacket, usize)> {
-    parse_server_with_tail_as(Expansion::Classic, opcode, body)
+    if UNDECODED.contains(&opcode) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "no 3.3.5a decoder for this opcode yet",
+        ));
+    }
+    let mut r = body;
+    // The inflated leftover of the compressed update object, the one arm with a second stream.
+    let mut inner_tail = 0;
+    let packet = parse_server_body(opcode, &mut r, &mut inner_tail)?;
+    let tail = match packet {
+        ServerPacket::Other { .. } => 0,
+        _ => r.len() + inner_tail,
+    };
+    Ok((packet, tail))
 }
 
-/// The opcodes whose 3.3.5a body is known to differ from 1.12.1's and has no 3.3.5a decoder yet:
-/// each failed or left bytes unread when read in 1.12.1's layout against AzerothCore, and
+/// The opcodes whose 3.3.5a body is known to differ from the layout their arm reads and has no
+/// 3.3.5a decoder yet: each failed or left bytes unread against AzerothCore, and
 /// `SMSG_COMPRESSED_MOVES`, which AzerothCore never sends, frames its records unverified.
-const WOTLK_UNDECODED: [u16; 9] = [
+const UNDECODED: [u16; 9] = [
     opcode::SMSG_ACTION_BUTTONS,
     opcode::SMSG_INITIAL_SPELLS,
     opcode::SMSG_SPELL_START,
@@ -296,47 +294,21 @@ const WOTLK_UNDECODED: [u16; 9] = [
     opcode::SMSG_COMPRESSED_MOVES,
 ];
 
-/// [`parse_server`] in `expansion`'s layouts.
-pub fn parse_server_as(expansion: Expansion, opcode: u16, body: &[u8]) -> io::Result<ServerPacket> {
-    parse_server_with_tail_as(expansion, opcode, body).map(|(packet, _)| packet)
-}
-
-/// [`parse_server_with_tail`] in `expansion`'s layouts. A 3.3.5a body whose layout is known to
-/// differ from 1.12.1's and has no 3.3.5a decoder yet is an error, never a 1.12.1 read.
-pub fn parse_server_with_tail_as(
-    expansion: Expansion,
-    opcode: u16,
-    body: &[u8],
-) -> io::Result<(ServerPacket, usize)> {
-    if expansion == Expansion::Wotlk && WOTLK_UNDECODED.contains(&opcode) {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "no 3.3.5a decoder for this opcode yet",
-        ));
-    }
-    let mut r = body;
-    // The inflated leftover of the compressed update object, the one arm with a second stream.
-    let mut inner_tail = 0;
-    let packet = parse_server_body(expansion, opcode, &mut r, &mut inner_tail)?;
-    let tail = match packet {
-        ServerPacket::Other { .. } => 0,
-        _ => r.len() + inner_tail,
-    };
-    Ok((packet, tail))
-}
-
 /// The opcode dispatch; `cursor` advances past what the arm read only on success.
 fn parse_server_body(
-    expansion: Expansion,
     opcode: u16,
     cursor: &mut &[u8],
     inner_tail: &mut usize,
 ) -> io::Result<ServerPacket> {
     let mut r: &[u8] = cursor;
     let packet = match opcode {
-        opcode::SMSG_AUTH_CHALLENGE => ServerPacket::AuthChallenge {
-            server_seed: read_u32_le(&mut r)?,
-        },
+        // `u32 1`, the seed, then 32 bytes of further seeds.
+        opcode::SMSG_AUTH_CHALLENGE => {
+            let _one = read_u32_le(&mut r)?;
+            let server_seed = read_u32_le(&mut r)?;
+            let _seeds = crate::wire::read_array::<32>(&mut r)?;
+            ServerPacket::AuthChallenge { server_seed }
+        }
         opcode::SMSG_AUTH_RESPONSE => {
             // The client's grammar (`0x5b41b0`): `u8 code`; then, for OK or WAIT_QUEUE with 5+
             // bytes left, `u32 billingTimeRemaining, u8 billingPlanFlags, u32 billingTimeRested`;
@@ -364,7 +336,7 @@ fn parse_server_body(
             // vmangos clamps `CharactersPerRealm` to 10 (`World.cpp:629`).
             let mut characters = Vec::with_capacity(capacity_hint(count, 10));
             for _ in 0..count {
-                characters.push(Character::read(&mut r, Expansion::Classic)?);
+                characters.push(Character::read(&mut r)?);
             }
             ServerPacket::CharEnum { characters }
         }
@@ -378,15 +350,13 @@ fn parse_server_body(
             result: read_u8(&mut r)?,
         },
         opcode::SMSG_UPDATE_OBJECT => ServerPacket::UpdateObject {
-            objects: update_object::read_update_object(&mut r, expansion)?,
+            objects: update_object::read_update_object(&mut r)?,
         },
         opcode::SMSG_DESTROY_OBJECT => {
             let guid = read_u64_le(&mut r)?;
-            // 3.3.5a adds `u8 onDeath`, which plays the death on the way out
-            // (AzerothCore `Object::DestroyForPlayer`); not read yet.
-            if expansion == Expansion::Wotlk {
-                let _on_death = read_u8(&mut r)?;
-            }
+            // `u8 onDeath`, which plays the death on the way out (AzerothCore
+            // `Object::DestroyForPlayer`); not read yet.
+            let _on_death = read_u8(&mut r)?;
             ServerPacket::DestroyObject { guid }
         }
         opcode::SMSG_TRIGGER_CINEMATIC => ServerPacket::TriggerCinematic {
@@ -401,7 +371,7 @@ fn parse_server_body(
             decoder.read_to_end(&mut decompressed)?;
             drop(decoder);
             let mut dr = decompressed.as_slice();
-            let objects = update_object::read_update_object(&mut dr, expansion)?;
+            let objects = update_object::read_update_object(&mut dr)?;
             *inner_tail = dr.len();
             ServerPacket::UpdateObject { objects }
         }
@@ -414,15 +384,12 @@ fn parse_server_body(
         }
         opcode::SMSG_MONSTER_MOVE | opcode::SMSG_MONSTER_MOVE_TRANSPORT => {
             let on_transport = opcode == opcode::SMSG_MONSTER_MOVE_TRANSPORT;
-            match expansion {
-                Expansion::Classic => monster_move::read_monster_move(&mut r, on_transport)?,
-                Expansion::Wotlk => monster_move::read_monster_move_wotlk(&mut r, on_transport)?,
-            }
+            monster_move::read_monster_move_wotlk(&mut r, on_transport)?
         }
         opcode::MSG_MOVE_TELEPORT_ACK => {
             let guid = read_packed_guid(&mut r)?;
             let counter = read_u32_le(&mut r)?;
-            let info = movement::read_movement_info_as(expansion, &mut r)?;
+            let info = movement::read_movement_info_wotlk(&mut r)?;
             ServerPacket::Teleport {
                 guid,
                 counter,
@@ -471,10 +438,8 @@ fn parse_server_body(
             // day serial assumes 31-day months and 372-day years, monotonic but not calendar-true.
             let datetime = read_u32_le(&mut r)?;
             let timescale = read_f32_le(&mut r)?;
-            // 3.3.5a appends a `u32`, always 0 from AzerothCore (`Player::SendInitialPacketsAfterAddToMap`).
-            if expansion == Expansion::Wotlk {
-                let _ = read_u32_le(&mut r)?;
-            }
+            // A trailing `u32`, always 0 from AzerothCore (`Player::SendInitialPacketsAfterAddToMap`).
+            let _ = read_u32_le(&mut r)?;
             let (day, month, year) = (
                 (datetime >> 14) & 0x3F,
                 (datetime >> 20) & 0x0F,
@@ -671,27 +636,22 @@ fn parse_server_body(
             ServerPacket::Emote { guid, emote_id }
         }
         opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE => {
-            let (entry, info) = match expansion {
-                Expansion::Classic => items::read_item_query_response(&mut r)?,
-                Expansion::Wotlk => items::read_item_query_response_wotlk(&mut r)?,
-            };
+            let (entry, info) = items::read_item_query_response_wotlk(&mut r)?;
             ServerPacket::ItemQueryResponse {
                 entry,
                 info: info.map(Box::new),
             }
         }
-        opcode::SMSG_MESSAGECHAT => ServerPacket::MessageChat(match expansion {
-            Expansion::Classic => chat::read_message_chat(&mut r)?,
-            Expansion::Wotlk => chat::read_message_chat_wotlk(&mut r, false)?,
-        }),
-        // A GM-tagged speaker's line; 1.12.1 has no such opcode.
-        opcode::SMSG_GM_MESSAGECHAT if expansion == Expansion::Wotlk => {
+        opcode::SMSG_MESSAGECHAT => {
+            ServerPacket::MessageChat(chat::read_message_chat_wotlk(&mut r, false)?)
+        }
+        // A GM-tagged speaker's line.
+        opcode::SMSG_GM_MESSAGECHAT => {
             ServerPacket::MessageChat(chat::read_message_chat_wotlk(&mut r, true)?)
         }
-        opcode::SMSG_CHANNEL_NOTIFY => ServerPacket::ChannelNotify(match expansion {
-            Expansion::Classic => channel::read_channel_notify(&mut r)?,
-            Expansion::Wotlk => channel::read_channel_notify_wotlk(&mut r)?,
-        }),
+        opcode::SMSG_CHANNEL_NOTIFY => {
+            ServerPacket::ChannelNotify(channel::read_channel_notify_wotlk(&mut r)?)
+        }
         opcode::SMSG_CHANNEL_LIST => {
             let (name, flags, members) = channel::read_channel_list(&mut r)?;
             ServerPacket::ChannelList {
@@ -1268,21 +1228,7 @@ fn parse_server_body(
         opcode::SMSG_SET_FACTION_VISIBLE => ServerPacket::SetFactionVisible {
             list_id: read_u32_le(&mut r)?,
         },
-        opcode::SMSG_NAME_QUERY_RESPONSE if expansion == Expansion::Wotlk => {
-            read_name_query_response_wotlk(&mut r)?
-        }
-        opcode::SMSG_NAME_QUERY_RESPONSE => {
-            let guid = read_u64_le(&mut r)?;
-            let name = read_cstring(&mut r)?;
-            let _realm = read_cstring(&mut r)?; // cross-realm BG name; empty on a single realm
-            ServerPacket::NameQueryResponse {
-                guid,
-                name,
-                race: read_u32_le(&mut r)?,
-                gender: read_u32_le(&mut r)?,
-                class: read_u32_le(&mut r)?,
-            }
-        }
+        opcode::SMSG_NAME_QUERY_RESPONSE => read_name_query_response_wotlk(&mut r)?,
         opcode::SMSG_CREATURE_QUERY_RESPONSE => {
             let entry = read_u32_le(&mut r)?;
             // A miss is the lone entry echoed with its top bit set; nothing follows.
@@ -1545,18 +1491,12 @@ fn parse_server_body(
         opcode::SMSG_SPLINE_SET_SWIM_SPEED => read_spline_speed(SpeedKind::Swim, &mut r)?,
         opcode::SMSG_SPLINE_SET_SWIM_BACK_SPEED => read_spline_speed(SpeedKind::SwimBack, &mut r)?,
         opcode::SMSG_SPLINE_SET_TURN_RATE => read_spline_speed(SpeedKind::TurnRate, &mut r)?,
-        opcode::MSG_MOVE_SET_WALK_SPEED => read_move_set_speed(SpeedKind::Walk, &mut r, expansion)?,
-        opcode::MSG_MOVE_SET_RUN_SPEED => read_move_set_speed(SpeedKind::Run, &mut r, expansion)?,
-        opcode::MSG_MOVE_SET_RUN_BACK_SPEED => {
-            read_move_set_speed(SpeedKind::RunBack, &mut r, expansion)?
-        }
-        opcode::MSG_MOVE_SET_SWIM_SPEED => read_move_set_speed(SpeedKind::Swim, &mut r, expansion)?,
-        opcode::MSG_MOVE_SET_SWIM_BACK_SPEED => {
-            read_move_set_speed(SpeedKind::SwimBack, &mut r, expansion)?
-        }
-        opcode::MSG_MOVE_SET_TURN_RATE => {
-            read_move_set_speed(SpeedKind::TurnRate, &mut r, expansion)?
-        }
+        opcode::MSG_MOVE_SET_WALK_SPEED => read_move_set_speed(SpeedKind::Walk, &mut r)?,
+        opcode::MSG_MOVE_SET_RUN_SPEED => read_move_set_speed(SpeedKind::Run, &mut r)?,
+        opcode::MSG_MOVE_SET_RUN_BACK_SPEED => read_move_set_speed(SpeedKind::RunBack, &mut r)?,
+        opcode::MSG_MOVE_SET_SWIM_SPEED => read_move_set_speed(SpeedKind::Swim, &mut r)?,
+        opcode::MSG_MOVE_SET_SWIM_BACK_SPEED => read_move_set_speed(SpeedKind::SwimBack, &mut r)?,
+        opcode::MSG_MOVE_SET_TURN_RATE => read_move_set_speed(SpeedKind::TurnRate, &mut r)?,
         opcode::SMSG_MOUNTRESULT => ServerPacket::MountResult {
             mount: true,
             code: read_u32_le(&mut r)?,
@@ -1689,7 +1629,7 @@ fn parse_server_body(
         // Another player's move, relayed under the mover's opcode (creatures use monster moves).
         o if is_movement_relay(o) => {
             let guid = read_packed_guid(&mut r)?;
-            let info = movement::read_movement_info_as(expansion, &mut r)?;
+            let info = movement::read_movement_info_wotlk(&mut r)?;
             ServerPacket::PlayerMove {
                 guid,
                 opcode: o,
@@ -1750,8 +1690,8 @@ mod tests {
             out.extend(z.finish().unwrap());
             out
         }
-        // `u32 count = 0, u8 has_transport = 0`: a well-formed, empty object list.
-        let empty = [0u8, 0, 0, 0, 0];
+        // `u32 count = 0`: a well-formed, empty object list.
+        let empty = [0u8, 0, 0, 0];
         let (packet, tail) =
             parse_server_with_tail(opcode::SMSG_COMPRESSED_UPDATE_OBJECT, &body(&empty))
                 .expect("an empty update object decodes");

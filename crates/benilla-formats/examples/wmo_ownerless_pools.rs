@@ -139,7 +139,7 @@ fn main() -> anyhow::Result<()> {
             continue;
         };
         let portals = parse_wmo_portals(&bytes);
-        let rule = WmoLiquidRule::for_root(chain.expansion(), &root);
+        let rule = WmoLiquidRule::for_root(&root);
         let stem = k.strip_suffix(".wmo").unwrap_or(k).to_string();
         let mut row = Root {
             wmo_id: wmo_root_id(&bytes),

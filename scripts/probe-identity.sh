@@ -55,7 +55,7 @@ probe_server_or_skip() {
     for port in $ports; do
         if ! (exec 3<>"/dev/tcp/$PROBE_HOST/$port") 2>/dev/null; then
             echo "$tag: SKIPPED — nothing listening on $PROBE_HOST:$port (auth $PROBE_AUTH_PORT; a local"
-            echo "       vmangos also serves the world on 8085). Start your 1.12.1 server, or point"
+            echo "       server also serves the world on 8085). Start your 3.3.5a server, or point"
             echo "       WOW_HOST at it."
             return 1
         fi

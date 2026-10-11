@@ -2,9 +2,8 @@
 //! updates it pushes; the `--<probe>` flags live-verify one wire each.
 //!
 //! Example: `cargo run -p benilla-protocol --bin benilla-world -- <account> <password> localhost`
-//! On PowerShell, a remote WotLK server can instead be selected for the session with
-//! `$env:WOW_EXPANSION="wotlk"; $env:WOW_HOST="192.168.1.89"` before running the same command
-//! without its final host argument.
+//! On PowerShell, a remote server can instead be selected for the session with
+//! `$env:WOW_HOST="192.168.1.89"` before running the same command without its final host argument.
 //!
 //! An account with no character gets a Human Warrior (`--create <name>`). The world address
 //! defaults to the realm list's (`--world` overrides).

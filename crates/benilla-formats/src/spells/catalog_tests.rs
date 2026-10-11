@@ -5,6 +5,7 @@ use super::*;
 /// A trainer's learn wrapper is never in `SkillLineAbility`, so the tree groups it by the spell
 /// it teaches: Heroic Strike 78 via 1605, Charge 100 via 1738, Battle Shout 6673 via 6674.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_learn_spell_hop_resolves_the_taught_ability() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -36,6 +37,7 @@ fn real_learn_spell_hop_resolves_the_taught_ability() {
 
 /// Values from the vmangos `spell_template` rows.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_ranged_attributes() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -84,6 +86,7 @@ fn real_spell_catalog_reads_ranged_attributes() {
 /// The buff bar's cache builder (`PlayerAuras_Update` `0x4e4170`) refuses `NO_AURA_ICON` and
 /// `DO_NOT_DISPLAY` (0x80), reading `Attributes` as a byte (columns 6 and 7).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_hides_stances_from_the_aura_bar() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -120,6 +123,7 @@ fn real_spell_catalog_hides_stances_from_the_aura_bar() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_rank_and_passive() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -142,6 +146,7 @@ fn real_spell_catalog_reads_rank_and_passive() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_gates_the_spellbook() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -179,6 +184,7 @@ fn real_spell_catalog_gates_the_spellbook() {
 /// The OPEN_LOCK effect (column 61 == 0x21) and its `LockType` (`EffectMiscValue`, column 106): a
 /// Copper Vein's `Lock.dbc` skill slot names LockType 3, which Mining (2575) opens.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_open_lock_types() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -259,6 +265,7 @@ fn real_spell_catalog_reads_open_lock_types() {
 /// The two `Effect[0]` values the client latches at learn time (`0x4b25e0` into `[0xb700e4]` and
 /// `[0xb700e8]`); the cursor's skin leg shows the knife only when one of them is in the book.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_pins_the_skin_latch_effects() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -291,6 +298,7 @@ fn real_spell_catalog_pins_the_skin_latch_effects() {
 /// term (`0x5ea690`). Its columns (27, 28, 64, 67, 70, 73, 76) are pinned by result, against
 /// values known from the game; the below-cap rows are the ones a caster-level term would miss.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_computes_the_lock_skill_an_opener_provides() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -324,6 +332,7 @@ fn real_spell_catalog_computes_the_lock_skill_an_opener_provides() {
 
 /// Values from vmangos `spell_template`, each entry at its highest build up to 5875.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_cooldown_cost_and_range_columns() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -383,6 +392,7 @@ fn real_spell_catalog_reads_cooldown_cost_and_range_columns() {
 
 /// [`COL_TARGETS`] (13) and [`COL_IMPLICIT_TARGET_A1`] (82): one row per `0x6e5250` arm or bit.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_cast_targeting_columns() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -414,6 +424,7 @@ fn real_spell_catalog_reads_cast_targeting_columns() {
 
 /// The usable walk's columns (`0x6e3d60`), one row per gate family, and the real form flags.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_usable_walk_columns() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -538,6 +549,7 @@ fn real_spell_catalog_reads_usable_walk_columns() {
 }
 
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_tooltip_columns() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -652,6 +664,7 @@ fn spell_schema_decodes_token_float_columns() {
 /// [`SpellDisplay::initiates_auto_attack_at_go`] (`AttributesEx2 & 0x100000`), whose union is
 /// [`SpellDisplay::initiates_combat`] (`0x6e5200`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_classifies_combat_initiation() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -761,6 +774,7 @@ fn real_spell_catalog_classifies_combat_initiation() {
 /// (`SPELL_EFFECT_CREATE_ITEM` 24, `SPELL_EFFECT_ENCHANT_ITEM` 53) or `modalNextSpell` chain may
 /// carry predicate `0x6e5200`. No item's use spell does either (vmangos `item_template`).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_keeps_the_attack_pick_to_spell_presses() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -796,6 +810,7 @@ fn real_spell_catalog_keeps_the_attack_pick_to_spell_presses() {
 /// `modalNextSpell`, column 38, which `0x6e7447` reads to start Auto Shot after a hunter shot:
 /// nonzero on 57 of 22357 rows, 52 of them naming spell 75.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_modal_next_spell() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -855,6 +870,7 @@ fn real_spell_catalog_reads_modal_next_spell() {
 
 /// `EffectItemType` (columns 103-105) and `RequiresSpellFocus` (15); values from vmangos.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_crafting_columns_read_created_item_and_focus() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -923,6 +939,7 @@ fn the_tooltip_gates_read_effect_and_mask() {
 /// equipped main hand instead of arming the item cursor. vmangos keeps a row per build, so a
 /// `GROUP BY entry` also returns pre-5302 Feedback and Omen of Clarity rows and counts 28.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_main_hand_autopick_family() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -978,6 +995,7 @@ fn real_main_hand_autopick_family() {
 /// (`0x496128`); vmangos sends neither, so with no shipped [`SPELL_EFFECT_PROSPECTING`] spell
 /// neither message can appear.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_prospecting_effect_is_absent_from_5875() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1011,6 +1029,7 @@ fn real_prospecting_effect_is_absent_from_5875() {
 /// bit on shipped data: `Targets` is exactly `0x10` (enchants, poisons, stones, scopes) or
 /// `0x4000` (OPEN_LOCK), so the resolver forks on the bare word. `0x495d60` reads the gate columns.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_item_target_family_and_its_gate_columns() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1117,6 +1136,7 @@ fn real_item_target_family_and_its_gate_columns() {
 /// `GetCooldownInfo` (`0x6e13e0`): the `SpellCategory` flags `0x2` wildcard is wand Shoot's
 /// category 351, the whole-bar swing sweep the cooldown store's wildcard leg implements.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn gcd_wildcard_and_shape_corners_hold_on_the_real_data() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1151,6 +1171,7 @@ fn gcd_wildcard_and_shape_corners_hold_on_the_real_data() {
 
 /// The health power type is -2, read as `0xFFFFFFFE`.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_cost_columns() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1245,6 +1266,7 @@ fn real_spell_catalog_cost_columns() {
 /// Titan, Thalassian and Kalimag garble for everyone, and a language-to-spell map would resolve
 /// Common to Old Tongue; vmangos's `lang_description[]` (`ObjectMgr.cpp:84`) gives them their own.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_language_declaring_spells_cover_nine_of_thirteen_languages() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1311,6 +1333,7 @@ fn the_language_declaring_spells_cover_nine_of_thirteen_languages() {
 /// [`SpellDisplay::is_harmful`], the client's `0x6ea280 == 2`: an enemy implicit target in slot A
 /// (6), or only in slot B as Frost Nova's (A 22, the caster's spot; B 15, a source-area enemy).
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_is_harmful_pins() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1352,6 +1375,7 @@ fn real_is_harmful_pins() {
 /// `SpellChannelStart` (`0x6e7550`): unlike the cast bar, the channel bar says "Channeling" unless
 /// a bit lets it name the spell, as 9 of the 323 channeled rows do; 2 suppress the bar.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_channel_bar_name_law() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1415,6 +1439,7 @@ fn real_channel_bar_name_law() {
 /// are vmangos's `SpellFamilyNames`, 322 rows set several bits and the top bit is 35, so the high
 /// dword is live, and Cleanse (4987, bits 12 and 33) pins the pair's order.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_family_columns_carry_the_modifier_gate() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1478,6 +1503,7 @@ fn real_spell_family_columns_carry_the_modifier_gate() {
 /// pair (`0x6e2de0`), which every learnable pet ability carries as category 133, and its press
 /// route branches on `AttributesEx4 & 0x20` (`0x4bd355`), the dword at `+0x28`, column 10.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_pet_spells_carry_the_gcd_pair_and_ex4_reads_column_10() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1522,6 +1548,7 @@ fn real_pet_spells_carry_the_gcd_pair_and_ex4_reads_column_10() {
 /// `TargetCreatureType` (column 14), read as the bind gate does: bit `type - 1` of the mask.
 /// Beast is type 1, Dragonkin 2, Demon 3, Elemental 4, Undead 6, Humanoid 7.
 #[test]
+#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_the_bind_gate_columns() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
