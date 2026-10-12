@@ -104,6 +104,14 @@ pub struct UnitState {
     /// Exalted reads too (`0x606439` caps the rank), 0 unknown (nil). Fed for the tokens naming
     /// another unit; `"player"` and `"pet"` stay 0.
     pub reaction: u8,
+    /// The player's reaction toward the unit, `UnitReaction("player", unit)` on the same scale:
+    /// 12340's `0x7251c0` with the player as `this`, which answers a reputation faction by the
+    /// at-war bit alone, so it can differ from [`Self::reaction`]. Fed where that is; 0 unknown.
+    pub reaction_from_player: u8,
+    /// `UnitSelectionColor` (`0x60da00`): the ARGB dword `0x521bf0` resolves for the unit, which
+    /// the binding splits into r, g, b and a over 255. 0 is unfed, read as the resolver's answer
+    /// for a unit it holds no object for, blue.
+    pub selection_color: u32,
     /// `UnitRace`'s localized first return, from `UNIT_FIELD_BYTES_0` byte 0; `None` answers
     /// `nil, nil`.
     pub race: Option<String>,
@@ -498,6 +506,36 @@ fn with_unit<T>(
         Some(u) => f(u),
         None => default,
     })
+}
+
+/// 12340's reaction routine `0x7251c0` with `a` as `this` toward `b`, on `UnitReaction`'s 1-based
+/// scale, as `UnitReaction`, `UnitIsEnemy` and `UnitIsFriend` ask it (`0x60d2d7`, `0x60d386`,
+/// `0x514050`); `None` when either token names no unit (`0x60d2ce`). A unit toward itself is 5
+/// (`0x7251d5`). The snapshots hold the two directions between the player and a unit, so a pair
+/// naming the player answers from the other unit's, where a snapshot with no player-side
+/// direction fed (party, pet) answers its own; a pair without the player is not built and
+/// answers `a`'s reaction toward the player. 0 is an unfed reaction and answers `None` too.
+fn pair_reaction(lua: &Lua, a: &str, b: &str) -> Option<u8> {
+    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let (ua, ub) = (model.unit(a)?, model.unit(b)?);
+    let player = model.unit_guids.player;
+    let is_player = |token: &str, u: &UnitState| {
+        token.eq_ignore_ascii_case("player") || (player != 0 && u.guid == player)
+    };
+    let (a_player, b_player) = (is_player(a, ua), is_player(b, ub));
+    let r = if (a_player && b_player) || (ua.guid != 0 && ua.guid == ub.guid) {
+        5
+    } else if b_player {
+        ua.reaction
+    } else if a_player {
+        match ub.reaction_from_player {
+            0 => ub.reaction,
+            r => r,
+        }
+    } else {
+        ua.reaction
+    };
+    (r != 0).then_some(r)
 }
 
 /// A unit predicate's body: the number 1 or nil through [`super::binding_abi::flag`], never a Lua

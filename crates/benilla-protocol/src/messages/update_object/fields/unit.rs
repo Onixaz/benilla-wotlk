@@ -355,6 +355,13 @@ impl ObjectFields {
     pub fn unit_sheath_state(&self) -> Option<u8> {
         self.get_u32(FIELD_UNIT_BYTES_2).map(|v| (v & 0xff) as u8)
     }
+    /// `UNIT_FIELD_BYTES_2` byte 1, 3.3.5a's `UNIT_BYTE2_FLAG`s: PvP `0x1`, FFA PvP `0x4`,
+    /// sanctuary `0x8` (AzerothCore `UnitBytes2Flags`). The selection colour reads it at
+    /// `[unit+0xd0]+0x1d1` (`0x521e9f`); 0 when unstreamed.
+    pub fn unit_byte2_flags(&self) -> u8 {
+        self.get_u32(FIELD_UNIT_BYTES_2)
+            .map_or(0, |v| ((v >> 8) & 0xff) as u8)
+    }
     /// `UNIT_FIELD_STAT0 + i`: primary stat `i` after buffs, 0 Str, 1 Agi, 2 Sta, 3 Int, 4 Spi.
     pub fn unit_stat(&self, i: u8) -> Option<u32> {
         (i < 5).then(|| self.get_u32(FIELD_UNIT_STAT0 + u16::from(i)))?

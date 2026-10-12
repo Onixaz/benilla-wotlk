@@ -77,32 +77,130 @@ fn spell_can_target_unit_answers_per_validated_token() {
 #[test]
 fn unit_reaction_reports_the_scale_value_or_nil() {
     let mut s = UiScript::new().unwrap();
-    // 4 is neutral.
-    s.set_unit(
-        "target",
-        Some(UnitState {
-            exists: true,
-            reaction: 4,
-            ..Default::default()
-        }),
-    );
-    assert_eq!(
-        s.eval::<i64>(r#"return UnitReaction("target", "player")"#)
-            .unwrap(),
-        4
-    );
-    // 0 is unresolved, which answers nil.
+    s.set_unit_guids(&UnitGuids {
+        player: 0x10,
+        target: 0x30,
+        ..Default::default()
+    });
     s.set_unit(
         "player",
         Some(UnitState {
             exists: true,
-            reaction: 0,
+            guid: 0x10,
             ..Default::default()
         }),
     );
+    // 4 is neutral: the Northshire wolf of #117, neutral both ways.
+    s.set_unit(
+        "target",
+        Some(UnitState {
+            exists: true,
+            guid: 0x30,
+            reaction: 4,
+            reaction_from_player: 4,
+            ..Default::default()
+        }),
+    );
+    let reaction = |s: &UiScript, a: &str, b: &str| {
+        s.eval::<Option<i64>>(&format!("return UnitReaction({a:?}, {b:?})"))
+            .unwrap()
+    };
+    assert_eq!(reaction(&s, "target", "player"), Some(4));
+    assert_eq!(reaction(&s, "player", "target"), Some(4));
+    // A unit toward itself is 5 (`0x7251d5`), the player included.
+    assert_eq!(reaction(&s, "player", "player"), Some(5));
+    assert_eq!(reaction(&s, "target", "target"), Some(5));
+    // A token naming no unit answers nil (`0x60d300`), in either place.
+    assert_eq!(reaction(&s, "focus", "player"), None);
+    assert_eq!(reaction(&s, "player", "focus"), None);
+
+    // The two directions differ for a reputation faction: neutral standing toward the player,
+    // friendly from the player's side (not at war).
+    s.set_unit(
+        "target",
+        Some(UnitState {
+            exists: true,
+            guid: 0x30,
+            reaction: 4,
+            reaction_from_player: 5,
+            ..Default::default()
+        }),
+    );
+    assert_eq!(reaction(&s, "target", "player"), Some(4));
+    assert_eq!(reaction(&s, "player", "target"), Some(5));
     assert!(s
-        .eval::<bool>(r#"return UnitReaction("player", "target") == nil"#)
+        .eval::<bool>(r#"return UnitIsFriend("player", "target") == 1 and UnitIsFriend("target", "player") == nil"#)
         .unwrap());
+
+    // A snapshot whose player-side direction is unfed answers its own; 0 both ways is nil.
+    s.set_unit(
+        "target",
+        Some(UnitState {
+            exists: true,
+            guid: 0x30,
+            reaction: 2,
+            ..Default::default()
+        }),
+    );
+    assert_eq!(reaction(&s, "player", "target"), Some(2));
+    assert!(s
+        .eval::<bool>(r#"return UnitIsEnemy("player", "target") == 1 and UnitIsEnemy("target", "player") == 1"#)
+        .unwrap());
+    s.set_unit(
+        "target",
+        Some(UnitState {
+            exists: true,
+            guid: 0x30,
+            ..Default::default()
+        }),
+    );
+    assert_eq!(reaction(&s, "player", "target"), None);
+    assert_eq!(reaction(&s, "target", "player"), None);
+}
+
+/// `0x60da00`: the resolved ARGB split into r, g, b, a over 255; an unfed or absent unit reads the
+/// resolver's no-object blue, and a non-string token raises.
+#[test]
+fn unit_selection_color_splits_the_resolved_argb() {
+    let mut s = UiScript::new().unwrap();
+    let color = |s: &UiScript, token: &str| {
+        s.eval::<(f64, f64, f64, f64)>(&format!("return UnitSelectionColor({token:?})"))
+            .unwrap()
+    };
+    s.set_unit(
+        "target",
+        Some(UnitState {
+            exists: true,
+            selection_color: 0xFFFF_FF00,
+            ..Default::default()
+        }),
+    );
+    assert_eq!(color(&s, "target"), (1.0, 1.0, 0.0, 1.0), "neutral yellow");
+    s.set_unit(
+        "target",
+        Some(UnitState {
+            exists: true,
+            selection_color: 0xFFFF_8000,
+            ..Default::default()
+        }),
+    );
+    let (r, g, b, a) = color(&s, "target");
+    assert_eq!((r, b, a), (1.0, 0.0, 1.0));
+    assert!((g - 128.0 / 255.0).abs() < 1e-9, "unfriendly orange, g {g}");
+    s.set_unit(
+        "target",
+        Some(UnitState {
+            exists: true,
+            ..Default::default()
+        }),
+    );
+    assert_eq!(color(&s, "target"), (0.0, 0.0, 1.0, 1.0), "unfed");
+    assert_eq!(color(&s, "focus"), (0.0, 0.0, 1.0, 1.0), "no unit");
+    let err = s.run("UnitSelectionColor()").unwrap_err().to_string();
+    assert!(
+        err.contains(r#"Usage: UnitSelectionColor("unit")"#),
+        "{err}"
+    );
 }
 
 /// A player target branches on `UnitIsEnemy` and an NPC on `UnitReaction` (2 hostile, 5
@@ -110,6 +208,8 @@ fn unit_reaction_reports_the_scale_value_or_nil() {
 #[test]
 fn the_name_plate_faction_branch_picks_player_red_blue_over_the_reaction_swatch() {
     let mut s = UiScript::new().unwrap();
+    // Both units must resolve (`0x60d37d`), so the player is held.
+    s.set_unit("player", Some(player()));
     let plate = r#"
             local u = "target"
             if UnitIsPlayer(u) then

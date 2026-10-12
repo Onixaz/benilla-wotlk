@@ -63,7 +63,8 @@ pub(crate) use price_discount::vendor_price_discount;
 #[cfg(test)]
 pub(crate) use price_discount::{stormwind_fixture, HUMAN_WARRIOR};
 pub(crate) use relations::{
-    can_assist, can_attack, can_interact, corpse_friendly, is_possessed_by, UNIT_FLAG_POSSESSED,
+    can_assist, can_attack, can_interact, corpse_friendly, is_possessed_by, selection_color,
+    UNIT_FLAG_POSSESSED,
 };
 // The attack validator's target half, run in the call that asks, for the player's Attack and the
 // pet bar's; the melee probe's press with nothing selected.
@@ -74,7 +75,9 @@ pub(crate) use by_name::{AssistRequest, PlayerLookup, TargetByNameRequest};
 pub(crate) use by_name::SelectCommit;
 // The reaction decode and its faction catalog, which also tint the target frame
 // (`TargetFrame_CheckFaction`); `duel_rung` is the same walk, for `/reaction`.
-pub(crate) use ring::{duel_rung, ring_reaction, ring_variant, Factions, RingVariant};
+pub(crate) use ring::{
+    duel_rung, reaction_from_player, ring_reaction, ring_variant, Factions, RingVariant,
+};
 
 pub(crate) use click::DeselectGuid;
 pub use click::Interact;

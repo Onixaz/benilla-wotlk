@@ -167,10 +167,200 @@ pub(crate) fn can_assist(
     pvp_flags & UNIT_FLAG_PVP != 0
 }
 
+/// 12340's reaction palette at `0xbd0c94`, ARGB, indexed by `0x7251c0`'s 0-based answer: hated
+/// and hostile red, unfriendly orange, neutral yellow, friendly and up green (`0x521bf4`).
+const SELECTION_REACTION: [u32; 8] = [
+    0xFFFF_0000,
+    0xFFFF_0000,
+    0xFFFF_8000,
+    0xFFFF_FF00,
+    0xFF00_FF00,
+    0xFF00_FF00,
+    0xFF00_FF00,
+    0xFF00_FF00,
+];
+/// `0xbd0c8c[0]`, a player-controlled unit neither side can attack and no PvP flag colours.
+const SELECTION_BLUE: u32 = 0xFF00_00FF;
+/// `UNIT_BYTE2_FLAG_PVP` and `_SANCTUARY`, `UNIT_FIELD_BYTES_2` byte 1 (`0x521ea5`).
+const BYTE2_PVP: u8 = 0x1;
+const BYTE2_SANCTUARY: u8 = 0x8;
+
+/// `UnitSelectionColor`'s ARGB dword, 12340's resolver `0x521bf0` with its third argument 0, as
+/// `0x60da6f` calls it: a unit that is not player-controlled takes the palette entry of its
+/// reaction toward the player (`0x521fa7`, no dead grey in this mode). A player-controlled one
+/// asks `CanAttack 0x729740` both ways: it can attack us and we it, red; it us only, blue; we it
+/// only, yellow (`0x521e45`-`0x521e9e`). Else a PvP-flagged unit, neither side in a sanctuary,
+/// takes its reaction's entry, and any other blue. `self_store` is the player's own descriptor;
+/// passing it as `store` reads the player's own colour, whose reaction toward itself is 4
+/// (`0x7251d5`). Not applied: the active mover's vehicle or charm (`0x6dd060`, `0x5140a0`) and
+/// the zone's sanctuary test (`[0xbea570] == 4`).
+pub(crate) fn selection_color(
+    store: &ObjectStore,
+    factions: Option<&Factions>,
+    reputations: &Reputations,
+    self_store: Option<&ObjectStore>,
+) -> u32 {
+    let Some(own) = self_store else {
+        return SELECTION_BLUE;
+    };
+    let reaction_color = || {
+        let r = if std::ptr::eq(store, own) {
+            4
+        } else {
+            ring_reaction(factions, reputations, Some(store), Some(own))
+        };
+        SELECTION_REACTION[usize::from(r.min(7))]
+    };
+    if store.0.unit_flags() & UNIT_FLAG_PLAYER_CONTROLLED == 0 {
+        return reaction_color();
+    }
+    // `CanAttack(unit, player)`: the arm both bit-3 flags select is the same either way round,
+    // so the player-side predicate with the two swapped asks it.
+    let attacks_us = super::ring::can_attack_from_player(
+        factions,
+        reputations,
+        Some(own),
+        Some(store),
+        is_player_object(Some(own)),
+    );
+    let we_attack = can_attack(Some(store), factions, reputations, Some(own));
+    match (attacks_us, we_attack) {
+        (true, true) => SELECTION_REACTION[1],
+        (true, false) => SELECTION_BLUE,
+        (false, true) => SELECTION_REACTION[3],
+        (false, false) => {
+            let (theirs, ours) = (store.0.unit_byte2_flags(), own.0.unit_byte2_flags());
+            if theirs & BYTE2_PVP != 0
+                && theirs & BYTE2_SANCTUARY == 0
+                && ours & BYTE2_SANCTUARY == 0
+            {
+                reaction_color()
+            } else {
+                SELECTION_BLUE
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::spell::targeting::corpse_fixture as fx;
+
+    /// `0x521bf0` with its third argument 0, over templates 1 (Human) and 2 (Orc) and three NPC
+    /// rows: a beast no mask names (neutral), a monster enemy-masked against players (hostile)
+    /// and a guard friend-masked toward the Alliance (friendly).
+    #[test]
+    fn the_selection_colour_follows_the_reference_resolver() {
+        use benilla_formats::{FactionCatalog, FactionTemplate};
+        use std::collections::HashMap;
+
+        let tpl = |faction, group_mask, friend_group_mask, enemy_group_mask| FactionTemplate {
+            faction,
+            group_mask,
+            friend_group_mask,
+            enemy_group_mask,
+            enemies: [0; 4],
+            friends: [0; 4],
+        };
+        let factions = Factions::from_catalog(FactionCatalog::from_rows(
+            HashMap::from([
+                (1, tpl(1, 3, 2, 12)),
+                (2, tpl(2, 5, 4, 10)),
+                (7, tpl(7, 0, 0, 0)),
+                (14, tpl(14, 8, 0, 1)),
+                (11, tpl(11, 2, 2, 0)),
+            ]),
+            HashMap::new(),
+        ));
+        let reps = Reputations::default();
+        // `OBJECT_FIELD_TYPE` 2, the template 35, `UNIT_FIELD_FLAGS` 46, `UNIT_FIELD_BYTES_2` 164.
+        let unit = |template: u32, flags: u32, byte2: u8, player: bool| {
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (2, if player { 0x19 } else { 0x9 }),
+                (35, template),
+                (46, flags),
+                (164, u32::from(byte2) << 8),
+            ]))
+        };
+        let me = unit(1, UNIT_FLAG_PLAYER_CONTROLLED, 0, true);
+        let color = |store: &ObjectStore| selection_color(store, Some(&factions), &reps, Some(&me));
+
+        // NPCs: the reaction palette.
+        assert_eq!(
+            color(&unit(7, 0, 0, false)),
+            0xFFFF_FF00,
+            "a neutral beast is yellow"
+        );
+        assert_eq!(
+            color(&unit(14, 0, 0, false)),
+            0xFFFF_0000,
+            "a hostile monster is red"
+        );
+        assert_eq!(
+            color(&unit(11, 0, 0, false)),
+            0xFF00_FF00,
+            "a friendly guard is green"
+        );
+
+        // Players: attackability both ways, then the PvP byte.
+        let pc = UNIT_FLAG_PLAYER_CONTROLLED;
+        assert_eq!(
+            color(&unit(1, pc, 0, true)),
+            0xFF00_00FF,
+            "an unflagged ally is blue"
+        );
+        assert_eq!(
+            color(&unit(1, pc, BYTE2_PVP, true)),
+            0xFF00_FF00,
+            "a PvP-flagged ally takes its reaction, friendly"
+        );
+        assert_eq!(
+            color(&unit(1, pc, BYTE2_PVP | BYTE2_SANCTUARY, true)),
+            0xFF00_00FF,
+            "in a sanctuary the flag does not count"
+        );
+        assert_eq!(
+            color(&unit(2, pc, 0, true)),
+            0xFF00_00FF,
+            "nobody can attack: blue"
+        );
+        assert_eq!(
+            color(&unit(2, pc | UNIT_FLAG_PVP, 0, true)),
+            0xFFFF_FF00,
+            "a flagged enemy we can attack and who cannot attack us is yellow"
+        );
+        let flagged_me = unit(1, pc | UNIT_FLAG_PVP, 0, true);
+        let enemy = unit(2, pc | UNIT_FLAG_PVP, 0, true);
+        assert_eq!(
+            selection_color(&enemy, Some(&factions), &reps, Some(&flagged_me)),
+            0xFFFF_0000,
+            "both flagged: red"
+        );
+        assert_eq!(
+            selection_color(
+                &unit(2, pc, 0, true),
+                Some(&factions),
+                &reps,
+                Some(&flagged_me)
+            ),
+            0xFF00_00FF,
+            "it can attack us and we not it: blue"
+        );
+
+        // The player's own colour: reaction 4 toward itself when flagged, else blue.
+        assert_eq!(color(&me), 0xFF00_00FF);
+        let flagged = unit(1, pc, BYTE2_PVP, true);
+        assert_eq!(
+            selection_color(&flagged, Some(&factions), &reps, Some(&flagged)),
+            0xFF00_FF00
+        );
+        // No player: the resolver's blue.
+        assert_eq!(
+            selection_color(&unit(7, 0, 0, false), Some(&factions), &reps, None),
+            0xFF00_00FF
+        );
+    }
 
     /// `0x6067d0`: the caster's template toward the corpse's race's, friendly or better; every gap
     /// is neutral (`0x60651b`) and fails.

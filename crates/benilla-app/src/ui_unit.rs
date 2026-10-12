@@ -1284,6 +1284,8 @@ fn feed_units(
         s.is_player = true;
         // `CanAssist` answers the player for himself.
         s.can_assist = true;
+        s.selection_color =
+            crate::target::selection_color(store, factions.as_deref(), &reputations, Some(store));
         s.raid_target = group.raid_target_index(guid.0);
         s.faction_group = faction_group(store, factions.as_deref());
         s.faction_group_localized = faction_group_localized(store, factions.as_deref());

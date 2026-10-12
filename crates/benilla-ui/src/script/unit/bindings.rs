@@ -9,9 +9,9 @@ use super::super::binding_abi::flag;
 use super::super::calls::ScriptCall;
 use super::super::Model;
 use super::{
-    classification_word, grey_band, level_reads_unknown, parse_unit_token, pick_unit_token,
-    unit_predicate, unknownobject, with_unit, PlayerRecord, SelectionRequest, UnitBase,
-    UnitTokenParse,
+    classification_word, grey_band, level_reads_unknown, pair_reaction, parse_unit_token,
+    pick_unit_token, unit_predicate, unknownobject, with_unit, PlayerRecord, SelectionRequest,
+    UnitBase, UnitTokenParse,
 };
 
 /// The type `UnitPower` and `UnitPowerMax` read with no type argument, the unit's own display
@@ -324,72 +324,63 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnitReaction(unit, other) (`0x5167e0`): `0x6061e0(unit, other)` plus one (`0x51683e`), so
-    // 1-based, 5 for a unit toward itself, never 0; nil (`0x51685f`) only when a token names no
-    // unit. Our reaction 0 means "not fed" and also answers nil, where the reference answers a
-    // number. The snapshot holds the reaction toward the player, so `other` is checked, not read.
+    // UnitReaction(unit, other) (12340 `0x60d280`): both tokens resolved (`0x60c1f0`), then
+    // `0x7251c0(unit, other)` plus one (`0x60d2dc`), so 1-based, 5 for a unit toward itself; nil
+    // (`0x60d300`) when either names no unit. Our reaction 0 means "not fed" and also answers nil,
+    // where the reference answers a number. [`pair_reaction`] reads the pair.
     g.set(
         "UnitReaction",
-        lua.create_function(|lua, (token, _other): (Value, Value)| {
+        lua.create_function(|lua, (a, b): (Value, Value)| {
             // Both arguments are `lua_isstring`-gated, so either one nil raises.
-            let token = Some(crate::script::binding_abi::string_arg(
-                lua,
-                token,
-                r#"Usage: UnitReaction("unit", "otherUnit")"#,
-            )?);
-            let _other = Some(crate::script::binding_abi::string_arg(
-                lua,
-                _other,
-                r#"Usage: UnitReaction("unit", "otherUnit")"#,
-            )?);
-            let r = with_unit(lua, &token, 0u8, |u| u.reaction)?;
-            Ok(if r == 0 {
-                Value::Nil
-            } else {
-                Value::Integer(i64::from(r))
-            })
+            let usage = r#"Usage: UnitReaction("unit", "otherUnit")"#;
+            let a = crate::script::binding_abi::string_arg(lua, a, usage)?;
+            let b = crate::script::binding_abi::string_arg(lua, b, usage)?;
+            Ok(pair_reaction(lua, &a, &b).map_or(Value::Nil, |r| Value::Integer(i64::from(r))))
         })?,
     )?;
 
-    // UnitIsEnemy/UnitIsFriend (`0x516890`/`0x516930`) threshold the reaction `UnitReaction`
-    // reads: enemy at 1 or 2, friend at 5 and up, and an unfed 0 is neither. The snapshot holds the
-    // reaction toward the player, so the non-player argument names the unit.
+    // UnitIsEnemy (12340 `0x60d330`) asks the same `0x7251c0(unit, other)` and answers 1 at 0 or 1
+    // (`0x60d38b`), 1 or 2 on `UnitReaction`'s scale; UnitIsFriend (`0x60d3d0`) through `0x514050`
+    // at 4 and up, 5 on that scale. An unfed or unresolved pair is neither. Not built:
+    // UnitIsFriend's creature-template leg (`0x715df0`, type flag bit 26) and its party-roster
+    // leg for a unit with no object (`0x512a30`).
     g.set(
         "UnitIsEnemy",
         lua.create_function(|lua, (a, b): (Value, Value)| {
             // Both arguments are `lua_isstring`-gated, so either one nil raises.
-            let a = Some(crate::script::binding_abi::string_arg(
-                lua,
-                a,
-                r#"Usage: UnitIsEnemy("unit", "otherUnit")"#,
-            )?);
-            let b = Some(crate::script::binding_abi::string_arg(
-                lua,
-                b,
-                r#"Usage: UnitIsEnemy("unit", "otherUnit")"#,
-            )?);
-            let token = pick_unit_token(&a, &b);
-            let r = with_unit(lua, &token, 0u8, |u| u.reaction)?;
-            Ok(flag((1..=2).contains(&r)))
+            let usage = r#"Usage: UnitIsEnemy("unit", "otherUnit")"#;
+            let a = crate::script::binding_abi::string_arg(lua, a, usage)?;
+            let b = crate::script::binding_abi::string_arg(lua, b, usage)?;
+            Ok(flag(pair_reaction(lua, &a, &b).is_some_and(|r| r <= 2)))
         })?,
     )?;
     g.set(
         "UnitIsFriend",
         lua.create_function(|lua, (a, b): (Value, Value)| {
             // Both arguments are `lua_isstring`-gated, so either one nil raises.
-            let a = Some(crate::script::binding_abi::string_arg(
+            let usage = r#"Usage: UnitIsFriend("unit", "otherUnit")"#;
+            let a = crate::script::binding_abi::string_arg(lua, a, usage)?;
+            let b = crate::script::binding_abi::string_arg(lua, b, usage)?;
+            Ok(flag(pair_reaction(lua, &a, &b).is_some_and(|r| r >= 5)))
+        })?,
+    )?;
+
+    // UnitSelectionColor(unit) (12340 `0x60da00`): `lua_isstring`-gated, then the ARGB dword
+    // `0x521bf0` resolves for the unit's guid, pushed as r, g, b, a, each byte times 1/255
+    // (`[0x9ead78]`). The app resolves the dword ([`UnitState::selection_color`]); a token naming
+    // no fed unit reads the resolver's no-object answer, blue `0xFF0000FF` (`0x522093`).
+    g.set(
+        "UnitSelectionColor",
+        lua.create_function(|lua, token: Value| {
+            let token = crate::script::binding_abi::string_arg(
                 lua,
-                a,
-                r#"Usage: UnitIsFriend("unit", "otherUnit")"#,
-            )?);
-            let b = Some(crate::script::binding_abi::string_arg(
-                lua,
-                b,
-                r#"Usage: UnitIsFriend("unit", "otherUnit")"#,
-            )?);
-            let token = pick_unit_token(&a, &b);
-            let r = with_unit(lua, &token, 0u8, |u| u.reaction)?;
-            Ok(flag(r >= 5))
+                token,
+                r#"Usage: UnitSelectionColor("unit")"#,
+            )?;
+            let argb = with_unit(lua, &Some(token), 0, |u| u.selection_color)?;
+            let argb = if argb == 0 { 0xFF00_00FF } else { argb };
+            let channel = |shift: u32| f64::from((argb >> shift) & 0xff) / 255.0;
+            Ok((channel(16), channel(8), channel(0), channel(24)))
         })?,
     )?;
 

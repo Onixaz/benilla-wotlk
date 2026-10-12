@@ -47,6 +47,16 @@ impl HeldUnits<'_> {
             .map(str::to_string);
         let reaction = unit_reaction(self.factions, self.reputations, store, self.self_store);
         let mut s = snapshot(store, guid, name, reaction, self.classes, self.types);
+        // `UnitReaction("player", unit)`, `0x7251c0` with the player as `this`, plus one.
+        s.reaction_from_player = crate::target::reaction_from_player(
+            self.factions,
+            self.reputations,
+            Some(store),
+            self.self_store,
+        ) + 1;
+        // `UnitSelectionColor`, the target frame's name background (`TargetFrame.lua:268`).
+        s.selection_color =
+            crate::target::selection_color(store, self.factions, self.reputations, self.self_store);
         s.raid_target = self.group.raid_target_index(guid);
         s.faction_group = faction_group(store, self.factions);
         s.faction_group_localized = faction_group_localized(store, self.factions);

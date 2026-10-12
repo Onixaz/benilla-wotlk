@@ -128,8 +128,10 @@ impl ObjectFields {
                 element,
                 (value & 0xff) | ((value >> 16) & 0xff) << 24,
             ),
-            // Sheath state in byte 0; 3.3.5a's PvP and pet flags and form have other meanings.
-            Field::UnitBytes2 => put(field, element, value & 0xff),
+            // Sheath state in byte 0 and the `UNIT_BYTE2_FLAG` byte 1 (PvP `0x1`, FFA `0x4`,
+            // sanctuary `0x8`) that `0x521bf0` reads at `+0x1d1`; the pet flags in byte 2 and the
+            // form in byte 3 have other meanings.
+            Field::UnitBytes2 => put(field, element, value & 0xffff),
             Field::UnitNpcFlags => put(field, element, classic_npc_flags(value)),
             // Gender and drunkenness; bytes 2 and 3 are the PvP title and arena faction, where
             // 1.12.1 keeps the city protector and the honor rank.
@@ -257,6 +259,10 @@ mod tests {
         assert!(f.unit_is_stealthed());
         assert!(!f.unit_is_ghost_visual());
         assert_eq!(f.unit_npc_flags(), 0x4 | 0x4000 | 0x8 | 0x1);
+        // Sheathed melee, PvP and sanctuary flags, pet flags 0x3, form 0x10.
+        let f = ObjectFields::from_wotlk(wire(&[(122, 0x1003_0901)]), ObjectType::Unit);
+        assert_eq!(f.unit_sheath_state(), Some(1));
+        assert_eq!(f.unit_byte2_flags(), 0x09);
     }
 
     #[test]
