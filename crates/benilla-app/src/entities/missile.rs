@@ -113,7 +113,7 @@ enum Aim {
     /// A unit target, homed to its live attachment, so a moving target bends the path.
     Unit {
         target: Entity,
-        /// The attachment it homes to (`SpellVisual` field 9); `None` is the base.
+        /// The attachment it homes to (`SpellVisual` column 10); `None` is the base.
         dest_tag: Option<u16>,
         /// The wire's `SpellMissInfo` code for a miss, which arrives as the victim's defense clip
         /// instead of the impact; `None` for a hit.

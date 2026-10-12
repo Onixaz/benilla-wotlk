@@ -189,16 +189,14 @@ pub fn shakecensus(chain: &mut Chain) -> Result<()> {
     // Only the GameObject (typemask 0x20, `0x5f3e20`) and DynamicObject (0x40, `0x5d58c0`)
     // dispatchers decode `$SHK`; on a creature it reaches `CGUnit_C::HandleAnimEvent` and on a
     // bone-attached `CEffect` the fixed `$SND`/`$HIT` router `0x61f6f0`, and neither decodes it.
-    // A DynamicObject's area model is `SpellVisual` field 12, gated by field 11 (`0x5d57c0`):
-    // Inferno's visual 4859 and Meteor's 7479 plant one (effects 2362, 3007) with `$SHK` group 2.
+    // A DynamicObject's area model is its persistent area kit's world or base effect (`0x704b30`).
     let gos = benilla_formats::load_gameobject_catalog(chain)?;
     let go_models: BTreeSet<String> = gos.iter().map(|(_, path)| mdx_key(path)).collect();
     let creature_models: BTreeSet<String> = creatures.model_paths().map(mdx_key).collect();
     let dynobj_models: BTreeSet<String> = visuals
         .visuals()
-        .filter(|(_, v)| v.area_gate != 0 && v.area_effect != 0)
-        .filter_map(|(_, v)| visuals.effect_path(v.area_effect))
-        .map(mdx_key)
+        .filter_map(|(_, v)| visuals.persistent_area_model(v))
+        .map(|(_, path)| mdx_key(path))
         .collect();
     let mut shk_models = 0u32;
     let mut shk_marks = 0u32;

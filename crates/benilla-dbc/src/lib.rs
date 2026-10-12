@@ -1,11 +1,12 @@
-//! A WDBC reader for WoW 1.12.1: a 20-byte header, `record_count × record_size` bytes of 4-byte
-//! fields, then a string block. The file has no column types; the caller supplies a [`Schema`].
+//! A WDBC reader: a 20-byte header, `record_count × record_size` bytes of fields, then a string
+//! block. The file has no column types; the caller supplies a [`Schema`]. Columns are 4 bytes but
+//! for the byte columns a 3.3.5a table may carry (`SpellChainEffects`).
 
 use std::io::{Cursor, Write};
 
 use benilla_bytes::{capped, ByteExt};
 
-/// Column type for a DBC field. Every field is 4 bytes on disk.
+/// Column type for a DBC field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldType {
     UInt32,
@@ -13,9 +14,21 @@ pub enum FieldType {
     Float32,
     /// A `u32` offset into the string block.
     String,
+    /// One byte on disk, decoded as a [`Value::UInt32`].
+    UInt8,
 }
 
-/// One schema field; a `count` above 1 is an inline array of that many 4-byte slots.
+impl FieldType {
+    /// The column's width on disk.
+    pub fn width(self) -> usize {
+        match self {
+            FieldType::UInt8 => 1,
+            _ => 4,
+        }
+    }
+}
+
+/// One schema field; a `count` above 1 is an inline array of that many columns.
 #[derive(Debug, Clone)]
 pub struct SchemaField {
     pub name: String,
@@ -66,9 +79,14 @@ impl Schema {
         self.key_field = Some(name.into());
     }
 
-    /// The 4-byte slots covered, arrays expanded; the header's `field_count` must match.
+    /// The columns covered, arrays expanded; the header's `field_count` must match.
     fn expanded_len(&self) -> usize {
         self.fields.iter().map(|f| f.count).sum()
+    }
+
+    /// The bytes one record covers; the header's `record_size` must match.
+    fn record_width(&self) -> usize {
+        self.fields.iter().map(|f| f.count * f.ty.width()).sum()
     }
 }
 
@@ -117,6 +135,11 @@ pub enum Error {
         schema: usize,
         file: u32,
     },
+    /// Schema's column widths don't sum to the file's `record_size`.
+    SchemaRecordSizeMismatch {
+        schema: usize,
+        file: u32,
+    },
     BadStringRef(u32),
     /// `record_count × record_size + string_block_size` overflows `usize`: a corrupt header.
     SizeOverflow,
@@ -129,6 +152,12 @@ impl std::fmt::Display for Error {
             Error::Truncated(what) => write!(f, "truncated DBC: {what}"),
             Error::SchemaFieldMismatch { schema, file } => {
                 write!(f, "schema has {schema} fields but file has {file}")
+            }
+            Error::SchemaRecordSizeMismatch { schema, file } => {
+                write!(
+                    f,
+                    "schema covers {schema} bytes a record but file has {file}"
+                )
             }
             Error::BadStringRef(off) => write!(f, "string ref {off} out of bounds"),
             Error::SizeOverflow => {
@@ -209,13 +238,20 @@ impl<'a> DbcParser<'a> {
         &self.header
     }
 
-    /// Attach a schema, validating its expanded field count against the file header.
+    /// Attach a schema, validating its expanded field count and record width against the header.
     pub fn with_schema(mut self, schema: Schema) -> Result<Self> {
         let n = schema.expanded_len();
         if n != self.header.field_count as usize {
             return Err(Error::SchemaFieldMismatch {
                 schema: n,
                 file: self.header.field_count,
+            });
+        }
+        let w = schema.record_width();
+        if w != self.header.record_size as usize {
+            return Err(Error::SchemaRecordSizeMismatch {
+                schema: w,
+                file: self.header.record_size,
             });
         }
         self.schema = Some(schema);
@@ -241,12 +277,14 @@ impl<'a> DbcParser<'a> {
             .ok_or(Error::Truncated("string block"))?
             .to_vec();
 
-        // One type and one column name per 4-byte slot, arrays expanded.
+        // One type, byte offset and column name per column, arrays expanded.
         let mut types = Vec::with_capacity(fc);
         let mut names = Vec::with_capacity(fc);
+        let mut offset = 0;
         for field in &schema.fields {
             for k in 0..field.count {
-                types.push(field.ty);
+                types.push((field.ty, offset));
+                offset += field.ty.width();
                 names.push(if field.count == 1 {
                     field.name.clone()
                 } else {
@@ -265,9 +303,10 @@ impl<'a> DbcParser<'a> {
         for r in 0..rc {
             let base = r * rs;
             let mut values = Vec::with_capacity(fc);
-            for (i, ty) in types.iter().enumerate() {
-                let raw = rd_u32_at(records_bytes, base + i * 4);
+            for &(ty, off) in &types {
+                let raw = rd_u32_at(records_bytes, base + off);
                 values.push(match ty {
+                    FieldType::UInt8 => Value::UInt32(raw & 0xff),
                     FieldType::UInt32 => Value::UInt32(raw),
                     FieldType::Int32 => Value::Int32(raw as i32),
                     FieldType::Float32 => Value::Float32(f32::from_bits(raw)),
@@ -578,18 +617,59 @@ mod tests {
     fn zero_record_size_with_records_is_refused_not_iterated() {
         let bytes = build_wdbc(u32::MAX, 2, 0, &[], &[]);
         let parser = DbcParser::parse(&mut Cursor::new(bytes.as_slice()))
-            .expect("0 × anything fits the size guard")
-            .with_schema(id_name_schema())
-            .expect("schema matches");
+            .expect("0 × anything fits the size guard");
+        assert!(matches!(
+            parser.with_schema(id_name_schema()),
+            Err(Error::SchemaRecordSizeMismatch { schema: 8, file: 0 })
+        ));
+        // A schema of no columns matches size 0 and meets the parse guard instead.
+        let bytes = build_wdbc(u32::MAX, 0, 0, &[], &[]);
+        let parser = DbcParser::parse(&mut Cursor::new(bytes.as_slice()))
+            .unwrap()
+            .with_schema(Schema::new("Empty"))
+            .expect("no columns, no bytes");
         assert!(matches!(parser.parse_records(), Err(Error::Truncated(_))));
-        // No records at size 0 still decodes, to nothing.
-        let bytes = build_wdbc(0, 2, 0, &[], &[]);
+    }
+
+    #[test]
+    fn schema_width_must_match_record_size() {
+        // Two columns, but 12-byte records: a third column the schema does not name.
+        let bytes = build_wdbc(1, 2, 12, &[0u8; 12], &[]);
+        let parser = DbcParser::parse(&mut Cursor::new(bytes.as_slice())).unwrap();
+        assert!(matches!(
+            parser.with_schema(id_name_schema()),
+            Err(Error::SchemaRecordSizeMismatch {
+                schema: 8,
+                file: 12
+            })
+        ));
+    }
+
+    /// `SpellChainEffects`' shape: byte columns pack, so the columns after them sit off the 4-byte
+    /// grid.
+    #[test]
+    fn byte_columns_shift_the_columns_after_them() {
+        let mut records = Vec::new();
+        records.extend_from_slice(&7u32.to_le_bytes());
+        records.extend_from_slice(&[0xff, 0x03]);
+        records.extend_from_slice(&0x4000_0000u32.to_le_bytes());
+        let bytes = build_wdbc(1, 4, 10, &records, &[]);
+
+        let mut schema = Schema::new("Packed");
+        schema.add_field(SchemaField::new("id", FieldType::UInt32));
+        schema.add_field(SchemaField::new_array("bytes", FieldType::UInt8, 2));
+        schema.add_field(SchemaField::new("after", FieldType::UInt32));
+
         let rs = DbcParser::parse(&mut Cursor::new(bytes.as_slice()))
             .unwrap()
-            .with_schema(id_name_schema())
+            .with_schema(schema)
             .unwrap()
             .parse_records()
             .unwrap();
-        assert!(rs.records().is_empty());
+        let r = &rs.records()[0];
+        assert_eq!(r.get_value(0), Some(&Value::UInt32(7)));
+        assert_eq!(r.get_value(1), Some(&Value::UInt32(0xff)));
+        assert_eq!(r.get_value(2), Some(&Value::UInt32(3)));
+        assert_eq!(r.get_value(3), Some(&Value::UInt32(0x4000_0000)));
     }
 }

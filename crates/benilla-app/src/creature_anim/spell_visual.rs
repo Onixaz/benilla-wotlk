@@ -9,7 +9,7 @@ use std::cell::Cell;
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy::prelude::*;
 
-use benilla_formats::{SpellVisualCatalog, VisualKit, VisualStages, MISSILE_ATTACH_TABLE};
+use benilla_formats::{SpellVisualCatalog, VisualKit, VisualStages};
 use benilla_protocol::EntityKind;
 
 use crate::aura_visual::AuraProc;
@@ -170,13 +170,14 @@ pub(crate) struct ChainProcPlay {
 pub(crate) struct MissileSpawn {
     pub(crate) caster: Entity,
     pub(crate) spell_id: u32,
-    /// `SpellVisual` field 7's model, or `ERROR_CUBE` for an unresolvable id; `None` when field
-    /// 7 is below 1 or there is no row, and the spawner flies the wire ammo model (`0x479f40`).
+    /// `SpellVisual` column 8's model, or `ERROR_CUBE` for an unresolvable id; `None` when column
+    /// 8 is below 1 or there is no row, and the spawner flies the wire ammo model (`0x479f40`).
     pub(crate) path: Option<String>,
     /// The GO's ammo display, flown when [`Self::path`] is `None`.
     pub(crate) ammo_display_id: Option<u32>,
-    /// The attach tag the missile homes to (`SpellVisual` field 9 through
-    /// [`benilla_formats::MISSILE_ATTACH_TABLE`], `0x860a18`); `None` aims at the target's base.
+    /// The attach tag the missile homes to
+    /// ([`benilla_formats::VisualStages::missile_dest_attachment`]); `None` aims at the target's
+    /// base.
     pub(crate) dest_tag: Option<u16>,
     /// `Spell.dbc` Speed; flight time is distance over speed (`0x61ceb0`).
     pub(crate) speed: f32,
@@ -484,6 +485,32 @@ fn play_kit(
     }
 }
 
+/// A kit played at a world point rather than on a unit, the area kits' form (`0x745230` with a
+/// position): each effect slot's model once at the point, the sound and the shake there. The
+/// anim, beam and trail legs need a unit and do not run.
+fn play_kit_at(
+    kit: &VisualKit,
+    pos: Vec3,
+    visuals: &SpellVisualCatalog,
+    out: &mut KitOut,
+    bursts: &mut MessageWriter<crate::entities::dest_fx::GroundBurst>,
+) {
+    for (_, effect) in kit.effects() {
+        if let Some(path) = visuals.effect_path(effect) {
+            bursts.write(crate::entities::dest_fx::GroundBurst {
+                path: path.to_string(),
+                pos,
+            });
+        }
+    }
+    if let Some(kit_sound) = kit.sound {
+        out.sounds.write(SpellKitSound::PlayAt { pos, kit_sound });
+    }
+    if let Some(group) = kit.shake {
+        out.shakes.write(SpellKitShake::PlayAt { pos, group });
+    }
+}
+
 /// One spell landing on one unit.
 #[derive(Clone, Copy)]
 struct ImpactPlay {
@@ -767,16 +794,18 @@ pub(super) fn route_cast_visuals(
                 );
             }
             CastEventKind::GroundImpact { pos } => {
-                // A missile arrived at a point (`0x61e1d0` → `0x61d870`): `SpellVisual` field 13,
-                // the area kit, plays at the landing point. Every shipped row that reaches here
-                // carries only a sound, so the anim and slot legs are not built.
-                let area = resolve_kit(spells, &visuals.0, ev.spell_id, |s| s.area_kit, || None);
-                if let Some(kit_sound) = area.and_then(|k| k.sound) {
-                    out.sounds.write(SpellKitSound::PlayAt { pos, kit_sound });
-                }
-                // Kit 1285 (Cannon Ball) is a shake and nothing else.
-                if let Some(group) = area.and_then(|k| k.shake) {
-                    out.shakes.write(SpellKitShake::PlayAt { pos, group });
+                // A missile arrived at a point: `SpellVisual` column 24, the impact area kit, which
+                // `SMSG_SPELL_GO` leaves to the landing when a missile flies (`0x80ef53`), plays
+                // there.
+                let area = resolve_kit(
+                    spells,
+                    &visuals.0,
+                    ev.spell_id,
+                    |s| s.impact_area_kit,
+                    || None,
+                );
+                if let Some(kit) = area {
+                    play_kit_at(&kit, pos, &visuals.0, &mut out, bursts);
                 }
             }
             CastEventKind::Fail => {
@@ -804,18 +833,11 @@ pub(super) fn route_cast_visuals(
         // Resolved once per GO (`0x6e802e`); every consumer below reads the merged row.
         let wv = weapon_src.caster(go.caster);
         let stages = resolve_stages(spells, &visuals.0, go.spell_id, || wv);
-        // The dest one-shot (`0x6e8088`): field 12's model once at the dest point when field 6 is
-        // 0, fired at GO whatever the hit list.
+        // The instant area kit (`0x80ee85`): column 23's kit at the dest point when the targets
+        // carry one, fired at GO whatever the hit list.
         if let Some(dest) = go.dest {
-            if let Some(stages) = stages {
-                if stages.missile_gate == 0 && stages.area_effect != 0 {
-                    if let Some(path) = visuals.0.effect_path(stages.area_effect) {
-                        bursts.write(crate::entities::dest_fx::GroundBurst {
-                            path: path.to_string(),
-                            pos: dest,
-                        });
-                    }
-                }
+            if let Some(kit) = stages.and_then(|s| visuals.0.kit(s.instant_area_kit)) {
+                play_kit_at(kit, dest, &visuals.0, &mut out, bursts);
             }
         }
         if display.speed <= 0.0 {
@@ -847,8 +869,7 @@ pub(super) fn route_cast_visuals(
                 })
             });
             // An out-of-table ordinal reads adjacent `.rdata` in the reference; here, the base.
-            let dest_tag =
-                stages.and_then(|s| MISSILE_ATTACH_TABLE.get(s.missile_attach as usize).copied());
+            let dest_tag = stages.and_then(|s| s.missile_dest_attachment());
             let missile_sound = stages.and_then(|s| s.missile_sound);
             let targets: Vec<(Entity, Option<u8>)> = go
                 .hits

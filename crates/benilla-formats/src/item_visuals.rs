@@ -1,5 +1,5 @@
 //! The item and enchant glow chain. An ItemVisuals id comes from the item's display
-//! (`ItemDisplayInfo` column 22) or its enchant (`SpellItemEnchantment` field 22); its row holds
+//! (`ItemDisplayInfo` column 22) or its enchant (`SpellItemEnchantment` column 31); its row holds
 //! five `ItemVisualEffects` ids, each naming a glow model, and slot `i` hangs on the item model's
 //! attachment `i` (`0x479700` calls `0x712f70(glow, item, i)`). The loaders check each table's
 //! field count and record size (`0x548760`, `0x548530`, `0x54f6e0`).
@@ -150,25 +150,41 @@ pub(crate) fn item_visual_effects_schema() -> Schema {
     s
 }
 
-/// `SpellItemEnchantment.dbc`: 24 fields, 96-byte records. The reference reads the enUS name at
-/// `+0x34` (field 13, `0x4960d0`), the visual at `+0x58` (field 22, `0x5d9be1`) and `Flags` at
-/// `+0x5c` (field 23).
+/// `SpellItemEnchantment.dbc`: 38 columns, 152-byte records, as the 12340 reader (`0x8b7de0`) takes
+/// them: id, charges, the four effect arrays, the 17-column name, then the visual, `Flags` and five
+/// requirement columns. In memory the name collapses to one pointer, so the visual sits at `+0x3c`
+/// (`0x7590e6`) and `Flags` at `+0x40` (`0x52124b` tests bit 0, `0x7510ac` bit 1).
 pub(crate) fn spell_item_enchantment_schema() -> Schema {
     let mut s = Schema::new("SpellItemEnchantment");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
+    s.add_field(SchemaField::new("Charges", FieldType::UInt32));
     for group in ["Effect", "EffectPointsMin", "EffectPointsMax", "EffectArg"] {
         for i in 0..3 {
             s.add_field(SchemaField::new(format!("{group}{i}"), FieldType::UInt32));
         }
     }
-    for i in 0..8 {
+    for i in 0..16 {
         s.add_field(SchemaField::new(format!("Name{i}"), FieldType::String));
     }
     s.add_field(SchemaField::new("NameFlags", FieldType::UInt32));
     s.add_field(SchemaField::new("ItemVisual", FieldType::UInt32));
     s.add_field(SchemaField::new("Flags", FieldType::UInt32));
+    for name in [
+        "SrcItemID",
+        "ConditionID",
+        "RequiredSkillID",
+        "RequiredSkillRank",
+        "MinLevel",
+    ] {
+        s.add_field(SchemaField::new(name, FieldType::UInt32));
+    }
     s
 }
+
+/// `SpellItemEnchantment` columns benilla reads: the enUS name, the visual and `Flags`.
+const ENCHANT_NAME: usize = 14;
+const ENCHANT_VISUAL: usize = 31;
+const ENCHANT_FLAGS: usize = 32;
 
 /// Load and join `ItemVisuals.dbc` and `ItemVisualEffects.dbc`, applying the reference's skips.
 pub fn load_item_visual_catalog(chain: &mut Chain) -> Result<ItemVisualCatalog> {
@@ -219,13 +235,13 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
         // Every row, `Flags == 0` included: the keys are the row set.
-        flags.insert(id, u32_at(r, 23).unwrap_or(0));
-        let visual = u32_at(r, 22).unwrap_or(0) as i32;
+        flags.insert(id, u32_at(r, ENCHANT_FLAGS).unwrap_or(0));
+        let visual = u32_at(r, ENCHANT_VISUAL).unwrap_or(0) as i32;
         if visual != 0 {
             visuals.insert(id, visual);
         }
         // `str_at` drops an empty name.
-        if let Some(name) = str_at(&rs, r, 13) {
+        if let Some(name) = str_at(&rs, r, ENCHANT_NAME) {
             names.insert(id, name);
         }
     }
@@ -332,21 +348,21 @@ mod tests {
         );
     }
 
-    /// Every shipped field-22 value but one `-1` names an ItemVisuals row, which pins the column.
+    /// Every shipped column-31 value but one `-1` names an ItemVisuals row, which pins the column.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_enchant_visuals_resolve() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let visuals = load_item_visual_catalog(&mut chain).expect("load ItemVisuals");
         let enchants = load_enchant_catalog(&mut chain).expect("load SpellItemEnchantment");
-        assert_eq!(enchants.visual_count(), 102, "enchants carrying a visual");
+        assert_eq!(enchants.visual_count(), 225, "enchants carrying a visual");
 
         let resolved = enchants
             .iter_visuals()
             .filter(|(_, v)| visuals.effects(*v).is_some())
             .count();
-        assert_eq!(resolved, 101, "…all but the one -1 row resolve to a row");
+        assert_eq!(resolved, 224, "…all but the one -1 row resolve to a row");
+        assert_eq!(enchants.visual(2605), Some(-1));
 
         // Rockbiter 3 (enchant 1) → visual 61 → the slot-3 rock glow.
         let rockbiter = visuals
@@ -364,25 +380,24 @@ mod tests {
             sharpened[4].as_deref(),
             Some("Spells\\Enchantments\\Sparkle_A.mdx")
         );
-        // A plain +stat enchant carries none (241 "Weapon Damage +2", 929 "Stamina +7").
+        // A plain +stat enchant carries none (241 "+2 Weapon Damage", 929 "+7 Stamina").
         assert_eq!(enchants.visual(241), None);
         assert_eq!(enchants.visual(929), None);
     }
 
-    /// Names are stored in the table's own word order (`"Agility +15"`), glowing or not.
+    /// Names are stored in the table's own word order (`"+15 Agility"`), glowing or not.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_enchant_names_read_off_the_table() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let enchants = load_enchant_catalog(&mut chain).expect("load SpellItemEnchantment");
 
         // 2564, a permanent weapon enchant: a name and a visual (125, GreenGlow_Low) on one row.
-        assert_eq!(enchants.name(2564), Some("Agility +15"));
+        assert_eq!(enchants.name(2564), Some("+15 Agility"));
         assert_eq!(enchants.visual(2564), Some(125));
         // Named, no glow: the +stat family.
-        assert_eq!(enchants.name(241), Some("Weapon Damage +2"));
-        assert_eq!(enchants.name(929), Some("Stamina +7"));
+        assert_eq!(enchants.name(241), Some("+2 Weapon Damage"));
+        assert_eq!(enchants.name(929), Some("+7 Stamina"));
         assert_eq!(enchants.name(1900), Some("Crusader"));
         assert_eq!(enchants.name(999_999), None);
         assert!(
@@ -393,31 +408,30 @@ mod tests {
 
     /// Both bits' rows are named one by one, so a column slip fails.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_enchant_flags_column() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let e = load_enchant_catalog(&mut chain).expect("load SpellItemEnchantment");
 
-        // Bit 0, the bind confirm's gate, on 86 rows: the shaman imbues, the rogue poisons,
-        // Firestone and the Zul'Gurub and Ahn'Qiraj head and leg enchants.
+        // Bit 0, the bind confirm's gate: the shaman imbues, the rogue poisons, the head and leg
+        // enchants, scopes.
         for (id, name) in [
             (1u32, "Rockbiter 3"),
             (7, "Deadly Poison"),
             (283, "Windfury 1"),
             (2488, "+5 All Resistances"),
             (2606, "+30 Attack Power"),
+            (33, "Scope (+3 Damage)"),
         ] {
             assert!(e.binds_the_item(id), "{id} ({name}) must carry Flags & 1");
         }
-        // Profession enchants and consumables (stones, oils, scopes) do not bind.
+        // Profession enchants and consumables (stones, oils) do not bind.
         for (id, name) in [
-            (2564u32, "Agility +15"),
+            (2564u32, "+15 Agility"),
             (1900, "Crusader"),
             (803, "Fiery Weapon"),
-            (40, "Sharpened +2"),
+            (40, "Sharpened (+2 Damage)"),
             (2627, "Wizard Oil"),
-            (33, "Scope (+3 Damage)"),
         ] {
             assert!(
                 !e.binds_the_item(id),
@@ -425,15 +439,18 @@ mod tests {
             );
         }
 
-        // Bit 1, the tooltip line suppression: exactly twelve rows.
+        // Bit 1, the tooltip line suppression: exactly seventeen rows.
         let hidden: std::collections::BTreeSet<u32> =
-            (0..3000).filter(|&id| e.tooltip_hides_name(id)).collect();
+            (0..4000).filter(|&id| e.tooltip_hides_name(id)).collect();
         assert_eq!(
             hidden,
-            [124, 285, 303, 543, 563, 564, 1683, 1783, 1803, 1823, 1824, 1825]
-                .into_iter()
-                .collect(),
-            "the totem-granted imbues (Flametongue/Windfury Totem), Orb of Fire and Firestone 1-4"
+            [
+                124, 285, 303, 543, 563, 564, 1683, 1783, 1803, 1823, 1824, 1825, 2637, 2638, 2639,
+                2645, 3014
+            ]
+            .into_iter()
+            .collect(),
+            "the totem-granted imbues, Orb of Fire, the Firestones and their 3.3.5a kin"
         );
         // The name stays, for the replace confirm.
         assert_eq!(e.name(124), Some("Flametongue Totem 1"));

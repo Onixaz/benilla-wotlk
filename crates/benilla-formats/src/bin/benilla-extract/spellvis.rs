@@ -51,15 +51,14 @@ pub fn run(chain: &mut Chain, spell_id: u32) -> Result<()> {
                             ),
                         }
                     }
-                    // The kit's CharProcs (fields 15-34), what it does to the body.
+                    // The kit's CharProcs (columns 17-36), what it does to the body.
                     crate::charprocs::print_kit_procs(&visuals, kit_id, "           ");
                     // The beam, if any: the chain CharProc's decoded `SpellChainEffects` row.
                     if let Some(c) = kit.chain_proc() {
                         match visuals.chain_effect(c.effect_id) {
                             Some(e) => println!(
-                                "           beam   chain {} x{} flag={} -> {} (segLen {} halfWidth {} noise {} scroll {}s hopLife {}ms hopStagger {}ms)",
+                                "           beam   chain {} flag={} -> {} (segLen {} halfWidth {} noise {} scroll {}s hopLife {}ms delay {}ms hopStagger {}ms)",
                                 c.effect_id,
-                                c.beams,
                                 u8::from(c.flag),
                                 e.texture,
                                 e.avg_seg_len,
@@ -67,6 +66,7 @@ pub fn run(chain: &mut Chain, spell_id: u32) -> Result<()> {
                                 e.noise_scale,
                                 e.scroll_period_s,
                                 e.bolt_life_ms,
+                                e.first_bolt_delay_ms,
                                 e.bolt_stagger_ms,
                             ),
                             None => println!(
@@ -86,12 +86,10 @@ pub fn run(chain: &mut Chain, spell_id: u32) -> Result<()> {
             }
         }
     }
-    // A missile exists whenever `Speed > 0`: its model is field 7's `SpellVisualEffectName`, else
-    // the ammo or ErrorCube fallback, and it homes on a live target's field-9 dest-attach ordinal.
+    // A missile exists whenever `Speed > 0`: its model is column 8's `SpellVisualEffectName`, else
+    // the ammo or ErrorCube fallback, and it homes on a live target's column-10 dest attachment.
     if spell.speed > 0.0 {
-        let tag = benilla_formats::MISSILE_ATTACH_TABLE
-            .get(stages.missile_attach as usize)
-            .copied();
+        let tag = stages.missile_dest_attachment();
         println!(
             "  missile  effect {:<5} -> {}   dest ordinal {} (attach {})",
             stages.missile_model,

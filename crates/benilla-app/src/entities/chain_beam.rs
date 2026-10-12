@@ -3,10 +3,10 @@
 //! `caster → t1 → t2 → …`, one ribbon per hop, subdivided, jittered every frame and scrolled: the
 //! reference's `LightningObject` (`0x6ec460`) and `CLightning` (`0x7af9b0`/`0x7afcb0`).
 //!
-//! Hop `i` burns in `[t0 + i × stagger, + life)` (`0x6ec980`), so a 3-hop cast arcs outward, and
-//! the beam expires at `t0 + hops × life`. `ChainProc::flag`, the decoded `CharParamTwo`, is the
-//! whole cast/channel split: set, both are bypassed and the beam lives until swept by
-//! `LightningObject::Stop` (`0x6ece10`), whose one caller is the channel teardown.
+//! Hop `i` burns in `[t0 + delay + i × stagger, + life)` (`0x7fa4d0`), and the beam expires with
+//! its last hop. Chain Lightning's row staggers by 0, so its hops light together 300 ms after the
+//! play. `ChainProc::flag`, `CharParamTwo != 0`, is the whole cast/channel split: set, the expiry
+//! is bypassed and the beam lives until swept by the channel teardown.
 //!
 //! Endpoints are identities re-resolved from the live units every frame (`0x6ec460`), so a beam
 //! tracks moving units, and a hop whose unit does not resolve is hidden, not re-pathed.
@@ -15,11 +15,10 @@
 //! emissive white and never tinted, two-sided, depth-write off, fog off, drawn on the shared
 //! effect-quad stream ([`benilla_world::particles::buffer::EffectQuads`]).
 //!
-//! Strands (`CharParamOne`, at most 3, more than one only on Chain Burn) are independently jittered
-//! copies of one polyline; the reference builds them from identical arguments and they diverge only
-//! through their interleaved draws on one shared PRNG.
+//! One strand per play: the 12340 chain case reads no strand count (`0x726ab1`-`0x726af2`), and the
+//! row's joint, wave and arc columns, which shape its beam, are not built.
 
-use benilla_formats::{ChainEffect, MISSILE_ATTACH_TABLE};
+use benilla_formats::ChainEffect;
 use bevy::prelude::*;
 
 use crate::creature_anim::{ChainProcPlay, FxClass, SpellKitFx, SpellVisuals};
@@ -34,8 +33,8 @@ use super::OverheadFallback;
 /// that [`OverheadFallback`] carries, standing in for the reference's `obj+0x90`.
 const CASTER_HEIGHT_FACTOR: f32 = 0.75;
 
-/// The attachment a non-caster end falls back to when the spell's `SpellVisual` field 9 names
-/// none, the reference's literal `0x22` (`0x6ec7b5`–`0x6ec7c7`); below it, the unit's position.
+/// The attachment a non-caster end falls back to when the spell's `SpellVisual` column 10 names
+/// none, the 1.12.1 reference's literal `0x22`; below it, the unit's position.
 const CHAIN_ATTACH_FALLBACK: u16 = 34;
 
 /// The subdivision floor, the `2.0f` at `0x801628` added at `0x7af716`: even a one-yard hop bends.
@@ -68,9 +67,9 @@ pub(crate) struct ChainHops(pub(crate) Vec<Entity>);
 /// One hop of a live beam, the reference's 16-byte `Bolt`, whose `idxA`/`idxB` are always
 /// `(i, i+1)` into the node list.
 struct Bolt {
-    /// `t0 + i × boltStagger` in scene seconds (`0x6ec9d7`–`0x6ec9e8`).
+    /// `t0 + delay + i × stagger` in scene seconds (`0x7fa4e3`, `0x7fa569`).
     start: f32,
-    /// `start + boltLife` (`0x6ec9eb`).
+    /// `start + boltLife` (`0x7fa556`).
     end: f32,
     /// The live jittered polyline per strand, advected rather than rebuilt; empty while the hop is
     /// not drawn.
@@ -90,21 +89,27 @@ pub(crate) struct ChainBeam {
     bolts: Vec<Bolt>,
     effect: ChainEffect,
     texture: Handle<Image>,
-    /// The attachment every non-caster endpoint anchors at, from the spell's `SpellVisual` field 9,
+    /// The attachment every non-caster endpoint anchors at, from the spell's `SpellVisual` column 10,
     /// resolved once where the reference re-reads the unchanging row every frame.
     dest_tag: u16,
     /// The decoded `CharParamTwo`: a channel beam, which never expires by time (`node+0x48`).
     persistent: bool,
-    /// `t0 + hops × boltLife` (`0x6ecd30`); ignored while [`Self::persistent`].
+    /// The last hop's end, the latest any hop burns to (`0x7fa569`); ignored while
+    /// [`Self::persistent`].
     expiry: f32,
     /// The texture-scroll accumulator in seconds (`+0x60`).
     phase: f32,
     rng: u32,
 }
 
-/// The DBC's backslash path as the lowercase, forward-slash `mpq://` URL every BLP load uses.
+/// The DBC's backslash path as the lowercase, forward-slash `mpq://` URL of its `.blp`. The texture
+/// loader tries the stored extension, then `.blp` ([`benilla_assets::sprite_candidates`]); no
+/// `.tga` ships in the 3.3.5a chain, and row 257 stores one.
 fn beam_texture_url(raw: &str) -> String {
-    format!("mpq://{}", raw.to_ascii_lowercase().replace('\\', "/"))
+    format!(
+        "mpq://{}.blp",
+        benilla_assets::sprite_key(raw).replace('\\', "/")
+    )
 }
 
 /// One xorshift draw in `[−1, 1)`. Deviation: not the reference's generator
@@ -209,7 +214,7 @@ pub(super) fn spawn_chain_beams(
         commands.entity(play.entity).try_remove::<ChainHops>();
         // `0x6ecbd0`'s guards: no spell, no strands or no targets is a silent return.
         let targets = select_targets(play.spell_id, hops, store, &index);
-        if play.spell_id == 0 || play.proc.beams == 0 || targets.is_empty() {
+        if play.spell_id == 0 || targets.is_empty() {
             continue;
         }
         let (Some(visuals), Some(spells)) = (visuals.as_deref(), spells.as_deref()) else {
@@ -218,13 +223,12 @@ pub(super) fn spawn_chain_beams(
         let Some(effect) = visuals.0.chain_effect(play.proc.effect_id).cloned() else {
             continue; // an id naming no row is the client's own no-op (`0x6ecc2e`)
         };
-        // `0x6ec780`: the spell's own visual row, field 9 through the missile table, with no
-        // ranged fallback.
+        // The spell's own visual row's dest attachment, with no ranged fallback.
         let dest_tag = spells
             .catalog
             .get(play.spell_id)
             .and_then(|d| visuals.0.stages(d.visual))
-            .and_then(|s| MISSILE_ATTACH_TABLE.get(s.missile_attach as usize).copied())
+            .and_then(|s| s.missile_dest_attachment())
             .unwrap_or(CHAIN_ATTACH_FALLBACK);
         // A persistent beam replaces the one before it on the same caster and spell.
         if play.proc.flag {
@@ -234,18 +238,20 @@ pub(super) fn spawn_chain_beams(
                 }
             }
         }
-        let stagger = f32::from(u16::try_from(effect.bolt_stagger_ms).unwrap_or(u16::MAX)) / 1000.0;
+        let delay = effect.first_bolt_delay_ms as f32 / 1000.0;
+        let stagger = effect.bolt_stagger_ms as f32 / 1000.0;
         let life = effect.bolt_life_ms as f32 / 1000.0;
         let bolts: Vec<Bolt> = (0..targets.len())
             .map(|i| {
-                let start = now + i as f32 * stagger;
+                let start = now + delay + i as f32 * stagger;
                 Bolt {
                     start,
                     end: start + life,
-                    strands: vec![Vec::new(); play.proc.beams as usize],
+                    strands: vec![Vec::new()],
                 }
             })
             .collect();
+        let expiry = bolts.iter().map(|b| b.end).fold(now + delay, f32::max);
         let texture = asset_server.load::<Image>(beam_texture_url(&effect.texture));
         let nodes = std::iter::once(play.entity).chain(targets).collect();
         commands.spawn((
@@ -254,7 +260,7 @@ pub(super) fn spawn_chain_beams(
                 spell_id: play.spell_id,
                 caster: play.entity,
                 nodes,
-                expiry: now + bolts.len() as f32 * life,
+                expiry,
                 bolts,
                 effect,
                 texture,
@@ -488,11 +494,14 @@ mod tests {
     use super::*;
     use crate::net::ObjectStore;
 
-    /// Chain Lightning (`benilla-extract <Data> spellvis 421`): visual 36, chain effect id 1.
+    /// Chain Lightning (`benilla-extract <Data> spellvis 421`): visual 36.
     const CHAIN_SPELL: u32 = 421;
     const CHAIN_VISUAL: u32 = 36;
+    /// A row that staggers its hops, 61 as shipped: 300 ms delay, 40 ms between hops.
+    const STAGGERED: u32 = 61;
 
-    /// Chain Lightning's `SpellChainEffects` row as shipped (`benilla-extract <Data> chaincensus`).
+    /// `SpellChainEffects` row 1, the 1.12.1 lightning, as 3.3.5a ships it
+    /// (`benilla-extract <Data> chaincensus`).
     fn lightning() -> ChainEffect {
         ChainEffect {
             avg_seg_len: 2.78,
@@ -500,7 +509,8 @@ mod tests {
             noise_scale: 0.04,
             scroll_period_s: 1.0,
             bolt_life_ms: 1000,
-            bolt_stagger_ms: 300,
+            first_bolt_delay_ms: 300,
+            bolt_stagger_ms: 0,
             texture: "Textures\\SpellChainEffects\\Lightning.blp".into(),
         }
     }
@@ -517,7 +527,7 @@ mod tests {
                 HashMap::from([(
                     CHAIN_VISUAL,
                     VisualStages {
-                        // Field 9's ordinal: missile-table index 1 is attachment 34, also the
+                        // Column 10's ordinal: missile-table index 1 is attachment 34, also the
                         // chain's fallback.
                         missile_attach: 1,
                         ..Default::default()
@@ -525,7 +535,15 @@ mod tests {
                 )]),
                 HashMap::new(),
             )
-            .with_chain_effect(1, lightning()),
+            .with_chain_effect(1, lightning())
+            .with_chain_effect(
+                STAGGERED,
+                ChainEffect {
+                    bolt_life_ms: 203,
+                    bolt_stagger_ms: 40,
+                    ..lightning()
+                },
+            ),
         ));
         app.insert_resource(crate::ui_action::Spells {
             catalog: SpellCatalog::from_displays(HashMap::from([(
@@ -548,14 +566,13 @@ mod tests {
             .id()
     }
 
-    /// A cast-stage Chain Lightning play: chain id 1, one strand, flag clear.
+    /// A cast-stage play of chain id 1, flag clear.
     fn play(entity: Entity, spell_id: u32) -> ChainProcPlay {
         ChainProcPlay {
             entity,
             spell_id,
             proc: ChainProc {
                 effect_id: 1,
-                beams: 1,
                 flag: false,
                 ty: char_proc_type::CHAIN_CAST,
             },
@@ -835,16 +852,13 @@ mod tests {
             "caster → t1 → t2, in wire order"
         );
         assert_eq!(bolts.len(), 2, "two hops for two targets");
-        // id 1's row: 1000 ms of life per hop, 300 ms of stagger between them.
-        assert!(
-            (bolts[1].0 - bolts[0].0 - 0.3).abs() < 1e-5,
-            "the hop stagger"
-        );
+        // id 1's row: 1000 ms of life per hop, both lit together after the delay.
+        assert_eq!(bolts[0].0, bolts[1].0, "no stagger between the hops");
         assert!(
             (bolts[0].1 - bolts[0].0 - 1.0).abs() < 1e-5,
             "one second per hop"
         );
-        assert!((expiry - bolts[0].0 - 2.0).abs() < 1e-5, "hops × boltLife");
+        assert_eq!(*expiry, bolts[1].1, "the beam ends with its last hop");
         assert!(!persistent, "a cast-stage proc (flag 0) self-terminates");
 
         assert!(app.world().entity(caster).get::<ChainHops>().is_none());
@@ -855,6 +869,29 @@ mod tests {
             1,
             "the second play has nothing to run"
         );
+    }
+
+    /// Row 61: hop `i` lights `delay + i × 40 ms` after the play and burns 203 ms.
+    #[test]
+    fn a_staggered_row_lights_its_hops_in_turn() {
+        let mut app = beam_app();
+        let (caster, t1, t2) = (unit(&mut app), unit(&mut app), unit(&mut app));
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(ChainHops(vec![t1, t2]));
+        let mut p = play(caster, CHAIN_SPELL);
+        p.proc.effect_id = STAGGERED;
+        app.world_mut().write_message(p);
+        app.update();
+        let now = app.world().resource::<Time>().elapsed_secs();
+        let (_, bolts, expiry, _) = beams(&mut app).remove(0);
+        assert!((bolts[0].0 - now - 0.3).abs() < 1e-5, "the first-hop delay");
+        assert!((bolts[1].0 - bolts[0].0 - 0.04).abs() < 1e-5, "the stagger");
+        assert!(
+            (bolts[1].1 - bolts[1].0 - 0.203).abs() < 1e-5,
+            "203 ms a hop"
+        );
+        assert_eq!(expiry, bolts[1].1);
     }
 
     #[test]
@@ -901,11 +938,7 @@ mod tests {
 
     #[test]
     fn the_constructors_guards_build_nothing_but_still_consume() {
-        for (spell_id, beams_param, effect_id) in [
-            (0u32, 1u32, 1u32),
-            (CHAIN_SPELL, 0, 1),
-            (CHAIN_SPELL, 1, 99),
-        ] {
+        for (spell_id, effect_id) in [(0u32, 1u32), (CHAIN_SPELL, 99)] {
             let mut app = beam_app();
             let (caster, t1) = (unit(&mut app), unit(&mut app));
             app.world_mut()
@@ -913,12 +946,11 @@ mod tests {
                 .insert(ChainHops(vec![t1]));
             let mut p = play(caster, spell_id);
             p.proc.effect_id = effect_id;
-            p.proc.beams = beams_param;
             app.world_mut().write_message(p);
             app.update();
             assert!(
                 beams(&mut app).is_empty(),
-                "spell {spell_id} / beams {beams_param} / chain {effect_id} draws nothing"
+                "spell {spell_id} / chain {effect_id} draws nothing"
             );
             assert!(
                 app.world().entity(caster).get::<ChainHops>().is_none(),
@@ -932,6 +964,11 @@ mod tests {
         assert_eq!(
             beam_texture_url("Textures\\SpellChainEffects\\Lightning.blp"),
             "mpq://textures/spellchaineffects/lightning.blp"
+        );
+        assert_eq!(
+            beam_texture_url("Textures\\SpellChainEffects\\SummonGhoulsLightning.tga"),
+            "mpq://textures/spellchaineffects/summonghoulslightning.blp",
+            "the `.blp` the loader falls back to"
         );
     }
 }

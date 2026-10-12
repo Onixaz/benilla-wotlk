@@ -989,8 +989,8 @@ mod tests {
         assert!(enchant_lines([(0, 2564, 0, None)], None).is_empty());
     }
 
-    /// `SpellItemEnchantment` field 23 for three synthetic rows: one that binds, one that binds
-    /// AND hides its tooltip line (the Firestone shape), one that does neither.
+    /// `SpellItemEnchantment.Flags` for three synthetic rows: one that binds, one that binds AND
+    /// hides its tooltip line (the Firestone shape), one that does neither.
     fn catalog() -> Enchants {
         Enchants(benilla_formats::EnchantCatalog::from_rows(
             HashMap::new(),

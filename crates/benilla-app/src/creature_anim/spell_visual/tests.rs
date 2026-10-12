@@ -817,16 +817,15 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
     );
 }
 
-/// A Speed>0 GO with no hits but a ground point spawns one projectile at it (`0x6e8a50`'s empty-hit
-/// arm), whose arrival (`0x61d870`) rings `SpellVisual` field 13's kit sound at the landing point.
-#[test]
-fn a_targetless_dest_go_spawns_a_ground_missile_whose_arrival_sounds_at_the_point() {
-    const GROUND: u32 = 1543; // Flare's shape: speed>0, dest-targeted, empty hit list
+/// A router app with one dest-targeted spell of this visual row, its kits and effect paths.
+fn ground_app(
+    spell_id: u32,
+    speed: f32,
+    stages: VisualStages,
+    kits: HashMap<u32, VisualKit>,
+    paths: HashMap<u32, String>,
+) -> App {
     const VISUAL: u32 = 318;
-    const AREA_KIT: u32 = 3270;
-    const BOOM: u32 = 4100;
-    let at = Vec3::new(11.0, 2.0, -3.0);
-
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
     app.add_message::<CastEvent>()
@@ -844,17 +843,42 @@ fn a_targetless_dest_go_spawns_a_ground_missile_whose_arrival_sounds_at_the_poin
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
         .add_message::<SheathRequest>();
-    app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
-        HashMap::from([(
-            VISUAL,
-            VisualStages {
-                // Field 6 ≠ 0: the missile owns the arrival, so the GO plays no dest burst.
-                missile_gate: 1,
-                area_effect: 3021,
-                area_kit: AREA_KIT,
+    app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables_with_paths(
+        HashMap::from([(VISUAL, stages)]),
+        kits,
+        paths,
+    )));
+    app.insert_resource(crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            spell_id,
+            SpellDisplay {
+                visual: VISUAL,
+                speed,
                 ..Default::default()
             },
-        )]),
+        )])),
+        ..crate::ui_action::Spells::empty_for_tests()
+    });
+    app.add_systems(Update, route_cast_visuals);
+    app
+}
+
+/// A Speed>0 GO with no hits but a ground point spawns one projectile at it (`0x6e8a50`'s empty-hit
+/// arm), whose arrival rings `SpellVisual` column 24's kit sound at the landing point.
+#[test]
+fn a_targetless_dest_go_spawns_a_ground_missile_whose_arrival_sounds_at_the_point() {
+    const GROUND: u32 = 1543; // Flare's shape: speed>0, dest-targeted, empty hit list
+    const AREA_KIT: u32 = 3270;
+    const BOOM: u32 = 4100;
+    let at = Vec3::new(11.0, 2.0, -3.0);
+    let mut app = ground_app(
+        GROUND,
+        5.0,
+        VisualStages {
+            missile_gate: 1,
+            impact_area_kit: AREA_KIT,
+            ..Default::default()
+        },
         HashMap::from([(
             AREA_KIT,
             VisualKit {
@@ -862,19 +886,8 @@ fn a_targetless_dest_go_spawns_a_ground_missile_whose_arrival_sounds_at_the_poin
                 ..Default::default()
             },
         )]),
-    )));
-    app.insert_resource(crate::ui_action::Spells {
-        catalog: SpellCatalog::from_displays(HashMap::from([(
-            GROUND,
-            SpellDisplay {
-                visual: VISUAL,
-                speed: 5.0,
-                ..Default::default()
-            },
-        )])),
-        ..crate::ui_action::Spells::empty_for_tests()
-    });
-    app.add_systems(Update, route_cast_visuals);
+        HashMap::new(),
+    );
 
     let caster = app.world_mut().spawn_empty().id();
     app.world_mut().write_message(SpellGoTargets {
@@ -901,7 +914,7 @@ fn a_targetless_dest_go_spawns_a_ground_missile_whose_arrival_sounds_at_the_poin
             .drain()
             .next()
             .is_none(),
-        "field 6 ≠ 0 suppresses the GO's dest one-shot — the missile owns the arrival"
+        "no instant area kit, no burst at GO: the impact area kit waits for the landing"
     );
 
     // The arrival the missile lane writes back.
@@ -923,6 +936,73 @@ fn a_targetless_dest_go_spawns_a_ground_missile_whose_arrival_sounds_at_the_poin
             [SpellKitSound::PlayAt { pos, kit_sound }] if pos == at && kit_sound == BOOM
         ),
         "the area kit's sound, at the landing point: {sounds:?}"
+    );
+}
+
+/// `SMSG_SPELL_GO` with a dest point plays column 23's kit there (`0x80ee85`): every effect model
+/// once at the point and the sound there, missile or not.
+#[test]
+fn a_dest_go_plays_the_instant_area_kit_at_the_point() {
+    const INSTANT_KIT: u32 = 1944;
+    const SPARK: u32 = 4101;
+    let at = Vec3::new(-4.0, 1.0, 9.0);
+    let mut app = ground_app(
+        2120,
+        0.0,
+        VisualStages {
+            instant_area_kit: INSTANT_KIT,
+            ..Default::default()
+        },
+        HashMap::from([(
+            INSTANT_KIT,
+            VisualKit {
+                sound: Some(SPARK),
+                // A base slot and a world effect: both land at the point.
+                effect_slots: [None, None, Some(420), None, None, None, None, None, None],
+                world_effect: Some(5721),
+                ..Default::default()
+            },
+        )]),
+        HashMap::from([
+            (420, "Spells\\Flamestrike_Impact_Base.mdx".to_string()),
+            (5721, "Spells\\Blizzard_Spawn.mdx".to_string()),
+        ]),
+    );
+    let caster = app.world_mut().spawn_empty().id();
+    app.world_mut().write_message(SpellGoTargets {
+        caster,
+        spell_id: 2120,
+        hits: Vec::new(),
+        misses: Vec::new(),
+        dest: Some(at),
+        ammo_display_id: None,
+        seq: 1,
+    });
+    app.update();
+    let bursts: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Messages<crate::entities::dest_fx::GroundBurst>>()
+        .drain()
+        .map(|b| (b.path, b.pos))
+        .collect();
+    assert_eq!(
+        bursts,
+        [
+            ("Spells\\Flamestrike_Impact_Base.mdx".to_string(), at),
+            ("Spells\\Blizzard_Spawn.mdx".to_string(), at),
+        ]
+    );
+    let sounds: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Messages<SpellKitSound>>()
+        .drain()
+        .collect();
+    assert!(
+        matches!(
+            sounds[..],
+            [SpellKitSound::PlayAt { pos, kit_sound }] if pos == at && kit_sound == SPARK
+        ),
+        "the kit sound at the point: {sounds:?}"
     );
 }
 

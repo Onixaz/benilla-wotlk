@@ -1,7 +1,7 @@
 //! `chaincensus`: every `SpellVisualKit` that draws a `SpellChainEffects` beam, the row it names
-//! and the spells that reach it by stage. Each live slot must name one of the table's 18 rows, or
-//! the small-int decode of `CharParamZero` is wrong. The client tells the two kinds apart by the
-//! flag alone, never the type key: `channel` kits ship flag 1, `cast` kits flag 0.
+//! and the spells that reach it by stage. Each live slot must name one of the table's rows, or the
+//! decode of `CharParamZero` is wrong. The client tells the two kinds apart by the flag alone,
+//! never the type key.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -48,13 +48,13 @@ fn kit_reachability(
     Ok(out)
 }
 
-/// Census the beam system: the 18-row effect table, then every kit that draws one.
+/// Census the beam system: the effect table, then every kit that draws one.
 pub fn run(chain: &mut Chain) -> Result<()> {
     let visuals = benilla_formats::load_spell_visual_catalog(chain)?;
     let reach = kit_reachability(chain, &visuals)?;
 
     println!(
-        "SpellChainEffects: {} rows\n{:>4}  {:>8} {:>6} {:>7} {:>7} {:>7} {:>6}  texture",
+        "SpellChainEffects: {} rows\n{:>4}  {:>8} {:>6} {:>7} {:>7} {:>7} {:>7} {:>6}  texture",
         visuals.chain_effect_len(),
         "id",
         "segLen",
@@ -62,27 +62,29 @@ pub fn run(chain: &mut Chain) -> Result<()> {
         "noise",
         "scrollS",
         "hopLife",
+        "delay",
         "hopStag",
     );
-    for id in 0..=255 {
+    for id in visuals.chain_effect_ids() {
         let Some(c) = visuals.chain_effect(id) else {
             continue;
         };
         println!(
-            "{id:>4}  {:>8} {:>6} {:>7} {:>7} {:>7} {:>6}  {}",
+            "{id:>4}  {:>8} {:>6} {:>7} {:>7} {:>7} {:>7} {:>6}  {}",
             c.avg_seg_len,
             c.half_width,
             c.noise_scale,
             c.scroll_period_s,
             c.bolt_life_ms,
+            c.first_bolt_delay_ms,
             c.bolt_stagger_ms,
             c.texture,
         );
     }
 
     println!(
-        "\n{:>5} {:>4} {:>5} {:>5} {:>4}  {:<9} {:<26} spells",
-        "kit", "type", "chain", "beams", "flag", "stage", "texture",
+        "\n{:>5} {:>4} {:>5} {:>4}  {:<9} {:<26} spells",
+        "kit", "type", "chain", "flag", "stage", "texture",
     );
     let (mut live, mut padding, mut spells_hit) = (0usize, 0usize, BTreeSet::new());
     for kit_id in visuals.kit_ids() {
@@ -105,10 +107,9 @@ pub fn run(chain: &mut Chain) -> Result<()> {
             let listed: Vec<&str> = spells.iter().take(6).map(String::as_str).collect();
             let more = spells.len().saturating_sub(listed.len());
             println!(
-                "{kit_id:>5} {:>4} {:>5} {:>5} {:>4}  {:<9} {texture:<26} {}{}",
+                "{kit_id:>5} {:>4} {:>5} {:>4}  {:<9} {texture:<26} {}{}",
                 c.ty,
                 c.effect_id,
-                c.beams,
                 u8::from(c.flag),
                 stages.iter().copied().collect::<Vec<_>>().join(","),
                 listed.join(", "),

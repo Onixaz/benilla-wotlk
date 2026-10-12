@@ -477,7 +477,7 @@ pub(super) struct FxAttached {
     instances: Vec<FxInstance>,
 }
 
-/// A world-planted kit instance root (kit field 12): a free entity planted once at its owner
+/// A world-planted kit instance root (kit column 14): a free entity planted once at its owner
 /// (`0x620a90`), and re-planted on displacement for a root-aura spell (`0x620580`).
 #[derive(Component)]
 pub(super) struct WorldPlantFx {
@@ -788,7 +788,7 @@ pub(super) fn attach_spell_fx(
             if dm.parts.is_none() {
                 return true; // model still loading
             }
-            // The world-plant slot (kit field 12): no attach tag (`0x61fcf0` pushes -1), planted
+            // The world-plant slot (kit column 14): no attach tag (`0x61fcf0` pushes -1), planted
             // once in world space (`0x620c86` via `0x620a90`), riding no bone.
             let planted = inst.tag == benilla_formats::WORLD_EFFECT_TAG;
             // A bone-riding effect waits for the body: before it is built there are no attach

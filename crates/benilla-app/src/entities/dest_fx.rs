@@ -1,7 +1,7 @@
 //! Dest-anchored spell effects: what a ground cast shows at its point. A DynamicObject anchors a
-//! persistent area effect with two visuals, its own looping model and a shard emitter, outside the
-//! unit kit pipeline (no `PlaySpellVisualKit` `0x60edf0` call site is on this class), and
-//! `SMSG_SPELL_GO` plays a one-shot at the dest point.
+//! persistent area effect with two visuals from `SpellVisual` column 25's kit, its own looping
+//! model (`0x704b30`) and a shard emitter (`0x704f60`), outside the unit kit pipeline, and the area
+//! kits play their models once at a point ([`GroundBurst`]).
 
 use bevy::prelude::*;
 
@@ -83,11 +83,11 @@ pub(super) struct ShardEmitter {
     rng: u64,
 }
 
-/// The router's dest one-shot: `SMSG_SPELL_GO` to a dest location plays `SpellVisual` field 12 once
-/// at the point when field 6, the missile, is 0 (`0x6e8088`..`0x6e8143`).
+/// One effect model of an area kit played at a point: `SMSG_SPELL_GO`'s instant area kit at the
+/// dest point, a missile's impact area kit where it lands.
 #[derive(Message, Clone)]
 pub(crate) struct GroundBurst {
-    /// The field-12 `SpellVisualEffectName` model path.
+    /// The `SpellVisualEffectName` model path.
     pub(crate) path: String,
     /// The dest point, in Bevy coordinates.
     pub(crate) pos: Vec3,
@@ -129,27 +129,25 @@ pub(super) fn arm_ground_effects(
             .dynamicobject_position()
             .map(|(_, f)| f)
             .unwrap_or(0.0);
-        // Visual A (`0x5d57c0`): field 12's model when field 11 is set, at the object's position
-        // with no terrain projection, turned by `DYNAMICOBJECT_FACING` (`0x613ef0`, `0x7bdd60`);
-        // as a child it goes with the anchor.
-        if stages.area_gate != 0 && stages.area_effect != 0 {
-            if let Some(path) = visuals.0.effect_path(stages.area_effect) {
-                let path = path.to_string();
-                ensure_model(&mut fx, &asset_server, &path);
-                let child = commands
-                    .spawn((
-                        GroundFx::new(path, true),
-                        Transform::from_rotation(Quat::from_rotation_y(facing)),
-                        Visibility::default(),
-                    ))
-                    .id();
-                commands.entity(anchor).add_child(child);
-            }
+        // Visual A (`0x704b30`): the persistent kit's world effect, else its base slot, at the
+        // object's position with no terrain projection, turned by `DYNAMICOBJECT_FACING`; as a
+        // child it goes with the anchor.
+        if let Some((_, path)) = visuals.0.persistent_area_model(stages) {
+            let path = path.to_string();
+            ensure_model(&mut fx, &asset_server, &path);
+            let child = commands
+                .spawn((
+                    GroundFx::new(path, true),
+                    Transform::from_rotation(Quat::from_rotation_y(facing)),
+                    Visibility::default(),
+                ))
+                .id();
+            commands.entity(anchor).add_child(child);
         }
-        // Visual B from field 13's kit, whose sound loops as the area sound: stopped at destroy,
+        // Visual B from the same kit, whose sound loops as the area sound: stopped at destroy,
         // where the reference fades it over 3 s. A kit with no type-9 block sounds here; whether
         // the reference, which ties the sound to the emitter, sounds it is untraced.
-        if let Some(kit) = visuals.0.kit(stages.area_kit) {
+        if let Some(kit) = visuals.0.kit(stages.persistent_area_kit) {
             if let Some(proc) = kit.char_procs().find(|p| p.ty == PROC_TYPE_SHARD_EMITTER) {
                 let path = SHARD_MODELS[shard_model_index(proc.params[0])].to_string();
                 ensure_model(&mut fx, &asset_server, &path);
@@ -169,10 +167,9 @@ pub(super) fn arm_ground_effects(
             }
         }
         debug!(
-            "dest_fx: dynobj armed — spell {spell_id}, gateA={} effect={} kit={} radius {:?}",
-            stages.area_gate,
-            stages.area_effect,
-            stages.area_kit,
+            "dest_fx: dynobj armed — spell {spell_id}, kit={} model={:?} radius {:?}",
+            stages.persistent_area_kit,
+            visuals.0.persistent_area_model(stages).map(|(id, _)| id),
             store.0.dynamicobject_radius(),
         );
     }

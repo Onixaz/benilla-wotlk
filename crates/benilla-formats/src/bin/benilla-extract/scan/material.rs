@@ -921,8 +921,8 @@ fn fx_record(
 }
 
 /// Every model the spell-visual tables reach, keyed by [`crate::model_key`], then joined to the
-/// spells: every kit's ten effect slots, and each `SpellVisual` row's missile model (field 7) and
-/// dest-anchored model (field 12). Stage `area` covers field 12 and the area kit (field 13).
+/// spells: every kit's ten effect slots and each `SpellVisual` row's missile model (column 8).
+/// Stage `area` covers the three area kits (columns 23-25).
 fn fx_corpus(
     visuals: &benilla_formats::SpellVisualCatalog,
     spells: &benilla_formats::SpellCatalog,
@@ -938,7 +938,6 @@ fn fx_corpus(
     }
     for (_, st) in visuals.visuals() {
         fx_record(&mut out, visuals, st.missile_model, None);
-        fx_record(&mut out, visuals, st.area_effect, None);
     }
     for (id, sp) in spells.iter() {
         let Some(st) = visuals.stages(sp.visual).copied() else {
@@ -950,7 +949,9 @@ fn fx_corpus(
             ("impact", st.impact),
             ("state", st.state),
             ("channel", st.channel),
-            ("area", st.area_kit),
+            ("area", st.instant_area_kit),
+            ("area", st.impact_area_kit),
+            ("area", st.persistent_area_kit),
         ] {
             let Some(kit) = visuals.kit(kit_id) else {
                 continue;
@@ -964,12 +965,6 @@ fn fx_corpus(
             visuals,
             st.missile_model,
             Some((id, &sp.name, "missile")),
-        );
-        fx_record(
-            &mut out,
-            visuals,
-            st.area_effect,
-            Some((id, &sp.name, "area")),
         );
     }
     out
