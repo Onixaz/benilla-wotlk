@@ -40,6 +40,13 @@ impl UiScript {
 /// [`UiScript::fire_event`] for a caller holding `&Lua`, such as a Lua binding.
 pub(crate) fn fire_event_into(lua: &Lua, event: &str, args: Vec<ScriptValue>) {
     let model_mut = || crate::script::model_mut_of(lua);
+    let vm = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data set")
+        .vm;
+    if !vm.fires(event) {
+        return;
+    }
     {
         let mut at = {
             let model = model_mut();

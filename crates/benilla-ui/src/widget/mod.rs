@@ -490,10 +490,7 @@ impl WidgetArena {
                 }
                 // `CGCharacterModelBase` extends `CSimpleModel`, adding only a turn-animation pair,
                 // which is not modelled.
-                FrameKind::Model
-                | FrameKind::PlayerModel
-                | FrameKind::DressUpModel
-                | FrameKind::TabardModel => KindState::Model(kinds::ModelState::default()),
+                k if k.is_model() => KindState::Model(kinds::ModelState::default()),
                 FrameKind::Minimap => KindState::Minimap(kinds::MinimapState::default()),
                 FrameKind::GameTooltip => KindState::Tooltip(kinds::TooltipState::default()),
                 FrameKind::Cooldown => KindState::Cooldown(CooldownState::default()),

@@ -16,6 +16,7 @@ mod end_to_end;
 mod events;
 mod font_object;
 mod frame_api;
+mod glue_surface;
 mod gm_ticket;
 mod grammar;
 mod handler_prof;

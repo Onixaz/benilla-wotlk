@@ -86,3 +86,24 @@ rules, and are ignored until they are ported.
 loads at the width its loader checks, if a loader reads a table `dbc_tables.rs` does not
 register, if a table 12340 reads is neither read nor listed with what it backs, or if benilla
 reads one of the tables 12340 never reads without saying so.
+
+## `1.12-glue-events.tsv` and `1.12-glue-surface.tsv`
+
+The glue screens' own FrameScript state. The glue builder (`0x46a7b0`) gives Lua a different
+surface and a different event table from the in-game state's, and GlueXML runs against those.
+
+`1.12-glue-events.tsv` is the 26-entry event table (`0xb41e70`) the builder loads in place of the
+in-game one (`0x703d90` at `0x46a88f`), so a glue event's id names a different event in-game. It is
+vendored from the client's bytes, as `1.12-event-catalog.tsv` is.
+
+`1.12-glue-surface.tsv` is every function in the glue state's `_G` before GlueXML loads: the base
+set both states share (`0x7039e0`), the three registrars the in-game state calls too, and the four
+glue-only tables, with each glue verb's in-game namesake and the six whose shape differs from it.
+Regenerating: `scripts/gen-reference-glue-surface.py`, from the shapes and globals tables, so it
+reproduces the committed file from any clone.
+
+Reading them: `crates/benilla-ui/src/script/tests/glue_surface.rs` holds the surface table to the
+shapes table, row for row by `table_va`, and the glue VM (`UiScript::new_glue`) to the surface table:
+every function it exposes is a glue-state one, and every glue-state function it lacks is on the
+file's `NOT_YET` list, which only shrinks. The same file holds the VM's event table to
+`1.12-glue-events.tsv`.
