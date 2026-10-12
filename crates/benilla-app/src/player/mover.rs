@@ -80,6 +80,21 @@ pub(super) fn step(
     let cast = |from: Vec3, disp: Vec3| world.cast_mover(capsule, from, disp, SKIN_WIDTH);
     let probe_down = |c: Vec3, dist: f32| cast(c, Vec3::NEG_Y * dist);
 
+    // The first frame after a settle hold may lift a body the server placed inside the ground.
+    if std::mem::take(&mut player.settle_lift) && !player.settling {
+        if let Some(up) = buried_floor_lift(world, capsule, center) {
+            center.y += up;
+            let feet = center - half_h;
+            benilla_assets::trace::line(
+                "move",
+                &format!(
+                    "settle lift {up:+.2} to ({:8.2},{:7.2},{:8.2})",
+                    feet.x, feet.y, feet.z
+                ),
+            );
+        }
+    }
+
     // Airborne, the ground reach tightens to [`LAND_PROBE`] so the arc ends where the slide meets
     // the floor. A hovering body rests [`HOVER_HEIGHT`] up, so every ground reach grows by it.
     let hover_offset = if player.modes.hover {
@@ -350,6 +365,34 @@ pub(super) fn step(
             None
         },
     }
+}
+
+/// How far to lift a body whose feet start under a walkable floor that crosses its own height;
+/// `None` when a walkable floor is under its feet or none crosses it. The server's position can
+/// sit inside the ground: a typed `.go xyz` z, or a saved z under a slope. Our one-sided down probe
+/// drops a face wholly above the feet (`one_sided`'s backface band), so such a body falls through
+/// the world. The reference never falls from a slightly low server z; its walk resolver skips a
+/// body at rest (read on 1.12.1). We classify every frame, so the settle release seats the body on
+/// the floor to the same end.
+pub(super) fn buried_floor_lift(
+    world: &benilla_world::collision::WorldCollision<'_, '_>,
+    capsule: &Collider,
+    center: Vec3,
+) -> Option<f32> {
+    // The classify's own test: a buried body may still touch a face (the band keeps one with a
+    // vertex near the feet, an edge's normal), which is no floor.
+    if world
+        .cast_mover(capsule, center, Vec3::NEG_Y * GROUND_PROBE, SKIN_WIDTH)
+        .is_some_and(|h| h.normal1.y >= GROUND_COS)
+    {
+        return None;
+    }
+    // Swept down from one body height up, so only a face inside the body's span is found; a
+    // ceiling's face is wound away from a downward sweep and is skipped.
+    let top = center + Vec3::Y * CAPSULE_HEIGHT;
+    let hit = world.cast_mover(capsule, top, Vec3::NEG_Y * CAPSULE_HEIGHT, SKIN_WIDTH)?;
+    let up = CAPSULE_HEIGHT - hit.distance;
+    (hit.normal1.y >= GROUND_COS && up > 0.0).then_some(up)
 }
 
 /// The body facts [`grounded_step`] cannot work out for itself, passed in by its caller.
@@ -1960,6 +2003,89 @@ mod tests {
             (Vec3::ZERO, false),
             "the planted nibble locks the arc: no nudge fires and the body does not drift, however \
              hard the key is held"
+        );
+    }
+
+    /// Elwynn's two falls (issue #96): the server put the feet 0.16 and 1.29 yd under the terrain,
+    /// and the first free frame fell through it. The settle release stands the body on the floor,
+    /// and only then; a body already on its floor is not moved.
+    #[test]
+    fn a_body_released_inside_the_ground_stands_on_it() {
+        const FLAT: [(f32, f32); 2] = [(-3.0, 0.0), (3.0, 0.0)];
+        // Feet after one release frame and after 30 more frames at rest.
+        let settle = |feet_y: f32, release: bool| {
+            world_from_profile(&FLAT)
+                .world_mut()
+                .run_system_once(move |world: benilla_world::collision::WorldCollision| {
+                    let capsule = player_capsule();
+                    let mut time = Time::default();
+                    time.advance_by(std::time::Duration::from_secs_f32(1.0 / 60.0));
+                    let mut player = Player {
+                        pos: Vec3::new(0.0, feet_y, 0.0),
+                        settle_lift: release,
+                        ..Default::default()
+                    };
+                    let frame = |player: &mut Player| {
+                        step(
+                            player,
+                            &time,
+                            &world,
+                            &capsule,
+                            false,
+                            Vec3::ZERO,
+                            0.0,
+                            false,
+                            false,
+                            None,
+                            None,
+                            0.0,
+                        )
+                        .grounded
+                    };
+                    let first = (frame(&mut player), player.pos.y);
+                    for _ in 0..30 {
+                        frame(&mut player);
+                    }
+                    (first, player.pos.y)
+                })
+                .unwrap()
+        };
+        for buried in [0.16, 1.29] {
+            let ((grounded, first_y), last_y) = settle(-buried, true);
+            assert!(
+                grounded && (0.0..=SKIN_WIDTH * 2.0).contains(&first_y),
+                "{buried} yd under: the release frame stands on the floor (y={first_y})"
+            );
+            assert!(
+                (last_y - first_y).abs() < 1.0e-3,
+                "{buried} yd under: and stays there ({first_y} -> {last_y})"
+            );
+            let (_, fell_y) = settle(-buried, false);
+            assert!(
+                fell_y < -buried,
+                "{buried} yd under, no release: it falls ({fell_y})"
+            );
+        }
+        // A valley whose floor line passes just over the feet: the band keeps its faces as a touch.
+        const VALLEY: [(f32, f32); 3] = [(-3.0, 0.6), (0.0, 0.0), (3.0, 0.6)];
+        let valley = world_from_profile(&VALLEY)
+            .world_mut()
+            .run_system_once(|world: benilla_world::collision::WorldCollision| {
+                buried_floor_lift(
+                    &world,
+                    &player_capsule(),
+                    Vec3::Y * (CAPSULE_HEIGHT * 0.5 - 0.1),
+                )
+            })
+            .unwrap();
+        assert!(
+            valley.is_some_and(|up| up > 0.1),
+            "a body 0.1 yd under a valley floor is lifted onto it: {valley:?}"
+        );
+        let ((_, on_floor_y), _) = settle(0.01, true);
+        assert!(
+            on_floor_y <= 0.01,
+            "a body on its floor is not lifted ({on_floor_y})"
         );
     }
 
