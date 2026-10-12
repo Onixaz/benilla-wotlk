@@ -83,6 +83,8 @@ pub struct ChrRaces {
     pub fields: usize,
     /// `clientFileString` (`"Human"`, `"Scourge"`).
     pub client_file: usize,
+    /// The enUS slot of `Name_Lang`, the race name (`"Night Elf"`).
+    pub name: usize,
     /// `facialHairCustomization[2]`, male then female.
     pub facial_hair_customization: usize,
     pub hair_customization: usize,
@@ -185,6 +187,7 @@ pub const LAYOUTS: DbcLayouts = DbcLayouts {
     chr_races: ChrRaces {
         fields: 69,
         client_file: 11,
+        name: 14,
         facial_hair_customization: 65,
         hair_customization: 67,
     },

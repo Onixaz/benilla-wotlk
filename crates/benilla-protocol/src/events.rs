@@ -75,6 +75,19 @@ pub enum LoginStage {
     WorldConnected,
 }
 
+/// What a roster was fetched for. The screen takes a reply as its own only when it asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RosterCause {
+    /// The IO thread's own enumeration on reaching the character park, which the native screens
+    /// wait for; the stock screens ask for theirs instead.
+    Park,
+    /// The reply to a roster request from the screen (`CMSG_CHAR_ENUM` for
+    /// `GetCharacterListUpdate`, `0x5aabb0`).
+    Asked,
+    /// A create or delete changed the roster; re-sent before the action's result.
+    Changed,
+}
+
 /// How a world session ended. On a loss the reference fires `DISCONNECTED_FROM_SERVER` and
 /// `GlueParent.lua` returns to the login screen; a logout returns to character select.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +137,21 @@ pub enum SessionEvent {
         realms: Vec<crate::RealmInfo>,
         failed: bool,
     },
+    /// The world server accepted the authentication (`SMSG_AUTH_RESPONSE` `AUTH_OK`, `0x5ab2b8`
+    /// → `0x5aab80`): the world connect is done and the IO thread is at the character park, with
+    /// no roster fetched unless the native policy's enumeration follows. Emitted by the IO thread,
+    /// never wire-decoded. `epoch` numbers the world session, per process; `generation` is the
+    /// abandon generation of the attempt that dialed it, which a Cancel or a disconnect since has
+    /// moved past (the reference drops the socket there, `0x46befd`, `0x46d360`).
+    WorldAuthenticated {
+        realm: crate::RealmInfo,
+        epoch: u64,
+        generation: u64,
+    },
+    /// A roster ask on the parked session failed on the stream (`0x5ab300`'s failure leg,
+    /// `SetStatus(0, 0x2c)`, `CHAR_LIST_FAILED`); the session ends after it. Emitted by the IO
+    /// thread, never wire-decoded.
+    RosterFailed { epoch: u64 },
     /// Queued for a full realm (`AUTH_WAIT_QUEUE`), per queue packet: a wait, not an outcome.
     LoginQueued {
         position: Option<u32>,
@@ -143,6 +171,11 @@ pub enum SessionEvent {
     CharacterList {
         characters: Vec<Character>,
         realm: Option<crate::RealmInfo>,
+        cause: RosterCause,
+        /// The world session's number ([`Self::WorldAuthenticated`]'s), 0 on the raw decode path.
+        epoch: u64,
+        /// The abandon generation of the attempt that dialed that session.
+        generation: u64,
     },
     /// `SMSG_CHAR_CREATE`/`_DELETE`'s raw `WorldResult`; on success a fresh roster comes first.
     CharActionResult { action: CharAction, code: u8 },

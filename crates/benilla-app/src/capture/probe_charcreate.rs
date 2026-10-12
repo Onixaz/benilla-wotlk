@@ -21,6 +21,9 @@ impl Plugin for ProbeCharCreatePlugin {
         else {
             return; // inert without a valid env spec
         };
+        if super::refuse_under_stock(app, "WOW_PROBE_CHARCREATE") {
+            return;
+        }
         let keep = std::env::var("WOW_PROBE_CHARCREATE_KEEP").as_deref() == Ok("1");
         app.insert_resource(CharCreateProbe {
             req,

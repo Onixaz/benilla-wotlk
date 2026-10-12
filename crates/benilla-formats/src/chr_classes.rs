@@ -65,6 +65,7 @@ pub const PET_NAME_TOKEN_FALLBACK: &str = "PET";
 struct ChrClass {
     damage_bonus_stat: u32,
     pet_name_token: Option<String>,
+    name: Option<String>,
     has_relic_slot: bool,
     spell_family: u32,
 }
@@ -95,6 +96,12 @@ impl ChrClasses {
             .get(&class)
             .and_then(|c| c.pet_name_token.as_deref())
             .unwrap_or(PET_NAME_TOKEN_FALLBACK)
+    }
+
+    /// The class's `Name_Lang` name, `GetCharacterInfo`'s third return; `None` for a class with no
+    /// row or no name.
+    pub fn name(&self, class: u32) -> Option<&str> {
+        self.by_id.get(&class)?.name.as_deref()
     }
 
     /// The class's damage bonus stat, 0-based (Strength 0, Agility 1); `None` for a class with
@@ -154,6 +161,7 @@ pub fn load_chr_classes(chain: &mut Chain) -> Result<ChrClasses> {
             ChrClass {
                 damage_bonus_stat: u32_at(r, DAMAGE_BONUS_STAT_FIELD).unwrap_or(0),
                 pet_name_token: str_at(&rs, r, PET_NAME_TOKEN_FIELD),
+                name: str_at(&rs, r, NAME_FIELD),
                 has_relic_slot: u32_at(r, FLAGS_FIELD).is_some_and(|v| v & FLAG_RELIC_SLOT != 0),
                 spell_family: u32_at(r, SPELL_FAMILY_FIELD).unwrap_or(0),
             },

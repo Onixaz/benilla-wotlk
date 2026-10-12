@@ -19,13 +19,16 @@ use super::{
     EnteredWorldMessage, GameTime, GuidIndex, HomeBind, KnockBackMessage, LoggedOutMessage,
     LoginFailedMessage, LoginQueuedMessage, LoginStageMessage, NetCommands, NetHandlerApp,
     NetStatus, ObjectStore, PendingTransfer, Proficiencies, RealmListMessage, Reputations,
-    SelfGuid, ServerTime, ServerWallClock, TeleportMessage, WorldportMessage,
+    RosterFailedMessage, SelfGuid, ServerTime, ServerWallClock, TeleportMessage, WorldAuthMessage,
+    WorldportMessage,
 };
 
 /// Registers the session handlers.
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::LoginStage, on_login_edge)
+        .net_handler(K::WorldAuthenticated, on_login_edge)
+        .net_handler(K::RosterFailed, on_login_edge)
         .net_handler(K::LoginQueued, on_login_edge)
         .net_handler(K::LoginFailed, on_login_edge)
         .net_handler(K::RealmList, on_login_edge)
@@ -69,6 +72,8 @@ pub(crate) struct Edges<'w> {
     knockbacks: MessageWriter<'w, KnockBackMessage>,
     login_stages: MessageWriter<'w, LoginStageMessage>,
     login_queued: MessageWriter<'w, LoginQueuedMessage>,
+    world_auth: MessageWriter<'w, WorldAuthMessage>,
+    roster_failed: MessageWriter<'w, RosterFailedMessage>,
     login_failures: MessageWriter<'w, LoginFailedMessage>,
     disconnects: MessageWriter<'w, DisconnectedMessage>,
     client_control: MessageWriter<'w, ClientControlMessage>,
@@ -100,6 +105,20 @@ pub(crate) struct Bridge<'w, 's> {
 fn on_login_edge(In(ev): In<SessionEvent>, mut e: Edges) {
     match ev {
         SessionEvent::LoginStage { stage } => login_stage(stage, &mut e.login_stages),
+        SessionEvent::WorldAuthenticated {
+            realm,
+            epoch,
+            generation,
+        } => {
+            e.world_auth.write(WorldAuthMessage {
+                realm,
+                epoch,
+                generation,
+            });
+        }
+        SessionEvent::RosterFailed { epoch } => {
+            e.roster_failed.write(RosterFailedMessage { epoch });
+        }
         SessionEvent::LoginQueued { position, realm } => {
             e.login_queued.write(LoginQueuedMessage { position, realm });
         }
@@ -126,8 +145,23 @@ fn on_login_edge(In(ev): In<SessionEvent>, mut e: Edges) {
 }
 
 fn on_character_list(In(ev): In<SessionEvent>, mut e: Edges, mut b: Bridge) {
-    if let SessionEvent::CharacterList { characters, realm } = ev {
-        character_list(characters, realm, &mut b.status, &mut e.char_lists);
+    if let SessionEvent::CharacterList {
+        characters,
+        realm,
+        cause,
+        epoch,
+        generation,
+    } = ev
+    {
+        character_list(
+            characters,
+            realm,
+            cause,
+            epoch,
+            generation,
+            &mut b.status,
+            &mut e.char_lists,
+        );
     }
 }
 
@@ -369,6 +403,9 @@ fn char_action_result(
 fn character_list(
     characters: Vec<Character>,
     realm: Option<benilla_protocol::RealmInfo>,
+    cause: benilla_protocol::RosterCause,
+    epoch: u64,
+    generation: u64,
     status: &mut NetStatus,
     char_lists: &mut MessageWriter<CharListMessage>,
 ) {
@@ -379,7 +416,13 @@ fn character_list(
     // A roster means a live link: clear the failure the logout's synthesized `Disconnected`
     // left, or the select screen keeps its "Server down" note until the next world entry.
     status.last_reason = None;
-    char_lists.write(CharListMessage { characters, realm });
+    char_lists.write(CharListMessage {
+        characters,
+        realm,
+        cause,
+        epoch,
+        generation,
+    });
 }
 
 /// `SMSG_CHARACTER_LOGIN_FAILED`: the announced entry is void; `crate::char_select` says why.

@@ -73,6 +73,9 @@ impl Plugin for ProbeRigPlugin {
         else {
             return; // inert without a parseable spec (parse() has already said why)
         };
+        if super::refuse_under_stock(app, "WOW_RIG") {
+            return;
+        }
         info!("rig: {}", spec.describe());
         // Publish the claim on the character pick, so the roster knows the pick is spoken for.
         if let Some(name) = rig_char_name(&spec) {
