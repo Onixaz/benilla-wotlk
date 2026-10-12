@@ -138,7 +138,8 @@ fn model() -> Vec<u8> {
     tex.extend_from_slice(&6u32.to_le_bytes());
     tex.extend_from_slice(&name.to_le_bytes());
     m.array(h264::TEXTURES, 1, &tex);
-    m.array(h264::PARTICLES, 1, &[0u8; 476]);
+    // The particle emitter array (header +0x128), one 0x1dc-byte record.
+    m.array(0x128, 1, &[0u8; 0x1dc]);
     m.b
 }
 
@@ -228,8 +229,9 @@ fn the_1_12_reader_takes_the_relayout() {
 
 #[test]
 fn what_1_12_cannot_hold_is_named_not_dropped_silently() {
+    // The particle emitter is read from the version-264 record, so the relayout drops nothing.
     let out = relayout_264(&model(), &skin(0)).unwrap();
-    assert_eq!(out.dropped, vec!["1 particle emitters".to_string()]);
+    assert!(out.dropped.is_empty(), "{:?}", out.dropped);
 
     let mut m = model();
     // Sequence 1's keys move to a `.anim` file.
@@ -241,6 +243,29 @@ fn what_1_12_cannot_hold_is_named_not_dropped_silently() {
         "{:?}",
         out.dropped
     );
+}
+
+#[test]
+fn tracks_264_reads_onto_the_relayouts_bands() {
+    let m = model();
+    let mut t = Tracks264::new(&m).unwrap();
+    assert_eq!(
+        t.sequences(),
+        vec![((0, 100), SEQ_IN_FILE), ((101, 151), SEQ_IN_FILE)]
+    );
+    let bone = m.u32_at(h264::BONES + 4).unwrap() as usize;
+    let tr = t.vec3(bone + 0x10, [0.0; 3]).unwrap();
+    // The same keys and windows the relayout writes for the bone's translation.
+    let out = relayout_264(&m, &skin(0)).unwrap();
+    let b = &out.bytes;
+    let (ranges, keys) = track_256(b, b.u32_at(h256::BONES + 4).unwrap() as usize + 0x0c, 12);
+    assert_eq!(tr.ranges, ranges);
+    let as_bytes: Vec<(u32, Vec<u8>)> = tr.keys.iter().map(|&(ms, v)| (ms, floats(&v))).collect();
+    assert_eq!(as_bytes, keys);
+    assert!(matches!(
+        Tracks264::new(&out.bytes),
+        Err(Error::UnsupportedVersion(256))
+    ));
 }
 
 #[test]

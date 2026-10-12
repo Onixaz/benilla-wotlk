@@ -12,8 +12,8 @@ use super::buffer::{
 };
 use super::quads::{expand_quads, CamBasis, DrawFrame};
 use super::{
-    accumulate_emission, emit_local, next_u32, rand01, rand_s11, ChildDraw, ChildEmitter,
-    EmitterFade, OwnerLoss, Particle, ParticleEmitter, ParticleTuning, MAX_PARTICLES,
+    accumulate_emission, emit_local, life_of, next_u32, rand01, rand_s11, BirthRolls, ChildDraw,
+    ChildEmitter, EmitterFade, OwnerLoss, Particle, ParticleEmitter, ParticleTuning, MAX_PARTICLES,
 };
 
 /// The emitter-constant inputs of one integrator step ([`integrate_particle`]).
@@ -25,6 +25,9 @@ struct StepEnv {
     kill_origin: Option<Vec3>,
     /// The frame's shared follow-delta vector, stored frame (zero when unauthored).
     follow: Vec3,
+    /// The emitter's live lifespan and its variance, which every live particle's life follows.
+    lifespan: f32,
+    lifespan_vary: f32,
 }
 
 /// One step of the reference integrator (`0x7b2680`): age and kill; the follow-delta add, skipped
@@ -35,7 +38,8 @@ struct StepEnv {
 fn integrate_particle(p: &mut Particle, env: &StepEnv) -> bool {
     let (dt, g) = (env.dt, env.gravity);
     p.age += dt;
-    // Its own birth-sampled lifetime: the reference feeds each spawn the current lifespan.
+    // The life follows the emitter's live lifespan, varied by the particle's own seed (`0x97de97`).
+    p.life = life_of(env.lifespan, p.life_seed, env.lifespan_vary);
     if p.age >= p.life {
         return false;
     }
@@ -143,18 +147,29 @@ fn drive_child(
                 vel += (1.0 + now.speed_variation * rand_s11(&mut child.rng)) * p.vel;
             }
             let phase = next_u32(&mut child.rng);
-            child.particles.push(Particle {
-                pos: p.pos + fold(local),
+            let age = birth_age(child.def.burst(), dt, &mut child.rng);
+            let rolls = BirthRolls::roll(&child.def, &mut child.rng);
+            child.particles.push(rolls.particle(
+                &child.def,
+                now.lifespan,
+                p.pos + fold(local),
                 vel,
-                age: birth_age(child.def.burst(), dt, &mut child.rng),
-                life: now.lifespan,
+                age,
                 phase,
-                fresh: true,
-                quat: Quat::IDENTITY,
-                angvel: Vec3::ZERO,
-            });
+                Quat::IDENTITY,
+                Vec3::ZERO,
+            ));
         }
     }
+}
+
+/// This frame's rate with its variance, `rate + S11·rateVary` (`0x97d952`), floored at 0 as the
+/// sampled rate is; an emitter without variance draws nothing.
+fn vary_rate(def: &benilla_formats::ParticleEmitterDef, rate: f32, rng: &mut u32) -> f32 {
+    if def.rate_vary == 0.0 {
+        return rate;
+    }
+    (rate + rand_s11(rng) * def.rate_vary).max(0.0)
 }
 
 /// Birth age `U01 · w`, the kernels' third argument (`0x7b88c4`, `0x7b88c7`): `w` is 0 for a burst
@@ -810,6 +825,8 @@ pub(super) fn simulate_particles(
             anchored,
             kill_origin,
             follow,
+            lifespan: now.lifespan,
+            lifespan_vary: def.lifespan_vary,
         };
         particles.retain_mut(|p| integrate_particle(p, &env));
 
@@ -819,7 +836,7 @@ pub(super) fn simulate_particles(
         //    is this emission LOD (`0x7b5550`): × clamp(1 − (camDist − 50)·0.02, 0.25, 1), then
         //    × `particleDensity`.
         let emitting = !*draining && def.timing.emitting(clock_seq, elapsed_s, gseq_now);
-        let rate = def.timing.rate(clock_seq, elapsed_s, gseq_now);
+        let rate = vary_rate(def, def.timing.rate(clock_seq, elapsed_s, gseq_now), rng);
         let dist_lod =
             (1.0 - (placement.translation.distance(e_cam_pos) - 50.0) * 0.02).clamp(0.25, 1.0);
         let burst = accumulate_emission(
@@ -836,6 +853,7 @@ pub(super) fn simulate_particles(
         }
         while *accumulator >= 1.0 && particles.len() < MAX_PARTICLES {
             *accumulator -= 1.0;
+            let rolls = BirthRolls::roll(def, rng);
             let (base, dir) = emit_local(def, &now, rng);
             let speed =
                 now.emission_speed * (1.0 + now.speed_variation * (rand01(rng) * 2.0 - 1.0));
@@ -858,9 +876,8 @@ pub(super) fn simulate_particles(
                 // Probed at the world point and stored back; a yaw-only `A` keeps world down.
                 let world = ride.to_world(pos);
                 if let Some(hit) = spatial.cast_ray(world, Dir3::NEG_Y, 20.0, true, &snap_filter) {
-                    pos = ride.to_stored(
-                        world.with_y(world.y - hit.distance + def.over_life.sample(0.0).size),
-                    );
+                    let lift = def.over_life.sample(0.0).size[1] * rolls.size_mul[1];
+                    pos = ride.to_stored(world.with_y(world.y - hit.distance + lift));
                 }
             }
             // Inherit (the kernels' closing block): `vel += (1 + S11·speedVariation) · inherit`.
@@ -881,7 +898,7 @@ pub(super) fn simulate_particles(
                     (1.0 + rand01(rng)) * (amax[1] - amin[1]),
                     (1.0 + rand01(rng)) * (amax[2] - amin[2]),
                 ];
-                if def.tumble_random_sign() {
+                if def.random_spin_sign() {
                     for a in &mut w {
                         if next_u32(rng) & 1 == 0 {
                             *a = -*a;
@@ -900,16 +917,8 @@ pub(super) fn simulate_particles(
                 (Quat::IDENTITY, Vec3::ZERO)
             };
             let phase = next_u32(rng);
-            particles.push(Particle {
-                pos,
-                vel,
-                age: birth_age(def.burst(), dt, rng),
-                life: now.lifespan,
-                phase,
-                fresh: true,
-                quat,
-                angvel,
-            });
+            let age = birth_age(def.burst(), dt, rng);
+            particles.push(rolls.particle(def, now.lifespan, pos, vel, age, phase, quat, angvel));
         }
 
         // 2b. Children (`0x7b5550`) drive off the post-birth pool on their own tracks, slot 0 on
@@ -917,7 +926,11 @@ pub(super) fn simulate_particles(
         for child in children.iter_mut() {
             // A child cloud is its own fresh instance: its gseq cursor is its own age.
             let c_emitting = !*draining && child.def.timing.emitting(None, *age, f64::from(*age));
-            let c_rate = child.def.timing.rate(None, *age, f64::from(*age));
+            let c_rate = vary_rate(
+                &child.def,
+                child.def.timing.rate(None, *age, f64::from(*age)),
+                &mut child.rng,
+            );
             let c_now = child.def.params.sample(None, *age, f64::from(*age));
             drive_child(
                 child,
@@ -937,6 +950,8 @@ pub(super) fn simulate_particles(
                 anchored,
                 kill_origin: None,
                 follow: Vec3::ZERO,
+                lifespan: c_now.lifespan,
+                lifespan_vary: child.def.lifespan_vary,
             };
             child
                 .particles
@@ -1290,6 +1305,11 @@ mod tests {
             vel,
             age: 0.0,
             life: 10.0,
+            life_seed: 0.0,
+            size_mul: [1.0; 2],
+            base_spin: 0.0,
+            spin: 0.0,
+            cell: 0,
             phase: 0,
             fresh: false,
             quat: Quat::IDENTITY,
@@ -1305,6 +1325,8 @@ mod tests {
             anchored: true,
             kill_origin,
             follow,
+            lifespan: 10.0,
+            lifespan_vary: 0.0,
         }
     }
 

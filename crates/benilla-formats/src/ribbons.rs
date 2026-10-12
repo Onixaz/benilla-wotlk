@@ -1,42 +1,39 @@
-//! M2 ribbon emitters (weapon trails, wisp streamers, missile trails), read from raw bytes in the
-//! reference's layout (relocation fixup `0x71ef40`):
+//! 3.3.5a M2 ribbon emitters (weapon trails, wisp streamers, missile trails), read from the
+//! version-264 record (header +0x120/+0x124, stride 0xb0; loader `0x833702`), its tracks onto the
+//! relayout's sequence bands ([`benilla_m2::Tracks264`]):
 //!
 //! ```text
-//! header array : count @ MD20+0x134, ptr @ MD20+0x138        record stride 0xdc
 //! +0x04 boneIndex(u16)  +0x08 position(C3Vector, bone-local)
 //! +0x14 textureIndices(M2Array<u16> → M2 textures)  +0x1c materialIndices(M2Array<u16> → the
-//!       M2 render-flags table @MD20+0x84, stride 4: flags u16, blend u16)
-//! +0x24 colorTrack(M2Track<C3Vector>)  +0x40 alphaTrack(M2Track<fixed16>)
-//! +0x5c heightAboveTrack(M2Track<f32>)  +0x78 heightBelowTrack(M2Track<f32>)
-//! +0x94 edgesPerSecond(f32)  +0x98 edgeLifetime(f32, clamped ≥ 0.25)  +0x9c gravity(f32)
-//! +0xa0 textureRows(u16)  +0xa2 textureCols(u16)
-//! +0xa4 texSlotTrack(M2Track<u16>)  +0xc0 visibilityTrack(M2Track<u8>)
+//!       M2 render-flags table @MD20+0x70, stride 4: flags u16, blend u16)
+//! +0x24 colorTrack(M2Track<C3Vector>)  +0x38 alphaTrack(M2Track<fixed16>)
+//! +0x4c heightAboveTrack(M2Track<f32>)  +0x60 heightBelowTrack(M2Track<f32>)
+//! +0x74 edgesPerSecond(f32)  +0x78 edgeLifetime(f32, clamped ≥ 0.25)  +0x7c gravity(f32)
+//! +0x80 textureRows(u16)  +0x82 textureCols(u16)
+//! +0x84 texSlotTrack(M2Track<u16>)  +0x98 visibilityTrack(M2Track<u8>)
 //! ```
 //!
 //! Color, alpha and the two heights are keyed tracks rebased onto the first sequence's band;
-//! `texSlot` is its first value, constant in the shipped files. The visibility track sets the
-//! enable byte `block+0xbc` (ctor `0x71b34c` 0, loader `0x70f80e` 1, then every frame at
-//! `0x7176ee`/`0x717714` in `0x714260`; nothing else writes it, and `0x718960` only reads it), and
-//! a cleared byte skips the ribbon's whole draw (`0x7080c2`, `0x708263`). It keys inside a
-//! sequence: `G_FrostTrap.m2` lights its upper streamers 200 ms into `Custom0`.
+//! `texSlot` is its first value. The visibility track sets the enable byte every frame, and a
+//! cleared byte skips the ribbon's whole draw. It keys inside a sequence: `G_FrostTrap.m2` lights
+//! its upper streamers 200 ms into `Custom0`.
 //!
 //! The reference samples a single-key track once and latches it, where this resamples every frame
 //! (the same for a constant track), and windows keys by the emitter bone's active sequence, where
 //! this uses the model's (the same wherever the bone plays the model's sequence).
 
-use std::io::Cursor;
-
 use anyhow::Result;
-use benilla_m2::parse_m2;
+use benilla_m2::{md20_version, M2Track, Tracks264, VERSION_264};
 
-use crate::value_track::{seq0_band, track_keys_with, ValueTrack};
+use crate::particles::{texture_paths_264, HDR_RIBBONS};
+use crate::value_track::{rebase_keys_to_band, TrackValue, ValueTrack};
 use crate::ParticleBlend;
 
-const STRIDE: usize = 0xdc;
-const HDR_COUNT: usize = 0x134;
-const HDR_PTR: usize = 0x138;
+const STRIDE: usize = 0xb0;
 /// The M2 render-flags (materials) table: `{flags u16, blend u16}` per entry.
-const HDR_RENDER_FLAGS: usize = 0x84;
+const HDR_RENDER_FLAGS: usize = 0x70;
+/// The sequences table, `0x40`-byte records with the animation id at +0.
+const HDR_SEQUENCES: usize = 0x1c;
 
 fn le_u16(b: &[u8], o: usize) -> u16 {
     u16::from_le_bytes([b[o], b[o + 1]])
@@ -48,23 +45,20 @@ fn le_f32(b: &[u8], o: usize) -> f32 {
     f32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]])
 }
 
-/// The first value of a 0x1c-byte M2Track (values count @ +0x14, offset @ +0x18), or `default`.
-fn track_first<T>(
-    b: &[u8],
-    track: usize,
-    elem_size: usize,
-    default: T,
-    read: impl Fn(&[u8], usize) -> T,
-) -> T {
-    if track + 0x1c > b.len() {
-        return default;
+/// A timeline track as a [`ValueTrack`]: sequence keys rebased to `band`, global-sequence ones on
+/// their clock, and an empty track `default`.
+fn value_track<V: TrackValue>(t: M2Track<V>, default: V, band: (u32, u32)) -> ValueTrack<V> {
+    if t.keys.is_empty() {
+        return ValueTrack::constant(default);
     }
-    let n = le_u32(b, track + 0x14);
-    let ofs = le_u32(b, track + 0x18) as usize;
-    if n == 0 || ofs + elem_size > b.len() {
-        return default;
+    let mut keys = t.keys;
+    if t.gseq == 0xffff {
+        rebase_keys_to_band(&mut keys, band.0, band.1);
     }
-    read(b, ofs)
+    ValueTrack {
+        keys,
+        interp: t.interp,
+    }
 }
 
 /// One M2 ribbon emitter, as the renderer needs it.
@@ -96,12 +90,12 @@ pub struct RibbonEmitterDef {
     pub tile_rows: u16,
     pub tile_cols: u16,
     pub tex_slot: u16,
-    /// The `+0xc0` enable track, `None` when always on; otherwise [`RibbonVisibility::at`] is
+    /// The `+0x98` enable track, `None` when always on; otherwise [`RibbonVisibility::at`] is
     /// sampled on the host's playing sequence every frame.
     pub visible: Option<RibbonVisibility>,
 }
 
-/// The `+0xc0` enable track per `AnimationData.dbc` id: step keys in band-local seconds, the
+/// The `+0x98` enable track per `AnimationData.dbc` id: step keys in band-local seconds, the
 /// first being the value the band opens on.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RibbonVisibility {
@@ -110,7 +104,7 @@ pub struct RibbonVisibility {
 
 impl RibbonVisibility {
     /// Whether the trail emits `t` seconds into `anim`, stepped. An unauthored sequence takes
-    /// Stand's answer, and without one the load default, on (`0x70f80e`).
+    /// Stand's answer, and without one the load default, on.
     pub fn at(&self, anim: u16, t: f32) -> bool {
         let Some(keys) = self.by_anim.get(&anim).or_else(|| self.by_anim.get(&0)) else {
             return true;
@@ -128,41 +122,21 @@ impl RibbonVisibility {
     }
 }
 
-/// The `+0xc0` gate track as a [`RibbonVisibility`]; `None` when keyless, on a global-sequence
-/// clock, or on everywhere. Sequences: MD20 count @ `0x1c`, offset @ `0x20`, stride `0x44`, with
-/// `anim_id` @ +0 and the band's start and end @ +4 and +8.
-fn visibility_by_anim(bytes: &[u8], vis_track: usize) -> Option<RibbonVisibility> {
-    if vis_track + 0x1c > bytes.len() {
-        return None;
-    }
+/// The `+0x98` gate track as a [`RibbonVisibility`]; `None` when keyless, on a global-sequence
+/// clock, or on everywhere. `sequences` is each sequence's animation id and timeline band.
+fn visibility_by_anim(
+    vis: &M2Track<f32>,
+    sequences: &[(u16, (u32, u32))],
+) -> Option<RibbonVisibility> {
     // A global-sequence clock is not per animation: treated as always on.
-    if le_u16(bytes, vis_track + 0x02) != 0xffff {
+    if vis.gseq != 0xffff || vis.keys.is_empty() {
         return None;
     }
-    let tn = le_u32(bytes, vis_track + 0x0c) as usize;
-    let tofs = le_u32(bytes, vis_track + 0x10) as usize;
-    let vn = le_u32(bytes, vis_track + 0x14) as usize;
-    let vofs = le_u32(bytes, vis_track + 0x18) as usize;
-    let n = tn.min(vn);
-    if n == 0 || tofs + n * 4 > bytes.len() || vofs + n > bytes.len() {
-        return None; // keyless: the always-on default
-    }
-    let keys: Vec<(u32, bool)> = (0..n)
-        .map(|i| (le_u32(bytes, tofs + i * 4), bytes[vofs + i] != 0))
-        .collect();
-
-    let nseq = le_u32(bytes, 0x1c) as usize;
-    let oseq = le_u32(bytes, 0x20) as usize;
+    let keys: Vec<(u32, bool)> = vis.keys.iter().map(|&(t, v)| (t, v != 0.0)).collect();
     let mut by_anim: std::collections::HashMap<u16, Vec<(f32, bool)>> =
         std::collections::HashMap::new();
     let mut any_off = false;
-    for i in 0..nseq {
-        let s = oseq + i * 0x44;
-        if s + 0x0c > bytes.len() {
-            break;
-        }
-        let anim = le_u16(bytes, s);
-        let (start, end) = (le_u32(bytes, s + 4), le_u32(bytes, s + 8));
+    for &(anim, (start, end)) in sequences {
         // The band opens on the nearest-previous key, or the first key before any.
         let opening = keys
             .iter()
@@ -185,45 +159,44 @@ fn visibility_by_anim(bytes: &[u8], vis_track: usize) -> Option<RibbonVisibility
     any_off.then_some(RibbonVisibility { by_anim })
 }
 
-/// An M2's ribbon emitters; empty when it has none or is not a parseable M2.
+/// A version-264 M2's ribbon emitters; empty when it has none or is not version 264.
 pub fn parse_m2_ribbon_emitters(bytes: &[u8]) -> Result<Vec<RibbonEmitterDef>> {
-    if bytes.len() < HDR_PTR + 4 || &bytes[0..4] != b"MD20" {
+    if md20_version(bytes) != Some(VERSION_264) || bytes.len() < HDR_RIBBONS + 8 {
         return Ok(Vec::new());
     }
-    let textures: Vec<Option<String>> = match parse_m2(&mut Cursor::new(bytes)) {
-        Ok(fmt) => fmt
-            .model()
-            .textures
-            .iter()
-            .map(|t| {
-                let f = t
-                    .filename
-                    .string
-                    .to_string_lossy()
-                    .trim_end_matches('\0')
-                    .to_string();
-                (!f.is_empty()).then_some(f)
-            })
-            .collect(),
-        Err(_) => Vec::new(),
-    };
-    let count = le_u32(bytes, HDR_COUNT) as usize;
-    let base = le_u32(bytes, HDR_PTR) as usize;
+    let count = le_u32(bytes, HDR_RIBBONS) as usize;
+    let base = le_u32(bytes, HDR_RIBBONS + 4) as usize;
     // `count` sizes the reservation, so a hostile one is refused; 256 is far past any shipped
     // model, and checking it first keeps `count * STRIDE` from overflowing.
     if count == 0 || count > 256 || base + count * STRIDE > bytes.len() {
         return Ok(Vec::new());
     }
+    let textures = texture_paths_264(bytes);
+    let mut tracks = Tracks264::new(bytes)?;
     let rf_count = le_u32(bytes, HDR_RENDER_FLAGS) as usize;
     let rf_base = le_u32(bytes, HDR_RENDER_FLAGS + 4) as usize;
+    let sequences: Vec<(u16, (u32, u32))> = {
+        let ofs = le_u32(bytes, HDR_SEQUENCES + 4) as usize;
+        tracks
+            .sequences()
+            .into_iter()
+            .enumerate()
+            .map(|(i, (band, _))| {
+                let at = ofs + i * 0x40;
+                let anim = if at + 2 <= bytes.len() {
+                    le_u16(bytes, at)
+                } else {
+                    0
+                };
+                (anim, band)
+            })
+            .collect()
+    };
     // The first sequence's band, which the keyed look tracks rebase onto, as particle tracks do.
-    let band = seq0_band(bytes);
+    let band = sequences.first().map_or((0, u32::MAX), |&(_, b)| b);
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
         let e = base + i * STRIDE;
-        if e + STRIDE > bytes.len() {
-            break;
-        }
         // textureIndices[0] → the M2 textures table → path.
         let texture = {
             let n = le_u32(bytes, e + 0x14);
@@ -241,9 +214,8 @@ pub fn parse_m2_ribbon_emitters(bytes: &[u8]) -> Result<Vec<RibbonEmitterDef>> {
                 .filter(|&m| m < rf_count && rf_base + m * 4 + 4 <= bytes.len())
                 .map(|m| le_u16(bytes, rf_base + m * 4 + 2))
         };
-        // Shipped ribbons author Add (4) 527 times, Alpha (2) 51 and Mod2x (6) 12
-        // (`benilla-extract ribbonscan`). `ParticleBlend` has no Mod2x, so those 12 fold to
-        // `Opaque` and draw unblended, where the reference multiplies.
+        // `ParticleBlend` has no Mod2x, so a Mod2x trail folds to `Opaque` and draws unblended,
+        // where the reference multiplies.
         let blend = match blend_mode {
             Some(3 | 4) => ParticleBlend::Add,
             Some(2) => ParticleBlend::Alpha,
@@ -251,6 +223,13 @@ pub fn parse_m2_ribbon_emitters(bytes: &[u8]) -> Result<Vec<RibbonEmitterDef>> {
             Some(_) => ParticleBlend::Opaque,
             None => ParticleBlend::Add, // unresolved material: trails are near-always additive
         };
+        let color = tracks.vec3(e + 0x24, [1.0; 3]).unwrap_or_default();
+        // fix16 keys are signed; the draw clamps a negative to 0.
+        let alpha = tracks.fixed16(e + 0x38, 0x7fff).unwrap_or_default();
+        let above = tracks.float(e + 0x4c, 0.0).unwrap_or_default();
+        let below = tracks.float(e + 0x60, 0.0).unwrap_or_default();
+        let slot = tracks.short(e + 0x84, 0).unwrap_or_default();
+        let vis = tracks.byte(e + 0x98, 1).unwrap_or_default();
         out.push(RibbonEmitterDef {
             bone: le_u16(bytes, e + 0x04),
             position: [
@@ -261,22 +240,17 @@ pub fn parse_m2_ribbon_emitters(bytes: &[u8]) -> Result<Vec<RibbonEmitterDef>> {
             texture,
             blend,
             blend_mode,
-            color: track_keys_with(bytes, e + 0x24, [1.0; 3], band, 12, |b, o| {
-                [le_f32(b, o), le_f32(b, o + 4), le_f32(b, o + 8)]
-            }),
-            // fix16 keys are signed (`movsx` at `0x717933`); the draw clamps a negative to 0.
-            alpha: track_keys_with(bytes, e + 0x40, 1.0, band, 2, |b, o| {
-                f32::from(le_u16(b, o) as i16) / 32767.0
-            }),
-            height_above: track_keys_with(bytes, e + 0x5c, 0.0, band, 4, le_f32),
-            height_below: track_keys_with(bytes, e + 0x78, 0.0, band, 4, le_f32),
-            edges_per_second: le_f32(bytes, e + 0x94),
-            edge_lifetime: le_f32(bytes, e + 0x98).max(0.25),
-            gravity: le_f32(bytes, e + 0x9c),
-            tile_rows: le_u16(bytes, e + 0xa0).max(1),
-            tile_cols: le_u16(bytes, e + 0xa2).max(1),
-            tex_slot: track_first(bytes, e + 0xa4, 2, 0, le_u16),
-            visible: visibility_by_anim(bytes, e + 0xc0),
+            color: value_track(color, [1.0; 3], band),
+            alpha: value_track(alpha, 1.0, band),
+            height_above: value_track(above, 0.0, band),
+            height_below: value_track(below, 0.0, band),
+            edges_per_second: le_f32(bytes, e + 0x74),
+            edge_lifetime: le_f32(bytes, e + 0x78).max(0.25),
+            gravity: le_f32(bytes, e + 0x7c),
+            tile_rows: le_u16(bytes, e + 0x80).max(1),
+            tile_cols: le_u16(bytes, e + 0x82).max(1),
+            tex_slot: slot.keys.first().map_or(0, |&(_, v)| v as u16),
+            visible: visibility_by_anim(&vis, &sequences),
         });
     }
     Ok(out)
@@ -288,13 +262,15 @@ mod tests {
 
     #[test]
     fn a_hostile_ribbon_count_yields_nothing_not_an_abort() {
-        let mut b = vec![0u8; HDR_PTR + 4];
+        let (count, ptr) = (HDR_RIBBONS, HDR_RIBBONS + 4);
+        let mut b = vec![0u8; ptr + 4];
         b[0..4].copy_from_slice(b"MD20");
-        b[HDR_COUNT..HDR_COUNT + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        b[4..8].copy_from_slice(&264u32.to_le_bytes());
+        b[count..count + 4].copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(parse_m2_ribbon_emitters(&b).unwrap().is_empty());
         // A plausible count whose table the file cannot hold is refused too.
-        b[HDR_COUNT..HDR_COUNT + 4].copy_from_slice(&3u32.to_le_bytes());
-        b[HDR_PTR..HDR_PTR + 4].copy_from_slice(&((HDR_PTR + 4) as u32).to_le_bytes());
+        b[count..count + 4].copy_from_slice(&3u32.to_le_bytes());
+        b[ptr..ptr + 4].copy_from_slice(&((ptr + 4) as u32).to_le_bytes());
         assert!(parse_m2_ribbon_emitters(&b).unwrap().is_empty());
     }
 
@@ -323,7 +299,6 @@ mod tests {
     /// Smite's impact slash is two ribbons keyed inside the band [3300, 4433]: height 0 to 0.167
     /// and back over 267 ms, alpha 1 to 0 by 467 ms.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_holy_smite_slash_ribbons_are_keyed_flares() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -352,7 +327,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_thrown_dagger_trail_is_lit_only_in_flight() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

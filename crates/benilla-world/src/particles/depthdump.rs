@@ -143,7 +143,7 @@ pub(super) fn dump_emitter(
         };
         let c_px = px(ndc);
         // The quad as `expand_quads` builds it, spin ignored; `corners` is its NDC depth span.
-        let (r, u) = (basis.right * half, basis.up * half);
+        let (r, u) = (basis.right * half[0], basis.up * half[1]);
         let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
         let (mut dmin, mut dmax) = (f32::MAX, f32::MIN);
         for corner in [
@@ -162,7 +162,7 @@ pub(super) fn dump_emitter(
             dmax = dmax.max(n.z);
         }
         info!(
-            "PARTICLE_DEPTHDUMP f={fidx} p{i} age={:.3} center=({:.4},{:.4},{:.4}) half={:.4} \
+            "PARTICLE_DEPTHDUMP f={fidx} p{i} age={:.3} center=({:.4},{:.4},{:.4}) half={:.4?} \
              viewz={:.4} dquad={:.9} corners=[{:.9},{:.9}] px=({:.1},{:.1}) \
              rect=({:.0},{:.0})..({:.0},{:.0}) rgba=[{:.2},{:.2},{:.2},{:.2}]",
             p.age,

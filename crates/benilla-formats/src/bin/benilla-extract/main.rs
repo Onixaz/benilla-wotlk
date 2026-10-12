@@ -183,10 +183,6 @@ enum Command {
     },
     /// Sweep every `.m2` and list the models carrying ribbon emitters (header `0x134`).
     Ribbonscan,
-    /// Sweep every `.m2` and census particle flipbook fields: backward ramps (`begin > end`, legal
-    /// and shipped), tail ramps unlike the head's, indices past the atlas (the reference wraps the
-    /// column, the row runs off), repeat counts, and the reference's two degenerate fallbacks.
-    Cellscan,
     /// Sweep every `.m2` for materials with the multiply blends 5 (Mod) and 6 (Mod2x), the
     /// armor-reflect sheen family.
     Blendscan {
@@ -705,7 +701,6 @@ fn main() -> Result<()> {
         Command::M2part { internal_path } => m2dump::m2part(&mut chain, &internal_path)?,
         Command::Attachscan { prefix } => scan::attachscan(&mut chain, prefix.as_deref())?,
         Command::Ribbonscan => scan::ribbonscan(&mut chain)?,
-        Command::Cellscan => scan::cellscan(&mut chain)?,
         Command::Blendscan { prefix } => scan::blendscan(&mut chain, prefix.as_deref())?,
         Command::Bbscan { prefix } => scan::bbscan(&mut chain, prefix.as_deref())?,
         Command::Bbfacescan { prefix } => scan::bbfacescan(&mut chain, prefix.as_deref())?,

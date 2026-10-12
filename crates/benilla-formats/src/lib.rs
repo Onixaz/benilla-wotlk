@@ -229,7 +229,7 @@ mod emit_timing;
 pub use emit_timing::{EmitParams, EmitTiming, ParamsNow};
 mod particles;
 pub use particles::{
-    parse_m2_particle_emitters, CellRamp, OverLife, OverLifeSample, ParticleBlend,
+    parse_m2_particle_emitters, LifeTrack, OverLife, OverLifeSample, ParticleBlend,
     ParticleEmitterDef, ParticleShape, SplineData,
 };
 mod ribbons;

@@ -11,7 +11,7 @@ pub use bevy::app::AppExit;
 /// not compiled for a downstream crate.
 pub mod testing {
     use benilla_formats::{
-        CellRamp, EmitParams, EmitTiming, OverLife, ParamsNow, ParticleBlend, ParticleEmitterDef,
+        EmitParams, EmitTiming, LifeTrack, OverLife, ParamsNow, ParticleBlend, ParticleEmitterDef,
         ParticleShape,
     };
 
@@ -33,7 +33,8 @@ pub mod testing {
     /// A minimal emitter def for kernel tests; only the fields the emit kernel reads matter.
     pub fn particle_def(shape: ParticleShape) -> ParticleEmitterDef {
         ParticleEmitterDef {
-            flags: 0,
+            // Head quads (file flag 0x20000).
+            flags: 0x20000,
             position: [1.0, 2.0, 3.0],
             bone: 0,
             shape,
@@ -42,9 +43,11 @@ pub mod testing {
             texture: None,
             tile_rows: 1,
             tile_cols: 1,
-            head_tail: 0,
             timing: EmitTiming::constant(10.0),
             params: EmitParams::constant(particle_params_now()),
+            lifespan_vary: 0.0,
+            rate_vary: 0.0,
+            scale_vary: [0.0; 2],
             drag: 0.0,
             tail_time: 0.0,
             spline: None,
@@ -61,14 +64,16 @@ pub mod testing {
             twinkle_percent: 1.0,
             twinkle_min: 0.0,
             twinkle_max: 0.0,
+            base_spin: 0.0,
+            base_spin_vary: 0.0,
             spin: 0.0,
+            spin_vary: 0.0,
             over_life: OverLife {
-                mid: 0.5,
-                color: [[1.0; 4]; 3],
-                scale: [1.0; 3],
-                head_cells: [CellRamp::new(0, 0); 2],
-                tail_cells: [CellRamp::new(0, 0); 2],
-                repeat: [1.0; 2],
+                color: LifeTrack::constant([255.0; 3]),
+                alpha: LifeTrack::constant(1.0),
+                scale: LifeTrack::constant([1.0; 2]),
+                head_cell: LifeTrack::default(),
+                tail_cell: LifeTrack::default(),
             },
         }
     }

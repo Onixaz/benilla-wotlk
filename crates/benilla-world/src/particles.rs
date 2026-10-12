@@ -1,8 +1,9 @@
-//! M2 particle emitters, simulated on the CPU as the 1.12 client does: each [`ParticleEmitter`]
-//! ages and integrates its pool every frame and expands it into camera-facing quads in the shared
-//! effect stream ([`buffer::EffectQuads`]) that the effect lane ([`render`]) draws. File flag
-//! `0x10` picks a particle's storage frame, and so whether a moving host leaves a trail; colour,
-//! alpha, size and texture cell follow the [`benilla_formats::OverLife`] ramp by normalized age.
+//! M2 particle emitters, simulated on the CPU as the reference client does: each
+//! [`ParticleEmitter`] ages and integrates its pool every frame and expands it into camera-facing
+//! quads in the shared effect stream ([`buffer::EffectQuads`]) that the effect lane ([`render`])
+//! draws. File flag `0x10` picks a particle's storage frame, and so whether a moving host leaves a
+//! trail; colour, alpha, size and texture cell follow the [`benilla_formats::OverLife`] channels
+//! by normalized age, each particle varying its life, size and spin by its own birth rolls.
 
 use benilla_assets::ModelEmitter;
 use benilla_formats::ParticleEmitterDef;
@@ -70,9 +71,19 @@ struct Particle {
     pos: Vec3,
     vel: Vec3,
     age: f32,
-    /// The emitter's lifespan channel sampled at birth (it animates: Frost Nova's runs 0.47 to
-    /// 0.80 s). The particle dies at `age >= life`, and its over-life ramps normalize by it.
+    /// `max(lifespan + life_seed·lifespanVary, 1 ms)` against the emitter's live lifespan,
+    /// refreshed every frame (`0x97de97`; it animates: Frost Nova's runs 0.47 to 0.80 s). The
+    /// particle dies at `age >= life`, and its over-life channels normalize by it.
     life: f32,
+    /// The birth roll that varies the life, a fixed16 in [−1, 1] (particle `+0x1c`, `0x9798ec`).
+    life_seed: f32,
+    /// The size variance roll per axis (`0x97a04b`); `[1, 1]` without variance.
+    size_mul: [f32; 2],
+    /// The rolled base rotation and spin, rad and rad/s (`0x97a130`).
+    base_spin: f32,
+    spin: f32,
+    /// The random head cell of a random-cell emitter (`0x979f8a`), else 0.
+    cell: u16,
     /// A random twinkle-table phase; the reference hashes the particle's pointer to the same end.
     phase: u32,
     /// `particle+0xd` bit 1: the first integrate skips the follow-delta add (`0x7b2680`).
@@ -81,6 +92,87 @@ struct Particle {
     /// body-frame angular velocity; a quad particle carries identity and zero.
     quat: Quat,
     angvel: Vec3,
+}
+
+/// One birth's per-particle rolls. The reference keeps a seed per particle and re-rolls the same
+/// values from it every frame (`0x97a130`, `0x979e90`); rolled once here, they are the same.
+struct BirthRolls {
+    life_seed: f32,
+    size_mul: [f32; 2],
+    base_spin: f32,
+    spin: f32,
+    cell: u16,
+}
+
+impl BirthRolls {
+    fn roll(def: &ParticleEmitterDef, rng: &mut u32) -> Self {
+        let life_seed = rand_s11(rng);
+        // Size variance: `max(1 + S11·vary, 1e-4)`, one roll for both axes unless per-axis.
+        let vary = |v: f32, r: f32| (1.0 + r * v).max(1e-4);
+        let size_mul = if def.scale_vary_per_axis() {
+            [
+                vary(def.scale_vary[0], rand_s11(rng)),
+                vary(def.scale_vary[1], rand_s11(rng)),
+            ]
+        } else if def.scale_vary[0] != 0.0 {
+            [vary(def.scale_vary[0], rand_s11(rng)); 2]
+        } else {
+            [1.0; 2]
+        };
+        // Spin: each value rolls `x + S11·vary` only where its variance is non-zero.
+        let mut spun = |x: f32, v: f32| if v != 0.0 { x + rand_s11(rng) * v } else { x };
+        let base_spin = spun(def.base_spin, def.base_spin_vary);
+        let spin = spun(def.spin, def.spin_vary);
+        // A random cell: `(rand · cells) >> 32` (`0x979fa0`).
+        let cell = if def.random_cell() {
+            let cells = u64::from(def.tile_rows) * u64::from(def.tile_cols);
+            ((u64::from(next_u32(rng)) * cells) >> 32) as u16
+        } else {
+            0
+        };
+        Self {
+            life_seed,
+            size_mul,
+            base_spin,
+            spin,
+            cell,
+        }
+    }
+
+    /// The particle at birth, its life against the emitter's current `lifespan`.
+    #[allow(clippy::too_many_arguments)] // one birth's whole state, in the sim's order
+    fn particle(
+        self,
+        def: &ParticleEmitterDef,
+        lifespan: f32,
+        pos: Vec3,
+        vel: Vec3,
+        age: f32,
+        phase: u32,
+        quat: Quat,
+        angvel: Vec3,
+    ) -> Particle {
+        Particle {
+            pos,
+            vel,
+            age,
+            life: life_of(lifespan, self.life_seed, def.lifespan_vary),
+            life_seed: self.life_seed,
+            size_mul: self.size_mul,
+            base_spin: self.base_spin,
+            spin: self.spin,
+            cell: self.cell,
+            phase,
+            fresh: true,
+            quat,
+            angvel,
+        }
+    }
+}
+
+/// A particle's life: `max(lifespan + seed·vary, 0.001)` (`0x97de97`, 1 ms at `[0x9e1134]`).
+fn life_of(lifespan: f32, seed: f32, vary: f32) -> f32 {
+    (lifespan + seed * vary).max(0.001)
 }
 
 impl ParticleEmitter {

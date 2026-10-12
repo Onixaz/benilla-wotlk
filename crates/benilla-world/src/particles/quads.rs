@@ -1,6 +1,5 @@
 //! Quad expansion: one pool of live particles into camera-facing (or XY-plane) quads, the
-//! reference's quad writer (`0x7b2a50` head, `0x7b3041` tail), shared by child emitters
-//! (`0x7b5dd0`).
+//! reference's quad writer (`0x97be80`), shared by child emitters.
 
 use benilla_assets::coords::wow_to_bevy;
 use benilla_formats::ParticleEmitterDef;
@@ -27,12 +26,12 @@ fn twinkle_noise(twinkle_speed: f32, age: f32, phase: u32) -> f32 {
     TWINKLE_LUT[idx]
 }
 
-/// `spin·age`, negated when negative on a particle whose 0x20-byte pool slot has address bit 5 set
-/// (`0x7b2dda`), so a negative-spin emitter counter-rotates half its cloud. Our bit 5 is
+/// `base + spin·age`, negated on a random-sign emitter (file flag 0x200) for a particle whose pool
+/// slot has address bit 5 set (`0x97c594`), so half its cloud counter-rotates. Our bit 5 is
 /// [`Particle::phase`]'s, stable per particle where a pool index would not be.
-pub(super) fn spin_angle(spin: f32, age: f32, phase: u32) -> f32 {
-    let angle = spin * age;
-    if angle < 0.0 && phase & 0x20 != 0 {
+pub(super) fn spin_angle(base: f32, spin: f32, age: f32, random_sign: bool, phase: u32) -> f32 {
+    let angle = spin * age + base;
+    if random_sign && phase & 0x20 != 0 {
         -angle
     } else {
         angle
@@ -76,13 +75,13 @@ pub(super) fn draw_gated(def: &ParticleEmitterDef, p: &Particle) -> bool {
     def.twinkle_percent < 1.0 && noise > def.twinkle_percent
 }
 
-/// One particle's rendered half-extent; must match the `half` term in [`expand_quads`].
+/// One particle's rendered half-extents, x and y; must match the `half` term in [`expand_quads`].
 pub(super) fn particle_half(
     def: &ParticleEmitterDef,
     placement: &Transform,
     p: &Particle,
     size_scale: f32,
-) -> f32 {
+) -> [f32; 2] {
     let noise = twinkle_noise(def.twinkle_speed, p.age, p.phase);
     let u_age = (p.age / p.life).clamp(0.0, 1.0);
     let scale = if def.scale_size_by_instance() {
@@ -90,7 +89,9 @@ pub(super) fn particle_half(
     } else {
         size_scale
     };
-    def.over_life.sample(u_age).size * def.twinkle(noise) * scale
+    let size = def.over_life.sample(u_age).size;
+    let k = def.twinkle(noise) * scale;
+    [size[0] * p.size_mul[0] * k, size[1] * p.size_mul[1] * k]
 }
 
 /// Expand one pool into the shared stream: world-space quads, corners in perimeter order for the
@@ -142,15 +143,20 @@ pub(super) fn expand_quads(
         }
         let u_age = (p.age / p.life).clamp(0.0, 1.0);
         let ol = def.over_life.sample(u_age);
-        let (mut rgba, size) = (ol.color, ol.size);
+        let mut rgba = ol.color;
         // The model's render alpha scales alpha alone, never RGB (`0x7b9b10`, the `0x7b9b42` fmul).
         rgba[3] *= frame.alpha;
         // Raw authored gamma RGB: additive stacks sum in gamma like the reference's bytes, and
         // the FFX chain's scene reads apply their 255 saturation (`ffx_glow.wgsl`), not this.
         let center = particle_center(frame, placement, p);
-        // `size` is the half-extent (corners ±1.0, `0x7b2d0c`), times the gated twinkle and the
-        // flagged instance scale; a twinkle range with min == max burns steady.
-        let half = size * def.twinkle(noise) * scale;
+        // The half-extents per axis (corners ±1.0), times the particle's size roll, the gated
+        // twinkle and the flagged instance scale (`0x97bf88`); a twinkle range with min == max
+        // burns steady.
+        let k = def.twinkle(noise) * scale;
+        let (half_x, half_y) = (
+            ol.size[0] * p.size_mul[0] * k,
+            ol.size[1] * p.size_mul[1] * k,
+        );
         // Deviation: quads keep pool order within a cloud, without the reference's back-to-front
         // sort (`0x7b3a10`), because only an alpha-blended cloud can show the order; between
         // clouds, each draw record's anchor sorts it.
@@ -163,20 +169,22 @@ pub(super) fn expand_quads(
                 });
             }
         };
-        // Head quad (particleType 0 or 2), drawn first (`0x7b2bc9`): a billboard, or the XY plane.
-        if def.head_tail != 1 {
-            let ((u0, u1), (v0, v1)) = cell_uv(ol.head_cell);
+        // Head quad (file flag 0x20000), drawn first (`0x97bfe8`): a billboard, or the XY plane.
+        if def.draws_head() {
+            let ((u0, u1), (v0, v1)) = cell_uv(ol.head_cell.unwrap_or(p.cell));
             let (base_r, base_u) = plane_basis.unwrap_or((cam_right, cam_up));
-            // Spin (file +0x198): in-plane by [`spin_angle`] (`0x7b2ddc`); on an XY quad this
-            // is the reference's Rodrigues about the plane normal, as `normal × base_r = base_u`.
-            let (r, u) = if def.spin != 0.0 {
-                let (sa, ca) = spin_angle(def.spin, p.age, p.phase).sin_cos();
+            // Rotation by [`spin_angle`], only while the spin or its variance is non-zero
+            // (`0x97c282`); on an XY quad this is the reference's Rodrigues about the plane
+            // normal, as `normal × base_r = base_u`.
+            let (r, u) = if def.rotates() {
+                let angle = spin_angle(p.base_spin, p.spin, p.age, def.random_spin_sign(), p.phase);
+                let (sa, ca) = angle.sin_cos();
                 (
-                    (base_r * ca + base_u * sa) * half,
-                    (base_u * ca - base_r * sa) * half,
+                    (base_r * ca + base_u * sa) * half_x,
+                    (base_u * ca - base_r * sa) * half_y,
                 )
             } else {
-                (base_r * half, base_u * half)
+                (base_r * half_x, base_u * half_y)
             };
             push_quad(
                 [
@@ -188,10 +196,11 @@ pub(super) fn expand_quads(
                 [[u0, v1], [u1, v1], [u1, v0], [u0, v0]],
             );
         }
-        // Tail quad (particleType 1 or 2, `0x7b3041`): |velocity|·tailTime back along the motion,
-        // 2·half wide in screen space, U from 0 at the particle to 1 at the tip, a billboard when
-        // the velocity is view-parallel; its own flipbook cell (file +0x174..+0x17b, `0x7b3054`).
-        if def.head_tail >= 1 {
+        // Tail quad (file flag 0x40000): |velocity|·tailTime back along the motion, 2·half wide in
+        // screen space, U from 0 at the particle to 1 at the tip, a billboard when the velocity is
+        // view-parallel; its own flipbook cell (file +0x14c). Its width takes the x extent.
+        if def.draws_tail() {
+            let half = half_x;
             let ((u0, u1), (v0, v1)) = cell_uv(ol.tail_cell);
             let vel_world = if anchored {
                 frame.ride.dir_to_world(p.vel)
@@ -238,20 +247,121 @@ pub(super) fn expand_quads(
 #[cfg(test)]
 mod tests {
     use super::{expand_quads, spin_angle, CamBasis, DrawFrame, Particle};
+    use benilla_formats::LifeTrack;
     use bevy::prelude::{Quat, Transform, Vec3};
 
-    /// The `0x7b2dda` negate: only a negative angle on a bit-5 particle flips.
+    /// The `0x97c594` negate: a random-sign emitter flips its bit-5 half, whatever the sign.
     #[test]
-    fn negative_spin_counter_rotates_the_bit5_half() {
-        assert_eq!(spin_angle(-3.0, 0.5, 0x20), 1.5, "bit 5 set: negated");
-        assert_eq!(spin_angle(-3.0, 0.5, 0x1f), -1.5, "bit 5 clear: kept");
+    fn a_random_sign_emitter_counter_rotates_the_bit5_half() {
         assert_eq!(
-            spin_angle(3.0, 0.5, 0x20),
-            1.5,
-            "positive spin: never negated"
+            spin_angle(0.25, 3.0, 0.5, true, 0x20),
+            -1.75,
+            "bit 5 set: negated"
         );
-        assert_eq!(spin_angle(3.0, 0.5, 0x1f), 1.5);
-        assert_eq!(spin_angle(0.0, 0.5, 0xff), 0.0);
+        assert_eq!(
+            spin_angle(0.25, 3.0, 0.5, true, 0x1f),
+            1.75,
+            "bit 5 clear: kept"
+        );
+        assert_eq!(
+            spin_angle(0.25, -3.0, 0.5, false, 0x20),
+            -1.25,
+            "no flag: kept"
+        );
+        assert_eq!(spin_angle(0.0, 0.0, 0.5, true, 0xff), 0.0);
+    }
+
+    fn particle() -> Particle {
+        Particle {
+            pos: Vec3::ZERO,
+            vel: Vec3::ZERO,
+            age: 0.0,
+            life: 1.0,
+            life_seed: 0.0,
+            size_mul: [1.0; 2],
+            base_spin: 0.0,
+            spin: 0.0,
+            cell: 0,
+            phase: 0,
+            fresh: false,
+            quat: Quat::IDENTITY,
+            angvel: Vec3::ZERO,
+        }
+    }
+
+    fn cam() -> CamBasis {
+        CamBasis {
+            right: Vec3::X,
+            up: Vec3::Y,
+        }
+    }
+
+    fn frame(alpha: f32) -> DrawFrame {
+        DrawFrame {
+            anchored: true,
+            ride: crate::ride_frame::StoredFrame::default(),
+            alpha,
+            size_scale: 1.0,
+        }
+    }
+
+    /// A 3.3.5a quad takes its x and y extents apart, each times the particle's size roll.
+    #[test]
+    fn the_head_quad_takes_x_and_y_extents_and_the_size_roll() {
+        let mut def = crate::particles::tests::plain_def();
+        def.over_life.scale = LifeTrack::constant([1.0, 2.0]);
+        let mut p = particle();
+        p.size_mul = [0.5, 1.5];
+        let mut out = Vec::new();
+        expand_quads(
+            &def,
+            std::slice::from_ref(&p),
+            &frame(1.0),
+            &Transform::IDENTITY,
+            &cam(),
+            &mut out,
+        );
+        assert_eq!(out.len(), 4);
+        assert_eq!(out[2].pos, [0.5, 3.0, 0.0], "corner +r+u: 1·0.5 by 2·1.5");
+        // No head flag, no head quad.
+        def.flags &= !0x20000;
+        out.clear();
+        expand_quads(
+            &def,
+            std::slice::from_ref(&p),
+            &frame(1.0),
+            &Transform::IDENTITY,
+            &cam(),
+            &mut out,
+        );
+        assert!(out.is_empty());
+    }
+
+    /// Base spin turns the quad only while spin or its variance is non-zero (`0x97c282`).
+    #[test]
+    fn base_spin_alone_does_not_turn_the_quad() {
+        let mut def = crate::particles::tests::plain_def();
+        let mut p = particle();
+        p.base_spin = std::f32::consts::FRAC_PI_2;
+        let corner = |def: &benilla_formats::ParticleEmitterDef| {
+            let mut out = Vec::new();
+            expand_quads(
+                def,
+                std::slice::from_ref(&p),
+                &frame(1.0),
+                &Transform::IDENTITY,
+                &cam(),
+                &mut out,
+            );
+            out[2].pos
+        };
+        assert_eq!(corner(&def), [1.0, 1.0, 0.0], "unturned");
+        def.spin_vary = 0.1;
+        let c = corner(&def);
+        assert!(
+            (c[0] + 1.0).abs() < 1e-6 && (c[1] - 1.0).abs() < 1e-6,
+            "turned 90°: {c:?}"
+        );
     }
 
     /// The reference folds `emitter+0x1a8`, the model's `CM2Model+0x19c`, into the alpha byte alone
@@ -259,35 +369,28 @@ mod tests {
     #[test]
     fn the_models_render_alpha_scales_particle_alpha_and_nothing_else() {
         let mut def = crate::particles::tests::plain_def();
-        def.over_life.color = [[0.8, 0.4, 0.2, 0.5]; 3];
-        let pool = [Particle {
-            pos: Vec3::ZERO,
-            vel: Vec3::ZERO,
-            age: 0.0,
-            life: 1.0,
-            phase: 0,
-            fresh: false,
-            quat: Quat::IDENTITY,
-            angvel: Vec3::ZERO,
-        }];
-        let cam = CamBasis {
-            right: Vec3::X,
-            up: Vec3::Y,
-        };
+        def.over_life.color = LifeTrack::constant([204.0, 102.0, 51.0]);
+        def.over_life.alpha = LifeTrack::constant(0.5);
+        let pool = [particle()];
         let shoot = |alpha| {
-            let frame = DrawFrame {
-                anchored: true,
-                ride: crate::ride_frame::StoredFrame::default(),
-                alpha,
-                size_scale: 1.0,
-            };
             let mut out = Vec::new();
-            expand_quads(&def, &pool, &frame, &Transform::IDENTITY, &cam, &mut out);
+            expand_quads(
+                &def,
+                &pool,
+                &frame(alpha),
+                &Transform::IDENTITY,
+                &cam(),
+                &mut out,
+            );
             out[0].color
         };
 
         let opaque = shoot(1.0);
-        assert_eq!(opaque, [0.8, 0.4, 0.2, 0.5], "no fade: the authored ramp");
+        assert_eq!(
+            opaque,
+            [0.8, 0.4, 0.2, 0.5],
+            "no fade: the authored channels"
+        );
         let half = shoot(0.5);
         assert_eq!(
             [half[0], half[1], half[2]],

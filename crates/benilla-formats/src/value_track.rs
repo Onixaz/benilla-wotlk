@@ -1,15 +1,8 @@
-//! The keyed M2Track sampler shared by the particle and ribbon parsers. Sequence-timeline keys
+//! The keyed M2Track sampler of the ribbon parser. Sequence-timeline keys
 //! (`gseq == 0xffff`) sit in each sequence's absolute `[start, end]` band, as bone keys do: an
 //! effect whose sequence 0 spans `[1000, 2600]` bursts at 1000 ms, its first instant. Parsing
 //! rebases them onto sequence 0's band, the one an effect or doodad plays, so seconds since spawn
 //! sample them directly; a model keying an emitter per sequence is sampled on sequence 0 alone.
-
-fn le_u16(b: &[u8], o: usize) -> u16 {
-    u16::from_le_bytes([b[o], b[o + 1]])
-}
-fn le_u32(b: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]])
-}
 
 /// A value a track can hold and lerp: `f32` scalars and the ribbon colour track's `[f32; 3]`.
 pub trait TrackValue: Copy {
@@ -146,58 +139,6 @@ pub(crate) fn rebase_keys_to_band<V: Copy>(keys: &mut Vec<(u32, V)>, start: u32,
         }
     }
     *keys = out;
-}
-
-/// The first sequence's absolute time band; a sequence-less model gets the whole timeline.
-pub(crate) fn seq0_band(bytes: &[u8]) -> (u32, u32) {
-    let (n_seq, o_seq) = (le_u32(bytes, 0x1c) as usize, le_u32(bytes, 0x20) as usize);
-    if n_seq > 0 && o_seq + 0x44 <= bytes.len() {
-        (le_u32(bytes, o_seq + 4), le_u32(bytes, o_seq + 8))
-    } else {
-        (0, u32::MAX)
-    }
-}
-
-/// A vanilla M2Track's `(gseq, n, timestamps offset, values offset)`.
-fn track_arrays(b: &[u8], track: usize) -> Option<(u16, usize, usize, usize)> {
-    if track + 0x1c > b.len() {
-        return None;
-    }
-    let gseq = le_u16(b, track + 0x02);
-    let tn = le_u32(b, track + 0x0c) as usize;
-    let tofs = le_u32(b, track + 0x10) as usize;
-    let vn = le_u32(b, track + 0x14) as usize;
-    let vofs = le_u32(b, track + 0x18) as usize;
-    let n = tn.min(vn);
-    (n > 0 && tofs + n * 4 <= b.len()).then_some((gseq, n, tofs, vofs))
-}
-
-/// Read an M2Track's keys, `elem`-byte values decoded by `read`; sequence keys are rebased to
-/// `band`, global-sequence ones keep their clock, and an empty or truncated track is `default`.
-pub(crate) fn track_keys_with<V: TrackValue>(
-    b: &[u8],
-    track: usize,
-    default: V,
-    band: (u32, u32),
-    elem: usize,
-    read: impl Fn(&[u8], usize) -> V,
-) -> ValueTrack<V> {
-    let Some((gseq, n, tofs, vofs)) = track_arrays(b, track) else {
-        return ValueTrack::constant(default);
-    };
-    if vofs + n * elem > b.len() {
-        return ValueTrack::constant(default);
-    }
-    let mut keys: Vec<(u32, V)> = (0..n)
-        .map(|i| (le_u32(b, tofs + i * 4), read(b, vofs + i * elem)))
-        .collect();
-    if gseq == 0xffff {
-        rebase_keys_to_band(&mut keys, band.0, band.1);
-    }
-    ValueTrack {
-        keys,
-        interp: le_u16(b, track),
-    }
 }
 
 #[cfg(test)]

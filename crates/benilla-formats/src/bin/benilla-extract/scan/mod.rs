@@ -17,9 +17,7 @@ pub use lighting::{darkpropscan, m2lightscan, shadeat};
 pub use material::{
     alphascan, blendscan, entityuvscan, envmapscan, fxuvscan, texmodescan, uvslotscan, uvwrapscan,
 };
-pub use particles::{
-    cellscan, fxordercensus, partcensus, partscan, partslotscan, ribbonscan, shardcensus,
-};
+pub use particles::{fxordercensus, partcensus, partscan, partslotscan, ribbonscan, shardcensus};
 pub use sequence::{
     fxlifescan, goanimscan, goslotscan, idleslotscan, seqclockscan, soundeventscan,
 };

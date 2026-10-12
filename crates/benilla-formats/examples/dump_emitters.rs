@@ -19,8 +19,12 @@ fn main() -> anyhow::Result<()> {
             e.flags, e.bone, e.shape, e.blend
         );
         println!(
-            "  texture {:?} tiles {}x{} head_tail {}",
-            e.texture, e.tile_rows, e.tile_cols, e.head_tail
+            "  texture {:?} tiles {}x{} head {} tail {}",
+            e.texture,
+            e.tile_rows,
+            e.tile_cols,
+            e.draws_head(),
+            e.draws_tail()
         );
         let now = e.params.sample(None, 0.0, 0.0);
         println!(

@@ -246,7 +246,7 @@ fn print_m2anim_summary(s: &M2AnimSummary, bytes: &[u8]) {
             format!("{rate}  enabled/seq [{}]", per.join("  "))
         };
         // A tail's streak length is |velocity| · tail_time.
-        let tail = if d.head_tail >= 1 {
+        let tail = if d.draws_tail() {
             format!(
                 "  tail {:.2}s{}",
                 d.tail_time,
@@ -265,11 +265,7 @@ fn print_m2anim_summary(s: &M2AnimSummary, bytes: &[u8]) {
             "             {:?} {:?} {}  {rate}  life {:.2}s  speed {:.2}  grav {:.2}  drag {:.1}{tail}  twinkle [{:.2}..{:.2}] spd {:.1} pct {:.2}  spin {:.2}",
             d.shape,
             d.blend,
-            match d.head_tail {
-                0 => "head",
-                1 => "tail",
-                _ => "head+tail",
-            },
+            quad_kinds(d),
             now.lifespan,
             now.emission_speed,
             now.gravity,
@@ -357,11 +353,12 @@ fn print_m2anim_summary(s: &M2AnimSummary, bytes: &[u8]) {
             d.tile_rows,
             d.tile_cols,
         );
-        let c = d.over_life.color;
+        let ol = &d.over_life;
         println!(
-            "             color/alpha keys: [{:.2} {:.2} {:.2} a{:.2}] -> [{:.2} {:.2} {:.2} a{:.2}] -> [{:.2} {:.2} {:.2} a{:.2}]  size {:?}",
-            c[0][0], c[0][1], c[0][2], c[0][3], c[1][0], c[1][1], c[1][2], c[1][3], c[2][0],
-            c[2][1], c[2][2], c[2][3], d.over_life.scale,
+            "             color {:?} alpha {:?} size {:?}",
+            (&ol.color.times, &ol.color.values),
+            (&ol.alpha.times, &ol.alpha.values),
+            (&ol.scale.times, &ol.scale.values),
         );
     }
     println!("ribbon emitters:    {}", s.ribbon_emitter_count);
@@ -1201,11 +1198,7 @@ pub fn m2part(chain: &mut Chain, internal_path: &str) -> Result<()> {
             e.bone,
             e.shape,
             e.blend,
-            match e.head_tail {
-                0 => "head",
-                1 => "tail",
-                _ => "head+tail",
-            },
+            quad_kinds(e),
             // Whether the renderer lights this emitter from the scene (`ParticleEmitterDef::lit`).
             if e.lit { "LIT" } else { "unlit" }
         );
@@ -1309,8 +1302,26 @@ pub fn m2part(chain: &mut Chain, internal_path: &str) -> Result<()> {
         }
 
         println!(
-            "     drag {:.3}  spin {:.3}  tailTime {:.3}  inheritScale {:.3}",
-            e.drag, e.spin, e.tail_time, e.inherit_scale
+            "     drag {:.3}  spin {:.3}±{:.3} base {:.3}±{:.3}  tailTime {:.3}  inheritScale {:.3}",
+            e.drag,
+            e.spin,
+            e.spin_vary,
+            e.base_spin,
+            e.base_spin_vary,
+            e.tail_time,
+            e.inherit_scale
+        );
+        println!(
+            "     variance: life ±{:.3}  rate ±{:.3}  size ±{:.3}/{:.3}{}",
+            e.lifespan_vary,
+            e.rate_vary,
+            e.scale_vary[0],
+            e.scale_vary[1],
+            if e.scale_vary_per_axis() {
+                " (per axis)"
+            } else {
+                ""
+            }
         );
         println!(
             "     twinkle speed {:.3} pct {:.3} range {:.3}..{:.3} [{}]",
@@ -1325,31 +1336,27 @@ pub fn m2part(chain: &mut Chain, internal_path: &str) -> Result<()> {
             }
         );
 
+        // The over-life channels: key times as fractions of the life, then values.
         let ol = &e.over_life;
-        println!("     over-life (mid {:.3}):", ol.mid);
-        for (k, c) in ol.color.iter().enumerate() {
-            println!(
-                "       colour k{k}  r {:.3} g {:.3} b {:.3}  a {:.3}",
-                c[0], c[1], c[2], c[3]
-            );
-        }
-        // Four decimals: UI models author sizes in thousandths, as the autocast shine's 0.0015.
+        println!("     over-life:");
+        println!("       colour  {:?} {:?}", ol.color.times, ol.color.values);
+        println!("       alpha   {:?} {:?}", ol.alpha.times, ol.alpha.values);
+        // Four decimals: UI models author sizes in thousandths.
         println!(
-            "       size    {:.4} -> {:.4} -> {:.4} yd (half-extent)",
-            ol.scale[0], ol.scale[1], ol.scale[2]
+            "       size    {:?} {:?} yd (half-extent)",
+            ol.scale.times, ol.scale.values
         );
         println!(
-            "       cells   head A {}->{} B {}->{} · tail A {}->{} B {}->{} · repeat {:.2}/{:.2}",
-            ol.head_cells[0].begin,
-            ol.head_cells[0].end,
-            ol.head_cells[1].begin,
-            ol.head_cells[1].end,
-            ol.tail_cells[0].begin,
-            ol.tail_cells[0].end,
-            ol.tail_cells[1].begin,
-            ol.tail_cells[1].end,
-            ol.repeat[0],
-            ol.repeat[1]
+            "       cells   head {:?} {:?} · tail {:?} {:?}{}",
+            ol.head_cell.times,
+            ol.head_cell.values,
+            ol.tail_cell.times,
+            ol.tail_cell.values,
+            if e.random_cell() {
+                " · random head cell"
+            } else {
+                ""
+            }
         );
 
         let rate = e.timing.peak_rate();
@@ -1369,8 +1376,18 @@ pub fn m2part(chain: &mut Chain, internal_path: &str) -> Result<()> {
         } else {
             speed * life
         };
-        let size_lo = ol.scale.iter().copied().fold(f32::MAX, f32::min);
-        let size_hi = ol.scale.iter().copied().fold(f32::MIN, f32::max);
+        let size_lo = ol
+            .scale
+            .values
+            .iter()
+            .map(|s| s[0])
+            .fold(f32::MAX, f32::min);
+        let size_hi = ol
+            .scale
+            .values
+            .iter()
+            .map(|s| s[0])
+            .fold(f32::MIN, f32::max);
         println!(
             "     derived: {} · reach ~{reach:.2} yd · size {size_lo:.3}..{size_hi:.3} yd · peak alpha {:.2}",
             if e.burst() {
@@ -1387,7 +1404,7 @@ pub fn m2part(chain: &mut Chain, internal_path: &str) -> Result<()> {
                     rate * life
                 )
             },
-            ol.color.iter().map(|c| c[3]).fold(0.0f32, f32::max)
+            ol.alpha.values.iter().copied().fold(0.0f32, f32::max)
         );
     }
     Ok(())
@@ -1440,4 +1457,14 @@ pub fn m2cam(chain: &mut Chain, internal_path: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Which quads an emitter draws, file flags 0x20000 (head) and 0x40000 (tail).
+pub(crate) fn quad_kinds(d: &benilla_formats::ParticleEmitterDef) -> &'static str {
+    match (d.draws_head(), d.draws_tail()) {
+        (true, false) => "head",
+        (false, true) => "tail",
+        (true, true) => "head+tail",
+        (false, false) => "none",
+    }
 }

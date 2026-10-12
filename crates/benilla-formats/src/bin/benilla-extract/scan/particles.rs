@@ -96,11 +96,7 @@ pub fn partscan(chain: &mut Chain, mask: u32, prefix: Option<&str>) -> Result<()
                     "e{i} flags {:#010x}  {:?} {}  {name}",
                     d.flags,
                     d.shape,
-                    match d.head_tail {
-                        0 => "head",
-                        1 => "tail",
-                        _ => "head+tail",
-                    },
+                    crate::m2dump::quad_kinds(d),
                 );
             }
         }
@@ -285,10 +281,11 @@ pub fn partcensus(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
                     hit(PARAM_KEYS[c]);
                 }
             }
-            match d.head_tail {
-                0 => hit("type:head"),
-                1 => hit("type:tail"),
-                _ => hit("type:head+tail"),
+            match crate::m2dump::quad_kinds(d) {
+                "head" => hit("type:head"),
+                "tail" => hit("type:tail"),
+                "head+tail" => hit("type:head+tail"),
+                _ => hit("type:none"),
             }
             match d.blend {
                 benilla_formats::ParticleBlend::Add => hit("blend:add"),
@@ -439,98 +436,6 @@ pub fn partcensus(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
             println!("  … {} more", t.model_count as usize - 16);
         }
     }
-    Ok(())
-}
-
-/// Census the emitters' over-life flipbook fields: `INVERTED` (`begin > end`) plays the sheet
-/// backwards, which a `clamp` into it panics on; `TAIL-RAMP`, a tail ramp (`+0x174`) unlike the
-/// head's (`+0x168`); `PAST-ATLAS`, a cell past `rows·cols`, which the reference wraps to row 0
-/// (it masks the column only); `REPEAT`, a segment repeat other than 1; `NON-POW2` and `MID`,
-/// shapes the reference degrades on (a 1×1 fallback, a NaN sampler), none in 1.12.1.
-pub fn cellscan(chain: &mut Chain) -> Result<()> {
-    let names = super::m2_names(chain, None)?;
-
-    let (mut models, mut emitters) = (0u32, 0u32);
-    let (mut inverted, mut tail_ramp, mut repeat_ne1) = (0u32, 0u32, 0u32);
-    let (mut past_atlas, mut past_atlas_real, mut bad_tiles, mut bad_mid) =
-        (0u32, 0u32, 0u32, 0u32);
-
-    for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
-            continue;
-        };
-        models += 1;
-        let Ok(defs) = benilla_formats::parse_m2_particle_emitters(&bytes) else {
-            continue;
-        };
-        for (i, e) in defs.iter().enumerate() {
-            emitters += 1;
-            let ol = &e.over_life;
-            let at = format!("{name} [{i}] {}x{}", e.tile_rows, e.tile_cols);
-            let ramps = [
-                ol.head_cells[0],
-                ol.head_cells[1],
-                ol.tail_cells[0],
-                ol.tail_cells[1],
-            ];
-            let pair = |r: &benilla_formats::CellRamp| (r.begin, r.end);
-
-            if ramps.iter().any(|r| r.begin > r.end) {
-                inverted += 1;
-                println!(
-                    "INVERTED   {at} head {:?}/{:?}",
-                    pair(&ol.head_cells[0]),
-                    pair(&ol.head_cells[1])
-                );
-            }
-            // Only a tail-drawing emitter (particleType 1 or 2) shows a tail ramp.
-            if e.head_tail >= 1 && ol.tail_cells != ol.head_cells {
-                tail_ramp += 1;
-                println!(
-                    "TAIL-RAMP  {at} head {:?}/{:?} tail {:?}/{:?}",
-                    pair(&ol.head_cells[0]),
-                    pair(&ol.head_cells[1]),
-                    pair(&ol.tail_cells[0]),
-                    pair(&ol.tail_cells[1])
-                );
-            }
-            if ol.repeat.iter().any(|&r| r != 1.0) {
-                repeat_ne1 += 1;
-                println!("REPEAT     {at} {:?}", ol.repeat);
-            }
-            let atlas = e.tile_rows * e.tile_cols;
-            if ramps.iter().any(|r| r.begin >= atlas || r.end >= atlas) {
-                past_atlas += 1;
-                // On a 1×1 sheet every index is the same texture: only a real atlas shows the wrap.
-                if atlas > 1 {
-                    past_atlas_real += 1;
-                    println!(
-                        "PAST-ATLAS {at} head {:?}/{:?}",
-                        pair(&ol.head_cells[0]),
-                        pair(&ol.head_cells[1])
-                    );
-                }
-            }
-            if !e.tile_rows.is_power_of_two() || !e.tile_cols.is_power_of_two() {
-                bad_tiles += 1;
-                println!("NON-POW2   {at}");
-            }
-            if !(ol.mid > 0.0 && ol.mid < 1.0) {
-                bad_mid += 1;
-                println!("MID        {at} mid {}", ol.mid);
-            }
-        }
-    }
-
-    eprintln!(
-        "{models} models / {emitters} emitters scanned\n  \
-         INVERTED    {inverted}\n  \
-         TAIL-RAMP   {tail_ramp}\n  \
-         REPEAT      {repeat_ne1}\n  \
-         PAST-ATLAS  {past_atlas} ({past_atlas_real} on a real >1x1 atlas)\n  \
-         NON-POW2    {bad_tiles}\n  \
-         MID 0 or 1  {bad_mid}"
-    );
     Ok(())
 }
 

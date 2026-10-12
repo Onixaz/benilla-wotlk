@@ -149,7 +149,8 @@ pub(super) fn update_model_particles(
             let u = (p.age / p.life).clamp(0.0, 1.0);
             // No texture atlas here: only colour and size reach a model particle.
             let ol = emitter.def.over_life.sample(u);
-            let (mut rgba, size) = (ol.color, ol.size);
+            // A model particle scales uniformly by the x extent and its roll.
+            let (mut rgba, size) = (ol.color, ol.size[0] * p.size_mul[0]);
             // The owning model's render alpha, into the instance's `MeshTag` alpha.
             rgba[3] *= emitter.render_alpha();
             let tf = if anchored {

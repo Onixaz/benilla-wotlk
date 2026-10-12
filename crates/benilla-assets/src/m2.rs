@@ -239,7 +239,9 @@ impl AssetLoader for M2ModelLoader {
         reader.read_to_end(&mut bytes).await?;
         let to_io = |e: anyhow::Error| std::io::Error::other(format!("{e:#}"));
 
-        // A 3.3.5a model is read in the 1.12.1 layout, with its skin profile beside it.
+        // A 3.3.5a model is read in the 1.12.1 layout, with its skin profile beside it; its
+        // particle and ribbon emitters are read from the version-264 records the relayout skips.
+        let mut raw = Vec::new();
         if benilla_formats::md20_version(&bytes) == Some(benilla_formats::VERSION_264) {
             let path = ctx.path().path().to_string_lossy().to_ascii_lowercase();
             let skin = ctx
@@ -251,7 +253,7 @@ impl AssetLoader for M2ModelLoader {
             for dropped in &out.dropped {
                 warn!("{path}: not loaded: {dropped}");
             }
-            bytes = out.bytes;
+            raw = std::mem::replace(&mut bytes, out.bytes);
         }
 
         // Skins fill at the spawn site, so no skin directory or list is passed.
@@ -318,7 +320,7 @@ impl AssetLoader for M2ModelLoader {
 
         let skeleton_raw = parse_m2_skeleton(&bytes).unwrap_or_default();
 
-        let mut emitters: Vec<ModelEmitter> = parse_m2_particle_emitters(&bytes)
+        let mut emitters: Vec<ModelEmitter> = parse_m2_particle_emitters(&raw)
             .unwrap_or_default()
             .into_iter()
             .map(|def| {
@@ -362,7 +364,7 @@ impl AssetLoader for M2ModelLoader {
             })
             .collect();
 
-        let ribbons: Vec<ModelRibbon> = benilla_formats::parse_m2_ribbon_emitters(&bytes)
+        let ribbons: Vec<ModelRibbon> = benilla_formats::parse_m2_ribbon_emitters(&raw)
             .unwrap_or_default()
             .into_iter()
             .map(|def| {

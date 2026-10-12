@@ -1,17 +1,17 @@
-//! Vanilla (MD20 v256) M2 particle emitters, read from raw bytes because `benilla-m2` skips them:
-//! fixed 0x1f8-byte records (array at MD20+0x13c/+0x140) at the reference loader's offsets
-//! (`0x70ebd0`). Rate and enabled bake one loop per sequence into [`EmitTiming`], since the
-//! reference samples both in the playing sequence's key window (`0x713d50`).
-
-use std::io::Cursor;
+//! 3.3.5a (MD20 v264) M2 particle emitters, read from the version-264 record because the 1.12.1
+//! relayout has no place for it: fixed 0x1dc-byte records (array at MD20+0x128/+0x12c) at the
+//! reference loader's offsets (`0x833b40`). The emission tracks are read onto the relayout's
+//! sequence bands ([`benilla_m2::Tracks264`]); rate and enabled bake one loop per sequence into
+//! [`EmitTiming`], the other nine into [`EmitParams`].
 
 use anyhow::Result;
-use benilla_m2::{parse_m2, M2ScalarTrack};
+use benilla_m2::{md20_version, M2ScalarTrack, Tracks264, VERSION_264};
 
 use crate::emit_timing::{EmitParams, EmitTiming};
 use crate::models::SeqSlot;
 
-/// Emitter spawn shape, file `emitterType` (+0x2a): 1 plane, 2 sphere, 3 spline.
+/// Emitter spawn shape, file `emitterType` (+0x29, a byte; `0x832ef0` sizes the emitter by it):
+/// 1 plane, 2 sphere, 3 spline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParticleShape {
     Plane,
@@ -24,133 +24,148 @@ pub enum ParticleShape {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ParticleBlend {
     /// `4` Add, `(SRC_ALPHA, ONE)`, and `3` NoAlphaAdd, which the reference draws `(ONE, ONE)`
-    /// (EGxBlend 10): no depth write or sort. Flames and glows.
+    /// (EGxBlend 10, the loader's switch at `0x833e21`): no depth write or sort. Flames and glows.
     Add,
     /// `2` Alpha: `(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)`. Smoke.
     Alpha,
-    /// `1` AlphaKey, for chips and debris: alpha test `GEQUAL round(instanceAlpha × 224)` from the
-    /// raw mode (`0x70c256`, 224.0 at `[0x812034]`). Mode ≤ 1 at alpha ≥ 0.99999 joins the opaque
-    /// list (`0x7085db`), whose promotion row `0x811fe0` keeps it EGxBlend 1, blending off
-    /// (`0x59d563`); z-write goes off only above mode 1 (`0x70d8f1`).
+    /// `1` AlphaKey, for chips and debris: an alpha-tested opaque material (EGxBlend 1).
     AlphaKey,
-    /// `0` Opaque: blending off, depth write on, no alpha test (the mode-0 arm of `0x70c237` sets
-    /// ref 0, which `0x59d5b9` turns into `glDisable(GL_ALPHA_TEST)`). Also any unknown byte.
+    /// `0` Opaque: blending off, depth write on, no alpha test. Also any unknown byte.
     Opaque,
 }
 
-/// One segment's flipbook cell ramp: the authored `(begin, end)` and the `(base, span)` the
-/// reference derives at load (`0x7b9da0` head, `0x7b9de0` tail), `|end − begin| + 1` cells in the
-/// authored direction. A decreasing pair is shipped and plays backwards; nothing swaps or clamps.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CellRamp {
-    /// The authored pair, stored at `rec+0x3c/+0x40` and never read back by the reference.
-    pub begin: u16,
-    pub end: u16,
-    base: i32,
-    span: i32,
+/// One over-life channel, 3.3.5a's `M2FakeTrack`: keys at fixed16 fractions of the particle's
+/// life (`i16 / 0x7fff`), sampled at its normalized age by `0x9793b0`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LifeTrack<V> {
+    /// Key times, fractions of the life.
+    pub times: Vec<f32>,
+    pub values: Vec<V>,
 }
 
-impl CellRamp {
-    /// From an authored pair, by `0x7b9da0`'s two arms.
-    pub fn new(begin: u16, end: u16) -> Self {
-        let (b, e) = (i32::from(begin), i32::from(end));
-        let (base, span) = if e >= b {
-            (b, e - b + 1)
-        } else {
-            (b + 1, e - b - 1)
-        };
+impl<V: Copy> LifeTrack<V> {
+    /// A one-key constant channel.
+    pub fn constant(v: V) -> Self {
         Self {
-            begin,
-            end,
-            base,
-            span,
+            times: vec![0.0],
+            values: vec![v],
         }
     }
 
-    /// The cell at segment fraction `t` (inset and repeat already applied, [`OverLife::sample`]):
-    /// `floor(base + span·t) & 0xFF`, the reference's mod-256 wrap, not a clamp.
-    pub fn sample(&self, t: f32) -> u16 {
-        // Deviation: NaN floors to 0 where the reference reads the raw mantissa, because we do not
-        // reproduce its divide by zero on a `mid` of 0 or 1; no shipped emitter authors one.
-        let v = self.base as f32 + self.span as f32 * t;
-        ((v.floor() as i32) & 0xFF) as u16
+    /// The value indices and fraction at normalized age `u`, by `0x9793b0`'s three arms: two
+    /// keys span the whole life whatever their times say; three split at the middle key; more
+    /// take the binary search `0x979330`. The fraction is not clamped, as age < life at a draw.
+    fn locate(&self, u: f32) -> (usize, usize, f32) {
+        match self.times.len() {
+            0..=2 => (0, 1, u),
+            3 => {
+                let mid = self.times[1];
+                if u < mid {
+                    (0, 1, u / mid)
+                } else {
+                    (1, 2, (u - mid) / (1.0 - mid))
+                }
+            }
+            n => {
+                let k = self.times[1..n - 1].partition_point(|&t| t <= u);
+                (
+                    k,
+                    k + 1,
+                    (u - self.times[k]) / (self.times[k + 1] - self.times[k]),
+                )
+            }
+        }
+    }
+
+    /// The channel at normalized age `u`: a one-value channel is that value (the callers' `count ==
+    /// 1` arm, `0x979487`); otherwise `lerp` between the located pair. `None` with no values.
+    pub fn sample(&self, u: f32, lerp: impl Fn(V, V, f32) -> V) -> Option<V> {
+        match self.values.as_slice() {
+            [] => None,
+            [v] => Some(*v),
+            values => {
+                let (lo, hi, t) = self.locate(u);
+                let (a, b) = (*values.get(lo)?, *values.get(hi)?);
+                Some(lerp(a, b, t))
+            }
+        }
     }
 }
 
-/// The over-life ramps (+0x14c..) at normalized age `u = age / lifespan`: colour and size are
-/// 3-key ramps split at [`Self::mid`] into two linear segments, with a [`CellRamp`] per segment
-/// for the head and the tail (built at `0x70ebd0`, evaluated at `0x7b9b10`).
-#[derive(Debug, Clone, Copy)]
+/// The five over-life channels (+0x104..+0x15b), sampled at the particle's normalized age by
+/// `0x979e90`.
+#[derive(Debug, Clone, Default)]
 pub struct OverLife {
-    /// Normalized age (+0x14c) splitting the segments; only `age > lifespan·mid` enters B.
-    pub mid: f32,
-    /// RGBA keys (+0x150/+0x154/+0x158, packed BGRA); A is the over-life opacity.
-    pub color: [[f32; 4]; 3],
-    /// Size keys (+0x15c/+0x160/+0x164), yards.
-    pub scale: [f32; 3],
-    /// The head quad's ramp per segment: A (+0x168/+0x16a), B (+0x16e/+0x170).
-    pub head_cells: [CellRamp; 2],
-    /// The tail streak's own ramp: A (+0x174/+0x176), B (+0x178/+0x17a), read at `0x7b304e`.
-    pub tail_cells: [CellRamp; 2],
-    /// Flipbook repeats per segment (+0x16c/+0x172): unless 1.0, the cells cycle `fract(t·repeat)`.
-    pub repeat: [f32; 2],
+    /// RGB, authored 0..255 (+0x104).
+    pub color: LifeTrack<[f32; 3]>,
+    /// Opacity, fixed16 (+0x114).
+    pub alpha: LifeTrack<f32>,
+    /// Half-extent per axis, yards (+0x124).
+    pub scale: LifeTrack<[f32; 2]>,
+    /// Head flipbook cell (+0x13c).
+    pub head_cell: LifeTrack<u16>,
+    /// Tail flipbook cell (+0x14c).
+    pub tail_cell: LifeTrack<u16>,
 }
 
-/// One evaluation of the over-life ramps: the four outputs of the reference's `0x7b9b10`.
+/// One evaluation of the over-life channels, before the per-particle variances.
 #[derive(Debug, Clone, Copy)]
 pub struct OverLifeSample {
-    /// Linear RGBA; A is the over-life opacity.
+    /// RGB 0..1 and over-life opacity.
     pub color: [f32; 4],
-    /// Half-extent in yards.
-    pub size: f32,
-    pub head_cell: u16,
+    /// Half-extent per axis, yards.
+    pub size: [f32; 2],
+    /// `None` when the head channel has no keys, where the reference draws cell 0 or, on a
+    /// random-cell emitter, the particle's own cell (`0x979f68`).
+    pub head_cell: Option<u16>,
     pub tail_cell: u16,
 }
 
+/// A cell lerp: `fistp` of `lo + (hi − lo)·t`, the FPU's round-to-nearest-even (`0x9795aa`).
+fn cell_lerp(a: u16, b: u16, t: f32) -> u16 {
+    let v = f32::from(a) + (f32::from(b) - f32::from(a)) * t;
+    v.round_ties_even() as i32 as u16
+}
+
 impl OverLife {
-    /// Sample every ramp at normalized age `u` (0..1).
+    /// Sample every channel at normalized age `u = age / life`. Colour bytes round as the
+    /// reference's `fistp` (`0x979702`); an unkeyed channel takes white, 1, 1 yard or cell 0.
     pub fn sample(&self, u: f32) -> OverLifeSample {
-        let u = u.clamp(0.0, 1.0);
-        // Deviation: `mid` is clamped to [1e-3, 1] because a 0 divides by zero in the reference
-        // (`0x7b9cf0`, walking NaN into the sampler); no shipped emitter authors one.
-        let mid = self.mid.clamp(1e-3, 1.0);
-        let (k0, k1, t, seg) = if u <= mid {
-            (0, 1, u / mid, 0)
-        } else {
-            (1, 2, (u - mid) / (1.0 - mid).max(1e-3), 1)
+        let lerp3 = |a: [f32; 3], b: [f32; 3], t: f32| -> [f32; 3] {
+            std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t)
         };
-        // The reference's only normalized time: `0x7b9b10` computes `t·0.99 + 0.005` once for every
-        // ramp. With the cell ramp's ±1 it gives `cell(0) == begin` and `cell(1) == end` either
-        // way (exact below 200 cells; the largest shipped atlas is 8×8).
-        let t = t.clamp(0.0, 1.0) * 0.99 + 0.005;
-        let mut color = [0.0; 4];
-        for (c, slot) in color.iter_mut().enumerate() {
-            *slot = self.color[k0][c] + (self.color[k1][c] - self.color[k0][c]) * t;
-        }
-        let size = self.scale[k0] + (self.scale[k1] - self.scale[k0]) * t;
-        // The repeat cycles the cells only: colour and size are stored before the `rec+0x50 != 1.0`
-        // branch (`0x7b9bcc`).
-        let ct = if self.repeat[seg] != 1.0 {
-            (t * self.repeat[seg]).fract()
-        } else {
-            t
-        };
+        let rgb = self.color.sample(u, lerp3).unwrap_or([255.0; 3]);
+        let byte = |v: f32| f32::from((v.round_ties_even() as i32) as u8) / 255.0;
+        let alpha = self
+            .alpha
+            .sample(u, |a, b, t| a + (b - a) * t)
+            .unwrap_or(1.0);
+        let size = self
+            .scale
+            .sample(u, |a, b, t| {
+                [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+            })
+            .unwrap_or([1.0; 2]);
         OverLifeSample {
-            color,
+            color: [byte(rgb[0]), byte(rgb[1]), byte(rgb[2]), alpha],
             size,
-            head_cell: self.head_cells[seg].sample(ct),
-            tail_cell: self.tail_cells[seg].sample(ct),
+            head_cell: (!self.head_cell.times.is_empty())
+                .then(|| self.head_cell.sample(u, cell_lerp))
+                .flatten(),
+            tail_cell: (!self.tail_cell.times.is_empty())
+                .then(|| self.tail_cell.sample(u, cell_lerp))
+                .flatten()
+                .unwrap_or(0),
         }
     }
 }
 
 /// A spline (type 3) emitter's curve: a cubic Bézier chain (`3K+1` points: P, out, in, P, …)
-/// walked by normalized arc length, whose knots the reference computes at load (`0x7b9a80` →
-/// `0x4532e0`) for the spawn kernel `0x7b9500`. A segment's length here is a 16-chord sum; the
-/// reference's method (`0x453e50`) is untraced.
+/// walked by normalized arc length, whose knots the reference computes at load for the spawn
+/// kernel. A segment's length here is a 16-chord sum; the reference's method is untraced.
 #[derive(Debug, Clone)]
 pub struct SplineData {
-    /// Control points, model-local WoW axes (`3K+1`, from file+0x1d4/+0x1d8).
+    /// Control points, model-local WoW axes (`3K+1`, from file+0x1c0/+0x1c4).
     pub points: Vec<[f32; 3]>,
     /// Cumulative normalized arc length at each segment boundary (`K+1` entries, 0 to 1).
     knots: Vec<f32>,
@@ -216,7 +231,7 @@ impl SplineData {
         (seg, ((t - a) / (b - a).max(1e-6)).clamp(0.0, 1.0))
     }
 
-    /// The point at arc fraction `t`, clamped to the end points outside [0, 1] (`0x453390`).
+    /// The point at arc fraction `t`, clamped to the end points outside [0, 1].
     pub fn eval(&self, t: f32) -> [f32; 3] {
         if t <= 0.0 {
             return self.points[0];
@@ -228,14 +243,14 @@ impl SplineData {
         Self::bezier(&self.points[3 * seg..3 * seg + 4], u)
     }
 
-    /// The unnormalized tangent at arc fraction `t` (`0x453420`; its caller renormalizes).
+    /// The unnormalized tangent at arc fraction `t` (its caller renormalizes).
     pub fn tangent(&self, t: f32) -> [f32; 3] {
         let (seg, u) = self.locate(t.clamp(0.0, 1.0));
         Self::bezier_deriv(&self.points[3 * seg..3 * seg + 4], u)
     }
 }
 
-/// One vanilla M2 particle emitter, positions and vectors model-local (WoW axes, Z up).
+/// One 3.3.5a M2 particle emitter, positions and vectors model-local (WoW axes, Z up).
 #[derive(Debug, Clone)]
 pub struct ParticleEmitterDef {
     pub flags: u32,
@@ -245,77 +260,82 @@ pub struct ParticleEmitterDef {
     pub blend: ParticleBlend,
     /// Whether the scene light multiplies the quads (`lit_of`, from the raw blend byte).
     pub lit: bool,
-    /// Geometry model (+0x18, an `M2Array<char>` path, `0x7b1c80`): spawns models, not quads.
+    /// Geometry model (+0x18, an `M2Array<char>` path): spawns models, not quads.
     pub geometry_model: Option<String>,
-    /// Recursion model (+0x20, `0x7b5dd0`, `0x7b5b9f`): up to 4 of its emitters run as children,
-    /// driven once per live parent particle per frame at that particle's position.
+    /// Recursion model (+0x20): up to 4 of its emitters run as children, driven once per live
+    /// parent particle per frame at that particle's position.
     pub recursion_model: Option<String>,
-    /// Particle texture, the `.blp` path from the M2 textures table.
+    /// Particle texture, the `.blp` path from the M2 textures table (+0x16).
     pub texture: Option<String>,
-    /// Atlas rows (and `tile_cols` columns), both non-zero powers of two: on a bad pair the
-    /// reference's setter `0x7b4ed0` writes nothing and keeps its 1×1, and so does the parse.
+    /// Atlas rows (+0x30) and `tile_cols` columns (+0x32), both non-zero powers of two; a bad pair
+    /// keeps 1×1.
     pub tile_rows: u16,
     pub tile_cols: u16,
-    /// 0 head (camera-facing quad), 1 tail (velocity streak), 2 both.
-    pub head_tail: u8,
-    /// Spawn rate (+0xdc) and the on/off gate (+0x1dc), baked one loop per sequence.
+    /// Spawn rate (+0xb0) and the on/off gate (+0x1c8), baked one loop per sequence.
     pub timing: EmitTiming,
-    /// The other nine emission tracks (+0x34..+0x130), baked the same way and sampled each frame
+    /// The other nine emission tracks (+0x34..+0xf0), baked the same way and sampled each frame
     /// on the emitter's clock: they animate, so `value[0]` alone is wrong.
     pub params: EmitParams,
-    /// Velocity drag (+0x194, a scalar copied to runtime +0x1e0 at `0x70ffdd`): each frame, after
-    /// gravity, `vel −= min(dt·drag, 1)·vel` (`0x7b2680`).
+    /// Life variance (+0xac, runtime +0xa8): a particle lives `lifespan + seed·vary`, its seed a
+    /// fixed16 in [−1, 1] drawn at birth, against the emitter's live lifespan every frame
+    /// (`0x97de97`), floored at 1 ms.
+    pub lifespan_vary: f32,
+    /// Rate variance (+0xc4, runtime +0xa0): each frame's rate is `rate + S11·vary` (`0x97d952`).
+    pub rate_vary: f32,
+    /// Size variance per axis (+0x134/+0x138, runtime +0xe4/+0xe8): the over-life size times
+    /// `max(1 + S11·vary, 1e-4)`, one roll for both axes unless [`Self::scale_vary_per_axis`]
+    /// (`0x97a04b`).
+    pub scale_vary: [f32; 2],
+    /// Velocity drag (+0x174): each frame, after gravity, `vel −= min(dt·drag, 1)·vel`.
     pub drag: f32,
-    /// Tail time (+0x17c, seconds; the quad writer's tail block `0x7b3041`): a tail particle draws
-    /// a streak `|velocity| · tail_time` long behind its motion.
+    /// Tail time (+0x15c, seconds): a tail particle draws a streak `|velocity| · tail_time` long
+    /// behind its motion.
     pub tail_time: f32,
-    /// Model particles' spin range (+0x19c min, +0x1a8 max, rad/s), rolled per birth at
-    /// `0x7b2420`: X takes `min + u·range`; Y and Z a raw [1, 2) mantissa × range, ignoring min.
+    /// Model particles' spin range (+0x188 min, +0x194 max, rad/s), rolled per birth.
     pub angular_velocity_min: [f32; 3],
     pub angular_velocity_max: [f32; 3],
-    /// Scales a flag-0x40 emitter's inherited velocity (+0x190, runtime +0x1c4 at
-    /// `0x70ff71`/`0x70ff77`).
+    /// Scales a flag-0x40 emitter's inherited velocity (+0x170, runtime +0x14c, `0x97ed88`).
     pub inherit_scale: f32,
-    /// Two (emitter speed, follow fraction) samples (+0x1c4..+0x1d0) for [`Self::follow_line`].
+    /// Two (emitter speed, follow fraction) samples (+0x1b0..+0x1bc) for [`Self::follow_line`].
     pub follow_speed1: f32,
     pub follow_scale1: f32,
     pub follow_speed2: f32,
     pub follow_scale2: f32,
-    /// Twinkle (+0x180..+0x18c; the quad writer `0x7b2a50`): the half-size is the over-life size
-    /// times [`Self::twinkle`], a multiplier skipped when `min == max`, so `{0,0}` burns steady at
-    /// ramp size. The loader `0x70ebd0` keeps min and the delta `max − min` (`rt+0x1c0`).
+    /// Twinkle (+0x160..+0x16c): the half-size is the over-life size times [`Self::twinkle`], a
+    /// multiplier skipped when `min == max`, so `{0,0}` burns steady at ramp size.
     pub twinkle_speed: f32,
-    /// Below 1, a frame whose twinkle noise exceeds it draws no quad (`0x7b2adc`).
+    /// Below 1, a frame whose twinkle noise exceeds it draws no quad (`0x97bed8`).
     pub twinkle_percent: f32,
     pub twinkle_min: f32,
     pub twinkle_max: f32,
-    /// Spline curve (+0x1d4 count, +0x1d8 offset, `3·⌊count/3⌋ + 1` points, `0x7b9a80`). A spline
+    /// Spline curve (+0x1c0 count, +0x1c4 offset, `3·⌊count/3⌋ + 1` points). A spline
     /// repurposes the tracks' `values[0]`: `area_length`/`area_width` are the spawn window in
-    /// [0, 1], `vertical_range` a spin ψ about the tangent (birth velocity +Z turned by S11·ψ),
-    /// `horizontal_range` a `U01·scatter` jitter along the velocity, and the rate a load-time arc
-    /// scale that the first per-frame rate sample overwrites.
+    /// [0, 1], `vertical_range` a spin ψ about the tangent, `horizontal_range` a scatter jitter
+    /// along the velocity, and the rate a load-time arc scale that the first rate sample overwrites.
     pub spline: Option<SplineData>,
-    /// Quad spin (+0x198, runtime +0x18c): rotation `spin · age` rad (`0x7b2ddc`); a negative spin
-    /// reverses on half the particles (a pointer-bit-5 hash, `0x7b2dda`).
+    /// Quad rotation (+0x178 base, +0x17c its variance, +0x180 spin, +0x184 its variance): a
+    /// particle turns `base + spin·age` rad, each rolled `x + S11·vary` per particle (`0x97a130`),
+    /// and only while `spin` or its variance is non-zero (`0x97c282`).
+    pub base_spin: f32,
+    pub base_spin_vary: f32,
     pub spin: f32,
+    pub spin_vary: f32,
     pub over_life: OverLife,
 }
 
 impl ParticleEmitterDef {
-    /// File flag 0x10 (runtime 0x100; the flag remap `0x70faf8`..`0x70fc44` is not the identity).
-    /// Set, particles live emitter-local and the draw re-applies the live emitter matrix, so the
-    /// cloud rides the emitter; clear, the spawn bakes them into world space, so a moving host lays
-    /// a trail (spawn `0x7b8a9a`, draw `0x7b3ef9`).
+    /// File flag 0x10 (runtime 0x200): particles live emitter-local and the draw re-applies the
+    /// live emitter matrix, so the cloud rides the emitter; clear, the spawn bakes them into world
+    /// space, so a moving host lays a trail.
     pub fn model_space(&self) -> bool {
         self.flags & 0x10 != 0
     }
-    /// File flag 0x4000 (runtime 0x40000, added at `0x7b2744`): live particles move by
-    /// [`Self::follow_line`]'s fraction (≤ 1) of the emitter's per-frame motion; a store already
-    /// riding the emitter moves by `(fraction − 1)·Δ`.
+    /// File flag 0x4000 (runtime 0x80000): live particles move by [`Self::follow_line`]'s
+    /// fraction (≤ 1) of the emitter's per-frame motion.
     pub fn follow_emitter(&self) -> bool {
         self.flags & 0x4000 != 0
     }
-    /// `(slope, intercept)` through the two follow samples (`0x7b5d30`): the per-frame fraction is
+    /// `(slope, intercept)` through the two follow samples: the per-frame fraction is
     /// `clamp(slope·|Δpos|/dt + intercept, 0, 1)`. Equal speeds give no response.
     pub fn follow_line(&self) -> Option<(f32, f32)> {
         ((self.follow_speed2 - self.follow_speed1).abs() >= 1e-6).then(|| {
@@ -324,56 +344,74 @@ impl ParticleEmitterDef {
             (slope, self.follow_scale1 - slope * self.follow_speed1)
         })
     }
-    /// File flag 0x40 (runtime 0x400, `0x7b53ce`): births inherit the emitter's motion. Past each
-    /// 1/30 s of accumulated dt the inherit velocity becomes
-    /// `oneFrameΔ · ((1/30) / accum) · inherit_scale`, 0 while no particle lives, and each birth
-    /// adds `(1 + S11·speed_variation) · inherit` to its velocity.
+    /// File flag 0x40 (runtime 0x800): births inherit the emitter's motion. Past each 1/30 s of
+    /// accumulated dt the inherit velocity becomes `oneFrameΔ · ((1/30) / accum) · inherit_scale`
+    /// (`0x97ed88`), and each birth adds `(1 + S11·speed_variation) · inherit` to its velocity.
     pub fn inherits_emitter_motion(&self) -> bool {
         self.flags & 0x40 != 0
     }
-    /// File flag 0x20 (runtime 0x200): particle size scales with the emitter transform's scale;
-    /// without it an instance-scaled prop scales only its particle positions.
+    /// File flag 0x20 (runtime 0x400): particle size scales with the emitter transform's scale
+    /// (`0x97bf7e`); without it an instance-scaled prop scales only its particle positions.
     pub fn scale_size_by_instance(&self) -> bool {
         self.flags & 0x20 != 0
     }
-    /// File flag 0x100 on a sphere (runtime 0x4000, mapped only for type 2): birth velocity is
+    /// File flag 0x100 on a sphere (runtime 0x8000, mapped only for type 2): birth velocity is
     /// straight +Z instead of radial.
     pub fn sphere_up(&self) -> bool {
         self.flags & 0x100 != 0
     }
-    /// File flag 0x80 on a sphere (runtime 0x800, mapped only for type 2): a particle dies the
-    /// frame `dot(stepVelocity, updatedPos) > 0` (`0x7b2680`).
+    /// File flag 0x80 on a sphere (runtime 0x1000, mapped only for type 2): a particle dies the
+    /// frame `dot(stepVelocity, updatedPos) > 0`.
     pub fn kill_outbound(&self) -> bool {
         self.shape == ParticleShape::Sphere && self.flags & 0x80 != 0
     }
-    /// File flag 0x400 (runtime 0x10000): the tail streak's `tail_time` is clamped to the
-    /// particle's age, so the streak grows from zero at birth.
+    /// File flag 0x400 (runtime 0x20000, `0x978d34`): the tail streak's `tail_time` is clamped to
+    /// the particle's age, so the streak grows from zero at birth.
     pub fn tail_clamps_to_age(&self) -> bool {
         self.flags & 0x400 != 0
     }
-    /// File flag 0x200 (runtime 0x8000, tested in the spawn `0x7b2420`): each tumble axis's
-    /// angular velocity flips sign with probability ½.
-    pub fn tumble_random_sign(&self) -> bool {
+    /// File flag 0x200 (runtime 0x10000): a geometry particle's tumble axes each flip sign with
+    /// probability ½ (`0x979b08`), and half the quads turn the other way (`0x97c594`).
+    pub fn random_spin_sign(&self) -> bool {
         self.flags & 0x200 != 0
     }
-    /// File flag 0x2000 (runtime 0x20000): once per birth in anchored mode (hook `0x7b2140`), the
-    /// client probes 20 yd down for terrain, WMO or doodad geometry (`0x672b60` → `0x6aa160`,
-    /// flags 0x100111); on a hit the quad stands on the surface, its height the surface plus its
-    /// birth size (`0x7b9e20`).
+    /// File flag 0x2000 (runtime 0x40000): once per birth in world mode the client probes down
+    /// for terrain, WMO or doodad geometry, and the quad stands on the surface.
     pub fn ground_snap(&self) -> bool {
         self.flags & 0x2000 != 0
     }
-    /// File flag 0x8000, a one-shot burst (`0x718ec8`): when `enabled && rate > 0` first holds it
-    /// spawns `ftol(rate · density · LOD)` particles once (`0x7b5c50` → `0x7b55ae`/`0x7b563d`),
-    /// never pours `rate·dt`, and re-arms only when the gate falls.
+    /// File flag 0x8000, a one-shot burst: when `enabled && rate > 0` first holds it spawns
+    /// `ftol(rate · density · LOD)` particles once, never pours `rate·dt`, and re-arms only when
+    /// the gate falls.
     pub fn burst(&self) -> bool {
         self.flags & 0x8000 != 0
     }
-    /// File flag 0x1000 (runtime 0x2000): the head quad lies flat in the emitter's model XY plane,
-    /// the ±1 unit square times the live draw matrix, spinning about its normal (`0x7b2c25`,
-    /// corner table `0x7b41a3`).
+    /// File flag 0x1000 (runtime 0x4000): the head quad lies flat in the emitter's model XY plane,
+    /// spinning about its normal.
     pub fn xy_quad(&self) -> bool {
         self.flags & 0x1000 != 0
+    }
+    /// File flag 0x20000 (runtime 0x4, `0x978d0a`): the head quad is drawn (`0x97bfe8`).
+    pub fn draws_head(&self) -> bool {
+        self.flags & 0x20000 != 0
+    }
+    /// File flag 0x40000 (runtime 0x8): the tail streak is drawn.
+    pub fn draws_tail(&self) -> bool {
+        self.flags & 0x40000 != 0
+    }
+    /// File flag 0x10000 on an atlas of more than one cell (runtime 0x100000, `0x978e30`): a head
+    /// with no cell keys draws a random cell per particle (`0x979f7e`).
+    pub fn random_cell(&self) -> bool {
+        self.flags & 0x10000 != 0 && u32::from(self.tile_rows) * u32::from(self.tile_cols) > 1
+    }
+    /// File flag 0x80000 (runtime 0x800000): [`Self::scale_vary`] rolls x and y separately.
+    pub fn scale_vary_per_axis(&self) -> bool {
+        self.flags & 0x80000 != 0
+    }
+    /// Whether the quad turns at all: only a non-zero spin or spin variance applies the rotation,
+    /// base spin included (`0x97c282`).
+    pub fn rotates(&self) -> bool {
+        self.spin != 0.0 || self.spin_vary != 0.0
     }
     /// The gated twinkle size multiplier for a noise sample in [0, 1) from the caller's LUT at
     /// `twinkle_speed · age`: 1 when `min == max`.
@@ -386,9 +424,10 @@ impl ParticleEmitterDef {
     }
 }
 
-const STRIDE: usize = 0x1f8;
-const HDR_COUNT: usize = 0x13c;
-const HDR_PTR: usize = 0x140;
+const STRIDE: usize = 0x1dc;
+const HDR_TEXTURES: usize = 0x50;
+pub(crate) const HDR_RIBBONS: usize = 0x120;
+const HDR_PARTICLES: usize = 0x128;
 
 fn le_u16(b: &[u8], o: usize) -> u16 {
     u16::from_le_bytes([b[o], b[o + 1]])
@@ -403,46 +442,6 @@ fn le_vec3(b: &[u8], o: usize) -> [f32; 3] {
     [le_f32(b, o), le_f32(b, o + 4), le_f32(b, o + 8)]
 }
 
-/// One raw 28-byte vanilla M2Track at `track`: absolute key times and the per-sequence `ranges`;
-/// `read` decodes one `elem`-byte value.
-fn read_raw_track(
-    b: &[u8],
-    track: usize,
-    elem: usize,
-    read: impl Fn(&[u8], usize) -> f32,
-) -> M2ScalarTrack {
-    let mut out = M2ScalarTrack {
-        gseq: 0xffff,
-        ..M2ScalarTrack::default()
-    };
-    if track + 0x1c > b.len() {
-        return out;
-    }
-    out.interp = le_u16(b, track);
-    out.gseq = le_u16(b, track + 2);
-    let (rn, ro) = (le_u32(b, track + 4) as usize, le_u32(b, track + 8) as usize);
-    let (tn, to) = (
-        le_u32(b, track + 0x0c) as usize,
-        le_u32(b, track + 0x10) as usize,
-    );
-    let (vn, vo) = (
-        le_u32(b, track + 0x14) as usize,
-        le_u32(b, track + 0x18) as usize,
-    );
-    if ro + rn * 8 <= b.len() {
-        out.ranges = (0..rn)
-            .map(|i| (le_u32(b, ro + i * 8), le_u32(b, ro + i * 8 + 4)))
-            .collect();
-    }
-    let n = tn.min(vn);
-    if n > 0 && to + n * 4 <= b.len() && vo + n * elem <= b.len() {
-        out.keys = (0..n)
-            .map(|i| (le_u32(b, to + i * 4), read(b, vo + i * elem)))
-            .collect();
-    }
-    out
-}
-
 fn blend_of(v: u8) -> ParticleBlend {
     match v {
         3 | 4 => ParticleBlend::Add,
@@ -452,13 +451,11 @@ fn blend_of(v: u8) -> ParticleBlend {
     }
 }
 
-/// The reference's per-blend lighting table (`0x811fa8`, read at `0x70bb0a`), indexed by the raw
-/// blend byte: the mod modes light nothing.
+/// The per-blend lighting table, indexed by the raw blend byte: the mod modes light nothing.
 const LIGHTING_BY_BLEND: [bool; 7] = [true, true, true, true, true, false, false];
 
-/// Whether the reference lights this emitter's quads: its synthesized per-draw material
-/// (`0x70d8b0`) decides `GL_LIGHTING` as a mesh's does (`0x70baf0`, at `0x70bb00`), lit iff file
-/// bit 0x1 is clear and `0x811fa8[blend]` is set. Bit 0x1 is unlit; wowdev has it inverted.
+/// Whether the reference lights this emitter's quads: its material takes lighting from file bit
+/// 0x1 clear (`0x833e71`) and the blend's table entry. Bit 0x1 is unlit; wowdev has it inverted.
 fn lit_of(flags: u32, blend_byte: u8) -> bool {
     flags & 0x1 == 0
         && LIGHTING_BY_BLEND
@@ -467,7 +464,7 @@ fn lit_of(flags: u32, blend_byte: u8) -> bool {
             .unwrap_or(true)
 }
 
-fn shape_of(v: u16) -> ParticleShape {
+fn shape_of(v: u8) -> ParticleShape {
     match v {
         2 => ParticleShape::Sphere,
         3 => ParticleShape::Spline,
@@ -475,51 +472,85 @@ fn shape_of(v: u16) -> ParticleShape {
     }
 }
 
-/// The vanilla M2's particle emitters, textures resolved through `benilla-m2`'s textures table;
-/// empty for a model with none or a file that is not MD20.
-pub fn parse_m2_particle_emitters(bytes: &[u8]) -> Result<Vec<ParticleEmitterDef>> {
-    let textures: Vec<Option<String>> = match parse_m2(&mut Cursor::new(bytes)) {
-        Ok(fmt) => fmt
-            .model()
-            .textures
-            .iter()
-            .map(|t| {
-                let f = t
-                    .filename
-                    .string
-                    .to_string_lossy()
-                    .trim_end_matches('\0')
-                    .to_string();
-                (!f.is_empty()).then_some(f)
-            })
-            .collect(),
-        Err(_) => Vec::new(),
-    };
+/// The version-264 model's texture paths, by index (header +0x50, records of 16 bytes with the
+/// filename `M2Array<char>` at +0x08).
+pub(crate) fn texture_paths_264(b: &[u8]) -> Vec<Option<String>> {
+    let (n, o) = (
+        le_u32(b, HDR_TEXTURES) as usize,
+        le_u32(b, HDR_TEXTURES + 4) as usize,
+    );
+    if n > 0x10000 {
+        return Vec::new();
+    }
+    (0..n)
+        .map_while(|i| {
+            let r = o.checked_add(i * 16)?;
+            (r + 16 <= b.len()).then_some(r)
+        })
+        .map(|r| {
+            let (len, at) = (le_u32(b, r + 8) as usize, le_u32(b, r + 12) as usize);
+            let s = b.get(at..at.checked_add(len)?)?;
+            let s = String::from_utf8_lossy(s)
+                .trim_end_matches('\0')
+                .to_string();
+            (!s.is_empty()).then_some(s)
+        })
+        .collect()
+}
 
-    if bytes.len() < HDR_PTR + 4 || &bytes[..4] != b"MD20" {
+/// A fake track's `(times, values)` arrays (`0x10` bytes at `at`), `size`-byte values decoded by
+/// `read`; empty where the file cannot hold them.
+fn life_track<V>(
+    b: &[u8],
+    at: usize,
+    size: usize,
+    read: impl Fn(&[u8], usize) -> V,
+) -> LifeTrack<V> {
+    let (tn, to) = (le_u32(b, at) as usize, le_u32(b, at + 4) as usize);
+    let (vn, vo) = (le_u32(b, at + 8) as usize, le_u32(b, at + 12) as usize);
+    let fits = |n: usize, o: usize, s: usize| {
+        n <= 0x10000 && o.checked_add(n * s).is_some_and(|end| end <= b.len())
+    };
+    if !fits(tn, to, 2) || !fits(vn, vo, size) {
+        return LifeTrack {
+            times: Vec::new(),
+            values: Vec::new(),
+        };
+    }
+    LifeTrack {
+        times: (0..tn)
+            .map(|i| f32::from(le_u16(b, to + i * 2) as i16) / 32767.0)
+            .collect(),
+        values: (0..vn).map(|i| read(b, vo + i * size)).collect(),
+    }
+}
+
+/// The version-264 model's particle emitters, textures resolved through its textures table;
+/// empty for a model with none or a file that is not version 264.
+pub fn parse_m2_particle_emitters(bytes: &[u8]) -> Result<Vec<ParticleEmitterDef>> {
+    if md20_version(bytes) != Some(VERSION_264) || bytes.len() < HDR_PARTICLES + 8 {
         return Ok(Vec::new());
     }
-    let count = le_u32(bytes, HDR_COUNT) as usize;
-    let base = le_u32(bytes, HDR_PTR) as usize;
+    let count = le_u32(bytes, HDR_PARTICLES) as usize;
+    let base = le_u32(bytes, HDR_PARTICLES + 4) as usize;
     if count == 0 || count > 256 || base + count * STRIDE > bytes.len() {
         return Ok(Vec::new());
     }
+    let textures = texture_paths_264(bytes);
+    let mut tracks = Tracks264::new(bytes)?;
 
     // Each sequence's band and loop flag (flags bit 0 clear loops); a model with none gets one
     // whole-timeline slot so its tracks still bake.
-    let mut seq_slots: Vec<SeqSlot> = {
-        let (n, o) = (le_u32(bytes, 0x1c) as usize, le_u32(bytes, 0x20) as usize);
-        (0..n)
-            .map_while(|i| {
-                let e = o + i * 0x44;
-                (e + 0x44 <= bytes.len()).then(|| SeqSlot {
-                    index: i,
-                    band: (le_u32(bytes, e + 0x04), le_u32(bytes, e + 0x08)),
-                    looping: le_u32(bytes, e + 0x10) & 1 == 0,
-                })
-            })
-            .collect()
-    };
+    let mut seq_slots: Vec<SeqSlot> = tracks
+        .sequences()
+        .into_iter()
+        .enumerate()
+        .map(|(index, (band, flags))| SeqSlot {
+            index,
+            band,
+            looping: flags & 1 == 0,
+        })
+        .collect();
     if seq_slots.is_empty() {
         seq_slots.push(SeqSlot {
             index: 0,
@@ -535,27 +566,20 @@ pub fn parse_m2_particle_emitters(bytes: &[u8]) -> Result<Vec<ParticleEmitterDef
             .collect()
     };
 
-    let color_key = |o: usize| -> [f32; 4] {
-        let v = le_u32(bytes, o);
-        [
-            ((v >> 16) & 0xff) as f32 / 255.0, // R
-            ((v >> 8) & 0xff) as f32 / 255.0,  // G
-            (v & 0xff) as f32 / 255.0,         // B
-            ((v >> 24) & 0xff) as f32 / 255.0, // A
-        ]
-    };
-
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
         let e = base + i * STRIDE;
-        let tex_index = le_u16(bytes, e + 0x16) as usize;
-        let texture = textures.get(tex_index).cloned().flatten();
-        let shape = shape_of(le_u16(bytes, e + 0x2a));
+        let flags = le_u32(bytes, e + 0x04);
+        let texture = textures
+            .get(usize::from(le_u16(bytes, e + 0x16)))
+            .cloned()
+            .flatten();
+        let shape = shape_of(bytes[e + 0x29]);
         // The geometry and recursion model paths (`M2Array<char>`, file-relative offsets).
         let model_path = |cnt_off: usize| -> Option<String> {
             let n = le_u32(bytes, e + cnt_off) as usize;
             let ofs = le_u32(bytes, e + cnt_off + 4) as usize;
-            if n < 2 || ofs + n > bytes.len() {
+            if n < 2 || ofs.checked_add(n)? > bytes.len() {
                 return None;
             }
             let s = String::from_utf8_lossy(&bytes[ofs..ofs + n])
@@ -563,14 +587,12 @@ pub fn parse_m2_particle_emitters(bytes: &[u8]) -> Result<Vec<ParticleEmitterDef
                 .to_string();
             (!s.is_empty()).then_some(s)
         };
-        let geometry_model = model_path(0x18);
-        let recursion_model = model_path(0x20);
         let spline = (shape == ParticleShape::Spline)
             .then(|| {
-                let q = le_u32(bytes, e + 0x1d4) as usize;
-                let ofs = le_u32(bytes, e + 0x1d8) as usize;
+                let q = le_u32(bytes, e + 0x1c0) as usize;
+                let ofs = le_u32(bytes, e + 0x1c4) as usize;
                 let n = 3 * (q / 3) + 1;
-                if q < 3 || ofs + n * 12 > bytes.len() {
+                if !(3..=0x10000).contains(&q) || ofs + n * 12 > bytes.len() {
                     return None;
                 }
                 SplineData::new((0..n).map(|p| le_vec3(bytes, ofs + p * 12)).collect())
@@ -581,81 +603,82 @@ pub fn parse_m2_particle_emitters(bytes: &[u8]) -> Result<Vec<ParticleEmitterDef
             _ => (1, 1),
         };
         let over_life = OverLife {
-            mid: le_f32(bytes, e + 0x14c),
-            color: [
-                color_key(e + 0x150),
-                color_key(e + 0x154),
-                color_key(e + 0x158),
-            ],
-            scale: [
-                le_f32(bytes, e + 0x15c),
-                le_f32(bytes, e + 0x160),
-                le_f32(bytes, e + 0x164),
-            ],
-            // Ten u16s at +0x168..+0x17b (`0x70ebd0`), a repeat count after each head pair, not
-            // the eight wowdev's `*UVAnim` names imply.
-            head_cells: [
-                CellRamp::new(le_u16(bytes, e + 0x168), le_u16(bytes, e + 0x16a)),
-                CellRamp::new(le_u16(bytes, e + 0x16e), le_u16(bytes, e + 0x170)),
-            ],
-            tail_cells: [
-                CellRamp::new(le_u16(bytes, e + 0x174), le_u16(bytes, e + 0x176)),
-                CellRamp::new(le_u16(bytes, e + 0x178), le_u16(bytes, e + 0x17a)),
-            ],
-            repeat: [
-                f32::from(le_u16(bytes, e + 0x16c)),
-                f32::from(le_u16(bytes, e + 0x172)),
-            ],
+            color: life_track(bytes, e + 0x104, 12, le_vec3),
+            alpha: life_track(bytes, e + 0x114, 2, |b, o| {
+                f32::from(le_u16(b, o) as i16) / 32767.0
+            }),
+            scale: life_track(bytes, e + 0x124, 8, |b, o| [le_f32(b, o), le_f32(b, o + 4)]),
+            head_cell: life_track(bytes, e + 0x13c, 2, le_u16),
+            tail_cell: life_track(bytes, e + 0x14c, 2, le_u16),
         };
+        // The emission tracks, onto the relayout's bands; a sequence without keys takes the
+        // channel default, as an unkeyed channel does.
+        let mut f = |at: usize, default: f32| -> M2ScalarTrack {
+            tracks.float(e + at, default).unwrap_or_default()
+        };
+        let params = [
+            f(0x34, 0.0), // speed
+            f(0x48, 0.0), // speedVar
+            f(0x5c, 0.0), // latitude
+            f(0x70, 0.0), // longitude
+            f(0x84, 0.0), // gravity
+            f(0x98, 1.0), // lifespan
+            f(0xc8, 0.0), // areaLength
+            f(0xdc, 0.0), // areaWidth
+            f(0xf0, 0.0), // zSource
+        ];
+        let rate = f(0xb0, 0.0);
+        let enabled = tracks
+            .byte(e + 0x1c8, 1)
+            .map(|mut t| {
+                for k in &mut t.keys {
+                    k.1 = f32::from(k.1 != 0.0);
+                }
+                t
+            })
+            .unwrap_or_default();
         out.push(ParticleEmitterDef {
-            flags: le_u32(bytes, e + 0x04),
+            flags,
             position: le_vec3(bytes, e + 0x08),
             bone: le_u16(bytes, e + 0x14),
             shape,
             spline,
-            geometry_model,
-            recursion_model,
+            geometry_model: model_path(0x18),
+            recursion_model: model_path(0x20),
             blend: blend_of(bytes[e + 0x28]),
-            lit: lit_of(le_u32(bytes, e + 0x04), bytes[e + 0x28]),
+            lit: lit_of(flags, bytes[e + 0x28]),
             texture,
             tile_rows: tiles.0,
             tile_cols: tiles.1,
-            head_tail: bytes[e + 0x2c],
-            timing: EmitTiming::bake(
-                &read_raw_track(bytes, e + 0xdc, 4, le_f32),
-                &read_raw_track(bytes, e + 0x1dc, 1, |b, o| f32::from(b[o] != 0)),
-                &seq_slots,
-                &gseq,
-            ),
+            timing: EmitTiming::bake(&rate, &enabled, &seq_slots, &gseq),
             params: EmitParams::bake(
                 [
-                    &read_raw_track(bytes, e + 0x34, 4, le_f32),  // speed
-                    &read_raw_track(bytes, e + 0x50, 4, le_f32),  // speedVar
-                    &read_raw_track(bytes, e + 0x6c, 4, le_f32),  // latitude
-                    &read_raw_track(bytes, e + 0x88, 4, le_f32),  // longitude
-                    &read_raw_track(bytes, e + 0xa4, 4, le_f32),  // gravity
-                    &read_raw_track(bytes, e + 0xc0, 4, le_f32),  // lifespan
-                    &read_raw_track(bytes, e + 0xf8, 4, le_f32),  // areaLength
-                    &read_raw_track(bytes, e + 0x114, 4, le_f32), // areaWidth
-                    &read_raw_track(bytes, e + 0x130, 4, le_f32), // zSource
+                    &params[0], &params[1], &params[2], &params[3], &params[4], &params[5],
+                    &params[6], &params[7], &params[8],
                 ],
                 &seq_slots,
                 &gseq,
             ),
-            drag: le_f32(bytes, e + 0x194),
-            tail_time: le_f32(bytes, e + 0x17c),
-            angular_velocity_min: le_vec3(bytes, e + 0x19c),
-            angular_velocity_max: le_vec3(bytes, e + 0x1a8),
-            inherit_scale: le_f32(bytes, e + 0x190),
-            follow_speed1: le_f32(bytes, e + 0x1c4),
-            follow_scale1: le_f32(bytes, e + 0x1c8),
-            follow_speed2: le_f32(bytes, e + 0x1cc),
-            follow_scale2: le_f32(bytes, e + 0x1d0),
-            twinkle_speed: le_f32(bytes, e + 0x180),
-            twinkle_percent: le_f32(bytes, e + 0x184),
-            twinkle_min: le_f32(bytes, e + 0x188),
-            twinkle_max: le_f32(bytes, e + 0x18c),
-            spin: le_f32(bytes, e + 0x198),
+            lifespan_vary: le_f32(bytes, e + 0xac),
+            rate_vary: le_f32(bytes, e + 0xc4),
+            scale_vary: [le_f32(bytes, e + 0x134), le_f32(bytes, e + 0x138)],
+            tail_time: le_f32(bytes, e + 0x15c),
+            twinkle_speed: le_f32(bytes, e + 0x160),
+            twinkle_percent: le_f32(bytes, e + 0x164),
+            twinkle_min: le_f32(bytes, e + 0x168),
+            twinkle_max: le_f32(bytes, e + 0x16c),
+            inherit_scale: le_f32(bytes, e + 0x170),
+            drag: le_f32(bytes, e + 0x174),
+            base_spin: le_f32(bytes, e + 0x178),
+            base_spin_vary: le_f32(bytes, e + 0x17c),
+            spin: le_f32(bytes, e + 0x180),
+            spin_vary: le_f32(bytes, e + 0x184),
+            angular_velocity_min: le_vec3(bytes, e + 0x188),
+            angular_velocity_max: le_vec3(bytes, e + 0x194),
+            follow_speed1: le_f32(bytes, e + 0x1b0),
+            follow_scale1: le_f32(bytes, e + 0x1b4),
+            follow_speed2: le_f32(bytes, e + 0x1b8),
+            follow_scale2: le_f32(bytes, e + 0x1bc),
             over_life,
         });
     }
@@ -668,12 +691,10 @@ mod tests {
 
     #[test]
     fn bit_one_is_the_unlit_flag_and_mod_blends_never_light() {
-        // The Elwynn waterfall: bit 0x1 clear, blend 2 (alpha), so the scene lights it.
         assert!(
             lit_of(0x0002, 2),
             "an emitter that CLEARS 0x1 takes the light"
         );
-        // The Orgrimmar bonfire's flame (0x29) and smoke (0x21) set 0x1, so both are unlit.
         assert!(!lit_of(0x0029, 4), "0x1 set: unlit, whatever the blend");
         assert!(!lit_of(0x0021, 2));
         for blend in 0u8..=4 {
@@ -685,21 +706,57 @@ mod tests {
         assert!(lit_of(0x0000, 7));
     }
 
+    fn track<V: Copy>(times: &[i16], values: &[V]) -> LifeTrack<V> {
+        LifeTrack {
+            times: times.iter().map(|&t| f32::from(t) / 32767.0).collect(),
+            values: values.to_vec(),
+        }
+    }
+
+    /// `0x9793b0`'s three arms: two keys span the life whatever their times; three split at the
+    /// middle key (Northrend's colour at 16186, its alpha at 6553); more search their segment.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn the_waterfall_emitter_is_lit() {
-        let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file(
-                "World\\Azeroth\\Elwynn\\PassiveDoodads\\Waterfall\\ElwynnTallWaterfall01.m2",
-            )
-            .expect("read ElwynnTallWaterfall01.m2");
-        let defs = parse_m2_particle_emitters(&bytes).expect("parse emitters");
-        assert_eq!(defs.len(), 1);
-        assert_eq!(defs[0].flags, 0x0002, "authored flag word");
-        assert_eq!(defs[0].blend, ParticleBlend::Alpha);
-        assert!(defs[0].lit, "the spray sheet is shaded by the world");
+    fn life_tracks_locate_by_the_reference_arms() {
+        let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+        let two = track(&[5000, 9000], &[0.0, 1.0]);
+        assert_eq!(two.sample(0.25, lerp), Some(0.25), "times ignored");
+        let mid = 6553.0 / 32767.0;
+        let three = track(&[0, 6553, 32767], &[0.0, 1.0, 0.0]);
+        assert!((three.sample(mid * 0.5, lerp).unwrap() - 0.5).abs() < 1e-5);
+        assert_eq!(three.sample(mid, lerp), Some(1.0), "the middle key opens B");
+        let late = three.sample(mid + (1.0 - mid) * 0.75, lerp).unwrap();
+        assert!((late - 0.25).abs() < 1e-5, "{late}");
+        let four = track(&[0, 8192, 16384, 32767], &[0.0, 10.0, 20.0, 40.0]);
+        let at = |u: f32| four.sample(u, lerp).unwrap();
+        assert!((at(0.125) - 5.0).abs() < 1e-3);
+        assert!((at(0.375) - 15.0).abs() < 1e-3);
+        assert!((at(0.75) - 30.0).abs() < 1e-2);
+        assert_eq!(
+            track(&[0, 32767], &[7.0]).sample(0.9, lerp),
+            Some(7.0),
+            "one value"
+        );
+        assert_eq!(track::<f32>(&[], &[]).sample(0.5, lerp), None);
+    }
+
+    /// Cells round to nearest, ties to even, as `fistp` does; colours land on bytes.
+    #[test]
+    fn over_life_rounds_cells_and_colour_bytes() {
+        let ol = OverLife {
+            color: track(&[0, 32767], &[[0.0, 100.0, 255.0], [255.0, 101.0, 255.0]]),
+            alpha: track(&[0, 32767], &[1.0, 0.0]),
+            scale: track(&[0, 32767], &[[1.0, 2.0], [3.0, 6.0]]),
+            head_cell: track(&[0, 32767], &[0, 3]),
+            tail_cell: LifeTrack::default(),
+        };
+        let s = ol.sample(0.5);
+        assert_eq!(s.color[0], 128.0 / 255.0, "127.5 rounds to the even byte");
+        assert_eq!(s.color[1], 100.0 / 255.0, "100.5 rounds to the even byte");
+        assert_eq!(s.color[3], 0.5);
+        assert_eq!(s.size, [2.0, 4.0], "x and y ride their own keys");
+        assert_eq!(s.head_cell, Some(2), "1.5 rounds to 2");
+        assert_eq!(s.tail_cell, 0, "an unkeyed tail draws cell 0");
+        assert_eq!(ol.sample(1.0 / 6.0).head_cell, Some(0), "0.5 rounds to 0");
     }
 
     /// Straight segments of 1 and 3 yd (control points at thirds, so each cubic is linear) put
@@ -726,9 +783,72 @@ mod tests {
         assert!(SplineData::new(vec![x(0.0)]).is_none(), "below one segment");
     }
 
+    #[test]
+    fn a_hostile_emitter_count_or_a_1_12_file_yields_nothing() {
+        let mut b = vec![0u8; 0x200];
+        b[0..4].copy_from_slice(b"MD20");
+        b[4..8].copy_from_slice(&264u32.to_le_bytes());
+        b[HDR_PARTICLES..HDR_PARTICLES + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(parse_m2_particle_emitters(&b).unwrap().is_empty());
+        b[4..8].copy_from_slice(&256u32.to_le_bytes());
+        b[HDR_PARTICLES..HDR_PARTICLES + 4].copy_from_slice(&1u32.to_le_bytes());
+        assert!(parse_m2_particle_emitters(&b).unwrap().is_empty());
+    }
+
+    /// The WotLK login scene's Northrend emitters, which the relayout once dropped: forty of them,
+    /// their over-life channels split at the issue's measured midpoints.
+    #[test]
+    fn the_northrend_glue_scene_authors_forty_emitters() {
+        let data = crate::wow_data_or_skip!();
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = chain
+            .read("Interface\\Glues\\Models\\UI_MainMenu_Northrend\\UI_MainMenu_Northrend.m2")
+            .expect("read the Northrend glue scene");
+        let defs = parse_m2_particle_emitters(&bytes).expect("parse emitters");
+        assert_eq!(defs.len(), 40);
+        assert!(
+            defs.iter().all(|d| d.texture.is_some()),
+            "every emitter has a texture"
+        );
+        let mid = |t: &[f32]| (t.len() == 3).then(|| (t[1] * 32767.0).round() as i32);
+        assert!(
+            defs.iter()
+                .any(|d| mid(&d.over_life.color.times) == Some(16186)
+                    && mid(&d.over_life.alpha.times) == Some(6553)),
+            "colour midpoint 16186 beside alpha midpoint 6553"
+        );
+        assert!(
+            defs.iter().all(|d| d.draws_head() || d.draws_tail()),
+            "every emitter draws something"
+        );
+        assert!(
+            defs.iter().any(|d| d.timing.peak_rate() > 0.0),
+            "the scene emits"
+        );
+    }
+
+    #[test]
+    fn the_waterfall_emitter_is_lit() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let bytes = chain
+            .read_file(
+                "World\\Azeroth\\Elwynn\\PassiveDoodads\\Waterfall\\ElwynnTallWaterfall01.m2",
+            )
+            .expect("read ElwynnTallWaterfall01.m2");
+        let defs = parse_m2_particle_emitters(&bytes).expect("parse emitters");
+        assert_eq!(defs.len(), 1);
+        assert_eq!(
+            defs[0].flags, 0x20002,
+            "authored flag word: 0x2 and the head quad"
+        );
+        assert!(defs[0].draws_head() && !defs[0].draws_tail());
+        assert_eq!(defs[0].blend, ParticleBlend::Alpha);
+        assert!(defs[0].lit, "the spray sheet is shaded by the world");
+    }
+
     /// `BloodSpurt.m2`, the melee impact flash: emitters 1 to 3 are keyed bursts.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_blood_spurt_emitters_are_keyed_bursts() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -761,7 +881,6 @@ mod tests {
     /// `Feint_Impact_Chest.m2`: the plume (e0) and crescents (e3) set flag 0x8000, one puff at
     /// their 67 ms key; `Eviscerate_Cast_Hands.m2` has the same 1.6 s shape with the flag clear.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_feint_impact_authors_burst_emitters() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -794,7 +913,6 @@ mod tests {
 
     /// `FlameStrike_Area.m2`'s four fire columns: type-3 chains of 16 and 19 points, no spin.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_flamestrike_authors_spline_chains() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -830,7 +948,7 @@ mod tests {
     /// Fireball (spell 133): the cast flash is on for its clip's first 200 ms and the impact plume
     /// ramps 0 → 60 over 133 ms of clip time, though seq 0 spans [1000, 2600] of the file.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+    #[ignore = "3.3.5a's MoltenBlast_Impact_Chest keys its plume differently; re-measure (#51)"]
     fn real_fireball_effects_rebase_to_clip_time() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

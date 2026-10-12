@@ -11,12 +11,14 @@
 //! otherwise read a neighbouring band's keys.
 //!
 //! Particle and ribbon emitters are not written: 3.3.5a's carry what 1.12.1's records have no
-//! place for (per-channel over-life keys, life, rate, size and spin variance).
-//! [`Relayout::dropped`] names them, and anything else left out.
+//! place for (per-channel over-life keys, life, rate, size and spin variance). Their readers take
+//! the version-264 records and read the tracks through [`Tracks264`], onto the same bands.
+//! [`Relayout::dropped`] names anything else left out.
 
 use benilla_bytes::ByteExt;
 
 use crate::error::{Error, Result};
+use crate::track::{M2ScalarTrack, M2Track, M2Vec3Track};
 
 /// The MD20 version [`relayout_264`] reads.
 pub const VERSION_264: u32 = 264;
@@ -92,8 +94,6 @@ mod h264 {
     pub const LIGHTS: usize = 0x108;
     pub const CAMERAS: usize = 0x110;
     pub const CAMERA_LOOKUP: usize = 0x118;
-    pub const RIBBONS: usize = 0x120;
-    pub const PARTICLES: usize = 0x128;
 }
 
 /// The version-256 header, at the offsets the 1.12.1 readers take.
@@ -219,8 +219,107 @@ const ONE3: Channel = Channel::Vec3([1.0; 3]);
 struct Band {
     start: u32,
     length: u32,
+    flags: u32,
     /// The keys are somewhere [`relayout_264`] does not read: a `.anim` file or an alias target.
     elsewhere: bool,
+}
+
+/// One track on the version-256 timeline: `ranges` (8 bytes each), `times` (4) and `values` (one
+/// per time, in the version-256 layout).
+struct Timed {
+    interp: u16,
+    gseq: u16,
+    ranges: Vec<u8>,
+    times: Vec<u8>,
+    values: Vec<u8>,
+}
+
+/// The tracks of a version-264 model's records that [`relayout_264`] does not write, read onto
+/// the bands it writes: sequence `i` at `[start_i, start_i + length_i]`, its window `ranges[i]`,
+/// each band padded as the relayout pads it.
+pub struct Tracks264<'a> {
+    w: Writer<'a>,
+}
+
+impl<'a> Tracks264<'a> {
+    pub fn new(m2: &'a [u8]) -> Result<Self> {
+        match md20_version(m2) {
+            None => Err(Error::NotMd20),
+            Some(VERSION_264) => Ok(Self {
+                w: Writer::new(m2)?,
+            }),
+            Some(v) => Err(Error::UnsupportedVersion(v)),
+        }
+    }
+
+    /// Each sequence's band `(start, end)` and flags, as the relayout's sequence records hold them.
+    pub fn sequences(&self) -> Vec<((u32, u32), u32)> {
+        self.w
+            .bands
+            .iter()
+            .map(|b| ((b.start, b.start.saturating_add(b.length)), b.flags))
+            .collect()
+    }
+
+    fn read<V>(
+        &mut self,
+        at: usize,
+        ch: Channel,
+        decode: impl Fn(&[u8]) -> V,
+    ) -> Result<M2Track<V>> {
+        let t = self.w.timed(at, ch)?;
+        let size = ch.size_264();
+        Ok(M2Track {
+            interp: t.interp,
+            gseq: t.gseq,
+            ranges: t
+                .ranges
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|r| (r.u32_at(0).unwrap_or(0), r.u32_at(4).unwrap_or(0)))
+                .collect(),
+            keys: t
+                .times
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(t.values.chunks_exact(size))
+                .map(|(ms, v)| (u32::from_le_bytes(*ms), decode(v)))
+                .collect(),
+        })
+    }
+
+    /// The `f32` track at `at`; a sequence without keys takes `default`.
+    pub fn float(&mut self, at: usize, default: f32) -> Result<M2ScalarTrack> {
+        self.read(at, Channel::Float(default), |v| v.f32_at(0).unwrap_or(0.0))
+    }
+
+    /// The `u8` track at `at`, as `0..=255` scalars.
+    pub fn byte(&mut self, at: usize, default: u8) -> Result<M2ScalarTrack> {
+        self.read(at, Channel::Byte(default), |v| f32::from(v[0]))
+    }
+
+    /// The `u16` track at `at`, as scalars.
+    pub fn short(&mut self, at: usize, default: u16) -> Result<M2ScalarTrack> {
+        self.read(at, Channel::Fixed16(default as i16), |v| {
+            f32::from(v.u16_at(0).unwrap_or(0))
+        })
+    }
+
+    /// The `fixed16` track at `at`, `i16 / 0x7fff`.
+    pub fn fixed16(&mut self, at: usize, default: i16) -> Result<M2ScalarTrack> {
+        self.read(at, Channel::Fixed16(default), |v| {
+            f32::from(v.u16_at(0).unwrap_or(0) as i16) / 32767.0
+        })
+    }
+
+    /// The `C3Vector` track at `at`.
+    pub fn vec3(&mut self, at: usize, default: [f32; 3]) -> Result<M2Vec3Track> {
+        self.read(at, Channel::Vec3(default), |v| {
+            std::array::from_fn(|i| v.f32_at(i * 4).unwrap_or(0.0))
+        })
+    }
 }
 
 struct Writer<'a> {
@@ -265,6 +364,7 @@ impl<'a> Writer<'a> {
             bands.push(Band {
                 start,
                 length,
+                flags,
                 elsewhere,
             });
             // One empty millisecond between bands, so each band's end key stays its own.
@@ -412,15 +512,6 @@ impl<'a> Writer<'a> {
         )?;
         self.convert_arr(h264::CAMERAS, h256::CAMERAS, 0x64, Self::camera)?;
         self.copy_arr(h264::CAMERA_LOOKUP, h256::CAMERA_LOOKUP, 2)?;
-        for (at, what) in [
-            (h264::RIBBONS, "ribbon emitters"),
-            (h264::PARTICLES, "particle emitters"),
-        ] {
-            let (count, _) = arr(src, at)?;
-            if count > 0 {
-                self.dropped.push(format!("{count} {what}"));
-            }
-        }
         Ok(())
     }
 
@@ -536,13 +627,26 @@ impl<'a> Writer<'a> {
 
     /// Track `at` (`0x14` bytes) as a version-256 track header, its keys on the timeline.
     fn track(&mut self, at: usize, ch: Channel) -> Result<[u8; TRACK_256]> {
+        let t = self.timed(at, ch)?;
+        self.track_header(t.interp, t.gseq, &t.ranges, &t.times, &t.values)
+    }
+
+    /// Track `at` (`0x14` bytes) with its keys on the timeline.
+    fn timed(&mut self, at: usize, ch: Channel) -> Result<Timed> {
         let interp = u16_at(self.src, at)?;
         let gseq = u16_at(self.src, at + 2)?;
         let size = ch.size_264();
         let (sets, _) = arr(self.src, at + 4)?;
+        let empty = |ranges, times, values| Timed {
+            interp,
+            gseq,
+            ranges,
+            times,
+            values,
+        };
         if interp > 1 && !matches!(ch, Channel::Spline(_)) && sets > 0 {
             self.spline_tracks += 1;
-            return self.track_header(interp, gseq, &[], &[], &[]);
+            return Ok(empty(Vec::new(), Vec::new(), Vec::new()));
         }
         let (mut times, mut values, mut ranges) = (Vec::new(), Vec::new(), Vec::new());
         if gseq != NO_GSEQ {
@@ -551,7 +655,7 @@ impl<'a> Writer<'a> {
                 times.extend_from_slice(&t.to_le_bytes());
                 ch.put(v, &mut values);
             }
-            return self.track_header(interp, gseq, &[], &times, &values);
+            return Ok(empty(Vec::new(), times, values));
         }
         // A track with fewer sets than sequences reads set 0 for the rest, as OpenWoW does.
         let per_seq: Vec<Vec<(u32, &[u8])>> = (0..self.bands.len())
@@ -561,7 +665,7 @@ impl<'a> Writer<'a> {
             })
             .collect();
         if per_seq.iter().all(Vec::is_empty) {
-            return self.track_header(interp, gseq, &[], &[], &[]);
+            return Ok(empty(Vec::new(), Vec::new(), Vec::new()));
         }
         let mut past_end = 0;
         let mut key = |times: &mut Vec<u8>, t: u32, v: Option<&[u8]>| {
@@ -598,7 +702,7 @@ impl<'a> Writer<'a> {
             ranges.extend_from_slice(&(count(&times) - 1).to_le_bytes());
         }
         self.keys_past_end += past_end;
-        self.track_header(interp, gseq, &ranges, &times, &values)
+        Ok(empty(ranges, times, values))
     }
 
     /// An event's `M2TrackBase` (`0x0c` bytes, times alone) as version 256's (`0x14`).
