@@ -41,9 +41,32 @@ fn new_vm(world: &mut World) -> Option<UiScript> {
         }
     };
     seed_vm_clock(world, &mut script);
+    seed_class_names(world, &mut script);
     install_addon_asset_resolvers(world, &mut script);
     info!("ui_script: new VM, session {}", script.session());
     Some(script)
+}
+
+/// Hand the new VM `ChrClasses.dbc`'s names before its first file: `Constants.lua:87` calls
+/// `FillLocalizedClassList` at load. Without the table the call fills nothing, as the reference's
+/// walk over zero rows would.
+fn seed_class_names(world: &World, script: &mut UiScript) {
+    let Some(table) = world.get_resource::<crate::chr_classes::ChrClassTable>() else {
+        return;
+    };
+    script.set_class_names(
+        table
+            .0
+            .names()
+            .iter()
+            .map(|n| benilla_ui::script::ClassNames {
+                file: n.file.clone(),
+                name: n.name.clone(),
+                female: n.female.clone(),
+                male: n.male.clone(),
+            })
+            .collect(),
+    );
 }
 
 /// Start the new VM's `GetTime()` where the process already is and re-anchor [`UiClock`] to it,

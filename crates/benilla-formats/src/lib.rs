@@ -111,7 +111,7 @@ pub use lock::{
 mod lock_type;
 pub use lock_type::{load_lock_type_catalog, LockTypeCatalog};
 mod chr_classes;
-pub use chr_classes::{load_chr_classes, ChrClasses, PET_NAME_TOKEN_FALLBACK};
+pub use chr_classes::{load_chr_classes, ChrClassNames, ChrClasses, PET_NAME_TOKEN_FALLBACK};
 mod pet_stats;
 pub use pet_stats::{
     load_pet_loyalty_names, load_pet_personalities, PetHappiness, PetLoyaltyNames,

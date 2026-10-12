@@ -313,6 +313,8 @@ pub(crate) struct Model {
     pub(crate) chat_colors_changed: bool,
     /// The languages this character knows, in `Languages.dbc` row order.
     pub(crate) known_languages: Vec<String>,
+    /// `ChrClasses.dbc`'s rows in record order, which `FillLocalizedClassList` walks.
+    pub(crate) class_names: Vec<super::class_list::ClassNames>,
     /// `Languages.dbc`'s `(ID, Name_lang)` rows in file order, whatever the character knows.
     pub(crate) language_table: Vec<(u32, String)>,
     pub(crate) zone_channel_catalog: Vec<super::channel::ZoneChannelRow>,
@@ -1159,6 +1161,7 @@ impl Model {
             chat_colors: super::chat_types::seed(),
             chat_colors_changed: false,
             known_languages: Vec::new(),
+            class_names: Vec::new(),
             language_table: Vec::new(),
             zone_channel_catalog: Vec::new(),
             channel_commands: Vec::new(),

@@ -41,6 +41,7 @@ mod chat_misc;
 mod chat_send;
 mod chat_types;
 mod chat_window;
+mod class_list;
 mod clip;
 mod colorselect;
 mod container;
@@ -178,6 +179,7 @@ pub use chat_misc::EmoteRequest;
 pub use chat_send::ChatSend;
 pub use chat_types::ChatTypeColor;
 pub use chat_window::{message_group_index, ChatWindowLook, MESSAGE_GROUPS};
+pub use class_list::ClassNames;
 pub use container::{
     BagAutoStore, ContainerMove, ContainerSlot, ContainerState, EnchantView, PendingWrap,
     PetitionSlotView, RandomPropertyView, UiCursorMode,
@@ -512,6 +514,7 @@ impl UiScript {
         addon::install(&lua)?;
         addon_message::install(&lua)?;
         chat_send::install(&lua)?;
+        class_list::install(&lua)?;
         chat_types::install(&lua)?;
         chat_misc::install(&lua)?;
         channel::install(&lua)?;
