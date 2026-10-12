@@ -252,8 +252,8 @@ impl Plugin for RealmSelectPlugin {
                     // Input before the row refresh, so a click shows on the frame it landed.
                     smoke::debug_realm_smoke,
                     (
-                        input::clicks,
-                        input::keys,
+                        input::clicks.run_if(crate::ui_script::glue::native_glue),
+                        input::keys.run_if(crate::ui_script::glue::native_glue),
                         tick_refresh,
                         screen::refresh_list,
                     )

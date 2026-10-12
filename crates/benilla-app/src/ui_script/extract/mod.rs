@@ -527,8 +527,9 @@ pub(super) fn tick_script(
     {
         let _span = bevy::log::info_span!("ui_script: tick").entered();
         let resized = script.set_screen_size(w / s, if h > 0.0 { h / s } else { 768.0 });
-        // A resize re-runs what the interface computed from the old screen size.
-        if resized {
+        // The glue lays out on the root alone; only the in-game state re-runs what the interface
+        // computed from the old screen size.
+        if resized && script.vm_kind() == benilla_ui::script::VmKind::InGame {
             super::manifest::on_screen_resized(&script);
         }
         script.tick(time.delta_secs());
@@ -601,8 +602,13 @@ pub(super) fn tick_script(
     for w in script.take_warnings() {
         warn!("ui_script: {w}");
     }
-    // A runtime `LoadAddOn`'s record, appended to `Logs\FrameXML.log`.
-    super::load_log::write(script.take_load_log_writes());
+    // A runtime `LoadAddOn`'s record, appended to `Logs\FrameXML.log`; the glue has none, but
+    // whatever its VM drains is the glue log's.
+    let writes = script.take_load_log_writes();
+    match script.vm_kind() {
+        benilla_ui::script::VmKind::InGame => super::load_log::write(writes),
+        benilla_ui::script::VmKind::Glue => super::load_log::write_glue(writes),
+    }
 
     // ── The handover ────────────────────────────────────────────────────────────────────────
     *pass = super::UiPassState {
