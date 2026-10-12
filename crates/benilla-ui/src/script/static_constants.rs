@@ -38,7 +38,7 @@ mod tests {
 
     #[test]
     fn the_seven_static_constants_fill_the_table() {
-        let mut s = UiScript::new().unwrap();
+        let s = UiScript::new().unwrap();
         s.run("T = {} RegisterStaticConstants(T)").unwrap();
         for (name, want) in super::STATIC_CONSTANTS {
             assert_eq!(
