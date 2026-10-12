@@ -805,27 +805,14 @@ fn setup_entities(
         // Without `LockType` data a locked GameObject shows the Interact cursor.
         Err(e) => warn!("lock-type catalog unavailable, GO cursors fall back to Interact: {e:#}"),
     }
-    match (
-        benilla_formats::load_pet_personalities(&mut chain),
-        benilla_formats::load_pet_loyalty_names(&mut chain),
-    ) {
-        (Ok(personalities), Ok(loyalty)) => {
-            info!(
-                "pet stat tables: {} personalities, {} loyalty levels",
-                personalities.len(),
-                loyalty.len()
-            );
-            commands.insert_resource(crate::ui_pet_stats::PetStatTables {
-                personalities,
-                loyalty,
-            });
+    match benilla_formats::load_pet_personalities(&mut chain) {
+        Ok(personalities) => {
+            info!("pet stat tables: {} personalities", personalities.len());
+            commands.insert_resource(crate::ui_pet_stats::PetStatTables { personalities });
         }
-        // Without them happiness answers nil (the icon hides) and the loyalty line is blank; the
-        // rest of the pet page reads the descriptor.
-        (p, l) => warn!(
-            "pet stat tables unavailable, happiness/loyalty stay blank: {:#}",
-            p.err().or(l.err()).expect("at least one of the two failed")
-        ),
+        // Without it happiness answers nil (the icon hides); the rest of the pet page reads the
+        // descriptor.
+        Err(e) => warn!("pet stat tables unavailable, happiness stays blank: {e:#}"),
     }
     match (
         benilla_formats::load_creature_families(&mut chain),

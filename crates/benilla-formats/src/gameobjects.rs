@@ -42,6 +42,10 @@ pub(crate) fn gameobject_display_info_schema() -> Schema {
     for i in 0..10 {
         s.add_field(SchemaField::new(format!("Sound{i}"), FieldType::UInt32));
     }
+    // 12340 adds the model's bounding box and an `ObjectEffectPackage` id.
+    s.add_field(SchemaField::new_array("GeoBoxMin", FieldType::Float32, 3));
+    s.add_field(SchemaField::new_array("GeoBoxMax", FieldType::Float32, 3));
+    s.add_field(SchemaField::new("ObjectEffectPackageID", FieldType::UInt32));
     s
 }
 

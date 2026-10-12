@@ -20,11 +20,17 @@ const GROUND_EFFECT_DOODAD: &str = "DBFilesClient\\GroundEffectDoodad.dbc";
 /// the MPQ listfile but readable by exact path.
 const DETAIL_DIR: &str = "World\\NoDXT\\Detail\\";
 
-/// The empty slot is `0xFFFFFFFF` alone: 0 is a real `internalId`, `ElwFlo01.mdl`'s, which 16
-/// shipped slots name.
+/// The empty slot is 0 in 12340: doodad ids are row `ID`s, 1 to 798, and no slot holds the
+/// 5875 sentinel `0xFFFFFFFF`.
 fn is_no_doodad(id: u32) -> bool {
-    id == 0xFFFF_FFFF
+    id == 0
 }
+
+/// `GroundEffectTexture.dbc` columns in 12340: `ID`, `DoodadID[4]`, `DoodadWeight[4]`, then these.
+/// The weights are 1 on all but six of the 3,532 filled slots and are not read.
+const GET_DENSITY: usize = 9;
+/// The `TerrainType` id, the footstep chain's link.
+pub(crate) const GET_TERRAIN_TYPE: usize = 10;
 
 /// One `GroundEffectTexture.dbc` row: the detail doodads and density for an `effectId`.
 #[derive(Clone, Debug)]
@@ -291,9 +297,8 @@ fn fan_point(
 pub(crate) fn ground_effect_texture_schema() -> Schema {
     let mut s = Schema::new("GroundEffectTexture");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
-    for i in 0..4 {
-        s.add_field(SchemaField::new(format!("Doodad{i}"), FieldType::UInt32));
-    }
+    s.add_field(SchemaField::new_array("DoodadID", FieldType::UInt32, 4));
+    s.add_field(SchemaField::new_array("DoodadWeight", FieldType::UInt32, 4));
     s.add_field(SchemaField::new("Density", FieldType::UInt32));
     s.add_field(SchemaField::new("Sound", FieldType::UInt32));
     s
@@ -302,8 +307,8 @@ pub(crate) fn ground_effect_texture_schema() -> Schema {
 fn doodad_schema() -> Schema {
     let mut s = Schema::new("GroundEffectDoodad");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
-    s.add_field(SchemaField::new("InternalId", FieldType::UInt32));
-    s.add_field(SchemaField::new("ModelPath", FieldType::String));
+    s.add_field(SchemaField::new("DoodadPath", FieldType::String));
+    s.add_field(SchemaField::new("Flags", FieldType::UInt32));
     s
 }
 
@@ -314,14 +319,9 @@ fn resolve_model(dbc_name: &str) -> String {
     format!("{DETAIL_DIR}{stem}.m2")
 }
 
-/// Load both ground-effect DBCs off the patch chain. The reference matches `doodadId` against
-/// `GroundEffectDoodad.internalId` (field 1), one less than the row `ID` in 5875: `true` is
-/// faithful, `false` keys by row `ID`, an off-by-one kept only for A/B comparison.
-pub fn load_ground_effect_catalog(
-    chain: &mut Chain,
-    key_by_internal_id: bool,
-) -> Result<GroundEffectCatalog> {
-    let key_field = if key_by_internal_id { 1 } else { 0 };
+/// Load both ground-effect DBCs off the patch chain. A `doodadId` names a `GroundEffectDoodad`
+/// row `ID`: 12340 has no `internalId` column, its doodad record is `ID`, `DoodadPath`, `Flags`.
+pub fn load_ground_effect_catalog(chain: &mut Chain) -> Result<GroundEffectCatalog> {
     let doodads = {
         let bytes = chain
             .read_file(GROUND_EFFECT_DOODAD)
@@ -329,7 +329,7 @@ pub fn load_ground_effect_catalog(
         let rs = parse(&bytes, doodad_schema(), "GroundEffectDoodad")?;
         let mut m = HashMap::with_capacity(rs.records().len());
         for r in rs.records() {
-            if let (Some(id), Some(name)) = (u32_at(r, key_field), str_at(&rs, r, 2)) {
+            if let (Some(id), Some(name)) = (u32_at(r, 0), str_at(&rs, r, 1)) {
                 m.insert(id, resolve_model(&name));
             }
         }
@@ -357,7 +357,7 @@ pub fn load_ground_effect_catalog(
         if slots.iter().all(Option::is_none) {
             continue; // a terrain-type row: footsteps and sound, no doodads
         }
-        let density = u32_at(r, 5).unwrap_or(0);
+        let density = u32_at(r, GET_DENSITY).unwrap_or(0);
         effects.insert(
             id,
             GroundEffect {
@@ -387,9 +387,9 @@ mod tests {
 
     #[test]
     fn no_doodad_sentinels() {
-        assert!(is_no_doodad(0xFFFF_FFFF));
-        assert!(!is_no_doodad(0));
-        assert!(!is_no_doodad(42));
+        assert!(is_no_doodad(0));
+        assert!(!is_no_doodad(1));
+        assert!(!is_no_doodad(798));
     }
 
     #[test]

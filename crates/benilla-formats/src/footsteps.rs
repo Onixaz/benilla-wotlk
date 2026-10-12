@@ -105,7 +105,10 @@ pub fn load_footstep_catalog(chain: &mut Chain) -> Result<FootstepCatalog> {
     )?;
     let mut effect_terrain = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
-        if let (Some(id), Some(tt)) = (u32_at(r, 0), u32_at(r, 6)) {
+        if let (Some(id), Some(tt)) = (
+            u32_at(r, 0),
+            u32_at(r, crate::ground_effects::GET_TERRAIN_TYPE),
+        ) {
             effect_terrain.insert(id, tt);
         }
     }
@@ -176,14 +179,14 @@ pub fn load_footprint_textures(chain: &mut Chain) -> Result<HashMap<u32, String>
 mod tests {
     use super::*;
 
-    /// The chain on 5875 data: class 8 on Metallic, and the character class on dirt and grass.
+    /// The chain on 12340 data: class 8 on Metallic, and the character class on dirt and grass.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_footstep_chain_resolves() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_footstep_catalog(&mut chain).expect("load footstep catalog");
-        assert_eq!(cat.len(), 179, "all lookup rows load");
+        // 217 rows, one key repeated.
+        assert_eq!(cat.len(), 216, "all lookup rows load");
 
         // An effect over Metallic (`TerrainType` 1, sound 2).
         let metallic = cat
@@ -194,7 +197,7 @@ mod tests {
         if let Some(e) = metallic {
             assert_eq!(
                 cat.resolve(8, Some(e)),
-                Some((650, 1063)),
+                Some((15168, 1063)),
                 "class 8 on metallic → the byte-decoded row"
             );
         }
@@ -223,9 +226,8 @@ mod tests {
         assert_eq!(cat.resolve(9999, None), None);
     }
 
-    /// The footprint bit on 5875 data, Snow and Sand only, and the six `FootprintTextures` rows.
+    /// The footprint bit on 12340 data, Snow and Sand only, and the six `FootprintTextures` rows.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn footprint_gate_and_textures_on_real_data() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

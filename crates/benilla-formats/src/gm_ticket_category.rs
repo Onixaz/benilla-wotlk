@@ -1,8 +1,8 @@
-//! `GMTicketCategory.dbc`, the ten categories of the Help window's GM list, which
-//! `GetGMTicketCategories()` pushes as `(id, name)` pairs in file order; the `TICKET_TYPE1..4`
-//! strings feed the OpenTicket dropdown, which 1.12 never shows. The id is the wire value: the
-//! clicked button stores it as `HelpFrameOpenTicket.ticketType` and `NewGMTicket` sends it as
-//! `CMSG_GMTICKET_CREATE`'s category, so the file's ids are kept, never renumbered.
+//! `GMTicketCategory.dbc`, the categories of the Help window's GM list (38 rows in 12340, 10 in
+//! 5875), which `GetGMTicketCategories()` pushes as `(id, name)` pairs in file order; the
+//! `TICKET_TYPE1..4` strings feed the OpenTicket dropdown, which 1.12 never shows. The id is the
+//! wire value: the clicked button stores it as `HelpFrameOpenTicket.ticketType` and `NewGMTicket`
+//! sends it as `CMSG_GMTICKET_CREATE`'s category, so the file's ids are kept, never renumbered.
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
@@ -44,7 +44,7 @@ impl GmTicketCategoryCatalog {
 fn gm_ticket_category_schema() -> Schema {
     let mut s = Schema::new("GMTicketCategory");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
-    for i in 0..8 {
+    for i in 0..16 {
         s.add_field(SchemaField::new(format!("Name{i}"), FieldType::String));
     }
     s.add_field(SchemaField::new("NameFlags", FieldType::UInt32));
@@ -73,11 +73,10 @@ pub fn load_gm_ticket_categories(chain: &mut Chain) -> Result<GmTicketCategoryCa
 mod tests {
     use super::*;
 
-    /// The 5875 ids (the wire values) in file order (the painted order), matching
-    /// `GENERAL_HELPFRAME`'s ten keys.
+    /// The 12340 ids (the wire values) in file order: 5875's ten rows, the `GENERAL_HELPFRAME`
+    /// keys, now behind a `<not set>` row 0 and ahead of 27 more.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn the_shipped_categories_are_the_ten_help_window_rows_in_order() {
+    fn the_shipped_categories_keep_the_ten_help_window_rows_in_order() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_gm_ticket_categories(&mut chain).expect("GMTicketCategory.dbc");
@@ -87,9 +86,10 @@ mod tests {
             .iter()
             .map(|c| (c.id, c.name.as_str()))
             .collect();
+        assert_eq!(rows[0], (0, "<not set>"));
         assert_eq!(
-            rows,
-            vec![
+            rows[1..11],
+            [
                 (1, "Stuck"),
                 (2, "Behavior/Harassment"),
                 (3, "Guild"),
@@ -103,6 +103,7 @@ mod tests {
             ],
             "the wire ids and the painted order both matter — see the module doc"
         );
-        assert_eq!(cat.len(), 10, "the whole shipped table");
+        assert_eq!(rows[37], (37, "Scam Report"));
+        assert_eq!(cat.len(), 38, "the whole shipped table");
     }
 }

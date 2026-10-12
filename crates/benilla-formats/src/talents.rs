@@ -1,10 +1,13 @@
 //! `Talent.dbc` and `TalentTab.dbc`: each class's three talent tabs, and each tab's talents with
 //! grid seat, rank spells and prerequisites; `CMSG_LEARN_TALENT` carries a row id from here. The
-//! columns are vmangos's `TalentEntry` and `TalentTabEntry` (`DBCStructure.h`).
+//! columns are TrinityCore 3.3.5's `TalentEntry` and `TalentTabEntry`: 12340's `Talent` adds a
+//! two-word category mask after 5875's 21 columns, and its `TalentTab` name runs over sixteen
+//! locales and a mask before the icon, masks, pet-talent mask, order and background.
 //!
 //! Order matters: `GetTalentInfo(tab, index)` indexes a tab's talents in native row order
 //! (`TalentTabInfo[+0xC] + (index−1)*0x54`), never a (tier, column) sort, and a class's tabs come
-//! in file order among rows matching both masks (`0x4f2e50`), never by `orderIndex` (column 13).
+//! in file order among rows matching both masks (`0x4f2e50`), never by `orderIndex` (column 22).
+//! The three hunter-pet tabs carry neither mask, so no race and class reaches them here.
 
 use std::collections::HashMap;
 
@@ -17,7 +20,7 @@ use crate::Chain;
 const TALENT: &str = "DBFilesClient\\Talent.dbc";
 const TALENT_TAB: &str = "DBFilesClient\\TalentTab.dbc";
 
-const TALENT_FIELDS: usize = 21;
+const TALENT_FIELDS: usize = 23;
 const COL_T_TAB: usize = 1;
 const COL_T_ROW: usize = 2;
 const COL_T_COL: usize = 3;
@@ -27,13 +30,13 @@ const COL_T_PREREQ_RANK: usize = 16;
 const COL_T_FLAGS: usize = 19;
 const COL_T_REQUIRED_SPELL: usize = 20;
 
-const TALENT_TAB_FIELDS: usize = 15;
+const TALENT_TAB_FIELDS: usize = 24;
 const COL_TT_NAME_ENUS: usize = 1;
-const COL_TT_RACE_MASK: usize = 11;
-const COL_TT_CLASS_MASK: usize = 12;
-const COL_TT_BACKGROUND: usize = 14;
+const COL_TT_RACE_MASK: usize = 19;
+const COL_TT_CLASS_MASK: usize = 20;
+const COL_TT_BACKGROUND: usize = 23;
 
-/// The vanilla rank ceiling (`MAX_TALENT_RANK`, vmangos `DBCStructure.h`).
+/// The rank ceiling: `Talent.dbc` has nine rank columns, and no 12340 talent fills past five.
 pub const MAX_TALENT_RANK: usize = 5;
 
 /// One `Talent.dbc` row: a talent's grid seat, rank spells and prerequisites.
@@ -71,7 +74,7 @@ pub struct TalentTabInfo {
     pub id: u32,
     pub name: String,
     /// `raceMask` and `classMask`, bit `1 << (id − 1)`; the client admits a tab only when both
-    /// match (511 is every race in the shipped data).
+    /// match (2047, every race, on all class tabs but the Death Knight's `0xfffc07ff`).
     pub race_mask: u32,
     pub class_mask: u32,
     /// The `Interface\TalentFrame\<background>-…` art base ("MageFire").
@@ -192,14 +195,13 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_talent_tables_hold_the_grid_and_prereq_invariants() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_talent_catalog(&mut chain).expect("load Talent/TalentTab");
         assert!(
             cat.len() > 300,
-            "the 1.12 talent table has hundreds of rows, got {}",
+            "the 12340 talent table has hundreds of rows, got {}",
             cat.len()
         );
 
@@ -216,13 +218,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["MageArcane", "MageFire", "MageFrost"]
         );
-        // Every shipped tab's raceMask is 511, so race 10 admits nothing.
+        // Every class tab's raceMask covers races 1-11 alone, so race 12 admits nothing.
         assert!(
-            cat.tabs_for_class(10, MAGE).is_empty(),
-            "race bit 10 is outside 511"
+            cat.tabs_for_class(12, MAGE).is_empty(),
+            "race bit 12 is outside every mask"
         );
-        // Every class has pages; vanilla's classes are 1-5, 7-9 and 11 (druid).
-        for class in [1u8, 2, 3, 4, 5, 7, 8, 9, 11] {
+        // Every class has pages: 1-9 (6 the Death Knight) and 11 (druid).
+        for class in [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 11] {
             let n = cat.tabs_for_class(HUMAN, class).len();
             assert_eq!(n, 3, "class {class} has three talent pages, got {n}");
         }
@@ -249,7 +251,7 @@ mod tests {
                 t.id,
                 t.col
             );
-            assert!(t.row < 8, "talent {} row {} inside 8 tiers", t.id, t.row);
+            assert!(t.row < 11, "talent {} row {} inside 11 tiers", t.id, t.row);
             let n = t.max_rank() as usize;
             assert!(n >= 1, "talent {} has at least one rank", t.id);
             assert!(
@@ -257,13 +259,15 @@ mod tests {
                 "talent {} rank array is prefix-shaped",
                 t.id
             );
-            if t.prereq_talent != 0 {
+            // 12340 ships two prerequisites that name no row: 1756 → 1409 and 1993 → 1994.
+            if t.prereq_talent != 0 && !all_ids.contains(&t.prereq_talent) {
                 assert!(
-                    all_ids.contains(&t.prereq_talent),
+                    matches!((t.id, t.prereq_talent), (1756, 1409) | (1993, 1994)),
                     "talent {} prereq {} resolves",
                     t.id,
                     t.prereq_talent
                 );
+            } else if t.prereq_talent != 0 {
                 assert!(
                     cat.talent(t.tab, t.prereq_talent).is_some(),
                     "talent {} prereq {} lives in the same tab",

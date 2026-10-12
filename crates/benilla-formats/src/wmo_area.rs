@@ -1,7 +1,8 @@
 //! `WMOAreaTable.dbc`, a WMO interior's audio identity per building and per group; the Northshire
 //! Abbey chant is its whole-WMO row's `ZoneIntroMusicTable` 221. Rows key on the root's
 //! `MOHD.wmoID`, the placement's `MODF.nameSet` and each group's `MOGP.uniqueID` (`+0x38`), with
-//! `WMOGroupID` `-1` for the whole-WMO row; the enUS `AreaName` is column 11 of 20.
+//! `WMOGroupID` `-1` for the whole-WMO row; the enUS `AreaName` is column 11 of 28 (sixteen locales
+//! and a mask in 12340).
 
 use std::collections::HashMap;
 
@@ -124,7 +125,7 @@ fn schema() -> Schema {
         s.add_field(SchemaField::new(name, FieldType::UInt32));
     }
     s.add_field(SchemaField::new("AreaName", FieldType::String));
-    for i in 12..20 {
+    for i in 12..28 {
         s.add_field(SchemaField::new(format!("_pad{i}"), FieldType::UInt32));
     }
     s
@@ -165,22 +166,21 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_wmo_area_resolves_abbey_and_chapel() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_wmo_area_catalog(&mut chain).expect("load WMOAreaTable");
-        // 21115 rows but 21105 distinct (wmo, nameset, group) keys: the shipped data repeats 10.
-        assert_eq!(cat.len(), 21105, "all distinct rows load");
+        // 22550 rows, every (wmo, nameset, group) key distinct.
+        assert_eq!(cat.len(), 22550, "all rows load");
 
         // NSabbey (59): an unknown group falls back to the whole-WMO row, the monk chant.
         let abbey = cat.resolve(59, 0, 9999).expect("abbey default row");
         assert_eq!(abbey.intro_sound, 221, "Sacred01 intro");
 
-        // The reused abbey model's "Main Hall" (group 1934) sits at Alexston Farmstead (area 219).
+        // Name set 1, the abbey at Northshire, sets each group's area to Northshire Abbey (24).
         assert_eq!(
-            cat.resolve(59, 0, 1934).unwrap().area_table_id,
-            219,
+            cat.resolve(59, 1, 1934).unwrap().area_table_id,
+            24,
             "the group's AreaTableID resolves (field 10, not the zeroed field 9)"
         );
 

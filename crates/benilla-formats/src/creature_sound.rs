@@ -1,6 +1,8 @@
-//! Creature voice: `CreatureDisplayInfo.SoundID` to `CreatureSoundData.dbc`, 30 `u32` columns of
-//! per-display voice kits whose names are the community's, since a DBC carries none. Column 22
-//! (`NPCSoundID`) is empty on every row and unread. A display whose own `SoundID` is 0, nearly
+//! Creature voice: `CreatureDisplayInfo.SoundID` to `CreatureSoundData.dbc`, 38 columns of
+//! per-display voice kits in 12340, whose names are the community's, since a DBC carries none.
+//! `SoundFidget` holds five kits (14-18), so the columns after it sit one later than 5875's; column
+//! 23 (`NPCSoundID`) is empty on every row and unread, and the two fidget-delay floats, birth,
+//! directed-cast, submerge and pet-sound-data columns (31-37) are unread. A display whose own `SoundID` is 0, nearly
 //! every one, resolves through `CreatureModelData.SoundID` (col 13), as the client does.
 
 use std::collections::HashMap;
@@ -30,7 +32,7 @@ pub struct CreatureVoice {
     pub wing_flap: u32,
     pub wing_glide: u32,
     pub alert: u32,
-    /// Fired by `$FD1`..`$FD4`.
+    /// Fired by `$FD1`..`$FD4`; the fifth kit (col 18) is unread.
     pub fidget: [u32; 4],
     /// Fired by `$AH0`..`$AH3`.
     pub custom_attack: [u32; 4],
@@ -40,13 +42,13 @@ pub struct CreatureVoice {
     pub impact_type: u32,
     pub jump_start: u32,
     pub jump_end: u32,
-    /// Column 27, the bark on an attack order: `SMSG_PET_ACTION_SOUND`'s `PET_TALK_ATTACK`, bark
-    /// state 2 of `0x623a40` (`0x623ad3` reads `[row+0x6c]`).
+    /// Column 28, the bark on an attack order: `SMSG_PET_ACTION_SOUND`'s `PET_TALK_ATTACK`, bark
+    /// state 2 of 5875's `0x623a40` (`0x623ad3` reads `[row+0x6c]`, its column 27).
     pub pet_attack: u32,
-    /// Column 28, the bark acknowledging an ordered spell: `PET_TALK_SPECIAL_SPELL`, bark state 1
-    /// (`0x623ac8` reads `[row+0x70]`).
+    /// Column 29, the bark acknowledging an ordered spell: `PET_TALK_SPECIAL_SPELL`, bark state 1
+    /// (5875's `0x623ac8` reads `[row+0x70]`).
     pub pet_order: u32,
-    /// Column 29, `SMSG_PET_DISMISS_SOUND`'s parting line: `0x604140` reads `[row+0x74]`
+    /// Column 30, `SMSG_PET_DISMISS_SOUND`'s parting line: 5875's `0x604140` reads `[row+0x74]`
     /// (`0x6041c4`, `0x6041dc`) and plays it at a bare world position, since the pet is gone.
     pub pet_dismiss: u32,
 }
@@ -83,8 +85,13 @@ impl CreatureVoiceCatalog {
 
 fn csd_schema() -> Schema {
     let mut s = Schema::new("CreatureSoundData");
-    for i in 0..30 {
-        s.add_field(SchemaField::new(format!("f{i}"), FieldType::UInt32));
+    for i in 0..38 {
+        let ty = if matches!(i, 31 | 32) {
+            FieldType::Float32
+        } else {
+            FieldType::UInt32
+        };
+        s.add_field(SchemaField::new(format!("f{i}"), ty));
     }
     s
 }
@@ -113,14 +120,14 @@ pub fn load_creature_voice_catalog(chain: &mut Chain) -> Result<CreatureVoiceCat
                 wing_glide: g(12),
                 alert: g(13),
                 fidget: [g(14), g(15), g(16), g(17)],
-                custom_attack: [g(18), g(19), g(20), g(21)],
-                loop_sound: g(23),
-                impact_type: g(24),
-                jump_start: g(25),
-                jump_end: g(26),
-                pet_attack: g(27),
-                pet_order: g(28),
-                pet_dismiss: g(29),
+                custom_attack: [g(19), g(20), g(21), g(22)],
+                loop_sound: g(24),
+                impact_type: g(25),
+                jump_start: g(26),
+                jump_end: g(27),
+                pet_attack: g(28),
+                pet_order: g(29),
+                pet_dismiss: g(30),
             },
         );
     }
@@ -178,16 +185,15 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_creature_voice_resolves() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_creature_voice_catalog(&mut chain).expect("load creature voices");
-        assert_eq!(cat.len(), 406, "all CreatureSoundData rows load");
+        assert_eq!(cat.len(), 1306, "all CreatureSoundData rows load");
 
         let v = cat.for_display(26).expect("display 26 has a voice");
         assert_eq!(v.death, 314);
-        assert_eq!(v.exertion, [312, 313]);
+        assert_eq!(v.exertion, [312, 0]);
         assert_eq!(v.footstep_class, 8);
         assert_eq!(v.aggro, 694);
 
@@ -199,11 +205,11 @@ mod tests {
             .expect("human male resolves via the model");
         assert_eq!(human.footstep_class, 7);
     }
-    /// Only four rows carry columns 27-29, and their kits are named `_KILL`, `_ORDER` and
-    /// `_DISMISS` in column order; a hunter pet's are 0, so it is silent, as in the reference.
+    /// Only the demon voices (and one test row) carry columns 28-30, and their kits are named
+    /// `_KILL`, `_ORDER` and `_DISMISS` in column order; a hunter pet's are 0, so it is silent,
+    /// as in the reference.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn only_the_four_demon_voices_carry_pet_barks() {
+    fn only_the_demon_voices_carry_pet_barks() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_creature_voice_catalog(&mut chain).expect("load creature voices");
@@ -251,6 +257,24 @@ mod tests {
                     "A_VOIDWALKER_KILL".into(),
                     "A_VOIDWALKER_ORDER".into(),
                     "A_VOIDWALKER_DISMISS".into()
+                ),
+                (
+                    348,
+                    "A_IMP_KILL".into(),
+                    "A_IMP_ORDER".into(),
+                    "A_Imp_Dismiss".into()
+                ),
+                (
+                    488,
+                    "A_DOOMGUARD_KILL".into(),
+                    "A_DOOMGUARD_ORDER".into(),
+                    "A_DOOMGUARD_DISMISS01".into()
+                ),
+                (
+                    2257,
+                    "TEST Craig Steele".into(),
+                    "TEST Craig Steele".into(),
+                    "TEST Craig Steele".into()
                 ),
             ],
         );

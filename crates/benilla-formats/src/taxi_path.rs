@@ -85,12 +85,11 @@ mod tests {
 
     /// Hop 6 runs Stormwind (node 2) to Sentinel Hill (node 4) for 110 copper.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_taxi_path_layout_sanity() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_taxi_paths(&mut chain).expect("load TaxiPath");
-        assert_eq!(cat.len(), 287, "1.12 ships 287 taxi path hops");
+        assert_eq!(cat.len(), 915, "12340 ships 915 taxi path hops");
 
         let hop = cat.between(2, 4).expect("a direct 2 -> 4 hop exists");
         assert_eq!(hop.id, 6);

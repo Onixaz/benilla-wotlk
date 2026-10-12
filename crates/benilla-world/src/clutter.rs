@@ -100,8 +100,7 @@ fn setup_clutter(mut commands: Commands, world_assets: Option<ResMut<WorldAssets
     };
     commands.insert_resource(ClutterGeometry::default());
     let mut chain = world_assets.chain.lock_recover();
-    // `true`: a `doodadId` names a `GroundEffectDoodad.internalId`, as the reference keys it.
-    match load_ground_effect_catalog(&mut chain, true) {
+    match load_ground_effect_catalog(&mut chain) {
         Ok(catalog) => {
             info!("ground-effect catalog: {} effects", catalog.len());
             commands.insert_resource(GroundClutter { catalog });

@@ -38,7 +38,7 @@ fn item_class_schema() -> Schema {
     s.add_field(SchemaField::new("ClassID", FieldType::UInt32));
     s.add_field(SchemaField::new("SubClassMapID", FieldType::UInt32));
     s.add_field(SchemaField::new("Flags", FieldType::UInt32));
-    for i in 0..8 {
+    for i in 0..16 {
         s.add_field(SchemaField::new(format!("Name{i}"), FieldType::String));
     }
     s.add_field(SchemaField::new("NameFlags", FieldType::UInt32));
@@ -68,7 +68,6 @@ mod tests {
 
     /// Bagnon (`Bagnon_Core/localization.lua:94-95`) expects "Container" and "Quiver" here.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_classes_are_named_as_getiteminfo_returns_them() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -81,10 +80,12 @@ mod tests {
         assert_eq!(cat.name(7), Some("Trade Goods"));
         assert_eq!(cat.name(11), Some("Quiver"), "Bagnon's own expectation");
         assert_eq!(cat.name(15), Some("Miscellaneous"));
+        assert_eq!(cat.name(3), Some("Gem"));
+        assert_eq!(cat.name(16), Some("Glyph"));
         // The reference pushes the row string unfiltered.
-        assert_eq!(cat.name(3), Some("Jewelry(OBSOLETE)"));
-        assert_eq!(cat.name(10), Some("Money(OBSOLETE)"));
-        assert_eq!(cat.name(16), None);
-        assert_eq!(cat.len(), 16, "the whole shipped table");
+        assert_eq!(cat.name(8), Some("Generic(OBSOLETE)"));
+        assert_eq!(cat.name(14), Some("Permanent(OBSOLETE)"));
+        assert_eq!(cat.name(17), None);
+        assert_eq!(cat.len(), 17, "the whole shipped table");
     }
 }

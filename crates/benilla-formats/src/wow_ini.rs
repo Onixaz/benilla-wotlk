@@ -1,6 +1,7 @@
 //! `Wow.ini`, the client's `[WoW Config]` section. The reference loads it through the archive
 //! chain at startup (`0x40249d`, `SFileLoadFile`), and a stock install ships it in
-//! `interface.MPQ`; `Region` picks the realm categories ([`crate::load_realm_categories`]).
+//! `interface.MPQ`. 5875's `Region` picked the realm categories; 12340's category set is every
+//! `Cfg_Categories.dbc` row ([`crate::load_realm_categories`]).
 
 use crate::Chain;
 
@@ -92,17 +93,16 @@ mod tests {
         assert_eq!(ini_int("'AB'"), 0x4142, "a quoted run packs its bytes");
     }
 
-    /// The install carries a `Wow.ini` in its archives, and its Region names categories.
+    /// The install carries a `Wow.ini` in its archives, and it names a Region.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn the_install_names_a_region_with_categories() {
+    fn the_install_names_a_region() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
+        let chain = crate::open_chain(&data).expect("open chain");
         assert!(chain.contains(WOW_INI), "Wow.ini is not in the patch chain");
-        let region = client_region(&chain);
-        assert_ne!(region, 0, "the shipped Wow.ini names a Region");
-        let categories =
-            crate::load_realm_categories(&mut chain, region).expect("Cfg_Categories.dbc");
-        assert!(!categories.is_empty(), "Region {region} has no categories");
+        assert_ne!(
+            client_region(&chain),
+            0,
+            "the shipped Wow.ini names a Region"
+        );
     }
 }

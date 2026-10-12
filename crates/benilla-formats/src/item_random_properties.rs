@@ -6,7 +6,7 @@
 //! enchant slots 2..6 for `0x52c991` to print, so a linked item shows its stat lines, not
 //! `<Random enchantment>`. An item object carries its own enchants (`ITEM_FIELD_ENCHANTMENT`
 //! 2..6) and reads the table only for the name, off `ITEM_FIELD_RANDOM_PROPERTIES_ID`. The
-//! localized suffix is columns 7..14, read at `0x1c + 4*locale`.
+//! localized suffix is columns 7..22 in 12340 (sixteen locales, then its mask), enUS at `0x1c`.
 
 use std::collections::HashMap;
 
@@ -85,7 +85,7 @@ pub(crate) fn item_random_properties_schema() -> Schema {
             FieldType::UInt32,
         ));
     }
-    for i in 0..8 {
+    for i in 0..16 {
         s.add_field(SchemaField::new(format!("Suffix{i}"), FieldType::String));
     }
     s.add_field(SchemaField::new("SuffixFlags", FieldType::UInt32));
@@ -124,7 +124,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_table_loads_with_its_suffixes_and_enchants() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

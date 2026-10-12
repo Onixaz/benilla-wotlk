@@ -1,9 +1,9 @@
-//! `AnimationData.dbc`, the per-animation policy: 208 rows of `ID`, `Name`, `WeaponFlags`,
-//! `BodyFlags`, two unidentified columns and `Fallback`. The reference's sheath reconcile
-//! (`0x5fdf80`, on every `PlayAnimation`) reads `WeaponFlags` at row `+0x8` of the `0xc0e070` cache
-//! for the requested id, not a model's substitute: `4` and `0x10` stow, `0x20` draws melee, and
-//! 5875 sets no other bit. `Fallback` is walked only for ids past a model's baked
-//! `PlayableAnimationLookup` (203 and up), which was computed from it.
+//! `AnimationData.dbc`, the per-animation policy: 506 rows of `ID`, `Name`, `WeaponFlags`,
+//! `BodyFlags`, `Flags`, `Fallback`, `BehaviorID` and `BehaviorTier` in 12340. The sheath reconcile
+//! (`0x5fdf80` in 5875, on every `PlayAnimation`) reads `WeaponFlags` at row `+0x8` for the
+//! requested id, not a model's substitute: `4` and `0x10` stow, `0x20` draws melee, and 12340 sets
+//! no other bit. `Fallback` is walked only for ids past a model's baked `PlayableAnimationLookup`,
+//! which was computed from it.
 
 use std::collections::HashMap;
 
@@ -18,7 +18,8 @@ use crate::Chain;
 pub struct AnimEntry {
     /// The sheath-reconcile bits (col 2).
     pub weapon_flags: u32,
-    /// The substitute animation id when a model lacks this clip (`0` = Stand).
+    /// The substitute animation id when a model lacks this clip (`0` = Stand), col 5; col 6,
+    /// `BehaviorID`, is mostly the row's own id.
     pub fallback: u16,
 }
 
@@ -69,7 +70,7 @@ impl AnimDataCatalog {
 
 fn schema() -> Schema {
     let mut s = Schema::new("AnimationData");
-    for i in 0..7 {
+    for i in 0..8 {
         let ty = if i == 1 {
             FieldType::String
         } else {
@@ -94,7 +95,7 @@ pub fn load_anim_data_catalog(chain: &mut Chain) -> Result<AnimDataCatalog> {
             id as u16,
             AnimEntry {
                 weapon_flags: u32_at(r, 2).unwrap_or(0),
-                fallback: u32_at(r, 6).unwrap_or(0) as u16,
+                fallback: u32_at(r, 5).unwrap_or(0) as u16,
             },
         );
         if let Some(name) = str_at(&rs, r, 1).filter(|n| !n.is_empty()) {
@@ -108,14 +109,13 @@ pub fn load_anim_data_catalog(chain: &mut Chain) -> Result<AnimDataCatalog> {
 mod tests {
     use super::*;
 
-    /// The 5875 table: WeaponFlags within the reconcile's three bits, spot rows, fallback chains.
+    /// The 12340 table: WeaponFlags within the reconcile's three bits, spot rows, fallback chains.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_animation_data_decodes() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_anim_data_catalog(&mut chain).expect("load AnimationData");
-        assert_eq!(cat.len(), 208);
+        assert_eq!(cat.len(), 506);
 
         for (&id, row) in &cat.rows {
             assert!(
@@ -148,7 +148,8 @@ mod tests {
         assert_eq!(cat.name(0), Some("Stand"));
         assert_eq!(cat.name(5), Some("Run"));
         assert_eq!(cat.name(17), Some("Attack1H"));
-        assert_eq!(cat.name(255), None, "unknown id has no name");
+        assert_eq!(cat.name(505), Some("FlyCarried2H"));
+        assert_eq!(cat.name(9999), None, "unknown id has no name");
 
         assert_eq!(cat.fallback(18), Some(17), "Attack2H → Attack1H");
         assert_eq!(cat.fallback(17), Some(16), "Attack1H → AttackUnarmed");

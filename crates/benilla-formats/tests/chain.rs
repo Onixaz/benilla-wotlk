@@ -191,7 +191,6 @@ fn decodes_a_blp_icon_to_png() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn dumps_taxinodes_to_csv() {
     let data = benilla_formats::wow_data_or_skip!();
 
@@ -204,7 +203,7 @@ fn dumps_taxinodes_to_csv() {
     let (records, fields) =
         benilla_formats::dbc_to_csv(&bytes, "TaxiNodes.dbc", &out).expect("dbc->csv");
 
-    assert_eq!((records, fields), (85, 16), "vanilla TaxiNodes.dbc shape");
+    assert_eq!((records, fields), (364, 24), "12340 TaxiNodes.dbc shape");
     let csv = std::fs::read_to_string(&out).expect("read csv");
     assert!(
         csv.lines()
@@ -214,7 +213,7 @@ fn dumps_taxinodes_to_csv() {
         "schema-derived header"
     );
     assert!(csv.contains("Stormwind"), "expected a known flight node");
-    assert_eq!(csv.lines().count(), 86, "85 records + 1 header row");
+    assert_eq!(csv.lines().count(), 365, "364 records + 1 header row");
     let _ = std::fs::remove_file(&out);
 }
 
@@ -1290,18 +1289,17 @@ fn wmo_ground_type_is_a_terrain_type_id() {
     assert_eq!(multi, 121, "roots authoring more than one surface");
 }
 
-/// The ghost sky: `LightParams.lightSkyboxID` -> `LightSkybox.dbc` -> a readable model. The
-/// reference reads it only through the ghost override (`0x6d26cb`, gated on `[0xce9bb0] != -1`).
-/// 5 of 426 `LightParams` rows carry an id, all 3 (`DeathClouds.mdx`), from param slot 4 of all
-/// 374 `Light` rows, so it resolves the same everywhere, Deeprun Tram's fallback row included.
+/// The ghost sky: `LightParams.lightSkyboxID` -> `LightSkybox.dbc` -> a readable model. 5875
+/// reads it only through the ghost override (`0x6d26cb`, gated on `[0xce9bb0] != -1`). In 12340
+/// the death slot of 713 of the 715 `Light` rows names params 2 to 5, each `DeathSkybox.mdx`, so
+/// it resolves the same at both capitals and at Deeprun Tram's fallback row.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn resolves_the_ghost_skybox_everywhere() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
     let cat = benilla_formats::LightCatalog::load(&mut chain).expect("load Light DBCs");
 
-    const DEATH_CLOUDS: &str = "environments\\stars\\deathclouds.m2";
+    const DEATH_SKYBOX: &str = "environments\\stars\\deathskybox.m2";
     for (map, pos, what) in [
         (0u32, [-8949.95f32, -132.49, 83.5], "Northshire, Azeroth"),
         (1, [1629.0, -4373.0, 31.0], "Orgrimmar, Kalimdor"),
@@ -1313,14 +1311,14 @@ fn resolves_the_ghost_skybox_everywhere() {
     ] {
         assert_eq!(
             cat.ghost_skybox(map, pos),
-            Some(DEATH_CLOUDS),
+            Some(DEATH_SKYBOX),
             "the ghost sky must resolve at {what}"
         );
     }
 
     // The DBC authors `.mdx`; the path is normalised to the `.m2` the archive ships.
     let bytes = chain
-        .read_file(DEATH_CLOUDS)
+        .read_file(DEATH_SKYBOX)
         .expect("the ghost sky model the DBC names must be readable from the chain");
-    assert_eq!(&bytes[..4], b"MD20", "DeathClouds is an M2");
+    assert_eq!(&bytes[..4], b"MD20", "DeathSkybox is an M2");
 }

@@ -33,6 +33,7 @@ const LIGHT_SKYBOX: &str = "DBFilesClient\\LightSkybox.dbc";
 const POS_SCALE: f32 = 36.0;
 
 /// `Light.dbc` param slots: 0 clear, 1 clear underwater, 2 storm, 3 storm underwater, 4 death.
+/// 12340 carries eight; slots 5 to 7 are set on 18, 0 and 1 of its 715 rows and are not read.
 const SLOT_CLEAR: usize = 0;
 /// Denser fog and cooler light while the eye is under water; only the water kinds reach it,
 /// magma and slime take fixed rows ([`PARAM_MAGMA`]).
@@ -171,8 +172,8 @@ pub struct LightCatalog {
     /// `LightParams` id → `lightSkyboxID` ([`LP_SKYBOX`]), for its non-zero rows only.
     light_params_skybox: HashMap<u32, u32>,
     /// `LightSkybox.dbc` id → model chain path, spelled as a WMO MOSB skybox is so one model never
-    /// builds twice. Only id 3 (`DeathClouds.mdx`) is reachable from `LightParams`; the other five
-    /// rows are MOSB skyboxes.
+    /// builds twice. Only the ghost path reads it here; 12340's 158 skybox params are mostly zone
+    /// skies (`StormPeaks_SkyC_Ulduar.mdx`), which no path draws yet.
     skyboxes: HashMap<u32, String>,
 }
 
@@ -189,14 +190,15 @@ fn light_schema() -> Schema {
     ] {
         s.add_field(SchemaField::new(n, t));
     }
-    for i in 0..5 {
+    for i in 0..8 {
         s.add_field(SchemaField::new(format!("param{i}"), FieldType::UInt32));
     }
     s
 }
 
-/// `LightParams.dbc`: 9 fields, 36-byte records, types per the client's reader `0x589030`.
-/// `cloudTypeID` (+0x0C) is 0 in every 5875 record; the glow is +0x10.
+/// `LightParams.dbc`: 9 fields, 36-byte records, types per the client's reader `0x589030` (5875).
+/// `cloudTypeID` (+0x0C) is 0 in every 5875 and 12340 record; the glow is +0x10, up to 1.0 in
+/// 12340's 850 rows (0 on 47 of them), and the four water alphas follow it.
 fn light_params_schema() -> Schema {
     let mut s = Schema::new("LightParams");
     for (n, t) in [
@@ -323,9 +325,11 @@ impl LightCatalog {
             let bytes = chain
                 .read_file(LIGHT_SKYBOX)
                 .with_context(|| format!("reading {LIGHT_SKYBOX}"))?;
+            // 12340 closes the record with a `Flags` column.
             let mut schema = Schema::new("LightSkybox");
             schema.add_field(SchemaField::new("ID", FieldType::UInt32));
             schema.add_field(SchemaField::new("Name", FieldType::String));
+            schema.add_field(SchemaField::new("Flags", FieldType::UInt32));
             let rs = parse(&bytes, schema, "LightSkybox")?;
             let mut m = HashMap::with_capacity(rs.records().len());
             for r in rs.records() {
@@ -434,7 +438,7 @@ impl LightCatalog {
     /// `[row+0x2c]`. The ghost bit is the whole condition: the colour-table build `0x6d2260` fills
     /// `[0xce9bb4]` at `0x6d26cb` only while `[0xce9bb0] != -1`, which only `0x6d4620` writes, for
     /// the ghost selector `0x5de9c0` (`mov ecx,4`). The row is [`pick_light`](Self::pick_light)'s;
-    /// every shipped row's slot 4 names the same sky, `DeathClouds.mdx`.
+    /// all but two of 12340's 715 rows name `DeathSkybox.mdx` in slot 4.
     pub fn ghost_skybox(&self, map: u32, pos: [f32; 3]) -> Option<&str> {
         let light = self.pick_light(map, pos)?;
         let id = self.light_params_skybox.get(&light.params[SLOT_DEATH])?;

@@ -1,8 +1,9 @@
 //! `AreaPOI.dbc`, the named points of interest (inns, flight masters, dungeon entrances,
 //! battleground nodes) behind the minimap's landmark blips and the world map's icons. Client-only:
-//! vmangos never loads it. 339 rows of 29 columns (116 B): `ID`, `Importance`, `Icon`,
+//! no server loads it. 738 rows of 54 columns (216 B) in 12340: `ID`, `Importance`, `Icon[9]`,
 //! `FactionID`, `Pos[3]`, `ContinentID`, `Flags`, `AreaID`, then `Name` and `Description` as
-//! 9-column loc-strings (enUS, 7 other locales, flags), then `WorldStateID`.
+//! 17-column loc-strings (enUS, 15 other locales, flags), then `WorldStateID` and `WorldMapLink`.
+//! The first icon is the map icon; the other eight, set on 54 rows at most, are not read.
 
 use std::collections::HashMap;
 
@@ -17,9 +18,9 @@ const AREA_POI: &str = "DBFilesClient\\AreaPOI.dbc";
 /// One `AreaPOI.dbc` row.
 #[derive(Clone, Debug)]
 pub struct AreaPoi {
-    /// Prominence tier, `{0, 2, 3, 4}` in 5875; the minimap ranks its landmark arrows by it.
+    /// Prominence tier, 0 to 4 in 12340; the minimap ranks its landmark arrows by it.
     pub importance: u32,
-    /// The map icon, a cell of `POIIcons.blp`.
+    /// The map icon, a cell of `POIIcons.blp` (`Icon[0]`).
     pub icon: u32,
     /// `FactionTemplate.dbc` id for a faction-tinted icon, `0` for none.
     pub faction_id: u32,
@@ -68,9 +69,11 @@ impl AreaPoiCatalog {
 
 fn schema() -> Schema {
     let mut s = Schema::new("AreaPOI");
-    for name in ["ID", "Importance", "Icon", "FactionID"] {
+    for name in ["ID", "Importance"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));
     }
+    s.add_field(SchemaField::new_array("Icon", FieldType::UInt32, 9));
+    s.add_field(SchemaField::new("FactionID", FieldType::UInt32));
     s.add_field(SchemaField::new_array("Pos", FieldType::Float32, 3));
     for name in ["ContinentID", "Flags", "AreaID"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));
@@ -80,11 +83,12 @@ fn schema() -> Schema {
         s.add_field(SchemaField::new_array(
             format!("{name_col}OtherLocales"),
             FieldType::String,
-            7,
+            15,
         ));
         s.add_field(SchemaField::new(flags_col, FieldType::UInt32));
     }
     s.add_field(SchemaField::new("WorldStateID", FieldType::UInt32));
+    s.add_field(SchemaField::new("WorldMapLink", FieldType::UInt32));
     s
 }
 
@@ -96,20 +100,20 @@ pub fn load_area_poi_catalog(chain: &mut Chain) -> Result<AreaPoiCatalog> {
     let mut by_id = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
-        let (Some(x), Some(y), Some(z)) = (f32_at(r, 4), f32_at(r, 5), f32_at(r, 6)) else {
+        let (Some(x), Some(y), Some(z)) = (f32_at(r, 12), f32_at(r, 13), f32_at(r, 14)) else {
             continue;
         };
         let poi = AreaPoi {
             importance: u32_at(r, 1).unwrap_or(0),
             icon: u32_at(r, 2).unwrap_or(0),
-            faction_id: u32_at(r, 3).unwrap_or(0),
+            faction_id: u32_at(r, 11).unwrap_or(0),
             pos: [x, y, z],
-            continent_id: u32_at(r, 7).unwrap_or(0),
-            flags: u32_at(r, 8).unwrap_or(0),
-            area_id: u32_at(r, 9).unwrap_or(0),
-            name: str_at(&rs, r, 10).unwrap_or_default(),
-            description: str_at(&rs, r, 19).unwrap_or_default(),
-            world_state_id: u32_at(r, 28).unwrap_or(0),
+            continent_id: u32_at(r, 15).unwrap_or(0),
+            flags: u32_at(r, 16).unwrap_or(0),
+            area_id: u32_at(r, 17).unwrap_or(0),
+            name: str_at(&rs, r, 18).unwrap_or_default(),
+            description: str_at(&rs, r, 35).unwrap_or_default(),
+            world_state_id: u32_at(r, 52).unwrap_or(0),
         };
         by_id.insert(id, rows.len());
         rows.push((id, poi));
@@ -121,14 +125,13 @@ pub fn load_area_poi_catalog(chain: &mut Chain) -> Result<AreaPoiCatalog> {
 mod tests {
     use super::*;
 
-    /// The 5875 layout: readable names, positions in range, and Arathi Basin's Stables node.
+    /// The 12340 layout: readable names, positions in range, and Arathi Basin's Stables node.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_area_poi_layout_sanity() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_area_poi_catalog(&mut chain).expect("load AreaPOI");
-        assert_eq!(cat.len(), 339, "all 339 rows load");
+        assert_eq!(cat.len(), 738, "all 738 rows load");
 
         let mut nonempty_names = 0;
         let mut worldstate_nonzero = 0;
@@ -146,9 +149,9 @@ mod tests {
                 worldstate_nonzero += 1;
             }
         }
-        assert_eq!(nonempty_names, 339, "every row has a readable enUS name");
+        assert_eq!(nonempty_names, 738, "every row has a readable enUS name");
         assert!(
-            worldstate_nonzero >= 100,
+            worldstate_nonzero >= 300,
             "a meaningful share of rows carry a live WorldStateID: {worldstate_nonzero}"
         );
 

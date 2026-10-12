@@ -181,14 +181,14 @@ fn item_sub_class_schema() -> Schema {
     for name in ["ParrySeq", "ReadySeq", "AttackSeq", "SwingSize"] {
         s.add_field(SchemaField::new(format!("Weapon{name}"), FieldType::UInt32));
     }
-    for i in 0..8 {
+    for i in 0..16 {
         s.add_field(SchemaField::new(
             format!("DisplayName{i}"),
             FieldType::String,
         ));
     }
     s.add_field(SchemaField::new("DisplayNameFlags", FieldType::UInt32));
-    for i in 0..8 {
+    for i in 0..16 {
         s.add_field(SchemaField::new(
             format!("VerboseName{i}"),
             FieldType::String,
@@ -202,7 +202,7 @@ fn item_sub_class_mask_schema() -> Schema {
     let mut s = Schema::new("ItemSubClassMask");
     s.add_field(SchemaField::new("ClassID", FieldType::UInt32));
     s.add_field(SchemaField::new("Mask", FieldType::UInt32));
-    for i in 0..8 {
+    for i in 0..16 {
         s.add_field(SchemaField::new(format!("Name{i}"), FieldType::String));
     }
     s.add_field(SchemaField::new("NameFlags", FieldType::UInt32));
@@ -253,9 +253,9 @@ pub fn load_item_sub_classes(chain: &mut Chain) -> Result<ItemSubClassCatalog> {
                 weapon_swing_size: u32_at(r, 9).unwrap_or(0),
             },
         );
-        // The enUS verbose name (column 19) first, the display name (column 10) as fallback.
+        // The enUS verbose name (column 27) first, the display name (column 10) as fallback.
         let display = crate::dbc::str_at(&rs, r, 10).filter(|n| !n.is_empty());
-        let name = crate::dbc::str_at(&rs, r, 19)
+        let name = crate::dbc::str_at(&rs, r, 27)
             .filter(|n| !n.is_empty())
             .or_else(|| display.clone());
         if let Some(name) = name {
@@ -279,7 +279,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_subclass_names_resolve_verbose_first() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -297,7 +296,6 @@ mod tests {
 
     /// The requirement lookup's two stages (`0x52eea7`-`0x52f10a`) on the shipped tables.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_requirement_names_take_the_group_before_the_join() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -362,7 +360,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn item_sub_classes_load_from_the_chain() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

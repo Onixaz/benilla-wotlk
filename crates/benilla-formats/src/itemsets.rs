@@ -1,6 +1,6 @@
 //! `ItemSet.dbc`: the item sets behind the item tooltip's set block (builder `0x52b650`), laid out
-//! as vmangos `ItemSetEntry` (`DBCStructure.h`): 17 item ids, then 8 spells and each one's
-//! required equipped count.
+//! as TrinityCore 3.3.5's `ItemSetEntry`: the name over sixteen locales and a mask, 17 item ids,
+//! then 8 spells and each one's required equipped count.
 
 use std::collections::HashMap;
 
@@ -46,7 +46,7 @@ impl ItemSetCatalog {
 fn item_set_schema() -> Schema {
     let mut s = Schema::new("ItemSet");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
-    for i in 0..8 {
+    for i in 0..16 {
         s.add_field(SchemaField::new(format!("Name{i}"), FieldType::String));
     }
     s.add_field(SchemaField::new("NameFlags", FieldType::UInt32));
@@ -80,15 +80,15 @@ pub fn load_item_sets(chain: &mut Chain) -> Result<ItemSetCatalog> {
             id,
             ItemSetInfo {
                 name,
-                items: (10..27).map(at).filter(|&i| i != 0).collect(),
+                items: (18..35).map(at).filter(|&i| i != 0).collect(),
                 bonuses: (0..8)
                     .filter_map(|i| {
-                        let spell = at(27 + i);
-                        (spell != 0).then(|| (at(35 + i), spell))
+                        let spell = at(35 + i);
+                        (spell != 0).then(|| (at(43 + i), spell))
                     })
                     .collect(),
-                required_skill: at(43),
-                required_skill_rank: at(44),
+                required_skill: at(51),
+                required_skill_rank: at(52),
             },
         );
     }
@@ -100,7 +100,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn item_sets_load_from_the_chain() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

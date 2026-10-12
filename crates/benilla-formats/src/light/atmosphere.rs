@@ -36,8 +36,8 @@ pub(super) const LP_HIGHLIGHT: usize = 1;
 
 /// `LightParams.dbc` field of lightSkyboxID, record byte `+0x08`: the `LightSkybox.dbc` model that
 /// replaces the celestial pass. The reference fills `[0xce9bb4]` (`0x6d2260` at `0x6d26cb`) only
-/// while `0x6d4620` has set the ghost override `[0xce9bb0]`; the 5 non-zero rows are all
-/// `DeathClouds.mdx`.
+/// while `0x6d4620` has set the ghost override `[0xce9bb0]`, where 5875's 5 non-zero rows were all
+/// `DeathClouds.mdx`; 12340 sets it on 158 rows.
 pub(super) const LP_SKYBOX: usize = 2;
 
 /// `LightParams.dbc` fields 5 to 8, after the glow: the water-blend alphas, the depth-alpha

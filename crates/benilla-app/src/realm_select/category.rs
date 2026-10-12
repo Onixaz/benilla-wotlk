@@ -158,7 +158,7 @@ impl Realms {
     }
 }
 
-/// Read the client Region's category set once, after the archive chain opens.
+/// Read the category set once, after the archive chain opens.
 pub(super) fn load_categories(
     mut realms: ResMut<Realms>,
     assets: Option<Res<benilla_assets::WorldAssets>>,
@@ -168,21 +168,13 @@ pub(super) fn load_categories(
         return;
     };
     let mut chain = assets.chain.lock_recover();
-    let region = benilla_formats::client_region(&chain);
-    match benilla_formats::load_realm_categories(&mut chain, region) {
+    match benilla_formats::load_realm_categories(&mut chain) {
         Ok(categories) => {
-            info!(
-                "realm list: Region {region}, categories {:?}",
-                categories
-                    .iter()
-                    .map(|c| (c.id, c.name.as_str()))
-                    .collect::<Vec<_>>()
-            );
+            info!("realm list: {} categories", categories.len());
             if categories.is_empty() {
                 warn!(
-                    "realm list: Region {region} names no Cfg_Categories.dbc row, so every realm \
-                     lists on one untabbed page (the reference's Region is Wow.ini's [WoW Config] \
-                     Region)"
+                    "realm list: Cfg_Categories.dbc has no rows, so every realm lists on one \
+                     untabbed page"
                 );
             }
             realms.categories = Some(categories);
@@ -205,7 +197,7 @@ pub(super) mod tests {
         }
     }
 
-    /// Region 1's rows, `Cfg_Categories.dbc` in file order.
+    /// Two categories in file order, as 5875's US Region named them.
     pub(in crate::realm_select) fn us() -> Vec<RealmCategory> {
         vec![cat(1, "United States"), cat(5, "Oceanic")]
     }
@@ -235,14 +227,23 @@ pub(super) mod tests {
         r.rows().iter().map(|&i| r.realms[i].name.clone()).collect()
     }
 
-    /// The US client reads its two categories from the install's own `Cfg_Categories.dbc`.
+    /// The install's own `Cfg_Categories.dbc` names the categories a realm byte selects: 2 is
+    /// United States, 3 Oceanic.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn the_us_categories_come_from_the_install() {
+    fn the_categories_come_from_the_install() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
-        let loaded = benilla_formats::load_realm_categories(&mut chain, 1).expect("DBC");
-        assert_eq!(loaded, us());
+        let loaded = benilla_formats::load_realm_categories(&mut chain).expect("DBC");
+        let r = Realms {
+            realms: [("Alpha", 2), ("Down Under", 3), ("Beta", 2)]
+                .iter()
+                .map(|&(n, c)| realm(n, c))
+                .collect(),
+            categories: Some(loaded),
+            ..Realms::default()
+        };
+        assert_eq!(r.tabs(), ["United States", "Oceanic"]);
+        assert_eq!(names(&r), ["Alpha", "Beta"]);
     }
 
     /// A category byte is an id, matched for equality: 1 and 5 are the two US tabs.
@@ -296,8 +297,7 @@ pub(super) mod tests {
         assert_eq!(names(&r), ["Alpha", "Berlin", "Dev"]);
     }
 
-    /// A Region no row names (Region 0, no `Wow.ini` Region) lists every realm untabbed too,
-    /// where the reference faults; the list opens on it and a realm on it can be entered.
+    /// An empty category set lists every realm untabbed too, where the reference faults; the list opens on it and a realm on it can be entered.
     #[test]
     fn a_region_with_no_categories_lists_every_realm_untabbed() {
         let mut r = realms(&[("Alpha", 1), ("Berlin", 2), ("Dev", 0)]);

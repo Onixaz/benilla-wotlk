@@ -23,7 +23,6 @@ fn params(id: u32) -> Option<benilla_formats::Atmosphere> {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_blasted_lands_cloud_base_is_black_not_a_pale_invention() {
     let Some(atmo) = params(PARAMS_BLASTED_LANDS) else {
         return;
@@ -52,7 +51,6 @@ fn the_blasted_lands_cloud_base_is_black_not_a_pale_invention() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_authored_black_and_a_keyless_row_agree_which_is_why_the_data_reads_as_it_does() {
     let Some(elwynn) = params(PARAMS_ELWYNN) else {
         return;
@@ -78,7 +76,6 @@ fn an_authored_black_and_a_keyless_row_agree_which_is_why_the_data_reads_as_it_d
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_keyless_scalar_row_is_zero_not_a_thousand_yards() {
     // LightParams 95, a clear-underwater slot on map 269, has keyless fog-end and fog-start rows.
     let Some(atmo) = params(95) else { return };
@@ -91,7 +88,6 @@ fn a_keyless_scalar_row_is_zero_not_a_thousand_yards() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_params_id_above_the_id_gaps_still_reads_its_own_bands() {
     // `LightParams` ids run 1..499 over 426 records, and a band-row id derives from the params id,
     // `(p-1)*18 + b + 1`, not its row position. 499 is the last id.

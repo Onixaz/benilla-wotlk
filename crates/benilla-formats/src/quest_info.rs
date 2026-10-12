@@ -42,7 +42,7 @@ pub fn load_quest_tag_names(chain: &mut Chain) -> Result<QuestTagNames> {
         chain,
         "DBFilesClient\\QuestInfo.dbc",
         1,
-        10,
+        18,
         "QuestInfo",
     )?))
 }

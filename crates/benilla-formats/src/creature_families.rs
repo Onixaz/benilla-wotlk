@@ -1,8 +1,9 @@
 //! `CreatureFamily.dbc` and `ItemPetFood.dbc`: a pet's family word (`UnitCreatureFamily`,
 //! `0x51a310`) and the diet its food mask names (`GetPetFoodTypes`, `0x4bea10`).
 //!
-//! `CreatureFamily.dbc` is 18 fields in 0x48-byte records, 23 rows with ids 1..28 (10, 13, 14, 18
-//! and 22 absent). `ItemPetFood.dbc` is 10 fields, 8 rows. Mask bit `b` names food row `b + 1`,
+//! `CreatureFamily.dbc` is 28 fields in 0x70-byte records in 12340, 40 rows with ids 1..46: the
+//! scale ramp, two skill lines, the food mask, the pet-talent type and category, the name over
+//! sixteen locales and a mask, then the icon. `ItemPetFood.dbc` is 18 fields, 8 rows. Mask bit `b` names food row `b + 1`,
 //! low bit first, which is the client's record order (vmangos `Objects/Pet.cpp:1503-1504`).
 //!
 //! `GetPetFoodTypes`' gate (the pet is ours and we are a Hunter, `0x6116e0`) is live state, applied
@@ -20,8 +21,8 @@ const CREATURE_FAMILY: &str = "DBFilesClient\\CreatureFamily.dbc";
 const ITEM_PET_FOOD: &str = "DBFilesClient\\ItemPetFood.dbc";
 
 /// `CreatureFamily.dbc`'s field count, which `benilla-dbc` checks against the header.
-const FAMILY_FIELDS: usize = 18;
-const FOOD_FIELDS: usize = 10;
+const FAMILY_FIELDS: usize = 28;
+const FOOD_FIELDS: usize = 18;
 
 const FAMILY_MIN_SCALE_FIELD: usize = 1;
 const FAMILY_MIN_SCALE_LEVEL_FIELD: usize = 2;
@@ -29,9 +30,9 @@ const FAMILY_MAX_SCALE_FIELD: usize = 3;
 const FAMILY_MAX_SCALE_LEVEL_FIELD: usize = 4;
 const FAMILY_FOOD_MASK_FIELD: usize = 0x1c / 4;
 /// The enUS name, the localized block's first slot.
-const FAMILY_NAME_FIELD: usize = 0x20 / 4;
+const FAMILY_NAME_FIELD: usize = 10;
 /// `iconFile`, after the name block's locale flags.
-const FAMILY_ICON_FIELD: usize = 0x44 / 4;
+const FAMILY_ICON_FIELD: usize = 27;
 /// `ItemPetFood.dbc`'s enUS name.
 const FOOD_NAME_FIELD: usize = 1;
 
@@ -45,7 +46,7 @@ pub struct CreatureFamily {
     pub name: String,
     /// `Interface\\Icons\\Ability_Hunter_Pet_<Family>`; empty when the row ships none.
     pub icon: String,
-    /// The diet bitfield; 0 on the five warlock minions and row 28, so an empty diet is real.
+    /// The diet bitfield; 0 on the warlock minions, the Ghoul and row 28, so an empty diet is real.
     pub pet_food_mask: u32,
     /// The size ramp: the model scale at `min_scale_level` and at `max_scale_level`.
     pub min_scale: f32,
@@ -222,10 +223,9 @@ mod tests {
         Some(crate::open_chain(&data).expect("open chain"))
     }
 
-    /// Field 17 sits behind locale slots typed as dwords, so a column slip reads an empty path.
+    /// Field 27 sits behind locale slots typed as dwords, so a column slip reads an empty path.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn every_shipped_family_carries_a_pet_icon() {
+    fn every_tameable_family_carries_a_pet_icon() {
         let Some(mut chain) = chain() else { return };
         let fams = load_creature_families(&mut chain).expect("families");
 
@@ -233,15 +233,13 @@ mod tests {
             fams.icon(1),
             Some("Interface\\Icons\\Ability_Hunter_Pet_Wolf")
         );
-        // A warlock minion has one too, for `GetPetIcon`.
-        assert!(fams
-            .icon(15)
-            .is_some_and(|i| i.starts_with("Interface\\Icons\\")));
+        // 12340's warlock minions ship no icon.
+        assert_eq!(fams.icon(15), None, "Felhunter");
 
-        for id in 1..=27 {
-            let Some(f) = fams.get(id) else { continue };
+        for (&id, f) in fams.0.iter().filter(|(_, f)| f.pet_food_mask != 0) {
             assert!(
-                fams.icon(id).is_some(),
+                fams.icon(id)
+                    .is_some_and(|i| i.starts_with("Interface\\Icons\\")),
                 "family {id} ({}) has no icon",
                 f.name
             );
@@ -250,7 +248,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_family_size_ramp_reads_off_the_shipped_file() {
         let Some(mut chain) = chain() else { return };
         let fams = load_creature_families(&mut chain).expect("families");
@@ -303,11 +300,10 @@ mod tests {
 
     /// Names are asserted verbatim: a column early reads the food mask, a column late a zero slot.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_real_creature_families_name_every_pet() {
         let Some(mut chain) = chain() else { return };
         let f = load_creature_families(&mut chain).expect("load CreatureFamily.dbc");
-        assert_eq!(f.len(), 23, "5875 ships 23 creature families");
+        assert_eq!(f.len(), 40, "12340 ships 40 creature families");
 
         assert_eq!(f.name(1), Some("Wolf"));
         assert_eq!(f.name(2), Some("Cat"));
@@ -318,6 +314,7 @@ mod tests {
         assert_eq!(f.name(17), Some("Succubus"));
         assert_eq!(f.name(19), Some("Doomguard"));
         assert_eq!(f.name(23), Some("Imp"));
+        assert_eq!(f.name(46), Some("Spirit Beast"));
 
         // The id gaps: a dense 1..=23 read would shift half the table.
         for missing in [10, 13, 14, 18, 22] {
@@ -327,7 +324,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_real_pet_food_names_are_the_eight_diets() {
         let Some(mut chain) = chain() else { return };
         let n = load_pet_food_names(&mut chain).expect("load ItemPetFood.dbc");
@@ -348,11 +344,9 @@ mod tests {
         assert_eq!(n.name(9), None);
     }
 
-    /// Wolf, Bear, Boar and Turtle are the reference's own cases (`0x4bea10`); the rest are
-    /// vanilla's documented diets.
+    /// Wolf, Bear, Boar and Turtle are 5875's own cases (`0x4bea10`); the rest are 12340's masks.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn the_shipped_masks_expand_to_vanillas_own_diets() {
+    fn the_shipped_masks_expand_to_their_diets() {
         let Some(mut chain) = chain() else { return };
         let fam = load_creature_families(&mut chain).expect("families");
         let food = load_pet_food_names(&mut chain).expect("foods");
@@ -363,18 +357,21 @@ mod tests {
         assert_eq!(diet(2), ["Meat", "Fish"], "Cat");
         assert_eq!(diet(4), EVERYTHING, "Bear — control");
         assert_eq!(diet(5), EVERYTHING, "Boar — control");
-        assert_eq!(diet(9), ["Fungus", "Fruit"], "Gorilla");
-        assert_eq!(diet(12), ["Cheese", "Fungus", "Fruit"], "Tallstrider");
+        assert_eq!(diet(9), ["Bread", "Fungus", "Fruit"], "Gorilla");
+        assert_eq!(
+            diet(12),
+            ["Cheese", "Bread", "Fungus", "Fruit"],
+            "Tallstrider"
+        );
         assert_eq!(diet(27), ["Fish", "Cheese", "Bread"], "Wind Serpent");
-        // Turtle (mask 178) is the only family to set bit 7, row 8's "Raw Fish".
         assert_eq!(
             diet(21),
-            ["Fish", "Fungus", "Fruit", "Raw Fish"],
+            ["Fish", "Bread", "Fungus", "Fruit"],
             "Turtle — control"
         );
 
         // The exact empty-diet set: the diet tooltip formats `BuildListString()`'s nil for an empty
-        // list and errors, so no tameable beast may join the five minions and row 28.
+        // list and errors, so no tameable beast may join the minions, the Ghoul and row 28.
         let empty: Vec<u32> = {
             let mut v: Vec<u32> = fam
                 .0
@@ -387,8 +384,8 @@ mod tests {
         };
         assert_eq!(
             empty,
-            [15, 16, 17, 19, 23, 28],
-            "Felhunter/Voidwalker/Succubus/Doomguard/Imp + Remote Control — no tameable beast"
+            [15, 16, 17, 19, 23, 28, 29, 40],
+            "Felhunter/Voidwalker/Succubus/Doomguard/Imp, Remote Control, Felguard, Ghoul"
         );
     }
 

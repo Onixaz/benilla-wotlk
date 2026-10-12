@@ -48,7 +48,8 @@ pub(crate) struct Realms {
     pub(super) realms: Vec<RealmInfo>,
     /// The highlighted row by realm name, so a refresh that adds or drops a realm cannot move it.
     selected: Option<String>,
-    /// The client Region's categories ([`category`]), read once at startup; `None` until then,
+    /// The `Cfg_Categories.dbc` categories ([`category`]), read once at startup; `None` until
+    /// then,
     /// and every realm lists untabbed.
     pub(super) categories: Option<Vec<RealmCategory>>,
     /// The tab in front, `RealmList.selectedCategory`: a 1-based ordinal over the categories

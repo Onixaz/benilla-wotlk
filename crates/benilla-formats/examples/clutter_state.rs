@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 fn main() -> anyhow::Result<()> {
     let data = benilla_formats::wow_data().expect("no WoW install found (set $WOW_DATA)");
     let mut chain = benilla_formats::open_chain(&data)?;
-    let catalog = benilla_formats::load_ground_effect_catalog(&mut chain, true)?;
+    let catalog = benilla_formats::load_ground_effect_catalog(&mut chain)?;
 
     // Every distinct model the catalog can place; it exposes rows by id only, so sweep the ids.
     let mut models: BTreeSet<String> = BTreeSet::new();

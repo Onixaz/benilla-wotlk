@@ -1,6 +1,7 @@
 //! `TaxiNodes.dbc`, every flight-master node: its map and position, name, and the taxi mount each
-//! team rides from it. The layout is vmangos's `TaxiNodesEntry` (`DBCStructure.h:789-799`): `ID`,
-//! `MapID`, `X`, `Y`, `Z`, the `Name` loc-string (5-13), then `MountCreatureID[2]`, Horde first.
+//! team rides from it. 12340's layout is TrinityCore's `TaxiNodesEntry`: `ID`, `MapID`, `X`, `Y`,
+//! `Z`, the `Name` loc-string (5-21, sixteen locales and a mask), then `MountCreatureID[2]`, Horde
+//! first (Stormwind's is 0 and 541).
 //! The mounts are `creature_template` entries, not display ids, resolved like any NPC's.
 
 use std::collections::HashMap;
@@ -65,7 +66,7 @@ pub(crate) fn taxi_nodes_schema() -> Schema {
     s.add_field(SchemaField::new_array(
         "NameOtherLocales",
         FieldType::String,
-        7,
+        15,
     ));
     s.add_field(SchemaField::new("NameFlags", FieldType::UInt32));
     s.add_field(SchemaField::new("MountIdHorde", FieldType::UInt32));
@@ -90,8 +91,8 @@ pub fn load_taxi_nodes(chain: &mut Chain) -> Result<TaxiNodes> {
             map_id: u32_at(r, 1).unwrap_or(0),
             pos: [x, y, z],
             name: str_at(&rs, r, 5).unwrap_or_default(),
-            mount_horde: u32_at(r, 14).unwrap_or(0),
-            mount_alliance: u32_at(r, 15).unwrap_or(0),
+            mount_horde: u32_at(r, 22).unwrap_or(0),
+            mount_alliance: u32_at(r, 23).unwrap_or(0),
         };
         rows.insert(id, node);
     }
@@ -102,14 +103,13 @@ pub fn load_taxi_nodes(chain: &mut Chain) -> Result<TaxiNodes> {
 mod tests {
     use super::*;
 
-    /// The 5875 layout on Stormwind's node, which serves the Alliance only.
+    /// The 12340 layout on Stormwind's node, which serves the Alliance only.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_taxi_nodes_layout_sanity() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_taxi_nodes(&mut chain).expect("load TaxiNodes");
-        assert_eq!(cat.len(), 85, "1.12 ships 85 taxi nodes");
+        assert_eq!(cat.len(), 364, "12340 ships 364 taxi nodes");
 
         let stormwind = cat.get(2).expect("node 2 exists");
         assert_eq!(stormwind.name, "Stormwind, Elwynn");

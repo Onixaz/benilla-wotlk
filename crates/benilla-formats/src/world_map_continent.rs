@@ -70,6 +70,9 @@ fn schema() -> Schema {
     ] {
         s.add_field(SchemaField::new(name, FieldType::Float32));
     }
+    // 12340 closes the record with a column wowdev names `WorldMapID`: 1 on Azeroth, Kalimdor and
+    // Northrend, 0 on Outland. Not read.
+    s.add_field(SchemaField::new("WorldMapID", FieldType::UInt32));
     s
 }
 
@@ -134,12 +137,11 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn real_world_map_continent_has_azeroth_and_kalimdor() {
+    fn real_world_map_continent_has_the_four_continents() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_world_map_continent_catalog(&mut chain).expect("load WorldMapContinent");
-        assert_eq!(cat.len(), 2);
+        assert_eq!(cat.len(), 4, "Azeroth, Kalimdor, Outland, Northrend");
 
         let azeroth = cat.get(0).expect("Azeroth (mapId 0)");
         assert_eq!(
@@ -149,15 +151,15 @@ mod tests {
                 azeroth.top_boundary,
                 azeroth.bottom_boundary
             ),
-            (23, 47, 15, 61)
+            (26, 44, 8, 60)
         );
-        assert!((azeroth.offset_x - 14.5).abs() < 0.01);
-        assert!((azeroth.offset_y - (-7.0)).abs() < 0.01);
-        assert!((azeroth.scale - 0.75).abs() < 0.001);
-        assert!((azeroth.taxi_min.0 - (-15980.0)).abs() < 0.1);
-        assert!((azeroth.taxi_min.1 - (-11880.0)).abs() < 0.1);
-        assert!((azeroth.taxi_max.0 - 5817.0).abs() < 0.1);
-        assert!((azeroth.taxi_max.1 - 9917.0).abs() < 0.1);
+        assert!((azeroth.offset_x - 16.875).abs() < 0.01);
+        assert!((azeroth.offset_y - (-1.5)).abs() < 0.01);
+        assert!((azeroth.scale - 0.7).abs() < 0.001);
+        assert!((azeroth.taxi_min.0 - (-16530.0)).abs() < 0.1);
+        assert!((azeroth.taxi_min.1 - (-16530.0)).abs() < 0.1);
+        assert!((azeroth.taxi_max.0 - 12270.0).abs() < 0.1);
+        assert!((azeroth.taxi_max.1 - 12270.0).abs() < 0.1);
 
         let kalimdor = cat.get(1).expect("Kalimdor (mapId 1)");
         assert_eq!(
@@ -167,8 +169,12 @@ mod tests {
                 kalimdor.top_boundary,
                 kalimdor.bottom_boundary
             ),
-            (23, 48, 9, 52)
+            (16, 46, 9, 52)
         );
-        assert!((kalimdor.scale - 0.75).abs() < 0.001);
+        assert!((kalimdor.scale - 0.7).abs() < 0.001);
+
+        let outland = cat.get(530).expect("Outland (mapId 530)");
+        assert!((outland.scale - 0.75).abs() < 0.001);
+        assert!(cat.get(571).is_some(), "Northrend (mapId 571)");
     }
 }

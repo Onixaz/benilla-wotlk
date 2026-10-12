@@ -39,6 +39,6 @@ pub fn load_quest_header_names(chain: &mut Chain) -> Result<QuestHeaderNames> {
             crate::area_table::area_table_schema(&crate::dbc_layout::LAYOUTS.area_table),
             11,
         )?,
-        sorts: load_id_name_table(chain, "DBFilesClient\\QuestSort.dbc", 1, 10, "QuestSort")?,
+        sorts: load_id_name_table(chain, "DBFilesClient\\QuestSort.dbc", 1, 18, "QuestSort")?,
     })
 }

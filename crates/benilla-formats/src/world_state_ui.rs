@@ -2,8 +2,9 @@
 //! columns (`GetNumWorldStateUI`, `GetWorldStateUIInfo` `0x4c5a70`). It is client-only: vmangos
 //! sends only world-state values, and which are shown, where and with what label is this table's.
 //!
-//! Layout: 39 fields of 156 bytes (the loader asserts both, `0x553a9e`, `0x553ad6`), each
-//! localized string nine dwords; field 22 (`+0x58`) is loaded and never read, so not carried.
+//! Layout: 63 fields of 252 bytes in 12340, each localized string seventeen dwords; `PhaseShift`
+//! (column 3, `64`, `128` or `256` on 47 rows) is not carried. 5875 had 39 fields, with an unread
+//! column after the tooltip in place of the phase column.
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
@@ -34,13 +35,13 @@ pub struct WorldStateUiRow {
     /// player is in a zone-dependent defense channel (`ZONE_DEP | DEFENSE`, LocalDefense alone),
     /// the world-PvP rows; `2` a scoreboard column, built by another handler.
     pub ui_type: u32,
-    /// The icon shown instead while [`Self::state_variable`] is live: the enemy flag, on the two
-    /// Warsong Gulch rows that have one.
+    /// The icon shown instead while [`Self::state_variable`] is live: the enemy flag on the two
+    /// Warsong Gulch rows, crossed swords on ten others.
     pub dynamic_icon: String,
     /// The tooltip that goes with [`Self::dynamic_icon`] (`"Horde flag has been picked up"`).
     pub dynamic_tooltip: String,
-    /// A token naming an extra widget the row drives: `"CAPTUREPOINT"`, on the Eastern
-    /// Plaguelands progress row alone.
+    /// A token naming an extra widget the row drives: `"CAPTUREPOINT"`, on ten rows, the first
+    /// the Eastern Plaguelands progress row.
     pub extended_ui: String,
     /// The world-state ids that widget reads; the binding answers their values.
     pub extended_ui_state: [u32; 3],
@@ -73,7 +74,7 @@ impl WorldStateUiCatalog {
 
 fn schema() -> Schema {
     let mut s = Schema::new("WorldStateUI");
-    for name in ["ID", "MapID", "AreaID"] {
+    for name in ["ID", "MapID", "AreaID", "PhaseShift"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));
     }
     s.add_field(SchemaField::new("Icon", FieldType::String));
@@ -82,14 +83,13 @@ fn schema() -> Schema {
         s.add_field(SchemaField::new_array(
             format!("{name}OtherLocales"),
             FieldType::String,
-            7,
+            15,
         ));
         s.add_field(SchemaField::new(format!("{name}Flags"), FieldType::UInt32));
     };
     loc(&mut s, "Text");
     loc(&mut s, "Tooltip");
-    // +0x58: loaded, never read.
-    for name in ["UnreadCol22", "StateVariable", "Type"] {
+    for name in ["StateVariable", "Type"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));
     }
     s.add_field(SchemaField::new("DynamicIcon", FieldType::String));
@@ -117,18 +117,18 @@ pub fn load_world_state_ui_catalog(chain: &mut Chain) -> Result<WorldStateUiCata
             WorldStateUiRow {
                 map_id: u32_at(r, 1).unwrap_or(0),
                 area_id: u32_at(r, 2).unwrap_or(0),
-                icon: str_at(&rs, r, 3).unwrap_or_default(),
-                text: str_at(&rs, r, 4).unwrap_or_default(),
-                tooltip: str_at(&rs, r, 13).unwrap_or_default(),
-                state_variable: u32_at(r, 23).unwrap_or(0),
-                ui_type: u32_at(r, 24).unwrap_or(0),
-                dynamic_icon: str_at(&rs, r, 25).unwrap_or_default(),
-                dynamic_tooltip: str_at(&rs, r, 26).unwrap_or_default(),
-                extended_ui: str_at(&rs, r, 35).unwrap_or_default(),
+                icon: str_at(&rs, r, 4).unwrap_or_default(),
+                text: str_at(&rs, r, 5).unwrap_or_default(),
+                tooltip: str_at(&rs, r, 22).unwrap_or_default(),
+                state_variable: u32_at(r, 39).unwrap_or(0),
+                ui_type: u32_at(r, 40).unwrap_or(0),
+                dynamic_icon: str_at(&rs, r, 41).unwrap_or_default(),
+                dynamic_tooltip: str_at(&rs, r, 42).unwrap_or_default(),
+                extended_ui: str_at(&rs, r, 59).unwrap_or_default(),
                 extended_ui_state: [
-                    u32_at(r, 36).unwrap_or(0),
-                    u32_at(r, 37).unwrap_or(0),
-                    u32_at(r, 38).unwrap_or(0),
+                    u32_at(r, 60).unwrap_or(0),
+                    u32_at(r, 61).unwrap_or(0),
+                    u32_at(r, 62).unwrap_or(0),
                 ],
             },
         ));
@@ -141,12 +141,11 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_world_state_ui_layout_sanity() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_world_state_ui_catalog(&mut chain).expect("load WorldStateUI");
-        assert_eq!(cat.len(), 20, "all 20 rows load");
+        assert_eq!(cat.len(), 153, "all 153 rows load");
 
         let by_id = |id: u32| {
             cat.rows()
@@ -159,12 +158,12 @@ mod tests {
         let alliance = by_id(136);
         assert_eq!((alliance.map_id, alliance.area_id), (0, 139));
         assert_eq!(alliance.icon, "Interface\\WorldStateFrame\\AllianceTower");
-        assert_eq!(alliance.text, "Towers Controlled: %2327w");
+        assert_eq!(alliance.text, "Controlled: %2327w");
         assert_eq!(alliance.tooltip, "Alliance Towers Controlled");
         assert_eq!(alliance.ui_type, 1);
         let horde = by_id(137);
         assert_eq!(horde.icon, "Interface\\WorldStateFrame\\HordeTower");
-        assert_eq!(horde.text, "Towers Controlled: %2328w");
+        assert_eq!(horde.text, "Controlled: %2328w");
         assert_eq!((alliance.ui_type, horde.ui_type), (1, 1));
         assert_eq!(
             (alliance.state_variable, horde.state_variable),
@@ -172,16 +171,16 @@ mod tests {
             "no uiState of their own — the binding answers 1.0"
         );
 
-        // ── The one extended-UI row, and the only user of the trailing id array.
+        // ── The first extended-UI row, a user of the trailing id array.
         let progress = by_id(138);
         assert_eq!(progress.extended_ui, "CAPTUREPOINT");
         assert_eq!(progress.extended_ui_state, [2427, 2428, 0]);
         assert_eq!(progress.state_variable, 2426);
         assert_eq!(progress.text, "Progress: %2427w");
 
-        // ── Warsong Gulch: the dynamic-icon columns, the only rows that carry them.
+        // ── Warsong Gulch: the dynamic-icon columns, the enemy flag.
         let ws_alliance = by_id(2);
-        assert_eq!(ws_alliance.map_id, 489);
+        assert_eq!((ws_alliance.map_id, ws_alliance.area_id), (489, 3277));
         assert_eq!(ws_alliance.state_variable, 2339);
         assert_eq!(
             ws_alliance.dynamic_icon,
@@ -201,18 +200,21 @@ mod tests {
         // ── Whole-table shape.
         let mut with_area = 0;
         let mut with_macro = 0;
+        let mut unlabelled = 0;
         for (_, row) in cat.rows() {
             assert!(
-                matches!(row.ui_type, 0..=2),
+                matches!(row.ui_type, 0..=3),
                 "Type is a small enum: {}",
                 row.ui_type
             );
             assert!(
-                row.state_variable == 0 || (2000..3000).contains(&row.state_variable),
+                row.state_variable == 0 || (2000..6000).contains(&row.state_variable),
                 "StateVariable lands in the live world-state id band: {}",
                 row.state_variable
             );
-            assert!(!row.text.is_empty(), "every row is labelled");
+            if row.text.is_empty() {
+                unlabelled += 1;
+            }
             assert_ne!(
                 row.map_id,
                 u32::MAX,
@@ -230,9 +232,10 @@ mod tests {
                 with_macro += 1;
             }
         }
-        assert_eq!(with_area, 5, "only the two outdoor zones narrow by area");
+        assert_eq!(unlabelled, 4, "all but four rows are labelled");
+        assert_eq!(with_area, 60, "the rows that narrow by area");
         assert_eq!(
-            with_macro, 9,
+            with_macro, 86,
             "the always-up rows read the world-state table"
         );
     }

@@ -1,6 +1,6 @@
 //! `WorldMapArea.dbc`, the world map's projection basis: for each continent or zone map, the art
-//! folder under `Interface\WorldMap\<name>\` and the world rect its texture covers (vmangos's
-//! `WorldMapAreaEntry`, `DBCStructure.h:737`).
+//! folder under `Interface\WorldMap\<name>\` and the world rect its texture covers (TrinityCore
+//! 3.3.5's `WorldMapAreaEntry`).
 
 use std::collections::HashMap;
 
@@ -77,6 +77,11 @@ fn schema() -> Schema {
     for name in ["LocLeft", "LocRight", "LocTop", "LocBottom"] {
         s.add_field(SchemaField::new(name, FieldType::Float32));
     }
+    // 12340 adds the display map (`-1` on all but four rows), the default dungeon floor and the
+    // parent map row, none read.
+    s.add_field(SchemaField::new("DisplayMapID", FieldType::Int32));
+    s.add_field(SchemaField::new("DefaultDungeonFloor", FieldType::UInt32));
+    s.add_field(SchemaField::new("ParentWorldMapID", FieldType::UInt32));
     s
 }
 
@@ -131,14 +136,13 @@ pub fn load_world_map_area_catalog(chain: &mut Chain) -> Result<WorldMapAreaCata
 mod tests {
     use super::*;
 
-    /// The 5875 table: both continents, Durotar's rect, and `AreaName` naming a real art folder.
+    /// The 12340 table: the continents, Durotar's rect, and `AreaName` naming a real art folder.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_world_map_area_has_continents_and_durotar_and_art_folder() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_world_map_area_catalog(&mut chain).expect("load WorldMapArea");
-        assert_eq!(cat.len(), 51, "all 51 rows load");
+        assert_eq!(cat.len(), 108, "all 108 rows load");
 
         let azeroth = cat.get(14).expect("Azeroth continent row (id 14)");
         assert_eq!((azeroth.map_id, azeroth.area_id), (0, 0));
@@ -152,6 +156,10 @@ mod tests {
         assert_eq!(azeroth_id, 14);
         let (kalimdor_id, _) = cat.continent(1).expect("Kalimdor via continent(1)");
         assert_eq!(kalimdor_id, 13);
+        let (outland_id, _) = cat.continent(530).expect("Outland via continent(530)");
+        assert_eq!(outland_id, 466);
+        let (northrend_id, _) = cat.continent(571).expect("Northrend via continent(571)");
+        assert_eq!(northrend_id, 485);
 
         let durotar = cat.get(4).expect("Durotar row (id 4)");
         assert_eq!((durotar.map_id, durotar.area_id), (1, 14));

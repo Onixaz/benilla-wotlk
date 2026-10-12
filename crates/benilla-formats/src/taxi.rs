@@ -1,6 +1,6 @@
 //! `TaxiPathNode.dbc`, the ordered waypoints of every flight path and every `MO_TRANSPORT` (boat,
-//! zeppelin), keyed by `TaxiPath.dbc` id; the layout is vmangos's `TaxiPathNodeEntry`
-//! (`DBCStructure.h:696-707`). A path can cross maps (302, Orgrimmar to Undercity, spans 1 and 0),
+//! zeppelin), keyed by `TaxiPath.dbc` id; the layout is TrinityCore's 3.3.5 `TaxiPathNodeEntry`,
+//! whose arrival and departure event ids close the record. A path can cross maps (302, Orgrimmar to Undercity, spans 1 and 0),
 //! and the transport timetable (`crate::transports`) turns a map change into a teleport keyframe.
 
 use std::collections::HashMap;
@@ -67,7 +67,7 @@ pub(crate) fn taxi_path_node_schema() -> Schema {
     for name in ["LocX", "LocY", "LocZ"] {
         s.add_field(SchemaField::new(name, FieldType::Float32));
     }
-    for name in ["Flags", "Delay"] {
+    for name in ["Flags", "Delay", "ArrivalEventID", "DepartureEventID"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));
     }
     s
@@ -109,9 +109,8 @@ pub fn load_taxi_path_nodes(chain: &mut Chain) -> Result<TaxiPathNodes> {
 mod tests {
     use super::*;
 
-    /// The 5875 layout on path 302 (Orgrimmar to Undercity, two 60 s stops) and path 285.
+    /// The 12340 layout on path 302 (Orgrimmar to Undercity, two 60 s stops) and path 285.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_taxi_path_node_layout_sanity() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -123,7 +122,7 @@ mod tests {
         );
 
         let path302 = cat.path(302).expect("path 302 exists");
-        assert_eq!(path302.len(), 36, "path 302 has 36 nodes");
+        assert_eq!(path302.len(), 22, "path 302 has 22 nodes");
         for w in path302.windows(2) {
             assert!(
                 w[0].node_index < w[1].node_index,
@@ -142,7 +141,7 @@ mod tests {
         for n in path302 {
             *flag_histogram.entry(n.flags).or_insert(0) += 1;
         }
-        assert_eq!(flag_histogram.get(&0).copied(), Some(34));
+        assert_eq!(flag_histogram.get(&0).copied(), Some(20));
         assert_eq!(flag_histogram.get(&2).copied(), Some(2));
         let flag2_delays: Vec<u32> = path302
             .iter()
@@ -152,13 +151,13 @@ mod tests {
         assert_eq!(flag2_delays, vec![60, 60], "both flag-2 nodes delay 60s");
 
         let path285 = cat.path(285).expect("path 285 exists");
-        assert_eq!(path285.len(), 27, "path 285 has 27 nodes");
+        assert_eq!(path285.len(), 18, "path 285 has 18 nodes");
         let stop_indexes: Vec<u32> = path285
             .iter()
             .filter(|n| n.flags == 2)
             .map(|n| n.node_index)
             .collect();
-        assert_eq!(stop_indexes, vec![4, 20], "path 285 stops at indexes 4, 20");
+        assert_eq!(stop_indexes, vec![3, 14], "path 285 stops at indexes 3, 14");
 
         let path292 = cat.path(292).expect("path 292 exists");
         assert!(!path292.is_empty(), "path 292 is non-empty");

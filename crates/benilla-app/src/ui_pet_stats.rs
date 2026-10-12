@@ -24,12 +24,12 @@ const CLASS_HUNTER: u8 = 3;
 /// power is focus.
 const POWER_HAPPINESS: u8 = 4;
 
-/// `PetPersonality.dbc` and `PetLoyalty.dbc`, loaded once; without them happiness and loyalty
-/// answer the bindings' failure forms.
+/// `PetPersonality.dbc`, loaded once; without it happiness answers the binding's failure form.
+/// 12340 has no pet loyalty (no `PetLoyalty.dbc`, no loyalty-rate column), so the 1.12 loyalty
+/// readouts, until #52 removes them, answer their no-data forms: a nil name and a 0 rate.
 #[derive(Resource)]
 pub(crate) struct PetStatTables {
     pub(crate) personalities: benilla_formats::PetPersonalities,
-    pub(crate) loyalty: benilla_formats::PetLoyaltyNames,
 }
 
 /// `CreatureFamily.dbc` (the word and icon) and `ItemPetFood.dbc` (the diet a family's food mask
@@ -125,26 +125,22 @@ fn stats_for(
             },
         );
     }
-    let (happiness, damage_percentage, loyalty_rate) = tables
+    let (happiness, damage_percentage) = tables
         .and_then(|t| t.personalities.for_pet(None))
         .map(|p| {
             let h = p.happiness(fields.unit_power(POWER_HAPPINESS).unwrap_or(0));
-            (Some(h.bucket), h.damage_percentage, h.loyalty_rate)
+            (Some(h.bucket), h.damage_percentage)
         })
         // No DBC: the binding's gate-failure numbers and a nil bucket.
-        .unwrap_or((None, 100.0, 0.0));
+        .unwrap_or((None, 100.0));
     (
         has_ui,
         PetStats {
             hunter_pet: true,
             happiness,
             damage_percentage,
-            loyalty_rate,
-            loyalty: tables.and_then(|t| {
-                t.loyalty
-                    .name(u32::from(fields.unit_loyalty_level()))
-                    .map(str::to_string)
-            }),
+            loyalty_rate: 0.0,
+            loyalty: None,
             training_points: fields.unit_training_points(),
             experience: fields.unit_pet_experience(),
             family,
@@ -282,7 +278,6 @@ mod tests {
         Some(PetStatTables {
             personalities: benilla_formats::load_pet_personalities(&mut chain)
                 .expect("personality"),
-            loyalty: benilla_formats::load_pet_loyalty_names(&mut chain).expect("loyalty"),
         })
     }
 
@@ -336,8 +331,8 @@ mod tests {
         assert!(has_ui && s.hunter_pet);
         assert_eq!(s.happiness, Some(3));
         assert_eq!(s.damage_percentage, 125.0);
-        assert_eq!(s.loyalty_rate, 20.0);
-        assert_eq!(s.loyalty.as_deref(), Some("(Loyalty Level 6) Best Friend"));
+        assert_eq!(s.loyalty_rate, 0.0, "12340 has no loyalty");
+        assert_eq!(s.loyalty, None);
         assert_eq!(
             s.training_points,
             (170, 130),

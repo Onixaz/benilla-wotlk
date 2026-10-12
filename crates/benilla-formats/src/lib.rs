@@ -114,8 +114,7 @@ mod chr_classes;
 pub use chr_classes::{load_chr_classes, ChrClassNames, ChrClasses, PET_NAME_TOKEN_FALLBACK};
 mod pet_stats;
 pub use pet_stats::{
-    load_pet_loyalty_names, load_pet_personalities, PetHappiness, PetLoyaltyNames,
-    PetPersonalities, PetPersonality, FALLBACK_PERSONALITY,
+    load_pet_personalities, PetHappiness, PetPersonalities, PetPersonality, FALLBACK_PERSONALITY,
 };
 mod items;
 pub use items::{load_item_display_catalog, ItemDisplay, ItemDisplayCatalog};

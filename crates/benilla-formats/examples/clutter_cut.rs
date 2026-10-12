@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
     let want = std::env::args().nth(1).unwrap_or_default().to_uppercase();
     let data = benilla_formats::wow_data().expect("no WoW install found (set $WOW_DATA)");
     let mut chain = benilla_formats::open_chain(&data)?;
-    let catalog = benilla_formats::load_ground_effect_catalog(&mut chain, true)?;
+    let catalog = benilla_formats::load_ground_effect_catalog(&mut chain)?;
 
     let mut models: BTreeSet<String> = BTreeSet::new();
     for id in 0..4096u32 {

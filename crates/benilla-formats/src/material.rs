@@ -61,7 +61,14 @@ impl MaterialCatalog {
 
 fn schema() -> Schema {
     let mut s = Schema::new("Material");
-    for name in ["ID", "Flags", "FoleySoundID"] {
+    // 12340 adds the sheathe and unsheathe kits, set on materials 1, 2, 6 and 7 and not read.
+    for name in [
+        "ID",
+        "Flags",
+        "FoleySoundID",
+        "SheatheSoundID",
+        "UnsheatheSoundID",
+    ] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));
     }
     s
@@ -88,10 +95,9 @@ pub fn load_material_catalog(chain: &mut Chain) -> Result<MaterialCatalog> {
 mod tests {
     use super::*;
 
-    /// The 5875 table, whose ids are the item query's materials (1 metal, 2 wood, 5 chain,
+    /// The 12340 table, whose ids are the item query's materials (1 metal, 2 wood, 5 chain,
     /// 6 plate, 7 cloth, 8 leather).
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_materials_decode() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -113,10 +119,9 @@ mod tests {
         assert_eq!(cat.foley_kit(9), None);
     }
 
-    /// The `Flags` column on 5875; a missing material, as a creature without virtual-item info
+    /// The `Flags` column on 12340; a missing material, as a creature without virtual-item info
     /// has, is not metal.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_flags_column_splits_metal_and_names_the_armor_slot() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

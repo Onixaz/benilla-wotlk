@@ -13,10 +13,11 @@ use benilla_dbc::{FieldType, Schema, SchemaField};
 use crate::dbc::{parse, str_at, u32_at};
 
 const LOCK_TYPE: &str = "DBFilesClient\\LockType.dbc";
-/// The file's column count, which `benilla-dbc` checks against the header.
-const LOCK_TYPE_FIELDS: usize = 29;
-/// `CursorName`, the `[row+0x70]` that `0x5f3070` reads.
-const CURSOR_NAME_FIELD: usize = 28;
+/// The file's column count, which `benilla-dbc` checks against the header: `ID`, then `Name`,
+/// `ResourceName` and `Verb` over sixteen locales and a mask each, then `CursorName`.
+const LOCK_TYPE_FIELDS: usize = 53;
+/// `CursorName`, the string 5875's `0x5f3070` reads (`[row+0x70]`, its column 28).
+const CURSOR_NAME_FIELD: usize = 52;
 /// The `Name` block's enUS column, the toast's `[row + locale*4 + 4]` at locale 0.
 const NAME_FIELD: usize = 1;
 
@@ -86,9 +87,8 @@ pub fn load_lock_type_catalog(chain: &mut Chain) -> Result<LockTypeCatalog> {
 mod tests {
     use super::*;
 
-    /// The 5875 rows: a column slip lands on another column and fails.
+    /// The 12340 rows: a column slip lands on another column and fails.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_lock_types_name_their_cursors() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -99,19 +99,20 @@ mod tests {
         assert_eq!(cat.cursor_name(3), Some("Mine"));
         assert_eq!(cat.cursor_name(5), None); // Open; 13 is the keyless chest
         assert_eq!(cat.cursor_name(13), None);
-        assert_eq!(cat.cursor_name(19), None); // Fishing
+        assert_eq!(cat.cursor_name(19), Some("FishingCursor"));
         assert_eq!(cat.cursor_name(0), None); // an empty lock slot's index
         assert_eq!(
             cat.len(),
-            3,
-            "only three LockType rows carry a CursorName in 5875"
+            4,
+            "four LockType rows carry a CursorName in 12340"
         );
 
-        // A slip to `ResourceName` (field 10) would print "Requires Herbs".
-        assert_eq!(cat.name(1), Some("Pick Lock"));
+        // A slip to `ResourceName` (field 18) would print "Requires Herbs".
+        assert_eq!(cat.name(1), Some("Lockpicking"));
         assert_eq!(cat.name(2), Some("Herbalism"));
         assert_eq!(cat.name(3), Some("Mining"));
-        assert_eq!(cat.name(19), Some("Fishing"));
+        assert_eq!(cat.name(19), Some("Fishing (DND)"));
+        assert_eq!(cat.name(20), Some("Inscription"));
         assert_eq!(cat.name(0), None);
     }
 }

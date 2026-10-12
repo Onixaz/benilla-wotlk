@@ -14,7 +14,7 @@ use benilla_ui::script::{StableIntent, StablePetSlot, StableState, UiScript, NUM
 
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
-use crate::ui_pet_stats::{PetFamilyTables, PetStatTables};
+use crate::ui_pet_stats::PetFamilyTables;
 use crate::ui_script::{UiFeed, UiInput};
 use crate::ui_session::{close_npc_session_out_of_range, npc_switched, NpcSession};
 
@@ -101,7 +101,6 @@ fn resolve_pet(
     wire: &StabledPet,
     names: &NameCache,
     families: Option<&PetFamilyTables>,
-    stats: Option<&PetStatTables>,
     commands: &NetCommands,
 ) -> StablePetSlot {
     // Guid 0 asks for the template alone: a stabled pet has no spawn.
@@ -121,10 +120,9 @@ fn resolve_pet(
         name: wire.name.clone(),
         level: wire.level,
         family: family_row.map(|f| f.name.clone()),
-        // The loyalty level's `PetLoyalty.dbc` name, as `GetPetLoyalty` gives the live pet's.
-        loyalty: stats
-            .and_then(|t| t.loyalty.name(wire.loyalty))
-            .map(str::to_string),
+        // 12340 has no `PetLoyalty.dbc`: the 1.12 loyalty column, until #52 removes it, stays
+        // empty, as `GetPetLoyalty` does for the live pet.
+        loyalty: None,
         // The food mask as diet names, as `GetPetFoodTypes` gives them; empty for a zero mask.
         diet: family_row
             .map(|f| {
@@ -146,7 +144,6 @@ fn snapshot(
     open: &StableOpen,
     names: &NameCache,
     families: Option<&PetFamilyTables>,
-    stats: Option<&PetStatTables>,
     next_slot_cost: u32,
     has_live_pet: bool,
     commands: &NetCommands,
@@ -156,7 +153,7 @@ fn snapshot(
     for wire in &open.pets {
         // Seat rows by their slot, not position: a petless hunter's list has no slot-0 row.
         match slots.get_mut(usize::from(wire.slot)) {
-            Some(seat) => *seat = Some(resolve_pet(wire, names, families, stats, commands)),
+            Some(seat) => *seat = Some(resolve_pet(wire, names, families, commands)),
             None => debug!(
                 "ui_stable: pet {} arrived in slot {} — past the {NUM_STABLE_SLOTS} the window has, dropped",
                 wire.pet_number, wire.slot
@@ -178,7 +175,6 @@ fn feed_stable(
     mut open: ResMut<StableOpen>,
     bar: Res<crate::ui_pet::PetBar>,
     families: Option<Res<PetFamilyTables>>,
-    stats: Option<Res<PetStatTables>>,
     prices: Option<Res<StableSlotPrices>>,
     commands: Res<NetCommands>,
     names: Res<NameCache>,
@@ -215,7 +211,6 @@ fn feed_stable(
         &open,
         &names,
         families.as_deref(),
-        stats.as_deref(),
         next_slot_cost,
         has_live_pet,
         &commands,

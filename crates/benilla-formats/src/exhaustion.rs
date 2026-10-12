@@ -1,7 +1,8 @@
 //! `Exhaustion.dbc`: the rest states. `GetRestState` (`0x48d350`) indexes it by the
 //! `PLAYER_BYTES_2` rest-state byte (`[0xc0dd78]`) and returns the id, the name from this file's
 //! string block (not GlobalStrings) and the factor. `GetXPExhaustion` (`0x48d3f0`) scales the
-//! rested pool by row 1's factor, 2.0 in the data. Rows 3-5 are beta tiers never sent.
+//! rested pool by row 1's factor, 2.0 in the data. Rows 3-5 are beta tiers never sent, row 6
+//! the Refer-A-Friend state; 12340 spreads the name over sixteen locales and a mask.
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
@@ -28,11 +29,11 @@ fn exhaustion_schema() -> Schema {
     s.add_field(SchemaField::new("Factor", FieldType::Float32));
     s.add_field(SchemaField::new("OutdoorHours", FieldType::Float32));
     s.add_field(SchemaField::new("InnHours", FieldType::Float32));
-    for i in 0..8 {
+    for i in 0..16 {
         s.add_field(SchemaField::new(format!("Name{i}"), FieldType::String));
     }
     s.add_field(SchemaField::new("NameFlags", FieldType::UInt32));
-    s.add_field(SchemaField::new("Threshold", FieldType::UInt32));
+    s.add_field(SchemaField::new("Threshold", FieldType::Float32));
     s
 }
 
@@ -58,7 +59,6 @@ mod tests {
     use super::load_exhaustion;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_rest_states_carry_the_rested_double() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -72,6 +72,11 @@ mod tests {
         assert_eq!(by_id[&3], ("XXXTired", 1.0), "beta tier, never sent");
         assert_eq!(by_id[&4], ("XXXTired", 0.5));
         assert_eq!(by_id[&5], ("XXXExhausted", 0.25));
-        assert_eq!(rows.len(), 5, "the whole shipped table");
+        assert_eq!(
+            by_id[&6],
+            ("Refer-A-Friend", 2.0),
+            "12340's sixth row, the recruit bonus"
+        );
+        assert_eq!(rows.len(), 6, "the whole shipped table");
     }
 }

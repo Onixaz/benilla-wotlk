@@ -1,7 +1,8 @@
 //! `ItemBagFamily.dbc`: what a specialised bag accepts ("Arrows", "Soul Shards", "Keys", …), the
 //! `%s` of inventory error reason 16, `ERR_WRONG_BAG_TYPE_SUBCLASS`. Despite that name the
 //! reference (`0x5ede00`) keys the row by the bag's `BagFamily`, not its subclass, through
-//! `0x5da050` into `[0xc0dc38]`. Ids skip 4 and 5, so this is keyed, never indexed.
+//! `0x5da050` into `[0xc0dc38]`. 5875's ids skipped 4 and 5, so this is keyed, never indexed;
+//! 12340 ships 0 to 15.
 
 use std::collections::HashMap;
 
@@ -39,7 +40,7 @@ impl ItemBagFamilyCatalog {
 fn item_bag_family_schema() -> Schema {
     let mut s = Schema::new("ItemBagFamily");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
-    for i in 0..8 {
+    for i in 0..16 {
         s.add_field(SchemaField::new(format!("Name{i}"), FieldType::String));
     }
     s.add_field(SchemaField::new("NameFlags", FieldType::UInt32));
@@ -68,7 +69,6 @@ mod tests {
     use super::load_item_bag_families;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_families_are_named_as_the_error_line_needs() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -81,10 +81,11 @@ mod tests {
         assert_eq!(cat.name(7), Some("Enchanting Supplies"));
         assert_eq!(cat.name(8), Some("Engineering Supplies"));
         assert_eq!(cat.name(9), Some("Keys"), "the keyring family");
-        // 4 and 5 do not ship.
-        assert_eq!(cat.name(4), None);
-        assert_eq!(cat.name(5), None);
+        assert_eq!(cat.name(4), Some("Leatherworking Supplies"));
+        assert_eq!(cat.name(5), Some("Inscription Supplies"));
+        assert_eq!(cat.name(15), Some("Quest Items"));
+        assert_eq!(cat.name(16), None);
         assert_eq!(cat.name(0), None, "family 0 must not render as \"NONE\"");
-        assert_eq!(cat.len(), 8, "the whole shipped table");
+        assert_eq!(cat.len(), 16, "the whole shipped table, row 0 included");
     }
 }
