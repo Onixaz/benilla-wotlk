@@ -39,6 +39,13 @@ pub(crate) struct UnitCasts {
     channels: HashMap<u64, UnitCast>,
 }
 
+impl UnitCasts {
+    /// The unit's pushed channel, running or not.
+    pub(crate) fn channel_of(&self, guid: u64) -> Option<&UnitCast> {
+        self.channels.get(&guid)
+    }
+}
+
 impl super::UiScript {
     /// Push (or clear) a unit's cast, or with `channel` its channel.
     pub fn set_unit_cast(&mut self, guid: u64, channel: bool, cast: Option<UnitCast>) {

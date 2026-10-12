@@ -539,6 +539,20 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // UnitCanAssist("unit", "otherUnit") (`0x60d690` -> `0x7293d0`): the player toward the other
+    // token, as `UnitCanAttack`
+    // pairs them; the stock secure click asks it of the clicked unit (`SecureTemplates.lua:491`).
+    g.set(
+        "UnitCanAssist",
+        lua.create_function(|lua, (a, b): (Value, Value)| {
+            let usage = r#"Usage: UnitCanAssist("unit", "otherUnit")"#;
+            let a = Some(crate::script::binding_abi::string_arg(lua, a, usage)?);
+            let b = Some(crate::script::binding_abi::string_arg(lua, b, usage)?);
+            let token = pick_unit_token(&a, &b);
+            unit_predicate(lua, &token, |u| u.can_assist)
+        })?,
+    )?;
+
     // Deviation: UnitCanCooperate answers 1 for a friendly (5 and up) player, because the engine
     // carries no faction templates; the reference resolves their cooperation masks. The verdict
     // matches for the unit popup's invite and whisper gates.

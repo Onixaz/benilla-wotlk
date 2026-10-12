@@ -171,6 +171,7 @@ impl Plugin for UiUnitPlugin {
         .add_systems(Update, drain_action_bar_toggles.after(UiInput))
         .add_systems(Update, feed_default_language.in_set(UnitFeed))
         .add_systems(Update, feed_known_languages.in_set(UnitFeed))
+        .add_systems(Update, feed_option_state.in_set(UnitFeed))
         // `load_exhaustion_rows` pushes into the VM, so it runs per VM; the rest are one-shots.
         .add_systems(
             Update,
@@ -1269,6 +1270,8 @@ fn feed_units(
             .map(str::to_string);
         let mut s = snapshot(store, guid.0, name, 0, chr, types);
         s.is_player = true;
+        // `CanAssist` answers the player for himself.
+        s.can_assist = true;
         s.raid_target = group.raid_target_index(guid.0);
         s.faction_group = faction_group(store, factions.as_deref());
         s.faction_group_localized = faction_group_localized(store, factions.as_deref());
@@ -1291,6 +1294,10 @@ fn feed_units(
         }
         feed.warned_sideless = sideless;
     }
+    let owner_of = |guid: u64| {
+        let e = *index.as_ref()?.0.get(&guid)?;
+        stores.all.get(e).ok().cloned()
+    };
     // What the three snapshots below (target, target-of-target, NPC) read besides a descriptor.
     let held = held::HeldUnits {
         names: &names,
@@ -1301,6 +1308,7 @@ fn feed_units(
         self_store: self_pair.map(|(s, _)| s),
         classes: chr,
         types,
+        owner_of: &owner_of,
     };
     let target = selection.target.zip(selection.guid).and_then(|(e, guid)| {
         let store = stores.all.get(e).ok()?;
@@ -1625,6 +1633,28 @@ pub(crate) fn add_unit_feed(app: &mut App) {
     app.init_resource::<UnitFeedState>()
         .add_message::<crate::net::FieldChanged>()
         .add_systems(Update, feed_units);
+}
+
+/// The player state `SecureCmdOptionParse`'s `swimming` and `mounted` read, pushed each frame:
+/// the swim bit of our movement flags and our mount display.
+fn feed_option_state(
+    script: Option<NonSendMut<UiScript>>,
+    player: Option<Res<crate::player::Player>>,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    let state = benilla_ui::script::OptionState {
+        swimming: player
+            .as_deref()
+            .is_some_and(|p| p.move_flags() & crate::creature_anim::move_flags::SWIMMING != 0),
+        mounted: self_q
+            .iter()
+            .next()
+            .is_some_and(|s| s.0.unit_mount_display_id() != 0),
+    };
+    script.set_option_state(state);
 }
 
 #[cfg(test)]

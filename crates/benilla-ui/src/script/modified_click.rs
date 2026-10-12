@@ -123,6 +123,24 @@ fn click_of<'a>(model: &'a Model, action: &str) -> Option<&'a str> {
         .map(|(_, b)| b.as_str())
 }
 
+/// `0x55f940`: with no action, any modifier held; an action that is itself a modifier set
+/// (`"SHIFT"`) needs each of its modifiers held; otherwise the action'"'"'s binding holds by
+/// `0x55d6b0`, and an action no `Bindings.xml` declared never holds. `[mod:...]` asks it too.
+pub(super) fn is_modified_click(model: &Model, action: Option<&str>) -> bool {
+    let (shift, ctrl, alt) = model.modifiers;
+    match action {
+        None | Some("") => shift || ctrl || alt,
+        Some(text) => {
+            let set = ClickBinding::parse(text);
+            if set.has_modifiers() {
+                (!set.shift || shift) && (!set.ctrl || ctrl) && (!set.alt || alt)
+            } else {
+                click_of(model, text).is_some_and(|b| binding_holds(&ClickBinding::parse(b), model))
+            }
+        }
+    }
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
@@ -135,20 +153,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, action: Option<Value>| {
             let action = action.and_then(|v| super::binding_abi::optional_string(lua, &v));
             let model = lua.app_data_ref::<Model>().expect("model app_data");
-            let (shift, ctrl, alt) = model.modifiers;
-            let held = match action.as_deref() {
-                None | Some("") => shift || ctrl || alt,
-                Some(text) => {
-                    let set = ClickBinding::parse(text);
-                    if set.has_modifiers() {
-                        (!set.shift || shift) && (!set.ctrl || ctrl) && (!set.alt || alt)
-                    } else {
-                        click_of(&model, text)
-                            .is_some_and(|b| binding_holds(&ClickBinding::parse(b), &model))
-                    }
-                }
-            };
-            Ok(flag(held))
+            Ok(flag(is_modified_click(&model, action.as_deref())))
         })?,
     )?;
 

@@ -97,6 +97,7 @@ mod messageframe;
 mod minimap;
 pub mod nameplate;
 pub use nameplate::{PlateBitWrites, PlateGeometry, PlateState, PLATE_BIT_ENEMY, PLATE_BIT_FRIEND};
+mod macro_options;
 mod model;
 mod modelframe;
 mod modified_click;
@@ -204,6 +205,7 @@ pub use guild::{
     MAX_RANKS, MIN_RANKS, RANK_RIGHT_BITS,
 };
 pub use input_verbs::{BindingInput, FiredInput, HeldInput};
+pub use macro_options::OptionState;
 pub use modelframe::ModelPaneFrame;
 pub use petition::{
     validate_guild_name, PetitionRecordView, PetitionRequest, PetitionState, PETITION_TYPE_CHARTER,
@@ -553,6 +555,7 @@ impl UiScript {
         keybind::install(&lua)?;
         modified_click::install(&lua)?;
         unit_cast::install(&lua)?;
+        macro_options::install(&lua)?;
         sound::install(&lua)?;
         ui_errors::install(&lua)?;
         pointer::install(&lua)?;

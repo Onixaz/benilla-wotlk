@@ -32,6 +32,8 @@ pub(super) struct HeldUnits<'a> {
     pub(super) self_store: Option<&'a ObjectStore>,
     pub(super) classes: Option<&'a ChrClasses>,
     pub(super) types: CreatureTypeSources<'a>,
+    /// A unit's owner's descriptor by guid, which `CanAssist`'s `IsPvP` leg reads.
+    pub(super) owner_of: &'a dyn Fn(u64) -> Option<ObjectStore>,
 }
 
 impl HeldUnits<'_> {
@@ -54,6 +56,14 @@ impl HeldUnits<'_> {
             self.factions,
             self.reputations,
             self.self_store,
+        );
+        // `CanAssist` (`0x6066f0`), `UnitCanAssist`'s and the secure click's `help`.
+        s.can_assist = crate::target::can_assist(
+            Some(store),
+            self.factions,
+            self.reputations,
+            self.self_store,
+            self.owner_of,
         );
         enrich_unit(
             &mut s,
@@ -134,6 +144,10 @@ pub(super) fn feed_chain_units(
         return;
     }
 
+    let owner_of = |guid: u64| {
+        let e = *index.as_ref()?.0.get(&guid)?;
+        stores.get(e).ok().cloned()
+    };
     let held = HeldUnits {
         names: &names,
         commands: &commands,
@@ -143,6 +157,7 @@ pub(super) fn feed_chain_units(
         self_store: self_q.iter().next(),
         classes: tables.classes(),
         types: tables.types(&names),
+        owner_of: &owner_of,
     };
     let built: HashMap<u64, UnitState> = ends
         .iter()

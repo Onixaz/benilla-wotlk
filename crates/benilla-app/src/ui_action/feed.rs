@@ -317,6 +317,16 @@ pub(super) fn feed_actions(
         .collect();
     show_messages(&mut script, &mut sink, "ui_action", engine_lines);
 
+    // `SecureCmdOptionParse`'s unknown condition names (`0x5f011a`, message 574).
+    let unknown = script.take_unknown_macro_options();
+    let unknown_lines: Vec<Shown> = unknown
+        .iter()
+        .filter_map(|name| {
+            super::errors::keyed_line_s(&script, "ERR_UNKNOWN_MACRO_OPTION_S", &[name])
+        })
+        .collect();
+    show_messages(&mut script, &mut sink, "ui_action", unknown_lines);
+
     let store = self_q.iter().next();
 
     // Stance page: our form's bonus bar offset, with `UPDATE_BONUS_ACTIONBAR` on change.

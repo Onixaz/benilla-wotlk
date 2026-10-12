@@ -968,6 +968,10 @@ pub(crate) struct Model {
     /// The button of the click whose `PreClick`/`OnClick`/`PostClick` is running, which a
     /// button-qualified modified click compares (`[0xb499a8]+0x1234`).
     pub(crate) click_button: Option<String>,
+    /// The player state `SecureCmdOptionParse`'s conditions read beside the unit snapshots.
+    pub(crate) option_state: super::OptionState,
+    /// Condition names `SecureCmdOptionParse` did not know, for `ERR_UNKNOWN_MACRO_OPTION_S`.
+    pub(crate) unknown_macro_options: Vec<String>,
 }
 
 impl Model {
@@ -1429,6 +1433,8 @@ impl Model {
             modifiers: (false, false, false),
             modified_clicks: Vec::new(),
             click_button: None,
+            option_state: Default::default(),
+            unknown_macro_options: Vec::new(),
             money: 0,
             net_latency_ms: 0,
             player_xp: 0,
