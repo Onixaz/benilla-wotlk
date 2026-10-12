@@ -139,8 +139,8 @@ const NOT_YET: &[(&str, &[&str])] = &[
         &["ReadFile", "DeleteFile", "AppendToFile"],
     ),
     (
-        "the glue core (0x46ddf0, table 0x8373b8): the addon list, the movie, the patch and survey, \
-         the billing, the cursor, the URLs and the credits music; each a binding of its own, the \
+        "the glue core (0x46ddf0, table 0x8373b8): the addon list, the movie's setter, the patch and \
+         survey, the billing, the addon URL and the credits music; each a binding of its own, the \
          ones with an in-game namesake included",
         &[
             "DisableAddOn",
@@ -161,7 +161,6 @@ const NOT_YET: &[(&str, &[&str])] = &[
             "HideCursor",
             "IsAddonVersionCheckEnabled",
             "LaunchAddOnURL",
-            "LaunchURL",
             "PINEntered",
             "PatchDownloadApply",
             "PatchDownloadCancel",

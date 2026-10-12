@@ -122,6 +122,69 @@ pub enum GlueRequest {
     /// cleared in the VM; the host takes screen state 3, the `CHAR_LIST_RETRIEVING` dialog and
     /// the `CMSG_CHAR_ENUM`.
     GetCharacterList,
+    /// `LaunchURL(url)` (`0x46cf60` → `0x5abd00`) for a URL that passed `launch_url_allowed`
+    /// (`0x5abd00` tests `0x5abc10` first): the player's browser opens it (`0x429ff0`).
+    LaunchUrl(String),
+}
+
+/// The hosts `LaunchURL` opens, the 10-entry table at `0x85cc34`: a leading `*` stands for one
+/// label, so `*.blizzard.com` takes `forums.blizzard.com` and not `a.b.blizzard.com`.
+const LAUNCH_HOSTS: [&str; 10] = [
+    "*.blizzard.com",
+    "*.blizzcon.com",
+    "www.battle.net",
+    "*.worldofwarcraft.com",
+    "www.battlenet.co.kr",
+    "*.worldofwarcraft.co.kr",
+    "*.blizzard-europe.com",
+    "*.wow-europe.com",
+    "*.wowchina.com",
+    "*.wowtaiwan.com.tw",
+];
+
+/// The gate in front of the browser: `0x5abd00` tests `0x5abc10` and `0x429ff0` takes the URL.
+/// The URL begins `http://` (`0x85d6bc`, compared case-folded), every byte after it is a letter,
+/// a digit, `.`, `-` or `/` (so no query, port, escape or `_`), and its host, the text up to the
+/// first `/`, is one of [`LAUNCH_HOSTS`], compared case-folded. `0x429ff0` refuses a URL of 0x400
+/// bytes or more (`0x42a01c`). The reference works on a C string, so the verb cuts its argument
+/// at a NUL before asking; a URL with a NUL in it is refused here.
+///
+/// Deviation: a host of 0x80 bytes or more is refused. The reference copies the host into a 0x80-byte
+/// buffer (`0x5abc7c`-`0x5abc9c`) and writes its terminator one byte past the end, and the cut
+/// host could end in a whitelisted suffix the real one does not; this takes the safe side.
+pub fn launch_url_allowed(url: &str) -> bool {
+    if url.len() >= 0x400 || url.contains('\0') {
+        return false;
+    }
+    let url = url.as_bytes();
+    const SCHEME: &[u8] = b"http://";
+    let Some(rest) = url
+        .get(..SCHEME.len())
+        .filter(|head| head.eq_ignore_ascii_case(SCHEME))
+        .map(|_| &url[SCHEME.len()..])
+    else {
+        return false;
+    };
+    if !rest
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'/'))
+    {
+        return false;
+    }
+    let host = rest.split(|&b| b == b'/').next().unwrap_or_default();
+    if host.len() >= 0x80 {
+        return false;
+    }
+    LAUNCH_HOSTS
+        .iter()
+        .any(|entry| match entry.strip_prefix('*') {
+            // `SStrChr(host, '.')`, then the rest against the entry past its `*`.
+            Some(suffix) => host
+                .iter()
+                .position(|&b| b == b'.')
+                .is_some_and(|dot| host[dot..].eq_ignore_ascii_case(suffix.as_bytes())),
+            None => host.eq_ignore_ascii_case(entry.as_bytes()),
+        })
 }
 
 /// The realm `GetServerName` (`0x46d280`) answers: the `realmName` CVar's text, and the
@@ -423,6 +486,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
+    // A string argument (`0x46cf68`) or `Usage: LaunchURL("URL")` (`0x837ca4`), then `0x5abd00`,
+    // which opens the browser for a URL `0x5abc10` passes and does nothing for any other. The
+    // in-game state has no such verb.
+    g.set(
+        "LaunchURL",
+        lua.create_function(|lua, url: Value| {
+            let url = string_arg(lua, url, "Usage: LaunchURL(\"URL\")")?;
+            // The C string ends at a NUL (`0x6f3690`), for the gate and for the shell alike.
+            let url = url.split('\0').next().unwrap_or_default();
+            if launch_url_allowed(url) {
+                queue(lua, GlueRequest::LaunchUrl(url.to_string()));
+            }
+            Ok(())
+        })?,
+    )?;
     g.set(
         "StopGlueMusic",
         lua.create_function(|lua, _: MultiValue| {
@@ -523,6 +601,80 @@ mod tests {
             err.contains("Usage: SetSavedAccountName(\"accountName\")"),
             "{err}"
         );
+    }
+
+    /// `0x5abc10`: the scheme, the character set past it and the host table.
+    #[test]
+    fn launch_url_opens_only_the_whitelisted_hosts() {
+        let ok = [
+            "http://www.worldofwarcraft.com/",
+            "HTTP://WWW.WorldOfWarcraft.com/index.html",
+            "http://forums.blizzard.com",
+            "http://us.blizzard.com/en-us/alert",
+            "http://www.battle.net/x",
+            "http://www.wow-europe.com/en/info/theburningcrusade.html",
+            "http://status.wow-europe.com/en/alert",
+        ];
+        for url in ok {
+            assert!(launch_url_allowed(url), "{url}");
+        }
+        let refused = [
+            "https://www.blizzard.com/",
+            "ftp://www.blizzard.com/",
+            "www.blizzard.com",
+            "http://blizzard.com/",
+            "http://a.b.blizzard.com/",
+            "http://example.com/",
+            "http://example.com/www.blizzard.com",
+            "http://www.blizzard.com.evil.net/",
+            "http://battle.net/",
+            "http://www.blizzard.com/?q=1",
+            "http://www.blizzard.com:80/",
+            "http://www.blizzard.com/a_b",
+            "http://www.blizzard.com/a b",
+            "http://www.blizzard.com\n/",
+            "",
+        ];
+        for url in refused {
+            assert!(!launch_url_allowed(url), "{url:?}");
+        }
+        // The gate takes a C string: a NUL inside one is refused outright.
+        assert!(!launch_url_allowed("http://www.blizzard.com/\0?q=1"));
+        // 0x400 bytes or more is refused (`0x42a01c`); one byte under is not.
+        let path = |n: usize| format!("http://www.blizzard.com/{}", "a".repeat(n - 24));
+        assert!(launch_url_allowed(&path(0x3ff)));
+        assert!(!launch_url_allowed(&path(0x400)));
+        // A host of 0x80 bytes or more is refused rather than cut to a whitelisted tail.
+        let host = |n: usize| format!("http://{}.blizzard.com/", "a".repeat(n - 13));
+        assert!(launch_url_allowed(&host(0x7f)));
+        assert!(!launch_url_allowed(&host(0x80)));
+        let cut = format!("http://{}.blizzard.com.evil.net/", "a".repeat(0x80 - 13));
+        assert!(!launch_url_allowed(&cut));
+    }
+
+    #[test]
+    fn launch_url_queues_a_passing_url_and_raises_its_usage() {
+        let mut s = UiScript::new_glue().unwrap();
+        s.run("LaunchURL('http://www.worldofwarcraft.com/')")
+            .unwrap();
+        s.run("LaunchURL('http://example.com/')").unwrap();
+        // The text before a NUL is the argument, for the gate and for the opener.
+        s.run("LaunchURL('http://www.blizzard.com/a\\0?q=1')")
+            .unwrap();
+        s.run("LaunchURL('http://example.com/\\0http://www.blizzard.com/')")
+            .unwrap();
+        let queued = s.take_glue_requests();
+        assert!(
+            matches!(
+                queued.as_slice(),
+                [GlueRequest::LaunchUrl(a), GlueRequest::LaunchUrl(b)]
+                    if a == "http://www.worldofwarcraft.com/" && b == "http://www.blizzard.com/a"
+            ),
+            "{queued:?}"
+        );
+        let err = s.run("LaunchURL()").unwrap_err().to_string();
+        assert!(err.contains("Usage: LaunchURL(\"URL\")"), "{err}");
+        assert!(s.take_glue_requests().is_empty());
     }
 
     #[test]

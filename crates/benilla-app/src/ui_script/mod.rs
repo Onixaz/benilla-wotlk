@@ -21,6 +21,8 @@ pub(crate) mod glue;
 pub(crate) mod glue_mgr;
 pub(crate) mod glue_scene;
 mod input;
+/// The server alert's fetch and `LaunchURL`'s browser, for the stock glue screens.
+pub(crate) mod server_alert;
 #[cfg(test)]
 mod layer_tests;
 mod load_log;
