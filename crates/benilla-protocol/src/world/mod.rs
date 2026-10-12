@@ -23,6 +23,7 @@ mod writer;
 
 pub use reader::WorldReader;
 pub use session::{WardenRequired, WorldAuthReject, WorldConnectEvent, WorldSession};
+
 pub use writer::WorldWriter;
 
 /// The stock `mangosd` port, for probes that dial the world server without a realm list.
@@ -43,14 +44,37 @@ pub(super) fn recv_raw(
     Ok((opcode, body))
 }
 
-/// Read, decrypt and parse one packet; `decrypter` is `None` only for `SMSG_AUTH_CHALLENGE`.
+/// Read, decrypt and parse one packet; `decrypter` is `None` only for `SMSG_AUTH_CHALLENGE`. A
+/// body that does not parse is an [`Unparsed`] error.
 pub(super) fn recv_packet(
     stream: &mut TcpStream,
     decrypter: Option<&mut Decrypter>,
 ) -> Result<ServerPacket> {
     let (opcode, body) = recv_raw(stream, decrypter)?;
-    messages::parse_server(opcode, &body).map_err(|e| anyhow!("parsing opcode {opcode:#x}: {e}"))
+    messages::parse_server(opcode, &body).map_err(|e| {
+        Unparsed {
+            opcode,
+            reason: e.to_string(),
+        }
+        .into()
+    })
 }
+
+/// A packet whose body did not parse. The whole body was read, so the stream is still aligned and
+/// a reader may skip it and go on, as [`WorldReader::poll`] does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unparsed {
+    pub opcode: u16,
+    pub reason: String,
+}
+
+impl std::fmt::Display for Unparsed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "parsing opcode {:#x}: {}", self.opcode, self.reason)
+    }
+}
+
+impl std::error::Error for Unparsed {}
 
 /// What [`observe_sends`] takes: called with a sent packet's opcode and body length.
 pub type SendObserver = fn(opcode: u16, body_len: usize);

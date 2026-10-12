@@ -60,11 +60,25 @@ impl std::error::Error for WardenRequired {}
 pub struct WorldSession {
     stream: TcpStream,
     crypto: Crypto,
-    /// Roster guid to race, so [`Self::player_login`] can pick the chat language.
-    roster_races: std::collections::HashMap<u64, u8>,
+    link: LinkFacts,
     /// The language chat sends speak, the character's faction tongue: vmangos drops chat, even
     /// dot-commands, in a language the character does not know.
     chat_language: u32,
+    /// `SMSG_TUTORIAL_FLAGS` when it lands during the handshake rather than in the world stream.
+    tutorial_flags: Option<Vec<u8>>,
+    /// The `castCount` each `CMSG_CAST_SPELL` carries, handed on to the split writer.
+    cast_counter: messages::CastCounter,
+    /// The unit our movement packets name: the last `CMSG_SET_ACTIVE_MOVER`, handed on to the
+    /// split writer. AzerothCore drops a move whose packed guid is not its mover.
+    mover: u64,
+}
+
+/// What the connection learned that outlives one character's world session, carried by the read
+/// half across a split so [`WorldSession::rejoin`] has it back.
+#[derive(Default)]
+pub(super) struct LinkFacts {
+    /// Roster guid to race, so [`WorldSession::player_login`] can pick the chat language.
+    roster_races: std::collections::HashMap<u64, u8>,
     /// The rested billing minutes the admitting `SMSG_AUTH_RESPONSE` carried. Deviation: `0` when
     /// the body is too short, where the reference leaves its global as it was; this field lives
     /// per connection, with nothing earlier to keep.
@@ -72,15 +86,11 @@ pub struct WorldSession {
     /// The account's expansion byte from the last `SMSG_AUTH_RESPONSE` that carried the group, the
     /// session's `+0x2f2d`; 0 before one, as the reference's constructor zeroes it (`0x465136`).
     expansion: u8,
-    /// `SMSG_TUTORIAL_FLAGS` when it lands during the handshake rather than in the world stream.
-    tutorial_flags: Option<Vec<u8>>,
     /// `SMSG_ADDON_INFO`'s per-record status bytes in order; `None` until the server answers.
+    /// The server sends it once per connection, after the authentication, and the reference
+    /// applies it to add-on records that outlive the world session, so every login on the link
+    /// reads it.
     addon_info: Option<Vec<u8>>,
-    /// The `castCount` each `CMSG_CAST_SPELL` carries, handed on to the split writer.
-    cast_counter: messages::CastCounter,
-    /// The unit our movement packets name: the last `CMSG_SET_ACTIVE_MOVER`, handed on to the
-    /// split writer. AzerothCore drops a move whose packed guid is not its mover.
-    mover: u64,
 }
 
 /// The server seed of `SMSG_AUTH_CHALLENGE`, whose body is `u32 1`, the seed, then 32 bytes of
@@ -172,12 +182,9 @@ impl WorldSession {
         let mut session = WorldSession {
             stream,
             crypto,
-            roster_races: Default::default(),
+            link: LinkFacts::default(),
             chat_language: messages::LANGUAGE_COMMON,
-            billing_time_rested: 0,
-            expansion: 0,
             tutorial_flags: None,
-            addon_info: None,
             cast_counter: Default::default(),
             mover: 0,
         };
@@ -193,9 +200,9 @@ impl WorldSession {
                     ..
                 } if result == messages::AUTH_OK => {
                     // The reference keeps the last AUTH_RESPONSE's billing group.
-                    session.billing_time_rested = billing_time_rested.unwrap_or(0);
+                    session.link.billing_time_rested = billing_time_rested.unwrap_or(0);
                     if let Some(expansion) = expansion {
-                        session.expansion = expansion;
+                        session.link.expansion = expansion;
                     }
                     break;
                 }
@@ -207,7 +214,7 @@ impl WorldSession {
                     ..
                 } if result == messages::AUTH_WAIT_QUEUE => {
                     if let Some(expansion) = expansion {
-                        session.expansion = expansion;
+                        session.link.expansion = expansion;
                     }
                     if !queued {
                         queued = true;
@@ -240,12 +247,12 @@ impl WorldSession {
 
     /// Rested billing minutes (`GetBillingTimeRested`); always 0 from vmangos (`World.cpp:331`).
     pub fn billing_time_rested(&self) -> u32 {
-        self.billing_time_rested
+        self.link.billing_time_rested
     }
 
     /// The account's expansion (`GetAccountExpansionLevel`): 2 for a Wrath account.
     pub fn expansion(&self) -> u8 {
-        self.expansion
+        self.link.expansion
     }
 
     /// The tutorial bank captured during the login handshake, if any.
@@ -269,6 +276,15 @@ impl WorldSession {
                 .map_err(|e| anyhow!("parsing SMSG_AUTH_RESPONSE: {e}")),
             opcode::SMSG_CHAR_ENUM => messages::parse_server(opcode, &body)
                 .map_err(|e| anyhow!("parsing SMSG_CHAR_ENUM: {e}")),
+            // Kept for every login on the link; a body that does not parse is skipped.
+            opcode::SMSG_ADDON_INFO => {
+                if let Ok(ServerPacket::AddonInfo { statuses }) =
+                    messages::parse_server(opcode, &body)
+                {
+                    self.link.addon_info = Some(statuses);
+                }
+                Ok(ServerPacket::Other { opcode })
+            }
             _ => Ok(ServerPacket::Other { opcode }),
         }
     }
@@ -278,15 +294,27 @@ impl WorldSession {
         let packet = recv_packet(&mut self.stream, Some(&mut self.crypto.decrypter))?;
         // `SMSG_ADDON_INFO` can reach any of the handshake's read loops, so it is caught here.
         if let ServerPacket::AddonInfo { statuses } = &packet {
-            self.addon_info = Some(statuses.clone());
+            self.link.addon_info = Some(statuses.clone());
         }
         Ok(packet)
     }
 
-    /// The `SMSG_ADDON_INFO` statuses, taken once; `None` is real, as vmangos stays silent when it
-    /// rejects the addon block (`WorldSocket.cpp:447`).
-    pub fn take_addon_info(&mut self) -> Option<Vec<u8>> {
-        self.addon_info.take()
+    /// The next packet a request at character select reads past, or `None` for one whose body did
+    /// not parse: skipped, as the world stream skips it ([`WorldReader::poll`]), since back from
+    /// the world the link still carries what the world session left in flight (a pong, a reply
+    /// vmangos serves to an authenticated session).
+    fn recv_parsed(&mut self) -> Result<Option<ServerPacket>> {
+        match self.recv() {
+            Ok(packet) => Ok(Some(packet)),
+            Err(e) if e.downcast_ref::<super::Unparsed>().is_some() => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The `SMSG_ADDON_INFO` statuses this connection received, for every login on it; `None` is
+    /// real, as vmangos stays silent when it rejects the addon block (`WorldSocket.cpp:447`).
+    pub fn addon_info(&self) -> Option<&[u8]> {
+        self.link.addon_info.as_deref()
     }
 
     /// Send a client packet (encrypted header + plaintext body).
@@ -306,7 +334,7 @@ impl WorldSession {
             let packet = self.recv_glue()?;
             match packet {
                 ServerPacket::CharEnum { characters } => {
-                    self.roster_races = characters.iter().map(|c| (c.guid, c.race)).collect();
+                    self.link.roster_races = characters.iter().map(|c| (c.guid, c.race)).collect();
                     return Ok(characters);
                 }
                 // Warden can arm on either side of SMSG_AUTH_RESPONSE, so this step refuses it too.
@@ -328,9 +356,8 @@ impl WorldSession {
     pub fn create_character(&mut self, req: &messages::CharCreateReq) -> Result<u8> {
         self.send(opcode::CMSG_CHAR_CREATE, &messages::char_create(req))?;
         loop {
-            match self.recv()? {
-                ServerPacket::CharCreate { result } => return Ok(result),
-                _ => continue,
+            if let Some(ServerPacket::CharCreate { result }) = self.recv_parsed()? {
+                return Ok(result);
             }
         }
     }
@@ -339,9 +366,8 @@ impl WorldSession {
     pub fn delete_character(&mut self, guid: u64) -> Result<u8> {
         self.send(opcode::CMSG_CHAR_DELETE, &messages::full_guid(guid))?;
         loop {
-            match self.recv()? {
-                ServerPacket::CharDelete { result } => return Ok(result),
-                _ => continue,
+            if let Some(ServerPacket::CharDelete { result }) = self.recv_parsed()? {
+                return Ok(result);
             }
         }
     }
@@ -349,6 +375,7 @@ impl WorldSession {
     /// Enter the world as `guid`, adopting its faction tongue for chat (Common if not enumerated).
     pub fn player_login(&mut self, guid: u64) -> Result<()> {
         self.chat_language = self
+            .link
             .roster_races
             .get(&guid)
             .map_or(messages::LANGUAGE_COMMON, |&race| {
@@ -864,6 +891,7 @@ impl WorldSession {
             WorldReader {
                 stream: read_stream,
                 decrypter,
+                link: self.link,
             },
             WorldWriter {
                 stream: self.stream,
@@ -873,6 +901,34 @@ impl WorldSession {
                 mover: self.mover,
             },
         ))
+    }
+
+    /// The halves [`Self::into_split`] made, one session again on the same connection: a logout
+    /// or a refused character login returns to character select on the link it entered by,
+    /// where the reference re-enumerates (`0x5aaeb0` → `0x401ee0(1, 1, 0)` → `0x46b880`), with
+    /// no new authentication. The cipher keeps the state each direction reached, and the reads
+    /// wait with the handshake's bound again, as every park step awaits one reply.
+    pub fn rejoin(reader: WorldReader, writer: WorldWriter) -> Result<Self> {
+        // The read half is a clone of the write half's socket; dropping it closes nothing.
+        let WorldReader {
+            decrypter, link, ..
+        } = reader;
+        let session = WorldSession {
+            stream: writer.stream,
+            crypto: Crypto {
+                encrypter: writer.encrypter,
+                decrypter,
+            },
+            link,
+            chat_language: writer.chat_language,
+            tutorial_flags: None,
+            cast_counter: writer.cast_counter,
+            mover: writer.mover,
+        };
+        session
+            .set_read_timeout(Some(HANDSHAKE_READ_TIMEOUT))
+            .context("restoring the park's read timeout")?;
+        Ok(session)
     }
 
     /// Log out to character select, waiting up to `timeout`; needs a socket read timeout.

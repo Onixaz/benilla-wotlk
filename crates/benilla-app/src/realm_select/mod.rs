@@ -9,14 +9,14 @@
 //! character park, and takes one answer. The policy, in order:
 //!
 //! 1. `WOW_REALM`, matched case-insensitively; a name not on the list falls through.
-//! 2. The realm this session is on, so a logout or a dropped connection returns to it.
+//! 2. The realm this session is on, so an unattended reconnect returns to it.
 //! 3. The remembered realm, the persisted `realmName` CVar.
 //! 4. An unattended run (`crate::run_mode::unattended`) takes the first realm that is up.
 //! 5. Otherwise the dialog.
 //!
 //! Change Realm costs a world dial, not a login. `RequestRealmList` (`0x46ecf0` -> `0x46b8d0`)
-//! begins a realm query on the realmd socket, which stays open until world entry (`0x46b70c`), and
-//! names no screen; only `ConnectToRealm` (`0x46b210`) drops the world connection, once a realm is
+//! begins a realm query on the realmd socket, which stays open until world entry (`0x46b70c`) and
+//! is dialled again for a query after it (`0x5b2200`), and names no screen; only `ConnectToRealm` (`0x46b210`) drops the world connection, once a realm is
 //! chosen. So the character park serves the list in place and Cancel there does nothing.
 //!
 //! Under `WOW_GLUE_STOCK=1` the stock `RealmList` and its verbs take the list instead

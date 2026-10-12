@@ -20,8 +20,8 @@ pub use messages::{
     CHARACTER_FLAG_HIDE_CLOAK, CHARACTER_FLAG_HIDE_HELM, CHARACTER_FLAG_RENAME,
 };
 pub use world::{
-    observe_sends, SendObserver, WardenRequired, WorldAuthReject, WorldConnectEvent, WorldReader,
-    WorldSession, WorldWriter, WORLD_PORT,
+    observe_sends, SendObserver, Unparsed, WardenRequired, WorldAuthReject, WorldConnectEvent,
+    WorldReader, WorldSession, WorldWriter, WORLD_PORT,
 };
 
 use std::net::TcpStream;
@@ -159,6 +159,12 @@ impl Logon {
     /// Whether the realmd socket is still up, so [`Self::refresh_realms`] can do anything.
     pub fn realmd_live(&self) -> bool {
         self.stream.is_some()
+    }
+
+    /// `CLoginMgr::Cancel` (`0x5b3320`): the realmd socket closes; the session key and the last
+    /// list are kept.
+    pub fn close(&mut self) {
+        self.stream = None;
     }
 }
 
