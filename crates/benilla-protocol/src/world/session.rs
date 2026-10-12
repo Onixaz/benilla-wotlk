@@ -95,6 +95,16 @@ fn server_seed(opcode: u16, body: &[u8]) -> Result<u32> {
     Ok(u32::from_le_bytes(seed.try_into().expect("four bytes")))
 }
 
+/// What a world connect reports on its way to `SMSG_AUTH_RESPONSE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorldConnectEvent {
+    /// The socket connected: the reference's connect operation completes `RESPONSE_CONNECTED`
+    /// here (`0x5aaa90`) and its authentication begins.
+    Connected,
+    /// A queue position (`AUTH_WAIT_QUEUE`), or `None` when the body carried none.
+    Queued(Option<u32>),
+}
+
 impl WorldSession {
     /// Connect and complete the auth handshake with the logon's account and session key, for the
     /// realm list's `realm_id`, which `CMSG_AUTH_SESSION` names to the world server.
@@ -107,7 +117,8 @@ impl WorldSession {
         Self::connect_queued(addr, username, session_key, realm_id, &mut |_| true)
     }
 
-    /// [`Self::connect`], calling `on_queue` with each queue position; `false` abandons the queue.
+    /// [`Self::connect`], calling `on_event` once the socket connects and with each queue position;
+    /// `false` abandons the connect.
     /// Deviation: checked per queue packet where the reference checks each tick, so a cancel can
     /// lag one server update.
     pub fn connect_queued(
@@ -115,10 +126,13 @@ impl WorldSession {
         username: &str,
         session_key: [u8; SESSION_KEY_LENGTH],
         realm_id: u8,
-        on_queue: &mut dyn FnMut(Option<u32>) -> bool,
+        on_event: &mut dyn FnMut(WorldConnectEvent) -> bool,
     ) -> Result<Self> {
         let mut queued = false;
         let mut stream = TcpStream::connect(addr).context("connecting to world server")?;
+        if !on_event(WorldConnectEvent::Connected) {
+            bail!("world connect abandoned");
+        }
         // Nagle off: the reference sets `TCP_NODELAY` on its game socket (`0x5bca60`).
         stream
             .set_nodelay(true)
@@ -201,7 +215,7 @@ impl WorldSession {
                             .set_read_timeout(Some(QUEUE_READ_TIMEOUT))
                             .context("relaxing the read timeout for the login queue")?;
                     }
-                    if !on_queue(queue_position) {
+                    if !on_event(WorldConnectEvent::Queued(queue_position)) {
                         bail!("login queue abandoned");
                     }
                 }

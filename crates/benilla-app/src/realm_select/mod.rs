@@ -236,6 +236,10 @@ pub(super) fn is_invalid(realm: &RealmInfo) -> bool {
 /// The realm-selection subsystem: the park's policy plus the screen.
 pub(crate) struct RealmSelectPlugin;
 
+/// The subsystem's `Update` chain, for a reader of [`Realms`] to order itself after.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct RealmSelectSet;
+
 impl Plugin for RealmSelectPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Realms>()
@@ -261,6 +265,7 @@ impl Plugin for RealmSelectPlugin {
                         .run_if(|realms: Res<Realms>| realms.shown),
                 )
                     .chain()
+                    .in_set(RealmSelectSet)
                     .after(benilla_world::schedule::WorldStage::Net)
                     .before(crate::glue::GlueVisuals),
             );

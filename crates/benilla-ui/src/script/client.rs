@@ -5,11 +5,11 @@
 use mlua::{Lua, MultiValue, Value};
 
 /// The 1.12.1 client's build identity, as the strings in its binary spell it.
-const VERSION: &str = "3.3.5";
-const BUILD: &str = "12340";
-const BUILD_DATE: &str = "Jun 24 2010";
+pub(super) const VERSION: &str = "3.3.5";
+pub(super) const BUILD: &str = "12340";
+pub(super) const BUILD_DATE: &str = "Jun 24 2010";
 /// `GetCodeInterfaceVersion()` (`0x5f4c10`), the TOC number the addon gate compares with.
-const INTERFACE_VERSION: f64 = 30300.0;
+pub(super) const INTERFACE_VERSION: f64 = 30300.0;
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
