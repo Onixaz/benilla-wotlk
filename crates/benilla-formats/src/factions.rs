@@ -334,7 +334,9 @@ fn faction_template_schema() -> Schema {
     s
 }
 
-/// `Faction.dbc`: 37 fields in build 5875 (vmangos `FactionEntry`).
+/// `Faction.dbc`: 57 fields in build 12340 (AzerothCore `FactionEntryfmt`). The first 19 are
+/// 1.12's; the parent is followed by the two spillover rates and two spillover ints, then the
+/// 17-column name and description blocks (16 locales and a flags column).
 fn faction_schema() -> Schema {
     let mut s = Schema::new("Faction");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
@@ -352,25 +354,35 @@ fn faction_schema() -> Schema {
         s.add_field(SchemaField::new(format!("RepFlags{i}"), FieldType::UInt32));
     }
     s.add_field(SchemaField::new("Team", FieldType::UInt32));
-    for i in 0..8 {
+    s.add_field(SchemaField::new("SpilloverRateIn", FieldType::Float32));
+    s.add_field(SchemaField::new("SpilloverRateOut", FieldType::Float32));
+    s.add_field(SchemaField::new("SpilloverMaxRankIn", FieldType::UInt32));
+    s.add_field(SchemaField::new("SpilloverRank", FieldType::UInt32));
+    for i in 0..LOCALE_SLOTS {
         s.add_field(SchemaField::new(format!("Name{i}"), FieldType::String));
     }
     s.add_field(SchemaField::new("NameFlags", FieldType::UInt32));
-    for i in 0..8 {
+    for i in 0..LOCALE_SLOTS {
         s.add_field(SchemaField::new(format!("Desc{i}"), FieldType::String));
     }
     s.add_field(SchemaField::new("DescFlags", FieldType::UInt32));
     s
 }
 
-/// `FactionGroup.dbc`: 12 fields, 48-byte rows; `MaskID` is a bit index, read by `0x48d540` at
-/// `+0x4` with the name at `+0xc`.
+/// 12340's locale slots per localized string, before the block's flags column.
+const LOCALE_SLOTS: usize = 16;
+/// `Faction.dbc`'s enUS `Name_lang` and `Description_lang` columns.
+const FACTION_NAME_FIELD: usize = 23;
+const FACTION_DESC_FIELD: usize = FACTION_NAME_FIELD + LOCALE_SLOTS + 1;
+
+/// `FactionGroup.dbc`: 20 fields, 80-byte rows in build 12340; `MaskID` is a bit index, and the
+/// enUS name is field 3, after `InternalName`.
 fn faction_group_schema() -> Schema {
     let mut s = Schema::new("FactionGroup");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("MaskID", FieldType::UInt32));
     s.add_field(SchemaField::new("InternalName", FieldType::String));
-    for i in 0..8 {
+    for i in 0..LOCALE_SLOTS {
         s.add_field(SchemaField::new(format!("Name{i}"), FieldType::String));
     }
     s.add_field(SchemaField::new("NameFlags", FieldType::UInt32));
@@ -423,12 +435,12 @@ pub fn load_faction_catalog(chain: &mut Chain) -> Result<FactionCatalog> {
                     flags: [at(14), at(15), at(16), at(17)],
                 },
             );
-            // Name0 (enUS), column 19: after the ID, the index, 16 slot columns and `Team`.
-            if let Some(name) = crate::dbc::str_at(&rs, r, 19) {
+            // The enUS name, after the ID, the index, 16 slot columns, `Team` and the spillover.
+            if let Some(name) = crate::dbc::str_at(&rs, r, FACTION_NAME_FIELD) {
                 names.insert(id, name);
             }
-            // Desc0 (enUS), column 28, past the name block; empty on most rows.
-            if let Some(desc) = crate::dbc::str_at(&rs, r, 28) {
+            // The enUS description, past the name block; empty on most rows.
+            if let Some(desc) = crate::dbc::str_at(&rs, r, FACTION_DESC_FIELD) {
                 descriptions.insert(id, desc);
             }
         }
@@ -562,7 +574,6 @@ mod tests {
     /// Unit templates toward a human player (template 1), the direction `0x7cbaa0` colours by;
     /// ids from vmangos `creature_template.faction`, expected colours from a reference capture.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_dbc_reactions_match_reference_capture() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -657,7 +668,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_gameobject_factions_resolve_toward_both_player_templates() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -679,7 +689,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_faction_group_names_by_mask() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -690,14 +699,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_reputation_factions_group_under_their_team() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_faction_catalog(&mut chain).expect("load factions");
 
-        // 54 of the table's 190 rows carry a reputation slot; the rest are reaction-only.
-        assert_eq!(cat.reputation_factions().count(), 54);
+        // 105 of the table's 401 rows carry a reputation slot; the rest are reaction-only.
+        assert_eq!(cat.reputation_factions().count(), 105);
 
         // The four Alliance cities sit under Alliance (469), the four Horde ones under Horde (67).
         for id in [72 /* Stormwind */, 47, 69, 54] {
@@ -719,14 +727,16 @@ mod tests {
             );
         }
         assert_eq!(cat.reputation_faction(169).unwrap().rep_index, 10);
-        for id in [469, 67, 169] {
-            assert_eq!(cat.reputation_faction(id).unwrap().team, 0, "faction {id}");
+        // 3.3.5a files the 1.12 roots, Argent Dawn among them, under the Classic header (1118).
+        for id in [469, 67, 169, 529] {
+            assert_eq!(
+                cat.reputation_faction(id).unwrap().team,
+                1118,
+                "faction {id}"
+            );
         }
-        // Argent Dawn and the other ungrouped factions carry no team.
-        assert_eq!(cat.reputation_faction(529).unwrap().team, 0);
 
-        // Exactly five parents, each a pane header: Alliance, Horde, Steamwheedle Cartel and the
-        // two battleground blocs.
+        // The parents, each a pane header or a faction with its own slot that groups others.
         let mut parents: Vec<u32> = cat
             .reputation_factions()
             .map(|(_, f)| f.team)
@@ -735,7 +745,10 @@ mod tests {
             .into_iter()
             .collect();
         parents.sort_unstable();
-        assert_eq!(parents, [67, 169, 469, 891, 892]);
+        assert_eq!(
+            parents,
+            [67, 169, 469, 891, 892, 936, 948, 949, 980, 1037, 1052, 1097, 1117, 1118]
+        );
 
         assert!(
             cat.faction_description(529)
