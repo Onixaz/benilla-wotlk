@@ -402,16 +402,28 @@ pub(crate) enum CharRequest {
 #[derive(Resource)]
 pub(crate) struct RealmChoice(pub(crate) Sender<RealmRequest>);
 
-/// One request to the IO thread parked at the realm list.
+/// One request to the IO thread about the realm list, served at the logon park and at character
+/// select; at the login park a query fails and the rest are dropped.
 #[derive(Debug)]
 pub(crate) enum RealmRequest {
-    /// Enter this realm, by name: the list refreshes while open, so an index could shift.
-    Enter(String),
-    /// Re-request the realm list (`RequestRealmList`, every 5 s from `RealmList_OnUpdate`).
+    /// Dial this realm (`ConnectToRealm`, `0x46b210`), the record as the list held it, as the
+    /// reference dials its copy (`0xc27fb8`) whatever a later list says. `generation` is the
+    /// abandon generation the app held when it asked: a later Cancel ends the dial however early
+    /// it lands.
+    Enter {
+        realm: benilla_protocol::RealmInfo,
+        generation: u64,
+    },
+    /// Query the realm list (`RequestRealmList`, every 5 s from `RealmList_OnUpdate`); the answer
+    /// is a [`RealmListMessage`], failed when the link gave none.
     Refresh,
-    /// Cancel (`RealmList_OnCancel` only hides the frame): the screen underneath stays, login or
-    /// character select.
-    Abandon,
+    /// `CLoginMgr::Cancel` (`0x5b3320`, from `RealmListDialogCancelled` on the login screen, the
+    /// logon's Cancel and `DisconnectFromServer`): the realmd link closes and the thread parks for
+    /// credentials. At character select, where `RealmListDialogCancelled` is a no-op, nothing.
+    Close,
+    /// `ConnectToRealm` with the world up (`0x46b22b` → `0x5ab1a0`): the session at character
+    /// select drops and the thread returns to the logon park, realmd still up. Elsewhere, nothing.
+    Leave,
 }
 
 /// The credentials channel to the IO thread's pre-logon park, sent by [`crate::login`].
@@ -419,9 +431,16 @@ pub(crate) enum RealmRequest {
 pub(crate) struct LoginSubmit(pub(crate) Sender<io::LoginRequest>);
 
 /// The login abandon generation: Cancel bumps it, and the IO thread drops an
-/// [`io::LoginRequest`] submitted under an older value.
+/// [`io::LoginRequest`] or a [`RealmRequest::Enter`] asked under an older value.
 #[derive(Resource)]
 pub(crate) struct LoginAbandon(pub(crate) std::sync::Arc<std::sync::atomic::AtomicU64>);
+
+impl LoginAbandon {
+    /// The generation an ask is stamped with now.
+    pub(crate) fn now(abandon: Option<&LoginAbandon>) -> u64 {
+        abandon.map_or(0, |a| a.0.load(std::sync::atomic::Ordering::SeqCst))
+    }
+}
 
 /// Guid to entity for every kind, items included, like the reference's one `ClntObjMgr` index.
 /// Written only by `net::objects`.
@@ -2014,10 +2033,12 @@ pub(crate) enum ClientCommand {
     },
 }
 
-/// The realm list (`CMD_REALM_LIST`); the IO thread waits for [`crate::realm_select`] to pick.
+/// The realm list (`CMD_REALM_LIST`); the IO thread waits for a [`RealmRequest`]. `failed` is a
+/// query that got no answer (`REALM_LIST_FAILED`), `realms` then the list last held.
 #[derive(Message)]
 pub(crate) struct RealmListMessage {
     pub(crate) realms: Vec<benilla_protocol::RealmInfo>,
+    pub(crate) failed: bool,
 }
 
 /// The character roster (`SMSG_CHAR_ENUM`); the IO thread waits for [`crate::char_select`] to
