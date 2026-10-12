@@ -66,6 +66,8 @@ pub struct WorldWriter {
     pub(super) chat_language: u32,
     /// The `castCount` each `CMSG_CAST_SPELL` carries.
     pub(super) cast_counter: crate::messages::CastCounter,
+    /// The unit every movement packet names, set by [`Self::set_active_mover`].
+    pub(super) mover: u64,
 }
 
 impl WorldWriter {

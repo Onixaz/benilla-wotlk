@@ -8,69 +8,18 @@ use crate::wire::{read_f32_le, read_u32_le, Vector3d};
 // (`MovementInfo.h:56`), not TBC's 0x200, which 1.12 names `MOVEFLAG_UNUSED10`.
 pub(super) const MOVEMENT_FLAG_ON_TRANSPORT: u32 = 0x0200_0000;
 pub(super) const MOVEMENT_FLAG_JUMPING: u32 = 0x2000;
+#[cfg(test)]
 pub(super) const MOVEMENT_FLAG_SWIMMING: u32 = 0x20_0000;
 pub(super) const MOVEMENT_FLAG_SPLINE_ENABLED: u32 = 0x40_0000;
-#[cfg(test)]
-pub(super) const MOVEMENT_FLAG_SPLINE_ELEVATION: u32 = 0x400_0000;
+/// 1.12.1's flying bit, 3.3.5a's `FLYING` (`0x200_0000`) once mapped.
+const MOVEMENT_FLAG_FLYING: u32 = 0x100_0000;
 
 /// `MSG_MOVE_TIME_SKIPPED` inbound: a packed guid and the ms that mover's client skipped
-/// (reference handler `0x603b40`; vmangos `MovementHandler.cpp:1005-1011`). Our own send uses a
-/// plain 8-byte guid ([`super::client::move_time_skipped`]); the asymmetry is the reference's.
+/// (reference handler `0x603b40`). Our own `CMSG_MOVE_TIME_SKIPPED` has the same shape.
 pub(super) fn read_move_time_skipped(r: &mut &[u8]) -> io::Result<(u64, u32)> {
     let guid = crate::wire::read_packed_guid(r)?;
     let lag_ms = read_u32_le(r)?;
     Ok((guid, lag_ms))
-}
-
-/// [`MovementInfo::write`]'s layout read back, vmangos `MovementInfo::Read` order: flags, time,
-/// position, facing, the transport pose if `ON_TRANSPORT` (no transport time), the swim pitch if
-/// `SWIMMING`, `u32` fall time, the jump tail if `JUMPING`, then a spline-elevation `f32` if
-/// `SPLINE_ELEVATION`, read and dropped.
-#[cfg(test)]
-pub(super) fn read_movement_info(r: &mut impl Read) -> io::Result<MovementInfo> {
-    let flags = read_u32_le(r)?;
-    let timestamp = read_u32_le(r)?;
-    let position = Vector3d::read(r)?;
-    let orientation = read_f32_le(r)?;
-    let transport = if flags & MOVEMENT_FLAG_ON_TRANSPORT != 0 {
-        Some(TransportPose {
-            // A full u64, not packed (vmangos `ObjectGuid.cpp:180`, `buf.read<uint64>()`).
-            guid: crate::wire::read_u64_le(r)?,
-            pos: Vector3d::read(r)?,
-            orientation: read_f32_le(r)?,
-        })
-    } else {
-        None
-    };
-    let pitch = if flags & MOVEMENT_FLAG_SWIMMING != 0 {
-        read_f32_le(r)?
-    } else {
-        0.0
-    };
-    let fall_time = read_u32_le(r)?;
-    let jump = if flags & MOVEMENT_FLAG_JUMPING != 0 {
-        Some(JumpInfo {
-            zspeed: read_f32_le(r)?,
-            cos_angle: read_f32_le(r)?,
-            sin_angle: read_f32_le(r)?,
-            xy_speed: read_f32_le(r)?,
-        })
-    } else {
-        None
-    };
-    if flags & MOVEMENT_FLAG_SPLINE_ELEVATION != 0 {
-        let _ = read_f32_le(r)?;
-    }
-    Ok(MovementInfo {
-        flags,
-        timestamp,
-        position,
-        orientation,
-        transport,
-        pitch,
-        fall_time,
-        jump,
-    })
 }
 
 /// 3.3.5a's `MovementFlags` (AzerothCore `UnitDefines.h`), where its bit differs from 1.12.1's.
@@ -118,6 +67,33 @@ pub(crate) fn classic_flags_from_wotlk(flags: u32) -> u32 {
         }
     }
     classic
+}
+
+/// 1.12.1's movement flags in 3.3.5a's bits, the inverse of [`classic_flags_from_wotlk`] on every
+/// bit it produces. 1.12.1's unused `0x200` and `0x0080_0000` have no 3.3.5a bit and are dropped.
+pub(crate) fn wotlk_flags_from_classic(classic: u32) -> u32 {
+    let mut flags = classic & (0x1ff | 0x20_0000 | 0x400_0000 | 0x7000_0000);
+    let moved: [(u32, u32); 13] = [
+        (MOVEMENT_FLAG_ON_TRANSPORT, wotlk_flag::ON_TRANSPORT),
+        (0x400, wotlk_flag::DISABLE_GRAVITY),
+        (0x1000, wotlk_flag::ROOT),
+        (MOVEMENT_FLAG_JUMPING, wotlk_flag::FALLING),
+        (0x4000, 0x2000),      // falling far
+        (0x8000, 0x4000),      // pending stop
+        (0x1_0000, 0x8000),    // pending strafe stop
+        (0x2_0000, 0x1_0000),  // pending forward
+        (0x4_0000, 0x2_0000),  // pending backward
+        (0x8_0000, 0x4_0000),  // pending strafe left
+        (0x10_0000, 0x8_0000), // pending strafe right
+        (MOVEMENT_FLAG_FLYING, wotlk_flag::FLYING),
+        (MOVEMENT_FLAG_SPLINE_ENABLED, wotlk_flag::SPLINE_ENABLED),
+    ];
+    for (shared, wotlk) in moved {
+        if classic & shared != 0 {
+            flags |= wotlk;
+        }
+    }
+    flags
 }
 
 /// 3.3.5a's `MovementInfo` (AzerothCore `Unit::BuildMovementPacket`): `u32` flags, `u16` extra
@@ -323,8 +299,8 @@ impl RelayVerb {
     }
 }
 
-/// The `JUMPING` tail: `zspeed, cosAngle, sinAngle, xyspeed`, cos before sin (vmangos
-/// `MovementInfo::Read`). The launch is `(cos, sin) * xy_speed` in world XY, frozen at take-off,
+/// The jump tail: `zspeed, sinAngle, cosAngle, xyspeed` in 3.3.5a's `MovementInfo` under `FALLING`
+/// (AzerothCore `ReadMovementInfo`). The launch is `(cos, sin) * xy_speed` in world XY, frozen at take-off,
 /// so a receiver can replay the arc under `g = 19.291105` (vmangos `ExtrapolateMovement`).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct JumpInfo {
@@ -337,8 +313,8 @@ pub struct JumpInfo {
     pub xy_speed: f32,
 }
 
-/// The `ON_TRANSPORT` tail of `MovementInfo` and of a `LIVING` block: a full `u64` transport guid,
-/// then position and facing in the transport's own frame (vmangos `MovementInfo::Read`).
+/// The `ON_TRANSPORT` tail of `MovementInfo` and of a `LIVING` block: the transport guid, then
+/// position and facing in the transport's own frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TransportPose {
     /// The transport GameObject's guid, `HIGH_MO_TRANSPORT` or `HIGH_TRANSPORT`.
@@ -355,7 +331,7 @@ pub struct MovementInfo {
     pub orientation: f32,
     /// `Some` iff `ON_TRANSPORT` is set: the sender's pose in the transport's frame.
     pub transport: Option<TransportPose>,
-    /// Swim pitch in radians, up-positive; on the wire only while `SWIMMING`, else read as `0.0`.
+    /// Pitch in radians, up-positive; on the wire only while swimming or flying, else `0.0`.
     pub pitch: f32,
     /// Milliseconds airborne, a `u32` (vmangos `MovementInfo::fallTime`): the jump arc's clock.
     pub fall_time: u32,
@@ -364,15 +340,28 @@ pub struct MovementInfo {
 }
 
 impl MovementInfo {
-    pub(super) fn write(&self, w: &mut Vec<u8>) {
-        w.extend_from_slice(&self.flags.to_le_bytes());
+    /// `[packed mover guid][MovementInfo]` in 3.3.5a's layout, the shape every client movement
+    /// packet opens with and [`read_movement_info_wotlk`] reads back after the guid. AzerothCore
+    /// drops a packet whose guid is not the mover (`MovementHandler.cpp`, `HandleMovementOpcodes`).
+    /// The flags go out in 3.3.5a's bits ([`wotlk_flags_from_classic`]) with no extra flags; the
+    /// transport time is the move's own, and the seat is `-1`, no vehicle seat.
+    pub(super) fn write(&self, mover: u64, w: &mut Vec<u8>) {
+        crate::wire::write_packed_guid(mover, w).expect("a Vec write cannot fail");
+        self.write_body(w);
+    }
+
+    /// The `MovementInfo` alone, as an ack carries it after its own guid and counter.
+    pub(super) fn write_body(&self, w: &mut Vec<u8>) {
+        let flags = wotlk_flags_from_classic(self.flags);
+        w.extend_from_slice(&flags.to_le_bytes());
+        w.extend_from_slice(&0u16.to_le_bytes());
         w.extend_from_slice(&self.timestamp.to_le_bytes());
         w.extend_from_slice(&self.position.x.to_le_bytes());
         w.extend_from_slice(&self.position.y.to_le_bytes());
         w.extend_from_slice(&self.position.z.to_le_bytes());
         w.extend_from_slice(&self.orientation.to_le_bytes());
-        // Each conditional tail must travel with its flag or vmangos `MovementInfo::Read` desyncs.
-        if self.flags & MOVEMENT_FLAG_ON_TRANSPORT != 0 {
+        // Each conditional tail must travel with its flag or the server's reader desyncs.
+        if flags & wotlk_flag::ON_TRANSPORT != 0 {
             let t = self.transport.unwrap_or(TransportPose {
                 guid: 0,
                 pos: Vector3d {
@@ -382,22 +371,27 @@ impl MovementInfo {
                 },
                 orientation: 0.0,
             });
-            w.extend_from_slice(&t.guid.to_le_bytes());
+            crate::wire::write_packed_guid(t.guid, w).expect("a Vec write cannot fail");
             w.extend_from_slice(&t.pos.x.to_le_bytes());
             w.extend_from_slice(&t.pos.y.to_le_bytes());
             w.extend_from_slice(&t.pos.z.to_le_bytes());
             w.extend_from_slice(&t.orientation.to_le_bytes());
+            w.extend_from_slice(&self.timestamp.to_le_bytes());
+            w.push(0xff);
         }
-        if self.flags & MOVEMENT_FLAG_SWIMMING != 0 {
+        if flags & (wotlk_flag::SWIMMING | wotlk_flag::FLYING) != 0 {
             w.extend_from_slice(&self.pitch.to_le_bytes());
         }
         w.extend_from_slice(&self.fall_time.to_le_bytes());
-        if self.flags & MOVEMENT_FLAG_JUMPING != 0 {
+        if flags & wotlk_flag::FALLING != 0 {
             let j = self.jump.unwrap_or_default();
             w.extend_from_slice(&j.zspeed.to_le_bytes());
-            w.extend_from_slice(&j.cos_angle.to_le_bytes());
             w.extend_from_slice(&j.sin_angle.to_le_bytes());
+            w.extend_from_slice(&j.cos_angle.to_le_bytes());
             w.extend_from_slice(&j.xy_speed.to_le_bytes());
+        }
+        if flags & wotlk_flag::SPLINE_ELEVATION != 0 {
+            w.extend_from_slice(&0f32.to_le_bytes());
         }
     }
 }
@@ -406,6 +400,8 @@ impl MovementInfo {
 mod tests {
     use super::*;
     use crate::wire::Vector3d;
+
+    const MOVER: u64 = 0x0000_0000_0000_03e9;
 
     fn info(flags: u32) -> MovementInfo {
         MovementInfo {
@@ -424,18 +420,67 @@ mod tests {
         }
     }
 
+    /// Write, then read back the way the server does: the packed guid, then 3.3.5a's info.
+    fn round_trip(mi: &MovementInfo) -> (u64, MovementInfo, usize) {
+        let mut bytes = Vec::new();
+        mi.write(MOVER, &mut bytes);
+        let mut r = &bytes[..];
+        let guid = crate::wire::read_packed_guid(&mut r).expect("guid");
+        let back = read_movement_info_wotlk(&mut r).expect("parse");
+        assert!(r.is_empty(), "the reader consumes every byte written");
+        (guid, back, bytes.len())
+    }
+
+    /// A walk report: the mover's packed guid (mask 0x03: two bytes), the forward bit, a zero
+    /// `u16` extra-flags word, then the 3.3.5a body: 3 + 4 + 2 + 4 + 16 + 4 = 33 bytes.
+    #[test]
+    fn a_walk_report_is_the_packed_mover_then_the_wotlk_body() {
+        let mut bytes = Vec::new();
+        info(0x1).write(MOVER, &mut bytes);
+        #[rustfmt::skip]
+        let want: &[u8] = &[
+            0x03, 0xe9, 0x03,       // packed guid 0x3e9
+            0x01, 0x00, 0x00, 0x00, // flags: FORWARD
+            0x00, 0x00,             // extra flags
+            0x39, 0x30, 0x00, 0x00, // timestamp 12345
+            0x00, 0x00, 0x80, 0x3F, // x = 1.0
+            0x00, 0x00, 0x00, 0x40, // y = 2.0
+            0x00, 0x00, 0x40, 0x40, // z = 3.0
+            0x00, 0x00, 0x00, 0x3F, // orientation = 0.5
+            0x2a, 0x00, 0x00, 0x00, // fall time 42
+        ];
+        assert_eq!(bytes, want);
+    }
+
+    #[test]
+    fn every_shared_flag_maps_to_wotlk_and_back() {
+        // Every bit `classic_flags_from_wotlk` can produce survives the round trip.
+        for bit in 0..32 {
+            let wotlk = 1u32 << bit;
+            let classic = classic_flags_from_wotlk(wotlk);
+            if classic == 0 {
+                continue;
+            }
+            assert_eq!(
+                classic_flags_from_wotlk(wotlk_flags_from_classic(classic)),
+                classic,
+                "1.12.1 bits {classic:#x} (3.3.5a {wotlk:#x})"
+            );
+            assert_eq!(wotlk_flags_from_classic(classic), wotlk, "{classic:#x}");
+        }
+        assert_eq!(wotlk_flags_from_classic(MOVEMENT_FLAG_JUMPING), 0x1000);
+        assert_eq!(wotlk_flags_from_classic(MOVEMENT_FLAG_ON_TRANSPORT), 0x200);
+        assert_eq!(wotlk_flags_from_classic(0x1000), 0x800, "root");
+    }
+
     #[test]
     fn swim_pitch_round_trips_when_swimming() {
-        let mut bytes = Vec::new();
-        info(MOVEMENT_FLAG_SWIMMING).write(&mut bytes);
-        let back = read_movement_info(&mut &bytes[..]).expect("parse");
+        let (guid, back, _) = round_trip(&info(MOVEMENT_FLAG_SWIMMING));
+        assert_eq!(guid, MOVER);
         assert_eq!(back.flags, MOVEMENT_FLAG_SWIMMING);
         assert_eq!(back.pitch, -0.7, "the swim pitch survives the round-trip");
         assert_eq!(back.orientation, 0.5);
-        assert_eq!(
-            back.fall_time, 42,
-            "fall_time still lands after the pitch tail"
-        );
+        assert_eq!(back.fall_time, 42, "fall_time still lands after the pitch");
     }
 
     #[test]
@@ -450,16 +495,14 @@ mod tests {
             },
             orientation: 1.5,
         });
-        let mut bytes = Vec::new();
-        riding.write(&mut bytes);
-        let mut walking = Vec::new();
-        info(0).write(&mut walking);
+        let (_, back, len) = round_trip(&riding);
+        let (_, _, walking) = round_trip(&info(0));
         assert_eq!(
-            bytes.len() - walking.len(),
-            24,
-            "the transport tail adds exactly u64 + 4×f32"
+            len - walking,
+            5 + 16 + 4 + 1,
+            "packed guid (mask + 4 bytes), the pose, transport time and seat"
         );
-        let back = read_movement_info(&mut &bytes[..]).expect("parse");
+        assert_eq!(back.flags, MOVEMENT_FLAG_ON_TRANSPORT);
         let t = back.transport.expect("transport pose survives");
         assert_eq!(t.guid, 0x1FC0_0000_0000_2B10);
         assert_eq!((t.pos.x, t.pos.y, t.pos.z), (-5.5, 2.25, 8.0));
@@ -468,17 +511,32 @@ mod tests {
     }
 
     #[test]
+    fn the_jump_tail_rides_falling_in_sin_cos_order() {
+        let mut jumping = info(MOVEMENT_FLAG_JUMPING);
+        jumping.jump = Some(JumpInfo {
+            zspeed: -7.955547,
+            cos_angle: 0.6,
+            sin_angle: 0.8,
+            xy_speed: 7.0,
+        });
+        let mut bytes = Vec::new();
+        jumping.write(MOVER, &mut bytes);
+        assert_eq!(&bytes[3..7], &0x1000u32.to_le_bytes(), "FALLING is 0x1000");
+        let tail = &bytes[bytes.len() - 16..];
+        assert_eq!(&tail[4..8], &0.8f32.to_le_bytes(), "sin before cos");
+        let (_, back, _) = round_trip(&jumping);
+        assert_eq!(back.jump, jumping.jump);
+    }
+
+    #[test]
     fn no_pitch_tail_when_not_swimming() {
-        let mut swimming = Vec::new();
-        info(MOVEMENT_FLAG_SWIMMING).write(&mut swimming);
-        let mut dry = Vec::new();
-        info(0).write(&mut dry);
+        let (_, _, swimming) = round_trip(&info(MOVEMENT_FLAG_SWIMMING));
+        let (_, back, dry) = round_trip(&info(0));
         assert_eq!(
-            swimming.len() - dry.len(),
+            swimming - dry,
             4,
-            "the swim pitch adds exactly one f32 to the packet, and only when swimming"
+            "the pitch adds one f32, and only when swimming"
         );
-        let back = read_movement_info(&mut &dry[..]).expect("parse");
         assert_eq!(back.pitch, 0.0, "a dry packet parses a level (0) pitch");
         assert_eq!(back.fall_time, 42);
     }

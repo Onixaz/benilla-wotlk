@@ -75,6 +75,9 @@ pub struct WorldSession {
     addon_info: Option<Vec<u8>>,
     /// The `castCount` each `CMSG_CAST_SPELL` carries, handed on to the split writer.
     cast_counter: messages::CastCounter,
+    /// The unit our movement packets name: the last `CMSG_SET_ACTIVE_MOVER`, handed on to the
+    /// split writer. AzerothCore drops a move whose packed guid is not its mover.
+    mover: u64,
 }
 
 /// The server seed of `SMSG_AUTH_CHALLENGE`, whose body is `u32 1`, the seed, then 32 bytes of
@@ -158,6 +161,7 @@ impl WorldSession {
             tutorial_flags: None,
             addon_info: None,
             cast_counter: Default::default(),
+            mover: 0,
         };
 
         // AUTH_RESPONSE is not always first, so others are skipped; Warden data ends the connect.
@@ -325,6 +329,7 @@ impl WorldSession {
     /// Declare the unit we move, as the 1.12 client does at its own create; vmangos drops moves
     /// until then.
     pub fn set_active_mover(&mut self, guid: u64) -> Result<()> {
+        self.mover = guid;
         self.send(opcode::CMSG_SET_ACTIVE_MOVER, &messages::full_guid(guid))
     }
 
@@ -337,7 +342,10 @@ impl WorldSession {
     pub fn start_forward(&mut self, pos: [f32; 3], orientation: f32) -> Result<()> {
         self.send(
             opcode::MSG_MOVE_START_FORWARD,
-            &messages::movement(&movement_info(pos, orientation, MOVEMENT_FLAG_FORWARD)),
+            &messages::movement(
+                self.mover,
+                &movement_info(pos, orientation, MOVEMENT_FLAG_FORWARD),
+            ),
         )
     }
 
@@ -345,7 +353,10 @@ impl WorldSession {
     pub fn heartbeat(&mut self, pos: [f32; 3], orientation: f32) -> Result<()> {
         self.send(
             opcode::MSG_MOVE_HEARTBEAT,
-            &messages::movement(&movement_info(pos, orientation, MOVEMENT_FLAG_FORWARD)),
+            &messages::movement(
+                self.mover,
+                &movement_info(pos, orientation, MOVEMENT_FLAG_FORWARD),
+            ),
         )
     }
 
@@ -353,11 +364,11 @@ impl WorldSession {
     pub fn stop(&mut self, pos: [f32; 3], orientation: f32) -> Result<()> {
         self.send(
             opcode::MSG_MOVE_STOP,
-            &messages::movement(&movement_info(pos, orientation, 0)),
+            &messages::movement(self.mover, &movement_info(pos, orientation, 0)),
         )
     }
 
-    /// Ack a `SMSG_FORCE_*_SPEED_CHANGE` at rest with the full guid, counter and exact speed.
+    /// Ack a `SMSG_FORCE_*_SPEED_CHANGE` at rest with the guid, counter and exact speed.
     pub fn force_speed_ack(
         &mut self,
         kind: messages::SpeedKind,
@@ -382,7 +393,7 @@ impl WorldSession {
     ) -> Result<()> {
         self.send(
             opcode::CMSG_MOVE_SPLINE_DONE,
-            &messages::move_spline_done(&movement_info(pos, orientation, 0), spline_id),
+            &messages::move_spline_done(self.mover, &movement_info(pos, orientation, 0), spline_id),
         )
     }
 
@@ -823,6 +834,7 @@ impl WorldSession {
                 encrypter,
                 chat_language: self.chat_language,
                 cast_counter: self.cast_counter,
+                mover: self.mover,
             },
         ))
     }

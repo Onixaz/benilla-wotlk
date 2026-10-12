@@ -183,14 +183,14 @@ fn client_bodies_golden() {
         jump: None,
     };
     assert_eq!(
-        messages::movement(&mi),
-        hx("0100000004030201cdd70bc6357e04c3f90fa7420000a03f00000000"),
-        "MSG_MOVE_* body"
+        messages::movement(0x3e9, &mi),
+        hx("03e90301000000000004030201cdd70bc6357e04c3f90fa7420000a03f00000000"),
+        "MSG_MOVE_* body: the packed mover, flags, extra flags, then the 3.3.5a info"
     );
     assert_eq!(
         messages::teleport_ack(0x1234_5678_9abc_def0, 7, 0x0102_0304),
-        hx("f0debc9a785634120700000004030201"),
-        "MSG_MOVE_TELEPORT_ACK body"
+        hx("fff0debc9a785634120700000004030201"),
+        "MSG_MOVE_TELEPORT_ACK body: a packed guid, the counter, the time"
     );
 }
 

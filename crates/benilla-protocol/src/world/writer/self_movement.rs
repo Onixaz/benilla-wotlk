@@ -30,14 +30,14 @@ impl WorldWriter {
         info.fall_time = fall_time;
         info.jump = jump;
         info.transport = transport;
-        self.send(opcode, &messages::movement(&info))
+        self.send(opcode, &messages::movement(self.mover, &info))
     }
 
-    /// `CMSG_SET_ACTIVE_MOVER`, full guid: the client's claim after `SMSG_CLIENT_CONTROL_UPDATE`.
-    /// Until it lands, every `MSG_MOVE_*` for that unit is discarded
-    /// (`MovementHandler.cpp:291-293`, `Player.cpp:20257-20272`); sent at login for our own body
-    /// and again on possession.
+    /// `CMSG_SET_ACTIVE_MOVER`, full guid: the client's claim after `SMSG_CLIENT_CONTROL_UPDATE`,
+    /// sent at login for our own body and again on possession. Every later movement packet
+    /// names this unit, as the server drops one naming any other.
     pub fn set_active_mover(&mut self, guid: u64) -> Result<()> {
+        self.mover = guid;
         self.send(opcode::CMSG_SET_ACTIVE_MOVER, &messages::full_guid(guid))
     }
 
@@ -47,8 +47,8 @@ impl WorldWriter {
         self.send(opcode::CMSG_FAR_SIGHT, &[u8::from(engage)])
     }
 
-    /// `CMSG_MOVE_NOT_ACTIVE_MOVER`: the released full guid, then its parting pose, which vmangos
-    /// re-broadcasts to observers as a stop (`MovementHandler.cpp:955-964`).
+    /// `CMSG_MOVE_NOT_ACTIVE_MOVER`: the released mover's packed guid, then its parting pose,
+    /// which the server re-broadcasts to observers as a stop (`HandleMoveNotActiveMover`).
     pub fn move_not_active_mover(
         &mut self,
         guid: u64,
@@ -59,9 +59,10 @@ impl WorldWriter {
     ) -> Result<()> {
         let mut info = movement_info(pos, orientation, flags);
         info.fall_time = fall_time;
-        let mut body = messages::full_guid(guid);
-        body.extend_from_slice(&messages::movement(&info));
-        self.send(opcode::CMSG_MOVE_NOT_ACTIVE_MOVER, &body)
+        self.send(
+            opcode::CMSG_MOVE_NOT_ACTIVE_MOVER,
+            &messages::movement(guid, &info),
+        )
     }
 
     /// `CMSG_MOVE_TIME_SKIPPED`: the server adds `lag_ms` to its copy of our movement clock and,
@@ -85,7 +86,7 @@ impl WorldWriter {
         let info = movement_info(pos, orientation, flags);
         self.send(
             opcode::CMSG_MOVE_SPLINE_DONE,
-            &messages::move_spline_done(&info, spline_id),
+            &messages::move_spline_done(self.mover, &info, spline_id),
         )
     }
 
@@ -122,7 +123,7 @@ impl WorldWriter {
     }
 
     /// `MSG_MOVE_TELEPORT_ACK`: completes a near-teleport at once; without it the server finishes
-    /// on a ~20 s fallback. The guid is a full 8 bytes: a packed one overruns vmangos's reader.
+    /// on a ~20 s fallback.
     pub fn teleport_ack(&mut self, guid: u64, counter: u32) -> Result<()> {
         self.send(
             opcode::MSG_MOVE_TELEPORT_ACK,
@@ -130,7 +131,7 @@ impl WorldWriter {
         )
     }
 
-    /// Ack a granted root, water-walk, feather-fall or hover: full guid, echoed counter and our
+    /// Ack a granted root, water-walk, feather-fall or hover: guid, echoed counter and our
     /// pose, plus a trailing `u32 apply` for all but root. Unacked, the server never applies it.
     /// `flags` must carry the mode's bit (a root apply-ack without it is a kick, vmangos
     /// `MovementHandler.cpp:715-722`) and no moving bit beside `MOVEFLAG_ROOT`; turn bits are fine.

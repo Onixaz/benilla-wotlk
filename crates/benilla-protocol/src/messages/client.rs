@@ -278,50 +278,51 @@ pub fn pet_name_query(pet_number: u32, guid: u64) -> Vec<u8> {
     body
 }
 
-/// Body of a `MSG_MOVE_*` message: a `MovementInfo`.
-pub fn movement(info: &MovementInfo) -> Vec<u8> {
-    let mut body = Vec::with_capacity(28);
-    info.write(&mut body);
+/// Body of a `MSG_MOVE_*` message: the mover's packed guid, then its `MovementInfo`.
+pub fn movement(mover: u64, info: &MovementInfo) -> Vec<u8> {
+    let mut body = Vec::with_capacity(40);
+    info.write(mover, &mut body);
     body
 }
 
-/// `CMSG_MOVE_TIME_SKIPPED` body: the mover's unpacked guid, then the skipped ms
-/// (`Server/Packets/Movement.cpp:10-14`); the server's relayed `MSG_MOVE_TIME_SKIPPED` packs it.
+/// The mover's packed guid, as the 3.3.5a acks open (AzerothCore `MovementHandler.cpp`).
+fn packed(guid: u64) -> Vec<u8> {
+    let mut body = Vec::with_capacity(9);
+    crate::wire::write_packed_guid(guid, &mut body).expect("a Vec write cannot fail");
+    body
+}
+
+/// `CMSG_MOVE_TIME_SKIPPED` body: the mover's packed guid, then the skipped ms
+/// (`HandleMoveTimeSkippedOpcode`).
 pub fn move_time_skipped(guid: u64, lag_ms: u32) -> Vec<u8> {
-    let mut body = Vec::with_capacity(12);
-    body.extend_from_slice(&guid.to_le_bytes());
+    let mut body = packed(guid);
     body.extend_from_slice(&lag_ms.to_le_bytes());
     body
 }
 
-/// `CMSG_MOVE_SPLINE_DONE` body: the `MovementInfo` at the ride's end, the acked spline id, and a
-/// float the server skips but requires. The 1.12 client writes its completion fraction there
-/// (`0x600b10`); we send only at completion, so it is always 1.0.
-pub fn move_spline_done(info: &MovementInfo, spline_id: u32) -> Vec<u8> {
-    let mut body = Vec::with_capacity(36);
-    info.write(&mut body);
+/// `CMSG_MOVE_SPLINE_DONE` body: the mover's packed guid and `MovementInfo` at the ride's end,
+/// then the acked spline id (`HandleMoveSplineDoneOpcode`).
+pub fn move_spline_done(mover: u64, info: &MovementInfo, spline_id: u32) -> Vec<u8> {
+    let mut body = movement(mover, info);
     body.extend_from_slice(&spline_id.to_le_bytes());
-    body.extend_from_slice(&1.0f32.to_le_bytes()); // completion fraction (server-skipped)
     body
 }
 
-/// `MSG_MOVE_TELEPORT_ACK` body: an unpacked guid (vmangos requires it), counter, client time.
+/// `MSG_MOVE_TELEPORT_ACK` body: the mover's packed guid, the counter, the client time
+/// (`HandleMoveTeleportAck`).
 pub fn teleport_ack(guid: u64, counter: u32, time_ms: u32) -> Vec<u8> {
-    let mut body = Vec::with_capacity(16);
-    body.extend_from_slice(&guid.to_le_bytes());
+    let mut body = packed(guid);
     body.extend_from_slice(&counter.to_le_bytes());
     body.extend_from_slice(&time_ms.to_le_bytes());
     body
 }
 
-/// Body of all six `CMSG_FORCE_*_SPEED_CHANGE_ACK`s: the mover's unpacked guid, the echoed
-/// counter, our live `MovementInfo`, the echoed speed. The server needs an exact counter and a
-/// speed within 0.01 (`Unit::FindPendingMovementSpeedChange`), then moves us to that pose.
+/// Body of all six `CMSG_FORCE_*_SPEED_CHANGE_ACK`s: the mover's packed guid, the echoed
+/// counter, our live `MovementInfo`, the echoed speed (`HandleForceSpeedChangeAck`).
 pub fn force_speed_ack(guid: u64, counter: u32, info: &MovementInfo, speed: f32) -> Vec<u8> {
-    let mut body = Vec::with_capacity(44);
-    body.extend_from_slice(&guid.to_le_bytes());
+    let mut body = packed(guid);
     body.extend_from_slice(&counter.to_le_bytes());
-    info.write(&mut body);
+    info.write_body(&mut body);
     body.extend_from_slice(&speed.to_le_bytes());
     body
 }
@@ -335,25 +336,21 @@ pub fn ping(sequence: u32, last_rtt_ms: u32) -> Vec<u8> {
     body
 }
 
-/// Body of a movement-mode ack: unpacked guid, the echoed counter, our `MovementInfo`, then
-/// `u32 apply` for every mode but root (`Server/Packets/Movement.cpp:38-59`). `info.flags` must
-/// carry the applied mode bit: vmangos kicks a root ack without it (`MovementHandler.cpp:715-722`)
-/// and takes the flags as the mover's new ones for the other modes.
+/// Body of a movement-mode ack: the mover's packed guid, the echoed counter, our `MovementInfo`,
+/// then `u32 apply` for every mode but root (`HandleMoveFlagChangeOpcode`, `HandleMoveRootAck`).
+/// `info.flags` must carry the applied mode bit.
 pub fn move_flag_ack(guid: u64, counter: u32, info: &MovementInfo, apply: Option<bool>) -> Vec<u8> {
-    let mut body = Vec::with_capacity(48);
-    body.extend_from_slice(&guid.to_le_bytes());
+    let mut body = packed(guid);
     body.extend_from_slice(&counter.to_le_bytes());
-    info.write(&mut body);
+    info.write_body(&mut body);
     if let Some(apply) = apply {
         body.extend_from_slice(&u32::from(apply).to_le_bytes());
     }
     body
 }
 
-/// `CMSG_MOVE_KNOCK_BACK_ACK` body, a movement-mode ack without `apply` (`Movement.cpp:38-68`).
-/// `info` must carry `MOVEFLAG_JUMPING` and the launch quad: the server matches the counter and
-/// all four floats within 0.01 (`Unit::FindPendingMovementKnockbackChange`), builds observers'
-/// `MSG_MOVE_KNOCK_BACK` from this info, and never re-sends a knockback (`Unit.cpp:6912`).
+/// `CMSG_MOVE_KNOCK_BACK_ACK` body, a movement-mode ack without `apply` (`HandleMoveKnockBackAck`).
+/// `info` must carry `MOVEFLAG_JUMPING` and the launch quad, which the server matches.
 pub fn knock_back_ack(guid: u64, counter: u32, info: &MovementInfo) -> Vec<u8> {
     move_flag_ack(guid, counter, info, None)
 }
@@ -363,11 +360,11 @@ mod tests {
     use super::*;
     use crate::wire::Vector3d;
 
-    /// vmangos `MoveSplineDone::ReadFromWorldPacket` reads info, spline id, then a skipped float.
+    /// AzerothCore `HandleMoveSplineDoneOpcode` reads the packed guid, the info, then the id.
     #[test]
     fn move_spline_done_body_golden() {
         let info = MovementInfo {
-            flags: 0, // no SWIMMING / JUMPING ⇒ no conditional MovementInfo tails
+            flags: 0, // no conditional MovementInfo tails
             timestamp: 0x1122_3344,
             position: Vector3d {
                 x: 1.0,
@@ -380,10 +377,12 @@ mod tests {
             fall_time: 0x5566_7788,
             jump: None,
         };
-        let body = move_spline_done(&info, 0xAABB_CCDD);
+        let body = move_spline_done(0x3e9, &info, 0xAABB_CCDD);
         #[rustfmt::skip]
         let want: &[u8] = &[
+            0x03, 0xE9, 0x03,       // packed guid 0x3e9
             0x00, 0x00, 0x00, 0x00, // flags
+            0x00, 0x00,             // extra flags
             0x44, 0x33, 0x22, 0x11, // timestamp
             0x00, 0x00, 0x80, 0x3F, // pos.x = 1.0
             0x00, 0x00, 0x00, 0x40, // pos.y = 2.0
@@ -391,19 +390,32 @@ mod tests {
             0x00, 0x00, 0x00, 0x3F, // orientation = 0.5
             0x88, 0x77, 0x66, 0x55, // fall_time
             0xDD, 0xCC, 0xBB, 0xAA, // splineId
-            0x00, 0x00, 0x80, 0x3F, // completion fraction 1.0 (server-skipped)
         ];
         assert_eq!(body, want, "CMSG_MOVE_SPLINE_DONE body");
-        let mi = movement(&info);
-        assert_eq!(
-            &body[..mi.len()],
-            &mi[..],
-            "MovementInfo comes first, verbatim"
-        );
-        assert_eq!(
-            body.len(),
-            mi.len() + 8,
-            "…then splineId + the skipped float"
-        );
+    }
+
+    /// An ack's guid comes once, before its counter: the info that follows carries none.
+    #[test]
+    fn an_ack_packs_its_guid_once_before_the_counter() {
+        let info = MovementInfo {
+            flags: 0,
+            timestamp: 0,
+            position: Vector3d {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            orientation: 0.0,
+            transport: None,
+            pitch: 0.0,
+            fall_time: 0,
+            jump: None,
+        };
+        let ack = move_flag_ack(0x3e9, 7, &info, Some(true));
+        assert_eq!(&ack[..7], &[0x03, 0xE9, 0x03, 7, 0, 0, 0]);
+        let mut bare = Vec::new();
+        info.write_body(&mut bare);
+        assert_eq!(&ack[7..ack.len() - 4], &bare[..]);
+        assert_eq!(&ack[ack.len() - 4..], &1u32.to_le_bytes());
     }
 }

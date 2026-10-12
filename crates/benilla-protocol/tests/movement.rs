@@ -10,8 +10,8 @@ use benilla_protocol::ServerPacket;
 use common::hx;
 
 /// `SMSG_FORCE_*_SPEED_CHANGE` is `[packed guid][u32 counter][f32 speed]` (vmangos
-/// `SendSpeedChangeToController`); the ack is `[u64 guid][u32 counter][MovementInfo][f32 speed]`
-/// with the guid unpacked (`MoveSpeedAck::ReadFromWorldPacket`).
+/// `SendSpeedChangeToController`); the ack is `[packed guid][u32 counter][MovementInfo][f32 speed]`
+/// (AzerothCore `HandleForceSpeedChangeAck`).
 #[test]
 fn force_speed_change_parses_and_ack_body_golden() {
     use benilla_protocol::messages::SpeedKind;
@@ -75,7 +75,7 @@ fn force_speed_change_parses_and_ack_body_golden() {
     };
     assert_eq!(
         messages::force_speed_ack(8, 7, &info, 14.0),
-        hx("08000000000000000700000000000000393000000000803f00000040000040400000003f2a00000000006041"),
+        hx("010807000000000000000000393000000000803f00000040000040400000003f2a00000000006041"),
         "CMSG_FORCE_*_SPEED_CHANGE_ACK body"
     );
     assert_eq!(SpeedKind::Run.ack_opcode(), 0x00E3);
@@ -84,7 +84,7 @@ fn force_speed_change_parses_and_ack_body_golden() {
 }
 
 /// The knockback and its ack: `SMSG_MOVE_KNOCK_BACK` orders the launch vcos, vsin, speedXY,
-/// speedZ; the ack's jump tail orders it zspeed, cos, sin, xyspeed, and vmangos rejects a
+/// speedZ; the ack's jump tail orders it zspeed, sin, cos, xyspeed, and the server rejects a
 /// mismatched ack. speedZ is down-positive: the reference stores it as-is (`0x7c61f0`) where a
 /// jump stores -7.955547, so -12 throws the body up.
 #[test]
@@ -119,8 +119,8 @@ fn knock_back_parses_and_ack_body_golden() {
         other => panic!("expected one KnockBack event, got {other:?}"),
     }
 
-    // The ack: the full guid (packed only inbound), the counter, and a MovementInfo with
-    // MOVEFLAG_JUMPING (0x2000), without which no jump tail is written for the server to match.
+    // The ack: the packed guid, the counter, and a MovementInfo with the shared JUMPING bit
+    // (0x2000), written as 3.3.5a's FALLING (0x1000), without which no jump tail is written.
     let info = MovementInfo {
         flags: 0x2000,
         timestamp: 12345,
@@ -137,7 +137,7 @@ fn knock_back_parses_and_ack_body_golden() {
     };
     assert_eq!(
         messages::knock_back_ack(8, 7, &info),
-        hx("08000000000000000700000000200000393000000000803f00000040000040400000003f00000000000040c19a99193fcdcc4c3f0000c841"),
+        hx("010807000000001000000000393000000000803f00000040000040400000003f00000000000040c1cdcc4c3f9a99193f0000c841"),
         "CMSG_MOVE_KNOCK_BACK_ACK body"
     );
     assert_eq!(messages::opcode::SMSG_MOVE_KNOCK_BACK, 0x00EF);

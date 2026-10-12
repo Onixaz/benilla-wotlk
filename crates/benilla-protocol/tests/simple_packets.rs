@@ -317,7 +317,8 @@ fn death_arc_family_parses_and_decodes() {
     }
 }
 
-/// Root's ack lacks the trailing u32 apply the other modes carry (vmangos `Movement.cpp:38-59`).
+/// Root's ack lacks the trailing u32 apply the other modes carry (AzerothCore `HandleMoveRootAck`,
+/// `HandleMoveFlagChangeOpcode`).
 #[test]
 fn move_flag_ack_bodies_differ_by_the_apply_tail() {
     use benilla_protocol::messages::{move_flag_ack, MovementInfo};
@@ -342,9 +343,9 @@ fn move_flag_ack_bodies_differ_by_the_apply_tail() {
     assert_eq!(root.len() + 4, walk.len());
     assert_eq!(&walk[..root.len()], root.as_slice());
     assert_eq!(&walk[root.len()..], 1u32.to_le_bytes());
-    // The ack's guid is full, not packed.
-    assert_eq!(&root[..8], &0x2Au64.to_le_bytes());
-    assert_eq!(&root[8..12], &7u32.to_le_bytes());
+    // The ack's guid is packed: mask 0x01, one byte.
+    assert_eq!(&root[..2], &[0x01, 0x2A]);
+    assert_eq!(&root[2..6], &7u32.to_le_bytes());
 }
 
 /// `SMSG_DURABILITY_DAMAGE_DEATH` (0x2BD): empty body; the cue for the 10% durability-loss line.
