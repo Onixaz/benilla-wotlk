@@ -649,6 +649,14 @@ impl UnitTokens<'_, '_> {
             UnitBase::Party(row) => self.party_member(row).and_then(|guid| self.held(guid)),
             // The interaction NPC's guid, `[0xb4e2d0]` (`0x515c00`).
             UnitBase::Npc => self.held(self.interact.as_ref()?.1?),
+            // 12340's bases the app has no unit for yet (#90).
+            UnitBase::Vehicle
+            | UnitBase::Focus
+            | UnitBase::QuestNpc
+            | UnitBase::Boss(_)
+            | UnitBase::Arena(_)
+            | UnitBase::ArenaPet(_)
+            | UnitBase::Commentator(_) => None,
         }
     }
 
@@ -870,6 +878,10 @@ pub(crate) fn snapshot(
         power_type,
         power: store.0.unit_shown_power(power_type).unwrap_or(0),
         max_power: store.0.unit_shown_max_power(power_type).unwrap_or(0),
+        shown_powers: std::array::from_fn(|ty| store.0.unit_shown_power(ty as u8).unwrap_or(0)),
+        shown_max_powers: std::array::from_fn(|ty| {
+            store.0.unit_shown_max_power(ty as u8).unwrap_or(0)
+        }),
         // `UnitIsDead` (`0x517ac0`): health ≤ 0 or the dead-looking flag.
         dead: store.0.unit_reads_dead(),
         // `PLAYER_FLAGS` bit `0x10`; a ghost's health is 1, so `dead` is false for it.

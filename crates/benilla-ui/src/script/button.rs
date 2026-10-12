@@ -622,18 +622,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // The per-state label fonts, and `<NormalFont>` and kin through the loader. Each takes a font
     // object, its name or nil, stored by name: extract re-resolves the current state's font every
-    // frame, so a state change or a later edit to the object reaches the label.
-    m.set(
-        "SetTextFontObject",
-        lua.create_function(|lua, (this, font): (Table, Value)| {
-            let name = super::font::resolve("SetTextFontObject", &font)?;
-            let owner = frame_handle_of(lua, &this)?;
-            with_button(lua, &this, |bs| bs.normal_font = name)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
-            apply_normal_font(&mut model, owner);
-            Ok(())
-        })?,
-    )?;
+    // frame, so a state change or a later edit to the object reaches the label. 3.3.5a names the
+    // normal-state setter `SetNormalFontObject` (`0x977340`); `SetTextFontObject`, 1.12.1's name
+    // for it, stays registered for the loader and benilla's own layer.
+    for name in ["SetNormalFontObject", "SetTextFontObject"] {
+        m.set(
+            name,
+            lua.create_function(move |lua, (this, font): (Table, Value)| {
+                let font = super::font::resolve(name, &font)?;
+                let owner = frame_handle_of(lua, &this)?;
+                with_button(lua, &this, |bs| bs.normal_font = font)?;
+                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                apply_normal_font(&mut model, owner);
+                Ok(())
+            })?,
+        )?;
+    }
     m.set(
         "SetHighlightFontObject",
         lua.create_function(|lua, (this, font): (Table, Value)| {

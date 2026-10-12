@@ -115,8 +115,7 @@ pub(crate) fn registered_rows() -> impl Iterator<Item = &'static Registered> {
 }
 
 /// The rows 3.3.5a registers and 1.12.1 has no name for, each with a reader in the 3.3.5a stock
-/// chat code. Their register sites sit in one run (`0x51e2d8`-`0x51f2d2`, `CVar::Register`
-/// `0x767fc0`).
+/// UI. Their register sites sit in one run (`0x51e2d8`-`0x51f2d2`, `CVar::Register` `0x767fc0`).
 pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // "The style of Edit Boxes for the ChatFrame" (`0x51e2d8`, "im"); `ChatFrame.lua` hides the
     // edit box between lines in "im" and keeps it in "classic".
@@ -130,6 +129,9 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // `0x51f2d2`, "": the GM a reload should reopen the GM chat window for; UIParent's
     // `VARIABLES_LOADED` arm loads `Blizzard_GMChatUI` when it is not "".
     same("lastTalkedToGM", ""),
+    // `0x51f147`, "3": when `IsThreatWarningEnabled` answers 1 (0 off, 1 in dungeons, 2 in a
+    // group, 3 always), which the stock unit frames' threat glow reads.
+    same("threatWarning", "3"),
 ];
 
 /// The host-backed CVars, one row per knob that has a reader: a host knob, or a Lua consumer

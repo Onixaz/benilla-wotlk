@@ -2047,3 +2047,91 @@ fn the_target_leader_crown_follows_player_flags_changed() {
 
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
+
+/// 3.3.5a's unit frames load whole: the four boss frames, the focus frame and the target frame
+/// start hidden (`TargetFrame_Update`, `TargetFrame.lua:97`), and the target frame shows on a
+/// target and hides again on its loss.
+#[test]
+fn the_3_3_5a_target_focus_and_boss_frames_hide_until_their_unit_exists() {
+    benilla_formats::wow_data_or_skip!();
+    let mut s = UiScript::new().unwrap();
+    s.set_screen_size(1024.0, 768.0);
+    // Collected, not asserted per file: the files around these frames carry unrelated 3.3.5a
+    // gaps (`BuffFrame.xml`), and only these six frames' own errors are under test.
+    let mut errors = Vec::new();
+    s.register_cvars(crate::cvars::registered_pairs());
+    for entry in super::test_ui::production_order(&[&[
+        r"Interface\FrameXML\GlobalStrings.lua",
+        r"Interface\FrameXML\Fonts.xml",
+        r"Interface\FrameXML\BasicControls.xml",
+        r"Interface\FrameXML\UIParent.xml",
+        r"Interface\FrameXML\SecureTemplates.lua",
+        r"Interface\FrameXML\MoneyFrame.lua",
+        r"Interface\FrameXML\MoneyFrame.xml",
+        r"Interface\FrameXML\GameTooltip.xml",
+        r"Interface\FrameXML\UIDropDownMenu.xml",
+        r"Interface\FrameXML\TextStatusBar.lua",
+        r"Interface\FrameXML\TextStatusBar.xml",
+        r"Interface\FrameXML\CombatFeedback.xml",
+        r"Interface\FrameXML\CastingBarFrame.xml",
+        r"Interface\FrameXML\UnitPopup.xml",
+        r"Interface\FrameXML\UnitFrame.xml",
+        r"Interface\FrameXML\TargetFrame.xml",
+        r"Interface\FrameXML\ReputationFrame.lua",
+    ]]) {
+        let path = entry.replace('\\', "/");
+        let bytes = super::test_ui::read(&path).unwrap_or_else(|| panic!("{entry}: not found"));
+        if path.to_ascii_lowercase().ends_with(".lua") {
+            if let Err(e) = s.run_chunk_named(&bytes, &format!("@{entry}")) {
+                errors.push(e.to_string());
+            }
+            continue;
+        }
+        let doc = benilla_ui::framexml::parse(&benilla_ui::source::decode(&bytes))
+            .unwrap_or_else(|e| panic!("{entry}: {e}"));
+        let provider = |req: &str| super::test_ui::read(req);
+        errors.extend(benilla_ui::loader::load_in(&s, &doc, &path, &provider).errors);
+    }
+    errors.extend(s.take_errors());
+    let frames = [
+        "Boss1TargetFrame",
+        "Boss2TargetFrame",
+        "Boss3TargetFrame",
+        "Boss4TargetFrame",
+        "FocusFrame",
+        "TargetFrame",
+    ];
+    let load_errors: Vec<String> = errors
+        .into_iter()
+        .filter(|e| frames.iter().any(|f| e.contains(f)))
+        .collect();
+    assert!(load_errors.is_empty(), "OnLoad errors: {load_errors:#?}");
+    let shown =
+        |s: &mut UiScript, f: &str| s.eval::<bool>(&format!("return {f}:IsShown()")).unwrap();
+    for f in frames {
+        assert!(!shown(&mut s, f), "{f} starts hidden");
+    }
+
+    s.set_unit(
+        "target",
+        Some(UnitState {
+            exists: true,
+            has_object: true,
+            name: Some("Young Wolf".into()),
+            health: 50,
+            max_health: 50,
+            level: 2,
+            is_connected: true,
+            ..UnitState::default()
+        }),
+    );
+    s.fire_event("PLAYER_TARGET_CHANGED", vec![]);
+    assert!(shown(&mut s, "TargetFrame"), "a target shows the frame");
+    for f in &frames[..5] {
+        assert!(!shown(&mut s, f), "{f} stays hidden");
+    }
+
+    s.set_unit("target", None);
+    s.fire_event("PLAYER_TARGET_CHANGED", vec![]);
+    assert!(!shown(&mut s, "TargetFrame"), "losing the target hides it");
+}

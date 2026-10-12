@@ -14,6 +14,63 @@ use super::{
     UnitTokenParse,
 };
 
+/// The type `UnitPower` and `UnitPowerMax` read with no type argument, the unit's own display
+/// power (`0x60ed72`, `0x60effd`).
+const OWN_POWER_TYPE: i64 = 7;
+
+/// `UnitPower`/`UnitPowerMax`: the token must pass `lua_isstring`, else the usage line raises. A
+/// numeric type goes through `lua_tointeger` (`0x84e070`, `fistp` at the default round-to-nearest)
+/// and outside `0..=7` answers 0; 7 or no type is the unit's display type. A held unit answers
+/// its own type, and another type only for the local player's current power (`0x4cee50`); the
+/// maximum of any type answers for any held unit. A unit the client holds no object for answers
+/// its party record's type alone (`0x513c30`), and an unknown token reads nobody, 0.
+fn unit_power(
+    lua: &Lua,
+    token: Value,
+    ty: Value,
+    usage: &'static str,
+    max: bool,
+) -> mlua::Result<i64> {
+    let token = super::super::binding_abi::string_arg(lua, token, usage)?;
+    let ty = match ty {
+        Value::Number(_) | Value::Integer(_) | Value::String(_) => lua
+            .coerce_number(ty)?
+            .map_or(OWN_POWER_TYPE, |n| n.round_ties_even() as i64),
+        _ => OWN_POWER_TYPE,
+    };
+    if !(0..=OWN_POWER_TYPE).contains(&ty) {
+        return Ok(0);
+    }
+    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let player = model.unit_guids.player;
+    let Some(u) = model.unit(&token) else {
+        return Ok(0);
+    };
+    let own = i64::from(u.power_type);
+    let ty = if ty == OWN_POWER_TYPE { own } else { ty };
+    let shown = if ty == own {
+        if max {
+            u.max_power
+        } else {
+            u.power
+        }
+    } else if !u.has_object || (!max && (player == 0 || u.guid != player)) {
+        0
+    } else {
+        let table = if max {
+            &u.shown_max_powers
+        } else {
+            &u.shown_powers
+        };
+        usize::try_from(ty)
+            .ok()
+            .and_then(|i| table.get(i))
+            .copied()
+            .unwrap_or(0)
+    };
+    Ok(i64::from(shown))
+}
+
 /// The `"player"` fast path of `UnitName`, `UnitRace`, `UnitClass` and `UnitSex`, never
 /// `UnitLevel`: the record's answer when the token equals `"player"` (`0x847894`) whole and
 /// case-insensitively; any other token, `"playerfoo"` included, goes to the resolver.
@@ -502,6 +559,25 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // UnitInBattleground(unit) (`0x60caa0`): the unit's 0-based raid roster row (`0x608130`), but
+    // only on a battleground or arena map (`InstanceType` 3 or 4, `0x572f50`); nil otherwise. The
+    // token is never checked: a missing or unknown one is GUID 0, a miss.
+    g.set(
+        "UnitInBattleground",
+        lua.create_function(|lua, token: Option<String>| {
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            if !matches!(model.instance_type, Some(3 | 4)) {
+                return Ok(Value::Nil);
+            }
+            let row = token
+                .as_ref()
+                .and_then(|t| model.unit(t))
+                .filter(|u| u.exists && u.guid != 0)
+                .and_then(|u| model.party.raid.iter().position(|m| m.guid == u.guid));
+            Ok(row.map_or(Value::Nil, |i| Value::Number(i as f64)))
+        })?,
+    )?;
+
     // UnitInParty(unit): the grouped player or a party member, by token or by roster GUID.
     g.set(
         "UnitInParty",
@@ -824,28 +900,89 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnitMana/UnitManaMax(unit): the current and maximum of whatever power the unit uses; 1.12
-    // has no `UnitPower` and no power-type argument.
+    // UnitPower(unit [, type]) (`0x60ed40`) and UnitPowerMax (`0x60ef40`); `UnitMana` and
+    // `UnitManaMax` are the same two functions in 12340.
+    for (names, usage, max) in [
+        (
+            ["UnitPower", "UnitMana"],
+            r#"Usage: UnitPower("unit"[, type])"#,
+            false,
+        ),
+        (
+            ["UnitPowerMax", "UnitManaMax"],
+            r#"Usage: UnitPowerMax("unit"[, type])"#,
+            true,
+        ),
+    ] {
+        let f = lua.create_function(move |lua, (token, ty): (Value, Value)| {
+            unit_power(lua, token, ty, usage, max)
+        })?;
+        for name in names {
+            g.set(name, f.clone())?;
+        }
+    }
+
+    // UnitThreatSituation(unit [, mob]) (`0x613a60`): each token through the resolver, an unknown
+    // one raising the usage line; then the status byte, `status - 1` when nonzero and nothing
+    // otherwise. benilla keeps no threat table, so every status reads 0, as a unit with no
+    // threat entry does in the reference (`0x52a1d7`).
     g.set(
-        "UnitMana",
-        lua.create_function(|lua, token: Value| {
-            let token = Some(crate::script::binding_abi::string_arg(
-                lua,
-                token,
-                r#"Usage: UnitMana("unit")"#,
-            )?);
-            with_unit(lua, &token, 0i64, |u| i64::from(u.power))
+        "UnitThreatSituation",
+        lua.create_function(|lua, (unit, mob): (Value, Value)| {
+            const USAGE: &str = r#"Usage: UnitThreatSituation("unit" [, "mob"])"#;
+            let known = |v: &Value| -> bool {
+                crate::script::binding_abi::optional_string(lua, v)
+                    .is_some_and(|t| parse_unit_token(&t) != UnitTokenParse::Unknown)
+            };
+            if !known(&unit) {
+                return Err(mlua::Error::runtime(USAGE));
+            }
+            // The mob goes through the resolver only when `lua_isstring` passes (`0x613aae`).
+            if matches!(mob, Value::String(_) | Value::Number(_) | Value::Integer(_))
+                && !known(&mob)
+            {
+                return Err(mlua::Error::runtime(USAGE));
+            }
+            Ok(mlua::MultiValue::new())
         })?,
     )?;
+
+    // UnitDetailedThreatSituation(unit, mob) (`0x613b40`): both tokens through the resolver, the
+    // mob too, so a missing or unknown one raises the usage line; then nothing for a mob not held
+    // or a status of 0, which every status is without a threat table.
     g.set(
-        "UnitManaMax",
-        lua.create_function(|lua, token: Value| {
-            let token = Some(crate::script::binding_abi::string_arg(
-                lua,
-                token,
-                r#"Usage: UnitManaMax("unit")"#,
-            )?);
-            with_unit(lua, &token, 0i64, |u| i64::from(u.max_power))
+        "UnitDetailedThreatSituation",
+        lua.create_function(|lua, (unit, mob): (Value, Value)| {
+            const USAGE: &str = r#"Usage: UnitDetailedThreatSituation("unit" [, "mob"])"#;
+            for v in [&unit, &mob] {
+                let known = crate::script::binding_abi::optional_string(lua, v)
+                    .is_some_and(|t| parse_unit_token(&t) != UnitTokenParse::Unknown);
+                if !known {
+                    return Err(mlua::Error::runtime(USAGE));
+                }
+            }
+            Ok(mlua::MultiValue::new())
+        })?,
+    )?;
+
+    // GetThreatStatusColor(status) (`0x511fe0`): `trunc(tonumber(status) + 1)` indexes the colour
+    // table `0xad2d70`, entry 1 for anything outside `0..5` (`0x61a4f6`); each channel byte times
+    // the single-precision `0.00392156` at `0x9ead78`, not quite `1/255`. A NaN status stores the
+    // integer-indefinite pattern, past the table: entry 1.
+    g.set(
+        "GetThreatStatusColor",
+        lua.create_function(|lua, status: Option<Value>| {
+            const COLORS: [u32; 5] = [0xffffff, 0xb0b0b0, 0xffff77, 0xff9900, 0xff0000];
+            const SCALE: f32 = 0.003_921_56;
+            let status = crate::script::binding_abi::coerced_number(lua, status) + 1.0;
+            let index = if status.is_finite() {
+                usize::try_from(status as i64).unwrap_or(1)
+            } else {
+                1
+            };
+            let rgb = COLORS.get(index).copied().unwrap_or(COLORS[1]);
+            let channel = |shift: u32| f64::from((rgb >> shift) & 0xff) * f64::from(SCALE);
+            Ok((channel(16), channel(8), channel(0)))
         })?,
     )?;
 
@@ -885,8 +1022,17 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // UnitIsPossessed(unit) (`0x60d860`): a held unit whose `UNIT_FIELD_FLAGS` carries
+    // `UNIT_FLAG_POSSESSED` (`0x01000000`, byte 3 bit 0 at `0x60d8ad`).
+    g.set(
+        "UnitIsPossessed",
+        lua.create_function(|lua, token: Option<String>| {
+            unit_predicate(lua, &token, |u| u.has_object && u.flags & 0x0100_0000 != 0)
+        })?,
+    )?;
+
     // UnitIsCharmed(unit) (`0x516cf0`): `UNIT_FIELD_CHARMEDBY` is nonzero, not a flags bit, so the
-    // charmed unit answers 1 and its charmer nil. 1.12 has no `UnitIsPossessed`.
+    // charmed unit answers 1 and its charmer nil.
     g.set(
         "UnitIsCharmed",
         lua.create_function(|lua, token: Option<String>| {

@@ -530,13 +530,10 @@ fn power_bindings_read_the_active_type() {
         s.eval::<i64>(r#"return UnitManaMax("player")"#).unwrap(),
         100
     );
-    // `UnitMana` reports the active power, here rage, as `UnitFrame.lua:218` reads it for every
-    // type; `UnitPower` and `UnitPowerMax` are not 1.12 verbs.
-    assert!(
-        s.eval::<bool>("return UnitPower == nil and UnitPowerMax == nil")
-            .unwrap(),
-        "UnitPower and UnitPowerMax are not 1.12 globals"
-    );
+    // `UnitMana` is `UnitPower` in 12340, one function (`0x60ed40`).
+    assert!(s
+        .eval::<bool>("return UnitMana == UnitPower and UnitManaMax == UnitPowerMax")
+        .unwrap());
     // An absent unit is the number 0, never nil: `UnitFrame.lua:122` indexes `ManaBarColor` by it.
     assert_eq!(
         s.eval::<i64>(r#"return UnitPowerType("target")"#).unwrap(),
@@ -1979,4 +1976,239 @@ fn a_unit_token_the_resolver_lacks_reads_empty() {
         "",
         "every one reads empty"
     );
+}
+
+/// A warrior with a mana pool on the side, as the snapshot carries every type's shown value.
+fn player_with_pools() -> UnitState {
+    UnitState {
+        guid: 0x10,
+        has_object: true,
+        shown_powers: [120, 35, 0, 0, 0],
+        shown_max_powers: [300, 100, 0, 0, 0],
+        ..player()
+    }
+}
+
+/// `0x60ed40`/`0x60ef40`: no type or 7 is the display type; another type answers for the local
+/// player's current power and any held unit's maximum; outside `0..=7` is 0.
+#[test]
+fn unit_power_reads_a_type_as_12340_gates_it() {
+    let mut s = UiScript::new().unwrap();
+    s.set_unit_guids(&UnitGuids {
+        player: 0x10,
+        target: 0x30,
+        ..Default::default()
+    });
+    s.set_unit("player", Some(player_with_pools()));
+    s.set_unit(
+        "target",
+        Some(UnitState {
+            guid: 0x30,
+            ..player_with_pools()
+        }),
+    );
+    let n = |s: &mut UiScript, call: &str| s.eval::<i64>(&format!("return {call}")).unwrap();
+
+    assert_eq!(
+        n(&mut s, r#"UnitPower("player")"#),
+        35,
+        "the display type, rage"
+    );
+    assert_eq!(
+        n(&mut s, r#"UnitPower("player", 7)"#),
+        35,
+        "7 is the display type"
+    );
+    assert_eq!(
+        n(&mut s, r#"UnitPower("player", 0)"#),
+        120,
+        "the player's mana"
+    );
+    assert_eq!(
+        n(&mut s, r#"UnitPower("player", "0")"#),
+        120,
+        "a numeric string"
+    );
+    assert_eq!(
+        n(&mut s, r#"UnitPower("player", 0.4)"#),
+        120,
+        "rounded to nearest"
+    );
+    assert_eq!(n(&mut s, r#"UnitPowerMax("player", 0)"#), 300);
+    assert_eq!(n(&mut s, r#"UnitPower("player", 8)"#), 0, "past 7");
+    assert_eq!(n(&mut s, r#"UnitPower("player", -1)"#), 0);
+    assert_eq!(
+        n(&mut s, r#"UnitPower("player", 6)"#),
+        0,
+        "runic power has no shared field"
+    );
+
+    // Another unit: its display type, and the maximum of any type, but no other current power.
+    assert_eq!(n(&mut s, r#"UnitPower("target")"#), 35);
+    assert_eq!(
+        n(&mut s, r#"UnitPower("target", 0)"#),
+        0,
+        "only the player (0x4cee50)"
+    );
+    assert_eq!(n(&mut s, r#"UnitPowerMax("target", 0)"#), 300);
+
+    // A token naming nobody, known or not, is 0; a bad argument raises the usage line.
+    assert_eq!(n(&mut s, r#"UnitPower("boss1")"#), 0);
+    assert_eq!(n(&mut s, r#"UnitPowerMax("bogus")"#), 0);
+    let err = s.run("UnitPowerMax({})").unwrap_err().to_string();
+    assert!(
+        err.contains(r#"Usage: UnitPowerMax("unit"[, type])"#),
+        "{err}"
+    );
+}
+
+/// `0x613a60`: an unknown token raises; with no threat entry every unit answers nothing.
+#[test]
+fn unit_threat_situation_answers_nothing_without_a_threat_entry() {
+    let mut s = UiScript::new().unwrap();
+    s.set_unit("player", Some(player_with_pools()));
+    for call in [
+        r#"UnitThreatSituation("player")"#,
+        r#"UnitThreatSituation("boss1")"#,
+        r#"UnitThreatSituation("player", "target")"#,
+    ] {
+        assert_eq!(
+            s.eval::<i64>(&format!("return select('#', {call})"))
+                .unwrap(),
+            0,
+            "{call}"
+        );
+    }
+    for call in [
+        r#"UnitThreatSituation("bogus")"#,
+        r#"UnitThreatSituation("player", "bogus")"#,
+        "UnitThreatSituation()",
+    ] {
+        let err = s.run(call).unwrap_err().to_string();
+        assert!(
+            err.contains(r#"Usage: UnitThreatSituation("unit" [, "mob"])"#),
+            "{call}: {err}"
+        );
+    }
+}
+
+/// `0x613b40`: the mob is required; with no threat entry a known pair answers nothing.
+#[test]
+fn unit_detailed_threat_situation_needs_both_tokens() {
+    let s = UiScript::new().unwrap();
+    assert_eq!(
+        s.eval::<i64>(r#"return select('#', UnitDetailedThreatSituation("player", "boss1"))"#)
+            .unwrap(),
+        0
+    );
+    for call in [
+        r#"UnitDetailedThreatSituation("player")"#,
+        r#"UnitDetailedThreatSituation("bogus", "target")"#,
+    ] {
+        let err = s.run(call).unwrap_err().to_string();
+        assert!(
+            err.contains(r#"Usage: UnitDetailedThreatSituation("unit" [, "mob"])"#),
+            "{call}: {err}"
+        );
+    }
+}
+
+/// `0x511fe0`: `status + 1` indexes the five colours, entry 1 outside them.
+#[test]
+fn threat_status_colors_index_the_table() {
+    let mut s = UiScript::new().unwrap();
+    let rgb = |s: &mut UiScript, arg: &str| {
+        s.eval::<(f64, f64, f64)>(&format!("return GetThreatStatusColor({arg})"))
+            .unwrap()
+    };
+    let k = f64::from(0.003_921_56_f32);
+    assert_eq!(rgb(&mut s, "3"), (255.0 * k, 0.0, 0.0), "red");
+    assert_eq!(rgb(&mut s, "2"), (255.0 * k, 153.0 * k, 0.0), "orange");
+    assert_eq!(
+        rgb(&mut s, "1"),
+        (255.0 * k, 255.0 * k, 119.0 * k),
+        "yellow"
+    );
+    let grey = (176.0 * k, 176.0 * k, 176.0 * k);
+    assert_eq!(rgb(&mut s, "0"), grey);
+    assert_eq!(rgb(&mut s, "9"), grey, "past the table");
+    assert_eq!(rgb(&mut s, "-5"), grey);
+    assert_eq!(
+        rgb(&mut s, "-1"),
+        (255.0 * k, 255.0 * k, 255.0 * k),
+        "entry 0, white"
+    );
+}
+
+/// `0x60caa0`: the raid row, 0-based, and only on a battleground or arena map.
+#[test]
+fn unit_in_battleground_reads_the_raid_row_on_a_pvp_map() {
+    use crate::script::RaidMemberInfo;
+    let mut s = UiScript::new().unwrap();
+    s.set_unit(
+        "player",
+        Some(UnitState {
+            guid: 0x10,
+            ..player()
+        }),
+    );
+    s.set_party(PartyState {
+        raid: vec![
+            RaidMemberInfo {
+                guid: 0x20,
+                ..Default::default()
+            },
+            RaidMemberInfo {
+                guid: 0x10,
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    });
+    let row = |s: &mut UiScript| {
+        s.eval::<Option<i64>>(r#"return UnitInBattleground("player")"#)
+            .unwrap()
+    };
+    s.set_instance_type(Some(0));
+    assert_eq!(row(&mut s), None, "the open world");
+    s.set_instance_type(Some(3));
+    assert_eq!(row(&mut s), Some(1), "the second row, 0-based");
+    s.set_instance_type(Some(4));
+    assert_eq!(row(&mut s), Some(1), "an arena too");
+    assert_eq!(
+        s.eval::<Option<i64>>(r#"return UnitInBattleground("bogus")"#)
+            .unwrap(),
+        None,
+        "no raise"
+    );
+}
+
+/// `0x60d860`: a held unit's `UNIT_FLAG_POSSESSED`; `0x816da0`: nothing is tainted here.
+#[test]
+fn unit_is_possessed_reads_the_flag_and_issecure_is_set() {
+    let mut s = UiScript::new().unwrap();
+    s.set_unit(
+        "pet",
+        Some(UnitState {
+            has_object: true,
+            exists: true,
+            flags: 0x0100_0000,
+            ..player()
+        }),
+    );
+    s.set_unit(
+        "target",
+        Some(UnitState {
+            has_object: true,
+            exists: true,
+            ..player()
+        }),
+    );
+    assert!(s
+        .eval::<bool>(r#"return UnitIsPossessed("pet") == 1"#)
+        .unwrap());
+    assert!(s
+        .eval::<bool>(r#"return UnitIsPossessed("target") == nil"#)
+        .unwrap());
+    assert!(s.eval::<bool>("return issecure() == 1").unwrap());
 }

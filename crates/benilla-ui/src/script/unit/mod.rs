@@ -82,10 +82,17 @@ pub struct UnitState {
     /// The active power type (`UnitPowerType`), `UNIT_FIELD_BYTES_0` byte 3: 0 mana, 1 rage,
     /// 2 focus, 3 energy, 4 happiness.
     pub power_type: u8,
-    /// Current power of the active type (`UnitMana`).
+    /// Current power of the active type, shown scale (`UnitPower` with no type).
     pub power: u32,
-    /// Maximum power of the active type (`UnitManaMax`).
+    /// Maximum power of the active type, shown scale (`UnitPowerMax` with no type).
     pub max_power: u32,
+    /// Current power of each type 0..=4 (mana, rage, focus, energy, happiness), shown scale, which
+    /// `UnitPower(unit, type)` reads for the local player. Runes and runic power (5, 6) have no
+    /// shared descriptor place and read 0.
+    pub shown_powers: [u32; 5],
+    /// Maximum power of each type 0..=4, shown scale, which `UnitPowerMax(unit, type)` reads for
+    /// any held unit.
+    pub shown_max_powers: [u32; 5],
     /// `UnitIsDead`; a released ghost is not dead by it, as its health is 1.
     pub dead: bool,
     /// `UnitIsCharmed` (`0x516cf0`): `UNIT_FIELD_CHARMEDBY` (fields 10-11) is non-zero.

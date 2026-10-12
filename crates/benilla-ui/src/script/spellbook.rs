@@ -441,6 +441,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // GetSummonFriendCooldown() (`0x511d30`): the Summon Friend spell's cooldown through the
+    // same query as `GetSpellCooldown` (`0x809000`), start and duration in seconds. benilla tracks
+    // no Recruit-a-Friend cooldown, so it is the no-cooldown `(0, 0, 1)`.
+    g.set(
+        "GetSummonFriendCooldown",
+        lua.create_function(|_, ()| Ok((0.0, 0.0, 1i64)))?,
+    )?;
+
     // GetSpellCooldown(id, bookType) -> start, duration, enable in `GetTime` seconds, as
     // `GetActionCooldown`: enable 0 for an on-hold cooldown; an expired or empty one answers the
     // reference's no-cooldown `(0, 0, 1)`, so a re-feed cannot replay the finish flash.

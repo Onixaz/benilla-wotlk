@@ -419,6 +419,14 @@ fn feed_instance(
     }
 
     script.set_instance_type(here.and_then(|m| maps.as_ref().and_then(|c| c.0.instance_type(m))));
+    script.set_map_info(here.and_then(|m| {
+        let c = &maps.as_ref()?.0;
+        c.instance_type(m)?;
+        Some((
+            c.name(m).unwrap_or_default().to_string(),
+            c.has_dynamic_difficulty(m),
+        ))
+    }));
     let party_dungeon = |m: u32| maps.as_ref().is_some_and(|c| c.0.is_party_dungeon(m));
     script.set_can_reset_instances(state.can_reset(here, &party_dungeon, now));
 }

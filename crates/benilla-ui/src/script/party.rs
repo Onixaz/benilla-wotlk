@@ -416,6 +416,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // GetOptOutOfLoot() (`0x52c2d0`): 1 while the client's opt-out flag `[0xbd19a0]` is set,
+    // else nil. Only `SetOptOutOfLoot` sets it, which is not built, so it reads nil.
+    g.set(
+        "GetOptOutOfLoot",
+        lua.create_function(|_, ()| Ok(Value::Nil))?,
+    )?;
+
     // The party verbs queue a `PartyRequest` and return nothing.
     g.set(
         "AcceptGroup",

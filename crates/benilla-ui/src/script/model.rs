@@ -389,6 +389,8 @@ pub(crate) struct Model {
 
     /// The CVar table, by lowercased name.
     pub(crate) cvars: HashMap<String, super::cvars::CvarSlot>,
+    /// The current map's `MapName_lang` and dynamic-difficulty bit, `GetInstanceInfo`'s.
+    pub(crate) map_info: Option<(String, bool)>,
     /// Saved CVar values, set before any registration so a CVar starts at its saved value: the
     /// reference's table outlives `ReloadUI`, while ours is per VM.
     pub(crate) cvars_saved_base: HashMap<String, String>,
@@ -1190,6 +1192,7 @@ impl Model {
             music_queue: Vec::new(),
             sound_suppression: 0,
             cvars: HashMap::new(),
+            map_info: None,
             cvars_saved_base: HashMap::new(),
             cvar_changes: Vec::new(),
             cvar_registrations: Vec::new(),

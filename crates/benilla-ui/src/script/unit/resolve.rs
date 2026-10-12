@@ -1,7 +1,11 @@
-//! The unit-token resolver `0x515970`, token to guid, over the state it reads, which the app pushes
-//! as [`UnitGuids`]: a base (`player`, `pet`, `target`, `partyN`, `partypetN`, `raidN`,
-//! `raidpetN`, `mouseover`, `npc`), then any number of `target` hops, each off the current unit's
-//! `UNIT_FIELD_TARGET`. Every compare folds ASCII case (`SStrCmpI 0x64a4c0`, first at `0x5159b4`).
+//! The unit-token resolver, token to guid, over the state it reads, which the app pushes as
+//! [`UnitGuids`]: a base, then any number of `target` hops, each off the current unit's
+//! `UNIT_FIELD_TARGET`. Every compare folds ASCII case. The bases are 12340's (`0x60abf0`, in its
+//! compare order): `player`, `vehicle`, `pet`, `target`, `partypetN`, `partyN`, `raidpetN`,
+//! `raidN`, `bossN`, `arenapetN`, `arenaN`, `commentatorN`, `mouseover`, `focus`, then the exact
+//! `npc`, `questnpc` and `none`. The app pushes no guid for `vehicle`, `bossN`, `arenaN`,
+//! `arenapetN`, `commentatorN`, `focus` or `questnpc` yet, so they name nobody (#90); 12340's
+//! `pet` and `-` suffixes and its name lookup (`0x60aaa0`, `0x60a630`) are not built.
 
 use std::collections::HashMap;
 
@@ -35,30 +39,43 @@ pub struct UnitGuids {
 }
 
 /// A token's base, the resolver's compares in its order (`partypet` before `party`, `raidpet`
-/// before `raid`); `npc` is tested apart, as its one full-string compare.
+/// before `raid`, `arenapet` before `arena`); `npc`, `questnpc` and `none` are tested apart, as
+/// full-string compares.
 #[derive(Clone, Copy)]
 enum Base {
     Player,
+    Vehicle,
     Pet,
     Target,
     PartyPet,
     Party,
     RaidPet,
     Raid,
+    Boss,
+    ArenaPet,
+    Arena,
+    Commentator,
     Mouseover,
+    Focus,
 }
 
-/// Each prefix and its base, in the resolver's order; a prefix test compares `strlen(literal)`
-/// bytes, so `"playerfoo"` matches `player`.
-const PREFIXES: [(&str, Base); 8] = [
+/// Each prefix and its base, in the resolver's order (`0x60ac2a`-`0x60af2a`); a prefix test
+/// compares `strlen(literal)` bytes, so `"playerfoo"` matches `player`.
+const PREFIXES: [(&str, Base); 14] = [
     ("player", Base::Player),
+    ("vehicle", Base::Vehicle),
     ("pet", Base::Pet),
     ("target", Base::Target),
     ("partypet", Base::PartyPet),
     ("party", Base::Party),
     ("raidpet", Base::RaidPet),
     ("raid", Base::Raid),
+    ("boss", Base::Boss),
+    ("arenapet", Base::ArenaPet),
+    ("arena", Base::Arena),
+    ("commentator", Base::Commentator),
     ("mouseover", Base::Mouseover),
+    ("focus", Base::Focus),
 ];
 
 /// The unit a token starts from, before any `target` hop. A numbered base carries its 0-based
@@ -70,18 +87,32 @@ pub enum UnitBase {
     Pet,
     Target,
     Mouseover,
-    /// The interaction NPC; an exact compare, so it takes no `target` hop (`0x515bec`).
+    /// The interaction NPC; an exact compare, so it takes no `target` hop (`0x60af58`).
     Npc,
     Party(u32),
     PartyPet(u32),
     Raid(u32),
     RaidPet(u32),
+    /// The unit whose vehicle we ride (`0x60ac87`).
+    Vehicle,
+    /// The focus global `[0xbd07d0]`.
+    Focus,
+    /// The quest giver (`0x6081b0`); an exact compare.
+    QuestNpc,
+    /// An encounter unit, `0x5ed710(row)`.
+    Boss(u32),
+    /// An arena opponent, `0x608180(row)`.
+    Arena(u32),
+    /// An arena opponent's pet, `0x60a2f0(row)`.
+    ArenaPet(u32),
+    /// A spectated player, `0x56b1e0(row)`.
+    Commentator(u32),
 }
 
 /// What `0x515970` makes of a token's text, before it reads any state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnitTokenParse {
-    /// None of the nine compares match: the reference raises `Unknown unit name` (`0x515c14`).
+    /// None of the compares match: the reference raises `Unknown unit name` (`0x515c14`).
     Unknown,
     /// Recognised, and names nobody whatever the state: the empty token (`0x51599d`), or text
     /// after the base, and after each hop, that is not `target` (`0x515c2d`).
@@ -117,7 +148,7 @@ fn index_of(s: &[u8]) -> (u32, usize) {
 
 /// Read `token`'s text as `0x515970` does, before any state: the base by the compares in their
 /// order, a numbered base's row, then `target` hops to the end of the text. `"party1target"` is
-/// party1 and one hop, `"targettarget"` the target and one, and `"npctarget"` is none of the nine
+/// party1 and one hop, `"targettarget"` the target and one, and `"npctarget"` is none of the
 /// compares, as `npc` is one full-string compare.
 pub fn parse_unit_token(token: &str) -> UnitTokenParse {
     let bytes = token.as_bytes();
@@ -125,11 +156,14 @@ pub fn parse_unit_token(token: &str) -> UnitTokenParse {
         return UnitTokenParse::Nobody;
     }
     let Some((base, len)) = base_of(bytes) else {
+        let exact = |base| UnitTokenParse::Unit { base, hops: 0 };
         return if token.eq_ignore_ascii_case("npc") {
-            UnitTokenParse::Unit {
-                base: UnitBase::Npc,
-                hops: 0,
-            }
+            exact(UnitBase::Npc)
+        } else if token.eq_ignore_ascii_case("questnpc") {
+            exact(UnitBase::QuestNpc)
+        } else if token.eq_ignore_ascii_case("none") {
+            // The `-1` guid (`0x60afc9`), which names no object.
+            UnitTokenParse::Nobody
         } else {
             UnitTokenParse::Unknown
         };
@@ -142,9 +176,15 @@ pub fn parse_unit_token(token: &str) -> UnitTokenParse {
     };
     let base = match base {
         Base::Player => UnitBase::Player,
+        Base::Vehicle => UnitBase::Vehicle,
         Base::Pet => UnitBase::Pet,
         Base::Target => UnitBase::Target,
         Base::Mouseover => UnitBase::Mouseover,
+        Base::Focus => UnitBase::Focus,
+        Base::Boss => numbered(UnitBase::Boss),
+        Base::ArenaPet => numbered(UnitBase::ArenaPet),
+        Base::Arena => numbered(UnitBase::Arena),
+        Base::Commentator => numbered(UnitBase::Commentator),
         Base::PartyPet => numbered(UnitBase::PartyPet),
         Base::Party => numbered(UnitBase::Party),
         Base::RaidPet => numbered(UnitBase::RaidPet),
@@ -162,7 +202,7 @@ pub fn parse_unit_token(token: &str) -> UnitTokenParse {
 }
 
 impl UnitGuids {
-    /// The guid `token` names, or `None` for nobody; `Err` for a token none of the nine compares
+    /// The guid `token` names, or `None` for nobody; `Err` for a token none of the compares
     /// match, where the reference raises `Unknown unit name: %s` (`0x515c14`). An empty token is
     /// nobody (`0x51599d`).
     pub(crate) fn resolve(&self, token: &str) -> Result<Option<u64>, ()> {
@@ -199,6 +239,14 @@ impl UnitGuids {
             UnitBase::Raid(row) => at(&self.raid, row),
             UnitBase::Mouseover if !self.held.contains_key(&self.mouseover) => return None,
             UnitBase::Mouseover => self.mouseover,
+            // No guid pushed for these yet (#90).
+            UnitBase::Vehicle
+            | UnitBase::Focus
+            | UnitBase::QuestNpc
+            | UnitBase::Boss(_)
+            | UnitBase::Arena(_)
+            | UnitBase::ArenaPet(_)
+            | UnitBase::Commentator(_) => return None,
         };
         self.follow(guid, hops)
     }
@@ -392,7 +440,7 @@ mod tests {
     }
 
     /// Text after the base, or after any hop, that is not `target` names nobody; a token none of
-    /// the nine compares match is the raise, `npc` being an exact compare with no chain.
+    /// the compares match is the raise, `npc` being an exact compare with no chain.
     #[test]
     fn a_token_that_is_not_base_then_hops_parses_to_nobody_or_the_raise() {
         for token in [
@@ -409,9 +457,44 @@ mod tests {
         ] {
             assert_eq!(parse_unit_token(token), UnitTokenParse::Nobody, "{token}");
         }
-        for token in ["npctarget", "npc1", "bogus", "tar", "focus", "5", "targe"] {
+        for token in [
+            "npctarget",
+            "npc1",
+            "bogus",
+            "tar",
+            "focu",
+            "5",
+            "targe",
+            "nonex",
+        ] {
             assert_eq!(parse_unit_token(token), UnitTokenParse::Unknown, "{token}");
         }
+    }
+
+    /// 12340's bases past 1.12.1's (`0x60abf0`): each parses, and names nobody until the app
+    /// pushes its guid.
+    #[test]
+    fn the_3_3_5a_bases_parse_and_name_nobody() {
+        for (token, base, hops) in [
+            ("boss1", UnitBase::Boss(0), 0),
+            ("Boss4", UnitBase::Boss(3), 0),
+            ("arena2", UnitBase::Arena(1), 0),
+            ("arenapet5", UnitBase::ArenaPet(4), 0),
+            ("commentator3", UnitBase::Commentator(2), 0),
+            ("focus", UnitBase::Focus, 0),
+            ("focustarget", UnitBase::Focus, 1),
+            ("vehicle", UnitBase::Vehicle, 0),
+            ("questnpc", UnitBase::QuestNpc, 0),
+        ] {
+            assert_eq!(
+                parse_unit_token(token),
+                UnitTokenParse::Unit { base, hops },
+                "{token}"
+            );
+            assert_eq!(guids().resolve(token), Ok(None), "{token}");
+        }
+        assert_eq!(parse_unit_token("none"), UnitTokenParse::Nobody);
+        assert_eq!(parse_unit_token("questnpctarget"), UnitTokenParse::Unknown);
     }
 
     #[test]
@@ -451,7 +534,7 @@ mod tests {
 
     #[test]
     fn an_unrecognised_token_is_the_raise() {
-        for t in ["bogus", "focus", "none", "5", "npc1", "tar"] {
+        for t in ["bogus", "5", "npc1", "tar"] {
             assert_eq!(guids().resolve(t), Err(()), "{t}");
         }
     }

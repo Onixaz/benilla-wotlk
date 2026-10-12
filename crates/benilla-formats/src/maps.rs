@@ -24,7 +24,13 @@ pub struct MapCatalog {
     /// `InstanceType` (field 2, `+0x8`, read at `0x48a772`, `0x495cb9`, `0x495d33`): 0 none,
     /// 1 party, 2 raid, 3 battleground, as `IsInInstance` spells them (`0x83de58`, guarded `< 4`).
     instance_types: HashMap<u32, u32>,
+    /// `Flags` (column 3, `+0xc`), for maps with a non-zero one.
+    flags: HashMap<u32, u32>,
 }
+
+/// `Map.dbc` `Flags` bit: the map's difficulty can change inside it, `GetInstanceInfo`'s seventh
+/// return (`0x51a9e4`).
+const FLAG_DYNAMIC_DIFFICULTY: u32 = 0x100;
 
 impl MapCatalog {
     /// The MPQ directory name (`Directory`) for `map_id`, as `MapTiles::load(chain, dir)` takes it.
@@ -47,6 +53,13 @@ impl MapCatalog {
         self.instance_types.get(&map_id).copied()
     }
 
+    /// Whether `map_id`'s difficulty can change inside it ([`FLAG_DYNAMIC_DIFFICULTY`]).
+    pub fn has_dynamic_difficulty(&self, map_id: u32) -> bool {
+        self.flags
+            .get(&map_id)
+            .is_some_and(|f| f & FLAG_DYNAMIC_DIFFICULTY != 0)
+    }
+
     /// Whether `map_id` is a party dungeon, the reference's lockout test rather than "is an
     /// instance": `cmp [rec+8],1` gates `SMSG_UPDATE_LAST_INSTANCE` and `CanShowResetInstances`.
     pub fn is_party_dungeon(&self, map_id: u32) -> bool {
@@ -63,6 +76,7 @@ impl MapCatalog {
 }
 
 const INSTANCE_TYPE_FIELD: usize = 2;
+const FLAGS_FIELD: usize = 3;
 
 /// The layout's columns typed; the unread are `u32` placeholders, so only the record has to add up.
 fn map_schema(l: &MapLayout) -> Schema {
@@ -89,6 +103,7 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
     let mut names = HashMap::with_capacity(rs.records().len());
     let mut loading_screens = HashMap::new();
     let mut instance_types = HashMap::with_capacity(rs.records().len());
+    let mut flags = HashMap::new();
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
         if let Some(dir) = str_at(&rs, r, 1) {
@@ -104,12 +119,16 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
         if let Some(ls) = u32_at(r, l.loading_screen).filter(|&v| v != 0) {
             loading_screens.insert(id, ls);
         }
+        if let Some(f) = u32_at(r, FLAGS_FIELD).filter(|&v| v != 0) {
+            flags.insert(id, f);
+        }
     }
     Ok(MapCatalog {
         dirs,
         names,
         loading_screens,
         instance_types,
+        flags,
     })
 }
 
@@ -130,5 +149,9 @@ mod tests {
         assert_eq!(catalog.name(489), Some("Warsong Gulch"));
         assert_eq!(catalog.instance_type(489), Some(3));
         assert_eq!(catalog.loading_screen_id(489), Some(122));
+        // Flags `0x100`: the two raids whose difficulty changes inside, and no other map.
+        assert!(catalog.has_dynamic_difficulty(631), "Icecrown Citadel");
+        assert!(catalog.has_dynamic_difficulty(724), "The Ruby Sanctum");
+        assert!(!catalog.has_dynamic_difficulty(0) && !catalog.has_dynamic_difficulty(533));
     }
 }
