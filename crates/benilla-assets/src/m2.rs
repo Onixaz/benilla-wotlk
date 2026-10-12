@@ -7,9 +7,9 @@ use std::sync::Arc;
 use benilla_formats::{
     hand_grip_finger_poses, parse_m2_animations, parse_m2_attachments, parse_m2_bounds,
     parse_m2_collision_hull, parse_m2_global_sequence_bones, parse_m2_lights,
-    parse_m2_particle_emitters, parse_m2_playable_animation_lookup, parse_m2_portrait_camera,
-    parse_m2_render_submeshes, parse_m2_skeleton, CollisionMesh, M2Bounds, M2Light,
-    ParticleEmitterDef,
+    parse_m2_particle_emitters_with_anims, parse_m2_playable_animation_lookup,
+    parse_m2_portrait_camera, parse_m2_render_submeshes, parse_m2_ribbon_emitters_with_anims,
+    parse_m2_skeleton, CollisionMesh, M2Bounds, M2Light, ParticleEmitterDef,
 };
 use bevy::animation::graph::AnimationGraph;
 use bevy::asset::io::Reader;
@@ -239,16 +239,26 @@ impl AssetLoader for M2ModelLoader {
         reader.read_to_end(&mut bytes).await?;
         let to_io = |e: anyhow::Error| std::io::Error::other(format!("{e:#}"));
 
-        // A 3.3.5a model is read in the 1.12.1 layout, with its skin profile beside it; its
-        // particle and ribbon emitters are read from the version-264 records the relayout skips.
+        // A 3.3.5a model is read in the 1.12.1 layout, with its skin profile and its sequences'
+        // `.anim` files beside it; its particle and ribbon emitters are read from the version-264
+        // records the relayout skips.
         let mut raw = Vec::new();
+        let mut anims = benilla_formats::AnimFiles::new();
         if benilla_formats::md20_version(&bytes) == Some(benilla_formats::VERSION_264) {
             let path = ctx.path().path().to_string_lossy().to_ascii_lowercase();
             let skin = ctx
                 .read_asset_bytes(format!("mpq://{}", benilla_formats::skin_path(&path)))
                 .await
                 .map_err(|e| std::io::Error::other(format!("{path}: skin profile 0: {e}")))?;
-            let out = benilla_formats::relayout_264(&bytes, &skin)
+            let files = benilla_formats::anim_paths(&bytes, &path)
+                .map_err(|e| std::io::Error::other(format!("{path}: {e}")))?;
+            // A file that does not read leaves its sequences without keys, named in `dropped`.
+            for (seq, file) in files {
+                if let Ok(a) = ctx.read_asset_bytes(format!("mpq://{file}")).await {
+                    anims.insert(seq, a);
+                }
+            }
+            let out = benilla_formats::relayout_264(&bytes, &skin, &anims)
                 .map_err(|e| std::io::Error::other(format!("{path}: {e}")))?;
             for dropped in &out.dropped {
                 warn!("{path}: not loaded: {dropped}");
@@ -320,7 +330,7 @@ impl AssetLoader for M2ModelLoader {
 
         let skeleton_raw = parse_m2_skeleton(&bytes).unwrap_or_default();
 
-        let mut emitters: Vec<ModelEmitter> = parse_m2_particle_emitters(&raw)
+        let mut emitters: Vec<ModelEmitter> = parse_m2_particle_emitters_with_anims(&raw, &anims)
             .unwrap_or_default()
             .into_iter()
             .map(|def| {
@@ -364,7 +374,7 @@ impl AssetLoader for M2ModelLoader {
             })
             .collect();
 
-        let ribbons: Vec<ModelRibbon> = benilla_formats::parse_m2_ribbon_emitters(&raw)
+        let ribbons: Vec<ModelRibbon> = parse_m2_ribbon_emitters_with_anims(&raw, &anims)
             .unwrap_or_default()
             .into_iter()
             .map(|def| {

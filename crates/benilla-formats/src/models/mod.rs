@@ -33,17 +33,26 @@ pub use tex_anim::{rotation_2x2, uv_transform, UvAnim, UvRotAnim};
 pub use types::*;
 pub use wmo::*;
 
-pub use benilla_m2::{md20_version, relayout_264, skin_path, Relayout, VERSION_264};
+pub use benilla_m2::{
+    anim_paths, md20_version, relayout_264, skin_path, AnimFiles, Relayout, VERSION_264,
+};
 
 /// The M2 at `path` in the 1.12.1 layout every reader here takes: a version-264 model is written
-/// in it with its skin profile 0 ([`relayout_264`]), whose [`Relayout::dropped`] comes back beside.
+/// in it with its skin profile 0 and its `.anim` files ([`relayout_264`]), whose
+/// [`Relayout::dropped`] comes back beside.
 pub fn read_m2(chain: &Chain, path: &str) -> Result<(Vec<u8>, Vec<String>)> {
     let bytes = chain.read(path)?;
     if md20_version(&bytes) != Some(VERSION_264) {
         return Ok((bytes, Vec::new()));
     }
     let skin = chain.read(&skin_path(path))?;
-    let out = relayout_264(&bytes, &skin).map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
+    let to_err = |e| anyhow::anyhow!("{path}: {e}");
+    let anims: AnimFiles = anim_paths(&bytes, path)
+        .map_err(to_err)?
+        .into_iter()
+        .filter_map(|(seq, file)| Some((seq, chain.read(&file).ok()?)))
+        .collect();
+    let out = relayout_264(&bytes, &skin, &anims).map_err(to_err)?;
     Ok((out.bytes, out.dropped))
 }
 

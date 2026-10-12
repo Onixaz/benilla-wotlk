@@ -5,7 +5,7 @@
 //! [`EmitTiming`], the other nine into [`EmitParams`].
 
 use anyhow::Result;
-use benilla_m2::{md20_version, M2ScalarTrack, Tracks264, VERSION_264};
+use benilla_m2::{md20_version, AnimFiles, M2ScalarTrack, Tracks264, VERSION_264};
 
 use crate::emit_timing::{EmitParams, EmitTiming};
 use crate::models::SeqSlot;
@@ -526,8 +526,18 @@ fn life_track<V>(
 }
 
 /// The version-264 model's particle emitters, textures resolved through its textures table;
-/// empty for a model with none or a file that is not version 264.
+/// empty for a model with none or a file that is not version 264. A sequence keyed in a `.anim`
+/// file has no keys here ([`parse_m2_particle_emitters_with_anims`] reads them).
 pub fn parse_m2_particle_emitters(bytes: &[u8]) -> Result<Vec<ParticleEmitterDef>> {
+    parse_m2_particle_emitters_with_anims(bytes, &AnimFiles::new())
+}
+
+/// [`parse_m2_particle_emitters`], the tracks of a sequence keyed in a `.anim` read from `anims`
+/// ([`benilla_m2::anim_paths`]).
+pub fn parse_m2_particle_emitters_with_anims(
+    bytes: &[u8],
+    anims: &AnimFiles,
+) -> Result<Vec<ParticleEmitterDef>> {
     if md20_version(bytes) != Some(VERSION_264) || bytes.len() < HDR_PARTICLES + 8 {
         return Ok(Vec::new());
     }
@@ -537,7 +547,7 @@ pub fn parse_m2_particle_emitters(bytes: &[u8]) -> Result<Vec<ParticleEmitterDef
         return Ok(Vec::new());
     }
     let textures = texture_paths_264(bytes);
-    let mut tracks = Tracks264::new(bytes)?;
+    let mut tracks = Tracks264::new(bytes, anims)?;
 
     // Each sequence's band and loop flag (flags bit 0 clear loops); a model with none gets one
     // whole-timeline slot so its tracks still bake.

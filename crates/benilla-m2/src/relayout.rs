@@ -14,6 +14,12 @@
 //! place for (per-channel over-life keys, life, rate, size and spin variance). Their readers take
 //! the version-264 records and read the tracks through [`Tracks264`], onto the same bands.
 //! [`Relayout::dropped`] names anything else left out.
+//!
+//! A sequence without flag `0x20` keeps its keys in `<Model><id>-<sub>.anim`, whose bytes the
+//! track's sub-array offsets index; an alias (flag `0x40`) plays its owner's keys. [`anim_paths`]
+//! names the files a model needs and [`relayout_264`] takes their bytes.
+
+use std::collections::HashMap;
 
 use benilla_bytes::ByteExt;
 
@@ -38,6 +44,35 @@ pub fn skin_path(model_path: &str) -> String {
     format!("{stem}00.skin")
 }
 
+/// The `.anim` files of a model's sequences, by the index of the sequence that owns each
+/// ([`anim_paths`]).
+pub type AnimFiles = HashMap<usize, Vec<u8>>;
+
+/// The `.anim` files the sequences of the version-264 `m2` at `model_path` key into: each owning
+/// sequence's index and path, the model path cut at its last `.` then `%04d-%02d.anim` of the
+/// owner's id and variation (`0x835a20`). An alias names its owner's file (`0x83da10`).
+pub fn anim_paths(m2: &[u8], model_path: &str) -> Result<Vec<(usize, String)>> {
+    let seqs = sequences(m2)?;
+    let stem = model_path
+        .rfind('.')
+        .map_or(model_path, |i| &model_path[..i]);
+    let mut owners: Vec<usize> = (0..seqs.len())
+        .filter_map(|i| owner(&seqs, i))
+        .filter(|&o| seqs[o].flags & SEQ_IN_FILE == 0)
+        .collect();
+    owners.sort_unstable();
+    owners.dedup();
+    Ok(owners
+        .into_iter()
+        .map(|o| {
+            (
+                o,
+                format!("{stem}{:04}-{:02}.anim", seqs[o].id, seqs[o].sub),
+            )
+        })
+        .collect())
+}
+
 /// A version-264 model written as version 256.
 pub struct Relayout {
     pub bytes: Vec<u8>,
@@ -45,8 +80,9 @@ pub struct Relayout {
     pub dropped: Vec<String>,
 }
 
-/// Write the version-264 `m2` and its skin profile 0, `skin`, as a version-256 model.
-pub fn relayout_264(m2: &[u8], skin: &[u8]) -> Result<Relayout> {
+/// Write the version-264 `m2` and its skin profile 0, `skin`, as a version-256 model; `anims` holds
+/// the [`anim_paths`] files, and a sequence whose file is missing keeps no keys.
+pub fn relayout_264(m2: &[u8], skin: &[u8], anims: &AnimFiles) -> Result<Relayout> {
     match md20_version(m2) {
         None => return Err(Error::NotMd20),
         Some(VERSION_264) => {}
@@ -55,7 +91,7 @@ pub fn relayout_264(m2: &[u8], skin: &[u8]) -> Result<Relayout> {
     if skin.get(0..4) != Some(&b"SKIN"[..]) {
         return Err(Error::NotSkin);
     }
-    let mut w = Writer::new(m2)?;
+    let mut w = Writer::new(m2, anims)?;
     w.header()?;
     w.view(skin)?;
     Ok(w.finish())
@@ -140,7 +176,8 @@ const TRACK_BASE_256: usize = 0x14;
 
 /// Sequence flag `0x20`: the keys are in the `.m2`; clear, they are in `<Model><id>-<sub>.anim`.
 const SEQ_IN_FILE: u32 = 0x20;
-/// Sequence flag `0x40`: an alias, whose keys are another sequence's.
+/// Sequence flag `0x40`: an alias, whose keys are those of the sequence its `aliasNext` (`+0x3e`)
+/// leads to; the chain ends at the first sequence without the flag.
 const SEQ_ALIAS: u32 = 0x40;
 /// `gseq` on a track keyed per sequence rather than on a global sequence.
 const NO_GSEQ: u16 = 0xffff;
@@ -215,13 +252,54 @@ impl Channel {
 const ZERO3: Channel = Channel::Vec3([0.0; 3]);
 const ONE3: Channel = Channel::Vec3([1.0; 3]);
 
+/// The fields of a version-264 sequence record the relayout reads.
+struct Seq {
+    id: u16,
+    sub: u16,
+    length: u32,
+    flags: u32,
+    alias_next: u16,
+}
+
+/// The `m2`'s sequence records.
+fn sequences(m2: &[u8]) -> Result<Vec<Seq>> {
+    let (count, ofs) = arr(m2, h264::SEQUENCES)?;
+    get_n(m2, ofs, count, 64)?;
+    (0..count)
+        .map(|i| {
+            let rec = get(m2, ofs + i * 64, 64)?;
+            Ok(Seq {
+                id: u16_at(rec, 0)?,
+                sub: u16_at(rec, 2)?,
+                length: u32_at(rec, 4)?,
+                flags: u32_at(rec, 12)?,
+                alias_next: u16_at(rec, 0x3e)?,
+            })
+        })
+        .collect()
+}
+
+/// The sequence whose keys sequence `i` plays: `i` itself, or the end of its alias chain; `None`
+/// for a chain that leaves the array or never ends.
+fn owner(seqs: &[Seq], i: usize) -> Option<usize> {
+    let mut j = i;
+    for _ in 0..=seqs.len() {
+        if seqs.get(j)?.flags & SEQ_ALIAS == 0 {
+            return Some(j);
+        }
+        j = usize::from(seqs[j].alias_next);
+    }
+    None
+}
+
 /// One sequence's band on the version-256 timeline.
-struct Band {
+struct Band<'a> {
     start: u32,
     length: u32,
     flags: u32,
-    /// The keys are somewhere [`relayout_264`] does not read: a `.anim` file or an alias target.
-    elsewhere: bool,
+    /// The sequence whose set holds the keys, and the bytes its offsets index (the `.m2` or the
+    /// owner's `.anim`); `None` when those bytes are not at hand.
+    keys: Option<(usize, &'a [u8])>,
 }
 
 /// One track on the version-256 timeline: `ranges` (8 bytes each), `times` (4) and `values` (one
@@ -242,11 +320,12 @@ pub struct Tracks264<'a> {
 }
 
 impl<'a> Tracks264<'a> {
-    pub fn new(m2: &'a [u8]) -> Result<Self> {
+    /// The tracks of `m2`, with the [`anim_paths`] files in `anims`.
+    pub fn new(m2: &'a [u8], anims: &'a AnimFiles) -> Result<Self> {
         match md20_version(m2) {
             None => Err(Error::NotMd20),
             Some(VERSION_264) => Ok(Self {
-                w: Writer::new(m2)?,
+                w: Writer::new(m2, anims)?,
             }),
             Some(v) => Err(Error::UnsupportedVersion(v)),
         }
@@ -325,7 +404,7 @@ impl<'a> Tracks264<'a> {
 struct Writer<'a> {
     src: &'a [u8],
     out: Vec<u8>,
-    bands: Vec<Band>,
+    bands: Vec<Band<'a>>,
     dropped: Vec<String>,
     /// Keys past their sequence's length, which no band holds.
     keys_past_end: usize,
@@ -334,38 +413,42 @@ struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
-    fn new(src: &'a [u8]) -> Result<Self> {
+    fn new(src: &'a [u8], anims: &'a AnimFiles) -> Result<Self> {
         let mut out = vec![0u8; h256::LEN];
         out[0..4].copy_from_slice(b"MD20");
         out[4..8].copy_from_slice(&256u32.to_le_bytes());
-        let (count, ofs) = arr(src, h264::SEQUENCES)?;
-        get_n(src, ofs, count, 64)?;
-        let mut bands = Vec::with_capacity(count);
+        let seqs = sequences(src)?;
+        let mut bands = Vec::with_capacity(seqs.len());
         let mut start = 0u32;
         let mut dropped = Vec::new();
-        for i in 0..count {
-            let rec = get(src, ofs + i * 64, 64)?;
-            let (id, sub) = (u16_at(rec, 0)?, u16_at(rec, 2)?);
-            let length = u32_at(rec, 4)?;
-            let flags = u32_at(rec, 12)?;
-            let elsewhere = if flags & SEQ_ALIAS != 0 {
-                dropped.push(format!(
-                    "sequence {i} ({id}-{sub}): an alias, whose keys are not read"
-                ));
-                true
-            } else if flags & SEQ_IN_FILE == 0 {
-                dropped.push(format!(
-                    "sequence {i} ({id}-{sub}): its keys are in a .anim file"
-                ));
-                true
-            } else {
-                false
+        for (i, s) in seqs.iter().enumerate() {
+            let (id, sub) = (s.id, s.sub);
+            let keys = match owner(&seqs, i) {
+                None => {
+                    dropped.push(format!(
+                        "sequence {i} ({id}-{sub}): an alias chain that reaches no owner"
+                    ));
+                    None
+                }
+                Some(o) if seqs[o].flags & SEQ_IN_FILE != 0 => Some((o, src)),
+                Some(o) => {
+                    let file = anims.get(&o).map(|a| (o, a.as_slice()));
+                    if file.is_none() {
+                        let (oid, osub) = (seqs[o].id, seqs[o].sub);
+                        dropped.push(format!(
+                            "sequence {i} ({id}-{sub}): its keys are in {oid:04}-{osub:02}.anim, \
+                             which was not read"
+                        ));
+                    }
+                    file
+                }
             };
+            let length = s.length;
             bands.push(Band {
                 start,
                 length,
-                flags,
-                elsewhere,
+                flags: s.flags,
+                keys,
             });
             // One empty millisecond between bands, so each band's end key stays its own.
             start = start.saturating_add(length).saturating_add(1);
@@ -612,10 +695,19 @@ impl<'a> Writer<'a> {
         (set < sets).then(|| arr(self.src, ofs + set * 8).ok())?
     }
 
-    /// Set `set` of the track at `at`, `(ms, value)` with values `size` bytes; a set reaching past
-    /// the file ends at the last whole key.
-    fn keys(&self, at: usize, set: usize, size: usize) -> Vec<(u32, &'a [u8])> {
-        let src = self.src;
+    /// Where sequence `s` of a track with `sets` sets reads its keys: its owner's set, or set 0 when
+    /// the track has fewer sets (as OpenWoW reads), and the bytes that set's offsets index.
+    fn source(&self, s: usize, sets: usize) -> Option<(usize, &'a [u8])> {
+        let (o, _) = self.bands[s].keys?;
+        match o < sets {
+            true => self.bands[o].keys,
+            false => self.bands.first()?.keys.map(|(_, b)| (0, b)),
+        }
+    }
+
+    /// Set `set` of the track at `at`, `(ms, value)` with values `size` bytes read from `src`
+    /// (the `.m2` or a `.anim`); a set reaching past those bytes ends at the last whole key.
+    fn keys(&self, at: usize, set: usize, size: usize, src: &'a [u8]) -> Vec<(u32, &'a [u8])> {
         let (Some((tn, to)), Some((vn, vo))) = (self.set(at + 4, set), self.set(at + 12, set))
         else {
             return Vec::new();
@@ -651,17 +743,16 @@ impl<'a> Writer<'a> {
         let (mut times, mut values, mut ranges) = (Vec::new(), Vec::new(), Vec::new());
         if gseq != NO_GSEQ {
             // A global-sequence track keys one set on its own clock (OpenWoW reads set 0 alone).
-            for (t, v) in self.keys(at, 0, size) {
+            for (t, v) in self.keys(at, 0, size, self.src) {
                 times.extend_from_slice(&t.to_le_bytes());
                 ch.put(v, &mut values);
             }
             return Ok(empty(Vec::new(), times, values));
         }
-        // A track with fewer sets than sequences reads set 0 for the rest, as OpenWoW does.
         let per_seq: Vec<Vec<(u32, &[u8])>> = (0..self.bands.len())
-            .map(|s| match self.bands[s].elsewhere {
-                true => Vec::new(),
-                false => self.keys(at, if s < sets { s } else { 0 }, size),
+            .map(|s| {
+                self.source(s, sets)
+                    .map_or(Vec::new(), |(set, src)| self.keys(at, set, size, src))
             })
             .collect();
         if per_seq.iter().all(Vec::is_empty) {
@@ -707,25 +798,24 @@ impl<'a> Writer<'a> {
 
     /// An event's `M2TrackBase` (`0x0c` bytes, times alone) as version 256's (`0x14`).
     fn track_base(&mut self, at: usize) -> Result<[u8; TRACK_BASE_256]> {
-        let src = self.src;
-        let interp = u16_at(src, at)?;
-        let gseq = u16_at(src, at + 2)?;
-        let times_of = |w: &Self, s: usize| -> Vec<u32> {
+        let interp = u16_at(self.src, at)?;
+        let gseq = u16_at(self.src, at + 2)?;
+        let times_of = |w: &Self, s: usize, src: &[u8]| -> Vec<u32> {
             w.set(at + 4, s).map_or(Vec::new(), |(n, o)| {
                 (0..n).map_while(|k| src.u32_at(o + k * 4)).collect()
             })
         };
         let (mut times, mut ranges) = (Vec::new(), Vec::new());
         if gseq != NO_GSEQ {
-            for t in times_of(self, 0) {
+            for t in times_of(self, 0, self.src) {
                 times.extend_from_slice(&t.to_le_bytes());
             }
         } else {
             let mut n = 0u32;
             for s in 0..self.bands.len() {
                 let lo = n;
-                if !self.bands[s].elsewhere {
-                    for t in times_of(self, s) {
+                if let Some((set, src)) = self.bands[s].keys {
+                    for t in times_of(self, set, src) {
                         if t > self.bands[s].length {
                             self.keys_past_end += 1;
                             continue;

@@ -163,7 +163,7 @@ fn track_256(b: &[u8], at: usize, size: usize) -> Track256 {
 
 #[test]
 fn sequences_take_consecutive_bands() {
-    let out = relayout_264(&model(), &skin(0)).unwrap();
+    let out = relayout_264(&model(), &skin(0), &AnimFiles::new()).unwrap();
     let b = &out.bytes;
     assert_eq!(md20_version(b), Some(256));
     let ofs = b.u32_at(h256::SEQUENCES + 4).unwrap() as usize;
@@ -177,7 +177,7 @@ fn sequences_take_consecutive_bands() {
 
 #[test]
 fn a_band_holds_its_end_keys_and_an_empty_one_takes_the_default() {
-    let out = relayout_264(&model(), &skin(0)).unwrap();
+    let out = relayout_264(&model(), &skin(0), &AnimFiles::new()).unwrap();
     let b = &out.bytes;
     let bone = b.u32_at(h256::BONES + 4).unwrap() as usize;
     let (ranges, keys) = track_256(b, bone + 0x0c, 12);
@@ -197,7 +197,7 @@ fn a_band_holds_its_end_keys_and_an_empty_one_takes_the_default() {
 
 #[test]
 fn rotations_unpack_and_a_lone_set_serves_every_sequence() {
-    let out = relayout_264(&model(), &skin(0)).unwrap();
+    let out = relayout_264(&model(), &skin(0), &AnimFiles::new()).unwrap();
     let b = &out.bytes;
     let bone = b.u32_at(h256::BONES + 4).unwrap() as usize;
     let (ranges, keys) = track_256(b, bone + 0x28, 16);
@@ -213,7 +213,7 @@ fn rotations_unpack_and_a_lone_set_serves_every_sequence() {
 
 #[test]
 fn the_1_12_reader_takes_the_relayout() {
-    let out = relayout_264(&model(), &skin(0)).unwrap();
+    let out = relayout_264(&model(), &skin(0), &AnimFiles::new()).unwrap();
     let m = parse_m2(&mut Cursor::new(&out.bytes[..])).unwrap();
     let m = m.model();
     assert_eq!(m.bones.len(), 1);
@@ -230,14 +230,14 @@ fn the_1_12_reader_takes_the_relayout() {
 #[test]
 fn what_1_12_cannot_hold_is_named_not_dropped_silently() {
     // The particle emitter is read from the version-264 record, so the relayout drops nothing.
-    let out = relayout_264(&model(), &skin(0)).unwrap();
+    let out = relayout_264(&model(), &skin(0), &AnimFiles::new()).unwrap();
     assert!(out.dropped.is_empty(), "{:?}", out.dropped);
 
     let mut m = model();
     // Sequence 1's keys move to a `.anim` file.
     let ofs = m.u32_at(h264::SEQUENCES + 4).unwrap() as usize;
     m[ofs + 64 + 12..ofs + 64 + 16].copy_from_slice(&0u32.to_le_bytes());
-    let out = relayout_264(&m, &skin(0)).unwrap();
+    let out = relayout_264(&m, &skin(0), &AnimFiles::new()).unwrap();
     assert!(
         out.dropped.iter().any(|d| d.contains(".anim")),
         "{:?}",
@@ -245,10 +245,99 @@ fn what_1_12_cannot_hold_is_named_not_dropped_silently() {
     );
 }
 
+/// Patch sequence `i`'s record: its id and variation, flags and `aliasNext`.
+fn set_sequence(m: &mut [u8], i: usize, id: u16, sub: u16, flags: u32, alias_next: u16) {
+    let rec = m.u32_at(h264::SEQUENCES + 4).unwrap() as usize + i * 64;
+    m[rec..rec + 2].copy_from_slice(&id.to_le_bytes());
+    m[rec + 2..rec + 4].copy_from_slice(&sub.to_le_bytes());
+    m[rec + 12..rec + 16].copy_from_slice(&flags.to_le_bytes());
+    m[rec + 0x3e..rec + 0x40].copy_from_slice(&alias_next.to_le_bytes());
+}
+
+/// The bone translation's version-256 keys after a relayout of `m` with `anims`.
+fn translation(m: &[u8], anims: &AnimFiles) -> (Track256, Vec<String>) {
+    let out = relayout_264(m, &skin(0), anims).unwrap();
+    let b = &out.bytes;
+    let bone = b.u32_at(h256::BONES + 4).unwrap() as usize;
+    (track_256(b, bone + 0x0c, 12), out.dropped)
+}
+
+#[test]
+fn a_sequence_keyed_in_a_dot_anim_reads_its_keys_there() {
+    let mut m = model();
+    set_sequence(&mut m, 1, 60, 2, 0, 1);
+    assert_eq!(
+        anim_paths(&m, "Character\\Human\\Male\\HumanMale.m2").unwrap(),
+        vec![(
+            1,
+            "Character\\Human\\Male\\HumanMale0060-02.anim".to_string()
+        )]
+    );
+    // Set 1 of the bone translation: two keys, times at offset 8 and values at 16 of the `.anim`
+    // (offsets that in the `.m2` hold its header).
+    let mut anim = vec![0u8; 8];
+    anim.extend([5u32, 40].iter().flat_map(|t| t.to_le_bytes()));
+    anim.extend(floats(&[1.0, 1.0, 1.0, 2.0, 2.0, 2.0]));
+    let bone = m.u32_at(h264::BONES + 4).unwrap() as usize;
+    for (heads, ofs) in [(bone + 0x18, 8u32), (bone + 0x20, 16)] {
+        let set1 = m.u32_at(heads).unwrap() as usize + 8;
+        m[set1..set1 + 4].copy_from_slice(&2u32.to_le_bytes());
+        m[set1 + 4..set1 + 8].copy_from_slice(&ofs.to_le_bytes());
+    }
+    let anims = AnimFiles::from([(1, anim)]);
+    let ((ranges, keys), dropped) = translation(&m, &anims);
+    assert!(dropped.is_empty(), "{dropped:?}");
+    let band1: Vec<(u32, Vec<u8>)> = keys[ranges[1].0 as usize..=ranges[1].1 as usize].to_vec();
+    assert_eq!(
+        band1,
+        vec![
+            (101, floats(&[1.0; 3])),
+            (106, floats(&[1.0; 3])),
+            (141, floats(&[2.0; 3])),
+            (151, floats(&[2.0; 3])),
+        ]
+    );
+    // Without the file the band keeps the default, and says so.
+    let ((_, keys), dropped) = translation(&m, &AnimFiles::new());
+    assert_eq!(keys.last(), Some(&(101, floats(&[0.0; 3]))));
+    assert!(
+        dropped.iter().any(|d| d.contains("0060-02.anim")),
+        "{dropped:?}"
+    );
+}
+
+#[test]
+fn an_alias_plays_its_owners_keys() {
+    let mut m = model();
+    // Sequence 1, as long as sequence 0, aliases it; its own set is empty.
+    let rec = m.u32_at(h264::SEQUENCES + 4).unwrap() as usize + 64;
+    m[rec + 4..rec + 8].copy_from_slice(&100u32.to_le_bytes());
+    set_sequence(&mut m, 1, 136, 0, SEQ_ALIAS, 0);
+    assert!(anim_paths(&m, "a.m2").unwrap().is_empty());
+    let ((ranges, keys), dropped) = translation(&m, &AnimFiles::new());
+    assert!(dropped.is_empty(), "{dropped:?}");
+    let band = |i: usize| -> Vec<(u32, Vec<u8>)> {
+        keys[ranges[i].0 as usize..=ranges[i].1 as usize]
+            .iter()
+            .map(|(t, v)| (t - [0, 101][i], v.clone()))
+            .collect()
+    };
+    assert_eq!(band(1), band(0));
+    // A chain that never reaches a sequence without the flag keeps no keys.
+    set_sequence(&mut m, 1, 136, 0, SEQ_ALIAS, 1);
+    let ((_, keys), dropped) = translation(&m, &AnimFiles::new());
+    assert_eq!(keys.last(), Some(&(101, floats(&[0.0; 3]))));
+    assert!(
+        dropped.iter().any(|d| d.contains("no owner")),
+        "{dropped:?}"
+    );
+}
+
 #[test]
 fn tracks_264_reads_onto_the_relayouts_bands() {
     let m = model();
-    let mut t = Tracks264::new(&m).unwrap();
+    let none = AnimFiles::new();
+    let mut t = Tracks264::new(&m, &none).unwrap();
     assert_eq!(
         t.sequences(),
         vec![((0, 100), SEQ_IN_FILE), ((101, 151), SEQ_IN_FILE)]
@@ -256,14 +345,14 @@ fn tracks_264_reads_onto_the_relayouts_bands() {
     let bone = m.u32_at(h264::BONES + 4).unwrap() as usize;
     let tr = t.vec3(bone + 0x10, [0.0; 3]).unwrap();
     // The same keys and windows the relayout writes for the bone's translation.
-    let out = relayout_264(&m, &skin(0)).unwrap();
+    let out = relayout_264(&m, &skin(0), &AnimFiles::new()).unwrap();
     let b = &out.bytes;
     let (ranges, keys) = track_256(b, b.u32_at(h256::BONES + 4).unwrap() as usize + 0x0c, 12);
     assert_eq!(tr.ranges, ranges);
     let as_bytes: Vec<(u32, Vec<u8>)> = tr.keys.iter().map(|&(ms, v)| (ms, floats(&v))).collect();
     assert_eq!(as_bytes, keys);
     assert!(matches!(
-        Tracks264::new(&out.bytes),
+        Tracks264::new(&out.bytes, &none),
         Err(Error::UnsupportedVersion(256))
     ));
 }
@@ -271,7 +360,7 @@ fn tracks_264_reads_onto_the_relayouts_bands() {
 #[test]
 fn a_section_past_u16_is_an_error() {
     assert!(matches!(
-        relayout_264(&model(), &skin(1)),
+        relayout_264(&model(), &skin(1), &AnimFiles::new()),
         Err(Error::SkinSectionPastU16(0))
     ));
 }
@@ -281,11 +370,11 @@ fn only_version_264_relays_out() {
     let mut m = model();
     m[4..8].copy_from_slice(&256u32.to_le_bytes());
     assert!(matches!(
-        relayout_264(&m, &skin(0)),
+        relayout_264(&m, &skin(0), &AnimFiles::new()),
         Err(Error::UnsupportedVersion(256))
     ));
     assert!(matches!(
-        relayout_264(&model(), b"NOPE"),
+        relayout_264(&model(), b"NOPE", &AnimFiles::new()),
         Err(Error::NotSkin)
     ));
 }

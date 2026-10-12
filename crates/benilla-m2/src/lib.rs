@@ -16,7 +16,9 @@ pub use model::{
     M2Format, M2Header, M2Material, M2Model, M2PlayableAnim, M2RawData, M2RenderFlags, M2Texture,
     M2TextureTransform, M2TextureType, M2Vertex, C2, C3,
 };
-pub use relayout::{md20_version, relayout_264, skin_path, Relayout, Tracks264, VERSION_264};
+pub use relayout::{
+    anim_paths, md20_version, relayout_264, skin_path, AnimFiles, Relayout, Tracks264, VERSION_264,
+};
 pub use skin::{Skin, SkinBatch, SkinSection};
 pub use track::{
     CubicValue, M2QuatTrack, M2ScalarSplineTrack, M2ScalarTrack, M2SplineKey, M2Track,

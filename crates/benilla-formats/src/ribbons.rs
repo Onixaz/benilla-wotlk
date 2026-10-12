@@ -23,7 +23,7 @@
 //! this uses the model's (the same wherever the bone plays the model's sequence).
 
 use anyhow::Result;
-use benilla_m2::{md20_version, M2Track, Tracks264, VERSION_264};
+use benilla_m2::{md20_version, AnimFiles, M2Track, Tracks264, VERSION_264};
 
 use crate::particles::{texture_paths_264, HDR_RIBBONS};
 use crate::value_track::{rebase_keys_to_band, TrackValue, ValueTrack};
@@ -159,8 +159,18 @@ fn visibility_by_anim(
     any_off.then_some(RibbonVisibility { by_anim })
 }
 
-/// A version-264 M2's ribbon emitters; empty when it has none or is not version 264.
+/// A version-264 M2's ribbon emitters; empty when it has none or is not version 264. A sequence
+/// keyed in a `.anim` file has no keys here ([`parse_m2_ribbon_emitters_with_anims`] reads them).
 pub fn parse_m2_ribbon_emitters(bytes: &[u8]) -> Result<Vec<RibbonEmitterDef>> {
+    parse_m2_ribbon_emitters_with_anims(bytes, &AnimFiles::new())
+}
+
+/// [`parse_m2_ribbon_emitters`], the tracks of a sequence keyed in a `.anim` read from `anims`
+/// ([`benilla_m2::anim_paths`]).
+pub fn parse_m2_ribbon_emitters_with_anims(
+    bytes: &[u8],
+    anims: &AnimFiles,
+) -> Result<Vec<RibbonEmitterDef>> {
     if md20_version(bytes) != Some(VERSION_264) || bytes.len() < HDR_RIBBONS + 8 {
         return Ok(Vec::new());
     }
@@ -172,7 +182,7 @@ pub fn parse_m2_ribbon_emitters(bytes: &[u8]) -> Result<Vec<RibbonEmitterDef>> {
         return Ok(Vec::new());
     }
     let textures = texture_paths_264(bytes);
-    let mut tracks = Tracks264::new(bytes)?;
+    let mut tracks = Tracks264::new(bytes, anims)?;
     let rf_count = le_u32(bytes, HDR_RENDER_FLAGS) as usize;
     let rf_base = le_u32(bytes, HDR_RENDER_FLAGS + 4) as usize;
     let sequences: Vec<(u16, (u32, u32))> = {
