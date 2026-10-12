@@ -70,10 +70,13 @@ const ROW_HIT_H: f32 = 55.0;
 const ROW_PITCH: f32 = 57.0;
 
 /// Entry only resets state: the initial state's `OnEnter` fires at startup, before the MPQ chain
-/// and booth slots exist, so the tree spawns in [`materialize_screen`].
+/// and booth slots exist, so the tree spawns in [`materialize_screen`]. The native screen's alone:
+/// the stock screens' facing is the glue VM's.
 pub(super) fn enter_select(mut preview: ResMut<GluePreview>) {
     // The model faces the camera on entry: the reference's facing global defaults to zero.
     preview.yaw = 0.0;
+    // `CharacterSelect`'s OnShow (`0x46fa60`).
+    preview.shown = preview.shown.wrapping_add(1);
 }
 
 /// Spawn the screen tree once the art is loaded, respawn it when art lands after an artless spawn
@@ -602,18 +605,21 @@ pub(super) fn hide_under_world_cover(
     }
 }
 
+/// Leaving the native select screen drops its scene; the next screen sets its own.
+pub(super) fn clear_select_scene(mut preview: ResMut<GluePreview>) {
+    preview.look = None;
+    preview.scene = None;
+}
+
 pub(super) fn exit_select(
     mut commands: Commands,
     roots: Query<Entity, With<CharSelectUi>>,
-    mut preview: ResMut<GluePreview>,
     mut dialog: ResMut<super::dialog::DeleteDialog>,
     mut glue_dialog: ResMut<crate::glue::dialog::GlueDialog>,
 ) {
     for e in &roots {
         commands.entity(e).despawn();
     }
-    preview.look = None;
-    preview.scene = None;
     dialog.close();
     // The glue dialog must not follow into the world or the create screen. Its tree is despawned
     // here, since its driver runs on the glue screens only.

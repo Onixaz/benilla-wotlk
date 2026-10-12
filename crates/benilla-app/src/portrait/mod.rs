@@ -56,7 +56,7 @@ pub(crate) use dressup::{DressUpBake, DressUpLook, DressUpPreview};
 mod glue_booth;
 pub(crate) use glue_booth::{
     CreateLook, GhostKit, GlueLook, GluePetBake, GluePreview, GluePreviewBake, GlueScene, PetLook,
-    PreviewBillboard, PreviewEffects, PreviewPart, PreviewRider, SelectLook, GLUE_SLOT,
+    PreviewBillboard, PreviewEffects, PreviewPart, PreviewRider, SceneFog, SelectLook, GLUE_SLOT,
 };
 mod light;
 pub(crate) use light::{material_variant, VariantLane};
@@ -119,6 +119,11 @@ pub(crate) fn model_pane_booth(name: &str) -> Option<&'static str> {
         .find(|(pane, _)| *pane == name)
         .map(|(_, slot)| *slot)
 }
+
+/// The systems that write [`GluePreview`], one per glue screen set (the native screens', the
+/// stock glue VM's); the glue booth reads it after them, the same frame.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct GluePreviewFeed;
 
 /// World is layer 0, the UI pass layer 1; each portrait slot gets its own layer from here up.
 const PORTRAIT_LAYER_BASE: usize = 2;
@@ -803,7 +808,8 @@ impl Plugin for PortraitPlugin {
                     // Last: it reads the wake/pending state every sync above may have armed.
                     gate_booth_cameras,
                 )
-                    .chain(),
+                    .chain()
+                    .after(GluePreviewFeed),
             )
             // Re-face each booth's eye-glow cards to its own camera.
             .add_systems(Update, booth::face_booth_billboards)
