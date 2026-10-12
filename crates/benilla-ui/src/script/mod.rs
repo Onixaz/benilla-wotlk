@@ -52,6 +52,7 @@ pub mod diagnostics;
 mod editbox;
 mod formatted_text;
 pub mod instance;
+mod static_constants;
 pub(crate) use editbox::{adopt_text_region, editbox_text_region_wrapper};
 pub(crate) mod addon;
 mod addon_enable;
@@ -515,6 +516,7 @@ impl UiScript {
         addon_message::install(&lua)?;
         chat_send::install(&lua)?;
         class_list::install(&lua)?;
+        static_constants::install(&lua)?;
         chat_types::install(&lua)?;
         chat_misc::install(&lua)?;
         channel::install(&lua)?;
