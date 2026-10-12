@@ -7,7 +7,7 @@
 //!
 //! Run: `cargo run -p benilla-protocol --example cooldown_probe -- probeN <password> [host]` on a
 //! probe account with a warrior (a login kicks whoever is on the account); `.learn` needs
-//! gmlevel 5 (`SEC_DEVELOPER`). It is a combat probe, so it never runs unattended.
+//! gmlevel 5 (`SEC_DEVELOPER`).
 
 use std::time::{Duration, Instant};
 

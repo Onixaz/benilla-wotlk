@@ -366,8 +366,8 @@ fn findings(
 
     if unit_flags & UNIT_FLAG_IN_COMBAT != 0 {
         out.push(
-            "IN COMBAT on arrival — something is already fighting this character. Do not leave it \
-             unattended (docs/METHOD.md's unattended-combat ban): break the fight or move it out."
+            "IN COMBAT on arrival — something is already fighting this character: a run measuring \
+             anything else breaks the fight or moves it out first."
                 .into(),
         );
     }

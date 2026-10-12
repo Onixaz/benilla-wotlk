@@ -100,7 +100,7 @@ account. These bind every session and every agent:
   player's, because a login kicks whoever holds the account, and the client refuses a scripted
   login from a checkout on any account but the declared one.
 - Every unattended run says so: `WOW_UNATTENDED=1`. An agent's run is silent: `WOW_NOSOUND=1`.
-- No unattended combat probes.
+- A combat probe keeps its character alive: `.cheat god on` before the fight.
 - Anything about hostility, reaction colour, nameplates, threat, damage or breath runs with
   `WOW_GM=off`.
 - Read the preflight banner before debugging anything else.
