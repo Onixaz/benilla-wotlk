@@ -1,7 +1,6 @@
 //! The zone audio tables: `AreaTable` (the row an MCNK `areaId` names) joined to `ZoneMusic`,
-//! `SoundAmbience` and `ZoneIntroMusicTable`. `AreaTable.dbc` has 25 columns in 5875, not the 28
-//! of later builds: the eleven `area_schema` names, `AreaName_lang` (11-19), `FactionGroupMask`
-//! and `LiquidTypeID[4]`.
+//! `SoundAmbience` and `ZoneIntroMusicTable`. `AreaTable.dbc` is read through
+//! [`crate::area_table`]'s schema; its audio ids are columns 5 to 9.
 
 use std::collections::HashMap;
 
@@ -142,34 +141,6 @@ impl AreaSoundCatalog {
     }
 }
 
-fn area_schema() -> Schema {
-    let mut s = Schema::new("AreaTable");
-    for (i, name) in [
-        "ID",
-        "ContinentID",
-        "ParentAreaID",
-        "AreaBit",
-        "Flags",
-        "SoundProviderPref",
-        "SoundProviderPrefUnderwater",
-        "AmbienceID",
-        "ZoneMusic",
-        "IntroSound",
-        "ExplorationLevel",
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        debug_assert!(i < 11);
-        s.add_field(SchemaField::new(name, FieldType::UInt32));
-    }
-    s.add_field(SchemaField::new("AreaName", FieldType::String));
-    for i in 12..25 {
-        s.add_field(SchemaField::new(format!("_pad{i}"), FieldType::UInt32));
-    }
-    s
-}
-
 fn zone_music_schema() -> Schema {
     let mut s = Schema::new("ZoneMusic");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
@@ -217,7 +188,7 @@ pub fn load_area_sound_catalog(chain: &mut Chain) -> Result<AreaSoundCatalog> {
     let rs = read(
         chain,
         "DBFilesClient\\AreaTable.dbc",
-        area_schema(),
+        crate::area_table::area_table_schema(&crate::dbc_layout::LAYOUTS.area_table),
         "AreaTable",
     )?;
     let mut areas = HashMap::with_capacity(rs.records().len());
@@ -309,14 +280,56 @@ pub fn load_area_sound_catalog(chain: &mut Chain) -> Result<AreaSoundCatalog> {
 mod tests {
     use super::*;
 
-    /// The 5875 tables: Elwynn Forest (area 12) and a subzone inheriting its music.
+    /// Every audio id in `AreaTable` columns 5 to 9 names a row of its own table, so the columns
+    /// sit where the loader reads them. Four intro ids name rows the shipped table lacks.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+    fn real_area_audio_columns_name_their_tables() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let cat = load_area_sound_catalog(&mut chain).expect("load area-sound catalog");
+        let providers =
+            crate::load_sound_provider_catalog(&mut chain).expect("load sound providers");
+        let mut seen = [0usize; 5];
+        let mut missing = Vec::new();
+        for a in cat.areas.values() {
+            let cols = [
+                (a.sound_provider, providers.get(a.sound_provider).is_some()),
+                (
+                    a.sound_provider_underwater,
+                    providers.get(a.sound_provider_underwater).is_some(),
+                ),
+                (a.ambience, cat.ambience_row(a.ambience).is_some()),
+                (a.zone_music, cat.zone_music(a.zone_music).is_some()),
+                (a.intro_sound, cat.intro(a.intro_sound).is_some()),
+            ];
+            for (k, (id, found)) in cols.into_iter().enumerate() {
+                if id != 0 {
+                    seen[k] += 1;
+                    if !found {
+                        missing.push((5 + k, id));
+                    }
+                }
+            }
+        }
+        assert!(seen.iter().all(|&n| n > 0), "each column is set: {seen:?}");
+        missing.sort_unstable();
+        assert_eq!(missing, [(9, 65), (9, 67), (9, 68), (9, 71)]);
+
+        let dalaran = cat.resolve(4395).expect("Dalaran resolves");
+        assert_eq!(dalaran.area_name, "Dalaran");
+        assert_eq!(
+            dalaran.music.expect("city music").set_name,
+            "Zone-DalaranCity"
+        );
+    }
+
+    /// The 12340 tables: Elwynn Forest (area 12) and a subzone inheriting its music.
+    #[test]
     fn real_area_chain_resolves_elwynn() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_area_sound_catalog(&mut chain).expect("load area-sound catalog");
-        assert_eq!(cat.len(), 1081, "all AreaTable rows load");
+        assert_eq!(cat.len(), 2307, "all AreaTable rows load");
 
         let elwynn = cat.resolve(12).expect("Elwynn resolves");
         assert_eq!(elwynn.area_name, "Elwynn Forest");

@@ -6,7 +6,7 @@ use std::io::Cursor;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use benilla_dbc::{DbcParser, FieldType, Schema, SchemaField};
+use benilla_dbc::{DbcParser, Schema};
 
 /// The BLP texel forms, re-exported for [`BlpMipChain::texels`].
 pub use benilla_blp::BlpTexels;
@@ -572,8 +572,8 @@ pub fn blp_bytes_to_native_chain(bytes: &[u8]) -> Result<BlpMipChain> {
     })
 }
 
-/// Our schema for a known 1.12 DBC by base filename, as DBC files carry no column types. A
-/// localized string is 9 dwords: 8 locale offsets and a flags word.
+/// Our schema for a known DBC by base filename, as DBC files carry no column types: the loader's
+/// own, so every table has one schema.
 fn schema_for(dbc_name: &str) -> Option<Schema> {
     let base = dbc_name.rsplit(['/', '\\']).next().unwrap_or(dbc_name);
 
@@ -609,6 +609,11 @@ fn schema_for(dbc_name: &str) -> Option<Schema> {
             "ItemDisplayInfo.dbc",
             items::item_display_info_schema(&dbc.item_display_info),
         ),
+        (
+            "AreaTable.dbc",
+            area_table::area_table_schema(&dbc.area_table),
+        ),
+        ("ChrRaces.dbc", characters::chr_races_schema(&dbc.chr_races)),
     ] {
         if base.eq_ignore_ascii_case(name) {
             return Some(schema);
@@ -633,113 +638,21 @@ fn schema_for(dbc_name: &str) -> Option<Schema> {
             item_random_properties::item_random_properties_schema,
         ),
         ("AreaTrigger.dbc", area_trigger::area_trigger_schema),
+        ("TaxiNodes.dbc", taxi_nodes::taxi_nodes_schema),
+        ("TaxiPath.dbc", taxi_path::taxi_path_schema),
+        ("TaxiPathNode.dbc", taxi::taxi_path_node_schema),
+        (
+            "GameObjectDisplayInfo.dbc",
+            gameobjects::gameobject_display_info_schema,
+        ),
+        (
+            "TransportAnimation.dbc",
+            elevators::transport_animation_schema,
+        ),
     ] {
         if base.eq_ignore_ascii_case(name) {
             return Some(ctor());
         }
-    }
-
-    if base.eq_ignore_ascii_case("TaxiNodes.dbc") {
-        // 16 fields, 64-byte records.
-        let mut s = Schema::new("TaxiNodes");
-        s.add_field(SchemaField::new("ID", FieldType::UInt32));
-        s.add_field(SchemaField::new("MapID", FieldType::UInt32));
-        s.add_field(SchemaField::new("X", FieldType::Float32));
-        s.add_field(SchemaField::new("Y", FieldType::Float32));
-        s.add_field(SchemaField::new("Z", FieldType::Float32));
-        s.add_field(SchemaField::new("Name", FieldType::String)); // enUS (locale 0)
-        s.add_field(SchemaField::new_array(
-            "NameOtherLocales",
-            FieldType::String,
-            7,
-        ));
-        s.add_field(SchemaField::new("NameFlags", FieldType::UInt32));
-        s.add_field(SchemaField::new("MountIdHorde", FieldType::UInt32));
-        s.add_field(SchemaField::new("MountIdAlliance", FieldType::UInt32));
-        s.set_key_field("ID");
-        return Some(s);
-    }
-
-    if base.eq_ignore_ascii_case("AreaTable.dbc") {
-        // 25 fields, 100-byte records, as `area_table.rs` and `area_sound.rs` load them.
-        let mut s = Schema::new("AreaTable");
-        s.add_field(SchemaField::new("ID", FieldType::UInt32));
-        s.add_field(SchemaField::new("ContinentID", FieldType::UInt32));
-        s.add_field(SchemaField::new("ParentAreaID", FieldType::UInt32));
-        s.add_field(SchemaField::new("AreaBit", FieldType::UInt32));
-        s.add_field(SchemaField::new("Flags", FieldType::UInt32));
-        s.add_field(SchemaField::new("SoundProviderPref", FieldType::UInt32));
-        s.add_field(SchemaField::new(
-            "SoundProviderPrefUnderwater",
-            FieldType::UInt32,
-        ));
-        s.add_field(SchemaField::new("AmbienceID", FieldType::UInt32));
-        s.add_field(SchemaField::new("ZoneMusic", FieldType::UInt32));
-        s.add_field(SchemaField::new("IntroSound", FieldType::UInt32));
-        s.add_field(SchemaField::new("ExplorationLevel", FieldType::UInt32));
-        s.add_field(SchemaField::new("AreaName", FieldType::String)); // enUS (locale 0)
-        s.add_field(SchemaField::new_array(
-            "AreaNameOtherLocales",
-            FieldType::String,
-            7,
-        ));
-        s.add_field(SchemaField::new("AreaNameFlags", FieldType::UInt32));
-        s.add_field(SchemaField::new("FactionGroupMask", FieldType::UInt32));
-        s.add_field(SchemaField::new_array("LiquidTypeID", FieldType::UInt32, 4));
-        s.set_key_field("ID");
-        return Some(s);
-    }
-
-    if base.eq_ignore_ascii_case("GameObjectDisplayInfo.dbc") {
-        // 12 fields, as `gameobjects.rs` loads them.
-        let mut s = Schema::new("GameObjectDisplayInfo");
-        s.add_field(SchemaField::new("ID", FieldType::UInt32));
-        s.add_field(SchemaField::new("ModelName", FieldType::String));
-        for i in 0..10 {
-            s.add_field(SchemaField::new(format!("Sound{i}"), FieldType::UInt32));
-        }
-        s.set_key_field("ID");
-        return Some(s);
-    }
-
-    if base.eq_ignore_ascii_case("TaxiPath.dbc") {
-        let mut s = Schema::new("TaxiPath");
-        for name in ["ID", "FromTaxiNode", "ToTaxiNode", "Cost"] {
-            s.add_field(SchemaField::new(name, FieldType::UInt32));
-        }
-        s.set_key_field("ID");
-        return Some(s);
-    }
-
-    if base.eq_ignore_ascii_case("TaxiPathNode.dbc") {
-        // 9 fields, as `taxi.rs` loads them.
-        let mut s = Schema::new("TaxiPathNode");
-        for name in ["ID", "PathID", "NodeIndex", "MapID"] {
-            s.add_field(SchemaField::new(name, FieldType::UInt32));
-        }
-        for name in ["LocX", "LocY", "LocZ"] {
-            s.add_field(SchemaField::new(name, FieldType::Float32));
-        }
-        for name in ["Flags", "Delay"] {
-            s.add_field(SchemaField::new(name, FieldType::UInt32));
-        }
-        s.set_key_field("ID");
-        return Some(s);
-    }
-
-    if base.eq_ignore_ascii_case("TransportAnimation.dbc") {
-        // 7 fields; vmangos's `TransportAnimationEntry` (`DBCStructure.h:709-718`) reads the
-        // middle five, leaving the first and last out.
-        let mut s = Schema::new("TransportAnimation");
-        s.add_field(SchemaField::new("ID", FieldType::UInt32));
-        s.add_field(SchemaField::new("TransportID", FieldType::UInt32));
-        s.add_field(SchemaField::new("TimeIndex", FieldType::UInt32));
-        for name in ["PosX", "PosY", "PosZ"] {
-            s.add_field(SchemaField::new(name, FieldType::Float32));
-        }
-        s.add_field(SchemaField::new("SequenceID", FieldType::UInt32));
-        s.set_key_field("ID");
-        return Some(s);
     }
 
     None

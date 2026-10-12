@@ -100,7 +100,7 @@ pub fn load_footstep_catalog(chain: &mut Chain) -> Result<FootstepCatalog> {
         .context("reading GroundEffectTexture.dbc")?;
     let rs = parse(
         &bytes,
-        n_u32_schema("GroundEffectTexture", 7, &[]),
+        crate::ground_effects::ground_effect_texture_schema(),
         "GroundEffectTexture",
     )?;
     let mut effect_terrain = HashMap::with_capacity(rs.records().len());

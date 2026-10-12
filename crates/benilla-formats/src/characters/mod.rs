@@ -20,6 +20,8 @@ pub use sections::{
     BlitSource, CharSections, CompositePlan, EmblemLayer, EquipBlit, GuildEmblem,
 };
 
-// The loaders' own schemas, for the `benilla-extract dbc` CSV dump (`crate::schema_for`).
+// The loaders' own schemas, for the `benilla-extract dbc` CSV dump (`crate::schema_for`) and the
+// other readers of the same table.
+pub(crate) use customization::chr_races_schema;
 pub(crate) use geosets::{char_facial_hair_schema, char_hair_geosets_schema, helmet_vis_schema};
 pub(crate) use sections::char_sections_schema;

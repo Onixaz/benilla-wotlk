@@ -25,7 +25,8 @@ pub struct DbcLayouts {
 }
 
 /// `AreaTable.dbc`; the id, map, parent, explore bit, flags and exploration level are columns 0
-/// to 4 and 10, and `AreaName_lang`'s enUS column is 11.
+/// to 4 and 10, the dry and underwater sound providers, ambience, zone music and intro columns 5
+/// to 9, and `AreaName_lang`'s enUS column is 11.
 #[derive(Debug)]
 pub struct AreaTable {
     pub fields: usize,

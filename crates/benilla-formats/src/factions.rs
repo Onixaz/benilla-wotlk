@@ -377,20 +377,6 @@ fn faction_group_schema() -> Schema {
     s
 }
 
-/// `ChrRaces.dbc`: 29 fields in build 5875. Only the id and `FactionID` (column 2) are read; the
-/// string columns are declared so the field count matches.
-fn chr_races_schema() -> Schema {
-    let mut s = Schema::new("ChrRaces");
-    for i in 0..29 {
-        let ty = match i {
-            15 | 26 | 27 | 28 => FieldType::String,
-            _ => FieldType::UInt32,
-        };
-        s.add_field(SchemaField::new(format!("f{i}"), ty));
-    }
-    s
-}
-
 /// Load the three faction tables and the race templates off the patch chain.
 pub fn load_faction_catalog(chain: &mut Chain) -> Result<FactionCatalog> {
     let bytes = chain
@@ -468,7 +454,9 @@ pub fn load_faction_catalog(chain: &mut Chain) -> Result<FactionCatalog> {
     let bytes = chain
         .read_file(CHR_RACES)
         .with_context(|| format!("reading {CHR_RACES}"))?;
-    let rs = parse(&bytes, chr_races_schema(), "ChrRaces")?;
+    let schema = crate::characters::chr_races_schema(&crate::dbc_layout::LAYOUTS.chr_races);
+    let rs = parse(&bytes, schema, "ChrRaces")?;
+    // `FactionID` is column 2: 1 to 4 on the first four races, `FactionTemplate`'s rows 1 to 4.
     let race_templates = rs
         .records()
         .iter()

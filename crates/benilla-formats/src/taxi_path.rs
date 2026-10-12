@@ -54,7 +54,7 @@ impl TaxiPaths {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn taxi_path_schema() -> Schema {
     let mut s = Schema::new("TaxiPath");
     for name in ["ID", "FromTaxiNode", "ToTaxiNode", "Cost"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));
@@ -65,7 +65,7 @@ fn schema() -> Schema {
 /// Read `TaxiPath.dbc` off the patch chain into a [`TaxiPaths`] catalog.
 pub fn load_taxi_paths(chain: &mut Chain) -> Result<TaxiPaths> {
     let bytes = chain.read_file(TAXI_PATH).context("reading TaxiPath.dbc")?;
-    let rs = parse(&bytes, schema(), "TaxiPath")?;
+    let rs = parse(&bytes, taxi_path_schema(), "TaxiPath")?;
     let mut rows = HashMap::with_capacity(rs.records().len());
     let mut by_pair = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {

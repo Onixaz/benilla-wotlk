@@ -287,7 +287,8 @@ fn fan_point(
     ]
 }
 
-fn texture_schema() -> Schema {
+/// `GroundEffectTexture.dbc`, the one schema its readers share.
+pub(crate) fn ground_effect_texture_schema() -> Schema {
     let mut s = Schema::new("GroundEffectTexture");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     for i in 0..4 {
@@ -338,7 +339,11 @@ pub fn load_ground_effect_catalog(
     let bytes = chain
         .read_file(GROUND_EFFECT_TEXTURE)
         .with_context(|| format!("reading {GROUND_EFFECT_TEXTURE}"))?;
-    let rs = parse(&bytes, texture_schema(), "GroundEffectTexture")?;
+    let rs = parse(
+        &bytes,
+        ground_effect_texture_schema(),
+        "GroundEffectTexture",
+    )?;
     let mut effects = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };

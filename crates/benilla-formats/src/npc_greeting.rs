@@ -1,7 +1,7 @@
 //! The NPC greeting voice, a per-display property apart from the body vocals of
-//! [`crate::creature_sound`]: `UNIT_FIELD_DISPLAYID` → `CreatureDisplayInfo.dbc` field 11
-//! (`NPCSoundID`, row `+0x2c`; loader `0x542e90`, 12 columns) → `NPCSounds.dbc` (`0x54afa0`: `ID`,
-//! `hello`, `goodbye`, `pissed`, and `ack`, 0 on every row and never read). Each is a
+//! [`crate::creature_sound`]: `UNIT_FIELD_DISPLAYID` → `CreatureDisplayInfo.dbc`'s `NPCSoundID`
+//! (column 12 in 12340, after `PortraitTextureName`) → `NPCSounds.dbc` (`0x54afa0`: `ID`, `hello`,
+//! `goodbye`, `pissed`, and `ack`, 0 on every row and never read). Each is a
 //! `SoundEntries` kit of type 17, no-duplicates (`0x20`), cut off at 45 yd, a 3D emitter at the NPC
 //! (`0x7a5b10`). `CreatureSoundData.NPCSoundID` is not on the path (`0x60c3b0`, `0x623910`).
 
@@ -27,7 +27,7 @@ pub struct NpcGreeting {
     pub pissed: u32,
 }
 
-/// Display id → greeting kits, joined through `CreatureDisplayInfo` field 11 → `NPCSounds`.
+/// Display id → greeting kits, joined through `CreatureDisplayInfo.NPCSoundID` → `NPCSounds`.
 pub struct NpcGreetingCatalog {
     display_to_sound: HashMap<u32, u32>,
     rows: HashMap<u32, NpcGreeting>,
@@ -57,14 +57,6 @@ fn npcsounds_schema() -> Schema {
     s
 }
 
-fn cdi_schema() -> Schema {
-    let mut s = Schema::new("CreatureDisplayInfo");
-    for i in 0..12 {
-        s.add_field(SchemaField::new(format!("f{i}"), FieldType::UInt32));
-    }
-    s
-}
-
 /// Read `NPCSounds.dbc` + `CreatureDisplayInfo.dbc` off the patch chain into the joined catalog.
 pub fn load_npc_greeting_catalog(chain: &mut Chain) -> Result<NpcGreetingCatalog> {
     let bytes = chain
@@ -87,10 +79,15 @@ pub fn load_npc_greeting_catalog(chain: &mut Chain) -> Result<NpcGreetingCatalog
     let bytes = chain
         .read_file("DBFilesClient\\CreatureDisplayInfo.dbc")
         .context("reading CreatureDisplayInfo.dbc")?;
-    let rs = parse(&bytes, cdi_schema(), "CreatureDisplayInfo")?;
+    let l = &crate::dbc_layout::LAYOUTS.creature_display_info;
+    let rs = parse(
+        &bytes,
+        crate::creatures::creature_display_info_schema(l),
+        "CreatureDisplayInfo",
+    )?;
     let mut display_to_sound = HashMap::new();
     for r in rs.records() {
-        let (Some(id), Some(npc_sound)) = (u32_at(r, 0), u32_at(r, 11)) else {
+        let (Some(id), Some(npc_sound)) = (u32_at(r, 0), u32_at(r, l.npc_sound)) else {
             continue;
         };
         if npc_sound != 0 {
@@ -107,14 +104,13 @@ pub fn load_npc_greeting_catalog(chain: &mut Chain) -> Result<NpcGreetingCatalog
 mod tests {
     use super::*;
 
-    /// The 5875 join: character displays resolve their kits, a beast display (26) has none.
+    /// The 12340 join: character displays resolve their kits, a beast display (26) has none.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_npc_greeting_resolves() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_npc_greeting_catalog(&mut chain).expect("load npc greetings");
-        assert_eq!(cat.len(), 156, "all NPCSounds rows load");
+        assert_eq!(cat.len(), 301, "all NPCSounds rows load");
 
         // Display 793 is `NPCSoundID` 50.
         let g = cat.for_display(793).expect("display 793 greets");

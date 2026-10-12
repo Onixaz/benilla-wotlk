@@ -54,7 +54,7 @@ impl TaxiNodes {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn taxi_nodes_schema() -> Schema {
     let mut s = Schema::new("TaxiNodes");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("MapID", FieldType::UInt32));
@@ -78,7 +78,7 @@ pub fn load_taxi_nodes(chain: &mut Chain) -> Result<TaxiNodes> {
     let bytes = chain
         .read_file(TAXI_NODES)
         .context("reading TaxiNodes.dbc")?;
-    let rs = parse(&bytes, schema(), "TaxiNodes")?;
+    let rs = parse(&bytes, taxi_nodes_schema(), "TaxiNodes")?;
     let mut rows = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };

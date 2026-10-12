@@ -111,7 +111,9 @@ impl AreaTableCatalog {
     }
 }
 
-fn schema(l: &crate::dbc_layout::AreaTable) -> Schema {
+/// `AreaTable.dbc`, the one schema every reader of the table shares: `AreaName_lang`'s enUS
+/// column a string, every other column a `u32`.
+pub(crate) fn area_table_schema(l: &crate::dbc_layout::AreaTable) -> Schema {
     let mut s = Schema::new("AreaTable");
     for i in 0..l.fields {
         match i {
@@ -128,7 +130,7 @@ pub fn load_area_table_catalog(chain: &mut Chain) -> Result<AreaTableCatalog> {
         .read_file(AREA_TABLE)
         .context("reading AreaTable.dbc")?;
     let layout = &crate::dbc_layout::LAYOUTS.area_table;
-    let rs = parse(&bytes, schema(layout), "AreaTable")?;
+    let rs = parse(&bytes, area_table_schema(layout), "AreaTable")?;
     let mut by_id = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
         let (Some(id), Some(map_id), Some(zone_id), Some(explore_flag), Some(flags), Some(name)) = (

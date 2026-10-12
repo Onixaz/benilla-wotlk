@@ -50,16 +50,6 @@ fn languages_schema() -> Schema {
     s
 }
 
-/// `ChrRaces.dbc`, all read as dwords: only the count must match the header, and only field 7 is
-/// used.
-fn chr_races_schema() -> Schema {
-    let mut s = Schema::new("ChrRaces");
-    for i in 0..crate::dbc_layout::LAYOUTS.chr_races.fields {
-        s.add_field(SchemaField::new(format!("f{i}"), FieldType::UInt32));
-    }
-    s
-}
-
 /// `BaseLanguage`, which the binding reads at `record + 0x1c`: 7 on the Alliance races, 1 on the
 /// Horde's. Field 8 beside it is the creature type, 7 on every playable race.
 const CHR_RACES_BASE_LANGUAGE: usize = 7;
@@ -135,7 +125,8 @@ pub fn load_default_languages(chain: &mut Chain) -> Result<DefaultLanguages> {
     let race_bytes = chain
         .read_file(CHR_RACES)
         .with_context(|| format!("reading {CHR_RACES}"))?;
-    let races = parse(&race_bytes, chr_races_schema(), "ChrRaces.dbc")?;
+    let schema = crate::characters::chr_races_schema(&crate::dbc_layout::LAYOUTS.chr_races);
+    let races = parse(&race_bytes, schema, "ChrRaces.dbc")?;
     let mut out = HashMap::new();
     for r in races.records() {
         let (Some(race), Some(lang)) = (u32_at(r, 0), u32_at(r, CHR_RACES_BASE_LANGUAGE)) else {

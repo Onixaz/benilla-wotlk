@@ -5,7 +5,6 @@ use std::collections::HashMap;
 
 use crate::Chain;
 use anyhow::{Context, Result};
-use benilla_dbc::{FieldType, Schema, SchemaField};
 
 use crate::dbc::{parse, u32_at};
 
@@ -35,14 +34,7 @@ pub fn load_exploration_sound_catalog(chain: &mut Chain) -> Result<ExplorationSo
     let bytes = chain
         .read_file(CHR_RACES)
         .with_context(|| format!("reading {CHR_RACES}"))?;
-    let mut schema = Schema::new("ChrRaces");
-    for i in 0..29 {
-        let ty = match i {
-            15 | 26 | 27 | 28 => FieldType::String,
-            _ => FieldType::UInt32,
-        };
-        schema.add_field(SchemaField::new(format!("f{i}"), ty));
-    }
+    let schema = crate::characters::chr_races_schema(&crate::dbc_layout::LAYOUTS.chr_races);
     let rs = parse(&bytes, schema, "ChrRaces")?;
     let mut by_race = HashMap::new();
     for r in rs.records() {
@@ -61,18 +53,22 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_chr_races_exploration_kits() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_exploration_sound_catalog(&mut chain).expect("load ChrRaces");
-        for race in 1..=8u32 {
-            let kit = cat.kit(race);
-            eprintln!("race {race}: exploration kit {kit:?}");
-            assert!(kit.is_some(), "race {race} has no exploration sound");
+        assert_eq!(cat.len(), 10, "the ten playable races, Goblin (9) none");
+        for race in (1..=11u32).filter(|&r| r != 9) {
+            assert!(
+                cat.kit(race).is_some(),
+                "race {race} has no exploration sound"
+            );
         }
-        // The shipped kits run 4140-4147; Human and Orc guard the column position.
+        // The shipped kits run 4140-4147; Human and Orc guard the column position, and Blood Elf
+        // and Draenei reuse the Undead's and the Human's.
         assert_eq!(cat.kit(1), Some(4140));
         assert_eq!(cat.kit(2), Some(4141));
+        assert_eq!(cat.kit(10), Some(4142));
+        assert_eq!(cat.kit(11), Some(4140));
     }
 }

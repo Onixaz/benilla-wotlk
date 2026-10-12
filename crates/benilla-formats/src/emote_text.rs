@@ -131,7 +131,7 @@ fn fill(template: &str, args: &[&str]) -> String {
 }
 
 /// `EmotesText.dbc`: 19 fields, the 76-byte record the reference loader checks for.
-fn emotes_text_schema() -> Schema {
+pub(crate) fn emotes_text_schema() -> Schema {
     let mut s = Schema::new("EmotesText");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("Name", FieldType::String));

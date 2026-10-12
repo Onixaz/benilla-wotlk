@@ -97,10 +97,22 @@ pub(crate) fn load_id_name_table(
     cols: usize,
     what: &str,
 ) -> Result<HashMap<u32, String>> {
+    load_id_name_map(chain, file, id_name_schema(what, name_col, cols), name_col)
+}
+
+/// Read a DBC through `schema` into an id → name map from `name_col`, skipping rows whose name is
+/// empty.
+pub(crate) fn load_id_name_map(
+    chain: &mut Chain,
+    file: &str,
+    schema: Schema,
+    name_col: usize,
+) -> Result<HashMap<u32, String>> {
     let bytes = chain
         .read_file(file)
         .with_context(|| format!("reading {file}"))?;
-    let rs = parse(&bytes, id_name_schema(what, name_col, cols), what)?;
+    let what = schema.name.clone();
+    let rs = parse(&bytes, schema, &what)?;
     let mut out = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
         if let (Some(id), Some(name)) = (u32_at(r, 0), str_at(&rs, r, name_col)) {

@@ -59,7 +59,7 @@ impl TaxiPathNodes {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn taxi_path_node_schema() -> Schema {
     let mut s = Schema::new("TaxiPathNode");
     for name in ["ID", "PathID", "NodeIndex", "MapID"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));
@@ -78,7 +78,7 @@ pub fn load_taxi_path_nodes(chain: &mut Chain) -> Result<TaxiPathNodes> {
     let bytes = chain
         .read_file(TAXI_PATH_NODE)
         .context("reading TaxiPathNode.dbc")?;
-    let rs = parse(&bytes, schema(), "TaxiPathNode")?;
+    let rs = parse(&bytes, taxi_path_node_schema(), "TaxiPathNode")?;
     let mut paths: HashMap<u32, Vec<TaxiPathNode>> = HashMap::new();
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };

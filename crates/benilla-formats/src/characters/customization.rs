@@ -221,6 +221,23 @@ impl CharCreateCatalog {
     }
 }
 
+/// `ChrRaces.dbc`, the one schema every reader of the table shares: the string columns benilla
+/// reads typed as strings, every other column a `u32`.
+pub(crate) fn chr_races_schema(l: &crate::dbc_layout::ChrRaces) -> Schema {
+    let facial = l.facial_hair_customization;
+    let strings = [l.client_file, facial, facial + 1, l.hair_customization];
+    let mut schema = Schema::new("ChrRaces");
+    for i in 0..l.fields {
+        let ty = if strings.contains(&i) {
+            FieldType::String
+        } else {
+            FieldType::UInt32
+        };
+        schema.add_field(SchemaField::new(format!("f{i}"), ty));
+    }
+    schema
+}
+
 /// ChrRaces → per playable race: displayIds (cols 4/5), fileString, facial-hair and hair tokens;
 /// other string columns are read as ignored `u32`s.
 #[allow(clippy::type_complexity)] // one pass over one DBC → the catalog's three race-keyed maps
@@ -236,17 +253,7 @@ fn load_races(
         .with_context(|| format!("reading {CHR_RACES}"))?;
     let l = &crate::dbc_layout::LAYOUTS.chr_races;
     let facial = l.facial_hair_customization;
-    let strings = [l.client_file, facial, facial + 1, l.hair_customization];
-    let mut schema = Schema::new("ChrRaces");
-    for i in 0..l.fields {
-        let ty = if strings.contains(&i) {
-            FieldType::String
-        } else {
-            FieldType::UInt32
-        };
-        schema.add_field(SchemaField::new(format!("f{i}"), ty));
-    }
-    let rs = parse(&bytes, schema, "ChrRaces")?;
+    let rs = parse(&bytes, chr_races_schema(l), "ChrRaces")?;
     let mut displays = HashMap::new();
     let mut files = HashMap::new();
     let mut tokens = HashMap::new();
@@ -359,7 +366,7 @@ fn load_available_sections(chain: &mut Chain) -> Result<HashSet<SectionKey>> {
     let l = &crate::dbc_layout::LAYOUTS.char_sections;
     let rs = parse(
         &bytes,
-        all_u32_schema("CharSections", l.fields),
+        super::sections::char_sections_schema(l),
         "CharSections",
     )?;
     let mut avail = HashSet::new();
@@ -387,7 +394,7 @@ fn load_hair_geosets(chain: &mut Chain) -> Result<HashMap<(u8, u8), HashSet<u8>>
         .with_context(|| format!("reading {CHAR_HAIR_GEOSETS}"))?;
     let rs = parse(
         &bytes,
-        all_u32_schema("CharHairGeosets", 6),
+        super::geosets::char_hair_geosets_schema(),
         "CharHairGeosets",
     )?;
     let mut map: HashMap<(u8, u8), HashSet<u8>> = HashMap::new();
@@ -406,12 +413,11 @@ fn load_facial_hair_styles(chain: &mut Chain) -> Result<HashMap<(u8, u8), HashSe
     let bytes = chain
         .read_file(CHAR_FACIAL_HAIR_STYLES)
         .with_context(|| format!("reading {CHAR_FACIAL_HAIR_STYLES}"))?;
-    let fields = crate::dbc_layout::LAYOUTS
-        .character_facial_hair_styles
-        .fields;
     let rs = parse(
         &bytes,
-        all_u32_schema("CharacterFacialHairStyles", fields),
+        super::geosets::char_facial_hair_schema(
+            &crate::dbc_layout::LAYOUTS.character_facial_hair_styles,
+        ),
         "CharacterFacialHairStyles",
     )?;
     let mut map: HashMap<(u8, u8), HashSet<u8>> = HashMap::new();
@@ -459,15 +465,6 @@ fn derive_ranges(
         hair_color: section_axis_count(avail, race, sex, SECTION_HAIR, false),
         facial_hair: facial.get(&(race, sex)).map_or(0, |v| v.len() as u8),
     }
-}
-
-/// `n` `UInt32` fields for a DBC read by index; the parser's field-count check guards the layout.
-fn all_u32_schema(name: &str, n: usize) -> Schema {
-    let mut s = Schema::new(name);
-    for i in 0..n {
-        s.add_field(SchemaField::new(format!("f{i}"), FieldType::UInt32));
-    }
-    s
 }
 
 #[cfg(test)]

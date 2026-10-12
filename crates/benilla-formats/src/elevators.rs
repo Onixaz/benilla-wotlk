@@ -47,7 +47,7 @@ impl ElevatorPaths {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn transport_animation_schema() -> Schema {
     let mut s = Schema::new("TransportAnimation");
     for name in ["ID", "TransportID", "TimeIndex"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));
@@ -66,7 +66,7 @@ pub fn load_elevator_paths(chain: &mut Chain) -> Result<ElevatorPaths> {
     let bytes = chain
         .read_file(TRANSPORT_ANIMATION)
         .context("reading TransportAnimation.dbc")?;
-    let rs = parse(&bytes, schema(), "TransportAnimation")?;
+    let rs = parse(&bytes, transport_animation_schema(), "TransportAnimation")?;
     let mut by_entry: HashMap<u32, Vec<ElevatorKeyframe>> = HashMap::new();
     for r in rs.records() {
         let Some(entry) = u32_at(r, 1) else { continue };

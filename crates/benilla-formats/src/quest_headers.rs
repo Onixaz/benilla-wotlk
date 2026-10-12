@@ -1,4 +1,4 @@
-//! Quest log header names. As in the 1.12 client, a quest's `ZoneOrSort` is an `AreaTable.dbc` id
+//! Quest log header names. As in the client, a quest's `ZoneOrSort` is an `AreaTable.dbc` id
 //! when positive and a negated `QuestSort.dbc` id (class, profession, seasonal) when negative.
 
 use std::collections::HashMap;
@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use crate::chain::Chain;
-use crate::dbc::load_id_name_table;
+use crate::dbc::{load_id_name_map, load_id_name_table};
 
 /// `ZoneOrSort` → header name.
 #[derive(Debug, Default)]
@@ -33,7 +33,12 @@ impl QuestHeaderNames {
 /// Load both name tables through the patch chain.
 pub fn load_quest_header_names(chain: &mut Chain) -> Result<QuestHeaderNames> {
     Ok(QuestHeaderNames {
-        zones: load_id_name_table(chain, "DBFilesClient\\AreaTable.dbc", 11, 25, "AreaTable")?,
+        zones: load_id_name_map(
+            chain,
+            "DBFilesClient\\AreaTable.dbc",
+            crate::area_table::area_table_schema(&crate::dbc_layout::LAYOUTS.area_table),
+            11,
+        )?,
         sorts: load_id_name_table(chain, "DBFilesClient\\QuestSort.dbc", 1, 10, "QuestSort")?,
     })
 }

@@ -138,7 +138,11 @@ pub fn load_emote_sound_catalog(chain: &mut Chain) -> Result<EmoteSoundCatalog> 
     let bytes = chain
         .read_file("DBFilesClient\\EmotesText.dbc")
         .context("reading EmotesText.dbc")?;
-    let rs = parse(&bytes, schema("EmotesText", 19, &[1]), "EmotesText")?;
+    let rs = parse(
+        &bytes,
+        crate::emote_text::emotes_text_schema(),
+        "EmotesText",
+    )?;
     let mut by_name = HashMap::with_capacity(rs.records().len());
     let mut text_emote = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
