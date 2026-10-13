@@ -2241,6 +2241,10 @@ mod tests {
             ("gxCursor", "OptionsFrame.lua's Hardware Cursor box"),
             ("gxFixLag", "OptionsFrame.lua's Fix Input Lag box"),
             ("gxRefresh", "OptionsFrame.lua's refresh-rate dropdown"),
+            (
+                "ShowAllSpellRanks",
+                "SpellBookFrame.lua's SpellBook_GetTabInfo and Show All Spell Ranks box",
+            ),
         ];
         let app_src = crate::test_support::src_dir();
         let ui_src = app_src

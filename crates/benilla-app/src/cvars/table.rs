@@ -237,6 +237,9 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // `autoSelfCast` (register site `0x51dbee`, name `0xa025e4`, default `0x9e1464` "1"): a
     // friendly cast that binds nothing falls back to the caster. `TOGGLEAUTOSELFCAST` toggles it.
     same("autoSelfCast", "1"),
+    // `ShowAllSpellRanks` (register site `0x51f1e6`, name `0x9ffea0`, default `0x9e1464` "1"):
+    // `SpellBook_GetTabInfo` pages the full book while set, the highest-rank view while clear.
+    same("ShowAllSpellRanks", "1"),
     // The five saved camera views and the live index, at the reference's names and default strings;
     // owned by [`crate::player::camera_view`]. Registered so a `SaveView` persists.
     same(

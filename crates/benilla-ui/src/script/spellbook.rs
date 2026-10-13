@@ -44,7 +44,7 @@ pub struct SpellSlotView {
     /// `SPELL_ATTR_PASSIVE`: grays the name and refuses `CastSpell` and `CastSpellByName`, never
     /// a pickup (the reference does not block one).
     pub passive: bool,
-    /// `IsCurrentCast`, the checked ring: the reference (`0x4b3600`) answers it only for a
+    /// `IsSelectedSpell`, the checked ring: the reference (`0x4b3600`) answers it only for a
     /// shapeshift into the player's current form or the open trade-skill window's spell, never an
     /// ordinary cast.
     pub current: bool,
@@ -82,10 +82,60 @@ pub struct SpellBookState {
     pub slots: Vec<SpellSlotView>,
 }
 
+/// The book with every lower rank folded away, which `SpellBookFrame.lua` pages through while
+/// `ShowAllSpellRanks` is off: the reference's second id array (`0xbe5d88`, count `0xbe8d9c`) and
+/// each tab's count beside it (`tab+0x8`), rebuilt on every re-sort (`0x53cb0f`-`0x53cd31`).
+///
+/// A slot stays unless the next slot of its tab has the same name (`0x76e760`, the CRT `strncmp`)
+/// and a nonzero rank number (`0x53b540`, `rank_number`'s parse): the ranks sit in
+/// ascending order, so each name keeps its highest, and an unranked follower folds nothing.
+///
+/// Deviation: the reference compares a tab's last slot with the slot after it even when that one
+/// opens the next tab, so a same-named ranked spell there would hide it; the fold stops at the tab
+/// edge here, because one tab never hides another's spell.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct HighestRankView {
+    /// The kept spell ids in book order; `GetKnownSlotFromHighestRankSlot` maps one back to its
+    /// full-book slot by id (`0x53b681`).
+    pub(crate) spell_ids: Vec<u32>,
+    /// Per tab, the kept count; a tab's offset is the sum of the counts before it (`0x53bfec`).
+    pub(crate) tab_counts: Vec<u32>,
+}
+
+impl HighestRankView {
+    pub(crate) fn of(book: &SpellBookState) -> Self {
+        let mut view = Self::default();
+        for tab in &book.tabs {
+            let start = tab.offset as usize;
+            let end = (start + tab.num_spells as usize).min(book.slots.len());
+            let tab_slots = book.slots.get(start..end).unwrap_or_default();
+            let before = view.spell_ids.len();
+            for (i, slot) in tab_slots.iter().enumerate() {
+                let folded = tab_slots.get(i + 1).is_some_and(|next| {
+                    next.name == slot.name && rank_number(next.rank.as_deref()) != 0
+                });
+                if !folded {
+                    view.spell_ids.push(slot.spell_id);
+                }
+            }
+            view.tab_counts.push((view.spell_ids.len() - before) as u32);
+        }
+        view
+    }
+
+    /// The tab's `(highestRankOffset, highestRankNumSpells)`, `GetSpellTabInfo`'s fifth and sixth.
+    fn tab(&self, index: usize) -> (u32, u32) {
+        let offset = self.tab_counts.iter().take(index).sum();
+        (offset, self.tab_counts.get(index).copied().unwrap_or(0))
+    }
+}
+
 impl super::UiScript {
     /// Replace the book; the app fires `SPELLS_CHANGED` on its own diff.
     pub fn set_spellbook(&mut self, state: SpellBookState) {
-        self.model_mut().spellbook = state;
+        let mut model = self.model_mut();
+        model.spellbook_highest_rank = HighestRankView::of(&state);
+        model.spellbook = state;
     }
 
     /// Replace the pet's book; the app fires `SPELLS_CHANGED`, which the reference fires for both
@@ -353,13 +403,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetSpellTabInfo(i) -> name, texture, offset, numSpells, four values on every path
-    // (`0x4b3ce0`). Out of range, 0 and negatives included (`0x4b3d26`), is `nil, nil, 0, 0`
-    // (`0x4b3e12`): `SpellBookFrame.lua:295` and `:328` compare `id > (offset + numSpells)`
-    // unguarded, so the zeros hide every button where a nil would raise. In range, the reference
-    // answers a nil name and texture for a skill line with no DBC row (`0x4b3dbd`) and a nil
-    // texture for one with no icon (SkillLine 733, 753, 754); here the name is always a string.
-    // The index is truncated before the decrement, unlike in `0x4b3ec0`, so 0.5 is out of range.
+    // GetSpellTabInfo(i) -> name, texture, offset, numSpells, highestRankOffset,
+    // highestRankNumSpells, six values on every path (`0x53be70`, `mov eax,6` at `0x53c04c` and
+    // `0x53c09b`); the last two index [`HighestRankView`], which `SpellBook_GetTabInfo` reads
+    // while `ShowAllSpellRanks` is off. Out of range, 0 and negatives included (`0x53bece`), is
+    // `nil, nil, 0, 0, 0, 0` (`0x53c056`): `SpellBookFrame.lua` compares `displayID > (offset +
+    // numSpells)` unguarded, so the zeros hide every button where a nil would raise. In range, the
+    // reference answers a nil name and texture for a skill line with no DBC row (`0x53bf69`) and a
+    // nil texture for one with no icon; here the name is always a string. The index is truncated
+    // before the decrement (`0x53bea7`), so 0.5 is out of range.
     g.set(
         "GetSpellTabInfo",
         lua.create_function(|lua, i: Value| {
@@ -375,8 +427,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Value::Nil,
                     Value::Integer(0),
                     Value::Integer(0),
+                    Value::Integer(0),
+                    Value::Integer(0),
                 ]));
             };
+            let (hr_offset, hr_num) = model.spellbook_highest_rank.tab(i as usize - 1);
             let texture = match &tab.texture {
                 Some(t) => Value::String(lua.create_string(t)?),
                 None => Value::Nil,
@@ -386,7 +441,27 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 texture,
                 Value::Integer(i64::from(tab.offset)),
                 Value::Integer(i64::from(tab.num_spells)),
+                Value::Integer(i64::from(hr_offset)),
+                Value::Integer(i64::from(hr_num)),
             ]))
+        })?,
+    )?;
+
+    // GetKnownSlotFromHighestRankSlot(slot) -> the 1-based full-book slot holding the spell at
+    // `slot` of [`HighestRankView`], 0 when `slot` is past it or the spell left the book
+    // (`0x53b650`: `0x53b691` then `inc`). One number on every path. The argument is a bare
+    // `lua_tointeger` (`0x84e070`) with no usage check, so a non-number reads as 0 and answers 0.
+    g.set(
+        "GetKnownSlotFromHighestRankSlot",
+        lua.create_function(|lua, slot: Option<Value>| {
+            let slot = super::binding_abi::coerced_number(lua, slot).round_ties_even() as i64;
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let known = usize::try_from(slot - 1)
+                .ok()
+                .and_then(|i| model.spellbook_highest_rank.spell_ids.get(i))
+                .and_then(|&id| model.spellbook.slots.iter().position(|s| s.spell_id == id))
+                .map_or(0, |i| i as i64 + 1);
+            Ok(known)
         })?,
     )?;
 
@@ -425,12 +500,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // IsCurrentCast(id, bookType) (`0x4b4370`) reads back the app's per-slot verdict,
-    // `SpellSlotView::current`.
+    // IsSelectedSpell(id, bookType) (`0x5412c0`, 1.12's `IsCurrentCast`) reads back the app's
+    // per-slot verdict, `SpellSlotView::current`.
     g.set(
-        "IsCurrentCast",
+        "IsSelectedSpell",
         lua.create_function(|lua, (id, book_type): (Value, Value)| {
-            let (id, book_type) = spell_slot_args(id, book_type, "IsCurrentCast")?;
+            let (id, book_type) = spell_slot_args(id, book_type, "IsSelectedSpell")?;
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             let current = book_slot(&model, id, &book_type).is_some_and(|s| s.current);
             // 1 or nil, never false, as the reference's bindings answer.
@@ -474,10 +549,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // IsPassiveSpell(id, bookType) (`0x541340`, 1.12's `IsSpellPassive`): 1 or nil.
     g.set(
-        "IsSpellPassive",
+        "IsPassiveSpell",
         lua.create_function(|lua, (id, book_type): (Value, Value)| {
-            let (id, book_type) = spell_slot_args(id, book_type, "IsSpellPassive")?;
+            let (id, book_type) = spell_slot_args(id, book_type, "IsPassiveSpell")?;
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             Ok(flag(
                 book_slot(&model, id, &book_type).is_some_and(|s| s.passive),
@@ -727,7 +803,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PetBookState, SpellBookState, SpellSlotView, SpellTabView};
+    use super::{HighestRankView, PetBookState, SpellBookState, SpellSlotView, SpellTabView};
     use crate::script::cursor::{CursorAction, CursorPayload};
     use crate::script::UiScript;
     use crate::script::{CastAt, ScriptCall};
@@ -815,24 +891,24 @@ mod tests {
     fn is_current_cast_reads_the_slot_verdict() {
         let mut s = UiScript::new().unwrap();
         assert!(s
-            .eval::<bool>("return IsCurrentCast(1, BOOKTYPE_SPELL) == nil")
+            .eval::<bool>("return IsSelectedSpell(1, BOOKTYPE_SPELL) == nil")
             .unwrap());
         let mut b = book();
         b.slots[0].current = true;
         s.set_spellbook(b);
         assert_eq!(
-            s.eval::<i64>("return IsCurrentCast(1, BOOKTYPE_SPELL)")
+            s.eval::<i64>("return IsSelectedSpell(1, BOOKTYPE_SPELL)")
                 .unwrap(),
             1
         );
         assert!(s
-            .eval::<bool>("return IsCurrentCast(2, BOOKTYPE_SPELL) == nil")
+            .eval::<bool>("return IsSelectedSpell(2, BOOKTYPE_SPELL) == nil")
             .unwrap());
         assert!(s
-            .eval::<bool>("return IsCurrentCast(1, BOOKTYPE_PET) == nil")
+            .eval::<bool>("return IsSelectedSpell(1, BOOKTYPE_PET) == nil")
             .unwrap());
         assert!(s
-            .eval::<bool>("return IsCurrentCast(99, BOOKTYPE_SPELL) == nil")
+            .eval::<bool>("return IsSelectedSpell(99, BOOKTYPE_SPELL) == nil")
             .unwrap());
     }
 
@@ -888,7 +964,7 @@ mod tests {
     fn tab_info_shapes_and_book_id_offsets() {
         let mut s = UiScript::new().unwrap();
         assert_eq!(s.eval::<i64>("return GetNumSpellTabs()").unwrap(), 0);
-        // Lua compares only the first value; `out_of_range_answers_four_values` checks the arity.
+        // Lua compares only the first value; `out_of_range_answers_six_values` checks the arity.
         assert!(s
             .eval::<bool>("return (GetSpellTabInfo(1)) == nil")
             .unwrap());
@@ -896,17 +972,27 @@ mod tests {
         s.set_spellbook(book());
         assert_eq!(s.eval::<i64>("return GetNumSpellTabs()").unwrap(), 2);
 
-        let (name, texture, offset, num) = s
-            .eval::<(String, String, i64, i64)>("return GetSpellTabInfo(1)")
+        let (name, texture, offset, num, hr_offset, hr_num) = s
+            .eval::<(String, String, i64, i64, i64, i64)>("return GetSpellTabInfo(1)")
             .unwrap();
         assert_eq!(
-            (name.as_str(), texture.as_str(), offset, num),
-            ("Fire", "Interface\\Icons\\Spell_Fire_FlameBolt", 0, 2)
+            (
+                name.as_str(),
+                texture.as_str(),
+                offset,
+                num,
+                hr_offset,
+                hr_num
+            ),
+            ("Fire", "Interface\\Icons\\Spell_Fire_FlameBolt", 0, 2, 0, 2)
         );
-        let (name2, _tex2, offset2, num2) = s
-            .eval::<(String, String, i64, i64)>("return GetSpellTabInfo(2)")
+        let (name2, _tex2, offset2, num2, hr_offset2, hr_num2) = s
+            .eval::<(String, String, i64, i64, i64, i64)>("return GetSpellTabInfo(2)")
             .unwrap();
-        assert_eq!((name2.as_str(), offset2, num2), ("Frost", 2, 1));
+        assert_eq!(
+            (name2.as_str(), offset2, num2, hr_offset2, hr_num2),
+            ("Frost", 2, 1, 2, 1)
+        );
 
         // Out of range: nil first.
         assert!(s.eval::<bool>("return GetSpellTabInfo(3) == nil").unwrap());
@@ -1083,10 +1169,10 @@ mod tests {
         assert!(s.take_spell_casts().is_empty());
 
         assert!(s
-            .eval::<bool>(r#"return IsSpellPassive(2, BOOKTYPE_SPELL)"#)
+            .eval::<bool>(r#"return IsPassiveSpell(2, BOOKTYPE_SPELL)"#)
             .unwrap());
         assert!(!s
-            .eval::<bool>(r#"return IsSpellPassive(1, BOOKTYPE_SPELL)"#)
+            .eval::<bool>(r#"return IsPassiveSpell(1, BOOKTYPE_SPELL)"#)
             .unwrap());
     }
 
@@ -1238,7 +1324,7 @@ mod tests {
             .eval::<bool>(r#"return GetSpellTexture(1, BOOKTYPE_PET) == nil"#)
             .unwrap());
         assert!(!s
-            .eval::<bool>(r#"return IsSpellPassive(1, BOOKTYPE_PET)"#)
+            .eval::<bool>(r#"return IsPassiveSpell(1, BOOKTYPE_PET)"#)
             .unwrap());
         assert!(s
             .eval::<bool>(r#"local n, t = HasPetSpells() return n == nil and t == nil"#)
@@ -1585,21 +1671,21 @@ mod tests {
 
     /// The count is the assertion: `(GetSpellTabInfo(0)) == nil` holds for a single nil too.
     #[test]
-    fn out_of_range_answers_four_values() {
+    fn out_of_range_answers_six_values() {
         let s = UiScript::new().unwrap();
         for idx in ["0", "1", "99", "-1", "0.5"] {
             assert_eq!(
                 s.arity(&format!("GetSpellTabInfo({idx})")).unwrap(),
-                4,
-                "GetSpellTabInfo({idx}) must answer four values"
+                6,
+                "GetSpellTabInfo({idx}) must answer six values"
             );
             assert_eq!(
                 s.eval::<i64>(&format!(
-                    "local _,_,o,n = GetSpellTabInfo({idx}) return o + n"
+                    "local _,_,o,n,ho,hn = GetSpellTabInfo({idx}) return o + n + ho + hn"
                 ))
                 .unwrap(),
                 0,
-                "GetSpellTabInfo({idx}) slots 3+4 must be NUMBERS summing to 0"
+                "GetSpellTabInfo({idx}) slots 3-6 must be NUMBERS summing to 0"
             );
             assert!(s
                 .eval::<bool>(&format!("return (GetSpellTabInfo({idx})) == nil"))
@@ -1628,5 +1714,114 @@ mod tests {
             s.eval::<String>("return (GetSpellTabInfo('1'))").unwrap(),
             s.eval::<String>("return (GetSpellTabInfo(1))").unwrap()
         );
+    }
+
+    fn ranked(spell_id: u32, name: &str, rank: &str) -> SpellSlotView {
+        SpellSlotView {
+            spell_id,
+            name: name.into(),
+            rank: Some(rank.into()),
+            ..Default::default()
+        }
+    }
+
+    /// Two tabs: Fireball ranks 1-3 and an unranked same-name follower in one, Frostbolt 1-2 in
+    /// the other, each ascending as the re-sort leaves them.
+    fn ranked_book() -> SpellBookState {
+        SpellBookState {
+            tabs: vec![
+                SpellTabView {
+                    name: "Fire".into(),
+                    offset: 0,
+                    num_spells: 5,
+                    ..Default::default()
+                },
+                SpellTabView {
+                    name: "Frost".into(),
+                    offset: 5,
+                    num_spells: 2,
+                    ..Default::default()
+                },
+            ],
+            slots: vec![
+                ranked(133, "Fireball", "Rank 1"),
+                ranked(143, "Fireball", "Rank 2"),
+                ranked(145, "Fireball", "Rank 3"),
+                ranked(2136, "Fire Blast", "Rank 1"),
+                ranked(2137, "Fire Blast", ""),
+                ranked(116, "Frostbolt", "Rank 1"),
+                ranked(205, "Frostbolt", "Rank 2"),
+            ],
+        }
+    }
+
+    /// `0x53cb0f`-`0x53cd31`: a slot folds under a same-named follower with a rank number, so
+    /// Fireball keeps rank 3 alone and Fire Blast keeps both (its follower parses to 0).
+    #[test]
+    fn the_highest_rank_view_folds_lower_ranks_per_tab() {
+        let mut s = UiScript::new().unwrap();
+        s.set_spellbook(ranked_book());
+        let tab = |i: i64| {
+            s.eval::<(i64, i64, i64, i64)>(&format!(
+                "local _,_,o,n,ho,hn = GetSpellTabInfo({i}) return o, n, ho, hn"
+            ))
+            .unwrap()
+        };
+        assert_eq!(tab(1), (0, 5, 0, 3));
+        assert_eq!(tab(2), (5, 2, 3, 1));
+        // Highest-rank slot -> full-book slot: Fireball 3, Fire Blast 1, Fire Blast, Frostbolt 2.
+        let known: Vec<i64> = (1..=4)
+            .map(|i| {
+                s.eval::<i64>(&format!("return GetKnownSlotFromHighestRankSlot({i})"))
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(known, vec![3, 4, 5, 7]);
+    }
+
+    /// `0x53b650`: past the view, at or below 0, or not a number, the answer is 0, one value.
+    #[test]
+    fn known_slot_answers_zero_off_the_view() {
+        let mut s = UiScript::new().unwrap();
+        s.set_spellbook(ranked_book());
+        for arg in ["5", "0", "-1", "nil", "'x'", "{}"] {
+            let call = format!("GetKnownSlotFromHighestRankSlot({arg})");
+            assert_eq!(s.arity(&call).unwrap(), 1, "{call}");
+            assert_eq!(
+                s.eval::<i64>(&format!("return {call}")).unwrap(),
+                0,
+                "{call}"
+            );
+        }
+        // A numeric string coerces.
+        assert_eq!(
+            s.eval::<i64>("return GetKnownSlotFromHighestRankSlot('1')")
+                .unwrap(),
+            3
+        );
+    }
+
+    /// The fold stops at the tab edge (the deviation on [`HighestRankView`]): a tab's last spell
+    /// stays even when the next tab opens with a ranked spell of its name.
+    #[test]
+    fn the_fold_never_crosses_into_the_next_tab() {
+        let book = SpellBookState {
+            tabs: vec![
+                SpellTabView {
+                    offset: 0,
+                    num_spells: 1,
+                    ..Default::default()
+                },
+                SpellTabView {
+                    offset: 1,
+                    num_spells: 1,
+                    ..Default::default()
+                },
+            ],
+            slots: vec![ranked(1, "Shared", "Rank 1"), ranked(2, "Shared", "Rank 2")],
+        };
+        let view = HighestRankView::of(&book);
+        assert_eq!(view.spell_ids, vec![1, 2]);
+        assert_eq!(view.tab_counts, vec![1, 1]);
     }
 }

@@ -197,7 +197,7 @@ fn feed_spellbook(
         attack_icon,
         ranged_icon,
     );
-    // The book's `IsCurrentCast` is `0x4b3600`, not the action bar's `0x4e53a0`, with two arms: a
+    // The book's `IsSelectedSpell` is `0x4b3600`, not the action bar's `0x4e53a0`, with two arms: a
     // form spell is current while the form byte is its form, and the open trade-skill window, not
     // built. It has no casting-now arm, so a book slot never lights during a cast.
     let form_byte = store.map(|s| s.0.unit_shapeshift_form()).unwrap_or(0);

@@ -155,7 +155,7 @@ fn slot_view(
         rank: d.rank.clone(),
         texture: d.icon.clone(),
         passive: d.passive,
-        // `IsCurrentCast`'s pet arm (`0x4b36f0`, and its delegate `0x4b3600`): lit while the
+        // `IsSelectedSpell`'s pet arm (`0x4b36f0`, and its delegate `0x4b3600`): lit while the
         // spell's aura is on the pet (`[pet.fields + 0xa4]`), the bar's own predicate.
         current: pet_store
             .is_some_and(|s| crate::ui_action::toggle::active_action_toggle(spell_id, d, s)),

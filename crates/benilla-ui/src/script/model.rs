@@ -445,6 +445,8 @@ pub(crate) struct Model {
     pub(crate) ui_errors: Vec<&'static str>,
 
     pub(crate) spellbook: spellbook::SpellBookState,
+    /// The book's highest-rank view, rebuilt with every [`Self::spellbook`] push.
+    pub(crate) spellbook_highest_rank: spellbook::HighestRankView,
     /// The pet's spellbook, a second array as in the reference (`0xb700f0`, `0xb6f098`).
     pub(crate) pet_book: spellbook::PetBookState,
     /// The player's macros, owned here as 1.12 macros have no server side; the app persists them.
@@ -1220,6 +1222,7 @@ impl Model {
             action_sets: Vec::new(),
             ui_errors: Vec::new(),
             spellbook: spellbook::SpellBookState::default(),
+            spellbook_highest_rank: spellbook::HighestRankView::default(),
             pet_book: spellbook::PetBookState::default(),
             macros: macros::MacroState::default(),
             macros_dirty: false,
