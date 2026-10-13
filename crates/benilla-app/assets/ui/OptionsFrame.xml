@@ -593,11 +593,18 @@
 
         -- UIOptionsFrame.lua:193-227 re-applies saved uvars, so this window has no load ladder.
 
-        -- OptionsFrameSliders is the stock table (OptionsFrame.lua:24-34), which addons write.
-        -- Holes at 4, 5 and 7, so the OnShow loop uses the pairs form: ipairs would stop at 3.
-        BENILLA_GRAPHICS_SLIDER_ROWS = {
-            "RowUiScale", "RowFarclip", "RowWorldDetail",
-            [6] = "RowBrightness", [8] = "RowSpellDetail", [9] = "RowWeatherDensity",
+        -- The slider rows' grids, held here: 1.12's stock OptionsFrameSliders (OptionsFrame.lua:
+        -- 24-34) is gone in 3.3.5a, whose panels key theirs by CVar (VideoOptionsPanels.lua:
+        -- ResolutionPanelOptions, EffectsPanelOptions) over settings these rows do not drive
+        -- (farclip to 1277, environmentDetail, particleDensity). 1.12's grids, in its slots;
+        -- gamma's and weatherDensity's are 3.3.5a's own too.
+        BENILLA_GRAPHICS_SLIDERS = {
+            [1] = { minValue = 0.64, maxValue = 1.0, valueStep = 0.01 },
+            [2] = { minValue = 177, maxValue = 777, valueStep = 60 },
+            [3] = { minValue = 0, maxValue = 2, valueStep = 1 },
+            [6] = { minValue = -0.5, maxValue = 0.5, valueStep = 0.1 },
+            [8] = { minValue = 0, maxValue = 2, valueStep = 1 },
+            [9] = { minValue = 0, maxValue = 3, valueStep = 1 },
         }
 
         -- SetMinMaxValues re-clamps and fires OnValueChanged, which must not write back.
@@ -615,20 +622,20 @@
             row.refreshing = nil
         end
 
-        -- ── The dropdown rows: the 1.12 UIDropDownMenu kit ──
+        -- ── The dropdown rows: the stock UIDropDownMenu kit ──
         function BenillaOptionsDropdownRow_Setup(row, entries)
             row.entries = entries
             local dd = getglobal(row:GetName() .. "Dropdown")
-            UIDropDownMenu_SetWidth(180, dd)
+            UIDropDownMenu_SetWidth(dd, 180)
             UIDropDownMenu_Initialize(dd, BenillaOptionsDropdownRow_InitMenu)
             -- The capsule's button steals hover from the row, so it carries the row wash too.
             local btn = getglobal(dd:GetName() .. "Button")
-            btn:SetScript("OnEnter", function() BenillaOptionsRow_Hover(this:GetParent():GetParent(), 1) end)
-            btn:SetScript("OnLeave", function() BenillaOptionsRow_Hover(this:GetParent():GetParent(), nil) end)
+            btn:SetScript("OnEnter", function(self) BenillaOptionsRow_Hover(self:GetParent():GetParent(), 1) end)
+            btn:SetScript("OnLeave", function(self) BenillaOptionsRow_Hover(self:GetParent():GetParent(), nil) end)
         end
 
-        function BenillaOptionsDropdownRow_InitMenu()
-            local dd = getglobal(UIDROPDOWNMENU_INIT_MENU)
+        -- The kit hands the dropdown itself (UIDropDownMenu.lua:69).
+        function BenillaOptionsDropdownRow_InitMenu(dd)
             local row = dd:GetParent()
             for _, e in ipairs(row.entries) do
                 local info = {}
@@ -639,11 +646,11 @@
             end
         end
 
-        -- `this` is the list button; the kit closes the list and plays the click.
-        function BenillaOptionsDropdownEntry_OnClick()
+        -- `self` is the list button; the kit closes the list and plays the click.
+        function BenillaOptionsDropdownEntry_OnClick(self)
             local dd = UIDropDownMenu_GetCurrentDropDown()
             local row = dd:GetParent()
-            BenillaOptionsRow_Set(row, this.value)
+            BenillaOptionsRow_Set(row, self.value)
             BenillaOptionsDropdown_ShowValue(row)
         end
 
@@ -669,12 +676,12 @@
             end
             if match then
                 dd.selectedValue = match.value
-                UIDropDownMenu_SetText(match.text, dd)
+                UIDropDownMenu_SetText(dd, match.text)
                 -- As UIOptionsFrameCameraDropDown_OnClick retargets OPTION_TOOLTIP_CAMERA<id>.
                 if match.tip then row.tip = match.tip end
             else
                 dd.selectedValue = v
-                UIDropDownMenu_SetText(v, dd)
+                UIDropDownMenu_SetText(dd, v)
             end
         end
 
@@ -1187,7 +1194,7 @@
                             <Size><AbsDimension x="32" y="32"/></Size>
                         </ThumbTexture>
                         <Scripts>
-                            <OnValueChanged>BenillaOptionsSlider_OnValueChanged(this, arg1)</OnValueChanged>
+                            <OnValueChanged>BenillaOptionsSlider_OnValueChanged(self, value)</OnValueChanged>
                             <OnEnter>BenillaOptionsRow_Hover(this:GetParent():GetParent(), 1)</OnEnter>
                             <OnLeave>BenillaOptionsRow_Hover(this:GetParent():GetParent(), nil)</OnLeave>
                         </Scripts>
@@ -1506,9 +1513,9 @@
                             <!-- An armed Keybindings capsule binds the wheel, search rows included. -->
                             <OnMouseWheel>
                                 if BenillaKeyBindingsPage.selected then
-                                    BenillaKeyBindings_OnMouseWheel(arg1)
+                                    BenillaKeyBindings_OnMouseWheel(delta)
                                 else
-                                    BenillaScroll_OnMouseWheel(this, arg1)
+                                    BenillaScroll_OnMouseWheel(self, delta)
                                 end
                             </OnMouseWheel>
                             <OnVerticalScroll>BenillaScroll_SyncBar(this)</OnVerticalScroll>
@@ -1856,9 +1863,9 @@
                                             <Scripts><OnLoad>
                                                 BenillaOptionsRow_OnLoad(this, "uiScale", "UI Scale",
                                                     "OPTION_TOOLTIP_UI_SCALE")
-                                                BenillaOptionsSliderRow_Setup(this, OptionsFrameSliders[1].minValue,
-                                                    OptionsFrameSliders[1].maxValue,
-                                                    OptionsFrameSliders[1].valueStep)
+                                                BenillaOptionsSliderRow_Setup(this, BENILLA_GRAPHICS_SLIDERS[1].minValue,
+                                                    BENILLA_GRAPHICS_SLIDERS[1].maxValue,
+                                                    BENILLA_GRAPHICS_SLIDERS[1].valueStep)
                                                 -- A live write would rescale the slider mid-drag.
                                                 this.deferred = 1
                                             </OnLoad></Scripts>
@@ -1871,9 +1878,9 @@
                                             <Scripts><OnLoad>
                                                 BenillaOptionsRow_OnLoad(this, "farclip", "Terrain Distance",
                                                     "OPTION_TOOLTIP_FARCLIP")
-                                                BenillaOptionsSliderRow_Setup(this, OptionsFrameSliders[2].minValue,
-                                                    OptionsFrameSliders[2].maxValue,
-                                                    OptionsFrameSliders[2].valueStep, "raw")
+                                                BenillaOptionsSliderRow_Setup(this, BENILLA_GRAPHICS_SLIDERS[2].minValue,
+                                                    BENILLA_GRAPHICS_SLIDERS[2].maxValue,
+                                                    BENILLA_GRAPHICS_SLIDERS[2].valueStep, "raw")
                                             </OnLoad></Scripts>
                                         </Frame>
                                         <Frame name="$parentRowWorldDetail" inherits="BenillaOptionsSliderRowTemplate">
@@ -1885,9 +1892,9 @@
                                                 BenillaOptionsRow_OnLoad(this, "WorldDetail", "Environment Detail",
                                                     "OPTION_TOOLTIP_ENVIRONMENT_DETAIL")
                                                 -- Stop names from the era quality ladder.
-                                                BenillaOptionsSliderRow_Setup(this, OptionsFrameSliders[3].minValue,
-                                                    OptionsFrameSliders[3].maxValue,
-                                                    OptionsFrameSliders[3].valueStep, nil,
+                                                BenillaOptionsSliderRow_Setup(this, BENILLA_GRAPHICS_SLIDERS[3].minValue,
+                                                    BENILLA_GRAPHICS_SLIDERS[3].maxValue,
+                                                    BENILLA_GRAPHICS_SLIDERS[3].valueStep, nil,
                                                     { "Low", "Medium", "High" })
                                             </OnLoad></Scripts>
                                         </Frame>
@@ -1903,9 +1910,9 @@
                                                     "OPTION_TOOLTIP_SPELL_DETAIL")
                                                 -- Our names for the handler's emission scalars
                                                 -- 0.33, 0.66 and 1.0 (`0x689510`).
-                                                BenillaOptionsSliderRow_Setup(this, OptionsFrameSliders[8].minValue,
-                                                    OptionsFrameSliders[8].maxValue,
-                                                    OptionsFrameSliders[8].valueStep, nil,
+                                                BenillaOptionsSliderRow_Setup(this, BENILLA_GRAPHICS_SLIDERS[8].minValue,
+                                                    BENILLA_GRAPHICS_SLIDERS[8].maxValue,
+                                                    BENILLA_GRAPHICS_SLIDERS[8].valueStep, nil,
                                                     { "Low", "Medium", "High" })
                                             </OnLoad></Scripts>
                                         </Frame>
@@ -1924,9 +1931,9 @@
                                                 BenillaOptionsNumFuncRow_OnLoad(this, GetGamma, SetGamma,
                                                     tostring(1 - gd), "Brightness",
                                                     "BENILLA_TOOLTIP_BRIGHTNESS")
-                                                BenillaOptionsSliderRow_Setup(this, OptionsFrameSliders[6].minValue,
-                                                    OptionsFrameSliders[6].maxValue,
-                                                    OptionsFrameSliders[6].valueStep, "travel")
+                                                BenillaOptionsSliderRow_Setup(this, BENILLA_GRAPHICS_SLIDERS[6].minValue,
+                                                    BENILLA_GRAPHICS_SLIDERS[6].maxValue,
+                                                    BENILLA_GRAPHICS_SLIDERS[6].valueStep, "travel")
                                             </OnLoad></Scripts>
                                         </Frame>
                                         <!-- On the CVar, as 1.12's lands: there is no
@@ -1941,9 +1948,9 @@
                                                     "OPTION_TOOLTIP_WEATHER_DETAIL")
                                                 -- Our names for `0x67b870`'s spawn-rate gains
                                                 -- `{0.1, 0.33, 0.66, 1.0}` (`[0x8680ec]`).
-                                                BenillaOptionsSliderRow_Setup(this, OptionsFrameSliders[9].minValue,
-                                                    OptionsFrameSliders[9].maxValue,
-                                                    OptionsFrameSliders[9].valueStep, nil,
+                                                BenillaOptionsSliderRow_Setup(this, BENILLA_GRAPHICS_SLIDERS[9].minValue,
+                                                    BENILLA_GRAPHICS_SLIDERS[9].maxValue,
+                                                    BENILLA_GRAPHICS_SLIDERS[9].valueStep, nil,
                                                     { "Minimal", "Low", "Medium", "Full" })
                                             </OnLoad></Scripts>
                                         </Frame>
@@ -1993,20 +2000,6 @@
                                             </OnLoad></Scripts>
                                         </Frame>
                                     </Frames>
-                                    <!-- Re-apply the bounds on show, as OptionsFrame_Load does, so
-                                         an addon's write lands. -->
-                                    <Scripts>
-                                        <OnShow>
-                                            for i, name in ipairs(BENILLA_GRAPHICS_SLIDER_ROWS) do
-                                                local info = OptionsFrameSliders[i]
-                                                local row = getglobal(this:GetName() .. name)
-                                                if ( info and row ) then
-                                                    BenillaOptionsSliderRow_Setup(row, info.minValue, info.maxValue,
-                                                        info.valueStep, row.fmt, row.stops)
-                                                end
-                                            end
-                                        </OnShow>
-                                    </Scripts>
                                 </Frame>
                                 <!-- 1.12's AdvancedOptionsCombatText box, as uvar rows. -->
                                 <Frame name="$parentCombat" hidden="true">
@@ -2857,17 +2850,17 @@
                                                 <Anchor point="BOTTOMRIGHT"><Offset><AbsDimension x="-32" y="28"/></Offset></Anchor>
                                             </Anchors>
                                             <Scripts>
-                                                <OnLoad>ScrollFrame_OnLoad()</OnLoad>
+                                                <OnLoad>ScrollFrame_OnLoad(self)</OnLoad>
                                                 <!-- BENILLA_KEYBINDINGS_ROW_HEIGHT must stay a global: this
                                                      chunk cannot see another file's local. -->
-                                                <OnVerticalScroll>FauxScrollFrame_OnVerticalScroll(BENILLA_KEYBINDINGS_ROW_HEIGHT, BenillaKeyBindingsPage_Update)</OnVerticalScroll>
+                                                <OnVerticalScroll>FauxScrollFrame_OnVerticalScroll(self, offset, BENILLA_KEYBINDINGS_ROW_HEIGHT, BenillaKeyBindingsPage_Update)</OnVerticalScroll>
                                                 <!-- Fires before the page's guard, so it is
                                                      replaced: an armed capsule binds the wheel. -->
                                                 <OnMouseWheel>
                                                     if BenillaKeyBindingsPage.selected then
-                                                        BenillaKeyBindings_OnMouseWheel(arg1)
+                                                        BenillaKeyBindings_OnMouseWheel(delta)
                                                     else
-                                                        ScrollFrameTemplate_OnMouseWheel(arg1)
+                                                        ScrollFrameTemplate_OnMouseWheel(self, delta)
                                                     end
                                                 </OnMouseWheel>
                                             </Scripts>
@@ -2878,12 +2871,12 @@
                                     <Scripts>
                                         <OnMouseWheel>
                                             if BenillaKeyBindingsPage.selected then
-                                                BenillaKeyBindings_OnMouseWheel(arg1)
+                                                BenillaKeyBindings_OnMouseWheel(delta)
                                             else
-                                                BenillaFauxScrollFrame_OnMouseWheel(getglobal(this:GetName() .. "ScrollFrame"), arg1)
+                                                BenillaFauxScrollFrame_OnMouseWheel(getglobal(self:GetName() .. "ScrollFrame"), delta)
                                             end
                                         </OnMouseWheel>
-                                        <OnMouseUp>BenillaKeyBindings_OnKeyDown(arg1)</OnMouseUp>
+                                        <OnMouseUp>BenillaKeyBindings_OnKeyDown(button)</OnMouseUp>
                                     </Scripts>
                                 </Frame>
                                 <!-- One per BENILLA_OPTIONS_PAGE_ROWS page. -->
@@ -2959,7 +2952,7 @@
                                     <Anchor point="TOPRIGHT"><Offset><AbsDimension x="-10" y="-21"/></Offset></Anchor>
                                     <Anchor point="BOTTOMRIGHT"><Offset><AbsDimension x="-10" y="20"/></Offset></Anchor>
                                 </Anchors>
-                                <Scripts><OnValueChanged>BenillaScrollBar_OnValueChanged(this, arg1)</OnValueChanged></Scripts>
+                                <Scripts><OnValueChanged>BenillaScrollBar_OnValueChanged(self, value)</OnValueChanged></Scripts>
                             </Slider>
                         </Frames>
                     </ScrollFrame>
@@ -3078,9 +3071,9 @@
                 this:EnableKeyboard(false)
                 this:EnableMouseWheel(false)
             </OnLoad>
-            <OnKeyDown>BenillaKeyBindings_OnKeyDown()</OnKeyDown>
-            <OnMouseUp>BenillaKeyBindings_OnKeyDown(arg1)</OnMouseUp>
-            <OnMouseWheel>BenillaKeyBindings_OnMouseWheel(arg1)</OnMouseWheel>
+            <OnKeyDown>BenillaKeyBindings_OnKeyDown(nil, key)</OnKeyDown>
+            <OnMouseUp>BenillaKeyBindings_OnKeyDown(button)</OnMouseUp>
+            <OnMouseWheel>BenillaKeyBindings_OnMouseWheel(delta)</OnMouseWheel>
             <!-- Hiding ends a search, discards pending edits, and disarms a bind capture. -->
             <OnHide>
                 BenillaOptionsFrameSearchBox:SetText("")

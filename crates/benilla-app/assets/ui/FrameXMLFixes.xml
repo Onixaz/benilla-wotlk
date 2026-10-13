@@ -21,11 +21,11 @@
         -- pass seats the frame 20 further in while a side glyph shows (UIParent.lua:1759-1768),
         -- but the stock frame runs it only from OnShow/OnHide, so a glyph appearing while the frame
         -- is shown leaves the shield's overhang off the screen edge. The stock handler runs first,
-        -- unchanged, on the this/event/arg1 already set for the dispatch.
+        -- unchanged, on the arguments the dispatch passed.
         if DurabilityFrame then
             local refOnEvent = DurabilityFrame:GetScript("OnEvent")
-            DurabilityFrame:SetScript("OnEvent", function()
-                if refOnEvent then refOnEvent() end
+            DurabilityFrame:SetScript("OnEvent", function(self, ...)
+                if refOnEvent then refOnEvent(self, ...) end
                 UIParent_ManageFramePositions()
             end)
         end

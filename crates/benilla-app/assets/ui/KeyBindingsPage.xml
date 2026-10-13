@@ -24,7 +24,7 @@
         <DisabledFont inherits="GameFontDisableSmall"/>
         <Scripts>
             <OnLoad>this:RegisterForClicks("LeftButtonUp", "RightButtonUp", "MiddleButtonUp", "Button4Up", "Button5Up")</OnLoad>
-            <OnClick>BenillaKeyBindingButton_OnClick(arg1)</OnClick>
+            <OnClick>BenillaKeyBindingButton_OnClick(button)</OnClick>
         </Scripts>
     </Button>
 
@@ -340,9 +340,9 @@
 
         -- 1.12's KeyBindingFrame_OnKeyDown armed branch (Blizzard_BindingUI.lua:140-212), then
         -- the live commit: `button` is a mouse button's or the wheel's name, else the key is
-        -- `arg1`, the window's OnKeyDown argument. Unarmed it does nothing: the window takes keys
+        -- `key`, the window's OnKeyDown argument. Unarmed it does nothing: the window takes keys
         -- only while armed, so 1.12's unarmed ESCAPE arm never runs here.
-        function BenillaKeyBindings_OnKeyDown(button)
+        function BenillaKeyBindings_OnKeyDown(button, key)
             local page = BenillaKeyBindingsPage
             if not page.selected then
                 return
@@ -365,7 +365,7 @@
                 end
                 chord = button
             else
-                chord = arg1
+                chord = key
             end
             if chord == "UNKNOWN" or chord == "SHIFT" or chord == "CTRL" or chord == "ALT" then
                 return

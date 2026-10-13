@@ -1,22 +1,16 @@
 <Ui>
     <!--
-        Deviation: the pet page's autocast widgets take the pet bar button's proportions, so the
-        shine and the corner brackets sit on the button's edge and share its centre. Stock
-        SpellBookFrame.xml has the shine 36x36 at CENTER (1,1), scale 1.22, the brackets 60; 71.53
-        is 37 x 58/30 (the art fills 33/64 of UI-AutoCastableOverlay.blp).
+        Deviation: the pet page's autocastable overlay takes the pet bar button's proportions,
+        so its corner brackets sit on the button's edge. Stock SpellBookFrame.xml:126 has it 60
+        on a 37 button; the pet bar's is 58 on 30 (PetActionBarFrame.xml:10), and 71.53 is
+        37 x 58/30. The autocast sparkle, a SpellBookShineTemplate frame placed per button by
+        SpellButton_UpdateButton, stays stock.
     -->
     <Script><![CDATA[
         for i = 1, 12 do
-            local button = getglobal("SpellButton" .. i)
-            local overlay = getglobal("SpellButton" .. i .. "AutoCastable")
+            local overlay = _G["SpellButton" .. i .. "AutoCastable"]
             overlay:SetWidth(71.53)
             overlay:SetHeight(71.53)
-            local pane = getglobal("SpellButton" .. i .. "AutoCast")
-            pane:SetWidth(37)
-            pane:SetHeight(37)
-            pane:ClearAllPoints()
-            pane:SetPoint("CENTER", button, "CENTER", 0, 0)
-            pane:SetModelScale(1.48)
         end
     ]]></Script>
 </Ui>

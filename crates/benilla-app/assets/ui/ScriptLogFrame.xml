@@ -161,7 +161,9 @@
                 this:SetText(shown)
                 this:HighlightText()
             end
-            ScrollingEdit_OnTextChanged(getglobal("BenillaScriptLogDetailScroll"))
+            -- 1.12's ScrollingEdit_OnTextChanged recomputed the range; 3.3.5a's also runs the
+            -- scroll-to-caret this pane leaves out, so the range is asked for directly.
+            BenillaScriptLogDetailScroll:UpdateScrollChildRect()
         end
 
         function BenillaScriptLogRow_OnClick(button)
@@ -295,7 +297,7 @@
                 <Anchors><Anchor point="TOPRIGHT" relativePoint="TOPRIGHT"><Offset><AbsDimension x="-67" y="-96"/></Offset></Anchor></Anchors>
                 <Scripts>
                     <!-- The stock kit has no `updateFunc`, so the repaint is wired here. -->
-                    <OnVerticalScroll>FauxScrollFrame_OnVerticalScroll(BENILLA_SCRIPTLOG_ROW_HEIGHT, BenillaScriptLog_Update)</OnVerticalScroll>
+                    <OnVerticalScroll>FauxScrollFrame_OnVerticalScroll(self, offset, BENILLA_SCRIPTLOG_ROW_HEIGHT, BenillaScriptLog_Update)</OnVerticalScroll>
                 </Scripts>
             </ScrollFrame>
 
@@ -307,7 +309,7 @@
                 <Anchors><Anchor point="TOPLEFT" relativeTo="BenillaScriptLogListScrollFrame" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-8"/></Offset></Anchor></Anchors>
                 <Scripts>
                     <OnLoad>this:SetScrollChild(getglobal(this:GetName() .. "Child"))</OnLoad>
-                    <OnMouseWheel>BenillaScroll_OnMouseWheel(this, arg1)</OnMouseWheel>
+                    <OnMouseWheel>BenillaScroll_OnMouseWheel(self, delta)</OnMouseWheel>
                     <OnVerticalScroll>BenillaScroll_SyncBar(this)</OnVerticalScroll>
                     <OnScrollRangeChanged>BenillaScroll_SyncBar(this)</OnScrollRangeChanged>
                 </Scripts>
@@ -317,7 +319,7 @@
                             <Anchor point="TOPLEFT" relativePoint="TOPRIGHT"><Offset><AbsDimension x="6" y="-16"/></Offset></Anchor>
                             <Anchor point="BOTTOMLEFT" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="6" y="16"/></Offset></Anchor>
                         </Anchors>
-                        <Scripts><OnValueChanged>BenillaScrollBar_OnValueChanged(this, arg1)</OnValueChanged></Scripts>
+                        <Scripts><OnValueChanged>BenillaScrollBar_OnValueChanged(self, value)</OnValueChanged></Scripts>
                     </Slider>
                     <!-- Mouse-enabled and the pane's full height, as SendMailScrollChildFrame is
                          (MailFrame.xml:604-659): a click below the text focuses the box. -->
@@ -329,12 +331,12 @@
                                  body: `autoFocus="false"`, so the keyboard stays with the game until a
                                  click, and Escape clears the focus. A multi-line box is as tall as its
                                  insets and its wrapped text, so the scroll frame ranges over it as
-                                 ScrollingEdit_OnTextChanged (UIPanelTemplates.lua:307) recomputes. The
+                                 UpdateScrollChildRect recomputes on each change. The
                                  insets seat the text 6 in and 6 down, 270 wide, and leave 20 below
                                  the last line. No `letters`, so the whole error goes in. Read-only
                                  through OnTextChanged; a click selects it all, so Ctrl+C copies the
                                  error. Not wired: the stock scroll-to-caret (UIPanelTemplates.lua:
-                                 314-342), since selecting all leaves the caret at the end and a
+                                 339-390), since selecting all leaves the caret at the end and a
                                  click would scroll a long traceback to its bottom. -->
                             <EditBox name="BenillaScriptLogDetailText" multiLine="true" autoFocus="false">
                                 <Size><AbsDimension x="296" y="119"/></Size>
@@ -371,7 +373,7 @@
         <Scripts>
             <OnLoad>BenillaScriptLogFrame_OnLoad()</OnLoad>
             <!-- A spin bubbles up the parent chain; the detail pane's own handler wins there. -->
-            <OnMouseWheel>BenillaScriptLogFrame_OnMouseWheel(arg1)</OnMouseWheel>
+            <OnMouseWheel>BenillaScriptLogFrame_OnMouseWheel(delta)</OnMouseWheel>
             <OnShow>BenillaScriptLog_Update()</OnShow>
         </Scripts>
     </Frame>
