@@ -12,13 +12,13 @@ fn seeded() -> UiScript {
             AddOnInfo {
                 name: "Alpha".into(),
                 title: Some("Alpha Title".into()),
-                interface: 11200,
+                interface: 30300,
                 enabled: true,
                 ..Default::default()
             },
             AddOnInfo {
                 name: "Beta".into(),
-                interface: 11200,
+                interface: 30300,
                 enabled: true,
                 ..Default::default()
             },

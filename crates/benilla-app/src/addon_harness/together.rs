@@ -200,14 +200,14 @@ mod tests {
         // global state, as corpus packages that ship `Tablet-2.0` do.
         write(
             "AlphaShipsIt",
-            "## Interface: 11200\nlib.lua\n",
+            "## Interface: 30300\nlib.lua\n",
             "lib.lua",
             "SharedLibrary = { greet = function() return 1 end }\n",
         );
         // Declares no dependency on it and does not ship it.
         write(
             "ZuluWantsIt",
-            "## Interface: 11200\nuse.lua\n",
+            "## Interface: 30300\nuse.lua\n",
             "use.lua",
             "ZuluSaw = SharedLibrary.greet()\n",
         );
@@ -251,7 +251,7 @@ mod tests {
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(
                 dir.join(format!("{name}.toc")),
-                "## Interface: 11200\nf.lua\n",
+                "## Interface: 30300\nf.lua\n",
             )
             .unwrap();
             std::fs::write(dir.join("f.lua"), body).unwrap();

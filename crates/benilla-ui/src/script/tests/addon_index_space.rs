@@ -11,7 +11,7 @@ fn seeded() -> UiScript {
     let row = |name: &str, title: Option<&str>| AddOnInfo {
         name: name.into(),
         title: title.map(str::to_owned),
-        interface: 11200,
+        interface: 30300,
         enabled: true,
         ..Default::default()
     };
@@ -54,13 +54,13 @@ fn a_titleless_addon_sorts_under_its_folder_name() {
             AddOnInfo {
                 name: "Yankee".into(),
                 title: Some("zzz".into()),
-                interface: 11200,
+                interface: 30300,
                 enabled: true,
                 ..Default::default()
             },
             AddOnInfo {
                 name: "bravo".into(),
-                interface: 11200,
+                interface: 30300,
                 enabled: true,
                 ..Default::default()
             },
@@ -130,7 +130,7 @@ fn with_hidden_blizzard(blizzard_enabled: bool) -> UiScript {
         vec![
             AddOnInfo {
                 name: "Blizzard_AuctionUI".into(),
-                interface: 11200,
+                interface: 30300,
                 load_on_demand: true,
                 chain: true,
                 files: vec!["Blizzard_AuctionUI.lua".into()],
@@ -139,7 +139,7 @@ fn with_hidden_blizzard(blizzard_enabled: bool) -> UiScript {
             },
             AddOnInfo {
                 name: "Probe".into(),
-                interface: 11200,
+                interface: 30300,
                 enabled: true,
                 ..Default::default()
             },

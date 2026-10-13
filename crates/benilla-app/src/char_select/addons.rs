@@ -322,19 +322,28 @@ impl AddonsPanel {
             .collect()
     }
 
-    /// Why a row will not load. The glue surface passes `demand_only=false`, so
-    /// `NOT_DEMAND_LOADED` is unreachable; the version check is re-read per query.
+    /// Why a row will not load. The glue's `GetAddOnInfo` passes 0 (`0x4dc66b`), so a
+    /// LoadOnDemand row reports `DEMAND_LOADED`; the version check is re-read per query.
     fn verdict(&self, i: usize) -> Verdict {
-        can_load(&self.gate_rows(), i, false, self.version_check)
+        can_load(&self.gate_rows(), i, true, self.version_check)
     }
 
-    /// The title colour (`AddonList.lua:60-66`): gold when loadable, red when enabled and still
-    /// not loading unless the reason is `DEP_DISABLED`, grey otherwise. `|c` markup overrides it.
+    /// The title colour (`AddonList.lua:60-66`): gold when loadable or enabled and only demand
+    /// loaded, red when enabled and still not loading unless the reason is `DEP_DISABLED`, grey
+    /// otherwise. `|c` markup overrides it.
     fn title_colour(&self, i: usize) -> Color {
         let verdict = self.verdict(i);
-        if verdict.loadable() {
+        let token = verdict.token();
+        let enabled = self.effective_enabled(i);
+        if verdict.loadable()
+            || (enabled
+                && matches!(
+                    token.as_deref(),
+                    Some("DEMAND_LOADED" | "DEP_DEMAND_LOADED")
+                ))
+        {
             GOLD
-        } else if self.effective_enabled(i) && verdict.token().as_deref() != Some("DEP_DISABLED") {
+        } else if enabled && token.as_deref() != Some("DEP_DISABLED") {
             BROKEN
         } else {
             DIM
@@ -365,16 +374,20 @@ impl AddonsPanel {
     }
 }
 
-/// The status text, `getglobal("ADDON_"..reason)` over the parsed GlueStrings; the fallbacks are
-/// the shipped values (`GlueStrings.lua:44-56`).
+/// The status text, `_G["ADDON_"..reason]` over the parsed GlueStrings; the fallbacks are the
+/// shipped values (`GlueStrings.lua:60-75`).
 fn status_label<'a>(strings: &'a GlueStrings, token: &'a str) -> &'a str {
     let fallback = match token {
         "DISABLED" => "Disabled",
         "INTERFACE_VERSION" => "Out of date",
+        "INCOMPATIBLE" => "Incompatible",
         "DEP_MISSING" => "Dependency missing",
         "DEP_DISABLED" => "Dependency disabled",
         "DEP_INTERFACE_VERSION" => "Dependency out of date",
-        // `BANNED`, `CORRUPT`, `INSECURE` and `NOT_DEMAND_LOADED` are not produced at the glue.
+        "DEP_INCOMPATIBLE" => "Dependency incompatible",
+        // GlueStrings defines no `ADDON_DEMAND_LOADED`, so the status `SetText(nil)` is empty.
+        "DEMAND_LOADED" => "",
+        // `BANNED`, `CORRUPT` and `INSECURE` are not produced.
         other => other,
     };
     strings.get(&format!("ADDON_{token}")).unwrap_or(fallback)
@@ -1567,11 +1580,11 @@ mod tests {
     #[test]
     fn the_status_column_reports_the_gates_reason_in_the_references_precedence() {
         let mut p = panel(vec![
-            addon("Solo", &[], 11200),
-            addon("Lib", &[], 11200),
-            addon("Needs", &["Lib"], 11200),
-            addon("Orphan", &["Nowhere"], 11200),
-            addon("Old", &[], 11100),
+            addon("Solo", &[], 30300),
+            addon("Lib", &[], 30300),
+            addon("Needs", &["Lib"], 30300),
+            addon("Orphan", &["Nowhere"], 30300),
+            addon("Old", &[], 30200),
             addon("Silent", &[], 0),
         ]);
 
@@ -1589,17 +1602,16 @@ mod tests {
         assert_eq!(p.verdict(4).token().as_deref(), Some("INTERFACE_VERSION"));
         assert_eq!(
             p.verdict(5).token().as_deref(),
-            Some("INTERFACE_VERSION"),
-            "a manifest with NO `## Interface` parses as 0 and IS out of date — the record ctor \
-             leaves [rec+0x1c]=0 and the gate compares it like any other value (byte-verified: \
-             a missing line is never read as current)"
+            Some("INCOMPATIBLE"),
+            "a manifest with NO `## Interface` parses as 0, below 20000 (`0x5f7f1a`)"
         );
 
-        // Force-load erases the refusal (reason 7 written, then reset to 0), so a ticked box
-        // leaves an out-of-date row indistinguishable from a current one.
+        // Force-load erases the out-of-date refusal (reason 7 written, then reset to 0), so a
+        // ticked box leaves an out-of-date row indistinguishable from a current one; the
+        // incompatible arm returns before the check is read.
         p.version_check = false;
         assert_eq!(p.verdict(4).token(), None);
-        assert_eq!(p.verdict(5).token(), None);
+        assert_eq!(p.verdict(5).token().as_deref(), Some("INCOMPATIBLE"));
         p.version_check = true;
 
         set(&mut p, Some(0), 1, false);
@@ -1614,12 +1626,19 @@ mod tests {
     #[test]
     fn the_title_colour_follows_addonlist_luas_rule_with_the_dep_disabled_exception() {
         let mut p = panel(vec![
-            addon("Lib", &[], 11200),
-            addon("Needs", &["Lib"], 11200),
-            addon("Old", &[], 11100),
+            addon("Lib", &[], 30300),
+            addon("Needs", &["Lib"], 30300),
+            addon("Old", &[], 30200),
         ]);
         assert_eq!(p.title_colour(0), GOLD, "loadable = gold");
         assert_eq!(p.title_colour(2), BROKEN, "enabled + out of date = red");
+        let mut lod = addon("Lod", &[], 30300);
+        lod.load_on_demand = true;
+        let mut q = panel(vec![lod]);
+        assert_eq!(q.verdict(0).token().as_deref(), Some("DEMAND_LOADED"));
+        assert_eq!(q.title_colour(0), GOLD, "enabled + DEMAND_LOADED = gold");
+        set(&mut q, Some(0), 0, false);
+        assert_eq!(q.title_colour(0), DIM, "a disabled one is grey");
 
         set(&mut p, Some(0), 0, false);
         assert_eq!(p.title_colour(0), DIM, "player-disabled = grey");
@@ -1635,7 +1654,7 @@ mod tests {
     fn the_all_view_feeds_the_gate_any_character_on() {
         let mut p = panel_for(
             2,
-            vec![addon("Lib", &[], 11200), addon("Needs", &["Lib"], 11200)],
+            vec![addon("Lib", &[], 30300), addon("Needs", &["Lib"], 30300)],
         );
         // Char0 turned Lib off and Char1 on; with no row Char1 would follow Char0.
         set(&mut p, Some(0), 0, false);
@@ -1658,7 +1677,7 @@ mod tests {
 
     #[test]
     fn the_all_view_box_is_a_tri_state_over_every_character() {
-        let mut p = panel_for(3, vec![addon("A", &[], 11200)]);
+        let mut p = panel_for(3, vec![addon("A", &[], 30300)]);
         assert_eq!(p.box_state(0), BoxState::On, "enabled for all three");
 
         set(&mut p, None, 0, true); // a row for each, so one can differ
@@ -1682,7 +1701,7 @@ mod tests {
     /// In the All view a mixed box counts as checked, so a click disables for every character.
     #[test]
     fn an_all_view_click_follows_the_references_checkbutton() {
-        let mut p = panel_for(3, vec![addon("A", &[], 11200)]);
+        let mut p = panel_for(3, vec![addon("A", &[], 30300)]);
         set(&mut p, None, 0, true);
         set(&mut p, Some(1), 0, false); // mixed
 
@@ -1709,7 +1728,7 @@ mod tests {
     /// No enable file is touched until Okay; Cancel (`ResetAddOns`) is `close`.
     #[test]
     fn edits_are_staged_and_cancel_discards_them() {
-        let mut p = panel(vec![addon("A", &[], 11200), addon("B", &[], 11200)]);
+        let mut p = panel(vec![addon("A", &[], 30300), addon("B", &[], 30300)]);
         assert_eq!(p.bits, vec![vec![true, true]]);
         set(&mut p, Some(0), 0, false);
         assert_eq!(p.bits, vec![vec![false, true]]);
@@ -1740,7 +1759,7 @@ mod tests {
         for name in ["Alpha", "Beta"] {
             let dir = home.join("AddOns").join(name);
             std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(dir.join(format!("{name}.toc")), "## Interface: 11200\n").unwrap();
+            std::fs::write(dir.join(format!("{name}.toc")), "## Interface: 30300\n").unwrap();
         }
         let _c = crate::local_state::test_env::EnvGuard::unset("WOW_CAPTURE");
         let _h =
@@ -1816,7 +1835,7 @@ mod tests {
         for name in ["Alpha", "Beta"] {
             let dir = home.join("AddOns").join(name);
             std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(dir.join(format!("{name}.toc")), "## Interface: 11200\n").unwrap();
+            std::fs::write(dir.join(format!("{name}.toc")), "## Interface: 30300\n").unwrap();
         }
         let _c = crate::local_state::test_env::EnvGuard::unset("WOW_CAPTURE");
         let _h =
@@ -1872,9 +1891,9 @@ mod tests {
                 dir.join(format!("{name}.toc")),
                 // Beta ships `## DefaultState: disabled`, so the tie-break is visible.
                 if name == "Beta" {
-                    "## Interface: 11200\n## DefaultState: disabled\n"
+                    "## Interface: 30300\n## DefaultState: disabled\n"
                 } else {
-                    "## Interface: 11200\n"
+                    "## Interface: 30300\n"
                 },
             )
             .unwrap();
@@ -1945,7 +1964,7 @@ mod tests {
         // 39 addons over 19 slots = 20 scroll positions.
         let mut p = panel(
             (0..MAX_ROWS * 2 + 1)
-                .map(|i| addon(&format!("A{i}"), &[], 11200))
+                .map(|i| addon(&format!("A{i}"), &[], 30300))
                 .collect(),
         );
         let max = p.max_offset();
@@ -1982,7 +2001,7 @@ mod tests {
         let thumb_n = KNOB / BAR_H;
         let mut p = panel(
             (0..MAX_ROWS * 2 + 1)
-                .map(|i| addon(&format!("A{i}"), &[], 11200))
+                .map(|i| addon(&format!("A{i}"), &[], 30300))
                 .collect(),
         );
         let max = p.max_offset();
@@ -2006,7 +2025,7 @@ mod tests {
     fn the_knob_position_and_the_row_it_means_are_inverses() {
         let mut p = panel(
             (0..MAX_ROWS + 7)
-                .map(|i| addon(&format!("A{i}"), &[], 11200))
+                .map(|i| addon(&format!("A{i}"), &[], 30300))
                 .collect(),
         );
         for row in 0..=p.max_offset() {
@@ -2023,7 +2042,7 @@ mod tests {
     fn a_list_that_fits_has_no_scroll_positions() {
         let mut p = panel(
             (0..MAX_ROWS)
-                .map(|i| addon(&format!("A{i}"), &[], 11200))
+                .map(|i| addon(&format!("A{i}"), &[], 30300))
                 .collect(),
         );
         assert_eq!(p.max_offset(), 0);
@@ -2043,7 +2062,7 @@ mod tests {
     fn the_offset_clamps_to_the_list() {
         let mut short = panel(
             (0..5)
-                .map(|i| addon(&format!("A{i}"), &[], 11200))
+                .map(|i| addon(&format!("A{i}"), &[], 30300))
                 .collect(),
         );
         assert_eq!(short.max_offset(), 0);
@@ -2052,7 +2071,7 @@ mod tests {
 
         let mut long = panel(
             (0..MAX_ROWS + 4)
-                .map(|i| addon(&format!("A{i}"), &[], 11200))
+                .map(|i| addon(&format!("A{i}"), &[], 30300))
                 .collect(),
         );
         assert_eq!(long.max_offset(), 4);

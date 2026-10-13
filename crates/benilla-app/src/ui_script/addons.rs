@@ -89,11 +89,13 @@ impl Addon {
     }
 
     /// The base this addon's manifest entries resolve against: `Interface/AddOns/<Folder>` for a
-    /// `Dir`, empty for the shipped flat tree and the chain's full paths.
+    /// `Dir` and a chain `Blizzard_*` addon, empty for the shipped flat tree and the core's full
+    /// chain paths.
     fn prefix(&self) -> String {
         match &self.source {
-            Source::Builtin | Source::Chain => String::new(),
-            Source::Dir(_) => format!("{ADDONS_PREFIX}{}", self.name),
+            Source::Chain if self.name == super::reference_ui::NAME => String::new(),
+            Source::Builtin => String::new(),
+            Source::Dir(_) | Source::Chain => format!("{ADDONS_PREFIX}{}", self.name),
         }
     }
 
@@ -286,25 +288,37 @@ fn root_from(home: Option<PathBuf>) -> Option<PathBuf> {
     home.map(|h| h.join(ADDONS_DIR))
 }
 
-/// The reference's twelve `Blizzard_*` LoadOnDemand addons: on a 1.12 install each folder holds
-/// only a `.pub`, with the files in the archive. Probed against the chain.
-const BLIZZARD_ADDONS: [&str; 12] = [
+/// The 23 `Blizzard_*` addons a 3.3.5a chain carries (`Interface\AddOns\Blizzard_*\*.toc`, all
+/// `## Interface: 30300`), by folder name in ascending ASCII order. Probed against the chain.
+const BLIZZARD_ADDONS: [&str; 23] = [
+    "Blizzard_AchievementUI",
+    "Blizzard_ArenaUI",
     "Blizzard_AuctionUI",
+    "Blizzard_BarbershopUI",
     "Blizzard_BattlefieldMinimap",
     "Blizzard_BindingUI",
+    "Blizzard_Calendar",
+    "Blizzard_CombatLog",
     "Blizzard_CombatText",
-    "Blizzard_CraftUI",
+    "Blizzard_DebugTools",
+    "Blizzard_GMChatUI",
     "Blizzard_GMSurveyUI",
+    "Blizzard_GlyphUI",
+    "Blizzard_GuildBankUI",
     "Blizzard_InspectUI",
+    "Blizzard_ItemSocketingUI",
     "Blizzard_MacroUI",
     "Blizzard_RaidUI",
     "Blizzard_TalentUI",
+    "Blizzard_TimeManager",
+    "Blizzard_TokenUI",
     "Blizzard_TradeSkillUI",
     "Blizzard_TrainerUI",
 ];
 
-/// The Blizzard addons the chain carries as LoadOnDemand registry rows, for `UIParentLoadAddOn`;
-/// a toc that is not LoadOnDemand is skipped, as the startup walk does not read the chain.
+/// The Blizzard addons the chain carries as LoadOnDemand registry rows, for `UIParentLoadAddOn`.
+/// Deviation: `Blizzard_TokenUI` carries no `## LoadOnDemand`, so the reference's startup walk
+/// loads it; this walk does not read the chain, so it is not a row yet.
 fn chain_addons() -> Vec<Addon> {
     BLIZZARD_ADDONS
         .iter()
@@ -841,7 +855,8 @@ struct Walk {
     /// Addons the player turned off, lowercased; empty means every addon is enabled.
     disabled: HashSet<String>,
     /// `checkAddonVersion`: when on, an addon whose `## Interface` is not exactly the client's is
-    /// skipped like a disabled one, and a dependent gets `Err` (`DEP_INTERFACE_VERSION`).
+    /// skipped like a disabled one, and a dependent gets `Err` (`DEP_INTERFACE_VERSION`); one below
+    /// 20000 is skipped either way (`INCOMPATIBLE`).
     version_check: bool,
 }
 
@@ -872,15 +887,15 @@ impl Walk {
             self.failed.insert(addon.name.clone());
             return Err(());
         }
-        // The version gate, `AddOn_CanLoad` check 6: after the enable state, before the dependency
-        // loop, an exact `==` (a missing `## Interface` is 0). Not a failure either: the AddOns
-        // screens show it, and the Load out of date AddOns checkbox loads it anyway.
-        if self.version_check
-            && addon.toc.interface_version() != benilla_ui::script::addon_gate::CLIENT_INTERFACE
-        {
+        // The version arm, `AddOn_CanLoad` check 6 (`0x5f7f17`): after the enable state, before
+        // the dependency loop. Not a failure either: the AddOns screens show it, and the Load out
+        // of date AddOns checkbox loads an out-of-date addon anyway, never an incompatible one.
+        if let Some(reason) = benilla_ui::script::addon_gate::version_reason(
+            addon.toc.interface_version(),
+            self.version_check,
+        ) {
             info!(
-                "ui_script: {key} is out of date (## Interface: {}, client {}) — not loaded \
-                 (the AddOns screen's 'Load out of date AddOns' loads it anyway)",
+                "ui_script: {key} is {reason} (## Interface: {}, client {}) — not loaded",
                 addon.toc.interface_version(),
                 benilla_ui::script::addon_gate::CLIENT_INTERFACE
             );
@@ -1041,23 +1056,23 @@ mod tests {
         write_addon(
             &home,
             "Alpha",
-            "## Interface: 11200\n## Title: zebra\n",
+            "## Interface: 30300\n## Title: zebra\n",
             &[],
         );
         write_addon(
             &home,
             "Mike",
-            "## Interface: 11200\n## Title: Middle\n",
+            "## Interface: 30300\n## Title: Middle\n",
             &[],
         );
         write_addon(
             &home,
             "Zulu",
-            "## Interface: 11200\n## Title: aardvark\n",
+            "## Interface: 30300\n## Title: aardvark\n",
             &[],
         );
         // No `## Title`: sorts under its folder name.
-        write_addon(&home, "bravo", "## Interface: 11200\n", &[]);
+        write_addon(&home, "bravo", "## Interface: 30300\n", &[]);
 
         let rows = installed_rows();
         assert_eq!(
@@ -1089,10 +1104,10 @@ mod tests {
         write_addon(
             &home,
             &collide,
-            "## Interface: 11200\n## Title: Impostor\n",
+            "## Interface: 30300\n## Title: Impostor\n",
             &[],
         );
-        write_addon(&home, "Loose", "## Interface: 11200\n", &[]);
+        write_addon(&home, "Loose", "## Interface: 30300\n", &[]);
 
         let found = discover();
         let names: Vec<&str> = found.iter().map(|a| a.name.as_str()).collect();
@@ -1122,20 +1137,35 @@ mod tests {
         );
     }
 
-    /// Every chain row is LoadOnDemand and chain-sourced, the eight windows the interface opens
-    /// through them are rows, and the core, the chain's `FrameXML.toc`, lists none.
+    /// The registry's Blizzard rows are the built-ins the logon reports, name for name.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+    fn the_blizzard_rows_are_the_stock_secure_addons() {
+        let secure: Vec<&str> = benilla_protocol::messages::STOCK_SECURE_ADDONS_WOTLK
+            .iter()
+            .map(|a| a.name)
+            .collect();
+        assert_eq!(secure, BLIZZARD_ADDONS);
+    }
+
+    /// Every 3.3.5a Blizzard addon but `Blizzard_TokenUI` is a LoadOnDemand, chain-sourced row at
+    /// 30300, and the core, the chain's `FrameXML.toc`, lists none.
+    #[test]
     fn the_chain_carries_blizzards_load_on_demand_addons_as_registry_rows() {
         let _data = benilla_formats::wow_data_or_skip!();
         let rows = chain_addons();
-        assert!(
-            rows.iter().any(|a| a.name == "Blizzard_TrainerUI"),
-            "the trainer addon is a row: {:?}",
-            rows.iter().map(|a| &a.name).collect::<Vec<_>>()
-        );
+        let names: Vec<&str> = rows.iter().map(|a| a.name.as_str()).collect();
+        let want: Vec<&str> = BLIZZARD_ADDONS
+            .into_iter()
+            .filter(|n| *n != "Blizzard_TokenUI")
+            .collect();
+        assert_eq!(names, want, "every LoadOnDemand addon is on the chain");
         for a in &rows {
-            assert!(a.toc.load_on_demand(), "{} is LoadOnDemand", a.name);
+            assert_eq!(
+                a.toc.interface_version(),
+                benilla_ui::script::addon_gate::CLIENT_INTERFACE,
+                "{} is the client's version",
+                a.name
+            );
             assert!(
                 matches!(a.source, Source::Chain),
                 "{} comes off the chain",
@@ -1147,21 +1177,6 @@ mod tests {
                 a.name
             );
         }
-        for name in [
-            "Blizzard_AuctionUI",
-            "Blizzard_CraftUI",
-            "Blizzard_InspectUI",
-            "Blizzard_MacroUI",
-            "Blizzard_RaidUI",
-            "Blizzard_TalentUI",
-            "Blizzard_TradeSkillUI",
-            "Blizzard_TrainerUI",
-        ] {
-            assert!(
-                rows.iter().any(|a| a.name == name),
-                "{name} is a row the interface opens on demand"
-            );
-        }
         assert!(
             !super::super::reference_ui::core()
                 .expect("the player's FrameXML.toc")
@@ -1169,7 +1184,7 @@ mod tests {
                 .files
                 .iter()
                 .any(|f| f.replace('/', "\\").starts_with("Interface\\AddOns\\")),
-            "the core lists a Blizzard addon eagerly; the reference loads every one on demand"
+            "the core lists a Blizzard addon; the reference registers each from its own folder"
         );
         // The glue's list is the player's folder alone.
         assert!(installed_rows()
@@ -1265,7 +1280,7 @@ mod tests {
         std::fs::write(root.join("Probe/Probe.lua"), "PROBE_RAN = 1").unwrap();
         let addon = Addon {
             name: "Probe".into(),
-            toc: Toc::parse("## Interface: 11200\nBindings.xml\nProbe.lua\n"),
+            toc: Toc::parse("## Interface: 30300\nBindings.xml\nProbe.lua\n"),
             source: Source::Dir(root),
         };
 
@@ -1306,7 +1321,7 @@ mod tests {
             r#"<Ui><Script file="viaxml.lua"/></Ui>"#,
         )
         .unwrap();
-        let toc = "## Interface: 11200\nlisted.lua\nCore\\doc.xml\n";
+        let toc = "## Interface: 30300\nlisted.lua\nCore\\doc.xml\n";
         let addon = Addon {
             name: "Probe".into(),
             toc: Toc::parse(toc),
@@ -1352,9 +1367,17 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let all = vec![
-            dir_addon(&tmp, "Alone", "## Interface: 11200\n"),
-            dir_addon(&tmp, "NeedsGhost", "## Dependencies: Ghost\n"),
-            dir_addon(&tmp, "WantsGhost", "## OptionalDeps: Ghost\n"),
+            dir_addon(&tmp, "Alone", "## Interface: 30300\n"),
+            dir_addon(
+                &tmp,
+                "NeedsGhost",
+                "## Interface: 30300\n## Dependencies: Ghost\n",
+            ),
+            dir_addon(
+                &tmp,
+                "WantsGhost",
+                "## Interface: 30300\n## OptionalDeps: Ghost\n",
+            ),
         ];
         let mut script = UiScript::new().unwrap();
         let mut w = Walk::default();
@@ -1393,7 +1416,7 @@ mod tests {
         // reaches a sibling file by bare name and a shared library addon by `..\..`.
         std::fs::write(
             dir.join("ProbeAddon.toc"),
-            "## Interface: 11200\n## Title: Probe\nsrc\\main.xml\n",
+            "## Interface: 30300\n## Title: Probe\nsrc\\main.xml\n",
         )
         .unwrap();
         std::fs::write(
@@ -1491,7 +1514,7 @@ mod tests {
         // `Bump.xml` counts its own runs, so a second load is observable.
         let shared = tmp.join("Shared");
         std::fs::create_dir_all(&shared).unwrap();
-        std::fs::write(shared.join("Shared.toc"), "## Interface: 11200\nBump.xml\n").unwrap();
+        std::fs::write(shared.join("Shared.toc"), "## Interface: 30300\nBump.xml\n").unwrap();
         std::fs::write(
             shared.join("Bump.xml"),
             "<Ui><Script>SharedLoads = (SharedLoads or 0) + 1</Script></Ui>",
@@ -1503,8 +1526,16 @@ mod tests {
                 toc: Toc::parse(&std::fs::read_to_string(shared.join("Shared.toc")).unwrap()),
                 source: Source::Dir(tmp.clone()),
             },
-            dir_addon(&tmp, "UpperDep", "## Dependencies: SHARED\n"),
-            dir_addon(&tmp, "LowerDep", "## Dependencies: shared\n"),
+            dir_addon(
+                &tmp,
+                "UpperDep",
+                "## Interface: 30300\n## Dependencies: SHARED\n",
+            ),
+            dir_addon(
+                &tmp,
+                "LowerDep",
+                "## Interface: 30300\n## Dependencies: shared\n",
+            ),
         ];
         let mut script = UiScript::new().unwrap();
         let mut w = Walk::default();
@@ -1528,8 +1559,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let all = vec![
-            dir_addon(&tmp, "Ping", "## Dependencies: Pong\n"),
-            dir_addon(&tmp, "Pong", "## Dependencies: Ping\n"),
+            dir_addon(&tmp, "Ping", "## Interface: 30300\n## Dependencies: Pong\n"),
+            dir_addon(&tmp, "Pong", "## Interface: 30300\n## Dependencies: Ping\n"),
         ];
         let mut script = UiScript::new().unwrap();
         let mut w = Walk::default();
@@ -1574,7 +1605,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join("Cased")).unwrap();
         std::fs::create_dir_all(tmp.join("Bare")).unwrap();
-        std::fs::write(tmp.join("Cased/cased.TOC"), "## Interface: 11200\n").unwrap();
+        std::fs::write(tmp.join("Cased/cased.TOC"), "## Interface: 30300\n").unwrap();
         std::fs::write(tmp.join("Bare/notes.txt"), "not an addon").unwrap();
         assert!(manifest_in(&tmp.join("Cased"), "Cased").is_some());
         assert!(manifest_in(&tmp.join("Bare"), "Bare").is_none());
@@ -1619,7 +1650,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("EventProbe.toc"),
-            "## Interface: 11200\nprobe.lua\nprobe.xml\n",
+            "## Interface: 30300\nprobe.lua\nprobe.xml\n",
         )
         .unwrap();
         // File-scope Lua runs before the event; its marker proves the order.
@@ -1662,7 +1693,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("EventProbe.toc"),
-            "## Interface: 11200\nprobe.xml\n",
+            "## Interface: 30300\nprobe.xml\n",
         )
         .unwrap();
         std::fs::write(dir.join("probe.xml"), recorder_xml(&["ADDON_LOADED"])).unwrap();
@@ -1709,7 +1740,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("EventProbe.toc"),
-            "## Interface: 11200\nprobe.xml\n",
+            "## Interface: 30300\nprobe.xml\n",
         )
         .unwrap();
         std::fs::write(
@@ -1758,8 +1789,9 @@ mod tests {
         (home, guard)
     }
 
-    /// `AddOn_CanLoad` check 6: exact `==`, a missing `## Interface` is 0 and out of date, and a
-    /// gated addon's dependent is blocked; `checkAddonVersion` off loads the same folder in full.
+    /// `AddOn_CanLoad` check 6: exact `==` to 30300, a missing `## Interface` is 0 and incompatible,
+    /// and a gated addon's dependent is blocked; `checkAddonVersion` off loads the out-of-date
+    /// ones and still holds the incompatible one.
     #[test]
     fn the_version_gate_holds_the_walk_and_force_load_opens_it() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -1769,25 +1801,25 @@ mod tests {
         write_addon(
             &home,
             "Fresh",
-            "## Interface: 11200\nmain.lua\n",
+            "## Interface: 30300\nmain.lua\n",
             &[("main.lua", "FreshRan = true\n")],
         );
         write_addon(
             &home,
             "Old",
-            "## Interface: 11100\nmain.lua\n",
+            "## Interface: 30200\nmain.lua\n",
             &[("main.lua", "OldRan = true\n")],
         );
         write_addon(
             &home,
             "Silent",
-            "main.lua\n", // no ## Interface: parses as 0, out of date
+            "main.lua\n", // no ## Interface: parses as 0, incompatible
             &[("main.lua", "SilentRan = true\n")],
         );
         write_addon(
             &home,
             "NeedsOld",
-            "## Interface: 11200\n## Dependencies: Old\nmain.lua\n",
+            "## Interface: 30300\n## Dependencies: Old\nmain.lua\n",
             &[("main.lua", "NeedsOldRan = true\n")],
         );
 
@@ -1806,7 +1838,7 @@ mod tests {
                 .eval::<bool>("return OldRan == nil and SilentRan == nil")
                 .ok(),
             Some(true),
-            "out-of-date and interface-less addons are held by the gate"
+            "out-of-date and incompatible addons are held by the gate"
         );
         assert_eq!(
             script.eval::<bool>("return NeedsOldRan == nil").ok(),
@@ -1819,12 +1851,15 @@ mod tests {
         let failures = load_third_party(&mut open, None, &[], false);
         assert!(failures.is_empty(), "force-load load errors: {failures:?}");
         assert_eq!(
-            open.eval::<bool>(
-                "return OldRan == true and SilentRan == true and NeedsOldRan == true"
-            )
-            .ok(),
+            open.eval::<bool>("return OldRan == true and NeedsOldRan == true")
+                .ok(),
             Some(true),
-            "'Load out of date AddOns' loads the very same folder in full"
+            "'Load out of date AddOns' loads the out-of-date addon and its dependent"
+        );
+        assert_eq!(
+            open.eval::<bool>("return SilentRan == nil").ok(),
+            Some(true),
+            "but not an incompatible one (`0x5f7f25` returns before the check is read)"
         );
     }
 
@@ -1857,7 +1892,7 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (home, _guard) = hermetic_root("encoding");
         // `## Title:` holds a cp1252 a-umlaut (0xE4).
-        let mut toc = b"## Interface: 11200\n## Title: Sch\xE4tze\nlocale.lua\nboot.lua\n".to_vec();
+        let mut toc = b"## Interface: 30300\n## Title: Sch\xE4tze\nlocale.lua\nboot.lua\n".to_vec();
         toc.splice(0..0, [0xEFu8, 0xBB, 0xBF]); // and a BOM on the manifest too
         write_addon_bytes(
             &home,
@@ -1877,8 +1912,8 @@ mod tests {
         let failures = load_third_party(&mut script, None, &[], true);
         assert!(failures.is_empty(), "load errors: {failures:?}");
 
-        // Discovery found it. One, not thirteen: `SMSG_ADDON_INFO` answers status 2 for the
-        // chain's twelve secure addons, and the Lua index space drops them.
+        // Discovery found it. One, not 23: `SMSG_ADDON_INFO` answers status 2 for the
+        // chain's 22 secure rows, and the Lua index space drops them.
         seat_stock_addon_reply(&mut script);
         assert_eq!(script.eval::<i64>("return GetNumAddOns()").ok(), Some(1));
         assert_eq!(
@@ -1939,7 +1974,7 @@ mod tests {
     /// Seat the `SMSG_ADDON_INFO` reply hiding the secure addons, as world entry does: the Lua
     /// index space does not exist until the server answers, as in the reference.
     fn seat_stock_addon_reply(script: &mut UiScript) {
-        let hidden: Vec<String> = benilla_protocol::messages::STOCK_SECURE_ADDONS
+        let hidden: Vec<String> = benilla_protocol::messages::STOCK_SECURE_ADDONS_WOTLK
             .iter()
             .map(|a| a.name.to_string())
             .collect();
@@ -1958,13 +1993,13 @@ mod tests {
         write_addon(
             &home,
             "Probe",
-            "## Interface: 11200\n## Title: Probe Title\n## Notes: What it does\n## URL: http://example\n## Version: 1.2\n",
+            "## Interface: 30300\n## Title: Probe Title\n## Notes: What it does\n## URL: http://example\n## Version: 1.2\n",
             &[],
         );
         let mut script = UiScript::new().unwrap();
         let _ = load_third_party(&mut script, None, &[], true);
 
-        // One, not thirteen: the chain's twelve secure addons are hidden by the reply.
+        // One, not 23: the chain's 22 secure rows are hidden by the reply.
         seat_stock_addon_reply(&mut script);
         assert_eq!(script.eval::<i64>("return GetNumAddOns()").ok(), Some(1));
         assert_eq!(
@@ -2036,13 +2071,13 @@ mod tests {
         write_addon(
             &home,
             "Off",
-            "## Interface: 11200\nran.lua\n",
+            "## Interface: 30300\nran.lua\n",
             &[("ran.lua", "OffRan = true")],
         );
         write_addon(
             &home,
             "On",
-            "## Interface: 11200\nran.lua\n",
+            "## Interface: 30300\nran.lua\n",
             &[("ran.lua", "OnRan = true")],
         );
         // "On" is absent from the file.
@@ -2090,7 +2125,7 @@ mod tests {
         write_addon(
             &home,
             "Demand",
-            "## Interface: 11200\n## Title: Demand\n## LoadOnDemand: 1\nlate.lua\nlate.xml\n",
+            "## Interface: 30300\n## Title: Demand\n## LoadOnDemand: 1\nlate.lua\nlate.xml\n",
             &[
                 ("late.lua", "DemandRan = true"),
                 (
@@ -2105,7 +2140,7 @@ mod tests {
         script.set_screen_size(1024.0, 768.0);
         let _ = load_third_party(&mut script, None, &[], true);
 
-        // Discovered and described, not run; one row, the chain's twelve hidden by the reply.
+        // Discovered and described, not run; one row, the chain's 22 hidden by the reply.
         seat_stock_addon_reply(&mut script);
         assert_eq!(script.eval::<i64>("return GetNumAddOns()").ok(), Some(1));
         assert_eq!(
@@ -2174,7 +2209,7 @@ mod tests {
         write_addon(
             &home,
             "Demand",
-            "## Interface: 11200\n## LoadOnDemand: 1\nlate.xml\ngone.xml\ngone.lua\n",
+            "## Interface: 30300\n## LoadOnDemand: 1\nlate.xml\ngone.xml\ngone.lua\n",
             &[("late.xml", "<Ui><Include file=\"nope.xml\"/></Ui>")],
         );
         let mut script = UiScript::new().unwrap();
@@ -2207,7 +2242,7 @@ mod tests {
     }
 
     /// A LoadOnDemand options package on a dependency the startup walk loaded (`/msbt`'s shape):
-    /// without the walk's `mark_addon_loaded` stamp the gate answers `DEP_NOT_DEMAND_LOADED`.
+    /// without the walk's `mark_addon_loaded` stamp, `LoadAddOn` would run the dependency again.
     #[test]
     fn a_load_on_demand_addon_loads_on_top_of_an_already_loaded_dependency() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -2218,13 +2253,13 @@ mod tests {
         write_addon(
             &home,
             "Base",
-            "## Interface: 11200\n## Title: Base\nbase.lua\n",
+            "## Interface: 30300\n## Title: Base\nbase.lua\n",
             &[("base.lua", "BaseRan = true")],
         );
         write_addon(
             &home,
             "BaseOptions",
-            "## Interface: 11200\n## Title: Base Options\n## Dependencies: Base\n             ## LoadOnDemand: 1\nopts.lua\n",
+            "## Interface: 30300\n## Title: Base Options\n## Dependencies: Base\n             ## LoadOnDemand: 1\nopts.lua\n",
             &[("opts.lua", "OptsRan = BaseRan")],
         );
         let mut script = UiScript::new().unwrap();
@@ -2232,9 +2267,11 @@ mod tests {
         let _ = load_third_party(&mut script, None, &[], true);
 
         assert_eq!(
-            script.eval::<bool>("return IsAddOnLoaded('Base') == 1").ok(),
+            script
+                .eval::<bool>("return IsAddOnLoaded('Base') == 1")
+                .ok(),
             Some(true),
-            "a startup-loaded addon reads as loaded, else a dependent answers DEP_NOT_DEMAND_LOADED"
+            "a startup-loaded addon reads as loaded, else a dependent's LoadAddOn reruns it"
         );
         assert_eq!(
             script.eval::<bool>("return OptsRan == nil").ok(),
@@ -2268,7 +2305,7 @@ mod tests {
         write_addon(
             &home,
             "Holey",
-            "## Interface: 11200\n## Title: Holey\n## LoadOnDemand: 1\n\
+            "## Interface: 30300\n## Title: Holey\n## LoadOnDemand: 1\n\
              Locale-koKR.lua\nreal.lua\n",
             // `Locale-koKR.lua` is listed and not written.
             &[("real.lua", "HoleyRan = true")],
@@ -2319,11 +2356,11 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _c = crate::local_state::test_env::EnvGuard::unset("WOW_CAPTURE");
         let (home, _h) = hermetic_root("reasons");
-        write_addon(&home, "Plain", "## Interface: 11200\n", &[]);
+        write_addon(&home, "Plain", "## Interface: 30300\n", &[]);
         write_addon(
             &home,
             "Off",
-            "## Interface: 11200\n## LoadOnDemand: 1\n",
+            "## Interface: 30300\n## LoadOnDemand: 1\n",
             &[],
         );
         std::fs::create_dir_all(home.join("addons")).unwrap();
@@ -2363,13 +2400,13 @@ mod tests {
         write_addon(
             &home,
             "Shunned",
-            "## Interface: 11200\nran.lua\n",
+            "## Interface: 30300\nran.lua\n",
             &[("ran.lua", "ShunnedRan = true")],
         );
         write_addon(
             &home,
             "Contested",
-            "## Interface: 11200\nran.lua\n",
+            "## Interface: 30300\nran.lua\n",
             &[("ran.lua", "ContestedRan = true")],
         );
         // Two characters with files: both turned `Shunned` off, they disagree about `Contested`.
@@ -2417,11 +2454,11 @@ mod tests {
         let _c = crate::local_state::test_env::EnvGuard::unset("WOW_CAPTURE");
         let (home, _h) = hermetic_root("unknown-char");
         // `OptIn` ships `DefaultState: disabled`, so the epilogue's two outcomes differ.
-        write_addon(&home, "Shunned", "## Interface: 11200\n", &[]);
+        write_addon(&home, "Shunned", "## Interface: 30300\n", &[]);
         write_addon(
             &home,
             "OptIn",
-            "## Interface: 11200\n## DefaultState: disabled\n",
+            "## Interface: 30300\n## DefaultState: disabled\n",
             &[],
         );
         for who in ["Onemage", "Onerogue"] {
@@ -2458,11 +2495,11 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _c = crate::local_state::test_env::EnvGuard::unset("WOW_CAPTURE");
         let (home, _h) = hermetic_root("roundtrip");
-        write_addon(&home, "Keep", "## Interface: 11200\n", &[]);
+        write_addon(&home, "Keep", "## Interface: 30300\n", &[]);
         write_addon(
             &home,
             "Drop",
-            "## Interface: 11200\nran.lua\n",
+            "## Interface: 30300\nran.lua\n",
             &[("ran.lua", "DropRan = true")],
         );
         let id = ("Realm".to_string(), "Char".to_string());
@@ -2500,8 +2537,8 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _c = crate::local_state::test_env::EnvGuard::unset("WOW_CAPTURE");
         let (home, _h) = hermetic_root("untouched");
-        write_addon(&home, "Keep", "## Interface: 11200\n", &[]);
-        write_addon(&home, "Off", "## Interface: 11200\n", &[]);
+        write_addon(&home, "Keep", "## Interface: 30300\n", &[]);
+        write_addon(&home, "Off", "## Interface: 30300\n", &[]);
         let fresh = ("Realm".to_string(), "Fresh".to_string());
         let mut script = UiScript::new().unwrap();
         let _ = load_third_party(&mut script, Some(&fresh), &[], true);
@@ -2549,7 +2586,7 @@ mod tests {
         write_addon(
             &home,
             "Shared",
-            "## Interface: 11200\nran.lua\n",
+            "## Interface: 30300\nran.lua\n",
             &[("ran.lua", "SharedRan = true")],
         );
         let roster = ["Alice".to_string(), "Bob".to_string()];
@@ -2591,7 +2628,7 @@ mod tests {
         write_addon(
             &home,
             "Keeper",
-            "## Interface: 11200\n## SavedVariables: KeeperDB\n\
+            "## Interface: 30300\n## SavedVariables: KeeperDB\n\
              ## SavedVariablesPerCharacter: KeeperChar\nkeeper.lua\nkeeper.xml\n",
             &[
                 (
@@ -2665,7 +2702,7 @@ mod tests {
         write_addon(
             &home,
             "Gram",
-            "## Interface: 11200\n## SavedVariables: GramDB\n\
+            "## Interface: 30300\n## SavedVariables: GramDB\n\
              ## SavedVariablesPerCharacter: GramChar\ngram.lua\n",
             &[("gram.lua", "GramDB = {}\nGramChar = 0\n")],
         );
@@ -2713,7 +2750,7 @@ mod tests {
         write_addon(
             &home,
             "Last",
-            "## Interface: 11200\n## SavedVariables: LastDB\nlast.lua\nlast.xml\n",
+            "## Interface: 30300\n## SavedVariables: LastDB\nlast.lua\nlast.xml\n",
             &[
                 ("last.lua", "LastDB = 'unset'"),
                 (
@@ -2752,7 +2789,7 @@ mod tests {
         write_addon(
             &home,
             "MyAddon",
-            "## Interface: 11200\nmain.lua\n",
+            "## Interface: 30300\nmain.lua\n",
             &[("main.lua", "MyAddonRan = true")],
         );
         let id = ("Realm".to_string(), "Char".to_string());
@@ -2790,7 +2827,7 @@ mod tests {
     }
 
     /// `AddOn_Load 0x51f240` has no re-entrancy guard (the visiting byte `[UIADDON+0x2d]` lives in
-    /// `AddOn_CanLoad 0x51e780`) but stamps the loaded byte before the dependency loops
+    /// `AddOn_CanLoad 0x5f7e90`) but stamps the loaded byte before the dependency loops
     /// (`0x51f313 mov byte [rec+0x18],1`), so the re-entered frame exits at `0x51f2d6`/`0x51f2db`
     /// with 1. A cycle loads both with no reason token, `ADDON_LOADED` fires B then A, and
     /// `IsAddOnLoaded('Ping')` is 1 while Pong's files run.
@@ -2804,7 +2841,7 @@ mod tests {
         write_addon(
             &home,
             "Ping",
-            "## Interface: 11200\n## LoadOnDemand: 1\n## Dependencies: Pong\nping.lua\n",
+            "## Interface: 30300\n## LoadOnDemand: 1\n## Dependencies: Pong\nping.lua\n",
             &[(
                 "ping.lua",
                 "PingRan = true Order = (Order or '') .. 'Ping,'",
@@ -2813,7 +2850,7 @@ mod tests {
         write_addon(
             &home,
             "Pong",
-            "## Interface: 11200\n## LoadOnDemand: 1\n## Dependencies: Ping\npong.lua\n",
+            "## Interface: 30300\n## LoadOnDemand: 1\n## Dependencies: Ping\npong.lua\n",
             &[(
                 "pong.lua",
                 "PongRan = true Order = (Order or '') .. 'Pong,' \

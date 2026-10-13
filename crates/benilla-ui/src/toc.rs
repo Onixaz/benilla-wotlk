@@ -102,7 +102,7 @@ impl Toc {
         self.list_where(|k| starts_with_ci(k, "OptionalDep"))
     }
 
-    /// `## LoadOnDemand: 1`, which stock 1.12 addons such as `Blizzard_TalentUI` carry.
+    /// `## LoadOnDemand: 1`, which stock 3.3.5a addons such as `Blizzard_TalentUI` carry.
     pub fn load_on_demand(&self) -> bool {
         self.directive("LoadOnDemand").map(str::trim) == Some("1")
     }
@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn default_state_is_enabled_unless_the_manifest_says_disabled() {
         let d = |body: &str| Toc::parse(body).default_state();
-        assert!(d("## Interface: 11200\n"), "absent: the ctor's own 1");
+        assert!(d("## Interface: 30300\n"), "absent: the ctor's own 1");
         assert!(d("## DefaultState: enabled\n"));
         assert!(!d("## DefaultState: disabled\n"));
         assert!(
@@ -176,13 +176,13 @@ mod tests {
     #[test]
     fn vanilla_1_12_shape() {
         let toc = Toc::parse(
-            "## Interface: 11200\n\
+            "## Interface: 30300\n\
              ## Title: FrameXML\n\
              ## Secure: 1\n\
              GlobalStrings.lua\n\
              Fonts.xml\n",
         );
-        assert_eq!(toc.interface_versions(), vec![11200]);
+        assert_eq!(toc.interface_versions(), vec![30300]);
         assert_eq!(toc.directive("Secure"), Some("1"));
         assert!(!toc.load_on_demand());
         assert_eq!(toc.files.len(), 2);

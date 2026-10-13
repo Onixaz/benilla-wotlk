@@ -625,7 +625,7 @@ fn run(
         let addon_info = statuses.as_deref().map(|statuses| {
             benilla_protocol::messages::hidden_from_reply(
                 statuses,
-                &benilla_protocol::messages::STOCK_SECURE_ADDONS,
+                &benilla_protocol::messages::STOCK_SECURE_ADDONS_WOTLK,
             )
         });
         match (&statuses, &addon_info) {

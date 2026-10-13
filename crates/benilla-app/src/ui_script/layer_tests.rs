@@ -32,7 +32,7 @@ fn production_load(tag: &str, stock_ui: bool) -> (UiScript, Vec<String>) {
     production_load_with(tag, stock_ui, &before, |root| {
         let dir = root.join("ZZOrder");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("ZZOrder.toc"), "## Interface: 11200\nprobe.lua\n").unwrap();
+        std::fs::write(dir.join("ZZOrder.toc"), "## Interface: 30300\nprobe.lua\n").unwrap();
         std::fs::write(
             dir.join("probe.lua"),
             "ZZORDER_SAW_LAYER = BenillaOptionsFrame ~= nil\n",
@@ -410,7 +410,7 @@ fn the_error_log_collects_off_the_error_handler() {
     let (mut s, failures) = production_load_with("errlog", false, before, |root| {
         let dir = root.join("ZZErr");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("ZZErr.toc"), "## Interface: 11200\nerr.lua\n").unwrap();
+        std::fs::write(dir.join("ZZErr.toc"), "## Interface: 30300\nerr.lua\n").unwrap();
         std::fs::write(
             dir.join("err.lua"),
             "ZZErrButton = CreateFrame('Button', 'ZZErrButton')\n\

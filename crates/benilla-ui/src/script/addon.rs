@@ -2,7 +2,7 @@
 //! (`reference/3.3.5a-globals.tsv`), over a registry the host fills at discovery. A verb that names
 //! an addon takes a 1-based index or a name. `reason` is a token the stock UI splices into
 //! `getglobal("ADDON_"..reason)` (`UIParent.lua:642`), so its spelling is the contract. Verdicts
-//! come from [`super::addon_gate`], the reference's `AddOn_CanLoad` (`0x51e780`).
+//! come from [`super::addon_gate`], the reference's `AddOn_CanLoad` (`0x5f7e90`).
 
 use std::path::PathBuf;
 
@@ -176,13 +176,14 @@ fn version_check(model: &Model) -> bool {
         .is_none_or(|s| s.value != "0")
 }
 
-/// [`can_load`] in the in-game flavour (`dl=1`). A loaded addon is loadable before the gate
-/// runs, as in `0x48e390`, so disabling it mid-session does not mark it unloadable.
+/// [`can_load`] in the in-game flavour, the demand arm skipped (`0x51138b`, `0x528a6d` push 1).
+/// A loaded addon is loadable before the gate runs, as in `0x48e390`, so disabling it
+/// mid-session does not mark it unloadable.
 fn verdict(model: &Model, i: usize) -> Verdict {
     if model.addons[i].loaded {
         return Verdict::Loadable;
     }
-    can_load(&gate_rows(model), i, true, version_check(model))
+    can_load(&gate_rows(model), i, false, version_check(model))
 }
 
 fn lua_str(lua: &Lua, s: &str) -> mlua::Result<Value> {

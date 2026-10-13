@@ -18,7 +18,7 @@ SwitchProbeDB = { who = currentPlayer }
 
 /// Declares `SwitchProbeDB` saved per character, so the shutdown writes a real file.
 const PROBE_TOC: &str = "\
-## Interface: 11200
+## Interface: 30300
 ## SavedVariablesPerCharacter: SwitchProbeDB
 SwitchProbe.lua
 ";
@@ -586,7 +586,7 @@ fn an_addon_error_while_entering_world_reports_on_screen_and_the_sibling_loads()
     // A second addon, first alphabetically, that dies at file scope.
     let dir = tmp.join("benilla-config/AddOns/AaBroken");
     std::fs::create_dir_all(&dir).expect("broken addon dir");
-    std::fs::write(dir.join("AaBroken.toc"), "## Interface: 11200\nboom.lua\n").expect("toc");
+    std::fs::write(dir.join("AaBroken.toc"), "## Interface: 30300\nboom.lua\n").expect("toc");
     std::fs::write(dir.join("boom.lua"), "error('file-scope boom')\n").expect("lua");
     let mut world = booted_world();
 
@@ -633,7 +633,7 @@ fn a_looping_addon_cannot_freeze_world_entry() {
     let (tmp, _c, _h) = hermetic_probe("addon-loop");
     let dir = tmp.join("benilla-config/AddOns/AaSpin");
     std::fs::create_dir_all(&dir).expect("spin addon dir");
-    std::fs::write(dir.join("AaSpin.toc"), "## Interface: 11200\nspin.lua\n").expect("toc");
+    std::fs::write(dir.join("AaSpin.toc"), "## Interface: 30300\nspin.lua\n").expect("toc");
     std::fs::write(dir.join("spin.lua"), "while true do end\n").expect("lua");
     let mut world = booted_world();
 
@@ -883,7 +883,7 @@ fn an_addon_that_fails_to_load_without_raising_is_readable_in_the_error_log() {
     std::fs::create_dir_all(&dir).expect("addon dir");
     std::fs::write(
         dir.join("AaMissing.toc"),
-        "## Interface: 11200\nBossnames\\BossNames.xml\nDatabase\\hash.lua\n",
+        "## Interface: 30300\nBossnames\\BossNames.xml\nDatabase\\hash.lua\n",
     )
     .expect("toc");
     // …and no such file is written.
@@ -1273,7 +1273,7 @@ fn run_ingame_ui_up(world: &mut World) -> bool {
 #[test]
 fn an_addon_reads_the_map_catalog_at_file_scope() {
     const MAP_PROBE_TOC: &str = "\
-## Interface: 11200
+## Interface: 30300
 MapProbe.lua
 ";
     // Astrolabe's two calls, in its idiom: a table constructor around a multi-return.
@@ -1332,7 +1332,7 @@ MapProbeZones = table.getn({ GetMapZones(1) })
 #[test]
 fn an_addon_reads_the_keybinding_table_at_file_scope() {
     const TOC: &str = "\
-## Interface: 11200
+## Interface: 30300
 BindProbe.lua
 ";
     const LUA: &str = "\
@@ -1377,7 +1377,7 @@ BindProbeSet = SetBinding(\"J\", \"TOGGLEWORLDMAP\")
 #[test]
 fn an_addon_that_joins_general_at_file_scope_puts_nothing_on_the_wire() {
     const TOC: &str = "\
-## Interface: 11200
+## Interface: 30300
 JoinProbe.lua
 ";
     const LUA: &str = "JoinChannelByName(\"General\")\n";
@@ -1421,7 +1421,7 @@ JoinProbe.lua
 #[test]
 fn an_addon_reads_the_real_screen_size_at_file_scope() {
     const TOC: &str = "\
-## Interface: 11200
+## Interface: 30300
 ScreenProbe.lua
 ";
     const LUA: &str = "\

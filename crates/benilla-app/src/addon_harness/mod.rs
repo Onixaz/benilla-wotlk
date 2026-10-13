@@ -48,7 +48,7 @@ pub use use_probe::{UseReport, Used, MAX_USE_TARGETS};
 #[derive(Debug, Clone, Default)]
 pub struct AddonReport {
     pub name: String,
-    /// `## Interface`, as written (1.12 is `11200`); older values are not refused.
+    /// `## Interface`, as written (3.3.5a is `30300`); other values are not refused.
     pub interface: Vec<u32>,
     /// No manifest entry raised, failed to parse or dropped a frame. An entry naming no file does
     /// not count: the 1.12 client logs `Couldn't open %s` and carries on (`0x6edaa0`); its row
@@ -296,8 +296,8 @@ fn survey_one(
 
     let files = load_addon_files(&script, root, name, &toc);
     // The live walk stamps each addon as loaded just before its `ADDON_LOADED` (`0x51f5ad`);
-    // without it `IsAddOnLoaded` answers nil and a LoadOnDemand dependent gets
-    // `DEP_NOT_DEMAND_LOADED`. The dependencies stamped themselves in `load_dependencies`.
+    // without it `IsAddOnLoaded` answers nil and a LoadOnDemand dependent's `LoadAddOn` runs
+    // this addon a second time. The dependencies stamped themselves in `load_dependencies`.
     script.mark_addon_loaded(name);
     let wants = missing_calls(root, name, &toc, &known, &dep_methods);
     // After the addon's files, so a template its own XML declares is registered.
@@ -2603,19 +2603,19 @@ mod dependency_tests {
         // depth-first.
         write(
             "Lib",
-            "## Interface: 11200\nlib.lua\n",
+            "## Interface: 30300\nlib.lua\n",
             "lib.lua",
             "LibReady = 1\n",
         );
         write(
             "Mid",
-            "## Interface: 11200\n## Dependencies: Lib\nmid.lua\n",
+            "## Interface: 30300\n## Dependencies: Lib\nmid.lua\n",
             "mid.lua",
             "MidReady = LibReady + 1\n",
         );
         write(
             "Leaf",
-            "## Interface: 11200\n## Dependencies: Mid\nleaf.lua\n",
+            "## Interface: 30300\n## Dependencies: Mid\nleaf.lua\n",
             "leaf.lua",
             "LeafReady = MidReady + 1\n",
         );
@@ -2632,7 +2632,7 @@ mod dependency_tests {
         // ...and a dependency that is not installed is still reported.
         write(
             "Orphan",
-            "## Interface: 11200\n## Dependencies: Nowhere\norphan.lua\n",
+            "## Interface: 30300\n## Dependencies: Nowhere\norphan.lua\n",
             "orphan.lua",
             "OrphanReady = 1\n",
         );
@@ -2790,7 +2790,7 @@ mod dependency_tests {
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(
                 dir.join(format!("{name}.toc")),
-                "## Interface: 11200\na.lua\n",
+                "## Interface: 30300\na.lua\n",
             )
             .unwrap();
             std::fs::write(dir.join("a.lua"), body).unwrap();
@@ -2858,7 +2858,7 @@ mod dependency_tests {
         // names.
         write(
             "QueueLib",
-            "## Interface: 11200\nlib.lua\n",
+            "## Interface: 30300\nlib.lua\n",
             "lib.lua",
             "QueueLibQueue = {}\n\
              QueueLibFrame = CreateFrame(\"Frame\")\n\
@@ -2872,7 +2872,7 @@ mod dependency_tests {
         // The consumer queues a callback that raises from its own file.
         write(
             "QueueUser",
-            "## Interface: 11200\n## Dependencies: QueueLib\nuse.lua\n",
+            "## Interface: 30300\n## Dependencies: QueueLib\nuse.lua\n",
             "use.lua",
             "table.insert(QueueLibQueue, function() error(\"consumer init blew up\") end)\n",
         );
@@ -2913,7 +2913,7 @@ mod dependency_tests {
         // `ADDON_LOADED`.
         write(
             "TheLib",
-            "## Interface: 11200\nlib.lua\n",
+            "## Interface: 30300\nlib.lua\n",
             "lib.lua",
             "TheLibFrame = CreateFrame(\"Frame\")\n\
              TheLibFrame:RegisterEvent(\"ADDON_LOADED\")\n\
@@ -2924,7 +2924,7 @@ mod dependency_tests {
         // The consumer reads the library's initialised state on a later event.
         write(
             "TheUser",
-            "## Interface: 11200\n## Dependencies: TheLib\nuse.lua\n",
+            "## Interface: 30300\n## Dependencies: TheLib\nuse.lua\n",
             "use.lua",
             "TheUserFrame = CreateFrame(\"Frame\")\n\
              TheUserFrame:RegisterEvent(\"PLAYER_LOGIN\")\n\
@@ -2933,7 +2933,7 @@ mod dependency_tests {
         // A library whose own handler raises: its row, not its consumers'.
         write(
             "BadLib",
-            "## Interface: 11200\nbad.lua\n",
+            "## Interface: 30300\nbad.lua\n",
             "bad.lua",
             "BadLibFrame = CreateFrame(\"Frame\")\n\
              BadLibFrame:RegisterEvent(\"ADDON_LOADED\")\n\
@@ -2943,7 +2943,7 @@ mod dependency_tests {
         );
         write(
             "BadUser",
-            "## Interface: 11200\n## Dependencies: BadLib\nquiet.lua\n",
+            "## Interface: 30300\n## Dependencies: BadLib\nquiet.lua\n",
             "quiet.lua",
             "QuietGlobal = 1\n",
         );
@@ -2992,7 +2992,7 @@ mod dependency_tests {
         };
         write(
             "EagerLib",
-            "## Interface: 11200\nlib.lua\n",
+            "## Interface: 30300\nlib.lua\n",
             "lib.lua",
             "EagerLibFrame = CreateFrame(\"Frame\")\n\
              EagerLibFrame:RegisterEvent(\"ADDON_LOADED\")\n\
@@ -3003,7 +3003,7 @@ mod dependency_tests {
         // The consumer reads it at file scope.
         write(
             "EagerUser",
-            "## Interface: 11200\n## Dependencies: EagerLib\nuse.lua\n",
+            "## Interface: 30300\n## Dependencies: EagerLib\nuse.lua\n",
             "use.lua",
             "EagerUserSaw = EagerLibReady.anything\n",
         );
@@ -3040,7 +3040,7 @@ mod dependency_tests {
         let _ = std::fs::remove_dir_all(&tmp);
         let dir = tmp.join("TplUser");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("TplUser.toc"), "## Interface: 11200\nuse.lua\n").unwrap();
+        std::fs::write(dir.join("TplUser.toc"), "## Interface: 30300\nuse.lua\n").unwrap();
         // Every shape in one file; only the first three are seen.
         std::fs::write(
             dir.join("use.lua"),
@@ -3105,13 +3105,13 @@ mod dependency_tests {
         // Ships one of the two files its own manifest lists.
         write(
             "ShortPackage",
-            "## Interface: 11200\nhere.lua\ngone.lua\n",
+            "## Interface: 30300\nhere.lua\ngone.lua\n",
             &[("here.lua", "ShortPackageRan = 1\n")],
         );
         // Reaches a neighbour that is not installed, through `..`.
         write(
             "WantsNeighbour",
-            "## Interface: 11200\nown.lua\n..\\NotInstalled\\templates.xml\n",
+            "## Interface: 30300\nown.lua\n..\\NotInstalled\\templates.xml\n",
             &[("own.lua", "WantsNeighbourRan = 1\n")],
         );
 
@@ -3188,13 +3188,13 @@ mod dependency_tests {
         // the 1.12 client because they share a Lua state.
         write(
             "Embedder",
-            "## Interface: 11200\nembedded.lua\n",
+            "## Interface: 30300\nembedded.lua\n",
             "embedded.lua",
             "SharedLibGlobal = 1\n",
         );
         write(
             "Freeloader",
-            "## Interface: 11200\nuse.lua\n",
+            "## Interface: 30300\nuse.lua\n",
             "use.lua",
             "if not SharedLibGlobal then error('needs the sibling library') end\n",
         );
@@ -3234,13 +3234,13 @@ mod dependency_tests {
         // The library, and a dependent whose own file order needs it to have gone first.
         write(
             "TheLib",
-            "## Interface: 11200\nlib.lua\n",
+            "## Interface: 30300\nlib.lua\n",
             "lib.lua",
             "TheLibGlobal = 1\n",
         );
         write(
             "Dependent",
-            "## Interface: 11200\n## OptionalDeps: TheLib, NotInstalled\nuse.lua\n",
+            "## Interface: 30300\n## OptionalDeps: TheLib, NotInstalled\nuse.lua\n",
             "use.lua",
             "if not TheLibGlobal then error('Dependent requires TheLib') end\nDependentReady = 1\n",
         );
@@ -3271,7 +3271,7 @@ mod dependency_tests {
         let _ = std::fs::remove_dir_all(&tmp);
         let dir = tmp.join("Inheritor");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("Inheritor.toc"), "## Interface: 11200\nui.xml\n").unwrap();
+        std::fs::write(dir.join("Inheritor.toc"), "## Interface: 30300\nui.xml\n").unwrap();
         std::fs::write(
             dir.join("ui.xml"),
             r#"<Ui>
@@ -3328,7 +3328,7 @@ mod dependency_tests {
         std::fs::create_dir_all(&lib).unwrap();
         std::fs::write(
             lib.join("MethodicalLib.toc"),
-            "## Interface: 11200\nlib.lua\n",
+            "## Interface: 30300\nlib.lua\n",
         )
         .unwrap();
         std::fs::write(
@@ -3340,7 +3340,7 @@ mod dependency_tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("Methodical.toc"),
-            "## Interface: 11200\n## Dependencies: MethodicalLib\na.lua\n",
+            "## Interface: 30300\n## Dependencies: MethodicalLib\na.lua\n",
         )
         .unwrap();
         // Inside a function never called: the census is static, and an unrun body keeps `loaded`
@@ -3408,7 +3408,7 @@ mod dependency_tests {
         let _ = std::fs::remove_dir_all(&tmp);
         let dir = tmp.join("PerKind");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("PerKind.toc"), "## Interface: 11200\na.lua\n").unwrap();
+        std::fs::write(dir.join("PerKind.toc"), "## Interface: 30300\na.lua\n").unwrap();
         // Never executed: the scan is static, and an unrun body keeps `loaded` clean.
         std::fs::write(
             dir.join("a.lua"),
