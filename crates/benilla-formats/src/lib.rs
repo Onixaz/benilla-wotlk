@@ -177,6 +177,8 @@ mod sound_provider;
 pub use sound_provider::{load_sound_provider_catalog, SoundProvider, SoundProviderCatalog};
 mod sound_water;
 pub use sound_water::{load_water_sound_catalog, WaterSoundCatalog};
+mod weather;
+pub use weather::{load_weather_catalog, WeatherCatalog, WeatherRow};
 mod vocal_ui_sounds;
 pub use vocal_ui_sounds::{
     load_vocal_ui_sounds, VocalUiSound, VocalUiSoundCatalog, VOCAL_UI_LINES,

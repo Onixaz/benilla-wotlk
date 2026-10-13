@@ -133,6 +133,25 @@ fn server_sound_trio_parse_and_decode() {
     ));
 }
 
+/// 12340's body is `u32 weatherId, f32 grade, u8 instant` (`0x526a77`), nine bytes, no sound.
+#[test]
+fn weather_reads_the_3_3_5a_body_whole() {
+    let mut body = 4u32.to_le_bytes().to_vec();
+    body.extend_from_slice(&0.5f32.to_le_bytes());
+    body.push(1);
+    let (p, tail) =
+        messages::parse_server_with_tail(messages::opcode::SMSG_WEATHER, &body).unwrap();
+    assert_eq!(tail, 0, "the decoder reads the whole body");
+    assert!(matches!(
+        decode(p)[..],
+        [SessionEvent::Weather {
+            weather_id: 4,
+            grade: 0.5,
+            instant: true,
+        }]
+    ));
+}
+
 /// u8 itemClass + u32 subclass bitmask, per vmangos `Skill.cpp` `AppendBodyTo`.
 #[test]
 fn set_proficiency_parses_and_decodes() {

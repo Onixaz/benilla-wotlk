@@ -46,14 +46,12 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             vec![SessionEvent::PlayObjectSound { sound_id, guid }]
         }
         ServerPacket::Weather {
-            weather_type,
+            weather_id,
             grade,
-            sound_id,
             instant,
         } => vec![SessionEvent::Weather {
-            weather_type,
+            weather_id,
             grade,
-            sound_id,
             instant,
         }],
         ServerPacket::TextEmote {

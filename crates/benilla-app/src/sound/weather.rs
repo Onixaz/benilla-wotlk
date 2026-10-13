@@ -1,5 +1,5 @@
-//! Weather sound: `SMSG_WEATHER.soundId` (a loop kit, 8533..8558, from vmangos
-//! `Weather::GetSound`; 0 is clear) is an input to the one zone-ambience channel, not a loop of
+//! Weather sound: the `SMSG_WEATHER` id's `Weather.dbc` ambience kit (12340 stores it at
+//! `0x4c8610`; 0 is none) is an input to the one zone-ambience channel, not a loop of
 //! its own. The selector `0x460bd0` returns the weather kit while the zonetext indoor bit
 //! `[0xb06d44]` is clear (written 1 by the indoor area feeder `0x67e7d4`, 0 by the outdoor one
 //! `0x67e919`) and the area's `AmbienceID` while set, each swap a 5.0 s crossfade (`0x460b00`):
@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use benilla_world::schedule::WorldStage;
 use benilla_world::weather::WeatherMessage;
 
-/// The weather loop's SoundEntries kit from the last `SMSG_WEATHER`, 0 for clear skies.
+/// The weather loop's SoundEntries kit from the last `SMSG_WEATHER`, 0 for none.
 #[derive(Resource, Default)]
 pub(super) struct WeatherAmbience(pub(super) u32);
 

@@ -289,9 +289,8 @@ pub fn parse_server_with_tail(opcode: u16, body: &[u8]) -> io::Result<(ServerPac
 /// The opcodes whose 3.3.5a body is known to differ from the layout their arm reads and has no
 /// 3.3.5a decoder yet: each failed or left bytes unread against AzerothCore, and
 /// `SMSG_COMPRESSED_MOVES`, which AzerothCore never sends, frames its records unverified.
-const UNDECODED: [u16; 5] = [
+const UNDECODED: [u16; 4] = [
     opcode::SMSG_INIT_WORLD_STATES,
-    opcode::SMSG_WEATHER,
     opcode::SMSG_FRIEND_LIST,
     opcode::SMSG_GUILD_ROSTER,
     opcode::SMSG_COMPRESSED_MOVES,
@@ -615,9 +614,8 @@ fn parse_server_body(
             guid: read_u64_le(&mut r)?,
         },
         opcode::SMSG_WEATHER => ServerPacket::Weather {
-            weather_type: read_u32_le(&mut r)?,
+            weather_id: read_u32_le(&mut r)?,
             grade: read_f32_le(&mut r)?,
-            sound_id: read_u32_le(&mut r)?,
             instant: read_u8(&mut r)? != 0,
         },
         opcode::SMSG_TEXT_EMOTE => {

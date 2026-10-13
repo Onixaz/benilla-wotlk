@@ -20,7 +20,7 @@ mod precip;
 /// Rain's forced-fog window, read by the effect lane's `EffectFog::Rain` row.
 pub(crate) use precip::{RAIN_FOG_END, RAIN_FOG_START};
 
-/// Wire weather types (`SMSG_WEATHER` / vmangos `WeatherType`).
+/// `Weather.dbc`'s effect types, which `SetWeather` (`0x7846a0`) takes below 4.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum WeatherKind {
     #[default]
@@ -297,7 +297,7 @@ pub(crate) struct WeatherPlugin;
 pub struct WeatherMessage {
     pub weather_type: u32,
     pub grade: f32,
-    /// A SoundEntries loop kit (8533..8558), 0 = clear skies.
+    /// The row's ambience `SoundEntries` kit, 0 = none.
     pub sound_id: u32,
     pub instant: bool,
 }

@@ -423,11 +423,10 @@ pub enum SessionEvent {
     PlayMusic { music_id: u32 },
     /// A server-pushed 3D sound kit at object `guid` (`SMSG_PLAY_OBJECT_SOUND`).
     PlayObjectSound { sound_id: u32, guid: u64 },
-    /// The zone's weather (`SMSG_WEATHER`); `sound_id` is a SoundEntries loop, 8533..8558, 0 clear.
+    /// The zone's weather (`SMSG_WEATHER`); `weather_id` is a `Weather.dbc` row.
     Weather {
-        weather_type: u32,
+        weather_id: u32,
         grade: f32,
-        sound_id: u32,
         instant: bool,
     },
     /// A chat emote (`SMSG_TEXT_EMOTE`, `EmotesText.dbc`); empty `target_name` means untargeted.

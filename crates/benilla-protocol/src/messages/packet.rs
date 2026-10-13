@@ -380,11 +380,11 @@ pub enum ServerPacket {
         sound_id: u32,
         guid: u64,
     },
-    /// `SMSG_WEATHER`: `u32 type, f32 grade, u32 soundId, u8 instant`; sounds 8533..8558, 0 clear.
+    /// `SMSG_WEATHER`: `u32 weatherId, f32 grade, u8 instant` (12340 handler `0x526a77`); the id
+    /// is a `Weather.dbc` row.
     Weather {
-        weather_type: u32,
+        weather_id: u32,
         grade: f32,
-        sound_id: u32,
         instant: bool,
     },
     /// `SMSG_TEXT_EMOTE`: `u64 guid, u32 textEmote, u32 emoteNum, u32 namelen, char name[namelen]`
