@@ -1366,3 +1366,60 @@ fn button_get_text_color_answers_four_values_through_the_state_font() {
         .unwrap();
     assert_eq!(s.arity("ChkColorBtn:GetTextColor()").unwrap(), 4);
 }
+
+/// `Enable`/`Disable` run `OnEnable`/`OnDisable` on a change only (`0x970440` returns early when
+/// the state already matches), with no arguments past `self`.
+#[test]
+fn enable_and_disable_fire_their_scripts_on_a_change() {
+    let s = script();
+    s.run(
+        r##"
+        log = {}
+        b = CreateFrame("Button", "Toggled")
+        b:SetScript("OnEnable", function(self, ...) table.insert(log, "enable:" .. self:GetName() .. ":" .. select("#", ...)) end)
+        b:SetScript("OnDisable", function(self) table.insert(log, "disable") end)
+        b:Enable()
+        b:Disable()
+        b:Disable()
+        b:Enable()
+        b:Enable()
+    "##,
+    )
+    .unwrap();
+    assert_eq!(
+        s.eval::<String>("return table.concat(log, ',')").unwrap(),
+        "disable,enable:Toggled:0"
+    );
+}
+
+/// A frame still in its XML load (`+0x130`, set by `LoadXML` and cleared before its `OnLoad`)
+/// runs no `OnEnable`/`OnDisable`: a child's `OnLoad` that disables its parent is silent, the
+/// parent's own `OnLoad` is not.
+#[test]
+fn a_frame_in_its_xml_load_fires_no_enable_scripts() {
+    let s = script();
+    let doc = crate::framexml::parse(
+        r#"<Ui>
+        <Button name="LoadingBtn">
+            <Frames>
+                <Frame name="$parentKid">
+                    <Scripts><OnLoad>self:GetParent():Disable()</OnLoad></Scripts>
+                </Frame>
+            </Frames>
+            <Scripts>
+                <OnLoad>table.insert(log, "onload") self:Enable()</OnLoad>
+                <OnEnable>table.insert(log, "enable")</OnEnable>
+                <OnDisable>table.insert(log, "disable")</OnDisable>
+            </Scripts>
+        </Button>
+        </Ui>"#,
+    )
+    .unwrap();
+    s.run("log = {}").unwrap();
+    let report = crate::loader::load_in(&s, &doc, "test.xml", &|_| None);
+    assert!(report.errors.is_empty(), "{:#?}", report.errors);
+    assert_eq!(
+        s.eval::<String>("return table.concat(log, ',')").unwrap(),
+        "onload,enable"
+    );
+}

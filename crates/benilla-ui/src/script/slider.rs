@@ -93,7 +93,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (this, min, max): (Table, f32, f32)| {
             // A reversed pair is kept, not swapped (`0x789580`). A held value re-clamps and fires
             // on a move; a fresh slider with no value yet fires nothing (bit 2).
-            let changed = with_slider(lua, &this, |s| s.set_min_max(min, max))?;
+            let (changed, range) = with_slider(lua, &this, |s| {
+                let before = (s.range_valid, s.min, s.max);
+                let changed = s.set_min_max(min, max);
+                (
+                    changed,
+                    (before != (true, s.min, s.max)).then_some((s.min, s.max)),
+                )
+            })?;
+            super::statusbar::fire_min_max_changed(lua, &this, range)?;
             fire_value_changed(lua, &this, changed)
         })?,
     )?;

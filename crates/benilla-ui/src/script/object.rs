@@ -48,7 +48,7 @@ pub(crate) fn decode_id(this: &Table) -> mlua::Result<u32> {
 }
 
 /// Resolve `self` (a frame wrapper) to its live [`FrameHandle`].
-pub(super) fn frame_handle_of(lua: &Lua, this: &Table) -> mlua::Result<FrameHandle> {
+pub(crate) fn frame_handle_of(lua: &Lua, this: &Table) -> mlua::Result<FrameHandle> {
     let id = decode_id(this)?;
     let model = lua.app_data_ref::<Model>().expect("model app_data");
     model

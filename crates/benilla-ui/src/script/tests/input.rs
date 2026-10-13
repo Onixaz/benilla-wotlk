@@ -566,7 +566,12 @@ fn the_unfired_script_kinds_still_raise_rather_than_silently_accepting() {
     s.run(r#"Raiser = CreateFrame("EditBox", "RaiserBox")"#)
         .unwrap();
     // Real slots that benilla does not fire.
-    for name in ["OnHyperlinkEnter", "OnMessageScrollChanged"] {
+    for name in [
+        "OnHyperlinkEnter",
+        "OnMessageScrollChanged",
+        "OnTooltipSetItem",
+        "OnMovieFinished",
+    ] {
         let err = s
             .run(&format!(r#"Raiser:SetScript("{name}", function() end)"#))
             .unwrap_err();

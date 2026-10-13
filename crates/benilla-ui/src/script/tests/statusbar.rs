@@ -195,3 +195,29 @@ fn statusbar_get_texture_returns_the_bar_region() {
     )
     .unwrap();
 }
+
+/// `SetMinMaxValues` runs `OnMinMaxChanged(min, max)` on a new range, and on the first one, before
+/// the re-clamp's `OnValueChanged` (`0x961859` then the `SetValue` at `0x96187b`); a repeat of the
+/// held range runs nothing (`0x96181f`).
+#[test]
+fn statusbar_min_max_changes_fire_on_min_max_changed() {
+    let s = script();
+    s.run(
+        r#"
+        log = {}
+        b = CreateFrame("StatusBar", "RangeBar")
+        b:SetScript("OnMinMaxChanged", function(self, mn, mx) table.insert(log, "range:" .. mn .. "-" .. mx) end)
+        b:SetScript("OnValueChanged", function(self, v) table.insert(log, "value:" .. v) end)
+        b:SetMinMaxValues(0, 0)
+        b:SetMinMaxValues(0, 100)
+        b:SetValue(80)
+        b:SetMinMaxValues(0, 100)
+        b:SetMinMaxValues(0, 50)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(
+        s.eval::<String>("return table.concat(log, ',')").unwrap(),
+        "range:0-0,range:0-100,value:80,range:0-50,value:50"
+    );
+}

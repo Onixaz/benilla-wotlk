@@ -155,6 +155,17 @@ fn render_unit(lua: &Lua, this: &Table, token: &str) -> mlua::Result<bool> {
     // An unresolved guid (0) is no subject: nothing can push for it.
     set_subject(lua, h, Some(u.guid).filter(|&g| g != 0));
     update_bar(lua, h, Some(&u));
+    // `OnTooltipSetUnit` (slot `+0x4ec`) runs once the lines are built, before the show
+    // (`0x621b85`): the stock handler re-tints the name line by `GameTooltip_UnitColor`.
+    let id = lua
+        .app_data_mut::<Model>()
+        .expect("model app_data")
+        .frame_id(h);
+    if let Err(e) = super::event::fire_widget_handler(lua, id, "OnTooltipSetUnit", Vec::new()) {
+        lua.app_data_mut::<Model>()
+            .expect("model app_data")
+            .record_script_error(e.to_string());
+    }
     show_or_hide_empty(lua, h);
     Ok(true)
 }
@@ -553,6 +564,41 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 mlua::Value::Integer(1)
             } else {
                 mlua::Value::Nil
+            })
+        })?,
+    )?;
+    // GameTooltip:IsUnit(token) (`0x61da20`) → 1 when the token names the unit the tooltip shows,
+    // by guid (`+0x328`), else nil; a non-string token raises (`0xa24db4`). An unknown token names
+    // nobody, as every 3.3.5a token read does.
+    m.set(
+        "IsUnit",
+        lua.create_function(|lua, (this, token): (Table, mlua::Value)| {
+            let token = match &token {
+                mlua::Value::String(s) => s.to_str()?.to_string(),
+                mlua::Value::Integer(_) | mlua::Value::Number(_) => lua
+                    .coerce_string(token.clone())?
+                    .map(|s| s.to_string_lossy())
+                    .unwrap_or_default(),
+                _ => {
+                    let who: Option<String> =
+                        this.get::<mlua::Function>("GetName")?.call(this.clone())?;
+                    return Err(mlua::Error::runtime(format!(
+                        "Usage: {}:IsUnit(\"unit\")",
+                        who.as_deref()
+                            .unwrap_or(super::object::anchor_args::UNNAMED)
+                    )));
+                }
+            };
+            let h = frame_handle_of(lua, &this)?;
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let shown = match model.arena.frame(h).map(|f| &f.kind_state) {
+                Some(KindState::Tooltip(t)) => t.unit_guid,
+                _ => None,
+            };
+            let named = model.unit(&token).filter(|u| u.exists).map(|u| u.guid);
+            Ok(match (named, shown) {
+                (Some(g), Some(s)) if g != 0 && g == s => mlua::Value::Integer(1),
+                _ => mlua::Value::Nil,
             })
         })?,
     )?;

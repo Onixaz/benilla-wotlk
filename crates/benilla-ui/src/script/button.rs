@@ -199,20 +199,33 @@ fn with_button<T>(
 /// (`0x779183`), and never while `LockHighlight` holds (`[frame+0xf8]`).
 fn set_enabled(lua: &Lua, this: &Table, on: bool) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
-    let frame = model
-        .arena
-        .frame_mut(h)
-        .ok_or_else(|| mlua::Error::runtime("stale frame handle"))?;
-    match &mut frame.kind_state {
-        KindState::Button(bs) => bs.set_enabled(on),
-        _ => return Err(mlua::Error::runtime("not a Button")),
+    let fire = {
+        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let frame = model
+            .arena
+            .frame_mut(h)
+            .ok_or_else(|| mlua::Error::runtime("stale frame handle"))?;
+        let changed = match &mut frame.kind_state {
+            KindState::Button(bs) => bs.set_enabled(on),
+            _ => return Err(mlua::Error::runtime("not a Button")),
+        };
+        let bit = 1u8 << DrawLayer::Highlight.index();
+        if on {
+            frame.disabled_layers &= !bit;
+        } else {
+            frame.disabled_layers |= bit;
+        }
+        // A change runs `OnEnable`/`OnDisable` (`0x9704eb`), unless the frame is still in its XML
+        // load (`+0x130`, `0x9704fe`).
+        (changed && !model.xml_loading.contains(&h)).then(|| model.frame_id(h))
     };
-    let bit = 1u8 << DrawLayer::Highlight.index();
-    if on {
-        frame.disabled_layers &= !bit;
-    } else {
-        frame.disabled_layers |= bit;
+    if let Some(id) = fire {
+        let script = if on { "OnEnable" } else { "OnDisable" };
+        if let Err(e) = event::fire_widget_handler(lua, id, script, Vec::new()) {
+            lua.app_data_mut::<Model>()
+                .expect("model app_data")
+                .record_script_error(e.to_string());
+        }
     }
     Ok(())
 }

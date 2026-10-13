@@ -413,7 +413,7 @@ pub const SCREEN: crate::layout::Handle = 0;
 /// ScrollFrame's three scroll kinds are `+0x32c`/`+0x334`/`+0x33c` (script-name map `0x786c40`).
 /// The EditBox's vtable (`0x81c910`) replaces the key and char slots: an EditBox never fires
 /// `OnKeyDown`, and fires `OnChar` only from `Insert`, with the inserted text (`0x77c13c`).
-const SCRIPT_KINDS: [&str; 43] = [
+const SCRIPT_KINDS: [&str; 47] = [
     "OnLoad",
     "OnEvent",
     "OnUpdate",
@@ -474,6 +474,15 @@ const SCRIPT_KINDS: [&str; 43] = [
     // Both have parameter templates in the script compiler ([`event::script_parameters`]).
     "OnAttributeChanged",
     "OnInputLanguageChanged",
+    // The base map's pair (`0x48e916`, slots `+0x1bc`/`+0x1c4`), fired by `Button:Enable` and
+    // `Disable` on a change ([`button`]).
+    "OnEnable",
+    "OnDisable",
+    // The StatusBar's and Slider's, fired by `SetMinMaxValues` on a new range ([`statusbar`]).
+    "OnMinMaxChanged",
+    // The GameTooltip's (`0x61a30b`, `+0x4ec`), fired once a unit's lines are built
+    // ([`tooltip_unit`]).
+    "OnTooltipSetUnit",
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────

@@ -659,6 +659,12 @@ impl Loader<'_> {
     ) {
         // This frame's deferred anchors drain before its OnLoad; a nested frame drains its own.
         let deferred_mark = self.deferred_anchors.len();
+        // In its XML load until its own `OnLoad` (`+0x130`): no `OnEnable`/`OnDisable` fires on it,
+        // not even from a child's `OnLoad`.
+        let loading = crate::script::object::frame_handle_of(self.lua(), wrapper).ok();
+        if let Some(h) = loading {
+            self.model().xml_loading.insert(h);
+        }
         // 2 · LoadXML attributes (`0x769820`).
         self.apply_attrs(el, wrapper, dbg_name);
         // 3 · <Size> and 4 · <Anchors> (the CLayoutFrame geometry base, `0x767800`).
@@ -717,7 +723,11 @@ impl Loader<'_> {
 
         // 7c · deferred anchors: every child exists now, as at the reference's layout pass.
         self.drain_deferred_anchors(deferred_mark);
-        // 8 · this frame's OnLoad, now that its subtree is complete (bottom-up).
+        // 8 · this frame's OnLoad, now that its subtree is complete (bottom-up), after the load
+        //     mark is cleared (`0x490421`).
+        if let Some(h) = loading {
+            self.model().xml_loading.remove(&h);
+        }
         if let Some(func) = onload {
             self.fire_onload(wrapper, &func, dbg_name);
         }

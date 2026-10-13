@@ -628,3 +628,27 @@ fn a_step_before_any_range_is_the_whole_call() {
     let (min, max): (f32, f32) = s.eval("return SlNoRange:GetMinMaxValues()").unwrap();
     assert_eq!((min, max), (0.0, 0.0), "no range was pushed");
 }
+
+/// The Slider's `SetMinMaxValues` runs `OnMinMaxChanged(min, max)` on a new range (`0x96bbb0`,
+/// `min` and `min + range`), before the held value re-clamps; a repeat runs nothing (`0x96c484`).
+#[test]
+fn slider_min_max_changes_fire_on_min_max_changed() {
+    let s = script();
+    s.run(
+        r#"
+        log = {}
+        sl = CreateFrame("Slider", "RangeSlider")
+        sl:SetScript("OnMinMaxChanged", function(self, mn, mx) table.insert(log, "range:" .. mn .. "-" .. mx) end)
+        sl:SetScript("OnValueChanged", function(self, v) table.insert(log, "value:" .. v) end)
+        sl:SetMinMaxValues(0, 10)
+        sl:SetValue(8)
+        sl:SetMinMaxValues(0, 10)
+        sl:SetMinMaxValues(0, 5)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(
+        s.eval::<String>("return table.concat(log, ',')").unwrap(),
+        "range:0-10,value:8,range:0-5,value:5"
+    );
+}

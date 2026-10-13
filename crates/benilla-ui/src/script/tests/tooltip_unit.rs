@@ -676,3 +676,50 @@ fn minimap_blip_tooltip_shows_and_fades() {
         .unwrap();
     assert!(s.take_errors().is_empty());
 }
+
+/// `OnTooltipSetUnit` runs once the unit's lines are built, before the show (`0x621b85`), so the
+/// stock handler can re-tint the name line; `IsUnit` answers 1 for a token naming the shown unit
+/// by guid and nil otherwise (`0x61da20`), and raises on a non-string token.
+#[test]
+fn set_unit_fires_on_tooltip_set_unit_and_is_unit_matches_by_guid() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.set_unit("target", Some(wolf()));
+    let mut other = wolf();
+    other.guid = 0xF130_0000_4500_0002;
+    s.set_unit("focus", Some(other));
+    s.run(
+        r#"
+        local a = CreateFrame("Button", "UFSet"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local tt = CreateFrame("GameTooltip", "TTSet")
+        tt:Hide()
+        seen = nil
+        tt:SetScript("OnTooltipSetUnit", function(self)
+            seen = { lines = self:NumLines(), shown = self:IsShown() and 1 or 0,
+                     target = self:IsUnit("target"), focus = self:IsUnit("focus"),
+                     nobody = self:IsUnit("party4") }
+            TTSetTextLeft1:SetTextColor(0, 1, 0)
+        end)
+        tt:SetOwner(a, "ANCHOR_RIGHT")
+        tt:SetUnit("target")
+    "#,
+    )
+    .unwrap();
+    assert!(s.eval::<bool>("return seen ~= nil").unwrap(), "it fired");
+    assert!(
+        s.eval::<bool>("return seen.lines >= 1").unwrap(),
+        "after the lines"
+    );
+    assert!(
+        s.eval::<bool>("return seen.shown == 0").unwrap(),
+        "before the show"
+    );
+    assert!(s.eval::<bool>("return seen.target == 1").unwrap());
+    assert!(s.eval::<bool>("return seen.focus == nil").unwrap());
+    assert!(s.eval::<bool>("return seen.nobody == nil").unwrap());
+    assert!(s.eval::<bool>("return TTSet:IsShown()").unwrap());
+    let (_, g, _): (f32, f32, f32) = s.eval("return TTSetTextLeft1:GetTextColor()").unwrap();
+    assert_eq!(g, 1.0, "the handler's tint stands");
+    let e = s.run("TTSet:IsUnit({})").unwrap_err().to_string();
+    assert!(e.contains("Usage: TTSet:IsUnit(\"unit\")"), "{e}");
+}

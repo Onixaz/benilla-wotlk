@@ -182,6 +182,9 @@ pub(crate) struct Model {
     pub(crate) on_size_changed_frames: Vec<FrameHandle>,
     /// Frames with an `OnUpdateModel` script, fired as a visible model pane paints (`0x76d1a0`).
     pub(crate) on_update_model_frames: Vec<FrameHandle>,
+    /// Frames inside their XML load, from `LoadXML` to their own `OnLoad` (`+0x130`, set at
+    /// `0x4903b2`, cleared at `0x490421` before `OnLoad`): their `OnEnable`/`OnDisable` stay quiet.
+    pub(crate) xml_loading: HashSet<FrameHandle>,
     /// Per model file, a pane clock's sequences and bounds, read by the host off the `MD20`.
     pub(crate) model_facts: HashMap<String, std::sync::Arc<crate::widget::ModelFileFacts>>,
     /// Model files still waiting for their facts, for the host to load; deduplicated.
@@ -1103,6 +1106,7 @@ impl Model {
             on_update_frames: Vec::new(),
             on_size_changed_frames: Vec::new(),
             on_update_model_frames: Vec::new(),
+            xml_loading: HashSet::new(),
             model_facts: HashMap::new(),
             model_facts_wanted: Vec::new(),
             event_to_frames: HashMap::new(),

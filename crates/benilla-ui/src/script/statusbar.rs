@@ -97,11 +97,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetMinMaxValues",
         lua.create_function(|lua, (this, min, max): (Table, f32, f32)| {
             // A reversed pair is swapped, as `LoadXML` does; the held value re-clamps, and a move
-            // fires `OnValueChanged`.
-            let changed = with_bar(lua, &this, |sb| {
+            // fires `OnValueChanged`. A new range fires `OnMinMaxChanged` first (`0x961859`).
+            let (changed, range) = with_bar(lua, &this, |sb| {
+                let before = (sb.min, sb.max);
                 (sb.min, sb.max) = if min <= max { (min, max) } else { (max, min) };
-                store_value(sb, sb.value)
+                let range =
+                    (!sb.range_set || before != (sb.min, sb.max)).then_some((sb.min, sb.max));
+                sb.range_set = true;
+                (store_value(sb, sb.value), range)
             })?;
+            fire_min_max_changed(lua, &this, range)?;
             fire_value_changed(lua, &this, changed)
         })?,
     )?;
@@ -238,6 +243,36 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 /// Fire `OnValueChanged` (the StatusBar's script slot, `+0x32c`) for a changed value, outside any
 /// model borrow.
+/// Fire `OnMinMaxChanged(min, max)` when `range` carries a new range: the StatusBar's (slot
+/// `+0x2bc`, `0x961560`) and the Slider's (`+0x2c0`, `0x96bbb0`), each run by its
+/// `SetMinMaxValues` only when the pair changed or was never set (`0x961819`, `0x96c484`), and
+/// with no load guard. Errors are recorded in [`Model::errors`].
+pub(super) fn fire_min_max_changed(
+    lua: &Lua,
+    this: &Table,
+    range: Option<(f32, f32)>,
+) -> mlua::Result<()> {
+    let Some((min, max)) = range else {
+        return Ok(());
+    };
+    let id = {
+        let h = frame_handle_of(lua, this)?;
+        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        model.frame_id(h)
+    };
+    if let Err(e) = event::fire_widget_handler(
+        lua,
+        id,
+        "OnMinMaxChanged",
+        vec![Value::Number(f64::from(min)), Value::Number(f64::from(max))],
+    ) {
+        lua.app_data_mut::<Model>()
+            .expect("model app_data")
+            .record_script_error(e.to_string());
+    }
+    Ok(())
+}
+
 fn fire_value_changed(lua: &Lua, this: &Table, changed: Option<f32>) -> mlua::Result<()> {
     let Some(value) = changed else { return Ok(()) };
     let id = {
