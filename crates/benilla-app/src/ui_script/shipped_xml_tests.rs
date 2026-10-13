@@ -1984,21 +1984,18 @@ fn the_layer_does_not_grow() {
     );
 }
 
-/// The layer speaks the 1.12 dialect: a handler body is the chunk itself (`0x704c70`), so it reads
-/// its frame from `this`, never `self`; the loader reads no `function=`; the strata table
-/// (`0x8119f8`) has no `BLIZZARD`; `SetDrawLayer` (`0x79a780`) takes a layer name alone; and a
-/// button's state textures take a texture, never a colour (`0x781970`).
+/// The layer speaks the dialect of the FrameXML it loads over: a 3.3.5a handler body is compiled
+/// under its parameter list (`self`, `delta`, `value`, ...), and the client sets `this` and `event`
+/// around a handler but no `argN` global (no such name in the 12340 binary), so a body reads its
+/// arguments, never `arg1`. The strata table (`0x8119f8`) has no `BLIZZARD`; `SetDrawLayer`
+/// (`0x79a780`) takes a layer name alone; and a button's state textures take a texture, never a
+/// colour (`0x781970`).
 #[test]
-fn the_layer_speaks_the_1_12_dialect() {
+fn the_layer_speaks_the_3_3_5a_dialect() {
     fn handlers(el: &benilla_ui::framexml::Element, out: &mut Vec<(String, String)>) {
         if el.tag == "Scripts" {
             for h in &el.children {
                 out.push((h.tag.clone(), h.body.clone()));
-                assert!(
-                    h.attr("function").is_none(),
-                    "<{} function=…> is no 1.12 form",
-                    h.tag
-                );
             }
         }
         for c in &el.children {
@@ -2027,7 +2024,13 @@ fn the_layer_speaks_the_1_12_dialect() {
             }
         }
         for (tag, body) in found {
-            assert!(!word(&body, "self"), "{file}: <{tag}> reads `self`: {body}");
+            for n in 1..=9 {
+                let global = format!("arg{n}");
+                assert!(
+                    !word(&body, &global),
+                    "{file}: <{tag}> reads `{global}`, which 3.3.5a never sets: {body}"
+                );
+            }
         }
         assert!(!text.contains("BLIZZARD"), "{file}: BLIZZARD strata");
         for line in text.lines().filter(|l| l.contains("SetDrawLayer(")) {
