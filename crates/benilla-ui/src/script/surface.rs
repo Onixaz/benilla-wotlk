@@ -35,6 +35,7 @@ const METHOD_TABLES: &[&str] = &[
     "__benilla_scrollingmessageframe_methods",
     "__benilla_minimap_methods",
     "__benilla_tooltip_methods",
+    "__benilla_cooldown_methods",
 ];
 
 /// Every class benilla can hand an addon, with a Lua expression making one, published as
@@ -105,6 +106,10 @@ const CLASSES: &[(&str, &str)] = &[
     (
         "Minimap",
         r#"CreateFrame("Minimap", "DWMinimapN", UIParent)"#,
+    ),
+    (
+        "Cooldown",
+        r#"CreateFrame("Cooldown", "DWCooldownN", UIParent)"#,
     ),
     ("Texture", r#"DW_Frame:CreateTexture("DWTexN")"#),
     ("FontString", r#"DW_Frame:CreateFontString("DWFSN")"#),

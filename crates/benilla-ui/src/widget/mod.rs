@@ -119,13 +119,15 @@ impl<T> Arena<T> {
 mod kinds;
 pub use kinds::{
     model_key, slider_fraction, slider_grab, slider_set_value, ArmedSequence, ButtonFont,
-    ButtonState, ButtonVisualState, ColorSelectState, EditAction, EditBoxState, EditOutcome,
-    EditUnit, FrameKind, InsertMode, KindState, MessageFrameState, MessageLine, MinimapState,
-    ModelFileFacts, ModelFog, ModelLight, ModelPlayHead, ModelState, RegionKind, ScrollFrameState,
-    ScrollingMessageState, SequenceFacts, SliderState, StatusBarState, TooltipAnchor, TooltipState,
-    MINIMAP_DEFAULT_ARROW_MODEL, MINIMAP_DEFAULT_MASK, MINIMAP_DEFAULT_PLAYER_MODEL,
-    MINIMAP_DEFAULT_ZOOM, MINIMAP_ENGINE_CHILDREN, MINIMAP_ZOOM_LEVELS, TOOLTIP_DOUBLE_GAP,
-    TOOLTIP_FADE_SECS, TOOLTIP_LINE_GAP, TOOLTIP_PAD, TOOLTIP_WRAP_WIDTH,
+    ButtonState, ButtonVisualState, ColorSelectState, CooldownFlash, CooldownPaint, CooldownState,
+    CooldownStep, EditAction, EditBoxState, EditOutcome, EditUnit, FrameKind, InsertMode,
+    KindState, MessageFrameState, MessageLine, MinimapState, ModelFileFacts, ModelFog, ModelLight,
+    ModelPlayHead, ModelState, RegionKind, ScrollFrameState, ScrollingMessageState, SequenceFacts,
+    SliderState, StatusBarState, TooltipAnchor, TooltipState, COOLDOWN_FLASH_MS,
+    COOLDOWN_FLASH_RGB, COOLDOWN_SWIPE_ALPHA, MINIMAP_DEFAULT_ARROW_MODEL, MINIMAP_DEFAULT_MASK,
+    MINIMAP_DEFAULT_PLAYER_MODEL, MINIMAP_DEFAULT_ZOOM, MINIMAP_ENGINE_CHILDREN,
+    MINIMAP_ZOOM_LEVELS, TOOLTIP_DOUBLE_GAP, TOOLTIP_FADE_SECS, TOOLTIP_LINE_GAP, TOOLTIP_PAD,
+    TOOLTIP_WRAP_WIDTH,
 };
 
 // ── Frame and Region nodes ───────────────────────────────────────────────────────────────────
@@ -242,7 +244,7 @@ pub struct WidgetArena {
     pub(crate) order_cache: crate::order::OrderCache,
     /// Minimap frames ever created, so the state feed notices a new one without a walk.
     minimap_created: u64,
-    /// The live frames the host ticks (message fades, model scene clocks), so the tick skips the
+    /// The live frames the host ticks (message fades, model scene clocks, cooldown sweeps), so the tick skips the
     /// rest of the arena. Added at creation, as kinds never change; `destroy` removes its own.
     ticked_kinds: Vec<FrameHandle>,
     /// The live GameTooltips, kept the same way, for the layout pre-pass, fade tick and unit push.
@@ -472,6 +474,7 @@ impl WidgetArena {
                 | FrameKind::TabardModel => KindState::Model(kinds::ModelState::default()),
                 FrameKind::Minimap => KindState::Minimap(kinds::MinimapState::default()),
                 FrameKind::GameTooltip => KindState::Tooltip(kinds::TooltipState::default()),
+                FrameKind::Cooldown => KindState::Cooldown(CooldownState::default()),
                 _ => KindState::None,
             },
             next_decl: 0,
@@ -488,6 +491,7 @@ impl WidgetArena {
                 | FrameKind::PlayerModel
                 | FrameKind::DressUpModel
                 | FrameKind::TabardModel
+                | FrameKind::Cooldown
         );
         let (index, generation) = self.frames.insert(frame);
         let handle = FrameHandle { index, generation };

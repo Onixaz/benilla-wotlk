@@ -878,3 +878,21 @@ fn tooltip_anchor_type_round_trips_every_reachable_mode() {
         s.warnings()
     );
 }
+
+/// `GetOwner` (`0x61d350`) answers the owner's own object, the one `SetOwner` took, or nil before
+/// any owner: `ActionButton_Update` compares it with `self` (`ActionButton.lua:265`).
+#[test]
+fn get_owner_answers_the_owner_frame_or_nil() {
+    let s = script();
+    s.run(
+        r#"
+        local tt = CreateFrame("GameTooltip", "OwnerTip")
+        assert(tt:GetOwner() == nil, "no owner yet")
+        local b = CreateFrame("Button", "OwnerBtn")
+        tt:SetOwner(b, "ANCHOR_RIGHT")
+        assert(tt:GetOwner() == b, "the same object SetOwner took")
+        assert(tt:GetOwner() == OwnerBtn)
+    "#,
+    )
+    .unwrap();
+}

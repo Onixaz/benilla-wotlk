@@ -1422,6 +1422,8 @@ fn a_frames_type_chain_matches_the_roster() {
             &["GameTooltip", "Frame", "Region"],
         ),
         ("Minimap", "Minimap", &["Minimap", "Frame", "Region"]),
+        // A `Frame` subtype, not a `Model` (`0x5ebe70`), whatever the 1.12 template made it.
+        ("Cooldown", "Cooldown", &["Cooldown", "Frame", "Region"]),
         // `PlayerModel` derives from `Model` (`0x505830`/`0x5057c0`), so a `SetUnit` portrait pane
         // has `SetCamera` too; `DressUpModel`, like `TabardModel`, derives from `PlayerModel`: the
         // roster's maximum depth, 5.

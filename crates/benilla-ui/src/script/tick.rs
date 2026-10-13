@@ -150,6 +150,7 @@ impl super::UiScript {
             }
         }
         self.tick_model_panes(elapsed);
+        super::cooldown_widget::tick(&self.lua);
         // The engine's line fades, apart from any OnUpdate script: ScrollingMessageFrame's
         // (`0x788460`) and MessageFrame's (`0x786200`), which also keeps only the lines that fit
         // its height, so its rows are read from the resolved rect before the mutable walk.

@@ -12,6 +12,7 @@ use crate::ui_text::UiFontAtlas;
 use benilla_assets::WorldAssets;
 
 mod colorselect;
+mod cooldown;
 mod text;
 
 /// `WOW_UI_COST=1`: one untraced `[ui-cost]` line per frame, each phase's μs and the quad counts.
@@ -70,6 +71,7 @@ fn report_ui_pick(eq: &benilla_ui::script::ExtractedQuad, rect: Rect, at: Vec2, 
     }
     let what = match &eq.content {
         QuadContent::Frame => "frame-slot".to_string(),
+        QuadContent::Cooldown(_) => "cooldown".to_string(),
         QuadContent::Minimap { .. } => "minimap".to_string(),
         QuadContent::Texture {
             path,
@@ -92,6 +94,7 @@ fn report_ui_pick(eq: &benilla_ui::script::ExtractedQuad, rect: Rect, at: Vec2, 
 fn content_kind(c: &QuadContent) -> &'static str {
     match c {
         QuadContent::Frame => "frame",
+        QuadContent::Cooldown(_) => "cooldown",
         QuadContent::Minimap { .. } => "minimap",
         QuadContent::ModelPane { .. } => "modelpane",
         QuadContent::Texture { .. } => "texture",
@@ -1101,6 +1104,12 @@ fn convert_entry(
     match eq.content {
         // A frame draws nothing itself; its regions carry the visuals.
         QuadContent::Frame => {}
+        // A `Cooldown`'s own sweep, under its regions and children.
+        QuadContent::Cooldown(paint) => {
+            if let Some(assets) = assets.as_mut() {
+                cooldown::emit(&paint, rect, eq.z, eq.alpha, clip, assets, images, out);
+            }
+        }
         // The `<Minimap>` content hole, parked for the minimap renderer to fill at this `z`.
         QuadContent::Minimap { zoom, inside_zoom } => {
             *minimap_slot = Some(crate::minimap::MinimapSlot {

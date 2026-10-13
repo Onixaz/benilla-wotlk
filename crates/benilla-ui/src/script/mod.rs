@@ -79,6 +79,7 @@ pub use handler_prof::HandlerRow;
 mod surface;
 pub use surface::widget_method_census;
 mod bit;
+mod cooldown_widget;
 mod input_verbs;
 mod inspect;
 mod inventory_verbs;
@@ -619,6 +620,7 @@ impl UiScript {
         slider::install(&lua)?;
         colorselect::install(&lua)?;
         minimap::install(&lua)?;
+        cooldown_widget::install(&lua)?;
         modelframe::install(&lua)?;
         tooltip::install(&lua)?;
         worldmap::install(&lua)?;
@@ -1192,6 +1194,7 @@ impl UiScript {
                 crate::widget::FrameKind::MovieFrame => "MovieFrame",
                 crate::widget::FrameKind::GameTooltip => "GameTooltip",
                 crate::widget::FrameKind::Minimap => "Minimap",
+                crate::widget::FrameKind::Cooldown => "Cooldown",
             });
         }
         // Region leaves publish into their own name table, not the arena's.

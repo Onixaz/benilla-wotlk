@@ -57,6 +57,9 @@ impl TexCoords {
 pub enum QuadContent {
     /// The frame's own draw slot, which draws nothing itself.
     Frame,
+    /// A `Cooldown` widget's sweep, emitted at the frame's own z; its regions and children, if
+    /// any, paint above it.
+    Cooldown(crate::widget::CooldownPaint),
     /// A `Minimap` widget's content hole, which the app fills with the map; emitted at the
     /// frame's own z, so the widget's children (border art, buttons) paint above it.
     Minimap {

@@ -142,6 +142,27 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(owner == Some(fh))
         })?,
     )?;
+    // GetOwner() (`0x61d350`): the owner's object (`+0x29c`), or nil with none; `ActionButton_Update`
+    // asks it of every button (`ActionButton.lua:265`).
+    m.set(
+        "GetOwner",
+        lua.create_function(|lua, this: Table| {
+            let Some(owner) = with_tip(lua, &this, |t| t.owner)? else {
+                return Ok(Value::Nil);
+            };
+            let id = {
+                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                model
+                    .arena
+                    .frame(owner)
+                    .and(model.frame_to_id.get(&owner).copied())
+            };
+            match id {
+                Some(id) => Ok(Value::Table(crate::script::object::frame_wrapper(lua, id)?)),
+                None => Ok(Value::Nil),
+            }
+        })?,
+    )?;
 
     // SetText(text, r, g, b, alpha, wrap) (`0x531b90`): alpha has its own number gate, default 1,
     // and a text that is neither string nor number raises the binding's usage error. It clears,

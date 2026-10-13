@@ -1,5 +1,5 @@
 //! The cooldown bindings: per-action state and the `GetTime`-space triples stock `Cooldown.lua`
-//! consumes (its `<Model>` widget runs in `tests::model_clock`).
+//! consumes, and the `Cooldown` widget it drives.
 
 use super::common::script;
 use crate::script::*;
@@ -170,4 +170,97 @@ fn shapeshift_and_container_cooldowns_keep_their_anchors_too() {
     assert!(s
         .eval::<bool>("local st = GetContainerItemCooldown(0, 1); return math.abs(st - 50) < 1e-3")
         .unwrap());
+}
+
+/// 3.3.5a's native `Cooldown` widget: a `Frame` subtype with five methods of its own;
+/// `SetCooldown` shows it and starts the sweep, which the tick runs through a one-second flash to
+/// a hide, and the extract paints from the frame's own slot.
+#[test]
+fn the_cooldown_widget_sweeps_flashes_and_hides() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.tick(100.0);
+    s.run(
+        r#"
+        cd = CreateFrame("Cooldown", "SweepCD")
+        cd:SetPoint("CENTER", 0, 0) cd:SetWidth(36) cd:SetHeight(36)
+        cd:Hide()
+        assert(cd:GetObjectType() == "Cooldown")
+        assert(cd:IsObjectType("Frame") and cd:IsObjectType("Cooldown"))
+        assert(cd:GetReverse() == false and cd:GetDrawEdge() == false)
+        cd:SetReverse(1) assert(cd:GetReverse() == true) cd:SetReverse(nil)
+        cd:SetCooldown(GetTime(), 10)
+        assert(cd:IsShown(), "SetCooldown shows the frame")
+    "#,
+    )
+    .unwrap();
+    let paint = |s: &mut UiScript| {
+        s.resolve();
+        s.extract().into_iter().find_map(|q| match q.content {
+            QuadContent::Cooldown(p) => Some(p),
+            _ => None,
+        })
+    };
+    s.tick(5.0);
+    let half = paint(&mut s).expect("a running sweep paints");
+    assert_eq!(half.swipe.len(), 5, "half-way: six o'clock back to twelve");
+    assert!(half.flash.is_none() && half.edge.is_none());
+    s.tick(5.0);
+    let flash = paint(&mut s).expect("the flash paints");
+    assert!(flash.swipe.is_empty() && flash.flash.is_some());
+    assert!(s.eval::<bool>("return SweepCD:IsShown()").unwrap());
+    s.tick(1.0);
+    assert!(
+        !s.eval::<bool>("return SweepCD:IsShown()").unwrap(),
+        "the flash's end hides the frame"
+    );
+
+    let e = s
+        .run(r#"SweepCD:SetCooldown("soon", 1)"#)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("Usage: SweepCD:SetCooldown(start, duration)"),
+        "{e}"
+    );
+}
+
+/// The stock template, `<Cooldown name="CooldownFrameTemplate" setAllPoints="true"
+/// hidden="true" virtual="true"/>` (`Cooldown.xml`), builds through the XML loader, and the stock
+/// `CooldownFrame_SetTimer` drives it.
+#[test]
+fn the_stock_cooldown_template_loads_and_cooldown_frame_set_timer_drives_it() {
+    let s = script();
+    let doc = crate::framexml::parse(
+        r#"<Ui>
+        <Cooldown name="CooldownFrameTemplate" setAllPoints="true" hidden="true" virtual="true"/>
+        <Button name="CDButton">
+            <Size><AbsDimension x="36" y="36"/></Size>
+            <Frames><Cooldown name="$parentCooldown" inherits="CooldownFrameTemplate"/></Frames>
+        </Button>
+        </Ui>"#,
+    )
+    .unwrap();
+    let report = crate::loader::load_in(&s, &doc, "test.xml", &|_| None);
+    assert!(report.errors.is_empty(), "{:#?}", report.errors);
+    assert!(report.warnings.is_empty(), "{:#?}", report.warnings);
+    s.run(
+        r#"
+        function CooldownFrame_SetTimer(self, start, duration, enable)
+            if ( start > 0 and duration > 0 and enable > 0) then
+                self:SetCooldown(start, duration);
+                self:Show();
+            else
+                self:Hide();
+            end
+        end
+        assert(CDButtonCooldown:GetObjectType() == "Cooldown")
+        assert(not CDButtonCooldown:IsShown())
+        CooldownFrame_SetTimer(CDButtonCooldown, 1, 30, 1)
+        assert(CDButtonCooldown:IsShown())
+        CooldownFrame_SetTimer(CDButtonCooldown, 0, 0, 1)
+        assert(not CDButtonCooldown:IsShown())
+    "#,
+    )
+    .unwrap();
 }

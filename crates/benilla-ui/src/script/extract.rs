@@ -75,6 +75,10 @@ impl UiScript {
                             zoom: m.zoom,
                             inside_zoom: m.inside_zoom,
                         },
+                        // The layout scale the edge's UV spin reads is the frame's effective one.
+                        Some(crate::widget::KindState::Cooldown(c)) => c
+                            .paint(frame.map_or(1.0, |f| f.effective_scale))
+                            .map_or(QuadContent::Frame, QuadContent::Cooldown),
                         // A `<Model>`/`<PlayerModel>` pane's content hole, named so the app can
                         // join it to that window's bake. Both kinds share `KindState::Model`, as
                         // the client's `CGCharacterModelBase` extends `CSimpleModel`.

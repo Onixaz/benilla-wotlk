@@ -105,6 +105,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             FrameKind::MovieFrame => &["MovieFrame", "Frame", "Region"],
             FrameKind::GameTooltip => &["GameTooltip", "Frame", "Region"],
             FrameKind::Minimap => &["Minimap", "Frame", "Region"],
+            // `IsObjectType` (`0x5ebe70`) answers its own id, then the frame chain's.
+            FrameKind::Cooldown => &["Cooldown", "Frame", "Region"],
         }
     }
     fn chain_of(lua: &Lua, this: &Table) -> mlua::Result<&'static [&'static str]> {
