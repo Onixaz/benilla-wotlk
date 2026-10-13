@@ -61,7 +61,7 @@ pub(crate) fn feed_pet_book(
     classes: Option<Res<crate::chr_classes::ChrClassTable>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     index: Res<GuidIndex>,
-    stores: Query<&ObjectStore>,
+    auras: Query<&crate::unit_auras::UnitAuras>,
     clock: Res<crate::ui_script::UiClock>,
     mut memory: Local<crate::ui_script::VmMemo<FeedMemory>>,
 ) {
@@ -75,10 +75,10 @@ pub(crate) fn feed_pet_book(
     };
     let now = Instant::now();
     let (anchor, ui_now) = (clock.anchor, clock.ui_now);
-    let pet_store = index
+    let pet_auras = index
         .0
         .get(&bar.spells.pet_guid)
-        .and_then(|&e| stores.get(e).ok());
+        .and_then(|&e| auras.get(e).ok());
 
     let mut fresh = PetBookState {
         // `HasPetSpells`'s token is the player's class, not the pet's (`0x4b4463` reads
@@ -103,7 +103,7 @@ pub(crate) fn feed_pet_book(
             }
             fresh
                 .slots
-                .push(slot_view(entry, d, &bar, pet_store, now, anchor, ui_now));
+                .push(slot_view(entry, d, &bar, pet_auras, now, anchor, ui_now));
         }
         // `0x4b2fd0`'s re-sort, with the player book's own comparator.
         fresh
@@ -143,7 +143,7 @@ fn slot_view(
     entry: PetActionEntry,
     d: &SpellDisplay,
     bar: &PetBar,
-    pet_store: Option<&ObjectStore>,
+    pet_auras: Option<&crate::unit_auras::UnitAuras>,
     now: Instant,
     anchor: Instant,
     ui_now: f64,
@@ -157,8 +157,7 @@ fn slot_view(
         passive: d.passive,
         // `IsSelectedSpell`'s pet arm (`0x4b36f0`, and its delegate `0x4b3600`): lit while the
         // spell's aura is on the pet (`[pet.fields + 0xa4]`), the bar's own predicate.
-        current: pet_store
-            .is_some_and(|s| crate::ui_action::toggle::active_action_toggle(spell_id, d, s)),
+        current: crate::ui_action::toggle::active_action_toggle(spell_id, d, pet_auras),
         // The pet's own cooldown store, the one `GetPetActionCooldown` reads.
         cooldown: bar
             .cooldowns
@@ -183,8 +182,8 @@ pub(crate) fn cast_pet_spell(p: &mut crate::ui_pet::PetPress, spell_id: u32, on_
     }
     let target_guid = p.spell_target(on_self);
     let display = p.spells.as_ref().and_then(|s| s.catalog.get(spell_id));
-    if let (Some(d), Some(store)) = (display, p.pet.store(pet_guid)) {
-        if crate::ui_action::toggle::active_action_toggle(spell_id, d, store) {
+    if let Some(d) = display {
+        if crate::ui_action::toggle::active_action_toggle(spell_id, d, p.pet.auras(pet_guid)) {
             debug!("ui_pet_book: cast {spell_id} cancels the pet's own aura");
             let _ = p
                 .commands

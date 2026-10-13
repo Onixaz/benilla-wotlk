@@ -682,6 +682,10 @@ fn reap_matching(
         if i.decaying || !i.persistent || i.spell_id != spell_id || i.class != class {
             return true;
         }
+        debug!(
+            "spell fx: {} reaped for spell {spell_id} ({class:?})",
+            i.path
+        );
         let span = i
             .root
             .and_then(|_| fx.models.get(&i.path))
@@ -859,6 +863,10 @@ pub(super) fn attach_spell_fx(
                 None, // an attach-point kit effect opens on its model's own `Stand`
             );
             inst.root = Some(root);
+            debug!(
+                "spell fx: {} spawned for spell {} on {unit} ({:?})",
+                inst.path, inst.spell_id, inst.class
+            );
             if !inst.persistent {
                 // One pass of sequence 0, from the raw sequence table: a sequence with no bone
                 // keys builds no clip (the eat/drink tankard). A looping one counts as one pass;

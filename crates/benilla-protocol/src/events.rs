@@ -637,9 +637,8 @@ pub enum SessionEvent {
     },
     /// A unit's channel time left (`MSG_CHANNEL_UPDATE`); 0 is over, natural or interrupted.
     ChannelUpdate { caster: u64, remaining_ms: u32 },
-    /// Time left on one of our auras by `UNIT_FIELD_AURA` slot (`SMSG_UPDATE_AURA_DURATION`),
-    /// never for a permanent one. It arrives before the delta naming the slot's spell.
-    AuraDuration { slot: u8, remaining_ms: u32 },
+    /// A unit's aura slots (`SMSG_AURA_UPDATE_ALL` / `SMSG_AURA_UPDATE`).
+    AuraUpdate(crate::messages::AuraUpdate),
     /// A spell-visual kit outside the cast sequence (`SMSG_PLAY_SPELL_VISUAL`), such as eat/drink.
     PlaySpellVisual { unit: u64, kit_id: u32 },
     /// Spell damage dealt (`SMSG_SPELLNONMELEEDAMAGELOG`).

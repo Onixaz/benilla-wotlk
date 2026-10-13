@@ -638,6 +638,8 @@ pub enum ServerPacket {
         slot: u8,
         remaining_ms: u32,
     },
+    /// `SMSG_AURA_UPDATE_ALL` / `SMSG_AURA_UPDATE`: a unit's aura slots.
+    AuraUpdate(super::AuraUpdate),
     /// `SMSG_PLAY_SPELL_VISUAL`: a spell-visual kit on a unit outside a cast, at the fixed stage 0.
     PlaySpellVisual {
         unit: u64,
@@ -1423,6 +1425,8 @@ impl ServerPacket {
             ServerPacket::ChannelStart { .. } => "MSG_CHANNEL_START".into(),
             ServerPacket::ChannelUpdate { .. } => "MSG_CHANNEL_UPDATE".into(),
             ServerPacket::UpdateAuraDuration { .. } => "SMSG_UPDATE_AURA_DURATION".into(),
+            ServerPacket::AuraUpdate(u) if u.all => "SMSG_AURA_UPDATE_ALL".into(),
+            ServerPacket::AuraUpdate(_) => "SMSG_AURA_UPDATE".into(),
             ServerPacket::PlaySpellVisual { .. } => "SMSG_PLAY_SPELL_VISUAL".into(),
             ServerPacket::SpellDamageLog(_) => "SMSG_SPELLNONMELEEDAMAGELOG".into(),
             ServerPacket::PeriodicAuraLog(_) => "SMSG_PERIODICAURALOG".into(),

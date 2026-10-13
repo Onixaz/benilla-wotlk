@@ -616,15 +616,14 @@ fn only_the_attack_order_is_gated() {
     )));
 }
 
-/// A pet with one aura in slot 0. `AURAFLAGS` packs a nibble per slot: `0x2` is an effect-index
-/// bit (the slot is live), `0x1` is `AFLAG_CANCELABLE`, the bit `0x4bcea0` tests.
-fn pet_running(spell_id: u32, nibble: u32) -> ObjectStore {
-    const AURA: u16 = 47;
-    const AURAFLAGS: u16 = 95;
-    ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-        (AURA, spell_id),
-        (AURAFLAGS, nibble),
-    ]))
+/// A pet with one aura in slot 0, `cancelable` or not: `0x4bcea0` tests the cancelable bit.
+fn pet_running(spell_id: u32, cancelable: bool) -> crate::unit_auras::UnitAuras {
+    let flags = if cancelable {
+        benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE | 1
+    } else {
+        1
+    };
+    crate::unit_auras::UnitAuras::of(1, &[(0, spell_id, flags)])
 }
 
 /// A spell with an active icon, which the predicate requires.
@@ -639,7 +638,7 @@ fn toggle_spell() -> benilla_formats::SpellDisplay {
 #[test]
 fn a_pet_spell_shows_active_only_while_it_is_a_live_cancelable_aura_on_the_pet() {
     let slot = packed(2645, benilla_protocol::messages::PET_TYPE_SPELL_FIRST);
-    let running = pet_running(2645, 0x3);
+    let running = pet_running(2645, true);
     let d = toggle_spell();
 
     assert_eq!(
@@ -651,11 +650,11 @@ fn a_pet_spell_shows_active_only_while_it_is_a_live_cancelable_aura_on_the_pet()
     let plain = spell("Growl", None);
     assert_eq!(active_aura_press(slot, Some(&running), Some(&plain)), None);
     // Live but not cancelable.
-    let uncancelable = pet_running(2645, 0x2);
+    let uncancelable = pet_running(2645, false);
     assert_eq!(active_aura_press(slot, Some(&uncancelable), Some(&d)), None);
     // A different spell's aura, and no pet descriptor at all.
     assert_eq!(
-        active_aura_press(slot, Some(&pet_running(768, 0x3)), Some(&d)),
+        active_aura_press(slot, Some(&pet_running(768, true)), Some(&d)),
         None
     );
     assert_eq!(active_aura_press(slot, None, Some(&d)), None);

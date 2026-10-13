@@ -11,7 +11,6 @@ use benilla_protocol::messages::{
 };
 use benilla_ui::script::{PetActionView, UiScript};
 
-use crate::net::ObjectStore;
 use crate::target::UNIT_FLAG_POSSESSED;
 use crate::ui_action::Spells;
 
@@ -157,14 +156,14 @@ pub(super) fn slot_paint(
 /// (`0x4bcefd`), so a press on a spell without one re-casts rather than cancels.
 pub(super) fn active_aura_press(
     entry: PetActionEntry,
-    pet: Option<&ObjectStore>,
+    pet: Option<&crate::unit_auras::UnitAuras>,
     spell: Option<&benilla_formats::SpellDisplay>,
 ) -> Option<u32> {
     if !entry.is_spell() || entry.is_empty() {
         return None;
     }
     let spell_id = entry.action();
-    crate::ui_action::toggle::active_action_toggle(spell_id, spell?, pet?).then_some(spell_id)
+    crate::ui_action::toggle::active_action_toggle(spell_id, spell?, pet).then_some(spell_id)
 }
 
 /// Push the ten slot views on a change, and `PET_BAR_UPDATE` when the bar itself moved. A change
@@ -220,7 +219,7 @@ pub(super) fn feed_pet_bar(
                     display,
                     cooldown,
                     pet_attacking,
-                    active_aura_press(entry, pet_store, display).is_some(),
+                    active_aura_press(entry, pet.auras(bar.spells.pet_guid), display).is_some(),
                 )
             })
             .collect()

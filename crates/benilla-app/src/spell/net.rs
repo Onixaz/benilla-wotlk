@@ -1,5 +1,5 @@
 //! The spell's packet handlers: the spell book and action bar, the cast lifecycle, cooldowns,
-//! channels, aura durations and spell modifiers. They reach the lifecycle state
+//! channels and spell modifiers. They reach the lifecycle state
 //! ([`super::inflight`], [`super::cooldowns`], [`super::mods`]) and the windows' stores through
 //! [`Lifecycle`] and [`Scene`].
 
@@ -16,7 +16,6 @@ use super::{
 };
 use crate::creature_anim::{CastEvent, CastEventKind, Casting, SpellGoTargets};
 use crate::ui_action::{CastErrors, PlayerActions, Spells, UiError, UiErrorKeys};
-use crate::ui_aura::AuraDurations;
 use crate::ui_cast::{CastBarEdge, CastBarFeed};
 use crate::ui_spellbook::LearnedInTab;
 
@@ -49,7 +48,6 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::ItemCooldown, on_item_cooldown)
         .net_handler(K::ChannelStart, on_channel)
         .net_handler(K::ChannelUpdate, on_channel)
-        .net_handler(K::AuraDuration, on_aura_duration)
         .net_handler(K::SpellModifier, on_spell_modifier);
 }
 
@@ -70,7 +68,6 @@ pub(crate) struct Lifecycle<'w> {
     cooldowns: ResMut<'w, Cooldowns>,
     auto_repeat: ResMut<'w, AutoRepeatActive>,
     channel: ResMut<'w, ActiveChannel>,
-    aura_durations: ResMut<'w, AuraDurations>,
     spell_mods: ResMut<'w, crate::spell::SpellModifiers>,
     pet_bar: ResMut<'w, crate::ui_pet::PetBar>,
     /// The PlayAnimation call-order counter: every animation-bearing message stamps `next()`,
@@ -490,17 +487,6 @@ fn on_channel(In(ev): In<SessionEvent>, mut l: Lifecycle) {
             channel_update(caster, own, remaining_ms, &mut l.channel, &mut l.cast_bar);
         }
         _ => {}
-    }
-}
-
-fn on_aura_duration(In(ev): In<SessionEvent>, mut l: Lifecycle, real_clock: Res<Time<Real>>) {
-    if let SessionEvent::AuraDuration { slot, remaining_ms } = ev {
-        aura_duration(
-            slot,
-            remaining_ms,
-            &mut l.aura_durations,
-            real_clock.elapsed_secs_f64(),
-        );
     }
 }
 
@@ -1386,12 +1372,6 @@ fn channel_update(
         caster,
         remaining_ms,
     });
-}
-
-/// `SMSG_UPDATE_AURA_DURATION`: one of our auras' remaining time, by raw slot, stamped with the
-/// receive time. It arrives before the descriptor delta that names the slot.
-fn aura_duration(slot: u8, remaining_ms: u32, durations: &mut AuraDurations, now_secs: f64) {
-    durations.set(slot, remaining_ms, now_secs);
 }
 
 /// `SMSG_SET_FLAT_SPELL_MODIFIER` / `SMSG_SET_PCT_SPELL_MODIFIER` (`HandleSetSpellModifier

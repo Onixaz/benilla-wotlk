@@ -130,6 +130,7 @@ impl Plugin for UiPetPlugin {
 pub(crate) struct PetUnit<'w, 's> {
     index: Res<'w, GuidIndex>,
     stores: Query<'w, 's, &'static ObjectStore>,
+    auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
     self_guid: Res<'w, crate::net::SelfGuid>,
 }
 
@@ -138,6 +139,12 @@ impl PetUnit<'_, '_> {
     pub(crate) fn store(&self, pet_guid: u64) -> Option<&ObjectStore> {
         let e = *self.index.0.get(&pet_guid)?;
         self.stores.get(e).ok()
+    }
+
+    /// The pet's aura table, `None` while its object is not streamed or holds no aura yet.
+    pub(crate) fn auras(&self, pet_guid: u64) -> Option<&crate::unit_auras::UnitAuras> {
+        let e = *self.index.0.get(&pet_guid)?;
+        self.auras.get(e).ok()
     }
 
     /// The active player's descriptor, `None` while its object is not streamed: the lookup the

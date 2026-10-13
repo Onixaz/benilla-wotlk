@@ -312,9 +312,10 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             caster,
             remaining_ms,
         }],
-        ServerPacket::UpdateAuraDuration { slot, remaining_ms } => {
-            vec![SessionEvent::AuraDuration { slot, remaining_ms }]
-        }
+        // 12340's 0x137 is no aura duration: its handler (`0x5af6c0`) reads a `u32` and a packed
+        // guid into `0x5ae760`. Durations ride `SMSG_AURA_UPDATE`.
+        ServerPacket::UpdateAuraDuration { .. } => Vec::new(),
+        ServerPacket::AuraUpdate(u) => vec![SessionEvent::AuraUpdate(u)],
         ServerPacket::PlaySpellVisual { unit, kit_id } => {
             vec![SessionEvent::PlaySpellVisual { unit, kit_id }]
         }

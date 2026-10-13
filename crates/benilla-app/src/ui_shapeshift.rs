@@ -41,10 +41,10 @@ fn form_active(
     spell_id: u32,
     d: &benilla_formats::SpellDisplay,
     form_byte: u8,
-    store: Option<&ObjectStore>,
+    auras: Option<&crate::unit_auras::UnitAuras>,
 ) -> bool {
     match d.shapeshift_form.unwrap_or(0) {
-        0 => store.is_some_and(|s| crate::ui_action::toggle::active_action_toggle(spell_id, d, s)),
+        0 => crate::ui_action::toggle::active_action_toggle(spell_id, d, auras),
         form => form == u32::from(form_byte),
     }
 }
@@ -142,6 +142,7 @@ fn feed_shapeshift_bar(
     spells: Option<Res<Spells>>,
     cooldowns: Res<Cooldowns>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    self_auras: Query<&crate::unit_auras::UnitAuras, With<SelfPlayer>>,
     selection: Res<Selection>,
     // The selection's guid index, and the bag walk behind each form's reagent leg.
     objects: Objects,
@@ -200,7 +201,7 @@ fn feed_shapeshift_bar(
     let fresh: Vec<ShapeshiftFormView> = rows
         .into_iter()
         .map(|(id, d)| {
-            let active = form_active(id, d, form_byte, store);
+            let active = form_active(id, d, form_byte, self_auras.iter().next());
             // `isCastable`: true for the active form, else the `0x6e3d60` walk the action bar's
             // `IsUsableAction` runs.
             let castable = active
@@ -257,9 +258,8 @@ pub(crate) fn cast_form(cast: &mut crate::spell::ScriptCast, spell_id: u32) {
     // The force-admit arm uses `form_active`'s predicate, so a lit button always cancels.
     let disposition = d.and_then(|d| {
         if d.shapeshift_form.unwrap_or(0) == 0 {
-            store
-                .filter(|s| crate::ui_action::toggle::active_action_toggle(spell_id, d, s))
-                .map(|_| true)
+            let auras = targeting.self_auras.iter().next();
+            crate::ui_action::toggle::active_action_toggle(spell_id, d, auras).then_some(true)
         } else {
             crate::ui_action::toggle::form_recast_disposition(d, form_byte, row)
         }
@@ -283,13 +283,13 @@ pub(crate) fn cast_form(cast: &mut crate::spell::ScriptCast, spell_id: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::unit_auras::UnitAuras;
     use benilla_formats::SpellDisplay;
-    use benilla_protocol::ObjectFields;
+    use benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE;
 
-    /// `UNIT_FIELD_AURA` 47 and `UNIT_FIELD_AURAFLAGS` 95 (nibble-packed); `0xb` is occupied plus
-    /// cancelable (bit 0).
-    fn player_with_aura(spell_id: u32) -> ObjectStore {
-        ObjectStore(ObjectFields::from_pairs(&[(47u16, spell_id), (95, 0xb)]))
+    /// One live, cancelable aura of `spell_id`.
+    fn player_with_aura(spell_id: u32) -> UnitAuras {
+        UnitAuras::of(1, &[(0, spell_id, AURA_UPDATE_FLAG_CANCELABLE | 1)])
     }
 
     /// Devotion Aura as the shipped `Spell.dbc` has it: `AttributesEx2 0x10`, no `MOD_SHAPESHIFT`
@@ -319,12 +319,7 @@ mod tests {
             "a DIFFERENT aura's button stays dark while Devotion is the one that is up"
         );
         assert!(
-            !form_active(
-                465,
-                &devotion,
-                0,
-                Some(&ObjectStore(ObjectFields::from_pairs(&[])))
-            ),
+            !form_active(465, &devotion, 0, Some(&UnitAuras::default())),
             "no aura, no latch"
         );
         assert!(
@@ -395,7 +390,7 @@ mod tests {
             active_icon_id: 0,
             ..Default::default()
         };
-        let no_auras = ObjectStore(ObjectFields::from_pairs(&[]));
+        let no_auras = UnitAuras::default();
         assert!(form_active(2457, &battle_stance, 17, Some(&no_auras)));
         assert!(!form_active(2457, &battle_stance, 1, Some(&no_auras)));
         assert!(

@@ -248,6 +248,10 @@ pub const MSG_CHANNEL_UPDATE: u16 = 0x013A; // 314
 /// Our own aura's remaining time: `u8 slot`, `u32 remaining_ms`; never for others' or permanent
 /// auras (`SpellAuras.cpp:7511-7523`). It arrives before the `UNIT_FIELD_AURA` delta for the slot.
 pub const SMSG_UPDATE_AURA_DURATION: u16 = 0x0137; // 311
+/// 3.3.5a only: a unit's whole aura array; slots it does not name are emptied (`0x7300a0`).
+pub const SMSG_AURA_UPDATE_ALL: u16 = 0x0495;
+/// 3.3.5a only: some of a unit's aura slots, the same body as `SMSG_AURA_UPDATE_ALL`.
+pub const SMSG_AURA_UPDATE: u16 = 0x0496;
 
 /// Our own level-up, with no guid and sent only to the leveling player (`Player::GiveLevel`).
 pub const SMSG_LEVELUP_INFO: u16 = 0x01D4; // 468

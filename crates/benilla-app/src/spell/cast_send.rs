@@ -569,16 +569,21 @@ fn send_spell_cast(
             .and_then(|f| f.unit_charmed_by())
             .is_some_and(|charmer| Some(charmer) != ctx.self_guid),
         def,
-        // The exemption scan reads the caster's raw aura slot ids, unfiltered, as the reference.
+        // The exemption scan reads the caster's aura spell ids.
         &mut |aura_types: &[u32]| {
-            let Some((d, fields)) = def.zip(self_fields) else {
+            let Some(d) = def else {
                 return benilla_formats::CcExemption::default();
+            };
+            let ids = || {
+                ctx.self_auras
+                    .into_iter()
+                    .flat_map(|t| t.iter().map(|a| a.spell_id))
             };
             let catalog = spells.as_ref().map(|s| &s.catalog);
             aura_types
                 .iter()
                 .map(|&ty| {
-                    benilla_formats::cc_exemption(d, fields.unit_aura_ids(), ty, |id| {
+                    benilla_formats::cc_exemption(d, ids(), ty, |id| {
                         catalog.and_then(|c| c.get(id))
                     })
                 })
@@ -821,6 +826,7 @@ mod tests {
             },
             range: cast_target::RangeInputs::default(),
             main_hand_item: None,
+            self_auras: None,
             self_move_flags: 0,
         }
     }

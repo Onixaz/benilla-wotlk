@@ -88,7 +88,7 @@ impl PetPress<'_, '_> {
             .is_spell()
             .then(|| spells.as_ref().and_then(|s| s.catalog.get(entry.action())))
             .flatten();
-        if let Some(spell_id) = active_aura_press(entry, Some(pet_store), display) {
+        if let Some(spell_id) = active_aura_press(entry, pet.auras(pet_guid), display) {
             debug!("ui_pet: slot {slot} cancels its own aura (spell {spell_id}) — no PetAction");
             let _ = commands
                 .0

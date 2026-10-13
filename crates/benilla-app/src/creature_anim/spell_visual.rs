@@ -16,6 +16,7 @@ use crate::aura_visual::AuraProc;
 use crate::entities::ItemDisplays;
 use crate::items::{ItemObject, Items};
 use crate::net::{FieldChanged, NetCommands, NetEntity, ObjectStore};
+use crate::unit_auras::UnitAuras;
 use benilla_assets::{LockRecover, WorldAssets};
 
 use super::{
@@ -980,24 +981,24 @@ pub(super) fn route_cast_visuals(
     channel_cache.retain(|e, _| units.contains(*e));
 }
 
-/// The reference's aura watch span (`0x604d00`, registered at `0x604226`): from
-/// `FIELD_UNIT_AURA`, 54 dwords, the 48 slot ids and the 6 packed flag words.
-const AURA_WATCH_BASE: u16 = benilla_protocol::field::FIELD_UNIT_AURA;
-const AURA_WATCH_SPAN: u16 = 54;
-
-/// Arm and reap each aura's state kit (stage 2) off the unit's `UNIT_AURA` slots: a spell entering
-/// the slots begins its kit's models persistent, also on a unit streamed in mid-aura, and leaving
-/// reaps them (`0x604d00` → `0x5ff350`; remove `0x612320` → `0x614150(spellId, force=1)`). The add
-/// edge rings the kit sound ungated (`0x5ff4c6`) and never plays the kit's anim: stage 2 compares
-/// it with what the unit plays, a mismatch spent on a [`BaseAnimRecompute`]. `CharProc` columns go
-/// out as [`AuraProc`] edges, and a kit arms for any leg (Stealth's kit 312 is one `CharProc`).
-/// `armed` holds only the pairs this watcher began.
+/// Arm and reap each aura's state kit (stage 2) off the unit's [`UnitAuras`]: a spell entering
+/// the table begins its kit's models persistent, also on a unit streamed in mid-aura (its first
+/// `SMSG_AURA_UPDATE_ALL`), and leaving reaps them. 12340's applied core (`0x724820`) plays the
+/// spell's `SpellVisual` state kit (column 4, `+0x10`) at stage 2 through the unit's kit player
+/// (`0x745230`, `0x724c86`), and its removal core (`0x71e930`) stops the spell's kits with
+/// `0x743b40(spellId, force=1)` (`0x71ebda`). The add edge rings the kit sound and never plays the
+/// kit's anim: stage 2 compares it with what the unit plays, a mismatch spent on a
+/// [`BaseAnimRecompute`]. `CharProc` columns go out as [`AuraProc`] edges, and a kit arms for any
+/// leg (Stealth's kit 312 is one `CharProc`). `armed` holds only the pairs this watcher began.
+///
+/// Deviation: the reference arms per slot (`unit+0xedc`) and its stop is by spell, so losing one
+/// of two slots holding a spell stops the kit the other still holds; this arms per spell and
+/// reaps when no slot holds it, as one state instance per spell is the evident intent.
 pub(crate) fn arm_aura_state_fx(
-    // Re-run on an edge inside the aura watch span and on first sight (a standing aura is a
-    // state); the full sweep runs once per DBC-resource arrival.
-    units: Query<(Entity, &ObjectStore), Without<ItemObject>>,
-    arrived: Query<Entity, (Added<ObjectStore>, Without<ItemObject>)>,
-    mut edges: MessageReader<FieldChanged>,
+    // Re-run on a table change and on first sight (a standing aura is a state); the full sweep
+    // runs once per DBC-resource arrival.
+    units: Query<(Entity, &UnitAuras)>,
+    changed: Query<Entity, Changed<UnitAuras>>,
     visuals: Option<Res<SpellVisuals>>,
     spells: Option<Res<crate::ui_action::Spells>>,
     mut fx: MessageWriter<SpellKitFx>,
@@ -1014,33 +1015,24 @@ pub(crate) fn arm_aura_state_fx(
     let scan = if full_sweep {
         units.iter().collect::<Vec<_>>()
     } else {
-        let mut due: EntityHashSet = arrived.iter().collect();
-        due.extend(
-            edges
-                .read()
-                .filter(|e| {
-                    e.unit_array_slot(AURA_WATCH_BASE, AURA_WATCH_SPAN)
-                        .is_some()
-                })
-                .map(|e| e.entity),
-        );
-        due.into_iter().filter_map(|e| units.get(e).ok()).collect()
+        changed.iter().filter_map(|e| units.get(e).ok()).collect()
     };
-    for (entity, store) in scan {
+    for (entity, auras) in scan {
         let prev = armed.entry(entity).or_default();
         // Occupied slots, deduped: one state instance per spell however many casters hold it.
-        let mut cur: Vec<u32> = store.0.unit_auras().map(|a| a.spell_id).collect();
+        let mut cur: Vec<u32> = auras.iter().map(|a| a.spell_id).collect();
         cur.sort_unstable();
         cur.dedup();
         for &spell_id in prev.iter() {
             if cur.binary_search(&spell_id).is_err() {
+                debug!("anim: aura state kit reaped ({entity}, spell {spell_id})");
                 fx.write(SpellKitFx::Reap {
                     entity,
                     spell_id,
                     class: FxClass::AuraState,
                 });
                 procs.write(AuraProc::Reap { entity, spell_id });
-                // A looping state-kit sound dies with the aura (`0x614150`, 0.15 s fade).
+                // A looping state-kit sound dies with the aura's kits (`0x743b40`).
                 if let Some(kit_sound) =
                     resolve_kit(spells, &visuals.0, spell_id, |s| s.state, || None)
                         .and_then(|k| k.sound)
@@ -1070,6 +1062,11 @@ pub(crate) fn arm_aura_state_fx(
             {
                 continue; // nothing to arm or reap
             }
+            debug!(
+                "anim: aura state kit armed ({entity}, spell {spell_id}): {} model(s), {} proc                  node(s)",
+                effects.len(),
+                nodes.len()
+            );
             if !effects.is_empty() {
                 fx.write(SpellKitFx::Begin {
                     entity,
@@ -1091,8 +1088,8 @@ pub(crate) fn arm_aura_state_fx(
             if let Some(kit_sound) = kit.sound {
                 sounds.write(SpellKitSound::Play { entity, kit_sound });
             }
-            // The stage-2 anim leg, on the add edge only: an aura refreshed in place keeps its id,
-            // and `0x604d00` fires neither arm.
+            // The stage-2 anim leg, on the add edge only: an aura refreshed in place keeps its
+            // spell, and the slot already armed with it is skipped (`0x7248a8`).
             if let Some(anim_id) = kit.anim_id {
                 recomputes.write(BaseAnimRecompute { entity, anim_id });
             }
@@ -1290,31 +1287,40 @@ fn is_morph_spell(spells: &crate::ui_action::Spells, spell_id: u32) -> bool {
 
 /// Arm [`MorphLatch`] from aura-slot edges, as the add watcher and the remove tail (`0x6123ad`)
 /// both call `0x5ff0c0`: old spell first, new second, so a form swap latches the form entered.
-/// First sight emits no edge, as the reference's watchers fire on deltas only.
+/// A slot edge is a [`UnitAuras`] change diffed against the slots last seen; first sight emits no
+/// edge, as the reference's watchers fire on deltas only.
 pub(super) fn arm_morph_latch(
     units: Query<(), With<ObjectStore>>,
-    mut edges: MessageReader<FieldChanged>,
+    changed: Query<(Entity, &UnitAuras), Changed<UnitAuras>>,
     spells: Option<Res<crate::ui_action::Spells>>,
     mut latch: ResMut<MorphLatch>,
+    mut seen: Local<EntityHashMap<std::collections::BTreeMap<u8, u32>>>,
 ) {
-    if let Some(spells) = spells.as_deref() {
-        for e in edges.read() {
-            if e.unit_array_slot(
-                benilla_protocol::field::FIELD_UNIT_AURA,
-                u16::from(benilla_protocol::messages::UNIT_AURA_SLOTS),
-            )
-            .is_none()
-            {
+    for (entity, auras) in &changed {
+        let now: std::collections::BTreeMap<u8, u32> =
+            auras.iter().map(|a| (a.slot, a.spell_id)).collect();
+        let Some(before) = seen.insert(entity, now.clone()) else {
+            continue;
+        };
+        let Some(spells) = spells.as_deref() else {
+            continue;
+        };
+        let slots: std::collections::BTreeSet<u8> =
+            before.keys().chain(now.keys()).copied().collect();
+        for slot in slots {
+            let (old, new) = (before.get(&slot).copied(), now.get(&slot).copied());
+            if old == new {
                 continue;
             }
-            for spell_id in [e.old, e.new] {
-                if spell_id != 0 && is_morph_spell(spells, spell_id) {
-                    debug!("anim: morph latch armed ({}, spell {spell_id})", e.entity);
-                    latch.0.insert(e.entity, spell_id);
+            for spell_id in [old, new].into_iter().flatten() {
+                if is_morph_spell(spells, spell_id) {
+                    debug!("anim: morph latch armed ({entity}, spell {spell_id})");
+                    latch.0.insert(entity, spell_id);
                 }
             }
         }
     }
+    seen.retain(|e, _| units.contains(*e));
     // The latch dies with a despawned unit.
     latch.0.retain(|e, _| units.contains(*e));
 }

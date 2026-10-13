@@ -74,7 +74,8 @@ pub(super) fn feed_actions(
     // The by-key and resolved-text queues as one parameter, at Bevy's 16-parameter limit.
     ui_errors: (ResMut<UiErrorKeys>, ResMut<UiErrorTexts>),
     spells: Option<Res<Spells>>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    // With the aura table, the `ActiveIconID` toggle's input.
+    self_q: Query<(&ObjectStore, Option<&crate::unit_auras::UnitAuras>), With<SelfPlayer>>,
     objects: crate::net::Objects,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
@@ -94,7 +95,7 @@ pub(super) fn feed_actions(
     // fires. The drain owns the arms that need our bags or the item cache: `0x78` and `0x5c`
     // (`0x6e1e7f`) name the failing slot's item, found as the pre-send check finds it. On a cache
     // miss the entry stays queued, as the reference's callback `0x6e29b0` redisplays on the answer.
-    let self_store = self_q.iter().next();
+    let self_store = self_q.iter().next().map(|(s, _)| s);
     let mut await_template: Vec<crate::ui_action::CastFail> = Vec::new();
     // The same failures for the combat log: `0x6e1a00` calls both `DisplayError` and the log
     // formatter `0x62c360`.
@@ -327,7 +328,10 @@ pub(super) fn feed_actions(
         .collect();
     show_messages(&mut script, &mut sink, "ui_action", unknown_lines);
 
-    let store = self_q.iter().next();
+    let (store, auras) = self_q
+        .iter()
+        .next()
+        .map_or((None, None), |(s, a)| (Some(s), a));
 
     // Stance page: our form's bonus bar offset, with `UPDATE_BONUS_ACTIONBAR` on change.
     let form = store.map(|s| s.0.unit_shapeshift_form()).unwrap_or(0);
@@ -370,6 +374,7 @@ pub(super) fn feed_actions(
                             d,
                             sp,
                             store,
+                            auras,
                             &objects,
                             &items,
                             icons.as_deref(),
@@ -477,6 +482,7 @@ pub(super) fn feed_actions(
                                 d,
                                 sp,
                                 Some(store),
+                                auras,
                                 &objects,
                                 &items,
                                 icons.as_deref(),
@@ -518,6 +524,7 @@ fn spell_action_icon(
     d: &benilla_formats::SpellDisplay,
     spells: &super::Spells,
     store: Option<&crate::net::ObjectStore>,
+    auras: Option<&crate::unit_auras::UnitAuras>,
     objects: &crate::net::Objects,
     items: &Items,
     icons: Option<&ItemDisplays>,
@@ -525,9 +532,9 @@ fn spell_action_icon(
 ) -> Option<String> {
     auto_attack_icon(d, store, &spells.forms, objects, items, icons, commands)
         .or_else(|| {
-            store
-                .filter(|s| super::toggle::active_action_toggle(spell_id, d, s))
-                .and_then(|_| d.active_icon.clone())
+            super::toggle::active_action_toggle(spell_id, d, auras)
+                .then(|| d.active_icon.clone())
+                .flatten()
         })
         .or_else(|| d.icon.clone())
 }

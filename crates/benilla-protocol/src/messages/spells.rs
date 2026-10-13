@@ -1,6 +1,6 @@
 //! The cast pipeline on the wire: the `CMSG_CAST_SPELL` shapes, the server's verdict, the
 //! start/launch pair every observer sees, interrupt and pushback notices, the channel timer and the
-//! aura messages. Aura state itself is descriptor data (`UNIT_FIELD_AURA`), not a packet.
+//! aura messages. The auras themselves arrive in `SMSG_AURA_UPDATE` (`super::aura`).
 
 use std::io::{self, Read};
 

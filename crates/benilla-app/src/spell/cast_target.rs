@@ -29,6 +29,7 @@ use crate::creature_type::CreatureTypeSources;
 use crate::names::NameCache;
 use crate::net::{GuidIndex, ObjectStore, Reputations, SelfGuid, SelfPlayer};
 use crate::target::{can_assist, can_attack, Factions, Selection};
+use crate::unit_auras::UnitAuras;
 use benilla_protocol::messages::OwnerFallback;
 
 /// `TARGET_FLAG_*` bits of the client's targeting flag word (`0xcecac0`).
@@ -181,6 +182,8 @@ pub(crate) struct CastContext<'a> {
     /// The caster's movement flags (the client's `[unit+0x9e8]`), read by the requirement
     /// validator's moving gate.
     pub(crate) self_move_flags: u32,
+    /// The caster's aura table: the toggle-cancel scans and the crowd-control exemption read it.
+    pub(crate) self_auras: Option<&'a UnitAuras>,
 }
 
 /// Positions and the two units for the pre-send range refusal: the client's cast runs
@@ -231,6 +234,7 @@ impl Default for RangeInputs {
 pub(crate) struct CastTargeting<'w, 's> {
     pub(crate) selection: Res<'w, Selection>,
     pub(crate) self_store: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
+    pub(crate) self_auras: Query<'w, 's, &'static UnitAuras, With<SelfPlayer>>,
     stores: Query<'w, 's, &'static ObjectStore>,
     index: Option<Res<'w, GuidIndex>>,
     self_guid: Res<'w, SelfGuid>,
@@ -296,6 +300,7 @@ impl CastTargeting<'_, '_> {
                 .and_then(|s| s.0.player_inv_slot(EQUIPMENT_SLOT_MAINHAND))
                 .filter(|&g| g != 0),
             self_move_flags: self.player.as_deref().map_or(0, |p| p.move_flags()),
+            self_auras: self.self_auras.iter().next(),
         }
     }
 

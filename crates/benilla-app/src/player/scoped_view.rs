@@ -12,7 +12,7 @@
 use bevy::camera::{PerspectiveProjection, Projection};
 use bevy::prelude::*;
 
-use crate::net::{ObjectStore, SelfPlayer};
+use crate::net::SelfPlayer;
 use crate::ui_action::Spells;
 use benilla_world::view::{WorldCamera, CAM_FOVY};
 
@@ -37,10 +37,10 @@ impl ScopedView {
     }
 }
 
-/// Drives the projection from aura 76 in our own aura slots only, as the reference gates it: the
-/// aura field is public, so another player's spyglass must not zoom ours.
+/// Drives the projection from aura 76 in our own aura table only, as the reference gates it:
+/// another player's spyglass must not zoom ours.
 pub(super) fn apply_scoped_view(
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    self_q: Query<&crate::unit_auras::UnitAuras, With<SelfPlayer>>,
     spells: Option<Res<Spells>>,
     mut scoped: ResMut<ScopedView>,
     mut projections: Query<&mut Projection, With<WorldCamera>>,
@@ -50,8 +50,8 @@ pub(super) fn apply_scoped_view(
         .single()
         .ok()
         .zip(catalog)
-        .and_then(|(store, catalog)| {
-            store.0.unit_auras().find_map(|slot| {
+        .and_then(|(auras, catalog)| {
+            auras.iter().find_map(|slot| {
                 let rec = catalog.get(slot.spell_id)?;
                 (0..3).find_map(|i| {
                     // The reference reads the misc value from the aura name's own effect index.

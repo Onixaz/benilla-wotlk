@@ -181,6 +181,7 @@ mod ui_tradeskill;
 mod ui_trainer;
 mod ui_unit;
 mod ui_world_map;
+mod unit_auras;
 mod video;
 mod vplates;
 mod weapon_trail;

@@ -8,12 +8,12 @@ use crate::wire::{
 };
 
 use super::{
-    action_bar, area_trigger, attack, auction, bank, battlefield, binder, broadcast, channel, chat,
-    combat_log, death, duel, gameobject, gm_ticket, gossip, group, guild, instance, items, loot,
-    mail, meeting_stone, mirror_timer, monster_move, movement, opcode, page_text, pet, petition,
-    pose, progression, pvp, quest, social, spellbook, spells, stable, summon, tabard, taxi, trade,
-    trainer, tutorial, update_object, vendor, world_state, AttackSwingError, Character,
-    CreatureQueryInfo, JumpInfo, MoveMode, ServerPacket, SpeedKind, SplineMode,
+    action_bar, area_trigger, attack, auction, aura, bank, battlefield, binder, broadcast, channel,
+    chat, combat_log, death, duel, gameobject, gm_ticket, gossip, group, guild, instance, items,
+    loot, mail, meeting_stone, mirror_timer, monster_move, movement, opcode, page_text, pet,
+    petition, pose, progression, pvp, quest, social, spellbook, spells, stable, summon, tabard,
+    taxi, trade, trainer, tutorial, update_object, vendor, world_state, AttackSwingError,
+    Character, CreatureQueryInfo, JumpInfo, MoveMode, ServerPacket, SpeedKind, SplineMode,
 };
 
 /// Read a `SMSG_FORCE_*_SPEED_CHANGE` body: `[packed guid][u32 counter][f32 speed]`, with a `u8`
@@ -874,6 +874,9 @@ fn parse_server_body(
             let (slot, remaining_ms) = spells::read_update_aura_duration(&mut r)?;
             ServerPacket::UpdateAuraDuration { slot, remaining_ms }
         }
+        opcode::SMSG_AURA_UPDATE_ALL | opcode::SMSG_AURA_UPDATE => ServerPacket::AuraUpdate(
+            aura::read_aura_update(&mut r, opcode == opcode::SMSG_AURA_UPDATE_ALL)?,
+        ),
         opcode::SMSG_PLAY_SPELL_VISUAL => {
             let (unit, kit_id) = spells::read_play_spell_visual(&mut r)?;
             ServerPacket::PlaySpellVisual { unit, kit_id }

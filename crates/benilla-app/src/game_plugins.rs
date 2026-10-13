@@ -202,6 +202,8 @@ impl PluginGroup for GamePlugins {
             .add(crate::spell::SpellPlugin)
             // After UiActionPlugin, whose `Spells` catalog it shares.
             .add(UiAuraPlugin)
+            // The aura feed every aura reader reads.
+            .add(crate::unit_auras::UnitAurasPlugin)
             // After UiActionPlugin, whose `Spells` and `send_spell_cast` it shares.
             .add(UiSpellbookPlugin)
             // After UiSpellbookPlugin: a macro's spell resolves against the book it pushes.

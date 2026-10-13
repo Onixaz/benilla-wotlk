@@ -440,7 +440,8 @@ pub(crate) fn cast_spell(
     let forks = via_book.then(|| (ladder.spells.as_ref(), targeting.self_store.iter().next()));
     if let Some((Some(sp), Some(store))) = forks {
         if let Some(d) = sp.catalog.get(spell_id) {
-            if crate::ui_action::toggle::active_action_toggle(spell_id, d, store) {
+            let auras = targeting.self_auras.iter().next();
+            if crate::ui_action::toggle::active_action_toggle(spell_id, d, auras) {
                 debug!("ui_spellbook: cast {spell_id} re-pressed — aura cancels");
                 let _ = ladder
                     .commands

@@ -6,6 +6,7 @@ pub mod addons;
 mod area_trigger;
 mod attack;
 mod auction;
+mod aura;
 mod bank;
 mod battlefield;
 mod binder;
@@ -71,6 +72,10 @@ pub use auction::{
     auction_list_bidder_items, auction_list_items, auction_list_owner_items, auction_place_bid,
     auction_remove_item, auction_sell_item, AuctionBidderNotification, AuctionCommandTail,
     AuctionListEntry, AuctionOwnerNotification, AUCTION_PAGE_SIZE, AUCTION_RECORD_BYTES,
+};
+pub use aura::{
+    AuraRecord, AuraUpdate, AURA_UPDATE_EFF_INDEX_MASK, AURA_UPDATE_FLAG_CANCELABLE,
+    AURA_UPDATE_FLAG_DURATION, AURA_UPDATE_FLAG_HARMFUL, AURA_UPDATE_FLAG_SELF_CAST,
 };
 pub use bank::{
     autobank_item, autostore_bank_item, bank_slot_result, banker_activate, buy_bank_slot,

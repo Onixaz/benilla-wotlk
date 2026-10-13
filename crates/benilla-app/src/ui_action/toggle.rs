@@ -7,17 +7,21 @@
 
 use benilla_formats::{ShapeshiftForm, SpellDisplay};
 
-use crate::net::ObjectStore;
+use crate::unit_auras::UnitAuras;
 
 /// The active-action predicate (`0x4e55f0`, twin `0x4b36f0`): a nonzero raw `ActiveIconID` and
 /// the spell's own aura live with the cancelable bit, so the press cancels instead of casting.
-/// No form guard: a warrior stance has `ActiveIconID` 0.
-pub(crate) fn active_action_toggle(spell_id: u32, d: &SpellDisplay, store: &ObjectStore) -> bool {
+/// No form guard: a warrior stance has `ActiveIconID` 0. A unit with no aura table holds none.
+pub(crate) fn active_action_toggle(
+    spell_id: u32,
+    d: &SpellDisplay,
+    auras: Option<&UnitAuras>,
+) -> bool {
     d.active_icon_id != 0
-        && store
-            .0
-            .unit_auras()
-            .any(|a| a.spell_id == spell_id && a.is_cancelable())
+        && auras.is_some_and(|t| {
+            t.iter()
+                .any(|a| a.spell_id == spell_id && a.is_cancelable())
+        })
 }
 
 /// The form-match recast: `None` casts (not the active form), `Some(true)` cancels the form,
@@ -37,15 +41,7 @@ pub(crate) fn form_recast_disposition(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use benilla_protocol::ObjectFields;
-
-    /// Raw indices: `UNIT_FIELD_AURA` 47, `UNIT_FIELD_AURAFLAGS` 95 (a nibble per slot).
-    fn store_with_aura(spell_id: u32, flags_nibble: u32) -> ObjectStore {
-        ObjectStore(ObjectFields::from_pairs(&[
-            (47u16, spell_id),
-            (95, flags_nibble),
-        ]))
-    }
+    use benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE;
 
     #[test]
     fn active_action_toggle_needs_the_icon_and_the_live_cancelable_aura() {
@@ -54,16 +50,17 @@ mod tests {
             ..Default::default()
         };
         let plain = SpellDisplay::default();
-        // 0xb: occupied (effect-index bits) and cancelable (bit 0).
-        let shifted = store_with_aura(2645, 0xb);
-        assert!(active_action_toggle(2645, &ghost_wolf, &shifted));
-        assert!(!active_action_toggle(2645, &plain, &shifted));
-        // 0x2: occupied, not cancelable.
-        let uncancelable = store_with_aura(2645, 0x2);
-        assert!(!active_action_toggle(2645, &ghost_wolf, &uncancelable));
-        assert!(!active_action_toggle(768, &ghost_wolf, &shifted));
-        let bare = ObjectStore(ObjectFields::from_pairs(&[]));
-        assert!(!active_action_toggle(2645, &ghost_wolf, &bare));
+        let shifted = UnitAuras::of(1, &[(0, 2645, AURA_UPDATE_FLAG_CANCELABLE | 1)]);
+        assert!(active_action_toggle(2645, &ghost_wolf, Some(&shifted)));
+        assert!(!active_action_toggle(2645, &plain, Some(&shifted)));
+        let uncancelable = UnitAuras::of(1, &[(0, 2645, 1)]);
+        assert!(!active_action_toggle(
+            2645,
+            &ghost_wolf,
+            Some(&uncancelable)
+        ));
+        assert!(!active_action_toggle(768, &ghost_wolf, Some(&shifted)));
+        assert!(!active_action_toggle(2645, &ghost_wolf, None));
     }
 
     #[test]

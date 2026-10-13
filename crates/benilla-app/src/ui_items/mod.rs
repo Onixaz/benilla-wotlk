@@ -652,9 +652,7 @@ pub(crate) fn send_item_use(
         let Some(d) = ladder.spells.as_ref().and_then(|s| s.catalog.get(spell)) else {
             return false;
         };
-        ctx.rel
-            .self_store
-            .is_some_and(|store| crate::ui_action::toggle::active_action_toggle(spell, d, store))
+        crate::ui_action::toggle::active_action_toggle(spell, d, ctx.self_auras)
     };
     // The disarm ladder, asked of the caster's own inventory.
     let disarmed_hand = ctx.rel.self_store.and_then(|store| {

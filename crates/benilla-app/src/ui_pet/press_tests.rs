@@ -32,9 +32,15 @@ pub(super) const CHARMEDBY: u16 = 10;
 pub(super) const SUMMONEDBY: u16 = 12;
 pub(super) const CREATEDBY: u16 = 14;
 pub(super) const FLAGS: u16 = 46;
-/// `UNIT_FIELD_AURA` slot 0 and `UNIT_FIELD_AURAFLAGS`, a nibble per slot.
-pub(super) const AURA: u16 = 47;
-pub(super) const AURAFLAGS: u16 = 95;
+/// Gives the rig's pet one live, cancelable aura of `spell`, as its aura packet would.
+fn pet_running(rig: &mut Rig, spell: u32) {
+    let pet = rig.app.world().resource::<GuidIndex>().0[&PET];
+    let flags = benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE | 1;
+    rig.app
+        .world_mut()
+        .entity_mut(pet)
+        .insert(crate::unit_auras::UnitAuras::of(ME, &[(0, spell, flags)]));
+}
 
 pub(super) const CLAW: u32 = 16829;
 pub(super) const BITE: u32 = 17258;
@@ -366,8 +372,8 @@ fn a_client_targeted_spell_press_starts_no_pet_gcd() {
 /// `0x4bd24f`: a press on a running aura cancels it and returns before the arm.
 #[test]
 fn an_aura_cancel_press_starts_no_pet_gcd() {
-    let running = owned_pet_with(&[(AURA, COWER), (AURAFLAGS, 0x3)]);
-    let mut rig = rig(vec![(COWER, cower())], &[COWER], Some(running));
+    let mut rig = rig(vec![(COWER, cower())], &[COWER], Some(owned_pet_with(&[])));
+    pet_running(&mut rig, COWER);
 
     rig.press(1);
 
@@ -461,8 +467,8 @@ fn a_spell_press_with_no_player_object_sends_nothing() {
 /// unresolved a running aura is not cancelled either.
 #[test]
 fn an_aura_cancel_press_with_no_player_object_sends_nothing() {
-    let running = owned_pet_with(&[(AURA, COWER), (AURAFLAGS, 0x3)]);
-    let mut rig = rig(vec![(COWER, cower())], &[COWER], Some(running));
+    let mut rig = rig(vec![(COWER, cower())], &[COWER], Some(owned_pet_with(&[])));
+    pet_running(&mut rig, COWER);
     rig.app
         .world_mut()
         .resource_mut::<GuidIndex>()

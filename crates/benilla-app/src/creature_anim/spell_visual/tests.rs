@@ -458,8 +458,6 @@ fn ranged_spells_merge_the_weapon_visual_into_their_empty_slots() {
 /// the spell enters the slots and reaps them as it leaves. Food: spell 433 → visual 51 → kit 409.
 #[test]
 fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
-    use benilla_protocol::messages::ObjectFields;
-
     const FOOD: u32 = 433;
     const FOOD_VISUAL: u32 = 51;
     const STATE_KIT: u32 = 409;
@@ -528,16 +526,9 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
             .chain(),
     );
 
-    // Slot 0: UNIT_FIELD_AURA[0] (field 47) holds the spell id; occupancy is an effect-index bit
-    // in the slot's AURAFLAGS nibble (field 95's low nibble).
-    let eating = ObjectFields::from_pairs(&[(47, FOOD), (95, 0x0E)]);
-    let fasted = ObjectFields::from_pairs(&[(95, 0)]);
-
     let unit = app
         .world_mut()
-        .spawn(crate::net::ObjectStore(
-            eating.into_created(benilla_protocol::messages::ObjectType::Unit),
-        ))
+        .spawn(crate::unit_auras::aura_unit_for_test(&[FOOD]))
         .id();
     app.update();
     {
@@ -574,11 +565,7 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
         "a held aura re-arms nothing"
     );
 
-    crate::net::apply_fields_for_test(
-        app.world_mut(),
-        unit,
-        fasted.into_created(benilla_protocol::messages::ObjectType::Unit),
-    );
+    crate::unit_auras::set_auras_for_test(app.world_mut(), unit, &[]);
     app.update();
     {
         let log = &app.world().resource::<FxLog>().0;
@@ -1673,8 +1660,6 @@ fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
 /// anim-only (`benilla-extract kitanim`), kit 586's Stun (14) among them.
 #[test]
 fn an_anim_only_state_kit_still_arms_on_the_aura_add_edge() {
-    use benilla_protocol::messages::ObjectFields;
-
     const SPELL: u32 = 6902; // Sneezing Fit
     const VISUAL: u32 = 517;
     const STATE_KIT: u32 = 586; // anim 14, no effect slot, no sound, no CharProc
@@ -1717,10 +1702,7 @@ fn an_anim_only_state_kit_still_arms_on_the_aura_add_edge() {
 
     let unit = app
         .world_mut()
-        .spawn(crate::net::ObjectStore(
-            ObjectFields::from_pairs(&[(47, SPELL), (95, 0x0E)])
-                .into_created(benilla_protocol::messages::ObjectType::Unit),
-        ))
+        .spawn(crate::unit_auras::aura_unit_for_test(&[SPELL]))
         .id();
     app.update();
 
