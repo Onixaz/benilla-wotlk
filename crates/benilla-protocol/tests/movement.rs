@@ -9,17 +9,19 @@ use benilla_protocol::wire::Vector3d;
 use benilla_protocol::ServerPacket;
 use common::hx;
 
-/// `SMSG_FORCE_*_SPEED_CHANGE` is `[packed guid][u32 counter][f32 speed]` (vmangos
-/// `SendSpeedChangeToController`); the ack is `[packed guid][u32 counter][MovementInfo][f32 speed]`
+/// `SMSG_FORCE_*_SPEED_CHANGE` is `[packed guid][u32 counter][f32 speed]`, with a `u8` before the
+/// run kind's speed (12340's `0x7307fd`); the ack is `[packed guid][u32 counter][MovementInfo][f32 speed]`
 /// (AzerothCore `HandleForceSpeedChangeAck`).
 #[test]
 fn force_speed_change_parses_and_ack_body_golden() {
     use benilla_protocol::messages::SpeedKind;
 
-    // SMSG_FORCE_RUN_SPEED_CHANGE: packed guid 8 (mask 0x01, one byte), counter 7, speed 14.0.
+    // SMSG_FORCE_RUN_SPEED_CHANGE: packed guid 8 (mask 0x01, one byte), counter 7, u8 1,
+    // speed 14.0: AzerothCore's `.modify speed 2` bytes.
+    let run_body = hx("0108070000000100006041");
     let body = hx("01080700000000006041");
     let packet =
-        messages::parse_server(messages::opcode::SMSG_FORCE_RUN_SPEED_CHANGE, &body).unwrap();
+        messages::parse_server(messages::opcode::SMSG_FORCE_RUN_SPEED_CHANGE, &run_body).unwrap();
     match &packet {
         ServerPacket::ForceSpeedChange {
             guid: 8,
@@ -54,7 +56,10 @@ fn force_speed_change_parses_and_ack_body_golden() {
         ),
     ] {
         match messages::parse_server(op, &body).unwrap() {
-            ServerPacket::ForceSpeedChange { kind: k, .. } => assert_eq!(k, kind),
+            // The other kinds carry no byte before the speed (12340's `0x730844`).
+            ServerPacket::ForceSpeedChange { kind: k, speed, .. } => {
+                assert_eq!((k, speed), (kind, 14.0))
+            }
             _ => panic!("expected ForceSpeedChange for opcode {op:#06x}"),
         }
     }

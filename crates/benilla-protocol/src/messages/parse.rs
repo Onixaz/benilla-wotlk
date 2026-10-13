@@ -16,13 +16,19 @@ use super::{
     CreatureQueryInfo, JumpInfo, MoveMode, ServerPacket, SpeedKind, SplineMode,
 };
 
-/// Read a `SMSG_FORCE_*_SPEED_CHANGE` body: `[packed guid][u32 counter][f32 speed]` for all six
-/// kinds (vmangos `SendSpeedChangeToController`, the `> 1_9_4` branch).
+/// Read a `SMSG_FORCE_*_SPEED_CHANGE` body: `[packed guid][u32 counter][f32 speed]`, with a `u8`
+/// before the speed for the run kind alone: 12340's shared handler (`0x7307a0`) reads it only on
+/// `0xe2`'s arm (`0x7307fd`) and the float alone on the others (`0x730844`).
 fn read_force_speed(kind: SpeedKind, r: &mut impl Read) -> io::Result<ServerPacket> {
+    let guid = read_packed_guid(r)?;
+    let counter = read_u32_le(r)?;
+    if kind == SpeedKind::Run {
+        read_u8(r)?;
+    }
     Ok(ServerPacket::ForceSpeedChange {
-        guid: read_packed_guid(r)?,
+        guid,
         kind,
-        counter: read_u32_le(r)?,
+        counter,
         speed: read_f32_le(r)?,
     })
 }
