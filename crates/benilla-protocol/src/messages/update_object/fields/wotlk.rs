@@ -138,6 +138,9 @@ impl ObjectFields {
             Field::PlayerBytes3 => put(field, element, value & 0xffff),
             // Byte 1 is the refer-a-friend level, where 1.12.1 keeps the combo points.
             Field::PlayerFieldBytes => put(field, element, value & !0xff00),
+            // Byte 3 is the aura vision; bytes 0-2 are the override-spells id and the regen
+            // prediction mask, where 1.12.1 keeps the honor rank bar.
+            Field::PlayerFieldBytes2 => put(field, element, value & 0xff00_0000),
             // The permanent and temporary enchant as two `u16`, which 1.12.1 sends as the first
             // two of seven dwords (AzerothCore `Player::SetVisibleItemSlot`).
             Field::PlayerVisibleItemEnchants => {
@@ -263,6 +266,14 @@ mod tests {
         let f = ObjectFields::from_wotlk(wire(&[(122, 0x1003_0901)]), ObjectType::Unit);
         assert_eq!(f.unit_sheath_state(), Some(1));
         assert_eq!(f.unit_byte2_flags(), 0x09);
+    }
+
+    #[test]
+    fn player_field_bytes2_keeps_the_aura_vision_and_drops_the_override_spells() {
+        // Override spells 0x1234, regen mask 0x56, stealth and invisibility vision 0x60.
+        let f = ObjectFields::from_wotlk(wire(&[(1229, 0x6056_1234)]), ObjectType::Player);
+        assert_eq!(f.player_aura_vision(), Some(0x60));
+        assert_eq!(f.player_honor_rank_bar(), Some(0));
     }
 
     #[test]

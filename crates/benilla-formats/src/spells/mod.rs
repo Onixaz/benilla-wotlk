@@ -147,6 +147,13 @@ const COL_SPELL_LEVEL: usize = 39;
 const COL_EFFECT_APPLY_AURA_1: usize = 95;
 /// `SPELL_AURA_MOD_SHAPESHIFT`: its `EffectMiscValue` is the `SpellShapeshiftForm.dbc` id.
 const SPELL_AURA_MOD_SHAPESHIFT: u32 = 36;
+/// `SPELL_AURA_MOD_STEALTH_DETECT` and `SPELL_AURA_MOD_INVISIBILITY_DETECT`, the auras
+/// [`SpellDisplay::aura_vision_mask`] reads (`0x7fe3e0`).
+const SPELL_AURA_MOD_STEALTH_DETECT: u32 = 17;
+const SPELL_AURA_MOD_INVISIBILITY_DETECT: u32 = 19;
+/// `PLAYER_FIELD_BYTES2` byte 3's stealth and invisibility vision bits.
+const AURA_VISION_STEALTH: u8 = 0x20;
+const AURA_VISION_INVISIBILITY: u8 = 0x40;
 const COL_ICON_ID: usize = 133;
 /// `ActiveIconID` (`+0x218`, read at `0x4b4754`): druid forms carry 122, the dismiss paw.
 const COL_ACTIVE_ICON_ID: usize = 134;
@@ -169,6 +176,7 @@ const COL_PROC_CHARGES: usize = 36;
 const COL_STACK_AMOUNT: usize = 49;
 const COL_MAX_TARGET_LEVEL: usize = 207;
 const COL_MAX_AFFECTED_TARGETS: usize = 212;
+const COL_REQUIRED_AURA_VISION: usize = 221;
 const COL_DAMAGE_MULTIPLIER_1: usize = 216;
 const COL_EFFECT_POINTS_PER_COMBO_POINT_1: usize = 119;
 
@@ -606,6 +614,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 stack_amount: u32_at(r, COL_STACK_AMOUNT).unwrap_or(0),
                 max_target_level: u32_at(r, COL_MAX_TARGET_LEVEL).unwrap_or(0),
                 max_affected_targets: u32_at(r, COL_MAX_AFFECTED_TARGETS).unwrap_or(0),
+                required_aura_vision: u32_at(r, COL_REQUIRED_AURA_VISION).unwrap_or(0),
                 effect_base_points: std::array::from_fn(|i| {
                     i32_at(r, COL_EFFECT_BASE_POINTS_1 + i).unwrap_or(0)
                 }),

@@ -170,6 +170,9 @@ pub struct SpellDisplay {
     pub max_target_level: u32,
     /// `MaxAffectedTargets` (column 212): the description expander's `$i` (`507fc3`).
     pub max_affected_targets: u32,
+    /// `RequiredAuraVision` (column 221, `SpellRec+0x274`): an aura vision bit, 1-based, that
+    /// [`Self::aura_vision_mask`] folds in; 0 for none.
+    pub required_aura_vision: u32,
     /// `EffectBasePoints[3]` (columns 80-82, signed): each roll's floor; -1 on weapon damage.
     pub effect_base_points: [i32; 3],
     /// `EffectDieSides[3]` (columns 74-76, signed): with n dice, the value runs base + n to
@@ -280,6 +283,7 @@ impl Default for SpellDisplay {
             stack_amount: 0,
             max_target_level: 0,
             max_affected_targets: 0,
+            required_aura_vision: 0,
             effect_base_points: [0; 3],
             effect_die_sides: [0; 3],
             effect_base_dice: [0; 3],
@@ -557,6 +561,26 @@ impl SpellDisplay {
     /// `GetPlayerBuff` never returns it: warrior stances, Defensive State 5302.
     pub fn hidden_from_aura_bar(&self) -> bool {
         self.attributes & ATTR_DO_NOT_DISPLAY != 0 || self.attributes_ex & ATTR_EX_NO_AURA_ICON != 0
+    }
+
+    /// The aura vision this aura's state kit needs on the active player (`0x7fe3e0`): bit
+    /// `RequiredAuraVision - 1`, plus `0x20` for a `MOD_STEALTH_DETECT` effect and `0x40` for a
+    /// `MOD_INVISIBILITY_DETECT` of type 0 or 10. 0 shows the kit to everyone.
+    pub fn aura_vision_mask(&self) -> u8 {
+        let mut mask = match self.required_aura_vision {
+            0 => 0,
+            n => 1u32.wrapping_shl(n - 1) as u8,
+        };
+        for (&aura, &misc) in self.effect_apply_aura.iter().zip(&self.effect_misc_value) {
+            match aura {
+                SPELL_AURA_MOD_STEALTH_DETECT => mask |= AURA_VISION_STEALTH,
+                SPELL_AURA_MOD_INVISIBILITY_DETECT if misc == 0 || misc == 10 => {
+                    mask |= AURA_VISION_INVISIBILITY
+                }
+                _ => {}
+            }
+        }
+        mask
     }
 
     /// A tracking spell (`EffectApplyAuraName` 44, 45 or 151): never in an aura display

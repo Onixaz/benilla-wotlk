@@ -468,7 +468,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
 /// 3.3.5a (12340): AzerothCore `UpdateFields.h`. Not here, so not read: the auras
 /// (`SMSG_AURA_UPDATE` carries them), the virtual items (item entries, not display ids), the item
 /// text id, training points, the combo target and the old honor fields, which 3.3.5a has not;
-/// and, not yet converted, the quest log (25 slots of 5) and `PLAYER_FIELD_BYTES2`.
+/// and, not yet converted, the quest log (25 slots of 5).
 pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
     ends: DescriptorEnds {
         object: 6,
@@ -605,6 +605,7 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         run(F::PlayerBuybackTimestamp, Player, 1213, 12),
         one(F::PlayerYesterdayContribution, Player, 1227),
         one(F::PlayerLifetimeHonorableKills, Player, 1228),
+        one(F::PlayerFieldBytes2, Player, 1229),
         one(F::PlayerWatchedFactionIndex, Player, 1230),
         run(F::GameObjectCreatedBy, GameObject, 6, 2),
         one(F::GameObjectDisplayId, GameObject, 8),

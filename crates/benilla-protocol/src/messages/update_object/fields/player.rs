@@ -463,6 +463,13 @@ impl ObjectFields {
         self.get_u32(FIELD_PLAYER_FIELD_BYTES2)
             .map(|b| (b & 0xff) as u8)
     }
+    /// `PLAYER_FIELD_BYTES2` byte 3 (private): the aura vision, `0x20` stealth and `0x40`
+    /// invisibility detection, which 12340 reads at `+0x10e7` to show or hide the detection
+    /// auras' state kits on every unit (`0x724979`, `0x727b4e`).
+    pub fn player_aura_vision(&self) -> Option<u8> {
+        self.get_u32(FIELD_PLAYER_FIELD_BYTES2)
+            .map(|b| (b >> 24) as u8)
+    }
     /// `UNIT_FIELD_BYTES_0` byte 0: race.
     pub fn unit_race(&self) -> Option<u8> {
         self.unit_bytes_0().map(|b| (b & 0xff) as u8)

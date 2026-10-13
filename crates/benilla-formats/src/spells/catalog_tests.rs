@@ -1609,3 +1609,35 @@ fn creature_type_mask_rule() {
     );
     assert!(masked(1).admits_creature_type(33), "bit 32 wraps to bit 0");
 }
+
+/// `0x7fe3e0`: the vision bit from `RequiredAuraVision`, stealth detection's `0x20` from any slot,
+/// invisibility detection's `0x40` only for type 0 or 10, and nothing for a plain aura.
+#[test]
+fn aura_vision_mask_folds_the_column_and_the_detection_auras() {
+    let with = |aura: u32, misc: i32| {
+        let mut d = SpellDisplay::default();
+        d.effect_apply_aura[2] = aura;
+        d.effect_misc_value[2] = misc;
+        d
+    };
+    assert_eq!(SpellDisplay::default().aura_vision_mask(), 0);
+    assert_eq!(
+        with(SPELL_AURA_MOD_STEALTH_DETECT, 0).aura_vision_mask(),
+        0x20
+    );
+    assert_eq!(
+        with(SPELL_AURA_MOD_INVISIBILITY_DETECT, 0).aura_vision_mask(),
+        0x40
+    );
+    assert_eq!(
+        with(SPELL_AURA_MOD_INVISIBILITY_DETECT, 10).aura_vision_mask(),
+        0x40
+    );
+    assert_eq!(
+        with(SPELL_AURA_MOD_INVISIBILITY_DETECT, 3).aura_vision_mask(),
+        0
+    );
+    let mut d = with(SPELL_AURA_MOD_STEALTH_DETECT, 0);
+    d.required_aura_vision = 1;
+    assert_eq!(d.aura_vision_mask(), 0x21);
+}

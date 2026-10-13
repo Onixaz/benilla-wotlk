@@ -991,6 +991,12 @@ pub(super) fn route_cast_visuals(
 /// [`BaseAnimRecompute`]. `CharProc` columns go out as [`AuraProc`] edges, and a kit arms for any
 /// leg (Stealth's kit 312 is one `CharProc`). `armed` holds only the pairs this watcher began.
 ///
+/// A detection aura's kit shows only to a viewer who shares its vision: the applied core skips the
+/// kit when the spell's [`aura_vision_mask`](benilla_formats::SpellDisplay::aura_vision_mask) has
+/// no bit in our own `PLAYER_FIELD_BYTES2` byte 3 (`0x724979`), and a change of that byte re-arms
+/// or reaps every unit's matching auras (`0x727a70`), so a guard's Stealth Detection eye is hidden
+/// from anyone who cannot see stealth.
+///
 /// Deviation: the reference arms per slot (`unit+0xedc`) and its stop is by spell, so losing one
 /// of two slots holding a spell stops the kit the other still holds; this arms per spell and
 /// reaps when no slot holds it, as one state instance per spell is the evident intent.
@@ -999,6 +1005,7 @@ pub(crate) fn arm_aura_state_fx(
     // runs once per DBC-resource arrival.
     units: Query<(Entity, &UnitAuras)>,
     changed: Query<Entity, Changed<UnitAuras>>,
+    self_store: Query<&ObjectStore, With<crate::net::SelfPlayer>>,
     visuals: Option<Res<SpellVisuals>>,
     spells: Option<Res<crate::ui_action::Spells>>,
     mut fx: MessageWriter<SpellKitFx>,
@@ -1006,8 +1013,17 @@ pub(crate) fn arm_aura_state_fx(
     mut sounds: MessageWriter<SpellKitSound>,
     mut recomputes: MessageWriter<BaseAnimRecompute>,
     mut armed: Local<EntityHashMap<Vec<u32>>>,
+    mut seen_vision: Local<u8>,
 ) {
-    let full_sweep = visuals.as_ref().is_some_and(|v| v.is_changed())
+    // No active player sees nothing gated (`0x72496a` returns on a null player).
+    let vision = self_store
+        .iter()
+        .next()
+        .and_then(|s| s.0.player_aura_vision())
+        .unwrap_or(0);
+    let vision_changed = std::mem::replace(&mut *seen_vision, vision) != vision;
+    let full_sweep = vision_changed
+        || visuals.as_ref().is_some_and(|v| v.is_changed())
         || spells.as_ref().is_some_and(|s| s.is_changed());
     let (Some(visuals), Some(spells)) = (visuals.as_deref(), spells.as_deref()) else {
         return; // no client data
@@ -1019,8 +1035,16 @@ pub(crate) fn arm_aura_state_fx(
     };
     for (entity, auras) in scan {
         let prev = armed.entry(entity).or_default();
-        // Occupied slots, deduped: one state instance per spell however many casters hold it.
-        let mut cur: Vec<u32> = auras.iter().map(|a| a.spell_id).collect();
+        // Occupied slots this viewer may see, deduped: one state instance per spell however many
+        // casters hold it.
+        let mut cur: Vec<u32> = auras
+            .iter()
+            .map(|a| a.spell_id)
+            .filter(|&id| {
+                let mask = spells.catalog.get(id).map_or(0, |d| d.aura_vision_mask());
+                mask == 0 || vision & mask != 0
+            })
+            .collect();
         cur.sort_unstable();
         cur.dedup();
         for &spell_id in prev.iter() {

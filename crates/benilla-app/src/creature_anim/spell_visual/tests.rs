@@ -1718,3 +1718,103 @@ fn an_anim_only_state_kit_still_arms_on_the_aura_add_edge() {
         "an anim-only state kit is not nothing — its ADD edge owes a recompute"
     );
 }
+
+/// A stealth-detection aura's state kit arms only while our own `PLAYER_FIELD_BYTES2` byte 3
+/// carries the stealth vision (`0x724979`), and gaining or losing it re-arms or reaps the kit on
+/// a unit whose auras did not change (`0x727a70`).
+#[test]
+fn a_detection_aura_s_state_kit_follows_our_own_aura_vision() {
+    const SPELL: u32 = 1;
+    const VISUAL: u32 = 2;
+    const STATE_KIT: u32 = 3;
+    const ANIM: u16 = 14;
+    const MOD_STEALTH_DETECT: u32 = 17;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_message::<SpellKitFx>()
+        .add_message::<crate::net::FieldChanged>()
+        .add_message::<crate::aura_visual::AuraProc>()
+        .add_message::<SpellKitSound>()
+        .add_message::<super::BaseAnimRecompute>();
+    app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
+        HashMap::from([(
+            VISUAL,
+            VisualStages {
+                state: STATE_KIT,
+                ..Default::default()
+            },
+        )]),
+        HashMap::from([(
+            STATE_KIT,
+            VisualKit {
+                anim_id: Some(ANIM),
+                ..Default::default()
+            },
+        )]),
+    )));
+    app.insert_resource(crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            SPELL,
+            SpellDisplay {
+                visual: VISUAL,
+                effect_apply_aura: [MOD_STEALTH_DETECT, 0, 0],
+                ..Default::default()
+            },
+        )])),
+        ..crate::ui_action::Spells::empty_for_tests()
+    });
+    app.add_systems(Update, super::arm_aura_state_fx);
+
+    let vision = |byte3: u32| {
+        crate::net::ObjectStore(benilla_protocol::messages::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_PLAYER_FIELD_BYTES2,
+            byte3 << 24,
+        )]))
+    };
+    let me = app
+        .world_mut()
+        .spawn((crate::net::SelfPlayer, vision(0)))
+        .id();
+    let guard = app
+        .world_mut()
+        .spawn(crate::unit_auras::aura_unit_for_test(&[SPELL]))
+        .id();
+    let step = |app: &mut App| {
+        app.update();
+        let armed: Vec<Entity> = app
+            .world_mut()
+            .resource_mut::<Messages<super::BaseAnimRecompute>>()
+            .drain()
+            .map(|r| r.entity)
+            .collect();
+        let reaped: Vec<Entity> = app
+            .world_mut()
+            .resource_mut::<Messages<crate::aura_visual::AuraProc>>()
+            .drain()
+            .filter_map(|p| match p {
+                crate::aura_visual::AuraProc::Reap { entity, .. } => Some(entity),
+                _ => None,
+            })
+            .collect();
+        (armed, reaped)
+    };
+
+    assert_eq!(
+        step(&mut app),
+        (vec![], vec![]),
+        "hidden without stealth vision"
+    );
+    app.world_mut().entity_mut(me).insert(vision(0x20));
+    assert_eq!(
+        step(&mut app),
+        (vec![guard], vec![]),
+        "shown once we see stealth"
+    );
+    app.world_mut().entity_mut(me).insert(vision(0x40));
+    assert_eq!(
+        step(&mut app),
+        (vec![], vec![guard]),
+        "reaped when the vision goes"
+    );
+}
