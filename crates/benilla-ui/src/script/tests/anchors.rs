@@ -126,20 +126,17 @@ fn setpoint_unresolved_name_raises() {
     assert!(s.take_warnings().is_empty());
 }
 
-/// The reference's other `SetPoint` raises: Usage (`0x87cc28`) when `relativeTo` is absent, since
-/// `lua_type(L,3)` is `TNONE` at the gate (`0x7a25e6-0x7a2620`); "Unknown region point"
-/// (`0x87cd04`, the 9-entry scan `0x6f1840`); "trying to anchor to itself" (`0x87cca8`,
-/// `0x87cd54`). The type gates run before the point scan, so an unknown point with no
-/// `relativeTo` answers Usage.
+/// The reference's other `SetPoint` raises: Usage (`0x9ec588`) only for a `point` that is not a
+/// string (`0x49db70`); "Unknown region point" (`0x9ec560`, the scan `0x814ed0`), checked before
+/// `relativeTo` is read; "trying to anchor to itself" (`0x9ec504`).
 #[test]
 fn the_other_setpoint_raises() {
     let s = script();
     s.run(r#"f = CreateFrame("Frame", "Ladder")"#).unwrap();
 
-    let e = s
-        .run(r#"Ladder:SetPoint("CENTER")"#)
-        .unwrap_err()
-        .to_string();
+    let e = s.run(r#"Ladder:SetPoint()"#).unwrap_err().to_string();
+    assert!(e.contains("Usage: Ladder:SetPoint(\"point\""), "{e}");
+    let e = s.run(r#"Ladder:SetPoint({})"#).unwrap_err().to_string();
     assert!(e.contains("Usage: Ladder:SetPoint(\"point\""), "{e}");
 
     let e = s
@@ -152,7 +149,10 @@ fn the_other_setpoint_raises() {
         .run(r#"Ladder:SetPoint("MIDDLE")"#)
         .unwrap_err()
         .to_string();
-    assert!(e.contains("Usage:"), "the tag gate runs first: {e}");
+    assert!(
+        e.contains("Ladder:SetPoint(): Unknown region point"),
+        "the point scan runs before relativeTo is read: {e}"
+    );
 
     let e = s
         .run(r#"Ladder:SetPoint("CENTER", Ladder, "CENTER", 0, 0)"#)
@@ -164,19 +164,68 @@ fn the_other_setpoint_raises() {
     );
 }
 
-/// `lua_type(L,3)` tells `LUA_TNIL` (0, the screen root) from `LUA_TNONE` (-1, Usage), so the
-/// raise ladder must see the argument count Lua saw, not a padded or trimmed tuple.
+/// `lua_type(L,3)` tells `LUA_TNIL` (0, the screen root, `0x49dc9d`) from `LUA_TNONE` (-1, the
+/// parent), so the ladder must see the argument count Lua saw, not a padded or trimmed tuple.
 #[test]
 fn a_trailing_nil_relative_to_is_present_where_an_absent_one_is_not() {
-    let s = script();
-    s.run(r#"f = CreateFrame("Frame", "Trail")"#).unwrap();
-    s.run(r#"Trail:SetPoint("CENTER", nil)"#).unwrap();
-    assert_eq!(s.eval::<i64>("return Trail:GetNumPoints()").unwrap(), 1);
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        host = CreateFrame("Frame", "TrailHost")
+        TrailHost:SetPoint("BOTTOMLEFT", nil, "BOTTOMLEFT", 200, 100)
+        TrailHost:SetWidth(100) TrailHost:SetHeight(100)
+        CreateFrame("Frame", "Trail", TrailHost):SetWidth(10)
+        Trail:SetHeight(10)
+        CreateFrame("Frame", "TrailNil", TrailHost):SetWidth(10)
+        TrailNil:SetHeight(10)
+        Trail:SetPoint("BOTTOMLEFT")
+        TrailNil:SetPoint("BOTTOMLEFT", nil)
+    "#,
+    )
+    .unwrap();
+    s.resolve();
+    assert_eq!(s.eval::<f32>("return Trail:GetLeft()").unwrap(), 200.0);
+    assert_eq!(s.eval::<f32>("return TrailNil:GetLeft()").unwrap(), 0.0);
+}
+
+/// An omitted `relativeTo` is the layout parent (`0x49dba8`), and a slot holding neither a string,
+/// a table nor `nil` is left for `relativePoint` and the offsets: `MoneyFrame.lua:253` anchors a
+/// money button's icon with `texture:SetPoint("RIGHT")`.
+#[test]
+fn an_omitted_relative_to_is_the_parent() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        local host = CreateFrame("Button", "OmitHost")
+        host:SetPoint("BOTTOMLEFT", nil, "BOTTOMLEFT", 200, 100)
+        host:SetWidth(100) host:SetHeight(40)
+        local icon = host:CreateTexture("OmitIcon")
+        icon:SetWidth(13) icon:SetHeight(13)
+        icon:SetPoint("RIGHT")
+        local kid = CreateFrame("Frame", "OmitKid", host)
+        kid:SetWidth(10) kid:SetHeight(10)
+        local flag = CreateFrame("Frame", "OmitFlag", host)
+        flag:SetWidth(10) flag:SetHeight(10)
+        flag:SetPoint("BOTTOMLEFT", true, 7, 9)
+    "#,
+    )
+    .unwrap();
+    s.resolve();
+    assert_eq!(s.eval::<f32>("return OmitIcon:GetRight()").unwrap(), 300.0);
+    assert_eq!(s.eval::<f32>("return OmitIcon:GetBottom()").unwrap(), 113.5);
     let e = s
-        .run(r#"Trail:SetPoint("CENTER")"#)
+        .run(r#"OmitKid:SetPoint("TOPLEFT", "TOPRIGHT")"#)
         .unwrap_err()
         .to_string();
-    assert!(e.contains("Usage:"), "{e}");
+    assert!(
+        e.contains("Couldn't find region named 'TOPRIGHT'"),
+        "a string second argument is always a name: {e}"
+    );
+    // A boolean is not consumed, and is no number, so the offsets are both 0.
+    assert_eq!(s.eval::<f32>("return OmitFlag:GetLeft()").unwrap(), 200.0);
+    assert_eq!(s.eval::<f32>("return OmitFlag:GetBottom()").unwrap(), 100.0);
 }
 
 /// An explicit `nil` `relativeTo` is the screen root, not the parent (`0x7a2710` loads it from

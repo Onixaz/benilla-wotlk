@@ -1,6 +1,6 @@
-//! The argument ladder of `SetPoint` (`0x7a2540`) and `SetAllPoints` (`0x7a2940`): the reference
-//! registers both once, in the Region method table (`0x87c9b8`), so every widget type runs the
-//! same function. Every failure leg raises; none falls back to the parent or does nothing.
+//! The argument ladder of `SetPoint` (`0x49db10`) and `SetAllPoints` (`0x49de40`): the reference
+//! registers both once, in the Region method table (`0xac1480`), so every widget type runs the
+//! same function. Every failure leg raises; an omitted `relativeTo` is the parent.
 
 use mlua::{Lua, MultiValue, Table, Value};
 
@@ -12,16 +12,17 @@ use super::{decode_id, point_from_str, prefetch_named_target, resolve_named_targ
 /// The name the reference prints for a widget that has none (the literal at `0x84c7f0`).
 pub(crate) const UNNAMED: &str = "<unnamed>";
 
-/// `relativeTo` by the four tags `lua_type(L,3)` accepts (`0x7a25e6`..`0x7a2620`); any other tag,
-/// absent included, raises Usage in `SetPoint`.
+/// `relativeTo` by `lua_type(L,3)` (`0x49dc11`..`0x49dca6`): a string, a table or an explicit
+/// `nil` is consumed; any other tag, absent included, leaves the parent and the slot unread.
 pub(crate) enum RelTarget {
-    /// A widget wrapper table (`0x7a26c9`); the reference runs no `IsA` check on it.
+    /// A widget wrapper table (`0x49dc4e`).
     Wrapper(Table),
     /// A name string, already read out of `_G` with no `Model` guard alive ([`NamedTarget`]).
     Named(NamedTarget),
-    /// An explicit `nil`: the screen root `ds:[0xcf0bd8]` (`0x7a2710`), not the parent.
+    /// An explicit `nil`: the screen root `ds:[0xb499a8]` (`0x49dc9d`), not the parent.
     Screen,
-    /// A number: the `SetPoint(point, x, y)` shorthand (`0x7a270e`), against the default parent.
+    /// The layout parent (`0x49dba8`): an absent `relativeTo` or a number, the
+    /// `SetPoint(point, x, y)` shorthand.
     DefaultParent,
 }
 
@@ -34,7 +35,7 @@ pub(crate) struct PointArgs {
     pub(crate) y: f32,
 }
 
-/// The reference's `Usage:` raise (`0x87cc28`).
+/// The reference's `Usage:` raise (`0x9ec588`), for a `point` that is not a string.
 fn usage(who: &str) -> mlua::Error {
     mlua::Error::runtime(format!(
         "Usage: {who}:SetPoint(\"point\" [, region or nil] [, \"relativePoint\"] \
@@ -42,19 +43,19 @@ fn usage(who: &str) -> mlua::Error {
     ))
 }
 
-/// `0x87cd04`: the point-name scan `0x6f1840` rejected `point` or a string `relativePoint`.
+/// `0x9ec560`: the point-name scan `0x814ed0` rejected `point` or a string `relativePoint`.
 fn unknown_point(who: &str) -> mlua::Error {
     mlua::Error::runtime(format!("{who}:SetPoint(): Unknown region point"))
 }
 
-/// `0x87ccd4` for `SetPoint`, `0x87cd84` for `SetAllPoints`: a raise, never a fallback.
+/// `0x9ec530` for `SetPoint`, `0x9ec63c` for `SetAllPoints`: a raise, never a fallback.
 pub(crate) fn no_such_region(who: &str, verb: &str, name: &str) -> mlua::Error {
     mlua::Error::runtime(format!(
         "{who}:{verb}(): Couldn't find region named '{name}'"
     ))
 }
 
-/// `0x87cca8` / `0x87cd54`, from the self compare at `0x7a2764` / `0x7a2aa8`.
+/// `0x9ec504` / `0x9ec60c`, from the self compare at `0x49dcea` and its `SetAllPoints` twin.
 fn anchor_to_self(who: &str, verb: &str) -> mlua::Error {
     mlua::Error::runtime(format!("{who}:{verb}(): trying to anchor to itself"))
 }
@@ -79,8 +80,9 @@ fn as_string(lua: &Lua, v: &Value) -> Option<String> {
     }
 }
 
-/// Parse `SetPoint` in the reference's order: both tag gates (Usage), the point-name scan,
-/// `relativePoint`, the offsets; so an unknown point with no `relativeTo` raises Usage. The caller
+/// Parse `SetPoint` in the reference's order: the `point` tag gate (Usage), the point-name scan,
+/// `relativeTo`, `relativePoint`, the offsets. Only a `point` that is not a string raises Usage
+/// (`0x49db70`); `SetPoint("RIGHT")` anchors to the parent (`MoneyFrame.lua:253`). The caller
 /// computes `who` and `parent_base` first, since an `__index` on `_G` can call back into a binding.
 pub(crate) fn parse_set_point(
     lua: &Lua,
@@ -92,30 +94,25 @@ pub(crate) fn parse_set_point(
     let Some(point_str) = point_str else {
         return Err(usage(who));
     };
-
-    let Some(rel_arg) = args.get(1) else {
-        return Err(usage(who));
-    };
-    let target = match rel_arg {
-        Value::String(s) => RelTarget::Named(match s.to_str() {
-            Ok(n) => prefetch_named_target(lua, n.as_ref(), Some(parent_base)),
-            Err(_) => NamedTarget::unreadable(),
-        }),
-        Value::Table(t) => RelTarget::Wrapper(t.clone()),
-        Value::Nil => RelTarget::Screen,
-        Value::Number(_) | Value::Integer(_) => RelTarget::DefaultParent,
-        _ => return Err(usage(who)),
-    };
-
     let point = point_from_str(&point_str).ok_or_else(|| unknown_point(who))?;
 
-    // `relativePoint` defaults to `point` (`0x7a2697`) and is consumed only when strictly a string
-    // (`0x7a2810`), else the offsets start here; the number arm reads one slot earlier.
-    let mut cur = if matches!(target, RelTarget::DefaultParent) {
-        1
-    } else {
-        2
+    // A consumed `relativeTo` moves the cursor to slot 3 (`0x49dca6`); otherwise slot 2 is read
+    // again as `relativePoint` or the first offset.
+    let (target, mut cur) = match args.get(1) {
+        Some(Value::String(s)) => (
+            RelTarget::Named(match s.to_str() {
+                Ok(n) => prefetch_named_target(lua, n.as_ref(), Some(parent_base)),
+                Err(_) => NamedTarget::unreadable(),
+            }),
+            2,
+        ),
+        Some(Value::Table(t)) => (RelTarget::Wrapper(t.clone()), 2),
+        Some(Value::Nil) => (RelTarget::Screen, 2),
+        _ => (RelTarget::DefaultParent, 1),
     };
+
+    // `relativePoint` defaults to `point` and is consumed only when strictly a string (`0x49dd4e`),
+    // else the offsets start here.
     let mut rel_point = point;
     if let Some(Value::String(s)) = args.get(cur) {
         let name = s.to_str()?;
@@ -123,7 +120,7 @@ pub(crate) fn parse_set_point(
         cur += 1;
     }
 
-    // Both offsets or neither: one failing `lua_isnumber` zeroes both (`0x7a2888` → `0x7a28e6`).
+    // Both offsets or neither: one failing `lua_isnumber` zeroes both (`0x49dd95` → `0x49de06`).
     let (x, y) = match (
         args.get(cur).and_then(|v| as_number(lua, v)),
         args.get(cur + 1).and_then(|v| as_number(lua, v)),
