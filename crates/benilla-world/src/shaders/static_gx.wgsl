@@ -39,8 +39,9 @@ struct GxCell {
     origin: vec4<f32>, // xyz = the bake's recentring origin
 }
 @group(1) @binding(0) var<uniform> cell: GxCell;
-// The per-item records, indexed by the vertex word's low 16 bits: x the texture-array layer, y
-// the WMO batch order (0 on cells), z the MOMT SIDN colour r|g<<8|b<<16 in gamma bytes, w flags:
+// The per-item records, indexed by the vertex word's low 16 bits: x the texture-array layer | the
+// WMO batch order << 16 (0 on cells), y a unified WMO item's MOHD ambient r|g<<8|b<<16 with bit 24
+// set (MOHD 0x2), z the MOMT SIDN colour r|g<<8|b<<16 in gamma bytes, w flags:
 // bit 0 exile kill, bits 1..=13 the interior-prop probe slot, bit 14 interior fog (`[0xca7f00]`).
 @group(1) @binding(1) var<storage, read> recs: array<vec4<u32>>;
 @group(1) @binding(2) var tex_array: texture_2d_array<f32>;
@@ -160,9 +161,9 @@ fn vertex(v: GxVertex) -> GxVsOut {
         view.view_from_world[2].xyz,
     );
     out.position = view.clip_from_view * vec4<f32>(view_rot * p_cam, 1.0);
-    // Authored MOBA batch order (record y, 0 on cells): a later coplanar batch wins reverse-Z
-    // GreaterEqual in any draw order, because the draw sort does not keep authored order.
-    out.position.z *= 1.0 + f32(recs[v.word & 0xffffu].y) * 1.1920929e-7;
+    // Authored MOBA batch order (record x high half, 0 on cells): a later coplanar batch wins
+    // reverse-Z GreaterEqual in any draw order, because the draw sort does not keep authored order.
+    out.position.z *= 1.0 + f32(recs[v.word & 0xffffu].x >> 16u) * 1.1920929e-7;
     out.world_normal = v.normal;
     out.uv = v.uv;
     out.word = v.word;
@@ -190,7 +191,7 @@ fn fragment(in: GxVsOut) -> @location(0) vec4<f32> {
     let wrap_x = (in.word & WORD_WRAP_X) != 0u;
     let wrap_y = (in.word & WORD_WRAP_Y) != 0u;
     if ((in.word & WORD_TEXTURED) != 0u) {
-        let layer = i32(recs[in.word & 0xffffu].x);
+        let layer = i32(recs[in.word & 0xffffu].x & 0xffffu);
         let dims = vec2<f32>(textureDimensions(tex_array).xy);
         let inset = 0.5 / dims;
         var uv_mixed = in.uv;
@@ -355,6 +356,49 @@ fn fragment(in: GxVsOut) -> @location(0) vec4<f32> {
     if ((in.word & WORD_UNLIT) != 0u) {
         rgb = folded;
     }
+    // A unified WMO item (MOHD 0x2): wow_model.wgsl's unified branch, which documents the law.
+    // `base` is the bare texel here; no MOCV adds no light.
+    var fog_weight = 1.0;
+    let unified = recs[in.word & 0xffffu].y;
+    if ((in.word & WORD_WMO) != 0u && (unified & 16777216u) != 0u) {
+        let mocv = select(vec4<f32>(0.0, 0.0, 0.0, 1.0), in.color, has_vc);
+        let amb = vec3<f32>(
+            f32(unified & 0xffu),
+            f32((unified >> 8u) & 0xffu),
+            f32((unified >> 16u) & 0xffu),
+        ) / 255.0;
+        let rec = recs[in.word & 0xffffu];
+        let sidn_rgb = vec3<f32>(
+            f32(rec.z & 0xffu),
+            f32((rec.z >> 8u) & 0xffu),
+            f32((rec.z >> 16u) & 0xffu),
+        ) / 255.0;
+        let k = 127.0 / 255.0;
+        let e = 0.5 * sidn_rgb * wow_light.grade.x;
+        let window = (in.word & WORD_WINDOW) != 0u;
+        let unlit = (in.word & WORD_UNLIT) != 0u;
+        let window_mid = 0.5 * (wow_light.light_ambient.rgb + wow_light.light_diffuse.rgb);
+        let lit_window = clamp(
+            window_mid + vec3<f32>(16.0 / 255.0) + window_mid * ndotl,
+            vec3<f32>(0.0),
+            vec3<f32>(1.0),
+        );
+        let lit_dn = clamp(lit_nl + in.point_lit, vec3<f32>(0.0), vec3<f32>(1.0));
+        let lit_a = select(lit_dn, lit_window, window);
+        let v_unlit = clamp(mocv.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        let v_amb = clamp(amb * k + mocv.rgb + e, vec3<f32>(0.0), vec3<f32>(1.0));
+        let v_lit = clamp(lit_a * k + mocv.rgb + e, vec3<f32>(0.0), vec3<f32>(1.0));
+        var v: vec3<f32>;
+        if ((in.word & WORD_CLASS_TRANS) != 0u) {
+            v = mix(v_amb, select(v_lit, v_unlit, unlit), mocv.a);
+            fog_weight = mocv.a;
+        } else if ((in.word & WORD_INTERIOR) != 0u) {
+            v = select(v_amb, v_lit, window);
+        } else {
+            v = select(v_lit, v_unlit, unlit);
+        }
+        rgb = clamp(2.0 * base.rgb * v, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
     // Planar eye-Z fog; other fog modes belong to blends never admitted here. The interior triple
     // keys on the per-frame record bit, not `WORD_INTERIOR`: the client sets it per group under
     // `[0xca7f00]` (`0x6b5190` for surfaces, `0x6b62e0` for the group's doodads).
@@ -367,7 +411,7 @@ fn fragment(in: GxVsOut) -> @location(0) vec4<f32> {
     if (fog_color.w > 0.5 && (in.word & WORD_FOG_OFF) == 0u) {
         let denom = max(fog_span.y - fog_span.x, 0.001);
         let factor = clamp((fog_span.y - eye_z) / denom, 0.0, 1.0);
-        rgb = mix(fog_color.xyz, rgb, factor);
+        rgb = mix(fog_color.xyz * fog_weight, rgb, factor);
     }
     // Gamma-space output; alpha pinned 1.0, every draw here is opaque.
     return vec4<f32>(rgb, 1.0);

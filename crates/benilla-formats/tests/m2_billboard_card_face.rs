@@ -99,6 +99,7 @@ fn the_shape_ignores_edge_on_correct_and_degenerate_batches() {
         uv_scale_seq: None,
         sidn: None,
         window: false,
+        wmo_unified: None,
         additive: false,
         no_depth_write: false,
         no_depth_test: false,

@@ -94,6 +94,7 @@ pub(super) fn update_model_particles(
                         None,
                         None,
                         false,
+                        None,
                         false, // an effect model is never a skybox
                         &light.0,
                         None, // no animated loop, so no placement key

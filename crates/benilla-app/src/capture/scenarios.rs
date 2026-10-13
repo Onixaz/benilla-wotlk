@@ -152,6 +152,12 @@ pub(super) const HOUSE_EYE: [f32; 3] = [-9439.1, 71.2, 68.0];
 pub(super) const MAP_AZEROTH: u32 = 0;
 pub(super) const MAP_KALIMDOR: u32 = 1;
 pub(super) const MAP_DEEPRUN_TRAM: u32 = 369;
+pub(super) const MAP_NORTHREND: u32 = 571;
+
+/// Wyrmrest Temple (`wyrmrest-noon`), placed at (3546.6, 273.1, 9.2): its west face from 90 yd,
+/// close enough that the fog leaves the walls and terraces readable.
+pub(super) const WYRMREST_EYE: [f32; 3] = [3456.0, 273.0, 215.0];
+pub(super) const WYRMREST_LOOK: [f32; 3] = [3546.6, 273.1, 190.0];
 
 /// A glue-screen capture: a login-side screen with no world, camera or map, sharing only the
 /// shutter with [`Scenario`]. Not in the golden sweep; capturable by name.
@@ -313,6 +319,17 @@ pub(super) const ON_DEMAND: &[Scenario] = &[
         map: Some(MAP_AZEROTH),
         eye: SCAR_EYE,
         look: SCAR_LOOK,
+        minute: 720,
+        ui: None,
+    },
+    // ---- Wyrmrest Temple, Dragonblight ----
+    // A root under MOHD 0x2 and 0x8 (`Wyrmrest.wmo`, flags 0xf): its MOCV is authored near-black
+    // and is light added under the unified law, so read as the 1.12 multiplier the temple is black.
+    Scenario {
+        name: "wyrmrest-noon",
+        map: Some(MAP_NORTHREND),
+        eye: WYRMREST_EYE,
+        look: WYRMREST_LOOK,
         minute: 720,
         ui: None,
     },

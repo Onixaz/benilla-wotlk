@@ -120,6 +120,7 @@ pub(super) fn spawn_menagerie(
                         None,
                         None,
                         false,
+                        None,
                         false, // the world lane
                         light,
                         // The shared batch material; a per-placement clone has the same
@@ -157,6 +158,7 @@ pub(super) fn spawn_menagerie(
                         None,
                         None,
                         false,
+                        None,
                         false, // the world lane
                         light,
                         None,
@@ -203,6 +205,7 @@ pub(super) fn spawn_menagerie(
                     None,
                     None,
                     false,
+                    None,
                     true, // the sky lane
                     light,
                     None, // the shared lane
@@ -238,6 +241,7 @@ pub(super) fn spawn_menagerie(
                 None,
                 None,
                 false,
+                None,
                 false, // the world lane
                 light,
                 None, // the shared lane
@@ -285,6 +289,7 @@ pub(super) fn spawn_menagerie(
                         None,
                         None,
                         false,
+                        None,
                         false, // the world lane
                         light,
                         None, // the shared lane
@@ -736,6 +741,7 @@ fn warm_quad(colors: bool, skinned: bool) -> RenderSubmesh {
         uv_scale_seq: None,
         sidn: None,
         window: false,
+        wmo_unified: None,
         additive: false,
         no_depth_write: false,
         no_depth_test: false,

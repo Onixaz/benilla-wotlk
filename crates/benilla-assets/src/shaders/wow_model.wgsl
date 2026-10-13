@@ -44,6 +44,9 @@ struct ModelParams {
     // Rows of `wow_light.matanim`, 0 = identity: x = UV scroll, y = tint, z = texture-transform
     // affine, w = the UI tile's cell clip.
     anim_slots: vec4<f32>,
+    // A WMO batch under its root's MOHD 0x2 (the unified law): xyz = the MOHD ambient (gamma /255),
+    // w = 1. Zero elsewhere.
+    wmo_unified: vec4<f32>,
 };
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> m: ModelParams;
 
@@ -758,6 +761,52 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
         unlit_rgb = unlit_tex * clamp(unlit_sum, vec3<f32>(0.0), vec3<f32>(1.0));
     }
     var rgb = select(lit_rgb, unlit_rgb, is_emissive);
+    // The fog colour's weight in the result: 1, but MOCV.a on a unified TRANS batch (below).
+    var fog_weight = 1.0;
+    // MOHD 0x2, the unified drawer (`0x7a9380`, `MapObjU.wfx`). Its vertex program
+    // `MapObjUDiffuse_T1` adds the MOCV M to the light at 127/255 (c28 = `0xff7f7f7f`, `0x7a8940`)
+    // beside the halved emission (c29), V(L) = clamp(L·127/255 + M + e/2), and `MapObjDiffuse`
+    // doubles it: out = 2·tex·V. The light by section (`0x7a8b10` modes, `0x7a9a66`): an exterior
+    // group's batch the Direct/Ambient N·L, an UNLIT one the bare V = M; an interior group's the
+    // MOHD ambient alone, a WINDOW batch the midpoint light. A TRANS batch of any group draws twice:
+    // the lit pass (SrcAlphaOpaque) weighted by MOCV.a, the MOHD-ambient pass (InvSrcAlphaAdd,
+    // black fog) by 1 − a.
+    if (is_wmo && m.wmo_unified.w > 0.5) {
+        // No MOCV adds no light: the unified vertex default is black (`0x7c86f7`).
+        var mocv = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        var tex_u = base.rgb;
+#ifdef VERTEX_COLORS
+        mocv = in.color;
+        // Bevy folded M into the colour and M is often 0 here, so the texel is re-sampled.
+#ifdef VERTEX_UVS_A
+        tex_u = textureSampleBias(
+            pbr_bindings::base_color_texture,
+            pbr_bindings::base_color_sampler,
+            vo.uv,
+            view.mip_bias,
+        ).rgb;
+#else
+        tex_u = vec3<f32>(1.0);
+#endif
+#endif
+        let k = 127.0 / 255.0;
+        let e = 0.5 * (m.sidn.rgb * wow_light.grade.x + highlight);
+        let lit_dn = clamp(lit_nl + point_diffuse, vec3<f32>(0.0), vec3<f32>(1.0));
+        let lit_a = select(lit_dn, lit_window, m.sidn.w > 0.5);
+        let v_unlit = clamp(mocv.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        let v_amb = clamp(m.wmo_unified.rgb * k + mocv.rgb + e, vec3<f32>(0.0), vec3<f32>(1.0));
+        let v_lit = clamp(lit_a * k + mocv.rgb + e, vec3<f32>(0.0), vec3<f32>(1.0));
+        var v: vec3<f32>;
+        if (m.tint.w > 1.5) {
+            v = mix(v_amb, select(v_lit, v_unlit, is_emissive), mocv.a);
+            fog_weight = mocv.a;
+        } else if (is_interior) {
+            v = select(v_amb, v_lit, m.sidn.w > 0.5);
+        } else {
+            v = select(v_lit, v_unlit, is_emissive);
+        }
+        rgb = clamp(2.0 * tex_u * v, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
     // An M2 Mod or Mod2x batch draws the bare texel: the reference zeroes its tint·M2Color term and
     // forces the primary colour to the blend identity (`0x70c507`/`0x70c5b8`), so neither the
     // animated M2Color nor the body tint reaches it. Its alpha still does, through the lerp below.
@@ -787,7 +836,7 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
         if (fog_policy == 1u) { fog_rgb = vec3<f32>(0.0); }
         else if (fog_policy == 2u) { fog_rgb = vec3<f32>(1.0); }
         else if (fog_policy == 3u) { fog_rgb = vec3<f32>(0.50196078); }
-        rgb = mix(fog_rgb, rgb, factor);
+        rgb = mix(fog_rgb * fog_weight, rgb, factor);
     }
 
 

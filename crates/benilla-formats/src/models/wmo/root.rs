@@ -6,7 +6,7 @@ use std::io::Cursor;
 use anyhow::Result;
 use benilla_wmo::{parse_wmo, ParsedWmo};
 
-use super::find_wmo_chunk;
+use super::{find_wmo_chunk, WmoLightLaw};
 
 /// A placed WMO doodad (an MODD entry): an M2 prop in WMO model space (WoW axes, Z up), composed
 /// with the instance's world transform at spawn (`benilla_assets::coords::wmo_doodad_local`).
@@ -60,6 +60,7 @@ pub struct WmoRoot {
     fogs: Vec<WmoFog>,
     skybox: Option<String>,
     flags: u16,
+    ambient: [u8; 3],
 }
 
 impl WmoRoot {
@@ -131,6 +132,17 @@ impl WmoRoot {
         self.flags
     }
 
+    /// MOHD `ambColor` at `0x1c` as RGB bytes (BGRA on disk), which the client copies to
+    /// `mapObj+0x1a0` (`0x7d7ec6`); black if MOHD is short.
+    pub fn ambient(&self) -> [u8; 3] {
+        self.ambient
+    }
+
+    /// The root's lighting law, from its MOHD flags.
+    pub fn light_law(&self) -> WmoLightLaw {
+        WmoLightLaw::from_flags(self.flags, self.ambient)
+    }
+
     /// The MOSB skybox model a [`WmoGroupInfo::show_skybox`] group draws; five 5875 roots have one.
     pub fn skybox(&self) -> Option<&str> {
         self.skybox.as_deref()
@@ -149,9 +161,13 @@ pub fn parse_wmo_root(bytes: &[u8]) -> Result<WmoRoot> {
     let portals = parse_wmo_portals(bytes);
     let fogs = parse_wmo_fogs(bytes);
     let skybox = parse_skybox(bytes);
-    let flags = find_wmo_chunk(bytes, b"DHOM") // MOHD
+    let mohd = find_wmo_chunk(bytes, b"DHOM");
+    let flags = mohd
         .and_then(|m| m.get(0x3c..0x3e))
         .map_or(0, |f| u16::from_le_bytes([f[0], f[1]]));
+    let ambient = mohd
+        .and_then(|m| m.get(0x1c..0x1f))
+        .map_or([0; 3], |c| [c[2], c[1], c[0]]);
     Ok(WmoRoot {
         parsed,
         doodads,
@@ -161,6 +177,7 @@ pub fn parse_wmo_root(bytes: &[u8]) -> Result<WmoRoot> {
         fogs,
         skybox,
         flags,
+        ambient,
     })
 }
 

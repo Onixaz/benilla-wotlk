@@ -37,6 +37,43 @@ pub const NO_GROUP_LIQUID: u32 = 0xf;
 /// Root MOHD flag: the WMO's liquid is stored as `LiquidType` ids.
 const MOHD_LIQUID_TYPE_IDS: u16 = 0x4;
 
+/// Root MOHD flag: the doorway fade never runs. The loader pre-sets the group's fade-done bit
+/// `+0x198 & 2` (`0x7d841d`), which the draw tests before the fade `0x7d78c0` (`0x7abf80`).
+const MOHD_NO_DOORWAY_FADE: u16 = 0x1;
+
+/// Root MOHD flag: both group drawers hand the group to the unified drawer `0x7a9380`
+/// (`MapObjU.wfx`) instead (`0x7ac6b6`, `0x7aca0c`).
+const MOHD_UNIFIED: u16 = 0x2;
+
+/// Root MOHD flag: the group load skips the MOCV fix-up `0x7d7380` (`0x7d7d0c`).
+const MOHD_NO_MOCV_FIXUP: u16 = 0x8;
+
+/// How a root's groups are lit, from its MOHD flags. Bits `0x2` and `0x8` occur only in Wrath-era
+/// art, `0x8` always with `0x2`; a root without `0x2` takes the 1.12-derived law the rest of this
+/// module builds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WmoLightLaw {
+    /// MOHD `0x2`: the unified law, carrying the MOHD ambient (RGB bytes) that lights its interior
+    /// groups. The vertex program `MapObjUDiffuse_T1` adds MOCV to the light,
+    /// `clamp(L·127/255 + MOCV + emission/2)`, where `MapObjDiffuse_T1` multiplies by it.
+    pub unified: Option<[u8; 3]>,
+    /// Without MOHD `0x8`: the load runs the MOCV fix-up [`fix_up_mocv`].
+    pub mocv_fixup: bool,
+    /// Without MOHD `0x1`: the doorway fade runs at the group's first draw.
+    pub doorway_fade: bool,
+}
+
+impl WmoLightLaw {
+    /// The law of a root whose MOHD carries `flags` and `ambient` (RGB).
+    pub fn from_flags(flags: u16, ambient: [u8; 3]) -> Self {
+        WmoLightLaw {
+            unified: (flags & MOHD_UNIFIED != 0).then_some(ambient),
+            mocv_fixup: flags & MOHD_NO_MOCV_FIXUP == 0,
+            doorway_fade: flags & MOHD_NO_DOORWAY_FADE == 0,
+        }
+    }
+}
+
 /// MOGP flag making a water liquid the ocean kind (`0x7d7331`).
 const MOGP_WATER_IS_OCEAN: u32 = 0x80000;
 
@@ -174,6 +211,21 @@ pub struct FootprintTris {
     /// reads it off the hit face (`0x6a26fc`). The on-disk `0xFF` non-index occurs only on faces
     /// [`FOOTPRINT_REJECT`] drops; consumers still bounds-check.
     pub mopy_material: Vec<u8>,
+    /// What the sampler does to the interpolated bytes: `clamp(scale·s + ambient)` per channel.
+    /// Under MOHD `0x2` the 3.3.5a sampler doubles the bake and adds the MOHD ambient (`0x7c82d8`);
+    /// otherwise this is ×1 + 0 over the unhalved bake, the 1.12-derived law.
+    pub sample_scale: u8,
+    pub sample_ambient: [u8; 3],
+}
+
+impl FootprintTris {
+    /// The light bytes for a barycentric sample `s` of [`Self::mocv`].
+    pub fn sample_light(&self, s: [u8; 3]) -> [u8; 3] {
+        std::array::from_fn(|i| {
+            (u16::from(self.sample_scale) * u16::from(s[i]) + u16::from(self.sample_ambient[i]))
+                .min(255) as u8
+        })
+    }
 }
 
 /// The footprint ray's MOPY reject mask (the reference's BSP walk `0x6b92b0`/`0x6bc370`): a
@@ -183,13 +235,20 @@ const FOOTPRINT_REJECT: u8 = 0x88;
 
 /// A group's [`FootprintTris`], `None` unless it is an interior group with MOCV parallel to its
 /// positions. Rejected faces drop at build: the set is static, so this equals the per-ray reject.
-pub fn wmo_group_footprint_tris(group_bytes: &[u8]) -> Option<FootprintTris> {
+pub fn wmo_group_footprint_tris(group_bytes: &[u8], root: &WmoRoot) -> Option<FootprintTris> {
     let Ok(ParsedWmo::Group(group)) = parse_wmo(&mut Cursor::new(group_bytes)) else {
         return None;
     };
     if group.flags & 0x48 != 0 || group.vertex_colors.len() != group.vertex_positions.len() {
         return None;
     }
+    // The 3.3.5a sampler reads the group's live MOCV, fixed up and faded; the 1.12-derived law
+    // samples the authored bytes.
+    let law = root.light_law();
+    let mocv: Vec<Color> = match law.unified {
+        Some(_) => fixed_colors(&group, group_bytes, root)?,
+        None => group.vertex_colors.clone(),
+    };
     let mut indices = Vec::new();
     let mut mopy_flags = Vec::new();
     let mut mopy_material = Vec::new();
@@ -209,13 +268,11 @@ pub fn wmo_group_footprint_tris(group_bytes: &[u8]) -> Option<FootprintTris> {
             .map(|v| [v.x, v.y, v.z])
             .collect(),
         indices,
-        mocv: group
-            .vertex_colors
-            .iter()
-            .map(|c| [c.r, c.g, c.b])
-            .collect(),
+        mocv: mocv.iter().map(|c| [c.r, c.g, c.b]).collect(),
         mopy_flags,
         mopy_material,
+        sample_scale: if law.unified.is_some() { 2 } else { 1 },
+        sample_ambient: law.unified.unwrap_or([0; 3]),
     })
 }
 
@@ -472,6 +529,16 @@ fn fix_color_vertex_alpha(
     root: &WmoRoot,
     header_refs: (u16, u16),
 ) {
+    fade_doorway_vertices(colors, group, root, header_refs);
+}
+
+/// The fade's kernel over `colors`, a prefix of the group's vertices.
+fn fade_doorway_vertices(
+    colors: &mut [Color],
+    group: &WmoGroup,
+    root: &WmoRoot,
+    header_refs: (u16, u16),
+) {
     let portals = root.portals();
     let infos = root.group_infos();
     let (start, count) = (header_refs.0 as usize, header_refs.1 as usize);
@@ -557,12 +624,61 @@ fn parallel_colors(group: &WmoGroup) -> Option<Vec<Color>> {
     Some(colors)
 }
 
-/// The authored MOCV with the doorway fade run over it.
+/// The MOCV fix-up the 3.3.5a group load runs unless MOHD `0x8` is set (`0x7d7380`): a vertex
+/// below `trans_end` (a TRANS batch's) halves its RGB and keeps its alpha; any other takes
+/// `min(255, (c + c·a/64) / 2)` per channel and alpha 255. The halving pairs with the effects'
+/// Mod2x (`MapObj.wfx`, `MapObjU.wfx`).
+fn fix_up_mocv(colors: &mut [Color], trans_end: usize) {
+    for (i, c) in colors.iter_mut().enumerate() {
+        if i < trans_end {
+            c.r >>= 1;
+            c.g >>= 1;
+            c.b >>= 1;
+        } else {
+            let a = u32::from(c.a);
+            let lift = |ch: u8| {
+                let ch = u32::from(ch);
+                ((((ch * a) >> 6) + ch) >> 1).min(255) as u8
+            };
+            c.r = lift(c.r);
+            c.g = lift(c.g);
+            c.b = lift(c.b);
+            c.a = 255;
+        }
+    }
+}
+
+/// One past the last TRANS-batch vertex: MOGP `+0x28` TRANS batches, the last one's MOBA
+/// `maxIndex + 1`, 0 with none (`0x7d7386`); the fix-up and the 3.3.5a fade split on it.
+fn trans_vertex_end(group: &WmoGroup, group_bytes: &[u8]) -> usize {
+    let trans_n = find_wmo_chunk(group_bytes, b"PGOM")
+        .filter(|m| m.len() >= 0x2a)
+        .map_or(0, |m| usize::from(u16::from_le_bytes([m[0x28], m[0x29]])));
+    trans_n
+        .checked_sub(1)
+        .and_then(|last| group.render_batches.get(last))
+        .map_or(0, |b| usize::from(b.max_index) + 1)
+}
+
+/// The MOCV as the group draws it. The 1.12-derived law fades the authored bytes; under MOHD `0x2`
+/// the 3.3.5a load's fix-up runs first unless MOHD `0x8`, then the fade unless MOHD `0x1`, which in
+/// 3.3.5a walks the TRANS-batch vertices alone (`0x7d78c0`, up to the last one's `maxIndex`).
 fn fixed_colors(group: &WmoGroup, group_bytes: &[u8], root: &WmoRoot) -> Option<Vec<Color>> {
     let mut colors = parallel_colors(group)?;
     let refs =
         wmo_group_header(group_bytes).map_or((0, 0), |h| (h.portal_ref_start, h.portal_ref_count));
-    fix_color_vertex_alpha(&mut colors, group, root, refs);
+    let law = root.light_law();
+    if law.unified.is_none() {
+        fix_color_vertex_alpha(&mut colors, group, root, refs);
+        return Some(colors);
+    }
+    let trans_end = trans_vertex_end(group, group_bytes).min(colors.len());
+    if law.mocv_fixup {
+        fix_up_mocv(&mut colors, trans_end);
+    }
+    if law.doorway_fade {
+        fade_doorway_vertices(&mut colors[..trans_end], group, root, refs);
+    }
     Some(colors)
 }
 
@@ -574,6 +690,7 @@ pub fn wmo_group_submeshes(group_bytes: &[u8], root: &WmoRoot) -> Result<Vec<Ren
     // The reference fades once per group, gated on its `+0xbc` done-byte (`0x6b3f90`); a group
     // loads once, so the load is the gate.
     let colors = fixed_colors(&group, group_bytes, root).unwrap_or_default();
+    let law = root.light_law();
     let ParsedWmo::Root(root) = &root.parsed else {
         anyhow::bail!("WmoRoot is not a root");
     };
@@ -655,7 +772,9 @@ pub fn wmo_group_submeshes(group_bytes: &[u8], root: &WmoRoot) -> Result<Vec<Ren
             // adds the night-glow colour inside the lit sum; WINDOW `0x20` gives an interior batch
             // the brighter midpoint light.
             let flags = material.map_or(0, |m| m.flags);
-            let emissive = !interior && flags & 0x01 != 0;
+            // The unified drawer reads UNLIT in every group, on a TRANS batch's lit pass too
+            // (`0x7a9634`); its interior sections ignore it.
+            let emissive = (!interior || law.unified.is_some()) && flags & 0x01 != 0;
             // UNCULLED `0x04`: without it the reference back-face culls the batch (`0x6b4fd7`,
             // `0x6b52bf`). Two-sided cloth is authored as the same faces twice with reversed
             // winding, so drawing both sides z-fights. A WMO has no skeleton: the skin is unused.
@@ -673,16 +792,25 @@ pub fn wmo_group_submeshes(group_bytes: &[u8], root: &WmoRoot) -> Result<Vec<Ren
                 .then(|| material.map(|m| m.sidn_rgb))
                 .flatten();
             submesh.window = flags & 0x20 != 0;
+            submesh.wmo_unified = law.unified;
             if !has_normals {
                 submesh.normals.clear(); // no MONR: the renderer computes flat normals
             }
             if !has_colors {
-                submesh.vertex_colors.clear(); // no MOCV: untinted
+                // No MOCV: untinted, or under the unified law no light added (the vertex default
+                // is black there, and `0x7f` grey, ×2 white, otherwise: `0x7c86f7`).
+                submesh.vertex_colors.clear();
             }
             // MOCV alpha is lighting data on interior batches: TRANS reads it as the lit-to-bake
             // lerp factor, INT as the self-illumination mask (the reference's
-            // `tex·MOCV·(1 + 4·a)`). Elsewhere it is blend state, forced opaque.
-            if !(interior && matches!(class, WmoBatchClass::Trans | WmoBatchClass::Int)) {
+            // `tex·MOCV·(1 + 4·a)`). The unified drawer lerps the TRANS batches of every group by
+            // it (`0x7a95e7`). Elsewhere it is blend state, forced opaque.
+            let alpha_is_light = if law.unified.is_some() {
+                class == WmoBatchClass::Trans
+            } else {
+                interior && matches!(class, WmoBatchClass::Trans | WmoBatchClass::Int)
+            };
+            if !alpha_is_light {
                 for c in &mut submesh.vertex_colors {
                     c[3] = 1.0;
                 }
@@ -700,6 +828,60 @@ mod tests {
 
     /// A root without MOHD `0x4`: `groupLiquid` and the tiles carry the type nibble.
     const LEGACY: WmoLiquidRule = WmoLiquidRule { mohd_ids: false };
+
+    /// `0x7d7380`: a TRANS vertex halves its RGB and keeps its alpha; any other vertex lifts by
+    /// its alpha, `(c + c·a/64) / 2` capped at 255, and goes opaque.
+    #[test]
+    fn the_mocv_fix_up_halves_trans_and_lifts_the_rest_by_alpha() {
+        let c = |r, g, b, a| Color { b, g, r, a };
+        let mut colors = vec![
+            c(200, 101, 51, 77), // TRANS
+            c(100, 101, 0, 128), // 100·128/64 = 200, (200 + 100)/2 = 150
+            c(200, 101, 51, 255),
+            c(101, 3, 255, 0),
+        ];
+        fix_up_mocv(&mut colors, 1);
+        let rgba = |c: &Color| [c.r, c.g, c.b, c.a];
+        assert_eq!(rgba(&colors[0]), [100, 50, 25, 77]);
+        assert_eq!(rgba(&colors[1]), [150, 151, 0, 255]);
+        assert_eq!(rgba(&colors[2]), [255, 251, 127, 255], "capped at 255");
+        assert_eq!(rgba(&colors[3]), [50, 1, 127, 255], "alpha 0 only halves");
+    }
+
+    /// Wyrmrest Temple's root carries `0xf`: unified, no fix-up, no doorway fade.
+    #[test]
+    fn mohd_flags_pick_the_light_law() {
+        let amb = [94, 112, 119];
+        let wyrmrest = WmoLightLaw::from_flags(0xf, amb);
+        assert_eq!(wyrmrest.unified, Some(amb));
+        assert!(!wyrmrest.mocv_fixup && !wyrmrest.doorway_fade);
+        let classic = WmoLightLaw::from_flags(0x0, amb);
+        assert_eq!(classic.unified, None);
+        assert!(classic.mocv_fixup && classic.doorway_fade);
+        let unified_faded = WmoLightLaw::from_flags(0x2, amb);
+        assert!(unified_faded.mocv_fixup && unified_faded.doorway_fade);
+    }
+
+    /// The 3.3.5a footprint sampler under MOHD `0x2`: `clamp(2·s + ambient)` (`0x7c82d8`).
+    #[test]
+    fn a_unified_footprint_sample_doubles_and_adds_the_ambient() {
+        let fp = FootprintTris {
+            positions: Vec::new(),
+            indices: Vec::new(),
+            mocv: Vec::new(),
+            mopy_flags: Vec::new(),
+            mopy_material: Vec::new(),
+            sample_scale: 2,
+            sample_ambient: [94, 112, 119],
+        };
+        assert_eq!(fp.sample_light([13, 0, 100]), [120, 112, 255]);
+        let legacy = FootprintTris {
+            sample_scale: 1,
+            sample_ambient: [0; 3],
+            ..fp
+        };
+        assert_eq!(legacy.sample_light([13, 0, 100]), [13, 0, 100]);
+    }
 
     #[test]
     fn builds_wmo_water_mesh_skipping_holes() {

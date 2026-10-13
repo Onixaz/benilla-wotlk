@@ -157,7 +157,9 @@ fn load_subject(internal: &str, site: Option<&Site>) -> Subject {
     let root_bytes = chain.read(internal).expect("read root wmo");
     let root = parse_wmo_root(&root_bytes).expect("parse root");
     let liquid_rule = benilla_formats::WmoLiquidRule::for_root(&root);
-    let stem = internal.strip_suffix(".wmo").unwrap_or(internal);
+    // MODF names come uppercase (`…\WYRMREST.WMO`); the group names derive from the stem.
+    let internal = internal.to_ascii_lowercase();
+    let stem = internal.strip_suffix(".wmo").unwrap_or(&internal);
 
     let n = root.group_count() as usize;
     let mut group_nav: Vec<WmoGroupNav> = (0..n)
@@ -196,7 +198,7 @@ fn load_subject(internal: &str, site: Option<&Site>) -> Subject {
         };
         // The MLIQ surface as the asset loader stores it, for the down-ray's liquid leg.
         group_liquids[gi] = benilla_formats::wmo_group_liquid_mesh(&gbytes, liquid_rule);
-        group_footprints[gi] = wmo_group_footprint_tris(&gbytes);
+        group_footprints[gi] = wmo_group_footprint_tris(&gbytes, &root);
         if let (Some(h), Some(nav)) = (wmo_group_header(&gbytes), group_nav.get_mut(gi)) {
             nav.flags = h.flags;
             nav.ref_start = h.portal_ref_start;

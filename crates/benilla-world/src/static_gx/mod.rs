@@ -213,6 +213,8 @@ struct GxItemWmo {
     class_lane: u8,
     sidn: [u8; 3],
     window: bool,
+    /// The MOHD ambient under the root's unified law (MOHD `0x2`).
+    unified: Option<[u8; 3]>,
     /// The authored batch order for the clip-z nudge; 0 under `WOW_WMO_BIAS=0`.
     order: u16,
 }
@@ -346,6 +348,8 @@ pub struct GxWmoBatch {
     pub sidn: Option<[u8; 3]>,
     /// The MOMT WINDOW midpoint-light flag.
     pub window: bool,
+    /// The MOHD ambient when the root lights by the unified law (MOHD `0x2`).
+    pub unified: Option<[u8; 3]>,
     /// The authored batch order (batch index + 1), for the coplanar-MOBA clip-z nudge.
     pub batch_order: u16,
 }
@@ -436,13 +440,15 @@ impl StaticGx {
         let wmo = b.wmo.map(|w| GxItemWmo {
             group: w.group,
             interior: w.interior,
-            class_lane: match (w.interior, w.class) {
+            // The unified drawer lerps the TRANS batches of exterior groups too.
+            class_lane: match (w.interior || w.unified.is_some(), w.class) {
                 (true, Some(WmoBatchClass::Int)) => 1,
                 (true, Some(WmoBatchClass::Trans)) => 2,
                 _ => 0,
             },
             sidn: w.sidn.unwrap_or([0; 3]),
             window: w.window,
+            unified: w.unified,
             order: if wmo_bias_disabled() {
                 0
             } else {

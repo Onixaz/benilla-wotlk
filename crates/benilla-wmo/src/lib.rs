@@ -83,6 +83,8 @@ pub struct Color {
 pub struct Batch {
     pub start_index: u32,
     pub count: u16,
+    /// The highest vertex index the batch draws.
+    pub max_index: u16,
     pub material_id: u8,
 }
 
@@ -296,6 +298,7 @@ fn parse_group(mogp: &[u8]) -> Result<WmoGroup> {
                     g.render_batches.push(Batch {
                         start_index: c.u32_at(12).ok_or(Error::Truncated("MOBA"))?,
                         count: c.u16_at(16).ok_or(Error::Truncated("MOBA"))?,
+                        max_index: c.u16_at(20).ok_or(Error::Truncated("MOBA"))?,
                         material_id: c.u8_at(23).ok_or(Error::Truncated("MOBA"))?,
                     });
                 }

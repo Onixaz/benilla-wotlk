@@ -73,6 +73,8 @@ pub struct MatKey {
     sidn: Option<[u8; 3]>,
     /// The WMO MOMT WINDOW flag: an interior-group batch on the brighter midpoint light.
     window: bool,
+    /// The MOHD ambient of a WMO batch under its root's unified law (MOHD `0x2`).
+    wmo_unified: Option<[u8; 3]>,
     /// A depth-prime twin ([`zfill_material`], the reference's `M2UseZFill` clone at `0x707f7d`).
     zfill: bool,
     /// A WMO skybox batch ([`crate::skybox`]), with its own pipeline and sort rung.
@@ -144,6 +146,7 @@ pub fn model_material(
     wmo_class: Option<WmoBatchClass>,
     sidn: Option<[u8; 3]>,
     window: bool,
+    wmo_unified: Option<[u8; 3]>,
     sky_depth: bool,
     light: &Buffer,
     instance: Option<Entity>,
@@ -169,6 +172,7 @@ pub fn model_material(
         wmo_class,
         sidn,
         window,
+        wmo_unified,
         zfill: false,
         sky_depth,
         instance,
@@ -297,11 +301,13 @@ pub fn model_material(
                 // batches lerp lit to baked by the MOCV alpha (`0x6b5190`); exterior and M2 are 0.
                 tint: {
                     let t0 = rgb_anim.map_or([1.0, 1.0, 1.0], |a| a.sample(0.0));
-                    let class_lane = match (is_interior && is_wmo, wmo_class) {
-                        (true, Some(WmoBatchClass::Int)) => 1.0,
-                        (true, Some(WmoBatchClass::Trans)) => 2.0,
-                        _ => 0.0,
-                    };
+                    // The unified drawer lerps the TRANS batches of exterior groups too (`0x7a95de`).
+                    let class_lane =
+                        match (is_wmo && (is_interior || wmo_unified.is_some()), wmo_class) {
+                            (true, Some(WmoBatchClass::Int)) => 1.0,
+                            (true, Some(WmoBatchClass::Trans)) => 2.0,
+                            _ => 0.0,
+                        };
                     Vec4::new(t0[0], t0[1], t0[2], class_lane)
                 },
                 // xyz the SIDN emissive, ramped by the night fraction; w the WINDOW flag.
@@ -316,6 +322,15 @@ pub fn model_material(
                 },
                 // Zero until a sampler registers this material and bakes its table slot in once.
                 anim_slots: Vec4::ZERO,
+                // xyz the MOHD ambient, w the unified law (MOHD 0x2).
+                wmo_unified: wmo_unified.map_or(Vec4::ZERO, |c| {
+                    Vec4::new(
+                        f32::from(c[0]) / 255.0,
+                        f32::from(c[1]) / 255.0,
+                        f32::from(c[2]) / 255.0,
+                        1.0,
+                    )
+                }),
                 light_buf: light.clone(),
             },
         },
@@ -400,6 +415,7 @@ pub fn zfill_material(
         wmo_class: None,
         sidn: None,
         window: false,
+        wmo_unified: None,
         zfill: true,
         // No skybox batch has a twin: the sky writes no depth.
         sky_depth: false,
@@ -435,6 +451,7 @@ pub fn zfill_material(
                 tint: Vec4::new(1.0, 1.0, 1.0, 0.0),
                 sidn: Vec4::ZERO,
                 anim_slots: Vec4::ZERO,
+                wmo_unified: Vec4::ZERO,
                 light_buf: light.clone(),
             },
         },

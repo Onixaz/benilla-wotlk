@@ -476,7 +476,7 @@ impl AssetLoader for WmoModelLoader {
                 *slot = wmo_group_light_refs(&gbytes);
             }
             if let Some(slot) = group_footprints.get_mut(gi as usize) {
-                *slot = wmo_group_footprint_tris(&gbytes);
+                *slot = wmo_group_footprint_tris(&gbytes, &root);
             }
             if let Some(slot) = group_liquids.get_mut(gi as usize) {
                 *slot = wmo_group_liquid_mesh(&gbytes, liquid_rule);

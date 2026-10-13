@@ -278,6 +278,7 @@ fn bake_cell(items: &[GxItem], meshes: &mut Assets<Mesh>) -> render::GxCellDraw 
             group: sel_group,
             order: item.wmo.as_ref().map_or(0, |w| w.order),
             sidn: item.wmo.as_ref().map_or([0; 3], |w| w.sidn),
+            unified: item.wmo.as_ref().and_then(|w| w.unified),
             slot: item.prop.as_ref().and_then(|p| p.slot).unwrap_or(0),
         });
     }
@@ -533,6 +534,7 @@ mod tests {
             class,
             sidn: Some([10, 20, 30]),
             window: true,
+            unified: None,
             batch_order: group + 1,
         };
         // An INT batch of group 2, pushed first…

@@ -135,6 +135,7 @@ impl M2BatchMaterials<'_> {
                 None, // M2: no MOBA class, no SIDN, no WINDOW
                 None,
                 false,
+                None,
                 true, // the sky lane
                 &light,
                 None, // one shared sky material, no per-sequence channel to key on
@@ -308,6 +309,7 @@ impl M2BatchMaterials<'_> {
                 None,  // worn/held part: light selection anchors at the instance origin
                 None,  // M2 carries no MOMT SIDN colour
                 false, // …nor the WINDOW flag
+                None,  // …nor a WMO's unified light
                 false, // a character composite is never a skybox
                 &light,
                 None, // a composite sheet carries no animated UV/tint channel at all
@@ -400,6 +402,7 @@ impl M2BatchMaterials<'_> {
             sub.wmo_batch,
             sub.sidn,
             sub.window,
+            sub.geometry.wmo_unified,
             // The sky lane overrides the batch's depth state, so only `Self::skybox` builds it.
             false,
             light,

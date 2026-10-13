@@ -115,6 +115,10 @@ pub struct WowModelExt {
     /// tint, `z` = the texture-transform affine, `w` = the UI tile's cell clip.
     #[uniform(100)]
     pub anim_slots: Vec4,
+    /// A WMO batch under its root's MOHD `0x2`, the unified drawer (`0x7a9380`): `xyz` = the MOHD
+    /// ambient, `w` = 1; zero elsewhere.
+    #[uniform(100)]
+    pub wmo_unified: Vec4,
     /// The shared global light (`lighting::global_light`), updated in place once a frame; the
     /// vertex stage reads its point-light table, since Bevy's clusterable lights are fragment-only.
     #[storage(90, read_only, buffer, visibility(vertex, fragment))]

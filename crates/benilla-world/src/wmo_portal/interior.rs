@@ -609,12 +609,13 @@ fn footprint_scan(
         }
     }
     best.map(|(_, gi, mocv, mopy, material)| {
-        (
-            gi,
-            mocv.map(|v| v.round().clamp(0.0, 255.0) as u8),
-            mopy,
-            material,
-        )
+        let bytes = mocv.map(|v| v.round().clamp(0.0, 255.0) as u8);
+        let light = model
+            .group_footprints
+            .get(gi)
+            .and_then(Option::as_ref)
+            .map_or(bytes, |fp| fp.sample_light(bytes));
+        (gi, light, mopy, material)
     })
 }
 
@@ -699,6 +700,8 @@ mod tests {
             mocv: vec![[10, 20, 30]; 3],
             mopy_flags: vec![0],
             mopy_material: vec![material],
+            sample_scale: 1,
+            sample_ambient: [0; 3],
         };
         vec![
             Some(face([-5.0, -5.0, 0.0], 1)),
@@ -737,6 +740,8 @@ mod tests {
             mocv,
             mopy_flags,
             mopy_material,
+            sample_scale: 1,
+            sample_ambient: [0; 3],
         }
     }
 
