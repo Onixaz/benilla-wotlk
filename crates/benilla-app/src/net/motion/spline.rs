@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
 use benilla_protocol::{CreateSpline, EntityKind};
+use bevy::ecs::batching::BatchingStrategy;
 use bevy::prelude::*;
+use bevy::utils::Parallel;
 
 use crate::entities::CollisionHeight;
 use crate::player::swim_enter_depth;
@@ -463,6 +465,74 @@ pub(crate) fn grounded_y(
     y
 }
 
+/// Units per parallel batch in [`ground_clamp_creatures`]: a walker's swept step is ~20 µs, so
+/// a few per task keeps the dispatch cost small against the work.
+const CLAMP_BATCH: usize = 4;
+
+/// One worker's [`ground_clamp_creatures`] counts for the `WOW_CLAMP_COST` meter, merged after
+/// the parallel pass.
+pub(in crate::net) struct ClampStats {
+    visited: u32,
+    skipped: u32,
+    held: u32,
+    cast: u32,
+    swept: u32,
+    hit: u32,
+    moved: u32,
+    /// Frames whose swept step found no floor: nonzero while the world streams, and harmless (the
+    /// frame holds the server's pose).
+    noflr: u32,
+    /// Such frames left below the seat; must read 0. `deepest` and `worst` name the offender.
+    ratchet: u32,
+    deepest: f32,
+    worst: Option<(u32, [f32; 2], f32)>,
+    /// What re-armed a cast: the unit's seat moved (`reseat`) or the colliders changed under it
+    /// (`armed`); a nonzero steady-state `armed` means the collider set is churning.
+    reseat: u32,
+    armed: u32,
+}
+
+impl Default for ClampStats {
+    fn default() -> Self {
+        Self {
+            visited: 0,
+            skipped: 0,
+            held: 0,
+            cast: 0,
+            swept: 0,
+            hit: 0,
+            moved: 0,
+            noflr: 0,
+            ratchet: 0,
+            deepest: f32::NEG_INFINITY,
+            worst: None,
+            reseat: 0,
+            armed: 0,
+        }
+    }
+}
+
+impl ClampStats {
+    fn merge(mut self, o: Self) -> Self {
+        self.visited += o.visited;
+        self.skipped += o.skipped;
+        self.held += o.held;
+        self.cast += o.cast;
+        self.swept += o.swept;
+        self.hit += o.hit;
+        self.moved += o.moved;
+        self.noflr += o.noflr;
+        self.ratchet += o.ratchet;
+        self.reseat += o.reseat;
+        self.armed += o.armed;
+        if o.deepest > self.deepest {
+            self.deepest = o.deepest;
+            self.worst = o.worst;
+        }
+        self
+    }
+}
+
 /// Grounds every [`ground_derived`] body on benilla's world: the 1.12 client zeroes a ground
 /// spline's Δz and takes Z from the world trace, and an idle unit reads grounded too, by an
 /// untraced path. Every probe starts at the body, measured from the seat (the Z the unit's
@@ -494,179 +564,242 @@ pub(in crate::net) fn ground_clamp_creatures(
         Has<crate::net::Embodied>,
         Has<crate::net::RemoteMotion>,
     )>,
+    mut stats: Local<Parallel<ClampStats>>,
+    mut inserts: Local<Parallel<Vec<(Entity, GroundClamped)>>>,
 ) {
     let cost = clamp_cost_enabled();
     let legacy = clamp_seat_disabled();
     let t0 = cost.then(std::time::Instant::now);
-    let (mut visited, mut skipped, mut held, mut cast, mut swept, mut hit_n, mut moved) =
-        (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
-    // Walker-arm counters: `noflr` counts frames whose swept step found no floor (nonzero while the
-    // world streams, and harmless: the frame holds the server's pose); `ratchet` counts such frames
-    // left below the seat and must read 0; `deepest` and `worst` name the offender.
-    let (mut noflr, mut ratchet, mut deepest) = (0u32, 0u32, f32::NEG_INFINITY);
-    let mut worst: Option<(u32, [f32; 2], f32)> = None;
-    // What re-armed a cast: the unit's seat moved (`reseat`) or the colliders changed under it
-    // (`armed`); a nonzero steady-state `armed` means the collider set is churning.
-    let (mut reseat, mut armed) = (0u32, 0u32);
+    let epoch = epoch.get();
 
-    for (entity, net, spline, mut t, mut clamped, swimming, modes, embodied, relayed) in &mut q {
-        visited += 1;
-        if !ground_derived(
-            net.kind,
-            spline.is_some(),
-            clamped.is_some(),
-            embodied,
-            relayed,
-        ) {
-            skipped += 1;
-            continue; // somebody else owns this body's Z
-        }
-        if spline.is_some_and(|s| !s.grounded) {
-            skipped += 1;
-            continue; // a flying path is authoritative on Z
-        }
-        if spline.is_some_and(|s| s.deck.is_some()) {
-            skipped += 1;
-            continue; // a deck path: no terrain under a deck, and the wire Z is deck-local
-        }
-        if swimming {
-            skipped += 1;
-            continue; // in-liquid: the wire Z is the creature's swim depth
-        }
-        let xz = [t.translation.x, t.translation.z];
-        // The granted modes change the ray's answer, so they join the cache gate below.
-        let granted = modes.copied().unwrap_or_default();
-        // A Y other than the one our last clamp left was written by the unit's position owner and
-        // is the new seat; with no memo, the spawn pose is the seat.
-        let seat_y = match clamped.as_deref() {
-            _ if legacy => t.translation.y, // `WOW_CLAMP_SEAT=off`: from our own last answer
-            Some(c) if c.y_written == t.translation.y => c.seat_y,
-            _ => t.translation.y,
-        };
-        // The cast gate: same XZ, same collider epoch, same modes, and our own answer still the Y
-        // standing here, so the ray cannot answer differently. Testing the standing Y rather than
-        // the seat also re-grounds a re-sent identical wire pose. A miss never caches.
-        if let Some(c) = clamped.as_deref() {
-            let same_question = if legacy {
-                c.y_written == t.translation.y
-            } else {
-                c.y_written == t.translation.y && c.epoch == epoch.get() && c.modes == granted
-            };
-            if c.hit && c.xz == xz && same_question {
-                held += 1;
-                continue;
-            }
-            if cost && !legacy {
-                if c.xz == xz && c.seat_y == seat_y {
-                    armed += 1; // the world changed under a unit that didn't move
-                } else {
-                    reseat += 1; // the unit moved, or was moved
-                }
-            }
-        }
-        // Only for a unit not swimming: the reference takes this arm with the swim bit clear
-        // (`0x631617`). Deviation: its rate-limited hover climb (`0x636fa1`, 7 yd/s) is not
-        // reproduced, because the cache gate needs a pure function; it converges to this answer.
-        let water = granted
-            .water_walking()
-            .then(|| {
-                let wow = bevy_to_wow(t.translation);
-                let who = benilla_world::world_point::Subject::Unit(entity);
-                points
-                    .liquid_at(who, wow)
-                    .map(|l| t.translation.y + (l.surface_z - wow[2]))
-            })
-            .flatten();
-        let hover = granted.hovering();
-        // A continuing walker takes the swept step from last frame's pose with Δz = 0 (step-up
-        // `H` 2.0) and keeps only Y, so it rides a hill its chord cuts under; an idle unit or a new
-        // path settles down from the seat (`0x636dcd`-`0x636e45`, `d·1.849 + 1/36`).
-        let path = spline.map(|s| (s.id, s.start));
-        let continuing = clamped
-            .as_deref()
-            .filter(|c| path.is_some() && c.path == path)
-            .map(|c| (c.xz, c.y_written));
-        cast += 1;
-        let (y, hit_ground) = if let Some((pxz, py)) = continuing {
-            swept += 1;
-            let half_h = Vec3::Y * (crate::player::CAPSULE_HEIGHT * 0.5);
-            let from = Vec3::new(pxz[0], py, pxz[1]) + half_h;
-            // The frame's horizontal displacement as a one-second velocity: `grounded_step` travels
-            // `speed · dt`, and the reference's walk step takes a distance and a direction
-            // (`0x6367b0`).
-            let delta = Vec3::new(xz[0] - pxz[0], 0.0, xz[1] - pxz[1]);
-            let g = crate::player::mover::grounded_step(
-                &world,
-                &capsule.0,
-                from,
-                delta,
-                Duration::from_secs(1),
-                crate::player::mover::Support {
-                    rise: crate::player::CREATURE_STEP_UP_HEIGHT,
-                    offset: if hover {
-                        crate::player::HOVER_HEIGHT
-                    } else {
-                        0.0
-                    },
-                    water,
-                    // Per-frame state the memo does not keep; the path's next sample corrects a
-                    // miss on a steep face.
-                    steep: false,
-                },
-            );
-            // A sweep that finds no floor holds the server's pose, as `grounded_y` does: the step's
-            // no-floor drop would ratchet below a surface the one-sided cast cannot find again.
-            let y = if g.unsupported.is_some() {
-                seat_y
-            } else {
-                g.center.y - half_h.y
-            };
-            if benilla_assets::trace::enabled_for("clmp")
-                && clamp_trace_display().is_some_and(|d| net.display_id == Some(d))
+    // Each unit's probe reads only the world and writes only its own row, so units run in
+    // parallel; a cast is ~20 µs, so small batches spread a few dozen walkers over the pool.
+    q.par_iter_mut()
+        .batching_strategy(BatchingStrategy::fixed(CLAMP_BATCH))
+        .for_each(|row| {
+            let mut s = stats.borrow_local_mut();
+            if let Some(first) = clamp_unit(&world, &points, &capsule.0, epoch, legacy, row, &mut s)
             {
-                let z_of = |y: f32| bevy_to_wow(Vec3::new(0.0, y, 0.0))[2];
-                benilla_assets::trace::line(
-                    "clmp",
-                    &format!(
-                        "display={} walk from_z={:.3} seat_z={:.3} d={:.3} ground={} z={:.3}",
-                        net.display_id.unwrap_or(0),
-                        z_of(py),
-                        z_of(seat_y),
-                        delta.length(),
-                        g.ground.is_some() as u8,
-                        z_of(y),
-                    ),
-                );
+                inserts.borrow_local_mut().push(first);
             }
-            if g.unsupported.is_some() {
-                noflr += 1;
-                if seat_y - y > 1.0e-4 {
-                    ratchet += 1;
-                    if seat_y - y > deepest {
-                        deepest = seat_y - y;
-                        worst = Some((net.display_id.unwrap_or(0), xz, y));
-                    }
-                }
-            }
-            (y, g.ground.is_some())
+        });
+
+    for (entity, state) in inserts.drain() {
+        commands.entity(entity).insert(state);
+    }
+    let s = stats
+        .iter_mut()
+        .fold(ClampStats::default(), |acc, s| acc.merge(std::mem::take(s)));
+    if let Some(t0) = t0 {
+        // `WOW_CLAMP_COST=1`: the sweep's cost per frame. `cast` against `visited` is what the
+        // cast gate saves, `moved` against `hit` how often a write changes Y; quote `ms`.
+        eprintln!(
+            "[clamp-cost] visited={} skipped={} held={} cast={} swept={} reseat={} armed={} hit={} moved={} noflr={} ratchet={} deepest={} worst={} ms={:.3}",
+            s.visited,
+            s.skipped,
+            s.held,
+            s.cast,
+            s.swept,
+            s.reseat,
+            s.armed,
+            s.hit,
+            s.moved,
+            s.noflr,
+            s.ratchet,
+            if s.deepest.is_finite() { format!("{:+.2}", s.deepest) } else { "-".to_string() },
+            s.worst.map_or_else(
+                || "-".to_string(),
+                |(d, xz, y)| format!("display={d}@({:.0},{:.0}) y={y:.2}", xz[0], xz[1])
+            ),
+            t0.elapsed().as_secs_f32() * 1000.0
+        );
+    }
+}
+
+/// One row of [`ground_clamp_creatures`]'s query.
+type ClampRow<'a> = (
+    Entity,
+    &'a NetEntity,
+    Option<&'a Spline>,
+    Mut<'a, Transform>,
+    Option<Mut<'a, GroundClamped>>,
+    bool,
+    Option<&'a crate::net::UnitMoveModes>,
+    bool,
+    bool,
+);
+
+/// One unit's clamp for [`ground_clamp_creatures`]: writes the unit's Y and its memo, and
+/// returns the memo to insert on a unit's first clamp.
+#[allow(clippy::too_many_arguments)]
+fn clamp_unit(
+    world: &benilla_world::collision::WorldCollision,
+    points: &benilla_world::world_point::WorldPoint,
+    capsule: &avian3d::prelude::Collider,
+    epoch: u64,
+    legacy: bool,
+    row: ClampRow,
+    s: &mut ClampStats,
+) -> Option<(Entity, GroundClamped)> {
+    let (entity, net, spline, mut t, mut clamped, swimming, modes, embodied, relayed) = row;
+    let cost = clamp_cost_enabled();
+    s.visited += 1;
+    if !ground_derived(
+        net.kind,
+        spline.is_some(),
+        clamped.is_some(),
+        embodied,
+        relayed,
+    ) {
+        s.skipped += 1;
+        return None; // somebody else owns this body's Z
+    }
+    if spline.is_some_and(|s| !s.grounded) {
+        s.skipped += 1;
+        return None; // a flying path is authoritative on Z
+    }
+    if spline.is_some_and(|s| s.deck.is_some()) {
+        s.skipped += 1;
+        return None; // a deck path: no terrain under a deck, and the wire Z is deck-local
+    }
+    if swimming {
+        s.skipped += 1;
+        return None; // in-liquid: the wire Z is the creature's swim depth
+    }
+    let xz = [t.translation.x, t.translation.z];
+    // The granted modes change the ray's answer, so they join the cache gate below.
+    let granted = modes.copied().unwrap_or_default();
+    // A Y other than the one our last clamp left was written by the unit's position owner and
+    // is the new seat; with no memo, the spawn pose is the seat.
+    let seat_y = match clamped.as_deref() {
+        _ if legacy => t.translation.y, // `WOW_CLAMP_SEAT=off`: from our own last answer
+        Some(c) if c.y_written == t.translation.y => c.seat_y,
+        _ => t.translation.y,
+    };
+    // The cast gate: same XZ, same collider epoch, same modes, and our own answer still the Y
+    // standing here, so the ray cannot answer differently. Testing the standing Y rather than
+    // the seat also re-grounds a re-sent identical wire pose. A miss never caches.
+    if let Some(c) = clamped.as_deref() {
+        let same_question = if legacy {
+            c.y_written == t.translation.y
         } else {
-            let origin = Vec3::new(t.translation.x, seat_y + IDLE_UP_BAND, t.translation.z);
-            let reach = IDLE_UP_BAND + GROUND_CLAMP_DOWN;
-            // One-sided, as the player mover grounds: a face wound away is no floor.
-            let hit = world.ray_body(origin, Dir3::NEG_Y, reach);
-            let floor = hit.as_ref().map(|h| origin.y - h.distance);
-            let y = grounded_y(seat_y, floor, water, hover);
-            // The `clmp` trace for one display (`WOW_CLAMP_TRACE=<display id>`): per cast, the
-            // seat, the ray origin, the hit and the Z written, in WoW coordinates.
-            if benilla_assets::trace::enabled_for("clmp")
-                && clamp_trace_display().is_some_and(|d| net.display_id == Some(d))
-            {
-                let seat = bevy_to_wow(Vec3::new(t.translation.x, seat_y, t.translation.z));
-                let z_of = |y: f32| bevy_to_wow(Vec3::new(0.0, y, 0.0))[2];
-                let hit_s = hit.as_ref().map_or("miss".to_string(), |h| {
-                    format!("hit d={:.3} n.y={:+.3}", h.distance, h.normal.y)
-                });
-                benilla_assets::trace::line(
+            c.y_written == t.translation.y && c.epoch == epoch && c.modes == granted
+        };
+        if c.hit && c.xz == xz && same_question {
+            s.held += 1;
+            return None;
+        }
+        if cost && !legacy {
+            if c.xz == xz && c.seat_y == seat_y {
+                s.armed += 1; // the world changed under a unit that didn't move
+            } else {
+                s.reseat += 1; // the unit moved, or was moved
+            }
+        }
+    }
+    // Only for a unit not swimming: the reference takes this arm with the swim bit clear
+    // (`0x631617`). Deviation: its rate-limited hover climb (`0x636fa1`, 7 yd/s) is not
+    // reproduced, because the cache gate needs a pure function; it converges to this answer.
+    let water = granted
+        .water_walking()
+        .then(|| {
+            let wow = bevy_to_wow(t.translation);
+            let who = benilla_world::world_point::Subject::Unit(entity);
+            points
+                .liquid_at(who, wow)
+                .map(|l| t.translation.y + (l.surface_z - wow[2]))
+        })
+        .flatten();
+    let hover = granted.hovering();
+    // A continuing walker takes the swept step from last frame's pose with Δz = 0 (step-up
+    // `H` 2.0) and keeps only Y, so it rides a hill its chord cuts under; an idle unit or a new
+    // path settles down from the seat (`0x636dcd`-`0x636e45`, `d·1.849 + 1/36`).
+    let path = spline.map(|s| (s.id, s.start));
+    let continuing = clamped
+        .as_deref()
+        .filter(|c| path.is_some() && c.path == path)
+        .map(|c| (c.xz, c.y_written));
+    s.cast += 1;
+    let (y, hit_ground) = if let Some((pxz, py)) = continuing {
+        s.swept += 1;
+        let half_h = Vec3::Y * (crate::player::CAPSULE_HEIGHT * 0.5);
+        let from = Vec3::new(pxz[0], py, pxz[1]) + half_h;
+        // The frame's horizontal displacement as a one-second velocity: `grounded_step` travels
+        // `speed · dt`, and the reference's walk step takes a distance and a direction
+        // (`0x6367b0`).
+        let delta = Vec3::new(xz[0] - pxz[0], 0.0, xz[1] - pxz[1]);
+        let g = crate::player::mover::grounded_step(
+            world,
+            capsule,
+            from,
+            delta,
+            Duration::from_secs(1),
+            crate::player::mover::Support {
+                rise: crate::player::CREATURE_STEP_UP_HEIGHT,
+                offset: if hover {
+                    crate::player::HOVER_HEIGHT
+                } else {
+                    0.0
+                },
+                water,
+                // Per-frame state the memo does not keep; the path's next sample corrects a
+                // miss on a steep face.
+                steep: false,
+            },
+        );
+        // A sweep that finds no floor holds the server's pose, as `grounded_y` does: the step's
+        // no-floor drop would ratchet below a surface the one-sided cast cannot find again.
+        let y = if g.unsupported.is_some() {
+            seat_y
+        } else {
+            g.center.y - half_h.y
+        };
+        if benilla_assets::trace::enabled_for("clmp")
+            && clamp_trace_display().is_some_and(|d| net.display_id == Some(d))
+        {
+            let z_of = |y: f32| bevy_to_wow(Vec3::new(0.0, y, 0.0))[2];
+            benilla_assets::trace::line(
+                "clmp",
+                &format!(
+                    "display={} walk from_z={:.3} seat_z={:.3} d={:.3} ground={} z={:.3}",
+                    net.display_id.unwrap_or(0),
+                    z_of(py),
+                    z_of(seat_y),
+                    delta.length(),
+                    g.ground.is_some() as u8,
+                    z_of(y),
+                ),
+            );
+        }
+        if g.unsupported.is_some() {
+            s.noflr += 1;
+            if seat_y - y > 1.0e-4 {
+                s.ratchet += 1;
+                if seat_y - y > s.deepest {
+                    s.deepest = seat_y - y;
+                    s.worst = Some((net.display_id.unwrap_or(0), xz, y));
+                }
+            }
+        }
+        (y, g.ground.is_some())
+    } else {
+        let origin = Vec3::new(t.translation.x, seat_y + IDLE_UP_BAND, t.translation.z);
+        let reach = IDLE_UP_BAND + GROUND_CLAMP_DOWN;
+        // One-sided, as the player mover grounds: a face wound away is no floor.
+        let hit = world.ray_body(origin, Dir3::NEG_Y, reach);
+        let floor = hit.as_ref().map(|h| origin.y - h.distance);
+        let y = grounded_y(seat_y, floor, water, hover);
+        // The `clmp` trace for one display (`WOW_CLAMP_TRACE=<display id>`): per cast, the
+        // seat, the ray origin, the hit and the Z written, in WoW coordinates.
+        if benilla_assets::trace::enabled_for("clmp")
+            && clamp_trace_display().is_some_and(|d| net.display_id == Some(d))
+        {
+            let seat = bevy_to_wow(Vec3::new(t.translation.x, seat_y, t.translation.z));
+            let z_of = |y: f32| bevy_to_wow(Vec3::new(0.0, y, 0.0))[2];
+            let hit_s = hit.as_ref().map_or("miss".to_string(), |h| {
+                format!("hit d={:.3} n.y={:+.3}", h.distance, h.normal.y)
+            });
+            benilla_assets::trace::line(
                     "clmp",
                     &format!(
                         "display={} idle seat=({:.2},{:.2},{:.3}) origin_z={:.3} reach={:.2} {hit_s} floor_z={} z={:.3}",
@@ -680,48 +813,32 @@ pub(in crate::net) fn ground_clamp_creatures(
                         z_of(y),
                     ),
                 );
-            }
-            (y, hit.is_some())
-        };
-        if hit_ground {
-            hit_n += 1;
         }
-        // Exact equality on purpose: Bevy's change detection fires on any write, and a real
-        // sub-epsilon shift must still land.
-        if y != t.translation.y {
-            moved += 1;
-            t.translation.y = y;
-        }
-        let state = GroundClamped {
-            xz,
-            seat_y,
-            y_written: t.translation.y,
-            hit: hit_ground,
-            epoch: epoch.get(),
-            modes: granted,
-            path,
-        };
-        match clamped.as_deref_mut() {
-            Some(c) => *c = state,
-            None => {
-                commands.entity(entity).insert(state);
-            }
-        }
+        (y, hit.is_some())
+    };
+    if hit_ground {
+        s.hit += 1;
     }
-
-    if let Some(t0) = t0 {
-        // `WOW_CLAMP_COST=1`: the sweep's cost per frame. `cast` against `visited` is what the
-        // cast gate saves, `moved` against `hit` how often a write changes Y; quote `ms`.
-        eprintln!(
-            "[clamp-cost] visited={visited} skipped={skipped} held={held} cast={cast} swept={swept} reseat={reseat} armed={armed} hit={hit_n} moved={moved} noflr={noflr} ratchet={ratchet} deepest={} worst={} ms={:.3}",
-            if deepest.is_finite() { format!("{deepest:+.2}") } else { "-".to_string() },
-            worst.map_or_else(
-                || "-".to_string(),
-                |(d, xz, y)| format!("display={d}@({:.0},{:.0}) y={y:.2}", xz[0], xz[1])
-            ),
-            t0.elapsed().as_secs_f32() * 1000.0
-        );
+    // Exact equality on purpose: Bevy's change detection fires on any write, and a real
+    // sub-epsilon shift must still land.
+    if y != t.translation.y {
+        s.moved += 1;
+        t.translation.y = y;
     }
+    let state = GroundClamped {
+        xz,
+        seat_y,
+        y_written: t.translation.y,
+        hit: hit_ground,
+        epoch,
+        modes: granted,
+        path,
+    };
+    match clamped.as_deref_mut() {
+        Some(c) => *c = state,
+        None => return Some((entity, state)),
+    }
+    None
 }
 
 /// The one display the `clmp` trace follows (`WOW_CLAMP_TRACE=<display id>`); `None` writes
