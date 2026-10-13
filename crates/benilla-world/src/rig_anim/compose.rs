@@ -24,12 +24,17 @@ fn compose_rig_models(
     mut rigs: Query<&mut RigPose, Without<AnimParked>>,
     mut anchors: Query<&mut Transform>,
 ) {
-    for rig in &mut rigs {
+    // A rig's chain reads and writes only itself, so the drawn set (~950 swaying doodads at
+    // Northshire Abbey) composes in parallel; the anchors, other entities, re-seat after.
+    rigs.par_iter_mut().for_each(|mut rig| {
+        if rig.pose_dirty {
+            rig.compose();
+        }
+    });
+    for rig in &rigs {
         if !rig.pose_dirty {
             continue;
         }
-        let rig = rig.into_inner();
-        rig.compose();
         for &(bone, anchor) in &rig.anchors {
             let Some(m) = rig.model.get(bone as usize) else {
                 continue;

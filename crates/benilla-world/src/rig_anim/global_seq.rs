@@ -78,47 +78,66 @@ impl GlobalSeqDrive {
 /// driven components, so the eyelid blinks over any gait.
 fn apply_global_sequences(
     time: Res<Time>,
-    mut drives: Query<(Entity, &mut GlobalSeqDrive, Has<super::AnimParked>)>,
+    mut drives: Query<(
+        &mut GlobalSeqDrive,
+        Option<&mut super::RigPose>,
+        Has<super::AnimParked>,
+    )>,
     mut joints: Query<&mut Transform>,
-    mut rigs: Query<&mut super::RigPose>,
 ) {
     let now = time.elapsed_secs_f64();
-    for (host, mut drive, parked) in &mut drives {
-        let scene_now = drive.clock.unwrap_or(now);
-        // Stamped even while parked: the reference stamps `+0x68` at attach, not at first draw.
-        let t = scene_now - *drive.anchor.get_or_insert(scene_now);
+    // A collapsed rig's channels write only its own pose, so those drives (the drawn swaying
+    // doodads) run in parallel; a joint drive writes other entities and runs after, serially.
+    drives.par_iter_mut().for_each(|(mut drive, rig, parked)| {
+        let Some(t) = drive_cursor(&mut drive, now, parked) else {
+            return;
+        };
+        let Some(mut rig) = rig else { return };
+        for (target, bone) in &drive.bones {
+            let SeqTarget::Bone(b) = target else { continue };
+            rig.pose_dirty = true;
+            if let Some(tf) = rig.locals.get_mut(*b as usize) {
+                sample_into(tf, bone, t);
+            }
+        }
+    });
+    for (drive, _, parked) in &drives {
+        let Some(t) = drive.anchor.map(|a| drive.clock.unwrap_or(now) - a) else {
+            continue;
+        };
         if drive.paused || parked {
             continue;
         }
-        let mut rig = rigs.get_mut(host).ok();
         for (target, bone) in &drive.bones {
-            let tf: &mut Transform = match target {
-                SeqTarget::Joint(joint) => {
-                    let Ok(tf) = joints.get_mut(*joint) else {
-                        continue;
-                    };
-                    tf.into_inner()
-                }
-                SeqTarget::Bone(b) => {
-                    let Some(rig) = rig.as_mut() else { continue };
-                    rig.pose_dirty = true;
-                    let Some(tf) = rig.locals.get_mut(*b as usize) else {
-                        continue;
-                    };
-                    tf
-                }
+            let SeqTarget::Joint(joint) = target else {
+                continue;
             };
-            let at = |period: f32| (t % f64::from(period.max(1e-3))) as f32;
-            if let Some(c) = &bone.translation {
-                tf.translation = c.sample(at(c.period));
-            }
-            if let Some(c) = &bone.rotation {
-                tf.rotation = c.sample(at(c.period));
-            }
-            if let Some(c) = &bone.scale {
-                tf.scale = c.sample(at(c.period));
+            if let Ok(mut tf) = joints.get_mut(*joint) {
+                sample_into(&mut tf, bone, t);
             }
         }
+    }
+}
+
+/// Stamp the drive's anchor and return its cursor, or `None` while it is held. Stamped even while
+/// parked: the reference stamps `+0x68` at attach, not at first draw.
+fn drive_cursor(drive: &mut GlobalSeqDrive, now: f64, parked: bool) -> Option<f64> {
+    let scene_now = drive.clock.unwrap_or(now);
+    let t = scene_now - *drive.anchor.get_or_insert(scene_now);
+    (!drive.paused && !parked).then_some(t)
+}
+
+/// Write only the driven components at cursor `t`, each channel wrapped on its own period.
+fn sample_into(tf: &mut Transform, bone: &GlobalBone, t: f64) {
+    let at = |period: f32| (t % f64::from(period.max(1e-3))) as f32;
+    if let Some(c) = &bone.translation {
+        tf.translation = c.sample(at(c.period));
+    }
+    if let Some(c) = &bone.rotation {
+        tf.rotation = c.sample(at(c.period));
+    }
+    if let Some(c) = &bone.scale {
+        tf.scale = c.sample(at(c.period));
     }
 }
 
