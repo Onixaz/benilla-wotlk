@@ -9,7 +9,7 @@ use benilla_m2::parse_m2;
 
 use crate::Chain;
 
-use super::model_path;
+use super::read_model;
 
 /// An M2's authored bounds and the reads sized from them, in model-local yards before the
 /// placement scale.
@@ -50,10 +50,7 @@ pub struct M2Bounds {
 
 /// Read an M2's bounds from the chain, by model or doodad (`.mdx`/`.mdl`) path.
 pub fn load_m2_bounds(chain: &mut Chain, raw_path: &str) -> Result<M2Bounds> {
-    let path = model_path(raw_path);
-    let bytes = chain
-        .read_file(&path)
-        .with_context(|| format!("reading M2 {path}"))?;
+    let (path, bytes) = read_model(chain, raw_path)?;
     parse_m2_bounds(&bytes).with_context(|| format!("parsing M2 bounds {path}"))
 }
 

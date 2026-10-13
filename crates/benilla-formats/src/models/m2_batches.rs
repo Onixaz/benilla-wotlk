@@ -14,7 +14,7 @@ use super::anim::parse_m2_animations;
 use super::key_anim::SeqSlot;
 use super::mat_anim;
 use super::tex_anim;
-use super::{le_u16, le_u32, model_path, remap_submesh};
+use super::{le_u16, le_u32, read_model, remap_submesh};
 use super::{
     AlphaAnim, Billboard, BillboardKind, BoneScaleAnim, CharSkinSlot, FogPolicy, ModelBlend,
     RenderSubmesh,
@@ -193,12 +193,9 @@ pub fn load_m2_mesh_skinned(
     raw_path: &str,
     skins: &[Option<String>],
 ) -> Result<Vec<RenderSubmesh>> {
-    let path = model_path(raw_path);
-    let dir = parent_dir(&path).to_string();
-    let bytes = chain
-        .read_file(&path)
-        .with_context(|| format!("reading M2 {path}"))?;
-    parse_m2_render_submeshes(&bytes, &dir, skins).with_context(|| format!("parsing M2 {path}"))
+    let (path, bytes) = read_model(chain, raw_path)?;
+    parse_m2_render_submeshes(&bytes, parent_dir(&path), skins)
+        .with_context(|| format!("parsing M2 {path}"))
 }
 
 /// [`crate::m2_bone_spins`] for a model read from the chain.
@@ -206,10 +203,7 @@ pub fn load_m2_bone_spins(
     chain: &mut Chain,
     raw_path: &str,
 ) -> Result<std::collections::HashMap<u16, crate::BoneSpin>> {
-    let path = model_path(raw_path);
-    let bytes = chain
-        .read_file(&path)
-        .with_context(|| format!("reading M2 {path}"))?;
+    let (_, bytes) = read_model(chain, raw_path)?;
     Ok(crate::m2_bone_spins(&bytes))
 }
 

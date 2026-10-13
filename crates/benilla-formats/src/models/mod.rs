@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::Chain;
 
@@ -54,6 +54,15 @@ pub fn read_m2(chain: &Chain, path: &str) -> Result<(Vec<u8>, Vec<String>)> {
         .collect();
     let out = relayout_264(&bytes, &skin, &anims).map_err(to_err)?;
     Ok((out.bytes, out.dropped))
+}
+
+/// The 3.3.5a model at `raw_path` (`.mdx`/`.mdl` read as `.m2`) with its chain path, read
+/// through [`read_m2`] so `parse_m2` can take it: the version-264 file with its skin profile 0
+/// and `.anim` files. A sequence whose `.anim` does not read is left without keys.
+fn read_model(chain: &Chain, raw_path: &str) -> Result<(String, Vec<u8>)> {
+    let path = model_path(raw_path);
+    let (bytes, _dropped) = read_m2(chain, &path).with_context(|| format!("reading M2 {path}"))?;
+    Ok((path, bytes))
 }
 
 /// Build a compact submesh from global vertex indices. Also returns each local vertex's global

@@ -314,7 +314,12 @@ fn build_chunk_clutter(
     let mut out = Vec::new();
     for (model_path, placements) in models {
         let subs = geometry.0.or_insert_with(model_path.clone(), || {
-            load_m2_mesh(&mut assets.chain.lock_recover(), model_path).unwrap_or_default()
+            // The failure is cached too: a model that does not load warns once while its area stays
+            // resident, and draws no tufts.
+            load_m2_mesh(&mut assets.chain.lock_recover(), model_path).unwrap_or_else(|e| {
+                warn!("ground clutter model {model_path} not loaded: {e:#}");
+                Vec::new()
+            })
         });
         if subs.is_empty() {
             continue;
