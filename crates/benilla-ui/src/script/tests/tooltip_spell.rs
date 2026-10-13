@@ -393,8 +393,8 @@ fn requirement_and_reagent_lines_render_in_law_order() {
 }
 
 /// `SetUnitBuff`/`SetUnitDebuff` render the aura variant from the unit's sign-filtered list, with
-/// no remaining line: only `SetPlayerBuff` appends it, and the 1.12 wire carries no other unit's
-/// durations.
+/// no remaining line for an untimed aura (`0x62600a`); a miss leaves the plate as it was
+/// (`0x625fbe`).
 #[test]
 fn unit_buff_and_debuff_hover_render_the_aura_variant_without_remaining() {
     let mut s = script();
@@ -451,7 +451,7 @@ fn unit_buff_and_debuff_hover_render_the_aura_variant_without_remaining() {
         assert(TTTextLeft1:GetText() == "Mark of the Wild", "the sign filter picks the buff")
         tt:SetOwner(a, "ANCHOR_BOTTOMRIGHT", 15, -25)
         tt:SetUnitDebuff("target", 2)
-        assert(tt:NumLines() == 0 and not tt:IsShown(), "past the list: no empty plate")
+        assert(tt:NumLines() == 0, "SetOwner cleared it, and a miss adds nothing")
     "#,
     )
     .unwrap();

@@ -261,6 +261,12 @@ fn survey_one(
     script.register_addons(registry.to_vec(), Some(root.to_path_buf()), None, None);
     seat_a_session(&mut script);
     let _ = crate::ui_script::load_default_ui(&script);
+    // The stock buff frame builds its buttons from the seated buff before the baseline, so its
+    // `BuffButton1` is charged to the stock UI, not to the addon under survey.
+    script.fire_event(
+        "UNIT_AURA",
+        vec![benilla_ui::script::ScriptValue::Str("player".into())],
+    );
     // The addon's dependencies, first and recursively, as `AddOn_Load` (`0x51f240`) does in its
     // first two steps. Loaded before `globals_of` below, so a name a dependency provides is not
     // missing.

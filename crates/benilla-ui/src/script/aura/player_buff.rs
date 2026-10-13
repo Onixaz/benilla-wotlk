@@ -205,6 +205,7 @@ mod tests {
             cancelable,
             until_cancelled: false,
             channeled: false,
+            ..Default::default()
         }
     }
 

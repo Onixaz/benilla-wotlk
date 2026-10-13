@@ -104,6 +104,7 @@ fn debuff(spell_id: u32, name: &str, debuff_type: Option<&str>) -> AuraState {
         cancelable: false,
         until_cancelled: false,
         channeled: false,
+        ..Default::default()
     }
 }
 

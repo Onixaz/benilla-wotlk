@@ -343,6 +343,7 @@ fn seat_a_buff(s: &mut UiScript, spell_id: u32, name: &str, icon: &str) {
         cancelable: true,
         until_cancelled: true,
         channeled: false,
+        ..Default::default()
     }]);
     s.fire_event("PLAYER_AURAS_CHANGED", vec![]);
 }

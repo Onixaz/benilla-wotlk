@@ -488,7 +488,7 @@ mod tests {
         let count = app
             .world_mut()
             .non_send_resource::<UiScript>()
-            .eval::<i64>(r#"local _, count = UnitDebuff("party1", 1) return count"#)
+            .eval::<i64>(r#"local _, _, _, count = UnitDebuff("party1", 1) return count"#)
             .unwrap();
         assert_eq!(count, 1);
         assert_eq!(seen(&mut app), ["party1"]);
@@ -778,7 +778,7 @@ mod tests {
         let count = app
             .world_mut()
             .non_send_resource::<UiScript>()
-            .eval::<i64>(r#"local _, count = UnitDebuff("raid5", 1) return count"#)
+            .eval::<i64>(r#"local _, _, _, count = UnitDebuff("raid5", 1) return count"#)
             .unwrap();
         assert_eq!(count, 1);
         assert_eq!(listed(&mut app, "raidpet5", false), [1126]);

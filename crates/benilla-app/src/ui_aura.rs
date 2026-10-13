@@ -245,6 +245,10 @@ fn unit_aura_state(
         // `untilCancelled` is the player cache record's alone (`0xbc6040` `+0xc`).
         until_cancelled: false,
         channeled: display.is_some_and(|d| d.attributes_ex & SPELL_ATTR_EX_IS_CHANNELED != 0),
+        rank: display.and_then(|d| d.rank.clone()),
+        // The descriptor feed carries no caster, steal or consolidation fact; 3.3.5a's
+        // `SMSG_AURA_UPDATE` feed does (#137).
+        ..Default::default()
     }
 }
 
@@ -465,6 +469,9 @@ fn feed_auras(
                 ),
                 channeled: display
                     .is_some_and(|d| d.attributes_ex & SPELL_ATTR_EX_IS_CHANNELED != 0),
+                rank: display.and_then(|d| d.rank.clone()),
+                // As [`unit_aura_state`]: the caster and the two flags wait on #137.
+                ..Default::default()
             }
         })
         .collect();

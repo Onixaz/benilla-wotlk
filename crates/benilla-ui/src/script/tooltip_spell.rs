@@ -2,7 +2,8 @@
 //! aura builder `0x52f880`: name and rank; cost and range; cast time and cooldown (omitted for a
 //! passive spell, with no "Passive" line); the required item class, then form, white when met and
 //! red when not; reagents, a missing one inline red; the description, gold (white on an aura).
-//! Only `SetPlayerBuff` adds the gold time-remaining line.
+//! `SetPlayerBuff`, and `SetUnitAura` and its siblings on a timed aura, add the gold
+//! time-remaining line.
 //!
 //! The app resolves each spell into a [`SpellTooltipView`] (`$`-tokens, cast, range and duration
 //! text), kept in an ask-once store by spell id and pushed ahead of a hover: one store for the
@@ -13,7 +14,7 @@
 //! pushed set names, such as an `enchant:` link's, always meets it. A talent or tracking miss shows
 //! its view on the next hover.
 
-use mlua::{Lua, Table, Value};
+use mlua::{Lua, MultiValue, Table, Value};
 
 use super::object::{frame_handle_of, frame_wrapper};
 use super::tooltip::{append_line, clear_content, fire_cleared, tip_mut};
@@ -663,35 +664,56 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             )
         })?,
     )?;
-    // GameTooltip:SetUnitBuff/SetUnitDebuff(unit, index): the aura variant with no time line; the
-    // 1-based index counts within the helpful or harmful list, as `UnitBuff` does.
-    for (verb, helpful) in [("SetUnitBuff", true), ("SetUnitDebuff", false)] {
+    // GameTooltip:SetUnitAura("unit", [index] or ["name", "rank"][, "filter"]) (`0x626240`), and
+    // SetUnitBuff (`0x6262c0`) and SetUnitDebuff (`0x626350`) with the sign forced as `UnitBuff`
+    // forces it: the aura variant of the aura `UnitAura` finds, through the builder `0x625f00`.
+    // A timed aura, on any unit, appends the time-remaining line (`0x62600a`-`0x62604f`), its
+    // text `0x61a9e0`'s (`tooltip::duration_text`) off `max(0, expiry - now)`. A miss leaves the
+    // plate as it was (`0x625fbe`).
+    for (verb, helpful) in [
+        ("SetUnitAura", None),
+        ("SetUnitBuff", Some(true)),
+        ("SetUnitDebuff", Some(false)),
+    ] {
         m.set(
             verb,
-            // `index` is a `Value`: the reference's `lua_tonumber` reads nil as 0, which finds no
-            // aura, where an `i64` would raise.
-            lua.create_function(move |lua, (this, token, index): (Table, String, Value)| {
-                let index = match &index {
-                    Value::Integer(i) => *i,
-                    Value::Number(n) => *n as i64,
-                    Value::String(s) => s
-                        .to_str()
-                        .ok()
-                        .and_then(|t| t.parse::<i64>().ok())
-                        .unwrap_or(0),
-                    _ => 0,
+            lua.create_function(move |lua, (this, args): (Table, MultiValue)| {
+                let args = args.into_vec();
+                let Some(q) = crate::script::aura::AuraQuery::read_signed(lua, &args, helpful)?
+                else {
+                    let who = {
+                        let h = frame_handle_of(lua, &this)?;
+                        let model = lua.app_data_ref::<Model>().expect("model app_data");
+                        model
+                            .arena
+                            .frame(h)
+                            .and_then(|f| f.name.clone())
+                            .unwrap_or_else(|| "<unnamed>".to_string())
+                    };
+                    return Err(mlua::Error::runtime(format!(
+                        r#"Usage: {who}:{verb}("unit", [index] or ["name", "rank"][, "filter"])"#
+                    )));
                 };
-                // The token resolves as `UnitBuff`'s does (`0x515970`, called at `0x534b8b`).
-                let hit = {
+                let (spell_id, name, remaining_ms) = {
                     let model = lua.app_data_ref::<Model>().expect("model app_data");
-                    let idx = usize::try_from(index.max(1) - 1).unwrap_or(0);
-                    crate::script::aura::auras_of(&model, &token)?
-                        .and_then(|a| a.iter().filter(|a| a.helpful == helpful).nth(idx))
-                        .map(|a| (a.spell_id, a.name.clone()))
+                    let Some(a) = crate::script::aura::find(&model, &q) else {
+                        return Ok(());
+                    };
+                    // The reference counts integer milliseconds off `GetTickCount`; this rounds
+                    // the float clock to the nearest one.
+                    let ms = (a.duration > 0.0).then(|| {
+                        ((a.expiration_time - model.now) * 1000.0)
+                            .round()
+                            .clamp(0.0, f64::from(u32::MAX)) as u32
+                    });
+                    (a.spell_id, a.name, ms)
                 };
-                // A miss goes through with spell id 0, which clears and hides the plate and
-                // records no ask.
-                let (spell_id, name) = hit.unwrap_or((0, None));
+                let remaining = remaining_ms.and_then(|ms| {
+                    let g = lua.globals();
+                    super::tooltip::duration_text(ms, "SPELL_TIME_REMAINING", true, &|key| {
+                        g.get::<String>(key).ok()
+                    })
+                });
                 set_spell_by_id(
                     lua,
                     &this,
@@ -701,7 +723,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                         aura: true,
                         ..Default::default()
                     },
-                    None,
+                    remaining,
                 )
             })?,
         )?;
