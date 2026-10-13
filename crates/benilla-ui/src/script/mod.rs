@@ -239,7 +239,7 @@ pub use measure::TextMeasure;
 pub use merchant::{ItemStatsHead, MerchantItem, MerchantState, RepairCosts};
 pub(crate) use minimap::apply_model_attrs as apply_minimap_model_attrs;
 pub(crate) use model::Model;
-pub use model::{FontProbe, TextureProbe, TextureSizeProbe, WorldLocProjector};
+pub use model::{FontProbe, MacroIconSource, TextureProbe, TextureSizeProbe, WorldLocProjector};
 pub use party::{PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo};
 pub use pet::{PetActionView, PetStats};
 pub use pvp::{decorated_name, pvp_name_global_keys, HonorState, InspectHonorData, RankTitle};

@@ -156,9 +156,16 @@ impl super::UiScript {
         std::mem::take(&mut self.model_mut().macros_dirty)
     }
 
-    /// Push the icon chooser's texture paths in grid order, built by the app from `SpellIcon.dbc`.
+    /// Push the icon chooser's texture paths in grid order.
     pub fn set_macro_icons(&mut self, icons: Vec<String>) {
         self.model_mut().macro_icons = icons;
+    }
+
+    /// Install the host's builder for the chooser's list. Like 12340's `GetNumMacroIcons`
+    /// (`0x566490`, which runs `0x565840` while the count at `[0xbeaf94]` is 0), the first
+    /// `GetNumMacroIcons` builds it; `GetMacroIconInfo` (`0x564e90`) only reads what is built.
+    pub fn set_macro_icon_source(&mut self, source: crate::script::MacroIconSource) {
+        self.model_mut().macro_icon_source = Some(source);
     }
 
     /// Bumped by every seed and every change, so a per-frame reader such as the action bar compares
@@ -337,7 +344,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumMacroIcons",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            if let Some(source) = model.macro_icon_source.take() {
+                model.macro_icons = source();
+            }
             Ok(model.macro_icons.len() as i64)
         })?,
     )?;
@@ -652,5 +662,29 @@ mod tests {
         );
         assert!(s.eval::<bool>("return GetMacroIconInfo(4) == nil").unwrap());
         assert!(s.eval::<bool>("return GetMacroIconInfo(0) == nil").unwrap());
+    }
+
+    /// 12340 builds the list on the first `GetNumMacroIcons` (`0x566490`) and never in
+    /// `GetMacroIconInfo` (`0x564e90`), so a VM that never opens the chooser never lists.
+    #[test]
+    fn the_icon_chooser_list_builds_on_the_first_count_and_only_once() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let mut s = UiScript::new().unwrap();
+        let builds = Rc::new(Cell::new(0));
+        let counter = Rc::clone(&builds);
+        s.set_macro_icon_source(Box::new(move || {
+            counter.set(counter.get() + 1);
+            vec!["Interface\\Icons\\Ability_Ambush".into()]
+        }));
+        assert!(s.eval::<bool>("return GetMacroIconInfo(1) == nil").unwrap());
+        assert_eq!(builds.get(), 0, "an info read must not build the list");
+        assert_eq!(s.eval::<i64>("return GetNumMacroIcons()").unwrap(), 1);
+        assert_eq!(s.eval::<i64>("return GetNumMacroIcons()").unwrap(), 1);
+        assert_eq!(builds.get(), 1, "the list builds once");
+        assert_eq!(
+            s.eval::<String>("return GetMacroIconInfo(1)").unwrap(),
+            "Interface\\Icons\\Ability_Ambush"
+        );
     }
 }

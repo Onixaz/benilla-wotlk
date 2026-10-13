@@ -33,12 +33,18 @@ pub(crate) struct MacroBoundSpells(pub(crate) std::collections::HashMap<u32, Bou
 
 pub(crate) use run::BoundSpell;
 
+/// The icon chooser's list, built once for the process: 12340 keeps it in globals
+/// (`[0xbeaf94]` count, `[0xbeaf98]` paths) that outlive every login and reload.
+#[derive(Resource, Default)]
+struct MacroIconList(std::sync::Arc<std::sync::OnceLock<Vec<String>>>);
+
 pub(crate) struct UiMacroPlugin;
 
 impl Plugin for UiMacroPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MacroFiles>()
             .init_resource::<MacroBoundSpells>()
+            .init_resource::<MacroIconList>()
             .add_systems(
                 Update,
                 (
@@ -62,12 +68,15 @@ impl Plugin for UiMacroPlugin {
     }
 }
 
-/// Build the icon chooser's list once per VM: the `Spell_` and `Ability_` files under
-/// `Interface\Icons\` ([`benilla_formats::load_macro_icons`]). A failed load leaves it empty, and
-/// `MacroPopupOkayButton_Update` then keeps OKAY disabled.
+/// Give each VM the icon chooser's builder: the `Spell_` and `Ability_` files under
+/// `Interface\Icons\` ([`benilla_formats::load_macro_icons`]), listed on the first
+/// `GetNumMacroIcons` into [`MacroIconList`]. The listing walks every archive's listfile, ~0.6 s,
+/// so no VM builds it unasked. A failed load leaves it empty, and `MacroPopupOkayButton_Update`
+/// then keeps OKAY disabled.
 fn load_icon_catalog(
     script: Option<NonSendMut<UiScript>>,
     assets: Option<Res<WorldAssets>>,
+    list: Res<MacroIconList>,
     mut seeded: Local<crate::ui_script::VmMemo<bool>>,
 ) {
     let (Some(mut script), Some(assets)) = (script, assets) else {
@@ -76,16 +85,25 @@ fn load_icon_catalog(
     if !seeded.claim(&script) {
         return;
     }
-    let loaded = {
-        let mut chain = assets.chain.lock_recover();
-        benilla_formats::load_macro_icons(&mut chain)
-    };
-    match loaded {
+    let chain = assets.chain.clone();
+    let built = std::sync::Arc::clone(&list.0);
+    script.set_macro_icon_source(Box::new(move || {
+        built
+            .get_or_init(|| list_icons(&mut chain.lock_recover()))
+            .clone()
+    }));
+}
+
+fn list_icons(chain: &mut benilla_formats::Chain) -> Vec<String> {
+    match benilla_formats::load_macro_icons(chain) {
         Ok(icons) => {
             info!("ui_macro: {} macro icons in the chooser", icons.len());
-            script.set_macro_icons(icons);
+            icons
         }
-        Err(e) => error!("ui_macro: no Interface\\Icons\\ listing — the chooser is empty: {e:#}"),
+        Err(e) => {
+            error!("ui_macro: no Interface\\Icons\\ listing — the chooser is empty: {e:#}");
+            Vec::new()
+        }
     }
 }
 
