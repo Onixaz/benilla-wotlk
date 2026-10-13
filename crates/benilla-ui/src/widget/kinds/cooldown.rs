@@ -14,16 +14,17 @@ pub const COOLDOWN_SWIPE_ALPHA: f32 = 160.0 / 255.0;
 
 /// The flash keys, one per sixth of [`COOLDOWN_FLASH_MS`] (`× 0.006`, `0xa1d1fc`), interpolated
 /// linearly: its alpha share (`0xad1434`), its rotation in radians (`0xc24254`, filled from
-/// `0xa1d214`..`0xa1d200`) and its UV span (`0xad1418`), below 1 a magnified star.
+/// `0xa1d214`..`0xa1d200`, an eighth of a turn in sixths: −π/8 and −π/4 are exact f32 values
+/// there) and its UV span (`0xad1418`), below 1 a magnified star.
 const FLASH_ALPHA: [f32; 7] = [0.0, 0.5, 1.0, 0.75, 0.5, 0.25, 0.0];
 const FLASH_ANGLE: [f32; 7] = [
     0.0,
     -0.130_376_1,
     -0.259_181_4,
-    -0.392_699_1,
+    -std::f32::consts::FRAC_PI_8,
     -0.518_362_8,
     -0.651_880_5,
-    -0.785_398_2,
+    -std::f32::consts::FRAC_PI_4,
 ];
 const FLASH_UV_SPAN: [f32; 7] = [
     1.0,
