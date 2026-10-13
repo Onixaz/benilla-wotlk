@@ -79,6 +79,12 @@ pub(super) fn read_spirit_healer_confirm(r: &mut &[u8]) -> io::Result<u64> {
     read_u64_le(r)
 }
 
+/// `CMSG_REPOP_REQUEST` body: one byte, 0 from `RepopMe` (`0x51aa90` -> `0x6d2950(0)`, which puts
+/// `arg != 0` as a u8). The server reads it (`read_skip<uint8>`), so an empty body is dropped.
+pub fn repop_request() -> Vec<u8> {
+    vec![0]
+}
+
 /// `CMSG_RECLAIM_CORPSE` body: the corpse's full guid, as the 1.12 client sends, though the server
 /// ignores it. It requires a ghost, the delay elapsed and 39 yd range (`MiscHandler.cpp:573-603`).
 pub fn reclaim_corpse(corpse_guid: u64) -> Vec<u8> {
@@ -225,6 +231,7 @@ mod tests {
 
     #[test]
     fn client_bodies_are_full_guids() {
+        assert_eq!(repop_request(), [0]);
         assert_eq!(
             reclaim_corpse(0xF500_0000_0000_0001),
             0xF500_0000_0000_0001u64.to_le_bytes().to_vec()

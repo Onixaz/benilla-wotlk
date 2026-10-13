@@ -107,7 +107,7 @@ pub use combat_log::{
     SpellInstaKillLog, SpellLogExecute, SpellLogMiss, SpellOutcomeLog,
 };
 pub use death::{
-    area_spirit_healer, reclaim_corpse, resurrect_response, spirit_healer_activate,
+    area_spirit_healer, reclaim_corpse, repop_request, resurrect_response, spirit_healer_activate,
     AreaSpiritHealerTime, CorpseLocation, ResurrectRequestBody,
 };
 pub use duel::{

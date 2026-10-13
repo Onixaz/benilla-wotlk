@@ -761,7 +761,7 @@ pub const SMSG_LOOT_ROLL: u16 = 0x02A2; // 674
 pub const CMSG_LOOT_MASTER_GIVE: u16 = 0x02A3; // 675
 pub const SMSG_LOOT_MASTER_LIST: u16 = 0x02A4; // 676
 
-// Death: `CMSG_REPOP_REQUEST` and our `MSG_CORPSE_QUERY` request have empty bodies.
+// Death: `CMSG_REPOP_REQUEST` is one byte; our `MSG_CORPSE_QUERY` request is empty.
 pub const CMSG_REPOP_REQUEST: u16 = 0x015A; // 346
 pub const SMSG_RESURRECT_REQUEST: u16 = 0x015B; // 347
 pub const CMSG_RESURRECT_RESPONSE: u16 = 0x015C; // 348

@@ -11,7 +11,7 @@ impl WorldWriter {
     /// Release the spirit while dead and unreleased; the server answers with ghost aura 8326, the
     /// corpse, `SMSG_CORPSE_RECLAIM_DELAY` and the graveyard teleport.
     pub fn repop_request(&mut self) -> Result<()> {
-        self.send(opcode::CMSG_REPOP_REQUEST, &[])
+        self.send(opcode::CMSG_REPOP_REQUEST, &messages::repop_request())
     }
 
     /// Ask where our corpse is (`MSG_CORPSE_QUERY`, empty body), answered on the same opcode.
