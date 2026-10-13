@@ -1,24 +1,25 @@
-//! The talent window feed: the class's pages from `Talent.dbc` and `TalentTab.dbc`, the known
-//! spells and `PLAYER_CHARACTER_POINTS1/2`, and `LearnTalent` clicks as `CMSG_LEARN_TALENT`. A
-//! talent's rank is its highest known rank spell (learning grants every lower rank, vmangos
-//! `Player::LearnTalent`); an unlearned one wears rank 1's name and icon.
+//! The talent window feed: the class's pages from `Talent.dbc` and `TalentTab.dbc`, each talent
+//! group's ranks from 3.3.5a's `SMSG_TALENTS_INFO`, and the learn verbs' sends. 12340 keeps the
+//! talent state the packet carries and nothing else (`0x5c9e50`): a rank is the packet's, never a
+//! known-spell guess, and the packet fires `PLAYER_TALENT_UPDATE`, plus
+//! `ACTIVE_TALENT_GROUP_CHANGED(new, old)` when the active group moved.
 //!
-//! The red requirement lines are the three keys `0x52b390` emits, in its order:
-//! `TOOLTIP_TALENT_TIER_POINTS` (`0x854a40`), `TOOLTIP_TALENT_PREREQ[_P1]` (`0x854a5c`) and
-//! `ITEM_REQ_SKILL` (`0x84e338`), resolved off the install's `GlobalStrings.lua`; a key it lacks
-//! renders no line.
+//! Only the player's talents are modelled; the pet body is read and dropped (the pet spec tab
+//! stays hidden, `GetNumTalentGroups(false, true)` answering 0).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use bevy::prelude::*;
 
-use benilla_formats::{Talent, TalentCatalog};
+use benilla_formats::TalentCatalog;
+use benilla_protocol::messages::TalentsInfo;
+use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{
-    ScriptValue, TalentPrereqView, TalentTabView, TalentUiState, TalentView, UiScript,
+    ScriptValue, TalentGroupView, TalentPrereqView, TalentRankView, TalentTabView, TalentUiState,
+    TalentView, UiScript,
 };
-use benilla_ui::strings::{fill, Arg};
 
-use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
+use crate::net::{ClientCommand, NetCommands, NetHandlerApp, ObjectStore, SelfPlayer};
 use crate::ui_action::{PlayerActions, Spells};
 use crate::ui_script::{gate, UiInput};
 use crate::ui_unit::UnitFeed;
@@ -30,11 +31,38 @@ pub(crate) struct Talents {
     pub(crate) catalog: TalentCatalog,
 }
 
+/// The player's talent groups as the last `SMSG_TALENTS_INFO` named them (`0xc21030`).
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub(crate) struct PlayerTalentGroups {
+    /// The packet's unspent points, the active group's.
+    pub(crate) unspent: u32,
+    /// 0-based.
+    pub(crate) active: usize,
+    /// Per group, talent id → 0-based rank.
+    pub(crate) ranks: Vec<HashMap<u32, u8>>,
+    /// The events the packet owes the VM, fired after the snapshot they describe is pushed.
+    pending_events: Vec<(&'static str, Vec<ScriptValue>)>,
+}
+
+impl PlayerTalentGroups {
+    /// One group, nothing learned and `unspent` points: a fresh character's state.
+    pub(crate) fn fresh(unspent: u32) -> Self {
+        PlayerTalentGroups {
+            unspent,
+            active: 0,
+            ranks: vec![HashMap::new()],
+            pending_events: Vec::new(),
+        }
+    }
+}
+
 pub(crate) struct UiTalentPlugin;
 
 impl Plugin for UiTalentPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_talents.after(AssetSet::Open))
+        app.init_resource::<PlayerTalentGroups>()
+            .net_handler(SessionEventKind::TalentsInfo, on_talents_info)
+            .add_systems(Startup, load_talents.after(AssetSet::Open))
             .add_systems(
                 Update,
                 (
@@ -62,6 +90,54 @@ fn load_talents(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
     }
 }
 
+/// `SMSG_TALENTS_INFO` (`0x6cd770`): the player's groups replace the held ones whole
+/// (`0x5c9a30(0)` clears them first); a pet body is not modelled.
+fn on_talents_info(In(ev): In<SessionEvent>, mut held: ResMut<PlayerTalentGroups>) {
+    let SessionEvent::TalentsInfo(info) = ev else {
+        return;
+    };
+    let TalentsInfo::Player {
+        unspent,
+        active_group,
+        groups,
+    } = info
+    else {
+        debug!("ui_talent: pet talents not modelled");
+        return;
+    };
+    debug!(
+        "ui_talent: SMSG_TALENTS_INFO {} group(s), active {active_group}, {unspent} unspent",
+        groups.len()
+    );
+    let (old_active, old_count) = (held.active, held.ranks.len());
+    held.unspent = unspent;
+    held.active = active_group.into();
+    held.ranks = groups
+        .iter()
+        .map(|g| g.talents.iter().map(|t| (t.talent_id, t.rank)).collect())
+        .collect();
+    held.pending_events
+        .push(("PLAYER_TALENT_UPDATE", Vec::new()));
+    // `ACTIVE_TALENT_GROUP_CHANGED(new, old)`, 1-based, a side with no groups reading 0
+    // (`0x5c9ebf`).
+    if old_active != held.active {
+        let new = if held.ranks.is_empty() {
+            0
+        } else {
+            held.active as i64 + 1
+        };
+        let old = if old_count == 0 {
+            0
+        } else {
+            old_active as i64 + 1
+        };
+        held.pending_events.push((
+            "ACTIVE_TALENT_GROUP_CHANGED",
+            vec![ScriptValue::Int(new), ScriptValue::Int(old)],
+        ));
+    }
+}
+
 /// The last pushed snapshot, and the points pair `CHARACTER_POINTS_CHANGED`'s deltas come from.
 #[derive(Default)]
 struct FeedMemory {
@@ -70,9 +146,11 @@ struct FeedMemory {
     points: Option<(u32, u32)>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn feed_talents(
     script: Option<NonSendMut<UiScript>>,
     talents: Option<Res<Talents>>,
+    mut held: ResMut<PlayerTalentGroups>,
     actions: Res<PlayerActions>,
     spells: Option<Res<Spells>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -83,9 +161,10 @@ fn feed_talents(
         return;
     };
     let (memory, vm_reset) = memory.get_reset(&script);
-    // Reopened by every input the build reads: the known spells, both catalogs (their landing
-    // counts as a change) and the self descriptor.
+    // Reopened by every input the build reads: the groups, the known spells (a talent's
+    // `requiredSpell`), both catalogs (their landing counts as a change) and the self descriptor.
     let self_changed = !changed_self.is_empty();
+    let groups_changed = held.is_changed();
     let actions_changed = actions.is_changed();
     let talents_changed = talents.as_ref().is_some_and(|r| r.is_changed());
     let spells_changed = spells.as_ref().is_some_and(|r| r.is_changed());
@@ -94,13 +173,19 @@ fn feed_talents(
         &[
             ("vm_reset", vm_reset),
             ("self", self_changed),
+            ("groups", groups_changed),
             ("actions", actions_changed),
             ("talents", talents_changed),
             ("spells", spells_changed),
         ],
     );
     let gate = gate::Gate::new(
-        vm_reset || self_changed || actions_changed || talents_changed || spells_changed,
+        vm_reset
+            || self_changed
+            || groups_changed
+            || actions_changed
+            || talents_changed
+            || spells_changed,
     );
     if gate.skip() {
         return;
@@ -117,38 +202,39 @@ fn feed_talents(
         store.0.player_talent_points().unwrap_or(0),
         store.0.player_free_professions().unwrap_or(0),
     );
-    // Scoped: the `GlobalStrings.lua` lookup borrows the VM, which the push needs mutably.
-    let fresh = {
-        let get = |key: &str| {
-            script
-                .lua()
-                .globals()
-                .get::<String>(key)
-                .ok()
-                .filter(|t| !t.is_empty())
-        };
-        build_pages(
-            &talents.catalog,
-            &actions.spells,
-            &spells.catalog,
-            race,
-            class,
-            points,
-            &get,
-        )
-    };
+    let fresh = build_pages(
+        &talents.catalog,
+        &actions.spells,
+        &spells.catalog,
+        race,
+        class,
+        points,
+        &held,
+    );
     if fresh != memory.pushed {
         gate.audit("feed_talents", "the talent pages");
         debug!(
-            "ui_talent: fed {} tab(s), {} points",
+            "ui_talent: fed {} tab(s), {} group(s), {} unspent",
             fresh.tabs.len(),
-            points.0
+            fresh.groups.len(),
+            held.unspent
         );
         script.set_talents(fresh.clone());
         memory.pushed = fresh;
-        // The talent and profession point deltas, as the reference's `SignalEvent2` sends them:
-        // `ChatFrame.lua:1326` tests `arg2 > 0` unguarded, so an argless fire raises.
-        // `memory.points` still holds the previous pair here.
+    }
+    // The packet's events, after the snapshot they describe.
+    if !held.pending_events.is_empty() {
+        gate.audit("feed_talents", "the talent events");
+        for (event, args) in std::mem::take(&mut held.bypass_change_detection().pending_events) {
+            script.fire_event(event, args);
+        }
+    }
+    // The talent and profession point deltas, as the reference's `SignalEvent2` sends them:
+    // `ChatFrame.lua:1326` tests `arg2 > 0` unguarded, so an argless fire raises. The
+    // free-professions line is not composed here: the stock `ChatFrame_OnEvent` arm
+    // (`ChatFrame.lua:1324-1334`) prints `LEVEL_UP_SKILL_POINTS` itself on `arg2 > 0`.
+    if memory.points != Some(points) {
+        gate.audit("feed_talents", "the points memo");
         let (talent_delta, profession_delta) = match memory.points {
             Some((old_talent, old_professions)) => (
                 i64::from(points.0) - i64::from(old_talent),
@@ -156,6 +242,7 @@ fn feed_talents(
             ),
             None => (0, 0),
         };
+        memory.points = Some(points);
         script.fire_event(
             "CHARACTER_POINTS_CHANGED",
             vec![
@@ -164,26 +251,12 @@ fn feed_talents(
             ],
         );
     }
-    // The free-professions line must not be composed here: the stock `ChatFrame_OnEvent` arm
-    // (`ChatFrame.lua:1324-1334`) prints `LEVEL_UP_SKILL_POINTS` itself on `arg2 > 0`.
-    if memory.points != Some(points) {
-        gate.audit("feed_talents", "the points memo");
-        memory.points = Some(points);
-    }
 }
 
-/// A talent's rank: the highest rank whose spell is known.
-fn rank_of(t: &Talent, known: &BTreeSet<u32>) -> u32 {
-    t.ranks
-        .iter()
-        .enumerate()
-        .filter(|(_, &s)| s != 0 && known.contains(&s))
-        .map(|(i, _)| i as u32 + 1)
-        .max()
-        .unwrap_or(0)
-}
-
-/// Builds the pushed snapshot.
+/// Builds the pushed snapshot: the class's tabs in file order, each tab's talents in row order
+/// (`0x5c64d0`), and each group's ranks and unspent points. An inactive group's unspent is the
+/// total less its own spent, the total being the packet's unspent plus the active group's spent
+/// (`0x5c9ca0`).
 pub(crate) fn build_pages(
     catalog: &TalentCatalog,
     known: &BTreeSet<u32>,
@@ -193,189 +266,183 @@ pub(crate) fn build_pages(
     race: u8,
     class: u8,
     points: (u32, u32),
-    // The VM's `GlobalStrings.lua`, for the red requirement lines.
-    get: &dyn Fn(&str) -> Option<String>,
+    held: &PlayerTalentGroups,
 ) -> TalentUiState {
-    let mut tabs = Vec::new();
-    let mut pages = Vec::new();
-    for tab in catalog.tabs_for_class(race, class) {
+    let class_tabs = catalog.tabs_for_class(race, class);
+    let mut tabs = Vec::with_capacity(class_tabs.len());
+    let mut pages = Vec::with_capacity(class_tabs.len());
+    for tab in &class_tabs {
         let list = catalog.talents_in_tab(tab.id);
-        let spent: u32 = list.iter().map(|t| rank_of(t, known)).sum();
-        let mut views = Vec::with_capacity(list.len());
-        for t in list {
-            let rank = rank_of(t, known);
-            let max_rank = t.max_rank();
-            let display_spell = t.ranks[rank.max(1) as usize - 1];
-            let next_spell = if rank > 0 && rank < max_rank {
-                t.ranks[rank as usize]
-            } else {
-                0
-            };
-            let d = spells.get(display_spell);
-            // `meetsPrereq` is the `requiredSpell` check alone (`GetTalentInfo` `0x4f3200`).
-            let meets_prereq = t.required_spell == 0 || known.contains(&t.required_spell);
-            // The tier gate reads the tab's own spent sum; prereqs read the prereq's rank.
-            let tier_unlocked = t.row * 5 <= spent;
-            let mut req_lines = Vec::new();
-            if !tier_unlocked {
-                req_lines.extend(
-                    get("TOOLTIP_TALENT_TIER_POINTS")
-                        .map(|f| fill(&f, &[Arg::D(i64::from(t.row * 5)), Arg::S(&tab.name)])),
-                );
-            }
-            // The item tooltip's `ITEM_REQ_SKILL`, not the `LOCKED_WITH_*` or `SPELL_FAILED_*`
-            // keys that read the same in enUS.
-            if !meets_prereq {
-                if let Some(req) = spells.get(t.required_spell) {
-                    req_lines.extend(get("ITEM_REQ_SKILL").map(|f| fill(&f, &[Arg::S(&req.name)])));
+        let views = list
+            .iter()
+            .map(|t| {
+                let ranks = t.ranks[..t.max_rank() as usize]
+                    .iter()
+                    .map(|&spell| {
+                        let d = spells.get(spell);
+                        TalentRankView {
+                            spell,
+                            name: d.map(|d| d.name.clone()).unwrap_or_default(),
+                            icon: d.and_then(|d| d.icon.clone()),
+                        }
+                    })
+                    .collect();
+                // A prerequisite naming no row in the tab draws no arrow (two 12340 rows do).
+                let prereqs = t
+                    .prereqs
+                    .iter()
+                    .filter_map(|&(id, rank)| {
+                        let index = list.iter().position(|o| o.id == id)?;
+                        Some(TalentPrereqView { index, rank })
+                    })
+                    .collect();
+                TalentView {
+                    id: t.id,
+                    tier: t.row + 1,
+                    column: t.col + 1,
+                    ranks,
+                    exceptional: t.exceptional,
+                    prereqs,
+                    required_spell_known: t.required_spell == 0
+                        || known.contains(&t.required_spell),
+                    required_spell_name: (t.required_spell != 0)
+                        .then(|| spells.get(t.required_spell).map(|d| d.name.clone()))
+                        .flatten(),
                 }
-            }
-            let mut prereqs = Vec::new();
-            if t.prereq_talent != 0 {
-                if let Some(p) = catalog.talent(t.tab, t.prereq_talent) {
-                    let need = t.prereq_rank + 1;
-                    let learnable = rank_of(p, known) >= need;
-                    prereqs.push(TalentPrereqView {
-                        tier: p.row + 1,
-                        column: p.col + 1,
-                        learnable,
-                    });
-                    if !learnable {
-                        let p_name = spells
-                            .get(p.ranks[0])
-                            .map(|d| d.name.clone())
-                            .unwrap_or_default();
-                        req_lines.extend(
-                            benilla_ui::strings::plural("TOOLTIP_TALENT_PREREQ", Some(need), get)
-                                .map(|f| fill(&f, &[Arg::D(i64::from(need)), Arg::S(&p_name)])),
-                        );
-                    }
-                }
-            }
-            // The green hint is points left and not maxed alone (`SetTalent` `0x535170`); the
-            // frame's gold, green and gray come from the stock Lua.
-            let learnable = rank < max_rank && points.0 > 0;
-            views.push(TalentView {
-                name: d.map(|d| d.name.clone()).unwrap_or_default(),
-                texture: d.and_then(|d| d.icon.clone()),
-                tier: t.row + 1,
-                column: t.col + 1,
-                rank,
-                max_rank,
-                exceptional: t.exceptional,
-                meets_prereq,
-                prereqs,
-                display_spell,
-                next_spell,
-                req_lines,
-                learnable,
-            });
-        }
+            })
+            .collect::<Vec<_>>();
         tabs.push(TalentTabView {
             name: tab.name.clone(),
+            icon: tab.icon.clone(),
             background: tab.background.clone(),
-            points_spent: spent,
         });
-        pages.push(views);
+        pages.push((tab.id, views));
     }
+
+    // A rank that names no rank spell is dropped, as the packet reader drops it (`0x5c9347`).
+    let ranks_of = |group: &HashMap<u32, u8>| -> Vec<Vec<i32>> {
+        pages
+            .iter()
+            .map(|(_, views)| {
+                views
+                    .iter()
+                    .map(|v| match group.get(&v.id) {
+                        Some(&r) if usize::from(r) < v.ranks.len() => i32::from(r),
+                        _ => -1,
+                    })
+                    .collect()
+            })
+            .collect()
+    };
+    let spent = |ranks: &[Vec<i32>]| -> i32 { ranks.iter().flatten().map(|r| r + 1).sum() };
+    let group_ranks: Vec<Vec<Vec<i32>>> = held.ranks.iter().map(ranks_of).collect();
+    let active = held.active.min(group_ranks.len().saturating_sub(1));
+    let total = held.unspent as i32 + group_ranks.get(active).map_or(0, |r| spent(r));
+    let groups = group_ranks
+        .into_iter()
+        .enumerate()
+        .map(|(g, ranks)| {
+            let unspent = if g == active {
+                held.unspent
+            } else {
+                (total - spent(&ranks)).max(0) as u32
+            };
+            TalentGroupView { ranks, unspent }
+        })
+        .collect();
     TalentUiState {
         tabs,
-        talents: pages,
+        talents: pages.into_iter().map(|(_, v)| v).collect(),
+        groups,
+        active_group: active,
         points,
     }
 }
 
-/// Drains `LearnTalent(tab, index)` clicks into `CMSG_LEARN_TALENT` for the current rank count,
-/// the 0-based next rank, which vmangos learns up to.
-fn drain_talent_learns(
-    script: Option<NonSendMut<UiScript>>,
-    talents: Option<Res<Talents>>,
-    actions: Res<PlayerActions>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    commands: Res<NetCommands>,
-) {
+/// Drains the learn verbs into `CMSG_LEARN_TALENT` and `CMSG_LEARN_PREVIEW_TALENTS`; the VM chose
+/// the talent and rank (`0x5c80e0`, `0x5c6a10`), and the server answers with `SMSG_TALENTS_INFO`.
+fn drain_talent_learns(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
     let Some(mut script) = script else {
         return;
     };
-    let clicks = script.take_talent_learns();
-    if clicks.is_empty() {
-        return;
+    for (talent_id, rank) in script.take_talent_learns() {
+        debug!("ui_talent: learn talent {talent_id} rank {rank}");
+        let _ = commands
+            .0
+            .send(ClientCommand::LearnTalent { talent_id, rank });
     }
-    let Some(talents) = talents.as_deref() else {
-        return;
-    };
-    let Ok(store) = self_q.single() else {
-        return;
-    };
-    let race = store.0.unit_race().unwrap_or(0);
-    let class = store.0.unit_class().unwrap_or(0);
-    let tabs = talents.catalog.tabs_for_class(race, class);
-    for (tab, index) in clicks {
-        // 1-based Lua-facing pair; a 0 from a stray script is a miss, never an underflow.
-        let Some(t) = (tab as usize)
-            .checked_sub(1)
-            .and_then(|i| tabs.get(i))
-            .and_then(|tab| {
-                (index as usize)
-                    .checked_sub(1)
-                    .and_then(|i| talents.catalog.talents_in_tab(tab.id).get(i))
-            })
-        else {
-            continue;
-        };
-        let rank = rank_of(t, &actions.spells);
-        // Not at max is the client's only send gate (`LearnTalent` `0x4f36a0`); points and
-        // prereqs are the server's to enforce.
-        if rank >= t.max_rank() {
-            continue;
-        }
-        debug!("ui_talent: learn talent {} rank {}", t.id, rank);
-        let _ = commands.0.send(ClientCommand::LearnTalent {
-            talent_id: t.id,
-            rank,
-        });
+    for talents in script.take_talent_preview_learns() {
+        debug!("ui_talent: learn preview talents {talents:?}");
+        let _ = commands
+            .0
+            .send(ClientCommand::LearnPreviewTalents { talents });
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use benilla_formats::MAX_TALENT_RANK;
+    use benilla_protocol::messages::{LearnedTalent, TalentGroupInfo};
 
-    fn talent(id: u32, tab: u32, row: u32, col: u32, ranks: &[u32]) -> Talent {
-        let mut r = [0u32; MAX_TALENT_RANK];
-        r[..ranks.len()].copy_from_slice(ranks);
-        Talent {
-            id,
-            tab,
-            row,
-            col,
-            ranks: r,
-            prereq_talent: 0,
-            prereq_rank: 0,
-            required_spell: 0,
-            exceptional: false,
-        }
+    fn held(unspent: u32, active: u8, groups: Vec<Vec<(u32, u8)>>) -> PlayerTalentGroups {
+        let mut app = App::new();
+        app.init_resource::<PlayerTalentGroups>();
+        let info = TalentsInfo::Player {
+            unspent,
+            active_group: active,
+            groups: groups
+                .into_iter()
+                .map(|g| TalentGroupInfo {
+                    talents: g
+                        .into_iter()
+                        .map(|(talent_id, rank)| LearnedTalent { talent_id, rank })
+                        .collect(),
+                    glyphs: Vec::new(),
+                })
+                .collect(),
+        };
+        app.world_mut()
+            .run_system_cached_with(on_talents_info, SessionEvent::TalentsInfo(info))
+            .unwrap();
+        app.world_mut()
+            .remove_resource::<PlayerTalentGroups>()
+            .unwrap()
     }
 
     #[test]
-    fn rank_is_the_highest_known_rank_spell() {
-        let t = talent(1, 81, 0, 0, &[100, 101, 102]);
-        let known: BTreeSet<u32> = [100, 101].into_iter().collect();
-        assert_eq!(rank_of(&t, &known), 2);
-        assert_eq!(rank_of(&t, &BTreeSet::new()), 0);
-        // Learning up to a rank leaves no gap on the wire, but a gap still reads by the max.
-        let holey: BTreeSet<u32> = [102].into_iter().collect();
-        assert_eq!(rank_of(&t, &holey), 3);
+    fn the_packet_replaces_the_groups_and_owes_the_events() {
+        let h = held(3, 1, vec![vec![(26, 4)], vec![]]);
+        assert_eq!((h.unspent, h.active, h.ranks.len()), (3, 1, 2));
+        assert_eq!(h.ranks[0].get(&26), Some(&4));
+        let names: Vec<&str> = h.pending_events.iter().map(|(e, _)| *e).collect();
+        assert_eq!(
+            names,
+            vec!["PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED"]
+        );
+        assert_eq!(
+            h.pending_events[1].1,
+            vec![ScriptValue::Int(2), ScriptValue::Int(0)],
+            "new 2, old 0: there were no groups before"
+        );
     }
 
-    /// The rank reads the known spells alone, so a wipe shows once the `SMSG_REMOVED_SPELL` burst
-    /// empties them; the points are a descriptor field and arrive on their own.
     #[test]
-    fn an_emptied_book_reads_as_a_wiped_tree() {
-        let t = talent(1, 201, 0, 0, &[14522, 14788, 14789]);
-        let spent: BTreeSet<u32> = [14522, 14788, 14789].into_iter().collect();
-        assert_eq!(rank_of(&t, &spent), 3);
-        assert_eq!(rank_of(&t, &BTreeSet::new()), 0);
+    fn an_inactive_groups_unspent_is_the_total_less_its_spent() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let catalog = benilla_formats::load_talent_catalog(&mut chain).unwrap();
+        let spells = benilla_formats::load_spell_catalog(&mut chain).unwrap();
+        const HUMAN: u8 = 1;
+        const MAGE: u8 = 8;
+        let first = catalog.talents_in_tab(catalog.tabs_for_class(HUMAN, MAGE)[0].id)[0].id;
+        // Active group 1 holds 2 points in the first Arcane talent, 2 unspent: 4 in all. Group 2
+        // holds 1 point, so it has 3 to spend.
+        let h = held(2, 0, vec![vec![(first, 1)], vec![(first, 0)]]);
+        let state = build_pages(&catalog, &BTreeSet::new(), &spells, HUMAN, MAGE, (2, 0), &h);
+        assert_eq!(state.tabs.len(), 3);
+        assert_eq!(state.groups.len(), 2);
+        assert_eq!(state.groups[0].ranks[0][0], 1);
+        assert_eq!((state.groups[0].unspent, state.groups[1].unspent), (2, 3));
+        assert!(state.tabs.iter().all(|t| t.icon.is_some()));
     }
 }

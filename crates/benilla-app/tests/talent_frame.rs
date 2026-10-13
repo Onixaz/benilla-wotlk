@@ -5,8 +5,8 @@
 mod common;
 
 use benilla_ui::script::{
-    QuadContent, SpellTooltipView, TalentPrereqView, TalentTabView, TalentUiState, TalentView,
-    UiScript, UnitState,
+    QuadContent, SpellTooltipView, TalentGroupView, TalentPrereqView, TalentRankView,
+    TalentTabView, TalentUiState, TalentView, UiScript, UnitState,
 };
 
 /// The talent window's load prefix, in the production order.
@@ -45,50 +45,60 @@ fn load_ui(script: &UiScript) {
     }
 }
 
+fn ranks(first: u32, name: &str, icon: &str, n: u32) -> Vec<TalentRankView> {
+    (0..n)
+        .map(|i| TalentRankView {
+            spell: first + i,
+            name: name.into(),
+            icon: Some(format!("Interface\\Icons\\{icon}")),
+        })
+        .collect()
+}
+
 /// A rank-3 prereq two tiers up the same column, the empty cell between carrying the branch.
 /// `points_spent` of 10 or more unlocks tier 3 (yellow, `1`); fewer draws it gray (`-1`).
 fn fixture(points_spent: u32) -> TalentUiState {
     let rend = TalentView {
-        name: "Improved Rend".into(),
-        texture: Some("Interface\\Icons\\Ability_Gouge".into()),
+        id: 1,
         tier: 1,
         column: 3,
-        rank: 3,
-        max_rank: 3,
-        exceptional: false,
-        meets_prereq: true,
-        prereqs: Vec::new(),
-        display_spell: 201,
-        next_spell: 0,
-        req_lines: Vec::new(),
-        learnable: false,
+        ranks: ranks(201, "Improved Rend", "Ability_Gouge", 3),
+        required_spell_known: true,
+        ..Default::default()
     };
     let deep_wounds = TalentView {
-        name: "Deep Wounds".into(),
-        texture: Some("Interface\\Icons\\Ability_BackStab".into()),
+        id: 2,
         tier: 3,
         column: 3,
-        rank: 0,
-        max_rank: 3,
-        exceptional: false,
-        meets_prereq: true,
-        prereqs: vec![TalentPrereqView {
-            tier: 1,
-            column: 3,
-            learnable: true,
-        }],
-        display_spell: 301,
-        next_spell: 0,
-        req_lines: Vec::new(),
-        learnable: true,
+        ranks: ranks(301, "Deep Wounds", "Ability_BackStab", 3),
+        prereqs: vec![TalentPrereqView { index: 0, rank: 2 }],
+        required_spell_known: true,
+        ..Default::default()
     };
+    // Improved Rend holds three of the points; the rest sit in talents this page does not show.
+    let rest = points_spent.saturating_sub(3) as i32;
+    let mut filler = rend.clone();
+    filler.id = 3;
+    filler.column = 1;
+    filler.ranks = ranks(501, "Filler", "Ability_Gouge", rest.max(1) as u32);
+    let mut talents = vec![rend, deep_wounds];
+    let mut group = vec![2, -1];
+    if rest > 0 {
+        talents.push(filler);
+        group.push(rest - 1);
+    }
     TalentUiState {
         tabs: vec![TalentTabView {
             name: "Arms".into(),
+            icon: None,
             background: "WarriorArms".into(),
-            points_spent,
         }],
-        talents: vec![vec![rend, deep_wounds]],
+        talents: vec![talents],
+        groups: vec![TalentGroupView {
+            ranks: vec![group],
+            unspent: 2,
+        }],
+        active_group: 0,
         points: (2, 0),
     }
 }
@@ -98,12 +108,12 @@ fn fixture(points_spent: u32) -> TalentUiState {
 fn tall_fixture() -> TalentUiState {
     let mut state = fixture(10);
     let mut deep = state.talents[0][1].clone();
-    deep.name = "Mortal Strike".into();
+    deep.id = 4;
     deep.tier = 7;
-    deep.rank = 0;
     deep.prereqs = Vec::new();
-    deep.display_spell = 401;
+    deep.ranks = ranks(401, "Mortal Strike", "Ability_BackStab", 1);
     state.talents[0].push(deep);
+    state.groups[0].ranks[0].push(-1);
     state
 }
 

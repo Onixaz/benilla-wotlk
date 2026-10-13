@@ -108,6 +108,7 @@ mod net_stats;
 pub(crate) mod object;
 mod unit_cast;
 pub use object::frame_kind_from_tag;
+mod achievement;
 mod party;
 mod pet;
 mod petition;
@@ -262,7 +263,9 @@ pub use spellbook::{
 };
 pub use stable::{StableIntent, StablePetSlot, StableState, NUM_STABLE_SLOTS};
 pub use summon::SummonConfirmUiState;
-pub use talent::{TalentPrereqView, TalentTabView, TalentUiState, TalentView};
+pub use talent::{
+    TalentGroupView, TalentPrereqView, TalentRankView, TalentTabView, TalentUiState, TalentView,
+};
 pub use taxi::{TaxiNodeType, TaxiUiNode, TaxiUiState};
 pub use tooltip_spell::SpellTooltipView;
 pub use trade::{TradeSideState, TradeSlotItem, TradeState, TRADE_SLOTS};
@@ -581,6 +584,7 @@ impl UiScript {
         spellbook::install(&lua)?;
         macros::install(&lua)?;
         talent::install(&lua)?;
+        achievement::install(&lua)?;
         dialog_verbs::install(&lua)?;
         battlefield_score::install(&lua)?;
         battlefield_queue::install(&lua)?;

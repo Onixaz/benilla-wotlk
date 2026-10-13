@@ -16,6 +16,15 @@ impl WorldWriter {
         )
     }
 
+    /// `CMSG_LEARN_PREVIEW_TALENTS`: the preview mode's Learn, each `(talentId, rank)` whose
+    /// preview rank passes its learned one. The server answers with a fresh `SMSG_TALENTS_INFO`.
+    pub fn learn_preview_talents(&mut self, talents: &[(u32, u32)]) -> Result<()> {
+        self.send(
+            opcode::CMSG_LEARN_PREVIEW_TALENTS,
+            &messages::learn_preview_talents(talents),
+        )
+    }
+
     /// `MSG_TALENT_WIPE_CONFIRM`: the `CONFIRM_TALENT_WIPE` dialog's Accept; declining sends
     /// nothing. The server resets the talents and has the trainer cast spell 14867.
     pub fn talent_wipe_confirm(&mut self, trainer_guid: u64) -> Result<()> {

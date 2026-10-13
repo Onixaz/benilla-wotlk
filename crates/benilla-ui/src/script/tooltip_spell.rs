@@ -290,7 +290,19 @@ pub(super) struct TalentLines {
     /// The next rank's spell id, 0 for none, asked from the store while `next_desc` is missing.
     pub next_spell: u32,
     pub next_desc: Option<String>,
-    pub learn: bool,
+    /// The closing hint lines, in order (`0x622800`).
+    pub hints: Vec<TalentHint>,
+}
+
+/// One closing hint of a talent tooltip.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TalentHint {
+    /// `TOOLTIP_TALENT_LEARN`, green: the active group can spend here.
+    Learn,
+    /// `TALENT_TOOLTIP_ADDPREVIEWPOINT`, green: a preview point can go here.
+    AddPreview,
+    /// `TALENT_TOOLTIP_REMOVEPREVIEWPOINT`, red: a preview point can come off.
+    RemovePreview,
 }
 
 /// The talent learn hint's green, `0xff00ff00`.
@@ -414,9 +426,14 @@ fn render_spell(
             }
             append_line(lua, this, (next.clone(), GOLD), None, true)?;
         }
-        if t.learn {
-            if let Some(hint) = crate::strings::global(lua, "TOOLTIP_TALENT_LEARN") {
-                append_line(lua, this, (hint, GREEN), None, false)?;
+        for hint in &t.hints {
+            let (key, colour) = match hint {
+                TalentHint::Learn => ("TOOLTIP_TALENT_LEARN", GREEN),
+                TalentHint::AddPreview => ("TALENT_TOOLTIP_ADDPREVIEWPOINT", GREEN),
+                TalentHint::RemovePreview => ("TALENT_TOOLTIP_REMOVEPREVIEWPOINT", RED),
+            };
+            if let Some(text) = crate::strings::global(lua, key) {
+                append_line(lua, this, (text, colour), None, false)?;
             }
         }
     }

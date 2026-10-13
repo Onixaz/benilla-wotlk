@@ -797,6 +797,9 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             zone,
             delay_ms,
         }],
+        ServerPacket::TalentsInfo(info) => vec![SessionEvent::TalentsInfo(info)],
+        ServerPacket::AllAchievementData(d) => vec![SessionEvent::AllAchievementData(d)],
+        ServerPacket::AchievementEarned(e) => vec![SessionEvent::AchievementEarned(e)],
         ServerPacket::TalentWipeConfirm { trainer, cost } => {
             vec![SessionEvent::TalentWipeConfirm { trainer, cost }]
         }

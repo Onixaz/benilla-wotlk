@@ -473,8 +473,17 @@ pub(crate) struct Model {
     pub(crate) spell_targetable_units: HashSet<u64>,
 
     pub(crate) talents: super::talent::TalentUiState,
-    /// `LearnTalent(tab, index)` calls queued.
+    /// `CanShowAchievementUI`: the achievement list arrived.
+    pub(crate) achievement_list_received: bool,
+    /// `HasCompletedAnyAchievement`: the player's completed achievements held.
+    pub(crate) achievements_completed: usize,
+    /// The preview ranks per group, tab and talent, 0-based with -1 for none; reset to the learned
+    /// ranks by every push.
+    pub(crate) talent_preview: Vec<Vec<Vec<i32>>>,
+    /// `LearnTalent` sends queued, `(talentId, rank)`.
     pub(crate) talent_learns: Vec<(u32, u32)>,
+    /// `LearnPreviewTalents` sends queued, one `(talentId, rank)` list each.
+    pub(crate) talent_preview_learns: Vec<Vec<(u32, u32)>>,
     /// `ConfirmTalentWipe()` calls, one `MSG_TALENT_WIPE_CONFIRM` each; the app holds the trainer.
     pub(crate) talent_wipe_confirms: u32,
     /// `CheckTalentMasterDist()`: the respec question is live and in range; false hides its dialog.
@@ -1234,7 +1243,11 @@ impl Model {
             spell_targeting: false,
             spell_targetable_units: HashSet::new(),
             talents: super::talent::TalentUiState::default(),
+            achievement_list_received: false,
+            achievements_completed: 0,
+            talent_preview: Vec::new(),
             talent_learns: Vec::new(),
+            talent_preview_learns: Vec::new(),
             talent_wipe_confirms: 0,
             talent_master_pending: false,
             pet_unlearn_confirms: 0,

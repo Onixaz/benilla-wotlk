@@ -225,6 +225,12 @@ pub enum ServerPacket {
         trainer: u64,
         cost: u32,
     },
+    /// `SMSG_TALENTS_INFO`: the player's talent groups, or the pet's talents.
+    TalentsInfo(super::TalentsInfo),
+    /// `SMSG_ALL_ACHIEVEMENT_DATA`: the player's completed achievements.
+    AllAchievementData(super::AllAchievementData),
+    /// `SMSG_ACHIEVEMENT_EARNED`: a unit earned an achievement.
+    AchievementEarned(super::AchievementEarned),
     /// `SMSG_PET_UNLEARN_CONFIRM`: a pet trainer asks; `CMSG_PET_UNLEARN` with the guid confirms.
     PetUnlearnConfirm {
         trainer: u64,
@@ -1306,6 +1312,9 @@ impl ServerPacket {
             ServerPacket::PlayerBound { .. } => "SMSG_PLAYERBOUND".into(),
             ServerPacket::SummonRequest { .. } => "SMSG_SUMMON_REQUEST".into(),
             ServerPacket::TalentWipeConfirm { .. } => "MSG_TALENT_WIPE_CONFIRM".into(),
+            ServerPacket::TalentsInfo(_) => "SMSG_TALENTS_INFO".into(),
+            ServerPacket::AllAchievementData(_) => "SMSG_ALL_ACHIEVEMENT_DATA".into(),
+            ServerPacket::AchievementEarned(_) => "SMSG_ACHIEVEMENT_EARNED".into(),
             ServerPacket::PetUnlearnConfirm { .. } => "SMSG_PET_UNLEARN_CONFIRM".into(),
             ServerPacket::RaidGroupOnly { .. } => "SMSG_RAID_GROUP_ONLY".into(),
             ServerPacket::AreaSpiritHealerTime { .. } => "SMSG_AREA_SPIRIT_HEALER_TIME".into(),

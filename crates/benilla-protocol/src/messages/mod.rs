@@ -1,6 +1,7 @@
 //! World (`mangosd`) packet bodies: server packets decode into [`ServerPacket`] via
 //! [`parse_server`], client bodies are built here; the header framing lives in [`crate::world`].
 
+mod achievement;
 mod action_bar;
 pub mod addons;
 mod area_trigger;
@@ -50,6 +51,7 @@ mod spells;
 mod stable;
 mod summon;
 mod tabard;
+mod talents;
 mod taxi;
 mod trade;
 mod trainer;
@@ -57,6 +59,7 @@ mod tutorial;
 mod update_object;
 mod vendor;
 mod world_state;
+pub use achievement::{AchievementEarned, AllAchievementData};
 pub use action_bar::{
     set_action_button, set_actionbar_toggles, ActionButton, ACTION_KIND_ITEM, ACTION_KIND_MACRO,
     ACTION_KIND_SPELL,
@@ -243,6 +246,7 @@ pub use summon::{summon_response, SummonRequest};
 pub use tabard::{
     battlemaster_hello, save_guild_emblem, tabard_vendor_activate, GUILD_EMBLEM_RESULT_MESSAGES,
 };
+pub use talents::{learn_preview_talents, LearnedTalent, TalentGroupInfo, TalentsInfo};
 pub use taxi::{
     activate_taxi, activate_taxi_express, taxi_node_status_query, taxi_query_available_nodes,
     taxi_reply, TaxiMask,

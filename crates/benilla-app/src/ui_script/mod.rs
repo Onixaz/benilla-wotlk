@@ -1032,6 +1032,8 @@ mod target_aura_tests;
 
 #[cfg(test)]
 mod aura_verb_tests;
+#[cfg(test)]
+mod talent_ui_tests;
 
 #[cfg(test)]
 mod zone_text_tests;

@@ -1286,11 +1286,16 @@ pub(crate) enum ClientCommand {
     BuyStableSlot {
         npc: u64,
     },
-    /// `CMSG_LEARN_TALENT`: a `Talent.dbc` row and the 0-based rank, which is the current rank
-    /// count. No reply beyond the learn and `PLAYER_CHARACTER_POINTS1`.
+    /// `CMSG_LEARN_TALENT`: a `Talent.dbc` row and the 0-based rank to learn, the active
+    /// group's next. The server answers with `SMSG_TALENTS_INFO`.
     LearnTalent {
         talent_id: u32,
         rank: u32,
+    },
+    /// `CMSG_LEARN_PREVIEW_TALENTS`: the preview mode's Learn, each `(talentId, rank)` whose
+    /// preview rank passes its learned one.
+    LearnPreviewTalents {
+        talents: Vec<(u32, u32)>,
     },
     /// `CMSG_UNLEARN_SKILL`. No ack: the line leaves only by the `PLAYER_SKILL_INFO` update.
     UnlearnSkill {

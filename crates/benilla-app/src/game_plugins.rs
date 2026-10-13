@@ -34,6 +34,7 @@ use crate::target::TargetPlugin;
 use crate::textinput::TextInputPlugin;
 use crate::transport::TransportPlugin;
 use crate::tutorial::TutorialPlugin;
+use crate::ui_achievement::UiAchievementPlugin;
 use crate::ui_action::UiActionPlugin;
 use crate::ui_auction::UiAuctionPlugin;
 use crate::ui_aura::UiAuraPlugin;
@@ -210,6 +211,7 @@ impl PluginGroup for GamePlugins {
             .add(crate::ui_macro::UiMacroPlugin)
             // After UiActionPlugin, whose `Spells` catalog it shares.
             .add(UiTalentPlugin)
+            .add(UiAchievementPlugin)
             .add(UiTalentWipePlugin)
             // The form list by the reference's admission and order (`0x4b25b0`, `0x4b2bb0`); after
             // UiActionPlugin (`Spells`) and SpellPlugin (the cast tail).

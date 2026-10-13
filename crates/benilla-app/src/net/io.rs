@@ -1180,6 +1180,9 @@ fn writer_loop(
                     ClientCommand::LearnTalent { talent_id, rank } => {
                         w.learn_talent(talent_id, rank)
                     }
+                    ClientCommand::LearnPreviewTalents { talents } => {
+                        w.learn_preview_talents(&talents)
+                    }
                     ClientCommand::UnlearnSkill { skill_id } => w.unlearn_skill(skill_id),
                     ClientCommand::SetFactionAtWar {
                         rep_list_id,

@@ -4,59 +4,59 @@
 use super::common::script;
 use crate::script::*;
 
+fn ranks(first: u32, name: &str, n: u32) -> Vec<TalentRankView> {
+    (0..n)
+        .map(|i| TalentRankView {
+            spell: first + i,
+            name: name.into(),
+            icon: Some("Interface\\Icons\\Spell_Fire_FlameBolt".into()),
+        })
+        .collect()
+}
+
+/// Fire: Improved Fireball (tier 1, rank 3 of 5) and Ignite (tier 2, unlearned, needs Improved
+/// Fireball at rank 5); an empty Frost tab. One group, two points unspent.
 fn one_tab_state() -> TalentUiState {
     TalentUiState {
         tabs: vec![
             TalentTabView {
                 name: "Fire".into(),
+                icon: None,
                 background: "MageFire".into(),
-                points_spent: 7,
             },
             TalentTabView {
                 name: "Frost".into(),
+                icon: None,
                 background: "MageFrost".into(),
-                points_spent: 0,
             },
         ],
         talents: vec![
             vec![
                 TalentView {
-                    name: "Improved Fireball".into(),
-                    texture: Some("Interface\\Icons\\Spell_Fire_FlameBolt".into()),
+                    id: 26,
                     tier: 1,
                     column: 1,
-                    rank: 3,
-                    max_rank: 5,
-                    exceptional: false,
-                    meets_prereq: true,
-                    prereqs: Vec::new(),
-                    display_spell: 11070,
-                    next_spell: 11071,
-                    req_lines: Vec::new(),
-                    learnable: true,
+                    ranks: ranks(11068, "Improved Fireball", 5),
+                    required_spell_known: true,
+                    ..Default::default()
                 },
                 TalentView {
-                    name: "Ignite".into(),
-                    texture: None,
+                    id: 34,
                     tier: 2,
                     column: 2,
-                    rank: 0,
-                    max_rank: 5,
-                    exceptional: false,
-                    meets_prereq: true,
-                    prereqs: vec![TalentPrereqView {
-                        tier: 1,
-                        column: 1,
-                        learnable: false,
-                    }],
-                    display_spell: 11119,
-                    next_spell: 0,
-                    req_lines: vec!["Requires 5 points in Improved Fireball".into()],
-                    learnable: false,
+                    ranks: ranks(11119, "Ignite", 5),
+                    prereqs: vec![TalentPrereqView { index: 0, rank: 4 }],
+                    required_spell_known: true,
+                    ..Default::default()
                 },
             ],
             Vec::new(),
         ],
+        groups: vec![TalentGroupView {
+            ranks: vec![vec![2, -1], Vec::new()],
+            unspent: 2,
+        }],
+        active_group: 0,
         points: (2, 1),
     }
 }
@@ -68,20 +68,20 @@ fn bindings_read_the_pushed_snapshot() {
     s.run(
         r#"
         assert(GetNumTalentTabs() == 2)
-        local name, texture, points, file = GetTalentTabInfo(1)
-        assert(name == "Fire" and texture == nil and points == 7 and file == "MageFire")
+        local name, icon, points, file, preview = GetTalentTabInfo(1)
+        assert(name == "Fire" and icon == nil and points == 3 and file == "MageFire" and preview == 0)
         assert(GetTalentTabInfo(3) == nil, "out of range is nil")
         assert(GetNumTalents(1) == 2 and GetNumTalents(2) == 0 and GetNumTalents(9) == 0)
 
-        local n, icon, tier, col, rank, max, exc, meets = GetTalentInfo(1, 1)
+        local n, icon, tier, col, rank, max, exc, meets, prank, pmeets = GetTalentInfo(1, 1)
         assert(n == "Improved Fireball" and tier == 1 and col == 1)
-        assert(rank == 3 and max == 5 and exc == 0 and meets == true)
+        assert(rank == 3 and max == 5 and exc == nil and meets == 1 and prank == 3 and pmeets == 1)
         assert(icon == "Interface\\Icons\\Spell_Fire_FlameBolt")
         assert(GetTalentInfo(1, 9) == nil)
 
-        -- The prereq triplets, flat (the reference walks arg[5], arg[6], arg[7], ...).
-        local pt, pc, pl = GetTalentPrereqs(1, 2)
-        assert(pt == 1 and pc == 1 and pl == false)
+        -- The prereq quadruplets, flat.
+        local pt, pc, pl, ppl = GetTalentPrereqs(1, 2)
+        assert(pt == 1 and pc == 1 and pl == nil and ppl == nil)
         assert(GetTalentPrereqs(1, 1) == nil, "no prereqs is empty")
 
         local cp1, cp2 = UnitCharacterPoints("player")
@@ -93,23 +93,26 @@ fn bindings_read_the_pushed_snapshot() {
 }
 
 #[test]
-fn learn_talent_queues_for_the_app_drain() {
+fn learn_talent_queues_the_talent_and_its_next_rank() {
     let mut s = script();
     s.set_talents(one_tab_state());
     s.run("LearnTalent(1, 1); LearnTalent(1, 2)").unwrap();
-    assert_eq!(s.take_talent_learns(), vec![(1, 1), (1, 2)]);
+    assert_eq!(s.take_talent_learns(), vec![(26, 3), (34, 0)]);
     assert!(s.take_talent_learns().is_empty(), "drain empties the queue");
     assert!(s.take_errors().is_empty());
 }
 
-/// Stand-in values for the three talent keys, not the shipped wording: the tests check which key
-/// each line reaches.
+/// Stand-in values for the talent keys, not the shipped wording: the tests check which key each
+/// line reaches.
 fn seed_talent_strings(s: &mut UiScript) {
     s.run(
         r#"
         TOOLTIP_TALENT_RANK      = "[RANK %d/%d]"
         TOOLTIP_TALENT_NEXT_RANK = "[NEXT_RANK]"
         TOOLTIP_TALENT_LEARN     = "[LEARN]"
+        TOOLTIP_TALENT_PREREQ_P1 = "Requires %d points in %s"
+        TALENT_TOOLTIP_ADDPREVIEWPOINT    = "[ADD]"
+        TALENT_TOOLTIP_REMOVEPREVIEWPOINT = "[REMOVE]"
     "#,
     )
     .unwrap();
@@ -194,11 +197,15 @@ fn set_talent_on_a_passive_talent_is_the_talent_builder() {
 fn set_talent_on_an_exceptional_talent_keeps_the_spell_body() {
     let mut s = script();
     seed_talent_strings(&mut s);
+    s.run(r#"TOOLTIP_TALENT_TIER_POINTS = "Requires %d points in %s Talents""#)
+        .unwrap();
     let mut state = one_tab_state();
+    state.tabs[0].name = "Protection".into();
     let holy_shield = &mut state.talents[0][1];
-    holy_shield.name = "Holy Shield".into();
+    holy_shield.ranks = ranks(11119, "Holy Shield", 5);
+    holy_shield.tier = 7;
+    holy_shield.prereqs.clear();
     holy_shield.exceptional = true;
-    holy_shield.req_lines = vec!["Requires 30 points in Protection Talents".into()];
     s.set_talents(state);
     s.set_spell_tooltip(
         11119,
@@ -271,7 +278,8 @@ fn set_talent_locked_reqs_and_the_ask_once_miss() {
         tt:SetTalent(1, 2)
         -- name, rank, req(red), desc = 4 lines; rank 0 has no next block, locked has no hint.
         assert(tt:NumLines() == 4, "got " .. tt:NumLines())
-        assert(TT2TextLeft3:GetText() == "Requires 5 points in Improved Fireball")
+        assert(TT2TextLeft3:GetText() == "Requires 5 points in Improved Fireball",
+            tostring(TT2TextLeft3:GetText()))
     "#,
     )
     .unwrap();
@@ -282,5 +290,40 @@ fn set_talent_locked_reqs_and_the_ask_once_miss() {
             if t.starts_with("Requires 5") && (c[0] - 1.0).abs() < 1e-6 && c[1] < 0.2)
     });
     assert!(red, "the requirement line is red");
+    assert!(s.take_errors().is_empty());
+}
+
+/// With `isPreview` the closing hints are the preview moves that would pass (`0x622800`): a point
+/// can go on Improved Fireball and, once one is on, come off.
+#[test]
+fn set_talent_in_preview_offers_the_moves_that_would_pass() {
+    let mut s = script();
+    seed_talent_strings(&mut s);
+    s.set_talents(one_tab_state());
+    s.set_spell_tooltip(
+        11070,
+        passive_body("Reduces the casting time of your Fireball spell by 0.3 sec."),
+    );
+    s.set_spell_tooltip(
+        11071,
+        passive_body("Reduces the casting time of your Fireball spell by 0.4 sec."),
+    );
+    s.run(
+        r#"
+        local a = CreateFrame("Button", "TB4"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local tt = CreateFrame("GameTooltip", "TT4")
+        tt:SetOwner(a, "ANCHOR_RIGHT")
+        tt:SetTalent(1, 1, false, false, 1, true)
+        local last = getglobal("TT4TextLeft" .. tt:NumLines()):GetText()
+        assert(last == "[ADD]", "nothing previewed: add only, got " .. tostring(last))
+        AddPreviewTalentPoints(1, 1, 1)
+        tt:SetOwner(a, "ANCHOR_RIGHT")
+        tt:SetTalent(1, 1, false, false, 1, true)
+        local n = tt:NumLines()
+        assert(getglobal("TT4TextLeft" .. (n - 1)):GetText() == "[ADD]")
+        assert(getglobal("TT4TextLeft" .. n):GetText() == "[REMOVE]")
+    "#,
+    )
+    .unwrap();
     assert!(s.take_errors().is_empty());
 }

@@ -311,6 +311,12 @@ pub enum SessionEvent {
     },
     /// `MSG_TALENT_WIPE_CONFIRM`, `cost` in copper; accepting echoes it, declining sends nothing.
     TalentWipeConfirm { trainer: u64, cost: u32 },
+    /// The talent groups (`SMSG_TALENTS_INFO`): the player's, or the pet's.
+    TalentsInfo(crate::messages::TalentsInfo),
+    /// The player's completed achievements (`SMSG_ALL_ACHIEVEMENT_DATA`).
+    AllAchievementData(crate::messages::AllAchievementData),
+    /// A unit earned an achievement (`SMSG_ACHIEVEMENT_EARNED`).
+    AchievementEarned(crate::messages::AchievementEarned),
     /// `SMSG_PET_UNLEARN_CONFIRM`: accept with `CMSG_PET_UNLEARN`; declining sends nothing.
     PetUnlearnConfirm { trainer: u64, cost: u32 },
     /// The instance-boot clock (`SMSG_RAID_GROUP_ONLY`): a positive delay arms it

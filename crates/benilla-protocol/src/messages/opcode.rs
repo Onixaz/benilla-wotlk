@@ -649,6 +649,18 @@ pub const CMSG_STABLE_SWAP_PET: u16 = 0x0275; // 629
 
 /// Spend a talent point; the rank's `SMSG_LEARNED_SPELL` and `PLAYER_CHARACTER_POINTS1` answer it.
 pub const CMSG_LEARN_TALENT: u16 = 0x0251; // 593
+/// 3.3.5a only: the pet's `LearnTalent`, `u64 pet`, `u32 talentId`, `u32 rank` (`0x5c8291`).
+pub const CMSG_PET_LEARN_TALENT: u16 = 0x047A;
+/// 3.3.5a only: a unit earned an achievement (`0x5b3020`).
+pub const SMSG_ACHIEVEMENT_EARNED: u16 = 0x0468;
+/// 3.3.5a only: the player's completed achievements and criteria at login (`0x5b32f0`).
+pub const SMSG_ALL_ACHIEVEMENT_DATA: u16 = 0x047D;
+/// 3.3.5a only: every talent group's ranks, or the pet's (`0x6cd770`).
+pub const SMSG_TALENTS_INFO: u16 = 0x04C0;
+/// 3.3.5a only: the preview mode's learn, `u32 count` × (`u32 talentId`, `u32 rank`) (`0x5c6a10`).
+pub const CMSG_LEARN_PREVIEW_TALENTS: u16 = 0x04C1;
+/// 3.3.5a only: the pet's preview learn, the pet guid before the same body (`0x5c6ab4`).
+pub const CMSG_LEARN_PREVIEW_TALENTS_PET: u16 = 0x04C2;
 
 /// The respec, both ways: the trainer's gossip line (`Player.cpp:12406`) makes the server ask with
 /// the trainer's guid and the cost; the `CONFIRM_TALENT_WIPE` Accept sends the latched guid back.

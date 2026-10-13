@@ -516,6 +516,40 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // IsCurrentSpell(spellId | name) (`0x541500`): 1 while that spell is the current cast, else
+    // nil. Deviation: 12340 asks the cast state by spell id (`0x806030`); here it is the book
+    // slot's `current` verdict, so a spell the book does not list answers nil.
+    g.set(
+        "IsCurrentSpell",
+        lua.create_function(|lua, spell: Value| {
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let current = match &spell {
+                Value::Integer(_) | Value::Number(_) => {
+                    let id = super::binding_abi::number_arg(lua, spell.clone(), "")?;
+                    model
+                        .spellbook
+                        .slots
+                        .iter()
+                        .any(|s| s.current && f64::from(s.spell_id) == id as f64)
+                }
+                Value::String(name) => {
+                    let name = name.to_string_lossy();
+                    model
+                        .spellbook
+                        .slots
+                        .iter()
+                        .any(|s| s.current && s.name == name)
+                }
+                _ => false,
+            };
+            Ok(if current {
+                Value::Integer(1)
+            } else {
+                Value::Nil
+            })
+        })?,
+    )?;
+
     // GetSummonFriendCooldown() (`0x511d30`): the Summon Friend spell's cooldown through the
     // same query as `GetSpellCooldown` (`0x809000`), start and duration in seconds. benilla tracks
     // no Recruit-a-Friend cooldown, so it is the no-cooldown `(0, 0, 1)`.

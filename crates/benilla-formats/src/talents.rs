@@ -25,13 +25,14 @@ const COL_T_TAB: usize = 1;
 const COL_T_ROW: usize = 2;
 const COL_T_COL: usize = 3;
 const COL_T_RANK0: usize = 4; // ..=8, five rank spells
-const COL_T_PREREQ: usize = 13;
-const COL_T_PREREQ_RANK: usize = 16;
+const COL_T_PREREQ: usize = 13; // ..=15
+const COL_T_PREREQ_RANK: usize = 16; // ..=18
 const COL_T_FLAGS: usize = 19;
 const COL_T_REQUIRED_SPELL: usize = 20;
 
 const TALENT_TAB_FIELDS: usize = 24;
 const COL_TT_NAME_ENUS: usize = 1;
+const COL_TT_SPELL_ICON: usize = 18;
 const COL_TT_RACE_MASK: usize = 19;
 const COL_TT_CLASS_MASK: usize = 20;
 const COL_TT_BACKGROUND: usize = 23;
@@ -51,10 +52,10 @@ pub struct Talent {
     pub col: u32,
     /// The spell taught at each rank; a talent with `n` ranks fills exactly the first `n`.
     pub ranks: [u32; MAX_TALENT_RANK],
-    /// Prerequisite talent id (0 for none) and the 0-based rank it needs. Every shipped
-    /// prerequisite is in the same tab, the only arrows the reference frame draws.
-    pub prereq_talent: u32,
-    pub prereq_rank: u32,
+    /// Prerequisite talents and the 0-based rank each needs, the three `Talent.dbc` slots that
+    /// name one (`GetTalentPrereqs` walks all three, `0x5c7ed0`). Every shipped prerequisite is
+    /// in the same tab, the only arrows the reference frame draws.
+    pub prereqs: Vec<(u32, u32)>,
     /// A spell that must be known regardless of talents (0 = none).
     pub required_spell: u32,
     /// Flags bit 0 (`TalentRec+0x4c`), the Lua API's `isExceptional`: an activatable ability.
@@ -79,6 +80,9 @@ pub struct TalentTabInfo {
     pub class_mask: u32,
     /// The `Interface\TalentFrame\<background>-…` art base ("MageFire").
     pub background: String,
+    /// `SpellIconID` through `SpellIcon.dbc`, `GetTalentTabInfo`'s icon (`0x5c61c3`); `None`
+    /// when it names no row.
+    pub icon: Option<String>,
 }
 
 /// Talent tabs by class and talents by tab.
@@ -151,6 +155,7 @@ pub fn load_talent_catalog(chain: &mut Chain) -> Result<TalentCatalog> {
         .read_file(TALENT_TAB)
         .context("reading TalentTab.dbc")?;
     let tab_set = parse(&tab_bytes, talent_tab_schema(), "TalentTab.dbc")?;
+    let icons = crate::dbc::load_spell_icon_map(chain)?;
     let mut tabs = Vec::new();
     for r in tab_set.records() {
         let Some(id) = u32_at(r, 0) else { continue };
@@ -160,6 +165,7 @@ pub fn load_talent_catalog(chain: &mut Chain) -> Result<TalentCatalog> {
             race_mask: u32_at(r, COL_TT_RACE_MASK).unwrap_or(0),
             class_mask: u32_at(r, COL_TT_CLASS_MASK).unwrap_or(0),
             background: str_at(&tab_set, r, COL_TT_BACKGROUND).unwrap_or_default(),
+            icon: u32_at(r, COL_TT_SPELL_ICON).and_then(|i| icons.get(&i).cloned()),
         });
     }
 
@@ -178,8 +184,12 @@ pub fn load_talent_catalog(chain: &mut Chain) -> Result<TalentCatalog> {
             row: u32_at(r, COL_T_ROW).unwrap_or(0),
             col: u32_at(r, COL_T_COL).unwrap_or(0),
             ranks,
-            prereq_talent: u32_at(r, COL_T_PREREQ).unwrap_or(0),
-            prereq_rank: u32_at(r, COL_T_PREREQ_RANK).unwrap_or(0),
+            prereqs: (0..3)
+                .filter_map(|i| {
+                    let talent = u32_at(r, COL_T_PREREQ + i).unwrap_or(0);
+                    (talent != 0).then(|| (talent, u32_at(r, COL_T_PREREQ_RANK + i).unwrap_or(0)))
+                })
+                .collect(),
             required_spell: u32_at(r, COL_T_REQUIRED_SPELL).unwrap_or(0),
             exceptional: u32_at(r, COL_T_FLAGS).unwrap_or(0) & 1 != 0,
         };
@@ -217,6 +227,13 @@ mod tests {
                 .map(|t| t.background.as_str())
                 .collect::<Vec<_>>(),
             vec!["MageArcane", "MageFire", "MageFrost"]
+        );
+        assert!(
+            tabs.iter().all(|t| t
+                .icon
+                .as_deref()
+                .is_some_and(|i| i.starts_with("Interface"))),
+            "every mage tab names an icon"
         );
         // Every class tab's raceMask covers races 1-11 alone, so race 12 admits nothing.
         assert!(
@@ -259,26 +276,25 @@ mod tests {
                 "talent {} rank array is prefix-shaped",
                 t.id
             );
-            // 12340 ships two prerequisites that name no row: 1756 → 1409 and 1993 → 1994.
-            if t.prereq_talent != 0 && !all_ids.contains(&t.prereq_talent) {
+            for &(prereq, rank) in &t.prereqs {
+                // 12340 ships two prerequisites that name no row: 1756 → 1409 and 1993 → 1994.
+                if !all_ids.contains(&prereq) {
+                    assert!(
+                        matches!((t.id, prereq), (1756, 1409) | (1993, 1994)),
+                        "talent {} prereq {prereq} resolves",
+                        t.id
+                    );
+                    continue;
+                }
                 assert!(
-                    matches!((t.id, t.prereq_talent), (1756, 1409) | (1993, 1994)),
-                    "talent {} prereq {} resolves",
-                    t.id,
-                    t.prereq_talent
+                    cat.talent(t.tab, prereq).is_some(),
+                    "talent {} prereq {prereq} lives in the same tab",
+                    t.id
                 );
-            } else if t.prereq_talent != 0 {
                 assert!(
-                    cat.talent(t.tab, t.prereq_talent).is_some(),
-                    "talent {} prereq {} lives in the same tab",
-                    t.id,
-                    t.prereq_talent
-                );
-                assert!(
-                    (t.prereq_rank as usize) < MAX_TALENT_RANK,
-                    "talent {} prereq rank {} is 0-based sane",
-                    t.id,
-                    t.prereq_rank
+                    (rank as usize) < MAX_TALENT_RANK,
+                    "talent {} prereq rank {rank} is 0-based sane",
+                    t.id
                 );
             }
         }

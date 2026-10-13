@@ -115,6 +115,7 @@ mod text_reshape;
 mod textinput;
 mod transport;
 mod tutorial;
+mod ui_achievement;
 mod ui_action;
 mod ui_auction;
 mod ui_aura;
