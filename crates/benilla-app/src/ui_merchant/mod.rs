@@ -130,8 +130,8 @@ impl Plugin for UiMerchantPlugin {
 /// the handler's `ret`. vmangos never sends it.
 const BUY_SILENT: u8 = 6;
 
-/// The message a `SMSG_BUY_FAILED` code shows, from the reference's switch at `0x5dcdd8`; its
-/// default arm (`0x5dce81`) shows `ERR_ITEM_NOT_FOUND` for 0, 3, 9, 10 and 13 up.
+/// The message a `SMSG_BUY_FAILED` code shows, from 12340's switch at `0x6cdc23`; its default arm
+/// shows `ERR_ITEM_NOT_FOUND` for 0, 3, 9, 10 and 13 up.
 fn buy_error_key(reason: u8) -> Option<&'static str> {
     Some(match reason {
         // One arm (`0x5dcdee`) for both; only code 1 also zeroes the row.
@@ -147,9 +147,9 @@ fn buy_error_key(reason: u8) -> Option<&'static str> {
     })
 }
 
-/// The message a `SMSG_SELL_ITEM` error code shows, from the reference's switch at `0x5dd22c`.
-/// Its default is silence: 0 returns before the switch (`0x5dd21e`), and 5 and 7 up skip the
-/// `DisplayError`.
+/// The message a `SMSG_SELL_ITEM` error code shows, from 12340's switch at `0x6d157c`, which hands
+/// the row's text to `AddErrorMessage` (`0x6d15f7`) while the vendor's unit exists. Its default is
+/// silence: 0 returns before the switch, and 5 and 10 up skip the message.
 fn sell_error_key(reason: u8) -> Option<&'static str> {
     Some(match reason {
         sell_result::CANT_FIND_ITEM => "ERR_ITEM_NOT_FOUND", // 0x17
@@ -157,6 +157,9 @@ fn sell_error_key(reason: u8) -> Option<&'static str> {
         sell_result::CANT_FIND_VENDOR => "ERR_VENDOR_HATES_YOU", // 0x22
         sell_result::YOU_DONT_OWN_THAT_ITEM => "ERR_NOT_OWNER", // 0x1b
         sell_result::ONLY_EMPTY_BAG => "ERR_DESTROY_NONEMPTY_BAG", // 0x0b
+        sell_result::CANT_SELL_TO_THIS_MERCHANT => "ERR_VENDOR_DOESNT_BUY",
+        sell_result::MUST_REPAIR_DURABILITY => "ERR_MUST_REPAIR_DURABILITY",
+        sell_result::INTERNAL_BAG_ERROR => "ERR_INTERNAL_BAG_ERROR",
         _ => return None,
     })
 }
@@ -1346,7 +1349,7 @@ mod tests {
         }
     }
 
-    /// The ids are asserted, not just the keys: each is its arm's `push <id>; call 0x496720`.
+    /// The ids are asserted, not just the keys: each is the message its arm pushes.
     #[test]
     fn the_refusal_tables_are_the_references_own() {
         let id = |key: &str| {
@@ -1354,8 +1357,8 @@ mod tests {
                 .unwrap_or_else(|| panic!("{key} is not a catalog row"))
                 .key
         };
-        // `SMSG_BUY_FAILED`, the switch at `0x5dcdd8`: 1 and 7 share `0x23`, 6 is silent, and
-        // codes outside the table fall to `0x17`.
+        // `SMSG_BUY_FAILED`, the switch at `0x6cdc23`: 1 and 7 share the sold-out row, 6 is
+        // silent, and codes outside the table fall to `ERR_ITEM_NOT_FOUND`.
         for (code, want) in [
             (0u8, Some("ERR_ITEM_NOT_FOUND")),
             (1, Some("ERR_VENDOR_SOLD_OUT")),
@@ -1375,7 +1378,7 @@ mod tests {
         ] {
             assert_eq!(buy_error_key(code).map(id), want, "buy code {code}");
         }
-        // `SMSG_SELL_ITEM`, the switch at `0x5dd22c`, where the default is silence.
+        // `SMSG_SELL_ITEM`, the switch at `0x6d157c`, where the default is silence.
         for (code, want) in [
             (0u8, None),
             (1, Some("ERR_ITEM_NOT_FOUND")),
@@ -1384,7 +1387,10 @@ mod tests {
             (4, Some("ERR_NOT_OWNER")),
             (5, None),
             (6, Some("ERR_DESTROY_NONEMPTY_BAG")),
-            (7, None),
+            (7, Some("ERR_VENDOR_DOESNT_BUY")),
+            (8, Some("ERR_MUST_REPAIR_DURABILITY")),
+            (9, Some("ERR_INTERNAL_BAG_ERROR")),
+            (10, None),
             (255, None),
         ] {
             assert_eq!(sell_error_key(code).map(id), want, "sell code {code}");

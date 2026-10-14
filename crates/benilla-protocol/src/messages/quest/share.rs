@@ -7,30 +7,38 @@ use std::io;
 
 use crate::wire::{read_cstring, read_u32_le, read_u64_le, read_u8};
 
-/// `QuestShareMessages` (vmangos `QuestDef.h:62-70`): the `u8` verdict of `MSG_QUEST_PUSH_RESULT`.
-/// A newtype, not an enum, so an unknown value survives the parse.
+/// The `u8` verdict of `MSG_QUEST_PUSH_RESULT`, numbered as 12340 shows it: byte `v` in 0..=11 is
+/// message `0x19b + v` (`0x6e3a72`, table at `0x6e43f8`). 1.12.1's `TOO_FAR` (4) is gone, so
+/// every later value moved down one. A newtype, not an enum, so an unknown value survives the
+/// parse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct QuestShareMsg(pub u8);
 
 impl QuestShareMsg {
-    /// `QUEST_PARTY_MSG_SHARING_QUEST`: the push went out to this member.
+    /// The push went out to this member.
     pub const SHARING_QUEST: Self = Self(0);
-    /// `QUEST_PARTY_MSG_CANT_TAKE_QUEST`: the member fails `CanTakeQuest` (level, race, prereqs).
+    /// The member fails `CanTakeQuest` (level, race, prereqs).
     pub const CANT_TAKE_QUEST: Self = Self(1);
-    /// `QUEST_PARTY_MSG_ACCEPT_QUEST`: sent by the server when the member accepts.
+    /// Sent by the server when the member accepts.
     pub const ACCEPT_QUEST: Self = Self(2);
-    /// `QUEST_PARTY_MSG_DECLINE_QUEST`: the one value the client sends.
+    /// The client's no (`0x58cb0e`).
     pub const DECLINE_QUEST: Self = Self(3);
-    /// `QUEST_PARTY_MSG_TOO_FAR`: beyond `QUEST_SHARE_DISTANCE`, 14 yd (vmangos `Object.h:72`).
-    pub const TOO_FAR: Self = Self(4);
-    /// `QUEST_PARTY_MSG_BUSY`: the member already has a share latched.
-    pub const BUSY: Self = Self(5);
-    /// `QUEST_PARTY_MSG_LOG_FULL`: the member's quest log is full.
-    pub const LOG_FULL: Self = Self(6);
-    /// `QUEST_PARTY_MSG_HAVE_QUEST`: the member is already on the quest.
-    pub const HAVE_QUEST: Self = Self(7);
-    /// `QUEST_PARTY_MSG_FINISH_QUEST`: the member has already completed the quest.
-    pub const FINISH_QUEST: Self = Self(8);
+    /// The member already has a share open; the client's answer to a second (`0x6d07bf`).
+    pub const BUSY: Self = Self(4);
+    /// The member's quest log is full.
+    pub const LOG_FULL: Self = Self(5);
+    /// The member is already on the quest.
+    pub const HAVE_QUEST: Self = Self(6);
+    /// The member has already completed the quest.
+    pub const FINISH_QUEST: Self = Self(7);
+    /// A daily the member cannot take today.
+    pub const CANT_BE_SHARED_TODAY: Self = Self(8);
+    /// The quest's timer ran out before the share.
+    pub const SHARING_TIMER_EXPIRED: Self = Self(9);
+    /// The member is not in the sharer's party.
+    pub const NOT_IN_PARTY: Self = Self(10);
+    /// A daily the member is not eligible for today.
+    pub const NOT_ELIGIBLE_TODAY: Self = Self(11);
 }
 
 /// `MSG_QUEST_PUSH_RESULT` from the server (`Quest.cpp:81-85`). Its guid is the member the verdict
@@ -118,7 +126,7 @@ mod tests {
     #[test]
     fn push_result_reads_member_then_msg() {
         let mut b = 0x0000_0000_0000_00AAu64.to_le_bytes().to_vec();
-        b.push(8);
+        b.push(7);
         let r = read_quest_push_result(&mut b.as_slice()).unwrap();
         assert_eq!(
             r,

@@ -9,6 +9,7 @@ use bevy::prelude::*;
 
 use benilla_protocol::messages::{PetMode, PetSpells};
 use benilla_protocol::{SessionEvent, SessionEventKind};
+use benilla_ui::names::NameError;
 
 use benilla_assets::coords::wow_to_bevy;
 
@@ -67,7 +68,7 @@ fn on_tame_failure(In(ev): In<SessionEvent>, mut failures: ResMut<PetTameFailure
 
 fn on_refusal_line(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>) {
     match ev {
-        SessionEvent::PetNameInvalid => pet_name_invalid(&mut errors),
+        SessionEvent::PetNameInvalid { code } => pet_name_invalid(code, &mut errors),
         SessionEvent::PetBroken => pet_broken(&mut errors),
         _ => {}
     }
@@ -210,11 +211,12 @@ fn pet_tame_failure(reason: u8, failures: &mut PetTameFailures) {
     failures.0.push(reason);
 }
 
-/// `SMSG_PET_NAME_INVALID`, an empty body: the reference raises `ERR_INVALID_PETNAME` and reads
-/// nothing (`0x5e3e33`). No local name was applied, so nothing rolls back.
-fn pet_name_invalid(errors: &mut UiErrorKeys) {
-    debug!("net: pet name refused");
-    errors.0.push(UiError::key("ERR_INVALID_PETNAME"));
+/// `SMSG_PET_NAME_INVALID`: the server's name code through `DisplayNameError` (`0x6e2fc0`), as
+/// the client's own check would show it. No local name was applied, so nothing rolls back.
+fn pet_name_invalid(code: u32, errors: &mut UiErrorKeys) {
+    let key = NameError(code).key();
+    debug!("net: pet name refused, code {code} ({key})");
+    errors.0.push(UiError::key(key));
 }
 
 /// `SMSG_PET_BROKEN`, an empty body: loyalty hit zero; raise `ERR_PET_BROKEN` (`0x4bdc00`). The
@@ -275,6 +277,16 @@ mod tests {
         };
         s.bar[0] = PetActionEntry::from(PET_COMMAND_ATTACK | (u32::from(PET_ACT_COMMAND) << 24));
         s
+    }
+
+    /// The server's name code shows the client's own name error.
+    #[test]
+    fn a_refused_rename_shows_its_name_error() {
+        let mut errors = UiErrorKeys::default();
+        pet_name_invalid(NameError::TOO_LONG.0, &mut errors);
+        pet_name_invalid(99, &mut errors);
+        let keys: Vec<&str> = errors.0.iter().map(|e| e.key).collect();
+        assert_eq!(keys, ["ERR_NAME_TOO_LONG", "ERR_NAME_INVALID"]);
     }
 
     #[test]

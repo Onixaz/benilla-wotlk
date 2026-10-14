@@ -67,21 +67,23 @@ impl QuestShare {
     }
 }
 
-/// The `ERR_QUEST_PUSH_*` key a verdict shows, named as vmangos `QuestDef.h:62-70` names them. The
-/// reference's `0x276` arm (`0x5e4781`) maps 0..8 onto messages `0x181`-`0x189` in this order, all
-/// `kind 0` (`0x487dc9`-`0x487e69`): `CHAT_MSG_SYSTEM` lines, never `UIErrorsFrame`. An unmapped
-/// byte shows nothing.
+/// The `ERR_QUEST_PUSH_*` key a verdict shows. 12340's `0x276` arm maps 0..=11 onto messages
+/// `0x19b`-`0x1a6` in this order (`0x6e3a72`), each passed the member's name, all `kind 0`:
+/// `CHAT_MSG_SYSTEM` lines, never `UIErrorsFrame`. An unmapped byte shows nothing.
 fn verdict_message(msg: QuestShareMsg) -> Option<&'static str> {
     let key = match msg {
         QuestShareMsg::SHARING_QUEST => "ERR_QUEST_PUSH_SUCCESS_S",
         QuestShareMsg::CANT_TAKE_QUEST => "ERR_QUEST_PUSH_INVALID_S",
         QuestShareMsg::ACCEPT_QUEST => "ERR_QUEST_PUSH_ACCEPTED_S",
         QuestShareMsg::DECLINE_QUEST => "ERR_QUEST_PUSH_DECLINED_S",
-        QuestShareMsg::TOO_FAR => "ERR_QUEST_PUSH_TOO_FAR_S",
         QuestShareMsg::BUSY => "ERR_QUEST_PUSH_BUSY_S",
         QuestShareMsg::LOG_FULL => "ERR_QUEST_PUSH_LOG_FULL_S",
         QuestShareMsg::HAVE_QUEST => "ERR_QUEST_PUSH_ONQUEST_S",
         QuestShareMsg::FINISH_QUEST => "ERR_QUEST_PUSH_ALREADY_DONE_S",
+        QuestShareMsg::CANT_BE_SHARED_TODAY => "ERR_QUEST_PUSH_NOT_DAILY_S",
+        QuestShareMsg::SHARING_TIMER_EXPIRED => "ERR_QUEST_PUSH_TIMER_EXPIRED_S",
+        QuestShareMsg::NOT_IN_PARTY => "ERR_QUEST_PUSH_NOT_IN_PARTY_S",
+        QuestShareMsg::NOT_ELIGIBLE_TODAY => "ERR_QUEST_PUSH_DIFFERENT_SERVER_DAILY_S",
         _ => return None,
     };
     Some(key)
@@ -245,19 +247,23 @@ mod tests {
 
     #[test]
     fn every_wire_verdict_has_a_key_and_an_unknown_has_none() {
-        for v in 0u8..=8 {
-            assert!(
-                verdict_message(QuestShareMsg(v)).is_some(),
-                "verdict {v} unmapped"
+        for v in 0u8..=11 {
+            let key =
+                verdict_message(QuestShareMsg(v)).unwrap_or_else(|| panic!("verdict {v} unmapped"));
+            // Byte `v` is message `0x19b + v` (`0x6e43f8`).
+            assert_eq!(
+                benilla_ui::messages::by_key(key).map(|r| r.id),
+                Some(0x19b + u16::from(v)),
+                "verdict {v} shows {key}"
             );
         }
-        assert!(verdict_message(QuestShareMsg(9)).is_none());
+        assert!(verdict_message(QuestShareMsg(12)).is_none());
         assert!(verdict_message(QuestShareMsg(0xFF)).is_none());
     }
 
     #[test]
     fn verdict_keys_are_distinct() {
-        let mut keys: Vec<&str> = (0u8..=8)
+        let mut keys: Vec<&str> = (0u8..=11)
             .filter_map(|v| verdict_message(QuestShareMsg(v)))
             .collect();
         keys.sort_unstable();
@@ -268,7 +274,7 @@ mod tests {
 
     #[test]
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn every_verdict_key_resolves_and_names_a_member() {
+    fn every_verdict_key_resolves() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
         let src = chain
@@ -278,11 +284,11 @@ mod tests {
         s.run(&String::from_utf8_lossy(&src)).expect("runs clean");
         let g = |key: &str| s.lua().globals().get::<String>(key).ok();
 
-        for raw in 0u8..=8 {
+        // Three of the twelve have no `%s` in enUS, though the arm passes the name to all.
+        for raw in 0u8..=11 {
             let key = verdict_message(QuestShareMsg(raw)).expect("mapped");
             let text = g(key).unwrap_or_default();
             assert!(!text.is_empty(), "{key} (verdict {raw}) missing");
-            assert!(text.contains("%s"), "{key} names no member: {text:?}");
         }
 
         // The opener the sharer sees on the click, and a decline's answer.

@@ -220,10 +220,10 @@ struct LootRefusal {
     releases: bool,
 }
 
-/// The reference's refusal jump table for codes 4..=14 (`0x5eba0b`, entries at `0x5ebc64`). The
-/// four that answer an already-open window (10, 12, 13, 14) skip the release tail. Every other
-/// code takes the default, `ERR_LOOT_DIDNT_KILL`: 1.12 has no string for vmangos'
-/// `ALREADY_PICKPOCKETED` (15) or `NOT_WHILE_SHAPESHIFTED` (16).
+/// The reference's refusal switch (12340 `0x6d54b8`, table at `0x6d5828`). The arms that answer
+/// an already-open window (10, 12, 13, 14) and 12340's `NOT_WHILE_SHAPESHIFTED` (16, `0x6d556d`)
+/// skip the release tail. Every other code takes the default, `ERR_LOOT_DIDNT_KILL`, 15
+/// included: its own line is shown only for a refused response ([`loot_error`]).
 fn loot_refusal(reason: u8) -> LootRefusal {
     use benilla_protocol::messages::loot_error as e;
     // A gap in the vmangos enum, but a real arm of the client's table.
@@ -240,6 +240,7 @@ fn loot_refusal(reason: u8) -> LootRefusal {
         e::MASTER_INV_FULL => ("ERR_LOOT_MASTER_INV_FULL", false),
         e::MASTER_UNIQUE_ITEM => ("ERR_LOOT_MASTER_UNIQUE_ITEM", false),
         e::MASTER_OTHER => ("ERR_LOOT_MASTER_OTHER", false),
+        e::NOT_WHILE_SHAPESHIFTED => ("ERR_NOT_WHILE_SHAPESHIFTED", false),
         _ => ("ERR_LOOT_DIDNT_KILL", DEFAULT_ARM_RELEASES),
     };
     LootRefusal { key, releases }
@@ -247,9 +248,11 @@ fn loot_refusal(reason: u8) -> LootRefusal {
 
 /// `SMSG_LOOT_RESPONSE`'s error shape: the arm's message by key, as `DisplayError(stringId)` takes
 /// its surface and voice from the record; a releasing arm drops the latch and runs
-/// `UnlockItem 0x495420` on the packet's guid (the tail `0x5ebac2`). There is no admission gate
-/// here: a guid-mismatched error still shows and keeps the latch, where the reference refuses it
-/// at `0x5eb963`, clearing the latch and showing nothing.
+/// `UnlockItem 0x495420` on the packet's guid (the tail `0x5ebac2`). The admission gate is built
+/// for one code only: an `ALREADY_PICKPOCKETED` the latch does not hold (a pickpocket never arms
+/// it) takes 12340's refused leg (`0x6d57de`), which shows `ERR_ALREADY_PICKPOCKETED` and drops the
+/// latch and the lock. Any other guid-mismatched error still shows and keeps the latch, where the
+/// reference refuses it, clearing the latch and showing nothing.
 fn loot_error(
     guid: u64,
     error: u8,
@@ -257,6 +260,14 @@ fn loot_error(
     latch: &mut LootLatch,
     unlock: ItemUnlock,
 ) {
+    use benilla_protocol::messages::loot_error as e;
+    if error == e::ALREADY_PICKPOCKETED && latch.0 != Some(guid) {
+        debug!("net: loot error {error} on {guid:#x}, refused → ERR_ALREADY_PICKPOCKETED");
+        errors.0.push(UiError::key("ERR_ALREADY_PICKPOCKETED"));
+        latch.0 = None;
+        unlock.unlock(guid);
+        return;
+    }
     let LootRefusal { key, releases } = loot_refusal(error);
     debug!("net: loot error {error} on {guid:#x} → {key} (releases: {releases})");
     errors.0.push(UiError::key(key));
@@ -378,10 +389,9 @@ mod tests {
         assert_eq!(g("ERR_FISH_ESCAPED"), "Your fish got away!");
     }
 
-    /// The ids the reference's jump table (`0x5ebc64`) pushes: a plausible wrong key fails.
+    /// The ids 12340's switch (`0x6d54b8`) pushes: a plausible wrong key fails.
     #[test]
     fn every_refusal_names_the_message_key_the_reference_pushes() {
-        // The 1.12.1 handler's picks, by key; unverified against 3.3.5a.
         const TABLE: &[(u8, &str)] = &[
             (4, "ERR_LOOT_TOO_FAR"),
             (5, "ERR_LOOT_BAD_FACING"),
@@ -394,11 +404,12 @@ mod tests {
             (12, "ERR_LOOT_MASTER_INV_FULL"),
             (13, "ERR_LOOT_MASTER_UNIQUE_ITEM"),
             (14, "ERR_LOOT_MASTER_OTHER"),
-            // The default arm: 0 is `DIDNT_KILL`, 15 and 16 have no 1.12 string, 1 is an enum gap.
+            (16, "ERR_NOT_WHILE_SHAPESHIFTED"),
+            // The default arm: 0 is `DIDNT_KILL`, 1 is an enum gap, and 15 shows its own line
+            // only on the refused leg.
             (0, "ERR_LOOT_DIDNT_KILL"),
             (1, "ERR_LOOT_DIDNT_KILL"),
             (15, "ERR_LOOT_DIDNT_KILL"),
-            (16, "ERR_LOOT_DIDNT_KILL"),
             (200, "ERR_LOOT_DIDNT_KILL"),
         ];
         for &(code, want) in TABLE {
@@ -457,10 +468,9 @@ mod tests {
             (12, "That player's inventory is full"),
             (13, "Player has too many of that item already"),
             (14, "Can't assign item to that player"),
-            // The default arm, including the two vmangos codes 1.12 has no string for.
+            // The default arm.
             (0, "You don't have permission to loot that corpse."),
             (15, "You don't have permission to loot that corpse."),
-            (16, "You don't have permission to loot that corpse."),
         ] {
             assert_eq!(g(loot_refusal(code).key), want, "wire code {code}");
         }
@@ -470,14 +480,14 @@ mod tests {
     #[test]
     fn only_the_window_less_refusals_drop_the_kneel() {
         // The releasing arms plus the default, which is code 7's arm (`ja 0x5ebabd`).
-        for code in [4u8, 5, 6, 7, 8, 9, 11, 0, 1, 2, 3, 15, 16, 200, 255] {
+        for code in [4u8, 5, 6, 7, 8, 9, 11, 0, 1, 2, 3, 15, 200, 255] {
             let mut errors = UiErrorKeys::default();
             let mut latch = LootLatch(Some(CORPSE));
             loot_error(CORPSE, code, &mut errors, &mut latch, no_item!());
             assert_eq!(latch.0, None, "code {code} should release");
             assert_eq!(errors.0.len(), 1, "code {code} shows exactly one line");
         }
-        for code in [10u8, 12, 13, 14] {
+        for code in [10u8, 12, 13, 14, 16] {
             let mut errors = UiErrorKeys::default();
             let mut latch = LootLatch(Some(CORPSE));
             loot_error(CORPSE, code, &mut errors, &mut latch, no_item!());
@@ -497,6 +507,21 @@ mod tests {
         let mut latch = LootLatch(Some(CHEST));
         loot_error(CORPSE, 8, &mut errors, &mut latch, no_item!());
         assert_eq!(latch.0, Some(CHEST));
+    }
+
+    /// A pickpocket's `ALREADY_PICKPOCKETED` arrives on a cold latch: 12340's refused leg shows
+    /// its own line and drops the latch (`0x6d57de`). On a held latch it is the default arm.
+    #[test]
+    fn already_pickpocketed_shows_on_the_refused_leg_only() {
+        use benilla_protocol::messages::loot_error::ALREADY_PICKPOCKETED as PICKED;
+        let run = |held| {
+            let (mut errors, mut latch) = (UiErrorKeys::default(), LootLatch(held));
+            loot_error(CORPSE, PICKED, &mut errors, &mut latch, no_item!());
+            (errors.0[0].key, latch.0)
+        };
+        assert_eq!(run(None), ("ERR_ALREADY_PICKPOCKETED", None));
+        assert_eq!(run(Some(CHEST)), ("ERR_ALREADY_PICKPOCKETED", None));
+        assert_eq!(run(Some(CORPSE)), ("ERR_LOOT_DIDNT_KILL", None));
     }
 
     /// A GameObject guid: a chest.

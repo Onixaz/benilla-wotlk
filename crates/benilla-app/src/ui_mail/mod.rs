@@ -196,21 +196,26 @@ pub(crate) fn send_query_next_mail_time_on_enter(
     }
 }
 
-/// The message key a `SMSG_SEND_MAIL_RESULT` error shows: the handler `0x4ad050` indexes
-/// `[0x4ad1a0 + error]` into the nine-arm jump table at `0x4ad17c`, and codes 6 to 13 and past 15
-/// share `ERR_MAIL_DATABASE_ERROR` (`0x4ad147`). `OK` shows [`MAIL_SENT_KEY`] and `EQUIP_ERROR`
-/// goes through the equip-error table (`0x4ad12e` → `0x622630`).
-pub(crate) fn mail_refusal(error: u32) -> &'static str {
-    match error {
+/// The message key a `SMSG_SEND_MAIL_RESULT` error shows, by 12340's switch (`0x5717b0`): codes
+/// 6 to 13 and past 21 share `ERR_MAIL_DATABASE_ERROR`, and 20 shows nothing. `OK` shows
+/// [`MAIL_SENT_KEY`] and `EQUIP_ERROR` goes through the equip-error table.
+pub(crate) fn mail_refusal(error: u32) -> Option<&'static str> {
+    Some(match error {
         mail_error::CANNOT_SEND_TO_SELF => "ERR_MAIL_TO_SELF", // 0x164
         mail_error::NOT_ENOUGH_MONEY => "ERR_NOT_ENOUGH_MONEY", // 0x25, voiced (speech 0x28)
         mail_error::RECIPIENT_NOT_FOUND => "ERR_MAIL_TARGET_NOT_FOUND", // 0x165
         mail_error::NOT_YOUR_TEAM => "ERR_PLAYER_WRONG_FACTION", // 0xff
         mail_error::TRIAL_ACCOUNT => "ERR_RESTRICTED_ACCOUNT", // 0x1be
-        mail_error::TOO_MANY_ATTACHMENTS => "ERR_MAIL_REACHED_CAP", // 0x1c4
-        // INTERNAL_ERROR (6) and every other code (`0x4ad147`).
+        mail_error::RECIPIENT_CAP_REACHED => "ERR_MAIL_REACHED_CAP", // 0x1c4
+        mail_error::CANT_SEND_WRAPPED_COD => "ERR_MAIL_WRAPPED_COD",
+        mail_error::MAIL_AND_CHAT_SUSPENDED => "ERR_USER_SQUELCHED",
+        mail_error::TOO_MANY_ATTACHMENTS => "ERR_MAIL_TOO_MANY_ATTACHMENTS",
+        mail_error::ATTACHMENT_INVALID => "ERR_MAIL_INVALID_ATTACHMENT",
+        mail_error::SILENT => return None,
+        mail_error::ITEM_HAS_EXPIRED => "ERR_MAIL_ATTACHMENT_EXPIRED",
+        // INTERNAL_ERROR (6) and every other code.
         _ => "ERR_MAIL_DATABASE_ERROR", // 0x166
-    }
+    })
 }
 
 /// The yellow info line (id `0x167`) a successful `SEND` shows before the form reset (`0x4ad0b1`,
@@ -759,8 +764,7 @@ mod tests {
         );
     }
 
-    /// The result table at `0x4ad17c` (indexed at `0x4ad1a0`), asserted as the message ids its
-    /// arms push.
+    /// 12340's result switch (`0x5717b0`), asserted as the message ids its arms push.
     #[test]
     fn the_mail_result_table_is_the_references_own() {
         let id = |key: &str| {
@@ -775,18 +779,30 @@ mod tests {
             (mail_error::NOT_YOUR_TEAM, "ERR_PLAYER_WRONG_FACTION"),
             (mail_error::INTERNAL_ERROR, "ERR_MAIL_DATABASE_ERROR"),
             (mail_error::TRIAL_ACCOUNT, "ERR_RESTRICTED_ACCOUNT"),
-            (mail_error::TOO_MANY_ATTACHMENTS, "ERR_MAIL_REACHED_CAP"),
+            (mail_error::RECIPIENT_CAP_REACHED, "ERR_MAIL_REACHED_CAP"),
+            (mail_error::CANT_SEND_WRAPPED_COD, "ERR_MAIL_WRAPPED_COD"),
+            (mail_error::MAIL_AND_CHAT_SUSPENDED, "ERR_USER_SQUELCHED"),
+            (
+                mail_error::TOO_MANY_ATTACHMENTS,
+                "ERR_MAIL_TOO_MANY_ATTACHMENTS",
+            ),
+            (
+                mail_error::ATTACHMENT_INVALID,
+                "ERR_MAIL_INVALID_ATTACHMENT",
+            ),
+            (mail_error::ITEM_HAS_EXPIRED, "ERR_MAIL_ATTACHMENT_EXPIRED"),
         ] {
-            assert_eq!(id(mail_refusal(code)), want, "mail error {code}");
+            assert_eq!(mail_refusal(code).map(id), Some(want), "mail error {code}");
         }
-        // `ja 0x4ad147` and the index table's `08` run: 7..13 and past 15 share the database error.
-        for code in [7, 8, 13, 16, 99, u32::MAX] {
+        // The switch's default: 7..13 and past 21 share the database error.
+        for code in [7, 8, 13, 22, 99, u32::MAX] {
             assert_eq!(
-                id(mail_refusal(code)),
-                "ERR_MAIL_DATABASE_ERROR",
+                mail_refusal(code).map(id),
+                Some("ERR_MAIL_DATABASE_ERROR"),
                 "mail error {code}"
             );
         }
+        assert_eq!(mail_refusal(mail_error::SILENT), None);
         // A success shows on the yellow info line.
         assert_eq!(id(MAIL_SENT_KEY), "ERR_MAIL_SENT");
         assert_eq!(

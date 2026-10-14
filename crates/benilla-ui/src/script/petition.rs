@@ -119,22 +119,11 @@ impl super::UiScript {
     }
 }
 
-/// The guild-name check `BuyGuildCharter` and `RenamePetition` share (`0x4f5160`), which maps the
-/// checker `0x6c9b70`'s code to a message and accepts only `0xd`; `Err` carries the GlobalStrings
-/// key to show, and no packet is built. Only codes 0 (empty), 10 (an edge space) and 11
-/// (consecutive spaces) are built; the rest pass, as the checker's rules are untraced and the
-/// server re-checks every name (`ObjectMgr::IsValidCharterName`).
+/// The guild-name check `BuyGuildCharter` (`0x59a130`) and `RenamePetition` (`0x5cf450`) share:
+/// [`crate::names::check_guild_name`], whose refusal shows through `DisplayNameError 0x5218c0`.
+/// `Err` carries that message's key, and no packet is built.
 pub fn validate_guild_name(name: &str) -> Result<(), &'static str> {
-    if name.is_empty() {
-        return Err("ERR_GUILD_ENTER_NAME");
-    }
-    if name.starts_with(' ') || name.ends_with(' ') {
-        return Err("ERR_GUILD_NAME_INVALID_SPACE");
-    }
-    if name.contains("  ") {
-        return Err("ERR_GUILD_NAME_NAME_CONSECUTIVE_SPACES");
-    }
-    Ok(())
+    crate::names::check_guild_name(name).map_err(crate::names::NameError::key)
 }
 
 /// A cached name as a string, an uncached one as nil.
@@ -259,8 +248,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // BuyGuildCharter(guildName) (`0x4f5260`) returns 1 or nil for name validity, not for a send:
-    // `0x4f5294` runs the shared validator, and the action behind it has five silent refusals.
+    // BuyGuildCharter(guildName) (`0x59a130`) returns 1 or nil for name validity, not for a send:
+    // `0x59a16d` runs the shared validator, and the action behind it has five silent refusals.
     g.set(
         "BuyGuildCharter",
         lua.create_function(|lua, name: String| {
@@ -280,7 +269,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // RenamePetition(name) (`0x4f4930`): zero values, the same validator, silent beyond its
+    // RenamePetition(name) (`0x5cf450`): zero values, the same validator, silent beyond its
     // message. A bad argument raises mlua's coercion error; the reference's usage string is
     // `Usage(RenamePetition("name")`, unbalanced.
     g.set(
@@ -503,36 +492,28 @@ mod tests {
             s.take_petition_requests(),
             vec![
                 PetitionRequest::Buy("Legacy".into()),
-                PetitionRequest::NameRefused("ERR_GUILD_ENTER_NAME"),
+                PetitionRequest::NameRefused("ERR_NAME_NO_NAME"),
                 PetitionRequest::Rename("Legacy".into()),
-                PetitionRequest::NameRefused("ERR_GUILD_NAME_INVALID_SPACE"),
+                PetitionRequest::NameRefused("ERR_NAME_INVALID_SPACE"),
             ]
         );
     }
 
     #[test]
-    fn the_validator_refuses_only_what_it_can_prove() {
-        assert_eq!(validate_guild_name(""), Err("ERR_GUILD_ENTER_NAME"));
+    fn a_refused_guild_name_shows_its_name_error() {
+        assert_eq!(validate_guild_name(""), Err("ERR_NAME_NO_NAME"));
+        assert_eq!(validate_guild_name("A"), Err("ERR_NAME_TOO_SHORT"));
         assert_eq!(
             validate_guild_name(" Legacy"),
-            Err("ERR_GUILD_NAME_INVALID_SPACE")
-        );
-        assert_eq!(
-            validate_guild_name("Legacy "),
-            Err("ERR_GUILD_NAME_INVALID_SPACE")
+            Err("ERR_NAME_INVALID_SPACE")
         );
         assert_eq!(
             validate_guild_name("Legacy  of Steel"),
-            Err("ERR_GUILD_NAME_NAME_CONSECUTIVE_SPACES")
+            Err("ERR_NAME_CONSECUTIVE_SPACES")
         );
-        // Passed through: the length, profanity and script rules live in the untraced `0x6c9b70`,
-        // and the server re-checks them.
-        for ok in ["Legacy of Steel", "A", "Ab", "Éclair", "x y z"] {
-            assert_eq!(
-                validate_guild_name(ok),
-                Ok(()),
-                "{ok:?} passes to the server"
-            );
+        assert_eq!(validate_guild_name("Legacy's"), Err("ERR_NAME_INVALID"));
+        for ok in ["Legacy of Steel", "Ab", "Éclair", "x y z"] {
+            assert_eq!(validate_guild_name(ok), Ok(()), "{ok:?}");
         }
     }
 

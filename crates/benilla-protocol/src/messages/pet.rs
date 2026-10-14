@@ -4,7 +4,9 @@
 
 use std::io::{self, Read};
 
-use crate::wire::{capacity_hint, read_u16_le, read_u32_le, read_u64_le, read_u8, Vector3d};
+use crate::wire::{
+    capacity_hint, read_cstring, read_u16_le, read_u32_le, read_u64_le, read_u8, Vector3d,
+};
 
 /// Pet bar slots: vmangos `MAX_UNIT_ACTION_BAR_INDEX`, FrameXML's `NUM_PET_ACTION_SLOTS`.
 pub const PET_ACTION_SLOTS: usize = 10;
@@ -249,6 +251,21 @@ pub(super) fn read_pet_tame_failure(r: &mut impl Read) -> io::Result<u8> {
     read_u8(r)
 }
 
+/// Read `SMSG_PET_NAME_INVALID` as 12340's arm does (`0x6e2fb1`): the `u32` name code it hands
+/// `DisplayNameError`, the refused name, a `u8` declension flag and, when set, five declined
+/// forms. Only the code is kept; the declensions feed `PET_FORCE_NAME_DECLENSION`, which the
+/// ruRU client alone asks for.
+pub(super) fn read_pet_name_invalid(r: &mut impl Read) -> io::Result<u32> {
+    let code = read_u32_le(r)?;
+    read_cstring(r)?;
+    if read_u8(r)? != 0 {
+        for _ in 0..5 {
+            read_cstring(r)?;
+        }
+    }
+    Ok(code)
+}
+
 /// The `GlobalStrings.lua` key filling `ERR_TAME_FAILED`'s `%s`: the reference's table
 /// (`0x6e6ac0`) covers `1..=11`, and anything else, vmangos's 12 included, is the default arm.
 pub fn pet_tame_failure_key(reason: u8) -> &'static str {
@@ -359,13 +376,15 @@ pub fn pet_abandon(pet_guid: u64) -> Vec<u8> {
     pet_guid.to_le_bytes().to_vec()
 }
 
-/// Body of `CMSG_PET_RENAME` (opcode 375, vmangos `Packets/Pet.cpp:21-25`): the pet guid, then
-/// the name NUL-terminated. The 12-letter cap is the popup's; the server refuses a bad name with
+/// Body of `CMSG_PET_RENAME` (opcode 375) as 12340's sender `0x5d4a00` builds it: the pet guid,
+/// the name NUL-terminated, then a `u8` declension flag, 0 here; the five declined forms that
+/// follow a 1 are the ruRU client's alone. The server refuses a bad name with
 /// `SMSG_PET_NAME_INVALID` rather than truncating.
 pub fn pet_rename(pet_guid: u64, name: &str) -> Vec<u8> {
-    let mut body = Vec::with_capacity(9 + name.len());
+    let mut body = Vec::with_capacity(10 + name.len());
     body.extend_from_slice(&pet_guid.to_le_bytes());
     body.extend_from_slice(name.as_bytes());
+    body.push(0);
     body.push(0);
     body
 }
@@ -550,14 +569,14 @@ mod tests {
 
         assert_eq!(pet_abandon(0x2A), 0x2Au64.to_le_bytes());
 
-        // CMSG_PET_RENAME: guid then a NUL-terminated name, the terminator being its only framing.
+        // CMSG_PET_RENAME: guid, a NUL-terminated name, then the declension flag.
         assert_eq!(
             pet_rename(0x2A, "Bruce"),
-            [&0x2Au64.to_le_bytes()[..], b"Bruce\0"].concat()
+            [&0x2Au64.to_le_bytes()[..], b"Bruce\0\0"].concat()
         );
         assert_eq!(
             pet_rename(0x2A, "").len(),
-            9,
+            10,
             "an empty name is still framed"
         );
     }

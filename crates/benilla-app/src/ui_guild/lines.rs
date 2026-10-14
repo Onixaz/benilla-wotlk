@@ -1,12 +1,14 @@
 //! The guild system lines: `ERR_GUILD_*` message ids the engine composes, not the FrameXML. The
-//! event, invite, decline and command-result handlers (`0x5e7180`, `0x5e6f65`, `0x5e6f9a`,
-//! `0x5e7520`) pass them to `CGGameUI::DisplayError 0x496720`, and the catalog row picks the
-//! surface and the sound. The `GUILD_MOTD` line is the FrameXML's (`ChatFrame.lua:1335-1340`) and
-//! `/ginfo`'s are not catalog rows (built in [`super::feed`]), so neither is here.
+//! event and decline handlers (1.12.1's `0x5e7180`, `0x5e6f9a`) and 12340's invite and
+//! command-result handlers (`0x6cc3b0`, `0x6cc590`) pass them to the message display
+//! (`0x5216f0`), and the catalog row picks the surface and the sound. The `GUILD_MOTD` line is the
+//! FrameXML's (`ChatFrame.lua:1335-1340`) and `/ginfo`'s are not catalog rows (built in
+//! [`super::feed`]), so neither is here.
 
 use benilla_protocol::messages::{
     guild_command, guild_command_error, guild_event, GuildCommandResult, GuildEventNotice,
 };
+use benilla_ui::names::NameError;
 
 use crate::ui_action::UiError;
 
@@ -64,8 +66,8 @@ pub(super) fn event_line(notice: &GuildEventNotice, announce_signon: bool) -> Op
 }
 
 /// The line one `SMSG_GUILD_COMMAND_RESULT` prints, if any: on result 0 the [`guild_command`]
-/// tag picks it (`0x5e7550`), otherwise the result code does. Every `_S` key takes the name and
-/// every other key nothing (`0x5e7520`).
+/// tag picks it, otherwise the result code does (`0x6cc590`). Every `_S` key takes the name and
+/// every other key nothing.
 pub(super) fn command_line(result: &GuildCommandResult) -> Option<UiError> {
     let name = result.name.as_str();
     let named = |key: &'static str| Some(UiError::s(key, name));
@@ -86,7 +88,7 @@ pub(super) fn command_line(result: &GuildCommandResult) -> Option<UiError> {
         guild_command_error::ALREADY_IN_GUILD_S => named("ERR_ALREADY_IN_GUILD_S"),
         guild_command_error::INVITED_TO_GUILD => Some(UiError::key("ERR_INVITED_TO_GUILD")),
         guild_command_error::ALREADY_INVITED_TO_GUILD_S => named("ERR_ALREADY_INVITED_TO_GUILD_S"),
-        guild_command_error::NAME_INVALID => Some(UiError::key("ERR_GUILD_NAME_INVALID")),
+        guild_command_error::NAME_INVALID => Some(UiError::key(NameError::INVALID.key())),
         guild_command_error::NAME_EXISTS_S => named("ERR_GUILD_NAME_EXISTS_S"),
         // `0x08` is `ERR_GUILD_LEADER_LEAVE` under `QUIT` and `ERR_GUILD_PERMISSIONS` otherwise.
         guild_command_error::PERMISSIONS if result.command == guild_command::QUIT => {
@@ -104,15 +106,20 @@ pub(super) fn command_line(result: &GuildCommandResult) -> Option<UiError> {
         guild_command_error::RANKS_LOCKED => Some(UiError::key("ERR_GUILD_RANKS_LOCKED")),
         guild_command_error::RANK_IN_USE => Some(UiError::key("ERR_GUILD_RANK_IN_USE")),
         guild_command_error::IGNORING_YOU_S => named("ERR_IGNORING_YOU_S"),
-        // Silent: 15, 16, `UNK20` (a roster re-request for command 5) and anything unknown.
+        guild_command_error::WITHDRAW_LIMIT => Some(UiError::key("ERR_GUILD_WITHDRAW_LIMIT")),
+        guild_command_error::NOT_ENOUGH_MONEY => Some(UiError::key("ERR_GUILD_NOT_ENOUGH_MONEY")),
+        guild_command_error::BANK_FULL => Some(UiError::key("ERR_GUILD_BANK_FULL")),
+        guild_command_error::ITEM_NOT_FOUND => Some(UiError::key("ERR_ITEM_NOT_FOUND")),
+        // Silent: 15, 16, `UNK20` (a roster re-request for command 5), 21 to 24, 27 and anything
+        // past 29.
         _ => None,
     }
 }
 
-/// `SMSG_GUILD_INVITE`'s notice line, printed beside the popup (`0x5e6f65`, message `0x4f`); the
-/// popup is the separate `GUILD_INVITE_REQUEST` at `0x5e6f53`.
+/// `SMSG_GUILD_INVITE`'s notice line, printed beside the popup (`0x6cc3fa`, message `0x58`): the
+/// inviter twice, for the `|Hplayer:%s|h` link and the bracketed name, then the guild.
 pub(super) fn invite_line(inviter: &str, guild: &str) -> UiError {
-    UiError::strings("ERR_INVITED_TO_GUILD_SS", &[inviter, guild])
+    UiError::strings("ERR_INVITED_TO_GUILD_SSS", &[inviter, inviter, guild])
 }
 
 /// `SMSG_GUILD_DECLINE`: our invitee said no (sent to the inviter only).
@@ -250,7 +257,7 @@ mod tests {
 
     #[test]
     fn every_underscore_s_key_takes_the_name_and_every_other_takes_nothing() {
-        for result in 0u32..=0x15 {
+        for result in 0u32..=0x1f {
             for command in [
                 guild_command::CREATE,
                 guild_command::INVITE,
@@ -277,7 +284,7 @@ mod tests {
                 seen.extend(event_line(&notice(event, &["a", "b", "c"]), announce));
             }
         }
-        for result in 0u32..=0x15 {
+        for result in 0u32..=0x1f {
             for command in 0u32..=0x14 {
                 seen.extend(command_line(&GuildCommandResult {
                     command,
@@ -289,16 +296,7 @@ mod tests {
         seen.push(invite_line("Tigole", "Legacy of Steel"));
         seen.push(decline_line("Kaplan"));
         assert!(seen.len() > 20, "the sweep found the table");
-        // The guild-name keys 3.3.5a's catalog lacks wait for their 3.3.5a keys (#53).
-        let not_yet_ported = [
-            "ERR_GUILD_ENTER_NAME",
-            "ERR_GUILD_NAME_INVALID",
-            "ERR_GUILD_NAME_INVALID_SPACE",
-            "ERR_GUILD_NAME_NAME_CONSECUTIVE_SPACES",
-            "ERR_GUILD_NAME_TOO_SHORT",
-            "ERR_INVITED_TO_GUILD_SS",
-        ];
-        for e in seen.iter().filter(|e| !not_yet_ported.contains(&e.key)) {
+        for e in &seen {
             assert!(by_key(e.key).is_some(), "{} is not a catalog row", e.key);
         }
 
@@ -315,10 +313,34 @@ mod tests {
     }
 
     #[test]
-    fn the_invite_notice_names_both() {
+    fn the_invite_notice_links_the_inviter_and_names_the_guild() {
         let e = invite_line("Tigole", "Legacy of Steel");
-        assert_eq!(e.key, "ERR_INVITED_TO_GUILD_SS");
-        assert_eq!(strings(&e), ["Tigole", "Legacy of Steel"]);
+        assert_eq!(e.key, "ERR_INVITED_TO_GUILD_SSS");
+        assert_eq!(strings(&e), ["Tigole", "Tigole", "Legacy of Steel"]);
         assert_eq!(decline_line("Kaplan").key, "ERR_GUILD_DECLINE_S");
+    }
+
+    /// 12340's arms past 1.12's: the server's name refusal is a name error, and the guild bank's
+    /// four refusals (`0x6cc590`).
+    #[test]
+    fn the_3_3_5a_command_results_show_their_own_rows() {
+        let line = |result| {
+            command_line(&GuildCommandResult {
+                command: guild_command::CREATE,
+                name: "Kaplan".into(),
+                result,
+            })
+            .map(|e| e.key)
+        };
+        assert_eq!(
+            line(guild_command_error::NAME_INVALID),
+            Some("ERR_NAME_INVALID")
+        );
+        assert_eq!(line(0x19), Some("ERR_GUILD_WITHDRAW_LIMIT"));
+        assert_eq!(line(0x1a), Some("ERR_GUILD_NOT_ENOUGH_MONEY"));
+        assert_eq!(line(0x1b), None);
+        assert_eq!(line(0x1c), Some("ERR_GUILD_BANK_FULL"));
+        assert_eq!(line(0x1d), Some("ERR_ITEM_NOT_FOUND"));
+        assert_eq!(line(0x1e), None);
     }
 }

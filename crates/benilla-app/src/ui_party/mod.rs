@@ -269,10 +269,16 @@ impl GroupState {
             .take(4)
     }
 
-    /// `SMSG_GROUP_INVITE`: the popup plus a chat line, as the reference's `0x5e6730` does.
+    /// `SMSG_GROUP_INVITE`: the popup plus a chat line naming the inviter twice, for the
+    /// `|Hplayer:%s|h` link and the bracketed name (12340's `0x6df1a0`, message `0x41`). Its
+    /// leading status byte, which shows `ERR_INVITED_ALREADY_IN_GROUP_SS` and no popup when 0, is
+    /// not read yet (#190).
     pub fn apply_invited(&mut self, inviter: &str) -> Vec<UiError> {
         self.pending_invite = Some(inviter.to_string());
-        vec![UiError::s("ERR_INVITED_TO_GROUP_S", inviter)]
+        vec![UiError::strings(
+            "ERR_INVITED_TO_GROUP_SS",
+            &[inviter, inviter],
+        )]
     }
 
     /// `SMSG_GROUP_DECLINE`: our invitee said no; only the inviter gets it.
@@ -309,11 +315,11 @@ impl GroupState {
         }
     }
 
-    /// `SMSG_PARTY_COMMAND_RESULT` through the reference's jump table (`0x5e6a14`): one message
-    /// per result, its catalog row giving text, surface and sound (result 7 is the red error line,
-    /// the rest chat). Silent, as in the reference: results past 8, `OK` for an operation other
-    /// than invite or leave, and an invite ack with no name (`0x5e6923`). The leave ack also
-    /// empties the slots (`0x5e68f6`).
+    /// `SMSG_PARTY_COMMAND_RESULT` through 12340's switch (`0x6cbec0`): one message per result,
+    /// its catalog row giving text, surface and sound. Silent, as in the reference: 10, 11, 27
+    /// (`VOTE_KICK_REASON_NEEDED`, an event) and past 30, `OK` for an operation other than invite
+    /// or leave, and an invite ack with no name. The leave ack also empties the slots. Not built:
+    /// 21 and 24, whose `%s` is the packet's trailing seconds as a spell duration.
     pub fn apply_command_result(
         &mut self,
         operation: u32,
@@ -333,12 +339,46 @@ impl GroupState {
             },
             party_result::BAD_PLAYER_NAME => Some(named("ERR_BAD_PLAYER_NAME_S")),
             party_result::TARGET_NOT_IN_GROUP => Some(named("ERR_TARGET_NOT_IN_GROUP_S")),
+            party_result::TARGET_NOT_IN_INSTANCE => Some(named("ERR_TARGET_NOT_IN_INSTANCE_S")),
             party_result::GROUP_FULL => Some(UiError::key("ERR_GROUP_FULL")),
             party_result::ALREADY_IN_GROUP => Some(named("ERR_ALREADY_IN_GROUP_S")),
             party_result::NOT_IN_GROUP => Some(UiError::key("ERR_NOT_IN_GROUP")),
             party_result::NOT_LEADER => Some(UiError::key("ERR_NOT_LEADER")),
             party_result::WRONG_FACTION => Some(UiError::key("ERR_PLAYER_WRONG_FACTION")),
             party_result::IGNORING_YOU => Some(named("ERR_IGNORING_YOU_S")),
+            party_result::LFG_PENDING => Some(UiError::key("ERR_LFG_PENDING")),
+            party_result::INVITE_RESTRICTED => Some(UiError::key("ERR_INVITE_RESTRICTED")),
+            party_result::IN_COMBAT_OR_SWAP_FAILED if operation == party_operation::SWAP => {
+                Some(UiError::key("ERR_GROUP_SWAP_FAILED"))
+            }
+            party_result::IN_COMBAT_OR_SWAP_FAILED => Some(UiError::key("ERR_INVITE_IN_COMBAT")),
+            party_result::INVITE_UNKNOWN_REALM => Some(UiError::key("ERR_INVITE_UNKNOWN_REALM")),
+            party_result::INVITE_NO_PARTY_SERVER => {
+                Some(UiError::key("ERR_INVITE_NO_PARTY_SERVER"))
+            }
+            party_result::INVITE_PARTY_BUSY => Some(UiError::key("ERR_INVITE_PARTY_BUSY")),
+            party_result::TARGET_AMBIGUOUS => Some(UiError::key("ERR_PARTY_TARGET_AMBIGUOUS")),
+            party_result::LFG_INVITE_RAID_LOCKED => Some(named("ERR_PARTY_LFG_INVITE_RAID_LOCKED")),
+            party_result::LFG_BOOT_LIMIT => Some(UiError::key("ERR_PARTY_LFG_BOOT_LIMIT")),
+            party_result::LFG_BOOT_IN_PROGRESS => {
+                Some(UiError::key("ERR_PARTY_LFG_BOOT_IN_PROGRESS"))
+            }
+            party_result::LFG_BOOT_TOO_FEW_PLAYERS => {
+                Some(UiError::key("ERR_PARTY_LFG_BOOT_TOO_FEW_PLAYERS"))
+            }
+            party_result::RAID_DISALLOWED_BY_LEVEL => {
+                Some(UiError::key("ERR_RAID_DISALLOWED_BY_LEVEL"))
+            }
+            party_result::LFG_BOOT_IN_COMBAT => Some(UiError::key("ERR_PARTY_LFG_BOOT_IN_COMBAT")),
+            party_result::LFG_BOOT_DUNGEON_COMPLETE => {
+                Some(UiError::key("ERR_PARTY_LFG_BOOT_DUNGEON_COMPLETE"))
+            }
+            party_result::LFG_BOOT_LOOT_ROLLS => {
+                Some(UiError::key("ERR_PARTY_LFG_BOOT_LOOT_ROLLS"))
+            }
+            party_result::LFG_TELEPORT_IN_COMBAT => {
+                Some(UiError::key("ERR_PARTY_LFG_TELEPORT_IN_COMBAT"))
+            }
             _ => None,
         }
     }
@@ -992,7 +1032,7 @@ mod tests {
         let mut g = GroupState::default();
         assert_eq!(
             g.apply_invited("Bob"),
-            vec![UiError::s("ERR_INVITED_TO_GROUP_S", "Bob")]
+            vec![UiError::strings("ERR_INVITED_TO_GROUP_SS", &["Bob", "Bob"])]
         );
         assert_eq!(g.pending_invite.as_deref(), Some("Bob"));
         assert_eq!(
@@ -1115,12 +1155,17 @@ mod tests {
     /// Asserted by message id, since the English cannot tell a right key from a wrong one.
     #[test]
     fn every_party_result_names_the_message_key_the_reference_pushes() {
-        // The 1.12.1 handler's picks, by key; unverified against 3.3.5a.
+        // 12340's arms (`0x6cbec0`), by key; `true` where the arm passes the name.
         const TABLE: &[(u32, &str, bool)] = &[
             (party_result::BAD_PLAYER_NAME, "ERR_BAD_PLAYER_NAME_S", true),
             (
                 party_result::TARGET_NOT_IN_GROUP,
                 "ERR_TARGET_NOT_IN_GROUP_S",
+                true,
+            ),
+            (
+                party_result::TARGET_NOT_IN_INSTANCE,
+                "ERR_TARGET_NOT_IN_INSTANCE_S",
                 true,
             ),
             (party_result::GROUP_FULL, "ERR_GROUP_FULL", false),
@@ -1137,6 +1182,82 @@ mod tests {
                 false,
             ),
             (party_result::IGNORING_YOU, "ERR_IGNORING_YOU_S", true),
+            (party_result::LFG_PENDING, "ERR_LFG_PENDING", false),
+            (
+                party_result::INVITE_RESTRICTED,
+                "ERR_INVITE_RESTRICTED",
+                false,
+            ),
+            (
+                party_result::IN_COMBAT_OR_SWAP_FAILED,
+                "ERR_INVITE_IN_COMBAT",
+                false,
+            ),
+            (
+                party_result::INVITE_UNKNOWN_REALM,
+                "ERR_INVITE_UNKNOWN_REALM",
+                false,
+            ),
+            (
+                party_result::INVITE_NO_PARTY_SERVER,
+                "ERR_INVITE_NO_PARTY_SERVER",
+                false,
+            ),
+            (
+                party_result::INVITE_PARTY_BUSY,
+                "ERR_INVITE_PARTY_BUSY",
+                false,
+            ),
+            (
+                party_result::TARGET_AMBIGUOUS,
+                "ERR_PARTY_TARGET_AMBIGUOUS",
+                false,
+            ),
+            (
+                party_result::LFG_INVITE_RAID_LOCKED,
+                "ERR_PARTY_LFG_INVITE_RAID_LOCKED",
+                true,
+            ),
+            (
+                party_result::LFG_BOOT_LIMIT,
+                "ERR_PARTY_LFG_BOOT_LIMIT",
+                false,
+            ),
+            (
+                party_result::LFG_BOOT_IN_PROGRESS,
+                "ERR_PARTY_LFG_BOOT_IN_PROGRESS",
+                false,
+            ),
+            (
+                party_result::LFG_BOOT_TOO_FEW_PLAYERS,
+                "ERR_PARTY_LFG_BOOT_TOO_FEW_PLAYERS",
+                false,
+            ),
+            (
+                party_result::RAID_DISALLOWED_BY_LEVEL,
+                "ERR_RAID_DISALLOWED_BY_LEVEL",
+                false,
+            ),
+            (
+                party_result::LFG_BOOT_IN_COMBAT,
+                "ERR_PARTY_LFG_BOOT_IN_COMBAT",
+                false,
+            ),
+            (
+                party_result::LFG_BOOT_DUNGEON_COMPLETE,
+                "ERR_PARTY_LFG_BOOT_DUNGEON_COMPLETE",
+                false,
+            ),
+            (
+                party_result::LFG_BOOT_LOOT_ROLLS,
+                "ERR_PARTY_LFG_BOOT_LOOT_ROLLS",
+                false,
+            ),
+            (
+                party_result::LFG_TELEPORT_IN_COMBAT,
+                "ERR_PARTY_LFG_TELEPORT_IN_COMBAT",
+                false,
+            ),
         ];
         let mut g = GroupState::default();
         for &(result, id, takes_name) in TABLE {
@@ -1146,18 +1267,22 @@ mod tests {
             let row = benilla_ui::messages::by_key(msg.key)
                 .unwrap_or_else(|| panic!("result {result} named {}, not a catalog row", msg.key));
             assert_eq!(row.key, id, "result {result}");
-            // The arms the reference passes the name to are exactly the `_S` keys.
             assert_eq!(
                 msg.arg_s().is_some(),
                 takes_name,
                 "result {result} name fill"
             );
-            assert_eq!(
-                msg.key.ends_with("_S"),
-                takes_name,
-                "result {result} _S suffix"
-            );
         }
+        // 14 under a subgroup swap is the swap's own refusal (`0x6cc228`).
+        assert_eq!(
+            g.apply_command_result(
+                party_operation::SWAP,
+                "Zed",
+                party_result::IN_COMBAT_OR_SWAP_FAILED
+            )
+            .map(|m| m.key),
+            Some("ERR_GROUP_SWAP_FAILED")
+        );
 
         // The two `OK` arms, where the operation decides.
         let mut ok = |op| g.apply_command_result(op, "Zed", party_result::OK);
@@ -1200,12 +1325,12 @@ mod tests {
         }
     }
 
-    /// Three inputs show nothing: the reference's default arm (`0x5e6a06`) returns with no call.
+    /// Three inputs show nothing: the switch's default returns with no call (`0x6cbec0`).
     #[test]
     fn the_silent_inputs_show_nothing() {
         let mut g = GroupState::default();
-        // 1: every result past the table (`dec eax; cmp eax,7; ja`, unsigned).
-        for r in [9u32, 10, 42, u32::MAX] {
+        // 1: the gaps and every result past the switch.
+        for r in [10u32, 11, 21, 24, 27, 31, 42, u32::MAX] {
             assert!(
                 g.apply_command_result(party_operation::INVITE, "Zed", r)
                     .is_none(),
@@ -1309,7 +1434,7 @@ mod tests {
             [
                 "ERR_DECLINE_GROUP_S",
                 "ERR_GROUP_DISBANDED",
-                "ERR_INVITED_TO_GROUP_S",
+                "ERR_INVITED_TO_GROUP_SS",
                 "ERR_JOINED_GROUP_S",
                 "ERR_LEFT_GROUP_S",
                 "ERR_NEW_LEADER_S",

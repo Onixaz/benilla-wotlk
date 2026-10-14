@@ -557,15 +557,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // A number coerces, as `lua_tostring` does (`0x6f3690` → `0x6f7c80`); an empty or over-long
-    // name is still queued, since the reference raises `ERR_NULL_PETNAME` or truncates at send.
+    // A number coerces, as `lua_tostring` does. Every call is queued, a missing name as an empty
+    // one: `PetRename 0x5d5670` checks the pet before the name, and shows `ERR_NAME_NO_NAME` for
+    // either, so the app runs both checks.
     g.set(
         "PetRename",
         lua.create_function(|lua, name: Option<mlua::String>| {
-            let Some(name) = name else {
-                return Ok(());
+            let name = match name {
+                Some(name) => name.to_str()?.to_string(),
+                None => String::new(),
             };
-            let name = name.to_str()?.to_string();
             let mut model = lua.app_data_mut::<Model>().expect("model app_data");
             model.pet_renames.push(name);
             Ok(())
@@ -793,12 +794,17 @@ mod tests {
         assert_eq!(s.take_pet_gives_up(), (1, 2));
         assert_eq!(s.take_pet_gives_up(), (0, 0), "drain empties");
 
-        // An empty name is queued for the send's error, a number coerces, no argument queues none.
+        // An empty name is queued for the app's checks, a number coerces, no argument is empty.
         s.run("PetRename(\"Bruce\") PetRename(\"\") PetRename(7) PetRename()")
             .unwrap();
         assert_eq!(
             s.take_pet_renames(),
-            vec!["Bruce".to_string(), String::new(), "7".to_string()]
+            vec![
+                "Bruce".to_string(),
+                String::new(),
+                "7".to_string(),
+                String::new()
+            ]
         );
         assert!(s.take_pet_renames().is_empty(), "drain empties");
     }

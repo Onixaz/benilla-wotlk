@@ -65,23 +65,17 @@ pub(super) fn no_charter_line() -> Line {
     UiError::key("ERR_NO_GUILD_CHARTER")
 }
 
-/// A name the client's own validator refused ([`benilla_ui::script::validate_guild_name`]), as a
-/// red line.
-pub(super) fn name_refused_line(key: &str) -> Line {
-    UiError::key(match key {
-        "ERR_GUILD_ENTER_NAME" => "ERR_GUILD_ENTER_NAME",
-        "ERR_GUILD_NAME_INVALID_SPACE" => "ERR_GUILD_NAME_INVALID_SPACE",
-        "ERR_GUILD_NAME_NAME_CONSECUTIVE_SPACES" => "ERR_GUILD_NAME_NAME_CONSECUTIVE_SPACES",
-        "ERR_GUILD_NAME_TOO_SHORT" => "ERR_GUILD_NAME_TOO_SHORT",
-        // A key `0x6c9b70` is not known to produce becomes the generic row, never a raw key.
-        _ => "ERR_GUILD_NAME_INVALID",
-    })
+/// A name the client's own validator refused ([`benilla_ui::script::validate_guild_name`]): the
+/// `ERR_NAME_*` row `DisplayNameError 0x5218c0` picked, a red line.
+pub(super) fn name_refused_line(key: &'static str) -> Line {
+    UiError::key(key)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use benilla_ui::messages::MsgKind;
+    use benilla_ui::names::NameError;
 
     /// A line's key and the surface its catalog row names, the join the sink makes. Asserting the
     /// key rather than the enUS text holds where two rows read alike in one locale only.
@@ -174,16 +168,7 @@ mod tests {
         ];
         lines.extend((0..8).filter_map(my_sign_line));
         lines.extend((0..8).filter_map(turn_in_line));
-        lines.extend(
-            [
-                "ERR_GUILD_ENTER_NAME",
-                "ERR_GUILD_NAME_INVALID",
-                "ERR_GUILD_NAME_INVALID_SPACE",
-                "ERR_GUILD_NAME_NAME_CONSECUTIVE_SPACES",
-                "ERR_GUILD_NAME_TOO_SHORT",
-            ]
-            .map(name_refused_line),
-        );
+        lines.extend((0..=16).map(|code| name_refused_line(NameError(code).key())));
 
         for line in lines {
             let text: String = s
@@ -206,20 +191,18 @@ mod tests {
         }
     }
 
+    /// Every `DisplayNameError` row is `kind 2`, the red `UI_ERROR_MESSAGE`.
     #[test]
-    fn refused_names_keep_their_key_and_degrade_safely() {
+    fn refused_names_show_as_red_lines() {
         assert_eq!(
-            shown(name_refused_line("ERR_GUILD_ENTER_NAME")),
-            ("ERR_GUILD_ENTER_NAME", MsgKind::Error)
+            shown(name_refused_line(NameError::NO_NAME.key())),
+            ("ERR_NAME_NO_NAME", MsgKind::Error)
         );
-        assert_eq!(
-            shown(name_refused_line("ERR_GUILD_NAME_INVALID_SPACE")),
-            ("ERR_GUILD_NAME_INVALID_SPACE", MsgKind::Error)
-        );
-        assert_eq!(
-            shown(name_refused_line("ERR_SOMETHING_UNCARVED")),
-            ("ERR_GUILD_NAME_INVALID", MsgKind::Error),
-            "never a raw key on screen"
-        );
+        for code in 0..=16 {
+            assert_eq!(
+                shown(name_refused_line(NameError(code).key())).1,
+                MsgKind::Error
+            );
+        }
     }
 }

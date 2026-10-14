@@ -491,12 +491,25 @@ fn pet_feedback_family_parses_and_decodes() {
     assert_eq!(messages::pet_tame_failure_key(12), "PETTAME_UNKNOWNERROR");
     assert_eq!(messages::pet_tame_failure_key(200), "PETTAME_UNKNOWNERROR");
 
+    // SMSG_PET_NAME_INVALID: the name code, the name ("Bruce") and the declension flag, then with
+    // the flag set its five declined forms (here empty).
+    for (body, want) in [
+        ("0c000000".to_owned() + "427275636500" + "00", 12),
+        ("10000000".to_owned() + "00" + "01" + "0000000000", 16),
+    ] {
+        let p = messages::parse_server(opcode::SMSG_PET_NAME_INVALID, &hx(&body)).unwrap();
+        assert!(
+            matches!(p, ServerPacket::PetNameInvalid { code } if code == want),
+            "body {body:?}"
+        );
+        assert!(matches!(
+            decode(p)[..],
+            [SessionEvent::PetNameInvalid { code }] if code == want
+        ));
+    }
+
     // The reference reads no body here (vmangos writes none), so stray bytes change nothing.
     for body in ["", "deadbeef"] {
-        let p = messages::parse_server(opcode::SMSG_PET_NAME_INVALID, &hx(body)).unwrap();
-        assert!(matches!(p, ServerPacket::PetNameInvalid), "body {body:?}");
-        assert!(matches!(decode(p)[..], [SessionEvent::PetNameInvalid]));
-
         let p = messages::parse_server(opcode::SMSG_PET_BROKEN, &hx(body)).unwrap();
         assert!(matches!(p, ServerPacket::PetBroken), "body {body:?}");
         assert!(matches!(decode(p)[..], [SessionEvent::PetBroken]));

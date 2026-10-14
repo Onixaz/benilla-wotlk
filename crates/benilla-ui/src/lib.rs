@@ -9,6 +9,7 @@ pub mod layout;
 pub mod loader;
 pub mod markup;
 pub mod messages;
+pub mod names;
 pub mod order;
 pub mod script;
 pub mod source;

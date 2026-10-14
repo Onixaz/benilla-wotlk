@@ -5,24 +5,9 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-/// Fixtures for the unknown-key fallback (`ui_petition::lines` and `benilla_ui::messages`'
+/// Fixtures for the unknown-key fallback (`ui_action::errors` and `benilla_ui::messages`'
 /// `kind_of`), which need a key the client does not have.
-const NOT_A_MESSAGE: &[&str] = &["ERR_SOMETHING_UNCARVED", "ERR_NOT_A_REAL_MESSAGE"];
-
-/// 1.12.1 keys the source still raises that the 3.3.5a catalog has no row for, each to be replaced
-/// by the 3.3.5a client's own key (#53). The list only shrinks.
-pub const NOT_YET_PORTED: &[&str] = &[
-    "ERR_GUILD_ENTER_NAME",
-    "ERR_GUILD_NAME_INVALID",
-    "ERR_GUILD_NAME_INVALID_SPACE",
-    "ERR_GUILD_NAME_NAME_CONSECUTIVE_SPACES",
-    "ERR_GUILD_NAME_TOO_SHORT",
-    "ERR_INVALID_PETNAME",
-    "ERR_INVITED_TO_GROUP_S",
-    "ERR_INVITED_TO_GUILD_SS",
-    "ERR_NULL_PETNAME",
-    "ERR_QUEST_PUSH_TOO_FAR_S",
-];
+const NOT_A_MESSAGE: &[&str] = &["ERR_NOT_A_REAL_MESSAGE"];
 
 /// The generated catalog, skipped: walking it would make every key trivially present.
 const GENERATED: &str = "catalog.rs";
@@ -70,21 +55,12 @@ fn every_error_key_in_the_source_is_a_catalog_row() {
     let strays: Vec<&String> = keys
         .iter()
         .filter(|k| !NOT_A_MESSAGE.contains(&k.as_str()))
-        .filter(|k| !NOT_YET_PORTED.contains(&k.as_str()))
         .filter(|k| benilla_ui::messages::by_key(k).is_none())
         .collect();
     assert!(
         strays.is_empty(),
         "these keys are not rows of the 12340 message catalog, so the client would show nothing \
          for them: {strays:?}"
-    );
-    let ported: Vec<&&str> = NOT_YET_PORTED
-        .iter()
-        .filter(|k| benilla_ui::messages::by_key(k).is_some() || !keys.contains(**k))
-        .collect();
-    assert!(
-        ported.is_empty(),
-        "no longer a stray, so off `NOT_YET_PORTED`: {ported:?}"
     );
 }
 

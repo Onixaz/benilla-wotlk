@@ -155,8 +155,8 @@ pub const SMSG_PET_CAST_FAILED: u16 = 0x0138; // 312
 /// Tame, Call Pet or Revive Pet refused: one `u8` reason. The reference (`0x6e97e0`) shows
 /// `ERR_TAME_FAILED` with the reason's `PETTAME_*` string, `PETTAME_UNKNOWNERROR` outside 1..=11.
 pub const SMSG_PET_TAME_FAILURE: u16 = 0x0173; // 371
-/// A refused pet rename: empty body (`PetHandler.cpp:542-548`), yet the reference shows
-/// `ERR_INVALID_PETNAME` for it (`0x5e3e33`).
+/// A refused pet rename: a `u32` name code, the name, and a declension flag with its forms
+/// (`0x6e2fb1`).
 pub const SMSG_PET_NAME_INVALID: u16 = 0x0178; // 376
 /// The pet ran away at zero loyalty (`Pet.cpp:822`): empty body. The reference (`0x4bdc00`) only
 /// shows `ERR_PET_BROKEN`; the bar's teardown still comes as an `SMSG_PET_SPELLS`.

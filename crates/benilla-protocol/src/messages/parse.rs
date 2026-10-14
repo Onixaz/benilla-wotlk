@@ -757,8 +757,10 @@ fn parse_server_body(
         opcode::SMSG_PET_TAME_FAILURE => ServerPacket::PetTameFailure {
             reason: pet::read_pet_tame_failure(&mut r)?,
         },
-        // Empty bodies on both sides: vmangos writes nothing and the reference reads nothing.
-        opcode::SMSG_PET_NAME_INVALID => ServerPacket::PetNameInvalid,
+        opcode::SMSG_PET_NAME_INVALID => ServerPacket::PetNameInvalid {
+            code: pet::read_pet_name_invalid(&mut r)?,
+        },
+        // An empty body on both sides: vmangos writes nothing and the reference reads nothing.
         opcode::SMSG_PET_BROKEN => ServerPacket::PetBroken,
         opcode::SMSG_PET_ACTION_SOUND => {
             let (pet_guid, talk) = pet::read_pet_action_sound(&mut r)?;

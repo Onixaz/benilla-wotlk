@@ -33,7 +33,7 @@ pub mod buy_result {
     pub const REPUTATION_REQUIRE: u8 = 12;
 }
 
-/// `SellResult` (vmangos `ItemDefines.h:120-141`): the `u8` reason on `SMSG_SELL_ITEM`.
+/// `SellResult`: the `u8` reason on `SMSG_SELL_ITEM`, 7 to 9 added by 3.3.5a (`0x6d157c`).
 pub mod sell_result {
     pub const CANT_FIND_ITEM: u8 = 1;
     pub const CANT_SELL_ITEM: u8 = 2;
@@ -41,6 +41,9 @@ pub mod sell_result {
     pub const YOU_DONT_OWN_THAT_ITEM: u8 = 4;
     pub const UNK: u8 = 5;
     pub const ONLY_EMPTY_BAG: u8 = 6;
+    pub const CANT_SELL_TO_THIS_MERCHANT: u8 = 7;
+    pub const MUST_REPAIR_DURABILITY: u8 = 8;
+    pub const INTERNAL_BAG_ERROR: u8 = 9;
 }
 
 /// Body of `CMSG_LIST_INVENTORY`: the vendor guid; the dead get no list (`ItemHandler.cpp:693`).

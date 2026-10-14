@@ -27,22 +27,47 @@ pub mod member_status {
 }
 
 /// vmangos `PartyOperation` (`WorldSession.h:94-98`): which command a party result answers.
+/// 12340 also tells `SWAP` apart (`0x6cc228`).
 pub mod party_operation {
     pub const INVITE: u32 = 0;
     pub const LEAVE: u32 = 2;
+    pub const SWAP: u32 = 4;
 }
 
-/// vmangos `PartyResult` (`WorldSession.h:100-111`), the verdict of `SMSG_PARTY_COMMAND_RESULT`.
+/// The verdict of `SMSG_PARTY_COMMAND_RESULT`, numbered as 12340's handler `0x6cbec0` switches on
+/// it; 1.12.1 had no `TARGET_NOT_IN_INSTANCE`, so every code past 2 moved up one.
 pub mod party_result {
     pub const OK: u32 = 0;
     pub const BAD_PLAYER_NAME: u32 = 1;
     pub const TARGET_NOT_IN_GROUP: u32 = 2;
-    pub const GROUP_FULL: u32 = 3;
-    pub const ALREADY_IN_GROUP: u32 = 4;
-    pub const NOT_IN_GROUP: u32 = 5;
-    pub const NOT_LEADER: u32 = 6;
-    pub const WRONG_FACTION: u32 = 7;
-    pub const IGNORING_YOU: u32 = 8;
+    pub const TARGET_NOT_IN_INSTANCE: u32 = 3;
+    pub const GROUP_FULL: u32 = 4;
+    pub const ALREADY_IN_GROUP: u32 = 5;
+    pub const NOT_IN_GROUP: u32 = 6;
+    pub const NOT_LEADER: u32 = 7;
+    pub const WRONG_FACTION: u32 = 8;
+    pub const IGNORING_YOU: u32 = 9;
+    pub const LFG_PENDING: u32 = 12;
+    pub const INVITE_RESTRICTED: u32 = 13;
+    /// `ERR_GROUP_SWAP_FAILED` under [`super::party_operation::SWAP`], `ERR_INVITE_IN_COMBAT`
+    /// otherwise.
+    pub const IN_COMBAT_OR_SWAP_FAILED: u32 = 14;
+    pub const INVITE_UNKNOWN_REALM: u32 = 15;
+    pub const INVITE_NO_PARTY_SERVER: u32 = 16;
+    pub const INVITE_PARTY_BUSY: u32 = 17;
+    pub const TARGET_AMBIGUOUS: u32 = 18;
+    pub const LFG_INVITE_RAID_LOCKED: u32 = 19;
+    pub const LFG_BOOT_LIMIT: u32 = 20;
+    pub const LFG_BOOT_COOLDOWN: u32 = 21;
+    pub const LFG_BOOT_IN_PROGRESS: u32 = 22;
+    pub const LFG_BOOT_TOO_FEW_PLAYERS: u32 = 23;
+    pub const LFG_BOOT_NOT_ELIGIBLE: u32 = 24;
+    pub const RAID_DISALLOWED_BY_LEVEL: u32 = 25;
+    pub const LFG_BOOT_IN_COMBAT: u32 = 26;
+    pub const VOTE_KICK_REASON_NEEDED: u32 = 27;
+    pub const LFG_BOOT_DUNGEON_COMPLETE: u32 = 28;
+    pub const LFG_BOOT_LOOT_ROLLS: u32 = 29;
+    pub const LFG_TELEPORT_IN_COMBAT: u32 = 30;
 }
 
 /// One `SMSG_GROUP_LIST` member row (`Group.cpp:161-167`); the recipient has no row, their flags

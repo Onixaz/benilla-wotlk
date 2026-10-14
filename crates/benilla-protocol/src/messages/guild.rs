@@ -177,7 +177,7 @@ pub mod guild_command_error {
     pub const INVITED_TO_GUILD: u32 = 0x04;
     /// `ERR_ALREADY_INVITED_TO_GUILD_S`.
     pub const ALREADY_INVITED_TO_GUILD_S: u32 = 0x05;
-    /// `ERR_GUILD_NAME_INVALID`.
+    /// The server's name check refused it; 12340 shows it as name code 1 (`0x6cc6db`).
     pub const NAME_INVALID: u32 = 0x06;
     /// `ERR_GUILD_NAME_EXISTS_S`.
     pub const NAME_EXISTS_S: u32 = 0x07;
@@ -205,6 +205,14 @@ pub mod guild_command_error {
     pub const IGNORING_YOU_S: u32 = 0x13;
     /// `ERR_GUILD_UNK20`: "for Typecommand 0x05 only" per vmangos.
     pub const UNK20: u32 = 0x14;
+    /// `ERR_GUILD_WITHDRAW_LIMIT`, a guild bank refusal.
+    pub const WITHDRAW_LIMIT: u32 = 0x19;
+    /// `ERR_GUILD_NOT_ENOUGH_MONEY`.
+    pub const NOT_ENOUGH_MONEY: u32 = 0x1A;
+    /// `ERR_GUILD_BANK_FULL`.
+    pub const BANK_FULL: u32 = 0x1C;
+    /// `ERR_ITEM_NOT_FOUND`.
+    pub const ITEM_NOT_FOUND: u32 = 0x1D;
 }
 
 /// `SMSG_GUILD_QUERY_RESPONSE`: one guild's name, ten rank names and tabard, by guild id.

@@ -29,7 +29,7 @@ pub mod mail_action {
     pub const MADE_PERMANENT: u32 = 5;
 }
 
-/// `SMSG_SEND_MAIL_RESULT`'s `error` (vmangos `Mail.h` `MailResponseResult`).
+/// `SMSG_SEND_MAIL_RESULT`'s `error`, as 12340's handler `0x5717b0` switches on it.
 pub mod mail_error {
     pub const OK: u32 = 0;
     pub const EQUIP_ERROR: u32 = 1;
@@ -39,7 +39,15 @@ pub mod mail_error {
     pub const NOT_YOUR_TEAM: u32 = 5;
     pub const INTERNAL_ERROR: u32 = 6;
     pub const TRIAL_ACCOUNT: u32 = 14;
-    pub const TOO_MANY_ATTACHMENTS: u32 = 15;
+    pub const RECIPIENT_CAP_REACHED: u32 = 15;
+    pub const CANT_SEND_WRAPPED_COD: u32 = 16;
+    pub const MAIL_AND_CHAT_SUSPENDED: u32 = 17;
+    pub const TOO_MANY_ATTACHMENTS: u32 = 18;
+    pub const ATTACHMENT_INVALID: u32 = 19;
+    /// Shows nothing (`0x5717b0`'s arm 20).
+    pub const SILENT: u32 = 20;
+    /// An expired attachment on a take; it carries the take's item tail, as `OK` does.
+    pub const ITEM_HAS_EXPIRED: u32 = 21;
 }
 
 /// A mail's one attachment (`MAX_MAIL_ITEMS` is 1 in 1.12): a fixed-width block present on every
@@ -228,8 +236,9 @@ pub(super) fn read_mail_list_result(r: &mut &[u8]) -> io::Result<Vec<MailListEnt
     Ok(mails)
 }
 
-/// `SMSG_SEND_MAIL_RESULT` (vmangos `Server/Packets/Mail.cpp`): `u32 mailId, action, error`, then
-/// `u32 equipError` on `EQUIP_ERROR`, or `u32 itemEntry, itemCount` on an OK `ITEM_TAKEN`.
+/// `SMSG_SEND_MAIL_RESULT` (12340 `0x5717b0`): `u32 mailId, action, error`, then `u32 equipError`
+/// on `EQUIP_ERROR`, or `u32 itemEntry, itemCount` on an `ITEM_TAKEN` that is `OK` or
+/// `ITEM_HAS_EXPIRED`.
 #[allow(clippy::type_complexity)]
 pub(super) fn read_send_mail_result(
     r: &mut &[u8],
@@ -241,7 +250,10 @@ pub(super) fn read_send_mail_result(
     let mut item = None;
     if error == mail_error::EQUIP_ERROR && !r.is_empty() {
         equip_error = Some(read_u32_le(r)?);
-    } else if action == mail_action::ITEM_TAKEN && error == mail_error::OK && !r.is_empty() {
+    } else if action == mail_action::ITEM_TAKEN
+        && matches!(error, mail_error::OK | mail_error::ITEM_HAS_EXPIRED)
+        && !r.is_empty()
+    {
         item = Some((read_u32_le(r)?, read_u32_le(r)?));
     }
     Ok((mail_id, action, error, equip_error, item))

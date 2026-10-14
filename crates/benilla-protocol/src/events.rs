@@ -474,8 +474,9 @@ pub enum SessionEvent {
     /// A refused tame, Call Pet or Revive Pet (`SMSG_PET_TAME_FAILURE`): the reason's
     /// `PETTAME_*` string fills `ERR_TAME_FAILED`.
     PetTameFailure { reason: u8 },
-    /// A refused pet rename (`SMSG_PET_NAME_INVALID`, empty body): `ERR_INVALID_PETNAME`.
-    PetNameInvalid,
+    /// A refused pet rename (`SMSG_PET_NAME_INVALID`): `code` is the name code
+    /// `DisplayNameError` shows.
+    PetNameInvalid { code: u32 },
     /// The pet ran away at zero loyalty (`SMSG_PET_BROKEN`, empty body): `ERR_PET_BROKEN`.
     PetBroken,
     /// The pet's voice (`SMSG_PET_ACTION_SOUND`): a talk selector into its `CreatureSoundData` row.

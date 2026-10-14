@@ -157,7 +157,8 @@ fn send_mail_result(
         mail.send_acks.push(MailSendAck {
             ok: error == mail_error::OK,
             refusal: (error != mail_error::OK && error != mail_error::EQUIP_ERROR)
-                .then(|| mail_refusal(error)),
+                .then(|| mail_refusal(error))
+                .flatten(),
         });
         return;
     }
@@ -192,7 +193,7 @@ fn send_mail_result(
             required_level: None,
             bag_slot: 255,
         }),
-        other => mail.errors.push(mail_refusal(other)),
+        other => mail.errors.extend(mail_refusal(other)),
     }
 }
 

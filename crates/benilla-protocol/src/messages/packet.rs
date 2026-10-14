@@ -512,8 +512,10 @@ pub enum ServerPacket {
     PetTameFailure {
         reason: u8,
     },
-    /// `SMSG_PET_NAME_INVALID`: the rename was refused; empty body.
-    PetNameInvalid,
+    /// `SMSG_PET_NAME_INVALID`: the rename was refused, with the name code that picks the message.
+    PetNameInvalid {
+        code: u32,
+    },
     /// `SMSG_PET_BROKEN`: the pet's loyalty hit zero and it ran away; empty body.
     PetBroken,
     /// `SMSG_PET_ACTION_SOUND`: the pet's voice; `talk` is [`super::pet::PET_TALK_ORDER`] or
@@ -1387,7 +1389,7 @@ impl ServerPacket {
             ServerPacket::PetMode(_) => "SMSG_PET_MODE".into(),
             ServerPacket::PetActionFeedback { .. } => "SMSG_PET_ACTION_FEEDBACK".into(),
             ServerPacket::PetTameFailure { .. } => "SMSG_PET_TAME_FAILURE".into(),
-            ServerPacket::PetNameInvalid => "SMSG_PET_NAME_INVALID".into(),
+            ServerPacket::PetNameInvalid { .. } => "SMSG_PET_NAME_INVALID".into(),
             ServerPacket::PetBroken => "SMSG_PET_BROKEN".into(),
             ServerPacket::PetActionSound { .. } => "SMSG_PET_ACTION_SOUND".into(),
             ServerPacket::PetDismissSound { .. } => "SMSG_PET_DISMISS_SOUND".into(),

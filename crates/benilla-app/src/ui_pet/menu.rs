@@ -21,10 +21,6 @@ const UNIT_FLAG_PET_RENAME: u32 = 0x0000_0010;
 /// `UNIT_FLAG_PET_ABANDON`, `0x4be544`'s mask: set on a hunter pet, clear on a summon.
 const UNIT_FLAG_PET_ABANDON: u32 = 0x0000_0020;
 
-/// The rename sender's silent truncation, `0x64a7f0(dst, 0x50, "%s", name)` at `0x4bd840`: 79
-/// plus the NUL. The popup's 12-letter cap is FrameXML's, a layer above.
-const PET_NAME_MAX: usize = 79;
-
 /// `(PetCanBeAbandoned, PetCanBeRenamed)` (`0x4be500`, `0x4be580`), read off `UNIT_FIELD_FLAGS`
 /// (dword 46), not the TBC's `UNIT_FIELD_BYTES_2`, which this server leaves zero.
 pub(super) fn menu_predicates(pet_flags: u32) -> (bool, bool) {
@@ -69,6 +65,10 @@ pub(super) fn drain_pet_menu(
     }
     let pet_guid = bar.spells.pet_guid;
     if pet_guid == 0 {
+        // `PetRename 0x5d5670`'s first check; the other verbs drop silently.
+        for _ in &renames {
+            ui_errors.0.push(UiError::key("ERR_NO_PET"));
+        }
         debug!("ui_pet: dropping a queued menu verb — there is no pet");
         return;
     }
@@ -94,19 +94,12 @@ pub(super) fn drain_pet_menu(
         });
     }
     for name in renames {
-        // `0x4bd840`: an empty name raises an error and sends nothing; the rest is truncated.
-        if name.is_empty() {
-            ui_errors.0.push(UiError::key("ERR_NULL_PETNAME"));
+        // `PetRename 0x5d5670`: a refused name shows its name error and sends nothing.
+        if let Err(code) = benilla_ui::names::check_pet_name(&name) {
+            ui_errors.0.push(UiError::key(code.key()));
             continue;
         }
-        let name = clamp_pet_name(&name);
         debug!("ui_pet: renaming pet {pet_guid:#x} to {name:?}");
         let _ = commands.0.send(ClientCommand::PetRename { pet_guid, name });
     }
-}
-
-/// [`PET_NAME_MAX`]'s truncation. Deviation: it counts characters where the reference counts
-/// bytes, because a byte cut can split a UTF-8 character.
-fn clamp_pet_name(name: &str) -> String {
-    name.chars().take(PET_NAME_MAX).collect()
 }
