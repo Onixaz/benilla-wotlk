@@ -352,8 +352,8 @@ fn snapshot(
             objectives: sub(&d.objectives),
             choices: resolve_items(&d.choices, items, icons, commands),
             rewards: resolve_items(&d.rewards, items, icons, commands),
-            reward_money: d.money.max(0) as u32,
-            reward_spell: reward_spell_view(d.reward_spell, spells),
+            reward_money: d.extra.money.max(0) as u32,
+            reward_spell: reward_spell_view(d.extra.spell, spells),
             ..Default::default()
         },
         QuestView::Progress(p) => QuestState {
@@ -371,8 +371,8 @@ fn snapshot(
             body: sub(&o.offer_text),
             choices: resolve_items(&o.choices, items, icons, commands),
             rewards: resolve_items(&o.rewards, items, icons, commands),
-            reward_money: o.money.max(0) as u32,
-            reward_spell: reward_spell_view(o.reward_spell, spells),
+            reward_money: o.extra.money.max(0) as u32,
+            reward_spell: reward_spell_view(o.extra.spell, spells),
             ..Default::default()
         },
     })
@@ -637,9 +637,20 @@ fn drain_quest(
                 }
                 if let Some(quest) = view_quest {
                     giver.acted = true;
-                    let _ = commands
-                        .0
-                        .send(ClientCommand::QuestgiverAccept { npc, quest });
+                    // A shared quest is accepted toward its sharer, and the details' start-cheat
+                    // byte rides along (`0x58cd65`, `0x58cd7d`).
+                    let (to, start_cheat) = match giver.view.as_ref() {
+                        Some(QuestView::Detail(d)) if d.sharer != 0 => {
+                            (d.sharer, u32::from(d.start_cheat))
+                        }
+                        Some(QuestView::Detail(d)) => (npc, u32::from(d.start_cheat)),
+                        _ => (npc, 0),
+                    };
+                    let _ = commands.0.send(ClientCommand::QuestgiverAccept {
+                        npc: to,
+                        quest,
+                        start_cheat,
+                    });
                     // `AcceptQuest`'s tail (`0x5013df`) triggers the Quest Log tutorial.
                     if let Some(t) = tutorials.as_mut() {
                         t.write(crate::tutorial::TutorialEvent::trigger(
@@ -735,11 +746,10 @@ mod tests {
                 title: "The Unsent Letter".into(),
                 details: String::new(),
                 objectives: String::new(),
-                auto_finish: 0,
+                auto_launched: false,
                 choices: Vec::new(),
                 rewards: Vec::new(),
-                money: 0,
-                reward_spell: 0,
+                ..Default::default()
             })
         };
         let mut giver = QuestGiver::default();
@@ -761,11 +771,14 @@ mod tests {
                 title: "A Threat Within".into(),
                 details: "Kill kobolds, $N.".into(),
                 objectives: "Slay 10.".into(),
-                auto_finish: 1,
+                auto_launched: true,
                 choices: vec![triple(2000)],
                 rewards: vec![triple(3000)],
-                money: 1234,
-                reward_spell: 0,
+                extra: benilla_protocol::messages::QuestExtraRewards {
+                    money: 1234,
+                    ..Default::default()
+                },
+                ..Default::default()
             }),
         );
         assert!(giver.is_open());
@@ -814,6 +827,8 @@ mod tests {
                 request_text: "Bring me the tusks.".into(),
                 emote: 0,
                 close_on_cancel: 1,
+                quest_flags: 0,
+                suggested_players: 0,
                 required_money: 500,
                 required_items: vec![triple(2001)],
                 is_complete: true,
@@ -902,11 +917,10 @@ mod tests {
                 title: "A Threat Within".into(),
                 details: String::new(),
                 objectives: String::new(),
-                auto_finish: 0,
+                auto_launched: false,
                 choices: vec![],
                 rewards: vec![],
-                money: 0,
-                reward_spell: 0,
+                ..Default::default()
             }),
         );
         assert_eq!(giver.view_title(100).as_deref(), Some("A Threat Within"));
@@ -998,11 +1012,10 @@ mod tests {
                 title: "A Threat Within".into(),
                 details: String::new(),
                 objectives: String::new(),
-                auto_finish: close_on_cancel,
+                auto_launched: close_on_cancel != 0,
                 choices: Vec::new(),
                 rewards: Vec::new(),
-                money: 0,
-                reward_spell: 0,
+                ..Default::default()
             }),
         );
         // The latch is written by the packet, after the open (as `net::quest_detail` does).

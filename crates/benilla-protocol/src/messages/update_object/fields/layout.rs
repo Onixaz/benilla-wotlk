@@ -282,14 +282,15 @@ use Block::{Container, Corpse, DynamicObject, GameObject, Item, Object, Player, 
 use Field as F;
 
 /// The index space [`super::ObjectFields`] keeps, 1.12.1's (vmangos `UpdateFields_1_12_1.h`)
-/// numbering, with the places only the movement block fills on the wire.
+/// numbering, with the places only the movement block fills on the wire and, past its player end,
+/// the 3.3.5a quest log, which outgrew 1.12.1's 20 slots of 3.
 pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
     ends: DescriptorEnds {
         object: 6,
         item: 48,
         container: 122,
         unit: 188,
-        player: 1282,
+        player: 1407,
         gameobject: 26,
         dynamicobject: 16,
         corpse: 38,
@@ -383,8 +384,8 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         one(F::PlayerBytes2, Player, 194),
         one(F::PlayerBytes3, Player, 195),
         one(F::PlayerDuelTeam, Player, 196),
-        // 20 slots of (quest id, counters and state, timer).
-        run(F::PlayerQuestLog, Player, 198, 60),
+        // 25 slots of (quest id, state, two words of four `u16` counters, timer).
+        run(F::PlayerQuestLog, Player, 1282, 125),
         // 19 slots of 12: creator guid, entry, 7 enchants, properties, pad.
         strided(F::PlayerVisibleItemEntry, Player, 260, 19, 12),
         strided(F::PlayerVisibleItemEnchants, Player, 261, 19, 12),
@@ -467,8 +468,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
 
 /// 3.3.5a (12340): AzerothCore `UpdateFields.h`. Not here, so not read: the auras
 /// (`SMSG_AURA_UPDATE` carries them), the virtual items (item entries, not display ids), the item
-/// text id, training points, the combo target and the old honor fields, which 3.3.5a has not;
-/// and, not yet converted, the quest log (25 slots of 5).
+/// text id, training points, the combo target and the old honor fields, which 3.3.5a has not.
 pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
     ends: DescriptorEnds {
         object: 6,
@@ -567,6 +567,9 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         one(F::PlayerBytes2, Player, 154),
         one(F::PlayerBytes3, Player, 155),
         one(F::PlayerDuelTeam, Player, 156),
+        // 25 slots of 5 at `UNIT_END + 0xA`: 12340 reads slot `i` at `(i*5 + 10)*4` into the player
+        // block (`0x5e1561`), the counters as `u16` at `+8` (`0x5e161c`).
+        run(F::PlayerQuestLog, Player, 158, 125),
         // 19 slots of 2: entry, then the permanent and temporary enchant as two `u16`.
         strided(F::PlayerVisibleItemEntry, Player, 283, 19, 2),
         strided(F::PlayerVisibleItemEnchants, Player, 284, 19, 2),

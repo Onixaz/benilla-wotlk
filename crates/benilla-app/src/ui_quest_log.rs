@@ -172,12 +172,12 @@ fn leaderboard_text(
     })
 }
 
-/// One creature or GameObject line, for `ReqCreatureOrGOId[i] != 0` (`0x4e00c0`, `0x4e02d7`);
-/// `counter` is the slot's 6-bit counter for index i. A non-empty `text` is the name and takes
+/// One creature or GameObject line, for `ReqCreatureOrGOId[i] != 0` (`0x5e15ec`); `counter` is
+/// the slot's `u16` counter for index i (`0x5e161c`). A non-empty `text` is the name and takes
 /// `QUEST_OBJECTS_FOUND` (`0x4e03da`), while `type` stays `"monster"` (`0x4e04ca`).
 fn creature_line(
     obj: &QuestObjective,
-    counter: u8,
+    counter: u16,
     creature_name: Option<&str>,
     get: &dyn Fn(&str) -> Option<String>,
 ) -> Option<QuestLogObjectiveView> {
@@ -208,20 +208,19 @@ fn creature_line(
     })
 }
 
-/// One item line, for `ReqItemId[i] > 0 && ReqItemId[i] != SrcItemId` (`0x4e04f4`-`0x4e04fd`).
-/// `bag_count` is the live inventory count, as an item has no slot counter; the name comes from
-/// the item cache alone, the override text being the creature branch's (`0x4e033f`, `0x4e03c9`).
+/// One required-item line, for `ReqItemId[i] > 0` unless it is the quest's own source item and
+/// one is enough (`0x5e16d9`). `bag_count` is the live inventory count, as an item has no slot
+/// counter; the name comes from the item cache alone.
 fn item_line(
-    obj: &QuestObjective,
+    (item_id, req): (u32, u32),
     src_item_id: u32,
     item_name: Option<&str>,
     bag_count: u32,
     get: &dyn Fn(&str) -> Option<String>,
 ) -> Option<QuestLogObjectiveView> {
-    if obj.item_id == 0 || obj.item_id == src_item_id {
+    if item_id == 0 || (item_id == src_item_id && req < 2) {
         return None;
     }
-    let req = obj.item_count;
     let cur = bag_count.min(req);
     Some(QuestLogObjectiveView {
         text: leaderboard_text(
@@ -279,10 +278,10 @@ fn resolve_template_item(
     }
 }
 
-/// One quest's objective lines, for every quest, as the watch frame reads any quest's
-/// (`QuestLogFrame.lua:613-663`). The reference walks the array once per kind, `event`, creature
-/// or GameObject, item, reputation (`0x4e0000`, `0x4e0110`), so one quad can give two lines. The
-/// `event` and reputation lines are not built.
+/// One quest's objective lines, for every quest, as the watch frame reads any quest's. The
+/// leaderboard (`0x5e1460`) walks `event`, the four creature or GameObject rows, the six required
+/// items, the intermediate drops, then players slain. The `event`, drop and player lines are not
+/// built.
 fn build_objectives(
     template: &QuestTemplate,
     log_slot: &QuestLogSlot,
@@ -310,17 +309,15 @@ fn build_objectives(
             objectives.push(line);
         }
     }
-    // Item.
-    for obj in template.objectives.iter() {
-        if obj.item_id == 0 {
+    // Required items.
+    for &(item_id, req) in template.required_items.iter() {
+        if item_id == 0 {
             continue;
         }
-        let item_name = items
-            .template(obj.item_id, 0, commands)
-            .map(|t| t.name.clone());
-        let bag_count = count_of(store, objects, obj.item_id, InventoryScope::QUEST_ITEMS);
+        let item_name = items.template(item_id, 0, commands).map(|t| t.name.clone());
+        let bag_count = count_of(store, objects, item_id, InventoryScope::QUEST_ITEMS);
         if let Some(line) = item_line(
-            obj,
+            (item_id, req),
             template.src_item_id,
             item_name.as_deref(),
             bag_count,
@@ -1019,19 +1016,44 @@ mod tests {
         assert_eq!(remap_selection(&old, &new, 99), 0); // out-of-range: nothing to follow
     }
 
+    /// One row of a test template: objective `i`'s creature or GameObject, its count and text,
+    /// and required item `i`, which 3.3.5a keeps in its own array.
+    #[derive(Clone, Copy)]
+    struct Row {
+        creature_or_go: u32,
+        required_count: u32,
+        item_id: u32,
+        item_count: u32,
+        text: &'static str,
+    }
+
     fn obj(
         creature_or_go: u32,
         required_count: u32,
         item_id: u32,
         item_count: u32,
-        text: &str,
-    ) -> QuestObjective {
-        QuestObjective {
+        text: &'static str,
+    ) -> Row {
+        Row {
             creature_or_go,
             required_count,
             item_id,
             item_count,
-            text: text.into(),
+            text,
+        }
+    }
+
+    impl Row {
+        fn objective(&self) -> QuestObjective {
+            QuestObjective {
+                creature_or_go: self.creature_or_go,
+                required_count: self.required_count,
+                text: self.text.into(),
+                ..Default::default()
+            }
+        }
+        fn item(&self) -> (u32, u32) {
+            (self.item_id, self.item_count)
         }
     }
 
@@ -1051,7 +1073,7 @@ mod tests {
     #[test]
     fn creature_objective_with_resolved_name() {
         let o = obj(100, 10, 0, 0, "");
-        let line = creature_line(&o, 3, Some("Kobold Vermin"), &probe_strings).unwrap();
+        let line = creature_line(&o.objective(), 3, Some("Kobold Vermin"), &probe_strings).unwrap();
         assert_eq!(line.text, "<KILLED Kobold Vermin 3 of 10>");
         assert_eq!(line.kind, "monster");
         assert!(!line.finished);
@@ -1060,7 +1082,7 @@ mod tests {
     #[test]
     fn creature_objective_in_flight_shows_a_placeholder() {
         let o = obj(100, 10, 0, 0, "");
-        let line = creature_line(&o, 0, None, &probe_strings).unwrap();
+        let line = creature_line(&o.objective(), 0, None, &probe_strings).unwrap();
         assert_eq!(line.text, "<KILLED ... 0 of 10>");
     }
 
@@ -1069,7 +1091,7 @@ mod tests {
     fn go_objective_falls_back_without_a_name_cache() {
         let go_id = ((-57i32) as u32) | 0x8000_0000;
         let o = obj(go_id, 1, 0, 0, "");
-        let line = creature_line(&o, 1, None, &probe_strings).unwrap();
+        let line = creature_line(&o.objective(), 1, None, &probe_strings).unwrap();
         assert_eq!(line.text, "<FOUND ... 1 of 1>");
         assert_eq!(line.kind, "object");
         assert!(line.finished); // cur (1) >= req (1)
@@ -1079,7 +1101,7 @@ mod tests {
     fn go_objective_prefers_its_custom_text_over_the_fallback() {
         let go_id = ((-57i32) as u32) | 0x8000_0000;
         let o = obj(go_id, 4, 0, 0, "Destroy the barricade");
-        let line = creature_line(&o, 1, None, &probe_strings).unwrap();
+        let line = creature_line(&o.objective(), 1, None, &probe_strings).unwrap();
         assert_eq!(line.text, "<FOUND Destroy the barricade 1 of 4>");
         assert_eq!(line.kind, "object");
     }
@@ -1088,7 +1110,7 @@ mod tests {
     fn item_objective_counts_bags_and_clamps_to_required() {
         let o = obj(0, 0, 2000, 5, "");
         // 8 carried, 5 required: the line clamps.
-        let line = item_line(&o, 0, Some("Kobold Ear"), 8, &probe_strings).unwrap();
+        let line = item_line(o.item(), 0, Some("Kobold Ear"), 8, &probe_strings).unwrap();
         assert_eq!(line.text, "<NEEDED Kobold Ear 5 of 5>");
         assert_eq!(line.kind, "item");
         assert!(line.finished);
@@ -1097,7 +1119,7 @@ mod tests {
     #[test]
     fn item_objective_in_flight_shows_a_placeholder() {
         let o = obj(0, 0, 2000, 5, "");
-        let line = item_line(&o, 0, None, 2, &probe_strings).unwrap();
+        let line = item_line(o.item(), 0, None, 2, &probe_strings).unwrap();
         assert_eq!(line.text, "<NEEDED ... 2 of 5>");
     }
 
@@ -1105,7 +1127,7 @@ mod tests {
     #[test]
     fn custom_text_overrides_the_creature_auto_line() {
         let o = obj(100, 10, 0, 0, "Slay the vermin");
-        let line = creature_line(&o, 4, Some("Kobold Vermin"), &probe_strings).unwrap();
+        let line = creature_line(&o.objective(), 4, Some("Kobold Vermin"), &probe_strings).unwrap();
         assert_eq!(line.text, "<FOUND Slay the vermin 4 of 10>");
         assert_eq!(line.kind, "monster");
     }
@@ -1135,7 +1157,7 @@ mod tests {
             assert!(get(key).is_some(), "{key} missing");
         }
         let o = obj(100, 10, 0, 0, "");
-        let line = creature_line(&o, 3, Some("Kobold Vermin"), &get).unwrap();
+        let line = creature_line(&o.objective(), 3, Some("Kobold Vermin"), &get).unwrap();
         assert_eq!(line.text, "Kobold Vermin slain: 3/10");
     }
 
@@ -1145,7 +1167,7 @@ mod tests {
     fn a_complete_quest_does_not_mark_a_short_objective_finished() {
         let o = obj(100, 10, 0, 0, "");
         // 1 of 10: not finished, whatever the quest's state.
-        let line = creature_line(&o, 1, Some("Kobold"), &probe_strings).unwrap();
+        let line = creature_line(&o.objective(), 1, Some("Kobold"), &probe_strings).unwrap();
         assert_eq!(line.text, "<KILLED Kobold 1 of 10>");
         assert!(!line.finished);
     }
@@ -1153,38 +1175,24 @@ mod tests {
     #[test]
     fn empty_objective_slot_emits_no_line() {
         let o = obj(0, 0, 0, 0, "");
-        assert!(creature_line(&o, 0, None, &probe_strings).is_none());
-        assert!(item_line(&o, 0, None, 0, &probe_strings).is_none());
+        assert!(creature_line(&o.objective(), 0, None, &probe_strings).is_none());
+        assert!(item_line(o.item(), 0, None, 0, &probe_strings).is_none());
     }
 
     // ── build_objectives ────────────────────────────────────────────────────────────────────────
 
-    fn quest_template(objectives: [QuestObjective; 4]) -> QuestTemplate {
+    fn quest_template(rows: [Row; 4]) -> QuestTemplate {
+        let mut required_items = [(0, 0); 6];
+        for (slot, row) in required_items.iter_mut().zip(&rows) {
+            *slot = row.item();
+        }
         QuestTemplate {
             quest_id: 1,
-            method: 0,
             level: 1,
-            zone_or_sort: 0,
-            quest_type: 0,
-            rep_objective_faction: 0,
-            rep_objective_value: 0,
-            next_quest_in_chain: 0,
-            money: 0,
-            money_max_level: 0,
-            reward_spell: 0,
-            src_item_id: 0,
-            flags: 0,
-            rewards: [(0, 0); 4],
-            choices: [(0, 0); 6],
-            point_map_id: 0,
-            point_x: 0.0,
-            point_y: 0.0,
-            point_opt: 0,
             title: "A Threat Within".into(),
-            objectives_text: String::new(),
-            details: String::new(),
-            end_text: String::new(),
-            objectives,
+            objectives: rows.map(|r| r.objective()),
+            required_items,
+            ..Default::default()
         }
     }
 
@@ -1316,11 +1324,11 @@ mod tests {
         assert_eq!(objectives[1].text, "<NEEDED ... 0 of 8>");
     }
 
-    /// `ReqItemId[i] != SrcItemId` (`0x4e00ce`, `0x4e04fa`).
+    /// The quest's own source item is no line when one is enough (`0x5e16d9`).
     #[test]
     fn the_quests_own_source_item_is_not_a_leaderboard_line() {
         let mut template = quest_template([
-            obj(0, 0, 2834, 8, ""),
+            obj(0, 0, 2834, 1, ""),
             obj(0, 0, 0, 0, ""),
             obj(0, 0, 0, 0, ""),
             obj(0, 0, 0, 0, ""),
@@ -1450,7 +1458,11 @@ mod tests {
             t.zone_or_sort = zos;
             t.title = title.into();
             log.insert_template(t);
-            pairs.push((FIELD_PLAYER_QUEST_LOG_1_1 + 3 * u16::from(slot), id));
+            pairs.push((
+                FIELD_PLAYER_QUEST_LOG_1_1
+                    + benilla_protocol::messages::QUEST_LOG_SLOT_FIELDS * u16::from(slot),
+                id,
+            ));
         }
         app.insert_resource(log);
         app.world_mut().spawn((
@@ -1554,7 +1566,10 @@ mod tests {
             .entity_mut(player)
             .insert(ObjectStore(ObjectFields::from_pairs(&[
                 (FIELD_PLAYER_QUEST_LOG_1_1, 7),
-                (FIELD_PLAYER_QUEST_LOG_1_1 + 3, 783),
+                (
+                    FIELD_PLAYER_QUEST_LOG_1_1 + benilla_protocol::messages::QUEST_LOG_SLOT_FIELDS,
+                    783,
+                ),
             ])));
         app.update();
         assert_eq!(

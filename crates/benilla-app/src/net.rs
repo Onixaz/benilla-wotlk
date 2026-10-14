@@ -1383,6 +1383,8 @@ pub(crate) enum ClientCommand {
     QuestgiverAccept {
         npc: u64,
         quest: u32,
+        /// The details panel's start-cheat byte, echoed back.
+        start_cheat: u32,
     },
     /// `CMSG_QUESTGIVER_COMPLETE_QUEST`; answered by `SMSG_QUESTGIVER_REQUEST_ITEMS`, or
     /// `OFFER_REWARD` with no required items.

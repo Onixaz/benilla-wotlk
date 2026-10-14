@@ -1360,12 +1360,13 @@ mod tests {
             );
         }
         for status in [
-            dialog_status::CHAT,
+            dialog_status::LOW_LEVEL_AVAILABLE,
             dialog_status::INCOMPLETE,
             dialog_status::REWARD_REP,
+            dialog_status::AVAILABLE_REP,
             dialog_status::AVAILABLE,
-            dialog_status::REWARD_OLD,
             dialog_status::REWARD2,
+            dialog_status::REWARD,
         ] {
             assert_eq!(
                 service_cursor(QUESTGIVER, Some(status)),

@@ -6,7 +6,10 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use benilla_protocol::{decode, guid, EntityKind, SessionEvent, WorldSession};
 
-use crate::probes::{Ctx, Probe, FIELD_PLAYER_QUEST_LOG_1_1, QUEST_TURNIN_ENTRY, QUEST_TURNIN_TP};
+use crate::probes::{
+    Ctx, Probe, FIELD_PLAYER_QUEST_LOG_1_1, QUEST_LOG_SLOT_FIELDS, QUEST_TURNIN_ENTRY,
+    QUEST_TURNIN_TP,
+};
 
 /// A `drain_quest` handler: `Some(msg)` stops the drain, `None` keeps pumping.
 type QuestEventHandler = Box<dyn FnMut(&SessionEvent) -> Option<String>>;
@@ -90,7 +93,7 @@ impl Probe for Quest {
                     d.title,
                     d.choices.len(),
                     d.rewards.len(),
-                    d.money
+                    d.extra.money
                 )),
                 _ => None,
             }),
@@ -98,15 +101,16 @@ impl Probe for Quest {
         .context("--quest: no SMSG_QUESTGIVER_QUEST_DETAILS for quest 783 within 5s")?;
         println!("✅ details: {details}");
 
-        // 2) Accept, then find the quest id in a `PLAYER_QUEST_LOG` slot (field 198 + 3·i, 20
+        // 2) Accept, then find the quest id in a `PLAYER_QUEST_LOG` slot (5 fields per slot, 25
         // slots), polling 6 s since the delta can trail the closing GOSSIP_COMPLETE.
         println!("giver: CMSG_QUESTGIVER_ACCEPT_QUEST");
-        session.questgiver_accept_quest(willem, QUEST_ID)?;
+        session.questgiver_accept_quest(willem, QUEST_ID, 0)?;
         let quest_in_log = |sf: &Option<benilla_protocol::messages::ObjectFields>| {
             sf.as_ref().is_some_and(|sf| {
-                (0..20).any(|i| {
+                (0..u16::from(benilla_protocol::messages::PLAYER_QUEST_LOG_SLOTS)).any(|i| {
                     sf.raw_fields().any(|(idx, val)| {
-                        idx == FIELD_PLAYER_QUEST_LOG_1_1 + 3 * i && val == QUEST_ID
+                        idx == FIELD_PLAYER_QUEST_LOG_1_1 + QUEST_LOG_SLOT_FIELDS * i
+                            && val == QUEST_ID
                     })
                 })
             })
@@ -191,7 +195,7 @@ impl Probe for Quest {
                         o.title,
                         o.choices.len(),
                         o.rewards.len(),
-                        o.money
+                        o.extra.money
                     )),
                     _ => None,
                 }),
@@ -214,11 +218,8 @@ impl Probe for Quest {
             6,
             Box::new(|ev| match ev {
                 SessionEvent::QuestComplete(c) if c.quest_id == QUEST_ID => Some(format!(
-                    "SMSG_QUESTGIVER_QUEST_COMPLETE: quest {} — {} XP, {} copper, {} item(s)",
-                    c.quest_id,
-                    c.xp,
-                    c.money,
-                    c.items.len()
+                    "SMSG_QUESTGIVER_QUEST_COMPLETE: quest {} — {} XP, {} copper",
+                    c.quest_id, c.xp, c.money
                 )),
                 // Diagnostics: a rejected choice re-offers the reward, and a success offers the
                 // chain's next quest (783, then 7).

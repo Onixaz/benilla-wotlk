@@ -1,7 +1,7 @@
 //! The quest chat lines the reference raises from its packet and field handlers: the accept line
-//! from the quest-slot watcher, and the turn-in's completion, experience, money and item lines. A
-//! line whose quest or item record is not cached waits for it, as the reference's cache callbacks
-//! (`0x5ddeb0`, `0x5dc710`, `0x5dc7b0`) print on the record's arrival.
+//! from the quest-slot watcher, and the turn-in's completion, experience, money and item lines
+//! (12340's `0x6d0e10`). A line whose quest or item record is not cached waits for it, as the
+//! reference's cache callbacks print on the record's arrival.
 
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
@@ -18,15 +18,18 @@ use crate::ui_quest_log::QuestLog;
 pub(crate) enum QuestLine {
     /// `ERR_QUEST_ACCEPTED_S` (`0x89`) with the quest's title (`0x5dde66`).
     Accepted(u32),
-    /// `ERR_QUEST_COMPLETE_S` (`0x8a`) with the title, unless the quest names a next quest in its
-    /// chain (`record+0x24`, `0x5dc4d7`).
+    /// `ERR_QUEST_COMPLETE_S` with the title, for every turn-in; the next quest in the chain only
+    /// decides whether the window stays (`0x6d10ca`).
     Completed(u32),
     /// `ERR_QUEST_REWARD_EXP_I` (`0x95`, `0x5dc4f9`).
     Experience(u32),
     /// `ERR_QUEST_REWARD_MONEY_S` (`0x97`, `0x5dc609`) with the coin string.
     Money(u32),
-    /// `ERR_QUEST_REWARD_ITEM_S` (`0x96`, `0x5dc822`) with the item's link.
+    /// `ERR_QUEST_REWARD_ITEM_S` with the item's link.
     Item(u32),
+    /// The quest template's fixed reward items, one [`Self::Item`] each once the template is here
+    /// (`0x6d1018`).
+    RewardItems(u32),
 }
 
 /// The lines raised and not yet shown.
@@ -85,6 +88,24 @@ fn feed_quest_lines(
         return;
     }
     let get = |key: &str| benilla_ui::strings::global(script.lua(), key);
+    // A template's reward items expand in place once its record is here.
+    let mut expanded = Vec::with_capacity(lines.0.len());
+    for line in lines.0.drain(..) {
+        match line {
+            QuestLine::RewardItems(id) => match quest(id, &quest_log, &commands) {
+                Ok(t) => expanded.extend(
+                    t.rewards
+                        .iter()
+                        .filter(|&&(item, _)| item != 0)
+                        .map(|&(item, _)| QuestLine::Item(item)),
+                ),
+                Err(Resolved::Wait) => expanded.push(line),
+                Err(_) => {}
+            },
+            other => expanded.push(other),
+        }
+    }
+    lines.0 = expanded;
     let mut shown = Vec::new();
     lines.0.retain(
         |&line| match resolve(line, &quest_log, &items, &commands, &get) {
@@ -114,10 +135,7 @@ fn resolve(
             Err(r) => r,
         },
         QuestLine::Completed(id) => match quest(id, quest_log, commands) {
-            Ok(t) if t.next_quest_in_chain == 0 => {
-                Resolved::Show(UiError::s("ERR_QUEST_COMPLETE_S", t.title.clone()))
-            }
-            Ok(_) => Resolved::Drop,
+            Ok(t) => Resolved::Show(UiError::s("ERR_QUEST_COMPLETE_S", t.title.clone())),
             Err(r) => r,
         },
         QuestLine::Experience(xp) => Resolved::Show(UiError::args(
@@ -128,7 +146,8 @@ fn resolve(
             "ERR_QUEST_REWARD_MONEY_S",
             coin_text(copper, &|k| get(k).unwrap_or_default()),
         )),
-        // The name is `0x5d8b00`'s with no random property, the link `0x52adb0`'s.
+        // Expanded before resolving; one still here waits on its template.
+        QuestLine::RewardItems(_) => Resolved::Wait,
         QuestLine::Item(entry) => match items.template(entry, 0, commands) {
             Some(t) => Resolved::Show(UiError::s(
                 "ERR_QUEST_REWARD_ITEM_S",
@@ -153,60 +172,39 @@ fn quest<'a>(
     }
 }
 
-/// The turn-in's coin string (`0x5dc511`-`0x5dc5fd`): each paid denomination as `"%d %s"` with
-/// its `GOLD`, `SILVER` or `COPPER` global, gold first. The reference's separator test yields
-/// `", , "` with a zero middle coin; this joins only the paid ones, with `", "`.
+/// The turn-in's coin string, 12340's `0x7e7d80`: each paid denomination through its
+/// `GOLD_AMOUNT`, `SILVER_AMOUNT` or `COPPER_AMOUNT` format (`0xaf4914`), gold first, joined by
+/// `", "` (`0x9fc494`).
 fn coin_text(copper: u32, get: &dyn Fn(&str) -> String) -> String {
-    // `0x6c6260`'s split by 10000, 100 and 1.
     let (g, s, c) = (copper / 10000, copper / 100 % 100, copper % 100);
-    [(g, "GOLD"), (s, "SILVER"), (c, "COPPER")]
-        .into_iter()
-        .filter(|&(n, _)| n != 0)
-        .map(|(n, key)| format!("{n} {}", get(key)))
-        .collect::<Vec<_>>()
-        .join(", ")
+    [
+        (g, "GOLD_AMOUNT"),
+        (s, "SILVER_AMOUNT"),
+        (c, "COPPER_AMOUNT"),
+    ]
+    .into_iter()
+    .filter(|&(n, _)| n != 0)
+    .map(|(n, key)| get(key).replacen("%d", &n.to_string(), 1))
+    .collect::<Vec<_>>()
+    .join(", ")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use benilla_protocol::messages::{QuestObjective, QuestTemplate};
+    use benilla_protocol::messages::QuestTemplate;
 
     use crate::net::ClientCommand;
 
     fn template(quest_id: u32, title: &str, next_quest_in_chain: u32) -> QuestTemplate {
-        let objective = || QuestObjective {
-            creature_or_go: 0,
-            required_count: 0,
-            item_id: 0,
-            item_count: 0,
-            text: String::new(),
-        };
         QuestTemplate {
             quest_id,
             method: 2,
             level: 1,
             zone_or_sort: 12,
-            quest_type: 0,
-            rep_objective_faction: 0,
-            rep_objective_value: 0,
             next_quest_in_chain,
-            money: 0,
-            money_max_level: 0,
-            reward_spell: 0,
-            src_item_id: 0,
-            flags: 0,
-            rewards: [(0, 0); 4],
-            choices: [(0, 0); 6],
-            point_map_id: 0,
-            point_x: 0.0,
-            point_y: 0.0,
-            point_opt: 0,
             title: title.into(),
-            objectives_text: String::new(),
-            details: String::new(),
-            end_text: String::new(),
-            objectives: std::array::from_fn(|_| objective()),
+            ..Default::default()
         }
     }
 
@@ -230,7 +228,7 @@ mod tests {
                 ERR_QUEST_REWARD_EXP_I = "Experience gained: %d."
                 ERR_QUEST_REWARD_MONEY_S = "Received %s."
                 ERR_QUEST_REWARD_ITEM_S = "Received item: %s."
-                GOLD = "Gold"; SILVER = "Silver"; COPPER = "Copper"
+                GOLD_AMOUNT = "%d Gold"; SILVER_AMOUNT = "%d Silver"; COPPER_AMOUNT = "%d Copper"
                 "#,
             )
             .unwrap();
@@ -317,9 +315,9 @@ mod tests {
         assert!(app.world().resource::<QuestLines>().queued().is_empty());
     }
 
-    /// `0x5dc4d7`: a quest that names a next quest in its chain completes silently.
+    /// 12340 names every turn-in, a chained quest too (`0x6d0e10`); an unknown item says nothing.
     #[test]
-    fn a_chained_quest_and_an_unknown_record_show_nothing() {
+    fn a_chained_quest_still_completes_aloud_and_an_unknown_item_shows_nothing() {
         let (mut app, _rx) = app();
         {
             let world = app.world_mut();
@@ -332,15 +330,50 @@ mod tests {
             lines.push(QuestLine::Item(9_999));
         }
         app.update();
+        assert_eq!(chat(&app), ["A Threat Within completed."]);
+        assert!(app.world().resource::<QuestLines>().queued().is_empty());
+    }
+
+    /// The fixed rewards print from the template once it lands, one item line each (`0x6d1018`).
+    #[test]
+    fn a_templates_reward_items_expand_when_the_template_lands() {
+        let (mut app, _rx) = app();
+        {
+            let world = app.world_mut();
+            world
+                .resource_mut::<Items>()
+                .insert_template(6_529, Some(crate::items::test_template("Shiny Bauble")));
+            world
+                .resource_mut::<QuestLines>()
+                .push(QuestLine::RewardItems(7));
+        }
+        app.update();
         assert!(chat(&app).is_empty());
+        assert_eq!(
+            app.world().resource::<QuestLines>().queued(),
+            [QuestLine::RewardItems(7)],
+            "the template is still in flight"
+        );
+        {
+            let mut t = template(7, "Kobold Camp Cleanup", 0);
+            t.rewards[1] = (6_529, 1);
+            app.world_mut()
+                .resource_mut::<QuestLog>()
+                .insert_template(t);
+        }
+        app.update();
+        assert_eq!(
+            chat(&app),
+            ["Received item: |cffffffff|Hitem:6529:0:0:0|h[Shiny Bauble]|h|r."]
+        );
         assert!(app.world().resource::<QuestLines>().queued().is_empty());
     }
 
     fn words(key: &str) -> String {
         match key {
-            "GOLD" => "Gold",
-            "SILVER" => "Silver",
-            "COPPER" => "Copper",
+            "GOLD_AMOUNT" => "%d Gold",
+            "SILVER_AMOUNT" => "%d Silver",
+            "COPPER_AMOUNT" => "%d Copper",
             _ => "",
         }
         .into()

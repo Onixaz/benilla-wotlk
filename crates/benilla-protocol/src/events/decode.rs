@@ -352,6 +352,10 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::QuestGiverStatus { npc, status } => {
             vec![SessionEvent::QuestGiverStatus { npc, status }]
         }
+        ServerPacket::QuestGiverStatusMultiple(all) => all
+            .into_iter()
+            .map(|(npc, status)| SessionEvent::QuestGiverStatus { npc, status })
+            .collect(),
         ServerPacket::QuestGiverQuestList(l) => vec![SessionEvent::QuestGreeting(l)],
         ServerPacket::QuestGiverDetails(d) => vec![SessionEvent::QuestDetail(d)],
         ServerPacket::QuestGiverRequestItems(p) => vec![SessionEvent::QuestProgress(p)],

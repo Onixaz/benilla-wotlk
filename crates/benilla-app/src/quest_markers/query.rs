@@ -366,7 +366,7 @@ mod tests {
         const ESCORT: u64 = 0x5115; // Mist: gives the quest, then follows with npcflags off
         const PLAIN: u64 = 0x5116; // an ordinary giver standing next to her
         const FIELD_NPC_FLAGS: u16 = 147;
-        const FIELD_QUEST_LOG_1_1: u16 = 198;
+        use benilla_protocol::messages::field::FIELD_PLAYER_QUEST_LOG_1_1 as FIELD_QUEST_LOG_1_1;
 
         let net_entity = || NetEntity {
             kind: EntityKind::Unit,

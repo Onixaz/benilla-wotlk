@@ -1,49 +1,94 @@
-//! The questgiver family (opcodes 386-402): the NPC accept, progress and reward panels, which
-//! carry their own text. Layouts from vmangos `Server/Packets/Quest.cpp`.
+//! The questgiver family (opcodes 386-402 and 0x418): the NPC accept, progress and reward panels,
+//! which carry their own text. 12340 routes every SMSG here through `0x6d7f10`; each reader below
+//! names the arm whose read order it follows.
 
 use std::io;
 
-use crate::wire::{capacity_hint, read_cstring, read_i32_le, read_u32_le, read_u64_le, read_u8};
+use crate::wire::{
+    capacity_hint, read_cstring, read_f32_le, read_i32_le, read_u32_le, read_u64_le, read_u8,
+};
 
-/// vmangos `QUEST_EMOTE_COUNT` (`QuestDef.h:43`): the emote pairs DETAILS always writes.
+/// The emote pairs DETAILS writes, a counted run on the wire.
 pub const QUEST_EMOTE_COUNT: u32 = 4;
+/// The reward-reputation slots the details, reward and template bodies carry, three arrays each.
+pub const QUEST_REPUTATIONS_COUNT: usize = 5;
 
-/// vmangos `DIALOG_STATUS_*` (`QuestDef.h:120-129`): an NPC's `SMSG_QUESTGIVER_STATUS`, which
-/// drives the `!`/`?` over its head, and a quest row's `icon`.
+/// An NPC's `SMSG_QUESTGIVER_STATUS`, which drives the `!`/`?` over its head. 12340 maps the 11
+/// values to a marker row through `0xa34f5c` and draws 2-4 only under low-level quest tracking
+/// (`0x745dd7`, `0x57bf30`).
 pub mod dialog_status {
     pub const NONE: u32 = 0;
+    /// Grey `!`: the quest needs a higher level.
     pub const UNAVAILABLE: u32 = 1;
-    pub const CHAT: u32 = 2;
-    pub const INCOMPLETE: u32 = 3;
-    pub const REWARD_REP: u32 = 4;
-    pub const AVAILABLE: u32 = 5;
-    pub const REWARD_OLD: u32 = 6;
-    pub const REWARD2: u32 = 7;
+    pub const LOW_LEVEL_AVAILABLE: u32 = 2;
+    pub const LOW_LEVEL_REWARD_REP: u32 = 3;
+    pub const LOW_LEVEL_AVAILABLE_REP: u32 = 4;
+    /// Grey `?`: a quest in the log, not yet completable.
+    pub const INCOMPLETE: u32 = 5;
+    /// Blue `?`: a repeatable quest ready to turn in.
+    pub const REWARD_REP: u32 = 6;
+    /// Blue `!`: a repeatable quest on offer.
+    pub const AVAILABLE_REP: u32 = 7;
+    /// Gold `!`.
+    pub const AVAILABLE: u32 = 8;
+    /// Gold `?` without the minimap dot.
+    pub const REWARD2: u32 = 9;
+    /// Gold `?`.
+    pub const REWARD: u32 = 10;
 }
 
-/// One reward or choice item on a questgiver panel (vmangos `Quest.cpp:244-249`). `display_id`
-/// is an `ItemDisplayInfo.dbc` row; an all-zero triple means the server had no item template.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One reward or choice item on a questgiver panel. `display_id` is an `ItemDisplayInfo.dbc` row;
+/// an all-zero triple means the server had no item template.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct QuestRewardItem {
     pub item_id: u32,
     pub count: u32,
     pub display_id: u32,
 }
 
-/// A required item on the progress panel, the same triple (vmangos `Quest.cpp:376-381`).
+/// A required item on the progress panel, the same triple.
 pub type QuestRequiredItem = QuestRewardItem;
 
-/// One greeting-panel quest row; `icon` is a [`dialog_status`] value, a `u32` (`Quest.h:270`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The reward-reputation arrays: faction ids, value-table ids, and raw overrides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct QuestReputationRewards {
+    pub factions: [u32; QUEST_REPUTATIONS_COUNT],
+    pub value_ids: [i32; QUEST_REPUTATIONS_COUNT],
+    pub overrides: [i32; QUEST_REPUTATIONS_COUNT],
+}
+
+/// The rewards past the item blocks that 3.3.5a's DETAILS and OFFER_REWARD both carry.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct QuestExtraRewards {
+    /// Signed, negative for a quest that costs money.
+    pub money: i32,
+    pub xp: u32,
+    /// Ten times the honor `GetRewardHonor` shows (`0x58c110` divides by 10).
+    pub honor: u32,
+    pub honor_multiplier: f32,
+    pub spell: u32,
+    /// The spell cast on the player at turn-in, `-1`-style signed in the server's template.
+    pub spell_cast: i32,
+    pub title: u32,
+    pub talents: u32,
+    pub arena_points: u32,
+    pub reputation: QuestReputationRewards,
+}
+
+/// One greeting-panel quest row (`0x6d0240`). `icon` 3 and 4 list it as active, the rest as
+/// available (`0x6d039a`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct QuestListEntry {
     pub quest_id: u32,
     pub icon: u32,
     pub level: u32,
+    pub flags: u32,
+    pub repeatable: bool,
     pub title: String,
 }
 
-/// `SMSG_QUESTGIVER_QUEST_LIST` (vmangos `Quest.cpp:159-203`): the multi-quest greeting panel.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// `SMSG_QUESTGIVER_QUEST_LIST`: the multi-quest greeting panel.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct QuestGiverList {
     pub npc: u64,
     pub greeting: String,
@@ -52,40 +97,46 @@ pub struct QuestGiverList {
     pub quests: Vec<QuestListEntry>,
 }
 
-/// `SMSG_QUESTGIVER_QUEST_DETAILS` (vmangos `Quest.cpp:205-273`): the accept panel. `money` is
-/// signed, negative for a quest that costs money (`GetRewOrReqMoney`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// `SMSG_QUESTGIVER_QUEST_DETAILS`: the accept panel.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct QuestDetails {
     pub npc: u64,
+    /// The player who shared the quest, else 0. Accept answers it when set (`0x58cd65`).
+    pub sharer: u64,
     pub quest_id: u32,
     pub title: String,
     pub details: String,
     pub objectives: String,
-    pub auto_finish: u32,
+    /// `CGQuestInfo::m_autoLaunched`: the publisher stores it in the decline latch (`0x58de4f`),
+    /// so Decline closes the window instead of going back to the greeting.
+    pub auto_launched: bool,
+    pub flags: u32,
+    pub suggested_players: u32,
+    /// Echoed back as `CMSG_QUESTGIVER_ACCEPT_QUEST`'s last field (`0x58c69e` → `0x58cd7d`).
+    pub start_cheat: u8,
     pub choices: Vec<QuestRewardItem>,
     pub rewards: Vec<QuestRewardItem>,
-    pub money: i32,
-    pub reward_spell: u32,
+    pub extra: QuestExtraRewards,
 }
 
-/// `SMSG_QUESTGIVER_OFFER_REWARD` (vmangos `Quest.cpp:275-339`): the reward panel.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// `SMSG_QUESTGIVER_OFFER_REWARD`: the reward panel.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct QuestOfferReward {
     pub npc: u64,
     pub quest_id: u32,
     pub title: String,
     pub offer_text: String,
-    pub auto_finish: u32,
+    pub auto_finish: bool,
+    pub quest_flags: u32,
+    pub suggested_players: u32,
     pub choices: Vec<QuestRewardItem>,
     pub rewards: Vec<QuestRewardItem>,
-    pub money: i32,
-    pub quest_flags: u32,
-    pub reward_spell: u32,
+    pub extra: QuestExtraRewards,
 }
 
-/// `SMSG_QUESTGIVER_REQUEST_ITEMS` (vmangos `Quest.cpp:341-391`): the progress panel. The client
-/// ANDs four flag words to enable Continue; `is_complete` comes from the second (`Quest.cpp:388`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// `SMSG_QUESTGIVER_REQUEST_ITEMS`: the progress panel. Continue is enabled only when all four
+/// trailing flag words are non-zero (`0x6d0a1d`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct QuestRequestItems {
     pub npc: u64,
     pub quest_id: u32,
@@ -93,71 +144,76 @@ pub struct QuestRequestItems {
     pub request_text: String,
     pub emote: u32,
     pub close_on_cancel: u32,
+    pub quest_flags: u32,
+    pub suggested_players: u32,
     pub required_money: u32,
     pub required_items: Vec<QuestRequiredItem>,
     pub is_complete: bool,
 }
 
-/// `SMSG_QUESTGIVER_QUEST_COMPLETE` (vmangos `Quest.cpp:96-108`): the XP, money and fixed items
-/// granted; the item rows carry no display id.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// `SMSG_QUESTGIVER_QUEST_COMPLETE` (`0x6d1110`): what the turn-in granted. 3.3.5a sends no item
+/// list here; the items arrive as item pushes.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct QuestComplete {
     pub quest_id: u32,
     pub xp: u32,
     pub money: u32,
-    pub items: Vec<(u32, u32)>,
+    pub honor: u32,
+    pub talents: u32,
+    pub arena_points: u32,
 }
 
-// ── CMSG encoders (vmangos `Quest.cpp:6-50`) ─────────────────────────────────────────────────────
+// ── CMSG encoders (12340's builders at 0x6d4c10-0x6d4ee6) ────────────────────────────────────────
 
-/// Body of `CMSG_QUESTGIVER_STATUS_QUERY` (`Quest.cpp:11-14`): the `u64` NPC guid.
+/// Body of `CMSG_QUESTGIVER_STATUS_QUERY`: the `u64` NPC guid.
 pub fn questgiver_status_query(npc: u64) -> Vec<u8> {
     npc.to_le_bytes().to_vec()
 }
 
-/// Body of `CMSG_QUESTGIVER_HELLO` (`Quest.cpp:16-19`): the NPC guid. The server answers it like
-/// `CMSG_GOSSIP_HELLO`, through `SendPreparedGossip` (`QuestHandler.cpp:104`).
+/// Body of `CMSG_QUESTGIVER_HELLO`: the NPC guid.
 pub fn questgiver_hello(npc: u64) -> Vec<u8> {
     npc.to_le_bytes().to_vec()
 }
 
-/// Body of `CMSG_QUESTGIVER_QUERY_QUEST` (`Quest.cpp:27-31`): `u64 guid, u32 quest`, sent by a
-/// quest row's click and always answered with the details panel (`QuestHandler.cpp:224`).
+/// Body of `CMSG_QUESTGIVER_QUERY_QUEST` (`0x6d4c10`): `u64 guid, u32 quest, u8 1`, sent by a
+/// quest row's click and answered with the details panel.
 pub fn questgiver_query_quest(npc: u64, quest: u32) -> Vec<u8> {
-    guid_quest(npc, quest)
+    let mut body = guid_quest(npc, quest);
+    body.push(1);
+    body
 }
 
-/// Body of `CMSG_QUESTGIVER_ACCEPT_QUEST` (`Quest.cpp:21-25`): `u64 guid, u32 quest`. The server
-/// logs the quest, then closes the gossip window (`SMSG_GOSSIP_COMPLETE`).
-pub fn questgiver_accept_quest(npc: u64, quest: u32) -> Vec<u8> {
-    guid_quest(npc, quest)
+/// Body of `CMSG_QUESTGIVER_ACCEPT_QUEST` (`0x6d4ca0`): `u64 guid, u32 quest, u32 start_cheat`,
+/// the last the details panel's [`QuestDetails::start_cheat`].
+pub fn questgiver_accept_quest(npc: u64, quest: u32, start_cheat: u32) -> Vec<u8> {
+    let mut body = guid_quest(npc, quest);
+    body.extend_from_slice(&start_cheat.to_le_bytes());
+    body
 }
 
-/// Body of `CMSG_QUESTGIVER_COMPLETE_QUEST` (`Quest.cpp:46-50`): `u64 guid, u32 quest`, answered
-/// with the progress panel (`QuestHandler.cpp:383-397`).
+/// Body of `CMSG_QUESTGIVER_COMPLETE_QUEST` (`0x6d4d40`): `u64 guid, u32 quest`, answered with the
+/// progress panel.
 pub fn questgiver_complete_quest(npc: u64, quest: u32) -> Vec<u8> {
     guid_quest(npc, quest)
 }
 
-/// Body of `CMSG_QUESTGIVER_REQUEST_REWARD` (`Quest.cpp:40-44`): `u64 guid, u32 quest`, the
-/// progress panel's Continue, answered with the reward panel (`QuestHandler.cpp:286-312`).
+/// Body of `CMSG_QUESTGIVER_REQUEST_REWARD` (`0x6d4dd0`): `u64 guid, u32 quest`, the progress
+/// panel's Continue, answered with the reward panel.
 pub fn questgiver_request_reward(npc: u64, quest: u32) -> Vec<u8> {
     guid_quest(npc, quest)
 }
 
-/// Body of `CMSG_QUESTGIVER_CHOOSE_REWARD` (`Quest.cpp:33-38`): `u64 guid, u32 quest, u32 reward`,
-/// `reward` a 0-based choice index (0 with no choice). Sent by the reward panel's Complete and
-/// answered with `SMSG_QUESTGIVER_QUEST_COMPLETE` (`QuestHandler.cpp:239-284`).
+/// Body of `CMSG_QUESTGIVER_CHOOSE_REWARD` (`0x6d4e60`): `u64 guid, u32 quest, u32 reward`,
+/// `reward` a 0-based choice index (0 with no choice). Answered with
+/// `SMSG_QUESTGIVER_QUEST_COMPLETE`.
 pub fn questgiver_choose_reward(npc: u64, quest: u32, reward: u32) -> Vec<u8> {
-    let mut body = Vec::with_capacity(16);
-    body.extend_from_slice(&npc.to_le_bytes());
-    body.extend_from_slice(&quest.to_le_bytes());
+    let mut body = guid_quest(npc, quest);
     body.extend_from_slice(&reward.to_le_bytes());
     body
 }
 
 fn guid_quest(npc: u64, quest: u32) -> Vec<u8> {
-    let mut body = Vec::with_capacity(12);
+    let mut body = Vec::with_capacity(16);
     body.extend_from_slice(&npc.to_le_bytes());
     body.extend_from_slice(&quest.to_le_bytes());
     body
@@ -175,7 +231,7 @@ fn read_item_triple(r: &mut &[u8]) -> io::Result<QuestRewardItem> {
 
 fn read_item_block(r: &mut &[u8]) -> io::Result<Vec<QuestRewardItem>> {
     let count = read_u32_le(r)?;
-    // `QUEST_REWARD_CHOICES_COUNT` 6, the wider of the two lists (vmangos `QuestDef.h:39`).
+    // Six choice slots, the wider of the two lists.
     let mut items = Vec::with_capacity(capacity_hint(count, 6));
     for _ in 0..count {
         items.push(read_item_triple(r)?);
@@ -183,27 +239,56 @@ fn read_item_block(r: &mut &[u8]) -> io::Result<Vec<QuestRewardItem>> {
     Ok(items)
 }
 
-/// Read `SMSG_QUESTGIVER_STATUS` (vmangos `Quest.cpp:153-157`): `u64 npcGuid, u32 status`.
-pub(in crate::messages) fn read_questgiver_status(r: &mut &[u8]) -> io::Result<(u64, u32)> {
-    Ok((read_u64_le(r)?, read_u32_le(r)?))
+/// The three reputation arrays, five `u32` each.
+pub(super) fn read_reputation(r: &mut &[u8]) -> io::Result<QuestReputationRewards> {
+    let mut rep = QuestReputationRewards::default();
+    for f in rep.factions.iter_mut() {
+        *f = read_u32_le(r)?;
+    }
+    for v in rep.value_ids.iter_mut() {
+        *v = read_i32_le(r)?;
+    }
+    for o in rep.overrides.iter_mut() {
+        *o = read_i32_le(r)?;
+    }
+    Ok(rep)
 }
 
-/// Read `SMSG_QUESTGIVER_QUEST_LIST` (vmangos `Quest.cpp:159-203`): `u64 npc`, greeting,
-/// `u32 emoteDelay, u32 emote, u8 count`, then per quest `u32 id, u32 icon, u32 level`, title.
-/// The icon is a `u32` here, unlike a gossip option's `u8`.
+/// Read `SMSG_QUESTGIVER_STATUS` (`0x6d11c0`): `u64 npcGuid, u8 status`.
+pub(in crate::messages) fn read_questgiver_status(r: &mut &[u8]) -> io::Result<(u64, u32)> {
+    Ok((read_u64_le(r)?, u32::from(read_u8(r)?)))
+}
+
+/// Read `SMSG_QUESTGIVER_STATUS_MULTIPLE` (`0x6d1230`): `u32 count`, then `{u64 guid, u8 status}`
+/// per NPC, the answer to the login and zone-change sweep.
+pub(in crate::messages) fn read_questgiver_status_multiple(
+    r: &mut &[u8],
+) -> io::Result<Vec<(u64, u32)>> {
+    let count = read_u32_le(r)?;
+    let mut out = Vec::with_capacity(capacity_hint(count, 64));
+    for _ in 0..count {
+        out.push(read_questgiver_status(r)?);
+    }
+    Ok(out)
+}
+
+/// Read `SMSG_QUESTGIVER_QUEST_LIST` (`0x6d0240`): `u64 npc`, greeting, `u32 emoteDelay, u32 emote,
+/// u8 count`, then per quest `u32 id, u32 icon, u32 level, u32 flags, u8 repeatable`, title.
 pub(in crate::messages) fn read_questgiver_quest_list(r: &mut &[u8]) -> io::Result<QuestGiverList> {
     let npc = read_u64_le(r)?;
     let greeting = read_cstring(r)?;
     let emote_delay = read_u32_le(r)?;
     let emote = read_u32_le(r)?;
     let count = read_u8(r)?;
-    // No server cap (`GossipDef.h:184`); `GOSSIP_MAX_MENU_ITEMS` 32 is the display limit.
+    // The client's row arrays hold 32 (`0xc9d550`, `0x80` bytes each).
     let mut quests = Vec::with_capacity(capacity_hint(count, 32));
     for _ in 0..count {
         quests.push(QuestListEntry {
             quest_id: read_u32_le(r)?,
             icon: read_u32_le(r)?,
             level: read_u32_le(r)?,
+            flags: read_u32_le(r)?,
+            repeatable: read_u8(r)? != 0,
             title: read_cstring(r)?,
         });
     }
@@ -216,23 +301,55 @@ pub(in crate::messages) fn read_questgiver_quest_list(r: &mut &[u8]) -> io::Resu
     })
 }
 
-/// Read `SMSG_QUESTGIVER_QUEST_DETAILS` (vmangos `Quest.cpp:205-273`): npc, id, title, details,
-/// objectives, auto-finish, the choice and reward blocks, money, spell, then a count (always 4)
-/// of `{u32 emote, u32 delay}` pairs. A hidden-rewards quest writes three zeros for the blocks
-/// and money (`Quest.cpp:235-237`), which read as empty blocks.
+/// The money-to-reputation run DETAILS and OFFER_REWARD share, minus OFFER_REWARD's extra word
+/// after the honor multiplier (`skip_after_honor`).
+fn read_extra_rewards(r: &mut &[u8], skip_after_honor: bool) -> io::Result<QuestExtraRewards> {
+    let money = read_i32_le(r)?;
+    let xp = read_u32_le(r)?;
+    let honor = read_u32_le(r)?;
+    let honor_multiplier = read_f32_le(r)?;
+    if skip_after_honor {
+        let _unknown = read_u32_le(r)?;
+    }
+    let spell = read_u32_le(r)?;
+    let spell_cast = read_i32_le(r)?;
+    let title = read_u32_le(r)?;
+    let talents = read_u32_le(r)?;
+    let arena_points = read_u32_le(r)?;
+    let _unknown = read_u32_le(r)?;
+    Ok(QuestExtraRewards {
+        money,
+        xp,
+        honor,
+        honor_multiplier,
+        spell,
+        spell_cast,
+        title,
+        talents,
+        arena_points,
+        reputation: read_reputation(r)?,
+    })
+}
+
+/// Read `SMSG_QUESTGIVER_QUEST_DETAILS` (`0x6d0460`): `u64 npc, u64 sharer, u32 quest`, title,
+/// details, objectives, `u8 autoLaunched, u32 flags, u32 suggestedPlayers, u8 startCheat`, the
+/// choice and reward blocks, the extra rewards, then a counted run of `{u32 emote, u32 delay}`.
 pub(in crate::messages) fn read_questgiver_quest_details(
     r: &mut &[u8],
 ) -> io::Result<QuestDetails> {
     let npc = read_u64_le(r)?;
+    let sharer = read_u64_le(r)?;
     let quest_id = read_u32_le(r)?;
     let title = read_cstring(r)?;
     let details = read_cstring(r)?;
     let objectives = read_cstring(r)?;
-    let auto_finish = read_u32_le(r)?;
+    let auto_launched = read_u8(r)? != 0;
+    let flags = read_u32_le(r)?;
+    let suggested_players = read_u32_le(r)?;
+    let start_cheat = read_u8(r)?;
     let choices = read_item_block(r)?;
     let rewards = read_item_block(r)?;
-    let money = read_i32_le(r)?;
-    let reward_spell = read_u32_le(r)?;
+    let extra = read_extra_rewards(r, false)?;
     let emote_count = read_u32_le(r)?;
     for _ in 0..emote_count {
         let _emote = read_u32_le(r)?;
@@ -240,21 +357,24 @@ pub(in crate::messages) fn read_questgiver_quest_details(
     }
     Ok(QuestDetails {
         npc,
+        sharer,
         quest_id,
         title,
         details,
         objectives,
-        auto_finish,
+        auto_launched,
+        flags,
+        suggested_players,
+        start_cheat,
         choices,
         rewards,
-        money,
-        reward_spell,
+        extra,
     })
 }
 
-/// Read `SMSG_QUESTGIVER_OFFER_REWARD` (vmangos `Quest.cpp:275-339`): npc, id, title, text,
-/// auto-finish, a counted run of `{u32 delay, u32 emote}` pairs (delay first, unlike DETAILS,
-/// `Quest.cpp:308-309`), the choice and reward blocks, money, quest flags, spell.
+/// Read `SMSG_QUESTGIVER_OFFER_REWARD` (`0x6d0ab0`): npc, id, title, text, `u8 autoFinish,
+/// u32 flags, u32 suggestedPlayers`, a counted run of `{u32 delay, u32 emote}`, the choice and
+/// reward blocks, then the extra rewards with one more word after the honor multiplier.
 pub(in crate::messages) fn read_questgiver_offer_reward(
     r: &mut &[u8],
 ) -> io::Result<QuestOfferReward> {
@@ -262,34 +382,34 @@ pub(in crate::messages) fn read_questgiver_offer_reward(
     let quest_id = read_u32_le(r)?;
     let title = read_cstring(r)?;
     let offer_text = read_cstring(r)?;
-    let auto_finish = read_u32_le(r)?;
+    let auto_finish = read_u8(r)? != 0;
+    let quest_flags = read_u32_le(r)?;
+    let suggested_players = read_u32_le(r)?;
     let emote_count = read_u32_le(r)?;
     for _ in 0..emote_count {
-        let _delay = read_u32_le(r)?; // delay first here, unlike DETAILS
+        let _delay = read_u32_le(r)?;
         let _emote = read_u32_le(r)?;
     }
     let choices = read_item_block(r)?;
     let rewards = read_item_block(r)?;
-    let money = read_i32_le(r)?;
-    let quest_flags = read_u32_le(r)?;
-    let reward_spell = read_u32_le(r)?;
+    let extra = read_extra_rewards(r, true)?;
     Ok(QuestOfferReward {
         npc,
         quest_id,
         title,
         offer_text,
         auto_finish,
+        quest_flags,
+        suggested_players,
         choices,
         rewards,
-        money,
-        quest_flags,
-        reward_spell,
+        extra,
     })
 }
 
-/// Read `SMSG_QUESTGIVER_REQUEST_ITEMS` (vmangos `Quest.cpp:341-391`): npc, id, title, text,
-/// `u32` emote delay, emote, close-on-cancel and money, the required items, then four flag words
-/// `0x02, complete ? 0x03 : 0x00, 0x04, 0x08`.
+/// Read `SMSG_QUESTGIVER_REQUEST_ITEMS` (`0x6d08f0`): npc, id, title, text, `u32` emote delay,
+/// emote, close-on-cancel, flags, suggested players and money, the required items, then four flag
+/// words that must all be non-zero for Continue.
 pub(in crate::messages) fn read_questgiver_request_items(
     r: &mut &[u8],
 ) -> io::Result<QuestRequestItems> {
@@ -297,15 +417,17 @@ pub(in crate::messages) fn read_questgiver_request_items(
     let quest_id = read_u32_le(r)?;
     let title = read_cstring(r)?;
     let request_text = read_cstring(r)?;
-    let _emote_delay = read_u32_le(r)?; // always 0
+    let _emote_delay = read_u32_le(r)?;
     let emote = read_u32_le(r)?;
     let close_on_cancel = read_u32_le(r)?;
+    let quest_flags = read_u32_le(r)?;
+    let suggested_players = read_u32_le(r)?;
     let required_money = read_u32_le(r)?;
     let required_items = read_item_block(r)?;
-    let _flag0 = read_u32_le(r)?; // 0x02
-    let flag_complete = read_u32_le(r)?; // 0x03 complete / 0x00 not
-    let _flag2 = read_u32_le(r)?; // 0x04
-    let _flag3 = read_u32_le(r)?; // 0x08
+    let mut is_complete = true;
+    for _ in 0..4 {
+        is_complete &= read_u32_le(r)? != 0;
+    }
     Ok(QuestRequestItems {
         npc,
         quest_id,
@@ -313,41 +435,35 @@ pub(in crate::messages) fn read_questgiver_request_items(
         request_text,
         emote,
         close_on_cancel,
+        quest_flags,
+        suggested_players,
         required_money,
         required_items,
-        is_complete: flag_complete != 0,
+        is_complete,
     })
 }
 
-/// Read `SMSG_QUESTGIVER_QUEST_COMPLETE` (vmangos `Quest.cpp:96-108`): `u32` quest, unknown, xp,
-/// money and item count, then `{u32 itemId, u32 count}` pairs.
+/// Read `SMSG_QUESTGIVER_QUEST_COMPLETE` (`0x6d1110`): six `u32`s, quest, xp, money, honor,
+/// talents, arena points.
 pub(in crate::messages) fn read_questgiver_quest_complete(
     r: &mut &[u8],
 ) -> io::Result<QuestComplete> {
-    let quest_id = read_u32_le(r)?;
-    let _unknown = read_u32_le(r)?;
-    let xp = read_u32_le(r)?;
-    let money = read_u32_le(r)?;
-    let count = read_u32_le(r)?;
-    // `QUEST_REWARDS_COUNT` 4 (vmangos `QuestDef.h:40`).
-    let mut items = Vec::with_capacity(capacity_hint(count, 4));
-    for _ in 0..count {
-        items.push((read_u32_le(r)?, read_u32_le(r)?));
-    }
     Ok(QuestComplete {
-        quest_id,
-        xp,
-        money,
-        items,
+        quest_id: read_u32_le(r)?,
+        xp: read_u32_le(r)?,
+        money: read_u32_le(r)?,
+        honor: read_u32_le(r)?,
+        talents: read_u32_le(r)?,
+        arena_points: read_u32_le(r)?,
     })
 }
 
-/// Read `SMSG_QUESTGIVER_QUEST_INVALID` (vmangos `Quest.cpp:126`): one `u32` message code.
+/// Read `SMSG_QUESTGIVER_QUEST_INVALID` (`0x6cd7c0`): one `u32` message code.
 pub(in crate::messages) fn read_questgiver_quest_invalid(r: &mut &[u8]) -> io::Result<u32> {
     read_u32_le(r)
 }
 
-/// Read `SMSG_QUESTGIVER_QUEST_FAILED` (vmangos `Quest.cpp:110`): `u32 questId, u32 reason`.
+/// Read `SMSG_QUESTGIVER_QUEST_FAILED` (`0x6cda70`): `u32 questId, u32 reason`.
 pub(in crate::messages) fn read_questgiver_quest_failed(r: &mut &[u8]) -> io::Result<(u32, u32)> {
     Ok((read_u32_le(r)?, read_u32_le(r)?))
 }
@@ -375,6 +491,45 @@ mod tests {
         push_u32(b, count);
         push_u32(b, disp);
     }
+    /// Money through the reputation arrays, DETAILS' order, plus OFFER_REWARD's extra word.
+    fn push_extra(b: &mut Vec<u8>, offer: bool) {
+        push_i32(b, 1234); // money
+        push_u32(b, 450); // xp
+        push_u32(b, 70); // honor x10
+        b.extend_from_slice(&0.5f32.to_le_bytes());
+        if offer {
+            push_u32(b, 8);
+        }
+        push_u32(b, 133); // spell
+        push_i32(b, -1); // spell cast
+        push_u32(b, 3); // title
+        push_u32(b, 1); // talents
+        push_u32(b, 25); // arena
+        push_u32(b, 0);
+        for i in 0..5 {
+            push_u32(b, 72 + i);
+        }
+        for i in 0..5 {
+            push_i32(b, i);
+        }
+        for i in 0..5 {
+            push_i32(b, -i);
+        }
+    }
+    fn assert_extra(e: &QuestExtraRewards) {
+        assert_eq!(e.money, 1234);
+        assert_eq!(e.xp, 450);
+        assert_eq!(e.honor, 70);
+        assert_eq!(e.honor_multiplier, 0.5);
+        assert_eq!(e.spell, 133);
+        assert_eq!(e.spell_cast, -1);
+        assert_eq!(e.title, 3);
+        assert_eq!(e.talents, 1);
+        assert_eq!(e.arena_points, 25);
+        assert_eq!(e.reputation.factions, [72, 73, 74, 75, 76]);
+        assert_eq!(e.reputation.value_ids, [0, 1, 2, 3, 4]);
+        assert_eq!(e.reputation.overrides, [0, -1, -2, -3, -4]);
+    }
 
     // ── CMSG encode goldens ──────────────────────────────────────────────────────────────────────
 
@@ -392,10 +547,26 @@ mod tests {
         let mut want = Vec::new();
         push_u64(&mut want, 0x42);
         push_u32(&mut want, 3);
-        assert_eq!(questgiver_query_quest(0x42, 3), want);
-        assert_eq!(questgiver_accept_quest(0x42, 3), want);
         assert_eq!(questgiver_complete_quest(0x42, 3), want);
         assert_eq!(questgiver_request_reward(0x42, 3), want);
+    }
+
+    #[test]
+    fn cmsg_query_quest_ends_in_a_one_byte() {
+        let mut want = Vec::new();
+        push_u64(&mut want, 0x42);
+        push_u32(&mut want, 3);
+        want.push(1);
+        assert_eq!(questgiver_query_quest(0x42, 3), want);
+    }
+
+    #[test]
+    fn cmsg_accept_quest_echoes_the_start_cheat() {
+        let mut want = Vec::new();
+        push_u64(&mut want, 0x42);
+        push_u32(&mut want, 3);
+        push_u32(&mut want, 1);
+        assert_eq!(questgiver_accept_quest(0x42, 3, 1), want);
     }
 
     #[test]
@@ -410,69 +581,103 @@ mod tests {
     // ── SMSG parse fixtures ──────────────────────────────────────────────────────────────────────
 
     #[test]
-    fn status_parses() {
-        let mut b = Vec::new();
-        push_u64(&mut b, 0xF130_0000_0000_0042);
-        push_u32(&mut b, dialog_status::AVAILABLE);
-        let (npc, status) = read_questgiver_status(&mut b.as_slice()).unwrap();
-        assert_eq!(npc, 0xF130_0000_0000_0042);
-        assert_eq!(status, 5);
+    fn status_is_a_guid_and_one_byte() {
+        // The nine bytes AzerothCore sends (#147): a creature guid and status 0.
+        let b = [0xdb, 0x03, 0x00, 0xc4, 0x00, 0x00, 0x30, 0xf1, 0x00];
+        let mut r = &b[..];
+        let (npc, status) = read_questgiver_status(&mut r).unwrap();
+        assert_eq!(npc, 0xF130_0000_C400_03DB);
+        assert_eq!(status, dialog_status::NONE);
+        assert!(r.is_empty());
     }
 
     #[test]
-    fn quest_list_reads_u32_icon() {
-        // Reading the `u32` icon as a `u8` would misalign every field after it.
+    fn status_multiple_reads_a_counted_run() {
+        let mut b = Vec::new();
+        push_u32(&mut b, 2);
+        push_u64(&mut b, 0xF130_0000_0000_0042);
+        b.push(dialog_status::AVAILABLE as u8);
+        push_u64(&mut b, 0xF130_0000_0000_0043);
+        b.push(dialog_status::REWARD as u8);
+        let mut r = b.as_slice();
+        let all = read_questgiver_status_multiple(&mut r).unwrap();
+        assert_eq!(
+            all,
+            vec![
+                (0xF130_0000_0000_0042, dialog_status::AVAILABLE),
+                (0xF130_0000_0000_0043, dialog_status::REWARD)
+            ]
+        );
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn quest_list_rows_carry_flags_and_repeatable() {
         let mut b = Vec::new();
         push_u64(&mut b, 0xABCD);
         push_cstr(&mut b, "Greetings, hero.");
         push_u32(&mut b, 0); // emoteDelay
         push_u32(&mut b, 1); // emote
         b.push(2); // count (u8)
-        push_u32(&mut b, 100); // questId
-        push_u32(&mut b, dialog_status::AVAILABLE); // icon, a u32
+        push_u32(&mut b, 100);
+        push_u32(&mut b, 2); // icon
         push_u32(&mut b, 3); // level
+        push_u32(&mut b, 0x8); // flags
+        b.push(0); // repeatable
         push_cstr(&mut b, "A Threat Within");
         push_u32(&mut b, 200);
-        push_u32(&mut b, dialog_status::REWARD_REP);
+        push_u32(&mut b, 4);
         push_u32(&mut b, 5);
+        push_u32(&mut b, 0);
+        b.push(1);
         push_cstr(&mut b, "Report to Goldshire");
-        let list = read_questgiver_quest_list(&mut b.as_slice()).unwrap();
-        assert_eq!(list.npc, 0xABCD);
+        let mut r = b.as_slice();
+        let list = read_questgiver_quest_list(&mut r).unwrap();
+        assert!(r.is_empty());
         assert_eq!(list.greeting, "Greetings, hero.");
         assert_eq!(list.quests.len(), 2);
-        assert_eq!(list.quests[0].icon, 5);
-        assert_eq!(list.quests[0].level, 3);
+        assert_eq!(list.quests[0].flags, 0x8);
+        assert!(!list.quests[0].repeatable);
         assert_eq!(list.quests[0].title, "A Threat Within");
-        assert_eq!(list.quests[1].quest_id, 200);
         assert_eq!(list.quests[1].icon, 4);
+        assert!(list.quests[1].repeatable);
         assert_eq!(list.quests[1].title, "Report to Goldshire");
     }
 
     #[test]
-    fn details_rewards_block_is_uniform() {
+    fn details_reads_12340_s_order() {
         let mut b = Vec::new();
-        push_u64(&mut b, 0x42);
-        push_u32(&mut b, 100); // questId
+        push_u64(&mut b, 0x42); // npc
+        push_u64(&mut b, 0x77); // sharer
+        push_u32(&mut b, 100);
         push_cstr(&mut b, "A Threat Within");
         push_cstr(&mut b, "Kill the kobolds.");
         push_cstr(&mut b, "Slay 10 kobolds.");
-        push_u32(&mut b, 1); // autoFinish
-        push_u32(&mut b, 1); // choiceCount
-        push_triple(&mut b, 2000, 1, 555); // choice item
-        push_u32(&mut b, 1); // rewCount
-        push_triple(&mut b, 3000, 2, 777); // fixed reward
-        push_i32(&mut b, 1234); // money
-        push_u32(&mut b, 0); // rewSpell
-        push_u32(&mut b, QUEST_EMOTE_COUNT); // emoteCount (always 4)
+        b.push(1); // autoLaunched
+        push_u32(&mut b, 0x8); // flags
+        push_u32(&mut b, 3); // suggested players
+        b.push(1); // start cheat
+        push_u32(&mut b, 1);
+        push_triple(&mut b, 2000, 1, 555);
+        push_u32(&mut b, 1);
+        push_triple(&mut b, 3000, 2, 777);
+        push_extra(&mut b, false);
+        push_u32(&mut b, QUEST_EMOTE_COUNT);
         for i in 0..QUEST_EMOTE_COUNT {
-            push_u32(&mut b, 10 + i); // emote
-            push_u32(&mut b, 100 + i); // delay
+            push_u32(&mut b, 10 + i);
+            push_u32(&mut b, 100 + i);
         }
-        let d = read_questgiver_quest_details(&mut b.as_slice()).unwrap();
+        let mut r = b.as_slice();
+        let d = read_questgiver_quest_details(&mut r).unwrap();
+        assert!(r.is_empty());
+        assert_eq!(d.npc, 0x42);
+        assert_eq!(d.sharer, 0x77);
         assert_eq!(d.quest_id, 100);
-        assert_eq!(d.title, "A Threat Within");
-        assert_eq!(d.details, "Kill the kobolds.");
         assert_eq!(d.objectives, "Slay 10 kobolds.");
+        assert!(d.auto_launched);
+        assert_eq!(d.flags, 0x8);
+        assert_eq!(d.suggested_players, 3);
+        assert_eq!(d.start_cheat, 1);
         assert_eq!(
             d.choices,
             vec![QuestRewardItem {
@@ -481,81 +686,66 @@ mod tests {
                 display_id: 555
             }]
         );
-        assert_eq!(
-            d.rewards,
-            vec![QuestRewardItem {
-                item_id: 3000,
-                count: 2,
-                display_id: 777
-            }]
-        );
-        assert_eq!(d.money, 1234);
+        assert_eq!(d.rewards[0].item_id, 3000);
+        assert_extra(&d.extra);
     }
 
     #[test]
-    fn details_hidden_rewards_fork_parses_as_empty() {
+    fn details_with_hidden_rewards_reads_empty_blocks() {
         let mut b = Vec::new();
         push_u64(&mut b, 0x42);
+        push_u64(&mut b, 0);
         push_u32(&mut b, 100);
         push_cstr(&mut b, "T");
         push_cstr(&mut b, "D");
         push_cstr(&mut b, "O");
-        push_u32(&mut b, 0); // autoFinish
-        push_u32(&mut b, 0); // (hidden) choiceCount zero
-        push_u32(&mut b, 0); // (hidden) rewCount zero
-        push_u32(&mut b, 0); // (hidden) money zero
-        push_u32(&mut b, 42); // rewSpell
-        push_u32(&mut b, QUEST_EMOTE_COUNT);
-        for _ in 0..QUEST_EMOTE_COUNT {
-            push_u32(&mut b, 0);
-            push_u32(&mut b, 0);
-        }
-        let d = read_questgiver_quest_details(&mut b.as_slice()).unwrap();
+        b.push(0);
+        push_u32(&mut b, 0x200);
+        push_u32(&mut b, 0);
+        b.push(0);
+        push_u32(&mut b, 0); // choice count
+        push_u32(&mut b, 0); // reward count
+        push_extra(&mut b, false);
+        push_u32(&mut b, 0); // no emotes
+        let mut r = b.as_slice();
+        let d = read_questgiver_quest_details(&mut r).unwrap();
+        assert!(r.is_empty());
         assert!(d.choices.is_empty());
         assert!(d.rewards.is_empty());
-        assert_eq!(d.money, 0);
-        assert_eq!(d.reward_spell, 42);
     }
 
-    /// The pairs are read and discarded, so the check is that the fields after the run align.
     #[test]
-    fn offer_reward_skips_its_counted_emote_pairs() {
+    fn offer_reward_reads_12340_s_order() {
         let mut b = Vec::new();
         push_u64(&mut b, 0x42);
         push_u32(&mut b, 100);
         push_cstr(&mut b, "Well done.");
         push_cstr(&mut b, "Here is your reward.");
-        push_u32(&mut b, 1); // autoFinish
+        b.push(1); // autoFinish
+        push_u32(&mut b, 0x200); // flags
+        push_u32(&mut b, 0); // suggested players
         push_u32(&mut b, 2); // emoteCount
-        push_u32(&mut b, 500); // delay, first
-        push_u32(&mut b, 1); // emote
-        push_u32(&mut b, 0); // delay
-        push_u32(&mut b, 2); // emote
+        push_u32(&mut b, 500);
+        push_u32(&mut b, 1);
+        push_u32(&mut b, 0);
+        push_u32(&mut b, 2);
         push_u32(&mut b, 0); // choiceCount
         push_u32(&mut b, 1); // rewCount
         push_triple(&mut b, 3000, 1, 888);
-        push_i32(&mut b, 500); // money
-        push_u32(&mut b, 0x200); // questFlags (HIDDEN_REWARDS bit, just a value here)
-        push_u32(&mut b, 7); // rewSpell
-        let o = read_questgiver_offer_reward(&mut b.as_slice()).unwrap();
-        assert_eq!(o.quest_id, 100);
+        push_extra(&mut b, true);
+        let mut r = b.as_slice();
+        let o = read_questgiver_offer_reward(&mut r).unwrap();
+        assert!(r.is_empty());
         assert_eq!(o.offer_text, "Here is your reward.");
-        assert!(o.choices.is_empty());
-        assert_eq!(
-            o.rewards,
-            vec![QuestRewardItem {
-                item_id: 3000,
-                count: 1,
-                display_id: 888
-            }]
-        );
-        assert_eq!(o.money, 500);
+        assert!(o.auto_finish);
         assert_eq!(o.quest_flags, 0x200);
-        assert_eq!(o.reward_spell, 7);
+        assert!(o.choices.is_empty());
+        assert_eq!(o.rewards[0].display_id, 888);
+        assert_extra(&o.extra);
     }
 
     #[test]
-    fn request_items_reads_completability() {
+    fn request_items_needs_all_four_flag_words() {
         let mut b = Vec::new();
         push_u64(&mut b, 0x42);
         push_u32(&mut b, 100);
@@ -564,51 +754,54 @@ mod tests {
         push_u32(&mut b, 0); // emoteDelay
         push_u32(&mut b, 1); // emote
         push_u32(&mut b, 1); // closeOnCancel
+        push_u32(&mut b, 0x8); // flags
+        push_u32(&mut b, 0); // suggested players
         push_u32(&mut b, 0); // requiredMoney
-        push_u32(&mut b, 1); // reqCount
-        push_triple(&mut b, 2001, 8, 111); // required item
-        push_u32(&mut b, 0x02);
-        push_u32(&mut b, 0x03); // isComplete
-        push_u32(&mut b, 0x04);
-        push_u32(&mut b, 0x08);
-        let ri = read_questgiver_request_items(&mut b.as_slice()).unwrap();
-        assert_eq!(ri.title, "A Threat Within");
+        push_u32(&mut b, 1);
+        push_triple(&mut b, 2001, 8, 111);
+        for w in [0x03, 0x04, 0x08, 0x10] {
+            push_u32(&mut b, w);
+        }
+        let mut r = b.as_slice();
+        let ri = read_questgiver_request_items(&mut r).unwrap();
+        assert!(r.is_empty());
         assert_eq!(ri.request_text, "Bring me the tusks.");
-        assert_eq!(
-            ri.required_items,
-            vec![QuestRewardItem {
-                item_id: 2001,
-                count: 8,
-                display_id: 111
-            }]
-        );
+        assert_eq!(ri.close_on_cancel, 1);
+        assert_eq!(ri.quest_flags, 0x8);
+        assert_eq!(ri.required_items[0].count, 8);
         assert!(ri.is_complete);
 
-        // The not-complete fork: second flag word 0x00.
+        // AzerothCore writes 0 in the first word for a quest that cannot complete yet.
         let mut b2 = b.clone();
-        let flag_off = b2.len() - 16 + 4; // second of the four trailing u32 flags
-        b2[flag_off..flag_off + 4].copy_from_slice(&0u32.to_le_bytes());
-        let ri2 = read_questgiver_request_items(&mut b2.as_slice()).unwrap();
-        assert!(!ri2.is_complete);
+        let off = b2.len() - 16;
+        b2[off..off + 4].copy_from_slice(&0u32.to_le_bytes());
+        assert!(
+            !read_questgiver_request_items(&mut b2.as_slice())
+                .unwrap()
+                .is_complete
+        );
     }
 
     #[test]
-    fn quest_complete_reads_reward_summary() {
+    fn quest_complete_is_six_words() {
         let mut b = Vec::new();
-        push_u32(&mut b, 100); // questId
-        push_u32(&mut b, 0); // unknown
-        push_u32(&mut b, 450); // xp
-        push_u32(&mut b, 1234); // money
-        push_u32(&mut b, 2); // itemCount
-        push_u32(&mut b, 3000);
-        push_u32(&mut b, 1);
-        push_u32(&mut b, 3001);
-        push_u32(&mut b, 5);
-        let c = read_questgiver_quest_complete(&mut b.as_slice()).unwrap();
-        assert_eq!(c.quest_id, 100);
-        assert_eq!(c.xp, 450);
-        assert_eq!(c.money, 1234);
-        assert_eq!(c.items, vec![(3000, 1), (3001, 5)]);
+        for v in [100, 450, 1234, 70, 1, 25] {
+            push_u32(&mut b, v);
+        }
+        let mut r = b.as_slice();
+        let c = read_questgiver_quest_complete(&mut r).unwrap();
+        assert!(r.is_empty());
+        assert_eq!(
+            c,
+            QuestComplete {
+                quest_id: 100,
+                xp: 450,
+                money: 1234,
+                honor: 70,
+                talents: 1,
+                arena_points: 25,
+            }
+        );
     }
 
     #[test]

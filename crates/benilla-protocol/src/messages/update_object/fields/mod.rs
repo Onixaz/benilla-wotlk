@@ -178,9 +178,9 @@ const FIELD_PLAYER_BYTES_2: u16 = 194;
 // `[[unit+0xe68]+0x1d]`; byte 2 is the city-protector race, byte 3 the current honor rank
 // (`Player.h:351-356`). Public: the one honor value that streams for every visible player.
 const FIELD_PLAYER_BYTES_3: u16 = 195;
-// 20 slots of 3 fields (`Player.h:439-444`): the quest id (group-only), then the counters and
-// state byte, and the timer (both private).
-pub const FIELD_PLAYER_QUEST_LOG_1_1: u16 = 198;
+// 25 slots of [`QUEST_LOG_SLOT_FIELDS`]: the quest id (group-only), then the state, the counters
+// and the timer (private). Kept past the 1.12.1 player end, where the 125 fields fit.
+pub const FIELD_PLAYER_QUEST_LOG_1_1: u16 = 1282;
 
 /// The indices a field watch names: the same constants the accessors read, so the two agree.
 pub mod field {
@@ -197,24 +197,27 @@ pub mod field {
     };
 }
 
-/// `MAX_QUEST_LOG_SIZE` (`QuestDef.h:34`).
-pub const PLAYER_QUEST_LOG_SLOTS: u8 = 20;
+/// The quest log's slots, 25 in 3.3.5a: 12340 walks them `< 0x1a` at stride `0x14` (`0x6d8086`).
+pub const PLAYER_QUEST_LOG_SLOTS: u8 = 25;
+/// The fields of one slot: id, state, two words of counters, timer.
+pub const QUEST_LOG_SLOT_FIELDS: u16 = 5;
 
 /// One `PLAYER_QUEST_LOG` slot, the durable quest state; `SMSG_QUESTUPDATE_*` are only toasts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QuestLogSlot {
     /// 0 for an empty slot.
     pub quest_id: u32,
-    /// Four 6-bit kill, cast and interact counters at bits `6i..6i+6` (`Player.h:1100-1106`); the
-    /// client counts item objectives from the bags itself.
-    pub counters: [u8; 4],
-    /// Byte 3 of the counter field (`Player.h:1107`): a [`quest_slot_state`] bit, 0 in progress.
+    /// Four kill, cast and interact counters, `u16` each over two fields (12340 reads counter `i`
+    /// as `movzx WORD [slot + 8 + 2i]`, `0x5e161c`); the client counts item objectives itself.
+    pub counters: [u16; 4],
+    /// The state field's low byte: a [`quest_slot_state`] bit, 0 in progress (`0x6d80a9` tests
+    /// `& 2` for a failed quest).
     pub state: u8,
     /// The absolute end time of a timed quest, else 0.
     pub timer: u32,
 }
 
-/// `QUEST_STATE_*` bits of [`QuestLogSlot::state`] (`Player.h:447-451`).
+/// `QUEST_STATE_*` bits of [`QuestLogSlot::state`].
 pub mod quest_slot_state {
     pub const COMPLETE: u8 = 0x01;
     pub const FAIL: u8 = 0x02;
@@ -357,14 +360,15 @@ pub struct ObjectFields {
 /// OBJECT, UNIT and PLAYER.
 fn descriptor_len(object_type: ObjectType) -> u16 {
     match object_type {
-        ObjectType::Object => 6,         // OBJECT_END = 0x6
-        ObjectType::Item => 48,          // ITEM_END = OBJECT_END + 0x2A
-        ObjectType::Container => 122,    // CONTAINER_END = ITEM_END + 0x4A
-        ObjectType::Unit => 188,         // UNIT_END = OBJECT_END + 0xB6
-        ObjectType::Player => 1282,      // PLAYER_END = UNIT_END + 0x446
-        ObjectType::GameObject => 26,    // GAMEOBJECT_END = OBJECT_END + 0x14
+        ObjectType::Object => 6,      // OBJECT_END = 0x6
+        ObjectType::Item => 48,       // ITEM_END = OBJECT_END + 0x2A
+        ObjectType::Container => 122, // CONTAINER_END = ITEM_END + 0x4A
+        ObjectType::Unit => 188,      // UNIT_END = OBJECT_END + 0xB6
+        // 1.12.1's PLAYER_END (UNIT_END + 0x446), plus the 3.3.5a quest log kept past it.
+        ObjectType::Player => 1407,
+        ObjectType::GameObject => 26, // GAMEOBJECT_END = OBJECT_END + 0x14
         ObjectType::DynamicObject => 16, // DYNAMICOBJECT_END = OBJECT_END + 0xA
-        ObjectType::Corpse => 38,        // CORPSE_END = OBJECT_END + 0x20
+        ObjectType::Corpse => 38,     // CORPSE_END = OBJECT_END + 0x20
     }
 }
 

@@ -186,6 +186,7 @@ impl ObjectFields {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::messages::update_object::{quest_slot_state, QuestLogSlot};
 
     fn wire(pairs: &[(u16, u32)]) -> ObjectFields {
         ObjectFields::from_pairs(pairs)
@@ -248,6 +249,37 @@ mod tests {
         assert_eq!(f.player_visible_item_enchant(4, 1), Some(25));
         assert_eq!(f.player_inv_slot(0), Some(0x55));
         assert_eq!(f.player_money(), Some(12_345));
+    }
+
+    #[test]
+    fn a_quest_log_slot_reads_from_3_3_5a_s_25_by_5_block() {
+        // Slot 2 at 158 + 2*5: id, state COMPLETE, counters 5/300 then 63/0 as `u16`, a timer.
+        let base = 158 + 2 * 5;
+        let f = ObjectFields::from_wotlk(
+            wire(&[
+                (base, 783),
+                (base + 1, 1),
+                (base + 2, 5 | 300 << 16),
+                (base + 3, 63),
+                (base + 4, 4_242),
+                // Slot 24, the last, and the first visible item right after the block.
+                (158 + 24 * 5, 99),
+                (283, 6_096),
+            ]),
+            ObjectType::Player,
+        );
+        assert_eq!(
+            f.player_quest_log(2),
+            Some(QuestLogSlot {
+                quest_id: 783,
+                counters: [5, 300, 63, 0],
+                state: quest_slot_state::COMPLETE,
+                timer: 4_242,
+            })
+        );
+        assert_eq!(f.player_quest_log(24).map(|s| s.quest_id), Some(99));
+        assert_eq!(f.player_visible_item_entry(0), Some(6_096));
+        assert_eq!(f.player_quest_log(1), None);
     }
 
     #[test]

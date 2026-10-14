@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 use benilla_protocol::events::decode;
 use benilla_protocol::SessionEvent;
 
-use crate::probes::{Ctx, Probe, FIELD_PLAYER_QUEST_LOG_1_1};
+use crate::probes::{Ctx, Probe, FIELD_PLAYER_QUEST_LOG_1_1, QUEST_LOG_SLOT_FIELDS};
 
 /// "Iverron's Antidote" (Teldrassil): `LimitTime` 300, min level 2, and no prerequisite that a
 /// GM `.quest add` checks.
@@ -88,7 +88,11 @@ impl Probe for QuestTimer {
             .as_ref()
             .and_then(|sf| {
                 sf.raw_fields()
-                    .find(|&(idx, _)| idx == FIELD_PLAYER_QUEST_LOG_1_1 + 3 * u16::from(slot) + 2)
+                    .find(|&(idx, _)| {
+                        idx == FIELD_PLAYER_QUEST_LOG_1_1
+                            + QUEST_LOG_SLOT_FIELDS * u16::from(slot)
+                            + 4
+                    })
                     .map(|(_, v)| v)
             })
             .unwrap_or(0);

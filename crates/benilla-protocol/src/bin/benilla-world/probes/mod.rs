@@ -40,9 +40,9 @@ pub(crate) trait Probe {
 /// Onto Marshal McBride, the `--quest` turn-in NPC and quest 7's giver and ender.
 pub(crate) const QUEST_TURNIN_TP: &str = ".go xyz -8902.59 -162.606 82.0223";
 pub(crate) const QUEST_TURNIN_ENTRY: u32 = 197; // Marshal McBride, who takes 783
-/// `PLAYER_QUEST_LOG_1_1`: `UNIT_END` (188) + 0xA, 3 fields per slot for 20 slots
-/// (`UpdateFields_1_12_1.h:128`).
-pub(crate) const FIELD_PLAYER_QUEST_LOG_1_1: u16 = 198;
+/// The shared index of `PLAYER_QUEST_LOG_1_1`, and the fields per slot.
+pub(crate) use benilla_protocol::messages::field::FIELD_PLAYER_QUEST_LOG_1_1;
+pub(crate) use benilla_protocol::messages::QUEST_LOG_SLOT_FIELDS;
 
 /// Quest 7 "Kobold Camp Cleanup": Marshal McBride (197) gives and takes it
 /// (`creature_questrelation`, `creature_involvedrelation`), and its objective, 10 kills of entry

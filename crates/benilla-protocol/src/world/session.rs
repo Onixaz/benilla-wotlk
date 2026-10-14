@@ -594,10 +594,15 @@ impl WorldSession {
     }
 
     /// Accept a quest (`CMSG_QUESTGIVER_ACCEPT_QUEST`); the server closes the gossip window.
-    pub fn questgiver_accept_quest(&mut self, npc: u64, quest: u32) -> Result<()> {
+    pub fn questgiver_accept_quest(
+        &mut self,
+        npc: u64,
+        quest: u32,
+        start_cheat: u32,
+    ) -> Result<()> {
         self.send(
             opcode::CMSG_QUESTGIVER_ACCEPT_QUEST,
-            &messages::questgiver_accept_quest(npc, quest),
+            &messages::questgiver_accept_quest(npc, quest, start_cheat),
         )
     }
 

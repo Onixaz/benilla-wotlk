@@ -551,6 +551,8 @@ pub const CMSG_QUESTGIVER_CHOOSE_REWARD: u16 = 0x018E; // 398
 pub const SMSG_QUESTGIVER_QUEST_INVALID: u16 = 0x018F; // 399
 pub const SMSG_QUESTGIVER_QUEST_COMPLETE: u16 = 0x0191; // 401
 pub const SMSG_QUESTGIVER_QUEST_FAILED: u16 = 0x0192; // 402
+/// 3.3.5a only: `u32 count`, then `{u64 guid, u8 status}` per NPC; 12340 routes it with 0x183.
+pub const SMSG_QUESTGIVER_STATUS_MULTIPLE: u16 = 0x0418;
 
 pub const CMSG_QUESTLOG_SWAP_QUEST: u16 = 0x0193; // 403
 pub const CMSG_QUESTLOG_REMOVE_QUEST: u16 = 0x0194; // 404

@@ -692,6 +692,8 @@ pub enum ServerPacket {
         npc: u64,
         status: u32,
     },
+    /// `SMSG_QUESTGIVER_STATUS_MULTIPLE`: many NPCs' markers at once, `(npc, status)` each.
+    QuestGiverStatusMultiple(Vec<(u64, u32)>),
     /// `SMSG_QUESTGIVER_QUEST_LIST`: the greeting panel, an NPC's offered and active quests.
     QuestGiverQuestList(QuestGiverList),
     /// `SMSG_QUESTGIVER_QUEST_DETAILS`: the accept panel, full quest text and rewards.
@@ -1456,6 +1458,7 @@ impl ServerPacket {
             ServerPacket::ExplorationXp(_) => "SMSG_EXPLORATION_EXPERIENCE".into(),
             ServerPacket::LevelUp(_) => "SMSG_LEVELUP_INFO".into(),
             ServerPacket::QuestGiverStatus { .. } => "SMSG_QUESTGIVER_STATUS".into(),
+            ServerPacket::QuestGiverStatusMultiple(_) => "SMSG_QUESTGIVER_STATUS_MULTIPLE".into(),
             ServerPacket::QuestGiverQuestList(_) => "SMSG_QUESTGIVER_QUEST_LIST".into(),
             ServerPacket::QuestGiverDetails(_) => "SMSG_QUESTGIVER_QUEST_DETAILS".into(),
             ServerPacket::QuestGiverRequestItems(_) => "SMSG_QUESTGIVER_REQUEST_ITEMS".into(),

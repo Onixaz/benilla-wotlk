@@ -217,11 +217,10 @@ mod tests {
                 title: "A Threat Within".into(),
                 details: String::new(),
                 objectives: String::new(),
-                auto_finish: 0,
+                auto_launched: false,
                 choices: Vec::new(),
                 rewards: Vec::new(),
-                money: 0,
-                reward_spell: 0,
+                ..Default::default()
             })
         }
 

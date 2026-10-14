@@ -182,23 +182,27 @@ impl ObjectFields {
         self.get_u32(FIELD_PLAYER_FIELD_BYTES).unwrap_or(0) & 0x2 != 0
     }
     /// `PLAYER_QUEST_LOG_<slot+1>_*`: one quest-log slot, `quest_id == 0` when the server cleared
-    /// it; the count-state and timer are written with the id (`Player.h:1094-1099`).
+    /// it; the state, counters and timer are written with the id.
     pub fn player_quest_log(&self, slot: u8) -> Option<QuestLogSlot> {
         if slot >= PLAYER_QUEST_LOG_SLOTS {
             return None;
         }
-        let base = FIELD_PLAYER_QUEST_LOG_1_1 + 3 * u16::from(slot);
+        let base = FIELD_PLAYER_QUEST_LOG_1_1 + QUEST_LOG_SLOT_FIELDS * u16::from(slot);
         let quest_id = self.get_u32(base)?;
-        let count_state = self.get_u32(base + 1).unwrap_or(0);
-        let timer = self.get_u32(base + 2).unwrap_or(0);
-        let mut counters = [0u8; 4];
+        let state = self.get_u32(base + 1).unwrap_or(0);
+        let counts = [
+            self.get_u32(base + 2).unwrap_or(0),
+            self.get_u32(base + 3).unwrap_or(0),
+        ];
+        let timer = self.get_u32(base + 4).unwrap_or(0);
+        let mut counters = [0u16; 4];
         for (i, c) in counters.iter_mut().enumerate() {
-            *c = ((count_state >> (6 * i)) & 0x3F) as u8;
+            *c = (counts[i / 2] >> (16 * (i % 2))) as u16;
         }
         Some(QuestLogSlot {
             quest_id,
             counters,
-            state: (count_state >> 24) as u8,
+            state: state as u8,
             timer,
         })
     }

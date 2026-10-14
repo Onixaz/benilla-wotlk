@@ -391,11 +391,14 @@ pub(super) fn seed_ui_fixture(
                               and return to me."
                             .into(),
                     objectives: "Kill 8 Kobold Vermin.".into(),
-                    auto_finish: 1,
+                    auto_launched: true,
                     choices: vec![choice(92_001, DISP_SWORD), choice(92_002, DISP_STONE)],
                     rewards: vec![choice(92_003, DISP_SHIELD)],
-                    money: 1234, // 12s 34c
-                    reward_spell: 0,
+                    extra: benilla_protocol::messages::QuestExtraRewards {
+                        money: 1234, // 12s 34c
+                        ..Default::default()
+                    },
+                    ..Default::default()
                 }),
             );
         }
@@ -428,12 +431,14 @@ pub(super) fn seed_ui_fixture(
                             icon: 0,
                             level: 4,
                             title: "Brotherhood of Thieves".into(),
+                            ..Default::default()
                         },
                         benilla_protocol::messages::QuestListEntry {
                             quest_id: 40,
                             icon: 0,
                             level: 3,
                             title: "Eagan Peltskinner".into(),
+                            ..Default::default()
                         },
                     ],
                 }),
@@ -441,9 +446,12 @@ pub(super) fn seed_ui_fixture(
         }
         UiFixture::QuestLog => {
             // The log reads the self player's PLAYER_QUEST_LOG slots, so a synthetic self player
-            // carries two and `feed_quest_log` runs the real chain. A slot is id, packed 6-bit
-            // counters plus a state byte, and timer, from field 198.
-            use benilla_protocol::messages::{ObjectFields, QuestObjective, QuestTemplate};
+            // carries two and `feed_quest_log` runs the real chain. A slot is id, state, two words
+            // of `u16` counters, and timer.
+            use benilla_protocol::messages::field::FIELD_PLAYER_QUEST_LOG_1_1 as LOG;
+            use benilla_protocol::messages::{
+                ObjectFields, QuestObjective, QuestTemplate, QUEST_LOG_SLOT_FIELDS,
+            };
             const KOBOLD_ENTRY: u32 = 90_002;
             names.insert_creature(
                 KOBOLD_ENTRY,
@@ -471,13 +479,6 @@ pub(super) fn seed_ui_fixture(
             cloak.display_info_id = DISP_SHIELD;
             items.insert_template(93_003, Some(cloak));
 
-            let blank = QuestObjective {
-                creature_or_go: 0,
-                required_count: 0,
-                item_id: 0,
-                item_count: 0,
-                text: String::new(),
-            };
             // Entry 1, auto-selected: a creature objective at 3/10, an item objective at 0/5,
             // rewards and money. `quest_type: 1` is `QuestInfo.dbc`'s "Elite", though the real 783
             // is plain, so a row tag is in the shot.
@@ -487,20 +488,9 @@ pub(super) fn seed_ui_fixture(
                 level: 2,
                 zone_or_sort: 12,
                 quest_type: 1,
-                rep_objective_faction: 0,
-                rep_objective_value: 0,
-                next_quest_in_chain: 0,
                 money: 150, // 1s 50c
-                money_max_level: 0,
-                reward_spell: 0,
-                src_item_id: 0,
-                flags: 0,
                 rewards: [(93_003, 1), (0, 0), (0, 0), (0, 0)],
                 choices: [(93_002, 1), (93_001, 3), (0, 0), (0, 0), (0, 0), (0, 0)],
-                point_map_id: 0,
-                point_x: 0.0,
-                point_y: 0.0,
-                point_opt: 0,
                 title: "A Threat Within".into(),
                 objectives_text: "Slay 10 Kobold Vermin and recover 5 Chipped Boar Tusks, then \
                                   return to Marshal McBride."
@@ -509,25 +499,18 @@ pub(super) fn seed_ui_fixture(
                           the woods to the north. Go there and fight the kobold vermin you find. \
                           Reduce their numbers so that we may one day drive them from Northshire."
                     .into(),
-                end_text: String::new(),
                 objectives: [
                     QuestObjective {
                         creature_or_go: KOBOLD_ENTRY,
                         required_count: 10,
-                        item_id: 0,
-                        item_count: 0,
-                        text: String::new(),
+                        ..Default::default()
                     },
-                    QuestObjective {
-                        creature_or_go: 0,
-                        required_count: 0,
-                        item_id: 93_001,
-                        item_count: 5,
-                        text: String::new(),
-                    },
-                    blank.clone(),
-                    blank.clone(),
+                    QuestObjective::default(),
+                    QuestObjective::default(),
+                    QuestObjective::default(),
                 ],
+                required_items: [(93_001, 5), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
+                ..Default::default()
             });
             // Entry 2: complete, for the row's "(Complete)" tag.
             quest_log.insert_template(QuestTemplate {
@@ -535,48 +518,33 @@ pub(super) fn seed_ui_fixture(
                 method: 2,
                 level: 3,
                 zone_or_sort: 12,
-                quest_type: 0,
-                rep_objective_faction: 0,
-                rep_objective_value: 0,
-                next_quest_in_chain: 0,
                 money: 25,
-                money_max_level: 0,
-                reward_spell: 0,
-                src_item_id: 0,
-                flags: 0,
-                rewards: [(0, 0); 4],
-                choices: [(0, 0); 6],
-                point_map_id: 0,
-                point_x: 0.0,
-                point_y: 0.0,
-                point_opt: 0,
                 title: "Kobold Camp Cleanup".into(),
                 objectives_text: "Kill 10 kobold workers.".into(),
                 details: "The kobold infestation grows.".into(),
-                end_text: String::new(),
                 objectives: [
                     QuestObjective {
                         creature_or_go: KOBOLD_ENTRY,
                         required_count: 10,
-                        item_id: 0,
-                        item_count: 0,
-                        text: String::new(),
+                        ..Default::default()
                     },
-                    blank.clone(),
-                    blank.clone(),
-                    blank,
+                    QuestObjective::default(),
+                    QuestObjective::default(),
+                    QuestObjective::default(),
                 ],
+                ..Default::default()
             });
 
             // Slot 0 is quest 783 (counter 0 at 3), slot 1 quest 7 (counter 0 at 10, state
-            // COMPLETE), packed as vmangos's `SetQuestSlotCounter` and `SetQuestSlotState` write.
+            // COMPLETE).
+            let slot1 = LOG + QUEST_LOG_SLOT_FIELDS;
             let fields = ObjectFields::from_pairs(&[
-                (198, 783),
-                (199, 3),
-                (200, 0),
-                (201, 7),
-                (202, 10 | (0x01 << 24)),
-                (203, 0),
+                (LOG, 783),
+                (LOG + 1, 0),
+                (LOG + 2, 3),
+                (slot1, 7),
+                (slot1 + 1, 0x01),
+                (slot1 + 2, 10),
             ]);
             // A guid and cached name, as the feeds resolve the player through the self query.
             const PLAYER_GUID: u64 = 0x51;

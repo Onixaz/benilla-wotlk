@@ -944,6 +944,9 @@ fn parse_server_body(
             let (npc, status) = quest::read_questgiver_status(&mut r)?;
             ServerPacket::QuestGiverStatus { npc, status }
         }
+        opcode::SMSG_QUESTGIVER_STATUS_MULTIPLE => {
+            ServerPacket::QuestGiverStatusMultiple(quest::read_questgiver_status_multiple(&mut r)?)
+        }
         opcode::SMSG_QUESTGIVER_QUEST_LIST => {
             ServerPacket::QuestGiverQuestList(quest::read_questgiver_quest_list(&mut r)?)
         }

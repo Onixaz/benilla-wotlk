@@ -56,18 +56,20 @@ fn seq_loop(info: &BillboardInfo, anim_id: u16) -> Option<BoneScaleAnim> {
         .map(|(_, l)| l.clone())
 }
 
-/// The marker M2 per dialog status: the reference's file table `0xc4d9d8` through the status map
-/// `0x80c454` = `{0,3,0,2,7,1,6,6}`, its `.mdx` names loaded as `.m2`. The statuses are
-/// UNAVAILABLE 1, INCOMPLETE 3, REWARD_REP 4, AVAILABLE 5, REWARD_OLD 6 and REWARD2 7; NONE 0 and
-/// CHAT 2 draw nothing. File index 4, the green `!`, comes from the flight-master status instead,
-/// and index 5, the blue `!`, is unreachable in 1.12.1.
+/// The marker M2 per dialog status: 12340 maps the status to a row through `0xa34f5c` and the row
+/// to a file through `0xadaca0` (12-byte rows of handle, scale and path), loading the `.mdx` names
+/// as `.m2`. The low-level statuses 2-4 draw only under the minimap's low-level quest tracking
+/// (`0x745dd7`, `0x57bf30`), which benilla does not model, so they draw nothing; NONE 0 draws
+/// nothing either.
 fn marker_model(status: u32) -> Option<&'static str> {
+    use benilla_protocol::messages::dialog_status::*;
     match status {
-        1 => Some("Interface\\Buttons\\TalkToMeGrey.m2"),
-        3 => Some("Interface\\Buttons\\TalkToMeQuestion_Grey.m2"),
-        4 => Some("Interface\\Buttons\\TalkToMeQuestion_LTBlue.m2"),
-        5 => Some("Interface\\Buttons\\TalkToMe.m2"),
-        6 | 7 => Some("Interface\\Buttons\\TalkToMeQuestionMark.m2"),
+        UNAVAILABLE => Some("Interface\\Buttons\\TalkToMeGrey.m2"),
+        INCOMPLETE => Some("Interface\\Buttons\\TalkToMeQuestion_Grey.m2"),
+        REWARD_REP => Some("Interface\\Buttons\\TalkToMeQuestion_LTBlue.m2"),
+        AVAILABLE_REP => Some("Interface\\Buttons\\TalkToMeBlue.m2"),
+        AVAILABLE => Some("Interface\\Buttons\\TalkToMe.m2"),
+        REWARD2 | REWARD => Some("Interface\\Buttons\\TalkToMeQuestionMark.m2"),
         _ => None,
     }
 }

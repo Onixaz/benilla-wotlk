@@ -7,7 +7,8 @@ use anyhow::{bail, Context, Result};
 use benilla_protocol::{decode, guid, EntityKind, SessionEvent};
 
 use crate::probes::{
-    Ctx, Probe, FIELD_PLAYER_QUEST_LOG_1_1, QUESTLOG_ID, QUEST_TURNIN_ENTRY, QUEST_TURNIN_TP,
+    Ctx, Probe, FIELD_PLAYER_QUEST_LOG_1_1, QUESTLOG_ID, QUEST_LOG_SLOT_FIELDS, QUEST_TURNIN_ENTRY,
+    QUEST_TURNIN_TP,
 };
 
 const QUESTLOG_TITLE: &str = "Kobold Camp Cleanup";
@@ -68,7 +69,7 @@ impl Probe for QuestLog {
         println!("✅ giver details: \"{giver_title}\"");
 
         println!("giver: CMSG_QUESTGIVER_ACCEPT_QUEST");
-        session.questgiver_accept_quest(mcbride, QUESTLOG_ID)?;
+        session.questgiver_accept_quest(mcbride, QUESTLOG_ID, 0)?;
         // The accept's values delta can trail the GOSSIP_COMPLETE that closes the interaction.
         let drain_until = Instant::now() + Duration::from_secs(3);
         while Instant::now() < drain_until {
@@ -119,11 +120,16 @@ impl Probe for QuestLog {
             template.money,
         );
         for (i, o) in template.objectives.iter().enumerate() {
-            if o.required_count > 0 || o.item_count > 0 {
+            if o.required_count > 0 {
                 println!(
-                    "  objective {i}: creature_or_go {} required_count {} item {}x{} — \"{}\"",
-                    o.creature_or_go, o.required_count, o.item_id, o.item_count, o.text
+                    "  objective {i}: creature_or_go {} required_count {} — \"{}\"",
+                    o.creature_or_go, o.required_count, o.text
                 );
+            }
+        }
+        for (i, (id, n)) in template.required_items.iter().enumerate() {
+            if *n > 0 {
+                println!("  required item {i}: {id}x{n}");
             }
         }
         if template.title != QUESTLOG_TITLE {
@@ -140,7 +146,7 @@ impl Probe for QuestLog {
         );
 
         // 3) Find the accept's PLAYER_QUEST_LOG slot, GM-complete it, and require the slot's
-        // count-state field (id field + 1) to gain the complete bit, 0x01 in its top byte.
+        // state field (id field + 1) to gain the complete bit, 0x01.
         let find_slot = |sf: &Option<benilla_protocol::messages::ObjectFields>| {
             sf.as_ref().and_then(|sf| {
                 (0..benilla_protocol::messages::PLAYER_QUEST_LOG_SLOTS)
@@ -173,15 +179,16 @@ impl Probe for QuestLog {
         println!("quest {QUESTLOG_ID} occupies PLAYER_QUEST_LOG slot {slot}");
 
         // Raw rather than decoded, so the exact before and after bytes print.
-        let count_state_word = |sf: &Option<benilla_protocol::messages::ObjectFields>| {
+        let state_index = FIELD_PLAYER_QUEST_LOG_1_1 + QUEST_LOG_SLOT_FIELDS * u16::from(slot) + 1;
+        let state_word = |sf: &Option<benilla_protocol::messages::ObjectFields>| {
             sf.as_ref().and_then(|sf| {
                 sf.raw_fields()
-                    .find(|&(idx, _)| idx == FIELD_PLAYER_QUEST_LOG_1_1 + 3 * u16::from(slot) + 1)
+                    .find(|&(idx, _)| idx == state_index)
                     .map(|(_, v)| v)
             })
         };
-        let before_word = count_state_word(&world.self_fields).unwrap_or(0);
-        println!("count-state word before: {before_word:#010x}");
+        let before_word = state_word(&world.self_fields).unwrap_or(0);
+        println!("state word before: {before_word:#010x}");
 
         session.send_chat(&format!(".quest complete {QUESTLOG_ID}"))?;
         println!("GM: .quest complete {QUESTLOG_ID} (letting it apply…)");
@@ -205,17 +212,17 @@ impl Probe for QuestLog {
                     }
                 }
             }
-            if let Some(w) = count_state_word(&world.self_fields) {
-                if w & (0x01 << 24) != 0 {
+            if let Some(w) = state_word(&world.self_fields) {
+                if w & 0x01 != 0 {
                     after_word = Some(w);
                 }
             }
         }
         let after_word = after_word.context(
-            "--questlog: the slot's count-state field never gained the COMPLETE bit \
-             (0x01 << 24) after GM .quest complete",
+            "--questlog: the slot's state field never gained the COMPLETE bit (0x01) after GM \
+             .quest complete",
         )?;
-        println!("count-state word after:  {after_word:#010x}");
+        println!("state word after:  {after_word:#010x}");
         println!(
             "✅ slot state: quest {QUESTLOG_ID} in slot {slot}; COMPLETE bit set after GM \
              complete ({before_word:#010x} → {after_word:#010x})."

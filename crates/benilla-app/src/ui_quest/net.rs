@@ -199,8 +199,8 @@ fn quest_detail(d: QuestDetails, quest: &mut QuestGiver, commands: &NetCommands)
         });
         return;
     }
-    // The trailing flag is the latch, not part of the view.
-    quest.close_on_cancel = d.auto_finish;
+    // The auto-launched byte is the decline latch, not part of the view (`0x58de4f`).
+    quest.close_on_cancel = u32::from(d.auto_launched);
     quest.open(d.npc, crate::ui_quest::QuestView::Detail(d));
 }
 
@@ -221,24 +221,20 @@ fn quest_offer(o: QuestOfferReward, quest: &mut QuestGiver) {
         "net: quest reward offer — quest {} on {:#x}",
         o.quest_id, o.npc
     );
-    // The `u32` after the reward text lands in the latch through DETAILS' publisher `0x500ef0`
-    // (`0x50101a`).
-    quest.close_on_cancel = o.auto_finish;
+    // The byte after the reward text lands in the latch through DETAILS' publisher `0x58dd50`.
+    quest.close_on_cancel = u32::from(o.auto_finish);
     quest.open(o.npc, crate::ui_quest::QuestView::Reward(o));
 }
 
-/// `SMSG_QUESTGIVER_QUEST_COMPLETE` (`0x5dc400`): the turn-in's chat lines, in the reference's
-/// order, then the window closes. The XP, money and items themselves arrive by `UPDATE_OBJECT`
-/// and `ITEM_PUSH_RESULT`.
+/// `SMSG_QUESTGIVER_QUEST_COMPLETE` (`0x6d1110`): the turn-in's chat lines, then the window
+/// closes. The XP, money and items themselves arrive by `UPDATE_OBJECT` and `ITEM_PUSH_RESULT`;
+/// 3.3.5a's body has no item list: the fixed rewards print from the template (`0x6d1018`).
 fn quest_complete(c: QuestComplete, quest: &mut QuestGiver, lines: &mut QuestLines) {
     // The reference plays the `QUESTCOMPLETED` fanfare on this packet.
     quest.completed_fanfare = true;
     debug!(
-        "net: quest {} complete — +{} XP, +{} copper, {} item(s)",
-        c.quest_id,
-        c.xp,
-        c.money,
-        c.items.len()
+        "net: quest {} complete — +{} XP, +{} copper",
+        c.quest_id, c.xp, c.money
     );
     lines.push(QuestLine::Completed(c.quest_id));
     if c.xp != 0 {
@@ -248,9 +244,7 @@ fn quest_complete(c: QuestComplete, quest: &mut QuestGiver, lines: &mut QuestLin
     if (c.money as i32) > 0 {
         lines.push(QuestLine::Money(c.money));
     }
-    for &(item, _count) in &c.items {
-        lines.push(QuestLine::Item(item));
-    }
+    lines.push(QuestLine::RewardItems(c.quest_id));
     if quest.chosen_reward != 0 {
         lines.push(QuestLine::Item(std::mem::take(&mut quest.chosen_reward)));
     }
@@ -392,8 +386,8 @@ mod tests {
         );
     }
 
-    /// `0x5dc400`'s order: the completion, the XP, the money, each packet item, then the chosen
-    /// reward, which the turn-in spends.
+    /// `0x6d0e10`'s order: the completion, the XP, the money, the template's reward items, then
+    /// the chosen reward, which the turn-in spends.
     #[test]
     fn a_turn_in_raises_its_lines_in_the_reference_order() {
         let mut giver = QuestGiver {
@@ -406,7 +400,7 @@ mod tests {
                 quest_id: 7,
                 xp: 450,
                 money: 1_025,
-                items: vec![(6_529, 1), (159, 5)],
+                ..Default::default()
             },
             &mut giver,
             &mut lines,
@@ -417,26 +411,26 @@ mod tests {
                 QuestLine::Completed(7),
                 QuestLine::Experience(450),
                 QuestLine::Money(1_025),
-                QuestLine::Item(6_529),
-                QuestLine::Item(159),
+                QuestLine::RewardItems(7),
                 QuestLine::Item(2_047),
             ]
         );
         assert_eq!(giver.chosen_reward, 0, "the turn-in zeroes the latch");
 
-        // No XP (a capped level) and no money: only the completion line.
+        // No XP (a capped level) and no money: the completion and the template's items.
         let mut lines = QuestLines::default();
         quest_complete(
             QuestComplete {
                 quest_id: 7,
-                xp: 0,
-                money: 0,
-                items: vec![],
+                ..Default::default()
             },
             &mut giver,
             &mut lines,
         );
-        assert_eq!(lines.queued(), [QuestLine::Completed(7)]);
+        assert_eq!(
+            lines.queued(),
+            [QuestLine::Completed(7), QuestLine::RewardItems(7)]
+        );
     }
 
     fn open_detail(quest_id: u32) -> QuestGiver {
@@ -449,11 +443,10 @@ mod tests {
                 title: "A Threat Within".into(),
                 details: String::new(),
                 objectives: String::new(),
-                auto_finish: 0,
+                auto_launched: false,
                 choices: vec![],
                 rewards: vec![],
-                money: 0,
-                reward_spell: 0,
+                ..Default::default()
             }),
         );
         giver
@@ -537,11 +530,10 @@ mod tests {
             title: "A Threat Within".into(),
             details: String::new(),
             objectives: String::new(),
-            auto_finish: 0,
+            auto_launched: false,
             choices: Vec::new(),
             rewards: Vec::new(),
-            money: 0,
-            reward_spell: 0,
+            ..Default::default()
         }
     }
 
@@ -592,9 +584,9 @@ mod tests {
         let mut quest = QuestGiver::default();
 
         let mut d = detail(NPC, 100);
-        d.auto_finish = 3;
+        d.auto_launched = true;
         quest_detail(d, &mut quest, &commands);
-        assert_eq!(quest.close_on_cancel, 3, "DETAILS writes it");
+        assert_eq!(quest.close_on_cancel, 1, "DETAILS writes it");
 
         quest_progress(progress(NPC, 100, 1), &mut quest);
         assert_eq!(
@@ -632,6 +624,8 @@ mod tests {
             request_text: String::new(),
             emote: 0,
             close_on_cancel,
+            quest_flags: 0,
+            suggested_players: 0,
             required_money: 0,
             required_items: Vec::new(),
             is_complete: false,
@@ -644,12 +638,8 @@ mod tests {
             quest_id,
             title: "A Threat Within".into(),
             offer_text: String::new(),
-            auto_finish,
-            choices: Vec::new(),
-            rewards: Vec::new(),
-            money: 0,
-            quest_flags: 0,
-            reward_spell: 0,
+            auto_finish: auto_finish != 0,
+            ..Default::default()
         }
     }
 }

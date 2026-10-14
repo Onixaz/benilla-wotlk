@@ -211,9 +211,11 @@ pub use quest::{
     quest_query, questgiver_accept_quest, questgiver_choose_reward, questgiver_complete_quest,
     questgiver_hello, questgiver_query_quest, questgiver_request_reward, questgiver_status_query,
     questlog_remove_quest, questlog_swap_quest, QuestComplete, QuestConfirmAccept, QuestDetails,
-    QuestGiverList, QuestListEntry, QuestObjective, QuestOfferReward, QuestPushResult,
-    QuestRequestItems, QuestRequiredItem, QuestRewardItem, QuestShareMsg, QuestTemplate,
-    QUEST_EMOTE_COUNT, QUEST_OBJECTIVES_COUNT, QUEST_REWARDS_COUNT, QUEST_REWARD_CHOICES_COUNT,
+    QuestExtraRewards, QuestGiverList, QuestListEntry, QuestObjective, QuestOfferReward,
+    QuestPushResult, QuestReputationRewards, QuestRequestItems, QuestRequiredItem, QuestRewardItem,
+    QuestShareMsg, QuestTemplate, QUEST_EMOTE_COUNT, QUEST_OBJECTIVES_COUNT,
+    QUEST_REPUTATIONS_COUNT, QUEST_REQUIRED_ITEMS_COUNT, QUEST_REWARDS_COUNT,
+    QUEST_REWARD_CHOICES_COUNT,
 };
 pub use reputation::{
     set_faction_at_war, set_faction_inactive, set_watched_faction, FACTION_LIST_LEN,
@@ -263,7 +265,7 @@ pub use update_object::{
     power_display_scale, quest_slot_state, CorpseLook, CreateSpline, MovementBlock, MoverState,
     Object, ObjectFields, ObjectType, OwnerFallback, PlayerSkillSlot, QuestLogSlot, UnitAuraSlot,
     AURA_FLAG_CANCELABLE, AURA_FLAG_EFF_INDEX_MASK, FIELD_PLAYER_SKILL_INFO_1_1,
-    PLAYER_EXPLORED_ZONES_SLOTS, PLAYER_QUEST_LOG_SLOTS, PLAYER_SKILL_SLOTS,
+    PLAYER_EXPLORED_ZONES_SLOTS, PLAYER_QUEST_LOG_SLOTS, PLAYER_SKILL_SLOTS, QUEST_LOG_SLOT_FIELDS,
     UNIT_AURA_POSITIVE_SLOTS, UNIT_AURA_SLOTS,
 };
 pub use vendor::{

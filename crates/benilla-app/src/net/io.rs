@@ -1223,9 +1223,11 @@ fn writer_loop(
                     ClientCommand::QuestgiverQuery { npc, quest } => {
                         w.questgiver_query_quest(npc, quest)
                     }
-                    ClientCommand::QuestgiverAccept { npc, quest } => {
-                        w.questgiver_accept_quest(npc, quest)
-                    }
+                    ClientCommand::QuestgiverAccept {
+                        npc,
+                        quest,
+                        start_cheat,
+                    } => w.questgiver_accept_quest(npc, quest, start_cheat),
                     ClientCommand::QuestgiverComplete { npc, quest } => {
                         w.questgiver_complete_quest(npc, quest)
                     }

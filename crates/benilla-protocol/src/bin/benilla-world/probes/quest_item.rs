@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use benilla_protocol::{decode, SessionEvent, WorldSession};
 
-use crate::probes::{Ctx, Probe, FIELD_PLAYER_QUEST_LOG_1_1};
+use crate::probes::{Ctx, Probe, FIELD_PLAYER_QUEST_LOG_1_1, QUEST_LOG_SLOT_FIELDS};
 
 /// A drain handler: `Some(msg)` stops the drain early, `None` keeps pumping.
 type QuestEventHandler = Box<dyn FnMut(&SessionEvent) -> Option<String>>;
@@ -97,7 +97,7 @@ impl Probe for QuestItem {
         // 3) Accept on the same guid. vmangos `Player::AddQuest` keeps an item giver the quest
         // requires or names `SrcItemId`, and 5805 does both, so the starter must survive.
         println!("CMSG_QUESTGIVER_ACCEPT_QUEST({QUEST_ID}) on the item guid");
-        session.questgiver_accept_quest(item_guid, QUEST_ID)?;
+        session.questgiver_accept_quest(item_guid, QUEST_ID, 0)?;
         let mut destroyed = false;
         let mut in_log = false;
         for _ in 0..6 {
@@ -115,9 +115,10 @@ impl Probe for QuestItem {
                 destroyed = true;
             }
             in_log = world.self_fields.as_ref().is_some_and(|sf| {
-                (0..20).any(|i| {
+                (0..u16::from(benilla_protocol::messages::PLAYER_QUEST_LOG_SLOTS)).any(|i| {
                     sf.raw_fields().any(|(idx, val)| {
-                        idx == FIELD_PLAYER_QUEST_LOG_1_1 + 3 * i && val == QUEST_ID
+                        idx == FIELD_PLAYER_QUEST_LOG_1_1 + QUEST_LOG_SLOT_FIELDS * i
+                            && val == QUEST_ID
                     })
                 })
             });
@@ -163,7 +164,7 @@ impl Probe for QuestItem {
         )?;
         println!("✅ the panel legitimately re-opens: DETAILS {reopened}");
 
-        session.questgiver_accept_quest(item_guid, QUEST_ID)?;
+        session.questgiver_accept_quest(item_guid, QUEST_ID, 0)?;
         let refusal = drain(
             session,
             &mut world.self_fields,
