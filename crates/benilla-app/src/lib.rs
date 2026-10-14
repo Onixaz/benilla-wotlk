@@ -286,6 +286,14 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
             "executor: PostUpdate -> single-threaded (the default; WOW_MT_POSTUPDATE=1 for MT)"
         );
     }
+    // PreUpdate as well: its systems sum to ~0.01 ms a frame at Northshire Abbey, under ~0.2 ms of
+    // multi-threaded dispatch; single-threaded measured 0.22 -> 0.13 ms, and the frame 6.8 -> 6.3 ms
+    // in interleaved runs. `WOW_MT_PREUPDATE=1` restores it.
+    if std::env::var_os("WOW_MT_PREUPDATE").is_none() {
+        app.edit_schedule(PreUpdate, |s| {
+            s.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+        });
+    }
     // The build banner ships in every build: which build produced a log is the first thing a report
     // from another machine must establish.
     app.add_systems(Startup, benilla_world::build_id::banner);
