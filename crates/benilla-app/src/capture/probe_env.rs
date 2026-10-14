@@ -32,6 +32,12 @@ pub(crate) const PROBE_VARS: &[ProbeVar] = &[
         wall_clock: true,
     },
     ProbeVar {
+        name: "WOW_PROBE_AS",
+        purpose: "<entry>|pool — log in as a .probe-identity entry, or the first pool entry no other run on this machine holds",
+        // Read once, at the login screen.
+        wall_clock: false,
+    },
+    ProbeVar {
         name: "WOW_PROBE_PARK",
         purpose: "corner|edge|off — where the un-occludable probe window sits, and whether it is pinned on top",
         // A dial on the occlusion defence itself, not a schedule.

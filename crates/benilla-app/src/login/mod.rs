@@ -381,29 +381,33 @@ fn drive_policy(
     let empty = GlueStrings::default();
     let strings = strings.as_deref().unwrap_or(&empty);
 
-    // The env fast path, once: `WOW_USER` and `WOW_PASS` both set auto-submit, except under the
-    // login smoke, which drives its own credentials. There is no default account.
+    // The env fast path, once: `WOW_USER` and `WOW_PASS` both set, or `WOW_PROBE_AS`, auto-submit,
+    // except under the login smoke, which drives its own credentials. There is no default account.
     if !attempt.intent.env_read {
         attempt.intent.env_read = true;
-        if crate::run_mode::env_login() && std::env::var_os("WOW_LOGIN_SMOKE").is_none() {
-            let user = std::env::var("WOW_USER").unwrap_or_default();
-            let pass = std::env::var("WOW_PASS").unwrap_or_default();
-            // A vmangos login kicks whoever holds the account, so the automated path logs in
-            // only as the checkout's declared account (`.probe-identity`); a typed login is not
-            // gated.
-            match crate::run_mode::account_guard(&user) {
-                Ok(()) => {
-                    info!("login: env fast path — auto-submitting as {user}");
-                    attempt.intent.creds = Some((user, pass));
-                    attempt.intent.retry_at = Some(now);
-                }
-                Err(why) if std::env::var_os("WOW_ALLOW_ACCOUNT").is_some() => {
-                    warn!("login: {why} — WOW_ALLOW_ACCOUNT is set, going ahead anyway");
-                    attempt.intent.creds = Some((user, pass));
+        // A login kicks whoever holds the account, so the automated path logs in only as an
+        // account the checkout declares (`.probe-identity`) and no other run on this machine
+        // holds; a typed login is not gated.
+        let fast = std::env::var_os("WOW_LOGIN_SMOKE")
+            .is_none()
+            .then(crate::run_mode::fast_path)
+            .flatten();
+        if let Some(decision) = fast {
+            match decision {
+                Ok(fast) => {
+                    let entry = fast
+                        .identity
+                        .map(|id| format!(" (.probe-identity entry `{}`)", id.name))
+                        .unwrap_or_default();
+                    info!(
+                        "login: env fast path — auto-submitting as {}{entry}",
+                        fast.user
+                    );
+                    attempt.intent.creds = Some((fast.user, fast.pass));
                     attempt.intent.retry_at = Some(now);
                 }
                 Err(why) => {
-                    error!("login: REFUSING the env fast path — {why} Set WOW_ALLOW_ACCOUNT=1 if the cross-account login is deliberate.");
+                    error!("login: REFUSING the env fast path — {why}");
                     dialog.open_error(&why);
                     // The refusal is deterministic, so the run can never get past this screen.
                     if crate::run_mode::fatal_when_driverless(

@@ -338,8 +338,9 @@ fn apply_roster_policy(
                 }
                 None
             }
-            // `WOW_CHAR`, or the login smoke's optional third field.
-            None => std::env::var("WOW_CHAR").ok().or_else(|| {
+            // `WOW_CHAR` (or the `.probe-identity` entry's), or the login smoke's optional third
+            // field.
+            None => crate::run_mode::fast_path_character().or_else(|| {
                 std::env::var("WOW_LOGIN_SMOKE")
                     .ok()
                     .and_then(|s| crate::login::smoke_character(&s))

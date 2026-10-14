@@ -95,10 +95,11 @@ benilla talks to any 3.3.5a server: `WOW_HOST` names it (default `localhost`), `
 `WOW_PASS` together log in without typing, `WOW_CHAR` picks the character. There is no default
 account. These bind every session and every agent:
 
-- A scripted run logs in as the account its checkout declares in `.probe-identity` (the three
-  variables, one per line, never committed), or as the three variables name; never as a
-  player's, because a login kicks whoever holds the account, and the client refuses a scripted
-  login from a checkout on any account but the declared one.
+- A scripted run logs in as an account its checkout declares in `.probe-identity` (the three
+  variables, one per line, never committed; `[name]` sections declare more), or as the three
+  variables name; never as a player's, because a login kicks whoever holds the account, and the
+  client refuses a scripted login from a checkout on an account it does not declare, or on one
+  another run on the machine holds. Parallel runs each take their own: `WOW_PROBE_AS=pool`.
 - Every unattended run says so: `WOW_UNATTENDED=1`. An agent's run is silent: `WOW_NOSOUND=1`.
 - A combat probe keeps its character alive: `.cheat god on` before the fight.
 - Anything about hostility, reaction colour, nameplates, threat, damage or breath runs with

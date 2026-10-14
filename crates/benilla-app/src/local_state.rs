@@ -214,6 +214,23 @@ pub(crate) fn fps_journal_path() -> Option<PathBuf> {
     diagnostics_dir().map(|d| d.join("fps-journal.csv"))
 }
 
+/// `benilla-config/probe-leases/<account>.lock`: the lock a run holds on a declared account while
+/// it lives ([`crate::run_mode::fast_path`]). Always the shared project folder's, past
+/// `$BENILLA_HOME` and a capture, because the lease guards an account on the server, which every
+/// worktree's runs share. `None` in a player build and in a unit test.
+pub(crate) fn probe_lease_path(user: &str) -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    let file = format!("{}.lock", file_token(&user.to_ascii_lowercase()));
+    Some(
+        dev_project_root()?
+            .join(STATE_DIR)
+            .join("probe-leases")
+            .join(file),
+    )
+}
+
 /// A realm or character name as one path component: anything not a letter or digit becomes `_`.
 /// Letters of any script stay, as in the reference's raw-name folders: vmangos accepts non-Latin
 /// names (`StrictPlayerNames = 0`) and a character name is letters only, so no two share a file.
@@ -489,20 +506,19 @@ mod tests {
             benilla_formats::set_project_folder(dir.to_str().unwrap());
             if crate::run_mode::dev_affordances() {
                 assert_eq!(resident_home(), Some(dir.join(STATE_DIR)));
-                assert_eq!(
-                    crate::run_mode::declared_identity(),
-                    Some(crate::run_mode::DeclaredIdentity {
-                        user: "probe9".into(),
-                        character: "Modchar".into()
-                    })
-                );
+                let declared = crate::run_mode::declared_identities();
+                let summary: Vec<_> = declared
+                    .iter()
+                    .map(|id| (id.user.as_str(), id.character.as_str()))
+                    .collect();
+                assert_eq!(summary, [("probe9", "Modchar")]);
             } else {
                 let exe_dir = std::env::current_exe().unwrap();
                 assert_eq!(
                     resident_home(),
                     Some(exe_dir.parent().unwrap().join(STATE_DIR))
                 );
-                assert_eq!(crate::run_mode::declared_identity(), None);
+                assert!(crate::run_mode::declared_identities().is_empty());
             }
             return;
         }

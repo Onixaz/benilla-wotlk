@@ -20,8 +20,9 @@
 # is the only thing in the tree that may write it.
 /benilla-config
 
-# The account a scripted run from this checkout logs in as (scripts/probe-identity.sh and the
-# client's account guard read it): WOW_USER=, WOW_PASS=, WOW_CHAR=, one per line. A credential.
+# The accounts a scripted run from this checkout logs in as (scripts/probe-identity.sh and the
+# client's account guard read it): WOW_USER=, WOW_PASS=, WOW_CHAR=, one per line, more under
+# `[name]` headers. A credential.
 /.probe-identity
 
 # Profiling output: `--features bevy/trace_chrome` drops a multi-GB flame chart in the cwd, which

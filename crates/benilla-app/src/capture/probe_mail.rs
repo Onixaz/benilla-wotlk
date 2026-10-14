@@ -194,7 +194,7 @@ fn mail_probe(
 
     match phase {
         Phase::Wait => {
-            probe.char_name = std::env::var("WOW_CHAR").unwrap_or_default();
+            probe.char_name = crate::run_mode::fast_path_character().unwrap_or_default();
             if probe.char_name.is_empty() {
                 error!("PROBE_MAIL: FAIL — WOW_CHAR is unset; nothing to GM-mail or self-send to");
                 probe.fails += 1;

@@ -31,7 +31,8 @@ for v in $(env | sed -n 's/^\(WOW_[A-Za-z0-9_]*\)=.*/\1/p'); do
     unset "$v"
     # The account is in $user/$pass/$char now and each leg passes what it needs by name (the realm
     # leg refuses a WOW_CHAR), so it leaves the environment either way. It was only "ignored"
-    # when the checkout's declared identity took its place.
+    # when the checkout's declared identity took its place. WOW_PROBE_AS chose that identity.
+    [ "$v" = WOW_PROBE_AS ] && continue
     [ -n "$PROBE_DECLARED" ] || case "$v" in WOW_USER | WOW_PASS | WOW_CHAR) continue ;; esac
     inherited="$inherited $v"
 done

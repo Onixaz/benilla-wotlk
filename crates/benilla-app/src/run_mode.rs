@@ -37,13 +37,15 @@ pub(crate) fn capture_ui_opted_in() -> bool {
     false
 }
 
-/// Do the credentials come from the environment (`$WOW_USER` and `$WOW_PASS`, both)? That means
-/// "log in without typing" and nothing about who is present; [`unattended`] answers that. One
-/// credential alone is a typed login, and `$WOW_CHAR` alone is only the roster's fast path.
+/// Do the credentials come from the environment (`$WOW_USER` and `$WOW_PASS`, both, or
+/// `$WOW_PROBE_AS` naming a `.probe-identity` entry, [`fast_path`])? That means "log in without
+/// typing" and nothing about who is present; [`unattended`] answers that. One credential alone is
+/// a typed login, and `$WOW_CHAR` alone is only the roster's fast path.
 pub(crate) fn env_login() -> bool {
     ["WOW_USER", "WOW_PASS"]
         .iter()
         .all(|k| std::env::var_os(k).is_some())
+        || std::env::var_os("WOW_PROBE_AS").is_some()
 }
 
 /// Is nobody at the keyboard? `false` unless the run declares itself with `$WOW_UNATTENDED`, or is
@@ -141,66 +143,274 @@ pub(crate) fn dev_source_dir() -> Option<&'static std::path::Path> {
     }
 }
 
-/// The pre-connect account guard on the env fast path ([`crate::login`]): `Err(explanation)` when
-/// this checkout declares an account ([`declared_identity`]) and the login is for another, because
-/// a login kicks whoever holds the account. Inert without a declaration. `WOW_ALLOW_ACCOUNT=1`
-/// turns the refusal into a warning.
-pub(crate) fn account_guard(user: &str) -> Result<(), String> {
-    guard_for(declared_identity().as_ref(), user)
-}
+/// The name of `.probe-identity`'s lines before any `[name]` header.
+const DEFAULT_IDENTITY: &str = "default";
 
-/// What `.probe-identity` at the project root declares: the account a scripted run from this
-/// checkout logs in as (`WOW_USER=`, `WOW_PASS=`, `WOW_CHAR=`, one per line, gitignored). Also read
-/// by `scripts/probe-identity.sh`.
-#[derive(Debug, PartialEq, Eq)]
+/// `$WOW_PROBE_AS`'s word for "any pool entry no other run holds".
+const POOL: &str = "pool";
+
+/// One account `.probe-identity` at the project root declares (gitignored, also read by
+/// `scripts/probe-identity.sh`): `WOW_USER=`, `WOW_PASS=`, `WOW_CHAR=`, one per line. The lines
+/// before any `[name]` header are the checkout's default entry, which is in the pool; a `[name]`
+/// section joins it with `pool=1`, and `pool=0` takes the default out.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DeclaredIdentity {
+    pub(crate) name: String,
     pub(crate) user: String,
     pub(crate) character: String,
+    pub(crate) pool: bool,
+    /// Read only when `$WOW_PROBE_AS` logs in from the file; may be empty.
+    pass: String,
 }
 
-/// The declaration, read off the launcher's project folder ([`benilla_formats::project_folder`]);
-/// a player build has none.
-pub(crate) fn declared_identity() -> Option<DeclaredIdentity> {
-    let root = benilla_formats::project_folder()?;
-    parse_identity(&std::fs::read_to_string(root.join(".probe-identity")).ok()?)
+/// Every declared entry, in file order, read off the launcher's project folder
+/// ([`benilla_formats::project_folder`]); a player build has none.
+pub(crate) fn declared_identities() -> Vec<DeclaredIdentity> {
+    benilla_formats::project_folder()
+        .and_then(|root| std::fs::read_to_string(root.join(".probe-identity")).ok())
+        .map(|text| parse_identities(&text))
+        .unwrap_or_default()
 }
 
-/// The file as an identity, `None` unless both the account and the character are there; the
-/// password is never read.
-fn parse_identity(text: &str) -> Option<DeclaredIdentity> {
-    let field = |key: &str| {
-        text.lines()
-            .filter_map(|l| l.trim().strip_prefix(key)?.strip_prefix('='))
-            .map(|v| v.trim().trim_matches('"').to_string())
-            .find(|v| !v.is_empty())
+/// The file as entries; an entry without both the account and the character is dropped. A key's
+/// first non-empty value wins.
+fn parse_identities(text: &str) -> Vec<DeclaredIdentity> {
+    let mut sections: Vec<(String, Vec<(&str, &str)>)> =
+        vec![(DEFAULT_IDENTITY.to_string(), Vec::new())];
+    for line in text.lines().map(str::trim) {
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            sections.push((name.trim().to_string(), Vec::new()));
+        } else if let Some((key, value)) = line.split_once('=') {
+            let value = value.trim().trim_matches('"');
+            if let Some((_, fields)) = sections.last_mut().filter(|_| !value.is_empty()) {
+                fields.push((key.trim(), value));
+            }
+        }
+    }
+    sections
+        .into_iter()
+        .filter_map(|(name, fields)| {
+            let field = |key: &str| {
+                fields
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| v.to_string())
+            };
+            Some(DeclaredIdentity {
+                user: field("WOW_USER")?,
+                character: field("WOW_CHAR")?,
+                pass: field("WOW_PASS").unwrap_or_default(),
+                pool: field("pool").map_or(name == DEFAULT_IDENTITY, |v| v == "1"),
+                name,
+            })
+        })
+        .collect()
+}
+
+/// What the env fast path logs in as, decided once per run by [`fast_path`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FastPath {
+    pub(crate) user: String,
+    pub(crate) pass: String,
+    /// `$WOW_CHAR`, else the entry's character when the file supplied the account and no
+    /// `$WOW_PROBE_CHARCREATE` is about to make one.
+    pub(crate) character: Option<String>,
+    /// The entry this run holds the lease on; `None` without a declaration, or for an undeclared
+    /// account let through by `WOW_ALLOW_ACCOUNT`.
+    pub(crate) identity: Option<DeclaredIdentity>,
+}
+
+/// The env fast path's account ([`crate::login`]), `None` unless [`env_login`]. `$WOW_USER` and
+/// `$WOW_PASS` name it, else `$WOW_PROBE_AS` names a `.probe-identity` entry, or `pool` for the
+/// first pool entry no other run on this machine holds. A login kicks whoever holds the account,
+/// so a declared account is leased for the life of the process (an OS file lock,
+/// [`crate::local_state::probe_lease_path`], released when the process ends however it ends), and
+/// the answer is `Err(explanation)` when another run holds it, or when this checkout declares
+/// accounts and the login is for none of them (`WOW_ALLOW_ACCOUNT=1` lets that one through,
+/// unleased). Decided once, the lease with it.
+pub(crate) fn fast_path() -> Option<Result<FastPath, String>> {
+    if !env_login() {
+        return None;
+    }
+    let decide = || {
+        resolve(
+            |key| std::env::var(key).ok(),
+            &declared_identities(),
+            |user| crate::local_state::probe_lease_path(user).map_or(Ok(true), |p| take_lease(&p)),
+        )
     };
-    Some(DeclaredIdentity {
-        user: field("WOW_USER")?,
-        character: field("WOW_CHAR")?,
+    // A unit test changes the environment between calls, so it decides every time.
+    if cfg!(test) {
+        return Some(decide());
+    }
+    static DECIDED: std::sync::OnceLock<Result<FastPath, String>> = std::sync::OnceLock::new();
+    Some(DECIDED.get_or_init(decide).clone())
+}
+
+/// The character the roster's fast path seats: `$WOW_CHAR`, else [`fast_path`]'s.
+pub(crate) fn fast_path_character() -> Option<String> {
+    std::env::var("WOW_CHAR")
+        .ok()
+        .or_else(|| fast_path()?.ok()?.character)
+}
+
+/// [`fast_path`]'s decision, with the environment, the declaration and the lease passed in;
+/// `lease(user)` is `Ok(false)` when another run holds the account.
+fn resolve(
+    env: impl Fn(&str) -> Option<String>,
+    declared: &[DeclaredIdentity],
+    mut lease: impl FnMut(&str) -> Result<bool, String>,
+) -> Result<FastPath, String> {
+    let held = |user: &str| {
+        format!(
+            "another run on this machine is logged in as `{user}`, and a second login kicks it. \
+             Wait for it to end, or take another entry (WOW_PROBE_AS=pool takes a free one)."
+        )
+    };
+    if let (Some(user), Some(pass)) = (env("WOW_USER"), env("WOW_PASS")) {
+        let identity = match guard_for(declared, &user) {
+            Ok(id) => id.cloned(),
+            Err(why) if env("WOW_ALLOW_ACCOUNT").is_some() => {
+                warn!("login: {why} — WOW_ALLOW_ACCOUNT is set, going ahead anyway");
+                None
+            }
+            Err(why) => {
+                return Err(format!(
+                    "{why} Set WOW_ALLOW_ACCOUNT=1 if the cross-account login is deliberate."
+                ))
+            }
+        };
+        if let Some(id) = &identity {
+            if !lease(&id.user)? {
+                return Err(held(&id.user));
+            }
+        }
+        let character = env("WOW_CHAR");
+        return Ok(FastPath {
+            user,
+            pass,
+            character,
+            identity,
+        });
+    }
+    let wanted = env("WOW_PROBE_AS").unwrap_or_default();
+    let pool = wanted.eq_ignore_ascii_case(POOL);
+    let candidates: Vec<&DeclaredIdentity> = if pool {
+        declared.iter().filter(|id| id.pool).collect()
+    } else {
+        declared
+            .iter()
+            .find(|id| id.name.eq_ignore_ascii_case(&wanted))
+            .into_iter()
+            .collect()
+    };
+    let names = declared
+        .iter()
+        .map(|id| format!("{}{}", id.name, if id.pool { " (pool)" } else { "" }))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if candidates.is_empty() {
+        return Err(if declared.is_empty() {
+            format!(
+                "WOW_PROBE_AS={wanted}, but this checkout's .probe-identity declares no account."
+            )
+        } else {
+            format!("WOW_PROBE_AS={wanted} matches no .probe-identity entry; it declares {names}.")
+        });
+    }
+    for &id in &candidates {
+        if !lease(&id.user)? {
+            continue;
+        }
+        if id.pass.is_empty() {
+            return Err(format!(
+                "the .probe-identity entry `{}` has no WOW_PASS.",
+                id.name
+            ));
+        }
+        let character = env("WOW_CHAR").or_else(|| {
+            env("WOW_PROBE_CHARCREATE")
+                .is_none()
+                .then(|| id.character.clone())
+        });
+        return Ok(FastPath {
+            user: id.user.clone(),
+            pass: id.pass.clone(),
+            character,
+            identity: Some(id.clone()),
+        });
+    }
+    Err(if pool {
+        format!("other runs on this machine hold every pool entry ({names}); a login kicks them.")
+    } else {
+        held(&candidates[0].user)
     })
 }
 
-/// [`account_guard`]'s decision, with the declaration passed in.
-fn guard_for(declared: Option<&DeclaredIdentity>, user: &str) -> Result<(), String> {
-    let Some(id) = declared else {
-        return Ok(());
-    };
-    if user.eq_ignore_ascii_case(&id.user) {
-        return Ok(());
+/// The account guard: `Ok(Some(entry))` for a declared account, `Ok(None)` without a declaration,
+/// `Err(explanation)` for an account the checkout does not declare, because a login kicks whoever
+/// holds the account.
+fn guard_for<'a>(
+    declared: &'a [DeclaredIdentity],
+    user: &str,
+) -> Result<Option<&'a DeclaredIdentity>, String> {
+    if declared.is_empty() {
+        return Ok(None);
     }
+    if let Some(id) = declared
+        .iter()
+        .find(|id| user.eq_ignore_ascii_case(&id.user))
+    {
+        return Ok(Some(id));
+    }
+    let accounts = declared
+        .iter()
+        .map(|id| format!("`{}` (WOW_CHAR={})", id.user, id.character))
+        .collect::<Vec<_>>()
+        .join(", ");
     Err(format!(
         "the env fast path is about to log in as `{user}`, and this checkout's .probe-identity \
-         declares `{}` (WOW_CHAR={}). A login kicks whoever holds `{user}` — a player mid-session, \
-         or another checkout's probe.",
-        id.user, id.character
+         declares {accounts}. A login kicks whoever holds `{user}` — a player mid-session, or \
+         another checkout's probe."
     ))
 }
 
+/// Takes the lease at `path` for the rest of the process: `Ok(false)` when another process holds
+/// it. The OS drops the lock when the process ends, so a crash strands no lease.
+fn take_lease(path: &std::path::Path) -> Result<bool, String> {
+    static HELD: std::sync::Mutex<Vec<std::fs::File>> = std::sync::Mutex::new(Vec::new());
+    let fail = |e: std::io::Error| format!("cannot take the lease {}: {e}", path.display());
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(fail)?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .map_err(fail)?;
+    match file.try_lock() {
+        Ok(()) => {
+            HELD.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(file);
+            Ok(true)
+        }
+        Err(std::fs::TryLockError::WouldBlock) => Ok(false),
+        Err(std::fs::TryLockError::Error(e)) => Err(fail(e)),
+    }
+}
+
 /// The word a rig appends to this checkout's bodies (`<Race3><Class3><word>[f]`) so checkouts
-/// never collide on a name: the declared character, lowercased, without a leading `probe`. `None`
-/// without a declaration; the rig then configures the body it logged in as.
+/// never collide on a name: the character of the entry this run holds, else the default entry's,
+/// lowercased, without a leading `probe`. `None` without a declaration; the rig then configures
+/// the body it logged in as.
 pub(crate) fn rig_suffix() -> Option<String> {
-    Some(suffix_of(&declared_identity()?.character))
+    let id = fast_path()
+        .and_then(Result::ok)
+        .and_then(|f| f.identity)
+        .or_else(|| declared_identities().into_iter().next())?;
+    Some(suffix_of(&id.character))
 }
 
 fn suffix_of(character: &str) -> String {
@@ -298,6 +508,7 @@ mod tests {
         let _decl = EnvGuard::unset("WOW_UNATTENDED");
         let _cap = EnvGuard::unset("WOW_CAPTURE");
         let _rig = EnvGuard::unset("WOW_RIG");
+        let _as = EnvGuard::unset("WOW_PROBE_AS");
 
         // A player build's defaults: nothing set, nothing assumed.
         {
@@ -322,33 +533,152 @@ mod tests {
         assert!(!unattended(), "and each guard puts it back");
     }
 
-    #[test]
-    fn the_fast_path_is_the_declared_account_or_refused() {
-        let id = parse_identity("WOW_USER=probe4\nWOW_PASS=secret\nWOW_CHAR=Probefour\n").unwrap();
-        assert!(guard_for(Some(&id), "probe4").is_ok());
-        assert!(guard_for(Some(&id), "PROBE4").is_ok()); // vmangos accounts are case-insensitive
+    /// A file with the default entry, a pool entry and a by-name-only entry.
+    const FLEET: &str = "WOW_USER=probe4\nWOW_PASS=secret\nWOW_CHAR=Probefour\n\n\
+                         [two]\nWOW_USER=probe5\nWOW_PASS=secret5\nWOW_CHAR=Probefive\npool=1\n\n\
+                         [ghost]\r\nWOW_USER=tester\r\nWOW_PASS=secret6\r\nWOW_CHAR=Elza\r\n";
 
-        // Anyone else's account kicks a live session.
-        let player = guard_for(Some(&id), "player").unwrap_err();
-        assert!(player.contains("probe4") && player.contains("kicks"));
-        // The override hint belongs to the caller that can act on it, not to the reason.
-        assert!(!player.contains("WOW_ALLOW_ACCOUNT"));
-        assert!(guard_for(Some(&id), "probe7").is_err());
-        assert!(guard_for(None, "player").is_ok());
+    /// [`resolve`] over `vars`, with `held` naming the accounts another run leases.
+    fn resolve_with(vars: &[(&str, &str)], held: &[&str]) -> Result<FastPath, String> {
+        resolve(
+            |key| {
+                vars.iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| v.to_string())
+            },
+            &parse_identities(FLEET),
+            |user| Ok(!held.contains(&user)),
+        )
     }
 
     #[test]
-    fn the_declaration_needs_the_account_and_the_character() {
+    fn the_fast_path_is_a_declared_account_or_refused() {
+        let declared = parse_identities(FLEET);
         assert_eq!(
-            parse_identity("WOW_USER=probe4\nWOW_PASS=x\nWOW_CHAR=\"Probefour\"\n"),
-            Some(DeclaredIdentity {
-                user: "probe4".into(),
-                character: "Probefour".into()
-            })
+            guard_for(&declared, "probe4").unwrap().unwrap().name,
+            "default"
         );
-        assert!(parse_identity("WOW_USER=probe4\nWOW_PASS=x\n").is_none());
-        assert!(parse_identity("WOW_USER=\nWOW_CHAR=Probefour\n").is_none());
-        assert!(parse_identity("").is_none());
+        // vmangos accounts are case-insensitive, and any entry is declared, pool or not.
+        assert_eq!(guard_for(&declared, "PROBE5").unwrap().unwrap().name, "two");
+        assert_eq!(
+            guard_for(&declared, "tester").unwrap().unwrap().name,
+            "ghost"
+        );
+
+        // Anyone else's account kicks a live session.
+        let player = guard_for(&declared, "player").unwrap_err();
+        assert!(player.contains("probe4") && player.contains("probe5") && player.contains("kicks"));
+        // The override hint belongs to the caller that can act on it, not to the reason.
+        assert!(!player.contains("WOW_ALLOW_ACCOUNT"));
+        assert!(guard_for(&[], "player").unwrap().is_none());
+
+        let env = [("WOW_USER", "player"), ("WOW_PASS", "x")];
+        assert!(resolve_with(&env, &[])
+            .unwrap_err()
+            .contains("WOW_ALLOW_ACCOUNT=1"));
+        let allowed = resolve_with(&[env[0], env[1], ("WOW_ALLOW_ACCOUNT", "1")], &[]).unwrap();
+        assert_eq!((allowed.user.as_str(), allowed.identity), ("player", None));
+    }
+
+    #[test]
+    fn the_file_declares_named_entries_and_who_is_in_the_pool() {
+        let fleet = parse_identities(FLEET);
+        let summary: Vec<_> = fleet
+            .iter()
+            .map(|id| {
+                (
+                    id.name.as_str(),
+                    id.user.as_str(),
+                    id.character.as_str(),
+                    id.pool,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("default", "probe4", "Probefour", true),
+                ("two", "probe5", "Probefive", true),
+                ("ghost", "tester", "Elza", false),
+            ]
+        );
+        assert_eq!(fleet[2].pass, "secret6", "a CRLF file reads the same");
+
+        // An entry needs the account and the character; the old one-entry file still reads.
+        let one = parse_identities("WOW_USER=probe4\nWOW_PASS=x\nWOW_CHAR=\"Probefour\"\n");
+        assert_eq!((one.len(), one[0].character.as_str()), (1, "Probefour"));
+        assert!(parse_identities("WOW_USER=probe4\nWOW_PASS=x\n").is_empty());
+        assert!(parse_identities("WOW_USER=\nWOW_CHAR=Probefour\n").is_empty());
+        assert!(parse_identities("").is_empty());
+        let out = parse_identities("WOW_USER=a\nWOW_CHAR=A\npool=0\n[b]\nWOW_USER=b\nWOW_CHAR=B\n");
+        assert!(
+            out.iter().all(|id| !id.pool),
+            "pool=0 takes the default out"
+        );
+    }
+
+    #[test]
+    fn probe_as_logs_in_from_the_file_and_the_pool_skips_held_accounts() {
+        // By name, the entry's own account and character.
+        let ghost = resolve_with(&[("WOW_PROBE_AS", "Ghost")], &[]).unwrap();
+        assert_eq!(
+            (
+                ghost.user.as_str(),
+                ghost.pass.as_str(),
+                ghost.character.as_deref()
+            ),
+            ("tester", "secret6", Some("Elza"))
+        );
+        // `$WOW_CHAR` still picks the body; a create probe makes its own.
+        let other = resolve_with(&[("WOW_PROBE_AS", "two"), ("WOW_CHAR", "Alt")], &[]).unwrap();
+        assert_eq!(other.character.as_deref(), Some("Alt"));
+        let create = resolve_with(
+            &[("WOW_PROBE_AS", "two"), ("WOW_PROBE_CHARCREATE", "N")],
+            &[],
+        );
+        assert_eq!(create.unwrap().character, None);
+
+        // The pool, in file order, past whatever another run holds; never a by-name entry.
+        let pool = |held: &[&str]| resolve_with(&[("WOW_PROBE_AS", "pool")], held);
+        assert_eq!(pool(&[]).unwrap().user, "probe4");
+        assert_eq!(pool(&["probe4"]).unwrap().user, "probe5");
+        assert!(pool(&["probe4", "probe5"])
+            .unwrap_err()
+            .contains("every pool entry"));
+
+        // A held account refuses rather than kicks, whichever way it was named.
+        assert!(resolve_with(&[("WOW_PROBE_AS", "ghost")], &["tester"])
+            .unwrap_err()
+            .contains("`tester`"));
+        let env = [("WOW_USER", "probe4"), ("WOW_PASS", "secret")];
+        assert!(resolve_with(&env, &["probe4"])
+            .unwrap_err()
+            .contains("kicks it"));
+        assert_eq!(
+            resolve_with(&env, &[]).unwrap().identity.unwrap().name,
+            "default"
+        );
+
+        let unknown = resolve_with(&[("WOW_PROBE_AS", "three")], &[]).unwrap_err();
+        assert!(
+            unknown.contains("default (pool), two (pool), ghost"),
+            "{unknown}"
+        );
+    }
+
+    /// Two handles on one lease file: the second is refused while the first lives, as another
+    /// process would be.
+    #[test]
+    fn a_lease_is_held_until_the_process_lets_go() {
+        let dir = std::env::temp_dir().join(format!("benilla-lease-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let path = dir.join("probe-leases").join("probe4.lock");
+        assert_eq!(take_lease(&path), Ok(true));
+        assert_eq!(take_lease(&path), Ok(false));
+        assert_eq!(
+            take_lease(&dir.join("probe-leases").join("probe5.lock")),
+            Ok(true)
+        );
     }
 
     #[test]

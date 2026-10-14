@@ -96,6 +96,28 @@ out of scope is closed with the reason.
   must already be on the account, since the client creates a character only when asked:
   `WOW_PROBE_CHARCREATE=<name> WOW_PROBE_CHARCREATE_KEEP=1`, run without `WOW_CHAR`, makes it.
   The probes drive the body with GM commands, so give that account the top GM level.
+  To run probes side by side, declare more accounts in the same file, each under a
+  `[name]` header with its own three lines; `pool=1` puts one in the pool, which the lines
+  before any header are in already:
+
+  ```
+  WOW_USER=probe1
+  WOW_PASS=…
+  WOW_CHAR=Probeone
+
+  [two]
+  WOW_USER=probe2
+  WOW_PASS=…
+  WOW_CHAR=Probetwo
+  pool=1
+  ```
+
+  `WOW_PROBE_AS=two` logs the client in as that entry without the credentials in the
+  environment (the scripts take it too), and `WOW_PROBE_AS=pool` as the first pool entry no
+  other run on the machine holds: a run holds its account (a lock under the primary checkout's
+  `benilla-config/probe-leases/`) until it exits, and a second login on it is refused, not
+  kicked. Give each character a different word after a `probe` prefix: a rig names its bodies
+  after it (its first six letters).
 - **Running it unattended.** The rules are `docs/METHOD.md`, "The local server"; these are the
   switches.
   - `WOW_UNATTENDED=1` reconnects instead of waiting at a dialog, and exits non-zero on a login
