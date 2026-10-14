@@ -10,7 +10,7 @@
 //! | Marshal McBride (197) | `0x03` GOSSIP\|QUESTGIVER | Gossip | gossip menu |
 //! | Llane Beshere (911) | `0x13` GOSSIP\|QUESTGIVER\|TRAINER | Gossip | gossip menu |
 //! | *any pure questgiver with an offer* | `0x02`, GOSSIP clear | Questgiver | quest frame |
-//! | Alma Jainrose (812) | `0x10` TRAINER only | Trainer | trainer frame |
+//! | Alma Jainrose (812) | `0x11` GOSSIP\|TRAINER | Gossip | trainer frame, through her menu |
 //!
 //! The pure-questgiver row is found by predicate: the bit-1 arm is gated on the quest status
 //! (`[unit+0xcb8] ∉ {0,1}`), which depends on what the character has turned in, so the leg takes
@@ -134,13 +134,15 @@ const LEGS: &[Leg] = &[
         want_arm: ServiceArm::Questgiver,
         want_window: Window::Quest,
     },
+    // The 3.3.5a world DB gives her GOSSIP too, so the click opens her menu and the stock frame
+    // selects its lone trainer option itself: `CMSG_GOSSIP_SELECT_OPTION`, then the trainer list.
     Leg {
-        name: "Alma Jainrose — TRAINER, no GOSSIP",
+        name: "Alma Jainrose — GOSSIP|TRAINER, a lone trainer option",
         ident: Ident::Entry(812),
         map: 0,
         at: &[[-9237.78, -2041.65, 78.1678]],
-        db_flags: 0x10,
-        want_arm: ServiceArm::Trainer,
+        db_flags: 0x11,
+        want_arm: ServiceArm::Gossip,
         want_window: Window::Trainer,
     },
 ];
@@ -267,6 +269,11 @@ fn open_window(
     giver: &QuestGiver,
     trainer: &TrainerOpen,
 ) -> Option<Window> {
+    // A trainer list reached through the NPC's menu leaves the menu's session latched, so the
+    // trainer is read first.
+    if trainer.trainer == Some(guid) {
+        return Some(Window::Trainer);
+    }
     // The gossip frame stays closed until the greeting's `CMSG_NPC_TEXT_QUERY` answers
     // (`ui_gossip`), so the greeting is part of open.
     if gossip.npc == Some(guid) && gossip.greeting.is_some() {
@@ -274,9 +281,6 @@ fn open_window(
     }
     if giver.npc == Some(guid) && giver.view.is_some() {
         return Some(Window::Quest);
-    }
-    if trainer.trainer == Some(guid) {
-        return Some(Window::Trainer);
     }
     None
 }
@@ -510,6 +514,10 @@ fn service_probe(
                         since: now,
                         guid,
                     };
+                }
+                // A menu on the way to a trainer: the stock frame's lone-option select is out.
+                Some(Window::Gossip)
+                    if leg.want_window == Window::Trainer && now - since <= WINDOW_TIMEOUT_SECS => {
                 }
                 Some(open) => {
                     error!(

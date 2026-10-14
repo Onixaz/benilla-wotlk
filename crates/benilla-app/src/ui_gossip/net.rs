@@ -1,6 +1,6 @@
 //! The gossip window's packet handlers: they fill [`GossipState`] and never touch the VM.
 
-use benilla_protocol::messages::{GossipOption, NpcTextBlock};
+use benilla_protocol::messages::{GossipMenu, NpcTextBlock};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
@@ -24,23 +24,8 @@ fn on_gossip_menu(
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
 ) {
-    if let SessionEvent::GossipMenu {
-        npc,
-        text_id,
-        options,
-        quests,
-    } = ev
-    {
-        gossip_menu(
-            npc,
-            text_id,
-            options,
-            quests,
-            &mut gossip,
-            &commands,
-            &index,
-            &stores,
-        );
+    if let SessionEvent::GossipMenu(menu) = ev {
+        gossip_menu(menu, &mut gossip, &commands, &index, &stores);
     }
 }
 
@@ -71,7 +56,7 @@ fn on_session_end(In(_): In<SessionEvent>, mut gossip: ResMut<GossipState>) {
 }
 
 /// A streamed unit's gender (`UNIT_FIELD_BYTES_0` byte 2), which picks the greeting's column: the
-/// reference tests `== 1` for female (`0x4e20c1`), so genderless 2 reads male. `0` when the guid
+/// reference tests `== 1` for female (`0x58ace0`), so genderless 2 reads male. `0` when the guid
 /// is not a streamed unit; the reference's non-unit arm takes the female column only when block
 /// 0 has no male text.
 fn npc_gender(guid: u64, index: &GuidIndex, stores: &Query<&ObjectStore>) -> u8 {
@@ -84,24 +69,23 @@ fn npc_gender(guid: u64, index: &GuidIndex, stores: &Query<&ObjectStore>) -> u8 
 }
 
 /// `SMSG_GOSSIP_MESSAGE`: latch the menu, and on a first visit to its text send the query. The
-/// greeting is drawn at menu open, as the reference's `0x4e2010` draws it.
+/// greeting is drawn at menu open, as the reference's `0x58ac30` draws it.
 fn gossip_menu(
-    npc: u64,
-    text_id: u32,
-    options: Vec<GossipOption>,
-    quests: Vec<(u32, u32, u32, String)>,
+    menu: GossipMenu,
     gossip: &mut GossipState,
     net_commands: &NetCommands,
     index: &GuidIndex,
     stores: &Query<&ObjectStore>,
 ) {
+    let (npc, text_id) = (menu.npc, menu.text_id);
     let npc_gender = npc_gender(npc, index, stores);
     debug!(
-        "net: gossip menu on {npc:#x} — {} options, {} quests",
-        options.len(),
-        quests.len()
+        "net: gossip menu {} on {npc:#x} — {} options, {} quests",
+        menu.menu_id,
+        menu.options.len(),
+        menu.quests.len()
     );
-    if gossip.open_menu(npc, text_id, options, quests, npc_gender) {
+    if gossip.open_menu(menu, npc_gender) {
         let _ = net_commands
             .0
             .send(ClientCommand::NpcTextQuery { text_id, guid: npc });

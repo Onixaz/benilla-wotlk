@@ -509,7 +509,9 @@ fn assert_icon_and_select(
     }
     let _ = net.0.send(ClientCommand::GossipSelectOption {
         guid: innkeeper,
+        menu_id: gossip.menu_id,
         option: opt.index,
+        code: None,
     });
     info!(
         "PROBE_BINDER: (4 select) GossipSelectOption({innkeeper:#x}, wire index {}) sent for {:?}",

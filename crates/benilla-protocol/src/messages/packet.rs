@@ -6,19 +6,18 @@ use super::{
     ActionButton, AttackSwingError, AttackerState, AuctionBidderNotification, AuctionCommandTail,
     AuctionListEntry, AuctionOwnerNotification, CastOutcome, ChannelNotify, Character, ChatMessage,
     CorpseLocation, DamageShield, DispelFailed, EnchantmentLog, EnvironmentalDamageLog,
-    ExplorationXp, FriendEntry, FriendStatusUpdate, GameObjectQueryInfo, GmTicket, GossipOption,
+    ExplorationXp, FriendEntry, FriendStatusUpdate, GameObjectQueryInfo, GmTicket, GossipMenu,
     GossipPoi, GroupLootInfo, GroupMemberEntry, GuildCommandResult, GuildEventNotice, GuildInfo,
     GuildQueryResponse, GuildRoster, InitWorldStates, InspectHonorStats, ItemInfo, ItemPushResult,
     JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon, LootStartRoll,
     MailListEntry, MirrorTimerStart, MoveMode, Object, PartyKillLog, PartyMemberStatsInfo,
     PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse, PetitionRename, PetitionShowList,
     PetitionShowSignatures, PetitionSignResults, PvpCredit, QuestComplete, QuestConfirmAccept,
-    QuestDetails, QuestGiverList, QuestOfferReward, QuestOption, QuestPushResult,
-    QuestRequestItems, QuestTemplate, ResurrectRequestBody, SpeedKind, SpellChainTargets,
-    SpellCooldown, SpellDamageLog, SpellDispelLog, SpellEnergizeLog, SpellGo, SpellHealLog,
-    SpellInstaKillLog, SpellLogExecute, SpellLogMiss, SpellOutcomeLog, SpellStart, SplineMode,
-    StabledPet, TaxiMask, TradeStatus, TradeStatusExtended, TrainerSpell, TransportPose,
-    VendorItem, WhoResults, XpGain,
+    QuestDetails, QuestGiverList, QuestOfferReward, QuestPushResult, QuestRequestItems,
+    QuestTemplate, ResurrectRequestBody, SpeedKind, SpellChainTargets, SpellCooldown,
+    SpellDamageLog, SpellDispelLog, SpellEnergizeLog, SpellGo, SpellHealLog, SpellInstaKillLog,
+    SpellLogExecute, SpellLogMiss, SpellOutcomeLog, SpellStart, SplineMode, StabledPet, TaxiMask,
+    TradeStatus, TradeStatusExtended, TrainerSpell, TransportPose, VendorItem, WhoResults, XpGain,
 };
 
 /// The final facing a `SMSG_MONSTER_MOVE` dictates (`moveType`), applied as a hard snap, not a
@@ -748,14 +747,8 @@ pub enum ServerPacket {
         item_id: u32,
         count: u32,
     },
-    /// `SMSG_GOSSIP_MESSAGE`: an NPC's gossip menu and quest rows (`GossipDef.cpp:180-225`, no
-    /// box-money field in 1.12); `text_id` is for a follow-up `CMSG_NPC_TEXT_QUERY`.
-    GossipMessage {
-        npc: u64,
-        text_id: u32,
-        options: Vec<GossipOption>,
-        quests: Vec<QuestOption>,
-    },
+    /// `SMSG_GOSSIP_MESSAGE`: an NPC's gossip menu and quest rows.
+    GossipMessage(GossipMenu),
     /// `SMSG_GOSSIP_COMPLETE`: the gossip window closes; empty body (`Npc.cpp:90`).
     GossipComplete,
     /// `SMSG_GOSSIP_POI`: a guard's directions marker, unrequested (`GossipDef.cpp:253`).
@@ -1475,7 +1468,7 @@ impl ServerPacket {
             ServerPacket::QuestUpdateFailedTimer { .. } => "SMSG_QUESTUPDATE_FAILEDTIMER".into(),
             ServerPacket::QuestUpdateAddKill { .. } => "SMSG_QUESTUPDATE_ADD_KILL".into(),
             ServerPacket::QuestUpdateAddItem { .. } => "SMSG_QUESTUPDATE_ADD_ITEM".into(),
-            ServerPacket::GossipMessage { .. } => "SMSG_GOSSIP_MESSAGE".into(),
+            ServerPacket::GossipMessage(_) => "SMSG_GOSSIP_MESSAGE".into(),
             ServerPacket::GossipComplete => "SMSG_GOSSIP_COMPLETE".into(),
             ServerPacket::GossipPoi(..) => "SMSG_GOSSIP_POI".into(),
             ServerPacket::NpcText { .. } => "SMSG_NPC_TEXT_UPDATE".into(),

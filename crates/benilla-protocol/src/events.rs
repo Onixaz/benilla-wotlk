@@ -4,17 +4,17 @@ use crate::messages::{
     ActionButton, AttackSwingError, AttackerState, AuctionBidderNotification, AuctionCommandTail,
     AuctionListEntry, AuctionOwnerNotification, ChannelNoticeTail, Character, CreateSpline,
     DamageShield, DispelFailed, EnchantmentLog, EnvironmentalDamageLog, ExplorationXp, FriendEntry,
-    FriendStatusUpdate, GmTicket, GossipOption, GroupLootInfo, GroupMemberEntry,
-    GuildCommandResult, GuildEventNotice, GuildInfo, GuildQueryResponse, GuildRoster,
-    InspectHonorStats, ItemInfo, ItemPushResult, JumpInfo, LevelUpInfo, LootAllPassed, LootItem,
-    LootRoll, LootRollWon, LootStartRoll, MailListEntry, MirrorTimerStart, MonsterMoveFacing,
-    MoverState, ObjectFields, PartyKillLog, PartyMemberStatsInfo, PeriodicAuraLog, PetMode,
-    PetSpells, PetitionQueryResponse, PetitionRename, PetitionShowList, PetitionShowSignatures,
-    PetitionSignResults, PvpCredit, QuestComplete, QuestConfirmAccept, QuestDetails,
-    QuestGiverList, QuestOfferReward, QuestRequestItems, QuestShareMsg, QuestTemplate,
-    SpellDamageLog, SpellDispelLog, SpellEnergizeLog, SpellHealLog, SpellInstaKillLog,
-    SpellLogExecute, SpellLogMiss, SpellOutcomeLog, StabledPet, TaxiMask, TradeStatus,
-    TradeStatusExtended, TrainerSpell, TransportPose, VendorItem, WhoResults, XpGain,
+    FriendStatusUpdate, GmTicket, GossipMenu, GroupLootInfo, GroupMemberEntry, GuildCommandResult,
+    GuildEventNotice, GuildInfo, GuildQueryResponse, GuildRoster, InspectHonorStats, ItemInfo,
+    ItemPushResult, JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon,
+    LootStartRoll, MailListEntry, MirrorTimerStart, MonsterMoveFacing, MoverState, ObjectFields,
+    PartyKillLog, PartyMemberStatsInfo, PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse,
+    PetitionRename, PetitionShowList, PetitionShowSignatures, PetitionSignResults, PvpCredit,
+    QuestComplete, QuestConfirmAccept, QuestDetails, QuestGiverList, QuestOfferReward,
+    QuestRequestItems, QuestShareMsg, QuestTemplate, SpellDamageLog, SpellDispelLog,
+    SpellEnergizeLog, SpellHealLog, SpellInstaKillLog, SpellLogExecute, SpellLogMiss,
+    SpellOutcomeLog, StabledPet, TaxiMask, TradeStatus, TradeStatusExtended, TrainerSpell,
+    TransportPose, VendorItem, WhoResults, XpGain,
 };
 
 /// Coarse entity classification, free of wire types, carried on [`SessionEvent::ObjectCreate`].
@@ -682,14 +682,8 @@ pub enum SessionEvent {
     ExplorationXp(ExplorationXp),
     /// Our own level-up (`SMSG_LEVELUP_INFO`, self-only).
     LevelUp(LevelUpInfo),
-    /// A gossip menu (`SMSG_GOSSIP_MESSAGE`): `text_id` is the greeting for
-    /// [`crate::messages::npc_text_query`]; `quests` rows are `(quest_id, icon, level, title)`.
-    GossipMenu {
-        npc: u64,
-        text_id: u32,
-        options: Vec<GossipOption>,
-        quests: Vec<(u32, u32, u32, String)>,
-    },
+    /// A gossip menu (`SMSG_GOSSIP_MESSAGE`).
+    GossipMenu(GossipMenu),
     /// An NPC's `!`/`?` marker (`SMSG_QUESTGIVER_STATUS`), a [`crate::messages::dialog_status`].
     QuestGiverStatus { npc: u64, status: u32 },
     /// The greeting panel: an NPC's offered/active quest rows (`SMSG_QUESTGIVER_QUEST_LIST`).

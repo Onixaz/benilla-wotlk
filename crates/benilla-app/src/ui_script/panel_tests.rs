@@ -69,12 +69,15 @@ fn shipped_gossip_frame_drives_end_to_end() {
             GossipOptionView {
                 label: "Let me browse your goods.".into(),
                 icon_type: "vendor".into(),
+                ..Default::default()
             },
             GossipOptionView {
                 label: "I wish to sign the petition.".into(),
                 icon_type: "gossip".into(),
+                ..Default::default()
             },
         ],
+        ..Default::default()
     }));
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
@@ -177,7 +180,7 @@ fn shipped_gossip_frame_drives_end_to_end() {
     );
     s.mouse_button(cx, cy, "LeftButton", true);
     s.mouse_button(cx, cy, "LeftButton", false);
-    assert_eq!(s.take_gossip_selects(), vec![1]);
+    assert_eq!(s.take_gossip_selects(), vec![(1, None)]);
     assert!(!s.take_gossip_close());
 
     // The close button hides the window; its OnHide calls `CloseGossip()` (`GossipFrame.xml:455`).
@@ -218,17 +221,21 @@ fn shipped_gossip_frame_renders_quest_rows_above_options() {
                 title: "Report to Goldshire".into(),
                 level: 5,
                 active: true,
+                ..Default::default()
             },
             GossipQuestRow {
                 title: "A Threat Within".into(),
                 level: 7,
                 active: false,
+                ..Default::default()
             },
         ],
         options: vec![GossipOptionView {
             label: "Let me browse your goods.".into(),
             icon_type: "vendor".into(),
+            ..Default::default()
         }],
+        ..Default::default()
     }));
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
@@ -337,6 +344,7 @@ fn shipped_gossip_rows_grow_to_their_wrapped_labels() {
     let long = |t: &str| GossipOptionView {
         label: t.into(),
         icon_type: "gossip".into(),
+        ..Default::default()
     };
     s.set_gossip(Some(GossipMenu {
         greeting: "Make your choice!".into(),
@@ -355,6 +363,7 @@ fn shipped_gossip_rows_grow_to_their_wrapped_labels() {
                   encouraging him to leave the land.",
             ),
         ],
+        ..Default::default()
     }));
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
@@ -443,6 +452,7 @@ fn gossip_show_hide_plays_open_and_close_kits() {
         greeting: "Well met.".into(),
         quests: Vec::new(),
         options: Vec::new(),
+        ..Default::default()
     }));
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
@@ -490,7 +500,9 @@ fn shipped_panel_slot_replaces_gossip_with_merchant() {
         options: vec![GossipOptionView {
             label: "Let me browse your goods.".into(),
             icon_type: "vendor".into(),
+            ..Default::default()
         }],
+        ..Default::default()
     }));
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
@@ -581,6 +593,7 @@ fn displacing_an_npc_window_ends_the_displaced_session() {
         greeting: "Well met.".into(),
         quests: Vec::new(),
         options: Vec::new(),
+        ..Default::default()
     }));
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
@@ -726,7 +739,9 @@ fn gossip_bank_option_hands_the_left_slot_to_the_bank() {
             options: vec![GossipOptionView {
                 label: "I would like to check my deposit box.".into(),
                 icon_type: "money".into(),
+                ..Default::default()
             }],
+            ..Default::default()
         }));
         s.fire_event("GOSSIP_SHOW", vec![]);
         assert!(s
@@ -795,11 +810,13 @@ fn an_overflowing_gossip_menu_scrolls_instead_of_spilling() {
              broken the law of the land and it is my sworn duty to enforce it, whatever the cost."
         ),
         icon_type: "gossip".into(),
+        ..Default::default()
     };
     s.set_gossip(Some(GossipMenu {
         greeting: "Make your choice!".into(),
         quests: Vec::new(),
         options: (1..=8).map(long).collect(),
+        ..Default::default()
     }));
     s.fire_event("GOSSIP_SHOW", vec![]);
 
@@ -950,6 +967,7 @@ fn an_addons_own_frame_registered_in_uipanelwindows_takes_the_left_slot() {
         greeting: "Well met.".into(),
         quests: Vec::new(),
         options: Vec::new(),
+        ..Default::default()
     }));
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());

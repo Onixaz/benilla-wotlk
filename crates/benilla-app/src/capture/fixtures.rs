@@ -230,7 +230,14 @@ pub(super) fn seed_ui_fixture(
                     .into(),
             );
             // An available quest row above the options, for the quest-row icon and text seating.
-            gossip.quests = vec![(783, 0, 5, "Eagan Peltskinner".into())];
+            gossip.quests = vec![benilla_protocol::messages::QuestOption {
+                quest_id: 783,
+                icon: 0,
+                level: 5,
+                flags: 0,
+                repeatable: false,
+                title: "Eagan Peltskinner".into(),
+            }];
             // One short option and four that wrap, taller than the parchment, so the capture covers
             // the stock `GossipResize` per-row height, the scroll frame and its scrollbar.
             let judgement = [
@@ -247,7 +254,9 @@ pub(super) fn seed_ui_fixture(
                 index: 0,
                 icon: 1,
                 coded: false,
+                box_money: 0,
                 message: "Let me browse your goods.".into(),
+                box_text: None,
             }];
             gossip
                 .options
@@ -256,7 +265,9 @@ pub(super) fn seed_ui_fixture(
                         index: i as u32 + 1,
                         icon: 0,
                         coded: false,
+                        box_money: 0,
                         message: (*message).into(),
+                        box_text: None,
                     }
                 }));
         }

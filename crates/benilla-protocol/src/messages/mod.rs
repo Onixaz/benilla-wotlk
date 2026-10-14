@@ -128,8 +128,8 @@ pub use gm_ticket::{
     GMTICKET_STATUS_DEFAULT, GMTICKET_STATUS_HASTEXT, RESERVED_FOR_FUTURE_USE,
 };
 pub use gossip::{
-    gossip_hello, gossip_select_option, npc_text_query, select_greeting, GossipOption, GossipPoi,
-    NpcTextBlock, QuestOption, NPC_TEXT_BLOCKS,
+    gossip_hello, gossip_select_option, npc_text_query, select_greeting, GossipMenu, GossipOption,
+    GossipPoi, NpcTextBlock, QuestOption, GOSSIP_MAX_ITEMS, NPC_TEXT_BLOCKS,
 };
 pub use group::{
     group_accept, group_assistant_leader, group_change_sub_group, group_decline, group_disband,

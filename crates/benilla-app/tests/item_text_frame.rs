@@ -416,6 +416,7 @@ fn a_quest_givers_gossip_displaces_the_open_reader() {
         greeting: "What can I do for you?".into(),
         quests: Vec::new(),
         options: Vec::new(),
+        ..Default::default()
     }));
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.take_errors().is_empty());

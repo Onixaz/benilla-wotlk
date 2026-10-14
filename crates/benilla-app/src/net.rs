@@ -1071,11 +1071,12 @@ pub(crate) enum ClientCommand {
     GossipHello {
         guid: u64,
     },
-    /// `CMSG_GOSSIP_SELECT_OPTION` with the line's `index`. No code is ever sent: coded options
-    /// are not selectable.
+    /// `CMSG_GOSSIP_SELECT_OPTION`: the menu's id, the line's `index`, and a coded line's code.
     GossipSelectOption {
         guid: u64,
+        menu_id: u32,
         option: u32,
+        code: Option<String>,
     },
     /// `CMSG_NPC_TEXT_QUERY`, asked once per `text_id` on menu receipt.
     NpcTextQuery {

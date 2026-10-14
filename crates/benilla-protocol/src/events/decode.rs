@@ -335,20 +335,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::XpGain(s) => vec![SessionEvent::XpGain(s)],
         ServerPacket::ExplorationXp(s) => vec![SessionEvent::ExplorationXp(s)],
         ServerPacket::LevelUp(l) => vec![SessionEvent::LevelUp(l)],
-        ServerPacket::GossipMessage {
-            npc,
-            text_id,
-            options,
-            quests,
-        } => vec![SessionEvent::GossipMenu {
-            npc,
-            text_id,
-            options,
-            quests: quests
-                .into_iter()
-                .map(|q| (q.quest_id, q.icon, q.level, q.title))
-                .collect(),
-        }],
+        ServerPacket::GossipMessage(menu) => vec![SessionEvent::GossipMenu(menu)],
         ServerPacket::QuestGiverStatus { npc, status } => {
             vec![SessionEvent::QuestGiverStatus { npc, status }]
         }

@@ -28,17 +28,17 @@ fn gossip_bodies_golden() {
         "CMSG_NPC_TEXT_QUERY body"
     );
 
-    // CMSG_GOSSIP_SELECT_OPTION (vmangos Npc.cpp:78-86): guid, gossipListId, then a code cstring
-    // only for a coded option; the server reads it only when bytes remain.
+    // CMSG_GOSSIP_SELECT_OPTION (12340 `0x58afe3`..`0x58b030`): guid, menu id, the option's
+    // index, then a code cstring only for a coded option.
     assert_eq!(
-        messages::gossip_select_option(0x1234_5678_9abc_def0, 3, None),
-        hx(concat!("f0debc9a78563412", "03000000")),
+        messages::gossip_select_option(0x1234_5678_9abc_def0, 0x2a5, 3, None),
+        hx(concat!("f0debc9a78563412", "a5020000", "03000000")),
         "CMSG_GOSSIP_SELECT_OPTION body, no code"
     );
-    let mut with_code = hx(concat!("f0debc9a78563412", "03000000"));
+    let mut with_code = hx(concat!("f0debc9a78563412", "a5020000", "03000000"));
     with_code.extend_from_slice(b"1234\0");
     assert_eq!(
-        messages::gossip_select_option(0x1234_5678_9abc_def0, 3, Some("1234")),
+        messages::gossip_select_option(0x1234_5678_9abc_def0, 0x2a5, 3, Some("1234")),
         with_code,
         "CMSG_GOSSIP_SELECT_OPTION body, coded option with a real code"
     );
@@ -70,92 +70,105 @@ fn vendor_bodies_golden() {
 
 #[test]
 fn gossip_message_wire() {
-    use benilla_protocol::messages::{GossipOption, QuestOption};
+    use benilla_protocol::messages::{GossipMenu, GossipOption, QuestOption};
 
-    // SMSG_GOSSIP_MESSAGE (vmangos GossipDef.cpp:180-225), with no quest options.
-    let mut body = 0xAAu64.to_le_bytes().to_vec(); // objectGuid
-    body.extend_from_slice(&100u32.to_le_bytes()); // textId
-    body.extend_from_slice(&2u32.to_le_bytes()); // optionCount
+    // SMSG_GOSSIP_MESSAGE as 12340 reads it (`0x58b1b0`): guid, menu id, text id, options of
+    // u32 index, u8 icon, u8 coded, u32 box money, message, box text; no quests here.
+    let mut body = 0xAAu64.to_le_bytes().to_vec(); // npc guid
+    body.extend_from_slice(&0x2a5u32.to_le_bytes()); // menu id
+    body.extend_from_slice(&100u32.to_le_bytes()); // text id
+    body.extend_from_slice(&2u32.to_le_bytes()); // option count
     body.extend_from_slice(&0u32.to_le_bytes()); // option 0: index
-    body.push(0); // icon: chat bubble
+    body.push(3); // icon: trainer
     body.push(0); // coded: false
+    body.extend_from_slice(&0u32.to_le_bytes()); // box money
     body.extend_from_slice(b"Train me\0");
+    body.push(0); // box text: empty
     body.extend_from_slice(&1u32.to_le_bytes()); // option 1: index
-    body.push(1); // icon: vendor
+    body.push(0); // icon: chat
     body.push(1); // coded: true
-    body.extend_from_slice(b"Show me your wares\0");
-    body.extend_from_slice(&0u32.to_le_bytes()); // questOptionCount: 0
+    body.extend_from_slice(&500u32.to_le_bytes()); // box money
+    body.extend_from_slice(b"Unlearn my talents\0");
+    body.extend_from_slice(b"Are you sure?\0");
+    body.extend_from_slice(&0u32.to_le_bytes()); // quest count: 0
 
+    let expected = GossipMenu {
+        npc: 0xAA,
+        menu_id: 0x2a5,
+        text_id: 100,
+        options: vec![
+            GossipOption {
+                index: 0,
+                icon: 3,
+                coded: false,
+                box_money: 0,
+                message: "Train me".into(),
+                box_text: None,
+            },
+            GossipOption {
+                index: 1,
+                icon: 0,
+                coded: true,
+                box_money: 500,
+                message: "Unlearn my talents".into(),
+                box_text: Some("Are you sure?".into()),
+            },
+        ],
+        quests: Vec::new(),
+    };
     match messages::parse_server(messages::opcode::SMSG_GOSSIP_MESSAGE, &body).unwrap() {
-        ServerPacket::GossipMessage {
-            npc,
-            text_id,
-            options,
-            quests,
-        } => {
-            assert_eq!((npc, text_id), (0xAA, 100));
-            assert_eq!(
-                options,
-                vec![
-                    GossipOption {
-                        index: 0,
-                        icon: 0,
-                        coded: false,
-                        message: "Train me".into(),
-                    },
-                    GossipOption {
-                        index: 1,
-                        icon: 1,
-                        coded: true,
-                        message: "Show me your wares".into(),
-                    },
-                ]
-            );
-            assert!(quests.is_empty());
-        }
+        ServerPacket::GossipMessage(menu) => assert_eq!(menu, expected),
         other => panic!("gossip message, got {}", other.name()),
     }
-
     let packet = messages::parse_server(messages::opcode::SMSG_GOSSIP_MESSAGE, &body).unwrap();
     match decode(packet).pop().unwrap() {
-        SessionEvent::GossipMenu {
-            npc,
-            text_id,
-            options,
-            quests,
-        } => {
-            assert_eq!((npc, text_id, options.len()), (0xAA, 100, 2));
-            assert!(quests.is_empty());
-        }
+        SessionEvent::GossipMenu(menu) => assert_eq!(menu, expected),
         other => panic!("gossip menu event, got {other:?}"),
     }
 
+    // Quests: u32 id, icon, level (signed), flags, then a u8 repeatable and the title.
     let mut body_q = 0xBBu64.to_le_bytes().to_vec();
-    body_q.extend_from_slice(&200u32.to_le_bytes()); // textId
-    body_q.extend_from_slice(&0u32.to_le_bytes()); // optionCount: 0
-    body_q.extend_from_slice(&1u32.to_le_bytes()); // questOptionCount: 1
-    body_q.extend_from_slice(&42u32.to_le_bytes()); // questId
-    body_q.extend_from_slice(&7u32.to_le_bytes()); // icon
-    body_q.extend_from_slice(&10u32.to_le_bytes()); // level
+    body_q.extend_from_slice(&7u32.to_le_bytes()); // menu id
+    body_q.extend_from_slice(&200u32.to_le_bytes()); // text id
+    body_q.extend_from_slice(&0u32.to_le_bytes()); // option count: 0
+    body_q.extend_from_slice(&2u32.to_le_bytes()); // quest count: 2
+    body_q.extend_from_slice(&42u32.to_le_bytes()); // quest id
+    body_q.extend_from_slice(&8u32.to_le_bytes()); // icon
+    body_q.extend_from_slice(&10i32.to_le_bytes()); // level
+    body_q.extend_from_slice(&0x1000u32.to_le_bytes()); // flags: daily
+    body_q.push(1); // repeatable
     body_q.extend_from_slice(b"A Quest\0");
+    body_q.extend_from_slice(&43u32.to_le_bytes());
+    body_q.extend_from_slice(&4u32.to_le_bytes());
+    body_q.extend_from_slice(&(-1i32).to_le_bytes()); // scales to the player
+    body_q.extend_from_slice(&0u32.to_le_bytes());
+    body_q.push(0);
+    body_q.extend_from_slice(b"Another\0");
 
     match messages::parse_server(messages::opcode::SMSG_GOSSIP_MESSAGE, &body_q).unwrap() {
-        ServerPacket::GossipMessage {
-            npc,
-            options,
-            quests,
-            ..
-        } => {
-            assert_eq!(npc, 0xBB);
-            assert!(options.is_empty());
+        ServerPacket::GossipMessage(menu) => {
+            assert_eq!((menu.npc, menu.menu_id, menu.text_id), (0xBB, 7, 200));
+            assert!(menu.options.is_empty());
             assert_eq!(
-                quests,
-                vec![QuestOption {
-                    quest_id: 42,
-                    icon: 7,
-                    level: 10,
-                    title: "A Quest".into(),
-                }]
+                menu.quests,
+                vec![
+                    QuestOption {
+                        quest_id: 42,
+                        icon: 8,
+                        level: 10,
+                        flags: 0x1000,
+                        repeatable: true,
+                        title: "A Quest".into(),
+                    },
+                    QuestOption {
+                        quest_id: 43,
+                        icon: 4,
+                        level: -1,
+                        flags: 0,
+                        repeatable: false,
+                        title: "Another".into(),
+                    },
+                ]
             );
         }
         other => panic!("gossip message with quests, got {}", other.name()),

@@ -1,16 +1,19 @@
 //! The gossip window's app side: [`GossipState`] holds the menu and the NPC-text records,
 //! [`feed_gossip`] pushes the menu and fires its events, and [`drain_gossip`] sends the selects.
-//! As in the reference's `0x4e2010`, a menu opens only once its greeting is drawn.
+//! As in the reference's `0x58ac30`, a menu opens only once its greeting is drawn.
 
 use std::collections::HashMap;
 
-use benilla_protocol::messages::{select_greeting, GossipOption, NpcTextBlock};
+use benilla_protocol::messages::{
+    quest_slot_state, select_greeting, GossipMenu as WireMenu, GossipOption, NpcTextBlock,
+    QuestOption, PLAYER_QUEST_LOG_SLOTS,
+};
 use bevy::prelude::*;
 
 use benilla_ui::script::{GossipMenu, GossipOptionView, GossipQuestRow, ScriptValue, UiScript};
 
 use crate::names::NameCache;
-use crate::net::{ClientCommand, Guid, NetCommands, ObjectStore, SelfPlayer};
+use crate::net::{ClientCommand, Guid, GuidIndex, NetCommands, ObjectStore, SelfPlayer};
 use crate::ui_quest::{row_is_active, row_is_one_click};
 use crate::ui_script::{UiFeed, UiInput};
 use crate::ui_session::{close_npc_session_out_of_range, npc_switched, NpcSession};
@@ -20,14 +23,13 @@ use crate::ui_session::{close_npc_session_out_of_range, npc_switched, NpcSession
 #[derive(Resource, Default)]
 pub(crate) struct GossipState {
     pub(crate) npc: Option<u64>,
+    /// Echoed in every select (`0xc016f8`).
+    pub(crate) menu_id: u32,
     pub(crate) text_id: u32,
     /// This open's drawn greeting; `None` while its text query is out.
     pub(crate) greeting: Option<String>,
     pub(crate) options: Vec<GossipOption>,
-    /// The packet's quest rows, `(quest_id, dialog-status icon, level, title)`. The level is kept
-    /// because `GetGossipAvailableQuests` and `GetGossipActiveQuests` return `(title, level)`
-    /// pairs, walked in twos by stock `GossipFrame.lua` (lines 66 and 90).
-    pub(crate) quests: Vec<(u32, u32, u32, String)>,
+    pub(crate) quests: Vec<QuestOption>,
     records: HashMap<u32, Vec<NpcTextBlock>>,
 }
 
@@ -46,7 +48,7 @@ impl GossipState {
         select_greeting(blocks, npc_gender, greeting_roll()).map(str::to_string)
     }
 
-    /// The reference's text-pending latch (`[0xbbb670]`): a menu whose text query is out, or was
+    /// The reference's text-pending latch (`[0xc00be8]`): a menu whose text query is out, or was
     /// never sent (`text_id` 0). While it holds, nothing fires and every select is refused.
     pub(crate) fn text_pending(&self) -> bool {
         self.npc.is_some() && self.greeting.is_none()
@@ -54,18 +56,13 @@ impl GossipState {
 
     /// Latch a `SMSG_GOSSIP_MESSAGE` menu; `true` when the caller owes the `CMSG_NPC_TEXT_QUERY`.
     /// A `text_id` of 0 stays pending: the reference's `DBCache::Get` never queries id 0.
-    pub(crate) fn open_menu(
-        &mut self,
-        npc: u64,
-        text_id: u32,
-        options: Vec<GossipOption>,
-        quests: Vec<(u32, u32, u32, String)>,
-        npc_gender: u8,
-    ) -> bool {
-        self.npc = Some(npc);
+    pub(crate) fn open_menu(&mut self, menu: WireMenu, npc_gender: u8) -> bool {
+        let text_id = menu.text_id;
+        self.npc = Some(menu.npc);
+        self.menu_id = menu.menu_id;
         self.text_id = text_id;
-        self.options = options;
-        self.quests = quests;
+        self.options = menu.options;
+        self.quests = menu.quests;
         self.greeting = None;
         if text_id == 0 {
             return false;
@@ -90,7 +87,7 @@ impl GossipState {
     }
 
     /// Draw the open menu's greeting, or end the interaction when the record has no line for the
-    /// NPC's gender: the reference's missing-text path (`0x4e216e`) logs "Missing gossip text!"
+    /// NPC's gender: the reference's missing-text path (`0x58adc7`) logs "Missing gossip text!"
     /// and fires `GOSSIP_CLOSED`. Here the clear makes the feed fire it if a menu was showing.
     fn resolve_greeting(&mut self, npc_gender: u8) {
         match self.draw_greeting(self.text_id, npc_gender) {
@@ -116,6 +113,7 @@ impl GossipState {
     /// Close the menu; the records stay.
     pub(crate) fn clear(&mut self) {
         self.npc = None;
+        self.menu_id = 0;
         self.text_id = 0;
         self.greeting = None;
         self.options.clear();
@@ -160,52 +158,65 @@ impl NpcSession for GossipState {
     }
 }
 
-/// The `GetGossipOptions()` type string for a wire `GOSSIP_ICON` byte, which the reference's
-/// `0x4e28d0` uses as a bare index into the 14-entry table at `0x84b7ac`.
+/// The `GetGossipOptions()` type string for a wire icon byte, which the reference's
+/// `GetGossipOptions` (`0x58aa0e`) uses as a bare index into the table at `0xacef20`.
 ///
-/// Deviation: 14 (a NULL, pushed as `nil`) and 15 up (a read past the table's end) give
+/// Deviation: 14 and 15 (NULLs, pushed as `nil`) and 21 up (a read past the table's end) give
 /// `"gossip"`, because the reference's behaviour there is a missing bounds check.
 fn gossip_icon_type(icon: u8) -> &'static str {
     GOSSIP_ICON_TYPES
         .get(icon as usize)
         .copied()
+        .flatten()
         .unwrap_or("gossip")
 }
 
-/// The reference's icon-type table at `0x84b7ac`, verbatim; 11-13 are real `gossip` aliases.
-/// `auctioneer` names art 1.12 never shipped, so its row has no icon, in the reference too.
-const GOSSIP_ICON_TYPES: [&str; 14] = [
-    "gossip",
-    "vendor",
-    "taxi",
-    "trainer",
-    "healer",
-    "binder",
-    "banker",
-    "petition",
-    "tabard",
-    "battlemaster",
-    "auctioneer",
-    "gossip",
-    "gossip",
-    "gossip",
+/// The reference's icon-type table at `0xacef20`, verbatim; 11-13 and 16-20 are real `gossip`
+/// aliases. `auctioneer` names art the install never shipped, so its row has no icon, in the
+/// reference too.
+const GOSSIP_ICON_TYPES: [Option<&str>; 21] = [
+    Some("gossip"),
+    Some("vendor"),
+    Some("taxi"),
+    Some("trainer"),
+    Some("healer"),
+    Some("binder"),
+    Some("banker"),
+    Some("petition"),
+    Some("tabard"),
+    Some("battlemaster"),
+    Some("auctioneer"),
+    Some("gossip"),
+    Some("gossip"),
+    Some("gossip"),
+    None,
+    None,
+    Some("gossip"),
+    Some("gossip"),
+    Some("gossip"),
+    Some("gossip"),
+    Some("gossip"),
 ];
 
 /// The Lua-facing menu, `None` with no menu open. [`feed_gossip`] never calls it while the text
-/// is pending, so its `None` never means pending.
-fn snapshot(state: &GossipState) -> Option<GossipMenu> {
+/// is pending, so its `None` never means pending. `force_gossip` is the NPC's creature type flag
+/// (`0x715e10`).
+fn snapshot(state: &GossipState, force_gossip: bool) -> Option<GossipMenu> {
     state.npc?;
     Some(GossipMenu {
         greeting: state.greeting.clone()?,
-        // Active or available by the wire icon: the reference's `{3,4}` test in `0x4e2430` and
-        // `0x4e2580`, behind `GetGossipAvailableQuests` and `GetGossipActiveQuests`.
+        // Active or available by the wire icon: the reference's `{3,4}` test in `0x58a5d0` and
+        // `0x58a6c0`, behind both quest-list verbs.
         quests: state
             .quests
             .iter()
-            .map(|(_id, icon, level, title)| GossipQuestRow {
-                title: title.clone(),
-                level: *level,
-                active: row_is_active(*icon),
+            .map(|q| GossipQuestRow {
+                quest_id: q.quest_id,
+                title: q.title.clone(),
+                level: q.level,
+                active: row_is_active(q.icon),
+                daily: q.flags & QUEST_FLAG_DAILY != 0,
+                repeatable: q.repeatable,
             })
             .collect(),
         options: state
@@ -214,22 +225,48 @@ fn snapshot(state: &GossipState) -> Option<GossipMenu> {
             .map(|o| GossipOptionView {
                 label: o.message.clone(),
                 icon_type: gossip_icon_type(o.icon).into(),
+                coded: o.coded,
+                box_text: o.box_text.clone(),
+                box_money: o.box_money,
             })
             .collect(),
+        force_gossip,
     })
 }
 
+/// `ForceGossip`'s creature type flag (`0x715e1a`: the cached record's type flags, bit 27).
+const TYPE_FLAG_FORCE_GOSSIP: u32 = 0x0800_0000;
+
+/// The quest flag `GetGossipAvailableQuests` reads as `isDaily` (`0x58b423`).
+const QUEST_FLAG_DAILY: u32 = 0x1000;
+
+/// The quest ids whose log slot is complete, which `GetGossipActiveQuests` reads at call time.
+fn complete_quests(own: Option<&ObjectStore>) -> Vec<u32> {
+    let Some(own) = own else {
+        return Vec::new();
+    };
+    (0..PLAYER_QUEST_LOG_SLOTS)
+        .filter_map(|slot| own.0.player_quest_log(slot))
+        .filter(|s| s.quest_id != 0 && s.state & quest_slot_state::COMPLETE != 0)
+        .map(|s| s.quest_id)
+        .collect()
+}
+
 /// Push the menu into the VM and fire `GOSSIP_SHOW` or `GOSSIP_CLOSED` on a change.
+#[allow(clippy::too_many_arguments)]
 fn feed_gossip(
     script: Option<NonSendMut<UiScript>>,
     state: Res<GossipState>,
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
+    index: Res<GuidIndex>,
+    stores: Query<&ObjectStore>,
     names: Res<NameCache>,
     commands: Res<NetCommands>,
     states: Res<crate::world_state::WorldStates>,
     mut last: Local<crate::ui_script::VmMemo<Option<GossipMenu>>>,
     mut last_name: Local<crate::ui_script::VmMemo<Option<String>>>,
     mut last_npc: Local<crate::ui_script::VmMemo<Option<u64>>>,
+    mut last_complete: Local<crate::ui_script::VmMemo<Vec<u32>>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -237,19 +274,34 @@ fn feed_gossip(
     let last = last.get(&script);
     let last_name = last_name.get(&script);
     let last_npc = last_npc.get(&script);
+    let last_complete = last_complete.get(&script);
+    // The log's completion is pushed apart from the menu, so a quest finishing while the menu is
+    // open answers at the next call without a `GOSSIP_SHOW`.
+    let complete = complete_quests(self_q.single().ok().map(|(s, _)| s));
+    if complete != *last_complete {
+        script.set_gossip_complete_quests(complete.clone());
+        *last_complete = complete;
+    }
+    script.set_gossip_pending(state.text_pending());
     // The NPC's name rides `GOSSIP_SHOW` as arg1, and its landing alone re-fires the event; the
-    // reference fires `GOSSIP_SHOW` bare (`0x4e22b0`), and stock `GossipFrame.lua:33` titles with
+    // reference fires `GOSSIP_SHOW` bare (`0x58aef6`), and stock `GossipFrame.lua` titles with
     // `UnitName("npc")`. Asked before the hold, so the name query goes out beside the text query.
     let npc_name = state
         .npc
         .and_then(|g| names.resolve(g, &commands).map(str::to_string));
     // While the text query is out, fire nothing and keep the last snapshot: the reference returns
-    // at `0x4e2068` with no write and no event, so its frame keeps what it last showed. Reading
+    // at `0x58ac5e` with no write and no event, so its frame keeps what it last showed. Reading
     // the hold as a close would flash an open window.
     if state.text_pending() {
         return;
     }
-    let mut fresh = snapshot(&state);
+    let force_gossip = state
+        .npc
+        .and_then(|g| stores.get(*index.0.get(&g)?).ok())
+        .and_then(|s| s.0.object_entry())
+        .and_then(|entry| names.creature_record(entry))
+        .is_some_and(|r| r.type_flags & TYPE_FLAG_FORCE_GOSSIP != 0);
+    let mut fresh = snapshot(&state, force_gossip);
     // Expand the greeting's `$N`/`$B`/`$G`/`$<n>w` macros client-side, as the reference does.
     if let Some(greeting) = fresh.as_mut().map(|m| &mut m.greeting) {
         let player = crate::npc_text::player_identity(&self_q, &names, &commands);
@@ -290,10 +342,9 @@ fn feed_gossip(
     *last_npc = state.npc;
 }
 
-/// Drain the Lua intents: an option sends `CMSG_GOSSIP_SELECT_OPTION` with its wire `index`, a
-/// quest row its questgiver query, and `CloseGossip` clears locally, as there is no close packet.
-/// A coded option is not sent: the reference's code prompt (`GOSSIP_ENTER_CODE`, `0x4e237e`) is
-/// not built.
+/// Drain the Lua intents: an option sends `CMSG_GOSSIP_SELECT_OPTION` with the menu id, its wire
+/// `index` and a coded option's code, a quest row its questgiver query, and `CloseGossip` clears
+/// locally, as there is no close packet. The binding has already run the client's checks.
 fn drain_gossip(
     script: Option<NonSendMut<UiScript>>,
     mut state: ResMut<GossipState>,
@@ -302,10 +353,10 @@ fn drain_gossip(
     let Some(mut script) = script else {
         return;
     };
-    for pos in script.take_gossip_selects() {
+    for (pos, code) in script.take_gossip_selects() {
         let Some(npc) = state.npc else { continue };
         // Refused while the text query is out, as the reference's `SelectGossipOption`
-        // (`0x4e2320`) refuses under the latch `0xbbb670`.
+        // (`0x58af16`) refuses under the latch `0xc00be8`.
         if state.text_pending() {
             debug!(
                 "ui_gossip: SelectGossipOption({pos}) while the text query is in flight — refused"
@@ -317,14 +368,18 @@ fn drain_gossip(
             .checked_sub(1)
             .and_then(|i| state.options.get(i as usize))
         {
-            Some(opt) if !opt.coded => {
-                debug!("ui_gossip: select option {} (index {})", pos, opt.index);
+            Some(opt) => {
+                debug!(
+                    "ui_gossip: select option {pos} (menu {}, index {})",
+                    state.menu_id, opt.index
+                );
                 let _ = commands.0.send(ClientCommand::GossipSelectOption {
                     guid: npc,
+                    menu_id: state.menu_id,
                     option: opt.index,
+                    code,
                 });
             }
-            Some(_) => debug!("ui_gossip: ignoring coded option {pos} (coded options are greyed)"),
             None => debug!("ui_gossip: SelectGossipOption({pos}) out of range — ignored"),
         }
     }
@@ -342,8 +397,8 @@ fn drain_gossip(
             .checked_sub(1)
             .and_then(|i| state.quests.get(i as usize))
         {
-            Some((quest_id, icon, _level, _title)) => {
-                let (quest, icon) = (*quest_id, *icon);
+            Some(row) => {
+                let (quest, icon) = (row.quest_id, row.icon);
                 let active = row_is_active(icon);
                 // As on the quest greeting panel: an active row is a turn-in, and so is an
                 // available one with its one-click flag.
@@ -368,22 +423,39 @@ fn drain_gossip(
 mod tests {
     use super::*;
 
-    /// The one type in [`GOSSIP_ICON_TYPES`] with no art in the 1.12 install.
+    /// The one type in [`GOSSIP_ICON_TYPES`] with no art in the install.
     const GOSSIP_ICON_TYPE_UNSHIPPED: &str = "auctioneer";
+
+    /// A wire menu with no quests and menu id 0.
+    fn wire(npc: u64, text_id: u32, options: Vec<GossipOption>) -> WireMenu {
+        WireMenu {
+            npc,
+            menu_id: 0,
+            text_id,
+            options,
+            quests: Vec::new(),
+        }
+    }
+
+    fn plain_option(index: u32, icon: u8, message: &str) -> GossipOption {
+        GossipOption {
+            index,
+            icon,
+            coded: false,
+            box_money: 0,
+            message: message.into(),
+            box_text: None,
+        }
+    }
 
     #[test]
     fn snapshot_is_none_until_a_menu_opens() {
         let mut state = GossipState::default();
-        assert!(snapshot(&state).is_none());
+        assert!(snapshot(&state, false).is_none());
         state.npc = Some(0x42);
         state.greeting = Some("Hello".into());
-        state.options = vec![GossipOption {
-            index: 3,
-            icon: 1,
-            coded: false,
-            message: "Browse".into(),
-        }];
-        let menu = snapshot(&state).expect("open");
+        state.options = vec![plain_option(3, 1, "Browse")];
+        let menu = snapshot(&state, false).expect("open");
         assert_eq!(menu.greeting, "Hello");
         assert_eq!(menu.options.len(), 1);
         assert_eq!(menu.options[0].icon_type, "vendor");
@@ -395,16 +467,11 @@ mod tests {
     #[test]
     fn first_visit_holds_the_menu_until_the_text_answers() {
         let mut state = GossipState::default();
-        let options = vec![GossipOption {
-            index: 0,
-            icon: 9,
-            coded: false,
-            message: "I wish to join the battle!".into(),
-        }];
-        let wants_query = state.open_menu(0x42, 50, options, Vec::new(), 0);
+        let options = vec![plain_option(0, 9, "I wish to join the battle!")];
+        let wants_query = state.open_menu(wire(0x42, 50, options), 0);
         assert!(wants_query, "first visit asks for the text");
         assert!(
-            snapshot(&state).is_none(),
+            snapshot(&state, false).is_none(),
             "menu held closed while the query is in flight"
         );
 
@@ -417,7 +484,7 @@ mod tests {
             }],
             0,
         );
-        let menu = snapshot(&state).expect("text landed — the menu opens now, complete");
+        let menu = snapshot(&state, false).expect("text landed — the menu opens now, complete");
         assert_eq!(menu.greeting, "The Alliance needs you!");
         assert_eq!(menu.options.len(), 1, "options open WITH the greeting");
     }
@@ -443,6 +510,7 @@ mod tests {
         app.insert_resource(NetCommands(tx))
             .init_resource::<GossipState>()
             .init_resource::<NameCache>()
+            .init_resource::<GuidIndex>()
             .init_resource::<crate::world_state::WorldStates>()
             .add_systems(Update, (feed_gossip, drain_gossip).chain());
         let mut script = UiScript::new().unwrap();
@@ -475,12 +543,7 @@ mod tests {
     }
 
     fn option(label: &str) -> Vec<GossipOption> {
-        vec![GossipOption {
-            index: 0,
-            icon: 0,
-            coded: false,
-            message: label.into(),
-        }]
+        vec![plain_option(0, 0, label)]
     }
 
     /// The selects sent; the channel also carries the feed's name query.
@@ -503,7 +566,7 @@ mod tests {
         {
             let mut st = state(&mut app);
             st.remember_record(50, record("What are you looking for?"));
-            assert!(!st.open_menu(GUARD, 50, option("The bank"), Vec::new(), 0));
+            assert!(!st.open_menu(wire(GUARD, 50, option("The bank")), 0));
         }
         assert_eq!(
             tick(&mut app),
@@ -516,7 +579,7 @@ mod tests {
         // "The bank" is clicked: a new menu on the same NPC with an unseen text id. Nothing fires
         // for the round trip, and a click on the old menu's row is refused.
         assert!(
-            state(&mut app).open_menu(GUARD, 51, option("Goodbye"), Vec::new(), 0),
+            state(&mut app).open_menu(wire(GUARD, 51, option("Goodbye")), 0),
             "first visit to the sub-menu's text: the query is owed"
         );
         for _ in 0..3 {
@@ -560,7 +623,7 @@ mod tests {
             tick(&mut app),
             (vec!["GOSSIP_CLOSED".to_string()], String::new())
         );
-        assert!(state(&mut app).open_menu(GUARD, 52, option("Goodbye"), Vec::new(), 0));
+        assert!(state(&mut app).open_menu(wire(GUARD, 52, option("Goodbye")), 0));
         assert_eq!(
             tick(&mut app),
             (Vec::new(), String::new()),
@@ -571,6 +634,54 @@ mod tests {
             tick(&mut app),
             (vec!["GOSSIP_SHOW".to_string()], "Yes?".to_string())
         );
+    }
+
+    /// A select carries the menu's id and, for a coded option, the code the popup collected
+    /// (`0x58b00f`, `0x58b02c`); the binding's code ask sends nothing.
+    #[test]
+    fn a_select_sends_the_menu_id_and_a_coded_options_code() {
+        let (mut app, rx) = feed_app(|s| s.run(RECORDER).unwrap());
+        {
+            let mut st = state(&mut app);
+            st.remember_record(50, record("Speak the word."));
+            let mut menu = wire(GUARD, 50, vec![plain_option(7, 0, "Open the gate.")]);
+            menu.menu_id = 0x2a5;
+            menu.options[0].coded = true;
+            assert!(!st.open_menu(menu, 0));
+        }
+        let _ = tick(&mut app);
+        let run = |app: &mut App, lua: &str| {
+            app.world_mut()
+                .non_send_resource_mut::<UiScript>()
+                .run(lua)
+                .unwrap()
+        };
+        run(&mut app, "SelectGossipOption(1)");
+        let _ = tick(&mut app);
+        assert_eq!(
+            selects_sent(&rx),
+            0,
+            "a coded option asks for its code first"
+        );
+
+        run(&mut app, "SelectGossipOption(1, 'mellon', true)");
+        let _ = tick(&mut app);
+        let sent: Vec<ClientCommand> = rx
+            .try_iter()
+            .filter(|c| matches!(c, ClientCommand::GossipSelectOption { .. }))
+            .collect();
+        match sent.as_slice() {
+            [ClientCommand::GossipSelectOption {
+                guid,
+                menu_id,
+                option,
+                code,
+            }] => {
+                assert_eq!((*guid, *menu_id, *option), (GUARD, 0x2a5, 7));
+                assert_eq!(code.as_deref(), Some("mellon"));
+            }
+            other => panic!("one select, got {} commands", other.len()),
+        }
     }
 
     /// The same sequence through stock `GossipFrame.xml`: the window stays up, silent, on the
@@ -608,7 +719,7 @@ mod tests {
         {
             let mut st = state(&mut app);
             st.remember_record(50, record("What are you looking for?"));
-            st.open_menu(GUARD, 50, option("The bank"), Vec::new(), 0);
+            st.open_menu(wire(GUARD, 50, option("The bank")), 0);
         }
         let _ = tick(&mut app);
         assert_eq!(
@@ -623,7 +734,7 @@ mod tests {
         );
 
         // The click's answer holds on its text: the window must not blink.
-        assert!(state(&mut app).open_menu(GUARD, 51, option("Goodbye"), Vec::new(), 0));
+        assert!(state(&mut app).open_menu(wire(GUARD, 51, option("Goodbye")), 0));
         for _ in 0..3 {
             let (seen, _) = tick(&mut app);
             assert!(seen.is_empty(), "nothing fires during the hold: {seen:?}");
@@ -666,10 +777,10 @@ mod tests {
                 female: String::new(),
             }],
         );
-        let wants_query = state.open_menu(0x42, 50, Vec::new(), Vec::new(), 0);
+        let wants_query = state.open_menu(wire(0x42, 50, Vec::new()), 0);
         assert!(!wants_query, "cached — no re-query");
         assert_eq!(
-            snapshot(&state).expect("open at once").greeting,
+            snapshot(&state, false).expect("open at once").greeting,
             "Back again?"
         );
     }
@@ -680,7 +791,7 @@ mod tests {
     fn missing_text_ends_the_interaction_and_id_zero_never_queries() {
         // The record's male column is empty, so a male NPC has no line.
         let mut state = GossipState::default();
-        assert!(state.open_menu(0x42, 60, Vec::new(), Vec::new(), 0));
+        assert!(state.open_menu(wire(0x42, 60, Vec::new()), 0));
         state.text_arrived(
             60,
             vec![NpcTextBlock {
@@ -691,12 +802,12 @@ mod tests {
             0,
         );
         assert_eq!(state.npc, None, "missing gossip text — interaction ended");
-        assert!(snapshot(&state).is_none());
+        assert!(snapshot(&state, false).is_none());
 
         // Id 0: no query wanted, and the menu never opens.
         let mut state = GossipState::default();
-        assert!(!state.open_menu(0x42, 0, Vec::new(), Vec::new(), 0));
-        assert!(snapshot(&state).is_none());
+        assert!(!state.open_menu(wire(0x42, 0, Vec::new()), 0));
+        assert!(snapshot(&state, false).is_none());
     }
 
     #[test]
@@ -710,9 +821,9 @@ mod tests {
         };
         // Switched: the waiting menu is for id 70; id 50's late answer must not open it.
         let mut state = GossipState::default();
-        assert!(state.open_menu(0x42, 70, Vec::new(), Vec::new(), 0));
+        assert!(state.open_menu(wire(0x42, 70, Vec::new()), 0));
         state.text_arrived(50, blocks(), 0);
-        assert!(snapshot(&state).is_none(), "still waiting on id 70");
+        assert!(snapshot(&state, false).is_none(), "still waiting on id 70");
         assert!(
             state.cached_record(50).is_some(),
             "the answer seeded the cache"
@@ -720,7 +831,7 @@ mod tests {
 
         // Already open: a duplicate answer leaves the drawn line alone.
         state.text_arrived(70, blocks(), 0);
-        assert_eq!(snapshot(&state).expect("open").greeting, "Hail.");
+        assert_eq!(snapshot(&state, false).expect("open").greeting, "Hail.");
         state.greeting = Some("The drawn line".into());
         state.text_arrived(70, blocks(), 0);
         assert_eq!(
@@ -775,7 +886,7 @@ mod tests {
         assert_eq!(state.draw_greeting(78, 0), None, "record not yet arrived");
     }
 
-    /// The reference's table (`0x84b7ac`), each index beside the `GOSSIP_OPTION_*` the world DB
+    /// The reference's table (`0xacef20`), each index beside the `GOSSIP_OPTION_*` the world DB
     /// sends it with.
     #[test]
     fn the_icon_byte_indexes_the_clients_own_table() {
@@ -792,19 +903,22 @@ mod tests {
         assert_eq!(gossip_icon_type(10), "auctioneer"); // _AUCTIONEER
         assert_eq!(gossip_icon_type(11), "gossip");
         assert_eq!(gossip_icon_type(13), "gossip");
-        // The deviation past the table: see `gossip_icon_type`.
+        assert_eq!(gossip_icon_type(20), "gossip");
+        // The deviation at the table's NULLs and past its end: see `gossip_icon_type`.
         assert_eq!(gossip_icon_type(14), "gossip");
+        assert_eq!(gossip_icon_type(15), "gossip");
+        assert_eq!(gossip_icon_type(21), "gossip");
         assert_eq!(gossip_icon_type(255), "gossip");
     }
 
     /// Stock `GossipFrame.lua:123` builds the icon path from the type, so every type has its BLP
-    /// but `auctioneer`, which 1.12 never shipped.
+    /// but `auctioneer`, which the install never shipped.
     #[test]
     fn gossip_icon_types_name_the_shipped_art() {
         let data = benilla_formats::wow_data_or_skip!();
         let chain = benilla_formats::open_chain(&data).expect("open chain");
         let blp = |ty: &str| format!("Interface\\GossipFrame\\{ty}GossipIcon.blp");
-        for ty in GOSSIP_ICON_TYPES {
+        for ty in GOSSIP_ICON_TYPES.into_iter().flatten() {
             if ty == GOSSIP_ICON_TYPE_UNSHIPPED {
                 continue;
             }
@@ -812,7 +926,7 @@ mod tests {
         }
         assert!(
             !chain.contains(&blp(GOSSIP_ICON_TYPE_UNSHIPPED)),
-            "5875 has grown a {GOSSIP_ICON_TYPE_UNSHIPPED} gossip icon — give the XML its key"
+            "the install has grown a {GOSSIP_ICON_TYPE_UNSHIPPED} gossip icon — give the XML its key"
         );
     }
 }

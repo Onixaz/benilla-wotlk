@@ -1004,13 +1004,7 @@ fn parse_server_body(
             ServerPacket::QuestUpdateAddItem { item_id, count }
         }
         opcode::SMSG_GOSSIP_MESSAGE => {
-            let (npc, text_id, options, quests) = gossip::read_gossip_message(&mut r)?;
-            ServerPacket::GossipMessage {
-                npc,
-                text_id,
-                options,
-                quests,
-            }
+            ServerPacket::GossipMessage(gossip::read_gossip_message(&mut r)?)
         }
         opcode::SMSG_GOSSIP_COMPLETE => ServerPacket::GossipComplete,
         opcode::SMSG_GOSSIP_POI => ServerPacket::GossipPoi(gossip::read_gossip_poi(&mut r)?),
