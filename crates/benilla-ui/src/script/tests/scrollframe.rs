@@ -273,9 +273,10 @@ fn vertical_scroll_range_is_local_units_on_a_scaled_frame() {
 }
 
 /// `0x786db0` fires `OnVerticalScroll` with the unclamped stored value `[+0x328]`, under the
-/// handler conventions of `0x704f10`.
+/// handler conventions of `0x704f10`; the resolve's pump fires `OnScrollRangeChanged`
+/// horizontal first (`0x96afd0`).
 #[test]
-fn vertical_scroll_fires_as_given_and_update_rect_fires_range_changed() {
+fn vertical_scroll_fires_as_given_and_the_pump_fires_range_changed() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
     s.run(
@@ -300,6 +301,8 @@ fn vertical_scroll_fires_as_given_and_update_rect_fires_range_changed() {
     )
     .unwrap();
     s.resolve();
+    let (lo, hi): (f32, f32) = s.eval("return seen_lo, seen_hi").unwrap();
+    assert_eq!((lo, hi), (0.0, 400.0));
 
     s.run("SF:SetVerticalScroll(9999)").unwrap();
     assert_eq!(
@@ -307,17 +310,13 @@ fn vertical_scroll_fires_as_given_and_update_rect_fires_range_changed() {
         9999.0,
         "fires with the value as given — the range (400) is not consulted"
     );
-
-    s.run("SF:UpdateScrollChildRect()").unwrap();
-    let (lo, hi): (f32, f32) = s.eval("return seen_lo, seen_hi").unwrap();
-    assert_eq!((lo, hi), (0.0, 400.0));
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `UpdateScrollChildRect` resolves for itself, so a resize earlier in the same tick counts; the
-/// app resolves only once per frame.
+/// `UpdateScrollChildRect` only marks the ranges dirty (`0x9727b0`): nothing fires inside the
+/// call, and the next resolve's pump reports the range a same-tick resize made.
 #[test]
-fn update_scroll_child_rect_sees_a_same_tick_resize_with_no_intervening_resolve() {
+fn update_scroll_child_rect_marks_dirty_and_the_resolve_reports_a_same_tick_resize() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
     s.run(
@@ -344,15 +343,79 @@ fn update_scroll_child_rect_sees_a_same_tick_resize_with_no_intervening_resolve(
     .unwrap();
     assert!(s.errors().is_empty(), "{:?}", s.errors());
     assert_eq!(
-        s.eval::<f32>("return seen_hi").unwrap(),
-        400.0,
-        "UpdateScrollChildRect must resolve the JUST-set height itself, not report the stale \
-         (pre-resize) range from the last full UiScript::resolve"
+        s.eval::<Option<f32>>("return seen_hi").unwrap(),
+        None,
+        "the call only marks the ranges dirty"
+    );
+    s.resolve();
+    assert_eq!(
+        s.eval::<Option<f32>>("return seen_hi").unwrap(),
+        Some(400.0),
+        "the resolve's pump measures the JUST-set height, not the pre-resize range"
     );
     assert_eq!(
         s.eval::<f32>("return SF:GetVerticalScrollRange()").unwrap(),
         400.0
     );
+}
+
+/// The reference re-measures a shown ScrollFrame whose subtree resized or showed (`0x48fea0` marks
+/// it, `0x96b5a0` measures), so no script has to ask: the stock 3.3.5a talent tree never calls
+/// `UpdateScrollChildRect`. It fires on a change only, and a hidden frame waits until shown.
+#[test]
+fn the_pump_fires_on_a_range_change_with_no_script_asking() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        Fires = {}
+        local frame = CreateFrame("ScrollFrame", "SF")
+        frame:SetPoint("TOPLEFT", 0, -100)
+        frame:SetWidth(300); frame:SetHeight(200)
+        frame:SetScript("OnScrollRangeChanged", function(self, x, y)
+            table.insert(Fires, x .. "/" .. y)
+        end)
+        local child = CreateFrame("Frame", "Child", frame)
+        child:SetWidth(300); child:SetHeight(100)
+        frame:SetScrollChild(child)
+        -- A deep button below the fold, hidden for now: it adds no range.
+        local deep = CreateFrame("Button", "Deep", child)
+        deep:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -450)
+        deep:SetWidth(20); deep:SetHeight(20)
+        deep:Hide()
+    "#,
+    )
+    .unwrap();
+    let fires =
+        |s: &crate::script::UiScript| s.eval::<String>("return table.concat(Fires, ',')").unwrap();
+    s.resolve();
+    assert_eq!(
+        fires(&s),
+        "",
+        "content fits: the range stays at the ctor's 0, no fire"
+    );
+
+    s.run("Deep:Show()").unwrap();
+    s.resolve();
+    assert_eq!(
+        fires(&s),
+        "0/270",
+        "a shown descendant widens the range: 470 - 200"
+    );
+    s.resolve();
+    assert_eq!(fires(&s), "0/270", "an unchanged range does not fire again");
+
+    s.run("SF:Hide(); Child:SetHeight(800)").unwrap();
+    s.resolve();
+    assert_eq!(fires(&s), "0/270", "a hidden frame is not measured");
+    s.run("SF:Show()").unwrap();
+    s.resolve();
+    assert_eq!(
+        fires(&s),
+        "0/270,0/600",
+        "shown again, it reports the range it missed"
+    );
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
 #[test]
@@ -511,9 +574,10 @@ fn hit_test_denies_a_button_clipped_out_and_admits_it_once_scrolled_into_view() 
     );
 }
 
-/// The reference measures text synchronously, as stock `QuestLog_UpdateQuestDetails` relies on.
+/// Stock `QuestLog_UpdateQuestDetails` sets text and then calls `UpdateScrollChildRect`; the
+/// resolve measures the text before its pump reads the range, so the first fire is the full one.
 #[test]
-fn update_scroll_child_rect_measures_the_childs_text_before_it_reads_the_range() {
+fn the_pump_reads_the_range_of_the_childs_measured_text() {
     struct Rows;
     impl crate::script::TextMeasure for Rows {
         fn measure(&mut self, req: &crate::script::MeasureRequest) -> (f32, f32, f32) {
@@ -541,11 +605,12 @@ fn update_scroll_child_rect_measures_the_childs_text_before_it_reads_the_range()
         "#,
     )
     .unwrap();
+    s.resolve();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert_eq!(
         s.eval::<f64>("return RANGE").unwrap(),
         6.0,
-        "56px of measured text under a 50px frame: the range is known at the call, not a frame later"
+        "56px of measured text under a 50px frame, reported at the first resolve"
     );
 }
 
@@ -658,10 +723,10 @@ fn scroll_child_left_tracks_horizontal_scroll_unclamped_and_fires_on_change() {
     );
 }
 
-/// The vertical range leaves `0x786e30` on top of the x87 stack and is `fstp`'d first, so it is
-/// pushed deepest and lands as `arg2`.
+/// 12340's notify `0x96afd0` pushes `[+0x2a4]` (horizontal) and then `[+0x2a8]` (vertical), so
+/// the vertical range lands as `arg2`.
 #[test]
-fn update_scroll_child_rect_reports_both_ranges_horizontal_first() {
+fn the_range_notify_reports_both_ranges_horizontal_first() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
     s.run(
@@ -679,7 +744,6 @@ fn update_scroll_child_rect_reports_both_ranges_horizontal_first() {
     )
     .unwrap();
     s.resolve();
-    s.run("BSF:UpdateScrollChildRect()").unwrap();
     assert_eq!(
         s.eval::<f32>("return seen[1]").unwrap(),
         200.0,

@@ -495,7 +495,7 @@ fn queue_size_changes(
 
 impl UiScript {
     /// [`UiScript::resolve`]'s body on a bare `Model`, so a Lua binding can force a fresh resolve,
-    /// as `UpdateScrollChildRect` must report a range reflecting a same-tick `SetHeight`.
+    /// as a geometry query must answer against a same-tick `SetHeight`.
     pub(super) fn resolve_layout(model: &mut Model) {
         Self::resolve_layout_inner(model);
         if !model.layout_verify_recheck {

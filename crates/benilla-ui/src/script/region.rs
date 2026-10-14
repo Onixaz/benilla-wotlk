@@ -59,6 +59,17 @@ pub(super) fn clear_texture(model: &mut Model, rh: RegionHandle) {
     data.portrait_unit = None;
 }
 
+/// A region's `Show`/`Hide`; a real change counts as a visibility change, since a shown region in
+/// a scroll child widens its range (`0x48fea0`).
+fn set_region_hidden(lua: &Lua, rh: RegionHandle, hidden: bool) {
+    let mut model = lua.app_data_mut::<Model>().expect("model");
+    let data = model.region_data.entry(rh).or_default();
+    if data.hidden != hidden {
+        data.hidden = hidden;
+        model.arena.note_visibility_change();
+    }
+}
+
 /// Apply the font parts an XML element supplies (`font=`, `<FontHeight>`, `outline=`), any of
 /// which may be absent. Not the `SetFont` binding: the reference applies XML fonts in `LoadXML`,
 /// and its `SetFont` requires a path and a height (`0x87c69c`). Each part is an explicit set, so it
@@ -314,8 +325,7 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
         "Show",
         lua.create_function(|lua, this: Table| {
             let rh = region_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
-            model.region_data.entry(rh).or_default().hidden = false;
+            set_region_hidden(lua, rh, false);
             Ok(())
         })?,
     )?;
@@ -324,8 +334,7 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
         "Hide",
         lua.create_function(|lua, this: Table| {
             let rh = region_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
-            model.region_data.entry(rh).or_default().hidden = true;
+            set_region_hidden(lua, rh, true);
             Ok(())
         })?,
     )?;

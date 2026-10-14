@@ -102,3 +102,54 @@ fn the_stock_talent_window_opens_on_the_model_and_learns_a_rank() {
     let errors = talent_errors(s.take_errors());
     assert!(errors.is_empty(), "talent window errors: {errors:#?}");
 }
+
+/// The stock tree never calls `UpdateScrollChildRect`: the bar learns its range from the engine's
+/// own `OnScrollRangeChanged` once the laid-out tree outgrows the frame, and then a wheel spin
+/// and the down arrow scroll it (#162).
+#[test]
+fn the_stock_talent_tree_scrolls_by_wheel_and_arrow() {
+    use super::keybindings_tests::{centre, click};
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _load_failures) =
+        super::layer_tests::production_load_with("talents", false, "", |_| {});
+    let _ = s.take_errors();
+    push_talents(&mut s);
+    s.run("ToggleTalentFrame()").unwrap();
+    s.resolve();
+
+    const SF: &str = "PlayerTalentFrameScrollFrame";
+    const BAR: &str = "PlayerTalentFrameScrollFrameScrollBar";
+    let (range, lo, hi): (f64, f64, f64) = s
+        .eval(&format!(
+            "local lo, hi = {BAR}:GetMinMaxValues() \
+             return {SF}:GetVerticalScrollRange(), lo, hi"
+        ))
+        .unwrap();
+    assert!(
+        range > 0.0,
+        "the hunter's tree outgrows the frame, range {range}"
+    );
+    assert_eq!((lo, hi), (0.0, range), "the bar spans the measured range");
+
+    let scroll = |s: &UiScript| {
+        s.eval::<f64>(&format!("return {SF}:GetVerticalScroll()"))
+            .unwrap()
+    };
+    let (x, y) = centre(&mut s, SF);
+    s.mouse_wheel(x, y, -1.0);
+    s.resolve();
+    let wheeled = scroll(&s);
+    assert!(wheeled > 0.0, "a wheel notch down scrolls the tree");
+
+    s.run(&format!("{BAR}:SetValue(0)")).unwrap();
+    s.resolve();
+    assert_eq!(scroll(&s), 0.0, "the bar scrolls back to the top");
+    click(&mut s, &format!("{BAR}ScrollDownButton"), "LeftButton");
+    s.resolve();
+    assert!(scroll(&s) > 0.0, "the down arrow scrolls the tree");
+    let errors = talent_errors(s.take_errors());
+    assert!(errors.is_empty(), "talent window errors: {errors:#?}");
+}

@@ -76,6 +76,9 @@ fn the_stock_quest_log_draws_the_model() {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (mut s, _load_failures) =
         super::layer_tests::production_load_with("quests", false, "", |_| {});
+    // The first frame's layout, so the `OnSizeChanged` handlers it fires (`WatchFrame`'s update
+    // among them) count with the load's errors.
+    s.resolve();
     let _ = s.take_errors();
     s.set_quest_log(model());
     s.fire_event(

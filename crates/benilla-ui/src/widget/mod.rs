@@ -254,6 +254,11 @@ pub struct WidgetArena {
     /// The live EditBoxes, kept the same way, for the resize re-seat (`reseat_resized`) and the
     /// tick's walk, which flushes every shown box.
     editbox_kinds: Vec<FrameHandle>,
+    /// The live ScrollFrames, kept the same way, for the scroll-range pump.
+    scroll_kinds: Vec<FrameHandle>,
+    /// Bumped by every show or hide that changed what is visible, a frame's or a region's: a
+    /// scroll child's span moves with it (`NotifyScrollParent` `0x48fea0`).
+    visibility_epoch: u64,
 }
 
 impl Default for WidgetArena {
@@ -297,6 +302,8 @@ impl WidgetArena {
             tooltip_kinds: Vec::new(),
             minimap_kinds: Vec::new(),
             editbox_kinds: Vec::new(),
+            scroll_kinds: Vec::new(),
+            visibility_epoch: 0,
         }
     }
 
@@ -320,6 +327,20 @@ impl WidgetArena {
 
     pub fn editbox_kinds(&self) -> &[FrameHandle] {
         &self.editbox_kinds
+    }
+
+    pub fn scroll_kinds(&self) -> &[FrameHandle] {
+        &self.scroll_kinds
+    }
+
+    /// How many shows and hides have changed what is visible ([`Self::note_visibility_change`]).
+    pub fn visibility_epoch(&self) -> u64 {
+        self.visibility_epoch
+    }
+
+    /// Count a show or hide that changed what is visible.
+    pub fn note_visibility_change(&mut self) {
+        self.visibility_epoch = self.visibility_epoch.wrapping_add(1);
     }
 
     // ── Read access ────────────────────────────────────────────────────────────────────────────
@@ -501,6 +522,9 @@ impl WidgetArena {
         if matches!(kind, FrameKind::GameTooltip) {
             self.tooltip_kinds.push(handle);
         }
+        if matches!(kind, FrameKind::ScrollFrame) {
+            self.scroll_kinds.push(handle);
+        }
         if let Some(p) = parent {
             self.frame_mut(p)
                 .expect("live parent")
@@ -570,6 +594,7 @@ impl WidgetArena {
         self.tooltip_kinds.retain(|&t| t != h);
         self.minimap_kinds.retain(|&t| t != h);
         self.editbox_kinds.retain(|&t| t != h);
+        self.scroll_kinds.retain(|&t| t != h);
 
         for c in children {
             self.destroy(c);

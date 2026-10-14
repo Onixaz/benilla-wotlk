@@ -923,8 +923,9 @@ impl UiScript {
     }
 
     /// Resolve and cache every frame's rect, which `GetWidth`/`GetHeight`/`extract` read, then fire
-    /// `OnSizeChanged` for frames whose size moved ([`event::fire_size_changes`]) and re-seat the
-    /// text of every resized EditBox.
+    /// `OnSizeChanged` for frames whose size moved ([`event::fire_size_changes`]), re-seat the
+    /// text of every resized EditBox and fire `OnScrollRangeChanged` for every shown ScrollFrame
+    /// whose range moved ([`scrollframe::fire_range_changes`]).
     pub fn resolve(&mut self) {
         self.resolve_and_measure();
         event::fire_size_changes(&self.lua);
@@ -933,6 +934,12 @@ impl UiScript {
         let reseated = editbox::reseat_resized(&mut self.model_mut());
         if reseated {
             self.resolve_and_measure();
+        }
+        // The scroll-range pump reads the fresh rects; a handler's bar update moves the scroll
+        // child, which this frame then draws where the reference would.
+        if scrollframe::fire_range_changes(&self.lua) {
+            self.resolve_and_measure();
+            event::fire_size_changes(&self.lua);
         }
     }
 

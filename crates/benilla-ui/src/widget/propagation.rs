@@ -20,6 +20,9 @@ impl WidgetArena {
         }
         let parent_visible = self.parent_visible(h);
         self.propagate_visible(h, parent_visible, &mut changed);
+        if !changed.is_empty() {
+            self.note_visibility_change();
+        }
         changed
     }
 

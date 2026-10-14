@@ -629,7 +629,8 @@ pub const MINIMAP_DEFAULT_ARROW_MODEL: &str = "Interface\\Minimap\\Rotating-Mini
 /// The default `minimapPlayerModel` (`0x8453c0`), applied to engine child 9 alone (`0x4ee260`).
 pub const MINIMAP_DEFAULT_PLAYER_MODEL: &str = "Interface\\Minimap\\MinimapArrow.mdx";
 
-/// A `CSimpleScrollFrame`'s members (`+0x318`/`+0x324`/`+0x328`); the ranges are measured live.
+/// A `CSimpleScrollFrame`'s members (`+0x318`/`+0x324`/`+0x328`); the getters measure the ranges
+/// live, and `range` is the pump's cache.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ScrollFrameState {
     /// `SetScrollChild`'s frame, which pans within this frame's rect.
@@ -640,6 +641,16 @@ pub struct ScrollFrameState {
     /// `SetVerticalScroll`'s offset in px (`0x786db0`), unclamped: a positive one lifts the child
     /// to show what is below; the FrameXML scroll bar's range keeps it in bounds.
     pub vertical: f32,
+    /// The `(horizontal, vertical)` ranges last measured, 12340's `[+0x2a4]`/`[+0x2a8]`, zero
+    /// from the ctor (`0x96b2d0`): `OnScrollRangeChanged` fires when a measure moves either.
+    pub range: (f32, f32),
+    /// 12340's `[+0x29c]`: `SetScrollChild` (`0x96b3a0`) and `UpdateScrollChildRect` (`0x9727b0`)
+    /// set it, and the frame's next update (`0x96b5a0`) measures.
+    pub range_dirty: bool,
+    /// The (layout epoch, visibility epoch) of the last measure. A move stands in for the
+    /// reference's notify from inside the scrolled subtree (`0x48fea0`), which ours has no hook
+    /// for: any layout write or show anywhere re-measures a shown ScrollFrame.
+    pub range_stamp: Option<(u64, u64)>,
 }
 
 /// `Button:SetFont`'s record, one for the client's three embedded fonts (`+0x33c`, `+0x434`,
