@@ -22,15 +22,19 @@ pub fn tuned_default_plugins(primary_window: Window) -> PluginGroupBuilder {
             ..default()
         })
         // Asset loads parse synchronously on the IO pool, and Bevy's default 4 threads saturate on
-        // a dense teleport. Workers spawn at default QoS, behind any background build:
-        // compute is user-interactive, IO and async compute user-initiated, and
-        // `ThreadQosPlugin` promotes the render thread from inside.
+        // a dense teleport, so IO keeps a floor of 2 and a ceiling of 8. Its share is Bevy's 25%,
+        // not half: compute takes what IO and async compute leave, and every frame's parallel
+        // passes run there (on 12 threads half to IO left compute 3; a quarter leaves 6, 0.15 ms
+        // a frame faster at Northshire Abbey, with login and teleport loads unchanged). Workers
+        // spawn at default QoS, behind any background build: compute is user-interactive, IO and
+        // async compute user-initiated, and `ThreadQosPlugin` promotes the render thread from
+        // inside.
         .set(TaskPoolPlugin {
             task_pool_options: TaskPoolOptions {
                 io: bevy::app::TaskPoolThreadAssignmentPolicy {
                     min_threads: 2,
                     max_threads: 8,
-                    percent: 0.5,
+                    percent: 0.25,
                     on_thread_spawn: Some(std::sync::Arc::new(|| {
                         thread_qos::promote_current_thread(thread_qos::QosClass::UserInitiated)
                     })),
