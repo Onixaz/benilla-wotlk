@@ -11,6 +11,7 @@ use super::test_ui::{bag_open, load_ui as load_xml, BAG_UI};
 
 fn empty_bag(name: &str, num_slots: u32) -> Option<ContainerState> {
     Some(ContainerState {
+        bag_family: 0,
         name: Some(name.into()),
         num_slots,
         slots: std::collections::HashMap::new(),
@@ -158,6 +159,7 @@ fn item_slot_paints_from_container_minus_one_and_repaints_on_playerbankslots_cha
     s.set_container(
         -1,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Bank".into()),
             num_slots: 24,
             slots,
@@ -184,6 +186,7 @@ fn item_slot_paints_from_container_minus_one_and_repaints_on_playerbankslots_cha
     s.set_container(
         -1,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Bank".into()),
             num_slots: 24,
             slots: slots2,
@@ -436,6 +439,7 @@ fn clicking_item_slot_one_with_an_empty_cursor_queues_the_pickup() {
     s.set_container(
         -1,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Bank".into()),
             num_slots: 24,
             slots,

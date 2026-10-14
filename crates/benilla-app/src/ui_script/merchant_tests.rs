@@ -13,6 +13,7 @@ fn equip_bag(s: &mut UiScript, id: i64, name: &str, num_slots: u32) {
     s.set_container(
         id,
         Some(ContainerState {
+            bag_family: 0,
             name: Some(name.into()),
             num_slots,
             slots: std::collections::HashMap::new(),

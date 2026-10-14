@@ -136,6 +136,7 @@ mod tests {
             },
         );
         ContainerState {
+            bag_family: 0,
             name: None,
             num_slots: 4,
             slots,

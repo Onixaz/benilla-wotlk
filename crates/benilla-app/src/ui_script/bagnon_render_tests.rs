@@ -162,6 +162,7 @@ fn seat(root: &Path, seat: Seat) -> UiScript {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -849,6 +850,7 @@ fn open_bagnon_stacked(root: &Path) -> UiScript {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -1164,6 +1166,7 @@ fn bagnon_forevers_records_survive_the_logout_boundary() {
     s.set_container(
         1,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Small Green Pouch".into()),
             num_slots: 6,
             slots: Default::default(),
@@ -1229,6 +1232,7 @@ fn a_bag_slot_click_toggles_bagnon_not_the_native_window() {
     s.set_container(
         2,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Small Green Pouch".into()),
             num_slots: 6,
             slots: Default::default(),

@@ -129,6 +129,7 @@ fn backpack_with_jerky(s: &mut UiScript) -> String {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,

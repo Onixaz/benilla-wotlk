@@ -276,6 +276,7 @@ mod tests {
             },
         );
         ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -471,6 +472,7 @@ mod tests {
         s.set_container(
             -1,
             Some(ContainerState {
+                bag_family: 0,
                 name: Some("Bank".into()),
                 num_slots: 24,
                 slots: vault,

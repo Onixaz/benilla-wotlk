@@ -771,6 +771,7 @@ fn the_create_gate_and_the_deposit() {
     s.set_container(
         0,
         Some(benilla_ui::script::ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots: std::collections::HashMap::from([(

@@ -14,6 +14,8 @@ fn one_item_backpack(item_id: u32, name: &str, quality: u32) -> ContainerState {
     slots.insert(
         1,
         ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -34,6 +36,7 @@ fn one_item_backpack(item_id: u32, name: &str, quality: u32) -> ContainerState {
         },
     );
     ContainerState {
+        bag_family: 0,
         name: Some("Backpack".into()),
         num_slots: 16,
         slots,

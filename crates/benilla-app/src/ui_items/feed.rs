@@ -699,6 +699,9 @@ fn resolve_slot(
         });
     };
     Some(ContainerSlot {
+        // `GetContainerItemQuestInfo`: bonding 4 is the quest-item border, `StartQuest` the bang.
+        quest_item: t.bonding == 4,
+        start_quest: t.start_quest,
         // A charter's guild name and master, keyed by the petition id the server puts in
         // enchantment slot 0 (`PetitionsHandler.cpp:126`), where the reference reads it
         // (`0x5ef337`) and its enchant lines skip it (`0x52c9e0`). The first hover sends the query.
@@ -992,6 +995,7 @@ pub(crate) fn feed_containers(
         fresh.insert(
             0,
             ContainerState {
+                bag_family: 0,
                 name: Some("Backpack".into()),
                 num_slots: u32::from(PACK_SLOTS),
                 slots,
@@ -1017,13 +1021,11 @@ pub(crate) fn feed_containers(
                 }
                 None => (0, 0, Vec::new()),
             };
-            let name = (entry != 0)
-                .then(|| {
-                    items
-                        .template(entry, bag_guid, &commands)
-                        .map(|t| t.name.clone())
-                })
-                .flatten();
+            // The bag's name, and its `BagFamily` for `GetContainerNumFreeSlots`.
+            let (name, bag_family) = (entry != 0)
+                .then(|| items.template(entry, bag_guid, &commands))
+                .flatten()
+                .map_or((None, 0), |t| (Some(t.name.clone()), t.bag_family));
             let mut slots = HashMap::new();
             for (j, &guid) in slot_guids.iter().enumerate() {
                 if let Some(mut slot) = resolve_slot(
@@ -1051,6 +1053,7 @@ pub(crate) fn feed_containers(
                     name,
                     num_slots,
                     slots,
+                    bag_family,
                 },
             );
         }
@@ -1082,6 +1085,7 @@ pub(crate) fn feed_containers(
         fresh.insert(
             BANK_CONTAINER,
             ContainerState {
+                bag_family: 0,
                 name: Some("Bank".into()),
                 num_slots: u32::from(BANK_SLOTS),
                 slots,
@@ -1103,13 +1107,11 @@ pub(crate) fn feed_containers(
                 }
                 None => (0, 0, Vec::new()),
             };
-            let name = (entry != 0)
-                .then(|| {
-                    items
-                        .template(entry, bag_guid, &commands)
-                        .map(|t| t.name.clone())
-                })
-                .flatten();
+            // The bag's name, and its `BagFamily` for `GetContainerNumFreeSlots`.
+            let (name, bag_family) = (entry != 0)
+                .then(|| items.template(entry, bag_guid, &commands))
+                .flatten()
+                .map_or((None, 0), |t| (Some(t.name.clone()), t.bag_family));
             let mut slots = HashMap::new();
             for (j, &guid) in slot_guids.iter().enumerate() {
                 if let Some(mut slot) = resolve_slot(
@@ -1137,6 +1139,7 @@ pub(crate) fn feed_containers(
                     name,
                     num_slots,
                     slots,
+                    bag_family,
                 },
             );
         }
@@ -1170,6 +1173,7 @@ pub(crate) fn feed_containers(
         fresh.insert(
             KEYRING_CONTAINER,
             ContainerState {
+                bag_family: 0,
                 name: Some("Keyring".into()),
                 num_slots: size,
                 slots,
@@ -1479,6 +1483,7 @@ mod tests {
             HashMap::from([(
                 BANK_CONTAINER,
                 ContainerState {
+                    bag_family: 0,
                     name: None,
                     num_slots: u32::from(BANK_SLOTS),
                     slots: HashMap::from([(
@@ -1533,6 +1538,7 @@ mod tests {
             HashMap::from([(
                 BANK_CONTAINER,
                 ContainerState {
+                    bag_family: 0,
                     name: None,
                     num_slots: u32::from(BANK_SLOTS),
                     slots: HashMap::from([
@@ -1609,6 +1615,7 @@ mod tests {
             HashMap::from([(
                 1,
                 ContainerState {
+                    bag_family: 0,
                     name: Some("Small Brown Pouch".into()),
                     num_slots: n,
                     slots: HashMap::new(),
@@ -1674,6 +1681,7 @@ mod tests {
                 (
                     5,
                     ContainerState {
+                        bag_family: 0,
                         name: Some("Linen Bag".into()),
                         num_slots: 6,
                         slots: HashMap::new(),
@@ -1682,6 +1690,7 @@ mod tests {
                 (
                     6,
                     ContainerState {
+                        bag_family: 0,
                         name: Some("Linen Bag".into()),
                         num_slots: 6,
                         slots: HashMap::new(),
@@ -1735,6 +1744,7 @@ mod tests {
         )
         .unwrap();
         let bag0 = ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots: HashMap::new(),
@@ -1807,6 +1817,7 @@ mod tests {
             HashMap::from([(
                 0,
                 ContainerState {
+                    bag_family: 0,
                     name: Some("Backpack".into()),
                     num_slots: 16,
                     slots: HashMap::from([(1, s)]),

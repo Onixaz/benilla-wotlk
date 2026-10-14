@@ -66,6 +66,7 @@ fn backpack_toggle_plays_open_and_close_kits() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots: std::collections::HashMap::new(),
@@ -119,6 +120,7 @@ fn b_opens_the_backpack_alone_and_closes_every_bag() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots: std::collections::HashMap::new(),
@@ -127,6 +129,7 @@ fn b_opens_the_backpack_alone_and_closes_every_bag() {
     s.set_container(
         2,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Small Pouch".into()),
             num_slots: 6,
             slots: std::collections::HashMap::new(),
@@ -193,6 +196,7 @@ fn shift_b_toggles_every_bag_at_once() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots: std::collections::HashMap::new(),
@@ -201,6 +205,7 @@ fn shift_b_toggles_every_bag_at_once() {
     s.set_container(
         2,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Small Pouch".into()),
             num_slots: 6,
             slots: std::collections::HashMap::new(),
@@ -276,6 +281,7 @@ fn bag_bar_buttons_light_while_their_bag_is_open() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots: std::collections::HashMap::new(),
@@ -284,6 +290,7 @@ fn bag_bar_buttons_light_while_their_bag_is_open() {
     s.set_container(
         2,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Small Pouch".into()),
             num_slots: 6,
             slots: std::collections::HashMap::new(),
@@ -391,6 +398,8 @@ fn bag_tooltip_hangs_left_when_the_slot_sits_in_the_right_half() {
     slots.insert(
         1,
         ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -413,6 +422,7 @@ fn bag_tooltip_hangs_left_when_the_slot_sits_in_the_right_half() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -469,6 +479,8 @@ fn hovered_bag_tooltip_fills_itself_when_the_stats_land() {
     slots.insert(
         1,
         ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -491,6 +503,7 @@ fn hovered_bag_tooltip_fills_itself_when_the_stats_land() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -577,6 +590,8 @@ fn vendor_bag_hover_shows_sell_price_and_arms_the_pouch_cursor() {
     slots.insert(
         1,
         ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -599,6 +614,8 @@ fn vendor_bag_hover_shows_sell_price_and_arms_the_pouch_cursor() {
     slots.insert(
         2,
         ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -621,6 +638,7 @@ fn vendor_bag_hover_shows_sell_price_and_arms_the_pouch_cursor() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -739,6 +757,7 @@ fn readable_letter_hover_shows_the_inspect_magnifier() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -788,6 +807,8 @@ fn drag_across_two_slots_queues_the_same_move_a_click_pickup_would() {
     slots.insert(
         1,
         ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -810,6 +831,7 @@ fn drag_across_two_slots_queues_the_same_move_a_click_pickup_would() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -875,6 +897,8 @@ fn a_second_bag_window_feeds_and_paints_via_the_bag_bar() {
     slots.insert(
         1,
         ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -897,6 +921,7 @@ fn a_second_bag_window_feeds_and_paints_via_the_bag_bar() {
     s.set_container(
         1,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Small Pouch".into()),
             num_slots: 6,
             slots,
@@ -960,6 +985,7 @@ fn equipped_bag_window_snug_fits_its_row_count() {
         s.set_container(
             bag,
             Some(ContainerState {
+                bag_family: 0,
                 name: Some(format!("Bag {bag}")),
                 num_slots: size,
                 slots: std::collections::HashMap::new(),
@@ -1012,6 +1038,8 @@ fn open_backpack_with_a_five_stack(s: &mut UiScript) -> (f32, f32) {
     slots.insert(
         1,
         ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -1034,6 +1062,7 @@ fn open_backpack_with_a_five_stack(s: &mut UiScript) -> (f32, f32) {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -1349,6 +1378,7 @@ fn bag_slot_cooldown_sweeps_through_the_xml() {
         let mut slots = std::collections::HashMap::new();
         slots.insert(1, potion(cooldown));
         ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -1483,6 +1513,7 @@ fn keyring(size: u32, occupied: bool) -> ContainerState {
         );
     }
     ContainerState {
+        bag_family: 0,
         name: Some("Keyring".into()),
         num_slots: size,
         slots,
@@ -1733,6 +1764,7 @@ fn a_key_dropped_on_the_button_files_itself() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots: std::collections::HashMap::from([(
@@ -2092,6 +2124,7 @@ fn the_backpack_buttons_ring_follows_its_own_window_through_real_clicks() {
     s.set_container(
         0,
         Some(benilla_ui::script::ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots: std::collections::HashMap::new(),
@@ -2100,6 +2133,7 @@ fn the_backpack_buttons_ring_follows_its_own_window_through_real_clicks() {
     s.set_container(
         1,
         Some(benilla_ui::script::ContainerState {
+            bag_family: 0,
             name: Some("Pouch".into()),
             num_slots: 6,
             slots: std::collections::HashMap::new(),

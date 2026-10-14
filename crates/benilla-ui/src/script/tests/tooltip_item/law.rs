@@ -493,6 +493,7 @@ fn charter_lines_sit_between_the_name_and_the_signable_line() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 4,
             slots,
@@ -626,6 +627,7 @@ fn instance_tail_creator_and_readable() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 6,
             slots,
@@ -732,6 +734,7 @@ fn a_runtime_bound_instance_overrides_the_bind_line_to_soulbound() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,

@@ -543,6 +543,8 @@ pub(crate) struct Model {
     pub(crate) tutorial_bank: Option<Vec<u8>>,
     /// `FlagTutorial(n)` calls, 0-based and in range.
     pub(crate) tutorial_flag_requests: Vec<u32>,
+    /// `TriggerTutorial(n)` calls, 0-based and in range.
+    pub(crate) tutorial_triggers: Vec<u32>,
     pub(crate) tutorial_clears: u32,
     pub(crate) tutorial_resets: u32,
 
@@ -1290,6 +1292,7 @@ impl Model {
             meeting_stone_status_text: None,
             tutorial_bank: None,
             tutorial_flag_requests: Vec::new(),
+            tutorial_triggers: Vec::new(),
             tutorial_clears: 0,
             tutorial_resets: 0,
             shapeshift_forms: Vec::new(),

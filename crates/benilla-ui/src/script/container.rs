@@ -60,6 +60,11 @@ pub struct ContainerSlot {
     /// A signable charter's petition, printed between the name and the green `ITEM_SIGNABLE`
     /// line; `None` until the record the hover queries arrives.
     pub petition: Option<PetitionSlotView>,
+    /// The template's `Bonding` is 4, a quest item: `GetContainerItemQuestInfo`'s `isQuestItem`
+    /// (template `+0x178`, `0x5d9490`). Bonding 5 does not count.
+    pub quest_item: bool,
+    /// The template's `StartQuest` (`+0x18c`), the quest the item starts; 0 for none.
+    pub start_quest: u32,
 }
 
 /// One enchant slot as the tooltip renders it (`0x52c9f9`..`0x52ca23`); the app resolves the row.
@@ -98,6 +103,9 @@ pub struct ContainerState {
     pub name: Option<String>,
     pub num_slots: u32,
     pub slots: std::collections::HashMap<u32, ContainerSlot>,
+    /// The bag template's `BagFamily` mask (`+0x1b8`, read by `0x7072b0`): 0 for a general bag,
+    /// the backpack and the bank.
+    pub bag_family: u32,
 }
 
 /// One queued move from `(src_bag, src_slot)` to `(dst_bag, dst_slot)`. `count` is `None` for a
@@ -440,31 +448,38 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetBagPortaitTexture(texture, containerID) (`0x4fa4f0`, the reference's spelling): 0 and
-    // below return before the clear (`0x4fa5b9`), 1-10 clear and then set the bag's icon, 11 and
-    // up raise. The reference also needs the bank open for 5-10, which is not checked here.
+    // SetBagPortraitTexture(texture, containerID) (`0x5d7180`): a non-number id raises its usage
+    // text; 0 and below return before the clear, 1-11 clear and then set the bag's icon as a
+    // portrait (`0x619330`, `SetPortraitToTexture`'s core), 12 and up raise. Bank bags 5-11
+    // resolve only while the bank is open (`0x5d6f20` tests the banker guid `[0xbeb9a0]`).
     lua.globals().set(
-        "SetBagPortaitTexture",
-        lua.create_function(|lua, (region, container): (Table, i64)| {
-            if container >= 11 {
-                return Err(mlua::Error::runtime("Invalid slot in SetBagPortaitTexture"));
-            }
-            if container <= 0 {
+        "SetBagPortraitTexture",
+        lua.create_function(|lua, (region, container): (Table, Value)| {
+            let container = super::binding_abi::number_arg(
+                lua,
+                container,
+                "Usage: SetBagPortraitTexture(texture, slot)",
+            )?;
+            let index = container.wrapping_sub(1);
+            if index < 0 {
                 return Ok(());
             }
-            // `ContainerIDToInventoryID`'s arithmetic, inlined: an addon may replace that global,
-            // and the reference's portrait read does not go through Lua.
-            let t = container.wrapping_sub(1);
-            let inv = if t < 4 {
-                t.wrapping_add(20)
-            } else {
-                t.wrapping_add(60)
-            };
+            if index >= 11 {
+                return Err(mlua::Error::runtime(
+                    "Invalid slot in SetBagPortraitTexture",
+                ));
+            }
             let path = {
                 let model = lua.app_data_ref::<Model>().expect("model app_data");
-                usize::try_from(inv)
-                    .ok()
-                    .and_then(|slot| model.inv_slot("player", slot))
+                // Worn bags sit in inventory slots 20-23; a bank bag in the bank verbs' own slot
+                // map (`BankButtonIDToInvSlotID`), which is still the 1.12 layout.
+                let slot = if index < 4 {
+                    Some(index + 20)
+                } else {
+                    model.bank.is_some().then_some(index + 60)
+                };
+                slot.and_then(|s| usize::try_from(s).ok())
+                    .and_then(|s| model.inv_slot("player", s))
                     .and_then(|v| v.icon.clone())
             };
             let rh = crate::script::region::region_handle_of(lua, &region)?;
@@ -483,6 +498,116 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, bag: i64| {
             let model = lua.app_data_ref::<Model>().expect("model app_data");
             Ok(model.containers.get(&bag).map_or(0, |c| c.num_slots))
+        })?,
+    )?;
+
+    // GetContainerNumFreeSlots(bag) (`0x5d7590`) → freeSlots, bagFamily: the backpack's and the
+    // bank's (-1) empty slots with family 0, a worn or bank bag's empty slots and its template's
+    // `BagFamily`. Anything it cannot resolve answers the lone number 0: no player, the bank
+    // closed, an empty bag slot, an id outside -1..=11 (the keyring included). The usage text is
+    // the reference's, which names `GetContainerFreeSlots`.
+    lua.globals().set(
+        "GetContainerNumFreeSlots",
+        lua.create_function(|lua, bag: Value| {
+            let bag = i64::from(super::binding_abi::number_arg(
+                lua,
+                bag,
+                "Usage: GetContainerFreeSlots(index)",
+            )?);
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            // The backpack's snapshot stands for the active player, which every branch needs.
+            if !model.containers.contains_key(&0) {
+                return Ok(mlua::MultiValue::from_vec(vec![Value::Integer(0)]));
+            }
+            let bank_open = model.bank.is_some();
+            let resolved = match bag {
+                0 => true,
+                -1 | 5..=11 => bank_open,
+                1..=4 => true,
+                _ => false,
+            };
+            let answer = resolved
+                .then(|| model.containers.get(&bag))
+                .flatten()
+                .map(|c| {
+                    let free = c.num_slots.saturating_sub(c.slots.len() as u32);
+                    (free, c.bag_family)
+                });
+            Ok(mlua::MultiValue::from_vec(match answer {
+                Some((free, family)) => vec![
+                    Value::Integer(i64::from(free)),
+                    Value::Integer(i64::from(family)),
+                ],
+                None => vec![Value::Integer(0)],
+            }))
+        })?,
+    )?;
+
+    // GetContainerItemQuestInfo(bag, slot) (`0x5d9400`) → isQuestItem, questId, isActive, always
+    // three values: `true` or nil for a `Bonding` 4 template, then the `StartQuest` id and whether
+    // that quest is already in the log (`0x5e11d0`), or nil, nil. An empty slot or an unresolved
+    // template answers three nils.
+    lua.globals().set(
+        "GetContainerItemQuestInfo",
+        lua.create_function(|lua, (bag, slot): (Value, Value)| {
+            const USAGE: &str = "Usage: GetContainerItemQuestInfo(index, slot)";
+            let bag = i64::from(super::binding_abi::number_arg(lua, bag, USAGE)?);
+            let slot = super::binding_abi::number_arg(lua, slot, USAGE)?;
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let Some(s) = u32::try_from(slot)
+                .ok()
+                .and_then(|slot| model.containers.get(&bag)?.slots.get(&slot))
+            else {
+                return Ok((Value::Nil, Value::Nil, Value::Nil));
+            };
+            let quest_item = if s.quest_item {
+                Value::Boolean(true)
+            } else {
+                Value::Nil
+            };
+            if s.start_quest == 0 {
+                return Ok((quest_item, Value::Nil, Value::Nil));
+            }
+            let log = &model.quest_log;
+            let active = log
+                .entries
+                .iter()
+                .any(|e| !e.is_header && e.quest_id == s.start_quest)
+                || log.hidden_quest_ids.contains(&s.start_quest);
+            Ok((
+                quest_item,
+                Value::Integer(i64::from(s.start_quest)),
+                Value::Boolean(active),
+            ))
+        })?,
+    )?;
+
+    // GetContainerItemPurchaseInfo(bag, slot[, isEquipped]) (`0x5d8d80`) → money, honorPoints,
+    // arenaPoints, itemCount, refundSec, read off the item's refund record (`item+0x3d4`) while
+    // its two-hour window is open. The record is filled only by `SMSG_ITEM_REFUND_INFO_RESPONSE`,
+    // which benilla does not read yet, so every item answers as one without a record: nothing.
+    lua.globals().set(
+        "GetContainerItemPurchaseInfo",
+        lua.create_function(|lua, (bag, slot): (Value, Value)| {
+            const USAGE: &str = "Usage: GetContainerItemPurchaseInfo(index, slot[, isEquipped])";
+            super::binding_abi::number_arg(lua, bag, USAGE)?;
+            super::binding_abi::number_arg(lua, slot, USAGE)?;
+            Ok(())
+        })?,
+    )?;
+
+    // GetContainerItemPurchaseItem(bag, slot, itemIndex[, isEquipped]) (`0x5d8f70`) → texture,
+    // count, link of the record's `itemIndex`th cost item; nothing without a refund record, as
+    // above. The usage text is the reference's, which drops the `Get`.
+    lua.globals().set(
+        "GetContainerItemPurchaseItem",
+        lua.create_function(|lua, (bag, slot, index): (Value, Value, Value)| {
+            const USAGE: &str =
+                "Usage: ContainerItemPurchaseItem(bag, slot, itemIndex[, isEquipped])";
+            for v in [bag, slot, index] {
+                super::binding_abi::number_arg(lua, v, USAGE)?;
+            }
+            Ok(())
         })?,
     )?;
 
@@ -708,6 +833,8 @@ mod tests {
         slots.insert(
             1,
             ContainerSlot {
+                quest_item: false,
+                start_quest: 0,
                 duration_ms: None,
                 petition: None,
                 already_bound: false,
@@ -740,6 +867,7 @@ mod tests {
             },
         );
         ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -947,6 +1075,8 @@ mod tests {
         state.slots.insert(
             5,
             ContainerSlot {
+                quest_item: false,
+                start_quest: 0,
                 duration_ms: None,
                 petition: None,
                 already_bound: false,
@@ -1413,5 +1543,155 @@ mod tests {
                 "{call} must raise, got {err}"
             );
         }
+    }
+
+    // ── The 3.3.5a bag verbs ──────────────────────────────────────────────────────────
+
+    /// A worn bag of `size` slots holding one item, of template family `family`.
+    fn worn_bag(size: u32, family: u32) -> ContainerState {
+        let mut slots = std::collections::HashMap::new();
+        slots.insert(
+            1,
+            ContainerSlot {
+                item_id: 2_512,
+                count: 200,
+                ..Default::default()
+            },
+        );
+        ContainerState {
+            name: Some("Quiver".into()),
+            num_slots: size,
+            slots,
+            bag_family: family,
+        }
+    }
+
+    /// `0x5d7590`: two values for a resolved container, the lone 0 for everything else.
+    #[test]
+    fn free_slots_count_empties_and_name_the_bag_family() {
+        let mut s = UiScript::new().unwrap();
+        assert_eq!(
+            s.arity("GetContainerNumFreeSlots(0)").unwrap(),
+            1,
+            "no player yet: the lone 0"
+        );
+        s.set_container(0, Some(backpack()));
+        s.set_container(1, Some(worn_bag(6, 1)));
+        s.set_container(-1, Some(worn_bag(28, 0)));
+        let free = |s: &UiScript, bag: &str| -> (i64, Option<i64>) {
+            s.eval(&format!("return GetContainerNumFreeSlots({bag})"))
+                .unwrap()
+        };
+        // The backpack holds three items (one still in flight) in 16 slots.
+        assert_eq!(free(&s, "0"), (13, Some(0)));
+        assert_eq!(free(&s, "1"), (5, Some(1)), "a quiver names its family");
+        assert_eq!(
+            s.arity("GetContainerNumFreeSlots(2)").unwrap(),
+            1,
+            "empty bag slot"
+        );
+        assert_eq!(free(&s, "2"), (0, None));
+        assert_eq!(free(&s, "-1"), (0, None), "the bank, closed");
+        s.set_bank(Some(crate::script::BankState::default()));
+        assert_eq!(free(&s, "-1"), (27, Some(0)), "the bank, open");
+        assert_eq!(free(&s, "-2"), (0, None), "the keyring is not a case");
+        assert_eq!(free(&s, "12"), (0, None));
+        let err = s
+            .eval::<mlua::Value>("return GetContainerNumFreeSlots()")
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("Usage: GetContainerFreeSlots(index)"),
+            "the reference's own usage name, got {err}"
+        );
+    }
+
+    /// `0x5d9400`: always three values; `true` or nil, the quest id or nil, then whether the
+    /// quest is already in the log.
+    #[test]
+    fn quest_info_marks_quest_items_and_quest_starters() {
+        let mut s = UiScript::new().unwrap();
+        let mut bag = backpack();
+        bag.slots.get_mut(&1).unwrap().quest_item = true;
+        bag.slots.insert(
+            5,
+            ContainerSlot {
+                item_id: 1_307,
+                start_quest: 123,
+                ..Default::default()
+            },
+        );
+        bag.slots.insert(
+            6,
+            ContainerSlot {
+                item_id: 1_972,
+                start_quest: 456,
+                ..Default::default()
+            },
+        );
+        s.set_container(0, Some(bag));
+        s.set_quest_log(crate::script::QuestLogState {
+            entries: vec![crate::script::QuestLogEntryView {
+                quest_id: 456,
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        let info = |slot: u32| -> (Option<bool>, Option<i64>, Option<bool>) {
+            s.eval(&format!("return GetContainerItemQuestInfo(0, {slot})"))
+                .unwrap()
+        };
+        assert_eq!(info(1), (Some(true), None, None), "a bonding-4 item");
+        assert_eq!(
+            info(5),
+            (None, Some(123), Some(false)),
+            "a starter not taken"
+        );
+        assert_eq!(
+            info(6),
+            (None, Some(456), Some(true)),
+            "a starter in the log"
+        );
+        assert_eq!(info(3), (None, None, None), "an unresolved template");
+        assert_eq!(info(2), (None, None, None), "an empty slot");
+        assert_eq!(s.arity("GetContainerItemQuestInfo(0, 2)").unwrap(), 3);
+        assert!(s
+            .eval::<mlua::Value>("return GetContainerItemQuestInfo(0)")
+            .is_err());
+    }
+
+    /// `0x5d7180`: 0 and below return untouched, 12 and up raise; 1-11 clear and set.
+    #[test]
+    fn bag_portrait_takes_the_3_3_5a_name_and_range() {
+        let s = UiScript::new().unwrap();
+        s.run("PortraitProbe = CreateFrame('Frame'):CreateTexture()")
+            .unwrap();
+        for id in ["0", "-1", "1", "11"] {
+            s.run(&format!("SetBagPortraitTexture(PortraitProbe, {id})"))
+                .unwrap_or_else(|e| panic!("id {id} must not raise: {e}"));
+        }
+        let err = s
+            .run("SetBagPortraitTexture(PortraitProbe, 12)")
+            .unwrap_err();
+        assert!(format!("{err}").contains("Invalid slot in SetBagPortraitTexture"));
+        let err = s.run("SetBagPortraitTexture(PortraitProbe)").unwrap_err();
+        assert!(format!("{err}").contains("Usage: SetBagPortraitTexture(texture, slot)"));
+        assert!(
+            s.eval::<bool>("return SetBagPortaitTexture == nil")
+                .unwrap(),
+            "1.12's misspelling is not a 3.3.5a global"
+        );
+    }
+
+    /// No refund record is held, so both purchase verbs answer nothing; bad arguments raise.
+    #[test]
+    fn purchase_info_answers_nothing_without_a_refund_record() {
+        let mut s = UiScript::new().unwrap();
+        s.set_container(0, Some(backpack()));
+        assert_eq!(s.arity("GetContainerItemPurchaseInfo(0, 1)").unwrap(), 0);
+        assert_eq!(s.arity("GetContainerItemPurchaseItem(0, 1, 1)").unwrap(), 0);
+        let err = s
+            .eval::<mlua::Value>("return GetContainerItemPurchaseItem(0, 1)")
+            .unwrap_err();
+        assert!(format!("{err}").contains("Usage: ContainerItemPurchaseItem("));
     }
 }

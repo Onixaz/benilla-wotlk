@@ -64,6 +64,8 @@ fn merchant_compare_renders_the_compare_shape_and_no_hover_seats_a_plate() {
     slots.insert(
         1,
         ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -86,6 +88,7 @@ fn merchant_compare_renders_the_compare_shape_and_no_hover_seats_a_plate() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 4,
             slots,
@@ -697,6 +700,7 @@ fn item_bindings_return_the_pushed_repair_cost() {
         s.set_container(
             bag,
             Some(ContainerState {
+                bag_family: 0,
                 name: Some(name.into()),
                 num_slots: 24,
                 slots,

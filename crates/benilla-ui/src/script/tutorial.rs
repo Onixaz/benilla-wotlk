@@ -1,5 +1,6 @@
-//! The four tutorial verbs, registered at `0x846b04`. The banks are the app's: it pushes the
-//! acknowledged bank for `TutorialsEnabled` and drains the writes. `ClearTutorials()` sets every
+//! The tutorial verbs. The banks are the app's: it pushes the acknowledged bank for
+//! `TutorialsEnabled` and drains the writes. `TriggerTutorial(n)` raises tutorial `n` through the
+//! app's fire-once trigger, as the client's own sites do. `ClearTutorials()` sets every
 //! bit of both banks and sends `CMSG_TUTORIAL_CLEAR`; `ResetTutorials()` clears them and sends
 //! `CMSG_TUTORIAL_RESET`. None of the three writers returns a value.
 
@@ -11,6 +12,9 @@ use super::Model;
 /// `FlagTutorial`'s bound, `0 ≤ n − 1 < 0x32`: the fifty tutorials `GlobalStrings.lua` names.
 const TUTORIAL_IDS: i32 = 0x32;
 
+/// `TriggerTutorial`'s bound, `n − 1 < 0x3c` unsigned (`0x5308f2`).
+const TRIGGER_IDS: i32 = 0x3c;
+
 impl super::UiScript {
     /// The acknowledged bank's bytes, `None` before `SMSG_TUTORIAL_FLAGS`.
     pub fn set_tutorial_bank(&mut self, bank: Option<Vec<u8>>) {
@@ -20,6 +24,11 @@ impl super::UiScript {
     /// `FlagTutorial(n)` calls since the last drain, as 0-based ids (`n − 1`).
     pub fn take_tutorial_flag_requests(&mut self) -> Vec<u32> {
         std::mem::take(&mut self.model_mut().tutorial_flag_requests)
+    }
+
+    /// `TriggerTutorial(n)` calls since the last drain, as 0-based ids (`n − 1`).
+    pub fn take_tutorial_triggers(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.model_mut().tutorial_triggers)
     }
 
     /// `ClearTutorials()` calls since the last drain.
@@ -62,6 +71,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
             let mut model = lua.app_data_mut::<Model>().expect("model app_data");
             model.tutorial_flag_requests.push(id as u32);
+            Ok(())
+        })?,
+    )?;
+
+    // `TriggerTutorial(n)` (`0x5308d0`): a non-number raises the reference's usage text, which
+    // names `Trigger`; an `n − 1` outside `0..0x3c` is a silent no-op. Inside, the client's
+    // trigger `0x530840` runs with no delay: fire once, the popup cue, `TUTORIAL_TRIGGER(n)`.
+    g.set(
+        "TriggerTutorial",
+        lua.create_function(|lua, n: Value| {
+            let n = number_arg(lua, n, "Usage: Trigger(\"tutorial\")")?;
+            let id = n.wrapping_sub(1);
+            if !(0..TRIGGER_IDS).contains(&id) {
+                return Ok(());
+            }
+            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            model.tutorial_triggers.push(id as u32);
             Ok(())
         })?,
     )?;
@@ -139,5 +165,18 @@ mod tests {
         assert_eq!(s.take_tutorial_clears(), 2);
         assert_eq!(s.take_tutorial_resets(), 1);
         assert_eq!(s.take_tutorial_clears(), 0);
+    }
+
+    /// `TriggerTutorial(n)` (`0x5308d0`): `n − 1` in `0..0x3c` reaches the trigger, the rest is a
+    /// silent no-op; a non-number raises the reference's `Trigger` usage text.
+    #[test]
+    fn trigger_tutorial_queues_the_zero_based_id_in_range() {
+        let mut s = UiScript::new().unwrap();
+        s.run("TriggerTutorial(59) TriggerTutorial(58) TriggerTutorial(60) TriggerTutorial(61) TriggerTutorial(0)")
+            .unwrap();
+        assert_eq!(s.take_tutorial_triggers(), vec![58, 57, 59]);
+        assert_eq!(s.arity("TriggerTutorial(1)").unwrap(), 0);
+        let err = s.run("TriggerTutorial()").unwrap_err();
+        assert!(format!("{err}").contains("Usage: Trigger(\"tutorial\")"));
     }
 }

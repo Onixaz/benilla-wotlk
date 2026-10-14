@@ -360,6 +360,8 @@ fn chat_click_dismisses_a_stuck_spell_but_not_an_item() {
     slots.insert(
         1,
         ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -382,6 +384,7 @@ fn chat_click_dismisses_a_stuck_spell_but_not_an_item() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,

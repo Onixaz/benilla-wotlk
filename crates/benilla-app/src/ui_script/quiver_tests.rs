@@ -450,6 +450,7 @@ fn spending_an_arrow_starts_quivers_reload_through_the_real_item_feed() {
         Some(HashMap::from([(
             0i64,
             ContainerState {
+                bag_family: 0,
                 name: Some("Backpack".into()),
                 num_slots: 16,
                 slots: HashMap::from([(

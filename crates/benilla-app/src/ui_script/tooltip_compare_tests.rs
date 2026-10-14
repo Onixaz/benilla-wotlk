@@ -111,6 +111,8 @@ fn seed_items(s: &mut UiScript) {
     slots.insert(
         1,
         ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -133,6 +135,7 @@ fn seed_items(s: &mut UiScript) {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -277,6 +280,7 @@ fn repair_mode_hover_shows_the_items_repair_cost() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,

@@ -236,6 +236,7 @@ mod tests {
         s.set_container(
             -1,
             Some(super::super::ContainerState {
+                bag_family: 0,
                 name: Some("Bank".into()),
                 num_slots: 24,
                 slots,

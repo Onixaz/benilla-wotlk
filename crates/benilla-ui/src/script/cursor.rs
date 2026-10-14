@@ -3,7 +3,7 @@
 //! and the spellbook all transition it through [`queue_cursor_update`] and [`queue_lock_changed`],
 //! so sounds, `CURSOR_UPDATE`, grid events and lock display fire from one place.
 
-use mlua::Lua;
+use mlua::{Lua, MultiValue, Value};
 
 use super::{Model, ScriptValue};
 
@@ -437,8 +437,74 @@ pub enum EnchantConfirm {
 // Lua globals
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
+/// `GetCursorInfo()` (`0x515200`), switched on the payload mode:
+/// - 1, an item: `"item", itemId, link`;
+/// - 2, money: `"money", copper`;
+/// - 3, a spell: `"spell", bookIndex, "spell"|"pet"`, the index 1-based in the player's book,
+///   then the pet's (`0x53b4e0`), 0 when in neither;
+/// - 5, a vendor row: `"merchant", row`, 1-based;
+/// - 8, a macro: `"macro", index`;
+/// - 4 (a pet action), 10 (a stabled pet) and an empty cursor: nothing.
+///
+/// A bar-slot pickup answers as the payload the reference would hold for it: an item by id, whose
+/// link needs the template (`0x5153a9`), else nothing; a macro; a spell. Deviation: a companion
+/// spell answers as a spell, not `"companion", index, "CRITTER"|"MOUNT"` (`0x5152c0`), as
+/// `GetActionInfo` does; benilla keeps no companion list, guild bank or equipment sets, so modes
+/// 12 (`"guildbankmoney"`) and 13 (`"equipmentset"`) never arise.
+fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
+    let str = |s: &str| lua.create_string(s).map(Value::String);
+    let int = |n: u32| Value::Integer(i64::from(n));
+    let spell = |spell_id: u32, fallback: Option<(u32, &str)>| -> mlua::Result<Vec<Value>> {
+        let in_book = model
+            .spellbook
+            .slots
+            .iter()
+            .position(|s| s.spell_id == spell_id)
+            .map(|i| (i as u32 + 1, "spell"));
+        let (index, book) = in_book.or(fallback).unwrap_or((0, "spell"));
+        Ok(vec![str("spell")?, int(index), str(book)?])
+    };
+    let values = match &model.cursor {
+        None | Some(CursorPayload::PetAction(_) | CursorPayload::StablePet(_)) => Vec::new(),
+        Some(CursorPayload::Item(item)) => vec![
+            str("item")?,
+            int(item.item_id),
+            item.link.as_deref().map_or(Ok(Value::Nil), str)?,
+        ],
+        Some(CursorPayload::Money(m)) => vec![str("money")?, int(m.copper)],
+        Some(CursorPayload::Spell(s)) => {
+            let pet = (s.book_type == "pet").then_some((s.book_slot, "pet"));
+            spell(s.spell_id, pet)?
+        }
+        Some(CursorPayload::Merchant(m)) => vec![str("merchant")?, int(m.row + 1)],
+        Some(CursorPayload::Macro(m)) => vec![str("macro")?, int(m.index)],
+        Some(CursorPayload::Action(a)) => match a.kind & 0xf0 {
+            super::action::ACTION_KIND_ITEM => match model.item_templates.get(&a.action) {
+                Some(t) => vec![
+                    str("item")?,
+                    int(a.action),
+                    str(&super::item_stats::item_link(a.action, &t.name, t.quality))?,
+                ],
+                None => Vec::new(),
+            },
+            super::action::ACTION_KIND_MACRO => vec![str("macro")?, int(a.action)],
+            super::action::ACTION_KIND_SPELL => spell(a.action, None)?,
+            _ => Vec::new(),
+        },
+    };
+    Ok(MultiValue::from_vec(values))
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
+
+    g.set(
+        "GetCursorInfo",
+        lua.create_function(|lua, ()| {
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            cursor_info(lua, &model)
+        })?,
+    )?;
 
     // `BindEnchant()`, `ReplaceEnchant()`: queue an intent for the app; nothing is sent from here.
     for (name, answer) in [
@@ -514,6 +580,8 @@ mod tests {
         slots.insert(
             1,
             crate::script::container::ContainerSlot {
+                quest_item: false,
+                start_quest: 0,
                 duration_ms: None,
                 petition: None,
                 already_bound: false,
@@ -534,6 +602,7 @@ mod tests {
             },
         );
         crate::script::container::ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -752,5 +821,91 @@ mod tests {
             .unwrap());
         let held = s.cursor_item().expect("picked up");
         assert_eq!(held.count, None, "count>=stack ⇒ whole-stack pickup");
+    }
+
+    /// `GetCursorInfo()` (`0x515200`): the payload's type word and its id, per mode.
+    #[test]
+    fn cursor_info_names_each_payload() {
+        let mut s = UiScript::new().unwrap();
+        let info = |s: &UiScript| -> Vec<String> {
+            let values: mlua::Variadic<mlua::Value> = s.eval("return GetCursorInfo()").unwrap();
+            values
+                .iter()
+                .map(|v| match v {
+                    mlua::Value::String(t) => t.to_string_lossy().to_string(),
+                    mlua::Value::Integer(n) => n.to_string(),
+                    mlua::Value::Number(n) => n.to_string(),
+                    other => format!("{other:?}"),
+                })
+                .collect()
+        };
+        assert!(info(&s).is_empty(), "an empty cursor answers nothing");
+
+        s.set_cursor_for_test(CursorPayload::Item(CursorItem {
+            bag: 0,
+            slot: 1,
+            item_id: 117,
+            texture: None,
+            link: Some("|cffffffff|Hitem:117|h[Tough Jerky]|h|r".into()),
+            count: None,
+            quality: Some(1),
+            equip_slots: Vec::new(),
+            bar_placeable: true,
+        }));
+        assert_eq!(
+            info(&s),
+            ["item", "117", "|cffffffff|Hitem:117|h[Tough Jerky]|h|r"]
+        );
+
+        s.set_cursor_for_test(CursorPayload::Money(super::CursorMoney { copper: 250 }));
+        assert_eq!(info(&s), ["money", "250"]);
+
+        s.set_cursor_for_test(CursorPayload::Merchant(super::CursorMerchantItem {
+            item_id: 159,
+            row: 2,
+            texture: None,
+        }));
+        assert_eq!(info(&s), ["merchant", "3"], "the row, 1-based");
+
+        s.set_cursor_for_test(CursorPayload::Macro(super::CursorMacro {
+            index: 19,
+            texture: None,
+        }));
+        assert_eq!(info(&s), ["macro", "19"]);
+
+        // A spell outside the pushed book: index 0, the player's book.
+        s.set_cursor_for_test(CursorPayload::Spell(CursorSpell {
+            book_slot: 4,
+            book_type: "spell".into(),
+            spell_id: 133,
+            texture: None,
+            passive: false,
+        }));
+        assert_eq!(info(&s), ["spell", "0", "spell"]);
+        // From the pet's book: its slot and `"pet"`.
+        s.set_cursor_for_test(CursorPayload::Spell(CursorSpell {
+            book_slot: 2,
+            book_type: "pet".into(),
+            spell_id: 17_253,
+            texture: None,
+            passive: false,
+        }));
+        assert_eq!(info(&s), ["spell", "2", "pet"]);
+
+        // A bar macro pickup answers as the macro; an item one waits for its template.
+        s.set_cursor_for_test(CursorPayload::Action(CursorAction {
+            src_slot: 1,
+            kind: crate::script::action::ACTION_KIND_MACRO,
+            action: 3,
+            texture: None,
+        }));
+        assert_eq!(info(&s), ["macro", "3"]);
+        s.set_cursor_for_test(CursorPayload::Action(CursorAction {
+            src_slot: 1,
+            kind: crate::script::action::ACTION_KIND_ITEM,
+            action: 6_948,
+            texture: None,
+        }));
+        assert!(info(&s).is_empty(), "no template, no answer (`0x5153a9`)");
     }
 }

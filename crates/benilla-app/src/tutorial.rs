@@ -388,13 +388,18 @@ fn watch_self(
     watch.swimming = Some(player.swimming);
 }
 
-/// After the script tick: the four verbs' writes, then every send.
+/// After the script tick: the verbs' writes, then every send.
 fn drain_tutorials(
     script: Option<NonSendMut<UiScript>>,
     mut tutorials: ResMut<Tutorials>,
     commands: Res<NetCommands>,
 ) {
     if let Some(mut script) = script {
+        // `TriggerTutorial(n)` calls the client's trigger with no delay (`0x5308f7`).
+        let now = Instant::now();
+        for id in script.take_tutorial_triggers() {
+            tutorials.trigger(id, 0, now);
+        }
         for id in script.take_tutorial_flag_requests() {
             tutorials.acknowledge(id);
         }

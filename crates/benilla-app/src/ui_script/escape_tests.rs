@@ -12,6 +12,8 @@ fn one_item_backpack() -> ContainerState {
     slots.insert(
         1,
         ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -32,6 +34,7 @@ fn one_item_backpack() -> ContainerState {
         },
     );
     ContainerState {
+        bag_family: 0,
         name: Some("Backpack".into()),
         num_slots: 16,
         slots,
@@ -256,6 +259,8 @@ fn escape_closes_an_open_stack_split_frame() {
     slots.insert(
         1,
         ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -278,6 +283,7 @@ fn escape_closes_an_open_stack_split_frame() {
     s.set_container(
         0,
         Some(ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,

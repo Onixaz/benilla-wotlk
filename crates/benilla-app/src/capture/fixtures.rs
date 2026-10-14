@@ -1423,6 +1423,8 @@ fn seed_cooldown_filmstrip(
         slots.insert(
             slot,
             benilla_ui::script::ContainerSlot {
+                quest_item: false,
+                start_quest: 0,
                 petition: None,
                 durability: None,
                 duration_ms: None,
@@ -1446,6 +1448,7 @@ fn seed_cooldown_filmstrip(
     script.set_container(
         0,
         Some(benilla_ui::script::ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -1475,6 +1478,8 @@ fn seed_bag_window(
     };
     let slot = |disp: u32, count: u32, id: u32, name: &str, quality: u32| {
         benilla_ui::script::ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             petition: None,
             durability: None,
             duration_ms: None,
@@ -1507,6 +1512,7 @@ fn seed_bag_window(
     script.set_container(
         0,
         Some(benilla_ui::script::ContainerState {
+            bag_family: 0,
             name: Some("Backpack".into()),
             num_slots: 16,
             slots,
@@ -1561,6 +1567,8 @@ fn seed_equipped_bags(
     };
     let slot =
         |disp: u32, count: u32, name: &str, quality: u32| benilla_ui::script::ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             petition: None,
             durability: None,
             duration_ms: None,
@@ -1581,7 +1589,7 @@ fn seed_equipped_bags(
         };
 
     // The equipped-bag slots (inv ids 20-23, `Bag0Slot`-`Bag3Slot`) get an icon each, so each
-    // window's portrait shows its own bag through `SetBagPortaitTexture`; live, the char feed
+    // window's portrait shows its own bag through `SetBagPortraitTexture`; live, the char feed
     // does this.
     let mut inv: benilla_ui::script::InventorySlots = Default::default();
     for (id, icon_name) in [
@@ -1641,6 +1649,7 @@ fn seed_equipped_bags(
         script.set_container(
             bag_id,
             Some(benilla_ui::script::ContainerState {
+                bag_family: 0,
                 name: Some(name.into()),
                 num_slots: size,
                 slots,

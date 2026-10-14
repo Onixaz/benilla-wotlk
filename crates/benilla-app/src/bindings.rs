@@ -1560,6 +1560,7 @@ mod tests {
         script.set_container(
             0,
             Some(benilla_ui::script::ContainerState {
+                bag_family: 0,
                 name: Some("Backpack".into()),
                 num_slots: 16,
                 slots: std::collections::HashMap::new(),
@@ -1568,6 +1569,7 @@ mod tests {
         script.set_container(
             2,
             Some(benilla_ui::script::ContainerState {
+                bag_family: 0,
                 name: Some("Small Pouch".into()),
                 num_slots: 6,
                 slots: std::collections::HashMap::new(),

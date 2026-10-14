@@ -1215,6 +1215,7 @@ fn seat_a_session(script: &mut UiScript) {
         script.set_container(
             0,
             Some(benilla_ui::script::ContainerState {
+                bag_family: 0,
                 name: Some("Backpack".into()),
                 num_slots: 16,
                 slots,

@@ -895,6 +895,7 @@ mod tests {
         s.set_container(
             0,
             Some(ContainerState {
+                bag_family: 0,
                 name: None,
                 num_slots: 16,
                 slots,

@@ -78,6 +78,8 @@ fn backpack_with_fitting_helm() -> benilla_ui::script::ContainerState {
     slots.insert(
         1,
         benilla_ui::script::ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -98,6 +100,7 @@ fn backpack_with_fitting_helm() -> benilla_ui::script::ContainerState {
         },
     );
     benilla_ui::script::ContainerState {
+        bag_family: 0,
         name: Some("Backpack".into()),
         num_slots: 16,
         slots,

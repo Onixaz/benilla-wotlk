@@ -715,6 +715,7 @@ mod tests {
         script.set_container(
             0,
             Some(benilla_ui::script::ContainerState {
+                bag_family: 0,
                 name: None,
                 num_slots: 16,
                 slots: std::collections::HashMap::from([(

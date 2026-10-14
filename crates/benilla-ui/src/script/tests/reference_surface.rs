@@ -74,7 +74,6 @@ const BEYOND_REFERENCE: &[&str] = &[
     "PromoteToPartyLeader",
     "RestoreVideoDefaults",
     "SelectCraft",
-    "SetBagPortaitTexture",
     "SetDoodadAnim",
     "SetGuildRecruitmentMode",
     "SetInventoryPortaitTexture",

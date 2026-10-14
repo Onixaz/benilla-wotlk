@@ -708,6 +708,8 @@ fn backpack() -> ContainerState {
     slots.insert(
         1,
         ContainerSlot {
+            quest_item: false,
+            start_quest: 0,
             duration_ms: None,
             petition: None,
             already_bound: false,
@@ -728,6 +730,7 @@ fn backpack() -> ContainerState {
         },
     );
     ContainerState {
+        bag_family: 0,
         name: Some("Backpack".into()),
         num_slots: 16,
         slots,
