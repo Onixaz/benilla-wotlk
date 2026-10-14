@@ -44,7 +44,7 @@ const AURA_MOD_XP_QUEST_PCT: u32 = 0x123;
 pub(crate) struct RewardInputs<'w, 's> {
     tables: Option<Res<'w, QuestRewardTablesRes>>,
     factions: Option<Res<'w, crate::target::Factions>>,
-    reputations: Res<'w, crate::net::Reputations>,
+    reputations: Option<Res<'w, crate::net::Reputations>>,
     auras: Query<'w, 's, &'static UnitAuras, With<SelfPlayer>>,
     roster: Option<Res<'w, crate::char_select::Roster>>,
 }
@@ -62,7 +62,11 @@ impl RewardInputs<'_, '_> {
         let Ok(index) = usize::try_from(row.rep_index) else {
             return 0;
         };
-        let wire = self.reputations.0.get(index).map_or(0, |&(_, s)| s);
+        let wire = self
+            .reputations
+            .as_ref()
+            .and_then(|r| r.0.get(index))
+            .map_or(0, |&(_, s)| s);
         let (race, class) = (
             store.unit_race().unwrap_or(0),
             store.unit_class().unwrap_or(0),
@@ -418,8 +422,8 @@ mod tests {
         assert_eq!(quest_xp(&t, 10, 3, 17), 250);
         // Player 30: clamped to 1 tenth: 41 → nearest 5 → 40.
         assert_eq!(quest_xp(&t, 10, 3, 30), 40);
-        // A `-1` quest takes the player's level.
-        assert_eq!(quest_xp(&t, u32::MAX, 5, 10), 820);
+        // A `-1` quest takes the player's level; 820 is past 500, so it rounds to 25s.
+        assert_eq!(quest_xp(&t, u32::MAX, 5, 10), 825);
     }
 
     #[test]

@@ -3533,17 +3533,17 @@ mod dependency_tests {
             "Elwynn Forest"
         );
         assert!(
-            s.eval::<bool>("local _,_,_,h = GetQuestLogTitle(1) return h and true or false")
+            s.eval::<bool>("local _,_,_,_,h = GetQuestLogTitle(1) return h and true or false")
                 .unwrap(),
             "row 1 is the header"
         );
         // Both ends of isComplete: nil for in-progress, 1 for complete.
         assert!(s
-            .eval::<Option<i64>>("local _,_,_,_,_,c = GetQuestLogTitle(2) return c")
+            .eval::<Option<i64>>("local _,_,_,_,_,_,c = GetQuestLogTitle(2) return c")
             .unwrap()
             .is_none());
         assert_eq!(
-            s.eval::<i64>("local _,_,_,_,_,c = GetQuestLogTitle(3) return c")
+            s.eval::<i64>("local _,_,_,_,_,_,c = GetQuestLogTitle(3) return c")
                 .unwrap(),
             1
         );
