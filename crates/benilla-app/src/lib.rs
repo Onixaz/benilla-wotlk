@@ -294,6 +294,16 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
             s.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
         });
     }
+    if std::env::var_os("WOW_MT_FIXED").is_none() {
+        let single = |s: &mut Schedule| {
+            s.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+        };
+        app.edit_schedule(FixedFirst, single)
+            .edit_schedule(FixedPreUpdate, single)
+            .edit_schedule(FixedUpdate, single)
+            .edit_schedule(FixedPostUpdate, single)
+            .edit_schedule(FixedLast, single);
+    }
     // The build banner ships in every build: which build produced a log is the first thing a report
     // from another machine must establish.
     app.add_systems(Startup, benilla_world::build_id::banner);
