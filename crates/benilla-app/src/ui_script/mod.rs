@@ -1036,6 +1036,9 @@ mod aura_verb_tests;
 mod talent_ui_tests;
 
 #[cfg(test)]
+mod quest_ui_tests;
+
+#[cfg(test)]
 mod zone_text_tests;
 
 #[cfg(test)]

@@ -804,6 +804,9 @@ pub(crate) struct Model {
     /// The quest log, selection (1-based), abandon mark (a quest id, `0xbb7484`) and abandons.
     pub(crate) quest_log: quest_log::QuestLogState,
     pub(crate) quest_log_selection: u32,
+    /// The reward-faction list, refilled by a quest panel's publish or
+    /// `ProcessQuestLogRewardFactions` (`0x58d050`).
+    pub(crate) quest_reward_factions: Vec<(u32, i32)>,
     pub(crate) quest_log_abandon_mark: u32,
     pub(crate) quest_log_abandons: Vec<u32>,
     /// `QuestLogPushQuest()` quest ids, resolved at the click so a log change cannot retarget one.
@@ -1421,6 +1424,7 @@ impl Model {
             death_actions: Vec::new(),
             quest_log: quest_log::QuestLogState::default(),
             quest_log_selection: 0,
+            quest_reward_factions: Vec::new(),
             quest_log_abandon_mark: 0,
             quest_log_abandons: Vec::new(),
             quest_log_pushes: Vec::new(),

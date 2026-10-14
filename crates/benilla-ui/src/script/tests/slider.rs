@@ -229,17 +229,24 @@ fn slider_setvalue_fires_onvaluechanged_only_on_change() {
     .unwrap();
 }
 
-/// `Enable`/`Disable`/`IsEnabled` are Button methods in 1.12 (table `0x879d00`), so a Slider must
-/// not answer them: addons duck-type on `if widget.IsEnabled then`. A Button is the control.
+/// 3.3.5a's Slider table (`0xb2ce20`) has its own `Enable`, `Disable` and `IsEnabled`: 1 or nil
+/// (`0x972050`), and each call runs `OnEnable`/`OnDisable` even without a change. The Button's
+/// predicate stays the number 1 or 0.
 #[test]
-fn a_slider_does_not_answer_the_buttons_enable_trio() {
+fn a_slider_answers_its_own_enable_trio() {
     let s = script();
     s.run(
         r#"
         local sl = CreateFrame("Slider", "SlEnable")
-        for _, name in ipairs({ "Enable", "Disable", "IsEnabled" }) do
-            assert(sl[name] == nil, "Slider must not answer " .. name)
-        end
+        local fired = {}
+        sl:SetScript("OnDisable", function() fired[#fired + 1] = "off" end)
+        sl:SetScript("OnEnable", function() fired[#fired + 1] = "on" end)
+        assert(sl:IsEnabled() == 1, "a new slider is enabled")
+        sl:Disable()
+        assert(sl:IsEnabled() == nil, "nil, not 0")
+        sl:Disable()
+        sl:Enable()
+        assert(table.concat(fired, ",") == "off,off,on", table.concat(fired, ","))
         local b = CreateFrame("Button", "SlEnableControl")
         for _, name in ipairs({ "Enable", "Disable", "IsEnabled" }) do
             assert(type(b[name]) == "function", "Button still answers " .. name)

@@ -42,6 +42,11 @@ pub struct QuestLogEntryView {
     /// `Player::AddQuest`), 0 when untimed. A stamp, not a countdown: the app diffs this snapshot
     /// to fire `QUEST_LOG_UPDATE`, so a live number here would rebuild the log every frame.
     pub timer: u32,
+    /// `GetQuestLogTitle`'s `suggestedGroup`, the template's suggested players (`+0x18`,
+    /// `0x5ded30`); 0 on a header.
+    pub suggested_group: u32,
+    /// `isDaily`: the template's `0x1000` flag (`0x5decc0`).
+    pub is_daily: bool,
     /// This row's objective lines; the leaderboard verbs serve any row, selected or not.
     pub objectives: Vec<QuestLogObjectiveView>,
     /// This row's detail pane, `None` on a header. Per row, not per selection: the reference's
@@ -85,6 +90,8 @@ pub struct QuestLogDetail {
     pub rewards: Vec<QuestLogQuestItem>,
     /// The template's `rewSpell`, as `GetQuestLogRewardSpell` answers it.
     pub reward_spell: Option<super::quest::QuestRewardSpell>,
+    /// The XP, honor, talent, arena, title and reputation rewards the app resolves.
+    pub extras: super::quest::QuestRewardExtras,
 }
 
 /// A quest-log reward row is the same shape as a questgiver panel row.
@@ -98,6 +105,8 @@ pub struct QuestLogState {
     /// `GetNumQuestLogEntries`'s return 2: every quest, folded ones included, for the
     /// "Quests: N/20" count (`QuestLogFrame.lua:290`).
     pub num_quests: u32,
+    /// `GetDailyQuestsCompleted`: the daily-quest fields holding a quest (`0x58db30`).
+    pub daily_completed: u32,
     /// Quests folded under a collapsed header: in the log, not in `entries`. Their watches and
     /// abandon marks hold, as the reference's watch prune (`0x4de7a7` to `0x4de80f`) and abandon
     /// search (`0xbb71c0`) cover every row, folded ones included.
@@ -204,9 +213,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `title, level, tag, isHeader, isCollapsed, isComplete`, always six (`0x4df930`). The index
-    // truncates as `_ftol` does, and a missing or non-number one raises `Usage:`; out of range it
-    // answers `nil, 0, nil, nil, nil, nil`, and a header's level is 0 too.
+    // `title, level, questTag, suggestedGroup, isHeader, isCollapsed, isComplete, isDaily,
+    // questID`, nine (`0x5e5cc0`). The index truncates as `_ftol` does, and a missing or
+    // non-number one raises `Usage:`; out of range, or on a header, the numbers read 0. The tenth,
+    // `displayQuestID`, rides the `displayQuestID` CVar, which benilla does not register.
     g.set(
         "GetQuestLogTitle",
         lua.create_function(|lua, i: Value| {
@@ -224,9 +234,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Value::Nil,
                     Value::Integer(0),
                     Value::Nil,
+                    Value::Integer(0),
                     Value::Nil,
                     Value::Nil,
                     Value::Nil,
+                    Value::Nil,
+                    Value::Integer(0),
                 ]));
             };
             let tag = match &e.tag {
@@ -237,19 +250,45 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 0 => Value::Nil,
                 c => Value::Integer(i64::from(c.signum())),
             };
-            // Returns 4 and 5 are 1 or nil, never booleans; `isCollapsed` is 1 only on a header
-            // whose bit in `[0xbb748c]` is clear.
+            // The flags are 1 or nil, never booleans; `isCollapsed` is 1 only on a folded header.
             let flag = |b: bool| if b { Value::Integer(1) } else { Value::Nil };
+            let quest = |v: u32| Value::Integer(if e.is_header { 0 } else { i64::from(v) });
             Ok(MultiValue::from_vec(vec![
                 Value::String(lua.create_string(&e.title)?),
-                Value::Integer(i64::from(e.level)),
+                quest(e.level),
                 tag,
+                quest(e.suggested_group),
                 flag(e.is_header),
                 flag(e.is_header && e.collapsed),
                 complete,
+                flag(e.is_daily),
+                quest(e.quest_id),
             ]))
         })?,
     )?;
+
+    // The selection's suggested group (`0x5df870`).
+    g.set(
+        "GetQuestLogGroupNum",
+        lua.create_function(|lua, ()| {
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let index = model.quest_log_selection as usize;
+            Ok(index
+                .checked_sub(1)
+                .and_then(|n| model.quest_log.entries.get(n))
+                .map_or(0, |e| i64::from(e.suggested_group)))
+        })?,
+    )?;
+
+    // The daily count (`0x58db30`) and its constant cap, 25 (`0x58c470`).
+    g.set(
+        "GetDailyQuestsCompleted",
+        lua.create_function(|lua, ()| {
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            Ok(i64::from(model.quest_log.daily_completed))
+        })?,
+    )?;
+    g.set("GetMaxDailyQuests", lua.create_function(|_, ()| Ok(25i64))?)?;
 
     g.set(
         "SelectQuestLogEntry",
@@ -342,6 +381,66 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     install_detail_count(lua, "GetNumQuestLogRewards", |d| d.rewards.len() as i64)?;
     install_detail_count(lua, "GetNumQuestLogChoices", |d| d.choices.len() as i64)?;
     install_detail_count(lua, "GetQuestLogRewardMoney", |d| i64::from(d.reward_money))?;
+    // The selection's extra rewards (`0x5e49b0`, `0x5e4b70`, `0x5df3a0`, `0x5df400`).
+    install_detail_count(lua, "GetQuestLogRewardXP", |d| i64::from(d.extras.xp))?;
+    install_detail_count(lua, "GetQuestLogRewardHonor", |d| i64::from(d.extras.honor))?;
+    install_detail_count(lua, "GetQuestLogRewardTalents", |d| {
+        i64::from(d.extras.talents)
+    })?;
+    install_detail_count(lua, "GetQuestLogRewardArenaPoints", |d| {
+        i64::from(d.extras.arena_points)
+    })?;
+    // `GetQuestLogRewardTitle` (`0x5e4c10`): the title's text, nil for none.
+    lua.globals().set(
+        "GetQuestLogRewardTitle",
+        lua.create_function(|lua, ()| {
+            let title = {
+                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                model
+                    .selected_quest_detail()
+                    .and_then(|d| d.extras.title.clone())
+            };
+            match title {
+                Some(t) => Ok(Value::String(lua.create_string(&t)?)),
+                None => Ok(Value::Nil),
+            }
+        })?,
+    )?;
+    // `ProcessQuestLogRewardFactions` (`0x5df8a0`) refills the reward-faction list from the
+    // selection; `GetNumQuestLogRewardFactions` (`0x5df910`) and `GetQuestLogRewardFactionInfo`
+    // (`0x5df940`) read it, whichever panel filled it last. Out of range answers `0, 0`.
+    lua.globals().set(
+        "ProcessQuestLogRewardFactions",
+        lua.create_function(|lua, ()| {
+            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let factions = model
+                .selected_quest_detail()
+                .map(|d| d.extras.factions.clone())
+                .unwrap_or_default();
+            model.quest_reward_factions = factions;
+            Ok(())
+        })?,
+    )?;
+    lua.globals().set(
+        "GetNumQuestLogRewardFactions",
+        lua.create_function(|lua, ()| {
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            Ok(model.quest_reward_factions.len() as i64)
+        })?,
+    )?;
+    lua.globals().set(
+        "GetQuestLogRewardFactionInfo",
+        lua.create_function(|lua, i: Value| {
+            let n = number_arg(lua, i, "Usage: GetQuestLogRewardFactionInfo(index)")?;
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let (id, amount) = usize::try_from(n)
+                .ok()
+                .and_then(|n| n.checked_sub(1))
+                .and_then(|n| model.quest_reward_factions.get(n).copied())
+                .unwrap_or((0, 0));
+            Ok((i64::from(id), i64::from(amount)))
+        })?,
+    )?;
     install_detail_count(lua, "GetQuestLogRequiredMoney", |d| {
         i64::from(d.required_money)
     })?;
@@ -723,6 +822,7 @@ mod tests {
         QuestLogState {
             num_quests: 2,
             hidden_quest_ids: Vec::new(),
+            daily_completed: 0,
             entries: vec![
                 QuestLogEntryView {
                     quest_id: 783,
@@ -752,6 +852,7 @@ mod tests {
                             link: Some("|cffffffff|Hitem:2024:0:0:0|h[Militia Hammer]|h|r".into()),
                         }],
                         reward_spell: None,
+                        extras: Default::default(),
                     }),
                     ..Default::default()
                 },
@@ -775,6 +876,7 @@ mod tests {
                         choices: vec![],
                         rewards: vec![],
                         reward_spell: None,
+                        extras: Default::default(),
                     }),
                     ..Default::default()
                 },
@@ -800,24 +902,30 @@ mod tests {
         );
         assert!(s
             .eval::<bool>(
-                "local t, l, tag, h, c, done = GetQuestLogTitle(1)\n\
-                 return t == 'A Threat Within' and l == 1 and tag == nil\n\
-                    and h == nil and c == nil and done == nil"
+                "local t, l, tag, g, h, c, done, daily, id = GetQuestLogTitle(1)\n\
+                 return t == 'A Threat Within' and l == 1 and tag == nil and g == 0\n\
+                    and h == nil and c == nil and done == nil and daily == nil and id == 783"
             )
             .unwrap());
         assert!(s
             .eval::<bool>(
-                "local t, _, _, _, _, done = GetQuestLogTitle(2)\n\
-                 return t == 'Kobold Camp Cleanup' and done == 1"
+                "local t, _, _, _, _, _, done, _, id = GetQuestLogTitle(2)\n\
+                 return t == 'Kobold Camp Cleanup' and done == 1 and id == 7"
             )
             .unwrap());
     }
 
-    /// The shape of `0x4df930`.
+    /// The shape of `0x5e5cc0`: nine values, the numbers 0 out of range.
     #[test]
-    fn out_of_range_is_six_values_with_a_zero_level_and_a_bad_arg_raises() {
+    fn out_of_range_is_nine_values_with_zero_numbers_and_a_bad_arg_raises() {
         let mut s = UiScript::new().unwrap();
-        assert_eq!(s.arity("GetQuestLogTitle(1)").unwrap(), 6);
+        assert_eq!(s.arity("GetQuestLogTitle(1)").unwrap(), 9);
+        assert!(s
+            .eval::<bool>(
+                "local t, l, _, g, _, _, _, _, id = GetQuestLogTitle(1)\n\
+                 return t == nil and l == 0 and g == 0 and id == 0"
+            )
+            .unwrap());
         assert!(s
             .eval::<bool>("local t, l = GetQuestLogTitle(1) return t == nil and l == 0")
             .unwrap());
@@ -876,15 +984,15 @@ mod tests {
 
         assert!(s
             .eval::<bool>(
-                "local _, l, _, h, c = GetQuestLogTitle(1) return h == 1 and c == 1 and l == 0"
+                "local _, l, _, _, h, c = GetQuestLogTitle(1) return h == 1 and c == 1 and l == 0"
             )
             .unwrap());
         assert!(s
-            .eval::<bool>("local _, _, _, h, c = GetQuestLogTitle(2) return h == 1 and c == nil")
+            .eval::<bool>("local _, _, _, _, h, c = GetQuestLogTitle(2) return h == 1 and c == nil")
             .unwrap());
         assert!(s
             .eval::<bool>(
-                "local _, _, _, h, c = GetQuestLogTitle(3)\n\
+                "local _, _, _, _, h, c = GetQuestLogTitle(3)\n\
                  return h == nil and c == nil and type(h) ~= 'boolean'"
             )
             .unwrap());
@@ -1094,7 +1202,7 @@ mod tests {
         s.run("SelectQuestLogEntry(1)").unwrap();
         assert!(s.eval::<bool>("return IsCurrentQuestFailed()").unwrap());
         assert!(s
-            .eval::<bool>("local _, _, _, _, _, done = GetQuestLogTitle(1)\nreturn done == -1")
+            .eval::<bool>("local _, _, _, _, _, _, done = GetQuestLogTitle(1)\nreturn done == -1")
             .unwrap());
         s.run("SelectQuestLogEntry(2)").unwrap();
         assert!(!s.eval::<bool>("return IsCurrentQuestFailed()").unwrap());
@@ -1150,6 +1258,7 @@ mod tests {
             entries: vec![header(true)],
             num_quests: 2,
             hidden_quest_ids: vec![783, 7],
+            daily_completed: 0,
         });
         assert_eq!(
             s.eval::<i64>("return GetNumQuestWatches()").unwrap(),

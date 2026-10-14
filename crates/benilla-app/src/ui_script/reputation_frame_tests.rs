@@ -20,6 +20,8 @@ fn entry(faction_id: u32, rep_list_id: u32, parent_id: u32, name: &str) -> Facti
         at_war: false,
         can_toggle_at_war: true,
         inactive: false,
+        has_rep: false,
+        is_child: false,
     }
 }
 

@@ -72,6 +72,9 @@ pub struct QuestExtraRewards {
     pub title: u32,
     pub talents: u32,
     pub arena_points: u32,
+    /// Bit `i` keeps reputation reward `i` from spilling to its parent and children
+    /// (`0x58d050`'s `0xacf160[i] & mask` test).
+    pub rep_no_spillover: u32,
     pub reputation: QuestReputationRewards,
 }
 
@@ -316,7 +319,7 @@ fn read_extra_rewards(r: &mut &[u8], skip_after_honor: bool) -> io::Result<Quest
     let title = read_u32_le(r)?;
     let talents = read_u32_le(r)?;
     let arena_points = read_u32_le(r)?;
-    let _unknown = read_u32_le(r)?;
+    let rep_no_spillover = read_u32_le(r)?;
     Ok(QuestExtraRewards {
         money,
         xp,
@@ -327,6 +330,7 @@ fn read_extra_rewards(r: &mut &[u8], skip_after_honor: bool) -> io::Result<Quest
         title,
         talents,
         arena_points,
+        rep_no_spillover,
         reputation: read_reputation(r)?,
     })
 }
@@ -505,7 +509,7 @@ mod tests {
         push_u32(b, 3); // title
         push_u32(b, 1); // talents
         push_u32(b, 25); // arena
-        push_u32(b, 0);
+        push_u32(b, 0b10); // no spillover for reward 1
         for i in 0..5 {
             push_u32(b, 72 + i);
         }
@@ -526,6 +530,7 @@ mod tests {
         assert_eq!(e.title, 3);
         assert_eq!(e.talents, 1);
         assert_eq!(e.arena_points, 25);
+        assert_eq!(e.rep_no_spillover, 0b10);
         assert_eq!(e.reputation.factions, [72, 73, 74, 75, 76]);
         assert_eq!(e.reputation.value_ids, [0, 1, 2, 3, 4]);
         assert_eq!(e.reputation.overrides, [0, -1, -2, -3, -4]);

@@ -1189,6 +1189,7 @@ fn seat_a_session(script: &mut UiScript) {
             entries: vec![header, in_progress, done],
             num_quests: 2,
             hidden_quest_ids: Vec::new(),
+            daily_completed: 0,
         });
     }
 

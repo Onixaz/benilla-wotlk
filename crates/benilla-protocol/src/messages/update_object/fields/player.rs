@@ -206,6 +206,16 @@ impl ObjectFields {
             timer,
         })
     }
+    /// How many of the 25 daily-quest fields hold a quest: `GetDailyQuestsCompleted` (`0x58db30`).
+    pub fn player_daily_quests_completed(&self) -> u32 {
+        (0..25)
+            .filter(|&i| self.get_u32(FIELD_PLAYER_DAILY_QUESTS_1 + i).unwrap_or(0) != 0)
+            .count() as u32
+    }
+    /// `PLAYER_FIELD_MAX_LEVEL`: the level cap of the account's expansion.
+    pub fn player_max_level(&self) -> Option<u32> {
+        self.get_u32(FIELD_PLAYER_MAX_LEVEL)
+    }
     /// `PLAYER_EXPLORED_ZONES_1 + i`: bitset dword `i`; bit `n` is `AreaTable` explore flag `n`.
     pub fn player_explored_zone_slot(&self, i: u16) -> u32 {
         if i >= PLAYER_EXPLORED_ZONES_SLOTS {

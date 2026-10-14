@@ -98,11 +98,14 @@ fn snap_block_top_law(y: f32) -> f32 {
 pub(crate) const UI_SEAT_NUDGE: f32 = 1.0;
 
 /// `SetAlphaGradient`'s alpha at a character: opaque before `start`, linear to 0 over `length`.
+/// A zero `length` fades nothing: 12340 steps the alpha down by `alpha / length` per glyph
+/// (`0x6c78f0`), a step of 0 there, which the stock quest log's `SetAlphaGradient(0, 0)` relies on
+/// to show its description whole (`QuestInfo.lua:107`).
 fn gradient_alpha(index: usize, start: f32, length: f32) -> f32 {
     let i = index as f32;
-    if i < start {
+    if i < start || length <= 0.0 {
         1.0
-    } else if length > 0.0 && i < start + length {
+    } else if i < start + length {
         1.0 - (i - start) / length
     } else {
         0.0
@@ -381,8 +384,10 @@ mod gradient_tests {
         assert_eq!(gradient_alpha(40, 10.0, 30.0), 0.0);
         assert_eq!(gradient_alpha(1000, 10.0, 30.0), 0.0);
         // Zero length: a hard reveal edge, never a divide by zero.
+        // A zero length fades nothing.
         assert_eq!(gradient_alpha(5, 10.0, 0.0), 1.0);
-        assert_eq!(gradient_alpha(15, 10.0, 0.0), 0.0);
+        assert_eq!(gradient_alpha(15, 10.0, 0.0), 1.0);
+        assert_eq!(gradient_alpha(15, 0.0, 0.0), 1.0);
     }
 }
 

@@ -934,6 +934,8 @@ pub struct SliderState {
     pub vertical: bool,
     /// The thumb texture (`<ThumbTexture>`), placed at [`Self::fraction`] along the track.
     pub thumb: Option<RegionHandle>,
+    /// Frame flag `0x400`, set by `Disable` (`0x972150`): a press starts no drag (`0x96c406`).
+    pub disabled: bool,
 }
 
 impl Default for SliderState {
@@ -947,6 +949,7 @@ impl Default for SliderState {
             step: 0.0,
             vertical: true,
             thumb: None,
+            disabled: false,
         }
     }
 }

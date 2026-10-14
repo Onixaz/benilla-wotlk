@@ -110,6 +110,23 @@ fn attributes_of(lua: &Lua, id: u32, create: bool) -> mlua::Result<Option<Table>
     }
 }
 
+/// Store `value` under `name` without the notifier, as an XML `<Attribute>` does: 12340's
+/// `CSimpleFrame::LoadXML_Attributes` (`0x492f70`) writes the hash table directly, so no
+/// `OnAttributeChanged` fires.
+pub(crate) fn store_from_xml(
+    lua: &Lua,
+    this: &Table,
+    name: &str,
+    value: Value,
+) -> mlua::Result<()> {
+    let h = frame_handle_of(lua, this)?;
+    let id = lua.app_data_mut::<Model>().expect("model").frame_id(h);
+    if let Some(t) = attributes_of(lua, id, true)? {
+        t.set(name.to_lowercase(), value)?;
+    }
+    Ok(())
+}
+
 /// Store `value` under `name` and fire `OnAttributeChanged(self, lowercased name, value)`. The
 /// handler runs as every engine-fired script does: its error is reported and `SetAttribute`
 /// returns as usual, so `ActionButton_OnLoad` (`ActionButton.lua:83-88`) sets each attribute even

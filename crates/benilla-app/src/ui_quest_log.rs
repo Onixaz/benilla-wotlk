@@ -130,7 +130,11 @@ impl Plugin for UiQuestLogPlugin {
         app.init_resource::<QuestLog>()
             .add_systems(
                 Startup,
-                (load_quest_header_names, load_quest_tag_names)
+                (
+                    load_quest_header_names,
+                    load_quest_tag_names,
+                    crate::ui_quest::rewards::load_quest_reward_tables,
+                )
                     .after(benilla_assets::AssetSet::Open),
             )
             .add_systems(
@@ -361,6 +365,7 @@ fn build_detail(
         choices,
         rewards,
         reward_spell: crate::ui_quest::reward_spell_view(template.reward_spell, spells),
+        extras: Default::default(),
     }
 }
 
@@ -457,9 +462,13 @@ pub(crate) fn feed_quest_log(
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
     commands: Res<NetCommands>,
-    header_names: Option<Res<QuestHeaderNamesRes>>,
-    tag_names: Option<Res<QuestTagNamesRes>>,
+    (header_names, tag_names): (
+        Option<Res<QuestHeaderNamesRes>>,
+        Option<Res<QuestTagNamesRes>>,
+    ),
     states: Res<crate::world_state::WorldStates>,
+    // The XP, honor, title and reputation extras each row's detail carries.
+    rewards: crate::ui_quest::rewards::RewardInputs,
     spells: Option<Res<Spells>>,
     // The completion toast is a message-catalog row, whose surface and sound the sink reads.
     mut sink: crate::ui_action::MessageSink,
@@ -582,6 +591,8 @@ pub(crate) fn feed_quest_log(
             complete: 0,
             timer: 0,
             pushable: false,
+            suggested_group: 0,
+            is_daily: false,
             objectives: Vec::new(),
             detail: None,
         });
@@ -592,7 +603,7 @@ pub(crate) fn feed_quest_log(
                 hidden_quest_ids.push(r.quest_id);
                 continue;
             }
-            let (title, level, tag, pushable, objectives, detail) =
+            let (title, level, tag, pushable, suggested_group, is_daily, objectives, detail) =
                 match quest_log.template(r.quest_id, &commands) {
                     Some(t) => (
                         t.title.clone(),
@@ -607,6 +618,8 @@ pub(crate) fn feed_quest_log(
                         // alone: vmangos pushes without it (`QuestHandler.cpp:403-459`) and checks
                         // it only at the accept (`QuestHandler.cpp:114`).
                         t.flags & quest_flags::SHARABLE != 0,
+                        t.suggested_players,
+                        t.flags & quest_flags::DAILY != 0,
                         build_objectives(
                             t,
                             &r.log_slot,
@@ -618,14 +631,22 @@ pub(crate) fn feed_quest_log(
                             &get,
                         ),
                         // Every row's: the bindings resolve the selection per call.
-                        Some(build_detail(
-                            t,
-                            &items,
-                            icons.as_deref(),
-                            &commands,
-                            &macros,
-                            spells.as_deref(),
-                        )),
+                        Some(QuestLogDetail {
+                            extras: rewards.for_template(
+                                t,
+                                &store.0,
+                                player.as_ref().map_or("", |p| p.name.as_str()),
+                                spells.as_deref(),
+                            ),
+                            ..build_detail(
+                                t,
+                                &items,
+                                icons.as_deref(),
+                                &commands,
+                                &macros,
+                                spells.as_deref(),
+                            )
+                        }),
                     ),
                     // The in-flight filter above kept only cached rows.
                     None => unreachable!("the in-flight gate leaves only cached rows"),
@@ -646,6 +667,8 @@ pub(crate) fn feed_quest_log(
                 collapsed: false,
                 complete,
                 pushable,
+                suggested_group,
+                is_daily,
                 // Absolute unix seconds, 0 untimed; the bindings subtract the server clock.
                 timer: r.log_slot.timer,
                 objectives,
@@ -668,6 +691,7 @@ pub(crate) fn feed_quest_log(
     let fresh = QuestLogState {
         entries,
         num_quests: rows.len() as u32,
+        daily_completed: store.0.player_daily_quests_completed(),
         hidden_quest_ids,
     };
     if fresh == *last {
@@ -965,6 +989,8 @@ mod tests {
             complete: 0,
             timer: 0,
             pushable: false,
+            suggested_group: 0,
+            is_daily: false,
             objectives: Vec::new(),
         }
     }
@@ -981,6 +1007,8 @@ mod tests {
             complete: 0,
             timer: 0,
             pushable: false,
+            suggested_group: 0,
+            is_daily: false,
             objectives: Vec::new(),
         }
     }
@@ -1613,6 +1641,7 @@ mod tests {
             num_quests: entries.iter().filter(|e| !e.is_header).count() as u32,
             entries,
             hidden_quest_ids: Vec::new(),
+            daily_completed: 0,
         }
     }
 

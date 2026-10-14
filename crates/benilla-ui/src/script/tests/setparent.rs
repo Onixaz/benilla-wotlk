@@ -108,10 +108,11 @@ fn a_visible_reparent_refires_onhide_then_onshow() {
     );
 }
 
-/// The `+0xd4` visibility cascade runs only in the show half (`0x76abfd` gates on the captured
-/// `ebx`), so a hidden frame moved under a visible parent stays invisible until shown.
+/// 12340's `CSimpleFrame::SetParent` (`0x4911b0`) runs the show half for a shown frame (`+0xdc`)
+/// under a visible parent (`+0xe0`), so a frame moved out of a hidden parent shows, firing
+/// `OnShow` once; it hid nothing, so no `OnHide`.
 #[test]
-fn a_hidden_reparent_fires_nothing_and_leaves_visibility_stale() {
+fn a_shown_frame_moved_out_of_a_hidden_parent_shows() {
     let s = script();
     s.run(
         r#"
@@ -128,21 +129,13 @@ fn a_hidden_reparent_fires_nothing_and_leaves_visibility_stale() {
     .unwrap();
     assert_eq!(
         s.eval::<i64>("return fired").unwrap(),
-        0,
-        "neither event fired"
+        1,
+        "the move's OnShow alone"
     );
     assert!(
-        s.eval::<bool>("return STF:IsShown() and not STF:IsVisible()")
+        s.eval::<bool>("return STF:IsShown() and STF:IsVisible() == 1")
             .unwrap(),
-        "shown bit intact, effective visibility stale-false under the visible new parent"
-    );
-    // Show() no-ops while the shown bit is set, so it takes a toggle; only its Show half fires.
-    s.run("STF:Hide(); STF:Show()").unwrap();
-    assert!(s.eval::<bool>("return STF:IsVisible()").unwrap());
-    assert_eq!(
-        s.eval::<i64>("return fired").unwrap(),
-        1,
-        "the toggle's OnShow alone"
+        "visible under its visible new parent"
     );
 }
 
@@ -241,4 +234,27 @@ fn a_reparent_under_a_scale_change_moves_the_childs_rect() {
         widths.iter().any(|w| (w - 200.0).abs() < 1e-3),
         "the reparented child should be 100 x scale 2 = 200 screen units wide; got {widths:?}"
     );
+}
+
+/// A frame re-parented from a hidden parent into a frame whose own `OnShow` does the move ends up
+/// visible with it: the stock quest log attaches its detail pane that way
+/// (`QuestLogDetailFrame_AttachToQuestLog` from `QuestLog_OnShow`, `QuestLogFrame.lua:294`).
+#[test]
+fn a_frame_moved_in_by_its_new_parents_onshow_is_visible() {
+    let s = crate::script::UiScript::new().unwrap();
+    s.run(
+        r#"
+        local holder = CreateFrame("Frame", "SpHolder")
+        holder:Hide()
+        local pane = CreateFrame("Frame", "SpPane", holder)
+        local log = CreateFrame("Frame", "SpLog")
+        log:Hide()
+        log:SetScript("OnShow", function() SpPane:SetParent(SpLog) end)
+        log:Show()
+        assert(SpLog:IsVisible() == 1, "the log is visible")
+        assert(SpPane:GetParent() == SpLog, "the pane moved")
+        assert(SpPane:IsVisible() == 1, "the pane shows with its new parent")
+        "#,
+    )
+    .unwrap();
 }

@@ -85,6 +85,7 @@ fn catalog() -> Vec<WorldMapContinentView> {
             area_id: 3277,
             map_file: "WarsongGulch".into(),
             loc_rect: (1000.0, 0.0, 1000.0, 0.0),
+            default_dungeon_floor: 0,
             overlays: vec![
                 overlay("SilverwingHold", 300, 200, 100, 50, 1),
                 overlay("WarsongLumberMill", 256, 256, 400, 300, 2),

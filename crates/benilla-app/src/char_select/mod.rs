@@ -165,6 +165,11 @@ pub(crate) struct Roster {
 }
 
 impl Roster {
+    /// The connected realm's type, `Cfg_Configs.dbc`'s `RealmType` key.
+    pub(crate) fn realm_type(&self) -> Option<u32> {
+        self.realm.as_ref().map(|r| r.realm_type)
+    }
+
     /// A roster with a pick in flight, for tests outside this module.
     #[cfg(test)]
     pub(crate) fn with_pending_pick(chars: Vec<Character>, guid: u64) -> Self {

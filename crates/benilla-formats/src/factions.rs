@@ -103,6 +103,14 @@ pub struct FactionInfo {
     base: [i32; 4],
     /// Per-slot `ReputationFlags`; `0x4` on the matched slot hides the unit tooltip's faction line.
     flags: [u32; 4],
+    /// Field 19: the share of a parent's reputation this faction receives.
+    pub spillover_rate_in: f32,
+    /// Field 20: the share of this faction's reputation its parent receives.
+    pub spillover_rate_out: f32,
+    /// Field 21: the rank this faction's received spillover stops at.
+    pub spillover_max_rank_in: u32,
+    /// Field 22: the rank the spillover to the parent stops at.
+    pub spillover_rank: u32,
 }
 
 impl FactionInfo {
@@ -132,6 +140,26 @@ impl FactionInfo {
     /// reference never reads this column; the byte it displays is the wire's.
     pub fn default_flags_for(&self, race: u8, class: u8) -> u32 {
         self.slot_for(race, class).map_or(0, |i| self.flags[i])
+    }
+
+    /// A header's `hasRep` (`0x5d0ce0`): the first slot fitting `race`/`class` carries
+    /// `ReputationFlags` `0x80` and the faction has a reputation slot.
+    pub fn header_has_rep_for(&self, race: u8, class: u8) -> bool {
+        let race_bit = 1u32 << (race.max(1) - 1);
+        let class_bit = 1u32 << (class.max(1) - 1);
+        for i in 0..4 {
+            let (races, classes) = (self.race_masks[i], self.class_masks[i]);
+            let fits = match (races, classes) {
+                (0, 0) => false,
+                (0, c) => c & class_bit != 0,
+                (r, 0) => r & race_bit != 0,
+                (r, c) => r & race_bit != 0 && c & class_bit != 0,
+            };
+            if fits {
+                return self.flags[i] & 0x80 != 0 && self.rep_index >= 0;
+            }
+        }
+        false
     }
 
     /// Whether the unit tooltip shows this faction's name to a player of `race`/`class`: the unit
@@ -222,6 +250,8 @@ pub struct FactionCatalog {
     names: HashMap<u32, String>,
     /// Faction id to localized description, the reputation pane's detail paragraph; most have none.
     descriptions: HashMap<u32, String>,
+    /// Faction id to the factions naming it as their parent, in table order.
+    children: HashMap<u32, Vec<u32>>,
 }
 
 impl FactionCatalog {
@@ -239,7 +269,14 @@ impl FactionCatalog {
             group_internal_names: HashMap::new(),
             names: HashMap::new(),
             descriptions: HashMap::new(),
+            children: HashMap::new(),
         }
+    }
+
+    /// The factions whose parent (field 18) is `faction_id`, in table order: the reward walk's
+    /// child list (`0x5d2680`).
+    pub fn children_of(&self, faction_id: u32) -> &[u32] {
+        self.children.get(&faction_id).map_or(&[], Vec::as_slice)
     }
 
     /// The template row for a `UNIT_FIELD_FACTIONTEMPLATE` id.
@@ -256,6 +293,12 @@ impl FactionCatalog {
     /// for a race with no row or a template that is not in the table, both the reference's null.
     pub fn race_template(&self, race: u8) -> Option<&FactionTemplate> {
         self.template(*self.race_templates.get(&race)?)
+    }
+
+    /// Any `Faction.dbc` row by id, with or without a reputation slot: the reward walk's lookup
+    /// (`0x58c790` checks only that the row exists).
+    pub fn faction_row(&self, faction_id: u32) -> Option<&FactionInfo> {
+        self.factions.get(&faction_id)
     }
 
     /// A `Faction.dbc` id's reputation identity, `Some` only with a reputation slot: the
@@ -420,6 +463,7 @@ pub fn load_faction_catalog(chain: &mut Chain) -> Result<FactionCatalog> {
     let mut factions = HashMap::with_capacity(rs.records().len());
     let mut names = HashMap::with_capacity(rs.records().len());
     let mut descriptions = HashMap::new();
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
     for r in rs.records() {
         if let Some(id) = u32_at(r, 0) {
             let at = |i| u32_at(r, i).unwrap_or(0);
@@ -433,8 +477,15 @@ pub fn load_faction_catalog(chain: &mut Chain) -> Result<FactionCatalog> {
                     class_masks: [at(6), at(7), at(8), at(9)],
                     base: [iat(10), iat(11), iat(12), iat(13)],
                     flags: [at(14), at(15), at(16), at(17)],
+                    spillover_rate_in: crate::dbc::f32_at(r, 19).unwrap_or(0.0),
+                    spillover_rate_out: crate::dbc::f32_at(r, 20).unwrap_or(0.0),
+                    spillover_max_rank_in: at(21),
+                    spillover_rank: at(22),
                 },
             );
+            if at(18) != 0 {
+                children.entry(at(18)).or_default().push(id);
+            }
             // The enUS name, after the ID, the index, 16 slot columns, `Team` and the spillover.
             if let Some(name) = crate::dbc::str_at(&rs, r, FACTION_NAME_FIELD) {
                 names.insert(id, name);
@@ -483,6 +534,7 @@ pub fn load_faction_catalog(chain: &mut Chain) -> Result<FactionCatalog> {
         group_internal_names,
         names,
         descriptions,
+        children,
     })
 }
 

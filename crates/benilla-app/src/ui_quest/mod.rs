@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 
 use benilla_protocol::messages::{
-    QuestDetails, QuestGiverList, QuestOfferReward, QuestRequestItems, QuestRewardItem,
-    QuestShareMsg,
+    quest_flags, QuestDetails, QuestGiverList, QuestOfferReward, QuestRequestItems,
+    QuestRewardItem, QuestShareMsg,
 };
 use bevy::prelude::*;
 
@@ -195,6 +195,7 @@ pub(crate) fn questgiver_failed_key(reason: u32) -> &'static str {
 
 mod lines;
 mod net;
+pub(crate) mod rewards;
 
 pub(crate) use lines::{QuestLine, QuestLines};
 
@@ -400,8 +401,12 @@ pub(crate) fn feed_quest(
     states: Res<crate::world_state::WorldStates>,
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
     spells: Option<Res<Spells>>,
-    go_templates: Res<crate::go_templates::GameObjectTemplates>,
-    materials: Option<Res<crate::ui_item_text::PageMaterials>>,
+    (go_templates, materials): (
+        Res<crate::go_templates::GameObjectTemplates>,
+        Option<Res<crate::ui_item_text::PageMaterials>>,
+    ),
+    // The detail and reward panels' XP, honor, title and reputation extras.
+    rewards: rewards::RewardInputs,
     mut sink: MessageSink,
     mut last: Local<crate::ui_script::VmMemo<Option<QuestState>>>,
     mut last_name: Local<crate::ui_script::VmMemo<Option<String>>>,
@@ -451,6 +456,27 @@ pub(crate) fn feed_quest(
                 &commands,
             )
         });
+        st
+    });
+    // The panel's extras and flags, which its publisher stores beside the text (`0x58dd50`,
+    // `0x58ba80`).
+    let fresh = fresh.map(|mut st| {
+        let (Some(view), Some((store, _))) = (giver.view.as_ref(), self_q.iter().next()) else {
+            return st;
+        };
+        let name = player.as_ref().map_or("", |p| p.name.as_str());
+        let (extra, flags, suggested) = match view {
+            QuestView::Detail(d) => (Some(&d.extra), d.flags, d.suggested_players),
+            QuestView::Reward(o) => (Some(&o.extra), o.quest_flags, o.suggested_players),
+            QuestView::Progress(p) => (None, p.quest_flags, p.suggested_players),
+            QuestView::Greeting(_) => (None, 0, 0),
+        };
+        if let Some(e) = extra {
+            st.extras = rewards.for_panel(e, &store.0, name);
+        }
+        st.suggested_group = suggested;
+        st.flags_pvp = flags & quest_flags::FLAGS_PVP != 0 && !rewards.realm_is_pvp();
+        st.auto_accept = flags & quest_flags::AUTO_ACCEPT != 0;
         st
     });
     let npc_name = giver

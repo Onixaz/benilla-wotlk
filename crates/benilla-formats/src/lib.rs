@@ -149,6 +149,8 @@ mod quest_headers;
 pub use quest_headers::{load_quest_header_names, QuestHeaderNames};
 mod quest_info;
 pub use quest_info::{load_quest_tag_names, QuestTagNames};
+mod quest_rewards;
+pub use quest_rewards::{load_quest_reward_tables, QuestRewardTables};
 mod area_trigger;
 pub use area_trigger::{load_area_trigger_catalog, AreaTriggerCatalog, AreaTriggerRow};
 mod area_sound;

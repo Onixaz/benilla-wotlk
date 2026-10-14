@@ -52,6 +52,21 @@ pub struct QuestRewardSpell {
     pub tradeskill: bool,
 }
 
+/// The rewards past items and money that 3.3.5a's quest frame and log both show, resolved by the
+/// app: the quest-frame verbs read the panel's (`GetRewardXP`, …), the log's the selection's.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct QuestRewardExtras {
+    pub xp: u32,
+    pub honor: u32,
+    pub talents: u32,
+    pub arena_points: u32,
+    /// The title reward's text for the player's gender, `None` for no title.
+    pub title: Option<String>,
+    /// `(faction id, amount × 100)`, the reward and its spillover in the reference's order, at
+    /// most ten: the list `GetQuestLogRewardFactionInfo` reads (`0xc01818`, `0xc01840`).
+    pub factions: Vec<(u32, i32)>,
+}
+
 /// One open questgiver panel, with every field the four panels read; pushed whole by the app.
 #[derive(Clone, Debug, PartialEq)]
 pub struct QuestState {
@@ -80,6 +95,14 @@ pub struct QuestState {
     /// `GetQuestBackgroundMaterial`, which the app fills from an item or GameObject source, never
     /// from the wire; nil reads as "Parchment" (`QuestFrame.lua:598-604`).
     pub background_material: Option<String>,
+    /// The detail and reward panels' extra rewards.
+    pub extras: QuestRewardExtras,
+    /// `GetSuggestedGroupNum` (`0x58c3b0`, the panel's suggested players).
+    pub suggested_group: u32,
+    /// `QuestFlagsPVP` (`0x58c3e0`): the quest's `0x2000` flag, never on a PvP realm.
+    pub flags_pvp: bool,
+    /// `QuestGetAutoAccept` (`0x58c430`): the quest's `0x80000` flag.
+    pub auto_accept: bool,
 }
 
 impl Default for QuestState {
@@ -100,6 +123,10 @@ impl Default for QuestState {
             completable: false,
             reward_spell: None,
             background_material: None,
+            extras: QuestRewardExtras::default(),
+            suggested_group: 0,
+            flags_pvp: false,
+            auto_accept: false,
         }
     }
 }
@@ -133,9 +160,16 @@ pub enum QuestAction {
 }
 
 impl super::UiScript {
-    /// Push (or clear, with `None`) the open questgiver panel snapshot.
+    /// Push (or clear, with `None`) the open questgiver panel snapshot. A detail or reward panel
+    /// refills the reward-faction list, as its publisher does (`0x58dd50` → `0x58d050`).
     pub fn set_quest(&mut self, state: Option<QuestState>) {
-        self.model_mut().quest = state;
+        let mut model = self.model_mut();
+        if let Some(q) = &state {
+            if matches!(q.panel, QuestPanel::Detail | QuestPanel::Reward) {
+                model.quest_reward_factions = q.extras.factions.clone();
+            }
+        }
+        model.quest = state;
     }
 
     /// Drain the greeting-panel row selects queued since the last call.
@@ -234,6 +268,41 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     install_count(lua, "GetNumQuestItems", |q| q.required.len() as i64)?;
     install_count(lua, "GetRewardMoney", |q| i64::from(q.reward_money))?;
     install_count(lua, "GetQuestMoneyToGet", |q| i64::from(q.required_money))?;
+    // The panel's extra rewards (`0x58c0e0`, `0x58c110`, `0x58c140`, `0x58c4a0`, `0x58c3b0`).
+    install_count(lua, "GetRewardXP", |q| i64::from(q.extras.xp))?;
+    install_count(lua, "GetRewardHonor", |q| i64::from(q.extras.honor))?;
+    install_count(lua, "GetRewardTalents", |q| i64::from(q.extras.talents))?;
+    install_count(lua, "GetRewardArenaPoints", |q| {
+        i64::from(q.extras.arena_points)
+    })?;
+    install_count(lua, "GetSuggestedGroupNum", |q| {
+        i64::from(q.suggested_group)
+    })?;
+    fn install_flag(lua: &Lua, name: &str, pick: fn(&QuestState) -> bool) -> mlua::Result<()> {
+        lua.globals().set(
+            name,
+            lua.create_function(move |lua, ()| {
+                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                Ok(flag(model.quest.as_ref().is_some_and(pick)))
+            })?,
+        )
+    }
+    install_flag(lua, "QuestFlagsPVP", |q| q.flags_pvp)?;
+    install_flag(lua, "QuestGetAutoAccept", |q| q.auto_accept)?;
+    // `GetRewardTitle` (`0x58d810`): the title's text, nil for none.
+    g.set(
+        "GetRewardTitle",
+        lua.create_function(|lua, ()| {
+            let title = {
+                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                model.quest.as_ref().and_then(|q| q.extras.title.clone())
+            };
+            match title {
+                Some(t) => Ok(Value::String(lua.create_string(&t)?)),
+                None => Ok(Value::Nil),
+            }
+        })?,
+    )?;
 
     g.set(
         "IsQuestCompletable",

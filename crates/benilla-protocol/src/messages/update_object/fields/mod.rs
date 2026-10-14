@@ -181,6 +181,8 @@ const FIELD_PLAYER_BYTES_3: u16 = 195;
 // 25 slots of [`QUEST_LOG_SLOT_FIELDS`]: the quest id (group-only), then the state, the counters
 // and the timer (private). Kept past the 1.12.1 player end, where the 125 fields fit.
 pub const FIELD_PLAYER_QUEST_LOG_1_1: u16 = 1282;
+const FIELD_PLAYER_DAILY_QUESTS_1: u16 = 1407;
+const FIELD_PLAYER_MAX_LEVEL: u16 = 1432;
 
 /// The indices a field watch names: the same constants the accessors read, so the two agree.
 pub mod field {
@@ -364,8 +366,8 @@ fn descriptor_len(object_type: ObjectType) -> u16 {
         ObjectType::Item => 48,       // ITEM_END = OBJECT_END + 0x2A
         ObjectType::Container => 122, // CONTAINER_END = ITEM_END + 0x4A
         ObjectType::Unit => 188,      // UNIT_END = OBJECT_END + 0xB6
-        // 1.12.1's PLAYER_END (UNIT_END + 0x446), plus the 3.3.5a quest log kept past it.
-        ObjectType::Player => 1407,
+        // 1.12.1's PLAYER_END (UNIT_END + 0x446), plus the 3.3.5a fields kept past it.
+        ObjectType::Player => 1433,
         ObjectType::GameObject => 26, // GAMEOBJECT_END = OBJECT_END + 0x14
         ObjectType::DynamicObject => 16, // DYNAMICOBJECT_END = OBJECT_END + 0xA
         ObjectType::Corpse => 38,     // CORPSE_END = OBJECT_END + 0x20

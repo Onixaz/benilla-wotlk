@@ -27,6 +27,9 @@ pub struct WorldMapArea {
     pub loc_right: f32,
     pub loc_top: f32,
     pub loc_bottom: f32,
+    /// `DefaultDungeonFloor` (field 9): `-1` on the maps `GetCurrentMapDungeonLevel` counts one
+    /// floor up on (`0x544fc0`, `+0x24`).
+    pub default_dungeon_floor: i32,
 }
 
 /// `WorldMapArea.dbc` rows keyed by `ID`, the id `WorldMapOverlay.worldMapAreaId` joins. File order
@@ -78,9 +81,9 @@ fn schema() -> Schema {
         s.add_field(SchemaField::new(name, FieldType::Float32));
     }
     // 12340 adds the display map (`-1` on all but four rows), the default dungeon floor and the
-    // parent map row, none read.
+    // parent map row; only the floor is read.
     s.add_field(SchemaField::new("DisplayMapID", FieldType::Int32));
-    s.add_field(SchemaField::new("DefaultDungeonFloor", FieldType::UInt32));
+    s.add_field(SchemaField::new("DefaultDungeonFloor", FieldType::Int32));
     s.add_field(SchemaField::new("ParentWorldMapID", FieldType::UInt32));
     s
 }
@@ -126,6 +129,7 @@ pub fn load_world_map_area_catalog(chain: &mut Chain) -> Result<WorldMapAreaCata
                 loc_right,
                 loc_top,
                 loc_bottom,
+                default_dungeon_floor: crate::dbc::i32_at(r, 9).unwrap_or(0),
             },
         );
     }

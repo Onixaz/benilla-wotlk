@@ -338,11 +338,10 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             };
             // None: the same parent, a total no-op (`0x76ab20`), not even a layout touch.
             let Some(hidden) = hidden else { return Ok(()) };
-            let was_visible = !hidden.is_empty();
             event::fire_visibility_changes(lua, hidden);
             let shown = {
                 let mut model = lua.app_data_mut::<Model>().expect("model");
-                let shown = model.arena.reparent_finish(h, new_parent, was_visible);
+                let shown = model.arena.reparent_finish(h, new_parent);
                 // A reparent moves the subtree's effective scale, a layout input and part of every
                 // descendant FontString's measure key.
                 model.touch_layout_reparent(h);

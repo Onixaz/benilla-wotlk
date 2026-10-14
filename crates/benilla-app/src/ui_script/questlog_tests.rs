@@ -41,6 +41,7 @@ thread_local! {
                 link: Some(HAMMER_LINK.into()),
             }],
             reward_spell: None,
+            extras: Default::default(),
         };
 }
 
@@ -72,6 +73,7 @@ fn eight_entries() -> QuestLogState {
         num_quests: 8,
         entries,
         hidden_quest_ids: Vec::new(),
+        daily_completed: 0,
     }
 }
 
@@ -837,6 +839,7 @@ fn reward_rows_follow_the_refs_two_per_row_layout() {
             ..Default::default()
         }],
         reward_spell: None,
+        extras: Default::default(),
     };
     for e in &mut state.entries {
         e.detail = Some(detail.clone());
@@ -932,6 +935,7 @@ fn overflowing_entry() -> QuestLogState {
     QuestLogState {
         num_quests: 1,
         hidden_quest_ids: Vec::new(),
+        daily_completed: 0,
         entries: vec![QuestLogEntryView {
             quest_id: 1,
             title: "A Very Long Quest".into(),
@@ -954,6 +958,7 @@ fn overflowing_entry() -> QuestLogState {
                     ..Default::default()
                 }],
                 reward_spell: None,
+                extras: Default::default(),
             }),
             ..Default::default()
         }],

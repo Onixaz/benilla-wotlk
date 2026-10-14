@@ -25,6 +25,8 @@ pub struct WorldMapZoneView {
     /// The `WorldMapArea` loc rect `(left, right, top, bottom)`; at zone level, the grid's window.
     pub loc_rect: (f32, f32, f32, f32),
     pub overlays: Vec<WorldMapOverlayView>,
+    /// `WorldMapArea`'s `DefaultDungeonFloor`, `-1` on a map counted one floor up.
+    pub default_dungeon_floor: i32,
 }
 
 /// A POI icon on the displayed map, projected to map UV. The reference's builder (`0x4a67a0`)
@@ -573,6 +575,19 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let direct = model.worldmap.player_direct_area;
             select_resolved(&mut model, c, z, direct);
             Ok(())
+        })?,
+    )?;
+
+    // GetCurrentMapDungeonLevel() (`0x544fc0`): the current DungeonMap row's floor, plus one on a
+    // map whose `DefaultDungeonFloor` is -1. benilla's map selects no DungeonMap row, so the
+    // first term is 0.
+    g.set(
+        "GetCurrentMapDungeonLevel",
+        lua.create_function(|lua, ()| {
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            Ok(i64::from(
+                current_zone(&model.worldmap).is_some_and(|z| z.default_dungeon_floor == -1),
+            ))
         })?,
     )?;
 

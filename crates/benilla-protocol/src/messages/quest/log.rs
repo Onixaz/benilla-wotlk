@@ -80,6 +80,8 @@ pub struct QuestTemplate {
     pub players_slain: u32,
     pub reward_talents: u32,
     pub reward_arena_points: u32,
+    /// Record `+0x28e0`: bit `i` keeps reputation reward `i` from spilling (`0x5df8f3`).
+    pub rep_no_spillover: u32,
     pub rewards: [(u32, u32); QUEST_REWARDS_COUNT as usize],
     pub choices: [(u32, u32); QUEST_REWARD_CHOICES_COUNT as usize],
     pub reputation: QuestReputationRewards,
@@ -147,7 +149,7 @@ pub(in crate::messages) fn read_quest_query_response(r: &mut &[u8]) -> io::Resul
     q.players_slain = read_u32_le(r)?;
     q.reward_talents = read_u32_le(r)?;
     q.reward_arena_points = read_u32_le(r)?;
-    let _unknown = read_u32_le(r)?;
+    q.rep_no_spillover = read_u32_le(r)?;
 
     // Fixed-count, unlike the giver panels' count-prefixed blocks; HIDDEN_REWARDS only zeroes them.
     for slot in q.rewards.iter_mut() {
@@ -282,8 +284,8 @@ mod tests {
         push_i32(&mut b, -1); // spell cast
         push_u32(&mut b, 70); // honor
         push_f32(&mut b, 0.25); // honor multiplier
-                                // source item, flags, title, players slain, talents, arena, unknown
-        for v in [900u32, 0x1008, 3, 2, 1, 25, 0] {
+                                // source item, flags, title, players slain, talents, arena, no-spillover mask
+        for v in [900u32, 0x1008, 3, 2, 1, 25, 0b100] {
             push_u32(&mut b, v);
         }
         for (id, n) in [(3000, 1), (0, 0), (3005, 3), (0, 0)] {
@@ -355,6 +357,7 @@ mod tests {
         assert_eq!(q.players_slain, 2);
         assert_eq!(q.reward_talents, 1);
         assert_eq!(q.reward_arena_points, 25);
+        assert_eq!(q.rep_no_spillover, 0b100);
         assert_eq!(q.rewards, [(3000, 1), (0, 0), (3005, 3), (0, 0)]);
         assert_eq!(q.choices[1], (4000, 2));
         assert_eq!(q.reputation.factions, [60, 61, 62, 63, 64]);

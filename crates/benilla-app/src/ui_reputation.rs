@@ -75,6 +75,10 @@ pub(crate) fn reputation_row(
         // What `GetFactionInfo` reports; the toggle itself is stricter (`0x4d5fd0`).
         can_toggle_at_war: flags & flag::PEACE_FORCED == 0 && standing >= -3000,
         inactive: flags & flag::INACTIVE != 0,
+        has_rep: info.header_has_rep_for(race, class),
+        is_child: catalog
+            .reputation_faction(info.team)
+            .is_some_and(|parent| parent.team != 0),
     })
 }
 

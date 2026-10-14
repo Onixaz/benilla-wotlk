@@ -29,6 +29,7 @@ fn push_catalog(s: &mut UiScript) {
                     map_file: "Durotar".into(),
                     loc_rect: (-1800.0, -6800.0, -3800.0, -8500.0),
                     overlays: Vec::new(),
+                    default_dungeon_floor: 0,
                 },
                 WorldMapZoneView {
                     name: "The Barrens".into(),
@@ -36,6 +37,7 @@ fn push_catalog(s: &mut UiScript) {
                     map_file: "Barrens".into(),
                     loc_rect: (-1000.0, -11000.0, -5500.0, -17000.0),
                     overlays: Vec::new(),
+                    default_dungeon_floor: 0,
                 },
             ],
         },
@@ -52,6 +54,7 @@ fn push_catalog(s: &mut UiScript) {
                     map_file: "Elwynn".into(),
                     // Synthetic, inside EK's rect: w=2000, h=1500, for round highlight coords.
                     loc_rect: (-8000.0, -10000.0, -400.0, -1900.0),
+                    default_dungeon_floor: 0,
                     // Northshire (bit 125) and Goldshire (124) carry the real exploreFlags; hit
                     // rects are (top, left, bottom, right) in px of 1002×668. The first row's area
                     // is unresolvable (bit 126) and overlaps Northshire: the hover walks past it.
@@ -95,6 +98,7 @@ fn push_catalog(s: &mut UiScript) {
                     map_file: "StormwindCity".into(),
                     loc_rect: (-8200.0, -8900.0, -400.0, -1100.0),
                     overlays: Vec::new(),
+                    default_dungeon_floor: 0,
                 },
             ],
         },
@@ -112,6 +116,7 @@ fn push_direct_areas(s: &mut UiScript) {
             map_file: folder.into(),
             // A synthetic rect: the app owns every projection, so nothing here reads it.
             loc_rect: (1500.0, 500.0, 1600.0, 600.0),
+            default_dungeon_floor: 0,
             overlays,
         }
     };

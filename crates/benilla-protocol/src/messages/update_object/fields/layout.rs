@@ -123,6 +123,10 @@ pub enum Field {
     PlayerBytes3,
     PlayerDuelTeam,
     PlayerQuestLog,
+    /// 3.3.5a's daily quests done today, a quest id per field.
+    PlayerDailyQuests,
+    /// 3.3.5a's level cap for the account's expansion.
+    PlayerMaxLevel,
     /// Each equipment slot's broadcast item entry.
     PlayerVisibleItemEntry,
     /// Each equipment slot's broadcast enchants.
@@ -290,7 +294,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         item: 48,
         container: 122,
         unit: 188,
-        player: 1407,
+        player: 1433,
         gameobject: 26,
         dynamicobject: 16,
         corpse: 38,
@@ -386,6 +390,9 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         one(F::PlayerDuelTeam, Player, 196),
         // 25 slots of (quest id, state, two words of four `u16` counters, timer).
         run(F::PlayerQuestLog, Player, 1282, 125),
+        // 3.3.5a's daily quests and level cap, also kept past the 1.12.1 player end.
+        run(F::PlayerDailyQuests, Player, 1407, 25),
+        one(F::PlayerMaxLevel, Player, 1432),
         // 19 slots of 12: creator guid, entry, 7 enchants, properties, pad.
         strided(F::PlayerVisibleItemEntry, Player, 260, 19, 12),
         strided(F::PlayerVisibleItemEnchants, Player, 261, 19, 12),
@@ -570,6 +577,10 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         // 25 slots of 5 at `UNIT_END + 0xA`: 12340 reads slot `i` at `(i*5 + 10)*4` into the player
         // block (`0x5e1561`), the counters as `u16` at `+8` (`0x5e161c`).
         run(F::PlayerQuestLog, Player, 158, 125),
+        // `UNIT_END + 0x46b`, the cap `GetQuestLogRewardXP` tests (`+0x11ac`, `0x5e4a21`), and the
+        // 25 daily quests `GetDailyQuestsCompleted` counts (`+0x11b0`, `0x58db5e`).
+        one(F::PlayerMaxLevel, Player, 1279),
+        run(F::PlayerDailyQuests, Player, 1280, 25),
         // 19 slots of 2: entry, then the permanent and temporary enchant as two `u16`.
         strided(F::PlayerVisibleItemEntry, Player, 283, 19, 2),
         strided(F::PlayerVisibleItemEnchants, Player, 284, 19, 2),

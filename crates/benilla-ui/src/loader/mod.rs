@@ -667,6 +667,8 @@ impl Loader<'_> {
         }
         // 2 · LoadXML attributes (`0x769820`).
         self.apply_attrs(el, wrapper, dbg_name);
+        // 2b · <Attributes>, stored before any script can read them.
+        self.apply_frame_attributes(el, wrapper, dbg_name);
         // 3 · <Size> and 4 · <Anchors> (the CLayoutFrame geometry base, `0x767800`).
         self.apply_size(el, wrapper, dbg_name);
         self.apply_anchors(el, wrapper, parent_name, dbg_name);
@@ -730,6 +732,57 @@ impl Loader<'_> {
         }
         if let Some(func) = onload {
             self.fire_onload(wrapper, &func, dbg_name);
+        }
+    }
+
+    /// `<Attributes><Attribute name type value/></Attributes>` (`0x492f70`): `type` defaults to
+    /// `string`; `nil`, `boolean` and `number` convert the value, and a missing value is an error
+    /// except for `nil`. Each lands in the frame's attribute table without the change notifier.
+    fn apply_frame_attributes(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
+        for attrs in children_named(el, "Attributes") {
+            for a in &attrs.children {
+                if !a.tag.eq_ignore_ascii_case("Attribute") {
+                    self.report
+                        .warnings
+                        .push(format!("Frame {dbg}: Unknown attributes element {}", a.tag));
+                    continue;
+                }
+                let Some(name) = a.attr("name").filter(|n| !n.is_empty()) else {
+                    self.report
+                        .warnings
+                        .push(format!("Frame {dbg}: attribute element missing name"));
+                    continue;
+                };
+                let kind = a.attr("type").unwrap_or("string");
+                let value = match (kind.to_ascii_lowercase().as_str(), a.attr("value")) {
+                    ("nil", _) => Value::Nil,
+                    (_, None) => {
+                        self.report.warnings.push(format!(
+                            "Frame {dbg}: attribute element named {name} missing value"
+                        ));
+                        continue;
+                    }
+                    ("boolean", Some(v)) => Value::Boolean(v.eq_ignore_ascii_case("true")),
+                    ("number", Some(v)) => Value::Number(v.trim().parse().unwrap_or(0.0)),
+                    (_, Some(v)) => match self.lua().create_string(v) {
+                        Ok(s) => Value::String(s),
+                        Err(e) => {
+                            self.report.errors.push(format!("Frame {dbg}: {e}"));
+                            continue;
+                        }
+                    },
+                };
+                if let Err(e) = crate::script::object::attributes::store_from_xml(
+                    self.lua(),
+                    wrapper,
+                    name,
+                    value,
+                ) {
+                    self.report
+                        .errors
+                        .push(format!("Frame {dbg}: attribute {name}: {e}"));
+                }
+            }
         }
     }
 

@@ -85,8 +85,52 @@ fn ensure_thumb(lua: &Lua, this: &Table, layer: Option<DrawLayer>) -> mlua::Resu
     Ok(model.region_id(rh))
 }
 
+/// `Enable`/`Disable` (`0x9720e0`, `0x972150`): set or clear flag `0x400`, then run `OnEnable` or
+/// `OnDisable` on every call, a change or not, unless the frame is still in its XML load
+/// (`+0x130`).
+fn set_enabled(lua: &Lua, this: &Table, on: bool) -> mlua::Result<()> {
+    let h = super::object::frame_handle_of(lua, this)?;
+    let fire = {
+        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let frame = model
+            .arena
+            .frame_mut(h)
+            .ok_or_else(|| mlua::Error::runtime("stale frame handle"))?;
+        match &mut frame.kind_state {
+            KindState::Slider(s) => s.disabled = !on,
+            _ => return Err(mlua::Error::runtime("not a Slider")),
+        }
+        (!model.xml_loading.contains(&h)).then(|| model.frame_id(h))
+    };
+    if let Some(id) = fire {
+        let script = if on { "OnEnable" } else { "OnDisable" };
+        if let Err(e) = super::event::fire_widget_handler(lua, id, script, Vec::new()) {
+            lua.app_data_mut::<Model>()
+                .expect("model app_data")
+                .record_script_error(e.to_string());
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
+
+    m.set(
+        "Enable",
+        lua.create_function(|lua, this: Table| set_enabled(lua, &this, true))?,
+    )?;
+    m.set(
+        "Disable",
+        lua.create_function(|lua, this: Table| set_enabled(lua, &this, false))?,
+    )?;
+    // `IsEnabled` (`0x972050`): 1 or nil, unlike a Button's 1 or 0.
+    m.set(
+        "IsEnabled",
+        lua.create_function(|lua, this: Table| {
+            with_slider(lua, &this, |s| super::binding_abi::flag(!s.disabled))
+        })?,
+    )?;
 
     m.set(
         "SetMinMaxValues",
@@ -287,9 +331,9 @@ pub(crate) struct SliderDrag {
     pub(crate) grab_offset: f32,
 }
 
-/// On a LeftButton press on a Slider `hit`, capture a drag at the [`slider_grab`] offset, with no
-/// enabled gate since a 1.12 Slider has no enabled state. Returns `(frame id, new value)` when the
-/// press jumps the value, for the caller to fire `OnValueChanged` outside the model borrow.
+/// On a LeftButton press on an enabled Slider `hit`, capture a drag at the [`slider_grab`] offset;
+/// a disabled one starts none (`0x96c406`). Returns `(frame id, new value)` when the press jumps
+/// the value, for the caller to fire `OnValueChanged` outside the model borrow.
 pub(super) fn begin_drag(
     model: &mut Model,
     hit: Option<FrameHandle>,
@@ -299,7 +343,7 @@ pub(super) fn begin_drag(
     let h = hit?;
     let r = model.resolved.get(&h).copied()?;
     let (vertical, fraction, thumb) = match model.arena.frame(h).map(|f| &f.kind_state) {
-        Some(KindState::Slider(s)) => (s.vertical, s.fraction(), s.thumb),
+        Some(KindState::Slider(s)) if !s.disabled => (s.vertical, s.fraction(), s.thumb),
         _ => return None,
     };
     // No thumb region: the press still captures, the dispatcher's store being unconditional, but

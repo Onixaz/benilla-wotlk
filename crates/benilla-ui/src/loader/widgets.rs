@@ -93,6 +93,7 @@ impl Loader<'_> {
                 }
                 let getter = method.replacen("Set", "Get", 1);
                 if let Ok(region) = wrapper.call_method::<Table>(getter.as_str(), ()) {
+                    this.bind_parent_key(t, wrapper, &region);
                     if let (None, Some(c)) = (t.attr("file"), color) {
                         this.call_region(&region, "SetTexture", (c[0], c[1], c[2], c[3]), dbg);
                     }
@@ -158,6 +159,9 @@ impl Loader<'_> {
             }
             self.call(wrapper, "SetText", label, dbg);
             if let Ok(region) = wrapper.call_method::<Table>("GetFontString", ()) {
+                // `parentKey` binds the label like any region: stock 3.3.5a reads a quest row's
+                // `.normalText` (`QuestLogFrame.xml:86`, `QuestLogFrame.lua:187`).
+                self.bind_parent_key(bt, wrapper, &region);
                 // Clear, lay out, then the implicit step, as both reference legs do (`0x6f27f5`,
                 // `0x778b96`); the button's own adopter anchor never fires on them (`0x778d5f`).
                 // On `<NormalText>` the justify is the Normal font's, so the implicit anchor reads
@@ -410,6 +414,9 @@ impl Loader<'_> {
                 self.call(wrapper, "SetThumbTexture", (c[0], c[1], c[2], c[3]), dbg);
             }
             if let Ok(region) = wrapper.call_method::<Table>("GetThumbTexture", ()) {
+                // `parentKey` binds it like any region: `HybridScrollFrame_Update` reads the bar's
+                // `.thumbTexture` (`HybridScrollFrame.xml:128`).
+                self.bind_parent_key(tt, wrapper, &region);
                 if let Some(mode) = tt.attr("alphaMode") {
                     self.call_region(&region, "SetBlendMode", mode.to_string(), dbg);
                 }

@@ -90,6 +90,7 @@ fn map_row_view(
         area_id: a.area_id,
         map_file: a.name.clone(),
         loc_rect: (a.loc_left, a.loc_right, a.loc_top, a.loc_bottom),
+        default_dungeon_floor: a.default_dungeon_floor,
         // WorldMapOverlay rows by WMA id, each revealed by its covered areas' `exploreFlag` bits.
         overlays: wmo
             .for_area(wma_id)
@@ -1149,6 +1150,7 @@ mod player_zone_tests {
                     map_file: "WarsongGulch".into(),
                     loc_rect: (1.0, -1.0, 1.0, -1.0),
                     overlays: Vec::new(),
+                    default_dungeon_floor: 0,
                 },
             }],
         }

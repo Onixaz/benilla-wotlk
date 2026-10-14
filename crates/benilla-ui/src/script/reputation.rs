@@ -54,6 +54,10 @@ pub struct FactionEntry {
     /// Flag `0x20`; flipped here like [`Self::at_war`], it moves the row under "Inactive" rather
     /// than hiding it.
     pub inactive: bool,
+    /// A header row that is also a reputation bar (`GetFactionInfoByID`'s `hasRep`, `0x5d0ce0`).
+    pub has_rep: bool,
+    /// Its parent is itself under a header (`isChild`, `0x5d06e0`): a sub-header's member.
+    pub is_child: bool,
 }
 
 /// A flat, unordered push of every faction the player has a slot for; the engine groups and sorts.
@@ -321,6 +325,48 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // GetFactionInfoByID(id) → 3.3.5a's thirteen (`0x5d11e0` → `0x5d0da0`): name, description,
+    // standingID, barMin, barMax, barValue, atWarWith, canToggleAtWar, isHeader, isCollapsed,
+    // hasRep, isWatched, isChild. A faction outside the player's pushed rows answers the
+    // reference's unknown shape, two nils, four zeros and seven nils.
+    g.set(
+        "GetFactionInfoByID",
+        lua.create_function(|lua, id: Value| {
+            let id = binding_abi::number_arg(lua, id, "Usage: GetFactionInfoByID(id)")?;
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let Some(e) = model
+                .reputation
+                .entries
+                .iter()
+                .find(|e| i64::from(e.faction_id) == i64::from(id))
+            else {
+                let mut out = vec![Value::Nil, Value::Nil];
+                out.extend(std::iter::repeat_n(Value::Integer(0), 4));
+                out.extend(std::iter::repeat_n(Value::Nil, 7));
+                return Ok(MultiValue::from_vec(out));
+            };
+            let collapsed = e.is_header
+                && model.reputation_groups.iter().any(|g| {
+                    g.key == i64::from(e.faction_id) && model.reputation_collapsed.contains(&g.key)
+                });
+            Ok(MultiValue::from_vec(vec![
+                Value::String(lua.create_string(&e.name)?),
+                Value::String(lua.create_string(&e.description)?),
+                Value::Integer(i64::from(e.standing_id)),
+                Value::Integer(i64::from(e.bar_min)),
+                Value::Integer(i64::from(e.bar_max)),
+                Value::Integer(i64::from(e.standing)),
+                binding_abi::flag(e.at_war),
+                binding_abi::flag(e.can_toggle_at_war),
+                binding_abi::flag(e.is_header),
+                binding_abi::flag(collapsed),
+                binding_abi::flag(e.is_header && e.has_rep),
+                binding_abi::flag(model.reputation.watched == Some(e.rep_list_id)),
+                binding_abi::flag(e.is_child),
+            ]))
+        })?,
+    )?;
+
     // GetSelectedFaction() → the selected row's visible index, or 0 for none, as
     // `ReputationFrame.lua:146` tests; re-found each call, since the selection is held by slot.
     g.set(
@@ -503,6 +549,8 @@ mod tests {
             at_war: false,
             can_toggle_at_war: true,
             inactive: false,
+            has_rep: false,
+            is_child: false,
         }
     }
 

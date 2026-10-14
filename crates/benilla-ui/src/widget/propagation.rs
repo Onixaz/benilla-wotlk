@@ -234,15 +234,14 @@ impl WidgetArena {
     /// Phase 2 of `SetParent` (`0x76ab10`): relink, strata := the parent's (`0x76ab5a`, MEDIUM for
     /// none), level := the parent's + 1 without propagating (`0x76ab65`, 0 for none), scale
     /// re-inherited, then the show half, returning the frames that became visible; alpha is
-    /// untouched. `h`'s own children keep their levels, so one can end up below `h`.
-    /// `was_visible` is whether phase 1 hid anything (the reference's `ebx` at `0x76ab2b`); the
-    /// show half runs only then (`0x76abfd`), so a hidden frame moved under a visible parent keeps
-    /// a stale effective visibility until something shows it.
+    /// untouched. `h`'s own children keep their levels, so one can end up below `h`. The show half
+    /// runs for a shown frame (`+0xdc`) whose new parent is visible (`+0xe0`) or absent
+    /// (12340's `CSimpleFrame::SetParent`, `0x4911b0`), so a frame moved out of a hidden parent
+    /// shows with its new one, as the stock quest log's detail pane relies on.
     pub fn reparent_finish(
         &mut self,
         h: FrameHandle,
         new_parent: Option<FrameHandle>,
-        was_visible: bool,
     ) -> Vec<FrameHandle> {
         let mut shown = Vec::new();
         if self.frame(h).is_none() {
@@ -275,7 +274,7 @@ impl WidgetArena {
         let ps = self.parent_effective_scale(h);
         self.propagate_scale(h, ps);
 
-        if was_visible && self.parent_visible(h) {
+        if self.frame(h).is_some_and(|f| f.shown) && self.parent_visible(h) {
             self.propagate_visible(h, true, &mut shown);
         }
         shown
@@ -290,8 +289,7 @@ impl WidgetArena {
         let Some(hidden) = self.reparent_begin(h, new_parent) else {
             return Vec::new();
         };
-        let was_visible = !hidden.is_empty();
-        let shown = self.reparent_finish(h, new_parent, was_visible);
+        let shown = self.reparent_finish(h, new_parent);
         [hidden, shown].concat()
     }
 
