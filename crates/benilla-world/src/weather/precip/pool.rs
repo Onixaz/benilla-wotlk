@@ -144,7 +144,7 @@ impl HeightCache {
         spatial: &SpatialQuery,
         filter: &SpatialQueryFilter,
     ) -> f32 {
-        if (self.cast_y - cast_from_y).abs() > 8.0 || self.cells.len() > 20_000 {
+        if self.stale(cast_from_y) {
             self.cells.clear();
             self.cast_y = cast_from_y;
         }
@@ -167,11 +167,30 @@ impl HeightCache {
         y
     }
 
+    /// Whether the next [`Self::ground_y`] starts over: the cast plane moved a story, or the cache
+    /// outgrew its bound.
+    fn stale(&self, cast_from_y: f32) -> bool {
+        (self.cast_y - cast_from_y).abs() > 8.0 || self.cells.len() > 20_000
+    }
+
+    /// [`Self::ground_y`] without the ray: the cached answer, or `None` where `ground_y` would
+    /// cast (a miss, or a cache it would clear first).
+    fn peek(&self, key: (i32, i32), cast_from_y: f32) -> Option<f32> {
+        if self.stale(cast_from_y) {
+            return None;
+        }
+        self.cells.get(&key).copied()
+    }
+
     /// The grid cell owning an XZ position.
     pub(super) fn key(x: f32, z: f32) -> (i32, i32) {
         ((x / CELL).floor() as i32, (z / CELL).floor() as i32)
     }
 }
+
+/// Drops per parallel task in the drift: a step is a few nanoseconds, so a chunk this size keeps
+/// the dispatch cost small against the work (heavy rain holds ~17 k drops).
+const DRIFT_CHUNK: usize = 2048;
 
 /// The per-frame record count, `fistp(min(space, quota) − 0.5)` under x87 round-to-nearest-even
 /// (`0x6754cc`). The parity is load-bearing: at `space = 1` it is `RNE(0.5) = 0` forever, so a
@@ -343,16 +362,38 @@ pub(super) fn run_kind(
     // ===== integrate + land =====
     // Landing tests the current cell's ground, a max from above: a drop drifting under cover
     // lands on the roof and splashes there, never on the floor below.
+    // Each drop moves alone and reads the cache, so the drift runs in parallel chunks; a drop
+    // whose new cell is not cached takes its ray after, serially, as rays fill the shared cache.
+    let misses: Vec<Vec<usize>> = {
+        let heights = &*heights;
+        bevy::tasks::ComputeTaskPool::get().scope(|s| {
+            for (c, chunk) in pool.drops.chunks_mut(DRIFT_CHUNK).enumerate() {
+                s.spawn(async move {
+                    let mut miss = Vec::new();
+                    for (i, d) in chunk.iter_mut().enumerate() {
+                        d.pos += d.vel * dt;
+                        d.age += dt;
+                        let cell = HeightCache::key(d.pos.x, d.pos.z);
+                        if cell != d.cell {
+                            d.cell = cell;
+                            match heights.peek(cell, cast_plane) {
+                                Some(y) => d.land_y = y,
+                                None => miss.push(c * DRIFT_CHUNK + i),
+                            }
+                        }
+                    }
+                    miss
+                });
+            }
+        })
+    };
+    for i in misses.into_iter().flatten() {
+        let d = &mut pool.drops[i];
+        d.land_y = heights.ground_y(d.pos.x, d.pos.z, cast_plane, spatial, filter);
+    }
     let mut landed: Vec<Patter> = Vec::new();
     {
         pool.drops.retain_mut(|d| {
-            d.pos += d.vel * dt;
-            d.age += dt;
-            let cell = HeightCache::key(d.pos.x, d.pos.z);
-            if cell != d.cell {
-                d.cell = cell;
-                d.land_y = heights.ground_y(d.pos.x, d.pos.z, cast_plane, spatial, filter);
-            }
             if d.pos.y > d.land_y {
                 return true;
             }
