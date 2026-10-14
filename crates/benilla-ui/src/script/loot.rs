@@ -2,11 +2,11 @@
 //! first when there is gold, and the Lua verbs queue intents it drains. `slot` is 1-based; the app
 //! maps a row to the money intent or the item's wire slot, which Lua never sees.
 //!
-//! `LootSlot` is only the LOOT_BIND confirmation: `0x4c2e70` passes flag 1 to the take dispatcher
-//! `0x4c2790`, which then refuses every slot but the pending one. The take itself is flag 0, the
-//! row click of [`crate::widget::FrameKind::LootButton`]. Master loot's dropdown opens from the
-//! app, on a picked row whose wire `slot_type` is `MASTER`, as the dispatcher branches on that byte
-//! before any Lua runs.
+//! `LootSlot` is the take: 12340's binding `0x589520` calls the take dispatcher `0x589140`, and the
+//! stock row click ends in it (`LootFrame.lua:221`). `ConfirmLootSlot` (`0x589590` → `0x589300`)
+//! completes a LOOT_BIND confirm and refuses every slot but the pending one. Master loot's dropdown
+//! opens from the app, on a taken row whose wire `slot_type` is `MASTER`, as the dispatcher
+//! branches on that byte.
 
 use mlua::{Lua, MultiValue, Table, Value};
 
@@ -48,8 +48,11 @@ pub struct LootRow {
     pub quality: Option<u32>,
     /// The synthesized coin pile (`LootSlotIsCoin` true, `LootSlotIsItem` false).
     pub is_coin: bool,
-    /// The tooltip store's key, 0 for the coin row: `GetLootSlotInfo`'s fifth return, not 1.12's.
+    /// The tooltip store's key, 0 for the coin row.
     pub item_id: u32,
+    /// The wire `slot_type` is `LOCKED` (3): `GetLootSlotInfo`'s fifth return, which tints the row
+    /// red (`LootFrame.lua:102`).
+    pub locked: bool,
     /// `GetLootSlotLink`'s answer; `None` for the coin row and while the template is in flight.
     pub link: Option<String>,
     /// The drop's random-suffix roll (`randomPropertyId`, 0 unrolled), resolved by the tooltip
@@ -88,14 +91,14 @@ impl super::UiScript {
         self.model_mut().loot = state;
     }
 
-    /// Drain the 1-based rows the row click took; the app maps each to the coin or the item's wire
+    /// Drain the 1-based rows `LootSlot` took; the app maps each to the coin or the item's wire
     /// slot and applies the bind-on-pickup deferral.
     pub fn take_loot_picks(&mut self) -> Vec<u32> {
         std::mem::take(&mut self.model_mut().loot_picks)
     }
 
-    /// Drain the 1-based rows `LootSlot` queued; the app honours only the one a LOOT_BIND confirm
-    /// is pending for (the reference's `[0x847cec]` gate).
+    /// Drain the 1-based rows `ConfirmLootSlot` queued; the app honours only the one a LOOT_BIND
+    /// confirm is pending for (the reference's `[0xacee24]` gate, `0x589300`).
     pub fn take_loot_confirms(&mut self) -> Vec<u32> {
         std::mem::take(&mut self.model_mut().loot_confirms)
     }
@@ -110,6 +113,12 @@ impl super::UiScript {
     pub fn take_loot_master_gives(&mut self) -> Vec<(u32, u32)> {
         std::mem::take(&mut self.model_mut().loot_master_gives)
     }
+}
+
+/// A loot verb's slot as its binding converts it: truncated toward zero, and nothing below 1.
+fn loot_slot_arg(slot: f64) -> Option<u32> {
+    let slot = slot.trunc();
+    (slot >= 1.0).then_some(slot as u32)
 }
 
 /// Register the loot globals.
@@ -147,8 +156,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetLootSlotInfo(slot) → texture, item, quantity, quality (`0x4c2c60`, `LootFrame.lua:81`),
-    // four on every leg (`0x4c2d07 mov eax,4`): no item is `nil, "", 0, 0`, a cleared slot
+    // GetLootSlotInfo(slot) → texture, item, quantity, quality, locked (`0x588570`,
+    // `LootFrame.lua:97`), five on every leg: `locked` is 1 for a `LOCKED` slot type
+    // (`[0xbfa6ac]` == 3) and nil otherwise. No item is `nil, "", 0, 0`, a cleared slot
     // `nil, "", 0, -1`. The miss sentinels are a floor: the reference opens no window before every
     // template lands, and the app holds `LOOT_OPENED` back likewise.
     g.set(
@@ -174,8 +184,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     } else {
                         NO_SLOT_QUALITY
                     }),
-                    // The trailing item id: none here.
-                    Value::Integer(0),
+                    Value::Nil,
                 ]));
             };
             let texture =
@@ -188,8 +197,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 item,
                 Value::Integer(i64::from(row.quantity)),
                 quality,
-                // The item id, a fifth return that is not a 1.12 value.
-                Value::Integer(i64::from(row.item_id)),
+                if row.locked {
+                    Value::Integer(1)
+                } else {
+                    Value::Nil
+                },
             ]))
         })?,
     )?;
@@ -275,14 +287,28 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.set_named_registry_value(REG_LOOTBUTTON_METHODS, m)?;
     }
 
-    // LootSlot(slot): the LOOT_BIND confirmation only (`0x4c2e70`: `luaL_checknumber(1)`,
-    // `dec eax`, `0x4c2790(slot, 1)`, whose arm at `0x4c27c0` returns unless the slot is the
-    // pending confirm, `cmp edi, [0x847cec]`). On an ordinary row it does nothing.
+    // LootSlot(slot): the take (`0x589520`: a number check, the truncating `fistp`, `sub eax,1`,
+    // then `0x589140`). The dispatcher bounds-checks the decremented slot, so below 1 takes nothing.
     g.set(
         "LootSlot",
-        lua.create_function(|lua, slot: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
-            model.loot_confirms.push(slot);
+        lua.create_function(|lua, slot: f64| {
+            if let Some(slot) = loot_slot_arg(slot) {
+                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                model.loot_picks.push(slot);
+            }
+            Ok(())
+        })?,
+    )?;
+
+    // ConfirmLootSlot(slot): the `LOOT_BIND` popup's accept (`StaticPopup.lua:1519`). `0x589590`
+    // converts as `LootSlot` does and calls `0x589300`, which sends only for the pending slot.
+    g.set(
+        "ConfirmLootSlot",
+        lua.create_function(|lua, slot: f64| {
+            if let Some(slot) = loot_slot_arg(slot) {
+                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                model.loot_confirms.push(slot);
+            }
             Ok(())
         })?,
     )?;
@@ -402,6 +428,7 @@ mod tests {
                     is_coin: true,
                     link: None,
                     random_property_id: 0,
+                    locked: false,
                 }),
                 Some(LootRow {
                     item_id: 0,
@@ -412,6 +439,7 @@ mod tests {
                     is_coin: false,
                     link: Some("|cffffffff|Hitem:2589:0:0:0|h[Wool Cloth]|h|r".into()),
                     random_property_id: 0,
+                    locked: false,
                 }),
                 // In flight: the loot arrived, its item template has not.
                 Some(LootRow {
@@ -423,6 +451,7 @@ mod tests {
                     is_coin: false,
                     link: None,
                     random_property_id: 0,
+                    locked: false,
                 }),
             ],
             fishing: false,
@@ -598,18 +627,55 @@ mod tests {
         assert!(s.take_loot_picks().is_empty());
     }
 
-    /// In the pick queue `LootSlot` would loot any row an addon named, which the reference refuses.
+    /// `LootSlot` is the take (`0x589520` → `0x589140`); `ConfirmLootSlot` the confirm
+    /// (`0x589590` → `0x589300`).
     #[test]
-    fn loot_slot_queues_confirms_not_picks() {
+    fn loot_slot_takes_and_confirm_loot_slot_confirms() {
         let mut s = UiScript::new().unwrap();
         s.set_loot(Some(loot()));
         s.run("LootSlot(2)").unwrap();
-        assert!(
-            s.take_loot_picks().is_empty(),
-            "LootSlot is not the take verb"
+        assert_eq!(s.take_loot_picks(), vec![2], "LootSlot is the take");
+        assert!(s.take_loot_confirms().is_empty());
+        assert!(s.take_loot_picks().is_empty(), "drained");
+
+        s.run("ConfirmLootSlot(3)").unwrap();
+        assert_eq!(s.take_loot_confirms(), vec![3]);
+        assert!(s.take_loot_picks().is_empty(), "a confirm is not a take");
+
+        // The `fistp` truncates, and a decremented slot below 0 takes nothing.
+        s.run("LootSlot(2.9) LootSlot(0) LootSlot(-1) ConfirmLootSlot(0.5)")
+            .unwrap();
+        assert_eq!(s.take_loot_picks(), vec![2]);
+        assert!(s.take_loot_confirms().is_empty());
+    }
+
+    /// The fifth return is 1 for a `LOCKED` row and nil otherwise, never the item id.
+    #[test]
+    fn get_loot_slot_info_reports_a_locked_row() {
+        let mut s = UiScript::new().unwrap();
+        let mut l = loot();
+        l.rows[1].as_mut().unwrap().item_id = 2589;
+        s.set_loot(Some(l.clone()));
+        for slot in 1..=4 {
+            assert!(
+                s.eval::<bool>(&format!("return select(5, GetLootSlotInfo({slot})) == nil"))
+                    .unwrap(),
+                "slot {slot} is not locked"
+            );
+        }
+        assert_eq!(
+            s.eval::<i64>("return select('#', GetLootSlotInfo(9))")
+                .unwrap(),
+            5,
+            "five returns past the end too"
         );
-        assert_eq!(s.take_loot_confirms(), vec![2]);
-        assert!(s.take_loot_confirms().is_empty(), "drained");
+        l.rows[1].as_mut().unwrap().locked = true;
+        s.set_loot(Some(l));
+        assert_eq!(
+            s.eval::<i64>("return select(5, GetLootSlotInfo(2))")
+                .unwrap(),
+            1
+        );
     }
 
     #[test]

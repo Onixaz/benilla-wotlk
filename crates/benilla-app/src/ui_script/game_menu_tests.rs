@@ -254,6 +254,7 @@ fn the_open_menu_takes_the_screen_and_refuses_every_other_panel() {
             is_coin: false,
             link: None,
             random_property_id: 0,
+            locked: false,
         })],
     }));
     s.fire_event("LOOT_OPENED", vec![]);

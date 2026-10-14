@@ -81,6 +81,7 @@ fn escape_closes_bag_and_panel_releases_loot_and_keeps_the_held_item() {
             is_coin: false,
             link: None,
             random_property_id: 0,
+            locked: false,
         })],
     }));
     s.fire_event("LOOT_OPENED", vec![]);

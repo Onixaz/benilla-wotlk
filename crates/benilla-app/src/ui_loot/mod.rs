@@ -11,18 +11,23 @@ use crate::entities::ItemDisplays;
 use crate::items::{Items, RollCatalogs};
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
+use crate::ui_action::{UiError, UiErrorKeys};
 use crate::ui_items::KEYRING_CONTAINER;
 use crate::ui_party::{GroupState, GROUPTYPE_RAID, GROUP_MEMBER_SUBGROUP};
 use crate::ui_script::{UiFeed, UiInput};
 
 mod net;
 
-/// `ItemBondingType::BIND_WHEN_PICKED_UP`, the first conjunct of the `LOOT_BIND` confirm: the
-/// client compares `item_template + 0x194` against 1.
+/// `ItemBondingType::BIND_WHEN_PICKED_UP`, the first conjunct of the `LOOT_BIND` confirm: the take
+/// dispatcher `0x589140` compares the item record's `+0x178` against 1.
 const BIND_WHEN_PICKED_UP: u32 = 1;
 
-/// The second conjunct: uncommon or better (`0x4c28fb cmp [tmpl+0x1c], 2`).
+/// The second conjunct: uncommon or better (`0x589140`: `1 < [rec+0x14]`).
 const BIND_CONFIRM_MIN_QUALITY: u32 = 2;
+
+/// The third: not `ITEM_FLAG_MULTI_DROP` (`0x589140`: `[rec+0x18] & 0x800`), whose every looter
+/// gets a copy, so taking it costs nobody else the drop.
+const ITEM_FLAG_MULTI_DROP: u32 = 0x800;
 
 /// The coin row's quality, 0, so its text is grey: `0x4c23a0`'s coin guard returns 0 at
 /// `0x4c23de`, and `LootFrame_Update` has no coin case (`LootFrame.lua:81-85`).
@@ -91,10 +96,10 @@ pub(crate) struct LootState {
     fishing: bool,
     /// The open window's master-loot candidates (`SMSG_LOOT_MASTER_LIST`), in wire order.
     master_candidates: Vec<u64>,
-    /// The row a `LOOT_BIND_CONFIRM` is open for, the reference's `[0x847cec]`: set by a click
-    /// (`0x4c2790`), cleared by the confirmed send (`0x4c281a`) and per window (`0x4c1df5`).
-    /// Deviation: it is the display row, where the reference's is the item index plus one
-    /// (`0x4c2885`), so an addon's `GetLootSlotInfo(arg1)` reads the row the dialog is for.
+    /// The display row a `LOOT_BIND_CONFIRM` is open for: set by `LootSlot`, cleared by the
+    /// confirmed send and with each window. The reference keeps the item index at `[0xacee24]`
+    /// (`0x589140`), and `ConfirmLootSlot` turns its slot into the item index the same way
+    /// (`0x589300`), so the two compare alike; the event carries the display row.
     pending_bind_confirm: Option<u32>,
     /// The list staged for the next open: vmangos sends it from inside `Player::SendLoot`
     /// (`Player.cpp:8080`), just ahead of its response. Staging keeps it out of later windows.
@@ -473,6 +478,8 @@ fn resolve_item(
         link,
         // The raw id, as the client's loot record keeps it; the tooltip resolves it (`0x52b7bf`).
         random_property_id: item.random_property_id,
+        // `GetLootSlotInfo`'s fifth return reads the slot type (`0x588570`).
+        locked: item.slot_type == slot_type::LOCKED,
     }
 }
 
@@ -512,6 +519,7 @@ fn snapshot(
             // No item behind it: a modified click finds nil.
             link: None,
             random_property_id: 0,
+            locked: false,
         }));
     }
     for it in &loot.items {
@@ -736,7 +744,7 @@ fn feed_loot(
                         }) if slot_type == slot_type::ALLOW_LOOT => {
                             // A hand click's bind gate plus a one-shot latch (`0x4c21c2`,
                             // `0x4c21e2`): later bind-on-pickup rows stay, untaken and unasked.
-                            if bind_confirm_required(&items, &commands, item_id) {
+                            if bind_confirm_required(&items, &commands, item_id, slot_type) {
                                 if bind_confirm_fired {
                                     continue;
                                 }
@@ -791,12 +799,17 @@ fn feed_loot(
     *last = fresh;
 }
 
-/// Whether a take must raise `LOOT_BIND_CONFIRM` first (`0x4c28f2`/`0x4c28fb`): bind on pickup
-/// and uncommon or better. An unresolved template answers false, as the reference's cache peek.
-fn bind_confirm_required(items: &Items, commands: &NetCommands, item_id: u32) -> bool {
-    items
-        .template(item_id, 0, commands)
-        .is_some_and(|t| t.bonding == BIND_WHEN_PICKED_UP && t.quality >= BIND_CONFIRM_MIN_QUALITY)
+/// Whether a take must raise `LOOT_BIND_CONFIRM` first (`0x589140`): bind on pickup, uncommon or
+/// better, not multi-drop, and not an `OWNER` slot. An unresolved template answers false, as the
+/// reference's cache peek. Not ported: the hold-count check `0x754dd0` the reference runs before
+/// the dialog, which refuses an item past its `MaxCount` or limit category with a red error.
+fn bind_confirm_required(items: &Items, commands: &NetCommands, item_id: u32, kind: u8) -> bool {
+    kind != slot_type::OWNER
+        && items.template(item_id, 0, commands).is_some_and(|t| {
+            t.bonding == BIND_WHEN_PICKED_UP
+                && t.quality >= BIND_CONFIRM_MIN_QUALITY
+                && t.flags & ITEM_FLAG_MULTI_DROP == 0
+        })
 }
 
 /// `CloseInteraction 0x48f200` past its early returns, the one close every loot close shares: the
@@ -899,6 +912,7 @@ fn drain_loot(
     // The move-start close runs before the VM check: it needs no Lua.
     mut move_start: ResMut<LootMoveStart>,
     mut dead: DeadUnitDeselect,
+    mut errors: ResMut<UiErrorKeys>,
 ) {
     if std::mem::take(&mut move_start.0) {
         dead.after_close(close_on_move_start(&mut loot, &mut latch, &commands));
@@ -913,8 +927,15 @@ fn drain_loot(
                 debug!("ui_loot: loot coin (row {index})");
                 let _ = commands.0.send(ClientCommand::LootMoney);
             }
-            // A master-loot row opens the candidate dropdown instead: the dispatcher branches on
-            // the slot type (`0x4c28a9`), and the Lua `OnClick` has already stashed the anchor.
+            // The take dispatcher `0x589140` branches on the slot type first: a roll in progress
+            // and a locked row refuse with a red error, and a master-loot row opens the candidate
+            // dropdown, whose anchor the stock `LootButton_OnClick` has already stashed.
+            Some(LootAction::Item { slot_type, .. }) if slot_type == slot_type::ROLL_ONGOING => {
+                errors.0.push(UiError::key("ERR_LOOT_ROLL_PENDING"));
+            }
+            Some(LootAction::Item { slot_type, .. }) if slot_type == slot_type::LOCKED => {
+                errors.0.push(UiError::key("ERR_LOOT_CANT_LOOT_THAT"));
+            }
             Some(LootAction::Item { slot_type, .. }) if slot_type == slot_type::MASTER => {
                 debug!("ui_loot: row {index} is master-loot — opening the candidate list");
                 script.fire_event("OPEN_MASTER_LOOT_LIST", vec![]);
@@ -923,11 +944,11 @@ fn drain_loot(
                 wire_slot,
                 display_id,
                 item_id,
-                ..
+                slot_type,
             }) => {
-                // The bind-on-pickup deferral (`0x4c28f2`-`0x4c2920`): stash the row, fire the
-                // event, send nothing, not even the pickup sound.
-                if bind_confirm_required(&items, &commands, item_id) {
+                // The bind-on-pickup deferral: stash the row, fire the event with it, send
+                // nothing, not even the pickup sound.
+                if bind_confirm_required(&items, &commands, item_id, slot_type) {
                     debug!("ui_loot: row {index} (wire {wire_slot}) binds on pickup — confirming");
                     loot.pending_bind_confirm = Some(index);
                     script.fire_event(
@@ -940,18 +961,19 @@ fn drain_loot(
                 let _ = commands
                     .0
                     .send(ClientCommand::AutostoreLootItem { slot: wire_slot });
-                // At the click, before any answer (`0x4c2926`): the item's ItemGroupSounds kit 0.
+                // Before any answer (`0x4d0090`, ahead of the send `0x6d2c20`): the item's
+                // ItemGroupSounds kit 0.
                 pickup.write(crate::sound::LootPickupSound { display_id });
             }
-            None => debug!("ui_loot: row {index} clicked out of range — ignored"),
+            None => debug!("ui_loot: LootSlot({index}) is out of range — ignored"),
         }
     }
 
-    // `LootSlot`, the confirm arm (`0x4c27c0`): it sends only for the pending row and clears the
-    // stash on the send (`0x4c281a`), so a doubled OnAccept cannot loot twice.
+    // `ConfirmLootSlot` (`0x589300`): it sends only for the pending row and clears the stash on
+    // the send, so a doubled OnAccept cannot loot twice.
     for index in script.take_loot_confirms() {
         if loot.pending_bind_confirm != Some(index) {
-            debug!("ui_loot: LootSlot({index}) is not the pending bind confirm — ignored");
+            debug!("ui_loot: ConfirmLootSlot({index}) is not the pending bind confirm — ignored");
             continue;
         }
         let Some(LootAction::Item {
@@ -960,7 +982,7 @@ fn drain_loot(
             ..
         }) = loot.action_at(index)
         else {
-            // The row went under the dialog: bail without clearing the stash, as `0x4c27d7` does.
+            // The row went under the dialog: bail without clearing the stash, as `0x589300` does.
             debug!("ui_loot: bind confirm for row {index} — the row is gone, nothing sent");
             continue;
         };
@@ -1114,10 +1136,12 @@ mod tests {
     const WHITE_BOP: u32 = 9999;
     /// Brutality Blade, a second BoP epic, for the sweep's one-dialog latch.
     const SECOND_BOP: u32 = 18832;
+    /// A BoP epic flagged `ITEM_FLAG_MULTI_DROP`, which takes no confirm.
+    const MULTI_DROP_BOP: u32 = 90_001;
 
-    /// `rows` open on a corpse with every template landed, then `lua` and one drain.
-    /// A loot window over `rows` whose display rows `clicks` are clicked by the mouse, as a
-    /// `LootButton` takes (`0x4c1820`), then `lua` run, then one drain.
+    /// A loot window over `rows` with every template landed, the display rows `clicks` taken
+    /// through `LootSlot` as the stock row click does (`LootFrame.lua:221`), then `lua` run, then
+    /// one drain.
     fn drain_with(
         gold: u32,
         rows: Vec<LootItem>,
@@ -1134,6 +1158,7 @@ mod tests {
             .init_resource::<GroupState>()
             .init_resource::<Items>()
             .init_resource::<crate::net::GuidIndex>()
+            .init_resource::<UiErrorKeys>()
             .insert_resource(NetCommands(tx));
 
         let mut items = app.world_mut().resource_mut::<Items>();
@@ -1151,12 +1176,21 @@ mod tests {
         tmpl(FLURRY_AXE, "Flurry Axe", 4, 2);
         tmpl(TOUGH_JERKY, "Tough Jerky", 1, 0);
         tmpl(WHITE_BOP, "A White Soulbound Thing", 1, 1);
+        items.insert_template(
+            MULTI_DROP_BOP,
+            Some(ItemInfo {
+                quality: 4,
+                bonding: 1,
+                flags: ITEM_FLAG_MULTI_DROP,
+                ..crate::items::test_template("A Shared Epic")
+            }),
+        );
 
         app.world_mut()
             .resource_mut::<LootState>()
             .open(0x42, loot_type::CORPSE, gold, rows);
 
-        let mut script = UiScript::new().unwrap();
+        let script = UiScript::new().unwrap();
         script
             .run(
                 "BIND_CONFIRMS = {}\n\
@@ -1165,18 +1199,8 @@ mod tests {
                  f:SetScript(\"OnEvent\", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) tinsert(BIND_CONFIRMS, arg1) end)",
             )
             .unwrap();
-        script.set_screen_size(1024.0, 768.0);
         for &row in clicks {
-            script
-                .run(&format!(
-                    "local b = CreateFrame(\"LootButton\", \"DrainRow\", UIParent)\n\
-                     b:SetPoint(\"BOTTOMLEFT\", 100, 100) b:SetWidth(50) b:SetHeight(50)\n\
-                     b:EnableMouse(true) b:Show() b:SetSlot({row})"
-                ))
-                .unwrap();
-            script.resolve();
-            script.mouse_button(125.0, 125.0, "LeftButton", true);
-            script.mouse_button(125.0, 125.0, "LeftButton", false);
+            script.run(&format!("LootSlot({row})")).unwrap();
         }
         script.run(lua).unwrap();
         app.insert_non_send_resource(script);
@@ -1343,7 +1367,7 @@ mod tests {
         app.world().resource::<LootState>().pending_bind_confirm
     }
 
-    /// The click arm's deferral (`0x4c28f2`-`0x4c2920`).
+    /// `LootSlot`'s deferral (`0x589140`).
     #[test]
     fn a_bop_row_confirms_instead_of_sending() {
         let (mut app, rx) = drain_with(0, vec![item(0, FELSTRIKER, 1)], &[1], "");
@@ -1357,10 +1381,10 @@ mod tests {
         );
     }
 
-    /// The confirm arm (`0x4c27c0`).
+    /// `ConfirmLootSlot` (`0x589300`).
     #[test]
-    fn loot_slot_completes_the_pending_confirm_exactly_once() {
-        let (mut app, rx) = drain_with(0, vec![item(7, FELSTRIKER, 1)], &[1], "LootSlot(1)");
+    fn confirm_loot_slot_completes_the_pending_confirm_exactly_once() {
+        let (mut app, rx) = drain_with(0, vec![item(7, FELSTRIKER, 1)], &[1], "ConfirmLootSlot(1)");
         assert!(
             matches!(
                 sent(&rx)[..],
@@ -1373,20 +1397,20 @@ mod tests {
         // A second accept over the same dialog: nothing left to complete.
         app.world_mut()
             .non_send_resource_mut::<UiScript>()
-            .run("LootSlot(1)")
+            .run("ConfirmLootSlot(1)")
             .unwrap();
         app.world_mut().run_system_once(drain_loot).unwrap();
         assert!(sent(&rx).is_empty(), "a second accept sends nothing");
     }
 
-    /// The flag-1 arm opens with `cmp edi,[0x847cec]`, the pending row.
+    /// `0x589300` compares the slot with the pending one, `[0xacee24]`, first.
     #[test]
-    fn loot_slot_on_an_ordinary_row_sends_nothing() {
+    fn confirm_loot_slot_on_an_ordinary_row_sends_nothing() {
         let (_app, rx) = drain_with(
             0,
             vec![item(0, TOUGH_JERKY, 1), item(1, FLURRY_AXE, 1)],
             &[],
-            "LootSlot(1) LootSlot(2)",
+            "ConfirmLootSlot(1) ConfirmLootSlot(2)",
         );
         assert!(
             sent(&rx).is_empty(),
@@ -1394,14 +1418,74 @@ mod tests {
         );
     }
 
+    /// `LootSlot` on an ordinary row is the take: one autostore of its wire slot.
     #[test]
-    fn the_bind_gate_needs_both_conjuncts() {
-        for (entry, why) in [
-            (FLURRY_AXE, "bind-on-equip is not bind-on-pickup"),
-            (WHITE_BOP, "quality 1 is below the floor of 2"),
-            (TOUGH_JERKY, "neither"),
+    fn loot_slot_takes_an_ordinary_row() {
+        let (_app, rx) = drain_with(
+            0,
+            vec![item(0, TOUGH_JERKY, 1), item(1, FLURRY_AXE, 1)],
+            &[2, 1],
+            "",
+        );
+        assert!(matches!(
+            sent(&rx)[..],
+            [
+                ClientCommand::AutostoreLootItem { slot: 1 },
+                ClientCommand::AutostoreLootItem { slot: 0 }
+            ]
+        ));
+    }
+
+    /// `LootSlot` on the coin row takes the money.
+    #[test]
+    fn loot_slot_on_the_coin_row_takes_the_money() {
+        let (_app, rx) = drain_with(120, vec![item(0, TOUGH_JERKY, 1)], &[1], "");
+        assert!(matches!(sent(&rx)[..], [ClientCommand::LootMoney]));
+    }
+
+    /// The slot-type branches of `0x589140`: a roll in progress and a locked row refuse with their
+    /// red errors and send nothing.
+    #[test]
+    fn a_rolling_or_locked_row_refuses_with_its_error() {
+        for (kind, key) in [
+            (slot_type::ROLL_ONGOING, "ERR_LOOT_ROLL_PENDING"),
+            (slot_type::LOCKED, "ERR_LOOT_CANT_LOOT_THAT"),
         ] {
-            let (app, rx) = drain_with(0, vec![item(3, entry, 1)], &[1], "");
+            let row = LootItem {
+                slot_type: kind,
+                ..item(3, TOUGH_JERKY, 1)
+            };
+            let (app, rx) = drain_with(0, vec![row], &[1], "");
+            assert!(sent(&rx).is_empty(), "slot type {kind} sends nothing");
+            let errors: Vec<_> = app
+                .world()
+                .resource::<UiErrorKeys>()
+                .0
+                .iter()
+                .map(|e| e.key)
+                .collect();
+            assert_eq!(errors, vec![key], "slot type {kind}");
+        }
+    }
+
+    #[test]
+    fn the_bind_gate_needs_every_conjunct() {
+        for (entry, kind, why) in [
+            (FLURRY_AXE, 0, "bind-on-equip is not bind-on-pickup"),
+            (WHITE_BOP, 0, "quality 1 is below the floor of 2"),
+            (TOUGH_JERKY, 0, "neither"),
+            (MULTI_DROP_BOP, 0, "a multi-drop item costs nobody the drop"),
+            (
+                FELSTRIKER,
+                slot_type::OWNER,
+                "an OWNER slot skips the binding checks",
+            ),
+        ] {
+            let row = LootItem {
+                slot_type: kind,
+                ..item(3, entry, 1)
+            };
+            let (app, rx) = drain_with(0, vec![row], &[1], "");
             assert!(
                 matches!(
                     sent(&rx)[..],
@@ -1437,7 +1521,7 @@ mod tests {
         // The accept, with the same number, reaches the right wire slot.
         app.world_mut()
             .non_send_resource_mut::<UiScript>()
-            .run("LootSlot(2)")
+            .run("ConfirmLootSlot(2)")
             .unwrap();
         app.world_mut().run_system_once(drain_loot).unwrap();
         assert!(matches!(
@@ -1446,7 +1530,7 @@ mod tests {
         ));
     }
 
-    /// `0x4c27d7`: the continuation returns on an emptied record.
+    /// `0x589300`: the continuation returns on an emptied record.
     #[test]
     fn an_accept_for_a_row_that_was_taken_away_sends_nothing() {
         let (mut app, rx) = drain_with(0, vec![item(2, FELSTRIKER, 1)], &[1], "");
@@ -1454,7 +1538,7 @@ mod tests {
 
         app.world_mut().resource_mut::<LootState>().remove_slot(2);
         let script = app.world_mut().non_send_resource_mut::<UiScript>();
-        script.run("LootSlot(1)").unwrap();
+        script.run("ConfirmLootSlot(1)").unwrap();
         app.world_mut().run_system_once(drain_loot).unwrap();
 
         assert!(
@@ -2178,6 +2262,7 @@ mod tests {
             .init_resource::<GroupState>()
             .init_resource::<Items>()
             .init_resource::<crate::net::GuidIndex>()
+            .init_resource::<UiErrorKeys>()
             .insert_resource(NetCommands(tx))
             .add_systems(Update, drain_loot);
         for (guid, health) in [(CORPSE, 0), (LIVE, 100)] {

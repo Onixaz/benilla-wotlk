@@ -626,6 +626,7 @@ fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {
             link: Some("|cff1eff00|Hitem:8888:0:584:0|h[Bloodrazor of the Monkey]|h|r".into()),
             // The row carries the roll id; the engine resolves it, as the reference reads `+0x424`.
             random_property_id: 584,
+            locked: false,
         })],
         fishing: false,
     }));
