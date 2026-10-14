@@ -435,7 +435,9 @@ mod tests {
             assert_eq!(quads.verts.len(), 4);
         }
 
-        /// Without it, the write precedes the clear and the debug assert fires.
+        /// Without it, the write precedes the clear and the debug assert fires; a release build
+        /// compiles the tripwire out, so the test is debug-only.
+        #[cfg(debug_assertions)]
         #[test]
         #[should_panic(expected = "effect-stream write before `begin_effect_frame`")]
         fn without_the_edge_the_tripwire_names_it() {
