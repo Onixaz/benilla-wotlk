@@ -157,6 +157,10 @@ impl Plugin for DebugPanelPlugin {
             )
             // No ordering against `UiInput`: a dev chord cannot be typed text.
             .add_systems(Update, (toggle_panel, gate_egui_lane).chain())
+            // bevy_egui's end-pass set builds two fresh `QueryState`s every frame
+            // (`run_egui_context_pass_loop_system`), ~0.1 ms against this world's archetypes
+            // even with every context on `run_manually`; the set waits for an open lane.
+            .configure_sets(PostUpdate, EguiPostUpdateSet::EndPass.run_if(egui_lane_open))
             // A gated frame still owes bevy_egui a prepared empty output, between the end pass it
             // skipped and the output consumer that still runs.
             .add_systems(
@@ -225,6 +229,11 @@ fn spawn_egui_camera(mut commands: Commands) {
             ..default()
         },
     ));
+}
+
+/// Whether the egui lane is wanted this frame: the panel open or the inspector on.
+fn egui_lane_open(debug: Res<DebugState>, inspect: Res<crate::ui_script::InspectMode>) -> bool {
+    debug.open || inspect.enabled
 }
 
 /// Demand-gate the egui lane: with the panel closed and inspect off, the primary context goes
