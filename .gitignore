@@ -41,3 +41,4 @@ __pycache__/
 # The vanilla addon corpus the UI engine's real-addon tests read (third-party content): a symlink
 # beside `WoW`, or `BENILLA_ADDON_CORPUS`.
 /wow-addons-vanilla
+.mcp.json
