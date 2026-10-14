@@ -93,6 +93,14 @@ impl Plugin for DevProbesPlugin {
             {
                 app.add_plugins(crate::capture::ProbeFocusPlugin);
             }
+            // `WOW_PROBE_CONTINUOUS=1`: a frame-time run keeps the loop continuous while the
+            // window is unfocused, where bevy's `WinitSettings::game()` would rail it at 60 Hz.
+            if std::env::var("WOW_PROBE_CONTINUOUS").as_deref() == Ok("1") {
+                app.insert_resource(bevy::winit::WinitSettings {
+                    focused_mode: bevy::winit::UpdateMode::Continuous,
+                    unfocused_mode: bevy::winit::UpdateMode::Continuous,
+                });
+            }
             // `WOW_PROBE_CHAT=".go xyz …"`: sends GM or chat lines once in-world.
             if std::env::var("WOW_PROBE_CHAT").is_ok() {
                 app.add_plugins(crate::capture::ProbeChatPlugin);

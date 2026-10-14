@@ -44,9 +44,11 @@ pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut journal: ResMut<Fps
 impl Plugin for FpsJournalPlugin {
     fn build(&self, app: &mut App) {
         // Bevy's per-pass render diagnostics, the source of the GPU columns and of Tracy's GPU
-        // zones, registered in every build.
-        app.add_plugins(RenderDiagnosticsPlugin)
-            .init_resource::<FpsJournalSetting>()
+        // zones, registered in every build; `bevy/trace_tracy` registers it itself first.
+        if !app.is_plugin_added::<RenderDiagnosticsPlugin>() {
+            app.add_plugins(RenderDiagnosticsPlugin);
+        }
+        app.init_resource::<FpsJournalSetting>()
             .add_observer(on_cvar)
             .insert_resource(FpsJournal {
                 env_path: std::env::var("WOW_FPS_JOURNAL")
