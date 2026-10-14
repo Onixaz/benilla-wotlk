@@ -20,6 +20,13 @@
 #[global_allocator]
 static ALLOC: assert_no_alloc::AllocDisabler = assert_no_alloc::AllocDisabler;
 
+/// The release allocator, mimalloc: the frame's allocation churn (command queues, extract
+/// buffers, per-system scratch) runs through thread-local heaps instead of the OS heap's
+/// lock. `WOW_SYS_ALLOC` is not a switch: an allocator is chosen at link time.
+#[cfg(all(not(debug_assertions), not(doctest)))]
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 pub mod addon_harness;
 mod area;
 mod area_poi;
