@@ -93,6 +93,18 @@ fn n_u32_schema(name: &str, n: usize, string_fields: &[usize]) -> Schema {
     s
 }
 
+pub(crate) fn terrain_type_schema() -> Schema {
+    n_u32_schema("TerrainType", 6, &[1])
+}
+
+pub(crate) fn footstep_terrain_lookup_schema() -> Schema {
+    n_u32_schema("FootstepTerrainLookup", 5, &[])
+}
+
+pub(crate) fn footprint_textures_schema() -> Schema {
+    n_u32_schema("FootprintTextures", 2, &[1])
+}
+
 /// Read the three tables off the patch chain.
 pub fn load_footstep_catalog(chain: &mut Chain) -> Result<FootstepCatalog> {
     let bytes = chain
@@ -116,7 +128,7 @@ pub fn load_footstep_catalog(chain: &mut Chain) -> Result<FootstepCatalog> {
     let bytes = chain
         .read_file("DBFilesClient\\TerrainType.dbc")
         .context("reading TerrainType.dbc")?;
-    let rs = parse(&bytes, n_u32_schema("TerrainType", 6, &[1]), "TerrainType")?;
+    let rs = parse(&bytes, terrain_type_schema(), "TerrainType")?;
     let mut terrain_sound = HashMap::with_capacity(rs.records().len());
     let mut terrain_flags = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
@@ -133,7 +145,7 @@ pub fn load_footstep_catalog(chain: &mut Chain) -> Result<FootstepCatalog> {
         .context("reading FootstepTerrainLookup.dbc")?;
     let rs = parse(
         &bytes,
-        n_u32_schema("FootstepTerrainLookup", 5, &[]),
+        footstep_terrain_lookup_schema(),
         "FootstepTerrainLookup",
     )?;
     let mut lookup = HashMap::with_capacity(rs.records().len());
@@ -161,11 +173,7 @@ pub fn load_footprint_textures(chain: &mut Chain) -> Result<HashMap<u32, String>
     let bytes = chain
         .read_file("DBFilesClient\\FootprintTextures.dbc")
         .context("reading FootprintTextures.dbc")?;
-    let rs = parse(
-        &bytes,
-        n_u32_schema("FootprintTextures", 2, &[1]),
-        "FootprintTextures",
-    )?;
+    let rs = parse(&bytes, footprint_textures_schema(), "FootprintTextures")?;
     let mut map = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
         if let (Some(id), Some(path)) = (u32_at(r, 0), str_at(&rs, r, 1)) {

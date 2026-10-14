@@ -40,7 +40,7 @@ impl DefaultLanguages {
     }
 }
 
-fn languages_schema() -> Schema {
+pub(crate) fn languages_schema() -> Schema {
     let mut s = Schema::new("Languages");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     for i in 0..LOCALES {
@@ -212,7 +212,7 @@ impl LanguageWords {
     }
 }
 
-fn language_words_schema() -> Schema {
+pub(crate) fn language_words_schema() -> Schema {
     let mut s = Schema::new("LanguageWords");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("LanguageID", FieldType::UInt32));

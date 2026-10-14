@@ -43,7 +43,7 @@ impl ItemSetCatalog {
     }
 }
 
-fn item_set_schema() -> Schema {
+pub(crate) fn item_set_schema() -> Schema {
     let mut s = Schema::new("ItemSet");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     for i in 0..16 {

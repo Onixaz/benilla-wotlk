@@ -1,0 +1,420 @@
+//! benilla's DBC tables against 12340's (`reference/3.3.5a-dbc.tsv`, generated from the client's
+//! table loaders): each table benilla reads is one 12340 loads, held to the width 12340's loader
+//! checks; each table 12340 reads is read here or listed in [`NOT_READ`]; and each table has one
+//! schema in this crate, as a second copy is how a reader goes on parsing a layout the table no
+//! longer has.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+
+use benilla_formats::{dbc_width, READ_TABLES};
+
+/// Tables 12340 reads that benilla does not, each with what it backs in the reference and the
+/// open issue that builds it, where one does.
+const NOT_READ: &[(&str, &str)] = &[
+    (
+        "Achievement",
+        "#191 achievements: GetAchievementInfo and the tracker",
+    ),
+    ("Achievement_Category", "#191 achievements: GetCategoryList"),
+    (
+        "Achievement_Criteria",
+        "#191 achievements: GetAchievementCriteriaInfo, statistics",
+    ),
+    ("AreaGroup", "GetTradeSkillTools' area requirement"),
+    ("BannedAddOns", "the addon ban list"),
+    ("BarberShopStyle", "the barber shop"),
+    (
+        "BattlemasterList",
+        "battleground and arena queues: GetBattlefieldInfo",
+    ),
+    (
+        "Cfg_Configs",
+        "realm type rules: GetRealmInfo; realm_select hardcodes its rows",
+    ),
+    ("CreatureMovementInfo", "creature movement"),
+    ("CurrencyCategory", "the currency tab"),
+    ("CurrencyTypes", "the currency tab"),
+    ("DanceMoves", "dance studio emotes"),
+    ("DeclinedWord", "Russian name declension"),
+    ("DeclinedWordCases", "Russian name declension"),
+    ("DestructibleModelData", "destructible buildings"),
+    ("DungeonEncounter", "dungeon encounter ids"),
+    (
+        "DungeonMap",
+        "dungeon map levels: GetCurrentMapDungeonLevel, SetMapByID",
+    ),
+    ("DungeonMapChunk", "dungeon map levels"),
+    ("FileData", "the movie file table"),
+    ("GameObjectArtKit", "game object art kits"),
+    ("GameTables", "binds the gt tables to their lookup slots"),
+    ("GemProperties", "#202 gems and sockets"),
+    ("GlyphProperties", "#166 glyphs: GetGlyphSocketInfo"),
+    ("GlyphSlot", "#166 glyphs: GetGlyphSocketInfo"),
+    ("GMSurveyAnswers", "GM surveys"),
+    ("GMSurveyCurrentSurvey", "GM surveys"),
+    ("GMSurveyQuestions", "GM surveys"),
+    ("GMSurveySurveys", "GM surveys"),
+    (
+        "gtBarberShopCostBase",
+        "barber shop prices: GetBarberShopStyleInfo",
+    ),
+    ("gtChanceToMeleeCrit", "the character sheet's crit chance"),
+    (
+        "gtChanceToMeleeCritBase",
+        "the character sheet's crit chance",
+    ),
+    (
+        "gtChanceToSpellCrit",
+        "the character sheet's spell crit chance",
+    ),
+    (
+        "gtChanceToSpellCritBase",
+        "the character sheet's spell crit chance",
+    ),
+    ("gtCombatRatings", "combat ratings: GetCombatRatingBonus"),
+    ("gtNPCManaCostScaler", "NPC spell costs"),
+    (
+        "gtOCTClassCombatRatingScalar",
+        "combat ratings: GetCombatRatingBonus",
+    ),
+    ("gtOCTRegenHP", "health regeneration"),
+    ("gtRegenHPPerSpt", "health regeneration"),
+    ("gtRegenMPPerSpt", "mana regeneration"),
+    ("HolidayDescriptions", "the calendar's holidays"),
+    ("HolidayNames", "the calendar's holidays"),
+    (
+        "Holidays",
+        "the calendar's holidays: CalendarGetHolidayInfo",
+    ),
+    (
+        "Item",
+        "item class, display and sheath by id: GetItemIcon, PickupItem",
+    ),
+    (
+        "ItemExtendedCost",
+        "#198 merchant costs in items and points: GetMerchantItemCostInfo",
+    ),
+    (
+        "ItemLimitCategory",
+        "unique-equipped limits: GetItemUniqueness",
+    ),
+    ("ItemPurchaseGroup", "merchant purchase groups"),
+    ("ItemRandomSuffix", "random suffix item names"),
+    ("LfgDungeonExpansion", "the dungeon finder"),
+    ("LfgDungeonGroup", "the dungeon finder"),
+    (
+        "LfgDungeons",
+        "the dungeon finder: GetLFGDungeonInfo, rewards",
+    ),
+    ("LiquidMaterial", "liquid materials"),
+    ("LiquidType", "liquid types: WMO and MH2O liquid kinds"),
+    ("LoadingScreenTaxiSplines", "the taxi loading screen"),
+    ("MailTemplate", "templated mail text: GetInboxText"),
+    ("MapDifficulty", "instance difficulty and reset times"),
+    ("Movie", "#130 movies"),
+    ("MovieFileData", "#130 movies"),
+    ("MovieVariation", "#130 movies"),
+    ("NameGen", "random character names"),
+    ("NamesProfanity", "character name checks"),
+    ("NamesReserved", "character name checks"),
+    ("ObjectEffect", "object effects"),
+    ("ObjectEffectGroup", "object effects"),
+    ("ObjectEffectModifier", "object effects"),
+    ("ObjectEffectPackage", "object effects"),
+    ("ObjectEffectPackageElem", "object effects"),
+    ("OverrideSpellData", "the vehicle and override action bar"),
+    (
+        "PaperDollItemFrame",
+        "equipment slot names: GetInventorySlotInfo",
+    ),
+    ("ParticleColor", "#119 particle colour overrides"),
+    ("PowerDisplay", "alternate power display: UnitPowerType"),
+    ("PvpDifficulty", "battleground level brackets"),
+    ("RandPropPoints", "random property and suffix stats"),
+    ("Resistances", "resistance names"),
+    ("ScalingStatDistribution", "heirloom stat scaling"),
+    ("ScalingStatValues", "heirloom stat scaling"),
+    ("ScreenEffect", "screen effects"),
+    ("SkillCostsData", "skill training costs"),
+    ("SkillTiers", "skill tiers"),
+    ("SoundEntriesAdvanced", "sound entry extensions"),
+    ("SoundFilter", "sound filters"),
+    ("SoundFilterElem", "sound filters"),
+    (
+        "SpellDescriptionVariables",
+        "#199 spell description variables",
+    ),
+    ("SpellDifficulty", "per-difficulty spell variants"),
+    ("SpellItemEnchantmentCondition", "#202 meta gem conditions"),
+    ("SpellMissile", "#110 spell missiles"),
+    ("SpellMissileMotion", "#110 spell missile motion"),
+    ("SpellRuneCost", "death knight rune costs"),
+    ("SpellVisualKitAreaModel", "#110 area spell visual kits"),
+    (
+        "SpellVisualKitModelAttach",
+        "#110 spell visual kit attachments",
+    ),
+    ("Startup_Strings", "the client's startup error text"),
+    ("StringLookups", "string lookups"),
+    ("SummonProperties", "summoned unit slots and totems"),
+    (
+        "TotemCategory",
+        "totem and tool categories: GetTradeSkillTools, SetMultiCastSpell",
+    ),
+    ("TransportPhysics", "transport rocking"),
+    ("TransportRotation", "transport rotation"),
+    ("Vehicle", "vehicles"),
+    ("VehicleSeat", "vehicles"),
+    ("VehicleUIIndicator", "the vehicle seat indicator"),
+    ("VehicleUIIndSeat", "the vehicle seat indicator"),
+    ("VideoHardware", "graphics defaults by video card"),
+    ("WorldChunkSounds", "per-chunk zone sounds"),
+    ("WorldMapTransforms", "world map transforms between maps"),
+    ("WorldSafeLocs", "graveyards on the map: GetMapLandmarkInfo"),
+    ("WorldStateZoneSounds", "world-state zone sounds"),
+];
+
+/// Tables benilla reads that 12340 loads and never reads: each is a reader the reference does
+/// not have, so each names what reads it here.
+const READ_PAST_12340: &[(&str, &str)] = &[
+    ("SheatheSoundLookups", "the sheathe sounds"),
+    ("SoundWaterType", "the liquid loops and splashes"),
+];
+
+struct Table {
+    columns: usize,
+    row_size: usize,
+    readers: usize,
+}
+
+fn reference() -> BTreeMap<String, Table> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../reference/3.3.5a-dbc.tsv");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut lines = text.lines().filter(|l| !l.starts_with('#'));
+    let header: Vec<&str> = lines.next().unwrap().split('\t').collect();
+    let col = |name: &str| header.iter().position(|h| *h == name).unwrap();
+    let (table, columns, row_size, readers) = (
+        col("table"),
+        col("columns"),
+        col("row_size"),
+        col("readers"),
+    );
+    lines
+        .map(|line| {
+            let f: Vec<&str> = line.split('\t').collect();
+            let n = |i: usize| f[i].parse::<usize>().unwrap();
+            let row = Table {
+                columns: n(columns),
+                row_size: n(row_size),
+                readers: n(readers),
+            };
+            (f[table].to_owned(), row)
+        })
+        .collect()
+}
+
+#[test]
+fn the_reference_is_every_12340_loader() {
+    let reference = reference();
+    assert_eq!(reference.len(), 241, "12340 has 241 table loaders");
+}
+
+#[test]
+fn the_install_files_have_the_widths_12340_checks() {
+    let data = benilla_formats::wow_data_or_skip!();
+    let mut chain = benilla_formats::open_chain(&data).unwrap();
+    let mut wrong = Vec::new();
+    for (table, r) in reference() {
+        let bytes = chain
+            .read_file(&format!("DBFilesClient\\{table}.dbc"))
+            .unwrap();
+        let header = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
+        let file = (header(8), header(12));
+        if &bytes[..4] != b"WDBC" || file != (r.columns, r.row_size) {
+            wrong.push(format!(
+                "{table}: file {file:?}, 12340 checks {:?}",
+                (r.columns, r.row_size)
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
+fn every_table_read_is_a_12340_table_at_its_width() {
+    let reference = reference();
+    let mut wrong = Vec::new();
+    for table in READ_TABLES {
+        let ours = dbc_width(table).unwrap();
+        match reference.get(*table) {
+            None => wrong.push(format!("{table}: 12340 has no such table")),
+            Some(r) if (r.columns, r.row_size) != ours => wrong.push(format!(
+                "{table}: ours {ours:?}, 12340 checks {:?}",
+                (r.columns, r.row_size)
+            )),
+            Some(_) => {}
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
+fn every_table_12340_reads_is_read_or_listed() {
+    let reference = reference();
+    let read: BTreeSet<&str> = READ_TABLES.iter().copied().collect();
+    let listed: BTreeMap<&str, &str> = NOT_READ.iter().copied().collect();
+    assert_eq!(listed.len(), NOT_READ.len(), "a table listed twice");
+    let unlisted: Vec<_> = reference
+        .iter()
+        .filter(|(t, r)| {
+            r.readers > 0 && !read.contains(t.as_str()) && !listed.contains_key(t.as_str())
+        })
+        .map(|(t, _)| t)
+        .collect();
+    assert!(
+        unlisted.is_empty(),
+        "12340 reads these, benilla does not, and NOT_READ does not say what they back: {unlisted:?}"
+    );
+    let stale: Vec<_> = listed
+        .keys()
+        .filter(|t| read.contains(*t) || reference.get(**t).is_none_or(|r| r.readers == 0))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "NOT_READ lists tables now read, never read by 12340, or unknown: {stale:?}"
+    );
+}
+
+#[test]
+fn a_table_12340_never_reads_is_read_only_where_listed() {
+    let reference = reference();
+    let listed: BTreeMap<&str, &str> = READ_PAST_12340.iter().copied().collect();
+    let past: BTreeSet<&str> = READ_TABLES
+        .iter()
+        .copied()
+        .filter(|t| reference.get(*t).is_some_and(|r| r.readers == 0))
+        .collect();
+    assert_eq!(
+        past,
+        listed.keys().copied().collect(),
+        "the tables benilla reads that 12340 loads and never reads"
+    );
+}
+
+fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            rust_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// The crate's loader sources, by path under `src/`: all but the `bin/` tools and the `tests.rs`
+/// fixture modules, whose synthetic tables build the loader's own constants.
+fn loader_sources() -> Vec<(String, String)> {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    rust_files(&src, &mut files);
+    files
+        .into_iter()
+        .filter(|f| f.file_name().is_some_and(|n| n != "tests.rs"))
+        .filter(|f| !f.strip_prefix(&src).unwrap().starts_with("bin"))
+        .map(|f| {
+            let at = f.strip_prefix(&src).unwrap().display().to_string();
+            (at, std::fs::read_to_string(&f).unwrap())
+        })
+        .collect()
+}
+
+/// The string literal opening `rest`, past leading whitespace.
+fn leading_literal(rest: &str) -> Option<&str> {
+    let rest = rest.trim_start().strip_prefix('"')?;
+    Some(&rest[..rest.find('"')?])
+}
+
+/// The tables a source file builds a schema for: the name a `Schema::new` or `…schema(` call
+/// opens with.
+fn schema_names(text: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for (i, m) in text.match_indices("chema(") {
+        if let Some(name) = leading_literal(&text[i + m.len()..]) {
+            names.push(name.to_owned());
+        }
+    }
+    for (i, m) in text.match_indices("Schema::new(") {
+        if let Some(name) = leading_literal(&text[i + m.len()..]) {
+            names.push(name.to_owned());
+        }
+    }
+    names
+}
+
+/// The tables a source file opens by path: each literal `DBFilesClient\\<table>.dbc` in its code,
+/// past its comments and a formatted name.
+fn dbc_paths(text: &str) -> Vec<String> {
+    const PREFIX: &str = "DBFilesClient\\\\";
+    let mut names = Vec::new();
+    for line in text.lines() {
+        let code = line.split("//").next().unwrap_or("");
+        for (i, _) in code.match_indices(PREFIX) {
+            let rest = &code[i + PREFIX.len()..];
+            let Some(name) = rest.split(".dbc").next() else {
+                continue;
+            };
+            if rest.contains(".dbc")
+                && !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                names.push(name.to_owned());
+            }
+        }
+    }
+    names
+}
+
+#[test]
+fn the_scan_sees_each_way_a_table_is_named() {
+    let src = "Schema::new(\"A\"); n_u32_schema(\n    \"B\", 3); id_name_schema(\"C\", 1, 18)";
+    assert_eq!(schema_names(src), ["B", "C", "A"]);
+    let src = "read(\"DBFilesClient\\\\D.dbc\"); format!(\"DBFilesClient\\\\{t}.dbc\") // \
+               DBFilesClient\\\\E.dbc";
+    assert_eq!(dbc_paths(src), ["D"]);
+}
+
+#[test]
+fn every_table_is_declared_once() {
+    let mut sites: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (at, text) in loader_sources() {
+        for name in schema_names(&text) {
+            sites.entry(name).or_default().push(at.clone());
+        }
+    }
+    assert!(sites.len() > 50, "the scan found the schemas: {sites:?}");
+    let doubled: Vec<_> = sites.iter().filter(|(_, at)| at.len() > 1).collect();
+    assert!(
+        doubled.is_empty(),
+        "tables with more than one schema: {doubled:?}"
+    );
+}
+
+#[test]
+fn the_registry_names_every_table_a_loader_reads() {
+    let read: BTreeSet<&str> = READ_TABLES.iter().copied().collect();
+    assert_eq!(read.len(), READ_TABLES.len(), "a table registered twice");
+    let mut missing = BTreeMap::new();
+    for (at, text) in loader_sources() {
+        for name in schema_names(&text).into_iter().chain(dbc_paths(&text)) {
+            if !read.contains(name.as_str()) {
+                missing.insert(name, at.clone());
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "loaders read tables `dbc_tables.rs` does not register: {missing:?}"
+    );
+}

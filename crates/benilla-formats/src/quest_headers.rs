@@ -4,9 +4,10 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
+use benilla_dbc::Schema;
 
 use crate::chain::Chain;
-use crate::dbc::{load_id_name_map, load_id_name_table};
+use crate::dbc::{id_name_schema, load_id_name_map};
 
 /// `ZoneOrSort` → header name.
 #[derive(Debug, Default)]
@@ -30,6 +31,11 @@ impl QuestHeaderNames {
     }
 }
 
+/// `QuestSort.dbc`: `ID` and the `SortName` loc-string at column 1, 18 columns.
+pub(crate) fn quest_sort_schema() -> Schema {
+    id_name_schema("QuestSort", 1, 18)
+}
+
 /// Load both name tables through the patch chain.
 pub fn load_quest_header_names(chain: &mut Chain) -> Result<QuestHeaderNames> {
     Ok(QuestHeaderNames {
@@ -39,6 +45,11 @@ pub fn load_quest_header_names(chain: &mut Chain) -> Result<QuestHeaderNames> {
             crate::area_table::area_table_schema(&crate::dbc_layout::LAYOUTS.area_table),
             11,
         )?,
-        sorts: load_id_name_table(chain, "DBFilesClient\\QuestSort.dbc", 1, 18, "QuestSort")?,
+        sorts: load_id_name_map(
+            chain,
+            "DBFilesClient\\QuestSort.dbc",
+            quest_sort_schema(),
+            1,
+        )?,
     })
 }

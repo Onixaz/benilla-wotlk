@@ -304,7 +304,7 @@ pub(crate) fn ground_effect_texture_schema() -> Schema {
     s
 }
 
-fn doodad_schema() -> Schema {
+pub(crate) fn doodad_schema() -> Schema {
     let mut s = Schema::new("GroundEffectDoodad");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("DoodadPath", FieldType::String));

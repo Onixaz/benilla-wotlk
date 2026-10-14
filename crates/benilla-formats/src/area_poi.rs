@@ -67,7 +67,7 @@ impl AreaPoiCatalog {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("AreaPOI");
     for name in ["ID", "Importance"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));

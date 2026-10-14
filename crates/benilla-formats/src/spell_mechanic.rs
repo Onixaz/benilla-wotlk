@@ -35,7 +35,7 @@ impl SpellMechanicCatalog {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("SpellMechanic");
     for i in 0..SPELL_MECHANIC_FIELDS {
         let ty = if i == COL_NAME_ENUS {

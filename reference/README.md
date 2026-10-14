@@ -19,7 +19,7 @@ GNU objdump's instruction boundaries; it never copies executable bytes into this
 python scripts/gen-reference-wotlk.py --exe PATH/TO/Wow.exe --objdump PATH/TO/objdump
 ```
 
-It regenerates seven executable-derived surfaces:
+It regenerates eight executable-derived surfaces:
 
 - `3.3.5a-event-catalog.tsv`: the exact 646 named entries in the 722-slot in-world event registry.
   The separate 41-slot GlueXML registry is also decoded and validated so its numeric ids cannot be
@@ -46,8 +46,14 @@ It regenerates seven executable-derived surfaces:
 - `3.3.5a-verb-events.tsv`: the 61 verb/event pairs whose dispatcher site lies in the registered
   verb's own body. It is explicitly a floor: helper attribution waits for verified build-12340
   function extents and a complete call graph.
+- `3.3.5a-dbc.tsv`: all 241 DBC tables the client loads, one row per table loader (237 in the
+  startup run at `0x6337d0`, four loaded on demand), with the column count and row size each
+  loader checks, its table object, and the functions that read it. Readers are a floor (a read
+  through a computed pointer is not seen), complete for the twelve `gt` tables, and attributed to
+  Lua bindings and opcode handlers that read directly. Ten tables have no reader: 12340 loads
+  them and never reads them.
 
-The eighth surface, `3.3.5a-globals.tsv`, is the entire addon-visible global namespace: 46,312
+The ninth surface, `3.3.5a-globals.tsv`, is the entire addon-visible global namespace: 46,312
 names, `name<TAB>type<TAB>origin`. It unions 43,708 names captured in-world after loading all 23
 shipped `Blizzard_*` addons (minus the capture addon's two globals) with 2,606 shipped-UI
 definitions absent from that session as type `lod`. Its origin totals are 35 Lua 5.1, 2,079 engine
@@ -76,3 +82,7 @@ benilla's layer, adds any global past 3.3.5a other than the layer's own `Benilla
 or any widget method. The shape, event and verb-event gates (`ui_script/shape_gate.rs`,
 `event_shape_gate.rs`, `verb_event_gate.rs`) read the 3.3.5a tables but still apply 1.12.1's
 rules, and are ignored until they are ported.
+`crates/benilla-formats/tests/dbc_coverage.rs` fails if a table benilla reads is not one 12340
+loads at the width its loader checks, if a loader reads a table `dbc_tables.rs` does not
+register, if a table 12340 reads is neither read nor listed with what it backs, or if benilla
+reads one of the tables 12340 never reads without saying so.

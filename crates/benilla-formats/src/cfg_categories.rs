@@ -22,7 +22,7 @@ pub struct RealmCategory {
 
 /// `ID`, `LocaleMask`, `CreateCharsetMask`, `Flags`, then `Name_lang` over sixteen locales and
 /// its mask: 21 columns of 84 bytes.
-fn cfg_categories_schema() -> Schema {
+pub(crate) fn cfg_categories_schema() -> Schema {
     let mut s = Schema::new("Cfg_Categories");
     for name in ["ID", "LocaleMask", "CreateCharsetMask", "Flags"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));

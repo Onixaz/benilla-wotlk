@@ -133,6 +133,14 @@ fn schema(name: &str, n: usize, strings: &[usize]) -> Schema {
     s
 }
 
+pub(crate) fn emotes_text_sound_schema() -> Schema {
+    schema("EmotesTextSound", 5, &[])
+}
+
+pub(crate) fn emotes_schema() -> Schema {
+    schema("Emotes", 7, &[1])
+}
+
 /// Read the three tables off the patch chain.
 pub fn load_emote_sound_catalog(chain: &mut Chain) -> Result<EmoteSoundCatalog> {
     let bytes = chain
@@ -156,7 +164,7 @@ pub fn load_emote_sound_catalog(chain: &mut Chain) -> Result<EmoteSoundCatalog> 
     let bytes = chain
         .read_file("DBFilesClient\\EmotesTextSound.dbc")
         .context("reading EmotesTextSound.dbc")?;
-    let rs = parse(&bytes, schema("EmotesTextSound", 5, &[]), "EmotesTextSound")?;
+    let rs = parse(&bytes, emotes_text_sound_schema(), "EmotesTextSound")?;
     let mut voice = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
         let (Some(text), Some(race), Some(sex), Some(kit)) =
@@ -170,7 +178,7 @@ pub fn load_emote_sound_catalog(chain: &mut Chain) -> Result<EmoteSoundCatalog> 
     let bytes = chain
         .read_file("DBFilesClient\\Emotes.dbc")
         .context("reading Emotes.dbc")?;
-    let rs = parse(&bytes, schema("Emotes", 7, &[1]), "Emotes")?;
+    let rs = parse(&bytes, emotes_schema(), "Emotes")?;
     let mut event_sound = HashMap::with_capacity(rs.records().len());
     let mut anim = HashMap::with_capacity(rs.records().len());
     let mut emote_flags = HashMap::with_capacity(rs.records().len());

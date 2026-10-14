@@ -71,7 +71,7 @@ impl WorldMapAreaCatalog {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("WorldMapArea");
     for name in ["ID", "MapID", "AreaID"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));

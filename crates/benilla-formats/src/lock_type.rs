@@ -49,7 +49,7 @@ impl LockTypeCatalog {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("LockType");
     for i in 0..LOCK_TYPE_FIELDS {
         // The unread columns are 4-byte filler, declared so the record size matches the header.

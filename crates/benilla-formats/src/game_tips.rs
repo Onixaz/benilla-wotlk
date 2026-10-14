@@ -40,7 +40,7 @@ impl GameTipsCatalog {
 }
 
 /// `ID`, the localized text in the layout's locale count, then its mask.
-fn schema(l: &GameTipsLayout) -> Schema {
+pub(crate) fn schema(l: &GameTipsLayout) -> Schema {
     let mut s = Schema::new("GameTips");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new_array(

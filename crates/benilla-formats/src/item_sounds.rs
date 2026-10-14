@@ -47,7 +47,7 @@ impl ItemGroupSoundsCatalog {
     }
 }
 
-fn item_group_sounds_schema() -> Schema {
+pub(crate) fn item_group_sounds_schema() -> Schema {
     let mut s = Schema::new("ItemGroupSounds");
     for name in ["ID", "Pickup", "PutDown", "Use", "Unused3"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));

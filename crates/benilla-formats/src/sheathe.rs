@@ -52,7 +52,7 @@ impl SheatheSoundCatalog {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("SheatheSoundLookups");
     for i in 0..7 {
         s.add_field(SchemaField::new(format!("f{i}"), FieldType::UInt32));

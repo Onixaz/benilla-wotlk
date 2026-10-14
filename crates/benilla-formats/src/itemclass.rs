@@ -33,7 +33,7 @@ impl ItemClassCatalog {
     }
 }
 
-fn item_class_schema() -> Schema {
+pub(crate) fn item_class_schema() -> Schema {
     let mut s = Schema::new("ItemClass");
     s.add_field(SchemaField::new("ClassID", FieldType::UInt32));
     s.add_field(SchemaField::new("SubClassMapID", FieldType::UInt32));

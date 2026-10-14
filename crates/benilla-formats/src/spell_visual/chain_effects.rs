@@ -68,7 +68,7 @@ pub struct ChainProc {
     pub ty: i32,
 }
 
-fn chain_effects_schema() -> Schema {
+pub(crate) fn chain_effects_schema() -> Schema {
     let mut s = Schema::new("SpellChainEffects");
     let mut add = |name: &str, ty| s.add_field(SchemaField::new(name.to_string(), ty));
     add("ID", FieldType::UInt32);

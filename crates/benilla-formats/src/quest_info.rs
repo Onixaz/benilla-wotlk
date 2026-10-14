@@ -11,9 +11,10 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
+use benilla_dbc::Schema;
 
 use crate::chain::Chain;
-use crate::dbc::load_id_name_table;
+use crate::dbc::{id_name_schema, load_id_name_map};
 
 /// `Type` → tag name.
 #[derive(Debug, Default)]
@@ -36,13 +37,17 @@ impl QuestTagNames {
     }
 }
 
+/// `QuestInfo.dbc`: `ID` and the `Name` loc-string at column 1, 18 columns.
+pub(crate) fn quest_info_schema() -> Schema {
+    id_name_schema("QuestInfo", 1, 18)
+}
+
 /// Load the tag names through the patch chain.
 pub fn load_quest_tag_names(chain: &mut Chain) -> Result<QuestTagNames> {
-    Ok(QuestTagNames(load_id_name_table(
+    Ok(QuestTagNames(load_id_name_map(
         chain,
         "DBFilesClient\\QuestInfo.dbc",
+        quest_info_schema(),
         1,
-        18,
-        "QuestInfo",
     )?))
 }

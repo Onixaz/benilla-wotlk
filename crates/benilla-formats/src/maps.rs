@@ -79,7 +79,7 @@ const INSTANCE_TYPE_FIELD: usize = 2;
 const FLAGS_FIELD: usize = 3;
 
 /// The layout's columns typed; the unread are `u32` placeholders, so only the record has to add up.
-fn map_schema(l: &MapLayout) -> Schema {
+pub(crate) fn map_schema(l: &MapLayout) -> Schema {
     let mut s = Schema::new("Map");
     for i in 0..l.fields {
         let ty = if i == 1 || i == l.map_name {

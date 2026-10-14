@@ -83,7 +83,7 @@ impl CreatureVoiceCatalog {
     }
 }
 
-fn csd_schema() -> Schema {
+pub(crate) fn csd_schema() -> Schema {
     let mut s = Schema::new("CreatureSoundData");
     for i in 0..38 {
         let ty = if matches!(i, 31 | 32) {

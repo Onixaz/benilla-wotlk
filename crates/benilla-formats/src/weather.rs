@@ -40,7 +40,7 @@ impl WeatherCatalog {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("Weather");
     for name in ["ID", "AmbienceID", "EffectType"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));

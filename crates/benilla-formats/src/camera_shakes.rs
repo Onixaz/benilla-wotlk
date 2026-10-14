@@ -108,7 +108,7 @@ impl CameraShakeCatalog {
     }
 }
 
-fn camera_shakes_schema() -> Schema {
+pub(crate) fn camera_shakes_schema() -> Schema {
     let mut s = Schema::new("CameraShakes");
     for (name, ty) in [
         ("ID", FieldType::UInt32),
@@ -125,7 +125,7 @@ fn camera_shakes_schema() -> Schema {
     s
 }
 
-fn spell_effect_camera_shakes_schema() -> Schema {
+pub(crate) fn spell_effect_camera_shakes_schema() -> Schema {
     let mut s = Schema::new("SpellEffectCameraShakes");
     for name in ["ID", "CameraShake1", "CameraShake2", "CameraShake3"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));

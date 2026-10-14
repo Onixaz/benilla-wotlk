@@ -33,15 +33,19 @@ impl PageTextMaterialCatalog {
     }
 }
 
+pub(crate) fn schema() -> Schema {
+    let mut s = Schema::new("PageTextMaterial");
+    s.add_field(SchemaField::new("ID", FieldType::UInt32));
+    s.add_field(SchemaField::new("Name", FieldType::String));
+    s
+}
+
 /// Load `PageTextMaterial.dbc` from the patch chain.
 pub fn load_page_text_material_catalog(chain: &mut Chain) -> Result<PageTextMaterialCatalog> {
     let bytes = chain
         .read_file(PAGE_TEXT_MATERIAL)
         .context("reading PageTextMaterial.dbc")?;
-    let mut schema = Schema::new("PageTextMaterial");
-    schema.add_field(SchemaField::new("ID", FieldType::UInt32));
-    schema.add_field(SchemaField::new("Name", FieldType::String));
-    let set = parse(&bytes, schema, "PageTextMaterial.dbc")?;
+    let set = parse(&bytes, schema(), "PageTextMaterial.dbc")?;
     let mut by_id = HashMap::new();
     for r in set.records() {
         if let (Some(id), Some(name)) = (u32_at(r, 0), str_at(&set, r, 1)) {

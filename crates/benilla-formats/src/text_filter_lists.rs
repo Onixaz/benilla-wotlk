@@ -36,11 +36,24 @@ fn schema(name: &str, fields: usize) -> Schema {
     s
 }
 
-fn load(chain: &mut Chain, path: &str, name: &str, fields: usize) -> Result<Vec<FilterPattern>> {
+pub(crate) fn chat_profanity_schema() -> Schema {
+    schema(
+        "ChatProfanity",
+        crate::dbc_layout::LAYOUTS.chat_profanity.fields,
+    )
+}
+
+/// `SpamMessages.dbc`: two fields.
+pub(crate) fn spam_messages_schema() -> Schema {
+    schema("SpamMessages", 2)
+}
+
+fn load(chain: &mut Chain, path: &str, schema: Schema) -> Result<Vec<FilterPattern>> {
+    let name = schema.name.clone();
     let bytes = chain
         .read_file(path)
         .with_context(|| format!("reading {name}.dbc"))?;
-    let rs = parse(&bytes, schema(name, fields), name)?;
+    let rs = parse(&bytes, schema, &name)?;
     let mut out = Vec::with_capacity(rs.records().len());
     for r in rs.records() {
         // File order is the list order, which masking depends on: patterns apply in list order,
@@ -58,15 +71,13 @@ fn load(chain: &mut Chain, path: &str, name: &str, fields: usize) -> Result<Vec<
 
 /// `ChatProfanity.dbc`, the masker's list, in file order.
 pub fn load_chat_profanity(chain: &mut Chain) -> Result<Vec<FilterPattern>> {
-    let fields = crate::dbc_layout::LAYOUTS.chat_profanity.fields;
-    load(chain, CHAT_PROFANITY, "ChatProfanity", fields)
+    load(chain, CHAT_PROFANITY, chat_profanity_schema())
 }
 
 /// `SpamMessages.dbc`, the spam predicate's list, in file order. The reference then scans a
 /// second list the server can push (SMSG `0x332`, handler `0x49e6e0`); vmangos never sends one.
 pub fn load_spam_messages(chain: &mut Chain) -> Result<Vec<FilterPattern>> {
-    // Two fields.
-    load(chain, SPAM_MESSAGES, "SpamMessages", 2)
+    load(chain, SPAM_MESSAGES, spam_messages_schema())
 }
 
 #[cfg(test)]

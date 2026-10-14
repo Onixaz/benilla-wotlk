@@ -141,7 +141,7 @@ impl AreaSoundCatalog {
     }
 }
 
-fn zone_music_schema() -> Schema {
+pub(crate) fn zone_music_schema() -> Schema {
     let mut s = Schema::new("ZoneMusic");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("SetName", FieldType::String));
@@ -158,7 +158,7 @@ fn zone_music_schema() -> Schema {
     s
 }
 
-fn intro_schema() -> Schema {
+pub(crate) fn intro_schema() -> Schema {
     let mut s = Schema::new("ZoneIntroMusicTable");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("Name", FieldType::String));
@@ -168,7 +168,7 @@ fn intro_schema() -> Schema {
     s
 }
 
-fn ambience_schema() -> Schema {
+pub(crate) fn ambience_schema() -> Schema {
     let mut s = Schema::new("SoundAmbience");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("AmbienceDay", FieldType::UInt32));

@@ -158,7 +158,7 @@ fn resolve_forced_beds(rows: &[SoundKit]) -> (Option<u32>, Option<u32>) {
     (ghost, underwater)
 }
 
-fn sound_entries_schema() -> Schema {
+pub(crate) fn sound_entries_schema() -> Schema {
     let mut s = Schema::new("SoundEntries");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("SoundType", FieldType::UInt32));

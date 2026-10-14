@@ -25,7 +25,7 @@ impl EnvironmentalDamageTable {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("EnvironmentalDamage");
     for name in ["ID", "DamageType", "VisualKit"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));

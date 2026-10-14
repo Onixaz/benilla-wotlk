@@ -29,7 +29,7 @@ impl WeaponSwingCatalog {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("WeaponSwingSounds2");
     for name in ["ID", "SwingType", "Critical", "SoundEntriesID"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));

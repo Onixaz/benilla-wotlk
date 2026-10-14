@@ -18,6 +18,8 @@ use super::shipped::{Shipped, SHIPPED};
 const CHR_RACES: &str = "DBFilesClient\\ChrRaces.dbc";
 const CHAR_BASE_INFO: &str = "DBFilesClient\\CharBaseInfo.dbc";
 const CHAR_START_OUTFIT: &str = "DBFilesClient\\CharStartOutfit.dbc";
+/// `CharBaseInfo.dbc`'s columns and row bytes: race and class, one byte each.
+pub(crate) const CHAR_BASE_INFO_WIDTH: (usize, usize) = (2, 2);
 const CHAR_HAIR_GEOSETS: &str = "DBFilesClient\\CharHairGeosets.dbc";
 const CHAR_FACIAL_HAIR_STYLES: &str = "DBFilesClient\\CharacterFacialHairStyles.dbc";
 const CHAR_SECTIONS: &str = "DBFilesClient\\CharSections.dbc";
@@ -289,10 +291,13 @@ fn load_combos(chain: &mut Chain) -> Result<HashSet<(u8, u8)>> {
         bail!("CharBaseInfo: not a WDBC file");
     }
     let record_count = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
-    let field_count = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+    let field_count = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
     let record_size = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
-    if field_count != 2 || record_size != 2 {
-        bail!("CharBaseInfo: unexpected layout (fields {field_count}, record size {record_size}; expected 2/2)");
+    if (field_count, record_size) != CHAR_BASE_INFO_WIDTH {
+        bail!(
+            "CharBaseInfo: unexpected layout (fields {field_count}, record size {record_size}; \
+             expected {CHAR_BASE_INFO_WIDTH:?})"
+        );
     }
     let data = &bytes[20..];
     let mut combos = HashSet::new();

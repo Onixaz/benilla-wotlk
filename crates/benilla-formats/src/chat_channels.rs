@@ -135,7 +135,7 @@ impl ChatChannelsCatalog {
 
 /// The id, flags and faction group, then Name and Shortcut, each over the layout's locales and a
 /// mask.
-fn schema(l: &ChatChannelsLayout) -> Schema {
+pub(crate) fn schema(l: &ChatChannelsLayout) -> Schema {
     let locales = (l.fields - 5) / 2;
     let mut s = Schema::new("ChatChannels");
     s.add_field(SchemaField::new("ChannelID", FieldType::UInt32));

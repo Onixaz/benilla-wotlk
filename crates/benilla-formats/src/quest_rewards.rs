@@ -90,8 +90,16 @@ fn id_and_ten(name: &str, signed: bool) -> Schema {
     s
 }
 
+pub(crate) fn quest_xp_schema() -> Schema {
+    id_and_ten("QuestXP", false)
+}
+
+pub(crate) fn quest_faction_reward_schema() -> Schema {
+    id_and_ten("QuestFactionReward", true)
+}
+
 /// `CharTitles.dbc`: 37 columns, `Name` at 2 and `Name1` at 19, each a 17-column loc-string.
-fn titles_schema() -> Schema {
+pub(crate) fn titles_schema() -> Schema {
     let mut s = Schema::new("CharTitles");
     for i in 0..37 {
         let t = if i == 2 || i == 19 {
@@ -104,7 +112,7 @@ fn titles_schema() -> Schema {
     s
 }
 
-fn honor_schema() -> Schema {
+pub(crate) fn honor_schema() -> Schema {
     let mut s = Schema::new("TeamContributionPoints");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("Data", FieldType::Float32));
@@ -117,7 +125,7 @@ pub fn load_quest_reward_tables(chain: &mut Chain) -> Result<QuestRewardTables> 
 
     let rs = parse(
         &read(chain, "DBFilesClient\\QuestXP.dbc")?,
-        id_and_ten("QuestXP", false),
+        quest_xp_schema(),
         "QuestXP",
     )?;
     for r in rs.records() {
@@ -129,7 +137,7 @@ pub fn load_quest_reward_tables(chain: &mut Chain) -> Result<QuestRewardTables> 
 
     let rs = parse(
         &read(chain, "DBFilesClient\\QuestFactionReward.dbc")?,
-        id_and_ten("QuestFactionReward", true),
+        quest_faction_reward_schema(),
         "QuestFactionReward",
     )?;
     for r in rs.records() {

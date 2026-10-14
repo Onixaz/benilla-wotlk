@@ -74,17 +74,21 @@ impl VocalUiSoundCatalog {
     }
 }
 
+pub(crate) fn schema() -> Schema {
+    let mut s = Schema::new("VocalUISounds");
+    for i in 0..7 {
+        s.add_field(SchemaField::new(format!("f{i}"), FieldType::UInt32));
+    }
+    s
+}
+
 /// Load `VocalUISounds.dbc` off the patch chain, dropping the rows the reference's builder drops
 /// (`VocalUIEnum >= 0x44`).
 pub fn load_vocal_ui_sounds(chain: &mut Chain) -> Result<VocalUiSoundCatalog> {
     let bytes = chain
         .read_file(VOCAL_UI_SOUNDS)
         .with_context(|| format!("reading {VOCAL_UI_SOUNDS}"))?;
-    let mut schema = Schema::new("VocalUISounds");
-    for i in 0..7 {
-        schema.add_field(SchemaField::new(format!("f{i}"), FieldType::UInt32));
-    }
-    let rs = parse(&bytes, schema, "VocalUISounds")?;
+    let rs = parse(&bytes, schema(), "VocalUISounds")?;
     let mut rows = Vec::new();
     for r in rs.records() {
         let (Some(id), Some(line), Some(race)) = (u32_at(r, 0), u32_at(r, 1), u32_at(r, 2)) else {

@@ -68,7 +68,7 @@ impl AnimDataCatalog {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("AnimationData");
     for i in 0..8 {
         let ty = if i == 1 {

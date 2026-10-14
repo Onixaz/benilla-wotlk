@@ -80,12 +80,12 @@ impl Schema {
     }
 
     /// The columns covered, arrays expanded; the header's `field_count` must match.
-    fn expanded_len(&self) -> usize {
+    pub fn expanded_len(&self) -> usize {
         self.fields.iter().map(|f| f.count).sum()
     }
 
     /// The bytes one record covers; the header's `record_size` must match.
-    fn record_width(&self) -> usize {
+    pub fn record_width(&self) -> usize {
         self.fields.iter().map(|f| f.count * f.ty.width()).sum()
     }
 }

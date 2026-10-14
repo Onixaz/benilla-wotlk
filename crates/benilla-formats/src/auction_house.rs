@@ -55,7 +55,7 @@ impl AuctionHouseCatalog {
     }
 }
 
-fn auction_house_schema() -> Schema {
+pub(crate) fn auction_house_schema() -> Schema {
     let mut s = Schema::new("AuctionHouse");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("FactionID", FieldType::UInt32));

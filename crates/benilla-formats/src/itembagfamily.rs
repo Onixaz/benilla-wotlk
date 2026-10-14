@@ -37,7 +37,7 @@ impl ItemBagFamilyCatalog {
     }
 }
 
-fn item_bag_family_schema() -> Schema {
+pub(crate) fn item_bag_family_schema() -> Schema {
     let mut s = Schema::new("ItemBagFamily");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     for i in 0..16 {

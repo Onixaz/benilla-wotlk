@@ -54,7 +54,7 @@ impl WeaponImpactCatalog {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("WeaponImpactSounds");
     for i in 0..23 {
         s.add_field(SchemaField::new(format!("f{i}"), FieldType::UInt32));

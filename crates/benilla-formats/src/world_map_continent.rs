@@ -53,7 +53,7 @@ impl WorldMapContinentCatalog {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("WorldMapContinent");
     for name in [
         "ID",

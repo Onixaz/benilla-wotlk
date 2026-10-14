@@ -59,7 +59,7 @@ impl MaterialCatalog {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("Material");
     // 12340 adds the sheathe and unsheathe kits, set on materials 1, 2, 6 and 7 and not read.
     for name in [

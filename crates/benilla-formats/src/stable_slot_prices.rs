@@ -30,7 +30,7 @@ impl StableSlotPrices {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("StableSlotPrices");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("Price", FieldType::UInt32));

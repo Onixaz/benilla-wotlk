@@ -57,17 +57,21 @@ impl StationeryCatalog {
     }
 }
 
+pub(crate) fn schema() -> Schema {
+    let mut s = Schema::new("Stationery");
+    s.add_field(SchemaField::new("ID", FieldType::UInt32));
+    s.add_field(SchemaField::new("Item", FieldType::UInt32));
+    s.add_field(SchemaField::new("Texture", FieldType::String));
+    s.add_field(SchemaField::new("Flags", FieldType::UInt32));
+    s
+}
+
 /// Load `Stationery.dbc` from the patch chain.
 pub fn load_stationery_catalog(chain: &mut Chain) -> Result<StationeryCatalog> {
     let bytes = chain
         .read_file(STATIONERY)
         .context("reading Stationery.dbc")?;
-    let mut schema = Schema::new("Stationery");
-    schema.add_field(SchemaField::new("ID", FieldType::UInt32));
-    schema.add_field(SchemaField::new("Item", FieldType::UInt32));
-    schema.add_field(SchemaField::new("Texture", FieldType::String));
-    schema.add_field(SchemaField::new("Flags", FieldType::UInt32));
-    let set = parse(&bytes, schema, "Stationery.dbc")?;
+    let set = parse(&bytes, schema(), "Stationery.dbc")?;
     let mut rows = Vec::new();
     let mut by_id = HashMap::new();
     for r in set.records() {

@@ -104,7 +104,7 @@ impl BloodCatalog {
     }
 }
 
-fn unit_blood_levels_schema() -> Schema {
+pub(crate) fn unit_blood_levels_schema() -> Schema {
     let mut s = Schema::new("UnitBloodLevels");
     for name in ["ID", "Violence0", "Violence1", "Violence2"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));
@@ -112,7 +112,7 @@ fn unit_blood_levels_schema() -> Schema {
     s
 }
 
-fn unit_blood_schema() -> Schema {
+pub(crate) fn unit_blood_schema() -> Schema {
     let mut s = Schema::new("UnitBlood");
     for name in ["ID", "FrontSmall", "FrontLarge", "BackSmall", "BackLarge"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));

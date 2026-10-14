@@ -28,19 +28,23 @@ pub struct PackageRow {
     pub name: String,
 }
 
-/// Load `Package.dbc`'s rows, in file order.
-pub fn load_packages(chain: &mut Chain) -> Result<Vec<PackageRow>> {
-    let bytes = chain.read_file(PACKAGE).context("reading Package.dbc")?;
-    let mut schema = Schema::new("Package");
+pub(crate) fn schema() -> Schema {
+    let mut s = Schema::new("Package");
     for i in 0..PACKAGE_FIELDS {
         let ty = if i == 1 || i == 3 {
             FieldType::String
         } else {
             FieldType::UInt32
         };
-        schema.add_field(SchemaField::new(format!("F{i}"), ty));
+        s.add_field(SchemaField::new(format!("F{i}"), ty));
     }
-    let set = parse(&bytes, schema, "Package.dbc")?;
+    s
+}
+
+/// Load `Package.dbc`'s rows, in file order.
+pub fn load_packages(chain: &mut Chain) -> Result<Vec<PackageRow>> {
+    let bytes = chain.read_file(PACKAGE).context("reading Package.dbc")?;
+    let set = parse(&bytes, schema(), "Package.dbc")?;
     Ok(set
         .records()
         .iter()

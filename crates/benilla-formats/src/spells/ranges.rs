@@ -216,12 +216,7 @@ const SPELL_RANGE: &str = "DBFilesClient\\SpellRange.dbc";
 /// 4), `Flags` (5), then two localized names.
 const SPELL_RANGE_FIELDS: usize = 40;
 
-/// Load `SpellRange.dbc` off the patch chain. Only the hostile pair is read: the friendly pair
-/// differs on five rows, among them 161 (20 hostile, 40 friendly), and is not modelled yet.
-pub fn load_spell_ranges(chain: &mut Chain) -> Result<SpellRangeCatalog> {
-    let bytes = chain
-        .read_file(SPELL_RANGE)
-        .context("reading SpellRange.dbc")?;
+pub(crate) fn schema() -> Schema {
     let mut schema = Schema::new("SpellRange");
     for i in 0..SPELL_RANGE_FIELDS {
         match i {
@@ -229,7 +224,16 @@ pub fn load_spell_ranges(chain: &mut Chain) -> Result<SpellRangeCatalog> {
             _ => schema.add_field(SchemaField::new(format!("F{i}"), FieldType::UInt32)),
         }
     }
-    let set = parse(&bytes, schema, "SpellRange.dbc")?;
+    schema
+}
+
+/// Load `SpellRange.dbc` off the patch chain. Only the hostile pair is read: the friendly pair
+/// differs on five rows, among them 161 (20 hostile, 40 friendly), and is not modelled yet.
+pub fn load_spell_ranges(chain: &mut Chain) -> Result<SpellRangeCatalog> {
+    let bytes = chain
+        .read_file(SPELL_RANGE)
+        .context("reading SpellRange.dbc")?;
+    let set = parse(&bytes, schema(), "SpellRange.dbc")?;
     let mut ranges = HashMap::new();
     for r in set.records() {
         let Some(id) = u32_at(r, 0) else { continue };

@@ -239,6 +239,25 @@ MESSAGE_TABLE = 0x00AC8AF0
 MESSAGE_COUNT = 0x2DA
 MESSAGE_ROW_SIZE = 20
 
+# `0x634e2a` sets ESI to `0x6348b0` (`mov eax,[ecx]; jmp [eax+4]`: a table object's load slot) and
+# calls `0x6337d0`, a straight run of `mov ecx,<table object>; call esi` returning at `0x63478d`.
+# Each table object is a 0x24-byte `.data` struct whose first dword is its vtable, statically
+# initialised. Each loader names its file through a `mov eax,<path>; ret` thunk and checks the
+# header against literal widths, passing them to one shared pair of format strings.
+DBC_LOAD_ALL = (0x006337D0, 0x0063478D)
+DBC_LOAD_SLOT = 0x006348B0
+DBC_OBJECT_SIZE = 0x24
+DBC_COLUMNS_FORMAT = 0x009E24F4
+DBC_ROW_SIZE_FORMAT = 0x009E24A4
+DBC_TABLE_COUNT = 241
+DBC_STARTUP_COUNT = 237
+# `0x7f6990(slot, row, column)` reads a game table through the adapter at `[0xaf4f90 + 4*slot]`;
+# `0x7f6a80` binds the twelve adapters (`cmp esi,0x30`) by name, and each adapter's `+0xc` is the
+# table object it reads.
+GAME_TABLE_ADAPTERS = 0x00AF4F90
+GAME_TABLE_COUNT = 12
+GAME_TABLE_LOOKUP = 0x007F6990
+
 
 class PeImage:
     """The small PE32 view this generator needs: sections, VA mapping and C strings."""
@@ -1823,6 +1842,237 @@ def write_verb_events(path, table):
             )
 
 
+def dbc_tables(image, instructions, bindings, opcodes):
+    """Recover every client DBC table: its object, loader, literal widths and direct readers.
+
+    The loader set is anchored on the two width-check format strings, which each loader passes
+    once; the startup list and the object vtables must then account for every loader exactly.
+    Readers are a floor: a function counts when it names an address inside the table object, or
+    passes a literal game-table slot to the lookup; a read through a computed pointer is not seen.
+    Every game-table lookup passes a literal slot, so a gt table's readers are complete.
+    """
+    anchors = {
+        0x00634E2A: bytes.fromhex("be b0 48 63 00"),  # mov esi,0x6348b0
+        0x00634E2F: bytes.fromhex("e8 9c e9 ff ff"),  # call 0x6337d0
+        DBC_LOAD_SLOT: bytes.fromhex("8b 01 ff 60 04"),
+        0x007F6A91: bytes.fromhex("83 fe 30"),  # twelve adapter slots
+        0x007F6996: bytes.fromhex("8b 0c 85 90 4f af 00"),
+    }
+    for va, expected in anchors.items():
+        actual = image.bytes_at(va, len(expected))
+        if actual != expected:
+            sys.exit(
+                f"DBC mechanism anchor {va:#x} changed: got {actual.hex(' ')}, "
+                f"expected {expected.hex(' ')}"
+            )
+    if 4 * GAME_TABLE_COUNT != 0x30:
+        raise AssertionError("game-table adapter extent constant is inconsistent")
+
+    def u32(va):
+        return struct.unpack("<I", image.bytes_at(va, 4))[0]
+
+    data = image.section(".data")
+    text = image.section(".text")
+    by_va, starts, _ends = function_layout(instructions, bindings)
+
+    def enclosing(va):
+        return starts[bisect.bisect_right(starts, va) - 1]
+
+    def loader_of(obj):
+        if not data["va"] <= obj < data["va"] + data["raw_size"]:
+            sys.exit(f"DBC object {obj:#x} is not in .data")
+        loader = u32(u32(obj) + 4)
+        if not text["va"] <= loader < text["va"] + text["raw_size"]:
+            sys.exit(f"DBC object {obj:#x} has a non-code load slot {loader:#x}")
+        return loader
+
+    # Width checks: `push expected; push eax; call thunk; push eax; push format`.
+    checks = collections.defaultdict(dict)
+    for index, instruction in enumerate(instructions):
+        value = push_value(instruction)
+        if len(instruction["bytes"]) != 5 or value not in (
+            DBC_COLUMNS_FORMAT,
+            DBC_ROW_SIZE_FORMAT,
+        ):
+            continue
+        expected, found, call, name = instructions[index - 4 : index]
+        thunk = direct_target(call)
+        width = push_value(expected)
+        if (
+            width is None
+            or found["bytes"] != b"\x50"
+            or name["bytes"] != b"\x50"
+            or thunk is None
+            or call["bytes"][0] != 0xE8
+        ):
+            sys.exit(f"DBC width check {instruction['va']:#x} has an unknown shape")
+        kind = "columns" if value == DBC_COLUMNS_FORMAT else "row_size"
+        loader = enclosing(instruction["va"])
+        if kind in checks[loader]:
+            sys.exit(f"DBC loader {loader:#x} checks {kind} twice")
+        checks[loader][kind] = width
+        if checks[loader].setdefault("thunk", thunk) != thunk:
+            sys.exit(f"DBC loader {loader:#x} names two files")
+
+    tables = {}
+    for loader, check in checks.items():
+        if set(check) != {"columns", "row_size", "thunk"}:
+            sys.exit(f"DBC loader {loader:#x} lacks a width check: {sorted(check)}")
+        raw = image.bytes_at(check["thunk"], 6)
+        if raw[0] != 0xB8 or raw[5] != 0xC3:
+            sys.exit(f"DBC name thunk {check['thunk']:#x} is not `mov eax,imm; ret`")
+        path = image.cstring(struct.unpack_from("<I", raw, 1)[0])
+        match = re.fullmatch(r"DBFilesClient\\(\w+)\.dbc", path)
+        if not match:
+            sys.exit(f"DBC loader {loader:#x} names {path!r}")
+        if match.group(1) in tables:
+            sys.exit(f"two DBC loaders read {match.group(1)}")
+        tables[match.group(1)] = {
+            "loader": loader,
+            "columns": check["columns"],
+            "row_size": check["row_size"],
+        }
+    by_loader = {row["loader"]: name for name, row in tables.items()}
+
+    # Load sites: the startup run, then a direct `mov ecx,<object>; call <loader>` for the rest.
+    loads = {}
+    index = by_va[DBC_LOAD_ALL[0]]
+    while instructions[index]["va"] < DBC_LOAD_ALL[1]:
+        instruction = instructions[index]
+        if instructions[index + 1]["bytes"] == b"\xff\xd6":  # call esi
+            raw = instruction["bytes"]
+            if len(raw) != 5 or raw[0] != 0xB9:
+                sys.exit(f"DBC startup load {instruction['va']:#x} has no literal object")
+            obj = struct.unpack_from("<I", raw, 1)[0]
+            loads[obj] = (instruction["va"], "startup")
+        index += 1
+    for index, instruction in enumerate(instructions[:-1]):
+        raw = instruction["bytes"]
+        target = direct_target(instructions[index + 1])
+        if len(raw) == 5 and raw[0] == 0xB9 and target in by_loader:
+            obj = struct.unpack_from("<I", raw, 1)[0]
+            if obj in loads:
+                sys.exit(f"DBC object {obj:#x} is loaded twice")
+            loads[obj] = (instruction["va"], f"0x{enclosing(instruction['va']):x}")
+
+    for obj, (site, loaded_by) in loads.items():
+        name = by_loader.get(loader_of(obj))
+        if name is None:
+            sys.exit(f"DBC object {obj:#x} loaded at {site:#x} has no checked loader")
+        if "object" in tables[name]:
+            sys.exit(f"{name} has two table objects")
+        tables[name].update(object=obj, load_site=site, loaded_by=loaded_by)
+    startup = sum(row.get("loaded_by") == "startup" for row in tables.values())
+    unplaced = sorted(name for name, row in tables.items() if "object" not in row)
+    if (len(tables), startup, unplaced) != (DBC_TABLE_COUNT, DBC_STARTUP_COUNT, []):
+        sys.exit(
+            f"DBC tables changed: {len(tables)} loaders, {startup} at startup, "
+            f"unloaded {unplaced}; expected {DBC_TABLE_COUNT}, {DBC_STARTUP_COUNT}, none"
+        )
+
+    by_object = {row["object"]: name for name, row in tables.items()}
+    game_tables = {}
+    for slot in range(GAME_TABLE_COUNT):
+        obj = u32(u32(GAME_TABLE_ADAPTERS + 4 * slot) + 0xC)
+        name = by_object.get(obj)
+        if name is None or not name.startswith("gt"):
+            sys.exit(f"game-table slot {slot} reads {obj:#x}, not a gt table")
+        tables[name]["game_table"] = slot
+        game_tables[slot] = name
+    if {name for name in tables if name.startswith("gt")} != set(game_tables.values()):
+        sys.exit("a gt table has no game-table slot")
+
+    # Code naming a table object: its load site, the static destructor that restores the
+    # vtables (`mov dword [object or object+0x18], imm`), and every reader.
+    rdata = image.section(".rdata")
+    objects = sorted(by_object)
+    load_sites = {row["load_site"] for row in tables.values()}
+    hex_operand = re.compile(r"0x([0-9a-f]+)")
+    named = collections.defaultdict(set)
+    destructors = collections.defaultdict(set)
+    for index, instruction in enumerate(instructions):
+        raw = instruction["bytes"]
+        if raw[:2] == b"\xc7\x05" and len(raw) == 10:
+            target, value = struct.unpack_from("<II", raw, 2)
+            position = bisect.bisect_right(objects, target)
+            if (
+                position
+                and target - objects[position - 1] in (0, 0x18)
+                and rdata["va"] <= value < rdata["va"] + rdata["raw_size"]
+            ):
+                destructors[by_object[objects[position - 1]]].add(enclosing(instruction["va"]))
+                continue
+        if instruction["va"] in load_sites:
+            continue
+        for operand in hex_operand.findall(instruction["operands"]):
+            address = int(operand, 16)
+            position = bisect.bisect_right(objects, address)
+            if position and address < objects[position - 1] + DBC_OBJECT_SIZE:
+                named[by_object[objects[position - 1]]].add(enclosing(instruction["va"]))
+        if direct_target(instruction) == GAME_TABLE_LOOKUP and raw[0] == 0xE8:
+            (slot,) = instruction_pushes(instructions, index, 1)
+            if slot not in game_tables:
+                sys.exit(f"game-table lookup {instruction['va']:#x} passes slot {slot!r}")
+            named[game_tables[slot]].add(enclosing(instruction["va"]))
+
+    lua = {}
+    for binding_name, function, _pair, _table, kind in bindings:
+        if kind in ("global", "method"):
+            lua.setdefault(function, set()).add(
+                binding_name if kind == "global" else f":{binding_name}"
+            )
+    handler_opcodes = collections.defaultdict(set)
+    for row in opcodes:
+        handler_opcodes[row["handler"]].add(row["opcode"])
+    for name, row in tables.items():
+        readers = named[name] - destructors[name] - {DBC_LOAD_ALL[0]}
+        row["readers"] = sorted(readers)
+        row["lua"] = sorted({entry for f in readers for entry in lua.get(f, ())})
+        row["opcodes"] = sorted({op for f in readers for op in handler_opcodes.get(f, ())})
+    return tables
+
+
+def write_dbc_tables(path, tables):
+    unread = sorted(name for name, row in tables.items() if not row["readers"])
+    with open(path, "w", encoding="utf-8", newline="\n") as out:
+        out.write(
+            f"# Every DBC table the {VERSION} client loads (WoW.exe build {BUILD}), "
+            "one row per table loader.\n"
+            f"# {DBC_STARTUP_COUNT} load at startup through the run at "
+            f"{DBC_LOAD_ALL[0]:#x} (`loaded_by=startup`); the rest are loaded by the named "
+            "function.\n"
+            "# columns / row_size are the loader's literal header checks: a file of any other "
+            "width is a fatal error.\n"
+            "# game_table is the slot a gt table is read through "
+            f"({GAME_TABLE_LOOKUP:#x}(slot, row, column)); every lookup passes a literal "
+            "slot.\n"
+            "# readers are the functions naming an address inside the 0x24-byte table object "
+            "(or passing its\n"
+            "# literal game-table slot), past its load site and static destructor. They are a "
+            "floor: a read through a\n"
+            "# computed pointer is not seen. lua lists the Lua bindings (`:Name` a widget "
+            "method) and opcodes the\n"
+            "# incoming opcodes whose registered handler is itself a reader; a reader reached "
+            "through a helper is\n"
+            "# counted but not attributed.\n"
+            f"# {len(tables)} tables; {len(unread)} with no reader: the client loads them "
+            "and never reads them.\n"
+            "table\tobject_va\tloader_va\tload_site_va\tloaded_by\tcolumns\trow_size\t"
+            "game_table\treaders\tlua\topcodes\treader_vas\n"
+        )
+        for name in sorted(tables, key=str.lower):
+            row = tables[name]
+            slot = row.get("game_table")
+            out.write(
+                f"{name}\t0x{row['object']:x}\t0x{row['loader']:x}\t"
+                f"0x{row['load_site']:x}\t{row['loaded_by']}\t{row['columns']}\t"
+                f"{row['row_size']}\t{'-' if slot is None else slot}\t{len(row['readers'])}\t"
+                f"{'|'.join(row['lua'])}\t"
+                f"{'|'.join(f'0x{op:x}' for op in row['opcodes'])}\t"
+                f"{'|'.join(f'0x{va:x}' for va in row['readers'])}\n"
+            )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", required=True, help=f"the {VERSION} build-{BUILD} Wow.exe")
@@ -1890,6 +2140,14 @@ def main():
     verb_events_out = os.path.join(args.out_dir, "3.3.5a-verb-events.tsv")
     write_verb_events(verb_events_out, verb_event_rows)
     print(f"wrote {verb_events_out}: {len(verb_event_rows)} verb/event pairs")
+
+    dbc = dbc_tables(image, instructions, bindings, opcodes)
+    dbc_out = os.path.join(args.out_dir, "3.3.5a-dbc.tsv")
+    write_dbc_tables(dbc_out, dbc)
+    print(
+        f"wrote {dbc_out}: {len(dbc)} tables, "
+        f"{sum(not row['readers'] for row in dbc.values())} never read"
+    )
 
 
 if __name__ == "__main__":

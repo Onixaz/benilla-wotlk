@@ -41,7 +41,7 @@ impl GmTicketCategoryCatalog {
     }
 }
 
-fn gm_ticket_category_schema() -> Schema {
+pub(crate) fn gm_ticket_category_schema() -> Schema {
     let mut s = Schema::new("GMTicketCategory");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     for i in 0..16 {

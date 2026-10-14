@@ -22,6 +22,6 @@ pub use sections::{
 
 // The loaders' own schemas, for the `benilla-extract dbc` CSV dump (`crate::schema_for`) and the
 // other readers of the same table.
-pub(crate) use customization::chr_races_schema;
+pub(crate) use customization::{chr_races_schema, CHAR_BASE_INFO_WIDTH};
 pub(crate) use geosets::{char_facial_hair_schema, char_hair_geosets_schema, helmet_vis_schema};
 pub(crate) use sections::char_sections_schema;

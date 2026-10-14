@@ -124,7 +124,7 @@ impl LockCatalog {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("Lock");
     for i in 0..LOCK_FIELDS {
         s.add_field(SchemaField::new(format!("F{i}"), FieldType::UInt32));

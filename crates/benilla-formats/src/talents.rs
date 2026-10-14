@@ -127,7 +127,7 @@ impl TalentCatalog {
     }
 }
 
-fn talent_schema() -> Schema {
+pub(crate) fn talent_schema() -> Schema {
     let mut s = Schema::new("Talent");
     for i in 0..TALENT_FIELDS {
         s.add_field(SchemaField::new(format!("F{i}"), FieldType::UInt32));
@@ -135,7 +135,7 @@ fn talent_schema() -> Schema {
     s
 }
 
-fn talent_tab_schema() -> Schema {
+pub(crate) fn talent_tab_schema() -> Schema {
     let mut s = Schema::new("TalentTab");
     for i in 0..TALENT_TAB_FIELDS {
         if i == COL_TT_NAME_ENUS {

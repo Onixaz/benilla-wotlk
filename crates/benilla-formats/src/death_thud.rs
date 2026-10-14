@@ -64,26 +64,26 @@ fn n_u32_schema(name: &str, n: usize) -> Schema {
     s
 }
 
+pub(crate) fn terrain_type_sounds_schema() -> Schema {
+    n_u32_schema("TerrainTypeSounds", 1)
+}
+
+pub(crate) fn death_thud_lookups_schema() -> Schema {
+    n_u32_schema("DeathThudLookups", 5)
+}
+
 /// Read the two tables off the patch chain.
 pub fn load_death_thud_catalog(chain: &mut Chain) -> Result<DeathThudCatalog> {
     let bytes = chain
         .read_file("DBFilesClient\\TerrainTypeSounds.dbc")
         .context("reading TerrainTypeSounds.dbc")?;
-    let rs = parse(
-        &bytes,
-        n_u32_schema("TerrainTypeSounds", 1),
-        "TerrainTypeSounds",
-    )?;
+    let rs = parse(&bytes, terrain_type_sounds_schema(), "TerrainTypeSounds")?;
     let terrain_sounds: BTreeSet<u32> = rs.records().iter().filter_map(|r| u32_at(r, 0)).collect();
 
     let bytes = chain
         .read_file("DBFilesClient\\DeathThudLookups.dbc")
         .context("reading DeathThudLookups.dbc")?;
-    let rs = parse(
-        &bytes,
-        n_u32_schema("DeathThudLookups", 5),
-        "DeathThudLookups",
-    )?;
+    let rs = parse(&bytes, death_thud_lookups_schema(), "DeathThudLookups")?;
     let mut lookup = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
         let (Some(size_class), Some(ts)) = (u32_at(r, 1), u32_at(r, 2)) else {

@@ -56,7 +56,7 @@ impl ServerMessagesCatalog {
 }
 
 /// `ID`, the text over the layout's locales, then its mask.
-fn schema(l: &LocalizedTable) -> Schema {
+pub(crate) fn schema(l: &LocalizedTable) -> Schema {
     let mut s = Schema::new("ServerMessages");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new_array(

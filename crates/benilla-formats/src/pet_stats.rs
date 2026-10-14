@@ -84,7 +84,7 @@ impl PetPersonalities {
     }
 }
 
-fn personality_schema() -> Schema {
+pub(crate) fn personality_schema() -> Schema {
     let mut s = Schema::new("PetPersonality");
     for i in 0..PERSONALITY_FIELDS {
         let ty = match i {

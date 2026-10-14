@@ -11,13 +11,13 @@
 //! per-effect fields are `[3]` arrays in consecutive columns from `Effect` at 71.
 //! `SpellIcon.dbc` is `ID`, `TextureFilename` (no extension).
 
-mod cast_times;
-mod dispel_types;
+pub(crate) mod cast_times;
+pub(crate) mod dispel_types;
 mod display;
-mod duration;
-mod forms;
-mod radius;
-mod ranges;
+pub(crate) mod duration;
+pub(crate) mod forms;
+pub(crate) mod radius;
+pub(crate) mod ranges;
 mod soft_float;
 mod tokens;
 
@@ -372,9 +372,17 @@ impl SpellCatalog {
     }
 }
 
+/// `SpellCategory.dbc`: `ID` and the `Flags` whose `0x2` makes a wildcard cooldown category.
+pub(crate) fn spell_category_schema() -> Schema {
+    let mut s = Schema::new("SpellCategory");
+    s.add_field(SchemaField::new("ID", FieldType::UInt32));
+    s.add_field(SchemaField::new("Flags", FieldType::UInt32));
+    s
+}
+
 /// 234 fields, `u32` but for `Speed`, the four float effect arrays and the four enUS string heads;
 /// the signed columns stay `u32`, as [`i32_at`] reads the same bits.
-fn spell_schema() -> Schema {
+pub(crate) fn spell_schema() -> Schema {
     let mut s = Schema::new("Spell");
     for i in 0..SPELL_FIELDS {
         if i == COL_NAME_ENUS {
@@ -434,16 +442,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
         let bytes = chain
             .read_file("DBFilesClient\\SpellCategory.dbc")
             .context("reading SpellCategory.dbc")?;
-        let mut s = benilla_dbc::Schema::new("SpellCategory");
-        s.add_field(benilla_dbc::SchemaField::new(
-            "ID",
-            benilla_dbc::FieldType::UInt32,
-        ));
-        s.add_field(benilla_dbc::SchemaField::new(
-            "Flags",
-            benilla_dbc::FieldType::UInt32,
-        ));
-        let rs = parse(&bytes, s, "SpellCategory.dbc")?;
+        let rs = parse(&bytes, spell_category_schema(), "SpellCategory.dbc")?;
         rs.records()
             .iter()
             .filter(|r| u32_at(r, 1).unwrap_or(0) & 0x2 != 0)

@@ -362,7 +362,7 @@ impl SkillLineCatalog {
     }
 }
 
-fn skill_line_schema() -> Schema {
+pub(crate) fn skill_line_schema() -> Schema {
     let mut s = Schema::new("SkillLine");
     for i in 0..SKILL_LINE_FIELDS {
         if i == COL_SL_NAME_ENUS {
@@ -376,7 +376,7 @@ fn skill_line_schema() -> Schema {
     s
 }
 
-fn skill_line_ability_schema() -> Schema {
+pub(crate) fn skill_line_ability_schema() -> Schema {
     let mut s = Schema::new("SkillLineAbility");
     for i in 0..SKILL_LINE_ABILITY_FIELDS {
         s.add_field(SchemaField::new(format!("F{i}"), FieldType::UInt32));
@@ -384,7 +384,7 @@ fn skill_line_ability_schema() -> Schema {
     s
 }
 
-fn skill_line_category_schema() -> Schema {
+pub(crate) fn skill_line_category_schema() -> Schema {
     let mut s = Schema::new("SkillLineCategory");
     for i in 0..SKILL_LINE_CATEGORY_FIELDS {
         let ty = if i == COL_SLC_NAME_ENUS {
@@ -419,7 +419,7 @@ fn load_categories(chain: &mut Chain) -> HashMap<u32, (String, u32)> {
     map
 }
 
-fn skill_race_class_info_schema() -> Schema {
+pub(crate) fn skill_race_class_info_schema() -> Schema {
     let mut s = Schema::new("SkillRaceClassInfo");
     for i in 0..SKILL_RACE_CLASS_INFO_FIELDS {
         s.add_field(SchemaField::new(format!("F{i}"), FieldType::UInt32));

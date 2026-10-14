@@ -34,7 +34,7 @@ impl LoadingScreenCatalog {
 }
 
 /// The shared columns typed; the rest are `u32` placeholders, so only the record has to add up.
-fn schema(l: &LoadingScreensLayout) -> Schema {
+pub(crate) fn schema(l: &LoadingScreensLayout) -> Schema {
     let mut s = Schema::new("LoadingScreens");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("Name", FieldType::String));

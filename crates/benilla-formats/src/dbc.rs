@@ -57,15 +57,19 @@ pub(crate) fn str_at(rs: &RecordSet, r: &Record, i: usize) -> Option<String> {
     }
 }
 
+pub(crate) fn spell_icon_schema() -> Schema {
+    let mut s = Schema::new("SpellIcon");
+    s.add_field(SchemaField::new("ID", FieldType::UInt32));
+    s.add_field(SchemaField::new("TextureFilename", FieldType::String));
+    s
+}
+
 /// `SpellIcon.dbc`: id → extensionless texture path (`Interface\Icons\…`).
 pub(crate) fn load_spell_icon_map(chain: &mut Chain) -> Result<HashMap<u32, String>> {
     let bytes = chain
         .read_file("DBFilesClient\\SpellIcon.dbc")
         .context("reading SpellIcon.dbc")?;
-    let mut schema = Schema::new("SpellIcon");
-    schema.add_field(SchemaField::new("ID", FieldType::UInt32));
-    schema.add_field(SchemaField::new("TextureFilename", FieldType::String));
-    let set = parse(&bytes, schema, "SpellIcon.dbc")?;
+    let set = parse(&bytes, spell_icon_schema(), "SpellIcon.dbc")?;
     let mut icons = HashMap::new();
     for r in set.records() {
         if let (Some(id), Some(path)) = (u32_at(r, 0), str_at(&set, r, 1)) {
@@ -87,17 +91,6 @@ pub(crate) fn id_name_schema(what: &str, name_col: usize, cols: usize) -> Schema
         }
     }
     s
-}
-
-/// Read an id → name DBC into a map, skipping rows whose name is empty (a hole, not a name).
-pub(crate) fn load_id_name_table(
-    chain: &mut Chain,
-    file: &str,
-    name_col: usize,
-    cols: usize,
-    what: &str,
-) -> Result<HashMap<u32, String>> {
-    load_id_name_map(chain, file, id_name_schema(what, name_col, cols), name_col)
 }
 
 /// Read a DBC through `schema` into an id → name map from `name_col`, skipping rows whose name is

@@ -177,7 +177,24 @@ pub struct LightCatalog {
     skyboxes: HashMap<u32, String>,
 }
 
-fn light_schema() -> Schema {
+pub(crate) fn light_int_band_schema() -> Schema {
+    band_schema("LightIntBand", FieldType::UInt32)
+}
+
+pub(crate) fn light_float_band_schema() -> Schema {
+    band_schema("LightFloatBand", FieldType::Float32)
+}
+
+/// `LightSkybox.dbc`: `ID`, the model path, and the `Flags` column 12340 closes the record with.
+pub(crate) fn light_skybox_schema() -> Schema {
+    let mut s = Schema::new("LightSkybox");
+    s.add_field(SchemaField::new("ID", FieldType::UInt32));
+    s.add_field(SchemaField::new("Name", FieldType::String));
+    s.add_field(SchemaField::new("Flags", FieldType::UInt32));
+    s
+}
+
+pub(crate) fn light_schema() -> Schema {
     let mut s = Schema::new("Light");
     for (n, t) in [
         ("ID", FieldType::UInt32),
@@ -199,7 +216,7 @@ fn light_schema() -> Schema {
 /// `LightParams.dbc`: 9 fields, 36-byte records, types per the client's reader `0x589030` (5875).
 /// `cloudTypeID` (+0x0C) is 0 in every 5875 and 12340 record; the glow is +0x10, up to 1.0 in
 /// 12340's 850 rows (0 on 47 of them), and the four water alphas follow it.
-fn light_params_schema() -> Schema {
+pub(crate) fn light_params_schema() -> Schema {
     let mut s = Schema::new("LightParams");
     for (n, t) in [
         ("ID", FieldType::UInt32),
@@ -271,16 +288,8 @@ impl LightCatalog {
             }
             v
         };
-        let int_bands = load_bands(
-            chain,
-            INT_BAND,
-            band_schema("LightIntBand", FieldType::UInt32),
-        )?;
-        let float_bands = load_float_bands(
-            chain,
-            FLOAT_BAND,
-            band_schema("LightFloatBand", FieldType::Float32),
-        )?;
+        let int_bands = load_bands(chain, INT_BAND, light_int_band_schema())?;
+        let float_bands = load_float_bands(chain, FLOAT_BAND, light_float_band_schema())?;
         let (
             light_params_glow,
             light_params_highlight,
@@ -325,12 +334,7 @@ impl LightCatalog {
             let bytes = chain
                 .read_file(LIGHT_SKYBOX)
                 .with_context(|| format!("reading {LIGHT_SKYBOX}"))?;
-            // 12340 closes the record with a `Flags` column.
-            let mut schema = Schema::new("LightSkybox");
-            schema.add_field(SchemaField::new("ID", FieldType::UInt32));
-            schema.add_field(SchemaField::new("Name", FieldType::String));
-            schema.add_field(SchemaField::new("Flags", FieldType::UInt32));
-            let rs = parse(&bytes, schema, "LightSkybox")?;
+            let rs = parse(&bytes, light_skybox_schema(), "LightSkybox")?;
             let mut m = HashMap::with_capacity(rs.records().len());
             for r in rs.records() {
                 if let (Some(id), Some(path)) = (u32_at(r, 0), str_at(&rs, r, 1)) {

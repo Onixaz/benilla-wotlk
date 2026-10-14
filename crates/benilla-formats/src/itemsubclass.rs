@@ -164,7 +164,7 @@ impl ItemSubClassCatalog {
     }
 }
 
-fn item_sub_class_schema() -> Schema {
+pub(crate) fn item_sub_class_schema() -> Schema {
     let mut s = Schema::new("ItemSubClass");
     s.add_field(SchemaField::new("Class", FieldType::UInt32));
     s.add_field(SchemaField::new("SubClass", FieldType::UInt32));
@@ -198,7 +198,7 @@ fn item_sub_class_schema() -> Schema {
     s
 }
 
-fn item_sub_class_mask_schema() -> Schema {
+pub(crate) fn item_sub_class_mask_schema() -> Schema {
     let mut s = Schema::new("ItemSubClassMask");
     s.add_field(SchemaField::new("ClassID", FieldType::UInt32));
     s.add_field(SchemaField::new("Mask", FieldType::UInt32));

@@ -125,7 +125,7 @@ impl ChrClasses {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("ChrClasses");
     for i in 0..CHR_CLASSES_FIELDS {
         // The token, the three enUS name slots and the file name are strings; the rest, the other

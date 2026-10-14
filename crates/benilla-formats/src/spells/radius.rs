@@ -42,17 +42,21 @@ impl SpellRadiusCatalog {
     }
 }
 
-/// Load `SpellRadius.dbc` off the patch chain.
-pub fn load_spell_radii(chain: &mut Chain) -> Result<SpellRadiusCatalog> {
-    let bytes = chain
-        .read_file("DBFilesClient\\SpellRadius.dbc")
-        .context("reading SpellRadius.dbc")?;
+pub(crate) fn schema() -> Schema {
     let mut schema = Schema::new("SpellRadius");
     schema.add_field(SchemaField::new("ID", FieldType::UInt32));
     schema.add_field(SchemaField::new("Radius", FieldType::Float32));
     schema.add_field(SchemaField::new("RadiusPerLevel", FieldType::Float32));
     schema.add_field(SchemaField::new("RadiusMax", FieldType::Float32));
-    let set = parse(&bytes, schema, "SpellRadius.dbc")?;
+    schema
+}
+
+/// Load `SpellRadius.dbc` off the patch chain.
+pub fn load_spell_radii(chain: &mut Chain) -> Result<SpellRadiusCatalog> {
+    let bytes = chain
+        .read_file("DBFilesClient\\SpellRadius.dbc")
+        .context("reading SpellRadius.dbc")?;
+    let set = parse(&bytes, schema(), "SpellRadius.dbc")?;
     let mut rows = HashMap::new();
     for r in set.records() {
         let Some(id) = u32_at(r, 0) else { continue };

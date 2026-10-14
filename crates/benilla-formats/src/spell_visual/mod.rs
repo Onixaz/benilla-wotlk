@@ -465,9 +465,13 @@ fn n_u32_schema(name: &str, fields: usize) -> Schema {
     s
 }
 
+pub(crate) fn spell_visual_schema() -> Schema {
+    n_u32_schema("SpellVisual", SPELL_VISUAL_FIELDS)
+}
+
 /// `SpellVisualEffectName`: id, name, model path, then the area effect size and three scale
 /// floats, which benilla does not read.
-fn effect_name_schema() -> Schema {
+pub(crate) fn effect_name_schema() -> Schema {
     let mut s = Schema::new("SpellVisualEffectName");
     for i in 0..SPELL_VISUAL_EFFECT_NAME_FIELDS {
         let ty = match i {
@@ -482,7 +486,7 @@ fn effect_name_schema() -> Schema {
 
 /// `SpellVisualKit`: columns 0-16 are ids, 17-20 the signed `CharProcType` keys, 21-36 the float
 /// params and 37 the flags.
-fn kit_schema() -> Schema {
+pub(crate) fn kit_schema() -> Schema {
     let mut s = Schema::new("SpellVisualKit");
     for i in 0..SPELL_VISUAL_KIT_FIELDS {
         let ty = match i {
@@ -523,11 +527,7 @@ fn some_unless_none(v: u32) -> Option<u32> {
 
 /// `SpellVisual.dbc`'s rows by id.
 fn parse_visuals(bytes: &[u8]) -> Result<HashMap<u32, VisualStages>> {
-    let set = parse(
-        bytes,
-        n_u32_schema("SpellVisual", SPELL_VISUAL_FIELDS),
-        "SpellVisual.dbc",
-    )?;
+    let set = parse(bytes, spell_visual_schema(), "SpellVisual.dbc")?;
     let mut visuals = HashMap::with_capacity(set.records().len());
     for r in set.records() {
         let Some(id) = u32_at(r, 0) else { continue };

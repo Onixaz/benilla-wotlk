@@ -33,6 +33,8 @@ mod cinematics;
 mod creatures;
 mod dbc;
 mod dbc_layout;
+mod dbc_tables;
+pub use dbc_tables::{dbc_schema, dbc_width, READ_TABLES};
 mod unit_blood;
 pub use camera_shakes::{load_camera_shakes, CameraShake, CameraShakeCatalog, SpellShakeGroup};
 pub use cinematics::{
@@ -578,90 +580,13 @@ pub fn blp_bytes_to_native_chain(bytes: &[u8]) -> Result<BlpMipChain> {
     })
 }
 
-/// Our schema for a known DBC by base filename, as DBC files carry no column types: the loader's
-/// own, so every table has one schema.
+/// Our schema for a DBC by file name, the loader's own ([`dbc_schema`]): a table's stem, matched
+/// case-insensitively.
 fn schema_for(dbc_name: &str) -> Option<Schema> {
     let base = dbc_name.rsplit(['/', '\\']).next().unwrap_or(dbc_name);
-
-    // A table with a typed loader reuses its schema, so a dump reads what the loader reads; one
-    // whose layout differs between clients is dumped in the active client's.
-    let dbc = &crate::dbc_layout::LAYOUTS;
-    for (name, schema) in [
-        (
-            "CreatureDisplayInfo.dbc",
-            creatures::creature_display_info_schema(&dbc.creature_display_info),
-        ),
-        (
-            "CreatureDisplayInfoExtra.dbc",
-            creatures::creature_display_info_extra_schema(&dbc.creature_display_info_extra),
-        ),
-        (
-            "CreatureModelData.dbc",
-            creatures::creature_model_data_schema(&dbc.creature_model_data),
-        ),
-        (
-            "CharacterFacialHairStyles.dbc",
-            characters::char_facial_hair_schema(&dbc.character_facial_hair_styles),
-        ),
-        (
-            "CharSections.dbc",
-            characters::char_sections_schema(&dbc.char_sections),
-        ),
-        (
-            "HelmetGeosetVisData.dbc",
-            characters::helmet_vis_schema(&dbc.helmet_geoset_vis_data),
-        ),
-        (
-            "ItemDisplayInfo.dbc",
-            items::item_display_info_schema(&dbc.item_display_info),
-        ),
-        (
-            "AreaTable.dbc",
-            area_table::area_table_schema(&dbc.area_table),
-        ),
-        ("ChrRaces.dbc", characters::chr_races_schema(&dbc.chr_races)),
-    ] {
-        if base.eq_ignore_ascii_case(name) {
-            return Some(schema);
-        }
-    }
-    for (name, ctor) in [
-        (
-            "CharHairGeosets.dbc",
-            characters::char_hair_geosets_schema as fn() -> Schema,
-        ),
-        ("ItemVisuals.dbc", item_visuals::item_visuals_schema),
-        (
-            "ItemVisualEffects.dbc",
-            item_visuals::item_visual_effects_schema,
-        ),
-        (
-            "SpellItemEnchantment.dbc",
-            item_visuals::spell_item_enchantment_schema,
-        ),
-        (
-            "ItemRandomProperties.dbc",
-            item_random_properties::item_random_properties_schema,
-        ),
-        ("AreaTrigger.dbc", area_trigger::area_trigger_schema),
-        ("TaxiNodes.dbc", taxi_nodes::taxi_nodes_schema),
-        ("TaxiPath.dbc", taxi_path::taxi_path_schema),
-        ("TaxiPathNode.dbc", taxi::taxi_path_node_schema),
-        (
-            "GameObjectDisplayInfo.dbc",
-            gameobjects::gameobject_display_info_schema,
-        ),
-        (
-            "TransportAnimation.dbc",
-            elevators::transport_animation_schema,
-        ),
-    ] {
-        if base.eq_ignore_ascii_case(name) {
-            return Some(ctor());
-        }
-    }
-
-    None
+    let stem = base.strip_suffix(".dbc").unwrap_or(base);
+    let table = READ_TABLES.iter().find(|t| t.eq_ignore_ascii_case(stem))?;
+    dbc_schema(table)
 }
 
 /// Write a DBC as CSV through our schema for it, returning `(record_count, field_count)`; an error
@@ -673,13 +598,7 @@ pub fn dbc_to_csv(dbc_bytes: &[u8], dbc_name: &str, out: &Path) -> Result<(u32, 
     let (records, fields) = (parser.header().record_count, parser.header().field_count);
 
     let schema = schema_for(dbc_name).ok_or_else(|| {
-        anyhow::anyhow!(
-            "no schema defined for '{dbc_name}' ({fields} fields); known: TaxiNodes.dbc, \
-             AreaTable.dbc, GameObjectDisplayInfo.dbc, TaxiPath.dbc, TaxiPathNode.dbc, \
-             TransportAnimation.dbc, CreatureDisplayInfo.dbc, CreatureDisplayInfoExtra.dbc, \
-             CreatureModelData.dbc, CharHairGeosets.dbc, CharacterFacialHairStyles.dbc, \
-             HelmetGeosetVisData.dbc, CharSections.dbc, ItemDisplayInfo.dbc"
-        )
+        anyhow::anyhow!("no schema for '{dbc_name}' ({fields} fields): benilla does not read it")
     })?;
 
     let parser = parser

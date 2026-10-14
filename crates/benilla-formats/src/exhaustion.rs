@@ -22,7 +22,7 @@ pub struct ExhaustionRow {
     pub factor: f32,
 }
 
-fn exhaustion_schema() -> Schema {
+pub(crate) fn exhaustion_schema() -> Schema {
     let mut s = Schema::new("Exhaustion");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("Xp", FieldType::UInt32));

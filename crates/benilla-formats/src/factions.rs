@@ -356,7 +356,7 @@ impl FactionCatalog {
 
 /// `FactionTemplate.dbc`: 14 fields, 56-byte rows at the offsets `0x606640` reads (vmangos
 /// `FactionTemplateEntry`).
-fn faction_template_schema() -> Schema {
+pub(crate) fn faction_template_schema() -> Schema {
     let mut s = Schema::new("FactionTemplate");
     for (name, ty) in [
         ("ID", FieldType::UInt32),
@@ -380,7 +380,7 @@ fn faction_template_schema() -> Schema {
 /// `Faction.dbc`: 57 fields in build 12340 (AzerothCore `FactionEntryfmt`). The first 19 are
 /// 1.12's; the parent is followed by the two spillover rates and two spillover ints, then the
 /// 17-column name and description blocks (16 locales and a flags column).
-fn faction_schema() -> Schema {
+pub(crate) fn faction_schema() -> Schema {
     let mut s = Schema::new("Faction");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("ReputationIndex", FieldType::Int32));
@@ -420,7 +420,7 @@ const FACTION_DESC_FIELD: usize = FACTION_NAME_FIELD + LOCALE_SLOTS + 1;
 
 /// `FactionGroup.dbc`: 20 fields, 80-byte rows in build 12340; `MaskID` is a bit index, and the
 /// enUS name is field 3, after `InternalName`.
-fn faction_group_schema() -> Schema {
+pub(crate) fn faction_group_schema() -> Schema {
     let mut s = Schema::new("FactionGroup");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     s.add_field(SchemaField::new("MaskID", FieldType::UInt32));

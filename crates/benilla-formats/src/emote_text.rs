@@ -144,7 +144,7 @@ pub(crate) fn emotes_text_schema() -> Schema {
 
 /// `EmotesTextData.dbc`: an id, a `LocalizedString` block and its flags. In 1.12.1 the block is
 /// 8 locales, the 40-byte record the reader checks (`cmp eax,0x28`, `0x544579`); 3.3.5a's is 16.
-fn emotes_text_data_schema(l: &LocalizedTable) -> Schema {
+pub(crate) fn emotes_text_data_schema(l: &LocalizedTable) -> Schema {
     let mut s = Schema::new("EmotesTextData");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
     for i in 0..l.fields - 2 {
