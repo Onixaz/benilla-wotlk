@@ -122,11 +122,27 @@ impl PluginGroup for WorldPlugins {
     }
 }
 
+/// Any of Bevy's own lights.
+type BevyLight = Or<(With<DirectionalLight>, With<PointLight>, With<SpotLight>)>;
+
+/// Whether any Bevy light exists, the gate on Bevy's light-visibility pass.
+fn bevy_light_exists(lights: Query<(), BevyLight>) -> bool {
+    !lights.is_empty()
+}
+
 /// The engine's bare settings, after `PhysicsPlugins`: [`SubstepCount`] overwrites its default.
 struct WorldFoundation;
 
 impl Plugin for WorldFoundation {
     fn build(&self, app: &mut App) {
+        // Bevy's light visibility serves its shadow maps, and the world spawns no Bevy light (its
+        // lights are `WorldPointLight`s on the reference's model). With none, the pass still
+        // queues a fresh `ViewVisibility` query state every frame (~0.1 ms matching this world's
+        // archetypes), so it waits for a light.
+        app.configure_sets(
+            PostUpdate,
+            bevy::light::SimulationLightSystems::CheckLightVisibility.run_if(bevy_light_exists),
+        );
         // One solver substep, not avian's 6: with no dynamic bodies, kinematic motion is exact at
         // any count. Revisit when a dynamic body enters the world.
         app.insert_resource(SubstepCount(1))
