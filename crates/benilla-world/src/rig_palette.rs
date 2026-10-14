@@ -156,6 +156,27 @@ fn rows_make_mut<'a>(
     Arc::make_mut(rows)
 }
 
+/// One rig's palette rows, `frame × ibp` per bone as the three rows the shader reads, over frames
+/// the world pass composed from a zero-translation root. Pure, so rigs build theirs in parallel.
+pub(crate) fn rig_rows(
+    rig: &RigSkin,
+    worlds: &[GlobalTransform],
+    ibp: &[Mat4],
+) -> Vec<[[f32; 4]; 3]> {
+    let n = (worlds.len().min(ibp.len()) as u32).min(rig.len) as usize;
+    (0..n)
+        .map(|b| {
+            let m = worlds[b].affine() * Affine3A::from_mat4(ibp[b]);
+            let (m3, t) = (m.matrix3, m.translation);
+            [
+                [m3.x_axis.x, m3.y_axis.x, m3.z_axis.x, t.x],
+                [m3.x_axis.y, m3.y_axis.y, m3.z_axis.y, t.y],
+                [m3.x_axis.z, m3.y_axis.z, m3.z_axis.z, t.z],
+            ]
+        })
+        .collect()
+}
+
 fn rebase(mut world: Affine3A, origin: Vec3) -> Affine3A {
     world.translation -= bevy::math::Vec3A::from(origin);
     world
@@ -340,7 +361,13 @@ impl RigPalettes {
         ibp: &[Mat4],
         origin: Vec3,
     ) {
-        let n = (worlds.len().min(ibp.len()) as u32).min(rig.len);
+        self.write_rig_rows(rig, &rig_rows(rig, worlds, ibp), origin);
+    }
+
+    /// Copy one rig's [`rig_rows`] into its slot, the half of [`Self::write_rig_worlds`] that
+    /// touches the shared rows.
+    pub(crate) fn write_rig_rows(&mut self, rig: &RigSkin, bones: &[[[f32; 4]; 3]], origin: Vec3) {
+        let n = bones.len() as u32;
         let (slot, base) = (rig.slot, rig.base);
         self.cost_rows += n;
         self.set_origin(slot, origin);
@@ -352,14 +379,8 @@ impl RigPalettes {
             &mut self.cost_copies,
             &mut self.cost_copy_us,
         );
-        for b in 0..n as usize {
-            let m = worlds[b].affine() * Affine3A::from_mat4(ibp[b]);
-            let (m3, t) = (m.matrix3, m.translation);
-            let r = 3 * (base as usize + b);
-            rows[r] = [m3.x_axis.x, m3.y_axis.x, m3.z_axis.x, t.x];
-            rows[r + 1] = [m3.x_axis.y, m3.y_axis.y, m3.z_axis.y, t.y];
-            rows[r + 2] = [m3.x_axis.z, m3.y_axis.z, m3.z_axis.z, t.z];
-        }
+        let r = 3 * base as usize;
+        rows[r..r + 3 * bones.len()].copy_from_slice(bones.as_flattened());
         if n > 0 {
             let mirrored = self.mirrored.get(slot as usize).copied().unwrap_or(false);
             self.dirty.push((base, n, mirrored));

@@ -7,9 +7,10 @@
 
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
+use bevy::tasks::{ComputeTaskPool, ParallelSlice};
 
 use crate::billboard::{billboard_basis, parent_arm_matrix, BillboardJointRig};
-use crate::rig_palette::{RigPalettes, RigSkin};
+use crate::rig_palette::{rig_rows, RigPalettes, RigSkin};
 use crate::view::WorldCamera;
 
 use super::{AnimParked, RigFrame, RigPose};
@@ -121,6 +122,47 @@ pub(crate) fn seed_rig_rows(
     palettes.write_rig_worlds(skin, &worlds, ibp, origin);
 }
 
+/// Refreshed rigs per parallel task in [`finalize_rig_worlds`]: a doodad rig's chain and rows are
+/// a few microseconds, so a chunk keeps the dispatch cost small against the work.
+const FINALIZE_CHUNK: usize = 64;
+
+/// One rig's world chain, the bones it replaced and its palette rows, built off the shared state.
+struct RigWorlds {
+    origin: Vec3,
+    worlds: Vec<GlobalTransform>,
+    touched: Vec<bool>,
+    /// `None` without a slot or before its inverse bind poses load.
+    rows: Option<Vec<[[f32; 4]; 3]>>,
+}
+
+/// Compose one rig from its root's propagated frame: `None` for a slot-less rig with nothing to
+/// re-seat, or a root not in the world.
+fn compose_worlds(
+    rig: &RigPose,
+    skin: Option<&RigSkin>,
+    globals: &Query<(&Transform, &mut GlobalTransform), Without<WorldCamera>>,
+    ibps: &Assets<SkinnedMeshInverseBindposes>,
+    cam_basis: Option<(Vec3, Vec3, Vec3)>,
+    root_moved: bool,
+) -> Option<RigWorlds> {
+    if skin.is_none() && !rig.has_special && !root_moved {
+        return None;
+    }
+    let root_g = *globals.get(rig.joints_root).ok()?.1;
+    // Rig-relative, which translation-equivariant steps allow: at ~9.5 k yards an f32 ULP (~1 mm)
+    // per matmul, fresh each frame, shimmers. `WOW_NO_RIG_REBASE=1` turns it off.
+    let origin = crate::rig_palette::rebase_origin(root_g.translation());
+    let root_rel = crate::rig_palette::rebase_global(root_g, origin);
+    let (worlds, touched) = rig_worlds(rig, root_rel, cam_basis);
+    let rows = skin.and_then(|s| Some(rig_rows(s, &worlds, ibps.get(&s.ibp)?)));
+    Some(RigWorlds {
+        origin,
+        worlds,
+        touched,
+        rows,
+    })
+}
+
 /// The world pass: palette rows, anchor re-seats and the seat-frame cascade.
 #[allow(clippy::type_complexity)]
 pub fn finalize_rig_worlds(
@@ -167,33 +209,39 @@ pub fn finalize_rig_worlds(
         return;
     }
     let cost_t0 = crate::rig_palette::rig_cost_enabled().then(std::time::Instant::now);
+    // A rig's chain and rows read only that rig and its root's frame, so the drawn set (~950
+    // doodad rigs at Northshire Abbey) builds them in parallel, in refresh order; the shared rows,
+    // the anchors and the cascade write after. A seat another rig re-seats this frame is read as
+    // propagated, and the cascade below re-finalizes its rig from the new seat.
+    let composed: Vec<Vec<(Entity, RigWorlds)>> = {
+        let globals = worlds_params.p1();
+        let (rigs, globals, ibps) = (&rigs, &globals, &*ibps);
+        refresh.par_chunk_map(ComputeTaskPool::get(), FINALIZE_CHUNK, |_, chunk| {
+            chunk
+                .iter()
+                .filter_map(|&holder| {
+                    let (_, rig, skin, _, rider) = rigs.get(holder).ok()?;
+                    // A rider's rows are the rider lane's: no skin, so only the anchors.
+                    let skin = skin.filter(|_| !rider);
+                    compose_worlds(rig, skin, globals, ibps, cam_basis, false).map(|w| (holder, w))
+                })
+                .collect()
+        })
+    };
     let mut globals = worlds_params.p1();
     // As in the entity pass, the re-walk does not enter a nested rig with its own billboard output.
     let fx_roots: bevy::platform::collections::HashSet<Entity> =
         hosts.iter().map(|r| r.root()).collect();
     let mut cascade: Vec<Entity> = Vec::new();
-    let mut finalize =
-        |rig: &mut RigPose,
+    let mut apply =
+        |rig: &RigPose,
          skin: Option<&RigSkin>,
+         w: &RigWorlds,
          globals: &mut Query<(&Transform, &mut GlobalTransform), Without<WorldCamera>>,
          cascade: &mut Vec<Entity>,
          root_moved: bool| {
-            // A slot-less rig without special bones is done; the caller clears `pose_dirty`.
-            if skin.is_none() && !rig.has_special && !root_moved {
-                return;
-            }
-            let Ok(root_g) = globals.get(rig.joints_root).map(|(_, g)| *g) else {
-                return;
-            };
-            // Rig-relative, which translation-equivariant steps allow: at ~9.5 k yards an f32 ULP
-            // (~1 mm) per matmul, fresh each frame, shimmers. `WOW_NO_RIG_REBASE=1` turns it off.
-            let origin = crate::rig_palette::rebase_origin(root_g.translation());
-            let root_rel = crate::rig_palette::rebase_global(root_g, origin);
-            let (worlds, touched) = rig_worlds(rig, root_rel, cam_basis);
-            if let Some(skin) = skin {
-                if let Some(ibp) = ibps.get(&skin.ibp) {
-                    palettes.write_rig_worlds(skin, &worlds, ibp, origin);
-                }
+            if let (Some(skin), Some(rows)) = (skin, &w.rows) {
+                palettes.write_rig_rows(skin, rows, w.origin);
             }
             if !rig.has_special && !root_moved {
                 return;
@@ -203,11 +251,11 @@ pub fn finalize_rig_worlds(
             let mut stack: Vec<(Entity, GlobalTransform)> = Vec::new();
             for &(bone, anchor) in &rig.anchors {
                 let b = bone as usize;
-                if !root_moved && !touched.get(b).copied().unwrap_or(false) {
+                if !root_moved && !w.touched.get(b).copied().unwrap_or(false) {
                     continue;
                 }
                 // Anchors are world-space scene entities; only the palette stays rig-relative.
-                let Some(world) = worlds.get(b).map(|&w| shift(w, origin)) else {
+                let Some(world) = w.worlds.get(b).map(|&g| shift(g, w.origin)) else {
                     continue;
                 };
                 if let Ok((_, mut g)) = globals.get_mut(anchor) {
@@ -235,26 +283,30 @@ pub fn finalize_rig_worlds(
                 }
             }
         };
-    for &holder in &refresh {
-        let Ok((_, rig, skin, _, rider)) = rigs.get_mut(holder) else {
+    for (holder, w) in composed.iter().flatten() {
+        let Ok((_, rig, skin, _, rider)) = rigs.get(*holder) else {
             continue;
         };
-        let rig = rig.into_inner();
-        // A rider's rows are the rider lane's: no skin, so only the anchors.
         let skin = skin.filter(|_| !rider);
-        finalize(rig, skin, &mut globals, &mut cascade, false);
-        rig.pose_dirty = false;
+        apply(rig, skin, w, &mut globals, &mut cascade, false);
+    }
+    // A slot-less rig without special bones composed nothing, but is done all the same.
+    for &holder in &refresh {
+        if let Ok((_, mut rig, ..)) = rigs.get_mut(holder) {
+            rig.pose_dirty = false;
+        }
     }
     // Re-finalize each rig whose seat a patch walk moved; one level deep by construction.
     if !cascade.is_empty() {
-        for (holder, rig, skin, _, rider) in &mut rigs {
+        for (holder, mut rig, skin, _, rider) in &mut rigs {
             if !cascade.contains(&holder) {
                 continue;
             }
-            let rig = rig.into_inner();
-            let mut ignore = Vec::new();
             let skin = skin.filter(|_| !rider);
-            finalize(rig, skin, &mut globals, &mut ignore, true);
+            if let Some(w) = compose_worlds(&rig, skin, &globals, &ibps, cam_basis, true) {
+                let mut ignore = Vec::new();
+                apply(&rig, skin, &w, &mut globals, &mut ignore, true);
+            }
             rig.pose_dirty = false;
         }
     }
