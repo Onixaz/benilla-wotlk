@@ -422,6 +422,8 @@ pub(crate) struct Player {
     /// Swimming (`MOVEFLAG_SWIMMING`): the water over the feet crossed the swim-enter depth,
     /// latched with hysteresis ([`super::swim::update_swimming`]).
     pub(crate) swimming: bool,
+    /// 3.3.5a's vertical channel: the ascend and descend flags the held keys drive while swimming.
+    pub(super) vertical: super::vertical::Vertical,
     /// Our body's collision height, of which every swim depth line is a fraction. The component's
     /// own type, so `Player::default()` gives [`DEFAULT_COLLISION_HEIGHT`] rather than 0, which
     /// would swim on dry land.

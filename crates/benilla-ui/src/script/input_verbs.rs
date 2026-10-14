@@ -41,18 +41,26 @@ pub enum HeldInput {
     TurnOrAction,
     /// `0x2`, `CameraOrSelectOrMoveStart`/`Stop` (`0x514190`/`0x5141d0`), the left button's.
     CameraOrSelectOrMove,
+    /// 3.3.5a's `0x2000`, set by `JumpOrAscendStart` (`0x5fbf80`, `0x5fa170(0x2000)`) and cleared
+    /// by `AscendStop` (`0x5fc0a0`, `0x5fa450(0x2000)`): the up half of the vertical channel.
+    Ascend,
+    /// 3.3.5a's `0x4000`, set by `SitStandOrDescendStart` (`0x51b1d0` → `0x5fc0f0`) and cleared
+    /// by `DescendStop` (`0x5fc140`): the down half of the vertical channel.
+    Descend,
 }
 
 /// A one-shot command, fired as its key fires it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FiredInput {
-    /// `Jump()` (`0x513bd0`).
+    /// The ground arm of `JumpOrAscendStart()` (`0x5fbf80`): a jump, which the engine takes only
+    /// off a mover neither swimming nor flying (`0x5fbfed` tests `0x2200000`).
     Jump,
     /// `ToggleRun()` (`0x513d50` → `0x60e080`), the walk toggle.
     ToggleRun,
     /// `ToggleAutoRun()` (`0x513de0`), which toggles `0x1000`.
     ToggleAutoRun,
-    /// `SitOrStand()` (`0x48b920`): sit when standing, else stand (`0x5ed430(1)` or `(0)`).
+    /// The posture arm of `SitStandOrDescendStart()` (`0x51b1d0`): sit when standing, else stand
+    /// (`0x6dcb40(1)` or `(0)` off the stand byte `[+0xd0]+0x110`), skipped while flying.
     SitOrStand,
     /// `ToggleSheath()` (`0x48a070` → `0x5eb480`).
     ToggleSheath,
@@ -160,7 +168,8 @@ fn inert(lua: &Lua, names: &[&str]) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Register the 49 functions: the three tables' 48 and `TargetNearestFriend`.
+/// Register the binding functions: the three tables' and `TargetNearestFriend`, with 3.3.5a's
+/// vertical four in place of 1.12's `Jump` and `SitOrStand`.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
@@ -221,10 +230,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })?,
         )?;
     }
-    // `Jump` (`0x513bd0`), `ToggleRun` (`0x513d50`) and `ToggleAutoRun` (`0x513de0`) open on the
-    // same gate; their further refusals (a dead or rooted player) are the engine's, as for the key.
-    let fired: [(&str, FiredInput); 3] = [
-        ("Jump", FiredInput::Jump),
+    // `ToggleRun` (`0x513d50`) and `ToggleAutoRun` (`0x513de0`) open on the same gate; their
+    // further refusals (a dead or rooted player) are the engine's, as for the key.
+    let fired: [(&str, FiredInput); 2] = [
         ("ToggleRun", FiredInput::ToggleRun),
         ("ToggleAutoRun", FiredInput::ToggleAutoRun),
     ];
@@ -234,6 +242,35 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             lua.create_function(move |lua, _: MultiValue| {
                 if in_binding(lua) {
                     push(lua, BindingInput::Fire(input));
+                }
+                Ok(())
+            })?,
+        )?;
+    }
+    // 3.3.5a's vertical pair, which replaced 1.12's one-shot `Jump`, each a zero-result call
+    // behind the hardware-event gate (`CanPerformAction(0)`). `JumpOrAscendStart` (`0x5fbf80`)
+    // sets the ascend bit, then jumps off a mover neither swimming nor flying; `AscendStop`
+    // (`0x5fc0a0`) and `DescendStop` (`0x5fc140`) clear their bit. Each bit change resyncs the
+    // vertical channel (`0x5fbbc0` → `0x5face0`), which only a swimming or flying mover reads.
+    g.set(
+        "JumpOrAscendStart",
+        lua.create_function(|lua, _: MultiValue| {
+            if in_binding(lua) {
+                push(lua, BindingInput::Start(HeldInput::Ascend));
+                push(lua, BindingInput::Fire(FiredInput::Jump));
+            }
+            Ok(())
+        })?,
+    )?;
+    for (name, input) in [
+        ("AscendStop", HeldInput::Ascend),
+        ("DescendStop", HeldInput::Descend),
+    ] {
+        g.set(
+            name,
+            lua.create_function(move |lua, _: MultiValue| {
+                if in_binding(lua) {
+                    push(lua, BindingInput::Stop(input));
                 }
                 Ok(())
             })?,
@@ -351,20 +388,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // `ToggleSheath()` and `SitOrStand()` resolve the active player and act on it, ungated.
-    let posture: [(&str, FiredInput); 2] = [
-        ("ToggleSheath", FiredInput::ToggleSheath),
-        ("SitOrStand", FiredInput::SitOrStand),
-    ];
-    for (name, input) in posture {
-        g.set(
-            name,
-            lua.create_function(move |lua, _: MultiValue| {
-                push(lua, BindingInput::Fire(input));
-                Ok(())
-            })?,
-        )?;
-    }
+    // `ToggleSheath()` resolves the active player and acts on it, ungated.
+    g.set(
+        "ToggleSheath",
+        lua.create_function(|lua, _: MultiValue| {
+            push(lua, BindingInput::Fire(FiredInput::ToggleSheath));
+            Ok(())
+        })?,
+    )?;
+    // `SitStandOrDescendStart()` (`0x51b1d0`): the descend bit through `0x5fc0f0`, behind the
+    // hardware-event gate, then the stand toggle on the active player, which has none.
+    g.set(
+        "SitStandOrDescendStart",
+        lua.create_function(|lua, _: MultiValue| {
+            if in_binding(lua) {
+                push(lua, BindingInput::Start(HeldInput::Descend));
+            }
+            push(lua, BindingInput::Fire(FiredInput::SitOrStand));
+            Ok(())
+        })?,
+    )?;
     Ok(())
 }
 
@@ -372,10 +415,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use super::*;
 
-    /// The three reference tables' 48 names (`0x8500b8`, `0x84f7a0`, and the main table's seven
-    /// at `0x83de68`), each a callable global that answers without raising.
-    const NAMES: [&str; 48] = [
-        "Jump",
+    /// The binding functions, each a callable global that answers without raising.
+    const NAMES: [&str; 50] = [
+        "JumpOrAscendStart",
+        "AscendStop",
+        "SitStandOrDescendStart",
+        "DescendStop",
         "ToggleRun",
         "ToggleAutoRun",
         "MoveForwardStart",
@@ -422,7 +467,6 @@ mod tests {
         "TargetLastTarget",
         "AttackTarget",
         "ToggleSheath",
-        "SitOrStand",
     ];
 
     #[test]
@@ -443,16 +487,17 @@ mod tests {
     #[test]
     fn the_movement_calls_act_only_inside_a_binding_body() {
         let mut s = UiScript::new().unwrap();
-        s.run("MoveForwardStart() StrafeLeftStop() Jump() ToggleRun()")
+        s.run("MoveForwardStart() StrafeLeftStop() JumpOrAscendStart() ToggleRun()")
             .unwrap();
         assert!(s.take_binding_input().is_empty());
-        s.run_binding("MoveForwardStart() StrafeLeftStop() Jump() ToggleRun()")
+        s.run_binding("MoveForwardStart() StrafeLeftStop() JumpOrAscendStart() ToggleRun()")
             .unwrap();
         assert_eq!(
             s.take_binding_input(),
             vec![
                 BindingInput::Start(HeldInput::MoveForward),
                 BindingInput::Stop(HeldInput::StrafeLeft),
+                BindingInput::Start(HeldInput::Ascend),
                 BindingInput::Fire(FiredInput::Jump),
                 BindingInput::Fire(FiredInput::ToggleRun),
             ]
@@ -461,7 +506,8 @@ mod tests {
         assert!(s.run_binding("error('boom')").is_err());
         s.run("TurnLeftStart()").unwrap();
         assert!(s.take_binding_input().is_empty());
-        s.run("SitOrStand() ToggleSheath() CameraZoomIn()").unwrap();
+        s.run("SitStandOrDescendStart() ToggleSheath() CameraZoomIn()")
+            .unwrap();
         assert_eq!(
             s.take_binding_input(),
             vec![
@@ -470,6 +516,69 @@ mod tests {
                 BindingInput::Fire(FiredInput::CameraZoomIn(1.0)),
             ]
         );
+    }
+
+    /// The stock 3.3.5a `JUMP` and `SITORSTAND` bodies (`runOnUp`) on both key edges: the press
+    /// starts its half of the vertical channel (the jump and the stand toggle beside it), the
+    /// release stops it and fires nothing; 1.12's one-shot `Jump` and `SitOrStand` are gone.
+    #[test]
+    fn the_vertical_pair_starts_on_the_press_and_stops_on_the_release() {
+        const JUMP: &str = r#"if ( keystate == "down" ) then
+                JumpOrAscendStart();
+            else
+                AscendStop();
+            end"#;
+        const SITORSTAND: &str = r#"if ( keystate == "down" ) then
+                SitStandOrDescendStart();
+            else
+                DescendStop();
+            end"#;
+        let mut s = UiScript::new().unwrap();
+        for name in [
+            "JumpOrAscendStart()",
+            "AscendStop()",
+            "SitStandOrDescendStart()",
+            "DescendStop()",
+        ] {
+            assert_eq!(s.arity(name).unwrap(), 0, "{name} returns nothing");
+        }
+        // The arity probe ran each call once; its queued inputs are not the edges under test.
+        s.take_binding_input();
+        let edge = |s: &mut UiScript, body: &str, keystate: &str| {
+            s.run_binding(&format!("local keystate = {keystate:?} {body}"))
+                .unwrap();
+            s.take_binding_input()
+        };
+        assert_eq!(
+            edge(&mut s, JUMP, "down"),
+            vec![
+                BindingInput::Start(HeldInput::Ascend),
+                BindingInput::Fire(FiredInput::Jump),
+            ]
+        );
+        assert_eq!(
+            edge(&mut s, JUMP, "up"),
+            vec![BindingInput::Stop(HeldInput::Ascend)],
+            "the release stops the ascent and jumps no second time"
+        );
+        assert_eq!(
+            edge(&mut s, SITORSTAND, "down"),
+            vec![
+                BindingInput::Start(HeldInput::Descend),
+                BindingInput::Fire(FiredInput::SitOrStand),
+            ]
+        );
+        assert_eq!(
+            edge(&mut s, SITORSTAND, "up"),
+            vec![BindingInput::Stop(HeldInput::Descend)]
+        );
+        for gone in ["Jump", "SitOrStand"] {
+            assert_eq!(
+                s.eval::<String>(&format!("return type({gone})")).unwrap(),
+                "nil",
+                "{gone} is 1.12.1's, absent from 3.3.5a"
+            );
+        }
     }
 
     /// The zoom's amount: a number or numeric string (`0x6f34d0`), else 1.0 (`0x50b42d`); a

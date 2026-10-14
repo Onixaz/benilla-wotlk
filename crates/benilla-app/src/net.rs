@@ -666,6 +666,10 @@ pub(crate) enum MoveKind {
     FallLand,
     StartSwim,
     StopSwim,
+    /// 3.3.5a's vertical channel: StartAscend, StartDescend and the one stop for both.
+    StartAscend,
+    StartDescend,
+    StopAscend,
     /// The walk/run toggle: sent from the toggle handler (`ToggleRun 0x513d50` to `0x617de0`),
     /// not the move broadcaster, so it goes out standing still (`0x61a99d` gates the latter).
     SetWalkMode,
@@ -691,6 +695,9 @@ impl MoveKind {
             MoveKind::FallLand => op::MSG_MOVE_FALL_LAND,
             MoveKind::StartSwim => op::MSG_MOVE_START_SWIM,
             MoveKind::StopSwim => op::MSG_MOVE_STOP_SWIM,
+            MoveKind::StartAscend => op::MSG_MOVE_START_ASCEND,
+            MoveKind::StartDescend => op::MSG_MOVE_START_DESCEND,
+            MoveKind::StopAscend => op::MSG_MOVE_STOP_ASCEND,
             MoveKind::SetWalkMode => op::MSG_MOVE_SET_WALK_MODE,
             MoveKind::SetRunMode => op::MSG_MOVE_SET_RUN_MODE,
             MoveKind::SetFacing => op::MSG_MOVE_SET_FACING,

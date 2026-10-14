@@ -62,6 +62,7 @@ mod setup;
 mod state;
 pub(crate) mod step_probe;
 mod swim;
+mod vertical;
 mod view_subject;
 mod walk;
 mod wire_in;

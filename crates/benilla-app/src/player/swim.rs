@@ -7,8 +7,9 @@
 //! only from the pitched stroke, and the one constraint is a top cap with the feet at
 //! `surface - 0.75·h` (`0x632ba0`), satisfied again when the surface falls ([`settle_to_rest`]) and
 //! never pulling a deeper swimmer up. A rise into the cap turns level at full speed
-//! ([`cap_redirect`]). The way out through the top is the swim jump ([`breach_step`], `0x7c6230`);
-//! the way to rise is aiming up and swimming forward (`0x7c6f70`).
+//! ([`cap_redirect`]). The way out through the top is the jump an ascent ends in ([`breach_step`],
+//! `0x730d10`); the ways to rise are the ascent ([`super::vertical`]) and aiming up while swimming
+//! forward (`0x7c6f70`).
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -27,8 +28,8 @@ pub(super) const SWIM_SPEED: f32 = 4.722_222;
 /// fallback role as [`SWIM_SPEED`].
 pub(super) const SWIM_BACK_SPEED: f32 = 2.5;
 
-/// Swim-jump take-off speed (yd/s): `0x7c6230`'s swim seed `0xc1118c48` (-9.096748, down-positive),
-/// about 14% over the land jump's 7.955547.
+/// Swim-jump take-off speed (yd/s): the Jump's swim seed `0xc1118c48` (-9.096748, down-positive,
+/// `0x9883f0`), about 14% over the land jump's 7.955547.
 const SWIM_JUMP_SPEED: f32 = 9.096_748;
 
 /// The share of the unit's collision height the water must cover to swim (`0x8012cc`, compared
@@ -120,7 +121,7 @@ fn stop_pitch(player: &mut Player, was: bool) {
     }
 }
 
-/// The take-off frame of a jump while swimming (`0x7c6230`), at any depth: [`SWIM_JUMP_SPEED`],
+/// The take-off frame of a jump while swimming (`0x9883f0`), at any depth: [`SWIM_JUMP_SPEED`],
 /// then FALLING. The last swim frame's travel carries the leap, frozen as in every jump
 /// (`0x7c61f0` never rewrites it), and there is no gravity tick this frame, so the jump tail
 /// carries the exact seed. The caller has already cleared [`Player::swimming`].
@@ -275,8 +276,9 @@ pub(super) struct SwimFrame {
 
 /// One swimming frame: the drunk pitch wobble, the pitched travel basis, the directional speed,
 /// the stroke rate and [`swim_step`]. `basis` is the level `(forward, right)` pair, `amounts` the
-/// netted `(fwd, side)` translation ([`translate_amounts`]), and `wobble` the drunk angle, zero
-/// when it must not apply.
+/// netted `(fwd, side)` translation ([`translate_amounts`]), `vertical` the ascent's sign
+/// ([`super::vertical::Vertical::direction`]), and `wobble` the drunk angle, zero when it must not
+/// apply.
 pub(super) fn drive_step(
     player: &mut Player,
     time: &Time,
@@ -286,6 +288,7 @@ pub(super) fn drive_step(
     surface_y: Option<f32>,
     basis: (Vec3, Vec3),
     amounts: (f32, f32),
+    vertical: f32,
     speeds: Option<benilla_protocol::MoveSpeeds>,
     move_speed: &super::MoveSpeed,
     wobble: f32,
@@ -299,12 +302,16 @@ pub(super) fn drive_step(
             .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
     }
     let mut pitch = player.mover_pitch;
-    // The travel basis (`0x7c5880`): forward is the facing pitched by the swim pitch, strafe stays
-    // level, and there is no vertical input; Space's one swim role is the jump.
+    // The travel basis (`0x7c5880`): forward is the facing pitched by the swim pitch and strafe
+    // stays level; an ascent or descent replaces it with its own ([`super::vertical::stroke`]).
     let (sp, cp) = player.mover_pitch.sin_cos();
     let fwd_axis = basis.0 * cp + Vec3::Y * sp;
     let v = fwd_axis * swim_fwd + basis.1 * swim_side;
-    let dir3 = v.normalize_or_zero();
+    let dir3 = if vertical == 0.0 {
+        v.normalize_or_zero()
+    } else {
+        super::vertical::stroke(basis.0 * swim_fwd + basis.1 * swim_side, vertical)
+    };
     let rest_line = rest_line(player, surface_y);
     // The directional speed (`0x7c4c90`'s swim arm): backward takes `min(swimBack, swim)`,
     // forward and strafe the swim speed.

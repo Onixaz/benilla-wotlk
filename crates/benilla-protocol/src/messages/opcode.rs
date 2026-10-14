@@ -525,6 +525,13 @@ pub const MSG_MOVE_WORLDPORT_ACK: u16 = 0x00DC; // 220
 pub const MSG_MOVE_SET_FACING: u16 = 0x00DA; // 218
 pub const MSG_MOVE_SET_PITCH: u16 = 0x00DB; // 219
 pub const MSG_MOVE_HEARTBEAT: u16 = 0x00EE; // 238
+/// 3.3.5a only: the vertical channel's three verbs, sent by the move-command executor `0x6ef860`
+/// (cases 6, 7 and 8) and relayed through the shared move handler.
+pub const MSG_MOVE_START_ASCEND: u16 = 0x0359; // 857
+/// 3.3.5a only: the one stop for either direction (`0x989940` clears both bits).
+pub const MSG_MOVE_STOP_ASCEND: u16 = 0x035A; // 858
+/// 3.3.5a only.
+pub const MSG_MOVE_START_DESCEND: u16 = 0x03A7; // 935
 
 pub const CMSG_GOSSIP_HELLO: u16 = 0x017B; // 379
 pub const CMSG_GOSSIP_SELECT_OPTION: u16 = 0x017C; // 380

@@ -490,10 +490,23 @@ pub(super) fn control(
                 0
             },
         );
-        // `Jump` (`0x513bd0`) inlines `0x5144e0` and `0x514560`, which is `may_translate` term for
-        // term: health, root and stand state 7. Hover's refusal is the movement handler's
-        // (`0x7c623a`), which keeps the mounted flourish reachable while hovering.
-        let mut want_jump = binds.fired(crate::bindings::Input::Jump) && may_translate;
+        // `JumpOrAscendStart`'s ground arm, refused to a mover swimming or flying at the call
+        // (`0x5fbfed`), whose press is the ascent alone; its predicate `0x5fa9e0` is `may_translate`
+        // term for term: health, root and stand state 7. Hover's refusal is the movement handler's
+        // (`0x9883f0`), which keeps the mounted flourish reachable while hovering.
+        let was_swimming = player.swimming;
+        let mut want_jump =
+            binds.fired(crate::bindings::Input::Jump) && may_translate && !was_swimming;
+        // A held bit's change resyncs the vertical channel (`0x5fbbc0`) against the flags the
+        // mover had at the call.
+        if binds.control_changed() {
+            player.vertical.resync(
+                binds.pressed(crate::bindings::Input::Ascend),
+                binds.pressed(crate::bindings::Input::Descend),
+                was_swimming,
+                may_translate,
+            );
+        }
 
         // Swim or walk, latched with hysteresis at the `0x6030c0` boundary against flicker.
         let surface_y = swim::surface_over_feet(world, player.pos);
@@ -508,12 +521,18 @@ pub(super) fn control(
         if let Some(surface) = surface_y {
             move_trace::swim(player.pos.y, surface, swimming, player.collision_height.0);
         }
-        // Space while swimming is the Jump command (`0x7c6230`), once per press: it breaches at
-        // the surface and hops about 1.6 yd below it, re-latching swim once the launch halves
-        // (`0x7c5de0`). It clears SWIMMING before the mover, so this frame's mover, flags and wire
-        // see a jump. Hover refuses it (`0x7c623a`, ahead of the take-off select at `0x7c6261`),
-        // and hover does not stop swim entry (`0x6030c0` tests only LEVITATING).
-        //
+        // A swimmer leaves through the top by a jump, which clears SWIMMING before the mover
+        // (StartFalling `0x988370`), so this frame's mover, flags and wire see a jump. The swim
+        // decision jumps an ascent within a third of a yard of the swim depth (`0x730e52`), reading
+        // the latch it enters with; a root refuses it, as every jump (`0x9883f0`). Mounted and
+        // still, `0x72eb80` would take its flourish arm instead; that arm is not built here.
+        let hop = was_swimming
+            && !player.modes.rooted
+            && surface_y.is_some_and(|s| {
+                player
+                    .vertical
+                    .surface_hop(s - player.pos.y, player.collision_height.0)
+            });
         // The `Jump(force = 0)` a hover grant owes: `force` 0 skips the hover refusal (`0x7c6236`),
         // so it launches a body already hovering; root and falling still refuse it (`0x7c625c`).
         let wire_jump = player.take_wire_jump();
@@ -527,12 +546,17 @@ pub(super) fn control(
 
         // A knockback sets FALLING, which excludes SWIMMING; it brings its own launch, so the land
         // mover flies it, not `breach_step`.
-        let breach = swimming && (want_jump && !player.modes.hover || wire_jump);
+        let breach = hop || (swimming && wire_jump);
         let knock_breach = swimming && knock_launch.is_some();
         if breach || knock_breach {
             player.swimming = false;
         }
         let swimming = swimming && !breach && !knock_breach;
+        // Out of the water by depth or by a jump, or rooted, the vertical flags end with no packet
+        // of their own.
+        if !swimming || player.modes.rooted {
+            player.vertical.end();
+        }
 
         // Read by both the swim mover and the flag build, so the two cannot disagree.
         let (swim_fwd, swim_side) = if swimming {
@@ -579,10 +603,16 @@ pub(super) fn control(
             air_nudged,
             ground,
         } = if breach {
-            // Jump while swimming (`0x7c6230`): falls unconditionally, seeded about 14% over a land
-            // jump, and streams as a normal jump.
+            // A jump while swimming (`0x9883f0`): falls unconditionally, seeded about 14% over a
+            // land jump, and streams as a normal jump.
             swim::breach_step(&mut player, &time, &collide, capsule)
         } else if swimming {
+            // The translate predicate cuts the vertical stroke as it cuts the horizontal.
+            let vertical = if may_translate {
+                player.vertical.direction()
+            } else {
+                0.0
+            };
             // One swimming frame; it also picks the presented pitch, levelled at the surface cap.
             let frame = swim::drive_step(
                 &mut player,
@@ -593,6 +623,7 @@ pub(super) fn control(
                 surface_y,
                 (move_fwd, move_right),
                 (swim_fwd, swim_side),
+                vertical,
                 mover_speeds,
                 move_speed,
                 if translating { drunk_wobble } else { 0.0 },

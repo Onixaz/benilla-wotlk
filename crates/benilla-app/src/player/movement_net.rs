@@ -28,6 +28,8 @@ const OUTBOUND_FLAG_MASK: u32 = move_flags::FORWARD
     | move_flags::FALLING
     | move_flags::FALLING_FAR
     | move_flags::SWIMMING
+    | move_flags::ASCENDING
+    | move_flags::DESCENDING
     // The granted modes echo back: the reference builds its packets from the flags word the
     // server's merges land in. vmangos stores what we report, so a dropped `LEVITATING` returns
     // cleared on the next server-authored move and ends GM flight.
@@ -213,6 +215,11 @@ pub(super) fn stream_self_movement(
     // the JUMPING bit as movement and stand a seated player up (`Unit.cpp:10398-10399`). A
     // server-driven take-off sends no JUMP: vmangos flags a JUMP faster than run speed as a cheat,
     // knockbacks included (`MovementAnticheat.cpp:650`).
+    // The vertical channel's command goes out as the executor runs it (`0x6ef860` cases 6-8),
+    // ahead of a hop it may end in this same frame.
+    if let Some(kind) = player.vertical.take_sent() {
+        send_move!(kind);
+    }
     if jumped && !wire_launch {
         send_move!(MoveKind::Jump);
     } else if landed {
@@ -220,9 +227,11 @@ pub(super) fn stream_self_movement(
     }
     // `START_SWIM` (0xca) and `STOP_SWIM` (0xcb) go out the frame `SWIMMING` flips, enqueued by
     // the swim decision `0x6030c0`; airborne and swimming never overlap, so the arc cannot race.
+    // A take-off out of the water sends no STOP: StartFalling clears SWIMMING itself (`0x988370`),
+    // and the decision's stop arm runs only on a swimmer below the leave depth (`0x730e83`).
     if added & move_flags::SWIMMING != 0 {
         send_move!(MoveKind::StartSwim);
-    } else if removed & move_flags::SWIMMING != 0 {
+    } else if removed & move_flags::SWIMMING != 0 && !jumped {
         send_move!(MoveKind::StopSwim);
     }
     // `SET_WALK_MODE` (0xc3) and `SET_RUN_MODE` (0xc2) go out the frame the bit flips, airborne or
@@ -1338,6 +1347,92 @@ mod tests {
             (tail.zspeed + 7.955547).abs() < 1.0e-4,
             "the wire zspeed is down-positive: a rising jump reports negative, got {}",
             tail.zspeed
+        );
+    }
+
+    /// Space held in water: `START_ASCEND` carries SWIMMING with ASCENDING, the release
+    /// `STOP_ASCEND`, and a frame the resync left alone sends neither.
+    #[test]
+    fn the_vertical_channel_sends_its_start_and_its_stop() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut player = Player {
+            move_flags: move_flags::SWIMMING,
+            ..Default::default()
+        };
+        let frame = |player: &mut Player, up: bool, now: f32| {
+            player.vertical.resync(up, false, true, true);
+            let flags = move_flags::SWIMMING | player.vertical.flags();
+            stream_self_movement(
+                &tx,
+                player,
+                flags,
+                0.0,
+                ArcEdges {
+                    jumped: false,
+                    wire_launch: false,
+                    air_nudged: false,
+                    landed: false,
+                    fall_time: 0,
+                },
+                now,
+                &[],
+                None,
+                None,
+                no_skip(),
+            );
+        };
+        let sent = || -> Vec<(MoveKind, u32)> {
+            rx.try_iter()
+                .filter_map(|c| match c {
+                    ClientCommand::Move { kind, flags, .. } => Some((kind, flags)),
+                    _ => None,
+                })
+                .collect()
+        };
+        frame(&mut player, true, 0.0);
+        assert_eq!(
+            sent(),
+            vec![(
+                MoveKind::StartAscend,
+                move_flags::SWIMMING | move_flags::ASCENDING
+            )]
+        );
+        frame(&mut player, true, 0.1);
+        assert!(sent().iter().all(|(k, _)| *k == MoveKind::Heartbeat));
+        frame(&mut player, false, 0.2);
+        assert_eq!(
+            sent().first(),
+            Some(&(MoveKind::StopAscend, move_flags::SWIMMING))
+        );
+
+        // The surface hop: the ascent's start and the jump, and no STOP_SWIM beside them.
+        player.jump_zspeed = 9.096_748;
+        player.vertical.resync(true, false, true, true);
+        player.vertical.end();
+        stream_self_movement(
+            &tx,
+            &mut player,
+            move_flags::FALLING,
+            0.0,
+            ArcEdges {
+                jumped: true,
+                wire_launch: false,
+                air_nudged: false,
+                landed: false,
+                fall_time: 0,
+            },
+            0.3,
+            &[],
+            None,
+            None,
+            no_skip(),
+        );
+        assert_eq!(
+            sent(),
+            vec![
+                (MoveKind::StartAscend, move_flags::FALLING),
+                (MoveKind::Jump, move_flags::FALLING)
+            ]
         );
     }
 

@@ -84,6 +84,11 @@ pub(crate) mod move_flags {
     /// (`MovementHandler.cpp:715-722`); a moving bit beside it freezes the 1.12 client.
     pub const ROOT: u32 = 0x1000;
     pub const SWIMMING: u32 = 0x20_0000;
+    /// 3.3.5a's `MOVEFLAG_ASCENDING` (`0x40_0000`), in an unused bit of this 1.12.1-shaped word
+    /// (`benilla_protocol::messages::CLASSIC_ASCENDING`).
+    pub const ASCENDING: u32 = benilla_protocol::messages::CLASSIC_ASCENDING;
+    /// 3.3.5a's `MOVEFLAG_DESCENDING` (`0x80_0000`).
+    pub const DESCENDING: u32 = benilla_protocol::messages::CLASSIC_DESCENDING;
     /// `MOVEFLAG_ONTRANSPORT` (`MovementInfo.h:56`, not TBC's 0x200): every packet carrying it
     /// also carries the transport-local pose.
     pub const ON_TRANSPORT: u32 = 0x0200_0000;

@@ -144,6 +144,9 @@ const fn is_movement_relay(o: u16) -> bool {
             | opcode::MSG_MOVE_SET_FACING
             | opcode::MSG_MOVE_SET_PITCH
             | opcode::MSG_MOVE_HEARTBEAT
+            | opcode::MSG_MOVE_START_ASCEND
+            | opcode::MSG_MOVE_STOP_ASCEND
+            | opcode::MSG_MOVE_START_DESCEND
             // Another unit's knockback: the four trailing launch floats go unread, since the
             // `MovementInfo` comes from the victim's ack and its jump tail already is that quad.
             | opcode::MSG_MOVE_KNOCK_BACK

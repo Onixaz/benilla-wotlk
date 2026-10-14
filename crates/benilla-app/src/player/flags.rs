@@ -57,9 +57,9 @@ pub(super) fn this_frame(
     if let Some((swim_fwd, swim_side)) = swim {
         // SWIMMING (its pitch tail rides with it) and the direction bits of the netted swim
         // amounts, which the swim gait selector cascades on (`0x5fd100`: turn 41, strafe 43/44,
-        // back 45, forward 42, idle 41). Space sets nothing: its swim role is the breach
-        // (`0x7c6230`). No FALLING, and the arc is cleared.
-        move_flags_now |= move_flags::SWIMMING;
+        // back 45, forward 42, idle 41), and the vertical channel's flags. No FALLING, and the arc
+        // is cleared.
+        move_flags_now |= move_flags::SWIMMING | player.vertical.flags();
         if swim_fwd < 0.0 {
             move_flags_now |= move_flags::BACKWARD;
         } else if swim_fwd > 0.0 {

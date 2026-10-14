@@ -171,8 +171,8 @@ mod tests {
             MoveForwardStop();
         end
     </Binding>
-    <Binding name="JUMP">
-        Jump();
+    <Binding name="TOGGLEAUTORUN">
+        ToggleAutoRun();
     </Binding>
     <Binding name="PROBEHIDDEN" hidden="true">
         Probe();
@@ -220,7 +220,7 @@ mod tests {
         );
 
         // Section membership is resolved at registration, not here.
-        assert_eq!(binds[1].name, "JUMP");
+        assert_eq!(binds[1].name, "TOGGLEAUTORUN");
         assert_eq!(binds[1].header, None);
         assert!(!binds[1].run_on_up);
 

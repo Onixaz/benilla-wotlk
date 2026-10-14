@@ -28,13 +28,17 @@ pub(crate) enum Input {
     TurnOrAction,
     /// `CameraOrSelectOrMoveStart`/`Stop`, bit `0x2`.
     CameraOrSelectOrMove,
-    /// `Jump()`.
+    /// `JumpOrAscendStart`/`AscendStop`, 3.3.5a's bit `0x2000`.
+    Ascend,
+    /// `SitStandOrDescendStart`/`DescendStop`, 3.3.5a's bit `0x4000`.
+    Descend,
+    /// `JumpOrAscendStart()`'s ground jump.
     Jump,
     /// `ToggleRun()`, the walk toggle.
     ToggleRun,
     /// `ToggleAutoRun()`.
     ToggleAutoRun,
-    /// `SitOrStand()`.
+    /// `SitStandOrDescendStart()`'s stand toggle.
     SitOrStand,
     /// `ToggleSheath()`.
     ToggleSheath,
@@ -55,6 +59,8 @@ fn held_input(input: HeldInput) -> Input {
         HeldInput::StrafeRight => Input::StrafeRight,
         HeldInput::TurnOrAction => Input::TurnOrAction,
         HeldInput::CameraOrSelectOrMove => Input::CameraOrSelectOrMove,
+        HeldInput::Ascend => Input::Ascend,
+        HeldInput::Descend => Input::Descend,
     }
 }
 
@@ -83,13 +89,17 @@ impl BindingsState {
                     if !self.pressed(i) {
                         self.just.push(i);
                         self.held.push(i);
+                        self.control_changed = true;
                     }
                 }
                 // `0x514b70` clears the bit whoever set it, so a second key still down on the
                 // same command stops too, and its release is a no-op second Stop.
                 BindingInput::Stop(held) => {
                     let i = held_input(held);
-                    self.held.retain(|&h| h != i);
+                    if self.pressed(i) {
+                        self.held.retain(|&h| h != i);
+                        self.control_changed = true;
+                    }
                 }
                 // A one-shot is its own press edge.
                 BindingInput::Fire(fired) => {

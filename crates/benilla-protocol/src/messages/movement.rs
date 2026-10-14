@@ -13,6 +13,11 @@ pub(super) const MOVEMENT_FLAG_SWIMMING: u32 = 0x20_0000;
 pub(super) const MOVEMENT_FLAG_SPLINE_ENABLED: u32 = 0x40_0000;
 /// 1.12.1's flying bit, 3.3.5a's `FLYING` (`0x200_0000`) once mapped.
 const MOVEMENT_FLAG_FLYING: u32 = 0x100_0000;
+/// 3.3.5a's `ASCENDING` (`0x40_0000`) in the 1.12.1 word: its `MOVEFLAG_UNUSED10`, since 1.12.1's
+/// `0x40_0000` is the spline bit.
+pub const CLASSIC_ASCENDING: u32 = 0x200;
+/// 3.3.5a's `DESCENDING` (`0x80_0000`) in the 1.12.1 word, where that bit is unused.
+pub const CLASSIC_DESCENDING: u32 = 0x80_0000;
 
 /// `MSG_MOVE_TIME_SKIPPED` inbound: a packed guid and the ms that mover's client skipped
 /// (reference handler `0x603b40`). Our own `CMSG_MOVE_TIME_SKIPPED` has the same shape.
@@ -29,6 +34,9 @@ mod wotlk_flag {
     pub const ROOT: u32 = 0x800;
     pub const FALLING: u32 = 0x1000;
     pub const SWIMMING: u32 = 0x20_0000;
+    /// Set by StartAscend `0x9898e0`, cleared with [`DESCENDING`] by StopAscend `0x989940`.
+    pub const ASCENDING: u32 = 0x40_0000;
+    pub const DESCENDING: u32 = 0x80_0000;
     pub const FLYING: u32 = 0x200_0000;
     pub const SPLINE_ELEVATION: u32 = 0x400_0000;
     pub const SPLINE_ENABLED: u32 = 0x800_0000;
@@ -40,14 +48,17 @@ mod wotlk_flag {
 
 /// 3.3.5a's movement flags in 1.12.1's bits. 3.3.5a moved transport to `0x200` and spline to
 /// `0x0800_0000`, shifted root through the pending bits down by one and added ascending,
-/// descending, can-fly and pending-root, which 1.12.1 has no bit for and are dropped. Its gravity
-/// off is 1.12.1's levitating and its flying 1.12.1's `0x0100_0000`.
+/// descending, can-fly and pending-root. Ascending and descending ride 1.12.1's two unused bits,
+/// [`CLASSIC_ASCENDING`] and [`CLASSIC_DESCENDING`]; can-fly and pending-root are dropped. Its
+/// gravity off is 1.12.1's levitating and its flying 1.12.1's `0x0100_0000`.
 pub(crate) fn classic_flags_from_wotlk(flags: u32) -> u32 {
     // Forward through walking, and swimming, spline elevation, water walk, safe fall and hover,
     // keep their bit.
     let mut classic = flags & (0x1ff | 0x20_0000 | 0x400_0000 | 0x7000_0000);
-    let moved: [(u32, u32); 13] = [
+    let moved: [(u32, u32); 15] = [
         (wotlk_flag::ON_TRANSPORT, MOVEMENT_FLAG_ON_TRANSPORT),
+        (wotlk_flag::ASCENDING, CLASSIC_ASCENDING),
+        (wotlk_flag::DESCENDING, CLASSIC_DESCENDING),
         (wotlk_flag::DISABLE_GRAVITY, 0x400),
         (wotlk_flag::ROOT, 0x1000),
         (wotlk_flag::FALLING, MOVEMENT_FLAG_JUMPING),
@@ -70,11 +81,13 @@ pub(crate) fn classic_flags_from_wotlk(flags: u32) -> u32 {
 }
 
 /// 1.12.1's movement flags in 3.3.5a's bits, the inverse of [`classic_flags_from_wotlk`] on every
-/// bit it produces. 1.12.1's unused `0x200` and `0x0080_0000` have no 3.3.5a bit and are dropped.
+/// bit it produces.
 pub(crate) fn wotlk_flags_from_classic(classic: u32) -> u32 {
     let mut flags = classic & (0x1ff | 0x20_0000 | 0x400_0000 | 0x7000_0000);
-    let moved: [(u32, u32); 13] = [
+    let moved: [(u32, u32); 15] = [
         (MOVEMENT_FLAG_ON_TRANSPORT, wotlk_flag::ON_TRANSPORT),
+        (CLASSIC_ASCENDING, wotlk_flag::ASCENDING),
+        (CLASSIC_DESCENDING, wotlk_flag::DESCENDING),
         (0x400, wotlk_flag::DISABLE_GRAVITY),
         (0x1000, wotlk_flag::ROOT),
         (MOVEMENT_FLAG_JUMPING, wotlk_flag::FALLING),
@@ -471,6 +484,28 @@ mod tests {
         assert_eq!(wotlk_flags_from_classic(MOVEMENT_FLAG_JUMPING), 0x1000);
         assert_eq!(wotlk_flags_from_classic(MOVEMENT_FLAG_ON_TRANSPORT), 0x200);
         assert_eq!(wotlk_flags_from_classic(0x1000), 0x800, "root");
+        assert_eq!(wotlk_flags_from_classic(CLASSIC_ASCENDING), 0x40_0000);
+        assert_eq!(wotlk_flags_from_classic(CLASSIC_DESCENDING), 0x80_0000);
+        assert_eq!(
+            classic_flags_from_wotlk(0x40_0000),
+            CLASSIC_ASCENDING,
+            "not 1.12.1's spline bit"
+        );
+    }
+
+    /// An ascending swimmer's report carries both bits in 3.3.5a's places, and the pitch tail.
+    #[test]
+    fn an_ascending_swimmer_round_trips() {
+        let (_, back, _) = round_trip(&info(MOVEMENT_FLAG_SWIMMING | CLASSIC_ASCENDING));
+        assert_eq!(back.flags, MOVEMENT_FLAG_SWIMMING | CLASSIC_ASCENDING);
+        assert_eq!(back.pitch, -0.7);
+        let mut bytes = Vec::new();
+        info(MOVEMENT_FLAG_SWIMMING | CLASSIC_DESCENDING).write(MOVER, &mut bytes);
+        assert_eq!(
+            &bytes[3..7],
+            &0x00a0_0000u32.to_le_bytes(),
+            "SWIMMING | DESCENDING"
+        );
     }
 
     #[test]

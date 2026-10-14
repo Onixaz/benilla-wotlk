@@ -88,6 +88,10 @@ pub(crate) struct BindingsState {
     fired: Vec<Input>,
     /// Amount per one-shot this frame: a zoom's yards, else 1.0.
     amounts: Vec<(Input, f32)>,
+    /// A held bit was set or cleared this frame: the reference's setter and clearer (`0x5fa170`,
+    /// `0x5fa450`) return 1 only on a change, and only then does the caller resync the mover's
+    /// channels (`0x5fbbc0`).
+    control_changed: bool,
     /// The keys we believe are down: a press of one is a repeat. The reference classifies
     /// auto-repeat off its own list (`0x4248b3`), never the Win32 `lParam` repeat bit.
     /// Normalized like [`latched`](Self::latched) and reconciled against `ButtonInput` every
@@ -117,6 +121,10 @@ impl BindingsState {
     /// Did this one-shot fire this frame?
     pub(crate) fn fired(&self, i: Input) -> bool {
         self.fired.contains(&i)
+    }
+    /// Did a held bit change this frame, the edge on which the reference resyncs (`0x5fbbc0`)?
+    pub(crate) fn control_changed(&self) -> bool {
+        self.control_changed
     }
     /// Total amount for a one-shot this frame (0.0 when idle): the camera zoom's yards.
     pub(crate) fn amount(&self, i: Input) -> f32 {
@@ -344,6 +352,7 @@ fn latch_and_dispatch(
     state.just.clear();
     state.fired.clear();
     state.amounts.clear();
+    state.control_changed = false;
 
     // Deviation: latches die with the VM that made them, because a latch names a command of that
     // VM's table and releasing it against a new one would run another load's up-half. The
@@ -603,8 +612,20 @@ mod tests {
         <Binding name="TURNLEFT" runOnUp="true">
             if keystate == "down" then TurnLeftStart() else TurnLeftStop() end
         </Binding>
-        <Binding name="JUMP">Jump()</Binding>
-        <Binding name="SITORSTAND">SitOrStand()</Binding>
+        <Binding name="JUMP" runOnUp="true">
+            if ( keystate == "down" ) then
+                JumpOrAscendStart();
+            else
+                AscendStop();
+            end
+        </Binding>
+        <Binding name="SITORSTAND" runOnUp="true">
+            if ( keystate == "down" ) then
+                SitStandOrDescendStart();
+            else
+                DescendStop();
+            end
+        </Binding>
         <Binding name="TOGGLESHEATH">ToggleSheath()</Binding>
         <Binding name="TOGGLEAUTORUN">ToggleAutoRun()</Binding>
         <Binding name="ACTIONBUTTON1" runOnUp="true" header="ACTIONBAR">AB1 = keystate</Binding>
@@ -1069,16 +1090,48 @@ mod tests {
         // Outside a binding body (a macro, `RunScript`, an addon's own code) nothing moves.
         app.world()
             .non_send_resource::<UiScript>()
-            .run("MoveForwardStart() Jump() ToggleAutoRun() RunBinding('MOVEFORWARD')")
+            .run("MoveForwardStart() JumpOrAscendStart() ToggleAutoRun() RunBinding('MOVEFORWARD')")
             .expect("the calls answer");
         app.update();
         assert!(!state(&app).pressed(Input::MoveForward));
         assert!(!state(&app).fired(Input::Jump));
+        assert!(!state(&app).pressed(Input::Ascend));
         assert!(!state(&app).fired(Input::ToggleAutoRun));
     }
 
+    /// The stock 3.3.5a `JUMP` and `SITORSTAND` on SPACE and X: the press starts its vertical half
+    /// with the jump or the stand toggle beside it, holding changes nothing, and the release stops
+    /// the half without a second jump; each bit change is a resync edge.
+    #[test]
+    fn space_and_x_hold_their_vertical_half_until_released() {
+        let mut app = harness();
+        for (key, half, one_shot) in [
+            (KeyCode::Space, Input::Ascend, Input::Jump),
+            (KeyCode::KeyX, Input::Descend, Input::SitOrStand),
+        ] {
+            press_key(&mut app, key);
+            app.update();
+            assert!(state(&app).pressed(half), "{half:?} starts on the press");
+            assert!(
+                state(&app).fired(one_shot),
+                "{one_shot:?} fires on the press"
+            );
+            assert!(state(&app).control_changed());
+            app.update();
+            assert!(state(&app).pressed(half), "held across frames");
+            assert!(!state(&app).fired(one_shot), "once per press");
+            assert!(!state(&app).control_changed());
+            release_key(&mut app, key);
+            app.update();
+            assert!(!state(&app).pressed(half), "{half:?} stops on the release");
+            assert!(!state(&app).fired(one_shot), "the release fires nothing");
+            assert!(state(&app).control_changed());
+        }
+    }
+
     /// The ungated one-shots fire as the keys do: `CameraZoomIn(yards)` carries its amount to the
-    /// zoom (1.0 when absent, `0x50b42d`), `SitOrStand` and `ToggleSheath` fire.
+    /// zoom (1.0 when absent, `0x50b42d`), `SitStandOrDescendStart`'s stand toggle and
+    /// `ToggleSheath` fire.
     #[test]
     fn the_one_shot_functions_fire_their_inputs() {
         let mut app = harness();
@@ -1099,7 +1152,7 @@ mod tests {
             0.0,
             "one frame only"
         );
-        run(&mut app, "SitOrStand()");
+        run(&mut app, "SitStandOrDescendStart()");
         assert!(state(&app).fired(Input::SitOrStand));
         run(&mut app, "ToggleSheath()");
         assert!(state(&app).fired(Input::ToggleSheath));
