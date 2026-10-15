@@ -107,6 +107,19 @@ impl Plugin for PerfPlugin {
         if std::env::var_os("WOW_CAM_CHANGED").is_some() {
             app.add_systems(bevy::app::PostUpdate, census::count_camera_changes);
         }
+        // Before propagation, so the counts are what `mark_dirty_trees` and the visibility
+        // propagation see this frame.
+        if std::env::var_os("WOW_XFORM_CENSUS").is_some() {
+            app.add_systems(
+                bevy::app::PostUpdate,
+                (
+                    census::transform_census,
+                    census::transform_census_by_archetype,
+                )
+                    .chain()
+                    .before(bevy::transform::TransformSystems::Propagate),
+            );
+        }
         if let Some(at) = std::env::var("WOW_ARCH_CENSUS")
             .ok()
             .and_then(|v| v.parse::<f32>().ok())

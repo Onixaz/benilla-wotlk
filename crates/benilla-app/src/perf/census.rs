@@ -404,6 +404,106 @@ pub(super) fn arch_census(world: &mut World) {
     }
 }
 
+/// `WOW_XFORM_CENSUS=1`: once a second, how many rows the transform and visibility passes find
+/// changed per frame, and how many rows they scan: the premise of their cost.
+#[allow(clippy::type_complexity)]
+pub(super) fn transform_census(
+    t_changed: Query<Entity, Changed<Transform>>,
+    g_changed: Query<Entity, Changed<GlobalTransform>>,
+    v_changed: Query<Entity, Changed<Visibility>>,
+    with_t: Query<(), With<Transform>>,
+    with_v: Query<(), With<bevy::camera::visibility::ViewVisibility>>,
+    with_mesh: Query<(), With<Mesh3d>>,
+    time: Res<Time>,
+    mut acc: Local<(f32, u32, u32, u32, u32)>,
+) {
+    let (last, frames, t_n, g_n, v_n) = &mut *acc;
+    *frames += 1;
+    *t_n += t_changed.iter().count() as u32;
+    *g_n += g_changed.iter().count() as u32;
+    *v_n += v_changed.iter().count() as u32;
+    if time.elapsed_secs() - *last >= 1.0 {
+        let f = (*frames).max(1) as f32;
+        eprintln!(
+            "[xform-census] per frame: Transform changed {:.0} / {} rows, GlobalTransform changed {:.0}, Visibility changed {:.0} / {} ViewVisibility rows, {} Mesh3d rows",
+            *t_n as f32 / f,
+            with_t.iter().count(),
+            *g_n as f32 / f,
+            *v_n as f32 / f,
+            with_v.iter().count(),
+            with_mesh.iter().count(),
+        );
+        (*frames, *t_n, *g_n, *v_n) = (0, 0, 0, 0);
+        *last = time.elapsed_secs();
+    }
+}
+
+/// `WOW_XFORM_CENSUS=1`'s second half, once a second: the changed `Transform` and `Visibility`
+/// rows by archetype, the writers' fingerprint.
+pub(super) fn transform_census_by_archetype(world: &mut World) {
+    let due = {
+        let now = world.resource::<Time>().elapsed_secs();
+        let mut next = world.get_resource_or_insert_with(|| XformCensusNext(0.0));
+        if now < next.0 {
+            return;
+        }
+        next.0 = now + 1.0;
+        true
+    };
+    if !due {
+        return;
+    }
+    let short = |full: &str| -> String {
+        let base = full.split('<').next().unwrap_or(full);
+        let segs: Vec<&str> = base.split("::").collect();
+        segs[segs.len().saturating_sub(2)..].join("::")
+    };
+    for (label, entities) in [
+        (
+            "Transform",
+            world
+                .query_filtered::<Entity, Changed<Transform>>()
+                .iter(world)
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "Visibility",
+            world
+                .query_filtered::<Entity, Changed<Visibility>>()
+                .iter(world)
+                .collect::<Vec<_>>(),
+        ),
+    ] {
+        let mut by_arch: std::collections::HashMap<String, u32> = Default::default();
+        for e in &entities {
+            let Ok(er) = world.get_entity(*e) else {
+                continue;
+            };
+            let mut names: Vec<String> = er
+                .archetype()
+                .components()
+                .iter()
+                .filter_map(|&c| world.components().get_info(c))
+                .map(|i| short(&i.name().to_string()))
+                .collect();
+            names.sort();
+            *by_arch.entry(names.join("+")).or_default() += 1;
+        }
+        let mut rows: Vec<_> = by_arch.into_iter().collect();
+        rows.sort_by_key(|r| std::cmp::Reverse(r.1));
+        eprintln!(
+            "[xform-census] {label} changed this frame: {} rows",
+            entities.len()
+        );
+        for (sig, n) in rows.iter().take(8) {
+            eprintln!("[xform-census]   {n:>6}  {}", &sig[..sig.len().min(220)]);
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(super) struct XformCensusNext(f32);
+
 /// `WOW_CAM_CHANGED=1`: per-second count of frames whose world-camera `Transform` /
 /// `GlobalTransform` registered as changed.
 pub(super) fn count_camera_changes(
