@@ -53,6 +53,8 @@ mod gm_ticket_category;
 pub use gm_ticket_category::{
     load_gm_ticket_categories, GmTicketCategory, GmTicketCategoryCatalog,
 };
+mod summon_properties;
+pub use summon_properties::{load_summon_properties, SummonPropertiesCatalog};
 mod cfg_categories;
 pub use cfg_categories::{load_realm_categories, RealmCategory};
 mod wow_ini;

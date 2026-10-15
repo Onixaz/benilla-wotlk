@@ -114,6 +114,7 @@ const COL_SPEED: usize = 47;
 const COL_EFFECT_1: usize = 71;
 /// `EffectMiscValue[0]`, `71 + 13 × 3`: the 14th `[3]` array from `Effect`.
 const COL_EFFECT_MISC_1: usize = 110;
+const COL_EFFECT_MISC_B_1: usize = 113;
 /// `EffectTriggerSpell[0]`, `71 + 15 × 3`, after `EffectMiscValueB`.
 const COL_EFFECT_TRIGGER_1: usize = 116;
 /// `SPELL_EFFECT_LEARN_SPELL`: teaches its `EffectTriggerSpell`, as a trainer's wrapper does.
@@ -652,6 +653,9 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 }),
                 effect_misc_value: std::array::from_fn(|i| {
                     i32_at(r, COL_EFFECT_MISC_1 + i).unwrap_or(0)
+                }),
+                effect_misc_value_b: std::array::from_fn(|i| {
+                    i32_at(r, COL_EFFECT_MISC_B_1 + i).unwrap_or(0)
                 }),
             },
         );

@@ -208,6 +208,8 @@ pub struct SpellDisplay {
     /// `EffectMiscValue[3]` (columns 110-112, signed). On a trade-skill opener (effect 47),
     /// slot 0 picks the window: nonzero the CraftFrame, 0 the TradeSkillFrame (`0x6e4bd7`).
     pub effect_misc_value: [i32; 3],
+    /// `EffectMiscValueB[3]` (columns 113-115, signed): a summon effect's `SummonProperties` row.
+    pub effect_misc_value_b: [i32; 3],
     /// The integer per-level dice term, 0 on every 12340 row, which dropped `EffectDicePerLevel`.
     pub effect_dice_per_level: [i32; 3],
     /// `EffectRealPointsPerLevel[3]` (columns 77-79): the float per-level term (`0x6e3889`); 5.0
@@ -306,6 +308,7 @@ impl Default for SpellDisplay {
             effect_trigger_spell: [0; 3],
             effect_item_type: [0; 3],
             effect_misc_value: [0; 3],
+            effect_misc_value_b: [0; 3],
         }
     }
 }
@@ -659,6 +662,19 @@ impl SpellDisplay {
             0 => self.spell_level,
             n => n,
         }
+    }
+
+    /// A companion or mount (`0x8009b0`): effect 0 summons into slot 5, or aura 0 is `MOUNTED`.
+    pub fn is_companion(&self, summons: &crate::SummonPropertiesCatalog) -> bool {
+        const SPELL_EFFECT_SUMMON: u32 = 28;
+        const SPELL_AURA_MOUNTED: u32 = 78;
+        const SUMMON_SLOT_COMPANION: u32 = 5;
+        (self.effects[0] == SPELL_EFFECT_SUMMON
+            && u32::try_from(self.effect_misc_value_b[0])
+                .ok()
+                .and_then(|row| summons.slot(row))
+                == Some(SUMMON_SLOT_COMPANION))
+            || self.effect_apply_aura[0] == SPELL_AURA_MOUNTED
     }
 
     /// The name and rank as the client composes them, `"%s (%s)"` (`0x8468b0`), or the bare name

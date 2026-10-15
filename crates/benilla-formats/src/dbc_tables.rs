@@ -148,6 +148,7 @@ tables! {
         "SpellVisualKit" => spell_visual::kit_schema(),
         "StableSlotPrices" => stable_slot_prices::schema(),
         "Stationery" => stationery::schema(),
+        "SummonProperties" => summon_properties::summon_properties_schema(),
         "Talent" => talents::talent_schema(),
         "TalentTab" => talents::talent_tab_schema(),
         "TaxiNodes" => taxi_nodes::taxi_nodes_schema(),

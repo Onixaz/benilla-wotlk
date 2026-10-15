@@ -63,6 +63,7 @@ pub(crate) struct Lifecycle<'w> {
     net: Res<'w, NetCommands>,
     actions: ResMut<'w, PlayerActions>,
     learned_in_tab: ResMut<'w, LearnedInTab>,
+    summons: Res<'w, super::SummonSlots>,
     cast_bar: ResMut<'w, CastBarFeed>,
     pending: ResMut<'w, PendingCast>,
     queued_melee: ResMut<'w, QueuedMeleeSpell>,
@@ -133,6 +134,7 @@ fn on_spell_learned(
             &mut l.learned_in_tab,
             learner,
             &l.net,
+            &l.summons.0,
         );
     }
 }
@@ -572,8 +574,7 @@ fn action_buttons(buttons: Vec<ActionButton>, actions: &mut PlayerActions) {
 /// the player's own init replays it as `0x6e7b00(spell, slot, 0, 1)` (`0x6e7f73`): the book
 /// alone, no line, no flash, no button.
 ///
-/// The reference's totem-bar refill (`0x5ab9d0`: the four spells at `0xaccccc` and totems
-/// into slots 132..143) is not modelled, since benilla has no multi-cast bar (#253).
+/// Hidden, recipe, companion (#263) and unbooked learns skip tab and bar (`0x54265c`-`0x542856`).
 fn learned_spell(
     spell_id: u32,
     actions: &mut PlayerActions,
@@ -582,6 +583,7 @@ fn learned_spell(
     tab_flash: &mut LearnedInTab,
     learner: Option<Learner>,
     net: &NetCommands,
+    summons: &benilla_formats::SummonPropertiesCatalog,
 ) {
     debug!("net: learned spell {spell_id}");
     if actions.spells.insert(spell_id) {
@@ -599,7 +601,22 @@ fn learned_spell(
             actions.write_slot(slot, packed, net);
         }
     }
+    if let Some(d) = display {
+        if d.attributes & ATTR_DO_NOT_DISPLAY != 0 {
+            return;
+        }
+        if d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0 {
+            announce_learn(spell_id, spells, errors);
+            return;
+        }
+        if d.is_companion(summons) {
+            return;
+        }
+    }
     announce_learn(spell_id, spells, errors);
+    if display.is_some_and(|d| d.attributes_ex4 & ATTR_EX4_NOT_IN_SPELLBOOK != 0) {
+        return;
+    }
     tab_flash.0.push(spell_id);
     if let (Some(spells), Some(display)) = (spells, display) {
         if learn_place::auto_place_allowed(display, learner.level) {
@@ -611,6 +628,11 @@ fn learned_spell(
         }
     }
 }
+
+/// `Attributes & 0x80`: the registrar's first exit (`0x54265c`).
+const ATTR_DO_NOT_DISPLAY: u32 = 0x80;
+/// `AttributesEx4 & 0x8000`: kept out of the spellbook, so off the tab and the bar (`0x542856`).
+const ATTR_EX4_NOT_IN_SPELLBOOK: u32 = 0x8000;
 
 /// The `ERR_LEARN_*` chat line the registrar `0x4b25b0` prints at `0x4b2909` for a spell learned
 /// mid-session; which line, and whether it carries the rank, is
@@ -1524,6 +1546,7 @@ mod tests {
             &mut flash,
             live(),
             &no_bar(),
+            &Default::default(),
         );
 
         assert_eq!(errors.0.len(), 1, "one line, once");
@@ -1555,6 +1578,7 @@ mod tests {
             &mut LearnedInTab::default(),
             live(),
             &no_bar(),
+            &Default::default(),
         );
         assert_eq!(errors.0[0].key, "ERR_LEARN_SPELL_S");
         assert_eq!(errors.0[0].arg_s(), Some("Fireball (Rank 1)"));
@@ -1577,6 +1601,7 @@ mod tests {
             &mut LearnedInTab::default(),
             live(),
             &no_bar(),
+            &Default::default(),
         );
         assert_eq!(errors.0[0].key, "ERR_LEARN_RECIPE_S");
         assert_eq!(
@@ -1658,6 +1683,7 @@ mod tests {
             &mut LearnedInTab::default(),
             live(),
             &no_bar(),
+            &Default::default(),
         );
         learned_spell(
             99999,
@@ -1667,6 +1693,7 @@ mod tests {
             &mut LearnedInTab::default(),
             live(),
             &no_bar(),
+            &Default::default(),
         );
         assert!(
             errors.0.is_empty(),
@@ -1686,6 +1713,7 @@ mod tests {
             &mut LearnedInTab::default(),
             live(),
             &no_bar(),
+            &Default::default(),
         );
         assert!(actions.spells.contains(&6603));
         assert!(actions.dirty, "a new spell dirties the feed");
@@ -1699,6 +1727,7 @@ mod tests {
             &mut LearnedInTab::default(),
             live(),
             &no_bar(),
+            &Default::default(),
         );
         assert!(
             !actions.dirty,
@@ -1766,6 +1795,7 @@ mod tests {
             &mut flash,
             live(),
             &net,
+            &Default::default(),
         );
         assert_eq!(actions.buttons[&1].action, 133, "slot 1 is the first empty");
         assert_eq!(
@@ -1786,6 +1816,7 @@ mod tests {
             &mut flash,
             live(),
             &net,
+            &Default::default(),
         );
         assert!(!actions.buttons.contains_key(&2));
         assert!(sent(&rx).is_empty());
@@ -1800,6 +1831,7 @@ mod tests {
             &mut flash,
             live(),
             &net,
+            &Default::default(),
         );
         assert_eq!(actions.buttons[&1].action, 143);
         assert!(!actions.buttons.contains_key(&2));
@@ -1820,10 +1852,100 @@ mod tests {
                 form: 0,
             }),
             &net,
+            &Default::default(),
         );
         assert!(actions.spells.contains(&133));
         assert!(!actions.buttons.contains_key(&1));
         assert!(sent(&rx).is_empty());
+    }
+
+    /// Each early exit still joins the book; only the plain spell is flashed and placed.
+    #[test]
+    fn hidden_recipe_companion_mount_and_unbooked_learns_stay_off_the_tab_and_bar() {
+        use benilla_formats::{SpellDisplay, SummonPropertiesCatalog};
+        let row = |id: u32, d: SpellDisplay| {
+            (
+                id,
+                SpellDisplay {
+                    id,
+                    name: format!("Spell {id}"),
+                    rank: Some("Rank 1".into()),
+                    ..d
+                },
+            )
+        };
+        let mut spells = Spells::empty_for_tests();
+        spells.catalog = benilla_formats::SpellCatalog::from_displays(
+            [
+                row(
+                    1001,
+                    SpellDisplay {
+                        attributes: 0x80,
+                        ..Default::default()
+                    },
+                ),
+                row(
+                    1002,
+                    SpellDisplay {
+                        attributes: 0x20,
+                        ..Default::default()
+                    },
+                ),
+                row(
+                    1003,
+                    SpellDisplay {
+                        effects: [28, 0, 0],
+                        effect_misc_value_b: [41, 0, 0],
+                        ..Default::default()
+                    },
+                ),
+                row(
+                    1004,
+                    SpellDisplay {
+                        effect_apply_aura: [78, 0, 0],
+                        ..Default::default()
+                    },
+                ),
+                row(
+                    1005,
+                    SpellDisplay {
+                        attributes_ex4: 0x8000,
+                        ..Default::default()
+                    },
+                ),
+                row(1006, SpellDisplay::default()),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let summons = SummonPropertiesCatalog::from_slots([(41, 5)]);
+        // (spell, says a line, flashed and placed)
+        for (id, line, shown) in [
+            (1001, None, false),
+            (1002, Some("ERR_LEARN_RECIPE_S"), false),
+            (1003, None, false),
+            (1004, None, false),
+            (1005, Some("ERR_LEARN_SPELL_S"), false),
+            (1006, Some("ERR_LEARN_SPELL_S"), true),
+        ] {
+            let mut actions = PlayerActions::default();
+            let mut errors = UiErrorKeys::default();
+            let mut flash = LearnedInTab::default();
+            learned_spell(
+                id,
+                &mut actions,
+                Some(&spells),
+                &mut errors,
+                &mut flash,
+                live(),
+                &no_bar(),
+                &summons,
+            );
+            assert!(actions.spells.contains(&id), "{id} joins the book");
+            assert_eq!(errors.0.first().map(|e| e.key), line, "{id}'s line");
+            assert_eq!(!flash.0.is_empty(), shown, "{id}'s tab flash");
+            assert_eq!(actions.buttons.contains_key(&0), shown, "{id}'s button");
+        }
     }
 
     /// Before our player streams, the pair is buffered and replayed with the live flag clear
@@ -1850,6 +1972,7 @@ mod tests {
             &mut flash,
             None,
             &NetCommands(tx),
+            &Default::default(),
         );
         assert!(actions.spells.contains(&133));
         assert!(actions.buttons.is_empty(), "no button");
@@ -2824,6 +2947,7 @@ mod tests {
             &mut LearnedInTab::default(),
             live(),
             &no_bar(),
+            &Default::default(),
         );
         assert_eq!(errors.0.len(), 1, "the learn block never reads castUI");
         assert_eq!(errors.0[0].key, "ERR_LEARN_SPELL_S");

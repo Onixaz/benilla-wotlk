@@ -61,6 +61,25 @@ pub(crate) struct LocalCancel;
 
 pub(crate) struct SpellPlugin;
 
+/// `SummonProperties.dbc`, the learn registrar's companion test (`0x8009b0`); empty without data.
+#[derive(Resource, Default)]
+pub(crate) struct SummonSlots(pub(crate) benilla_formats::SummonPropertiesCatalog);
+
+fn load_summon_slots(mut commands: Commands, assets: Option<Res<benilla_assets::WorldAssets>>) {
+    use benilla_assets::LockRecover;
+    let Some(assets) = assets else { return };
+    let loaded = {
+        let mut chain = assets.chain.lock_recover();
+        benilla_formats::load_summon_properties(&mut chain)
+    };
+    match loaded {
+        Ok(catalog) => commands.insert_resource(SummonSlots(catalog)),
+        Err(e) => {
+            warn!("spell: SummonProperties.dbc failed — no learn reads as a companion: {e:#}")
+        }
+    }
+}
+
 impl Plugin for SpellPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PendingCast>()
@@ -114,7 +133,12 @@ impl Plugin for SpellPlugin {
                     targeting::commit_item_cast_on_pick.after(UiInput),
                 ),
             )
-            .add_systems(OnEnter(ClientState::InWorld), mods::clear_on_world_enter);
+            .add_systems(OnEnter(ClientState::InWorld), mods::clear_on_world_enter)
+            .init_resource::<SummonSlots>()
+            .add_systems(
+                Startup,
+                load_summon_slots.after(benilla_assets::AssetSet::Open),
+            );
         net::register(app);
     }
 }
