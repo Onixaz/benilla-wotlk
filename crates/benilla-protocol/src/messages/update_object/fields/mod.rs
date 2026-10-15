@@ -110,8 +110,7 @@ const FIELD_UNIT_VIRTUAL_ITEM_SLOT_DISPLAY: u16 = 37;
 /// sheath byte (`CreatureDefines.h:621-628`).
 const FIELD_UNIT_VIRTUAL_ITEM_INFO: u16 = 40;
 /// Byte 0 is the sheath state (`UnitDefines.h:93`); a player's comes only from `CMSG_SETSHEATHED`.
-/// Byte 1 the `UNIT_BYTE2_FLAG`s and byte 3 the shapeshift form, as 3.3.5a places them. Not
-/// `FIELD_PLAYER_BYTES_2`.
+/// Byte 1 the `UNIT_BYTE2_FLAG`s, byte 3 the shapeshift form. Not `FIELD_PLAYER_BYTES_2`.
 const FIELD_UNIT_BYTES_2: u16 = 164;
 // UNIT combat and stat block: offset from OBJECT_END, then the wire type.
 const FIELD_UNIT_BASEATTACKTIME: u16 = 126; // OBJECT_END+0x78; 2 slots [main, offhand], ms, INT

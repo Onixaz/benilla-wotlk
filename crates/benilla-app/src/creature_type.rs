@@ -74,8 +74,7 @@ mod tests {
     use crate::names::CreatureRecord;
     use benilla_protocol::ObjectFields;
 
-    /// `UNIT_FIELD_BYTES_2` (the form in byte 3) and `UNIT_FIELD_BYTES_0`, absolute descriptor
-    /// indices.
+    /// `UNIT_FIELD_BYTES_2` (form in byte 3) and `UNIT_FIELD_BYTES_0`, absolute indices.
     const BYTES_2: u16 = 164;
     const BYTES_0: u16 = 36;
     const OBJECT_FIELD_ENTRY: u16 = 3;

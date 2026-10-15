@@ -121,17 +121,13 @@ impl ObjectFields {
         match field {
             // Stand state stays in byte 0; 3.3.5a's visibility flags (ghost, creep, untrackable,
             // AzerothCore `UnitStandFlags`) move from byte 2 to 1.12.1's byte 3. Pet talents in
-            // byte 1 and the anim tier in byte 3 have no 1.12.1 place; 1.12.1's form byte (2)
-            // stays 0, since 3.3.5a keeps the form in `UNIT_FIELD_BYTES_2` byte 3.
+            // byte 1 and the anim tier in byte 3 have no 1.12.1 place.
             Field::UnitBytes1 => put(
                 field,
                 element,
                 (value & 0xff) | ((value >> 16) & 0xff) << 24,
             ),
-            // Sheath state in byte 0, the `UNIT_BYTE2_FLAG` byte 1 (PvP `0x1`, FFA `0x4`,
-            // sanctuary `0x8`) that `0x521bf0` reads at `+0x1d1`, and the shapeshift form in
-            // byte 3, which `CGUnit_C::GetShapeshiftForm` (`0x71af70`) reads at `+0x1d3`. The pet
-            // flags in byte 2 have no reader.
+            // Sheath byte 0, flags byte 1 (`+0x1d1`) and form byte 3 (`+0x1d3`, `0x71af70`).
             Field::UnitBytes2 => put(field, element, value & 0xff00_ffff),
             Field::UnitNpcFlags => put(field, element, classic_npc_flags(value)),
             // Gender and drunkenness; bytes 2 and 3 are the PvP title and arena faction, where
@@ -304,7 +300,7 @@ mod tests {
             0x10,
             "byte 3 is the form (`+0x1d3`)"
         );
-        // A warrior in Battle Stance: `UNIT_FIELD_BYTES_1` byte 2 does not carry it on 3.3.5a.
+        // Battle Stance; `UNIT_FIELD_BYTES_1` does not carry the form on 3.3.5a.
         let f = ObjectFields::from_wotlk(
             wire(&[(122, 17 << 24), (74, 0x00ff_0000)]),
             ObjectType::Unit,
