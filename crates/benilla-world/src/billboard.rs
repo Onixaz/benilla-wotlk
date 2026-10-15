@@ -53,6 +53,11 @@ pub struct BillboardCard {
 
 impl BillboardCard {
     /// A card for a submesh's [`BillboardInfo`] at a fixed instance `placement`.
+    /// Whether a translation track moves the card each frame, beyond its scale pulse.
+    pub(crate) fn tracks_translation(&self) -> bool {
+        self.seq_translation.is_some()
+    }
+
     pub fn new(info: &BillboardInfo, placement: Transform) -> Self {
         let world_pivot = placement.transform_point(info.pivot);
         Self {
@@ -460,8 +465,15 @@ pub(crate) fn face_billboards(
         } else if !tracked && !cam_moved {
             continue;
         }
-        // The gseq attach anchor, stamped on the first placement pass (`CM2Model+0x68`).
-        let attach_ms = *card.gseq_attach_ms.get_or_insert(elapsed_ms);
+        // The gseq attach anchor, stamped on the first placement pass (`CM2Model+0x68`). Written
+        // once: a `get_or_insert` through the `Mut` would mark the card changed every frame.
+        let attach_ms = match card.gseq_attach_ms {
+            Some(ms) => ms,
+            None => {
+                card.gseq_attach_ms = Some(elapsed_ms);
+                elapsed_ms
+            }
+        };
         let card = &*card;
         let rotation = billboard_basis(card.kind, card.placement_rot, fwd, right, up);
         // The global-sequence scale pulse on the instance's anchored cursor, `sceneNow − attach`.

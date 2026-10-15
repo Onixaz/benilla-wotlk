@@ -577,12 +577,14 @@ pub(crate) fn classify_water_side(
         Entity,
         (
             With<MeshMaterial3d<WowModelMaterial>>,
+            Without<crate::billboard::BillboardCard>,
             Or<(
                 Changed<GlobalTransform>,
                 Changed<bevy::camera::visibility::RenderLayers>,
             )>,
         ),
     >,
+    cards: CardMoves,
     reclaimed: Query<Entity, Changed<crate::wmo_portal::UnitWmoRoom>>,
     // An instance entering or leaving its water band re-classifies its whole subtree.
     rebanded: Query<Entity, Changed<crate::straddle::ModelWaterBand>>,
@@ -658,8 +660,9 @@ pub(crate) fn classify_water_side(
     } else {
         // Only the changed set; an entity dirty on two legs classifies twice, the second a no-op.
         let handle_dirty: Vec<Entity> = set.p0().iter().collect();
+        let moved_cards: Vec<Entity> = cards.moved();
         let mut parts = set.p1();
-        for e in moved.iter().chain(handle_dirty) {
+        for e in moved.iter().chain(moved_cards).chain(handle_dirty) {
             if let Ok(item) = parts.get_mut(e) {
                 classify_part(
                     &interleave,
@@ -709,6 +712,49 @@ type PartItem<'a> = (
 
 /// Classify one batch. `used` collects the live near identities for the twin GC's mark; the
 /// reactive path passes `None`.
+/// The billboard cards [`classify_water_side`] re-classifies: a card moves with its owner
+/// (`BillboardCard::re_place`, a card write) or along its own translation track; its scale pulse
+/// changes the transform without moving it, and re-classifies nothing.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct CardMoves<'w, 's> {
+    changed: Query<
+        'w,
+        's,
+        (Entity, &'static crate::billboard::BillboardCard),
+        (
+            With<MeshMaterial3d<WowModelMaterial>>,
+            Or<(
+                Changed<crate::billboard::BillboardCard>,
+                Changed<GlobalTransform>,
+                Changed<bevy::camera::visibility::RenderLayers>,
+            )>,
+        ),
+    >,
+    replaced: Query<
+        'w,
+        's,
+        (),
+        (
+            With<crate::billboard::BillboardCard>,
+            Or<(
+                Changed<crate::billboard::BillboardCard>,
+                Changed<bevy::camera::visibility::RenderLayers>,
+            )>,
+        ),
+    >,
+}
+
+impl CardMoves<'_, '_> {
+    /// The cards that moved this frame.
+    fn moved(&self) -> Vec<Entity> {
+        self.changed
+            .iter()
+            .filter(|(e, card)| card.tracks_translation() || self.replaced.contains(*e))
+            .map(|(e, _)| e)
+            .collect()
+    }
+}
+
 fn classify_part(
     interleave: &crate::particles::WaterInterleave,
     clips: &crate::straddle::WaterClips,
