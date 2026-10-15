@@ -160,7 +160,10 @@ impl Plugin for DebugPanelPlugin {
             // bevy_egui's end-pass set builds two fresh `QueryState`s every frame
             // (`run_egui_context_pass_loop_system`), ~0.1 ms against this world's archetypes
             // even with every context on `run_manually`; the set waits for an open lane.
-            .configure_sets(PostUpdate, EguiPostUpdateSet::EndPass.run_if(egui_lane_open))
+            .configure_sets(
+                PostUpdate,
+                EguiPostUpdateSet::EndPass.run_if(egui_lane_open),
+            )
             // A gated frame still owes bevy_egui a prepared empty output, between the end pass it
             // skipped and the output consumer that still runs.
             .add_systems(
