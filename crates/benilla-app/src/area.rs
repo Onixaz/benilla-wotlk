@@ -17,8 +17,8 @@
 //! - `GetMinimapZoneText` is subzone-else-zone (`0xb4da28`), with its own `MINIMAP_ZONE_CHANGED`
 //!   (`0x494970`).
 //!
-//! On the first world-enter `0x494780` also sets the world map to the player's zone
-//! (`0x4a6650`); that half lives in `crate::ui_world_map::world_enter_selection`.
+//! On the first world entry the zone updater also sets the world map to the player's zone
+//! (`0x5204f9` into `0x547170`); that half is `crate::ui_world_map`'s first-entry sync.
 //!
 //! Host globals are written before the event fires, so a handler's `GetZoneText()` sees the new
 //! state.

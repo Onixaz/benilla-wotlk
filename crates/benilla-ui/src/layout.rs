@@ -159,6 +159,8 @@ pub struct LayoutInput {
     pub extent_x: f32,
     /// The clamp's Y extent; the client's default is `0.6` (`0x41ae70`).
     pub extent_y: f32,
+    /// `SetClampRectInsets`' `[left, right, top, bottom]`, already times the scale.
+    pub clamp_insets: [f32; 4],
 }
 
 impl Default for LayoutInput {
@@ -171,6 +173,7 @@ impl Default for LayoutInput {
             clamp: false,
             extent_x: 0.8,
             extent_y: 0.6,
+            clamp_insets: [0.0; 4],
         }
     }
 }
@@ -298,10 +301,17 @@ pub struct AssembleRect {
     pub rect: [f32; 4],
 }
 
-/// `assemble` (`0x767a20`): fails if any edge is `+Inf`, else with `clamp` (flags bit 4) shifts
-/// the rect into `[0, extent]` on each axis, low edge first, keeping its size.
+/// `assemble` (`0x48944e` in 12340): fails if any edge is `+Inf`, else with `clamp` (flags bit 4)
+/// shifts the rect into the screen grown by the clamp insets, `[-left, extent_x + right]` and
+/// `[-bottom, extent_y + top]` as the insets read negated, low edge first, keeping its size.
 #[allow(clippy::float_cmp)]
-pub fn assemble_rect(edges: [f32; 4], clamp: bool, extent_x: f32, extent_y: f32) -> AssembleRect {
+pub fn assemble_rect(
+    edges: [f32; 4],
+    clamp: bool,
+    extent_x: f32,
+    extent_y: f32,
+    insets: [f32; 4],
+) -> AssembleRect {
     let [mut bottom, mut left, mut top, mut right] = edges;
     let inf = f32::INFINITY;
     if bottom == inf || left == inf || top == inf || right == inf {
@@ -311,23 +321,26 @@ pub fn assemble_rect(edges: [f32; 4], clamp: bool, extent_x: f32, extent_y: f32)
         };
     }
     if clamp {
-        if (left as f64) < 0.0 {
-            right = (f64::from(right) - f64::from(left)) as f32;
-            left = 0.0;
+        let [l_in, r_in, t_in, b_in] = insets;
+        let (lo_x, hi_x) = (-l_in, extent_x - r_in);
+        let (lo_y, hi_y) = (-b_in, extent_y - t_in);
+        if (left as f64) < (lo_x as f64) {
+            right = (f64::from(right) - (f64::from(left) - f64::from(lo_x))) as f32;
+            left = lo_x;
         }
-        if (bottom as f64) < 0.0 {
-            top = (f64::from(top) - f64::from(bottom)) as f32;
-            bottom = 0.0;
+        if (bottom as f64) < (lo_y as f64) {
+            top = (f64::from(top) - (f64::from(bottom) - f64::from(lo_y))) as f32;
+            bottom = lo_y;
         }
-        if (right as f64) > (extent_x as f64) {
-            let over = f64::from(right) - f64::from(extent_x);
+        if (right as f64) > (hi_x as f64) {
+            let over = f64::from(right) - f64::from(hi_x);
             left = (f64::from(left) - over) as f32;
-            right = extent_x;
+            right = hi_x;
         }
-        if (top as f64) > (extent_y as f64) {
-            let over = f64::from(top) - f64::from(extent_y);
+        if (top as f64) > (hi_y as f64) {
+            let over = f64::from(top) - f64::from(hi_y);
             bottom = (f64::from(bottom) - over) as f32;
-            top = extent_y;
+            top = hi_y;
         }
     }
     AssembleRect {
@@ -366,6 +379,7 @@ struct EdgeInput {
     clamp: bool,
     extent_x: f32,
     extent_y: f32,
+    clamp_insets: [f32; 4],
 }
 
 // The recursion-guard bits of the client's `G+0x28`.
@@ -558,7 +572,7 @@ fn resolve_edges(f: &EdgeInput) -> ResolveOutcome {
         return ResolveOutcome::Unresolvable;
     }
     let edges = [bottom as f32, left as f32, top as f32, right as f32];
-    let a = assemble_rect(edges, f.clamp, f.extent_x, f.extent_y);
+    let a = assemble_rect(edges, f.clamp, f.extent_x, f.extent_y, f.clamp_insets);
     ResolveOutcome::Resolved(Rect::from_array(a.rect))
 }
 
@@ -594,6 +608,7 @@ fn build_edge_input(
         clamp: frame.clamp,
         extent_x: frame.extent_x,
         extent_y: frame.extent_y,
+        clamp_insets: frame.clamp_insets,
     }
 }
 
@@ -727,6 +742,7 @@ impl LayoutSolver {
         dst.clamp = src.clamp;
         dst.extent_x = src.extent_x;
         dst.extent_y = src.extent_y;
+        dst.clamp_insets = src.clamp_insets;
     }
 
     /// Resolve every registered frame, anchor targets first; cycle members then resolve
@@ -917,17 +933,23 @@ mod tests {
     // ── assemble / clamp ────────────────────────────────────────────────────────────────────
     #[test]
     fn assemble_passthrough_and_fail() {
-        let a = assemble_rect([3.0, 100.0, 480.0, 260.0], false, 0.8, 0.6);
+        let a = assemble_rect([3.0, 100.0, 480.0, 260.0], false, 0.8, 0.6, [0.0; 4]);
         assert!(a.ok);
         assert_eq!(a.rect, [3.0, 100.0, 480.0, 260.0]);
-        let bad = assemble_rect([3.0, f32::INFINITY, 480.0, 260.0], false, 0.8, 0.6);
+        let bad = assemble_rect(
+            [3.0, f32::INFINITY, 480.0, 260.0],
+            false,
+            0.8,
+            0.6,
+            [0.0; 4],
+        );
         assert!(!bad.ok);
     }
 
     #[test]
     fn assemble_clamp_low_edge() {
         // left < 0 -> shift to 0, carry span to right
-        let a = assemble_rect([0.1, -0.2, 0.5, 0.3], true, 0.8, 0.6);
+        let a = assemble_rect([0.1, -0.2, 0.5, 0.3], true, 0.8, 0.6, [0.0; 4]);
         assert!(a.ok);
         assert_eq!(a.rect[1], 0.0); // left
                                     // right = 0.3 - (-0.2) computed via f64 then narrowed
@@ -938,7 +960,7 @@ mod tests {
     #[test]
     fn assemble_clamp_high_edge() {
         // right > extent_x -> shift back, right = extent
-        let a = assemble_rect([0.1, 0.1, 0.5, 1.5], true, 0.8, 0.6);
+        let a = assemble_rect([0.1, 0.1, 0.5, 1.5], true, 0.8, 0.6, [0.0; 4]);
         assert!(a.ok);
         assert_eq!(a.rect[3], 0.8);
         let over = f64::from(1.5f32) - f64::from(0.8f32);

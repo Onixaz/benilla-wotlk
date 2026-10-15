@@ -111,6 +111,10 @@ const CLASSES: &[(&str, &str)] = &[
         "Cooldown",
         r#"CreateFrame("Cooldown", "DWCooldownN", UIParent)"#,
     ),
+    (
+        "QuestPOIFrame",
+        r#"CreateFrame("QuestPOIFrame", "DWQuestPOIN", UIParent)"#,
+    ),
     ("Texture", r#"DW_Frame:CreateTexture("DWTexN")"#),
     ("FontString", r#"DW_Frame:CreateFontString("DWFSN")"#),
     ("TitleRegion", r#"DW_Frame:CreateTitleRegion()"#),

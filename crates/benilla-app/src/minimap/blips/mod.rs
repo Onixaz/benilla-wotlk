@@ -490,6 +490,7 @@ mod tests {
             name: name.into(),
             description: String::new(),
             world_state_id: 0,
+            ..Default::default()
         }
     }
 

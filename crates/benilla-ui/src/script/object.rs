@@ -306,6 +306,8 @@ fn frame_kind_from_str(s: &str) -> Option<FrameKind> {
         "MINIMAP" => FrameKind::Minimap,
         // Registered at `0x521069`, factory `0x51a380`.
         "COOLDOWN" => FrameKind::Cooldown,
+        // Registered at `0x5210c1`; `IsObjectType` `0x58fb00`.
+        "QUESTPOIFRAME" => FrameKind::QuestPoiFrame,
         _ => return None,
     })
 }
@@ -526,6 +528,8 @@ fn kind_method_registries(kind: Option<FrameKind>) -> &'static [&'static str] {
         Some(FrameKind::GameTooltip) => &[super::tooltip::REG_TOOLTIP_METHODS],
         // Its five (`0xad13a4`, `0x5ebe10`) over the frame table.
         Some(FrameKind::Cooldown) => &[super::cooldown_widget::REG_COOLDOWN_METHODS],
+        // Its fourteen (`0xacf180`) over the frame table.
+        Some(FrameKind::QuestPoiFrame) => &[super::quest_poi_frame::REG_QUEST_POI_METHODS],
         _ => &[],
     }
 }

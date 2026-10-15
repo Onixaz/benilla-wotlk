@@ -133,6 +133,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // GetNumBattlefieldVehicles() (`0x54a140`) counts the vehicle list `0x549740` gathers from the
+    // map's vehicle units, and GetBattlefieldVehicleInfo(i) (`0x54c4d0`) answers nothing past it.
+    // benilla models no vehicle (#235), so the list is empty.
+    g.set(
+        "GetNumBattlefieldVehicles",
+        lua.create_function(|_, ()| Ok(0))?,
+    )?;
+    g.set(
+        "GetBattlefieldVehicleInfo",
+        lua.create_function(|lua, index: Value| {
+            number_arg(lua, index, "Usage: GetBattlefieldVehicleInfo(index)")?;
+            Ok(MultiValue::new())
+        })?,
+    )?;
     Ok(())
 }
 

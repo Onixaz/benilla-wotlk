@@ -389,6 +389,20 @@ impl WidgetArena {
         self.frame(h).map(|f| f.clamped_to_screen).unwrap_or(false)
     }
 
+    /// `SetClampRectInsets` (`0x48eb00`), `[left, right, top, bottom]`.
+    pub fn set_clamp_rect_insets(&mut self, h: FrameHandle, insets: [f32; 4]) {
+        if let Some(f) = self.frame_mut(h) {
+            f.clamp_rect_insets = insets;
+        }
+    }
+
+    /// `GetClampRectInsets` (`0x48eb30`), `[left, right, top, bottom]`.
+    pub fn clamp_rect_insets(&self, h: FrameHandle) -> [f32; 4] {
+        self.frame(h)
+            .map(|f| f.clamp_rect_insets)
+            .unwrap_or([0.0; 4])
+    }
+
     /// `SetHitRectInsets`, `[left, right, top, bottom]`.
     pub fn set_hit_rect_insets(&mut self, h: FrameHandle, insets: [f32; 4]) {
         if let Some(f) = self.frame_mut(h) {

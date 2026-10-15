@@ -455,7 +455,27 @@ fn corpse_map_position_binding() {
         .eval::<(f64, f64)>("return GetCorpseMapPosition()")
         .unwrap();
     assert_eq!((x, y), (0.0, 0.0), "no corpse ⇒ the (0,0) hide sentinel");
-    s.set_world_map_feed(None, None, 0.0, Some((0.25, 0.75)), Vec::new(), Vec::new());
+    // A corpse at UV (0.25, 0.75) on a 1000 yd zone the map shows.
+    s.set_world_map_catalog(benilla_ui::script::WorldMapCatalog {
+        continents: vec![benilla_ui::script::WorldMapContinentView {
+            zones: vec![benilla_ui::script::WorldMapZoneView {
+                id: 1,
+                loc_rect: (1000.0, 0.0, 1000.0, 0.0),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    s.run("SetMapZoom(1, 1)").unwrap();
+    s.set_world_map_feed(benilla_ui::script::WorldMapFeed {
+        corpse: Some(benilla_ui::script::WorldMapPoint {
+            map: 0,
+            x: 250.0,
+            y: 750.0,
+        }),
+        ..Default::default()
+    });
     let (x, y) = s
         .eval::<(f64, f64)>("return GetCorpseMapPosition()")
         .unwrap();

@@ -301,6 +301,12 @@ mod world_map_overlay;
 pub use world_map_overlay::{
     load_world_map_overlay_catalog, WorldMapOverlay, WorldMapOverlayCatalog,
 };
+mod world_map_transforms;
+pub use world_map_transforms::{
+    load_world_map_transform_catalog, WorldMapTransform, WorldMapTransformCatalog,
+};
+mod dungeon_map;
+pub use dungeon_map::{load_dungeon_map_catalog, DungeonMap, DungeonMapCatalog};
 mod world_map_continent;
 pub use world_map_continent::{
     load_world_map_continent_catalog, WorldMapContinent, WorldMapContinentCatalog,

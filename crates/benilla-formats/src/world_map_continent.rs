@@ -32,6 +32,9 @@ pub struct WorldMapContinent {
     /// The taxi map's rect in world units; no map projection reads it.
     pub taxi_min: (f32, f32),
     pub taxi_max: (f32, f32),
+    /// The last column (`+0x34`), which the world map's builder copies as the continent's click
+    /// flag on the Azeroth sheet (`0x547eb0`): 0 on Outland, drawn on the cosmic sheet instead.
+    pub world_map_id: u32,
 }
 
 /// `WorldMapContinent.dbc` rows keyed by `MapID`.
@@ -71,7 +74,7 @@ pub(crate) fn schema() -> Schema {
         s.add_field(SchemaField::new(name, FieldType::Float32));
     }
     // 12340 closes the record with a column wowdev names `WorldMapID`: 1 on Azeroth, Kalimdor and
-    // Northrend, 0 on Outland. Not read.
+    // Northrend, 0 on Outland.
     s.add_field(SchemaField::new("WorldMapID", FieldType::UInt32));
     s
 }
@@ -126,6 +129,7 @@ pub fn load_world_map_continent_catalog(chain: &mut Chain) -> Result<WorldMapCon
                 scale,
                 taxi_min: (taxi_min_x, taxi_min_y),
                 taxi_max: (taxi_max_x, taxi_max_y),
+                world_map_id: u32_at(r, 13).unwrap_or(0),
             },
         );
     }

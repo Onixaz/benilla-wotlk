@@ -1,7 +1,9 @@
-//! The world map's arrow frames (`0x4a8bb0`), the seven bindings `WorldMapFrame.lua` and
-//! `Blizzard_BattlefieldMinimap.lua` call. The reference keeps two singletons per UI session, the
-//! world map's and the battlefield minimap's: stock `Model` frames made by the first `Create`,
-//! never freed, their rect the arrow file's bounding box and their facing the player's.
+//! The world map's arrow frames, the seven bindings `WorldMapFrame.lua` and
+//! `Blizzard_BattlefieldMinimap.lua` call. 12340 keeps two pairs per UI session, the world map's
+//! (`0x544750`: `PlayerArrowFrame`, `PlayerArrowEffectFrame`) and the battlefield minimap's
+//! (`0x5448a0`: `PlayerMiniArrowFrame`, `PlayerMiniArrowEffectFrame`): named `Model` frames made by
+//! the first `Create`, never freed, their rect the arrow file's bounding box and their facing the
+//! player's. Each binding moves, shows or turns both of a pair.
 
 use mlua::{Lua, MultiValue, ObjectLike, Table, Value};
 
@@ -21,7 +23,7 @@ fn centre_of(facts: Option<&crate::widget::ModelFileFacts>) -> (f32, f32, f32) {
     })
 }
 
-/// Which of the two singletons a binding addresses.
+/// Which of the two pairs a binding addresses.
 #[derive(Clone, Copy)]
 enum Arrow {
     World,
@@ -29,16 +31,23 @@ enum Arrow {
 }
 
 impl Arrow {
-    fn slot(self, model: &Model) -> Option<u32> {
+    fn slot(self, model: &Model) -> Option<(u32, u32)> {
         match self {
             Arrow::World => model.worldmap.arrow_world,
             Arrow::Mini => model.worldmap.arrow_mini,
         }
     }
-    fn set_slot(self, model: &mut Model, id: u32) {
+    fn set_slot(self, model: &mut Model, ids: (u32, u32)) {
         match self {
-            Arrow::World => model.worldmap.arrow_world = Some(id),
-            Arrow::Mini => model.worldmap.arrow_mini = Some(id),
+            Arrow::World => model.worldmap.arrow_world = Some(ids),
+            Arrow::Mini => model.worldmap.arrow_mini = Some(ids),
+        }
+    }
+    /// The pair's names (`0x544750`, `0x5448a0`).
+    fn names(self) -> [&'static str; 2] {
+        match self {
+            Arrow::World => ["PlayerArrowFrame", "PlayerArrowEffectFrame"],
+            Arrow::Mini => ["PlayerMiniArrowFrame", "PlayerMiniArrowEffectFrame"],
         }
     }
     /// The model scale over `G48`: `5/3` for the world map, `10/9` for the mini, so the arrow keeps
@@ -126,75 +135,85 @@ fn create(lua: &Lua, which: Arrow, parent: Value) -> mlua::Result<()> {
             .app_data_ref::<crate::script::ModelCell>()
             .expect("model app_data");
         if which.slot(&model).is_some() {
-            return Ok(()); // the singleton exists: the parent is not even read (`0x4a7a80`)
+            return Ok(()); // the pair exists: the parent is not even read (`0x544750`)
         }
     }
-    let wrapper = create_frame(
-        lua,
-        ("Model".to_string(), None, Some(Value::Table(t)), None),
-    )?;
-    let id = decode_id(&wrapper)?;
     let scale = {
         let model = lua
             .app_data_ref::<crate::script::ModelCell>()
             .expect("model app_data");
         arrow_scale(&model, which)
     };
-    // The reference's `SetModel` (`0x4a7a80` calls `0x76c8e0`) with no authored size: the rect is
-    // the file's bounding box, and `0x4a7b20` centres the model on it.
-    let facts = crate::script::model_mut_of(lua).model_facts_for(ARROW_MODEL);
-    super::modelframe::with_model(lua, &wrapper, |m| {
-        m.set_file(ARROW_MODEL.to_string(), facts.as_deref());
-        m.scale = scale;
-        m.position = centre_of(facts.as_deref());
-    })?;
-    let h = frame_handle_of(lua, &wrapper)?;
-    let mut model = crate::script::model_mut_of(lua);
-    model.apply_implicit_rect(h);
-    which.set_slot(&mut model, id);
+    let mut ids = [0u32; 2];
+    for (slot, name) in ids.iter_mut().zip(which.names()) {
+        let wrapper = create_frame(
+            lua,
+            (
+                "Model".to_string(),
+                Some(Value::String(lua.create_string(name)?)),
+                Some(Value::Table(t.clone())),
+                None,
+            ),
+        )?;
+        *slot = decode_id(&wrapper)?;
+        // `SetModel` with no authored size: the rect is the file's bounding box, and the model
+        // sits centred on it (`0x5446f0`).
+        let facts = crate::script::model_mut_of(lua).model_facts_for(ARROW_MODEL);
+        super::modelframe::with_model(lua, &wrapper, |m| {
+            m.set_file(ARROW_MODEL.to_string(), facts.as_deref());
+            m.scale = scale;
+            m.position = centre_of(facts.as_deref());
+        })?;
+        let h = frame_handle_of(lua, &wrapper)?;
+        crate::script::model_mut_of(lua).apply_implicit_rect(h);
+    }
+    which.set_slot(&mut crate::script::model_mut_of(lua), (ids[0], ids[1]));
     Ok(())
 }
 
-fn arrow_wrapper(lua: &Lua, which: Arrow) -> mlua::Result<Option<Table>> {
-    let id = {
+fn arrow_wrappers(lua: &Lua, which: Arrow) -> mlua::Result<Option<[Table; 2]>> {
+    let ids = {
         let model = lua
             .app_data_ref::<crate::script::ModelCell>()
             .expect("model app_data");
         which.slot(&model)
     };
-    id.map(|id| frame_wrapper(lua, id)).transpose()
+    ids.map(|(a, e)| Ok([frame_wrapper(lua, a)?, frame_wrapper(lua, e)?]))
+        .transpose()
 }
 
-/// `UpdateWorldMapArrowFrames()` (`0x4a8d10`, `0x4a7c20`): re-centre each arrow and copy the
-/// camera-tracked object's facing, the player's; with no player the facing stays.
+/// `UpdateWorldMapArrowFrames()` (`0x545fe0`, `0x5449f0`): re-centre all four frames and copy
+/// the camera-tracked object's facing, the player's; with no player the facing stays.
 fn update(lua: &Lua) -> mlua::Result<()> {
     for which in [Arrow::World, Arrow::Mini] {
-        let Some(wrapper) = arrow_wrapper(lua, which)? else {
+        let Some(wrappers) = arrow_wrappers(lua, which)? else {
             continue;
         };
-        let (facing, tracked, facts) = {
+        let (facing, facts) = {
             let mut model = crate::script::model_mut_of(lua);
             (
-                model.worldmap.player_facing,
-                model.worldmap.player_uv.is_some(),
+                model.worldmap.player_facing(),
                 model.model_facts_for(ARROW_MODEL),
             )
         };
-        super::modelframe::with_model(lua, &wrapper, |m| {
-            m.position = centre_of(facts.as_deref());
-            if tracked {
-                m.facing = facing;
-            }
-        })?;
+        for wrapper in &wrappers {
+            super::modelframe::with_model(lua, wrapper, |m| {
+                m.position = centre_of(facts.as_deref());
+                if let Some(facing) = facing {
+                    m.facing = facing;
+                }
+            })?;
+        }
     }
     Ok(())
 }
 
-/// `Position...("point", "frame" [, relativePoint] [, offsetX, offsetY])` (`0x4a8d20`,
-/// `0x4a8f20`): `SetPoint` on the arrow, silent with no arrow. A non-string third argument means
-/// the same point and zero offsets, with no error; offsets apply only when both are numbers.
+/// `Position...("point", "frame" [, relativePoint] [, offsetX, offsetY])` (`0x5430a0`,
+/// `0x5432c0`): `SetPoint` on both of the pair, the frame named as the arrow resolves it; silent
+/// with no pair. A non-string third argument means the same point and zero offsets, with no
+/// error; offsets apply only when both are numbers.
 fn position(lua: &Lua, which: Arrow, args: [Value; 5]) -> mlua::Result<()> {
-    let Some(arrow) = arrow_wrapper(lua, which)? else {
+    let Some([arrow, effect]) = arrow_wrappers(lua, which)? else {
         return Ok(());
     };
     let [point, frame, rel, x, y] = args;
@@ -249,16 +268,25 @@ fn position(lua: &Lua, which: Arrow, args: [Value; 5]) -> mlua::Result<()> {
     } else {
         (point_name.clone(), 0.0, 0.0)
     };
-    arrow.call_method::<()>(
-        "SetPoint",
-        (point_name, Value::Table(target), rel_point, ox, oy),
-    )
+    for frame in [&arrow, &effect] {
+        frame.call_method::<()>(
+            "SetPoint",
+            (
+                point_name.clone(),
+                Value::Table(target.clone()),
+                rel_point.clone(),
+                ox,
+                oy,
+            ),
+        )?;
+    }
+    Ok(())
 }
 
-/// `Show...([shown])` (`0x4a9120`, `0x4a9170`): silent with no arrow; the never-raising boolean
-/// coercion, true by default.
+/// `Show...([shown])` (`0x5434e0`, `0x543540`): both of the pair, silent with no pair; the
+/// never-raising boolean coercion, true by default.
 fn show(lua: &Lua, which: Arrow, args: MultiValue) -> mlua::Result<()> {
-    let Some(arrow) = arrow_wrapper(lua, which)? else {
+    let Some(wrappers) = arrow_wrappers(lua, which)? else {
         return Ok(());
     };
     // An absent argument is `LUA_TNONE`, which the binding's nil test does not match, so a bare
@@ -268,7 +296,10 @@ fn show(lua: &Lua, which: Arrow, args: MultiValue) -> mlua::Result<()> {
         Some(Value::Nil) => false,
         Some(v) => bool_or_default(Some(v), true),
     };
-    arrow.call_method::<()>(if on { "Show" } else { "Hide" }, ())
+    for frame in &wrappers {
+        frame.call_method::<()>(if on { "Show" } else { "Hide" }, ())?;
+    }
+    Ok(())
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
@@ -308,6 +339,30 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "UpdateWorldMapArrowFrames",
         lua.create_function(|lua, ()| update(lua))?,
     )?;
+    g.set(
+        "InitWorldMapPing",
+        lua.create_function(|lua, parent: Value| init_ping(lua, parent))?,
+    )?;
+    Ok(())
+}
+
+/// `InitWorldMapPing(parent)` (`0x545ff0`): the parent checked as the arrow's create checks it,
+/// then its `WorldMapPing` child's half size handed to the arrow effect as the ping's centre
+/// (`0x542f80`). benilla's effect model plays no ping, so only the checks are observable.
+fn init_ping(lua: &Lua, parent: Value) -> mlua::Result<()> {
+    let Value::Table(t) = parent else {
+        return Err(mlua::Error::runtime("Usage: InitWorldMapPing(parent)"));
+    };
+    if decode_id(&t).is_err() {
+        return Err(mlua::Error::runtime(
+            "InitWorldMapPing(): Couldn't find 'this' in parent object",
+        ));
+    }
+    if frame_handle_of(lua, &t).is_err() {
+        return Err(mlua::Error::runtime(
+            "InitWorldMapPing(): Wrong object type, expected frame",
+        ));
+    }
     Ok(())
 }
 
@@ -346,7 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn create_validates_its_parent_and_makes_one_arrow_per_session() {
+    fn create_validates_its_parent_and_makes_one_pair_per_session() {
         let mut s = vm();
         for (call, want) in [
             (
@@ -377,9 +432,16 @@ mod tests {
             before, after,
             "a second create is a no-op, whatever the parent"
         );
+        assert_eq!(after, 3, "the detail frame and the pair");
+        assert!(s
+            .eval::<bool>(
+                "return PlayerArrowEffectFrame:GetObjectType() == 'Model' \
+                 and PlayerArrowEffectFrame:GetParent() == WM",
+            )
+            .unwrap());
         let (kind, shown, w) = s
             .eval::<(String, bool, f32)>(
-                "local a = ({WM:GetChildren()})[2] \
+                "local a = PlayerArrowFrame \
                  return a:GetObjectType(), a:IsShown(), a:GetWidth()",
             )
             .unwrap();
@@ -391,14 +453,14 @@ mod tests {
         // Facts that land after the create are picked up by the next update, which re-centres.
         s.run("UpdateWorldMapArrowFrames()").unwrap();
         s.resolve();
-        let w: f32 = s.eval("return ({WM:GetChildren()})[2]:GetWidth()").unwrap();
+        let w: f32 = s.eval("return PlayerArrowFrame:GetWidth()").unwrap();
         assert!((w - 0.0262 * 1280.0).abs() < 0.05, "the box at 4:3: {w}");
         let pos = {
             let model = s
                 .lua()
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model");
-            let id = model.worldmap.arrow_world.expect("the singleton");
+            let (id, _) = model.worldmap.arrow_world.expect("the pair");
             let fh = model.id_to_frame.get(&id).copied().expect("live");
             match &model.arena.frame(fh).expect("frame").kind_state {
                 crate::widget::KindState::Model(m) => m.position,
@@ -425,7 +487,7 @@ mod tests {
         s.run("CreateWorldMapArrowFrame(WM)").unwrap();
         // The file's facts: a size-less pane has no rect to anchor until its box is known.
         arrow_facts(&mut s);
-        s.run("arrow = ({WM:GetChildren()})[2]").unwrap();
+        s.run("arrow = PlayerArrowFrame").unwrap();
         for (call, want) in [
             (
                 "PositionWorldMapArrowFrame(nil, 'WorldMapDetailFrame')",
@@ -476,8 +538,9 @@ mod tests {
 
         s.run("ShowWorldMapArrowFrame(nil)").unwrap();
         assert!(
-            !s.eval::<bool>("return arrow:IsShown()").unwrap(),
-            "nil hides"
+            !s.eval::<bool>("return arrow:IsShown() or PlayerArrowEffectFrame:IsShown()")
+                .unwrap(),
+            "nil hides both"
         );
         s.run("ShowWorldMapArrowFrame()").unwrap();
         assert!(
@@ -489,14 +552,22 @@ mod tests {
         s.run("ShowWorldMapArrowFrame(1)").unwrap();
         assert!(s.eval::<bool>("return arrow:IsShown()").unwrap());
 
-        s.set_world_map_feed(None, Some((0.5, 0.5)), 1.25, None, Vec::new(), Vec::new());
+        s.set_world_map_feed(crate::script::WorldMapFeed {
+            player: Some(crate::script::WorldMapPlayer {
+                facing: 1.25,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
         s.run("UpdateWorldMapArrowFrames()").unwrap();
-        let facing = s.eval::<f32>("return arrow:GetFacing()").unwrap();
+        let (facing, effect) = s
+            .eval::<(f32, f32)>("return arrow:GetFacing(), PlayerArrowEffectFrame:GetFacing()")
+            .unwrap();
         assert!(
-            (facing - 1.25).abs() < 1e-6,
-            "the tracked object's facing: {facing}"
+            (facing - 1.25).abs() < 1e-6 && facing == effect,
+            "the tracked object's facing, on both: {facing} {effect}"
         );
-        s.set_world_map_feed(None, None, 2.0, None, Vec::new(), Vec::new());
+        s.set_world_map_feed(crate::script::WorldMapFeed::default());
         s.run("UpdateWorldMapArrowFrames()").unwrap();
         assert!(
             (s.eval::<f32>("return arrow:GetFacing()").unwrap() - 1.25).abs() < 1e-6,

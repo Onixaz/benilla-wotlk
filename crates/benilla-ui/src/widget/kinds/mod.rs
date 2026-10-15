@@ -7,9 +7,11 @@ use super::{FrameHandle, RegionHandle};
 mod cooldown;
 mod editbox;
 mod messageframe;
+mod quest_poi;
 pub use cooldown::*;
 pub use editbox::*;
 pub use messageframe::*;
+pub use quest_poi::*;
 
 /// A [`Frame`]'s widget class; one with modeled behavior carries it in [`Frame::kind_state`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -51,6 +53,8 @@ pub enum FrameKind {
     Minimap,
     /// The `Cooldown` widget (factory `0x51a380`): a `Frame` that paints its own sweep.
     Cooldown,
+    /// `CGQuestPOIFrame` (registered at `0x5210c1`): the world map's quest blob layer.
+    QuestPoiFrame,
 }
 
 /// The kind of a [`Region`] leaf, the client's `CScriptRegion`-derived non-frame objects.
@@ -96,6 +100,8 @@ pub enum KindState {
     Tooltip(TooltipState),
     /// A `Cooldown`'s sweep clock and switches.
     Cooldown(CooldownState),
+    /// A `QuestPOIFrame`'s blob settings.
+    QuestPoi(QuestPoiState),
 }
 
 impl KindState {

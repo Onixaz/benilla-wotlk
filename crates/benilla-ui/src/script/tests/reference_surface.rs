@@ -54,7 +54,6 @@ const BEYOND_REFERENCE: &[&str] = &[
     "GetPlayerBuffTexture",
     "GetPlayerBuffTimeLeft",
     "GetWorldDetail",
-    "GetWorldLocMapPosition",
     "GuildDemoteByName",
     "GuildInviteByName",
     "GuildPromoteByName",

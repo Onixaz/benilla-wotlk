@@ -122,8 +122,8 @@ pub use kinds::{
     ButtonState, ButtonVisualState, ColorSelectState, CooldownFlash, CooldownPaint, CooldownState,
     CooldownStep, EditAction, EditBoxState, EditOutcome, EditUnit, FrameKind, InsertMode,
     KindState, MessageFrameState, MessageLine, MinimapState, ModelFileFacts, ModelFog, ModelLight,
-    ModelPlayHead, ModelState, RegionKind, ScrollFrameState, ScrollingMessageState, SequenceFacts,
-    SliderState, StatusBarState, TooltipAnchor, TooltipState, COOLDOWN_FLASH_MS,
+    ModelPlayHead, ModelState, QuestPoiState, RegionKind, ScrollFrameState, ScrollingMessageState,
+    SequenceFacts, SliderState, StatusBarState, TooltipAnchor, TooltipState, COOLDOWN_FLASH_MS,
     COOLDOWN_FLASH_RGB, COOLDOWN_SWIPE_ALPHA, MINIMAP_DEFAULT_ARROW_MODEL, MINIMAP_DEFAULT_MASK,
     MINIMAP_DEFAULT_PLAYER_MODEL, MINIMAP_DEFAULT_ZOOM, MINIMAP_ENGINE_CHILDREN,
     MINIMAP_ZOOM_LEVELS, TOOLTIP_DOUBLE_GAP, TOOLTIP_FADE_SECS, TOOLTIP_LINE_GAP, TOOLTIP_PAD,
@@ -177,6 +177,9 @@ pub struct Frame {
     /// Every GameTooltip is born with it here; the stock tooltips get it from their template,
     /// `GameTooltipTemplate.xml:3`.
     pub clamped_to_screen: bool,
+    /// `SetClampRectInsets` (`0x48eb00`), `[left, right, top, bottom]` in frame units: the clamp
+    /// (`0x48944e`) lets the frame that far past each screen edge, scaled by the frame's scale.
+    pub clamp_rect_insets: [f32; 4],
     /// `SetHitRectInsets` or `<HitRectInsets>`: the mouse rect's `[left, right, top, bottom]`
     /// inset. Only the hit test reads it; drawing, anchoring and `GetLeft`/`GetWidth` do not.
     pub hit_rect_insets: [f32; 4],
@@ -458,6 +461,7 @@ impl WidgetArena {
             // (`0x779ced`/`0x779cf8`) and WorldFrame (`0x481b09`) ctors enable key input.
             keyboard_enabled: false,
             clamped_to_screen: matches!(kind, FrameKind::GameTooltip),
+            clamp_rect_insets: [0.0; 4],
             hit_rect_insets: [0.0; 4],
             movable: false,
             resizable: false,
@@ -496,6 +500,7 @@ impl WidgetArena {
                 FrameKind::Minimap => KindState::Minimap(kinds::MinimapState::default()),
                 FrameKind::GameTooltip => KindState::Tooltip(kinds::TooltipState::default()),
                 FrameKind::Cooldown => KindState::Cooldown(CooldownState::default()),
+                FrameKind::QuestPoiFrame => KindState::QuestPoi(kinds::QuestPoiState::default()),
                 _ => KindState::None,
             },
             next_decl: 0,

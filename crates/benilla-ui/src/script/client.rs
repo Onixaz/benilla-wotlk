@@ -184,10 +184,25 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // SetUIVisibility([shown]) (`0x517c20`): the world-UI flag, true by default, which `TOGGLEUI`
+    // and the full-screen panel's close set; a change re-runs the unit name pass (`0x517be0`).
+    g.set(
+        "SetUIVisibility",
+        lua.create_function(|lua, args: MultiValue| {
+            let shown = super::binding_abi::bool_or_default(args.front(), true);
+            crate::script::model_mut_of(lua).world_ui_visible = shown;
+            Ok(())
+        })?,
+    )?;
     Ok(())
 }
 
 impl super::UiScript {
+    /// `SetUIVisibility`'s flag: whether the world should draw the names and plates over units.
+    pub fn world_ui_visible(&self) -> bool {
+        self.model_ref().world_ui_visible
+    }
+
     /// Drain the `RequestTimePlayed()` asks, each a `CMSG_PLAYED_TIME`: a count, as the request
     /// body is empty.
     pub fn take_played_time_asks(&mut self) -> u32 {

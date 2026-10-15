@@ -27,9 +27,14 @@ pub struct WorldMapArea {
     pub loc_right: f32,
     pub loc_top: f32,
     pub loc_bottom: f32,
-    /// `DefaultDungeonFloor` (field 9): `-1` on the maps `GetCurrentMapDungeonLevel` counts one
-    /// floor up on (`0x544fc0`, `+0x24`).
+    /// `DisplayMapID` (field 8, `+0x20`): the map the row is drawn on, `-1` for its own; map 530's
+    /// blood elf and draenei zones name the Eastern Kingdoms and Kalimdor (`0x547eb0`).
+    pub display_map_id: i32,
+    /// `DefaultDungeonFloor` (field 9, `+0x24`): the `DungeonMap` row the map opens on when
+    /// positive, `-1` on a map whose floor 0 is the terrain (`0x546310`, `0x544fc0`).
     pub default_dungeon_floor: i32,
+    /// `ParentWorldMapID` (field 10, `+0x28`): the row `ZoomOut` returns to, 0 for none.
+    pub parent_world_map_id: u32,
 }
 
 /// `WorldMapArea.dbc` rows keyed by `ID`, the id `WorldMapOverlay.worldMapAreaId` joins. File order
@@ -80,8 +85,8 @@ pub(crate) fn schema() -> Schema {
     for name in ["LocLeft", "LocRight", "LocTop", "LocBottom"] {
         s.add_field(SchemaField::new(name, FieldType::Float32));
     }
-    // 12340 adds the display map (`-1` on all but four rows), the default dungeon floor and the
-    // parent map row; only the floor is read.
+    // 12340 adds the display map (`-1` on all but seven rows), the default dungeon floor and the
+    // parent map row.
     s.add_field(SchemaField::new("DisplayMapID", FieldType::Int32));
     s.add_field(SchemaField::new("DefaultDungeonFloor", FieldType::Int32));
     s.add_field(SchemaField::new("ParentWorldMapID", FieldType::UInt32));
@@ -129,7 +134,9 @@ pub fn load_world_map_area_catalog(chain: &mut Chain) -> Result<WorldMapAreaCata
                 loc_right,
                 loc_top,
                 loc_bottom,
+                display_map_id: crate::dbc::i32_at(r, 8).unwrap_or(-1),
                 default_dungeon_floor: crate::dbc::i32_at(r, 9).unwrap_or(0),
+                parent_world_map_id: u32_at(r, 10).unwrap_or(0),
             },
         );
     }

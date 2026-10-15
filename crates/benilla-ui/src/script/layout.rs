@@ -62,6 +62,9 @@ impl InputFingerprint {
         self.feed(u64::from(i.clamp));
         self.f32(i.extent_x);
         self.f32(i.extent_y);
+        for v in i.clamp_insets {
+            self.f32(v);
+        }
     }
 
     /// The per-node `u64`; never [`NO_NODE`], or a present node would read as absent.
@@ -994,15 +997,16 @@ impl UiScript {
             }
         }
         for &(h, _) in &ids {
-            let (scale, clamp) = arena
+            let (scale, clamp, insets) = arena
                 .frame(h)
-                .map(|f| (f.effective_scale, f.clamped_to_screen))
-                .unwrap_or((1.0, false));
+                .map(|f| (f.effective_scale, f.clamped_to_screen, f.clamp_rect_insets))
+                .unwrap_or((1.0, false, [0.0; 4]));
             let input = layout_inputs.entry(h).or_default();
             input.scale = scale;
             // Clamp-to-screen is a frame property (geometry flags bit 4), so every placement path
             // clamps alike, against the live window size.
             input.clamp = clamp;
+            input.clamp_insets = insets.map(|v| v * scale);
             if clamp {
                 input.extent_x = screen.right;
                 input.extent_y = screen.top;

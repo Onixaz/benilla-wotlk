@@ -20,7 +20,6 @@ use crate::net::{ClientCommand, EnteredWorldMessage, GuidIndex, NetCommands, Net
 use crate::ui_dialog_verbs::BattlefieldQueue;
 use crate::ui_party::GroupState;
 use crate::ui_script::{UiFeed, UiInput};
-use crate::ui_world_map::{project_on_displayed, WorldMapUiData};
 
 /// `RequestBattlefieldPositions` (`0x4aa5c0`) sends at most once per 5000 ms (stamp
 /// `[0xb6ebe0]`), and only with an active queue slot; without one it clears the list.
@@ -87,7 +86,6 @@ fn feed_battlefield_positions(
     script: Option<NonSendMut<UiScript>>,
     mut state: ResMut<BattlefieldPositions>,
     queue: Res<BattlefieldQueue>,
-    data: Option<Res<WorldMapUiData>>,
     me: Res<SelfGuid>,
     group: Res<GroupState>,
     guids: Res<GuidIndex>,
@@ -120,12 +118,8 @@ fn feed_battlefield_positions(
     };
     *last_empty.get(&script) = Some((true, icon_scale.to_bits()));
 
-    let selection = script.world_map_selection();
-    let project = |x: f32, y: f32| {
-        data.as_deref()
-            .and_then(|d| project_on_displayed(d, selection, map, x, y))
-            .unwrap_or((0.0, 0.0))
-    };
+    let project =
+        |x: f32, y: f32| script.world_map_project(benilla_ui::script::WorldMapPoint { map, x, y });
     let mut name_landed = false;
     let mut players = Vec::with_capacity(packet.players.len());
     for p in &packet.players {

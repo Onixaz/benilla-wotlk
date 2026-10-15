@@ -48,10 +48,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("DeclinedWordCases", "#242 Russian name declension"),
     ("DestructibleModelData", "#243 destructible buildings"),
     ("DungeonEncounter", "#236 dungeon encounter ids"),
-    (
-        "DungeonMap",
-        "#238 dungeon map levels: GetCurrentMapDungeonLevel, SetMapByID",
-    ),
     ("DungeonMapChunk", "#238 dungeon map levels"),
     ("FileData", "#245 the movie file table"),
     ("GameObjectArtKit", "#243 game object art kits"),
@@ -188,10 +184,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("VehicleUIIndSeat", "#235 the vehicle seat indicator"),
     ("VideoHardware", "#245 graphics defaults by video card"),
     ("WorldChunkSounds", "#244 per-chunk zone sounds"),
-    (
-        "WorldMapTransforms",
-        "#238 world map transforms between maps",
-    ),
     (
         "WorldSafeLocs",
         "#238 graveyards on the map: GetMapLandmarkInfo",

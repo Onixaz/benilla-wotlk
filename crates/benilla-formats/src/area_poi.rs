@@ -3,7 +3,7 @@
 //! no server loads it. 738 rows of 54 columns (216 B) in 12340: `ID`, `Importance`, `Icon[9]`,
 //! `FactionID`, `Pos[3]`, `ContinentID`, `Flags`, `AreaID`, then `Name` and `Description` as
 //! 17-column loc-strings (enUS, 15 other locales, flags), then `WorldStateID` and `WorldMapLink`.
-//! The first icon is the map icon; the other eight, set on 54 rows at most, are not read.
+//! The minimap draws the first icon; the world map picks one of the nine by the row's world state.
 
 use std::collections::HashMap;
 
@@ -16,12 +16,14 @@ use crate::Chain;
 const AREA_POI: &str = "DBFilesClient\\AreaPOI.dbc";
 
 /// One `AreaPOI.dbc` row.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct AreaPoi {
     /// Prominence tier, 0 to 4 in 12340; the minimap ranks its landmark arrows by it.
     pub importance: u32,
-    /// The map icon, a cell of `POIIcons.blp` (`Icon[0]`).
+    /// The minimap's icon, a cell of `POIIcons.blp` (`Icon[0]`).
     pub icon: u32,
+    /// `Icon[9]`, which `GetMapLandmarkInfo` indexes by the row's world state (`0x545a30`).
+    pub icons: [u32; 9],
     /// `FactionTemplate.dbc` id for a faction-tinted icon, `0` for none.
     pub faction_id: u32,
     /// World position `(x, y, z)`.
@@ -38,6 +40,8 @@ pub struct AreaPoi {
     /// The `WorldState` id driving the live label and icon (a battleground node's capture
     /// state), `0` for none.
     pub world_state_id: u32,
+    /// `WorldMapLink`, the `DungeonMap` row a click on the icon opens; `0` for none.
+    pub map_link: u32,
 }
 
 /// Every `AreaPOI.dbc` row in file order, plus an id index. The order is the reference's: its
@@ -106,6 +110,7 @@ pub fn load_area_poi_catalog(chain: &mut Chain) -> Result<AreaPoiCatalog> {
         let poi = AreaPoi {
             importance: u32_at(r, 1).unwrap_or(0),
             icon: u32_at(r, 2).unwrap_or(0),
+            icons: std::array::from_fn(|i| u32_at(r, 2 + i).unwrap_or(0)),
             faction_id: u32_at(r, 11).unwrap_or(0),
             pos: [x, y, z],
             continent_id: u32_at(r, 15).unwrap_or(0),
@@ -114,6 +119,7 @@ pub fn load_area_poi_catalog(chain: &mut Chain) -> Result<AreaPoiCatalog> {
             name: str_at(&rs, r, 18).unwrap_or_default(),
             description: str_at(&rs, r, 35).unwrap_or_default(),
             world_state_id: u32_at(r, 52).unwrap_or(0),
+            map_link: u32_at(r, 53).unwrap_or(0),
         };
         by_id.insert(id, rows.len());
         rows.push((id, poi));

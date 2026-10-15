@@ -58,6 +58,7 @@ impl PoiMarker {
             // rows send 0, the first rank band.
             importance: wire.data,
             icon: wire.icon,
+            icons: [wire.icon; 9],
             faction_id: 0,
             pos: [wire.pos[0], wire.pos[1], 0.0],
             continent_id: map_id,
@@ -67,6 +68,7 @@ impl PoiMarker {
             // Never written, so `GetMapLandmarkInfo` returns a nil description.
             description: String::new(),
             world_state_id: 0,
+            map_link: 0,
         });
     }
 

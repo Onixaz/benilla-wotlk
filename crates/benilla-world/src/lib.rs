@@ -134,7 +134,6 @@ pub mod log_ring;
 
 /// macOS `Cmd+Q`, re-pointed at the window close so the shutdown systems run.
 pub mod mac_quit;
-pub mod map_proj;
 pub mod mat_anim_table;
 pub mod mesh_tag;
 pub mod model_fade;

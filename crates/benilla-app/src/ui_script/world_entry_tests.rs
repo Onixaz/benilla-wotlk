@@ -1286,22 +1286,25 @@ MapProbeZones = table.getn({ GetMapZones(1) })
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (tmp, _c, _h) = hermetic_addon("mapcatalog", "MapProbe", MAP_PROBE_TOC, MAP_PROBE_LUA);
     let mut world = booted_world();
-    world.insert_resource(crate::ui_world_map::WorldMapCatalog(vec![
-        benilla_ui::script::WorldMapContinentView {
-            name: "Kalimdor".into(),
-            zones: vec![
-                benilla_ui::script::WorldMapZoneView {
-                    name: "Durotar".into(),
-                    ..Default::default()
-                },
-                benilla_ui::script::WorldMapZoneView {
-                    name: "Mulgore".into(),
-                    ..Default::default()
-                },
-            ],
+    world.insert_resource(crate::ui_world_map::WorldMapCatalogRes(
+        benilla_ui::script::WorldMapCatalog {
+            continents: vec![benilla_ui::script::WorldMapContinentView {
+                name: "Kalimdor".into(),
+                zones: vec![
+                    benilla_ui::script::WorldMapZoneView {
+                        name: "Durotar".into(),
+                        ..Default::default()
+                    },
+                    benilla_ui::script::WorldMapZoneView {
+                        name: "Mulgore".into(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
             ..Default::default()
         },
-    ]));
+    ));
 
     log_in_as(&mut world, "Onewarrior", 1);
 

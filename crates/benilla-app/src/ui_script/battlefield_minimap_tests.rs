@@ -4,8 +4,8 @@
 
 use benilla_ui::script::{
     BattlefieldFlagView, BattlefieldPositionView, QuadContent, UiScript, UnitState,
-    WorldMapContinentView, WorldMapLandmarkView, WorldMapOverlayView, WorldMapZoneView,
-    WorldStateUiView, ARROW_MODEL,
+    WorldMapCatalog, WorldMapContinentView, WorldMapFeed, WorldMapOverlayView, WorldMapPlayer,
+    WorldMapPoiView, WorldMapPoint, WorldMapZoneView, WorldStateUiView, ARROW_MODEL,
 };
 
 fn quiet(s: &UiScript) {
@@ -65,33 +65,79 @@ fn overlay(texture: &str, w: u32, h: u32, ox: u32, oy: u32, bit: u32) -> WorldMa
         offset_x: ox,
         offset_y: oy,
         explore_bits: vec![bit],
-        hit_rect: (0, 0, 0, 0),
-        area_name: None,
+        ..Default::default()
+    }
+}
+
+/// A point at map UV `(u, v)` on the fixture's Warsong Gulch, whose rect is 1000 yd square from
+/// the origin.
+fn at((u, v): (f32, f32)) -> WorldMapPoint {
+    WorldMapPoint {
+        map: 1,
+        x: 1000.0 * (1.0 - v),
+        y: 1000.0 * (1.0 - u),
+    }
+}
+
+/// The player in Warsong Gulch at `uv`, off the map at `None`, with party members at theirs.
+fn feed(s: &mut UiScript, uv: Option<(f32, f32)>, facing: f32, party: Vec<Option<(f32, f32)>>) {
+    s.set_world_map_feed(WorldMapFeed {
+        player: Some(WorldMapPlayer {
+            pos: at(uv.unwrap_or((2.0, 2.0))),
+            facing,
+            zone: 3277,
+        }),
+        party: party.into_iter().map(|p| p.map(at)).collect(),
+        ..Default::default()
+    });
+}
+
+/// The flags as `AreaPOI` rows: a zone-level row with its own icon, shown while its world state
+/// is set.
+fn flag_poi(name: &str, icon: u32, uv: (f32, f32), state: u32) -> WorldMapPoiView {
+    WorldMapPoiView {
+        name: name.into(),
+        icons: [icon; 9],
+        pos: at(uv),
+        flags: 0x84,
+        world_state_id: state,
+        ..Default::default()
     }
 }
 
 /// Overlays that run both arms of the stock tile walk (`Blizzard_BattlefieldMinimap.lua:139-168`):
 /// `SilverwingHold` (300×200) takes a full and a remainder column and a remainder row, and
 /// `WarsongLumberMill` (256×256) zeroes both `mod`s, leaving it to the `== 0 then 256` guard.
-fn catalog() -> Vec<WorldMapContinentView> {
-    vec![WorldMapContinentView {
-        name: "Kalimdor".into(),
-        map_file: "Kalimdor".into(),
-        world_rect: (0.0, 0.0, 1.0, 1.0),
-        loc_rect: (10000.0, -10000.0, 10000.0, -10000.0),
-        zone_grid: Vec::new(),
-        zones: vec![WorldMapZoneView {
-            name: "Warsong Gulch".into(),
-            area_id: 3277,
-            map_file: "WarsongGulch".into(),
-            loc_rect: (1000.0, 0.0, 1000.0, 0.0),
-            default_dungeon_floor: 0,
-            overlays: vec![
-                overlay("SilverwingHold", 300, 200, 100, 50, 1),
-                overlay("WarsongLumberMill", 256, 256, 400, 300, 2),
-            ],
+fn catalog() -> WorldMapCatalog {
+    WorldMapCatalog {
+        continents: vec![WorldMapContinentView {
+            id: 13,
+            map_id: 1,
+            name: "Kalimdor".into(),
+            map_file: "Kalimdor".into(),
+            loc_rect: (10000.0, -10000.0, 10000.0, -10000.0),
+            zones: vec![WorldMapZoneView {
+                id: 443,
+                name: "Warsong Gulch".into(),
+                area_id: 3277,
+                map_id: 1,
+                display_map_id: -1,
+                map_file: "WarsongGulch".into(),
+                loc_rect: (1000.0, 0.0, 1000.0, 0.0),
+                overlays: vec![
+                    overlay("SilverwingHold", 300, 200, 100, 50, 1),
+                    overlay("WarsongLumberMill", 256, 256, 400, 300, 2),
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
         }],
-    }]
+        pois: vec![
+            flag_poi("Silverwing Flag", 6, (0.25, 0.5), 1),
+            flag_poi("Warsong Flag", 9, (0.75, 0.25), 2),
+        ],
+        ..Default::default()
+    }
 }
 
 /// Put the session in a battleground and press SHIFT-M. The world-state push is the gate:
@@ -100,14 +146,7 @@ fn catalog() -> Vec<WorldMapContinentView> {
 fn open(s: &mut UiScript) {
     s.set_world_map_catalog(catalog());
     s.set_world_map_explored(vec![0b110; 64]);
-    s.set_world_map_feed(
-        Some((1, 1)),
-        Some((0.5, 0.5)),
-        0.0,
-        None,
-        Vec::new(),
-        Vec::new(),
-    );
+    feed(s, Some((0.5, 0.5)), 0.0, Vec::new());
     s.set_world_state_ui(vec![WorldStateUiView {
         ui_state: 1,
         text: "Flags captured: 2".into(),
@@ -415,17 +454,8 @@ fn the_poi_pool_grows_from_the_landmarks_and_parks_its_tail() {
     open(&mut s);
     assert_eq!(s.eval::<i64>("return NUM_BATTLEFIELDMAP_POIS").unwrap(), 0);
 
-    let landmark = |name: &str, icon: u32, uv: (f32, f32)| WorldMapLandmarkView {
-        name: name.into(),
-        description: String::new(),
-        texture_index: icon,
-        uv,
-    };
     // Icon 6 is `ICON_POI_REDFLAG`, icon 9 the second row's first cell of the 8×8 `POIIcons` atlas.
-    s.set_world_map_landmarks(vec![
-        landmark("Silverwing Flag", 6, (0.25, 0.5)),
-        landmark("Warsong Flag", 9, (0.75, 0.25)),
-    ]);
+    s.set_world_map_world_states([(1, 1), (2, 1)].into_iter().collect());
     s.tick(0.0);
 
     assert_eq!(s.eval::<i64>("return NUM_BATTLEFIELDMAP_POIS").unwrap(), 2);
@@ -470,7 +500,7 @@ fn the_poi_pool_grows_from_the_landmarks_and_parks_its_tail() {
         "DEFAULT_POI_ICON_SIZE × GetBattlefieldMapIconScale()"
     );
 
-    s.set_world_map_landmarks(vec![landmark("Warsong Flag", 9, (0.75, 0.25))]);
+    s.set_world_map_world_states([(2, 1)].into_iter().collect());
     s.tick(0.0);
     assert_eq!(
         s.eval::<i64>("return NUM_BATTLEFIELDMAP_POIS").unwrap(),
@@ -514,14 +544,7 @@ fn the_battleground_blips_and_the_flag_follow_the_position_family() {
         }),
         1.0,
     );
-    s.set_world_map_feed(
-        Some((1, 1)),
-        Some((0.5, 0.25)),
-        0.0,
-        None,
-        vec![Some((0.1, 0.2)), None],
-        Vec::new(),
-    );
+    feed(&mut s, Some((0.5, 0.25)), 0.0, vec![Some((0.1, 0.2)), None]);
     update(&mut s, 0.1);
 
     assert!(
@@ -644,14 +667,7 @@ fn the_player_arrow_is_the_minis_own_singleton_seated_by_the_update() {
         "exactly one arrow pane, parented to the battle map"
     );
 
-    s.set_world_map_feed(
-        Some((1, 1)),
-        Some((0.25, 0.75)),
-        1.25,
-        None,
-        Vec::new(),
-        Vec::new(),
-    );
+    feed(&mut s, Some((0.25, 0.75)), 1.25, Vec::new());
     update(&mut s, 0.1);
 
     let seat = s
@@ -706,7 +722,7 @@ fn the_player_arrow_is_the_minis_own_singleton_seated_by_the_update() {
     );
 
     // Off the displayed map, `(0, 0)` calls `ShowMiniWorldMapArrowFrame(nil)`.
-    s.set_world_map_feed(Some((1, 1)), None, 0.0, None, Vec::new(), Vec::new());
+    feed(&mut s, None, 0.0, Vec::new());
     update(&mut s, 0.1);
     s.resolve();
     assert!(

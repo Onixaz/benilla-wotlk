@@ -404,6 +404,7 @@ mod tests {
             scale: 1.0,
             taxi_min: (0.0, 0.0),    // (Xmin, Ymin)
             taxi_max: (100.0, 50.0), // (Xmax, Ymax)
+            world_map_id: 1,
         };
         // worldX 50, worldY 0: u = (50 - 0) / 100 = 0.5 and v = (50 - 0) / 50 = 1.0; same-axis
         // denominators would give the reverse.

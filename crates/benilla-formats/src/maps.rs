@@ -26,6 +26,8 @@ pub struct MapCatalog {
     instance_types: HashMap<u32, u32>,
     /// `Flags` (column 3, `+0xc`), for maps with a non-zero one.
     flags: HashMap<u32, u32>,
+    /// The entrance (`+0x2c` map, `+0x30`/`+0x34` x and y), for maps with a non-zero one.
+    entrances: HashMap<u32, (u32, f32, f32)>,
 }
 
 /// `Map.dbc` `Flags` bit: the map's difficulty can change inside it, `GetInstanceInfo`'s seventh
@@ -66,6 +68,17 @@ impl MapCatalog {
         self.instance_type(map_id) == Some(1)
     }
 
+    /// The map's entrance `(map, x, y)` on another map, which a corpse and the world map use
+    /// for an instance (`0x547170`); `None` where the position is zero.
+    pub fn entrance(&self, map_id: u32) -> Option<(u32, f32, f32)> {
+        self.entrances.get(&map_id).copied()
+    }
+
+    /// Every map with an entrance, as `(map, (entrance map, x, y))`.
+    pub fn entrances(&self) -> impl Iterator<Item = (u32, (u32, f32, f32))> + '_ {
+        self.entrances.iter().map(|(&k, &v)| (k, v))
+    }
+
     pub fn len(&self) -> usize {
         self.dirs.len()
     }
@@ -104,6 +117,7 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
     let mut loading_screens = HashMap::new();
     let mut instance_types = HashMap::with_capacity(rs.records().len());
     let mut flags = HashMap::new();
+    let mut entrances = HashMap::new();
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
         if let Some(dir) = str_at(&rs, r, 1) {
@@ -122,6 +136,15 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
         if let Some(f) = u32_at(r, FLAGS_FIELD).filter(|&v| v != 0) {
             flags.insert(id, f);
         }
+        // The three columns after `MinimapIconScale`, two past the loading screen; the schema
+        // types them as `u32`, so the floats are read by their bits.
+        let at = |i: usize| u32_at(r, l.loading_screen + i);
+        if let (Some(m), Some(x), Some(y)) = (at(2), at(3), at(4)) {
+            let (x, y) = (f32::from_bits(x), f32::from_bits(y));
+            if x != 0.0 || y != 0.0 {
+                entrances.insert(id, (m, x, y));
+            }
+        }
     }
     Ok(MapCatalog {
         dirs,
@@ -129,6 +152,7 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
         loading_screens,
         instance_types,
         flags,
+        entrances,
     })
 }
 
