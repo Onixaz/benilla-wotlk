@@ -117,6 +117,40 @@ pub struct UnitCombatStats {
     pub dodge_percent: f32,
     pub parry_percent: f32,
     pub block_percent: f32,
+    /// Melee and ranged crit chance, percents (`PLAYER_CRIT_PERCENTAGE` and the ranged one).
+    pub crit_percent: f32,
+    pub ranged_crit_percent: f32,
+    /// Spell crit chance per school, percents, `[0]` physical (`PLAYER_SPELL_CRIT_PERCENTAGE1`).
+    pub spell_crit_percent: [f32; 7],
+    /// Each school's damage-done bonus, the positive and negative mods summed.
+    pub spell_damage_bonus: [i32; 7],
+    /// `PLAYER_FIELD_MOD_HEALING_DONE_POS`.
+    pub spell_healing_bonus: i32,
+    /// `PLAYER_FIELD_MOD_TARGET_RESISTANCE`, which `GetSpellPenetration` negates.
+    pub target_resistance_mod: i32,
+    /// `PLAYER_SHIELD_BLOCK`.
+    pub shield_block: u32,
+    /// Main-hand and off-hand expertise (`PLAYER_EXPERTISE`, `PLAYER_OFFHAND_EXPERTISE`).
+    pub expertise: [u32; 2],
+    /// The 25 combat ratings (`PLAYER_FIELD_COMBAT_RATING_1`).
+    pub combat_ratings: [i32; 25],
+    /// Each rating's bonus percent, `CGPlayer_C::GetCombatRatingPct` (`0x6de410`).
+    pub combat_rating_bonus: [f32; 25],
+    /// Mana regen per second out of casting and while casting, with no mana `None`.
+    pub mana_regen: Option<[f32; 2]>,
+    /// The class's `ChrClasses` damage bonus stat, `None` with no class row.
+    pub damage_bonus_stat: Option<u32>,
+    /// Whether the form's `SpellShapeshiftForm` flags carry `0x20`: agility adds attack power.
+    pub form_agility_attack_power: bool,
+    /// The player's or a pet's crit from agility and spell crit from intellect, percents
+    /// (`0x71bae0`, `0x71bb70`).
+    pub crit_from_agility: f32,
+    pub spell_crit_from_intellect: f32,
+    /// Health and mana regen from spirit (`0x71ba60`, `0x71b9f0`).
+    pub health_regen_from_spirit: f32,
+    pub mana_regen_from_spirit: f32,
+    /// `UNIT_FIELD_MAXHEALTHMODIFIER`, the multiplier less one.
+    pub max_health_modifier: f32,
 }
 
 impl Default for UnitCombatStats {
@@ -156,6 +190,24 @@ impl Default for UnitCombatStats {
             dodge_percent: 0.0,
             parry_percent: 0.0,
             block_percent: 0.0,
+            crit_percent: 0.0,
+            ranged_crit_percent: 0.0,
+            spell_crit_percent: [0.0; 7],
+            spell_damage_bonus: [0; 7],
+            spell_healing_bonus: 0,
+            target_resistance_mod: 0,
+            shield_block: 0,
+            expertise: [0; 2],
+            combat_ratings: [0; 25],
+            combat_rating_bonus: [0.0; 25],
+            mana_regen: None,
+            damage_bonus_stat: None,
+            form_agility_attack_power: false,
+            crit_from_agility: 0.0,
+            spell_crit_from_intellect: 0.0,
+            health_regen_from_spirit: 0.0,
+            mana_regen_from_spirit: 0.0,
+            max_health_modifier: 0.0,
         }
     }
 }
@@ -977,6 +1029,7 @@ mod tests {
             dodge_percent: 0.0,
             parry_percent: 0.0,
             block_percent: 0.0,
+            ..Default::default()
         }
     }
 

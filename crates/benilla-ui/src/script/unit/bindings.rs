@@ -953,8 +953,13 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 token,
                 r#"Usage: UnitPowerType("unit")"#,
             )?);
-            let ty = with_unit(lua, &token, 0u8, |u| u.power_type)?;
-            Ok(i64::from(ty))
+            // (type, token) as `0x60f100` pushes them: the token is `GetPowerString` (`0x7fe4b0`),
+            // and a unit that resolves nothing answers 0 and "" (`0x60f32a`).
+            let ty = with_unit(lua, &token, None, |u| Some(u.power_type))?;
+            Ok(match ty {
+                Some(ty) => (i64::from(ty), power_token(ty)),
+                None => (0, ""),
+            })
         })?,
     )?;
 
@@ -1344,4 +1349,18 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     Ok(())
+}
+
+/// `GetPowerString` (`0x7fe4b0`): the power type's token, "" past the seven.
+fn power_token(ty: u8) -> &'static str {
+    const TOKENS: [&str; 7] = [
+        "MANA",
+        "RAGE",
+        "FOCUS",
+        "ENERGY",
+        "HAPPINESS",
+        "RUNES",
+        "RUNIC_POWER",
+    ];
+    TOKENS.get(usize::from(ty)).copied().unwrap_or("")
 }

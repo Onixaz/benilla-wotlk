@@ -92,6 +92,7 @@ mod button;
 mod calls;
 mod camera_view;
 mod channel;
+mod char_sheet;
 mod char_stats;
 mod chat_misc;
 mod chat_send;
@@ -899,6 +900,7 @@ impl UiScript {
         skills::install(&lua)?;
         item_stats::install(&lua)?;
         char_stats::install(&lua)?;
+        char_sheet::install(&lua)?;
         inventory_verbs::install(&lua)?;
         weapon_enchant::install(&lua)?;
         loot::install(&lua)?;

@@ -620,10 +620,11 @@ fn unitname_reads_unknownobject_for_a_resolved_unit_whose_name_is_in_flight() {
 fn power_bindings_read_the_active_type() {
     let mut s = UiScript::new().unwrap();
     s.set_unit("player", Some(player())); // rage 35/100
-                                          // One value: `0x517940` pushes a number, never a string.
+                                          // The type and its `GetPowerString` token (`0x60f100`).
     assert_eq!(
-        s.eval::<i64>(r#"return UnitPowerType("player")"#).unwrap(),
-        1
+        s.eval::<(i64, String)>(r#"return UnitPowerType("player")"#)
+            .unwrap(),
+        (1, "RAGE".to_string())
     );
     assert_eq!(s.eval::<i64>(r#"return UnitMana("player")"#).unwrap(), 35);
     assert_eq!(
@@ -634,10 +635,11 @@ fn power_bindings_read_the_active_type() {
     assert!(s
         .eval::<bool>("return UnitMana == UnitPower and UnitManaMax == UnitPowerMax")
         .unwrap());
-    // An absent unit is the number 0, never nil: `UnitFrame.lua:122` indexes `ManaBarColor` by it.
+    // An absent unit is 0 and "", never nil: `UnitFrame.lua` indexes `ManaBarColor` by the type.
     assert_eq!(
-        s.eval::<i64>(r#"return UnitPowerType("target")"#).unwrap(),
-        0
+        s.eval::<(i64, String)>(r#"return UnitPowerType("target")"#)
+            .unwrap(),
+        (0, String::new())
     );
 }
 
