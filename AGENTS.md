@@ -18,7 +18,4 @@ Read, in this order:
 
 The rest of the root is code and data: `crates/` is the workspace, `reference/` contains the reference surfaces checked by tests, `scripts/` contains gates and development instruments, and `third_party/` contains vendored code.
 
-When the user says **check upstream merges** or **sync upstream tracker**, follow
-`docs/UPSTREAM_TRACKER.md`.
-
 @docs/METHOD.md

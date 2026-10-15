@@ -108,8 +108,6 @@ addons in `benilla-config/AddOns/`.
 - [`docs/MAP.md`](docs/MAP.md) is the generated map of what is currently implemented.
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) covers development setup, validation, and pull
   requests.
-- [`docs/UPSTREAM_TRACKER.md`](docs/UPSTREAM_TRACKER.md) defines the upstream merge-tracker
-  synchronization procedure.
 
 Issues and pull requests are welcome. Bugs, questions, and ideas can also be discussed on
 [Discord](https://discord.gg/wJSJx467G4).
