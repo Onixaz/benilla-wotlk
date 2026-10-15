@@ -3,6 +3,14 @@
 //! checks; each table 12340 reads is read here or listed in [`NOT_READ`]; and each table has one
 //! schema in this crate, as a second copy is how a reader goes on parsing a layout the table no
 //! longer has.
+//!
+//! A table comes in with the feature that reads it, never on its own: a schema nothing reads is
+//! checked for its width alone. Its TSV row names 12340's readers (`reader_vas`, with the Lua
+//! bindings and opcode handlers among them), and those functions are the spec for both the
+//! schema's fields and the feature. A table read only through helpers is followed up to the
+//! binding or handler that calls them, and the readers are a floor: a read through a computed
+//! pointer is not listed. A table several features read lands with the first of them. Where
+//! benilla serves a table's rows from a constant, reading the table replaces the constant.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

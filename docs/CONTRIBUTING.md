@@ -33,6 +33,8 @@ taken.
 - Anything from a WoW install: art, models, sounds, maps, data, and interface code (FrameXML and
   GlueXML), which runs off the player's own install (`docs/METHOD.md`).
 - Big or mixed changes. One change per pull request, small enough to read in one sitting.
+- A DBC table read and never used. A table comes in with the feature that reads it, built from
+  12340's readers of it (`crates/benilla-formats/tests/dbc_coverage.rs`).
 
 ## Building on top
 
