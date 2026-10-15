@@ -85,6 +85,9 @@ const VERDICTS: &[(&str, Verdict)] = &[
     ("CustomCursorImage", Plumbing),
     ("InputPlugin", Plumbing),
     ("WinitPlugin", Plumbing),
+    // The event loop's pacing (`WOW_PROBE_CONTINUOUS`); nothing arrives through it.
+    ("WinitSettings", Plumbing),
+    ("UpdateMode", Plumbing),
     ("InputSystems", Plumbing),
     ("Key", Plumbing),
     ("KeyCode", Plumbing),
