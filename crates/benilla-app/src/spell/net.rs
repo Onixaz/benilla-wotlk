@@ -6,10 +6,11 @@
 use std::time::{Duration, Instant};
 
 use benilla_formats::LearnAnnouncement;
-use benilla_protocol::messages::{ActionButton, SpellCooldown};
+use benilla_protocol::messages::{ActionButton, SpellCooldown, ACTION_KIND_SPELL};
 use bevy::prelude::*;
 
 use super::cast_target::CastTargeting;
+use super::learn_place::{self, Learner};
 use super::{
     ActiveChannel, AutoRepeatActive, CastCommit, CastLadder, Cooldowns, PendingCast,
     QueuedMeleeSpell,
@@ -110,14 +111,28 @@ fn on_action_buttons(In(ev): In<SessionEvent>, mut l: Lifecycle) {
     }
 }
 
-fn on_spell_learned(In(ev): In<SessionEvent>, mut l: Lifecycle, mut errors: ResMut<UiErrorKeys>) {
+fn on_spell_learned(
+    In(ev): In<SessionEvent>,
+    mut l: Lifecycle,
+    mut errors: ResMut<UiErrorKeys>,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+) {
     if let SessionEvent::SpellLearned { spell_id } = ev {
+        // `0x4d4db0(ClntObjMgrGetActivePlayer(), 0x10)`: our own player, once its object has
+        // streamed.
+        let learner = self_q.iter().next().map(|store| Learner {
+            level: store.0.unit_level().unwrap_or(0),
+            class: store.0.unit_class().unwrap_or(0),
+            form: store.0.unit_shapeshift_form(),
+        });
         learned_spell(
             spell_id,
             &mut l.actions,
             l.spells.as_deref(),
             &mut errors,
             &mut l.learned_in_tab,
+            learner,
+            &l.net,
         );
     }
 }
@@ -548,22 +563,53 @@ fn action_buttons(buttons: Vec<ActionButton>, actions: &mut PlayerActions) {
     actions.dirty = true;
 }
 
-/// `SMSG_LEARNED_SPELL`: the spell joins the book (the spellbook feed diffs it; learning never
-/// bars a spell) and is announced in chat, the reference's own tail: `0x5e61c0` →
-/// `AddSpell(id, slot, 1, 1)` → the registrar `0x4b25b0` with its announce flag set.
+/// `SMSG_LEARNED_SPELL` (`0x6e7d60`): with our player streamed, `0x6e7b00(spell, slot, 1, 1)`:
+/// the rank below leaves the bar for the new one (`0x5aafd0`), then the registrar `0x542030`
+/// with its live flag set adds the spell to the book (the spellbook feed diffs it; learning
+/// never bars a spell), announces it in chat, flashes its tab, and places a first rank on the
+/// first empty button of its page while the character is under level 11
+/// ([`super::learn_place`]). Before the player streams, the pair is buffered (`0x6dec70`) and
+/// the player's own init replays it as `0x6e7b00(spell, slot, 0, 1)` (`0x6e7f73`): the book
+/// alone, no line, no flash, no button.
+///
+/// The reference's totem-bar refill (`0x5ab9d0`: the four spells at `0xaccccc` and totems
+/// into slots 132..143) is not modelled, since benilla has no multi-cast bar (#253).
 fn learned_spell(
     spell_id: u32,
     actions: &mut PlayerActions,
     spells: Option<&Spells>,
     errors: &mut UiErrorKeys,
     tab_flash: &mut LearnedInTab,
+    learner: Option<Learner>,
+    net: &NetCommands,
 ) {
     debug!("net: learned spell {spell_id}");
     if actions.spells.insert(spell_id) {
         actions.dirty = true;
     }
+    let Some(learner) = learner else {
+        debug!("net: learned spell {spell_id} before the player: book only");
+        return;
+    };
+    let packed = spell_id | (u32::from(ACTION_KIND_SPELL) << 24);
+    let display = spells.and_then(|s| s.catalog.get(spell_id));
+    if let (Some(spells), Some(display)) = (spells, display) {
+        for slot in learn_place::lower_rank_slots(actions, &spells.catalog, display) {
+            info!("net: bar slot {slot} rank-replaced by learned spell {spell_id}");
+            actions.write_slot(slot, packed, net);
+        }
+    }
     announce_learn(spell_id, spells, errors);
     tab_flash.0.push(spell_id);
+    if let (Some(spells), Some(display)) = (spells, display) {
+        if learn_place::auto_place_allowed(display, learner.level) {
+            let page = learn_place::auto_place_page(display, learner, &spells.forms);
+            if let Some(slot) = learn_place::first_empty_slot(actions, page) {
+                info!("net: learned spell {spell_id} placed on bar slot {slot} (page {page})");
+                actions.write_slot(slot, packed, net);
+            }
+        }
+    }
 }
 
 /// The `ERR_LEARN_*` chat line the registrar `0x4b25b0` prints at `0x4b2909` for a spell learned
@@ -1430,7 +1476,21 @@ fn spell_chain_targets(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use benilla_protocol::messages::ACTION_KIND_SPELL;
+    use crate::spell::learn_place::Learner;
+
+    /// A streamed level-1 mage, so the registrar runs its live arms.
+    fn live() -> Option<Learner> {
+        Some(Learner {
+            level: 1,
+            class: 8,
+            form: 0,
+        })
+    }
+
+    /// A sender nobody reads: these tests judge the book and the chat line.
+    fn no_bar() -> NetCommands {
+        NetCommands(crossbeam_channel::unbounded().0)
+    }
 
     /// A catalog holding one row, so the announce tests can name a real `Attributes` value.
     fn catalog_with(id: u32, display: benilla_formats::SpellDisplay) -> Spells {
@@ -1456,7 +1516,15 @@ mod tests {
         let mut actions = PlayerActions::default();
         let mut errors = UiErrorKeys::default();
         let mut flash = LearnedInTab::default();
-        learned_spell(78, &mut actions, Some(&spells), &mut errors, &mut flash);
+        learned_spell(
+            78,
+            &mut actions,
+            Some(&spells),
+            &mut errors,
+            &mut flash,
+            live(),
+            &no_bar(),
+        );
 
         assert_eq!(errors.0.len(), 1, "one line, once");
         assert_eq!(errors.0[0].key, "ERR_LEARN_ABILITY_S");
@@ -1485,6 +1553,8 @@ mod tests {
             Some(&spells),
             &mut errors,
             &mut LearnedInTab::default(),
+            live(),
+            &no_bar(),
         );
         assert_eq!(errors.0[0].key, "ERR_LEARN_SPELL_S");
         assert_eq!(errors.0[0].arg_s(), Some("Fireball (Rank 1)"));
@@ -1505,6 +1575,8 @@ mod tests {
             Some(&spells),
             &mut errors,
             &mut LearnedInTab::default(),
+            live(),
+            &no_bar(),
         );
         assert_eq!(errors.0[0].key, "ERR_LEARN_RECIPE_S");
         assert_eq!(
@@ -1584,6 +1656,8 @@ mod tests {
             Some(&spells),
             &mut errors,
             &mut LearnedInTab::default(),
+            live(),
+            &no_bar(),
         );
         learned_spell(
             99999,
@@ -1591,6 +1665,8 @@ mod tests {
             Some(&spells),
             &mut errors,
             &mut LearnedInTab::default(),
+            live(),
+            &no_bar(),
         );
         assert!(
             errors.0.is_empty(),
@@ -1608,6 +1684,8 @@ mod tests {
             None,
             &mut errors,
             &mut LearnedInTab::default(),
+            live(),
+            &no_bar(),
         );
         assert!(actions.spells.contains(&6603));
         assert!(actions.dirty, "a new spell dirties the feed");
@@ -1619,11 +1697,165 @@ mod tests {
             None,
             &mut errors,
             &mut LearnedInTab::default(),
+            live(),
+            &no_bar(),
         );
         assert!(
             !actions.dirty,
             "re-learning a known spell is a no-op (insert returns false)"
         );
+    }
+
+    /// What the sender saw, as `(wire slot, packed)`.
+    fn sent(rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>) -> Vec<(u8, u32)> {
+        rx.try_iter()
+            .map(|c| match c {
+                crate::net::ClientCommand::SetActionButton { button, packed } => (button, packed),
+                other => panic!("a learn sends nothing but SetActionButton: {other:?}"),
+            })
+            .collect()
+    }
+
+    /// The registrar's auto-place (`0x542d44`..`0x542dcf`): a first rank at level 1 lands on the
+    /// first empty main-bar button through the `PlaceAction` tail, so one
+    /// `CMSG_SET_ACTION_BUTTON` leaves for that slot; a second learn of a second rank replaces it
+    /// in place (`0x5aafd0`) and places nothing new.
+    #[test]
+    fn a_first_rank_is_placed_on_the_first_empty_button_and_sent() {
+        let mut spells = Spells::empty_for_tests();
+        spells.catalog = benilla_formats::SpellCatalog::from_displays(
+            [
+                (133, "Rank 1", 0x10000),
+                (143, "Rank 2", 0x10000),
+                (168, "Rank 1", 0x40), // Frost Armor: passive
+            ]
+            .into_iter()
+            .map(|(id, rank, attributes)| {
+                (
+                    id,
+                    benilla_formats::SpellDisplay {
+                        id,
+                        name: if id == 168 { "Frost Armor" } else { "Fireball" }.to_string(),
+                        rank: Some(rank.to_string()),
+                        attributes,
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect(),
+        );
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let net = NetCommands(tx);
+        let mut actions = PlayerActions::default();
+        actions.buttons.insert(
+            0,
+            ActionButton {
+                slot: 0,
+                action: 6603,
+                kind: ACTION_KIND_SPELL,
+            },
+        );
+        let mut errors = UiErrorKeys::default();
+        let mut flash = LearnedInTab::default();
+
+        learned_spell(
+            133,
+            &mut actions,
+            Some(&spells),
+            &mut errors,
+            &mut flash,
+            live(),
+            &net,
+        );
+        assert_eq!(actions.buttons[&1].action, 133, "slot 1 is the first empty");
+        assert_eq!(
+            sent(&rx),
+            vec![(1, 133)],
+            "the write leaves as a player drop would"
+        );
+        assert_eq!(errors.0.len(), 1, "announced");
+        assert_eq!(flash.0, vec![133]);
+
+        // The passive gate: nothing placed, nothing sent.
+        actions.dirty = false;
+        learned_spell(
+            168,
+            &mut actions,
+            Some(&spells),
+            &mut errors,
+            &mut flash,
+            live(),
+            &net,
+        );
+        assert!(!actions.buttons.contains_key(&2));
+        assert!(sent(&rx).is_empty());
+
+        // Rank 2: the rank-1 button becomes rank 2 (`0x5aafd0` runs before the registrar), and
+        // the rank gate (`< 2`) places nothing more.
+        learned_spell(
+            143,
+            &mut actions,
+            Some(&spells),
+            &mut errors,
+            &mut flash,
+            live(),
+            &net,
+        );
+        assert_eq!(actions.buttons[&1].action, 143);
+        assert!(!actions.buttons.contains_key(&2));
+        assert_eq!(sent(&rx), vec![(1, 143)]);
+
+        // At level 11 the level gate closes: the book grows, the bar does not.
+        actions.spells.clear();
+        actions.buttons.remove(&1);
+        learned_spell(
+            133,
+            &mut actions,
+            Some(&spells),
+            &mut errors,
+            &mut flash,
+            Some(Learner {
+                level: 11,
+                class: 8,
+                form: 0,
+            }),
+            &net,
+        );
+        assert!(actions.spells.contains(&133));
+        assert!(!actions.buttons.contains_key(&1));
+        assert!(sent(&rx).is_empty());
+    }
+
+    /// Before our player streams, the pair is buffered and replayed with the live flag clear
+    /// (`0x6e7f73`): the book only.
+    #[test]
+    fn a_learn_before_the_player_is_book_only() {
+        let spells = catalog_with(
+            133,
+            benilla_formats::SpellDisplay {
+                name: "Fireball".to_string(),
+                rank: Some("Rank 1".to_string()),
+                ..Default::default()
+            },
+        );
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut actions = PlayerActions::default();
+        let mut errors = UiErrorKeys::default();
+        let mut flash = LearnedInTab::default();
+        learned_spell(
+            133,
+            &mut actions,
+            Some(&spells),
+            &mut errors,
+            &mut flash,
+            None,
+            &NetCommands(tx),
+        );
+        assert!(actions.spells.contains(&133));
+        assert!(actions.buttons.is_empty(), "no button");
+        assert!(sent(&rx).is_empty());
+        assert!(errors.0.is_empty(), "no line");
+        assert!(flash.0.is_empty(), "no flash");
     }
 
     /// A rank-up moves the book and marks the store dirty; the bar follows in `ui_action::ranks`.
@@ -2590,6 +2822,8 @@ mod tests {
             Some(&spells),
             &mut errors,
             &mut LearnedInTab::default(),
+            live(),
+            &no_bar(),
         );
         assert_eq!(errors.0.len(), 1, "the learn block never reads castUI");
         assert_eq!(errors.0[0].key, "ERR_LEARN_SPELL_S");

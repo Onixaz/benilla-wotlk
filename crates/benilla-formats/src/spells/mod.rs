@@ -86,6 +86,7 @@ const COL_IMPLICIT_TARGET_A1: usize = 86;
 const COL_IMPLICIT_TARGET_B1: usize = 89;
 /// The usable walk's gate columns (`IsSpellUsableNow` `0x6e3d60`).
 const COL_STANCES: usize = 12;
+const COL_STANCES_HIGH: usize = 13;
 const COL_STANCES_NOT: usize = 14;
 const COL_CASTER_AURA_STATE: usize = 20;
 const COL_TARGET_AURA_STATE: usize = 21;
@@ -577,6 +578,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                     u32_at(r, COL_IMPLICIT_TARGET_B1 + i).unwrap_or(0)
                 }),
                 stances: u32_at(r, COL_STANCES).unwrap_or(0),
+                stances_high: u32_at(r, COL_STANCES_HIGH).unwrap_or(0),
                 stances_not: u32_at(r, COL_STANCES_NOT).unwrap_or(0),
                 caster_aura_state: u32_at(r, COL_CASTER_AURA_STATE).unwrap_or(0),
                 target_aura_state: u32_at(r, COL_TARGET_AURA_STATE).unwrap_or(0),

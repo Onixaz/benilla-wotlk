@@ -18,6 +18,7 @@ pub(crate) mod cast_target;
 pub(crate) mod cooldowns;
 pub(crate) mod group_relation;
 mod inflight;
+pub(crate) mod learn_place;
 mod mods;
 pub(crate) mod net;
 mod range_units;

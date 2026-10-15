@@ -119,6 +119,9 @@ pub struct SpellDisplay {
     pub effect_implicit_target_b: [u32; 3],
     /// `Stances` (column 12, the low dword of a 64-bit mask): forms the spell may be cast in, `1 << (form - 1)` each; 0 is none.
     pub stances: u32,
+    /// Column 13, the mask's high dword (`SpellRec+0x34`), forms 33 and up; the bar-page chooser
+    /// `0x53b970` reads it after the low one. No 12340 form id exceeds 32.
+    pub stances_high: u32,
     /// `StancesNot` (column 14, likewise): forms the spell may not be cast in.
     pub stances_not: u32,
     /// `CasterAuraState` (column 20): state n needs bit `1 << (n - 1)` of the caster's
@@ -260,6 +263,7 @@ impl Default for SpellDisplay {
             target_creature_type: 0,
             implicit_target_a1: 0,
             stances: 0,
+            stances_high: 0,
             stances_not: 0,
             caster_aura_state: 0,
             target_aura_state: 0,
@@ -631,6 +635,32 @@ impl SpellDisplay {
             None
         }
     }
+    /// The rank number the subtext carries, as `0x53b540` parses `SpellRec+0x224`: the first
+    /// run of digits, wherever it starts ("Rank 2" is 2), and 0 when there is none ("Racial",
+    /// "Apprentice", or no subtext).
+    pub fn rank_number(&self) -> u32 {
+        let mut n: u32 = 0;
+        let mut seen = false;
+        for c in self.rank.as_deref().unwrap_or("").bytes() {
+            if c.is_ascii_digit() {
+                n = n.wrapping_mul(10).wrapping_add(u32::from(c - b'0'));
+                seen = true;
+            } else if seen {
+                break;
+            }
+        }
+        n
+    }
+
+    /// `0x53b5a0`: the rank number, or `spellLevel` (`+0x9c`) for a spell whose subtext carries
+    /// none; the bar's rank-replacement comparator (`0x5aafd0`) orders ranks by it.
+    pub fn rank_or_level(&self) -> u32 {
+        match self.rank_number() {
+            0 => self.spell_level,
+            n => n,
+        }
+    }
+
     /// The name and rank as the client composes them, `"%s (%s)"` (`0x8468b0`), or the bare name
     /// when the rank is empty; the trainer (`0x4d96e0`) and the learn line (`0x4b2982`) use it.
     pub fn ranked_name(&self) -> String {

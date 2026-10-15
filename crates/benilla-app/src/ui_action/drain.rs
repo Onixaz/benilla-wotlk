@@ -4,12 +4,10 @@
 
 use bevy::prelude::*;
 
-use benilla_protocol::messages::{
-    ActionButton, ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL,
-};
+use benilla_protocol::messages::{ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL};
 use benilla_ui::script::UiScript;
 
-use crate::net::{ClientCommand, NetCommands};
+use crate::net::NetCommands;
 
 use crate::spell::{cast_target, CastLadder};
 
@@ -378,25 +376,9 @@ pub(super) fn drain_action_sets(
             debug!("ui_action: set_action_button lua id {lua_id} out of range — ignored");
             continue;
         };
-        if packed == 0 {
-            actions.buttons.remove(&slot);
-        } else {
-            actions.buttons.insert(
-                slot,
-                ActionButton {
-                    slot,
-                    action: packed & 0x00FF_FFFF,
-                    kind: (packed >> 24) as u8,
-                },
-            );
-        }
-        actions.dirty = true;
         debug!(
             "ui_action: set_action_button lua {lua_id} (wire slot {slot}) packed {packed:#010x}"
         );
-        let _ = commands.0.send(ClientCommand::SetActionButton {
-            button: slot,
-            packed,
-        });
+        actions.write_slot(slot, packed, &commands);
     }
 }

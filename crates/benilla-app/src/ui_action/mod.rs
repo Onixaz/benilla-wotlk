@@ -38,6 +38,13 @@ mod weapon_icon;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct CooldownEvents;
 
+/// The slot-identity feed ([`feed::feed_actions`]), which fires `ACTIONBAR_SLOT_CHANGED`. The
+/// spellbook feed runs `.before` it: the registrar `0x542030` re-sorts the book and fires
+/// `SPELLS_CHANGED` (`0x542cd4`) and `LEARNED_SPELL_IN_TAB` (`0x542d16`) before it places the
+/// spell (`0x542de2`), so a slot's `GetActionInfo` book index resolves at its own event.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct SlotIdentityFeed;
+
 pub(crate) use errors::{
     attack_actor_blocked, attack_actor_refusal, keyed_line, keyed_line_s, reagent_totem_refusal,
     show_messages, ui_error_text, CastErrors, CastFail, Caster, FillArg, MessageSink, MountErrors,
@@ -64,6 +71,32 @@ pub(crate) struct PlayerActions {
     /// landed item template ([`crate::items::Items::template_epoch`]) also triggers. Item counts
     /// refresh every frame regardless.
     pub dirty: bool,
+}
+
+impl PlayerActions {
+    /// One button write, the tail every `PlaceAction` shares (`0x5aae80`, then
+    /// `CMSG_SET_ACTION_BUTTON`): the store, `dirty` for the feed (which fires
+    /// `ACTIONBAR_SLOT_CHANGED`), and the send. `packed == 0` clears; vmangos and AzerothCore
+    /// store the slot without a reply.
+    pub(crate) fn write_slot(&mut self, slot: u8, packed: u32, net: &crate::net::NetCommands) {
+        if packed == 0 {
+            self.buttons.remove(&slot);
+        } else {
+            self.buttons.insert(
+                slot,
+                ActionButton {
+                    slot,
+                    action: packed & 0x00FF_FFFF,
+                    kind: (packed >> 24) as u8,
+                },
+            );
+        }
+        self.dirty = true;
+        let _ = net.0.send(crate::net::ClientCommand::SetActionButton {
+            button: slot,
+            packed,
+        });
+    }
 }
 
 /// The world right-click's GameObject openers, queued one frame for the cast ladder: the click
@@ -268,7 +301,7 @@ impl Plugin for UiActionPlugin {
                     ranks::normalize_action_ranks
                         .in_set(UnitFeed)
                         .before(feed::feed_actions),
-                    feed::feed_actions.in_set(UnitFeed),
+                    feed::feed_actions.in_set(UnitFeed).in_set(SlotIdentityFeed),
                     state::feed_action_state
                         .in_set(UnitFeed)
                         .in_set(CooldownEvents)

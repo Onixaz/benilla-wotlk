@@ -54,10 +54,13 @@ impl Plugin for UiSpellbookPlugin {
             .add_systems(Startup, load_skill_lines.after(AssetSet::Open))
             .add_systems(
                 Update,
-                // The feed precedes `CooldownEvents`, whose `SPELL_UPDATE_COOLDOWN` makes the book
-                // re-read its cooldowns. A click's cast is a script call (`cast_spell`).
+                // The feed precedes the bar's identity feed (the registrar's order: the book and
+                // its events, then the placed slot's `ACTIONBAR_SLOT_CHANGED`) and
+                // `CooldownEvents`, whose `SPELL_UPDATE_COOLDOWN` makes the book re-read its
+                // cooldowns. A click's cast is a script call (`cast_spell`).
                 feed_spellbook
                     .in_set(UnitFeed)
+                    .before(crate::ui_action::SlotIdentityFeed)
                     .before(crate::ui_action::CooldownEvents),
             );
     }
