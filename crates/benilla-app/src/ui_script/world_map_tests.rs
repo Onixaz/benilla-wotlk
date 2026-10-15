@@ -60,6 +60,13 @@ fn the_stock_map_loads_and_opens_on_the_players_zone() {
         assert(math.abs(WorldMapDetailFrame:GetScale() - WORLDMAP_QUESTLIST_SIZE) < 1e-6)
         assert(PlayerArrowFrame and math.abs(PlayerArrowEffectFrame:GetAlpha() - 0.65) < 1e-3)
         assert(WorldMapBlobFrame:GetObjectType() == "QuestPOIFrame")
+        -- `WorldMapFrame_ResetFrameLevels` lifts the window to 87; its buttons ride along above
+        -- its art, as `SetFrameLevel` carries the children (`0x49ea50`).
+        local top = WorldMapFrame:GetFrameLevel()
+        assert(top == WORLDMAP_POI_FRAMELEVEL - 13, "window level " .. top)
+        for _, f in ipairs({ WorldMapZoomOutButton, WorldMapContinentDropDown, WorldMapZoneDropDown }) do
+            assert(f:GetFrameLevel() > top, f:GetName() .. " sits above the window's art")
+        end
         "#,
     )
     .unwrap();

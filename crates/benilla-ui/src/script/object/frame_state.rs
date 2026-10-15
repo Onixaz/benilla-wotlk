@@ -415,11 +415,11 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, level): (Table, i64)| {
             let h = frame_handle_of(lua, &this)?;
             let lvl = level.clamp(0, i64::from(u16::MAX)) as u16;
-            // A script level change moves no children: `0x774560` calls `set_frame_level 0x76a4f0`
-            // with `propagate = 0`, which stock `BonusActionButtonTemplate` relies on.
+            // A script level change carries the same-strata children along: `0x49e9d0` calls
+            // `CSimpleFrame::SetFrameLevel` with `propagate = 1` (`0x49ea50`).
             crate::script::model_mut_of(lua)
                 .arena
-                .set_frame_level(h, lvl, false);
+                .set_frame_level(h, lvl, true);
             Ok(())
         })?,
     )?;

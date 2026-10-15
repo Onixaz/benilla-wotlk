@@ -77,16 +77,17 @@ impl WidgetArena {
 
     // ── Level ────────────────────────────────────────────────────────────────────────────────────
 
-    /// Set `h`'s level (`0x76a4f0`); with `propagate`, same-strata children shift by the same
-    /// delta. A same-value call returns before relinking (`0x76a509`).
+    /// Set `h`'s level (`CSimpleFrame::SetFrameLevel` `0x4910a0`): the step up is capped at
+    /// `0x80` (`0x4910d9`), so the level moves by `min(new - old, 128)`; with `propagate`,
+    /// same-strata children move by the same step. A same-value call returns before relinking.
     pub fn set_frame_level(&mut self, h: FrameHandle, level: u16, propagate: bool) {
         let (delta, strata, children) = match self.frame_mut(h) {
             Some(f) => {
                 if f.level == level {
                     return;
                 }
-                let delta = i32::from(level) - i32::from(f.level);
-                f.level = level;
+                let delta = (i32::from(level) - i32::from(f.level)).min(0x80);
+                f.level = (i32::from(f.level) + delta).clamp(0, i32::from(u16::MAX)) as u16;
                 (delta, f.strata, f.children.clone())
             }
             None => return,

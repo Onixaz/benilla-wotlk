@@ -705,25 +705,46 @@ fn a_raise_with_a_hidden_child_keeps_the_windows_own_siblings_level() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `SetFrameLevel` (`0x774560`) calls `0x76a4f0` with `propagate=0`, so the children stay put;
-/// stock `BonusActionBarFrame.xml:13-15` raises a button and then its cooldown by hand.
+/// `SetFrameLevel` (`0x49e9d0`) calls `CSimpleFrame::SetFrameLevel` with `propagate = 1`
+/// (`0x49ea50`): same-strata children move by the parent's step, a child in another strata stays,
+/// and a step up is capped at 128 (`0x4910d9`).
 #[test]
-fn a_script_level_change_leaves_the_children_where_they_were() {
+fn a_script_level_change_carries_the_same_strata_children() {
     let mut s = script();
     s.run(
         r#"
         Parent = CreateFrame("Frame", "Parent")
         Child = CreateFrame("Frame", "Child", Parent)
         Grandchild = CreateFrame("Frame", "Grandchild", Child)
+        Dialog = CreateFrame("Frame", "Dialog", Parent)
+        Dialog:SetFrameStrata("DIALOG")
         "#,
     )
     .unwrap();
-    let (child, grandchild) = (level(&mut s, "Child"), level(&mut s, "Grandchild"));
+    let (parent, child, grandchild, dialog) = (
+        level(&mut s, "Parent"),
+        level(&mut s, "Child"),
+        level(&mut s, "Grandchild"),
+        level(&mut s, "Dialog"),
+    );
     s.run("Parent:SetFrameLevel(7)").unwrap();
+    let step = 7 - parent;
     assert_eq!(level(&mut s, "Parent"), 7);
     assert_eq!(
         (level(&mut s, "Child"), level(&mut s, "Grandchild")),
-        (child, grandchild),
-        "the children keep their absolute levels"
+        (child + step, grandchild + step),
+        "the children keep their place above the parent"
     );
+    assert_eq!(
+        level(&mut s, "Dialog"),
+        dialog,
+        "another strata is not carried"
+    );
+    s.run("Parent:SetFrameLevel(500)").unwrap();
+    assert_eq!(
+        level(&mut s, "Parent"),
+        7 + 128,
+        "the step up is capped at 128"
+    );
+    assert_eq!(level(&mut s, "Child"), child + step + 128);
 }
