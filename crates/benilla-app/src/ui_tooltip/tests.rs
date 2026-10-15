@@ -991,7 +991,7 @@ fn the_mouseover_token_names_the_hovered_units_creature_type() {
 
     /// `UNIT_FIELD_BYTES_0` and `UNIT_FIELD_BYTES_1`, absolute descriptor indices.
     const BYTES_0: u16 = 36;
-    const BYTES_1: u16 = 138;
+    const BYTES_2: u16 = 164;
     const NIGHT_ELF: u32 = 4;
     const CAT_FORM: u32 = 1;
     const DRUID: u64 = 0x99;
@@ -1010,7 +1010,7 @@ fn the_mouseover_token_names_the_hovered_units_creature_type() {
         .world_mut()
         .spawn(ObjectStore(ObjectFields::from_pairs(&[
             (BYTES_0, NIGHT_ELF),
-            (BYTES_1, CAT_FORM << 16),
+            (BYTES_2, CAT_FORM << 24),
         ])))
         .id();
     let creature_type = |app: &mut App| {
@@ -1027,7 +1027,7 @@ fn the_mouseover_token_names_the_hovered_units_creature_type() {
         .get_mut::<ObjectStore>()
         .unwrap()
         .0
-        .merge(ObjectFields::from_pairs(&[(BYTES_1, 0)]));
+        .merge(ObjectFields::from_pairs(&[(BYTES_2, 0)]));
     hover_unit(&mut app, druid, DRUID);
     assert_eq!(creature_type(&mut app).as_deref(), Some("Humanoid"));
 }

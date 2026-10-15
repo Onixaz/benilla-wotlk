@@ -3500,7 +3500,7 @@ mod tests {
         /// `UNIT_FIELD_BYTES_0` and `UNIT_FIELD_BYTES_1`, absolute descriptor indices, and
         /// `OBJECT_FIELD_ENTRY`.
         const BYTES_0: u16 = 36;
-        const BYTES_1: u16 = 138;
+        const BYTES_2: u16 = 164;
         const OBJECT_FIELD_ENTRY: u16 = 3;
         const NIGHT_ELF: u32 = 4;
         const CAT_FORM: u32 = 1;
@@ -3580,7 +3580,7 @@ mod tests {
                 .get_mut::<ObjectStore>()
                 .unwrap()
                 .0
-                .merge(ObjectFields::from_pairs(&[(BYTES_1, form << 16)]));
+                .merge(ObjectFields::from_pairs(&[(BYTES_2, form << 24)]));
             app.update();
         };
         let select = |app: &mut App, unit: Entity, guid: u64| {

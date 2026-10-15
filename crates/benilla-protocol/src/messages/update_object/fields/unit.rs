@@ -251,10 +251,11 @@ impl ObjectFields {
         self.get_u32(FIELD_UNIT_AURASTATE).unwrap_or(0)
     }
 
-    /// `UNIT_FIELD_BYTES_1` byte 2: the shapeshift form, 0 none, 17-19 the warrior stances, the
-    /// druid forms low; the creature-type resolver `0x605570` checks it first.
+    /// `UNIT_FIELD_BYTES_2` byte 3: the shapeshift form, 0 none, 17-19 the warrior stances, the
+    /// druid forms low; `CGUnit_C::GetShapeshiftForm` (`0x71af70`) reads it at `+0x1d3`, and the
+    /// creature-type resolver `0x605570` checks it first.
     pub fn unit_shapeshift_form(&self) -> u8 {
-        (self.get_u32(FIELD_UNIT_BYTES_1).unwrap_or(0) >> 16) as u8
+        (self.get_u32(FIELD_UNIT_BYTES_2).unwrap_or(0) >> 24) as u8
     }
     /// `UNIT_FIELD_POWER1..5`: current power of type `ty`, on the wire's raw scale.
     pub fn unit_power(&self, ty: u8) -> Option<u32> {

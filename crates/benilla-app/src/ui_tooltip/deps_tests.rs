@@ -343,7 +343,7 @@ fn mat(layout: &Layout, inputs: Inputs, p: Params) -> Mat {
     }
     let form = if inputs.form { p.form } else { 0 };
     if form != 0 {
-        pairs.push((138, u32::from(form) << 16));
+        pairs.push((164, u32::from(form) << 24));
     }
     // Block, dodge, parry and crit percent.
     for (i, pct) in [7.5f32, 6.25, 5.5, 3.75].into_iter().enumerate() {
@@ -1414,7 +1414,7 @@ fn the_seen_diff_names_each_input_it_saw_move() {
         1 << 22,
         "a bag"
     );
-    let now = player(&[(22, 100), (138, 1 << 16)]);
+    let now = player(&[(22, 100), (164, 1 << 24)]);
     assert!(seen(&now).changes_since(&seen(&base)).form);
     let now = player(&[(22, 100), (130, 3.0f32.to_bits())]);
     assert!(seen(&now).changes_since(&seen(&base)).range_units);

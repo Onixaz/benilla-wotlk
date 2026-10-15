@@ -94,7 +94,7 @@ fn feed_cost_per_invalidation() {
             (34, 60),
             (162, 1373),
             (130, reach.to_bits()),
-            (138, form << 16),
+            (164, form << 24),
             (486, head),
             (1106, 5.0f32.to_bits()),
             (1107, dodge.to_bits()),

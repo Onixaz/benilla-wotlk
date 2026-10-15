@@ -74,8 +74,9 @@ mod tests {
     use crate::names::CreatureRecord;
     use benilla_protocol::ObjectFields;
 
-    /// `UNIT_FIELD_BYTES_1` and `UNIT_FIELD_BYTES_0`, absolute descriptor indices.
-    const BYTES_1: u16 = 138;
+    /// `UNIT_FIELD_BYTES_2` (the form in byte 3) and `UNIT_FIELD_BYTES_0`, absolute descriptor
+    /// indices.
+    const BYTES_2: u16 = 164;
     const BYTES_0: u16 = 36;
     const OBJECT_FIELD_ENTRY: u16 = 3;
 
@@ -83,7 +84,7 @@ mod tests {
         ObjectStore(ObjectFields::from_pairs(&[
             (OBJECT_FIELD_ENTRY, entry),
             (BYTES_0, race),
-            (BYTES_1, form << 16),
+            (BYTES_2, form << 24),
         ]))
     }
 

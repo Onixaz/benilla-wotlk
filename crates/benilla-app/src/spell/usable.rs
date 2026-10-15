@@ -916,7 +916,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(walk(&claw, &alive), (false, false));
-        let in_cat = player(&[(138, 1 << 16)]);
+        let in_cat = player(&[(164, 1 << 24)]);
         assert_eq!(walk(&claw, &in_cat), (true, false));
 
         // Leg 7: only-stealthed vs the CREEP byte.
