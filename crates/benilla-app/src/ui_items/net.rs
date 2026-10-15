@@ -74,6 +74,8 @@ fn on_inventory_failure(
     mut pending: ResMut<PendingItemOps>,
     mut lock_cleared: ResMut<LockTransitions>,
     mut latch: ResMut<LootLatch>,
+    mut loot: ResMut<crate::ui_loot::LootState>,
+    net: Res<crate::net::NetCommands>,
 ) {
     if let SessionEvent::InventoryFailure {
         reason,
@@ -90,8 +92,8 @@ fn on_inventory_failure(
             &mut equip_errors,
             &mut pending,
             &mut lock_cleared,
-            &mut latch,
         );
+        loot.inventory_failed(item_guid, &mut latch, &net);
     }
 }
 
@@ -106,7 +108,6 @@ fn inventory_failure(
     equip_errors: &mut EquipErrors,
     pending: &mut PendingItemOps,
     lock_cleared: &mut LockTransitions,
-    latch: &mut LootLatch,
 ) {
     debug!("net: inventory failure {reason:#04x} (item {item_guid:#x}, bag slot {bag_slot})");
     equip_errors.0.push(EquipError {
@@ -115,48 +116,36 @@ fn inventory_failure(
         bag_slot,
     });
     lock_cleared.0.extend(pending.clear_by_failure(item_guid));
-    // A failure whose first item guid is the looted item (a lockbox) ends the loot (`0x5e3a84`).
-    if item_guid != 0 {
-        latch.clear_for(item_guid);
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// `0x6e321c`-`0x6e3232`: a failure on the latched item takes `CloseLoot(1, 0, 0)`.
     #[test]
-    fn an_inventory_failure_on_the_looted_object_clears_the_latch() {
+    fn an_inventory_failure_on_the_looted_object_closes_its_loot() {
         const LOCKBOX: u64 = 0x4000_0000_0000_0007;
-        let mut errs = EquipErrors::default();
-        let mut pending = PendingItemOps::default();
-        let mut cleared = LockTransitions::default();
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let net = crate::net::NetCommands(tx);
+        let mut loot = crate::ui_loot::LootState::default();
+        loot.open(LOCKBOX, 1, 5, Vec::new());
         let mut latch = LootLatch(Some(LOCKBOX));
 
         // An unrelated item's failure must not end the session.
-        inventory_failure(
-            2,
-            None,
-            0x1234,
-            0,
-            &mut errs,
-            &mut pending,
-            &mut cleared,
-            &mut latch,
-        );
+        loot.inventory_failed(0x1234, &mut latch, &net);
         assert_eq!(latch.0, Some(LOCKBOX));
+        assert_eq!(loot.source(), Some(LOCKBOX));
+        assert!(rx.try_recv().is_err());
 
-        inventory_failure(
-            2,
-            None,
-            LOCKBOX,
-            0,
-            &mut errs,
-            &mut pending,
-            &mut cleared,
-            &mut latch,
-        );
+        loot.inventory_failed(LOCKBOX, &mut latch, &net);
         assert_eq!(latch.0, None);
+        assert_eq!(loot.source(), None);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(crate::net::ClientCommand::LootRelease { guid }) if guid == LOCKBOX
+        ));
+        assert_eq!(loot.take_unlocks(), [LOCKBOX], "the close unlocks its item");
     }
     /// Driven through the real registration.
     #[test]
@@ -167,6 +156,7 @@ mod tests {
             .init_resource::<LockTransitions>()
             .init_resource::<BagOpens>()
             .init_resource::<LootLatch>()
+            .init_resource::<crate::ui_loot::LootState>()
             .init_resource::<SelfGuid>();
         register(&mut app);
         app.world_mut()

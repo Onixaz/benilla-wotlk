@@ -223,7 +223,7 @@ fn shipped_loot_frame_drives_end_to_end() {
         vec![1, 2],
         "coin row is pick 1, the first item row is pick 2"
     );
-    assert!(!s.take_loot_close());
+    assert!(s.take_loot_close().is_none());
 
     // The looted coin row hides in place, off `LOOT_SLOT_CLEARED` alone, and the items keep their
     // rows.
@@ -248,7 +248,7 @@ fn shipped_loot_frame_drives_end_to_end() {
 
     s.run("LootCloseButton:Click()").unwrap();
     assert!(
-        s.take_loot_close(),
+        s.take_loot_close().is_some(),
         "closing the window releases the loot (OnHide → CloseLoot)"
     );
     assert!(!s.eval::<bool>("return LootFrame:IsVisible()").unwrap());
@@ -562,8 +562,7 @@ fn the_loot_window_draws_over_the_party_frames() {
     );
 }
 
-/// Ctrl previews and shift posts the link (LootFrame.lua:147-154), and neither loots: the take is
-/// the `LootButton`'s own click, armed by `SetSlot` (LootFrame.lua:94) and off under any modifier.
+/// Ctrl previews and shift posts the link (LootFrame.lua:147-154), and neither loots.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ctrl_and_shift_on_a_loot_row_preview_and_post_without_looting() {
@@ -671,8 +670,7 @@ fn ctrl_and_shift_on_a_loot_row_preview_and_post_without_looting() {
         "a shift-click on the coin row must not loot the money either"
     );
 
-    // Alt: nothing, and no loot. No FrameXML binds alt on a loot row; the suppression is
-    // `CLootButton::OnClick`'s third modifier gate (`0x41f8f0(2)` at `0x4c1856`).
+    // Alt: nothing, and no loot: any modifier takes the row's `IsModifiedClick()` branch.
     s.set_modifiers(false, false, true);
     s.mouse_button(x, y, "LeftButton", true);
     s.mouse_button(x, y, "LeftButton", false);
@@ -1147,8 +1145,8 @@ fn loot_row_awaiting_its_template_opens_clean() {
     );
 }
 
-/// A `<LootButton>` loads as a `Button` (`CLootButton` keeps `CSimpleButton`'s `LoadXML`,
-/// `0x7788c0`), so it wears `ItemButtonTemplate`'s state textures and lights under the cursor.
+/// A stock loot row is a `Button` inheriting `ItemButtonTemplate`, so it wears its state textures
+/// and lights under the cursor.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn stock_loot_rows_wear_the_item_button_art_and_light_under_the_cursor() {

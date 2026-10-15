@@ -286,9 +286,6 @@ fn frame_kind_from_str(s: &str) -> Option<FrameKind> {
         "TAXIROUTEFRAME" => FrameKind::Frame,
         "BUTTON" => FrameKind::Button,
         "CHECKBUTTON" => FrameKind::CheckButton,
-        // Its own registered type (`0x4959a6`), not a Button: 1.12 has no Lua verb to take loot
-        // slot N (`LootSlot` only continues a bind confirm), so a Button row could loot nothing.
-        "LOOTBUTTON" => FrameKind::LootButton,
         "EDITBOX" => FrameKind::EditBox,
         "STATUSBAR" => FrameKind::StatusBar,
         "SLIDER" => FrameKind::Slider,
@@ -496,11 +493,6 @@ fn kind_method_registries(kind: Option<FrameKind>) -> &'static [&'static str] {
         Some(FrameKind::Slider) => &[super::slider::REG_SLIDER_METHODS],
         Some(FrameKind::ColorSelect) => &[super::colorselect::REG_COLORSELECT_METHODS],
         Some(FrameKind::Button) => &[super::button::REG_BUTTON_METHODS],
-        // Its one method, then `Button`'s: `0x4c1be0` probes its map `0xb71b64`, then `0x782c90`.
-        Some(FrameKind::LootButton) => &[
-            super::loot::REG_LOOTBUTTON_METHODS,
-            super::button::REG_BUTTON_METHODS,
-        ],
         Some(FrameKind::CheckButton) => &[
             super::button::REG_CHECKBUTTON_METHODS,
             super::button::REG_BUTTON_METHODS,

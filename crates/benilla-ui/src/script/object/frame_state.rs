@@ -96,8 +96,6 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             FrameKind::WorldFrame => &["Frame", "Region"],
             FrameKind::Button => &["Button", "Frame", "Region"],
             FrameKind::CheckButton => &["CheckButton", "Button", "Frame", "Region"],
-            // `CLootButton::IsObjectType` (`0x495af0`) prepends its name to `Button`'s chain.
-            FrameKind::LootButton => &["LootButton", "Button", "Frame", "Region"],
             FrameKind::EditBox => &["EditBox", "Frame", "Region"],
             FrameKind::StatusBar => &["StatusBar", "Frame", "Region"],
             FrameKind::Slider => &["Slider", "Frame", "Region"],

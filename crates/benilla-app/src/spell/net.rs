@@ -363,7 +363,15 @@ fn on_spell_start(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
     }
 }
 
-fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
+/// The loot state our own cast arms the auto-loot flag in.
+#[derive(SystemParam)]
+struct SpellGoLoot<'w> {
+    loot: ResMut<'w, crate::ui_loot::LootState>,
+    cfg: Res<'w, crate::ui_loot::LootConfig>,
+    script: Option<NonSend<'w, benilla_ui::script::UiScript>>,
+}
+
+fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut arm: SpellGoLoot) {
     if let SessionEvent::SpellGo {
         caster,
         cast_count,
@@ -416,6 +424,18 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
             (&mut l.auto_repeat, &mut sc.sheaths, engaged),
             l.play_seq.next(),
         );
+        // After the chest arm, the effect loop arms the auto-loot flag (`0x80f780`).
+        let display = l.spells.as_deref().and_then(|s| s.catalog.get(spell_id));
+        if let (true, Some(d)) = (l.self_guid.0 == Some(caster), display) {
+            crate::ui_loot::arm_on_spell_go(
+                &d.effects,
+                &mut arm.loot,
+                &arm.cfg,
+                arm.script.as_deref(),
+                &sc.loot_latch,
+                &l.net,
+            );
+        }
     }
 }
 
@@ -1071,14 +1091,7 @@ fn spell_go(
     let (auto_repeat, sheath, engaged) = attack_ctx;
     let now = Instant::now();
     let display = spells.and_then(|s| s.catalog.get(spell_id));
-    // A chest becomes the loot target at this packet, not at the loot response: `HandleSpellGo
-    // 0x6e7a70` reaches `0x6e831b call SetLootTarget 0x5ed5f0`, which writes `[player+0x1d28]` and
-    // plays Loot 50. Gates: the local player cast it (`0x6e81b6`), the spell has `OPEN_LOCK`
-    // (0x21) or `OPEN_LOCK_ITEM` (0x3b) (`0x6e81f9`/`0x6e8202`), and the target is a CHEST
-    // (`0x6e82df`–`0x6e830c`). The reference reads the target off a one-entry hit list
-    // (`0x6e82c1`); vmangos sends a GameObject target in `SpellCastTargets`, so this reads
-    // `go_target`, a single guid: the same condition. The pose needs no kick:
-    // [`crate::ui_loot::LootKneel`] recomputes every frame.
+    // Our own OPEN_LOCK cast on a chest latches it here (`OnLootGameObject` call `0x80f6a0`).
     if self_guid.0 == Some(caster) {
         if let Some(go_guid) = go_target {
             let is_open_lock = display.is_some_and(|d| d.open_lock.is_some());

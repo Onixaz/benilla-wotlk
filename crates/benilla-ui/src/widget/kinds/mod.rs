@@ -22,9 +22,6 @@ pub enum FrameKind {
     /// Lua, in stratum `WORLD` below `BACKGROUND`; hovered, it is not over the UI but runs scripts.
     WorldFrame,
     Button,
-    /// `CLootButton` (factory `0x495a30`): a `CSimpleButton` plus a loot slot and an `OnClick`
-    /// (`0x4c1820`) that takes it; a registered `CreateFrame` type the stock `LootFrame.xml` needs.
-    LootButton,
     CheckButton,
     EditBox,
     StatusBar,
@@ -691,9 +688,6 @@ pub struct ButtonState {
     /// The lock (`+0x32c`) of `SetButtonState(state, locked)`: while set, the hide, press, release
     /// and drag edges skip the button, and an `Enable`/`Disable` that runs (`0x779160`) clears it.
     pub locked: bool,
-    /// [`FrameKind::LootButton`]'s 0-based slot (`+0x4dc`) from `SetSlot`. Deviation: `None`
-    /// until then, not the ctor's 0, so that an unset row takes nothing rather than slot 0.
-    pub loot_slot: Option<u32>,
     /// A CheckButton's checked flag (`+0x4dc`, XML `checked`).
     pub checked: bool,
     /// `<NormalTexture>`/`SetNormalTexture` (`+0x4bc`).
@@ -747,7 +741,6 @@ pub struct ButtonState {
 impl Default for ButtonState {
     fn default() -> Self {
         ButtonState {
-            loot_slot: None,
             locked: false,
             checked: false,
             normal: None,

@@ -152,6 +152,8 @@ pub(crate) struct ServiceArms<'w> {
     pub(crate) interact: Res<'w, crate::ui_session::InteractNpc>,
     /// The cursor, for the vendor arm's sell fork (`0x5df5d7`); `None` when no VM is mounted.
     pub(crate) script: Option<NonSendMut<'w, benilla_ui::script::UiScript>>,
+    /// `autoLootDefault`, which a loot interact arms the auto-loot flag from.
+    pub(crate) loot_cfg: Res<'w, crate::ui_loot::LootConfig>,
 }
 
 /// The re-click gate (`0x5f0251`), before the ladder: a right-click on the NPC whose window is
@@ -174,6 +176,8 @@ pub(crate) struct Feedback<'w> {
     openers: ResMut<'w, crate::ui_action::GoOpenerCasts>,
     // The stone's refusals need the roster, so they run in `drain_meeting_stone_joins`.
     stone_uses: MessageWriter<'w, crate::ui_dialog_verbs::MeetingStoneUse>,
+    /// The loot close's dead-unit deselect (`0x5237ae`).
+    deselect: MessageWriter<'w, DeselectGuid>,
 }
 
 impl Feedback<'_> {
@@ -235,6 +239,30 @@ fn loot_stop(reach: f32) -> f32 {
 }
 
 impl Dispatch<'_, '_> {
+    /// `SetAutoLoot(IsAutoLooting())` at a loot interact (`0x731260`, `0x706010`, `0x711140`).
+    fn arm_auto_loot(&mut self) {
+        let on =
+            crate::ui_loot::is_auto_looting(&self.service.loot_cfg, self.service.script.as_deref());
+        self.seam
+            .loot
+            .set_auto_loot(on, &self.seam.loot_latch, &self.seam.net);
+    }
+
+    /// `CloseLoot(1, 0, 0)` ahead of a loot send (`0x6daec5`, `0x6dacf4`, `0x71115b`).
+    fn close_open_loot(&mut self) {
+        let closed = crate::ui_loot::close_interaction(
+            &mut self.seam.loot,
+            &mut self.seam.loot_latch,
+            &self.seam.net,
+            true,
+        );
+        if let Some(guid) =
+            closed.filter(|&g| crate::ui_loot::dead_unit_source(&self.go_inputs.objects, g))
+        {
+            self.feedback.deselect.write(DeselectGuid(guid));
+        }
+    }
+
     fn me(&self) -> Option<(Entity, u64, bool)> {
         self.self_player
             .single()
@@ -403,14 +431,25 @@ impl Dispatch<'_, '_> {
             return;
         }
         // By lock: used, opened by its opener cast, or refused locally (`0x5f3427..`).
-        match resolve_go_action(
+        let action = resolve_go_action(
             guid,
             &mut self.go_inputs,
             &self.player_actions.spells,
             go,
             self_store,
             &self.seam.net,
-        ) {
+        );
+        // `OnRightClick 0x711140`: `CloseLoot(1, 0, 0)` and the auto-loot flag, then the use.
+        if in_reach
+            && matches!(
+                action,
+                GoAction::Use | GoAction::OpenLock(_) | GoAction::OpenByKey(_)
+            )
+        {
+            self.close_open_loot();
+            self.arm_auto_loot();
+        }
+        match action {
             GoAction::Use | GoAction::OpenLock(_) | GoAction::OpenByKey(_) if !in_reach => {
                 self.walk_to_object(entity, guid, go_type, walk);
             }
@@ -459,6 +498,7 @@ impl Dispatch<'_, '_> {
     /// walked to first when `walk` and beyond its 5 yd (`0x5df1c3`), stopping at [`loot_stop`] of
     /// 5. A walk that does not start falls through to the send.
     fn loot_corpse(&mut self, entity: Entity, guid: u64, walk: bool) {
+        self.arm_auto_loot();
         if self.moving() {
             return;
         }
@@ -477,6 +517,7 @@ impl Dispatch<'_, '_> {
             return;
         }
         debug!("right-click corpse loot: {guid:#x}");
+        self.close_open_loot();
         let _ = self.seam.net.0.send(ClientCommand::Loot { guid });
         // Predicted, as for a unit corpse (`[player+0x1d28]` armed at the send).
         self.seam.loot_latch.0 = Some(guid);
@@ -486,6 +527,7 @@ impl Dispatch<'_, '_> {
     /// allow, never while [`Self::moving`] (`0x5df2e9`), walked to first when `walk` and beyond
     /// melee reach. A walk that does not start falls through to the send.
     fn loot_unit(&mut self, entity: Entity, guid: u64, can_loot: bool, walk: bool) {
+        self.arm_auto_loot();
         if !can_loot || self.moving() {
             return;
         }
@@ -503,6 +545,7 @@ impl Dispatch<'_, '_> {
             return;
         }
         debug!("right-click loot: {guid:#x}");
+        self.close_open_loot();
         let _ = self.seam.net.0.send(ClientCommand::Loot { guid });
         // Predicted at the send, as the reference's sender (`0x5df253`) arms `[player+0x1d28]` and
         // kneels before any reply; the anim driver reads the latch.
@@ -2076,6 +2119,7 @@ mod tests {
         world.init_resource::<Messages<Interact>>();
         world.init_resource::<crate::net::Reputations>();
         world.init_resource::<crate::ui_loot::LootConfig>();
+        world.init_resource::<Messages<DeselectGuid>>();
         world.init_resource::<ButtonInput<KeyCode>>();
         world.spawn((SelfPlayer, Guid(ME)));
         let boar = world
@@ -3084,6 +3128,44 @@ mod tests {
                     "flags {flags:#x}, corpse {on_corpse}"
                 );
             }
+        }
+    }
+
+    /// A loot click closes the open loot first (`CloseLoot(1, 0, 0)` at `0x6daec5`, `0x6dacf4`) and
+    /// arms the auto-loot flag from `autoLootDefault` (`0x731260`, `0x706010`).
+    #[test]
+    fn a_loot_click_closes_the_open_loot_and_arms_auto_loot() {
+        const CHEST: u64 = 0xF110_0000_0000_0077;
+        for (on_corpse, auto) in [(false, false), (false, true), (true, true)] {
+            let (mut world, body, corpse, rx) = loot_world(2.0, 0, false);
+            world.resource_mut::<crate::ui_loot::LootConfig>().auto_loot = auto;
+            world
+                .resource_mut::<crate::ui_loot::LootState>()
+                .open(CHEST, 3, 0, Vec::new());
+            world.resource_mut::<crate::ui_loot::LootLatch>().0 = Some(CHEST);
+            right_click_loot(&mut world, loot_hover(on_corpse, body, corpse, 2.0));
+            let sent: Vec<ClientCommand> = rx
+                .try_iter()
+                .filter(|c| {
+                    matches!(
+                        c,
+                        ClientCommand::LootRelease { .. } | ClientCommand::Loot { .. }
+                    )
+                })
+                .collect();
+            let want = if on_corpse { CORPSE } else { BODY };
+            assert!(
+                matches!(
+                    sent.as_slice(),
+                    [ClientCommand::LootRelease { guid: a }, ClientCommand::Loot { guid: b }]
+                        if *a == CHEST && *b == want
+                ),
+                "corpse {on_corpse}: {sent:?}"
+            );
+            let loot = world.resource::<crate::ui_loot::LootState>();
+            assert_eq!(loot.source(), None, "the chest's window closed");
+            assert_eq!(loot.auto_loot_armed(), auto, "corpse {on_corpse}");
+            assert_eq!(world.resource::<crate::ui_loot::LootLatch>().0, Some(want));
         }
     }
 

@@ -287,8 +287,6 @@ pub fn mouse_enabled_by_ctor(kind: FrameKind) -> bool {
             | FrameKind::Slider
             | FrameKind::ColorSelect
             | FrameKind::Minimap
-            // `LootButton` extends `CSimpleButton` and inherits its ctor's bit.
-            | FrameKind::LootButton
     )
 }
 
@@ -476,9 +474,8 @@ impl WidgetArena {
             insertion_seq,
             kind_state: match kind {
                 FrameKind::StatusBar => KindState::StatusBar(StatusBarState::default()),
-                // `CLootButton` and `CSimpleCheckbox` extend `CSimpleButton` by one field each,
-                // which `ButtonState` carries (`loot_slot`, `checked`).
-                FrameKind::Button | FrameKind::CheckButton | FrameKind::LootButton => {
+                // `CSimpleCheckbox` extends `CSimpleButton` by one field, `ButtonState::checked`.
+                FrameKind::Button | FrameKind::CheckButton => {
                     KindState::Button(ButtonState::default())
                 }
                 FrameKind::EditBox => KindState::EditBox(EditBoxState::default()),

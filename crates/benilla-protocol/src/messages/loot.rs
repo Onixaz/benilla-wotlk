@@ -33,14 +33,16 @@ pub mod slot_type {
     pub const OWNER: u8 = 4;
 }
 
-/// `LootType` (vmangos `LootMgr.h:49-61`). Only these four reach the wire: `SendLoot` remaps
-/// skinning and insignia to `PICKPOCKETING`, fishing holes and fails to `FISHING`
-/// (`Player.cpp:8120-8136`); `CMSG_LOOT` always gets `CORPSE` (`LootHandler.cpp:380`).
+/// `LootType`, the wire byte after the guid; 12340's response handler names 1-4 and 6-8
+/// (`0x6d53fb`-`0x6d541f`).
 pub mod loot_type {
     pub const CORPSE: u8 = 1;
     pub const PICKPOCKETING: u8 = 2;
     pub const FISHING: u8 = 3;
     pub const DISENCHANTING: u8 = 4;
+    pub const SKINNING: u8 = 6;
+    pub const PROSPECTING: u8 = 7;
+    pub const MILLING: u8 = 8;
 }
 
 /// `LootError` (vmangos `LootMgr.h:85-100`): the code on the error shape of `SMSG_LOOT_RESPONSE`.

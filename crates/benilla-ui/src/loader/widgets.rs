@@ -58,7 +58,7 @@ impl Loader<'_> {
         }
     }
 
-    /// `<Button>`, `<CheckButton>` and `<LootButton>` (`0x7788c0`, which `0x785170` runs first):
+    /// `<Button>` and `<CheckButton>` (`0x7788c0`, which `0x785170` runs first):
     /// the label, the state textures with their own layout, `checked`, `text=` and the per-state
     /// fonts. `$parent` in a child's anchors is this button.
     pub(super) fn apply_button(
@@ -69,12 +69,7 @@ impl Loader<'_> {
         dbg: &str,
     ) {
         let is_check = el.tag.eq_ignore_ascii_case("CheckButton");
-        // A `<LootButton>` loads exactly as a Button: its `LoadXML` slot holds `CSimpleButton`'s
-        // pointer (`0x804594[2]` = `0x81c7c8[2]`).
-        if !is_check
-            && !el.tag.eq_ignore_ascii_case("Button")
-            && !el.tag.eq_ignore_ascii_case("LootButton")
-        {
+        if !is_check && !el.tag.eq_ignore_ascii_case("Button") {
             return;
         }
         let tex = |tag: &str, method: &str, this: &mut Self| {

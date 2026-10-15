@@ -1501,8 +1501,6 @@ impl UiScript {
                 crate::widget::FrameKind::WorldFrame => "Frame",
                 crate::widget::FrameKind::Button => "Button",
                 crate::widget::FrameKind::CheckButton => "CheckButton",
-                // `GetObjectType` (`0x495b60`) says "LootButton" (`[0x847ce0]` → `0x843414`).
-                crate::widget::FrameKind::LootButton => "LootButton",
                 crate::widget::FrameKind::EditBox => "EditBox",
                 crate::widget::FrameKind::StatusBar => "StatusBar",
                 crate::widget::FrameKind::Slider => "Slider",

@@ -591,7 +591,7 @@ mod tests {
                 local want = {{{list}}}
                 local probes = {{ GameTooltip }}
                 local types = {{
-                    "Frame", "Button", "CheckButton", "LootButton", "StatusBar", "EditBox",
+                    "Frame", "Button", "CheckButton", "StatusBar", "EditBox",
                     "ScrollFrame",
                     "Slider", "ColorSelect", "MessageFrame", "ScrollingMessageFrame",
                     "SimpleHTML", "Model", "PlayerModel", "DressUpModel", "TabardModel",
@@ -798,7 +798,7 @@ mod tests {
                 }
             }
             // A method is never a global, so `own` and `have` do not apply to it. The load pass
-            // sees what neither census can, a missing widget type (`<LootButton>`). A window we
+            // sees what neither census can, a missing widget type. A window we
             // also ship is suspect there: `publish_global` does not overwrite (`0x701bd0`), so
             // `_G` keeps our frame while the stock handlers write to theirs.
             let ours_too = !migrated.contains(f)

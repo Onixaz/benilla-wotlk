@@ -20,7 +20,6 @@ const METHOD_TABLES: &[&str] = &[
     "__benilla_font_methods",
     "__benilla_button_methods",
     "__benilla_checkbutton_methods",
-    "__benilla_lootbutton_methods",
     "__benilla_editbox_methods",
     "__benilla_statusbar_methods",
     "__benilla_slider_methods",
@@ -48,10 +47,6 @@ const CLASSES: &[(&str, &str)] = &[
         r#"CreateFrame("WorldFrame", "DWWorldN", UIParent)"#,
     ),
     ("Button", r#"CreateFrame("Button", "DWButtonN", UIParent)"#),
-    (
-        "LootButton",
-        r#"CreateFrame("LootButton", "DWLootN", UIParent)"#,
-    ),
     (
         "CheckButton",
         r#"CreateFrame("CheckButton", "DWCheckN", UIParent)"#,

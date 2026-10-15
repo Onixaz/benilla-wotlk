@@ -157,6 +157,11 @@ pub(crate) struct ScriptItemUse<'w, 's> {
     pending_items: ResMut<'w, PendingItemOps>,
     // The loot latch the open arm sets, so `SMSG_LOOT_RESPONSE` admits an item loot.
     loot_latch: ResMut<'w, crate::ui_loot::LootLatch>,
+    // The open arm's `CloseLoot(1, 0, 0)` and auto-loot flag (`0x6dcd9c`-`0x6dcdc7`).
+    loot: ResMut<'w, crate::ui_loot::LootState>,
+    loot_cfg: Res<'w, crate::ui_loot::LootConfig>,
+    lock_cleared: ResMut<'w, crate::pending_item_ops::LockTransitions>,
+    deselect: MessageWriter<'w, crate::target::DeselectGuid>,
     ladder: crate::spell::CastLadder<'w, 's>,
     ui_errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
     gate: crate::ui_bind_confirm::BindGate<'w>,
@@ -231,6 +236,10 @@ impl ScriptItemUse<'_, '_> {
             targeting,
             pending_items,
             loot_latch,
+            loot,
+            loot_cfg,
+            lock_cleared,
+            deselect,
             ladder,
             ui_errors,
             gate,
@@ -419,12 +428,22 @@ impl ScriptItemUse<'_, '_> {
                 "ui_items: open item {:#x} (lua bag {bag} → wire {bag_index}/{wire_slot})",
                 c.guid
             );
-            // The loot latch on the item's guid, before the send (`0x5edcc0`); the admission gate
-            // refuses the type-1 `SMSG_LOOT_RESPONSE` without it. No kneel (`0x612710`).
+            // `OpenLootItem 0x6dcd70`: the open loot closes and the auto-loot flag is set first.
+            let closed =
+                crate::ui_loot::close_interaction(loot, loot_latch, &ladder.commands, true);
+            if let Some(g) =
+                closed.filter(|&g| crate::ui_loot::dead_unit_source(&ladder.objects, g))
+            {
+                deselect.write(crate::target::DeselectGuid(g));
+            }
+            for item in loot.take_unlocks() {
+                lock_cleared.0.extend(pending_items.clear_by_guid(item));
+            }
+            let auto = crate::ui_loot::is_auto_looting(loot_cfg, Some(&*script));
+            loot.set_auto_loot(auto, loot_latch, &ladder.commands);
+            // The latch on the item, before the send (`0x6dcdd4`), so its type-1 response passes.
             loot_latch.0 = Some(c.guid);
-            // The grey lock, also before the send (lock setter `0x4953e0` at `0x5edcd9`); it holds
-            // until the item empties, the server refuses, or `SMSG_LOOT_RELEASE_RESPONSE` unlocks
-            // it by guid. The unwrap arm's emitter (`0x5edd60`) takes neither lock nor latch.
+            // The grey lock, before the send (`LockItem` at `0x6dcded`), until the loot closes.
             let (guid, count) = self_q
                 .iter()
                 .next()
@@ -787,6 +806,10 @@ mod tests {
             .init_resource::<crate::ui_bind_confirm::PendingEquips>()
             .init_resource::<crate::ui_bind_confirm::PendingBindOnUse>()
             .init_resource::<crate::ui_loot::LootLatch>()
+            .init_resource::<crate::ui_loot::LootState>()
+            .init_resource::<crate::ui_loot::LootConfig>()
+            .init_resource::<crate::pending_item_ops::LockTransitions>()
+            .add_message::<crate::target::DeselectGuid>()
             .init_resource::<crate::target::Selection>()
             .init_resource::<crate::net::SelfGuid>()
             .init_resource::<crate::spell::cast_target::AutoSelfCast>()
@@ -1743,6 +1766,10 @@ mod bind_confirm_tests {
             .init_resource::<crate::ui_bind_confirm::PendingEquips>()
             .init_resource::<crate::ui_bind_confirm::PendingBindOnUse>()
             .init_resource::<crate::ui_loot::LootLatch>()
+            .init_resource::<crate::ui_loot::LootState>()
+            .init_resource::<crate::ui_loot::LootConfig>()
+            .init_resource::<crate::pending_item_ops::LockTransitions>()
+            .add_message::<crate::target::DeselectGuid>()
             .init_resource::<crate::target::Selection>()
             .init_resource::<crate::net::SelfGuid>()
             .init_resource::<crate::spell::cast_target::AutoSelfCast>()

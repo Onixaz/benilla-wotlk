@@ -92,6 +92,11 @@ fn binding_holds(b: &ClickBinding, model: &Model) -> bool {
 }
 
 impl super::UiScript {
+    /// `IsModifiedClick(action)` asked from the engine, as `IsAutoLooting 0x513700` asks it.
+    pub fn is_modified_click(&self, action: &str) -> bool {
+        is_modified_click(&self.model_ref(), Some(action))
+    }
+
     /// Register the core's `<ModifiedClick>` rows, each at its default.
     pub fn register_modified_clicks(&self, clicks: &[crate::bindings_xml::ModifiedClick]) {
         let mut model = self.model_mut();

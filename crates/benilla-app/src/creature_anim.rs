@@ -294,7 +294,8 @@ impl AttackSeam<'_, '_> {
             crate::ui_loot::close_interaction(
                 &mut self.loot,
                 &mut self.loot_latch,
-                Some(&self.net),
+                &self.net,
+                true,
             );
         }
     }

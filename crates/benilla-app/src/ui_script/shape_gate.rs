@@ -353,7 +353,6 @@ const WIDGET_PROBES: &[(&str, &str, &str)] = &[
     // `PlayerModel` is `Model` plus three verbs, in a table of its own.
     ("0x84f1fc", "PlayerModel", "PGPlayerModel"),
     ("0x87ab4c", "MovieFrame", "PGMovie"),
-    ("0x847ce4", "LootButton", "PGLoot"),
     // The base every widget falls back to (`REGION_MAP_METHODS`' 19 names), probed on a Frame.
     ("0x87c9b8", "Frame", "PGRegionBase"),
 ];

@@ -177,7 +177,7 @@ fn the_uncalled_hooks_are_absent() {
         ("BenillaGetMerchantItemStats", "no caller"),
         ("BenillaGetBuybackItemStats", "no caller"),
         ("BenillaSetBoothTexture", "no caller; SetPortraitTexture"),
-        ("BenillaTakeLootSlot", "a LootButton's own click (0x4c1820)"),
+        ("BenillaTakeLootSlot", "LootSlot (0x589520)"),
     ] {
         assert!(
             s.eval::<bool>(&format!("return {name} == nil")).unwrap(),

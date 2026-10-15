@@ -551,7 +551,7 @@ impl UiScript {
         if let Some(id) = click_id {
             // Shared with `Click()`: gated on the Button being enabled; a CheckButton toggles
             // before `OnClick` fires.
-            button::click_button(&self.lua, id, button, down, false);
+            button::click_button(&self.lua, id, button, down);
         }
         // `OnDoubleClick(self, button)` in place of `OnClick` (`0x77938d call [edx+0x98]`), with
         // the same click sound: its firer `0x779650` is the twin of `OnClick`'s `0x779540` and

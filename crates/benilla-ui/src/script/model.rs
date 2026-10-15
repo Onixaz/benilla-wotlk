@@ -727,14 +727,12 @@ pub(crate) struct Model {
     pub(crate) pending_equip_answers: Vec<bind_confirm::PendingEquipAnswer>,
     pub(crate) bind_on_use_confirms: u32,
 
-    /// The open loot, the row clicks and whether `CloseLoot` ran. A click is the reference's take
-    /// `0x4c2790` with flag 0, raising `LOOT_BIND` for a bind-on-pickup row (a `LootButton`'s own
-    /// click, `0x4c1820`); `LootSlot` passes 1 (`0x4c2e70`), taking it after the confirm.
+    /// The open loot, the `LootSlot` takes and whether `CloseLoot` ran, with its `noUI` flag.
     pub(crate) loot: Option<loot::LootState>,
     pub(crate) loot_picks: Vec<u32>,
-    /// `LootSlot(slot)` rows, 1-based, apart from clicks for the reference's pending-slot gate.
+    /// `ConfirmLootSlot(slot)` rows, 1-based, for its pending-slot gate (`0x589300`).
     pub(crate) loot_confirms: Vec<u32>,
-    pub(crate) loot_close: bool,
+    pub(crate) loot_close: Option<bool>,
     /// `GiveMasterLoot(slot, candidateIndex)`, both 1-based display positions the app translates.
     pub(crate) loot_master_gives: Vec<(u32, u32)>,
 
@@ -1395,7 +1393,7 @@ impl Model {
             bind_on_use_confirms: 0,
             loot_picks: Vec::new(),
             loot_confirms: Vec::new(),
-            loot_close: false,
+            loot_close: None,
             loot_master_gives: Vec::new(),
             loot_rolls: loot_roll::LootRollsState::default(),
             combat_log: combat_log::CombatLogStore::default(),

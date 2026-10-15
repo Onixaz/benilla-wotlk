@@ -253,26 +253,6 @@ pub(super) fn hover_notify_runs(model: &Model, h: Option<FrameHandle>) -> bool {
     }
 }
 
-/// `LootButton:SetSlot`: writes [`ButtonState::loot_slot`].
-pub(super) fn set_loot_slot(lua: &Lua, this: &Table, slot: Option<u32>) -> mlua::Result<()> {
-    let h = frame_handle_of(lua, this)?;
-    let mut model = crate::script::model_mut_of(lua);
-    let frame = model
-        .arena
-        .frame_mut(h)
-        .ok_or_else(|| mlua::Error::runtime("stale frame handle"))?;
-    match (&frame.kind, &mut frame.kind_state) {
-        (crate::widget::FrameKind::LootButton, KindState::Button(bs)) => {
-            bs.loot_slot = slot;
-            Ok(())
-        }
-        // `SetSlot` type-checks `this` as a LootButton (`0x4c18ee`) and raises on anything else.
-        _ => Err(mlua::Error::runtime(
-            "SetSlot: 'this' is not a LootButton widget",
-        )),
-    }
-}
-
 /// Get-or-create the region behind `slot`; returns its id.
 fn ensure_slot(lua: &Lua, this: &Table, slot: Slot) -> mlua::Result<u32> {
     let h = frame_handle_of(lua, this)?;
@@ -904,8 +884,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 model.frame_id(h)
             };
             let btn = button.unwrap_or_else(|| "LeftButton".to_string());
-            // A released click, flagged as scripted, which only a LootButton reads.
-            click_button(lua, id, &btn, false, true);
+            click_button(lua, id, &btn, false);
             Ok(())
         })?,
     )?;
@@ -983,36 +962,13 @@ pub(super) fn wants_press_visual(model: &Model, h: FrameHandle, button: &str) ->
 /// The click shared by the input path and `Click()`: a disabled Button fires nothing, a CheckButton
 /// toggles before `OnClick` runs (`0x785550`), then `OnClick` gets the button name alone as `arg1`
 /// (`0x779540` fires it with the format `"%s"`); `down`, true only for a click a `…ButtonDown`
-/// registration fired, reaches the nameplate's select alone. `scripted` marks a Lua `Click()`
-/// (`0x7826c0` passes 1, the mouse `0x779280`/`0x7793a4` pass 0): a LootButton then does nothing at
-/// all, not even its `OnClick` (`0x4c182b`); every other kind ignores it.
-pub(super) fn click_button(lua: &Lua, id: u32, button: &str, down: bool, scripted: bool) {
-    let mut take_loot = None;
+/// registration fired, reaches the nameplate's select alone.
+pub(super) fn click_button(lua: &Lua, id: u32, button: &str, down: bool) {
     let fire = {
         let mut model = crate::script::model_mut_of(lua);
         let Some(&h) = model.id_to_frame.get(&id) else {
             return;
         };
-        let is_loot = model
-            .arena
-            .frame(h)
-            .is_some_and(|f| f.kind == crate::widget::FrameKind::LootButton);
-        if is_loot {
-            if scripted {
-                return;
-            }
-            // Deviation: the slot is read before the handler, where the reference reads it after
-            // (`[esi+0x4dc]`), because reading first keeps the borrow simple and no stock handler
-            // re-slots its row. Shift, ctrl or alt suppresses the take (`0x4c183a`/`0x4c1848`/
-            // `0x4c1856`).
-            let (shift, ctrl, alt) = model.modifiers;
-            if !shift && !ctrl && !alt {
-                take_loot = model.arena.frame(h).and_then(|f| match &f.kind_state {
-                    KindState::Button(bs) => bs.loot_slot,
-                    _ => None,
-                });
-            }
-        }
         let Some(frame) = model.arena.frame_mut(h) else {
             return;
         };
@@ -1059,11 +1015,5 @@ pub(super) fn click_button(lua: &Lua, id: u32, button: &str, down: bool, scripte
     // press selects nothing: the plate registers Up clicks only (`0x7cb637`).
     if !down {
         super::nameplate::note_click(lua, id, button);
-    }
-    // The take runs whatever the handler did (`0x4c1867`): a row whose `OnClick` errored still
-    // loots.
-    if let Some(slot) = take_loot {
-        // The slot is 0-based; the take queue speaks the 1-based row.
-        crate::script::model_mut_of(lua).loot_picks.push(slot + 1);
     }
 }
