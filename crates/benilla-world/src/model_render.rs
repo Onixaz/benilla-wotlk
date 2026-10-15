@@ -716,6 +716,7 @@ type PartItem<'a> = (
 /// (`BillboardCard::re_place`, a card write) or along its own translation track; its scale pulse
 /// changes the transform without moving it, and re-classifies nothing.
 #[derive(bevy::ecs::system::SystemParam)]
+#[allow(clippy::type_complexity)] // the two card queries, commented inline
 pub(crate) struct CardMoves<'w, 's> {
     changed: Query<
         'w,
