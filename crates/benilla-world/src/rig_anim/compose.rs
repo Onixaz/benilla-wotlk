@@ -44,11 +44,16 @@ fn compose_rig_models(
                 continue;
             };
             let (scale, rotation, translation) = m.to_scale_rotation_translation();
-            *t = Transform {
+            let seat = Transform {
                 translation,
                 rotation,
                 scale,
             };
+            // Only a moved seat is written: an equal one would still register as changed, and
+            // every change-driven pass downstream would re-walk the anchor and its subtree.
+            if *t != seat {
+                *t = seat;
+            }
         }
     }
 }
@@ -259,7 +264,9 @@ pub fn finalize_rig_worlds(
                     continue;
                 };
                 if let Ok((_, mut g)) = globals.get_mut(anchor) {
-                    *g = world;
+                    if *g != world {
+                        *g = world;
+                    }
                 }
                 if let Ok(cs) = children.get(anchor) {
                     stack.extend(
@@ -277,7 +284,9 @@ pub fn finalize_rig_worlds(
                     continue;
                 };
                 let g = parent_g.mul_transform(*local);
-                *global = g;
+                if *global != g {
+                    *global = g;
+                }
                 if let Ok(cs) = children.get(e) {
                     stack.extend(cs.iter().filter(|c| !fx_roots.contains(c)).map(|c| (c, g)));
                 }

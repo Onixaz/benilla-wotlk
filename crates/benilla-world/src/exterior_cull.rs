@@ -282,11 +282,6 @@ fn apply_exterior_cull(
     // `WOW_NO_DRAW_ELECTION=1` disables the frustum and room legs; the window leg stays.
     let no_election =
         *no_election.get_or_insert_with(|| std::env::var_os("WOW_NO_DRAW_ELECTION").is_some());
-    let set = |vis: &mut Visibility, target: Visibility| {
-        if *vis != target {
-            *vis = target;
-        }
-    };
     let gate = ExteriorGate::build(&windows, cam.iter().next());
     // The view volume as the outside leg's `{0,0,1,1}` window (`0x6811ff`): an out-of-frustum
     // body is elected to pass 2. Built from this frame's camera transform, not the `Frustum`
@@ -309,14 +304,13 @@ fn apply_exterior_cull(
         hidden += usize::from(!admitted);
         liquid += usize::from(is_liquid);
         liquid_hidden += usize::from(is_liquid && !admitted);
-        set(
-            &mut vis,
-            if admitted {
-                Visibility::Inherited
-            } else {
-                Visibility::Hidden
-            },
-        );
+        // `set_if_neq`, never a `&mut Visibility` reborrow: the reborrow alone marks the row
+        // changed, and the visibility propagation re-walks every marked row.
+        vis.set_if_neq(if admitted {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
     }
     // The body leg: one whole-object test per net body.
     let (mut body_n, mut body_hidden) = (0usize, 0usize);
@@ -356,14 +350,13 @@ fn apply_exterior_cull(
             admitted,
         );
         body_hidden += usize::from(!admitted);
-        set(
-            &mut vis,
-            if admitted {
-                Visibility::Inherited
-            } else {
-                Visibility::Hidden
-            },
-        );
+        // `set_if_neq`, never a `&mut Visibility` reborrow: the reborrow alone marks the row
+        // changed, and the visibility propagation re-walks every marked row.
+        vis.set_if_neq(if admitted {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
     }
     *verdict = ExteriorCullVerdict {
         windows: match &*windows {

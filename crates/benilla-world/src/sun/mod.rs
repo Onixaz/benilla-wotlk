@@ -111,21 +111,17 @@ fn apply_celestial_visibility(
             Visibility::Inherited
         }
     };
-    let set = |vis: &mut Visibility, target: Visibility| {
-        if *vis != target {
-            *vis = target;
-        }
-    };
+    // `set_if_neq`, never a `&mut Visibility` reborrow, which alone would mark the row changed.
     for (sprite, mut vis) in &mut suns {
-        set(&mut vis, want(matches!(sprite.part, SunPart::Disc)));
+        vis.set_if_neq(want(matches!(sprite.part, SunPart::Disc)));
     }
     for (sprite, mut vis) in &mut moons {
-        set(
-            &mut vis,
-            want(matches!(sprite.part, MoonPart::Disc | MoonPart::Moon02)),
-        );
+        vis.set_if_neq(want(matches!(
+            sprite.part,
+            MoonPart::Disc | MoonPart::Moon02
+        )));
     }
     for mut vis in &mut stars {
-        set(&mut vis, want(true));
+        vis.set_if_neq(want(true));
     }
 }
