@@ -28,11 +28,16 @@ impl Plugin for ItemPersistPlugin {
                 Update,
                 (load_item_cache, save_item_cache)
                     .chain()
+                    .in_set(ItemCacheIo)
                     .before(benilla_world::schedule::WorldStage::Net),
             );
         crate::shutdown::on_app_exit(app, save_on_exit.into_configs());
     }
 }
+
+/// The cache's load and save, which read the roster's realm.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct ItemCacheIo;
 
 /// Where this realm's cache lives and what we last wrote there.
 #[derive(Resource, Default)]
