@@ -28,6 +28,10 @@ mod held;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UnitFeed;
 
+/// The system firing `PLAYER_ENTERING_WORLD`; a feed its stock handlers read runs before it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct EnterWorldFeed;
+
 /// One `UNIT_COMBAT` over a unit, the portrait hit indicator's feed. The emitter `0x494600` fires
 /// `(token, action, descriptor, amount, type)` once per token naming the unit, with no
 /// self-suppression and no CVar gate; `type` is the school on the melee and spell-damage paths, 0
@@ -152,7 +156,7 @@ impl Plugin for UiUnitPlugin {
                 // First, so a worldport's leaving edge precedes the entering edge `feed_units`
                 // raises for the same port.
                 fire_leaving_world_on_worldport,
-                feed_units,
+                feed_units.in_set(EnterWorldFeed),
                 // After the aura feed, whose resolver inputs it measures.
                 feed_unit_reach.after(crate::ui_aura::AuraEvents),
                 // After the same feed, whose guids it covers.

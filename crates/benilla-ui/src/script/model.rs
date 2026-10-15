@@ -559,6 +559,10 @@ pub(crate) struct Model {
     pub(crate) totems: super::totem::TotemSlots,
     /// `DestroyTotem` calls on live slots, 0-based, for the app to send.
     pub(crate) totem_destroys: Vec<u8>,
+    /// The totem bar's element lists and the tables its slot test reads.
+    pub(crate) multicast: super::multicast::MultiCastView,
+    /// Keyed refusals with one `%s`, shown by the app like [`Self::ui_errors`].
+    pub(crate) ui_errors_s: Vec<(&'static str, String)>,
 
     /// The pet bar's ten slots and two bar-wide bits, replaced whole by every `SMSG_PET_SPELLS`.
     pub(crate) pet_bar: super::pet::PetBarState,
@@ -1312,6 +1316,8 @@ impl Model {
             shapeshift_form_byte: 0,
             totems: Default::default(),
             totem_destroys: Vec::new(),
+            multicast: Default::default(),
+            ui_errors_s: Vec::new(),
             pet_bar: super::pet::PetBarState::default(),
             pet_autocast_toggles: Vec::new(),
             pet_stop_attacks: 0,

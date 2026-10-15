@@ -7,7 +7,9 @@ use bevy::prelude::*;
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 use benilla_formats::TotemCategoryCatalog;
 use benilla_protocol::{SessionEvent, SessionEventKind};
-use benilla_ui::script::{ScriptValue, TotemSlots, TotemView, UiScript, MAX_TOTEM_SLOTS};
+use benilla_ui::script::{
+    MultiCastView, ScriptValue, TotemSlots, TotemView, UiScript, MAX_TOTEM_SLOTS,
+};
 
 use crate::items::Items;
 use crate::names::NameCache;
@@ -60,8 +62,15 @@ impl Plugin for UiTotemPlugin {
             .add_systems(
                 Update,
                 (
-                    clear_at_session_start,
-                    feed_totems.in_set(UnitFeed).after(clear_at_session_start),
+                    clear_at_session_start.after(benilla_world::schedule::WorldStage::Net),
+                    feed_totems
+                        .in_set(UnitFeed)
+                        .after(clear_at_session_start)
+                        .before(crate::ui_unit::EnterWorldFeed),
+                    // Before `PLAYER_ENTERING_WORLD`, whose stock handler builds the bar.
+                    feed_multicast
+                        .in_set(UnitFeed)
+                        .before(crate::ui_unit::EnterWorldFeed),
                 ),
             );
     }
@@ -207,5 +216,56 @@ fn feed_totems(
             "PLAYER_TOTEM_UPDATE",
             vec![ScriptValue::Int(slot as i64 + 1)],
         );
+    }
+}
+
+/// What the bar feed last pushed, and the spell table it built once per catalog.
+#[derive(Default)]
+struct MultiCastMemo {
+    pushed: Option<MultiCastView>,
+    spell_categories: Option<std::collections::HashMap<u32, [u32; 2]>>,
+}
+
+/// The element rows `SetMultiCastSpell` and `PlaceAction` test a totem slot against.
+const ELEMENT_ROWS: [u32; 5] = [2, 3, 4, 5, 21];
+
+/// The totem bar's lists and tables, and `UPDATE_MULTI_CAST_ACTIONBAR` after a refill.
+fn feed_multicast(
+    script: Option<NonSendMut<UiScript>>,
+    mut lists: ResMut<crate::spell::multicast::MultiCastLists>,
+    spells: Option<Res<Spells>>,
+    categories: Res<TotemCategories>,
+    mut memo: Local<crate::ui_script::VmMemo<MultiCastMemo>>,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    let memo = memo.get(&script);
+    let spell_categories = memo
+        .spell_categories
+        .get_or_insert_with(|| {
+            spells.as_deref().map_or_else(Default::default, |s| {
+                s.catalog
+                    .iter()
+                    .filter(|(_, d)| d.totem_categories.iter().any(|c| ELEMENT_ROWS.contains(c)))
+                    .map(|(id, d)| (id, d.totem_categories))
+                    .collect()
+            })
+        })
+        .clone();
+    let view = MultiCastView {
+        lists: lists.lists.clone(),
+        spell_categories,
+        category_names: [2, 3, 4, 5]
+            .into_iter()
+            .filter_map(|row| Some((row, categories.0.get(row)?.name.clone())))
+            .collect(),
+    };
+    if memo.pushed.as_ref() != Some(&view) {
+        script.set_multicast(view.clone());
+        memo.pushed = Some(view);
+    }
+    if std::mem::take(&mut lists.announce) {
+        script.fire_event("UPDATE_MULTI_CAST_ACTIONBAR", vec![]);
     }
 }

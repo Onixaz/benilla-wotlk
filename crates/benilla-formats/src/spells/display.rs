@@ -41,6 +41,10 @@ pub struct SpellDisplay {
     pub attributes_ex3: u32,
     /// `AttributesEx4` (column 8, `+0x20`).
     pub attributes_ex4: u32,
+    /// `AttributesEx7` (column 11, `+0x2c`); `0x20` files a totem in the totem bar's lists.
+    pub attributes_ex7: u32,
+    /// `TotemCategory[2]` (columns 222-223): the tool rows the spell needs, a totem's element.
+    pub totem_categories: [u32; 2],
     /// `SpellFamilyName` (column 208): `GetSpellModifiers` (`0x6e6b30`) applies nothing unless it
     /// is nonzero and equals the local player's class family (`[0xcecaac]`, `0x6e6b46`).
     pub spell_family: u32,
@@ -309,6 +313,8 @@ impl Default for SpellDisplay {
             effect_item_type: [0; 3],
             effect_misc_value: [0; 3],
             effect_misc_value_b: [0; 3],
+            attributes_ex7: 0,
+            totem_categories: [0; 2],
         }
     }
 }

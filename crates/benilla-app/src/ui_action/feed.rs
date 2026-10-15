@@ -317,6 +317,17 @@ pub(super) fn feed_actions(
         })
         .collect();
     show_messages(&mut script, &mut sink, "ui_action", engine_lines);
+    // The same with one `%s` (`ERR_MULTI_CAST_ACTION_TOTEM_S`).
+    let engine_s: Vec<Shown> = script
+        .take_ui_errors_s()
+        .into_iter()
+        .filter_map(|(key, arg)| {
+            let e = UiError::s(key, arg);
+            ui_error_text(&e, &|k| script.lua().globals().get::<String>(k).ok())
+                .map(|t| Shown::keyed(e.key, t))
+        })
+        .collect();
+    show_messages(&mut script, &mut sink, "ui_action", engine_s);
 
     // `SecureCmdOptionParse`'s unknown condition names (`0x5f011a`, message 574).
     let unknown = script.take_unknown_macro_options();

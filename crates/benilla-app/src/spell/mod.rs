@@ -20,6 +20,7 @@ pub(crate) mod group_relation;
 mod inflight;
 pub(crate) mod learn_place;
 mod mods;
+pub(crate) mod multicast;
 pub(crate) mod net;
 mod range_units;
 pub(crate) mod targeting;
@@ -135,6 +136,11 @@ impl Plugin for SpellPlugin {
             )
             .add_systems(OnEnter(ClientState::InWorld), mods::clear_on_world_enter)
             .init_resource::<SummonSlots>()
+            .init_resource::<multicast::MultiCastLists>()
+            .add_systems(
+                Update,
+                multicast::run_refill.after(WorldStage::Net).before(UiFeed),
+            )
             .add_systems(
                 Startup,
                 load_summon_slots.after(benilla_assets::AssetSet::Open),

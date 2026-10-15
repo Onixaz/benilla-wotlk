@@ -64,6 +64,7 @@ pub(crate) struct Lifecycle<'w> {
     actions: ResMut<'w, PlayerActions>,
     learned_in_tab: ResMut<'w, LearnedInTab>,
     summons: Res<'w, super::SummonSlots>,
+    multicast: ResMut<'w, super::multicast::MultiCastLists>,
     cast_bar: ResMut<'w, CastBarFeed>,
     pending: ResMut<'w, PendingCast>,
     queued_melee: ResMut<'w, QueuedMeleeSpell>,
@@ -103,6 +104,20 @@ fn on_spell_book(In(ev): In<SessionEvent>, mut l: Lifecycle) {
     } = ev
     {
         spell_book(spell_ids, cooldowns, &mut l.actions, &mut l.cooldowns);
+        // The book load files the totems without a refill (`0x6e7f73`).
+        l.multicast.lists = Default::default();
+        if let Some(spells) = l.spells.as_deref() {
+            for d in l
+                .actions
+                .spells
+                .iter()
+                .filter_map(|&id| spells.catalog.get(id))
+            {
+                if files_in_book(d, &l.summons.0) {
+                    l.multicast.learn(d, &spells.catalog);
+                }
+            }
+        }
     }
 }
 
@@ -136,13 +151,42 @@ fn on_spell_learned(
             &l.net,
             &l.summons.0,
         );
+        // The totem lists, and a live learn's refill (`0x542d33`, `0x542df1`).
+        let display = l
+            .spells
+            .as_deref()
+            .and_then(|s| Some((s, s.catalog.get(spell_id)?)));
+        if let Some((spells, d)) = display.filter(|(_, d)| files_in_book(d, &l.summons.0)) {
+            let changed = l.multicast.learn(d, &spells.catalog);
+            if learner.is_some() && (changed || super::multicast::CALL_SPELLS.contains(&spell_id)) {
+                l.multicast.refill_due = true;
+            }
+        }
     }
 }
 
 fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut errors: ResMut<UiErrorKeys>) {
     if let SessionEvent::SpellRemoved { spell_id } = ev {
         removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut errors);
+        unlearn_totem(&mut l.multicast, spell_id);
     }
+}
+
+/// The unlearn's totem sweep (`0x53fe57`); an emptied list or a call spell refills (`0x53ff4f`).
+fn unlearn_totem(lists: &mut super::multicast::MultiCastLists, spell_id: u32) {
+    if lists.unlearn(spell_id) || super::multicast::CALL_SPELLS.contains(&spell_id) {
+        lists.refill_due = true;
+    }
+}
+
+/// Past the registrar's exits (`0x54265c`..`0x542856`): the spell is filed in the book's lists.
+fn files_in_book(
+    d: &benilla_formats::SpellDisplay,
+    summons: &benilla_formats::SummonPropertiesCatalog,
+) -> bool {
+    d.attributes & (ATTR_DO_NOT_DISPLAY | benilla_formats::SPELL_ATTR_IS_TRADESKILL) == 0
+        && !d.is_companion(summons)
+        && d.attributes_ex4 & ATTR_EX4_NOT_IN_SPELLBOOK == 0
 }
 
 fn on_spell_superceded(
@@ -163,6 +207,17 @@ fn on_spell_superceded(
             &mut errors,
             &mut l.learned_in_tab,
         );
+        // The pair is unlearn then a live learn (`0x542eb0`).
+        unlearn_totem(&mut l.multicast, old_spell_id);
+        let display = l
+            .spells
+            .as_deref()
+            .and_then(|s| Some((s, s.catalog.get(new_spell_id)?)));
+        if let Some((spells, d)) = display.filter(|(_, d)| files_in_book(d, &l.summons.0)) {
+            if l.multicast.learn(d, &spells.catalog) {
+                l.multicast.refill_due = true;
+            }
+        }
     }
 }
 

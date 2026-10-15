@@ -240,6 +240,8 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // `ShowAllSpellRanks` (register site `0x51f1e6`, name `0x9ffea0`, default `0x9e1464` "1"):
     // `SpellBook_GetTabInfo` pages the full book while set, the highest-rank view while clear.
     same("ShowAllSpellRanks", "1"),
+    // `autoFilledMultiCastSlots` (`0x51f38b`, default `0x9e14a0` "0"): elements the bar seeded.
+    same(crate::spell::multicast::CVAR_AUTO_FILLED, "0"),
     // The five saved camera views and the live index, at the reference's names and default strings;
     // owned by [`crate::player::camera_view`]. Registered so a `SaveView` persists.
     same(

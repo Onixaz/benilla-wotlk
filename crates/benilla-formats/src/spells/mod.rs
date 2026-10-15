@@ -110,6 +110,8 @@ const COL_ATTRIBUTES_EX3: usize = 7;
 /// `AttributesEx4` (`+0x20`), the dword after `AttributesEx3`: the pet-bar spell arm tests its
 /// `0x20` at `0x4bd355`.
 const COL_ATTRIBUTES_EX4: usize = 8;
+const COL_ATTRIBUTES_EX7: usize = 11;
+const COL_TOTEM_CATEGORY_1: usize = 222;
 const COL_SPEED: usize = 47;
 const COL_EFFECT_1: usize = 71;
 /// `EffectMiscValue[0]`, `71 + 13 × 3`: the 14th `[3]` array from `Effect`.
@@ -551,6 +553,10 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 attributes_ex2: u32_at(r, COL_ATTRIBUTES_EX2).unwrap_or(0),
                 attributes_ex3: u32_at(r, COL_ATTRIBUTES_EX3).unwrap_or(0),
                 attributes_ex4: u32_at(r, COL_ATTRIBUTES_EX4).unwrap_or(0),
+                attributes_ex7: u32_at(r, COL_ATTRIBUTES_EX7).unwrap_or(0),
+                totem_categories: std::array::from_fn(|i| {
+                    u32_at(r, COL_TOTEM_CATEGORY_1 + i).unwrap_or(0)
+                }),
                 school_mask: u32_at(r, COL_SCHOOL_MASK).unwrap_or(0),
                 mechanic: u32_at(r, COL_MECHANIC).unwrap_or(0),
                 effect_mechanic: std::array::from_fn(|i| {

@@ -693,7 +693,12 @@ pub(crate) mod schedule_tests {
     /// - a crate's interaction (`target::click::act_on_interact`) against what
     ///   `act_on_right_click` and the cursor classifier already pair with: it runs the click's
     ///   dispatchers over the classifier's reading of its object, and its attack leg
-    ///   selects as the click does, so it writes `Selection` where the click's drain does.
+    ///   selects as the click does, so it writes `Selection` where the click's drain does;
+    /// - `spell::multicast::run_refill` against the character and realm screens' `Cvars` writers
+    ///   (`apply_roster_policy`, `persist_last_character`, `apply_realm_policy`): the refill acts
+    ///   only on an in-world learn, they only before world entry;
+    /// - `ui_totem::feed_totems` against `ui_items::feed_item_stats` over `Items` and the VM: it
+    ///   only reads templates for the tool check, as `feed_quest_lines` does.
     ///
     /// Raising the ceiling is a claim that a new undeclared order is acceptable: make it with the
     /// reason read off the dump, or declare the order (`.after`, a set, a `chain`). A resource
