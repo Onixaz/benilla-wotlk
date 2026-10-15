@@ -535,7 +535,8 @@ impl Plugin for ProbeDragPlugin {
 
 /// [`ProbeDragPlugin`]'s state: `WOW_PROBE_DRAG="A>B[;C>D…]"` drags frame A onto B through the
 /// real pointer path from `WOW_PROBE_DRAG_AT` (default 14 s), one step per `WOW_PROBE_DRAG_STEP`
-/// (default 0.1 s); `WOW_PROBE_DRAG_LUA` is a chunk whose returned string is logged after each.
+/// (default 0.1 s), and `A>A` clicks A; `WOW_PROBE_DRAG_LUA` is a chunk whose returned string is
+/// logged after each.
 #[derive(Resource)]
 struct ProbeDrag {
     pairs: Vec<(String, String)>,
@@ -616,6 +617,8 @@ fn fire_probe_drag(
             let (x, y) = probe.from;
             script.mouse_button(x, y, "LeftButton", true);
         }
+        // `A>A` is a click: no motion between the press and the release.
+        2..=5 if from_name == to_name => {}
         // Past the 4-px drag threshold: fires `OnDragStart`.
         2 => {
             let (x, y) = probe.from;
