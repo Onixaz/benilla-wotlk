@@ -99,7 +99,7 @@ pub(super) fn attacker_state(
     poses: &Query<&mut Transform>,
     log: &mut ChatLog,
 ) {
-    // `0x625e40`, checked before the dispatcher (`0x629b3e`, `0x629b45`): a swing from a spell
+    // `0x754fd0`, checked before the dispatcher: a swing from a spell
     // that did not land plainly emits no line; the floating number has the same gate.
     if !s.displayed() {
         return;

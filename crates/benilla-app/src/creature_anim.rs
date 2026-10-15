@@ -396,9 +396,7 @@ pub(crate) struct HandGrip {
 /// The grip overlay's weight over the unmasked base on the fingers, about 8:1 so they read closed.
 pub(crate) const HAND_GRIP_WEIGHT: f32 = 8.0;
 
-/// One melee swing (`SMSG_ATTACKERSTATEUPDATE`): one packet, one animation. `hit_info` `0x4` is
-/// off-hand, `0x10000` suppresses the animation, `0x20` is an absorb (`0x6243e0`); the net bridge
-/// rewrites a full block's `victim_state` first.
+/// One melee swing (`SMSG_ATTACKERSTATEUPDATE`): one packet, one animation.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct SwingMessage {
     pub(crate) attacker: Entity,
@@ -409,7 +407,7 @@ pub(crate) struct SwingMessage {
     /// 8 deflect.
     pub(crate) victim_state: u32,
     pub(crate) damage: u32,
-    /// `0x625e40`'s display verdict: it gates only the floating number (`0x62440d`); animation,
+    /// `0x754fd0`'s display verdict: it gates only the floating number (`0x755a60`); animation,
     /// flinch, blood, sounds and timers run regardless.
     pub(crate) displayed: bool,
     /// `PlaySeq` stamp, in packet order.

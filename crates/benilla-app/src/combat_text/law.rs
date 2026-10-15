@@ -166,11 +166,11 @@ pub(crate) fn damage_color(
     }
 }
 
-/// The melee emitter split, `0x6243e0`'s branch order: victim states 2, 3, 5, 6, 7, 8 float their
-/// word whatever the damage; otherwise damage floats the bare number (category 2 on
-/// `HITINFO_CRITICALHIT 0x80`), and zero damage is "Absorb" on `0x20`, "Resist" on `0x40`, else
-/// "Miss" (`HITINFO_MISS` is never tested).
+/// The melee floating text, in `0x755a60`'s branch order.
 pub(crate) fn melee_text(hit_info: u32, victim_state: u32, damage: u32) -> Option<(u8, String)> {
+    use benilla_protocol::messages::hit_info::{
+        CRIT, FAKE_DAMAGE, FULL_ABSORB, FULL_RESIST, NO_MISS_WORD,
+    };
     let code = match victim_state {
         2 => 3, // DODGE
         3 => 4, // PARRY
@@ -181,12 +181,15 @@ pub(crate) fn melee_text(hit_info: u32, victim_state: u32, damage: u32) -> Optio
         _ => {
             // 0 UNAFFECTED, 1 NORMAL, 4 INTERRUPT: keyed on damage.
             if damage > 0 {
-                let category = if hit_info & 0x80 != 0 { 2 } else { 0 };
+                let category = if hit_info & CRIT != 0 { 2 } else { 0 };
                 return Some((category, damage.to_string()));
             }
-            if hit_info & 0x20 != 0 {
+            if hit_info & (FAKE_DAMAGE | NO_MISS_WORD) != 0 {
+                return None;
+            }
+            if hit_info & FULL_ABSORB != 0 {
                 10 // ABSORB, full; a partial one shows only the number
-            } else if hit_info & 0x40 != 0 {
+            } else if hit_info & FULL_RESIST != 0 {
                 2 // RESIST, full
             } else {
                 1 // MISS
@@ -402,11 +405,11 @@ mod tests {
         assert!((scale_value(2, 0.5) / scale_value(0, 0.5) - 1.5).abs() < 1e-3);
     }
 
-    /// The melee (`0x6243e0`) and spell splits; ABSORB is the one category-1 word.
+    /// The melee (`0x755a60`) and spell splits; ABSORB is the one category-1 word.
     #[test]
     fn emitters_split_numbers_and_words() {
         assert_eq!(melee_text(0x2, 1, 37), Some((0, "37".into())));
-        assert_eq!(melee_text(0x82, 1, 99), Some((2, "99".into()))); // crit bit 0x80
+        assert_eq!(melee_text(0x202, 1, 99), Some((2, "99".into()))); // crit bit 0x200
         assert_eq!(melee_text(0x10, 0, 0), Some((3, "Miss".into())));
         assert_eq!(melee_text(0x0, 2, 0), Some((3, "Dodge".into())));
         assert_eq!(melee_text(0x0, 3, 0), Some((3, "Parry".into())));
@@ -415,9 +418,12 @@ mod tests {
         // A word state ignores damage.
         assert_eq!(melee_text(0x2, 3, 25), Some((3, "Parry".into())));
         assert_eq!(melee_text(0x22, 1, 0), Some((1, "Absorb".into()))); // full absorb: bit 0x20
-        assert_eq!(melee_text(0x42, 1, 0), Some((3, "Resist".into()))); // full resist: bit 0x40
+        assert_eq!(melee_text(0x82, 1, 0), Some((3, "Resist".into()))); // full resist: bit 0x80
                                                                         // Zero damage: Miss.
         assert_eq!(melee_text(0x2, 1, 0), Some((3, "Miss".into())));
+        // `NO_MISS_WORD` and `FAKE_DAMAGE` float no word at zero damage.
+        assert_eq!(melee_text(0x4002, 1, 0), None);
+        assert_eq!(melee_text(0x1000002, 1, 0), None);
         assert_eq!(spell_text(120, 0, 0, false), Some((0, "120".into())));
         assert_eq!(spell_text(240, 0, 0, true), Some((2, "240".into())));
         assert_eq!(spell_text(0, 50, 0, false), Some((1, "Absorb".into())));

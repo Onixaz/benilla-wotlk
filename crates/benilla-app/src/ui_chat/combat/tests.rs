@@ -253,16 +253,16 @@ fn the_melee_dispatcher_follows_the_reference_order() {
     let f = |h, v, d, s| melee_family(h, v, d, s).expect("a family").stem;
     // A plain landed swing, and its crit and school variants.
     assert_eq!(f(0, 1, 120, 0), "COMBATHIT");
-    assert_eq!(f(0x80, 1, 120, 0), "COMBATHITCRIT");
+    assert_eq!(f(0x200, 1, 120, 0), "COMBATHITCRIT");
     assert_eq!(f(0, 1, 120, 2), "COMBATHITSCHOOL");
-    assert_eq!(f(0x80, 1, 120, 2), "COMBATHITCRITSCHOOL");
+    assert_eq!(f(0x200, 1, 120, 2), "COMBATHITCRITSCHOOL");
     // MISS wins over everything, including a VictimState that would say otherwise.
     assert_eq!(f(0x10, 2, 0, 0), "MISSED");
     // BLOCKS wins over the damage test: a partial block still lands damage.
     assert_eq!(f(0, 5, 90, 0), "VSBLOCK");
-    // Zero damage + the absorb/resist bits.
+    // Zero damage + the full absorb/resist bits.
     assert_eq!(f(0x20, 1, 0, 0), "VSABSORB");
-    assert_eq!(f(0x40, 1, 0, 0), "VSRESIST");
+    assert_eq!(f(0x80, 1, 0, 0), "VSRESIST");
     // ...but the same bits with damage through are a landed hit, not a full absorb.
     assert_eq!(f(0x20, 1, 90, 0), "COMBATHIT");
     // The VictimState words.

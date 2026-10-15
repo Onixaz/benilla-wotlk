@@ -12,6 +12,8 @@ use benilla_protocol::{
 /// A Kobold Vermin spawn in Northshire (`creature` guid 79992): hostile, level 1, in melee reach
 /// on landing. Attack, loot and death staging all teleport here.
 pub(crate) const ATTACK_TP: &str = ".go xyz -8780.71 -164.568 81.94";
+/// [`ATTACK_TP`]'s coordinates, for a login that already stands there.
+pub(crate) const ATTACK_TP_POS: [f32; 3] = [-8780.71, -164.568, 81.94];
 
 /// One entity decoded from the stream, as `benilla-world` reports it (raw WoW coords).
 pub(crate) struct Tracked {
@@ -417,8 +419,17 @@ impl World {
             SessionEvent::AttackerState(s) => {
                 self.swings_seen += 1;
                 println!(
-                    "SMSG_ATTACKERSTATEUPDATE: {:#x} → {:#x}  hitInfo {:#x}  damage {}  victimState {}",
-                    s.attacker, s.victim, s.hit_info, s.damage, s.victim_state
+                    "SMSG_ATTACKERSTATEUPDATE: {:#x} → {:#x}  hitInfo {:#x}  damage {}  overkill {}  victimState {}  meleeSpellId {}  absorb {}  resist {}  blocked {}",
+                    s.attacker,
+                    s.victim,
+                    s.hit_info,
+                    s.damage,
+                    s.overkill,
+                    s.victim_state,
+                    s.melee_spell_id,
+                    s.absorb,
+                    s.resist,
+                    s.blocked
                 );
             }
             SessionEvent::AttackSwingError(e) => {

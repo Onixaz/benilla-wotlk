@@ -154,10 +154,7 @@ fn periodic_center_text(damage: u32, absorb: u32, resist: i32) -> Option<CenterT
     }
 }
 
-/// Melee packet to the centre text's messageType and args (`0x629d30`), fired at packet receive,
-/// not at the impact keyframe. A landed hit with a partial fires the first of resist
-/// (`0x629efd`), block (`0x629f15`) and absorb (`0x629f30`) with `(damage, partial)`, ahead of
-/// the crit.
+/// The melee centre text (`0x7512b0`), fired at packet receive.
 pub(crate) fn melee_center_text(
     hit_info: u32,
     victim_state: u32,
@@ -181,14 +178,14 @@ pub(crate) fn melee_center_text(
                     Some(("BLOCK", Some(damage.to_string()), Some(blocked.to_string())))
                 } else if absorb > 0 {
                     Some(("ABSORB", Some(damage.to_string()), Some(absorb.to_string())))
-                } else if hit_info & 0x80 != 0 {
+                } else if hit_info & benilla_protocol::messages::hit_info::CRIT != 0 {
                     Some(("DAMAGE_CRIT", Some(damage.to_string()), None))
                 } else {
                     Some(("DAMAGE", Some(damage.to_string()), None))
                 }
-            } else if hit_info & 0x20 != 0 {
+            } else if hit_info & benilla_protocol::messages::hit_info::FULL_ABSORB != 0 {
                 Some(("ABSORB", None, None))
-            } else if hit_info & 0x40 != 0 {
+            } else if hit_info & benilla_protocol::messages::hit_info::FULL_RESIST != 0 {
                 Some(("RESIST", None, None))
             } else {
                 Some(("MISS", None, None))
@@ -698,7 +695,7 @@ mod tests {
     }
 
     /// A landed melee hit with several partials takes the first of resist, block and absorb
-    /// (`0x629efd`, `0x629f15`, `0x629f30`).
+    /// (`0x7512b0`).
     #[test]
     fn melee_partials_are_tested_resist_block_absorb() {
         // (hit_info, victim_state, damage, absorb, resist, blocked)
@@ -711,15 +708,15 @@ mod tests {
             words("RESIST", Some(300), Some(20))
         );
         assert_eq!(
-            melee_center_text(0x80, 1, 300, 50, 20, 40),
+            melee_center_text(0x200, 1, 300, 50, 20, 40),
             words("RESIST", Some(300), Some(20))
         );
         assert_eq!(
-            melee_center_text(0x80, 1, 300, 50, 0, 0),
+            melee_center_text(0x200, 1, 300, 50, 0, 0),
             words("ABSORB", Some(300), Some(50))
         );
         assert_eq!(
-            melee_center_text(0x80, 1, 300, 0, 0, 0),
+            melee_center_text(0x200, 1, 300, 0, 0, 0),
             words("DAMAGE_CRIT", Some(300), None)
         );
     }

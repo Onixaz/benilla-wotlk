@@ -609,13 +609,12 @@ pub(crate) struct Trailers {
     /// Negative is a vulnerability bonus, worded by `VULNERABLE_TRAILER`.
     pub resisted: i32,
     pub blocked: u32,
-    /// The swing's `HitInfo`, for `0x4000` GLANCING and `0x8000` CRUSHING; melee only.
+    /// The swing's `HitInfo`, for `0x10000` GLANCING and `0x20000` CRUSHING; melee only.
     pub hit_info: u32,
 }
 
 fn append_trailers(lua: &benilla_ui::script::UiScript, line: &mut String, t: Trailers) {
-    const GLANCING: u32 = 0x4000;
-    const CRUSHING: u32 = 0x8000;
+    use benilla_protocol::messages::hit_info::{CRUSHING, GLANCING};
     let mut push = |key: &str, arg: Option<i64>| {
         let Some(template) = global_string(lua, key) else {
             return;
@@ -1504,19 +1503,16 @@ pub(crate) fn miss_family(miss_info: u8) -> Family {
     }
 }
 
-/// The melee family a swing selects, the reference's dispatcher `0x629b60` arm for arm; the order
-/// matters because the tests overlap. The bits are vmangos's `HitInfo` in its `> 1.9.4` branch
-/// (`Objects/UnitDefines.h:250-268`) and `VictimState` (`:237-248`).
+/// The melee family a swing selects, `0x629b60` arm for arm; the order matters.
 pub(crate) fn melee_family(
     hit_info: u32,
     victim_state: u32,
     damage: u32,
     school: u8,
 ) -> Option<Family> {
-    const MISS: u32 = 0x10;
-    const ABSORB: u32 = 0x20;
-    const RESIST: u32 = 0x40;
-    const CRIT: u32 = 0x80;
+    use benilla_protocol::messages::hit_info::{
+        CRIT, FULL_ABSORB as ABSORB, FULL_RESIST as RESIST, MISS,
+    };
     if hit_info & MISS != 0 {
         return Some(MISSED);
     }

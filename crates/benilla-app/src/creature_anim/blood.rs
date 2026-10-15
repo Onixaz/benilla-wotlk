@@ -67,8 +67,12 @@ pub(super) fn blood_spurts(
         if *text_only {
             continue; // a flush carries only the floating text
         }
-        // The client's gate (`0x624530`): `HitInfo & 0x2`, damage, victim state 1 or 4 (interrupt).
-        if swing.hit_info & 0x2 == 0 || swing.damage == 0 || !matches!(swing.victim_state, 1 | 4) {
+        // `0x755e40`: `AFFECTS_VICTIM`, damage or `FAKE_DAMAGE`, and victim state 1 or 4.
+        let fake = swing.hit_info & benilla_protocol::messages::hit_info::FAKE_DAMAGE != 0;
+        if swing.hit_info & benilla_protocol::messages::hit_info::AFFECTS_VICTIM == 0
+            || (swing.damage == 0 && !fake)
+            || !matches!(swing.victim_state, 1 | 4)
+        {
             if swing.damage > 0 {
                 info!(
                     "blood: gate dropped a damaging swing (hit_info {:#x}, victim_state {}, damage {})",
@@ -106,7 +110,8 @@ pub(super) fn blood_spurts(
             }
             _ => true,
         };
-        let large = swing.hit_info & 0x2000 != 0; // crushing picks the large row; a crit does not
+        // `LARGE_BLOOD` picks the large row (`0x755380`).
+        let large = swing.hit_info & benilla_protocol::messages::hit_info::LARGE_BLOOD != 0;
         let Some((effect, path)) = blood
             .0
             .effect_id(blood_id, VIOLENCE_LEVEL, front, large)

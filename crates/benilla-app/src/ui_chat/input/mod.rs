@@ -1324,7 +1324,7 @@ fn combat_log_battery(log: &mut super::feed::ChatLog, get: &dyn Fn(&str) -> Opti
                     absorbed: 12,
                     resisted: 7,
                     blocked: 30,
-                    hit_info: 0x4000,
+                    hit_info: 0x10000, // GLANCING
                 }),
                 ..fills(210, None, None)
             },

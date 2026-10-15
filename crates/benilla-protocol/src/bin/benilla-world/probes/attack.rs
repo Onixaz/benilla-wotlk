@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 use benilla_protocol::{guid, EntityKind};
 
 use crate::probes::{Ctx, Probe};
-use crate::world::ATTACK_TP;
+use crate::world::{ATTACK_TP, ATTACK_TP_POS};
 
 #[derive(Default)]
 pub(crate) struct Attack {
@@ -24,6 +24,17 @@ impl Probe for Attack {
     }
 
     fn poll(&mut self, cx: &mut Ctx) -> Result<()> {
+        // A login already at the spot gets no teleport ack: the login position is the landing.
+        if cx.world.attack_pos.is_none() {
+            if let Some(me) = cx.world.tracked.get(&cx.world.self_guid) {
+                let p = me.position;
+                let d = (p[0] - ATTACK_TP_POS[0]).hypot(p[1] - ATTACK_TP_POS[1]);
+                if d < 10.0 {
+                    println!("already at the attack spot ({d:.1} yd off): no teleport needed");
+                    cx.world.attack_pos = Some(p);
+                }
+            }
+        }
         // Once landed, swing at the nearest creature within 20 yd: the kobold we stand on.
         if self.attack_target.is_none() {
             if let Some(pos) = cx.world.attack_pos {

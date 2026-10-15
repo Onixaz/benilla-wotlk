@@ -391,10 +391,11 @@ fn load_exhaustion_rows(
     }
 }
 
-/// Melee swing to the `UNIT_COMBAT` action (victim-state table `0x83de28`, `0x4946d0`) and
-/// descriptor, HitInfo keyed on the amount's sign: above zero CRITICAL `0x80`, GLANCING `0x4000`,
-/// CRUSHING `0x8000`; else ABSORB `0x20`, BLOCK `0x800`, RESIST `0x40`.
+/// Melee swing to the `UNIT_COMBAT` action and descriptor (`0x5132c0`).
 fn melee_feedback(hit_info: u32, victim_state: u32, damage: u32) -> (&'static str, &'static str) {
+    use benilla_protocol::messages::hit_info::{
+        BLOCK, CRIT, CRUSHING, FULL_ABSORB, FULL_RESIST, GLANCING,
+    };
     match victim_state {
         2 => ("DODGE", ""),
         3 => ("PARRY", ""),
@@ -405,20 +406,20 @@ fn melee_feedback(hit_info: u32, victim_state: u32, damage: u32) -> (&'static st
         // 0 UNAFFECTED / 1 NORMAL / 4 INTERRUPT: WOUND, descriptor by the amount-sign key.
         _ => {
             if damage > 0 {
-                if hit_info & 0x80 != 0 {
+                if hit_info & CRIT != 0 {
                     ("WOUND", "CRITICAL")
-                } else if hit_info & 0x4000 != 0 {
+                } else if hit_info & GLANCING != 0 {
                     ("WOUND", "GLANCING")
-                } else if hit_info & 0x8000 != 0 {
+                } else if hit_info & CRUSHING != 0 {
                     ("WOUND", "CRUSHING")
                 } else {
                     ("WOUND", "")
                 }
-            } else if hit_info & 0x20 != 0 {
+            } else if hit_info & FULL_ABSORB != 0 {
                 ("WOUND", "ABSORB")
-            } else if hit_info & 0x800 != 0 {
+            } else if hit_info & BLOCK != 0 {
                 ("WOUND", "BLOCK") // a full block the parse did not already make state 5
-            } else if hit_info & 0x40 != 0 {
+            } else if hit_info & FULL_RESIST != 0 {
                 ("WOUND", "RESIST")
             } else {
                 ("MISS", "")

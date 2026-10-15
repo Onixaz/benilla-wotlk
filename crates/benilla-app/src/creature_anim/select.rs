@@ -625,10 +625,9 @@ pub(super) fn arm_forces_head(engaged: bool, casting: bool, outgoing: u16) -> bo
     engaged || casting || matches!(outgoing, 16..=19 | 25..=29 | 51..=54)
 }
 
-/// The victim's wound flinch (`0x60ea70`), by severity and engagement alone: a crit (`HitInfo &
-/// 0x80`) CombatCritical, an engaged victim (`[unit+0xc48]` set) CombatWound, else StandWound.
+/// The wound flinch (`0x736640`): crit CombatCritical, engaged CombatWound, else StandWound.
 pub(super) fn wound_anim(hit_info: u32, engaged: bool) -> u16 {
-    if hit_info & 0x80 != 0 {
+    if hit_info & benilla_protocol::messages::hit_info::CRIT != 0 {
         10 // CombatCritical
     } else if engaged {
         9 // CombatWound

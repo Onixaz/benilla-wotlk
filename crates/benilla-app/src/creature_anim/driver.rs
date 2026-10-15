@@ -325,8 +325,8 @@ pub(super) fn drive_animations(
     // re-trigger re-seeds the same secondary slot.
     let mut pending_wound: bevy::ecs::entity::EntityHashMap<WoundEdge> = default();
     for s in swings.read() {
-        // HitInfo 0x10000 suppresses the swing animation only.
-        if s.hit_info & 0x10000 == 0 {
+        // `NO_ANIMATION` suppresses the swing animation only (`0x755130`).
+        if s.hit_info & benilla_protocol::messages::hit_info::NO_ANIMATION == 0 {
             pending
                 .entry(s.attacker)
                 .or_default()

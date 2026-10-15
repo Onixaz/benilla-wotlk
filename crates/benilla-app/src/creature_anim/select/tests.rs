@@ -819,9 +819,9 @@ fn base_arm_head_force_is_the_combat_carveout() {
 
 #[test]
 fn wound_id_by_severity_then_engagement() {
-    // A crit outranks engagement, which picks 9 over 8 (`0x60ea70`).
-    assert_eq!(wound_anim(0x2 | 0x80, false), 10);
-    assert_eq!(wound_anim(0x2 | 0x80, true), 10);
+    // A crit outranks engagement, which picks 9 over 8 (`0x736640`).
+    assert_eq!(wound_anim(0x2 | 0x200, false), 10);
+    assert_eq!(wound_anim(0x2 | 0x200, true), 10);
     assert_eq!(wound_anim(0x2, true), 9);
     assert_eq!(wound_anim(0x2, false), 8);
 }

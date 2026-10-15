@@ -35,10 +35,10 @@ use super::kit::{
 };
 use super::{AudioListener, SoundConfig, SoundOutput};
 
-// vmangos `HitInfo` bits (UnitDefines.h, 1.12 wire).
-const HITINFO_MISS: u32 = 0x10;
-const HITINFO_CRITICAL: u32 = 0x80;
-const HITINFO_CRUSHING: u32 = 0x8000;
+// The `HitInfo` bits the victim round `0x755e40` reads for the vocal.
+const HITINFO_MISS: u32 = benilla_protocol::messages::hit_info::MISS;
+const HITINFO_CRITICAL: u32 = benilla_protocol::messages::hit_info::CRIT;
+const HITINFO_CRUSHING: u32 = benilla_protocol::messages::hit_info::CRUSHING;
 // vmangos `VictimState`.
 const VICTIM_DODGE: u32 = 2;
 const VICTIM_PARRY: u32 = 3;
@@ -62,9 +62,9 @@ const COMBAT_MISS_2H: u32 = 7081;
 const DEFLECT_KIT: u32 = 3262;
 const ABSORB_KIT: u32 = 3334;
 
-/// `HITINFO_ABSORB | HITINFO_RESIST`, the reference's `test al, 0x60`: [`ABSORB_KIT`] instead of
-/// the wound vocal.
-const HITINFO_ABSORB_OR_RESIST: u32 = 0x60;
+/// The full absorb and resist bits (`0x755e40`): [`ABSORB_KIT`] instead of the wound vocal.
+const HITINFO_ABSORB_OR_RESIST: u32 = benilla_protocol::messages::hit_info::FULL_ABSORB
+    | benilla_protocol::messages::hit_info::FULL_RESIST;
 
 /// The stub emitters' lift (`0x457f4a`/`0x45863a`: `fadd [0x801628]`), as the armor foley's; the
 /// generic weapon impact passes its position through unlifted.
