@@ -9,7 +9,9 @@
 //! ```
 //!
 //! `bind <COMMAND> [key...]` replaces the command's key list; no tokens means unbound, an absent
-//! command keeps its defaults. Tokens are canonical chord strings and never contain spaces.
+//! command keeps its defaults. `modifiedclick <BINDING> <ACTION>` binds a `<ModifiedClick>` action
+//! set from Lua, the reference's own line (`0x55f1b0`); an absent action keeps its default.
+//! Tokens are canonical chord strings and never contain spaces.
 //! Deviation: the reference saves a full snapshot (`bindings-cache.wtf`); a diff is stored
 //! because a full snapshot would leave every command added later unbound for a saved file.
 
@@ -81,6 +83,31 @@ pub(crate) fn from_diff(text: &str) -> Vec<(String, Vec<String>)> {
         ));
     }
     out
+}
+
+/// The modified-click lines for the `(action, binding)` rows set from Lua, binding first as the
+/// reference writes them (`0x55f1b0`).
+pub(crate) fn clicks_to_diff(clicks: &[(String, String)]) -> String {
+    clicks
+        .iter()
+        .map(|(action, binding)| format!("modifiedclick {binding} {action}\n"))
+        .collect()
+}
+
+/// The `modifiedclick <binding> <action>` lines of a diff file, as `(action, binding)`; the
+/// reader takes the line case-insensitively (`0x5641c0`) and skips a malformed one.
+pub(crate) fn clicks_from_diff(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let mut it = line.split_whitespace();
+            if !it.next()?.eq_ignore_ascii_case("modifiedclick") {
+                return None;
+            }
+            let binding = it.next()?;
+            let action = it.next()?;
+            Some((action.to_string(), binding.to_string()))
+        })
+        .collect()
 }
 
 /// Resolve a diff into the full key table: the defaults, then each override in file order
@@ -166,6 +193,19 @@ mod tests {
         let resolved = resolve(&[("JUMP".to_string(), vec!["W".to_string()])], &defaults());
         assert_eq!(keys(&resolved, "MOVEFORWARD"), ["UP"]);
         assert_eq!(keys(&resolved, "JUMP"), ["W"]);
+    }
+
+    #[test]
+    fn modified_click_lines_round_trip_beside_the_binds() {
+        let clicks = vec![
+            ("SELFCAST".to_string(), "CTRL".to_string()),
+            ("FOCUSCAST".to_string(), "NONE".to_string()),
+        ];
+        let text = to_diff(&[], &[]) + &clicks_to_diff(&clicks);
+        assert!(text.contains("modifiedclick CTRL SELFCAST\n"), "{text}");
+        assert_eq!(clicks_from_diff(&text), clicks);
+        assert!(from_diff(&text).is_empty(), "the bind reader skips them");
+        assert!(clicks_from_diff("bind JUMP F\nmodifiedclick ALT\n").is_empty());
     }
 
     #[test]

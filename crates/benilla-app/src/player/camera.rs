@@ -363,6 +363,9 @@ struct FollowArm {
 pub(super) struct FollowRig {
     last_command: Option<u32>,
     arm: Option<FollowArm>,
+    /// The camera's `0x20`, set by a look ended with the sticky flag: no return arms until a look
+    /// ends without it (`IsCustomViewSmoothingActive` `0x5fff40`, read by `0x602760`).
+    pub(super) sticky: bool,
 }
 
 impl FollowRig {
@@ -419,6 +422,9 @@ impl FollowRig {
 
     /// The arming half (`0x510960` → `0x512c70`): pick the row, then cancel or snapshot a return.
     fn arm(&mut self, input: &FollowInput, cam_yaw: f32, stopping: bool) {
+        if self.sticky {
+            return;
+        }
         let (delay, factor) = input.style().row(input.state(stopping));
         if factor == 0.0 {
             // Factor 0 cancels, keeping the offset (Smart standing still, and all of Never).
@@ -1738,6 +1744,46 @@ mod tests {
             ..Default::default()
         };
         assert!(near(both.yaw_rate(), LOOK_SENSITIVITY * 1.5 * 1.5));
+    }
+
+    /// After a sticky camera stop no edge arms a return (`0x5fff40` answers 0 under the camera's
+    /// `0x20`), until a look ends without the flag.
+    #[test]
+    fn a_sticky_stop_keeps_the_camera_where_the_drag_left_it() {
+        const OFFSET: f32 = std::f32::consts::FRAC_PI_2;
+        let cfg = FollowConfig {
+            style: FollowStyle::Always,
+            tracking_style: FollowStyle::Always,
+            yaw_speed: FOLLOW_SPEED_DEFAULT,
+        };
+        let run = |rig: &mut FollowRig, words: &[u32]| {
+            let mut yaw = OFFSET;
+            for &command in words.iter().flat_map(|w| std::iter::repeat_n(w, 240)) {
+                let input = FollowInput {
+                    cfg,
+                    face_yaw: 0.0,
+                    command,
+                };
+                if let Some(y) = rig.advance(&input, yaw, 1.0 / 120.0, false) {
+                    yaw = y;
+                }
+            }
+            yaw
+        };
+        let mut rig = FollowRig {
+            sticky: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            run(&mut rig, &[follow_cmd::LEFT_MOUSE, 0, follow_cmd::FORWARD]),
+            OFFSET,
+            "the release and a W edge arm nothing"
+        );
+        rig.sticky = false;
+        assert!(
+            run(&mut rig, &[follow_cmd::LEFT_MOUSE, 0]).abs() < 1.0e-4,
+            "a plain release returns it"
+        );
     }
 
     /// The auto-follow (`0x510960`, `0x50f160`): edge-armed, then unattended, a cosine over

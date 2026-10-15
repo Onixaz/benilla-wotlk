@@ -955,7 +955,12 @@ impl Walk {
         // the addon's own sandboxed reader; absent is normal.
         let bindings_xml = benilla_ui::loader::join_ref(&addon.prefix(), "Bindings.xml");
         if let Some(bytes) = addon.read(&bindings_xml) {
-            match benilla_ui::bindings_xml::parse(&benilla_ui::source::decode(&bytes)) {
+            let text = benilla_ui::source::decode(&bytes);
+            // Its `<ModifiedClick>` rows too, after the core's (`0x562dd0` from the same loader).
+            if let Ok(clicks) = benilla_ui::bindings_xml::parse_modified_clicks(&text) {
+                script.register_modified_clicks(&clicks);
+            }
+            match benilla_ui::bindings_xml::parse(&text) {
                 Ok(bindings) => script.register_addon_bindings(&addon.name, &bindings),
                 Err(e) => {
                     let e = format!("{}/Bindings.xml: {e}", addon.name);

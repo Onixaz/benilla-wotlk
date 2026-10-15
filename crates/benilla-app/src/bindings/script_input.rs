@@ -94,11 +94,14 @@ impl BindingsState {
                 }
                 // `0x514b70` clears the bit whoever set it, so a second key still down on the
                 // same command stops too, and its release is a no-op second Stop.
-                BindingInput::Stop(held) => {
+                // A Stop that clears its bit also hands the camera its keep-smoothing argument
+                // (`0x5fa450`), which the look's end reads.
+                BindingInput::Stop(held, keep_smoothing) => {
                     let i = held_input(held);
                     if self.pressed(i) {
                         self.held.retain(|&h| h != i);
                         self.control_changed = true;
+                        self.keep_smoothing = keep_smoothing;
                     }
                 }
                 // A one-shot is its own press edge.

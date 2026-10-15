@@ -1,153 +1,322 @@
-//! The modified-click table behind `IsModifiedClick`, `GetModifiedClick` and `SetModifiedClick`:
-//! each action a `Bindings.xml` `<ModifiedClick>` declares, bound to a modifier set and an
-//! optional mouse button (`SELFCAST` is `ALT`, `CHATLINK` is `SHIFT-BUTTON1`). The stock action
-//! button asks `IsModifiedClick("SELFCAST")` on every press (`SecureTemplates.lua:207`).
+//! The modified-click table behind `IsModifiedClick`, `GetModifiedClick`, `SetModifiedClick`,
+//! `GetNumModifiedClickActions` and `GetModifiedClickAction`: each action a `Bindings.xml`
+//! `<ModifiedClick>` declares, bound to a modifier set and an optional mouse button (`SELFCAST`
+//! is `ALT`, `CHATLINK` is `SHIFT-BUTTON1`). The stock action button asks
+//! `IsModifiedClick("SELFCAST")` on every press (`SecureTemplates.lua:207`), and the stock
+//! `CAMERAORSELECTORMOVE` release asks `STICKYCAMERA`. Like the reference's `m_data[4]`, a row
+//! keeps a binding per set and rides the key-binding sets: `LoadBindings`/`SaveBindings` copy it
+//! with the keys (`0x562b80`), and a saved set holds the rows set from Lua (`0x55f1b0`).
 //!
 //! Deviation: benilla reads one flag per modifier, so a binding naming a side (`LSHIFT`) holds on
-//! either key, and `SetModifiedClick` lasts the session, where the reference saves the table
-//! with the key bindings.
+//! either key; the side is kept and read back.
 
 use mlua::{Lua, Value};
 
 use super::binding_abi::flag;
 use super::Model;
 
-/// One binding parsed as `0x55d860` reads it: the modifier prefixes, each `-`-joined, then the
-/// rest, a mouse button such as `BUTTON1`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct ClickBinding {
-    shift: bool,
-    ctrl: bool,
-    alt: bool,
-    button: Option<String>,
+/// One binding as `MODIFIEDCLICK::SetBinding` (`0x55e180`) stores it: `AddModifiers`' side bits
+/// (`0x55d860`: LSHIFT 1, RSHIFT 2, LCTRL 4, RCTRL 8, LALT 0x10, RALT 0x20) and a mouse button by
+/// its binding index (`BUTTON1` is the left, `IndexToMouseButton` `0x5eec20`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ClickBinding {
+    modifiers: u8,
+    button: Option<u8>,
+}
+
+/// `AddModifiers` (`0x55d860`): the modifier prefixes, each optionally `-`-joined, and the rest.
+fn add_modifiers(text: &str) -> (u8, &str) {
+    const PREFIXES: [(&str, u8); 9] = [
+        ("LSHIFT", 0x1),
+        ("RSHIFT", 0x2),
+        ("SHIFT", 0x3),
+        ("LCTRL", 0x4),
+        ("RCTRL", 0x8),
+        ("CTRL", 0xc),
+        ("LALT", 0x10),
+        ("RALT", 0x20),
+        ("ALT", 0x30),
+    ];
+    let (mut m, mut rest) = (0, text);
+    while let Some(&(p, bits)) = PREFIXES.iter().find(|(p, _)| {
+        rest.as_bytes()
+            .get(..p.len())
+            .is_some_and(|b| b.eq_ignore_ascii_case(p.as_bytes()))
+    }) {
+        m |= bits;
+        rest = &rest[p.len()..];
+        rest = rest.strip_prefix('-').unwrap_or(rest);
+    }
+    (m, rest)
+}
+
+/// A mouse button's binding index: `LeftButton` 1, `RightButton` 2, `MiddleButton` 3, `ButtonN` N.
+fn button_index(name: &str) -> Option<u8> {
+    crate::widget::mouse_button_bit(name).map(|bit| match bit {
+        0 => 1,
+        1 => 3,
+        2 => 2,
+        b => b as u8 + 1,
+    })
 }
 
 impl ClickBinding {
-    fn parse(text: &str) -> Self {
-        let mut b = Self::default();
-        let mut rest = text;
-        loop {
-            let upper = rest.to_ascii_uppercase();
-            let (len, which) = [
-                ("LSHIFT", 0),
-                ("RSHIFT", 0),
-                ("SHIFT", 0),
-                ("LCTRL", 1),
-                ("RCTRL", 1),
-                ("CTRL", 1),
-                ("LALT", 2),
-                ("RALT", 2),
-                ("ALT", 2),
-            ]
+    /// `0x55e180`'s parse: empty, nil or `NONE` is the empty binding; otherwise the modifiers,
+    /// then `BUTTON` and one digit (`0x55e1e6` steps one character), and nothing after. `None`
+    /// for text it refuses.
+    fn parse(text: Option<&str>) -> Option<Self> {
+        let Some(text) = text.filter(|t| !t.is_empty() && !t.eq_ignore_ascii_case("NONE")) else {
+            return Some(Self::default());
+        };
+        let (modifiers, rest) = add_modifiers(text);
+        let mut button = None;
+        let mut rest = rest;
+        if rest
+            .as_bytes()
+            .get(..6)
+            .is_some_and(|b| b.eq_ignore_ascii_case(b"BUTTON"))
+        {
+            let digit = *rest.as_bytes().get(6).filter(|c| c.is_ascii_digit())?;
+            button = (digit != b'0').then_some(digit - b'0');
+            rest = &rest[7..];
+        }
+        rest.is_empty().then_some(Self { modifiers, button })
+    }
+
+    /// `MODIFIEDCLICK::GetBinding` (`0x55e230`): `AddMetaPrefix`'s ALT, CTRL then SHIFT parts
+    /// (`0x55d990`), then `BUTTON<n>`, or `NONE` for neither.
+    fn canonical(&self) -> String {
+        let m = self.modifiers;
+        if m == 0 && self.button.is_none() {
+            return "NONE".into();
+        }
+        let mut out = String::new();
+        for (both, left, right, name) in [
+            (0x30, 0x10, 0x20, "ALT"),
+            (0xc, 0x4, 0x8, "CTRL"),
+            (0x3, 0x1, 0x2, "SHIFT"),
+        ] {
+            if m & both == both {
+                out.push_str(name);
+            } else if m & left != 0 {
+                out.push('L');
+                out.push_str(name);
+            } else if m & right != 0 {
+                out.push('R');
+                out.push_str(name);
+            } else {
+                continue;
+            }
+            out.push('-');
+        }
+        match self.button {
+            Some(n) => out.push_str(&format!("BUTTON{n}")),
+            None => {
+                out.pop();
+            }
+        }
+        out
+    }
+
+    /// `MODIFIEDCLICK::IsActive` (`0x55d6b0`): any one of its modifiers held, then its button the
+    /// running click's (`m_mouseButtonName`, set only around a click or mouse script) or no click
+    /// running; with no modifier, only a button binding can hold.
+    fn holds(&self, model: &Model) -> bool {
+        let (shift, ctrl, alt) = model.modifiers;
+        let m = self.modifiers;
+        if m != 0 {
+            let held = (m & 0x3 != 0 && shift) || (m & 0xc != 0 && ctrl) || (m & 0x30 != 0 && alt);
+            if !held {
+                return false;
+            }
+        }
+        match (self.button, model.click_button.as_deref()) {
+            (None, _) => m != 0,
+            (Some(_), None) => true,
+            (Some(want), Some(now)) => button_index(now) == Some(want),
+        }
+    }
+}
+
+/// One declared action: its default (set 0) and the live binding (set 3), with the reference's
+/// flag bit 0 inverted: `explicit` once Lua or a saved set bound it (`0x55e200`/`0x55e20a`).
+#[derive(Debug)]
+struct Row {
+    action: String,
+    default: ClickBinding,
+    live: ClickBinding,
+    explicit: bool,
+}
+
+/// The table, in declaration order (`m_fulllist`), and the explicitly bound rows of stored sets
+/// 1 (account) and 2 (character); lives in [`super::keybind::KeybindState`].
+#[derive(Debug, Default)]
+pub(crate) struct ModifiedClicks {
+    rows: Vec<Row>,
+    stored: [Option<Vec<(String, ClickBinding)>>; 2],
+}
+
+impl ModifiedClicks {
+    fn row(&self, action: &str) -> Option<&Row> {
+        self.rows
             .iter()
-            .find(|(p, _)| upper.starts_with(p))
-            .map_or((0, 3), |&(p, w)| (p.len(), w));
-            if len == 0 {
-                break;
-            }
-            match which {
-                0 => b.shift = true,
-                1 => b.ctrl = true,
-                _ => b.alt = true,
-            }
-            rest = &rest[len..];
-            rest = rest.strip_prefix('-').unwrap_or(rest);
+            .find(|r| r.action.eq_ignore_ascii_case(action))
+    }
+
+    /// The stored set `LoadBindings(set)` copies, with the key sets' fallback.
+    fn chosen(&self, set: u32) -> Option<&Vec<(String, ClickBinding)>> {
+        match set {
+            1 => self.stored[0].as_ref(),
+            2 => self.stored[1].as_ref().or(self.stored[0].as_ref()),
+            _ => None,
         }
-        if !rest.is_empty() && !rest.eq_ignore_ascii_case("NONE") {
-            b.button = Some(rest.to_string());
+    }
+
+    /// `LoadModifiedClick` (`0x562dd0`): a redefinition is skipped, so the first file keeps the
+    /// action; a refused default leaves it unbound. A set already loaded binds it at once, since
+    /// here the sets are read before the interface files.
+    fn register(&mut self, action: &str, default: &str, current_set: u32) {
+        if action.is_empty() || self.row(action).is_some() {
+            return;
         }
-        b
+        let default = ClickBinding::parse(Some(default)).unwrap_or_default();
+        let stored = self
+            .chosen(current_set)
+            .and_then(|l| l.iter().find(|(a, _)| a.eq_ignore_ascii_case(action)))
+            .map(|&(_, b)| b);
+        self.rows.push(Row {
+            action: action.to_string(),
+            default,
+            live: stored.unwrap_or(default),
+            explicit: stored.is_some(),
+        });
     }
 
-    fn has_modifiers(&self) -> bool {
-        self.shift || self.ctrl || self.alt
+    /// `CopyBindings(set, CURRENT)` (`0x562b80`): every row back to its default, then the set's.
+    pub(super) fn load(&mut self, set: u32) {
+        let chosen = self.chosen(set).cloned().unwrap_or_default();
+        for r in &mut self.rows {
+            match chosen
+                .iter()
+                .find(|(a, _)| a.eq_ignore_ascii_case(&r.action))
+            {
+                Some(&(_, b)) => (r.live, r.explicit) = (b, true),
+                None => (r.live, r.explicit) = (r.default, false),
+            }
+        }
     }
-}
 
-/// The click's button as a binding names it (`LeftButton` is `BUTTON1`).
-fn binding_button(button: &str) -> &str {
-    match button {
-        "LeftButton" => "BUTTON1",
-        "RightButton" => "BUTTON2",
-        "MiddleButton" => "BUTTON3",
-        "Button4" => "BUTTON4",
-        "Button5" => "BUTTON5",
-        other => other,
+    /// `SaveBindings(which)`: the live explicit rows become set `which`; the account set drops the
+    /// character set, as the key sets do.
+    pub(super) fn save(&mut self, which: u32) {
+        if which != 1 && which != 2 {
+            return;
+        }
+        let rows = self
+            .rows
+            .iter()
+            .filter(|r| r.explicit)
+            .map(|r| (r.action.clone(), r.live))
+            .collect();
+        self.stored[(which - 1) as usize] = Some(rows);
+        if which == 1 {
+            self.stored[1] = None;
+        }
     }
-}
 
-/// `0x55d6b0`: any one of the binding's modifiers held, and its button the click's while a click
-/// is running (`[0xb499a8]+0x1234`); with no modifier, only a button binding can hold.
-fn binding_holds(b: &ClickBinding, model: &Model) -> bool {
-    let (shift, ctrl, alt) = model.modifiers;
-    let modifier = (b.shift && shift) || (b.ctrl && ctrl) || (b.alt && alt);
-    if b.has_modifiers() && !modifier {
-        return false;
+    /// Seed stored set 1 or 2 from the saved file, `(action, binding)` pairs; a binding
+    /// `SetBinding` refuses is dropped, as the file reader ignores its failure (`0x5641c0`).
+    pub(super) fn seed(&mut self, set: u32, entries: Option<Vec<(String, String)>>) {
+        let parsed = entries.map(|e| {
+            e.into_iter()
+                .filter_map(|(a, b)| Some((a, ClickBinding::parse(Some(&b))?)))
+                .collect()
+        });
+        match set {
+            1 => self.stored[0] = parsed,
+            2 => self.stored[1] = parsed,
+            _ => {}
+        }
     }
-    match (&b.button, &model.click_button) {
-        (None, _) if !b.has_modifiers() => false,
-        (Some(want), Some(now)) => want.eq_ignore_ascii_case(binding_button(now)),
-        _ => true,
+
+    /// `SetModifiedClick` on the live set: `false` for an undeclared action or a refused binding.
+    fn set(&mut self, action: &str, binding: Option<&str>) -> bool {
+        let Some(b) = ClickBinding::parse(binding) else {
+            return false;
+        };
+        match self
+            .rows
+            .iter_mut()
+            .find(|r| r.action.eq_ignore_ascii_case(action))
+        {
+            Some(r) => {
+                (r.live, r.explicit) = (b, true);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The live explicit rows as `(action, binding)`, the lines a save writes (`0x55f1b0`).
+    fn overrides(&self) -> Vec<(String, String)> {
+        self.rows
+            .iter()
+            .filter(|r| r.explicit)
+            .map(|r| (r.action.clone(), r.live.canonical()))
+            .collect()
     }
 }
 
 impl super::UiScript {
     /// Register the core's `<ModifiedClick>` rows, each at its default.
     pub fn register_modified_clicks(&self, clicks: &[crate::bindings_xml::ModifiedClick]) {
-        let mut model = self.model_mut();
-        for c in clicks {
-            set_click(&mut model, &c.action, &c.default);
-        }
+        register(&mut self.model_mut(), clicks);
+    }
+
+    /// Seed stored set 1 (account) or 2 (character) of the table from the saved `(action,
+    /// binding)` pairs; `None` clears it. The live rows move at [`Self::load_binding_set`].
+    pub fn seed_modified_click_set(&mut self, set: u32, entries: Option<Vec<(String, String)>>) {
+        self.model_mut().keybinds.clicks.seed(set, entries);
+    }
+
+    /// The rows bound from Lua or a saved set, `(action, binding)` in declaration order: what a
+    /// save writes.
+    pub fn modified_click_overrides(&self) -> Vec<(String, String)> {
+        self.model_ref().keybinds.clicks.overrides()
     }
 }
 
-fn set_click(model: &mut Model, action: &str, binding: &str) {
-    match model
-        .modified_clicks
-        .iter_mut()
-        .find(|(a, _)| a.eq_ignore_ascii_case(action))
-    {
-        Some(row) => row.1 = binding.to_string(),
-        None => model
-            .modified_clicks
-            .push((action.to_string(), binding.to_string())),
+/// Register one file's `<ModifiedClick>` rows, core or addon, after the earlier files'.
+pub(crate) fn register(model: &mut Model, clicks: &[crate::bindings_xml::ModifiedClick]) {
+    let set = model.keybinds.current_set();
+    for c in clicks {
+        model.keybinds.clicks.register(&c.action, &c.default, set);
     }
 }
 
-/// The action's binding, matched case-insensitively.
-fn click_of<'a>(model: &'a Model, action: &str) -> Option<&'a str> {
-    model
-        .modified_clicks
-        .iter()
-        .find(|(a, _)| a.eq_ignore_ascii_case(action))
-        .map(|(_, b)| b.as_str())
-}
-
-/// `0x55f940`: with no action, any modifier held; an action that is itself a modifier set
-/// (`"SHIFT"`) needs each of its modifiers held; otherwise the action'"'"'s binding holds by
-/// `0x55d6b0`, and an action no `Bindings.xml` declared never holds. `[mod:...]` asks it too.
+/// `CGUIBindings::IsModifiedClick` (`0x55f940`): with no action, any modifier key down or any row
+/// holding; an action that is itself a modifier set (`"SHIFT"`) needs each of its modifiers held;
+/// otherwise the action's row holds by `0x55d6b0`, and an undeclared action never holds.
 pub(super) fn is_modified_click(model: &Model, action: Option<&str>) -> bool {
     let (shift, ctrl, alt) = model.modifiers;
+    let rows = &model.keybinds.clicks.rows;
     match action {
-        None | Some("") => shift || ctrl || alt,
-        Some(text) => {
-            let set = ClickBinding::parse(text);
-            if set.has_modifiers() {
-                (!set.shift || shift) && (!set.ctrl || ctrl) && (!set.alt || alt)
-            } else {
-                click_of(model, text).is_some_and(|b| binding_holds(&ClickBinding::parse(b), model))
-            }
-        }
+        None => shift || ctrl || alt || rows.iter().any(|r| r.live.holds(model)),
+        Some(text) => match add_modifiers(text).0 {
+            0 => model
+                .keybinds
+                .clicks
+                .row(text)
+                .is_some_and(|r| r.live.holds(model)),
+            m => (m & 0x3 == 0 || shift) && (m & 0xc == 0 || ctrl) && (m & 0x30 == 0 || alt),
+        },
     }
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // IsModifiedClick([action]) (`0x55fcc0` → `0x55f940`): 1 or nil. With no argument, any
-    // modifier held (`0x55fa60`). An argument that is itself a modifier set (`"SHIFT"`) needs each
-    // of its modifiers held (`0x55f977`-`0x55fa24`); otherwise it names an action, whose binding
-    // holds by `0x55d6b0`, and an action no `Bindings.xml` declared never holds (`0x55fa49`).
+    // IsModifiedClick([action]) (`0x55fcc0` → `0x55f940`): 1 or nil; a non-string is no action.
     g.set(
         "IsModifiedClick",
         lua.create_function(|lua, action: Option<Value>| {
@@ -159,8 +328,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetModifiedClick("action") (`0x55fc20`): the action's binding string, nil for an action no
-    // `Bindings.xml` declared (`0x55fc90`); a non-string raises.
+    // GetModifiedClick("action") (`0x55fc20`): the live binding as `GetBinding` spells it, nil
+    // for an undeclared action; a non-string raises.
     g.set(
         "GetModifiedClick",
         lua.create_function(|lua, action: Value| {
@@ -172,24 +341,68 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            match click_of(&model, &action) {
-                Some(b) => Ok(Value::String(lua.create_string(b)?)),
+            match model.keybinds.clicks.row(&action) {
+                Some(r) => Ok(Value::String(lua.create_string(r.live.canonical())?)),
                 None => Ok(Value::Nil),
             }
         })?,
     )?;
 
-    // SetModifiedClick("action", "binding") (`0x55fb90`): rebinds an action, the Controls
-    // panel's self-cast key.
+    // SetModifiedClick("action"[, "binding"]) (`0x55fb90`): rebinds a declared action in the live
+    // set; a missing binding is NONE, and an undeclared action or a refused binding raises.
     g.set(
         "SetModifiedClick",
-        lua.create_function(|lua, (action, binding): (Value, Value)| {
-            let usage = r#"Usage: SetModifiedClick("action", "binding")"#;
-            let action = super::binding_abi::string_arg(lua, action, usage)?;
-            let binding = super::binding_abi::string_arg(lua, binding, usage)?;
+        lua.create_function(|lua, (action, binding): (Value, Option<Value>)| {
+            let action = super::binding_abi::string_arg(
+                lua,
+                action,
+                r#"Usage: SetModifiedClick("action", "binding")"#,
+            )?;
+            let binding = binding.and_then(|v| super::binding_abi::optional_string(lua, &v));
             let mut model = crate::script::model_mut_of(lua);
-            set_click(&mut model, &action, &binding);
-            Ok(())
+            if model.keybinds.clicks.set(&action, binding.as_deref()) {
+                Ok(())
+            } else {
+                Err(mlua::Error::RuntimeError(format!(
+                    "SetModifiedClick(): Unknown action ({action}) or binding ({})",
+                    binding.as_deref().unwrap_or("(null)")
+                )))
+            }
+        })?,
+    )?;
+
+    // GetNumModifiedClickActions() (`0x55dc60`): the declared count.
+    g.set(
+        "GetNumModifiedClickActions",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(model.keybinds.clicks.rows.len() as f64)
+        })?,
+    )?;
+
+    // GetModifiedClickAction(index) (`0x55ea70`): the index-th declared action, nil past the end;
+    // a non-number raises.
+    g.set(
+        "GetModifiedClickAction",
+        lua.create_function(|lua, index: Value| {
+            let Some(n) = lua.coerce_number(index)? else {
+                return Err(mlua::Error::RuntimeError(
+                    "Usage: GetModifiedClickAction(index)".into(),
+                ));
+            };
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let i = n as i64 - 1;
+            match usize::try_from(i)
+                .ok()
+                .and_then(|i| model.keybinds.clicks.rows.get(i))
+            {
+                Some(r) => Ok(Value::String(lua.create_string(&r.action)?)),
+                None => Ok(Value::Nil),
+            }
         })?,
     )?;
 
@@ -303,5 +516,149 @@ mod tests {
             err.contains(r#"Usage: GetModifiedClick("action")"#),
             "{err}"
         );
+    }
+
+    /// `GetNumModifiedClickActions`/`GetModifiedClickAction` walk the declaration order; a
+    /// redefinition keeps the first (`0x562dd0`), and an index past the end is nil.
+    #[test]
+    fn the_actions_enumerate_in_declaration_order_and_the_first_wins() {
+        let s = script();
+        s.register_modified_clicks(&[ModifiedClick {
+            action: "selfcast".into(),
+            default: "CTRL".into(),
+        }]);
+        assert_eq!(
+            s.eval::<i64>("return GetNumModifiedClickActions()")
+                .unwrap(),
+            4
+        );
+        assert_eq!(
+            s.eval::<String>("return GetModifiedClickAction(1) .. GetModifiedClickAction('3')")
+                .unwrap(),
+            "SELFCASTCHATLINK"
+        );
+        assert!(s
+            .eval::<bool>(
+                "return GetModifiedClickAction(5) == nil and GetModifiedClickAction(0) == nil"
+            )
+            .unwrap());
+        assert_eq!(
+            s.eval::<String>(r#"return GetModifiedClick("SELFCAST")"#)
+                .unwrap(),
+            "ALT"
+        );
+        let err = s.run("GetModifiedClickAction()").unwrap_err().to_string();
+        assert!(
+            err.contains("Usage: GetModifiedClickAction(index)"),
+            "{err}"
+        );
+    }
+
+    /// `SetModifiedClick` refuses an undeclared action or a binding `0x55e180` cannot read (one
+    /// button digit, nothing after); a missing binding is NONE; `GetModifiedClick` spells the
+    /// binding as `0x55e230` does.
+    #[test]
+    fn set_modified_click_validates_and_get_spells_canonically() {
+        let s = script();
+        for (set, get) in [
+            ("shift-ctrl-button2", "CTRL-SHIFT-BUTTON2"),
+            ("LALT-RCTRL", "LALT-RCTRL"),
+            ("LSHIFT-RSHIFT", "SHIFT"),
+            ("BUTTON3", "BUTTON3"),
+            ("none", "NONE"),
+        ] {
+            s.run(&format!(r#"SetModifiedClick("SELFCAST", "{set}")"#))
+                .unwrap();
+            assert_eq!(
+                s.eval::<String>(r#"return GetModifiedClick("SELFCAST")"#)
+                    .unwrap(),
+                get,
+                "{set}"
+            );
+        }
+        s.run(r#"SetModifiedClick("SELFCAST")"#).unwrap();
+        assert_eq!(
+            s.eval::<String>(r#"return GetModifiedClick("SELFCAST")"#)
+                .unwrap(),
+            "NONE"
+        );
+        for bad in [
+            r#"SetModifiedClick("NOSUCHACTION", "ALT")"#,
+            r#"SetModifiedClick("SELFCAST", "BUTTON12")"#,
+            r#"SetModifiedClick("SELFCAST", "SHIFT-X")"#,
+        ] {
+            let err = s.run(bad).unwrap_err().to_string();
+            assert!(
+                err.contains("SetModifiedClick(): Unknown action"),
+                "{bad}: {err}"
+            );
+        }
+    }
+
+    /// The table rides the key sets: `SaveBindings` keeps the rows Lua set, `LoadBindings(0)`
+    /// restores every default, `LoadBindings(1)` the saved rows; a seeded set binds a row declared
+    /// after it, as the saved file loads after the interface files in the reference.
+    #[test]
+    fn the_table_saves_and_loads_with_the_binding_sets() {
+        let mut s = UiScript::new().unwrap();
+        s.seed_modified_click_set(1, Some(vec![("CHATLINK".into(), "CTRL-BUTTON1".into())]));
+        s.load_binding_set(1);
+        s.register_modified_clicks(&[("SELFCAST", "ALT"), ("CHATLINK", "SHIFT-BUTTON1")].map(
+            |(a, d)| ModifiedClick {
+                action: a.into(),
+                default: d.into(),
+            },
+        ));
+        let get = |s: &UiScript, a: &str| {
+            s.eval::<String>(&format!(r#"return GetModifiedClick("{a}")"#))
+                .unwrap()
+        };
+        assert_eq!(
+            get(&s, "CHATLINK"),
+            "CTRL-BUTTON1",
+            "the saved row, not the default"
+        );
+        s.run(r#"SetModifiedClick("SELFCAST", "SHIFT") SaveBindings(1)"#)
+            .unwrap();
+        assert_eq!(
+            s.modified_click_overrides(),
+            vec![
+                ("SELFCAST".to_string(), "SHIFT".to_string()),
+                ("CHATLINK".to_string(), "CTRL-BUTTON1".to_string()),
+            ]
+        );
+        s.run("LoadBindings(0)").unwrap();
+        assert_eq!(
+            (get(&s, "SELFCAST"), get(&s, "CHATLINK")),
+            ("ALT".into(), "SHIFT-BUTTON1".into())
+        );
+        assert!(s.modified_click_overrides().is_empty());
+        s.run("LoadBindings(1)").unwrap();
+        assert_eq!(
+            (get(&s, "SELFCAST"), get(&s, "CHATLINK")),
+            ("SHIFT".into(), "CTRL-BUTTON1".into())
+        );
+    }
+
+    /// With no action, a row bound to a bare button holds outside a click (`0x55f940` walks the
+    /// rows after the modifier keys); inside a click only its own button does.
+    #[test]
+    fn no_action_also_asks_the_rows() {
+        let s = UiScript::new().unwrap();
+        s.register_modified_clicks(&[ModifiedClick {
+            action: "PROBE".into(),
+            default: "BUTTON2".into(),
+        }]);
+        assert!(is(&s, "IsModifiedClick()"));
+        assert!(is(&s, r#"IsModifiedClick("PROBE")"#));
+        s.run(
+            r#"local b = CreateFrame("Button", "NoActionProbe", UIParent)
+               b:SetScript("OnClick", function(_, button)
+                   SEEN = button .. ":" .. tostring(IsModifiedClick("PROBE"))
+               end)
+               b:Click("LeftButton")"#,
+        )
+        .unwrap();
+        assert_eq!(s.eval::<String>("return SEEN").unwrap(), "LeftButton:nil");
     }
 }

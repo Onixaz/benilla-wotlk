@@ -110,7 +110,8 @@ pub struct ModifiedClick {
 }
 
 /// The root's `<ModifiedClick>` children in document order, the tag matched case-insensitively
-/// as `<Binding>` is. A row missing either attribute is skipped; the stock file has none.
+/// as `<Binding>` is. A row with no `action` is skipped and one with no `default` is unbound
+/// (`0x562dd0`).
 pub fn parse_modified_clicks(text: &str) -> Result<Vec<ModifiedClick>, Error> {
     let repaired;
     let doc = match roxmltree::Document::parse(text) {
@@ -127,7 +128,7 @@ pub fn parse_modified_clicks(text: &str) -> Result<Vec<ModifiedClick>, Error> {
         .filter(|n| n.is_element() && n.tag_name().name().eq_ignore_ascii_case("ModifiedClick"))
         .filter_map(|n| {
             let action = attr_ci(n, "action").filter(|a| !a.is_empty())?;
-            let default = attr_ci(n, "default")?;
+            let default = attr_ci(n, "default").unwrap_or_default();
             Some(ModifiedClick { action, default })
         })
         .collect())

@@ -74,7 +74,10 @@ pub enum FiredInput {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BindingInput {
     Start(HeldInput),
-    Stop(HeldInput),
+    /// A Stop and `UnsetControlBit`'s keep-smoothing argument (`0x5fa450`), set only by
+    /// `CameraOrSelectOrMoveStop`'s sticky flag: the camera then skips its return behind the
+    /// character until a look ends without it (`0x604850` sets the camera's `0x20`).
+    Stop(HeldInput, bool),
     Fire(FiredInput),
 }
 
@@ -177,8 +180,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // ── The movement table `0x8500b8` ──────────────────────────────────────────────────────
     // Each Start/Stop is `0x494a50(0)`, then `0x515090(bit, set, time, 0)`; nothing is returned,
-    // and no argument is read but `CameraOrSelectOrMoveStop`'s sticky flag (`0x5141f6`), which
-    // nothing here acts on.
+    // and no argument is read but `CameraOrSelectOrMoveStop`'s sticky flag (`0x5fc730` reads it
+    // with `GetBoolOrDefault(L, 1, 0)` at `0x5fc757`), which rides its Stop.
     let held: [(&str, &str, HeldInput); 8] = [
         (
             "MoveForwardStart",
@@ -224,9 +227,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
         g.set(
             stop,
-            lua.create_function(move |lua, _: MultiValue| {
+            lua.create_function(move |lua, args: MultiValue| {
                 if in_binding(lua) {
-                    push(lua, BindingInput::Stop(input));
+                    let sticky = input == HeldInput::CameraOrSelectOrMove
+                        && bool_or_default(args.front(), false);
+                    push(lua, BindingInput::Stop(input, sticky));
                 }
                 Ok(())
             })?,
@@ -272,7 +277,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             name,
             lua.create_function(move |lua, _: MultiValue| {
                 if in_binding(lua) {
-                    push(lua, BindingInput::Stop(input));
+                    push(lua, BindingInput::Stop(input, false));
                 }
                 Ok(())
             })?,
@@ -486,6 +491,27 @@ mod tests {
         }
     }
 
+    /// `CameraOrSelectOrMoveStop(sticky)` hands its flag through `GetBoolOrDefault(L, 1, 0)`
+    /// (`0x5fc757`); every other Stop passes 0, whatever it is given.
+    #[test]
+    fn the_camera_stop_carries_its_sticky_flag() {
+        let mut s = UiScript::new().unwrap();
+        s.run_binding(
+            "CameraOrSelectOrMoveStop() CameraOrSelectOrMoveStop(1) \
+             CameraOrSelectOrMoveStop(nil) TurnOrActionStop(1)",
+        )
+        .unwrap();
+        assert_eq!(
+            s.take_binding_input(),
+            vec![
+                BindingInput::Stop(HeldInput::CameraOrSelectOrMove, false),
+                BindingInput::Stop(HeldInput::CameraOrSelectOrMove, true),
+                BindingInput::Stop(HeldInput::CameraOrSelectOrMove, false),
+                BindingInput::Stop(HeldInput::TurnOrAction, false),
+            ]
+        );
+    }
+
     /// The gate `0x494a50(0)`: a movement call queues only from inside a binding body, while the
     /// camera and posture verbs, which have no gate, queue from anywhere.
     #[test]
@@ -500,7 +526,7 @@ mod tests {
             s.take_binding_input(),
             vec![
                 BindingInput::Start(HeldInput::MoveForward),
-                BindingInput::Stop(HeldInput::StrafeLeft),
+                BindingInput::Stop(HeldInput::StrafeLeft, false),
                 BindingInput::Start(HeldInput::Ascend),
                 BindingInput::Fire(FiredInput::Jump),
                 BindingInput::Fire(FiredInput::ToggleRun),
@@ -562,7 +588,7 @@ mod tests {
         );
         assert_eq!(
             edge(&mut s, JUMP, "up"),
-            vec![BindingInput::Stop(HeldInput::Ascend)],
+            vec![BindingInput::Stop(HeldInput::Ascend, false)],
             "the release stops the ascent and jumps no second time"
         );
         assert_eq!(
@@ -574,7 +600,7 @@ mod tests {
         );
         assert_eq!(
             edge(&mut s, SITORSTAND, "up"),
-            vec![BindingInput::Stop(HeldInput::Descend)]
+            vec![BindingInput::Stop(HeldInput::Descend, false)]
         );
         for gone in ["Jump", "SitOrStand"] {
             assert_eq!(

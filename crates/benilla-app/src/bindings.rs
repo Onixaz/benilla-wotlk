@@ -98,6 +98,9 @@ pub(crate) struct BindingsState {
     /// pass, so a window deactivate empties it and a key held across an alt-tab resumes, as in
     /// the reference. Keyboard only: mouse edges cannot repeat.
     down: Vec<KeyCode>,
+    /// The last bit-clearing Stop's keep-smoothing argument: `CameraOrSelectOrMoveStop`'s sticky
+    /// flag, false from every other Stop.
+    keep_smoothing: bool,
 }
 
 /// The physical input a latch waits on: a keyboard key by its code, not its name, so its release
@@ -110,6 +113,10 @@ enum Held {
 }
 
 impl BindingsState {
+    /// The keep-smoothing argument of the Stop that last cleared a bit ([`Self::keep_smoothing`]).
+    pub(crate) fn keep_smoothing(&self) -> bool {
+        self.keep_smoothing
+    }
     /// Is a held bit set right now (the reference's `[InputControl+4]`)?
     pub(crate) fn pressed(&self, i: Input) -> bool {
         self.held.contains(&i)
@@ -200,8 +207,13 @@ pub(crate) fn seed_bindings_for_vm(world: &mut World, script: &mut UiScript) {
     script.set_default_bindings(defaults);
     let defaults = script.default_bindings();
     let account = crate::local_state::bindings_account_path();
-    let overrides = read_diff(&account).unwrap_or_default();
+    let account_text = read_diff(&account);
+    let overrides = account_text
+        .as_deref()
+        .map(store::from_diff)
+        .unwrap_or_default();
     script.seed_binding_set(1, Some(store::resolve(&overrides, &defaults)));
+    script.seed_modified_click_set(1, account_text.as_deref().map(store::clicks_from_diff));
     script.load_binding_set(1);
 
     // The character's own set: its file existing makes it the active set, the reference's rule.
@@ -213,13 +225,16 @@ pub(crate) fn seed_bindings_for_vm(world: &mut World, script: &mut UiScript) {
         .as_ref()
         .and_then(|(realm, name)| crate::local_state::bindings_character_path(realm, name));
     match read_diff(&character) {
-        Some(overrides) => {
+        Some(text) => {
+            let overrides = store::from_diff(&text);
             script.seed_binding_set(2, Some(store::resolve(&overrides, &defaults)));
+            script.seed_modified_click_set(2, Some(store::clicks_from_diff(&text)));
             script.load_binding_set(2);
             info!("bindings: character-specific set loaded");
         }
         None => {
             script.seed_binding_set(2, None);
+            script.seed_modified_click_set(2, None);
             script.load_binding_set(1);
         }
     }
@@ -229,11 +244,11 @@ pub(crate) fn seed_bindings_for_vm(world: &mut World, script: &mut UiScript) {
     }
 }
 
-/// Read and parse one diff file; `None` (the defaults) when absent or unreadable.
-fn read_diff(path: &Option<std::path::PathBuf>) -> Option<Vec<(String, Vec<String>)>> {
+/// Read one diff file; `None` (the defaults) when absent or unreadable.
+fn read_diff(path: &Option<std::path::PathBuf>) -> Option<String> {
     let path = path.as_ref()?;
     match std::fs::read_to_string(path) {
-        Ok(text) => Some(store::from_diff(&text)),
+        Ok(text) => Some(text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => {
             warn!("bindings: reading {}: {e}", path.display());
@@ -248,7 +263,8 @@ fn drain_binding_requests(script: Option<NonSendMut<UiScript>>, files: Res<Bindi
     let Some(mut script) = script else { return };
     for req in script.take_keybind_requests() {
         let KeybindRequest::Save(which) = req;
-        let text = store::to_diff(&script.keybind_snapshot(), &script.default_bindings());
+        let text = store::to_diff(&script.keybind_snapshot(), &script.default_bindings())
+            + &store::clicks_to_diff(&script.modified_click_overrides());
         let path = match which {
             1 => &files.account,
             2 => &files.character,

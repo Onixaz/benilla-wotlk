@@ -228,6 +228,7 @@ pub(super) fn control(
         *right_click = None;
     }
     let focused = window.focused;
+    let was_looking = rig.look.is_some();
     run_look_session(
         mouse_motion,
         both_buttons,
@@ -247,6 +248,11 @@ pub(super) fn control(
         time.elapsed_secs(),
         focused,
     );
+    // The look's end is `DisableFreeLook(keep)` (`0x604850`): the sticky stop keeps the camera
+    // where the drag left it, any other end lets it return.
+    if was_looking && rig.look.is_none() {
+        rig.follow.sticky = binds.keep_smoothing();
+    }
     // The mouse turns the view, but the body hand-off (`0x514474`) skips a body that is stunned,
     // dead or seated (`0x5145e0`) or not ours to drive (`control_lost`, `reseat`), while the
     // camera rotate (`0x514444`) still runs. The reference never writes the facing; writing and

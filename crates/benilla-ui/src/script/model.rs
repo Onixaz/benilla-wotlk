@@ -1008,8 +1008,6 @@ pub(crate) struct Model {
     pub(crate) framerate: std::cell::Cell<f64>,
     /// `(shift, ctrl, alt)` for `Is*KeyDown`, pushed before the frame's mouse events.
     pub(crate) modifiers: (bool, bool, bool),
-    /// The `<ModifiedClick>` table, `(action, binding)` in registration order.
-    pub(crate) modified_clicks: Vec<(String, String)>,
     /// The button of the click whose `PreClick`/`OnClick`/`PostClick` is running, which a
     /// button-qualified modified click compares (`[0xb499a8]+0x1234`).
     pub(crate) click_button: Option<String>,
@@ -1495,7 +1493,6 @@ impl Model {
             summon_confirms: 0,
             framerate: std::cell::Cell::new(0.0),
             modifiers: (false, false, false),
-            modified_clicks: Vec::new(),
             click_button: None,
             option_state: Default::default(),
             unknown_macro_options: Vec::new(),

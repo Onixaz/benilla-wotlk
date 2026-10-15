@@ -146,6 +146,8 @@ pub(crate) struct KeybindState {
     /// dispatch.
     generation: u64,
     requests: Vec<KeybindRequest>,
+    /// The `<ModifiedClick>` table, whose sets load and save with the keys.
+    pub(crate) clicks: super::modified_click::ModifiedClicks,
 }
 
 /// `SetBinding(set, key, command)` on one key list: unbind `key` everywhere, then bind it to the
@@ -246,10 +248,16 @@ impl KeybindState {
             _ => return,
         };
         self.live = list.clone();
+        self.clicks.load(set);
         if set != 0 {
             self.current_set = set;
         }
         self.generation += 1;
+    }
+
+    /// The set the live table edits: 1 account, 2 character.
+    pub(crate) fn current_set(&self) -> u32 {
+        self.current_set
     }
 
     /// `SaveBindings(which)`: store the live table as set `which` and make it current. Saving the
@@ -262,6 +270,7 @@ impl KeybindState {
         if which == 1 {
             self.stored[1] = None;
         }
+        self.clicks.save(which);
         self.current_set = which;
         self.requests.push(KeybindRequest::Save(which));
     }

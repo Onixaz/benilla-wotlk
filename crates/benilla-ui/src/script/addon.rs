@@ -540,7 +540,12 @@ fn load_bindings(lua: &Lua, name: &str, read: &Reader) {
     let Some(bytes) = read(&path) else {
         return;
     };
-    match crate::bindings_xml::parse(&crate::source::decode(&bytes)) {
+    let text = crate::source::decode(&bytes);
+    // Its `<ModifiedClick>` rows too, after the core's (`0x562dd0` from the same loader).
+    if let Ok(clicks) = crate::bindings_xml::parse_modified_clicks(&text) {
+        super::modified_click::register(&mut crate::script::model_mut_of(lua), &clicks);
+    }
+    match crate::bindings_xml::parse(&text) {
         Ok(bindings) => super::keybind::register_addon_bindings(lua, name, &bindings),
         // Reported, not swallowed: otherwise a broken binding file leaves keys dead silently.
         Err(e) => log_error(lua, &format!("{name}/Bindings.xml: {e}")),
