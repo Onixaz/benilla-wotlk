@@ -637,6 +637,7 @@ pub(crate) fn end_ui_session(world: &mut World) {
     // After the shutdown events (a `PLAYER_LOGOUT` handler may `SetCVar`, which in the reference
     // lands in an engine-side store that survives) and before the VM is replaced.
     crate::cvars::fold_dying_vm_cvars(world);
+    crate::cvars::drop_character_cvars(world);
     // The chat cache folds here, not in its own `OnExit(InWorld)` system, which a `/reload` skips.
     crate::ui_chat::settings::fold_dying_vm_chat_cache(world);
     world.insert_resource(AddOnIdentity(None));

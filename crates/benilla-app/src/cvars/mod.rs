@@ -89,6 +89,8 @@ pub(crate) struct Row {
     /// Declared by an addon's `RegisterCVar`: persisted like any row and re-seeded into every later
     /// VM, so the addon's re-declaration is a no-op.
     pub(crate) addon: bool,
+    /// [`table::Registered::per_character`]: never saved or loaded, back at its default at logout.
+    pub(crate) per_character: bool,
 }
 
 impl Row {
@@ -154,6 +156,7 @@ impl Default for Cvars {
                 pending: None,
                 latched: r.latched,
                 addon: false,
+                per_character: r.per_character,
             });
         }
         cvars
@@ -389,6 +392,7 @@ impl Cvars {
             pending: None,
             latched: false,
             addon: true,
+            per_character: false,
         });
     }
 
@@ -407,6 +411,10 @@ impl Cvars {
                 continue;
             }
             let row = &mut self.rows[i];
+            if row.per_character {
+                warn!("config: {name} is a per-character cvar, not read from the file");
+                continue;
+            }
             if row.numeric() && value.trim().parse::<f32>().is_err() {
                 warn!("config: {name}: unparseable value '{value}' ignored");
                 continue;
@@ -422,6 +430,15 @@ impl Cvars {
             });
         }
         self.file = file;
+    }
+
+    /// `CVar::DeleteCharacterCVars` (`0x767350`) at logout: every per-character row back at its
+    /// default, silently, as the reference deletes the records without a callback.
+    pub(crate) fn drop_character_rows(&mut self) {
+        for row in self.rows.iter_mut().filter(|r| r.per_character) {
+            row.value = row.default.clone();
+            row.pending = None;
+        }
     }
 
     /// The file's entries no row claims: a newer build's keys, or an addon's not yet registered.
@@ -472,7 +489,7 @@ impl Cvars {
         let mut out = self.file.clone();
         for row in &self.rows {
             let key = row.name.to_ascii_lowercase();
-            if self.session_owned.contains(&key) {
+            if self.session_owned.contains(&key) || row.per_character {
                 continue;
             }
             // Match any existing entry case-insensitively so a hand-edited spelling doesn't fork.
@@ -809,6 +826,14 @@ pub(crate) fn fold_dying_vm_cvars(world: &mut World) {
     };
     for event in events {
         world.trigger(event);
+    }
+}
+
+/// The logout half of [`fold_dying_vm_cvars`]: the per-character rows go, after the fold kept the
+/// dying VM's last writes, so the next character starts from the defaults.
+pub(crate) fn drop_character_cvars(world: &mut World) {
+    if let Some(mut cvars) = world.get_resource_mut::<Cvars>() {
+        cvars.drop_character_rows();
     }
 }
 
@@ -1550,6 +1575,30 @@ mod tests {
         assert_eq!(out.get("uiScale").map(String::as_str), Some("0.8"));
         assert!(!out.contains_key("farclip"));
         assert_eq!(out.get("FutureKnob").map(String::as_str), Some("3"));
+    }
+
+    /// The stat dropdowns are per-character (flags 0x20): never written to or read from the file,
+    /// kept for the session, and back at "" after a logout.
+    #[test]
+    fn a_per_character_row_stays_out_of_the_file_and_drops_at_logout() {
+        let mut cvars = Cvars::default();
+        assert_eq!(cvars.get("playerStatLeftDropdown"), Some(""));
+        cvars.load_file([("playerStatRightDropdown".to_string(), "X".to_string())].into());
+        assert_eq!(cvars.get("playerStatRightDropdown"), Some(""), "not read");
+        cvars.set("playerStatLeftDropdown", "PLAYERSTAT_SPELL_COMBAT");
+        assert_eq!(
+            cvars.get("playerStatLeftDropdown"),
+            Some("PLAYERSTAT_SPELL_COMBAT")
+        );
+        let out = cvars.compose();
+        assert!(!out.contains_key("playerStatLeftDropdown"), "not written");
+        assert_eq!(
+            out.get("playerStatRightDropdown").map(String::as_str),
+            Some("X"),
+            "the file's own entry is left as found"
+        );
+        cvars.drop_character_rows();
+        assert_eq!(cvars.get("playerStatLeftDropdown"), Some(""));
     }
 
     #[test]

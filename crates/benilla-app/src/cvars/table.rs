@@ -16,6 +16,10 @@ pub(crate) struct Registered {
     /// Registered with flag bit1 (`rec+0x1c & 0x2`, `flags` 2 or 3 at the register site): a write
     /// is staged in [`super::Row::pending`] until [`super::Cvars::commit_latched`].
     pub(crate) latched: bool,
+    /// Registered in the per-character archive, `(flags & 0x30) == 0x20`: never in `Config.wtf`
+    /// (`CVar::SaveAll` writes category 0 only, `0x767100`) and dropped at logout
+    /// (`CVar::DeleteCharacterCVars` `0x767350`).
+    pub(crate) per_character: bool,
 }
 
 impl Registered {
@@ -23,6 +27,14 @@ impl Registered {
     pub(crate) const fn latched(self) -> Self {
         Self {
             latched: true,
+            ..self
+        }
+    }
+
+    /// Mark the row per-character.
+    pub(crate) const fn per_character(self) -> Self {
+        Self {
+            per_character: true,
             ..self
         }
     }
@@ -61,6 +73,7 @@ const fn same(name: &'static str, default: &'static str) -> Registered {
         default,
         reference: Reference::Same(default),
         latched: false,
+        per_character: false,
     }
 }
 
@@ -76,6 +89,7 @@ const fn overridden(
         default,
         reference: Reference::Overridden { registered, why },
         latched: false,
+        per_character: false,
     }
 }
 
@@ -91,6 +105,7 @@ const fn deviates(
         default,
         reference: Reference::Deviates { value, why },
         latched: false,
+        per_character: false,
     }
 }
 
@@ -101,6 +116,7 @@ const fn ours(name: &'static str, default: &'static str, why: &'static str) -> R
         default,
         reference: Reference::Ours(why),
         latched: false,
+        per_character: false,
     }
 }
 
@@ -132,6 +148,12 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // `0x51f147`, "3": when `IsThreatWarningEnabled` answers 1 (0 off, 1 in dungeons, 2 in a
     // group, 3 always), which the stock unit frames' threat glow reads.
     same("threatWarning", "3"),
+    // `0x51ee61` and `0x51ee84`, "" with flags 0x20: the panes the character sheet's two stat
+    // dropdowns show; `PaperDollFrame.lua`'s `VARIABLES_LOADED` arm writes the class default
+    // when either is "". The reference keeps them per character in its account data; benilla,
+    // with no account data store (#279), keeps them for the session only.
+    same("playerStatLeftDropdown", "").per_character(),
+    same("playerStatRightDropdown", "").per_character(),
 ];
 
 /// The host-backed CVars, one row per knob that has a reader: a host knob, or a Lua consumer
