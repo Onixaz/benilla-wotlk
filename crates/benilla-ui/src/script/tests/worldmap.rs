@@ -329,7 +329,7 @@ fn set_map_by_id_takes_the_area_id_less_one() {
     assert_eq!(map(&mut s), (Some("Azeroth".into()), 2, 0));
 
     // Ulduar: no continent draws map 603, and floor 0 is its terrain.
-    assert_eq!(s.eval::<bool>("return SetMapByID(529)").unwrap(), true);
+    assert!(s.eval::<bool>("return SetMapByID(529)").unwrap());
     assert_eq!(map(&mut s), (Some("Ulduar".into()), -1, 0));
     assert_eq!(
         s.eval::<(Option<i64>, i64, i64)>(
