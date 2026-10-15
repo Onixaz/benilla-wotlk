@@ -423,6 +423,20 @@ impl ObjectFields {
     pub fn unit_max_ranged_damage(&self) -> Option<f32> {
         self.get_f32(FIELD_UNIT_MAXRANGEDDAMAGE)
     }
+    /// `UNIT_FIELD_POWER_REGEN_FLAT_MODIFIER + power` (`interrupted` false) or its
+    /// `_INTERRUPTED_` twin: the power's regeneration per second out of casting, or while casting.
+    pub fn unit_power_regen(&self, power: u8, interrupted: bool) -> Option<f32> {
+        let base = if interrupted {
+            FIELD_UNIT_POWER_REGEN_INTERRUPTED_FLAT_MODIFIER
+        } else {
+            FIELD_UNIT_POWER_REGEN_FLAT_MODIFIER
+        };
+        (power < 7).then(|| self.get_f32(base + u16::from(power)))?
+    }
+    /// `UNIT_FIELD_MAXHEALTHMODIFIER`: the max-health multiplier less one.
+    pub fn unit_max_health_modifier(&self) -> Option<f32> {
+        self.get_f32(FIELD_UNIT_MAXHEALTHMODIFIER)
+    }
     /// `UNIT_FIELD_BASEATTACKTIME + i`: attack speed in ms, 0 mainhand, 1 offhand.
     pub fn unit_base_attack_time(&self, i: u8) -> Option<u32> {
         (i < 2).then(|| self.get_u32(FIELD_UNIT_BASEATTACKTIME + u16::from(i)))?

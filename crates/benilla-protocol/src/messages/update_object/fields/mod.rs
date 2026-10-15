@@ -183,6 +183,19 @@ const FIELD_PLAYER_BYTES_3: u16 = 195;
 pub const FIELD_PLAYER_QUEST_LOG_1_1: u16 = 1282;
 const FIELD_PLAYER_DAILY_QUESTS_1: u16 = 1407;
 const FIELD_PLAYER_MAX_LEVEL: u16 = 1432;
+// 3.3.5a's character-sheet fields, also past the 1.12.1 player end.
+const FIELD_PLAYER_EXPERTISE: u16 = 1433; // then the off hand's, INT
+const FIELD_PLAYER_SPELL_CRIT_PERCENTAGE1: u16 = 1435; // ×7 schools ([0] physical), FLOAT
+const FIELD_PLAYER_SHIELD_BLOCK: u16 = 1442;
+const FIELD_PLAYER_MOD_HEALING_DONE_POS: u16 = 1443;
+const FIELD_PLAYER_MOD_TARGET_RESISTANCE: u16 = 1444;
+const FIELD_PLAYER_COMBAT_RATING_1: u16 = 1445; // ×25, INT
+/// The combat ratings, 25 in 3.3.5a (`GetCombatRating` refuses an index past `0x19`).
+pub const PLAYER_COMBAT_RATINGS: u8 = 25;
+// 3.3.5a's power regen pairs and max-health modifier, in 1.12.1's unread power-cost words.
+const FIELD_UNIT_POWER_REGEN_FLAT_MODIFIER: u16 = 173; // ×7 powers, FLOAT
+const FIELD_UNIT_POWER_REGEN_INTERRUPTED_FLAT_MODIFIER: u16 = 180; // ×7, FLOAT
+const FIELD_UNIT_MAXHEALTHMODIFIER: u16 = 187; // FLOAT
 
 /// The indices a field watch names: the same constants the accessors read, so the two agree.
 pub mod field {
@@ -367,7 +380,7 @@ fn descriptor_len(object_type: ObjectType) -> u16 {
         ObjectType::Container => 122, // CONTAINER_END = ITEM_END + 0x4A
         ObjectType::Unit => 188,      // UNIT_END = OBJECT_END + 0xB6
         // 1.12.1's PLAYER_END (UNIT_END + 0x446), plus the 3.3.5a fields kept past it.
-        ObjectType::Player => 1433,
+        ObjectType::Player => 1470,
         ObjectType::GameObject => 26, // GAMEOBJECT_END = OBJECT_END + 0x14
         ObjectType::DynamicObject => 16, // DYNAMICOBJECT_END = OBJECT_END + 0xA
         ObjectType::Corpse => 38,     // CORPSE_END = OBJECT_END + 0x20

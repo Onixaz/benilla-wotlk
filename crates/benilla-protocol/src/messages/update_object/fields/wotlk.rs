@@ -317,6 +317,40 @@ mod tests {
     }
 
     #[test]
+    fn the_character_sheet_fields_land_where_the_12340_stat_verbs_read_them() {
+        let f = ObjectFields::from_wotlk(
+            wire(&[
+                (40, 12.5f32.to_bits()),
+                (47, 3.25f32.to_bits()),
+                (145, 0.1f32.to_bits()),
+                (1027, 12),
+                (1028, 7),
+                (1030, 4.5f32.to_bits()),
+                (1033, 6.75f32.to_bits()),
+                (1039, 95),
+                (1192, 410),
+                (1195, (-35i32) as u32),
+                (1231, 18),
+                (1255, 40),
+            ]),
+            ObjectType::Player,
+        );
+        assert_eq!(f.unit_power_regen(0, false), Some(12.5));
+        assert_eq!(f.unit_power_regen(0, true), Some(3.25));
+        assert_eq!(f.unit_max_health_modifier(), Some(0.1));
+        assert_eq!(f.player_expertise(0), Some(12));
+        assert_eq!(f.player_expertise(1), Some(7));
+        assert_eq!(f.player_ranged_crit_percentage(), Some(4.5));
+        assert_eq!(f.player_spell_crit_percentage(1), Some(6.75));
+        assert_eq!(f.player_shield_block(), Some(95));
+        assert_eq!(f.player_mod_healing_done_pos(), Some(410));
+        assert_eq!(f.player_mod_target_resistance(), Some(-35));
+        assert_eq!(f.player_combat_rating(0), Some(18));
+        assert_eq!(f.player_combat_rating(24), Some(40));
+        assert_eq!(f.player_combat_rating(25), None);
+    }
+
+    #[test]
     fn a_gameobject_s_bytes_split_into_state_type_and_its_rotation_comes_from_movement() {
         // State 1, type 19 (mailbox), art kit 0, anim progress 255; dynamic flags 0x4 under a
         // path progress.

@@ -239,6 +239,36 @@ impl ObjectFields {
     pub fn player_crit_percentage(&self) -> Option<f32> {
         self.get_f32(FIELD_PLAYER_CRIT_PERCENTAGE)
     }
+    /// `PLAYER_RANGED_CRIT_PERCENTAGE`: ranged crit chance, already a percent.
+    pub fn player_ranged_crit_percentage(&self) -> Option<f32> {
+        self.get_f32(FIELD_PLAYER_CRIT_PERCENTAGE + 1)
+    }
+    /// `PLAYER_SPELL_CRIT_PERCENTAGE1 + school`: spell crit chance, already a percent.
+    pub fn player_spell_crit_percentage(&self, school: u8) -> Option<f32> {
+        (school < 7)
+            .then(|| self.get_f32(FIELD_PLAYER_SPELL_CRIT_PERCENTAGE1 + u16::from(school)))?
+    }
+    /// `PLAYER_EXPERTISE` (`hand` 0) and `PLAYER_OFFHAND_EXPERTISE` (1).
+    pub fn player_expertise(&self, hand: u8) -> Option<u32> {
+        (hand < 2).then(|| self.get_u32(FIELD_PLAYER_EXPERTISE + u16::from(hand)))?
+    }
+    /// `PLAYER_SHIELD_BLOCK`: the shield's block value.
+    pub fn player_shield_block(&self) -> Option<u32> {
+        self.get_u32(FIELD_PLAYER_SHIELD_BLOCK)
+    }
+    /// `PLAYER_FIELD_MOD_HEALING_DONE_POS`: the healing bonus.
+    pub fn player_mod_healing_done_pos(&self) -> Option<i32> {
+        self.get_i32(FIELD_PLAYER_MOD_HEALING_DONE_POS)
+    }
+    /// `PLAYER_FIELD_MOD_TARGET_RESISTANCE`: spell penetration as the resistance it removes, ≤ 0.
+    pub fn player_mod_target_resistance(&self) -> Option<i32> {
+        self.get_i32(FIELD_PLAYER_MOD_TARGET_RESISTANCE)
+    }
+    /// `PLAYER_FIELD_COMBAT_RATING_1 + i`: combat rating `i`, 0-based.
+    pub fn player_combat_rating(&self, i: u8) -> Option<i32> {
+        (i < PLAYER_COMBAT_RATINGS)
+            .then(|| self.get_i32(FIELD_PLAYER_COMBAT_RATING_1 + u16::from(i)))?
+    }
     /// `PLAYER_FIELD_POSSTAT0 + i`: stat `i`'s positive buff total from gear, enchants and
     /// auras; an int on the wire, narrowed from the server's float (`BuildValuesUpdate`).
     pub fn player_posstat(&self, i: u8) -> Option<i32> {

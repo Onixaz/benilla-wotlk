@@ -107,6 +107,11 @@ pub enum Field {
     UnitRangedAttackPowerMultiplier,
     UnitMinRangedDamage,
     UnitMaxRangedDamage,
+    /// Per-power regeneration per second out of combat and while casting, floats.
+    UnitPowerRegenFlatModifier,
+    UnitPowerRegenInterruptedFlatModifier,
+    /// The max-health multiplier less one, a float.
+    UnitMaxHealthModifier,
     /// The positive and negative stat and resistance buffs: a unit block on the wire, a player
     /// block in [`SHARED`].
     PosStat,
@@ -152,6 +157,17 @@ pub enum Field {
     PlayerParryPercentage,
     PlayerCritPercentage,
     PlayerRangedCritPercentage,
+    /// Main-hand and off-hand expertise, integers.
+    PlayerExpertise,
+    PlayerOffhandExpertise,
+    /// Spell crit chance per school, percent floats, `[0]` physical.
+    PlayerSpellCritPercentage,
+    PlayerShieldBlock,
+    PlayerModHealingDonePos,
+    /// The spell penetration, a non-positive integer.
+    PlayerModTargetResistance,
+    /// The 25 combat ratings.
+    PlayerCombatRating,
     PlayerExploredZones,
     PlayerRestStateExperience,
     PlayerCoinage,
@@ -294,7 +310,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         item: 48,
         container: 122,
         unit: 188,
-        player: 1433,
+        player: 1470,
         gameobject: 26,
         dynamicobject: 16,
         corpse: 38,
@@ -380,6 +396,10 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         one(F::UnitRangedAttackPowerMultiplier, Unit, 170),
         one(F::UnitMinRangedDamage, Unit, 171),
         one(F::UnitMaxRangedDamage, Unit, 172),
+        // 3.3.5a's power regen and max-health modifier, in 1.12.1's unread power-cost words.
+        run(F::UnitPowerRegenFlatModifier, Unit, 173, 7),
+        run(F::UnitPowerRegenInterruptedFlatModifier, Unit, 180, 7),
+        one(F::UnitMaxHealthModifier, Unit, 187),
         run(F::PlayerDuelArbiter, Player, 188, 2),
         one(F::PlayerFlags, Player, 190),
         one(F::PlayerGuildId, Player, 191),
@@ -393,6 +413,14 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         // 3.3.5a's daily quests and level cap, also kept past the 1.12.1 player end.
         run(F::PlayerDailyQuests, Player, 1407, 25),
         one(F::PlayerMaxLevel, Player, 1432),
+        // 3.3.5a's character-sheet fields, past the daily quests.
+        one(F::PlayerExpertise, Player, 1433),
+        one(F::PlayerOffhandExpertise, Player, 1434),
+        run(F::PlayerSpellCritPercentage, Player, 1435, 7),
+        one(F::PlayerShieldBlock, Player, 1442),
+        one(F::PlayerModHealingDonePos, Player, 1443),
+        one(F::PlayerModTargetResistance, Player, 1444),
+        run(F::PlayerCombatRating, Player, 1445, 25),
         // 19 slots of 12: creator guid, entry, 7 enchants, properties, pad.
         strided(F::PlayerVisibleItemEntry, Player, 260, 19, 12),
         strided(F::PlayerVisibleItemEnchants, Player, 261, 19, 12),
@@ -566,6 +594,11 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         one(F::UnitRangedAttackPowerMultiplier, Unit, 128),
         one(F::UnitMinRangedDamage, Unit, 129),
         one(F::UnitMaxRangedDamage, Unit, 130),
+        // `GetManaRegen` reads power 0 at unit block `+0x88` and `+0xa4` (`0x4f5390`).
+        run(F::UnitPowerRegenFlatModifier, Unit, 40, 7),
+        run(F::UnitPowerRegenInterruptedFlatModifier, Unit, 47, 7),
+        // `GetUnitMaxHealthModifier` reads unit block `+0x22c` (`0x612870`).
+        one(F::UnitMaxHealthModifier, Unit, 145),
         run(F::PlayerDuelArbiter, Player, 148, 2),
         one(F::PlayerFlags, Player, 150),
         one(F::PlayerGuildId, Player, 151),
@@ -604,6 +637,13 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         one(F::PlayerParryPercentage, Player, 1026),
         one(F::PlayerCritPercentage, Player, 1029),
         one(F::PlayerRangedCritPercentage, Player, 1030),
+        // Player block `+0xdbc`/`+0xdc0` (`GetExpertise` `0x612bf0`).
+        one(F::PlayerExpertise, Player, 1027),
+        one(F::PlayerOffhandExpertise, Player, 1028),
+        // `+0xdd0 + 4 * (school - 1)` (`GetSpellCritChance` `0x60e290`).
+        run(F::PlayerSpellCritPercentage, Player, 1032, 7),
+        // `+0xdec` (`GetShieldBlock` `0x60dff0`).
+        one(F::PlayerShieldBlock, Player, 1039),
         // 128 words; the shared space keeps the first 64.
         run(F::PlayerExploredZones, Player, 1041, 64),
         one(F::PlayerRestStateExperience, Player, 1169),
@@ -611,6 +651,10 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         run(F::PlayerModDamageDonePos, Player, 1171, 7),
         run(F::PlayerModDamageDoneNeg, Player, 1178, 7),
         run(F::PlayerModDamageDonePct, Player, 1185, 7),
+        // `+0x1050` (`GetSpellBonusHealing` `0x60e3b0`) and `+0x105c` (`GetSpellPenetration`
+        // `0x60e470`).
+        one(F::PlayerModHealingDonePos, Player, 1192),
+        one(F::PlayerModTargetResistance, Player, 1195),
         one(F::PlayerFieldBytes, Player, 1197),
         one(F::PlayerAmmoId, Player, 1198),
         one(F::PlayerSelfResSpell, Player, 1199),
@@ -621,6 +665,8 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         one(F::PlayerLifetimeHonorableKills, Player, 1228),
         one(F::PlayerFieldBytes2, Player, 1229),
         one(F::PlayerWatchedFactionIndex, Player, 1230),
+        // `+0x10ec + 4 * index` (`GetCombatRating` `0x60ddb0`).
+        run(F::PlayerCombatRating, Player, 1231, 25),
         run(F::GameObjectCreatedBy, GameObject, 6, 2),
         one(F::GameObjectDisplayId, GameObject, 8),
         one(F::GameObjectFlags, GameObject, 9),
