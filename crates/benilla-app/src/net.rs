@@ -995,6 +995,10 @@ pub(crate) enum ClientCommand {
         button: u8,
         packed: u32,
     },
+    /// `CMSG_TOTEM_DESTROYED`: dismiss the totem in `slot` (0 fire .. 3 air). No answer.
+    TotemDestroyed {
+        slot: u8,
+    },
     /// `CMSG_SET_ACTIONBAR_TOGGLES` (sent by `0x4e76e0`), one per call. The byte is server-owned
     /// (`PLAYER_FIELD_BYTES` byte 2, read at `0x4e768c`; nothing in the client writes it), so it
     /// only changes by the descriptor echo. Disconnected, a silent no-op (`0x5ab637`, `0x5379ab`,

@@ -180,10 +180,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ),
     ("Startup_Strings", "#245 the client's startup error text"),
     ("StringLookups", "#245 string lookups"),
-    (
-        "TotemCategory",
-        "#240 totem and tool categories: GetTradeSkillTools, SetMultiCastSpell",
-    ),
     ("TransportPhysics", "#243 transport rocking"),
     ("TransportRotation", "#243 transport rotation"),
     ("Vehicle", "#235 vehicles"),

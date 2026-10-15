@@ -1045,6 +1045,7 @@ fn writer_loop(
                     ClientCommand::SetActionButton { button, packed } => {
                         w.set_action_button(button, packed)
                     }
+                    ClientCommand::TotemDestroyed { slot } => w.totem_destroyed(slot),
                     ClientCommand::SetActionBarToggles { toggles } => {
                         w.set_actionbar_toggles(toggles)
                     }

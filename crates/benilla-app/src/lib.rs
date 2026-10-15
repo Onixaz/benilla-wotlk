@@ -185,6 +185,7 @@ mod ui_talent_wipe;
 mod ui_taxi;
 mod ui_text;
 mod ui_tooltip;
+mod ui_totem;
 mod ui_trade;
 mod ui_tradeskill;
 mod ui_trainer;

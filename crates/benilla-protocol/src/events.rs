@@ -315,6 +315,8 @@ pub enum SessionEvent {
     TalentsInfo(crate::messages::TalentsInfo),
     /// The player's completed achievements (`SMSG_ALL_ACHIEVEMENT_DATA`).
     AllAchievementData(crate::messages::AllAchievementData),
+    /// A totem took one of our four slots (`SMSG_TOTEM_CREATED`).
+    TotemCreated(crate::messages::TotemCreated),
     /// A unit earned an achievement (`SMSG_ACHIEVEMENT_EARNED`).
     AchievementEarned(crate::messages::AchievementEarned),
     /// `SMSG_PET_UNLEARN_CONFIRM`: accept with `CMSG_PET_UNLEARN`; declining sends nothing.

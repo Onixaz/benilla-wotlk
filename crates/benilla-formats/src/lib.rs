@@ -55,6 +55,8 @@ pub use gm_ticket_category::{
 };
 mod summon_properties;
 pub use summon_properties::{load_summon_properties, SummonPropertiesCatalog};
+mod totem_category;
+pub use totem_category::{load_totem_categories, TotemCategory, TotemCategoryCatalog};
 mod cfg_categories;
 pub use cfg_categories::{load_realm_categories, RealmCategory};
 mod wow_ini;

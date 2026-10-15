@@ -87,6 +87,7 @@ use crate::ui_talent_wipe::UiTalentWipePlugin;
 use crate::ui_taxi::UiTaxiPlugin;
 use crate::ui_text::UiTextPlugin;
 use crate::ui_tooltip::UiTooltipPlugin;
+use crate::ui_totem::UiTotemPlugin;
 use crate::ui_trade::UiTradePlugin;
 use crate::ui_tradeskill::UiTradeSkillPlugin;
 use crate::ui_trainer::UiTrainerPlugin;
@@ -216,6 +217,8 @@ impl PluginGroup for GamePlugins {
             // The form list by the reference's admission and order (`0x4b25b0`, `0x4b2bb0`); after
             // UiActionPlugin (`Spells`) and SpellPlugin (the cast tail).
             .add(UiShapeshiftPlugin)
+            // The totem slots; after UiActionPlugin, whose `Spells` names each totem's icon.
+            .add(UiTotemPlugin)
             // After UiActionPlugin, whose `Spells` and cooldown clock it shares.
             .add(UiPetPlugin)
             .add(ChrClassesPlugin)

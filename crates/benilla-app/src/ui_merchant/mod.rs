@@ -1529,6 +1529,7 @@ mod tests {
                 area: 0,
                 map: 0,
                 bag_family: 0,
+                totem_category: 0,
             }),
         );
         let resolved = resolve_item(&row(2129, 1, 3), &items, None, &commands);

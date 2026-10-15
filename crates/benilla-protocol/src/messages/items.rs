@@ -115,6 +115,8 @@ pub struct ItemInfo {
     /// 7 enchanting, 8 engineering, 9 keyring; 0 none). An enum, not a mask, in 1.12: the
     /// reference's `HasKey` (`0x48ae90`) tests `== 9`.
     pub bag_family: u32,
+    /// The `TotemCategory.dbc` row this item is a tool for, 0 none (`ItemRec+0x1bc`).
+    pub totem_category: u32,
 }
 
 impl ItemInfo {
@@ -378,9 +380,9 @@ pub(super) fn read_item_query_response_wotlk(r: &mut &[u8]) -> io::Result<(u32, 
     let map = read_u32_le(r)?;
     let bag_family = read_u32_le(r)?;
 
-    // TotemCategory, 3 sockets { color, content }, socketBonus, GemProperties,
-    // RequiredDisenchantSkill, ArmorDamageModifier (f32), Duration, ItemLimitCategory, HolidayId.
-    for _ in 0..14 {
+    let totem_category = read_u32_le(r)?;
+    // Sockets, socket bonus, gem properties, disenchant skill, armor modifier, duration, limits.
+    for _ in 0..13 {
         let _ = read_u32_le(r)?;
     }
 
@@ -439,6 +441,7 @@ pub(super) fn read_item_query_response_wotlk(r: &mut &[u8]) -> io::Result<(u32, 
             area,
             map,
             bag_family,
+            totem_category,
         }),
     ))
 }

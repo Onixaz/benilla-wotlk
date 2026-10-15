@@ -666,6 +666,7 @@ pub(crate) fn test_template(name: &str) -> ItemInfo {
         area: 0,
         map: 0,
         bag_family: 0,
+        totem_category: 0,
     }
 }
 

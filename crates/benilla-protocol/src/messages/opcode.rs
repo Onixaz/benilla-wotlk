@@ -666,6 +666,10 @@ pub const SMSG_ACHIEVEMENT_EARNED: u16 = 0x0468;
 pub const SMSG_ALL_ACHIEVEMENT_DATA: u16 = 0x047D;
 /// 3.3.5a only: every talent group's ranks, or the pet's (`0x6cd770`).
 pub const SMSG_TALENTS_INFO: u16 = 0x04C0;
+/// 3.3.5a only: a totem took a slot (`0x526530` arm `0x413`).
+pub const SMSG_TOTEM_CREATED: u16 = 0x0413;
+/// 3.3.5a only: dismiss the totem in a slot, `u8 slot` (`DestroyTotem` `0x5197d0`).
+pub const CMSG_TOTEM_DESTROYED: u16 = 0x0414;
 /// 3.3.5a only: the preview mode's learn, `u32 count` × (`u32 talentId`, `u32 rank`) (`0x5c6a10`).
 pub const CMSG_LEARN_PREVIEW_TALENTS: u16 = 0x04C1;
 /// 3.3.5a only: the pet's preview learn, the pet guid before the same body (`0x5c6ab4`).

@@ -228,6 +228,8 @@ pub enum ServerPacket {
     TalentsInfo(super::TalentsInfo),
     /// `SMSG_ALL_ACHIEVEMENT_DATA`: the player's completed achievements.
     AllAchievementData(super::AllAchievementData),
+    /// `SMSG_TOTEM_CREATED`: a totem took one of the player's four slots.
+    TotemCreated(super::TotemCreated),
     /// `SMSG_ACHIEVEMENT_EARNED`: a unit earned an achievement.
     AchievementEarned(super::AchievementEarned),
     /// `SMSG_PET_UNLEARN_CONFIRM`: a pet trainer asks; `CMSG_PET_UNLEARN` with the guid confirms.
@@ -1311,6 +1313,7 @@ impl ServerPacket {
             ServerPacket::TalentWipeConfirm { .. } => "MSG_TALENT_WIPE_CONFIRM".into(),
             ServerPacket::TalentsInfo(_) => "SMSG_TALENTS_INFO".into(),
             ServerPacket::AllAchievementData(_) => "SMSG_ALL_ACHIEVEMENT_DATA".into(),
+            ServerPacket::TotemCreated(_) => "SMSG_TOTEM_CREATED".into(),
             ServerPacket::AchievementEarned(_) => "SMSG_ACHIEVEMENT_EARNED".into(),
             ServerPacket::PetUnlearnConfirm { .. } => "SMSG_PET_UNLEARN_CONFIRM".into(),
             ServerPacket::RaidGroupOnly { .. } => "SMSG_RAID_GROUP_ONLY".into(),

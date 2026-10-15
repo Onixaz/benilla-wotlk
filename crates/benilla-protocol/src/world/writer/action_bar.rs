@@ -17,6 +17,14 @@ impl WorldWriter {
         )
     }
 
+    /// Dismiss the totem in `slot` (`CMSG_TOTEM_DESTROYED`); the server answers with nothing.
+    pub fn totem_destroyed(&mut self, slot: u8) -> Result<()> {
+        self.send(
+            opcode::CMSG_TOTEM_DESTROYED,
+            &messages::totem_destroyed(slot),
+        )
+    }
+
     /// Post the extra bars' visibility byte, `PLAYER_FIELD_BYTES` byte 2. The server owns it: the
     /// reference never writes it locally, it holds once `SMSG_UPDATE_OBJECT` echoes it, and a
     /// disconnected send is dropped silently (`0x5ab637`).

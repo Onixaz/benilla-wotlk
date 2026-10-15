@@ -12,9 +12,9 @@ use super::{
     broadcast, channel, chat, combat_log, death, duel, gameobject, gm_ticket, gossip, group, guild,
     instance, items, loot, mail, meeting_stone, mirror_timer, monster_move, movement, opcode,
     page_text, pet, petition, pose, progression, pvp, quest, social, spellbook, spells, stable,
-    summon, tabard, talents, taxi, trade, trainer, tutorial, update_object, vendor, world_state,
-    AttackSwingError, Character, CreatureQueryInfo, JumpInfo, MoveMode, ServerPacket, SpeedKind,
-    SplineMode,
+    summon, tabard, talents, taxi, totem, trade, trainer, tutorial, update_object, vendor,
+    world_state, AttackSwingError, Character, CreatureQueryInfo, JumpInfo, MoveMode, ServerPacket,
+    SpeedKind, SplineMode,
 };
 
 /// Read a `SMSG_FORCE_*_SPEED_CHANGE` body: `[packed guid][u32 counter][f32 speed]`, with a `u8`
@@ -514,6 +514,9 @@ fn parse_server_body(
         opcode::SMSG_TALENTS_INFO => ServerPacket::TalentsInfo(talents::read_talents_info(&mut r)?),
         opcode::SMSG_ALL_ACHIEVEMENT_DATA => {
             ServerPacket::AllAchievementData(achievement::read_all_achievement_data(&mut r)?)
+        }
+        opcode::SMSG_TOTEM_CREATED => {
+            ServerPacket::TotemCreated(totem::read_totem_created(&mut r)?)
         }
         opcode::SMSG_ACHIEVEMENT_EARNED => {
             ServerPacket::AchievementEarned(achievement::read_achievement_earned(&mut r)?)

@@ -199,6 +199,7 @@ mod tooltip;
 mod tooltip_item;
 mod tooltip_spell;
 mod tooltip_unit;
+mod totem;
 mod ui_errors;
 pub use tooltip_unit::TooltipTint;
 mod trade;
@@ -331,6 +332,7 @@ pub use talent::{
 };
 pub use taxi::{TaxiNodeType, TaxiUiNode, TaxiUiState};
 pub use tooltip_spell::SpellTooltipView;
+pub use totem::{TotemSlots, TotemView, MAX_TOTEM_SLOTS};
 pub use trade::{TradeSideState, TradeSlotItem, TradeState, TRADE_SLOTS};
 pub use tradeskill::{TradeSkillDifficulty, TradeSkillReagent, TradeSkillRecipe, TradeSkillState};
 pub use trainer::{
@@ -869,6 +871,7 @@ impl UiScript {
         tutorial::install(&lua)?;
         worldmap_arrow::install(&lua)?;
         shapeshift::install(&lua)?;
+        totem::install(&lua)?;
         pet::install(&lua)?;
         gossip::install(&lua)?;
         merchant::install(&lua)?;

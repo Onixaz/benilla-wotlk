@@ -248,6 +248,14 @@ impl InventoryScope {
         bank: true,
         ..Self::DEFAULT
     };
+    /// `0x0F`, the tool walk's mask (`0x7548f0`): worn gear, bags, backpack and bank.
+    pub(crate) const TOOLS: Self = Self {
+        equipment: true,
+        bags: true,
+        backpack: true,
+        bank: true,
+        keyring: false,
+    };
     /// Bags and backpack only, narrower than any reference mask: the action-bar and reagent counts
     /// use it, where the reference's `0x47` also counts worn gear and the keyring.
     pub(crate) const CARRIED: Self = Self {
@@ -393,6 +401,27 @@ pub(crate) fn carried_counts(
         None
     });
     counts
+}
+
+/// The `TotemCategory` of every item in `scope`; an uncached template is asked for and skipped.
+pub(crate) fn tool_categories(
+    store: &ObjectFields,
+    objects: &Objects,
+    items: &crate::items::Items,
+    commands: &NetCommands,
+    scope: InventoryScope,
+) -> Vec<u32> {
+    let mut categories = Vec::new();
+    walk_inventory::<()>(store, objects, scope, |_, _, guid| {
+        let entry = objects.object(guid).and_then(|f| f.object_entry());
+        if let Some(t) = entry.and_then(|e| items.template(e, guid, commands)) {
+            if t.totem_category != 0 {
+                categories.push(t.totem_category);
+            }
+        }
+        None
+    });
+    categories
 }
 
 /// How far [`find_item`] looks and which copies count: the two mode bits the reference's callers

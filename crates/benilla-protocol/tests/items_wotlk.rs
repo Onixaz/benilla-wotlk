@@ -146,6 +146,7 @@ fn starting_pants_decode_whole() {
             area: 0,
             map: 0,
             bag_family: 0,
+            totem_category: 0,
         }))
     );
 }

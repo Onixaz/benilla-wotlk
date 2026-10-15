@@ -555,6 +555,10 @@ pub(crate) struct Model {
     pub(crate) shapeshift_forms: Vec<super::shapeshift::StoredShapeshiftForm>,
     /// The player's raw form byte (`CGUnit_C::GetShapeshiftForm`), 0 unshifted or no player.
     pub(crate) shapeshift_form_byte: u8,
+    /// The four totem slots and their tools.
+    pub(crate) totems: super::totem::TotemSlots,
+    /// `DestroyTotem` calls on live slots, 0-based, for the app to send.
+    pub(crate) totem_destroys: Vec<u8>,
 
     /// The pet bar's ten slots and two bar-wide bits, replaced whole by every `SMSG_PET_SPELLS`.
     pub(crate) pet_bar: super::pet::PetBarState,
@@ -1306,6 +1310,8 @@ impl Model {
             tutorial_resets: 0,
             shapeshift_forms: Vec::new(),
             shapeshift_form_byte: 0,
+            totems: Default::default(),
+            totem_destroys: Vec::new(),
             pet_bar: super::pet::PetBarState::default(),
             pet_autocast_toggles: Vec::new(),
             pet_stop_attacks: 0,
