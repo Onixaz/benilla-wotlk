@@ -266,7 +266,30 @@ impl Plugin for ProbeLuaPlugin {
             again,
             ..default()
         })
-        .add_systems(Update, fire_probe_lua);
+        .add_systems(Update, (fire_probe_lua, fire_probe_interacts));
+    }
+}
+
+/// `ProbeInteract()` calls not yet run, each a right-click on the target.
+static PROBE_INTERACTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Runs the queued `ProbeInteract()` presses on the selection.
+fn fire_probe_interacts(
+    selection: Res<crate::target::Selection>,
+    mut out: MessageWriter<crate::target::Interact>,
+) {
+    let n = PROBE_INTERACTS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    if n == 0 {
+        return;
+    }
+    match selection.target {
+        Some(entity) => {
+            info!("probe-interact: right-click {:?}", selection.guid);
+            for _ in 0..n {
+                out.write(crate::target::Interact(entity));
+            }
+        }
+        None => info!("probe-interact: no target"),
     }
 }
 
@@ -299,9 +322,19 @@ fn probe_lua_due(probe: &ProbeLua, now: f32) -> bool {
     }
 }
 
-/// Installs `ProbeLog(text)`, which logs `probe-log:` lines, into the live VM. Relog and
-/// `ReloadUI()` build a new Lua state, so it is reinstalled per VM; only while a chunk is set.
+/// Installs `ProbeLog(text)` and `ProbeInteract()` into the live VM, per VM, while a chunk is set.
 fn install_probe_log(script: &benilla_ui::script::UiScript) {
+    match script.lua().create_function(|_, ()| {
+        PROBE_INTERACTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }) {
+        Ok(f) => {
+            if let Err(e) = script.lua().globals().set("ProbeInteract", f) {
+                error!("probe-lua: installing ProbeInteract: {e}");
+            }
+        }
+        Err(e) => error!("probe-lua: creating ProbeInteract: {e}"),
+    }
     match script.lua().create_function(|_, text: String| {
         info!("probe-log: {text}");
         Ok(())
