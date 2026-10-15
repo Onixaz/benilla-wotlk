@@ -120,6 +120,10 @@ out of scope is closed with the reason.
   after it (its first six letters).
 - **Running it unattended.** The rules are `docs/METHOD.md`, "The local server"; these are the
   switches.
+  - The build a probe runs is the play build: `cargo build --profile play -p benilla`, then
+    `target/play/benilla.exe` with the switches in its environment. It relinks in a minute where
+    `--release` (fat LTO, one codegen unit) takes many. `--release` is for a frame-time
+    measurement, or when asked for.
   - `WOW_UNATTENDED=1` reconnects instead of waiting at a dialog, and exits non-zero on a login
     it cannot pass. `WOW_NOSOUND=1` runs silent. A capture (`WOW_CAPTURE`) is both, and a rig
     (`WOW_RIG`) is unattended. `WOW_ALLOW_ACCOUNT=1` overrides the account guard.
@@ -134,7 +138,9 @@ out of scope is closed with the reason.
   - A capture runs through `scripts/visual.sh`, whose recipe is the header of
     `crates/benilla-app/src/capture/mod.rs`. Pixel questions go through `benilla-visual crop`,
     `series` and `hotspot`.
-- **The loop.** `cargo play` builds and runs the play profile. `scripts/check.sh` verifies a
+- **The loop.** `cargo play` builds and runs the play profile, and a probe runs the same build.
+  `--release` is the shipped and the measured profile, fat LTO over one codegen unit, so it is
+  built for a frame-time number or a release, not per round. `scripts/check.sh` verifies a
   round of work; `scripts/gates.sh` is the full chain, and it opens a window for the engine boot
   checks, so it needs a display. `WOW_STOCK_UI=1` boots a dev build on the stock interface
   alone, without benilla's layer. Work on a branch.

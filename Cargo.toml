@@ -54,13 +54,18 @@ opt-level = 1
 
 # No debuginfo trimming: `debug = "line-tables-only"` measures no recurring win on macOS + sccache.
 
-# The shipping build (`--profile ship`): fat LTO measures -1.0 cpu_ms (-5 %) against `release`,
-# which stays the measured profile because fat LTO's link time would tax every iteration.
-# `-Ctarget-cpu=native` is not set: it is not portable.
-[profile.ship]
-inherits = "release"
+# `release` is the measured and the shipped profile: fat LTO over one codegen unit measures
+# -0.43 ms a frame (-6 %) at Northshire Abbey against thin-local LTO, and the player's fps is the
+# benchmark. The cost is the link: a full build 32 min against 23, a one-crate relink minutes
+# longer; the iteration loop and every probe run is `cargo play`, and `--release` is built to
+# measure or to ship. `-Ctarget-cpu=native` is not set: it is not portable.
+[profile.release]
 lto = "fat"
 codegen-units = 1
+
+# The former shipping profile, now `release` itself; kept so `--profile ship` still builds.
+[profile.ship]
+inherits = "release"
 
 # `release` plus incremental, run as `cargo play`: under `release` a one-line edit to
 # `benilla-app` costs 2m47s. Incremental applies to workspace members only, so dependencies stay
@@ -71,3 +76,6 @@ incremental = true
 # Not for speed: under `incremental`, thin-local LTO leaves promoted `anon.*.llvm.*` symbols
 # unresolved and the link fails intermittently (rustc #86049).
 lto = "off"
+# `release`'s own default before it went to one unit: one unit per crate would make every
+# incremental edit a whole-crate codegen.
+codegen-units = 16

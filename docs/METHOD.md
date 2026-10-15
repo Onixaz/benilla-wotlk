@@ -101,6 +101,9 @@ account. These bind every session and every agent:
   client refuses a scripted login from a checkout on an account it does not declare, or on one
   another run on the machine holds. Parallel runs each take their own: `WOW_PROBE_AS=pool`.
 - Every unattended run says so: `WOW_UNATTENDED=1`. An agent's run is silent: `WOW_NOSOUND=1`.
+- A scripted run is the play build (`cargo build --profile play -p benilla`,
+  `target/play/benilla.exe`); `--release` links with fat LTO and is built only to measure frame
+  time or when asked for.
 - A combat probe keeps its character alive: `.cheat god on` before the fight.
 - Anything about hostility, reaction colour, nameplates, threat, damage or breath runs with
   `WOW_GM=off`.
