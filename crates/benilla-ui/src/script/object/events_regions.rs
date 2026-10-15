@@ -6,7 +6,7 @@ use mlua::{Function, Lua, MultiValue, Table, Value};
 
 use crate::script::binding_abi::optional_string;
 use crate::script::region::region_wrapper;
-use crate::script::{Model, RegionData, REG_SCRIPTS, SCRIPT_KINDS};
+use crate::script::{RegionData, REG_SCRIPTS, SCRIPT_KINDS};
 use crate::widget::RegionKind;
 
 use super::{decode_id, draw_layer_from_str, frame_handle_of, publish_global};
@@ -18,7 +18,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "RegisterEvent",
         lua.create_function(|lua, (this, event): (Table, String)| {
             let h = frame_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             // Dispatch follows registration order, as the reference's listener list does; a
             // re-register keeps its place and never fires twice.
             let list = model.event_to_frames.entry(event.clone()).or_default();
@@ -33,7 +33,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "UnregisterEvent",
         lua.create_function(|lua, (this, event): (Table, String)| {
             let h = frame_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             if let Some(list) = model.event_to_frames.get_mut(&event) {
                 list.retain(|x| x != &h);
             }
@@ -49,7 +49,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "RegisterAllEvents",
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             if !model.all_event_frames.contains(&h) {
                 model.all_event_frames.push(h);
             }
@@ -61,7 +61,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "UnregisterAllEvents",
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             let events = model.frame_events.remove(&h).unwrap_or_default();
             for event in events {
                 if let Some(list) = model.event_to_frames.get_mut(&event) {
@@ -108,7 +108,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     set.insert(s.to_str()?.to_string());
                 }
             }
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             model.drag_registered.insert(h, set);
             Ok(())
         })?,
@@ -142,12 +142,14 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| {
             let owner = frame_handle_of(lua, &this)?;
             let existing = {
-                let model = lua.app_data_ref::<Model>().expect("model");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model");
                 model.arena.frame(owner).and_then(|f| f.title_region)
             };
             if let Some(rh) = existing {
                 let id = {
-                    let mut model = lua.app_data_mut::<Model>().expect("model");
+                    let mut model = crate::script::model_mut_of(lua);
                     let d = model.region_data.entry(rh).or_default();
                     let changed = !d.anchors.is_empty();
                     d.anchors.clear();
@@ -160,7 +162,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             }
             let wrapper = create_region(lua, &this, RegionKind::Title, None, None)?;
             let id = decode_id(&wrapper)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             let rh = *model
                 .id_to_region
                 .get(&id)
@@ -176,7 +178,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| {
             let owner = frame_handle_of(lua, &this)?;
             let found = {
-                let mut model = lua.app_data_mut::<Model>().expect("model");
+                let mut model = crate::script::model_mut_of(lua);
                 model
                     .arena
                     .frame(owner)
@@ -218,7 +220,7 @@ fn set_script(lua: &Lua, this: &Table, name: &str, func: Option<Function>) -> ml
     let kind = script_kind(lua, name)
         .ok_or_else(|| mlua::Error::runtime(format!("SetScript: unsupported script '{name}'")))?;
     let h = frame_handle_of(lua, this)?;
-    let id = lua.app_data_mut::<Model>().expect("model").frame_id(h);
+    let id = crate::script::model_mut_of(lua).frame_id(h);
 
     // The closure lives Lua-side in `REG_SCRIPTS[id][kind]`; Rust keeps a presence mirror.
     let scripts: Table = lua.named_registry_value(REG_SCRIPTS)?;
@@ -233,7 +235,7 @@ fn set_script(lua: &Lua, this: &Table, name: &str, func: Option<Function>) -> ml
     match func {
         Some(f) => {
             per.set(kind, f)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             // The first handler of a kind joins that kind's list; nothing else writes `scripts`.
             if model.scripts.entry(h).or_default().insert(kind) {
                 match kind {
@@ -246,7 +248,7 @@ fn set_script(lua: &Lua, this: &Table, name: &str, func: Option<Function>) -> ml
         }
         None => {
             per.set(kind, Value::Nil)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             if let Some(set) = model.scripts.get_mut(&h) {
                 if set.remove(&kind) {
                     match kind {
@@ -295,12 +297,14 @@ fn apply_region_inherits(lua: &Lua, wrapper: &Table, from: &str) -> mlua::Result
         return Ok(());
     }
     let is_template = {
-        let model = lua.app_data_ref::<Model>().expect("model");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
         let templates = model.framexml_templates.borrow();
         templates.contains_key(from) || templates.keys().any(|k| k.eq_ignore_ascii_case(from))
     };
     if is_template {
-        let mut model = lua.app_data_mut::<Model>().expect("model");
+        let mut model = crate::script::model_mut_of(lua);
         model.record_warning(format!(
             "CreateTexture/CreateFontString: '{from}' is a registered TEMPLATE, not a font object; \
              the region is created but the template's content is not applied (no corpus caller \
@@ -337,7 +341,7 @@ fn create_region(
         .unwrap_or_default();
 
     let id = {
-        let mut model = lua.app_data_mut::<Model>().expect("model");
+        let mut model = crate::script::model_mut_of(lua);
         let rh = model
             .arena
             .create_region(owner, kind, dl, 0)
@@ -352,12 +356,14 @@ fn create_region(
         // both bindings name the region through `CScriptRegion::SetName 0x76c650` (`0x773ba1`,
         // `0x773dc4`).
         let name = {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             crate::framexml::resolve_name(&name, &super::parent_token_base(&model, Some(owner)))
         };
         publish_global(lua, &name, &wrapper)?;
         // First name wins, as for frames; a sibling's `SetPoint` can then name this region.
-        let mut model = lua.app_data_mut::<Model>().expect("model");
+        let mut model = crate::script::model_mut_of(lua);
         model.region_names.entry(name).or_insert(id);
     }
     Ok(wrapper)

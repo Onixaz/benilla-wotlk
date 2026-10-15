@@ -194,12 +194,12 @@ impl super::UiScript {
 
     /// Drain the spell ids `BuyTrainerService` queued, each already resolved from its row.
     pub fn take_trainer_buys(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().trainer_buys)
+        drain_field!(self, trainer_buys)
     }
 
     /// Whether `CloseTrainer` was called since the last drain; the close sends no packet.
     pub fn take_trainer_close(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().trainer_close)
+        drain_field!(self, trainer_close)
     }
 }
 
@@ -432,7 +432,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumTrainerServices",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(num_services(&model) as i64)
         })?,
     )?;
@@ -441,7 +443,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrainerServiceInfo",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(n) = index.checked_sub(1) else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil]));
             };
@@ -481,7 +485,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrainerServiceSkillLine",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(n) = index.checked_sub(1) else {
                 return Ok(Value::Nil);
             };
@@ -501,7 +507,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrainerServiceIcon",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             opt_str(lua, service(&model, index).and_then(|s| s.texture.as_ref()))
         })?,
     )?;
@@ -509,7 +517,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrainerServiceDescription",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let text = service(&model, index)
                 .map(|s| s.description.clone())
                 .unwrap_or_default();
@@ -522,7 +532,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrainerServiceCost",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let (money, prof) = service(&model, index)
                 .map(|s| (s.cost, u32::from(s.prof_first_rank)))
                 .unwrap_or((0, 0));
@@ -537,7 +549,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrainerServiceLevelReq",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(service(&model, index).map_or(0, |s| s.level_req) as i64)
         })?,
     )?;
@@ -545,7 +559,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrainerServiceSkillReq",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(req) = service(&model, index).and_then(|s| s.skill_req.as_ref()) else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil]));
             };
@@ -560,7 +576,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrainerServiceNumAbilityReq",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(service(&model, index).map_or(0, |s| s.ability_reqs.len()) as i64)
         })?,
     )?;
@@ -568,7 +586,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrainerServiceAbilityReq",
         lua.create_function(|lua, (index, i): (usize, usize)| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(req) = service(&model, index)
                 .and_then(|s| i.checked_sub(1).and_then(|n| s.ability_reqs.get(n)))
             else {
@@ -590,7 +610,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsTrainerServiceTradeSkill",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(binding_abi::flag(
                 service(&model, index).is_some_and(|s| s.is_trade_skill),
             ))
@@ -602,7 +624,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsTrainerServiceLearnSpell",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let learn = service(&model, index).is_some_and(|s| !s.is_trade_skill);
             Ok(MultiValue::from_vec(vec![
                 binding_abi::flag(learn),
@@ -615,7 +639,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsTradeskillTrainer",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(binding_abi::flag(model.trainer.as_ref().is_some_and(|t| {
                 t.trainer_type == TRAINER_TYPE_TRADESKILL
             })))
@@ -626,7 +652,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsTalentTrainer",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(binding_abi::flag(
                 model.trainer.as_ref().is_some_and(|t| t.trainer_type == 1),
             ))
@@ -636,7 +664,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrainerGreetingText",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let text = model
                 .trainer
                 .as_ref()
@@ -649,7 +679,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrainerServiceTypeFilter",
         lua.create_function(|lua, kind: String| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(match TrainerServiceCategory::from_filter_str(&kind) {
                 Some(c) => binding_abi::flag(model.trainer_filter[c.filter_slot()]),
                 None => Value::Nil,
@@ -659,7 +691,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SetTrainerServiceTypeFilter",
         lua.create_function(|lua, (kind, on): (String, Value)| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if let Some(c) = TrainerServiceCategory::from_filter_str(&kind) {
                 // The stock window passes 1 or 0; nil, false and 0 disable.
                 let enable = !matches!(on, Value::Nil | Value::Integer(0) | Value::Boolean(false));
@@ -676,7 +708,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CollapseTrainerSkillLine",
         lua.create_function(|lua, id: usize| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             set_collapsed(&mut model, id, true);
             queue_trainer_update(&mut model);
             Ok(())
@@ -685,7 +717,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ExpandTrainerSkillLine",
         lua.create_function(|lua, id: usize| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             set_collapsed(&mut model, id, false);
             queue_trainer_update(&mut model);
             Ok(())
@@ -699,7 +731,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SelectTrainerService",
         lua.create_function(|lua, index: usize| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.trainer_selection = service(&model, index).map(|s| s.spell_id);
             Ok(())
         })?,
@@ -708,7 +740,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrainerSelectionIndex",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(selected_row(&model).map_or(0i64, |r| r as i64))
         })?,
     )?;
@@ -720,7 +754,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "BuyTrainerService",
         lua.create_function(|lua, index: usize| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let buyable = service(&model, index)
                 .filter(|s| s.category == TrainerServiceCategory::Available)
                 .map(|s| s.spell_id);
@@ -735,7 +769,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CloseTrainer",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.trainer_close = true;
             Ok(())
         })?,

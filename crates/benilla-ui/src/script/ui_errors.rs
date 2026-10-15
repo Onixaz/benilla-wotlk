@@ -8,8 +8,6 @@
 
 use mlua::Lua;
 
-use super::model::Model;
-
 /// Catalog id `0x7e`'s GlobalStrings key ("You can't do that when you're dead.").
 const NOT_WHILE_DEAD_KEY: &str = "ERR_PLAYER_DEAD";
 
@@ -18,7 +16,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "NotWhileDeadError",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.ui_errors.push(NOT_WHILE_DEAD_KEY);
             Ok(())
         })?,

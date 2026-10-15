@@ -4,8 +4,6 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::Model;
-
 /// `IsInInstance()`'s type word for a `Map.dbc` `InstanceType`: the reference's table at
 /// `0x83de58`, and `"none"` from 4 up.
 pub fn instance_type_name(instance_type: u32) -> &'static str {
@@ -22,33 +20,34 @@ impl super::UiScript {
     /// `IsInInstance()` then answers `nil, "none"`, because the reference returns two results
     /// without pushing either (`0x48a7a9`), a stack bug.
     pub fn set_instance_type(&mut self, instance_type: Option<u32>) {
-        let mut model = self.model_mut();
-        if model.instance_type != instance_type {
-            model.instance_type = instance_type;
+        if self.model_ref().instance_type == instance_type {
+            return;
         }
+        let mut model = self.model_mut();
+        model.instance_type = instance_type;
     }
 
     /// Push the current map's `MapName_lang` and whether its difficulty is dynamic (`Flags &
     /// 0x100`), `GetInstanceInfo`'s first and seventh returns; `None` for a map with no row.
     pub fn set_map_info(&mut self, info: Option<(String, bool)>) {
-        let mut model = self.model_mut();
-        if model.map_info != info {
-            model.map_info = info;
+        if self.model_ref().map_info == info {
+            return;
         }
+        self.model_mut().map_info = info;
     }
 
     /// Push `CanShowResetInstances()`'s answer; the app owns its terms (the ownership latch, the
     /// last dungeon, its age and the current map).
     pub fn set_can_reset_instances(&mut self, can: bool) {
-        let mut model = self.model_mut();
-        if model.can_reset_instances != can {
-            model.can_reset_instances = can;
+        if self.model_ref().can_reset_instances == can {
+            return;
         }
+        self.model_mut().can_reset_instances = can;
     }
 
     /// `ResetInstances()` calls since the last drain, each a `CMSG_RESET_INSTANCES`.
     pub fn take_reset_instance_asks(&mut self) -> u32 {
-        std::mem::take(&mut self.model_mut().reset_instance_asks)
+        drain_field!(self, reset_instance_asks)
     }
 }
 
@@ -83,7 +82,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "IsInInstance",
         lua.create_function(|lua, ()| {
             let ty = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.instance_type
             };
             let name = instance_type_name(ty.unwrap_or(0));
@@ -102,7 +103,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CanShowResetInstances",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(if model.can_reset_instances {
                 Value::Number(1.0)
             } else {
@@ -118,7 +121,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsThreatWarningEnabled",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let mode = model
                 .cvars
                 .get("threatwarning")
@@ -145,7 +150,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetInstanceInfo",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let ty = model.instance_type.unwrap_or(0);
             let word = ["none", "party", "raid", "pvp", "arena"]
                 .get(ty as usize)
@@ -174,7 +181,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ResetInstances",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.reset_instance_asks += 1;
             Ok(())
         })?,

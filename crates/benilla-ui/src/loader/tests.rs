@@ -2009,7 +2009,7 @@ mod loader_tests {
         let regions = {
             let lua = s.lua();
             let model = lua
-                .app_data_ref::<crate::script::Model>()
+                .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             let fh = model.arena.lookup("PageText").expect("frame");
             model.arena.frame(fh).expect("live").regions.len()
@@ -2024,7 +2024,7 @@ mod loader_tests {
         let (kinds, fonts, widths) = {
             let lua = s.lua();
             let model = lua
-                .app_data_ref::<crate::script::Model>()
+                .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             let fh = model.arena.lookup("PageText").expect("frame");
             let blocks = &model.simple_html.get(&fh).expect("state").blocks;

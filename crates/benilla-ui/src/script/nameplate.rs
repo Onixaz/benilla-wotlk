@@ -218,7 +218,7 @@ pub(super) fn install_verbs(lua: &Lua) -> mlua::Result<()> {
             name,
             // The empty `MultiValue` returns zero values, which is not nil.
             lua.create_function(move |lua, _: mlua::MultiValue| {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model.nameplates.bit_writes.write(bit, on);
                 Ok(mlua::MultiValue::new())
             })?,
@@ -230,9 +230,7 @@ pub(super) fn install_verbs(lua: &Lua) -> mlua::Result<()> {
 impl UiScript {
     /// Drain the plate verbs' writes for the engine's `[0xc4da34]`, which the app owns.
     pub fn take_nameplate_bit_writes(&mut self) -> PlateBitWrites {
-        let lua = self.lua();
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
-        std::mem::take(&mut model.nameplates.bit_writes)
+        drain_field!(self, nameplates.bit_writes)
     }
 
     /// Drive the pool from the app's per-frame states, one per shown plate; a unit with no state
@@ -240,7 +238,7 @@ impl UiScript {
     pub fn sync_nameplates(&mut self, geometry: PlateGeometry, states: &[PlateState]) {
         let lua = self.lua();
         let effects = {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             // No WorldFrame (no interface loaded), no plates: no addon walks an invented root.
             let Some(world) = model.arena.lookup("WorldFrame") else {
                 return;
@@ -257,7 +255,9 @@ impl UiScript {
     /// → `0x492890`, `[0xb4e2c8]`); an addon frame on a plate takes the hover from it.
     pub fn hovered_nameplate(&self) -> Option<u64> {
         let lua = self.lua();
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         let frame = model.mouseover?;
         let slot = *model.nameplates.by_frame.get(&frame)?;
         model.nameplates.plates.get(slot)?.key()
@@ -266,7 +266,7 @@ impl UiScript {
     /// Drain the completed plate clicks, physical or `plate:Click()`, for the app to select from.
     pub fn take_nameplate_clicks(&mut self) -> Vec<NamePlateClick> {
         let lua = self.lua();
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         std::mem::take(&mut model.nameplates.clicks)
     }
 
@@ -274,7 +274,7 @@ impl UiScript {
     /// plate and leaving re-enables it (called from `0x483e80` and `0x483e70`).
     pub fn set_nameplate_mouse(&mut self, enabled: bool) {
         let lua = self.lua();
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         let frames: Vec<FrameHandle> = model.nameplates.plates.iter().map(|p| p.frame).collect();
         for frame in frames {
             model.arena.set_mouse_enabled(frame, enabled);
@@ -286,8 +286,11 @@ impl UiScript {
     /// reference's `IsTargeting() && (flag & 0x60) && !0x6e6180()`; the third, a test of the same
     /// word against `0x878e` whose meaning is unsettled, is not applied.
     pub fn set_nameplate_hit_test_veto(&mut self, vetoed: bool) {
+        if self.model_ref().nameplates.hit_test_vetoed == vetoed {
+            return;
+        }
         let lua = self.lua();
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         model.nameplates.hit_test_vetoed = vetoed;
     }
 
@@ -296,11 +299,17 @@ impl UiScript {
     pub fn retire_nameplates(&mut self) {
         let lua = self.lua();
         let effects = {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
+            // Every frame with plates off comes here: an already-retired pool moves nothing.
+            let quiet = model.epoch();
             let mut effects = SyncEffects::default();
+            let was_assigned = !model.nameplates.assigned.is_empty();
             model.nameplates.assigned.clear();
             for i in 0..model.nameplates.plates.len() {
                 Plate::retire(&mut model, i, &mut effects);
+            }
+            if !was_assigned && effects.visibility.is_empty() && effects.values.is_empty() {
+                model.set_epoch(quiet);
             }
             effects
         };
@@ -310,14 +319,16 @@ impl UiScript {
     /// How many plate widgets the pool holds.
     pub fn nameplate_pool_len(&self) -> usize {
         let lua = self.lua();
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         model.nameplates.plates.len()
     }
 }
 
 /// Record a click on `id` if it is a live plate; every button click comes here.
 pub(super) fn note_click(lua: &mlua::Lua, id: u32, button: &str) {
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let Some(frame) = model.id_to_frame.get(&id).copied() else {
         return;
     };

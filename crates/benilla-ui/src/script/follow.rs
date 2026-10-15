@@ -7,8 +7,6 @@
 
 use mlua::Lua;
 
-use super::Model;
-
 /// A follow intent queued by the globals.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FollowRequest {
@@ -23,7 +21,7 @@ pub enum FollowRequest {
 impl super::UiScript {
     /// Drain the follow intents queued since the last call.
     pub fn take_follow_requests(&mut self) -> Vec<FollowRequest> {
-        std::mem::take(&mut self.model_mut().follow_requests)
+        drain_field!(self, follow_requests)
     }
 }
 
@@ -34,7 +32,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "FollowUnit",
         lua.create_function(|lua, unit: String| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.follow_requests.push(FollowRequest::ByUnit(unit));
             Ok(())
         })?,
@@ -51,7 +49,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some(mlua::Value::Number(n)) => n != 0.0,
                 Some(_) => true,
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model
                 .follow_requests
                 .push(FollowRequest::ByName { name, exact });

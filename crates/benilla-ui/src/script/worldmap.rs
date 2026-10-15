@@ -368,7 +368,7 @@ impl super::UiScript {
 
     /// Pushes the resolver's orphan leg; the continent leg rides [`Self::set_world_map_feed`].
     pub fn set_world_map_player_direct_area(&mut self, direct_area: Option<u32>) {
-        self.model_mut().worldmap.player_direct_area = direct_area;
+        set_field!(self, worldmap.player_direct_area, direct_area);
     }
 
     /// Pushes the discovery bitset; a change queues `WORLD_MAP_UPDATE` so an open map fills in.
@@ -403,6 +403,18 @@ impl super::UiScript {
         party_uv: Vec<Option<(f32, f32)>>,
         raid_uv: Vec<Option<(f32, f32)>>,
     ) {
+        {
+            let w = &self.model_ref().worldmap;
+            if w.player_zone == player_zone
+                && w.player_uv == player_uv
+                && w.player_facing == player_facing
+                && w.corpse_uv == corpse_uv
+                && w.party_uv == party_uv
+                && w.raid_uv == raid_uv
+            {
+                return;
+            }
+        }
         let mut model = self.model_mut();
         model.worldmap.player_zone = player_zone;
         model.worldmap.player_uv = player_uv;
@@ -504,7 +516,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetMapContinents",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let names: Vec<Value> = model
                 .worldmap
                 .continents
@@ -521,7 +535,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetMapZones",
         lua.create_function(|lua, c: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let zones = usize::try_from(c)
                 .ok()
                 .and_then(|c| c.checked_sub(1))
@@ -541,7 +557,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetCurrentMapContinent",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(match model.worldmap.direct_area {
                 Some(_) => -1i64,
                 None => i64::from(model.worldmap.selection.0),
@@ -551,7 +569,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetCurrentMapZone",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(model.worldmap.selection.1))
         })?,
     )?;
@@ -559,7 +579,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SetMapZoom",
         lua.create_function(|lua, (c, z): (i64, Option<i64>)| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             select(&mut model, c, z.unwrap_or(0));
             Ok(())
         })?,
@@ -570,7 +590,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SetMapToCurrentZone",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let (c, z) = model.worldmap.player_zone.unwrap_or((0, 0));
             let direct = model.worldmap.player_direct_area;
             select_resolved(&mut model, c, z, direct);
@@ -584,7 +604,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetCurrentMapDungeonLevel",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(
                 current_zone(&model.worldmap).is_some_and(|z| z.default_dungeon_floor == -1),
             ))
@@ -596,7 +618,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetMapInfo",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let wm = &model.worldmap;
             let file = match (wm.direct_area, wm.selection) {
                 // An instance map, by id through the orphan list: `0x4a6cf0`'s `jl 0x4a6d24`
@@ -640,7 +664,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             // The truncating cast, then the map id compared as an unsigned dword.
             let map = map as i64 as i32 as u32;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let wm = &model.worldmap;
             let selection = (wm.selection.0, wm.selection.1, wm.direct_area);
             let (u, v) = model
@@ -656,7 +682,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetCorpseMapPosition",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let (x, y) = model.worldmap.corpse_uv.unwrap_or((0.0, 0.0));
             Ok((f64::from(x), f64::from(y)))
         })?,
@@ -667,7 +695,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPlayerMapPosition",
         lua.create_function(|lua, unit: String| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let slot = |prefix: &str, list: &[Option<(f32, f32)>]| {
                 unit.strip_prefix(prefix)
                     .and_then(|n| n.parse::<usize>().ok())
@@ -691,7 +721,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ProcessMapClick",
         lua.create_function(|lua, (x, y): (f32, f32)| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             // An instance map swallows the click (`0x4a7540` opens `cmp esi,-2; je 0x4a760d`),
             // tested first as it shares the world sheet's `continent == 0`.
             if model.worldmap.direct_area.is_some() {
@@ -719,7 +749,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "UpdateMapHighlight",
         lua.create_function(|lua, (x, y): (f32, f32)| {
             let hit = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 hover(&model.worldmap, x, y)
             };
             let string = |s: &str| Ok::<_, mlua::Error>(Value::String(lua.create_string(s)?));
@@ -749,7 +781,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumMapLandmarks",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.worldmap.landmarks.len() as i64)
         })?,
     )?;
@@ -761,7 +795,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetMapLandmarkInfo",
         lua.create_function(|lua, i: i64| {
             let landmark = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 usize::try_from(i)
                     .ok()
                     .and_then(|i| i.checked_sub(1))
@@ -788,7 +824,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumMapOverlays",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(revealed_overlays(&model.worldmap).len() as i64)
         })?,
     )?;
@@ -799,7 +837,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetMapOverlayInfo",
         lua.create_function(|lua, i: i64| {
             let overlay = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 usize::try_from(i)
                     .ok()
                     .and_then(|i| i.checked_sub(1))

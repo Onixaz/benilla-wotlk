@@ -5,8 +5,6 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::Model;
-
 /// `DoEmote(token [, target])`: the `EmotesText.dbc` name token (`"WAVE"`, not `/wave`) and an
 /// optional target string (`0x49fd30` reads arg 2 with `lua_tostring`): a player name, or a `%`
 /// word for the selection. A non-string, non-number second argument reads as none.
@@ -45,22 +43,22 @@ fn flag_arg(v: Option<Value>) -> Option<bool> {
 impl super::UiScript {
     /// `DoEmote` calls since the last drain.
     pub fn take_emote_requests(&mut self) -> Vec<EmoteRequest> {
-        std::mem::take(&mut self.model_mut().emote_requests)
+        drain_field!(self, emote_requests)
     }
 
     /// `RandomRoll(min, max)` calls since the last drain, each a `CMSG_RANDOM_ROLL`.
     pub fn take_roll_requests(&mut self) -> Vec<(u32, u32)> {
-        std::mem::take(&mut self.model_mut().roll_requests)
+        drain_field!(self, roll_requests)
     }
 
     /// `UninviteByName` calls since the last drain.
     pub fn take_uninvite_requests(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.model_mut().uninvite_requests)
+        drain_field!(self, uninvite_requests)
     }
 
     /// `ConsoleExec` lines that write no CVar: the app's console commands (`reloadui`, …).
     pub fn take_console_lines(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.model_mut().console_lines)
+        drain_field!(self, console_lines)
     }
 
     /// `(chat, combat)`, as `LoggingChat` and `LoggingCombat` last set them.
@@ -71,7 +69,7 @@ impl super::UiScript {
 
     /// Whether a logging flag moved since the last drain: the app's cue to open or close its logs.
     pub fn take_logging_changes(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().logging_changed)
+        drain_field!(self, logging_changed)
     }
 }
 
@@ -84,7 +82,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(token) = token.filter(|t| !t.is_empty()) else {
                 return Ok(());
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.emote_requests.push(EmoteRequest {
                 token: token.to_ascii_uppercase(),
                 target: match target {
@@ -103,7 +101,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "RandomRoll",
         lua.create_function(|lua, (min, max): (Value, Value)| {
             let (min, max) = (to_u32(&min), to_u32(&max));
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.roll_requests.push((min, max));
             Ok(())
         })?,
@@ -115,7 +113,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(name) = name.filter(|n| !n.trim().is_empty()) else {
                 return Ok(());
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.script_calls.push(super::ScriptCall::Select(
                 super::SelectionRequest::AssistByName(name),
             ));
@@ -129,7 +127,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(name) = name.filter(|n| !n.trim().is_empty()) else {
                 return Ok(());
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.uninvite_requests.push(name);
             Ok(())
         })?,
@@ -147,7 +145,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let (name, value) = line
                 .split_once(char::is_whitespace)
                 .map_or((line.as_str(), ""), |(n, v)| (n, v.trim()));
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let is_cvar = model.cvars.contains_key(&name.to_ascii_lowercase());
             if is_cvar && !value.is_empty() {
                 super::cvars::write_cvar(&mut model, name, value.to_string());
@@ -162,7 +160,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, flag: Option<Value>| {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 let slot = if chat {
                     &mut model.logging_chat
                 } else {

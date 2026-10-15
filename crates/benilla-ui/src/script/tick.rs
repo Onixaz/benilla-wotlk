@@ -5,7 +5,7 @@ use mlua::Lua;
 
 use crate::widget::FrameHandle;
 
-use super::{editbox, event, tooltip, Model, ScriptValue, UiScript};
+use super::{editbox, event, tooltip, ScriptValue, UiScript};
 
 impl UiScript {
     /// Queue an event for the start of the next tick, behind everything queued earlier and before
@@ -29,13 +29,17 @@ impl UiScript {
     /// handler that unregisters itself does not skip its successor. Deviation: a handler that
     /// unregisters the saved next ends the dispatch, because the reference then reads a freed node.
     pub fn fire_event(&mut self, event: &str, args: Vec<ScriptValue>) {
+        let before = super::epoch_trace::enabled().then(|| self.visual_epoch());
         fire_event_into(&self.lua, event, args);
+        if let Some(before) = before {
+            super::epoch_trace::note_event(event, self.visual_epoch().wrapping_sub(before));
+        }
     }
 }
 
 /// [`UiScript::fire_event`] for a caller holding `&Lua`, such as a Lua binding.
 pub(crate) fn fire_event_into(lua: &Lua, event: &str, args: Vec<ScriptValue>) {
-    let model_mut = || lua.app_data_mut::<Model>().expect("model app_data set");
+    let model_mut = || crate::script::model_mut_of(lua);
     {
         let mut at = {
             let model = model_mut();
@@ -75,13 +79,20 @@ impl super::UiScript {
     /// EditBox its flush and caret blink after it; then the engine's own fades, model panes and
     /// hover.
     pub fn tick(&mut self, elapsed: f32) {
+        // The clock is no extract input and a drained queue is no change: the mutation count
+        // stands ([`ModelCell`]); the events fired below bump it through their verbs.
+        let quiet = self.visual_epoch();
+        let quiet_at_entry = quiet;
         self.model_mut().now += f64::from(elapsed);
         // Events queued since the last tick fire before this tick's OnUpdate.
-        let pending = std::mem::take(&mut self.model_mut().pending_events);
+        let pending = drain_field!(self, pending_events);
+        self.restore_epoch(quiet);
         for (event, args) in pending {
             self.fire_event(&event, args);
         }
         // Each entry: the frame's id, whether it has an `OnUpdate`, and the box if an EditBox.
+        // The roster compaction below is bookkeeping: the count stands.
+        let quiet = self.visual_epoch();
         let walk: Vec<(u32, bool, Option<FrameHandle>)> = {
             let mut model = self.model_mut();
             // `SetScript` keeps the OnUpdate list; a destroyed frame's handle compacts out here.
@@ -137,23 +148,68 @@ impl super::UiScript {
             });
             walk
         };
+        self.restore_epoch(quiet);
+        let tracing = super::epoch_trace::enabled();
+        if tracing {
+            let _ = self.lua.set_hook(
+                mlua::HookTriggers {
+                    on_calls: true,
+                    on_returns: true,
+                    ..mlua::HookTriggers::new()
+                },
+                |lua, debug| {
+                    super::epoch_trace::hook(lua, debug);
+                    Ok(mlua::VmState::Continue)
+                },
+            );
+        }
+        let mut in_handlers = 0u64;
         for (id, on_update, editbox) in walk {
             if on_update {
+                let before = tracing.then(|| self.visual_epoch());
                 if let Err(e) = event::fire_update_handler(&self.lua, id, elapsed) {
                     self.push_error(e);
+                }
+                if let Some(before) = before {
+                    let moved = self.visual_epoch().wrapping_sub(before);
+                    in_handlers += moved;
+                    super::epoch_trace::note_handler(id, moved);
                 }
             }
             // The box's own update runs its flush after its `OnUpdate` (`0x77a79a`, then
             // `0x77a7a1`), so the events an edit raised fire in the box's place in the walk.
             if let Some(h) = editbox {
+                let before = tracing.then(|| self.visual_epoch());
                 editbox::update(&self.lua, h, elapsed);
+                if let Some(before) = before {
+                    super::epoch_trace::note_leg(
+                        "editbox",
+                        self.visual_epoch().wrapping_sub(before),
+                    );
+                }
             }
         }
+        if tracing {
+            self.lua.remove_hook();
+        }
+        let mut leg_at = tracing.then(|| self.visual_epoch());
+        let mut leg = |me: &Self, name: &'static str| {
+            if let Some(at) = leg_at.as_mut() {
+                let now = me.visual_epoch();
+                super::epoch_trace::note_leg(name, now.wrapping_sub(*at));
+                *at = now;
+            }
+        };
         self.tick_model_panes(elapsed);
+        leg(self, "model panes");
         super::cooldown_widget::tick(&self.lua);
+        leg(self, "cooldowns");
         // The engine's line fades, apart from any OnUpdate script: ScrollingMessageFrame's
         // (`0x788460`) and MessageFrame's (`0x786200`), which also keeps only the lines that fit
         // its height, so its rows are read from the resolved rect before the mutable walk.
+        // A fade tick that moved no line's alpha and freed no line changed nothing drawn.
+        let quiet = self.visual_epoch();
+        let mut faded = false;
         let mut model = self.model_mut();
         let ticked: Vec<FrameHandle> = model.arena.ticked_kinds().to_vec();
         let message_frames: Vec<(FrameHandle, usize)> = ticked
@@ -171,8 +227,8 @@ impl super::UiScript {
             if let Some(crate::widget::KindState::Message(mf)) =
                 model.arena.frame_mut(h).map(|f| &mut f.kind_state)
             {
-                mf.tick(elapsed);
-                mf.trim_to_viewport(viewport_rows);
+                faded |= mf.tick(elapsed);
+                faded |= mf.trim_to_viewport(viewport_rows);
             }
         }
         for &h in &ticked {
@@ -180,12 +236,18 @@ impl super::UiScript {
                 continue;
             };
             if let crate::widget::KindState::ScrollingMessage(smf) = &mut frame.kind_state {
-                smf.tick(elapsed);
+                faded |= smf.tick(elapsed);
             }
         }
         drop(model);
+        if !faded {
+            self.restore_epoch(quiet);
+        }
+        leg(self, "message fades");
         // Tooltip fades: `FadeOut`'s ramp and the hide at its end.
         tooltip::tick_fades(&self.lua);
+        leg(self, "tooltip fades");
+        let quiet = self.visual_epoch();
         // A frame hid or showed under a still cursor: re-run the hover walk at the saved position,
         // as the reference's pump tail does (`0x765650` → `0x7660d0`). The hidden frame's OnLeave
         // already fired, so only the new winner's `OnEnter` fires.
@@ -195,11 +257,30 @@ impl super::UiScript {
             model.hover_repick = false;
             due.then_some(model.cursor_pos)
         };
+        if repick.is_none() {
+            self.restore_epoch(quiet);
+        }
         if let Some((x, y)) = repick {
             self.mouse_move(x, y);
         }
+        leg(self, "hover repick");
         // `WOW_UI_HANDLERS=<secs>`: last, so its report covers everything this tick fired.
         self.report_handler_profile(elapsed);
+        leg(self, "handler profile");
+        if tracing {
+            let total = self.visual_epoch().wrapping_sub(quiet_at_entry);
+            super::epoch_trace::note_legs(total.saturating_sub(in_handlers));
+            let now = self.now();
+            super::epoch_trace::report(now, |id| {
+                let model = self.model_ref();
+                model
+                    .id_to_frame
+                    .get(&id)
+                    .and_then(|h| model.arena.frame(*h))
+                    .and_then(|f| f.name.clone())
+                    .unwrap_or_else(|| format!("frame#{id}"))
+            });
+        }
     }
 }
 
@@ -212,6 +293,8 @@ impl UiScript {
     /// whose handler may re-arm.
     fn tick_model_panes(&mut self, elapsed: f32) {
         let dt_ms = (elapsed * 1000.0).trunc().max(0.0) as u64;
+        // The pane clocks and the roster compaction are no extract input: the count stands.
+        let quiet = self.visual_epoch();
         let update_ids: Vec<u32> = {
             let mut model = self.model_mut();
             let ticked: Vec<FrameHandle> = model.arena.ticked_kinds().to_vec();
@@ -259,6 +342,7 @@ impl UiScript {
             ids.sort_unstable(); // creation order, as in the OnUpdate sweep
             ids
         };
+        self.restore_epoch(quiet);
         for id in update_ids {
             if let Err(e) = event::fire_widget_handler(&self.lua, id, "OnUpdateModel", Vec::new()) {
                 self.push_error(e);

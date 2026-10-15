@@ -8,7 +8,6 @@ use super::binding_abi::number_arg;
 use super::char_stats::{inventory_slot_reader_accepts, recompute_inventory_alerts};
 use super::container::UiCursorMode;
 use super::region::{clear_texture, this_texture};
-use super::Model;
 
 /// `0x4c8520`, the registrar's shared slot reader: `is-number`, `tonumber`, the truncating cast,
 /// then `dec` into the 0-based slot and the whitelist; a failure of either raises `message`. The
@@ -44,7 +43,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "ShowInventorySellCursor",
         lua.create_function(|lua, slot: Value| {
             {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 // `[0xbe2c4c] == 1`: repair mode (`0x4fbce3`) and the targeting arm move the base.
                 if model.spell_targeting || model.repair_mode {
                     return Ok(());
@@ -58,7 +59,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if slot0 == -1 {
                 return Ok(());
             }
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let sellable = usize::try_from(slot0 + 1)
                 .ok()
                 .and_then(|slot| model.inv_slot("player", slot))
@@ -80,10 +81,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetInventoryPortaitTexture",
         lua.create_function(|lua, (texture, unit, slot): (Value, Value, Value)| {
             let rh = this_texture(lua, &texture)?;
-            clear_texture(
-                &mut lua.app_data_mut::<Model>().expect("model app_data"),
-                rh,
-            );
+            clear_texture(&mut crate::script::model_mut_of(lua), rh);
             if !matches!(
                 unit,
                 Value::String(_) | Value::Number(_) | Value::Integer(_)
@@ -107,7 +105,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "UpdateInventoryAlertStatus",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             recompute_inventory_alerts(&mut model);
             model
                 .pending_events

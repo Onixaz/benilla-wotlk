@@ -533,7 +533,9 @@ pub(crate) struct Model {
     pub(crate) battlefield_positions: Vec<super::battlefield_positions::BattlefieldPositionView>,
     pub(crate) battlefield_flag: Option<super::battlefield_positions::BattlefieldFlagView>,
     pub(crate) battlefield_icon_scale: f32,
-    pub(crate) battlefield_position_requests: u32,
+    /// A `Cell`: the stock `UIParent` OnUpdate calls the verb every frame and the app drains it
+    /// every frame, and neither is anything drawn (`ModelCell`).
+    pub(crate) battlefield_position_requests: std::cell::Cell<u32>,
     /// `CancelMeetingStoneRequest()` calls; the app gates on leadership.
     pub(crate) meeting_stone_cancels: u32,
     /// The meeting stone's queued area (`[0xb72038]`) and status text (`[0xb7203c]`), as pushed.
@@ -847,7 +849,8 @@ pub(crate) struct Model {
     pub(crate) quest_log_watched: Vec<u32>,
     /// The server's clock in Unix seconds, `None` before `SMSG_QUERY_TIME_RESPONSE`. A quest
     /// deadline is a stamp in it, and `GetQuestTimers` subtracts per call, as the reference does.
-    pub(crate) server_unix_time: Option<f64>,
+    /// A `Cell`: pushed every frame, read by the quest timer verbs alone (`ModelCell`).
+    pub(crate) server_unix_time: std::cell::Cell<Option<f64>>,
     /// `GetMoney()` in copper, from `PLAYER_FIELD_COINAGE`.
     pub(crate) money: u64,
 
@@ -993,7 +996,8 @@ pub(crate) struct Model {
     /// `ConfirmSummon()` calls, one `CMSG_SUMMON_RESPONSE` each; the app holds the summoner.
     pub(crate) summon_confirms: u32,
     /// `GetFramerate()`, pushed each tick.
-    pub(crate) framerate: f64,
+    /// A `Cell`: pushed every frame, read by `GetFramerate()` alone (`ModelCell`).
+    pub(crate) framerate: std::cell::Cell<f64>,
     /// `(shift, ctrl, alt)` for `Is*KeyDown`, pushed before the frame's mouse events.
     pub(crate) modifiers: (bool, bool, bool),
     /// The `<ModifiedClick>` table, `(action, binding)` in registration order.
@@ -1286,7 +1290,7 @@ impl Model {
             battlefield_positions: Vec::new(),
             battlefield_flag: None,
             battlefield_icon_scale: 1.0,
-            battlefield_position_requests: 0,
+            battlefield_position_requests: std::cell::Cell::new(0),
             meeting_stone_cancels: 0,
             meeting_stone_area: 0,
             meeting_stone_status_text: None,
@@ -1452,7 +1456,7 @@ impl Model {
             spell_tooltip_waits: HashMap::new(),
             quest_log_collapses: Vec::new(),
             quest_log_watched: Vec::new(),
-            server_unix_time: None,
+            server_unix_time: std::cell::Cell::new(None),
             worldmap: super::worldmap::WorldMapState::default(),
             nameplates: super::nameplate::NamePlates::default(),
             worldstate: super::worldstate::WorldStateUiState::default(),
@@ -1475,7 +1479,7 @@ impl Model {
             binder_pending: false,
             summon_confirm: super::summon::SummonConfirmUiState::default(),
             summon_confirms: 0,
-            framerate: 0.0,
+            framerate: std::cell::Cell::new(0.0),
             modifiers: (false, false, false),
             modified_clicks: Vec::new(),
             click_button: None,
@@ -1765,4 +1769,50 @@ fn derive_trace_armed() -> bool {
         && left
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1))
             .is_ok()
+}
+
+// ── The mutation counter ──
+
+/// [`Model`] behind a mutation counter. Every `&mut Model` taken through the VM's app data (a
+/// binding's `app_data_mut`, the host's `UiScript::model_mut`) comes through [`DerefMut`] and
+/// bumps `epoch`; a `&Model` never does. So a frame whose count stands where the last extract
+/// left it has nothing new to draw, and `UiScript::extract` can be skipped outright
+/// (`UiScript::visual_epoch`). The host's own per-frame bookkeeping, where it proves it changed
+/// nothing drawn (the clock, a drained empty queue, a settled solve), puts the count back with
+/// [`ModelCell::set_epoch`]; a write that is not provably invisible keeps its bump, so a miss
+/// costs one walk, never a stale frame.
+pub(crate) struct ModelCell {
+    inner: Model,
+    epoch: u64,
+}
+
+impl ModelCell {
+    pub(crate) fn new(inner: Model) -> ModelCell {
+        ModelCell { inner, epoch: 1 }
+    }
+
+    /// The count as of now; equal counts mean no mutable borrow in between.
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// Put the count back to `epoch`, by a caller that took a mutable borrow since and changed
+    /// nothing the extract reads.
+    pub(crate) fn set_epoch(&mut self, epoch: u64) {
+        self.epoch = epoch;
+    }
+}
+
+impl std::ops::Deref for ModelCell {
+    type Target = Model;
+    fn deref(&self) -> &Model {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for ModelCell {
+    fn deref_mut(&mut self) -> &mut Model {
+        self.epoch = self.epoch.wrapping_add(1);
+        &mut self.inner
+    }
 }

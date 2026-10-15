@@ -3,7 +3,7 @@
 
 use mlua::{Lua, Value};
 
-use super::{event, fire_script, frame_id_of, relayout, with_eb, Model, CARET_WIDTH};
+use super::{event, fire_script, frame_id_of, read_eb, relayout, with_eb, CARET_WIDTH};
 use crate::widget::{EditBoxState, FrameHandle};
 
 /// The box's update after its Lua `OnUpdate` (`0x77a79a`): the flush (`0x77a7a1`), then the caret
@@ -29,7 +29,7 @@ pub(in crate::script) fn update(lua: &Lua, h: FrameHandle, dt: f32) {
 /// re-windows a single-line box whose window benilla keeps host-side, and fires nothing, since
 /// bit 0 is sampled before it; benilla has no IME composition.
 pub(super) fn flush(lua: &Lua, h: FrameHandle) {
-    let Some((entry, owed)) = with_eb(lua, h, |eb| (eb.dirty, eb.relayout_owed)) else {
+    let Some((entry, owed)) = read_eb(lua, h, |eb| (eb.dirty, eb.relayout_owed)) else {
         return;
     };
     let text_changed = entry & EditBoxState::DIRTY_TEXT != 0;
@@ -56,7 +56,7 @@ fn caret(lua: &Lua, h: FrameHandle) -> bool {
     with_eb(lua, h, |eb| eb.blink_accum = 0.0);
     let placed = cursor_changed(lua, h);
     let focused = lua
-        .app_data_ref::<Model>()
+        .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data")
         .focused_editbox
         == Some(h);
@@ -114,9 +114,7 @@ fn cursor_changed(lua: &Lua, h: FrameHandle) -> bool {
             Value::Number(f64::from(pitch)),
         ],
     ) {
-        lua.app_data_mut::<Model>()
-            .expect("model app_data")
-            .record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
     true
 }
@@ -129,7 +127,7 @@ fn cursor_changed(lua: &Lua, h: FrameHandle) -> bool {
 /// which benilla's host keeps around the caret.
 fn blink(lua: &Lua, h: FrameHandle, dt: f32) {
     let focused = lua
-        .app_data_ref::<Model>()
+        .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data")
         .focused_editbox
         == Some(h);

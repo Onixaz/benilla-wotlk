@@ -8,7 +8,7 @@
 use mlua::{Lua, Table};
 
 use crate::script::tooltip::{append_line, duration_text, plural_template};
-use crate::script::{ItemTemplateView, Model};
+use crate::script::ItemTemplateView;
 use crate::strings::{fill, Arg};
 
 use super::names::*;
@@ -78,7 +78,7 @@ pub(super) fn render_view(
     inst: Option<&ItemInstance>,
 ) -> mlua::Result<()> {
     let (req, known_spell, taught_known, set_view, equipped) = {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         let knows = |id: u32| model.spellbook.slots.iter().any(|s| s.spell_id == id);
         let known = v.required_spell != 0 && knows(v.required_spell);
         // A taught spell (trigger 6, learn) the player knows: the always-red ITEM_SPELL_KNOWN.

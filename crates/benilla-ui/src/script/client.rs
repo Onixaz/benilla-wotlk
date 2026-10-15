@@ -4,8 +4,6 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::Model;
-
 /// The 1.12.1 client's build identity, as the strings in its binary spell it.
 const VERSION: &str = "1.12.1";
 const BUILD: &str = "5875";
@@ -46,9 +44,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "OpeningCinematic",
         lua.create_function(|lua, _: MultiValue| {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .opening_cinematic_asks += 1;
+            crate::script::model_mut_of(lua).opening_cinematic_asks += 1;
             Ok(())
         })?,
     )?;
@@ -77,7 +73,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "FrameXML_Debug",
         lua.create_function(|lua, v: Value| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let truthy = !matches!(v, Value::Nil | Value::Boolean(false));
             if truthy {
                 // A value that will not coerce is 0, as `lua_tonumber` (`0x6f3620`) answers.
@@ -132,8 +130,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .set_mode(mlua::ChunkMode::Text)
                 .exec()
             {
-                lua.app_data_mut::<crate::script::Model>()
-                    .expect("model")
+                crate::script::model_mut_of(lua)
                     .record_script_error(super::stdlib::lua_message(&e));
             }
             Ok(())
@@ -145,7 +142,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetRealmName",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             lua.create_string(&model.realm_name)
         })?,
     )?;
@@ -155,9 +154,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "RequestTimePlayed",
         lua.create_function(|lua, ()| {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .played_time_asks += 1;
+            crate::script::model_mut_of(lua).played_time_asks += 1;
             Ok(())
         })?,
     )?;
@@ -168,7 +165,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetBindLocation",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             lua.create_string(&model.bind_location)
         })?,
     )?;
@@ -178,8 +177,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetFramerate",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
-            Ok(model.framerate)
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(model.framerate.get())
         })?,
     )?;
 
@@ -190,12 +191,12 @@ impl super::UiScript {
     /// Drain the `RequestTimePlayed()` asks, each a `CMSG_PLAYED_TIME`: a count, as the request
     /// body is empty.
     pub fn take_played_time_asks(&mut self) -> u32 {
-        std::mem::take(&mut self.model_mut().played_time_asks)
+        drain_field!(self, played_time_asks)
     }
 
     /// Drain the `OpeningCinematic()` calls, each an empty `CMSG_OPENING_CINEMATIC`.
     pub fn take_opening_cinematic_asks(&mut self) -> u32 {
-        std::mem::take(&mut self.model_mut().opening_cinematic_asks)
+        drain_field!(self, opening_cinematic_asks)
     }
 
     /// Push the bind location's name, resolved from `SMSG_BINDPOINTUPDATE`'s AreaTable id through
@@ -237,7 +238,7 @@ impl super::UiScript {
 
     /// Push the current framerate, from the app's frame clock each tick; this crate has no clock.
     pub fn set_framerate(&mut self, fps: f64) {
-        self.model_mut().framerate = fps;
+        self.model_ref().framerate.set(fps);
     }
 }
 

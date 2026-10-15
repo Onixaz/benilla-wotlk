@@ -16,7 +16,7 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{bool_or_default, flag, number_arg, optional_string};
-use super::{Model, ScriptValue};
+use super::ScriptValue;
 
 /// One gossip option; its 1-based index is its place in [`GossipMenu::options`].
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -65,35 +65,35 @@ pub struct GossipMenu {
 impl super::UiScript {
     /// Push (or clear, with `None`) the open gossip menu.
     pub fn set_gossip(&mut self, menu: Option<GossipMenu>) {
-        self.model_mut().gossip = menu;
+        set_field!(self, gossip, menu);
     }
 
     /// Whether the open menu's greeting query is out: the reference's latch (`0xc00be8`), under
     /// which `SelectGossipOption` does nothing.
     pub fn set_gossip_pending(&mut self, pending: bool) {
-        self.model_mut().gossip_pending = pending;
+        set_field!(self, gossip_pending, pending);
     }
 
     /// The quest ids whose log slot is complete, behind `GetGossipActiveQuests`'s `isComplete`.
     /// Pushed apart from the menu, as the reference reads the log at call time.
     pub fn set_gossip_complete_quests(&mut self, ids: Vec<u32>) {
-        self.model_mut().gossip_complete_quests = ids;
+        set_field!(self, gossip_complete_quests, ids);
     }
 
     /// Drain the selects queued since the last call: the 1-based option position, and the code
     /// for a coded option.
     pub fn take_gossip_selects(&mut self) -> Vec<(u32, Option<String>)> {
-        std::mem::take(&mut self.model_mut().gossip_selects)
+        drain_field!(self, gossip_selects)
     }
 
     /// Whether `CloseGossip` was called since the last drain; the close sends no packet.
     pub fn take_gossip_close(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().gossip_close)
+        drain_field!(self, gossip_close)
     }
 
     /// Drain the queued 1-based whole-menu quest-row positions.
     pub fn take_gossip_quest_selects(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().gossip_quest_selects)
+        drain_field!(self, gossip_quest_selects)
     }
 }
 
@@ -117,7 +117,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetGossipText",
         lua.create_function(|lua, ()| {
             let text = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.gossip.as_ref().map(|m| m.greeting.clone())
             };
             match text {
@@ -132,7 +134,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| {
             // Copy out under one short borrow; build the Lua values with none held.
             let pairs: Vec<(String, String)> = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.gossip.as_ref().map_or_else(Vec::new, |m| {
                     m.options
                         .iter()
@@ -154,7 +158,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.globals().set(
             name,
             lua.create_function(move |lua, ()| {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 Ok(model.gossip.as_ref().map_or(0, count) as i64)
             })?,
         )
@@ -171,7 +177,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ForceGossip",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.gossip.as_ref().is_some_and(|m| m.force_gossip))
         })?,
     )?;
@@ -196,7 +204,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CloseGossip",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.gossip_close = true;
             Ok(())
         })?,
@@ -209,7 +217,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // (`0x58b490`); the flags are 1 or nil.
     fn quest_rows(lua: &Lua, active: bool) -> mlua::Result<MultiValue> {
         let rows: Vec<(String, i32, [bool; 3])> = {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let player_level = model.player_req.level;
             model.gossip.as_ref().map_or_else(Vec::new, |m| {
                 m.quests
@@ -251,7 +261,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // it maps back to the whole-menu position the app's queue holds.
     fn select_quest(lua: &Lua, active: bool, index: i32) {
         let whole = {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let nth = usize::try_from(index.wrapping_sub(1)).ok();
             model.gossip.as_ref().zip(nth).and_then(|(m, nth)| {
                 m.quests
@@ -263,8 +275,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })
         };
         if let Some(n) = whole {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
+            crate::script::model_mut_of(lua)
                 .gossip_quest_selects
                 .push(n);
         }
@@ -296,7 +307,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 /// A sent select empties the menu's options and quests (`0x58a7b0`) and fires
 /// `GOSSIP_CONFIRM_CANCEL` (`0x58b051`); the greeting stays.
 fn select_option(lua: &Lua, index: i32, code: Option<String>, confirmed: bool) {
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     if model.gossip_pending {
         return;
     }

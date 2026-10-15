@@ -53,7 +53,9 @@ fn has_script(lua: &Lua, id: u32, name: &str) -> bool {
 /// (`0x77a952`/`0x77a956`, `0x77b1c7`/`0x77b21e`). So an unfocused box's `OnChar` (`+0x180`)
 /// never runs and never eats a neighbour's keys.
 fn is_editbox(lua: &Lua, h: FrameHandle) -> bool {
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     model
         .arena
         .frame(h)
@@ -64,13 +66,17 @@ fn is_editbox(lua: &Lua, h: FrameHandle) -> bool {
 /// suppresses the keybinding; a handler's own return is discarded (`0x7026f0`).
 fn walk(lua: &Lua, channel: Channel, arg: &str) -> bool {
     let order = {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         walk_order(&model)
     };
     for h in order {
         // The focused box answers through its own vtable, at its walk position.
         let is_focused_box = {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             model.focused_editbox == Some(h)
         };
         if is_focused_box {
@@ -90,7 +96,7 @@ fn walk(lua: &Lua, channel: Channel, arg: &str) -> bool {
             continue;
         }
         let id = {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.frame_id(h)
         };
         match channel {
@@ -122,16 +128,12 @@ fn fire(lua: &Lua, id: u32, script: &str, arg: &str) {
     let val = mlua::Value::String(match lua.create_string(arg) {
         Ok(s) => s,
         Err(e) => {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_script_error(e.to_string());
             return;
         }
     });
     if let Err(e) = event::fire_widget_handler(lua, id, script, vec![val]) {
-        lua.app_data_mut::<Model>()
-            .expect("model app_data")
-            .record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
 }
 
@@ -152,12 +154,16 @@ pub(super) fn key_input(lua: &Lua, key: &str) -> bool {
 /// stops at the box with `false` for its chord path, so no frame below it takes them.
 pub(super) fn frame_key_input(lua: &Lua, key: &str) -> bool {
     let order = {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         walk_order(&model)
     };
     for h in order {
         {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             if model.focused_editbox == Some(h) {
                 return false; // the box's chord path owns this key
             }
@@ -167,7 +173,7 @@ pub(super) fn frame_key_input(lua: &Lua, key: &str) -> bool {
             continue;
         }
         let id = {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.frame_id(h)
         };
         let down = has_script(lua, id, "OnKeyDown");

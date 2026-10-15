@@ -8,8 +8,6 @@
 
 use mlua::{Lua, ObjectLike, Table, Value};
 
-use crate::script::Model;
-
 /// Add `IsMouseOver` to the shared frame method table `m`, on a target that has it.
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
@@ -31,7 +29,10 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     return Ok(false);
                 };
                 let scale: f64 = this.call_method("GetEffectiveScale", ())?;
-                let (cx, cy) = lua.app_data_ref::<Model>().expect("model").cursor_pos;
+                let (cx, cy) = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model")
+                    .cursor_pos;
                 let (x, y) = (f64::from(cx) / scale, f64::from(cy) / scale);
                 Ok(l + off(&left) <= x
                     && x <= r + off(&right)

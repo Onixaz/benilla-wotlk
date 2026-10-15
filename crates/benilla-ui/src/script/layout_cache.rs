@@ -149,7 +149,7 @@ impl super::UiScript {
 
     /// Whether a user-placed frame moved or resized since the last call: the host's cue to persist.
     pub fn take_user_placed_change(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().user_placed_changed)
+        drain_field!(self, user_placed_changed)
     }
 }
 

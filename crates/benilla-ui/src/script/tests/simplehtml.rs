@@ -3,7 +3,7 @@
 
 use super::common::script;
 use crate::layout::Point;
-use crate::script::{Model, UiScript};
+use crate::script::UiScript;
 use crate::widget::RegionKind;
 
 /// One block as a reader would describe it.
@@ -32,7 +32,9 @@ enum Rel {
 /// Read every block of the named SimpleHTML off the model, in emission order.
 fn blocks(s: &UiScript, name: &str) -> Vec<Blk> {
     let lua = s.lua();
-    let model = lua.app_data_ref::<Model>().expect("model");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
     let fh = model.arena.lookup(name).expect("SimpleHTML frame");
     let frame_id = model.frame_to_id.get(&fh).copied();
     let st = model.simple_html.get(&fh).expect("SimpleHTML state");
@@ -92,7 +94,9 @@ fn texts(s: &UiScript, name: &str) -> Vec<String> {
 /// The frame's region count, which still counts a block orphaned rather than freed.
 fn region_count(s: &UiScript, name: &str) -> usize {
     let lua = s.lua();
-    let model = lua.app_data_ref::<Model>().expect("model");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
     let fh = model.arena.lookup(name).expect("frame");
     model.arena.frame(fh).expect("live frame").regions.len()
 }
@@ -783,7 +787,9 @@ fn an_element_with_no_font_of_its_own_loses_its_own_colour_too() {
 /// Block `i`'s `vertex_color`, which for a FontString is the colour it draws.
 fn block_color(s: &UiScript, name: &str, i: usize) -> Option<[f32; 4]> {
     let lua = s.lua();
-    let model = lua.app_data_ref::<Model>().expect("model");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
     let fh = model.arena.lookup(name).expect("frame");
     let st = model.simple_html.get(&fh).expect("state");
     model.region_data.get(&st.blocks[i])?.vertex_color
@@ -859,7 +865,9 @@ fn set_justify_h_is_stored_and_answered_but_never_drawn() {
 /// Every block's resolved `(top, bottom)`, in block order.
 fn resolved_tops(s: &UiScript, name: &str) -> Vec<(f32, f32)> {
     let lua = s.lua();
-    let model = lua.app_data_ref::<Model>().expect("model");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
     let fh = model.arena.lookup(name).expect("frame");
     let st = model.simple_html.get(&fh).expect("state");
     st.blocks
@@ -873,7 +881,9 @@ fn resolved_tops(s: &UiScript, name: &str) -> Vec<(f32, f32)> {
 
 fn maybe_resolved_rect(s: &UiScript, name: &str, block: usize) -> Option<crate::layout::Rect> {
     let lua = s.lua();
-    let model = lua.app_data_ref::<Model>().expect("model");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
     let fh = model.arena.lookup(name).expect("frame");
     let st = model.simple_html.get(&fh).expect("state");
     model.region_resolved.get(&st.blocks[block]).copied()
@@ -881,7 +891,9 @@ fn maybe_resolved_rect(s: &UiScript, name: &str, block: usize) -> Option<crate::
 
 fn resolved_rect(s: &UiScript, name: &str, block: usize) -> crate::layout::Rect {
     let lua = s.lua();
-    let model = lua.app_data_ref::<Model>().expect("model");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
     let fh = model.arena.lookup(name).expect("frame");
     let st = model.simple_html.get(&fh).expect("state");
     *model

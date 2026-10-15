@@ -11,7 +11,7 @@ impl UiScript {
     /// when its text, font, scale or wrap width changed; an empty display needs no trip. Answer it
     /// with [`Self::set_editbox_advances`] before [`Self::focused_editbox_text_ui`].
     pub fn editbox_advances_request(&mut self) -> Option<types::EditBoxAdvanceRequest> {
-        let h = self.model_mut().focused_editbox?;
+        let h = self.model_ref().focused_editbox?;
         // The lazy text region first: its font keys the table, and a new box has none until now.
         let rh = super::ensure_text_region(self.lua(), h)?;
         stale_advances(&mut self.model_mut(), h, rh)
@@ -41,7 +41,7 @@ impl UiScript {
     /// until the advance table is answered: the text draws, without caret or highlight.
     pub fn focused_editbox_text_ui(&mut self) -> Option<types::EditBoxTextUi> {
         let h = {
-            let model = self.model_mut();
+            let model = self.model_ref();
             let h = model.focused_editbox?;
             let f = model.arena.frame(h)?;
             if !f.effective_visible || !matches!(f.kind_state, KindState::EditBox(_)) {
@@ -228,7 +228,7 @@ pub(super) fn advances_current(lua: &Lua, h: FrameHandle) -> bool {
     let Some(rh) = super::ensure_text_region(lua, h) else {
         return false;
     };
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let Some(req) = stale_advances(&mut model, h, rh) else {
         return true;
     };

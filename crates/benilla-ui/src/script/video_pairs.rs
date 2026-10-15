@@ -151,7 +151,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             pair.get,
             // Any arguments are ignored: the getter never calls `lua_gettop`.
             lua.create_function(move |lua, _: MultiValue| {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 Ok(match read {
                     Read::Zero => 0.0,
                     Read::Float(name) => record_float(&record_value(&model, name, default)),
@@ -180,7 +182,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     }
                     Write::TruncOneMinus(name) => (name, ftol_low(1.0 - v).to_string()),
                 };
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 write_cvar(&mut model, name, text);
                 // Zero return values, not nil (`xor eax,eax` at every `ret`).
                 Ok(MultiValue::new())

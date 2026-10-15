@@ -33,10 +33,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 Some(v) => !matches!(v, Value::Nil | Value::Boolean(false)),
             };
             let h = frame_handle_of(lua, &this)?;
-            lua.app_data_mut::<Model>()
-                .expect("model")
-                .arena
-                .set_toplevel(h, on);
+            crate::script::model_mut_of(lua).arena.set_toplevel(h, on);
             Ok(())
         })?,
     )?;
@@ -44,7 +41,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "IsToplevel",
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(crate::script::binding_abi::flag(model.arena.is_toplevel(h)))
         })?,
     )?;
@@ -54,7 +53,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "Raise",
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             raise(&mut model, h);
             Ok(())
         })?,

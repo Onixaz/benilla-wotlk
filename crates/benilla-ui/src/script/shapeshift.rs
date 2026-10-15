@@ -73,7 +73,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumShapeshiftForms",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.shapeshift_forms.len() as i64)
         })?,
     )?;
@@ -81,7 +83,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetShapeshiftFormInfo",
         lua.create_function(|lua, i: u32| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(form) = form_at(&model, i) else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil]));
             };
@@ -105,7 +109,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetShapeshiftFormCooldown",
         lua.create_function(|lua, i: u32| {
             let now = crate::script::clock::now(lua);
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(match form_at(&model, i).and_then(|f| f.cooldown) {
                 Some((start, duration, enabled)) if start + duration > now || !enabled => {
                     (start, duration, i32::from(enabled))
@@ -118,7 +124,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CastShapeshiftForm",
         lua.create_function(|lua, i: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if let Some(spell_id) = form_at(&model, i).map(|f| f.view.spell_id) {
                 model
                     .script_calls

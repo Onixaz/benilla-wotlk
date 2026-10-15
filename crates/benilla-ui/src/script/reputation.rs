@@ -120,7 +120,7 @@ impl super::UiScript {
 
     /// Drain the reputation verbs the pane queued since the last call.
     pub fn take_reputation_sends(&mut self) -> Vec<ReputationSend> {
-        std::mem::take(&mut self.model_mut().reputation_sends)
+        drain_field!(self, reputation_sends)
     }
 }
 
@@ -264,7 +264,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumFactions",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(num_rows(&model) as i64)
         })?,
     )?;
@@ -275,7 +277,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetFactionInfo",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(row) = index
                 .checked_sub(1)
                 .and_then(|n| rows(&model).get(n).copied())
@@ -333,7 +337,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetFactionInfoByID",
         lua.create_function(|lua, id: Value| {
             let id = binding_abi::number_arg(lua, id, "Usage: GetFactionInfoByID(id)")?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(e) = model
                 .reputation
                 .entries
@@ -372,7 +378,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSelectedFaction",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(slot) = model.reputation_selected else {
                 return Ok(0i64);
             };
@@ -388,7 +396,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SetSelectedFaction",
         lua.create_function(|lua, index: usize| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.reputation_selected = entry_at(&model, index).map(|e| e.rep_list_id);
             Ok(())
         })?,
@@ -402,7 +410,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "CollapseFactionHeader",
         lua.create_function(|lua, index: usize| {
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 set_collapsed(&mut model, index, true);
             }
             super::event::fire_global(lua, "UPDATE_FACTION", &[]);
@@ -413,7 +421,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "ExpandFactionHeader",
         lua.create_function(|lua, index: usize| {
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 set_collapsed(&mut model, index, false);
             }
             super::event::fire_global(lua, "UPDATE_FACTION", &[]);
@@ -426,7 +434,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "FactionToggleAtWar",
         lua.create_function(|lua, index: usize| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let Some(e) = entry_at_mut(&mut model, index) else {
                 return Ok(());
             };
@@ -449,7 +457,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsFactionInactive",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(binding_abi::flag(
                 entry_at(&model, index).is_some_and(|e| e.inactive),
             ))
@@ -459,7 +469,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, index: usize| {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 let Some(e) = entry_at_mut(&mut model, index) else {
                     return Ok(());
                 };
@@ -481,7 +491,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetWatchedFactionInfo",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let watched = model.reputation.watched.and_then(|slot| {
                 model
                     .reputation
@@ -517,7 +529,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SetWatchedFactionIndex",
         lua.create_function(|lua, index: usize| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let slot = entry_at(&model, index).map(|e| e.rep_list_id);
             model.reputation_sends.push(ReputationSend::Watch(slot));
             Ok(())

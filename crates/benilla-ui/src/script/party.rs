@@ -159,7 +159,7 @@ impl super::UiScript {
     /// Push the roster snapshot, replacing it, and run `SMSG_GROUP_LIST`'s ready-check leg over the
     /// new roster. The app fires the `PARTY_*` events.
     pub fn set_party(&mut self, state: PartyState) {
-        self.model_mut().party = state;
+        set_field!(self, party, state);
         // The ready-check leg (`0x4ba5f0`, from the `0x7d` handler): a member who left drops their
         // pending flag, and nobody left pending force-closes the check.
         let lua = self.lua();
@@ -220,17 +220,17 @@ impl super::UiScript {
     /// Drain the ready-check lines composed since the last call; the reference prints each as a
     /// `CHAT_MSG_SYSTEM` line (`0x49a870(text, 10)`).
     pub fn take_ready_check_lines(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.model_mut().ready_check.lines)
+        drain_field!(self, ready_check.lines)
     }
 
     /// Drain the party/loot intents queued since the last call.
     pub fn take_party_requests(&mut self) -> Vec<PartyRequest> {
-        std::mem::take(&mut self.model_mut().party_requests)
+        drain_field!(self, party_requests)
     }
 
     /// Push the saved raid-lockout list, replacing it; the app fires `UPDATE_INSTANCE_INFO`.
     pub fn set_saved_instances(&mut self, saved: Vec<SavedInstanceInfo>) {
-        self.model_mut().saved_instances = saved;
+        set_field!(self, saved_instances, saved);
     }
 }
 
@@ -301,7 +301,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumPartyMembers",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.party.members.len() as i64)
         })?,
     )?;
@@ -310,7 +312,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumRaidMembers",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.party.raid.len() as i64)
         })?,
     )?;
@@ -323,7 +327,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: GetRaidRosterInfo(index)")?;
             let row = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 // One unsigned compare after the decrement (`0x4bb5bb dec eax`, `0x4bb5be jae`)
                 // catches an index of 0 or below and one past the count; `dec` wraps, and
                 // `wrapping_sub` keeps that true of `i32::MIN`.
@@ -342,7 +348,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsRaidLeader",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(if leads_the_group(&model) {
                 Value::Integer(1)
             } else {
@@ -355,7 +363,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPartyMember",
         lua.create_function(|lua, id: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let n = model.party.members.len() as i64;
             Ok(if id >= 1 && id <= n {
                 Value::Integer(1)
@@ -369,7 +379,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPartyLeaderIndex",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(model.party.leader_index))
         })?,
     )?;
@@ -378,7 +390,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsPartyLeader",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(if leads_the_group(&model) {
                 Value::Integer(1)
             } else {
@@ -391,7 +405,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetLootMethod",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             // Never grouped, the reference reads zero-filled cells past `.data`'s end, and method
             // 0 is `freeforall`.
             let method = if model.party.loot_method.is_empty() {
@@ -411,7 +427,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetLootThreshold",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(model.party.loot_threshold))
         })?,
     )?;
@@ -427,7 +445,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "AcceptGroup",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.party_requests.push(PartyRequest::Accept);
             Ok(())
         })?,
@@ -435,7 +453,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "DeclineGroup",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.party_requests.push(PartyRequest::Decline);
             Ok(())
         })?,
@@ -443,7 +461,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "LeaveParty",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.party_requests.push(PartyRequest::Leave);
             Ok(())
         })?,
@@ -451,7 +469,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "InviteByName",
         lua.create_function(|lua, name: String| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.party_requests.push(PartyRequest::InviteName(name));
             Ok(())
         })?,
@@ -459,7 +477,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "InviteToParty",
         lua.create_function(|lua, unit: String| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.party_requests.push(PartyRequest::InviteUnit(unit));
             Ok(())
         })?,
@@ -467,7 +485,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "UninviteFromParty",
         lua.create_function(|lua, unit: String| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.party_requests.push(PartyRequest::UninviteUnit(unit));
             Ok(())
         })?,
@@ -475,7 +493,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PromoteToPartyLeader",
         lua.create_function(|lua, unit: String| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.party_requests.push(PartyRequest::PromoteUnit(unit));
             Ok(())
         })?,
@@ -485,7 +503,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetLootMethod",
         lua.create_function(
             |lua, (method, master_name, threshold): (String, Option<String>, Option<u32>)| {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model.party_requests.push(PartyRequest::LootMethod {
                     method,
                     master_name,
@@ -498,7 +516,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SetLootThreshold",
         lua.create_function(|lua, n: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.party_requests.push(PartyRequest::LootThreshold(n));
             Ok(())
         })?,
@@ -509,7 +527,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SetRaidTarget",
         lua.create_function(|lua, (unit, index): (String, u8)| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model
                 .party_requests
                 .push(PartyRequest::SetRaidTarget { unit, index });
@@ -533,7 +551,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ConvertToRaid",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.party_requests.push(PartyRequest::ConvertToRaid);
             Ok(())
         })?,
@@ -545,7 +563,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (index, group): (Value, Value)| {
             let index = number_arg(lua, index, "Usage: SetRaidSubgroup(index, group)")?;
             let group = number_arg(lua, group, "Usage: SetRaidSubgroup(index, group)")?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.party_requests.push(PartyRequest::SetSubgroup {
                 index: index.max(0) as u32,
                 group: group.max(0) as u32,
@@ -558,7 +576,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (index, other): (Value, Value)| {
             let index = number_arg(lua, index, "Usage: SwapRaidSubgroup(index1, index2)")?;
             let other = number_arg(lua, other, "Usage: SwapRaidSubgroup(index1, index2)")?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.party_requests.push(PartyRequest::SwapSubgroup {
                 index: index.max(0) as u32,
                 other: other.max(0) as u32,
@@ -569,7 +587,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PromoteByName",
         lua.create_function(|lua, name: String| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.party_requests.push(PartyRequest::PromoteName(name));
             Ok(())
         })?,
@@ -578,7 +596,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             binding,
             lua.create_function(move |lua, name: String| {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model
                     .party_requests
                     .push(PartyRequest::AssistantLeader { name, grant });
@@ -590,7 +608,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "UninviteFromRaid",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: UninviteFromRaid(index)")?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model
                 .party_requests
                 .push(PartyRequest::UninviteRaid(index.max(0) as u32));
@@ -601,7 +619,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "DoReadyCheck",
         lua.create_function(|lua, ()| {
             let now = clock(lua);
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             // The worker `0x4bb1d0` flags every roster member but the caller as pending
             // (`0x4bb24c`, `0x4bb258`) and arms the 30 s deadline (`0x4bb2b6`), then sends. A
             // party has no raid roster, so nothing is flagged and the leader's echo closes it.
@@ -627,7 +645,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "CheckReadyCheckTime",
         lua.create_function(|lua, ()| {
             let now = clock(lua);
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             ready_check_tick(lua, &mut model, now);
             Ok(())
         })?,
@@ -638,7 +656,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "ConfirmReadyCheck",
         lua.create_function(|lua, ready: Value| {
             let ready = !matches!(ready, Value::Nil | Value::Boolean(false));
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model
                 .party_requests
                 .push(PartyRequest::ReadyCheckAnswer(ready));
@@ -648,7 +666,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "RequestRaidInfo",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.party_requests.push(PartyRequest::RequestRaidInfo);
             Ok(())
         })?,
@@ -659,7 +677,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumSavedInstances",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.saved_instances.len() as i64)
         })?,
     )?;
@@ -668,7 +688,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: GetSavedInstanceInfo(index)")?;
             let row = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 usize::try_from(index.wrapping_sub(1))
                     .ok()
                     .and_then(|i| model.saved_instances.get(i))
@@ -691,7 +713,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetRaidRosterSelection",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: SetRaidRosterSelection(index)")?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.raid_selection = i64::from(index);
             Ok(())
         })?,
@@ -699,7 +721,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetRaidRosterSelection",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.raid_selection)
         })?,
     )?;

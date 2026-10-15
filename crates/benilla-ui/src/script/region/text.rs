@@ -4,14 +4,13 @@
 use mlua::{Lua, Table, Value};
 
 use crate::justify;
-use crate::script::Model;
 
 use super::region_handle_of;
 
 /// The string `SetText` (`0x771d80`) stores.
 fn set_text(lua: &Lua, this: &Table, text: Option<String>) -> mlua::Result<()> {
     let rh = region_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model");
+    let mut model = crate::script::model_mut_of(lua);
     let data = model.region_data.entry(rh).or_default();
     data.text = text;
     // Fresh text draws whole: an armed write-on gradient belongs to the old string.
@@ -57,7 +56,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| {
             let rh = region_handle_of(lua, &this)?;
             let text = {
-                let model = lua.app_data_ref::<Model>().expect("model");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model");
                 model
                     .region_data
                     .get(&rh)
@@ -81,7 +82,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         // `SetText` then `GetStringWidth` works in one tick; without one it is 0 until the host
         // answers.
         crate::script::measure::ensure_measured(lua, rh);
-        let model = lua.app_data_ref::<Model>().expect("model");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
         let Some(d) = model.region_data.get(&rh) else {
             return Ok(0.0);
         };
@@ -111,7 +114,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             if parsed == justify::Set::NoMatch {
                 return Err(justify::usage_h("FontString"));
             }
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             let d = model.region_data.entry(rh).or_default();
             match parsed {
                 justify::Set::To(jh) => d.justify.set_h(jh),
@@ -136,7 +139,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             if parsed == justify::Set::NoMatch {
                 return Err(justify::usage_v("FontString"));
             }
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             let d = model.region_data.entry(rh).or_default();
             match parsed {
                 justify::Set::To(jv) => d.justify.set_v(jv),
@@ -153,7 +156,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // untouched, the ctor's `0x212` read through each axis mask.
     fn justify_of(lua: &Lua, this: &Table) -> mlua::Result<justify::Justify> {
         let rh = region_handle_of(lua, this)?;
-        let model = lua.app_data_ref::<Model>().expect("model");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
         Ok(model
             .region_data
             .get(&rh)
@@ -180,7 +185,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 _ => true,
             };
             let rh = region_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             model.region_data.entry(rh).or_default().non_space_wrap = Some(on);
             Ok(())
         })?,
@@ -190,7 +195,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "CanNonSpaceWrap",
         lua.create_function(|lua, this: Table| {
             let rh = region_handle_of(lua, &this)?;
-            let model = lua.app_data_mut::<Model>().expect("model");
+            let model = crate::script::model_mut_of(lua);
             let on = model
                 .region_data
                 .get(&rh)
@@ -207,7 +212,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetTextHeight",
         lua.create_function(|lua, (this, height): (Table, f32)| {
             let rh = region_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             model.region_data.entry(rh).or_default().text_height = Some(height);
             model.touch_measure(rh);
             Ok(())

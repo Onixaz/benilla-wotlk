@@ -205,7 +205,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| {
             // `0x51def0` returns `[0xbe1b90]`, the sorted array's count, not the registry's.
             Ok(lua
-                .app_data_ref::<Model>()
+                .app_data_ref::<crate::script::ModelCell>()
                 .expect("model")
                 .addon_index
                 .len())
@@ -218,7 +218,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetAddOnInfo",
         lua.create_function(|lua, key: Value| {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             let i = match addon_key(lua, &model, &key, USAGE_INFO)? {
                 AddonKey::Index(i) => i,
                 AddonKey::Name(name) => match by_name(&model, &name) {
@@ -258,7 +260,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsAddOnLoaded",
         lua.create_function(|lua, key: Value| {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             let key = addon_key(lua, &model, &key, USAGE_LOADED)?;
             // `0x51e6f0` answers the record's loaded byte `[rec+0x18]`; an unknown name pushes nil
             // (`0x48e95b`).
@@ -271,7 +275,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsAddOnLoadOnDemand",
         lua.create_function(|lua, key: Value| {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             let key = addon_key(lua, &model, &key, USAGE_LOAD_ON_DEMAND)?;
             Ok(flag(
                 row_of(&model, &key).is_some_and(|i| model.addons[i].load_on_demand),
@@ -283,7 +289,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetAddOnDependencies",
         lua.create_function(|lua, key: Value| {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             let key = addon_key(lua, &model, &key, USAGE_DEPENDENCIES)?;
             // An unknown name comes back NULL from `0x51e350` and answers nothing (`0x48e68a`).
             let Some(i) = row_of(&model, &key) else {
@@ -301,7 +309,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetAddOnMetadata",
         lua.create_function(|lua, (key, field): (Value, Value)| {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             let key = addon_key(lua, &model, &key, USAGE_METADATA)?;
             // A missing or non-string argument 2 raises the same `Usage:` (`0x48e59c`, `0x48e5cb`).
             let field = super::binding_abi::string_arg(lua, field, USAGE_METADATA)?;
@@ -330,7 +340,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, key: Value| {
-                let mut model = lua.app_data_mut::<Model>().expect("model");
+                let mut model = crate::script::model_mut_of(lua);
                 let key = addon_key(lua, &model, &key, usage)?;
                 if let Some(i) = row_of(&model, &key) {
                     set_enabled(&mut model, i, on);
@@ -348,7 +358,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, _: MultiValue| {
-                let mut model = lua.app_data_mut::<Model>().expect("model");
+                let mut model = crate::script::model_mut_of(lua);
                 for k in 0..model.addon_index.len() {
                     let i = model.addon_index[k];
                     set_enabled(&mut model, i, on);
@@ -363,7 +373,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ResetDisabledAddOns",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             for a in &mut model.addons {
                 a.enabled = a.saved_enabled;
             }
@@ -376,7 +386,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "LoadAddOn",
         lua.create_function(|lua, key: Value| {
             let index = {
-                let model = lua.app_data_ref::<Model>().expect("model");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model");
                 let key = addon_key(lua, &model, &key, USAGE_LOAD)?;
                 row_of(&model, &key)
             };
@@ -388,13 +400,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             // One record for the call and the calls inside it (`ds:0xb4e3e0` counts them,
             // `0x48ea85`/`0x48ea9d`), drained when the outermost returns (`0x48eab4`).
-            lua.app_data_mut::<Model>()
-                .expect("model")
-                .load_log
-                .demand_depth += 1;
+            crate::script::model_mut_of(lua).load_log.demand_depth += 1;
             let result = load_addon(lua, i);
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model");
+                let mut model = crate::script::model_mut_of(lua);
                 let log = &mut model.load_log;
                 log.demand_depth -= 1;
                 if log.demand_depth == 0 && !log.demand.is_empty() {
@@ -419,7 +428,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 /// the Lua call, as stock callers use the addon on the next line (`UIParent.lua:577`).
 fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
     let (name, root, files, deps, already, chain, chain_reader) = {
-        let model = lua.app_data_ref::<Model>().expect("model");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
         let a = &model.addons[i];
         (
             a.name.clone(),
@@ -437,7 +448,9 @@ fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
     // `LoadAddOn` (`0x48e980`) refuses through `AddOn_CanLoad` and takes the reason from the same
     // gate; an out-of-date addon loads only with the version check off (`0x48ea8c`).
     {
-        let model = lua.app_data_ref::<Model>().expect("model");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
         if let refused @ Verdict::Refused { .. } = verdict(&model, i) {
             return Err(refused.token().expect("a refusal always carries a token"));
         }
@@ -461,14 +474,16 @@ fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
     // takes the loaded early-out (`0x51f2d6`). Inside a cycle, then, `IsAddOnLoaded("A")` is 1
     // while B runs and `ADDON_LOADED` fires B before A, as in the reference.
     {
-        let mut model = lua.app_data_mut::<Model>().expect("model");
+        let mut model = crate::script::model_mut_of(lua);
         model.addons[i].loaded = true;
     }
 
     // Past the gate, a dependency that fails to load maps to its `DEP_` reason.
     for dep in &deps {
         let d = {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             model
                 .addons
                 .iter()
@@ -478,7 +493,9 @@ fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
             None => return Err("DEP_MISSING".into()),
             Some(d) => {
                 let loaded = {
-                    let model = lua.app_data_ref::<Model>().expect("model");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model");
                     model.addons[d].loaded
                 };
                 if !loaded {
@@ -503,7 +520,7 @@ fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
     let toc_path = crate::status::addon_toc_path(&name);
     toc.close_into(&mut own, debug, crate::status::toc_banner(&toc_path));
     {
-        let mut model = lua.app_data_mut::<Model>().expect("model");
+        let mut model = crate::script::model_mut_of(lua);
         let banner = crate::status::addon_banner(&name);
         own.close_into(&mut model.load_log.demand, debug, banner);
     }
@@ -535,7 +552,9 @@ fn load_bindings(lua: &Lua, name: &str, read: &Reader) {
 /// and `ADDON_LOADED` so saved values win; a missing file is skipped (`0x51f4a9`, `0x51f530`).
 fn load_saved_variables(lua: &Lua, i: usize) {
     let (name, account, character, has_account, has_character) = {
-        let model = lua.app_data_ref::<Model>().expect("model");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
         let a = &model.addons[i];
         (
             a.name.clone(),
@@ -557,7 +576,7 @@ fn load_saved_variables(lua: &Lua, i: usize) {
             Err(e) => {
                 // Present but unreadable is held, like a file that will not run.
                 log_error(lua, &format!("{}: {e}", path.display()));
-                let mut model = lua.app_data_mut::<Model>().expect("model");
+                let mut model = crate::script::model_mut_of(lua);
                 if !model.held_saved_files.contains(&path) {
                     model.held_saved_files.push(path);
                 }
@@ -572,7 +591,7 @@ fn load_saved_variables(lua: &Lua, i: usize) {
             // Deviation: the reference fails silently; we report it, as a player needs to know,
             // and hold the file so the shutdown write keeps it.
             log_error(lua, &format!("{}: {e}", path.display()));
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             if !model.held_saved_files.contains(&path) {
                 model.held_saved_files.push(path);
             }
@@ -586,7 +605,7 @@ type Reader = Box<dyn Fn(&str) -> Option<Vec<u8>>>;
 
 /// `FrameXML_Debug` above 0, which puts every banner in the load log.
 fn framexml_debug(lua: &Lua) -> bool {
-    lua.app_data_ref::<Model>()
+    lua.app_data_ref::<crate::script::ModelCell>()
         .expect("model")
         .framexml_debug
         .get()
@@ -656,9 +675,7 @@ fn load_failure(lua: &Lua, msg: &str) {
     let msg = format!("LoadAddOn: {msg}");
     crate::script::diagnostics::record_load_failure(lua, &msg);
     // `warn_host_only`, not `record_warning`: the line above already kept it as a `Load` row.
-    lua.app_data_mut::<Model>()
-        .expect("model")
-        .warn_host_only(msg);
+    crate::script::model_mut_of(lua).warn_host_only(msg);
 }
 
 /// Read `root/rel`, refusing a path that leaves `root`, lexically before any filesystem call;
@@ -688,7 +705,7 @@ fn run_chunk(lua: &Lua, bytes: &[u8], name: &str) -> mlua::Result<()> {
 fn log_error(lua: &Lua, msg: &str) {
     let msg = format!("LoadAddOn: {msg}");
     super::diagnostics::record_load_failure(lua, &msg);
-    let mut model = lua.app_data_mut::<Model>().expect("model");
+    let mut model = crate::script::model_mut_of(lua);
     model.pending_error_dispatch.push(msg.clone());
     model.errors.push(msg);
 }

@@ -357,7 +357,7 @@ pub(crate) fn apply_element_font_parts(
     flags: Option<String>,
 ) -> mlua::Result<()> {
     let fh = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model");
+    let mut model = crate::script::model_mut_of(lua);
     let ef = &mut model.simple_html.entry(fh).or_default().fonts[elem];
     if let Some(p) = path.filter(|p| !p.is_empty()) {
         ef.font_path = Some(p);
@@ -396,7 +396,9 @@ pub(crate) fn element_of_xml_tag(tag: &str) -> Option<usize> {
 /// Resolve `this` to a live `SimpleHTML` frame; only a misapplied method table fails.
 fn html_handle(lua: &Lua, this: &Table) -> mlua::Result<FrameHandle> {
     let h = frame_handle_of(lua, this)?;
-    let model = lua.app_data_ref::<Model>().expect("model");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
     match model.arena.frame(h).map(|f| f.kind) {
         Some(FrameKind::SimpleHtml) => Ok(h),
         _ => Err(mlua::Error::runtime("not a SimpleHTML")),
@@ -437,14 +439,16 @@ fn edit_font<T>(
     f: impl FnOnce(&mut ElementFont) -> T,
 ) -> mlua::Result<T> {
     let h = html_handle(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model");
+    let mut model = crate::script::model_mut_of(lua);
     Ok(f(&mut model.simple_html.entry(h).or_default().fonts[elem]))
 }
 
 /// One element font's resolved paint: what the getters answer and a block would be built with.
 fn read_font(lua: &Lua, this: &Table, elem: usize) -> mlua::Result<BlockPaint> {
     let h = html_handle(lua, this)?;
-    let model = lua.app_data_ref::<Model>().expect("model");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
     let st = model.simple_html.get(&h);
     Ok(match st {
         Some(st) => resolve_font(&model, &st.fonts[elem]),
@@ -464,7 +468,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let elem = take_element(&mut rest);
             let name = super::font::resolve("SetFontObject", &arg(&rest, 0))?;
             if let Some(n) = &name {
-                let model = lua.app_data_ref::<Model>().expect("model");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model");
                 if model.font_object(n).is_none() {
                     return Err(mlua::Error::runtime(format!(
                         "SetFontObject: no font object named '{n}' is registered"
@@ -507,7 +513,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let elem = take_element(&mut rest);
             let h = html_handle(lua, &this)?;
             let name = {
-                let model = lua.app_data_ref::<Model>().expect("model");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model");
                 model
                     .simple_html
                     .get(&h)
@@ -717,7 +725,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 _ => String::new(),
             };
             let h = html_handle(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             set_text(&mut model, h, &raw);
             Ok(())
         })?,
@@ -734,7 +742,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let fmt = s.to_str()?.to_string();
             let h = html_handle(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             model.simple_html.entry(h).or_default().hyperlink_format = fmt;
             Ok(())
         })?,
@@ -743,7 +751,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetHyperlinkFormat",
         lua.create_function(|lua, this: Table| {
             let h = html_handle(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(model
                 .simple_html
                 .get(&h)

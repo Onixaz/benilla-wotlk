@@ -194,7 +194,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "PutItemInBag",
         lua.create_function(|lua, live: u32| {
             let yes = {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 put_item_in_bag(&mut model, live)
             };
             consumed(yes)
@@ -204,7 +204,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "PutItemInBackpack",
         lua.create_function(|lua, ()| {
             let yes = {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 put_item_in_backpack(&mut model)
             };
             consumed(yes)
@@ -213,7 +213,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PickupBagFromSlot",
         lua.create_function(|lua, live: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             pickup_bag_from_slot(&mut model, live);
             Ok(())
         })?,

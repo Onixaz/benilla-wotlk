@@ -17,7 +17,7 @@
 use mlua::{Lua, Table, Value};
 
 use super::object::as_f32;
-use super::{FontShadow, Model, Outline};
+use super::{FontShadow, Outline};
 use crate::widget::RegionHandle;
 
 /// How a widget's method table finds the region its glyphs paint from: a `FontString` is one, an
@@ -74,7 +74,7 @@ pub(super) fn install(
             let name = super::font::resolve("SetFontObject", &font)?;
             let rh = resolve(lua, &this)?;
             let relinked = {
-                let mut model = lua.app_data_mut::<Model>().expect("model");
+                let mut model = crate::script::model_mut_of(lua);
                 // nil severs the link and keeps the paint; the reference only nulls the parent.
                 let Some(name) = name else {
                     model.region_data.entry(rh).or_default().font_object = None;
@@ -113,7 +113,9 @@ pub(super) fn install(
         lua.create_function(move |lua, this: Table| {
             let rh = resolve(lua, &this)?;
             let name = {
-                let model = lua.app_data_ref::<Model>().expect("model");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model");
                 model
                     .region_data
                     .get(&rh)
@@ -137,7 +139,7 @@ pub(super) fn install(
             move |lua, (this, file, height, flags): (Table, Value, Value, Option<String>)| {
                 let (path, height) = set_font_args(&file, &height, widget)?;
                 let rh = resolve(lua, &this)?;
-                let mut model = lua.app_data_mut::<Model>().expect("model");
+                let mut model = crate::script::model_mut_of(lua);
                 let before = model
                     .region_data
                     .get(&rh)
@@ -184,7 +186,9 @@ pub(super) fn install(
         "GetFont",
         lua.create_function(move |lua, this: Table| {
             let rh = resolve(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             let d = model.region_data.get(&rh);
             let path = match d.and_then(|d| d.font_path.clone()) {
                 Some(p) => Value::String(lua.create_string(&p)?),
@@ -211,7 +215,7 @@ pub(super) fn install(
                     super::object::as_f32(&b),
                 );
                 let rh = resolve(lua, &this)?;
-                let mut model = lua.app_data_mut::<Model>().expect("model");
+                let mut model = crate::script::model_mut_of(lua);
                 let d = model.region_data.entry(rh).or_default();
                 d.vertex_color = Some([r, g, b, a.unwrap_or(1.0)]);
                 // Clears the colour inherit bit (`0x79dbd0`): it survives a font-object repaint.
@@ -225,7 +229,9 @@ pub(super) fn install(
         "GetTextColor",
         lua.create_function(move |lua, this: Table| {
             let rh = resolve(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             let c = model
                 .region_data
                 .get(&rh)
@@ -250,7 +256,7 @@ pub(super) fn install(
                     super::object::as_f32(&b),
                 );
                 let rh = resolve(lua, &this)?;
-                let mut model = lua.app_data_mut::<Model>().expect("model");
+                let mut model = crate::script::model_mut_of(lua);
                 let d = model.region_data.entry(rh).or_default();
                 let offset = d.font_shadow.map_or([0.0, 0.0], |s| s.offset);
                 d.font_shadow = Some(FontShadow {
@@ -266,7 +272,9 @@ pub(super) fn install(
         "GetShadowColor",
         lua.create_function(move |lua, this: Table| {
             let rh = resolve(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             let c = model
                 .region_data
                 .get(&rh)
@@ -280,7 +288,7 @@ pub(super) fn install(
         "SetShadowOffset",
         lua.create_function(move |lua, (this, x, y): (Table, f32, f32)| {
             let rh = resolve(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             let d = model.region_data.entry(rh).or_default();
             let color = d.font_shadow.map_or([0.0, 0.0, 0.0, 1.0], |s| s.color);
             d.font_shadow = Some(FontShadow {
@@ -295,7 +303,9 @@ pub(super) fn install(
         "GetShadowOffset",
         lua.create_function(move |lua, this: Table| {
             let rh = resolve(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             let o = model
                 .region_data
                 .get(&rh)

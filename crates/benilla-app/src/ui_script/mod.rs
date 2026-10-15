@@ -220,6 +220,8 @@ pub(crate) struct UiPassState {
     /// The layout counters before the tick, so the row's `solves` and `derives` cover both halves.
     pub(crate) solves_before: u64,
     pub(crate) derives_before: u64,
+    /// The model's mutation count after the tick half, for the `[ui-cost]` row's `ep=` split.
+    pub(crate) epoch_tick: u64,
 }
 
 /// UI chrome under the pointer: [`PointerOverUi`] minus the nameplates, which take the mouse but

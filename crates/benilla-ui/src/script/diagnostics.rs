@@ -12,8 +12,6 @@ use std::collections::VecDeque;
 
 use mlua::Lua;
 
-use super::Model;
-
 /// Distinct messages retained before the oldest is evicted, sized for the whole 218-addon corpus
 /// loaded at once.
 pub const DIAGNOSTIC_LOG_CAP: usize = 256;
@@ -140,7 +138,10 @@ impl super::UiScript {
 
     /// The drains made since the last call, in order, for the host to write.
     pub fn take_load_log_writes(&mut self) -> Vec<crate::status::LogWrite> {
-        std::mem::take(&mut self.model_mut().load_log.writes)
+        if self.model_ref().load_log.writes.is_empty() {
+            return Vec::new();
+        }
+        drain_field!(self, load_log.writes)
     }
 
     /// Retain a warning the host has already logged (a loader warning with its `<Addon>/<file>`
@@ -156,8 +157,7 @@ impl super::UiScript {
 /// `Couldn't open %s` (`0x846ff4`) at severity 2 and loading goes on, never reaching the Lua
 /// error handler.
 pub(crate) fn record_load_failure(lua: &Lua, msg: &str) {
-    lua.app_data_mut::<Model>()
-        .expect("model app_data set")
+    crate::script::model_mut_of(lua)
         .diagnostics
         .record(DiagnosticKind::Load, msg);
 }
@@ -165,8 +165,7 @@ pub(crate) fn record_load_failure(lua: &Lua, msg: &str) {
 /// Retain a warning its caller, holding `&Lua`, has already logged; `Model::record_warning` also
 /// queues it for the host log.
 pub(crate) fn record_warning(lua: &Lua, msg: &str) {
-    lua.app_data_mut::<Model>()
-        .expect("model app_data set")
+    crate::script::model_mut_of(lua)
         .diagnostics
         .record(DiagnosticKind::Warning, msg);
 }

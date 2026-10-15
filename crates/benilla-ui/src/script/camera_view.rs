@@ -10,8 +10,6 @@
 
 use mlua::{Lua, Value};
 
-use super::Model;
-
 /// The number of camera views, the rows of the reference's default-string table `0x84f488`.
 pub const CAMERA_VIEW_COUNT: u8 = 5;
 
@@ -36,7 +34,7 @@ pub enum CameraViewRequest {
 impl super::UiScript {
     /// Drain the camera-view intents queued since the last call.
     pub fn take_camera_view_requests(&mut self) -> Vec<CameraViewRequest> {
-        std::mem::take(&mut self.model_mut().camera_view_requests)
+        drain_field!(self, camera_view_requests)
     }
 }
 
@@ -60,7 +58,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetView",
         lua.create_function(|lua, n: Value| {
             if let Some(view) = view_arg(lua, n) {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model
                     .camera_view_requests
                     .push(CameraViewRequest::Set(view));
@@ -75,7 +73,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SaveView",
         lua.create_function(|lua, n: Value| {
             if let Some(view) = view_arg(lua, n) {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model
                     .camera_view_requests
                     .push(CameraViewRequest::Save(view));
@@ -90,7 +88,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "ResetView",
         lua.create_function(|lua, n: Value| {
             if let Some(view) = view_arg(lua, n) {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model
                     .camera_view_requests
                     .push(CameraViewRequest::Reset(view));
@@ -103,7 +101,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "NextView",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.camera_view_requests.push(CameraViewRequest::Next);
             Ok(())
         })?,
@@ -111,7 +109,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PrevView",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.camera_view_requests.push(CameraViewRequest::Prev);
             Ok(())
         })?,
@@ -123,7 +121,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "FlipCameraYaw",
         lua.create_function(|lua, degrees: Value| {
             if let Some(d) = lua.coerce_number(degrees).ok().flatten() {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model
                     .camera_view_requests
                     .push(CameraViewRequest::FlipYaw(d as f32));

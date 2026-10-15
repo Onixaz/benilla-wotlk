@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::{Model, ScriptValue};
+use super::ScriptValue;
 
 /// One unit's cast or channel as `UnitCastingInfo` and `UnitChannelInfo` answer it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -81,7 +81,9 @@ impl super::UiScript {
 /// The unit a token names, through the shared resolver; `None` for nobody or an unknown token.
 fn unit_of(lua: &Lua, unit: Value, usage: &'static str) -> mlua::Result<Option<u64>> {
     let token = super::binding_abi::string_arg(lua, unit, usage)?;
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     Ok(model.unit_guids.resolve(&token).ok().flatten())
 }
 
@@ -121,7 +123,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let now_ms = super::clock::now(lua) * 1000.0;
             let cast = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.unit_casts.casts.get(&guid).cloned()
             };
             match cast.filter(|c| now_ms < c.end_ms) {
@@ -141,7 +145,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let now_ms = super::clock::now(lua) * 1000.0;
             let cast = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.unit_casts.channels.get(&guid).cloned()
             };
             match cast.filter(|c| now_ms < c.end_ms) {

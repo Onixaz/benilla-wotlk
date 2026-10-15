@@ -6,7 +6,6 @@
 use mlua::{Lua, Table};
 
 use super::object::frame_handle_of;
-use super::Model;
 use crate::widget::{KindState, MinimapState, MINIMAP_ZOOM_LEVELS};
 
 /// Registry key of the Minimap method table.
@@ -20,7 +19,7 @@ fn with_minimap<T>(
     f: impl FnOnce(&mut MinimapState) -> T,
 ) -> mlua::Result<T> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let frame = model
         .arena
         .frame_mut(h)
@@ -41,7 +40,7 @@ pub(crate) fn apply_model_attrs(
     player: &str,
 ) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let Some(children) = model.arena.frame(h).map(|f| f.children.clone()) else {
         return Ok(());
     };
@@ -84,7 +83,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             // The reference also sets the mode's CVar, which is what survives a restart. The borrow
             // above is released first: both reach the same `Model`.
             super::cvars::set_from_engine(
-                &mut lua.app_data_mut::<Model>().expect("model app_data"),
+                &mut crate::script::model_mut_of(lua),
                 if inside {
                     "minimapInsideZoom"
                 } else {
@@ -118,9 +117,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         // the frame it draws the map; one pending click, not one per widget.
         lua.create_function(|lua, (this, x, y): (Table, f32, f32)| {
             with_minimap(lua, &this, |_| ())?;
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .minimap_ping_request = Some((x, y));
+            crate::script::model_mut_of(lua).minimap_ping_request = Some((x, y));
             Ok(())
         })?,
     )?;
@@ -132,7 +129,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| {
             with_minimap(lua, &this, |_| ())?;
             let (x, y) = lua
-                .app_data_ref::<Model>()
+                .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data")
                 .minimap_ping;
             Ok((x, y))

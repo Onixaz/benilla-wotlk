@@ -9,7 +9,7 @@ use mlua::{Lua, Table};
 use super::object::frame_handle_of;
 use super::tooltip::{append_line, clear_content, fire_cleared, show_or_hide_empty, tip_mut};
 use super::unit::{is_civilian_kill, level_reads_unknown, unknownobject};
-use super::{KindState, Model, UnitState};
+use super::{KindState, UnitState};
 use crate::layout::{Anchor, Point};
 use crate::strings::{fill, Arg};
 use crate::widget::FrameHandle;
@@ -102,14 +102,14 @@ fn level_line(lua: &Lua, u: &UnitState, player_level: u32) -> Option<String> {
 fn render_unit(lua: &Lua, this: &Table, token: &str) -> mlua::Result<bool> {
     let h = frame_handle_of(lua, this)?;
     let (unit, player_level) = {
-        let model = lua.app_data_mut::<Model>().expect("model app_data");
+        let model = crate::script::model_mut_of(lua);
         (
             model.unit(token).cloned().filter(|u| u.exists),
             model.player_req.level,
         )
     };
     {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         clear_content(&mut model, h);
     }
     fire_cleared(lua, h);
@@ -157,14 +157,9 @@ fn render_unit(lua: &Lua, this: &Table, token: &str) -> mlua::Result<bool> {
     update_bar(lua, h, Some(&u));
     // `OnTooltipSetUnit` (slot `+0x4ec`) runs once the lines are built, before the show
     // (`0x621b85`): the stock handler re-tints the name line by `GameTooltip_UnitColor`.
-    let id = lua
-        .app_data_mut::<Model>()
-        .expect("model app_data")
-        .frame_id(h);
+    let id = crate::script::model_mut_of(lua).frame_id(h);
     if let Err(e) = super::event::fire_widget_handler(lua, id, "OnTooltipSetUnit", Vec::new()) {
-        lua.app_data_mut::<Model>()
-            .expect("model app_data")
-            .record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
     show_or_hide_empty(lua, h);
     Ok(true)
@@ -172,7 +167,7 @@ fn render_unit(lua: &Lua, this: &Table, token: &str) -> mlua::Result<bool> {
 
 /// Mark the tooltip as world-hover-owned (the fade-on-loss gate).
 fn set_world_owned(lua: &Lua, h: FrameHandle) {
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     if let Some(f) = model.arena.frame_mut(h) {
         if let KindState::Tooltip(t) = &mut f.kind_state {
             t.world_owned = true;
@@ -182,7 +177,7 @@ fn set_world_owned(lua: &Lua, h: FrameHandle) {
 
 /// Remember (or drop) the guid of the unit the tooltip shows, the health watcher's key.
 fn set_subject(lua: &Lua, h: FrameHandle, guid: Option<u64>) {
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     if let Some(f) = model.arena.frame_mut(h) {
         if let KindState::Tooltip(t) = &mut f.kind_state {
             t.unit_guid = guid;
@@ -194,13 +189,13 @@ fn set_subject(lua: &Lua, h: FrameHandle, guid: Option<u64>) {
 /// `HealthBar_OnValueChanged` colours the fill.
 fn update_bar(lua: &Lua, h: FrameHandle, unit: Option<&UnitState>) {
     let bar = {
-        let model = lua.app_data_mut::<Model>().expect("model app_data");
+        let model = crate::script::model_mut_of(lua);
         let name = model.arena.frame(h).and_then(|f| f.name.clone());
         name.and_then(|n| model.arena.lookup(&format!("{n}StatusBar")))
     };
     let Some(bar) = bar else { return };
     let (changed, shown) = {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         let Some(f) = model.arena.frame_mut(bar) else {
             return;
         };
@@ -217,12 +212,12 @@ fn update_bar(lua: &Lua, h: FrameHandle, unit: Option<&UnitState>) {
         }
     };
     {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         model.arena.set_shown(bar, shown);
     }
     if changed {
         let (id, value) = {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let v = match model.arena.frame(bar).map(|f| &f.kind_state) {
                 Some(KindState::StatusBar(sb)) => sb.value,
                 _ => 0.0,
@@ -235,9 +230,7 @@ fn update_bar(lua: &Lua, h: FrameHandle, unit: Option<&UnitState>) {
             "OnValueChanged",
             vec![mlua::Value::Number(f64::from(value))],
         ) {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_script_error(e.to_string());
         }
     }
 }
@@ -248,7 +241,7 @@ fn update_bar(lua: &Lua, h: FrameHandle, unit: Option<&UnitState>) {
 /// `"mouseover"` does when the hover ends, leaves a fading plate's bar standing.
 pub(super) fn on_unit_push(lua: &Lua, token: &str) {
     let (unit, hits): (UnitState, Vec<FrameHandle>) = {
-        let model = lua.app_data_mut::<Model>().expect("model app_data");
+        let model = crate::script::model_mut_of(lua);
         let Some(unit) = model.pushed_unit(token).filter(|u| u.exists && u.guid != 0) else {
             return;
         };
@@ -391,7 +384,7 @@ impl super::UiScript {
         };
         let render = || -> mlua::Result<()> {
             {
-                let mut model = self.lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(&self.lua);
                 clear_content(&mut model, h);
             }
             fire_cleared(&self.lua, h);
@@ -590,7 +583,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 }
             };
             let h = frame_handle_of(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let shown = match model.arena.frame(h).map(|f| &f.kind_state) {
                 Some(KindState::Tooltip(t)) => t.unit_guid,
                 _ => None,

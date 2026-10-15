@@ -3,7 +3,6 @@
 use mlua::Lua;
 
 use super::{set_focus_handle, sync_text_region, with_eb};
-use crate::script::Model;
 use crate::widget::{FrameHandle, FrameKind, KindState};
 
 /// A UI-space point (y up) to the box's text byte index at the nearest cursor stop (`0x77d0d0`,
@@ -12,7 +11,9 @@ use crate::widget::{FrameHandle, FrameKind, KindState};
 /// table is answered.
 fn index_at_screen_pos(lua: &Lua, h: FrameHandle, x: f32, y: f32) -> usize {
     let corner = {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         let rh = match model.arena.frame(h).map(|f| &f.kind_state) {
             Some(KindState::EditBox(eb)) => eb.text_region,
             _ => None,
@@ -93,13 +94,15 @@ pub(in crate::script) fn cut_selection(lua: &Lua) -> Option<String> {
 }
 
 fn focused(lua: &Lua) -> Option<FrameHandle> {
-    lua.app_data_ref::<Model>()
+    lua.app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data")
         .focused_editbox
 }
 
 fn editbox_of(lua: &Lua, id: u32) -> Option<FrameHandle> {
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     let h = model.id_to_frame.get(&id).copied()?;
     matches!(
         model.arena.frame(h).map(|f| f.kind),

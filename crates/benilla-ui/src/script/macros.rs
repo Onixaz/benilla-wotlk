@@ -147,18 +147,18 @@ impl super::UiScript {
 
     /// Push every macro's cached cast by 1-based index, replacing the last push.
     pub fn set_macro_bindings(&mut self, bindings: std::collections::HashMap<u32, MacroBinding>) {
-        self.model_mut().macro_bindings = bindings;
+        set_field!(self, macro_bindings, bindings);
     }
 
     /// Whether a script changed the table since the last call; the app then saves it and fires
     /// `UPDATE_MACROS` (`0x452460`).
     pub fn take_macros_dirty(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().macros_dirty)
+        drain_field!(self, macros_dirty)
     }
 
     /// Push the icon chooser's texture paths in grid order.
     pub fn set_macro_icons(&mut self, icons: Vec<String>) {
-        self.model_mut().macro_icons = icons;
+        set_field!(self, macro_icons, icons);
     }
 
     /// Install the host's builder for the chooser's list. Like 12340's `GetNumMacroIcons`
@@ -172,7 +172,7 @@ impl super::UiScript {
     /// a `u64` instead of diffing the table. Not [`Self::take_macros_dirty`]: that drain has one
     /// owner, the save, and a second reader would steal its edge.
     pub fn macros_generation(&self) -> u64 {
-        self.model_mut().macros_generation
+        self.model_ref().macros_generation
     }
 }
 
@@ -301,7 +301,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumMacros",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok((
                 model.macros.account.len() as i64,
                 model.macros.character.len() as i64,
@@ -312,7 +314,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetMacroInfo",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(m) = model.macros.get(index) else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil]));
             };
@@ -336,7 +340,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetMacroIndexByName",
         lua.create_function(|lua, name: String| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.macros.index_by_name(&name) as i64)
         })?,
     )?;
@@ -344,7 +350,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumMacroIcons",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if let Some(source) = model.macro_icon_source.take() {
                 model.macro_icons = source();
             }
@@ -356,7 +362,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetMacroIconInfo",
         lua.create_function(|lua, index: usize| {
             let path = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 index
                     .checked_sub(1)
                     .and_then(|i| model.macro_icons.get(i))
@@ -375,7 +383,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, args: MultiValue| {
             let a: Vec<Value> = args.into_iter().collect();
             let name = opt_string(a.first()).unwrap_or_default();
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let texture = icon_path(&model, a.get(1));
             let body = opt_string(a.get(2)).unwrap_or_default();
             let (local_only, per_character) = (flag(a.get(3)), flag(a.get(4)));
@@ -395,7 +403,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(index) = a.first().and_then(|v| v.as_integer()).map(|i| i as usize) else {
                 return Ok(Value::Nil);
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             // A nil icon leaves the icon alone: `MacroFrame_SaveMacro` passes nil on every save.
             let texture = match a.get(2) {
                 None | Some(Value::Nil) => None,
@@ -419,7 +427,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "DeleteMacro",
         lua.create_function(|lua, index: usize| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             Ok(delete_macro(&mut model, index))
         })?,
     )?;
@@ -427,7 +435,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PickupMacro",
         lua.create_function(|lua, index: usize| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             Ok(pickup_macro(&mut model, index))
         })?,
     )?;

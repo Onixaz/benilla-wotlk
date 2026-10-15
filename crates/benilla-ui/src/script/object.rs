@@ -50,7 +50,9 @@ pub(crate) fn decode_id(this: &Table) -> mlua::Result<u32> {
 /// Resolve `self` (a frame wrapper) to its live [`FrameHandle`].
 pub(crate) fn frame_handle_of(lua: &Lua, this: &Table) -> mlua::Result<FrameHandle> {
     let id = decode_id(this)?;
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     model
         .id_to_frame
         .get(&id)
@@ -74,7 +76,9 @@ pub(crate) fn frame_wrapper(lua: &Lua, id: u32) -> mlua::Result<Table> {
     // The kind picks the metatable once, here: a frame's kind never changes and `id_to_frame`
     // never loses an entry, so the choice cannot go stale.
     let (kind, name): (Option<FrameKind>, Option<String>) = {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         let frame = model
             .id_to_frame
             .get(&id)
@@ -264,7 +268,7 @@ pub(crate) fn registered_frame_kind(lua: &Lua, kind: &str) -> Option<FrameKind> 
     let frame_kind = frame_kind_from_str(kind)?;
     let one_shot_spent = frame_kind == FrameKind::WorldFrame
         && lua
-            .app_data_ref::<Model>()
+            .app_data_ref::<crate::script::ModelCell>()
             .expect("model app_data")
             .world_frame_made;
     (!one_shot_spent).then_some(frame_kind)
@@ -360,14 +364,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetScreenWidth",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(model.screen.width())
         })?,
     )?;
     lua.globals().set(
         "GetScreenHeight",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(model.screen.height())
         })?,
     )?;
@@ -393,7 +401,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 ));
             }
             let scale = {
-                let model = lua.app_data_ref::<Model>().expect("model");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model");
                 fullscreen_scale(model.screen.width() / model.screen.height())
             };
             frame.call_method::<()>("SetScale", scale)
@@ -405,7 +415,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetCursorPosition",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(model.cursor_pos)
         })?,
     )?;
@@ -421,7 +433,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.globals().set(
             name,
             lua.create_function(move |lua, ()| {
-                let model = lua.app_data_ref::<Model>().expect("model");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model");
                 let m = [model.modifiers.0, model.modifiers.1, model.modifiers.2];
                 Ok(crate::script::binding_abi::flag(m[pick]))
             })?,
@@ -541,7 +555,9 @@ pub(super) fn create_frame(
     // reference raises `Usage: CreateFrame(...)` (`0x872f60`) for anything but a table or nil
     // (`0x706112`).
     let parent_handle: Option<FrameHandle> = {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         match &parent {
             Some(Value::Table(t)) => decode_id(t)
                 .ok()
@@ -555,7 +571,7 @@ pub(super) fn create_frame(
     // (`0x7061cb`); the warning is ours and changes nothing.
     if template.is_none() {
         if let Some(v) = inherits.as_ref().filter(|v| !v.is_nil()) {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.record_warning(format!(
                 "CreateFrame: the 4th argument (inherits) must be a template-name string, got {}; \
                  ignored for '{}'",
@@ -571,7 +587,9 @@ pub(super) fn create_frame(
     // the widget dispatcher (`0x704f10`) does for every handler.
     if let Some(t) = template.as_deref().filter(|t| !t.is_empty()) {
         let missing = {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let templates = model.framexml_templates.borrow();
             // Each name case-folded, as `framexml::expand` resolves it.
             crate::framexml::inherit_names(t)
@@ -593,13 +611,15 @@ pub(super) fn create_frame(
     // node (`0x70622d`) for the XML builder `0x6ee280`, so the name reaches `SetName` (`0x76c650`),
     // whose `0x76c691` call expands it against the parent's first named ancestor.
     let name = name.map(|n| {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         crate::framexml::resolve_name(&n, &parent_token_base(&model, parent_handle))
     });
 
     // Create in the arena, mint the id, seed a default layout input. All under one write borrow.
     let id = {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         let h = model.arena.create(frame_kind, name, parent_handle);
         if frame_kind == FrameKind::WorldFrame {
             model.world_frame_made = true;
@@ -623,7 +643,7 @@ pub(super) fn create_frame(
     if let Some(template) = template {
         let messages = crate::loader::apply_template(lua, &wrapper, &kind, &template);
         if !messages.is_empty() {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             for m in messages {
                 model.record_warning(m);
             }

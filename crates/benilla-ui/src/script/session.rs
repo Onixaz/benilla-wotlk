@@ -4,8 +4,6 @@
 
 use mlua::Lua;
 
-use super::Model;
-
 /// A session intent queued by a Lua call, drained by the app.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionRequest {
@@ -33,7 +31,7 @@ pub enum SessionRequest {
 impl super::UiScript {
     /// Drain the session intents queued since the last call.
     pub fn take_session_requests(&mut self) -> Vec<SessionRequest> {
-        std::mem::take(&mut self.model_mut().session_requests)
+        drain_field!(self, session_requests)
     }
 
     /// Queue an intent from the app: `/logout`, `/camp`, `/quit` and `/reload`, which benilla
@@ -58,7 +56,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, ()| {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model.session_requests.push(request);
                 Ok(())
             })?,
@@ -69,7 +67,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "InCinematic",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(if model.in_cinematic {
                 mlua::Value::Integer(1)
             } else {

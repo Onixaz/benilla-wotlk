@@ -12,7 +12,6 @@ use mlua::{Lua, MultiValue, Value};
 use super::binding_abi::number_arg;
 use super::container::UiCursorMode;
 use super::cursor::CursorPayload;
-use super::Model;
 
 /// One vendor row, resolved by the app; its 1-based index is its place in [`MerchantState::items`].
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -94,50 +93,50 @@ impl super::UiScript {
     /// merchant-close handler restores the Point base mode (`0x4fadf0`).
     pub fn set_merchant(&mut self, state: Option<MerchantState>) {
         let closing = state.is_none();
-        self.model_mut().merchant = state;
+        set_field!(self, merchant, state);
         if closing {
-            self.model_mut().repair_mode = false;
+            set_field!(self, repair_mode, false);
         }
     }
 
     /// Push `GetRepairAllCost`'s total in copper, swept by the app ahead of the events that read it.
     pub fn set_repair_all_cost(&mut self, copper: u32) {
-        self.model_mut().repair_all_cost = copper;
+        set_field!(self, repair_all_cost, copper);
     }
 
     /// Push the repair costs the item tooltip bindings return.
     pub fn set_repair_costs(&mut self, costs: RepairCosts) {
-        self.model_mut().repair_costs = costs;
+        set_field!(self, repair_costs, costs);
     }
 
     /// Drain the `(row, quantity)` buys `BuyMerchantItem` queued, the row 1-based.
     pub fn take_merchant_buys(&mut self) -> Vec<(u32, u32)> {
-        std::mem::take(&mut self.model_mut().merchant_buys)
+        drain_field!(self, merchant_buys)
     }
 
     /// Drain the `(bag, slot)` of each cursor item dropped on the vendor; the app sells it.
     pub fn take_merchant_cursor_sells(&mut self) -> Vec<(i64, u32)> {
-        std::mem::take(&mut self.model_mut().merchant_cursor_sells)
+        drain_field!(self, merchant_cursor_sells)
     }
 
     /// Drain the `(bag, slot, entry)` of held rows dropped into bags (`CMSG_BUY_ITEM_IN_SLOT`).
     pub fn take_merchant_slot_buys(&mut self) -> Vec<(i64, u32, u32)> {
-        std::mem::take(&mut self.model_mut().merchant_slot_buys)
+        drain_field!(self, merchant_slot_buys)
     }
 
     /// Whether `CloseMerchant` was called since the last drain; the close sends no packet.
     pub fn take_merchant_close(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().merchant_close)
+        drain_field!(self, merchant_close)
     }
 
     /// Drain the 1-based buyback slots `BuybackItem` queued.
     pub fn take_merchant_buybacks(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().merchant_buybacks)
+        drain_field!(self, merchant_buybacks)
     }
 
     /// Whether `RepairAllItems` was called since the last drain.
     pub fn take_repair_all(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().repair_all)
+        drain_field!(self, repair_all)
     }
 
     /// The repair-mode latch: while set, a bag or equipment click repairs the item.
@@ -148,7 +147,7 @@ impl super::UiScript {
     /// Leave repair mode, as `HideRepairCursor` does, for the world's right mouse-down, which
     /// resets the Repair base mode to Point (`0x492c68`).
     pub fn end_repair_mode(&mut self) {
-        self.model_mut().repair_mode = false;
+        set_field!(self, repair_mode, false);
     }
 }
 
@@ -180,7 +179,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetMerchantNumItems",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.merchant.as_ref().map_or(0, |m| m.items.len()) as i64)
         })?,
     )?;
@@ -189,7 +190,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetMerchantItemInfo",
         lua.create_function(|lua, index: usize| {
             let (item, usable) = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 let item = model
                     .merchant
                     .as_ref()
@@ -228,7 +231,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetMerchantItemLink",
         lua.create_function(|lua, index: usize| {
             let link = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model
                     .merchant
                     .as_ref()
@@ -250,7 +255,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetMerchantItemMaxStack",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: GetMerchantItemMaxStack(index)")?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             // Signed, as 1.12.1 reads both.
             let max_stack = usize::try_from(index)
                 .ok()
@@ -266,7 +273,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "BuyMerchantItem",
         lua.create_function(|lua, (index, quantity): (u32, Option<u32>)| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.merchant_buys.push((index, quantity.unwrap_or(1)));
             Ok(())
         })?,
@@ -285,7 +292,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PickupMerchantItem",
         lua.create_function(|lua, index: Option<f64>| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
 
             // The sell fork comes first, before the argument is read. Its clear is the sale's, not
             // `ClearCursor`: `CURSOR_UPDATE` fires and the source slot stays greyed until the
@@ -340,7 +347,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CloseMerchant",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.merchant_close = true;
             Ok(())
         })?,
@@ -349,7 +356,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumBuybackItems",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.merchant.as_ref().map_or(0, |m| m.buyback.len()) as i64)
         })?,
     )?;
@@ -360,7 +369,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetBuybackItemInfo",
         lua.create_function(|lua, index: usize| {
             let (item, usable) = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 let item = model
                     .merchant
                     .as_ref()
@@ -396,7 +407,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "BuybackItem",
         lua.create_function(|lua, index: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.merchant_buybacks.push(index);
             Ok(())
         })?,
@@ -406,7 +417,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "CanMerchantRepair",
         lua.create_function(|lua, ()| {
             let can = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.merchant.as_ref().is_some_and(|m| m.can_repair)
             };
             Ok(if can { Value::Integer(1) } else { Value::Nil })
@@ -419,7 +432,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetRepairAllCost",
         lua.create_function(|lua, ()| {
             let cost = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 if model.merchant.as_ref().is_some_and(|m| m.can_repair) {
                     model.repair_all_cost
                 } else {
@@ -436,7 +451,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "RepairAllItems",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             // `0x4fbff0`: nothing, not even the purse test, unless the open merchant repairs
             // (`0x4fadb0`, `UNIT_NPC_FLAGS` bit 14).
             if model.merchant.as_ref().is_some_and(|m| m.can_repair) {
@@ -449,7 +464,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ShowRepairCursor",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             // `0x4fbcc0`: a targeting spell or a vendor without repair service leaves the
             // cursor untouched. `ClearCursor(1,1)` returns any held item before mode 0x11 arms.
             if model.spell_targeting || !model.merchant.as_ref().is_some_and(|m| m.can_repair) {
@@ -465,9 +480,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "HideRepairCursor",
         lua.create_function(|lua, ()| {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .repair_mode = false;
+            crate::script::model_mut_of(lua).repair_mode = false;
             Ok(())
         })?,
     )?;
@@ -475,7 +488,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "InRepairMode",
         lua.create_function(|lua, ()| {
             let mode = lua
-                .app_data_ref::<Model>()
+                .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data")
                 .repair_mode;
             Ok(if mode { Value::Integer(1) } else { Value::Nil })
@@ -511,7 +524,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 /// Arm the vendor hover cursor from a row's price: Buy(3) if the player can afford it, else the
 /// greyed UnableBuy(23); no price leaves the cursor untouched.
 fn arm_vendor_cursor(lua: &Lua, price_of: impl FnOnce(&MerchantState) -> Option<u32>) {
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     // The family bails on `IsTargeting` first (`0x6e48a0`): an armed spell keeps its cursor.
     if model.spell_targeting {
         return;

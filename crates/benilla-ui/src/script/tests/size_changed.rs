@@ -144,8 +144,6 @@ fn set_script_on_size_changed_is_accepted_because_the_resolve_pass_fires_it() {
 /// list itself: a stale entry fires nothing, so only the list would show it.
 #[test]
 fn the_on_size_changed_watch_list_is_exactly_the_frames_carrying_the_script() {
-    use crate::script::model::Model;
-
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
     s.run(
@@ -164,7 +162,7 @@ fn the_on_size_changed_watch_list_is_exactly_the_frames_carrying_the_script() {
     .unwrap();
     let watched = |s: &crate::script::UiScript| {
         s.lua()
-            .app_data_ref::<Model>()
+            .app_data_ref::<crate::script::ModelCell>()
             .expect("model app_data")
             .on_size_changed_frames
             .len()

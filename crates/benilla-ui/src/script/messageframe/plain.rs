@@ -8,7 +8,6 @@
 use mlua::{Lua, Table, Value};
 
 use crate::script::object::frame_handle_of;
-use crate::script::Model;
 use crate::widget::{InsertMode, KindState, MessageFrameState};
 
 /// Registry key of the MessageFrame method table (the MAXCSTACK discipline).
@@ -22,7 +21,7 @@ fn with_mf<T>(
     f: impl FnOnce(&mut MessageFrameState) -> T,
 ) -> mlua::Result<T> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let frame = model
         .arena
         .frame_mut(h)

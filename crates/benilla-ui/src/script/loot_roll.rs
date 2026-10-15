@@ -55,19 +55,19 @@ pub struct LootRollsState {
 impl super::UiScript {
     /// Push the open-rolls snapshot (an empty list means no roll is open).
     pub fn set_loot_rolls(&mut self, state: LootRollsState) {
-        self.model_mut().loot_rolls = state;
+        set_field!(self, loot_rolls, state);
     }
 
     /// Drain the `(roll_id, roll_type)` votes queued by `RollOnLoot` since the last call. The app
     /// maps each roll id back to its `(lootedTarget, itemSlot)` for `CMSG_LOOT_ROLL`.
     pub fn take_loot_roll_votes(&mut self) -> Vec<(u32, u8)> {
-        std::mem::take(&mut self.model_mut().loot_roll_votes)
+        drain_field!(self, loot_roll_votes)
     }
 
     /// Drain the `(roll_id, roll_type)` Need or Greed calls on a bind-on-pickup roll: the app fires
     /// `CONFIRM_LOOT_ROLL`, and the popup's `ConfirmLootRoll` queues the real vote.
     pub fn take_loot_roll_confirms(&mut self) -> Vec<(u32, u8)> {
-        std::mem::take(&mut self.model_mut().loot_roll_confirms)
+        drain_field!(self, loot_roll_confirms)
     }
 }
 
@@ -83,7 +83,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetLootRollItemInfo",
         lua.create_function(|lua, roll_id: u32| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(r) = find(&model, roll_id) else {
                 return lua.pack_multi((
                     mlua::Value::Nil,
@@ -111,7 +113,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetLootRollItemLink",
         lua.create_function(|lua, roll_id: u32| {
             let link = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 find(&model, roll_id).and_then(|r| r.link.clone())
             };
             match link {
@@ -126,7 +130,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetLootRollTimeLeft",
         lua.create_function(|lua, roll_id: u32| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(find(&model, roll_id).map_or(0, |r| r.time_left_ms))
         })?,
     )?;
@@ -138,7 +144,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "RollOnLoot",
         lua.create_function(|lua, (roll_id, roll_type): (u32, u8)| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let Some(entry) = find(&model, roll_id) else {
                 return Ok(());
             };
@@ -158,7 +164,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ConfirmLootRoll",
         lua.create_function(|lua, (roll_id, roll_type): (u32, u8)| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if roll_type <= 2 && find(&model, roll_id).is_some() {
                 model.loot_roll_votes.push((roll_id, roll_type));
             }

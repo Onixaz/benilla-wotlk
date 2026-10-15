@@ -9,8 +9,6 @@ use std::collections::HashMap;
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::Model;
-
 /// An item template's tooltip view: the `SMSG_ITEM_QUERY_SINGLE_RESPONSE` fields the tooltip reads,
 /// plus app-resolved display strings.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -222,7 +220,7 @@ impl super::UiScript {
 
     /// Drains the ids read or asked for that the store did not hold.
     pub fn take_item_stat_asks(&mut self) -> Vec<u32> {
-        self.model_mut().item_stat_asks.drain().collect()
+        drain_set!(self, item_stat_asks)
     }
 
     /// Stores or replaces a set's view, re-pushed as member names resolve.
@@ -234,7 +232,7 @@ impl super::UiScript {
 
     /// Drains the set ids the renderer asked for that the store did not hold.
     pub fn take_item_set_asks(&mut self) -> Vec<u32> {
-        self.model_mut().item_set_asks.drain().collect()
+        drain_set!(self, item_set_asks)
     }
 
     /// Pushes the whole `ItemRandomProperties` table once, at load: a clicked tooltip cannot
@@ -243,12 +241,12 @@ impl super::UiScript {
         &mut self,
         rows: std::collections::HashMap<u32, super::RandomPropertyView>,
     ) {
-        self.model_mut().random_properties = rows;
+        set_field!(self, random_properties, rows);
     }
 
     /// Pushes the player state the red lines compare against.
     pub fn set_player_req_state(&mut self, state: PlayerReqState) {
-        self.model_mut().player_req = state;
+        set_field!(self, player_req, state);
     }
 }
 
@@ -416,7 +414,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(MultiValue::new()); // no record holds a negative or past-u32 id
             };
             let view = {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 let v = model.item_templates.get(&item_id).cloned();
                 if v.is_none() && item_id != 0 {
                     model.item_stat_asks.insert(item_id);

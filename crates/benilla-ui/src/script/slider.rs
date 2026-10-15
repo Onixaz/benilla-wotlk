@@ -28,7 +28,7 @@ fn with_slider<T>(
     f: impl FnOnce(&mut SliderState) -> T,
 ) -> mlua::Result<T> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let frame = model
         .arena
         .frame_mut(h)
@@ -43,7 +43,7 @@ fn with_slider<T>(
 /// and a new one defaults to OVERLAY (`0x789580`).
 fn ensure_thumb(lua: &Lua, this: &Table, layer: Option<DrawLayer>) -> mlua::Result<u32> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
 
     let existing = match &model
         .arena
@@ -91,7 +91,7 @@ fn ensure_thumb(lua: &Lua, this: &Table, layer: Option<DrawLayer>) -> mlua::Resu
 fn set_enabled(lua: &Lua, this: &Table, on: bool) -> mlua::Result<()> {
     let h = super::object::frame_handle_of(lua, this)?;
     let fire = {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         let frame = model
             .arena
             .frame_mut(h)
@@ -105,9 +105,7 @@ fn set_enabled(lua: &Lua, this: &Table, on: bool) -> mlua::Result<()> {
     if let Some(id) = fire {
         let script = if on { "OnEnable" } else { "OnDisable" };
         if let Err(e) = super::event::fire_widget_handler(lua, id, script, Vec::new()) {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_script_error(e.to_string());
         }
     }
     Ok(())
@@ -215,10 +213,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 };
                 let id = ensure_thumb(lua, &this, layer)?;
                 let rh = {
-                    let model = lua.app_data_ref::<Model>().expect("model app_data");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
                     *model.id_to_region.get(&id).expect("thumb region id")
                 };
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 let data = model.region_data.entry(rh).or_default();
                 match &a1 {
                     Value::String(s) => {
@@ -249,7 +249,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| {
             let thumb = with_slider(lua, &this, |s| s.thumb)?;
             let id = {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 thumb.map(|rh| model.region_id(rh))
             };
             match id {
@@ -269,7 +269,7 @@ fn fire_value_changed(lua: &Lua, this: &Table, changed: Option<f32>) -> mlua::Re
     let Some(value) = changed else { return Ok(()) };
     let id = {
         let h = frame_handle_of(lua, this)?;
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         model.frame_id(h)
     };
     if let Err(e) = event::fire_widget_handler(
@@ -278,9 +278,7 @@ fn fire_value_changed(lua: &Lua, this: &Table, changed: Option<f32>) -> mlua::Re
         "OnValueChanged",
         vec![Value::Number(f64::from(value))],
     ) {
-        lua.app_data_mut::<Model>()
-            .expect("model app_data")
-            .record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
     Ok(())
 }

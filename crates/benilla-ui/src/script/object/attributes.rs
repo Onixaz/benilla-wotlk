@@ -9,7 +9,7 @@
 use mlua::{Lua, Table, Value};
 
 use super::{decode_id, frame_handle_of};
-use crate::script::{event, Model};
+use crate::script::event;
 
 /// Registry table of per-frame attribute tables, `[frame id][lowercased name] = value`.
 const REG_ATTRIBUTES: &str = "__benilla_attributes";
@@ -120,7 +120,7 @@ pub(crate) fn store_from_xml(
     value: Value,
 ) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
-    let id = lua.app_data_mut::<Model>().expect("model").frame_id(h);
+    let id = crate::script::model_mut_of(lua).frame_id(h);
     if let Some(t) = attributes_of(lua, id, true)? {
         t.set(name.to_lowercase(), value)?;
     }
@@ -133,16 +133,14 @@ pub(crate) fn store_from_xml(
 /// when the update its first store triggers fails.
 fn set_attribute(lua: &Lua, this: &Table, name: &str, value: Value) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
-    let id = lua.app_data_mut::<Model>().expect("model").frame_id(h);
+    let id = crate::script::model_mut_of(lua).frame_id(h);
     let lower = name.to_lowercase();
     if let Some(t) = attributes_of(lua, id, true)? {
         t.set(lower.as_str(), value.clone())?;
     }
     let name = Value::String(lua.create_string(&lower)?);
     if let Err(e) = event::fire_widget_handler(lua, id, "OnAttributeChanged", vec![name, value]) {
-        lua.app_data_mut::<Model>()
-            .expect("model")
-            .record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
     Ok(())
 }

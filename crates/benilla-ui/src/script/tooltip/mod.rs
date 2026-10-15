@@ -44,7 +44,7 @@ impl super::UiScript {
 /// Runs `f` over a GameTooltip's state under one short write borrow.
 fn with_tip<T>(lua: &Lua, this: &Table, f: impl FnOnce(&mut TooltipState) -> T) -> mlua::Result<T> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     tip_mut(&mut model, h).map(f)
 }
 
@@ -80,7 +80,7 @@ fn ensure_lines(lua: &Lua, this: &Table, n: usize) -> mlua::Result<()> {
     // (id, global name) pairs to publish once the model borrow is dropped.
     let mut publish: Vec<(u32, String)> = Vec::new();
     {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         let frame_name = model
             .arena
             .frame(h)
@@ -307,13 +307,11 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
 /// Fires `OnTooltipCleared`; a script error is recorded, never propagated.
 pub(super) fn fire_cleared(lua: &Lua, h: FrameHandle) {
     let id = {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         model.frame_id(h)
     };
     if let Err(e) = event::fire_widget_handler(lua, id, "OnTooltipCleared", Vec::new()) {
-        lua.app_data_mut::<Model>()
-            .expect("model app_data")
-            .record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
 }
 
@@ -322,7 +320,7 @@ pub(super) fn fire_cleared(lua: &Lua, h: FrameHandle) {
 /// hides without [`hide_tooltip`] to keep the owner, which the hover loop's `IsOwned` needs.
 pub(super) fn show_or_hide_empty(lua: &Lua, h: FrameHandle) {
     let lines = {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         match tip_mut(&mut model, h) {
             Ok(t) => t.num_lines,
             Err(_) => 0,
@@ -358,7 +356,7 @@ fn now(lua: &Lua) -> f64 {
 /// Shows or hides through the arena and fires the visibility events.
 pub(super) fn set_shown(lua: &Lua, h: FrameHandle, shown: bool) {
     let changed = {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         model.arena.set_shown(h, shown)
     };
     event::fire_visibility_changes(lua, changed);
@@ -491,7 +489,7 @@ pub(super) fn append_line(
     let h = frame_handle_of(lua, this)?;
     let n = with_tip(lua, this, |t| t.num_lines + 1)?;
     ensure_lines(lua, this, n)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let (lh, rh) = match model.arena.frame(h).map(|f| &f.kind_state) {
         Some(KindState::Tooltip(t)) => (t.left_lines[n - 1], t.right_lines[n - 1]),
         _ => return Err(mlua::Error::runtime("not a GameTooltip")),
@@ -526,7 +524,7 @@ pub(super) use verbs::install;
 /// The full hide shared by `Hide`, a `Show` with no owner or no lines, and the end of a fade.
 pub(super) fn hide_tooltip(lua: &Lua, h: FrameHandle) {
     {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         full_alpha(&mut model, h);
         if let Ok(t) = tip_mut(&mut model, h) {
             t.owner = None;
@@ -680,7 +678,9 @@ pub(super) fn tick_fades(lua: &Lua) {
     let mut ramping: Vec<(FrameHandle, f32)> = Vec::new();
     let mut finished: Vec<FrameHandle> = Vec::new();
     {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         // Roster-gated as in `layout_tooltips`, since `hide_tooltip` below writes layout.
         for &h in model.arena.tooltip_kinds() {
             if !model.frame_to_id.contains_key(&h) {
@@ -708,7 +708,7 @@ pub(super) fn tick_fades(lua: &Lua) {
         }
     }
     {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         for (h, a) in ramping {
             model.arena.set_alpha(h, a);
         }

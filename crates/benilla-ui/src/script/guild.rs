@@ -224,12 +224,12 @@ impl super::UiScript {
     /// Push the guild snapshot, replacing it. The app fires `GUILD_ROSTER_UPDATE`,
     /// `PLAYER_GUILD_UPDATE` and `GUILD_MOTD` on the edges.
     pub fn set_guild(&mut self, state: GuildState) {
-        self.model_mut().guild = state;
+        set_field!(self, guild, state);
     }
 
     /// Drain the guild intents queued since the last call.
     pub fn take_guild_requests(&mut self) -> Vec<GuildRequest> {
-        std::mem::take(&mut self.model_mut().guild_requests)
+        drain_field!(self, guild_requests)
     }
 
     /// Queue an intent from a slash command (`/ginvite`, `/gquit`, `/gpromote`, ...). The
@@ -295,7 +295,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsInGuild",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(binding_abi::flag(model.guild.in_guild))
         })?,
     )?;
@@ -304,7 +306,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsGuildLeader",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(binding_abi::flag(model.guild.is_leader))
         })?,
     )?;
@@ -318,7 +322,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetGuildInfo",
         lua.create_function(|lua, unit: Option<String>| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(state) = unit.as_deref().and_then(|u| model.unit(u)) else {
                 return Ok((Value::Nil, Value::Nil, Value::Integer(0)));
             };
@@ -339,7 +345,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumGuildMembers",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.guild.num_members as i64)
         })?,
     )?;
@@ -352,7 +360,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetGuildRosterInfo",
         lua.create_function(|lua, index: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(m) = member_at(&model.guild.roster, index) else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil; 10]));
             };
@@ -376,7 +386,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetGuildRosterLastOnline",
         lua.create_function(|lua, index: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(m) = member_at(&model.guild.roster, index) else {
                 return Ok((Value::Nil, Value::Nil, Value::Nil, Value::Nil));
             };
@@ -394,14 +406,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetGuildRosterMOTD",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             lua.create_string(&model.guild.motd)
         })?,
     )?;
     g.set(
         "GetGuildInfoText",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             lua.create_string(&model.guild.info_text)
         })?,
     )?;
@@ -412,14 +428,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetGuildRosterSelection",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(model.guild.selection))
         })?,
     )?;
     g.set(
         "SetGuildRosterSelection",
         lua.create_function(|lua, index: i64| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let len = model.guild.roster.len();
             let index = u32::try_from(index.clamp(0, len as i64)).unwrap_or(0);
             model.guild.selection = index;
@@ -433,7 +451,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetGuildRosterShowOffline",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(binding_abi::flag(model.guild.show_offline))
         })?,
     )?;
@@ -445,7 +465,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 None => true,
                 Some(flag) => truthy(&flag),
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.guild.show_offline = on;
             model.guild_requests.push(GuildRequest::SetShowOffline(on));
             Ok(())
@@ -458,7 +478,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SortGuildRoster",
         lua.create_function(|lua, field: String| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.guild_requests.push(GuildRequest::Sort(field));
             Ok(())
         })?,
@@ -479,7 +499,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             global,
             lua.create_function(move |lua, ()| {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model.guild_requests.push(request.clone());
                 Ok(())
             })?,
@@ -511,7 +531,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             global,
             lua.create_function(move |lua, name: String| {
                 if !name.trim().is_empty() {
-                    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                    let mut model = crate::script::model_mut_of(lua);
                     model.guild_requests.push(make(name));
                 }
                 Ok(())
@@ -531,7 +551,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             global,
             lua.create_function(move |lua, text: String| {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model.guild_requests.push(make(text));
                 Ok(())
             })?,
@@ -557,7 +577,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     return Ok(());
                 };
                 if index >= 1 {
-                    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                    let mut model = crate::script::model_mut_of(lua);
                     model.guild_requests.push(make(index, note));
                 }
                 Ok(())
@@ -582,7 +602,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             global,
             lua.create_function(move |lua, ()| {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 Ok(binding_abi::flag(has_right(&model, index)))
             })?,
         )?;
@@ -593,7 +615,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GuildControlGetNumRanks",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.guild.ranks.len() as i64)
         })?,
     )?;
@@ -602,7 +626,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GuildControlGetRankName",
         lua.create_function(|lua, index: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let name = usize::try_from(index)
                 .ok()
                 .and_then(|i| i.checked_sub(1))
@@ -619,7 +645,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GuildControlSetRank",
         lua.create_function(|lua, index: i64| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let rank = u32::try_from(index).ok().filter(|i| *i >= 1).unwrap_or(0);
             let rights = live_rights(&model, rank);
             let mut staged = [false; 13];
@@ -638,7 +664,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GuildControlGetRankFlags",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let rights = live_rights(&model, model.guild_control.rank);
             Ok(MultiValue::from_vec(
                 RANK_RIGHT_BITS
@@ -660,7 +688,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             else {
                 return Ok(());
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.guild_control.staged[slot] = truthy(&enabled);
             Ok(())
         })?,
@@ -678,7 +706,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(name) = gated_rank_name(&name).map(str::to_string) else {
                 return Ok(());
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let edit = model.guild_control.clone();
             // The reference's `[0x84966c] >= [0xb73120]`: no rank loaded (its -1, our 0) or one
             // past the rank count.
@@ -709,7 +737,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(name) = gated_rank_name(&name).map(str::to_string) else {
                 return Ok(());
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if model.guild.ranks.len() < MAX_RANKS {
                 model.guild_requests.push(GuildRequest::AddRank(name));
             }
@@ -723,7 +751,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GuildControlDelRank",
         lua.create_function(|lua, _ignored: MultiValue| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if model.guild.ranks.len() > MIN_RANKS {
                 model.guild_requests.push(GuildRequest::DelRank);
             }

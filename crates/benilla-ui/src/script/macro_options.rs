@@ -34,13 +34,13 @@ pub struct OptionState {
 impl super::UiScript {
     /// Push the player state [`OptionState`] carries.
     pub fn set_option_state(&mut self, state: OptionState) {
-        self.model_mut().option_state = state;
+        set_field!(self, option_state, state);
     }
 
     /// Drain the condition names `SecureCmdOptionParse` did not know, for the app to post as
     /// `ERR_UNKNOWN_MACRO_OPTION_S` (`0x5f011a`).
     pub fn take_unknown_macro_options(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.model_mut().unknown_macro_options)
+        drain_field!(self, unknown_macro_options)
     }
 }
 
@@ -319,7 +319,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 r#"Usage: SecureCmdOptionParse("options")"#,
             )?;
             let parsed = {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 parse(&mut model, &options)
             };
             let Some((text, target)) = parsed else {

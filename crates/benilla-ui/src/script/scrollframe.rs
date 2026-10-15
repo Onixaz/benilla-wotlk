@@ -22,7 +22,7 @@ fn with_scroll<T>(
     f: impl FnOnce(&mut ScrollFrameState) -> T,
 ) -> mlua::Result<T> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let frame = model
         .arena
         .frame_mut(h)
@@ -130,7 +130,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 _ => None,
             };
             let new_child: Option<FrameHandle> = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 match &target {
                     Value::Table(t) => decode_id(t)
                         .ok()
@@ -151,7 +153,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })?;
             if changed {
                 // The child is an input of the layout resolve, so a real change dirties it.
-                lua.app_data_mut::<Model>().expect("model").touch_layout();
+                crate::script::model_mut_of(lua).touch_layout();
             }
             Ok(())
         })?,
@@ -161,7 +163,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| {
             let child = with_scroll(lua, &this, |s| s.child)?;
             let id = {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 child
                     .filter(|&h| model.arena.frame(h).is_some())
                     .map(|h| model.frame_id(h))
@@ -188,7 +190,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if !changed {
                 return Ok(());
             }
-            lua.app_data_mut::<Model>().expect("model").touch_layout();
+            crate::script::model_mut_of(lua).touch_layout();
             fire_scroll(lua, &this, "OnVerticalScroll", px)
         })?,
     )?;
@@ -200,7 +202,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetVerticalScrollRange",
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(scroll_range(&model, h, Axis::Vertical))
         })?,
     )?;
@@ -220,7 +224,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if !changed {
                 return Ok(());
             }
-            lua.app_data_mut::<Model>().expect("model").touch_layout();
+            crate::script::model_mut_of(lua).touch_layout();
             fire_scroll(lua, &this, "OnHorizontalScroll", px)
         })?,
     )?;
@@ -232,7 +236,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetHorizontalScrollRange",
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(scroll_range(&model, h, Axis::Horizontal))
         })?,
     )?;
@@ -257,13 +263,15 @@ const RANGE_EPSILON: f32 = 9.536_743e-7;
 /// at a time, since a handler can move another frame's range. Returns whether any fired.
 pub(super) fn fire_range_changes(lua: &Lua) -> bool {
     let candidates: Vec<FrameHandle> = {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         model.arena.scroll_kinds().to_vec()
     };
     let mut fired = false;
     for h in candidates {
         let due = {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let stamp = (model.layout_epoch, model.arena.visibility_epoch());
             let shown = model.arena.frame(h).is_some_and(|f| f.effective_visible);
             let measure = shown
@@ -297,9 +305,7 @@ pub(super) fn fire_range_changes(lua: &Lua) -> bool {
             "OnScrollRangeChanged",
             vec![Value::Number(f64::from(x)), Value::Number(f64::from(y))],
         ) {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_script_error(e.to_string());
         }
     }
     fired
@@ -310,15 +316,13 @@ pub(super) fn fire_range_changes(lua: &Lua) -> bool {
 fn fire_scroll(lua: &Lua, this: &Table, script: &str, value: f32) -> mlua::Result<()> {
     let id = {
         let h = frame_handle_of(lua, this)?;
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         model.frame_id(h)
     };
     if let Err(e) =
         event::fire_widget_handler(lua, id, script, vec![Value::Number(f64::from(value))])
     {
-        lua.app_data_mut::<Model>()
-            .expect("model app_data")
-            .record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
     Ok(())
 }

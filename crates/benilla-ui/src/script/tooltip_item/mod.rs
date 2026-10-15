@@ -14,7 +14,7 @@ use mlua::{Lua, MultiValue, Table, Value};
 
 use super::object::frame_handle_of;
 use super::tooltip::{append_line, clear_content, fire_cleared, show_or_hide_empty};
-use super::{ItemTemplateView, Model};
+use super::ItemTemplateView;
 
 mod names;
 mod render;
@@ -35,7 +35,9 @@ fn compare_against_worn(
     mut left: f64,
 ) -> mlua::Result<Value> {
     let found = {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         let mut hit = None;
         for &slot in equip_slots_for(offered.inventory_type) {
             let Some(worn) = model
@@ -63,7 +65,7 @@ fn compare_against_worn(
         return Ok(Value::Nil);
     };
     {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         if let Ok(t) = super::tooltip::tip_mut(&mut model, h) {
             t.equipped_header_armed = true;
         }
@@ -75,7 +77,7 @@ fn compare_against_worn(
 
 /// The cached template; a miss records the ask, and the hover's re-enter loop repaints on arrival.
 fn view_of(lua: &Lua, item_id: u32) -> Option<ItemTemplateView> {
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let v = model.item_templates.get(&item_id).cloned();
     if v.is_none() && item_id != 0 {
         model.item_stat_asks.insert(item_id);
@@ -86,7 +88,9 @@ fn view_of(lua: &Lua, item_id: u32) -> Option<ItemTemplateView> {
 /// A random-suffix roll's enchant lines: the reference copies the suffix row's five ids into
 /// enchant slots 2..6 (`0x52b7bf`) for a block source with no item object.
 fn roll_enchants(lua: &Lua, random_property_id: u32) -> Vec<crate::script::EnchantView> {
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     model
         .random_properties
         .get(&random_property_id)
@@ -103,7 +107,7 @@ fn link_name(link: &str) -> Option<&str> {
 /// Fire `OnTooltipAddMoney(copper)`: the engine computes, FrameXML's `SetTooltipMoney` draws.
 fn fire_add_money(lua: &Lua, h: crate::widget::FrameHandle, copper: u64) {
     let id = {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         model.frame_id(h)
     };
     if let Err(e) = super::event::fire_widget_handler(
@@ -112,9 +116,7 @@ fn fire_add_money(lua: &Lua, h: crate::widget::FrameHandle, copper: u64) {
         "OnTooltipAddMoney",
         vec![Value::Number(copper as f64)],
     ) {
-        lua.app_data_mut::<Model>()
-            .expect("model app_data")
-            .record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
 }
 
@@ -152,7 +154,7 @@ pub(super) fn render_by_id(
 ) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         clear_content(&mut model, h);
     }
     fire_cleared(lua, h);
@@ -186,7 +188,7 @@ fn set_quest_item_view(
         None => {
             let h = frame_handle_of(lua, this)?;
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             super::tooltip::show_or_hide_empty(lua, h);
@@ -233,7 +235,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetQuestItem",
         lua.create_function(|lua, (this, kind, index): (Table, String, usize)| {
             let item = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.quest.as_ref().and_then(|q| {
                     crate::script::quest::item_vec(q, &kind)
                         .and_then(|v| index.checked_sub(1).and_then(|n| v.get(n)))
@@ -247,7 +251,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetQuestLogItem",
         lua.create_function(|lua, (this, kind, index): (Table, String, usize)| {
             let item = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.selected_quest_detail().and_then(|d| {
                     let v = match kind.as_str() {
                         "choice" => Some(&d.choices),
@@ -285,7 +291,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             };
             let h = frame_handle_of(lua, &this)?;
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
@@ -339,7 +345,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 // error. Three of the binding's four builder legs pass it on, not `0x533106`.
                 let name_only = super::binding_abi::positive_number_flag(lua, name_only)?;
                 let (item_id, name, quality, inst, repair_cost, currently_equipped) = {
-                    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                    let mut model = crate::script::model_mut_of(lua);
                     let armed = match super::tooltip::tip_mut(&mut model, h) {
                         Ok(t) => std::mem::take(&mut t.equipped_header_armed),
                         Err(_) => false,
@@ -394,7 +400,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     name_only,
                 };
                 {
-                    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                    let mut model = crate::script::model_mut_of(lua);
                     clear_content(&mut model, h);
                 }
                 fire_cleared(lua, h);
@@ -444,7 +450,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, bag, slot): (Table, i64, u32)| {
             let h = frame_handle_of(lua, &this)?;
             let (item_id, count, has_cd, link, quality, inst, repair_cost) = {
-                let model = lua.app_data_mut::<Model>().expect("model app_data");
+                let model = crate::script::model_mut_of(lua);
                 let cost = model.repair_costs.bags.get(&(bag, slot)).copied();
                 match model
                     .containers
@@ -487,7 +493,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 }
             };
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
@@ -495,7 +501,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 Some(v) => {
                     render_view(lua, &this, &v, BuilderFlags::default(), Some(&inst))?;
                     let (merchant_open, repairing) = {
-                        let model = lua.app_data_mut::<Model>().expect("model app_data");
+                        let model = crate::script::model_mut_of(lua);
                         (model.merchant.is_some(), model.repair_mode)
                     };
                     if merchant_open && !repairing {
@@ -540,7 +546,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             lua.create_function(move |lua, (this, slot): (Table, usize)| {
                 let h = frame_handle_of(lua, &this)?;
                 let item = {
-                    let model = lua.app_data_ref::<Model>().expect("model app_data");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
                     model.trade.as_ref().and_then(|t| {
                         let side = if player_side { &t.player } else { &t.target };
                         slot.checked_sub(1)
@@ -552,7 +560,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     return Ok(());
                 };
                 {
-                    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                    let mut model = crate::script::model_mut_of(lua);
                     clear_content(&mut model, h);
                 }
                 fire_cleared(lua, h);
@@ -589,7 +597,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, slot): (Table, usize)| {
             let h = frame_handle_of(lua, &this)?;
             let row = {
-                let model = lua.app_data_mut::<Model>().expect("model app_data");
+                let model = crate::script::model_mut_of(lua);
                 model
                     .loot
                     .as_ref()
@@ -601,7 +609,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 return Ok(());
             };
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
@@ -641,7 +649,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, roll_id): (Table, u32)| {
             let h = frame_handle_of(lua, &this)?;
             let entry = {
-                let model = lua.app_data_mut::<Model>().expect("model app_data");
+                let model = crate::script::model_mut_of(lua);
                 model
                     .loot_rolls
                     .rolls
@@ -654,7 +662,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 return Ok(());
             };
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
@@ -727,7 +735,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let row = row as usize;
                 let Some(item_id) = ({
-                    let model = lua.app_data_ref::<Model>().expect("model app_data");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
                     model
                         .merchant
                         .as_ref()
@@ -793,7 +803,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let row = row as usize;
                 let Some(item_id) = ({
-                    let model = lua.app_data_ref::<Model>().expect("model app_data");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
                     let list = super::auction::list_index_of(&kind);
                     model
                         .auction
@@ -820,7 +832,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             lua.create_function(move |lua, (this, index): (Table, usize)| {
                 let h = frame_handle_of(lua, &this)?;
                 let row = {
-                    let model = lua.app_data_mut::<Model>().expect("model app_data");
+                    let model = crate::script::model_mut_of(lua);
                     let Some(merchant) = &model.merchant else {
                         return Ok(());
                     };
@@ -833,7 +845,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 };
                 let Some(row) = row else { return Ok(()) };
                 {
-                    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                    let mut model = crate::script::model_mut_of(lua);
                     clear_content(&mut model, h);
                 }
                 fire_cleared(lua, h);
@@ -879,7 +891,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, index): (Table, usize)| {
             let h = frame_handle_of(lua, &this)?;
             let (item_id, roll, name) = {
-                let model = lua.app_data_mut::<Model>().expect("model app_data");
+                let model = crate::script::model_mut_of(lua);
                 let Some(mail) = &model.mail else {
                     return Ok(());
                 };
@@ -892,7 +904,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 return Ok(());
             }
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
@@ -918,7 +930,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, kind, index): (Table, String, usize)| {
             let h = frame_handle_of(lua, &this)?;
             let (item_id, roll, name) = {
-                let model = lua.app_data_mut::<Model>().expect("model app_data");
+                let model = crate::script::model_mut_of(lua);
                 let Some(auction) = &model.auction else {
                     return Ok(());
                 };
@@ -934,7 +946,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 return Ok(());
             }
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
@@ -960,7 +972,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
             let item_id = {
-                let model = lua.app_data_mut::<Model>().expect("model app_data");
+                let model = crate::script::model_mut_of(lua);
                 model
                     .auction_sell_item
                     .as_ref()
@@ -971,7 +983,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 return Ok(());
             }
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
@@ -990,7 +1002,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
             let item_id = {
-                let model = lua.app_data_mut::<Model>().expect("model app_data");
+                let model = crate::script::model_mut_of(lua);
                 model
                     .mail_send_item
                     .as_ref()
@@ -1001,7 +1013,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 return Ok(());
             }
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
@@ -1021,7 +1033,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(
             |lua, (this, skill_index, reagent_index): (Table, usize, Option<usize>)| {
                 let found = {
-                    let model = lua.app_data_ref::<Model>().expect("model app_data");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
                     // A visible-row index, headers included (`0x4fca20`); a header is None.
                     let Some(recipe) = super::tradeskill::recipe_at(&model, skill_index) else {
                         return Ok(());
@@ -1050,7 +1064,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(
             |lua, (this, craft_index, reagent_index): (Table, usize, usize)| {
                 let found = {
-                    let model = lua.app_data_ref::<Model>().expect("model app_data");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
                     let Some(c) = &model.craft else {
                         return Ok(());
                     };

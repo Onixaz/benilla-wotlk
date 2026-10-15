@@ -6,7 +6,6 @@ use crate::layout::{Anchor, Point};
 use crate::script::binding_abi::optional_string;
 use crate::script::object::frame_handle_of;
 use crate::script::region::region_handle_of;
-use crate::script::Model;
 use crate::widget::{KindState, TooltipAnchor, TOOLTIP_LINE_GAP, TOOLTIP_PAD};
 
 use super::{
@@ -39,7 +38,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 // other type counts as absent rather than raising.
                 let anchor = optional_string(lua, &anchor);
                 {
-                    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                    let mut model = crate::script::model_mut_of(lua);
                     clear_content(&mut model, h);
                     full_alpha(&mut model, h);
                     tip_mut(&mut model, h)?.owner = Some(owner_h);
@@ -137,9 +136,15 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "IsOwned",
         lua.create_function(|lua, (this, frame): (Table, Table)| {
-            let owner = with_tip(lua, &this, |t| t.owner)?;
+            let h = frame_handle_of(lua, &this)?;
             let fh = frame_handle_of(lua, &frame)?;
-            Ok(owner == Some(fh))
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            match model.arena.frame(h).map(|f| &f.kind_state) {
+                Some(KindState::Tooltip(t)) => Ok(t.owner == Some(fh)),
+                _ => Err(mlua::Error::runtime("not a GameTooltip")),
+            }
         })?,
     )?;
     // GetOwner() (`0x61d350`): the owner's object (`+0x29c`), or nil with none; `ActionButton_Update`
@@ -151,7 +156,9 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(Value::Nil);
             };
             let id = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model
                     .arena
                     .frame(owner)
@@ -189,7 +196,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let wrap = bool_arg(args.get(5));
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
@@ -207,7 +214,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (this, text): (Table, Value)| {
             let h = frame_handle_of(lua, &this)?;
             let extra = text_of(Some(&text));
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let lh = match model.arena.frame(h).map(|f| &f.kind_state) {
                 Some(KindState::Tooltip(t)) if t.num_lines > 0 => t.left_lines[0],
                 Some(KindState::Tooltip(_)) => return Ok(()),
@@ -258,7 +265,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
@@ -277,7 +284,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let h = frame_handle_of(lua, &this)?;
             let lh = region_handle_of(lua, &left)?;
             let rh = region_handle_of(lua, &right)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let frame_id = model.frame_id(h);
             let prev_left = match model.arena.frame(h).map(|f| &f.kind_state) {
                 Some(KindState::Tooltip(t)) => t.left_lines.last().copied(),
@@ -360,7 +367,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
             let live = {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 full_alpha(&mut model, h);
                 tip_mut(&mut model, h)
                     .map(|t| t.owner.is_some() && t.num_lines > 0)

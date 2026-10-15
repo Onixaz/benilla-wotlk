@@ -4,7 +4,7 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::{cancel_authorized, AuraState, Model};
+use super::{cancel_authorized, AuraState};
 
 /// `GetPlayerBuff`'s filter mask: no filter argument means
 /// `HELPFUL|HARMFUL` (`0x4e4618`), and a filter string starts the mask at zero (`0x4e4639`), so a
@@ -72,7 +72,9 @@ fn buff_index_arg(lua: &Lua, v: Value, usage: &'static str) -> mlua::Result<i64>
 /// `+0x9`, the previous occupant's count, because no guarded caller reaches it.
 fn player_buff_record(lua: &Lua, pos: i64) -> Option<AuraState> {
     let pos = usize::try_from(pos).ok()?;
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     model.player_auras.get(pos).cloned()
 }
 
@@ -86,7 +88,9 @@ fn enumerate_player_buff(
     if index < 0 {
         return None;
     }
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     model
         .player_auras
         .iter()
@@ -178,7 +182,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, index: Value| {
             let pos = buff_index_arg(lua, index, "Usage: CancelPlayerBuff(buffIndex)")?;
             if let Some(a) = player_buff_record(lua, pos).filter(cancel_authorized) {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model.cancel_aura_requests.push(a.spell_id);
             }
             Ok(())

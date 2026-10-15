@@ -51,7 +51,7 @@ pub enum TabardIntent {
 impl super::UiScript {
     /// Push the guild record and the save latch.
     pub fn set_tabard_host(&mut self, host: TabardHost) {
-        self.model_mut().tabard_host = host;
+        set_field!(self, tabard_host, host);
     }
 
     /// The design the app previews on the player's body, `None` before the seed.
@@ -61,7 +61,7 @@ impl super::UiScript {
 
     /// The queued intents since the last drain.
     pub fn take_tabard_intents(&mut self) -> Vec<TabardIntent> {
-        std::mem::take(&mut self.model_mut().tabard_intents)
+        drain_field!(self, tabard_intents)
     }
 }
 
@@ -79,7 +79,9 @@ fn this_tabard(lua: &Lua, this: &Value) -> mlua::Result<FrameHandle> {
     }
     let wrong = || mlua::Error::runtime("Wrong object type for member function");
     let h = frame_handle_of(lua, t).map_err(|_| wrong())?;
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     let is_tabard = model
         .arena
         .frame(h)
@@ -98,7 +100,7 @@ fn design(model: &Model, h: FrameHandle) -> [i32; 5] {
 }
 
 fn store(lua: &Lua, h: FrameHandle, five: [i32; 5]) {
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     model.tabard_designs.insert(h, five);
     model.tabard_preview = Some(five);
 }
@@ -181,7 +183,7 @@ fn emblem_texture(lua: &Lua, this: Value, texture: Value, upper: bool) -> mlua::
         ))
     };
     let rh = region_handle_of(lua, &t).map_err(|_| wrong())?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     if !model
         .arena
         .region(rh)
@@ -207,7 +209,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, this: Value| {
             let h = this_tabard(lua, &this)?;
             let host = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 if !model.unit("player").is_some_and(|u| u.exists) {
                     return Ok(());
                 }
@@ -223,7 +227,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "Save",
         lua.create_function(|lua, this: Value| {
             let h = this_tabard(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if !model.unit("player").is_some_and(|u| u.exists) {
                 return Ok(());
             }
@@ -247,7 +251,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .filter(|i| *i < 5)
                 .ok_or_else(|| mlua::Error::runtime("Invalid variationIndex in CycleVariation"))?;
             let mut five = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 design(&model, h)
             };
             if cycle(&mut five, slot, delta as i32) {
@@ -269,7 +275,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             lua.create_function(move |lua, this: Value| {
                 let h = this_tabard(lua, &this)?;
                 let five = {
-                    let model = lua.app_data_ref::<Model>().expect("model app_data");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
                     design(&model, h)
                 };
                 let half = if upper { "TU" } else { "TL" };
@@ -305,7 +313,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "CanSaveTabardNow",
         lua.create_function(|lua, _: mlua::MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let can = model.unit("player").is_some_and(|u| u.exists)
                 && model.tabard_host.guild_record.is_some()
                 && !model.tabard_host.save_pending;
@@ -325,8 +335,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CloseTabardCreation",
         lua.create_function(|lua, _: mlua::MultiValue| {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
+            crate::script::model_mut_of(lua)
                 .tabard_intents
                 .push(TabardIntent::Close);
             Ok(())

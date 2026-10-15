@@ -8,8 +8,6 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::Model;
-
 /// The open bank's purchase row, pushed whole by the app.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BankState {
@@ -23,19 +21,19 @@ pub struct BankState {
 impl super::UiScript {
     /// Push (or clear, with `None`) the open bank's snapshot.
     pub fn set_bank(&mut self, state: Option<BankState>) {
-        self.model_mut().bank = state;
+        set_field!(self, bank, state);
     }
 
     /// Whether `PurchaseSlot()` was called since the last drain; the app sends
     /// `CMSG_BUY_BANK_SLOT`. Success has no reply packet, only the `PLAYER_BYTES_2` byte-2 change
     /// (`ItemHandler.cpp:934`).
     pub fn take_bank_purchase(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().bank_purchase)
+        drain_field!(self, bank_purchase)
     }
 
     /// Whether `CloseBankFrame()` was called since the last drain; no packet exists for it.
     pub fn take_bank_close(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().bank_close)
+        drain_field!(self, bank_close)
     }
 }
 
@@ -49,7 +47,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetNumBankSlots",
         lua.create_function(|lua, ()| {
             let n = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.bank.as_ref().map_or(0, |b| b.num_purchased)
             };
             let full = if n >= 6 {
@@ -68,7 +68,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetBankSlotCost",
         lua.create_function(|lua, _n: Option<u32>| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(model.bank.as_ref().map_or(0, |b| b.next_cost)))
         })?,
     )?;
@@ -77,7 +79,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PurchaseSlot",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.bank_purchase = true;
             Ok(())
         })?,
@@ -86,7 +88,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CloseBankFrame",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.bank_close = true;
             Ok(())
         })?,

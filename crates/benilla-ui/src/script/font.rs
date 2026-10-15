@@ -166,7 +166,7 @@ pub(crate) fn propagate(model: &mut Model, name: &str) {
 /// Run `f` on the named font object's record, then [`propagate`]: every setter's one write path.
 fn edit<R>(lua: &Lua, this: &Table, f: impl FnOnce(&mut FontObject) -> R) -> mlua::Result<R> {
     let name = name_of(this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model");
+    let mut model = crate::script::model_mut_of(lua);
     let out = f(model
         .font_objects_by_lower
         .entry(name.to_ascii_lowercase())
@@ -178,7 +178,9 @@ fn edit<R>(lua: &Lua, this: &Table, f: impl FnOnce(&mut FontObject) -> R) -> mlu
 /// A copy of the named font object's record.
 fn read(lua: &Lua, this: &Table) -> mlua::Result<FontObject> {
     let name = name_of(this)?;
-    let model = lua.app_data_ref::<Model>().expect("model");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
     Ok(model.font_object(&name).cloned().unwrap_or_default())
 }
 
@@ -429,7 +431,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 fn copy_from(lua: &Lua, this: &Table, other: &Value, verb: &str) -> mlua::Result<()> {
     let src = resolve_required(verb, other)?;
     let paint = {
-        let model = lua.app_data_ref::<Model>().expect("model");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
         model.font_object(&src).cloned().ok_or_else(|| {
             mlua::Error::runtime(format!(
                 "{verb}: no font object named '{src}' is registered"
@@ -449,7 +453,7 @@ fn create_font(lua: &Lua, name: Option<String>) -> mlua::Result<Table> {
         mlua::Error::runtime("CreateFont: a font name is required (it becomes a global)")
     })?;
     {
-        let mut model = lua.app_data_mut::<Model>().expect("model");
+        let mut model = crate::script::model_mut_of(lua);
         model
             .font_objects_by_lower
             .entry(name.to_ascii_lowercase())

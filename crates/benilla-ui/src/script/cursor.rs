@@ -370,7 +370,7 @@ impl super::UiScript {
 
     /// Feed the world pick under the cursor this frame ([`WorldPick`]).
     pub fn set_world_pick(&mut self, pick: WorldPick) {
-        self.model_mut().world_pick = pick;
+        set_field!(self, world_pick, pick);
     }
 
     /// [`take_cursor_item_for_sale`], for the app's interact ladder.
@@ -387,7 +387,7 @@ impl super::UiScript {
     /// Test-only: set the payload directly, bypassing the Lua bindings.
     #[cfg(test)]
     pub(crate) fn set_cursor_for_test(&mut self, payload: CursorPayload) {
-        self.model_mut().cursor = Some(payload);
+        set_field!(self, cursor, Some(payload));
     }
 }
 
@@ -399,25 +399,25 @@ impl super::UiScript {
     /// armed, a bag or paper-doll click queues its `(bag, slot)` as a pick instead of picking up,
     /// as the reference's two pickups do (`0x4f9b30` at `0x4f9c54`, `0x4c7300` at `0x4c76df`).
     pub fn set_item_pick_armed(&mut self, armed: bool) {
-        self.model_mut().item_pick_armed = armed;
+        set_field!(self, item_pick_armed, armed);
     }
 
     /// Push the guids of the units for which the armed word's unit checks all pass.
     /// `SpellCanTargetUnit` resolves its token to a guid, as `0x515970` does, and asks this set,
     /// so a chain such as `"party1target"` reads the unit it ends on.
     pub fn set_spell_targetable_units(&mut self, guids: impl IntoIterator<Item = u64>) {
-        self.model_mut().spell_targetable_units = guids.into_iter().collect();
+        set_field!(self, spell_targetable_units, guids.into_iter().collect());
     }
 
     /// Drain the `(bag, slot)` picks since the last call; a paper-doll pick reports as
     /// [`EQUIPMENT_BAG`] and its 1-based inventory slot.
     pub fn take_item_picks(&mut self) -> Vec<(i64, u32)> {
-        std::mem::take(&mut self.model_mut().item_picks)
+        drain_field!(self, item_picks)
     }
 
     /// Drain the enchant-confirm answers since the last call; both answer the pick the app parked.
     pub fn take_enchant_confirms(&mut self) -> Vec<EnchantConfirm> {
-        std::mem::take(&mut self.model_mut().enchant_confirms)
+        drain_field!(self, enchant_confirms)
     }
 }
 
@@ -501,7 +501,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetCursorInfo",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             cursor_info(lua, &model)
         })?,
     )?;
@@ -514,7 +516,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, ()| {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model.enchant_confirms.push(answer);
                 Ok(())
             })?,
@@ -524,21 +526,25 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CursorHasItem",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(matches!(model.cursor, Some(CursorPayload::Item(_))))
         })?,
     )?;
     g.set(
         "CursorHasSpell",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(matches!(model.cursor, Some(CursorPayload::Spell(_))))
         })?,
     )?;
     g.set(
         "ClearCursor",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             clear_cursor(&mut model);
             Ok(())
         })?,
@@ -547,14 +553,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SplitContainerItem",
         lua.create_function(|lua, (bag, slot, count): (i64, u32, i64)| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             Ok(split_container_item(&mut model, bag, slot, count))
         })?,
     )?;
     g.set(
         "DeleteCursorItem",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             delete_cursor_item(&mut model);
             Ok(())
         })?,

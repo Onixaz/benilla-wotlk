@@ -13,7 +13,9 @@ use super::{frame_handle_of, frame_parent_token_base, frame_wrapper, point_name}
 /// The receiver's name for the error strings and its `$parent` base, read under one short `Model`
 /// borrow that ends before the ladder's `_G` read.
 fn frame_ladder_context(lua: &Lua, h: FrameHandle) -> (String, String) {
-    let model = lua.app_data_ref::<Model>().expect("model");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
     let who = model
         .arena
         .frame(h)
@@ -34,7 +36,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     )?;
     set_shared(lua, m, Side::Frame, "ClearAllPoints", |lua, this: Table| {
         let h = frame_handle_of(lua, &this)?;
-        let mut model = lua.app_data_mut::<Model>().expect("model");
+        let mut model = crate::script::model_mut_of(lua);
         // Every layout setter mutates only on a real change, so a per-frame caller setting the
         // same value never reopens the layout gate. Clearing is a retarget to no targets.
         let old: Option<Vec<u32>> = match model.layout_inputs.get_mut(&h) {
@@ -60,7 +62,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         |lua, (this, n): (Table, Option<i64>)| {
             let h = frame_handle_of(lua, &this)?;
             let anchor = {
-                let model = lua.app_data_ref::<Model>().expect("model");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model");
                 let idx = (n.unwrap_or(1).max(1) - 1) as usize;
                 model
                     .layout_inputs
@@ -88,7 +92,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // GetNumPoints(): on the Region method table (`0x87c9b8`), so every widget answers it.
     set_shared(lua, m, Side::Frame, "GetNumPoints", |lua, this: Table| {
         let h = frame_handle_of(lua, &this)?;
-        let model = lua.app_data_ref::<Model>().expect("model");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
         Ok(model
             .layout_inputs
             .get(&h)
@@ -106,7 +112,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             // `who` and `$parent`, then the `_G` read, then the model guard, as in `set_point`.
             let (who, base) = frame_ladder_context(lua, h);
             let target = parse_set_all_points(lua, rest.front(), &base);
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             let me = model.frame_id(h);
             let parent = default_parent_id(&mut model, h);
             let rel_id: u32 =
@@ -137,7 +143,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetWidth",
         |lua, (this, w): (Table, f32)| {
             let h = frame_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             let input = model.layout_inputs.entry(h).or_default();
             let changed = input.width.to_bits() != w.to_bits();
             input.width = w;
@@ -156,7 +162,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetHeight",
         |lua, (this, ht): (Table, f32)| {
             let h = frame_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             let input = model.layout_inputs.entry(h).or_default();
             let changed = input.height.to_bits() != ht.to_bits();
             input.height = ht;
@@ -171,13 +177,17 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     set_shared(lua, m, Side::Frame, "GetWidth", |lua, this: Table| {
         let h = frame_handle_of(lua, &this)?;
         settle(lua);
-        let model = lua.app_data_ref::<Model>().expect("model");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
         Ok(size_read(&model, h, true))
     })?;
     set_shared(lua, m, Side::Frame, "GetHeight", |lua, this: Table| {
         let h = frame_handle_of(lua, &this)?;
         settle(lua);
-        let model = lua.app_data_ref::<Model>().expect("model");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
         Ok(size_read(&model, h, false))
     })?;
 
@@ -186,7 +196,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     set_shared(lua, m, Side::Frame, "GetCenter", |lua, this: Table| {
         let h = frame_handle_of(lua, &this)?;
         settle(lua);
-        let model = lua.app_data_ref::<Model>().expect("model");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
         let inv = 1.0 / eff_scale(&model, h);
         Ok(match model.resolved.get(&h) {
             Some(r) => (
@@ -206,7 +218,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "GetEffectiveScale",
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(f64::from(eff_scale(&model, h)))
         })?,
     )?;
@@ -222,7 +236,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         set_shared(lua, m, Side::Frame, name, move |lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
             settle(lua);
-            let model = lua.app_data_mut::<Model>().expect("model");
+            let model = crate::script::model_mut_of(lua);
             let inv = 1.0 / eff_scale(&model, h);
             Ok(model.resolved.get(&h).map(|r| {
                 inv * match pick {
@@ -242,8 +256,14 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 /// next `UiScript::resolve`, a tick after the reference's (`ApplyRect 0x76b580`), because running
 /// Lua handlers inside a binding risks a borrow panic or unbounded recursion.
 fn settle(lua: &Lua) {
-    let mut model = lua.app_data_mut::<Model>().expect("model");
+    let mut model = crate::script::model_mut_of(lua);
+    // A settle that solved nothing moved no rect: the mutation count stands (`ModelCell`).
+    let quiet = model.epoch();
+    let solves = model.layout_solves;
     crate::script::UiScript::resolve_layout(&mut model);
+    if model.layout_solves == solves {
+        model.set_epoch(quiet);
+    }
 }
 
 pub(crate) fn eff_scale(model: &Model, h: FrameHandle) -> f32 {
@@ -282,7 +302,8 @@ fn set_point(lua: &Lua, this: &Table, args: &MultiValue) -> mlua::Result<()> {
     // `__index` can call back in.
     let p = parse_set_point(lua, args, &who, &base)?;
 
-    let mut model = lua.app_data_mut::<Model>().expect("model");
+    let mut model = crate::script::model_mut_of(lua);
+    let quiet = model.epoch();
     let me = model.frame_id(h);
     let parent = default_parent_id(&mut model, h);
     let rel_to_id = resolve_rel_target(&model, &p.target, &who, "SetPoint", me, parent)?;
@@ -299,7 +320,10 @@ fn set_point(lua: &Lua, this: &Table, args: &MultiValue) -> mlua::Result<()> {
         && !input.anchors[..input.anchors.len() - 1]
             .iter()
             .any(|a| a.point == point);
-    if !same_at_tail {
+    if same_at_tail {
+        // The per-frame caller setting what is there: the mutation count stands too.
+        model.set_epoch(quiet);
+    } else {
         // Target lists are collected only for a retarget: the value-only change is the per-frame
         // idiom (a dragged window) and must stay allocation-free.
         let structural = anchor_retarget_is_structural(&input.anchors, &new);

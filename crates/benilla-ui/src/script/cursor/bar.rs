@@ -110,14 +110,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PickupAction",
         lua.create_function(|lua, id: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             Ok(pickup_action(&mut model, id))
         })?,
     )?;
     g.set(
         "PlaceAction",
         lua.create_function(|lua, id: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             Ok(place_action(&mut model, id))
         })?,
     )?;

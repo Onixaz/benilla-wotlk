@@ -98,6 +98,16 @@ impl CooldownState {
         CooldownStep::Running
     }
 
+    /// What an update can move of the paint's inputs, as one key: an unarmed box draws nothing,
+    /// so its clock does not count.
+    pub fn sweep_key(&self) -> (bool, u32, bool) {
+        (
+            self.armed,
+            if self.armed { self.elapsed_ms } else { 0 },
+            self.armed && self.flashing,
+        )
+    }
+
     /// The paint for this state (`0x5ebd20` over the geometry `0x5ec1e0` builds), `None` while
     /// unarmed. `layout_scale` is the frame's layout scale (layout `+0x5c`), which the edge's UV
     /// rotation multiplies by (`0x5ec34a`).

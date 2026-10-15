@@ -28,7 +28,9 @@ pub(super) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetCursorPosition",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<super::Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.cursor_pos)
         })?,
     )?;
@@ -39,7 +41,7 @@ pub(super) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
         "GetMouseFocus",
         lua.create_function(|lua, ()| {
             let id = {
-                let mut model = lua.app_data_mut::<super::Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 // A frame destroyed since the hover answers nil.
                 model
                     .mouseover
@@ -283,7 +285,7 @@ impl UiScript {
         if down {
             if let Some(h) = self.hit_test_frame(x, y) {
                 if self.title_region_hit(h, x, y) {
-                    self.model_mut().cursor_pos = (x, y);
+                    set_field!(self, cursor_pos, (x, y));
                     crate::script::object::movable::start_title_move(&mut self.model_mut(), h);
                     return true;
                 }
@@ -301,7 +303,7 @@ impl UiScript {
                 .as_ref()
                 .is_some_and(|m| m.auto_stop)
         {
-            self.model_mut().moving = None;
+            set_field!(self, moving, None);
         }
         // The press this release belongs to, read before the borrow below drains `mouse_down_on`.
         let captured_id: Option<u32> = if down {
@@ -315,7 +317,7 @@ impl UiScript {
         };
         // The `GetTime()` clock for the double-click detector, read before the borrow.
         let now = self.now();
-        self.model_mut().cursor_pos = (x, y);
+        set_field!(self, cursor_pos, (x, y));
         let btn = match self.lua.create_string(button) {
             Ok(s) => Value::String(s),
             Err(e) => {

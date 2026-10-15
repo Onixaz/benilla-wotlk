@@ -104,12 +104,12 @@ impl super::UiScript {
 
     /// Drain the spell ids the renderers asked the player's store for and it lacked.
     pub fn take_spell_tooltip_asks(&mut self) -> Vec<u32> {
-        self.model_mut().spell_tooltip_asks.drain().collect()
+        drain_set!(self, spell_tooltip_asks)
     }
 
     /// Drain the spell ids the renderers asked the pet's store for and it lacked.
     pub fn take_pet_spell_tooltip_asks(&mut self) -> Vec<u32> {
-        self.model_mut().pet_spell_tooltip_asks.drain().collect()
+        drain_set!(self, pet_spell_tooltip_asks)
     }
 
     /// The spells whose pet view a hover reads from the VM's own state: the pet's bar and book,
@@ -210,7 +210,7 @@ fn drawn_lines(model: &mut Model, h: FrameHandle) -> mlua::Result<Drawn> {
 /// its one `OnTooltipCleared`.
 fn answer_wait(lua: &Lua, h: FrameHandle, spell_id: u32, alt_caster: bool) -> mlua::Result<()> {
     let (id, wait) = {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         let Some(wait) = model
             .spell_tooltip_waits
             .get(&h)
@@ -265,7 +265,7 @@ pub(super) fn spell_view_of(
     spell_id: u32,
     alt_caster: bool,
 ) -> Option<SpellTooltipView> {
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let (views, asks) = spell_store(&mut model, alt_caster);
     let v = views.get(&spell_id).cloned();
     if v.is_none() && spell_id != 0 {
@@ -455,7 +455,7 @@ pub(super) fn set_spell_with_talent(
 ) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         clear_content(&mut model, h);
     }
     fire_cleared(lua, h);
@@ -493,7 +493,7 @@ fn set_reward_spell(
         None => {
             let h = frame_handle_of(lua, this)?;
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             super::tooltip::show_or_hide_empty(lua, h);
@@ -512,7 +512,7 @@ pub(super) fn set_spell_by_id(
 ) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         clear_content(&mut model, h);
     }
     fire_cleared(lua, h);
@@ -537,7 +537,7 @@ fn fill_spell(
             }
             // The fallback stands until the app answers the ask; id 0 asks nothing.
             if spell_id != 0 {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 let drawn = drawn_lines(&mut model, h)?;
                 model.spell_tooltip_waits.insert(
                     h,
@@ -570,7 +570,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 return Ok(());
             };
             let (spell_id, name) = {
-                let model = lua.app_data_mut::<Model>().expect("model app_data");
+                let model = crate::script::model_mut_of(lua);
                 match super::spellbook::book_slot(&model, book_id, &book_type) {
                     Some(s) => (s.spell_id, Some(s.name.clone())),
                     None => return Ok(()),
@@ -589,7 +589,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetShapeshift",
         lua.create_function(|lua, (this, index): (Table, usize)| {
             let (spell_id, name) = {
-                let model = lua.app_data_mut::<Model>().expect("model app_data");
+                let model = crate::script::model_mut_of(lua);
                 match model.shapeshift_forms.get(index.saturating_sub(1)) {
                     Some(f) => (f.view.spell_id, Some(f.view.name.clone())),
                     None => return Ok(()),
@@ -606,7 +606,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetPetAction",
         lua.create_function(|lua, (this, index): (Table, usize)| {
             let (spell_id, name) = {
-                let model = lua.app_data_mut::<Model>().expect("model app_data");
+                let model = crate::script::model_mut_of(lua);
                 match model
                     .pet_bar
                     .slots
@@ -637,7 +637,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, index): (Table, i64)| {
             let now = crate::script::clock::now(lua);
             let (spell_id, name, remaining_ms) = {
-                let model = lua.app_data_mut::<Model>().expect("model app_data");
+                let model = crate::script::model_mut_of(lua);
                 let hit = usize::try_from(index)
                     .ok()
                     .and_then(|pos| model.player_auras.get(pos));
@@ -700,7 +700,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 else {
                     let who = {
                         let h = frame_handle_of(lua, &this)?;
-                        let model = lua.app_data_ref::<Model>().expect("model app_data");
+                        let model = lua
+                            .app_data_ref::<crate::script::ModelCell>()
+                            .expect("model app_data");
                         model
                             .arena
                             .frame(h)
@@ -712,7 +714,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     )));
                 };
                 let (spell_id, name, remaining_ms) = {
-                    let model = lua.app_data_ref::<Model>().expect("model app_data");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
                     let Some(a) = crate::script::aura::find(&model, &q) else {
                         return Ok(());
                     };
@@ -752,7 +756,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetTrackingSpell",
         lua.create_function(|lua, this: Table| {
             let hit = {
-                let model = lua.app_data_mut::<Model>().expect("model app_data");
+                let model = crate::script::model_mut_of(lua);
                 model
                     .tracking
                     .as_ref()
@@ -761,7 +765,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let (spell_id, fallback_name) = hit.unwrap_or((0, None));
             let h = frame_handle_of(lua, &this)?;
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
@@ -795,7 +799,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetQuestRewardSpell",
         lua.create_function(|lua, this: Table| {
             let id = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model
                     .quest
                     .as_ref()
@@ -809,7 +815,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetQuestLogRewardSpell",
         lua.create_function(|lua, this: Table| {
             let id = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model
                     .selected_quest_detail()
                     .and_then(|d| d.reward_spell.as_ref())
@@ -826,7 +834,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetAction",
         lua.create_function(|lua, (this, slot): (Table, u32)| {
             let action = {
-                let model = lua.app_data_mut::<Model>().expect("model app_data");
+                let model = crate::script::model_mut_of(lua);
                 model.actions.get(&slot).cloned()
             };
             let Some(a) = action else { return Ok(()) };
@@ -846,7 +854,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 0x40 => {
                     let h = frame_handle_of(lua, &this)?;
                     let name = {
-                        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                        let mut model = crate::script::model_mut_of(lua);
                         clear_content(&mut model, h);
                         // The same 1..36 lookup as `GetActionText` and the bar icon, so the
                         // three agree on a slot's macro.
@@ -872,7 +880,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetTrainerService",
         lua.create_function(|lua, (this, index): (Table, usize)| {
             let subject = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 match super::trainer::service(&model, index) {
                     Some(s) => s.tooltip.clone(),
                     None => return Ok(()),
@@ -909,7 +919,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetCraftSpell",
         lua.create_function(|lua, (this, craft_index): (Table, usize)| {
             let subject = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 let Some(c) = &model.craft else {
                     return Ok(());
                 };

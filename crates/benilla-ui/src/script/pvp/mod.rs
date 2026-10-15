@@ -20,7 +20,6 @@ use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{number_arg, string_arg};
 use super::unit::is_civilian_kill;
-use super::Model;
 
 /// The local player's honor snapshot, decoded by the app from the private honor descriptor
 /// fields. Kill counts are halves of `TWO_SHORT` fields, low honorable and high dishonorable.
@@ -88,7 +87,7 @@ impl super::UiScript {
     /// Drain the queued `TogglePVP` calls, one `CMSG_TOGGLE_PVP` each; the packet is empty, so
     /// two toggles in a frame are two sends.
     pub fn take_pvp_toggles(&mut self) -> u32 {
-        std::mem::take(&mut self.model_mut().pvp_toggles)
+        drain_field!(self, pvp_toggles)
     }
 
     /// Queue a toggle for `/pvp`, which benilla parses in Rust; the reference's `/pvp` is Lua over
@@ -100,7 +99,7 @@ impl super::UiScript {
     /// Push or clear the local player's honor snapshot, the self getters' only source. It fires
     /// no event: the app fires `PLAYER_PVP_KILLS_CHANGED`/`PLAYER_PVP_RANK_CHANGED` alongside.
     pub fn set_honor(&mut self, honor: Option<HonorState>) {
-        self.model_mut().honor = honor;
+        set_field!(self, honor, honor);
     }
 
     /// Push or clear the last `MSG_INSPECT_HONOR_STATS` reply, paired with the pane's
@@ -117,7 +116,7 @@ impl super::UiScript {
     /// the app's inspect target. At most 1: the `pending` latch (`0x4c80b6`) refuses another until
     /// [`Self::set_inspect_honor`] resolves the first.
     pub fn take_inspect_honor_requests(&mut self) -> u32 {
-        std::mem::take(&mut self.model_mut().inspect_honor_requests)
+        drain_field!(self, inspect_honor_requests)
     }
 
     /// A rank's localized title for the app's `SMSG_PVP_CREDIT` chat line, `None` if missing or
@@ -165,11 +164,13 @@ fn rank_progress(bar: u8) -> f64 {
 }
 
 fn honor(lua: &Lua) -> Option<HonorState> {
-    lua.app_data_ref::<Model>().expect("model app_data").honor
+    lua.app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data")
+        .honor
 }
 
 fn inspect_honor(lua: &Lua) -> Option<InspectHonorData> {
-    lua.app_data_ref::<Model>()
+    lua.app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data")
         .inspect_honor
 }
@@ -204,11 +205,15 @@ fn team_arg(lua: &Lua, v: Value) -> mlua::Result<i64> {
     }
     let Some(token) = lua.coerce_string(v)? else {
         // Absent, boolean or table: the local player.
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         return Ok(model.unit("player").map_or(0, team_of));
     };
     let token = Some(token.to_str()?.to_owned());
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     Ok(token
         .as_ref()
         .and_then(|t| model.unit(t))
@@ -361,7 +366,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "TogglePVP",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.pvp_toggles += 1;
             Ok(())
         })?,
@@ -485,7 +490,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "UnitPVPRank",
         lua.create_function(|lua, token: Value| {
             let token = Some(string_arg(lua, token, "Usage: UnitPVPRank(\"unit\")")?);
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(token
                 .as_ref()
                 .and_then(|t| model.unit(t))
@@ -512,7 +519,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, token: Value| {
             let token = Some(string_arg(lua, token, "Usage: UnitPVPName(\"unit\")")?);
             let (unit, player_level) = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 (
                     token.as_ref().and_then(|t| model.unit(t)).cloned(),
                     model.player_req.level,
@@ -543,7 +552,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "RequestInspectHonorData",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if model.inspect_honor.is_some() || model.inspect_honor_pending {
                 return Ok(());
             }

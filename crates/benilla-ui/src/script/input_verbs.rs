@@ -19,7 +19,7 @@ use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{bool_or_default, flag};
 use super::calls::{NearestMode, ScriptCall};
-use super::{Model, UiScript};
+use super::UiScript;
 
 /// A held movement command: one bit of the reference's `[InputControl+4]` word, set by its Start
 /// and cleared by its Stop through `0x515090`.
@@ -95,7 +95,7 @@ pub(crate) struct InputState {
 impl UiScript {
     /// Take the binding calls queued since the last call, in call order.
     pub fn take_binding_input(&mut self) -> Vec<BindingInput> {
-        std::mem::take(&mut self.model_mut().input.queue)
+        drain_field!(self, input.queue)
     }
 
     /// Run a binding body as `CBindings::RunCommand` (`0x4b7b50`) does from inside
@@ -121,29 +121,31 @@ impl UiScript {
     /// Push whether the TurnOrAction channel is held: the world holds the right mouse button, or
     /// a `MouselookStart` holds it with none.
     pub fn set_turn_or_action_held(&mut self, held: bool) {
-        self.model_mut().input.turn_or_action = held;
+        set_field!(self, input.turn_or_action, held);
     }
 
     /// Take the `MouselookStart` (`true`) and `MouselookStop` calls made since the last call, in
     /// call order, for the app's look session.
     pub fn take_mouselook_calls(&mut self) -> Vec<bool> {
-        std::mem::take(&mut self.model_mut().input.mouselook)
+        drain_field!(self, input.mouselook)
     }
 }
 
 /// The hardware-event gate `0x494a50(0)`: inside a binding body.
 fn in_binding(lua: &Lua) -> bool {
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     model.input.binding_depth > 0
 }
 
 fn push(lua: &Lua, input: BindingInput) {
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     model.input.queue.push(input);
 }
 
 fn push_call(lua: &Lua, call: ScriptCall) {
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     model.script_calls.push(call);
 }
 
@@ -281,7 +283,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsMouselooking",
         lua.create_function(|lua, _: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(model.input.turn_or_action))
         })?,
     )?;
@@ -293,7 +297,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, _: MultiValue| {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model.input.turn_or_action = on;
                 model.input.mouselook.push(on);
                 Ok(())

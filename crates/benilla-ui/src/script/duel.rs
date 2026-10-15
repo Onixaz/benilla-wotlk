@@ -6,8 +6,6 @@
 
 use mlua::Lua;
 
-use super::Model;
-
 /// A duel intent queued by the globals, drained by `UiScript::take_duel_requests`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DuelRequest {
@@ -27,7 +25,7 @@ pub enum DuelRequest {
 impl super::UiScript {
     /// Drain the duel intents queued since the last call.
     pub fn take_duel_requests(&mut self) -> Vec<DuelRequest> {
-        std::mem::take(&mut self.model_mut().duel_requests)
+        drain_field!(self, duel_requests)
     }
 
     /// Queue an intent from the app's Rust slash parser: `/duel` and `/forfeit`, which the
@@ -44,7 +42,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "AcceptDuel",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.duel_requests.push(DuelRequest::Accept);
             Ok(())
         })?,
@@ -54,7 +52,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CancelDuel",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.duel_requests.push(DuelRequest::Cancel);
             Ok(())
         })?,
@@ -63,7 +61,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "StartDuel",
         lua.create_function(|lua, name: String| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.duel_requests.push(DuelRequest::StartByName(name));
             Ok(())
         })?,
@@ -72,7 +70,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "StartDuelUnit",
         lua.create_function(|lua, unit: String| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.duel_requests.push(DuelRequest::StartByUnit(unit));
             Ok(())
         })?,

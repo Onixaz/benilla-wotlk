@@ -91,12 +91,12 @@ impl super::UiScript {
     /// Push the instance list. A new list leaves the selection (`[0xb6eba0]`) alone; it only
     /// decides whether `GetSelectedBattlefield` still finds it (`0x4ab360`).
     pub fn set_battlefield_list(&mut self, list: BattlefieldListView) {
-        self.model_mut().battlefield_list = list;
+        set_field!(self, battlefield_list, list);
     }
 
     /// The world-enter reset (`0x4a9db0`) clears the selection with the list.
     pub fn reset_battlefield_selection(&mut self) {
-        self.model_mut().battlefield_selected = 0;
+        set_field!(self, battlefield_selected, 0);
     }
 
     /// Push the queue slots and the instance expiration (`[0xb6ebb8]`) every frame, since the
@@ -106,6 +106,14 @@ impl super::UiScript {
         slots: [BattlefieldQueueSlot; 3],
         instance_expiration_ms: u32,
     ) {
+        {
+            let m = self.model_ref();
+            if m.battlefield_slots == slots
+                && m.battlefield_instance_expiration_ms == instance_expiration_ms
+            {
+                return;
+            }
+        }
         let mut model = self.model_mut();
         model.battlefield_slots = slots;
         model.battlefield_instance_expiration_ms = instance_expiration_ms;
@@ -114,12 +122,12 @@ impl super::UiScript {
     /// `JoinBattlefield` calls since the last drain, `(instance, as group)`; instance 0 is first
     /// available. The app adds the map, the opcode and the group-size refusal (`0x4a9f60`).
     pub fn take_battlefield_join_requests(&mut self) -> Vec<(u32, bool)> {
-        std::mem::take(&mut self.model_mut().battlefield_join_requests)
+        drain_field!(self, battlefield_join_requests)
     }
 
     /// `ShowBattlefieldList` calls since the last drain: the map ids for `CMSG_BATTLEFIELD_LIST`.
     pub fn take_battlefield_list_requests(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().battlefield_list_requests)
+        drain_field!(self, battlefield_list_requests)
     }
 }
 
@@ -129,7 +137,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumBattlefields",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.battlefield_list.instances.len() as i64)
         })?,
     )?;
@@ -138,7 +148,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetBattlefieldInfo",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let list = &model.battlefield_list;
             let (Some(info), true) = (list.info.as_ref(), player_exists(&model)) else {
                 return Ok(MultiValue::new());
@@ -167,7 +179,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetBattlefieldInstanceInfo",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: GetBattlefieldInfo(index)")?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let list = &model.battlefield_list;
             if !player_exists(&model) {
                 return Ok(MultiValue::new());
@@ -187,7 +201,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (index, as_group): (Value, Value)| {
             let index = number_arg(lua, index, "Usage: JoinBattlefield(index)")?;
             let as_group = bool_or_default(Some(&as_group), false);
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let instance = slot_index(index, model.battlefield_list.instances.len())
                 .map_or(0, |i| model.battlefield_list.instances[i]);
             model.battlefield_join_requests.push((instance, as_group));
@@ -203,7 +217,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetSelectedBattlefield",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: SetSelectedBattlefield(index)")?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.battlefield_selected = slot_index(index, model.battlefield_list.instances.len())
                 .map_or(0, |i| model.battlefield_list.instances[i]);
             Ok(())
@@ -214,7 +228,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSelectedBattlefield",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let selected = model.battlefield_selected;
             Ok(model
                 .battlefield_list
@@ -230,7 +246,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetBattlefieldStatus",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: GetBattlefieldStatus(index)")?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(slot) = slot_index(index, 3).and_then(|i| model.battlefield_slots.get(i))
             else {
                 return Ok(MultiValue::from_vec(vec![
@@ -277,7 +295,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             name,
             lua.create_function(move |lua, index: Value| {
                 let index = number_arg(lua, index, usage)?;
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 Ok(i64::from(
                     slot_index(index, 3)
                         .and_then(|i| model.battlefield_slots.get(i))
@@ -291,7 +311,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetBattlefieldInstanceExpiration",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(model.battlefield_instance_expiration_ms))
         })?,
     )?;
@@ -301,7 +323,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "ShowBattlefieldList",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: ShowBattlefieldList(index)")?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let map_id = slot_index(index, 3)
                 .and_then(|i| model.battlefield_slots.get(i))
                 .filter(|s| s.map_id != 0 && s.status == 1)
@@ -317,7 +339,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CanJoinBattlefieldAsGroup",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(model.battlefield_list.group_queue))
         })?,
     )?;

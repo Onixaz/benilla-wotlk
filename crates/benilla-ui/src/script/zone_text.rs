@@ -5,8 +5,6 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::Model;
-
 /// The zone caches, as the host resolves them from the area tables.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ZoneTexts {
@@ -31,7 +29,7 @@ pub struct ZoneTexts {
 impl super::UiScript {
     /// Push the zone caches; the caller fires the zone events after.
     pub fn set_zone_texts(&mut self, texts: ZoneTexts) {
-        self.model_mut().zone = texts;
+        set_field!(self, zone, texts);
     }
 }
 
@@ -42,7 +40,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // their cache slot or the shared empty string `0x882748` when the slot is unset, never nil.
     let text = |pick: fn(&ZoneTexts) -> &str| {
         move |lua: &Lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             lua.create_string(pick(&model.zone))
         }
     };
@@ -61,7 +61,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetZonePVPInfo",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let z = &model.zone;
             let string = |s: &Option<String>| match s {
                 Some(s) => lua.create_string(s).map(Value::String),

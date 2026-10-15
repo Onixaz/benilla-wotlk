@@ -2,7 +2,7 @@
 //! engine parses no M2: a file's sequences and bounds are [`ModelFileFacts`] the host hands over.
 
 use super::common::script;
-use crate::script::{Model, UiScript};
+use crate::script::UiScript;
 use crate::widget::{KindState, ModelFileFacts, ModelState, SequenceFacts};
 
 /// A file's facts from `(anim_id, duration_ms, looping)` rows, in file order.
@@ -35,7 +35,10 @@ fn ping_facts() -> ModelFileFacts {
 
 /// The pane's scene state, read through the arena (1.12 has no getter for any of it).
 pub(super) fn pane(s: &UiScript, name: &str) -> ModelState {
-    let model = s.lua().app_data_ref::<Model>().expect("model");
+    let model = s
+        .lua()
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
     let fh = model.arena.lookup(name).expect("pane frame");
     match &model.arena.frame(fh).expect("live frame").kind_state {
         KindState::Model(m) => m.clone(),
@@ -46,7 +49,10 @@ pub(super) fn pane(s: &UiScript, name: &str) -> ModelState {
 /// `(anim_id, cursor_ms)` of the armed sequence under the facts the engine holds.
 fn play_head(s: &UiScript, name: &str, path: &str) -> Option<(u16, u32)> {
     let m = pane(s, name);
-    let model = s.lua().app_data_ref::<Model>().expect("model");
+    let model = s
+        .lua()
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
     let facts = model.model_facts.get(&crate::widget::model_key(path))?;
     m.play_head(facts).map(|p| (p.anim_id, p.cursor_ms))
 }

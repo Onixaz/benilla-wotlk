@@ -31,7 +31,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumFrames",
         lua.create_function(|lua, _: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.arena.iter_frames().count() as f64)
         })?,
     )?;
@@ -49,7 +51,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         Value::LightUserData(l) if !l.0.is_null() => decode_id(t)?,
                         _ => return Err(mlua::Error::runtime(NO_THIS)),
                     };
-                    let model = lua.app_data_ref::<Model>().expect("model app_data");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
                     if !model.id_to_frame.contains_key(&id) {
                         return Err(mlua::Error::runtime(NOT_A_FRAME));
                     }
@@ -58,7 +62,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 _ => 0,
             };
             let next = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 next_frame(&model, after)
             };
             match next {

@@ -5,15 +5,11 @@
 
 use mlua::Lua;
 
-use super::Model;
-
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "Screenshot",
         lua.create_function(|lua, ()| {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .screenshot_asks += 1;
+            crate::script::model_mut_of(lua).screenshot_asks += 1;
             Ok(())
         })?,
     )?;
@@ -23,6 +19,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 impl super::UiScript {
     /// `Screenshot()` calls since the last drain, each one capture.
     pub fn take_screenshot_asks(&mut self) -> u32 {
-        std::mem::take(&mut self.model_mut().screenshot_asks)
+        drain_field!(self, screenshot_asks)
     }
 }

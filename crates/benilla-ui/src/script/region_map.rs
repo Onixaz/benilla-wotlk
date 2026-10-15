@@ -26,7 +26,7 @@ use mlua::{FromLuaMulti, IntoLuaMulti, Lua, MultiValue, Table, Value};
 
 use super::object::decode_id;
 use super::{
-    Model, REGION_MAP_METHODS, REG_FONTSTRING_METHODS, REG_FRAME_METHODS, REG_REGION_METHODS,
+    REGION_MAP_METHODS, REG_FONTSTRING_METHODS, REG_FRAME_METHODS, REG_REGION_METHODS,
     REG_TEXTURE_METHODS, REG_TITLE_METHODS,
 };
 
@@ -41,7 +41,9 @@ pub(super) enum Side {
 /// `Err` for a table that is no widget wrapper; `Ok(None)` for a wrapper whose widget is gone.
 fn side_of(lua: &Lua, this: &Table) -> mlua::Result<Option<Side>> {
     let id = decode_id(this)?;
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     Ok(if model.id_to_frame.contains_key(&id) {
         Some(Side::Frame)
     } else if model.id_to_region.contains_key(&id) {

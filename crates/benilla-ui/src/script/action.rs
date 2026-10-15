@@ -8,7 +8,6 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::flag;
-use super::Model;
 
 /// The kind byte, bits 24-31 of the packed slot word (vmangos `Player.h:133`). Must match
 /// `benilla_protocol`'s `ACTION_KIND_*`; this crate has no protocol dependency.
@@ -116,7 +115,7 @@ impl super::UiScript {
 
     /// Push the current bonus-bar page offset (0 = the plain main bar; warrior stances 1..3).
     pub fn set_bonus_bar_offset(&mut self, offset: u8) {
-        self.model_mut().bonus_bar_offset = offset;
+        set_field!(self, bonus_bar_offset, offset);
     }
 
     /// Take the `UseAction` presses out of the call stream.
@@ -130,13 +129,13 @@ impl super::UiScript {
     /// Drain the `(lua action id, packed)` pairs `PickupAction`/`PlaceAction` queued; the app
     /// sends each as `CMSG_SET_ACTION_BUTTON` (`packed == 0` clears) and updates its own store.
     pub fn take_action_sets(&mut self) -> Vec<(u32, u32)> {
-        std::mem::take(&mut self.model_mut().action_sets)
+        drain_field!(self, action_sets)
     }
 
     /// Drain the GlobalStrings keys of engine-side refusals; the app fires `UI_ERROR_MESSAGE` for
     /// each, where the reference calls `CGGameUI::DisplayError` inline.
     pub fn take_ui_errors(&mut self) -> Vec<&'static str> {
-        std::mem::take(&mut self.model_mut().ui_errors)
+        drain_field!(self, ui_errors)
     }
 }
 
@@ -158,7 +157,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "HasAction",
         lua.create_function(|lua, action: u32| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(model.actions.contains_key(&action)))
         })?,
     )?;
@@ -173,7 +174,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetActionAutocast",
         lua.create_function(|lua, slot: Value| {
             let slot = super::binding_abi::number_arg(lua, slot, "Usage: GetActionAutocast(slot)")?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             // `(spell, pet_book)` as the resolver leaves them.
             let resolved = u32::try_from(slot)
                 .ok()
@@ -209,7 +212,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetActionTexture",
         lua.create_function(|lua, action: u32| {
             let tex = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.actions.get(&action).and_then(|s| s.texture.clone())
             };
             match tex {
@@ -233,7 +238,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, slot: Value| {
             let slot = super::binding_abi::number_arg(lua, slot, "Usage: GetActionText(slot)")?;
             let name = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 u32::try_from(slot)
                     .ok()
                     .and_then(|s| model.actions.get(&s))
@@ -261,7 +268,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetActionInfo",
         lua.create_function(|lua, slot: Value| {
             let slot = super::binding_abi::number_arg(lua, slot, "Usage: GetActionInfo(slot)")?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(a) = u32::try_from(slot).ok().and_then(|s| model.actions.get(&s)) else {
                 return Ok(MultiValue::new());
             };
@@ -307,7 +316,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Ok(action) = u32::try_from(action) else {
                 return Ok(());
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model
                 .script_calls
                 .push(super::ScriptCall::UseAction(ActionUse { action, at }));
@@ -318,7 +327,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetActionCount",
         lua.create_function(|lua, action: u32| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model
                 .actions
                 .get(&action)
@@ -330,7 +341,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetBonusBarOffset",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(model.bonus_bar_offset))
         })?,
     )?;
@@ -340,7 +353,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetActionBarPage",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(model.action_bar_page) + 1)
         })?,
     )?;
@@ -359,7 +374,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 ));
             };
             let changed = {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 let changed = i64::from(model.action_bar_page) != index;
                 model.action_bar_page = index as u8;
                 changed
@@ -375,7 +390,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // 1/nil booleans and `IsActionInRange`'s nil/0/1, which FrameXML tests with a plain `if`.
 
     fn state_flag(lua: &Lua, action: u32, pick: impl Fn(&ActionState) -> bool) -> Value {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         match model.action_states.get(&action) {
             Some(s) if pick(&s.state) => Value::Integer(1),
             _ => Value::Nil,
@@ -395,7 +412,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsActionInRange",
         lua.create_function(|lua, action: u32| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(
                 match model
                     .action_states
@@ -430,7 +449,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsConsumableAction",
         lua.create_function(|lua, action: u32| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             match model.actions.get(&action) {
                 Some(s) if s.consumable => Ok(Value::Integer(1)),
                 _ => Ok(Value::Nil),
@@ -442,7 +463,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "IsStackableAction",
         lua.create_function(|lua, slot: Value| {
             let slot = super::binding_abi::number_arg(lua, slot, "Usage: IsStackableAction(slot)")?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(
                 u32::try_from(slot)
                     .ok()
@@ -463,7 +486,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetActionCooldown",
         lua.create_function(|lua, action: u32| {
             let now = crate::script::clock::now(lua);
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(
                 match model.action_states.get(&action).and_then(|s| s.cooldown) {
                     Some((start, duration, enabled)) if start + duration > now || !enabled => {

@@ -4,7 +4,7 @@
 use mlua::{Lua, MultiValue, Table, Value};
 
 use crate::script::object::{as_f32, draw_layer_from_str, draw_layer_name};
-use crate::script::{BlendMode, Model, TexCoords};
+use crate::script::{BlendMode, TexCoords};
 
 use super::region_handle_of;
 
@@ -16,7 +16,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetAlpha",
         lua.create_function(|lua, (this, alpha): (Table, f32)| {
             let rh = region_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             model.region_data.entry(rh).or_default().alpha = Some(alpha.clamp(0.0, 1.0));
             Ok(())
         })?,
@@ -26,7 +26,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "GetAlpha",
         lua.create_function(|lua, this: Table| {
             let rh = region_handle_of(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(model
                 .region_data
                 .get(&rh)
@@ -45,7 +47,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             |lua, (this, r, g, b, a): (Table, Value, Value, Value, Option<f32>)| {
                 let (r, g, b) = (as_f32(&r), as_f32(&g), as_f32(&b));
                 let rh = region_handle_of(lua, &this)?;
-                let mut model = lua.app_data_mut::<Model>().expect("model");
+                let mut model = crate::script::model_mut_of(lua);
                 let d = model.region_data.entry(rh).or_default();
                 d.vertex_color = Some([r, g, b, a.unwrap_or(1.0)]);
                 // The slot `SetTextColor` writes on a FontString, so it overrides the font object.
@@ -60,7 +62,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "GetVertexColor",
         lua.create_function(|lua, this: Table| {
             let rh = region_handle_of(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             let c = model
                 .region_data
                 .get(&rh)
@@ -100,7 +104,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     ([c[0], c[1], c[2], 1.0], [c[3], c[4], c[5], 1.0])
                 };
                 let rh = region_handle_of(lua, &this)?;
-                let mut model = lua.app_data_mut::<Model>().expect("model");
+                let mut model = crate::script::model_mut_of(lua);
                 let d = model.region_data.entry(rh).or_default();
                 d.gradient = Some(crate::script::Gradient {
                     vertical: orientation.eq_ignore_ascii_case("VERTICAL"),
@@ -124,7 +128,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 // Scoped so the model borrow ends before the layout touch; the path arm drops it
                 // mid-way to call the host probe.
                 let (loaded, derived) = {
-                    let mut model = lua.app_data_mut::<Model>().expect("model");
+                    let mut model = crate::script::model_mut_of(lua);
                     // SetTexture drops any portrait mask and live-unit binding.
                     let data = model.region_data.entry(rh).or_default();
                     data.circular = false;
@@ -162,13 +166,15 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             let path = s.to_str()?.to_string();
                             drop(model);
                             let resolvable = {
-                                let model = lua.app_data_ref::<Model>().expect("model");
+                                let model = lua
+                                    .app_data_ref::<crate::script::ModelCell>()
+                                    .expect("model");
                                 model
                                     .texture_probe
                                     .as_ref()
                                     .is_none_or(|probe| probe(&path))
                             };
-                            let mut model = lua.app_data_mut::<Model>().expect("model");
+                            let mut model = crate::script::model_mut_of(lua);
                             let had_probe = model.texture_probe.is_some();
                             if resolvable {
                                 let data = model.region_data.entry(rh).or_default();
@@ -207,9 +213,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 // Only the art-sized shape can move; touching the layout on every repaint would
                 // reopen the resolve's change gate each frame.
                 if derived {
-                    lua.app_data_mut::<Model>()
-                        .expect("model")
-                        .touch_layout_region(rh);
+                    crate::script::model_mut_of(lua).touch_layout_region(rh);
                 }
                 Ok(if loaded {
                     Value::Number(1.0)
@@ -243,7 +247,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 Some(_) => true,
             };
             let rh = region_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             model.region_data.entry(rh).or_default().desaturated = on;
             // 1, not true: the reference pushes the number 1 (`0x6f3810`).
             Ok(Value::Number(1.0))
@@ -257,7 +261,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "GetTexture",
         lua.create_function(|lua, this: Table| {
             let rh = region_handle_of(lua, &this)?;
-            let model = lua.app_data_mut::<Model>().expect("model");
+            let model = crate::script::model_mut_of(lua);
             let Some(data) = model.region_data.get(&rh) else {
                 return Ok(None);
             };
@@ -277,7 +281,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetAlphaGradient",
         lua.create_function(|lua, (this, start, length): (Table, f32, f32)| {
             let rh = region_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             let data = model.region_data.entry(rh).or_default();
             data.alpha_gradient = Some((start, length));
             let chars = data.text.as_deref().map_or(0, |t| t.chars().count());
@@ -292,7 +296,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetBlendMode",
         lua.create_function(|lua, (this, mode): (Table, String)| {
             let rh = region_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             if let Some(blend) = BlendMode::parse(&mode) {
                 model.region_data.entry(rh).or_default().blend = blend;
             }
@@ -306,7 +310,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "GetBlendMode",
         lua.create_function(|lua, this: Table| {
             let rh = region_handle_of(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(model
                 .region_data
                 .get(&rh)
@@ -326,7 +332,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             // `GetBoolOrDefault` (`0x6f1c10`) with default 1 (`0x79c105`), but a missing argument
             // arrives here as nil and reads false, where the reference sets the flag.
             let on = crate::script::binding_abi::bool_or_default(Some(&arg), false);
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             model
                 .region_data
                 .entry(rh)
@@ -339,7 +345,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "GetTexCoordModifiesRect",
         lua.create_function(|lua, this: Table| {
             let rh = region_handle_of(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(crate::script::binding_abi::flag(
                 model
                     .region_data
@@ -363,7 +371,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             };
             let Some(dl) = dl else {
                 let name = {
-                    let model = lua.app_data_ref::<Model>().expect("model");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model");
                     crate::script::object::decode_id(&this)
                         .ok()
                         .and_then(|id| super::region_name_of(&model, id))
@@ -373,7 +383,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     name.as_deref().unwrap_or("<unnamed>")
                 )));
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             if let Some(region) = model.arena.region_mut(rh) {
                 region.draw_layer = dl;
             }
@@ -386,7 +396,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "GetDrawLayer",
         lua.create_function(|lua, this: Table| {
             let rh = region_handle_of(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             let dl = model
                 .arena
                 .region(rh)
@@ -426,8 +438,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     )))
                 }
             };
-            lua.app_data_mut::<Model>()
-                .expect("model")
+            crate::script::model_mut_of(lua)
                 .region_data
                 .entry(rh)
                 .or_default()
@@ -441,7 +452,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "GetTexCoord",
         lua.create_function(|lua, this: Table| {
             let rh = region_handle_of(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             // Eight values in the order of `SetTexCoord`'s usage string (`0x87c538`): ULx, ULy,
             // LLx, LLy, URx, URy, LRx, LRy. The four-edge form is setter-only.
             let corners = model

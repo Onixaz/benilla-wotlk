@@ -8,7 +8,7 @@ use mlua::{Lua, Table, Value};
 
 use super::object::{draw_layer_from_str, frame_handle_of};
 use super::region::region_wrapper;
-use super::{event, Model, RegionData};
+use super::{event, RegionData};
 use crate::order::DrawLayer;
 use crate::widget::{KindState, RegionKind, StatusBarState};
 
@@ -23,7 +23,7 @@ fn with_bar<T>(
     f: impl FnOnce(&mut StatusBarState) -> T,
 ) -> mlua::Result<T> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let frame = model
         .arena
         .frame_mut(h)
@@ -48,7 +48,7 @@ fn store_value(sb: &mut StatusBarState, v: f32) -> Option<f32> {
 /// re-layers an existing one.
 fn ensure_bar(lua: &Lua, this: &Table, layer: Option<DrawLayer>) -> mlua::Result<u32> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
 
     let existing = match &model
         .arena
@@ -159,10 +159,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 };
                 let id = ensure_bar(lua, &this, layer)?;
                 let rh = {
-                    let model = lua.app_data_ref::<Model>().expect("model app_data");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
                     *model.id_to_region.get(&id).expect("bar region id")
                 };
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 let data = model.region_data.entry(rh).or_default();
                 match &a1 {
                     Value::String(s) => {
@@ -194,7 +196,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| {
             let bar = with_bar(lua, &this, |sb| sb.bar)?;
             let id = {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 bar.map(|rh| model.region_id(rh))
             };
             match id {
@@ -216,7 +218,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     crate::script::object::as_f32(&b),
                 );
                 let id = ensure_bar(lua, &this, None)?;
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 let rh = *model.id_to_region.get(&id).expect("bar region id");
                 model.region_data.entry(rh).or_default().vertex_color =
                     Some([r, g, b, a.unwrap_or(1.0)]);
@@ -228,7 +230,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetStatusBarColor",
         lua.create_function(|lua, this: Table| {
             let bar = with_bar(lua, &this, |sb| sb.bar)?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let c = bar
                 .and_then(|rh| model.region_data.get(&rh))
                 .and_then(|d| d.vertex_color)
@@ -257,7 +261,7 @@ pub(super) fn fire_min_max_changed(
     };
     let id = {
         let h = frame_handle_of(lua, this)?;
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         model.frame_id(h)
     };
     if let Err(e) = event::fire_widget_handler(
@@ -266,9 +270,7 @@ pub(super) fn fire_min_max_changed(
         "OnMinMaxChanged",
         vec![Value::Number(f64::from(min)), Value::Number(f64::from(max))],
     ) {
-        lua.app_data_mut::<Model>()
-            .expect("model app_data")
-            .record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
     Ok(())
 }
@@ -277,7 +279,7 @@ fn fire_value_changed(lua: &Lua, this: &Table, changed: Option<f32>) -> mlua::Re
     let Some(value) = changed else { return Ok(()) };
     let id = {
         let h = frame_handle_of(lua, this)?;
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         model.frame_id(h)
     };
     if let Err(e) = event::fire_widget_handler(
@@ -286,9 +288,7 @@ fn fire_value_changed(lua: &Lua, this: &Table, changed: Option<f32>) -> mlua::Re
         "OnValueChanged",
         vec![Value::Number(f64::from(value))],
     ) {
-        lua.app_data_mut::<Model>()
-            .expect("model app_data")
-            .record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
     Ok(())
 }
@@ -298,7 +298,7 @@ fn fire_value_changed(lua: &Lua, this: &Table, changed: Option<f32>) -> mlua::Re
 /// and that `SetValue` fires the script as any other does.
 pub(super) fn fire_engine_value_changed(lua: &Lua, bar: crate::widget::FrameHandle, value: f32) {
     let id = {
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         model.frame_id(bar)
     };
     if let Err(e) = event::fire_widget_handler(
@@ -307,9 +307,7 @@ pub(super) fn fire_engine_value_changed(lua: &Lua, bar: crate::widget::FrameHand
         "OnValueChanged",
         vec![Value::Number(f64::from(value))],
     ) {
-        lua.app_data_mut::<Model>()
-            .expect("model app_data")
-            .record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
 }
 

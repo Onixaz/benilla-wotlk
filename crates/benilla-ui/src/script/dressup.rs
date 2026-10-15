@@ -7,7 +7,6 @@
 use mlua::{Lua, Table, Value};
 
 use super::object::frame_handle_of;
-use super::Model;
 use crate::widget::FrameKind;
 
 /// Registry key of the `DressUpModel` method table, its own three; the rest come by the chain.
@@ -33,13 +32,12 @@ pub enum DressUpIntent {
 impl super::UiScript {
     /// Drain the dressing room's intents, oldest first; the app applies them in order.
     pub fn take_dressup_intents(&mut self) -> Vec<DressUpIntent> {
-        std::mem::take(&mut self.model_mut().dressup_intents)
+        drain_field!(self, dressup_intents)
     }
 }
 
 fn queue(lua: &Lua, intent: DressUpIntent) {
-    lua.app_data_mut::<Model>()
-        .expect("model app_data")
+    crate::script::model_mut_of(lua)
         .dressup_intents
         .push(intent);
 }
@@ -48,7 +46,7 @@ fn queue(lua: &Lua, intent: DressUpIntent) {
 pub(super) fn redress_if_dressup(lua: &Lua, this: &Table) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     let is_dressup = lua
-        .app_data_ref::<Model>()
+        .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data")
         .arena
         .frame(h)

@@ -122,7 +122,9 @@ fn create(lua: &Lua, which: Arrow, parent: Value) -> mlua::Result<()> {
         return Err(mlua::Error::runtime(which.not_a_frame()));
     }
     {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         if which.slot(&model).is_some() {
             return Ok(()); // the singleton exists: the parent is not even read (`0x4a7a80`)
         }
@@ -133,22 +135,21 @@ fn create(lua: &Lua, which: Arrow, parent: Value) -> mlua::Result<()> {
     )?;
     let id = decode_id(&wrapper)?;
     let scale = {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         arrow_scale(&model, which)
     };
     // The reference's `SetModel` (`0x4a7a80` calls `0x76c8e0`) with no authored size: the rect is
     // the file's bounding box, and `0x4a7b20` centres the model on it.
-    let facts = lua
-        .app_data_mut::<Model>()
-        .expect("model app_data")
-        .model_facts_for(ARROW_MODEL);
+    let facts = crate::script::model_mut_of(lua).model_facts_for(ARROW_MODEL);
     super::modelframe::with_model(lua, &wrapper, |m| {
         m.set_file(ARROW_MODEL.to_string(), facts.as_deref());
         m.scale = scale;
         m.position = centre_of(facts.as_deref());
     })?;
     let h = frame_handle_of(lua, &wrapper)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     model.apply_implicit_rect(h);
     which.set_slot(&mut model, id);
     Ok(())
@@ -156,7 +157,9 @@ fn create(lua: &Lua, which: Arrow, parent: Value) -> mlua::Result<()> {
 
 fn arrow_wrapper(lua: &Lua, which: Arrow) -> mlua::Result<Option<Table>> {
     let id = {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         which.slot(&model)
     };
     id.map(|id| frame_wrapper(lua, id)).transpose()
@@ -170,7 +173,7 @@ fn update(lua: &Lua) -> mlua::Result<()> {
             continue;
         };
         let (facing, tracked, facts) = {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             (
                 model.worldmap.player_facing,
                 model.worldmap.player_uv.is_some(),
@@ -391,7 +394,10 @@ mod tests {
         let w: f32 = s.eval("return ({WM:GetChildren()})[2]:GetWidth()").unwrap();
         assert!((w - 0.0262 * 1280.0).abs() < 0.05, "the box at 4:3: {w}");
         let pos = {
-            let model = s.lua().app_data_ref::<Model>().expect("model");
+            let model = s
+                .lua()
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             let id = model.worldmap.arrow_world.expect("the singleton");
             let fh = model.id_to_frame.get(&id).copied().expect("live");
             match &model.arena.frame(fh).expect("frame").kind_state {

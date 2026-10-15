@@ -150,52 +150,53 @@ fn clear_compose(model: &mut Model) -> Option<(String, Vec<super::ScriptValue>)>
 impl super::UiScript {
     /// Push (or clear, with `None`) the open mailbox's inbox snapshot.
     pub fn set_mail(&mut self, state: Option<MailState>) {
-        self.model_mut().mail = state;
+        set_field!(self, mail, state);
     }
 
     /// Take the `CheckInbox` flag; the app answers it with `CMSG_GET_MAIL_LIST`.
     pub fn take_mail_check_inbox(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().mail_check_inbox)
+        drain_field!(self, mail_check_inbox)
     }
 
     /// Drain the 1-based indices `GetInboxText` opened; the app marks each read, fetches its body.
     pub fn take_mail_opens(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().mail_opens)
+        drain_field!(self, mail_opens)
     }
 
     /// Drain the 1-based `TakeInboxItem` row picks.
     pub fn take_mail_take_items(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().mail_take_items)
+        drain_field!(self, mail_take_items)
     }
 
     /// Drain the 1-based `TakeInboxMoney` row picks.
     pub fn take_mail_take_money(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().mail_take_money)
+        drain_field!(self, mail_take_money)
     }
 
     /// Drain the 1-based `DeleteInboxItem` row picks.
     pub fn take_mail_deletes(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().mail_deletes)
+        drain_field!(self, mail_deletes)
     }
 
     /// Drain the 1-based `ReturnInboxItem` row picks.
     pub fn take_mail_returns(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().mail_returns)
+        drain_field!(self, mail_returns)
     }
 
     /// Drain the 1-based `TakeInboxTextItem` row picks, each a `CMSG_MAIL_CREATE_TEXT_ITEM`.
     pub fn take_mail_take_texts(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().mail_take_texts)
+        drain_field!(self, mail_take_texts)
     }
 
     /// Take the `CloseMail` flag; 1.12 has no close opcode, so the app only ends its mail session.
     pub fn take_mail_close(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().mail_close)
+        drain_field!(self, mail_close)
     }
 
     /// Drain the `SendMail` intent with the current money, COD and attachment. The attachment
     /// stays until [`Self::reset_compose_tab`], so a failed send keeps it.
     pub fn take_mail_send(&mut self) -> Option<MailSendRequest> {
+        self.model_ref().mail_send.as_ref()?;
         let mut model = self.model_mut();
         let (target, subject, body) = model.mail_send.take()?;
         let item = model.mail_send_item.as_ref().map(|it| (it.bag, it.slot));
@@ -251,18 +252,18 @@ impl super::UiScript {
 
     /// Push the usable stationery list, in the picker's order.
     pub fn set_mail_stationeries(&mut self, list: Vec<StationeryView>) {
-        self.model_mut().mail_stationeries = list;
+        set_field!(self, mail_stationeries, list);
     }
 
     /// Push `Package.dbc`'s rows, in file order.
     pub fn set_mail_packages(&mut self, packages: Vec<PackageView>) {
-        self.model_mut().mail_packages = packages;
+        set_field!(self, mail_packages, packages);
     }
 
     /// Push `HasNewMail()`'s answer, independent of any open mailbox. The app sets it before each
     /// `UPDATE_PENDING_MAIL`, on which the minimap icon re-reads it (`Minimap.xml:278-289`).
     pub fn set_has_new_mail(&mut self, has: bool) {
-        self.model_mut().has_new_mail = has;
+        set_field!(self, has_new_mail, has);
     }
 }
 
@@ -282,7 +283,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetInboxNumItems",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.mail.as_ref().map_or(0, |m| m.inbox.len()) as i64)
         })?,
     )?;
@@ -292,7 +295,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetInboxHeaderInfo",
         lua.create_function(|lua, index: usize| {
             let row = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 row_at(&model, index)
             };
             let Some(r) = row else {
@@ -339,7 +344,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetInboxText",
         lua.create_function(|lua, index: usize| {
             let row = {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 let row = row_at(&model, index);
                 if row.is_some() {
                     // Queued once per drain.
@@ -374,7 +379,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetInboxInvoiceInfo",
         lua.create_function(|lua, index: usize| {
             let row = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 row_at(&model, index)
             };
             let miss = || {
@@ -409,7 +416,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetInboxItem",
         lua.create_function(|lua, index: usize| {
             let (row, usable) = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 let row = row_at(&model, index);
                 let usable = row
                     .as_ref()
@@ -449,7 +458,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "InboxItemCanDelete",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(row_at(&model, index).is_some_and(|r| r.can_delete)))
         })?,
     )?;
@@ -457,7 +468,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "HasNewMail",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(model.has_new_mail))
         })?,
     )?;
@@ -465,9 +478,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CheckInbox",
         lua.create_function(|lua, ()| {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .mail_check_inbox = true;
+            crate::script::model_mut_of(lua).mail_check_inbox = true;
             Ok(())
         })?,
     )?;
@@ -482,7 +493,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, index: u32| {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 match field {
                     0 => model.mail_take_items.push(index),
                     1 => model.mail_take_money.push(index),
@@ -498,9 +509,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CloseMail",
         lua.create_function(|lua, ()| {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .mail_close = true;
+            crate::script::model_mut_of(lua).mail_close = true;
             Ok(())
         })?,
     )?;
@@ -508,7 +517,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SendMail",
         lua.create_function(|lua, (target, subject, body): (String, String, String)| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             // `SendMail` (`0x4ae800`) aborts silently, no packet and no return value, on money
             // with COD or on COD with no attached item.
             if model.mail_send_money != 0 && model.mail_send_cod != 0 {
@@ -537,7 +546,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 copper,
                 "Usage: SetSendMailMoney(amount)",
             )? as u32;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if u64::from(n) > model.money {
                 model.ui_errors.push("ERR_NOT_ENOUGH_MONEY");
                 return Ok(Value::Nil);
@@ -555,7 +564,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetSendMailMoney",
         lua.create_function(|lua, ()| {
             Ok(i64::from(
-                lua.app_data_ref::<Model>()
+                lua.app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data")
                     .mail_send_money,
             ))
@@ -565,7 +574,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetSendMailCOD",
         lua.create_function(|lua, ()| {
             Ok(i64::from(
-                lua.app_data_ref::<Model>()
+                lua.app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data")
                     .mail_send_cod,
             ))
@@ -582,7 +591,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 copper,
                 "Usage: SetSendMailCOD(amount)",
             )? as u32;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if model.mail_send_item.is_none() {
                 return Ok(());
             }
@@ -603,7 +612,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| {
             // A whole-stack pickup records no count, so the size comes from the source slot.
             let item = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.mail_send_item.clone().map(|it| {
                     let count = cursor::held_count(&model, &it);
                     (it, count)
@@ -649,7 +660,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ClickSendMailItemButton",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             click_send_mail_item(&mut model);
             Ok(())
         })?,
@@ -662,7 +673,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumStationeries",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.mail_stationeries.len() as i64)
         })?,
     )?;
@@ -677,7 +690,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 index,
                 "Usage: GetStationeryInfo(index)",
             )?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let row = usize::try_from(index)
                 .ok()
                 .and_then(|i| i.checked_sub(1))
@@ -707,7 +722,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 index,
                 "Usage: SelectStationery(index)",
             )?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.mail_stationery = usize::try_from(index)
                 .ok()
                 .and_then(|i| i.checked_sub(1))
@@ -721,7 +736,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSelectedStationeryTexture",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let id = model.mail_stationery;
             let tex = (id != 0)
                 .then(|| model.mail_stationeries.iter().find(|r| r.id == id))
@@ -738,7 +755,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ClearSendMail",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let lock = clear_compose(&mut model);
             model.pending_events.extend(lock);
             for event in [
@@ -756,7 +773,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumPackages",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.mail_packages.len() as i64)
         })?,
     )?;
@@ -768,7 +787,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, index: Value| {
             let index =
                 crate::script::binding_abi::number_arg(lua, index, "Usage: GetPackageInfo(index)")?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let row = usize::try_from(index.wrapping_sub(1))
                 .ok()
                 .and_then(|i| model.mail_packages.get(i));
@@ -790,7 +811,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, index: Value| {
             let index =
                 crate::script::binding_abi::number_arg(lua, index, "Usage: SelectPackage(index)")?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.mail_package = usize::try_from(index.wrapping_sub(1))
                 .ok()
                 .and_then(|i| model.mail_packages.get(i))

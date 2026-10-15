@@ -6,7 +6,7 @@
 
 use mlua::Lua;
 
-use super::{MeasureRequest, MeasuredText, Model};
+use super::{MeasureRequest, MeasuredText};
 use crate::widget::RegionHandle;
 
 /// The host's font engine as the VM sees it. It must answer with the same code as the batch
@@ -35,7 +35,7 @@ pub trait TextMeasure {
 /// Measure region `rh` now if a measurer is installed and its stored measure is stale; a current
 /// one is left alone, so a per-frame poll does not re-measure.
 pub(super) fn ensure_measured(lua: &Lua, rh: RegionHandle) {
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     if model.measurer.is_none() {
         return;
     }
@@ -76,7 +76,7 @@ impl super::UiScript {
 
     /// Whether a [`TextMeasure`] is installed; the host then skips its batch measure pass.
     pub fn has_text_measurer(&self) -> bool {
-        self.model_mut().measurer.is_some()
+        self.model_ref().measurer.is_some()
     }
 
     /// Answer every pending FontString measure inline, so a box is right in the frame its text

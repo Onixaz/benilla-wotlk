@@ -295,10 +295,8 @@ impl Loader<'_> {
             .exec()
     }
 
-    fn model(&self) -> mlua::AppDataRefMut<'_, crate::script::Model> {
-        self.lua
-            .app_data_mut::<crate::script::Model>()
-            .expect("model app_data")
+    fn model(&self) -> crate::script::ModelGuard<'_> {
+        crate::script::model_mut_of(self.lua)
     }
 
     /// Run a widget handler with the client's calling convention, from `&Lua`.

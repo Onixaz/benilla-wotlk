@@ -27,7 +27,7 @@ fn with_colorselect<T>(
     f: impl FnOnce(&mut ColorSelectState) -> T,
 ) -> mlua::Result<T> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let frame = model
         .arena
         .frame_mut(h)
@@ -81,7 +81,7 @@ impl Slot {
 /// Get-or-create one slot's texture region, `layer` re-layering an existing one; returns its id.
 fn ensure_slot(lua: &Lua, this: &Table, slot: Slot, layer: Option<DrawLayer>) -> mlua::Result<u32> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
 
     let existing = match &model
         .arena
@@ -138,10 +138,12 @@ fn install_slot_texture(
                 };
                 let id = ensure_slot(lua, &this, slot, layer)?;
                 let rh = {
-                    let model = lua.app_data_ref::<Model>().expect("model app_data");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
                     *model.id_to_region.get(&id).expect("colorselect region id")
                 };
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 let data = model.region_data.entry(rh).or_default();
                 match &a1 {
                     Value::String(s) => {
@@ -172,7 +174,7 @@ fn install_slot_texture(
         lua.create_function(move |lua, this: Table| {
             let existing = with_colorselect(lua, &this, |s| slot.get(s))?;
             let id = {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 existing.map(|rh| model.region_id(rh))
             };
             match id {
@@ -257,7 +259,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 fn fire_color_select(lua: &Lua, this: &Table, r: f64, g: f64, b: f64) -> mlua::Result<()> {
     let id = {
         let h = frame_handle_of(lua, this)?;
-        let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+        let mut model = crate::script::model_mut_of(lua);
         model.frame_id(h)
     };
     if let Err(e) = event::fire_widget_handler(
@@ -266,9 +268,7 @@ fn fire_color_select(lua: &Lua, this: &Table, r: f64, g: f64, b: f64) -> mlua::R
         "OnColorSelect",
         vec![Value::Number(r), Value::Number(g), Value::Number(b)],
     ) {
-        lua.app_data_mut::<Model>()
-            .expect("model app_data")
-            .record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
     Ok(())
 }

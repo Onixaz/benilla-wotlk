@@ -118,7 +118,9 @@ fn multi_line_text_width(model: &Model, h: FrameHandle, [l, r]: [f32; 2]) -> Opt
 /// `false` when the text's measure is pending, for the flush to retry.
 pub(super) fn relayout(lua: &Lua, h: FrameHandle) -> bool {
     let multi_line = {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         matches!(
             model.arena.frame(h).map(|f| &f.kind_state),
             Some(KindState::EditBox(eb)) if eb.multi_line
@@ -135,7 +137,7 @@ pub(super) fn relayout(lua: &Lua, h: FrameHandle) -> bool {
     let Some(text_h) = text_height(lua, h, rh) else {
         return false;
     };
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let [_, _, top, bottom] = match model.arena.frame(h).map(|f| &f.kind_state) {
         Some(KindState::EditBox(eb)) => eb.text_insets,
         _ => return true,
@@ -155,7 +157,9 @@ pub(super) fn relayout(lua: &Lua, h: FrameHandle) -> bool {
 /// measured (`0x7729ff`). `None` while either measure is pending.
 fn text_height(lua: &Lua, h: FrameHandle, rh: RegionHandle) -> Option<f32> {
     let measured = {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         let d = model.region_data.get(&rh)?;
         if d.text.as_deref().is_none_or(str::is_empty) {
             0.0
@@ -178,7 +182,7 @@ const ONE_LINE: &str = "0";
 /// of one line, the same measure a line of text takes, cached on the box under its key. `None`
 /// with no engine installed.
 fn line_height(lua: &Lua, h: FrameHandle, rh: RegionHandle) -> Option<f32> {
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let scale = owner_scale(&model, h);
     let req = {
         let d = model.region_data.get(&rh)?;

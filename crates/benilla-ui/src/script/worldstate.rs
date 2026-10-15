@@ -4,8 +4,6 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::Model;
-
 /// One row of the readout: the ten values `GetWorldStateUIInfo` returns, in order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WorldStateUiView {
@@ -53,7 +51,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumWorldStateUI",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.worldstate.rows.len() as i64)
         })?,
     )?;
@@ -74,7 +74,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 _ => return Err(mlua::Error::runtime("Usage: GetWorldStateUIInfo(index)")),
             };
             let row = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 // Truncated toward zero by `__ftol`, then 1-based.
                 usize::try_from(index.trunc() as i64)
                     .ok()

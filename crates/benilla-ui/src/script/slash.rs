@@ -43,10 +43,7 @@ impl super::UiScript {
         let first = first.to_string();
         let handler = self.lua.create_function(move |lua, msg: Option<String>| {
             let line = format!("{first} {}", msg.unwrap_or_default());
-            lua.app_data_mut::<super::Model>()
-                .expect("model app_data")
-                .chat_input
-                .push(line);
+            crate::script::model_mut_of(lua).chat_input.push(line);
             Ok(())
         })?;
         list.set(key, handler)

@@ -152,7 +152,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "IsModifiedClick",
         lua.create_function(|lua, action: Option<Value>| {
             let action = action.and_then(|v| super::binding_abi::optional_string(lua, &v));
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(is_modified_click(&model, action.as_deref())))
         })?,
     )?;
@@ -167,7 +169,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 action,
                 r#"Usage: GetModifiedClick("action")"#,
             )?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             match click_of(&model, &action) {
                 Some(b) => Ok(Value::String(lua.create_string(b)?)),
                 None => Ok(Value::Nil),
@@ -183,7 +187,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let usage = r#"Usage: SetModifiedClick("action", "binding")"#;
             let action = super::binding_abi::string_arg(lua, action, usage)?;
             let binding = super::binding_abi::string_arg(lua, binding, usage)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             set_click(&mut model, &action, &binding);
             Ok(())
         })?,

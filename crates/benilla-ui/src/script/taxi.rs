@@ -60,23 +60,23 @@ pub struct TaxiUiState {
 impl super::UiScript {
     /// Push (or clear, with `None`) the open taxi map's snapshot.
     pub fn set_taxi(&mut self, state: Option<TaxiUiState>) {
-        self.model_mut().taxi = state;
+        set_field!(self, taxi, state);
     }
 
     /// Whether the player is riding a taxi, for `UnitOnTaxi("player")`.
     pub fn set_on_taxi(&mut self, riding: bool) {
-        self.model_mut().taxi_riding = riding;
+        set_field!(self, taxi_riding, riding);
     }
 
     /// Drain the 1-based indices `TakeTaxiNode` queued; the app sends the activate for each.
     pub fn take_taxi_node(&mut self) -> Vec<usize> {
-        std::mem::take(&mut self.model_mut().taxi_takes)
+        drain_field!(self, taxi_takes)
     }
 
     /// Whether `CloseTaxiMap` was called since the last drain; it sends no packet, as the server
     /// holds no window session for the map.
     pub fn take_taxi_close(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().taxi_close)
+        drain_field!(self, taxi_close)
     }
 }
 
@@ -95,7 +95,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "NumTaxiNodes",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(model.taxi.as_ref().map_or(0, |t| t.nodes.len()) as i64)
         })?,
     )?;
@@ -104,7 +106,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "TaxiNodeGetType",
         lua.create_function(|lua, i: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(node(&model, i).map_or("NONE", |n| n.node_type.era_str()))
         })?,
     )?;
@@ -112,7 +116,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "TaxiNodePosition",
         lua.create_function(|lua, i: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             let (x, y) = node(&model, i).map_or((0.0, 0.0), |n| n.pos);
             Ok((x, y))
         })?,
@@ -121,7 +127,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "TaxiNodeName",
         lua.create_function(|lua, i: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(node(&model, i).map_or(String::new(), |n| n.name.clone()))
         })?,
     )?;
@@ -129,7 +137,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "TaxiNodeCost",
         lua.create_function(|lua, i: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(node(&model, i).map_or(0, |n| n.cost) as i64)
         })?,
     )?;
@@ -143,7 +153,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumRoutes",
         lua.create_function(|lua, i: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(node(&model, i).map_or(0, |n| n.routes.len()) as i64)
         })?,
     )?;
@@ -158,7 +170,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, (i, hop): (i64, i64)| {
-                let model = lua.app_data_ref::<Model>().expect("model");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model");
                 let coord = node(&model, i)
                     .zip(usize::try_from(hop).ok().and_then(|h| h.checked_sub(1)))
                     .and_then(|(n, h)| n.routes.get(h))
@@ -172,10 +186,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "TakeTaxiNode",
         lua.create_function(|lua, i: i64| {
             if let Ok(i) = usize::try_from(i) {
-                lua.app_data_mut::<Model>()
-                    .expect("model")
-                    .taxi_takes
-                    .push(i);
+                crate::script::model_mut_of(lua).taxi_takes.push(i);
             }
             Ok(())
         })?,
@@ -184,7 +195,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CloseTaxiMap",
         lua.create_function(|lua, ()| {
-            lua.app_data_mut::<Model>().expect("model").taxi_close = true;
+            crate::script::model_mut_of(lua).taxi_close = true;
             Ok(())
         })?,
     )?;
@@ -194,7 +205,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetTaxiMap",
         lua.create_function(|lua, this: Table| {
             let rh = region_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             let art = model.taxi.as_ref().map(|t| t.art.clone());
             if let Some(art) = art {
                 model.region_data.entry(rh).or_default().texture = Some(art);
@@ -211,7 +222,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, unit: mlua::Value| {
             let unit =
                 crate::script::binding_abi::string_arg(lua, unit, r#"Usage: UnitOnTaxi("unit")"#)?;
-            let model = lua.app_data_ref::<Model>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(crate::script::binding_abi::flag(
                 unit.eq_ignore_ascii_case("player") && model.taxi_riding,
             ))

@@ -18,14 +18,12 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::Model;
-
 impl super::UiScript {
     /// Push the name `GetDefaultLanguage()` answers. `None` is the reference's no-player state,
     /// which returns zero values, not `nil`; the app resolves it per world entry from
     /// `ChrRaces.BaseLanguage` and `Languages.dbc`.
     pub fn set_default_language(&mut self, name: Option<String>) {
-        self.model_mut().default_language = name;
+        set_field!(self, default_language, name);
     }
 }
 
@@ -62,7 +60,7 @@ impl super::UiScript {
     /// Push `Languages.dbc` as `(ID, Name_lang)` rows in file order, the table `SendChatMessage`
     /// matches its language name against (`[0xc0db40]`, count `[0xc0db44]`).
     pub fn set_language_table(&mut self, rows: Vec<(u32, String)>) {
-        self.model_mut().language_table = rows;
+        set_field!(self, language_table, rows);
     }
 }
 
@@ -101,7 +99,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetNumLanguages",
         lua.create_function(|lua, _ignored: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.known_languages.len() as i64)
         })?,
     )?;
@@ -116,7 +116,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 index,
                 "Usage: GetLanguageByIndex(index)",
             )?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let name = usize::try_from(index)
                 .ok()
                 .and_then(|i| i.checked_sub(1))
@@ -134,7 +136,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetDefaultLanguage",
         lua.create_function(|lua, _ignored: MultiValue| {
             let name = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.default_language.clone()
             };
             Ok(match name {
@@ -157,7 +161,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let reads_language = !ends_at_empty_line(&text, &chat_type);
                 let language = match super::binding_abi::optional_string(lua, &language) {
                     Some(name) if reads_language => {
-                        let model = lua.app_data_ref::<Model>().expect("model app_data");
+                        let model = lua
+                            .app_data_ref::<crate::script::ModelCell>()
+                            .expect("model app_data");
                         let id = language_id(&model.language_table, &name);
                         Some(
                             id.ok_or_else(|| mlua::Error::RuntimeError("Unknown language".into()))?,
@@ -168,15 +174,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 // `lua_isstring` then `lua_tostring` (`0x49f2f6`, `0x49f306`): a number is its
                 // text, so `2.7` reaches the channel's `SStrToInt` as "2.7", which reads 2.
                 let target = super::binding_abi::optional_string(lua, &target);
-                lua.app_data_mut::<Model>()
-                    .expect("model app_data")
-                    .chat_sends
-                    .push(ChatSend {
-                        text,
-                        chat_type,
-                        target,
-                        language,
-                    });
+                crate::script::model_mut_of(lua).chat_sends.push(ChatSend {
+                    text,
+                    chat_type,
+                    target,
+                    language,
+                });
                 Ok(())
             },
         )?,
@@ -187,7 +190,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 impl super::UiScript {
     /// Drain the lines `SendChatMessage` queued since the last call.
     pub fn take_chat_sends(&mut self) -> Vec<ChatSend> {
-        std::mem::take(&mut self.model_mut().chat_sends)
+        drain_field!(self, chat_sends)
     }
 }
 

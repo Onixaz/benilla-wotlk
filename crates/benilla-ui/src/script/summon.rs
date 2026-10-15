@@ -5,8 +5,6 @@
 
 use mlua::Lua;
 
-use super::Model;
-
 /// The dialog's three reads, never nil: with nothing pending or resolved they are `""`, `""` and
 /// 0, as the reference's getters answer (`0x882748` is its shared `""`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -31,7 +29,7 @@ impl super::UiScript {
 
     /// Drain the `ConfirmSummon()` calls, each a `CMSG_SUMMON_RESPONSE`.
     pub fn take_summon_confirms(&mut self) -> u32 {
-        std::mem::take(&mut self.model_mut().summon_confirms)
+        drain_field!(self, summon_confirms)
     }
 }
 
@@ -42,7 +40,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSummonConfirmSummoner",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             lua.create_string(&model.summon_confirm.summoner)
         })?,
     )?;
@@ -52,7 +52,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSummonConfirmAreaName",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             lua.create_string(&model.summon_confirm.area)
         })?,
     )?;
@@ -62,7 +64,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSummonConfirmTimeLeft",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(f64::from(model.summon_confirm.time_left_ms / 1000))
         })?,
     )?;
@@ -71,7 +75,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ConfirmSummon",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.summon_confirms += 1;
             Ok(())
         })?,

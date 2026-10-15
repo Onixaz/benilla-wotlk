@@ -1172,6 +1172,8 @@ impl UiScript {
     /// [`UiScript::resolve`], answer with [`UiScript::set_measured_text`], and resolve again.
     pub fn fontstrings_needing_measure(&mut self) -> Vec<MeasureRequest> {
         let mut model = self.model_mut();
+        // An empty ask re-arms the ledger and nothing else: the mutation count stands.
+        let quiet = model.epoch();
         // Every FontString with text, sized or not: `GetStringWidth` answers the natural width.
         // The ledger (`Model::touch_measure`) re-arms empty, so a second ask this frame sees only
         // the writes since the first; `None` walks every region.
@@ -1221,6 +1223,9 @@ impl UiScript {
             if let Some(req) = measure_request_for(&mut model, rh) {
                 out.push(req);
             }
+        }
+        if out.is_empty() {
+            model.set_epoch(quiet);
         }
         out
     }

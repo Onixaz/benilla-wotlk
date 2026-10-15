@@ -187,7 +187,9 @@ pub(crate) fn resolve_rel_target(
 pub(crate) fn resolve_xml_relative_to(lua: &Lua, name: &str) -> Option<Table> {
     // One `_G` read, its wrapper returned: an `__index` may answer a second read differently.
     let nt = prefetch_named_target(lua, name, None);
-    let model = lua.app_data_ref::<Model>().expect("model");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
     resolve_named_target(&model, &nt)?;
     // A wrapper, not a name, so the Lua ladder's raise can never reach a loading document.
     nt.wrapper.clone()

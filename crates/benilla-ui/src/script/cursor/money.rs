@@ -124,14 +124,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetCursorMoney",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(cursor_money(&model)))
         })?,
     )?;
     g.set(
         "CursorHasMoney",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(matches!(model.cursor, Some(CursorPayload::Money(_)))))
         })?,
     )?;
@@ -139,7 +143,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "PickupPlayerMoney",
         lua.create_function(|lua, amount: Value| {
             let n = number_arg(lua, amount, "Usage: PickupPlayerMoney(amount)")? as u32;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             pickup_player_money(&mut model, n);
             Ok(())
         })?,
@@ -147,7 +151,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "DropCursorMoney",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             drop_cursor_money(&mut model);
             Ok(())
         })?,
@@ -155,7 +159,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "AddTradeMoney",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             add_trade_money(&mut model);
             Ok(())
         })?,
@@ -164,7 +168,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "PickupTradeMoney",
         lua.create_function(|lua, amount: Value| {
             let n = number_arg(lua, amount, "Usage: PickupTradeMoney(amount)")?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             pickup_trade_money(&mut model, n);
             Ok(())
         })?,

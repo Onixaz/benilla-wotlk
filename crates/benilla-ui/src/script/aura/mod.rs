@@ -330,7 +330,9 @@ fn unit_aura(
         return Err(mlua::Error::RuntimeError(usage.into()));
     };
     let hit = {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         find(&model, &q).map(|a| {
             let caster = caster_token(&model, a.caster);
             (a, caster)
@@ -345,7 +347,7 @@ fn unit_aura(
 impl super::UiScript {
     /// Push the player's aura list in display order, durations joined.
     pub fn set_player_auras(&mut self, auras: Vec<AuraState>) {
-        self.model_mut().player_auras = auras;
+        set_field!(self, player_auras, auras);
     }
 
     /// Push or clear a unit's aura list by guid, in display order; any token naming the unit
@@ -371,15 +373,15 @@ impl super::UiScript {
 
     /// Push the unit-token resolver's inputs, copied only when they moved.
     pub fn set_unit_guids(&mut self, guids: &super::UnitGuids) {
-        let mut model = self.model_mut();
-        if model.unit_guids != *guids {
-            model.unit_guids.clone_from(guids);
+        if self.model_ref().unit_guids == *guids {
+            return;
         }
+        self.model_mut().unit_guids.clone_from(guids);
     }
 
     /// Push or clear the player's active [`TrackingState`].
     pub fn set_tracking(&mut self, tracking: Option<TrackingState>) {
-        self.model_mut().tracking = tracking;
+        set_field!(self, tracking, tracking);
     }
 
     /// The spell ids of the buffs (`helpful`) or debuffs of the unit `token` names, in the order
@@ -399,7 +401,7 @@ impl super::UiScript {
     /// Drain the queued cancels, one `CMSG_CANCEL_AURA` per spell id: the server cancels by spell,
     /// never by slot.
     pub fn take_cancel_aura_requests(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().cancel_aura_requests)
+        drain_field!(self, cancel_aura_requests)
     }
 }
 
@@ -448,7 +450,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         .into(),
                 ));
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let player = model.unit_guids.player;
             if player == 0 || q.guid(&model) != Some(player) {
                 return Ok(());
@@ -467,7 +469,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrackingTexture",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.tracking.as_ref().and_then(|t| t.icon.clone()))
         })?,
     )?;
@@ -477,7 +481,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CancelTrackingBuff",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if let Some(t) = model.tracking.as_ref().filter(|t| t.cancelable) {
                 let id = t.spell_id;
                 model.cancel_aura_requests.push(id);

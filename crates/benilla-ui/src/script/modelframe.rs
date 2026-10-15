@@ -100,11 +100,7 @@ impl Model {
 /// The facts of the file `this` pane holds, if it holds one the host has loaded.
 fn facts_of_pane(lua: &Lua, this: &Table) -> mlua::Result<Option<Arc<ModelFileFacts>>> {
     let path = with_model(lua, this, |m| m.path.clone())?;
-    Ok(path.and_then(|p| {
-        lua.app_data_mut::<Model>()
-            .expect("model app_data")
-            .model_facts_for(&p)
-    }))
+    Ok(path.and_then(|p| crate::script::model_mut_of(lua).model_facts_for(&p)))
 }
 
 /// Registry key of the `Model` method table (the MAXCSTACK discipline: a Lua-side root).
@@ -122,7 +118,7 @@ pub(super) fn with_model<T>(
     f: impl FnOnce(&mut ModelState) -> T,
 ) -> mlua::Result<T> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let frame = model
         .arena
         .frame_mut(h)
@@ -284,16 +280,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .to_string();
             // The reference's asset-resident test (`0x71d5a3`): the loader's Stand seed runs now,
             // or when the file lands.
-            let facts = lua
-                .app_data_mut::<Model>()
-                .expect("model app_data")
-                .model_facts_for(&path);
+            let facts = crate::script::model_mut_of(lua).model_facts_for(&path);
             with_model(lua, &this, |m| m.set_file(path, facts.as_deref()))?;
             // A size-less pane takes the file's rect as soon as the file is known.
             let h = frame_handle_of(lua, &this)?;
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .apply_implicit_rect(h);
+            crate::script::model_mut_of(lua).apply_implicit_rect(h);
             Ok(())
         })?,
     )?;
@@ -629,7 +620,7 @@ impl crate::script::UiScript {
     /// Drain the model files panes named with no facts yet, as [`crate::widget::model_key`]s; the
     /// host loads each once and answers through [`Self::set_model_facts`].
     pub fn model_facts_wanted(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.model_mut().model_facts_wanted)
+        drain_field!(self, model_facts_wanted)
     }
 
     /// Whether the engine holds facts for `path`'s file.

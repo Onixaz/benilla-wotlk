@@ -7,7 +7,6 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi;
-use super::Model;
 
 /// `GetPetitionInfo`'s first return when the record's charter bit is set (`0x84cf8c`, selected at
 /// `0x4f43fb`): the literal `PetitionFrame.lua:21` compares against.
@@ -88,12 +87,12 @@ pub enum PetitionRequest {
 impl super::UiScript {
     /// Replace the charter snapshot; the app fires the four events and defers `PETITION_SHOW`.
     pub fn set_petition(&mut self, state: PetitionState) {
-        self.model_mut().petition = state;
+        set_field!(self, petition, state);
     }
 
     /// Take the charter intents queued since the last drain.
     pub fn take_petition_requests(&mut self) -> Vec<PetitionRequest> {
-        std::mem::take(&mut self.model_mut().petition_requests)
+        drain_field!(self, petition_requests)
     }
 
     /// Drop the queued close intents, returning how many. Firing `PETITION_CLOSED` runs `OnHide`,
@@ -145,7 +144,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPetitionInfo",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(r) = model.petition.record.as_ref() else {
                 return Ok(MultiValue::from_vec(vec![
                     Value::Nil,
@@ -171,7 +172,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumPetitionNames",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.petition.signers.len() as i64)
         })?,
     )?;
@@ -182,7 +185,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPetitionNameInfo",
         lua.create_function(|lua, index: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(name) = usize::try_from(index)
                 .ok()
                 .and_then(|i| i.checked_sub(1))
@@ -200,7 +205,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CanSignPetition",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(binding_abi::flag(model.petition.can_sign))
         })?,
     )?;
@@ -210,7 +217,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetGuildCharterCost",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(model.petition.charter_cost))
         })?,
     )?;
@@ -228,7 +237,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             global,
             lua.create_function(move |lua, ()| {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model.petition_requests.push(request.clone());
                 Ok(())
             })?,
@@ -240,7 +249,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SignPetition",
         lua.create_function(|lua, n: Option<f64>| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             // `trunc` toward zero, then narrowed the way the `Put8` does.
             let byte = n.map_or(1i8, |v| v.trunc() as i64 as i8);
             model.petition_requests.push(PetitionRequest::Sign(byte));
@@ -253,7 +262,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "BuyGuildCharter",
         lua.create_function(|lua, name: String| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             match validate_guild_name(&name) {
                 Ok(()) => {
                     model.petition_requests.push(PetitionRequest::Buy(name));
@@ -275,7 +284,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "RenamePetition",
         lua.create_function(|lua, name: String| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             match validate_guild_name(&name) {
                 Ok(()) => model.petition_requests.push(PetitionRequest::Rename(name)),
                 Err(key) => model

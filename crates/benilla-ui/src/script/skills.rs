@@ -93,7 +93,7 @@ impl super::UiScript {
     /// Drain the skill ids `AbandonSkill` queued, one `CMSG_UNLEARN_SKILL` each; the removal comes
     /// back as a skill-field update.
     pub fn take_skill_abandons(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().skill_abandons)
+        drain_field!(self, skill_abandons)
     }
 }
 
@@ -270,7 +270,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumSkillLines",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(num_rows(&model) as i64)
         })?,
     )?;
@@ -281,7 +283,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSkillLineInfo",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(n) = index.checked_sub(1) else {
                 return out_of_range_tuple(lua);
             };
@@ -336,7 +340,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CollapseSkillHeader",
         lua.create_function(|lua, id: usize| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             set_collapsed(&mut model, id, true);
             Ok(())
         })?,
@@ -344,7 +348,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ExpandSkillHeader",
         lua.create_function(|lua, id: usize| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             set_collapsed(&mut model, id, false);
             Ok(())
         })?,
@@ -355,7 +359,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SetSelectedSkill",
         lua.create_function(|lua, index: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             set_selected(&mut model, index);
             Ok(())
         })?,
@@ -363,7 +367,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSelectedSkill",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(selected_index(&model)))
         })?,
     )?;
@@ -381,7 +387,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "AbandonSkill",
         lua.create_function(|lua, index: usize| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if let Some(id) = entry_at(&model, index).map(|e| e.skill_id) {
                 model.skill_abandons.push(id);
             }

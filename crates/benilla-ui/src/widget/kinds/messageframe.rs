@@ -250,11 +250,19 @@ impl ScrollingMessageState {
     /// scroll entries, not this, bring faded lines back. Both countdowns store `f32` while the
     /// ramp reads the unrounded x87 value (`fst` without pop, `0x7884d7`, `0x788544`), and phase
     /// 1's overshoot is dropped, so the fade starts whole on the next tick.
-    pub fn tick(&mut self, dt: f32) {
+    /// `true` when a line's drawn alpha moved; the countdowns alone draw nothing new.
+    pub fn tick(&mut self, dt: f32) -> bool {
         if !self.fading_enabled || !self.at_bottom() {
-            return;
+            return false;
         }
         let dt = f64::from(dt);
+        let mut moved = false;
+        let mut set_alpha = |line: &mut MessageLine, a: f32| {
+            if line.alpha != a {
+                line.alpha = a;
+                moved = true;
+            }
+        };
         for line in &mut self.lines {
             if line.time_left > 0.0 {
                 line.time_left = ((f64::from(line.time_left) - dt).max(0.0)) as f32;
@@ -262,21 +270,22 @@ impl ScrollingMessageState {
             }
             if self.fade_duration <= 0.0 {
                 // No ramp: the line vanishes when phase 1 ends.
-                line.alpha = 0.0;
+                set_alpha(line, 0.0);
                 continue;
             }
             let remaining = f64::from(line.fade_left) - dt;
             line.fade_left = remaining as f32;
             if remaining <= 0.0 {
                 line.fade_left = 0.0;
-                line.alpha = 0.0;
+                set_alpha(line, 0.0);
             } else {
                 // Over the live fadeDuration (a mid-fade change rescales the ramp), from the
                 // unrounded `remaining`, not the stored f32.
                 let byte = quantize_fade_wide(remaining / f64::from(self.fade_duration));
-                line.alpha = f32::from(byte) / 255.0;
+                set_alpha(line, f32::from(byte) / 255.0);
             }
         }
+        moved
     }
 }
 
@@ -371,37 +380,45 @@ impl MessageFrameState {
     /// scroll gate, freeing a finished line (`0x786570`). The reference also gates on
     /// `numLinesDisplayed > 0`, which this does not check. The arithmetic is `f32`: whether
     /// `0x786200` keeps the unrounded x87 value like the scrolling tick is untraced.
-    pub fn tick(&mut self, dt: f32) {
+    /// `true` when a line's drawn alpha moved or a line was freed.
+    pub fn tick(&mut self, dt: f32) -> bool {
         if !self.fading_enabled {
-            return;
+            return false;
         }
+        let mut moved = false;
         for line in &mut self.lines {
             if line.time_left > 0.0 {
                 line.time_left -= dt;
                 continue;
             }
-            if self.fade_duration <= 0.0 {
-                line.alpha = 0.0;
-                continue;
-            }
-            line.fade_left -= dt;
-            if line.fade_left <= 0.0 {
-                line.fade_left = 0.0;
-                line.alpha = 0.0;
+            let a = if self.fade_duration <= 0.0 {
+                0.0
             } else {
-                line.alpha = f32::from(quantize_fade(line.fade_left / self.fade_duration)) / 255.0;
+                line.fade_left -= dt;
+                if line.fade_left <= 0.0 {
+                    line.fade_left = 0.0;
+                    0.0
+                } else {
+                    f32::from(quantize_fade(line.fade_left / self.fade_duration)) / 255.0
+                }
+            };
+            if line.alpha != a {
+                line.alpha = a;
+                moved = true;
             }
         }
         // A line past phase 1 at alpha 0 is finished, and freed.
+        let before = self.lines.len();
         self.lines.retain(|l| l.time_left > 0.0 || l.alpha > 0.0);
+        moved || self.lines.len() != before
     }
 
     /// Evict the oldest lines until the rest fit `viewport_rows`, each costing its wrapped rows.
     /// Zero rows means no rect yet and evicts nothing, so a message posted from `OnLoad` before
     /// the first layout survives; until then only the fade bounds the list.
-    pub fn trim_to_viewport(&mut self, viewport_rows: usize) {
+    pub fn trim_to_viewport(&mut self, viewport_rows: usize) -> bool {
         if viewport_rows == 0 {
-            return;
+            return false;
         }
         let mut used = 0usize;
         let mut keep = 0usize;
@@ -412,8 +429,10 @@ impl MessageFrameState {
             used += usize::from(line.rows.max(1));
             keep += 1;
         }
+        let before = self.lines.len();
         while self.lines.len() > keep.max(1) {
             self.lines.pop_front();
         }
+        self.lines.len() != before
     }
 }

@@ -200,7 +200,9 @@ fn write_slot(model: &mut Model, target: usize, source: u32, passive: bool) -> O
 /// with `getglobal` (`PetActionBarFrame.lua:102`); the cursor needs the path, resolved here.
 fn resolve_token_icon(lua: &Lua) {
     let name = {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         match &model.cursor {
             Some(CursorPayload::PetAction(p)) if is_token(p.packed) => p.texture.clone(),
             _ => None,
@@ -210,7 +212,7 @@ fn resolve_token_icon(lua: &Lua) {
         return;
     };
     let path: Option<String> = lua.globals().get(name.as_str()).unwrap_or_default();
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     if let Some(CursorPayload::PetAction(p)) = &mut model.cursor {
         p.texture = path;
     }
@@ -222,7 +224,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "PickupPetAction",
         lua.create_function(|lua, slot: u32| {
             let took = {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 pickup_pet_action(&mut model, slot)
             };
             // Both the pickup and a drop's displaced occupant can put a token on the cursor.

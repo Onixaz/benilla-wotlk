@@ -195,35 +195,37 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PickupInventoryItem",
         lua.create_function(|lua, id: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             Ok(pickup_inventory_item(&mut model, id))
         })?,
     )?;
     g.set(
         "EquipCursorItem",
         lua.create_function(|lua, id: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             Ok(equip_cursor_item(&mut model, id))
         })?,
     )?;
     g.set(
         "CursorCanGoInSlot",
         lua.create_function(|lua, id: u32| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(cursor_can_go_in_slot(&model, id))
         })?,
     )?;
     g.set(
         "AutoEquipCursorItem",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             Ok(auto_equip_cursor_item(&mut model))
         })?,
     )?;
     g.set(
         "UseInventoryItem",
         lua.create_function(|lua, id: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             use_inventory_item(&mut model, id);
             Ok(())
         })?,
@@ -231,7 +233,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsInventoryItemLocked",
         lua.create_function(|lua, id: u32| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(is_inventory_item_locked(&model, id)))
         })?,
     )?;

@@ -15,8 +15,6 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::Model;
-
 /// The current pet plus the `NUM_PET_STABLE_SLOTS` (2) stable slots (`PetStable.lua:1`).
 pub const NUM_STABLE_SLOTS: usize = 3;
 
@@ -115,12 +113,12 @@ impl super::UiScript {
 
     /// Drain the queued stable verbs.
     pub fn take_stable_intents(&mut self) -> Vec<StableIntent> {
-        std::mem::take(&mut self.model_mut().stable.intents)
+        drain_field!(self, stable.intents)
     }
 
     /// Whether `ClosePetStables()` was called since the last drain; no packet exists for it.
     pub fn take_stable_close(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().stable.close)
+        drain_field!(self, stable.close)
     }
 
     /// `GetSelectedStablePet()`'s answer, translated from the held pet number: 0 the summoned
@@ -196,7 +194,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetStablePetInfo",
         lua.create_function(|lua, i: i64| {
             let pet = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 slot_index(i).and_then(|i| model.stable.state.as_ref()?.slots[i].clone())
             };
             let Some(pet) = pet else {
@@ -233,7 +233,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetStablePetFoodTypes",
         lua.create_function(|lua, i: i64| {
             let diet = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 slot_index(i)
                     .and_then(|i| {
                         Some(model.stable.state.as_ref()?.slots[i].as_ref()?.diet.clone())
@@ -252,7 +254,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumStableSlots",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(
                 model
                     .stable
@@ -267,7 +271,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumStablePets",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(
                 model.stable.state.as_ref().map_or(0, StableState::num_pets),
             ))
@@ -279,7 +285,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNextStableSlotCost",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(
                 model.stable.state.as_ref().map_or(0, |s| s.next_slot_cost),
             ))
@@ -291,7 +299,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSelectedStablePet",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(selected_slot(&model.stable)))
         })?,
     )?;
@@ -302,7 +312,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ClickStablePet",
         lua.create_function(|lua, i: i64| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let Some(to) = slot_index(i) else {
                 // Out of range: a click selects nothing, a drop clears the cursor.
                 if !matches!(
@@ -355,7 +365,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PickupStablePet",
         lua.create_function(|lua, i: i64| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let texture = slot_index(i)
                 .and_then(|i| model.stable.state.as_ref()?.slots[i].as_ref())
                 .and_then(|p| p.icon.clone());
@@ -376,7 +386,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "StablePet",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if model.stable.state.is_some() {
                 model.stable.intents.push(StableIntent::Stable);
             }
@@ -389,7 +399,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "UnstablePet",
         lua.create_function(|lua, i: i64| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let pet_number = model
                 .stable
                 .state
@@ -423,7 +433,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "BuyStableSlot",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             // Affordability reads `model.money`, the purse `GetMoney()` answers.
             let money = model.money;
             let allowed = model.stable.state.as_ref().is_some_and(|s| {
@@ -442,7 +452,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ClosePetStables",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.stable.close = true;
             Ok(())
         })?,

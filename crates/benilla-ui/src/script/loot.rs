@@ -11,7 +11,6 @@
 use mlua::{Lua, MultiValue, Table, Value};
 
 use super::binding_abi::flag;
-use super::Model;
 
 /// `CLootButton`'s own Lua method table (`0x847ce4`): one entry, per the registrar's `mov edx,1`.
 pub(super) const REG_LOOTBUTTON_METHODS: &str = "__benilla_lootbutton_methods";
@@ -88,30 +87,30 @@ pub const LOOT_PORTRAIT_UNIT: &str = "LOOT";
 impl super::UiScript {
     /// Push (or clear, with `None`) the open loot.
     pub fn set_loot(&mut self, state: Option<LootState>) {
-        self.model_mut().loot = state;
+        set_field!(self, loot, state);
     }
 
     /// Drain the 1-based rows `LootSlot` took; the app maps each to the coin or the item's wire
     /// slot and applies the bind-on-pickup deferral.
     pub fn take_loot_picks(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().loot_picks)
+        drain_field!(self, loot_picks)
     }
 
     /// Drain the 1-based rows `ConfirmLootSlot` queued; the app honours only the one a LOOT_BIND
     /// confirm is pending for (the reference's `[0xacee24]` gate, `0x589300`).
     pub fn take_loot_confirms(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().loot_confirms)
+        drain_field!(self, loot_confirms)
     }
 
     /// Whether `CloseLoot` was called since the last drain; the app releases an open loot.
     pub fn take_loot_close(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().loot_close)
+        drain_field!(self, loot_close)
     }
 
     /// Drain the `GiveMasterLoot(slot, candidateIndex)` pairs, both 1-based; the app resolves them
     /// to a wire slot and a guid for `CMSG_LOOT_MASTER_GIVE`.
     pub fn take_loot_master_gives(&mut self) -> Vec<(u32, u32)> {
-        std::mem::take(&mut self.model_mut().loot_master_gives)
+        drain_field!(self, loot_master_gives)
     }
 }
 
@@ -133,7 +132,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetLootPortrait",
         lua.create_function(|lua, texture: Value| {
             let rh = super::region::this_texture(lua, &texture)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if !model.loot.as_ref().is_some_and(|l| l.source_unit) {
                 super::region::clear_texture(&mut model, rh);
                 return Ok(Value::Nil);
@@ -151,7 +150,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumLootItems",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.loot.as_ref().map_or(0, |l| l.rows.len()) as i64)
         })?,
     )?;
@@ -166,7 +167,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, slot: usize| {
             // `Some(Some(row))` live, `Some(None)` cleared, `None` no such slot.
             let slot_state = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model
                     .loot
                     .as_ref()
@@ -213,7 +216,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetLootSlotLink",
         lua.create_function(|lua, slot: usize| {
             let link = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model
                     .loot
                     .as_ref()
@@ -230,7 +235,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "LootSlotIsItem",
         lua.create_function(|lua, slot: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(slot
                 .checked_sub(1)
                 .and_then(|n| model.loot.as_ref()?.rows.get(n)?.as_ref())
@@ -241,7 +248,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "LootSlotIsCoin",
         lua.create_function(|lua, slot: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(slot
                 .checked_sub(1)
                 .and_then(|n| model.loot.as_ref()?.rows.get(n)?.as_ref())
@@ -252,7 +261,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsFishingLoot",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(model.loot.as_ref().is_some_and(|l| l.fishing)))
         })?,
     )?;
@@ -293,7 +304,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "LootSlot",
         lua.create_function(|lua, slot: f64| {
             if let Some(slot) = loot_slot_arg(slot) {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model.loot_picks.push(slot);
             }
             Ok(())
@@ -306,7 +317,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "ConfirmLootSlot",
         lua.create_function(|lua, slot: f64| {
             if let Some(slot) = loot_slot_arg(slot) {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model.loot_confirms.push(slot);
             }
             Ok(())
@@ -317,7 +328,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CloseLoot",
         lua.create_function(|lua, _args: MultiValue| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.loot_close = true;
             Ok(())
         })?,
@@ -329,7 +340,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetMasterLootCandidate",
         lua.create_function(|lua, index: u32| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let name = index.checked_sub(1).and_then(|i| {
                 model
                     .loot
@@ -348,7 +361,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GiveMasterLoot",
         lua.create_function(|lua, (slot, candidate): (u32, u32)| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.loot_master_gives.push((slot, candidate));
             Ok(())
         })?,

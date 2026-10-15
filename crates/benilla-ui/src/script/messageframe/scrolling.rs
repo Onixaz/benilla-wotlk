@@ -7,7 +7,7 @@
 use mlua::{Lua, Table, Value};
 
 use crate::script::object::frame_handle_of;
-use crate::script::{Model, UiScript};
+use crate::script::UiScript;
 use crate::widget::{KindState, ScrollingMessageState};
 
 /// Registry key of the ScrollingMessageFrame method table (the MAXCSTACK discipline).
@@ -22,7 +22,7 @@ fn with_smf<T>(
     f: impl FnOnce(&mut ScrollingMessageState) -> T,
 ) -> mlua::Result<T> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let frame = model
         .arena
         .frame_mut(h)
@@ -59,7 +59,7 @@ fn scroll(
     op: impl FnOnce(&mut ScrollingMessageState, usize),
 ) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let viewport_rows = UiScript::message_viewport_rows(&model, h);
     let frame = model
         .arena
@@ -174,7 +174,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     m.set(
         "AtBottom",
-        lua.create_function(|lua, this: Table| with_smf(lua, &this, |smf| smf.at_bottom()))?,
+        lua.create_function(|lua, this: Table| {
+            let h = frame_handle_of(lua, &this)?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            match model.arena.frame(h).map(|f| &f.kind_state) {
+                Some(KindState::ScrollingMessage(smf)) => Ok(smf.at_bottom()),
+                _ => Err(mlua::Error::runtime("not a ScrollingMessageFrame")),
+            }
+        })?,
     )?;
 
     // SetMaxLines wipes the ring (`0x7938a0`).

@@ -55,54 +55,54 @@ pub struct TradeState {
 impl super::UiScript {
     /// Push (or clear, with `None`) the open trade window's snapshot.
     pub fn set_trade(&mut self, state: Option<TradeState>) {
-        self.model_mut().trade = state;
+        set_field!(self, trade, state);
     }
 
     /// Drain the tokens `InitiateTrade` queued; the app sends `CMSG_INITIATE_TRADE` for each.
     pub fn take_trade_initiates(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.model_mut().trade_initiates)
+        drain_field!(self, trade_initiates)
     }
 
     /// Whether `AcceptTrade` was called since the last drain: `CMSG_ACCEPT_TRADE`.
     pub fn take_trade_accept(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().trade_accept)
+        drain_field!(self, trade_accept)
     }
 
     /// Whether `CancelTradeAccept` was called since the last drain: `CMSG_UNACCEPT_TRADE`.
     pub fn take_trade_unaccept(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().trade_unaccept)
+        drain_field!(self, trade_unaccept)
     }
 
     /// Whether `CloseTrade`, the window's OnHide verb, was called since the last drain; the app
     /// sends `CMSG_CANCEL_TRADE` and ends its session.
     pub fn take_trade_close(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().trade_close)
+        drain_field!(self, trade_close)
     }
 
     /// Whether `BeginTrade()` was called since the last drain: an empty `CMSG_BEGIN_TRADE`.
     pub fn take_trade_begin(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().trade_begin)
+        drain_field!(self, trade_begin)
     }
 
     /// Whether `CancelTrade()` was called since the last drain: the bare `CMSG_CANCEL_TRADE`.
     pub fn take_trade_cancel(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().trade_cancel)
+        drain_field!(self, trade_cancel)
     }
 
     /// The copper `SetTradeMoney` last offered since the last drain: `CMSG_SET_TRADE_GOLD`.
     pub fn take_trade_money(&mut self) -> Option<u32> {
-        std::mem::take(&mut self.model_mut().trade_set_money)
+        drain_field!(self, trade_set_money)
     }
 
     /// The `(trade_id, bag, slot)` placements `ClickTradeButton` queued, for `CMSG_SET_TRADE_ITEM`:
     /// `trade_id` 1..=7, `bag` and `slot` in the cursor's space.
     pub fn take_trade_set_items(&mut self) -> Vec<(u32, i64, u32)> {
-        std::mem::take(&mut self.model_mut().trade_set_items)
+        drain_field!(self, trade_set_items)
     }
 
     /// The 1-based slots `ClickTradeButton` queued to clear, for `CMSG_CLEAR_TRADE_ITEM`.
     pub fn take_trade_clear_items(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().trade_clear_items)
+        drain_field!(self, trade_clear_items)
     }
 }
 
@@ -169,7 +169,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetTradePlayerItemInfo",
         lua.create_function(|lua, id: usize| {
             let (slot, usable) = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 let slot = slot_at(&model, id, |t| &t.player);
                 let usable = slot
                     .as_ref()
@@ -204,7 +206,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             name,
             lua.create_function(move |lua, id: usize| {
                 let link = {
-                    let model = lua.app_data_ref::<Model>().expect("model app_data");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
                     let slot = if side {
                         slot_at(&model, id, |t| &t.player)
                     } else {
@@ -225,7 +229,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetTradeTargetItemInfo",
         lua.create_function(|lua, id: usize| {
             let (slot, usable) = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 let slot = slot_at(&model, id, |t| &t.target);
                 let usable = slot
                     .as_ref()
@@ -259,14 +265,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPlayerTradeMoney",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(gold(&model, |t| &t.player)))
         })?,
     )?;
     g.set(
         "GetTargetTradeMoney",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(gold(&model, |t| &t.target)))
         })?,
     )?;
@@ -275,10 +285,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "InitiateTrade",
         lua.create_function(|lua, unit: String| {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .trade_initiates
-                .push(unit);
+            crate::script::model_mut_of(lua).trade_initiates.push(unit);
             Ok(())
         })?,
     )?;
@@ -286,27 +293,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "AcceptTrade",
         lua.create_function(|lua, ()| {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .trade_accept = true;
+            crate::script::model_mut_of(lua).trade_accept = true;
             Ok(())
         })?,
     )?;
     g.set(
         "CancelTradeAccept",
         lua.create_function(|lua, ()| {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .trade_unaccept = true;
+            crate::script::model_mut_of(lua).trade_unaccept = true;
             Ok(())
         })?,
     )?;
     g.set(
         "CloseTrade",
         lua.create_function(|lua, ()| {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .trade_close = true;
+            crate::script::model_mut_of(lua).trade_close = true;
             Ok(())
         })?,
     )?;
@@ -316,18 +317,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "BeginTrade",
         lua.create_function(|lua, ()| {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .trade_begin = true;
+            crate::script::model_mut_of(lua).trade_begin = true;
             Ok(())
         })?,
     )?;
     g.set(
         "CancelTrade",
         lua.create_function(|lua, ()| {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .trade_cancel = true;
+            crate::script::model_mut_of(lua).trade_cancel = true;
             Ok(())
         })?,
     )?;
@@ -343,7 +340,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 copper,
                 "Usage: SetTradeMoney(amount)",
             )? as u32;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if u64::from(n) > model.money {
                 return Ok(());
             }
@@ -355,7 +352,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ClickTradeButton",
         lua.create_function(|lua, id: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             click_trade_button(&mut model, id);
             Ok(())
         })?,
@@ -366,7 +363,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "ClickTargetTradeButton",
         lua.create_function(|lua, _id: u32| {
             // Coins on the cursor still go into our offer, the index unread (`0x4c00a3`).
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             cursor::money::add_trade_money(&mut model);
             Ok(())
         })?,

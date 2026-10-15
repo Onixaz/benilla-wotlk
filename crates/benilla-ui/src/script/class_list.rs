@@ -6,8 +6,6 @@
 
 use mlua::{Lua, Value};
 
-use super::Model;
-
 /// One `ChrClasses.dbc` row as `FillLocalizedClassList` reads it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClassNames {
@@ -41,7 +39,7 @@ impl super::UiScript {
     /// Push `ChrClasses.dbc`'s rows in record order, which `FillLocalizedClassList` walks. The app
     /// seeds each VM before its first file runs, since `Constants.lua` asks at load.
     pub fn set_class_names(&mut self, rows: Vec<ClassNames>) {
-        self.model_mut().class_names = rows;
+        set_field!(self, class_names, rows);
     }
 }
 
@@ -57,7 +55,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let female = !matches!(female, Value::Nil | Value::Boolean(false));
             let rows = lua
-                .app_data_ref::<Model>()
+                .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data")
                 .class_names
                 .clone();

@@ -300,12 +300,12 @@ fn ammo_alert_status(slot: &Option<InvSlotView>) -> u8 {
 impl super::UiScript {
     /// Push, or clear with `None`, the player's combat-stats snapshot.
     pub fn set_player_combat_stats(&mut self, stats: Option<UnitCombatStats>) {
-        self.model_mut().player_combat_stats = stats;
+        set_field!(self, player_combat_stats, stats);
     }
 
     /// The pet's snapshot; `None` without a pet, so `Unit*("pet")` reads the absent shape.
     pub fn set_pet_combat_stats(&mut self, stats: Option<UnitCombatStats>) {
-        self.model_mut().pet_combat_stats = stats;
+        set_field!(self, pet_combat_stats, stats);
     }
 
     /// Push the doll snapshot, recompute the 12 alert statuses and fire `UPDATE_INVENTORY_ALERTS`.
@@ -323,7 +323,7 @@ impl super::UiScript {
     /// Push the six bank-bag slots. The caller fires `PLAYERBANKSLOTS_CHANGED` for a changed item:
     /// the stock bank buttons repaint only on it and `BANKFRAME_OPENED` (`BankFrame.lua:206-212`).
     pub fn set_bank_bag_slots(&mut self, slots: BankBagSlots) {
-        self.model_mut().bank_bag_slots = slots;
+        set_field!(self, bank_bag_slots, slots);
     }
 
     /// Take the `UseInventoryItem` calls out of the call stream; the app sends each as
@@ -337,7 +337,7 @@ impl super::UiScript {
 
     /// Drain equipped slots clicked in repair mode, for `CMSG_REPAIR_ITEM`.
     pub fn take_inventory_repairs(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().inventory_repairs)
+        drain_field!(self, inventory_repairs)
     }
 }
 
@@ -359,7 +359,9 @@ fn with_unit_stats<T>(
     token: &Option<String>,
     f: impl FnOnce(&UnitCombatStats) -> T,
 ) -> T {
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     let absent = UnitCombatStats::default();
     let pushed = match token.as_deref() {
         Some("player") => model.player_combat_stats.as_ref(),
@@ -389,7 +391,9 @@ fn cgunit_skill(model: &Model, token: &str) -> i64 {
 fn player_inv_slot(lua: &Lua, token: &Option<String>, slot: i64) -> Option<InvSlotView> {
     let token = token.as_deref()?;
     let idx = usize::try_from(slot).ok()?;
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     model.inv_slot(token, idx)
 }
 
@@ -663,7 +667,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "UnitAttackBothHands",
         lua.create_function(|lua, token: Option<String>| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(match token.as_deref() {
                 Some("player") => model
                     .player_combat_stats
@@ -702,7 +708,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "UnitDefense",
         lua.create_function(|lua, token: Option<String>| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(match token.as_deref() {
                 Some("player") => model
                     .player_combat_stats
@@ -724,7 +732,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, ()| {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 Ok(model
                     .player_combat_stats
                     .as_ref()
@@ -759,7 +769,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "HasWandEquipped",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(
                 model
                     .player_combat_stats
@@ -860,7 +872,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetInventoryAlertStatus",
         lua.create_function(|lua, index: usize| {
-            let model = lua.app_data_mut::<Model>().expect("model app_data");
+            let model = crate::script::model_mut_of(lua);
             Ok(if (1..=12).contains(&index) {
                 i64::from(model.inventory_alerts[index - 1])
             } else {
@@ -873,7 +885,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "OffhandHasWeapon",
         lua.create_function(|lua, (): ()| {
-            let model = lua.app_data_mut::<Model>().expect("model app_data");
+            let model = crate::script::model_mut_of(lua);
             let is_weapon = model.inventory_slots[17]
                 .as_ref()
                 .filter(|v| v.item_id != 0)

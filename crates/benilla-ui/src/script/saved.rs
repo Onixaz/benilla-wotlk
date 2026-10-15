@@ -16,8 +16,6 @@ use std::ffi::c_void;
 
 use mlua::{Lua, Table, Value};
 
-use super::Model;
-
 /// Deviation: nesting stops at 32 where the reference recurses uncapped (its indent saturates at
 /// `0x80`), so a hostile structure cannot exhaust the stack.
 const MAX_DEPTH: usize = 32;
@@ -202,7 +200,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "RegisterForSave",
         lua.create_function(|lua, name: String| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if !model.saved_names.contains(&name) {
                 model.saved_names.push(name);
             }

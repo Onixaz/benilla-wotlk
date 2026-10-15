@@ -5,8 +5,6 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::Model;
-
 /// One ticket verb the window called, drained in call order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GmTicketIntent {
@@ -36,17 +34,17 @@ impl super::UiScript {
     /// The `GMTicketCategory.dbc` rows in file order, pushed once; the ids are the wire's values,
     /// so renumbering them would misfile every ticket.
     pub fn set_gm_ticket_categories(&mut self, categories: Vec<(u32, String)>) {
-        self.model_mut().gm_ticket_categories = categories;
+        set_field!(self, gm_ticket_categories, categories);
     }
 
     /// Drain the ticket verbs in call order, one packet each.
     pub fn take_gm_ticket_intents(&mut self) -> Vec<GmTicketIntent> {
-        std::mem::take(&mut self.model_mut().gm_ticket_intents)
+        drain_field!(self, gm_ticket_intents)
     }
 
     /// Drain the `Stuck()` calls, each one cast of spell 7355.
     pub fn take_stuck_casts(&mut self) -> u32 {
-        std::mem::take(&mut self.model_mut().stuck_casts)
+        drain_field!(self, stuck_casts)
     }
 }
 
@@ -58,7 +56,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetGMTicketCategories",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let mut out = Vec::with_capacity(model.gm_ticket_categories.len() * 2);
             for (id, name) in &model.gm_ticket_categories {
                 out.push(Value::Integer(i64::from(*id)));
@@ -77,8 +77,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, ()| {
-                lua.app_data_mut::<Model>()
-                    .expect("model app_data")
+                crate::script::model_mut_of(lua)
                     .gm_ticket_intents
                     .push(intent.clone());
                 Ok(())
@@ -91,8 +90,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, (category, text): (u32, String)| {
-                lua.app_data_mut::<Model>()
-                    .expect("model app_data")
+                crate::script::model_mut_of(lua)
                     .gm_ticket_intents
                     .push(GmTicketIntent::Write(GmTicketWrite {
                         category,
@@ -109,9 +107,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "Stuck",
         lua.create_function(|lua, ()| {
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
-                .stuck_casts += 1;
+            crate::script::model_mut_of(lua).stuck_casts += 1;
             Ok(())
         })?,
     )?;

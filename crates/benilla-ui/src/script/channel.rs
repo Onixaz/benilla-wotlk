@@ -98,12 +98,12 @@ pub enum ChannelCommand {
 impl super::UiScript {
     /// Feed the zone-channel catalog, whenever the zone, and so every resolved name, changes.
     pub fn set_zone_channel_catalog(&mut self, rows: Vec<ZoneChannelRow>) {
-        self.model_mut().zone_channel_catalog = rows;
+        set_field!(self, zone_channel_catalog, rows);
     }
 
     /// Channel verbs called since the last drain, in call order.
     pub fn take_channel_commands(&mut self) -> Vec<ChannelCommand> {
-        std::mem::take(&mut self.model_mut().channel_commands)
+        drain_field!(self, channel_commands)
     }
 
     /// The guild-recruitment auto-join latch: `0` STANDARD, `1` AUTO.
@@ -121,13 +121,13 @@ impl super::UiScript {
 
     /// Whether Lua moved the latch since the last drain: the chat cache's dirty signal.
     pub fn take_guild_recruitment_change(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().guild_recruitment_changed)
+        drain_field!(self, guild_recruitment_changed)
     }
 
     /// Whether Lua called `SetGuildRecruitmentMode(1)` since the last drain: the cue for the
     /// cascade (`0x49ea70` → `0x49ea90`).
     pub fn take_guild_recruitment_cascade(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().guild_recruitment_cascade)
+        drain_field!(self, guild_recruitment_cascade)
     }
 
     /// A manual join or leave of `GuildRecruitment` forces the latch to 0 (`0x49ed3d`, `0x49ef8f`)
@@ -145,7 +145,7 @@ impl super::UiScript {
 }
 
 fn push(lua: &Lua, cmd: ChannelCommand) {
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     model.channel_commands.push(cmd);
 }
 
@@ -181,7 +181,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetGuildRecruitmentMode",
         // Always a number, never nil: `UIOptionsFrame_Load` tests it `== 1`.
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(f64::from(model.guild_recruitment_mode))
         })?,
     )?;
@@ -211,7 +213,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "SetGuildRecruitmentMode: invalid mode",
                 ));
             }
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let mode = n as u8;
             if model.guild_recruitment_mode != mode {
                 model.guild_recruitment_mode = mode;
@@ -232,7 +234,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetChannelName",
         lua.create_function(|lua, key: Value| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let slot = match &key {
                 // The reference bounds-checks `1 <= n <= count` (`0x49bf30`) and answers only a
                 // confirmed slot; `joined` holds only those, so the bound is the whole check.
@@ -284,7 +288,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetChannelList",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let mut out = Vec::with_capacity(model.joined_channels.len() * 2);
             // Occupied slots only: the reference skips the cleared entries of its record array.
             for (i, name) in model.joined_channels.iter().enumerate() {
@@ -347,7 +353,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "EnumerateServerChannels",
         lua.create_function(|lua, _ignored: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let mut out = Vec::new();
             for row in model.zone_channel_catalog.iter().filter(|r| r.listed) {
                 out.push(Value::String(lua.create_string(&row.shortcut)?));
@@ -380,7 +388,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 push(lua, ChannelCommand::Leave { name: key });
                 return Ok(());
             }
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let row = model
                 .zone_channel_catalog
                 .iter()
@@ -502,7 +510,7 @@ impl super::UiScript {
     /// Mirror the app's confirmed-joined channels in join order, `None` for a freed slot;
     /// `ui_chat::feed` pushes it on each `YOU_JOINED` and `YOU_LEFT`.
     pub fn set_joined_channels(&mut self, joined: Vec<Option<String>>) {
-        self.model_mut().joined_channels = joined;
+        set_field!(self, joined_channels, joined);
     }
 }
 
@@ -520,7 +528,9 @@ fn join_by_name(
         return Ok(None);
     }
     let row = {
-        let model = lua.app_data_ref::<Model>().expect("model app_data");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         model
             .zone_channel_catalog
             .iter()
@@ -547,9 +557,7 @@ fn join_by_name(
     .and_then(|i| usize::try_from(i).ok())
     .filter(|i| *i < 10);
     if let Some(i) = window {
-        lua.app_data_mut::<Model>()
-            .expect("model app_data")
-            .register_window_channel(i, listed_as, id);
+        crate::script::model_mut_of(lua).register_window_channel(i, listed_as, id);
     }
     let password = if id != 0 { String::new() } else { password };
     push(

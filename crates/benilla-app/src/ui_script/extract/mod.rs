@@ -21,6 +21,39 @@ pub(crate) fn ui_cost_enabled() -> bool {
     *ON.get_or_init(|| std::env::var("WOW_UI_COST").as_deref() == Ok("1"))
 }
 
+/// `WOW_UI_VERIFY=1`: walk every frame regardless of the mutation count and report a frame the
+/// count would have skipped whose list differs ([`report_epoch_miss`]): a write to the model
+/// that took no `&mut` through its cell.
+pub(crate) fn ui_verify_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("WOW_UI_VERIFY").as_deref() == Ok("1"))
+}
+
+/// One `[ui-verify]` line per miss: the first entry that differs, both sides summarized.
+fn report_epoch_miss(
+    script: &UiScript,
+    fresh: &[benilla_ui::script::ExtractedQuad],
+    held: &[benilla_ui::script::ExtractedQuad],
+) {
+    let at = fresh
+        .iter()
+        .zip(held)
+        .position(|(a, b)| a != b)
+        .unwrap_or(fresh.len().min(held.len()));
+    let name = |q: Option<&benilla_ui::script::ExtractedQuad>| {
+        q.and_then(|q| script.target_owner_name(q.target))
+            .unwrap_or_default()
+    };
+    eprintln!(
+        "[ui-verify] MISS: epoch unchanged but entry {at} of {}/{} differs ({}) — fresh {:?} held {:?}",
+        fresh.len(),
+        held.len(),
+        name(fresh.get(at)),
+        fresh.get(at).map(|q| (&q.rect, q.alpha, &q.content)),
+        held.get(at).map(|q| (&q.rect, q.alpha, &q.content)),
+    );
+}
+
 /// `WOW_UI_GATE=1`: log why the extract gate and the splice missed ([`report_gate_miss`]).
 fn gate_log_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -210,6 +243,9 @@ fn report_gate_miss(
 #[derive(Default)]
 pub(super) struct GateInputs {
     extracted: Vec<benilla_ui::script::ExtractedQuad>,
+    /// The model's mutation count `extracted` was walked under ([`UiScript::visual_epoch`]):
+    /// equal again next frame, the walk is skipped and `extracted` stands.
+    epoch: Option<u64>,
     text_ui: Option<benilla_ui::script::EditBoxTextUi>,
     dims: Option<(u32, u32, u32, u32)>,
     portraits: std::collections::HashMap<String, crate::portrait::PortraitSource>,
@@ -487,6 +523,7 @@ pub(super) fn tick_script(
             .replace(std::time::Instant::now())
             .map_or(0, |t| t.elapsed().as_micros())
     };
+    script.epoch_trace_phase("tick");
     {
         let _span = bevy::log::info_span!("ui_script: tick").entered();
         let resized = script.set_screen_size(w / s, if h > 0.0 { h / s } else { 768.0 });
@@ -576,7 +613,9 @@ pub(super) fn tick_script(
         us_measure,
         solves_before: solves_before.unwrap_or(0),
         derives_before: derives_before.unwrap_or(0),
+        epoch_tick: script.visual_epoch(),
     };
+    script.epoch_trace_phase("feeds");
 }
 
 /// The UI pass's second half, after the camera and the plate driver: an incremental measure and
@@ -618,6 +657,9 @@ pub(super) fn paint_script(
     let Ok(window) = window.single() else {
         return;
     };
+    // The mutation count after the feeds that ran between the two halves.
+    let epoch_feeds = script.visual_epoch();
+    script.epoch_trace_phase("paint");
     let (w, h) = (window.width(), window.height());
     let (s, dpi) = (pass.seam, pass.dpi);
     let (us_tick, us_resolve) = (pass.us_tick, pass.us_resolve);
@@ -653,6 +695,7 @@ pub(super) fn paint_script(
     }
     // Folded into the tick half's own measure figure: one frame, one row.
     let us_measure = pass.us_measure + lap();
+    let epoch_resolve = script.visual_epoch();
     // The glyph sheet's repack counter: a repack moves every cached cell's UV.
     let generation = font_atlas.as_deref().map(|a| a.generation);
     let extract_span = bevy::log::info_span!("ui_script: extract").entered();
@@ -677,19 +720,46 @@ pub(super) fn paint_script(
     // and the blink phase (0.5 s, `0x77a790`).
     let text_ui = script.focused_editbox_text_ui();
     let _ = lap(); // re-arm: the editbox seam above is not the walk's cost
-    let extracted = script.extract();
-    let us_exm = lap();
-    let n_extracted = extracted.len();
-    // ── The extract gate ──────────────────────────────────────────────────────
-    // Equal inputs skip the conversion; the quads, minimap slot and link spans stay as they are.
+                   // ── The extract gate ──────────────────────────────────────────────────────
+                   // Equal inputs skip the conversion; the quads, minimap slot and link spans stay as they are.
+                   // The model's mutation count standing where the last walk read it skips the walk itself:
+                   // nothing took a `&mut` to the model since, so the list would come out equal. Under
+                   // `WOW_UI_VERIFY=1` the walk runs regardless and a disagreement is reported.
     let dims = (w.to_bits(), h.to_bits(), s.to_bits(), dpi.to_bits());
-    let settled = capture.is_none()
+    let epoch = script.visual_epoch();
+    let inputs_still = capture.is_none()
         && prev.dims == Some(dims)
         && prev.generation == generation
         && text_ui == prev.text_ui
-        && booths.images.0 == prev.portraits
-        && extracted == prev.extracted;
+        && booths.images.0 == prev.portraits;
+    let epoch_still = prev.epoch == Some(epoch);
+    let verify = ui_verify_enabled();
+    let skip_walk = inputs_still && epoch_still && !verify;
+    let extracted = if skip_walk {
+        None
+    } else {
+        Some(script.extract())
+    };
+    let us_exm = lap();
+    let n_extracted = extracted.as_ref().map_or(prev.extracted.len(), Vec::len);
+    if verify && inputs_still && epoch_still {
+        if let Some(fresh) = &extracted {
+            if *fresh != prev.extracted {
+                report_epoch_miss(&script, fresh, &prev.extracted);
+            }
+        }
+    }
+    let ep = [
+        pass.epoch_tick
+            .wrapping_sub(prev.epoch.unwrap_or(pass.epoch_tick)),
+        epoch_feeds.wrapping_sub(pass.epoch_tick),
+        epoch_resolve.wrapping_sub(epoch_feeds),
+        epoch.wrapping_sub(epoch_resolve),
+    ];
+    let settled = inputs_still && (skip_walk || extracted.as_ref() == Some(&prev.extracted));
     if settled {
+        // The held list is this count's list too, so the next quiet frame skips the walk.
+        prev.epoch = Some(epoch);
         drop(extract_span);
         let us_cmp = lap();
         if cost_on {
@@ -716,12 +786,19 @@ pub(super) fn paint_script(
             eprintln!(
                 "[ui-cost] tick={us_tick} resolve={us_resolve} measure={us_measure} \
                  exm={us_exm} exa={us_cmp} diff=0 eq={n_extracted} quads={} \
-                 solves={solves} changed=0 skip=1",
-                quads.quads.len()
+                 solves={solves} changed=0 skip=1 walk={} ep={}/{}/{}/{}",
+                quads.quads.len(),
+                u8::from(!skip_walk),
+                ep[0],
+                ep[1],
+                ep[2],
+                ep[3],
             );
         }
         return;
     }
+    // Past the gate the walk ran: a skipped walk is settled by construction.
+    let extracted = extracted.expect("a skipped walk settles above");
     if gate_log_enabled() {
         report_gate_miss(
             &script,
@@ -893,6 +970,7 @@ pub(super) fn paint_script(
             quads.dirty = true;
         }
         prev.extracted = extracted;
+        prev.epoch = Some(epoch);
         if splice_verify_enabled() {
             verify_splice(
                 prev,
@@ -950,6 +1028,7 @@ pub(super) fn paint_script(
     prev.text_ui = text_ui.clone();
     prev.portraits = booths.images.0.clone();
     prev.extracted = extracted.clone();
+    prev.epoch = Some(epoch);
     // Cleared only on the full-conversion path: a settled frame's map is still true, and
     // clearing it would put the body panes' cameras to sleep.
     booths.panes.0.clear();

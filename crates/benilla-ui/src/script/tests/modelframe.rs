@@ -284,7 +284,9 @@ fn the_two_sequence_verbs_arm_the_pane_on_its_own_clock() {
     // 1.12 has no `GetSequence`, so the arm is read off the arena.
     let armed = |s: &UiScript| {
         let lua = s.lua();
-        let model = lua.app_data_ref::<crate::script::Model>().expect("model");
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
         let fh = model.arena.lookup("MSeq").expect("MSeq frame");
         match &model.arena.frame(fh).expect("live frame").kind_state {
             crate::widget::KindState::Model(m) => {

@@ -5,8 +5,6 @@
 
 use mlua::Lua;
 
-use super::Model;
-
 /// One answer to a pending-equip question.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PendingEquipAnswer {
@@ -22,12 +20,12 @@ impl super::UiScript {
     /// The equip answers in call order. The app ignores an index it holds no record for, as the
     /// reference's `0x5e1be0` bounds-checks it and returns.
     pub fn take_pending_equip_answers(&mut self) -> Vec<PendingEquipAnswer> {
-        std::mem::take(&mut self.model_mut().pending_equip_answers)
+        drain_field!(self, pending_equip_answers)
     }
 
     /// `ConfirmBindOnUse()` calls since the last drain.
     pub fn take_bind_on_use_confirms(&mut self) -> u32 {
-        std::mem::take(&mut self.model_mut().bind_on_use_confirms)
+        drain_field!(self, bind_on_use_confirms)
     }
 
     /// The client's item-usable predicate (`0x5ea930`), which the app's equip deferral asks: an
@@ -45,7 +43,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "EquipPendingItem",
         lua.create_function(|lua, index: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.pending_equip_answers.push(PendingEquipAnswer {
                 index,
                 accept: true,
@@ -59,7 +57,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CancelPendingEquip",
         lua.create_function(|lua, index: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.pending_equip_answers.push(PendingEquipAnswer {
                 index,
                 accept: false,
@@ -73,7 +71,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ConfirmBindOnUse",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.bind_on_use_confirms += 1;
             Ok(())
         })?,

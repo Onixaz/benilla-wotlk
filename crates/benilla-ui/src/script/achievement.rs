@@ -4,8 +4,6 @@
 
 use mlua::Lua;
 
-use super::Model;
-
 impl super::UiScript {
     /// Push the achievement state: the list arrived (`[0xc1f454]`, set by `0x5b32fc`) and the
     /// count of completed achievements the client holds (the list at `[0xacfdb8]`).
@@ -23,7 +21,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CanShowAchievementUI",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.achievement_list_received)
         })?,
     )?;
@@ -32,7 +32,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "HasCompletedAnyAchievement",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.achievements_completed > 0)
         })?,
     )?;

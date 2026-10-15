@@ -6,7 +6,7 @@
 
 use mlua::{Function, Lua, Table, Value};
 
-use super::{Model, ScriptValue, REG_SCRIPTS};
+use super::{ScriptValue, REG_SCRIPTS};
 use crate::script::object::frame_wrapper;
 use crate::widget::{ButtonState, FrameHandle};
 
@@ -19,7 +19,7 @@ pub(super) fn fire_global(lua: &Lua, event: &str, args: &[ScriptValue]) {
 /// listeners and skipping any already visited. The next frame is re-found by position each step
 /// (`0x703ee8`), so a handler that unregisters the walk's successor ends the dispatch there.
 pub(super) fn fire_all_event_listeners(lua: &Lua, event: &str, args: &[ScriptValue]) {
-    let model_mut = || lua.app_data_mut::<Model>().expect("model app_data set");
+    let model_mut = || crate::script::model_mut_of(lua);
     let mut at = model_mut().all_event_frames.first().copied();
     while let Some(h) = at {
         let mut model = model_mut();
@@ -35,9 +35,7 @@ pub(super) fn fire_all_event_listeners(lua: &Lua, event: &str, args: &[ScriptVal
         drop(model);
         if !already {
             if let Err(e) = fire_event_handler(lua, id, event, args) {
-                lua.app_data_mut::<Model>()
-                    .expect("model app_data")
-                    .record_script_error(e.to_string());
+                crate::script::model_mut_of(lua).record_script_error(e.to_string());
             }
         }
         at = next;
@@ -85,12 +83,7 @@ pub(super) fn fire_widget_handler(
 /// each, recording errors. It drains once: a size a handler changes fires on the next resolve, as
 /// the reference's `ApplyRect` does, so a handler that grows its own frame cannot spin forever.
 pub(super) fn fire_size_changes(lua: &Lua) {
-    let pending = std::mem::take(
-        &mut lua
-            .app_data_mut::<Model>()
-            .expect("model")
-            .pending_size_changed,
-    );
+    let pending = std::mem::take(&mut crate::script::model_mut_of(lua).pending_size_changed);
     for (id, w, h) in pending {
         if let Err(e) = fire(
             lua,
@@ -99,9 +92,7 @@ pub(super) fn fire_size_changes(lua: &Lua) {
             None,
             vec![Value::Number(f64::from(w)), Value::Number(f64::from(h))],
         ) {
-            lua.app_data_mut::<Model>()
-                .expect("model")
-                .record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_script_error(e.to_string());
         }
     }
 }
@@ -111,9 +102,12 @@ pub(super) fn fire_size_changes(lua: &Lua) {
 /// propagated and before its `OnShow` (`0x76ae10` at `0x76aee0`), so a show that does not come
 /// through Lua `Show` raises too.
 pub(super) fn fire_visibility_changes(lua: &Lua, changed: Vec<FrameHandle>) {
+    if changed.is_empty() {
+        return; // nothing to fire, and no borrow to count as a change
+    }
     // Resolve (handle, id, now-visible?) under one short borrow, then fire with no borrow held.
     let items: Vec<(FrameHandle, u32, bool)> = {
-        let mut model = lua.app_data_mut::<Model>().expect("model");
+        let mut model = crate::script::model_mut_of(lua);
         changed
             .into_iter()
             .filter_map(|h| {
@@ -127,7 +121,7 @@ pub(super) fn fire_visibility_changes(lua: &Lua, changed: Vec<FrameHandle>) {
     // hover and the drag-arm (`+0x100`/`+0x104`) and arms the re-pick; a show arms it too
     // (`0x764b8d`). This leave is how a tooltip closes with its window; the reference has no other.
     let left: Option<(FrameHandle, u32)> = {
-        let mut model = lua.app_data_mut::<Model>().expect("model");
+        let mut model = crate::script::model_mut_of(lua);
         let hidden_hover = model
             .mouseover
             .filter(|&m| items.iter().any(|&(h, _, vis)| h == m && !vis));
@@ -147,26 +141,22 @@ pub(super) fn fire_visibility_changes(lua: &Lua, changed: Vec<FrameHandle>) {
     };
     if let Some((_, oid)) = left {
         if let Err(e) = fire_widget_handler(lua, oid, "OnLeave", vec![Value::Boolean(true)]) {
-            lua.app_data_mut::<Model>()
-                .expect("model")
-                .record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_script_error(e.to_string());
         }
     }
     for (h, id, visible) in items {
         if visible {
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             super::object::toplevel::raise_on_show(&mut model, h);
         } else {
             // `CSimpleButton`'s hide notify (`+0x34`, `0x7791e0`) un-presses it, unless disabled
             // or locked, before the base notify, so a button hidden while held comes back unpushed.
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             super::button::edge(&mut model, h, ButtonState::on_hide);
         }
         let name = if visible { "OnShow" } else { "OnHide" };
         if let Err(e) = fire(lua, id, name, None, Vec::new()) {
-            lua.app_data_mut::<Model>()
-                .expect("model")
-                .record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_script_error(e.to_string());
         }
         // The EditBox show/hide overrides (`0x81c910` `+0x30`/`+0x34`) call the base notify first,
         // so this runs after the `fire`: an `autoFocus` box takes a free focus, a hidden box

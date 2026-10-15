@@ -117,7 +117,7 @@ pub enum NearestMode {
 impl UiScript {
     /// Take every queued call, in call order.
     pub fn take_script_calls(&mut self) -> Vec<ScriptCall> {
-        std::mem::take(&mut self.model_mut().script_calls)
+        drain_field!(self, script_calls)
     }
 
     /// Put calls back at the front of the queue, ahead of any queued since.

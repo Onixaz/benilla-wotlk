@@ -21,8 +21,6 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::Model;
-
 /// One weapon's temporary enchantment (`ITEM_FIELD_ENCHANTMENT` slot 1); the app builds one only
 /// for a nonzero enchant id, the reference's gate.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -42,8 +40,10 @@ impl super::UiScript {
         main_hand: Option<WeaponEnchant>,
         off_hand: Option<WeaponEnchant>,
     ) {
-        let mut model = self.model_mut();
-        model.weapon_enchants = [main_hand, off_hand];
+        if self.model_ref().weapon_enchants == [main_hand, off_hand] {
+            return;
+        }
+        self.model_mut().weapon_enchants = [main_hand, off_hand];
     }
 }
 
@@ -52,7 +52,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetWeaponEnchantInfo",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let mut out = Vec::with_capacity(6);
             // Main hand then off hand, three values each: always six.
             for hand in model.weapon_enchants {

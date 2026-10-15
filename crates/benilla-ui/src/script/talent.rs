@@ -114,28 +114,28 @@ impl super::UiScript {
     /// Drain the `LearnTalent` sends as `(talentId, rank)`, the 0-based rank to learn
     /// (`CMSG_LEARN_TALENT`, `0x5c8288`).
     pub fn take_talent_learns(&mut self) -> Vec<(u32, u32)> {
-        std::mem::take(&mut self.model_mut().talent_learns)
+        drain_field!(self, talent_learns)
     }
 
     /// Drain the `LearnPreviewTalents` sends, each a `CMSG_LEARN_PREVIEW_TALENTS` body's
     /// `(talentId, previewRank)` list.
     pub fn take_talent_preview_learns(&mut self) -> Vec<Vec<(u32, u32)>> {
-        std::mem::take(&mut self.model_mut().talent_preview_learns)
+        drain_field!(self, talent_preview_learns)
     }
 
     /// Drain the count of `ConfirmTalentWipe()` calls, each an outbound `MSG_TALENT_WIPE_CONFIRM`;
     /// a count, since the app holds the trainer's guid.
     pub fn take_talent_wipe_confirms(&mut self) -> u32 {
-        std::mem::take(&mut self.model_mut().talent_wipe_confirms)
+        drain_field!(self, talent_wipe_confirms)
     }
 
     /// Push whether a trainer's respec question is live and in range, which
     /// `CheckTalentMasterDist()` answers; false for none pending or walked away.
     pub fn set_talent_master_pending(&mut self, pending: bool) {
-        let mut model = self.model_mut();
-        if model.talent_master_pending != pending {
-            model.talent_master_pending = pending;
+        if self.model_ref().talent_master_pending == pending {
+            return;
         }
+        self.model_mut().talent_master_pending = pending;
     }
 }
 
@@ -501,7 +501,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumTalentTabs",
         lua.create_function(|lua, args: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             if flag_arg(args.front()) || flag_arg(args.get(1)) {
                 return Ok(0);
             }
@@ -514,7 +516,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTalentTabInfo",
         lua.create_function(|lua, args: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(tab) = int_arg(&args, 0) else {
                 return Err(mlua::Error::RuntimeError(
                     "Usage: GetTalentTabInfo(tabIndex[, isInspect[, isPet[, groupIndex]]])".into(),
@@ -557,7 +561,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumTalents",
         lua.create_function(|lua, args: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(tab) = int_arg(&args, 0) else {
                 return Err(mlua::Error::RuntimeError(
                     "Usage: GetNumTalents(tabIndex[, isInspect[, isPet]])".into(),
@@ -586,7 +592,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         .into(),
                 ));
             }
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua.app_data_ref::<crate::script::ModelCell>().expect("model app_data");
             talent_info(lua, &model, &args)
         })?,
     )?;
@@ -597,7 +603,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTalentPrereqs",
         lua.create_function(|lua, args: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let (tab, index) = (
                 int_arg(&args, 0).unwrap_or(0),
                 int_arg(&args, 1).unwrap_or(0),
@@ -636,7 +644,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTalentLink",
         lua.create_function(|lua, args: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let (tab, index) = (
                 int_arg(&args, 0).unwrap_or(0),
                 int_arg(&args, 1).unwrap_or(0),
@@ -666,7 +676,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetActiveTalentGroup",
         lua.create_function(|lua, args: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             if flag_arg(args.front()) || flag_arg(args.get(1)) {
                 return Ok(1);
             }
@@ -678,7 +690,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumTalentGroups",
         lua.create_function(|lua, args: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             if flag_arg(args.front()) || flag_arg(args.get(1)) {
                 return Ok(0);
             }
@@ -696,7 +710,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Usage: SetActiveTalentGroup(groupIndex)".into(),
                 ));
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let g = group as i64 - 1;
             if g >= 0
                 && (g as usize) != model.talents.active_group
@@ -717,7 +731,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetUnspentTalentPoints",
         lua.create_function(|lua, args: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             if flag_arg(args.front()) || flag_arg(args.get(1)) {
                 return Ok(0);
             }
@@ -730,7 +746,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetGroupPreviewTalentPointsSpent",
         lua.create_function(|lua, args: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             if flag_arg(args.front()) {
                 return Ok(0);
             }
@@ -770,7 +788,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if flag_arg(args.get(3)) {
                 return Ok(());
             }
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let group = group_arg(&model, &arg(&args, 4));
             let (Ok(t), Ok(i)) = (usize::try_from(tab - 1), usize::try_from(index - 1)) else {
                 return Ok(());
@@ -805,7 +823,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if flag_arg(args.get(1)) {
                 return Ok(());
             }
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let group = group_arg(&model, &arg(&args, 2));
             reset_preview(&mut model, group, usize::try_from(tab - 1).ok(), tab);
             Ok(())
@@ -817,7 +835,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if flag_arg(args.front()) {
                 return Ok(());
             }
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let group = group_arg(&model, &arg(&args, 1));
             reset_preview(&mut model, group, None, 0);
             Ok(())
@@ -832,7 +850,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if flag_arg(args.front()) {
                 return Ok(());
             }
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let group = model.talents.active_group;
             if group_preview_spent(&model, group) <= 0 {
                 return Ok(());
@@ -866,7 +884,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if flag_arg(args.get(2)) {
                 return Ok(());
             }
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let Some(t) = talent_at(&model, tab, index) else {
                 return Ok(());
             };
@@ -885,7 +903,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ConfirmTalentWipe",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.talent_wipe_confirms += 1;
             Ok(())
         })?,
@@ -895,7 +913,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CheckTalentMasterDist",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.talent_master_pending)
         })?,
     )?;
@@ -905,7 +925,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "UnitCharacterPoints",
         lua.create_function(|lua, _unit: String| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let (cp1, cp2) = model.talents.points;
             Ok((i64::from(cp1), i64::from(cp2)))
         })?,
@@ -947,7 +969,9 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetTalent",
         lua.create_function(|lua, (this, args): (Table, MultiValue)| {
             let (display, lines) = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 let (tab, index) = (
                     int_arg(&args, 0).unwrap_or(0),
                     int_arg(&args, 1).unwrap_or(0),

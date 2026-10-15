@@ -142,30 +142,30 @@ impl super::UiScript {
     /// Drain the abandons, quest ids marked by `SetAbandonQuest` and confirmed by
     /// `AbandonQuest()`; the app sends each slot's `CMSG_QUESTLOG_REMOVE_QUEST`.
     pub fn take_quest_log_abandons(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().quest_log_abandons)
+        drain_field!(self, quest_log_abandons)
     }
 
     /// Drain the shares `QuestLogPushQuest()` queued, as quest ids; the app sends one
     /// `CMSG_PUSHQUESTTOPARTY` each.
     pub fn take_quest_log_pushes(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().quest_log_pushes)
+        drain_field!(self, quest_log_pushes)
     }
 
     /// Drain the `ConfirmAcceptQuest()` calls as a count: the verb carries no quest id, so the app
     /// answers the confirm it holds.
     pub fn take_quest_confirms(&mut self) -> u32 {
-        std::mem::take(&mut self.model_mut().quest_confirms)
+        drain_field!(self, quest_confirms)
     }
 
     /// Drain `CollapseQuestHeader`/`ExpandQuestHeader` as `(1-based index, collapse)`; index 0
     /// is every header, as the collapse-all button passes (`QuestLogFrame.lua:557`, `:561`).
     pub fn take_quest_log_collapses(&mut self) -> Vec<(u32, bool)> {
-        std::mem::take(&mut self.model_mut().quest_log_collapses)
+        drain_field!(self, quest_log_collapses)
     }
 
     /// Set the selection, re-pointed by the app at the same quest when a rebuild shifts the rows.
     pub fn set_quest_log_selection(&mut self, i: u32) {
-        self.model_mut().quest_log_selection = i;
+        set_field!(self, quest_log_selection, i);
     }
 
     /// Push the server clock in unix seconds each frame: the app's `SMSG_QUERY_TIME_RESPONSE`
@@ -174,7 +174,7 @@ impl super::UiScript {
     /// step mid-session (an NTP correction) jumps the reference's countdown but not ours, because
     /// the step changes no time the quest has left.
     pub fn set_server_unix_time(&mut self, unix_secs: f64) {
-        self.model_mut().server_unix_time = Some(unix_secs);
+        self.model_ref().server_unix_time.set(Some(unix_secs));
     }
 }
 
@@ -207,7 +207,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumQuestLogEntries",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let entries = &model.quest_log.entries;
             Ok((entries.len() as i64, i64::from(model.quest_log.num_quests)))
         })?,
@@ -222,7 +224,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, i: Value| {
             let n = number_arg(lua, i, "Usage: GetQuestLogTitle(index)")?;
             let entry = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 usize::try_from(n)
                     .ok()
                     .and_then(|n| n.checked_sub(1))
@@ -271,7 +275,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetQuestLogGroupNum",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let index = model.quest_log_selection as usize;
             Ok(index
                 .checked_sub(1)
@@ -284,7 +290,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetDailyQuestsCompleted",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(model.quest_log.daily_completed))
         })?,
     )?;
@@ -293,7 +301,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SelectQuestLogEntry",
         lua.create_function(|lua, i: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.quest_log_selection = i;
             Ok(())
         })?,
@@ -303,7 +311,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetQuestLogSelection",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(model.quest_log_selection))
         })?,
     )?;
@@ -312,7 +322,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetQuestLogQuestText",
         lua.create_function(|lua, ()| {
             let (desc, obj) = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model
                     .selected_quest_detail()
                     .map(|d| (d.description.clone(), d.objectives_text.clone()))
@@ -330,7 +342,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumQuestLeaderBoards",
         lua.create_function(|lua, i: Option<u32>| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let index = i.unwrap_or(model.quest_log_selection) as usize;
             Ok(index
                 .checked_sub(1)
@@ -345,7 +359,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetQuestLogLeaderBoard",
         lua.create_function(|lua, (i, quest): (usize, Option<u32>)| {
             let line = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 let index = quest.unwrap_or(model.quest_log_selection) as usize;
                 index
                     .checked_sub(1)
@@ -373,7 +389,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.globals().set(
             name,
             lua.create_function(move |lua, ()| {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 Ok(model.selected_quest_detail().map(pick).unwrap_or(0))
             })?,
         )
@@ -395,7 +413,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetQuestLogRewardTitle",
         lua.create_function(|lua, ()| {
             let title = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model
                     .selected_quest_detail()
                     .and_then(|d| d.extras.title.clone())
@@ -412,7 +432,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "ProcessQuestLogRewardFactions",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let factions = model
                 .selected_quest_detail()
                 .map(|d| d.extras.factions.clone())
@@ -424,7 +444,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetNumQuestLogRewardFactions",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.quest_reward_factions.len() as i64)
         })?,
     )?;
@@ -432,7 +454,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetQuestLogRewardFactionInfo",
         lua.create_function(|lua, i: Value| {
             let n = number_arg(lua, i, "Usage: GetQuestLogRewardFactionInfo(index)")?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let (id, amount) = usize::try_from(n)
                 .ok()
                 .and_then(|n| n.checked_sub(1))
@@ -463,7 +487,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .ok_or_else(|| mlua::Error::runtime("Usage: GetQuestLogRewardInfo(index)"))?;
                 let row = i.trunc() as i64 - 1;
                 let item = {
-                    let model = lua.app_data_ref::<Model>().expect("model app_data");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
                     model.selected_quest_detail().and_then(|d| {
                         usize::try_from(row)
                             .ok()
@@ -504,7 +530,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetQuestLogItemLink",
         lua.create_function(|lua, (kind, index): (String, usize)| {
             let link = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.selected_quest_detail().and_then(|d| {
                     let v = match kind.as_str() {
                         "choice" => &d.choices,
@@ -529,7 +557,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsCurrentQuestFailed",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let sel = model.quest_log_selection as usize;
             Ok(flag(
                 sel.checked_sub(1)
@@ -543,7 +573,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CollapseQuestHeader",
         lua.create_function(|lua, i: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.quest_log_collapses.push((i, true));
             Ok(())
         })?,
@@ -551,7 +581,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ExpandQuestHeader",
         lua.create_function(|lua, i: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.quest_log_collapses.push((i, false));
             Ok(())
         })?,
@@ -564,7 +594,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SetAbandonQuest",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let sel = model.quest_log_selection as usize;
             model.quest_log_abandon_mark = sel
                 .checked_sub(1)
@@ -580,7 +610,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetAbandonQuestName",
         lua.create_function(|lua, ()| {
             let title = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 let mark = model.quest_log_abandon_mark;
                 model
                     .quest_log
@@ -603,7 +635,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "AbandonQuest",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let mark = model.quest_log_abandon_mark;
             let in_log = mark != 0
                 && (model
@@ -627,8 +659,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetQuestTimers",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
-            let now = model.server_unix_time;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let now = model.server_unix_time.get();
             Ok(MultiValue::from_vec(
                 model
                     .quest_log
@@ -646,8 +680,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetQuestIndexForTimer",
         lua.create_function(|lua, t: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
-            let now = model.server_unix_time;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let now = model.server_unix_time.get();
             let index = t.checked_sub(1).and_then(|n| {
                 model
                     .quest_log
@@ -670,11 +706,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetQuestLogTimeLeft",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let left = (model.quest_log_selection as usize)
                 .checked_sub(1)
                 .and_then(|n| model.quest_log.entries.get(n))
-                .and_then(|e| seconds_left(e, model.server_unix_time));
+                .and_then(|e| seconds_left(e, model.server_unix_time.get()));
             Ok(match left {
                 // Clamped where the lists drop the row, as in the reference.
                 Some(s) => Value::Integer(s.max(0)),
@@ -689,7 +727,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetQuestLogRewardSpell",
         lua.create_function(|lua, ()| {
             let spell = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model
                     .selected_quest_detail()
                     .and_then(|d| d.reward_spell.clone())
@@ -721,7 +761,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetQuestLogPushable",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(match selected_quest(&model).is_some_and(|e| e.pushable) {
                 true => Value::Integer(1),
                 false => Value::Nil,
@@ -731,7 +773,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "QuestLogPushQuest",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             // The verb checks the party and the sharable bit itself (`0x4e13a6`), as a macro can
             // call it solo. The id is resolved now; a header's `quest_id` is 0 and never queues.
             if model.party.members.is_empty() {
@@ -752,14 +794,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumQuestWatches",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.quest_log_watched.len() as i64)
         })?,
     )?;
     g.set(
         "IsQuestWatched",
         lua.create_function(|lua, i: u32| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(
                 watch_id_at(&model, i).is_some_and(|id| model.quest_log_watched.contains(&id)),
             ))
@@ -768,7 +814,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "AddQuestWatch",
         lua.create_function(|lua, i: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if let Some(id) = watch_id_at(&model, i) {
                 if !model.quest_log_watched.contains(&id) && model.quest_log_watched.len() < 5 {
                     model.quest_log_watched.push(id);
@@ -780,7 +826,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "RemoveQuestWatch",
         lua.create_function(|lua, i: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if let Some(id) = watch_id_at(&model, i) {
                 model.quest_log_watched.retain(|w| *w != id);
             }
@@ -791,7 +837,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetQuestIndexForWatch",
         lua.create_function(|lua, w: usize| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let index = w
                 .checked_sub(1)
                 .and_then(|n| model.quest_log_watched.get(n))

@@ -92,7 +92,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     _ => None,
                 };
                 let (Some(w), Some(hgt)) = (num(&pair.0), num(&pair.1)) else {
-                    let model = lua.app_data_ref::<Model>().expect("model");
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model");
                     let who = model
                         .arena
                         .frame(h)
@@ -107,7 +109,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                         "Usage: {who}:{verb}({a}, {b})"
                     )));
                 };
-                let mut model = lua.app_data_mut::<Model>().expect("model");
+                let mut model = crate::script::model_mut_of(lua);
                 if let Some(f) = model.arena.frame_mut(h) {
                     if upper {
                         f.max_resize = (w, hgt);
@@ -122,7 +124,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             format!("Get{name}"),
             lua.create_function(move |lua, this: Table| {
                 let h = frame_handle_of(lua, &this)?;
-                let model = lua.app_data_ref::<Model>().expect("model");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model");
                 let (w, hgt) = model.arena.frame(h).map_or((0.0, 0.0), |f| {
                     if upper {
                         f.max_resize
@@ -142,7 +146,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetUserPlaced",
         lua.create_function(|lua, (this, flag): (Table, bool)| {
             let h = frame_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             let ok = model
                 .arena
                 .frame(h)
@@ -168,7 +172,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "StartMoving",
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             start_moving(&mut model, h)
         })?,
     )?;
@@ -179,7 +183,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "StartSizing",
         lua.create_function(|lua, (this, point): (Table, Option<String>)| {
             let h = frame_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             if !model.arena.frame(h).is_some_and(|f| f.resizable) {
                 return Err(not_flagged(&model, h, "resizable"));
             }
@@ -222,7 +226,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "StopMovingOrSizing",
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model");
+            let mut model = crate::script::model_mut_of(lua);
             if model.sizing.is_some_and(|sz| sz.frame == h) {
                 model.sizing = None;
             }
@@ -248,7 +252,7 @@ enum Flag {
 
 fn set_flag(lua: &Lua, this: &Table, which: Flag, value: bool) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
-    let mut model = lua.app_data_mut::<Model>().expect("model");
+    let mut model = crate::script::model_mut_of(lua);
     if let Some(f) = model.arena.frame_mut(h) {
         match which {
             Flag::Movable => f.movable = value,
@@ -262,7 +266,9 @@ fn set_flag(lua: &Lua, this: &Table, which: Flag, value: bool) -> mlua::Result<(
 /// `IsMovable`/`IsResizable`/`IsUserPlaced`: 1 or nil, never a boolean.
 fn get_flag(lua: &Lua, this: &Table, which: Flag) -> mlua::Result<Value> {
     let h = frame_handle_of(lua, this)?;
-    let model = lua.app_data_ref::<Model>().expect("model");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
     Ok(crate::script::binding_abi::flag(
         model.arena.frame(h).is_some_and(|f| match which {
             Flag::Movable => f.movable,

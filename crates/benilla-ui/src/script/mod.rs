@@ -12,6 +12,62 @@
 //! state lives in the registry under named keys, fetched per call; [`Model`] is plain data in
 //! `lua.app_data`, borrowed briefly and released before re-entering Lua.
 
+// ── Host-side drains and writes that keep the mutation count where it stood ──
+//
+// The app polls dozens of these every frame. Each reads first through `model_ref`, which never
+// counts as a mutation ([`ModelCell`]), and takes the mutable borrow only with something to do.
+
+/// Drain a `Default + PartialEq` field (a `Vec`, a counter, a flag, an `Option`): read empty,
+/// nothing is taken.
+macro_rules! drain_field {
+    ($self:expr, $($field:ident).+) => {{
+        if crate::script::is_default(&$self.model_ref().$($field).+) {
+            Default::default()
+        } else {
+            std::mem::take(&mut $self.model_mut().$($field).+)
+        }
+    }};
+}
+
+/// `drain_field!`'s read: the field at its default, nothing to take.
+pub(crate) fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
+/// Drain an `Option` field whose payload has no `PartialEq`.
+macro_rules! drain_option {
+    ($self:expr, $($field:ident).+) => {{
+        if $self.model_ref().$($field).+.is_none() {
+            None
+        } else {
+            $self.model_mut().$($field).+.take()
+        }
+    }};
+}
+
+/// Drain a set or map field into a `Vec`.
+macro_rules! drain_set {
+    ($self:expr, $($field:ident).+) => {{
+        if $self.model_ref().$($field).+.is_empty() {
+            Vec::new()
+        } else {
+            std::mem::take(&mut $self.model_mut().$($field).+)
+                .into_iter()
+                .collect()
+        }
+    }};
+}
+
+/// Write a `PartialEq` field: an equal value is not written.
+macro_rules! set_field {
+    ($self:expr, $($field:ident).+, $value:expr) => {{
+        let value = $value;
+        if $self.model_ref().$($field).+ != value {
+            $self.model_mut().$($field).+ = value;
+        }
+    }};
+}
+
 mod action;
 mod action_bar_toggles;
 mod addon_message;
@@ -101,6 +157,7 @@ mod minimap;
 pub mod nameplate;
 pub use nameplate::{PlateBitWrites, PlateGeometry, PlateState, PLATE_BIT_ENEMY, PLATE_BIT_FRIEND};
 mod macro_options;
+
 mod model;
 mod modelframe;
 mod modified_click;
@@ -238,8 +295,8 @@ pub use mail::{
 pub use measure::TextMeasure;
 pub use merchant::{ItemStatsHead, MerchantItem, MerchantState, RepairCosts};
 pub(crate) use minimap::apply_model_attrs as apply_minimap_model_attrs;
-pub(crate) use model::Model;
 pub use model::{FontProbe, MacroIconSource, TextureProbe, TextureSizeProbe, WorldLocProjector};
+pub(crate) use model::{Model, ModelCell};
 pub use party::{PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo};
 pub use pet::{PetActionView, PetStats};
 pub use pvp::{decorated_name, pvp_name_global_keys, HonorState, InspectHonorData, RankTitle};
@@ -512,6 +569,219 @@ pub const INSTRUCTION_HOOK_STEP: u32 = 1_000_000;
 /// The chunk name the 1.12 client gives an addon's file, `Interface\AddOns\<Folder>\<File>`,
 /// backslashed and with the file, because addons parse it: `FuBarPlugin-2.0` finds its folder with
 /// the greedy `\\AddOns\\(.*)\\` over `debugstack`, which needs the file after the folder.
+/// The host's mutable borrow of the model: [`ModelCell`] through mlua's app-data borrow. Under
+/// `WOW_UI_EPOCH=1` the borrow's end charges its caller what the count moved.
+pub(crate) struct ModelGuard<'a> {
+    inner: mlua::AppDataRefMut<'a, ModelCell>,
+    at: u64,
+    who: (&'static str, u32),
+}
+
+impl std::ops::Deref for ModelGuard<'_> {
+    type Target = ModelCell;
+    fn deref(&self) -> &ModelCell {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for ModelGuard<'_> {
+    fn deref_mut(&mut self) -> &mut ModelCell {
+        &mut self.inner
+    }
+}
+
+impl Drop for ModelGuard<'_> {
+    fn drop(&mut self) {
+        if epoch_trace::enabled() {
+            let now = self.inner.epoch();
+            if now > self.at {
+                epoch_trace::note_host(self.who, now - self.at);
+            }
+        }
+    }
+}
+
+/// [`ModelGuard`] for a caller holding `&Lua` (a binding): the model's mutable borrow.
+#[track_caller]
+pub(crate) fn model_mut_of(lua: &mlua::Lua) -> ModelGuard<'_> {
+    let inner = lua.app_data_mut::<ModelCell>().expect("model app_data set");
+    let at = inner.epoch();
+    let l = std::panic::Location::caller();
+    ModelGuard {
+        inner,
+        at,
+        who: (l.file(), l.line()),
+    }
+}
+
+/// `WOW_UI_EPOCH=1`: who moves the model's mutation count ([`ModelCell`]) every frame. Host
+/// callers of `model_mut` by file and line, and `OnUpdate` handlers by frame, with the count
+/// each moved; a report every two seconds of UI time, top entries first.
+pub(crate) mod epoch_trace {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    pub(crate) fn enabled() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var("WOW_UI_EPOCH").as_deref() == Ok("1"))
+    }
+
+    #[derive(Default)]
+    struct Trace {
+        /// Host callers of `model_mut` by phase, with the count each borrow moved by its end.
+        hosts: HashMap<(&'static str, &'static str, u32), u64>,
+        /// The app's phase label (`UiScript::epoch_trace_phase`), keyed into `hosts`.
+        phase: &'static str,
+        handlers: HashMap<u32, u64>,
+        /// Engine verbs by the name the Lua call site used, with the count each moved.
+        verbs: HashMap<String, u64>,
+        /// The tick's own legs by name, with the count each moved.
+        leg_names: HashMap<&'static str, u64>,
+        /// Host-fired events by name and phase, with the count their handlers moved.
+        events: HashMap<(&'static str, String), u64>,
+        /// The VM call stack as the hook sees it: `(verb name or None for Lua, count at entry)`.
+        stack: Vec<(Option<String>, u64)>,
+        legs: u64,
+        frames: u64,
+        last_print: f64,
+    }
+
+    /// The VM call hook while a tick's handlers run: a C function's return attributes the
+    /// count it moved to the name its call site used.
+    pub(crate) fn hook(lua: &mlua::Lua, debug: &mlua::Debug) {
+        let epoch = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .map(|m| m.epoch())
+            .unwrap_or(0);
+        match debug.event() {
+            mlua::DebugEvent::Call => {
+                let name = (debug.source().what == "C").then(|| {
+                    debug
+                        .names()
+                        .name
+                        .map(|n| n.into_owned())
+                        .unwrap_or_else(|| "?".to_string())
+                });
+                TRACE.with(|t| t.borrow_mut().stack.push((name, epoch)));
+            }
+            mlua::DebugEvent::Ret | mlua::DebugEvent::TailCall => {
+                TRACE.with(|t| {
+                    let mut t = t.borrow_mut();
+                    if let Some((Some(name), at)) = t.stack.pop() {
+                        let moved = epoch.wrapping_sub(at);
+                        if moved > 0 {
+                            *t.verbs.entry(name).or_default() += moved;
+                        }
+                    }
+                });
+            }
+            _ => {}
+        }
+    }
+
+    thread_local! {
+        static TRACE: RefCell<Trace> = RefCell::new(Trace::default());
+    }
+
+    pub(crate) fn note_host(who: (&'static str, u32), moved: u64) {
+        TRACE.with(|t| {
+            let mut t = t.borrow_mut();
+            let phase = t.phase;
+            *t.hosts.entry((phase, who.0, who.1)).or_default() += moved;
+        });
+    }
+
+    pub(crate) fn set_phase(phase: &'static str) {
+        TRACE.with(|t| t.borrow_mut().phase = phase);
+    }
+
+    pub(crate) fn note_handler(frame_id: u32, moved: u64) {
+        if moved > 0 {
+            TRACE.with(|t| *t.borrow_mut().handlers.entry(frame_id).or_default() += moved);
+        }
+    }
+
+    /// The tick's own legs, outside any handler.
+    pub(crate) fn note_legs(moved: u64) {
+        TRACE.with(|t| t.borrow_mut().legs += moved);
+    }
+
+    /// A host-fired event, charged what its handlers moved.
+    pub(crate) fn note_event(event: &str, moved: u64) {
+        if moved > 0 {
+            TRACE.with(|t| {
+                let mut t = t.borrow_mut();
+                let phase = t.phase;
+                *t.events.entry((phase, event.to_string())).or_default() += moved;
+            });
+        }
+    }
+
+    /// One named leg of the tick.
+    pub(crate) fn note_leg(name: &'static str, moved: u64) {
+        if moved > 0 {
+            TRACE.with(|t| *t.borrow_mut().leg_names.entry(name).or_default() += moved);
+        }
+    }
+
+    /// Print and clear every two seconds; `name_of` resolves a frame id for the report.
+    pub(crate) fn report(now: f64, name_of: impl Fn(u32) -> String) {
+        TRACE.with(|t| {
+            let mut t = t.borrow_mut();
+            t.frames += 1;
+            if now - t.last_print < 2.0 {
+                return;
+            }
+            let frames = t.frames.max(1) as f64;
+            eprintln!(
+                "[ui-epoch] {} frames: tick legs {:.1}/frame",
+                t.frames,
+                t.legs as f64 / frames
+            );
+            let mut hosts: Vec<_> = t.hosts.iter().map(|(k, v)| (*v, *k)).collect();
+            hosts.sort_unstable_by_key(|e| std::cmp::Reverse(e.0));
+            for (n, (phase, file, line)) in hosts.iter().take(25) {
+                eprintln!(
+                    "[ui-epoch]   host {:8.1}/frame  [{phase}] {file}:{line}",
+                    *n as f64 / frames
+                );
+            }
+            let mut events: Vec<_> = t.events.iter().map(|(k, v)| (*v, k.clone())).collect();
+            events.sort_unstable_by_key(|e| std::cmp::Reverse(e.0));
+            for (n, (phase, name)) in events.iter().take(20) {
+                eprintln!(
+                    "[ui-epoch]   event {:8.1}/frame  [{phase}] {name}",
+                    *n as f64 / frames
+                );
+            }
+            let mut legs: Vec<_> = t.leg_names.iter().map(|(k, v)| (*v, *k)).collect();
+            legs.sort_unstable_by_key(|e| std::cmp::Reverse(e.0));
+            for (n, name) in legs {
+                eprintln!("[ui-epoch]   leg  {:8.1}/frame  {name}", n as f64 / frames);
+            }
+            let mut verbs: Vec<_> = t.verbs.iter().map(|(k, v)| (*v, k.clone())).collect();
+            verbs.sort_unstable_by_key(|e| std::cmp::Reverse(e.0));
+            for (n, name) in verbs.iter().take(30) {
+                eprintln!("[ui-epoch]   verb {:8.1}/frame  {name}", *n as f64 / frames);
+            }
+            let mut handlers: Vec<_> = t.handlers.iter().map(|(k, v)| (*v, *k)).collect();
+            handlers.sort_unstable_by_key(|e| std::cmp::Reverse(e.0));
+            for (n, id) in handlers.iter().take(25) {
+                eprintln!(
+                    "[ui-epoch]   OnUpdate {:8.1}/frame  {}",
+                    *n as f64 / frames,
+                    name_of(*id)
+                );
+            }
+            *t = Trace {
+                last_print: now,
+                phase: t.phase,
+                ..Trace::default()
+            };
+        });
+    }
+}
+
 pub fn addon_chunk_name(folder: &str, file: &str) -> String {
     // `@` marks the chunk as a file, so a traceback prints the path plainly.
     format!("@Interface\\AddOns\\{folder}\\{}", file.replace('/', "\\"))
@@ -521,7 +791,7 @@ impl UiScript {
     /// Build a fully sandboxed, stdlib- and object-model-equipped host.
     pub fn new() -> mlua::Result<UiScript> {
         let lua = Lua::new();
-        lua.set_app_data(Model::new());
+        lua.set_app_data(ModelCell::new(Model::new()));
         // Before anything can fire a handler and while no app-data borrow is held, as the
         // profiler's slot requires.
         handler_prof::install(&lua);
@@ -701,10 +971,10 @@ impl UiScript {
     /// from `GetScreenHeight()`, like the open-bag stack's column wrap, does not follow anchors.
     pub fn set_screen_size(&mut self, width: f32, height: f32) -> bool {
         let new = Rect::new(0.0, 0.0, height, width);
-        let mut model = self.model_mut();
-        if model.screen == new {
+        if self.model_ref().screen == new {
             return false;
         }
+        let mut model = self.model_mut();
         model.screen = new;
         model.touch_layout();
         drop(model);
@@ -716,6 +986,9 @@ impl UiScript {
     /// Push the modifier state behind `IsShiftKeyDown`/`IsControlKeyDown`/`IsAltKeyDown`; the app
     /// calls it before the frame's mouse events, so a click handler reads the state of its click.
     pub fn set_modifiers(&mut self, shift: bool, ctrl: bool, alt: bool) {
+        if self.model_ref().modifiers == (shift, ctrl, alt) {
+            return;
+        }
         let mut model = self.model_mut();
         model.modifiers = (shift, ctrl, alt);
     }
@@ -743,6 +1016,8 @@ impl UiScript {
     /// the field `Model:SetFacing` (`0x76dce0`) writes, so the arrow's `GetFacing()` reads it.
     pub fn set_minimap_player_facing(&mut self, facing: f32) {
         let mut model = self.model_mut();
+        let quiet = model.epoch();
+        let mut moved = false;
         let arrows: Vec<crate::widget::FrameHandle> = model
             .arena
             .minimap_kinds()
@@ -755,21 +1030,27 @@ impl UiScript {
         for h in arrows {
             if let Some(frame) = model.arena.frame_mut(h) {
                 if let KindState::Model(state) = &mut frame.kind_state {
-                    state.facing = facing;
+                    if state.facing != facing {
+                        state.facing = facing;
+                        moved = true;
+                    }
                 }
             }
+        }
+        if !moved {
+            model.set_epoch(quiet);
         }
     }
 
     /// Publish `Minimap:GetPingPosition()`'s offsets from the widget centre, as fractions of its
     /// side (x right, y up); the app recomputes them from the ping's world point each frame.
     pub fn set_minimap_ping(&mut self, ping: (f32, f32)) {
-        self.model_mut().minimap_ping = ping;
+        set_field!(self, minimap_ping, ping);
     }
 
     /// Drain a `Minimap:PingLocation(x, y)`: centre-relative offsets in UI units, x right, y up.
     pub fn take_minimap_ping_request(&mut self) -> Option<(f32, f32)> {
-        self.model_mut().minimap_ping_request.take()
+        drain_option!(self, minimap_ping_request)
     }
 
     /// `Minimap:SetMaskTexture`'s value from the first Minimap (the app draws one map), `None`
@@ -882,7 +1163,7 @@ impl UiScript {
     /// Drain the chat lines queued since the last call (a probe's, a host `SlashCmdList` row's), for
     /// the app to parse.
     pub fn take_chat_input(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.model_mut().chat_input)
+        drain_field!(self, chat_input)
     }
 
     /// Queue a line as if typed into the chat EditBox and submitted, for probes (`WOW_PROBE_CHAT`).
@@ -927,6 +1208,10 @@ impl UiScript {
     /// text of every resized EditBox and fire `OnScrollRangeChanged` for every shown ScrollFrame
     /// whose range moved ([`scrollframe::fire_range_changes`]).
     pub fn resolve(&mut self) {
+        // A resolve that solved nothing moved no rect and fired no size or range handler (both
+        // read the rects a solve wrote): the mutation count stands ([`ModelCell`]).
+        let quiet = self.visual_epoch();
+        let solves = self.model_ref().layout_solves;
         self.resolve_and_measure();
         event::fire_size_changes(&self.lua);
         // The EditBox's own `OnSizeChanged` (`0x77a8d0`) runs after the script fire and re-seats a
@@ -940,6 +1225,9 @@ impl UiScript {
         if scrollframe::fire_range_changes(&self.lua) {
             self.resolve_and_measure();
             event::fire_size_changes(&self.lua);
+        }
+        if self.model_ref().layout_solves == solves {
+            self.restore_epoch(quiet);
         }
     }
 
@@ -1045,11 +1333,18 @@ impl UiScript {
         // A started drag ends with `OnDragStop`, as the reference's release always ends it; dropped
         // silently, its `StopMovingOrSizing` never runs and the frame stays glued to the cursor.
         let abandoned = {
-            let mut model = self.model_mut();
-            cursor::abandon_drag(&mut model)
+            let quiet = self.visual_epoch();
+            let abandoned = cursor::abandon_drag(&mut self.model_mut());
+            if abandoned.is_none() {
+                self.restore_epoch(quiet);
+            }
+            abandoned
         };
         if let Some(source) = abandoned {
             self.fire_drag_stop(source);
+        }
+        if self.model_ref().mouse_down_on.is_empty() {
+            return;
         }
         let mut model = self.model_mut();
         let held: Vec<crate::widget::FrameHandle> = model.mouse_down_on.values().copied().collect();
@@ -1227,7 +1522,10 @@ impl UiScript {
 
     /// Drain the collected script errors.
     pub fn take_errors(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.model_mut().errors)
+        if self.model_ref().errors.is_empty() {
+            return Vec::new();
+        }
+        drain_field!(self, errors)
     }
 
     /// A snapshot of non-fatal host warnings (e.g. ignored `CreateFrame` templates).
@@ -1237,7 +1535,10 @@ impl UiScript {
 
     /// Drain the non-fatal host warnings, for the host to log.
     pub fn take_warnings(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.model_mut().warnings)
+        if self.model_ref().warnings.is_empty() {
+            return Vec::new();
+        }
+        drain_field!(self, warnings)
     }
 
     /// Report a script error the host caught outside the VM's dispatch (an addon file that failed
@@ -1260,7 +1561,10 @@ impl UiScript {
     /// batch, so the path cannot recurse. The call is [`stdlib::protected_call`]'s, so a raising
     /// handler costs no `_G` search.
     pub fn dispatch_script_errors_to_handler(&mut self) {
-        let pending = std::mem::take(&mut self.model_mut().pending_error_dispatch);
+        if self.model_ref().pending_error_dispatch.is_empty() {
+            return;
+        }
+        let pending = drain_field!(self, pending_error_dispatch);
         if pending.is_empty() {
             return;
         }
@@ -1301,16 +1605,45 @@ impl UiScript {
 
     // ── internals ────────────────────────────────────────────────────────────────────────────
 
-    fn model_ref(&self) -> mlua::AppDataRef<'_, Model> {
+    fn model_ref(&self) -> mlua::AppDataRef<'_, ModelCell> {
         self.lua
-            .app_data_ref::<Model>()
+            .app_data_ref::<ModelCell>()
             .expect("model app_data set")
     }
 
-    fn model_mut(&self) -> mlua::AppDataRefMut<'_, Model> {
-        self.lua
-            .app_data_mut::<Model>()
-            .expect("model app_data set")
+    /// A mutable borrow, which counts as a visual mutation ([`ModelCell`]).
+    #[track_caller]
+    fn model_mut(&self) -> ModelGuard<'_> {
+        let inner = self
+            .lua
+            .app_data_mut::<ModelCell>()
+            .expect("model app_data set");
+        let at = inner.epoch();
+        let l = std::panic::Location::caller();
+        ModelGuard {
+            inner,
+            at,
+            who: (l.file(), l.line()),
+        }
+    }
+
+    /// The model's mutation count ([`ModelCell::epoch`]): a frame on which it stands where the
+    /// last [`UiScript::extract`] read it has nothing new to extract.
+    pub fn visual_epoch(&self) -> u64 {
+        self.model_ref().epoch()
+    }
+
+    /// `WOW_UI_EPOCH=1`: name the app phase the host borrows that follow belong to.
+    pub fn epoch_trace_phase(&self, phase: &'static str) {
+        if epoch_trace::enabled() {
+            epoch_trace::set_phase(phase);
+        }
+    }
+
+    /// Put the mutation count back to `epoch` ([`ModelCell::set_epoch`]): the caller took a
+    /// mutable borrow since and changed nothing the extract reads.
+    fn restore_epoch(&self, epoch: u64) {
+        self.model_mut().set_epoch(epoch);
     }
 
     fn push_error(&self, e: mlua::Error) {

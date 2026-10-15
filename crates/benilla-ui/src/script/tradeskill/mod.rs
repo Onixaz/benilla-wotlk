@@ -162,12 +162,12 @@ impl super::UiScript {
     /// Drains the `(spell id, count)` crafts `DoTradeSkill` queued; the app's repeat loop
     /// (`0x4fd7b0`) sends one cast per item.
     pub fn take_trade_skill_dos(&mut self) -> Vec<(u32, u32)> {
-        std::mem::take(&mut self.model_mut().trade_skill_dos)
+        drain_field!(self, trade_skill_dos)
     }
 
     /// Whether `CloseTradeSkill` ran since the last drain; the close sends no packet.
     pub fn take_trade_skill_close(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().trade_skill_close)
+        drain_field!(self, trade_skill_close)
     }
 
     /// Whether a filter or fold changed since the last drain. The reference re-sorts and fires
@@ -175,6 +175,6 @@ impl super::UiScript {
     /// the app fires it the same frame, and the stock filter and collapse-all clicks repaint only
     /// off that event.
     pub fn take_trade_skill_touched(&mut self) -> bool {
-        std::mem::take(&mut self.model_mut().trade_skill_touched)
+        drain_field!(self, trade_skill_touched)
     }
 }

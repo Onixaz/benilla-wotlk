@@ -4,21 +4,20 @@
 
 use mlua::Lua;
 
-use super::Model;
-
 impl super::UiScript {
     /// `ConfirmBinder()` calls since the last drain, each a `CMSG_BINDER_ACTIVATE`; a count, since
     /// the app holds the innkeeper's guid.
     pub fn take_binder_confirms(&mut self) -> u32 {
-        std::mem::take(&mut self.model_mut().binder_confirms)
+        drain_field!(self, binder_confirms)
     }
 
     /// Push whether a bind question is pending with the innkeeper still in range.
     pub fn set_binder_pending(&mut self, pending: bool) {
-        let mut model = self.model_mut();
-        if model.binder_pending != pending {
-            model.binder_pending = pending;
+        if self.model_ref().binder_pending == pending {
+            return;
         }
+        let mut model = self.model_mut();
+        model.binder_pending = pending;
     }
 }
 
@@ -30,7 +29,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ConfirmBinder",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.binder_confirms += 1;
             Ok(())
         })?,
@@ -41,7 +40,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CheckBinderDist",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.binder_pending)
         })?,
     )?;

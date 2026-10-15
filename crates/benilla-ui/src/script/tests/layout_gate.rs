@@ -3,12 +3,12 @@
 //! equal rects cannot tell a skip from a re-solve.
 
 use super::common::script;
-use crate::script::{Model, UiScript};
+use crate::script::UiScript;
 
 /// The mutation epoch (tier 1's input): bumped by every write into the layout read set.
 fn epoch(s: &UiScript) -> u64 {
     s.lua()
-        .app_data_ref::<Model>()
+        .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data")
         .layout_epoch
 }
@@ -16,7 +16,7 @@ fn epoch(s: &UiScript) -> u64 {
 /// How many times the fixpoint has run.
 fn solves(s: &UiScript) -> u64 {
     s.lua()
-        .app_data_ref::<Model>()
+        .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data")
         .layout_solves
 }
@@ -300,7 +300,10 @@ fn the_hover_re_enter_loop_neither_re_measures_nor_re_solves() {
 /// Whether tier 1, the mutation epoch, is closed: any converged resolve closes it, and a quiet
 /// frame then skips at a `u64` compare without hashing the fingerprint.
 fn tier_one_closed(s: &UiScript) -> bool {
-    let m = s.lua().app_data_ref::<Model>().expect("model app_data");
+    let m = s
+        .lua()
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     m.layout_epoch_resolved == Some(m.layout_epoch)
 }
 

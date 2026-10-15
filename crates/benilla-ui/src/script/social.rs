@@ -8,7 +8,6 @@ use mlua::{Lua, Value};
 
 use super::binding_abi::string_arg;
 use super::who_sort::WhoSortChain;
-use super::Model;
 
 /// One friend row in `GetFriendInfo`'s order; offline, the level is 0 and class and area empty.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -88,12 +87,12 @@ pub enum SocialRequest {
 impl super::UiScript {
     /// Replace the social snapshot; firing `FRIENDLIST_UPDATE` and kin is the app's job.
     pub fn set_social(&mut self, state: SocialState) {
-        self.model_mut().social = state;
+        set_field!(self, social, state);
     }
 
     /// Drain the social intents queued since the last call.
     pub fn take_social_requests(&mut self) -> Vec<SocialRequest> {
-        std::mem::take(&mut self.model_mut().social_requests)
+        drain_field!(self, social_requests)
     }
 }
 
@@ -106,7 +105,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumFriends",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.social.friends.len() as i64)
         })?,
     )?;
@@ -116,7 +117,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetFriendInfo",
         lua.create_function(|lua, index: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(friend) = friend_at(&model.social.friends, index) else {
                 return Ok((
                     Value::Nil,
@@ -145,7 +148,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSelectedFriend",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(model.social.selected_friend))
         })?,
     )?;
@@ -155,7 +160,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SetSelectedFriend",
         lua.create_function(|lua, index: i64| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let index = clamp_index(index, model.social.friends.len());
             model.social.selected_friend = index;
             model
@@ -171,7 +176,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetLookingForGroup",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(mlua::MultiValue::from_vec(vec![
                 Value::Nil,
                 Value::Nil,
@@ -217,7 +224,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 },
                 _ => None,
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let mut changed = false;
             if model.lfg_slots != slots {
                 model.lfg_slots = slots;
@@ -254,7 +261,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ShowFriends",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.social_requests.push(SocialRequest::RefreshFriends);
             Ok(())
         })?,
@@ -266,7 +273,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "AddFriend",
         lua.create_function(|lua, name: String| {
             if !name.trim().is_empty() {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model.social_requests.push(SocialRequest::AddFriend(name));
             }
             Ok(())
@@ -287,7 +294,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 _ => None,
             };
             if let Some(request) = request {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 model.social_requests.push(request);
             }
             Ok(())
@@ -299,7 +306,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumIgnores",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.social.ignores.len() as i64)
         })?,
     )?;
@@ -307,7 +316,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetIgnoreName",
         lua.create_function(|lua, index: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let name = usize::try_from(index - 1)
                 .ok()
                 .and_then(|i| model.social.ignores.get(i));
@@ -322,14 +333,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSelectedIgnore",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(i64::from(model.social.selected_ignore))
         })?,
     )?;
     g.set(
         "SetSelectedIgnore",
         lua.create_function(|lua, index: i64| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let index = clamp_index(index, model.social.ignores.len());
             model.social.selected_ignore = index;
             model
@@ -351,7 +364,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             global,
             lua.create_function(move |lua, name: String| {
                 if !name.trim().is_empty() {
-                    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                    let mut model = crate::script::model_mut_of(lua);
                     model.social_requests.push(make(name));
                 }
                 Ok(())
@@ -364,7 +377,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumWhoResults",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok((
                 model.social.who.len() as i64,
                 i64::from(model.social.who_total),
@@ -375,7 +390,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetWhoInfo",
         lua.create_function(|lua, index: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let row = usize::try_from(index - 1)
                 .ok()
                 .and_then(|i| model.social.who.get(i));
@@ -403,7 +420,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SendWho",
         lua.create_function(|lua, filter: Option<String>| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model
                 .social_requests
                 .push(SocialRequest::Who(filter.unwrap_or_default()));
@@ -421,8 +438,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, sort_type: Value| {
             let sort_type = string_arg(lua, sort_type, "Usgae: SortWho(\"type\")")?;
             {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
-                let model = &mut *model;
+                let mut model = crate::script::model_mut_of(lua);
+                let model: &mut crate::script::Model = &mut model;
                 model.social.who_sort.promote(&sort_type);
                 model.social.who_sort.sort(&mut model.social.who);
                 model
@@ -444,7 +461,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Value::Number(n) => n != 0.0,
                 _ => true,
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.social_requests.push(SocialRequest::SetWhoToUi(on));
             Ok(())
         })?,

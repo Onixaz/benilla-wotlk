@@ -12,7 +12,6 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::bool_or_default;
-use super::Model;
 
 /// Toggle bits the bindings read and write, four both ways (setter `0x4e770e`, getter `0x4e76cd`).
 const ACTION_BAR_TOGGLE_BITS: u32 = 4;
@@ -20,7 +19,7 @@ const ACTION_BAR_TOGGLE_BITS: u32 = 4;
 impl super::UiScript {
     /// Push the server's `PLAYER_FIELD_BYTES` byte 2, the only way this value moves.
     pub fn set_action_bar_toggles(&mut self, toggles: u8) {
-        self.model_mut().action_bar_toggles = Some(toggles);
+        set_field!(self, action_bar_toggles, Some(toggles));
     }
 
     /// The last pushed byte. Lua reads `None` as a zero byte, four `nil`s, as the reference does
@@ -32,7 +31,7 @@ impl super::UiScript {
     /// Drain the queued `CMSG_SET_ACTIONBAR_TOGGLES` payloads, one per `SetActionBarToggles` call:
     /// the binding has no did-it-change test and no connection check, so two calls are two packets.
     pub fn take_action_bar_toggle_sends(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.model_mut().action_bar_toggle_sends)
+        drain_field!(self, action_bar_toggle_sends)
     }
 }
 
@@ -46,7 +45,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetActionBarToggles",
         lua.create_function(|lua, ()| {
             let byte = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.action_bar_toggles.unwrap_or(0)
             };
             let bit = |i: u32| {
@@ -73,7 +74,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     packed |= 1 << i;
                 }
             }
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.action_bar_toggle_sends.push(packed);
             Ok(())
         })?,

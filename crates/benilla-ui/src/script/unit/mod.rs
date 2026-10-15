@@ -5,7 +5,7 @@
 
 use mlua::Lua;
 
-use super::{Model, NearestMode, ScriptCall};
+use super::{NearestMode, ScriptCall};
 
 /// A selection ask from Lua, queued in call order for the app to resolve and commit. The reference
 /// routes `TargetUnit`, `AssistUnit` and `TargetLastEnemy` through one helper (`0x489a40`: commit,
@@ -363,7 +363,7 @@ impl super::UiScript {
 
     /// Push the player's copper (`PLAYER_FIELD_COINAGE`), read by `GetMoney`.
     pub fn set_money(&mut self, copper: u64) {
-        self.model_mut().money = copper;
+        set_field!(self, money, copper);
     }
 
     /// Push `PLAYER_XP` and `PLAYER_NEXT_LEVEL_XP`, private fields that `UnitXP` and `UnitXPMax`
@@ -395,7 +395,7 @@ impl super::UiScript {
     /// Push `GetBillingTimeRested()`'s minutes, from the `SMSG_AUTH_RESPONSE` that admitted the
     /// session; nothing else on the wire writes it.
     pub fn set_billing_time_rested(&mut self, minutes: u32) {
-        self.model_mut().billing_time_rested = minutes;
+        set_field!(self, billing_time_rested, minutes);
     }
 
     /// Enter the UI-load sound-suppression scope (`0x458f50`): a depth every name-keyed
@@ -413,7 +413,7 @@ impl super::UiScript {
 
     /// Push whether a cinematic is playing, `InCinematic()`'s answer.
     pub fn set_in_cinematic(&mut self, playing: bool) {
-        self.model_mut().in_cinematic = playing;
+        set_field!(self, in_cinematic, playing);
     }
 
     /// Push `Exhaustion.dbc`'s (rest state, localized name, factor) rows, read as `0x48d350` and
@@ -471,7 +471,7 @@ impl super::UiScript {
     /// Drain `DropItemOnUnit`'s tokens; on the pet the app casts the learned Feed Pet spell at
     /// the held item (`0x48d960`).
     pub fn take_drop_item_on_unit(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.model_mut().drop_item_on_unit)
+        drain_field!(self, drop_item_on_unit)
     }
 
     /// Take the `SpellTargetUnit` calls out of the call stream.
@@ -501,7 +501,9 @@ fn with_unit<T>(
     default: T,
     f: impl FnOnce(&UnitState) -> T,
 ) -> mlua::Result<T> {
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     Ok(match token.as_ref().and_then(|t| model.unit(t)) {
         Some(u) => f(u),
         None => default,
@@ -516,7 +518,9 @@ fn with_unit<T>(
 /// direction fed (party, pet) answers its own; a pair without the player is not built and
 /// answers `a`'s reaction toward the player. 0 is an unfed reaction and answers `None` too.
 fn pair_reaction(lua: &Lua, a: &str, b: &str) -> Option<u8> {
-    let model = lua.app_data_ref::<Model>().expect("model app_data");
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
     let (ua, ub) = (model.unit(a)?, model.unit(b)?);
     let player = model.unit_guids.player;
     let is_player = |token: &str, u: &UnitState| {

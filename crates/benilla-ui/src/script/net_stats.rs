@@ -5,13 +5,11 @@
 
 use mlua::Lua;
 
-use super::Model;
-
 impl super::UiScript {
     /// Push the average round trip in ms; `None`, before the first pong, reads 0, as the reference
     /// reports an unmeasured connection.
     pub fn set_latency_ms(&mut self, ms: Option<u32>) {
-        self.model_mut().net_latency_ms = ms.unwrap_or(0);
+        set_field!(self, net_latency_ms, ms.unwrap_or(0));
     }
 }
 
@@ -20,7 +18,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetNetStats",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok((0.0_f64, 0.0_f64, i64::from(model.net_latency_ms)))
         })?,
     )

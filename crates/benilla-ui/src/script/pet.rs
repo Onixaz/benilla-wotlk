@@ -169,11 +169,17 @@ impl super::UiScript {
     /// Push the pet's expiry on the `GetTime` clock, `None` for none: `SetPet` (`0x4bc7e0`)
     /// stores `OsTick() + duration` for each `SMSG_PET_SPELLS` whose duration is not 0, else 0.
     pub fn set_pet_expiry(&mut self, expiry: Option<f64>) {
-        self.model_mut().pet_bar.expiry = expiry;
+        set_field!(self, pet_bar.expiry, expiry);
     }
 
     /// Push the menu's two predicates, which move with the pet's `UNIT_FIELD_FLAGS`.
     pub fn set_pet_menu(&mut self, can_be_abandoned: bool, can_be_renamed: bool) {
+        {
+            let bar = &self.model_ref().pet_bar;
+            if bar.can_be_abandoned == can_be_abandoned && bar.can_be_renamed == can_be_renamed {
+                return;
+            }
+        }
         let bar = &mut self.model_mut().pet_bar;
         bar.can_be_abandoned = can_be_abandoned;
         bar.can_be_renamed = can_be_renamed;
@@ -190,12 +196,12 @@ impl super::UiScript {
 
     /// Drain the 1-based slot indices `TogglePetAutocast` queued.
     pub fn take_pet_autocast_toggles(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.model_mut().pet_autocast_toggles)
+        drain_field!(self, pet_autocast_toggles)
     }
 
     /// Drain the count of `PetStopAttack()` calls.
     pub fn take_pet_stop_attacks(&mut self) -> u32 {
-        std::mem::replace(&mut self.model_mut().pet_stop_attacks, 0)
+        drain_field!(self, pet_stop_attacks)
     }
 
     /// Take the one-shot orders (`PetAttack` and the rest) out of the call stream, each a packed
@@ -209,18 +215,24 @@ impl super::UiScript {
 
     /// Set the flag `HasFullControl` answers.
     pub fn set_player_control(&mut self, in_control: bool) {
-        self.model_mut().player_control = in_control;
+        set_field!(self, player_control, in_control);
     }
 
     /// Drain the drag's bar writes, already applied here: one `Vec` per `CMSG_PET_SET_ACTION` of
     /// one or two `(0-based position, packed word)` pairs. Send each whole: the server tells the
     /// two forms apart by body size.
     pub fn take_pet_set_actions(&mut self) -> Vec<Vec<(u32, u32)>> {
-        std::mem::take(&mut self.model_mut().pet_set_actions)
+        drain_field!(self, pet_set_actions)
     }
 
     /// Drain the `PetAbandon()` and `PetDismiss()` call counts, as `(abandons, dismisses)`.
     pub fn take_pet_gives_up(&mut self) -> (u32, u32) {
+        {
+            let m = self.model_ref();
+            if m.pet_abandons == 0 && m.pet_dismisses == 0 {
+                return (0, 0);
+            }
+        }
         let m = &mut *self.model_mut();
         (
             std::mem::replace(&mut m.pet_abandons, 0),
@@ -230,7 +242,7 @@ impl super::UiScript {
 
     /// Drain the names `PetRename(name)` queued, in order.
     pub fn take_pet_renames(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.model_mut().pet_renames)
+        drain_field!(self, pet_renames)
     }
 }
 
@@ -255,7 +267,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetPetTimeRemaining",
         lua.create_function(|lua, ()| {
             let expiry = lua
-                .app_data_ref::<Model>()
+                .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data")
                 .pet_bar
                 .expiry;
@@ -272,7 +284,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PetHasActionBar",
         lua.create_function(move |lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(model.pet_bar.has_bar))
         })?,
     )?;
@@ -280,7 +294,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPetActionsUsable",
         lua.create_function(move |lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(model.pet_bar.actions_usable))
         })?,
     )?;
@@ -289,7 +305,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPetActionInfo",
         lua.create_function(move |lua, i: u32| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(slot) = slot_at(&model, i) else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil]));
             };
@@ -315,7 +333,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetPetActionCooldown",
         lua.create_function(|lua, i: u32| {
             let now = crate::script::clock::now(lua);
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(match slot_at(&model, i).and_then(|s| s.cooldown) {
                 Some((start, duration, enabled)) if start + duration > now || !enabled => {
                     (start, duration, i32::from(enabled))
@@ -329,7 +349,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsPetAttackActive",
         lua.create_function(move |lua, i: u32| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(slot_at(&model, i).is_some_and(|s| s.view.attack_active))
         })?,
     )?;
@@ -340,7 +362,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CastPetAction",
         lua.create_function(|lua, i: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if slot_at(&model, i).is_some_and(|s| s.view.name.is_some()) {
                 model.script_calls.push(super::ScriptCall::PetAction(i));
             }
@@ -352,7 +374,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "TogglePetAutocast",
         lua.create_function(|lua, i: u32| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             if slot_at(&model, i).is_some_and(|s| s.view.autocast_allowed) {
                 model.pet_autocast_toggles.push(i);
             }
@@ -364,7 +386,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "HasPetUI",
         lua.create_function(move |lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let bar = &model.pet_bar;
             Ok((flag(bar.has_ui), flag(bar.has_ui && bar.stats.hunter_pet)))
         })?,
@@ -375,7 +399,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPetHappiness",
         lua.create_function(move |lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let s = &model.pet_bar.stats;
             let happiness = match s.happiness.filter(|_| s.hunter_pet) {
                 Some(b) => Value::Integer(i64::from(b)),
@@ -398,7 +424,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPetLoyalty",
         lua.create_function(move |lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let s = &model.pet_bar.stats;
             Ok(match s.loyalty.as_deref().filter(|_| s.hunter_pet) {
                 Some(name) => Value::String(lua.create_string(name)?),
@@ -411,7 +439,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPetTrainingPoints",
         lua.create_function(move |lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let s = &model.pet_bar.stats;
             let (total, spent) = if s.hunter_pet {
                 s.training_points
@@ -426,7 +456,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPetExperience",
         lua.create_function(move |lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let s = &model.pet_bar.stats;
             let (cur, next) = if s.hunter_pet { s.experience } else { (0, 0) };
             Ok((f64::from(cur), f64::from(next)))
@@ -440,7 +472,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "UnitCreatureFamily",
         lua.create_function(move |lua, token: Option<String>| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let family = token
                 .filter(|t| t.eq_ignore_ascii_case("pet"))
                 .and_then(|_| model.pet_bar.stats.family.as_deref());
@@ -456,7 +490,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPetIcon",
         lua.create_function(move |lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(match model.pet_bar.stats.icon.as_deref() {
                 Some(path) => Value::String(lua.create_string(path)?),
                 None => Value::Nil,
@@ -469,7 +505,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPetFoodTypes",
         lua.create_function(move |lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let values: Vec<Value> = model
                 .pet_bar
                 .stats
@@ -501,7 +539,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, ()| {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 if model.pet_bar.has_bar {
                     model.script_calls.push(super::ScriptCall::PetOrder(packed));
                 }
@@ -513,7 +551,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PetStopAttack",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.pet_stop_attacks += 1;
             Ok(())
         })?,
@@ -524,7 +562,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PetCanBeAbandoned",
         lua.create_function(move |lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(model.pet_bar.can_be_abandoned))
         })?,
     )?;
@@ -532,7 +572,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PetCanBeRenamed",
         lua.create_function(move |lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(model.pet_bar.can_be_renamed))
         })?,
     )?;
@@ -541,7 +583,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PetAbandon",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.pet_abandons += 1;
             Ok(())
         })?,
@@ -551,7 +593,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PetDismiss",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.pet_dismisses += 1;
             Ok(())
         })?,
@@ -567,7 +609,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some(name) => name.to_str()?.to_string(),
                 None => String::new(),
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.pet_renames.push(name);
             Ok(())
         })?,

@@ -20,7 +20,7 @@ pub enum WornDisplay {
 impl super::UiScript {
     /// Drain the queued flips, one packet each; two flips of one slot in a frame are two sends.
     pub fn take_worn_display_toggles(&mut self) -> Vec<WornDisplay> {
-        std::mem::take(&mut self.model_mut().worn_display_toggles)
+        drain_field!(self, worn_display_toggles)
     }
 
     /// Push the wire truth, only on a `PLAYER_FLAGS` edge: pushed per frame, it would undo an
@@ -79,7 +79,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, v: Value| {
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 want(&mut model, which, shown_arg(&v));
                 Ok(())
             })?,
@@ -94,7 +94,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, ()| {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 let shown = match which {
                     WornDisplay::Helm => model.helm_shown,
                     WornDisplay::Cloak => model.cloak_shown,

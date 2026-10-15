@@ -6,7 +6,6 @@
 use mlua::{Lua, Table, Value};
 
 use super::cursor::{self, CursorItem, CursorPayload};
-use super::Model;
 
 /// The petition lines an item tooltip prints under the name (`0x854d7c..0x854dd0`): the title and
 /// the creator, keyed `GUILD_CHARTER_*` for a charter, else `PETITION_*`. The signature-count line
@@ -136,7 +135,7 @@ pub struct BagAutoStore {
 impl super::UiScript {
     /// Drain the auto-stores `PutItemInBag`/`PutItemInBackpack` queued since the last call.
     pub fn take_bag_autostores(&mut self) -> Vec<BagAutoStore> {
-        std::mem::take(&mut self.model_mut().bag_autostores)
+        drain_field!(self, bag_autostores)
     }
 
     /// Push one bag's snapshot, or remove it with `None`; cooldowns arrive in ms on the `GetTime`
@@ -167,7 +166,7 @@ impl super::UiScript {
 
     /// Push `HasKey()`'s answer: whether the player owns a `BagFamily` key item anywhere.
     pub fn set_has_key(&mut self, has_key: bool) {
-        self.model_mut().has_key = has_key;
+        set_field!(self, has_key, has_key);
     }
 
     /// Take the `UseContainerItem` calls out of the call stream, as `(bag, slot)`.
@@ -180,23 +179,23 @@ impl super::UiScript {
 
     /// Drain the pick/place/swap moves queued by `PickupContainerItem` since the last call.
     pub fn take_container_moves(&mut self) -> Vec<ContainerMove> {
-        std::mem::take(&mut self.model_mut().container_moves)
+        drain_field!(self, container_moves)
     }
 
     /// Drain the `(bag, slot)` sources `AutoEquipCursorItem` queued, for `CMSG_AUTOEQUIP_ITEM`.
     pub fn take_container_autoequips(&mut self) -> Vec<(i64, u32)> {
-        std::mem::take(&mut self.model_mut().container_autoequips)
+        drain_field!(self, container_autoequips)
     }
 
     /// Drain the `(bag, slot)` clicks repair mode queued, for `CMSG_REPAIR_ITEM`.
     pub fn take_container_repairs(&mut self) -> Vec<(i64, u32)> {
-        std::mem::take(&mut self.model_mut().container_repairs)
+        drain_field!(self, container_repairs)
     }
 
     /// Drain the `(bag, slot, count)` destroys `DeleteCursorItem` queued, a 0 count being the whole
     /// stack, for `CMSG_DESTROYITEM`.
     pub fn take_container_destroys(&mut self) -> Vec<(i64, u32, u32)> {
-        std::mem::take(&mut self.model_mut().container_destroys)
+        drain_field!(self, container_destroys)
     }
 
     /// Arm a gift wrap with the paper at `(bag, slot)`, as `0x5edea0` does: the paper locks, the
@@ -217,7 +216,7 @@ impl super::UiScript {
 
     /// Drain the `(giftBag, giftSlot, itemBag, itemSlot)` wraps queued, for `CMSG_WRAP_ITEM`.
     pub fn take_container_wraps(&mut self) -> Vec<(i64, u32, i64, u32)> {
-        std::mem::take(&mut self.model_mut().container_wraps)
+        drain_field!(self, container_wraps)
     }
 
     /// The mode the last FrameXML cursor call set, `None` after a `ResetCursor`; the app acts on
@@ -231,6 +230,9 @@ impl super::UiScript {
     /// spellbook button.
     #[allow(clippy::option_option)]
     pub fn take_cursor_write(&mut self) -> Option<Option<UiCursorMode>> {
+        if !self.model_ref().ui_cursor_dirty {
+            return None;
+        }
         let mut model = self.model_mut();
         std::mem::take(&mut model.ui_cursor_dirty).then_some(model.ui_cursor)
     }
@@ -470,7 +472,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 ));
             }
             let path = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 // Worn bags sit in inventory slots 20-23; a bank bag in the bank verbs' own slot
                 // map (`BankButtonIDToInvSlotID`), which is still the 1.12 layout.
                 let slot = if index < 4 {
@@ -483,7 +487,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .and_then(|v| v.icon.clone())
             };
             let rh = crate::script::region::region_handle_of(lua, &region)?;
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let data = model.region_data.entry(rh).or_default();
             // An empty slot's `None` is the answer: the reference clears first, then sets.
             data.texture = path;
@@ -496,7 +500,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetContainerNumSlots",
         lua.create_function(|lua, bag: i64| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(model.containers.get(&bag).map_or(0, |c| c.num_slots))
         })?,
     )?;
@@ -514,7 +520,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 bag,
                 "Usage: GetContainerFreeSlots(index)",
             )?);
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             // The backpack's snapshot stands for the active player, which every branch needs.
             if !model.containers.contains_key(&0) {
                 return Ok(mlua::MultiValue::from_vec(vec![Value::Integer(0)]));
@@ -553,7 +561,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             const USAGE: &str = "Usage: GetContainerItemQuestInfo(index, slot)";
             let bag = i64::from(super::binding_abi::number_arg(lua, bag, USAGE)?);
             let slot = super::binding_abi::number_arg(lua, slot, USAGE)?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let Some(s) = u32::try_from(slot)
                 .ok()
                 .and_then(|slot| model.containers.get(&bag)?.slots.get(&slot))
@@ -615,7 +625,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetBagName",
         lua.create_function(|lua, bag: i64| {
             let name = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model.containers.get(&bag).and_then(|c| c.name.clone())
             };
             match name {
@@ -632,7 +644,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetContainerItemCooldown",
         lua.create_function(|lua, (bag, slot): (i64, u32)| {
             let now = crate::script::clock::now(lua);
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(match model.container_cooldowns.get(&(bag, slot)) {
                 Some(&(start, duration, enabled)) if start + duration > now || !enabled => {
                     (start, duration, i32::from(enabled))
@@ -646,7 +660,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetContainerItemLink",
         lua.create_function(|lua, (bag, slot): (i64, u32)| {
             let link = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 model
                     .containers
                     .get(&bag)
@@ -666,7 +682,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetContainerItemInfo",
         lua.create_function(|lua, (bag, slot): (i64, u32)| {
             let (info, held_here) = {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 let held = matches!(
                     &model.cursor,
                     Some(CursorPayload::Item(c)) if c.bag == bag && c.slot == slot
@@ -710,7 +728,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "UseContainerItem",
         lua.create_function(|lua, (bag, slot, _rest): (i64, u32, mlua::MultiValue)| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             // Every right-click clears the cursor before it reads the slot (`0x4fa198`): a held
             // payload goes back, never placed, and an armed gift wrap is cancelled.
             cursor::clear_cursor(&mut model);
@@ -738,7 +756,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "PickupContainerItem",
         lua.create_function(|lua, (bag, slot): (i64, u32)| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             pickup_container_item(&mut model, bag, slot);
             Ok(())
         })?,
@@ -749,7 +767,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "ShowContainerSellCursor",
         lua.create_function(|lua, (bag, slot): (i64, u32)| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let occupied = model
                 .containers
                 .get(&bag)
@@ -768,7 +786,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "ShowInspectCursor",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.ui_cursor = Some(UiCursorMode::Inspect);
             model.ui_cursor_dirty = true;
             Ok(())
@@ -779,7 +797,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "HasKey",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(if model.has_key {
                 Value::Integer(1)
             } else {
@@ -804,7 +824,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 // not built.
                 Some(_) => return Ok(()),
             };
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.ui_cursor = mode;
             model.ui_cursor_dirty = true;
             Ok(())
@@ -814,7 +834,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "ResetCursor",
         lua.create_function(|lua, ()| {
-            let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             model.ui_cursor = None;
             model.ui_cursor_dirty = true;
             Ok(())

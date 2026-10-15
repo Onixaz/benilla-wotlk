@@ -79,7 +79,7 @@ pub(super) fn install_justify(
                         }
                     })?;
                 let h = frame_handle_of(lua, &this)?;
-                let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+                let mut model = crate::script::model_mut_of(lua);
                 let frame = model
                     .arena
                     .frame_mut(h)
@@ -99,7 +99,9 @@ pub(super) fn install_justify(
         "GetJustifyH",
         lua.create_function(move |lua, this: mlua::Table| {
             let h = frame_handle_of(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let bits = match model.arena.frame(h).and_then(|f| own(&f.kind_state)) {
                 Some(j) => j.0,
                 None => {
@@ -114,7 +116,9 @@ pub(super) fn install_justify(
         "GetJustifyV",
         lua.create_function(move |lua, this: mlua::Table| {
             let h = frame_handle_of(lua, &this)?;
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let j = model
                 .arena
                 .frame(h)
@@ -150,7 +154,7 @@ pub(super) fn ensure_font_region(
     lua: &mlua::Lua,
     fh: FrameHandle,
 ) -> Option<crate::widget::RegionHandle> {
-    let mut model = lua.app_data_mut::<Model>().expect("model app_data");
+    let mut model = crate::script::model_mut_of(lua);
     let existing = model.arena.frame(fh).and_then(|frame| {
         frame
             .regions
@@ -228,9 +232,11 @@ impl UiScript {
     /// [`UiScript::resolve`]; answer with [`UiScript::set_message_line_rows`] before extract.
     pub fn message_lines_needing_measure(&mut self) -> Vec<LineMeasureRequest> {
         use std::hash::{Hash, Hasher};
-        let mut model = self.model_mut();
+        let mut cell = self.model_mut();
+        // An empty ask writes only sweep tokens: the mutation count stands.
+        let quiet = cell.epoch();
         // A plain reborrow, so the arena reads and the sweep-token writes borrow disjoint fields.
-        let model = &mut *model;
+        let model: &mut Model = &mut cell;
         let mut out = Vec::new();
         let frames: Vec<(FrameHandle, Rect)> = model
             .resolved
@@ -309,6 +315,9 @@ impl UiScript {
             } else {
                 model.msg_swept.remove(&fh);
             }
+        }
+        if out.is_empty() {
+            cell.set_epoch(quiet);
         }
         out
     }
