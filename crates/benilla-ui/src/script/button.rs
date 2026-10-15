@@ -835,19 +835,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // RegisterForClicks(...) (`0x782490`) replaces the registered set rather than adding to it
-    // (`0x779730` stores the mask), matching the names in any case (`0x64a4c0`); [`wants_click`]
-    // reads it.
+    // RegisterForClicks(...) (`0x9781d0`) replaces the mask with the OR of its names' bits
+    // (`0x96e9c0`), reading arguments while each is a string or number; [`wants_click`] reads it.
     m.set(
         "RegisterForClicks",
         lua.create_function(|lua, (this, args): (Table, MultiValue)| {
-            let mut set = std::collections::HashSet::new();
+            let mut mask = 0;
             for v in args.iter() {
-                if let Value::String(s) = v {
-                    set.insert(s.to_str()?.to_string());
+                match v {
+                    Value::String(s) => mask |= crate::widget::click_mask_of(&s.to_str()?),
+                    Value::Integer(_) | Value::Number(_) => {}
+                    _ => break,
                 }
             }
-            with_button(lua, &this, |bs| bs.registered_clicks = set)
+            with_button(lua, &this, |bs| bs.click_mask = mask)
         })?,
     )?;
 
@@ -953,31 +954,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Whether `h` fires `OnClick` for the transition `name` (e.g. `"RightButtonDown"`): a Button
-/// checks its `RegisterForClicks` set, ignoring case; any other kind fires on release only.
-pub(super) fn wants_click(model: &Model, h: FrameHandle, name: &str) -> bool {
+/// Whether `h` fires `OnClick` for `button`'s release (`up`) or press: a Button tests its click
+/// mask ([`ButtonState::wants_click`]); any other kind fires on release only.
+pub(super) fn wants_click(model: &Model, h: FrameHandle, button: &str, up: bool) -> bool {
     match model.arena.frame(h).map(|f| &f.kind_state) {
-        Some(KindState::Button(bs)) => bs
-            .registered_clicks
-            .iter()
-            .any(|s| s.eq_ignore_ascii_case(name)),
-        _ => name.ends_with("Up"),
+        Some(KindState::Button(bs)) => bs.wants_click(button, up),
+        _ => up,
     }
 }
 
-/// Whether `h` is registered for `button` (`"LeftButton"`, …) as Up or Down, the press-art gate.
-/// `OnMouseDown` (`0x779210`) tests `m | m << 8` against `[this+0x330]` (Down in byte 0, Up in
-/// byte 1, `0x77924b`) before the Down-only `OnClick` test (`0x77926b`), so any registration for
-/// that button pushes the art, click or not.
-pub(super) fn wants_press_visual(model: &Model, h: FrameHandle, button: &str) -> bool {
-    match model.arena.frame(h).map(|f| &f.kind_state) {
-        Some(KindState::Button(bs)) => bs.registered_clicks.iter().any(|s| {
-            s.strip_suffix("Up")
-                .or_else(|| s.strip_suffix("Down"))
-                .is_some_and(|b| b.eq_ignore_ascii_case(button))
-        }),
-        _ => false,
-    }
+/// Whether a press on `h` pushes the art: any Button, whatever its click mask, since
+/// `OnLayerMouseDown` (`0x96fb34`) sets PUSHED after the mask test, not under it.
+pub(super) fn wants_press_visual(model: &Model, h: FrameHandle) -> bool {
+    matches!(
+        model.arena.frame(h).map(|f| &f.kind_state),
+        Some(KindState::Button(_))
+    )
 }
 
 /// The click shared by the input path and `Click()`: a disabled Button fires nothing, a CheckButton

@@ -257,9 +257,9 @@ impl UiScript {
     }
 
     /// A mouse button press or release at `(x, y)`; `button` is the WoW name (`"LeftButton"`, …).
-    /// `OnClick` follows `RegisterForClicks` ([`button::wants_click`], default `{"LeftButtonUp"}`):
-    /// a press fires it for `"<Button>ButtonDown"`, a release on the pressed frame for
-    /// `"<Button>ButtonUp"`. Its `down` argument is not 1.12, whose firer (`0x779540`) passes only
+    /// `OnClick` follows the `RegisterForClicks` mask ([`button::wants_click`], default
+    /// `LeftButtonUp`): a press fires it on the button's Down bit, a release on the pressed frame
+    /// on its Up bit. Its `down` argument is not 1.12, whose firer (`0x779540`) passes only
     /// the button name. Returns whether the UI consumed the event.
     pub fn mouse_button(&mut self, x: f32, y: f32, button: &str, down: bool) -> bool {
         let hit_id = self.hit_test(x, y);
@@ -350,10 +350,8 @@ impl UiScript {
                     Some(h) => model.mouse_down_on.insert(button.to_string(), h),
                     None => model.mouse_down_on.remove(button),
                 };
-                // The press edge, `SetButtonState(PUSHED)` (`0x7792b1`), for a button registered
-                // for this mouse button up or down (`0x779210` tests `m | m << 8` at `0x77924b`).
-                if let Some(h) = hit_handle.filter(|&h| button::wants_press_visual(&model, h, button))
-                {
+                // The press edge, `SetButtonState(PUSHED)` (`0x96fb50`), on any Button.
+                if let Some(h) = hit_handle.filter(|&h| button::wants_press_visual(&model, h)) {
                     button::edge(&mut model, h, ButtonState::on_mouse_down);
                 }
                 // A press while this mouse button still holds another frame means a release was
@@ -383,9 +381,8 @@ impl UiScript {
                 } else {
                     None
                 };
-                let wants = format!("{button}Down");
                 let click = hit_handle
-                    .filter(|&h| button::wants_click(&model, h, &wants))
+                    .filter(|&h| button::wants_click(&model, h, button, false))
                     .and(hit_id);
                 (click, None, false, jump, None, abandoned, color_jump)
             } else {
@@ -419,12 +416,11 @@ impl UiScript {
                     && over_world(&model, hit_handle)
                     && over_world(&model, pressed)
                     && cursor::world_drop_click(&mut model);
-                let wants = format!("{button}Up");
                 let click = if started {
                     None
                 } else {
                     hit_handle
-                        .filter(|&h| same_frame && button::wants_click(&model, h, &wants))
+                        .filter(|&h| same_frame && button::wants_click(&model, h, button, true))
                         .and(hit_id)
                 };
                 // The double click, on the release that qualified as a click: `0x77938d` in the

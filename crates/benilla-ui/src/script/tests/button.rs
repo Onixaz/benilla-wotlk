@@ -223,10 +223,78 @@ fn disabling_a_button_takes_its_whole_highlight_layer() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `CButton::OnMouseDown` shows the pushed texture when the button is registered for that mouse
-/// button, up or down (`0x77924b`: `[this+0x330] & (m | m << 8)`), whether or not a click fires.
+/// `MouseButtonStringToBitmask` (`0x96e9c0`): Down bits 0-30, Up bits 31-61, `AnyDown`/`AnyUp`
+/// every bit of their half, case folded, an unknown name 0.
 #[test]
-fn any_registered_mouse_button_shows_the_pushed_texture() {
+fn click_names_map_to_the_12340_mask() {
+    use crate::widget::click_mask_of as m;
+    assert_eq!(m("LeftButtonDown"), 0x1);
+    assert_eq!(m("LeftButtonUp"), 0x8000_0000);
+    assert_eq!(m("MiddleButtonDown"), 0x2);
+    assert_eq!(m("MiddleButtonUp"), 0x1_0000_0000);
+    assert_eq!(m("rightbuttonup"), 0x2_0000_0000);
+    assert_eq!(m("Button4Down"), 0x8);
+    assert_eq!(m("Button31Down"), 0x4000_0000);
+    assert_eq!(m("Button31Up"), 0x2000_0000_0000_0000);
+    assert_eq!(m("AnyDown"), 0x7fff_ffff);
+    assert_eq!(m("anyup"), 0xffff_ffff_8000_0000);
+    for bad in [
+        "",
+        "Any",
+        "Button32Up",
+        "Button3Up",
+        "Button04Up",
+        "LeftButton",
+    ] {
+        assert_eq!(m(bad), 0, "{bad}");
+    }
+}
+
+/// The stock `ActionButton_OnLoad` registers `"AnyUp"`: a left and a right release both reach
+/// `OnClick`, a press none; `"AnyDown"` is the press half.
+#[test]
+fn any_up_and_any_down_reach_on_click() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        CLICKS = {}
+        local function slot(name, x, reg)
+            local b = CreateFrame("Button", name)
+            b:SetPoint("BOTTOMLEFT", x, 0); b:SetWidth(100); b:SetHeight(100)
+            b:RegisterForClicks(reg)
+            b:SetScript("OnClick", function(self, button, down)
+                table.insert(CLICKS, name .. ":" .. button)
+            end)
+        end
+        slot("UpBtn", 0, "AnyUp")
+        slot("DownBtn", 200, "AnyDown")
+    "#,
+    )
+    .unwrap();
+    s.resolve();
+    for (x, b) in [
+        (50.0, "LeftButton"),
+        (50.0, "RightButton"),
+        (250.0, "RightButton"),
+        (250.0, "Button5"),
+    ] {
+        s.mouse_move(x, 50.0);
+        s.mouse_button(x, 50.0, b, true);
+        s.mouse_button(x, 50.0, b, false);
+    }
+    assert_eq!(
+        s.eval::<String>("return table.concat(CLICKS, ' ')")
+            .unwrap(),
+        "UpBtn:LeftButton UpBtn:RightButton DownBtn:RightButton DownBtn:Button5"
+    );
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
+/// `CSimpleButton::OnLayerMouseDown` pushes the art on any press of an enabled Button, after the
+/// click-mask test and outside it (`0x96fb34`), so a press no registration names lights too.
+#[test]
+fn any_mouse_button_press_shows_the_pushed_texture() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
     s.run(
@@ -238,9 +306,9 @@ fn any_registered_mouse_button_shows_the_pushed_texture() {
             b:SetPushedTexture("Interface\\" .. name .. "P.blp")
             return b
         end
-        -- A bar slot: both buttons registered, exactly as ActionButton/PetActionButton do.
-        slot("Bar", 0):RegisterForClicks("LeftButtonUp", "RightButtonUp")
-        -- A plain button: the default set, {LeftButtonUp}.
+        -- A bar slot, registered as `ActionButton_OnLoad` does.
+        slot("Bar", 0):RegisterForClicks("AnyUp")
+        -- A plain button: the default mask, LeftButtonUp.
         slot("Plain", 200)
     "#,
     )
@@ -271,8 +339,8 @@ fn any_registered_mouse_button_shows_the_pushed_texture() {
     s.mouse_move(250.0, 50.0);
     s.mouse_button(250.0, 50.0, "RightButton", true);
     assert!(
-        shows(&s, "Interface\\PlainN.blp") && !shows(&s, "Interface\\PlainP.blp"),
-        "an unregistered button must not light"
+        shows(&s, "Interface\\PlainP.blp") && !shows(&s, "Interface\\PlainN.blp"),
+        "a press the mask does not name lights all the same"
     );
     s.mouse_button(250.0, 50.0, "RightButton", false);
     s.mouse_button(250.0, 50.0, "LeftButton", true);

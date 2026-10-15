@@ -423,10 +423,8 @@ impl Plate {
         // Button default is the left alone.
         if let Some(KindState::Button(bs)) = model.arena.frame_mut(frame).map(|f| &mut f.kind_state)
         {
-            bs.registered_clicks = ["LeftButtonUp", "RightButtonUp"]
-                .into_iter()
-                .map(str::to_string)
-                .collect();
+            bs.click_mask = crate::widget::click_mask_of("LeftButtonUp")
+                | crate::widget::click_mask_of("RightButtonUp");
         }
 
         // The ctor's blend modes, one `0x7703f0` call per texture: BLEND, but the glow is ADD

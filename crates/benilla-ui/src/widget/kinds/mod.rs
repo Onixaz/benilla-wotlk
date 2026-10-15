@@ -1,6 +1,6 @@
 //! Widget kinds: [`FrameKind`], [`RegionKind`] and the per-kind state, [`KindState`].
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use super::{FrameHandle, RegionHandle};
 
@@ -711,8 +711,8 @@ pub struct ButtonState {
     pub disabled_checked: Option<RegionHandle>,
     /// The `<ButtonText>` fontstring (`+0x338`, `SetText`), always drawn.
     pub text: Option<RegionHandle>,
-    /// `RegisterForClicks`' names, the transitions that reach `OnClick`; default `"LeftButtonUp"`.
-    pub registered_clicks: HashSet<String>,
+    /// The click mask (`+0x2a0`), the transitions that reach `OnClick`; default [`CLICK_LEFT_UP`].
+    pub click_mask: u64,
     /// The normal state's label font object (`<NormalFont>`); `None` keeps the label's own paint.
     pub normal_font: Option<String>,
     /// [`ButtonState::normal_font`] when highlighted; `None` keeps the normal one, colour and all.
@@ -757,7 +757,7 @@ impl Default for ButtonState {
             checked_tex: None,
             disabled_checked: None,
             text: None,
-            registered_clicks: HashSet::from(["LeftButtonUp".to_string()]),
+            click_mask: CLICK_LEFT_UP,
             normal_font: None,
             highlight_font: None,
             disabled_font: None,
@@ -775,7 +775,50 @@ impl Default for ButtonState {
     }
 }
 
+/// `LeftButtonUp`'s bit, a Button's default click mask (`0x97054d`).
+pub const CLICK_LEFT_UP: u64 = 1 << 31;
+
+/// A mouse button's Down bit: Left 0, Middle 1, Right 2, `Button4`-`Button31` 3-30; its Up bit is
+/// 31 higher (`0x96fbc2` shifts the button left by 31).
+pub fn mouse_button_bit(button: &str) -> Option<u32> {
+    let lower = button.to_ascii_lowercase();
+    match lower.as_str() {
+        "leftbutton" => Some(0),
+        "middlebutton" => Some(1),
+        "rightbutton" => Some(2),
+        _ => lower
+            .strip_prefix("button")
+            .filter(|n| !n.starts_with('0'))
+            .and_then(|n| n.parse::<u32>().ok())
+            .filter(|n| (4..=31).contains(n))
+            .map(|n| n - 1),
+    }
+}
+
+/// `MouseButtonStringToBitmask` (`0x96e9c0`): one `RegisterForClicks` name's bits, in any case;
+/// `AnyDown` is every Down bit, `AnyUp` every bit above them, anything else 0.
+pub fn click_mask_of(name: &str) -> u64 {
+    let lower = name.to_ascii_lowercase();
+    match lower.as_str() {
+        "anydown" => return 0x7fff_ffff,
+        "anyup" => return 0xffff_ffff_8000_0000,
+        _ => {}
+    }
+    let (base, up) = match (lower.strip_suffix("down"), lower.strip_suffix("up")) {
+        (Some(b), _) => (b, false),
+        (_, Some(b)) => (b, true),
+        _ => return 0,
+    };
+    mouse_button_bit(base).map_or(0, |bit| 1 << (bit + if up { 31 } else { 0 }))
+}
+
 impl ButtonState {
+    /// Whether the click mask has `button`'s Up (`up`) or Down bit (`0x96fae7`/`0x96fbc9`).
+    pub fn wants_click(&self, button: &str, up: bool) -> bool {
+        mouse_button_bit(button)
+            .is_some_and(|bit| self.click_mask & (1 << (bit + if up { 31 } else { 0 })) != 0)
+    }
+
     /// The slot a state draws from, the client's `[this + state*4 + 0x4b8]`.
     fn state_slot(&self, state: ButtonVisualState) -> Option<RegionHandle> {
         match state {

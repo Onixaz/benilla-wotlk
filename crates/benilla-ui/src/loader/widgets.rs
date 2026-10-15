@@ -201,6 +201,22 @@ impl Loader<'_> {
             let text = self.resolve_text(text, dbg);
             self.call(wrapper, "SetText", text, dbg);
         }
+        // `registerForClicks=` (`0x9702b1`): names split on space or comma, OR'd into 32 bits and
+        // stored with the high word zeroed (`0x970321`/`0x97032a`), so no Up bit past the left's.
+        if let Some(names) = el.attr("registerForClicks").filter(|n| !n.is_empty()) {
+            let mask = names
+                .split([' ', ','])
+                .map(crate::widget::click_mask_of)
+                .fold(0, |m, b| m | b)
+                & 0xffff_ffff;
+            if let Ok(h) = crate::script::object::frame_handle_of(self.lua(), wrapper) {
+                if let Some(crate::widget::KindState::Button(bs)) =
+                    self.model().arena.frame_mut(h).map(|f| &mut f.kind_state)
+                {
+                    bs.click_mask = mask;
+                }
+            }
+        }
         // The per-state fonts, two spellings each; every occurrence applies, in document order.
         for (children, method, which) in [
             (
