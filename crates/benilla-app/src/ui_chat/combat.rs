@@ -151,6 +151,20 @@ pub(crate) fn on_cvar(
     }
 }
 
+/// Hand each fired combat-log entry to the UI's store, which raises `COMBAT_LOG_EVENT`.
+pub(crate) fn feed_combat_log(
+    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    mut fired: MessageReader<crate::combat_log::entries::CombatLogFired>,
+) {
+    let Some(mut script) = script else {
+        fired.clear();
+        return;
+    };
+    for crate::combat_log::entries::CombatLogFired(entry) in fired.read() {
+        script.push_combat_log(entry.clone());
+    }
+}
+
 /// `CombatLogPeriodicSpells`. Off, the `SMSG_PERIODICAURALOG` handler `0x626dd0` returns at its
 /// first read (`0x626dee`), dropping the chat lines, the floating tick number and the miss word;
 /// it also filters the periodic `SMSG_SPELLNONMELEEDAMAGELOG` line (`0x62d9ae`) and the periodic

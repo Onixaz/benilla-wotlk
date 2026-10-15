@@ -89,9 +89,14 @@ impl Plugin for CombatLogPlugin {
         app.init_resource::<entries::PendingEntries>()
             .init_resource::<entries::CombatLogClock>()
             .add_message::<crate::net::EnteredWorldMessage>()
+            .add_message::<entries::CombatLogFired>()
             .add_systems(
                 Update,
-                (entries::on_world_entry, entries::fire_pending)
+                (
+                    entries::on_world_entry,
+                    entries::fire_pending,
+                    crate::ui_chat::combat::feed_combat_log,
+                )
                     .chain()
                     .in_set(crate::ui_script::UiFeed),
             );

@@ -3,9 +3,7 @@
 use std::collections::VecDeque;
 
 use benilla_protocol::messages::{hit_info, AttackerState};
-use benilla_ui::script::{
-    CombatLogEntry, CombatLogPayload, CombatLogUnit, Damage, MissType, UiScript,
-};
+use benilla_ui::script::{CombatLogEntry, CombatLogPayload, CombatLogUnit, Damage, MissType};
 use bevy::prelude::*;
 
 use crate::names::{NameCache, NameKey};
@@ -259,15 +257,19 @@ fn shown_guid(guid: u64, names: &NameCache) -> u64 {
     }
 }
 
+/// An entry fired with its names in, for the feed to hand to the UI.
+#[derive(Message)]
+pub(crate) struct CombatLogFired(pub(crate) CombatLogEntry);
+
 /// Fire the queued entries whose names are in, oldest first (`0x74f910`).
 pub(crate) fn fire_pending(
-    script: Option<NonSendMut<UiScript>>,
+    mut fired: MessageWriter<CombatLogFired>,
     mut pending: ResMut<PendingEntries>,
     names: Res<NameCache>,
     net: Res<NetCommands>,
     time: Option<Res<Time<bevy::time::Real>>>,
 ) {
-    let (Some(mut script), Some(time)) = (script, time) else {
+    let Some(time) = time else {
         return;
     };
     let now_ms = time.elapsed().as_millis() as u64;
@@ -293,7 +295,7 @@ pub(crate) fn fire_pending(
         };
         entry.source.guid = shown_guid(entry.source.guid, &names);
         entry.dest.guid = shown_guid(entry.dest.guid, &names);
-        script.push_combat_log(entry);
+        fired.write(CombatLogFired(entry));
     }
 }
 
