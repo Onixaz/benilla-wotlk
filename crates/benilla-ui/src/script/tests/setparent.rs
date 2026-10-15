@@ -3,10 +3,10 @@
 
 use super::common::script;
 
-/// `strata := parent.strata`, `level := parent.level + 1` (`0x76ab5a`/`0x76ab65`); the subtree's
-/// levels are not re-based (`propagate = 0`), so a child can land below its own parent.
+/// `strata := parent.strata`, `level := parent.level + 1`, and the same-strata subtree shifts by
+/// the same step (`0x4911b0` → `0x4910a0` with propagate 1), so a child stays above its parent.
 #[test]
-fn reparent_relevels_the_moved_frame_only() {
+fn reparent_shifts_the_subtree_with_the_moved_frame() {
     let s = script();
     s.run(
         r#"
@@ -36,12 +36,42 @@ fn reparent_relevels_the_moved_frame_only() {
     );
     assert_eq!(
         s.eval::<i64>("return Child:GetFrameLevel()").unwrap(),
-        1,
-        "the child keeps its absolute level — BELOW its parent's new 7; the client ships that"
+        8,
+        "the child moves by the panel's step, 1 + 7, and stays above it"
     );
 }
 
-/// `SetParent(nil)` resets to strata MEDIUM, level 0 (`0x76aba3`/`0x76abac`).
+/// The shift skips a child in another strata: a strata already equal to the parent's returns
+/// before recursing (`0x491020`), so a child's own strata survives and its level with it.
+#[test]
+fn reparent_leaves_a_cross_strata_child_level_alone() {
+    let s = script();
+    s.run(
+        r#"
+        Host = CreateFrame("Frame", "XSHost")
+        Host:SetFrameLevel(5)                      -- MEDIUM 5
+        Panel = CreateFrame("Frame", "XSPanel")    -- MEDIUM 0
+        Same = CreateFrame("Frame", "XSSame", Panel)   -- MEDIUM 1
+        Other = CreateFrame("Frame", "XSOther", Panel) -- MEDIUM 1, then HIGH
+        Other:SetFrameStrata("HIGH")
+        Panel:SetParent(Host)
+        "#,
+    )
+    .unwrap();
+    assert_eq!(s.eval::<i64>("return Panel:GetFrameLevel()").unwrap(), 6);
+    assert_eq!(s.eval::<i64>("return Same:GetFrameLevel()").unwrap(), 7);
+    assert_eq!(
+        s.eval::<String>("return Other:GetFrameStrata()").unwrap(),
+        "HIGH"
+    );
+    assert_eq!(
+        s.eval::<i64>("return Other:GetFrameLevel()").unwrap(),
+        1,
+        "a HIGH child under a MEDIUM panel is not shifted"
+    );
+}
+
+/// `SetParent(nil)` resets to strata MEDIUM, level 0 (`0x4912b1`).
 #[test]
 fn reparent_to_nil_resets_strata_and_level() {
     let s = script();

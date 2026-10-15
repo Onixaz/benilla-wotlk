@@ -108,7 +108,7 @@ impl Default for DrawLayer {
 //   bits  0..=11 (12)  declaration seq   the region's index within its owner frame
 //
 // Stock content relies on the layer outranking the frame: a child is born at its parent's level
-// plus 1 (`SetParent` `0x76ab10`, at `0x76ab65`), `MirrorTimer.xml:62` lowers the bar by 1 to tie
+// plus 1 (`SetParent` `0x4911b0`, at `0x49123a`), `MirrorTimer.xml:62` lowers the bar by 1 to tie
 // its parent, and the tie lets the bar's ARTWORK fill draw under the parent's OVERLAY border.
 //
 // The sub-level is the engine's own ordering within a layer, set only for the EditBox caret: 1.12

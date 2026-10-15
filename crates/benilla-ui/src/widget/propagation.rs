@@ -235,13 +235,12 @@ impl WidgetArena {
         Some(hidden)
     }
 
-    /// Phase 2 of `SetParent` (`0x76ab10`): relink, strata := the parent's (`0x76ab5a`, MEDIUM for
-    /// none), level := the parent's + 1 without propagating (`0x76ab65`, 0 for none), scale
-    /// re-inherited, then the show half, returning the frames that became visible; alpha is
-    /// untouched. `h`'s own children keep their levels, so one can end up below `h`. The show half
-    /// runs for a shown frame (`+0xdc`) whose new parent is visible (`+0xe0`) or absent
-    /// (12340's `CSimpleFrame::SetParent`, `0x4911b0`), so a frame moved out of a hidden parent
-    /// shows with its new one, as the stock quest log's detail pane relies on.
+    /// Phase 2 of `SetParent` (`0x4911b0`): relink, strata := the parent's (MEDIUM for none),
+    /// level := the parent's + 1 (0 for none) with its same-strata subtree shifted along
+    /// (`0x491232`/`0x4912b1` push propagate 1 to `0x4910a0`), scale re-inherited, then the show
+    /// half, returning the frames that became visible; alpha is untouched. The show half runs for
+    /// a shown frame whose new parent is visible or absent, so a frame moved out of a hidden
+    /// parent shows with its new one, as the stock quest log's detail pane relies on.
     pub fn reparent_finish(
         &mut self,
         h: FrameHandle,
@@ -270,11 +269,11 @@ impl WidgetArena {
                 let pf = self.frame(np).expect("live new parent");
                 (pf.strata, pf.level.saturating_add(1))
             }
-            // `SetParent(nil)` resets to MEDIUM and level 0 (`0x76aba3`/`0x76abac`).
+            // `SetParent(nil)` resets to MEDIUM and level 0 (`0x4912b1`).
             None => (Strata::default(), 0),
         };
         self.set_frame_strata(h, pstrata);
-        self.set_frame_level(h, plevel, false);
+        self.set_frame_level(h, plevel, true);
         let ps = self.parent_effective_scale(h);
         self.propagate_scale(h, ps);
 
