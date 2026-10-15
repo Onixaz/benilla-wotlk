@@ -38,6 +38,11 @@ pub(crate) const PROBE_VARS: &[ProbeVar] = &[
         wall_clock: false,
     },
     ProbeVar {
+        name: "WOW_PROBE_CONTINUOUS",
+        purpose: "1 — keep the loop continuous while the window is unfocused, where bevy's `WinitSettings::game()` rails it at 60 Hz; the frame-time run's switch",
+        wall_clock: false,
+    },
+    ProbeVar {
         name: "WOW_PROBE_PARK",
         purpose: "corner|edge|off — where the un-occludable probe window sits, and whether it is pinned on top",
         // A dial on the occlusion defence itself, not a schedule.
