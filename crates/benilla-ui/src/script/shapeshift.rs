@@ -1,9 +1,10 @@
-//! The stance bar's four bindings, which `BonusActionBarFrame.lua`'s `ShapeshiftBar_*` calls, over
-//! a form list the app resolves and pushes; flags answer 1/nil and the cooldown is the reference's
-//! `(start, duration, enable)`.
+//! The stance bar's four bindings, which `BonusActionBarFrame.lua`'s `ShapeshiftBar_*` calls, and
+//! `GetShapeshiftForm`, over a form list and form byte the app resolves and pushes; flags answer
+//! 1/nil and the cooldown is the reference's `(start, duration, enable)`.
 
 use mlua::{Lua, MultiValue, Value};
 
+use super::binding_abi::bool_or_default;
 use super::Model;
 
 /// One stance-bar button, resolved by the app.
@@ -50,6 +51,11 @@ impl super::UiScript {
             .collect();
     }
 
+    /// Push the player's raw form byte, 0 unshifted or no player.
+    pub fn set_shapeshift_form_byte(&mut self, form: u8) {
+        self.model_mut().shapeshift_form_byte = form;
+    }
+
     /// Take the `CastShapeshiftForm` calls out of the call stream, as form spells; the app casts
     /// each, or cancels it when it is the active form.
     pub fn take_shapeshift_casts(&mut self) -> Vec<u32> {
@@ -67,8 +73,35 @@ fn form_at(model: &Model, i: u32) -> Option<&StoredShapeshiftForm> {
         .and_then(|n| model.shapeshift_forms.get(n))
 }
 
+/// The current form's 1-based bar index (`0x53d4b0`): the last button reading active, else one
+/// past the bar while the form byte is set, else 0; `shifted_only` answers 0 while it is not.
+pub(super) fn current_form_index(model: &Model, shifted_only: bool) -> u32 {
+    let shifted = model.shapeshift_form_byte != 0;
+    if shifted_only && !shifted {
+        return 0;
+    }
+    let forms = &model.shapeshift_forms;
+    match forms.iter().rposition(|f| f.view.active) {
+        Some(i) => i as u32 + 1,
+        None if shifted => forms.len() as u32 + 1,
+        None => 0,
+    }
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
+
+    // `GetShapeshiftForm([shiftedOnly])` (`0x53de10`): the flag through `GetBoolOrDefault`, false.
+    g.set(
+        "GetShapeshiftForm",
+        lua.create_function(|lua, shifted_only: Value| {
+            let shifted_only = bool_or_default(Some(&shifted_only), false);
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(current_form_index(&model, shifted_only))
+        })?,
+    )?;
 
     g.set(
         "GetNumShapeshiftForms",
@@ -192,6 +225,51 @@ mod tests {
         assert!(s
             .eval::<bool>("return GetShapeshiftFormInfo(3) == nil")
             .unwrap());
+    }
+
+    #[test]
+    fn get_shapeshift_form_walks_the_bar_like_0x53d4b0() {
+        let form = |s: &mut UiScript, arg: &str| {
+            s.eval::<i64>(&format!("return GetShapeshiftForm({arg})"))
+                .unwrap()
+        };
+        let mut s = UiScript::new().unwrap();
+        assert_eq!(form(&mut s, ""), 0, "no bar, no form");
+
+        // Battle Stance lit, form 17.
+        let mut bar = forms();
+        s.set_shapeshift_forms(bar.clone());
+        s.set_shapeshift_form_byte(17);
+        assert_eq!(form(&mut s, ""), 1);
+        assert_eq!(form(&mut s, "true"), 1);
+
+        // Defensive Stance lit, form 18.
+        bar[0].active = false;
+        bar[1].active = true;
+        s.set_shapeshift_forms(bar.clone());
+        s.set_shapeshift_form_byte(18);
+        assert_eq!(form(&mut s, ""), 2);
+
+        // Both lit: the walk runs from the end.
+        bar[0].active = true;
+        s.set_shapeshift_forms(bar.clone());
+        assert_eq!(form(&mut s, ""), 2);
+
+        // Shifted into a form no button matches: one past the bar.
+        bar[0].active = false;
+        bar[1].active = false;
+        s.set_shapeshift_forms(bar.clone());
+        assert_eq!(form(&mut s, ""), 3);
+
+        // A lit button with the form byte clear (a paladin aura): only the flag hides it, and
+        // `GetBoolOrDefault` reads 1 as true and nil as false.
+        bar[0].active = true;
+        s.set_shapeshift_forms(bar);
+        s.set_shapeshift_form_byte(0);
+        assert_eq!(form(&mut s, ""), 1);
+        assert_eq!(form(&mut s, "nil"), 1);
+        assert_eq!(form(&mut s, "1"), 0);
+        assert_eq!(form(&mut s, "true"), 0);
     }
 
     #[test]

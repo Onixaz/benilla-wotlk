@@ -66,6 +66,8 @@ fn form_texture(d: &benilla_formats::SpellDisplay, active: bool) -> Option<Strin
 #[derive(Default)]
 pub(crate) struct StanceMemory {
     pushed: Option<Vec<ShapeshiftFormView>>,
+    /// The form byte `GetShapeshiftForm` last saw.
+    form_byte: u8,
 }
 
 /// The edge one push crossed, as [`push_forms`] announces it.
@@ -159,11 +161,15 @@ fn feed_shapeshift_bar(
         return;
     };
     let memory = memory.get(&script);
+    let store = self_q.iter().next();
+    let form_byte = store.map(|s| s.0.unit_shapeshift_form()).unwrap_or(0);
+    if memory.form_byte != form_byte {
+        memory.form_byte = form_byte;
+        script.set_shapeshift_form_byte(form_byte);
+    }
     let Some(spells) = spells else {
         return;
     };
-    let store = self_q.iter().next();
-    let form_byte = store.map(|s| s.0.unit_shapeshift_form()).unwrap_or(0);
     let now = Instant::now();
     // The frame's clock pair: a local `Instant::now()` would wobble the derived start.
     let (anchor, ui_now) = (clock.anchor, clock.ui_now);

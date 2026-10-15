@@ -176,13 +176,10 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
                 })
             }
         }
-        // The active form's 1-based stance index (`0x53d4b0`); no argument: any form.
+        // The form's 1-based stance index, shifted only (`0x5eefb0` → `0x53d4b0(1)`); no
+        // argument: any form.
         "stance" | "form" => {
-            let current = model
-                .shapeshift_forms
-                .iter()
-                .position(|f| f.view.active)
-                .map_or(0, |i| i as i64 + 1);
+            let current = i64::from(super::shapeshift::current_form_index(model, true));
             any_number(current, args, current != 0)
         }
         // A pet, by name when arguments say (`0x5efbd0`).
@@ -401,6 +398,26 @@ mod tests {
         );
         assert_eq!(parse(&s, "[harm:1] A; B"), "A|nil", "a numeric argument");
         assert_eq!(parse(&s, "[harm:0] A; B"), "B|nil");
+    }
+
+    #[test]
+    fn stance_counts_only_while_shifted() {
+        let mut s = script();
+        let form = |active| crate::script::ShapeshiftFormView {
+            active,
+            ..Default::default()
+        };
+        // A lit paladin aura leaves the form byte clear: no stance.
+        s.set_shapeshift_forms(vec![form(true), form(false)]);
+        assert_eq!(parse(&s, "[stance] A; B"), "B|nil");
+        assert_eq!(parse(&s, "[stance:1] A; B"), "B|nil");
+        assert_eq!(parse(&s, "[nostance] A; B"), "A|nil");
+
+        s.set_shapeshift_forms(vec![form(false), form(true)]);
+        s.set_shapeshift_form_byte(18);
+        assert_eq!(parse(&s, "[stance:2] A; B"), "A|nil");
+        assert_eq!(parse(&s, "[form:1/2] A; B"), "A|nil");
+        assert_eq!(parse(&s, "[stance] A; B"), "A|nil");
     }
 
     #[test]
