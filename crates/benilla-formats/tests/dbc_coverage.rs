@@ -51,10 +51,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("DungeonMapChunk", "#238 dungeon map levels"),
     ("FileData", "#245 the movie file table"),
     ("GameObjectArtKit", "#243 game object art kits"),
-    (
-        "GameTables",
-        "#233 binds the gt tables to their lookup slots",
-    ),
     ("GemProperties", "#202 gems and sockets"),
     ("GlyphProperties", "#166 glyphs: GetGlyphSocketInfo"),
     ("GlyphSlot", "#166 glyphs: GetGlyphSocketInfo"),
@@ -66,34 +62,7 @@ const NOT_READ: &[(&str, &str)] = &[
         "gtBarberShopCostBase",
         "#234 barber shop prices: GetBarberShopStyleInfo",
     ),
-    (
-        "gtChanceToMeleeCrit",
-        "#233 the character sheet's crit chance",
-    ),
-    (
-        "gtChanceToMeleeCritBase",
-        "#233 the character sheet's crit chance",
-    ),
-    (
-        "gtChanceToSpellCrit",
-        "#233 the character sheet's spell crit chance",
-    ),
-    (
-        "gtChanceToSpellCritBase",
-        "#233 the character sheet's spell crit chance",
-    ),
-    (
-        "gtCombatRatings",
-        "#233 combat ratings: GetCombatRatingBonus",
-    ),
     ("gtNPCManaCostScaler", "#233 NPC spell costs"),
-    (
-        "gtOCTClassCombatRatingScalar",
-        "#233 combat ratings: GetCombatRatingBonus",
-    ),
-    ("gtOCTRegenHP", "#233 health regeneration"),
-    ("gtRegenHPPerSpt", "#233 health regeneration"),
-    ("gtRegenMPPerSpt", "#233 mana regeneration"),
     ("HolidayDescriptions", "#241 the calendar's holidays"),
     ("HolidayNames", "#241 the calendar's holidays"),
     (

@@ -35,6 +35,8 @@ mod dbc;
 mod dbc_layout;
 mod dbc_tables;
 pub use dbc_tables::{dbc_schema, dbc_width, READ_TABLES};
+mod game_tables;
+pub use game_tables::{load_game_tables, GameTableId, GameTables};
 mod unit_blood;
 pub use camera_shakes::{load_camera_shakes, CameraShake, CameraShakeCatalog, SpellShakeGroup};
 pub use cinematics::{
