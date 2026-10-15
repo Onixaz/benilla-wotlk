@@ -518,6 +518,7 @@ fn draw_bubble(
         height: Some(px),
         outline: Outline::None,
         alpha_gradient: None,
+        spacing: 0.0,
     };
     // The wrap law (`0x4b1600`): wider than 0.2 gx wraps at the cap, else max(width, 2 borders).
     let cap = gx_px(WRAP_W, basis);

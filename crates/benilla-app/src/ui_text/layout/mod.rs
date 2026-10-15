@@ -59,6 +59,15 @@ pub(crate) struct FontSpec<'a> {
     pub outline: Outline,
     /// The `SetAlphaGradient` reveal `(start, length)`; on the spec, shadows fade with their fill.
     pub alpha_gradient: Option<(f32, f32)>,
+    /// The line gap (`SetSpacing`), seam folded in like [`Self::height`]: lines step the font
+    /// height plus it (`CSimpleFontString::UpdateString` hands `+0xf8` to the text block).
+    pub spacing: f32,
+}
+
+/// A block of `lines` lines at height `size` and gap `spacing`: `N·S + (N-1)·gap`, as the text
+/// block lays it (`0x5c2070`).
+pub(crate) fn text_block_h(lines: usize, size: f32, spacing: f32) -> f32 {
+    lines as f32 * size + lines.saturating_sub(1) as f32 * spacing
 }
 
 /// The reference's per-glyph step in device px: the FreeType advance floored plus one (glyph
@@ -200,15 +209,18 @@ fn layout_text_quads_inner(
     // The line stack (`CGxString+0x40` in `0x5cdc20`): a height-pinned rect stops emitting lines
     // once the pitch sum passes it, even for a caller that skips the ellipsis seam.
     if rect.height() > HEIGHT_LIMIT_MIN {
-        render_lines.truncate(overflow::lines_allowed(rect.height(), r.size));
+        render_lines.truncate(overflow::lines_allowed(
+            rect.height() + font.spacing,
+            r.size + font.spacing,
+        ));
     }
 
     let mut quads = Vec::new();
-    // `justifyV` seats the block in `rect` at a pitch of the font height (`LayoutLines` `0x5cdc20`:
-    // `px(size) + spacing`, spacing 0 in shipped UI), so `h = N·S`: the outline's `+2r` is only in
-    // the atlas cell (`[font+0x178]`), never the block. A degenerate rect keeps the top.
-    let pitch = r.size;
-    let block_h = render_lines.len() as f32 * pitch;
+    // `justifyV` seats the block in `rect` at a pitch of the font height plus the line gap, so
+    // `h = N·S + (N-1)·gap`: the outline's `+2r` is only in the atlas cell (`[font+0x178]`), never
+    // the block. A degenerate rect keeps the top.
+    let pitch = r.size + font.spacing;
+    let block_h = text_block_h(render_lines.len(), r.size, font.spacing);
     let v_offset = if rect.height() > f32::EPSILON {
         match justify.v {
             JustifyV::Top => 0.0,
@@ -421,7 +433,52 @@ mod measure_fits_render {
             height: Some(h),
             outline: Outline::None,
             alpha_gradient: None,
+            spacing: 0.0,
         }
+    }
+
+    /// The line gap is between lines only: a block is `N·S + (N-1)·gap` tall, measured and drawn
+    /// alike, so a three-line string's lines step the font height plus the gap.
+    #[test]
+    fn the_line_gap_sits_between_lines_in_the_measure_and_the_draw() {
+        assert_eq!(text_block_h(0, 12.0, 3.0), 0.0);
+        assert_eq!(text_block_h(1, 12.0, 3.0), 12.0);
+        assert_eq!(text_block_h(3, 12.0, 3.0), 42.0);
+        let Some(mut e) = test_engine(1.0) else {
+            eprintln!("skipping: no install / font chain");
+            return;
+        };
+        let gap = FontSpec {
+            spacing: 3.0,
+            ..spec(12.0)
+        };
+        let (_, h0) = measure_text(&mut e, "a\nb\nc", None, spec(12.0));
+        let (_, h3) = measure_text(&mut e, "a\nb\nc", None, gap);
+        assert_eq!(h3 - h0, 6.0, "two gaps for three lines");
+        // The same glyph on both lines, so the drop is the pitch alone.
+        let mut tops = |spec: FontSpec| {
+            let quads = layout_text_quads(
+                &mut e,
+                "a\na",
+                Rect::new(0.0, 0.0, 200.0, 0.0),
+                [1.0; 4],
+                Justify {
+                    h: JustifyH::Left,
+                    v: JustifyV::Top,
+                },
+                0,
+                spec,
+                TextSeat::Exact,
+            );
+            (quads[0].rect.min.y, quads[1].rect.min.y)
+        };
+        let (a0, b0) = tops(spec(12.0));
+        let (a3, b3) = tops(gap);
+        assert_eq!(
+            (a3, b3 - a3),
+            (a0, b0 - a0 + 3.0),
+            "the second line drops by the gap"
+        );
     }
 
     /// An auto-sized rect comes from `measure_text` and the draw re-wraps inside it, so a string
@@ -773,6 +830,7 @@ mod ellipsis_cost {
             height: Some(SIZE),
             outline: Outline::None,
             alpha_gradient: None,
+            spacing: 0.0,
         };
         let r = measure::resolve(&mut e, &s);
         let fits = overflow::lines_fitting(BOX_H, r.size);

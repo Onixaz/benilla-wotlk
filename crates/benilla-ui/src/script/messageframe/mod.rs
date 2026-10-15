@@ -439,6 +439,7 @@ impl UiScript {
                     shadow: font.shadow,
                     font_height: font.height,
                     text_height: None, // message lines have no SetTextHeight
+                    spacing: 0.0,
                     outline: font.outline,
                     alpha_gradient: None,
                     world_seat: false, // interface, not world

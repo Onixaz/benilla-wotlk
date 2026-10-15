@@ -23,6 +23,8 @@ pub(super) struct TextStyle {
     pub font: Option<String>,
     pub font_height: Option<f32>,
     pub text_height: Option<f32>,
+    /// The line gap in frame units.
+    pub spacing: f32,
     pub shadow: Option<FontShadow>,
     pub outline: Outline,
     pub alpha_gradient: Option<(f32, f32)>,
@@ -76,6 +78,7 @@ pub(super) fn emit(
         ),
         outline: style.outline,
         alpha_gradient: style.alpha_gradient,
+        spacing: style.spacing * host.scale * host.font_scale,
     };
     // The focused editbox draws windowed (`0x77da80`): the scroll window's substring from the
     // line origin, unwrapped and clipped at the box edge, the selection behind, the caret after.

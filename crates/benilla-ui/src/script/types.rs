@@ -155,6 +155,9 @@ pub enum QuadContent {
         font_height: Option<f32>,
         /// The `SetTextHeight` override, drawn uncapped; `None` keeps the 32 px raster cap.
         text_height: Option<f32>,
+        /// The gap between lines in logical px (`SetSpacing`): the pitch is the font height plus
+        /// it, and a block of N lines is `N·height + (N-1)·spacing` tall.
+        spacing: f32,
         /// 1.12's `MasterFont` sets `(1,-1)` black, so nearly every stock font has one.
         shadow: Option<FontShadow>,
         outline: Outline,
@@ -297,6 +300,9 @@ pub struct FontObject {
     pub outline: Outline,
     pub justify_h: Option<JustifyH>,
     pub justify_v: Option<JustifyV>,
+    /// The line gap in logical px (`spacing=`, `SetSpacing`), held once set (`0x4a3f90`'s
+    /// `0x1000` bit); `None` leaves an inheriting FontString's own.
+    pub spacing: Option<f32>,
 }
 
 /// One entry of [`UiScript::extract`](super::UiScript::extract)'s render list, in the client's
@@ -418,6 +424,8 @@ pub(crate) struct RegionData {
     pub(crate) outline: Outline,
     /// Resolved drop shadow (font object `<Shadow>`), drawn behind the glyphs.
     pub(crate) font_shadow: Option<FontShadow>,
+    /// The line gap in logical px (`SetSpacing`, `+0xf8`), never negative (`0x4870d0`).
+    pub(crate) font_spacing: f32,
     /// The host-measured size of a FontString with no explicit height.
     pub(crate) measured: Option<MeasuredText>,
 }
@@ -442,6 +450,8 @@ pub(crate) struct FontExplicit {
     pub(crate) justify_h: bool,
     /// `SetJustifyV`, or XML `justifyV=`.
     pub(crate) justify_v: bool,
+    /// `SetSpacing`, or XML `spacing=`.
+    pub(crate) spacing: bool,
 }
 
 /// A cached host measurement of a FontString's laid-out text.
@@ -491,6 +501,7 @@ impl RegionData {
         // The outline changes the measure: a THICK one steps each glyph 1 px further
         // (`GlyphStepBase 0x5ca2b0`).
         (self.outline as u8).hash(&mut hasher);
+        self.font_spacing.to_bits().hash(&mut hasher);
         scale.to_bits().hash(&mut hasher);
         hasher.finish()
     }
@@ -561,6 +572,8 @@ pub struct MeasureRequest {
     pub wrap_width: Option<f32>,
     /// A THICK outline adds 1 px to every glyph step (`GlyphStepBase 0x5ca2b0`).
     pub outline: Outline,
+    /// The line gap in logical px (`SetSpacing`), added between wrapped lines.
+    pub spacing: f32,
     /// The owner's `effective_scale`. The host measures at `font_height × scale × seam` and
     /// divides by that whole product: advances step to whole pixels, so a measure at the
     /// unscaled size is not proportional to the drawn one.

@@ -131,9 +131,12 @@ pub(crate) fn measure_text(
     }
     // Deviation: one pixel of headroom over the reference's measured width, kept because dropping
     // it narrows every auto-sized FontString, a look change.
-    // Height: N lines at the font em with no outline pad (`0x5c2070`: `N·S + (N-1)·gap`, gap 0 in
-    // shipped UI); an outlined ring pokes past it, as in the reference.
-    (max_w.ceil() + 1.0, render_lines.len() as f32 * r.size)
+    // Height: N lines at the font em with no outline pad (`0x5c2070`: `N·S + (N-1)·gap`); an
+    // outlined ring pokes past it, as in the reference.
+    (
+        max_w.ceil() + 1.0,
+        super::text_block_h(render_lines.len(), r.size, font.spacing),
+    )
 }
 
 /// How many rows `text` wraps into at `wrap_width`, by the render's own [`wrap_line`] pass: the
@@ -232,8 +235,10 @@ pub(crate) fn ellipsize_to_fit(
         e.ensure_metrics(r.face, r.ppem, "...");
         let e = &*e;
         // Overflow is decided one row past the box, the reference's bound (`wrapped_rows_capped`).
-        let cap = overflow::lines_fitting(box_h.max(r.size), r.size) + 1;
-        overflow::ellipsize_in_box(text, box_h, r.size, |candidate| {
+        // A gap between lines fits `N` where `N·S + (N-1)·gap` does: the pitch with one gap more.
+        let (gap_h, pitch) = (box_h + font.spacing, r.size + font.spacing);
+        let cap = overflow::lines_fitting(gap_h.max(pitch), pitch) + 1;
+        overflow::ellipsize_in_box(text, gap_h, pitch, |candidate| {
             wrapped_rows_capped(e, r, candidate, box_w, cap)
         })
     };

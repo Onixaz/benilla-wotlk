@@ -201,6 +201,7 @@ fn line_height(lua: &Lua, h: FrameHandle, rh: RegionHandle) -> Option<f32> {
             text_height: d.text_height,
             wrap_width: None,
             outline: d.outline,
+            spacing: 0.0,
             scale,
             text: ONE_LINE.to_string(),
             key,

@@ -201,6 +201,7 @@ pub(super) fn pill_quads(
                 height: Some(PILL_QUAD_PX),
                 outline: Outline::None,
                 alpha_gradient: None,
+                spacing: 0.0,
             },
             // Our own dev overlay: measured off a degenerate rect, then shifted into the pill.
             crate::ui_text::TextSeat::Exact,

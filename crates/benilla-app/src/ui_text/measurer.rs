@@ -28,6 +28,7 @@ pub(crate) fn measure_request(
         // THICK adds 1 px per glyph to the step law (`0x5ca2b0`), so the measure needs it.
         outline: r.outline,
         alpha_gradient: None, // alpha never changes metrics
+        spacing: r.spacing * rs,
     };
     let wrap = r.wrap_width.map(|w| w * rs);
     let (w, h) = super::measure_text(e, &r.text, wrap, spec());
@@ -55,6 +56,7 @@ pub(crate) fn editbox_advances(
         height: super::drawn_px(req.height, None, seam * req.scale),
         outline: req.outline,
         alpha_gradient: None, // alpha never changes metrics
+        spacing: 0.0,
     };
     let cum = super::line_advances(e, &req.text, spec)
         .iter()

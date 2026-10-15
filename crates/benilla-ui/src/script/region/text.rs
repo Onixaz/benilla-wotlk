@@ -104,6 +104,43 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| natural_w(lua, &this))?,
     )?;
 
+    // SetSpacing(spacing) (`0x48dd00`): a number, else the named Usage; clamped at 0
+    // (`0x4870d0`) and kept against the font object, as the setter clears the inherit bit.
+    m.set(
+        "SetSpacing",
+        lua.create_function(|lua, (this, sp): (Table, Value)| {
+            let Some(sp) = lua.coerce_number(sp)? else {
+                let who: Option<String> =
+                    this.get::<mlua::Function>("GetName")?.call(this.clone())?;
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:SetSpacing(spacing)",
+                    who.as_deref()
+                        .unwrap_or(super::super::object::anchor_args::UNNAMED)
+                )));
+            };
+            let rh = region_handle_of(lua, &this)?;
+            let mut model = crate::script::model_mut_of(lua);
+            let d = model.region_data.entry(rh).or_default();
+            d.font_spacing = (sp as f32).max(0.0);
+            d.font_explicit.spacing = true;
+            model.touch_layout_region(rh);
+            Ok(())
+        })?,
+    )?;
+    // GetSpacing() (`0x48dca0`): the gap in logical px.
+    m.set(
+        "GetSpacing",
+        lua.create_function(|lua, this: Table| {
+            let rh = region_handle_of(lua, &this)?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
+            Ok(f64::from(
+                model.region_data.get(&rh).map_or(0.0, |d| d.font_spacing),
+            ))
+        })?,
+    )?;
+
     // SetJustifyH (XML `justifyH`): the parse, the raise on a miss and the cross-axis clear are
     // `crate::justify`'s, shared with the `<Font>` object.
     m.set(

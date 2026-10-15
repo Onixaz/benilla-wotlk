@@ -102,6 +102,7 @@ struct Remembered {
     box_h: f32,
     font: Option<String>,
     height: Option<f32>,
+    spacing: f32,
     outline: Outline,
     /// The answer; `None` means the text fits and draws raw, also worth remembering.
     display: Option<String>,
@@ -130,6 +131,7 @@ impl EllipsisMemo {
             && (e.box_h - box_h).abs() < RECT_EPS
             && e.font.as_deref() == font.path
             && e.height == font.height
+            && e.spacing == font.spacing
             && e.outline == font.outline)
             .then_some(&e.display)
     }
@@ -154,6 +156,7 @@ impl EllipsisMemo {
                 box_h,
                 font: font.path.map(str::to_string),
                 height: font.height,
+                spacing: font.spacing,
                 outline: font.outline,
                 display,
             },
@@ -178,6 +181,7 @@ mod ellipsis_memo_tests {
             height,
             outline,
             alpha_gradient: None,
+            spacing: 0.0,
         }
     }
 

@@ -310,6 +310,7 @@ fn build_name_mesh(atlas: &mut UiFontAtlas, lines: &[String]) -> Mesh {
                 height: Some(BAKE_PX),
                 outline: Outline::None,
                 alpha_gradient: None,
+                spacing: 0.0,
             },
             // A world billboard: the glyphs are re-seated in pitch units below, off the UI grid.
             TextSeat::Exact,

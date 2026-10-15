@@ -145,6 +145,11 @@ pub(crate) fn repaint(d: &mut RegionData, fo: &FontObject) {
             d.justify.set_v(j);
         }
     }
+    if !ex.spacing {
+        if let Some(sp) = fo.spacing {
+            d.font_spacing = sp;
+        }
+    }
 }
 
 /// Repaint every region that inherits `name`, as the reference's live parent link does. Linear in
@@ -187,10 +192,6 @@ fn read(lua: &Lua, this: &Table) -> mlua::Result<FontObject> {
 // ── install: the method table, the metatable and CreateFont ──────────────────────────────────
 
 /// Build the font-object method table and metatable, and register `CreateFont`.
-///
-/// Deviation: `SetSpacing`/`GetSpacing` are absent, because nothing renders line spacing (the line
-/// pitch is the font height): a missing method raises and names itself, where a stored, undrawn
-/// value would fail silently.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.set_named_registry_value(REG_FONT_WRAPPERS, lua.create_table()?)?;
 
@@ -369,6 +370,28 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| {
             let o = read(lua, &this)?.shadow.map_or([0.0, 0.0], |s| s.offset);
             Ok((o[0], o[1]))
+        })?,
+    )?;
+
+    // ── spacing ─────────────────────────────────────────────────────────────────────────────
+    // SetSpacing(spacing) (`0x4a4720` → `0x4a3f90`): a number, else the named Usage; held from then
+    // on, so the inheriting FontStrings take it. GetSpacing (`0x4a4040`) answers 0 before any.
+    m.set(
+        "SetSpacing",
+        lua.create_function(|lua, (this, sp): (Table, Value)| {
+            let Some(sp) = lua.coerce_number(sp)? else {
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:SetSpacing(spacing)",
+                    name_of(&this)?
+                )));
+            };
+            edit(lua, &this, |fo| fo.spacing = Some(sp as f32))
+        })?,
+    )?;
+    m.set(
+        "GetSpacing",
+        lua.create_function(|lua, this: Table| {
+            Ok(f64::from(read(lua, &this)?.spacing.unwrap_or(0.0)))
         })?,
     )?;
 

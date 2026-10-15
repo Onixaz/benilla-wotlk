@@ -223,6 +223,7 @@ fn set_font_object_takes_the_object_or_the_name() {
             justify_h: None,
             justify_v: None,
             shadow: None,
+            spacing: None,
         },
     );
     s.run(
@@ -283,6 +284,7 @@ fn dewdrop_recolors_a_row_from_its_own_font_object() {
             justify_h: None,
             justify_v: None,
             shadow: None,
+            spacing: None,
         },
     );
     s.run(
@@ -318,6 +320,7 @@ fn mutating_a_font_object_repaints_everything_that_inherits_it() {
             justify_h: None,
             justify_v: None,
             shadow: None,
+            spacing: None,
         },
     );
     s.run(
@@ -504,6 +507,7 @@ fn fonz_appraiser_copies_a_shipped_object_then_overrides_the_face() {
             justify_h: Some(JustifyH::Right),
             justify_v: None,
             shadow: None,
+            spacing: None,
         },
     );
     s.run(
@@ -534,16 +538,6 @@ fn fonz_appraiser_copies_a_shipped_object_then_overrides_the_face() {
             .unwrap(),
         ("Fonts\\FRIZQT__.TTF".to_string(), 10.0, String::new())
     );
-}
-
-/// Line spacing is not built: the reference's `SetSpacing` is absent here, so a call raises rather
-/// than store a number nothing draws.
-#[test]
-fn the_unmodelled_spacing_pair_fails_loudly() {
-    let s = script();
-    s.register_font_object("SomeFont", FontObject::default());
-    assert!(s.run("SomeFont:SetSpacing(4)").is_err());
-    assert!(s.eval::<bool>("return SomeFont.SetSpacing == nil").unwrap());
 }
 
 /// A button's state fonts take the object or the name; they are stored as names and re-resolved at
@@ -1037,4 +1031,59 @@ fn msbt_paints_its_own_face_size_outline_and_fade_over_the_font_object_it_inheri
             "OUTLINE".to_string()
         )
     );
+}
+
+/// Line spacing (`0x48dd00`, `0x4a3f90`): a FontString inherits its font object's gap until it
+/// sets its own, clamped at 0; the gap reaches the draw and the host's measure request.
+#[test]
+fn spacing_inherits_from_the_font_object_until_set() {
+    let mut s = script();
+    load(
+        &s,
+        r#"<Ui><Font name="GapFont" font="Fonts\FRIZQT__.TTF" spacing="3"><FontHeight><AbsValue val="12"/></FontHeight></Font>
+           <Frame name="GapHost"><Size x="100" y="100"/><Anchors><Anchor point="CENTER"/></Anchors>
+             <Layers><Layer><FontString name="GapText" inherits="GapFont" text="a"/>
+               <FontString name="OwnGap" inherits="GapFont" spacing="1" text="b"/></Layer></Layers>
+           </Frame></Ui>"#,
+    );
+    s.run(
+        r#"
+        assert(GapFont:GetSpacing() == 3 and GapText:GetSpacing() == 3, "inherited")
+        assert(OwnGap:GetSpacing() == 1, "its own attribute wins")
+        GapFont:SetSpacing(5)
+        assert(GapText:GetSpacing() == 5 and OwnGap:GetSpacing() == 1, "the live link")
+        GapText:SetSpacing(-2)
+        assert(GapText:GetSpacing() == 0, "clamped at zero")
+        GapFont:SetSpacing(7)
+        assert(GapText:GetSpacing() == 0, "a set gap no longer inherits")
+        "#,
+    )
+    .unwrap();
+    for (call, want) in [
+        ("GapText:SetSpacing()", "Usage: GapText:SetSpacing(spacing)"),
+        (
+            "GapFont:SetSpacing('x')",
+            "Usage: GapFont:SetSpacing(spacing)",
+        ),
+    ] {
+        let err = s.run(call).unwrap_err().to_string();
+        assert!(err.contains(want), "{call}: {err}");
+    }
+    s.run("OwnGap:SetSpacing(4)").unwrap();
+    s.resolve();
+    let gap = s.extract().into_iter().find_map(|q| match q.content {
+        QuadContent::Text {
+            text: Some(ref t),
+            spacing,
+            ..
+        } if t == "b" => Some(spacing),
+        _ => None,
+    });
+    assert_eq!(gap, Some(4.0));
+    let asked = s
+        .fontstrings_needing_measure()
+        .into_iter()
+        .find(|r| r.text == "b")
+        .map(|r| r.spacing);
+    assert_eq!(asked, Some(4.0));
 }

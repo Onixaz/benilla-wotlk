@@ -329,6 +329,7 @@ impl UiScript {
                             font: data.font_path,
                             font_height: data.font_height,
                             text_height: data.text_height,
+                            spacing: data.font_spacing,
                             shadow: data.font_shadow,
                             outline: data.outline,
                             alpha_gradient: data.alpha_gradient,

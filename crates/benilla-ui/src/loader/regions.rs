@@ -199,6 +199,12 @@ impl Loader<'_> {
             if let Some(j) = region.attr("justifyV") {
                 self.call_region(wrapper, "SetJustifyV", j.to_string(), dbg);
             }
+            if let Some(sp) = region
+                .attr("spacing")
+                .and_then(|v| v.trim().parse::<f32>().ok())
+            {
+                self.call_region(wrapper, "SetSpacing", sp, dbg);
+            }
         }
         if region.attr_bool("setAllPoints") {
             self.call_region(wrapper, "SetAllPoints", (), dbg);

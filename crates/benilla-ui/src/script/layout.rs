@@ -1301,6 +1301,7 @@ pub(super) fn measure_request_for(model: &mut Model, rh: RegionHandle) -> Option
     let height = d.font_height;
     let text_height = d.text_height;
     let outline = d.outline;
+    let spacing = d.font_spacing;
     let id = model.region_id(rh);
     Some(MeasureRequest {
         id,
@@ -1309,6 +1310,7 @@ pub(super) fn measure_request_for(model: &mut Model, rh: RegionHandle) -> Option
         text_height,
         wrap_width,
         outline,
+        spacing,
         scale,
         text,
         key,

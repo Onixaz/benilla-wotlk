@@ -971,6 +971,9 @@ pub(super) fn font_object_from_element(el: &Element) -> FontObject {
         justify_h,
         justify_v,
         shadow,
+        spacing: el
+            .attr("spacing")
+            .and_then(|v| v.trim().parse::<f32>().ok()),
     }
 }
 

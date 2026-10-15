@@ -499,6 +499,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         shadow: ef.shadow.is_some(),
                         justify_h: true,
                         justify_v: true,
+                        spacing: false,
                     };
                 }
                 // A re-point keeps the severance mask, as on a region: each local setter clears
