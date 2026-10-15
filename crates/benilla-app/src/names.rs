@@ -100,7 +100,7 @@ pub(crate) fn gated_rank(rec: Option<&CreatureRecord>, store: Option<&ObjectStor
 /// Which cache names a unit and under which key: the branch of the reference's `GetUnitName`
 /// (`0x609210`), which the combat log's `GetObjectName` (`0x6264e0`) also calls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NameKey {
+pub(crate) enum NameKey {
     /// The `OBJECT_FIELD_TYPE` player bit (`0x609232`): the name cache by guid.
     Player(u64),
     /// `UNIT_FIELD_PETNUMBER` non-zero (`0x609295`): the pet-name cache under that number.
@@ -116,7 +116,7 @@ impl NameKey {
     /// `PETNUMBER` 0; a charmed creature has a `HIGHGUID_UNIT` guid and a pet number). Without
     /// one, a `HIGHGUID_PET` guid's entry slot is taken as the pet number, right only for a
     /// permanent pet.
-    fn of(guid_val: u64, unit: Option<&ObjectStore>) -> Option<Self> {
+    pub(crate) fn of(guid_val: u64, unit: Option<&ObjectStore>) -> Option<Self> {
         if guid::is_player(guid_val) {
             return Some(Self::Player(guid_val));
         }
@@ -155,7 +155,11 @@ impl NameCache {
         unit: Option<&ObjectStore>,
         commands: &NetCommands,
     ) -> Option<&str> {
-        match NameKey::of(guid_val, unit)? {
+        self.resolve_key(NameKey::of(guid_val, unit)?, guid_val, commands)
+    }
+
+    fn resolve_key(&self, key: NameKey, guid_val: u64, commands: &NetCommands) -> Option<&str> {
+        match key {
             NameKey::Player(guid_val) => self
                 .players
                 .get_or_ask(guid_val, || {
@@ -166,6 +170,24 @@ impl NameCache {
             NameKey::Pet(pet_number) => self.resolve_pet(pet_number, guid_val, commands),
             NameKey::Creature(entry) => self.resolve_creature(entry, guid_val, commands),
         }
+    }
+
+    /// The answer under `key`, asking once: `None` in flight, `Some(None)` for an empty answer.
+    pub(crate) fn answer(
+        &self,
+        key: NameKey,
+        guid_val: u64,
+        commands: &NetCommands,
+    ) -> Option<Option<&str>> {
+        if let Some(name) = self.resolve_key(key, guid_val, commands) {
+            return Some(Some(name));
+        }
+        let answered = match key {
+            NameKey::Player(guid_val) => self.players.answered(guid_val),
+            NameKey::Pet(pet_number) => self.pets.answered(pet_number),
+            NameKey::Creature(entry) => self.creatures.answered(entry),
+        };
+        answered.then_some(None)
     }
 
     /// There is no negative answer: vmangos sends nothing when the guid is not a live pet with

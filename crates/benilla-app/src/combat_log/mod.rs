@@ -2,7 +2,7 @@
 //! handler with two consumers, the chat line ([`chat`], the display dispatcher `0x629b60`) and the
 //! floating number with the portrait's `UNIT_COMBAT` flash ([`text`]; `0x629d30` fires
 //! `COMBAT_TEXT_UPDATE`); they run in that order. The two legs have different CVar gates and
-//! classification rules.
+//! classification rules. A melee swing logs as a 3.3.5a combat-log entry ([`entries`]) instead.
 //!
 //! The completed swing and the environmental-damage log also drive animation; those handlers
 //! ([`crate::creature_anim::net`]) register after these, so the line runs before the animation.
@@ -22,6 +22,7 @@ use crate::ui_chat::ChatLog;
 use crate::ui_unit::{CombatTextEvent, UnitCombatFeedback};
 
 pub(crate) mod chat;
+pub(crate) mod entries;
 pub(crate) mod text;
 
 /// The chat line's read-only inputs, built into a [`chat::ChatCtx`] per packet.
@@ -69,6 +70,15 @@ pub(crate) struct Sinks<'w, 's> {
     center: MessageWriter<'w, CombatTextEvent>,
 }
 
+/// What a combat-log entry is queued with: the queue, the timestamp base, the target and the clock.
+#[derive(SystemParam)]
+pub(crate) struct LogSink<'w> {
+    pending: ResMut<'w, entries::PendingEntries>,
+    clock: Res<'w, entries::CombatLogClock>,
+    selection: Option<Res<'w, crate::target::Selection>>,
+    time: Option<Res<'w, Time<bevy::time::Real>>>,
+}
+
 /// The combat log's handler registration. Added ahead of
 /// [`crate::creature_anim::CreatureAnimPlugin`], so a shared kind runs the line first.
 pub(crate) struct CombatLogPlugin;
@@ -76,6 +86,15 @@ pub(crate) struct CombatLogPlugin;
 impl Plugin for CombatLogPlugin {
     fn build(&self, app: &mut App) {
         use SessionEventKind as K;
+        app.init_resource::<entries::PendingEntries>()
+            .init_resource::<entries::CombatLogClock>()
+            .add_message::<crate::net::EnteredWorldMessage>()
+            .add_systems(
+                Update,
+                (entries::on_world_entry, entries::fire_pending)
+                    .chain()
+                    .in_set(crate::ui_script::UiFeed),
+            );
         app.net_handler(K::AttackerState, on_attacker_state)
             .net_handler(K::SpellDamageLog, on_spell_damage_log)
             .net_handler(K::PeriodicAuraLog, on_periodic_aura_log)
@@ -99,11 +118,35 @@ impl Plugin for CombatLogPlugin {
     }
 }
 
-fn on_attacker_state(In(ev): In<SessionEvent>, c: Ctx, mut l: Sinks) {
-    if let SessionEvent::AttackerState(s) = ev {
-        let ctx = c.ctx();
-        chat::attacker_state(s, &ctx, &l.stores, &l.poses, &mut l.log);
-    }
+/// A swing's entry (`0x7512b0`), its endpoints from the attacker to the victim.
+fn on_attacker_state(In(ev): In<SessionEvent>, c: Ctx, l: Sinks, mut log: LogSink) {
+    let SessionEvent::AttackerState(s) = ev else {
+        return;
+    };
+    let Some(payload) = entries::swing_payload(&s) else {
+        return;
+    };
+    let inputs = entries::FlagInputs {
+        me: c.self_guid.0,
+        group: &c.group,
+        target: log.selection.as_ref().and_then(|s| s.guid),
+        factions: c.factions.as_deref(),
+        reputations: &c.reputations,
+    };
+    let (index, stores) = (&c.index, &l.stores);
+    let store_of = |g: u64| index.0.get(&g).and_then(|&e| stores.get(e).ok());
+    let now_ms = log
+        .time
+        .as_ref()
+        .map_or(0, |t| t.elapsed().as_millis() as u64);
+    let clock = *log.clock;
+    log.pending.queue(
+        (s.attacker, s.victim),
+        payload,
+        (now_ms, clock),
+        &inputs,
+        store_of,
+    );
 }
 
 fn on_spell_damage_log(In(ev): In<SessionEvent>, c: Ctx, mut l: Sinks) {

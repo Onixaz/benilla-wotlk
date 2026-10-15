@@ -68,8 +68,8 @@ pub struct AttackerState {
     pub blocked: u32,
     /// Nonzero for an on-next-swing ability; the reference only compares it to zero (`0x754fd0`).
     pub melee_spell_id: u32,
-    /// The first sub-damage block's school, 0 physical, and 0 with no blocks.
-    pub school: u8,
+    /// The first sub-damage block's school mask, 1 physical, and 0 with no blocks.
+    pub school_mask: u32,
 }
 
 impl AttackerState {
@@ -88,12 +88,12 @@ pub(super) fn read_attacker_state(r: &mut impl Read) -> io::Result<AttackerState
     let damage = read_u32_le(r)?;
     let overkill = read_u32_le(r)?;
     let subs = read_u8(r)?;
-    let mut school = 0u8;
+    let mut school_mask = 0;
     for i in 0..subs {
         // The school comes from the first block; later blocks split off other schools.
         let block_school = read_u32_le(r)?;
         if i == 0 {
-            school = u8::try_from(block_school).unwrap_or(0);
+            school_mask = block_school;
         }
         let _damage_f = read_f32_le(r)?;
         let _damage = read_u32_le(r)?;
@@ -145,7 +145,7 @@ pub(super) fn read_attacker_state(r: &mut impl Read) -> io::Result<AttackerState
         absorb,
         resist,
         blocked,
-        school,
+        school_mask,
     })
 }
 

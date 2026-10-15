@@ -874,12 +874,6 @@ family!(
     [Attacker, Victim, Amount, School],
     "`\"%s hits %s for %d %s damage.\"` (:779)"
 );
-family!(
-    COMBATHITCRITSCHOOL,
-    "COMBATHITCRITSCHOOL",
-    [Attacker, Victim, Amount, School],
-    "`\"%s crits %s for %d %s damage.\"` (:773)"
-);
 
 // ── melee: the swing that did not ──────────────────────────────────────────────────────
 family!(
@@ -905,36 +899,6 @@ family!(
     "VSBLOCK",
     [Attacker, Victim],
     "`\"%s attacks. %s blocks.\"` (:5394)"
-);
-family!(
-    VSABSORB,
-    "VSABSORB",
-    [Attacker, Victim],
-    "`\"%s attacks. %s absorbs all the damage.\"` (:5391)"
-);
-family!(
-    VSRESIST,
-    "VSRESIST",
-    [Attacker, Victim],
-    "`\"%s attacks. %s resists all the damage.\"` (:5424)"
-);
-family!(
-    VSIMMUNE,
-    "VSIMMUNE",
-    [Attacker, Victim],
-    "`\"%s attacks but %s is immune.\"` (:5418)"
-);
-family!(
-    VSEVADE,
-    "VSEVADE",
-    [Attacker, Victim],
-    "`\"%s attacks. %s evades.\"` (:5415)"
-);
-family!(
-    VSDEFLECT,
-    "VSDEFLECT",
-    [Attacker, Victim],
-    "`\"%s attacks. %s deflects.\"` (:5397)"
 );
 
 // ── a spell's direct damage ────────────────────────────────────────────────────────────
@@ -1411,16 +1375,10 @@ pub(crate) const ALL_FAMILIES: &[Family] = &[
     COMBATHIT,
     COMBATHITCRIT,
     COMBATHITSCHOOL,
-    COMBATHITCRITSCHOOL,
     MISSED,
     VSDODGE,
     VSPARRY,
     VSBLOCK,
-    VSABSORB,
-    VSRESIST,
-    VSIMMUNE,
-    VSEVADE,
-    VSDEFLECT,
     SPELLLOG,
     SPELLLOGCRIT,
     SPELLLOGSCHOOL,
@@ -1500,50 +1458,6 @@ pub(crate) fn miss_family(miss_info: u8) -> Family {
         // 10 ABSORB, 0, 1 and anything out of range take the default arm `0x62c0e0`, not
         // `SPELLLOGABSORB`, which belongs to the direct-damage path.
         _ => SPELLMISS,
-    }
-}
-
-/// The melee family a swing selects, `0x629b60` arm for arm; the order matters.
-pub(crate) fn melee_family(
-    hit_info: u32,
-    victim_state: u32,
-    damage: u32,
-    school: u8,
-) -> Option<Family> {
-    use benilla_protocol::messages::hit_info::{
-        CRIT, FULL_ABSORB as ABSORB, FULL_RESIST as RESIST, MISS,
-    };
-    if hit_info & MISS != 0 {
-        return Some(MISSED);
-    }
-    if victim_state == 5 {
-        return Some(VSBLOCK);
-    }
-    if damage == 0 {
-        if hit_info & ABSORB != 0 {
-            return Some(VSABSORB);
-        }
-        if hit_info & RESIST != 0 {
-            return Some(VSRESIST);
-        }
-    }
-    if victim_state == 1 && damage > 0 {
-        return Some(match (hit_info & CRIT != 0, school != 0) {
-            (false, false) => COMBATHIT,
-            (true, false) => COMBATHITCRIT,
-            (false, true) => COMBATHITSCHOOL,
-            (true, true) => COMBATHITCRITSCHOOL,
-        });
-    }
-    // `0x62a710` words only a state its flag table `0x8628f8` marks (`0x62a720`) and its jump
-    // table `0x62a8ec` covers: 0, 1 without damage, 4, 9 and 10 or more print nothing.
-    match victim_state {
-        2 => Some(VSDODGE),
-        3 => Some(VSPARRY),
-        6 => Some(VSEVADE),
-        7 => Some(VSIMMUNE),
-        8 => Some(VSDEFLECT),
-        _ => None,
     }
 }
 

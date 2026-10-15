@@ -10,10 +10,9 @@
 use bevy::prelude::*;
 
 use benilla_protocol::messages::{
-    power_display_scale, AttackerState, DamageShield, DispelFailed, EnchantmentLog,
-    EnvironmentalDamageLog, PartyKillLog, PeriodicAuraLog, PeriodicTick, SpellDamageLog,
-    SpellDispelLog, SpellEnergizeLog, SpellHealLog, SpellInstaKillLog, SpellLogExecute,
-    SpellLogMiss, SpellOutcomeLog,
+    power_display_scale, DamageShield, DispelFailed, EnchantmentLog, EnvironmentalDamageLog,
+    PartyKillLog, PeriodicAuraLog, PeriodicTick, SpellDamageLog, SpellDispelLog, SpellEnergizeLog,
+    SpellHealLog, SpellInstaKillLog, SpellLogExecute, SpellLogMiss, SpellOutcomeLog,
 };
 
 use crate::ui_chat::combat::{self, Family, Fills, UnitClass};
@@ -88,57 +87,6 @@ impl ChatCtx<'_> {
             .and_then(|s| s.catalog.get(spell_id))
             .is_none_or(benilla_formats::SpellDisplay::is_harmful)
     }
-}
-
-/// `SMSG_ATTACKERSTATEUPDATE`: the melee line, every `COMBAT_*` family. `school`, the first
-/// sub-damage's, selects the `…SCHOOL` template; physical (0) takes the plain one.
-pub(super) fn attacker_state(
-    s: AttackerState,
-    ctx: &ChatCtx,
-    stores: &Query<&mut ObjectStore>,
-    poses: &Query<&mut Transform>,
-    log: &mut ChatLog,
-) {
-    // `0x754fd0`, checked before the dispatcher: a swing from a spell
-    // that did not land plainly emits no line; the floating number has the same gate.
-    if !s.displayed() {
-        return;
-    }
-    let attacker = ctx.classify(s.attacker, stores);
-    let victim = ctx.classify(s.victim, stores);
-    // `0x62a710` emits nothing for VictimState 0, 1, 4 or 9.
-    let Some(family) = combat::melee_family(s.hit_info, s.victim_state, s.damage, s.school) else {
-        return;
-    };
-    // The chat type pair is hits/misses: only a landed hit is "hits", a dodge or parry "misses".
-    let landed = family.stem.starts_with("COMBATHIT");
-    let Some(kind) = combat::combat_kind(attacker, victim, !landed) else {
-        return;
-    };
-    let fills = Fills {
-        spell: String::new(),
-        school: (s.school != 0).then_some(s.school),
-        amount: i64::from(s.damage),
-        // Only a landed hit grows a trailer, and only here can it say GLANCING, CRUSHING or BLOCK:
-        // of `0x628410`'s call sites, this one passes a real `blocked` and `HitInfo` (`0x629ee7`).
-        trailers: landed.then_some(combat::Trailers {
-            absorbed: s.absorb,
-            resisted: s.resist,
-            blocked: s.blocked,
-            hit_info: s.hit_info,
-        }),
-        ..Default::default()
-    };
-    queue(
-        log,
-        ctx,
-        poses,
-        kind,
-        family,
-        (s.attacker, attacker),
-        (s.victim, victim),
-        fills,
-    );
 }
 
 /// `SMSG_SPELLNONMELEEDAMAGELOG`: a spell's damage line, or the absorbed, blocked or resisted

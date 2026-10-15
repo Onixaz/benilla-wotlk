@@ -5,11 +5,12 @@ use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
     auction, backdrop, bank, bind_confirm, camera_view, char_stats, chat_window, colorselect,
-    container, craft, cursor, death, duel, follow, gossip, guild, inspect, item_text, loot,
-    loot_roll, macros, mail, merchant, parse_unit_token, party, petition, pvp, quest, quest_log,
-    reputation, session, simplehtml, skills, slider, social, spellbook, stable, taxi, trade,
-    tradeskill, trainer, weapon_enchant, ActionSlot, AuraState, FontObject, ItemTemplateView,
-    MusicRequest, PlayerReqState, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
+    combat_log, container, craft, cursor, death, duel, follow, gossip, guild, inspect, item_text,
+    loot, loot_roll, macros, mail, merchant, parse_unit_token, party, petition, pvp, quest,
+    quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable, taxi,
+    trade, tradeskill, trainer, weapon_enchant, ActionSlot, AuraState, FontObject,
+    ItemTemplateView, MusicRequest, PlayerReqState, RegionData, ScriptValue, SoundRequest,
+    UnitState, UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -734,6 +735,8 @@ pub(crate) struct Model {
 
     /// The open group-loot rolls, and the `RollOnLoot` `(roll_id, roll_type)` votes.
     pub(crate) loot_rolls: loot_roll::LootRollsState,
+    /// The combat log's entries, cursor and filters.
+    pub(crate) combat_log: combat_log::CombatLogStore,
     pub(crate) loot_roll_votes: Vec<(u32, u8)>,
     /// Need or Greed on a bind-on-pickup roll: a `CONFIRM_LOOT_ROLL` popup ask, not a vote.
     pub(crate) loot_roll_confirms: Vec<(u32, u8)>,
@@ -1385,6 +1388,7 @@ impl Model {
             loot_close: false,
             loot_master_gives: Vec::new(),
             loot_rolls: loot_roll::LootRollsState::default(),
+            combat_log: combat_log::CombatLogStore::default(),
             loot_roll_votes: Vec::new(),
             loot_roll_confirms: Vec::new(),
             item_text: None,

@@ -100,6 +100,7 @@ mod chat_window;
 mod class_list;
 mod clip;
 mod colorselect;
+mod combat_log;
 mod container;
 mod craft;
 mod cursor;
@@ -240,6 +241,10 @@ pub use chat_send::ChatSend;
 pub use chat_types::ChatTypeColor;
 pub use chat_window::{message_group_index, ChatWindowLook, MESSAGE_GROUPS};
 pub use class_list::ClassNames;
+pub use combat_log::{
+    CombatLogEntry, CombatLogPayload, CombatLogStore, CombatLogUnit, Damage, MissType, OBJECT_NONE,
+    RETENTION_CVAR,
+};
 pub use container::{
     BagAutoStore, ContainerMove, ContainerSlot, ContainerState, EnchantView, PendingWrap,
     PetitionSlotView, RandomPropertyView, UiCursorMode,
@@ -836,6 +841,7 @@ impl UiScript {
         death::install(&lua)?;
         aura::install(&lua)?;
         cvars::install(&lua)?;
+        combat_log::install(&lua)?;
         battle_net::install(&lua)?;
         secure_call::install(&lua)?;
         autocomplete::install(&lua)?;

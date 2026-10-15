@@ -378,6 +378,8 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // `CombatLogPeriodicSpells` (`0x6033b3`): the handle is discarded and every use looks it up by
     // name; read as the record's int.
     same(crate::ui_chat::combat::LOG_PERIODIC_CVAR, "1"),
+    // `combatLogRetentionTime` (`0x51efed`): seconds the combat log keeps an entry (`0x750400`).
+    same(benilla_ui::script::RETENTION_CVAR, "300"),
     // ── Sound-panel check buttons ────────────────────────────────────────────────────────────────
     //
     // Category-7 registrations that keep no handle: the reference looks each up by name at use.

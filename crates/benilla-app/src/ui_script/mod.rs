@@ -774,6 +774,9 @@ mod mirror_timer_tests;
 mod combat_text_tests;
 
 #[cfg(test)]
+mod combat_log_tests;
+
+#[cfg(test)]
 mod combo_frame_tests;
 
 #[cfg(test)]

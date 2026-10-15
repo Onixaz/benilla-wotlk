@@ -689,8 +689,17 @@ pub(crate) fn run_pending_reload(world: &mut World) {
         return;
     }
     info!("ui_script: ReloadUI — ending the UI session and building a new one");
+    // The combat log's store outlives a reload, as the reference keeps it outside the VM.
+    let combat_log = world
+        .get_non_send_resource_mut::<UiScript>()
+        .map(|mut s| s.take_combat_log());
     end_ui_session(world);
     load_ingame_ui_on_world_entry(world);
+    if let (Some(store), Some(mut script)) =
+        (combat_log, world.get_non_send_resource_mut::<UiScript>())
+    {
+        script.restore_combat_log(store);
+    }
     // `UI_Init` ends by re-entering the world-enter cascade (`0x490168`), its sends included, but
     // only with the active player set (`0x490166 je`): our own player's entity exists. Not
     // `SetActiveMover`, which only the player's create runs.
