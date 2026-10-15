@@ -2312,3 +2312,82 @@ fn unit_is_possessed_reads_the_flag_and_issecure_is_set() {
         .unwrap());
     assert!(s.eval::<bool>("return issecure() == 1").unwrap());
 }
+
+/// `UnitHasVehicleUI` (`0x613740`) pushes a Lua boolean through a resolver that never raises, so
+/// any argument answers false while benilla tracks no vehicle seat.
+#[test]
+fn unit_has_vehicle_ui_answers_a_boolean_false_for_any_argument() {
+    let mut s = UiScript::new().unwrap();
+    s.set_unit("target", Some(player()));
+    for arg in [
+        r#""target""#,
+        r#""player""#,
+        r#""nobody""#,
+        "nil",
+        "5",
+        "{}",
+    ] {
+        assert_eq!(
+            s.eval::<String>(&format!("return type(UnitHasVehicleUI({arg}))"))
+                .unwrap(),
+            "boolean",
+            "UnitHasVehicleUI({arg}) is a boolean"
+        );
+        assert!(
+            !s.eval::<bool>(&format!("return UnitHasVehicleUI({arg})"))
+                .unwrap(),
+            "UnitHasVehicleUI({arg})"
+        );
+    }
+}
+
+/// `IsReferAFriendLinked` (`0x51d1b0`): 1 for a held player whose `UNIT_DYNAMIC_FLAGS` carry
+/// 0x40 (`0x6d75b9`), nil otherwise, never raising, and nil with no player object.
+#[test]
+fn is_refer_a_friend_linked_reads_a_held_player_s_dynamic_flag() {
+    let linked = |s: &UiScript, arg: &str| {
+        s.eval::<bool>(&format!("return IsReferAFriendLinked({arg}) == 1"))
+            .unwrap()
+    };
+    let unit = |is_player: bool, has_object: bool, dynamic_flags: u32| UnitState {
+        exists: true,
+        is_player,
+        has_object,
+        dynamic_flags,
+        guid: 2,
+        ..Default::default()
+    };
+    let mut s = UiScript::new().unwrap();
+    s.set_unit("target", Some(unit(true, true, 0x40)));
+    assert!(!linked(&s, r#""target""#), "no player object: nil");
+
+    s.set_unit_guids(&UnitGuids {
+        player: 1,
+        target: 2,
+        ..Default::default()
+    });
+    assert!(linked(&s, r#""target""#), "a held, linked player");
+    assert!(linked(&s, r#""TARGET""#), "the token folds case");
+    assert_eq!(
+        s.eval::<i64>(r#"return IsReferAFriendLinked("target")"#)
+            .unwrap(),
+        1,
+        "the number 1, not a boolean"
+    );
+    // Other dynamic bits do not count.
+    s.set_unit("target", Some(unit(true, true, 0x3f | 0x80)));
+    assert!(!linked(&s, r#""target""#), "bit 0x40 alone");
+    // The object leg asks for a player object (type mask 0x10): a creature falls through.
+    s.set_unit("target", Some(unit(false, true, 0x40)));
+    assert!(!linked(&s, r#""target""#), "a creature is never linked");
+    // No object: the group and friend legs, not built, answer nothing.
+    s.set_unit("target", Some(unit(true, false, 0x40)));
+    assert!(!linked(&s, r#""target""#), "an unheld player");
+    for arg in [r#""nobody""#, "nil", "5", "{}"] {
+        assert!(
+            s.eval::<bool>(&format!("return IsReferAFriendLinked({arg}) == nil"))
+                .unwrap(),
+            "IsReferAFriendLinked({arg}) answers nil without raising"
+        );
+    }
+}

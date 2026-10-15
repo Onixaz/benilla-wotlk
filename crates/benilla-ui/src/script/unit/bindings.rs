@@ -17,6 +17,10 @@ use super::{
 /// power (`0x60ed72`, `0x60effd`).
 const OWN_POWER_TYPE: i64 = 7;
 
+/// `UNIT_DYNAMIC_FLAGS` bit 0x40, the Refer-a-Friend link `IsReferAFriendLinked` reads off a held
+/// player (`0x6d75bf`: `shr 6; and 1`).
+const UNIT_DYNFLAG_REFER_A_FRIEND: u32 = 0x40;
+
 /// `UnitPower`/`UnitPowerMax`: the token must pass `lua_isstring`, else the usage line raises. A
 /// numeric type goes through `lua_tointeger` (`0x84e070`, `fistp` at the default round-to-nearest)
 /// and outside `0..=7` answers 0; 7 or no type is the unit's display type. A held unit answers
@@ -143,6 +147,44 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             })?,
         )?;
     }
+
+    // `UnitHasVehicleUI(unit)` (`0x613740`): a Lua boolean, the flag `0x20000000` of the seat the
+    // unit rides (`0x613600`: the held unit's vehicle seat, else a party member's seat id). The
+    // token goes through `lua_tolstring` and the non-raising resolver (`0x60abf0`), so any
+    // argument answers. benilla tracks no vehicle, so every unit sits on no seat and answers
+    // false, as the macro conditions `vehicleui` and `unithasvehicleui` do.
+    g.set(
+        "UnitHasVehicleUI",
+        lua.create_function(|_, _token: Value| Ok(false))?,
+    )?;
+
+    // `IsReferAFriendLinked(unit)` (`0x51d1b0`): 1 or nil, never raising, and nil with no player
+    // object. The token resolves to a guid (`0x60c1c0`) and `0x6d7590` asks three places in turn:
+    // a held player object's `UNIT_DYNAMIC_FLAGS` bit 0x40 (`0x6d75b9`); else a group member's
+    // status bit 0x100 (`0x6d75e9`); else the friend list's status byte bit 0x08 (`0x6d7612`).
+    // Only the first is built: the group list and the friend list still arrive in 1.12.1's
+    // layouts, which carry neither bit (#190).
+    g.set(
+        "IsReferAFriendLinked",
+        lua.create_function(|lua, token: Value| {
+            let token = crate::script::binding_abi::optional_string(lua, &token);
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            if model.unit_guids.player == 0 {
+                return Ok(Value::Nil);
+            }
+            let linked = token
+                .as_deref()
+                .and_then(|t| model.unit(t))
+                .is_some_and(|u| {
+                    u.has_object
+                        && u.is_player
+                        && u.dynamic_flags & UNIT_DYNFLAG_REFER_A_FRIEND != 0
+                });
+            Ok(flag(linked))
+        })?,
+    )?;
 
     // `UnitIsPartyLeader(unit)` (`0x516210`): a held player's `PLAYER_FLAGS` bit 0x1, for a
     // stranger leading their own party, or a GUID equal to the group leader's, for a member not

@@ -784,3 +784,144 @@ fn click_frame(s: &mut UiScript, name: &str) {
     s.mouse_button(x as f32, y as f32, "LeftButton", false);
     s.resolve();
 }
+
+/// The stock 3.3.5a files a target-frame right-click runs through, in `FrameXML.toc` order:
+/// `SecureTemplates.xml` for the target frame's `SecureUnitButtonTemplate` click,
+/// `PlayerFrame.xml` for the `PlayerFrame` `TargetFrame_UpdateAuras` reads, and `PVPFrame.xml`
+/// for the `PVPTeamDetails` `UnitPopup_OnUpdate` reads. The load's own errors are returned, not
+/// asserted: the player frame's SELF menu still lacks `GetDungeonDifficulty`.
+fn load_target_menu_335(s: &mut UiScript) -> Vec<String> {
+    let mut errors = Vec::new();
+    s.register_cvars(crate::cvars::registered_pairs());
+    for entry in super::test_ui::production_order(&[&[
+        r"Interface\FrameXML\GlobalStrings.lua",
+        r"Interface\FrameXML\Fonts.xml",
+        r"Interface\FrameXML\BasicControls.xml",
+        r"Interface\FrameXML\UIParent.xml",
+        r"Interface\FrameXML\MoneyFrame.lua",
+        r"Interface\FrameXML\MoneyFrame.xml",
+        r"Interface\FrameXML\GameTooltip.xml",
+        r"Interface\FrameXML\UIDropDownMenu.xml",
+        r"Interface\FrameXML\SecureTemplates.xml",
+        r"Interface\FrameXML\UIPanelTemplates.lua",
+        r"Interface\FrameXML\UIPanelTemplates.xml",
+        r"Interface\FrameXML\TextStatusBar.lua",
+        r"Interface\FrameXML\TextStatusBar.xml",
+        r"Interface\FrameXML\CombatFeedback.xml",
+        r"Interface\FrameXML\CastingBarFrame.xml",
+        r"Interface\FrameXML\UnitPopup.xml",
+        r"Interface\FrameXML\UnitFrame.xml",
+        r"Interface\FrameXML\PlayerFrame.xml",
+        r"Interface\FrameXML\TargetFrame.xml",
+        r"Interface\FrameXML\PVPFrame.xml",
+    ]]) {
+        let path = entry.replace('\\', "/");
+        let bytes = super::test_ui::read(&path).unwrap_or_else(|| panic!("{entry}: not found"));
+        if path.to_ascii_lowercase().ends_with(".lua") {
+            if let Err(e) = s.run_chunk_named(&bytes, &format!("@{entry}")) {
+                errors.push(e.to_string());
+            }
+            continue;
+        }
+        let doc = benilla_ui::framexml::parse(&benilla_ui::source::decode(&bytes))
+            .unwrap_or_else(|e| panic!("{entry}: {e}"));
+        let provider = |req: &str| super::test_ui::read(req);
+        errors.extend(benilla_ui::loader::load_in(s, &doc, &path, &provider).errors);
+    }
+    errors.extend(s.take_errors());
+    errors
+}
+
+/// A right-click on the 3.3.5a target frame over a friendly player opens the PLAYER menu. The
+/// click runs `SecureUnitButton_OnClick`, whose unit lookup asks `UnitHasVehicleUI`
+/// (`SecureTemplates.lua:193`), and the menu's rows ask `IsReferAFriendLinked`
+/// (`UnitPopup.lua:788`); then the popup's per-frame update runs over the open menu.
+#[test]
+fn a_3_3_5a_target_frame_right_click_opens_the_player_menu() {
+    benilla_formats::wow_data_or_skip!();
+    const TARGET: u64 = 2;
+    let mut s = UiScript::new().unwrap();
+    s.set_screen_size(1024.0, 768.0);
+    load_target_menu_335(&mut s);
+
+    let held_player = |name: &str, guid: u64, reaction: u8| UnitState {
+        exists: true,
+        has_object: true,
+        name: Some(name.into()),
+        health: 40,
+        max_health: 40,
+        level: 5,
+        is_player: true,
+        player_controlled: true,
+        is_connected: true,
+        reaction,
+        guid,
+        ..UnitState::default()
+    };
+    s.set_unit("player", Some(held_player("Me", 1, 0)));
+    s.set_unit("target", Some(held_player("Ally", TARGET, 5)));
+    s.set_unit_guids(&benilla_ui::script::UnitGuids {
+        player: 1,
+        target: TARGET,
+        ..Default::default()
+    });
+    s.fire_event("PLAYER_TARGET_CHANGED", vec![]);
+    s.resolve();
+    assert!(
+        s.eval::<bool>("return TargetFrame:IsShown()").unwrap(),
+        "fixture: the target frame shows on a target"
+    );
+    let target_errors = s.take_errors();
+    assert!(
+        target_errors.is_empty(),
+        "target errors: {target_errors:#?}"
+    );
+
+    let (cx, cy) = s
+        .eval::<(f64, f64)>("return TargetFrame:GetCenter()")
+        .unwrap();
+    s.mouse_button(cx as f32, cy as f32, "RightButton", true);
+    s.mouse_button(cx as f32, cy as f32, "RightButton", false);
+    s.resolve();
+    let click_errors = s.take_errors();
+    assert!(click_errors.is_empty(), "click errors: {click_errors:#?}");
+    assert!(
+        s.eval::<bool>("return DropDownList1:IsShown()").unwrap(),
+        "a friendly player target opens a menu"
+    );
+    assert_eq!(
+        s.eval::<String>("return TargetFrameDropDown.which")
+            .unwrap(),
+        "PLAYER"
+    );
+    // The PLAYER rows (`UnitPopup.lua:141`) the predicates leave shown for an unlinked, friendly,
+    // ungrouped player: the Refer-a-Friend pair hides (`UnitPopup.lua:787-794`), the rest stay.
+    let rows: Vec<String> = s
+        .eval(
+            "local t = {} for i = 2, DropDownList1.numButtons do \
+             t[#t + 1] = _G['DropDownList1Button' .. i].value end return t",
+        )
+        .unwrap();
+    assert_eq!(
+        rows,
+        [
+            "SET_FOCUS",
+            "WHISPER",
+            "INSPECT",
+            "INVITE",
+            "ACHIEVEMENTS",
+            "TRADE",
+            "FOLLOW",
+            "DUEL",
+            "RAID_TARGET_ICON",
+            "CANCEL"
+        ]
+    );
+
+    s.run("UnitPopup_OnUpdate(0.1)").unwrap();
+    let update_errors = s.take_errors();
+    assert!(
+        update_errors.is_empty(),
+        "update errors: {update_errors:#?}"
+    );
+}
