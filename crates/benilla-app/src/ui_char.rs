@@ -4,9 +4,12 @@
 //! the half any unit shares: a creature has no player fields, so those read absent and keep their
 //! defaults.
 
+use std::collections::HashMap;
+
 use bevy::prelude::*;
 
-use benilla_protocol::messages::PLAYER_SKILL_SLOTS;
+use benilla_formats::{GameTableId, GameTables};
+use benilla_protocol::messages::{PLAYER_COMBAT_RATINGS, PLAYER_SKILL_SLOTS};
 use benilla_ui::script::{
     weapon_subclass_skill, BankBagSlots, InvSlotView, InventorySlots, ScriptValue, SkillEntry,
     SkillsState, UiScript, UnitCombatStats, BANK_BAG_SLOT_COUNT, EQUIPMENT_BAG, SKILL_DEFENSE,
@@ -30,6 +33,79 @@ const SLOT_RANGED: u8 = 17;
 const ITEM_CLASS_WEAPON: u32 = 2;
 /// Weapon subclass 19, wand (`ItemPrototype.h:211`), for `HasWandEquipped`.
 const SUBCLASS_WAND: u32 = 19;
+
+/// The gt tables and form flags behind the sheet's derived figures; absent, those read 0.
+#[derive(Resource)]
+pub(crate) struct SheetTables {
+    pub(crate) gt: GameTables,
+    /// `SpellShapeshiftForm.dbc` `flags1` by form id; bit `0x20` lets agility add attack power.
+    pub(crate) form_flags: HashMap<u32, u32>,
+}
+
+/// `GetHealthRegenRateFromSpirit`'s cap on the spirit `gtOCTRegenHP` prices (`[0xadaa10]`).
+const SPIRIT_REGEN_CAP: i32 = 50;
+
+/// The figures 12340 derives from a unit's level, class and stats through the gt tables, for the
+/// player or a pet: crit from agility (`0x71bae0`), spell crit from intellect (`0x71bb70`), and
+/// health and mana regen from spirit (`0x71ba60`, `0x71b9f0`).
+fn gt_derived(store: &ObjectStore, gt: &GameTables) -> [f32; 4] {
+    let f = &store.0;
+    let row = f.unit_level().unwrap_or(0) as i32 - 1;
+    let col = ((f.unit_bytes_0().unwrap_or(0) >> 8) & 0xff) as i32 - 1;
+    // Each stat floored at 0, as the reads' `(x < 0) - 1 & x`.
+    let stat = |i: u8| (f.unit_stat(i).unwrap_or(0) as i32).max(0);
+    let chance = |per: GameTableId, base: GameTableId, points: i32| {
+        let per = gt.lookup(per, row, col);
+        if per == 0.0 {
+            return 0.0;
+        }
+        ((f64::from(per) * f64::from(points) + f64::from(gt.lookup(base, 0, col))) * 100.0) as f32
+    };
+    let crit_from_agility = chance(
+        GameTableId::ChanceToMeleeCrit,
+        GameTableId::ChanceToMeleeCritBase,
+        stat(1),
+    );
+    let spell_crit_from_intellect = chance(
+        GameTableId::ChanceToSpellCrit,
+        GameTableId::ChanceToSpellCritBase,
+        stat(3),
+    );
+    let spirit = stat(4);
+    let capped = spirit.min(SPIRIT_REGEN_CAP);
+    let health_regen = f64::from(capped) * f64::from(gt.lookup(GameTableId::OctRegenHp, row, col))
+        + f64::from(gt.lookup(GameTableId::RegenHpPerSpt, row, col)) * f64::from(spirit - capped);
+    let mana_regen = f64::from(stat(3)).sqrt()
+        * f64::from(gt.lookup(GameTableId::RegenMpPerSpt, row, col))
+        * f64::from(spirit);
+    [
+        crit_from_agility,
+        spell_crit_from_intellect,
+        health_regen as f32,
+        mana_regen as f32,
+    ]
+}
+
+/// `CGPlayer_C::GetCombatRatingPct` (`0x6de410`) for each rating: the points over the level's
+/// `gtCombatRatings` price, times the class's `gtOCTClassCombatRatingScalar`; 0 when either is 0.
+fn combat_rating_bonus(store: &ObjectStore, gt: &GameTables) -> [f32; 25] {
+    let f = &store.0;
+    let level_row = f.unit_level().unwrap_or(0) as i32 - 1;
+    let class_col = ((f.unit_bytes_0().unwrap_or(0) >> 8) & 0xff) as i32 - 1;
+    std::array::from_fn(|i| {
+        let price = gt.lookup(GameTableId::CombatRatings, level_row, i as i32);
+        let scalar = gt.lookup(
+            GameTableId::OctClassCombatRatingScalar,
+            i as i32 + 1,
+            class_col,
+        );
+        if price == 0.0 || scalar == 0.0 {
+            return 0.0;
+        }
+        let rating = f.player_combat_rating(i as u8).unwrap_or(0);
+        (f64::from(rating) / f64::from(price) * f64::from(scalar)) as f32
+    })
+}
 
 /// An f32 snapshot field as a diff key, quantized to 1/32 so equal wire values compare equal.
 fn fixed(v: f32) -> i64 {
@@ -371,8 +447,13 @@ fn base_swing(streamed: Option<u32>) -> u32 {
     streamed.filter(|&ms| ms != 0).unwrap_or(2000)
 }
 
-pub(crate) fn unit_combat_stats(store: &ObjectStore) -> UnitCombatStats {
+pub(crate) fn unit_combat_stats(
+    store: &ObjectStore,
+    tables: Option<&SheetTables>,
+) -> UnitCombatStats {
     let f = &store.0;
+    let [crit_from_agility, spell_crit_from_intellect, health_regen_from_spirit, mana_regen_from_spirit] =
+        tables.map_or([0.0; 4], |t| gt_derived(store, &t.gt));
 
     let mut stats = [0i32; 5];
     let mut stat_pos = [0i32; 5];
@@ -429,19 +510,28 @@ pub(crate) fn unit_combat_stats(store: &ObjectStore) -> UnitCombatStats {
         offhand_weapon_skill: (0, 0),
         ranged_weapon_skill: (0, 0),
         defense_skill: (0, 0),
-        dodge_percent: 0.0,
-        parry_percent: 0.0,
-        block_percent: 0.0,
+        crit_from_agility,
+        spell_crit_from_intellect,
+        health_regen_from_spirit,
+        mana_regen_from_spirit,
+        max_health_modifier: f.unit_max_health_modifier().unwrap_or(0.0),
+        // The player's sheet half is `combat_stats`'s.
+        ..UnitCombatStats::default()
     }
 }
 
-/// The player's snapshot: [`unit_combat_stats`] plus the equipment flags and the skill pairs.
+/// The player's snapshot: [`unit_combat_stats`] plus the equipment flags, the skill pairs and the
+/// 3.3.5a sheet's player fields.
 fn combat_stats(
     store: &ObjectStore,
     objects: &Objects,
     items: &Items,
     commands: &NetCommands,
+    tables: Option<&SheetTables>,
+    classes: Option<&benilla_formats::ChrClasses>,
 ) -> UnitCombatStats {
+    let f = &store.0;
+    let class = (f.unit_bytes_0().unwrap_or(0) >> 8) & 0xff;
     // The off hand counts only as a weapon (a shield does not swing); both flags read false
     // until the template lands.
     let has_offhand = slot_entry(store, objects, SLOT_OFF_HAND)
@@ -472,7 +562,45 @@ fn combat_stats(
         dodge_percent: store.0.player_dodge_percentage().unwrap_or(0.0),
         parry_percent: store.0.player_parry_percentage().unwrap_or(0.0),
         block_percent: store.0.player_block_percentage().unwrap_or(0.0),
-        ..unit_combat_stats(store)
+        crit_percent: f.player_crit_percentage().unwrap_or(0.0),
+        ranged_crit_percent: f.player_ranged_crit_percentage().unwrap_or(0.0),
+        spell_crit_percent: std::array::from_fn(|i| {
+            f.player_spell_crit_percentage(i as u8).unwrap_or(0.0)
+        }),
+        // `GetModDamageDonePos + GetModDamageDoneNeg` (`0x578210`, `0x578250`).
+        spell_damage_bonus: std::array::from_fn(|i| {
+            f.player_mod_damage_done_pos(i as u8).unwrap_or(0)
+                + f.player_mod_damage_done_neg(i as u8).unwrap_or(0)
+        }),
+        spell_healing_bonus: f.player_mod_healing_done_pos().unwrap_or(0),
+        target_resistance_mod: f.player_mod_target_resistance().unwrap_or(0),
+        shield_block: f.player_shield_block().unwrap_or(0),
+        expertise: [
+            f.player_expertise(0).unwrap_or(0),
+            f.player_expertise(1).unwrap_or(0),
+        ],
+        combat_ratings: std::array::from_fn(|i| {
+            (i < usize::from(PLAYER_COMBAT_RATINGS))
+                .then(|| f.player_combat_rating(i as u8))
+                .flatten()
+                .unwrap_or(0)
+        }),
+        combat_rating_bonus: tables.map_or([0.0; 25], |t| combat_rating_bonus(store, &t.gt)),
+        // `GetManaRegen` answers only a mana user (power type byte 0, `0x612abb`); the base table
+        // `CGUnit::GetPowerRegenBase` adds is 0 for mana.
+        mana_regen: (f.unit_power_type() == 0).then(|| {
+            [
+                f.unit_power_regen(0, false).unwrap_or(0.0),
+                f.unit_power_regen(0, true).unwrap_or(0.0),
+            ]
+        }),
+        damage_bonus_stat: classes.and_then(|c| c.damage_bonus_stat(class)),
+        form_agility_attack_power: tables.is_some_and(|t| {
+            t.form_flags
+                .get(&u32::from(f.unit_shapeshift_form()))
+                .is_some_and(|flags| flags & 0x20 != 0)
+        }),
+        ..unit_combat_stats(store, tables)
     }
 }
 
@@ -836,6 +964,41 @@ pub(crate) fn fire_stat_transitions(
     }) {
         script.fire_event("UNIT_ATTACK", vec![tok()]);
     }
+    if token != "player" {
+        return;
+    }
+    // The player's mirror handlers (`0x6e5775`-`0x6e57f9`): the damage and healing mods, the
+    // block-to-spell-crit run and the regen floats fire `PLAYER_DAMAGE_DONE_MODS` with "player".
+    if changed(|s| {
+        let mut v = vec![
+            i64::from(s.physical_bonus_pos),
+            i64::from(s.physical_bonus_neg),
+            fixed(s.damage_percent),
+            i64::from(s.spell_healing_bonus),
+            fixed(s.block_percent),
+            fixed(s.dodge_percent),
+            fixed(s.parry_percent),
+            i64::from(s.expertise[0]),
+            i64::from(s.expertise[1]),
+            fixed(s.crit_percent),
+            fixed(s.ranged_crit_percent),
+        ];
+        v.extend(s.spell_damage_bonus.iter().map(|&x| i64::from(x)));
+        v.extend(s.spell_crit_percent[..5].iter().map(|&x| fixed(x)));
+        v.extend(s.mana_regen.iter().flatten().map(|&x| fixed(x)));
+        v
+    }) {
+        script.fire_event("PLAYER_DAMAGE_DONE_MODS", vec![tok()]);
+    }
+    // The ratings, shield block and target resistance fire `COMBAT_RATING_UPDATE`, no argument.
+    if changed(|s| {
+        let mut v: Vec<i64> = s.combat_ratings.iter().map(|&x| i64::from(x)).collect();
+        v.push(i64::from(s.shield_block));
+        v.push(i64::from(s.target_resistance_mod));
+        v
+    }) {
+        script.fire_event("COMBAT_RATING_UPDATE", vec![]);
+    }
 }
 
 pub(crate) fn feed_char(
@@ -854,6 +1017,8 @@ pub(crate) fn feed_char(
     names: Res<crate::names::NameCache>,
     // `ItemSubClass.dbc`, for `GetInventoryItemCount`'s container count bit.
     sub_classes: Option<Res<crate::ui_items::ItemSubClasses>>,
+    // The gt tables and form flags behind the sheet's derived figures.
+    sheet_tables: Option<Res<SheetTables>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -900,6 +1065,9 @@ pub(crate) fn feed_char(
         || props.as_ref().is_some_and(|r| r.is_changed());
     let pending_held = !pending.is_empty();
     let pending_moved = memo.pending_epoch.moved(pending.epoch());
+    // Both load once at startup, after the first snapshot can already be out.
+    let tables_added = sheet_tables.as_ref().is_some_and(|r| r.is_added())
+        || classes.as_ref().is_some_and(|r| r.is_added());
     gate::trace(
         "feed_char",
         &[
@@ -913,6 +1081,7 @@ pub(crate) fn feed_char(
             ("enchants", enchants_changed),
             ("pending", pending_held),
             ("pending-epoch", pending_moved),
+            ("tables", tables_added),
         ],
     );
     let gate = gate::Gate::new(
@@ -925,13 +1094,21 @@ pub(crate) fn feed_char(
             || icons_added
             || enchants_changed
             || pending_held
-            || pending_moved,
+            || pending_moved
+            || tables_added,
     );
     if gate.skip() {
         return;
     }
 
-    let stats = combat_stats(store, objects, &items, &commands);
+    let stats = combat_stats(
+        store,
+        objects,
+        &items,
+        &commands,
+        sheet_tables.as_deref(),
+        classes.as_deref().map(|t| &t.0),
+    );
     if memo.last_stats.as_ref() != Some(&stats) {
         gate.audit("feed_char", "the combat-stats snapshot");
         // Push before firing: handlers run synchronously and would paint the old values.

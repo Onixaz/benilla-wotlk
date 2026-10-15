@@ -31,6 +31,7 @@ fn feed_pet_doll(
     pet: PetUnit,
     mut booth: ResMut<PetDollBooth>,
     mut last: Local<crate::ui_script::VmMemo<Option<UnitCombatStats>>>,
+    tables: Option<Res<crate::ui_char::SheetTables>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -45,7 +46,7 @@ fn feed_pet_doll(
     // A guid whose object never streamed is no pet: `None` empties the booth.
     booth.unit = (pet_guid != 0).then(|| pet.entity(pet_guid)).flatten();
 
-    let fresh = store.map(unit_combat_stats);
+    let fresh = store.map(|s| unit_combat_stats(s, tables.as_deref()));
     // Push only on change: the page repaints off the `UNIT_*` events below.
     if *last == fresh {
         return;
@@ -109,7 +110,7 @@ mod tests {
     /// PLAYER-block values keep their defaults: the reference's pet sheet shows no buff split.
     #[test]
     fn the_core_reads_a_creatures_unit_block_and_defaults_the_rest() {
-        let s = unit_combat_stats(&boar());
+        let s = unit_combat_stats(&boar(), None);
         assert_eq!(s.stats, [63, 45, 68, 32, 42]);
         assert_eq!(s.resistances, [1810, 0, 15, 0, 0, 0, 0]);
         assert_eq!(s.min_damage, 30.5);
@@ -138,7 +139,7 @@ mod tests {
 
     #[test]
     fn an_unstreamed_pet_reads_the_absent_shape() {
-        let s = unit_combat_stats(&ObjectStore(ObjectFields::from_pairs(&[])));
+        let s = unit_combat_stats(&ObjectStore(ObjectFields::from_pairs(&[])), None);
         assert_eq!(s.stats, [0; 5]);
         assert_eq!(s.resistances, [0; 7]);
         assert_eq!(s.damage_percent, 1.0);
@@ -149,7 +150,7 @@ mod tests {
     #[test]
     fn the_feeds_composition_answers_the_pet_bindings() {
         let mut s = benilla_ui::script::UiScript::new().unwrap();
-        s.set_pet_combat_stats(Some(unit_combat_stats(&boar())));
+        s.set_pet_combat_stats(Some(unit_combat_stats(&boar(), None)));
 
         // `PetPaperDollFrame.lua:149`'s read; stamina is the third, 1-based.
         assert_eq!(

@@ -886,6 +886,21 @@ fn setup_entities(
             warn!("random properties unavailable: no item name suffix, no suffix line: {e:#}")
         }
     }
+    match benilla_formats::load_game_tables(&mut chain) {
+        Ok(gt) => {
+            let form_flags = benilla_formats::load_shapeshift_forms(&mut chain)
+                .map(|forms| forms.into_iter().map(|(id, f)| (id, f.flags)).collect())
+                .unwrap_or_else(|e| {
+                    warn!("shapeshift forms unavailable, no form adds agility attack power: {e:#}");
+                    Default::default()
+                });
+            commands.insert_resource(crate::ui_char::SheetTables { gt, form_flags });
+        }
+        Err(e) => warn!(
+            "gt tables unavailable, the sheet's rating bonuses, crit from stats and spirit \
+             regen read 0: {e:#}"
+        ),
+    }
     match benilla_formats::load_durability_tables(&mut chain) {
         Ok(tables) => commands.insert_resource(crate::ui_merchant::RepairTables(tables)),
         Err(e) => warn!("durability tables unavailable, repair costs show 0: {e:#}"),
