@@ -46,11 +46,16 @@ kira = { path = "third_party/kira" }
 # Dependencies at opt-level 3 in dev: at opt-level 0, avian/parry collision drops a run to <1 fps.
 [profile.dev.package."*"]
 opt-level = 3
+# One codegen unit each: `lto = "off"` below drops the ThinLTO that inlined across a crate's units.
+codegen-units = 1
 
 # Our crates at opt-level 1: Bevy's generic hot paths monomorphize into them, and at opt-level 0
-# Stormwind drops from a pinned 60 fps to ~45; the warm incremental rebuild cost is ~0.
+# Stormwind drops from a pinned 60 fps to ~45.
 [profile.dev]
 opt-level = 1
+# No ThinLTO: above opt-level 0 rustc runs it over a crate's own units and an incremental rebuild
+# redoes it whole; off, a one-constant `benilla-app` edit rebuilds in 92 s against 185 (Windows).
+lto = "off"
 
 # No debuginfo trimming: `debug = "line-tables-only"` measures no recurring win on macOS + sccache.
 
@@ -79,3 +84,9 @@ lto = "off"
 # `release`'s own default before it went to one unit: one unit per crate would make every
 # incremental edit a whole-crate codegen.
 codegen-units = 16
+
+# Dependencies at one codegen unit, as in `release`: the 16 above is for our crates' incremental
+# edits. A one-constant `benilla-app` edit rebuilds in 82 s against 93, and Northshire Abbey
+# frames 7.6 ms against 8.0.
+[profile.play.package."*"]
+codegen-units = 1
