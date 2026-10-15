@@ -319,7 +319,7 @@ impl World {
                     m.text
                 );
             }
-            SessionEvent::ItemTemplate { entry, info } => {
+            SessionEvent::ItemTemplate { entry, info, .. } => {
                 println!(
                     "SMSG_ITEM_QUERY_SINGLE_RESPONSE: entry {entry} → {:?}",
                     info.as_ref().map(|i| (&i.name, i.class, i.subclass))

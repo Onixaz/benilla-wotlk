@@ -103,6 +103,7 @@ mod script_calls;
 mod shaders;
 
 mod game_tip;
+mod item_persist;
 mod name_persist;
 mod opaque2d;
 /// Where "the client is going down" is observed, in `Last`; every system that persists state on the

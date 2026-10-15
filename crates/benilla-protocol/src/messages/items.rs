@@ -275,6 +275,12 @@ fn read_spell_blocks(r: &mut &[u8]) -> io::Result<SpellBlocks> {
 /// of a stat run that long, `ScalingStatDistribution` and `ScalingStatValue` after it,
 /// `RandomSuffix` after the random property and a 14-word trailer after the bag family, and it
 /// carries 2 damage blocks, not 5. The added fields have no shared place and are read past.
+/// Decode an `SMSG_ITEM_QUERY_SINGLE_RESPONSE` body kept by the item cache: the entry, and the
+/// template or `None` for the server's unknown entry.
+pub fn decode_item_query_response(mut body: &[u8]) -> io::Result<(u32, Option<ItemInfo>)> {
+    read_item_query_response_wotlk(&mut body)
+}
+
 pub(super) fn read_item_query_response_wotlk(r: &mut &[u8]) -> io::Result<(u32, Option<ItemInfo>)> {
     let entry = read_u32_le(r)?;
     if entry & 0x8000_0000 != 0 {

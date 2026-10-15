@@ -364,6 +364,8 @@ impl RollCatalogs<'_> {
 pub(crate) struct Items {
     /// A `None` answer is the server's unknown entry, cached so it is never re-asked.
     templates: QueryCache<u32, ItemInfo>,
+    /// Each template's response body, which [`crate::item_persist`] writes and decodes again.
+    bodies: std::collections::HashMap<u32, Vec<u8>>,
     /// Landed since the last [`Self::take_fresh`]; pushed to the UI unprompted.
     fresh: Vec<u32>,
     /// The reference's `PlayerPendingItemExpiration` list (`0x5ebd40`, at `CGPlayer_C + 0x1cc8`):
@@ -429,6 +431,39 @@ impl Items {
     /// [`Self::template`] without the ask: the cached record only.
     pub(crate) fn template_cached(&self, entry: u32) -> Option<&ItemInfo> {
         self.templates.get(entry)
+    }
+
+    /// Record a server answer with its body, kept for the item cache.
+    pub(crate) fn insert_answer(&mut self, entry: u32, info: Option<ItemInfo>, body: Vec<u8>) {
+        if info.is_some() {
+            self.bodies.insert(entry, body);
+        } else {
+            self.bodies.remove(&entry);
+        }
+        self.insert_template(entry, info);
+    }
+
+    /// Install a cached answer from the item cache; nothing is asked or pushed for it.
+    pub(crate) fn install_cached(
+        &mut self,
+        entry: u32,
+        info: Option<ItemInfo>,
+        body: Option<Vec<u8>>,
+    ) {
+        if let Some(body) = body {
+            self.bodies.insert(entry, body);
+        }
+        self.templates.insert(entry, info);
+    }
+
+    /// The cache's rows: a template's body, or `None` for an entry the server does not know.
+    pub(crate) fn cache_rows(&self) -> impl Iterator<Item = (u32, Option<&[u8]>)> + '_ {
+        self.templates
+            .iter()
+            .filter_map(|(&entry, answer)| match answer {
+                Some(_) => self.bodies.get(&entry).map(|b| (entry, Some(b.as_slice()))),
+                None => Some((entry, None)),
+            })
     }
 
     /// Record a template answer (`SMSG_ITEM_QUERY_SINGLE_RESPONSE`); `None` = unknown entry.

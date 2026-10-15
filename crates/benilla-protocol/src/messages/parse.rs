@@ -647,10 +647,12 @@ fn parse_server_body(
             ServerPacket::Emote { guid, emote_id }
         }
         opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE => {
+            let body = r.to_vec();
             let (entry, info) = items::read_item_query_response_wotlk(&mut r)?;
             ServerPacket::ItemQueryResponse {
                 entry,
                 info: info.map(Box::new),
+                body,
             }
         }
         opcode::SMSG_MESSAGECHAT => {

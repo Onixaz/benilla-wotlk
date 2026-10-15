@@ -16,7 +16,7 @@ fn item_query_response_miss() {
     )
     .unwrap();
     match decode(fail).pop().unwrap() {
-        SessionEvent::ItemTemplate { entry, info } => {
+        SessionEvent::ItemTemplate { entry, info, .. } => {
             assert_eq!((entry, info), (1234, None));
         }
         _ => panic!("item query miss event"),

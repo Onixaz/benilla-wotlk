@@ -132,6 +132,7 @@ impl Probe for Spells {
                         if let SessionEvent::ItemTemplate {
                             entry,
                             info: Some(i),
+                            ..
                         } = ev
                         {
                             world.item_names.insert(

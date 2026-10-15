@@ -487,6 +487,8 @@ pub enum SessionEvent {
     ItemTemplate {
         entry: u32,
         info: Option<Box<ItemInfo>>,
+        /// The response body, for the item cache.
+        body: Vec<u8>,
     },
     /// One chat line (`SMSG_MESSAGECHAT`); system lines (type `0x0A`) carry GM command feedback.
     Chat(crate::messages::ChatMessage),

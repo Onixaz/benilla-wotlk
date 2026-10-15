@@ -403,6 +403,8 @@ pub enum ServerPacket {
     ItemQueryResponse {
         entry: u32,
         info: Option<Box<ItemInfo>>,
+        /// The body as received, which the item cache keeps and decodes again on load.
+        body: Vec<u8>,
     },
     /// `SMSG_MESSAGECHAT`: one chat line; GM dot-commands answer as system lines (type `0x0A`).
     MessageChat(ChatMessage),

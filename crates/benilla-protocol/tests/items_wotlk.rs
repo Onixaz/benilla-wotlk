@@ -80,7 +80,7 @@ fn parse_wotlk(body: &[u8]) -> (u32, Option<Box<ItemInfo>>) {
         messages::parse_server_with_tail(opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE, body).unwrap();
     assert_eq!(tail, 0, "bytes left unread");
     match packet {
-        ServerPacket::ItemQueryResponse { entry, info } => (entry, info),
+        ServerPacket::ItemQueryResponse { entry, info, .. } => (entry, info),
         other => panic!("expected ItemQueryResponse, got {}", other.name()),
     }
 }

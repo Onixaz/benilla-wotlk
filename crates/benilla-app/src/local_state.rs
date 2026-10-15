@@ -183,6 +183,15 @@ pub(crate) fn name_cache_path(realm: &str) -> Option<PathBuf> {
     )
 }
 
+/// `benilla-config/cache/<realm>-items.tsv`: [`crate::item_persist`]'s `itemcache.wdb`.
+pub(crate) fn item_cache_path(realm: &str) -> Option<PathBuf> {
+    Some(
+        home()?
+            .join("cache")
+            .join(format!("{}-items.tsv", file_token(realm))),
+    )
+}
+
 /// `benilla-config/Logs/`: `WoWChatLog.txt` and `WoWCombatLog.txt`, the reference's names.
 pub(crate) fn logs_dir() -> Option<PathBuf> {
     home().map(|h| h.join("Logs"))
