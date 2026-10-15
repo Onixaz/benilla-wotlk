@@ -11,7 +11,7 @@ use crate::wire::{capacity_hint, read_cstring, read_u32_le, read_u64_le, read_u8
 pub struct TrainerSpell {
     /// The service spell id, which `CMSG_TRAINER_BUY_SPELL` names to buy it.
     pub spell: u32,
-    /// A [`trainer_spell_state`]: the client renders the colour as sent, never recomputing it.
+    /// A [`trainer_spell_state`]: the client re-derives it on its first trigger after the list.
     pub state: u8,
     /// In copper, already reputation-discounted by the server.
     pub cost: u32,
@@ -46,7 +46,7 @@ pub mod train_fail {
     pub const NOT_ENOUGH_SKILL: u32 = 2;
 }
 
-/// `CMSG_TRAINER_LIST`: re-requests the list, as after a purchase to turn the service gray.
+/// `CMSG_TRAINER_LIST`: asks a trainer for its list.
 pub fn trainer_list(trainer_guid: u64) -> Vec<u8> {
     trainer_guid.to_le_bytes().to_vec()
 }
@@ -89,7 +89,7 @@ pub(super) fn read_trainer_list(
 }
 
 /// `SMSG_TRAINER_BUY_SUCCEEDED` (trainer, spell) is confirmation only: the spell arrives by
-/// `SMSG_LEARNED_SPELL` and the gray repaint needs a `CMSG_TRAINER_LIST`.
+/// `SMSG_LEARNED_SPELL`, whose re-evaluation grays the bought row.
 pub(super) fn read_trainer_buy_succeeded(r: &mut &[u8]) -> io::Result<(u64, u32)> {
     Ok((read_u64_le(r)?, read_u32_le(r)?))
 }

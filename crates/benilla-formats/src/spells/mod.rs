@@ -115,21 +115,32 @@ const COL_EFFECT_1: usize = 71;
 /// `EffectMiscValue[0]`, `71 + 13 × 3`: the 14th `[3]` array from `Effect`.
 const COL_EFFECT_MISC_1: usize = 110;
 const COL_EFFECT_MISC_B_1: usize = 113;
+/// `EffectImplicitTargetA[0]`, `71 + 5 × 3`; the trainer's re-evaluator reads it at
+/// `0x596c99`.
+const COL_EFFECT_IMPLICIT_TARGET_A_1: usize = 86;
+/// `TARGET_PET`: a LEARN_SPELL aimed here teaches the pet, and the trainer's re-evaluator does not
+/// follow it (`0x596c99`).
+const TARGET_PET: u32 = 5;
 /// `EffectTriggerSpell[0]`, `71 + 15 × 3`, after `EffectMiscValueB`.
 const COL_EFFECT_TRIGGER_1: usize = 116;
 /// `SPELL_EFFECT_LEARN_SPELL`: teaches its `EffectTriggerSpell`, as a trainer's wrapper does.
 pub const SPELL_EFFECT_LEARN_SPELL: u32 = 36;
 
-/// One learn effect, in the slot order the trainer's state re-evaluator reads (`0x4d7d40`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One `Effect[]` slot as the trainer's state re-evaluator reads it
+/// (`Trainer_ReEvaluateServices`, `0x596b00`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LearnEffect {
-    /// `SPELL_EFFECT_LEARN_SPELL`: teaches `EffectTriggerSpell`.
+    /// `Effect` 0: the slot is skipped (`0x596bcc`).
+    #[default]
+    None,
+    /// `SPELL_EFFECT_LEARN_SPELL` on any target but the pet: teaches `EffectTriggerSpell`.
     Spell(u32),
     /// `SPELL_EFFECT_SKILL_STEP`: raises skill line `skill` (`EffectMiscValue`) to `step`,
     /// `EffectBasePoints + EffectDieSides`.
     SkillStep { skill: u32, step: u32 },
-    /// `SPELL_EFFECT_LEARN_PET_SPELL`: teaches the pet `EffectTriggerSpell`.
-    PetSpell(u32),
+    /// Any other effect, a pet-target LEARN_SPELL and LEARN_PET_SPELL among them: the spell
+    /// stands for itself (`0x596cb6`).
+    Other,
 }
 /// `SPELL_EFFECT_LEARN_PET_SPELL`: the trainer's icon accepts it or 36 in any slot (`0x4d8ff5`),
 /// but [`SpellCatalog::learned_spell`] follows 36 only.
@@ -290,8 +301,10 @@ pub const SPELL_EFFECT_PROSPECTING: u32 = 127;
 pub struct SpellCatalog {
     spells: HashMap<u32, SpellDisplay>,
     learned_spell: HashMap<u32, u32>,
-    /// Learn effects in slot order, for spells that have any.
-    learn_effects: HashMap<u32, Vec<LearnEffect>>,
+    /// The three effect slots of every spell with a [`LearnEffect::Spell`] or
+    /// [`LearnEffect::SkillStep`] slot; [`Self::learn_effects`] derives the rest from
+    /// [`SpellDisplay::effects`].
+    learn_effects: HashMap<u32, [LearnEffect; 3]>,
     /// Spell id to the `Languages.dbc` id its first effect declares.
     declared_language: HashMap<u32, u32>,
     dispel_types: SpellDispelTypes,
@@ -307,7 +320,7 @@ impl SpellCatalog {
     /// [`Self::from_displays`] with a learn-effect table, for the trainer tests.
     pub fn from_displays_and_effects(
         spells: HashMap<u32, SpellDisplay>,
-        learn_effects: HashMap<u32, Vec<LearnEffect>>,
+        learn_effects: HashMap<u32, [LearnEffect; 3]>,
     ) -> Self {
         let learned_spell = learn_effects
             .iter()
@@ -327,9 +340,18 @@ impl SpellCatalog {
         }
     }
 
-    /// A spell's learn effects in slot order, empty for a plain ability.
-    pub fn learn_effects(&self, id: u32) -> &[LearnEffect] {
-        self.learn_effects.get(&id).map_or(&[], Vec::as_slice)
+    /// A spell's three effect slots as the trainer reads them: a plain ability's non-zero effects
+    /// are all [`LearnEffect::Other`], and a spell with no record has none.
+    pub fn learn_effects(&self, id: u32) -> [LearnEffect; 3] {
+        if let Some(slots) = self.learn_effects.get(&id) {
+            return *slots;
+        }
+        self.spells.get(&id).map_or([LearnEffect::None; 3], |d| {
+            d.effects.map(|e| match e {
+                0 => LearnEffect::None,
+                _ => LearnEffect::Other,
+            })
+        })
     }
 
     pub fn get(&self, id: u32) -> Option<&SpellDisplay> {
@@ -456,7 +478,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
     let spells_set = parse(&spell_bytes, spell_schema(), "Spell.dbc")?;
     let mut spells: HashMap<u32, SpellDisplay> = HashMap::new();
     let mut learned_spell: HashMap<u32, u32> = HashMap::new();
-    let mut learn_effects: HashMap<u32, Vec<LearnEffect>> = HashMap::new();
+    let mut learn_effects: HashMap<u32, [LearnEffect; 3]> = HashMap::new();
     let mut declared_language: HashMap<u32, u32> = HashMap::new();
     for r in spells_set.records() {
         let Some(id) = u32_at(r, 0) else { continue };
@@ -469,27 +491,30 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 }
             }
         }
-        // Learn effects in slot order; a SKILL_STEP's step is base points plus die sides.
-        let effects: Vec<LearnEffect> = (0..3)
-            .filter_map(|i| {
-                let trigger = || u32_at(r, COL_EFFECT_TRIGGER_1 + i).filter(|&t| t != 0);
-                match u32_at(r, COL_EFFECT_1 + i)? {
-                    SPELL_EFFECT_LEARN_SPELL => trigger().map(LearnEffect::Spell),
-                    SPELL_EFFECT_LEARN_PET_SPELL => trigger().map(LearnEffect::PetSpell),
-                    SPELL_EFFECT_SKILL_STEP => {
-                        let skill = i32_at(r, COL_EFFECT_MISC_1 + i).filter(|&m| m > 0)? as u32;
-                        let value = i32_at(r, COL_EFFECT_BASE_POINTS_1 + i).unwrap_or(0)
-                            + i32_at(r, COL_EFFECT_DIE_SIDES_1 + i).unwrap_or(0);
-                        Some(LearnEffect::SkillStep {
-                            skill,
-                            step: value.max(0) as u32,
-                        })
-                    }
-                    _ => None,
+        // Each slot as `0x596b00` classifies it; a SKILL_STEP's step is base points plus die sides.
+        let slot = |i: usize| match u32_at(r, COL_EFFECT_1 + i).unwrap_or(0) {
+            0 => LearnEffect::None,
+            SPELL_EFFECT_LEARN_SPELL
+                if u32_at(r, COL_EFFECT_IMPLICIT_TARGET_A_1 + i) != Some(TARGET_PET) =>
+            {
+                LearnEffect::Spell(u32_at(r, COL_EFFECT_TRIGGER_1 + i).unwrap_or(0))
+            }
+            SPELL_EFFECT_SKILL_STEP => {
+                let value = i32_at(r, COL_EFFECT_BASE_POINTS_1 + i).unwrap_or(0)
+                    + i32_at(r, COL_EFFECT_DIE_SIDES_1 + i).unwrap_or(0);
+                LearnEffect::SkillStep {
+                    skill: i32_at(r, COL_EFFECT_MISC_1 + i).unwrap_or(0).max(0) as u32,
+                    step: value.max(0) as u32,
                 }
-            })
-            .collect();
-        if !effects.is_empty() {
+            }
+            _ => LearnEffect::Other,
+        };
+        let effects = [slot(0), slot(1), slot(2)];
+        // A spell with neither is all `Other`, which `learn_effects` derives from the display.
+        if effects
+            .iter()
+            .any(|e| matches!(e, LearnEffect::Spell(_) | LearnEffect::SkillStep { .. }))
+        {
             learn_effects.insert(id, effects);
         }
         // The language declaration (`0x4b2656`) reads slot 0 only, `+0xf4` and `+0x1a8`, unlike
@@ -677,9 +702,27 @@ mod tests;
 mod learn_effect_tests {
     use super::*;
 
-    /// A trainer's wrapper carries the learn effect and the step `0x4d7d40` compares.
+    /// A spell without a learn or step slot reads its effects off the display: each non-zero one
+    /// is `Other`, and a spell with no record has no slots at all.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+    fn a_plain_spells_slots_come_from_its_display() {
+        let cat = SpellCatalog::from_displays(HashMap::from([(
+            7,
+            SpellDisplay {
+                effects: [6, 0, 2],
+                ..Default::default()
+            },
+        )]));
+        assert_eq!(
+            cat.learn_effects(7),
+            [LearnEffect::Other, LearnEffect::None, LearnEffect::Other]
+        );
+        assert_eq!(cat.learn_effects(8), [LearnEffect::None; 3]);
+    }
+
+    /// A profession opener carries the learn slot and the step `0x596b00` compares; a class
+    /// trainer's row is the ability itself, every slot `Other`.
+    #[test]
     fn the_openers_skill_steps_read_off_the_real_file() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -693,12 +736,13 @@ mod learn_effect_tests {
         ] {
             assert_eq!(
                 cat.learn_effects(wrapper),
-                &[
+                [
                     LearnEffect::Spell(taught),
                     LearnEffect::SkillStep {
                         skill: blacksmithing,
                         step
-                    }
+                    },
+                    LearnEffect::None,
                 ],
                 "wrapper {wrapper}"
             );
@@ -706,15 +750,20 @@ mod learn_effect_tests {
         // Mining's opener: base −1 + die 1 on the LEARN slot is not a step; the SKILL_STEP slot is.
         assert_eq!(
             cat.learn_effects(2581),
-            &[
+            [
                 LearnEffect::Spell(2575),
                 LearnEffect::SkillStep {
                     skill: 186,
                     step: 1
-                }
+                },
+                LearnEffect::None,
             ]
         );
-        // A plain ability teaches nothing.
-        assert!(cat.learn_effects(2383).is_empty(), "Find Herbs");
+        // Find Herbs and Frostbolt teach nothing: each stands for itself.
+        assert_eq!(
+            cat.learn_effects(2383),
+            [LearnEffect::Other, LearnEffect::None, LearnEffect::None]
+        );
+        assert_eq!(cat.learn_effects(116), [LearnEffect::Other; 3]);
     }
 }

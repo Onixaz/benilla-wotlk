@@ -23,7 +23,7 @@ use benilla_protocol::field::{
 use benilla_protocol::messages::PLAYER_SKILL_SLOTS;
 use bevy::ecs::system::SystemParam;
 
-use crate::net::{ClientCommand, FieldChanged, GuidIndex, NetCommands, ObjectStore, SelfPlayer};
+use crate::net::{ClientCommand, FieldChanged, NetCommands, ObjectStore, SelfPlayer};
 use crate::ui_action::{PlayerActions, Spells};
 use crate::ui_script::{UiFeed, UiInput};
 use crate::ui_session::{close_npc_session_out_of_range, npc_switched, NpcSession};
@@ -48,9 +48,9 @@ pub(crate) struct TrainerOpen {
     /// the reference's builder resets them per list (`0x4d7b42` for the selection); an open window
     /// repaints through [`reeval`], never a second list.
     pub(crate) fresh_list: bool,
-    /// One of the reference's twelve re-evaluation triggers fired with the window open; the feed
-    /// re-derives and fires `TRAINER_UPDATE` even if no state moved, as `0x4d7d40`'s tail does
-    /// (`0x4d83f4`), and the stock window re-reads `GetMoney()` on it.
+    /// One of the re-evaluator's triggers fired with the window open; the feed re-derives and
+    /// fires `TRAINER_UPDATE` even if no state moved, as `0x596b00`'s tail does (`0x597098`), and
+    /// the stock window re-reads `GetMoney()` on it.
     pub(crate) re_derive: bool,
 }
 
@@ -72,7 +72,7 @@ impl TrainerOpen {
         self.re_derive = false;
     }
 
-    /// One of the twelve triggers fired: re-derive on the next feed, if a window is open.
+    /// A trigger fired: re-derive on the next feed, if a window is open (`0x596b14`).
     pub(crate) fn trigger_re_derive(&mut self) {
         if self.trainer.is_some() {
             self.re_derive = true;
@@ -127,8 +127,8 @@ impl Plugin for UiTrainerPlugin {
                 (
                     // Range-close before the feed so the clear fires TRAINER_CLOSED the same frame.
                     close_npc_session_out_of_range::<TrainerOpen>.before(feed_trainer),
-                    // The unit feeds also write the pet bar the re-evaluator reads; either order
-                    // reads the same pet spellbook, but the schedule check wants one declared.
+                    // The unit feeds share the VM and the player's stores with it; either order
+                    // reads the same state, but the schedule check wants one declared.
                     feed_trainer
                         .in_set(UiFeed)
                         .in_set(TrainerFeed)
@@ -278,13 +278,10 @@ fn snapshot(
 }
 
 /// The re-evaluator's inputs and its descriptor triggers: the player's descriptor and its field
-/// edges (money, level, a skill slot), the pet bar, and the stores that resolve the pet.
+/// edges (money, level, a skill slot).
 #[derive(SystemParam)]
 pub(crate) struct ReEvalInputs<'w, 's> {
     self_player: Query<'w, 's, (Entity, &'static ObjectStore), With<SelfPlayer>>,
-    stores: Query<'w, 's, &'static ObjectStore>,
-    index: Res<'w, GuidIndex>,
-    pet_bar: Res<'w, crate::ui_pet::PetBar>,
     edges: MessageReader<'w, 's, FieldChanged>,
 }
 
@@ -293,7 +290,7 @@ pub(crate) struct ReEvalInputs<'w, 's> {
 #[allow(clippy::too_many_arguments)] // one Bevy system's full input set
 pub(crate) fn feed_trainer(
     script: Option<NonSendMut<UiScript>>,
-    // Writes the re-derived states, as `0x4d7d40` overwrites its own records.
+    // Writes the re-derived states, as `0x596b00` overwrites its own records.
     mut open: ResMut<TrainerOpen>,
     actions: Res<PlayerActions>,
     spells: Option<Res<Spells>>,
@@ -360,7 +357,7 @@ pub(crate) fn feed_trainer(
             open.trigger_re_derive();
         }
     }
-    // `0x4d7d40` over every row, then `TRAINER_UPDATE` unconditionally, as its tail fires it.
+    // `0x596b00` over every row, then `TRAINER_UPDATE` unconditionally, as its tail fires it.
     let forced = open.re_derive && open.trainer.is_some();
     if forced {
         open.re_derive = false;
@@ -377,7 +374,7 @@ pub(crate) fn feed_trainer(
                         .map(|s| reeval::SkillSlot {
                             skill_id: u32::from(s.skill_id),
                             step: u32::from(s.step),
-                            // The permanent bonus counts only on a non-zero value (`0x4d8087`).
+                            // The permanent bonus counts only on a non-zero value (`0x51a28c`).
                             value_plus_perm: if s.value == 0 {
                                 0
                             } else {
@@ -387,30 +384,9 @@ pub(crate) fn feed_trainer(
                         .collect()
                 })
                 .unwrap_or_default(),
-            pet: (re_eval.pet_bar.spells.pet_guid != 0)
-                .then(|| re_eval.index.0.get(&re_eval.pet_bar.spells.pet_guid))
-                .flatten()
-                .and_then(|&e| re_eval.stores.get(e).ok())
-                .map(|store| reeval::PetView {
-                    level: store.0.unit_level().unwrap_or(0),
-                    known: re_eval
-                        .pet_bar
-                        .spells
-                        .spells
-                        .iter()
-                        .filter(|e| e.is_spell())
-                        .map(|e| e.action())
-                        .collect(),
-                }),
         };
-        let TrainerOpen {
-            services,
-            trainer_type,
-            ..
-        } = &mut *open;
         reeval::re_derive_all(
-            services,
-            *trainer_type,
+            &mut open.services,
             &spells.catalog,
             &skill_lines.catalog,
             &player,

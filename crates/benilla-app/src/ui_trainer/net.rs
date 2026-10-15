@@ -13,8 +13,8 @@ pub(super) fn register(app: &mut App) {
     app.net_handler(K::TrainerList, on_list)
         .net_handler(K::TrainerBuySucceeded, on_buy_succeeded)
         .net_handler(K::TrainerBuyFailed, on_buy_failed)
-        // Five of the twelve re-evaluation triggers, as second handlers on their kinds; the feed
-        // re-derives after every handler has run, so registration order does not matter.
+        // Re-evaluation triggers, as second handlers on their kinds; the feed re-derives after
+        // every handler has run, so registration order does not matter.
         .net_handler(K::SpellLearned, on_spell_learned)
         .net_handler(K::SpellRemoved, on_spell_removed)
         .net_handler(K::SpellSuperceded, on_spell_superceded)
@@ -30,28 +30,30 @@ fn on_spell_modifier(In(ev): In<SessionEvent>, mut trainer_open: ResMut<TrainerO
     }
 }
 
-/// A spell entered the book (`0x5e9fb7`).
+/// A spell entered the book: `SMSG_LEARNED_SPELL`'s handler (`0x6e7d60`) re-evaluates through
+/// the learn registrar (`0x6e7d2a`).
 fn on_spell_learned(In(ev): In<SessionEvent>, mut trainer_open: ResMut<TrainerOpen>) {
     if matches!(ev, SessionEvent::SpellLearned { .. }) {
         trainer_open.trigger_re_derive();
     }
 }
 
-/// A spell left the book (`0x5ea25f`).
+/// A spell left the book: `SMSG_REMOVED_SPELL`'s handler (`0x6e7840`) re-evaluates through the
+/// unlearn (`0x6e7376`).
 fn on_spell_removed(In(ev): In<SessionEvent>, mut trainer_open: ResMut<TrainerOpen>) {
     if matches!(ev, SessionEvent::SpellRemoved { .. }) {
         trainer_open.trigger_re_derive();
     }
 }
 
-/// A rank replaced another, so the known-at-a-higher-rank answers may have moved.
+/// A rank replaced another, so the known-at-a-higher-rank answers may have moved (`0x6e7e97`).
 fn on_spell_superceded(In(ev): In<SessionEvent>, mut trainer_open: ResMut<TrainerOpen>) {
     if matches!(ev, SessionEvent::SpellSuperceded { .. }) {
         trainer_open.trigger_re_derive();
     }
 }
 
-/// The pet's spellbook arrived or changed (`0x4bdaf5`).
+/// The pet's spellbook arrived or changed (`0x5d6d78`).
 fn on_pet_spells(In(ev): In<SessionEvent>, mut trainer_open: ResMut<TrainerOpen>) {
     if matches!(ev, SessionEvent::PetSpells(_)) {
         trainer_open.trigger_re_derive();
@@ -102,9 +104,9 @@ fn trainer_list(
     trainer_open.open(trainer, trainer_type, services, greeting);
 }
 
-/// `SMSG_TRAINER_BUY_SUCCEEDED`, logged only: the reference registers no handler for it
-/// (`0x5ab650`/`0x537a60`), the bought row repaints on `SMSG_LEARNED_SPELL`'s re-evaluation, and
-/// vmangos sends no fresh list (`NPCHandler.cpp:262-343`).
+/// `SMSG_TRAINER_BUY_SUCCEEDED`, logged only: the reference registers no handler for it (absent
+/// from `reference/3.3.5a-opcodes.tsv`), the bought row repaints on `SMSG_LEARNED_SPELL`'s
+/// re-evaluation, and AzerothCore sends no fresh list (`HandleTrainerBuySpellOpcode`).
 fn trainer_buy_succeeded(trainer: u64, spell_id: u32) {
     debug!("net: trainer {trainer:#x} taught spell {spell_id}");
 }
