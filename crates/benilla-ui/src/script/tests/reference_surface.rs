@@ -555,7 +555,7 @@ fn button_set_font_returns_nothing_and_is_a_no_op_without_a_label() {
         r#"
         CreateFont("SFInherited")
         SFInherited:SetFont("Fonts\\MORPHEUS.TTF", 14)
-        SFLabelled:SetTextFontObject(SFInherited)
+        SFLabelled:SetNormalFontObject(SFInherited)
         "#,
     )
     .unwrap();

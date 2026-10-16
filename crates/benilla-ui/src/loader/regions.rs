@@ -4,18 +4,6 @@ use crate::framexml::{self, Element};
 
 use super::{abs_dim, abs_value, children_named, color_of, tex_coords_of, Loader};
 
-/// Whether a region reads its own font attributes, the reference's `FONTSTRING+0x12c`: set by the
-/// ctor (`0x770de7`) and cleared only on a Button's `<NormalText>` (`0x778b7b`), whose string then
-/// skips them (`0x7710e1`-`0x771467`) for the button's Normal font to take (`0x783c30`). Here it
-/// gates only justify, the one font attribute the button's label pass applies.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum FontAttrs {
-    /// Every other region, a Button's `<ButtonText>` included.
-    Own,
-    /// A Button's `<NormalText>`: its font attributes are the button's Normal font's.
-    Disowned,
-}
-
 impl Loader<'_> {
     /// `<Layers>` (`0x769d70`): each `<Texture>` and `<FontString>`, created on its layer.
     pub(super) fn apply_layers(
@@ -69,13 +57,7 @@ impl Loader<'_> {
                     {
                         self.call_region(&region_wrapper, "SetAlpha", a, dbg);
                     }
-                    self.apply_region_layout(
-                        region,
-                        &region_wrapper,
-                        parent_name,
-                        dbg,
-                        FontAttrs::Own,
-                    );
+                    self.apply_region_layout(region, &region_wrapper, parent_name, dbg);
                     if is_fontstring {
                         // Before the visual pass, so an explicit `<Color>` beats the font object's.
                         self.apply_fontstring_font(region, &region_wrapper, dbg);
@@ -148,7 +130,7 @@ impl Loader<'_> {
                     }
                 },
             };
-            self.apply_region_layout(region, &region_wrapper, parent_name, dbg, FontAttrs::Own);
+            self.apply_region_layout(region, &region_wrapper, parent_name, dbg);
             self.apply_fontstring_font(region, &region_wrapper, dbg);
             self.apply_region_visual(region, &region_wrapper, false, dbg);
             // The implicit creation anchor, as in `apply_layers`; an EditBox's adopt replaces it.
@@ -171,8 +153,7 @@ impl Loader<'_> {
         }
     }
 
-    /// A region's geometry: `<Size>`, a FontString's justify when [`FontAttrs::Own`],
-    /// `setAllPoints` and `<Anchors>`, whose `$parent` is the owner's name, or a nameless owner's
+    /// A region's geometry: `<Size>`, a FontString's justify and spacing, `setAllPoints` and `<Anchors>`, whose `$parent` is the owner's name, or a nameless owner's
     /// nearest named ancestor's.
     pub(super) fn apply_region_layout(
         &mut self,
@@ -180,7 +161,6 @@ impl Loader<'_> {
         wrapper: &Table,
         parent_name: &str,
         dbg: &str,
-        font_attrs: FontAttrs,
     ) {
         // Every `<Size>` in document order, as in `apply_size`.
         for size in children_named(region, "Size") {
@@ -192,19 +172,17 @@ impl Loader<'_> {
                 self.call_region(wrapper, "SetHeight", h, dbg);
             }
         }
-        if font_attrs == FontAttrs::Own {
-            if let Some(j) = region.attr("justifyH") {
-                self.call_region(wrapper, "SetJustifyH", j.to_string(), dbg);
-            }
-            if let Some(j) = region.attr("justifyV") {
-                self.call_region(wrapper, "SetJustifyV", j.to_string(), dbg);
-            }
-            if let Some(sp) = region
-                .attr("spacing")
-                .and_then(|v| v.trim().parse::<f32>().ok())
-            {
-                self.call_region(wrapper, "SetSpacing", sp, dbg);
-            }
+        if let Some(j) = region.attr("justifyH") {
+            self.call_region(wrapper, "SetJustifyH", j.to_string(), dbg);
+        }
+        if let Some(j) = region.attr("justifyV") {
+            self.call_region(wrapper, "SetJustifyV", j.to_string(), dbg);
+        }
+        if let Some(sp) = region
+            .attr("spacing")
+            .and_then(|v| v.trim().parse::<f32>().ok())
+        {
+            self.call_region(wrapper, "SetSpacing", sp, dbg);
         }
         if region.attr_bool("setAllPoints") {
             self.call_region(wrapper, "SetAllPoints", (), dbg);

@@ -481,7 +481,7 @@ pub(super) fn region_type_name(model: &Model, rh: RegionHandle) -> &'static str 
 }
 
 /// Free a region and every trace of its identity (arena slot, paint, rect, name, id), so a held
-/// wrapper raises as stale; the reference frees too, as `CSimpleButton::SetFontString 0x778d20`
+/// wrapper raises as stale; the reference frees too, as `CSimpleButton::SetFontString 0x96f7b0`
 /// deletes the label it replaces.
 pub(crate) fn free_region(model: &mut Model, rh: RegionHandle) {
     model.region_data.remove(&rh);
@@ -534,8 +534,8 @@ pub(crate) fn implicit_creation_anchor(model: &mut Model, rh: RegionHandle) {
     model.touch_layout();
 }
 
-/// The middle-row point a justify word selects, as the FontString post-step (`0x771480`) and the
-/// button label adopter (`0x778d20`) both compute it: LEFT for 1, RIGHT for 4, else CENTER.
+/// The middle-row point a justify word selects, as the FontString post-step (`0x4836d0`) and the
+/// button label adopter (`0x96f7b0`) both compute it: LEFT for 1, RIGHT for 4, else CENTER.
 pub(crate) fn justify_anchor_point(word: u32) -> crate::layout::Point {
     use crate::layout::Point;
     match word & crate::justify::H_MASK {

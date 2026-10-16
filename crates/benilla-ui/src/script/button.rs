@@ -8,7 +8,7 @@ use mlua::{Lua, MultiValue, ObjectLike, Table, Value};
 
 use super::object::{as_f32, frame_handle_of};
 use super::region::region_wrapper;
-use super::{event, JustifyH, Model, RegionData};
+use super::{event, Model, RegionData};
 use crate::justify::Justify;
 use crate::order::DrawLayer;
 use crate::widget::{
@@ -72,25 +72,24 @@ impl Slot {
     }
 }
 
-/// The normal font's justify (`[button+0x390]`): its own `<NormalFont justifyH=>`, else its font
-/// object's, else CENTER. The label adopter anchors by it.
+/// The normal font's justify, its font object's or CENTER: the slot holds the shared object
+/// (`[button+0x2b0]`), whose style flags the label adopter reads (`SetFontString 0x96f7b0`).
 fn normal_font_justify(model: &Model, bs: &ButtonState) -> Justify {
     let mut word = Justify::default();
-    let inherited = || {
-        bs.normal_font
-            .as_deref()
-            .and_then(|n| model.font_object(n))
-            .and_then(|fo| fo.justify_h)
-    };
-    if let Some(j) = bs.normal_justify_h.or_else(inherited) {
+    if let Some(j) = bs
+        .normal_font
+        .as_deref()
+        .and_then(|n| model.font_object(n))
+        .and_then(|fo| fo.justify_h)
+    {
         word.set_h(j);
     }
     word
 }
 
-/// `SetFontString`'s tail (`0x778d20`), which `SetText` also creates its label through
-/// (`0x778dc0`): an unanchored label anchors LEFT, RIGHT or CENTER by the normal font's justify,
-/// never its own (`+0x120`, CENTER on a fresh string), then takes the per-state font (`0x779810`).
+/// `SetFontString`'s tail (`0x96f7b0`), which `SetText` also creates its label through
+/// (`0x96f860`): an unanchored label anchors LEFT, RIGHT or CENTER by the normal font's justify,
+/// never its own, then takes the per-state font (`UpdateTextState 0x96f4a0`).
 fn adopt_label(model: &mut Model, owner: FrameHandle, rh: RegionHandle) {
     let point = {
         let Some(frame) = model.arena.frame(owner) else {
@@ -105,14 +104,13 @@ fn adopt_label(model: &mut Model, owner: FrameHandle, rh: RegionHandle) {
     apply_normal_font(model, owner);
 }
 
-/// Link the label to the normal font object and local justify, the reference's `0x779810` →
-/// `0x770c60`, so its `GetFont` answers what it paints; the stock `DropDownList1` reads it
+/// Link the label to the normal font object (`UpdateTextState 0x96f4a0` → `SetFontObject
+/// 0x485160`), so its `GetFont` answers what it paints; the stock `DropDownList1` reads it
 /// (`UIDropDownMenu.xml:11`). Deviation: a hovered or disabled label still reports the normal
 /// font, since the state fonts are overlaid at paint and a link made here would outlive the state.
-/// `font::repaint` keeps what the label set itself (its severance mask, `CSimpleFontString+0xd4`),
-/// and the local justify obeys the same mask.
+/// `font::repaint` keeps what the label set itself (its severance mask, `CSimpleFontString+0xd4`).
 fn apply_normal_font(model: &mut Model, owner: FrameHandle) {
-    let (rh, name, local_justify) = {
+    let (rh, name) = {
         let Some(frame) = model.arena.frame(owner) else {
             return;
         };
@@ -122,7 +120,7 @@ fn apply_normal_font(model: &mut Model, owner: FrameHandle) {
         let Some(rh) = bs.text else {
             return;
         };
-        (rh, bs.normal_font.clone(), bs.normal_justify_h)
+        (rh, bs.normal_font.clone())
     };
     // An unregistered name is no error here: the setter accepted it and the loader reports it.
     let fo = name.as_deref().and_then(|n| model.font_object(n).cloned());
@@ -135,43 +133,11 @@ fn apply_normal_font(model: &mut Model, owner: FrameHandle) {
             super::font::repaint(d, &fo);
         }
     }
-    if let Some(j) = local_justify {
-        if !d.font_explicit.justify_h {
-            d.justify.set_h(j);
-        }
-    }
     model.touch_measure(rh);
 }
 
-/// Which of the button's three embedded font instances a `<…Font>` element writes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LabelFont {
-    Normal,
-    Highlight,
-    Disabled,
-}
-
-/// The loader's `<NormalFont justifyH=>` and kin: `LoadXML` (`0x7788c0`) runs the `<Font>` loader
-/// (`0x783c30`) on the embedded font, so the justify is its own, not inherited; no Lua verb
-/// writes it. An adopted label keeps its anchor and takes the new normal justify.
-pub(crate) fn set_label_font_justify_h_lua(
-    lua: &Lua,
-    wrapper: &Table,
-    which: LabelFont,
-    j: JustifyH,
-) -> mlua::Result<()> {
-    let owner = frame_handle_of(lua, wrapper)?;
-    with_button(lua, wrapper, |bs| match which {
-        LabelFont::Normal => bs.normal_justify_h = Some(j),
-        LabelFont::Highlight => bs.highlight_justify_h = Some(j),
-        LabelFont::Disabled => bs.disabled_justify_h = Some(j),
-    })?;
-    if which == LabelFont::Normal {
-        let mut model = crate::script::model_mut_of(lua);
-        apply_normal_font(&mut model, owner);
-    }
-    Ok(())
-}
+/// Reads one of the three per-state font slots.
+type FontSlot = fn(&ButtonState) -> Option<String>;
 
 /// Run `f` over a frame's Button state under one short write borrow. It moves no state, only an
 /// edge does: re-registering a held button's clicks does not un-press it, as in the reference.
@@ -296,7 +262,7 @@ fn ensure_slot(lua: &Lua, this: &Table, slot: Slot) -> mlua::Result<u32> {
                 }
             }
             // Only a new region gets an implicit anchor: a state texture fills the button
-            // (`0x778f9d`/`0x7790db`), a label goes to the adopter (`0x778dc0` → `0x778d20`).
+            // (`0x778f9d`/`0x7790db`), a label goes to the adopter (`0x96f860` → `0x96f7b0`).
             match slot {
                 Slot::Text => adopt_label(&mut model, h, rh),
                 _ => super::region::implicit_creation_anchor(&mut model, rh),
@@ -463,7 +429,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     texture_pair(lua, &m, "Disabled", Slot::Disabled)?;
     texture_pair(lua, &m, "Highlight", Slot::Highlight)?;
 
-    // SetText/GetText go to the ButtonText fontstring, as the `text` attribute does (`0x778dc0`).
+    // SetText/GetText go to the ButtonText fontstring, as the `text` attribute does (`0x96f860`).
     m.set(
         "SetText",
         lua.create_function(|lua, (this, text): (Table, Option<Value>)| {
@@ -510,7 +476,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| get_slot_texture(lua, &this, Slot::Text))?,
     )?;
 
-    // SetFontString(fontString) (`0x780a60` → `0x778d20`) raises, naming the button, on a
+    // SetFontString(fontString) (`0x9777c0` → `0x96f7b0`) raises, naming the button, on a
     // non-table (`0x87a100`), nil included, so Lua cannot clear the label; on a non-widget
     // (`0x87a160`); on a non-FontString (`0x87a124`). The same label is a no-op; otherwise the old
     // one is destroyed and the new one moves to the button at ARTWORK (`0x77fd10`) and is adopted.
@@ -614,20 +580,43 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     }
 
     // The per-state label fonts, and `<NormalFont>` and kin through the loader. Each takes a font
-    // object, its name or nil, stored by name: extract re-resolves the current state's font every
-    // frame, so a state change or a later edit to the object reaches the label. 3.3.5a names the
-    // normal-state setter `SetNormalFontObject` (`0x977340`); `SetTextFontObject`, 1.12.1's name
-    // for it, stays registered for the loader and benilla's own layer.
-    for name in ["SetNormalFontObject", "SetTextFontObject"] {
+    // object, its name or nil, stored by name: the slots point at the shared object (`+0x2b0`,
+    // `+0x2b4`, `+0x2b8`) and extract re-resolves the current state's every frame, so a state
+    // change or a later edit to the object reaches the label.
+    m.set(
+        "SetNormalFontObject",
+        lua.create_function(|lua, (this, font): (Table, Value)| {
+            let font = super::font::resolve("SetNormalFontObject", &font)?;
+            let owner = frame_handle_of(lua, &this)?;
+            with_button(lua, &this, |bs| bs.normal_font = font)?;
+            let mut model = crate::script::model_mut_of(lua);
+            apply_normal_font(&mut model, owner);
+            Ok(())
+        })?,
+    )?;
+    // The slot's font object, or nothing at all when it is empty (`0x977450`, `0x977750`,
+    // `0x9775d0`).
+    let slots: [(&str, FontSlot); 3] = [
+        ("GetNormalFontObject", |bs| bs.normal_font.clone()),
+        ("GetHighlightFontObject", |bs| bs.highlight_font.clone()),
+        ("GetDisabledFontObject", |bs| bs.disabled_font.clone()),
+    ];
+    for (name, slot) in slots {
         m.set(
             name,
-            lua.create_function(move |lua, (this, font): (Table, Value)| {
-                let font = super::font::resolve(name, &font)?;
-                let owner = frame_handle_of(lua, &this)?;
-                with_button(lua, &this, |bs| bs.normal_font = font)?;
-                let mut model = crate::script::model_mut_of(lua);
-                apply_normal_font(&mut model, owner);
-                Ok(())
+            lua.create_function(move |lua, this: Table| {
+                let font = with_button(lua, &this, |bs| slot(bs))?.filter(|n| {
+                    lua.app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data")
+                        .font_object(n)
+                        .is_some()
+                });
+                match font {
+                    Some(n) => Ok(MultiValue::from_iter([Value::Table(super::font::wrapper(
+                        lua, &n,
+                    )?)])),
+                    None => Ok(MultiValue::new()),
+                }
             })?,
         )?;
     }
@@ -683,7 +672,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?,
     )?;
     // GetFont() (`0x7809a0` → `0x79f3b0`) → file, height, flags off the normal font, else the
-    // object it inherits (`<NormalFont>`, `SetTextFontObject`); always three values.
+    // object it inherits (`<NormalFont>`, `SetNormalFontObject`); always three values.
     m.set(
         "GetFont",
         lua.create_function(|lua, this: Table| {
@@ -732,7 +721,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?,
     )?;
     // GetTextColor() (`0x781100`) → r, g, b, a, four values, off the normal font: its own colour,
-    // else the inherited object's (`<NormalFont>`, `SetTextFontObject`), else white.
+    // else the inherited object's (`<NormalFont>`, `SetNormalFontObject`), else white.
     m.set(
         "GetTextColor",
         lua.create_function(|lua, this: Table| {

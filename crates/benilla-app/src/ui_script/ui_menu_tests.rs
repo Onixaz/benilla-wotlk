@@ -1,6 +1,6 @@
 //! The stock `UIMenu` kit as the chat menu uses it: rows fixed at 104x16 by `UIMenu_Initialize`,
 //! the label the button's own text, the shortcut a sibling anchored RIGHT. `SetText` anchors a new
-//! label by the normal font's `justifyH` (`CSimpleButton::SetFontString`, `0x778d20`).
+//! label by the normal font's `justifyH` (`CSimpleButton::SetFontString`, `0x96f7b0`).
 
 use benilla_ui::script::UiScript;
 
@@ -65,7 +65,7 @@ fn chat_menu_rows_left_align_their_label_and_right_align_their_shortcut() {
     let (row_l, row_r) = edges(&mut s, "ChatMenuButton10");
     assert_eq!(row_r - row_l, 104.0, "UIMENU_BUTTON_WIDTH");
 
-    // The label's implicit anchor is LEFT to LEFT (0, 0), from `<NormalFont justifyH="LEFT"/>`.
+    // The label is anchored LEFT to LEFT (0, 0) by `<NormalFont style="GameFontNormalLeft"/>`.
     let (p, rp, x, y): (String, String, f32, f32) = s
         .eval(
             "local p, _, rp, x, y = ChatMenuButton10:GetFontString():GetPoint(1) \
@@ -96,7 +96,7 @@ fn chat_menu_rows_left_align_their_label_and_right_align_their_shortcut() {
     }
 }
 
-/// A lazily created label answers the normal font's justify and object (`0x779810`).
+/// A lazily created label answers the normal font's justify and object (`0x96f4a0`).
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_menu_rows_label_reports_the_normal_fonts_justify_and_object() {

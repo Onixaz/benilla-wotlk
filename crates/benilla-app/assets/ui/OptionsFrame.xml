@@ -139,12 +139,12 @@
                 if k == key then
                     bg:SetVertexColor(1, 1, 0)
                     bg:Show()
-                    row:SetTextFontObject("GameFontHighlight")
+                    row:SetNormalFontObject("GameFontHighlight")
                     BenillaOptionsFrameContainerTitle:SetText(row.pageTitle)
                 else
                     bg:SetVertexColor(0.196, 0.388, 0.8)
                     bg:Hide()
-                    row:SetTextFontObject("GameFontNormal")
+                    row:SetNormalFontObject("GameFontNormal")
                 end
             end
             for k in pairs(BENILLA_OPTIONS_PAGE_ROWS) do
@@ -1000,9 +1000,9 @@
         <PushedTexture file="Interface\Buttons\UI-Panel-Button-Down"><TexCoords left="0" right="0.625" top="0" bottom="0.6875"/></PushedTexture>
         <DisabledTexture file="Interface\Buttons\UI-Panel-Button-Disabled"><TexCoords left="0" right="0.625" top="0" bottom="0.6875"/></DisabledTexture>
         <HighlightTexture file="Interface\Buttons\UI-Panel-Button-Highlight" alphaMode="ADD"><TexCoords left="0" right="0.625" top="0" bottom="0.6875"/></HighlightTexture>
-        <NormalFont inherits="GameFontHighlight"/>
-        <HighlightFont inherits="GameFontHighlight"/>
-        <DisabledFont inherits="GameFontDisable"/>
+        <NormalFont style="GameFontHighlight"/>
+        <HighlightFont style="GameFontHighlight"/>
+        <DisabledFont style="GameFontDisable"/>
     </Button>
 
     <!-- The wash is 1.14's OptionsListButtonTemplate: blue on hover, gold when selected. -->
@@ -1022,9 +1022,9 @@
                 <Anchor point="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="1"/></Offset></Anchor>
             </Anchors>
         </ButtonText>
-        <NormalFont inherits="GameFontNormal"/>
-        <HighlightFont inherits="GameFontHighlight"/>
-        <DisabledFont inherits="GameFontDisable"/>
+        <NormalFont style="GameFontNormal"/>
+        <HighlightFont style="GameFontHighlight"/>
+        <DisabledFont style="GameFontDisable"/>
         <Scripts>
             <OnClick>BenillaOptionsFrame_SelectCategory(this.categoryKey)</OnClick>
             <!-- The selected row keeps its locked gold. -->
@@ -1345,9 +1345,9 @@
                 <ButtonText name="$parentText" text="Game">
                     <Anchors><Anchor point="BOTTOM"><Offset><AbsDimension x="0" y="6"/></Offset></Anchor></Anchors>
                 </ButtonText>
-                <NormalFont inherits="GameFontHighlightSmall"/>
-                <HighlightFont inherits="GameFontHighlightSmall"/>
-                <DisabledFont inherits="GameFontHighlightSmall"/>
+                <NormalFont style="GameFontHighlightSmall"/>
+                <HighlightFont style="GameFontHighlightSmall"/>
+                <DisabledFont style="GameFontHighlightSmall"/>
                 <Scripts>
                     <OnShow>BenillaOptionsTab_FitWidth(this)</OnShow>
                 </Scripts>
@@ -1372,9 +1372,9 @@
                 <ButtonText name="$parentText" text="AddOns">
                     <Anchors><Anchor point="BOTTOM"><Offset><AbsDimension x="0" y="4"/></Offset></Anchor></Anchors>
                 </ButtonText>
-                <NormalFont inherits="GameFontNormalSmall"/>
-                <HighlightFont inherits="GameFontNormalSmall"/>
-                <DisabledFont inherits="GameFontNormalSmall"/>
+                <NormalFont style="GameFontNormalSmall"/>
+                <HighlightFont style="GameFontNormalSmall"/>
+                <DisabledFont style="GameFontNormalSmall"/>
                 <!-- No addon list behind it: disabled, in the era's unselected gold. -->
                 <Scripts>
                     <OnLoad>this:Disable()</OnLoad>

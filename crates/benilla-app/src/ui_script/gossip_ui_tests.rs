@@ -2,7 +2,8 @@
 //! `GOSSIP_CONFIRM`, `StaticPopup.lua`) on the production load, over the menu the app pushes.
 
 use benilla_ui::script::{
-    GossipMenu, GossipOptionView, GossipQuestRow, PlayerReqState, ScriptValue, UiScript,
+    GossipMenu, GossipOptionView, GossipQuestRow, JustifyH, PlayerReqState, QuadContent,
+    ScriptValue, UiScript,
 };
 
 /// Errors from the gossip window's own code; the production load carries unrelated 3.3.5a gaps.
@@ -182,5 +183,145 @@ fn a_box_text_option_confirms_through_the_stock_popup() {
     assert!(s
         .eval::<bool>("return StaticPopup_Visible('GOSSIP_CONFIRM') == nil")
         .unwrap());
+    assert!(gossip_errors(s.take_errors()).is_empty());
+}
+
+/// The text quad painted for `frame`'s label: its text, with its centre inside the frame.
+fn label_quad(s: &mut UiScript, frame: &str) -> benilla_ui::script::ExtractedQuad {
+    s.resolve();
+    let (text, l, r, b, t): (String, f32, f32, f32, f32) = s
+        .eval(&format!(
+            "local f = {frame} return f:GetText(), f:GetLeft(), f:GetRight(), f:GetBottom(), f:GetTop()"
+        ))
+        .unwrap_or_else(|e| panic!("{frame}: {e}"));
+    s.extract()
+        .into_iter()
+        .find(|q| match (&q.content, q.rect) {
+            (QuadContent::Text { text: Some(qt), .. }, Some(rect)) => {
+                let (cx, cy) = (
+                    (rect.left + rect.right) * 0.5,
+                    (rect.bottom + rect.top) * 0.5,
+                );
+                *qt == text && (l..=r).contains(&cx) && (b.min(t)..=b.max(t)).contains(&cy)
+            }
+            _ => false,
+        })
+        .unwrap_or_else(|| panic!("no text quad for {frame} ({text:?})"))
+}
+
+fn label_color(s: &mut UiScript, frame: &str) -> [f32; 4] {
+    match label_quad(s, frame).content {
+        QuadContent::Text { color: Some(c), .. } => c,
+        other => panic!("{frame}'s label has no colour: {other:?}"),
+    }
+}
+
+fn hover(s: &mut UiScript, frame: &str) {
+    s.resolve();
+    let (x, y): (f32, f32) = s
+        .eval(&format!(
+            "local f = {frame} return (f:GetLeft() + f:GetRight()) / 2, (f:GetTop() + f:GetBottom()) / 2"
+        ))
+        .unwrap();
+    s.mouse_move(x, y);
+}
+
+/// The state fonts come from `<NormalFont style=>` and kin (`CSimpleButton::LoadXML 0x96fed0`): a
+/// quest row's label is `QuestFontLeft`, left-justified beside its icon (`GossipFrame.xml`), and
+/// the `UIPanelButtonTemplate` Goodbye button is gold, white under the cursor and grey disabled
+/// (`GameFontNormal`, `GameFontHighlight`, `GameFontDisable`).
+#[test]
+fn the_gossip_rows_and_buttons_wear_their_style_fonts() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut s = loaded();
+    s.set_gossip(Some(GossipMenu {
+        greeting: "Well met.".into(),
+        quests: vec![GossipQuestRow {
+            quest_id: 18,
+            title: "Brotherhood of Thieves".into(),
+            level: 4,
+            ..Default::default()
+        }],
+        options: vec![option("Train me.", "trainer")],
+        force_gossip: true,
+    }));
+    s.fire_event("GOSSIP_SHOW", Vec::<ScriptValue>::new());
+    let errors = gossip_errors(s.take_errors());
+    assert!(errors.is_empty(), "gossip window errors: {errors:#?}");
+
+    assert!(
+        s.eval::<bool>("return GossipTitleButton1:GetNormalFontObject() == QuestFontLeft")
+            .unwrap(),
+        "<NormalFont style=\"QuestFontLeft\"/> fills the normal slot"
+    );
+    assert!(
+        s.eval::<bool>(
+            "return GossipTitleButton1:GetFontString():GetFontObject() == QuestFontLeft"
+        )
+        .unwrap(),
+        "the row's label is linked to it"
+    );
+    assert_eq!(
+        s.eval::<String>("return GossipTitleButton1:GetFontString():GetJustifyH()")
+            .unwrap(),
+        "LEFT"
+    );
+    // `<ButtonText>` anchors LEFT 20 into the row, beside the icon, and paints left-justified.
+    let row_left = s
+        .eval::<f32>("return GossipTitleButton1:GetLeft()")
+        .unwrap();
+    let quad = label_quad(&mut s, "GossipTitleButton1");
+    let rect = quad.rect.expect("the quest name has a rect");
+    assert!(
+        (rect.left - (row_left + 20.0)).abs() < 0.5,
+        "the label box starts at {}, got {}",
+        row_left + 20.0,
+        rect.left
+    );
+    assert!(
+        matches!(
+            quad.content,
+            QuadContent::Text {
+                justify_h: JustifyH::Left,
+                ..
+            }
+        ),
+        "the quest name paints left-justified, not centred: {:?}",
+        quad.content
+    );
+
+    const GOLD: [f32; 4] = [1.0, 0.82, 0.0, 1.0];
+    const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+    const GREY: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+    let goodbye = "GossipFrameGreetingGoodbyeButton";
+    s.resolve();
+    s.mouse_move(1000.0, 10.0);
+    assert_eq!(
+        label_color(&mut s, goodbye),
+        GOLD,
+        "at rest: GameFontNormal"
+    );
+    hover(&mut s, goodbye);
+    assert_eq!(
+        label_color(&mut s, goodbye),
+        WHITE,
+        "hovered: GameFontHighlight"
+    );
+    s.resolve();
+    s.mouse_move(1000.0, 10.0);
+    assert_eq!(
+        label_color(&mut s, goodbye),
+        GOLD,
+        "the cursor gone: gold again"
+    );
+    s.run(&format!("{goodbye}:Disable()")).unwrap();
+    assert_eq!(
+        label_color(&mut s, goodbye),
+        GREY,
+        "disabled: GameFontDisable"
+    );
     assert!(gossip_errors(s.take_errors()).is_empty());
 }

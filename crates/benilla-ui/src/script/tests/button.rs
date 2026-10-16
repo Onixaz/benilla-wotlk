@@ -597,7 +597,7 @@ fn highlight_is_additive_and_state_textures_fill_then_anchor() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The label wears the current state's font object (`SetTextFontObject`, `SetDisabledFontObject`)
+/// The label wears the current state's font object (`SetNormalFontObject`, `SetDisabledFontObject`)
 /// with no Lua repaint; its own `SetTextColor` clears the colour's inherit bit and survives that.
 #[test]
 fn button_label_repaints_by_state_font_object() {
@@ -624,7 +624,7 @@ fn button_label_repaints_by_state_font_object() {
         b = CreateFrame("Button", "FontBtn")
         b:SetPoint("CENTER", 0, 0); b:SetWidth(100); b:SetHeight(20)
         b:SetText("Label")
-        b:SetTextFontObject("GoldFont")
+        b:SetNormalFontObject("GoldFont")
         b:SetDisabledFontObject("GrayFont")
     "#,
     )
@@ -669,10 +669,10 @@ fn button_label_repaints_by_state_font_object() {
     assert!((c[0] - 0.1).abs() < 1e-6 && (c[1] - 0.2).abs() < 1e-6);
 }
 
-/// The highlight label is its own font instance, put in force by a hover or `LockHighlight`, so the
-/// normal instance's `SetTextColor` cannot reach it: `ClassTrainerSkillButtonTemplate`'s recipe
-/// rows (`<HighlightFont inherits="GameFontHighlight">`) turn white, and
-/// `Blizzard_TradeSkillUI.lua:144` locks the selected row after blanking its highlight texture.
+/// The highlight font object is put in force by a hover or `LockHighlight` (`UpdateTextState
+/// 0x96f4a0` reads the highlight layer), so a colour on the normal state cannot reach it:
+/// `ClassTrainerSkillButtonTemplate`'s rows (`<HighlightFont style="GameFontHighlightLeft"/>`)
+/// turn white, and the trainer and trade-skill lists lock the selected row.
 #[test]
 fn a_locked_or_hovered_button_wears_its_highlight_font_over_its_normal_color() {
     let mut s = script();
@@ -698,7 +698,7 @@ fn a_locked_or_hovered_button_wears_its_highlight_font_over_its_normal_color() {
         b = CreateFrame("Button", "RowBtn")
         b:SetPoint("BOTTOMLEFT", 100, 100); b:SetWidth(100); b:SetHeight(20)
         b:SetText("Rough Copper Vest")
-        b:SetTextFontObject("RowNormal")
+        b:SetNormalFontObject("RowNormal")
         b:SetHighlightFontObject("RowHighlight")
         -- The difficulty paint every one of the three list windows applies to every row.
         b:SetTextColor(1.0, 0.5, 0.25)
@@ -734,7 +734,7 @@ fn a_locked_or_hovered_button_wears_its_highlight_font_over_its_normal_color() {
     assert_eq!(
         label_color(&mut s),
         Some([1.0, 1.0, 1.0, 1.0]),
-        "hovered: the HIGHLIGHT instance is in force, and the normal colour cannot reach it"
+        "hovered: the HIGHLIGHT font is in force, and the normal colour cannot reach it"
     );
 
     s.resolve();
@@ -932,10 +932,10 @@ fn set_font_string_anchors_only_an_unanchored_label() {
     );
 }
 
-/// A label made lazily (`SetText`, `0x778dc0`) or adopted goes through
-/// `CSimpleButton::SetFontString 0x778d20`, which anchors it by the button's normal font justify
-/// (`[button+0x390]`: LEFT, RIGHT, else CENTER), not the string's own, then links it to that font
-/// (`0x779810`). FrameXML writes that justify with `<NormalFont justifyH=>`.
+/// A label made lazily (`SetText`, `0x96f860`) or adopted goes through
+/// `CSimpleButton::SetFontString 0x96f7b0`, which anchors it by the normal font object's justify
+/// (LEFT, RIGHT, else CENTER), not the string's own, then links it to that font (`0x96f4a0`).
+/// `text=` runs after the state fonts (`0x970150`), so its label is anchored the same way.
 #[test]
 fn a_lazily_made_label_is_anchored_by_the_normal_fonts_justify() {
     let mut s = script();
@@ -945,19 +945,25 @@ fn a_lazily_made_label_is_anchored_by_the_normal_fonts_justify() {
              <Font name="ProbeFont" font="Fonts\FRIZQT__.TTF" virtual="true">
                <FontHeight><AbsValue val="12"/></FontHeight>
              </Font>
+             <Font name="ProbeFontLeft" inherits="ProbeFont" justifyH="LEFT" virtual="true"/>
              <Font name="ProbeFontRight" inherits="ProbeFont" justifyH="RIGHT" virtual="true"/>
              <Button name="LeftRowTemplate" virtual="true">
                <Size><AbsDimension x="104" y="16"/></Size>
-               <NormalFont inherits="ProbeFont" justifyH="LEFT"/>
-               <HighlightFont inherits="ProbeFont" justifyH="LEFT"/>
+               <NormalFont style="ProbeFontLeft"/>
+               <HighlightFont style="ProbeFontLeft"/>
              </Button>
              <Button name="RightRowTemplate" virtual="true">
                <Size><AbsDimension x="104" y="16"/></Size>
-               <NormalFont inherits="ProbeFontRight"/>
+               <NormalFont style="ProbeFontRight"/>
              </Button>
              <Button name="PlainRowTemplate" virtual="true">
                <Size><AbsDimension x="104" y="16"/></Size>
-               <NormalFont inherits="ProbeFont"/>
+               <NormalFont style="ProbeFont"/>
+             </Button>
+             <Button name="TextRow" text="Okay">
+               <Size><AbsDimension x="104" y="16"/></Size>
+               <Anchors><Anchor point="TOP"/></Anchors>
+               <NormalFont style="ProbeFontLeft"/>
              </Button>
            </Ui>"#,
     )
@@ -993,12 +999,17 @@ fn a_lazily_made_label_is_anchored_by_the_normal_fonts_justify() {
     assert_eq!(
         point(&s, "left"),
         ("LEFT".into(), "LEFT".into(), 0.0, 0.0),
-        "the element-level justifyH on <NormalFont> anchors the lazy label LEFT"
+        "the normal font object's justifyH anchors the lazy label LEFT"
+    );
+    assert_eq!(
+        point(&s, "TextRow"),
+        ("LEFT".into(), "LEFT".into(), 0.0, 0.0),
+        "text= makes its label after <NormalFont>, so the font's justify anchors it"
     );
     assert_eq!(
         point(&s, "right"),
         ("RIGHT".into(), "RIGHT".into(), 0.0, 0.0),
-        "a justify the normal font INHERITS from its object counts the same"
+        "a RIGHT normal font anchors it RIGHT"
     );
     assert_eq!(
         point(&s, "plain"),
@@ -1018,7 +1029,7 @@ fn a_lazily_made_label_is_anchored_by_the_normal_fonts_justify() {
         "LEFT"
     );
     assert!(s
-        .eval::<bool>("return left:GetFontString():GetFontObject() == ProbeFont")
+        .eval::<bool>("return left:GetFontString():GetFontObject() == ProbeFontLeft")
         .unwrap());
 
     s.run(
@@ -1035,8 +1046,8 @@ fn a_lazily_made_label_is_anchored_by_the_normal_fonts_justify() {
         "SetFontString anchors by the normal font's justify too"
     );
 
-    // A later `SetTextFontObject` re-links the normal font but does not re-anchor.
-    s.run("left:SetTextFontObject(ProbeFontRight)").unwrap();
+    // A later `SetNormalFontObject` re-links the normal font but does not re-anchor.
+    s.run("left:SetNormalFontObject(ProbeFontRight)").unwrap();
     assert_eq!(point(&s, "left"), ("LEFT".into(), "LEFT".into(), 0.0, 0.0));
 }
 
@@ -1062,7 +1073,7 @@ fn a_button_labels_own_setfont_survives_the_state_font_repoint() {
         b = CreateFrame("Button", "SkinnedBtn")
         b:SetPoint("CENTER", 0, 0); b:SetWidth(100); b:SetHeight(20)
         b:SetText("Label")
-        b:SetTextFontObject("TemplateFont")
+        b:SetNormalFontObject("TemplateFont")
         b:GetFontString():SetFont("Interface\\Addons\\Skin\\Fonts\\porky.ttf", 18, "OUTLINE")
     "#,
     )
@@ -1375,7 +1386,7 @@ fn button_get_text_color_answers_four_values_through_the_state_font() {
         r#"
         Plain = CreateFrame("Button", "PlainBtn")
         Themed = CreateFrame("Button", "ThemedBtn")
-        Themed:SetTextFontObject("BtnGold")
+        Themed:SetNormalFontObject("BtnGold")
         "#,
     )
     .unwrap();

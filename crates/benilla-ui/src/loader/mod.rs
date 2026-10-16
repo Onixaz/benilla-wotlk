@@ -879,18 +879,6 @@ pub(super) fn children_named<'a>(
         .filter(move |c| c.tag.eq_ignore_ascii_case(tag))
 }
 
-/// Iterate an element's direct children whose tag matches any of `tags` (case-insensitively), in
-/// document order. One walk, not one per tag: a Button's label and state fonts each answer to two
-/// tags (`CSimpleButton::LoadXML 0x7788c0`) and each slot is last-wins.
-pub(super) fn children_named_any<'a>(
-    el: &'a Element,
-    tags: &'a [&'a str],
-) -> impl Iterator<Item = &'a Element> {
-    el.children
-        .iter()
-        .filter(move |c| tags.iter().any(|t| c.tag.eq_ignore_ascii_case(t)))
-}
-
 /// Whether a `text=` value is shaped like a GlobalStrings key: `SCREAMING_SNAKE` with a letter, two
 /// characters or more (a one-character `text="X"` is a glyph).
 fn is_global_string_key(s: &str) -> bool {

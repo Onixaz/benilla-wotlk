@@ -178,10 +178,9 @@ impl UiScript {
                         }
                     }
                     // A Button's non-current state textures emit no quad, and its ButtonText takes
-                    // the current state's font instance (disabled > highlighted > normal).
+                    // the current state's font object (disabled > highlighted > normal).
                     let mut state_font: Option<&FontObject> = None;
                     let mut state_color: Option<[f32; 4]> = None;
-                    let mut state_justify: Option<super::JustifyH> = None;
                     let mut button_font: Option<&crate::widget::ButtonFont> = None;
                     if let Some(crate::widget::KindState::Button(bs)) =
                         owner_frame.map(|f| &f.kind_state)
@@ -193,38 +192,22 @@ impl UiScript {
                             continue;
                         }
                         if bs.text == Some(rh) {
-                            // The label takes one embedded font instance whole (normal `+0x33c`,
-                            // highlight `+0x3b8`, disabled `+0x434`), so font and colour pair up;
-                            // a state lacking a font object stays on normal (inferred, not traced).
-                            // A locked highlight counts: the trade-skill list blanks the highlight
-                            // texture and locks the selected row (`Blizzard_TradeSkillUI.lua:133`,
-                            // `:144`), so this swap is its white text.
+                            // The label is linked to one shared font object (`UpdateTextState
+                            // 0x96f4a0`): the disabled slot, else the highlight one while the
+                            // highlight layer is on, which a locked highlight also turns on, else
+                            // the normal one. An empty slot unlinks and keeps the last paint
+                            // (`SetFontObject 0x485160`), modelled as staying on normal.
                             let highlighted = hovered || bs.locked_highlight;
-                            let (name, color, justify) = if !bs.enabled()
-                                && bs.disabled_font.is_some()
-                            {
-                                (
-                                    bs.disabled_font.as_ref(),
-                                    bs.disabled_color,
-                                    bs.disabled_justify_h,
-                                )
+                            let (name, color) = if !bs.enabled() && bs.disabled_font.is_some() {
+                                (bs.disabled_font.as_ref(), bs.disabled_color)
                             } else if bs.enabled() && highlighted && bs.highlight_font.is_some() {
-                                (
-                                    bs.highlight_font.as_ref(),
-                                    bs.highlight_color,
-                                    bs.highlight_justify_h,
-                                )
+                                (bs.highlight_font.as_ref(), bs.highlight_color)
                             } else {
-                                (
-                                    bs.normal_font.as_ref(),
-                                    bs.normal_color,
-                                    bs.normal_justify_h,
-                                )
+                                (bs.normal_font.as_ref(), bs.normal_color)
                             };
                             state_font = name.and_then(|n| model.font_object(n));
                             button_font = bs.font.as_ref();
                             state_color = color;
-                            state_justify = justify;
                         }
                     }
                     // A title region never draws: `CreateTitleRegion 0x773910` builds a plain
@@ -269,10 +252,10 @@ impl UiScript {
                         if !data.font_explicit.color {
                             data.vertex_color = fo.color.or(data.vertex_color);
                         }
-                        // The instance's own `justifyH`, else the object's; a hover or disable
-                        // swaps it here, as the client re-links the label (`0x779810`).
+                        // The object's `justifyH`; a hover or disable swaps it here, as the
+                        // client re-links the label (`0x96f4a0`).
                         if !data.font_explicit.justify_h {
-                            if let Some(j) = state_justify.or(fo.justify_h) {
+                            if let Some(j) = fo.justify_h {
                                 data.justify.set_h(j);
                             }
                         }

@@ -779,7 +779,7 @@ mod loader_tests {
                             </Anchor>
                         </Anchors>
                     </ButtonText>
-                    <NormalFont inherits="GameFontNormal" justifyH="LEFT"/>
+                    <NormalFont style="GameFontNormal"/>
                 </Button>
             </Ui>"#,
         );
@@ -1739,186 +1739,169 @@ mod loader_tests {
         );
     }
 
-    /// `CSimpleButton::LoadXML 0x7788c0` builds the label from `<NormalText>` (`0x778b6c`), clears
-    /// its `ownsFontAttrs` (`0x778b7b`) and feeds the node to the Normal-state font (`0x783c30`,
-    /// at `0x778baf`): the label takes the name and geometry, the state font the `inherits=`.
+    /// `CSimpleButton::LoadXML 0x96fed0` reads one attribute on each state font, `style=`, and
+    /// stores the named font object itself (`0x97001d`, `0x970088`, `0x9700ec` →
+    /// `CSimpleFont::GetFont 0x496f70`), which the 3.3.5a getters hand back (`0x977450`,
+    /// `0x977750`, `0x9775d0`). The label takes the normal object's justify and paint.
     #[test]
-    fn a_button_normal_text_is_the_label_names_it_and_fonts_it() {
+    fn a_button_state_font_is_the_object_its_style_names() {
         let mut s = UiScript::new().unwrap();
         s.set_screen_size(800.0, 600.0);
         let doc = parse(
             r#"<Ui>
-                <Font name="KtmYellow" font="Fonts\FRIZQT__.TTF" virtual="true">
-                    <FontHeight><AbsValue val="10"/></FontHeight>
-                    <Color r="0.9" g="0.8" b="0.1" a="1"/>
+                <Font name="StyleNormal" font="Fonts\FRIZQT__.TTF" justifyH="LEFT" virtual="true">
+                    <FontHeight><AbsValue val="12"/></FontHeight>
+                    <Color r="1" g="0.82" b="0"/>
                 </Font>
-                <Button name="KtmHeaderTemplate" virtual="true">
-                    <NormalText name="$parentText" inherits="KtmYellow" text="Threat">
-                        <Size><AbsDimension x="70" y="14"/></Size>
-                        <Anchors><Anchor point="LEFT"/></Anchors>
-                    </NormalText>
+                <Font name="StyleHighlight" inherits="StyleNormal" virtual="true">
+                    <Color r="1" g="1" b="1"/>
+                </Font>
+                <Font name="StyleDisable" inherits="StyleNormal" virtual="true">
+                    <Color r="0.5" g="0.5" b="0.5"/>
+                </Font>
+                <Button name="StyledRowTemplate" virtual="true">
+                    <Size><AbsDimension x="200" y="16"/></Size>
+                    <ButtonText name="$parentText">
+                        <Anchors><Anchor point="LEFT"><Offset><AbsDimension x="20" y="0"/></Offset></Anchor></Anchors>
+                    </ButtonText>
+                    <NormalFont style="StyleNormal"/>
+                    <HighlightFont style="StyleHighlight"/>
+                    <DisabledFont style="StyleDisable"/>
                 </Button>
-                <Frame name="KtmSelf">
-                    <Size><AbsDimension x="300" y="100"/></Size>
+                <Button name="StyledRow" inherits="StyledRowTemplate" text="Brotherhood of Thieves">
                     <Anchors><Anchor point="CENTER"/></Anchors>
-                    <Frames>
-                        <Button name="$parentHeaderName" inherits="KtmHeaderTemplate">
-                            <Size><AbsDimension x="70" y="14"/></Size>
-                            <Anchors><Anchor point="TOPLEFT"/></Anchors>
-                        </Button>
-                    </Frames>
-                </Frame>
+                </Button>
             </Ui>"#,
         );
         let report = load(&s, &doc, &no_files);
         assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
 
-        // 1 · The global, `$parent` resolved against the instance.
+        for (getter, font) in [
+            ("GetNormalFontObject", "StyleNormal"),
+            ("GetHighlightFontObject", "StyleHighlight"),
+            ("GetDisabledFontObject", "StyleDisable"),
+        ] {
+            assert!(
+                s.eval::<bool>(&format!("return StyledRow:{getter}() == {font}"))
+                    .unwrap(),
+                "{getter} answers the object <…Font style=\"{font}\"/> names"
+            );
+        }
         assert!(
-            s.eval::<bool>("return KtmSelfHeaderNameText ~= nil")
+            s.eval::<bool>("return StyledRowText:GetFontObject() == StyleNormal")
                 .unwrap(),
-            "a named <NormalText> must publish its global"
-        );
-        // 2 · It is the button's label, not a loose FontString with the same name.
-        assert_eq!(
-            s.eval::<String>("return KtmSelfHeaderNameText:GetName()")
-                .unwrap(),
-            "KtmSelfHeaderNameText"
+            "the label is linked to the normal font object"
         );
         assert_eq!(
-            s.eval::<String>("return KtmSelfHeaderName:GetFontString():GetName()")
+            s.eval::<String>("return StyledRowText:GetJustifyH()")
                 .unwrap(),
-            "KtmSelfHeaderNameText",
-            "the <NormalText> region must BE the button's label"
+            "LEFT",
+            "the label takes the normal object's justify"
         );
-        // 3 · The element's geometry landed on the label.
+
+        let label_color = |s: &mut UiScript| {
+            s.resolve();
+            s.extract()
+                .into_iter()
+                .find_map(|q| match q.content {
+                    QuadContent::Text {
+                        text: Some(t),
+                        color,
+                        ..
+                    } if t == "Brotherhood of Thieves" => Some(color),
+                    _ => None,
+                })
+                .expect("the label paints")
+        };
         assert_eq!(
-            s.eval::<f64>("return KtmSelfHeaderNameText:GetWidth()")
-                .unwrap(),
-            70.0
+            label_color(&mut s),
+            Some([1.0, 0.82, 0.0, 1.0]),
+            "normal: gold"
         );
-        // 4 · Its `inherits=` reached the Normal-state font, read off the painted quad because the
-        // state font applies at extract.
-        s.resolve();
-        let label = s
-            .extract()
-            .into_iter()
-            .find_map(|q| match q.content {
-                QuadContent::Text {
-                    text: Some(t),
-                    color,
-                    ..
-                } if t == "Threat" => Some(color),
-                _ => None,
-            })
-            .expect("the <NormalText> label must paint");
+        s.run("StyledRow:LockHighlight()").unwrap();
         assert_eq!(
-            label,
-            Some([0.9, 0.8, 0.1, 1.0]),
-            "<NormalText inherits=> must reach the button's Normal-state font"
+            label_color(&mut s),
+            Some([1.0, 1.0, 1.0, 1.0]),
+            "highlight: white"
+        );
+        s.run("StyledRow:UnlockHighlight() StyledRow:Disable()")
+            .unwrap();
+        assert_eq!(
+            label_color(&mut s),
+            Some([0.5, 0.5, 0.5, 1.0]),
+            "disabled: grey"
         );
     }
 
-    /// Only the `<NormalText>` leg clears the label's `+0x12c` gate (`0x778b7b`), so the label's
-    /// `LoadXML 0x770f40` skips its font attributes, `justifyH` among them (`0x7710d3`), and
-    /// `0x771480` seats the ctor's CENTER (`0x212`, `0x770dd3`). `<ButtonText>` goes through the
-    /// ordinary FontString builder (`0x6f2780`) and seats LEFT. The justify still reaches the
-    /// paint and `GetJustifyH()` through the state font (`0x783c30`), after the anchor is set.
+    /// 12340 reads `style=` alone on a state font (`0x97001d`): `inherits=`, `font=` and `justifyH=`
+    /// are not read, an empty `style` is skipped, and a name with no font object warns per state
+    /// (`0x97005f`, `0x9700c6`, `0x970121`) and empties the slot. `<NormalText>`, `<HighlightText>`
+    /// and `<DisabledText>` are not 3.3.5a elements, so they build no label and set no font.
     #[test]
-    fn a_button_label_element_does_not_own_its_justify() {
-        let mut s = UiScript::new().unwrap();
-        s.set_screen_size(800.0, 600.0);
+    fn a_button_state_font_reads_style_alone() {
+        let s = UiScript::new().unwrap();
         let doc = parse(
             r#"<Ui>
-                <Font name="GatherFont" font="Fonts\FRIZQT__.TTF" virtual="true">
-                    <FontHeight><AbsValue val="10"/></FontHeight>
+                <Font name="SomeFont" font="Fonts\FRIZQT__.TTF" virtual="true">
+                    <FontHeight><AbsValue val="12"/></FontHeight>
                 </Font>
-                <Button name="GathererUI_PopupButtonTemplate" virtual="true">
-                    <Size><AbsDimension x="64" y="12"/></Size>
-                    <NormalText inherits="GatherFont" justifyH="LEFT"/>
-                    <HighlightText inherits="GatherFont" justifyH="LEFT"/>
-                    <DisabledText inherits="GatherFont" justifyH="LEFT"/>
+                <Button name="OldSpellings">
+                    <NormalFont inherits="SomeFont" font="SomeFont" justifyH="LEFT"/>
+                    <HighlightFont style=""/>
+                    <NormalText name="$parentText" inherits="SomeFont" text="Threat"/>
+                    <DisabledText inherits="SomeFont"/>
                 </Button>
-                <Button name="OwnLabelTemplate" virtual="true">
-                    <Size><AbsDimension x="64" y="12"/></Size>
-                    <ButtonText inherits="GatherFont" justifyH="LEFT"/>
+                <Button name="MissingStyle">
+                    <NormalFont style="SomeFont"/>
+                    <NormalFont style="NoSuchFont"/>
+                    <HighlightFont style="NoSuchHighlight"/>
+                    <DisabledFont style="NoSuchDisabled"/>
                 </Button>
-                <Frame name="GathererUI_Popup">
-                    <Size><AbsDimension x="120" y="60"/></Size>
-                    <Anchors>
-                        <Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="0" y="0"/></Offset></Anchor>
-                    </Anchors>
-                    <Frames>
-                        <Button name="GathererUI_PopupButton1" inherits="GathererUI_PopupButtonTemplate" text="Minimap [on]">
-                            <Anchors><Anchor point="TOP"/></Anchors>
-                        </Button>
-                        <Button name="OwnLabelButton" inherits="OwnLabelTemplate" text="Minimap [on]">
-                            <Anchors><Anchor point="BOTTOM"/></Anchors>
-                        </Button>
-                    </Frames>
-                </Frame>
             </Ui>"#,
         );
         let report = load(&s, &doc, &no_files);
         assert!(report.errors.is_empty(), "{:?}", report.errors);
 
-        // 1 · The label's anchor.
-        let (point, rel_point, x, y) = s
-            .eval::<(String, String, f64, f64)>(
-                "local p, rel, rp, x, y = GathererUI_PopupButton1:GetFontString():GetPoint(1) \
-                 return p, rp, x, y",
+        for (button, getter) in [
+            ("OldSpellings", "GetNormalFontObject"),
+            ("OldSpellings", "GetHighlightFontObject"),
+            ("OldSpellings", "GetDisabledFontObject"),
+            ("MissingStyle", "GetNormalFontObject"),
+            ("MissingStyle", "GetHighlightFontObject"),
+            ("MissingStyle", "GetDisabledFontObject"),
+        ] {
+            assert_eq!(
+                s.eval::<i64>(&format!("return select('#', {button}:{getter}())"))
+                    .unwrap(),
+                0,
+                "{button}:{getter}() returns nothing: the slot is empty"
+            );
+        }
+        assert!(
+            s.eval::<bool>(
+                "return OldSpellings:GetFontString() == nil and OldSpellingsText == nil"
             )
-            .unwrap();
-        assert_eq!(
-            (point.as_str(), rel_point.as_str(), x, y),
-            ("CENTER", "CENTER", 0.0, 0.0),
-            "<NormalText>'s justifyH is disowned, so 0x771480 seats the ctor's CENTER"
+            .unwrap(),
+            "<NormalText> builds no label"
         );
-
-        // 2 · The justify still reaches the label's getter through the state font.
-        assert_eq!(
-            s.eval::<String>("return GathererUI_PopupButton1:GetFontString():GetJustifyH()")
-                .unwrap(),
-            "LEFT",
-            "the state font's justify still reaches the label"
-        );
-
-        // 3 · The control: `<ButtonText>` keeps its justify, so it seats LEFT.
-        let (point, rel_point) = s
-            .eval::<(String, String)>(
-                "local p, rel, rp = OwnLabelButton:GetFontString():GetPoint(1) return p, rp",
-            )
-            .unwrap();
-        assert_eq!(
-            (point.as_str(), rel_point.as_str()),
-            ("LEFT", "LEFT"),
-            "<ButtonText> owns its font attributes — the gate is the <NormalText> leg's alone"
-        );
-
-        // 4 · Rows 64 wide centred on x=60 span [28,92]: a 40-wide label centred is [40,80],
-        // seated LEFT [28,68].
-        s.run(
-            "GathererUI_PopupButton1:GetFontString():SetWidth(40) \
-             OwnLabelButton:GetFontString():SetWidth(40)",
-        )
-        .unwrap();
-        s.resolve();
-        let (cl, cr, ll, lr) = s
-            .eval::<(f64, f64, f64, f64)>(
-                "local c = GathererUI_PopupButton1:GetFontString() \
-                 local l = OwnLabelButton:GetFontString() \
-                 return c:GetLeft(), c:GetRight(), l:GetLeft(), l:GetRight()",
-            )
-            .unwrap();
-        assert_eq!(
-            (cl, cr),
-            (40.0, 80.0),
-            "the Gatherer row's label is centred on the button, not hugging its left edge"
-        );
-        assert_eq!(
-            (ll, lr),
-            (28.0, 68.0),
-            "the <ButtonText> row's label still hugs the button's left edge"
+        for state in ["NORMAL font: NoSuchFont", "HIGHLIGHT font: NoSuchHighlight"] {
+            assert!(
+                report
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains(&format!("Couldn't find {state}"))),
+                "a miss warns as 12340 does: {state} in {:?}",
+                report.warnings
+            );
+        }
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("Couldn't find DISABLED font: NoSuchDisabled")),
+            "{:?}",
+            report.warnings
         );
     }
 

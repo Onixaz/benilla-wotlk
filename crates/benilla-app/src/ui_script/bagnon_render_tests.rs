@@ -1021,33 +1021,6 @@ fn resolved_font(s: &UiScript, lua_expr: &str) -> (String, String) {
     (r[0].clone(), r[1].clone())
 }
 
-/// A Button's `<NormalFont>`, `<HighlightFont>` and `<DisabledFont>` take `font=` too: they are
-/// `<Font>` elements, routed by `CSimpleButton::LoadXML` (`0x7788c0`, at `0x778bf4`) into the
-/// `0x783c30` a top-level `<Font>` uses, so `font=` resolves registry-first (`0x783d15`, then
-/// `0x783d22` calls `0x770c60`). 1.12.1 has no `style=` attribute.
-#[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn a_button_state_font_takes_the_font_attribute_not_just_inherits() {
-    benilla_formats::wow_data_or_skip!();
-    let root = corpus_or_skip!();
-    let mut s = open_bagnon_stacked(&root);
-    s.run("BagnonDBUI_ShowCharacterList(Bagnon)")
-        .expect("BagnonDBUI_ShowCharacterList");
-    for _ in 0..3 {
-        s.tick(0.1);
-    }
-
-    assert_eq!(
-        resolved_font(
-            &s,
-            "getglobal(\"BagnonDBUICharacterList1\"):GetFontString()"
-        ),
-        ("Fonts\\FRIZQT__.TTF".into(), "16".into()),
-        "`<NormalFont font=\"GameFontNormalLarge\"/>` must link the font object — 16px, not the \
-         12px default, and emphatically not the nil this returned while only `inherits=` was read"
-    );
-}
-
 /// `CSimpleFontString::LoadXML` reads `<FontHeight>`, `outline=` and `monochrome=` only on the leg
 /// where `font=` names a file (`[0x77111e, 0x771254)`); with no `font=`, `0x7710f1`/`0x7710fa`
 /// jump to `0x771254`. Stock `AutoFollowStatusText` (`ZoneText.xml:172-183`) inherits

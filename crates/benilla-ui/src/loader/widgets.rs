@@ -1,12 +1,8 @@
 use mlua::{ObjectLike, Table};
 
 use crate::framexml::{self, Element};
-use crate::script::LabelFont;
 
-use super::regions::FontAttrs;
-use super::{
-    abs_dim, abs_value, children_named, children_named_any, color_of, tex_coords_of, Loader,
-};
+use super::{abs_dim, abs_value, children_named, color_of, tex_coords_of, Loader};
 
 impl Loader<'_> {
     /// `<StatusBar>` (`0x782ef0`): a reversed `minValue`/`maxValue` pair is swapped, as
@@ -58,9 +54,9 @@ impl Loader<'_> {
         }
     }
 
-    /// `<Button>` and `<CheckButton>` (`0x7788c0`, which `0x785170` runs first):
-    /// the label, the state textures with their own layout, `checked`, `text=` and the per-state
-    /// fonts. `$parent` in a child's anchors is this button.
+    /// `<Button>` and `<CheckButton>` (`0x96fed0`, after `CSimpleFrame::LoadXML 0x4932c0`): the
+    /// label, the state textures with their own layout, `checked`, the per-state fonts and `text=`.
+    /// `$parent` in a child's anchors is this button.
     pub(super) fn apply_button(
         &mut self,
         el: &Element,
@@ -99,7 +95,7 @@ impl Loader<'_> {
                     // path places the authored ones first and the implicit step after (`0x778903`):
                     // clear, lay out, then re-run it, or a leftover implicit corner would pin it.
                     this.call_region(&region, "ClearAllPoints", (), dbg);
-                    this.apply_region_layout(t, &region, self_name, dbg, FontAttrs::Own);
+                    this.apply_region_layout(t, &region, self_name, dbg);
                     if let Err(e) = crate::script::implicit_creation_anchor_lua(this.lua, &region) {
                         this.report
                             .errors
@@ -122,16 +118,9 @@ impl Loader<'_> {
                 }
             }
         };
-        // Both label spellings build the label, in document order: `<ButtonText>` through the
-        // ordinary FontString builder (`0x7789d0` → `0x6f2780`), `<NormalText>` through an inline
-        // copy that disowns its font attributes (`0x778b7b`). `<HighlightText>` and
-        // `<DisabledText>` build no region, only fonts (`0x778bf4`).
-        for bt in children_named_any(el, &["ButtonText", "NormalText"]) {
-            let font_attrs = if bt.tag.eq_ignore_ascii_case("NormalText") {
-                FontAttrs::Disowned
-            } else {
-                FontAttrs::Own
-            };
+        // `<ButtonText>` is the one label element, an ordinary FontString (`LoadXML_String
+        // 0x815fa0`); 3.3.5a has no `<NormalText>` spelling (`0x96ffe1`).
+        for bt in children_named(el, "ButtonText") {
             // `SetText` creates the label even with no text, so its layout lands on a real region;
             // `text=` is a global-string key (`0x703bf0`).
             let label = match bt.attr("text") {
@@ -157,12 +146,10 @@ impl Loader<'_> {
                 // `parentKey` binds the label like any region: stock 3.3.5a reads a quest row's
                 // `.normalText` (`QuestLogFrame.xml:86`, `QuestLogFrame.lua:187`).
                 self.bind_parent_key(bt, wrapper, &region);
-                // Clear, lay out, then the implicit step, as both reference legs do (`0x6f27f5`,
-                // `0x778b96`); the button's own adopter anchor never fires on them (`0x778d5f`).
-                // On `<NormalText>` the justify is the Normal font's, so the implicit anchor reads
-                // the ctor's CENTER (`0x212`); the justify still reaches the paint (`0x784111`).
+                // Clear, lay out, then the implicit step by the label's own justify
+                // (`PostLoadXML 0x4836d0`), so the button's adopter anchor never fires on it.
                 self.call_region(&region, "ClearAllPoints", (), dbg);
-                self.apply_region_layout(bt, &region, self_name, dbg, font_attrs);
+                self.apply_region_layout(bt, &region, self_name, dbg);
                 if let Err(e) = crate::script::implicit_creation_anchor_lua(self.lua, &region) {
                     self.report
                         .errors
@@ -191,6 +178,30 @@ impl Loader<'_> {
                 self.call(wrapper, "SetChecked", checked, dbg);
             }
         }
+        // The per-state fonts: each element reads `style=` alone and stores the named font object,
+        // no copy (`0x97001d`, `0x970088`, `0x9700ec` → `CSimpleFont::GetFont 0x496f70`). A name
+        // with no font object warns and empties the slot (`0x97005f`, `0x9700c6`, `0x970121`).
+        for (tag, method, state) in [
+            ("NormalFont", "SetNormalFontObject", "NORMAL"),
+            ("DisabledFont", "SetDisabledFontObject", "DISABLED"),
+            ("HighlightFont", "SetHighlightFontObject", "HIGHLIGHT"),
+        ] {
+            for f in children_named(el, tag) {
+                let Some(style) = f.attr("style").filter(|s| !s.is_empty()) else {
+                    continue;
+                };
+                let found = self.model().font_object(style).is_some();
+                let font = found.then(|| style.to_string());
+                self.call(wrapper, method, font, dbg);
+                if !found {
+                    self.report
+                        .warnings
+                        .push(format!("{dbg}: Couldn't find {state} font: {style}"));
+                }
+            }
+        }
+        // After the fonts, as the label is attached after the child loop (`0x970150`): a label
+        // `text=` creates is anchored by the normal font's justify (`SetFontString 0x96f7b0`).
         if let Some(text) = el.attr("text") {
             // A global-string key (`0x703bf0`): `text="DELETE"` reads "Delete".
             let text = self.resolve_text(text, dbg);
@@ -209,55 +220,6 @@ impl Loader<'_> {
                     self.model().arena.frame_mut(h).map(|f| &mut f.kind_state)
                 {
                     bs.click_mask = mask;
-                }
-            }
-        }
-        // The per-state fonts, two spellings each; every occurrence applies, in document order.
-        for (children, method, which) in [
-            (
-                ["NormalFont", "NormalText"],
-                "SetTextFontObject",
-                LabelFont::Normal,
-            ),
-            (
-                ["HighlightFont", "HighlightText"],
-                "SetHighlightFontObject",
-                LabelFont::Highlight,
-            ),
-            (
-                ["DisabledFont", "DisabledText"],
-                "SetDisabledFontObject",
-                LabelFont::Disabled,
-            ),
-        ] {
-            for f in children_named_any(el, &children) {
-                // `<Font>`-typed elements (`0x778bf4` → `0x783c30`): `inherits=` and `font=` land
-                // in one slot and `font=` wins (`0x783d22`). `style=` is not 1.12 and is not read.
-                for attr in ["inherits", "font"] {
-                    if let Some(name) = f.attr(attr) {
-                        self.call(wrapper, method, name.to_string(), dbg);
-                    }
-                }
-                // A `justifyH` here is a local write on that state's font, never the label
-                // (`0x783c30`); the button reads it to anchor a label it makes later (`0x778d20`).
-                if let Some(j) = f.attr("justifyH") {
-                    match crate::justify::parse_h(j) {
-                        crate::justify::Set::To(jh) => {
-                            if let Err(e) = crate::script::set_label_font_justify_h_lua(
-                                self.lua, wrapper, which, jh,
-                            ) {
-                                self.report
-                                    .errors
-                                    .push(format!("{dbg}: <{}> justifyH: {e}", f.tag));
-                            }
-                        }
-                        // Reported, not modelled: the reference clears the axis on a cross-axis
-                        // token and raises on a non-token.
-                        _ => self.report.warnings.push(format!(
-                            "{dbg}: <{}> justifyH=\"{j}\" is not a horizontal token — ignored",
-                            f.tag
-                        )),
-                    }
                 }
             }
         }
@@ -431,7 +393,7 @@ impl Loader<'_> {
                 if let Some(mode) = tt.attr("alphaMode") {
                     self.call_region(&region, "SetBlendMode", mode.to_string(), dbg);
                 }
-                self.apply_region_layout(tt, &region, self_name, dbg, FontAttrs::Own);
+                self.apply_region_layout(tt, &region, self_name, dbg);
                 if let Some(tc) = tex_coords_of(tt) {
                     self.call_region(&region, "SetTexCoord", tc, dbg);
                 }
@@ -497,7 +459,7 @@ impl Loader<'_> {
                     if let Some(mode) = tt.attr("alphaMode") {
                         self.call_region(&region, "SetBlendMode", mode.to_string(), dbg);
                     }
-                    self.apply_region_layout(tt, &region, self_name, dbg, FontAttrs::Own);
+                    self.apply_region_layout(tt, &region, self_name, dbg);
                     if let Some(tc) = tex_coords_of(tt) {
                         self.call_region(&region, "SetTexCoord", tc, dbg);
                     }

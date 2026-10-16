@@ -1163,3 +1163,133 @@ return n";
          reported bug: the checkbox moved and the list underneath did not"
     );
 }
+
+/// 3.3.5a colours a row by its normal font object (`SetNormalFontObject(GameFontNormalLeftRed)`,
+/// `Blizzard_TrainerUI.lua:169`), and `ClassTrainerSkillButtonTemplate`'s
+/// `<HighlightFont style="GameFontHighlightLeft"/>` turns a hovered row white; the selection's
+/// `LockHighlight` (`:179`) keeps it white with the cursor elsewhere. Production load.
+#[test]
+fn the_stock_trainer_rows_turn_white_hovered_or_selected() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _load_failures) =
+        super::layer_tests::production_load_with("trainer-fonts", false, "", |_| {});
+    let _ = s.take_errors();
+    s.set_unit(
+        "npc",
+        Some(benilla_ui::script::UnitState {
+            exists: true,
+            name: Some("Sana Winterhoof".into()),
+            ..Default::default()
+        }),
+    );
+    s.set_money(50);
+    s.set_trainer(Some(menu()));
+    s.fire_event("TRAINER_SHOW", vec![]);
+    let errors: Vec<_> = s
+        .take_errors()
+        .into_iter()
+        .filter(|e| e.contains("Trainer"))
+        .collect();
+    assert!(errors.is_empty(), "trainer errors: {errors:#?}");
+    assert!(s
+        .eval::<bool>("return ClassTrainerFrame:IsShown()")
+        .unwrap());
+
+    // The row each service landed on, by its label, which the list indents under its header.
+    let row_of = |s: &UiScript, name: &str| -> String {
+        s.eval::<String>(&format!(
+            "for i = 1, CLASS_TRAINER_SKILLS_DISPLAYED do \
+               local b = _G['ClassTrainerSkill' .. i] \
+               if b:IsShown() and strtrim(b:GetText() or '') == '{name}' then return b:GetName() end \
+             end return ''"
+        ))
+        .unwrap()
+    };
+    let color_of = |s: &mut UiScript, row: &str| -> [f32; 3] {
+        s.resolve();
+        let (text, l, r, b, t): (String, f32, f32, f32, f32) = s
+            .eval(&format!(
+                "local f = {row} return f:GetText(), f:GetLeft(), f:GetRight(), f:GetBottom(), f:GetTop()"
+            ))
+            .unwrap();
+        s.extract()
+            .into_iter()
+            .find_map(|q| match (q.content, q.rect) {
+                (
+                    QuadContent::Text {
+                        text: Some(qt),
+                        color: Some(c),
+                        ..
+                    },
+                    Some(rect),
+                ) if qt == text && {
+                    let (cx, cy) = (
+                        (rect.left + rect.right) * 0.5,
+                        (rect.bottom + rect.top) * 0.5,
+                    );
+                    (l..=r).contains(&cx) && (b.min(t)..=b.max(t)).contains(&cy)
+                } =>
+                {
+                    Some([c[0], c[1], c[2]])
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no label quad for {row} ({text:?})"))
+    };
+    let hover = |s: &mut UiScript, row: &str| {
+        s.resolve();
+        let (x, y): (f32, f32) = s
+            .eval(&format!(
+                "local f = {row} return (f:GetLeft() + f:GetRight()) / 2, (f:GetTop() + f:GetBottom()) / 2"
+            ))
+            .unwrap();
+        s.mouse_move(x, y);
+    };
+    let park = |s: &mut UiScript| {
+        s.resolve();
+        s.mouse_move(1000.0, 10.0);
+    };
+    let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 0.02);
+
+    const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
+    const RED: [f32; 3] = [0.9, 0.0, 0.0]; // GameFontNormalLeftRed
+    let cleave = row_of(&s, "Cleave");
+    let strike = row_of(&s, "Heroic Strike");
+    assert!(
+        !cleave.is_empty() && !strike.is_empty(),
+        "both services list: {}",
+        s.eval::<String>(
+            "local t = {} for i = 1, CLASS_TRAINER_SKILLS_DISPLAYED do \
+               local b = _G['ClassTrainerSkill' .. i] \
+               t[#t + 1] = i .. '=' .. tostring(b:IsShown()) .. ':' .. tostring(b:GetText()) \
+             end return table.concat(t, ' ') .. ' n=' .. GetNumTrainerServices()"
+        )
+        .unwrap_or_else(|e| e.to_string())
+    );
+
+    s.run(&format!("{strike}:Click()")).unwrap();
+    park(&mut s);
+    let c = color_of(&mut s, &cleave);
+    assert!(near(c, RED), "an unavailable row at rest is red, got {c:?}");
+    let c = color_of(&mut s, &strike);
+    assert!(
+        near(c, WHITE),
+        "the selected row is white with the cursor away (LockHighlight), got {c:?}"
+    );
+
+    hover(&mut s, &cleave);
+    let c = color_of(&mut s, &cleave);
+    assert!(near(c, WHITE), "a hovered red row draws white, got {c:?}");
+    let c = color_of(&mut s, &strike);
+    assert!(
+        near(c, WHITE),
+        "and the selection stays white meanwhile, got {c:?}"
+    );
+
+    park(&mut s);
+    let c = color_of(&mut s, &cleave);
+    assert!(near(c, RED), "the cursor gone: red again, got {c:?}");
+}

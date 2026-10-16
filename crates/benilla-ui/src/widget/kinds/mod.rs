@@ -747,19 +747,13 @@ pub struct ButtonState {
     pub text: Option<RegionHandle>,
     /// The click mask (`+0x2a0`), the transitions that reach `OnClick`; default [`CLICK_LEFT_UP`].
     pub click_mask: u64,
-    /// The normal state's label font object (`<NormalFont>`); `None` keeps the label's own paint.
+    /// The normal state's label font object (`<NormalFont style=>`, `+0x2b0`), by name; `None`
+    /// keeps the label's own paint.
     pub normal_font: Option<String>,
-    /// [`ButtonState::normal_font`] when highlighted; `None` keeps the normal one, colour and all.
+    /// [`ButtonState::normal_font`] when highlighted (`+0x2b4`); `None` keeps the normal one.
     pub highlight_font: Option<String>,
-    /// [`ButtonState::normal_font`] for the disabled state.
+    /// [`ButtonState::normal_font`] for the disabled state (`+0x2b8`).
     pub disabled_font: Option<String>,
-    /// `<NormalFont justifyH=>`, local to the normal font (`+0x33c`) and kept over
-    /// `SetTextFontObject`; `SetFontString` (`0x778d20`) anchors an unanchored label by it.
-    pub normal_justify_h: Option<crate::script::JustifyH>,
-    /// `<HighlightFont justifyH=>` (`+0x3b8`); paint only, the label anchor reads the normal one.
-    pub highlight_justify_h: Option<crate::script::JustifyH>,
-    /// `<DisabledFont justifyH=>` (`+0x434`); paint only.
-    pub disabled_justify_h: Option<crate::script::JustifyH>,
     /// `Button:SetFont`'s face, kept on the button since `SetFont` never touches the label
     /// (`+0x338`) and so creates none; extract applies it to whatever label there is.
     pub font: Option<ButtonFont>,
@@ -794,9 +788,6 @@ impl Default for ButtonState {
             normal_font: None,
             highlight_font: None,
             disabled_font: None,
-            normal_justify_h: None,
-            highlight_justify_h: None,
-            disabled_justify_h: None,
             font: None,
             normal_color: None,
             highlight_color: None,

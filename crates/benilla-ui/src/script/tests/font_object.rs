@@ -560,7 +560,7 @@ fn button_state_fonts_take_the_object_and_follow_its_mutation() {
         b = CreateFrame("Button", "StateFontButton")
         b:SetWidth(80); b:SetHeight(22); b:SetPoint("CENTER", 0, 0)
         b:SetText("go")
-        b:SetTextFontObject(GameFontNormal)
+        b:SetNormalFontObject(GameFontNormal)
     "#,
     )
     .expect("the object form must be accepted");

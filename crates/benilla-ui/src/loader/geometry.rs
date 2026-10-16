@@ -2,7 +2,6 @@ use mlua::{ObjectLike, Table};
 
 use crate::framexml::{self, Element};
 
-use super::regions::FontAttrs;
 use super::{abs_dim, children_named, Loader};
 
 impl Loader<'_> {
@@ -152,7 +151,7 @@ impl Loader<'_> {
                 return;
             }
         };
-        self.apply_region_layout(tr, &region, self_name, dbg, FontAttrs::Own);
+        self.apply_region_layout(tr, &region, self_name, dbg);
     }
 
     /// `<Size>` (`0x767800`). Every one applies in document order, and expansion puts an
