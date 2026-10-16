@@ -59,6 +59,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let Some(text) = super::message_text(lua, &text) else {
                     return Ok(());
                 };
+                // The line's font string takes it through the grammar pass.
+                let text = crate::language::process_owned(text);
                 let has_rgb = !matches!(
                     (&r, &g, &b),
                     (Value::Nil, _, _) | (_, Value::Nil, _) | (_, _, Value::Nil)

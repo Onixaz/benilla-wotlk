@@ -7,12 +7,12 @@ use crate::justify;
 
 use super::region_handle_of;
 
-/// The string `SetText` (`0x771d80`) stores.
+/// The string `SetText` (`0x483910`) stores, after its grammar pass ([`crate::language`]).
 fn set_text(lua: &Lua, this: &Table, text: Option<String>) -> mlua::Result<()> {
     let rh = region_handle_of(lua, this)?;
     let mut model = crate::script::model_mut_of(lua);
     let data = model.region_data.entry(rh).or_default();
-    data.text = text;
+    data.text = text.map(crate::language::process_owned);
     // Fresh text draws whole: an armed write-on gradient belongs to the old string.
     data.alpha_gradient = None;
     // SetText must not touch the layout, since the extent has not moved yet; it names itself on

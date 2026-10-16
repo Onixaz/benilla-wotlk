@@ -23,6 +23,7 @@ mod handler_prof;
 mod host_state;
 mod input;
 mod keyboard;
+mod language;
 mod layout_gate;
 mod measure;
 mod minimap;

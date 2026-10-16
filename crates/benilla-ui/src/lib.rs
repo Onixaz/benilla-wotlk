@@ -5,6 +5,7 @@ pub mod bindings_xml;
 pub mod civil;
 pub mod framexml;
 pub mod justify;
+pub mod language;
 pub mod layout;
 pub mod loader;
 pub mod markup;

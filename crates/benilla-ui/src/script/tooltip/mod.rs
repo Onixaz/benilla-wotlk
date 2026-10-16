@@ -249,7 +249,7 @@ fn ensure_lines(lua: &Lua, this: &Table, n: usize) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Writes a line cell's text and colour and shows it.
+/// Writes a line cell's text and colour and shows it; the cell's `SetText` runs the grammar pass.
 pub(super) fn write_cell(
     model: &mut Model,
     rh: crate::widget::RegionHandle,
@@ -257,7 +257,7 @@ pub(super) fn write_cell(
     color: [f32; 4],
 ) {
     let d = model.region_data.entry(rh).or_default();
-    d.text = Some(text.to_string());
+    d.text = Some(crate::language::process(text).into_owned());
     d.vertex_color = Some(color);
     // The line's own colour, as if set by `SetTextColor`: a later
     // `GameTooltipText:SetTextColor` must not repaint it.

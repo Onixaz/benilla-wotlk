@@ -210,3 +210,68 @@ fn the_stock_target_frame_draws_the_targets_buffs_and_debuffs() {
     let run = aura_errors(s.take_errors());
     assert!(run.is_empty(), "runtime errors: {run:#?}");
 }
+
+/// 3.3.5a's `SPELL_TIME_REMAINING_*` carry their plural inline as `|4`, which the tooltip line's
+/// text store resolves (`0x483910`): each reads clean at one and at many, the two forms apart, and
+/// a timed buff's tooltip line too.
+#[test]
+fn the_time_remaining_templates_resolve_their_plural_on_the_tooltip() {
+    benilla_formats::wow_data_or_skip!();
+    let (mut s, _) = harness();
+    let lines: Vec<String> = s
+        .eval::<String>(
+            r#"local out = {}
+               for _, k in ipairs({"SPELL_TIME_REMAINING_DAYS", "SPELL_TIME_REMAINING_HOURS",
+                                   "SPELL_TIME_REMAINING_MIN", "SPELL_TIME_REMAINING_SEC"}) do
+                 for _, n in ipairs({1, 12}) do
+                   GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+                   GameTooltip:AddLine(format(_G[k], n))
+                   out[#out + 1] = GameTooltipTextLeft1:GetText()
+                 end
+               end
+               return table.concat(out, "\n")"#,
+        )
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(lines.len(), 8);
+    for pair in lines.chunks(2) {
+        assert!(
+            !pair[0].contains("|4") && !pair[1].contains("|4"),
+            "{pair:?}"
+        );
+        assert_ne!(
+            pair[0].replacen('1', "", 1),
+            pair[1].replacen("12", "", 1),
+            "{pair:?}"
+        );
+    }
+
+    s.set_spell_tooltip(
+        1243,
+        benilla_ui::script::SpellTooltipView {
+            name: "Fortitude".into(),
+            aura_description: "Up.".into(),
+            ..Default::default()
+        },
+    );
+    s.tick(10.0);
+    let mut timed = aura(1243, "Fortitude", "Spell_Holy_WordFortitude", true);
+    timed.duration = 1800.0;
+    timed.expiration_time = 730.0;
+    s.set_player_auras(vec![timed]);
+    let shown = s
+        .eval::<String>(
+            r#"GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+               GameTooltip:SetUnitAura("player", 1)
+               local out = {}
+               for i = 1, GameTooltip:NumLines() do
+                 out[#out + 1] = _G["GameTooltipTextLeft" .. i]:GetText() or ""
+               end
+               return table.concat(out, "\n")"#,
+        )
+        .unwrap();
+    assert!(shown.contains("12 "), "{shown}");
+    assert!(!shown.contains("|4"), "{shown}");
+}

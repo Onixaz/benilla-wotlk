@@ -94,6 +94,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let Some(text) = super::message_text(lua, &text) else {
                     return Ok(());
                 };
+                // The line's font string takes it through the grammar pass.
+                let text = crate::language::process_owned(text);
                 let has_rgb = is_number(&r) && is_number(&g) && is_number(&b);
                 // The chat-type index (`ChatFrame.lua` passes `info.id`), stack index 6 or 3.
                 let id = match if has_rgb { &id } else { &r } {

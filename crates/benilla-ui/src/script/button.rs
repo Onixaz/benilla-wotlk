@@ -411,12 +411,13 @@ fn texture_pair(lua: &Lua, m: &Table, name: &str, slot: Slot) -> mlua::Result<()
     Ok(())
 }
 
-/// `text` into the button's label, created on first use.
+/// `text` into the button's label, created on first use, through the label's grammar pass
+/// (`0x96f860` sets it with the process flag).
 fn set_label(lua: &Lua, this: &Table, text: String) -> mlua::Result<()> {
     let id = ensure_slot(lua, this, Slot::Text)?;
     let mut model = crate::script::model_mut_of(lua);
     let rh = *model.id_to_region.get(&id).expect("text region id");
-    model.region_data.entry(rh).or_default().text = Some(text);
+    model.region_data.entry(rh).or_default().text = Some(crate::language::process_owned(text));
     model.touch_measure(rh);
     Ok(())
 }

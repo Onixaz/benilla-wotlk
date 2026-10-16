@@ -510,3 +510,38 @@ fn set_unit_aura_resolves_the_token_and_the_filter() {
         (3, "Stamina increased by 3.".into(), "<2 mm>".into())
     );
 }
+
+/// The time-remaining line's `|4` resolves where the line is stored: 3.3.5a writes the plural
+/// inline in the template, with no `_P1` twin.
+#[test]
+fn the_time_remaining_line_picks_its_plural_form() {
+    let mut s = group_script();
+    s.run(
+        r#"local a = CreateFrame("Button", "TF1")
+           a:SetPoint("CENTER", 0, 0) a:SetWidth(10) a:SetHeight(10)
+           TT = CreateFrame("GameTooltip", "TT")
+           TT:SetOwner(a, "ANCHOR_BOTTOMRIGHT")
+           SPELL_TIME_REMAINING_MIN = "%d |4tick:ticks; left""#,
+    )
+    .unwrap();
+    s.set_spell_tooltip(
+        1243,
+        SpellTooltipView {
+            name: "Power Word: Fortitude".into(),
+            aura_description: "Stamina increased by 3.".into(),
+            ..Default::default()
+        },
+    );
+    s.tick(10.0);
+    for (expires, want) in [(100.0, "2 ticks left"), (70.0, "1 tick left")] {
+        let mut timed = aura(1243, "Power Word: Fortitude", true, true);
+        timed.duration = 1800.0;
+        timed.expiration_time = expires;
+        s.set_player_auras(vec![timed]);
+        s.run(r#"TT:SetUnitAura("player", 1)"#).unwrap();
+        assert_eq!(
+            s.eval::<String>("return TTTextLeft3:GetText()").unwrap(),
+            want
+        );
+    }
+}

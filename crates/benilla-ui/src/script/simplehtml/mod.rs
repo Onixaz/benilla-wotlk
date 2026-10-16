@@ -238,7 +238,8 @@ fn build(model: &mut Model, fh: FrameHandle, blocks: &[Block]) {
                     // No height: the rect takes the wrapped text's height from the measure round
                     // trip, as the client's font engine gives it (`0x7729b0`, `0x5c2070`).
                     size: Some((width, 0.0)),
-                    text: Some(text.clone()),
+                    // The block's `SetText` runs the grammar pass.
+                    text: Some(crate::language::process(text).into_owned()),
                     font_object: paint.font_object.clone(),
                     font_explicit: paint.explicit,
                     font_path: paint.font_path.clone(),
