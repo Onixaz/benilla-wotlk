@@ -15,8 +15,8 @@ use std::process::Command;
 /// - `BENILLA_GIT_DATE`: the commit date (`%cs`, `YYYY-MM-DD`), not the build date.
 /// - `BENILLA_GIT_DESCRIBE`: `git describe --tags --long` against the nearest release tag
 ///   (`v0.2.0-12-gb17be27`), which says how far past its release the commit is.
-/// - `BENILLA_PROFILE`: the profile directory's name, which tells `ship` from `release` where
-///   cargo's `PROFILE` does not.
+/// - `BENILLA_PROFILE`: the profile directory's name, `debug` (the play build) or `release`, and
+///   any custom profile's own name where cargo's `PROFILE` says only `release`.
 /// - `BENILLA_PROJECT_DIR`: the folder a dev build keeps its `WoW` link, `benilla-config/` and
 ///   `.probe-identity` in, the calling package's workspace root ([`workspace_root`]); empty unless
 ///   the package's own `dev` feature is on, so a player binary carries no source path.

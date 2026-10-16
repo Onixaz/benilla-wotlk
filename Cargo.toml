@@ -29,6 +29,9 @@ bevy = { version = "0.18.1", default-features = false, features = [
     "ui_bevy_render",
     "scene",
     "picking",
+    # Names systems and parameters in ECS diagnostics (else "Enable the debug feature to see the
+    # name"), which `benilla-worldview` reports; in every build, so dev and player share Bevy.
+    "debug",
 ] }
 # For the `WOW_GPU_MS` meter's query set, which bevy 0.18 does not wrap; must match bevy's wgpu.
 wgpu = "27"
@@ -43,50 +46,40 @@ lua-src = { path = "third_party/lua-src" }
 # interpolate them, not per sample frame (`third_party/kira/BENILLA.md`).
 kira = { path = "third_party/kira" }
 
-# Dependencies at opt-level 3 in dev: at opt-level 0, avian/parry collision drops a run to <1 fps.
-[profile.dev.package."*"]
-opt-level = 3
-# One codegen unit each: `lto = "off"` below drops the ThinLTO that inlined across a crate's units.
-codegen-units = 1
+# Two builds. `dev` is the play build: every run, probe, test and gate builds it, so they share one
+# set of compiled artifacts. `release` is built, never tested: to ship (`cargo ship`) or to measure.
 
-# Our crates at opt-level 1: Bevy's generic hot paths monomorphize into them, and at opt-level 0
-# Stormwind drops from a pinned 60 fps to ~45.
+# Optimized as a run needs it, incremental for our crates.
 [profile.dev]
-opt-level = 1
-# No ThinLTO: above opt-level 0 rustc runs it over a crate's own units and an incremental rebuild
-# redoes it whole; off, a one-constant `benilla-app` edit rebuilds in 92 s against 185 (Windows).
-lto = "off"
-
-# No debuginfo trimming: `debug = "line-tables-only"` measures no recurring win on macOS + sccache.
-
-# `release` is the measured and the shipped profile: fat LTO over one codegen unit measures
-# -0.43 ms a frame (-6 %) at Northshire Abbey against thin-local LTO, and the player's fps is the
-# benchmark. The cost is the link: a full build 32 min against 23, a one-crate relink minutes
-# longer; the iteration loop and every probe run is `cargo play`, and `--release` is built to
-# measure or to ship. `-Ctarget-cpu=native` is not set: it is not portable.
-[profile.release]
-lto = "fat"
-codegen-units = 1
-
-# The former shipping profile, now `release` itself; kept so `--profile ship` still builds.
-[profile.ship]
-inherits = "release"
-
-# `release` plus incremental, run as `cargo play`: under `release` a one-line edit to
-# `benilla-app` costs 2m47s. Incremental applies to workspace members only, so dependencies stay
-# sccache-cacheable; it changes codegen, so it lives here and not in the measured `release`.
-[profile.play]
-inherits = "release"
-incremental = true
+opt-level = 3
 # Not for speed: under `incremental`, thin-local LTO leaves promoted `anon.*.llvm.*` symbols
 # unresolved and the link fails intermittently (rustc #86049).
 lto = "off"
-# `release`'s own default before it went to one unit: one unit per crate would make every
-# incremental edit a whole-crate codegen.
+# Sixteen units a crate: one would make every incremental edit a whole-crate codegen.
 codegen-units = 16
+# Line tables, so a failing test's backtrace names its lines.
+debug = "line-tables-only"
+# Our crates keep `dev`'s debug assertions and overflow checks: the `debug_assert!` sites and the
+# audio thread's no-allocation guard run in every test and every probe.
 
-# Dependencies at one codegen unit, as in `release`: the 16 above is for our crates' incremental
-# edits. A one-constant `benilla-app` edit rebuilds in 82 s against 93, and Northshire Abbey
-# frames 7.6 ms against 8.0.
-[profile.play.package."*"]
+# Dependencies as `release` builds them: at opt-level 0 avian/parry collision drops a run to <1 fps,
+# and at 16 codegen units Northshire Abbey frames 8.0 ms against 7.6.
+[profile.dev.package."*"]
+opt-level = 3
+codegen-units = 1
+debug = false
+debug-assertions = false
+overflow-checks = false
+
+# The audio thread's no-allocation guard: under its `disable_release` default it checks only with
+# debug assertions of its own.
+[profile.dev.package.assert_no_alloc]
+debug-assertions = true
+
+# `release` is the shipped and the measured profile: fat LTO over one codegen unit measures
+# -0.43 ms a frame (-6 %) at Northshire Abbey against thin-local LTO, and the player's fps is the
+# benchmark. The cost is the link, a full build 32 min against 23, so it is built to ship or to
+# measure, never per round. `-Ctarget-cpu=native` is not set: it is not portable.
+[profile.release]
+lto = "fat"
 codegen-units = 1

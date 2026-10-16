@@ -22,7 +22,7 @@ pub struct BuildId {
     pub short: &'static str,
     /// The commit date of [`sha`](Self::sha) (`YYYY-MM-DD`), not the build date.
     pub date: &'static str,
-    /// The cargo profile directory: `debug`, `release` or `ship`.
+    /// The cargo profile directory: `debug` (the play build) or `release`.
     pub profile: &'static str,
     /// The launcher's project folder in a dev build, where its `WoW` link, `benilla-config/` and
     /// `.probe-identity` live; empty in a player build, which carries no source path.

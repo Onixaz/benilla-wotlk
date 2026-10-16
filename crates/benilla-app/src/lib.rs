@@ -12,7 +12,7 @@
 // modules. Dev builds warn normally.
 #![cfg_attr(not(feature = "dev"), allow(dead_code))]
 
-/// The realtime-audio allocation tripwire: in debug builds an allocation inside `sound::output`'s
+/// The realtime-audio allocation tripwire: in the play build an allocation inside `sound::output`'s
 /// `no_alloc` scopes (the output IO callback, the render pass) aborts the process; release builds
 /// carry no wrapper. Not under `doctest`: rustdoc collects a `--release` run's doctests with debug
 /// assertions on, against a release `assert_no_alloc` whose default `disable_release` drops the type.

@@ -4,8 +4,8 @@
 #   scripts/soundprobe.sh [client args…]   # play normally, press F9 when you hear it
 #   scripts/soundprobe.py                  # …then read the capture back
 #
-# Builds the `play` profile: a debug build stutters, and a stutter is a missed mix deadline, one of
-# the mechanisms the capture has to tell apart.
+# Builds `dev`, the optimized play build: an unoptimized build stutters, and a stutter is a missed
+# mix deadline, one of the mechanisms the capture has to tell apart.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,4 +26,4 @@ cat <<'BANNER'
 
 BANNER
 
-exec env WOW_SOUND_PROBE=1 cargo run -q --profile play -p benilla "$@"
+exec env WOW_SOUND_PROBE=1 cargo run -q -p benilla "$@"

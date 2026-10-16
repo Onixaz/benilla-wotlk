@@ -12,7 +12,7 @@ workspace = true
 # `dev` compiles in the instruments; the player build (`scripts/gates.sh`) has no defaults.
 default = ["dev"]
 # The asset, format and world crates default `dev` on, so they come in without it, forwarded here.
-dev = ["benilla-assets/dev", "benilla-formats/dev", "benilla-world/dev", "dep:bevy_egui"]
+dev = ["benilla-assets/dev", "benilla-formats/dev", "benilla-world/dev"]
 tracy = ["bevy/trace_tracy"]
 # Writes every system's per-run span to `trace-<ts>.json` in the cwd.
 trace_chrome = ["bevy/trace_chrome"]
@@ -24,7 +24,9 @@ arboard = "3"
 benilla-ui = { path = "../benilla-ui" }
 bevy.workspace = true
 wgpu.workspace = true
-bevy_egui = { version = "0.39", optional = true }
+# The debug panel, `dev` only, yet a dependency of every build: as an optional one it would turn
+# on Bevy, `syn` and `ttf-parser` features the player build lacks, and its tests would rebuild Bevy.
+bevy_egui = "0.39"
 bytemuck = { version = "1", features = ["derive"] }
 # `f16` decode for the `WOW_BOOTH_DUMP` dump of the `Rgba16Float` booth targets.
 half = "2"

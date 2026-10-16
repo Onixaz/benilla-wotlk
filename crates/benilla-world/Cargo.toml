@@ -12,9 +12,7 @@ workspace = true
 # The dev/player seam, on by default. `benilla-assets` and `-formats` come in without default
 # features and their `dev` is forwarded here, or unification would put it back in a player build.
 default = ["dev"]
-# `bevy/debug` names systems and parameters in ECS diagnostics (else "Enable the debug feature to
-# see the name"); set here so `benilla-worldview`, which reports those names, gets it too.
-dev = ["benilla-formats/dev", "benilla-assets/dev", "bevy/debug"]
+dev = ["benilla-formats/dev", "benilla-assets/dev"]
 
 [dependencies]
 avian3d = "0.6"

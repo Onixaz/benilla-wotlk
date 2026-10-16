@@ -571,7 +571,7 @@ fn frames_to_ns(frames: usize, sample_rate: u32) -> u64 {
     (frames as u64 * 1_000_000_000) / u64::from(sample_rate.max(1))
 }
 
-/// Run `f` with allocation forbidden: debug builds abort on a violation, release runs it bare.
+/// Run `f` with allocation forbidden: the play build aborts on a violation, release runs it bare.
 #[inline]
 fn no_alloc<R>(f: impl FnOnce() -> R) -> R {
     #[cfg(debug_assertions)]

@@ -1,5 +1,6 @@
-# `cargo play` — the run loop. Same optimization as `--release`, plus incremental compilation (see
-# `[profile.play]` in the workspace Cargo.toml for why it is a separate profile and not a flip of
-# `release`). Env vars still prefix it: `WOW_USER=<account> WOW_PASS=<password> cargo play`.
+# `cargo play` runs the client, the build every probe and test shares; `cargo ship` builds the
+# player's binary, `release` without `dev`. Env vars still prefix them:
+# `WOW_USER=<account> WOW_PASS=<password> cargo play`.
 [alias]
-play = "run --profile play -p benilla"
+play = "run -p benilla"
+ship = "build --release -p benilla --no-default-features"
