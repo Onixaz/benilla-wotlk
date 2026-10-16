@@ -1,7 +1,7 @@
-//! The stock glue screens, behind `WOW_GLUE_STOCK=1` in a dev build: the player's own
-//! `GlueXML.toc` off the patch chain, run into a glue VM ([`UiScript::new_glue`]) that stands in
-//! the world while no character is in it, where the boot VM otherwise stands. The native screens
-//! stay the default and, under the switch, keep driving the network unseen.
+//! The stock glue screens: the player's own `GlueXML.toc` off the patch chain, run into a glue VM
+//! ([`UiScript::new_glue`]) that stands in the world while no character is in it, where the boot
+//! VM otherwise stands. They are every run's glue screens but a dev build's `WOW_GLUE_NATIVE=1`
+//! ([`GlueStock::from_env`]).
 //!
 //! The reference's glue builder (`0x46a7b0`) resets the Lua state on a rebuild (`0x46a87b`; the
 //! cold first build, `0x46a505`, passes 0 and skips it), registers the glue functions
@@ -33,20 +33,26 @@ use benilla_ui::script::{ScriptValue, UiScript};
 
 use super::reference_ui;
 
-/// The switch's variable.
-const SWITCH: &str = "WOW_GLUE_STOCK";
+/// The dev switch that puts the native glue screens up instead of the stock ones.
+const NATIVE_SWITCH: &str = "WOW_GLUE_NATIVE";
 
-/// Whether this run puts the stock glue screens up, read once at plugin build: a dev build with
-/// `WOW_GLUE_STOCK=1`. A player build never does.
-#[derive(Resource, Default, Clone, Copy)]
+/// Whether this run puts the stock glue screens up, read once at plugin build. Absent, as in a
+/// test's partial app, it reads as stock, the default.
+#[derive(Resource, Clone, Copy)]
 pub(crate) struct GlueStock(pub(crate) bool);
 
+impl Default for GlueStock {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
 impl GlueStock {
-    /// The switch as this process has it.
+    /// The switch as this process has it: stock, but for a dev build with `WOW_GLUE_NATIVE=1`.
     pub(crate) fn from_env() -> Self {
         Self(
-            crate::run_mode::dev_affordances()
-                && std::env::var(SWITCH).ok().as_deref() == Some("1"),
+            !(crate::run_mode::dev_affordances()
+                && std::env::var(NATIVE_SWITCH).ok().as_deref() == Some("1")),
         )
     }
 }

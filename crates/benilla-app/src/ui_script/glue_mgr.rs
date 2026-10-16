@@ -1,4 +1,4 @@
-//! The glue manager, `CGlueMgr` host side, under `WOW_GLUE_STOCK=1`: the screen-state machine of
+//! The glue manager, `CGlueMgr` host side, under the stock glue screens: the screen-state machine of
 //! `CGlueMgr::Update` (`0x46b930`, `screenState` at `0xb41da0`) over the native login engine. The
 //! IO thread's parks and [`crate::login`]'s policy still do the network; this maps their messages
 //! onto the reference's screen states and fires the glue events the stock GlueXML answers: the
@@ -761,8 +761,9 @@ impl GlueMgr {
         s.set_glue_select_cells(self.select_cells);
         if !self.scripted_read {
             self.scripted_read = true;
-            self.scripted_pick =
-                crate::run_mode::fast_path_character().filter(|name| !name.is_empty());
+            // A rig picks its own body, which it may have to create first (`capture::probe_rig`).
+            self.scripted_pick = crate::run_mode::fast_path_character()
+                .filter(|name| !name.is_empty() && std::env::var_os("WOW_RIG").is_none());
         }
         self.stage(s, tables);
         self.holder_moved = true;
@@ -1409,7 +1410,7 @@ fn notice_cvar(notice: GlueNotice) -> &'static str {
 }
 
 /// The glue manager's frame: the VM's requests, the native login's news, the per-frame arms, then
-/// the events into the glue VM and its slots seeded. Runs under `WOW_GLUE_STOCK=1` only.
+/// the events into the glue VM and its slots seeded. Runs under the stock glue screens only.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn drive_glue_mgr(
     mut mgr: ResMut<GlueMgr>,

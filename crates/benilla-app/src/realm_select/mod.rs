@@ -19,14 +19,13 @@
 //! is dialled again for a query after it (`0x5b2200`), and names no screen; only `ConnectToRealm` (`0x46b210`) drops the world connection, once a realm is
 //! chosen. So the character park serves the list in place and Cancel there does nothing.
 //!
-//! Under `WOW_GLUE_STOCK=1` the stock `RealmList` and its verbs take the list instead
+//! Under the stock glue screens the stock `RealmList` and its verbs take the list instead
 //! ([`crate::ui_script::glue_mgr`]), and this policy stands down.
 
 mod category;
 mod input;
 mod load;
 mod screen;
-mod smoke;
 
 pub(crate) use load::pvp_rp;
 
@@ -321,7 +320,6 @@ impl Plugin for RealmSelectPlugin {
                     // Ungated by state: the dialog stands over login and character select alike.
                     screen::drive_screen,
                     // Input before the row refresh, so a click shows on the frame it landed.
-                    smoke::debug_realm_smoke,
                     (
                         input::clicks.run_if(crate::ui_script::glue::native_glue),
                         input::keys.run_if(crate::ui_script::glue::native_glue),

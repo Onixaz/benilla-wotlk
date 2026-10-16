@@ -20,7 +20,7 @@ use widgets::{ArtSwap, GlueBtn, GlueCaption, GlueDisabled, OutlineCopy};
 #[derive(Component)]
 pub(crate) struct NativeGlue;
 
-/// Under `WOW_GLUE_STOCK=1`, keep every native glue tree hidden, after any screen system shows one
+/// Under the stock glue screens, keep every native glue tree hidden, after any screen system shows one
 /// and before visibility propagates: their state machine still drives the network, unseen, and a
 /// hidden node takes no click.
 pub(crate) fn hide_native_glue(mut roots: Query<&mut Visibility, With<NativeGlue>>) {

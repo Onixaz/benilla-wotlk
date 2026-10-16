@@ -570,7 +570,7 @@ pub(crate) mod schedule_tests {
             })
     }
 
-    /// The glue booth has one feeder per switch: under `WOW_GLUE_STOCK=1` only the glue VM's
+    /// The glue booth has one feeder per switch: under the stock screens only the glue VM's
     /// writes `GluePreview`, and off it only the native screens' do. A writer of neither kind is
     /// named here with why it cannot run against the other.
     #[test]

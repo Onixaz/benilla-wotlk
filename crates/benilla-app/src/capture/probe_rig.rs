@@ -34,11 +34,7 @@ use benilla_protocol::{messages, CharAction, CharCreateReq};
 use bevy::prelude::*;
 
 use super::probes::ProbeClock;
-use crate::char_select::{send_pick, Roster};
-use crate::net::{
-    CharActionResultMessage, CharListMessage, CharPick, CharRequest, EnteredWorldMessage,
-    ObjectStore, SelfPlayer,
-};
+use crate::net::{CharActionResultMessage, EnteredWorldMessage, ObjectStore, SelfPlayer};
 
 /// Grace after world entry before the first GM line, while the descriptor and the UI VM come up;
 /// a command sent into a half-built session is dropped.
@@ -73,9 +69,6 @@ impl Plugin for ProbeRigPlugin {
         else {
             return; // inert without a parseable spec (parse() has already said why)
         };
-        if super::refuse_under_stock(app, "WOW_RIG") {
-            return;
-        }
         info!("rig: {}", spec.describe());
         // Publish the claim on the character pick, so the roster knows the pick is spoken for.
         if let Some(name) = rig_char_name(&spec) {
@@ -131,7 +124,7 @@ impl RigSpec {
                     }
                 }
             } else if let Ok(level) = lower.parse::<u8>() {
-                out.level = Some(level.clamp(1, 60));
+                out.level = Some(level.clamp(1, 80));
             } else if let Some(id) = race_id(&lower) {
                 race = Some(id);
             } else if let Some(id) = class_id(&lower) {
@@ -210,9 +203,13 @@ impl RigSpec {
 enum RigPhase {
     /// Parked at select, waiting for a roster to look our character up in.
     AwaitRoster,
-    /// Sent `Create`, waiting for its result.
+    /// The create screen asked for, waiting for it to stand.
+    CreateScreen,
+    /// Okay pressed on the create screen, waiting for the create's result.
     Creating,
-    /// Sent `Delete` (the roster was full), waiting for its result before retrying the create.
+    /// The account was full: back at select, choosing the rig character to delete.
+    Evicting,
+    /// The delete pressed, waiting for its result before retrying the create.
     Deleting,
     /// Sent `Enter`, waiting to be in the world.
     Entering,
@@ -230,8 +227,8 @@ enum RigPhase {
 struct Rig {
     spec: RigSpec,
     phase: RigPhase,
-    /// The freshest roster.
-    roster: Vec<benilla_protocol::Character>,
+    /// The select screen's roster, names and levels, as last read.
+    roster: Vec<(String, u8)>,
     /// A server-limit eviction has been spent; only one is allowed.
     evicted: bool,
     steps: Vec<String>,
@@ -242,57 +239,79 @@ struct Rig {
 /// The whole rig: find-or-create the body at select, enter as it, then apply the state batch.
 fn drive_rig(
     mut rig: ResMut<Rig>,
-    mut roster: ResMut<Roster>,
-    pick: Res<CharPick>,
     time: ProbeClock,
-    mut lists: MessageReader<CharListMessage>,
     mut results: MessageReader<CharActionResultMessage>,
     mut entered: MessageReader<EnteredWorldMessage>,
     script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    catalog: Option<Res<crate::entities::CharCreate>>,
+    classes: Option<Res<crate::chr_classes::ChrClassTable>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
 ) {
-    if let Some(list) = lists.read().last() {
-        rig.roster = list.characters.clone();
-    }
     let entered_world = entered.read().next().is_some();
+    let glue = super::glue_press::glue(script.as_deref());
 
     match rig.phase {
         RigPhase::AwaitRoster => {
-            if rig.roster.is_empty() && rig.spec.body.is_none() {
-                return; // no roster yet, and nothing to create
-            }
+            let Some(s) = glue.filter(|s| super::glue_press::select_up(s)) else {
+                return; // the stock select screen is not up and idle yet
+            };
+            let names = super::glue_press::roster(s);
             let Some(want) = rig_char_name(&rig.spec) else {
-                // No body asked for: char_select's own pick stands.
+                // No body asked for: the glue manager's own pick stands.
                 rig.phase = RigPhase::Entering;
                 return;
             };
+            rig.roster = names;
             match rig
                 .roster
                 .iter()
-                .find(|c| c.name.eq_ignore_ascii_case(&want))
+                .position(|(n, _)| n.eq_ignore_ascii_case(&want))
             {
-                Some(c) => {
-                    let guid = c.guid;
-                    info!("rig: reusing {want} (guid {guid})");
-                    send_pick(&mut roster, &pick, guid);
+                Some(row) => {
+                    info!("rig: reusing {want} — picking it on the stock screen");
+                    super::glue_press::press_enter(s, row);
                     rig.phase = RigPhase::Entering;
                 }
-                None if rig.roster.is_empty() => {} // the enum hasn't landed yet
                 None => {
-                    let (race, class, gender) = rig.spec.body.expect("name implies a body");
-                    info!("rig: {want} does not exist — creating it");
-                    let _ = pick.0.send(CharRequest::Create(CharCreateReq {
-                        name: want,
-                        race,
-                        class,
-                        gender,
-                        skin: 0,
-                        face: 0,
-                        hair_style: 0,
-                        hair_color: 0,
-                        facial_hair: 0,
-                    }));
+                    info!("rig: {want} does not exist — creating it on the stock screen");
+                    super::glue_press::press_create_screen(s);
+                    rig.phase = RigPhase::CreateScreen;
+                }
+            }
+        }
+        RigPhase::CreateScreen => {
+            let Some(s) = glue.filter(|s| super::glue_press::create_up(s)) else {
+                return;
+            };
+            let (race, class, gender) = rig.spec.body.expect("a create implies a body");
+            let files = (
+                catalog.as_deref().and_then(|c| c.0.race_file(race)),
+                classes.as_deref().and_then(|c| c.0.file(u32::from(class))),
+            );
+            let (Some(race_file), Some(class_file)) = files else {
+                error!("rig: no race or class file string for {race}/{class} — nothing rigged");
+                rig.phase = RigPhase::Done;
+                return;
+            };
+            let req = CharCreateReq {
+                name: rig_char_name(&rig.spec).expect("a create implies a name"),
+                race,
+                class,
+                gender,
+                skin: 0,
+                face: 0,
+                hair_style: 0,
+                hair_color: 0,
+                facial_hair: 0,
+            };
+            match super::glue_press::press_body(s, &req, race_file, class_file) {
+                Ok(()) => {
+                    super::glue_press::press_okay(s, &req.name);
                     rig.phase = RigPhase::Creating;
+                }
+                Err(why) => {
+                    error!("rig: {why} — nothing rigged");
+                    rig.phase = RigPhase::Done;
                 }
             }
         }
@@ -301,32 +320,43 @@ fn drive_rig(
                 return;
             };
             match r.code {
+                // The stock flow returns to character select, which lists the new body.
                 messages::CHAR_CREATE_SUCCESS => rig.phase = RigPhase::AwaitRoster,
                 messages::CHAR_CREATE_SERVER_LIMIT if !rig.evicted => {
                     rig.evicted = true;
-                    match crate::run_mode::rig_suffix().and_then(|word| {
-                        evictable(&rig.roster, rig_char_name(&rig.spec).as_deref(), &word)
-                    }) {
-                        Some((guid, name)) => {
-                            warn!(
-                                "rig: the account is full — evicting the cheapest rig character to rebuild, {name} \
-                                 (guid {guid}). Only this checkout's rig-named characters are ever \
-                                 deleted; Probe<N> and hand-made characters are never touched."
-                            );
-                            let _ = pick.0.send(CharRequest::Delete(guid));
-                            rig.phase = RigPhase::Deleting;
-                        }
-                        None => {
-                            error!(
-                                "rig: the account is full and nothing on it is a rig character to \
-                                 evict — delete one by hand, or rig on an existing body."
-                            );
-                            rig.phase = RigPhase::Done;
-                        }
+                    if let Some(s) = glue {
+                        super::glue_press::press_dialog_and_back(s);
                     }
+                    rig.phase = RigPhase::Evicting;
                 }
                 code => {
                     error!("rig: character create failed ({code:#04x}) — nothing rigged");
+                    rig.phase = RigPhase::Done;
+                }
+            }
+        }
+        RigPhase::Evicting => {
+            let Some(s) = glue.filter(|s| super::glue_press::select_up(s)) else {
+                return;
+            };
+            let names = super::glue_press::roster(s);
+            match crate::run_mode::rig_suffix()
+                .and_then(|word| evictable(&names, rig_char_name(&rig.spec).as_deref(), &word))
+            {
+                Some((row, name)) => {
+                    warn!(
+                        "rig: the account is full — evicting the cheapest rig character to rebuild, \
+                         {name}. Only this checkout's rig-named characters are ever deleted; \
+                         Probe<N> and hand-made characters are never touched."
+                    );
+                    super::glue_press::press_delete(s, row);
+                    rig.phase = RigPhase::Deleting;
+                }
+                None => {
+                    error!(
+                        "rig: the account is full and nothing on it is a rig character to \
+                         evict — delete one by hand, or rig on an existing body."
+                    );
                     rig.phase = RigPhase::Done;
                 }
             }
@@ -486,19 +516,15 @@ fn rig_char_name(spec: &RigSpec) -> Option<String> {
 /// (the enum is ordered by `create_time`, vmangos `CharacterHandler.cpp:180`). Anything not a rig
 /// name for `word` is never chosen. `word` is a parameter so a test does not depend on the
 /// checkout it runs in.
-fn evictable(
-    roster: &[benilla_protocol::Character],
-    want: Option<&str>,
-    word: &str,
-) -> Option<(u64, String)> {
+fn evictable(roster: &[(String, u8)], want: Option<&str>, word: &str) -> Option<(usize, String)> {
     roster
         .iter()
         .enumerate()
-        .filter(|(_, c)| {
-            !want.is_some_and(|w| c.name.eq_ignore_ascii_case(w)) && is_rig_name(&c.name, word)
+        .filter(|(_, (name, _))| {
+            !want.is_some_and(|w| name.eq_ignore_ascii_case(w)) && is_rig_name(name, word)
         })
-        .min_by_key(|(age, c)| (c.level, *age))
-        .map(|(_, c)| (c.guid, c.name.clone()))
+        .min_by_key(|(age, (_, level))| (*level, *age))
+        .map(|(row, (name, _))| (row, name.clone()))
 }
 
 /// Whether a roster name was minted by [`rig_char_name`] for this checkout: a known race code, a
@@ -513,7 +539,7 @@ fn is_rig_name(name: &str, word: &str) -> bool {
     has_codes && (rest == word || rest == format!("{word}f"))
 }
 
-const RACE_CODES: [(u8, &str); 8] = [
+const RACE_CODES: [(u8, &str); 10] = [
     (1, "hum"),
     (2, "orc"),
     (3, "dwa"),
@@ -522,15 +548,18 @@ const RACE_CODES: [(u8, &str); 8] = [
     (6, "tau"),
     (7, "gno"),
     (8, "tro"),
+    (10, "bel"),
+    (11, "dra"),
 ];
 
 /// Class id to its 3-letter name code (`wlk` for warlock, as `war` is the warrior's).
-const CLASS_CODES: [(u8, &str); 9] = [
+const CLASS_CODES: [(u8, &str); 10] = [
     (1, "war"),
     (2, "pal"),
     (3, "hun"),
     (4, "rog"),
     (5, "pri"),
+    (6, "dkn"),
     (7, "sha"),
     (8, "mag"),
     (9, "wlk"),
@@ -556,11 +585,13 @@ fn race_id(word: &str) -> Option<u8> {
         "tauren" => 6,
         "gnome" => 7,
         "troll" => 8,
+        "bloodelf" | "blood-elf" | "belf" => 10,
+        "draenei" => 11,
         _ => return None,
     })
 }
 
-/// Spec word to `ChrClasses.dbc` id (6 and 10 are unused in 1.12).
+/// Spec word to `ChrClasses.dbc` id (10 is unused).
 fn class_id(word: &str) -> Option<u8> {
     Some(match word {
         "warrior" => 1,
@@ -568,6 +599,7 @@ fn class_id(word: &str) -> Option<u8> {
         "hunter" => 3,
         "rogue" => 4,
         "priest" => 5,
+        "deathknight" | "death-knight" | "dk" => 6,
         "shaman" => 7,
         "mage" => 8,
         "warlock" => 9,
@@ -718,34 +750,9 @@ mod tests {
         assert_eq!(longest, MAX_PLAYER_NAME);
     }
 
-    /// A roster row with just the fields eviction reads.
-    fn row(name: &str, level: u8, guid: u64) -> benilla_protocol::Character {
-        benilla_protocol::Character {
-            guid,
-            name: name.into(),
-            level,
-            race: 0,
-            class: 0,
-            gender: 0,
-            skin: 0,
-            face: 0,
-            hair_style: 0,
-            hair_color: 0,
-            facial_hair: 0,
-            zone: 0,
-            map: 0,
-            position: benilla_protocol::wire::Vector3d {
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-            },
-            flags: 0,
-            customize_flags: 0,
-            equipment: [Default::default(); 19],
-            pet_display_id: 0,
-            pet_level: 0,
-            pet_family: 0,
-        }
+    /// A roster row as the select screen lists it: its name and level.
+    fn row(name: &str, level: u8, _guid: u64) -> (String, u8) {
+        (name.into(), level)
     }
 
     #[test]
@@ -763,12 +770,12 @@ mod tests {
         ];
         assert_eq!(
             evictable(&roster, Some("Tauwarone"), slot),
-            Some((4, "Orcwarone".into())),
+            Some((3, "Orcwarone".into())),
         );
         // The body we are about to create is never the one we delete to make room for it.
         assert_eq!(
             evictable(&roster, Some("Orcwarone"), slot),
-            Some((5, "Undmagone".into())),
+            Some((4, "Undmagone".into())),
         );
         // Nothing rig-named on this slot, nothing to evict; the caller errors rather than guessing.
         assert_eq!(evictable(&roster[..2], None, slot), None);

@@ -15,7 +15,7 @@ use benilla_world::schedule::WorldStage;
 pub(crate) mod addons;
 mod content;
 pub(crate) mod extract;
-/// The stock glue screens behind `WOW_GLUE_STOCK=1`.
+/// The stock glue screens.
 pub(crate) mod glue;
 /// `CGlueMgr`'s screen states over the native login, for the stock glue screens.
 pub(crate) mod glue_mgr;

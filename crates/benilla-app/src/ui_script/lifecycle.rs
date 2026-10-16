@@ -1,5 +1,5 @@
 //! The UI session's lifecycle, all edges and nothing per-frame: `Startup` installs a boot VM
-//! (strings and emote tokens), or the stock glue screens' VM under `WOW_GLUE_STOCK=1`; world entry
+//! (strings and emote tokens), or the stock glue screens' VM; world entry
 //! builds a fresh VM and loads the in-game UI and every addon onto it; leaving the world runs the
 //! reference's shutdown tail and installs the glue-side VM again; `ReloadUI()` is the two edges
 //! back to back without leaving the world.
@@ -35,7 +35,7 @@ fn install_glue_side_vm(world: &mut World, screen: super::glue::GlueScreen) {
         false
     };
     if stock_asked && !stock_up {
-        error!("ui_script: WOW_GLUE_STOCK=1 but the stock glue VM did not come up with its character select screen; the roster is fetched at the park");
+        error!("ui_script: the stock glue VM did not come up with its character select screen; the roster is fetched at the park");
     }
     if let Some(policy) = world.get_resource::<crate::net::RosterPolicy>() {
         policy
@@ -1090,7 +1090,7 @@ mod tests {
         }
     }
 
-    /// Under `WOW_GLUE_STOCK=1` the world holds the glue VM where it holds a boot VM, at startup
+    /// Under the stock glue screens the world holds the glue VM where it holds a boot VM, at startup
     /// on the login screen (`0x402b65`) and back from the world on the screen the exit enters
     /// (`0x402090`); a `ReloadUI()` never builds the glue.
     #[test]

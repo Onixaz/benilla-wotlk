@@ -289,6 +289,10 @@ impl Plugin for DevProbesPlugin {
             if std::env::var("WOW_PROBE_CHARCREATE").is_ok() {
                 app.add_plugins(crate::capture::ProbeCharCreatePlugin);
             }
+            // `WOW_REALM_SMOKE=1`: the realm-list walk `scripts/smoke.sh` runs.
+            if std::env::var_os("WOW_REALM_SMOKE").is_some() {
+                app.add_plugins(crate::capture::RealmWalkPlugin);
+            }
             // `WOW_LIVE_FPS=<frames>`: samples frame times on a live run, then exits.
             if std::env::var("WOW_LIVE_FPS").is_ok() {
                 app.add_plugins(crate::capture::LiveFpsPlugin);
