@@ -52,11 +52,11 @@ pins the benilla revision it builds on. What a crate cannot reach stays a fork's
 
 ## How a change is judged
 
-1. `scripts/gates.sh` is green: fmt, clippy with warnings denied, the workspace tests (once
-   with the client data, once without, so a test that reads the install has to declare it), the
-   doc-link and render-pass lints, the player build with its own tests, and the engine boot
-   checks. A pull request from a fork runs the ones that need neither the install nor a display
-   in CI, on Linux; the rest run on the maintainer's machine before it lands.
+1. `scripts/gates.sh` is green: fmt, clippy with warnings denied, the workspace tests, the
+   doc-link and render-pass lints, the player build with its own tests, and the engine boot. It
+   reads no client data, so a test that reads the install has to declare it, and a pull request
+   from a fork runs the same script in CI, on Linux. The tests that read the client data are
+   `scripts/check.sh`'s, run where the data is.
 2. The reference fact is stated: what 3.3.5a does, and where that is known from (the client's
    behaviour you observed, a DBC field, a FrameXML line, a packet capture). The names and shapes
    under `reference/` are the surface benilla tracks.
@@ -79,7 +79,8 @@ out of scope is closed with the reason.
 - **The toolchain.** Stable Rust (`rust-toolchain.toml` adds clippy and rustfmt) and a C
   compiler, because the client's Lua is vendored and built from source. On macOS the Xcode
   command line tools, which also supply libclang for the audio bindings; on Linux the ALSA and
-  udev development packages and pkg-config. `python3` runs two of the gates.
+  udev development packages and pkg-config. Python 3 (`python3`, `py -3` or `python`) runs two
+  of the gates.
 - **A 3.3.5a install of your own.** `WOW_DATA=<its Data folder>`, or a `WoW` link at the repo
   root, which only a dev build sees: the player build looks for `Data/` or `WoW/Data/` beside
   the binary. benilla reads the install and never writes into it. `WOW_DATA=` (set, empty)
@@ -87,9 +88,10 @@ out of scope is closed with the reason.
 - **Without the install, green is hollow.** Well over a thousand tests read the install and skip
   when it is absent, and a few dozen more read a corpus of addons
   (`BENILLA_ADDON_CORPUS=<a folder of addons>`, or a `wow-addons-vanilla` link at the root),
-  third-party content that is not in this repo. `scripts/gates.sh` and `scripts/check.sh` print
-  how many tests skipped and why. Where the data is, `BENILLA_REQUIRE_DATA=1` turns a skip into a
-  failure, and the gates set it themselves when the install and the corpus both resolve.
+  third-party content that is not in this repo. `scripts/check.sh` runs them and prints how many
+  skipped and why. Where the data is, `BENILLA_REQUIRE_DATA=1` turns a skip into a failure, and
+  the check sets it itself when the install and the corpus both resolve. `scripts/gates.sh`
+  runs with neither (`WOW_DATA=`, `BENILLA_ADDON_CORPUS=`).
 - **A server to test against.** Any 3.3.5a server; `WOW_HOST` names it (default
   `localhost:3724`). A scripted run has no default account: `WOW_USER`, `WOW_PASS` and
   `WOW_CHAR` name a test account on your server whose login kicks nobody, all three, either in
@@ -122,10 +124,10 @@ out of scope is closed with the reason.
   after it (its first six letters).
 - **Running it unattended.** The rules are `docs/METHOD.md`, "The local server"; these are the
   switches.
-  - The build a probe runs is the play build: `cargo build --profile play -p benilla`, then
-    `target/play/benilla.exe` with the switches in its environment. It relinks in a minute where
+  - The build a probe runs is the play build: `cargo build -p benilla`, then
+    `target/debug/benilla.exe` with the switches in its environment. It relinks in a minute where
     `--release` (fat LTO, one codegen unit) takes many. `--release` is for a frame-time
-    measurement, or when asked for.
+    measurement or a release, or when asked for.
   - `WOW_UNATTENDED=1` reconnects instead of waiting at a dialog, and exits non-zero on a login
     it cannot pass. `WOW_NOSOUND=1` runs silent. A capture (`WOW_CAPTURE`) is both, and a rig
     (`WOW_RIG`) is unattended. `WOW_ALLOW_ACCOUNT=1` overrides the account guard.
@@ -140,12 +142,14 @@ out of scope is closed with the reason.
   - A capture runs through `scripts/visual.sh`, whose recipe is the header of
     `crates/benilla-app/src/capture/mod.rs`. Pixel questions go through `benilla-visual crop`,
     `series` and `hotspot`.
-- **The loop.** `cargo play` builds and runs the play profile, and a probe runs the same build.
-  `--release` is the shipped and the measured profile, fat LTO over one codegen unit, so it is
-  built for a frame-time number or a release, not per round. `scripts/check.sh` verifies a
-  round of work; `scripts/gates.sh` is the full chain, and it opens a window for the engine boot
-  checks, so it needs a display. `WOW_STOCK_UI=1` boots a dev build on the stock interface
-  alone, without benilla's layer. Work on a branch.
+- **The loop.** There are two builds. `cargo play` builds and runs `dev`, the play build, and a
+  probe, every test and both scripts below build the same, so nothing compiles twice. Its debug
+  assertions make it no place to read frame time. `--release` is the shipped and the measured
+  profile, fat LTO over one codegen unit, so it is built for a frame-time number or a release
+  (`cargo ship`), not per round. `scripts/check.sh` verifies a round of work with the data;
+  `scripts/gates.sh` is the full chain without it, and it opens a window for the engine boot,
+  so it needs a display. `WOW_STOCK_UI=1` boots a dev build on the stock interface alone,
+  without benilla's layer. Work on a branch.
 
 ## Reporting a bug
 
