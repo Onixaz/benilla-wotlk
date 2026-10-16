@@ -528,6 +528,8 @@ pub(crate) struct GlueMgr {
     scripted_pick: Option<String>,
     /// [`Self::scripted_pick`] waits for the stock roster to have loaded.
     roster_loaded: bool,
+    /// A roster loaded since the AddOn registry was last built: the AddOns screen's characters.
+    addons_stale: bool,
     /// The scripted pick was read, on the first glue VM: it answers the first roster only.
     scripted_read: bool,
     /// The glue VM that holds the select screen's fallback stage; the race catalog can land after
@@ -1475,7 +1477,7 @@ pub(crate) fn drive_glue_mgr(
     }
     // The AddOn registry as the server's reply lands; a new VM had it at its seat.
     if let (Some(s), Some(reply)) = (script.as_deref_mut(), addon_reply.as_ref()) {
-        if fresh_vm || reply.is_changed() {
+        if fresh_vm || reply.is_changed() || std::mem::take(&mut mgr.addons_stale) {
             mgr.register_addons(s, reply.0.as_deref());
         }
     }
@@ -1561,6 +1563,13 @@ pub(crate) fn drive_glue_mgr(
                 GlueRequest::CancelLogin => logins.push(GlueLogin::Abandon),
                 GlueRequest::CreateCharacter(c) => mgr.create_character(c),
                 GlueRequest::DeleteCharacter(guid) => mgr.delete_character(guid),
+                GlueRequest::SaveAddOns(changes) => {
+                    let realm = s
+                        .cvar(crate::realm_select::CVAR_REALM_NAME)
+                        .unwrap_or_default();
+                    let roster: Vec<String> = mgr.roster.iter().map(|c| c.name.clone()).collect();
+                    super::addons::save_glue_addons(&realm, &roster, &changes);
+                }
                 // The ambience, the sound effects and the credits music have no glue player
                 // yet; the music has ([`crate::sound::GlueMusicRequest`]).
                 GlueRequest::PlayGlueAmbience { .. }
@@ -1962,6 +1971,7 @@ fn flush_one(
             }
             mgr.realm_cells = script.glue_realm_cells();
             mgr.roster_loaded = true;
+            mgr.addons_stale = true;
         }
     }
 }

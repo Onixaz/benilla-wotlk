@@ -156,6 +156,9 @@ pub enum SessionEvent {
     /// `SetStatus(0, 0x2c)`, `CHAR_LIST_FAILED`); the session ends after it. Emitted by the IO
     /// thread, never wire-decoded.
     RosterFailed { epoch: u64 },
+    /// The link's `SMSG_ADDON_INFO`, read at the character park: the addons it hides from the Lua
+    /// index space. Emitted by the IO thread once per link, never wire-decoded.
+    AddonReply { hidden: Vec<String> },
     /// Queued for a full realm (`AUTH_WAIT_QUEUE`), per queue packet: a wait, not an outcome.
     LoginQueued {
         position: Option<u32>,

@@ -776,10 +776,40 @@ pub(super) fn register_for_glue(
     for (info, addon) in infos.iter_mut().zip(addons.iter()) {
         info.enabled = store.enabled_for(&info.name, addon.toc.default_state(), None);
     }
+    // The AddOns screen's state: each character's bit through the same query, or, with no
+    // characters, the one default column.
+    let columns: Vec<Option<&str>> = if roster.is_empty() {
+        vec![None]
+    } else {
+        roster.iter().map(|c| Some(c.as_str())).collect()
+    };
+    let cells = addons
+        .iter()
+        .map(|a| {
+            columns
+                .iter()
+                .map(|&c| store.enabled_for(&a.name, a.toc.default_state(), c))
+                .collect()
+        })
+        .collect();
     script.register_addons(infos, root(), None, None);
+    script.set_glue_addon_enable(roster.to_vec(), cells);
     if let Some(reply) = reply {
         script.note_addon_info_reply(reply);
     }
+}
+
+/// `SaveAddOns` on the glue (`0x4dcac0`): each changed bit into its character's enable file.
+pub(super) fn save_glue_addons(
+    realm: &str,
+    roster: &[String],
+    changes: &[benilla_ui::script::GlueAddonChange],
+) {
+    let mut store = EnableStore::load(realm, roster);
+    for c in changes {
+        store.set(&c.addon, Some(&c.character), c.enabled);
+    }
+    store.save();
 }
 
 /// Load every discovered third-party addon at world entry (`UI_Init 0x48fbf0` → `0x51f600`),

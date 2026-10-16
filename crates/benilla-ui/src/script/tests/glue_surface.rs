@@ -93,19 +93,6 @@ const NOT_YET: &[(&str, &[&str])] = &[
         &["RenameCharacter", "DeclineCharacter"],
     ),
     (
-        "the AddOns screen's per-character enable state (table 0xac3e00)",
-        &[
-            "DisableAddOn",
-            "DisableAllAddOns",
-            "EnableAddOn",
-            "EnableAllAddOns",
-            "GetAddOnEnableState",
-            "LaunchAddOnURL",
-            "ResetAddOns",
-            "SaveAddOns",
-        ],
-    ),
-    (
         "the glue's credits text and its options defaults (table 0xac3e00)",
         &[
             "GetCreditsText",

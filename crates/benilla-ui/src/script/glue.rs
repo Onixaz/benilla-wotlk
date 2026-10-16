@@ -135,5 +135,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     super::cvars::install_cvar_verbs(lua)?;
     super::glue_realm::install(lua)?;
     super::glue_select::install(lua)?;
-    super::glue_create::install(lua)
+    super::glue_create::install(lua)?;
+    super::glue_addons::install(lua)
 }

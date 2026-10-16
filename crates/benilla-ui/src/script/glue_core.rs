@@ -154,6 +154,9 @@ pub enum GlueRequest {
     /// `DeleteCharacter(index)` (`0x4e33a0`) for a row on the roster: the host's
     /// `CGlueMgr::DeleteCharacter` (`0x4d8cc0`) with its guid.
     DeleteCharacter(u64),
+    /// `SaveAddOns()` (`0x4dcac0`): the enable bits changed since the last load or save, for the
+    /// host to write to each character's enable file.
+    SaveAddOns(Vec<super::glue_addons::GlueAddonChange>),
 }
 
 /// The hosts `LaunchURL` opens, the 10-entry table at `0x85cc34`: a leading `*` stands for one
@@ -247,6 +250,8 @@ pub(crate) struct GlueCore {
     pub(super) system: super::glue_system::GlueSystem,
     /// The character create verbs' slots ([`super::glue_create`]).
     pub(super) create: super::glue_create::GlueCreate,
+    /// The AddOns screen's per-character enable state.
+    pub(super) addons: super::glue_addons::GlueAddonEnable,
 }
 
 /// `SetCurrentScreen`'s buffer, 0x40 bytes with its terminator (`0x46b860`, `SStrCopy`).

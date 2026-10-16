@@ -29,6 +29,7 @@ pub(super) fn register(app: &mut App) {
     app.net_handler(K::LoginStage, on_login_edge)
         .net_handler(K::WorldAuthenticated, on_login_edge)
         .net_handler(K::RosterFailed, on_login_edge)
+        .net_handler(K::AddonReply, on_login_edge)
         .net_handler(K::LoginQueued, on_login_edge)
         .net_handler(K::LoginFailed, on_login_edge)
         .net_handler(K::RealmList, on_login_edge)
@@ -119,6 +120,7 @@ fn on_login_edge(In(ev): In<SessionEvent>, mut e: Edges) {
                 generation,
             });
         }
+        SessionEvent::AddonReply { hidden } => e.addon_reply.0 = Some(hidden),
         SessionEvent::RosterFailed { epoch } => {
             e.roster_failed.write(RosterFailedMessage { epoch });
         }

@@ -127,12 +127,14 @@ pub(crate) mod font;
 mod font_block;
 mod frame_enum;
 mod glue;
+mod glue_addons;
 mod glue_core;
 mod glue_create;
 mod glue_realm;
 mod glue_select;
 mod glue_system;
 pub use glue::{VmKind, GLUE_EVENTS};
+pub use glue_addons::GlueAddonChange;
 pub use glue_core::{
     launch_url_allowed, GlueCredentials, GlueNotice, GlueRequest, GlueServer, NoticeState,
 };

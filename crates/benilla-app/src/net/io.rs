@@ -734,6 +734,9 @@ fn world(
         // logout or a refused character login (`0x5aaeb0`, `0x5aad70`: `0x401ee0` tears the world
         // down and closes nothing). Its first world entry starts the connection's ping block.
         let mut fresh_link = true;
+        // The character screens read the AddOn index space before any world entry: the reply is
+        // announced once the park has read it.
+        let mut reply_announced = false;
         loop {
             // Park at character select until the app answers. Create and delete are serviced in place.
             // If the server kicked the parked socket meanwhile, the login below fails, the cycle
@@ -815,6 +818,16 @@ fn world(
                     Parked::Refused(reason) => return fail_terminal(reason),
                     Parked::Acted(action, code) => (action, code),
                     Parked::Listed => {
+                        if !reply_announced {
+                            if let Some(hidden) = hidden_addons(&session) {
+                                reply_announced = true;
+                                bevy::log::info!(
+                                    "net: SMSG_ADDON_INFO at the park — {} hidden from the AddOn index space",
+                                    hidden.len()
+                                );
+                                let _ = events_tx.send(SessionEvent::AddonReply { hidden });
+                            }
+                        }
                         if events_tx
                             .send(SessionEvent::CharacterList {
                                 characters: characters.clone(),
@@ -879,12 +892,7 @@ fn world(
             // reply means no AddOn index space at all, carried as `None`. The link's one reply
             // answers every login on it.
             let statuses = session.addon_info().map(<[u8]>::to_vec);
-            let addon_info = statuses.as_deref().map(|statuses| {
-                benilla_protocol::messages::hidden_from_reply(
-                    statuses,
-                    &benilla_protocol::messages::STOCK_SECURE_ADDONS_WOTLK,
-                )
-            });
+            let addon_info = hidden_addons(&session);
             match (&statuses, &addon_info) {
                 (Some(statuses), Some(hidden)) => bevy::log::info!(
                     "net: SMSG_ADDON_INFO — {} record(s), {} hidden from the AddOn index space",
@@ -1884,6 +1892,17 @@ fn trace_out(opcode: u16, len: usize) {
             benilla_protocol::messages::opcode_name(opcode).unwrap_or("?")
         ),
     );
+}
+
+/// The addons the link's `SMSG_ADDON_INFO` hides from the Lua index space, paired back against
+/// the block we sent; `None` with no reply, which leaves no index space at all.
+fn hidden_addons(session: &benilla_protocol::world::WorldSession) -> Option<Vec<String>> {
+    session.addon_info().map(|statuses| {
+        benilla_protocol::messages::hidden_from_reply(
+            statuses,
+            &benilla_protocol::messages::STOCK_SECURE_ADDONS_WOTLK,
+        )
+    })
 }
 
 #[cfg(test)]

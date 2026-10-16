@@ -812,7 +812,12 @@ pub(super) fn install_glue(lua: &Lua) -> mlua::Result<()> {
 
 /// A glue AddOn verb's 1-based index into the array (`lua_isnumber`, then `GetAddOnByIndex`):
 /// the usage error for a non-number, the range error for an index off the array.
-fn glue_index(lua: &Lua, model: &Model, index: Value, usage: &'static str) -> mlua::Result<usize> {
+pub(super) fn glue_index(
+    lua: &Lua,
+    model: &Model,
+    index: Value,
+    usage: &'static str,
+) -> mlua::Result<usize> {
     let Some(n) = lua.coerce_number(index)? else {
         return Err(mlua::Error::RuntimeError(usage.into()));
     };
