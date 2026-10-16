@@ -314,7 +314,7 @@ pub(super) fn spawn_net(connect: bool) -> NetHandles {
 
 /// What the logon park's wait ended with.
 enum LogonAnswer {
-    /// `ChangeRealm` (`0x46f0e0`): dial this realm with the logon's session key, under the abandon
+    /// `ChangeRealm` (`0x4defb0`): dial this realm with the logon's session key, under the abandon
     /// generation the ask carried.
     Enter(benilla_protocol::RealmInfo, u64),
     /// A new login supersedes the logon, as `CGlueMgr::Login` (`0x46afb0`) starts the next logon

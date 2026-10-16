@@ -999,7 +999,7 @@ impl GlueMgr {
 
     /// The session ended. A logout or a refused character login ends only the world: the link
     /// is kept (`0x5aaeb0` and `0x5aad70` reach no close), so the screen's roster ask goes out on
-    /// it (`IsConnectedToServer`, `0x46d380`). Over (`session_over`), the disconnect handler
+    /// it (`IsConnectedToServer`, `0x4dda50`). Over (`session_over`), the disconnect handler
     /// (`0x46c540`): state 0, and `DISCONNECTED_FROM_SERVER` (`0x46c62e`), which the stock screens
     /// answer with the login screen and the `DISCONNECTED` dialog. An unattended reconnect is no
     /// disconnect to the screens.
@@ -1549,7 +1549,7 @@ struct RosterNames<'a> {
     creatures: Option<&'a crate::entities::Creatures>,
 }
 
-/// A roster entry as the glue VM's records take it (`0x4732a0`). The race and class names are
+/// A roster entry as the glue VM's records take it (`0x4e3170`). The race and class names are
 /// the `Name_Lang` of the race and class rows (`ChrRaces` `+0x44`, `ChrClasses` `+0x14`) at the
 /// enUS slot (the one locale benilla reads, #429), the file string the race row's (`ChrRaces` column 15), and the model flag
 /// whether the race row's body for the gender resolves to a model. A race, class or zone with no row reads

@@ -179,10 +179,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `debugprofilestart`/`debugprofilestop` (`0x702840`/`0x702860`), the two real `debug*` verbs (RDTSC
-/// via `0x4293d0`): start latches, stop answers the milliseconds since. Ours read the `GetTime()`
-/// clock ([`super::clock::now`]), the monotonic session seconds the tick advances, as benilla has
-/// no cycle counter; read in Rust, so an addon that replaces the `GetTime` global cannot bend it.
+/// `debugprofilestart`/`debugprofilestop` (`0x817350`/`0x817370`), the two real `debug*` verbs
+/// (`OsGetAsyncTimeClocks`, `0x86ae30`): start latches, stop answers the milliseconds since. Ours
+/// read the `GetTime()` clock ([`super::clock::now`]), the monotonic session seconds the tick
+/// advances, as benilla has no cycle counter; read in Rust, so an addon that replaces the
+/// `GetTime` global cannot bend it.
 fn install_profile(lua: &Lua) -> mlua::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     let start = std::sync::Arc::new(AtomicU64::new(0f64.to_bits()));

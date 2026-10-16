@@ -1,4 +1,4 @@
-//! The realm list's glue verbs (`RealmList.cpp`, registrar `0x46f480`, table `0x837ea0`) and the
+//! The realm list's glue verbs (`RealmList.cpp`, registrar `0x46f480`, table `0xac4190`) and the
 //! list they read: the realm holder the `CMD_REALM_LIST` parser fills (`0x5b2230`), the client
 //! Region's categories (`0x46e300`), the sort (`0xb41f40`) and the two selection cells
 //! (`0x837e98`, `0x837e9c`). The host's glue manager seeds the holder and runs the rebuild
@@ -56,7 +56,7 @@ pub struct GlueRealmType {
     pub rp: bool,
 }
 
-/// A sort column, `SortRealms`' string argument (`0x46f330`) and the comparator's case
+/// A sort column, `SortRealms`' string argument (`0x4df420`) and the comparator's case
 /// (`0x46e790`, jump table `0x46e998`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RealmSortKey {
@@ -570,7 +570,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // Eight values on every returning path (`0x46ee40`).
+    // Eight values on every returning path (`0x4debc0`).
     g.set(
         "GetRealmInfo",
         lua.create_function(|lua, args: MultiValue| {
@@ -590,7 +590,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x46f0e0`: the pair leg stores the category (`0x46f188`) before its range check; a realm
+    // `0x4defb0`: the pair leg stores the category (`0x46f188`) before its range check; a realm
     // found marks the session's choice (`0x46f1d1`) and reaches `ConnectToRealm` (`0x46b210`),
     // whose first act sets `realmName` (`0x5ab7b0`).
     g.set(
@@ -654,7 +654,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x46f2c0`: the category through `0x46edf0`, the two flags through `0x6f1c10` with default
+    // `0x4df3a0`: the category through `0x46edf0`, the two flags through `0x6f1c10` with default
     // 0, then `realm_select` (`0x46ea20`), which fires `SUGGEST_REALM` with `"%d%d"` or, with no
     // realm to suggest, `OPEN_REALM_LIST` (`0x46ec21`).
     g.set(
@@ -687,7 +687,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x46f330`: a string (or number) argument, matched case-insensitively; anything else sorts by
+    // `0x4df420`: a string (or number) argument, matched case-insensitively; anything else sorts by
     // name. The usage string is the binary's own spelling (`0x838098`).
     g.set(
         "SortRealms",

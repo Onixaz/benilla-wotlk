@@ -3,12 +3,11 @@
 //! character on attachment 0 and its pet on attachment 1; the pane then draws the booth's image at
 //! its own bucket (the extract's `ModelPane` arm), so every GlueXML region paints over it.
 //!
-//! The scene is the pane's file: `AccountLogin.xml`'s `UI_MainMenu`, `CharacterSelect`'s OnLoad
-//! `UI_Orc` (`CharacterSelect.lua:26`), or the stage `SetCharSelectBackground` gives it. Its fog is
-//! the pane's own until `SetCharSelectBackground` swaps the fog fill callback for the select
-//! screen's (`0x472110`), which never fogs. The character is the select record the last
-//! `SelectCharacter` built and attached (`0x472950`), turned by the facing cell (`[0xb4217c]`,
-//! `SetCharacterSelectFacing`).
+//! The scene is the pane's file: `AccountLogin.lua`'s `UI_MainMenu_Northrend`, or the stage
+//! `SetCharSelectBackground` gives the select screen's pane; its fog is the pane's own, which
+//! `SetLighting` sets from the race's row after each stage. The character is the select record
+//! the last `SelectCharacter` built and attached, turned by the facing cell
+//! (`SetCharacterSelectFacing`).
 //!
 //! The scene fills the pane at the pane's own aspect, as the reference frames it, and starts over
 //! with each `SetModel` instance; the pane's showing resets the glue glow (`0x46fa60`).
@@ -160,7 +159,7 @@ mod tests {
     }
 
     /// The stock login's pane is `GlueParent`'s rect, which fills the screen up to 16:9 and is a
-    /// centred 16:9 box past it (`GlueParent.lua:78-84`): the rect the scene is framed in.
+    /// centred 16:9 box past it (`GlueParent.lua:175-183`): the rect the scene is framed in.
     #[test]
     fn the_stock_pane_is_glue_parents_rect_at_every_aspect() {
         let _ = benilla_formats::wow_data_or_skip!();
@@ -171,7 +170,11 @@ mod tests {
             super::super::glue::set_glue_screen(&mut s, super::super::glue::GlueScreen::Login);
             s.resolve();
             let pane = s.glue_scene().expect("AccountLogin is shown");
-            assert!(pane.path.ends_with("UI_MainMenu.mdx"), "{}", pane.path);
+            assert!(
+                pane.path.ends_with("UI_MainMenu_Northrend.m2"),
+                "{}",
+                pane.path
+            );
             let bar = ((aspect - 16.0 / 9.0) / (2.0 * aspect)).max(0.0);
             let rect = pane.rect.expect("laid out");
             for (got, want) in rect.iter().zip([bar, 1.0 - bar, 0.0, 1.0]) {

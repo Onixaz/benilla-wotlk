@@ -1,5 +1,5 @@
 //! The character select's glue verbs (`SelectCharacter.cpp`, registrar `0x4736c0`, table
-//! `0x838578`) and the roster they read: the record array (`[0xb42144]`, stride `0x120`) and its
+//! `0xac4378`) and the roster they read: the record array (`[0xb42144]`, stride `0x120`) and its
 //! count (`[0xb42140]`), the selection (`[0x83856c]`), the model frame (`[0xb42174]`), the facing
 //! (`[0xb4217c]`) and the build counter (`[0xb42178]`).
 //!
@@ -20,7 +20,7 @@ use super::binding_abi::{ftol, number_arg, string_arg};
 use super::glue_core::{leading_int, queue, GlueRequest};
 use super::{Model, ScriptValue};
 
-/// One character of the roster as `GetCharacterInfo` (`0x4732a0`) reads the record. The host
+/// One character of the roster as `GetCharacterInfo` (`0x4e3170`) reads the record. The host
 /// resolves the DBC-backed strings; an absent row is the empty string where the reference pushes
 /// one (`0x882748`) and `None` where it pushes nil.
 #[derive(Clone, Debug, PartialEq)]
@@ -91,7 +91,7 @@ pub struct GlueScenePane {
     /// The file the pane's last `SetModel` gave it: the XML `file`, `Model:SetModel`, or
     /// `SetCharSelectBackground`'s (`0x472128`, the pane's own `SetModel`).
     pub path: String,
-    /// The fog the scene draws with ([`crate::widget::ModelState::scene_fog`]).
+    /// The fog the scene draws with ([`crate::widget::ModelState::armed_fog`]).
     pub fog: Option<crate::widget::ModelFog>,
     /// The pane is the select screen's model frame (`[0xb42174]`), whose scene the selected
     /// character stands in.
@@ -174,12 +174,12 @@ impl super::UiScript {
     }
 
     /// The file `SetCharSelectBackground` gave the model frame, while its scene still holds it: a
-    /// later `SetModel` on the frame replaces the scene and its fill callback with it.
+    /// later `SetModel` on the frame replaces the scene and its lighting callback with it.
     pub fn glue_select_background(&self) -> Option<String> {
         let model = self.model_ref();
         let h = model_frame_handle(&model)?;
         match &model.arena.frame(h)?.kind_state {
-            crate::widget::KindState::Model(m) if m.select_fill => m.path.clone(),
+            crate::widget::KindState::Model(m) if m.select_lighting => m.path.clone(),
             _ => None,
         }
     }
@@ -237,7 +237,7 @@ impl super::UiScript {
                             }),
                         instance: m.instance,
                         path: m.path.clone()?,
-                        fog: m.scene_fog(),
+                        fog: m.armed_fog(),
                         select: select == Some(h),
                     },
                 ))
@@ -378,7 +378,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x4731c0`: a string or number (`0x6f3510`) or the usage error (`0x838720`); the global of
+    // `0x4e2f60`: a string or number (`0x6f3510`) or the usage error (`0x838720`); the global of
     // that name castable to the model type (`0x76c760`) becomes the frame (`0x472100`), else the
     // call changes nothing.
     g.set(
@@ -402,10 +402,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x473230`: the file (`0x6f3510`, else `0x83874c`) into `0x472110`, which needs the frame
-    // set and a non-empty name, hands it to the frame's own `SetModel` (vtable `+0x94`,
-    // `0x472128`), and on the new scene puts the select screen's fill callback `0x472150` where
-    // `SetModel` put the fog one (`0x472144`): the select scene never fogs once a background is set.
+    // `0x4e44e0`: a string or its usage error, into `0x4e3c10`, which needs the frame set and a
+    // non-empty name, skips the file the scene already holds (any case, `0x4e3c41`), hands any
+    // other to the frame's own `SetModel` (vtable `+0xe8`) and puts the select screen's lighting
+    // callback on the new scene (`0x4e3c7f`); the pane's fog is left as it is.
     g.set(
         "SetCharSelectBackground",
         lua.create_function(|lua, args: MultiValue| {
@@ -418,17 +418,27 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(h) = model_frame_handle(&m).filter(|_| !file.is_empty()) else {
                 return Ok(());
             };
+            let held = match m.arena.frame(h).map(|f| &f.kind_state) {
+                Some(crate::widget::KindState::Model(pane)) => pane
+                    .path
+                    .as_deref()
+                    .is_some_and(|p| p.eq_ignore_ascii_case(&file)),
+                _ => false,
+            };
+            if held {
+                return Ok(());
+            }
             m.set_pane_model(h, file);
             if let Some(crate::widget::KindState::Model(pane)) =
                 m.arena.frame_mut(h).map(|f| &mut f.kind_state)
             {
-                pane.select_fill = true;
+                pane.select_lighting = true;
             }
             Ok(())
         })?,
     )?;
 
-    // `0x473270` → `0x4723d0`: every record freed and the count 0 (`0x4723ff`) in the call, so a
+    // `0x4e4530` → `0x4723d0`: every record freed and the count 0 (`0x4723ff`) in the call, so a
     // `GetNumCharacters` straight after reads 0; then `0x46b880`, the host's: state 3, the
     // dialog and the list request.
     g.set(
@@ -440,13 +450,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x473280`: the count, a number.
+    // `0x4e3140`: the count, a number.
     g.set(
         "GetNumCharacters",
         lua.create_function(|lua, _: MultiValue| Ok(model(lua).glue.roster.records.len() as f64))?,
     )?;
 
-    // `0x4732a0`: one number (`0x6f34d0`) or `Usage: GetCharacterInfo(index)` (`0x838778`), then
+    // `0x4e3170`: one number (`0x6f34d0`) or `Usage: GetCharacterInfo(index)` (`0x838778`), then
     // eight values on every returning path; off the roster the tuple is nil, nil, nil, 0, nil,
     // nil, 0, nil (`0x47341e`-`0x473459`).
     g.set(
@@ -517,7 +527,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x473640` → `0x473190`: the selected record's composite (`+0x110`) is handed to the
+    // `0x4e2fd0` → `0x473190`: the selected record's composite (`+0x110`) is handed to the
     // character bake (`0x477860`), once per `OnUpdateModel` (`CharacterSelect.lua:208`). The
     // composite is the scene drive's, which bakes when the selection or the look changes, so
     // there is nothing for the call to do on the Lua side.
@@ -526,7 +536,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, _: MultiValue| Ok(()))?,
     )?;
 
-    // `0x473650`: the cell (a float) times 57.29578, pushed as a double.
+    // `0x4e3000`: the cell (a float) times 57.29578, pushed as a double.
     g.set(
         "GetCharacterSelectFacing",
         lua.create_function(|lua, _: MultiValue| {
@@ -535,7 +545,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x473670`: one number or `Usage: SetCharacterSelectFacing(degrees)` (`0x838814`), times
+    // `0x4e3030`: one number or `Usage: SetCharacterSelectFacing(degrees)` (`0x838814`), times
     // 0.017453292 and stored as a float, with no wrap or clamp, once a model has been built. It
     // returns one value (`0x4736ae`, `mov eax,1`) with nothing pushed since the arguments, so the
     // value is the top of the stack: the last argument, the degrees as the caller wrote them.
@@ -836,7 +846,7 @@ mod tests {
         // An empty name is ignored (`0x472123`).
         s.run("SetCharSelectBackground('')").unwrap();
         assert_eq!(s.glue_select_background().as_deref(), Some("a.mdx"));
-        // The frame's own `SetModel` replaces the scene, and the select fill with it.
+        // The frame's own `SetModel` replaces the scene, and the select lighting with it.
         s.run("Scene:SetModel('b.mdx')").unwrap();
         assert_eq!(s.glue_select_background(), None);
         s.run("SetCharSelectBackground('a.mdx')").unwrap();
@@ -856,12 +866,11 @@ mod tests {
         s.run("UpdateSelectionCustomizationScene()").unwrap();
     }
 
-    /// The scene's fog follows its fill callback: `SetModel` installs the fog one (`0x76cd96`), so
-    /// the select screen's OnLoad scene fogs with the fog its fields hold; `SetCharSelectBackground`
-    /// installs `0x472150` over it (`0x472144`), and the fog fields written after it change nothing;
-    /// the next `SetModel` brings the fog back.
+    /// The select scene fogs with the fog its fields hold, before and after a background
+    /// (`0x4e3c10` swaps the lighting callback alone); the file the scene already holds is no new
+    /// scene (`0x4e3c41`), any other is.
     #[test]
-    fn the_select_scene_fogs_until_a_background_is_set() {
+    fn the_select_scene_keeps_its_fog_and_its_held_background() {
         let s = UiScript::new_glue().unwrap();
         s.run(
             "local f = CreateFrame('ModelFFX', 'Scene') \
@@ -882,10 +891,12 @@ mod tests {
         )
         .unwrap();
         let pane = s.glue_scene().unwrap();
-        assert_eq!((pane.path.as_str(), pane.fog), ("UI_Human.mdx", None));
-        // Every call makes a new instance, the same file included (`0x76ccf5`-`0x76cd0d`).
+        assert_eq!(pane.path, "UI_Human.mdx");
+        assert_eq!(pane.fog.map(|f| f.far), Some(222.0));
         let first = pane.instance;
-        s.run("SetCharSelectBackground('UI_Human.mdx')").unwrap();
+        s.run("SetCharSelectBackground('ui_human.MDX')").unwrap();
+        assert_eq!(s.glue_scene().unwrap().instance, first);
+        s.run("SetCharSelectBackground('UI_Orc.mdx')").unwrap();
         assert!(s.glue_scene().unwrap().instance > first);
 
         s.run("Scene:SetModel('UI_Dwarf.mdx')").unwrap();

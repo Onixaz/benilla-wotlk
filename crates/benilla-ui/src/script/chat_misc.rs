@@ -73,7 +73,7 @@ impl super::UiScript {
     }
 }
 
-/// `ConsoleExec` (`0x515f10`) is in the registrar both states call (`0x51bb20`, from the glue
+/// `ConsoleExec` (`0x608270`) is in the registrar both states call (`0x51bb20`, from the glue
 /// registrar `0x46abb0` and the in-game `0x51bb60`), so it installs apart from this file's in-game
 /// verbs.
 pub(super) fn install_console_exec(lua: &Lua) -> mlua::Result<()> {

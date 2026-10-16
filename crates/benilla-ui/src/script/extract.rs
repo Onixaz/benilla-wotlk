@@ -93,7 +93,7 @@ impl UiScript {
                             icon: m.icon.clone(),
                             camera: m.camera,
                             light: m.light,
-                            fog: m.scene_fog(),
+                            fog: m.armed_fog(),
                             ffx: m.ffx,
                         },
                         _ => QuadContent::Frame,

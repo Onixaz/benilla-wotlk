@@ -218,10 +218,10 @@ pub(crate) enum GlueLogin {
     /// `RESPONSE_CANCELLED` (`0x46b754`); the failure arm then drops the world socket alone
     /// (`0x46befd`, `0x5ab1a0`), so the attempt in flight ends and the realmd link stays up.
     CancelWorld,
-    /// `DisconnectFromServer` (`0x46d340`): the world session dropped if there is one, then the
+    /// `DisconnectFromServer` (`0x4dda10`): the world session dropped if there is one, then the
     /// logon cancelled, as select's Back drops the parked session.
     Disconnect,
-    /// `QuitGame` (`0x46cea0` → `0x401560(0)`): the process ends, with no grace for a sound.
+    /// `QuitGame` (`0x4dc050` → `0x401560(0)`): the process ends, with no grace for a sound.
     Quit,
 }
 

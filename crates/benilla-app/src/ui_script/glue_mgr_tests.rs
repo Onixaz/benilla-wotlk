@@ -720,7 +720,7 @@ fn a_lost_session_fires_disconnected() {
 }
 
 /// A logout or a refused login keeps the world link (`0x5aaeb0`, `0x5aad70`), so the character
-/// screen that comes back up finds it connected (`0x46d380`) and its `GetCharacterListUpdate`
+/// screen that comes back up finds it connected (`0x4dda50`) and its `GetCharacterListUpdate`
 /// sends the roster ask on it (`0x46b880` → `0x5aabb0`), with no dialog of a disconnect.
 #[test]
 fn a_logout_keeps_the_link_for_the_screens_roster_ask() {
@@ -807,6 +807,17 @@ fn dialog(app: &App) -> Option<(String, String)> {
 }
 
 /// Type into the stock boxes and press Login, as `AccountLogin_Login` does.
+/// The agreements accepted as `TOSAccept` does, which then shows the next or starts the Scan.dll
+/// check (`AccountLogin_ShowUserAgreements`); the next frame's idle tick fires `SCANDLL_ERROR`,
+/// whose handler continues anyway and shows the login fields.
+fn accept_agreements(app: &mut App) {
+    vm(app)
+        .run("AcceptEULA() AcceptTOS() AccountLogin_ShowUserAgreements()")
+        .unwrap();
+    app.update();
+    app.update();
+}
+
 fn type_and_login(app: &mut App) {
     vm(app)
         .run(
@@ -890,8 +901,7 @@ fn the_stock_login_reaches_the_native_login_and_shows_its_status() {
     );
     type_and_login(&mut app);
     assert!(rx.try_recv().is_err(), "no login before the agreements");
-    vm(&app).run("AcceptEULA() AcceptTOS()").unwrap();
-    app.update();
+    accept_agreements(&mut app);
 
     type_and_login(&mut app);
     let req = rx.try_recv().expect("the native login gets the attempt");
@@ -921,8 +931,7 @@ fn the_stock_login_reaches_the_native_login_and_shows_its_status() {
 fn the_status_dialogs_cancel_abandons_the_attempt() {
     let _ = benilla_formats::wow_data_or_skip!();
     let (mut app, rx, abandon) = stock_app();
-    vm(&app).run("AcceptEULA() AcceptTOS()").unwrap();
-    app.update();
+    accept_agreements(&mut app);
     type_and_login(&mut app);
     assert!(rx.try_recv().is_ok());
     vm(&app).run("GlueDialogButton1:Click()").unwrap();
@@ -1230,7 +1239,7 @@ fn screen_up(app: &App) -> bool {
 /// and with no realm chosen: the connect fails `REALM_LIST_REALM_NOT_FOUND`, its `OKAY` comes
 /// down, and `GET_PREFERRED_REALM_INFO` puts the realm wizard up (#834). Its location buttons are
 /// the Region's categories holding a realm; Suggest with PvP asks `SetPreferredInfo`, whose
-/// `SUGGEST_REALM` the character screen turns into the suggestion dialog, and Accept connects.
+/// `SUGGEST_REALM` the character screen answers with `ChangeRealm` (`CharacterSelect.lua:273`).
 #[test]
 fn a_fresh_account_is_asked_for_a_realm_and_suggested_one() {
     let _ = benilla_formats::wow_data_or_skip!();
@@ -1268,14 +1277,6 @@ fn a_fresh_account_is_asked_for_a_realm_and_suggested_one() {
              RealmWizardSuggest:Click()",
         )
         .unwrap();
-    let (which, text) = dialog(&app).expect("the suggestion dialog");
-    assert_eq!(which, "SUGGEST_REALM");
-    assert!(
-        text.contains("Bravo"),
-        "the PvP realm is suggested: {text:?}"
-    );
-
-    vm(&app).run("GlueDialogButton1:Click()").unwrap();
     until(&mut app, "the character screen", screen_up);
     assert_eq!(
         vm(&app)
@@ -1522,7 +1523,7 @@ fn the_stock_login_loads_the_roster_into_character_select() {
     assert_eq!(vm(&app).glue_selected_guid(), Some(0x12));
     assert_eq!(
         vm(&app).glue_select_background().as_deref(),
-        Some("Interface\\Glues\\Models\\UI_Human\\UI_Human.mdx"),
+        Some("Interface\\Glues\\Models\\UI_Human\\UI_Human.m2"),
         "SetBackgroundModel reached SetCharSelectBackground for the selected race"
     );
 
@@ -1561,7 +1562,8 @@ fn the_stock_login_loads_the_roster_into_character_select() {
 }
 
 /// An empty roster: the teardown at the connect and the load both select -1, which fires
-/// `UPDATE_SELECTED_CHARACTER` with 1 (`0x472740`). With no realm chosen this session the load
+/// `UPDATE_SELECTED_CHARACTER` with 1, and each `CHARACTER_LIST_UPDATE` the screen takes ends in
+/// its `SelectCharacter(0)`, which fires it again (`0x4e45fa`). With no realm chosen this session the load
 /// asks for the realm list and fires no `CHARACTER_LIST_UPDATE` (`0x47253d`-`0x47254b`), and the
 /// list's rebuild puts the realm wizard up (an account with no characters); with a realm chosen
 /// it fires the update and the screen stays, with no rows.
@@ -1577,7 +1579,7 @@ fn an_empty_roster_asks_for_the_realm_list_only_with_no_realm_chosen() {
         1,
         "the teardown's, and not the load's"
     );
-    assert_eq!(seen(&app, "UPDATE_SELECTED_CHARACTER"), 2);
+    assert_eq!(seen(&app, "UPDATE_SELECTED_CHARACTER"), 3);
     assert_eq!(realmd.lists(), 2, "the logon's list and the load's query");
     assert_eq!(vm(&app).errors(), Vec::<String>::new());
 
@@ -1592,7 +1594,7 @@ fn an_empty_roster_asks_for_the_realm_list_only_with_no_realm_chosen() {
     assert!(shown(&app, "CharacterSelect") && !shown(&app, "RealmWizard"));
     assert!(!shown(&app, "RealmList"));
     assert_eq!(seen(&app, "CHARACTER_LIST_UPDATE"), 2);
-    assert_eq!(seen(&app, "UPDATE_SELECTED_CHARACTER"), 2);
+    assert_eq!(seen(&app, "UPDATE_SELECTED_CHARACTER"), 4);
     assert_eq!(realmd.lists(), 1, "no realm list was asked for");
     assert_eq!(
         vm(&app)
@@ -1601,7 +1603,8 @@ fn an_empty_roster_asks_for_the_realm_list_only_with_no_realm_chosen() {
                  CharSelectCharacterButton1:IsShown() == 1"
             )
             .unwrap(),
-        (0.0, 0, false)
+        (0.0, 1, false),
+        "the last UPDATE_SELECTED_CHARACTER's 1 is the screen's index"
     );
     assert_eq!(vm(&app).errors(), Vec::<String>::new());
 }
@@ -1612,14 +1615,15 @@ fn preview(app: &App) -> &crate::portrait::GluePreview {
     app.world().resource::<crate::portrait::GluePreview>()
 }
 
-/// The stock login's `AccountLogin` pane drives the glue booth: `UI_MainMenu` under the pane's
-/// own fog, `AccountLogin.xml`'s `<FogColor>` and `fogFar`, with nobody standing in it.
+/// The stock login's `AccountLogin` pane drives the glue booth: `UI_MainMenu_Northrend` (any
+/// account off a streaming trial) under the pane's own fog, `AccountLogin.xml`'s `<FogColor>` and
+/// `fogFar`, with nobody standing in it.
 #[test]
 fn the_stock_login_stands_the_main_menu_in_the_glue_booth() {
     let _ = benilla_formats::wow_data_or_skip!();
     let (app, _rx, _abandon) = stock_app();
     let p = preview(&app);
-    assert_eq!(p.scene, Some(crate::portrait::GlueScene::MainMenu));
+    assert_eq!(p.scene, Some(crate::portrait::GlueScene::MainMenuNorthrend));
     assert!(p.look.is_none());
     let fog = p.fog.expect("the main menu fogs");
     assert_eq!((fog.near, fog.far), (0.0, 1200.0));
@@ -1629,8 +1633,8 @@ fn the_stock_login_stands_the_main_menu_in_the_glue_booth() {
 }
 
 /// The selected character stands in the select scene: the roster load's selection, then a
-/// row's `CharacterSelect_SelectCharacter`, which sets its race's stage unfogged; the yaw is the
-/// facing cell `SetCharacterSelectFacing` writes, and the next select squares it.
+/// row's `CharacterSelect_SelectCharacter`, which sets its race's stage under the race's fog
+/// (`SetLighting`); the yaw is the facing cell `SetCharacterSelectFacing` writes, and the next select squares it.
 #[test]
 fn the_stock_select_stands_the_selected_character_at_the_cells_facing() {
     use crate::portrait::{GlueLook, GlueScene, SelectLook};
@@ -1650,14 +1654,16 @@ fn the_stock_select_stands_the_selected_character_at_the_cells_facing() {
         p.look == Some(GlueLook::Select(SelectLook::from(&roster[1]))),
         "lastCharacterIndex 1 stands Bravo"
     );
-    assert_eq!((p.scene, p.fog), (Some(GlueScene::Human), None));
+    assert_eq!(p.scene, Some(GlueScene::Human));
+    assert_eq!(p.fog.map(|f| f.far), Some(222.0));
     assert_eq!(p.yaw, 0.0);
 
     vm(&app).run("CharacterSelect_SelectCharacter(1)").unwrap();
     app.update();
     let p = preview(&app);
     assert!(p.look == Some(GlueLook::Select(SelectLook::from(&roster[0]))));
-    assert_eq!((p.scene, p.fog), (Some(GlueScene::NightElf), None));
+    assert_eq!(p.scene, Some(GlueScene::NightElf));
+    assert_eq!(p.fog.map(|f| f.far), Some(611.0));
 
     vm(&app).run("SetCharacterSelectFacing(90)").unwrap();
     app.update();
@@ -1672,24 +1678,23 @@ fn the_stock_select_stands_the_selected_character_at_the_cells_facing() {
         Some(GlueScene::Dwarf),
         "a gnome stands in Dwarf's stage"
     );
-    // The dwarf after the gnome: the same stage, set again by its own file string, is a new
-    // instance (`0x76cce0`), so the scene starts over.
+    // The dwarf after the gnome: the stage the scene already holds is kept (`0x4e3c41`), so the
+    // scene runs on.
     let gnome_stage = p.stage;
     vm(&app).run("CharacterSelect_SelectCharacter(4)").unwrap();
     app.update();
     let p = preview(&app);
     assert_eq!(p.scene, Some(GlueScene::Dwarf));
-    assert_ne!(p.stage, gnome_stage);
+    assert_eq!(p.stage, gnome_stage);
     // The pane is GlueParent's, the whole 4:3 screen.
     assert_eq!(p.pane, Some([0.0, 1.0, 0.0, 1.0]));
     assert_eq!(vm(&app).errors(), Vec::<String>::new());
 }
 
-/// #978: an account with no characters shows `CharacterSelect`'s OnLoad scene, `UI_Orc` under
-/// Orc's fog. Once a character has set its stage the scene stays, unfogged, when the roster
-/// empties: an empty roster sets no background.
+/// An account with no characters selects index 0, whose stage is race 2's (`0x4e3620`): `UI_Orc`
+/// under Orc's fog. A roster that empties goes back to it.
 #[test]
-fn the_stock_select_fogs_the_empty_roster_and_keeps_the_last_stage() {
+fn the_stock_select_stands_the_empty_roster_in_orcs_stage() {
     use crate::portrait::GlueScene;
     let _ = benilla_formats::wow_data_or_skip!();
     let (mut app, _realmd, _world) = char_select_app(&[], "0", true);
@@ -1713,7 +1718,8 @@ fn the_stock_select_fogs_the_empty_roster_and_keeps_the_last_stage() {
     });
     app.update();
     let p = preview(&app);
-    assert_eq!((p.scene, p.fog), (Some(GlueScene::Tauren), None));
+    assert_eq!(p.scene, Some(GlueScene::Tauren));
+    assert_eq!(p.fog.map(|f| f.far), Some(153.0));
     assert!(p.look.is_some());
 
     world.set_roster(&[]);
@@ -1725,7 +1731,8 @@ fn the_stock_select_fogs_the_empty_roster_and_keeps_the_last_stage() {
     });
     app.update();
     let p = preview(&app);
-    assert_eq!((p.scene, p.fog), (Some(GlueScene::Tauren), None));
+    assert_eq!(p.scene, Some(GlueScene::Orc));
+    assert_eq!(p.fog.map(|f| f.far), Some(270.0));
     assert!(p.look.is_none(), "the records are freed and detached");
     assert_eq!(vm(&app).errors(), Vec::<String>::new());
 }
@@ -1760,7 +1767,7 @@ fn the_roster_names_come_from_the_dbc_rows() {
         ),
         ("Undead", "Warlock", "Scourge", true)
     );
-    (c.race, c.class) = (99, 6);
+    (c.race, c.class) = (99, 10);
     let g = glue_character(&c, &names);
     assert_eq!(
         (
@@ -1974,12 +1981,11 @@ fn a_fetched_alert_cancels_the_logon_and_shows_the_alert_frame() {
     vm(&app)
         .run(
             "probe = CreateFrame('Frame') probe:RegisterEvent('SHOW_SERVER_ALERT') \
-             probe:SetScript('OnEvent', function() ALERT_ARG = arg1 \
+             probe:SetScript('OnEvent', function(self, event, text) ALERT_ARG = text \
              ALERT_CALLS = (ALERT_CALLS or 0) + 1 end)",
         )
         .unwrap();
-    vm(&app).run("AcceptEULA() AcceptTOS()").unwrap();
-    app.update();
+    accept_agreements(&mut app);
     type_and_login(&mut app);
     assert!(rx.try_recv().is_ok());
     assert_eq!(app.world().resource::<GlueMgr>().state, ScreenState::Logon);
@@ -2013,8 +2019,7 @@ fn a_body_without_the_prefix_shows_no_alert() {
     let _ = benilla_formats::wow_data_or_skip!();
     let url = serve_body("<html>Not an alert.</html>\n");
     let (mut app, rx, abandon) = stock_app();
-    vm(&app).run("AcceptEULA() AcceptTOS()").unwrap();
-    app.update();
+    accept_agreements(&mut app);
     type_and_login(&mut app);
     assert!(rx.try_recv().is_ok());
     let fetch = crate::ui_script::server_alert::spawn_fetch(url);

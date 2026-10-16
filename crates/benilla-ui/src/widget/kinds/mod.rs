@@ -297,11 +297,10 @@ pub struct ModelState {
     /// (`AddLight`, `AddCharacterLight`, `AddPetLight`), each two arrays of up to four,
     /// `ResetLights` clearing all six.
     pub ffx_lights: [[Vec<ModelLight>; 2]; 3],
-    /// The scene's fill callback is the select screen's (`0x472150`, installed by
-    /// `SetCharSelectBackground` at `0x472144`) in place of the fog callback `SetModel` installs
-    /// (`0x76cd96` → `0x76d680`): the scene draws unfogged whatever the fog fields hold. The
-    /// callback rides the model instance, so the next `SetModel` or `ClearModel` drops it.
-    pub select_fill: bool,
+    /// The scene's lighting callback is the select screen's (`GenericLightingCallback`
+    /// `0x4e3a20`, installed by `SetCharSelectBackground` at `0x4e3c7f`); it rides the model
+    /// instance, so the next `SetModel` or `ClearModel` drops it.
+    pub select_lighting: bool,
     /// The number of the instance the last `SetModel` made: `0x76cce0` builds a new one on every
     /// call (`0x76ccf5`-`0x76cd0d`), its scene starting over, even for the file it held. 0 for
     /// none.
@@ -381,7 +380,7 @@ impl Default for ModelState {
             ffx: false,
             glow: None,
             ffx_lights: Default::default(),
-            select_fill: false,
+            select_lighting: false,
             instance: 0,
         }
     }
@@ -485,7 +484,7 @@ impl ModelState {
         self.icon = None;
         self.armed = None;
         self.pending_seed = true;
-        self.select_fill = false;
+        self.select_lighting = false;
         if let Some(facts) = facts {
             self.seed_from_facts(facts);
         }
@@ -498,7 +497,7 @@ impl ModelState {
         self.icon = None;
         self.armed = None;
         self.pending_seed = false;
-        self.select_fill = false;
+        self.select_lighting = false;
     }
 
     /// `SetSequence`/`SetSequenceTime` (`0x7121a0`): interrupts what plays, with no
@@ -550,16 +549,6 @@ impl ModelState {
             near: self.fog_near,
             far: self.fog_far,
         })
-    }
-
-    /// The fog the scene draws with: the armed fog under the fog callback `SetModel` installs
-    /// (`0x76d680`), none under the select screen's ([`Self::select_fill`]).
-    pub fn scene_fog(&self) -> Option<ModelFog> {
-        if self.select_fill {
-            None
-        } else {
-            self.armed_fog()
-        }
     }
 
     /// `SetCamera` by raw index (`0x76cec0`): deferred until the facts are known, then installed

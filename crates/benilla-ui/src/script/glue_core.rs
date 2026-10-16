@@ -88,25 +88,25 @@ impl std::fmt::Debug for GlueCredentials {
 /// A glue verb's effect on the host, drained by its glue manager.
 #[derive(Debug)]
 pub enum GlueRequest {
-    /// `DefaultServerLogin(account, password)` (`0x46d160`), handed to `CGlueMgr::Login`
+    /// `DefaultServerLogin(account, password)` (`0x4dc260`), handed to `CGlueMgr::Login`
     /// (`0x46afb0`), whose guards and dialogs are the host's.
     Login(GlueCredentials),
-    /// `StatusDialogClick()` (`0x46d270` → `0x46b720`): the status dialog's button, per screen
+    /// `StatusDialogClick()` (`0x4dc500` → `0x46b720`): the status dialog's button, per screen
     /// state.
     StatusDialogClick,
-    /// `SetSavedAccountName(name)` (`0x46cdf0`): the `accountName` CVar's new value.
+    /// `SetSavedAccountName(name)` (`0x4dbec0`): the `accountName` CVar's new value.
     SetSavedAccountName(String),
     /// `AcceptTOS` and its three siblings (`0x46d000`, `0x46d070`, `0x46d0e0`, `0x46d150`): the
     /// agreement's CVar set to `"1"` (`0x46aef0` and its siblings).
     Accept(GlueNotice),
-    /// `PlayGlueMusic(file)` (`0x46ceb0` → `0x45aeb0`).
+    /// `PlayGlueMusic(file)` (`0x4dc070` → `0x45aeb0`).
     PlayGlueMusic(String),
-    /// `StopGlueMusic()` (`0x46cf00`): `0x45b050(1.0)`, a one-second fade.
+    /// `StopGlueMusic()` (`0x4dc1a0`): `0x45b050(1.0)`, a one-second fade.
     StopGlueMusic,
-    /// `DisconnectFromServer()` (`0x46d340`): the world connection dropped if up, then the logon
+    /// `DisconnectFromServer()` (`0x4dda10`): the world connection dropped if up, then the logon
     /// cancelled.
     DisconnectFromServer,
-    /// `QuitGame()` (`0x46cea0` → `0x46b870` → `0x401560(0)`).
+    /// `QuitGame()` (`0x4dc050` → `0x46b870` → `0x401560(0)`).
     QuitGame,
     /// `RequestRealmList([dialog])` (`0x46ecf0` → `0x46b8d0`): screen state 4, the status dialog
     /// when `dialog`, and a realm list query (`0x5ab840`).
@@ -120,11 +120,11 @@ pub enum GlueRequest {
     /// `ChangeRealm` reaching `ConnectToRealm` (`0x46b210`) with this realm, `realmName` already
     /// set to it (`0x5ab7b0`).
     ChangeRealm(String),
-    /// `GetCharacterListUpdate()` (`0x473270` → `0x4723d0` → `0x46b880`): the roster is already
+    /// `GetCharacterListUpdate()` (`0x4e4530` → `0x4723d0` → `0x46b880`): the roster is already
     /// cleared in the VM; the host takes screen state 3, the `CHAR_LIST_RETRIEVING` dialog and
     /// the `CMSG_CHAR_ENUM`.
     GetCharacterList,
-    /// `LaunchURL(url)` (`0x46cf60` → `0x5abd00`) for a URL that passed `launch_url_allowed`
+    /// `LaunchURL(url)` (`0x4dc1c0` → `0x5abd00`) for a URL that passed `launch_url_allowed`
     /// (`0x5abd00` tests `0x5abc10` first): the player's browser opens it (`0x429ff0`).
     LaunchUrl(String),
     /// `PlayGlueAmbience(name [, fade])` (`0x4dc0c0`): the named ambience, faded in over `fade`
@@ -210,7 +210,7 @@ pub fn launch_url_allowed(url: &str) -> bool {
         })
 }
 
-/// The realm `GetServerName` (`0x46d280`) answers: the `realmName` CVar's text, and the
+/// The realm `GetServerName` (`0x4dd900`) answers: the `realmName` CVar's text, and the
 /// selected realm's PvP and RP flags off its `Cfg_Configs` row, nil without a selected realm.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GlueServer {
@@ -223,14 +223,14 @@ pub struct GlueServer {
 #[derive(Default)]
 pub(crate) struct GlueCore {
     requests: Vec<GlueRequest>,
-    /// The `accountName` CVar (`[0x8826c8]`), which `GetSavedAccountName` (`0x46cdd0`) reads.
+    /// The `accountName` CVar (`[0x8826c8]`), which `GetSavedAccountName` (`0x4dd5d0`) reads.
     saved_account: String,
     notices: [NoticeState; 5],
     /// ClientServices' world-connection flag (`[svc+0x1b00]`), which `IsConnectedToServer`
-    /// (`0x46d380`) reads.
+    /// (`0x4dda50`) reads.
     connected: bool,
     server: GlueServer,
-    /// The current glue screen's name (`[0xb41478]`), which `SetCurrentScreen` (`0x46ce60` →
+    /// The current glue screen's name (`[0xb41478]`), which `SetCurrentScreen` (`0x4dc000` →
     /// `0x46b860`) copies into a 0x40-byte buffer.
     pub(super) screen: String,
     /// The realm list the realm verbs read ([`super::glue_realm`]).
@@ -436,14 +436,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
 
-    // Five strings (`0x46cd70`): the version type and build type through `GetGlobalString`
-    // (`BETA_BUILD` `0x837c1c`, `RELEASE_BUILD` `0x837c0c`), then the version, the build and the
-    // date as the binary spells them. The in-game binding (`0x4884a0`) has the last three only.
+    // Five strings (`0x4dbe60`): the `VERSION` and `RELEASE_BUILD` globals' text, then the
+    // version, the build and the date as the binary spells them. The in-game binding
+    // (`0x50f890`) answers the last three and the interface version.
     g.set(
         "GetBuildInfo",
         lua.create_function(|lua, _: MultiValue| {
             Ok(MultiValue::from_vec(vec![
-                Value::String(lua.create_string(global_text(lua, "BETA_BUILD"))?),
+                Value::String(lua.create_string(global_text(lua, "VERSION"))?),
                 Value::String(lua.create_string(global_text(lua, "RELEASE_BUILD"))?),
                 Value::String(lua.create_string(super::client::VERSION)?),
                 Value::String(lua.create_string(super::client::BUILD)?),
@@ -477,7 +477,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // Three values (`0x46d280`): the `realmName` CVar's string, always a string, then PvP and RP
+    // Three values (`0x4dd900`): the `realmName` CVar's string, always a string, then PvP and RP
     // as 1 or nil.
     g.set(
         "GetServerName",
@@ -726,7 +726,7 @@ mod tests {
     #[test]
     fn the_glue_build_info_is_five_strings() {
         let s = UiScript::new_glue().unwrap();
-        s.run("BETA_BUILD = 'Version' RELEASE_BUILD = 'Release'")
+        s.run("VERSION = 'Version' RELEASE_BUILD = 'Release'")
             .unwrap();
         assert_eq!(
             s.eval::<Vec<String>>("return { GetBuildInfo() }").unwrap(),

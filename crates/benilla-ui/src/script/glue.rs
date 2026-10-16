@@ -95,13 +95,11 @@ impl VmKind {
     }
 }
 
-/// The glue core's screen verbs (registrar `0x46ddf0`, table `0x8373b8`): the screen root's size
-/// and the cursor in it. The glue and in-game states share the root, `0x41ad10`'s, 768 units tall
-/// and `768·a` wide for the aspect `a` (the glue builder sets it at `0x46a828`, from `0x46ab40`:
-/// `gxResolution`'s width over height with `widescreen` on, its default, else 4:3). The glue has
-/// no `UIParent` and so no UI scale: `GetScreenWidth` (`0x46dd30`) and `GetScreenHeight`
-/// (`0x46dd80`) are the in-game pair (`0x48b480`, `0x48b4d0`) without its `0x494590` division,
-/// and `GetCursorPosition` (`0x46dad0`) is byte for byte the in-game `0x48b820`.
+/// The glue core's screen verbs (registrar `0x4dd580`, table `0xac3e00`): the screen root's size
+/// and the cursor in it, 768 units tall and `768·a` wide for the aspect `a`. The glue has no
+/// `UIParent` and so no UI scale: `GetScreenWidth` (`0x4dcc20`) and `GetScreenHeight`
+/// (`0x4dcc70`) are the in-game pair (`0x51aef0`, `0x51af50`) without its division by the scale
+/// (`[0xbd0778]+0x7c`), and `GetCursorPosition` (`0x4dcb60`) computes the in-game `0x510a10`'s.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
     g.set(

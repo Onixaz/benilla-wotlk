@@ -37,11 +37,11 @@ pub(crate) enum GlueMusicRequest {
     /// the old one over 3.0 s and starts at 0.8; an empty name restarts the remembered file if
     /// nothing streams.
     Play(String),
-    /// `StopGlueMusic()` (`0x46cf00`): a 1.0 s fade (`0x45b050(1.0)`), the file still remembered.
+    /// `StopGlueMusic()` (`0x4dc1a0`): a 1.0 s fade (`0x45b050(1.0)`), the file still remembered.
     Stop,
 }
 
-/// `StopGlueMusic`'s fade, `0x3f800000` pushed at `0x46cf00`.
+/// `StopGlueMusic`'s fade, `0x3f800000` pushed at `0x4dc1a0`.
 const STOP_GLUE_MUSIC_FADE_MS: u64 = 1000;
 
 /// The held glue-music stream and its starvation watch. The handle is kept through the stop-fade
