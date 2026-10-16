@@ -127,7 +127,7 @@ pub(super) fn drain_bag_autostores(
                 });
             }
             Some(n) => {
-                let count = n.min(u32::from(u8::MAX)) as u8;
+                let count = n;
                 debug!(
                     "ui_items: autostore split lua {}/{} → bag {} × {count} (wire {src_bag}/{src_slot} → {dst_bag})",
                     a.src_bag, a.src_slot, a.dst_bag
@@ -700,7 +700,7 @@ pub(crate) fn send_container_move(
             Some(n) => {
                 let (src_bag, src_slot) = src;
                 let (dst_bag, dst_slot) = dst;
-                let count = n.min(u32::from(u8::MAX)) as u8;
+                let count = n;
                 debug!(
                     "ui_items: split lua {}/{}→{}/{} × {count} (wire {src_bag}/{src_slot}→{dst_bag}/{dst_slot})",
                     mv.src_bag, mv.src_slot, mv.dst_bag, mv.dst_slot

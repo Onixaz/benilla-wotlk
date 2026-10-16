@@ -107,7 +107,7 @@ impl WorldWriter {
         src_slot: u8,
         dst_bag: u8,
         dst_slot: u8,
-        count: u8,
+        count: u32,
     ) -> Result<()> {
         self.send(
             opcode::CMSG_SPLIT_ITEM,

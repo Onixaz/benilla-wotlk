@@ -580,16 +580,18 @@ pub fn swap_item(dst_bag: u8, dst_slot: u8, src_bag: u8, src_slot: u8) -> Vec<u8
     vec![dst_bag, dst_slot, src_bag, src_slot]
 }
 
-/// Body of `CMSG_SWAP_INV_ITEM` (opcode 269, `Server/Packets/Item.cpp:38-42`): source then
-/// destination slot in the player's own array; an empty destination makes it a move.
+/// Body of `CMSG_SWAP_INV_ITEM` (opcode 269): destination then source slot in the player's own
+/// array, as 12340 writes them (`0x6dfb74`); an empty destination makes it a move.
 pub fn swap_inv_item(src_slot: u8, dst_slot: u8) -> Vec<u8> {
-    vec![src_slot, dst_slot]
+    vec![dst_slot, src_slot]
 }
 
-/// Body of `CMSG_SPLIT_ITEM` (opcode 270, `Server/Packets/Item.cpp:44-51`): source bag and slot,
-/// destination bag and slot, count.
-pub fn split_item(src_bag: u8, src_slot: u8, dst_bag: u8, dst_slot: u8, count: u8) -> Vec<u8> {
-    vec![src_bag, src_slot, dst_bag, dst_slot, count]
+/// Body of `CMSG_SPLIT_ITEM` (opcode 270): source bag and slot, destination bag and slot, then a
+/// u32 count (`0x6dba7f`).
+pub fn split_item(src_bag: u8, src_slot: u8, dst_bag: u8, dst_slot: u8, count: u32) -> Vec<u8> {
+    let mut body = vec![src_bag, src_slot, dst_bag, dst_slot];
+    body.extend_from_slice(&count.to_le_bytes());
+    body
 }
 
 /// Body of `CMSG_DESTROYITEM` (opcode 273, `Packets/Item.cpp:59-68`): bag, slot, count (0 for the
@@ -717,8 +719,8 @@ mod tests {
 
     #[test]
     fn swap_inv_item_body() {
-        // 269: srcslot, dstslot (Item.cpp:38-42); backpack slots 1 and 2 are 23 and 24.
-        assert_eq!(swap_inv_item(23, 24), vec![23, 24]);
+        // 269: dstslot, srcslot; backpack slot 1 (23) moved to slot 2 (24).
+        assert_eq!(swap_inv_item(23, 24), vec![24, 23]);
     }
 
     #[test]
@@ -729,8 +731,11 @@ mod tests {
 
     #[test]
     fn split_item_body() {
-        // 270: srcbag, srcslot, dstbag, dstslot, count (Item.cpp:44-51).
-        assert_eq!(split_item(255, 23, 255, 24, 5), vec![255, 23, 255, 24, 5]);
+        // 270: srcbag, srcslot, dstbag, dstslot, u32 count.
+        assert_eq!(
+            split_item(255, 23, 255, 24, 5),
+            vec![255, 23, 255, 24, 5, 0, 0, 0]
+        );
     }
 
     #[test]

@@ -1072,7 +1072,7 @@ pub(crate) enum ClientCommand {
         src_slot: u8,
         dst_bag: u8,
         dst_slot: u8,
-        count: u8,
+        count: u32,
     },
     /// `CMSG_DESTROYITEM`; `count` 0 is the whole stack.
     DestroyItem {
