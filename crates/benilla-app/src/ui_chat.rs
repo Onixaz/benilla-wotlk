@@ -213,6 +213,8 @@ pub(crate) fn end_chat_session(
     log: &mut ChatLog,
 ) {
     *log = ChatLog::default();
+    // The glue VM that replaced the game's at logout has no chat windows.
+    let script = script.filter(|s| s.vm_kind() == benilla_ui::script::VmKind::InGame);
     if let Some(script) = script {
         for frame in ["ChatFrame1", "ChatFrame2"] {
             crate::ui_script::run_or_warn(script, &format!("{frame}:Clear()"));

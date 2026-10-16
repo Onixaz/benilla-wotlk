@@ -291,10 +291,7 @@ impl super::UiScript {
 }
 
 pub(super) fn queue(lua: &Lua, request: GlueRequest) {
-    crate::script::model_mut_of(lua)
-        .glue
-        .requests
-        .push(request);
+    crate::script::model_mut_of(lua).glue.requests.push(request);
 }
 
 /// The text of a string global, as [`super::UiScript::global_text`] reads it.
@@ -357,7 +354,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSavedAccountName",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<crate::script::ModelCell>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             lua.create_string(&model.glue.saved_account)
         })?,
     )?;
@@ -367,9 +366,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetSavedAccountName",
         lua.create_function(|lua, name: Value| {
             let name = string_arg(lua, name, "Usage: SetSavedAccountName(\"accountName\")")?;
-            crate::script::model_mut_of(lua)
-                .glue
-                .saved_account = name.clone();
+            crate::script::model_mut_of(lua).glue.saved_account = name.clone();
             queue(lua, GlueRequest::SetSavedAccountName(name));
             Ok(())
         })?,
@@ -411,23 +408,25 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             show,
             lua.create_function(move |lua, _: MultiValue| {
-                let model = lua.app_data_ref::<crate::script::ModelCell>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 Ok(flag(model.glue.notices[i].show_notice))
             })?,
         )?;
         g.set(
             accepted,
             lua.create_function(move |lua, _: MultiValue| {
-                let model = lua.app_data_ref::<crate::script::ModelCell>().expect("model app_data");
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 Ok(flag(model.glue.notices[i].accepted))
             })?,
         )?;
         g.set(
             accept,
             lua.create_function(move |lua, _: MultiValue| {
-                crate::script::model_mut_of(lua)
-                    .glue
-                    .notices[i] = NoticeState {
+                crate::script::model_mut_of(lua).glue.notices[i] = NoticeState {
                     accepted: true,
                     show_notice: false,
                 };
@@ -473,9 +472,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 }
                 name.truncate(end);
             }
-            crate::script::model_mut_of(lua)
-                .glue
-                .screen = name;
+            crate::script::model_mut_of(lua).glue.screen = name;
             Ok(())
         })?,
     )?;
@@ -485,7 +482,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetServerName",
         lua.create_function(|lua, _: MultiValue| {
-            let model = lua.app_data_ref::<crate::script::ModelCell>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             let server = &model.glue.server;
             Ok(MultiValue::from_vec(vec![
                 Value::String(lua.create_string(&server.name)?),
@@ -498,7 +497,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsConnectedToServer",
         lua.create_function(|lua, _: MultiValue| {
-            let model = lua.app_data_ref::<crate::script::ModelCell>().expect("model app_data");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
             Ok(flag(model.glue.connected))
         })?,
     )?;

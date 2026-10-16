@@ -354,6 +354,7 @@ fn apply_roster_policy(
     cvars: Res<crate::cvars::Cvars>,
     // Present only when a rig drives the run and picks its own character.
     rig: Option<Res<crate::run_mode::RigCharacter>>,
+    stock: Option<Res<crate::net::RosterPolicy>>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if !roster.env_read {
@@ -417,6 +418,14 @@ fn apply_roster_policy(
                 }
                 None => warn!("char select: WOW_CHARSELECT_PICK={name} not on this account"),
             }
+        }
+        // With the stock glue screens up, the pick is theirs, made on their own screen
+        // ([`crate::ui_script::glue_mgr`]).
+        if stock
+            .as_deref()
+            .is_some_and(|p| p.0.load(std::sync::atomic::Ordering::SeqCst))
+        {
+            roster.env_char = None;
         }
         if let Some(guid) = roster.pending_pick {
             // A reconnect, or a pick that raced a dying socket: re-answer without the screen.

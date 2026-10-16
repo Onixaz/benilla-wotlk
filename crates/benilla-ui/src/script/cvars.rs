@@ -434,7 +434,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-
     install_cvar_verbs(lua)?;
     // ── RestoreVideoDefaults ─────────────────────────────────────────────────────────────────
     // The Defaults button's whole effect: `OptionsFrame_SetDefaults` only sets the widgets, which

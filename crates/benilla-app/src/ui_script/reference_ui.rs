@@ -115,10 +115,10 @@ pub(super) fn read(req: &str) -> Option<Vec<u8>> {
     }
 }
 
-/// A bare file name off the install's own folders, read-only: Storm's open tries the install
-/// directory (its base path `0xc52418`) and its `Data\` before the archives, which is where the
-/// login screen's agreements (`<SimpleHTML file="eula.html">`) are found, loose in `Data\`. The
-/// lookup ignores case, as the reference's file system does, so `credits.html` finds
+/// A bare file name off the install's own folders, read-only: the install directory, `Data\` and
+/// the locale's `Data\<locale>\`, before the archives; the login screen's agreements
+/// (`<SimpleHTML file="eula.html">`) are found loose in the locale's folder. The lookup ignores
+/// case, as the reference's file system does, so `credits.html` finds
 /// `Data/Credits.html` on a case-sensitive one. Only a bare name looks on disk; every chain path
 /// keeps reading the archives alone.
 fn read_loose(req: &str) -> Option<Vec<u8>> {
@@ -130,8 +130,16 @@ fn read_loose(req: &str) -> Option<Vec<u8>> {
         benilla_formats::wow_data()
             .map(|data| {
                 let install = data.parent().map(std::path::Path::to_path_buf);
-                let dirs: Vec<std::path::PathBuf> =
-                    install.into_iter().chain(std::iter::once(data)).collect();
+                // `Data\` and its locale alternate, `Data\<locale>\` (`SFile::SetDataPathAlternate`
+                // `0x421b50`), where the login screen's agreements are.
+                let locale = benilla_formats::data_locale(&data)
+                    .ok()
+                    .map(|l| data.join(l));
+                let dirs: Vec<std::path::PathBuf> = install
+                    .into_iter()
+                    .chain(std::iter::once(data))
+                    .chain(locale)
+                    .collect();
                 loose_index(&dirs)
             })
             .unwrap_or_default()

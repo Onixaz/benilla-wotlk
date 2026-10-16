@@ -331,7 +331,12 @@ fn a_rejoined_session_goes_on_on_the_same_connection() {
         let mut crypto = WotlkHeaderCrypto::server(&SESSION_KEY);
         let mut ok = vec![messages::AUTH_OK];
         ok.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 2]);
-        send(&mut stream, Some(&mut crypto), opcode::SMSG_AUTH_RESPONSE, &ok);
+        send(
+            &mut stream,
+            Some(&mut crypto),
+            opcode::SMSG_AUTH_RESPONSE,
+            &ok,
+        );
         // One record: state 2, no key, no URL.
         send(
             &mut stream,

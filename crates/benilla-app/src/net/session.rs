@@ -752,7 +752,6 @@ fn packet_dropped(opcode: u16, unparseable: bool, dropped: &mut DroppedOpcodes) 
     }
 }
 
-
 #[cfg(test)]
 mod teardown_tests {
     use super::*;

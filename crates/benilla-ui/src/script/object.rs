@@ -85,7 +85,11 @@ pub(crate) fn frame_wrapper(lua: &Lua, id: u32) -> mlua::Result<Table> {
             .get(&id)
             .and_then(|h| model.arena.frame(*h));
         let ffx = frame.is_some_and(|f| matches!(&f.kind_state, KindState::Model(m) if m.ffx));
-        (frame.map(|f| f.kind), frame.and_then(|f| f.name.clone()), ffx)
+        (
+            frame.map(|f| f.kind),
+            frame.and_then(|f| f.name.clone()),
+            ffx,
+        )
     };
     let meta = if ffx {
         frame_meta_chain(

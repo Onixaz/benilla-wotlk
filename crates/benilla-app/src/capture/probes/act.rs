@@ -470,6 +470,7 @@ fn fire_probe_glue_lua(
                 return;
             }
             probe.ran_at = Some(now);
+            install_probe_log(&script);
             info!("probe-glue-lua: running the chunk at {now:.1}s");
             if let Err(e) = script.run(&probe.chunk) {
                 error!("{}", glue_chunk_failure(&e));

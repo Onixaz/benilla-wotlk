@@ -11,7 +11,6 @@
 
 use mlua::Lua;
 
-
 /// Which of the reference's two FrameScript states a VM is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VmKind {
@@ -108,21 +107,27 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetScreenWidth",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<crate::script::ModelCell>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(model.screen.width())
         })?,
     )?;
     g.set(
         "GetScreenHeight",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<crate::script::ModelCell>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(model.screen.height())
         })?,
     )?;
     g.set(
         "GetCursorPosition",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<crate::script::ModelCell>().expect("model");
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
             Ok(model.cursor_pos)
         })?,
     )?;

@@ -242,7 +242,13 @@ impl CharCreateCatalog {
 /// reads typed as strings, every other column a `u32`.
 pub(crate) fn chr_races_schema(l: &crate::dbc_layout::ChrRaces) -> Schema {
     let facial = l.facial_hair_customization;
-    let strings = [l.client_file, l.name, facial, facial + 1, l.hair_customization];
+    let strings = [
+        l.client_file,
+        l.name,
+        facial,
+        facial + 1,
+        l.hair_customization,
+    ];
     let mut schema = Schema::new("ChrRaces");
     for i in 0..l.fields {
         let ty = if strings.contains(&i) {

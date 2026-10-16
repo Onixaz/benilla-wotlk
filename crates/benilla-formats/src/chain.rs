@@ -176,6 +176,27 @@ fn list(dir: &Path, want_files: bool) -> Result<Vec<String>> {
     Ok(names)
 }
 
+/// The locale folder of a `Data` directory ([`locale_of`]): the subfolder `Chain::open` mounts the
+/// locale archives from, which is also the loose-file alternate (`Data\<locale>\`).
+pub fn data_locale(path: &Path) -> Result<String> {
+    let (files, dirs) = data_listing(path)?;
+    locale_of(&LAYOUT, &files, &dirs)
+}
+
+/// A `Data` directory's files, its subfolders' as `dir/file`, and its subfolders.
+fn data_listing(path: &Path) -> Result<(Vec<String>, Vec<String>)> {
+    let mut files = list(path, true)?;
+    let dirs = list(path, false)?;
+    for dir in &dirs {
+        files.extend(
+            list(&path.join(dir), true)?
+                .into_iter()
+                .map(|f| format!("{dir}/{f}")),
+        );
+    }
+    Ok((files, dirs))
+}
+
 impl Chain {
     /// Open a `Data` directory's archives in the client's [`mount_order`], or a single `.MPQ` file.
     ///
@@ -188,15 +209,7 @@ impl Chain {
             let layout = &LAYOUT;
             let wrong_install =
                 || format!("{} is not a 3.3.5a (12340) Data folder", path.display());
-            let mut files = list(path, true)?;
-            let dirs = list(path, false)?;
-            for dir in &dirs {
-                files.extend(
-                    list(&path.join(dir), true)?
-                        .into_iter()
-                        .map(|f| format!("{dir}/{f}")),
-                );
-            }
+            let (files, dirs) = data_listing(path)?;
             let locale = locale_of(layout, &files, &dirs).with_context(wrong_install)?;
             let order = mount_order(layout, &files, &locale).with_context(wrong_install)?;
             for name in order {

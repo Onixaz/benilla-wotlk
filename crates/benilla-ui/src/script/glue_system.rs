@@ -224,7 +224,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, _: MultiValue| Ok(1.0))?,
     )?;
     for name in ["IsMacClient", "IsLinuxClient"] {
-        g.set(name, lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?)?;
+        g.set(
+            name,
+            lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
+        )?;
     }
     g.set(
         "GetClientExpansionLevel",
@@ -377,8 +380,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ScanDLLStart",
         lua.create_function(|lua, args: MultiValue| {
-            if string_ish(lua, args.front()).is_none() || string_ish(lua, args.get(1)).is_none()
-            {
+            if string_ish(lua, args.front()).is_none() || string_ish(lua, args.get(1)).is_none() {
                 return Err(mlua::Error::runtime(
                     "Usage: ScanDLLStart(\"VersionURL\", \"DLLURL\")",
                 ));
@@ -445,9 +447,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let n = lua.coerce_number(v).ok().flatten();
             match n {
                 None => Err(mlua::Error::runtime("Usage: MatrixEntered(number)")),
-                Some(n) if n > 9.0 => Err(mlua::Error::runtime(
-                    "MatrixEntered: number must be 0 to 9",
-                )),
+                Some(n) if n > 9.0 => {
+                    Err(mlua::Error::runtime("MatrixEntered: number must be 0 to 9"))
+                }
                 Some(_) => Ok(()),
             }
         })?,

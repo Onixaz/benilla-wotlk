@@ -311,8 +311,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             // A pane of this kind, or the error.
             with_model(lua, &this, |_| ())?;
             let h = frame_handle_of(lua, &this)?;
-            crate::script::model_mut_of(lua)
-                .set_pane_model(h, path);
+            crate::script::model_mut_of(lua).set_pane_model(h, path);
             Ok(())
         })?,
     )?;
@@ -382,8 +381,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let c = int(&c);
             with_model(lua, &this, |_| ())?;
             let h = frame_handle_of(lua, &this)?;
-            crate::script::model_mut_of(lua)
-                .set_pane_camera(h, c);
+            crate::script::model_mut_of(lua).set_pane_camera(h, c);
             Ok(())
         })?,
     )?;
@@ -728,7 +726,11 @@ pub(super) fn install_ffx(lua: &Lua) -> mlua::Result<()> {
             with_model(lua, &this, |m| m.ffx_lights = Default::default())
         })?,
     )?;
-    for (name, set) in [("AddLight", 0usize), ("AddCharacterLight", 1), ("AddPetLight", 2)] {
+    for (name, set) in [
+        ("AddLight", 0usize),
+        ("AddCharacterLight", 1),
+        ("AddPetLight", 2),
+    ] {
         m.set(
             name,
             lua.create_function(move |lua, args: MultiValue| {

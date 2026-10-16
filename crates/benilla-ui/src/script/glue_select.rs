@@ -361,7 +361,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetSelectBackgroundModel",
         lua.create_function(|lua, index: Value| {
             let Some(n) = lua.coerce_number(index)? else {
-                return Err(mlua::Error::runtime("Usage: GetSelectBackgroundModel(index)"));
+                return Err(mlua::Error::runtime(
+                    "Usage: GetSelectBackgroundModel(index)",
+                ));
             };
             let m = model(lua);
             let roster = &m.glue.roster;
@@ -622,10 +624,19 @@ mod tests {
         let s = vm(roster);
         assert_eq!(s.eval::<f64>("return GetNumCharacters()").unwrap(), 3.0);
         assert_eq!(
-            s.eval::<(String, String, String, f64, String, f64, bool, bool, bool, bool)>(
-                "return GetCharacterInfo(1)"
-            )
-            .unwrap(),
+            s.eval::<(
+                String,
+                String,
+                String,
+                f64,
+                String,
+                f64,
+                bool,
+                bool,
+                bool,
+                bool
+            )>("return GetCharacterInfo(1)")
+                .unwrap(),
             (
                 "Alpha".into(),
                 "Night Elf".into(),
@@ -662,10 +673,15 @@ mod tests {
             "GetCharacterInfo(-7)",
         ] {
             assert_eq!(
-                s.eval::<(Option<String>, Option<String>, Option<String>, f64, f64, Option<f64>)>(
-                    &format!("return {call}")
-                )
-                .unwrap(),
+                s.eval::<(
+                    Option<String>,
+                    Option<String>,
+                    Option<String>,
+                    f64,
+                    f64,
+                    Option<f64>
+                )>(&format!("return {call}"))
+                    .unwrap(),
                 (None, None, None, 0.0, 0.0, None),
                 "{call}"
             );

@@ -231,7 +231,7 @@ fn serve_realmd(
             records.extend_from_slice(&[r.realm_type, 0, r.flags]);
             records.extend_from_slice(format!("{}\0{}\0", r.name, r.address).as_bytes());
             records.extend_from_slice(&1f32.to_le_bytes()); // population
-            // characters, category, id
+                                                            // characters, category, id
             records.extend_from_slice(&[r.characters, r.category, i as u8 + 1]);
         }
         let mut list = vec![0x10];

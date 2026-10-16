@@ -1873,7 +1873,6 @@ pub(super) fn writer_loop(
     }
 }
 
-
 #[cfg(test)]
 mod cycle_tests;
 

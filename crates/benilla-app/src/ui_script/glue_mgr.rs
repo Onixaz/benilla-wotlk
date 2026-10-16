@@ -494,6 +494,16 @@ pub(crate) struct GlueMgr {
     alert_ready: Option<String>,
     /// The index `EnterWorld` writes to `lastCharacterIndex`, for the host's CVar registry.
     last_character: Option<i32>,
+    /// The scripted run's character (`WOW_CHAR` or its `.probe-identity` entry), picked once on
+    /// the stock screen as a player would: its row selected, then the screen's Enter World.
+    scripted_pick: Option<String>,
+    /// [`Self::scripted_pick`] waits for the stock roster to have loaded.
+    roster_loaded: bool,
+    /// The scripted pick was read, on the first glue VM: it answers the first roster only.
+    scripted_read: bool,
+    /// The glue VM that holds the select screen's fallback stage; the race catalog can land after
+    /// the VM is seated.
+    staged_vm: Option<u64>,
 }
 
 impl GlueMgr {
@@ -532,11 +542,6 @@ impl GlueMgr {
             self.status_dialog_click(asks);
             self.outbox.push(Outgoing::ServerAlert(text));
         }
-    }
-
-    /// The agreements as read at the startup (`0x46a400`).
-    pub(super) fn set_notices(&mut self, notices: [NoticeState; 5]) {
-        self.notices = Some(notices);
     }
 
     fn notice(&self, notice: GlueNotice) -> NoticeState {
@@ -630,6 +635,46 @@ impl GlueMgr {
         }
     }
 
+    /// Take `s` as the glue VM: state 0, the login cells cleared, and the slots that outlive a glue
+    /// state seeded into it (the saved account, the realm and select cells, the select screen's
+    /// fallback stage). The scripted pick is read with the first VM.
+    fn seat(&mut self, s: &mut UiScript, create: Option<&benilla_formats::CharCreateCatalog>) {
+        self.vm = Some(s.session());
+        self.state = ScreenState::Idle;
+        self.cells = LoginCells::default();
+        self.auth_final = false;
+        s.set_glue_saved_account(&crate::login::load_saved_account());
+        s.set_glue_realm_cells(self.realm_cells);
+        s.set_glue_select_cells(self.select_cells);
+        if !self.scripted_read {
+            self.scripted_read = true;
+            self.scripted_pick =
+                crate::run_mode::fast_path_character().filter(|name| !name.is_empty());
+        }
+        self.stage(s, create);
+        self.holder_moved = true;
+    }
+
+    /// `GetSelectBackgroundModel`'s stage off the roster, race 2's file string, once per VM.
+    fn stage(&mut self, s: &mut UiScript, create: Option<&benilla_formats::CharCreateCatalog>) {
+        if self.staged_vm == Some(s.session()) {
+            return;
+        }
+        if let Some(orc) = create.and_then(|c| c.race_file(2)) {
+            s.set_glue_default_background(orc);
+            self.staged_vm = Some(s.session());
+        }
+    }
+
+    /// The glue VM's AddOn registry over the realm's characters.
+    fn register_addons(&self, s: &mut UiScript, reply: Option<&[String]>) {
+        let realm = s
+            .cvar(crate::realm_select::CVAR_REALM_NAME)
+            .unwrap_or_default();
+        let roster: Vec<String> = self.roster.iter().map(|c| c.name.clone()).collect();
+        super::addons::register_for_glue(s, &realm, &roster, reply);
+    }
+
     /// `CGlueMgr::EnterWorld` (`0x4d9bd0`) for the record at the VM's selection: nothing with no
     /// realm selected, no record there or no world link; a record locked for a transfer (flag
     /// `0x4`) or by billing (`0x1000000`) opens `OKAY` with its text, one flagged for a rename
@@ -640,10 +685,7 @@ impl GlueMgr {
         if self.selected.is_none() || !self.connected {
             return EnterWorld::Nothing;
         }
-        let Some(character) = usize::try_from(index)
-            .ok()
-            .and_then(|i| self.roster.get(i))
-        else {
+        let Some(character) = usize::try_from(index).ok().and_then(|i| self.roster.get(i)) else {
             return EnterWorld::Nothing;
         };
         let (guid, flags) = (character.guid, character.flags);
@@ -1188,6 +1230,36 @@ pub(crate) struct GlueAsks<'w> {
     roster: Option<ResMut<'w, crate::char_select::Roster>>,
 }
 
+/// The scripted run's pick on the stock screen, once its roster has loaded: the named row's
+/// `CharacterSelect_SelectCharacter` and the screen's own `CharacterSelect_EnterWorld`, the calls
+/// a click on the row and on Enter World make. A name off the roster leaves the screen up.
+fn scripted_pick(mgr: &mut GlueMgr, script: &mut UiScript) {
+    let Some(name) = mgr.scripted_pick.clone() else {
+        return;
+    };
+    let Some(row) = mgr
+        .roster
+        .iter()
+        .position(|c| c.name.eq_ignore_ascii_case(&name))
+    else {
+        warn!("glue: WOW_CHAR={name} not on this account — showing the roster");
+        mgr.scripted_pick = None;
+        return;
+    };
+    mgr.scripted_pick = None;
+    info!(
+        "glue: WOW_CHAR={name} — picking row {} on the stock screen",
+        row + 1
+    );
+    let chunk = format!(
+        "CharacterSelect_SelectCharacter({}) CharacterSelect_EnterWorld()",
+        row + 1
+    );
+    if let Err(e) = script.run(&chunk) {
+        warn!("glue: the scripted pick raised: {e}");
+    }
+}
+
 /// What `EnterWorld` did ([`GlueMgr::enter_world`]).
 enum EnterWorld {
     /// A guard returned, or a flag arm opened its dialog.
@@ -1250,38 +1322,25 @@ pub(crate) fn drive_glue_mgr(
         }
     }
 
-    // A new glue VM is the glue build (`0x46a7b0`): state 0, its slots seeded, and the realm
-    // list's C globals carried over, which outlive the Lua state.
+    // A new glue VM is the glue build: state 0, its slots seeded, and the realm list's C globals
+    // carried over, which outlive the Lua state. A VM the lifecycle seated before its first screen
+    // ([`seat_glue_vm`]) is already the manager's.
     let mut fresh_vm = false;
     if let Some(s) = script.as_deref_mut() {
         if mgr.vm != Some(s.session()) {
-            mgr.vm = Some(s.session());
-            mgr.state = ScreenState::Idle;
-            mgr.cells = LoginCells::default();
-            mgr.auth_final = false;
-            s.set_glue_saved_account(&crate::login::load_saved_account());
-            s.set_glue_realm_cells(mgr.realm_cells);
-            s.set_glue_select_cells(mgr.select_cells);
-            // `GetSelectBackgroundModel`'s stage off the roster, race 2's file string.
-            if let Some(orc) = create.as_deref().and_then(|c| c.0.race_file(2)) {
-                s.set_glue_default_background(orc);
-            }
-            mgr.holder_moved = true;
+            mgr.seat(s, create.as_deref().map(|c| &c.0));
             fresh_vm = true;
         }
+        mgr.stage(s, create.as_deref().map(|c| &c.0));
     } else if in_world {
         // In the world the glue is torn down, and the entry's second phase leaves state 0
         // (`0x46c252`).
         mgr.state = ScreenState::Idle;
     }
-    // The AddOn registry, on a new VM and as the server's reply lands.
+    // The AddOn registry as the server's reply lands; a new VM had it at its seat.
     if let (Some(s), Some(reply)) = (script.as_deref_mut(), addon_reply.as_ref()) {
         if fresh_vm || reply.is_changed() {
-            let realm = s
-                .cvar(crate::realm_select::CVAR_REALM_NAME)
-                .unwrap_or_default();
-            let roster: Vec<String> = mgr.roster.iter().map(|c| c.name.clone()).collect();
-            super::addons::register_for_glue(s, &realm, &roster, reply.0.as_deref());
+            mgr.register_addons(s, reply.0.as_deref());
         }
     }
     if let (Some(s), Some(r)) = (script.as_deref_mut(), realms.as_ref()) {
@@ -1456,6 +1515,9 @@ pub(crate) fn drive_glue_mgr(
         creatures: creatures.as_deref(),
     };
     flush(&mut mgr, &mut script, now_ms, &names);
+    if std::mem::take(&mut mgr.roster_loaded) {
+        scripted_pick(&mut mgr, &mut script);
+    }
     mgr.select_cells = script.glue_select_cells();
     // What the outbox asked in turn (the roster load's realm list).
     send_asks(&mut mgr, Vec::new(), &mut asks);
@@ -1667,8 +1729,36 @@ fn flush_one(
                 mgr.request_realm_list(true);
             }
             mgr.realm_cells = script.glue_realm_cells();
+            mgr.roster_loaded = true;
         }
     }
+}
+
+/// Seat a new glue VM before its first `SET_GLUE_SCREEN`: the manager takes it ([`GlueMgr::seat`])
+/// and seeds the realm setup, the AddOn registry and the per-frame slots (the connection, the
+/// server), so the screen's `OnShow` reads them as the reference's glue build leaves them
+/// (`CGlueMgr::Resume` `0x4da5f0` before the screen is set).
+pub(super) fn seat_glue_vm(world: &mut World, script: &mut UiScript) {
+    let Some(mut mgr) = world.remove_resource::<GlueMgr>() else {
+        return;
+    };
+    let create = world.get_resource::<crate::entities::CharCreate>();
+    mgr.seat(script, create.map(|c| &c.0));
+    if let Some(r) = world.get_resource::<crate::realm_select::Realms>() {
+        let (categories, types) = r.glue_setup();
+        script.set_glue_realm_setup(categories, types);
+    }
+    let reply = world
+        .get_resource::<crate::net::AddonInfoReply>()
+        .and_then(|r| r.0.clone());
+    mgr.register_addons(script, reply.as_deref());
+    seed(
+        &mut mgr,
+        script,
+        world.get_resource::<crate::realm_select::Realms>(),
+        world.get_resource::<crate::realmlist::Realmlist>(),
+    );
+    world.insert_resource(mgr);
 }
 
 #[cfg(test)]

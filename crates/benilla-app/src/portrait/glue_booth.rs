@@ -194,15 +194,6 @@ impl GlueScene {
         }
     }
 
-    /// A character's stage: a Death Knight's is the class's, any other the race's.
-    pub(crate) fn of_character(race: u8, class: u8) -> Self {
-        if class == 6 {
-            GlueScene::DeathKnight
-        } else {
-            Self::of_race(race)
-        }
-    }
-
     /// The scene a model path names, by its file stem (`UI_<token>`, any case, any extension);
     /// `None` for a file that is none of the shipped scenes.
     pub(crate) fn from_model_path(path: &str) -> Option<Self> {
