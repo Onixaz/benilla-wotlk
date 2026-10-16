@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# The in-loop verify, with the client data: fmt, clippy and test on the whole workspace, the player
-# tests, and the engine boot against the install.
+# The in-loop verify, and the gate for our own pull requests: fmt, clippy, the doc-link and
+# render-pass lints, then the workspace tests, the player tests and the engine boot, each against
+# the install and again without it. Every gate of scripts/gates.sh runs here; gates.sh is the lean
+# chain without the data, for a pull request from an external contributor.
 #
 # The change set is the fork point against main plus staged, unstaged and untracked files: none
 # verifies nothing, and docs/ and *.md alone run fmt only. CHECK_SCOPED=1 narrows a round to the
@@ -10,7 +12,8 @@
 # workspace even with no changes.
 # Where the install (WOW_DATA, or the resolver's own ladder) and the addon corpus
 # (BENILLA_ADDON_CORPUS, or the `wow-addons-vanilla` link) both resolve, BENILLA_REQUIRE_DATA=1
-# turns a data-gated skip into a failure. The land gates, scripts/gates.sh, read no data at all.
+# turns a data-gated skip into a failure. The no-install rungs run only where some data was found:
+# elsewhere the first run already had none.
 #
 #   scripts/check.sh
 set -uo pipefail
@@ -136,6 +139,16 @@ report_skips() { # $1 = rung name
 run fmt cargo fmt --all -- --check
 run clippy cargo clippy $pflags --all-targets -- -D warnings
 
+# The lints scan the whole workspace whatever the scope: a dead doc link can sit in any crate.
+if [ -z "$python" ]; then
+    echo "CHECK FAILED: doc-links (no Python 3: tried python3, py -3, python)"
+    exit 1
+fi
+# doc-links: a doc link to a `crate::`, `super::`, `self::` or `Self::` path declared nowhere.
+run doc-links $python scripts/doc-links.py
+# pass-span-lint: a second `pass_span` on a render pass whose span is still open.
+run pass-span-lint $python scripts/pass-span-lint.py
+
 # ── The data ─────────────────────────────────────────────────────────────────────────────────────
 # The client's own resolver names the install, built beside `benilla` to reuse its dependencies;
 # the corpus is the override, else the checkout's link.
@@ -157,6 +170,15 @@ fi
 run test env ${require_data:+BENILLA_REQUIRE_DATA=1} BENILLA_SKIP_LOG="$skips" cargo test $pflags
 report_skips test
 
+# The no-install rungs, as gates.sh runs them: `WOW_DATA=` is the resolver's "no install" even where
+# a `WoW` link is, so a test that reads the install without `wow_data_or_skip!` fails here.
+had_data=""
+if [ -n "$wow_data" ] || [ -n "$corpus" ]; then had_data=1; fi
+no_data() { env -u BENILLA_REQUIRE_DATA -u BENILLA_SKIP_LOG WOW_DATA= BENILLA_ADDON_CORPUS= "$@"; }
+if [ -n "$had_data" ]; then
+    run test-no-install no_data cargo test $pflags
+fi
+
 # player-tests: `benilla-app` without `dev` with the data, for the shipped-UI tests that read
 # FrameXML off the install. Without `dev` only $BENILLA_ADDON_CORPUS finds the corpus.
 if in_scope benilla-app || in_scope benilla-formats; then
@@ -164,22 +186,28 @@ if in_scope benilla-app || in_scope benilla-formats; then
         ${require_data:+BENILLA_REQUIRE_DATA=1} BENILLA_SKIP_LOG="$skips" \
         cargo test -p benilla-formats -p benilla-app --no-default-features --lib
     report_skips player-tests
+    if [ -n "$had_data" ]; then
+        run player-tests-no-install no_data \
+            cargo test -p benilla-formats -p benilla-app --no-default-features --lib
+    fi
 fi
 
-# enforcer: `benilla-worldview` boots the engine plugins against the install with no server,
-# login, UI or player, in a small window, and refuses any system whose parameters need a gameplay
-# resource. The land gates boot it with no data only.
+# enforcer: `benilla-worldview` boots the engine plugins with no server, login, UI or player, in a
+# small window, and refuses any system whose parameters need a gameplay resource: against the
+# install, then with no client data at all, as gates.sh boots it.
 if in_scope benilla-worldview; then
+    # Beside `benilla`, so it reuses the play build's dependencies (gates.sh says why).
+    run enforcer-build cargo build -p benilla -p benilla-worldview
     if [ -n "$wow_data" ]; then
-        # Beside `benilla`, so it reuses the play build's dependencies (gates.sh says why).
-        run enforcer-build cargo build -p benilla -p benilla-worldview
         run enforcer env WOW_DATA="$wow_data" WOW_WORLDVIEW_CHECK=10 \
             "${CARGO_TARGET_DIR:-target}/debug/benilla-worldview"
     else
         echo "check SKIPPED: enforcer (no WoW install found;" \
              "\`cargo run -p benilla-formats --example where\` says where it looked)"
     fi
+    run enforcer-no-install no_data WOW_WORLDVIEW_CHECK=5 \
+        "${CARGO_TARGET_DIR:-target}/debug/benilla-worldview"
 fi
 
 echo "CHECK GREEN (scope: $pkgs)"
-echo "  (the land gates, scripts/gates.sh, run the whole workspace without the data before a pull request)"
+echo "  (it covers every gate of scripts/gates.sh, the chain an external contributor's pull request runs)"

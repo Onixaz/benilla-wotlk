@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# The land gate chain: every gate in order, stopping at the first failure.
+# The gate for a pull request from an external contributor: every gate in order, stopping at the
+# first failure.
 #
 # fmt, clippy, test, doc-links, pass-span-lint, player-tests, enforcer-build, enforcer-no-install.
 # The chain is synthetic: it reads no WoW install and no addon corpus (`WOW_DATA=` and
 # `BENILLA_ADDON_CORPUS=`, set and empty), so it runs the same on a fresh clone, a CI runner and a
 # machine with the data.
-# The tests that read the data are `scripts/check.sh`'s, per round. Everything builds in `dev`, the
-# play build, so the chain reuses the artifacts a `cargo play` or a probe build left.
+# `scripts/check.sh` runs all of it and the tests that read the data, so our own pull requests run
+# that instead. Everything builds in `dev`, the play build, so the chain reuses the artifacts a
+# `cargo play` or a probe build left.
 # A failure prints the gate's log tail and exits nonzero; a green run stamps the tree, which then
 # re-greens without running. GATES_FORCE=1 runs the chain anyway; TMPDIR holds the scratch files.
 # `.github/workflows/ci.yml` runs this script on a fork's pull request.

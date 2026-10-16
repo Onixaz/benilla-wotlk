@@ -54,9 +54,10 @@ pins the benilla revision it builds on. What a crate cannot reach stays a fork's
 
 1. `scripts/gates.sh` is green: fmt, clippy with warnings denied, the workspace tests, the
    doc-link and render-pass lints, the player build with its own tests, and the engine boot. It
-   reads no client data, so a test that reads the install has to declare it, and a pull request
-   from a fork runs the same script in CI, on Linux. The tests that read the client data are
-   `scripts/check.sh`'s, run where the data is.
+   is the gate for a pull request from an external contributor, and CI runs the same script on
+   one, on Linux. It reads no client data, so a test that reads the install has to declare it.
+   `scripts/check.sh` runs all of it plus the tests that read the client data, where the data
+   is; the maintainers' own pull requests run that instead.
 2. The reference fact is stated: what 3.3.5a does, and where that is known from (the client's
    behaviour you observed, a DBC field, a FrameXML line, a packet capture). The names and shapes
    under `reference/` are the surface benilla tracks.
@@ -90,8 +91,9 @@ out of scope is closed with the reason.
   (`BENILLA_ADDON_CORPUS=<a folder of addons>`, or a `wow-addons-vanilla` link at the root),
   third-party content that is not in this repo. `scripts/check.sh` runs them and prints how many
   skipped and why. Where the data is, `BENILLA_REQUIRE_DATA=1` turns a skip into a failure, and
-  the check sets it itself when the install and the corpus both resolve. `scripts/gates.sh`
-  runs with neither (`WOW_DATA=`, `BENILLA_ADDON_CORPUS=`).
+  the check sets it itself when the install and the corpus both resolve; it then runs the tests
+  and the boot again with neither, as `scripts/gates.sh` always runs (`WOW_DATA=`,
+  `BENILLA_ADDON_CORPUS=`).
 - **A server to test against.** Any 3.3.5a server; `WOW_HOST` names it (default
   `localhost:3724`). A scripted run has no default account: `WOW_USER`, `WOW_PASS` and
   `WOW_CHAR` name a test account on your server whose login kicks nobody, all three, either in
@@ -146,9 +148,9 @@ out of scope is closed with the reason.
   probe, every test and both scripts below build the same, so nothing compiles twice. Its debug
   assertions make it no place to read frame time. `--release` is the shipped and the measured
   profile, fat LTO over one codegen unit, so it is built for a frame-time number or a release
-  (`cargo ship`), not per round. `scripts/check.sh` verifies a round on the whole workspace
-  with the data; `scripts/gates.sh` is the full chain without it, and it opens a window for the
-  engine boot, so it needs a display. `WOW_STOCK_UI=1` boots a dev build on the stock interface alone,
+  (`cargo ship`), not per round. `scripts/check.sh` verifies a round on the whole workspace,
+  with the data and without it; `scripts/gates.sh` is its chain without the data, the one your
+  pull request needs green. Both open a window for the engine boot, so they need a display. `WOW_STOCK_UI=1` boots a dev build on the stock interface alone,
   without benilla's layer. Work on a branch.
 
 ## Reporting a bug

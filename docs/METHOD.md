@@ -76,19 +76,18 @@ crate of its own or a fork, and benilla opens a piece of itself to such a crate 
   overflow checks on benilla's own crates. Every run, probe, test and gate builds it, so they
   share one set of artifacts. `release` is built, never tested: `cargo ship` (without `dev`) to
   ship, `cargo build --release -p benilla` to measure frame time, which the play build never does.
-- **The land gates**: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets
-  -- -D warnings`, `cargo test --workspace`, the doc-link and render-pass lints, the player
-  build without the `dev` feature with its own tests, and the engine boot with no client data,
-  as `scripts/gates.sh`. The chain is synthetic: it reads no install and no addon corpus
-  (`WOW_DATA=`, `BENILLA_ADDON_CORPUS=`), so a test that reads the install without opening with
-  `wow_data_or_skip!` fails there and not on a clone, and CI runs the same script. It runs on
-  the tree that lands, before its pull request; it is memoized on the tree.
-- **Per round**: `scripts/check.sh`, on the whole workspace with the data: the tests that read
-  the install or the addon corpus, the player tests, and the engine boot against the install.
-  `CHECK_SCOPED=1` narrows it to the changed crates and their dependents. A test that reads data
-  skips where it is absent and the check prints the count; where the data is, a skip is a
-  failure (`BENILLA_REQUIRE_DATA=1`). Run each gate once per round; `tee` the output to a file
-  and grep the file.
+- **The check**: `scripts/check.sh`, per round and before our own pull requests, on the whole
+  workspace: `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, the
+  doc-link and render-pass lints, then `cargo test`, the player build without the `dev` feature
+  with its own tests, and the engine boot, each against the install and the addon corpus and
+  again with neither (`WOW_DATA=`, `BENILLA_ADDON_CORPUS=`), so a test that reads the install
+  without opening with `wow_data_or_skip!` fails here and not on a clone. `CHECK_SCOPED=1`
+  narrows it to the changed crates and their dependents. A test that reads data skips where it
+  is absent and the check prints the count; where the data is, a skip is a failure
+  (`BENILLA_REQUIRE_DATA=1`). Run it once per round; `tee` the output to a file and grep the
+  file.
+- **The land gates**: `scripts/gates.sh`, the check's chain without the data, for a pull request
+  from an external contributor; CI runs it on a fork's pull request. It is memoized on the tree.
 - **A clean run** is the fourth gate: `scripts/smoke.sh`, a live login and logout against the
   local server. For wire work the gate is a live run with a trace (`WOW_MOVE_TRACE=<path>`,
   tags filtered), never a capture: capture mode has no network.
