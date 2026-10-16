@@ -119,8 +119,8 @@ pub(crate) fn model_pane_booth(name: &str) -> Option<&'static str> {
         .map(|(_, slot)| *slot)
 }
 
-/// The systems that write [`GluePreview`], one per glue screen set (the native screens', the
-/// stock glue VM's); the glue booth reads it after them, the same frame.
+/// The systems that write [`GluePreview`], the stock glue VM's feed; the glue booth reads it
+/// after them, the same frame.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct GluePreviewFeed;
 

@@ -248,7 +248,7 @@ pub(crate) struct GluePreview {
     pub(crate) yaw: f32,
     pub(crate) fog: Option<SceneFog>,
     /// The stock screens' pane the scene fills, `[left, right, top, bottom]` as window fractions
-    /// from the top-left ([`super::framing::stock_pane_view`]); `None` frames the native way.
+    /// from the top-left ([`super::framing::stock_pane_view`]); `None` frames pane-less.
     pub(crate) pane: Option<[f32; 4]>,
     /// The stage's instance: a change starts the scene over, as each `SetModel` makes a new
     /// instance (`0x76cce0`), the same file included.
@@ -298,9 +298,9 @@ pub(crate) struct CreateScene {
     /// [`glue_scene_framing`] opens upward on a narrow window. `None` with no scene.
     art: Option<ArtExtent>,
     /// `Some(aspect)` while the window is wider than [`super::framing::GLUE_BOX_ASPECT`] under the
-    /// native screens: the camera renders into a centred viewport of this aspect
+    /// pane-less scene: the camera renders into a centred viewport of this aspect
     /// ([`pillarbox_glue_scene`]); a stock pane is its own viewport. Set from the window, not the
-    /// scene, so the chrome's canvas never moves on a race change.
+    /// scene, so the box never moves on a race change.
     viewport_aspect: Option<f32>,
     /// The character's stage spot, scene attachment 0 in Bevy model space (`ZERO` with no scene);
     /// the body seats on attachment 0 at select too (`0x473039`).
@@ -773,8 +773,8 @@ pub(super) fn sync_glue_scene(
         return;
     };
 
-    // The frame box is set from the window alone, before a token resolves, so the chrome's canvas
-    // ([`crate::glue::GlueCanvas`]) neither moves with the race nor flickers during a swap.
+    // The frame box is set from the window alone, before a token resolves, so it neither moves
+    // with the race nor flickers during a swap.
     if let Ok(w) = window.single() {
         resize_target(
             &mut images,
@@ -1076,7 +1076,7 @@ pub(super) fn sync_glue_scene(
         let fwd = (cam.target - cam.eye).normalize_or_zero();
         let up = Quat::from_axis_angle(fwd, cam.roll) * Vec3::Y;
         // The record fov is diagonal. A stock pane converts it at the pane's own aspect, as the
-        // reference does; the native screens' [`glue_scene_framing`] holds the authored 4:3 view
+        // reference does; the pane-less [`glue_scene_framing`] holds the authored 4:3 view
         // box instead (the Deviation is stated there). Far is kept generous (27.8 authored on Orc).
         let pane = window
             .single()
@@ -1098,7 +1098,7 @@ pub(super) fn sync_glue_scene(
 }
 
 /// The scene camera's vertical opening for its record's diagonal `fov`: at a stock pane's own
-/// aspect by the reference's law (`0x5c3cc0`), else the native screens' [`glue_scene_framing`]
+/// aspect by the reference's law (`0x5c3cc0`), else the pane-less [`glue_scene_framing`]
 /// for the window.
 fn scene_vert_fov(
     fov: f32,
@@ -1113,7 +1113,7 @@ fn scene_vert_fov(
 }
 
 /// Set the glue booth camera's viewport: a stock pane's rect ([`stock_pane_view`]), else the
-/// native pillarbox to [`CreateScene::viewport_aspect`], black either side; writes only on change.
+/// pane-less pillarbox to [`CreateScene::viewport_aspect`], black either side; writes only on change.
 pub(super) fn pillarbox_glue_scene(
     scene: Res<CreateScene>,
     preview: Res<GluePreview>,
@@ -1132,7 +1132,7 @@ pub(super) fn pillarbox_glue_scene(
                 ..default()
             })
         }
-        // The same arithmetic the chrome's canvas insets by ([`glue_box_physical`]).
+        // The centred box ([`glue_box_physical`]).
         None => glue_box_physical(w.physical_width(), full_h, scene.viewport_aspect).map(
             |(x, box_w)| bevy::camera::Viewport {
                 physical_position: UVec2::new(x, 0),
@@ -1711,12 +1711,12 @@ mod tests {
             let law = fov / (want * want + 1.0).sqrt();
             assert!((vert - law).abs() < 1e-3, "{w}x{h}: {vert} vs {law}");
         }
-        // Not the native screens' held box: at 16:10 that opens wider than the law.
+        // Not the pane-less held box: at 16:10 that opens wider than the law.
         let native = scene_vert_fov(fov, 1.6, None, None);
         assert!((native - fov / (1.6f32 * 1.6 + 1.0).sqrt()).abs() > 1e-2);
     }
 
-    /// The booth camera's viewport is the stock pane's rect, no pillarbox inside it; the native
+    /// The booth camera's viewport is the stock pane's rect, no pillarbox inside it; the pane-less
     /// screens keep their pillarbox past [`super::super::framing::GLUE_BOX_ASPECT`].
     #[test]
     fn the_viewport_is_the_stock_pane_and_the_native_box_otherwise() {

@@ -44,7 +44,7 @@ pub(super) use benilla_formats::{ArtExtent, GLUE_AUTHORED_ASPECT};
 /// art's `half_h` but never inside the authored box. Continuous at 4/3, where both legs give
 /// `0.6·fov`. A `<PlayerModel>` pane is not the window and keeps its verbatim crop.
 ///
-/// The Deviation is the native glue screens' alone. Under the stock screens `GlueParent` caps
+/// The Deviation is the pane-less scene's alone. Under the stock screens `GlueParent` caps
 /// every glue screen at 16:9 (`GlueParent.lua:78-84`), so the crop it answers cannot arise, and
 /// the scene is framed as the reference frames it ([`stock_pane_view`]).
 pub(super) fn glue_scene_framing(fov: f32, window_aspect: f32, art: Option<ArtExtent>) -> f32 {
@@ -99,8 +99,8 @@ pub(super) fn stock_pane_view(full_w: u32, full_h: u32, pane: [f32; 4]) -> Optio
 }
 
 /// The pillarbox aspect for a window: `Some(GLUE_BOX_ASPECT)` when the window is wider, else
-/// `None`. It depends on the window alone, so the booth viewport and the chrome's canvas
-/// ([`crate::glue::GlueCanvas`]) hold still when the selected race changes the stage.
+/// `None`. It depends on the window alone, so the booth viewport holds still when the selected
+/// race changes the stage.
 pub(crate) fn glue_box_aspect(window_aspect: f32) -> Option<f32> {
     (window_aspect > GLUE_BOX_ASPECT).then_some(GLUE_BOX_ASPECT)
 }
@@ -119,9 +119,8 @@ pub(super) fn glue_zoom_floor(fov: f32) -> f32 {
     (diag_to_vert(fov, REFERENCE_PANEL) * 0.5).tan()
 }
 
-/// The pillarbox in physical pixels, `(x, width)` of the centred box. The booth viewport
-/// (`super::glue_booth::pillarbox_glue_scene`) and the chrome's canvas both read it, so they
-/// agree to the pixel.
+/// The pillarbox in physical pixels, `(x, width)` of the centred box, the booth viewport's
+/// (`super::glue_booth::pillarbox_glue_scene`).
 pub(crate) fn glue_box_physical(
     full_w: u32,
     full_h: u32,
