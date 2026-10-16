@@ -1,11 +1,10 @@
-# The release build, `cargo ship`, on every push to main and every tag. Release is built, never
+# The release build, `cargo ship`, on every release tag and on demand. Release is built, never
 # tested: the gates test the same code in `dev`, and this catches what only fat LTO can break, the
 # link.
 name: Release build
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
