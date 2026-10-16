@@ -88,7 +88,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("Movie", "#130 movies"),
     ("MovieFileData", "#130 movies"),
     ("MovieVariation", "#130 movies"),
-    ("NameGen", "#242 random character names"),
     ("NamesProfanity", "#242 character name checks"),
     ("NamesReserved", "#242 character name checks"),
     ("ObjectEffect", "#243 object effects"),

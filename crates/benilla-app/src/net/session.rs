@@ -109,7 +109,10 @@ fn on_login_edge(In(ev): In<SessionEvent>, mut e: Edges) {
             realm,
             epoch,
             generation,
+            expansion,
         } => {
+            // The character screens read the account's expansion before any world entry.
+            e.account_expansion.0 = expansion;
             e.world_auth.write(WorldAuthMessage {
                 realm,
                 epoch,

@@ -149,6 +149,8 @@ pub enum SessionEvent {
         realm: crate::RealmInfo,
         epoch: u64,
         generation: u64,
+        /// The account's expansion byte the authentication carried (`GetAccountExpansionLevel`).
+        expansion: u8,
     },
     /// A roster ask on the parked session failed on the stream (`0x5ab300`'s failure leg,
     /// `SetStatus(0, 0x2c)`, `CHAR_LIST_FAILED`); the session ends after it. Emitted by the IO

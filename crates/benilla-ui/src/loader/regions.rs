@@ -221,10 +221,11 @@ impl Loader<'_> {
                 let rel_to: Option<String> = anchor
                     .attr("relativeTo")
                     .map(|r| framexml::resolve_name(r, parent_name));
+                // The `<Offset>` child, else the anchor's own `x`/`y` (`CLayoutFrame::LoadXML`,
+                // `0x48b2d0`).
                 let (x, y) = children_named(anchor, "Offset")
                     .next()
-                    .map(abs_dim)
-                    .unwrap_or((None, None));
+                    .map_or_else(|| abs_dim(anchor), abs_dim);
                 let args = (
                     point.to_string(),
                     rel_to,

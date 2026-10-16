@@ -148,6 +148,12 @@ pub enum GlueRequest {
     /// `CMSG_REALM_SPLIT` with this state: `0xFFFFFFFF` asks (`RequestRealmSplitInfo`,
     /// `0x4de2e0`), 0 to 2 answers (`SetRealmSplitState`, `0x4de250`).
     RealmSplit(u32),
+    /// `CreateCharacter(name)` past the client's name check (`0x4e0380`): the host's
+    /// `CGlueMgr::CreateCharacter` (`0x4d8c60`), or a paid change of an existing character.
+    CreateCharacter(super::glue_create::GlueCharCreate),
+    /// `DeleteCharacter(index)` (`0x4e33a0`) for a row on the roster: the host's
+    /// `CGlueMgr::DeleteCharacter` (`0x4d8cc0`) with its guid.
+    DeleteCharacter(u64),
 }
 
 /// The hosts `LaunchURL` opens, the 10-entry table at `0x85cc34`: a leading `*` stands for one
@@ -295,6 +301,10 @@ pub(super) fn queue(lua: &Lua, request: GlueRequest) {
 }
 
 /// The text of a string global, as [`super::UiScript::global_text`] reads it.
+pub(super) fn global_text_of(lua: &Lua, key: &str) -> String {
+    global_text(lua, key)
+}
+
 fn global_text(lua: &Lua, key: &str) -> String {
     match lua.globals().get::<Value>(key) {
         Ok(v @ (Value::String(_) | Value::Integer(_) | Value::Number(_))) => lua

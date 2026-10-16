@@ -768,6 +768,7 @@ fn stock_app() -> (
         .add_message::<RosterFailedMessage>()
         .add_message::<RealmListMessage>()
         .add_message::<DisconnectedMessage>()
+        .add_message::<crate::net::CharActionResultMessage>()
         .add_message::<GlueLogin>()
         .add_message::<crate::sound::GlueMusicRequest>()
         .add_message::<crate::ui_script::server_alert::LaunchUrl>()
@@ -1068,6 +1069,7 @@ fn pump(
                 realm,
                 epoch,
                 generation,
+                ..
             } => {
                 auths.write(WorldAuthMessage {
                     realm,
@@ -1142,6 +1144,7 @@ fn live_app_with(
         .add_message::<RosterFailedMessage>()
         .add_message::<RealmListMessage>()
         .add_message::<DisconnectedMessage>()
+        .add_message::<crate::net::CharActionResultMessage>()
         .add_message::<GlueLogin>()
         .add_message::<crate::sound::GlueMusicRequest>()
         .add_message::<crate::ui_script::server_alert::LaunchUrl>()

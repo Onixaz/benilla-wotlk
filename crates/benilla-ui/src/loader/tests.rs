@@ -669,6 +669,46 @@ mod loader_tests {
         assert!(s.eval::<bool>("return Still ~= nil").unwrap());
     }
 
+    /// An `<Anchor>` with no `<Offset>` takes its own `x`/`y` (`CLayoutFrame::LoadXML`,
+    /// `0x48b2d0`), the form 3.3.5a's `CharacterCreate.xml` writes, for a frame and a texture.
+    #[test]
+    fn an_anchor_without_an_offset_takes_its_own_x_and_y() {
+        let s = UiScript::new().unwrap();
+        let doc = parse(
+            r#"<Ui>
+                <Frame name="Holder">
+                    <Size x="200" y="200"/>
+                    <Anchors><Anchor point="TOPLEFT"/></Anchors>
+                    <Layers><Layer><Texture name="HolderTex">
+                        <Size x="10" y="10"/>
+                        <Anchors><Anchor point="TOP" x="-50" y="-61"/></Anchors>
+                    </Texture></Layer></Layers>
+                    <Frames>
+                        <Frame name="HolderKid">
+                            <Size x="38" y="38"/>
+                            <Anchors><Anchor point="TOP" x="-50" y="-61"/></Anchors>
+                        </Frame>
+                        <Frame name="HolderNext">
+                            <Size x="38" y="38"/>
+                            <Anchors>
+                                <Anchor point="TOPLEFT" relativeTo="HolderKid" relativePoint="BOTTOMLEFT" x="0" y="-21"/>
+                            </Anchors>
+                        </Frame>
+                    </Frames>
+                </Frame>
+            </Ui>"#,
+        );
+        let report = load(&s, &doc, &no_files);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(
+            s.eval::<(f64, f64, f64, f64, f64)>(
+                "local _, _, _, x, y = HolderKid:GetPoint(1)                  local _, _, _, tx = HolderTex:GetPoint(1)                  local _, _, _, _, ny = HolderNext:GetPoint(1) return x, y, tx, ny, HolderKid:GetNumPoints()"
+            )
+            .unwrap(),
+            (-50.0, -61.0, -50.0, -21.0, 1.0)
+        );
+    }
+
     #[test]
     fn parent_token_in_child_name_and_anchor_relative_to() {
         let mut s = UiScript::new().unwrap();

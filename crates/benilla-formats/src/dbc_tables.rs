@@ -125,6 +125,7 @@ tables! {
         "Map" => maps::map_schema(&LAYOUTS.map),
         "Material" => material::schema(),
         "NPCSounds" => npc_greeting::npcsounds_schema(),
+        "NameGen" => characters::name_gen_schema(),
         "Package" => packages::schema(),
         "PageTextMaterial" => page_text_material::schema(),
         "PetPersonality" => pet_stats::personality_schema(),

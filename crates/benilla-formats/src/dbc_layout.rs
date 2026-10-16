@@ -88,6 +88,11 @@ pub struct ChrRaces {
     /// `facialHairCustomization[2]`, male then female.
     pub facial_hair_customization: usize,
     pub hair_customization: usize,
+    /// The enUS slots of `Name_female_lang` and `Name_male_lang`.
+    pub name_female: usize,
+    pub name_male: usize,
+    /// The expansion level the race needs.
+    pub required_expansion: usize,
 }
 
 /// `CharStartOutfit.dbc`, a packed record: `u32 ID`, race, class, sex and outfit as one byte each
@@ -190,6 +195,9 @@ pub const LAYOUTS: DbcLayouts = DbcLayouts {
         name: 14,
         facial_hair_customization: 65,
         hair_customization: 67,
+        name_female: 31,
+        name_male: 48,
+        required_expansion: 68,
     },
     char_start_outfit: CharStartOutfit {
         fields: 77,

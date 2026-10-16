@@ -17,15 +17,17 @@ use bevy::prelude::*;
 use benilla_ui::script::{GlueScenePane, UiScript, VmKind};
 
 use super::glue_mgr::GlueMgr;
-use crate::portrait::{GlueLook, GluePreview, GlueScene, SceneFog, SelectLook};
+use crate::portrait::{CreateLook, GlueLook, GluePreview, GlueScene, SceneFog, SelectLook};
 
 /// What the booth stands while the stock glue screens are up: `pane` is the shown `ModelFFX`'s
 /// scene, `standing` the character on its attachment 0, `facing` the select facing cell in
-/// radians. A file that names none of the shipped scenes stands nothing.
+/// radians, `building` the create screen's character. A file that names none of the shipped
+/// scenes stands nothing.
 fn stock_preview(
     pane: Option<&GlueScenePane>,
     standing: Option<&benilla_protocol::Character>,
     facing: f32,
+    building: Option<benilla_ui::script::GlueCreateLook>,
 ) -> (Option<GlueScene>, Option<GlueLook>, f32, Option<SceneFog>) {
     let Some(pane) = pane else {
         return (None, None, 0.0, None);
@@ -37,12 +39,30 @@ fn stock_preview(
             pane.path
         );
     }
-    // The character and the facing are the select frame's scene's alone (`[0xb42174]`).
+    // The character and the facing are the select frame's scene's (`[0xb42174]`) and the create
+    // frame's (`m_charCustomizeFrame`, the character attached at `0x4e0040`) alone.
     let (look, yaw) = if pane.select {
         (
             standing.map(|c| GlueLook::Select(SelectLook::from(c))),
             facing,
         )
+    } else if pane.create {
+        match building {
+            Some(b) => (
+                Some(GlueLook::Create(CreateLook {
+                    race: b.character.race,
+                    sex: b.character.sex,
+                    class: b.class,
+                    skin: b.character.dials[0],
+                    face: b.character.dials[1],
+                    hair_style: b.character.dials[2],
+                    hair_color: b.character.dials[3],
+                    facial_hair: b.character.dials[4],
+                })),
+                b.facing,
+            ),
+            None => (None, 0.0),
+        }
     } else {
         (None, 0.0)
     };
@@ -77,7 +97,12 @@ pub(crate) fn feed_stock_glue_preview(
     let (scene, look, yaw, fog) = match script.as_deref() {
         Some(s) => {
             let standing = s.glue_standing_guid().and_then(|g| mgr.roster_character(g));
-            stock_preview(pane.as_ref(), standing, s.glue_select_cells().facing)
+            stock_preview(
+                pane.as_ref(),
+                standing,
+                s.glue_select_cells().facing,
+                s.glue_create_look(),
+            )
         }
         None => (None, None, 0.0, None),
     };
@@ -147,6 +172,7 @@ mod tests {
             )),
             Some(&c),
             1.0,
+            None,
         );
         assert_eq!(scene, Some(GlueScene::MainMenu));
         assert!(
@@ -185,12 +211,13 @@ mod tests {
 
     #[test]
     fn no_shown_pane_and_an_unknown_file_stand_nothing() {
-        assert_eq!(stock_preview(None, None, 0.0).0, None);
+        assert_eq!(stock_preview(None, None, 0.0, None).0, None);
         assert_eq!(
             stock_preview(
                 Some(&pane("Interface\\Glues\\Models\\Odd.mdx", true, None)),
                 None,
-                0.0
+                0.0,
+                None
             )
             .0,
             None

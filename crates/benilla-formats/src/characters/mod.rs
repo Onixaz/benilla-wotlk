@@ -13,7 +13,9 @@ mod geosets;
 mod sections;
 mod shipped;
 
-pub use customization::{CharCreateCatalog, DialRanges, StartOutfitItem};
+pub use customization::{
+    CharCreateCatalog, CreateRaceRow, DialRanges, NameGenRow, StartOutfitItem,
+};
 pub use geosets::{CharacterGeosets, EquipGeosets, VisibleGeosets};
 pub use sections::{
     equip_blits, equip_column, equip_region_candidates, equip_tex_dir, equip_tile, forearm_dressed,
@@ -22,6 +24,6 @@ pub use sections::{
 
 // The loaders' own schemas, for the `benilla-extract dbc` CSV dump (`crate::schema_for`) and the
 // other readers of the same table.
-pub(crate) use customization::{chr_races_schema, CHAR_BASE_INFO_WIDTH};
+pub(crate) use customization::{chr_races_schema, name_gen_schema, CHAR_BASE_INFO_WIDTH};
 pub(crate) use geosets::{char_facial_hair_schema, char_hair_geosets_schema, helmet_vis_schema};
 pub(crate) use sections::char_sections_schema;

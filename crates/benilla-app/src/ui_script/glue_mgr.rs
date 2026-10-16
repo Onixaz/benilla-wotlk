@@ -119,6 +119,10 @@ pub(crate) enum ScreenState {
     CharList = 3,
     /// A realm list query (`RequestRealmList`, `0x46b8d2`).
     RealmList = 4,
+    /// A character create (`CGlueMgr::CreateCharacter`, `0x4d8c60`), until its result.
+    CreateCharacter = 5,
+    /// A character delete (`CGlueMgr::DeleteCharacter`, `0x4d8cc0`), until its result.
+    DeleteCharacter = 6,
     /// The world entry (`CGlueMgr::EnterWorld`, `0x4d9bd0`), until the world is up.
     EnterWorld = 8,
 }
@@ -165,9 +169,9 @@ const LOGIN_RESULT_KEYS: [&str; 21] = [
     "DISCONNECTED",
 ];
 
-/// The `ClientServices` status keys (`0x85cae8`, 83 entries), the `ResponseCodes` the world
-/// server's `SMSG_AUTH_RESPONSE` byte indexes directly.
-const STATUS_KEYS: [&str; 0x53] = [
+/// The `ClientServices` status keys (`s_errorTokens`, `0xad91f0`, 104 entries), the response
+/// codes a status or result byte indexes directly (`GetErrorToken`, `0x6b0f40`).
+const STATUS_KEYS: [&str; 0x68] = [
     "RESPONSE_SUCCESS",
     "RESPONSE_FAILURE",
     "RESPONSE_CANCELLED",
@@ -202,6 +206,7 @@ const STATUS_KEYS: [&str; 0x53] = [
     "AUTH_DB_BUSY",
     "AUTH_SUSPENDED",
     "AUTH_PARENTAL_CONTROL",
+    "AUTH_LOCKED_ENFORCED",
     "REALM_LIST_IN_PROGRESS",
     "REALM_LIST_SUCCESS",
     "REALM_LIST_FAILED",
@@ -224,10 +229,25 @@ const STATUS_KEYS: [&str; 0x53] = [
     "CHAR_CREATE_ACCOUNT_LIMIT",
     "CHAR_CREATE_SERVER_QUEUE",
     "CHAR_CREATE_ONLY_EXISTING",
+    "CHAR_CREATE_EXPANSION",
+    "CHAR_CREATE_EXPANSION_CLASS",
+    "CHAR_CREATE_LEVEL_REQUIREMENT",
+    "CHAR_CREATE_UNIQUE_CLASS_LIMIT",
+    "CHAR_CREATE_CHARACTER_IN_GUILD",
+    "CHAR_CREATE_RESTRICTED_RACECLASS",
+    "CHAR_CREATE_CHARACTER_CHOOSE_RACE",
+    "CHAR_CREATE_CHARACTER_ARENA_LEADER",
+    "CHAR_CREATE_CHARACTER_DELETE_MAIL",
+    "CHAR_CREATE_CHARACTER_SWAP_FACTION",
+    "CHAR_CREATE_CHARACTER_RACE_ONLY",
+    "CHAR_CREATE_CHARACTER_GOLD_LIMIT",
+    "CHAR_CREATE_FORCE_LOGIN",
     "CHAR_DELETE_IN_PROGRESS",
     "CHAR_DELETE_SUCCESS",
     "CHAR_DELETE_FAILED",
     "CHAR_DELETE_FAILED_LOCKED_FOR_TRANSFER",
+    "CHAR_DELETE_FAILED_GUILD_LEADER",
+    "CHAR_DELETE_FAILED_ARENA_CAPTAIN",
     "CHAR_LOGIN_IN_PROGRESS",
     "CHAR_LOGIN_SUCCESS",
     "CHAR_LOGIN_NO_WORLD",
@@ -237,6 +257,10 @@ const STATUS_KEYS: [&str; 0x53] = [
     "CHAR_LOGIN_DISABLED",
     "CHAR_LOGIN_NO_CHARACTER",
     "CHAR_LOGIN_LOCKED_FOR_TRANSFER",
+    "CHAR_LOGIN_LOCKED_BY_BILLING",
+    "CHAR_LOGIN_LOCKED_BY_MOBILE_AH",
+    "CHAR_NAME_SUCCESS",
+    "CHAR_NAME_FAILURE",
     "CHAR_NAME_NO_NAME",
     "CHAR_NAME_TOO_SHORT",
     "CHAR_NAME_TOO_LONG",
@@ -249,8 +273,9 @@ const STATUS_KEYS: [&str; 0x53] = [
     "CHAR_NAME_THREE_CONSECUTIVE",
     "CHAR_NAME_INVALID_SPACE",
     "CHAR_NAME_CONSECUTIVE_SPACES",
-    "CHAR_NAME_FAILURE",
-    "CHAR_NAME_SUCCESS",
+    "CHAR_NAME_RUSSIAN_CONSECUTIVE_SILENT_CHARACTERS",
+    "CHAR_NAME_RUSSIAN_SILENT_CHARACTER_AT_BEGINNING_OR_END",
+    "CHAR_NAME_DECLENSION_DOESNT_MATCH_BASE_NAME",
 ];
 
 /// The five world statuses whose failure dialog carries a help URL, `{code, urlKey}` records at
@@ -284,13 +309,13 @@ const STATUS_AUTHENTICATING: u8 = 0x0b;
 const STATUS_AUTH_OK: u8 = 0x0c;
 const STATUS_AUTH_FAILED: u8 = 0x0d;
 const STATUS_WAIT_QUEUE: u8 = 0x1b;
-const STATUS_REALM_LIST_IN_PROGRESS: u8 = 0x22;
-const STATUS_REALM_LIST_SUCCESS: u8 = 0x23;
-const STATUS_REALM_LIST_FAILED: u8 = 0x24;
-const STATUS_REALM_LIST_REALM_NOT_FOUND: u8 = 0x26;
-const STATUS_CHAR_LIST_RETRIEVING: u8 = 0x2a;
-const STATUS_CHAR_LIST_RETRIEVED: u8 = 0x2b;
-const STATUS_CHAR_LIST_FAILED: u8 = 0x2c;
+const STATUS_REALM_LIST_IN_PROGRESS: u8 = 0x23;
+const STATUS_REALM_LIST_SUCCESS: u8 = 0x24;
+const STATUS_REALM_LIST_FAILED: u8 = 0x25;
+const STATUS_REALM_LIST_REALM_NOT_FOUND: u8 = 0x27;
+const STATUS_CHAR_LIST_RETRIEVING: u8 = 0x2b;
+const STATUS_CHAR_LIST_RETRIEVED: u8 = 0x2c;
+const STATUS_CHAR_LIST_FAILED: u8 = 0x2d;
 
 /// What a realmd result byte becomes, `(login state, result)`: `Logon::OnAuthResult`'s
 /// dispatch (`0x5b2c90`, byte index `0x5b2ea4`, jumps `0x5b2e78`) after the handlers' clamp of a
@@ -413,6 +438,10 @@ enum Outgoing {
     Teardown,
     /// The roster load (`0x4724d0`) over the roster the last reply left.
     Roster,
+    /// `SELECT_LAST_CHARACTER`, after a create.
+    SelectLast,
+    /// `SELECT_FIRST_CHARACTER`, after a delete.
+    SelectFirst,
     /// `SHOW_SERVER_ALERT(text)` (event 21, `0x46b964`): the alert's text after its prefix.
     ServerAlert(String),
 }
@@ -504,6 +533,8 @@ pub(crate) struct GlueMgr {
     /// The glue VM that holds the select screen's fallback stage; the race catalog can land after
     /// the VM is seated.
     staged_vm: Option<u64>,
+    /// The glue VM that holds the create screen's tables.
+    create_vm: Option<u64>,
 }
 
 impl GlueMgr {
@@ -603,8 +634,11 @@ impl GlueMgr {
                 self.op.complete(false, STATUS_CANCELLED);
                 self.outbox.push(Outgoing::Teardown);
             }
-            // `0x46b776` (states 4 and 8): the operation cancelled, state 0, nothing sent.
-            ScreenState::RealmList | ScreenState::EnterWorld => {
+            // `0x46b776` (states 4, 5 and 8): the operation cancelled, state 0, nothing sent.
+            ScreenState::RealmList
+            | ScreenState::CreateCharacter
+            | ScreenState::DeleteCharacter
+            | ScreenState::EnterWorld => {
                 self.op.complete(false, STATUS_CANCELLED);
                 self.state = ScreenState::Idle;
             }
@@ -635,10 +669,87 @@ impl GlueMgr {
         }
     }
 
+    /// `CGlueMgr::CreateCharacter` (`0x4d8c60`): state 5, the `CHAR_CREATE_IN_PROGRESS` dialog and
+    /// the request. A paid change of an existing character is not built: it fails in the dialog.
+    fn create_character(&mut self, c: benilla_ui::script::GlueCharCreate) {
+        if c.existing.is_some() {
+            warn!("glue: paid character changes are not built; the request is refused");
+            self.open("OKAY", Some(Text::Key("CHAR_CUSTOMIZE_FAILED")));
+            return;
+        }
+        self.state = ScreenState::CreateCharacter;
+        self.open("CANCEL", Some(Text::Key("CHAR_CREATE_IN_PROGRESS")));
+        if !self.connected {
+            self.state = ScreenState::Idle;
+            self.open("OKAY", Some(status_text(STATUS_FAILED_TO_CONNECT).0));
+            return;
+        }
+        self.park_out.push(
+            CharRequest::Create(benilla_protocol::CharCreateReq {
+                name: c.name,
+                race: c.race,
+                class: c.class,
+                gender: c.sex,
+                skin: c.skin,
+                face: c.face,
+                hair_style: c.hair_style,
+                hair_color: c.hair_color,
+                facial_hair: c.facial_hair,
+            })
+            .into(),
+        );
+    }
+
+    /// `CGlueMgr::DeleteCharacter` (`0x4d8cc0`): state 6, the `CHAR_DELETE_IN_PROGRESS` dialog
+    /// and the request.
+    fn delete_character(&mut self, guid: u64) {
+        if guid == 0 {
+            return;
+        }
+        self.state = ScreenState::DeleteCharacter;
+        self.open("CANCEL", Some(Text::Key("CHAR_DELETE_IN_PROGRESS")));
+        if !self.connected {
+            self.state = ScreenState::Idle;
+            self.open("OKAY", Some(status_text(STATUS_FAILED_TO_CONNECT).0));
+            return;
+        }
+        self.park_out.push(CharRequest::Delete(guid).into());
+    }
+
+    /// The completion of states 5 and 6. A create's success closes the dialog, fires
+    /// `SELECT_LAST_CHARACTER` and puts the character screen up, whose show asks for the list; a
+    /// delete's fires `SELECT_FIRST_CHARACTER` and asks for the list itself. A failure re-opens
+    /// the dialog with `OKAY` and the result's text, state 0.
+    fn on_char_result(&mut self, action: benilla_protocol::CharAction, code: u8) {
+        use benilla_protocol::{messages, CharAction};
+        match (self.state, action) {
+            (ScreenState::CreateCharacter, CharAction::Create) => {
+                self.state = ScreenState::Idle;
+                if code == messages::CHAR_CREATE_SUCCESS {
+                    self.outbox.push(Outgoing::Close);
+                    self.outbox.push(Outgoing::SelectLast);
+                    self.outbox.push(Outgoing::Screen("charselect"));
+                } else {
+                    self.open("OKAY", Some(status_text(code).0));
+                }
+            }
+            (ScreenState::DeleteCharacter, CharAction::Delete) => {
+                self.state = ScreenState::Idle;
+                if code == messages::CHAR_DELETE_SUCCESS {
+                    self.outbox.push(Outgoing::SelectFirst);
+                    self.get_character_list();
+                } else {
+                    self.open("OKAY", Some(status_text(code).0));
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Take `s` as the glue VM: state 0, the login cells cleared, and the slots that outlive a glue
     /// state seeded into it (the saved account, the realm and select cells, the select screen's
     /// fallback stage). The scripted pick is read with the first VM.
-    fn seat(&mut self, s: &mut UiScript, create: Option<&benilla_formats::CharCreateCatalog>) {
+    fn seat(&mut self, s: &mut UiScript, tables: CreateTables) {
         self.vm = Some(s.session());
         self.state = ScreenState::Idle;
         self.cells = LoginCells::default();
@@ -651,18 +762,28 @@ impl GlueMgr {
             self.scripted_pick =
                 crate::run_mode::fast_path_character().filter(|name| !name.is_empty());
         }
-        self.stage(s, create);
+        self.stage(s, tables);
         self.holder_moved = true;
     }
 
     /// `GetSelectBackgroundModel`'s stage off the roster, race 2's file string, once per VM.
-    fn stage(&mut self, s: &mut UiScript, create: Option<&benilla_formats::CharCreateCatalog>) {
-        if self.staged_vm == Some(s.session()) {
-            return;
+    /// `GetSelectBackgroundModel`'s stage off the roster, race 2's file string, and the tables the
+    /// create screen reads ([`glue_create_catalog`]), each once per VM as its tables land.
+    fn stage(&mut self, s: &mut UiScript, tables: CreateTables) {
+        let vm = Some(s.session());
+        if self.staged_vm != vm {
+            if let Some(orc) = tables.create.and_then(|c| c.race_file(2)) {
+                s.set_glue_default_background(orc);
+                self.staged_vm = vm;
+            }
         }
-        if let Some(orc) = create.and_then(|c| c.race_file(2)) {
-            s.set_glue_default_background(orc);
-            self.staged_vm = Some(s.session());
+        if self.create_vm != vm {
+            if let (Some(create), Some(classes), Some(factions)) =
+                (tables.create, tables.classes, tables.factions)
+            {
+                s.set_glue_create_catalog(glue_create_catalog(create, classes, factions));
+                self.create_vm = vm;
+            }
         }
     }
 
@@ -1054,8 +1175,11 @@ impl GlueMgr {
             ScreenState::Connect => self.tick_connect(),
             ScreenState::CharList => self.tick_char_list(),
             ScreenState::RealmList => self.tick_realm_list(),
-            // State 8's phases are the world entry's here.
-            ScreenState::EnterWorld | ScreenState::Idle => {}
+            // State 8's phases are the world entry's here; state 5 ends on its result.
+            ScreenState::CreateCharacter
+            | ScreenState::DeleteCharacter
+            | ScreenState::EnterWorld
+            | ScreenState::Idle => {}
         }
     }
 
@@ -1216,6 +1340,7 @@ pub(crate) struct LoginNews<'w, 's> {
     roster_failures: MessageReader<'w, 's, RosterFailedMessage>,
     realm_lists: MessageReader<'w, 's, RealmListMessage>,
     disconnects: MessageReader<'w, 's, DisconnectedMessage>,
+    results: MessageReader<'w, 's, crate::net::CharActionResultMessage>,
 }
 
 /// What the manager asks of the rest of the app.
@@ -1297,6 +1422,8 @@ pub(crate) fn drive_glue_mgr(
     creatures: Option<Res<crate::entities::Creatures>>,
     state: Option<Res<State<crate::char_select::ClientState>>>,
     addon_reply: Option<Res<crate::net::AddonInfoReply>>,
+    factions: Option<Res<crate::target::ring::Factions>>,
+    expansion: Option<Res<crate::net::AccountExpansion>>,
     time: Res<Time>,
 ) {
     let now_ms = time.elapsed().as_millis() as u32;
@@ -1325,13 +1452,22 @@ pub(crate) fn drive_glue_mgr(
     // A new glue VM is the glue build: state 0, its slots seeded, and the realm list's C globals
     // carried over, which outlive the Lua state. A VM the lifecycle seated before its first screen
     // ([`seat_glue_vm`]) is already the manager's.
+    let tables = CreateTables {
+        create: create.as_deref().map(|c| &c.0),
+        classes: classes.as_deref().map(|c| &c.0),
+        factions: factions.as_deref().map(|f| f.catalog()),
+    };
     let mut fresh_vm = false;
     if let Some(s) = script.as_deref_mut() {
         if mgr.vm != Some(s.session()) {
-            mgr.seat(s, create.as_deref().map(|c| &c.0));
+            mgr.seat(s, tables);
             fresh_vm = true;
         }
-        mgr.stage(s, create.as_deref().map(|c| &c.0));
+        mgr.stage(s, tables);
+        // `GetAccountExpansionLevel` and the create screen's gates read the authentication's byte.
+        if let Some(e) = expansion.as_deref() {
+            s.set_account_expansion(e.0);
+        }
     } else if in_world {
         // In the world the glue is torn down, and the entry's second phase leaves state 0
         // (`0x46c252`).
@@ -1423,6 +1559,8 @@ pub(crate) fn drive_glue_mgr(
                     }
                 }
                 GlueRequest::CancelLogin => logins.push(GlueLogin::Abandon),
+                GlueRequest::CreateCharacter(c) => mgr.create_character(c),
+                GlueRequest::DeleteCharacter(guid) => mgr.delete_character(guid),
                 // The ambience, the sound effects and the credits music have no glue player
                 // yet; the music has ([`crate::sound::GlueMusicRequest`]).
                 GlueRequest::PlayGlueAmbience { .. }
@@ -1449,6 +1587,9 @@ pub(crate) fn drive_glue_mgr(
     // The native login's news.
     for msg in news.stages.read() {
         mgr.on_stage(msg.stage, glue_up);
+    }
+    for msg in news.results.read() {
+        mgr.on_char_result(msg.action, msg.code);
     }
     // The logon's list ends the logon, then answers the connect its latch begins.
     let lists: Vec<(Vec<RealmInfo>, bool)> = news
@@ -1582,6 +1723,95 @@ fn glue_character(c: &Character, names: &RosterNames) -> GlueCharacter {
             .create
             .and_then(|r| r.body_display(c.race, c.gender))
             .is_some_and(|display| names.creatures.is_some_and(|k| k.resolves_model(display))),
+        race_id: c.race,
+        class_id: c.class,
+        dials: [c.skin, c.face, c.hair_style, c.hair_color, c.facial_hair],
+    }
+}
+
+/// The DBC tables the create screen is built from; any one missing leaves it unseeded.
+#[derive(Clone, Copy, Default)]
+struct CreateTables<'a> {
+    create: Option<&'a benilla_formats::CharCreateCatalog>,
+    classes: Option<&'a benilla_formats::ChrClasses>,
+    factions: Option<&'a benilla_formats::FactionCatalog>,
+}
+
+/// The create screen's tables: every `ChrRaces` row with its faction group's names (the race's
+/// `FactionTemplate` group mask, then `FactionGroup.dbc`), every `ChrClasses` row, `CharBaseInfo`,
+/// the dial counts and tokens per race, and `NameGen.dbc`.
+fn glue_create_catalog(
+    create: &benilla_formats::CharCreateCatalog,
+    classes: &benilla_formats::ChrClasses,
+    factions: &benilla_formats::FactionCatalog,
+) -> benilla_ui::script::GlueCreateCatalog {
+    use benilla_ui::script::{GlueCreateCatalog, GlueCreateClass, GlueCreateRace};
+    let races = create
+        .race_rows()
+        .iter()
+        .map(|r| {
+            let mask = factions
+                .template(r.faction_template)
+                .map_or(0, |t| t.group_mask);
+            GlueCreateRace {
+                id: r.id,
+                flags: r.flags,
+                required_expansion: r.required_expansion.min(255) as u8,
+                name: r.name.clone(),
+                name_female: r.name_female.clone(),
+                name_male: r.name_male.clone(),
+                file: r.file.clone(),
+                faction_name: factions.faction_group_name(mask).unwrap_or_default().into(),
+                faction_internal: factions
+                    .faction_group_internal_name(mask)
+                    .unwrap_or_default()
+                    .into(),
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut ranges = std::collections::HashMap::new();
+    let mut hair = std::collections::HashMap::new();
+    for r in &races {
+        for sex in [0u8, 1] {
+            if let (Some(d), Some(_)) = (create.ranges(r.id, sex), create.body_display(r.id, sex)) {
+                ranges.insert(
+                    (r.id, sex),
+                    [d.skin, d.face, d.hair_style, d.hair_color, d.facial_hair],
+                );
+            }
+        }
+        if let Some(h) = create.hair_customization(r.id) {
+            let facial = [0u8, 1].map(|sex| {
+                create
+                    .facial_hair_customization(r.id, sex)
+                    .unwrap_or("NORMAL")
+                    .to_string()
+            });
+            hair.insert(r.id, (h.to_string(), facial));
+        }
+    }
+    GlueCreateCatalog {
+        races,
+        classes: classes
+            .names()
+            .iter()
+            .map(|c| GlueCreateClass {
+                id: c.id.min(255) as u8,
+                required_expansion: c.required_expansion.min(255) as u8,
+                name: c.name.clone(),
+                name_female: c.female.clone(),
+                name_male: c.male.clone(),
+                file: c.file.clone(),
+            })
+            .collect(),
+        base_info: create.base_info().to_vec(),
+        ranges,
+        hair,
+        names: create
+            .name_gen()
+            .iter()
+            .map(|n| (n.name.clone(), n.race.min(255) as u8, n.sex.min(255) as u8))
+            .collect(),
     }
 }
 
@@ -1715,6 +1945,8 @@ fn flush_one(
             mgr.realm_cells = script.glue_realm_cells();
         }
         Outgoing::Teardown => script.teardown_glue_roster(),
+        Outgoing::SelectLast => script.fire_event("SELECT_LAST_CHARACTER", Vec::new()),
+        Outgoing::SelectFirst => script.fire_event("SELECT_FIRST_CHARACTER", Vec::new()),
         Outgoing::ServerAlert(text) => {
             script.fire_event("SHOW_SERVER_ALERT", vec![ScriptValue::Str(text)]);
         }
@@ -1743,7 +1975,16 @@ pub(super) fn seat_glue_vm(world: &mut World, script: &mut UiScript) {
         return;
     };
     let create = world.get_resource::<crate::entities::CharCreate>();
-    mgr.seat(script, create.map(|c| &c.0));
+    let tables = CreateTables {
+        create: create.map(|c| &c.0),
+        classes: world
+            .get_resource::<crate::chr_classes::ChrClassTable>()
+            .map(|c| &c.0),
+        factions: world
+            .get_resource::<crate::target::ring::Factions>()
+            .map(|f| f.catalog()),
+    };
+    mgr.seat(script, tables);
     if let Some(r) = world.get_resource::<crate::realm_select::Realms>() {
         let (categories, types) = r.glue_setup();
         script.set_glue_realm_setup(categories, types);

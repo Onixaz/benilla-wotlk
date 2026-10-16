@@ -136,6 +136,10 @@ pub use glue::{VmKind, GLUE_EVENTS};
 pub use glue_core::{
     launch_url_allowed, GlueCredentials, GlueNotice, GlueRequest, GlueServer, NoticeState,
 };
+pub use glue_create::{
+    validate_character_name, GlueCharCreate, GlueCreateCatalog, GlueCreateCharacter,
+    GlueCreateClass, GlueCreateLook, GlueCreateRace,
+};
 pub use glue_realm::{
     realm_load_classify, realm_load_stats, GlueRealm, GlueRealmCategory, GlueRealmCells,
     GlueRealmType, RealmSortKey,

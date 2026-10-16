@@ -53,6 +53,10 @@ const FILENAME_FIELD: usize = 55;
 /// Field 56, the class spell family.
 const SPELL_FAMILY_FIELD: usize = 56;
 
+/// Field 59, the expansion a class needs: the create screen offers it to an account of at least
+/// that level (`0x4e0830`).
+const REQUIRED_EXPANSION_FIELD: usize = 59;
+
 /// Field 57, the class flags, and its relic-slot bit (`0x611395`).
 const FLAGS_FIELD: usize = 57;
 const FLAG_RELIC_SLOT: u32 = 0x8;
@@ -75,11 +79,15 @@ struct ChrClass {
 /// enUS.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ChrClassNames {
+    /// The class id, field 0.
+    pub id: u32,
     /// `Filename`, the class token.
     pub file: String,
     pub name: String,
     pub female: String,
     pub male: String,
+    /// The expansion level the class needs (field 59).
+    pub required_expansion: u32,
 }
 
 /// `ChrClasses.dbc`'s read columns by class id, and the names in record order.
@@ -175,10 +183,12 @@ pub fn load_chr_classes(chain: &mut Chain) -> Result<ChrClasses> {
         );
         let text = |field| str_at(&rs, r, field).unwrap_or_default();
         table.names.push(ChrClassNames {
+            id,
             file: text(FILENAME_FIELD),
             name: text(NAME_FIELD),
             female: text(NAME_FEMALE_FIELD),
             male: text(NAME_MALE_FIELD),
+            required_expansion: u32_at(r, REQUIRED_EXPANSION_FIELD).unwrap_or(0),
         });
     }
     Ok(table)

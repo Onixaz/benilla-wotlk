@@ -52,6 +52,11 @@ pub struct GlueCharacter {
     /// Whether the race and gender have a character model (`0x5ec480` finds a row with a model
     /// path): the build `0x472950` makes for a record only goes ahead with one.
     pub model: bool,
+    /// The race and class bytes (`+0x100`, `+0x101`), the create screen's paid-change reads.
+    pub race_id: u8,
+    pub class_id: u8,
+    /// The appearance bytes: skin, face, hair style, hair colour, facial hair.
+    pub dials: [u8; 5],
 }
 
 /// The selection cells that outlive a glue VM: the reference keeps them in C globals, so a glue
@@ -96,6 +101,9 @@ pub struct GlueScenePane {
     /// The pane is the select screen's model frame (`[0xb42174]`), whose scene the selected
     /// character stands in.
     pub select: bool,
+    /// The pane is the create screen's frame (`m_charCustomizeFrame`), whose scene the character
+    /// being built stands in.
+    pub create: bool,
 }
 
 /// A record of the array: the character and whether `+0x110`, the built composite, is set.
@@ -122,6 +130,11 @@ const DEG_TO_RAD: f32 = f32::from_bits(0x3c8e_fa35);
 const RAD_TO_DEG: f32 = f32::from_bits(0x4265_2ee1);
 
 impl GlueRoster {
+    /// The roster's characters in record order.
+    pub(super) fn characters(&self) -> Vec<GlueCharacter> {
+        self.records.iter().map(|r| r.character.clone()).collect()
+    }
+
     /// `0x473700` on every record and the count to 0 (`0x4723ff`, `0x4725af`).
     fn clear(&mut self) {
         self.records.clear();
@@ -206,6 +219,7 @@ impl super::UiScript {
     pub fn glue_scene(&self) -> Option<GlueScenePane> {
         let model = self.model_ref();
         let select = model_frame_handle(&model);
+        let create = super::glue_create::customize_frame_handle(&model);
         let (sw, sh) = (model.screen.width(), model.screen.height());
         model
             .arena
@@ -239,6 +253,7 @@ impl super::UiScript {
                         path: m.path.clone()?,
                         fog: m.armed_fog(),
                         select: select == Some(h),
+                        create: create == Some(h),
                     },
                 ))
             })
@@ -527,6 +542,28 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // `DeleteCharacter(index)` (`0x4e33a0`): a number or the usage error; a row on the roster asks
+    // the host to delete it, any other index nothing.
+    g.set(
+        "DeleteCharacter",
+        lua.create_function(|lua, args: MultiValue| {
+            let index =
+                number_arg(lua, arg(&args, 0), "Usage: DeleteCharacter(index)")?.wrapping_sub(1);
+            let guid = usize::try_from(index).ok().and_then(|i| {
+                model(lua)
+                    .glue
+                    .roster
+                    .records
+                    .get(i)
+                    .map(|r| r.character.guid)
+            });
+            if let Some(guid) = guid {
+                super::glue_core::queue(lua, super::glue_core::GlueRequest::DeleteCharacter(guid));
+            }
+            Ok(())
+        })?,
+    )?;
+
     // `0x4e2fd0` → `0x473190`: the selected record's composite (`+0x110`) is handed to the
     // character bake (`0x477860`), once per `OnUpdateModel` (`CharacterSelect.lua:208`). The
     // composite is the scene drive's, which bakes when the selection or the look changes, so
@@ -587,6 +624,9 @@ mod tests {
             customize_flags: 0,
             background: "NightElf".into(),
             model: true,
+            race_id: 4,
+            class_id: 11,
+            dials: [0; 5],
         }
     }
 

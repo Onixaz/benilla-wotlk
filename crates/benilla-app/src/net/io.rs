@@ -710,6 +710,7 @@ fn world(
                 realm: realm.clone(),
                 epoch,
                 generation,
+                expansion: session.expansion(),
             })
             .is_err()
         {

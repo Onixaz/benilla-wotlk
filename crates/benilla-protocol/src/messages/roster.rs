@@ -5,14 +5,14 @@ use std::io::{self, Read};
 
 use crate::wire::{read_cstring, read_u32_le, read_u64_le, read_u8, Vector3d};
 
-/// `WorldResult::CharCreateSuccess` / `CharCreateNameInUse` (`SMSG_CHAR_CREATE`).
-pub const CHAR_CREATE_SUCCESS: u8 = 0x2E;
-pub const CHAR_CREATE_NAME_IN_USE: u8 = 0x31;
-/// `WorldResult::CharCreateServerLimit`: the account already holds `CharactersPerRealm`
-/// characters (vmangos `HandleCharCreateOpcode`; 0x2E + 6 in `SharedDefines.h` ResponseCodes).
-pub const CHAR_CREATE_SERVER_LIMIT: u8 = 0x34;
-/// `WorldResult::CharDeleteSuccess` (`SMSG_CHAR_DELETE`; vmangos `SharedDefines.h` ResponseCodes).
-pub const CHAR_DELETE_SUCCESS: u8 = 0x39;
+/// `SMSG_CHAR_CREATE`'s success and name-in-use codes, the indices of `CHAR_CREATE_SUCCESS` and
+/// `CHAR_CREATE_NAME_IN_USE` in 12340's response-token table (`0xad91f0`).
+pub const CHAR_CREATE_SUCCESS: u8 = 0x2F;
+pub const CHAR_CREATE_NAME_IN_USE: u8 = 0x32;
+/// `CHAR_CREATE_SERVER_LIMIT`: the account already holds the realm's character limit.
+pub const CHAR_CREATE_SERVER_LIMIT: u8 = 0x35;
+/// `SMSG_CHAR_DELETE`'s success code, `CHAR_DELETE_SUCCESS`'s index in the same table.
+pub const CHAR_DELETE_SUCCESS: u8 = 0x47;
 /// Race/Class/Gender values benilla's char-create sends.
 pub const RACE_HUMAN: u8 = 0x1;
 pub const CLASS_WARRIOR: u8 = 0x1;
