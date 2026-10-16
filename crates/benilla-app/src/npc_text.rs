@@ -3,7 +3,7 @@
 //! the reference routes its fourteen call sites through one expander (`0x506f70`, token handler
 //! `0x5070a0`).
 //!
-//! - The accepted set is `B C E G N R T W` in either case; anything else re-emits the `$` and
+//! - The accepted set is `A B C E G N R T W` in either case; anything else re-emits the `$` and
 //!   leaves the letter as text.
 //! - A decimal prefix is consumed ahead of every token, but only `W` and `E` read it.
 //! - Case is the output switch: `$r` is `$R` through `_strlwr`, and likewise `$c` and `$t`.
@@ -34,6 +34,9 @@ pub(crate) struct MacroContext<'a> {
     /// `None` is the reference's no-subject case.
     pub subject: Option<&'a Subject>,
     pub states: &'a crate::world_state::WorldStates,
+    /// The link `$A` writes, an achievement chat line's (`GetAchievementHyperlink`, `0x61bff0`);
+    /// `None` writes nothing, as an id the table lacks does.
+    pub achievement: Option<&'a str>,
 }
 
 /// Expands the macros in `text`. With no subject every person-token re-emits its `$`, so a name
@@ -65,6 +68,11 @@ pub(crate) fn substitute_checked(text: &str, ctx: &MacroContext) -> (String, boo
         // On a fail the `$` comes back and the letter is copied as text.
         let mut fail = false;
         match chars.get(j).copied() {
+            // 3.3.5a's achievement link (`0x578f20`).
+            Some('A' | 'a') => {
+                out.push_str(ctx.achievement.unwrap_or(""));
+                i = j + 1;
+            }
             // Exactly one `\n`, no CR.
             Some('B' | 'b') => {
                 out.push('\n');
@@ -132,7 +140,7 @@ pub(crate) fn substitute_checked(text: &str, ctx: &MacroContext) -> (String, boo
                 }
                 None => fail = true,
             },
-            // Not in `B C E G N R T W`, or the string ended on the `$`.
+            // Not in `A B C E G N R T W`, or the string ended on the `$`.
             _ => fail = true,
         }
         if fail {
@@ -234,6 +242,7 @@ mod tests {
             &MacroContext {
                 subject,
                 states: &WorldStates::default(),
+                achievement: None,
             },
         )
     }
@@ -245,6 +254,7 @@ mod tests {
         let ctx = |subject| MacroContext {
             subject,
             states: &states,
+            achievement: None,
         };
 
         assert_eq!(
@@ -341,6 +351,7 @@ mod tests {
                 &MacroContext {
                     subject: Some(&s),
                     states: &states,
+                    achievement: None,
                 },
             )
         };

@@ -357,6 +357,7 @@ fn feed_item_text(
         &crate::npc_text::MacroContext {
             subject: subject.as_ref(),
             states: &states,
+            achievement: None,
         },
     );
     script.set_item_text(Some(ItemTextState {

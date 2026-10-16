@@ -790,6 +790,10 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::AllAchievementData(d) => vec![SessionEvent::AllAchievementData(d)],
         ServerPacket::TotemCreated(t) => vec![SessionEvent::TotemCreated(t)],
         ServerPacket::AchievementEarned(e) => vec![SessionEvent::AchievementEarned(e)],
+        ServerPacket::CriteriaUpdate(c) => vec![SessionEvent::CriteriaUpdate(c)],
+        ServerPacket::InspectAchievements(i) => vec![SessionEvent::InspectAchievements(i)],
+        ServerPacket::CriteriaDeleted(id) => vec![SessionEvent::CriteriaDeleted(id)],
+        ServerPacket::AchievementDeleted(id) => vec![SessionEvent::AchievementDeleted(id)],
         ServerPacket::TalentWipeConfirm { trainer, cost } => {
             vec![SessionEvent::TalentWipeConfirm { trainer, cost }]
         }

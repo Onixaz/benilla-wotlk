@@ -39,6 +39,9 @@ macro_rules! tables {
 
 tables! {
     schemas {
+        "Achievement" => achievements::achievement_schema(),
+        "Achievement_Category" => achievements::category_schema(),
+        "Achievement_Criteria" => achievements::criteria_schema(),
         "AnimationData" => anim_data::schema(),
         "AreaPOI" => area_poi::schema(),
         "AreaTable" => area_table::area_table_schema(&LAYOUTS.area_table),

@@ -521,6 +521,18 @@ fn parse_server_body(
         opcode::SMSG_ACHIEVEMENT_EARNED => {
             ServerPacket::AchievementEarned(achievement::read_achievement_earned(&mut r)?)
         }
+        opcode::SMSG_CRITERIA_UPDATE => {
+            ServerPacket::CriteriaUpdate(achievement::read_criteria_update(&mut r)?)
+        }
+        opcode::SMSG_RESPOND_INSPECT_ACHIEVEMENTS => {
+            ServerPacket::InspectAchievements(achievement::read_inspect_achievements(&mut r)?)
+        }
+        opcode::SMSG_CRITERIA_DELETED => {
+            ServerPacket::CriteriaDeleted(achievement::read_deleted_id(&mut r)?)
+        }
+        opcode::SMSG_ACHIEVEMENT_DELETED => {
+            ServerPacket::AchievementDeleted(achievement::read_deleted_id(&mut r)?)
+        }
         opcode::SMSG_PET_UNLEARN_CONFIRM => {
             let ask = pet::read_pet_unlearn_confirm(&mut r)?;
             ServerPacket::PetUnlearnConfirm {

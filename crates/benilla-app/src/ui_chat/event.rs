@@ -49,6 +49,9 @@ pub(crate) enum ChatEventKind {
     BgSystemNeutral,
     BgSystemAlliance,
     BgSystemHorde,
+    /// 3.3.5a's award lines, the `$a` link already written.
+    Achievement,
+    GuildAchievement,
     // ── the combat log ───────────────────────────────────────────────────────────────
     // Every kind below has a producer.
     /// `0x19`, the reference's catch-all combat line: `DURABILITYDAMAGE_DEATH`, `SPELLDISMISSPET*`,
@@ -230,6 +233,8 @@ impl ChatEventKind {
             K::BgSystemNeutral,
             K::BgSystemAlliance,
             K::BgSystemHorde,
+            K::Achievement,
+            K::GuildAchievement,
             K::CombatMiscInfo,
             K::CombatSelfHits,
             K::CombatSelfMisses,
@@ -434,6 +439,8 @@ pub(crate) fn event_name(kind: ChatEventKind) -> &'static str {
         K::BgSystemNeutral => "CHAT_MSG_BG_SYSTEM_NEUTRAL",
         K::BgSystemAlliance => "CHAT_MSG_BG_SYSTEM_ALLIANCE",
         K::BgSystemHorde => "CHAT_MSG_BG_SYSTEM_HORDE",
+        K::Achievement => "CHAT_MSG_ACHIEVEMENT",
+        K::GuildAchievement => "CHAT_MSG_GUILD_ACHIEVEMENT",
         K::CombatMiscInfo => "CHAT_MSG_COMBAT_MISC_INFO",
         K::CombatSelfHits => "CHAT_MSG_COMBAT_SELF_HITS",
         K::CombatSelfMisses => "CHAT_MSG_COMBAT_SELF_MISSES",
@@ -583,6 +590,9 @@ pub(crate) fn default_color(kind: ChatEventKind) -> [u8; 3] {
         K::BgSystemNeutral => [255, 120, 10],
         K::BgSystemAlliance => [0, 174, 239],
         K::BgSystemHorde => [255, 0, 0],
+        // `s_chatTypeInfo` (`0x9fa558`): yellow, and the guild's green.
+        K::Achievement => [255, 255, 0],
+        K::GuildAchievement => [64, 255, 64],
         K::CombatMiscInfo | K::CombatFactionChange => [128, 128, 255],
         // ── the combat log ───────────────────────────────────────────────────────────────
         // White but for your own spells and what hits you.
@@ -673,6 +683,8 @@ pub(crate) fn kind_of_wire(chat_type: u8) -> Option<ChatEventKind> {
         m::CHAT_MSG_BG_SYSTEM_NEUTRAL => K::BgSystemNeutral,
         m::CHAT_MSG_BG_SYSTEM_ALLIANCE => K::BgSystemAlliance,
         m::CHAT_MSG_BG_SYSTEM_HORDE => K::BgSystemHorde,
+        m::CHAT_MSG_ACHIEVEMENT => K::Achievement,
+        m::CHAT_MSG_GUILD_ACHIEVEMENT => K::GuildAchievement,
         _ => return None,
     })
 }

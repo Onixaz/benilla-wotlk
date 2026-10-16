@@ -572,6 +572,7 @@ pub(crate) fn feed_quest_log(
     let macros = crate::npc_text::MacroContext {
         subject: player.as_ref(),
         states: &states,
+        achievement: None,
     };
 
     let mut entries: Vec<QuestLogEntryView> = Vec::new();

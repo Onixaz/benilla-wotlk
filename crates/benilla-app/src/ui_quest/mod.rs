@@ -440,6 +440,7 @@ pub(crate) fn feed_quest(
         &crate::npc_text::MacroContext {
             subject: player.as_ref(),
             states: &states,
+            achievement: None,
         },
         spells.as_deref(),
     );
@@ -825,6 +826,7 @@ mod tests {
             &crate::npc_text::MacroContext {
                 subject: Some(&player),
                 states: &crate::world_state::WorldStates::default(),
+                achievement: None,
             },
             None,
         )
@@ -871,6 +873,7 @@ mod tests {
             &crate::npc_text::MacroContext {
                 subject: None,
                 states: &crate::world_state::WorldStates::default(),
+                achievement: None,
             },
             None,
         )

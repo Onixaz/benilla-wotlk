@@ -1343,6 +1343,9 @@ fn writer_loop(
                     ClientCommand::Inspect { target } => w.inspect(target),
                     // Answered on the same opcode.
                     ClientCommand::InspectHonorStats { target } => w.inspect_honor_stats(target),
+                    ClientCommand::QueryInspectAchievements { target } => {
+                        w.query_inspect_achievements(target)
+                    }
                     ClientCommand::InitiateTrade { target } => w.initiate_trade(target),
                     ClientCommand::BeginTrade => w.begin_trade(),
                     ClientCommand::BusyTrade => w.busy_trade(),

@@ -639,6 +639,13 @@ impl GameTime {
         (self.base_minute as f32 + elapsed).rem_euclid(1440.0)
     }
 
+    /// Today's game date as the packed fields hold it: 0-based month and day, years since 2000.
+    /// The day advances through the serial, so a month boundary is not calendar-exact.
+    pub(crate) fn date(&self) -> (u32, u32, u32) {
+        let serial = self.day_continuous().floor() as u32;
+        (serial % 372 / 31, serial % 31, serial / 372)
+    }
+
     /// Days and day fraction since the serial epoch, unwrapped, for the moon phase
     /// `(dayCounter + todPhase) mod 1.7` (`0x6d41b9`); `f64` for sub-minute grain at ~12k days.
     pub(crate) fn day_continuous(&self) -> f64 {
@@ -1564,6 +1571,11 @@ pub(crate) enum ClientCommand {
     /// `MSG_INSPECT_HONOR_STATS`: the only source of another player's honor, whose fields are
     /// private. A refusal is silence.
     InspectHonorStats {
+        target: u64,
+    },
+    /// `CMSG_QUERY_INSPECT_ACHIEVEMENTS`: `SetAchievementComparisonUnit`'s query; the answer is
+    /// `SMSG_RESPOND_INSPECT_ACHIEVEMENTS`.
+    QueryInspectAchievements {
         target: u64,
     },
     // ── Player trade ──

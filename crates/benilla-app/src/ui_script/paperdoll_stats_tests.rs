@@ -117,7 +117,8 @@ fn the_stock_stat_panes_fill_every_row_for_each_dropdown_choice() {
 
     // `CharacterFrame_ShowSubFrame` raises on the unloaded `TokenFrame` (#281) after it has shown
     // the paper doll, so the open goes through `pcall`.
-    s.run(r#"pcall(ToggleCharacter, "PaperDollFrame")"#).unwrap();
+    s.run(r#"pcall(ToggleCharacter, "PaperDollFrame")"#)
+        .unwrap();
     assert!(s.eval::<bool>("return PaperDollFrame:IsShown()").unwrap());
     let errors = sheet_errors(s.take_errors());
     assert!(errors.is_empty(), "sheet errors on open: {errors:#?}");

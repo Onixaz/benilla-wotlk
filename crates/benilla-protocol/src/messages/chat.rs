@@ -39,6 +39,10 @@ pub const CHAT_MSG_RAID_BOSS_EMOTE: u8 = 0x5A;
 pub const CHAT_MSG_FILTERED: u8 = 0x5B;
 pub const CHAT_MSG_BATTLEGROUND: u8 = 0x5C;
 pub const CHAT_MSG_BATTLEGROUND_LEADER: u8 = 0x5D;
+/// 3.3.5a's achievement lanes, numbered past 1.12.1's last: "%s has earned the achievement
+/// $a!", the earner in the receiver guid and the id after the chat tag (`0x50c1cd`).
+pub const CHAT_MSG_ACHIEVEMENT: u8 = 0x5E;
+pub const CHAT_MSG_GUILD_ACHIEVEMENT: u8 = 0x5F;
 
 /// The only chat types the 1.12 client runs its `$`-macro expander over; the rest reach the frame
 /// verbatim. This is the wire gate (`0x49d5e4-0x49d606`); the re-expansion after a name query
@@ -85,6 +89,8 @@ pub struct ChatMessage {
     pub text: String,
     /// The [`chat_tag`] byte, shown as the `<AFK>`/`<DND>`/`<GM>` prefix on the sender's name.
     pub chat_tag: u8,
+    /// The achievement a `$a` names, on the two achievement lanes (0 elsewhere).
+    pub achievement: u32,
 }
 
 impl ChatMessage {
@@ -152,7 +158,7 @@ pub mod wotlk_chat_type {
 }
 
 /// The shared [`ChatMessage::chat_type`], 1.12.1's numbering, of a 3.3.5a type byte; `None` for a
-/// 3.3.5a lane with no 1.12.1 counterpart (`PARTY_LEADER`, `ACHIEVEMENT`, `WHISPER_FOREIGN`, …).
+/// 3.3.5a lane with no shared one yet (`PARTY_LEADER`, `WHISPER_FOREIGN`, …).
 pub fn wotlk_chat_type_shared(wire: u8) -> Option<u8> {
     use wotlk_chat_type as w;
     Some(match wire {
@@ -184,6 +190,8 @@ pub fn wotlk_chat_type_shared(wire: u8) -> Option<u8> {
         w::FILTERED => CHAT_MSG_FILTERED,
         w::BATTLEGROUND => CHAT_MSG_BATTLEGROUND,
         w::BATTLEGROUND_LEADER => CHAT_MSG_BATTLEGROUND_LEADER,
+        w::ACHIEVEMENT => CHAT_MSG_ACHIEVEMENT,
+        w::GUILD_ACHIEVEMENT => CHAT_MSG_GUILD_ACHIEVEMENT,
         _ => return None,
     })
 }
@@ -254,9 +262,11 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Cha
     }
     let text = read_len_string(r)?;
     let chat_tag = read_u8(r)?;
-    if matches!(wire_type, w::ACHIEVEMENT | w::GUILD_ACHIEVEMENT) {
-        let _achievement_id = read_u32_le(r)?;
-    }
+    let achievement = if matches!(wire_type, w::ACHIEVEMENT | w::GUILD_ACHIEVEMENT) {
+        read_u32_le(r)?
+    } else {
+        0
+    };
     let Some(chat_type) = wotlk_chat_type_shared(wire_type) else {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -272,6 +282,7 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Cha
         channel,
         text,
         chat_tag,
+        achievement,
     })
 }
 

@@ -313,12 +313,20 @@ pub enum SessionEvent {
     TalentWipeConfirm { trainer: u64, cost: u32 },
     /// The talent groups (`SMSG_TALENTS_INFO`): the player's, or the pet's.
     TalentsInfo(crate::messages::TalentsInfo),
-    /// The player's completed achievements (`SMSG_ALL_ACHIEVEMENT_DATA`).
+    /// The player's completed achievements and criteria (`SMSG_ALL_ACHIEVEMENT_DATA`).
     AllAchievementData(crate::messages::AllAchievementData),
     /// A totem took one of our four slots (`SMSG_TOTEM_CREATED`).
     TotemCreated(crate::messages::TotemCreated),
     /// A unit earned an achievement (`SMSG_ACHIEVEMENT_EARNED`).
     AchievementEarned(crate::messages::AchievementEarned),
+    /// One criterion's progress (`SMSG_CRITERIA_UPDATE`).
+    CriteriaUpdate(crate::messages::CriteriaProgress),
+    /// An inspected player's achievements (`SMSG_RESPOND_INSPECT_ACHIEVEMENTS`).
+    InspectAchievements(crate::messages::InspectAchievements),
+    /// One criterion's progress is gone (`SMSG_CRITERIA_DELETED`).
+    CriteriaDeleted(u32),
+    /// One completed achievement is gone (`SMSG_ACHIEVEMENT_DELETED`).
+    AchievementDeleted(u32),
     /// `SMSG_PET_UNLEARN_CONFIRM`: accept with `CMSG_PET_UNLEARN`; declining sends nothing.
     PetUnlearnConfirm { trainer: u64, cost: u32 },
     /// The instance-boot clock (`SMSG_RAID_GROUP_ONLY`): a positive delay arms it

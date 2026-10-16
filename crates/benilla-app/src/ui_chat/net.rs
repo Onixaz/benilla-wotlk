@@ -267,6 +267,7 @@ mod tests {
             channel: None,
             text: text.to_string(),
             chat_tag: 0,
+            achievement: 0,
         }
     }
 

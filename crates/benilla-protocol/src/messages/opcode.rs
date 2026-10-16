@@ -662,6 +662,16 @@ pub const CMSG_LEARN_TALENT: u16 = 0x0251; // 593
 pub const CMSG_PET_LEARN_TALENT: u16 = 0x047A;
 /// 3.3.5a only: a unit earned an achievement (`0x5b3020`).
 pub const SMSG_ACHIEVEMENT_EARNED: u16 = 0x0468;
+/// 3.3.5a only: one criterion's progress (`0x5b3160`).
+pub const SMSG_CRITERIA_UPDATE: u16 = 0x046A;
+/// 3.3.5a only: ask for a player's achievements, `SetAchievementComparisonUnit` (`0x5b1b1f`).
+pub const CMSG_QUERY_INSPECT_ACHIEVEMENTS: u16 = 0x046B;
+/// 3.3.5a only: the inspected player's achievements and criteria (`0x5b34a0`).
+pub const SMSG_RESPOND_INSPECT_ACHIEVEMENTS: u16 = 0x046C;
+/// 3.3.5a only: drop one criterion's progress (`0x5b36f0`).
+pub const SMSG_CRITERIA_DELETED: u16 = 0x049E;
+/// 3.3.5a only: drop one completed achievement (`0x5b3610`).
+pub const SMSG_ACHIEVEMENT_DELETED: u16 = 0x049F;
 /// 3.3.5a only: the player's completed achievements and criteria at login (`0x5b32f0`).
 pub const SMSG_ALL_ACHIEVEMENT_DATA: u16 = 0x047D;
 /// 3.3.5a only: every talent group's ranks, or the pet's (`0x6cd770`).

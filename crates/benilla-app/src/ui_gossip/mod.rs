@@ -310,6 +310,7 @@ fn feed_gossip(
             &crate::npc_text::MacroContext {
                 subject: player.as_ref(),
                 states: &states,
+                achievement: None,
             },
         );
     }

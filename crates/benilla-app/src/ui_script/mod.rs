@@ -1039,6 +1039,8 @@ mod buff_tests;
 mod target_aura_tests;
 
 #[cfg(test)]
+mod achievement_ui_tests;
+#[cfg(test)]
 mod aura_verb_tests;
 #[cfg(test)]
 mod bag_ui_tests;

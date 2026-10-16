@@ -78,19 +78,37 @@ fn a_monster_say_reads_the_inline_names() {
     assert_eq!(m.text, "Grr");
 }
 
-/// A 3.3.5a-only lane (here `ACHIEVEMENT`, `0x30`) is read through and then refused, never handed
-/// on under a guessed 1.12.1 type.
+/// The achievement lane: the earner in the receiver guid, the id after the chat tag
+/// (`0x50c1cd`).
 #[test]
-fn a_lane_without_a_shared_type_fails_visibly() {
+fn an_achievement_line_keeps_its_id() {
     let mut body = vec![0x30];
     body.extend(0u32.to_le_bytes());
     body.extend(0x21u64.to_le_bytes());
     body.extend(0u32.to_le_bytes());
     body.extend(0x21u64.to_le_bytes()); // receiver
-    body.extend(13u32.to_le_bytes());
-    body.extend(b"%s has done\0\0");
+    body.extend(12u32.to_le_bytes());
+    body.extend(b"%s has done\0");
     body.push(0);
     body.extend(6u32.to_le_bytes()); // achievement id
+    let (m, tail) = decode(&body);
+    assert_eq!(tail, 0);
+    assert_eq!(m.chat_type, messages::CHAT_MSG_ACHIEVEMENT);
+    assert_eq!((m.target_guid, m.achievement), (0x21, 6));
+}
+
+/// A 3.3.5a-only lane (here `PARTY_LEADER`, `0x33`) is read through and then refused, never
+/// handed on under a guessed 1.12.1 type.
+#[test]
+fn a_lane_without_a_shared_type_fails_visibly() {
+    let mut body = vec![0x33];
+    body.extend(0u32.to_le_bytes());
+    body.extend(0x21u64.to_le_bytes());
+    body.extend(0u32.to_le_bytes());
+    body.extend(0x21u64.to_le_bytes()); // receiver
+    body.extend(3u32.to_le_bytes());
+    body.extend(b"hi\0");
+    body.push(0);
     let Err(err) = messages::parse_server_with_tail(opcode::SMSG_MESSAGECHAT, &body) else {
         panic!("a 3.3.5a-only lane must not decode");
     };

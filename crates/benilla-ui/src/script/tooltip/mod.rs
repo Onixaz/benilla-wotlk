@@ -292,6 +292,7 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
     }
     // New content replaces a spell render still waiting on its view.
     model.spell_tooltip_waits.remove(&h);
+    model.achievement.tooltips.remove(&h);
     // The `<name>StatusBar` health bar is unit content: it hides with the lines, and the next
     // unit render re-shows it.
     let bar = model

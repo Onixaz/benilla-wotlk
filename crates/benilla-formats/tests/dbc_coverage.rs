@@ -20,15 +20,6 @@ use benilla_formats::{dbc_width, READ_TABLES};
 /// Tables 12340 reads that benilla does not, each with what it backs in the reference and the
 /// open issue that builds it, where one does.
 const NOT_READ: &[(&str, &str)] = &[
-    (
-        "Achievement",
-        "#191 achievements: GetAchievementInfo and the tracker",
-    ),
-    ("Achievement_Category", "#191 achievements: GetCategoryList"),
-    (
-        "Achievement_Criteria",
-        "#191 achievements: GetAchievementCriteriaInfo, statistics",
-    ),
     ("AreaGroup", "#240 GetTradeSkillTools' area requirement"),
     ("BannedAddOns", "#245 the addon ban list"),
     ("BarberShopStyle", "#234 the barber shop"),

@@ -474,10 +474,8 @@ pub(crate) struct Model {
     pub(crate) spell_targetable_units: HashSet<u64>,
 
     pub(crate) talents: super::talent::TalentUiState,
-    /// `CanShowAchievementUI`: the achievement list arrived.
-    pub(crate) achievement_list_received: bool,
-    /// `HasCompletedAnyAchievement`: the player's completed achievements held.
-    pub(crate) achievements_completed: usize,
+    /// The achievement tables, lists and tracked set.
+    pub(crate) achievement: super::achievement::AchievementModel,
     /// The preview ranks per group, tab and talent, 0-based with -1 for none; reset to the learned
     /// ranks by every push.
     pub(crate) talent_preview: Vec<Vec<Vec<i32>>>,
@@ -1267,8 +1265,7 @@ impl Model {
             spell_targeting: false,
             spell_targetable_units: HashSet::new(),
             talents: super::talent::TalentUiState::default(),
-            achievement_list_received: false,
-            achievements_completed: 0,
+            achievement: Default::default(),
             talent_preview: Vec::new(),
             talent_learns: Vec::new(),
             talent_preview_learns: Vec::new(),

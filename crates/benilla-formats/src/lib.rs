@@ -228,6 +228,11 @@ mod spell_focus;
 mod spell_mechanic;
 pub use spell_focus::{load_spell_focus_catalog, SpellFocusCatalog};
 pub use spell_mechanic::{load_spell_mechanic_catalog, SpellMechanicCatalog};
+mod achievements;
+pub use achievements::{
+    load_achievement_catalog, Achievement, AchievementCatalog, AchievementCategory,
+    AchievementCriteria,
+};
 mod talents;
 pub use talents::{load_talent_catalog, Talent, TalentCatalog, TalentTabInfo, MAX_TALENT_RANK};
 mod spell_visual;

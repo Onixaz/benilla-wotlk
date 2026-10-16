@@ -290,6 +290,10 @@ pub use unit_cast::UnitCast;
 pub use video_pairs::VIDEO_PAIR_CVARS;
 pub use worldmap_arrow::ARROW_MODEL;
 
+pub use achievement::{
+    achievement_hyperlink, AchievementBook, AchievementCategoryRow, AchievementCriteriaRow,
+    AchievementDb, AchievementRow, AchievementUpdate, CriteriaWire, WowDate,
+};
 pub(crate) use button::{set_label_font_justify_h_lua, LabelFont};
 pub use inspect::{InspectView, UnitReach};
 pub use item_stats::{item_usable, ItemSetView, ItemTemplateView, PlayerReqState};

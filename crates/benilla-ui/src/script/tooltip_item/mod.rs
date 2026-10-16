@@ -269,10 +269,14 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
     )?;
 
     // GameTooltip:SetHyperlink(link): the chat-link tooltip (`ItemRef.lua:60`). Takes an item
-    // link, escaped or a bare "item:<id>", or an enchant link; any other link does nothing.
+    // link, escaped or a bare "item:<id>", an enchant link or an achievement link; any other
+    // link does nothing.
     m.set(
         "SetHyperlink",
         lua.create_function(|lua, (this, link): (Table, String)| {
+            if super::achievement::set_achievement_link(lua, &this, &link)? {
+                return Ok(());
+            }
             // The only other link it takes, the craft window's `|Henchant:<spellId>|h[name]|h`
             // (`GetCraftItemLink`): the spell's own tooltip, behind its producer's castUI gate
             // (`0x532243`).

@@ -232,6 +232,14 @@ pub enum ServerPacket {
     TotemCreated(super::TotemCreated),
     /// `SMSG_ACHIEVEMENT_EARNED`: a unit earned an achievement.
     AchievementEarned(super::AchievementEarned),
+    /// `SMSG_CRITERIA_UPDATE`: one criterion's progress.
+    CriteriaUpdate(super::CriteriaProgress),
+    /// `SMSG_RESPOND_INSPECT_ACHIEVEMENTS`: another player's achievements.
+    InspectAchievements(super::InspectAchievements),
+    /// `SMSG_CRITERIA_DELETED`: one criterion's progress is gone.
+    CriteriaDeleted(u32),
+    /// `SMSG_ACHIEVEMENT_DELETED`: one completed achievement is gone.
+    AchievementDeleted(u32),
     /// `SMSG_PET_UNLEARN_CONFIRM`: a pet trainer asks; `CMSG_PET_UNLEARN` with the guid confirms.
     PetUnlearnConfirm {
         trainer: u64,
@@ -1317,6 +1325,10 @@ impl ServerPacket {
             ServerPacket::AllAchievementData(_) => "SMSG_ALL_ACHIEVEMENT_DATA".into(),
             ServerPacket::TotemCreated(_) => "SMSG_TOTEM_CREATED".into(),
             ServerPacket::AchievementEarned(_) => "SMSG_ACHIEVEMENT_EARNED".into(),
+            ServerPacket::CriteriaUpdate(_) => "SMSG_CRITERIA_UPDATE".into(),
+            ServerPacket::InspectAchievements(_) => "SMSG_RESPOND_INSPECT_ACHIEVEMENTS".into(),
+            ServerPacket::CriteriaDeleted(_) => "SMSG_CRITERIA_DELETED".into(),
+            ServerPacket::AchievementDeleted(_) => "SMSG_ACHIEVEMENT_DELETED".into(),
             ServerPacket::PetUnlearnConfirm { .. } => "SMSG_PET_UNLEARN_CONFIRM".into(),
             ServerPacket::RaidGroupOnly { .. } => "SMSG_RAID_GROUP_ONLY".into(),
             ServerPacket::AreaSpiritHealerTime { .. } => "SMSG_AREA_SPIRIT_HEALER_TIME".into(),

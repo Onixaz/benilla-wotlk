@@ -639,6 +639,11 @@ pub(super) fn feed_chat(
     guids: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
     states: Res<crate::world_state::WorldStates>,
+    // An award line's `$a`: the achievement tables and the game date its link carries.
+    (award_db, award_time): (
+        Option<Res<crate::ui_achievement::Achievements>>,
+        Res<crate::net::ServerTime>,
+    ),
     // The language gate: the word pool, this character's fluency and the GM bit.
     langs: Res<super::language::ChatLanguages>,
     // Item names for `TRADESKILL_LOG`, `FEEDPET_LOG`, `ITEMENCHANTMENT*`, `SPELLDURABILITYDAMAGE`.
@@ -689,11 +694,16 @@ pub(super) fn feed_chat(
                 }
                 // The base name; `stamp_channel` adds arg4's number and arg7-arg9 below.
                 let channel_base = msg.channel.clone().unwrap_or_default();
-                // `$`-macros expand for the monster, boss and BG system types only, against the
-                // addressee. A failed expansion (`0x49dac2`-`0x49db1e`, `0x49d9c9`) with a zero
+                // `$`-macros expand for the monster, boss, BG system and award types only, against
+                // the addressee. A failed expansion (`0x49dac2`-`0x49db1e`, `0x49d9c9`) with a zero
                 // subject or a known name drops the line, one with an unknown name holds it for
                 // the name query (`tries`), and only a second failure shows the raw text.
-                let expanded = if MACRO_EXPANDED_TYPES.contains(&msg.chat_type) {
+                let award = matches!(
+                    msg.chat_type,
+                    benilla_protocol::messages::CHAT_MSG_ACHIEVEMENT
+                        | benilla_protocol::messages::CHAT_MSG_GUILD_ACHIEVEMENT
+                );
+                let expanded = if MACRO_EXPANDED_TYPES.contains(&msg.chat_type) || award {
                     // The addressee, else the sender: the BG system lines carry one guid only.
                     let subject_guid = if msg.target_guid != 0 {
                         msg.target_guid
@@ -707,11 +717,26 @@ pub(super) fn feed_chat(
                         &names,
                         &commands,
                     );
+                    // `$a`: the earner's link, completed today with every criterion (`0x578f20`).
+                    let link = award.then(|| {
+                        let (month, day, year) = award_date(&award_time);
+                        award_db.as_ref().map_or_else(String::new, |db| {
+                            benilla_ui::script::achievement_hyperlink(
+                                &db.0,
+                                msg.achievement,
+                                subject_guid,
+                                true,
+                                benilla_ui::script::WowDate::from_date(month, day, year),
+                                [u32::MAX; 4],
+                            )
+                        })
+                    });
                     let (text, clean) = crate::npc_text::substitute_checked(
                         &msg.text,
                         &crate::npc_text::MacroContext {
                             subject: subject.as_ref(),
                             states: &states,
+                            achievement: link.as_deref(),
                         },
                     );
                     if clean {
@@ -1123,6 +1148,11 @@ pub(super) fn feed_chat(
     log.pending = still;
 }
 
+/// The game date an award line's link carries, `g_clientGameTime`'s; zero before the clock lands.
+fn award_date(time: &crate::net::ServerTime) -> (u32, u32, u32) {
+    time.0.as_ref().map_or((0, 0, 0), |t| t.date())
+}
+
 /// Whether a wire chat type carries a player guid to name (not a monster's inline name).
 fn needs_name(chat_type: u8) -> bool {
     use benilla_protocol::messages as m;
@@ -1145,6 +1175,8 @@ fn needs_name(chat_type: u8) -> bool {
             | m::CHAT_MSG_RAID_WARNING
             | m::CHAT_MSG_BATTLEGROUND
             | m::CHAT_MSG_BATTLEGROUND_LEADER
+            | m::CHAT_MSG_ACHIEVEMENT
+            | m::CHAT_MSG_GUILD_ACHIEVEMENT
     )
 }
 

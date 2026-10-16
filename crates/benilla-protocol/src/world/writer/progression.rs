@@ -1,4 +1,4 @@
-//! The talent sends: spending points and confirming a respec.
+//! The talent and achievement sends: spending points, confirming a respec, inspecting a list.
 
 use anyhow::Result;
 
@@ -7,6 +7,15 @@ use crate::messages::{self, opcode};
 use super::WorldWriter;
 
 impl WorldWriter {
+    /// Ask for a player's achievements (`CMSG_QUERY_INSPECT_ACHIEVEMENTS`); the server answers
+    /// `SMSG_RESPOND_INSPECT_ACHIEVEMENTS`.
+    pub fn query_inspect_achievements(&mut self, guid: u64) -> Result<()> {
+        self.send(
+            opcode::CMSG_QUERY_INSPECT_ACHIEVEMENTS,
+            &messages::query_inspect_achievements(guid),
+        )
+    }
+
     /// `CMSG_LEARN_TALENT`: a `Talent.dbc` row and the 0-based rank to learn up to. No reply:
     /// success is the rank spell's learn plus a fresh `PLAYER_CHARACTER_POINTS1`.
     pub fn learn_talent(&mut self, talent_id: u32, requested_rank: u32) -> Result<()> {

@@ -154,6 +154,9 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // with no account data store (#279), keeps them for the session only.
     same("playerStatLeftDropdown", "").per_character(),
     same("playerStatRightDropdown", "").per_character(),
+    // `0x51e027`, "" with flags 0x120: the tracked achievements, which `LoadTrackedState` reads
+    // and the tracking verbs write (`0x5b3840`, `0x5b1fa0`); per character like the dropdowns.
+    same("trackedAchievements", "").per_character(),
 ];
 
 /// The host-backed CVars, one row per knob that has a reader: a host knob, or a Lua consumer

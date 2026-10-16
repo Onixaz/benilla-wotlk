@@ -525,6 +525,7 @@ fn feed_mail(
     let macros = crate::npc_text::MacroContext {
         subject: subject.as_ref(),
         states: &states,
+        achievement: None,
     };
     let fresh = {
         // Scoped: the resolver borrows the VM, and `set_mail` below needs it back.
@@ -818,6 +819,7 @@ mod tests {
         crate::npc_text::MacroContext {
             subject: None,
             states,
+            achievement: None,
         }
     }
 

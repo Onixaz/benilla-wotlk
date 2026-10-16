@@ -67,6 +67,11 @@ pub(crate) fn compose(
         | K::BgSystemHorde => event.text.clone(),
         // The combat log is verbatim too, by prefix: `COMBAT_` and `SPELL_` (`:1397-1400`).
         k if k.is_combat_log() => event.text.clone(),
+        // `format(arg1, "|Hplayer:"..arg2.."|h["..arg2.."]|h")`, 3.3.5a's award line.
+        K::Achievement | K::GuildAchievement => fill(
+            &event.text,
+            &[Arg::S(&format!("|Hplayer:{0}|h[{0}]|h", event.sender))],
+        ),
         // `format(TEXT(CHAT_IGNORED), arg2)` (`:1404`): `CHAT_IGNORED`, not the same-worded
         // `ERR_IGNORING_YOU_S`.
         K::Ignored => fill(
