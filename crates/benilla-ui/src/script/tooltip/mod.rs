@@ -286,6 +286,7 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
     if let Ok(t) = tip_mut(model, h) {
         t.num_lines = 0;
         t.min_width = 0.0;
+        t.min_width_forced = false;
         // Clear drops the subject and unregisters its health watcher (`0x5300ad`, `0x53007c`).
         t.unit_guid = None;
         t.world_owned = false;

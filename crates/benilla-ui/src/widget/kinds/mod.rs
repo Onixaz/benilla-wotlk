@@ -209,6 +209,8 @@ pub struct TooltipState {
     pub anchor: TooltipAnchor,
     /// `SetMinimumWidth`: a floor on the auto-sized width, cleared with the content.
     pub min_width: f32,
+    /// `SetMinimumWidth`'s `force` (`+0x3dc`), read back by `GetMinimumWidth`.
+    pub min_width_forced: bool,
     /// `FadeOut()`'s start on the `GetTime` clock; any fresh content or `Show` cancels the fade.
     pub fade_start: Option<f64>,
     /// The guid of the unit this tooltip shows (`+0x368`/`+0x36c`, stored at `0x52a070`), whose

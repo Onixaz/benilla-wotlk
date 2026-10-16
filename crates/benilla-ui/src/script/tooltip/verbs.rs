@@ -329,12 +329,39 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // SetMinimumWidth(w): a floor on the auto-sized width (`SetTooltipMoney` passes the money
-    // row's, GameTooltip.lua:91).
+    // SetMinimumWidth(w [, force]): the auto-size floor `SetTooltipMoney` raises (`0x61d040`).
     m.set(
         "SetMinimumWidth",
-        lua.create_function(|lua, (this, w): (Table, f32)| {
-            with_tip(lua, &this, |t| t.min_width = w.max(0.0))
+        lua.create_function(|lua, (this, w, force): (Table, f32, Value)| {
+            let force = !matches!(force, Value::Nil | Value::Boolean(false));
+            with_tip(lua, &this, |t| {
+                t.min_width = w.max(0.0);
+                t.min_width_forced = force;
+            })
+        })?,
+    )?;
+    // GetMinimumWidth() -> width, 1 or nil: the floor and the force flag (`0x61d0d0`).
+    m.set(
+        "GetMinimumWidth",
+        lua.create_function(|lua, this: Table| {
+            let h = frame_handle_of(lua, &this)?;
+            let mut model = crate::script::model_mut_of(lua);
+            let t = tip_mut(&mut model, h)?;
+            let forced = if t.min_width_forced {
+                Value::Integer(1)
+            } else {
+                Value::Nil
+            };
+            Ok((f64::from(t.min_width), forced))
+        })?,
+    )?;
+    // GetPadding() -> width (`0x61d1c0`).
+    m.set(
+        "GetPadding",
+        lua.create_function(|lua, this: Table| {
+            let h = frame_handle_of(lua, &this)?;
+            let mut model = crate::script::model_mut_of(lua);
+            Ok(f64::from(tip_mut(&mut model, h)?.padding))
         })?,
     )?;
     // SetPadding(w): extra auto-size width that survives a content clear (ItemRefTooltip's 16
