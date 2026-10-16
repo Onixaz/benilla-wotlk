@@ -455,9 +455,9 @@ impl WidgetArena {
                 kind,
                 FrameKind::ScrollingMessageFrame | FrameKind::ScrollFrame | FrameKind::WorldFrame
             ),
-            // No kind is keyboard-enabled at creation here; the reference's EditBox
-            // (`0x779ced`/`0x779cf8`) and WorldFrame (`0x481b09`) ctors enable key input.
-            keyboard_enabled: false,
+            // The EditBox ctor enables its char and key events (`0x966b70`), so a box is in the
+            // key walk from birth and answers there before a keyboard frame below it.
+            keyboard_enabled: kind == FrameKind::EditBox,
             clamped_to_screen: matches!(kind, FrameKind::GameTooltip),
             clamp_rect_insets: [0.0; 4],
             hit_rect_insets: [0.0; 4],

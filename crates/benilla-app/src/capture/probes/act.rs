@@ -79,7 +79,8 @@ fn fire_probe_chat(
 }
 
 /// `WOW_PROBE_KEY="<key>@<secs>[:<hold>][;…]"`: presses each key at its time once in-world and
-/// releases it `<hold>` seconds later ([`PROBE_KEY_TAP_SECS`] when omitted). Reaches input no chat
+/// releases it `<hold>` seconds later ([`PROBE_KEY_TAP_SECS`] when omitted); `WOW_PROBE_KEY_GLUE=1`
+/// arms them from launch instead, for the glue screens' boxes. Reaches input no chat
 /// line or Lua chunk can (1.12 has no jump Lua API). Runs in `PreUpdate` after
 /// [`bevy::input::InputSystems`], so every `Update` reader sees the `just_pressed` that frame.
 pub(crate) struct ProbeKeyPlugin;
@@ -112,14 +113,14 @@ impl Plugin for ProbeKeyPlugin {
                 }
             })
             .collect();
-        app.insert_resource(ProbeKeys { taps, armed: false })
-            .add_systems(
-                bevy::app::PreUpdate,
-                fire_probe_key
-                    .after(bevy::input::InputSystems)
-                    // After the loading cover empties every button plane, so the press survives.
-                    .after(crate::loading_screen::CoverInput),
-            );
+        let armed = std::env::var("WOW_PROBE_KEY_GLUE").as_deref() == Ok("1");
+        app.insert_resource(ProbeKeys { taps, armed }).add_systems(
+            bevy::app::PreUpdate,
+            fire_probe_key
+                .after(bevy::input::InputSystems)
+                // After the loading cover empties every button plane, so the press survives.
+                .after(crate::loading_screen::CoverInput),
+        );
     }
 }
 

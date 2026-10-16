@@ -362,4 +362,50 @@ mod tests {
             "21:9: {got:?}"
         );
     }
+
+    /// The stock login's boxes take their editing keys: Backspace deletes in the focused box and
+    /// Tab runs its `OnTabPressed`, with `AccountLogin`'s `OnKeyDown` above them in the key walk.
+    /// Both reach the box only through the walk, as the input feed sends them.
+    #[test]
+    fn the_stock_login_boxes_take_backspace_and_tab() {
+        use benilla_ui::script::{EditAction, EditUnit};
+        let _ = benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new_glue().unwrap();
+        s.set_screen_size(1024.0, 768.0);
+        s.seed_cvars(crate::cvars::Cvars::default().vm_seed());
+        let _ = load_glue(&mut s);
+        set_glue_screen(&mut s, GlueScreen::Login);
+        for _ in 0..3 {
+            s.tick(0.1);
+        }
+        s.resolve();
+        // The panel as it stands once the agreements are accepted, which the glue manager reads.
+        s.run(
+            "AccountLoginUI:Show() AccountLoginAccountEdit:SetText('')              AccountLoginAccountEdit:SetFocus()",
+        )
+        .unwrap();
+        for c in ["a", "b", "c"] {
+            s.char_input(c);
+        }
+        // The feed offers BACKSPACE to the keyboard frames first, then the box's chord.
+        assert!(
+            !s.frame_key_input("BACKSPACE"),
+            "a keyboard frame above the focused box took BACKSPACE"
+        );
+        s.editbox_action(EditAction::Delete {
+            unit: EditUnit::Char,
+            back: true,
+        });
+        assert_eq!(
+            s.eval::<String>("return AccountLoginAccountEdit:GetText()")
+                .unwrap(),
+            "ab"
+        );
+        assert!(s.key_input("TAB"), "TAB reached nothing");
+        assert_eq!(
+            s.focused_editbox_name().as_deref(),
+            Some("AccountLoginPasswordEdit"),
+            "the account box's OnTabPressed moves the focus to the password"
+        );
+    }
 }

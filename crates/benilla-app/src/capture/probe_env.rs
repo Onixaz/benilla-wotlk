@@ -78,6 +78,11 @@ pub(crate) const PROBE_VARS: &[ProbeVar] = &[
         wall_clock: true,
     },
     ProbeVar {
+        name: "WOW_PROBE_KEY_GLUE",
+        purpose: "1 — arm the WOW_PROBE_KEY taps from launch, so they reach the glue screens",
+        wall_clock: false,
+    },
+    ProbeVar {
         name: "WOW_PROBE_LUA",
         purpose: "\"<chunk>\" — run a Lua chunk in the live UI VM once per world entry (the press-the-button-headlessly instrument)",
         // First fire at `_AT` seconds, re-armed `_AGAIN` seconds into every later world entry.
