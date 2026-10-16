@@ -1873,6 +1873,18 @@ pub(super) fn writer_loop(
     }
 }
 
+/// One `out` trace line per client packet written to the world socket, whichever session or writer
+/// sent it: the hook [`spawn_net`] installs when the `out` tag is on.
+fn trace_out(opcode: u16, len: usize) {
+    benilla_assets::trace::line(
+        "out",
+        &format!(
+            "{opcode:#06x} {} len={len}",
+            benilla_protocol::messages::opcode_name(opcode).unwrap_or("?")
+        ),
+    );
+}
+
 #[cfg(test)]
 mod cycle_tests;
 
@@ -1946,16 +1958,4 @@ mod rtt_tests {
         );
         assert_eq!(clock.avg_latency_ms(), None);
     }
-}
-
-/// One `out` trace line per client packet written to the world socket, whichever session or writer
-/// sent it: the hook [`spawn_net`] installs when the `out` tag is on.
-fn trace_out(opcode: u16, len: usize) {
-    benilla_assets::trace::line(
-        "out",
-        &format!(
-            "{opcode:#06x} {} len={len}",
-            benilla_protocol::messages::opcode_name(opcode).unwrap_or("?")
-        ),
-    );
 }
