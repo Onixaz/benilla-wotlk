@@ -20,6 +20,7 @@ mod names;
 mod render;
 
 use names::{quality_color, GRAY, WHITE};
+pub(super) use render::Sell;
 use render::{render_view, BuilderFlags};
 
 /// The body both compare bindings run (`0x536080`, `0x535d70`): walk `0x809200[InventoryType]`'s
@@ -104,17 +105,19 @@ fn link_name(link: &str) -> Option<&str> {
     Some(&link[start..end])
 }
 
-/// Fire `OnTooltipAddMoney(copper)`: the engine computes, FrameXML's `SetTooltipMoney` draws.
-fn fire_add_money(lua: &Lua, h: crate::widget::FrameHandle, copper: u64) {
+/// Fire `OnTooltipAddMoney(cost, maxcost)`, maxcost nil when absent (`CGTooltip::AddMoney`
+/// `0x61a0d0`): the engine computes, FrameXML's `SetTooltipMoney` draws.
+fn fire_add_money(lua: &Lua, h: crate::widget::FrameHandle, cost: u64, max: Option<u64>) {
     let id = {
         let mut model = crate::script::model_mut_of(lua);
         model.frame_id(h)
     };
+    let max = max.map_or(Value::Nil, |m| Value::Number(m as f64));
     if let Err(e) = super::event::fire_widget_handler(
         lua,
         id,
         "OnTooltipAddMoney",
-        vec![Value::Number(copper as f64)],
+        vec![Value::Number(cost as f64), max],
     ) {
         crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
@@ -151,6 +154,7 @@ pub(super) fn render_by_id(
     item_id: u32,
     fb_name: Option<String>,
     fb_q: Option<u32>,
+    sell: Sell,
 ) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     {
@@ -160,7 +164,11 @@ pub(super) fn render_by_id(
     fire_cleared(lua, h);
     match view_of(lua, item_id) {
         Some(v) => {
-            render_view(lua, this, &v, BuilderFlags::default(), None)?;
+            let flags = BuilderFlags {
+                sell,
+                ..Default::default()
+            };
+            render_view(lua, this, &v, flags, None)?;
         }
         None => {
             if let Some(name) = fb_name {
@@ -178,13 +186,70 @@ pub(super) fn render_by_id(
     Ok(())
 }
 
+/// An action-bar item's money source: the copy `SetAction` (`0x631000`) finds through
+/// `FindItemOfType`: a worn copy of equipment, else the first carried stack, else the template.
+pub(super) fn carried_sell(lua: &Lua, item_id: u32) -> Sell {
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    let equippable = model
+        .item_templates
+        .get(&item_id)
+        .is_some_and(|t| t.inventory_type != 0);
+    if equippable {
+        for slot in 1..=19 {
+            if let Some(s) = model
+                .inv_slot("player", slot)
+                .filter(|s| s.item_id == item_id)
+            {
+                return Sell::Object {
+                    stack: s.count,
+                    repair_cost: model.inv_repair_cost(slot),
+                    worn: true,
+                };
+            }
+        }
+    }
+    for bag in 0..=4 {
+        let Some(c) = model.containers.get(&bag) else {
+            continue;
+        };
+        for slot in 1..=c.num_slots {
+            if let Some(s) = c.slots.get(&slot).filter(|s| s.item_id == item_id) {
+                return Sell::Object {
+                    stack: s.count.max(1),
+                    repair_cost: model
+                        .repair_costs
+                        .bags
+                        .get(&(bag, slot))
+                        .copied()
+                        .unwrap_or(0),
+                    worn: false,
+                };
+            }
+        }
+    }
+    Sell::ONE
+}
+
 fn set_quest_item_view(
     lua: &Lua,
     this: &Table,
     item: Option<crate::script::quest::QuestItemView>,
 ) -> mlua::Result<()> {
     match item {
-        Some(it) => render_by_id(lua, this, it.item_id, it.name.clone(), Some(it.quality)),
+        // The count as the link-info stack (`0x62e670`, `0x62e790`).
+        Some(it) => render_by_id(
+            lua,
+            this,
+            it.item_id,
+            it.name.clone(),
+            Some(it.quality),
+            Sell::Block {
+                stack: it.count,
+                max: None,
+            },
+        ),
         None => {
             let h = frame_handle_of(lua, this)?;
             {
@@ -311,9 +376,14 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 enchants: roll_enchants(lua, roll),
                 ..Default::default()
             };
+            // A link's block keeps `Clear`'s stack of 1: the link carries no count (`0x62dae0`).
+            let flags = BuilderFlags {
+                sell: Sell::ONE,
+                ..Default::default()
+            };
             match view_of(lua, id) {
                 Some(v) => {
-                    render_view(lua, &this, &v, BuilderFlags::default(), Some(&inst))?;
+                    render_view(lua, &this, &v, flags, Some(&inst))?;
                 }
                 None => {
                     if let Some(name) = link_name(&link) {
@@ -348,7 +418,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 // (`0x533027..0x53304c`); anything else builds the ordinary tooltip, without an
                 // error. Three of the binding's four builder legs pass it on, not `0x533106`.
                 let name_only = super::binding_abi::positive_number_flag(lua, name_only)?;
-                let (item_id, name, quality, inst, repair_cost, currently_equipped) = {
+                let (item_id, name, quality, inst, repair_cost, currently_equipped, stack) = {
                     let mut model = crate::script::model_mut_of(lua);
                     let armed = match super::tooltip::tip_mut(&mut model, h) {
                         Ok(t) => std::mem::take(&mut t.equipped_header_armed),
@@ -362,6 +432,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                                 s.item_id,
                                 s.name.clone(),
                                 s.quality,
+                                s.count,
                                 render::ItemInstance {
                                     // App-composed, with the suffix off
                                     // `ITEM_FIELD_RANDOM_PROPERTIES_ID`.
@@ -387,7 +458,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                         0
                     };
                     match view {
-                        Some((id, name, q, inst)) => (id, name, q, inst, cost, armed),
+                        Some((id, name, q, stack, inst)) => (id, name, q, inst, cost, armed, stack),
                         // An empty slot answers nil and still pushes the other two: callers
                         // destructure all three first, and an addon may add up repairCost.
                         None => {
@@ -399,9 +470,20 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                         }
                     }
                 };
+                // Ours is an item object, 1-23 worn; an inspected one a block (`0x62e050`).
+                let sell = if unit.eq_ignore_ascii_case("player") {
+                    Sell::Object {
+                        stack,
+                        repair_cost,
+                        worn: slot <= 23,
+                    }
+                } else {
+                    Sell::ONE
+                };
                 let flags = BuilderFlags {
                     currently_equipped,
                     name_only,
+                    sell,
                 };
                 {
                     let mut model = crate::script::model_mut_of(lua);
@@ -445,10 +527,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         )?,
     )?;
 
-    // GameTooltip:SetBagItem(bag, slot) -> hasCooldown, repairCost: the real-instance hover and
-    // the one money source: with the merchant open and repair off (`0x52e376`), the engine fires
-    // `OnTooltipAddMoney(SellPrice × stack)`, or prints ITEM_UNSELLABLE at price 0 (`0x854a74`,
-    // pushed at `0x52e4a3`). repairCost is the item's cost (`0x534975`), shown in repair mode.
+    // GameTooltip:SetBagItem(bag, slot) -> hasCooldown, repairCost (`0x62f420`): the real-instance
+    // hover, an item object to the money block. repairCost shows in repair mode.
     m.set(
         "SetBagItem",
         lua.create_function(|lua, (this, bag, slot): (Table, i64, u32)| {
@@ -503,18 +583,15 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             fire_cleared(lua, h);
             match view_of(lua, item_id) {
                 Some(v) => {
-                    render_view(lua, &this, &v, BuilderFlags::default(), Some(&inst))?;
-                    let (merchant_open, repairing) = {
-                        let model = crate::script::model_mut_of(lua);
-                        (model.merchant.is_some(), model.repair_mode)
+                    let flags = BuilderFlags {
+                        sell: Sell::Object {
+                            stack: count,
+                            repair_cost,
+                            worn: false,
+                        },
+                        ..Default::default()
                     };
-                    if merchant_open && !repairing {
-                        if v.sell_price > 0 {
-                            fire_add_money(lua, h, u64::from(v.sell_price) * u64::from(count));
-                        } else if let Some(t) = crate::strings::global(lua, "ITEM_UNSELLABLE") {
-                            append_line(lua, &this, (t, WHITE), None, false)?;
-                        }
-                    }
+                    render_view(lua, &this, &v, flags, Some(&inst))?;
                 }
                 None => {
                     // Deviation: while the template is in flight the reference leaves the tooltip
@@ -572,8 +649,25 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     name: item.name.clone(),
                     ..Default::default()
                 };
+                // Ours is an item object (`0x62eff0`), theirs a block of its count (`0x62f1e0`).
+                let sell = if player_side {
+                    Sell::Object {
+                        stack: item.count,
+                        repair_cost: 0,
+                        worn: false,
+                    }
+                } else {
+                    Sell::Block {
+                        stack: item.count,
+                        max: None,
+                    }
+                };
+                let flags = BuilderFlags {
+                    sell,
+                    ..Default::default()
+                };
                 match view_of(lua, item.item_id) {
-                    Some(v) => render_view(lua, &this, &v, BuilderFlags::default(), Some(&inst))?,
+                    Some(v) => render_view(lua, &this, &v, flags, Some(&inst))?,
                     None => {
                         if let Some(name) = item.name.clone() {
                             append_line(
@@ -624,8 +718,16 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 enchants: roll_enchants(lua, row.random_property_id),
                 ..Default::default()
             };
+            // The slot's count as the block's stack (`0x62e520`).
+            let flags = BuilderFlags {
+                sell: Sell::Block {
+                    stack: row.quantity,
+                    max: None,
+                },
+                ..Default::default()
+            };
             match view_of(lua, row.item_id) {
-                Some(v) => render_view(lua, &this, &v, BuilderFlags::default(), Some(&inst))?,
+                Some(v) => render_view(lua, &this, &v, flags, Some(&inst))?,
                 // Template in flight: the row's name, as `SetBagItem`'s miss path.
                 None => {
                     if let Some(name) = row.name.clone() {
@@ -675,8 +777,15 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 enchants: roll_enchants(lua, entry.random_property_id),
                 ..Default::default()
             };
+            let flags = BuilderFlags {
+                sell: Sell::Block {
+                    stack: entry.quantity,
+                    max: None,
+                },
+                ..Default::default()
+            };
             match view_of(lua, entry.item_id) {
-                Some(v) => render_view(lua, &this, &v, BuilderFlags::default(), Some(&inst))?,
+                Some(v) => render_view(lua, &this, &v, flags, Some(&inst))?,
                 None => {
                     if let Some(name) = entry.name.clone() {
                         append_line(
@@ -828,8 +937,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         )?,
     )?;
 
-    // GameTooltip:SetMerchantItem(index) / SetBuybackItem(index): template sources, as the
-    // reference's `SetMerchantItem` (`0x534080`) is.
+    // GameTooltip:SetMerchantItem(index) / SetBuybackItem(index): template sources. A vendor's own
+    // goods skip the sell price (`0x62ed70`); a buyback row is a priced object (`0x62ff60`).
     for (method, buyback) in [("SetMerchantItem", false), ("SetBuybackItem", true)] {
         m.set(
             method,
@@ -853,9 +962,21 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     clear_content(&mut model, h);
                 }
                 fire_cleared(lua, h);
+                let flags = BuilderFlags {
+                    sell: if buyback {
+                        Sell::Object {
+                            stack: row.quantity,
+                            repair_cost: 0,
+                            worn: false,
+                        }
+                    } else {
+                        Sell::Skip
+                    },
+                    ..Default::default()
+                };
                 match view_of(lua, row.item_id) {
                     Some(v) => {
-                        render_view(lua, &this, &v, BuilderFlags::default(), None)?;
+                        render_view(lua, &this, &v, flags, None)?;
                         // Nothing to arm: the vendor tab's row seats `ShoppingTooltip1/2` itself
                         // (`MerchantFrame.xml:67-80`), and the buyback tab seats none.
                     }
@@ -879,7 +1000,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             block: head.block,
                             ..Default::default()
                         };
-                        render_view(lua, &this, &v, BuilderFlags::default(), None)?;
+                        render_view(lua, &this, &v, flags, None)?;
                     }
                 }
                 show_or_hide_empty(lua, h);
@@ -894,14 +1015,19 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetInboxItem",
         lua.create_function(|lua, (this, index): (Table, usize)| {
             let h = frame_handle_of(lua, &this)?;
-            let (item_id, roll, name) = {
+            let (item_id, roll, name, stack) = {
                 let model = crate::script::model_mut_of(lua);
                 let Some(mail) = &model.mail else {
                     return Ok(());
                 };
                 match mail.inbox.get(index.saturating_sub(1)) {
-                    Some(r) => (r.item_id, r.item_random_property_id, r.item_name.clone()),
-                    None => (0, 0, None),
+                    Some(r) => (
+                        r.item_id,
+                        r.item_random_property_id,
+                        r.item_name.clone(),
+                        r.item_count,
+                    ),
+                    None => (0, 0, None, 0),
                 }
             };
             if item_id == 0 {
@@ -918,8 +1044,13 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 enchants: roll_enchants(lua, roll),
                 ..Default::default()
             };
+            // The attachment's count as the block's stack (`0x62f9e0`).
+            let flags = BuilderFlags {
+                sell: Sell::Block { stack, max: None },
+                ..Default::default()
+            };
             if let Some(v) = view_of(lua, item_id) {
-                render_view(lua, &this, &v, BuilderFlags::default(), Some(&inst))?;
+                render_view(lua, &this, &v, flags, Some(&inst))?;
             }
             show_or_hide_empty(lua, h);
             Ok(())
@@ -960,6 +1091,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 enchants: roll_enchants(lua, roll),
                 ..Default::default()
             };
+            // A listing skips the sell price (`0x62fcf0`).
             if let Some(v) = view_of(lua, item_id) {
                 render_view(lua, &this, &v, BuilderFlags::default(), Some(&inst))?;
             }
@@ -975,13 +1107,12 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetAuctionSellItem",
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
-            let item_id = {
+            let (item_id, stack) = {
                 let model = crate::script::model_mut_of(lua);
                 model
                     .auction_sell_item
                     .as_ref()
-                    .map(|it| it.item_id)
-                    .unwrap_or(0)
+                    .map_or((0, 1), |it| (it.item_id, it.count.unwrap_or(1)))
             };
             if item_id == 0 {
                 return Ok(());
@@ -991,8 +1122,17 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
+            // The slot's item object (`0x62fc20`).
+            let flags = BuilderFlags {
+                sell: Sell::Object {
+                    stack,
+                    repair_cost: 0,
+                    worn: false,
+                },
+                ..Default::default()
+            };
             if let Some(v) = view_of(lua, item_id) {
-                render_view(lua, &this, &v, BuilderFlags::default(), None)?;
+                render_view(lua, &this, &v, flags, None)?;
             }
             show_or_hide_empty(lua, h);
             Ok(())
@@ -1005,13 +1145,12 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetSendMailItem",
         lua.create_function(|lua, this: Table| {
             let h = frame_handle_of(lua, &this)?;
-            let item_id = {
+            let (item_id, stack) = {
                 let model = crate::script::model_mut_of(lua);
                 model
                     .mail_send_item
                     .as_ref()
-                    .map(|it| it.item_id)
-                    .unwrap_or(0)
+                    .map_or((0, 1), |it| (it.item_id, it.count.unwrap_or(1)))
             };
             if item_id == 0 {
                 return Ok(());
@@ -1021,8 +1160,17 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
+            // The slot's item object (`0x62f8b0`).
+            let flags = BuilderFlags {
+                sell: Sell::Object {
+                    stack,
+                    repair_cost: 0,
+                    worn: false,
+                },
+                ..Default::default()
+            };
             if let Some(v) = view_of(lua, item_id) {
-                render_view(lua, &this, &v, BuilderFlags::default(), None)?;
+                render_view(lua, &this, &v, flags, None)?;
             }
             show_or_hide_empty(lua, h);
             Ok(())
@@ -1044,18 +1192,33 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     let Some(recipe) = super::tradeskill::recipe_at(&model, skill_index) else {
                         return Ok(());
                     };
+                    // The reagent's count, or the product's min and max made (`0x62eae0`).
                     match reagent_index {
-                        Some(ri) => ri
-                            .checked_sub(1)
-                            .and_then(|i| recipe.reagents.get(i))
-                            .map(|r| (r.item, r.name.clone())),
-                        None => Some((recipe.product_item, Some(recipe.name.clone()))),
+                        Some(ri) => {
+                            ri.checked_sub(1)
+                                .and_then(|i| recipe.reagents.get(i))
+                                .map(|r| {
+                                    let sell = Sell::Block {
+                                        stack: r.need,
+                                        max: None,
+                                    };
+                                    (r.item, r.name.clone(), sell)
+                                })
+                        }
+                        None => Some((
+                            recipe.product_item,
+                            Some(recipe.name.clone()),
+                            Sell::Block {
+                                stack: recipe.min_made,
+                                max: Some(recipe.max_made),
+                            },
+                        )),
                     }
                 };
-                let Some((item_id, fb_name)) = found else {
+                let Some((item_id, fb_name, sell)) = found else {
                     return Ok(());
                 };
-                render_by_id(lua, &this, item_id, fb_name, None)
+                render_by_id(lua, &this, item_id, fb_name, None, sell)
             },
         )?,
     )?;
@@ -1086,7 +1249,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 let Some((item_id, fb_name)) = found else {
                     return Ok(());
                 };
-                render_by_id(lua, &this, item_id, fb_name, None)
+                render_by_id(lua, &this, item_id, fb_name, None, Sell::Skip)
             },
         )?,
     )?;

@@ -563,7 +563,7 @@ fn hovered_bag_tooltip_fills_itself_when_the_stats_land() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// At a vendor a bag hover shows `SellPrice` times the stack (`0x52b650`, `0x52e376`) or the
+/// At a vendor a bag hover shows `SellPrice` times the stack (the money block, `0x62d71b`) or the
 /// `ITEM_UNSELLABLE` line, and arms the sell cursor (`ShowContainerSellCursor`, `0x4fa460`);
 /// leaving resets it.
 #[test]

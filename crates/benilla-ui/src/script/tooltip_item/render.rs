@@ -54,7 +54,33 @@ pub(super) struct ItemInstance {
 /// (`0x5c7659`), as the app's `fontstring_lines` trailing-break rule does.
 const SET_SPACER: &str = " \n";
 
-/// The builder's two independent render flags, p4 and p5 of `0x52b650`.
+/// Where the money block (`0x62d71b`) takes its stack from: the builder's item object or its
+/// link-info block, or nowhere when the binding passes `skipSellPrice` (`0x6277f0`).
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub(in crate::script) enum Sell {
+    /// `skipSellPrice` set, as `SetMerchantItem`, `SetAuctionItem` and `SetTrainerService` pass.
+    #[default]
+    Skip,
+    /// An item object: SellPrice less its repair cost (1 when the repair costs as much), times the
+    /// stack. `worn` is a player slot below 23, where a price of 0 prints no ITEM_UNSELLABLE.
+    Object {
+        stack: u32,
+        repair_cost: u32,
+        worn: bool,
+    },
+    /// No object: SellPrice × the block's stack, with a maxcost when `max` exceeds the stack.
+    Block { stack: u32, max: Option<u32> },
+}
+
+impl Sell {
+    /// A template with no link info, the `stackCount` 1 `ItemLinkInfo::Clear` leaves.
+    pub(in crate::script) const ONE: Self = Self::Block {
+        stack: 1,
+        max: None,
+    };
+}
+
+/// The builder's render flags: p4 and p5 of `0x52b650`, and the money source.
 #[derive(Clone, Copy, Default)]
 pub(super) struct BuilderFlags {
     /// p5 `[arg+0x18]`: prepend the gray `CURRENTLY_EQUIPPED` line. Only the two compare bindings
@@ -65,6 +91,7 @@ pub(super) struct BuilderFlags {
     /// and the stat body are cut, and all after the cooldown line is skipped; the slot/type cell,
     /// durability, duration, requirements, spell triggers and set block still print.
     pub name_only: bool,
+    pub sell: Sell,
 }
 
 /// Render one item into the tooltip in `0x52b650`'s order. Not built: ITEM_COOLDOWN_TIME,
@@ -610,36 +637,81 @@ pub(super) fn render_view(
     if !v.description.is_empty() {
         addw((format!("\"{}\"", v.description), GOLD))?;
     }
-    // The reference gates the rest on an item object (`0x52e1c7`, `0x52e2e0`). Here only a template
-    // source (`None`) stops, so a link, loot, mail or auction hover, which has an instance but no
-    // object, still reaches READABLE.
-    let Some(inst) = inst else { return Ok(()) };
-    // The creator line (`0x52e1b1..0x52e2db`), white `0xc0cf60`: ITEM_WRITTEN_BY for a letter, else
-    // ITEM_CREATED_BY, green by its own `|cff00ff00`. A wrapped instance (`0x8`, gate `0x52b7b0`)
-    // takes ITEM_WRAPPED_BY off `ITEM_FIELD_GIFTCREATOR` in the reference; that is not built, so a
-    // wrapped instance prints no creator line.
-    if inst.flags & 0x8 == 0 {
-        if let Some(name) = &inst.creator {
-            let key = if inst.has_text {
-                "ITEM_WRITTEN_BY"
-            } else {
-                "ITEM_CREATED_BY"
-            };
-            keyed(key, &[Arg::S(name)], WHITE, false)?;
+    // The reference gates the instance lines on an item object (`0x52e1c7`, `0x52e2e0`). Here only
+    // a template source (`None`) skips them, so a link, loot, mail or auction hover, which has an
+    // instance but no object, still reaches READABLE.
+    if let Some(inst) = inst {
+        // The creator line (`0x52e1b1..0x52e2db`), white `0xc0cf60`: ITEM_WRITTEN_BY for a letter,
+        // else ITEM_CREATED_BY, green by its own `|cff00ff00`. A wrapped instance (`0x8`, gate
+        // `0x52b7b0`) takes ITEM_WRAPPED_BY off `ITEM_FIELD_GIFTCREATOR` in the reference; that is
+        // not built, so a wrapped instance prints no creator line.
+        if inst.flags & 0x8 == 0 {
+            if let Some(name) = &inst.creator {
+                let key = if inst.has_text {
+                    "ITEM_WRITTEN_BY"
+                } else {
+                    "ITEM_CREATED_BY"
+                };
+                keyed(key, &[Arg::S(name)], WHITE, false)?;
+            }
+        }
+        // One green line, OPENABLE winning (`0x52e2f2..0x52e35d`). Openable: a p6=0 source and
+        // either the loot flag `0x4` behind its lock gate (a lock needs UNLOCKED) or a wrapped gift
+        // (`0x200` and WRAPPED `0x8`). Readable: PageText (`0x5d9e10`) or the letter text. The lock
+        // gate is the line's only: the click tests the bare flag (`ItemInfo::opens_loot`), and
+        // READABLE wins there.
+        let openable = inst.openable_source
+            && ((v.flags & 0x4 != 0 && (v.lock_id == 0 || inst.flags & 0x4 != 0))
+                || (v.flags & 0x200 != 0 && inst.flags & 0x8 != 0));
+        if openable {
+            keyed("ITEM_OPENABLE", &[], GREEN, false)?;
+        } else if v.page_text != 0 || inst.has_text {
+            keyed("ITEM_READABLE", &[], GREEN, false)?;
         }
     }
-    // One green line, OPENABLE winning (`0x52e2f2..0x52e35d`). Openable: a p6=0 source and either
-    // the loot flag `0x4` behind its lock gate (a lock needs UNLOCKED) or a wrapped gift (`0x200`
-    // and WRAPPED `0x8`). Readable: PageText (`0x5d9e10`) or the letter text. The lock gate is the
-    // line's only: the click tests the bare flag (`ItemInfo::opens_loot`), and READABLE wins there.
-    let openable = inst.openable_source
-        && ((v.flags & 0x4 != 0 && (v.lock_id == 0 || inst.flags & 0x4 != 0))
-            || (v.flags & 0x200 != 0 && inst.flags & 0x8 != 0));
-    if openable {
-        keyed("ITEM_OPENABLE", &[], GREEN, false)?;
-    } else if v.page_text != 0 || inst.has_text {
-        keyed("ITEM_READABLE", &[], GREEN, false)?;
+    add_sell_price(lua, this, v, flags.sell)
+}
+
+/// The money block, the builder's last lines (`0x62d71b..0x62d8ef`): nothing in repair mode
+/// (cursor mode 17) or for a `skipSellPrice` source, else `OnTooltipAddMoney(cost, maxcost)` with
+/// no merchant check. At price 0 an item object outside the worn slots prints ITEM_UNSELLABLE,
+/// only while a vendor is open (`0x62d823`). The charge scaling `0x62d772` is not built.
+fn add_sell_price(lua: &Lua, this: &Table, v: &ItemTemplateView, sell: Sell) -> mlua::Result<()> {
+    if sell == Sell::Skip {
+        return Ok(());
     }
+    let (repairing, merchant_open) = {
+        let model = crate::script::model_mut_of(lua);
+        (model.repair_mode, model.merchant.is_some())
+    };
+    if repairing {
+        return Ok(());
+    }
+    let price = u64::from(v.sell_price);
+    if price == 0 {
+        if merchant_open && matches!(sell, Sell::Object { worn: false, .. }) {
+            if let Some(t) = crate::strings::global(lua, "ITEM_UNSELLABLE") {
+                append_line(lua, this, (t, WHITE), None, false)?;
+            }
+        }
+        return Ok(());
+    }
+    let (cost, max) = match sell {
+        Sell::Skip => return Ok(()),
+        Sell::Object {
+            stack, repair_cost, ..
+        } => {
+            let repair = u64::from(repair_cost);
+            let unit = if repair < price { price - repair } else { 1 };
+            (unit * u64::from(stack.max(1)), None)
+        }
+        Sell::Block { stack, max } => (
+            price * u64::from(stack),
+            max.filter(|&m| m > stack).map(|m| price * u64::from(m)),
+        ),
+    };
+    let h = crate::script::object::frame_handle_of(lua, this)?;
+    super::fire_add_money(lua, h, cost, max);
     Ok(())
 }
 

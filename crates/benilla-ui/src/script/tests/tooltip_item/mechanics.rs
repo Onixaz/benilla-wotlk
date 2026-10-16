@@ -6,8 +6,11 @@ use std::collections::HashMap;
 use super::script;
 use crate::script::*;
 
-/// `SetBagItem` at an open merchant fires `OnTooltipAddMoney` with SellPrice × stack, and price 0
-/// prints `ITEM_UNSELLABLE`; with no merchant, neither. A template in flight renders the link name.
+/// The money block (`0x62d71b`) has no merchant gate: `SetBagItem`, `SetInventoryItem` and
+/// `SetHyperlink` fire `OnTooltipAddMoney` with no vendor open, an item object's price less its
+/// repair cost. Repair mode and a vendor's own goods (`skipSellPrice`) fire nothing. Price 0 prints
+/// `ITEM_UNSELLABLE` only at an open vendor and never for a worn slot. A template in flight
+/// renders the link name.
 #[test]
 fn bag_item_money_law_and_fallback() {
     let mut s = script();
@@ -33,6 +36,16 @@ fn bag_item_money_law_and_fallback() {
             ..Default::default()
         },
     );
+    slots.insert(
+        3,
+        ContainerSlot {
+            count: 1,
+            quality: Some(2),
+            item_id: 8300,
+            link: Some("|cff1eff00|Hitem:8300|h[Dented Mace]|h|r".into()),
+            ..Default::default()
+        },
+    );
     s.set_container(
         0,
         Some(ContainerState {
@@ -42,6 +55,27 @@ fn bag_item_money_law_and_fallback() {
             slots,
         }),
     );
+    let mut inv: InventorySlots = Default::default();
+    inv[1] = Some(InvSlotView {
+        item_id: 9999,
+        count: 1,
+        name: Some("Shadowforge Key".into()),
+        quality: 1,
+        ..Default::default()
+    });
+    inv[16] = Some(InvSlotView {
+        item_id: 8300,
+        count: 1,
+        name: Some("Dented Mace".into()),
+        quality: 2,
+        ..Default::default()
+    });
+    s.set_inventory_slots(inv);
+    // The bag mace's repair costs more than it sells for; the worn one's costs 40 of its 100.
+    let mut costs = RepairCosts::default();
+    costs.bags.insert((0, 3), 250);
+    costs.equipped.insert(16, 40);
+    s.set_repair_costs(costs);
     s.set_item_template(
         2318,
         ItemTemplateView {
@@ -51,28 +85,40 @@ fn bag_item_money_law_and_fallback() {
             ..Default::default()
         },
     );
+    s.set_item_template(
+        8300,
+        ItemTemplateView {
+            name: "Dented Mace".into(),
+            quality: 2,
+            sell_price: 100,
+            ..Default::default()
+        },
+    );
     s.run(
         r#"
-        money_fired = nil
+        money_fired, max_fired = nil, nil
         local a = CreateFrame("Button", "Slot3"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         local tt = CreateFrame("GameTooltip", "TT")
-        tt:SetScript("OnTooltipAddMoney", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self = this money_fired = arg1 end)
-        -- No merchant: no money handler fires.
-        tt:SetOwner(a, "ANCHOR_RIGHT")
-        tt:SetBagItem(0, 1)
-        assert(money_fired == nil, "no merchant, no money")
-    "#,
-    )
-    .unwrap();
-    s.set_merchant(Some(MerchantState::default()));
-    s.run(
-        r#"
-        TT:SetOwner(Slot3, "ANCHOR_RIGHT")
-        TT:SetBagItem(0, 1)
-        assert(money_fired == 52, "SellPrice 13 × stack 4, got " .. tostring(money_fired))
+        tt:SetScript("OnTooltipAddMoney", function(self, cost, maxcost) money_fired, max_fired = cost, maxcost end)
+        function Hover(f)
+            money_fired, max_fired = nil, nil
+            TT:SetOwner(Slot3, "ANCHOR_RIGHT")
+            f()
+        end
+        function LastLine() return getglobal("TTTextLeft" .. TT:NumLines()):GetText() end
+        -- No merchant: the bag stack, the worn item and the link all carry money.
+        Hover(function() TT:SetBagItem(0, 1) end)
+        assert(money_fired == 52 and max_fired == nil, "SellPrice 13 x stack 4, got " .. tostring(money_fired))
+        Hover(function() TT:SetInventoryItem("player", 16) end)
+        assert(money_fired == 60, "100 less the 40 repair, got " .. tostring(money_fired))
+        Hover(function() TT:SetBagItem(0, 3) end)
+        assert(money_fired == 1, "a repair dearer than the price leaves 1, got " .. tostring(money_fired))
+        Hover(function() TT:SetHyperlink("item:2318") end)
+        assert(money_fired == 13, "a link is one of the item, got " .. tostring(money_fired))
+        Hover(function() TT:SetInventoryItem("target", 16) end)
+        assert(money_fired == nil, "no inspected item here")
         -- The unresolved key: the link-name fallback line + nothing else.
-        TT:SetOwner(Slot3, "ANCHOR_RIGHT")
-        TT:SetBagItem(0, 2)
+        Hover(function() TT:SetBagItem(0, 2) end)
         assert(TT:NumLines() == 1, "fallback one-liner")
         assert(TTTextLeft1:GetText() == "Shadowforge Key", "fallback carries the link name")
     "#,
@@ -90,12 +136,34 @@ fn bag_item_money_law_and_fallback() {
     );
     s.run(
         r#"
-        money_fired = nil
-        TT:SetOwner(Slot3, "ANCHOR_RIGHT")
-        TT:SetBagItem(0, 2)
+        Hover(function() TT:SetBagItem(0, 2) end)
+        assert(money_fired == nil and LastLine() ~= "[ITEM_UNSELLABLE]", "price 0 and no vendor: nothing")
+    "#,
+    )
+    .unwrap();
+    s.set_merchant(Some(MerchantState {
+        items: vec![MerchantItem {
+            item_id: 2318,
+            ..Default::default()
+        }],
+        can_repair: true,
+        ..Default::default()
+    }));
+    s.run(
+        r#"
+        Hover(function() TT:SetBagItem(0, 2) end)
         assert(money_fired == nil, "unsellable fires no money")
-        local last = getglobal("TTTextLeft" .. TT:NumLines())
-        assert(last:GetText() == "[ITEM_UNSELLABLE]", "ITEM_UNSELLABLE line")
+        assert(LastLine() == "[ITEM_UNSELLABLE]", "ITEM_UNSELLABLE at a vendor")
+        Hover(function() TT:SetInventoryItem("player", 1) end)
+        assert(LastLine() ~= "[ITEM_UNSELLABLE]", "a worn slot never says unsellable")
+        Hover(function() TT:SetMerchantItem(1) end)
+        assert(money_fired == nil, "a vendor's own goods skip the sell price")
+        Hover(function() TT:SetBagItem(0, 1) end)
+        assert(money_fired == 52, "the vendor changes nothing for a priced stack")
+        ShowRepairCursor()
+        Hover(function() TT:SetBagItem(0, 1) end)
+        assert(money_fired == nil, "repair mode: no money")
+        HideRepairCursor()
     "#,
     )
     .unwrap();

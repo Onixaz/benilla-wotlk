@@ -850,7 +850,10 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     },
                     None,
                 ),
-                0x80 => super::tooltip_item::render_by_id(lua, &this, a.action, None, None),
+                0x80 => {
+                    let sell = super::tooltip_item::carried_sell(lua, a.action);
+                    super::tooltip_item::render_by_id(lua, &this, a.action, None, None, sell)
+                }
                 0x40 => {
                     let h = frame_handle_of(lua, &this)?;
                     let name = {
@@ -891,9 +894,15 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             match subject {
                 // The item builder (`0x52b650`), with no fallback name: id 0 or a template in
                 // flight renders empty, the builder's own early-out.
-                TrainerTooltip::Item(item_id) => {
-                    super::tooltip_item::render_by_id(lua, &this, item_id, None, None)
-                }
+                // `skipSellPrice` set (`0x62e900`).
+                TrainerTooltip::Item(item_id) => super::tooltip_item::render_by_id(
+                    lua,
+                    &this,
+                    item_id,
+                    None,
+                    None,
+                    super::tooltip_item::Sell::Skip,
+                ),
                 TrainerTooltip::Spell {
                     spell_id,
                     alt_caster,
@@ -931,9 +940,14 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 }
             };
             match subject {
-                CraftTooltip::Item(item_id) => {
-                    super::tooltip_item::render_by_id(lua, &this, item_id, None, None)
-                }
+                CraftTooltip::Item(item_id) => super::tooltip_item::render_by_id(
+                    lua,
+                    &this,
+                    item_id,
+                    None,
+                    None,
+                    super::tooltip_item::Sell::Skip,
+                ),
                 CraftTooltip::Spell(spell_id) => {
                     set_spell_by_id(lua, &this, spell_id, None, SpellRenderOpts::default(), None)
                 }

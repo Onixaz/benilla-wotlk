@@ -1,5 +1,5 @@
 //! The engine item-tooltip renderer: line order, requirement reds against live player state, the
-//! sell price (`OnTooltipAddMoney` at an open merchant, for a real instance, out of repair mode)
+//! sell price (`OnTooltipAddMoney` from every priced source, out of repair mode)
 //! and the fallback for a template still in flight.
 
 use super::common::script as bare_script;
@@ -120,7 +120,14 @@ fn script() -> UiScript {
     let f = s
         .lua()
         .create_function(|lua, (tt, id): (mlua::Table, u32)| {
-            crate::script::tooltip_item::render_by_id(lua, &tt, id, None, None)
+            crate::script::tooltip_item::render_by_id(
+                lua,
+                &tt,
+                id,
+                None,
+                None,
+                crate::script::tooltip_item::Sell::Skip,
+            )
         })
         .unwrap();
     s.lua().globals().set("SetItemByIdForTest", f).unwrap();
