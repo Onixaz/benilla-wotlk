@@ -4,15 +4,13 @@
 
 # benilla-wotlk
 
-A from-scratch World of Warcraft client written in Rust and Bevy. Upstream
-[benilla](https://github.com/samwhosung/benilla) targets World of Warcraft 1.12.1; this fork
-targets World of Warcraft 3.3.5a (build 12340) alone.
+A from-scratch World of Warcraft client written in Rust and Bevy, for World of Warcraft 3.3.5a
+(build 12340) alone.
 
 The client connects to a 3.3.5a server over the original protocol, reads game data from your own
 3.3.5a installation, and runs the stock 3.3.5a interface from that installation. The file formats,
-network protocol, renderer, and interface engine are implemented from scratch. When upstream's
-1.12.1 behavior and 3.3.5a differ, the 3.3.5a reference client is the specification. No original
-client code or bundled game data is included.
+network protocol, renderer, and interface engine are implemented from scratch. The 3.3.5a
+reference client is the specification. No original client code or bundled game data is included.
 
 ## Status
 

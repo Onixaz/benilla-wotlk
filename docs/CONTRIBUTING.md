@@ -7,7 +7,7 @@ top of benilla, in a crate of its own or a fork, and both are welcome.
 
 ## Where to start
 
-The [issues](https://github.com/samwhosung/benilla/issues) the maintainers file are checked
+The [issues](https://github.com/Onixaz/benilla-wotlk/issues) the maintainers file are checked
 against 3.3.5a first: each says what 3.3.5a does, what benilla does instead, and where in the
 code, and any of them is a place to start. One labelled `in progress` is taken: someone is
 working on it or a pull request is open for it, so pick another. Once you start one, open a draft

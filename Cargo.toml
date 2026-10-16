@@ -3,10 +3,10 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-authors = ["sam <samuv.eth@gmail.com>"]
+authors = ["Juozas Polikevičius <onixaz@gmail.com>"]
 
 # A version two crates share is pinned in `[workspace.dependencies]`; feature additions stay per
 # crate. `image` stays per-crate: its consumers differ on default features, and a member cannot
