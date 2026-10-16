@@ -27,6 +27,7 @@ impl Plugin for ProbeCharCreatePlugin {
             req,
             keep,
             state: ProbeState::AwaitingSelect,
+            cleanup_since: None,
         })
         .add_systems(Update, drive_charcreate_probe);
     }
@@ -72,6 +73,8 @@ struct CharCreateProbe {
     req: CharCreateReq,
     keep: bool,
     state: ProbeState,
+    /// When the cleanup began waiting for the fresh roster to list the new character.
+    cleanup_since: Option<f32>,
 }
 
 /// Drive the create, then the delete, through the stock screens as a player's clicks would.
@@ -81,6 +84,7 @@ fn drive_charcreate_probe(
     catalog: Option<Res<crate::entities::CharCreate>>,
     classes: Option<Res<crate::chr_classes::ChrClassTable>>,
     mut results: MessageReader<CharActionResultMessage>,
+    time: super::probes::ProbeClock,
 ) {
     let glue = super::glue_press::glue(script.as_deref());
     match probe.state {
@@ -163,6 +167,10 @@ fn drive_charcreate_probe(
                     super::glue_press::press_delete(s, row);
                     probe.state = ProbeState::Deleting;
                 }
+                // The screen stands before the roster its create asked for lands.
+                None if time.elapsed_secs()
+                    - *probe.cleanup_since.get_or_insert(time.elapsed_secs())
+                    < CLEANUP_WAIT_SECS => {}
                 None => {
                     warn!("probe-charcreate: created char not in roster — cannot clean up");
                     probe.state = ProbeState::Done;
@@ -183,6 +191,9 @@ fn drive_charcreate_probe(
         ProbeState::Done => {}
     }
 }
+
+/// How long the cleanup waits for the fresh roster to list the new character.
+const CLEANUP_WAIT_SECS: f32 = 15.0;
 
 /// A name for the result bytes the probe checks; the create screen has the full table.
 fn result_label(action: CharAction, code: u8) -> &'static str {
