@@ -154,9 +154,9 @@ fn skipped_under(required: bool, what: &str, looked_in: &[PathBuf]) {
 }
 
 /// The third-party addon corpus the UI engine's real-addon tests run against, or `None`:
-/// `$BENILLA_ADDON_CORPUS`, then `<benilla's checkout>/wow-addons-vanilla` (`dev` only), a
-/// gitignored link beside `WoW`. Never a folder beside the checkout, which depends on where the
-/// checkout sits.
+/// `$BENILLA_ADDON_CORPUS` (set and empty: none), then `<benilla's checkout>/wow-addons-vanilla`
+/// (`dev` only), a gitignored link beside `WoW`. Never a folder beside the checkout, which depends
+/// on where the checkout sits.
 pub fn addon_corpus() -> Option<PathBuf> {
     addon_corpus_candidates().into_iter().find(|c| c.is_dir())
 }
@@ -169,7 +169,11 @@ pub fn addon_corpus_candidates() -> Vec<PathBuf> {
 /// [`addon_corpus_candidates`] with the environment passed in, like [`candidates_from`].
 fn addon_corpus_candidates_from(override_dir: Option<PathBuf>) -> Vec<PathBuf> {
     let mut out = Vec::with_capacity(2);
+    // Set and empty is no corpus at all, as `WOW_DATA=` is no install: the land gates run so.
     if let Some(over) = override_dir {
+        if over.as_os_str().is_empty() {
+            return Vec::new();
+        }
         out.push(over);
     }
     // benilla's checkout, dev builds only, whoever the launcher is: the corpus tests are benilla's.
@@ -344,6 +348,14 @@ mod tests {
                 c.display()
             );
         }
+    }
+
+    #[test]
+    fn an_empty_corpus_override_is_no_corpus_even_in_a_dev_build() {
+        assert_eq!(
+            addon_corpus_candidates_from(Some(PathBuf::new())),
+            Vec::<PathBuf>::new()
+        );
     }
 
     #[cfg(not(feature = "dev"))]
