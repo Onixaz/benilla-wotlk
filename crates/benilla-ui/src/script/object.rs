@@ -76,7 +76,7 @@ pub(crate) fn frame_wrapper(lua: &Lua, id: u32) -> mlua::Result<Table> {
     t.raw_set(0, Value::LightUserData(id_to_lud(id)))?;
     // The kind picks the metatable once, here: a frame's kind never changes and `id_to_frame`
     // never loses an entry, so the choice cannot go stale.
-    let (kind, name): (Option<FrameKind>, Option<String>) = {
+    let (kind, name, ffx): (Option<FrameKind>, Option<String>, bool) = {
         let model = lua
             .app_data_ref::<crate::script::ModelCell>()
             .expect("model app_data");
@@ -84,9 +84,21 @@ pub(crate) fn frame_wrapper(lua: &Lua, id: u32) -> mlua::Result<Table> {
             .id_to_frame
             .get(&id)
             .and_then(|h| model.arena.frame(*h));
-        (frame.map(|f| f.kind), frame.and_then(|f| f.name.clone()))
+        let ffx = frame.is_some_and(|f| matches!(&f.kind_state, KindState::Model(m) if m.ffx));
+        (frame.map(|f| f.kind), frame.and_then(|f| f.name.clone()), ffx)
     };
-    t.set_metatable(Some(frame_meta_for(lua, kind)?))?;
+    let meta = if ffx {
+        frame_meta_chain(
+            lua,
+            &[
+                super::modelframe::REG_MODELFFX_METHODS,
+                super::modelframe::REG_MODEL_METHODS,
+            ],
+        )?
+    } else {
+        frame_meta_for(lua, kind)?
+    };
+    t.set_metatable(Some(meta))?;
     wrappers.set(id, t.clone())?;
     if let Some(name) = name {
         publish_global(lua, &name, &t)?;
@@ -492,7 +504,11 @@ const REG_KIND_METAS: &str = "__benilla_frame_meta_by_kind";
 /// tail-calling its base's (`CheckButton`, `Button`, `Frame`): a later write to a table shows
 /// through, and a plain Frame never reaches `StatusBar`'s methods, so `frame.SetValue` stays nil.
 fn frame_meta_for(lua: &Lua, kind: Option<FrameKind>) -> mlua::Result<Table> {
-    let chain = kind_method_registries(kind);
+    frame_meta_chain(lua, kind_method_registries(kind))
+}
+
+/// [`frame_meta_for`] over an explicit chain of method registries, own table first.
+fn frame_meta_chain(lua: &Lua, chain: &[&'static str]) -> mlua::Result<Table> {
     let key = chain.first().copied().unwrap_or("");
     let metas: Table = lua.named_registry_value(REG_KIND_METAS)?;
     if let Value::Table(meta) = metas.raw_get::<Value>(key)? {

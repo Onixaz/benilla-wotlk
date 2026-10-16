@@ -291,6 +291,12 @@ pub struct ModelState {
     /// and its layer-2 paint callback (`0x46fad0`, registered by `0x46fa90`) brackets the model
     /// paint `0x76d240` with the full-screen-effect pass pair `0x6cd890`/`0x6cda70`.
     pub ffx: bool,
+    /// `SetGlow(value)`: the model's glow, `None` until a script sets one.
+    pub glow: Option<f32>,
+    /// A `ModelFFX`'s custom lights: the background's, the character's and the pet's sets
+    /// (`AddLight`, `AddCharacterLight`, `AddPetLight`), each two arrays of up to four,
+    /// `ResetLights` clearing all six.
+    pub ffx_lights: [[Vec<ModelLight>; 2]; 3],
     /// The scene's fill callback is the select screen's (`0x472150`, installed by
     /// `SetCharSelectBackground` at `0x472144`) in place of the fog callback `SetModel` installs
     /// (`0x76cd96` → `0x76d680`): the scene draws unfogged whatever the fog fields hold. The
@@ -373,6 +379,8 @@ impl Default for ModelState {
             fog_near: 0.0,
             fog_far: 1.0,
             ffx: false,
+            glow: None,
+            ffx_lights: Default::default(),
             select_fill: false,
             instance: 0,
         }

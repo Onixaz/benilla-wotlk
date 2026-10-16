@@ -443,6 +443,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(MultiValue::from_vec(out))
         })?,
     )?;
+    // `SetGlow(value)` (`0x9614b0`): a number or `Usage: %s:SetGlow(value)`.
+    m.set(
+        "SetGlow",
+        lua.create_function(|lua, (this, v): (Table, Value)| {
+            let Some(glow) = lua.coerce_number(v)? else {
+                return Err(usage(lua, &this, "SetGlow(value)"));
+            };
+            with_model(lua, &this, |m| m.glow = Some(glow as f32))
+        })?,
+    )?;
     m.set(
         "SetFogColor",
         lua.create_function(
@@ -701,4 +711,48 @@ pub struct ModelPaneFrame {
     pub clock_ms: u64,
     /// The armed sequence's play head; `None` draws the rest pose.
     pub play: Option<crate::widget::ModelPlayHead>,
+}
+
+/// The registry key of `ModelFFX`'s own method table (`0xac465c`), chained over `Model`'s.
+pub(super) const REG_MODELFFX_METHODS: &str = "__benilla_modelffx_methods";
+
+/// `ModelFFX`'s four light methods (`CSimpleModelFFX`, `0x4e6c40`-`0x4e6d60`): `ResetLights`
+/// clears the three sets; `AddLight`, `AddCharacterLight` and `AddPetLight` take an optional
+/// array index (nonzero picks the second) and `SetLight`'s arguments, and append the light to the
+/// background's, the character's or the pet's set while it holds fewer than four.
+pub(super) fn install_ffx(lua: &Lua) -> mlua::Result<()> {
+    let m = lua.create_table()?;
+    m.set(
+        "ResetLights",
+        lua.create_function(|lua, this: Table| {
+            with_model(lua, &this, |m| m.ffx_lights = Default::default())
+        })?,
+    )?;
+    for (name, set) in [("AddLight", 0usize), ("AddCharacterLight", 1), ("AddPetLight", 2)] {
+        m.set(
+            name,
+            lua.create_function(move |lua, args: MultiValue| {
+                let mut it = args.into_iter();
+                let this = match it.next() {
+                    Some(Value::Table(t)) => t,
+                    _ => return Err(mlua::Error::runtime("expected a Model")),
+                };
+                let index = match it.next() {
+                    Some(v) => lua.coerce_number(v)?.is_some_and(|n| n as i64 != 0),
+                    None => false,
+                };
+                let a: Vec<Value> = it.collect();
+                match parse_set_light(&a) {
+                    SetLight::Set(l) => with_model(lua, &this, |m| {
+                        let lights = &mut m.ffx_lights[set][usize::from(index)];
+                        if lights.len() < 4 {
+                            lights.push(l);
+                        }
+                    }),
+                    _ => Err(usage(lua, &this, &format!("{name}(index, enabled[,omni,dirX,dirY,dirZ,ambIntensity[,ambR,ambG,ambB],dirIntensity[,dirR,dirG,dirB]])"))),
+                }
+            })?,
+        )?;
+    }
+    lua.set_named_registry_value(REG_MODELFFX_METHODS, m)
 }
