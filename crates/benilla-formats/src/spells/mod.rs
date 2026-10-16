@@ -12,9 +12,11 @@
 //! `SpellIcon.dbc` is `ID`, `TextureFilename` (no extension).
 
 pub(crate) mod cast_times;
+pub(crate) mod desc_vars;
 pub(crate) mod dispel_types;
 mod display;
 pub(crate) mod duration;
+mod expr;
 pub(crate) mod forms;
 pub(crate) mod radius;
 pub(crate) mod ranges;
@@ -22,11 +24,13 @@ mod soft_float;
 mod tokens;
 
 pub use cast_times::{load_spell_cast_times, SpellCastTime, SpellCastTimeCatalog};
+pub use desc_vars::{load_spell_description_variables, SpellDescriptionVariablesCatalog};
 pub use dispel_types::{load_spell_dispel_types, SpellDispelTypes};
 pub use display::{FormRefusal, LearnAnnouncement, OpenLock, SpellDisplay};
 pub use duration::{load_spell_durations, SpellDuration, SpellDurationCatalog};
 pub use forms::{load_shapeshift_forms, ShapeshiftForm};
 mod immunity;
+pub use expr::PlayerValue;
 pub use immunity::{cc_exemption, grants_immunity, CcExemption};
 pub use radius::{load_spell_radii, SpellRadius, SpellRadiusCatalog};
 pub use ranges::{
@@ -35,7 +39,7 @@ pub use ranges::{
     MOVING_BONUS_FLAGS, MOVING_RANGE_BONUS, ON_NEXT_SWING_RANGE,
 };
 pub use soft_float::modify as soft_modify;
-pub use tokens::{substitute, SpellMods, TokenContext, TokenNumber};
+pub use tokens::{substitute, Caster, SpellMods, TokenContext, TokenNumber};
 
 use std::collections::HashMap;
 
@@ -64,6 +68,7 @@ const COL_MANA_COST: usize = 42;
 const COL_MANA_COST_PCT: usize = 204;
 const COL_MANA_COST_PER_LEVEL: usize = 43;
 const COL_MANA_PER_SECOND: usize = 44;
+const COL_MANA_PER_SECOND_PER_LEVEL: usize = 45;
 /// `rangeIndex` (`+0xb8`), resolved by `GetMinMaxRange` (`0x6e3480`).
 const COL_RANGE_INDEX: usize = 46;
 /// `modalNextSpell` (`+0xc0`): 52 of its 57 nonzero rows are hunter shots naming Auto Shot.
@@ -110,6 +115,9 @@ const COL_ATTRIBUTES_EX3: usize = 7;
 /// `AttributesEx4` (`+0x20`), the dword after `AttributesEx3`: the pet-bar spell arm tests its
 /// `0x20` at `0x4bd355`.
 const COL_ATTRIBUTES_EX4: usize = 8;
+/// `AttributesExE` (`+0x24`): `0x200` and `0x2000` reach the description's over-time and haste
+/// terms.
+const COL_ATTRIBUTES_EX5: usize = 9;
 const COL_ATTRIBUTES_EX7: usize = 11;
 const COL_TOTEM_CATEGORY_1: usize = 222;
 const COL_SPEED: usize = 47;
@@ -193,6 +201,10 @@ const COL_MAX_TARGET_LEVEL: usize = 207;
 const COL_MAX_AFFECTED_TARGETS: usize = 212;
 const COL_REQUIRED_AURA_VISION: usize = 221;
 const COL_DAMAGE_MULTIPLIER_1: usize = 216;
+/// `EffectBonusMultiplier[3]` (`+0x294`), the expression operands `bc1`..`bc3`.
+const COL_EFFECT_BONUS_MULTIPLIER_1: usize = 229;
+/// `SpellDescriptionVariablesID` (`+0x2a0`, read by `0x57abc0`).
+const COL_DESCRIPTION_VARIABLES_ID: usize = 232;
 const COL_EFFECT_POINTS_PER_COMBO_POINT_1: usize = 119;
 
 /// The per-effect `[3]` arrays, each constant slot 0; die sides and base points are signed.
@@ -310,6 +322,8 @@ pub struct SpellCatalog {
     /// Spell id to the `Languages.dbc` id its first effect declares.
     declared_language: HashMap<u32, u32>,
     dispel_types: SpellDispelTypes,
+    /// `SpellDescriptionVariables.dbc`, the definitions the texts' `$<name>` read.
+    description_variables: SpellDescriptionVariablesCatalog,
 }
 
 impl SpellCatalog {
@@ -339,7 +353,22 @@ impl SpellCatalog {
             learn_effects,
             declared_language: HashMap::new(),
             dispel_types: SpellDispelTypes::default(),
+            description_variables: SpellDescriptionVariablesCatalog::default(),
         }
+    }
+
+    /// `SpellDescriptionVariables.dbc` ([`SpellDisplay::description_variables_id`]).
+    pub fn description_variables(&self) -> &SpellDescriptionVariablesCatalog {
+        &self.description_variables
+    }
+
+    /// The catalog with `variables` as its description variables, for tests.
+    pub fn with_description_variables(
+        mut self,
+        variables: SpellDescriptionVariablesCatalog,
+    ) -> Self {
+        self.description_variables = variables;
+        self
     }
 
     /// A spell's three effect slots as the trainer reads them: a plain ability's non-zero effects
@@ -451,6 +480,11 @@ pub(crate) fn spell_schema() -> Schema {
                 format!("DmgMultiplier{}", i - COL_DAMAGE_MULTIPLIER_1),
                 FieldType::Float32,
             ));
+        } else if (COL_EFFECT_BONUS_MULTIPLIER_1..COL_EFFECT_BONUS_MULTIPLIER_1 + 3).contains(&i) {
+            s.add_field(SchemaField::new(
+                format!("EffectBonusMultiplier{}", i - COL_EFFECT_BONUS_MULTIPLIER_1),
+                FieldType::Float32,
+            ));
         } else {
             s.add_field(SchemaField::new(format!("F{i}"), FieldType::UInt32));
         }
@@ -462,6 +496,7 @@ pub(crate) fn spell_schema() -> Schema {
 pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
     let icons = crate::dbc::load_spell_icon_map(chain)?;
     let dispel_types = load_spell_dispel_types(chain)?;
+    let description_variables = load_spell_description_variables(chain)?;
     // Categories whose `SpellCategory.dbc` flags carry `0x2` match every cooldown query
     // (`GetCooldownInfo` `0x6e13e0`); only wand Shoot's 351 does.
     let wildcard_categories: std::collections::HashSet<u32> = {
@@ -553,6 +588,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 attributes_ex2: u32_at(r, COL_ATTRIBUTES_EX2).unwrap_or(0),
                 attributes_ex3: u32_at(r, COL_ATTRIBUTES_EX3).unwrap_or(0),
                 attributes_ex4: u32_at(r, COL_ATTRIBUTES_EX4).unwrap_or(0),
+                attributes_ex5: u32_at(r, COL_ATTRIBUTES_EX5).unwrap_or(0),
                 attributes_ex7: u32_at(r, COL_ATTRIBUTES_EX7).unwrap_or(0),
                 totem_categories: std::array::from_fn(|i| {
                     u32_at(r, COL_TOTEM_CATEGORY_1 + i).unwrap_or(0)
@@ -598,6 +634,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 mana_cost_pct: u32_at(r, COL_MANA_COST_PCT).unwrap_or(0),
                 mana_cost_per_level: u32_at(r, COL_MANA_COST_PER_LEVEL).unwrap_or(0),
                 mana_per_second: u32_at(r, COL_MANA_PER_SECOND).unwrap_or(0),
+                mana_per_second_per_level: u32_at(r, COL_MANA_PER_SECOND_PER_LEVEL).unwrap_or(0),
                 range_index: u32_at(r, COL_RANGE_INDEX).unwrap_or(0),
                 modal_next_spell: u32_at(r, COL_MODAL_NEXT_SPELL).unwrap_or(0),
                 targets: u32_at(r, COL_TARGETS).unwrap_or(0),
@@ -639,6 +676,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                     .and_then(|i| icons.get(&i).cloned()),
                 description: str_at(&spells_set, r, COL_DESCRIPTION_ENUS),
                 aura_description: str_at(&spells_set, r, COL_AURA_DESCRIPTION_ENUS),
+                description_variables_id: u32_at(r, COL_DESCRIPTION_VARIABLES_ID).unwrap_or(0),
                 duration_index: u32_at(r, COL_DURATION_INDEX).unwrap_or(0),
                 casting_time_index: u32_at(r, COL_CASTING_TIME_INDEX).unwrap_or(0),
                 proc_flags: u32_at(r, COL_PROC_FLAGS).unwrap_or(0),
@@ -675,6 +713,9 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 damage_multiplier: std::array::from_fn(|i| {
                     f32_at(r, COL_DAMAGE_MULTIPLIER_1 + i).unwrap_or(0.0)
                 }),
+                effect_bonus_multiplier: std::array::from_fn(|i| {
+                    f32_at(r, COL_EFFECT_BONUS_MULTIPLIER_1 + i).unwrap_or(0.0)
+                }),
                 effect_points_per_combo_point: std::array::from_fn(|i| {
                     f32_at(r, COL_EFFECT_POINTS_PER_COMBO_POINT_1 + i).unwrap_or(0.0)
                 }),
@@ -697,6 +738,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
         learn_effects,
         declared_language,
         dispel_types,
+        description_variables,
     })
 }
 

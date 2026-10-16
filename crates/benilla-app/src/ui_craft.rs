@@ -102,6 +102,8 @@ fn feed_craft(
     focus: Option<Res<SpellFocus>>,
     icons: Option<Res<ItemDisplays>>,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
+    // The player's auras, which a recipe text's `$?a` reads.
+    self_auras: Query<&crate::unit_auras::UnitAuras, With<SelfPlayer>>,
     objects: Objects,
     items: Res<Items>,
     commands: Res<NetCommands>,
@@ -125,18 +127,32 @@ fn feed_craft(
             .map(|l| l.name.clone())
             .unwrap_or_else(|| format!("Skill {line}"));
         let global = |key: &str| benilla_ui::strings::global(script.lua(), key);
+        let skill =
+            |id| crate::spell::spell_skill_value(Some(store), Some(&skill_lines.catalog), id);
+        let operands = crate::spell::text_caster::Operands::of(Some(store), &items);
+        let cost = |d: &benilla_formats::SpellDisplay| {
+            crate::spell::usable::power_cost(d, store, &spell_mods) as i32
+        };
+        let text_caster = crate::spell::text_caster::untracked(
+            store,
+            (&actions.spells, self_auras.single().ok()),
+            &operands,
+            &spell_mods,
+            &skill,
+            &cost,
+        );
         let ctx = benilla_formats::TokenContext {
             durations: &spells.durations,
             radii: &spells.radii,
             ranges: Some(&spells.ranges),
-            skill: &|id| {
-                crate::spell::spell_skill_value(Some(store), Some(&skill_lines.catalog), id)
-            },
+            variables: Some(spells.catalog.description_variables()),
+            skill: &skill,
             lookup: &|id| spells.catalog.get(id),
             mods: Some(&*spell_mods),
             unmodified_points: false,
             gender: &|| store.0.unit_gender().unwrap_or(0),
             home_area: &|| None,
+            caster: Some(&text_caster),
             global: &global,
             printf: &crate::ui_script::token_printf,
         };

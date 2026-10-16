@@ -65,6 +65,8 @@ fn spell_desc_text(
     mods: Option<&crate::spell::SpellModifiers>,
     // The VM's strings for the keyed `$d`/`$s` tokens.
     global: &dyn Fn(&str) -> Option<String>,
+    // The player's known spells, auras and fields, which `$?` and `${…}` read.
+    caster: Option<&dyn benilla_formats::Caster>,
 ) -> Option<String> {
     let sp = spells?;
     let d = sp.catalog.get(id)?;
@@ -75,12 +77,14 @@ fn spell_desc_text(
                 durations: &sp.durations,
                 radii: &sp.radii,
                 ranges: Some(&sp.ranges),
+                variables: Some(sp.catalog.description_variables()),
                 skill,
                 lookup: &|i| sp.catalog.get(i),
                 mods: mods.map(|m| m as &dyn benilla_formats::SpellMods),
                 unmodified_points: false,
                 gender,
                 home_area: &|| home_area,
+                caster,
                 global,
                 printf: &crate::ui_script::token_printf,
             };
@@ -90,13 +94,22 @@ fn spell_desc_text(
     }
 }
 
-/// What the `$`-tokens read of the player beside the modifiers: the skills the per-level terms
-/// scale by, and the gender byte `$g`/`$G` branch on (`0x508214`).
-type TokenReads = (crate::spell::SkillSnapshot, u8);
+/// What the `$`-tokens read of the player beside the modifiers, the known set and the auras: the
+/// skills the per-level terms scale by, the gender byte `$g`/`$G` branch on, and the expression
+/// operands off its fields.
+type TokenReads = (
+    crate::spell::SkillSnapshot,
+    u8,
+    crate::spell::text_caster::Operands,
+);
 
-fn token_reads(me: Option<&ObjectStore>) -> TokenReads {
+fn token_reads(me: Option<&ObjectStore>, items: &Items) -> TokenReads {
     let gender = me.and_then(|s| s.0.unit_gender()).unwrap_or(0);
-    (crate::spell::skill_snapshot(me), gender)
+    (
+        crate::spell::skill_snapshot(me),
+        gender,
+        crate::spell::text_caster::Operands::of(me, items),
+    )
 }
 
 /// Only descriptions with substitution tokens can change when the caster's spell mods change.
@@ -158,13 +171,15 @@ fn template_view(
     // The VM's own `GlobalStrings.lua`, for the reputation-requirement line and the `$`-engine's
     // keyed tokens.
     get: &dyn Fn(&str) -> Option<String>,
+    caster: Option<&dyn benilla_formats::Caster>,
 ) -> benilla_ui::script::ItemTemplateView {
     let spell_name = |id: u32| -> Option<String> {
         spells
             .and_then(|s| s.catalog.get(id))
             .map(|sd| sd.name.clone())
     };
-    let spell_text = |id: u32| spell_desc_text(spells, id, skill, home_area, gender, mods, get);
+    let spell_text =
+        |id: u32| spell_desc_text(spells, id, skill, home_area, gender, mods, get, caster);
     benilla_ui::script::ItemTemplateView {
         name: t.name.clone(),
         quality: t.quality,
@@ -264,6 +279,7 @@ pub(super) fn feed_item_sets(
     spell_mods: Res<crate::spell::SpellModifiers>,
     skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    caster_sources: crate::spell::text_caster::CasterSources,
     mut pending: Local<
         crate::ui_script::VmMemo<std::collections::HashMap<u32, benilla_ui::script::ItemSetView>>,
     >,
@@ -280,11 +296,12 @@ pub(super) fn feed_item_sets(
         pending.entry(id).or_default();
     }
     // The `$`-tokens follow the player's skills and gender.
-    let reads = token_reads(me);
+    let reads = token_reads(me, &items);
     let gender = reads.1;
     let reads_changed = last_reads.get(&script).as_ref() != Some(&reads);
+    let operands = reads.2.clone();
     *last_reads.get(&script) = Some(reads);
-    if spell_mods.is_changed() || reads_changed {
+    if spell_mods.is_changed() || reads_changed || caster_sources.changed() {
         for &id in mod_sensitive.iter() {
             pending.entry(id).or_default();
         }
@@ -298,6 +315,24 @@ pub(super) fn feed_item_sets(
     let spell_res = spells.as_deref();
     let skill_catalog = skill_lines.as_deref().map(|s| &s.catalog);
     let skill = |id| crate::spell::spell_skill_value(me, skill_catalog, id);
+    let cost = |d: &benilla_formats::SpellDisplay| {
+        me.map_or(d.mana_cost, |s| {
+            crate::spell::usable::power_cost(d, s, &spell_mods)
+        }) as i32
+    };
+    let text_caster = me.map(|store| {
+        crate::spell::text_caster::untracked(
+            store,
+            (caster_sources.known(), caster_sources.auras()),
+            &operands,
+            &spell_mods,
+            &skill,
+            &cost,
+        )
+    });
+    let caster = text_caster
+        .as_ref()
+        .map(|c| c as &dyn benilla_formats::Caster);
     let mut done: Vec<u32> = Vec::new();
     let mut push: Vec<(u32, benilla_ui::script::ItemSetView)> = Vec::new();
     // Its borrow of the VM ends before the push, which needs the VM mutably.
@@ -331,6 +366,7 @@ pub(super) fn feed_item_sets(
                         &|| gender,
                         Some(&spell_mods),
                         &global,
+                        caster,
                     )
                     .map(|desc| (n, desc))
                 })
@@ -399,9 +435,10 @@ pub(super) fn feed_item_stats(
     commands: Res<NetCommands>,
     spells: Option<Res<crate::ui_action::Spells>>,
     // The caster the `$`-tokens read: its spell modifiers and its skills.
-    (spell_mods, self_q): (
+    (spell_mods, self_q, caster_sources): (
         Res<crate::spell::SpellModifiers>,
         Query<&ObjectStore, With<SelfPlayer>>,
+        crate::spell::text_caster::CasterSources,
     ),
     skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
     // The `$z` token: the bind point's area (`SMSG_BINDPOINTUPDATE`), named through `AreaTable`.
@@ -425,9 +462,10 @@ pub(super) fn feed_item_stats(
     let last_home = last_home.get(&script);
     let me = self_q.single().ok();
     // The `$`-tokens follow the player's skills and gender.
-    let reads = token_reads(me);
+    let reads = token_reads(me, &items);
     let gender = reads.1;
     let reads_changed = last_reads.get(&script).as_ref() != Some(&reads);
+    let operands = reads.2.clone();
     *last_reads.get(&script) = Some(reads);
     // `GetBindLocation()`'s push, here so it and the `$z` token share one name, and ahead of the
     // pending gate below: the bind point can arrive while the feed idles.
@@ -445,7 +483,7 @@ pub(super) fn feed_item_stats(
 
     pending.extend(items.take_fresh());
     pending.extend(script.take_item_stat_asks());
-    if spell_mods.is_changed() || reads_changed {
+    if spell_mods.is_changed() || reads_changed || caster_sources.changed() {
         pending.extend(mod_sensitive.iter().copied());
     }
     if pending.is_empty() {
@@ -454,6 +492,24 @@ pub(super) fn feed_item_stats(
     let spell_res = spells.as_deref();
     let skill_catalog = skill_lines.as_deref().map(|s| &s.catalog);
     let skill = |id| crate::spell::spell_skill_value(me, skill_catalog, id);
+    let cost = |d: &benilla_formats::SpellDisplay| {
+        me.map_or(d.mana_cost, |s| {
+            crate::spell::usable::power_cost(d, s, &spell_mods)
+        }) as i32
+    };
+    let text_caster = me.map(|store| {
+        crate::spell::text_caster::untracked(
+            store,
+            (caster_sources.known(), caster_sources.auras()),
+            &operands,
+            &spell_mods,
+            &skill,
+            &cost,
+        )
+    });
+    let caster = text_caster
+        .as_ref()
+        .map(|c| c as &dyn benilla_formats::Caster);
     let ready: Vec<u32> = pending
         .iter()
         .copied()
@@ -494,6 +550,7 @@ pub(super) fn feed_item_stats(
                         classes.as_deref().map(|c| &c.0),
                         icons.as_deref(),
                         &get,
+                        caster,
                     ),
                 ))
             })
@@ -1962,7 +2019,16 @@ mod tests {
                 "spell {id} has a name — which is exactly what must NOT leak into the tooltip"
             );
             assert_eq!(
-                super::spell_desc_text(Some(&spells), id, &|_| 0, None, &|| 0, None, &no_strings),
+                super::spell_desc_text(
+                    Some(&spells),
+                    id,
+                    &|_| 0,
+                    None,
+                    &|| 0,
+                    None,
+                    &no_strings,
+                    None
+                ),
                 None,
                 "spell {id} ({:?}) has no description, so the reference prints no trigger line",
                 d.name
@@ -1970,9 +2036,17 @@ mod tests {
         }
 
         // The control: Fireball (133), described, still yields its line.
-        let fireball =
-            super::spell_desc_text(Some(&spells), 133, &|_| 0, None, &|| 0, None, &no_strings)
-                .expect("a described spell still yields its line");
+        let fireball = super::spell_desc_text(
+            Some(&spells),
+            133,
+            &|_| 0,
+            None,
+            &|| 0,
+            None,
+            &no_strings,
+            None,
+        )
+        .expect("a described spell still yields its line");
         assert!(
             fireball.contains("damage"),
             "expected the substituted Fireball description, got {fireball:?}"
@@ -1995,6 +2069,7 @@ mod tests {
                 &move || gender,
                 None,
                 &no_strings,
+                None,
             )
             .expect("a described spell")
         };
@@ -2009,8 +2084,15 @@ mod tests {
         let store = |bytes: u32| {
             crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(36, bytes)]))
         };
-        let male = super::token_reads(Some(&store(4 | 1 << 8)));
-        assert_ne!(super::token_reads(Some(&store(4 | 1 << 8 | 1 << 16))), male);
-        assert_eq!(super::token_reads(Some(&store(1 | 2 << 8 | 1 << 24))), male);
+        let items = crate::items::Items::default();
+        let male = super::token_reads(Some(&store(4 | 1 << 8)), &items);
+        assert_ne!(
+            super::token_reads(Some(&store(4 | 1 << 8 | 1 << 16)), &items),
+            male
+        );
+        assert_eq!(
+            super::token_reads(Some(&store(1 | 2 << 8 | 1 << 24)), &items),
+            male
+        );
     }
 }

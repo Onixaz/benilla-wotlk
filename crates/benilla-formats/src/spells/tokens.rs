@@ -1,19 +1,40 @@
-//! The spell-description `$`-token engine the 1.12 client runs over `Spell.dbc` description and
-//! aura text (`0x5075f0` → `0x507710`), effect values from `GetEffectPoints 0x6e3800`. Effect
-//! point values print unsigned, as the client's do. `$g` and `$G` branch on the active player's
-//! gender ([`TokenContext::gender`]). `$c` and `$p` (`507dde`, `507ded`), which no shipped text
-//! uses, and unknown or unresolved tokens stay raw.
+//! The spell-text parser the 3.3.5a client runs over `Spell.dbc` description and aura text
+//! (`SpellParserParseText` `0x57abc0`): the description's variables from
+//! `SpellDescriptionVariables.dbc` (`0x579d60`), then each `$` token (`0x579e50`): a `${…}`
+//! expression ([`super::expr`]), a `$<name>` variable, a `$?cond[a][b]` conditional, or a letter
+//! with its optional `$/N;` or `$*N;` scale, cross-spell id and slot digit. A token the parser
+//! cannot read leaves a `$` and the text after it.
 
+use super::expr::{self, ExprEnv, MathVar, PlayerValue};
 use super::soft_float;
-use super::{SpellDisplay, SpellDurationCatalog, SpellRadiusCatalog, SpellRangeCatalog};
+use super::{
+    SpellDescriptionVariablesCatalog, SpellDisplay, SpellDurationCatalog, SpellRadiusCatalog,
+    SpellRangeCatalog,
+};
 
-/// The caster's spell-modifier appliers over its tables (`GetSpellModifiers 0x6e6b30`): the
-/// integer `0x6e6af0`, the FPU float `0x6e6bf0` and the software float `0x6e6c30`
-/// ([`super::soft_modify`]), each returning `value` unchanged when no modifier matches.
+/// The caster's spell-modifier appliers over its tables (`Spell_C_ModifySpellValue`): the
+/// integer, the FPU float and the software float forms, each returning `value` unchanged when no
+/// modifier matches.
 pub trait SpellMods {
     fn apply_int(&self, d: &SpellDisplay, op: u8, value: i32) -> i32;
     fn apply_float(&self, d: &SpellDisplay, op: u8, value: f32) -> f32;
     fn apply_soft(&self, d: &SpellDisplay, op: u8, value: f32) -> f32;
+}
+
+/// What the parser reads of the active player beyond its level and gender.
+pub trait Caster {
+    /// `IsSpellKnown` `0x7260e0`: the spell is in the player's known set.
+    fn knows_spell(&self, spell: u32) -> bool;
+    /// `HasAuraBySpellId` `0x7282a0`: an aura of the spell is on the player.
+    fn has_aura(&self, spell: u32) -> bool;
+    /// An expression operand read off the player's fields.
+    fn value(&self, value: PlayerValue) -> f32;
+    /// `Spell_C_GetPowerCost` and `Spell_C_GetPowerCostPerSecond` `0x7ff100` for the view's
+    /// caster.
+    fn power_cost(&self, d: &SpellDisplay) -> i32;
+    fn power_cost_per_second(&self, d: &SpellDisplay) -> i32;
+    /// `UNIT_MOD_CAST_SPEED`, which scales a hasted period.
+    fn cast_speed(&self) -> f32;
 }
 
 /// A value supplied to a `%` hole.
@@ -28,70 +49,78 @@ pub struct TokenContext<'a> {
     pub durations: &'a SpellDurationCatalog,
     pub radii: &'a SpellRadiusCatalog,
     pub ranges: Option<&'a SpellRangeCatalog>,
-    /// `0x5ea520` behind `0x6de040`: the active player's skill in a spell's `SkillLineAbility`
-    /// line, bonuses included, by spell id; 0 without a player or a line. Every per-level term
-    /// scales by the level derived from it ([`SpellDisplay::skill_level`]), not the character
-    /// level.
+    /// `SpellDescriptionVariables.dbc`, the `$name=` definitions a description's `$<name>` reads.
+    pub variables: Option<&'a SpellDescriptionVariablesCatalog>,
+    /// The active player's skill in a spell's `SkillLineAbility` line, bonuses included, by
+    /// spell id; 0 without a player or a line. Every per-level term scales by the level derived
+    /// from it (`Spell_C_GetSpellLevel` `0x7ff070`, [`SpellDisplay::skill_level`]).
     pub skill: &'a dyn Fn(u32) -> u32,
     pub lookup: &'a dyn Fn(u32) -> Option<&'a SpellDisplay>,
     /// The caster's live spell-modifier tables; absent for contexts without a caster.
     pub mods: Option<&'a dyn SpellMods>,
-    /// `0x5075f0`'s last argument, set only by the aura tooltip `0x52f880` (`52f940`): the effect
-    /// points skip their modifiers (`6e3925`), and so does the duration of `$d` and `$o`
-    /// (`0x6ea000`'s flag, pushed at `507ccd` and `507917`).
+    /// The parser's no-modifiers flag, set by the aura tooltip: the effect points and the
+    /// duration skip their modifiers.
     pub unmodified_points: bool,
-    /// The active player's gender, `UNIT_FIELD_BYTES_0` byte 2 (`0x508214`), which `$g`/`$G`
-    /// branch on. Asked only where a branch expands.
+    /// The active player's gender, `UNIT_FIELD_BYTES_0` byte 2, which `$g`/`$G` branch on.
+    /// Asked only where a branch expands.
     pub gender: &'a dyn Fn() -> u8,
-    /// The `$z` token: the home-bind area's name, from `SMSG_BINDPOINTUPDATE`'s area id through
-    /// `AreaTable.dbc`; `None` leaves the token raw. Asked only where a `$z` expands, so a caller
-    /// can tell which texts read the bind point.
+    /// The `$z` token: the home-bind area's name; `None` reads `HOME_INN`. Asked only where a
+    /// `$z` expands, so a caller can tell which texts read the bind point.
     pub home_area: &'a dyn Fn() -> Option<&'a str>,
-    /// `GetText 0x703bf0`: a `GlobalStrings` template by key. `None` leaves the token raw.
+    /// The active player's other state; `None` without one, where every expression operand reads
+    /// 0 (`0x578303`) and every condition is false.
+    pub caster: Option<&'a dyn Caster>,
+    /// `FrameScript_GetText` `0x819d40`: a `GlobalStrings` template by key. `None` leaves the
+    /// token unexpanded.
     pub global: &'a dyn Fn(&str) -> Option<String>,
-    /// `SStrPrintf 0x64a7f0`: a template's `%` holes filled, as the CRT formats them.
+    /// `SStrPrintf`: a template's `%` holes filled, as the CRT formats them.
     pub printf: &'a dyn Fn(&str, &[TokenNumber]) -> String,
+}
+
+/// `GetText(key, -1)`: the plural index of -1 is 1, so the `_P1` twin wins where one exists.
+fn text_of(ctx: &TokenContext, key: &str) -> Option<String> {
+    (ctx.global)(&format!("{key}_P1"))
+        .filter(|s| !s.is_empty())
+        .or_else(|| (ctx.global)(key))
 }
 
 /// A `GlobalStrings` template, filled.
 fn keyed(ctx: &TokenContext, key: &str, args: &[TokenNumber]) -> Option<String> {
-    Some((ctx.printf)(&(ctx.global)(key)?, args))
+    Some((ctx.printf)(&text_of(ctx, key)?, args))
 }
 
-/// `"%.1f"` (`0x84f398`).
-fn tenths(ctx: &TokenContext, v: impl Into<f64>) -> String {
-    (ctx.printf)("%.1f", &[TokenNumber::Float(v.into())])
+fn fixed(ctx: &TokenContext, decimals: u8, v: f64) -> String {
+    (ctx.printf)(&format!("%.{decimals}f"), &[TokenNumber::Float(v)])
 }
 
-/// `0x6e3130` for the active player (`0x6e318d`: `CGPlayer`'s `[vtbl+0xa8]`, `0x5ea690`).
+/// `Spell_C_GetSpellLevel` `0x7ff070` for the active player.
 fn skill_level(ctx: &TokenContext, d: &SpellDisplay) -> u32 {
     d.skill_level((ctx.skill)(d.id))
 }
 
-/// `0x6e3b80`'s verdict on an effect: whether its points round to whole numbers (its out-byte)
-/// and whether it takes a damage op (its return).
-fn classify(effect: u32, aura: u32) -> (bool, bool) {
+/// `GetEffectModifierType` `0x7fd440` (jump tables `0x7fd498` and `0x7fd53c`): whether the
+/// effect's points round to whole numbers, whether its damage is periodic, and whether it takes a
+/// damage op at all.
+fn classify(effect: u32, aura: u32) -> (bool, bool, bool) {
     match effect {
-        2 | 9 | 17 | 31 | 58 | 121 => (true, true),
-        6 | 27 | 35 | 119 | 128 | 129 => match aura {
-            3 | 15 | 43 | 53 | 89 => (true, true),
-            8 | 20 | 21 | 24 | 62 | 63 | 64 | 162 => (true, false),
-            _ => (false, false),
+        2 | 9 | 10 | 17 | 31 | 58 | 67 | 75 | 121 => (true, false, true),
+        6 | 27 | 35 | 65 | 119 | 128 | 129 | 143 => match aura {
+            3 | 8 | 20 | 53 | 62 | 89 => (true, true, true),
+            15 | 43 => (true, false, true),
+            21 | 24 | 63 | 64 | 162 => (true, false, false),
+            _ => (false, false, false),
         },
-        8 | 10 | 30 | 62 | 67 | 75 => (true, false),
-        _ => (false, false),
+        8 | 30 | 62 | 146 => (true, false, false),
+        _ => (false, false, false),
     }
 }
 
-/// `GetEffectPoints 0x6e3800`: the effect's `(min, max)` as the soft floats it returns. A `level`
-/// of 0 takes the spell's own ([`skill_level`], `6e3841`-`6e3852`); `Δ` is it less `baseLevel`
-/// when that is positive, floored at 0 (`6e3854`-`6e3861`). With `n` the dice, the integer
-/// `BaseDice + DicePerLevel·Δ`, the bounds start as `BasePoints + n` and `BasePoints +
-/// DieSides·n` (`6e3863`, `6e38bb`), each made a soft float plus `RealPointsPerLevel × Δ`
-/// through `0x760be0` and `0x760e20`. Unless the context is the aura tooltip's, op 8, then a
-/// damage effect's op (22 for aura 3, else 0), then the aura's ([`aura_op`]) apply to each bound
-/// through `0x6e6c30`. The tail quantizes both to 1/128, and a rounding effect floors the minimum
-/// and ceils the maximum (`6e3a67`).
+/// `Spell_C_GetMinMaxPoints` `0x7ff770`: the slot's `(min, max)` as soft floats. With `level` 0
+/// the spell's own; less `baseLevel` when that is positive, floored at 0. The bounds are
+/// `BasePoints + 1` and `BasePoints + DieSides`, each plus `RealPointsPerLevel × level`. Unless
+/// modifiers are off: op 8, the slot's own op (3, 12, 23), the damage op (22 periodic, else 0),
+/// and op 2 for auras 10, 103 and 183. Both quantize to 1/128; a rounding effect floors the
+/// minimum and ceils the maximum.
 fn effect_points(d: &SpellDisplay, slot: usize, ctx: &TokenContext, level: u32) -> (f32, f32) {
     let level = if level == 0 {
         skill_level(ctx, d)
@@ -106,23 +135,25 @@ fn effect_points(d: &SpellDisplay, slot: usize, ctx: &TokenContext, level: u32) 
     }
     .max(0);
     let base = d.effect_base_points[slot];
-    let dice =
-        d.effect_base_dice[slot].wrapping_add(d.effect_dice_per_level[slot].wrapping_mul(delta));
-    let sides = d.effect_die_sides[slot];
     let real = soft_float::mul_f32(
         d.effect_real_points_per_level[slot],
         soft_float::int_to_float(delta),
     );
-    let mut min = soft_float::add_f32(soft_float::int_to_float(base.wrapping_add(dice)), real);
+    let mut min = soft_float::add_f32(soft_float::int_to_float(base.wrapping_add(1)), real);
     let mut max = soft_float::add_f32(
-        soft_float::int_to_float(base.wrapping_add(sides.wrapping_mul(dice))),
+        soft_float::int_to_float(base.wrapping_add(d.effect_die_sides[slot])),
         real,
     );
     let aura = d.effect_apply_aura[slot];
-    let (rounds, damage) = classify(d.effects[slot], aura);
+    let (rounds, periodic, damage) = classify(d.effects[slot], aura);
     if let Some(mods) = ctx.mods.filter(|_| !ctx.unmodified_points) {
-        let damage_op = damage.then_some(if aura == 3 { 22 } else { 0 });
-        for op in [Some(8), damage_op, aura_op(d, slot)].into_iter().flatten() {
+        let slot_op = [3, 12, 23][slot];
+        let damage_op = damage.then_some(if periodic { 22 } else { 0 });
+        let aura_op = matches!(aura, 10 | 103 | 183).then_some(2);
+        for op in [Some(8), Some(slot_op), damage_op, aura_op]
+            .into_iter()
+            .flatten()
+        {
             min = mods.apply_soft(d, op, min);
             max = mods.apply_soft(d, op, max);
         }
@@ -135,20 +166,6 @@ fn effect_points(d: &SpellDisplay, slot: usize, ctx: &TokenContext, level: u32) 
     }
 }
 
-/// The aura's own op (`0x6e397e`, jump table `0x6e3ab8` over the byte table `0x6e3ad0`, indexed
-/// by `aura − 10`): 10/103/183 op 2 (`6e3996`), the speed auras op 12 (`6e39a6`), 138 op 23
-/// (`6e39b6`), 65 op 24 (`6e39c6`), 99 op 3 (`6e39d6`).
-fn aura_op(d: &SpellDisplay, slot: usize) -> Option<u8> {
-    match d.effect_apply_aura[slot] {
-        10 | 103 | 183 => Some(2),
-        31 | 32 | 33 | 58 | 129 | 130 | 171 | 172 => Some(12),
-        138 => Some(23),
-        65 => Some(24),
-        99 => Some(3),
-        _ => None,
-    }
-}
-
 fn modify_int(ctx: &TokenContext, d: &SpellDisplay, op: u8, value: i32) -> i32 {
     ctx.mods.map_or(value, |m| m.apply_int(d, op, value))
 }
@@ -157,11 +174,38 @@ fn modify_float(ctx: &TokenContext, d: &SpellDisplay, op: u8, value: f32) -> f32
     ctx.mods.map_or(value, |m| m.apply_float(d, op, value))
 }
 
-/// A spell's duration in ms, `GetSpellDuration 0x6ea000`, which `$d` and `$o` both call: 0 with
-/// no row (`6ea032`), else the row's base plus its per-level term times the spell's own level ([`skill_level`], `6ea041`)
-/// less `baseLevel`, subtracted and multiplied unfloored (`6ea046`-`6ea053`), capped at the row's
-/// maximum (`6ea055`), then op 1 unless its flag says not to (`6ea064`).
-fn duration_ms(d: &SpellDisplay, ctx: &TokenContext) -> i64 {
+/// `AttributesExE` `0x2000`: a periodic spell's duration and tick scale with cast speed.
+const ATTR_EX5_HASTE_AFFECTS_DURATION: u32 = 0x2000;
+/// `AttributesExE` `0x200`: the over-time total counts one tick more.
+const ATTR_EX5_START_PERIODIC_AT_APPLY: u32 = 0x200;
+/// `AttributesExC` `0x20000000`: no haste.
+const ATTR_EX3_IGNORE_HASTE: u32 = 0x2000_0000;
+/// `AttributesExB` `0x1000000`: a referenced spell scales by the player's level.
+const ATTR_EX2_PLAYER_LEVEL: u32 = 0x100_0000;
+
+/// A tick or duration scaled by cast speed, as `Spell_C_GetDuration` and `$t` scale them: the spell
+/// is periodic, opts in and is not exempt, and the player's speed is at least 0.001; rounded to
+/// nearest (`CMath::fint_`). Deviation: the duration's haste (`0x800a70`) also opts in a spell an
+/// aura of type 316 reaches, which the modifier tables here do not report.
+fn hasted(ctx: &TokenContext, d: &SpellDisplay, ms: i32) -> i32 {
+    let Some(caster) = ctx.caster else { return ms };
+    let periodic = d.effect_amplitude.iter().any(|&p| p != 0);
+    let speed = caster.cast_speed();
+    if periodic
+        && d.attributes_ex5 & ATTR_EX5_HASTE_AFFECTS_DURATION != 0
+        && d.attributes_ex3 & ATTR_EX3_IGNORE_HASTE == 0
+        && speed >= 0.001
+    {
+        (ms as f32 * speed).round_ties_even() as i32
+    } else {
+        ms
+    }
+}
+
+/// `Spell_C_GetDuration` `0x800a70`: 0 with no row, else the row's base plus its per-level term
+/// at the spell's own level less `baseLevel`, unfloored, capped at the row's maximum, then op 1
+/// unless modifiers are off, then cast speed when `haste` asks for it.
+fn duration_ms(d: &SpellDisplay, ctx: &TokenContext, haste: bool) -> i32 {
     let Some(row) = ctx.durations.get(d.duration_index) else {
         return 0;
     };
@@ -170,48 +214,82 @@ fn duration_ms(d: &SpellDisplay, ctx: &TokenContext) -> i64 {
         .base_ms
         .wrapping_add(levels.wrapping_mul(row.per_level_ms))
         .min(row.max_ms);
-    i64::from(if ctx.unmodified_points {
+    let modified = if ctx.unmodified_points {
         resolved
     } else {
         modify_int(ctx, d, 1, resolved)
-    })
-}
-
-/// The `$d` text: no positive duration is `SPELL_DURATION_UNTIL_CANCELLED` (`507cda`); else the
-/// formatter at `0x52f980` selects the integer ladder (`0x52fa50`) for whole units and the
-/// floating ladder (`0x52fbd0`) for fractional units. Both use the largest unit.
-fn duration_text(ms: i64, ctx: &TokenContext) -> Option<String> {
-    if ms <= 0 {
-        return keyed(ctx, "SPELL_DURATION_UNTIL_CANCELLED", &[]);
-    }
-    let (unit, unit_ms) = if ms < 60_000 {
-        ("SEC", 1_000)
-    } else if ms < 3_600_000 {
-        ("MIN", 60_000)
-    } else if ms < 86_400_000 {
-        ("HOURS", 3_600_000)
-    } else {
-        ("DAYS", 86_400_000)
     };
-    let amount = ms as f64 / unit_ms as f64;
-    if (amount - amount.trunc()).abs() >= 0.01 {
-        return keyed(
-            ctx,
-            &format!("SPELL_DURATION_{unit}"),
-            &[TokenNumber::Float(amount)],
-        );
+    if haste {
+        hasted(ctx, d, modified)
+    } else {
+        modified
     }
-    let n = ms / unit_ms;
-    let key = format!("INT_SPELL_DURATION_{unit}");
-    (n != 1)
-        .then(|| keyed(ctx, &format!("{key}_P1"), &[TokenNumber::Int(n)]))
-        .flatten()
-        .or_else(|| keyed(ctx, &key, &[TokenNumber::Int(n)]))
 }
 
-/// The expander's integer read of a scaled bound (`5079cc`-`507b04`): the bound truncated, and
-/// whether it counts as whole, within 0.001 (`[0x801360]`) of its floor or its ceiling. A bound
-/// just under its ceiling reads as the ceiling.
+/// `TimeFractionBelow` `0x61a960`: the time in its largest unit, its float copy less the floor
+/// of the double, under `fraction`.
+fn time_fraction_below(ms: f32, fraction: f32) -> bool {
+    let t = f64::from(ms);
+    let value = if ms >= 86_400_000.0 {
+        t * f64::from(1.157_407_4e-8_f32)
+    } else if ms >= 3_600_000.0 {
+        t * f64::from(2.777_778e-7_f32)
+    } else if ms >= 60_000.0 {
+        t * f64::from(1.666_666_7e-5_f32)
+    } else {
+        t * f64::from(0.001_f32)
+    };
+    f64::from(value as f32) - value.floor() < f64::from(fraction)
+}
+
+/// The `$d` text: no positive duration is `SPELL_DURATION_UNTIL_CANCELLED`; a whole unit takes
+/// `GetDurationString` `0x61a9e0` over `INT_SPELL_DURATION`, a fractional one
+/// `GetFloatDurationString` `0x61aee0` over `SPELL_DURATION`.
+fn duration_text(ms: i32, ctx: &TokenContext) -> Option<String> {
+    if ms <= 0 {
+        return text_of(ctx, "SPELL_DURATION_UNTIL_CANCELLED");
+    }
+    let unit = |ms: f64| -> (&'static str, f64) {
+        if ms >= 86_400_000.0 {
+            ("DAYS", 86_400_000.0)
+        } else if ms >= 3_600_000.0 {
+            ("HOURS", 3_600_000.0)
+        } else if ms >= 60_000.0 {
+            ("MIN", 60_000.0)
+        } else {
+            ("SEC", 1_000.0)
+        }
+    };
+    if time_fraction_below(ms as f32, 0.01) {
+        let (suffix, per) = unit(f64::from(ms));
+        let n = (f64::from(ms) / per) as i64;
+        keyed(
+            ctx,
+            &format!("INT_SPELL_DURATION_{suffix}"),
+            &[TokenNumber::Int(n)],
+        )
+    } else {
+        let t = ms as f32;
+        let (suffix, value) = if t >= 86_400_000.0 {
+            ("DAYS", t / 86_400_000.0)
+        } else if t >= 3_600_000.0 {
+            ("HOURS", t / 3_600_000.0)
+        } else if t >= 60_000.0 {
+            ("MIN", t * 1.666_666_7e-5)
+        } else {
+            ("SEC", t * 0.001)
+        };
+        keyed(
+            ctx,
+            &format!("SPELL_DURATION_{suffix}"),
+            &[TokenNumber::Float(f64::from(value.max(0.0)))],
+        )
+    }
+}
+
+/// The points arm's integer read of a scaled bound: the bound truncated, and whether it counts as
+/// whole, within 0.001 of its floor or its ceiling. A bound just under its ceiling reads as the
+/// ceiling.
 fn whole(v: f32) -> (i32, bool) {
     let x = f64::from(v);
     let eps = f64::from(0.001f32);
@@ -225,228 +303,38 @@ fn whole(v: f32) -> (i32, bool) {
     }
 }
 
-/// The `$s $S $m $M $o $O` arm (`0x5078b4`): the effect points, spread over the duration for `$o`
-/// (`507926`: duration × points / period, 0 without a positive period or duration, a period of
-/// 0 read as 5000), then made positive and scaled (`507952`) and printed by the letter's rule
-/// (`507b1a`-`507c4a`). The text and the integer the `$l` plural picker keys on (`[0xbe0b84]`).
-fn points_text(
-    letter: char,
-    slot: usize,
-    d: &SpellDisplay,
-    ctx: &TokenContext,
-    scale: f32,
-    level: u32,
-) -> Option<(String, f64)> {
-    // The expander multiplies both by its integer argument here (`5078d1`), which is 1 but in
-    // the aura tooltip's stack count; no caller passes a count.
-    let (mut min, mut max) = effect_points(d, slot, ctx, level);
-    if letter.eq_ignore_ascii_case(&'o') {
-        let amplitude = d.effect_amplitude[slot] as i32;
-        let period = if amplitude == 0 { 5000 } else { amplitude };
-        let duration = if period > 0 { duration_ms(d, ctx) } else { 0 };
-        (min, max) = if duration > 0 {
-            let over = |v: f32| (duration as f64 * f64::from(v) / f64::from(period)) as f32;
-            (over(min), over(max))
-        } else {
-            (0.0, 0.0)
-        };
-    }
-    let scaled = |v: f32| (f64::from(v.abs()) * f64::from(scale)) as f32;
-    let (lo, hi) = (scaled(min), scaled(max));
-    let ((lo_int, lo_whole), (hi_int, hi_whole)) = (whole(lo), whole(hi));
-    let plural = match letter {
-        'm' if lo_whole => lo_int,
-        'm' => 2,
-        _ if hi_whole => hi_int,
-        _ => 2,
-    };
-    let int = |n: i32| TokenNumber::Int(i64::from(n));
-    let text = match letter {
-        'm' if lo_whole => lo_int.to_string(),
-        'm' => tenths(ctx, lo),
-        'M' if hi_whole => hi_int.to_string(),
-        'M' => tenths(ctx, hi),
-        // Equal bounds print one number, `%d` unless `$S` holds a fraction (`507ba3`).
-        _ if min == max && (lo_whole || letter != 'S') => lo_int.to_string(),
-        _ if min == max => tenths(ctx, lo),
-        _ if lo_whole && hi_whole => keyed(
-            ctx,
-            "INT_SPELL_POINTS_SPREAD_TEMPLATE",
-            &[int(lo_int), int(hi_int)],
-        )?,
-        'S' => keyed(
-            ctx,
-            "SPELL_POINTS_SPREAD_TEMPLATE",
-            &[
-                TokenNumber::Float(f64::from(lo)),
-                TokenNumber::Float(f64::from(hi)),
-            ],
-        )?,
-        // A fractional spread under `s`/`o`/`O`: the minimum truncated, a fractional maximum
-        // truncated plus one (`507c2a`-`507c4a`).
-        _ => {
-            let top = if hi_whole { hi_int } else { hi as i32 + 1 };
-            keyed(
-                ctx,
-                "INT_SPELL_POINTS_SPREAD_TEMPLATE",
-                &[int(lo as i32), int(top)],
-            )?
-        }
-    };
-    Some((text, f64::from(plural)))
-}
-
-/// One token's text and the numeric value the `$l` plural picker keys on.
-fn token_value(
-    letter: char,
-    slot: usize,
-    d: &SpellDisplay,
-    ctx: &TokenContext,
-    scale: f32,
-    level: u32,
-) -> Option<(String, f64)> {
-    match letter.to_ascii_lowercase() {
-        's' | 'm' | 'o' => points_text(letter, slot, d, ctx, scale, level),
-        'b' => {
-            // `507ed4`: `EffectPointsPerComboPoint`, truncated toward zero by `0x40a2b0`.
-            let v = d.effect_points_per_combo_point[slot].trunc() as i32;
-            Some((v.to_string(), f64::from(v)))
-        }
-        'f' => {
-            // `507ff7` / `508025`: the scale times `DmgMultiplier`, exact at the x87's PC_53.
-            let v = f64::from(scale) * f64::from(d.damage_multiplier[slot]);
-            if letter == 'F' {
-                // ±0.5 by the sign, then chopped by `0x40a2b0` (`50802f`-`50804a`).
-                let n = v.round() as i32;
-                Some((n.to_string(), f64::from(n)))
-            } else {
-                Some((tenths(ctx, v), v))
-            }
-        }
-        'i' => {
-            // `507fc3`: `MaxAffectedTargets` through `"%d"`.
-            let v = d.max_affected_targets as i32;
-            Some((v.to_string(), f64::from(v)))
-        }
-        'q' => {
-            // `50806e`: the slot's `EffectMiscValue` through `"%d"`.
-            let v = d.effect_misc_value[slot];
-            Some((v.to_string(), f64::from(v)))
-        }
-        'u' => {
-            // `507ef1`: `StackAmount` through `"%d"`.
-            let v = d.stack_amount as i32;
-            Some((v.to_string(), f64::from(v)))
-        }
-        'v' => {
-            // `507f4f`: `MaxTargetLevel` through `"%d"`.
-            let v = d.max_target_level as i32;
-            Some((v.to_string(), f64::from(v)))
-        }
-        'd' => {
-            let ms = duration_ms(d, ctx);
-            let v = if ms < 0 { 0.0 } else { ms as f64 / 1000.0 };
-            Some((duration_text(ms, ctx)?, v))
-        }
-        't' => {
-            // `507e3c`: ProcFlags bit 0 is five seconds unmodified, else the amplitude through
-            // op 19, zero included (`507e5c`); whole seconds, truncated (`507e61`).
-            let ms = if d.proc_flags & 1 != 0 {
-                5000
-            } else {
-                modify_int(ctx, d, 19, d.effect_amplitude[slot] as i32)
-            };
-            let secs = ms / 1000;
-            Some((secs.to_string(), f64::from(secs)))
-        }
-        'a' => {
-            // `507c74`: the SpellRadius row's radius truncated, then op 6; no row is 0.
-            let r = ctx.radii.get(d.effect_radius_index[slot]);
-            let v = r.map_or(0, |r| modify_int(ctx, d, 6, r.radius as i32));
-            Some((v.to_string(), f64::from(v)))
-        }
-        'h' => {
-            let v = modify_int(ctx, d, 18, d.proc_chance as i32);
-            Some((v.to_string(), f64::from(v)))
-        }
-        'x' => {
-            let v = *d.effect_chain_targets.get(slot).unwrap_or(&0);
-            let v = modify_int(ctx, d, 17, v as i32);
-            Some((v.to_string(), f64::from(v)))
-        }
-        'e' => {
-            // `507f83`: EffectMultipleValue through op 27, always one decimal.
-            let v = modify_float(ctx, d, 27, d.effect_multiple_value[slot]);
-            Some((tenths(ctx, v), f64::from(v)))
-        }
-        'n' => {
-            let v = modify_int(ctx, d, 4, d.proc_charges as i32);
-            Some((v.to_string(), f64::from(v)))
-        }
-        'z' => {
-            // Player state, not spell data: the home-bind area name.
-            let name = (ctx.home_area)()?;
-            Some((name.to_string(), 0.0))
-        }
-        'r' => {
-            // `507d5b`: RangeIndex at or below 1 reads row 1, its maximum through op 5; no row is
-            // 0.0. One decimal, and the plural keys on the ceiling (`507dbd`).
-            let row = ctx.ranges?.get(d.range_index.max(1));
-            let v = row.map_or(0.0, |r| modify_float(ctx, d, 5, r.max));
-            Some((tenths(ctx, v), f64::from(v).ceil()))
-        }
-        _ => None,
+/// A fractional number keys the `$l` plural as 2, a whole one as itself.
+fn plural_key(v: f64) -> i32 {
+    if v.fract() == 0.0 {
+        v as i32
+    } else {
+        2
     }
 }
 
-/// `$/N;` or `$*N;` just after the `$` (`507738`-`507790`): the text up to the `;` (at most seven
-/// characters) read by `atoi` (`0x64ac60`), the scale its value or, for `/`, its reciprocal in
-/// single precision (`507784`); a zero leaves 1.0 (`507774`). Returns the scale and the index past
-/// the `;`, or `None` without a `;`, where the reference consumes nothing.
-fn scale_prefix(text: &str, at: usize) -> Option<(f32, usize)> {
-    let op = *text.as_bytes().get(at)?;
-    if op != b'/' && op != b'*' {
-        return None;
-    }
-    let semi = at + text[at..].find(';')?;
-    let digits = &text.as_bytes()[at + 1..semi.min(at + 8)];
-    let n = atoi(digits);
-    let scale = match (n, op) {
-        (0, _) => 1.0,
-        (n, b'/') => (1.0 / f64::from(n)) as f32,
-        (n, _) => n as f32,
-    };
-    Some((scale, semi + 1))
+/// `$name=` definitions resolved by `0x579d60`: a 56-byte entry each of name, text and values.
+#[derive(Clone, Debug, Default)]
+struct Variable {
+    name: String,
+    text: String,
+    int_value: i32,
+    value: f32,
 }
 
-/// `0x5081c8`-`0x5081d7` and `0x50822a`-`0x50823b`: a `$g`/`$G` branch arm's leading spaces are
-/// skipped, and `0x508267`-`0x508280` trims its trailing spaces — both forms alike.
-fn trim_spaces(arm: &str) -> &str {
-    arm.trim_matches(' ')
-}
-
-/// The CRT's `atoi`: leading whitespace, an optional sign, then decimal digits up to the first
-/// other character; nothing parsed is 0.
+/// The CRT's `atoi`: an optional sign, then decimal digits up to the first other character;
+/// nothing parsed is 0.
 fn atoi(bytes: &[u8]) -> i32 {
-    let mut rest = bytes
-        .iter()
-        .copied()
-        .skip_while(u8::is_ascii_whitespace)
-        .peekable();
-    let negative = match rest.peek() {
-        Some(b'-') => {
-            rest.next();
-            true
-        }
-        Some(b'+') => {
-            rest.next();
-            false
-        }
-        _ => false,
+    let (negative, digits) = match bytes.first() {
+        Some(b'-') => (true, &bytes[1..]),
+        Some(b'+') => (false, &bytes[1..]),
+        _ => (false, bytes),
     };
-    let n = rest.take_while(u8::is_ascii_digit).fold(0i32, |n, b| {
-        n.wrapping_mul(10).wrapping_add(i32::from(b - b'0'))
-    });
+    let n = digits
+        .iter()
+        .take_while(|b| b.is_ascii_digit())
+        .fold(0i32, |n, &b| {
+            n.wrapping_mul(10).wrapping_add(i32::from(b - b'0'))
+        });
     if negative {
         n.wrapping_neg()
     } else {
@@ -454,1274 +342,776 @@ fn atoi(bytes: &[u8]) -> i32 {
     }
 }
 
-/// Substitute every `$`-token in `text` against `spell`.
-pub fn substitute(text: &str, spell: &SpellDisplay, ctx: &TokenContext) -> String {
-    // `0x5075f0`'s level: its caller's, which only the player-buff tooltip passes (the aura's
-    // `AURALEVELS` byte, `0x532bc3`, not built), else the expanded spell's own (`50764a`).
-    let level = skill_level(ctx, spell);
-    let bytes = text.as_bytes();
-    let mut out = String::with_capacity(text.len());
-    let mut i = 0;
-    let mut last_value: f64 = 0.0;
-    while i < bytes.len() {
-        if bytes[i] != b'$' {
-            let ch_len = utf8_len(bytes[i]);
-            out.push_str(&text[i..i + ch_len]);
-            i += ch_len;
-            continue;
+fn find(text: &str, from: usize, c: u8) -> Option<usize> {
+    let from = from.min(text.len());
+    text.as_bytes()[from..]
+        .iter()
+        .position(|&b| b == c)
+        .map(|i| from + i)
+}
+
+fn byte(text: &str, at: usize) -> u8 {
+    text.as_bytes().get(at).copied().unwrap_or(0)
+}
+
+/// One run of the parser over one spell: `0x57abc0`'s level and the shared state its pieces
+/// write, the variable table (`0xbeb668`) and the number `$l` keys on (`0xbeb660`).
+struct Parser<'c, 'a> {
+    ctx: &'c TokenContext<'a>,
+    spell: &'c SpellDisplay,
+    level: u32,
+    variables: Vec<Variable>,
+    last_number: i32,
+}
+
+/// The expression environment of one `${…}`: the parser's variables and spell.
+struct Env<'p, 'c, 'a> {
+    parser: &'p Parser<'c, 'a>,
+}
+
+impl ExprEnv for Env<'_, '_, '_> {
+    fn variable(&self, name: &str) -> f32 {
+        if name.is_empty() {
+            return 0.0;
         }
-        let start = i;
-        i += 1;
-        let mut scale = 1.0f32;
-        if let Some((s, next)) = scale_prefix(text, i) {
-            scale = s;
-            i = next;
-        }
-        // Optional cross-spell id digits.
-        let id_start = i;
-        while i < bytes.len() && bytes[i].is_ascii_digit() {
-            i += 1;
-        }
-        let ref_spell: Option<u32> = if i > id_start {
-            text[id_start..i].parse().ok()
-        } else {
-            None
+        self.parser
+            .variables
+            .iter()
+            .find(|v| v.name == name)
+            .map_or(0.0, |v| v.value)
+    }
+
+    fn value(&self, spell: Option<u32>, var: MathVar) -> Option<f32> {
+        let p = self.parser;
+        let d = match spell {
+            Some(id) => (p.ctx.lookup)(id)?,
+            None => p.spell,
         };
-        // The plural / gender selectors.
-        if i < bytes.len()
-            && (bytes[i] == b'l' || bytes[i] == b'L' || bytes[i] == b'g' || bytes[i] == b'G')
-        {
-            let selector = bytes[i].to_ascii_lowercase();
-            if let Some(end) = text[i + 1..].find(';') {
-                let body = &text[i + 1..i + 1 + end];
-                if let Some((a, b)) = body.split_once(':') {
-                    let pick = match selector {
-                        b'l' => {
-                            if (last_value - 1.0).abs() < 1e-9 {
-                                a
-                            } else {
-                                b
-                            }
+        let Some(caster) = p.ctx.caster else {
+            return Some(0.0);
+        };
+        Some(operand(p.ctx, d, p.level, caster, var))
+    }
+}
+
+/// `GetVariableValue` `0x5782d0` for one named operand.
+fn operand(
+    ctx: &TokenContext,
+    d: &SpellDisplay,
+    level: u32,
+    caster: &dyn Caster,
+    var: MathVar,
+) -> f32 {
+    let s = |slot: u8| usize::from(slot);
+    match var {
+        MathVar::MinPoints(slot) => effect_points(d, s(slot), ctx, level).0,
+        MathVar::MaxPoints(slot) => effect_points(d, s(slot), ctx, level).1,
+        MathVar::Radius(slot) => ctx
+            .radii
+            .get(d.effect_radius_index[s(slot)])
+            .map_or(0.0, |r| modify_float(ctx, d, 6, r.radius)),
+        MathVar::Duration => duration_ms(d, ctx, true) as f32 * 0.001,
+        MathVar::PowerCost => caster.power_cost(d) as f32,
+        MathVar::PowerCostPerSecond => caster.power_cost_per_second(d) as f32,
+        MathVar::ChainTargets(slot) => {
+            modify_int(ctx, d, 17, d.effect_chain_targets[s(slot)] as i32) as f32
+        }
+        MathVar::AuraPeriod(slot) => {
+            if d.proc_flags & 1 != 0 {
+                5000.0
+            } else {
+                modify_int(ctx, d, 19, d.effect_amplitude[s(slot)] as i32) as f32
+            }
+        }
+        MathVar::ProcChance => modify_int(ctx, d, 18, d.proc_chance as i32) as f32,
+        MathVar::ProcCharges => modify_int(ctx, d, 4, d.proc_charges as i32) as f32,
+        MathVar::PointsPerCombo(slot) => d.effect_points_per_combo_point[s(slot)],
+        MathVar::StackAmount => d.stack_amount as i32 as f32,
+        MathVar::MaxTargetLevel => d.max_target_level as i32 as f32,
+        MathVar::MaxTargets => d.max_affected_targets as i32 as f32,
+        MathVar::MultipleValue(slot) => modify_float(ctx, d, 27, d.effect_multiple_value[s(slot)]),
+        MathVar::DamageMultiplier(slot) => d.damage_multiplier[s(slot)],
+        // Deviation: the reference indexes these from the `f` operands' base, so they read 0; no
+        // shipped text uses them, and the slot is read here.
+        MathVar::MiscValue(slot) => d.effect_misc_value[s(slot)] as f32,
+        MathVar::BonusCoefficient(slot) => {
+            modify_float(ctx, d, 24, d.effect_bonus_multiplier[s(slot)])
+        }
+        MathVar::Player(v) => caster.value(v),
+    }
+}
+
+impl Parser<'_, '_> {
+    /// `SpellParserParseSubText` `0x57aaf0`: `text` with each token replaced; false when one
+    /// failed, which also leaves a `$` in its place.
+    fn sub_text(&mut self, text: &str, out: &mut String) -> bool {
+        let mut ok = true;
+        let mut start = 0;
+        let mut cursor = find(text, 0, b'$');
+        while let Some(at) = cursor {
+            out.push_str(&text[start..at]);
+            let mut pos = at + 1;
+            if !self.replace(text, &mut pos, out) {
+                out.push('$');
+                ok = false;
+            }
+            start = pos.min(text.len());
+            cursor = find(text, start, b'$');
+        }
+        out.push_str(&text[start..]);
+        ok
+    }
+
+    /// `SpellParserReplaceText` `0x579e50` with `pos` just past the `$`.
+    fn replace(&mut self, text: &str, pos: &mut usize, out: &mut String) -> bool {
+        match byte(text, *pos) {
+            b'{' => {
+                if let Some(end) = find(text, *pos, b'}') {
+                    return match self.expression(text, pos, end) {
+                        Some((shown, int, _)) => {
+                            out.push_str(&shown);
+                            self.last_number = int;
+                            true
                         }
-                        // `$g`/`$G` (`0x508180`): the first form on gender 0, else the second.
-                        _ => trim_spaces(if (ctx.gender)() == 0 { a } else { b }),
+                        None => false,
                     };
-                    out.push_str(pick);
-                    i = i + 1 + end + 1;
-                    continue;
                 }
             }
+            b'<' => {
+                if let Some(end) = find(text, *pos, b'>') {
+                    return self.variable(text, pos, end, out);
+                }
+            }
+            _ => {}
         }
-        // The token letter and its optional 1-based slot digit.
-        let Some(&letter_b) = bytes.get(i) else {
-            out.push('$');
-            continue;
-        };
-        let letter = letter_b as char;
-        if !letter.is_ascii_alphabetic() {
-            // Not a token: keep `$` and the next char raw, stepping by its UTF-8 width (`$é`).
-            let ch_len = utf8_len(letter_b);
-            out.push_str(&text[start..i + ch_len]);
-            i += ch_len;
-            continue;
+        let mut scale = 1.0f32;
+        let op = byte(text, *pos);
+        if op == b'/' || op == b'*' {
+            if let Some(semi) = find(text, *pos, b';') {
+                let digits = &text.as_bytes()[*pos + 1..semi.min(*pos + 8)];
+                // A zero leaves 1.0; `/` takes the reciprocal on the x87 at double precision.
+                scale = match atoi(digits) {
+                    0 => 1.0,
+                    n if op == b'/' => (1.0 / f64::from(n)) as f32,
+                    n => n as f32,
+                };
+                *pos = semi + 1;
+            }
         }
-        i += 1;
-        let slot = if i < bytes.len() && bytes[i].is_ascii_digit() {
-            // `$s0` is a 1-based slot below 1: saturate to slot 0 rather than wrap.
-            let s = bytes[i].saturating_sub(b'1') as usize;
-            i += 1;
-            s.min(2)
+        let mut spell = self.spell;
+        let mut level = self.level;
+        let digits = text.as_bytes()[*pos..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+        if digits > 0 {
+            let id = atoi(&text.as_bytes()[*pos..*pos + digits.min(7)]);
+            *pos += digits;
+            // Deviation: the reference first swaps in the row for the instance's difficulty
+            // (`0x802850`); outside a dungeon or raid that is the same id.
+            let Some(loaded) = (self.ctx.lookup)(id as u32) else {
+                return false;
+            };
+            spell = loaded;
+            if let Some(caster) = self
+                .ctx
+                .caster
+                .filter(|_| loaded.attributes_ex2 & ATTR_EX2_PLAYER_LEVEL != 0)
+            {
+                level = caster.value(PlayerValue::Level) as u32;
+            }
+            if loaded.max_level > 0 && level >= loaded.max_level {
+                level = loaded.max_level;
+            }
+        }
+        let letter = byte(text, *pos);
+        let slot_digit = byte(text, *pos + 1);
+        let (slot, has_slot) = if (b'1'..=b'9').contains(&slot_digit) {
+            let s = usize::from(slot_digit - b'1');
+            (if s >= 3 { 0 } else { s }, true)
         } else {
-            0
+            (0, false)
         };
-        // A cross-spell token caps the level at its row's positive `maxLevel` (`507805`-`507817`).
-        let (target, level): (&SpellDisplay, u32) = match ref_spell {
-            Some(id) => match (ctx.lookup)(id) {
-                Some(s) if s.max_level > 0 => (s, level.min(s.max_level)),
-                Some(s) => (s, level),
-                None => {
-                    out.push_str(&text[start..i]);
-                    continue;
-                }
-            },
-            None => (spell, level),
-        };
-        match token_value(letter, slot, target, ctx, scale, level) {
-            Some((sub, val)) => {
-                // Deviation: every token keys the `$l` plural. The reference's `$a`, `$d`, `$t`,
-                // `$e`, `$c`, `$p`, `$f`, `$F` and `$z` arms never write `[0xbe0b84]`, so its `$l`
-                // keys on the number before them, and Blizzard's "$s1 … every $t1
-                // $lsecond:seconds;" reads "every 1 seconds" in 1.12.1. We print the grammar the
-                // text means.
-                last_value = val;
-                out.push_str(&sub);
+        let ctx = self.ctx;
+        let shown = match letter {
+            b'?' => {
+                *pos += 1;
+                return self.conditional(text, pos, out, None);
             }
-            None => out.push_str(&text[start..i]), // unknown token: keep raw
+            b'l' | b'L' => {
+                *pos += 1;
+                self.plural(text, pos, out);
+                return true;
+            }
+            b'g' | b'G' => {
+                *pos += 1;
+                if ctx.caster.is_none() {
+                    return false;
+                }
+                gender_branch(text, pos, (ctx.gender)(), out);
+                if *pos < text.len() {
+                    *pos += 1;
+                }
+                return true;
+            }
+            b'a' | b'A' => {
+                let r = ctx.radii.get(spell.effect_radius_index[slot]);
+                let v = r.map_or(0, |r| modify_int(ctx, spell, 6, r.radius as i32));
+                self.key(v);
+                v.to_string()
+            }
+            b'b' | b'B' => {
+                let v = spell.effect_points_per_combo_point[slot] as i32;
+                self.last_number = v;
+                v.to_string()
+            }
+            b'c' | b'C' => {
+                let v = ctx.caster.map_or(0, |c| c.power_cost(spell));
+                self.key(v);
+                v.to_string()
+            }
+            b'd' | b'D' => {
+                let ms = duration_ms(spell, ctx, true);
+                self.key(ms.max(0) / 1000);
+                match duration_text(ms, ctx) {
+                    Some(t) => t,
+                    None => return false,
+                }
+            }
+            b'e' | b'E' => {
+                let v = f64::from(modify_float(
+                    ctx,
+                    spell,
+                    27,
+                    spell.effect_multiple_value[slot],
+                )) * f64::from(scale);
+                self.key(plural_key(v));
+                fixed(ctx, 1, v)
+            }
+            b'F' => {
+                // ±0.5 by the sign, then chopped (`CMath::fint_n`).
+                let v =
+                    (f64::from(scale) * f64::from(spell.damage_multiplier[slot])).round() as i32;
+                self.key(v);
+                v.to_string()
+            }
+            b'f' => {
+                let v = f64::from(scale) * f64::from(spell.damage_multiplier[slot]);
+                self.key(plural_key(v));
+                fixed(ctx, 1, v)
+            }
+            b'h' | b'H' => {
+                let v = modify_int(ctx, spell, 18, spell.proc_chance as i32);
+                self.last_number = v;
+                v.to_string()
+            }
+            b'i' | b'I' => {
+                let v = spell.max_affected_targets as i32;
+                self.last_number = v;
+                v.to_string()
+            }
+            b'm' | b'M' | b'o' | b'O' | b's' | b'S' => {
+                let Some((text, n)) = self.points(letter, slot, spell, scale, level) else {
+                    return false;
+                };
+                self.last_number = n;
+                text
+            }
+            b'n' | b'N' => {
+                let v = modify_int(ctx, spell, 4, spell.proc_charges as i32);
+                self.last_number = v;
+                v.to_string()
+            }
+            b'p' | b'P' => {
+                let v = ctx.caster.map_or(0, |c| c.power_cost_per_second(spell));
+                self.key(v);
+                v.to_string()
+            }
+            b'q' | b'Q' => {
+                let v = spell.effect_misc_value[slot];
+                self.last_number = v;
+                v.to_string()
+            }
+            b'r' | b'R' => {
+                // The row at or below index 1 is row 1; its first maximum through op 5.
+                let row = ctx.ranges.and_then(|r| r.get(spell.range_index.max(1)));
+                let v = row.map_or(0.0, |r| modify_float(ctx, spell, 5, r.max));
+                self.last_number = v.ceil() as i32;
+                (v as i32).to_string()
+            }
+            b't' | b'T' => {
+                let ms = if spell.proc_flags & 1 != 0 {
+                    5000
+                } else {
+                    hasted(
+                        ctx,
+                        spell,
+                        modify_int(ctx, spell, 19, spell.effect_amplitude[slot] as i32),
+                    )
+                };
+                if time_fraction_below(ms as f32, 0.01) {
+                    self.key(ms / 1000);
+                    (ms / 1000).to_string()
+                } else {
+                    self.key(2);
+                    fixed(ctx, 2, f64::from(ms as f32 * 0.001))
+                }
+            }
+            b'u' | b'U' => {
+                let v = spell.stack_amount as i32;
+                self.last_number = v;
+                v.to_string()
+            }
+            b'v' | b'V' => {
+                let v = spell.max_target_level as i32;
+                self.last_number = v;
+                v.to_string()
+            }
+            b'x' | b'X' => {
+                let v = modify_int(ctx, spell, 17, spell.effect_chain_targets[slot] as i32);
+                self.last_number = v;
+                v.to_string()
+            }
+            b'z' | b'Z' => match (ctx.home_area)() {
+                Some(name) => name.to_string(),
+                None => match text_of(ctx, "HOME_INN") {
+                    Some(t) => t,
+                    None => return false,
+                },
+            },
+            _ => return false,
+        };
+        out.push_str(&shown);
+        if *pos < text.len() {
+            *pos += 1;
+            if has_slot {
+                *pos += 1;
+            }
+        }
+        true
+    }
+
+    /// Deviation: every numeric arm keys the `$l` plural. The reference's `$a`, `$c`, `$d`, `$e`,
+    /// `$f`, `$F`, `$p` and `$t` arms leave `0xbeb660` alone, so its "$s1 … every $t1
+    /// $lsecond:seconds;" keys on the damage; we print the grammar the text means.
+    fn key(&mut self, n: i32) {
+        self.last_number = n;
+    }
+
+    /// The `$s $S $m $M $o $O` arm: the effect points times the parser's scale of 1, spread over
+    /// the duration for `$o` (unhasted, a period of 0 read as 5000, one tick more under
+    /// `AttributesExE` `0x200`), then made positive and scaled, and printed by the letter's
+    /// rule. The text and the number `$l` keys on: `m` its whole minimum, the others their whole
+    /// maximum, a fraction 2.
+    fn points(
+        &self,
+        letter: u8,
+        slot: usize,
+        d: &SpellDisplay,
+        scale: f32,
+        level: u32,
+    ) -> Option<(String, i32)> {
+        let ctx = self.ctx;
+        let (mut min, mut max) = effect_points(d, slot, ctx, level);
+        if letter.eq_ignore_ascii_case(&b'o') {
+            let amplitude = d.effect_amplitude[slot] as i32;
+            let period = if amplitude == 0 { 5000 } else { amplitude };
+            let duration = if period > 0 {
+                duration_ms(d, ctx, false)
+            } else {
+                0
+            };
+            (min, max) = if duration > 0 {
+                let extra = if d.attributes_ex5 & ATTR_EX5_START_PERIODIC_AT_APPLY != 0 {
+                    period
+                } else {
+                    0
+                };
+                let total = f64::from(duration.wrapping_add(extra));
+                let over = |v: f32| (total * f64::from(v) / f64::from(period)) as f32;
+                (over(min), over(max))
+            } else {
+                (0.0, 0.0)
+            };
+        }
+        let scaled = |v: f32| (f64::from(v.abs()) * f64::from(scale)) as f32;
+        let (lo, hi) = (scaled(min), scaled(max));
+        let ((lo_int, lo_whole), (hi_int, hi_whole)) = (whole(lo), whole(hi));
+        let plural = match letter {
+            b'm' if lo_whole => lo_int,
+            b'm' => 2,
+            _ if hi_whole => hi_int,
+            _ => 2,
+        };
+        let int = |n: i32| TokenNumber::Int(i64::from(n));
+        let text = match letter {
+            b'm' if lo_whole => lo_int.to_string(),
+            b'm' => fixed(ctx, 1, f64::from(lo)),
+            b'M' if hi_whole => hi_int.to_string(),
+            b'M' => fixed(ctx, 1, f64::from(hi)),
+            // Equal bounds print one number, `%d` unless `$S` holds a fraction.
+            _ if min == max && (lo_whole || letter != b'S') => lo_int.to_string(),
+            _ if min == max => fixed(ctx, 1, f64::from(lo)),
+            _ if lo_whole && hi_whole => keyed(
+                ctx,
+                "INT_SPELL_POINTS_SPREAD_TEMPLATE",
+                &[int(lo_int), int(hi_int)],
+            )?,
+            b'S' => keyed(
+                ctx,
+                "SPELL_POINTS_SPREAD_TEMPLATE",
+                &[
+                    TokenNumber::Float(f64::from(lo)),
+                    TokenNumber::Float(f64::from(hi)),
+                ],
+            )?,
+            // A fractional spread under `s`/`o`/`O`: the minimum truncated, a fractional maximum
+            // truncated plus one.
+            _ => {
+                let top = if hi_whole { hi_int } else { hi as i32 + 1 };
+                keyed(
+                    ctx,
+                    "INT_SPELL_POINTS_SPREAD_TEMPLATE",
+                    &[int(lo as i32), int(top)],
+                )?
+            }
+        };
+        Some((text, plural))
+    }
+
+    /// `SpellParserExpression` `0x579980` over `text[pos+1..end]`: the cursor moves past the `}`
+    /// and an optional `.1`..`.9` precision first, so a failed expression drops its text. The
+    /// shown value (`%.0f` or `%.Nf`), its integer (`fistp`, round to nearest) and the value.
+    fn expression(&self, text: &str, pos: &mut usize, end: usize) -> Option<(String, i32, f32)> {
+        let body = &text[*pos + 1..end];
+        *pos = end + 1;
+        let mut decimals = 0;
+        if byte(text, *pos) == b'.' && (b'1'..=b'9').contains(&byte(text, *pos + 1)) {
+            decimals = byte(text, *pos + 1) - b'0';
+            *pos += 2;
+        }
+        let env = Env { parser: self };
+        let program = expr::compile(body, &env)?;
+        let value = expr::evaluate(&program, &env)?;
+        let shown = fixed(self.ctx, decimals, f64::from(value));
+        Some((shown, value.round_ties_even() as i32, value))
+    }
+
+    /// `SpellParserVariable` `0x577c40`: `$<name>`, the name cut at 14 characters, prints its
+    /// variable's text and keys `$l` on its integer; an unknown name fails.
+    fn variable(&mut self, text: &str, pos: &mut usize, end: usize, out: &mut String) -> bool {
+        let name = &text.as_bytes()[*pos + 1..end.min(*pos + 15)];
+        let Some(v) = self.variables.iter().find(|v| v.name.as_bytes() == name) else {
+            return false;
+        };
+        out.push_str(&v.text);
+        self.last_number = v.int_value;
+        *pos = end + 1;
+        true
+    }
+
+    /// `SpellParserPluralConditional` `0x576ef0`: `$l` over `a:b[:c…];`, the form the plural
+    /// index of the last number picks, leading and trailing spaces trimmed. With no `;` nothing is
+    /// consumed.
+    fn plural(&self, text: &str, pos: &mut usize, out: &mut String) {
+        while byte(text, *pos) == b' ' {
+            *pos += 1;
+        }
+        let Some(semi) = find(text, *pos, b';') else {
+            return;
+        };
+        let forms = &text[*pos..semi];
+        *pos = semi + 1;
+        // enUS's plural rule (`0x817d10`): the second form for any number but one.
+        let index = usize::from(self.last_number != 1);
+        // Past the last form the walk stops on the `;`: an empty pick.
+        let form = forms.split(':').nth(index).unwrap_or("");
+        out.push_str(form.trim_start_matches(' ').trim_end_matches(' '));
+    }
+
+    /// `SpellParserConditional` `0x579ba0` with `pos` past the `?`. The condition picks its arm,
+    /// or the next condition of a `]?` chain, else the last `[…]`. Into `var` (`0x579d60`'s
+    /// definitions) the arm's first `${…}` is evaluated as that variable; otherwise the arm is
+    /// parsed as text. A conditional without its brackets consumes nothing.
+    fn conditional(
+        &mut self,
+        text: &str,
+        pos: &mut usize,
+        out: &mut String,
+        var: Option<&str>,
+    ) -> bool {
+        while byte(text, *pos) == b' ' {
+            *pos += 1;
+        }
+        if *pos >= text.len() {
+            return true;
+        }
+        let Some(arms) = verify_conditional(text, *pos) else {
+            return true;
+        };
+        let (start, stop) = if self.condition(text, pos, arms.true_start) {
+            (arms.true_start + 1, arms.true_end)
+        } else if let Some(mut next) = arms.else_at {
+            let ok = self.conditional(text, &mut next, out, var);
+            *pos = next;
+            return ok;
+        } else {
+            (arms.false_start + 1, arms.false_end)
+        };
+        let arm = &text[start..stop];
+        let mut ok = true;
+        match var {
+            Some(name) => {
+                if let Some(dollar) = find(arm, 0, b'$') {
+                    if let Some(open) = find(arm, dollar, b'{') {
+                        if let Some(close) = find(arm, open, b'}') {
+                            let mut at = open;
+                            self.define(name, arm, &mut at, close);
+                        }
+                    }
+                }
+            }
+            None => {
+                if !self.sub_text(arm, out) {
+                    out.push('$');
+                    ok = false;
+                }
+            }
+        }
+        *pos = arms.false_end + 1;
+        ok
+    }
+
+    /// `SpellParserParseConditional` `0x5797f0` from `pos` up to `end`: `s<id>` known, `a<id>` on
+    /// the player, `!` negating the next term, `&`, `|` short-circuiting, brackets nesting.
+    fn condition(&self, text: &str, pos: &mut usize, end: usize) -> bool {
+        let mut cond = false;
+        if byte(text, *pos) == 0 {
+            return false;
+        }
+        while *pos < end {
+            match byte(text, *pos) {
+                b'!' => {
+                    *pos += 1;
+                    while *pos < end && byte(text, *pos) != 0 {
+                        let c = byte(text, *pos);
+                        if b"sSaA".contains(&c) {
+                            cond = !self.condition_term(text, pos);
+                            break;
+                        }
+                        if c == b'(' {
+                            cond = !self.condition(text, pos, end);
+                            skip_bracket(text, pos, end);
+                            break;
+                        }
+                        *pos += 1;
+                    }
+                }
+                b'&' => {
+                    if !cond {
+                        return false;
+                    }
+                    *pos += 1;
+                    cond = self.condition(text, pos, end);
+                }
+                b'(' => {
+                    *pos += 1;
+                    cond = self.condition(text, pos, end);
+                    skip_bracket(text, pos, end);
+                }
+                b')' => return cond,
+                b'A' | b'S' | b'a' | b's' => cond = self.condition_term(text, pos),
+                b'|' => {
+                    if cond {
+                        return true;
+                    }
+                    *pos += 1;
+                    cond = self.condition(text, pos, end);
+                }
+                _ => *pos += 1,
+            }
+            if byte(text, *pos) == 0 {
+                return cond;
+            }
+        }
+        cond
+    }
+
+    /// `SpellParserGetCondition` `0x5796c0`: the letter, then the spell id; false without digits
+    /// or a player.
+    fn condition_term(&self, text: &str, pos: &mut usize) -> bool {
+        let kind = byte(text, *pos);
+        *pos += 1;
+        let digits = text.as_bytes()[(*pos).min(text.len())..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+        if digits == 0 {
+            return false;
+        }
+        let id = atoi(&text.as_bytes()[*pos..*pos + digits.min(10)]) as u32;
+        *pos += digits;
+        let Some(caster) = self.ctx.caster else {
+            return false;
+        };
+        match kind {
+            b'a' | b'A' => caster.has_aura(id),
+            b's' | b'S' => caster.knows_spell(id),
+            _ => false,
         }
     }
+
+    /// `SpellParserVariables` `0x579d60` over a `SpellDescriptionVariables.dbc` text: each
+    /// `$name=` followed by a `${…}` or a `$?…` defines `name`.
+    fn define_all(&mut self, defs: &str) {
+        let mut cursor = find(defs, 0, b'$');
+        while let Some(at) = cursor {
+            let name_at = at + 1;
+            let mut cur = name_at;
+            if let Some(eq) = find(defs, name_at, b'=') {
+                let mut cut = eq.min(name_at + 14);
+                while !defs.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                let name = &defs[name_at..cut];
+                let Some(dollar) = find(defs, name_at, b'$') else {
+                    break;
+                };
+                cur = dollar + 1;
+                match byte(defs, cur) {
+                    b'?' => {
+                        cur += 1;
+                        let mut sink = String::new();
+                        self.conditional(defs, &mut cur, &mut sink, Some(name));
+                    }
+                    b'{' => {
+                        if let Some(close) = find(defs, cur, b'}') {
+                            self.define(name, defs, &mut cur, close);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            cursor = find(defs, cur, b'$');
+        }
+    }
+
+    /// `SpellParserVariableExpression` `0x579b30`: a new entry, named only once its expression
+    /// evaluates.
+    fn define(&mut self, name: &str, text: &str, pos: &mut usize, close: usize) {
+        let entry = match self.expression(text, pos, close) {
+            Some((shown, int_value, value)) => Variable {
+                name: name.to_string(),
+                text: shown,
+                int_value,
+                value,
+            },
+            None => Variable::default(),
+        };
+        self.variables.push(entry);
+    }
+}
+
+/// The three bracket pairs of a conditional (`SpellParserVerifyConditional` `0x577030`).
+struct Arms {
+    true_start: usize,
+    true_end: usize,
+    else_at: Option<usize>,
+    false_start: usize,
+    false_end: usize,
+}
+
+/// The first `[…]` from `at`; a `]?` continues the chain, whose last `[…]` is the false arm.
+fn verify_conditional(text: &str, at: usize) -> Option<Arms> {
+    let true_start = find(text, at, b'[')?;
+    let true_end = find(text, true_start, b']')?;
+    if byte(text, true_end + 1) == b'?' {
+        let else_at = true_end + 2;
+        let rest = verify_conditional(text, else_at)?;
+        return Some(Arms {
+            true_start,
+            true_end,
+            else_at: Some(else_at),
+            false_start: rest.false_start,
+            false_end: rest.false_end,
+        });
+    }
+    let false_start = find(text, true_end, b'[')?;
+    let false_end = find(text, false_start, b']')?;
+    Some(Arms {
+        true_start,
+        true_end,
+        else_at: None,
+        false_start,
+        false_end,
+    })
+}
+
+/// `SpellParserSkipParenthesis` `0x576ff0`: past the `)` that closes the open bracket.
+fn skip_bracket(text: &str, pos: &mut usize, end: usize) {
+    let mut depth = 1;
+    while *pos < end && byte(text, *pos) != 0 {
+        match byte(text, *pos) {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    *pos += 1;
+                    return;
+                }
+            }
+            _ => {}
+        }
+        *pos += 1;
+    }
+}
+
+/// `GenderConditional` `0x576cd0` with `pos` past the `g`: `male:female[:selector];`, the first
+/// form on gender 0, else the second, each trimmed; `pos` lands on the `;`. A `:c` or `:r` selector
+/// switches the reference to the class's or race's display gender, which is the player's own here.
+fn gender_branch(text: &str, pos: &mut usize, gender: u8, out: &mut String) {
+    while byte(text, *pos) == b' ' {
+        *pos += 1;
+    }
+    let Some(colon) = find(text, *pos, b':') else {
+        return;
+    };
+    let Some(semi) = find(text, colon, b';') else {
+        return;
+    };
+    let selector = find(text, colon + 1, b':').filter(|&s| s + 1 < semi && s < semi);
+    let form = if gender == 0 {
+        &text[*pos..colon]
+    } else {
+        let mut start = colon + 1;
+        while byte(text, start) == b' ' {
+            start += 1;
+        }
+        &text[start.min(semi)..selector.unwrap_or(semi)]
+    };
+    out.push_str(form.trim_end_matches(' '));
+    *pos = semi;
+}
+
+/// Substitute every `$`-token in `text`, the description or aura text of `spell`.
+pub fn substitute(text: &str, spell: &SpellDisplay, ctx: &TokenContext) -> String {
+    let mut parser = Parser {
+        ctx,
+        spell,
+        level: skill_level(ctx, spell),
+        variables: Vec::new(),
+        last_number: 0,
+    };
+    if let Some(defs) = ctx
+        .variables
+        .and_then(|v| v.get(spell.description_variables_id))
+    {
+        parser.define_all(defs);
+    }
+    let mut out = String::with_capacity(text.len());
+    parser.sub_text(text, &mut out);
     out
 }
 
-fn utf8_len(b: u8) -> usize {
-    match b {
-        0x00..=0x7F => 1,
-        0xC0..=0xDF => 2,
-        0xE0..=0xEF => 3,
-        _ => 4,
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::spells::SpellDisplay;
-
-    /// Deliberately unlike the shipped wording, so a wrong key cannot pass by reading the same.
-    fn global(key: &str) -> Option<String> {
-        Some(
-            match key {
-                "SPELL_DURATION_UNTIL_CANCELLED" => "<forever>",
-                "INT_SPELL_DURATION_SEC" => "<%dsec>",
-                "INT_SPELL_DURATION_MIN" => "<%dmin>",
-                "INT_SPELL_DURATION_HOURS" => "<%dhour>",
-                "INT_SPELL_DURATION_HOURS_P1" => "<%dhrs>",
-                "INT_SPELL_DURATION_DAYS" => "<%ddays>",
-                "SPELL_DURATION_MIN" => "<%.2fmin>",
-                "INT_SPELL_POINTS_SPREAD_TEMPLATE" => "<%d..%d>",
-                "SPELL_POINTS_SPREAD_TEMPLATE" => "<%.1f to %.1f>",
-                _ => return None,
-            }
-            .into(),
-        )
-    }
-
-    /// Every spell-data formatter key needed by a corpus walk; individual formatter tests above
-    /// pin the reference's unit and spread choices separately.
-    fn corpus_global(key: &str) -> Option<String> {
-        global(key).or_else(|| {
-            if key.starts_with("INT_SPELL_DURATION_") {
-                Some("%d".into())
-            } else if key.starts_with("SPELL_DURATION_") {
-                Some("%.1f".into())
-            } else {
-                None
-            }
-        })
-    }
-
-    /// `%d`, `%.Nf` and `%%` in order; the tests keep clear of the CRT's rounding ties.
-    fn printf(template: &str, args: &[TokenNumber]) -> String {
-        let mut out = String::new();
-        let mut args = args.iter();
-        let mut chars = template.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c != '%' {
-                out.push(c);
-                continue;
-            }
-            let mut spec = String::new();
-            while let Some(&n) = chars.peek() {
-                chars.next();
-                spec.push(n);
-                if n.is_ascii_alphabetic() || n == '%' {
-                    break;
-                }
-            }
-            match (spec.as_str(), args.next()) {
-                ("d", Some(TokenNumber::Int(n))) => out.push_str(&n.to_string()),
-                (f, Some(TokenNumber::Float(x))) if f.starts_with('.') => {
-                    let p: usize = f[1..f.len() - 1].parse().unwrap();
-                    out.push_str(&format!("{x:.p$}"));
-                }
-                (s, a) => panic!("printf: %{s} with {a:?}"),
-            }
-        }
-        out
-    }
-
-    /// A caster's table: `(op, flat, pct)` rows through the three appliers' arithmetic.
-    struct Mods(Vec<(u8, i32, i32)>);
-
-    impl Mods {
-        fn find(&self, op: u8) -> Option<(i32, i32)> {
-            self.0
-                .iter()
-                .find(|m| m.0 == op)
-                .map(|&(_, flat, pct)| (flat, pct))
-        }
-    }
-
-    impl SpellMods for Mods {
-        fn apply_int(&self, _: &SpellDisplay, op: u8, value: i32) -> i32 {
-            self.find(op)
-                .map_or(value, |(flat, pct)| (value + flat) * pct / 100)
-        }
-        fn apply_float(&self, _: &SpellDisplay, op: u8, value: f32) -> f32 {
-            self.find(op).map_or(value, |(flat, pct)| {
-                ((f64::from(value) + f64::from(flat)) * f64::from(pct) * f64::from(0.01f32)) as f32
-            })
-        }
-        fn apply_soft(&self, _: &SpellDisplay, op: u8, value: f32) -> f32 {
-            self.find(op)
-                .map_or(value, |(flat, pct)| crate::soft_modify(value, flat, pct))
-        }
-    }
-
-    fn ctx<'a>(
-        durations: &'a SpellDurationCatalog,
-        radii: &'a SpellRadiusCatalog,
-        lookup: &'a dyn Fn(u32) -> Option<&'a SpellDisplay>,
-    ) -> TokenContext<'a> {
-        TokenContext {
-            home_area: &|| None,
-            durations,
-            radii,
-            ranges: None,
-            skill: &|_| 0,
-            lookup,
-            mods: None,
-            unmodified_points: false,
-            gender: &|| 0,
-            global: &global,
-            printf: &printf,
-        }
-    }
-
-    fn none_lookup<'a>(_: u32) -> Option<&'a SpellDisplay> {
-        None
-    }
-
-    /// A flat effect of `points` in slot 0 (base `points − 1`, one one-sided die).
-    fn points(points: i32) -> SpellDisplay {
-        SpellDisplay {
-            effect_base_points: [points - 1, 0, 0],
-            effect_base_dice: [1, 0, 0],
-            effect_die_sides: [1, 0, 0],
-            ..Default::default()
-        }
-    }
-
-    /// An effect rolling `min..=max` in slot 0.
-    fn spread(min: i32, max: i32) -> SpellDisplay {
-        SpellDisplay {
-            effect_base_points: [min - 1, 0, 0],
-            effect_base_dice: [1, 0, 0],
-            effect_die_sides: [max - min + 1, 0, 0],
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn the_duration_ladder_picks_unit_then_plural() {
-        let mut durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        for (idx, ms) in [
-            (1, 30_000),
-            (2, 60_000),
-            (3, 3_600_000),
-            (4, 7_200_000),
-            (5, 172_800_000),
-            (6, -1),
-            (7, 0),
-        ] {
-            durations.insert_for_tests(idx, ms);
-        }
-        let c = ctx(&durations, &radii, &none_lookup);
-        let d = |duration_index| {
-            substitute(
-                "$d",
-                &SpellDisplay {
-                    duration_index,
-                    ..Default::default()
-                },
-                &c,
-            )
-        };
-        assert_eq!(d(1), "<30sec>");
-        assert_eq!(d(2), "<1min>", "a single minute takes the bare token");
-        assert_eq!(d(3), "<1hour>", "and so does a single hour");
-        assert_eq!(d(4), "<2hrs>", "but two take the _P1 twin");
-        assert_eq!(d(5), "<2days>", "the days arm the ladder used to lack");
-        assert_eq!(d(6), "<forever>");
-        // No positive duration, and no row, which `0x6ea000` reads as 0 (`507cda`).
-        assert_eq!(d(7), "<forever>");
-        assert_eq!(d(8), "<forever>");
-    }
-
-    /// `0x508180`'s branch: the first form on gender 0, the second on anything else, the chosen
-    /// form trimmed of spaces at both ends (`0x5081c8`-`0x5081d7`, `0x50822a`-`0x50823b`,
-    /// `0x508267`-`0x508280`).
-    #[test]
-    fn gender_takes_the_players_side_of_the_branch() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let d = SpellDisplay::default();
-        let gender = std::cell::Cell::new(0u8);
-        let c = TokenContext {
-            gender: &|| gender.get(),
-            ..ctx(&durations, &radii, &none_lookup)
-        };
-
-        assert_eq!(substitute("$ghis:her;", &d, &c), "his");
-        gender.set(1);
-        assert_eq!(substitute("$ghis:her;", &d, &c), "her");
-        gender.set(2);
-        assert_eq!(substitute("$ghis:her;", &d, &c), "her");
-        // `G` is the same branch (`0x508138`'s table maps both spellings to `0x50786d`).
-        assert_eq!(substitute("$GLad:LAss;", &d, &c), "LAss");
-        // The chosen form's spaces go from both ends.
-        gender.set(0);
-        assert_eq!(substitute("$g his : her ;", &d, &c), "his");
-        gender.set(1);
-        assert_eq!(substitute("$g his : her ;", &d, &c), "her");
-        // An empty chosen arm consumes the token.
-        gender.set(0);
-        assert_eq!(substitute("$g:male;", &d, &c), "");
-        gender.set(1);
-        assert_eq!(substitute("$g:male;", &d, &c), "male");
-        assert_eq!(substitute("$g female:;", &d, &c), "");
-        // The shipped wording: Conjure Food 587 and Hellfire 1949.
-        assert_eq!(
-            substitute("providing the mage and $ghis:her; allies", &d, &c),
-            "providing the mage and her allies"
-        );
-        gender.set(0);
-        assert_eq!(
-            substitute("damage to $ghimself:herself;", &d, &c),
-            "damage to himself"
-        );
-    }
-
-    #[test]
-    fn duration_modifier_updates_description_and_overtime_total() {
-        let mut durations = SpellDurationCatalog::default();
-        durations.insert_for_tests(1, 120_000);
-        let radii = SpellRadiusCatalog::default();
-        let mods = Mods(vec![(1, 0, 150)]);
-        let c = TokenContext {
-            mods: Some(&mods),
-            ..ctx(&durations, &radii, &none_lookup)
-        };
-        let d = SpellDisplay {
-            duration_index: 1,
-            effect_amplitude: [3_000, 0, 0],
-            ..points(3)
-        };
-        assert_eq!(
-            substitute("Lasts $d; deals $o1 total.", &d, &c),
-            "Lasts <3min>; deals 180 total."
-        );
-    }
-
-    #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn battle_shout_description_uses_modified_duration_from_real_data() {
-        let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let spells = crate::load_spell_catalog(&mut chain).expect("Spell.dbc");
-        let durations = crate::load_spell_durations(&mut chain).expect("SpellDuration.dbc");
-        let radii = SpellRadiusCatalog::default();
-        let d = spells.get(6673).expect("Battle Shout rank 1");
-        let description = d.description.as_deref().expect("description");
-        let lookup = |id| spells.get(id);
-        let base = ctx(&durations, &radii, &lookup);
-        assert!(substitute(description, d, &base).contains("<2min>"));
-        let mods = Mods(vec![(1, 0, 150)]);
-        let modified = TokenContext {
-            mods: Some(&mods),
-            ..base
-        };
-        assert!(substitute(description, d, &modified).contains("<3min>"));
-    }
-
-    #[test]
-    fn booming_voice_ranks_preserve_fractional_minutes() {
-        let mut durations = SpellDurationCatalog::default();
-        durations.insert_for_tests(1, 120_000);
-        let radii = SpellRadiusCatalog::default();
-        let spell = SpellDisplay {
-            duration_index: 1,
-            ..Default::default()
-        };
-        for (rank, expected) in [
-            (0, "<2min>"),
-            (1, "<2.20min>"),
-            (2, "<2.40min>"),
-            (3, "<2.60min>"),
-            (4, "<2.80min>"),
-            (5, "<3min>"),
-        ] {
-            let mods = Mods(vec![(1, 0, 100 + rank * 10)]);
-            let ctx = TokenContext {
-                mods: Some(&mods),
-                ..ctx(&durations, &radii, &none_lookup)
-            };
-            assert_eq!(substitute("$d", &spell, &ctx), expected, "rank {rank}");
-        }
-    }
-
-    /// Base 13 and one 9-sided die give "14 to 22", Fireball rank 1's shape; a diceless effect
-    /// prints one value.
-    #[test]
-    fn s_token_bounds() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let mut d = SpellDisplay {
-            effect_base_points: [13, 24, 0],
-            effect_base_dice: [1, 0, 0],
-            effect_die_sides: [9, 0, 0],
-            ..Default::default()
-        };
-        let c = ctx(&durations, &radii, &none_lookup);
-        assert_eq!(
-            substitute("causes $s1 Fire damage and $s2 more", &d, &c),
-            "causes <14..22> Fire damage and 24 more"
-        );
-        // Negative base points print absolute (the client's "reduces by N" phrasing).
-        d.effect_base_points = [-31, 0, 0];
-        d.effect_base_dice = [1, 0, 0];
-        d.effect_die_sides = [1, 0, 0];
-        assert_eq!(
-            substitute("reduces armor by $s1", &d, &c),
-            "reduces armor by 30"
-        );
-    }
-
-    #[test]
-    fn scaled_effect_points_keep_fractional_seconds() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let c = ctx(&durations, &radii, &none_lookup);
-        for (n, expected) in [(100, "0.1"), (200, "0.2"), (500, "0.5")] {
-            let d = points(n);
-            assert_eq!(
-                substitute("$/1000;S1 sec.", &d, &c),
-                format!("{expected} sec.")
-            );
-            assert_eq!(
-                substitute("$/1000;m1 sec.", &d, &c),
-                format!("{expected} sec.")
-            );
-        }
-        // A whole scaled value prints `%d` under any letter.
-        assert_eq!(substitute("$/1000;S1", &points(1000), &c), "1");
-    }
-
-    /// Flametongue Weapon's shape (`$/77;8026m1 to $/25;8026M1` over 326): `m`/`M` print a
-    /// fraction at one decimal. The scale is `atoi`'s, so a decimal `$*` reads its integer part
-    /// and `$*0.04;` is no scale at all.
-    #[test]
-    fn scaled_m_tokens_print_tenths_and_the_scale_is_an_integer() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let c = ctx(&durations, &radii, &none_lookup);
-        let d = points(326);
-        assert_eq!(
-            substitute("$/77;m1 to $/25;M1 additional Fire damage", &d, &c),
-            "4.2 to 13.0 additional Fire damage"
-        );
-        assert_eq!(substitute("$*0.04;M1", &d, &c), "326");
-        assert_eq!(substitute("$*2;M1", &d, &c), "652");
-        assert_eq!(substitute("$/0;M1", &d, &c), "326", "atoi 0 leaves 1.0");
-        assert_eq!(
-            substitute("$/2 x;M1", &d, &c),
-            "163",
-            "atoi stops at the space"
-        );
-        assert_eq!(substitute("$/2 M1", &d, &c), "$/2 M1", "no `;`, no token");
-    }
-
-    /// `$/2;s1` of 3 truncates to 1 (`507b28`), where `$/2;S1` keeps its fraction.
-    #[test]
-    fn a_fractional_single_value_truncates_under_s_and_keeps_tenths_under_capital_s() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let c = ctx(&durations, &radii, &none_lookup);
-        let d = points(3);
-        assert_eq!(substitute("$/2;s1", &d, &c), "1");
-        assert_eq!(
-            substitute("$/2;o1", &d, &c),
-            "0",
-            "no duration spreads nothing"
-        );
-        assert_eq!(substitute("$/2;S1", &d, &c), "1.5");
-        assert_eq!(substitute("$/2;m1 $/2;M1", &d, &c), "1.5 1.5");
-    }
-
-    /// The spread arms (`507bc2`-`507c4a`): both whole takes the integer template; else `$S`
-    /// takes the float one, and `s` the integer one over the truncated minimum and a fractional
-    /// maximum truncated plus one.
-    #[test]
-    fn a_spread_picks_its_template_by_letter_and_wholeness() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let c = ctx(&durations, &radii, &none_lookup);
-        assert_eq!(substitute("$/2;s1", &spread(4, 6), &c), "<2..3>");
-        assert_eq!(substitute("$/2;s1", &spread(3, 5), &c), "<1..3>");
-        assert_eq!(substitute("$/2;S1", &spread(3, 5), &c), "<1.5 to 2.5>");
-        assert_eq!(substitute("$/2;s1", &spread(4, 5), &c), "<2..3>");
-        assert_eq!(substitute("$/2;S1", &spread(4, 5), &c), "<2.0 to 2.5>");
-        assert_eq!(substitute("$/2;O1", &spread(4, 5), &c), "0");
-    }
-
-    /// The plural value `[0xbe0b84]`: `m` keys on its whole minimum, the others on the whole
-    /// maximum, and a fraction keys as 2 (`507aa2`-`507b10`).
-    #[test]
-    fn the_plural_keys_on_the_whole_bound_or_two() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let c = ctx(&durations, &radii, &none_lookup);
-        let plural = |text: &str, d: &SpellDisplay| substitute(text, d, &c);
-        assert_eq!(plural("$m1 $lpoint:points;", &spread(1, 3)), "1 point");
-        assert_eq!(
-            plural("$s1 $lpoint:points;", &spread(1, 3)),
-            "<1..3> points"
-        );
-        assert_eq!(plural("$M1 $lpoint:points;", &points(1)), "1 point");
-        assert_eq!(plural("$/2;m1 $lpoint:points;", &points(2)), "1 point");
-        assert_eq!(plural("$/4;S1 $lpoint:points;", &points(2)), "0.5 points");
-    }
-
-    /// `0x6e3b80`'s rounding set: School Damage floors the minimum and ceils the maximum after
-    /// its modifiers, where an unrounded effect keeps the quantized fraction; a zero maximum
-    /// ceils to 1 (`0x761040`).
-    #[test]
-    fn a_rounding_effect_floors_and_ceils_its_modified_bounds() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let mods = Mods(vec![(0, 0, 110)]);
-        let c = TokenContext {
-            mods: Some(&mods),
-            ..ctx(&durations, &radii, &none_lookup)
-        };
-        let school = SpellDisplay {
-            effects: [2, 0, 0],
-            ..spread(14, 22)
-        };
-        assert_eq!(substitute("$s1", &school, &c), "<15..25>");
-        assert_eq!(substitute("$m1 $M1", &school, &c), "15 25");
-        let zero = SpellDisplay {
-            effects: [2, 0, 0],
-            ..points(0)
-        };
-        assert_eq!(
-            substitute("$s1", &zero, &ctx(&durations, &radii, &none_lookup)),
-            "<0..1>"
-        );
-        // A dummy effect is not in the set: op 0 does not reach it, and nothing rounds.
-        let dummy = SpellDisplay {
-            effects: [3, 0, 0],
-            ..spread(14, 22)
-        };
-        assert_eq!(substitute("$s1", &dummy, &c), "<14..22>");
-    }
-
-    /// The damage op is 22 for aura 3 and 0 for the other damage auras (`6e394a`).
-    #[test]
-    fn a_periodic_damage_aura_takes_op_22() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let mods = Mods(vec![(22, 0, 200)]);
-        let c = TokenContext {
-            mods: Some(&mods),
-            ..ctx(&durations, &radii, &none_lookup)
-        };
-        let aura = |aura| SpellDisplay {
-            effects: [6, 0, 0],
-            effect_apply_aura: [aura, 0, 0],
-            ..points(10)
-        };
-        assert_eq!(substitute("$s1", &aura(3), &c), "20");
-        assert_eq!(substitute("$s1", &aura(15), &c), "10");
-    }
-
-    /// `GetEffectPoints` modifies through the software-float applier `0x6e6c30`, whose truncating
-    /// steps land 269 × 1.01 × 1.33 on 361.34375 after the 1/128 quantizer, where the FPU applier
-    /// would reach 361.3515625 and print "361.4".
-    #[test]
-    fn effect_points_take_the_software_float_applier() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let mods = Mods(vec![(8, 0, 101), (2, 0, 133)]);
-        let c = TokenContext {
-            mods: Some(&mods),
-            ..ctx(&durations, &radii, &none_lookup)
-        };
-        let d = SpellDisplay {
-            effects: [6, 0, 0],
-            effect_apply_aura: [10, 0, 0],
-            ..points(269)
-        };
-        assert_eq!(substitute("$M1", &d, &c), "361.3");
-    }
-
-    /// The aura tooltip's context skips the effect points' modifiers and `$d`'s op 1, and keeps
-    /// the other tokens' ops.
-    #[test]
-    fn the_aura_tooltip_context_leaves_points_and_duration_unmodified() {
-        let mut durations = SpellDurationCatalog::default();
-        durations.insert_for_tests(1, 60_000);
-        let radii = SpellRadiusCatalog::default();
-        let mods = Mods(vec![(8, 0, 125), (1, 0, 200), (18, 10, 100)]);
-        let modified = TokenContext {
-            mods: Some(&mods),
-            ..ctx(&durations, &radii, &none_lookup)
-        };
-        let aura = TokenContext {
-            unmodified_points: true,
-            ..modified
-        };
-        let d = SpellDisplay {
-            duration_index: 1,
-            proc_chance: 5,
-            ..points(40)
-        };
-        assert_eq!(substitute("$s1 $d $h", &d, &modified), "50 <2min> 15");
-        assert_eq!(substitute("$s1 $d $h", &d, &aura), "40 <1min> 15");
-    }
-
-    #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn scaled_damage_tokens_from_real_spell_data() {
-        let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let spells = crate::load_spell_catalog(&mut chain).expect("Spell.dbc");
-        let durations = crate::load_spell_durations(&mut chain).expect("SpellDuration.dbc");
-        let radii = SpellRadiusCatalog::default();
-        let lookup = |id| spells.get(id);
-        let c = ctx(&durations, &radii, &lookup);
-        for (id, expected) in [
-            (8024, "4.2 to 13.0 additional Fire damage"),
-            (20154, "an additional 1 to 4 Holy damage"),
-            // `$/1000;s1` of 1500 and of 600: lowercase `s` truncates a fraction (`507b28`).
-            (21854, "Enslave Demon spell by 1 sec."),
-            (24271, "Raptor Strike by 0 sec."),
-        ] {
-            let d = spells.get(id).expect("spell");
-            let description = substitute(d.description.as_deref().unwrap(), d, &c);
-            assert!(description.contains(expected), "{id}: {description}");
-        }
-    }
-
-    #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn improved_frostbolt_ranks_display_tenths_from_real_spell_data() {
-        let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let catalog = crate::load_spell_catalog(&mut chain).expect("Spell.dbc");
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let lookup = |id| catalog.get(id);
-        let c = ctx(&durations, &radii, &lookup);
-        for (id, expected) in [
-            (11070, "0.1"),
-            (12473, "0.2"),
-            (16763, "0.3"),
-            (16765, "0.4"),
-            (16766, "0.5"),
-        ] {
-            let d = catalog.get(id).expect("Improved Frostbolt rank");
-            assert!(d.name == "Improved Frostbolt");
-            let description = substitute(d.description.as_deref().unwrap(), d, &c);
-            assert!(
-                description.contains(&format!("by {expected} sec.")),
-                "{description}"
-            );
-        }
-    }
-
-    /// The per-level terms scale by the skill level (`0x6e3130`): the skill capped at
-    /// `maxLevel × 5`, over 5 in integers, less `baseLevel` floored at 0. Battle Shout rank 1
-    /// (14 + 1d1, 0.5 a level from 1, cap 11), Power Word: Shield rank 1 (43 + 1d1, 0.8 from 6,
-    /// cap 11), Fireball rank 1 (13 + 1d9, 0.6 from 1, cap 5, a rounding effect).
-    #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn per_level_terms_scale_by_the_skill_level_from_real_spells() {
-        let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let spells = crate::load_spell_catalog(&mut chain).expect("Spell.dbc");
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let lookup = |id| spells.get(id);
-        let skill = std::cell::Cell::new(0);
-        let skill_of = |_| skill.get();
-        let c = TokenContext {
-            skill: &skill_of,
-            ..ctx(&durations, &radii, &lookup)
-        };
-        let at = |value: u32, id: u32| {
-            skill.set(value);
-            substitute("$s1", spells.get(id).unwrap(), &c)
-        };
-        // Levels 1, 11 and 60 at a class line's level × 5, and the cap at 11.
-        for (skill, expected) in [(0, "15"), (5, "15"), (55, "20"), (300, "20")] {
-            assert_eq!(at(skill, 6673), expected, "Battle Shout at skill {skill}");
-        }
-        assert_eq!(at(300, 17), "48");
-        // Level 3 is under baseLevel 6: no negative term.
-        assert_eq!(at(15, 17), "44");
-        assert_eq!(at(0, 133), "<14..22>");
-        // Skill 24 is level 4, not 4.8: 14 + 1.8 floored, 22 + 1.8 ceiled.
-        assert_eq!(at(24, 133), "<15..24>");
-        // 14 + 2.4 floored, 22 + 2.4 ceiled (`6e3a67`).
-        assert_eq!(at(300, 133), "<16..25>");
-    }
-
-    /// A `baseLevel` at or below 0 is not subtracted (`6e3859`): the level itself is Δ.
-    #[test]
-    fn a_base_level_at_or_below_zero_is_not_subtracted() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let d = SpellDisplay {
-            base_level: -1i32 as u32,
-            effect_real_points_per_level: [1.0, 0.0, 0.0],
-            ..points(10)
-        };
-        let c = TokenContext {
-            skill: &|_| 50,
-            ..ctx(&durations, &radii, &none_lookup)
-        };
-        assert_eq!(substitute("$s1", &d, &c), "20");
-    }
-
-    /// A cross-spell token takes the expanded spell's level capped at its own row's `maxLevel`
-    /// (`507805`); only a level of 0 falls through to the referenced spell's own (`6e3841`).
-    #[test]
-    fn a_cross_spell_token_caps_the_outer_level() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let per_level = |id: u32, max_level: u32| SpellDisplay {
-            id,
-            base_level: 1,
-            max_level,
-            effect_real_points_per_level: [1.0, 0.0, 0.0],
-            ..points(10)
-        };
-        let (capped, uncapped) = (per_level(2, 10), per_level(3, 0));
-        let lookup = |id: u32| match id {
-            2 => Some(&capped),
-            3 => Some(&uncapped),
-            _ => None,
-        };
-        let outer = SpellDisplay {
-            id: 1,
-            ..Default::default()
-        };
-        // The outer spell at level 30; the referenced ones in no line of the player's.
-        let c = TokenContext {
-            skill: &|id| if id == 1 { 150 } else { 0 },
-            ..ctx(&durations, &radii, &lookup)
-        };
-        assert_eq!(substitute("$2s1 $3s1", &outer, &c), "19 39");
-        // The outer spell at level 0: each takes its own, 100 capped at 10 × 5.
-        let c = TokenContext {
-            skill: &|id| if id == 1 { 0 } else { 100 },
-            ..ctx(&durations, &radii, &lookup)
-        };
-        assert_eq!(substitute("$2s1 $3s1", &outer, &c), "19 29");
-    }
-
-    /// Resurrection Sickness (15007) is the one shipped spell on a per-level duration row: 427,
-    /// -600000 ms plus 60000 a level, capped at 600000. In no line of the player's its level is 0,
-    /// and a duration at or below 0 reads as until cancelled.
-    #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn the_duration_takes_its_per_level_term_from_real_data() {
-        let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let spells = crate::load_spell_catalog(&mut chain).expect("Spell.dbc");
-        let durations = crate::load_spell_durations(&mut chain).expect("SpellDuration.dbc");
-        let radii = SpellRadiusCatalog::default();
-        let lookup = |id| spells.get(id);
-        let sickness = spells.get(15007).expect("Resurrection Sickness");
-        assert_eq!(sickness.duration_index, 427);
-        let skill = std::cell::Cell::new(0);
-        let skill_of = |_| skill.get();
-        let c = TokenContext {
-            skill: &skill_of,
-            ..ctx(&durations, &radii, &lookup)
-        };
-        for (value, expected) in [
-            (0, "<forever>"),
-            (50, "<forever>"),
-            (55, "<1min>"),
-            (150, "<10min>"),
-        ] {
-            skill.set(value);
-            assert_eq!(substitute("$d", sickness, &c), expected, "skill {value}");
-        }
-    }
-
-    /// Below `baseLevel` the duration's per-level term goes negative: no floor (`6ea046`).
-    #[test]
-    fn the_duration_level_term_is_not_floored() {
-        let mut durations = SpellDurationCatalog::default();
-        durations.insert_row_for_tests(
-            1,
-            crate::SpellDuration {
-                base_ms: 20_000,
-                per_level_ms: 1_000,
-                max_ms: 30_000,
-            },
-        );
-        let radii = SpellRadiusCatalog::default();
-        let d = SpellDisplay {
-            base_level: 10,
-            duration_index: 1,
-            ..Default::default()
-        };
-        let skill = std::cell::Cell::new(0);
-        let skill_of = |_| skill.get();
-        let c = TokenContext {
-            skill: &skill_of,
-            ..ctx(&durations, &radii, &none_lookup)
-        };
-        // Level 5, five under: 20 s less 5 s. Level 20: 30 s, the cap.
-        skill.set(25);
-        assert_eq!(substitute("$d", &d, &c), "<15sec>");
-        skill.set(100);
-        assert_eq!(substitute("$d", &d, &c), "<30sec>");
-    }
-
-    #[test]
-    fn dice_per_level_reaches_spread_and_overtime_tokens() {
-        let mut durations = SpellDurationCatalog::default();
-        durations.insert_for_tests(1, 9_000);
-        let radii = SpellRadiusCatalog::default();
-        let spell = SpellDisplay {
-            base_level: 1,
-            max_level: 3,
-            duration_index: 1,
-            effect_base_points: [10, 0, 0],
-            effect_base_dice: [1, 0, 0],
-            effect_die_sides: [3, 0, 0],
-            effect_dice_per_level: [1, 0, 0],
-            effect_amplitude: [3_000, 0, 0],
-            ..Default::default()
-        };
-        // Level 20, capped at 3: two more dice.
-        let c = TokenContext {
-            skill: &|_| 100,
-            ..ctx(&durations, &radii, &none_lookup)
-        };
-        assert_eq!(substitute("$s1; $o1", &spell, &c), "<13..19>; <39..57>");
-    }
-
-    #[test]
-    fn overtime_duration_period_scale_plural() {
-        let mut durations = SpellDurationCatalog::default();
-        durations.insert_for_tests(1, 18_000);
-        let radii = SpellRadiusCatalog::default();
-        let d = SpellDisplay {
-            duration_index: 1,
-            effect_amplitude: [3000, 0, 0],
-            ..points(3)
-        };
-        let c = ctx(&durations, &radii, &none_lookup);
-        assert_eq!(
-            substitute("Deals $o1 damage over $d, every $t1 sec.", &d, &c),
-            "Deals 18 damage over <18sec>, every 3 sec."
-        );
-        assert_eq!(
-            substitute("Restores $/2;S1 health: $l point:points;.", &d, &c),
-            // Uppercase S keeps 3/2 fractional; the plural picks "points".
-            "Restores 1.5 health: points.".to_string()
-        );
-    }
-
-    #[test]
-    fn cross_spell_and_unknown_tokens() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let other = points(100);
-        let lookup = |id: u32| -> Option<&SpellDisplay> { (id == 1234).then_some(&other) };
-        let d = SpellDisplay::default();
-        let c = TokenContext {
-            home_area: &|| Some("Goldshire"),
-            ..ctx(&durations, &radii, &lookup)
-        };
-        assert_eq!(
-            substitute("as strong as $1234s1 hits", &d, &c),
-            "as strong as 100 hits"
-        );
-        assert_eq!(substitute("stacks $u times", &d, &c), "stacks 0 times");
-        assert_eq!(substitute("unknown $j", &d, &c), "unknown $j");
-        assert_eq!(
-            substitute("Returns you to $z.", &d, &c),
-            "Returns you to Goldshire."
-        );
-        let unbound = ctx(&durations, &radii, &lookup);
-        assert_eq!(
-            substitute("Returns you to $z.", &d, &unbound),
-            "Returns you to $z."
-        );
-    }
-
-    /// Devotion Aura rank 1's shape: 55 armor, and Improved Devotion Aura's +25% on op 8 through
-    /// the soft applier and the 1/128 quantizer is 68.75, which `$s1` truncates and `$M1` prints
-    /// at one decimal.
-    #[test]
-    fn effect_value_tokens_take_the_all_effects_modifier() {
-        let d = SpellDisplay {
-            effects: [35, 0, 0],
-            effect_apply_aura: [22, 0, 0],
-            ..points(55)
-        };
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let mods = Mods(vec![(8, 0, 125)]);
-        let ctx = TokenContext {
-            mods: Some(&mods),
-            ..ctx(&durations, &radii, &none_lookup)
-        };
-        assert_eq!(substitute("Gives $s1 armor.", &d, &ctx), "Gives 68 armor.");
-        assert_eq!(
-            substitute("Increases armor by $M1.", &d, &ctx),
-            "Increases armor by 68.8."
-        );
-    }
-
-    /// Every aura `0x6e3ab8`'s table covers (10..=183), and none outside it.
-    #[test]
-    fn each_aura_takes_the_op_of_its_jump_table_arm() {
-        for aura in 0..=255u32 {
-            let expected = match aura {
-                10 | 103 | 183 => Some(2),
-                31 | 32 | 33 | 58 | 129 | 130 | 171 | 172 => Some(12),
-                138 => Some(23),
-                65 => Some(24),
-                99 => Some(3),
-                _ => None,
-            };
-            let d = SpellDisplay {
-                effect_apply_aura: [aura, 0, 0],
-                ..Default::default()
-            };
-            assert_eq!(aura_op(&d, 0), expected, "aura {aura}");
-        }
-    }
-
-    /// `$t` (`507e3c`): ProcFlags bit 0 is five seconds whatever the amplitude; else the
-    /// amplitude through op 19, zero included, in whole seconds.
-    #[test]
-    fn t_is_whole_seconds_of_the_modified_amplitude() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let mods = Mods(vec![(19, -1000, 100)]);
-        let c = TokenContext {
-            mods: Some(&mods),
-            ..ctx(&durations, &radii, &none_lookup)
-        };
-        let tick = |amplitude, proc_flags| SpellDisplay {
-            effect_amplitude: [amplitude, 0, 0],
-            proc_flags,
-            ..Default::default()
-        };
-        let bare = ctx(&durations, &radii, &none_lookup);
-        assert_eq!(substitute("$t1", &tick(1500, 0), &bare), "1");
-        assert_eq!(substitute("$t1", &tick(0, 0), &bare), "0");
-        assert_eq!(substitute("$t1", &tick(3000, 0), &c), "2");
-        assert_eq!(substitute("$t1", &tick(3000, 1), &c), "5");
-    }
-
-    /// The `$l` deviation in [`substitute`]: Blizzard's wording keys its plural on the `$t` just
-    /// before it, "every 1 second", where 1.12.1 keys on the damage and reads "every 1 seconds".
-    #[test]
-    fn the_plural_keys_on_the_nearest_token_a_deviation() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let c = ctx(&durations, &radii, &none_lookup);
-        let blizzard = SpellDisplay {
-            effect_base_points: [24, 0, 0],
-            effect_base_dice: [1, 0, 0],
-            effect_die_sides: [1, 0, 0],
-            effect_amplitude: [1000, 0, 0],
-            ..Default::default()
-        };
-        assert_eq!(
-            substitute(
-                "$s1 Frost damage every $t1 $lsecond:seconds;",
-                &blizzard,
-                &c
-            ),
-            "25 Frost damage every 1 second"
-        );
-        // `$f` and `$F` key it too, though their arms (`507ff7`, `508025`) leave it alone.
-        let multiplier = SpellDisplay {
-            effect_base_points: [24, 0, 0],
-            effect_base_dice: [1, 1, 0],
-            effect_die_sides: [1, 1, 0],
-            damage_multiplier: [1.0, 1.5, 0.0],
-            ..Default::default()
-        };
-        assert_eq!(
-            substitute("$s1 then $F1 $lpoint:points;", &multiplier, &c),
-            "25 then 1 point"
-        );
-        assert_eq!(
-            substitute("$s2 then $f2 $lpoint:points;", &multiplier, &c),
-            "1 then 1.5 points"
-        );
-    }
-
-    /// The field arms read the referenced row, `$b`, `$q`, `$f` and `$F` at the slot digit; `$b`,
-    /// `$u`, `$v`, `$i` and `$q` print `"%d"` and key the `$l` plural (`507ee0`, `507ef7`,
-    /// `507f55`, `507fc9`, `508075`).
-    #[test]
-    fn field_tokens_read_their_columns_and_plural_counts() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let rows = [
-            SpellDisplay {
-                id: 42,
-                effect_points_per_combo_point: [0.0, -2.9, 0.0],
-                damage_multiplier: [0.5, 1.3, -0.25],
-                effect_misc_value: [135, -1, 0],
-                max_affected_targets: 4,
-                stack_amount: 5,
-                max_target_level: 40,
-                ..Default::default()
-            },
-            SpellDisplay {
-                id: 43,
-                effect_points_per_combo_point: [1.9, 0.0, 0.0],
-                effect_misc_value: [0, 0, 1],
-                max_affected_targets: 1,
-                stack_amount: 1,
-                max_target_level: 1,
-                ..Default::default()
-            },
-            SpellDisplay {
-                id: 44,
-                max_affected_targets: 0x8000_0000,
-                stack_amount: u32::MAX,
-                max_target_level: u32::MAX - 1,
-                ..Default::default()
-            },
-        ];
-        let lookup = |id| rows.iter().find(|r| r.id == id);
-        let c = ctx(&durations, &radii, &lookup);
-        let empty = SpellDisplay::default();
-        assert_eq!(substitute("$42b2", &empty, &c), "-2");
-        assert_eq!(substitute("$42q1 $42Q2", &empty, &c), "135 -1");
-        assert_eq!(substitute("$42i $42u $42v", &empty, &c), "4 5 40");
-        assert_eq!(substitute("$42I $42U $42V", &empty, &c), "4 5 40");
-        assert_eq!(substitute("$*100;42F1", &empty, &c), "50");
-        assert_eq!(substitute("$42f2", &empty, &c), "1.3");
-        assert_eq!(substitute("$*10;42F3", &empty, &c), "-3");
-        assert_eq!(
-            substitute("$44i $44u $44v", &empty, &c),
-            "-2147483648 -1 -2"
-        );
-        for token in ["$43b1", "$43q3", "$43i", "$43u", "$43v"] {
-            assert_eq!(
-                substitute(&format!("{token} $lone:many;"), &empty, &c),
-                "1 one",
-                "{token}"
-            );
-        }
-    }
-
-    /// `$f` and `$F` (`507ff7`, `508025`) multiply on the x87 at PC_53, so the product of the two
-    /// floats is exact: rounded to a float first, these would read 1.1 and 3.
-    #[test]
-    fn the_multiplier_tokens_multiply_in_double() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let c = ctx(&durations, &radii, &none_lookup);
-        let d = SpellDisplay {
-            damage_multiplier: [0.23, 0.833_333_3, 0.0],
-            ..Default::default()
-        };
-        assert_eq!(substitute("$*5;f1", &d, &c), "1.2");
-        assert_eq!(substitute("$*3;F2", &d, &c), "2");
-    }
-
-    #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn shipped_spell_data_tokens_resolve() {
-        let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let spells = crate::load_spell_catalog(&mut chain).expect("Spell.dbc");
-        let durations = crate::load_spell_durations(&mut chain).expect("SpellDuration.dbc");
-        let radii = crate::load_spell_radii(&mut chain).expect("SpellRadius.dbc");
-        let ranges = crate::load_spell_ranges(&mut chain).expect("SpellRange.dbc");
-        let lookup = |id| spells.get(id);
-        let c = TokenContext {
-            ranges: Some(&ranges),
-            global: &corpus_global,
-            ..ctx(&durations, &radii, &lookup)
-        };
-        for (id, text, want) in [
-            (1064, "$*100;F1", "50"),
-            (10622, "$*100;F1", "50"),
-            (10623, "$*100;F1", "50"),
-            (22568, "$f1", "1.0"),
-            (2006, "$q1", "135"),
-            (1680, "$i", "4"),
-            (22959, "$u", "5"),
-            (453, "$v", "40"),
-            (14179, "$b1", "20"),
-        ] {
-            assert_eq!(
-                substitute(text, spells.get(id).unwrap(), &c),
-                want,
-                "spell {id}"
-            );
-        }
-        for id in [1064, 10622, 10623] {
-            let spell = spells.get(id).unwrap();
-            assert_eq!(spell.damage_multiplier[0], 0.5, "Chain Heal {id}");
-            let description = spell.description.as_deref().unwrap();
-            assert!(
-                description.contains("$*100;F1"),
-                "Chain Heal {id}: {description}"
-            );
-            assert!(
-                substitute(description, spell, &c).contains("50%"),
-                "Chain Heal {id} must show 50%"
-            );
-        }
-
-        // Walk every shipped spell-data token, including other ranks, effect slots, scale
-        // prefixes and cross-spell references. `$z` needs the player's home area, not Spell.dbc.
-        let mut seen = [0usize; 26];
-        for (id, spell) in spells.iter() {
-            for description in [
-                spell.description.as_deref(),
-                spell.aura_description.as_deref(),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                for (arm, token) in spell_data_tokens_in(description) {
-                    let expanded = substitute(token, spell, &c);
-                    assert_ne!(expanded, token, "spell {id} leaves {token} raw");
-                    seen[arm] += 1;
-                }
-            }
-        }
-        for &arm in b"bfiquv" {
-            assert!(
-                seen[usize::from(arm - b'a')] > 0,
-                "missing ${} in {seen:?}",
-                arm as char
-            );
-        }
-        assert!(
-            seen.iter().sum::<usize>() >= 50,
-            "too few shipped spell-data tokens: {seen:?}"
-        );
-    }
-
-    /// Isolate spell-data tokens, including a scale prefix, cross-spell id and one slot digit,
-    /// bounded as `substitute` bounds them. `$l`, `$g` and `$z` need other context.
-    fn spell_data_tokens_in(text: &str) -> Vec<(usize, &str)> {
-        let bytes = text.as_bytes();
-        let mut found = Vec::new();
-        for start in 0..bytes.len() {
-            if bytes[start] != b'$' {
-                continue;
-            }
-            let mut end = start + 1;
-            if matches!(bytes.get(end), Some(b'*' | b'/')) {
-                let Some(semi) = bytes[end..].iter().position(|&b| b == b';') else {
-                    continue;
-                };
-                end += semi + 1;
-            }
-            while bytes.get(end).is_some_and(u8::is_ascii_digit) {
-                end += 1;
-            }
-            let Some(letter) = bytes.get(end).copied().map(|b| b.to_ascii_lowercase()) else {
-                continue;
-            };
-            if !b"abdefhimnoqrstuvx".contains(&letter) {
-                continue;
-            }
-            end += 1;
-            if bytes.get(end).is_some_and(u8::is_ascii_digit) {
-                end += 1;
-            }
-            found.push((usize::from(letter - b'a'), &text[start..end]));
-        }
-        found
-    }
-
-    #[test]
-    fn spell_data_token_scan_keeps_scale_reference_and_slot() {
-        assert_eq!(
-            spell_data_tokens_in("Each jump is $*100;F1%, stacks $22959u times; $s1 is separate."),
-            vec![(5, "$*100;F1"), (20, "$22959u"), (18, "$s1")]
-        );
-    }
-
-    /// `$r` (`507d5b`) reads row 1 for an index at or below 1 and prints one decimal through
-    /// op 5; `$e` (`507f83`) prints one decimal through op 27; `$a` (`507c74`) truncates the
-    /// radius, applies op 6 and prints an integer, 0 without a row.
-    #[test]
-    fn r_e_and_a_follow_their_arms() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::from_rows(
-            [(
-                7,
-                crate::SpellRadius {
-                    radius: 8.5,
-                    per_level: 0.0,
-                    max: 8.5,
-                },
-            )]
-            .into(),
-        );
-        let range = |max| crate::SpellRange {
-            min: 0.0,
-            max,
-            flags: 0,
-        };
-        let ranges = SpellRangeCatalog::from_rows([(1, range(5.0)), (4, range(30.0))].into());
-        let mods = Mods(vec![(5, 0, 110), (27, 0, 150), (6, 2, 100)]);
-        let c = TokenContext {
-            ranges: Some(&ranges),
-            mods: Some(&mods),
-            ..ctx(&durations, &radii, &none_lookup)
-        };
-        let d = |range_index, radius| SpellDisplay {
-            range_index,
-            effect_radius_index: [radius, 0, 0],
-            effect_multiple_value: [2.0, 0.0, 0.0],
-            ..Default::default()
-        };
-        assert_eq!(substitute("$r", &d(4, 0), &c), "33.0");
-        assert_eq!(substitute("$r", &d(0, 0), &c), "5.5", "index 0 reads row 1");
-        assert_eq!(substitute("$r", &d(9, 0), &c), "0.0", "no row");
-        assert_eq!(substitute("$e1", &d(4, 0), &c), "3.0");
-        assert_eq!(substitute("$a1", &d(4, 7), &c), "10");
-        assert_eq!(substitute("$a1", &d(4, 3), &c), "0", "no row");
-    }
-
-    /// Whole within 0.001 of either neighbour, a near-ceiling value reading as the ceiling.
-    #[test]
-    fn a_bound_is_whole_within_a_thousandth() {
-        assert_eq!(whole(3.0), (3, true));
-        assert_eq!(whole(2.9995), (3, true));
-        assert_eq!(whole(3.0005), (3, true));
-        assert_eq!(whole(2.5), (2, false));
-        assert_eq!(whole(0.0), (0, true));
-    }
-
-    #[test]
-    fn a_dollar_before_a_multibyte_char_passes_through_on_the_char_boundary() {
-        let durations = SpellDurationCatalog::default();
-        let radii = SpellRadiusCatalog::default();
-        let d = SpellDisplay {
-            effect_base_points: [13, 24, 0],
-            effect_base_dice: [1, 0, 0],
-            effect_die_sides: [9, 0, 0],
-            ..Default::default()
-        };
-        let c = ctx(&durations, &radii, &none_lookup);
-        assert_eq!(substitute("coûte $é or $…!", &d, &c), "coûte $é or $…!");
-        assert_eq!(substitute("$é", &d, &c), "$é");
-        assert_eq!(substitute("$s0", &d, &c), "<14..22>");
-    }
-}
+mod tests;

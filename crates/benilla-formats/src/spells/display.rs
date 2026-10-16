@@ -41,6 +41,9 @@ pub struct SpellDisplay {
     pub attributes_ex3: u32,
     /// `AttributesEx4` (column 8, `+0x20`).
     pub attributes_ex4: u32,
+    /// `AttributesExE` (column 9, `+0x24`): `0x200` counts one more tick in `$o`, `0x2000` scales a
+    /// periodic spell's `$d` and `$t` by cast speed.
+    pub attributes_ex5: u32,
     /// `AttributesEx7` (column 11, `+0x2c`); `0x20` files a totem in the totem bar's lists.
     pub attributes_ex7: u32,
     /// `TotemCategory[2]` (columns 222-223): the tool rows the spell needs, a totem's element.
@@ -108,6 +111,8 @@ pub struct SpellDisplay {
     pub mana_cost_per_level: u32,
     /// `manaPerSecond` (column 44): the tooltip's "plus N per sec".
     pub mana_per_second: u32,
+    /// `manaPerSecondPerLevel` (column 45): its per-level term (`0x7ff100`).
+    pub mana_per_second_per_level: u32,
     /// `rangeIndex` (column 46): the `SpellRange.dbc` row.
     pub range_index: u32,
     /// `Targets` (column 16): the `TARGET_FLAG_*` seed of the cast arm's targeting word.
@@ -160,6 +165,9 @@ pub struct SpellDisplay {
     pub description: Option<String>,
     /// `AuraDescription` enUS (column 187): the buff or debuff icon's tooltip.
     pub aura_description: Option<String>,
+    /// `SpellDescriptionVariablesID` (column 232): the `SpellDescriptionVariables.dbc` row whose
+    /// definitions the texts' `$<name>` read; 0 for none.
+    pub description_variables_id: u32,
     /// `DurationIndex` (column 40): the `SpellDuration.dbc` row; 0 for no duration.
     pub duration_index: u32,
     /// `CastingTimeIndex` (column 28): the `SpellCastTimes.dbc` row; row 1 is instant.
@@ -203,6 +211,8 @@ pub struct SpellDisplay {
     pub effect_multiple_value: [f32; 3],
     /// `DmgMultiplier[3]` (columns 216-218, float): `$f`/`$F` print it scaled (`507ff7`, `508025`).
     pub damage_multiplier: [f32; 3],
+    /// `EffectBonusMultiplier[3]` (columns 229-231, float): the expression operands `bc1`..`bc3`.
+    pub effect_bonus_multiplier: [f32; 3],
     /// `EffectPointsPerComboPoint[3]` (columns 119-121, float): `$b` prints it chopped (`507ed4`).
     pub effect_points_per_combo_point: [f32; 3],
     /// `EffectTriggerSpell[3]` (columns 116-118): each effect's triggered spell, 0 for none.
@@ -264,6 +274,7 @@ impl Default for SpellDisplay {
             mana_cost_pct: 0,
             mana_cost_per_level: 0,
             mana_per_second: 0,
+            mana_per_second_per_level: 0,
             range_index: 0,
             targets: 0,
             target_creature_type: 0,
@@ -285,6 +296,7 @@ impl Default for SpellDisplay {
             active_icon_id: 0,
             description: None,
             aura_description: None,
+            description_variables_id: 0,
             duration_index: 0,
             casting_time_index: 0,
             proc_flags: 0,
@@ -308,11 +320,13 @@ impl Default for SpellDisplay {
             effect_chain_targets: [0; 3],
             effect_multiple_value: [0.0; 3],
             damage_multiplier: [0.0; 3],
+            effect_bonus_multiplier: [0.0; 3],
             effect_points_per_combo_point: [0.0; 3],
             effect_trigger_spell: [0; 3],
             effect_item_type: [0; 3],
             effect_misc_value: [0; 3],
             effect_misc_value_b: [0; 3],
+            attributes_ex5: 0,
             attributes_ex7: 0,
             totem_categories: [0; 2],
         }

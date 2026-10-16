@@ -71,6 +71,12 @@ pub(super) struct ViewCtx<'a, 'w, 's> {
     pub(super) spell_mods: &'a crate::spell::SpellModifiers,
     /// The VM's `GlobalStrings.lua`, where the keyed cells and the `$` tokens' templates resolve.
     pub(super) get: &'a dyn Fn(&str) -> Option<String>,
+    /// The player's known spells, which a description's `$?s` reads.
+    pub(super) known: &'a std::collections::BTreeSet<u32>,
+    /// The player's auras, which a description's `$?a` reads.
+    pub(super) auras: Option<&'a crate::unit_auras::UnitAuras>,
+    /// The expression operands off the player's fields, this frame's.
+    pub(super) operands: &'a crate::spell::text_caster::Operands,
 }
 
 /// Build one spell's tooltip view, every cell resolved here where the catalogs live, and what it
@@ -119,16 +125,48 @@ pub(super) fn build_view(
     };
     // `0x6e3130` for this spell: the level the cost's and the cast time's per-level terms read.
     let pet_level = |pet| d.skill_level(ViewCaster::pet_skill_value(pet));
+    // `$c` reads the view's caster's cost, as the cost cell does.
+    let text_cost = |t: &benilla_formats::SpellDisplay| match caster {
+        ViewCaster::Player => vctx
+            .store
+            .map_or(t.mana_cost, |s| usable::power_cost(t, s, vctx.spell_mods))
+            as i32,
+        ViewCaster::Pet(pet) => pet.map_or(-1, |p| {
+            usable::power_cost_at(
+                t,
+                p,
+                t.skill_level(ViewCaster::pet_skill_value(Some(p))),
+                vctx.spell_mods,
+            ) as i32
+        }),
+    };
+    let record = |read: crate::spell::text_caster::CasterRead| deps.borrow_mut().caster_read(read);
+    let text_caster = vctx
+        .store
+        .map(|store| crate::spell::text_caster::TextCaster {
+            store,
+            known: vctx.known,
+            auras: vctx.auras,
+            operands: vctx.operands,
+            mods: vctx.spell_mods,
+            skill: &skill,
+            power_cost: &text_cost,
+            on_read: &record,
+        });
     let ctx = benilla_formats::TokenContext {
         durations: &spells.durations,
         radii: &spells.radii,
         ranges: Some(&spells.ranges),
+        variables: Some(spells.catalog.description_variables()),
         skill: &skill,
         lookup: &lookup,
         mods: Some(vctx.spell_mods),
         unmodified_points: false,
         gender: &gender,
         home_area: &home_area,
+        caster: text_caster
+            .as_ref()
+            .map(|c| c as &dyn benilla_formats::Caster),
         global: vctx.get,
         printf: &crate::ui_script::token_printf,
     };
@@ -439,6 +477,8 @@ pub(super) struct SpellFeedMemory {
     pub(super) mods: Option<crate::spell::SpellModifiers>,
     /// Per reagent on show, the state its views were built against.
     pub(super) reagents: Reagents,
+    /// The known spells as last frame's check found them.
+    pub(super) known: std::collections::BTreeSet<u32>,
 }
 
 impl SpellFeedMemory {
@@ -535,6 +575,8 @@ pub(super) fn feed_spell_tooltips(
     actions: Option<Res<PlayerActions>>,
     spell_sources: SpellTooltipSources,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    // The player's auras, which a description's `$?a` reads.
+    self_auras: Query<&crate::unit_auras::UnitAuras, With<SelfPlayer>>,
     // The caster's and the pet's reach and motion and each one's auto-attack target, which the
     // melee range cell reads.
     range_units: crate::spell::RangeUnits,
@@ -634,19 +676,29 @@ pub(super) fn feed_spell_tooltips(
     // point (Astral Recall's `$z`), the form, the skills, what the equipped-item search learns of
     // each equipment slot and the disarm flag, the level, cost bases and ranged attack time, the
     // block, dodge, parry and crit percentages, and the two units the melee range cell reads.
+    let self_auras = self_auras.single().ok();
     let seen = Seen::of(
         self_store,
         home_area.as_deref(),
         RangeSeen::of(&caster_unit, attack_target.as_ref()),
         &objects,
         &items,
+        self_auras,
     );
     let mut changes = memory
         .seen
         .as_ref()
         .map(|prev| seen.changes_since(prev))
         .unwrap_or_default();
+    let operands = seen.operands().clone();
     memory.seen = Some(seen);
+    // The known set a description's `$?s` reads: a learn or an unlearn.
+    let no_spells = std::collections::BTreeSet::new();
+    let known = actions.as_deref().map_or(&no_spells, |a| &a.spells);
+    if *known != memory.known {
+        changes = changes.with_known(&memory.known, known);
+        memory.known = known.clone();
+    }
     // The talent tables: the cost, cast, cooldown and range cells and the description's tokens
     // resolve through them.
     if let Some(prev) = memory.mods.as_ref().filter(|_| spell_mods.is_changed()) {
@@ -708,6 +760,9 @@ pub(super) fn feed_spell_tooltips(
             skill_lines: skill_lines.as_deref().map(|s| &s.catalog),
             spell_mods,
             get: &get,
+            known,
+            auras: self_auras,
+            operands: &operands,
         };
         let built = build_views(wanted, spells, &mut vctx, memory, false);
         // The pet views read the pet's form and reach where the player's read the player's.

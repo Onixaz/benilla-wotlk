@@ -197,6 +197,12 @@ impl SpellModifiers {
         })
     }
 
+    /// The summed percentage alone for `op`, `None` where no modifier matches; the per-second
+    /// cost multiplies by it without the flat term (`0x7ff100`).
+    pub(crate) fn pct_of(&self, d: &SpellDisplay, op: u8) -> Option<i32> {
+        self.modifiers(d, op).map(|m| m.pct)
+    }
+
     /// Apply a spell's modifier for `op` to `value`: the applier with its `test al,al` gate.
     pub(crate) fn apply(&self, d: &SpellDisplay, op: u8, value: i32) -> i32 {
         self.modifiers(d, op).map_or(value, |m| m.apply(value))

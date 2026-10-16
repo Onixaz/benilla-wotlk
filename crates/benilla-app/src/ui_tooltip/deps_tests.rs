@@ -413,7 +413,7 @@ fn mat(layout: &Layout, inputs: Inputs, p: Params) -> Mat {
 fn changes(before: &Mat, now: &Mat, objects: &Objects, items: &Items) -> Changes {
     let seen = |m: &Mat| {
         let range = RangeSeen::of(&m.caster, m.attack_target.as_ref());
-        Seen::of(Some(&m.store), m.home, range, objects, items)
+        Seen::of(Some(&m.store), m.home, range, objects, items, None)
     };
     seen(now)
         .changes_since(&seen(before))
@@ -1311,6 +1311,9 @@ fn the_search_answers_the_same_wherever_the_watched_state_is_the_same() {
                             skill_lines: None,
                             spell_mods: &mods,
                             get,
+                            known: &std::collections::BTreeSet::new(),
+                            auras: None,
+                            operands: &crate::spell::text_caster::Operands::ZERO,
                         };
                         let (view, deps) = build_view(id, &spells, &mut vctx).expect("a spec");
                         assert!(
@@ -1391,6 +1394,7 @@ fn the_seen_diff_names_each_input_it_saw_move() {
             RangeSeen::of(&caster, attack),
             &objects,
             &items,
+            None,
         )
     };
     let seen = |s: &ObjectStore| seen_with(s, UnitMotion::default(), None);
@@ -1467,9 +1471,10 @@ fn the_seen_diff_names_each_input_it_saw_move() {
         RangeSeen::default(),
         &objects,
         &items,
+        None,
     );
     assert!(bound.changes_since(&seen(&base)).home);
-    let gone = Seen::of(None, None, RangeSeen::default(), &objects, &items);
+    let gone = Seen::of(None, None, RangeSeen::default(), &objects, &items, None);
     assert_eq!(gone.changes_since(&seen(&base)).worn, EQUIPMENT_MASK);
     assert!(seen(&base).changes_since(&seen(&base)).is_empty());
     // The disarm flag, and no other flag.

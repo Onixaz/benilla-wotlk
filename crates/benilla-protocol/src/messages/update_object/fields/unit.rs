@@ -380,6 +380,10 @@ impl ObjectFields {
             .unwrap_or((0, 0));
         (lo as i16, hi as i16)
     }
+    /// `UNIT_MOD_CAST_SPEED`: the cast-time multiplier, 1.0 unhasted.
+    pub fn unit_mod_cast_speed(&self) -> Option<f32> {
+        self.get_f32(FIELD_UNIT_MOD_CAST_SPEED)
+    }
     /// `UNIT_FIELD_ATTACK_POWER_MULTIPLIER`: the percent bonus minus 1.0, so 0.0 is no bonus.
     pub fn unit_attack_power_multiplier(&self) -> Option<f32> {
         self.get_f32(FIELD_UNIT_ATTACK_POWER_MULTIPLIER)

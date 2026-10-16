@@ -164,6 +164,8 @@ pub enum Field {
     PlayerSpellCritPercentage,
     PlayerShieldBlock,
     PlayerModHealingDonePos,
+    PlayerModHealingPct,
+    PlayerModHealingDonePct,
     /// The spell penetration, a non-positive integer.
     PlayerModTargetResistance,
     /// The 25 combat ratings.
@@ -310,7 +312,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         item: 48,
         container: 122,
         unit: 188,
-        player: 1470,
+        player: 1472,
         gameobject: 26,
         dynamicobject: 16,
         corpse: 38,
@@ -421,6 +423,9 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         one(F::PlayerModHealingDonePos, Player, 1443),
         one(F::PlayerModTargetResistance, Player, 1444),
         run(F::PlayerCombatRating, Player, 1445, 25),
+        // `+0x1054`/`+0x1058`, the spell-text operands `pbh` and `pbhd` (`0x5782d0`).
+        one(F::PlayerModHealingPct, Player, 1470),
+        one(F::PlayerModHealingDonePct, Player, 1471),
         // 19 slots of 12: creator guid, entry, 7 enchants, properties, pad.
         strided(F::PlayerVisibleItemEntry, Player, 260, 19, 12),
         strided(F::PlayerVisibleItemEnchants, Player, 261, 19, 12),
@@ -654,6 +659,8 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         // `+0x1050` (`GetSpellBonusHealing` `0x60e3b0`) and `+0x105c` (`GetSpellPenetration`
         // `0x60e470`).
         one(F::PlayerModHealingDonePos, Player, 1192),
+        one(F::PlayerModHealingPct, Player, 1193),
+        one(F::PlayerModHealingDonePct, Player, 1194),
         one(F::PlayerModTargetResistance, Player, 1195),
         one(F::PlayerFieldBytes, Player, 1197),
         one(F::PlayerAmmoId, Player, 1198),

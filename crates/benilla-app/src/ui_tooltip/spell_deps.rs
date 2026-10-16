@@ -5,15 +5,17 @@
 //! tables, the watched reagents) into what moved ([`Changes`]), and only the views that read what
 //! moved are built again.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use benilla_formats::RangeUnit;
 use benilla_protocol::ObjectFields;
 
 use crate::items::Items;
 use crate::net::{ObjectStore, Objects};
+use crate::spell::text_caster::{operand_bit, CasterRead, Operands};
 use crate::spell::usable::{slot_item_cached, SlotItem, EQUIPMENT_MASK, EQUIPMENT_SLOTS};
 use crate::spell::{ModsDiff, SkillSnapshot};
+use crate::unit_auras::UnitAuras;
 
 /// The four percentages a chance-to-X line reads (`0x52f5b1`), in the order [`Seen`] keeps them.
 #[derive(Clone, Copy)]
@@ -133,9 +135,27 @@ pub(super) struct Deps {
     pub(super) skill_lines: Vec<u32>,
     /// The reagent entries the reagents line lists.
     reagents: Vec<u32>,
+    /// The spells a `$?s` asked the known set about.
+    pub(super) known: Vec<u32>,
+    /// The spells a `$?a` asked the player's auras about.
+    pub(super) auras: Vec<u32>,
+    /// The expression operands read off the player's fields, an [`operand_bit`] each.
+    pub(super) operands: u64,
+    /// A hasted `$d` or `$t` read the cast speed.
+    pub(super) cast_speed: bool,
 }
 
 impl Deps {
+    /// Record one read the description's parser made of the player.
+    pub(super) fn caster_read(&mut self, read: CasterRead) {
+        match read {
+            CasterRead::Spell(id) => push_unique(&mut self.known, id),
+            CasterRead::Aura(id) => push_unique(&mut self.auras, id),
+            CasterRead::Operand(v) => self.operands |= operand_bit(v),
+            CasterRead::CastSpeed => self.cast_speed = true,
+        }
+    }
+
     pub(super) fn chance(&mut self, which: Chance) {
         self.avoidance |= which.bit();
     }
@@ -187,6 +207,16 @@ impl Deps {
                 .reagents
                 .iter()
                 .any(|entry| changes.reagents.contains(entry))
+            || changes.operands & self.operands != 0
+            || (changes.cast_speed && self.cast_speed)
+            || self.known.iter().any(|id| changes.known.contains(id))
+            || self.auras.iter().any(|id| changes.auras.contains(id))
+    }
+}
+
+fn push_unique(list: &mut Vec<u32>, id: u32) {
+    if !list.contains(&id) {
+        list.push(id);
     }
 }
 
@@ -210,6 +240,13 @@ pub(super) struct Changes {
     pub(super) mod_bits: u64,
     pub(super) skill_lines: Vec<u32>,
     pub(super) reagents: Vec<u32>,
+    /// The spells learned or unlearned.
+    pub(super) known: Vec<u32>,
+    /// The spells whose aura came onto or went off the player.
+    pub(super) auras: Vec<u32>,
+    /// An [`operand_bit`] each.
+    pub(super) operands: u64,
+    pub(super) cast_speed: bool,
 }
 
 impl Changes {
@@ -226,6 +263,16 @@ impl Changes {
             && self.mod_bits == 0
             && self.skill_lines.is_empty()
             && self.reagents.is_empty()
+            && self.known.is_empty()
+            && self.auras.is_empty()
+            && self.operands == 0
+            && !self.cast_speed
+    }
+
+    /// The spells that joined or left the known set between `prev` and `now`.
+    pub(super) fn with_known(mut self, prev: &BTreeSet<u32>, now: &BTreeSet<u32>) -> Self {
+        self.known = prev.symmetric_difference(now).copied().collect();
+        self
     }
 
     /// The modifier tables' change. A new class family changes which spells the tables reach at
@@ -274,6 +321,15 @@ impl RangeSeen {
     }
 }
 
+/// The ids in exactly one of two ascending lists.
+fn sorted_difference(a: &[u32], b: &[u32]) -> Vec<u32> {
+    a.iter()
+        .filter(|id| b.binary_search(id).is_err())
+        .chain(b.iter().filter(|id| a.binary_search(id).is_err()))
+        .copied()
+        .collect()
+}
+
 /// The player-side inputs one frame saw, which the pushed views were built against.
 #[derive(Clone, PartialEq)]
 pub(super) struct Seen {
@@ -296,6 +352,12 @@ pub(super) struct Seen {
     range_units: RangeSeen,
     /// The unit fields the cost, cast and cooldown cells read.
     unit: UnitFields,
+    /// The spells of the player's auras, ascending, which `$?a` reads.
+    auras: Vec<u32>,
+    /// The expression operands off the player's fields.
+    operands: Operands,
+    /// `UNIT_MOD_CAST_SPEED`'s bits, which a hasted period reads.
+    cast_speed: u32,
 }
 
 impl Seen {
@@ -305,7 +367,13 @@ impl Seen {
         range_units: RangeSeen,
         objects: &Objects,
         items: &Items,
+        auras: Option<&UnitAuras>,
     ) -> Self {
+        let mut aura_spells: Vec<u32> = auras
+            .map(|a| a.iter().map(|a| a.spell_id).collect())
+            .unwrap_or_default();
+        aura_spells.sort_unstable();
+        aura_spells.dedup();
         Seen {
             home: home.map(str::to_string),
             gender: player.and_then(|s| s.0.unit_gender()).unwrap_or(0),
@@ -318,7 +386,18 @@ impl Seen {
                 .map(|which| player.and_then(|s| which.read(&s.0)).map(f32::to_bits)),
             range_units,
             unit: UnitFields::of(player),
+            auras: aura_spells,
+            operands: Operands::of(player, items),
+            cast_speed: player
+                .and_then(|s| s.0.unit_mod_cast_speed())
+                .unwrap_or(1.0)
+                .to_bits(),
         }
+    }
+
+    /// The operands this frame saw, which the parser reads.
+    pub(super) fn operands(&self) -> &Operands {
+        &self.operands
     }
 
     /// What differs from the frame `prev` saw, the modifiers and reagents apart.
@@ -330,8 +409,11 @@ impl Seen {
             range_units: self.range_units != prev.range_units,
             disarm: self.disarmed != prev.disarmed,
             unit: self.unit.diff(&prev.unit),
+            operands: self.operands.diff(&prev.operands),
+            cast_speed: self.cast_speed != prev.cast_speed,
             ..Changes::default()
         };
+        changes.auras = sorted_difference(&prev.auras, &self.auras);
         for (which, (now, before)) in Chance::ALL
             .iter()
             .zip(self.avoidance.iter().zip(&prev.avoidance))

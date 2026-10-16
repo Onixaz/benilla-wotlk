@@ -260,6 +260,14 @@ impl ObjectFields {
     pub fn player_mod_healing_done_pos(&self) -> Option<i32> {
         self.get_i32(FIELD_PLAYER_MOD_HEALING_DONE_POS)
     }
+    /// `PLAYER_FIELD_MOD_HEALING_PCT`: the healing-taken multiplier.
+    pub fn player_mod_healing_pct(&self) -> Option<f32> {
+        self.get_f32(FIELD_PLAYER_MOD_HEALING_PCT)
+    }
+    /// `PLAYER_FIELD_MOD_HEALING_DONE_PCT`: the healing-done multiplier.
+    pub fn player_mod_healing_done_pct(&self) -> Option<f32> {
+        self.get_f32(FIELD_PLAYER_MOD_HEALING_DONE_PCT)
+    }
     /// `PLAYER_FIELD_MOD_TARGET_RESISTANCE`: spell penetration as the resistance it removes, ≤ 0.
     pub fn player_mod_target_resistance(&self) -> Option<i32> {
         self.get_i32(FIELD_PLAYER_MOD_TARGET_RESISTANCE)

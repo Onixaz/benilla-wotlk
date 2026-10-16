@@ -6,6 +6,9 @@ use crate::items::Items;
 use crate::net::{NetCommands, ObjectStore, Objects, SelfPlayer};
 use crate::ui_action::{real_spells, PlayerActions, Spells};
 
+/// No known spells, for views that read none.
+static NO_SPELLS: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+
 /// The view alone, for the cell tests; the feed keeps what it read beside it.
 fn spell_tooltip_view(
     spell_id: u32,
@@ -89,6 +92,9 @@ impl TestCtx {
             skill_lines: self.skill_lines.as_ref(),
             spell_mods: &self.spell_mods,
             get: self.get.as_ref(),
+            known: &NO_SPELLS,
+            auras: None,
+            operands: &crate::spell::text_caster::Operands::ZERO,
         }
     }
 

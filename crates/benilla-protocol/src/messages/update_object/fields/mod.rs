@@ -119,6 +119,7 @@ const FIELD_UNIT_MINDAMAGE: u16 = 134; // +0x80, FLOAT
 const FIELD_UNIT_MAXDAMAGE: u16 = 135; // +0x81, FLOAT
 const FIELD_UNIT_MINOFFHANDDAMAGE: u16 = 136; // +0x82, FLOAT
 const FIELD_UNIT_MAXOFFHANDDAMAGE: u16 = 137; // +0x83, FLOAT
+const FIELD_UNIT_MOD_CAST_SPEED: u16 = 145; // FLOAT
 const FIELD_UNIT_STAT0: u16 = 150; // +0x90 ×5, INT
 const FIELD_UNIT_RESISTANCES: u16 = 155; // +0x95 ×7, INT; [0] = armor
 const FIELD_UNIT_ATTACK_POWER: u16 = 165; // +0x9F, INT
@@ -190,6 +191,8 @@ const FIELD_PLAYER_SHIELD_BLOCK: u16 = 1442;
 const FIELD_PLAYER_MOD_HEALING_DONE_POS: u16 = 1443;
 const FIELD_PLAYER_MOD_TARGET_RESISTANCE: u16 = 1444;
 const FIELD_PLAYER_COMBAT_RATING_1: u16 = 1445; // ×25, INT
+const FIELD_PLAYER_MOD_HEALING_PCT: u16 = 1470; // FLOAT
+const FIELD_PLAYER_MOD_HEALING_DONE_PCT: u16 = 1471; // FLOAT
 /// The combat ratings, 25 in 3.3.5a (`GetCombatRating` refuses an index past `0x19`).
 pub const PLAYER_COMBAT_RATINGS: u8 = 25;
 // 3.3.5a's power regen pairs and max-health modifier, in 1.12.1's unread power-cost words.
@@ -380,7 +383,7 @@ fn descriptor_len(object_type: ObjectType) -> u16 {
         ObjectType::Container => 122, // CONTAINER_END = ITEM_END + 0x4A
         ObjectType::Unit => 188,      // UNIT_END = OBJECT_END + 0xB6
         // 1.12.1's PLAYER_END (UNIT_END + 0x446), plus the 3.3.5a fields kept past it.
-        ObjectType::Player => 1470,
+        ObjectType::Player => 1472,
         ObjectType::GameObject => 26, // GAMEOBJECT_END = OBJECT_END + 0x14
         ObjectType::DynamicObject => 16, // DYNAMICOBJECT_END = OBJECT_END + 0xA
         ObjectType::Corpse => 38,     // CORPSE_END = OBJECT_END + 0x20

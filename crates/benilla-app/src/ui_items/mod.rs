@@ -971,8 +971,13 @@ impl Plugin for UiItemsPlugin {
                         .before(crate::ui_action::CooldownEvents),
                     // The item-tooltip store answers before the input pass, so a re-hover the
                     // next frame sees the answer.
-                    feed_item_stats.in_set(UnitFeed),
-                    feed_item_sets.in_set(UnitFeed),
+                    // After the book feed, so a `$?s` reads this frame's learns.
+                    feed_item_stats
+                        .in_set(UnitFeed)
+                        .after(crate::ui_action::SlotIdentityFeed),
+                    feed_item_sets
+                        .in_set(UnitFeed)
+                        .after(crate::ui_action::SlotIdentityFeed),
                     // The roll table, pushed whole once per VM, before the first hover.
                     feed_random_properties.in_set(UnitFeed),
                     feed_player_req.in_set(UnitFeed),
