@@ -87,7 +87,70 @@ fn the_glue_tables_hold_their_rows() {
 
 /// Glue-table functions the glue VM does not answer yet, by registrar table. The list only
 /// shrinks: a verb is absent until built, never stubbed.
-const NOT_YET: &[(&str, &[&str])] = &[];
+const NOT_YET: &[(&str, &[&str])] = &[
+    (
+        "the character create screen (table 0xac4228) and its paid-service variants",
+        &[
+            "CreateCharacter",
+            "CustomizeExistingCharacter",
+            "CycleCharCustomization",
+            "GetAvailableClasses",
+            "GetAvailableRaces",
+            "GetCharacterCreateFacing",
+            "GetClassesForRace",
+            "GetCreateBackgroundModel",
+            "GetFacialHairCustomization",
+            "GetFactionForRace",
+            "GetHairCustomization",
+            "GetNameForRace",
+            "GetRandomName",
+            "GetSelectedClass",
+            "GetSelectedRace",
+            "GetSelectedSex",
+            "IsRaceClassRestricted",
+            "IsRaceClassValid",
+            "PaidChange_GetCurrentClassIndex",
+            "PaidChange_GetCurrentRaceIndex",
+            "PaidChange_GetName",
+            "PaidChange_GetPreviousRaceIndex",
+            "RandomizeCharCustomization",
+            "ResetCharCustomize",
+            "SetCharCustomizeBackground",
+            "SetCharacterCreateFacing",
+            "SetSelectedClass",
+            "SetSelectedRace",
+            "SetSelectedSex",
+            "UpdateCustomizationBackground",
+            "UpdateCustomizationScene",
+        ],
+    ),
+    (
+        "character select's delete, rename and declension (table 0xac4378)",
+        &["DeleteCharacter", "RenameCharacter", "DeclineCharacter"],
+    ),
+    (
+        "the AddOns screen's per-character enable state (table 0xac3e00)",
+        &[
+            "DisableAddOn",
+            "DisableAllAddOns",
+            "EnableAddOn",
+            "EnableAllAddOns",
+            "GetAddOnEnableState",
+            "LaunchAddOnURL",
+            "ResetAddOns",
+            "SaveAddOns",
+        ],
+    ),
+    (
+        "the glue's credits text and its options defaults (table 0xac3e00)",
+        &[
+            "GetCreditsText",
+            "RestoreVideoEffectsDefaults",
+            "RestoreVideoResolutionDefaults",
+            "RestoreVideoStereoDefaults",
+        ],
+    ),
+];
 
 /// The glue VM's globals by Lua type name.
 fn glue_globals() -> BTreeMap<String, String> {

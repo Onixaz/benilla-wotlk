@@ -73,6 +73,12 @@ fn install_glue_vm(world: &mut World, screen: super::glue::GlueScreen) -> bool {
         return false;
     };
     seat_raster_seam_for_load(world, &mut script);
+    // The CVar table before the files load: the options panels read their CVars in `OnLoad`, and
+    // this VM was born before `cvars::sync_cvars`'s per-VM seed.
+    match world.get_resource::<crate::cvars::Cvars>() {
+        Some(cvars) => script.seed_cvars(cvars.vm_seed()),
+        None => script.register_cvars(crate::cvars::registered_pairs()),
+    }
     let start = std::time::Instant::now();
     let failures = super::glue::load_glue(&mut script);
     super::glue::finish_glue_load_log(&mut script);

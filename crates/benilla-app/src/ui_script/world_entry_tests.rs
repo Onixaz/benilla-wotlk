@@ -45,6 +45,7 @@ fn roster_named(name: &str, guid: u64) -> Roster {
             z: 0.0,
         },
         flags: 0,
+        customize_flags: 0,
         equipment: [benilla_protocol::CharEnumItem::default(); 19],
         pet_display_id: 0,
         pet_level: 0,

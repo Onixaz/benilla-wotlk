@@ -75,6 +75,8 @@ pub struct Character {
     pub position: Vector3d,
     /// `CHARACTER_FLAG_*` bits.
     pub flags: u32,
+    /// The paid-service flags: `0x1` customize, `0x10000` faction change, `0x100000` race change.
+    pub customize_flags: u32,
     /// Equipment order: head, neck, shoulders, shirt, chest, waist, legs, feet, wrists, hands,
     /// finger x2, trinket x2, back, main hand, off hand, ranged, tabard.
     pub equipment: [CharEnumItem; 19],
@@ -105,7 +107,7 @@ impl Character {
         let position = Vector3d::read(r)?;
         let _guild_id = read_u32_le(r)?;
         let flags = read_u32_le(r)?;
-        let _customize_flags = read_u32_le(r)?;
+        let customize_flags = read_u32_le(r)?;
         let _first_login = read_u8(r)?;
         let pet_display_id = read_u32_le(r)?;
         let pet_level = read_u32_le(r)?;
@@ -139,6 +141,7 @@ impl Character {
             map,
             position,
             flags,
+            customize_flags,
             equipment,
             pet_display_id,
             pet_level,

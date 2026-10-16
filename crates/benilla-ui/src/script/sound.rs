@@ -54,6 +54,7 @@ impl super::UiScript {
 
 /// Register the sound and music globals.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
+    install_drivers(lua)?;
     lua.globals().set(
         "PlaySoundFile",
         // `0x458780`: `lua_isstring`, so a number is a file name, else the literal at `0x835f98`.
@@ -211,4 +212,85 @@ mod tests {
             vec![MusicRequest::Play("42".into()), MusicRequest::Stop]
         );
     }
+}
+
+/// The sound table's driver and voice verbs (table `0xb2d928`). benilla plays through the system's
+/// default output and lists no drivers of its own, and it has no voice chat: every driver count is
+/// 0, every name the empty string, and the voice loopback never runs.
+fn install_drivers(lua: &Lua) -> mlua::Result<()> {
+    let g = lua.globals();
+    // `Sound_GameSystem_GetNumOutputDrivers` (`0x985c70`) and its siblings: the counts.
+    for name in [
+        "Sound_GameSystem_GetNumOutputDrivers",
+        "Sound_GameSystem_GetNumInputDrivers",
+        "Sound_ChatSystem_GetNumOutputDrivers",
+        "Sound_ChatSystem_GetNumInputDrivers",
+    ] {
+        g.set(name, lua.create_function(|_, _: mlua::MultiValue| Ok(0.0))?)?;
+    }
+    // The names by index (`0x985ca0` and siblings): a number or the usage error, then the name.
+    for (name, usage) in [
+        (
+            "Sound_GameSystem_GetOutputDriverNameByIndex",
+            "Usage: Sound_GetOutputDriverNameByIndex(OutputDriverIndex)",
+        ),
+        (
+            "Sound_GameSystem_GetInputDriverNameByIndex",
+            "Usage: Sound_GameSystem_GetInputDriverNameByIndex(InputDriverIndex)",
+        ),
+        (
+            "Sound_ChatSystem_GetOutputDriverNameByIndex",
+            "Usage: Sound_ChatSystem_GetOutputDriverNameByIndex(OutputDriverIndex)",
+        ),
+        (
+            "Sound_ChatSystem_GetInputDriverNameByIndex",
+            "Usage: Sound_ChatSystem_GetInputDriverNameByIndex(InputDriverIndex)",
+        ),
+    ] {
+        g.set(
+            name,
+            lua.create_function(move |lua, index: Value| {
+                if lua.coerce_number(index)?.is_none() {
+                    return Err(mlua::Error::runtime(usage));
+                }
+                lua.create_string("")
+            })?,
+        )?;
+    }
+    // `Sound_GameSystem_RestartSoundSystem` (`0x985d30`): the sound system is the host's and
+    // follows its CVars as they change, so there is nothing to restart.
+    g.set(
+        "Sound_GameSystem_RestartSoundSystem",
+        lua.create_function(|_, _: mlua::MultiValue| Ok(()))?,
+    )?;
+    // The voice loopback (`0x985d50`-`0x985ef0`): with no voice chat nothing records or plays.
+    for name in [
+        "VoiceChat_StopCapture",
+        "VoiceChat_StartCapture",
+        "VoiceChat_StopRecordingLoopbackSound",
+        "VoiceChat_PlayLoopbackSound",
+        "VoiceChat_StopPlayingLoopbackSound",
+        "VoiceChat_ActivatePrimaryCaptureCallback",
+    ] {
+        g.set(name, lua.create_function(|_, _: mlua::MultiValue| Ok(()))?)?;
+    }
+    g.set(
+        "VoiceChat_RecordLoopbackSound",
+        lua.create_function(|lua, seconds: Value| {
+            if lua.coerce_number(seconds)?.is_none() {
+                return Err(mlua::Error::runtime(
+                    "Usage: VoiceChat_RecordLoopbackSound(MaxRecordTimeInSeconds)",
+                ));
+            }
+            Ok(())
+        })?,
+    )?;
+    for name in [
+        "VoiceChat_IsRecordingLoopbackSound",
+        "VoiceChat_IsPlayingLoopbackSound",
+        "VoiceChat_GetCurrentMicrophoneSignalLevel",
+    ] {
+        g.set(name, lua.create_function(|_, _: mlua::MultiValue| Ok(0.0))?)?;
+    }
+    Ok(())
 }

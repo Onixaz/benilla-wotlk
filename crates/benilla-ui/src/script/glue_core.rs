@@ -239,6 +239,8 @@ pub(crate) struct GlueCore {
     pub(super) roster: super::glue_select::GlueRoster,
     /// The system verbs' slots ([`super::glue_system`]).
     pub(super) system: super::glue_system::GlueSystem,
+    /// The character create verbs' slots ([`super::glue_create`]).
+    pub(super) create: super::glue_create::GlueCreate,
 }
 
 /// `SetCurrentScreen`'s buffer, 0x40 bytes with its terminator (`0x46b860`, `SStrCopy`).

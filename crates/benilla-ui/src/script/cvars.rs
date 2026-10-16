@@ -677,6 +677,48 @@ pub const VIDEO_DEFAULT_CVARS: &[&str] = &[
 /// `GetFarclip`/`SetFarclip` (`0x488f00`/`0x488f30`, in [`super::video_pairs`]) do exist;
 /// `getglobal` is case-sensitive.
 fn install_video_verbs(lua: &Lua) -> mlua::Result<()> {
+    // `GetTerrainMip`/`SetTerrainMip` (`0x54eb10`/`0x54eb40`): the terrain detail slider over
+    // `shadowLevel`, inverted (`1 - shadowLevel`); the setter takes a number or raises its usage.
+    lua.globals().set(
+        "GetTerrainMip",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let level = model
+                .cvars
+                .get("shadowlevel")
+                .map_or(0, |s| super::glue_core::leading_int(&s.value));
+            Ok((1 - level) as f64)
+        })?,
+    )?;
+    lua.globals().set(
+        "SetTerrainMip",
+        lua.create_function(|lua, v: Value| {
+            let Some(n) = lua.coerce_number(v)? else {
+                return Err(mlua::Error::runtime("Usage: SetTerrainMip(value)"));
+            };
+            let value = 1 - super::binding_abi::ftol(n);
+            set_from_engine(
+                &mut crate::script::model_mut_of(lua),
+                "shadowLevel",
+                value.to_string(),
+            );
+            Ok(())
+        })?,
+    )?;
+    // `IsStereoVideoAvailable` (`0x54ef90`): the device's stereo capability, which benilla's
+    // renderer does not offer.
+    lua.globals().set(
+        "IsStereoVideoAvailable",
+        lua.create_function(|_, ()| Ok(Value::Nil))?,
+    )?;
+    // `IsPlayerResolutionAvailable` (`0x54ebc0`): 1 on a machine with more than one processor,
+    // which every machine benilla runs on is.
+    lua.globals().set(
+        "IsPlayerResolutionAvailable",
+        lua.create_function(|_, ()| Ok(1.0))?,
+    )?;
     // ── GetScreenResolutions ─────────────────────────────────────────────────────────────────
     // A vararg of `"WxH"` strings, the spelling `ScreenResolution` pins.
     lua.globals().set(

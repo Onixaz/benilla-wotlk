@@ -182,7 +182,7 @@ pub(crate) struct Roster {
     pub(super) select_seq: u64,
     /// The guid picked; kept in-world so a reconnect's roster is answered with it, cleared by a
     /// logout so the roster is shown.
-    pub(super) pending_pick: Option<u64>,
+    pub(crate) pending_pick: Option<u64>,
     /// `WOW_CHAR`: auto-pick this name on the first roster only.
     env_char: Option<String>,
     /// A just-created character's name, whose row gets selected (the reference's
@@ -970,6 +970,7 @@ pub(crate) fn test_character(guid: u64, name: &str) -> Character {
             z: 0.0,
         },
         flags: 0,
+        customize_flags: 0,
         equipment: [benilla_protocol::CharEnumItem::default(); 19],
         pet_display_id: 0,
         pet_level: 0,

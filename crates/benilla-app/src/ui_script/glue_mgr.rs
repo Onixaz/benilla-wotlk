@@ -635,26 +635,28 @@ impl GlueMgr {
     /// `0x4`) or by billing (`0x1000000`) opens `OKAY` with its text, one flagged for a rename
     /// (`0x4000`) answers `FORCE_RENAME_CHARACTER`, neither entering. Otherwise
     /// `lastCharacterIndex` takes the selection, the state goes to 8 and the pick leaves with the
-    /// park's other requests; a later call in the same frame replaces its guid. Returns the rename
-    /// prompt's text when that arm fires, for the caller to signal.
-    fn enter_world(&mut self, index: i32) -> Option<&'static str> {
+    /// park's other requests; a later call in the same frame replaces its guid.
+    fn enter_world(&mut self, index: i32) -> EnterWorld {
         if self.selected.is_none() || !self.connected {
-            return None;
+            return EnterWorld::Nothing;
         }
-        let character = usize::try_from(index)
+        let Some(character) = usize::try_from(index)
             .ok()
-            .and_then(|i| self.roster.get(i))?;
+            .and_then(|i| self.roster.get(i))
+        else {
+            return EnterWorld::Nothing;
+        };
         let (guid, flags) = (character.guid, character.flags);
         if flags & 0x4 != 0 {
             self.open("OKAY", Some(Text::Key("CHAR_LOGIN_LOCKED_FOR_TRANSFER")));
-            return None;
+            return EnterWorld::Nothing;
         }
         if flags & 0x0100_0000 != 0 {
             self.open("OKAY", Some(Text::Key("CHAR_LOGIN_LOCKED_BY_BILLING")));
-            return None;
+            return EnterWorld::Nothing;
         }
         if flags & benilla_protocol::CHARACTER_FLAG_RENAME != 0 {
-            return Some("CHAR_RENAME_DESCRIPTION");
+            return EnterWorld::Rename("CHAR_RENAME_DESCRIPTION");
         }
         self.last_character = Some(index);
         let queued = self.park_out.iter_mut().find_map(|r| match r {
@@ -669,7 +671,7 @@ impl GlueMgr {
             None => {}
         }
         self.state = ScreenState::EnterWorld;
-        None
+        EnterWorld::Picked(guid)
     }
 
     /// `0x46b8d0`, `RequestRealmList`'s body: state 4, the dialog when asked, and the query
@@ -1182,6 +1184,18 @@ pub(crate) struct GlueAsks<'w> {
     launch: MessageWriter<'w, super::server_alert::LaunchUrl>,
     realm: Option<Res<'w, crate::net::RealmChoice>>,
     abandon: Option<Res<'w, crate::net::LoginAbandon>>,
+    /// The roster whose pending pick names the entering character to the in-world files.
+    roster: Option<ResMut<'w, crate::char_select::Roster>>,
+}
+
+/// What `EnterWorld` did ([`GlueMgr::enter_world`]).
+enum EnterWorld {
+    /// A guard returned, or a flag arm opened its dialog.
+    Nothing,
+    /// The record is flagged for a rename: `FORCE_RENAME_CHARACTER` with this text.
+    Rename(&'static str),
+    /// The pick is on its way.
+    Picked(u64),
 }
 
 /// The CVars each agreement is read from and written to.
@@ -1248,6 +1262,10 @@ pub(crate) fn drive_glue_mgr(
             s.set_glue_saved_account(&crate::login::load_saved_account());
             s.set_glue_realm_cells(mgr.realm_cells);
             s.set_glue_select_cells(mgr.select_cells);
+            // `GetSelectBackgroundModel`'s stage off the roster, race 2's file string.
+            if let Some(orc) = create.as_deref().and_then(|c| c.0.race_file(2)) {
+                s.set_glue_default_background(orc);
+            }
             mgr.holder_moved = true;
             fresh_vm = true;
         }
@@ -1332,11 +1350,17 @@ pub(crate) fn drive_glue_mgr(
                 GlueRequest::GetCharacterList => mgr.get_character_list(),
                 GlueRequest::EnterWorld => {
                     let index = s.glue_select_cells().selected;
-                    if let Some(text) = mgr.enter_world(index) {
-                        s.fire_event(
+                    match mgr.enter_world(index) {
+                        EnterWorld::Nothing => {}
+                        EnterWorld::Rename(text) => s.fire_event(
                             "FORCE_RENAME_CHARACTER",
                             vec![benilla_ui::script::ScriptValue::Str(text.to_string())],
-                        );
+                        ),
+                        EnterWorld::Picked(guid) => {
+                            if let Some(roster) = asks.roster.as_deref_mut() {
+                                roster.pending_pick = Some(guid);
+                            }
+                        }
                     }
                 }
                 GlueRequest::CancelLogin => logins.push(GlueLogin::Abandon),
@@ -1480,6 +1504,7 @@ fn glue_character(c: &Character, names: &RosterNames) -> GlueCharacter {
         file_string: text(names.create.and_then(|r| r.race_file(c.race))),
         gender: c.gender,
         flags: c.flags,
+        customize_flags: c.customize_flags,
         background: text(if c.class == 6 {
             names.classes.and_then(|k| k.file(6))
         } else {
@@ -1637,9 +1662,6 @@ fn flush_one(
                 .iter()
                 .map(|c| glue_character(c, names))
                 .collect();
-            if let Some(orc) = names.create.and_then(|r| r.race_file(2)) {
-                script.set_glue_default_background(orc);
-            }
             // `RequestRealmList(1)` at `0x47254b`, when no realm has been chosen.
             if script.load_glue_roster(roster) {
                 mgr.request_realm_list(true);

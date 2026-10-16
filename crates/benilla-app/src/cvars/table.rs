@@ -163,6 +163,44 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("readTerminationWithoutNotice", "0"),
     same("accountList", ""),
     same("g_accountUsesToken", "0"),
+    // The stock options panels' remaining rows, glue and in-game alike: "Display the launcher
+    // when starting the game" (`showToolsUI`, "-1"), "prevent resizing in windowed mode"
+    // (`windowResizeLock`, "0"), and the 3.3.5a sound switches the Sound panel binds, each at its
+    // registered default. Their host wiring is the options work's (#150).
+    same("showToolsUI", "-1"),
+    same("windowResizeLock", "0"),
+    same("Sound_EnableAllSound", "1"),
+    same("Sound_EnableSFX", "1"),
+    same("Sound_EnableErrorSpeech", "1"),
+    same("Sound_EnableEmoteSounds", "1"),
+    same("Sound_EnablePetSounds", "1"),
+    same("Sound_EnableMusic", "1"),
+    same("Sound_ZoneMusicNoDelay", "0"),
+    same("Sound_EnableAmbience", "1"),
+    same("Sound_EnableReverb", "0"),
+    same("Sound_EnableSoftwareHRTF", "0"),
+    // "1" on a machine with more than one processor.
+    same("Sound_EnableDSPEffects", "1"),
+    same("Sound_OutputQuality", "1"),
+    same("Sound_OutputDriverIndex", "0"),
+    same("Sound_NumChannels", "32"),
+    // The Effects panel's particle density and the Stereo panel's three rows.
+    same("particleDensity", "1.0"),
+    same("gxStereoEnabled", "0"),
+    same("gxStereoConvergence", "1"),
+    same("gxStereoSeparation", "25"),
+    same("extShadowQuality", "0"),
+    same("Sound_EnableHardware", "0"),
+    same("Sound_MasterVolume", "1.0"),
+    same("Sound_SFXVolume", "1.0"),
+    same("Sound_MusicVolume", "0.4"),
+    same("Sound_AmbienceVolume", "0.6"),
+    same("environmentDetail", "1.0"),
+    same("groundEffectDensity", "16"),
+    same("groundEffectDist", "70.0"),
+    same("projectedTextures", "0"),
+    same("textureFilteringMode", "1"),
+    same("componentTextureLevel", "8"),
 ];
 
 /// The host-backed CVars, one row per knob that has a reader: a host knob, or a Lua consumer

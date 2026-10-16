@@ -16,7 +16,7 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::binding_abi::{flag, ftol, number_arg, string_arg};
+use super::binding_abi::{ftol, number_arg, string_arg};
 use super::glue_core::{leading_int, queue, GlueRequest};
 use super::{Model, ScriptValue};
 
@@ -43,6 +43,9 @@ pub struct GlueCharacter {
     pub gender: u8,
     /// `+0xfc`: bit `0x2000` is a ghost.
     pub flags: u32,
+    /// The paid-service flags: `0x1` customize, `0x10000` faction change, `0x100000` race
+    /// change.
+    pub customize_flags: u32,
     /// The stage `GetSelectBackgroundModel` names for the record: the class's file name for a
     /// Death Knight, else the race row's file string, Gnome read as Dwarf and Troll as Orc.
     pub background: String,
@@ -459,9 +462,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Value::Nil,
                     Value::Nil,
                     Value::Number(0.0),
-                    Value::Nil,
-                    Value::Nil,
                     Value::Number(0.0),
+                    Value::Nil,
+                    Value::Nil,
+                    Value::Nil,
+                    Value::Nil,
                     Value::Nil,
                 ]));
             };
@@ -476,9 +481,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Some(zone) => text(zone)?,
                     None => Value::Nil,
                 },
-                text(&c.file_string)?,
-                Value::Number(f64::from(c.gender)),
-                flag(c.flags & 0x2000 != 0),
+                // `g_scriptSexIndex`: male 2, female 3, none 1.
+                Value::Number(match c.gender {
+                    0 => 2.0,
+                    1 => 3.0,
+                    _ => 1.0,
+                }),
+                Value::Boolean(c.flags & 0x2000 != 0),
+                Value::Boolean(c.customize_flags & 0x1 != 0),
+                Value::Boolean(c.customize_flags & 0x10_0000 != 0),
+                Value::Boolean(c.customize_flags & 0x1_0000 != 0),
             ]))
         })?,
     )?;
@@ -560,6 +572,7 @@ mod tests {
             file_string: "NightElf".into(),
             gender: 1,
             flags: 0,
+            customize_flags: 0,
             background: "NightElf".into(),
             model: true,
         }
@@ -600,52 +613,48 @@ mod tests {
     }
 
     #[test]
-    fn the_count_and_the_eight_values_of_a_character() {
+    fn the_count_and_the_ten_values_of_a_character() {
         let mut roster = three();
         roster[1].zone = None;
         roster[1].flags = 0x2000;
         roster[1].gender = 0;
+        roster[1].customize_flags = 0x1_0001;
         let s = vm(roster);
         assert_eq!(s.eval::<f64>("return GetNumCharacters()").unwrap(), 3.0);
         assert_eq!(
-            s.eval::<(
-                String,
-                String,
-                String,
-                f64,
-                String,
-                String,
-                f64,
-                Option<i64>
-            )>("return GetCharacterInfo(1)")
-                .unwrap(),
+            s.eval::<(String, String, String, f64, String, f64, bool, bool, bool, bool)>(
+                "return GetCharacterInfo(1)"
+            )
+            .unwrap(),
             (
                 "Alpha".into(),
                 "Night Elf".into(),
                 "Druid".into(),
                 12.0,
                 "Teldrassil".into(),
-                "NightElf".into(),
-                1.0,
-                None
+                3.0,
+                false,
+                false,
+                false,
+                false
             )
         );
-        // No zone row is nil in the fifth place; a ghost is 1 in the last.
+        // No zone row is nil in the fifth place; the sex index is 2 for male; a ghost is true;
+        // the paid-service flags are customize, race change and faction change.
         assert_eq!(
-            s.eval::<(String, Option<String>, f64, Option<i64>)>(
-                "local n, _, _, _, zone, _, gender, ghost = GetCharacterInfo(2) \
-                 return n, zone, gender, ghost"
+            s.eval::<(String, Option<String>, f64, bool, bool, bool, bool)>(
+                "local n, _, _, _, zone, sex, ghost, pcc, prc, pfc = GetCharacterInfo(2) \
+                 return n, zone, sex, ghost, pcc, prc, pfc"
             )
             .unwrap(),
-            ("Bravo".into(), None, 0.0, Some(1))
+            ("Bravo".into(), None, 2.0, true, true, false, true)
         );
-        assert_eq!(s.eval::<f64>(&count("GetCharacterInfo(3)")).unwrap(), 8.0);
+        assert_eq!(s.eval::<f64>(&count("GetCharacterInfo(3)")).unwrap(), 10.0);
     }
 
-    /// Off the roster the tuple is nil, nil, nil, 0, nil, nil, 0, nil, and still eight values
-    /// (`0x47341e`).
+    /// An index off the roster (`0x4e3510`) answers ten values: nil, nil, nil, 0, 0 and five nils.
     #[test]
-    fn an_index_off_the_roster_answers_the_eight_tuple() {
+    fn an_index_off_the_roster_answers_the_ten_tuple() {
         let s = vm(three());
         for call in [
             "GetCharacterInfo(0)",
@@ -653,21 +662,14 @@ mod tests {
             "GetCharacterInfo(-7)",
         ] {
             assert_eq!(
-                s.eval::<(
-                    Option<String>,
-                    Option<String>,
-                    Option<String>,
-                    f64,
-                    Option<String>,
-                    Option<String>,
-                    f64,
-                    Option<i64>
-                )>(&format!("return {call}"))
-                    .unwrap(),
-                (None, None, None, 0.0, None, None, 0.0, None),
+                s.eval::<(Option<String>, Option<String>, Option<String>, f64, f64, Option<f64>)>(
+                    &format!("return {call}")
+                )
+                .unwrap(),
+                (None, None, None, 0.0, 0.0, None),
                 "{call}"
             );
-            assert_eq!(s.eval::<f64>(&count(call)).unwrap(), 8.0);
+            assert_eq!(s.eval::<f64>(&count(call)).unwrap(), 10.0);
         }
         // A numeric string passes `is-number`; 2.9 truncates to 2.
         assert_eq!(

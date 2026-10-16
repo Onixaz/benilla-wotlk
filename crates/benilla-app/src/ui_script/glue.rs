@@ -175,37 +175,11 @@ mod tests {
     /// The glue functions the stock GlueXML calls that benilla has not built yet: each one's call
     /// raises "attempt to call global `X' (a nil value)", at the load or on the login screen. The
     /// list only shrinks: a name built, or no longer reached, comes off it.
-    const UNBUILT_CALLED: &[&str] = &[
-        // The video options table's (`0xacd320`) and the sound table's (`0xb2d928`), which the
-        // glue's Video and Audio options panels call at load; the in-game panels need them too
-        // (#150).
-        "GetTerrainMip",
-        "IsStereoVideoAvailable",
-        "Sound_GameSystem_GetNumOutputDrivers",
-        // Character create's (`0xac4228`), which the create screen's `OnLoad` calls.
-        "SetCharCustomizeFrame",
-    ];
+    const UNBUILT_CALLED: &[&str] = &[];
 
-    /// CVars the glue's Video and Audio options panels read that benilla does not register yet
-    /// (#150): each read warns, and `GetCVarMin` raises `Couldn't find CVar named`. The list only
-    /// shrinks.
-    const UNREGISTERED_CVARS: &[&str] = &[
-        "showToolsUI",
-        "windowResizeLock",
-        "Sound_EnableAllSound",
-        "Sound_EnableSFX",
-        "Sound_EnableErrorSpeech",
-        "Sound_EnableEmoteSounds",
-        "Sound_EnablePetSounds",
-        "Sound_EnableMusic",
-        "Sound_ZoneMusicNoDelay",
-        "Sound_EnableAmbience",
-        "Sound_EnableReverb",
-        "Sound_EnableSoftwareHRTF",
-        "Sound_EnableDSPEffects",
-        "Sound_OutputQuality",
-        "Sound_OutputDriverIndex",
-    ];
+    /// CVars the glue's files read that benilla does not register yet: each read warns, and
+    /// `GetCVarMin` raises `Couldn't find CVar named`. The list only shrinks.
+    const UNREGISTERED_CVARS: &[&str] = &[];
 
     /// What the player's own files make the reference report too: their `tos.html` uses `<H4>`,
     /// which 1.12's SimpleHTML does not know (`"Frame %s: Unknown element type: %s"`,
