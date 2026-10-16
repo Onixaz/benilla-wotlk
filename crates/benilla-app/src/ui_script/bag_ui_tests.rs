@@ -2,8 +2,11 @@
 //! (`MainMenuBarBagButtons.lua`) on the production load, over a backpack and one worn bag.
 
 use benilla_ui::script::{
-    ContainerSlot, ContainerState, QuestLogEntryView, QuestLogState, ScriptValue, UiScript,
+    ContainerMove, ContainerSlot, ContainerState, InvSlotView, InventorySlots, ItemTemplateView,
+    QuestLogEntryView, QuestLogState, ScriptValue, UiScript,
 };
+
+use super::test_ui::{centre_of, click, hover};
 
 /// Errors from the bag code itself; the production load carries unrelated 3.3.5a gaps.
 fn bag_errors(errors: impl IntoIterator<Item = String>) -> Vec<String> {
@@ -114,6 +117,7 @@ fn the_stock_backpack_opens_draws_and_takes_clicks() {
     assert!(errors.is_empty(), "bag errors: {errors:#?}");
     s.run(
         r#"
+        assert(BACKPACK_CONTAINER == 0 and NUM_BAG_SLOTS == 4, "Constants.lua ran to its end")
         assert(IsBagOpen(0), "the backpack is open")
         assert(ContainerFrame1:IsShown() and ContainerFrame1:GetID() == 0, "in the first frame")
         local function button(slot)
@@ -207,6 +211,127 @@ fn three_free_slots_trigger_the_bags_full_soon_tutorial() {
     let _ = s.take_tutorial_triggers();
     s.fire_event("BAG_UPDATE", vec![ScriptValue::Int(0)]);
     assert_eq!(s.take_tutorial_triggers(), vec![58]);
+    let errors = bag_errors(s.take_errors());
+    assert!(errors.is_empty(), "bag errors: {errors:#?}");
+}
+
+/// The open backpack after the production load, over [`push_bags`].
+fn open_backpack(tag: &str) -> UiScript {
+    let (mut s, _load_failures) = super::layer_tests::production_load_with(tag, false, "", |_| {});
+    let _ = s.take_errors();
+    push_bags(&mut s);
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    s.run("OpenBackpack()").unwrap();
+    s.resolve();
+    s
+}
+
+/// The `ContainerFrame1ItemN` drawing backpack `slot`: the stock frame numbers its buttons in
+/// reverse (`ContainerFrame.lua`, `SetID(size - i + 1)`).
+fn backpack_button(s: &UiScript, slot: u32) -> String {
+    s.eval(&format!(
+        "for i = 1, ContainerFrame1.size do            if _G['ContainerFrame1Item' .. i]:GetID() == {slot} then return 'ContainerFrame1Item' .. i end          end"
+    ))
+    .unwrap()
+}
+
+/// With no vendor open, hovering a bag stack and a worn item both end in `Sell Price:` and the
+/// tooltip's money frame: `SellPrice` × stack, through `GameTooltip_OnTooltipAddMoney`.
+#[test]
+fn a_bag_and_a_worn_hover_show_the_sell_price_with_no_vendor_open() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut s = open_backpack("bag-money");
+    s.set_item_template(
+        117,
+        ItemTemplateView {
+            name: "Item 117".into(),
+            quality: 1,
+            sell_price: 7,
+            ..Default::default()
+        },
+    );
+    s.set_item_template(
+        25,
+        ItemTemplateView {
+            name: "Item 25".into(),
+            quality: 1,
+            inventory_type: 21,
+            sell_price: 9,
+            ..Default::default()
+        },
+    );
+    let mut inv: InventorySlots = Default::default();
+    inv[16] = Some(InvSlotView {
+        item_id: 25,
+        count: 1,
+        name: Some("Item 25".into()),
+        quality: 1,
+        ..Default::default()
+    });
+    s.set_inventory_slots(inv);
+    let jerky = backpack_button(&s, 1);
+    hover(&mut s, &jerky);
+    let money = |s: &UiScript| -> (bool, String) {
+        s.eval(
+            "local f = GameTooltipMoneyFrame1              return f ~= nil and f:IsShown() == 1, f and GameTooltipMoneyFrame1CopperButton:GetText() or ''",
+        )
+        .unwrap()
+    };
+    assert_eq!(money(&s), (true, "35".into()), "7c each, a stack of 5");
+    s.run(
+        "GameTooltip:SetOwner(UIParent, 'ANCHOR_NONE') GameTooltip:SetInventoryItem('player', 16)",
+    )
+    .unwrap();
+    assert_eq!(money(&s), (true, "9".into()), "the worn item");
+    let errors = bag_errors(s.take_errors());
+    assert!(errors.is_empty(), "bag errors: {errors:#?}");
+}
+
+/// Real pointer input onto an empty slot: a click picks up and a second click places, and a drag
+/// does the same, each queuing the one move `PickupContainerItem` makes.
+#[test]
+fn a_click_place_and_a_drag_each_move_a_bag_item_into_an_empty_slot() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut s = open_backpack("bag-moves");
+    let _ = s.take_container_moves();
+    let mv = |src_slot, dst_slot| ContainerMove {
+        src_bag: 0,
+        src_slot,
+        dst_bag: 0,
+        dst_slot,
+        count: None,
+    };
+
+    let (b1, b5, b6) = (
+        backpack_button(&s, 1),
+        backpack_button(&s, 5),
+        backpack_button(&s, 6),
+    );
+    click(&mut s, &b1, "LeftButton");
+    assert!(s.cursor_item().is_some(), "the first click picks up");
+    click(&mut s, &b5, "LeftButton");
+    assert!(s.cursor_item().is_none(), "the second click places");
+    assert_eq!(s.take_container_moves(), vec![mv(1, 5)]);
+
+    // The move is the server's to make; the model still holds the item at slot 1.
+    let (x1, y1) = centre_of(&mut s, &b1);
+    let (x6, y6) = centre_of(&mut s, &b6);
+    s.mouse_move(x1, y1);
+    s.mouse_button(x1, y1, "LeftButton", true);
+    s.mouse_move(x1 + 8.0, y1 + 8.0);
+    s.mouse_move(x6, y6);
+    assert!(
+        s.mouse_button(x6, y6, "LeftButton", false),
+        "the drag release lands on the slot"
+    );
+    assert!(s.cursor_item().is_none(), "the drag places");
+    assert_eq!(s.take_container_moves(), vec![mv(1, 6)]);
     let errors = bag_errors(s.take_errors());
     assert!(errors.is_empty(), "bag errors: {errors:#?}");
 }
