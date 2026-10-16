@@ -34,11 +34,27 @@
 //! lua-src = { git = "https://github.com/samwhosung/benilla" }
 //! kira = { git = "https://github.com/samwhosung/benilla" }
 //!
+//! # The play build is `dev`; `assert_no_alloc` keeps its debug assertions, or `benilla-app` does
+//! # not build.
 //! [profile.dev]
-//! opt-level = 1
+//! opt-level = 3
+//! lto = "off"
+//! codegen-units = 16
+//! debug = "line-tables-only"
 //!
 //! [profile.dev.package."*"]
 //! opt-level = 3
+//! codegen-units = 1
+//! debug = false
+//! debug-assertions = false
+//! overflow-checks = false
+//!
+//! [profile.dev.package.assert_no_alloc]
+//! debug-assertions = true
+//!
+//! [profile.release]
+//! lto = "fat"
+//! codegen-units = 1
 //! ```
 //!
 //! ```text

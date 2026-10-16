@@ -57,12 +57,7 @@ fn the_documented_launcher_repeats_the_root_patches_profile_and_bevy() {
         table.keys().cloned().collect()
     };
     assert_eq!(patched(&doc), patched(&root), "[patch.crates-io]");
-    for keys in [
-        &["profile", "dev", "opt-level"][..],
-        &["profile", "dev", "package", "*", "opt-level"],
-    ] {
-        assert_eq!(at(&doc, keys), at(&root, keys), "{}", keys.join("."));
-    }
+    assert_eq!(at(&doc, &["profile"]), at(&root, &["profile"]), "[profile]");
     assert_eq!(
         at(&doc, &["dependencies", "bevy", "version"]),
         at(&root, &["workspace", "dependencies", "bevy", "version"]),
