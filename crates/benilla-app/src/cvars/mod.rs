@@ -1861,7 +1861,6 @@ mod tests {
         let _f = EnvGuard::unset("WOW_FARCLIP");
         let _d = EnvGuard::unset("WOW_CLUTTER_DENSITY");
         let _w = EnvGuard::unset("WOW_CHAR");
-        let _s = EnvGuard::unset("WOW_CHARSELECT_PICK");
         let _h = EnvGuard::set("BENILLA_HOME", tmp.to_str().unwrap());
         let roster = || {
             (1..=4)
@@ -1880,14 +1879,8 @@ mod tests {
             realm: None,
             cause: benilla_protocol::RosterCause::Park,
             epoch: 0,
-            generation: 0,
         });
         app.update();
-        assert_eq!(
-            app.world().resource::<Roster>().selected(),
-            Some(0),
-            "nothing remembered yet, so the first row — the behaviour that was already right",
-        );
         app.world_mut().resource_mut::<Roster>().pending_pick = Some(3); // guid 3 = row 2
         app.update();
         app.world_mut().write_message(AppExit::Success);
@@ -1910,14 +1903,13 @@ mod tests {
             realm: None,
             cause: benilla_protocol::RosterCause::Park,
             epoch: 0,
-            generation: 0,
         });
         app.update();
 
         assert_eq!(
-            app.world().resource::<Roster>().selected(),
-            Some(2),
-            "the second launch must stand the SAME character on the stage — the whole report",
+            res::<Cvars>(&app).get(crate::char_select::CVAR_LAST_CHARACTER),
+            Some("2"),
+            "the second launch must read the SAME row back, which the stock screen selects",
         );
         assert_eq!(
             *app.world().resource::<State<ClientState>>().get(),

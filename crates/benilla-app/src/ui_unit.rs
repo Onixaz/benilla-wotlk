@@ -541,14 +541,12 @@ pub(crate) fn class_names(class: u8) -> Option<(&'static str, &'static str)> {
 /// where addons concatenate `UnitFactionGroup("player")` at file scope; [`faction_group`] reads
 /// the live template.
 pub(crate) fn race_faction_group(race: u8) -> Option<&'static str> {
-    if !(1..=8).contains(&race) {
-        return None;
+    // The ten playable 3.3.5a races' sides, as `ChrRaces.dbc` seats them.
+    match race {
+        1 | 3 | 4 | 7 | 11 => Some("Alliance"),
+        2 | 5 | 6 | 8 | 10 => Some("Horde"),
+        _ => None,
     }
-    Some(if crate::char_create::ALLIANCE.contains(&race) {
-        "Alliance"
-    } else {
-        "Horde"
-    })
 }
 
 /// A unit's PvP team digit, `0x5efe00`'s `0` Horde, `1` Alliance, `-1` no side, from the race and

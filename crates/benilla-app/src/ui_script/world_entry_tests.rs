@@ -81,7 +81,8 @@ fn hermetic_addon(
     (tmp, capture, benilla_home)
 }
 
-/// The world after `Startup` ([`super::setup_script`]): a boot VM, no frames.
+/// The world after `Startup` ([`super::setup_script`]): the stock glue VM, or a boot VM with no
+/// install.
 fn booted_world() -> World {
     let mut world = World::new();
     world.init_resource::<super::AddOnIdentity>();
@@ -325,9 +326,10 @@ fn a_quit_from_the_character_screen_fires_logout_without_leaving_world() {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (tmp, _c, _h) = hermetic_probe("quitsplit");
     let mut world = booted_world();
+    super::install_boot_vm(&mut world);
     let mut script = world
         .remove_non_send_resource::<benilla_ui::script::UiScript>()
-        .expect("a boot VM is live at the character screen");
+        .expect("a boot VM, with no character in it");
 
     script
         .run(
@@ -800,6 +802,7 @@ fn the_login_one_shots_wait_for_the_in_game_ui() {
     app.init_resource::<crate::ui_guild::GuildState>();
     app.add_message::<crate::creature_anim::SwingImpact>();
     super::setup_script(app.world_mut());
+    super::install_boot_vm(app.world_mut());
 
     // A frame registered as FrameXML registers, in the VM that exists before the entry load.
     app.world()

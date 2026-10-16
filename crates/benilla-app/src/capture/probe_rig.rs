@@ -70,10 +70,6 @@ impl Plugin for ProbeRigPlugin {
             return; // inert without a parseable spec (parse() has already said why)
         };
         info!("rig: {}", spec.describe());
-        // Publish the claim on the character pick, so the roster knows the pick is spoken for.
-        if let Some(name) = rig_char_name(&spec) {
-            app.insert_resource(crate::run_mode::RigCharacter(name));
-        }
         app.insert_resource(Rig {
             spec,
             phase: RigPhase::AwaitRoster,

@@ -160,6 +160,10 @@ mod tests {
     /// `Local`s in VM-holding systems that are not memory about the VM, keyed
     /// `(path under src/, parameter name)`.
     const EXEMPT: &[(&str, &str)] = &[
+        // The glue instruments' own progress, which crosses the glue VM's swaps by design.
+        ("capture/glue_create.rs", "step"),
+        ("capture/realm_list.rs", "step"),
+        ("capture/realm_walk.rs", "walk"),
         // A raster fact; a fresh VM re-seats its measurer on `!has_text_measurer()` anyway.
         ("ui_script/extract/mod.rs", "last_seam"),
         // The plate driver's anti-overlap scratch, cleared at the top of every run.

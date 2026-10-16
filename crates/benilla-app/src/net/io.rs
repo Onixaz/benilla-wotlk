@@ -78,8 +78,8 @@ pub(super) struct Parks {
     pub(super) login_rx: Receiver<LoginRequest>,
     pub(super) park_rx: Receiver<ParkRequest>,
     /// The screen asks for the roster itself ([`CharRequest::Enumerate`], the stock glue's
-    /// `GetCharacterListUpdate`); false is the native screens' policy, the IO thread enumerating
-    /// on reaching the character park and after a create or delete. Read as each world park is
+    /// `GetCharacterListUpdate`); false, with no stock glue VM up, the IO thread enumerates on
+    /// reaching the character park and after a create or delete. Read as each world park is
     /// entered; the app sets it as it installs the VM that runs ([`super::RosterPolicy`]).
     pub(super) screen_asks_roster: Arc<AtomicBool>,
 }
@@ -675,7 +675,7 @@ fn world(
         // `CMSG_CHAR_CREATE` in one place (`0x5aac50`), reached only from the create screen.
         // Failures here are still pre-roster.
         //
-        // Only the native screens' policy enumerates here and after a create or delete. The stock
+        // Only a run with no stock glue VM enumerates here and after a create or delete. The stock
         // screen asks for its roster when it shows and after each action it makes
         // (`GetCharacterListUpdate`, [`CharRequest::Enumerate`], `0x46c1a7`), as the reference
         // does: the world connect completes with the authentication response (`0x5ab2b8`), and
@@ -949,7 +949,7 @@ fn world(
             };
             session = WorldSession::rejoin(reader, writer)?;
             bevy::log::info!("net: {reason} — back at character select on the same link");
-            // The native screens wait for the park's own enumeration, as on the dial; the stock
+            // With no stock glue VM the park enumerates itself, as on the dial; the stock
             // screen's `CharacterSelect_OnShow` asks for its roster itself (`0x46b880`).
             asks = screen_asks_roster.load(Ordering::SeqCst);
             if !asks {

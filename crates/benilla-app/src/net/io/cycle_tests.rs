@@ -110,7 +110,7 @@ fn an_empty_account_parks_at_select_without_creating_a_character() {
             assert_eq!(
                 cause,
                 RosterCause::Park,
-                "the native screens' own enumeration"
+                "the park's own enumeration, with no screen to ask"
             );
         }
         other => panic!("expected the roster at select, got {other:?}"),
@@ -579,7 +579,7 @@ fn expect_back(
 /// A logout returns to character select on the world link it entered by (`SMSG_LOGOUT_COMPLETE`
 /// → `0x5aaeb0` → `0x401ee0(1, 1, 0)`, then `CharacterSelect_OnShow` → `0x46b880`): one more
 /// `CMSG_CHAR_ENUM` on the same session, with no realmd logon and no second `CMSG_AUTH_SESSION`.
-/// The native screens get the park's enumeration; the stock screen's comes when it asks.
+/// With no stock glue VM the park enumerates; the stock screen's comes when it asks.
 #[test]
 fn a_logout_returns_to_character_select_on_the_same_link() {
     for asking in [false, true] {

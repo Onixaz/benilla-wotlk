@@ -57,7 +57,8 @@ impl QueueEstimate {
         Some(per_place * i64::from(self.position[0]))
     }
 
-    /// The dialog text. The reference reads `realm` from the `realmName` CVar it wrote on the way
+    /// The dialog text, its `QUEUE_*` template looked up by `lookup(key)` off the glue VM's own
+    /// `GlueStrings.lua`. The reference reads `realm` from the `realmName` CVar it wrote on the way
     /// in, so the `_NAME` variants are the ones that render in practice.
     ///
     /// The shown wait, `tick[0] + estimate - now`, is not a countdown: `estimate` grows with
@@ -66,34 +67,6 @@ impl QueueEstimate {
     ///
     /// The reference composes `"%s\n%s"` with an always-empty first half, a leading blank line in
     /// two of three states; that blank line is not reproduced.
-    pub(crate) fn text(
-        &self,
-        now_ms: u32,
-        realm: Option<&str>,
-        strings: &crate::glue_strings::GlueStrings,
-    ) -> String {
-        let (key, remaining) = self.key(now_ms, realm);
-        let fallback = match key {
-            "QUEUE_NAME_TIME_LEFT_UNKNOWN" => {
-                "%s is Full\nPosition in queue: %d\nEstimated time: Calculating..."
-            }
-            "QUEUE_NAME_TIME_LEFT_SECONDS" => {
-                "%s is Full\nPosition in queue: %d\nEstimated time: < 1 minute"
-            }
-            "QUEUE_NAME_TIME_LEFT" => "%s is Full\nPosition in queue: %d\nEstimated time: %d min",
-            "QUEUE_TIME_LEFT_UNKNOWN" => {
-                "Realm is Full\nPosition in queue: %d\nEstimated time: Calculating..."
-            }
-            "QUEUE_TIME_LEFT_SECONDS" => {
-                "Realm is Full\nPosition in queue: %d\nEstimated time: < 1 minute"
-            }
-            _ => "Realm is Full\nPosition in queue: %d\nEstimated time: %d min",
-        };
-        self.fill(strings.text(key, fallback), realm, remaining)
-    }
-
-    /// [`Self::text`] with the `QUEUE_*` template looked up by `lookup(key)`: the stock glue
-    /// screens read it off the glue VM's own `GlueStrings.lua`.
     pub(crate) fn text_by(
         &self,
         now_ms: u32,
@@ -138,8 +111,44 @@ impl QueueEstimate {
 
 #[cfg(test)]
 mod tests {
+    /// The `QUEUE_*` templates as `GlueStrings.lua` ships them.
+    fn template(key: &str) -> String {
+        match key {
+            "QUEUE_NAME_TIME_LEFT_UNKNOWN" => {
+                "%s is Full
+Position in queue: %d
+Estimated time: Calculating..."
+            }
+            "QUEUE_NAME_TIME_LEFT_SECONDS" => {
+                "%s is Full
+Position in queue: %d
+Estimated time: < 1 minute"
+            }
+            "QUEUE_NAME_TIME_LEFT" => {
+                "%s is Full
+Position in queue: %d
+Estimated time: %d min"
+            }
+            "QUEUE_TIME_LEFT_UNKNOWN" => {
+                "Realm is Full
+Position in queue: %d
+Estimated time: Calculating..."
+            }
+            "QUEUE_TIME_LEFT_SECONDS" => {
+                "Realm is Full
+Position in queue: %d
+Estimated time: < 1 minute"
+            }
+            _ => {
+                "Realm is Full
+Position in queue: %d
+Estimated time: %d min"
+            }
+        }
+        .to_string()
+    }
+
     use super::*;
-    use crate::glue_strings::GlueStrings;
 
     /// Feed packets `step_ms` apart; returns the ring and the instant the last one landed.
     fn ring_of(places: &[u32], step_ms: u32) -> (QueueEstimate, u32) {
@@ -234,9 +243,8 @@ mod tests {
 
     #[test]
     fn the_text_walks_calculating_then_minutes() {
-        let strings = GlueStrings::default();
         let (q, last) = ring_of(&[100, 99, 98], 1_000);
-        let calculating = q.text(last, Some("Benilla"), &strings);
+        let calculating = q.text_by(last, Some("Benilla"), template);
         assert!(calculating.starts_with("Benilla is Full"), "{calculating}");
         assert!(
             calculating.contains("Position in queue: 98"),
@@ -245,7 +253,7 @@ mod tests {
         assert!(calculating.contains("Calculating..."), "{calculating}");
 
         let (q, last) = ring_of(&[100, 99, 98, 97, 96, 95, 94, 93], 1_000);
-        let minutes = q.text(last, Some("Benilla"), &strings);
+        let minutes = q.text_by(last, Some("Benilla"), template);
         assert!(minutes.contains("Position in queue: 93"), "{minutes}");
         assert!(minutes.contains("1 min"), "{minutes}");
         assert!(!minutes.contains("Calculating"), "{minutes}");
@@ -254,21 +262,19 @@ mod tests {
     /// Few enough ahead that the inflation cannot carry the wait past a minute.
     #[test]
     fn a_short_wait_reads_under_a_minute() {
-        let strings = GlueStrings::default();
         let (q, last) = ring_of(&[8, 7, 6, 5, 4, 3, 2, 1], 1_000);
-        let text = q.text(last, Some("Benilla"), &strings);
+        let text = q.text_by(last, Some("Benilla"), template);
         assert!(text.contains("Position in queue: 1"), "{text}");
         assert!(text.contains("< 1 minute"), "{text}");
     }
 
     #[test]
     fn a_nameless_realm_uses_the_plain_form() {
-        let strings = GlueStrings::default();
         let (q, last) = ring_of(&[100, 99, 98], 1_000);
-        let plain = q.text(last, None, &strings);
+        let plain = q.text_by(last, None, template);
         assert!(plain.starts_with("Realm is Full"), "{plain}");
         assert!(!plain.contains("%s") && !plain.contains("%d"), "{plain}");
-        let named = q.text(last, Some("Benilla"), &strings);
+        let named = q.text_by(last, Some("Benilla"), template);
         assert!(!named.contains("%s") && !named.contains("%d"), "{named}");
     }
 }

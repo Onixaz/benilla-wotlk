@@ -165,8 +165,8 @@ pub(super) const WYRMREST_LOOK: [f32; 3] = [3546.6, 273.1, 190.0];
 pub(super) struct GlueScenario {
     pub(super) name: &'static str,
     pub(super) screen: GlueScreen,
-    /// The preview's race, sex and class ids, applied through `WOW_CHARCREATE_PICK` unless that is
-    /// already set (`WOW_CHARCREATE_PICK=6,0,11 WOW_CAPTURE=glue-charcreate` is the tauren stage).
+    /// The preview's race, sex and class ids, unless `WOW_CHARCREATE_PICK` names others
+    /// (`WOW_CHARCREATE_PICK=6,0,11 WOW_CAPTURE=glue-charcreate` is the tauren stage).
     pub(super) pick: Option<(u8, u8, u8)>,
 }
 
@@ -175,7 +175,7 @@ pub(super) struct GlueScenario {
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum GlueScreen {
     /// Character creation: the `UI_*` backdrop scene's rig lighting and per-race fog, the preview
-    /// body in its starting outfit, the GlueXML panel.
+    /// body in its starting outfit, the stock panel.
     CharCreate,
     /// The login screen, `UI_MainMenu` behind the account form. Its backdrop is the narrowest of
     /// the seven scenes, so a wide window (`WOW_WIN=2560x1440`) reaches its edges first.
@@ -189,7 +189,7 @@ pub(crate) enum GlueScreen {
 /// screenshots use, the login screen, and the realm list's category tabs over it.
 pub(super) const GLUE_SCENARIOS: &[GlueScenario] = &[
     GlueScenario {
-        name: "glue-charcreate",
+        name: super::glue_create::NAME,
         screen: GlueScreen::CharCreate,
         pick: Some((1, 0, 1)),
     },

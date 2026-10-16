@@ -30,7 +30,6 @@ fn failed(refusal: Option<LoginRefusal>, terminal: bool) -> LoginFailedMessage {
         refusal,
         reason: "test".into(),
         terminal,
-        dial: None,
     }
 }
 
@@ -769,6 +768,7 @@ fn stock_app() -> (
         .add_message::<RealmListMessage>()
         .add_message::<DisconnectedMessage>()
         .add_message::<crate::net::CharActionResultMessage>()
+        .add_message::<crate::net::CharacterLoginFailedMessage>()
         .add_message::<GlueLogin>()
         .add_message::<crate::sound::GlueMusicRequest>()
         .add_message::<crate::ui_script::server_alert::LaunchUrl>()
@@ -1041,13 +1041,12 @@ fn pump(
                 refusal,
                 reason,
                 terminal,
-                dial,
+                dial: _,
             } => {
                 failures.write(LoginFailedMessage {
                     refusal,
                     reason,
                     terminal,
-                    dial,
                 });
             }
             E::CharacterList {
@@ -1055,14 +1054,13 @@ fn pump(
                 realm,
                 cause,
                 epoch,
-                generation,
+                generation: _,
             } => {
                 rosters.write(CharListMessage {
                     characters,
                     realm,
                     cause,
                     epoch,
-                    generation,
                 });
             }
             E::WorldAuthenticated {
@@ -1145,6 +1143,7 @@ fn live_app_with(
         .add_message::<RealmListMessage>()
         .add_message::<DisconnectedMessage>()
         .add_message::<crate::net::CharActionResultMessage>()
+        .add_message::<crate::net::CharacterLoginFailedMessage>()
         .add_message::<GlueLogin>()
         .add_message::<crate::sound::GlueMusicRequest>()
         .add_message::<crate::ui_script::server_alert::LaunchUrl>()
@@ -2054,4 +2053,35 @@ fn launch_url_reaches_the_host_for_a_whitelisted_url() {
         .map(|m| m.0.clone())
         .collect();
     assert_eq!(launched, ["http://www.worldofwarcraft.com/news"]);
+}
+
+/// A refused character login is state 11 (`0x4066a0`): its `CHAR_LOGIN_*` text in `OKAY` every
+/// frame, the screen's roster ask held off (`0x4d95c0`), and the `OKAY` asking for it
+/// (`0x4d98d0`).
+#[test]
+fn a_refused_character_login_holds_its_okay_until_pressed() {
+    let mut m = GlueMgr {
+        connected: true,
+        ..accepted()
+    };
+    m.on_char_login_failed(1);
+    m.tick();
+    m.tick();
+    assert_eq!(m.outbox, [open("OKAY", Some("CHAR_LOGIN_NO_WORLD"))]);
+    m.outbox.clear();
+    m.get_character_list();
+    assert_eq!(m.state, ScreenState::WorldLogin, "the roster ask waits");
+    assert!(m.take_asks().1.is_empty());
+    m.status_dialog_click(&mut Vec::new());
+    assert_eq!(m.state, ScreenState::CharList);
+    assert_eq!(
+        m.outbox,
+        [open("CANCEL", Some("CHAR_LIST_RETRIEVING"))],
+        "the OKAY asks for the roster"
+    );
+    m.on_char_login_failed(9);
+    assert_eq!(
+        m.char_login_refusal, "CHAR_LOGIN_FAILED",
+        "past 8, the default"
+    );
 }

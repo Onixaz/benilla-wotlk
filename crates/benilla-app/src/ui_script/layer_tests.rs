@@ -229,7 +229,7 @@ fn the_layer_is_absent_from_the_addon_api() {
         );
     }
     assert!(
-        !super::addons::installed_rows()
+        !super::addons::discover_folder()
             .iter()
             .any(|a| a.name.eq_ignore_ascii_case("benilla")),
         "the AddOns screen lists benilla"

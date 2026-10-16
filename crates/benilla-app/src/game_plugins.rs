@@ -134,11 +134,9 @@ impl PluginGroup for GamePlugins {
                 connect: self.connect,
             })
             .add(crate::death::DeathPlugin)
-            .add(crate::glue::GluePlugin)
             .add(crate::char_select::CharSelectPlugin { start: self.start })
             .add(crate::login::LoginPlugin)
             .add(crate::realm_select::RealmSelectPlugin)
-            .add(crate::char_create::CharCreatePlugin)
             .add(SoundPlugin)
             .add(TargetPlugin)
             .add(TransportPlugin)
@@ -570,69 +568,30 @@ pub(crate) mod schedule_tests {
             })
     }
 
-    /// The glue booth has one feeder per switch: under the stock screens only the glue VM's
-    /// writes `GluePreview`, and off it only the native screens' do. A writer of neither kind is
-    /// named here with why it cannot run against the other.
+    /// The glue booth has one feeder, the stock screens' glue VM through its scene feed, and its
+    /// own instrument.
     #[test]
-    fn the_glue_preview_has_one_feeder_per_switch() {
-        use crate::char_select::ClientState;
-        // The create screen's state, which only the native select screen enters, and its
-        // instrument.
-        const EITHER: [&str; 2] = ["benilla_app::char_create::", "drive_create_test"];
+    fn the_glue_preview_has_one_feeder() {
         let mut app = headless_client();
-        let mut writers = Vec::new();
-        writers.extend(resource_writers::<crate::portrait::GluePreview>(
-            &mut app, Update,
-        ));
-        for state in [ClientState::Login, ClientState::CharSelect] {
-            writers.extend(resource_writers::<crate::portrait::GluePreview>(
-                &mut app,
-                OnEnter(state),
-            ));
-            writers.extend(resource_writers::<crate::portrait::GluePreview>(
-                &mut app,
-                OnExit(state),
-            ));
-        }
+        let writers = resource_writers::<crate::portrait::GluePreview>(&mut app, Update);
         if !writers.iter().any(|(n, _)| n.contains("benilla_app::")) {
             eprintln!(
                 "skipped: this build carries no type names (bevy/debug rides with the dev feature)"
             );
             return;
         }
-        let has = |conds: &[String], c: &str| conds.iter().any(|n| n.ends_with(c));
-        let mut stock = Vec::new();
-        let mut native = Vec::new();
-        let mut neither = Vec::new();
-        for (name, conds) in &writers {
-            match (has(conds, "::stock_glue"), has(conds, "::native_glue")) {
-                (true, false) => stock.push(name.as_str()),
-                (false, true) => native.push(name.as_str()),
-                _ if EITHER.iter().any(|e| name.contains(e)) => {}
-                _ => neither.push(name.as_str()),
-            }
-        }
-        assert!(
-            neither.is_empty(),
-            "GluePreview writers on neither switch: {neither:?}"
-        );
+        let names: Vec<&str> = writers
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .filter(|n| n.contains("benilla_app::"))
+            // The booth's own `WOW_CREATE_TEST` instrument, which drives it with no screen up.
+            .filter(|n| !n.ends_with("::drive_create_test"))
+            .collect();
         assert_eq!(
-            stock,
+            names,
             ["benilla_app::ui_script::glue_scene::feed_stock_glue_preview"],
             "the stock screens' one feeder"
         );
-        for want in [
-            "benilla_app::char_select::refresh::feed_glue_preview",
-            "benilla_app::login::show_main_menu",
-            "benilla_app::login::screen::clear_login_scene",
-            "benilla_app::char_select::screen::enter_select",
-            "benilla_app::char_select::screen::clear_select_scene",
-        ] {
-            assert!(
-                native.contains(&want),
-                "{want} is not gated to the native screens: {native:?}"
-            );
-        }
     }
 
     /// One row of the class table: the type's name for the message, and its `TypeId`.
@@ -765,9 +724,7 @@ pub(crate) mod schedule_tests {
     }
 
     /// `PostUpdate`'s undeclared-order pairs on the declared graph; `GlobalTransform` and the
-    /// particle `EffectQuads` are most of it. Six are `glue::hide_native_glue`'s `Visibility`
-    /// against the world's and the fade cover's writers, populations it never shares an entity
-    /// with (the native glue roots alone).
+    /// particle `EffectQuads` are most of it.
     const POST_UPDATE_CEILING: usize = 377;
     const POST_UPDATE_SLACK: usize = 20;
     /// The actionable pairs in `Update`: conflicting access, no declared order, and nothing
@@ -784,9 +741,6 @@ pub(crate) mod schedule_tests {
     ///   would, off the same clock;
     /// - the area-spirit-healer poll over `Transform` and `NetEntity`: it is level-triggered, so a
     ///   unit seen a frame early or late is decided again next frame;
-    /// - `ui_script::glue_scene::feed_stock_glue_preview` against the native glue screens'
-    ///   writers of `GluePreview`: the switch runs one side or the other (`stock_glue` against
-    ///   `native_glue`), never both;
     /// - the cursor classifier against `world_focus`'s focus publish and settle release over
     ///   `Player`: it reads `control_lost`, and they write only `settling` and `world_stale`;
     /// - `ui_quest::lines::feed_quest_lines` against `ui_items::feed_item_stats` and
@@ -827,7 +781,7 @@ pub(crate) mod schedule_tests {
     /// Raising the ceiling is a claim that a new undeclared order is acceptable: make it with the
     /// reason read off the dump, or declare the order (`.after`, a set, a `chain`). A resource
     /// that commutes by construction belongs in [`Classes`].
-    const UPDATE_ACTIONABLE_CEILING: usize = 4_689;
+    const UPDATE_ACTIONABLE_CEILING: usize = 4_049;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

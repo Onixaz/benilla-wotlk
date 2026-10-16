@@ -40,7 +40,6 @@ mod bowstring;
 mod camera_shake;
 #[cfg(feature = "dev")]
 mod capture;
-mod char_create;
 mod char_select;
 mod chat_bubble;
 mod chr_classes;
@@ -64,8 +63,6 @@ mod entities;
 mod fishing_line;
 mod footprints;
 mod game_plugins;
-mod glue;
-mod glue_strings;
 mod go_anim;
 mod go_templates;
 #[cfg(feature = "dev")]

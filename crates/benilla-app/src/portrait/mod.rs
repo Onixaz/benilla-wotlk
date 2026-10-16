@@ -40,8 +40,7 @@ use benilla_assets::materials::WowModelMaterial;
 
 mod framing;
 pub(crate) use framing::{
-    attachment_point, glue_box_aspect, glue_canvas_bars, head_anchor, pane_projection,
-    PortraitAnchors, WowPortraitProjection,
+    attachment_point, head_anchor, pane_projection, PortraitAnchors, WowPortraitProjection,
 };
 use framing::{body_frame, frame, PORTRAIT_FOV};
 mod booth;

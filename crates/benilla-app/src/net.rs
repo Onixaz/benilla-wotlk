@@ -483,7 +483,7 @@ pub(crate) enum CharRequest {
 }
 
 /// Whether the screen asks for its roster (the stock glue screens' `GetCharacterListUpdate`)
-/// instead of the IO thread fetching it on reaching the character park (the native screens'). Set
+/// instead of the IO thread fetching it on reaching the character park (with no glue VM up). Set
 /// by the UI session as it installs the VM that runs: true with the stock glue VM up, false
 /// otherwise, so a run whose stock VM did not build still gets its roster. The IO thread reads it
 /// as each park is entered.
@@ -2146,8 +2146,6 @@ pub(crate) struct CharListMessage {
     pub(crate) cause: benilla_protocol::RosterCause,
     /// The world session that sent it ([`WorldAuthMessage::epoch`]).
     pub(crate) epoch: u64,
-    /// The abandon generation of the attempt that dialed that session.
-    pub(crate) generation: u64,
 }
 
 /// The world server accepted the authentication: the world connect to `realm` is done and the IO
@@ -2177,7 +2175,7 @@ pub(crate) struct CharActionResultMessage {
 }
 
 /// `SMSG_CHARACTER_LOGIN_FAILED`: the picked character was refused. `result` is the raw reason,
-/// read by [`crate::char_select::char_login_refusal_text`].
+/// read by the glue manager (`crate::ui_script::glue_mgr`).
 #[derive(Message, Clone, Copy)]
 pub(crate) struct CharacterLoginFailedMessage {
     pub(crate) result: u8,
@@ -2276,9 +2274,6 @@ pub(crate) struct LoginFailedMessage {
     pub(crate) refusal: Option<benilla_protocol::LoginRefusal>,
     pub(crate) reason: String,
     pub(crate) terminal: bool,
-    /// The dial that never opened a socket, so the screen can tell an unknown name from a host
-    /// that does not answer.
-    pub(crate) dial: Option<benilla_protocol::DialFailure>,
 }
 
 /// A same-map teleport of our player: snap, then ack. Read by the controller in `Input`.

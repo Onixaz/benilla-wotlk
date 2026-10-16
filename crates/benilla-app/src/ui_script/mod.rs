@@ -351,7 +351,6 @@ impl Plugin for UiScriptPlugin {
         // The quit root runs in `Last`: the close button's `AppExit` is written in `PostUpdate`.
         crate::shutdown::on_app_exit(app, shutdown_on_exit.into_configs());
         app.insert_resource(UiScaleCvar(default_ui_scale()))
-            .insert_resource(glue::GlueStock::from_env())
             .init_resource::<glue_mgr::GlueMgr>()
             .init_resource::<UiFrameCost>()
             .init_resource::<crate::bindings::WheelNotches>()
@@ -413,12 +412,7 @@ impl Plugin for UiScriptPlugin {
             .init_resource::<PointerOverUiPanel>()
             .add_systems(
                 Update,
-                (
-                    extract::tick_script,
-                    input::feed_ui_input.run_if(
-                        in_state(crate::char_select::ClientState::InWorld).or(glue::glue_ui_up),
-                    ),
-                )
+                (extract::tick_script, input::feed_ui_input)
                     .chain()
                     .in_set(UiInput)
                     // So a key a focused box consumed never also fires a binding.
@@ -485,7 +479,7 @@ pub(crate) use lifecycle::load_ingame_ui_on_world_entry;
 use lifecycle::shutdown_on_exit;
 #[cfg(test)]
 pub(crate) use lifecycle::{
-    finish_ui_load, is_emote_token_line, seat_from_roster, shutdown_ui_state,
+    finish_ui_load, install_boot_vm, is_emote_token_line, seat_from_roster, shutdown_ui_state,
 };
 
 /// `GetFramerate()`'s host half: FPS on `Time<Real>`, smoothed by a one-second pole; how the

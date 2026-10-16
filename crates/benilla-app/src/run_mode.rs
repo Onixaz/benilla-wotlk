@@ -13,12 +13,6 @@ use bevy::prelude::*;
 #[derive(Resource)]
 pub(crate) struct CaptureMode;
 
-/// The rig's derived character name when `$WOW_RIG` names a body, inserted by
-/// `capture::ProbeRigPlugin`. While present the roster ignores `$WOW_CHAR`: the rig may have to
-/// create its body first, and the `WOW_CHAR` one-shot cannot wait for that.
-#[derive(Resource)]
-pub(crate) struct RigCharacter(pub(crate) String);
-
 /// Is a capture running (`$WOW_CAPTURE` set)? Read before any plugin builds: it decides whether
 /// the net thread starts, the window size, and whether clutter and anim-LOD randomness is pinned.
 pub(crate) fn scenario_active() -> bool {

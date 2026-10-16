@@ -104,8 +104,8 @@ use crate::net::{
 /// `CGlueMgr`'s `screenState` (`0xb41da0`), named by the functions that set each value: the
 /// states the login, the realm list and the character list reach. The reference's others are
 /// create, delete and rename (5-7, `0x46b29e`, `0x46b2f8`, `0x46b3a4`), `EnterWorld` (8,
-/// `0x46b711`), a refused character login (9, `0x402075`) and the patch and survey downloads (10
-/// and 11, `0x473c40`, `0x473da8`), each set by a verb these screens do not have yet.
+/// `0x46b711`) and the patch and survey downloads (10 and 11, `0x473c40`, `0x473da8`), each set
+/// by a verb these screens do not have yet.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum ScreenState {
     /// No operation (`0x46a7ce`, and every terminal arm).
@@ -125,6 +125,9 @@ pub(crate) enum ScreenState {
     DeleteCharacter = 6,
     /// The world entry (`CGlueMgr::EnterWorld`, `0x4d9bd0`), until the world is up.
     EnterWorld = 8,
+    /// A refused character login back at `charselect` (`ClientDestroyGame` stores 11 at
+    /// `0x4066a0`), its `OKAY` up until pressed.
+    WorldLogin = 11,
 }
 
 /// The logon's `LOGIN_STATE_*` keys by login state (`0x836b40`, 13 entries).
@@ -482,6 +485,8 @@ pub(crate) struct GlueMgr {
     realm: Option<benilla_protocol::RealmInfo>,
     /// State 2's operation.
     op: Operation,
+    /// The refused character login's `CHAR_LOGIN_*` status, which state 11 shows.
+    char_login_refusal: &'static str,
     queue: QueueEstimate,
     queue_realm: Option<String>,
     /// The current glue screen's name, as the VM's `SetCurrentScreen` last set it.
@@ -636,6 +641,11 @@ impl GlueMgr {
                 self.op.complete(false, STATUS_CANCELLED);
                 self.outbox.push(Outgoing::Teardown);
             }
+            // `0x4d98d0`'s state-11 arm: state 0, and the roster asked for.
+            ScreenState::WorldLogin => {
+                self.state = ScreenState::Idle;
+                self.get_character_list();
+            }
             // `0x46b776` (states 4, 5 and 8): the operation cancelled, state 0, nothing sent.
             ScreenState::RealmList
             | ScreenState::CreateCharacter
@@ -658,9 +668,12 @@ impl GlueMgr {
     /// `0x46b880`, the tail of `GetCharacterListUpdate`: state 3, the `CHAR_LIST_RETRIEVING`
     /// dialog and the query (`0x5aabb0`: operation 6 at status `0x2a`, then `CMSG_CHAR_ENUM` on
     /// the world link). With no link the operation fails `RESPONSE_FAILED_TO_CONNECT` at once
-    /// (`0x5aabca`). State 9, a refused character login (`0x46b880`'s first test), returns before
-    /// any of it; that state is not reached yet.
+    /// (`0x5aabca`). State 11, a refused character login (`0x4d95c0`'s first test), returns before
+    /// any of it.
     fn get_character_list(&mut self) {
+        if self.state == ScreenState::WorldLogin {
+            return;
+        }
         self.state = ScreenState::CharList;
         self.open("CANCEL", Some(Text::Key("CHAR_LIST_RETRIEVING")));
         self.op = Operation::begin(OpKind::CharList, STATUS_CHAR_LIST_RETRIEVING);
@@ -1150,6 +1163,27 @@ impl GlueMgr {
         }
     }
 
+    /// `ClientConnection::HandleCharacterLoginFailed` (`0x6b2070`): the reason byte cancels the
+    /// entry with its status, and the way back to `charselect` enters state 11 (`0x4066a0`).
+    fn on_char_login_failed(&mut self, result: u8) {
+        self.char_login_refusal = match result {
+            1 => "CHAR_LOGIN_NO_WORLD",
+            2 => "CHAR_LOGIN_DUPLICATE_CHARACTER",
+            3 => "CHAR_LOGIN_NO_INSTANCES",
+            4 => "CHAR_LOGIN_DISABLED",
+            5 => "CHAR_LOGIN_NO_CHARACTER",
+            6 => "CHAR_LOGIN_LOCKED_FOR_TRANSFER",
+            7 => "CHAR_LOGIN_LOCKED_BY_BILLING",
+            8 => "CHAR_LOGIN_LOCKED_BY_MOBILE_AH",
+            _ => "CHAR_LOGIN_FAILED",
+        };
+        info!(
+            "glue: character login refused ({result}) — {}",
+            self.char_login_refusal
+        );
+        self.state = ScreenState::WorldLogin;
+    }
+
     /// The per-frame arms of `CGlueMgr::Update` that run without a new message.
     fn tick(&mut self) {
         match self.state {
@@ -1176,6 +1210,17 @@ impl GlueMgr {
                 }
             }
             ScreenState::Connect => self.tick_connect(),
+            // `0x4dab40`'s state-11 arm: the refusal's `OKAY`, signalled every frame.
+            ScreenState::WorldLogin => {
+                let open = Outgoing::Open {
+                    which: "OKAY",
+                    text: Some(Text::Key(self.char_login_refusal)),
+                    data: None,
+                };
+                if !self.outbox.contains(&open) {
+                    self.outbox.push(open);
+                }
+            }
             ScreenState::CharList => self.tick_char_list(),
             ScreenState::RealmList => self.tick_realm_list(),
             // State 8's phases are the world entry's here; state 5 ends on its result.
@@ -1344,6 +1389,7 @@ pub(crate) struct LoginNews<'w, 's> {
     realm_lists: MessageReader<'w, 's, RealmListMessage>,
     disconnects: MessageReader<'w, 's, DisconnectedMessage>,
     results: MessageReader<'w, 's, crate::net::CharActionResultMessage>,
+    char_login_failures: MessageReader<'w, 's, crate::net::CharacterLoginFailedMessage>,
 }
 
 /// What the manager asks of the rest of the app.
@@ -1638,6 +1684,9 @@ pub(crate) fn drive_glue_mgr(
     }
     for msg in news.disconnects.read() {
         mgr.on_disconnected(msg.end, msg.session_over);
+    }
+    for msg in news.char_login_failures.read() {
+        mgr.on_char_login_failed(msg.result);
     }
     mgr.tick();
     send_asks(&mut mgr, logins, &mut asks);

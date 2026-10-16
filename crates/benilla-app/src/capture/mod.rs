@@ -47,6 +47,7 @@ use benilla_world::view::WorldCamera;
 
 mod depth_probe;
 mod fixtures;
+mod glue_create;
 mod glue_press;
 mod live_shot;
 mod phase_probe;
@@ -135,14 +136,14 @@ pub(crate) use probe_look::ProbeLookPlugin;
 pub(crate) use probe_pitch::ProbePitchPlugin;
 
 /// The screen a capture starts on, the dev arm of [`crate::run_mode::start_state`]: a glue capture
-/// boots onto its screen, any other capture straight in-world, no capture the login screen.
+/// boots onto the login screen and presses its way to its own, any other capture straight
+/// in-world, no capture the login screen.
 ///
 /// One of three readers of `$WOW_CAPTURE`, with `run_mode` and `dev_state::deterministic_run`,
 /// one per layer and sharing no symbol: keep them in step.
 pub(crate) fn start_state() -> crate::char_select::ClientState {
     match glue_screen() {
-        Some(GlueScreen::CharCreate) => crate::char_select::ClientState::CharCreate,
-        Some(GlueScreen::Login | GlueScreen::RealmList) => crate::char_select::ClientState::Login,
+        Some(_) => crate::char_select::ClientState::Login,
         None if crate::run_mode::scenario_active() => crate::char_select::ClientState::InWorld,
         None => crate::char_select::ClientState::Login,
     }
@@ -420,15 +421,6 @@ impl Plugin for CapturePlugin {
         let name = std::env::var("WOW_CAPTURE").unwrap_or_default();
         // A glue capture has no map, viewpoint or fixture; only the shutter is shared.
         let glue = GLUE_SCENARIOS.iter().find(|g| g.name == name).copied();
-        if let Some(g) = glue {
-            // The preview pick rides `WOW_CHARCREATE_PICK`, and a pick already in the environment
-            // wins, so one scenario photographs every race's stage.
-            if let Some((race, sex, class)) = g.pick {
-                if std::env::var_os("WOW_CHARCREATE_PICK").is_none() {
-                    std::env::set_var("WOW_CHARCREATE_PICK", format!("{race},{sex},{class}"));
-                }
-            }
-        }
         // `fxview`, `waterfx`, `vista` and `name-close` are built from knobs, not the tables, and
         // are never in the golden sweep.
         let scenario: Option<Scenario> = if glue.is_some() {
@@ -677,7 +669,10 @@ impl Plugin for CapturePlugin {
             // Before `UnitFeed`: the seed stands in for wire data live play delivers on earlier
             // frames, so the same frame's feeds and the one-shot `MERCHANT_SHOW` paint must see it.
             .add_systems(Update, seed_ui_fixture.before(crate::ui_unit::UnitFeed))
-            .add_systems(Update, realm_list::seed_realm_list)
+            .add_systems(
+                Update,
+                (realm_list::seed_realm_list, glue_create::seed_char_create),
+            )
             .add_systems(Last, drive_capture);
     }
 }

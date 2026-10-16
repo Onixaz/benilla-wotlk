@@ -78,8 +78,8 @@ pub enum LoginStage {
 /// What a roster was fetched for. The screen takes a reply as its own only when it asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RosterCause {
-    /// The IO thread's own enumeration on reaching the character park, which the native screens
-    /// wait for; the stock screens ask for theirs instead.
+    /// The IO thread's own enumeration on reaching the character park, for a run with no stock
+    /// glue VM up; the stock screens ask for theirs instead.
     Park,
     /// The reply to a roster request from the screen (`CMSG_CHAR_ENUM` for
     /// `GetCharacterListUpdate`, `0x5aabb0`).

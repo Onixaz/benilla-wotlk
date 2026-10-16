@@ -11,6 +11,7 @@ use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
 use super::glue_press::{self as press, glue};
+use super::probes::ProbeClock;
 use crate::net::CharListMessage;
 
 /// How long each leg may take before the walk names the one that stalled.
@@ -51,7 +52,7 @@ impl Walk {
 fn walk_realm_list(
     mut msgs: MessageReader<CharListMessage>,
     script: Option<NonSend<UiScript>>,
-    time: Res<Time>,
+    time: ProbeClock,
     mut walk: Local<Walk>,
     mut exit: MessageWriter<AppExit>,
 ) {

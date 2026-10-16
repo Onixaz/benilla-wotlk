@@ -390,7 +390,7 @@ fn upcase_unit(c: char) -> char {
 
 /// The player's own addons: every folder under the AddOns root with a `<Name>.toc`, in
 /// [`sort_by_directory_order`].
-fn discover_folder() -> Vec<Addon> {
+pub(super) fn discover_folder() -> Vec<Addon> {
     let Some(root) = root() else {
         return Vec::new();
     };
@@ -513,60 +513,6 @@ pub(crate) fn enable_state_path(identity: Option<&(String, String)>) -> Option<P
     crate::local_state::addons_state_path(realm, character)
 }
 
-/// One installed addon as the AddOns screens need it, read from the folder with no VM, as the glue
-/// runs before any VM holds addons.
-#[derive(Clone, Debug)]
-pub(crate) struct InstalledAddOn {
-    pub(crate) name: String,
-    pub(crate) title: Option<String>,
-    pub(crate) notes: Option<String>,
-    pub(crate) url: Option<String>,
-    pub(crate) dependencies: Vec<String>,
-    /// `## Interface` as the version gate reads it: the leading integer, 0 when absent. The load
-    /// walk enforces it when `checkAddonVersion` is on (`0x51e876`).
-    pub(crate) interface: u32,
-    /// `## LoadOnDemand: 1`: shown as a status, not a checkbox state, as such an addon is not off
-    /// but waiting for `LoadAddOn`.
-    pub(crate) load_on_demand: bool,
-    /// `## DefaultState:`, which [`EnableStore::enabled_for`] falls back to; no enable bit here.
-    pub(crate) default_state: bool,
-}
-
-impl InstalledAddOn {
-    /// The list's display name: `## Title`, else the folder name (`AddonList_Update`).
-    pub(crate) fn display_title(&self) -> &str {
-        self.title.as_deref().unwrap_or(&self.name)
-    }
-}
-
-/// Every installed addon in the glue list's order, by `## Title` (else the folder name): glue
-/// `0x46d460` resolves `GetAddOnInfo(i)` through `0x51df00`'s array, sorted by `0x51deb0` on
-/// `AddOn_GetTitle 0x51df20` with `SStrCmpI`. The Blizzard addons the server hides are not here.
-pub(crate) fn installed_rows() -> Vec<InstalledAddOn> {
-    let mut rows: Vec<InstalledAddOn> = discover_folder()
-        .into_iter()
-        .map(|addon| InstalledAddOn {
-            default_state: addon.toc.default_state(),
-            title: addon.toc.directive("Title").map(str::to_owned),
-            notes: addon.toc.directive("Notes").map(str::to_owned),
-            url: addon.toc.directive("URL").map(str::to_owned),
-            dependencies: addon
-                .toc
-                .dependencies()
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-            interface: addon.toc.interface_version(),
-            load_on_demand: addon.toc.load_on_demand(),
-            name: addon.name,
-        })
-        .collect();
-    // `SStrCmpI` folds `'A'..'Z'` by `+0x20` (`0x64a4c0`, `_strnicmp 0x414310`): ASCII only.
-    // Stable, where the reference's `qsort` leaves equal keys in any order.
-    rows.sort_by_key(|a| a.display_title().to_ascii_lowercase());
-    rows
-}
-
 // ── The enable store: the reference's `ADDONSTATELIST` ──
 
 /// The reference's `ADDONSTATELIST` (`0xbe1bd0`): a node per character in `SMSG_CHAR_ENUM` order,
@@ -599,19 +545,6 @@ impl EnableStore {
         Self {
             realm: realm.to_string(),
             nodes,
-        }
-    }
-
-    /// A node per character, none with a row, as for characters with no file; for tests that
-    /// must not read the state folder.
-    #[cfg(test)]
-    pub(crate) fn blank(realm: &str, characters: &[String]) -> Self {
-        Self {
-            realm: realm.to_string(),
-            nodes: characters
-                .iter()
-                .map(|c| (c.clone(), EnableHash::default()))
-                .collect(),
         }
     }
 
@@ -1105,47 +1038,6 @@ mod tests {
         assert_eq!(upcase_unit('é'), 'É');
     }
 
-    /// Glue's `0x51df00` array is `## Title`-sorted by `0x51deb0`, case-insensitively. Folder names
-    /// and titles are different permutations, and `Middle` is the case control.
-    #[test]
-    fn the_addons_screen_lists_in_title_order_not_folder_order() {
-        let _l = crate::local_state::test_env::ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _c = crate::local_state::test_env::EnvGuard::unset("WOW_CAPTURE");
-        let (home, _h) = hermetic_root("listorder");
-        write_addon(
-            &home,
-            "Alpha",
-            "## Interface: 30300\n## Title: zebra\n",
-            &[],
-        );
-        write_addon(
-            &home,
-            "Mike",
-            "## Interface: 30300\n## Title: Middle\n",
-            &[],
-        );
-        write_addon(
-            &home,
-            "Zulu",
-            "## Interface: 30300\n## Title: aardvark\n",
-            &[],
-        );
-        // No `## Title`: sorts under its folder name.
-        write_addon(&home, "bravo", "## Interface: 30300\n", &[]);
-
-        let rows = installed_rows();
-        assert_eq!(
-            rows.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
-            vec!["Zulu", "bravo", "Mike", "Alpha"],
-            "titles: {:?}",
-            rows.iter()
-                .map(InstalledAddOn::display_title)
-                .collect::<Vec<_>>()
-        );
-    }
-
     /// `AddOn_ScanAddOnDir 0x51c760` scans the archives (`0x51c777`) before the loose folders
     /// (`0x51c78f`), and `0x51c9b0` returns on a name already registered (`0x51ca10`).
     #[test]
@@ -1247,10 +1139,6 @@ mod tests {
                 .any(|f| f.replace('/', "\\").starts_with("Interface\\AddOns\\")),
             "the core lists a Blizzard addon; the reference registers each from its own folder"
         );
-        // The glue's list is the player's folder alone.
-        assert!(installed_rows()
-            .iter()
-            .all(|a| !a.name.starts_with("Blizzard_")));
     }
 
     use super::*;
