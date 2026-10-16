@@ -26,12 +26,19 @@ jobs:
       CARGO_INCREMENTAL: 0
       # No debuginfo: it is most of target/, and a runner's disk is small.
       CARGO_PROFILE_DEV_DEBUG: 0
+      # Two jobs and 16 GB of swap: an 8 GB runner runs out of memory building `benilla-app`'s tests
+      # at opt-level 3 (swap peaks near 7.6 GB).
+      CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Free disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Swap
+        run: >-
+          sudo fallocate -l 16G /mnt/swapfile && sudo chmod 600 /mnt/swapfile && sudo mkswap /mnt/swapfile
+          && sudo swapon /mnt/swapfile
       - name: System libraries
         run: >-
           sudo apt-get update -qq && sudo apt-get install -y -qq pkg-config libasound2-dev libudev-dev

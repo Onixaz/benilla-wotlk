@@ -19,15 +19,22 @@ concurrency:
 jobs:
   ship:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    # A cold fat-LTO build takes 33 min on 12 threads; the runner has two cores.
+    timeout-minutes: 300
     env:
       CARGO_TERM_COLOR: always
+      # Two jobs and swap, as ci.yml: the fat-LTO link holds the whole program in memory.
+      CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Free disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Swap
+        run: >-
+          sudo fallocate -l 16G /mnt/swapfile && sudo chmod 600 /mnt/swapfile && sudo mkswap /mnt/swapfile
+          && sudo swapon /mnt/swapfile
       - name: System libraries
         run: sudo apt-get update -qq && sudo apt-get install -y -qq pkg-config libasound2-dev libudev-dev
       - name: Toolchain
