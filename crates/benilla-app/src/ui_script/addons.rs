@@ -89,11 +89,16 @@ impl Addon {
     }
 
     /// The base this addon's manifest entries resolve against: `Interface/AddOns/<Folder>` for a
-    /// `Dir` and a chain `Blizzard_*` addon, empty for the shipped flat tree and the core's full
-    /// chain paths.
+    /// `Dir` and a chain `Blizzard_*` addon, empty for the shipped flat tree and the full chain
+    /// paths of the in-game core and the glue.
     fn prefix(&self) -> String {
         match &self.source {
-            Source::Chain if self.name == super::reference_ui::NAME => String::new(),
+            Source::Chain
+                if self.name == super::reference_ui::NAME
+                    || self.name == super::reference_ui::GLUE_NAME =>
+            {
+                String::new()
+            }
             Source::Builtin => String::new(),
             Source::Dir(_) | Source::Chain => format!("{ADDONS_PREFIX}{}", self.name),
         }
@@ -755,6 +760,27 @@ const SAVED_HEADER: &str = "\
 -- benilla per-addon saved variables.
 -- Written at logout/exit from the live globals; executed as a Lua chunk at addon load.
 ";
+
+/// Seat the glue VM's AddOn registry: every discovered addon, its enable bit what the realm's
+/// characters agree on (no character is logged in), and the array the server's
+/// `SMSG_ADDON_INFO` builds, when it has answered. Nothing loads.
+pub(super) fn register_for_glue(
+    script: &mut UiScript,
+    realm: &str,
+    roster: &[String],
+    reply: Option<&[String]>,
+) {
+    let addons = discover();
+    let mut infos: Vec<_> = addons.iter().map(info_for).collect();
+    let store = EnableStore::load(realm, roster);
+    for (info, addon) in infos.iter_mut().zip(addons.iter()) {
+        info.enabled = store.enabled_for(&info.name, addon.toc.default_state(), None);
+    }
+    script.register_addons(infos, root(), None, None);
+    if let Some(reply) = reply {
+        script.note_addon_info_reply(reply);
+    }
+}
 
 /// Load every discovered third-party addon at world entry (`UI_Init 0x48fbf0` → `0x51f600`),
 /// returning every load error tagged by addon. `&mut` because each `ADDON_LOADED` fires

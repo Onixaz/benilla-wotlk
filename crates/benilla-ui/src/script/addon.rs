@@ -715,6 +715,116 @@ fn log_error(lua: &Lua, msg: &str) {
     model.errors.push(msg);
 }
 
+/// The glue's AddOn verbs (table `0xac3e00`) over the same registry the in-game ones read: the
+/// array the server's `SMSG_ADDON_INFO` builds, keyed by its 1-based index. The per-character
+/// enable verbs are not built yet.
+pub(super) fn install_glue(lua: &Lua) -> mlua::Result<()> {
+    let g = lua.globals();
+
+    // `GetNumAddOns` (`0x511200`), the in-game binding: the array's count.
+    g.set(
+        "GetNumAddOns",
+        lua.create_function(|lua, _: MultiValue| {
+            Ok(lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model")
+                .addon_index
+                .len())
+        })?,
+    )?;
+
+    // `GetAddOnInfo(index)` (`0x4dc560`): eight values, `name, title, notes, url, loadable,
+    // reason, security, newVersion`. The loadable test passes the demand arm (`false` at
+    // `0x4dc66b`), so a LoadOnDemand addon reads `DEMAND_LOADED`. No server answers a newer
+    // version, so `newVersion` is nil.
+    g.set(
+        "GetAddOnInfo",
+        lua.create_function(|lua, index: Value| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
+            let i = glue_index(lua, &model, index, "Usage: GetAddOnInfo(index)")?;
+            let verdict = if model.addons[i].loaded {
+                Verdict::Loadable
+            } else {
+                can_load(&gate_rows(&model), i, true, version_check(&model))
+            };
+            let reason = verdict.token();
+            let a = &model.addons[i];
+            Ok(MultiValue::from_vec(vec![
+                lua_str(lua, &a.name)?,
+                opt_str(lua, &a.title)?,
+                opt_str(lua, &a.notes)?,
+                opt_str(lua, &a.url)?,
+                flag(reason.is_none()),
+                match &reason {
+                    Some(r) => lua_str(lua, r)?,
+                    None => Value::Nil,
+                },
+                lua_str(lua, if a.secure { "SECURE" } else { "INSECURE" })?,
+                Value::Nil,
+            ]))
+        })?,
+    )?;
+
+    // `GetAddOnDependencies(index)` (`0x4ddac0`): one return per dependency.
+    g.set(
+        "GetAddOnDependencies",
+        lua.create_function(|lua, index: Value| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
+            let i = glue_index(lua, &model, index, "Usage: GetAddOnDependencies(index)")?;
+            let mut out = Vec::new();
+            for dep in &model.addons[i].dependencies {
+                out.push(lua_str(lua, dep)?);
+            }
+            Ok(MultiValue::from_iter(out))
+        })?,
+    )?;
+
+    // `IsAddonVersionCheckEnabled` (`0x4dcae0`) and `SetAddonVersionCheck` (`0x4dcb20`):
+    // `checkAddonVersion`, 1 or nil, set from the argument's truth (default on).
+    g.set(
+        "IsAddonVersionCheckEnabled",
+        lua.create_function(|lua, _: MultiValue| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
+            Ok(flag(version_check(&model)))
+        })?,
+    )?;
+    g.set(
+        "SetAddonVersionCheck",
+        lua.create_function(|lua, v: Option<Value>| {
+            let on = super::binding_abi::bool_or_default(v.as_ref(), true);
+            let mut model = crate::script::model_mut_of(lua);
+            super::cvars::write_cvar(
+                &mut model,
+                "checkAddonVersion",
+                if on { "1" } else { "0" }.to_string(),
+            );
+            Ok(())
+        })?,
+    )?;
+    Ok(())
+}
+
+/// A glue AddOn verb's 1-based index into the array (`lua_isnumber`, then `GetAddOnByIndex`):
+/// the usage error for a non-number, the range error for an index off the array.
+fn glue_index(lua: &Lua, model: &Model, index: Value, usage: &'static str) -> mlua::Result<usize> {
+    let Some(n) = lua.coerce_number(index)? else {
+        return Err(mlua::Error::RuntimeError(usage.into()));
+    };
+    let index0 = (n as i64 as i32).wrapping_sub(1) as u32 as usize;
+    model.addon_index.get(index0).copied().ok_or_else(|| {
+        mlua::Error::RuntimeError(format!(
+            "AddOn index must be in the range of 1 to {}",
+            model.addon_index.len()
+        ))
+    })
+}
+
 /// The host's side: the registry, where its files live, and what to write back.
 impl super::UiScript {
     /// Seat the reader chain-sourced addons (`AddOnInfo::chain`) are read through.

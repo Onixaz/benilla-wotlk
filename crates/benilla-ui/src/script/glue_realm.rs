@@ -40,8 +40,12 @@ pub struct GlueRealm {
 pub struct GlueRealmCategory {
     /// Column 0, the id a realm's category byte is matched against (`0x46e60b`).
     pub id: u32,
-    /// The locale's `Name_Lang` slot (`[row + 8 + 4·locale]`, `0x46f238`).
+    /// The locale's `Name_Lang` slot.
     pub name: String,
+    /// The locales the category is for, one bit per locale index; 0 for all.
+    pub locale_mask: u32,
+    /// Bit `0x1` marks a tournament category.
+    pub flags: u32,
 }
 
 /// One `Cfg_Configs.dbc` row (the store `0xc0dfa0`): a realm type and its PvP and RP flags.
@@ -106,6 +110,8 @@ impl Default for GlueRealmCells {
 struct Category {
     id: Option<u32>,
     name: Option<String>,
+    locale_mask: u32,
+    flags: u32,
 }
 
 impl Category {
@@ -200,6 +206,8 @@ impl GlueRealmList {
             return vec![Category {
                 id: None,
                 name: None,
+                locale_mask: 0,
+                flags: 0,
             }];
         }
         self.rows
@@ -207,6 +215,8 @@ impl GlueRealmList {
             .map(|r| Category {
                 id: Some(r.id),
                 name: Some(r.name.clone()),
+                locale_mask: r.locale_mask,
+                flags: r.flags,
             })
             .collect()
     }
@@ -463,8 +473,8 @@ fn realm_name(model: &Model) -> String {
         .unwrap_or_default()
 }
 
-fn model(lua: &Lua) -> mlua::AppDataRefMut<'_, Model> {
-    lua.app_data_mut::<Model>().expect("model app_data")
+fn model(lua: &Lua) -> crate::script::ModelGuard<'_> {
+    crate::script::model_mut_of(lua)
 }
 
 /// `is-number` (`0x6f34d0`) on an argument, then `tonumber` and `0x40a2b0`.
@@ -721,6 +731,52 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(ordinal as f64)
         })?,
     )?;
+
+    // `RealmListUpdateRate` (`0x4de440`): 5 seconds for a realm server's grunt logon (4 is a
+    // Battle.net logon's).
+    g.set(
+        "RealmListUpdateRate",
+        lua.create_function(|_, _: MultiValue| Ok(5.0))?,
+    )?;
+
+    // The category tests (`IsTournamentRealmCategory`, `IsInvalidTournamentRealmCategory`,
+    // `IsInvalidLocale`): the 1-based visible category's row, 1 or nothing. A tournament row is
+    // flag `0x1`, invalid for an account that is neither GM nor ProPass, which a realm server's
+    // logon never reports; a locale row is one whose mask excludes the client's enUS (index 0).
+    for (name, which) in [
+        ("IsTournamentRealmCategory", 0u8),
+        ("IsInvalidTournamentRealmCategory", 1),
+        ("IsInvalidLocale", 2),
+    ] {
+        let usage = if which == 2 {
+            "Usage: Script_IsInvalidLocale(category)".to_string()
+        } else {
+            format!("Usage: {name}(category)")
+        };
+        g.set(
+            name,
+            lua.create_function(move |lua, args: MultiValue| {
+                let Some(ordinal) = number_at(lua, &args, 0) else {
+                    return Err(mlua::Error::RuntimeError(usage.clone()));
+                };
+                let m = model(lua);
+                let list = &m.glue.realms;
+                let at = list.stored_index(ordinal.saturating_sub(1));
+                let Some(cat) = list.categories().into_iter().nth(at) else {
+                    return Ok(MultiValue::new());
+                };
+                let yes = match which {
+                    0 | 1 => cat.flags & 0x1 != 0,
+                    _ => cat.locale_mask != 0 && cat.locale_mask & 1 == 0,
+                };
+                Ok(if yes {
+                    MultiValue::from_vec(vec![Value::Number(1.0)])
+                } else {
+                    MultiValue::new()
+                })
+            })?,
+        )?;
+    }
     Ok(())
 }
 
@@ -753,10 +809,14 @@ mod tests {
         s.set_glue_realm_setup(
             vec![
                 GlueRealmCategory {
+                    locale_mask: 0,
+                    flags: 0,
                     id: 1,
                     name: "United States".into(),
                 },
                 GlueRealmCategory {
+                    locale_mask: 0,
+                    flags: 0,
                     id: 5,
                     name: "Oceanic".into(),
                 },
@@ -793,7 +853,7 @@ mod tests {
     fn listen(s: &UiScript, events: &[&str]) {
         let mut chunk = String::from(
             "FIRED = {} local f = CreateFrame('Frame', 'Listener') \
-             f:SetScript('OnEvent', function() \
+             f:SetScript('OnEvent', function(self, event, arg1, arg2) \
                table.insert(FIRED, event .. ' ' .. tostring(arg1) .. ' ' .. tostring(arg2)) end) ",
         );
         for e in events {

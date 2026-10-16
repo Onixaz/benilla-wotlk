@@ -8,7 +8,7 @@ use benilla_protocol::{RealmInfo, SessionEnd};
 
 /// The manager with both agreements accepted, the way a returning player's CVars seed it.
 fn accepted() -> GlueMgr {
-    let mut n = [NoticeState::default(); 4];
+    let mut n = [NoticeState::default(); 5];
     n[GlueNotice::Tos as usize] = NoticeState::from_cvar("1");
     n[GlueNotice::Eula as usize] = NoticeState::from_cvar("1");
     GlueMgr {

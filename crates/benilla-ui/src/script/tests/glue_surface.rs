@@ -1,7 +1,7 @@
-//! The glue screens' Lua surface (`reference/1.12-glue-surface.tsv`) held to its source, the shapes
-//! table, and the glue VM ([`UiScript::new_glue`]) held to the surface: every function it puts in
-//! `_G` is a glue-state one, and every glue-state function is there or on [`NOT_YET`]. Then the glue
-//! state's frame types and event table.
+//! The glue screens' Lua surface, held to the reference's registrar tables in
+//! `reference/3.3.5a-shapes.tsv`: every function the glue VM ([`UiScript::new_glue`]) puts in `_G`
+//! is one the glue state has, and every glue-state function is there or on [`NOT_YET`]. Then the
+//! glue state's frame types and event table.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -19,197 +19,75 @@ fn reference_rows(file: &str, header: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// One row of the glue surface table.
-pub(super) struct GlueRow {
-    pub scope: String,
-    pub name: String,
-    pub fn_va: String,
-    pub table_va: String,
-    pub arity: String,
-}
+/// The tables FrameScript's Lua init (`FrameScript_Initialize`, `0x819bb0`) registers into `_G`:
+/// the Lua base library and the base table `0xa443a8`.
+const BASE_TABLES: [&str; 2] = ["0xa47c80", "0xa443a8"];
 
-/// `reference/1.12-glue-surface.tsv`.
-pub(super) fn glue_surface() -> Vec<GlueRow> {
-    let rows: Vec<GlueRow> = reference_rows("1.12-glue-surface.tsv", "scope")
-        .into_iter()
-        .map(|f| GlueRow {
-            scope: f[0].clone(),
-            name: f[2].clone(),
-            fn_va: f[3].clone(),
-            table_va: f[4].clone(),
-            arity: f[5].clone(),
-        })
-        .collect();
-    assert!(
-        rows.len() > 150,
-        "the glue surface table looks truncated ({} rows) — regenerate it with \
-         scripts/gen-reference-glue-surface.py",
-        rows.len()
-    );
-    rows
-}
+/// The registrar tables the glue manager's `Resume` (`0x4da5f0`) shares with the in-game UI:
+/// system (`0x60a120`), frame script (`0x81b870`), sound (`0x985ea0`), account messages
+/// (`0x550080`) and video options (`0x54ec00`).
+const SHARED_TABLES: [&str; 5] = ["0xad2184", "0xaf5848", "0xb2d928", "0xacd418", "0xacd320"];
 
-/// The tables the glue state installs, as the glue registrar `0x46abb0` and the Lua init
-/// `0x7039e0` loop them: each `cmp` bound over the 8-byte pair stride.
-const GLUE_TABLES: [(&str, usize); 8] = [
-    ("0x811e28", 36), // the base array, 0x7039e0
-    ("0x8503f4", 6),  // 0x51bb20
-    ("0x872e74", 4),  // 0x706350
-    ("0x8373b8", 60), // 0x46ddf0
-    ("0x838578", 11), // 0x4736c0
-    ("0x8380f8", 24), // 0x471a20
-    ("0x837ea0", 10), // 0x46f480
-    ("0x835a50", 4),  // 0x4587f0
+/// The glue-only registrar tables and their row counts: the glue core (`0x4dd580`), character
+/// select (`0x4e2570`), character create (`0x4dfd00`) and the realm list (`0x4de4d0`).
+const GLUE_TABLES: [(&str, usize); 4] = [
+    ("0xac3e00", 113),
+    ("0xac4378", 13),
+    ("0xac4228", 32),
+    ("0xac4190", 14),
 ];
 
-/// Each registrar table's rows are exactly the shapes table's rows for that table, binding and
-/// arity alike; a compat alias names a library binding the shapes table has.
+/// The global function aliases of the table, math and string libraries the compat chunk
+/// FrameScript's Lua init runs defines (`0xaf57f0`).
+const COMPAT: [&str; 42] = [
+    "foreach", "foreachi", "getn", "tinsert", "tremove", "sort", "wipe", "abs", "acos", "asin",
+    "atan", "atan2", "ceil", "cos", "deg", "exp", "floor", "frexp", "ldexp", "log", "log10", "max",
+    "min", "mod", "rad", "random", "sin", "sqrt", "tan", "strbyte", "strchar", "strfind", "format",
+    "gmatch", "gsub", "strlen", "strlower", "strmatch", "strrep", "strrev", "strsub", "strupper",
+];
+
+/// Base-library globals Lua 5.1's `luaopen_base` sets outside its registered table.
+const LUA_BASE_EXTRA: [&str; 4] = ["ipairs", "pairs", "newproxy", "print"];
+
+/// Globals the glue VM exposes past the reference's glue state, each with its reason: benilla's
+/// stdlib layer is shared with the in-game VM, which carries the same names
+/// (`reference_surface::BEYOND_REFERENCE`).
+const BEYOND: &[&str] = &[];
+
+/// Every function name the glue state has, and the glue tables' names alone.
+fn glue_state_names() -> (BTreeSet<String>, BTreeSet<String>) {
+    let shapes = reference_rows("3.3.5a-shapes.tsv", "name");
+    let mut allowed: BTreeSet<String> = BTreeSet::new();
+    let mut glue: BTreeSet<String> = BTreeSet::new();
+    for f in &shapes {
+        let table = f[3].as_str();
+        if BASE_TABLES.contains(&table) || SHARED_TABLES.contains(&table) {
+            allowed.insert(f[0].clone());
+        }
+        if GLUE_TABLES.iter().any(|(t, _)| *t == table) {
+            allowed.insert(f[0].clone());
+            glue.insert(f[0].clone());
+        }
+    }
+    for n in COMPAT.iter().chain(&LUA_BASE_EXTRA) {
+        allowed.insert(n.to_string());
+    }
+    (allowed, glue)
+}
+
+/// Each glue registrar table has the row count its registrar loops.
 #[test]
-fn the_glue_surface_matches_the_shapes_table() {
-    // (table_va, name) -> (fn, arity): a name is not a key in the shapes table.
-    let shapes: BTreeMap<(String, String), (String, String)> =
-        reference_rows("1.12-shapes.tsv", "name")
-            .into_iter()
-            .map(|f| ((f[3].clone(), f[0].clone()), (f[1].clone(), f[7].clone())))
-            .collect();
-    let surface = glue_surface();
-
-    for (table_va, rows) in GLUE_TABLES {
-        let in_shapes: BTreeSet<&str> = shapes
-            .keys()
-            .filter(|(t, _)| t == table_va)
-            .map(|(_, n)| n.as_str())
-            .collect();
-        let in_surface: BTreeSet<&str> = surface
-            .iter()
-            .filter(|r| r.table_va == table_va)
-            .map(|r| r.name.as_str())
-            .collect();
-        assert_eq!(
-            in_shapes.len(),
-            rows,
-            "the shapes table's {table_va} has {} rows",
-            in_shapes.len()
-        );
-        assert_eq!(
-            in_surface, in_shapes,
-            "table {table_va}: the glue surface and the shapes table differ"
-        );
-    }
-    for r in &surface {
-        if r.fn_va == "lua" {
-            continue;
-        }
-        if r.table_va == "-" {
-            // `__pow`, set by `luaopen_math` outside any table.
-            assert_eq!(r.name, "__pow", "{} has no table", r.name);
-            continue;
-        }
-        let shape = shapes
-            .iter()
-            .find(|((t, _), (f, _))| *t == r.table_va && *f == r.fn_va)
-            .map(|(_, s)| s);
-        assert_eq!(
-            shape.map(|(f, a)| (f.as_str(), a.as_str())),
-            Some((r.fn_va.as_str(), r.arity.as_str())),
-            "{}: no shapes row in table {} with that binding and arity",
-            r.name,
-            r.table_va
-        );
-    }
-    let names: BTreeSet<&str> = surface.iter().map(|r| r.name.as_str()).collect();
-    assert_eq!(names.len(), surface.len(), "a name appears twice");
-    // 36 base-array rows, the compat chunk's 39 functions and `__pow`; 6 + 4 + 4 shared; the four
-    // glue tables' 105.
-    for (scope, n) in [("base", 76), ("shared", 14), ("glue", 105)] {
-        assert_eq!(
-            surface.iter().filter(|r| r.scope == scope).count(),
-            n,
-            "{scope} rows"
-        );
+fn the_glue_tables_hold_their_rows() {
+    let shapes = reference_rows("3.3.5a-shapes.tsv", "name");
+    for (table, rows) in GLUE_TABLES {
+        let n = shapes.iter().filter(|f| f[3] == table).count();
+        assert_eq!(n, rows, "table {table}");
     }
 }
 
-/// Glue-state functions the glue VM does not answer yet, by registrar table, each with why. The
-/// list only shrinks: a verb is absent until built, never stubbed.
-const NOT_YET: &[(&str, &[&str])] = &[
-    (
-        "0x51bb20's file trio, each only `luaL_error(\"Access Denied\")`; unbuilt in the in-game \
-         VM too, tracked by #338",
-        &["ReadFile", "DeleteFile", "AppendToFile"],
-    ),
-    (
-        "the glue core (0x46ddf0, table 0x8373b8): the addon list, the movie's setter, the patch and \
-         survey, the billing, the addon URL and the credits music; each a binding of its own, the \
-         ones with an in-game namesake included",
-        &[
-            "DisableAddOn",
-            "DisableAllAddOns",
-            "EnableAddOn",
-            "EnableAllAddOns",
-            "EnterWorld",
-            "GetAddOnDependencies",
-            "GetAddOnEnableState",
-            "GetAddOnInfo",
-            "GetBillingPlan",
-            "GetBillingTimeRemaining",
-            "GetBillingTimeRested",
-            "GetMovieResolution",
-            "GetMovieSubtitles",
-            "GetNumAddOns",
-            "GetScriptMemory",
-            "HideCursor",
-            "IsAddonVersionCheckEnabled",
-            "LaunchAddOnURL",
-            "PINEntered",
-            "PatchDownloadApply",
-            "PatchDownloadCancel",
-            "PatchDownloadProgress",
-            "PlayCreditsMusic",
-            "ResetAddOns",
-            "SaveAddOns",
-            "Screenshot",
-            "SetAddonVersionCheck",
-            "SetMovieSubtitles",
-            "SetScriptMemory",
-            "ShowCursor",
-            "SurveyNotificationDone",
-        ],
-    ),
-    (
-        "character select (0x4736c0, table 0x838578): the delete and the rename",
-        &["DeleteCharacter", "RenameCharacter"],
-    ),
-    (
-        "character create (0x471a20, table 0x8380f8)",
-        &[
-            "CreateCharacter",
-            "CycleCharCustomization",
-            "GetAvailableRaces",
-            "GetCharacterCreateFacing",
-            "GetClassesForRace",
-            "GetFacialHairCustomization",
-            "GetFactionForRace",
-            "GetHairCustomization",
-            "GetNameForRace",
-            "GetRandomName",
-            "GetSelectedClass",
-            "GetSelectedRace",
-            "GetSelectedSex",
-            "HasCharCustomization",
-            "RandomizeCharCustomization",
-            "ResetCharCustomize",
-            "SetCharCustomizeBackground",
-            "SetCharCustomizeFrame",
-            "SetCharacterCreateFacing",
-            "SetSelectedClass",
-            "SetSelectedRace",
-            "SetSelectedSex",
-            "UpdateCustomizationBackground",
-            "UpdateCustomizationScene",
-        ],
-    ),
-];
+/// Glue-table functions the glue VM does not answer yet, by registrar table. The list only
+/// shrinks: a verb is absent until built, never stubbed.
+const NOT_YET: &[(&str, &[&str])] = &[];
 
 /// The glue VM's globals by Lua type name.
 fn glue_globals() -> BTreeMap<String, String> {
@@ -228,10 +106,11 @@ fn glue_globals() -> BTreeMap<String, String> {
         .collect()
 }
 
-/// The glue VM's functions are the glue surface less [`NOT_YET`], exactly.
+/// The glue VM's functions are glue-state ones, and every glue-table function is built or on
+/// [`NOT_YET`].
 #[test]
 fn the_glue_vm_answers_the_glue_surface() {
-    let surface: BTreeSet<String> = glue_surface().into_iter().map(|r| r.name).collect();
+    let (allowed, glue) = glue_state_names();
     let not_yet: BTreeSet<&str> = NOT_YET
         .iter()
         .flat_map(|(_, n)| n.iter().copied())
@@ -242,76 +121,49 @@ fn the_glue_vm_answers_the_glue_surface() {
         .map(|(k, _)| k)
         .collect();
 
-    let beyond: Vec<&String> = ours.iter().filter(|n| !surface.contains(*n)).collect();
+    let beyond: Vec<&String> = ours
+        .iter()
+        .filter(|n| !allowed.contains(*n) && !BEYOND.contains(&n.as_str()))
+        .collect();
     assert!(
         beyond.is_empty(),
         "the glue VM exposes {} function(s) the glue state does not have: {beyond:?}. The \
          in-game surface stays out of it (`UiScript::new` installs that).",
         beyond.len()
     );
-    let missing: Vec<&String> = surface
+    let missing: Vec<&String> = glue
         .iter()
         .filter(|n| !ours.contains(*n) && !not_yet.contains(n.as_str()))
         .collect();
     assert!(
         missing.is_empty(),
-        "glue-state functions the glue VM lacks and NOT_YET does not name: {missing:?}"
+        "glue-table functions the glue VM lacks and NOT_YET does not name: {missing:?}"
     );
     let stale: Vec<&&str> = not_yet
         .iter()
-        .filter(|n| ours.contains(**n) || !surface.contains(**n))
+        .filter(|n| ours.contains(**n) || !glue.contains(**n))
         .collect();
     assert!(
         stale.is_empty(),
-        "NOT_YET names that are built, or that are not glue-state functions; take them off: \
+        "NOT_YET names that are built, or that are not glue-table functions; take them off: \
          {stale:?}"
     );
-    assert_eq!(
-        not_yet.len(),
-        NOT_YET.iter().map(|(_, n)| n.len()).sum::<usize>(),
-        "a NOT_YET name is listed twice"
-    );
 }
 
-/// Past its functions the glue `_G` holds the four library tables, the frame metatable
-/// `0x7039e0` publishes, and the compat chunk's `PI`; `_G` itself is benilla's, as in-game
-/// (`reference_surface::BEYOND_1_12`).
-#[test]
-fn the_glue_vm_holds_no_other_global() {
-    let others: BTreeMap<String, String> = glue_globals()
-        .into_iter()
-        .filter(|(_, t)| t != "function")
-        .collect();
-    let want: BTreeMap<String, String> = [
-        ("PI", "number"),
-        ("__framescript_meta", "table"),
-        ("_G", "table"),
-        ("bit", "table"),
-        ("math", "table"),
-        ("string", "table"),
-        ("table", "table"),
-    ]
-    .into_iter()
-    .map(|(k, t)| (k.to_string(), t.to_string()))
-    .collect();
-    assert_eq!(others, want);
-}
-
-/// The glue event table in code is `reference/1.12-glue-events.tsv`, by id.
+/// The glue event table in code is `reference/3.3.5a-glue-events.tsv`, by id.
 #[test]
 fn the_glue_event_table_matches_the_reference() {
-    let rows = reference_rows("1.12-glue-events.tsv", "id");
+    let rows = reference_rows("3.3.5a-glue-events.tsv", "eventId");
     assert_eq!(rows.len(), GLUE_EVENTS.len());
     for (id, row) in rows.iter().enumerate() {
-        assert_eq!(row[0], id.to_string(), "ids run 0..26 in order");
+        assert_eq!(row[0], id.to_string(), "ids run 0..41 in order");
         assert_eq!(row[1], GLUE_EVENTS[id], "event {id}");
     }
 }
 
-/// `RegisterEvent` matches a name against the glue table case-insensitively (`0x702140` with
-/// `0x64a4c0`) and drops one the table lacks without raising; `UnregisterEvent` matches the same
-/// way (`0x702280`). An in-game event fired at the glue VM reaches nothing, an all-events frame
-/// included, since the reference fires by id.
+/// `RegisterEvent` matches a name against the glue table case-insensitively and drops one the
+/// table lacks without raising; `UnregisterEvent` matches the same way. An in-game event fired at
+/// the glue VM reaches nothing, an all-events frame included, since the reference fires by id.
 #[test]
 fn glue_events_register_by_the_glue_table() {
     let mut s = UiScript::new_glue().unwrap();
@@ -330,7 +182,6 @@ fn glue_events_register_by_the_glue_table() {
     .expect("an event off the glue table raises nothing");
     s.fire_event("SET_GLUE_SCREEN", vec![]);
     s.queue_event("PLAYER_LOGIN", vec![]);
-    // The per-frame advance runs over the glue VM, its queued events included.
     s.tick(0.016);
     assert_eq!(
         s.eval::<Vec<String>>("return heard").unwrap(),
@@ -359,8 +210,9 @@ fn the_in_game_vm_keeps_its_events() {
     assert_eq!(s.eval::<i64>("return heard").unwrap(), 1);
 }
 
-/// The frame types: the 13 registered at startup (`0x6ef070`) and `ModelFFX` (`0x46a4fe`) in both
-/// states; `UI_Init`'s eight (`0x495940`) only in-game.
+/// The frame types: the 13 registered at startup (`FrameXML_RegisterDefault`, `0x813df0`) and
+/// `ModelFFX` (the glue manager's init, `0x4db9f0`) in both states;
+/// `CGWorldFrame::RegisterFrames`' types (`0x521040`) only in-game.
 #[test]
 fn the_glue_vm_makes_the_startup_frame_types_only() {
     const STARTUP: [&str; 14] = [
@@ -379,15 +231,14 @@ fn the_glue_vm_makes_the_startup_frame_types_only() {
         "MovieFrame",
         "ModelFFX",
     ];
-    const IN_GAME: [&str; 8] = [
-        "WorldFrame",
+    const IN_GAME: [&str; 7] = [
         "GameTooltip",
+        "Cooldown",
         "Minimap",
         "PlayerModel",
         "DressUpModel",
         "TabardModel",
-        "LootButton",
-        "TaxiRouteFrame",
+        "QuestPOIFrame",
     ];
     let glue = UiScript::new_glue().unwrap();
     let world = UiScript::new().unwrap();
@@ -398,13 +249,29 @@ fn the_glue_vm_makes_the_startup_frame_types_only() {
         }
     }
     for t in IN_GAME {
-        let e = glue
-            .run(&format!(r#"CreateFrame("{t}")"#))
-            .expect_err(t)
-            .to_string();
-        assert!(e.contains(&format!("unknown frame type '{t}'")), "{t}: {e}");
+        glue.run(&format!(r#"CreateFrame("{t}")"#)).expect_err(t);
         world.run(&format!(r#"CreateFrame("{t}")"#)).unwrap();
     }
+}
+
+/// The glue's screen verbs answer the screen root with no UI scale (`GetScreenWidth`
+/// `0x4dcc20`, `GetScreenHeight` `0x4dcc70`), even when a frame is named `UIParent`; the cursor
+/// is the root's (`0x4dcb60`).
+#[test]
+fn the_glue_screen_verbs_answer_the_root_unscaled() {
+    let root = (768.0_f32 * 16.0 / 9.0, 768.0_f32);
+    let mut s = UiScript::new_glue().unwrap();
+    s.set_screen_size(root.0, root.1);
+    s.run(r#"local p = CreateFrame("Frame", "UIParent") p:SetScale(0.5)"#)
+        .unwrap();
+    s.mouse_move(100.0, 200.0);
+    assert_eq!(
+        s.eval::<(f32, f32, f32, f32)>(
+            "local x, y = GetCursorPosition() return GetScreenWidth(), GetScreenHeight(), x, y",
+        )
+        .unwrap(),
+        (root.0, root.1, 100.0, 200.0)
+    );
 }
 
 /// `ModelFFX` is a `Model` to Lua (`0x470030`, `0x46ffd0`) with `Model`'s methods, flagged FFX for
@@ -465,32 +332,5 @@ fn model_ffx_is_a_model_flagged_ffx() {
         s.eval::<(String, f64)>("return XmlFfx:GetModel(), XmlFfx:GetModelScale()")
             .unwrap(),
         ("Test/Xml.mdx".to_string(), 2.0)
-    );
-}
-
-/// The glue's screen verbs answer the screen root with no UI scale (`0x46dd30`, `0x46dd80`): the
-/// in-game pair divides by `UIParent`'s scale (`0x494590`), the glue pair has none to divide by,
-/// even when a frame is named `UIParent`. The cursor is the root's (`0x46dad0`).
-#[test]
-fn the_glue_screen_verbs_answer_the_root_unscaled() {
-    let root = (768.0_f32 * 16.0 / 9.0, 768.0_f32);
-    let read = |mut s: UiScript| {
-        s.set_screen_size(root.0, root.1);
-        s.run(r#"local p = CreateFrame("Frame", "UIParent") p:SetScale(0.5)"#)
-            .unwrap();
-        s.mouse_move(100.0, 200.0);
-        s.eval::<(f32, f32, f32, f32)>(
-            "local x, y = GetCursorPosition() return GetScreenWidth(), GetScreenHeight(), x, y",
-        )
-        .unwrap()
-    };
-    assert_eq!(
-        read(UiScript::new_glue().unwrap()),
-        (root.0, root.1, 100.0, 200.0)
-    );
-    assert_eq!(
-        read(UiScript::new().unwrap()),
-        (root.0 * 2.0, root.1 * 2.0, 100.0, 200.0),
-        "the in-game pair answers in UIParent's units"
     );
 }

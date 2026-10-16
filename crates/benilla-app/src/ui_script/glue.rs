@@ -175,7 +175,37 @@ mod tests {
     /// The glue functions the stock GlueXML calls that benilla has not built yet: each one's call
     /// raises "attempt to call global `X' (a nil value)", at the load or on the login screen. The
     /// list only shrinks: a name built, or no longer reached, comes off it.
-    const UNBUILT_CALLED: &[&str] = &["SetCharCustomizeFrame"];
+    const UNBUILT_CALLED: &[&str] = &[
+        // The video options table's (`0xacd320`) and the sound table's (`0xb2d928`), which the
+        // glue's Video and Audio options panels call at load; the in-game panels need them too
+        // (#150).
+        "GetTerrainMip",
+        "IsStereoVideoAvailable",
+        "Sound_GameSystem_GetNumOutputDrivers",
+        // Character create's (`0xac4228`), which the create screen's `OnLoad` calls.
+        "SetCharCustomizeFrame",
+    ];
+
+    /// CVars the glue's Video and Audio options panels read that benilla does not register yet
+    /// (#150): each read warns, and `GetCVarMin` raises `Couldn't find CVar named`. The list only
+    /// shrinks.
+    const UNREGISTERED_CVARS: &[&str] = &[
+        "showToolsUI",
+        "windowResizeLock",
+        "Sound_EnableAllSound",
+        "Sound_EnableSFX",
+        "Sound_EnableErrorSpeech",
+        "Sound_EnableEmoteSounds",
+        "Sound_EnablePetSounds",
+        "Sound_EnableMusic",
+        "Sound_ZoneMusicNoDelay",
+        "Sound_EnableAmbience",
+        "Sound_EnableReverb",
+        "Sound_EnableSoftwareHRTF",
+        "Sound_EnableDSPEffects",
+        "Sound_OutputQuality",
+        "Sound_OutputDriverIndex",
+    ];
 
     /// What the player's own files make the reference report too: their `tos.html` uses `<H4>`,
     /// which 1.12's SimpleHTML does not know (`"Frame %s: Unknown element type: %s"`,
@@ -215,17 +245,25 @@ mod tests {
         rest.starts_with(" (a nil value)").then_some(name)
     }
 
-    /// The glue state's functions, `reference/1.12-glue-surface.tsv`'s names.
+    /// The glue state's functions: the rows of the glue manager's registrar tables in
+    /// `reference/3.3.5a-shapes.tsv` (the glue core, character select and create, the realm
+    /// list, and the tables it shares with the in-game state).
     fn glue_surface() -> BTreeSet<String> {
+        const TABLES: [&str; 9] = [
+            "0xac3e00", "0xac4378", "0xac4228", "0xac4190", "0xad2184", "0xaf5848", "0xb2d928",
+            "0xacd418", "0xacd320",
+        ];
         let path = format!(
-            "{}/../../reference/1.12-glue-surface.tsv",
+            "{}/../../reference/3.3.5a-shapes.tsv",
             env!("CARGO_MANIFEST_DIR")
         );
         std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("reading {path}: {e}"))
             .lines()
-            .filter(|l| !l.starts_with('#') && !l.starts_with("scope\t"))
-            .filter_map(|l| l.split('\t').nth(2).map(str::to_string))
+            .filter(|l| !l.starts_with('#'))
+            .map(|l| l.split('\t').collect::<Vec<_>>())
+            .filter(|f| f.len() > 3 && TABLES.contains(&f[3]))
+            .map(|f| f[0].to_string())
             .collect()
     }
 
@@ -255,6 +293,8 @@ mod tests {
         let _ = benilla_formats::wow_data_or_skip!();
         let mut s = UiScript::new_glue().unwrap();
         s.set_screen_size(1024.0, 768.0);
+        // The CVar registry the app seeds every VM with.
+        s.seed_cvars(crate::cvars::Cvars::default().vm_seed());
         let mut errors = load_glue(&mut s);
         // `load_glue` reports the walk's handler errors; the rest are the screen's and the ticks'.
         let _ = s.take_errors();
@@ -278,6 +318,12 @@ mod tests {
                     return false;
                 }
                 if INSTALL_WARNINGS.contains(&e.as_str()) {
+                    return false;
+                }
+                if UNREGISTERED_CVARS.iter().any(|c| {
+                    e.as_str() == format!("unknown CVar '{c}' (not host-registered) — ignored")
+                        || e.contains(&format!("Couldn't find CVar named '{c}'"))
+                }) {
                     return false;
                 }
                 if let Some(h) = UNBUILT_HANDLERS.iter().find(|(frame, handler)| {

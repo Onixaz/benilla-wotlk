@@ -183,6 +183,8 @@ impl Realms {
             .map(|c| benilla_ui::script::GlueRealmCategory {
                 id: c.id,
                 name: c.name.clone(),
+                locale_mask: c.locale_mask,
+                flags: c.flags,
             })
             .collect();
         let types = load::REALM_TYPES

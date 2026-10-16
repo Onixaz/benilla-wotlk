@@ -775,7 +775,7 @@ fn a_command_ready_with_an_install_goes_out_on_the_new_writer() {
     keys_tx.send(KEY).unwrap();
     let world = fake::world(listener, keys_rx);
     let writer = || {
-        benilla_protocol::WorldSession::connect(&addr, fake::USER, KEY)
+        benilla_protocol::WorldSession::connect(&addr, fake::USER, KEY, 1)
             .unwrap()
             .into_split()
             .unwrap()

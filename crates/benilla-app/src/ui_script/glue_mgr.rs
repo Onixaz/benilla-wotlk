@@ -119,6 +119,8 @@ pub(crate) enum ScreenState {
     CharList = 3,
     /// A realm list query (`RequestRealmList`, `0x46b8d2`).
     RealmList = 4,
+    /// The world entry (`CGlueMgr::EnterWorld`, `0x4d9bd0`), until the world is up.
+    EnterWorld = 8,
 }
 
 /// The logon's `LOGIN_STATE_*` keys by login state (`0x836b40`, 13 entries).
@@ -444,7 +446,7 @@ pub(crate) struct GlueMgr {
     /// Authenticated, waiting for the next tick (`[0xb41e18]`).
     auth_final: bool,
     /// The four agreements, read once from their CVars (`0x46a400`).
-    notices: Option<[NoticeState; 4]>,
+    notices: Option<[NoticeState; 5]>,
     /// The world connection is up (`[svc+0x1b00]`).
     connected: bool,
     /// The realm this session connected to.
@@ -490,6 +492,8 @@ pub(crate) struct GlueMgr {
     /// The text a finished fetch left for the next frame (`alertReady`, `[0xb41e2c]`, and the
     /// buffer `0xb414f8` past its prefix).
     alert_ready: Option<String>,
+    /// The index `EnterWorld` writes to `lastCharacterIndex`, for the host's CVar registry.
+    last_character: Option<i32>,
 }
 
 impl GlueMgr {
@@ -531,7 +535,7 @@ impl GlueMgr {
     }
 
     /// The agreements as read at the startup (`0x46a400`).
-    pub(super) fn set_notices(&mut self, notices: [NoticeState; 4]) {
+    pub(super) fn set_notices(&mut self, notices: [NoticeState; 5]) {
         self.notices = Some(notices);
     }
 
@@ -594,8 +598,8 @@ impl GlueMgr {
                 self.op.complete(false, STATUS_CANCELLED);
                 self.outbox.push(Outgoing::Teardown);
             }
-            // `0x46b776`: the query cancelled, state 0, nothing sent.
-            ScreenState::RealmList => {
+            // `0x46b776` (states 4 and 8): the operation cancelled, state 0, nothing sent.
+            ScreenState::RealmList | ScreenState::EnterWorld => {
                 self.op.complete(false, STATUS_CANCELLED);
                 self.state = ScreenState::Idle;
             }
@@ -624,6 +628,48 @@ impl GlueMgr {
         } else {
             self.park_out.push(CharRequest::Enumerate.into());
         }
+    }
+
+    /// `CGlueMgr::EnterWorld` (`0x4d9bd0`) for the record at the VM's selection: nothing with no
+    /// realm selected, no record there or no world link; a record locked for a transfer (flag
+    /// `0x4`) or by billing (`0x1000000`) opens `OKAY` with its text, one flagged for a rename
+    /// (`0x4000`) answers `FORCE_RENAME_CHARACTER`, neither entering. Otherwise
+    /// `lastCharacterIndex` takes the selection, the state goes to 8 and the pick leaves with the
+    /// park's other requests; a later call in the same frame replaces its guid. Returns the rename
+    /// prompt's text when that arm fires, for the caller to signal.
+    fn enter_world(&mut self, index: i32) -> Option<&'static str> {
+        if self.selected.is_none() || !self.connected {
+            return None;
+        }
+        let character = usize::try_from(index)
+            .ok()
+            .and_then(|i| self.roster.get(i))?;
+        let (guid, flags) = (character.guid, character.flags);
+        if flags & 0x4 != 0 {
+            self.open("OKAY", Some(Text::Key("CHAR_LOGIN_LOCKED_FOR_TRANSFER")));
+            return None;
+        }
+        if flags & 0x0100_0000 != 0 {
+            self.open("OKAY", Some(Text::Key("CHAR_LOGIN_LOCKED_BY_BILLING")));
+            return None;
+        }
+        if flags & benilla_protocol::CHARACTER_FLAG_RENAME != 0 {
+            return Some("CHAR_RENAME_DESCRIPTION");
+        }
+        self.last_character = Some(index);
+        let queued = self.park_out.iter_mut().find_map(|r| match r {
+            ParkRequest::Char(CharRequest::Enter(g)) => Some(g),
+            _ => None,
+        });
+        match queued {
+            Some(g) => *g = guid,
+            None if self.state != ScreenState::EnterWorld => {
+                self.park_out.push(CharRequest::Enter(guid).into());
+            }
+            None => {}
+        }
+        self.state = ScreenState::EnterWorld;
+        None
     }
 
     /// `0x46b8d0`, `RequestRealmList`'s body: state 4, the dialog when asked, and the query
@@ -964,7 +1010,8 @@ impl GlueMgr {
             ScreenState::Connect => self.tick_connect(),
             ScreenState::CharList => self.tick_char_list(),
             ScreenState::RealmList => self.tick_realm_list(),
-            ScreenState::Idle => {}
+            // State 8's phases are the world entry's here.
+            ScreenState::EnterWorld | ScreenState::Idle => {}
         }
     }
 
@@ -1142,6 +1189,7 @@ fn notice_cvar(notice: GlueNotice) -> &'static str {
     match notice {
         GlueNotice::Tos => "readTOS",
         GlueNotice::Eula => "readEULA",
+        GlueNotice::TerminationWithoutNotice => "readTerminationWithoutNotice",
         GlueNotice::Scanning => "readScanning",
         GlueNotice::Contest => "readContest",
     }
@@ -1162,6 +1210,7 @@ pub(crate) fn drive_glue_mgr(
     classes: Option<Res<crate::chr_classes::ChrClassTable>>,
     creatures: Option<Res<crate::entities::Creatures>>,
     state: Option<Res<State<crate::char_select::ClientState>>>,
+    addon_reply: Option<Res<crate::net::AddonInfoReply>>,
     time: Res<Time>,
 ) {
     let now_ms = time.elapsed().as_millis() as u32;
@@ -1178,7 +1227,7 @@ pub(crate) fn drive_glue_mgr(
                 .map(|n| s.cvar(notice_cvar(*n)))
                 .collect();
             if let Some(values) = values {
-                let mut n = [NoticeState::default(); 4];
+                let mut n = [NoticeState::default(); 5];
                 for (notice, value) in GlueNotice::ALL.iter().zip(&values) {
                     n[*notice as usize] = NoticeState::from_cvar(value);
                 }
@@ -1206,6 +1255,16 @@ pub(crate) fn drive_glue_mgr(
         // In the world the glue is torn down, and the entry's second phase leaves state 0
         // (`0x46c252`).
         mgr.state = ScreenState::Idle;
+    }
+    // The AddOn registry, on a new VM and as the server's reply lands.
+    if let (Some(s), Some(reply)) = (script.as_deref_mut(), addon_reply.as_ref()) {
+        if fresh_vm || reply.is_changed() {
+            let realm = s
+                .cvar(crate::realm_select::CVAR_REALM_NAME)
+                .unwrap_or_default();
+            let roster: Vec<String> = mgr.roster.iter().map(|c| c.name.clone()).collect();
+            super::addons::register_for_glue(s, &realm, &roster, reply.0.as_deref());
+        }
     }
     if let (Some(s), Some(r)) = (script.as_deref_mut(), realms.as_ref()) {
         if fresh_vm || r.is_changed() {
@@ -1235,7 +1294,7 @@ pub(crate) fn drive_glue_mgr(
                 GlueRequest::StatusDialogClick => mgr.status_dialog_click(&mut logins),
                 GlueRequest::SetSavedAccountName(name) => crate::login::save_account(&name),
                 GlueRequest::Accept(notice) => {
-                    let n = mgr.notices.get_or_insert([NoticeState::default(); 4]);
+                    let n = mgr.notices.get_or_insert([NoticeState::default(); 5]);
                     n[notice as usize] = NoticeState {
                         accepted: true,
                         show_notice: false,
@@ -1271,9 +1330,37 @@ pub(crate) fn drive_glue_mgr(
                 GlueRequest::ChangeRealm(name) => mgr.connect_to_realm(&name),
                 // `0x46b880`; the VM cleared the roster in the verb.
                 GlueRequest::GetCharacterList => mgr.get_character_list(),
+                GlueRequest::EnterWorld => {
+                    let index = s.glue_select_cells().selected;
+                    if let Some(text) = mgr.enter_world(index) {
+                        s.fire_event(
+                            "FORCE_RENAME_CHARACTER",
+                            vec![benilla_ui::script::ScriptValue::Str(text.to_string())],
+                        );
+                    }
+                }
+                GlueRequest::CancelLogin => logins.push(GlueLogin::Abandon),
+                // The ambience, the sound effects and the credits music have no glue player
+                // yet; the music has ([`crate::sound::GlueMusicRequest`]).
+                GlueRequest::PlayGlueAmbience { .. }
+                | GlueRequest::StopGlueAmbience
+                | GlueRequest::StopAllSfx(_)
+                | GlueRequest::PlayCreditsMusic(_) => {}
+                GlueRequest::Screenshot
+                | GlueRequest::ReadyForAccountDataTimes
+                | GlueRequest::RealmSplit(_) => {}
             }
         }
         mgr.realm_cells = s.glue_realm_cells();
+        // `EnterWorld`'s `lastCharacterIndex` (`0x4d9bd0`), through the VM's mirror, whose
+        // writes the CVar sync persists.
+        if let Some(index) = mgr.last_character.take() {
+            s.set_cvar_engine(crate::char_select::CVAR_LAST_CHARACTER, &index.to_string());
+        }
+        // The glue manager's idle arm for the Scan.dll check (`0x4dab40`).
+        if glue_up {
+            s.run_glue_scan_tick();
+        }
     }
 
     // The native login's news.
@@ -1393,6 +1480,16 @@ fn glue_character(c: &Character, names: &RosterNames) -> GlueCharacter {
         file_string: text(names.create.and_then(|r| r.race_file(c.race))),
         gender: c.gender,
         flags: c.flags,
+        background: text(if c.class == 6 {
+            names.classes.and_then(|k| k.file(6))
+        } else {
+            let race = match c.race {
+                7 => 3,
+                8 => 2,
+                r => r,
+            };
+            names.create.and_then(|r| r.race_file(race))
+        }),
         // `0x5ec480`: the race row's display for the gender, then its model rows.
         model: names
             .create
@@ -1540,6 +1637,9 @@ fn flush_one(
                 .iter()
                 .map(|c| glue_character(c, names))
                 .collect();
+            if let Some(orc) = names.create.and_then(|r| r.race_file(2)) {
+                script.set_glue_default_background(orc);
+            }
             // `RequestRealmList(1)` at `0x47254b`, when no realm has been chosen.
             if script.load_glue_roster(roster) {
                 mgr.request_realm_list(true);

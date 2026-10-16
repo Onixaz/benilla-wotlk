@@ -64,6 +64,7 @@ pub const PET_NAME_TOKEN_FALLBACK: &str = "PET";
 #[derive(Debug, Clone)]
 struct ChrClass {
     damage_bonus_stat: u32,
+    file: Option<String>,
     pet_name_token: Option<String>,
     name: Option<String>,
     has_relic_slot: bool,
@@ -122,6 +123,11 @@ impl ChrClasses {
         self.by_id.get(&class).map_or(0, |c| c.spell_family)
     }
 
+    /// The class's `Filename` token (`"DEATHKNIGHT"`), `None` for a class with no row.
+    pub fn file(&self, class: u32) -> Option<&str> {
+        self.by_id.get(&class)?.file.as_deref()
+    }
+
     /// Every row's names in record order, the walk `FillLocalizedClassList` makes.
     pub fn names(&self) -> &[ChrClassNames] {
         &self.names
@@ -160,6 +166,7 @@ pub fn load_chr_classes(chain: &mut Chain) -> Result<ChrClasses> {
             id,
             ChrClass {
                 damage_bonus_stat: u32_at(r, DAMAGE_BONUS_STAT_FIELD).unwrap_or(0),
+                file: str_at(&rs, r, FILENAME_FIELD),
                 pet_name_token: str_at(&rs, r, PET_NAME_TOKEN_FIELD),
                 name: str_at(&rs, r, NAME_FIELD),
                 has_relic_slot: u32_at(r, FLAGS_FIELD).is_some_and(|v| v & FLAG_RELIC_SLOT != 0),

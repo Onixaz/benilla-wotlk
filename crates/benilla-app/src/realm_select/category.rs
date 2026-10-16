@@ -192,6 +192,8 @@ pub(super) mod tests {
 
     fn cat(id: u32, name: &str) -> RealmCategory {
         RealmCategory {
+            locale_mask: 0,
+            flags: 0,
             id,
             name: name.into(),
         }

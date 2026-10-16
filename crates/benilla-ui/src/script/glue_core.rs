@@ -7,24 +7,26 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{flag, string_arg};
-use super::Model;
 
-/// One of the four user agreements the login screen walks before it shows the login boxes
-/// (`AccountLogin_ShowUserAgreements`), each a CVar the glue manager reads once at startup
-/// (`0x46a400`): `readTOS`, `readEULA`, `readScanning`, `readContest`.
+/// One of the five user agreements the login screen walks before it shows the login boxes
+/// (`AccountLogin_ShowUserAgreements`), each a CVar the glue manager reads once at its init
+/// (`CGlueMgr::Initialize`, `0x4db9f0`): `readTOS`, `readEULA`, `readTerminationWithoutNotice`,
+/// `readScanning`, `readContest`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GlueNotice {
     Tos,
     Eula,
+    TerminationWithoutNotice,
     Scanning,
     Contest,
 }
 
 impl GlueNotice {
-    /// All four, in the glue manager's seeding order (`0x46a406`-`0x46a48e`).
-    pub const ALL: [GlueNotice; 4] = [
+    /// All five, in the glue manager's seeding order.
+    pub const ALL: [GlueNotice; 5] = [
         GlueNotice::Tos,
         GlueNotice::Eula,
+        GlueNotice::TerminationWithoutNotice,
         GlueNotice::Scanning,
         GlueNotice::Contest,
     ];
@@ -125,6 +127,27 @@ pub enum GlueRequest {
     /// `LaunchURL(url)` (`0x46cf60` → `0x5abd00`) for a URL that passed `launch_url_allowed`
     /// (`0x5abd00` tests `0x5abc10` first): the player's browser opens it (`0x429ff0`).
     LaunchUrl(String),
+    /// `PlayGlueAmbience(name [, fade])` (`0x4dc0c0`): the named ambience, faded in over `fade`
+    /// seconds, or the sound's own when none.
+    PlayGlueAmbience { name: String, fade: Option<f32> },
+    /// `StopGlueAmbience()` (`0x4dc130`): a one-second fade out.
+    StopGlueAmbience,
+    /// `StopAllSFX(fade)` (`0x4dd380`).
+    StopAllSfx(f32),
+    /// `PlayCreditsMusic(kit)` (`0x4dc150`).
+    PlayCreditsMusic(String),
+    /// `EnterWorld()` (`0x4dc510` → `CGlueMgr::EnterWorld` `0x4d9bd0`), whose guards are the
+    /// host's.
+    EnterWorld,
+    /// `CancelLogin()` (`0x4dce60` → `0x4d99e0`).
+    CancelLogin,
+    /// `Screenshot()` (`0x4dc520`), answered with `GLUE_SCREENSHOT_SUCCEEDED` or `_FAILED`.
+    Screenshot,
+    /// `ReadyForAccountDataTimes()` (`0x4de390`): a bare `CMSG_READY_FOR_ACCOUNT_DATA_TIMES`.
+    ReadyForAccountDataTimes,
+    /// `CMSG_REALM_SPLIT` with this state: `0xFFFFFFFF` asks (`RequestRealmSplitInfo`,
+    /// `0x4de2e0`), 0 to 2 answers (`SetRealmSplitState`, `0x4de250`).
+    RealmSplit(u32),
 }
 
 /// The hosts `LaunchURL` opens, the 10-entry table at `0x85cc34`: a leading `*` stands for one
@@ -202,7 +225,7 @@ pub(crate) struct GlueCore {
     requests: Vec<GlueRequest>,
     /// The `accountName` CVar (`[0x8826c8]`), which `GetSavedAccountName` (`0x46cdd0`) reads.
     saved_account: String,
-    notices: [NoticeState; 4],
+    notices: [NoticeState; 5],
     /// ClientServices' world-connection flag (`[svc+0x1b00]`), which `IsConnectedToServer`
     /// (`0x46d380`) reads.
     connected: bool,
@@ -214,6 +237,8 @@ pub(crate) struct GlueCore {
     pub(super) realms: super::glue_realm::GlueRealmList,
     /// The character roster and the select verbs' cells ([`super::glue_select`]).
     pub(super) roster: super::glue_select::GlueRoster,
+    /// The system verbs' slots ([`super::glue_system`]).
+    pub(super) system: super::glue_system::GlueSystem,
 }
 
 /// `SetCurrentScreen`'s buffer, 0x40 bytes with its terminator (`0x46b860`, `SStrCopy`).
@@ -264,8 +289,7 @@ impl super::UiScript {
 }
 
 pub(super) fn queue(lua: &Lua, request: GlueRequest) {
-    lua.app_data_mut::<Model>()
-        .expect("model app_data")
+    crate::script::model_mut_of(lua)
         .glue
         .requests
         .push(request);
@@ -300,6 +324,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
             let account = string_arg(lua, account, USAGE)?;
             let password = string_arg(lua, password, USAGE)?;
+            // `CGlueMgr::LoginServerLogin` (`0x4d8a30`) does nothing until the Scan.dll check
+            // has opened its gate (`[0xb6b474]`, `0x4d8a33`).
+            let scan = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data")
+                .glue
+                .system
+                .scan;
+            if scan != super::glue_system::ScanDll::Ok {
+                return Ok(());
+            }
             queue(
                 lua,
                 GlueRequest::Login(GlueCredentials { account, password }),
@@ -320,7 +355,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSavedAccountName",
         lua.create_function(|lua, ()| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua.app_data_ref::<crate::script::ModelCell>().expect("model app_data");
             lua.create_string(&model.glue.saved_account)
         })?,
     )?;
@@ -330,8 +365,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetSavedAccountName",
         lua.create_function(|lua, name: Value| {
             let name = string_arg(lua, name, "Usage: SetSavedAccountName(\"accountName\")")?;
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
+            crate::script::model_mut_of(lua)
                 .glue
                 .saved_account = name.clone();
             queue(lua, GlueRequest::SetSavedAccountName(name));
@@ -353,6 +387,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             "AcceptEULA",
         ),
         (
+            GlueNotice::TerminationWithoutNotice,
+            "ShowTerminationWithoutNoticeNotice",
+            "TerminationWithoutNoticeAccepted",
+            "AcceptTerminationWithoutNotice",
+        ),
+        (
             GlueNotice::Scanning,
             "ShowScanningNotice",
             "ScanningAccepted",
@@ -369,22 +409,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             show,
             lua.create_function(move |lua, _: MultiValue| {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua.app_data_ref::<crate::script::ModelCell>().expect("model app_data");
                 Ok(flag(model.glue.notices[i].show_notice))
             })?,
         )?;
         g.set(
             accepted,
             lua.create_function(move |lua, _: MultiValue| {
-                let model = lua.app_data_ref::<Model>().expect("model app_data");
+                let model = lua.app_data_ref::<crate::script::ModelCell>().expect("model app_data");
                 Ok(flag(model.glue.notices[i].accepted))
             })?,
         )?;
         g.set(
             accept,
             lua.create_function(move |lua, _: MultiValue| {
-                lua.app_data_mut::<Model>()
-                    .expect("model app_data")
+                crate::script::model_mut_of(lua)
                     .glue
                     .notices[i] = NoticeState {
                     accepted: true,
@@ -432,8 +471,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 }
                 name.truncate(end);
             }
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
+            crate::script::model_mut_of(lua)
                 .glue
                 .screen = name;
             Ok(())
@@ -445,7 +483,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetServerName",
         lua.create_function(|lua, _: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua.app_data_ref::<crate::script::ModelCell>().expect("model app_data");
             let server = &model.glue.server;
             Ok(MultiValue::from_vec(vec![
                 Value::String(lua.create_string(&server.name)?),
@@ -458,7 +496,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsConnectedToServer",
         lua.create_function(|lua, _: MultiValue| {
-            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            let model = lua.app_data_ref::<crate::script::ModelCell>().expect("model app_data");
             Ok(flag(model.glue.connected))
         })?,
     )?;
@@ -530,6 +568,11 @@ mod tests {
     #[test]
     fn default_server_login_queues_the_strings_or_raises_its_usage() {
         let mut s = UiScript::new_glue().unwrap();
+        // The login waits for the Scan.dll check's gate, which a failed load and the stock
+        // `ScanDLLContinueAnyway` open.
+        s.run("ScanDLLStart('v', 'd')").unwrap();
+        s.run_glue_scan_tick();
+        s.run("ScanDLLContinueAnyway()").unwrap();
         s.run("DefaultServerLogin('probe', 1234)").unwrap();
         let reqs = s.take_glue_requests();
         match reqs.as_slice() {
@@ -684,7 +727,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             s.eval::<Vec<String>>("return { GetBuildInfo() }").unwrap(),
-            ["Version", "Release", "1.12.1", "5875", "Sep 19 2006"]
+            ["Version", "Release", "3.3.5", "12340", "Jun 24 2010"]
         );
     }
 

@@ -108,22 +108,6 @@ fn start_server_alert(world: &mut World, script: &UiScript) {
     }
 }
 
-/// Read the four agreement CVars into the glue VM and the manager before any screen is set, as
-/// the reference does (`0x46a400` at `0x402b36`, then `SET_GLUE_SCREEN` at `0x402b65`): the login
-/// screen's `OnShow` asks them at once, and nothing asks again.
-fn seed_agreements(world: &mut World, script: &mut UiScript) {
-    let Some(cvars) = world.get_resource::<crate::cvars::Cvars>() else {
-        return;
-    };
-    let notices = super::glue_mgr::read_agreements(cvars);
-    for notice in GlueNotice::ALL {
-        script.set_glue_notice(notice, notices[notice as usize]);
-    }
-    if let Some(mut mgr) = world.get_resource_mut::<super::glue_mgr::GlueMgr>() {
-        mgr.set_notices(notices);
-    }
-}
-
 /// A fresh VM from `make` on the process clock with the addon asset probes wired, or `None` (the
 /// world's VM removed) when the VM cannot start.
 fn new_vm<E: std::fmt::Display>(

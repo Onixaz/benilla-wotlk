@@ -130,6 +130,7 @@ mod glue;
 mod glue_core;
 mod glue_realm;
 mod glue_select;
+mod glue_system;
 pub use glue::{VmKind, GLUE_EVENTS};
 pub use glue_core::{
     launch_url_allowed, GlueCredentials, GlueNotice, GlueRequest, GlueServer, NoticeState,
@@ -139,6 +140,7 @@ pub use glue_realm::{
     GlueRealmType, RealmSortKey,
 };
 pub use glue_select::{GlueCharacter, GlueScenePane, GlueSelectCells};
+pub use glue_system::{GlueBilling, ScanDll};
 mod gm_ticket;
 mod gossip;
 mod guild;
@@ -842,6 +844,8 @@ fn install_framescript(vm: VmKind) -> mlua::Result<Lua> {
     bit::install(&lua)?;
     stdlib::install(&lua)?;
     lua51::install(&lua)?;
+    // `issecure` and `securecall`, FrameScript's base table `0xa443a8`.
+    secure_call::install(&lua)?;
 
     // Table `0xad2184`: `GetTime`, `GetGameTime` and `ConsoleExec`. `ReadFile`, `DeleteFile`,
     // `AppendToFile` and `GetAccountExpansionLevel` are not built here.
@@ -865,6 +869,8 @@ fn install_framescript(vm: VmKind) -> mlua::Result<Lua> {
     // Table `0xb2d928`: `PlaySound`, `PlayMusic`, `PlaySoundFile`, `StopMusic` and the sound
     // driver verbs.
     sound::install(&lua)?;
+    // Table `0xacd320`, the video options, with `RestartGx`.
+    cvars::install_video_options(&lua)?;
     Ok(lua)
 }
 
@@ -908,7 +914,6 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     cvars::install(lua)?;
     combat_log::install(lua)?;
     battle_net::install(lua)?;
-    secure_call::install(lua)?;
     autocomplete::install(lua)?;
     nameplate::install_verbs(lua)?;
     saved::install(lua)?;

@@ -157,6 +157,12 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // `0x51e027`, "" with flags 0x120: the tracked achievements, which `LoadTrackedState` reads
     // and the tracking verbs write (`0x5b3840`, `0x5b1fa0`); per character like the dropdowns.
     same("trackedAchievements", "").per_character(),
+    // The login screen's third agreement (`readTerminationWithoutNotice`, "0"), and the saved
+    // Battle.net account list (`accountList`, "") and authenticator flag
+    // (`g_accountUsesToken`, "0") the glue's account verbs read and write.
+    same("readTerminationWithoutNotice", "0"),
+    same("accountList", ""),
+    same("g_accountUsesToken", "0"),
 ];
 
 /// The host-backed CVars, one row per knob that has a reader: a host knob, or a Lua consumer

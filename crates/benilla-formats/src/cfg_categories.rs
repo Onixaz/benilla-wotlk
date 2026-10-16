@@ -18,6 +18,10 @@ pub struct RealmCategory {
     pub id: u32,
     /// The enUS `Name_lang` slot, the column the reference reads on an enUS or enGB client.
     pub name: String,
+    /// Column 1, the locales the category is for, one bit per locale index.
+    pub locale_mask: u32,
+    /// Column 3; bit `0x1` marks a tournament category.
+    pub flags: u32,
 }
 
 /// `ID`, `LocaleMask`, `CreateCharsetMask`, `Flags`, then `Name_lang` over sixteen locales and
@@ -48,6 +52,8 @@ pub fn load_realm_categories(chain: &mut Chain) -> Result<Vec<RealmCategory>> {
                 id: u32_at(r, 0)?,
                 // An empty name is pushed as the empty string; only a missing row reads "UNKNOWN".
                 name: str_at(&rs, r, 4).unwrap_or_default(),
+                locale_mask: u32_at(r, 1).unwrap_or(0),
+                flags: u32_at(r, 3).unwrap_or(0),
             })
         })
         .collect())

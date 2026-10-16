@@ -8,8 +8,8 @@
         GlueDialogTypes["BENILLA_REALMLIST"] = {
             -- The realmList CVar's registered help text.
             text = "Address of realm list server",
-            button1 = TEXT(OKAY),
-            button2 = TEXT(CANCEL),
+            button1 = OKAY,
+            button2 = CANCEL,
             hasEditBox = 1,
             maxLetters = 64,
             OnShow = function()
@@ -32,7 +32,7 @@
 
         GlueDialogTypes["BENILLA_REALMLIST_PINNED"] = {
             text = "",
-            button1 = TEXT(OKAY),
+            button1 = OKAY,
             button2 = nil,
         };
 
@@ -77,7 +77,7 @@
             end
         end
     </Script>
-    <Button name="BenillaRealmlistButton" inherits="GlueButtonSmallTemplate" parent="AccountLoginUI" text="Realmlist">
+    <Button name="BenillaRealmlistButton" inherits="GlueButtonSmallTemplateBlue" parent="AccountLoginUI" text="Realmlist">
         <Anchors>
             <Anchor point="BOTTOM" relativeTo="AccountLoginCinematicsButton" relativePoint="TOP">
                 <Offset>

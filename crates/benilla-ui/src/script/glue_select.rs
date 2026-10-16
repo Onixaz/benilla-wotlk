@@ -16,7 +16,7 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::binding_abi::{flag, number_arg, string_arg};
+use super::binding_abi::{flag, ftol, number_arg, string_arg};
 use super::glue_core::{leading_int, queue, GlueRequest};
 use super::{Model, ScriptValue};
 
@@ -43,6 +43,9 @@ pub struct GlueCharacter {
     pub gender: u8,
     /// `+0xfc`: bit `0x2000` is a ghost.
     pub flags: u32,
+    /// The stage `GetSelectBackgroundModel` names for the record: the class's file name for a
+    /// Death Knight, else the race row's file string, Gnome read as Dwarf and Troll as Orc.
+    pub background: String,
     /// Whether the race and gender have a character model (`0x5ec480` finds a row with a model
     /// path): the build `0x472950` makes for a record only goes ahead with one.
     pub model: bool,
@@ -106,6 +109,8 @@ pub(crate) struct GlueRoster {
     cells: GlueSelectCells,
     /// `[0xb42174]`: the name of the model frame `SetCharSelectModelFrame` found.
     model_frame: Option<String>,
+    /// The stage for an index off the roster: race 2's file string.
+    pub(super) default_background: String,
 }
 
 /// `rad = deg · 0.017453292` (`0x7ffaac`, a float).
@@ -201,7 +206,7 @@ impl super::UiScript {
         let (sw, sh) = (model.screen.width(), model.screen.height());
         model
             .arena
-            .model_kinds()
+            .ticked_kinds()
             .iter()
             .filter_map(|&h| {
                 let f = model.arena.frame(h)?;
@@ -281,6 +286,11 @@ impl super::UiScript {
     /// the host to raise the realm list (the return value, `RequestRealmList(1)` at `0x47254b`);
     /// otherwise the cell is set to 0 (`0x472556`), the `lastCharacterIndex` CVar's integer is
     /// selected (`0x472550`-`0x472563`) and `CHARACTER_LIST_UPDATE` fires.
+    /// Seed the stage `GetSelectBackgroundModel` names for an index off the roster.
+    pub fn set_glue_default_background(&mut self, stage: &str) {
+        self.model_mut().glue.roster.default_background = stage.to_string();
+    }
+
     pub fn load_glue_roster(&mut self, roster: Vec<GlueCharacter>) -> bool {
         let last = self
             .cvar("lastCharacterIndex")
@@ -331,8 +341,8 @@ fn model_frame_handle(model: &Model) -> Option<crate::widget::FrameHandle> {
     .then_some(h)
 }
 
-fn model(lua: &Lua) -> mlua::AppDataRefMut<'_, Model> {
-    lua.app_data_mut::<Model>().expect("model app_data")
+fn model(lua: &Lua) -> crate::script::ModelGuard<'_> {
+    crate::script::model_mut_of(lua)
 }
 
 fn arg(args: &MultiValue, i: usize) -> Value {
@@ -341,6 +351,27 @@ fn arg(args: &MultiValue, i: usize) -> Value {
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
+
+    // `GetSelectBackgroundModel(index)` (`0x4e3620`): the usage error for a non-number, then the
+    // 1-based record's stage, race 2's for an index off the roster.
+    g.set(
+        "GetSelectBackgroundModel",
+        lua.create_function(|lua, index: Value| {
+            let Some(n) = lua.coerce_number(index)? else {
+                return Err(mlua::Error::runtime("Usage: GetSelectBackgroundModel(index)"));
+            };
+            let m = model(lua);
+            let roster = &m.glue.roster;
+            let i = ftol(n).wrapping_sub(1);
+            let stage = usize::try_from(i)
+                .ok()
+                .and_then(|i| roster.records.get(i))
+                .map_or(roster.default_background.as_str(), |r| {
+                    r.character.background.as_str()
+                });
+            lua.create_string(stage)
+        })?,
+    )?;
 
     // `0x4731c0`: a string or number (`0x6f3510`) or the usage error (`0x838720`); the global of
     // that name castable to the model type (`0x76c760`) becomes the frame (`0x472100`), else the
@@ -529,6 +560,7 @@ mod tests {
             file_string: "NightElf".into(),
             gender: 1,
             flags: 0,
+            background: "NightElf".into(),
             model: true,
         }
     }
@@ -539,7 +571,7 @@ mod tests {
         s.register_cvars([("lastCharacterIndex", "0")]);
         s.run(
             "FIRED = {} local f = CreateFrame('Frame', 'Listener') \
-             f:SetScript('OnEvent', function() \
+             f:SetScript('OnEvent', function(self, event, arg1, arg2) \
                table.insert(FIRED, event .. ' ' .. tostring(arg1)) end) \
              f:RegisterEvent('UPDATE_SELECTED_CHARACTER') \
              f:RegisterEvent('CHARACTER_LIST_UPDATE')",
@@ -969,7 +1001,7 @@ mod tests {
         s.register_cvars([("lastCharacterIndex", "0")]);
         s.run(
             "FIRED = {} local f = CreateFrame('Frame', 'Listener') \
-             f:SetScript('OnEvent', function() table.insert(FIRED, event .. ' ' .. tostring(arg1)) end) \
+             f:SetScript('OnEvent', function(self, event, arg1) table.insert(FIRED, event .. ' ' .. tostring(arg1)) end) \
              f:RegisterEvent('UPDATE_SELECTED_CHARACTER') f:RegisterEvent('CHARACTER_LIST_UPDATE')",
         )
         .unwrap();

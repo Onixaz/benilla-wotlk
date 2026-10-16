@@ -456,6 +456,22 @@ def write_event_catalog(path, rows):
             out.write(f"{event_id}\t{name}\n")
 
 
+def write_glue_event_catalog(path, rows):
+    with open(path, "w", encoding="utf-8", newline="\n") as out:
+        out.write(
+            f"# FrameScript C->Lua glue-event catalog of the {VERSION} client "
+            f"(WoW.exe build {BUILD}): eventId -> name.\n"
+            f"# Source: the {GLUE_EVENT_COUNT:#x}-slot event-name pointer array at "
+            f"{GLUE_EVENT_NAMES:#x}, filled by {GLUE_EVENT_INIT[0]:#x}..{GLUE_EVENT_INIT[1] - 1:#x}.\n"
+            "# The glue manager's Resume (0x4da5f0) hands it to the FrameScript event registry "
+            "at 0x81b5f0 in place of the world table, so a glue event's id names a different "
+            "event in-game.\n"
+            "eventId\tname\n"
+        )
+        for event_id, name in rows:
+            out.write(f"{event_id}\t{name}\n")
+
+
 def disassembly(image, objdump):
     """Return objdump's one-instruction-per-line view of `.text`.
 
@@ -2092,10 +2108,10 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
     catalog_out = os.path.join(args.out_dir, "3.3.5a-event-catalog.tsv")
     write_event_catalog(catalog_out, rows)
-    print(
-        f"wrote {catalog_out}: {len(rows)} named slots of {EVENT_COUNT}; "
-        f"validated {len(glue_rows)} glue slots separately"
-    )
+    print(f"wrote {catalog_out}: {len(rows)} named slots of {EVENT_COUNT}")
+    glue_out = os.path.join(args.out_dir, "3.3.5a-glue-events.tsv")
+    write_glue_event_catalog(glue_out, glue_rows)
+    print(f"wrote {glue_out}: {len(glue_rows)} glue slots")
 
     instructions = disassembly(image, args.objdump)
     firesites = event_firesites(image, instructions, rows)

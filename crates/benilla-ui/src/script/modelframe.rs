@@ -382,8 +382,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let c = int(&c);
             with_model(lua, &this, |_| ())?;
             let h = frame_handle_of(lua, &this)?;
-            lua.app_data_mut::<Model>()
-                .expect("model app_data")
+            crate::script::model_mut_of(lua)
                 .set_pane_camera(h, c);
             Ok(())
         })?,
