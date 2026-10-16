@@ -89,7 +89,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     //
     // Each class's chain is a fixed list in the reference, so a table here. `ScrollingMessageFrame`
     // derives from `Frame`, not `MessageFrame` (`0x787940`); `SimpleHTML` keeps its capitals,
-    // unlike the `SimpleHtml` variant; there is no `Cooldown` type (the reference's is a `Model`).
+    // unlike the `SimpleHtml` variant; `Cooldown` is its own frame class (`0x5ebe70`).
     fn type_chain(kind: FrameKind) -> &'static [&'static str] {
         match kind {
             FrameKind::Frame => &["Frame", "Region"],
