@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# The in-loop verify, with the client data: fmt everywhere, clippy and test on the changed crates
-# and their dependents, the player tests when `benilla-app` or `benilla-formats` is in scope, and
-# the engine boot against the install when `benilla-worldview` is.
+# The in-loop verify, with the client data: fmt, clippy and test on the whole workspace, the player
+# tests, and the engine boot against the install.
 #
-# The change set is the fork point against main plus staged, unstaged and untracked files. A path
-# under crates/<dir>/ scopes that package, docs/ and *.md scope nothing, and any other path scopes
-# the whole workspace. CHECK_FULL=1 scopes the whole workspace too.
+# The change set is the fork point against main plus staged, unstaged and untracked files: none
+# verifies nothing, and docs/ and *.md alone run fmt only. CHECK_SCOPED=1 narrows a round to the
+# changed crates and their dependents (a path under crates/<dir>/ scopes that package, any other
+# path the whole workspace), the player tests to when `benilla-app` or `benilla-formats` is in
+# scope, and the engine boot to when `benilla-worldview` is. CHECK_FULL=1 checks the whole
+# workspace even with no changes.
 # Where the install (WOW_DATA, or the resolver's own ladder) and the addon corpus
 # (BENILLA_ADDON_CORPUS, or the `wow-addons-vanilla` link) both resolve, BENILLA_REQUIRE_DATA=1
 # turns a data-gated skip into a failure. The land gates, scripts/gates.sh, read no data at all.
@@ -55,6 +57,9 @@ $changed
 EOF
 
 dirlist="$(printf '%s\n' $dirs | sed 's/.*DIR://' | sort -u)"
+if [ -z "$full_reason" ] && [ -n "$dirlist" ] && [ "${CHECK_SCOPED:-}" != "1" ]; then
+    full_reason="the default; CHECK_SCOPED=1 narrows to the changed crates"
+fi
 if [ -z "$full_reason" ] && [ -z "$dirlist" ]; then
     echo "check: docs-only round ($(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s)) — no gate can change; fmt only"
     cargo fmt --all -- --check || exit 1
@@ -64,7 +69,7 @@ fi
 
 # ── Changed crates → reverse-dependency closure, off cargo metadata ──────────────────────────────
 if [ -n "$full_reason" ]; then
-    echo "check: $full_reason — scoping the whole workspace"
+    echo "check: the whole workspace ($full_reason)"
     pkgs="WORKSPACE"
 elif [ -z "$python" ]; then
     echo "check: no Python 3 (tried python3, py -3, python) to scope the change — the whole workspace"
@@ -176,5 +181,5 @@ if in_scope benilla-worldview; then
     fi
 fi
 
-echo "CHECK GREEN (scoped: $pkgs)"
+echo "CHECK GREEN (scope: $pkgs)"
 echo "  (the land gates, scripts/gates.sh, run the whole workspace without the data before a pull request)"

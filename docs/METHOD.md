@@ -83,11 +83,12 @@ crate of its own or a fork, and benilla opens a piece of itself to such a crate 
   (`WOW_DATA=`, `BENILLA_ADDON_CORPUS=`), so a test that reads the install without opening with
   `wow_data_or_skip!` fails there and not on a clone, and CI runs the same script. It runs on
   the tree that lands, before its pull request; it is memoized on the tree.
-- **Per round**: `scripts/check.sh`, scoped to the changed crates and their dependents, with the
-  data: the tests that read the install or the addon corpus, the player tests, and the engine
-  boot against the install. A test that reads data skips where it is absent and the check prints
-  the count; where the data is, a skip is a failure (`BENILLA_REQUIRE_DATA=1`). Run each gate
-  once per round; `tee` the output to a file and grep the file.
+- **Per round**: `scripts/check.sh`, on the whole workspace with the data: the tests that read
+  the install or the addon corpus, the player tests, and the engine boot against the install.
+  `CHECK_SCOPED=1` narrows it to the changed crates and their dependents. A test that reads data
+  skips where it is absent and the check prints the count; where the data is, a skip is a
+  failure (`BENILLA_REQUIRE_DATA=1`). Run each gate once per round; `tee` the output to a file
+  and grep the file.
 - **A clean run** is the fourth gate: `scripts/smoke.sh`, a live login and logout against the
   local server. For wire work the gate is a live run with a trace (`WOW_MOVE_TRACE=<path>`,
   tags filtered), never a capture: capture mode has no network.

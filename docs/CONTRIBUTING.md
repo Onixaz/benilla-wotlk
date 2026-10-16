@@ -146,9 +146,9 @@ out of scope is closed with the reason.
   probe, every test and both scripts below build the same, so nothing compiles twice. Its debug
   assertions make it no place to read frame time. `--release` is the shipped and the measured
   profile, fat LTO over one codegen unit, so it is built for a frame-time number or a release
-  (`cargo ship`), not per round. `scripts/check.sh` verifies a round of work with the data;
-  `scripts/gates.sh` is the full chain without it, and it opens a window for the engine boot,
-  so it needs a display. `WOW_STOCK_UI=1` boots a dev build on the stock interface alone,
+  (`cargo ship`), not per round. `scripts/check.sh` verifies a round on the whole workspace
+  with the data; `scripts/gates.sh` is the full chain without it, and it opens a window for the
+  engine boot, so it needs a display. `WOW_STOCK_UI=1` boots a dev build on the stock interface alone,
   without benilla's layer. Work on a branch.
 
 ## Reporting a bug
