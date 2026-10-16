@@ -119,10 +119,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("SoundEntriesAdvanced", "#244 sound entry extensions"),
     ("SoundFilter", "#244 sound filters"),
     ("SoundFilterElem", "#244 sound filters"),
-    (
-        "SpellDescriptionVariables",
-        "#199 spell description variables",
-    ),
     ("SpellDifficulty", "#240 per-difficulty spell variants"),
     ("SpellItemEnchantmentCondition", "#202 meta gem conditions"),
     ("SpellMissile", "#110 spell missiles"),

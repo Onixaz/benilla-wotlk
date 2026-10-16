@@ -148,6 +148,7 @@ tables! {
         "SpellCastTimes" => spells::cast_times::schema(),
         "SpellCategory" => spells::spell_category_schema(),
         "SpellChainEffects" => spell_visual::chain_effects::chain_effects_schema(),
+        "SpellDescriptionVariables" => spells::desc_vars::schema(),
         "SpellDispelType" => spells::dispel_types::schema(),
         "SpellDuration" => spells::duration::schema(),
         "SpellEffectCameraShakes" => camera_shakes::spell_effect_camera_shakes_schema(),
