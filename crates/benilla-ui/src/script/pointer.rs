@@ -490,6 +490,14 @@ impl UiScript {
                     model
                         .id_to_frame
                         .get(&id)
+                        // A message frame with its links off takes no link clicks (`0x9699c0`).
+                        .filter(|fh| {
+                            !matches!(
+                                model.arena.frame(**fh).map(|f| &f.kind_state),
+                                Some(crate::widget::KindState::ScrollingMessage(smf))
+                                    if !smf.hyperlinks_enabled
+                            )
+                        })
                         .and_then(|fh| model.link_spans.get(fh))
                         .and_then(|spans| {
                             spans

@@ -243,7 +243,10 @@ pub use char_stats::{
 pub use chat_misc::EmoteRequest;
 pub use chat_send::ChatSend;
 pub use chat_types::ChatTypeColor;
-pub use chat_window::{message_group_index, ChatWindowLook, MESSAGE_GROUPS};
+pub use chat_window::{
+    frame_point_index, frame_point_name, message_group_index, ChatWindowLook,
+    CHAT_CACHE_ADDED_VERSION, COMBAT_LOG_FIRST_GROUP, MESSAGE_GROUPS,
+};
 pub use class_list::ClassNames;
 pub use combat_log::{
     CombatLogEntry, CombatLogPayload, CombatLogStore, CombatLogUnit, Damage, MissType, OBJECT_NONE,
@@ -269,7 +272,7 @@ pub use death::{DeathAction, DeathUiState};
 pub use dressup::DressUpIntent;
 pub use duel::DuelRequest;
 pub use follow::FollowRequest;
-pub use gm_ticket::{GmTicketIntent, GmTicketWrite};
+pub use gm_ticket::GmTicketIntent;
 pub use gossip::{GossipMenu, GossipOptionView, GossipQuestRow};
 pub use guild::{
     GuildMemberInfo, GuildRankEdit, GuildRankInfo, GuildRequest, GuildState, LastOnline, UnitGuild,
@@ -381,7 +384,7 @@ const REG_FRAME_METHODS: &str = "__benilla_frame_methods";
 const REG_REGION_METHODS: &str = "__benilla_region_methods";
 #[cfg(test)]
 pub(crate) const REG_REGION_METHODS_FOR_TEST: &str = REG_REGION_METHODS;
-/// The title region's method table and metatable: the 19 Region methods and nothing else.
+/// The title region's method table and metatable: the Region-map methods and nothing else.
 const REG_TITLE_METHODS: &str = "__benilla_title_methods";
 const REG_TITLE_META: &str = "__benilla_title_meta";
 /// The region leaf tables and metatables: Texture and FontString each answer their own map.
@@ -455,8 +458,9 @@ pub(crate) const FONTSTRING_ONLY_METHODS: [&str; 23] = [
     "GetSpacing",
 ];
 
-/// The Region method map (`0xcf54b4`): the 19 names every region leaf reaches on a miss.
-pub(crate) const REGION_MAP_METHODS: [&str; 19] = [
+/// The Region method map: the names every region leaf reaches on a miss, 3.3.5a's `SetSize` and
+/// `GetSize` (`0x49d7a0`, `0x49d6f0`, registrar `0xac1480`) among them.
+pub(crate) const REGION_MAP_METHODS: [&str; 21] = [
     "GetObjectType",
     "IsObjectType",
     "GetName",
@@ -471,6 +475,8 @@ pub(crate) const REGION_MAP_METHODS: [&str; 19] = [
     "SetWidth",
     "GetHeight",
     "SetHeight",
+    "GetSize",
+    "SetSize",
     "GetNumPoints",
     "GetPoint",
     "SetPoint",

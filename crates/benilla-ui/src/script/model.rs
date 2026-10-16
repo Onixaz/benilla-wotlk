@@ -878,19 +878,23 @@ pub(crate) struct Model {
     pub(crate) rest_pool: u32,
     pub(crate) resting: bool,
 
-    /// `PLAYER_FLAGS` bit 12, `PartialPlayTime()` (`0x48eb70`), an anti-addiction regime's flag.
+    /// `PLAYER_FLAGS` bit 12, `PartialPlayTime()` (`0x51cb30`), an anti-addiction regime's flag.
     pub(crate) partial_play_time: bool,
 
-    /// `PLAYER_FLAGS` bit 13, `NoPlayTime()` (`0x48ebe0`), the same regime's harsher half.
+    /// `PLAYER_FLAGS` bit 13, `NoPlayTime()` (`0x51cba0`), the same regime's harsher half.
     pub(crate) no_play_time: bool,
 
-    /// `GetBillingTimeRested()` (`0x48ec50`) in minutes from `SMSG_AUTH_RESPONSE`, unconverted.
+    /// `GetBillingTimeRested()` (`0x511c40`) in minutes from `SMSG_AUTH_RESPONSE`, unconverted.
     pub(crate) billing_time_rested: u32,
+    /// `PLAYER_FLAGS` bit 25, the server's no-XP flag, `IsXPUserDisabled()` (`0x614140`).
+    pub(crate) xp_user_disabled: bool,
+    /// The account's expansion byte from `SMSG_AUTH_RESPONSE`, `GetAccountExpansionLevel()`.
+    pub(crate) account_expansion: u8,
     /// `InCinematic()`. While set, `StaticPopup_Show` refuses any dialog without
     /// `interruptCinematic` (`StaticPopup.lua:1454`).
     pub(crate) in_cinematic: bool,
     /// `Exhaustion.dbc` by rest byte, `(name, factor)`: `GetRestState` indexes it and row 1 scales
-    /// `GetXPExhaustion` (`0x48d3f0`). enUS rows seed it until the app loads the install's own.
+    /// `GetXPExhaustion` (`0x51b960`). enUS rows seed it until the app loads the install's own.
     pub(crate) exhaustion: HashMap<u8, (String, f64)>,
 
     /// The paper doll's combat stats, `None` until the first push.
@@ -1503,6 +1507,8 @@ impl Model {
             partial_play_time: false,
             no_play_time: false,
             billing_time_rested: 0,
+            xp_user_disabled: false,
+            account_expansion: 0,
             in_cinematic: false,
             exhaustion: [
                 (1, ("Rested".to_string(), 2.0)),

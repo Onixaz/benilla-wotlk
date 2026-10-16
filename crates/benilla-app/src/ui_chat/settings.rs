@@ -1,13 +1,14 @@
 //! The chat windows' saved state, the whole `chat-cache.txt` record: the per-type colours and each
-//! window's tint, alpha, font size, lock, dock, shown flag, name, message groups and channels. It
-//! lives in the VM, written and read by the stock verbs (`SetChatWindow*`, `ChangeChatColor`,
-//! `GetChatWindowInfo` and kin); this module loads it at login and saves it at logout, in the
-//! grammar of the reference's `WTF/Account/<ACC>/<REALM>/<CHAR>/chat-cache.txt` (written whole by
-//! `0x499a80`, read by `0x498a60`):
+//! window's tint, alpha, font size, lock, interactivity, dock, shown flag, saved anchor and size,
+//! name, message groups and channels. It lives in the VM, written and read by the stock verbs
+//! (`SetChatWindow*`, `ChangeChatColor`, `GetChatWindowInfo` and kin); this module loads it at
+//! login and saves it at logout, in the grammar of the reference's
+//! `WTF/Account/<ACC>/<REALM>/<CHAR>/chat-cache.txt` (written whole by `0x4fd300`, read by
+//! `0x508320`):
 //!
 //! ```text
-//! VERSION 2
-//! ADDEDVERSION 2
+//! VERSION 5
+//! ADDEDVERSION 13
 //! OPTION_GUILD_RECRUITMENT_CHANNEL AUTO
 //! CHANNELS … END           ← the custom channels, one per line, re-joined at login
 //! ZONECHANNELS 18874371    ← the joined zone channels, as bits 1<<(ChannelID-1)
@@ -15,11 +16,14 @@
 //! WINDOW 1                 ← then per window:
 //! NAME General             ← only when a name was stored
 //! SIZE 0
-//! COLOR 0 0 0 0            ← R G B A bytes, from the record's packed BGRA quad
+//! COLOR 0 0 0 40           ← R G B A bytes
 //! LOCKED 1
+//! UNINTERACTABLE 0
 //! DOCKED 1
 //! SHOWN 1
-//! MESSAGES … END           ← the enabled groups of the 68-entry CHATMSGGROUP table, in order
+//! POSITION BOTTOMLEFT 0.031250 0.130000   ← only once a position was saved, with
+//! DIMENSIONS 430.000000 120.000000        ← the size
+//! MESSAGES … END           ← the enabled groups of the 46-entry table, in order
 //! CHANNELS … END           ← this window's custom channels; its zone channels are bits
 //! ZONECHANNELS 18874371    ← this window's zone channels, masked by the joined set
 //! END
@@ -27,23 +31,26 @@
 //!
 //! The loader zeroes every window's flags first, so a `MESSAGES` block is the whole set; a window
 //! the file omits keeps its boot init ([`ChatWindowLook::stock`]), and a file older than
-//! `ADDEDVERSION 2` gets the groups added since. `LOCKED` is an `i32` (`CHATWINDOW+0x8c`) written
-//! through `setne`, so only 0 and 1 round-trip. Deviation: `set_chat_window_looks` drops an
-//! out-of-range window, where the reference's `WINDOW` bound is off by one (`0x498d1c`, `ja` where
-//! the array needs `jae`), because that write would land past the array.
+//! `ADDEDVERSION 13` gets the groups added since. `LOCKED` is written as `!= 0`, so only 0 and 1
+//! round-trip. Deviation: `set_chat_window_looks` drops an out-of-range window, where the
+//! reference's `WINDOW` bound is off by one (`index > 10`), because that write would land past the
+//! array.
 //!
 //! Ours is `benilla-config/chat/<realm>-<character>.txt`
 //! ([`crate::local_state::chat_character_path`]); its reader is as lenient as the reference's
 //! (keys case-insensitive, unknown keys and blank lines skipped) and also reads benilla's older
 //! one-line `WINDOW 1  SIZE 0  COLOR …` rows. `UPDATE_CHAT_WINDOWS`, then `UPDATE_CHAT_COLOR` per
-//! registry entry, fire file or no file (`0x4996b9`, `0x499934`). Saves wait one quiet second, as
-//! the opacity slider writes on every drag step, and flush at the session end and at `AppExit`.
+//! registry entry, fire file or no file. Saves wait one quiet second, as the opacity slider writes
+//! on every drag step, and flush at the session end and at `AppExit`.
 
 use std::path::PathBuf;
 
 use bevy::prelude::*;
 
-use benilla_ui::script::{ChatTypeColor, ChatWindowLook, UiScript, MESSAGE_GROUPS};
+use benilla_ui::script::{
+    frame_point_index, frame_point_name, ChatTypeColor, ChatWindowLook, UiScript,
+    CHAT_CACHE_ADDED_VERSION, COMBAT_LOG_FIRST_GROUP, MESSAGE_GROUPS,
+};
 
 use super::edit::zone_bit;
 use crate::net::{ClientCommand, NetCommands};
@@ -55,18 +62,50 @@ const SAVE_QUIET: std::time::Duration = std::time::Duration::from_secs(1);
 /// The file's header, as comment lines: the reference's reader has no comments, ours skips them.
 const HEADER: &str = "\
 # benilla chat cache, in the reference's chat-cache.txt grammar (written by
-# 0x499a80, read by 0x498a60): the custom channels to re-join, the joined zone channels as bits, the
+# 0x4fd300, read by 0x508320): the custom channels to re-join, the joined zone channels as bits, the
 # per-type COLORS table, then one WINDOW block per chat frame — NAME (when one was set), SIZE,
-# COLOR r g b a as bytes, LOCKED, DOCKED, SHOWN, the MESSAGES … END list of the groups the window
-# shows, its CHANNELS … END list of custom channels, and its zone channels as ZONECHANNELS bits.
-# Written whole; the tab menu, /join and ChangeChatColor are what move it.
+# COLOR r g b a as bytes, LOCKED, UNINTERACTABLE, DOCKED, SHOWN, POSITION and DIMENSIONS once
+# saved, the MESSAGES … END list of the groups the window shows, its CHANNELS … END list of custom
+# channels, and its zone channels as ZONECHANNELS bits. Written whole; the tab menu, /join and
+# ChangeChatColor are what move it.
 ";
 
-/// benilla's repair marker, a header comment line, not the reference's grammar. A file without it
-/// may hold `ZONECHANNELS 0` words from an empty roster, which strip window 1 of its channels;
-/// [`restore_chat_looks`] re-seeds such a file once, and the next save stamps the marker. It is
-/// matched with `contains`, so a marker line with more text after it still counts.
-const WRITER_GENERATION: &str = "# benilla-writer 2";
+/// benilla's writer marker, a header comment line, not the reference's grammar, followed by
+/// [`WRITER_GENERATION`]: below 2 a file may hold `ZONECHANNELS 0` words from an empty roster, below
+/// 3 the old record's docks and groups. [`restore_chat_looks`] repairs either once.
+const WRITER_MARKER: &str = "# benilla-writer";
+const WRITER_GENERATION: u32 = 3;
+
+/// The generation a file's marker line carries, 0 for a file without one.
+fn writer_generation(text: &str) -> u32 {
+    text.lines()
+        .find_map(|l| l.trim().strip_prefix(WRITER_MARKER))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
+}
+
+/// A file from benilla's writer before generation 3 counted its docks from the window after
+/// `ChatFrame1`, which the dock holds at 1, and its first two windows carry the old boot groups:
+/// both are re-based once onto the 12340 boot record (`0x50edd0`).
+fn rebase_pre_wotlk(looks: &mut [(usize, ChatWindowLook)]) {
+    let primary_undocked = looks
+        .iter()
+        .find(|(w, _)| *w == 0)
+        .is_none_or(|(_, l)| l.docked.is_none());
+    for (w, look) in looks.iter_mut() {
+        if *w < 2 {
+            look.messages = ChatWindowLook::stock(*w).messages;
+        }
+        if primary_undocked {
+            look.docked = if *w == 0 {
+                Some(1)
+            } else {
+                look.docked.map(|p| p.saturating_add(1))
+            };
+        }
+    }
+}
 
 /// Which character's file we are on, where it lives, and whether it is owed a write.
 #[derive(Resource, Default)]
@@ -80,7 +119,7 @@ pub(super) struct ChatWindowFile {
 }
 
 /// A parsed file: its windows (0-based), its `COLORS` rows in file order, its custom channels.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub(super) struct Parsed {
     pub(super) looks: Vec<(usize, ChatWindowLook)>,
     pub(super) colors: Vec<(String, [u8; 3])>,
@@ -106,10 +145,10 @@ impl Default for Parsed {
     }
 }
 
-/// Render the file as the writer does (`0x499a80`). `custom` fills the header's `CHANNELS`, custom
-/// channels only: a zone channel travels as its bit (`0x499ba1`). `zone_mask` goes raw into the
-/// header (`0x499c19`) and is ANDed with each window's bits (`0x49a133`, `0x49a138`). Both are the
-/// durable lists, never the live roster, which the session end clears before the flush reads it.
+/// Render the file as the writer does (`0x4fd300`). `custom` fills the header's `CHANNELS`, custom
+/// channels only: a zone channel travels as its bit. `zone_mask` goes raw into the header and is
+/// ANDed with each window's bits. Both are the durable lists, never the live roster, which the
+/// session end clears before the flush reads it.
 fn render(
     looks: &[ChatWindowLook],
     colors: &[ChatTypeColor],
@@ -119,8 +158,7 @@ fn render(
 ) -> String {
     let mut out = String::from(HEADER);
     // The repair marker, a comment line.
-    out.push_str(WRITER_GENERATION);
-    out.push('\n');
+    out.push_str(&format!("{WRITER_MARKER} {WRITER_GENERATION}\n"));
     // The latch `SetGuildRecruitmentMode` writes; this is the one place it persists.
     let recruitment = if guild_recruitment_auto {
         "AUTO"
@@ -128,7 +166,8 @@ fn render(
         "STANDARD"
     };
     out.push_str(&format!(
-        "\nVERSION 2\n\nADDEDVERSION 2\n\nOPTION_GUILD_RECRUITMENT_CHANNEL {recruitment}\n\nCHANNELS\n"
+        "\nVERSION 5\n\nADDEDVERSION {CHAT_CACHE_ADDED_VERSION}\n\n\
+         OPTION_GUILD_RECRUITMENT_CHANNEL {recruitment}\n\nCHANNELS\n"
     ));
     for name in custom {
         out.push_str(name);
@@ -148,16 +187,29 @@ fn render(
             out.push_str(&format!("NAME {}\n", l.name));
         }
         out.push_str(&format!(
-            "SIZE {}\nCOLOR {} {} {} {}\nLOCKED {}\nDOCKED {}\nSHOWN {}\n\nMESSAGES\n",
+            "SIZE {}\nCOLOR {} {} {} {}\nLOCKED {}\nUNINTERACTABLE {}\nDOCKED {}\nSHOWN {}\n",
             l.font_size,
             l.r,
             l.g,
             l.b,
             l.a,
             i32::from(l.locked),
+            i32::from(l.uninteractable),
             l.docked.unwrap_or(0),
             i32::from(l.shown),
         ));
+        // `%f`, six decimals, as the writer's `SStrPrintf`.
+        if l.placed {
+            out.push_str(&format!(
+                "POSITION {} {:.6} {:.6}\nDIMENSIONS {:.6} {:.6}\n",
+                frame_point_name(l.point),
+                l.offset.0,
+                l.offset.1,
+                l.dimensions.0,
+                l.dimensions.1,
+            ));
+        }
+        out.push_str("\nMESSAGES\n");
         for m in &l.messages {
             out.push_str(m);
             out.push('\n');
@@ -244,7 +296,7 @@ fn parse(text: &str, rows: &[(u32, String)]) -> Parsed {
                 } else if let Some((_, look)) = current.as_mut() {
                     // A word that is a `ChatChannels.dbc` Shortcut is a zone channel that lost its
                     // id: the reference never stores one by name (`AddChatWindowChannel`
-                    // `0x4a1000` resolves shortcuts first), and `ChatFrame.lua:1379` matches ids.
+                    // `0x501db0` resolves shortcuts first), and `ChatFrame.lua:1379` matches ids.
                     let id = rows
                         .iter()
                         .find(|(_, shortcut)| shortcut.eq_ignore_ascii_case(head))
@@ -308,12 +360,12 @@ fn parse(text: &str, rows: &[(u32, String)]) -> Parsed {
         }
     }
     flush(&mut current, &mut out);
-    // The loader's EOF back-fill (`0x49967c`): an older file gets the groups added since, the
-    // first ten into window 1 and the rest, both `addedVersion` rows among them, into window 2.
-    if added_version < 2 {
+    // The loader's EOF back-fill: an older file gets the `defaultOn` groups added since, below
+    // group 40 into window 1 and the rest into window 2.
+    if added_version < CHAT_CACHE_ADDED_VERSION {
         for (i, (name, on, ver)) in MESSAGE_GROUPS.iter().enumerate() {
             if *on && *ver > added_version {
-                let target = usize::from(i >= 10);
+                let target = usize::from(i >= COMBAT_LOG_FIRST_GROUP);
                 if let Some((_, look)) = out.looks.iter_mut().find(|(w, _)| *w == target) {
                     if !look.messages.iter().any(|m| m == name) {
                         look.messages.push((*name).to_string());
@@ -337,6 +389,8 @@ fn apply_key<'a>(
 ) {
     let byte = |s: Option<&str>| -> u8 { s.and_then(|v| v.parse::<u8>().ok()).unwrap_or(0) };
     let flag = |s: Option<&str>| -> bool { s.is_none_or(|v| v.trim() != "0") };
+    // `SStrToFloat`: 0 for a missing or malformed word.
+    let float = |s: Option<&str>| -> f32 { s.and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0) };
     if key.eq_ignore_ascii_case("SIZE") {
         look.font_size = it
             .next()
@@ -350,6 +404,18 @@ fn apply_key<'a>(
         look.a = byte(it.next());
     } else if key.eq_ignore_ascii_case("LOCKED") {
         look.locked = flag(it.next());
+    } else if key.eq_ignore_ascii_case("UNINTERACTABLE") {
+        look.uninteractable = it.next().is_some_and(|v| v.trim() != "0");
+    } else if key.eq_ignore_ascii_case("POSITION") {
+        // An unknown point keeps the old one, as `StringToFramePoint` writes only on a match.
+        if let Some(point) = it.next().and_then(frame_point_index) {
+            look.point = point;
+        }
+        look.offset = (float(it.next()), float(it.next()));
+        look.placed = true;
+    } else if key.eq_ignore_ascii_case("DIMENSIONS") {
+        look.dimensions = (float(it.next()), float(it.next()));
+        look.placed = true;
     } else if key.eq_ignore_ascii_case("DOCKED") {
         look.docked = it
             .next()
@@ -388,7 +454,7 @@ fn shortcut_rows(channels: &super::edit::ChannelState) -> Vec<(u32, String)> {
 
 /// Restore the file into a fresh VM, once per character per VM, and fire the loader's two events,
 /// file or no file. Called from the world-entry UI load, not `Update`, for those events:
-/// `UPDATE_CHAT_WINDOWS` registers a window for any `CHAT_MSG_*` (`ChatFrame.lua:1261-1273`), so
+/// `UPDATE_CHAT_WINDOWS` registers a window for any `CHAT_MSG_*`, so
 /// it must precede the server's MOTD after `SMSG_LOGIN_VERIFY_WORLD`, and the `UPDATE_CHAT_COLOR`
 /// burst must precede `PLAYER_LOGIN`: its `WHISPER` row also repaints `ChatTypeInfo["REPLY"]`
 /// (`ChatFrame.lua:1357-1365`), whose `.id` is 0, and `UpdateColorByID(0, …)` recolours every line
@@ -439,13 +505,18 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
                 }
             });
         let had_file = text.is_some();
+        let generation = text.as_deref().map(writer_generation);
         // No marker: its `ZONECHANNELS` words may come from an empty roster. Repaired below, once.
-        let damaged = text
-            .as_deref()
-            .is_some_and(|t| !t.contains(WRITER_GENERATION));
+        let damaged = generation.is_some_and(|g| g < 2);
         parsed = text.map(|t| parse(&t, &rows)).unwrap_or_default();
+        if generation.is_some_and(|g| g < WRITER_GENERATION) {
+            rebase_pre_wotlk(&mut parsed.looks);
+            // Owed a write, which stamps the generation.
+            *file.dirty.get(script) = true;
+            info!("chat cache: re-based a pre-generation-3 file's docks and groups for {who}");
+        }
         if !had_file {
-            // The loader's no-file path (`0x4997ad`): window 1 gets each seed row as
+            // The loader's no-file path: window 1 gets each seed row as
             // `(Shortcut, id)`, which `ChatFrame_RegisterForChannels` matches zone speech by.
             let mut general = ChatWindowLook::stock(0);
             general.channels = auto_rows.clone();
@@ -492,7 +563,7 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
     script.set_chat_colors(parsed.colors);
     script.set_chat_window_looks(parsed.looks);
     // `UPDATE_CHAT_WINDOWS` once, then `UPDATE_CHAT_COLOR` for every registry entry, file or no
-    // file (`0x4996b9`, `0x499934`).
+    // file.
     script.fire_event("UPDATE_CHAT_WINDOWS", vec![]);
     let renorm = |b: u8| f64::from(b as f32 * (1.0f32 / 255.0f32));
     for entry in script.chat_colors() {
@@ -562,8 +633,8 @@ fn write(script: &UiScript, channels: &super::edit::ChannelState, path: &std::pa
 ///
 /// - A flush (`exiting`: session end or window close) writes whenever this VM restored the file
 ///   (`restored`, never a fresh VM's stock table), as the reference rewrites it whole at chat
-///   teardown (`0x499a80` from `0x490c55`) with no dirty check (`[0xb6e5c4]` is never read); host
-///   state such as the zone mask never marks the file dirty.
+///   teardown (`0x4ffda0` from `CGGameUI::Shutdown` `0x528f00`) with no dirty check; host state
+///   such as the zone mask never marks the file dirty.
 /// - Deviation: the debounce also writes Lua's changes (`dirty`) after the quiet time, where the
 ///   reference writes only at teardown, so a crash loses at most a second of changes.
 fn owes_write(exiting: bool, restored: bool, dirty: bool, quiet: bool) -> bool {
@@ -605,7 +676,7 @@ fn save_chat_looks(
     flush(&script, &channels, &mut file, exiting);
 }
 
-/// The session-end flush, the reference's chat teardown (`0x499a80` from `0x490c55`), called from
+/// The session-end flush, the reference's chat teardown (`0x4ffda0` from `0x528f00`), called from
 /// [`crate::ui_script::end_ui_session`] after the shutdown events and before the VM is replaced,
 /// on logout, character switch and `/reload` alike. Not an `OnExit(InWorld)` system: `/reload`
 /// never crosses it, and the debounce's state dies with the VM.
@@ -689,6 +760,11 @@ mod tests {
         let mut named = look(3, 9, 8, 7, 6, 12);
         named.name = "Loot & Trade".into();
         named.shown = true;
+        named.uninteractable = true;
+        named.point = 2;
+        named.offset = (0.25, -0.5);
+        named.placed = true;
+        named.dimensions = (500.0, 200.5);
         named.messages = vec!["LOOT".into(), "MONEY".into()];
         named.channels = vec![("MyChan".into(), 0), ("Trade".into(), 2)];
         let looks = vec![
@@ -702,6 +778,22 @@ mod tests {
         assert!(
             text.contains("\nCHANNELS\nMyChan\nEND\n\nZONECHANNELS 3\n"),
             "{text}"
+        );
+        assert!(text.contains("\nVERSION 5\n\nADDEDVERSION 13\n"), "{text}");
+        assert!(
+            text.contains(
+                "POSITION TOPRIGHT 0.250000 -0.500000\nDIMENSIONS 500.000000 200.500000\n"
+            ),
+            "{text}"
+        );
+        assert_eq!(
+            text.matches(
+                "
+POSITION "
+            )
+            .count(),
+            1,
+            "only a saved window writes its geometry"
         );
         let parsed = parse(&text, &rows());
         let mut expect = looks.clone();
@@ -781,19 +873,21 @@ mod tests {
         );
     }
 
-    /// The repair is keyed on the [`WRITER_GENERATION`] marker, not on the zone words.
+    /// The repairs are keyed on the writer's generation, not on the zone words.
     #[test]
     fn a_written_file_carries_the_writer_generation_and_a_damaged_one_does_not() {
         let text = render(&[ChatWindowLook::stock(0)], &[], &[], 0b11, true);
-        assert!(
-            text.contains(WRITER_GENERATION),
-            "every file we write is stamped, so the repair fires once: {text}"
+        assert_eq!(
+            writer_generation(&text),
+            WRITER_GENERATION,
+            "every file we write is stamped, so each repair fires once: {text}"
         );
+        assert_eq!(writer_generation("# benilla-writer 2\nVERSION 2\n"), 2);
         // A zeroed file: a header the reference's reader accepts, with no marker.
         let damaged = "VERSION 2\n\nCHANNELS\nEND\n\nZONECHANNELS 0\n\n\
              WINDOW 1\nSIZE 0\nSHOWN 1\n\nMESSAGES\nSYSTEM\nEND\n\n\
              CHANNELS\nEND\n\nZONECHANNELS 0\n\nEND\n";
-        assert!(!damaged.contains(WRITER_GENERATION));
+        assert_eq!(writer_generation(damaged), 0);
         let parsed = parse(damaged, &rows());
         assert_eq!(parsed.zone_mask, Some(0), "the zeroed header parses as 0");
         assert!(
@@ -904,21 +998,56 @@ mod tests {
             vec![
                 (0, look(1, 10, 20, 30, 40, 16)),
                 (1, w2),
-                (2, look(3, 0, 0, 0, 0, 12)),
+                (2, look(3, 0, 0, 0, 0x28, 12)),
             ]
         );
-        assert!(got.looks[1].1.messages.iter().any(|m| m == "MONEY"));
+        assert!(got.looks[0].1.messages.iter().any(|m| m == "MONEY"));
+        assert!(got.looks[1].1.messages.iter().any(|m| m == "OPENING"));
+    }
+
+    /// A pre-generation-3 file (window 1 undocked, window 2 at 1) gets the primary at 1, every
+    /// other dock one later, and the 12340 boot groups in windows 1 and 2.
+    #[test]
+    fn a_pre_wotlk_file_is_rebased_onto_the_12340_dock() {
+        let text = "# benilla-writer 2\nVERSION 2\n\nADDEDVERSION 2\n\n\
+                    WINDOW 1\nSIZE 0\nDOCKED 0\nSHOWN 1\n\nMESSAGES\nSYSTEM\nSAY\nCREATURE\nEND\n\nEND\n\n\
+                    WINDOW 2\nNAME Combat Log\nDOCKED 1\nSHOWN 1\n\nMESSAGES\nCOMBAT_XP_GAIN\nMONEY\nEND\n\nEND\n\n\
+                    WINDOW 3\nNAME Loot\nDOCKED 2\nSHOWN 1\n\nMESSAGES\nLOOT\nEND\n\nEND\n";
+        let mut got = parse(text, &rows());
+        rebase_pre_wotlk(&mut got.looks);
+        let docks: Vec<_> = got.looks.iter().map(|(_, l)| l.docked).collect();
+        assert_eq!(docks, vec![Some(1), Some(2), Some(3)]);
+        assert_eq!(got.looks[0].1.messages, ChatWindowLook::stock(0).messages);
+        assert_eq!(got.looks[1].1.messages, ChatWindowLook::stock(1).messages);
+        assert_eq!(
+            got.looks[1].1.name, "Combat Log",
+            "only docks and groups move"
+        );
+        assert_eq!(got.looks[2].1.messages, vec!["LOOT".to_string()]);
+
+        // A file whose primary was already docked, the combat log undocked: a legitimate state.
+        let mut kept = parse(
+            "WINDOW 1\nDOCKED 1\nSHOWN 1\nEND\nWINDOW 2\nDOCKED 0\nSHOWN 1\nEND\n",
+            &rows(),
+        );
+        rebase_pre_wotlk(&mut kept.looks);
+        assert_eq!(
+            kept.looks.iter().map(|(_, l)| l.docked).collect::<Vec<_>>(),
+            vec![Some(1), None]
+        );
     }
 
     #[test]
     fn a_stock_reference_file_parses() {
-        let text = "VERSION 2\n\nADDEDVERSION 2\n\nOPTION_GUILD_RECRUITMENT_CHANNEL AUTO\n\n\
+        let text = "VERSION 5\n\nADDEDVERSION 13\n\nOPTION_GUILD_RECRUITMENT_CHANNEL AUTO\n\n\
                     CHANNELS\nMyGuildChat\nEND\n\nZONECHANNELS 8388611\n\n\
-                    COLORS\nSAY 255 255 255\nSYSTEM 200 200 0\nEND\n\n\
-                    WINDOW 1\nSIZE 0\nCOLOR 0 0 0 0\nLOCKED 1\nDOCKED 1\nSHOWN 1\n\n\
-                    MESSAGES\nSYSTEM\nSAY\nEND\n\nCHANNELS\nMyGuildChat\nEND\n\n\
+                    COLORS\nSAY 255 255 255 N\nSYSTEM 200 200 0 N\nEND\n\n\
+                    WINDOW 1\nSIZE 0\nCOLOR 0 0 0 40\nLOCKED 1\nUNINTERACTABLE 0\nDOCKED 1\n\
+                    SHOWN 1\nMESSAGES\nSYSTEM\nSAY\nEND\n\nCHANNELS\nMyGuildChat\nEND\n\n\
                     ZONECHANNELS 8388611\n\nEND\n\n\
-                    WINDOW 2\nNAME Combat Log\nSIZE 0\nCOLOR 0 0 0 0\nLOCKED 1\nDOCKED 2\nSHOWN 0\n\n\
+                    WINDOW 2\nNAME Combat Log\nSIZE 0\nCOLOR 0 0 0 40\nLOCKED 1\nUNINTERACTABLE 1\n\
+                    DOCKED 2\nSHOWN 0\nPOSITION TOPLEFT 0.100000 -0.200000\n\
+                    DIMENSIONS 300.000000 150.000000\n\n\
                     MESSAGES\nCOMBAT_XP_GAIN\nEND\n\nCHANNELS\nEND\n\nZONECHANNELS 0\n\nEND\n";
         let got = parse(text, &rows());
         assert_eq!(
@@ -949,6 +1078,9 @@ mod tests {
         assert_eq!(w2.name, "Combat Log");
         assert_eq!(w2.docked, Some(2));
         assert_eq!(w2.messages, vec!["COMBAT_XP_GAIN".to_string()]);
+        assert!(w2.uninteractable && w2.placed);
+        assert_eq!((w2.point, w2.offset), (0, (0.1, -0.2)));
+        assert_eq!(w2.dimensions, (300.0, 150.0));
     }
 
     #[test]
@@ -976,8 +1108,8 @@ mod tests {
         let text = render(std::slice::from_ref(&moved), &[], &[], 0, true);
         assert!(text.contains("DOCKED 3"));
         assert_eq!(parse(&text, &rows()).looks, vec![(0, moved.clone())]);
-        // The boot init: window 1 shown and undocked with ten groups, window 2 shown at dock
-        // index 1 with 34, window 3 hidden.
+        // The boot init: window 1 shown at dock index 1 with forty groups, window 2 at 2 with
+        // six, window 3 hidden.
         let got = parse(
             "WINDOW 1  SIZE 0\nWINDOW 2  SIZE 0\nWINDOW 3  SIZE 0\n",
             &rows(),
@@ -987,7 +1119,7 @@ mod tests {
                 .iter()
                 .map(|(_, l)| (l.docked, l.shown, l.messages.len()))
                 .collect::<Vec<_>>(),
-            vec![(None, true, 10), (Some(1), true, 34), (None, false, 0)]
+            vec![(Some(1), true, 40), (Some(2), true, 6), (None, false, 0)]
         );
     }
 
@@ -997,13 +1129,13 @@ mod tests {
             "WINDOW\nnot a window line\nWINDOW 0 SIZE 1\nWINDOW 2 SIZE 18\n",
             &rows(),
         );
-        assert_eq!(got.looks, vec![(1, look(2, 0, 0, 0, 0, 18))]);
+        assert_eq!(got.looks, vec![(1, look(2, 0, 0, 0, 0x28, 18))]);
     }
 
     /// A `MESSAGES` block replaces the init set: the loader zeroes every flag before it reads.
     #[test]
     fn an_empty_messages_block_is_an_empty_set() {
-        let got = parse("ADDEDVERSION 2\nWINDOW 1\nMESSAGES\nEND\nEND\n", &rows());
+        let got = parse("ADDEDVERSION 13\nWINDOW 1\nMESSAGES\nEND\nEND\n", &rows());
         assert!(got.looks[0].1.messages.is_empty());
     }
 
@@ -1140,7 +1272,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().expect("a parent")).expect("the character dir");
         // A file this writer made (the marker), listing one custom channel in the header.
         let file = format!(
-            "{WRITER_GENERATION}\nVERSION 2\n\nCHANNELS\nMyChan\nEND\n\nZONECHANNELS 3\n\n\
+            "{WRITER_MARKER} {WRITER_GENERATION}\nVERSION 5\n\nCHANNELS\nMyChan\nEND\n\nZONECHANNELS 3\n\n\
              COLORS\nEND\n\nWINDOW 1\nSIZE 0\n\nMESSAGES\nSAY\nEND\n\nCHANNELS\nEND\n\n\
              ZONECHANNELS 3\n\nEND\n"
         );

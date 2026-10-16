@@ -1,6 +1,6 @@
-//! `Exhaustion.dbc`: the rest states. `GetRestState` (`0x48d350`) indexes it by the
-//! `PLAYER_BYTES_2` rest-state byte (`[0xc0dd78]`) and returns the id, the name from this file's
-//! string block (not GlobalStrings) and the factor. `GetXPExhaustion` (`0x48d3f0`) scales the
+//! `Exhaustion.dbc`: the rest states. `GetRestState` (`0x51b8b0`) indexes its records
+//! (`[0xad3838]`) by the `PLAYER_BYTES_2` rest-state byte and returns the id, the name from this
+//! file's string block (not GlobalStrings) and the factor. `GetXPExhaustion` (`0x51b960`) scales the
 //! rested pool by row 1's factor, 2.0 in the data. Rows 3-5 are beta tiers never sent, row 6
 //! the Refer-A-Friend state; 12340 spreads the name over sixteen locales and a mask.
 

@@ -135,3 +135,53 @@ fn a_swing_reaches_the_stock_combat_log_tab() {
         "the refilter reads both: {refiltered:#?}"
     );
 }
+
+/// The 12340 boot record docks `ChatFrame2` at 2 behind the primary, so its OnLoad joins the dock
+/// and lays it over `ChatFrame1`, and with General selected the combat log's quick-button bar
+/// hides on `ADDON_LOADED`; a dock position of 1 asserted in `FCFDock_AddChatFrame` and left the
+/// bar floating over the world (#289).
+#[test]
+fn the_combat_log_docks_behind_general_and_its_bar_hides() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, failures) = super::layer_tests::production_load_with("chatdock", false, "", |_| {});
+    let ours: Vec<_> = failures
+        .iter()
+        .filter(|f| f.contains("FloatingChatFrame.lua") || f.contains("ChatFrame2"))
+        .collect();
+    assert!(ours.is_empty(), "chat frame load failures: {ours:#?}");
+    s.resolve();
+    assert!(
+        s.eval::<bool>(
+            "local i for n, f in ipairs(GENERAL_CHAT_DOCK.DOCKED_CHAT_FRAMES) do \
+               if f == ChatFrame2 then i = n end end \
+             return GENERAL_CHAT_DOCK.primary == ChatFrame1 and i == 2 and ChatFrame2.isDocked == 1"
+        )
+        .unwrap(),
+        "ChatFrame2 is the dock's second frame"
+    );
+    assert!(
+        s.eval::<bool>(
+            "return ChatFrame2:GetLeft() == ChatFrame1:GetLeft() \
+               and ChatFrame2:GetTop() == ChatFrame1:GetTop()"
+        )
+        .unwrap(),
+        "docked, it lies over the primary"
+    );
+    s.take_errors();
+    super::test_ui::seat_chain_addon(&mut s, "Blizzard_CombatLog");
+    s.run("CombatLog_LoadUI()").unwrap();
+    s.resolve();
+    assert!(
+        s.eval::<bool>(
+            "return SELECTED_CHAT_FRAME == ChatFrame1 \
+               and not CombatLogQuickButtonFrame_Custom:IsShown()"
+        )
+        .unwrap(),
+        "General selected: the bar is hidden"
+    );
+    let errors = combat_log_errors(&mut s);
+    assert!(errors.is_empty(), "addon errors: {errors:#?}");
+}

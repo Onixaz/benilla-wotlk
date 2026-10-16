@@ -6,18 +6,19 @@ use super::{
     ActionButton, AttackSwingError, AttackerState, AuctionBidderNotification, AuctionCommandTail,
     AuctionListEntry, AuctionOwnerNotification, CastOutcome, ChannelNotify, Character, ChatMessage,
     CorpseLocation, DamageShield, DispelFailed, EnchantmentLog, EnvironmentalDamageLog,
-    ExplorationXp, FriendEntry, FriendStatusUpdate, GameObjectQueryInfo, GmTicket, GossipMenu,
-    GossipPoi, GroupLootInfo, GroupMemberEntry, GuildCommandResult, GuildEventNotice, GuildInfo,
-    GuildQueryResponse, GuildRoster, InitWorldStates, InspectHonorStats, ItemInfo, ItemPushResult,
-    JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon, LootStartRoll,
-    MailListEntry, MirrorTimerStart, MoveMode, Object, PartyKillLog, PartyMemberStatsInfo,
-    PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse, PetitionRename, PetitionShowList,
-    PetitionShowSignatures, PetitionSignResults, PvpCredit, QuestComplete, QuestConfirmAccept,
-    QuestDetails, QuestGiverList, QuestOfferReward, QuestPushResult, QuestRequestItems,
-    QuestTemplate, ResurrectRequestBody, SpeedKind, SpellChainTargets, SpellCooldown,
-    SpellDamageLog, SpellDispelLog, SpellEnergizeLog, SpellGo, SpellHealLog, SpellInstaKillLog,
-    SpellLogExecute, SpellLogMiss, SpellOutcomeLog, SpellStart, SplineMode, StabledPet, TaxiMask,
-    TradeStatus, TradeStatusExtended, TrainerSpell, TransportPose, VendorItem, WhoResults, XpGain,
+    ExplorationXp, FriendEntry, FriendStatusUpdate, GameObjectQueryInfo, GmResponse, GmTicket,
+    GossipMenu, GossipPoi, GroupLootInfo, GroupMemberEntry, GuildCommandResult, GuildEventNotice,
+    GuildInfo, GuildQueryResponse, GuildRoster, InitWorldStates, InspectHonorStats, ItemInfo,
+    ItemPushResult, JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon,
+    LootStartRoll, MailListEntry, MirrorTimerStart, MoveMode, Object, PartyKillLog,
+    PartyMemberStatsInfo, PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse,
+    PetitionRename, PetitionShowList, PetitionShowSignatures, PetitionSignResults, PvpCredit,
+    QuestComplete, QuestConfirmAccept, QuestDetails, QuestGiverList, QuestOfferReward,
+    QuestPushResult, QuestRequestItems, QuestTemplate, ResurrectRequestBody, SpeedKind,
+    SpellChainTargets, SpellCooldown, SpellDamageLog, SpellDispelLog, SpellEnergizeLog, SpellGo,
+    SpellHealLog, SpellInstaKillLog, SpellLogExecute, SpellLogMiss, SpellOutcomeLog, SpellStart,
+    SplineMode, StabledPet, TaxiMask, TradeStatus, TradeStatusExtended, TrainerSpell,
+    TransportPose, VendorItem, WhoResults, XpGain,
 };
 
 /// The final facing a `SMSG_MONSTER_MOVE` dictates (`moveType`), applied as a hard snap, not a
@@ -67,8 +68,10 @@ pub enum ServerPacket {
         /// Our login-queue place; only for [`super::AUTH_WAIT_QUEUE`] with a long enough body.
         queue_position: Option<u32>,
         /// Rested billing minutes (`PlayerFrame.lua:246` divides by 60), returned unconverted by
-        /// `GetBillingTimeRested()` (`0x48ec50`); `None` on a body too short for the group.
+        /// `GetBillingTimeRested()` (`0x511c40`); `None` on a body too short for the group.
         billing_time_rested: Option<u32>,
+        /// The account's expansion, `GetAccountExpansionLevel()` (`0x4ddc20`); `None` likewise.
+        expansion: Option<u8>,
     },
     CharEnum {
         characters: Vec<Character>,
@@ -187,13 +190,13 @@ pub enum ServerPacket {
         map: u32,
         area: u32,
     },
-    /// `SMSG_GMTICKET_GETTICKET`: our open ticket, `None` for "no ticket". Also pushed unasked
-    /// when a GM views, escalates or completes it (`GMTicketMgr.cpp:153-159`).
+    /// `SMSG_GMTICKET_GETTICKET`: the status, and our open ticket for status 6. Also pushed
+    /// unasked when a GM views, escalates or completes it.
     GmTicketAnswer {
+        status: u32,
         ticket: Option<Box<GmTicket>>,
     },
-    /// `SMSG_GMTICKET_CREATE`: 2 created, 3 refused, 1 already have one; vmangos never sends 1
-    /// and answers some refusals with silence.
+    /// `SMSG_GMTICKET_CREATE`: 2 created, 3 refused, 1 already have one.
     GmTicketCreated {
         response: u32,
     },
@@ -210,9 +213,19 @@ pub enum ServerPacket {
     GmTicketSystemStatus {
         status: i32,
     },
-    /// `SMSG_GM_TICKET_STATUS_UPDATE`: 1 updated, 2 closed, 3 survey; vmangos never sends it.
+    /// `SMSG_GM_TICKET_STATUS_UPDATE`: 1 or 4 updated, 2 closed, 3 closed with a survey.
     GmTicketStatusUpdate {
         status: u32,
+    },
+    /// `SMSG_GMRESPONSE_DB_ERROR`: empty; the client shows `ERR_GMRESPONSE_DB_ERROR`.
+    GmResponseDbError,
+    /// `SMSG_GMRESPONSE_RECEIVED`: a GM answered our ticket.
+    GmResponseReceived {
+        response: Box<GmResponse>,
+    },
+    /// `SMSG_GMRESPONSE_STATUS_UPDATE`: the answer is closed, offering the survey or not.
+    GmResponseStatusUpdate {
+        show_survey: bool,
     },
     /// `SMSG_BINDER_CONFIRM`: an innkeeper's question; `CMSG_BINDER_ACTIVATE` with the guid binds.
     BinderConfirm {
@@ -1317,6 +1330,9 @@ impl ServerPacket {
             ServerPacket::GmTicketDeleted { .. } => "SMSG_GMTICKET_DELETETICKET".into(),
             ServerPacket::GmTicketSystemStatus { .. } => "SMSG_GMTICKETSYSTEMSTATUS".into(),
             ServerPacket::GmTicketStatusUpdate { .. } => "SMSG_GM_TICKET_STATUS_UPDATE".into(),
+            ServerPacket::GmResponseDbError => "SMSG_GMRESPONSE_DB_ERROR".into(),
+            ServerPacket::GmResponseReceived { .. } => "SMSG_GMRESPONSE_RECEIVED".into(),
+            ServerPacket::GmResponseStatusUpdate { .. } => "SMSG_GMRESPONSE_STATUS_UPDATE".into(),
             ServerPacket::BinderConfirm { .. } => "SMSG_BINDER_CONFIRM".into(),
             ServerPacket::PlayerBound { .. } => "SMSG_PLAYERBOUND".into(),
             ServerPacket::SummonRequest { .. } => "SMSG_SUMMON_REQUEST".into(),

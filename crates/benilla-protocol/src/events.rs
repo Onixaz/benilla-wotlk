@@ -4,17 +4,17 @@ use crate::messages::{
     ActionButton, AttackSwingError, AttackerState, AuctionBidderNotification, AuctionCommandTail,
     AuctionListEntry, AuctionOwnerNotification, ChannelNoticeTail, Character, CreateSpline,
     DamageShield, DispelFailed, EnchantmentLog, EnvironmentalDamageLog, ExplorationXp, FriendEntry,
-    FriendStatusUpdate, GmTicket, GossipMenu, GroupLootInfo, GroupMemberEntry, GuildCommandResult,
-    GuildEventNotice, GuildInfo, GuildQueryResponse, GuildRoster, InspectHonorStats, ItemInfo,
-    ItemPushResult, JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon,
-    LootStartRoll, MailListEntry, MirrorTimerStart, MonsterMoveFacing, MoverState, ObjectFields,
-    PartyKillLog, PartyMemberStatsInfo, PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse,
-    PetitionRename, PetitionShowList, PetitionShowSignatures, PetitionSignResults, PvpCredit,
-    QuestComplete, QuestConfirmAccept, QuestDetails, QuestGiverList, QuestOfferReward,
-    QuestRequestItems, QuestShareMsg, QuestTemplate, SpellDamageLog, SpellDispelLog,
-    SpellEnergizeLog, SpellHealLog, SpellInstaKillLog, SpellLogExecute, SpellLogMiss,
-    SpellOutcomeLog, StabledPet, TaxiMask, TradeStatus, TradeStatusExtended, TrainerSpell,
-    TransportPose, VendorItem, WhoResults, XpGain,
+    FriendStatusUpdate, GmResponse, GmTicket, GossipMenu, GroupLootInfo, GroupMemberEntry,
+    GuildCommandResult, GuildEventNotice, GuildInfo, GuildQueryResponse, GuildRoster,
+    InspectHonorStats, ItemInfo, ItemPushResult, JumpInfo, LevelUpInfo, LootAllPassed, LootItem,
+    LootRoll, LootRollWon, LootStartRoll, MailListEntry, MirrorTimerStart, MonsterMoveFacing,
+    MoverState, ObjectFields, PartyKillLog, PartyMemberStatsInfo, PeriodicAuraLog, PetMode,
+    PetSpells, PetitionQueryResponse, PetitionRename, PetitionShowList, PetitionShowSignatures,
+    PetitionSignResults, PvpCredit, QuestComplete, QuestConfirmAccept, QuestDetails,
+    QuestGiverList, QuestOfferReward, QuestRequestItems, QuestShareMsg, QuestTemplate,
+    SpellDamageLog, SpellDispelLog, SpellEnergizeLog, SpellHealLog, SpellInstaKillLog,
+    SpellLogExecute, SpellLogMiss, SpellOutcomeLog, StabledPet, TaxiMask, TradeStatus,
+    TradeStatusExtended, TrainerSpell, TransportPose, VendorItem, WhoResults, XpGain,
 };
 
 /// Coarse entity classification, free of wire types, carried on [`SessionEvent::ObjectCreate`].
@@ -143,6 +143,8 @@ pub enum SessionEvent {
         name: String,
         /// Rested billing minutes for `GetBillingTimeRested()`, sent once, at auth.
         billing_time_rested: u32,
+        /// The account's expansion byte from `SMSG_AUTH_RESPONSE`, `GetAccountExpansionLevel()`.
+        expansion: u8,
         /// `SMSG_TUTORIAL_FLAGS` if it came during the handshake; `None` if it comes in-world.
         tutorial_flags: Option<Vec<u8>>,
         /// The addons `SMSG_ADDON_INFO` hid. `None` is no reply at all, where the reference's
@@ -286,11 +288,13 @@ pub enum SessionEvent {
     ServerUnixTime { unix_time: u32 },
     /// The hearthstone bind (`SMSG_BINDPOINTUPDATE`): the AreaTable id the `$z` token names.
     BindPoint { area: u32 },
-    /// `SMSG_GMTICKET_GETTICKET`, `None` for no ticket. The Help window re-polls every 10 minutes
-    /// and fires `UPDATE_TICKET` on each answer, changed or not: count these, never diff them.
-    GmTicket { ticket: Option<Box<GmTicket>> },
-    /// `SMSG_GMTICKET_CREATE`: 2 created, 3 refused, 1 already exists (vmangos never sends 1, and
-    /// sometimes sends nothing at all).
+    /// `SMSG_GMTICKET_GETTICKET`: the status, and the ticket for status 6. The Help window re-polls
+    /// every 10 minutes and the client fires `UPDATE_TICKET` on each answer, changed or not.
+    GmTicket {
+        status: u32,
+        ticket: Option<Box<GmTicket>>,
+    },
+    /// `SMSG_GMTICKET_CREATE`: 2 created, 3 refused, 1 already exists.
     GmTicketCreated { response: u32 },
     /// The answer to editing a ticket (`SMSG_GMTICKET_UPDATETEXT`): 4 = saved, 5 = refused.
     GmTicketUpdated { response: u32 },
@@ -298,8 +302,14 @@ pub enum SessionEvent {
     GmTicketDeleted { response: u32 },
     /// `SMSG_GMTICKETSYSTEMSTATUS`: 1 = the queue takes tickets; drives `UPDATE_GM_STATUS`.
     GmTicketSystemStatus { status: i32 },
-    /// `SMSG_GM_TICKET_STATUS_UPDATE`: 1 updated, 2 closed, 3 survey; vmangos never sends it.
+    /// `SMSG_GM_TICKET_STATUS_UPDATE`: 1 or 4 updated, 2 closed, 3 closed with a survey.
     GmTicketStatusUpdate { status: u32 },
+    /// `SMSG_GMRESPONSE_DB_ERROR`.
+    GmResponseDbError,
+    /// `SMSG_GMRESPONSE_RECEIVED`: a GM answered our ticket.
+    GmResponseReceived { response: Box<GmResponse> },
+    /// `SMSG_GMRESPONSE_STATUS_UPDATE`: the answer is closed, offering the survey or not.
+    GmResponseStatusUpdate { show_survey: bool },
     /// `SMSG_BINDER_CONFIRM`, the `CONFIRM_BINDER` dialog; echo `binder` in `CMSG_BINDER_ACTIVATE`.
     BinderConfirm { binder: u64 },
     /// `SMSG_SUMMON_REQUEST`: `zone` is the summoner's AreaTable id, `delay_ms` the auto-decline

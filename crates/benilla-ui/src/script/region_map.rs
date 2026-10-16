@@ -1,22 +1,22 @@
-//! The Region method map: the 19 names of the reference's `0x87c9b8` table, each one callable
+//! The Region method map: the names of the reference's Region table, each one callable
 //! that works on a Frame, a Texture or a FontString.
 //!
 //! Each widget class owns a flat method table whose lookup, on a miss, tail-calls its base's:
 //!
 //! ```text
-//! Region      0x87c9b8 (19)  lookup 0x7a2ea0, the root
+//! Region      0x87c9b8 (21)  lookup 0x7a2ea0, the root
 //! Frame       0x878ec0 (68)  lookup 0x778590 → 0x7a2ea0
 //! Texture     0x87c128 (22)  lookup 0x79c620 → 0x7a2ea0
 //! FontString  0x87c1d8 (32)  lookup 0x79ee20 → 0x7a2ea0
 //! ```
 //!
-//! Frame re-registers none of the 19, so `WorldFrame.GetHeight` is the function
+//! Frame re-registers none of them, so `WorldFrame.GetHeight` is the function
 //! `someTexture:GetHeight()` resolves to (`0x7a2030`), and addons pull a method off one widget to
 //! apply to another. Each name is one function that resolves the receiver and hands the call to
 //! that kind's arm, as `0x7a2030` calls a vtable slot `CSimpleFontString` overrides; it goes into
 //! every table the chain reaches, so `WorldFrame.GetHeight == someTexture.GetHeight` holds.
 //!
-//! Exactly the 19: `Show`, `Hide`, `SetAlpha` and the like are per class (`SetAlpha` is `0x774e90`
+//! Exactly these: `Show`, `Hide`, `SetAlpha` and the like are per class (`SetAlpha` is `0x774e90`
 //! on Frame, `0x79b580` on Texture), so `WorldFrame.Show(someTexture)` fails, as in the reference.
 
 use std::collections::HashMap;
@@ -53,7 +53,7 @@ fn side_of(lua: &Lua, this: &Table) -> mlua::Result<Option<Side>> {
     })
 }
 
-/// One side's implementation of one of the 19, erased to the variadic ABI so dispatch is a plain
+/// One side's implementation of one Region-map name, erased to the variadic ABI so dispatch is a plain
 /// Rust call: a `Function::call` would re-enter Lua through a `lua_pcall` on the hottest verbs.
 /// Built only by [`set_shared`], it converts arguments exactly as `create_function` does.
 pub(super) type Arm = Rc<dyn Fn(&Lua, MultiValue) -> mlua::Result<MultiValue>>;
@@ -97,7 +97,7 @@ pub(super) fn open_arms(lua: &Lua) {
     lua.set_app_data(Arms::default());
 }
 
-/// Replace each of the 19 in every table the chain reaches with one function that dispatches on
+/// Replace each Region-map name in every table the chain reaches with one function that dispatches on
 /// the receiver. Runs after `region::install` and `install_frame_methods` have built the tables.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let frame: Table = lua.named_registry_value(REG_FRAME_METHODS)?;
@@ -116,7 +116,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         .expect("Region-map arms — opened by `open_arms`");
 
     for name in REGION_MAP_METHODS {
-        // The reference gives every widget all 19, so a missing arm fails here, not at an addon.
+        // The reference gives every widget all of them, so a missing arm fails here, not at an addon.
         let arm = |side: Side, which: &str| -> mlua::Result<Arm> {
             arms.0.get(&(side, name)).cloned().ok_or_else(|| {
                 mlua::Error::runtime(format!(

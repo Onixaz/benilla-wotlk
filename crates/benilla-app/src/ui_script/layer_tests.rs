@@ -50,6 +50,18 @@ pub(super) fn production_load_with(
     before: &str,
     addons: impl FnOnce(&std::path::Path),
 ) -> (UiScript, Vec<String>) {
+    production_load_seeded(tag, stock_ui, before, addons, |_| {})
+}
+
+/// [`production_load_with`], with `seed` run on the VM before any file loads, for host state the
+/// stock files read at load time (`GetAccountExpansionLevel()` in `ReputationFrame_OnLoad`).
+pub(super) fn production_load_seeded(
+    tag: &str,
+    stock_ui: bool,
+    before: &str,
+    addons: impl FnOnce(&std::path::Path),
+    seed: impl FnOnce(&mut UiScript),
+) -> (UiScript, Vec<String>) {
     let tmp = std::env::temp_dir().join(format!("benilla-layer-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let home = tmp.join("benilla-config");
@@ -75,6 +87,7 @@ pub(super) fn production_load_with(
     // A reply that hid nothing, so `GetNumAddOns` counts the registry.
     s.note_addon_info_reply(&[]);
     s.register_cvars(crate::cvars::registered_pairs());
+    seed(&mut s);
     s.run(before).unwrap();
     // The layer passed in, not set through `WOW_STOCK_UI`: every test in this process reads it.
     let mut failures = Vec::new();

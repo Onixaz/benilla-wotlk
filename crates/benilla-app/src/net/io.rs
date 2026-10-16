@@ -618,6 +618,7 @@ fn run(
         session.player_login(refuse_once(guid))?;
 
         let billing_time_rested = session.billing_time_rested();
+        let expansion = session.expansion();
         let tutorial_flags = session.take_tutorial_flags();
         // `SMSG_ADDON_INFO` carries no names, so it is paired back against the block we sent. No
         // reply means no AddOn index space at all, carried as `None`.
@@ -644,6 +645,7 @@ fn run(
                 self_guid: guid,
                 name,
                 billing_time_rested,
+                expansion,
                 tutorial_flags,
                 addon_info,
             })
@@ -1105,14 +1107,14 @@ fn writer_loop(
                         w.repair_item(vendor, item_guid)
                     }
                     ClientCommand::GmTicketCreate {
-                        category,
                         map,
                         pos,
                         text,
-                    } => w.gm_ticket_create(category, map, pos, &text),
-                    ClientCommand::GmTicketUpdate { category, text } => {
-                        w.gm_ticket_updatetext(category, &text)
-                    }
+                        need_response,
+                        more_help,
+                    } => w.gm_ticket_create(map, pos, &text, need_response, more_help),
+                    ClientCommand::GmTicketUpdate { text } => w.gm_ticket_updatetext(&text),
+                    ClientCommand::GmResponseResolve => w.gm_response_resolve(),
                     ClientCommand::GmTicketGet => w.gm_ticket_get(),
                     ClientCommand::GmTicketDelete => w.gm_ticket_delete(),
                     ClientCommand::GmTicketSystemStatus => w.gm_ticket_system_status(),

@@ -94,7 +94,7 @@ fn the_exhaustion_tick_marks_where_rested_runs_out() {
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
     s.resolve();
 
-    // The three bindings under the bar (`0x48d350`, `0x48d3f0`, `0x516ea0`).
+    // The three bindings under the bar (`0x51b8b0`, `0x51b960`, `0x60dd40`).
     let (id, name, mult) = s
         .eval::<(i64, String, f64)>("return GetRestState()")
         .unwrap();
@@ -143,7 +143,7 @@ fn the_exhaustion_tick_marks_where_rested_runs_out() {
         .unwrap();
     assert!(ok, "a dry pool hides the tick and returns the purple bar");
 
-    // `GetXPExhaustion`'s nil follows the rest-state byte, not the pool (`0x48d3f0`): normal with
+    // `GetXPExhaustion`'s nil follows the rest-state byte, not the pool (`0x51b960`): normal with
     // a remnant pool (the server's 0 < bonus <= 10 window) is nil, rested and drained is 0. An
     // unmapped byte fails `GetRestState` to three nils.
     s.set_rest_state(2, 5, false);
@@ -339,4 +339,93 @@ fn the_rest_state_line_joins_the_held_open_tooltip() {
         "the handshake is consumed — the line never doubles"
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+}
+
+/// The stock 3.3.5a bar in login order: `ReputationFrame_OnLoad` reads the cap off
+/// `GetAccountExpansionLevel()`, the pre-player `SMSG_INITIALIZE_FACTIONS` fire hides the bar at a
+/// 0 maximum, XP alone cannot re-show it (its `OnValueChanged` returns while hidden), and the
+/// world-enter cascade's second `UPDATE_FACTION` (`0x5d2bc0`) does. The server's no-XP flag
+/// (`IsXPUserDisabled`, `DISABLE_XP_GAIN`) then swaps in the max-level rail.
+#[test]
+fn the_3_3_5a_xp_bar_shows_below_the_wrath_cap_and_yields_to_the_no_xp_flag() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, failures) = super::layer_tests::production_load_seeded(
+        "xpbar",
+        false,
+        "",
+        |_| {},
+        |s| {
+            s.set_account_expansion(2);
+        },
+    );
+    let ours: Vec<_> = failures
+        .iter()
+        .filter(|f| f.contains("ReputationFrame") || f.contains("ExhaustionTick"))
+        .collect();
+    assert!(ours.is_empty(), "load failures: {ours:#?}");
+    assert_eq!(s.eval::<i64>("return MAX_PLAYER_LEVEL").unwrap(), 80);
+    let _ = s.take_errors();
+
+    // `SMSG_INITIALIZE_FACTIONS` lands before our player's create: no XP yet.
+    s.fire_event("UPDATE_FACTION", vec![]);
+    s.resolve();
+    assert!(
+        !s.eval::<bool>("return MainMenuExpBar:IsShown()").unwrap(),
+        "a 0 maximum hides the bar"
+    );
+    s.set_player_xp(1000, 100_000);
+    s.set_rest_state(1, 700, true);
+    s.set_unit(
+        "player",
+        Some(UnitState {
+            exists: true,
+            level: 76,
+            ..UnitState::default()
+        }),
+    );
+    s.fire_event("PLAYER_XP_UPDATE", vec![]);
+    s.resolve();
+    assert!(
+        !s.eval::<bool>("return MainMenuExpBar:IsShown()").unwrap(),
+        "XP alone leaves it hidden"
+    );
+    // The cascade, as `feed_units` fires it.
+    s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
+    s.fire_event("UPDATE_FACTION", vec![]);
+    s.fire_event("UPDATE_EXHAUSTION", vec![]);
+    s.resolve();
+    assert!(
+        s.eval::<bool>(
+            "return MainMenuExpBar:IsShown() and not MainMenuBarMaxLevelBar:IsShown() \
+             and IsXPUserDisabled() == false"
+        )
+        .unwrap(),
+        "below the cap the XP bar shows and the rail stays hidden"
+    );
+
+    s.set_xp_user_disabled(true);
+    s.fire_event("DISABLE_XP_GAIN", vec![]);
+    s.resolve();
+    assert!(
+        s.eval::<bool>(
+            "return not MainMenuExpBar:IsShown() and MainMenuBarMaxLevelBar:IsShown() \
+             and IsXPUserDisabled() == true"
+        )
+        .unwrap(),
+        "the no-XP flag swaps in the rail"
+    );
+
+    s.set_xp_user_disabled(false);
+    s.fire_event("ENABLE_XP_GAIN", vec![]);
+    s.resolve();
+    assert!(s.eval::<bool>("return MainMenuExpBar:IsShown()").unwrap());
+    let errors: Vec<_> = s
+        .take_errors()
+        .into_iter()
+        .filter(|e| e.contains("Reputation") || e.contains("MainMenuBar"))
+        .collect();
+    assert!(errors.is_empty(), "script errors: {errors:#?}");
 }

@@ -90,6 +90,7 @@ impl Plugin for NetPlugin {
             .init_resource::<GuidIndex>()
             .init_resource::<SelfGuid>()
             .init_resource::<AddonInfoReply>()
+            .init_resource::<AccountExpansion>()
             .init_resource::<PendingTransfer>()
             .init_resource::<NetStatus>()
             .init_resource::<DroppedOpcodes>()
@@ -1137,21 +1138,21 @@ pub(crate) enum ClientCommand {
         vendor: u64,
         item_guid: u64,
     },
-    /// `CMSG_GMTICKET_CREATE`: `category` is a `GMTicketCategory.dbc` id (1..10), `map`/`pos`
-    /// where we stand. vmangos refuses several cases silently (queue off, under
-    /// `GMTickets.MinLevel`, category >= 11).
+    /// `CMSG_GMTICKET_CREATE` from `map`/`pos` where we stand; `more_help` is the follow-up to a
+    /// GM's answer.
     GmTicketCreate {
-        category: u8,
         map: u32,
         pos: [f32; 3],
         text: String,
+        need_response: bool,
+        more_help: bool,
     },
-    /// `CMSG_GMTICKET_UPDATETEXT`, with the category byte vmangos discards. vmangos kicks past 2
-    /// per world tick, so one send per click.
+    /// `CMSG_GMTICKET_UPDATETEXT`: the open ticket's new text.
     GmTicketUpdate {
-        category: u8,
         text: String,
     },
+    /// `CMSG_GMRESPONSE_RESOLVE`: `GMResponseResolve()`.
+    GmResponseResolve,
     /// `CMSG_GMTICKET_GETTICKET`: `GetGMTicket()`.
     GmTicketGet,
     /// `CMSG_GMTICKET_DELETETICKET`.
@@ -2062,6 +2063,11 @@ pub(crate) struct WorldEnterCascadeMessage;
 /// rewritten on every login.
 #[derive(Resource, Default)]
 pub(crate) struct AddonInfoReply(pub(crate) Option<Vec<String>>);
+
+/// The account's expansion byte from `SMSG_AUTH_RESPONSE`: a resource, as stock FrameXML reads
+/// `GetAccountExpansionLevel()` in `ReputationFrame_OnLoad` and `LFDFrame.lua` at file scope.
+#[derive(Resource, Default)]
+pub(crate) struct AccountExpansion(pub(crate) u8);
 
 /// `SMSG_TRIGGER_CINEMATIC`: a `CinematicSequences.dbc` id; [`crate::cinematic`] plays and acks it.
 #[derive(Message)]

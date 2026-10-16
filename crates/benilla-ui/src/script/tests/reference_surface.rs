@@ -1075,13 +1075,13 @@ fn get_inventory_slot_info_folds_case_and_flags_only_the_ranged_slot() {
     );
 }
 
-/// Every Region-map name (`0xcf54b4`, 19 entries) is callable on a Texture and a FontString, whose
+/// Every Region-map name is callable on a Texture and a FontString, whose
 /// lookups fall back to it (FontString's `0x79ee20` chains its own `0xcf5400`); a Font object's
 /// lookup (`0x7a1100`) has no fallback.
 #[test]
 fn every_region_map_method_is_callable_on_a_texture_and_a_fontstring() {
-    /// All 19, `GetObjectType`/`IsObjectType` (`0x7a11d0`/`0x7a1290`) among them.
-    const REGION_MAP: [&str; 19] = crate::script::REGION_MAP_METHODS;
+    /// All of them, `GetObjectType`/`IsObjectType` (`0x7a11d0`/`0x7a1290`) among them.
+    const REGION_MAP: [&str; 21] = crate::script::REGION_MAP_METHODS;
     let mut s = crate::script::UiScript::new().unwrap();
     s.set_screen_size(800.0, 600.0);
     s.run(

@@ -69,6 +69,9 @@ pub struct WorldSession {
     /// the body is too short, where the reference leaves its global as it was; this field lives
     /// per connection, with nothing earlier to keep.
     billing_time_rested: u32,
+    /// The account's expansion byte from the last `SMSG_AUTH_RESPONSE` that carried the group, the
+    /// session's `+0x2f2d`; 0 before one, as the reference's constructor zeroes it (`0x465136`).
+    expansion: u8,
     /// `SMSG_TUTORIAL_FLAGS` when it lands during the handshake rather than in the world stream.
     tutorial_flags: Option<Vec<u8>>,
     /// `SMSG_ADDON_INFO`'s per-record status bytes in order; `None` until the server answers.
@@ -158,6 +161,7 @@ impl WorldSession {
             roster_races: Default::default(),
             chat_language: messages::LANGUAGE_COMMON,
             billing_time_rested: 0,
+            expansion: 0,
             tutorial_flags: None,
             addon_info: None,
             cast_counter: Default::default(),
@@ -171,18 +175,26 @@ impl WorldSession {
                 ServerPacket::AuthResponse {
                     result,
                     billing_time_rested,
+                    expansion,
                     ..
                 } if result == messages::AUTH_OK => {
                     // The reference keeps the last AUTH_RESPONSE's billing group.
                     session.billing_time_rested = billing_time_rested.unwrap_or(0);
+                    if let Some(expansion) = expansion {
+                        session.expansion = expansion;
+                    }
                     break;
                 }
                 // Queued, not refused: the server re-sends as we move up and ends with `AUTH_OK`.
                 ServerPacket::AuthResponse {
                     result,
                     queue_position,
+                    expansion,
                     ..
                 } if result == messages::AUTH_WAIT_QUEUE => {
+                    if let Some(expansion) = expansion {
+                        session.expansion = expansion;
+                    }
                     if !queued {
                         queued = true;
                         session
@@ -215,6 +227,11 @@ impl WorldSession {
     /// Rested billing minutes (`GetBillingTimeRested`); always 0 from vmangos (`World.cpp:331`).
     pub fn billing_time_rested(&self) -> u32 {
         self.billing_time_rested
+    }
+
+    /// The account's expansion (`GetAccountExpansionLevel`): 2 for a Wrath account.
+    pub fn expansion(&self) -> u8 {
+        self.expansion
     }
 
     /// The tutorial bank captured during the login handshake, if any.

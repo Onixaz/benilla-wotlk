@@ -221,13 +221,7 @@ fn spawn_screen(
             let template = strings.text("VERSION_TEMPLATE", "%s %s (%s) (%s)\n%s");
             let build = benilla_protocol::CLIENT_BUILD.to_string();
             let mut out = template.to_string();
-            for piece in [
-                "Version",
-                "1.12.1",
-                build.as_str(),
-                "Release",
-                "Sep 19 2006",
-            ] {
+            for piece in ["Version", "3.3.5", build.as_str(), "Release", "Jun 24 2010"] {
                 out = out.replacen("%s", piece, 1);
             }
             out

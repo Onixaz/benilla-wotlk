@@ -59,7 +59,21 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         },
     )?;
 
-    // No `SetSize`: not a 1.12 verb.
+    // SetSize(width, height) (`0x49d7a0`) and GetSize() (`0x49d6f0`), shared with frames.
+    set_shared(
+        lua,
+        m,
+        Side::Region,
+        "SetSize",
+        crate::script::object::layout_methods::set_size,
+    )?;
+    set_shared(
+        lua,
+        m,
+        Side::Region,
+        "GetSize",
+        crate::script::object::layout_methods::get_size,
+    )?;
 
     set_shared(lua, m, Side::Region, "GetWidth", |lua, this: Table| {
         Ok(measured_wh(lua, &this)?.0)

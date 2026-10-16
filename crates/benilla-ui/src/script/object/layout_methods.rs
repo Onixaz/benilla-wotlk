@@ -25,6 +25,40 @@ fn frame_ladder_context(lua: &Lua, h: FrameHandle) -> (String, String) {
 }
 
 /// Populate `m`'s anchor and size methods.
+/// `SetSize(width, height)` (`0x49d7a0`): both axes through the object's own `SetWidth` and
+/// `SetHeight`, after the reference's usage check that both are numbers.
+pub(crate) fn set_size(lua: &Lua, (this, args): (Table, MultiValue)) -> mlua::Result<()> {
+    let num = |v: Option<&Value>| -> mlua::Result<Option<f64>> {
+        match v {
+            Some(v @ (Value::Integer(_) | Value::Number(_) | Value::String(_))) => {
+                lua.coerce_number(v.clone())
+            }
+            _ => Ok(None),
+        }
+    };
+    let (Some(w), Some(h)) = (num(args.front())?, num(args.get(1))?) else {
+        let get_name: mlua::Function = this.get("GetName")?;
+        let name: Option<String> = get_name.call(this.clone())?;
+        return Err(mlua::Error::runtime(format!(
+            "Usage: {}:SetSize(width, height)",
+            name.as_deref().unwrap_or(UNNAMED)
+        )));
+    };
+    this.get::<mlua::Function>("SetWidth")?
+        .call::<()>((this.clone(), w))?;
+    this.get::<mlua::Function>("SetHeight")?
+        .call::<()>((this.clone(), h))
+}
+
+/// `GetSize()` (`0x49d6f0`): the object's own `GetWidth` and `GetHeight`.
+pub(crate) fn get_size(_: &Lua, this: Table) -> mlua::Result<(f64, f64)> {
+    let w: f64 = this.get::<mlua::Function>("GetWidth")?.call(this.clone())?;
+    let h: f64 = this
+        .get::<mlua::Function>("GetHeight")?
+        .call(this.clone())?;
+    Ok((w, h))
+}
+
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // Layout: SetPoint / ClearAllPoints / SetWidth / SetHeight / GetWidth / GetHeight
     set_shared(
@@ -173,7 +207,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(())
         },
     )?;
-    // No `SetSize`: neither 1.12 method table has it.
+    // SetSize(width, height) (`0x49d7a0`) and GetSize() (`0x49d6f0`), the region table's pair.
+    set_shared(lua, m, Side::Frame, "SetSize", set_size)?;
+    set_shared(lua, m, Side::Frame, "GetSize", get_size)?;
     set_shared(lua, m, Side::Frame, "GetWidth", |lua, this: Table| {
         let h = frame_handle_of(lua, &this)?;
         settle(lua);

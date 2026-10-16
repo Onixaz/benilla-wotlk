@@ -814,7 +814,7 @@ fn feed_loot(
     commands: Res<NetCommands>,
     mut chat: ResMut<crate::ui_chat::ChatLog>,
     mut last: Local<crate::ui_script::VmMemo<Option<LootSnapshot>>>,
-    mut seen_generation: Local<u64>,
+    mut seen_generation: Local<crate::ui_script::VmMemo<u64>>,
     mut pickup: MessageWriter<crate::sound::LootPickupSound>,
     // The random-suffix catalogs: a loot slot has no item object to carry the roll.
     props: Option<Res<crate::items::RandomProperties>>,
@@ -828,6 +828,7 @@ fn feed_loot(
         return;
     };
     let last = last.get(&script);
+    let seen_generation = seen_generation.get(&script);
     let rolls = RollCatalogs {
         props: props.as_deref(),
         enchants: enchants.as_deref(),
@@ -858,9 +859,7 @@ fn feed_loot(
         pickup.write(crate::sound::LootPickupSound { display_id });
     }
     // A window that replaced the shown one: `SetObject` closes the old before it opens the new.
-    if std::mem::replace(&mut *seen_generation, loot.generation) != loot.generation
-        && last.is_some()
-    {
+    if std::mem::replace(seen_generation, loot.generation) != loot.generation && last.is_some() {
         script.set_loot(None);
         script.fire_event("LOOT_CLOSED", vec![]);
         *last = None;
@@ -1095,16 +1094,18 @@ fn drain_loot(
     if std::mem::take(&mut move_start.0) {
         dead.after_close(close_on_move_start(&mut loot, &mut latch, &commands));
     }
-    drain_loot_script(
-        script,
-        &mut loot,
-        &mut latch,
-        &commands,
-        &group,
-        &items,
-        &mut dead,
-        &mut errors,
-    );
+    if let Some(mut script) = script {
+        drain_loot_script(
+            &mut script,
+            &mut loot,
+            &mut latch,
+            &commands,
+            &group,
+            &items,
+            &mut dead,
+            &mut errors,
+        );
+    }
     for display_id in loot.take_pickups() {
         pickup.write(crate::sound::LootPickupSound { display_id });
     }
@@ -1114,7 +1115,7 @@ fn drain_loot(
 /// [`drain_loot`]'s Lua intents; the takes' pickup sounds queue on [`LootState`].
 #[allow(clippy::too_many_arguments)]
 fn drain_loot_script(
-    script: Option<NonSendMut<UiScript>>,
+    script: &mut UiScript,
     loot: &mut LootState,
     latch: &mut LootLatch,
     commands: &NetCommands,
@@ -1123,9 +1124,6 @@ fn drain_loot_script(
     dead: &mut DeadUnitDeselect,
     errors: &mut UiErrorKeys,
 ) {
-    let Some(mut script) = script else {
-        return;
-    };
     for index in script.take_loot_picks() {
         match loot.action_at(index) {
             // The coin row clears at the click (`0x589184`-`0x5891b8`); the purse watcher plays.

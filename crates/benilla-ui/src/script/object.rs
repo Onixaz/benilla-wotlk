@@ -21,7 +21,7 @@ pub(crate) mod anchor_args;
 pub(crate) mod attributes;
 mod events_regions;
 mod frame_state;
-mod layout_methods;
+pub(crate) mod layout_methods;
 mod mouse_over;
 pub(crate) use layout_methods::eff_scale;
 pub(crate) mod movable;
@@ -344,7 +344,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     super::statusbar::install(lua)?;
     super::button::install(lua)?;
     super::editbox::install(lua)?;
-    // After every table above exists: each of the 19 Region-map names gets one shared
+    // After every table above exists: each Region-map name gets one shared
     // implementation, so a method taken off a frame works on a texture.
     super::region_map::install(lua)?;
 

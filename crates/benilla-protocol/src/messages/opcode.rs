@@ -615,9 +615,9 @@ pub const CMSG_BINDER_ACTIVATE: u16 = 0x01B5; // 437
 pub const SMSG_PLAYERBOUND: u16 = 0x0158; // 344
 pub const SMSG_BINDER_CONFIRM: u16 = 0x02EB; // 747
 
-// GM tickets: nothing is pushed at login, so the client asks `CMSG_GMTICKET_GETTICKET`. GM commands
-// push GETTICKET and DELETETICKET answers unasked (`TicketCommands.cpp`), and a create or delete
-// can go unanswered (`GMTicketHandler.cpp:73-113`), so nothing waits on a reply.
+// GM tickets: nothing is pushed at login, so the Help window asks `CMSG_GMTICKET_GETTICKET`. GM
+// commands push GETTICKET, DELETETICKET and status answers unasked, so nothing waits on a reply.
+// 12340 reads all eight answers in one handler (`0x5ad240`).
 pub const CMSG_GMTICKET_CREATE: u16 = 0x0205; // 517
 pub const SMSG_GMTICKET_CREATE: u16 = 0x0206; // 518
 pub const CMSG_GMTICKET_UPDATETEXT: u16 = 0x0207; // 519
@@ -629,10 +629,16 @@ pub const SMSG_GMTICKET_DELETETICKET: u16 = 0x0218; // 536
 pub const CMSG_GMTICKET_SYSTEMSTATUS: u16 = 0x021A; // 538
 pub const SMSG_GMTICKET_SYSTEMSTATUS: u16 = 0x021B; // 539
 
-/// A ticket-state push: `u32` 1 updated, 2 closed, 3 survey offered; vmangos never sends it. The
-/// reference re-asks for the ticket on 1 (`0x5e7932`); 2 and 3 are recorded, not acted on, and
-/// the survey window 3 offers is not built.
+/// A ticket-state push: `u32` 1 or 4 re-asks, 2 closes the ticket, 3 closes it and offers the
+/// survey (`0x5ad42d`).
 pub const SMSG_GM_TICKET_STATUS_UPDATE: u16 = 0x0328; // 808
+
+// A GM's answer to a ticket, its database error, the player's resolve and the answer's closing
+// push (`0x5ad499`); `CMSG_GMRESPONSE_RESOLVE` is empty (`0x5acce0`).
+pub const SMSG_GMRESPONSE_DB_ERROR: u16 = 0x04EE; // 1262
+pub const SMSG_GMRESPONSE_RECEIVED: u16 = 0x04EF; // 1263
+pub const CMSG_GMRESPONSE_RESOLVE: u16 = 0x04F0; // 1264
+pub const SMSG_GMRESPONSE_STATUS_UPDATE: u16 = 0x04F1; // 1265
 
 // The bank: `CMSG_BANKER_ACTIVATE` opens a pure banker; `SMSG_SHOW_BANK` also arrives unasked
 // from the `GOSSIP_OPTION_BANKER` option.

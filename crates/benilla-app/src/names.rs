@@ -334,14 +334,14 @@ impl crate::query_cache::AskOnce for NameCache {
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /// The file's first line; any field that differs on load discards the whole file, the
-/// reference's rule for its `.wdb` header (`[FourCC | build 0x16f3 | locale | recordSize |
+/// reference's rule for its `.wdb` header (`[FourCC | build 0x3034 | locale | recordSize |
 /// version 1]`, no checksum, no timestamp, no TTL).
 const CACHE_MAGIC: &str = "benilla-namecache";
 /// Our record-layout version; bump it when a column changes. Version 2 holds creature records
 /// only.
 const CACHE_FORMAT: u32 = 2;
-/// The client build, the reference's `0x16f3`.
-const CACHE_BUILD: u32 = 5875;
+/// The client build, the reference's `0x3034`.
+const CACHE_BUILD: u32 = benilla_protocol::CLIENT_BUILD as u32;
 /// In the header as in the reference's; benilla reads DBC locale slot 0 only.
 const CACHE_LOCALE: &str = "enUS";
 

@@ -50,6 +50,9 @@ pub struct ScrollingMessageState {
     pub fading_enabled: bool,
     /// Lines scrolled back from the newest; 0 is AtBottom, the only state in which fades tick.
     pub scroll_offset: usize,
+    /// `+0x348`, on at construction (`0x96a45b`): off, the lines' link spans take no clicks
+    /// (`RefreshHyperlinks` `0x9699c0`), what an uninteractable chat window sets.
+    pub hyperlinks_enabled: bool,
 }
 
 impl Default for ScrollingMessageState {
@@ -64,6 +67,7 @@ impl Default for ScrollingMessageState {
             fading_enabled: true,
             lines_gen: 0,
             scroll_offset: 0,
+            hyperlinks_enabled: true,
         }
     }
 }

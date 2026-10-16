@@ -135,7 +135,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     //
     // `CreateTitleRegion` (`0x773910`) reads no argument and keeps one region per frame
     // (`CSimpleFrame+0xA8`): a second call clears that region's anchors and returns it, and a new
-    // one has none. The reference's region answers only the 19 Region methods (`0x7a2ea0`); ours
+    // one has none. The reference's region answers only the Region-map methods (`0x7a2ea0`); ours
     // shares the region metatable, so it also accepts the texture methods, inertly.
     m.set(
         "CreateTitleRegion",

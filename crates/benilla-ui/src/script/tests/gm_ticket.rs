@@ -1,7 +1,7 @@
-//! The Help window's seven engine globals ([`crate::script::gm_ticket`]).
+//! The Help window's engine globals ([`crate::script::gm_ticket`]).
 
 use super::common::script;
-use crate::script::{GmTicketIntent, GmTicketWrite, UiScript};
+use crate::script::{GmTicketIntent, UiScript};
 
 /// The catalog as the app pushes it: `GMTicketCategory.dbc`'s own ids and order.
 fn with_categories() -> UiScript {
@@ -93,49 +93,83 @@ fn the_queue_preserves_call_order_across_different_verbs() {
         vec![GmTicketIntent::Ask, GmTicketIntent::Delete]
     );
 
-    s.run("NewGMTicket(1, \"a\") GetGMTicket()").unwrap();
+    s.run("NewGMTicket(\"a\", true) GetGMTicket()").unwrap();
     assert!(matches!(
         s.take_gm_ticket_intents().as_slice(),
-        [GmTicketIntent::Write(_), GmTicketIntent::Ask]
+        [GmTicketIntent::Create { .. }, GmTicketIntent::Ask]
     ));
 }
 
-/// Same signature, different opcodes; the stock window picks one from its own `hasTicket` flag.
+/// Three writes, three intents in call order; the window picks create or edit by its own state.
 #[test]
-fn new_and_update_are_distinguishable_and_keep_their_order() {
+fn new_update_and_more_help_are_distinguishable_and_keep_their_order() {
     let mut s = script();
-    s.run("NewGMTicket(4, \"My sword vanished.\") UpdateGMTicket(4, \"Still gone.\")")
-        .unwrap();
+    s.run(
+        "NewGMTicket(\"My sword vanished.\", false) UpdateGMTicket(\"Still gone.\")          GMResponseNeedMoreHelp(\"Again.\") GMResponseResolve()",
+    )
+    .unwrap();
     assert_eq!(
         s.take_gm_ticket_intents(),
         vec![
-            GmTicketIntent::Write(GmTicketWrite {
-                category: 4,
+            GmTicketIntent::Create {
                 text: "My sword vanished.".into(),
-                is_new: true,
-            }),
-            GmTicketIntent::Write(GmTicketWrite {
-                category: 4,
+                need_response: false,
+                more_help: false,
+            },
+            GmTicketIntent::Update {
                 text: "Still gone.".into(),
-                is_new: false,
-            }),
+            },
+            GmTicketIntent::Create {
+                text: "Again.".into(),
+                need_response: true,
+                more_help: true,
+            },
+            GmTicketIntent::Resolve,
         ]
     );
 }
 
-/// The reference's usage string is `Usage: UpdateGMTicket(type, text)`. The binding queues any
-/// text; the reference refuses an empty one before the send (`ERR_TICKET_NO_TEXT`, `0x5ef808`,
-/// `0x5efae7`).
+/// `0x5ad0a1`: the second argument must be a real boolean, else the usage error.
+#[test]
+fn new_gm_ticket_takes_a_text_and_a_boolean() {
+    let mut s = script();
+    for bad in [
+        "NewGMTicket(4, \"x\")",
+        "NewGMTicket(\"x\")",
+        "NewGMTicket(\"x\", 1)",
+        "NewGMTicket(nil, true)",
+    ] {
+        let e = s.run(bad).unwrap_err().to_string();
+        assert!(
+            e.contains("Usage: NewGMTicket(ticketDescription, needResponse)"),
+            "{bad}: {e}"
+        );
+    }
+    assert!(s.take_gm_ticket_intents().is_empty());
+    s.run("NewGMTicket(12, true)").unwrap();
+    assert_eq!(
+        s.take_gm_ticket_intents(),
+        vec![GmTicketIntent::Create {
+            text: "12".into(),
+            need_response: true,
+            more_help: false,
+        }],
+        "a number is a string to lua_isstring"
+    );
+}
+
+/// The binding queues any text; the app's gate refuses an empty one before the send
+/// (`ERR_TICKET_NO_TEXT`, `0x5ac170`).
 #[test]
 fn an_empty_ticket_body_is_queued_not_swallowed() {
     let mut s = script();
-    s.run("NewGMTicket(1, \"\")").unwrap();
+    s.run("NewGMTicket(\"\", true)").unwrap();
     assert_eq!(
         s.take_gm_ticket_intents(),
-        vec![GmTicketIntent::Write(GmTicketWrite {
-            category: 1,
+        vec![GmTicketIntent::Create {
             text: String::new(),
-            is_new: true,
-        })]
+            need_response: true,
+            more_help: false,
+        }]
     );
 }

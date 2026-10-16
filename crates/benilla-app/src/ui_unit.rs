@@ -1039,13 +1039,16 @@ fn drain_action_bar_toggles(script: Option<NonSendMut<UiScript>>, commands: Res<
 /// `UNIT_FIELD_FLAGS` PvP bit `0x1000` the icon draws, which lingers for the server's timer.
 const PLAYER_FLAGS_PVP_DESIRED: u32 = 0x200;
 
-/// Inside a rest area (vmangos `Player.h:320`), the bit `IsResting` (`0x516ea0`) tests.
+/// Inside a rest area (vmangos `Player.h:320`), the bit `IsResting` (`0x60dd40`) tests.
 const PLAYER_FLAGS_RESTING: u32 = 0x20;
 
 /// `PLAYER_FLAGS` bits 12 and 13, a realm's two play-time limits, read by `PartialPlayTime`
-/// (`0x48eb70`) and `NoPlayTime` (`0x48ebe0`); not the pre-1.6.1 `CAN_SELF_RESURRECT`.
+/// (`0x51cb30`) and `NoPlayTime` (`0x51cba0`); not the pre-1.6.1 `CAN_SELF_RESURRECT`.
 const PLAYER_FLAGS_PARTIAL_PLAY_TIME: u32 = 0x1000;
 const PLAYER_FLAGS_NO_PLAY_TIME: u32 = 0x2000;
+
+/// The server's no-XP flag, bit 25, which `IsXPUserDisabled` (`0x614140`) reads (`0x614170`).
+const PLAYER_FLAGS_NO_XP_GAIN: u32 = 0x0200_0000;
 
 /// The `(toast, verbose)` GlobalStrings keys for a real change of the PvP-preference bit, silent on
 /// first sight (the reference diffs bits). The toasts are catalog rows 437/438 (kind 1, yellow
@@ -1416,9 +1419,10 @@ fn feed_units(
     }
 
     // The rest snapshot (rest-state byte, pool, `PLAYER_FLAGS`), ahead of the entering-world fire
-    // as the reference's descriptor is. Below `0x5ee990`'s local-GUID gate (`0x5eea93`) each arm
-    // tests its own bits: `PLAYER_UPDATE_RESTING` on either edge of `0x20` (`0x5eead0`, fire
-    // `0x5eeaf2`), `PLAYTIME_CHANGED` on `0x3000` (`0x5eeb65`, fire `0x5eeb6f`).
+    // as the reference's descriptor is. Below `0x6e0fd0`'s local-GUID gate (`0x6e10dc`) each arm
+    // tests its own bits: `PLAYER_UPDATE_RESTING` on either edge of `0x20` (fire `0x6e112d`),
+    // `PLAYTIME_CHANGED` on `0x3000` (`0x6e11c9`), `DISABLE_`/`ENABLE_XP_GAIN` on `0x2000000`
+    // (`0x6e121c`).
     // `UPDATE_EXHAUSTION` is two other watchers, `0x5de4e0` on the byte and `0x5de4b0` on the pool;
     // here it also fires on first sight, where they stay silent on a create and on `/reload`.
     if let Some((store, _)) = self_q.iter().next() {
@@ -1437,6 +1441,7 @@ fn feed_units(
                 rest.2 & PLAYER_FLAGS_PARTIAL_PLAY_TIME != 0,
                 rest.2 & PLAYER_FLAGS_NO_PLAY_TIME != 0,
             );
+            script.set_xp_user_disabled(rest.2 & PLAYER_FLAGS_NO_XP_GAIN != 0);
             if prev.map(|p| (p.0, p.1)) != Some((rest.0, rest.1)) {
                 script.fire_event("UPDATE_EXHAUSTION", vec![]);
             }
@@ -1453,9 +1458,18 @@ fn feed_units(
                 if moved & PLAYER_FLAGS_RESTING != 0 {
                     script.fire_event("PLAYER_UPDATE_RESTING", vec![]);
                 }
-                // `PLAYTIME_CHANGED` (id 530), argless; stock `PlayerFrame.lua:23` registers it.
+                // `PLAYTIME_CHANGED` (id 467), argless; stock `PlayerFrame.lua` registers it.
                 if moved & (PLAYER_FLAGS_PARTIAL_PLAY_TIME | PLAYER_FLAGS_NO_PLAY_TIME) != 0 {
                     script.fire_event("PLAYTIME_CHANGED", vec![]);
+                }
+                // Argless; `ReputationWatchBar` re-lays the XP bar on either.
+                if moved & PLAYER_FLAGS_NO_XP_GAIN != 0 {
+                    let event = if rest.2 & PLAYER_FLAGS_NO_XP_GAIN != 0 {
+                        "DISABLE_XP_GAIN"
+                    } else {
+                        "ENABLE_XP_GAIN"
+                    };
+                    script.fire_event(event, vec![]);
                 }
             }
         }
@@ -1512,6 +1526,10 @@ fn feed_units(
         if !memo.entered_world {
             gate.audit("feed_units", "the PLAYER_ENTERING_WORLD arm");
             script.fire_event("PLAYER_ENTERING_WORLD", vec![]);
+            // The cascade's `CGReputationInfo::EnterWorld` (`0x5d2bc0`) re-sorts and fires
+            // `UPDATE_FACTION` (`0x5d1bfa`) with the player seated, which re-shows the XP bar the
+            // pre-player `SMSG_INITIALIZE_FACTIONS` fire hid at a 0 maximum.
+            script.fire_event("UPDATE_FACTION", vec![]);
             memo.entered_world = true;
         }
     } else if memo.entered_world {

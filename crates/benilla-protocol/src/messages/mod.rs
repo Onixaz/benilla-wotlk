@@ -128,8 +128,9 @@ pub use duel::{
 };
 pub use gameobject::{gameobj_use, gameobject_query, GameObjectQueryInfo};
 pub use gm_ticket::{
-    gm_ticket_create, gm_ticket_updatetext, GmTicket, GMTICKET_QUEUE_ENABLED,
-    GMTICKET_STATUS_DEFAULT, GMTICKET_STATUS_HASTEXT, RESERVED_FOR_FUTURE_USE,
+    gm_ticket_create, gm_ticket_updatetext, GmResponse, GmTicket, GMTICKET_QUEUE_ENABLED,
+    GMTICKET_RESPONSE_TICKET_DELETED, GMTICKET_STATUS_DBERROR, GMTICKET_STATUS_DEFAULT,
+    GMTICKET_STATUS_HASTEXT,
 };
 pub use gossip::{
     gossip_hello, gossip_select_option, npc_text_query, select_greeting, GossipMenu, GossipOption,

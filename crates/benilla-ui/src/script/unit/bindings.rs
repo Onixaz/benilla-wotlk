@@ -3,7 +3,7 @@
 //! [`flag`](super::super::binding_abi::flag): no binding in the reference's unit table (`0x850438`)
 //! calls `lua_pushboolean` (`0x6f39f0`), though `IsPetAttackActive` (`0x4be0e0`) outside it does.
 
-use mlua::{Lua, Value};
+use mlua::{Lua, MultiValue, Value};
 
 use super::super::binding_abi::flag;
 use super::super::calls::ScriptCall;
@@ -1139,8 +1139,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetRestState() (`0x48d350`) → the Exhaustion.dbc row's ID, name and factor, indexed directly
-    // by `PLAYER_BYTES_2` byte 3 (`0xc0dd78`); nil, nil, nil when there is no such row.
+    // GetRestState() (`0x51b8b0`) → the Exhaustion.dbc row's ID, name and factor, the records at
+    // `[0xad3838]` indexed directly by `PLAYER_BYTES_2` byte 3; nil, nil, nil when there is no row.
     g.set(
         "GetRestState",
         lua.create_function(|lua, ()| {
@@ -1157,8 +1157,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             })
         })?,
     )?;
-    // GetXPExhaustion() (`0x48d3f0`): the rested pool times the factor of Exhaustion.dbc row 1
-    // whatever the state (2.0 shipped). Nil unless the rest byte is 1 (`0x48d43b`), whatever the
+    // GetXPExhaustion() (`0x51b960`): the rested pool times the factor of Exhaustion.dbc row 1
+    // whatever the state (2.0 shipped). Nil unless the rest byte is 1 (`0x51b9c7`), whatever the
     // pool holds, so a rested byte with an empty pool answers 0.
     g.set(
         "GetXPExhaustion",
@@ -1174,7 +1174,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             })
         })?,
     )?;
-    // IsResting() (`0x516ea0`): `PLAYER_FLAGS` bit 0x20, in a rest area.
+    // IsResting() (`0x60dd40`): `PLAYER_FLAGS` bit 0x20, in a rest area.
     g.set(
         "IsResting",
         lua.create_function(|lua, ()| {
@@ -1184,8 +1184,23 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(flag(model.resting))
         })?,
     )?;
+    // IsXPUserDisabled() (`0x614140`): `PLAYER_FLAGS` bit 25 as a boolean; nothing without a player.
+    g.set(
+        "IsXPUserDisabled",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            if !model.unit("player").is_some_and(|u| u.exists) {
+                return Ok(MultiValue::new());
+            }
+            Ok(MultiValue::from_vec(vec![Value::Boolean(
+                model.xp_user_disabled,
+            )]))
+        })?,
+    )?;
     // PartialPlayTime()/NoPlayTime(): the play-time limit flags, `PLAYER_FLAGS` bits 0x1000
-    // (`0x48eb70`) and 0x2000 (`0x48ebe0`).
+    // (`0x51cb30`) and 0x2000 (`0x51cba0`).
     g.set(
         "PartialPlayTime",
         lua.create_function(|lua, ()| {
@@ -1204,7 +1219,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(flag(model.no_play_time))
         })?,
     )?;
-    // GetBillingTimeRested() (`0x48ec50`): always one number, unconverted (`0x48ec5e`); stock
+    // GetBillingTimeRested() (`0x511c40`): always one number, unconverted (`0x511c57`); stock
     // `PlayerFrame.lua:246` reads it as minutes. vmangos always sends 0 (`World.cpp:331`).
     g.set(
         "GetBillingTimeRested",
@@ -1215,7 +1230,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(Value::Number(f64::from(model.billing_time_rested)))
         })?,
     )?;
-    // GetTimeToWellRested(): always nil; the reference's binding (`0x48d4b0`) only pushes nil.
+    // GetTimeToWellRested(): always nil; the reference's binding (`0x510b90`) only pushes nil.
     g.set(
         "GetTimeToWellRested",
         lua.create_function(|_, ()| Ok(Value::Nil))?,

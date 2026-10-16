@@ -336,6 +336,10 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
         .and_then(|r| r.realm.as_ref().map(|r| r.name.clone()))
         .unwrap_or_default();
     script.set_realm_name(&realm);
+    // The expansion before the load too: `ReputationFrame_OnLoad` sets `MAX_PLAYER_LEVEL` from it.
+    if let Some(expansion) = world.get_resource::<crate::net::AccountExpansion>() {
+        script.set_account_expansion(expansion.0);
+    }
     // `CGGameUI::InitializeGame` flags these read-only before `UI_Init` loads anything
     // (`0x48f566`-`0x48f584`), so an in-game `SetCVar` of one raises, logout handlers included;
     // `ShutdownGame` clears them (`0x491240`), and here the flags die with this VM. The host's

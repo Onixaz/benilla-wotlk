@@ -210,29 +210,40 @@ pub fn parse_server(opcode: u16, body: &[u8]) -> io::Result<ServerPacket> {
     parse_server_with_tail(opcode, body).map(|(packet, _)| packet)
 }
 
-/// 3.3.5a's `SMSG_AUTH_RESPONSE`: `u8 code`; then, in a full reply, `u32 billingTimeRemaining,
-/// u8 billingPlanFlags, u32 billingTimeRested, u8 expansion`; then, for WAIT_QUEUE, `u32 position,
-/// u8 freeCharacterMigration` (AzerothCore `WorldSession::SendAuthResponse`). A refusal may be
-/// the code alone (`WorldSocket::SendAuthResponseError`).
+/// 3.3.5a's `SMSG_AUTH_RESPONSE` as `RealmConnection::HandleAuthResponse` (`0x464640`) reads it:
+/// `u8 code`; for OK or WAIT_QUEUE with 10 bytes left past the queue's 5 (`0x46469e`), `u32
+/// billingTimeRemaining, u8 billingPlanFlags, u32 billingTimeRested, u8 expansion`; then, for
+/// WAIT_QUEUE, `u32 position, u8 freeCharacterMigration`. A refusal is the code alone. Deviation: a
+/// body too short for the position gives `None` where the client keeps a stale global.
 pub fn parse_auth_response_wotlk(body: &[u8]) -> io::Result<ServerPacket> {
     let mut r = body;
-    let result = read_u8(&mut r)?;
+    read_auth_response(&mut r)
+}
+
+fn read_auth_response(r: &mut &[u8]) -> io::Result<ServerPacket> {
+    let result = read_u8(r)?;
     let queued = result == super::AUTH_WAIT_QUEUE;
     let mut billing_time_rested = None;
+    let mut expansion = None;
     let mut queue_position = None;
-    if r.len() >= 10 {
-        let _billing_time_remaining = read_u32_le(&mut r)?;
-        let _billing_plan_flags = read_u8(&mut r)?;
-        billing_time_rested = Some(read_u32_le(&mut r)?);
-        let _expansion = read_u8(&mut r)?;
+    if result == super::AUTH_OK || queued {
+        let reserved = if queued { 5 } else { 0 };
+        if r.len().saturating_sub(reserved) >= 10 {
+            let _billing_time_remaining = read_u32_le(r)?;
+            let _billing_plan_flags = read_u8(r)?;
+            billing_time_rested = Some(read_u32_le(r)?);
+            // The session's `+0x2f2d`, `GetAccountExpansionLevel()`'s byte (`0x4646cd`).
+            expansion = Some(read_u8(r)?);
+        }
         if queued {
-            queue_position = read_u32_le(&mut r).ok();
+            queue_position = read_u32_le(r).ok();
         }
     }
     Ok(ServerPacket::AuthResponse {
         result,
         queue_position,
         billing_time_rested,
+        expansion,
     })
 }
 
@@ -314,28 +325,7 @@ fn parse_server_body(
             let _seeds = crate::wire::read_array::<32>(&mut r)?;
             ServerPacket::AuthChallenge { server_seed }
         }
-        opcode::SMSG_AUTH_RESPONSE => {
-            // The client's grammar (`0x5b41b0`): `u8 code`; then, for OK or WAIT_QUEUE with 5+
-            // bytes left, `u32 billingTimeRemaining, u8 billingPlanFlags, u32 billingTimeRested`;
-            // then, for WAIT_QUEUE, `u32 position`. The 5 guarding a 9-byte group is the client's
-            // and mis-parses a 6..=9 byte body; matched on purpose. Deviation: a body too short
-            // for the position gives `None` where the client redisplays a stale global, because
-            // showing a stale queue position as current is a client bug.
-            let result = read_u8(&mut r)?;
-            let queued = result == super::AUTH_WAIT_QUEUE;
-            let mut billing_time_rested = None;
-            if (result == super::AUTH_OK || queued) && r.len() >= 5 {
-                let _billing_time_remaining = read_u32_le(&mut r)?;
-                let _billing_plan_flags = read_u8(&mut r)?;
-                // The only source of `GetBillingTimeRested()` (the client's writer is `0x5b421a`).
-                billing_time_rested = Some(read_u32_le(&mut r)?);
-            }
-            ServerPacket::AuthResponse {
-                result,
-                queue_position: queued.then(|| read_u32_le(&mut r).ok()).flatten(),
-                billing_time_rested,
-            }
-        }
+        opcode::SMSG_AUTH_RESPONSE => read_auth_response(&mut r)?,
         opcode::SMSG_CHAR_ENUM => {
             let count = read_u8(&mut r)?;
             // vmangos clamps `CharactersPerRealm` to 10 (`World.cpp:629`).
@@ -473,9 +463,13 @@ fn parse_server_body(
             }
         }
         // The ticket response opcodes share one 4-byte body; only the opcode names the verb.
-        opcode::SMSG_GMTICKET_GETTICKET => ServerPacket::GmTicketAnswer {
-            ticket: gm_ticket::read_gm_ticket(&mut r)?.map(Box::new),
-        },
+        opcode::SMSG_GMTICKET_GETTICKET => {
+            let (status, ticket) = gm_ticket::read_gm_ticket(&mut r)?;
+            ServerPacket::GmTicketAnswer {
+                status,
+                ticket: ticket.map(Box::new),
+            }
+        }
         opcode::SMSG_GMTICKET_CREATE => ServerPacket::GmTicketCreated {
             response: gm_ticket::read_gm_ticket_response(&mut r)?,
         },
@@ -490,6 +484,13 @@ fn parse_server_body(
         },
         opcode::SMSG_GM_TICKET_STATUS_UPDATE => ServerPacket::GmTicketStatusUpdate {
             status: gm_ticket::read_gm_ticket_response(&mut r)?,
+        },
+        opcode::SMSG_GMRESPONSE_DB_ERROR => ServerPacket::GmResponseDbError,
+        opcode::SMSG_GMRESPONSE_RECEIVED => ServerPacket::GmResponseReceived {
+            response: Box::new(gm_ticket::read_gm_response(&mut r)?),
+        },
+        opcode::SMSG_GMRESPONSE_STATUS_UPDATE => ServerPacket::GmResponseStatusUpdate {
+            show_survey: gm_ticket::read_gm_response_status(&mut r)?,
         },
         opcode::SMSG_BINDER_CONFIRM => ServerPacket::BinderConfirm {
             binder: binder::read_binder_confirm(&mut r)?,

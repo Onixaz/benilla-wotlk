@@ -1,37 +1,28 @@
-//! The GM ticket live probe (`WOW_PROBE_GMTICKET=1`): drives the five ticket opcodes through the
-//! live Lua VM's bindings (`GetGMStatus`, `DeleteGMTicket`, `GetGMTicket`, `NewGMTicket`,
-//! `UpdateGMTicket`) and observes each answer as the Help window does, as an `UPDATE_TICKET` or
-//! `UPDATE_GM_STATUS` event. Logs one `PROBE_GMTICKET: <step> PASS/FAIL/SKIP <detail>` line per
-//! step, then `PROBE_GMTICKET: DONE pass=<n> fail=<m>`, and exits. Non-combat and sends no GM
-//! command; the switches are `docs/CONTRIBUTING.md`, "Running it unattended".
-//!
-//! vmangos answers several refusals with silence (`GMTicketHandler.cpp:88-113`): no packet for a
-//! create when the queue is off, the player is under `GMTickets.MinLevel` or the category is
-//! `>= GMTICKET_MAX` (11), nor for a delete with no ticket (`:73-86`).
+//! The GM ticket live probe (`WOW_PROBE_GMTICKET=1`): drives the ticket opcodes through the live
+//! Lua VM's bindings (`GetGMStatus`, `DeleteGMTicket`, `GetGMTicket`, `NewGMTicket`,
+//! `UpdateGMTicket`) and observes each answer as the stock 3.3.5a Help window does, as an
+//! `UPDATE_TICKET` or `UPDATE_GM_STATUS` event, and the ticket toast (`TicketStatusFrame`) as the
+//! player sees it. Logs one `PROBE_GMTICKET: <step> PASS/FAIL/SKIP <detail>` line per step, then
+//! `PROBE_GMTICKET: DONE pass=<n> fail=<m>`, and exits. Non-combat and sends no GM command; the
+//! switches are `docs/CONTRIBUTING.md`, "Running it unattended".
 //!
 //! The steps:
-//! 1. queue: `GetGMStatus()` must fire `UPDATE_GM_STATUS` with 1 (`GMTickets.Enable` defaults on,
-//!    `World.cpp:684`); a 0 is the queue switched off, and the rest SKIPs.
-//! 2. clean: `DeleteGMTicket()` then `GetGMTicket()`, expecting `arg1 == 0`; the get's answer is
-//!    waited on, since a delete with no ticket gets none.
-//! 3. create: `NewGMTicket(4, <unique text>)` then `GetGMTicket()`, expecting category 4 and the
-//!    text exactly, which proves the create body's layout.
+//! 1. queue: `GetGMStatus()` must fire `UPDATE_GM_STATUS` with 1; anything else is the queue
+//!    switched off, and the rest SKIPs.
+//! 2. clean: `DeleteGMTicket()` then `GetGMTicket()`, expecting `UPDATE_TICKET` with no arguments
+//!    and the toast hidden; the client sends the delete only while it holds a ticket.
+//! 3. create: `NewGMTicket(<unique text>, true)` then `GetGMTicket()`, expecting the text exactly
+//!    and the toast up, which proves the 3.3.5a create body and the id-led answer.
 //! 4. db: always SKIP. The client never reads map and position back, so the probe prints the row
 //!    it expects (`db-expect`, with a `drift=` bound) and the row is checked by hand.
-//! 5. edit: `UpdateGMTicket(4, <second text>)` then `GetGMTicket()`, expecting the new text
-//!    exactly, which proves the category byte on `CMSG_GMTICKET_UPDATETEXT` (cmangos-classic reads
-//!    a bare cstring there).
-//! 6. abandon: `DeleteGMTicket()` then `GetGMTicket()`, expecting `arg1 == 0` again.
+//! 5. edit: `UpdateGMTicket(<second text>)` then `GetGMTicket()`, expecting the new text exactly,
+//!    which proves `CMSG_GMTICKET_UPDATETEXT` is the bare text.
+//! 6. abandon: `DeleteGMTicket()` then `GetGMTicket()`, expecting no arguments and the toast gone.
 //!
 //! Lua's calls reach the wire in call order, so each step only waits on the server's round trip.
-//! Answers are not correlated to asks: a GM command, vmangos's post-delete `SendTicket(nullptr)`
-//! and the engine's own re-ask on create-ok and update-ok (reference `0x5e4479`) all fire
-//! `UPDATE_TICKET` unasked, so each step takes any matching answer after its baseline, and matches
-//! a unique text in steps 3 and 5.
-//!
-//! vmangos's abandon is `CloseTicket`, which sets `closed_by` and keeps the row
-//! (`GMTicketMgr.cpp:401-410`); an edit replaces `message` and the type but keeps the create's map
-//! and position (`GMTicketHandler.cpp:59-60`).
+//! Answers are not correlated to asks: a GM command, the delete's own bare `UPDATE_TICKET` and the
+//! engine's re-ask on create-ok and update-ok (reference `0x5ad2a1`) all fire unasked, so each step
+//! takes any matching answer after its baseline, and matches a unique text in steps 3 and 5.
 //!
 //! An environmental problem (no UI VM, the queue off, a binding that will not run) SKIPs; only a
 //! wrong value FAILs.
@@ -45,17 +36,11 @@ use super::probes::ProbeClock;
 use crate::net::SelfPlayer;
 use crate::player::Player;
 
-/// `GMTicketCategory.dbc` id 4, "Item", which is vmangos's `GMTICKET_ITEM`
-/// (`SharedDefines.h:1779`): the id is the wire value, not a list index.
-const CATEGORY_ITEM: u32 = 4;
-
-/// `SMSG_GMTICKETSYSTEMSTATUS`'s `GMTICKET_QUEUE_STATUS_ENABLED`. The field is signed (the
-/// reference fires it at `0x5e4689` through `%d`, a `fild dword` at `0x704fa6`), so the window's
-/// -1 arm is readable; vmangos sends 0 or 1.
+/// `SMSG_GMTICKETSYSTEMSTATUS`'s `GMTICKET_QUEUE_STATUS_ENABLED`.
 const QUEUE_ENABLED: f64 = 1.0;
 
-/// The `UPDATE_TICKET` `arg1` for no ticket; the Help window tests `arg1 and arg1 ~= 0`.
-const NO_TICKET: f64 = 0.0;
+/// The hook's mark for an argless `UPDATE_TICKET`, no ticket: the Help window tests `if (category)`.
+const NO_TICKET: f64 = -1.0;
 
 /// Settle before the first ask, so the Help window's login-time `GetGMTicket()` is answered before
 /// a baseline is latched.
@@ -80,9 +65,8 @@ const REST_TIMEOUT_SECS: f64 = 20.0;
 const STAMP_DRIFT_EPS: f32 = 0.05;
 
 /// Step 4's query against the server's `characters` database, printed for a manual check.
-const DB_QUERY: &str = "SELECT ticket_id, name, ticket_type, map, position_x, position_y, \
-                        position_z, closed_by, message FROM gm_tickets ORDER BY ticket_id DESC \
-                        LIMIT 1;";
+const DB_QUERY: &str = "SELECT id, name, mapId, posX, posY, posZ, closedBy, description \
+                        FROM gm_ticket ORDER BY id DESC LIMIT 1;";
 
 pub(crate) struct ProbeGmTicketPlugin;
 
@@ -131,7 +115,7 @@ enum Phase {
     CleanGap {
         since: f64,
     },
-    /// `GetGMTicket()` called; waiting for `arg1 == 0` (step 2b).
+    /// `GetGMTicket()` called; waiting for an argless `UPDATE_TICKET` (step 2b).
     CleanGet {
         since: f64,
         baseline: usize,
@@ -143,7 +127,7 @@ enum Phase {
         last: [f32; 3],
         still_since: f64,
     },
-    /// `NewGMTicket(4, …)` called; letting the drain flush it (step 3a).
+    /// `NewGMTicket(…, true)` called; letting the drain flush it (step 3a).
     CreateGap {
         since: f64,
     },
@@ -152,7 +136,7 @@ enum Phase {
         since: f64,
         baseline: usize,
     },
-    /// `UpdateGMTicket(4, …)` called; letting the drain flush it (step 5a).
+    /// `UpdateGMTicket(…)` called; letting the drain flush it (step 5a).
     EditGap {
         since: f64,
     },
@@ -165,7 +149,7 @@ enum Phase {
     AbandonGap {
         since: f64,
     },
-    /// `GetGMTicket()` called; waiting for `arg1 == 0` again (step 6b).
+    /// `GetGMTicket()` called; waiting for an argless `UPDATE_TICKET` again (step 6b).
     AbandonGet {
         since: f64,
         baseline: usize,
@@ -173,8 +157,8 @@ enum Phase {
     Done,
 }
 
-/// The `UPDATE_TICKET` answers seen, newest last, as `(category, text)`. The text is `""` when the
-/// category is 0: that fire carries one argument, and `arg2` would be stale.
+/// The `UPDATE_TICKET` answers seen, newest last, as `(category, text)`: [`NO_TICKET`] and `""` for
+/// an argless fire.
 fn ticket_answers(script: &UiScript) -> Vec<(f64, String)> {
     let cats = script
         .eval::<Vec<f64>>("return ProbeGmTicketCat or {}")
@@ -244,9 +228,9 @@ fn gm_ticket_probe(
                     f:RegisterEvent("UPDATE_GM_STATUS")
                     f:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
                         if event == "UPDATE_TICKET" then
-                            local c = arg1 or 0
+                            local c = arg1 or -1
                             table.insert(ProbeGmTicketCat, c)
-                            if c == 0 then
+                            if arg1 == nil then
                                 table.insert(ProbeGmTicketText, "")
                             else
                                 table.insert(ProbeGmTicketText, arg2 or "")
@@ -306,11 +290,9 @@ fn gm_ticket_probe(
             if status != QUEUE_ENABLED {
                 warn!(
                     "PROBE_GMTICKET: SKIP (1 queue) — the round trip WORKS (UPDATE_GM_STATUS \
-                     fired carrying {status}), but the server's ticket queue is not enabled. \
-                     vmangos then answers create with silence (GMTicketHandler.cpp: \
-                     `GetStatus() == GMTICKET_QUEUE_STATUS_DISABLED` → return), so every later \
-                     step would fail for a server setting rather than a client defect. Set \
-                     GMTickets.Enable = 1 and re-run."
+                     fired carrying {status}), but the server's ticket queue is not enabled, so \
+                     every later step would fail for a server setting rather than a client \
+                     defect. Enable the server's ticket system and re-run."
                 );
                 probe.phase = Phase::Done;
                 return;
@@ -327,8 +309,8 @@ fn gm_ticket_probe(
             probe.phase = Phase::CleanGap { since: now };
         }
 
-        // Step 2, the clean slate. The delete is not waited on: with no ticket vmangos sends
-        // nothing.
+        // Step 2, the clean slate. The delete is not waited on: with no ticket the client's own
+        // gate sends nothing (`0x5acc60`).
         Phase::CleanGap { since } => {
             if now - since < WRITE_GAP_SECS {
                 return;
@@ -345,9 +327,12 @@ fn gm_ticket_probe(
         Phase::CleanGet { since, baseline } => {
             let seen = ticket_answers(&script);
             if matching(&seen, baseline, |(c, _)| *c == NO_TICKET).is_some() {
+                if !toast_matches(&mut probe, &script, "2 clean", false) {
+                    return;
+                }
                 info!(
-                    "PROBE_GMTICKET: PASS (2 clean) — UPDATE_TICKET fired with arg1 == 0: no open \
-                     ticket, and the 4-byte GMTICKET_STATUS_DEFAULT answer decodes"
+                    "PROBE_GMTICKET: PASS (2 clean) — UPDATE_TICKET fired with no arguments and \
+                     the toast is hidden: no open ticket, and the 4-byte no-ticket answer decodes"
                 );
                 probe.passes += 1;
                 probe.phase = Phase::Rest {
@@ -357,7 +342,7 @@ fn gm_ticket_probe(
                 };
             } else if now - since > ANSWER_TIMEOUT_SECS {
                 error!(
-                    "PROBE_GMTICKET: FAIL (2 clean) — no UPDATE_TICKET with arg1 == 0 within \
+                    "PROBE_GMTICKET: FAIL (2 clean) — no argless UPDATE_TICKET within \
                      {ANSWER_TIMEOUT_SECS}s of DeleteGMTicket() + GetGMTicket(). Answers seen \
                      after the baseline: {:?}. A leftover ticket that refuses to clear, or a \
                      GETTICKET round trip that never answers.",
@@ -401,7 +386,7 @@ fn gm_ticket_probe(
                 &mut probe,
                 &script,
                 "3 create",
-                &format!("NewGMTicket({CATEGORY_ITEM}, \"{text}\")"),
+                &format!("NewGMTicket(\"{text}\", true)"),
             ) {
                 return;
             }
@@ -440,22 +425,14 @@ fn gm_ticket_probe(
             let want = probe.create_text.clone();
             if let Some(i) = matching(&seen, baseline, |(_, t)| *t == want) {
                 let (cat, text) = &seen[i];
-                if *cat != f64::from(CATEGORY_ITEM) {
-                    error!(
-                        "PROBE_GMTICKET: FAIL (3 create) — the ticket came back with the right \
-                         text but category {cat}, wanted {CATEGORY_ITEM}. The category byte is \
-                         the head of CMSG_GMTICKET_CREATE; a wrong value there shifts the map id \
-                         and the whole position."
-                    );
-                    probe.fails += 1;
-                    probe.phase = Phase::Done;
+                if !toast_matches(&mut probe, &script, "3 create", true) {
                     return;
                 }
                 info!(
                     "PROBE_GMTICKET: PASS (3 create) — the server filed and echoed the ticket: \
-                     arg1 == {cat} (Item) and arg2 == {text:?} byte for byte. The u8 category, \
-                     the map/position block, the text and the trailing \"Reserved for future \
-                     use\" cstring are all laid out the way vmangos reads them."
+                     arg2 == {text:?} byte for byte (arg1 == {cat}), and the toast is up. The \
+                     map/position block, the text, the response flag and the empty transcript \
+                     are laid out the way the server reads them, and the id-led answer decodes."
                 );
                 probe.passes += 1;
                 report_db_expectation(&probe, "after create", &want);
@@ -470,7 +447,7 @@ fn gm_ticket_probe(
                     &mut probe,
                     &script,
                     "5 edit",
-                    &format!("UpdateGMTicket({CATEGORY_ITEM}, \"{text}\")"),
+                    &format!("UpdateGMTicket(\"{text}\")"),
                 ) {
                     return;
                 }
@@ -480,10 +457,8 @@ fn gm_ticket_probe(
                 error!(
                     "PROBE_GMTICKET: FAIL (3 create) — the ticket never came back within \
                      {ANSWER_TIMEOUT_SECS}s. Wanted arg2 == {want:?}; answers seen after the \
-                     baseline: {:?}. vmangos answers a REFUSED create with silence — queue off, \
-                     under GMTickets.MinLevel, or category >= 11 — and a malformed body reads as \
-                     exactly this. Step 1 already proved the queue is up, so a wrong create body \
-                     is the live suspect.",
+                     baseline: {:?}. Step 1 already proved the queue is up, so a wrong create \
+                     body or answer decoder is the live suspect.",
                     &seen[baseline.min(seen.len())..]
                 );
                 probe.fails += 1;
@@ -491,7 +466,7 @@ fn gm_ticket_probe(
             }
         }
 
-        // Step 5: the edit, and with it the category byte on CMSG_GMTICKET_UPDATETEXT.
+        // Step 5: the edit, and with it CMSG_GMTICKET_UPDATETEXT's bare text.
         Phase::EditGap { since } => {
             if now - since < WRITE_GAP_SECS {
                 return;
@@ -513,9 +488,8 @@ fn gm_ticket_probe(
                 let (cat, text) = &seen[i];
                 info!(
                     "PROBE_GMTICKET: PASS (5 edit) — the edit landed and echoed EXACTLY: arg2 == \
-                     {text:?} (arg1 == {cat}). No stray leading byte, so the server read our \
-                     category as a category and the text as text — CMSG_GMTICKET_UPDATETEXT's \
-                     `u8 type; cstring text` is right for this server."
+                     {text:?} (arg1 == {cat}). No stray leading byte: CMSG_GMTICKET_UPDATETEXT's \
+                     bare cstring is right."
                 );
                 probe.passes += 1;
                 report_db_expectation(&probe, "after edit", &want);
@@ -531,9 +505,8 @@ fn gm_ticket_probe(
                 error!(
                     "PROBE_GMTICKET: FAIL (5 edit) — the edited text never came back within \
                      {ANSWER_TIMEOUT_SECS}s. Wanted arg2 == {want:?}; answers seen after the \
-                     baseline: {:?}. leading-byte-swallowed={stray} — if that is true, the server \
-                     read our category byte as the first character of the text, which is the \
-                     cmangos-classic behaviour.",
+                     baseline: {:?}. text-has-extra-prefix={stray} — if that is true, a stray \
+                     byte went out ahead of the text.",
                     &seen[baseline.min(seen.len())..]
                 );
                 probe.fails += 1;
@@ -541,7 +514,7 @@ fn gm_ticket_probe(
             }
         }
 
-        // Step 6, abandon. vmangos's `CloseTicket` keeps the row, so step 4's query still finds it.
+        // Step 6, abandon; the server keeps the closed row, so step 4's query still finds it.
         Phase::AbandonGap { since } => {
             if now - since < WRITE_GAP_SECS {
                 return;
@@ -558,10 +531,12 @@ fn gm_ticket_probe(
         Phase::AbandonGet { since, baseline } => {
             let seen = ticket_answers(&script);
             if matching(&seen, baseline, |(c, _)| *c == NO_TICKET).is_some() {
+                if !toast_matches(&mut probe, &script, "6 abandon", false) {
+                    return;
+                }
                 info!(
-                    "PROBE_GMTICKET: PASS (6 abandon) — UPDATE_TICKET fired with arg1 == 0 again: \
-                     the ticket is gone from the player's view (vmangos marks it closed_by and \
-                     keeps the row, so the db-expect rows above still resolve)"
+                    "PROBE_GMTICKET: PASS (6 abandon) — UPDATE_TICKET fired with no arguments \
+                     again and the toast is gone"
                 );
                 probe.passes += 1;
             } else if now - since > ANSWER_TIMEOUT_SECS {
@@ -617,13 +592,27 @@ fn run_or_skip(probe: &mut GmTicketProbe, script: &UiScript, step: &str, chunk: 
     }
 }
 
+/// Whether the ticket toast shows as `want`; a mismatch FAILs the step and ends the run.
+fn toast_matches(probe: &mut GmTicketProbe, script: &UiScript, step: &str, want: bool) -> bool {
+    let shown = script
+        .eval::<bool>("return TicketStatusFrame ~= nil and TicketStatusFrame:IsShown() ~= nil")
+        .unwrap_or(false);
+    if shown == want {
+        return true;
+    }
+    error!("PROBE_GMTICKET: FAIL ({step}) — TicketStatusFrame:IsShown() is {shown}, wanted {want}");
+    probe.fails += 1;
+    probe.phase = Phase::Done;
+    false
+}
+
 /// Prints what step 4's DB row must carry. `drift=` bounds the position's error; at or under
 /// [`STAMP_DRIFT_EPS`] it is exact, and the map id and `ticket_type` are always exact.
 fn report_db_expectation(probe: &GmTicketProbe, when: &str, message: &str) {
     let [x, y, z] = probe.create_pos;
     info!(
-        "PROBE_GMTICKET: db-expect ({when}) map={} pos={x},{y},{z} ticket_type={CATEGORY_ITEM} \
-         message={message:?} drift={:.3}",
+        "PROBE_GMTICKET: db-expect ({when}) map={} pos={x},{y},{z} message={message:?} \
+         drift={:.3}",
         probe.create_map,
         probe.stamp_drift.unwrap_or(0.0)
     );
@@ -643,10 +632,10 @@ mod tests {
     #[test]
     fn a_step_matches_after_its_baseline_and_never_before_it() {
         let answers = vec![
-            (0.0, String::new()),
-            (4.0, "mine".to_string()),
-            (0.0, String::new()),
-            (4.0, "mine".to_string()),
+            (NO_TICKET, String::new()),
+            (0.0, "mine".to_string()),
+            (NO_TICKET, String::new()),
+            (0.0, "mine".to_string()),
         ];
         assert_eq!(matching(&answers, 0, |(_, t)| t == "mine"), Some(1));
         // Baseline past the first match: the later identical answer is the one taken.

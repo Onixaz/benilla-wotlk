@@ -78,99 +78,81 @@ fn open_ticket_args(
     ]
 }
 
-/// With a ticket the form is an editor (Save Changes, Exit); a bare `arg1 = 0` makes it a form.
+/// The stock 3.3.5a window on the production load: no ticket is `UPDATE_TICKET` with no arguments,
+/// which leaves the toast hidden and the form a form; a ticket raises the toast and makes the form
+/// an editor (#188).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn an_open_ticket_turns_the_form_into_an_editor_and_a_zero_turns_it_back() {
+fn the_3_3_5a_ticket_toast_follows_the_ticket_and_no_ticket_is_no_arguments() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
-    s.run("ShowUIPanel(HelpFrame) HelpFrame_ShowFrame(\"OpenTicket\")")
-        .unwrap();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, failures) =
+        super::layer_tests::production_load_with("helpframe", false, "", |_| {});
+    let ours: Vec<_> = failures
+        .iter()
+        .filter(|f| f.contains("HelpFrame") || f.contains("TicketStatus"))
+        .collect();
+    assert!(ours.is_empty(), "help frame load failures: {ours:#?}");
+    let _ = s.take_errors();
+
+    // The login answer for a character with no ticket.
+    s.fire_event("UPDATE_TICKET", vec![]);
+    assert!(
+        !s.eval::<bool>("return TicketStatusFrame:IsShown()")
+            .unwrap(),
+        "no ticket, no toast"
+    );
+    assert!(s
+        .eval::<bool>("return KnowledgeBaseFrameGMTalk:IsShown() and not KnowledgeBaseFrameEditTicket:IsShown()")
+        .unwrap());
 
     s.fire_event(
         "UPDATE_TICKET",
-        open_ticket_args(7, "Where is this NPC?", 0.25, 2.5, 0.01),
+        open_ticket_args(1, "Where is this NPC?", 0.25, 2.5, 0.01),
+    );
+    assert!(
+        s.eval::<bool>("return TicketStatusFrame:IsShown()")
+            .unwrap(),
+        "a ticket raises the toast"
     );
     assert_eq!(
-        s.eval::<String>("return HelpFrameOpenTicketText:GetText()")
+        s.eval::<String>("return HelpFrameOpenTicketEditBox:GetText()")
             .unwrap(),
         "Where is this NPC?",
         "arg2 is the description"
     );
-    assert_eq!(
-        s.eval::<i64>("return HelpFrameOpenTicket.ticketType")
-            .unwrap(),
-        7,
-        "arg1 is the category"
-    );
-    assert_eq!(
-        s.eval::<i64>("return HelpFrameOpenTicket.hasTicket")
-            .unwrap(),
-        1
-    );
+    assert!(s
+        .eval::<bool>("return KnowledgeBaseFrameEditTicket:IsShown() and not KnowledgeBaseFrameGMTalk:IsShown()")
+        .unwrap());
 
-    // No ticket: a bare 0.
-    s.fire_event("UPDATE_TICKET", vec![ScriptValue::Int(0)]);
-    assert_eq!(
-        s.eval::<String>("return HelpFrameOpenTicketText:GetText()")
-            .unwrap(),
-        "",
-        "the editor empties"
-    );
-    assert!(
-        s.eval::<bool>("return HelpFrameOpenTicket.hasTicket == nil")
-            .unwrap(),
-        "and stops believing it has a ticket"
-    );
-}
-
-#[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn the_ticket_toast_follows_the_ticket() {
-    let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
-    s.fire_event(
-        "UPDATE_TICKET",
-        open_ticket_args(1, "Stuck.", 0.1, 0.2, 0.01),
-    );
-    assert!(
-        s.eval::<bool>("return TicketStatusFrame:IsVisible()")
-            .unwrap(),
-        "a ticket raises the toast"
-    );
-    s.fire_event("UPDATE_TICKET", vec![ScriptValue::Int(0)]);
-    assert!(
-        !s.eval::<bool>("return TicketStatusFrame:IsVisible()")
-            .unwrap(),
-        "and abandoning it takes the toast away"
-    );
-}
-
-/// `TicketStatus_OnUpdate` re-asks every `GMTICKET_CHECK_INTERVAL`, 600 s (`HelpFrame.lua:162`).
-#[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn the_toast_repolls_the_server_only_after_the_full_interval() {
-    let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
-    s.fire_event(
-        "UPDATE_TICKET",
-        open_ticket_args(1, "Stuck.", 0.1, 0.2, 0.01),
-    );
+    // While a ticket is held the toast re-asks every `GMTICKET_CHECK_INTERVAL`, 600 s.
     let _ = s.take_gm_ticket_intents();
-
-    s.run("TicketStatus_OnUpdate(599)").unwrap();
+    s.run("TicketStatusFrame_OnUpdate(TicketStatusFrame, 599)")
+        .unwrap();
     assert!(s.take_gm_ticket_intents().is_empty(), "not yet");
-    s.run("TicketStatus_OnUpdate(2)").unwrap();
-    assert_eq!(
-        s.take_gm_ticket_intents(),
-        vec![GmTicketIntent::Ask],
-        "600s elapsed — re-ask"
-    );
-    s.run("TicketStatus_OnUpdate(1)").unwrap();
+    s.run("TicketStatusFrame_OnUpdate(TicketStatusFrame, 2)")
+        .unwrap();
+    assert_eq!(s.take_gm_ticket_intents(), vec![GmTicketIntent::Ask]);
+
+    // Abandoned: the delete's answer fires bare again.
+    s.fire_event("UPDATE_TICKET", vec![]);
     assert!(
-        s.take_gm_ticket_intents().is_empty(),
-        "and the clock restarts"
+        !s.eval::<bool>("return TicketStatusFrame:IsShown()")
+            .unwrap(),
+        "abandoning it takes the toast away"
     );
+    assert_eq!(
+        s.eval::<String>("return HelpFrameOpenTicketEditBox:GetText()")
+            .unwrap(),
+        ""
+    );
+    let errors: Vec<_> = s
+        .take_errors()
+        .into_iter()
+        .filter(|e| e.contains("HelpFrame") || e.contains("TicketStatus"))
+        .collect();
+    assert!(errors.is_empty(), "script errors: {errors:#?}");
 }
 
 /// `HelpFrame_OnShow` asks the server for the queue status (`HelpFrame.lua:180`).

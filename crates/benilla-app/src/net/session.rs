@@ -64,6 +64,7 @@ pub(crate) struct Edges<'w> {
     char_login_failures: MessageWriter<'w, CharacterLoginFailedMessage>,
     entered_world: MessageWriter<'w, EnteredWorldMessage>,
     addon_reply: ResMut<'w, super::AddonInfoReply>,
+    account_expansion: ResMut<'w, super::AccountExpansion>,
     logged_out: MessageWriter<'w, LoggedOutMessage>,
     knockbacks: MessageWriter<'w, KnockBackMessage>,
     login_stages: MessageWriter<'w, LoginStageMessage>,
@@ -135,10 +136,12 @@ fn on_connected(In(ev): In<SessionEvent>, mut e: Edges, mut b: Bridge) {
         self_guid: guid,
         name,
         billing_time_rested,
+        expansion,
         tutorial_flags,
         addon_info,
     } = ev
     {
+        e.account_expansion.0 = expansion;
         connected(
             guid,
             name,

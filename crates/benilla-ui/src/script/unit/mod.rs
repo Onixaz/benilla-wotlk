@@ -392,6 +392,16 @@ impl super::UiScript {
         model.no_play_time = none;
     }
 
+    /// Push `PLAYER_FLAGS` bit 25 (`0x2000000`), the no-XP flag `IsXPUserDisabled()` reads.
+    pub fn set_xp_user_disabled(&mut self, disabled: bool) {
+        set_field!(self, xp_user_disabled, disabled);
+    }
+
+    /// Push the account's expansion byte, before the load, as stock files read it at load time.
+    pub fn set_account_expansion(&mut self, expansion: u8) {
+        set_field!(self, account_expansion, expansion);
+    }
+
     /// Push `GetBillingTimeRested()`'s minutes, from the `SMSG_AUTH_RESPONSE` that admitted the
     /// session; nothing else on the wire writes it.
     pub fn set_billing_time_rested(&mut self, minutes: u32) {
@@ -416,8 +426,8 @@ impl super::UiScript {
         set_field!(self, in_cinematic, playing);
     }
 
-    /// Push `Exhaustion.dbc`'s (rest state, localized name, factor) rows, read as `0x48d350` and
-    /// `0x48d3f0` read them; an empty push keeps the fallback table the model seeds.
+    /// Push `Exhaustion.dbc`'s (rest state, localized name, factor) rows, read as `0x51b8b0` and
+    /// `0x51b960` read them; an empty push keeps the fallback table the model seeds.
     pub fn set_exhaustion_rows(&mut self, rows: Vec<(u8, String, f64)>) {
         if rows.is_empty() {
             return;

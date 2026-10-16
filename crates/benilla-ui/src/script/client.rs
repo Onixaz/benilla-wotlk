@@ -5,9 +5,11 @@
 use mlua::{Lua, MultiValue, Value};
 
 /// The 1.12.1 client's build identity, as the strings in its binary spell it.
-const VERSION: &str = "1.12.1";
-const BUILD: &str = "5875";
-const BUILD_DATE: &str = "Sep 19 2006";
+const VERSION: &str = "3.3.5";
+const BUILD: &str = "12340";
+const BUILD_DATE: &str = "Jun 24 2010";
+/// `GetCodeInterfaceVersion()` (`0x5f4c10`), the TOC number the addon gate compares with.
+const INTERFACE_VERSION: f64 = 30300.0;
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
@@ -86,8 +88,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // Version, build and date, and no fourth value (the TOC number is a later expansion's): the
-    // in-game `GetBuildInfo` (`0x4884a0`) pushes three strings, the glue one (`0x46cd70`) five.
+    // Version, build, date and the interface number: the in-game `GetBuildInfo` (`0x50f890`)
+    // pushes three strings and a number, the glue one (`0x4dbe60`) five.
     g.set(
         "GetBuildInfo",
         lua.create_function(|lua, ()| {
@@ -95,6 +97,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Value::String(lua.create_string(VERSION)?),
                 Value::String(lua.create_string(BUILD)?),
                 Value::String(lua.create_string(BUILD_DATE)?),
+                Value::Number(INTERFACE_VERSION),
             ]))
         })?,
     )?;
@@ -148,6 +151,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             lua.create_string(&model.realm_name)
         })?,
     )?;
+
+    // `GetAccountExpansionLevel()` and `GetExpansionLevel()`, one binding (`0x4ddc20`): the
+    // session's expansion byte from `SMSG_AUTH_RESPONSE` (`0x4ddc29`), 0 before one.
+    for name in ["GetAccountExpansionLevel", "GetExpansionLevel"] {
+        g.set(
+            name,
+            lua.create_function(|lua, ()| {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                Ok(f64::from(model.account_expansion))
+            })?,
+        )?;
+    }
 
     // `RequestTimePlayed()` queues a `CMSG_PLAYED_TIME` and returns nothing; the answer is the
     // `TIME_PLAYED_MSG(total, level)` the app fires when `SMSG_PLAYED_TIME` lands.
@@ -261,20 +278,54 @@ impl super::UiScript {
 mod tests {
     use crate::script::UiScript;
 
-    /// Three strings and no fourth, as the in-game registrar pushes (`0x4884a0`); this VM is the
-    /// in-game one, not the glue (`0x46cd70`, five).
+    /// Three strings and the interface number, as the in-game registrar pushes (`0x50f890`); this
+    /// VM is the in-game one, not the glue (`0x4dbe60`, five).
     #[test]
-    fn get_build_info_answers_as_the_1_12_1_client() {
+    fn get_build_info_answers_as_the_12340_client() {
         let s = UiScript::new().unwrap();
         assert_eq!(
-            s.eval::<Vec<String>>("return { GetBuildInfo() }").unwrap(),
-            vec!["1.12.1", "5875", "Sep 19 2006"]
+            s.eval::<Vec<String>>("local v, b, d = GetBuildInfo() return { v, b, d }")
+                .unwrap(),
+            vec!["3.3.5", "12340", "Jun 24 2010"]
         );
         assert_eq!(
-            s.arity("GetBuildInfo()").unwrap(),
-            3,
-            "three values, never a fourth"
+            s.eval::<f64>("return select(4, GetBuildInfo())").unwrap(),
+            30300.0
         );
+        assert_eq!(s.arity("GetBuildInfo()").unwrap(), 4);
+    }
+
+    /// One binding (`0x4ddc20`): 0 until `SMSG_AUTH_RESPONSE` lands, then the account's byte.
+    #[test]
+    fn both_expansion_verbs_answer_the_auth_byte() {
+        let mut s = UiScript::new().unwrap();
+        assert_eq!(
+            s.eval::<f64>("return GetAccountExpansionLevel()").unwrap(),
+            0.0
+        );
+        s.set_account_expansion(2);
+        assert_eq!(
+            s.eval::<f64>("return GetAccountExpansionLevel()").unwrap(),
+            2.0
+        );
+        assert_eq!(s.eval::<f64>("return GetExpansionLevel()").unwrap(), 2.0);
+    }
+
+    /// No active player pushes nothing (`0x614162`); a player's bit 25 is a boolean.
+    #[test]
+    fn is_xp_user_disabled_needs_a_player_and_answers_a_boolean() {
+        let mut s = UiScript::new().unwrap();
+        assert_eq!(s.arity("IsXPUserDisabled()").unwrap(), 0);
+        s.set_unit(
+            "player",
+            Some(crate::script::UnitState {
+                exists: true,
+                ..Default::default()
+            }),
+        );
+        assert!(!s.eval::<bool>("return IsXPUserDisabled()").unwrap());
+        s.set_xp_user_disabled(true);
+        assert!(s.eval::<bool>("return IsXPUserDisabled()").unwrap());
     }
 
     /// Never nil: addons index with it at file scope, and a nil index errors far from the cause.

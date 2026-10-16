@@ -218,6 +218,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })
         })?,
     )?;
+    // SetHyperlinksEnabled([enable]) (`0x973c40`): the flag through `Lua_GetBoolOrDefault`,
+    // default on; GetHyperlinksEnabled (`0x973ca0`) answers 1 or nil.
+    m.set(
+        "SetHyperlinksEnabled",
+        lua.create_function(|lua, (this, rest): (Table, mlua::MultiValue)| {
+            let on = crate::script::binding_abi::bool_or_default(rest.front(), true);
+            with_smf(lua, &this, |smf| smf.hyperlinks_enabled = on)
+        })?,
+    )?;
+    m.set(
+        "GetHyperlinksEnabled",
+        lua.create_function(|lua, this: Table| {
+            with_smf(lua, &this, |smf| {
+                crate::script::binding_abi::flag(smf.hyperlinks_enabled)
+            })
+        })?,
+    )?;
     // XML's `displayDuration` is the Lua `TimeVisible` (`0x788090`).
     m.set(
         "SetTimeVisible",
@@ -727,6 +744,28 @@ mod tests {
         s.mouse_button(200.0, 100.0, "LeftButton", true);
         s.mouse_button(200.0, 100.0, "LeftButton", false);
         assert_eq!(
+            s.eval::<String>("return CLICKED or 'none'").unwrap(),
+            "none"
+        );
+        // Links off (`FCF_SetUninteractable`): the span takes no click; back on, it does.
+        assert_eq!(
+            s.eval::<i64>("return CF:GetHyperlinksEnabled()").unwrap(),
+            1
+        );
+        s.run("CF:SetHyperlinksEnabled(false)").unwrap();
+        assert!(s
+            .eval::<bool>("return CF:GetHyperlinksEnabled() == nil")
+            .unwrap());
+        s.mouse_button(30.0, 25.0, "LeftButton", true);
+        s.mouse_button(30.0, 25.0, "LeftButton", false);
+        assert_eq!(
+            s.eval::<String>("return CLICKED or 'none'").unwrap(),
+            "none"
+        );
+        s.run("CF:SetHyperlinksEnabled(true)").unwrap();
+        s.mouse_button(30.0, 25.0, "LeftButton", true);
+        s.mouse_button(30.0, 25.0, "LeftButton", false);
+        assert_ne!(
             s.eval::<String>("return CLICKED or 'none'").unwrap(),
             "none"
         );
