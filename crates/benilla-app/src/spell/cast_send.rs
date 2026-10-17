@@ -34,14 +34,14 @@ use crate::ui_action::{reagent_totem_refusal, CastErrors, Spells};
 pub(crate) enum CastCommit {
     /// `CMSG_CAST_SPELL` (0x12e).
     Spell,
-    /// `CMSG_USE_ITEM` (0xab): the item's wire position and spell ordinal, plus a caller-bound
-    /// GameObject.
+    /// `CMSG_USE_ITEM` (0xab): the item's wire position and guid, plus a caller-bound GameObject.
     Item {
         bag_index: u8,
         slot: u8,
         /// The item's template entry: the not-ready rung queries the `(use_spell, entry)` record.
         entry: u32,
-        spell_index: u8,
+        /// The item's guid, which the body names after the spell (`0x80b2d1`).
+        item_guid: u64,
         /// `CGItem::Use`'s own target argument, set only for a key in a lock; it bypasses the
         /// binder, as TryCast's target resolve (`6e4ef4`) takes the pair it was passed.
         on_object: Option<u64>,
@@ -160,12 +160,13 @@ impl CastLadder<'_, '_> {
             CastCommit::Item {
                 bag_index,
                 slot,
-                spell_index,
+                item_guid,
                 ..
             } => ClientCommand::UseItem {
                 bag_index,
                 slot,
-                spell_index,
+                spell_id,
+                item_guid,
                 target: match bound {
                     TargetedBind::Dest(dest) => UseItemTarget::Dest(dest),
                     TargetedBind::Source(src) => UseItemTarget::Source(src),
@@ -726,13 +727,14 @@ fn send_spell_cast(
         CastCommit::Item {
             bag_index,
             slot,
-            spell_index,
+            item_guid,
             on_object,
             ..
         } => ClientCommand::UseItem {
             bag_index,
             slot,
-            spell_index,
+            spell_id,
+            item_guid,
             target: match (on_object, item_target, target) {
                 (Some(go), _, _) => UseItemTarget::Object(go),
                 (None, Some(item), _) => UseItemTarget::Item(item),
@@ -803,9 +805,10 @@ mod tests {
         bag_index: 255,
         slot: 24,
         entry: 6948,
-        spell_index: 0,
+        item_guid: HEARTH_GUID,
         on_object: None,
     };
+    const HEARTH_GUID: u64 = 0x4000_0000_0000_0042;
 
     static EMPTY_REPUTATIONS: Reputations = Reputations(Vec::new());
 
@@ -1459,7 +1462,8 @@ mod tests {
             Ok(ClientCommand::UseItem {
                 bag_index: 255,
                 slot: 24,
-                spell_index: 0,
+                spell_id: HEARTHSTONE,
+                item_guid: HEARTH_GUID,
                 target: UseItemTarget::SelfImplicit
             })
         ));
@@ -1472,7 +1476,7 @@ mod tests {
                 bag_index: 255,
                 slot: 81,
                 entry: 6948,
-                spell_index: 0,
+                item_guid: HEARTH_GUID,
                 on_object: Some(0xF110_000C_1F00_A3B2),
             },
         );

@@ -503,14 +503,24 @@ impl WorldSession {
         )
     }
 
-    /// Use an item by bag position (`CMSG_USE_ITEM`).
-    pub fn use_item(&mut self, bag_index: u8, slot: u8, spell_slot: u8) -> Result<()> {
+    /// Use an item by bag position (`CMSG_USE_ITEM`), casting `spell_id`; the server matches
+    /// `item_guid` against the slot.
+    pub fn use_item(
+        &mut self,
+        bag_index: u8,
+        slot: u8,
+        spell_id: u32,
+        item_guid: u64,
+    ) -> Result<()> {
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_USE_ITEM,
             &messages::use_item(
+                count,
                 bag_index,
                 slot,
-                spell_slot,
+                spell_id,
+                item_guid,
                 messages::UseItemTarget::default(),
             ),
         )

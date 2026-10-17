@@ -262,12 +262,12 @@ pub(super) fn read_cast_result(r: &mut &[u8]) -> io::Result<(u8, u32, CastOutcom
 // --- Start and go --------------------------------------------------------------------------------
 //
 // The `SpellCastTargets` mask bits, a `u32` on 12340.
-const TARGET_FLAG_UNIT: u32 = 0x0002;
-const TARGET_FLAG_ITEM: u32 = 0x0010;
-const TARGET_FLAG_SOURCE_LOCATION: u32 = 0x0020;
-const TARGET_FLAG_DEST_LOCATION: u32 = 0x0040;
+pub(super) const TARGET_FLAG_UNIT: u32 = 0x0002;
+pub(super) const TARGET_FLAG_ITEM: u32 = 0x0010;
+pub(super) const TARGET_FLAG_SOURCE_LOCATION: u32 = 0x0020;
+pub(super) const TARGET_FLAG_DEST_LOCATION: u32 = 0x0040;
 const TARGET_FLAG_CORPSE_ENEMY: u32 = 0x0200;
-const TARGET_FLAG_GAMEOBJECT: u32 = 0x0800;
+pub(super) const TARGET_FLAG_GAMEOBJECT: u32 = 0x0800;
 const TARGET_FLAG_TRADE_ITEM: u32 = 0x1000;
 const TARGET_FLAG_STRING: u32 = 0x2000;
 const TARGET_FLAG_CORPSE_ALLY: u32 = 0x8000;
@@ -580,31 +580,47 @@ impl CastCounter {
 }
 
 /// The head of a 12340 `CMSG_CAST_SPELL` (sender `0x80b2f5`): `u8 castCount`, `u32 spellId`,
-/// `u8 castFlags` (0: no trajectory block), then the targets' `u32` mask (`0x9ab8c4`).
+/// then the shared tail ([`put_cast_tail`]).
 fn cast_head(cast_count: u8, spell_id: u32, mask: u32) -> Vec<u8> {
     let mut body = Vec::with_capacity(24);
     body.push(cast_count);
     body.extend_from_slice(&spell_id.to_le_bytes());
+    put_cast_tail(&mut body, mask);
+    body
+}
+
+/// The tail `CMSG_CAST_SPELL` and `CMSG_USE_ITEM` share from `0x80b351`: `u8 castFlags` (0: no
+/// trajectory block), then the targets' `u32` mask (`0x9ab8c4`).
+pub(super) fn put_cast_tail(body: &mut Vec<u8>, mask: u32) {
     body.push(0);
     body.extend_from_slice(&mask.to_le_bytes());
-    body
+}
+
+/// A guid target after the mask: one packed guid.
+pub(super) fn put_target_guid(body: &mut Vec<u8>, guid: u64) {
+    crate::wire::write_packed_guid(guid, body).expect("vec write");
+}
+
+/// A point target after the mask: a packed transport guid (0, none) and three `f32` WoW world
+/// coords, as the writer puts them for SOURCE and DEST (`0x9ab924`, `0x9ab96c`).
+pub(super) fn put_target_point(body: &mut Vec<u8>, point: [f32; 3]) {
+    crate::wire::write_packed_guid(0, body).expect("vec write");
+    for c in point {
+        body.extend_from_slice(&c.to_le_bytes());
+    }
 }
 
 /// A guid-target body: the head and one packed guid.
 fn cast_at_guid(cast_count: u8, spell_id: u32, mask: u32, guid: u64) -> Vec<u8> {
     let mut body = cast_head(cast_count, spell_id, mask);
-    crate::wire::write_packed_guid(guid, &mut body).expect("vec write");
+    put_target_guid(&mut body, guid);
     body
 }
 
-/// A point-target body: the head, a packed transport guid (0, none) and three `f32` WoW world
-/// coords, as the writer puts them for SOURCE and DEST (`0x9ab924`, `0x9ab96c`).
+/// A point-target body: the head and the point.
 fn cast_at_point(cast_count: u8, spell_id: u32, mask: u32, point: [f32; 3]) -> Vec<u8> {
     let mut body = cast_head(cast_count, spell_id, mask);
-    crate::wire::write_packed_guid(0, &mut body).expect("vec write");
-    for c in point {
-        body.extend_from_slice(&c.to_le_bytes());
-    }
+    put_target_point(&mut body, point);
     body
 }
 

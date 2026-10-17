@@ -375,21 +375,44 @@ impl SpellDisplay {
         Some((doubled.round_ties_even() as i32) >> 1)
     }
 
-    /// The hostility classifier `0x6ea280` reduced to "targets enemies", the gate on the victim's
-    /// flinch at a spell impact (`0x6e8c7b`, `0x6e8cf1`): the ally flag `0x100` wins, then the
-    /// enemy flag `0x80`, then an enemy A or B implicit target (tables `0x6ea338`/`0x6ea378`).
-    pub fn is_harmful(&self) -> bool {
-        const ENEMY_TARGETS: [u32; 8] = [2, 6, 15, 16, 24, 28, 53, 54];
+    /// `SpellRec::IsHelpfulOrHarmful` (`0x7fe1b0`): the ally flag `0x100` is helpful, then the
+    /// enemy flag `0x80` harmful; then any enemy A or B implicit target is harmful, before any
+    /// friendly one is helpful (jump tables `0x7fe280`/`0x7fe2e4`, `0x7fe34c`/`0x7fe398`). A
+    /// caster target (1) is helpful unless its effect applies aura 4.
+    fn helpful_or_harmful(&self) -> SpellIntent {
+        const ENEMY_TARGETS: [u32; 9] = [2, 6, 15, 16, 24, 28, 53, 54, 93];
+        const FRIEND_TARGETS: [u32; 19] = [
+            3, 4, 5, 20, 21, 27, 29, 30, 31, 33, 34, 35, 45, 56, 57, 58, 59, 61, 62,
+        ];
         if self.targets & 0x100 != 0 {
-            return false;
+            return SpellIntent::Helpful;
         }
         if self.targets & 0x80 != 0 {
-            return true;
+            return SpellIntent::Harmful;
         }
-        (0..3).any(|i| {
-            ENEMY_TARGETS.contains(&self.effect_implicit_target_a[i])
-                || ENEMY_TARGETS.contains(&self.effect_implicit_target_b[i])
-        })
+        let (a, b) = (self.effect_implicit_target_a, self.effect_implicit_target_b);
+        if (0..3).any(|i| ENEMY_TARGETS.contains(&a[i]) || ENEMY_TARGETS.contains(&b[i])) {
+            return SpellIntent::Harmful;
+        }
+        let friendly = |target: u32, i: usize| {
+            (target == 1 && self.effect_apply_aura[i] != 4) || FRIEND_TARGETS.contains(&target)
+        };
+        if (0..3).any(|i| friendly(a[i], i) || friendly(b[i], i)) {
+            return SpellIntent::Helpful;
+        }
+        SpellIntent::Neither
+    }
+
+    /// [`Self::helpful_or_harmful`] answering harmful: the gate on the victim's flinch at a spell
+    /// impact.
+    pub fn is_harmful(&self) -> bool {
+        self.helpful_or_harmful() == SpellIntent::Harmful
+    }
+
+    /// [`Self::helpful_or_harmful`] answering helpful: with no unit target, `GetMinMaxRange`'s
+    /// wrapper (`0x801692`) reads the friendly `SpellRange.dbc` pair for such a spell.
+    pub fn is_helpful(&self) -> bool {
+        self.helpful_or_harmful() == SpellIntent::Helpful
     }
 
     /// The ranged-stance gate, `AttributesEx2 & 0x20` or `Attributes & 0x2`, as tested at
@@ -736,6 +759,14 @@ impl SpellDisplay {
     }
 }
 
+/// `IsHelpfulOrHarmful`'s three answers (`0x7fe1b0`: 0, 1, 2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SpellIntent {
+    Neither,
+    Helpful,
+    Harmful,
+}
+
 /// Which `ERR_LEARN_*` line a learn prints; all three are system chat lines, not UI errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LearnAnnouncement {
@@ -770,6 +801,37 @@ impl FormRefusal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn helpful_or_harmful_reads_the_harmful_pass_first() {
+        let mut d = SpellDisplay::default();
+        assert_eq!(d.helpful_or_harmful(), SpellIntent::Neither);
+        d.targets = 0x100 | 0x80;
+        assert_eq!(
+            d.helpful_or_harmful(),
+            SpellIntent::Helpful,
+            "the ally flag first"
+        );
+        d.targets = 0;
+        d.effect_implicit_target_a = [21, 93, 0];
+        assert_eq!(
+            d.helpful_or_harmful(),
+            SpellIntent::Harmful,
+            "an enemy target in any slot beats a friend in an earlier one"
+        );
+        d.effect_implicit_target_a = [21, 0, 0];
+        assert!(d.is_helpful(), "TARGET_UNIT_TARGET_ALLY");
+        d.effect_implicit_target_a = [1, 0, 0];
+        assert!(d.is_helpful(), "the caster, with no aura 4");
+        d.effect_apply_aura = [4, 0, 0];
+        assert_eq!(
+            d.helpful_or_harmful(),
+            SpellIntent::Neither,
+            "the caster under aura 4"
+        );
+        d.effect_implicit_target_b = [45, 0, 0];
+        assert!(d.is_helpful(), "aura 4 on A falls through to B");
+    }
 
     #[test]
     fn is_harmful_follows_the_client_classifier() {

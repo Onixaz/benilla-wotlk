@@ -126,12 +126,6 @@ impl ItemInfo {
         self.spell_charges_0 != 0 && self.spell_charges_0 != -1
     }
 
-    /// The first ON_USE spell's block ordinal, the third byte of `CMSG_USE_ITEM`; usually 0, but
-    /// an item with an ON_EQUIP block 0 has its on-use in a later block.
-    pub fn use_spell_index(&self) -> Option<u8> {
-        self.spells.iter().find(|s| s.trigger == 0).map(|s| s.index)
-    }
-
     /// Consumable as the action bar's count means it (reference `IsConsumableAction`,
     /// `0x4e5250`): ammo or thrown, or an ON_USE spell with negative charges, which use the item
     /// up. Neither positive charges nor `Class` count: a mount, with charges 0, shows no count.
@@ -201,7 +195,7 @@ pub struct ItemDamage {
 /// run out, positive ones leave it (`ItemPrototype::_ItemSpell::SpellCharges`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ItemSpellEntry {
-    /// The template block ordinal (0..4), which `CMSG_USE_ITEM`'s spell byte carries.
+    /// The template block ordinal (0..4).
     pub index: u8,
     pub spell_id: u32,
     /// `ItemSpelltriggerType`: 0 ON_USE, 1 ON_EQUIP, 2 CHANCE_ON_HIT.
@@ -468,14 +462,6 @@ pub const SLOT_PACK_FIRST: u8 = 23;
 /// The first equipped-bag player-array slot (`INVENTORY_SLOT_BAG_START`; bags occupy 19-22).
 pub const SLOT_BAG_FIRST: u8 = 19;
 
-/// `SpellCastTargets` mask bits, vmangos `SpellDefines.h`.
-const TARGET_FLAG_GAMEOBJECT: u16 = 0x0800;
-
-const TARGET_FLAG_UNIT: u16 = 0x0002;
-const TARGET_FLAG_DEST_LOCATION: u16 = 0x0040;
-const TARGET_FLAG_SOURCE_LOCATION: u16 = 0x0020;
-const TARGET_FLAG_ITEM: u16 = 0x0010;
-
 /// The `SpellCastTargets` block of a `CMSG_USE_ITEM`, the same block a `CMSG_CAST_SPELL` carries:
 /// the reference's `SendCast` (`0x6e54f0`) only picks the opcode (`0x6e57d8`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -501,50 +487,51 @@ pub enum UseItemTarget {
     Corpse(super::spells::CorpseTarget, u64),
 }
 
-/// Body of `CMSG_USE_ITEM` (opcode 171): bag index (a bag's player-array slot 19-22, or
-/// [`BAG_PLAYER_INVENTORY`]), slot within it, the spell block ordinal, then the targets block.
-pub fn use_item(bag_index: u8, slot: u8, spell_slot: u8, target: UseItemTarget) -> Vec<u8> {
-    let mut body = Vec::with_capacity(5);
+/// Body of `CMSG_USE_ITEM` (opcode 171) as the 12340 sender writes it (`0x80b28b`): bag index (a
+/// bag's player-array slot 19-22, or [`BAG_PLAYER_INVENTORY`]), slot within it, `castCount`, the
+/// cast's `spellId`, the item's full `u64` guid (`0x80b2d1`), a `u32` glyph index (`0x80b2d6`, 0:
+/// only the glyph frame sets it), then the tail `CMSG_CAST_SPELL` shares.
+pub fn use_item(
+    cast_count: u8,
+    bag_index: u8,
+    slot: u8,
+    spell_id: u32,
+    item_guid: u64,
+    target: UseItemTarget,
+) -> Vec<u8> {
+    use super::spells::{
+        put_cast_tail, put_target_guid, put_target_point, TARGET_FLAG_DEST_LOCATION,
+        TARGET_FLAG_GAMEOBJECT, TARGET_FLAG_ITEM, TARGET_FLAG_SOURCE_LOCATION, TARGET_FLAG_UNIT,
+    };
+    let mut body = Vec::with_capacity(32);
     body.push(bag_index);
     body.push(slot);
-    body.push(spell_slot);
-    let guid = match target {
+    body.push(cast_count);
+    body.extend_from_slice(&spell_id.to_le_bytes());
+    body.extend_from_slice(&item_guid.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes());
+    let (mask, guid) = match target {
         UseItemTarget::SelfImplicit => {
-            body.extend_from_slice(&0u16.to_le_bytes());
+            put_cast_tail(&mut body, 0);
             return body;
         }
-        UseItemTarget::Unit(guid) => {
-            body.extend_from_slice(&TARGET_FLAG_UNIT.to_le_bytes());
-            guid
-        }
-        UseItemTarget::Object(guid) => {
-            body.extend_from_slice(&TARGET_FLAG_GAMEOBJECT.to_le_bytes());
-            guid
-        }
-        UseItemTarget::Item(guid) => {
-            body.extend_from_slice(&TARGET_FLAG_ITEM.to_le_bytes());
-            guid
-        }
-        UseItemTarget::Corpse(corpse, guid) => {
-            body.extend_from_slice(&(corpse.target_flag() as u16).to_le_bytes());
-            guid
-        }
+        UseItemTarget::Unit(guid) => (TARGET_FLAG_UNIT, guid),
+        UseItemTarget::Object(guid) => (TARGET_FLAG_GAMEOBJECT, guid),
+        UseItemTarget::Item(guid) => (TARGET_FLAG_ITEM, guid),
+        UseItemTarget::Corpse(corpse, guid) => (corpse.target_flag(), guid),
         UseItemTarget::Dest(dest) => {
-            body.extend_from_slice(&TARGET_FLAG_DEST_LOCATION.to_le_bytes());
-            for c in dest {
-                body.extend_from_slice(&c.to_le_bytes());
-            }
+            put_cast_tail(&mut body, TARGET_FLAG_DEST_LOCATION);
+            put_target_point(&mut body, dest);
             return body;
         }
         UseItemTarget::Source(src) => {
-            body.extend_from_slice(&TARGET_FLAG_SOURCE_LOCATION.to_le_bytes());
-            for c in src {
-                body.extend_from_slice(&c.to_le_bytes());
-            }
+            put_cast_tail(&mut body, TARGET_FLAG_SOURCE_LOCATION);
+            put_target_point(&mut body, src);
             return body;
         }
     };
-    crate::wire::write_packed_guid(guid, &mut body).expect("write to Vec cannot fail");
+    put_cast_tail(&mut body, mask);
+    put_target_guid(&mut body, guid);
     body
 }
 
@@ -689,6 +676,61 @@ mod tests {
             crate::messages::ServerPacket::Inspect { guid: 7 }
         ));
         assert!(crate::events::decode(packet).is_empty());
+    }
+
+    /// The fixed head every use body starts with: backpack slot 24, castCount 7, spell 0x1234,
+    /// item guid 0x4000_0000_0000_0123, glyph index 0.
+    const USE_HEAD: [u8; 19] = [
+        255, 24, // bag, slot
+        7,  // castCount
+        0x34, 0x12, 0x00, 0x00, // spellId
+        0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, // item guid, full width
+        0x00, 0x00, 0x00, 0x00, // glyph index
+    ];
+
+    fn use_body(target: UseItemTarget) -> Vec<u8> {
+        use_item(7, 255, 24, 0x1234, 0x4000_0000_0000_0123, target)
+    }
+
+    #[test]
+    fn use_item_self_body_golden() {
+        let body = use_body(UseItemTarget::SelfImplicit);
+        assert_eq!(body[..19], USE_HEAD);
+        assert_eq!(body[19..], [0, 0, 0, 0, 0], "castFlags, u32 mask 0");
+    }
+
+    #[test]
+    fn use_item_unit_and_item_bodies_golden() {
+        let unit = use_body(UseItemTarget::Unit(0xF130_0000_0000_002A));
+        assert_eq!(unit[..19], USE_HEAD);
+        assert_eq!(
+            unit[19..],
+            [0, 0x02, 0, 0, 0, 0xC1, 0x2A, 0x30, 0xF1],
+            "castFlags, TARGET_FLAG_UNIT, packed guid"
+        );
+        let item = use_body(UseItemTarget::Item(0x4000_0000_0000_0099));
+        assert_eq!(item[..19], USE_HEAD);
+        assert_eq!(
+            item[19..],
+            [0, 0x10, 0, 0, 0, 0x81, 0x99, 0x40],
+            "castFlags, TARGET_FLAG_ITEM, packed guid"
+        );
+    }
+
+    #[test]
+    fn use_item_dest_body_golden() {
+        let body = use_body(UseItemTarget::Dest([1.0, -2.5, 3.0]));
+        assert_eq!(body[..19], USE_HEAD);
+        assert_eq!(
+            body[19..],
+            [
+                0, 0x40, 0, 0, 0,    // castFlags, TARGET_FLAG_DEST_LOCATION
+                0x00, // transport guid, none
+                0x00, 0x00, 0x80, 0x3F, // x = 1.0
+                0x00, 0x00, 0x20, 0xC0, // y = -2.5
+                0x00, 0x00, 0x40, 0x40, // z = 3.0
+            ]
+        );
     }
 
     #[test]

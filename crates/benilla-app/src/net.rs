@@ -1015,12 +1015,14 @@ pub(crate) enum ClientCommand {
     },
     /// `CMSG_USE_ITEM` by wire position: bag 255 and an absolute slot for the player's own array
     /// (equipment, backpack, keyring), else the bag's slot 19-22 and the inner slot.
-    /// `spell_index` is the template's spell block ordinal. `target` is the same cast-targets
-    /// block as a cast's (`SendCast 0x6e54f0` writes both).
+    /// `spell_id` is the cast's, `item_guid` the item's, which the server matches against the
+    /// slot. `target` is the same cast-targets block as a cast's (the sender `0x80b351` writes
+    /// both).
     UseItem {
         bag_index: u8,
         slot: u8,
-        spell_index: u8,
+        spell_id: u32,
+        item_guid: u64,
         target: benilla_protocol::messages::UseItemTarget,
     },
     /// `CMSG_OPEN_ITEM`: the server answers `SMSG_LOOT_RESPONSE` on the item's own guid; a wrapped

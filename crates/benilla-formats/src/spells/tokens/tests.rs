@@ -914,6 +914,8 @@ fn r_e_and_a_follow_their_arms() {
     let range = |max| crate::SpellRange {
         min: 0.0,
         max,
+        friendly_min: 0.0,
+        friendly_max: max,
         flags: 0,
     };
     let ranges = SpellRangeCatalog::from_rows([(1, range(5.0)), (4, range(30.0))].into());

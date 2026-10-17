@@ -527,6 +527,8 @@ mod tests {
         let row = SpellRange {
             min: 8.0,
             max: 35.0,
+            friendly_min: 8.0,
+            friendly_max: 35.0,
             flags: 0,
         };
         mods.set(false, 5, OP_RANGE, 20);
@@ -560,6 +562,8 @@ mod tests {
         let melee = SpellRange {
             min: 0.0,
             max: 5.0,
+            friendly_min: 0.0,
+            friendly_max: 5.0,
             flags: 1,
         };
         mods.set(false, 5, OP_RANGE, 20);

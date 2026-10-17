@@ -1362,9 +1362,10 @@ pub(super) fn writer_loop(
                     ClientCommand::UseItem {
                         bag_index,
                         slot,
-                        spell_index,
+                        spell_id,
+                        item_guid,
                         target,
-                    } => w.use_item(bag_index, slot, spell_index, target),
+                    } => w.use_item(bag_index, slot, spell_id, item_guid, target),
                     ClientCommand::OpenItem { bag_index, slot } => w.open_item(bag_index, slot),
                     ClientCommand::WrapItem {
                         gift_bag,

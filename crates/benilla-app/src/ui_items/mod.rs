@@ -584,8 +584,6 @@ pub(crate) struct ItemUse {
     /// The template entry: the cooldown store keys item records on `(use_spell, entry)` (the
     /// client's `[eax+8]==spellId && [eax+0xc]==itemID`).
     pub(crate) entry: u32,
-    /// The template spell block ordinal the server should cast.
-    pub(crate) spell_index: u8,
     /// The ON_USE spell, `0x5d8c80`'s answer: the first block with `SpellId != 0` and
     /// `SpellTrigger == 0`.
     pub(crate) use_spell: Option<u32>,
@@ -753,7 +751,7 @@ pub(crate) fn send_item_use(
                     bag_index: it.bag_index,
                     slot: it.slot,
                     entry: it.entry,
-                    spell_index: it.spell_index,
+                    item_guid: it.guid.unwrap_or(0),
                     on_object: it.on_object,
                 },
             );
@@ -1046,7 +1044,6 @@ mod tests {
             start_quest: 0,
             bag_index: super::PLAYER_ARRAY,
             slot,
-            spell_index: 0,
             use_spell: Some(8690),
             on_object: None,
             is_charter: false,
@@ -1097,7 +1094,6 @@ mod tests {
             start_quest,
             bag_index: 255,
             slot: 23,
-            spell_index: 0,
             use_spell,
             on_object: None,
             is_charter: false,
@@ -1138,7 +1134,6 @@ mod tests {
             start_quest: 0,
             bag_index: 255,
             slot: 23,
-            spell_index: 0,
             use_spell,
             on_object: None,
             is_charter,
@@ -1176,7 +1171,6 @@ mod tests {
             start_quest,
             bag_index: 255,
             slot: 23,
-            spell_index: 0,
             use_spell,
             on_object: None,
             is_charter: false,

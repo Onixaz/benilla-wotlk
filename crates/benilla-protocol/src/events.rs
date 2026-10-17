@@ -541,7 +541,12 @@ pub enum SessionEvent {
     /// A refused pet order (`SMSG_PET_ACTION_FEEDBACK`): one reason code for the red error line.
     PetActionFeedback { reason: u8 },
     /// The pet's cast refusal (`SMSG_PET_CAST_FAILED`); it never touches our own cast state.
-    PetCastFailed { spell_id: u32, reason: Option<u8> },
+    /// `reason` is in the shared numbering, `arg` the first argument word when sent.
+    PetCastFailed {
+        spell_id: u32,
+        reason: u8,
+        arg: Option<u32>,
+    },
     /// A refused tame, Call Pet or Revive Pet (`SMSG_PET_TAME_FAILURE`): the reason's
     /// `PETTAME_*` string fills `ERR_TAME_FAILED`.
     PetTameFailure { reason: u8 },

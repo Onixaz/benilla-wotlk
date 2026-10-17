@@ -528,7 +528,7 @@ pub enum ServerPacket {
     PetActionFeedback {
         reason: u8,
     },
-    /// `SMSG_PET_CAST_FAILED`: the pet's cast refusal, in `SMSG_CAST_RESULT`'s vocabulary.
+    /// `SMSG_PET_CAST_FAILED`: the pet's cast refusal, in `SMSG_CAST_RESULT`'s body and vocabulary.
     PetCastFailed {
         spell_id: u32,
         outcome: CastOutcome,

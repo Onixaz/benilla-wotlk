@@ -82,13 +82,13 @@ impl CastErrors {
         });
     }
 
-    /// Queue the pet's `SMSG_PET_CAST_FAILED` refusal, which carries no argument word
-    /// (vmangos `Packets/Pet.cpp:127-132`).
-    pub(crate) fn push_pet(&mut self, spell_id: u32, reason: u8) {
+    /// Queue the pet's `SMSG_PET_CAST_FAILED` refusal; its handler (`0x806c30`) passes the
+    /// argument words to the message as the player's does.
+    pub(crate) fn push_pet(&mut self, spell_id: u32, reason: u8, arg: Option<u32>) {
         self.0.push(CastFail {
             spell_id,
             reason,
-            arg: None,
+            arg,
             caster: Caster::Pet,
             redisplay: false,
         });

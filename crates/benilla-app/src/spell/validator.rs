@@ -249,6 +249,8 @@ mod tests {
         let auto_shot = SpellRange {
             min: 8.0,
             max: 35.0,
+            friendly_min: 8.0,
+            friendly_max: 35.0,
             flags: 0,
         };
         let me = RangeUnit::still(1.5);
@@ -263,6 +265,8 @@ mod tests {
         let fireball = SpellRange {
             min: 0.0,
             max: 35.0,
+            friendly_min: 0.0,
+            friendly_max: 35.0,
             flags: 0,
         };
         let refuse = |d2: f32| cast_range_refusal(&d, Some(&fireball), me, reach, Some(d2), &mods);
@@ -281,6 +285,8 @@ mod tests {
         let melee = SpellRange {
             min: 0.0,
             max: 5.0,
+            friendly_min: 0.0,
+            friendly_max: 5.0,
             flags: 1,
         };
         let melee_spell = spell_with_range(2, 0);
@@ -321,6 +327,8 @@ mod tests {
         let melee = SpellRange {
             min: 0.0,
             max: 5.0,
+            friendly_min: 0.0,
+            friendly_max: 5.0,
             flags: 1,
         };
         let running = RangeUnit {

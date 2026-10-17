@@ -380,6 +380,8 @@ mod tests {
             benilla_formats::SpellRange {
                 min: 0.0,
                 max: 30.0,
+                friendly_min: 0.0,
+                friendly_max: 30.0,
                 flags: 0,
             },
         )]));
@@ -527,7 +529,7 @@ mod tests {
             bag_index: 255,
             slot: 24,
             entry: 7148,
-            spell_index: 0,
+            item_guid: 0x4000_0000_0000_1BEC,
             on_object: None,
         };
         let (sent, _, _) = clicked(0x8000, cables, friend(), 10.0);

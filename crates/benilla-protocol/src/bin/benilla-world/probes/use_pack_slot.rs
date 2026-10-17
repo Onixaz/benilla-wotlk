@@ -34,7 +34,27 @@ impl Probe for UsePackSlot {
             "\nusing pack slot {n} (guid {guid:#x}, entry {entry}, stack {before}) → CMSG_USE_ITEM bag 255 slot {}",
             23 + n0
         );
-        session.use_item(255, 23 + n0, 0)?;
+        // The body names the on-use spell, so read it off the template first.
+        session.item_query(entry, guid)?;
+        let mut spell_id = None;
+        let ask_until = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < ask_until && spell_id.is_none() {
+            let Ok(msg) = session.recv() else { continue };
+            for ev in decode(msg) {
+                if let SessionEvent::ItemTemplate {
+                    entry: e,
+                    info: Some(i),
+                    ..
+                } = ev
+                {
+                    if e == entry {
+                        spell_id = Some(i.use_spell.map_or(0, |u| u.spell_id));
+                    }
+                }
+            }
+        }
+        let spell_id = spell_id.context("no template answer for the pack item")?;
+        session.use_item(255, 23 + n0, spell_id, guid)?;
         let drain_until = Instant::now() + Duration::from_secs(5);
         let mut verdict: Option<String> = None;
         while Instant::now() < drain_until && verdict.is_none() {

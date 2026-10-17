@@ -11,7 +11,13 @@ use bevy::prelude::*;
 
 /// `SpellRange.dbc` rows 2, the melee row, and 4, an authored 0 to 35.
 fn melee_and_authored_rows() -> benilla_formats::SpellRangeCatalog {
-    let row = |min, max, flags| benilla_formats::SpellRange { min, max, flags };
+    let row = |min, max, flags| benilla_formats::SpellRange {
+        min,
+        max,
+        friendly_min: min,
+        friendly_max: max,
+        flags,
+    };
     benilla_formats::SpellRangeCatalog::from_rows(
         [(2, row(0.0, 5.0, 1)), (4, row(0.0, 35.0, 0))].into(),
     )

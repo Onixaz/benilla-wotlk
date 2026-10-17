@@ -536,7 +536,13 @@ mod tests {
                 },
             ),
         ]));
-        let row = |min, max| benilla_formats::SpellRange { min, max, flags: 0 };
+        let row = |min, max| benilla_formats::SpellRange {
+            min,
+            max,
+            friendly_min: min,
+            friendly_max: max,
+            flags: 0,
+        };
         spells.ranges = benilla_formats::SpellRangeCatalog::from_rows(HashMap::from([
             (5, row(0.0, 30.0)),
             (114, row(8.0, 35.0)),

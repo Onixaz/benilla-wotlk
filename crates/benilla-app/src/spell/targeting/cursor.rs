@@ -258,7 +258,13 @@ mod tests {
     /// Blizzard's row 4 is 0 to 30 yd; a synthetic min exercises the too-close arm.
     #[test]
     fn ground_point_in_range_mirrors_check_ground_point_in_range() {
-        let row = |min: f32, max: f32| SpellRange { min, max, flags: 0 };
+        let row = |min: f32, max: f32| SpellRange {
+            min,
+            max,
+            friendly_min: min,
+            friendly_max: max,
+            flags: 0,
+        };
         let origin = Vec3::ZERO;
         let at = |d: f32| Vec3::new(d, 0.0, 0.0);
         let spell = SpellDisplay::default();
@@ -301,11 +307,15 @@ mod tests {
         let row = SpellRange {
             min: 0.0,
             max: 30.0,
+            friendly_min: 0.0,
+            friendly_max: 30.0,
             flags: 0,
         };
         let banded = SpellRange {
             min: 8.0,
             max: 35.0,
+            friendly_min: 8.0,
+            friendly_max: 35.0,
             flags: 0,
         };
         let plain = {
@@ -342,6 +352,8 @@ mod tests {
         let melee = SpellRange {
             min: 0.0,
             max: 5.0,
+            friendly_min: 0.0,
+            friendly_max: 5.0,
             flags: 1,
         };
         let spell = SpellDisplay::default();
@@ -385,11 +397,15 @@ mod tests {
         let melee = SpellRange {
             min: 0.0,
             max: 5.0,
+            friendly_min: 0.0,
+            friendly_max: 5.0,
             flags: 1,
         };
         let blizzard = SpellRange {
             min: 0.0,
             max: 30.0,
+            friendly_min: 0.0,
+            friendly_max: 30.0,
             flags: 0,
         };
         let spell = SpellDisplay::default();
@@ -622,6 +638,8 @@ mod tests {
                         SpellRange {
                             min: 0.0,
                             max: 30.0,
+                            friendly_min: 0.0,
+                            friendly_max: 30.0,
                             flags: 0,
                         },
                     ),
@@ -630,6 +648,8 @@ mod tests {
                         SpellRange {
                             min: 0.0,
                             max: 5.0,
+                            friendly_min: 0.0,
+                            friendly_max: 5.0,
                             flags: 1,
                         },
                     ),
@@ -717,6 +737,8 @@ mod tests {
                 SpellRange {
                     min: 0.0,
                     max: 5.0,
+                    friendly_min: 0.0,
+                    friendly_max: 5.0,
                     flags: 0,
                 },
             )]));
@@ -788,7 +810,13 @@ mod tests {
                 range_index,
                 ..Default::default()
             };
-            let row = |min, max| SpellRange { min, max, flags: 0 };
+            let row = |min, max| SpellRange {
+                min,
+                max,
+                friendly_min: min,
+                friendly_max: max,
+                flags: 0,
+            };
             let mut spells = Spells::empty_for_tests();
             spells.catalog = benilla_formats::SpellCatalog::from_displays(HashMap::from([
                 (HEAL, display(5)),
@@ -890,6 +918,8 @@ mod tests {
                 SpellRange {
                     min: 0.0,
                     max: 5.0,
+                    friendly_min: 0.0,
+                    friendly_max: 5.0,
                     flags: 1,
                 },
             )]));

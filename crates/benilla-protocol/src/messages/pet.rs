@@ -53,22 +53,23 @@ pub const PET_STATE_BAR_DISABLED: u32 = 0x0800_0000;
 /// (`0x4bd075`). `UNIT_FLAG_POSSESSED` is not among them: a possessed unit's bar must work.
 pub const PET_UNUSABLE_UNIT_FLAGS: u32 = 0x0004_0000 | 0x0040_0000 | 0x0080_0000;
 
-/// Permanent-cooldown marker OR-ed into a pet cooldown's category duration (vmangos
-/// `Unit.cpp:11270-11271`); strip it before using the number as a duration.
-pub const PET_COOLDOWN_PERMANENT: u32 = 0x0800_0000;
+/// The flag bit of a pet cooldown's category duration, which 12340 splits off before using the
+/// rest as a duration (`0x5d6d19`, `0x5d6d2f`).
+pub const PET_COOLDOWN_PERMANENT: u32 = 0x8000_0000;
 
 /// One packed pet action word, as the client decodes it (`0x4bdcc7`/`0x4bdccd`/`0x4bdce3`): the
-/// action in bits 0-15, the type in 24-29, autocast allowed in 31 and on in 30; bits 16-23 are
-/// never read. The raw word is kept because the client echoes it verbatim in [`pet_action`].
+/// action in bits 0-23 (12340 masks `0xffffff`, `0x5d6c65`), the type in 24-29, autocast allowed
+/// in 31 and on in 30. The raw word is kept because the client echoes it verbatim in
+/// [`pet_action`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PetActionEntry {
     pub packed: u32,
 }
 
 impl PetActionEntry {
-    /// Bits 0-15: the spell id, command state or react state.
+    /// Bits 0-23: the spell id, command state or react state.
     pub fn action(self) -> u32 {
-        self.packed & 0xFFFF
+        self.packed & 0x00FF_FFFF
     }
     /// The client's slot type, bits 24-29.
     pub fn kind(self) -> u8 {
@@ -153,18 +154,17 @@ impl PetSpells {
     }
 }
 
-/// Read `SMSG_PET_SPELLS` (vmangos `Player::PetSpellInitialize`, `Player.cpp:17519-17561`):
-/// `u64 petGuid, u32 duration, u32 state, u32 bar[10], u8 count, u32 spells[count]`, then the
-/// cooldown block. A lone guid is the teardown; any longer body cut short is an error.
+/// Read `SMSG_PET_SPELLS` as the 12340 handler does (`0x5d6b90`): `u64 petGuid`, then, for a
+/// nonzero guid, `u16 family, u32 duration, u32 state, u32 bar[10], u8 count, u32
+/// spells[count]` and the cooldown block. A zero guid is the teardown (`0x5d6c00`); any longer
+/// body cut short is an error.
 pub(super) fn read_pet_spells(r: &mut &[u8]) -> io::Result<PetSpells> {
     let pet_guid = read_u64_le(r)?;
-    if r.is_empty() {
-        // The teardown; vmangos always writes a zero guid here.
-        return Ok(PetSpells {
-            pet_guid,
-            ..Default::default()
-        });
+    if pet_guid == 0 {
+        return Ok(PetSpells::default());
     }
+    // The creature family, which the handler reads and drops.
+    let _family = read_u16_le(r)?;
     let duration_ms = read_u32_le(r)?;
     let state = read_u32_le(r)?;
 
@@ -192,31 +192,15 @@ pub(super) fn read_pet_spells(r: &mut &[u8]) -> io::Result<PetSpells> {
     })
 }
 
-/// The trailing cooldown block. The client reads `u8 count` then 12-byte entries
-/// `{u16 spell, u16 category, u32, u32}` (`0x4bda58`); vmangos writes `u16 count` then 14-byte
-/// entries with a `u32` spell (`Unit.cpp:11245-11278`). Deviation: both are read, told apart
-/// exactly by the tail length (`12n` vs `1 + 14n`), since the 1.12 client mis-parses vmangos's.
+/// The trailing cooldown block as 12340 reads it (`0x5d6cd3`-`0x5d6d0d`): `u8 count`, then
+/// 14-byte entries `{u32 spell, u16 category, u32 cooldown, u32 categoryCooldown}`.
 fn read_cooldown_block(r: &mut &[u8]) -> io::Result<Vec<PetSpellCooldown>> {
     let count = usize::from(read_u8(r)?);
-    // At `count == 0` vmangos still leaves its `u16` count's high byte; it is consumed so the
-    // decode-length check sees no tail.
-    let vmangos = r.len() == 1 + 14 * count;
-    if vmangos {
-        let _high_byte = read_u8(r)?;
-    }
-    if count == 0 {
-        return Ok(Vec::new());
-    }
-    // `count` came off a `u8`; no tighter bound exists on either producer.
+    // `count` came off a `u8`; no tighter bound exists.
     let mut cooldowns = Vec::with_capacity(capacity_hint(count, usize::from(u8::MAX)));
     for _ in 0..count {
-        let spell_id = if vmangos {
-            read_u32_le(r)?
-        } else {
-            u32::from(read_u16_le(r)?)
-        };
         cooldowns.push(PetSpellCooldown {
-            spell_id,
+            spell_id: read_u32_le(r)?,
             category: read_u16_le(r)?,
             spell_cd_ms: read_u32_le(r)?,
             category_cd_ms: read_u32_le(r)?,
@@ -303,22 +287,6 @@ pub(super) fn read_pet_dismiss_sound(r: &mut impl Read) -> io::Result<(u32, Vect
     Ok((read_u32_le(r)?, Vector3d::read(r)?))
 }
 
-/// Read `SMSG_PET_CAST_FAILED` (vmangos `Packets/Pet.cpp:127-132`): `u32` spell, `u8` status,
-/// `u8` reason, in `SMSG_CAST_RESULT`'s vocabulary (2 is a failure) but with no argument words.
-pub(super) fn read_pet_cast_failed(r: &mut impl Read) -> io::Result<(u32, super::CastOutcome)> {
-    let spell_id = read_u32_le(r)?;
-    let status = read_u8(r)?;
-    let outcome = if status == 2 {
-        super::CastOutcome::Failed {
-            reason: read_u8(r)?,
-            arg: None,
-        }
-    } else {
-        super::CastOutcome::Ok
-    };
-    Ok((spell_id, outcome))
-}
-
 /// Body of `CMSG_PET_ACTION` (opcode 373, vmangos `Packets/Pet.cpp:9-14`): `u64` pet guid, the
 /// slot's `u32` word echoed verbatim, `u64` target guid (0 when the action needs none).
 pub fn pet_action(pet_guid: u64, packed: u32, target_guid: u64) -> Vec<u8> {
@@ -393,10 +361,41 @@ pub fn pet_rename(pet_guid: u64, name: &str) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    /// A hunter pet's `SMSG_PET_SPELLS` as vmangos builds it, with one spell and one cooldown.
+    /// 12340 reads `SMSG_CAST_FAILED`'s body here (`0x806c30`): count, spell, reason, args.
+    #[test]
+    fn pet_cast_failed_reads_the_cast_failed_body() {
+        use crate::events::{decode, SessionEvent};
+        let parse = |body: &[u8]| {
+            decode(
+                crate::messages::parse_server(crate::messages::opcode::SMSG_PET_CAST_FAILED, body)
+                    .unwrap(),
+            )
+        };
+        // Growl (2649), wire 0x66 REQUIRES_SPELL_FOCUS with focus 3: shared 0x5e.
+        assert!(matches!(
+            parse(&[4, 0x59, 0x0a, 0, 0, 0x66, 3, 0, 0, 0]).as_slice(),
+            [SessionEvent::PetCastFailed {
+                spell_id: 2649,
+                reason: 0x5e,
+                arg: Some(3),
+            }]
+        ));
+        // No argument: wire 0x0c BAD_TARGETS, shared 0x0a.
+        assert!(matches!(
+            parse(&[4, 0x59, 0x0a, 0, 0, 0x0c]).as_slice(),
+            [SessionEvent::PetCastFailed {
+                spell_id: 2649,
+                reason: 0x0a,
+                arg: None,
+            }]
+        ));
+    }
+
+    /// A hunter pet's `SMSG_PET_SPELLS` in the 12340 layout, with one spell and one cooldown.
     fn pet_spells_body() -> Vec<u8> {
         let mut b = Vec::new();
         b.extend_from_slice(&0xF140_0000_0000_002Au64.to_le_bytes()); // pet guid
+        b.extend_from_slice(&1u16.to_le_bytes()); // family (wolf)
         b.extend_from_slice(&0u32.to_le_bytes()); // duration (0 = a real pet)
         b.push(PET_REACT_DEFENSIVE as u8);
         b.push(PET_COMMAND_FOLLOW as u8);
@@ -419,21 +418,9 @@ mod tests {
         }
         b.push(1); // spell count
         b.extend_from_slice(&(3010u32 | (u32::from(PET_ACT_ENABLED) << 24)).to_le_bytes());
-        // The cooldown block in vmangos's layout: u16 count, u32 spell id (14-byte entries).
-        b.extend_from_slice(&1u16.to_le_bytes());
+        // The cooldown block: u8 count, 14-byte entries.
+        b.push(1);
         b.extend_from_slice(&3010u32.to_le_bytes());
-        b.extend_from_slice(&0u16.to_le_bytes()); // category
-        b.extend_from_slice(&4_500u32.to_le_bytes());
-        b.extend_from_slice(&0u32.to_le_bytes());
-        b
-    }
-
-    /// The same packet with the cooldown block in the client's layout: u8 count, 12-byte entries.
-    fn pet_spells_body_client_cooldowns() -> Vec<u8> {
-        let mut b = pet_spells_body();
-        b.truncate(b.len() - 16); // drop vmangos's u16 count + its one 14-byte entry
-        b.push(1); // u8 count
-        b.extend_from_slice(&3010u16.to_le_bytes());
         b.extend_from_slice(&0u16.to_le_bytes()); // category
         b.extend_from_slice(&4_500u32.to_le_bytes());
         b.extend_from_slice(&0u32.to_le_bytes());
@@ -486,29 +473,20 @@ mod tests {
         );
     }
 
+    /// No cooldowns: one count byte, fully consumed.
     #[test]
-    fn both_cooldown_layouts_decode_identically() {
-        let from_vmangos = read_pet_spells(&mut &pet_spells_body()[..]).unwrap();
-        let body = pet_spells_body_client_cooldowns();
-        let mut r = &body[..];
-        let from_client = read_pet_spells(&mut r).unwrap();
-        assert!(r.is_empty(), "the client-layout body is fully consumed");
-        assert_eq!(from_client.cooldowns, from_vmangos.cooldowns);
-        assert_eq!(from_client, from_vmangos);
+    fn an_empty_cooldown_block_is_one_byte() {
+        let mut r = &[0u8][..];
+        assert!(read_cooldown_block(&mut r).unwrap().is_empty());
+        assert!(r.is_empty());
     }
 
-    /// No cooldowns: the client's form is one byte, vmangos's two, and both are fully consumed.
+    /// 12340 keeps 24 action bits (`0x5d6c65`): a pet spell past `0xffff` survives.
     #[test]
-    fn an_empty_cooldown_block_reads_either_way() {
-        let mut client = &[0u8][..];
-        assert!(read_cooldown_block(&mut client).unwrap().is_empty());
-        assert!(client.is_empty());
-        let mut vmangos = &[0u8, 0][..];
-        assert!(read_cooldown_block(&mut vmangos).unwrap().is_empty());
-        assert!(
-            vmangos.is_empty(),
-            "vmangos's count high byte is consumed, not left as a tail"
-        );
+    fn the_action_is_24_bits() {
+        let e = PetActionEntry::from(0x1_0A3C | (u32::from(PET_ACT_ENABLED) << 24));
+        assert_eq!(e.action(), 0x1_0A3C);
+        assert!(e.is_spell());
     }
 
     /// A zero-guid body is the only signal that the bar is gone, so it must not be an error.

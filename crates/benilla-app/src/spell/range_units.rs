@@ -1,6 +1,6 @@
 //! The units `GetMinMaxRange` (`0x6e3480`) reads, built from the world: the caster, a target unit,
-//! and the caster's auto-attack target, each as its combat reach, player bit and motion
-//! ([`benilla_formats::RangeUnit`]).
+//! and the caster's auto-attack target, each as its combat reach, player bit, motion and whether
+//! the caster can assist it ([`benilla_formats::RangeUnit`]).
 
 use benilla_formats::{RangeUnit, UnitMotion};
 use benilla_protocol::messages::ObjectType;
@@ -11,10 +11,11 @@ use bevy::prelude::*;
 use crate::creature_anim::select::unify;
 use crate::creature_anim::{move_flags, Engaged};
 use crate::net::{
-    current_speed, CreatureSwimming, Embodied, GuidIndex, ObjectStore, RemoteMotion, SelfPlayer,
-    Spline, UnitMoveModes, UnitSpeeds,
+    current_speed, CreatureSwimming, Embodied, GuidIndex, ObjectStore, RemoteMotion, Reputations,
+    SelfPlayer, Spline, UnitMoveModes, UnitSpeeds,
 };
 use crate::player::Player;
+use crate::target::{can_assist, Factions};
 
 /// The descriptor's default combat reach, before a unit's store streams.
 pub(crate) const DEFAULT_REACH: f32 = 1.5;
@@ -70,6 +71,9 @@ pub(crate) struct RangeUnits<'w, 's> {
     index: Option<Res<'w, GuidIndex>>,
     /// The flags word of the body we drive, [`Player::move_flags`].
     player: Option<Res<'w, Player>>,
+    /// `CanAssist`'s reaction inputs; a harness without them assists only the caster.
+    factions: Option<Res<'w, Factions>>,
+    reputations: Option<Res<'w, Reputations>>,
 }
 
 impl RangeUnits<'_, '_> {
@@ -88,7 +92,31 @@ impl RangeUnits<'_, '_> {
             reach: store.0.unit_combat_reach(),
             player: store.0.object_type() == Some(ObjectType::Player),
             motion: unit_motion(flags, speeds.map(|s| &s.0), spline),
+            assist: self.caster_assists(entity, store),
         })
+    }
+
+    /// `CanAssist 0x7293d0` from our caster toward `entity`, which the caster always passes for
+    /// himself.
+    fn caster_assists(&self, entity: Entity, store: &ObjectStore) -> bool {
+        let caster = self.caster.iter().next();
+        if caster == Some(entity) {
+            return true;
+        }
+        let Some(reputations) = self.reputations.as_deref() else {
+            return false;
+        };
+        let self_store = caster.and_then(|e| self.units.get(e).ok()).map(|p| p.0);
+        can_assist(
+            Some(store),
+            self.factions.as_deref(),
+            reputations,
+            self_store,
+            |owner| {
+                let e = *self.index.as_ref()?.0.get(&owner)?;
+                self.units.get(e).ok().map(|p| p.0.clone())
+            },
+        )
     }
 
     /// The caster: our own player, at the default reach and standing until its descriptor streams.
@@ -269,6 +297,48 @@ mod tests {
             .expect("the units read");
     }
 
+    /// `assist` is `CanAssist` from our caster (`0x801685`): a friendly player passes, a hostile
+    /// monster does not, and the caster always does for himself.
+    #[test]
+    fn assist_follows_the_casters_relation_to_the_unit() {
+        use benilla_formats::{FactionCatalog, FactionTemplate};
+        use bevy::ecs::system::RunSystemOnce;
+        use std::collections::HashMap;
+
+        let tpl = |faction, group_mask, friend_group_mask, enemy_group_mask| FactionTemplate {
+            faction,
+            group_mask,
+            friend_group_mask,
+            enemy_group_mask,
+            enemies: [0; 4],
+            friends: [0; 4],
+        };
+        let mut world = World::new();
+        world.insert_resource(Factions::from_catalog(FactionCatalog::from_rows(
+            HashMap::from([(1, tpl(1, 3, 2, 12)), (14, tpl(14, 8, 0, 1))]),
+            HashMap::new(),
+        )));
+        world.insert_resource(Reputations::default());
+        // `OBJECT_FIELD_TYPE` 2, the template 35, `UNIT_FIELD_FLAGS` 46 (player-controlled 0x8).
+        let unit = |typemask: u32, template: u32, flags: u32| {
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (2, typemask),
+                (35, template),
+                (46, flags),
+            ]))
+        };
+        let me = world.spawn((SelfPlayer, unit(0x19, 1, 0x8))).id();
+        let ally = world.spawn(unit(0x19, 1, 0x8)).id();
+        let monster = world.spawn(unit(0x09, 14, 0)).id();
+        world
+            .run_system_once(move |units: RangeUnits| {
+                assert!(units.unit(me).unwrap().assist, "the caster himself");
+                assert!(units.unit(ally).unwrap().assist, "a friendly player");
+                assert!(!units.unit(monster).unwrap().assist, "a hostile monster");
+            })
+            .expect("the units read");
+    }
+
     /// Our own body is the word `Player` holds, so the same body standing still, walking or with
     /// no controller in the world is not running.
     #[test]
@@ -343,6 +413,8 @@ mod tests {
             let melee = SpellRange {
                 min: 0.0,
                 max: 5.0,
+                friendly_min: 0.0,
+                friendly_max: 5.0,
                 flags: 1,
             };
             world

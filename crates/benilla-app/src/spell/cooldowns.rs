@@ -502,7 +502,7 @@ impl Cooldowns {
     }
 
     /// One `SMSG_PET_SPELLS` cooldown: remainders, starting now. The category duration's
-    /// [`PET_COOLDOWN_PERMANENT`] marker is stripped, or it would read as a 37-hour sweep.
+    /// [`PET_COOLDOWN_PERMANENT`] flag is stripped, or it would read as a 24-day sweep.
     ///
     /// The handler seeds through `StartCooldown 0x6e2c60` (`0x4bdabf`), which calls no flush, so
     /// the insert leaves [`Self::generation`] where it was.

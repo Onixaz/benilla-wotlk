@@ -9,16 +9,29 @@ use benilla_dbc::{FieldType, Schema, SchemaField};
 
 use crate::dbc::{f32_at, parse, u32_at};
 
-/// One `SpellRange.dbc` row, in yards.
+/// One `SpellRange.dbc` row, in yards: a hostile and a friendly pair.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpellRange {
+    /// The hostile pair, columns 1 and 3.
     pub min: f32,
     pub max: f32,
+    /// The friendly pair, columns 2 and 4.
+    pub friendly_min: f32,
+    pub friendly_max: f32,
     /// Bit 0: the melee range family (combat-reach based, not the authored min/max).
     pub flags: u32,
 }
 
 impl SpellRange {
+    /// The `(min, max)` pair `GetMinMaxRange` (`0x7ff480`) indexes by its friendly argument.
+    pub fn pair(&self, friendly: bool) -> (f32, f32) {
+        if friendly {
+            (self.friendly_min, self.friendly_max)
+        } else {
+            (self.min, self.max)
+        }
+    }
+
     /// Flags bit 0: `GetMinMaxRange` takes the reach sum instead of the row's pair.
     pub fn is_melee(&self) -> bool {
         self.flags & 1 != 0
@@ -80,15 +93,19 @@ pub struct RangeUnit {
     /// own is the gate of the `Attributes & 2` scale (`0x6e36b4`-`0x6e36bf`), which is not applied.
     pub player: bool,
     pub motion: UnitMotion,
+    /// `CanAssist(caster, unit)` (`0x801685`): for a unit target, which `SpellRange.dbc` pair
+    /// applies. Only a target's read counts.
+    pub assist: bool,
 }
 
 impl RangeUnit {
-    /// A unit that stands still: no motion, so it never earns the moving bonus.
+    /// A unit that stands still: no motion, so it never earns the moving bonus; not assistable.
     pub fn still(reach: f32) -> Self {
         Self {
             reach,
             player: false,
             motion: UnitMotion::default(),
+            assist: false,
         }
     }
 }
@@ -146,19 +163,25 @@ pub fn min_max_range(
         };
         (0.0, max, unit)
     } else {
-        if row.min == 0.0 && row.max == 0.0 {
+        // The pair 12340's wrapper picks (`0x801650`): `CanAssist` toward a unit target, else the
+        // spell's own `IsHelpfulOrHarmful` answering helpful.
+        let friendly = targets
+            .target
+            .map_or_else(|| spell.is_helpful(), |t| t.assist);
+        let (row_min, row_max) = row.pair(friendly);
+        if row_min == 0.0 && row_max == 0.0 {
             return None;
         }
         let Some(target) = targets.target else {
-            return Some((row.min, row.max));
+            return Some((row_min, row_max));
         };
         let pad = f64::from(caster.reach) + f64::from(target.reach);
-        let min = if row.min == 0.0 {
+        let min = if row_min == 0.0 {
             0.0
         } else {
-            (pad + f64::from(row.min)) as f32
+            (pad + f64::from(row_min)) as f32
         };
-        (min, (f64::from(row.max) + pad) as f32, Some(target))
+        (min, (f64::from(row_max) + pad) as f32, Some(target))
     };
     let earns_bonus = |unit: &RangeUnit| {
         caster.motion.moves_at_run_speed()
@@ -227,8 +250,8 @@ pub(crate) fn schema() -> Schema {
     schema
 }
 
-/// Load `SpellRange.dbc` off the patch chain. Only the hostile pair is read: the friendly pair
-/// differs on five rows, among them 161 (20 hostile, 40 friendly), and is not modelled yet.
+/// Load `SpellRange.dbc` off the patch chain, both pairs: the friendly one differs on a few rows,
+/// among them 161 (20 hostile, 40 friendly).
 pub fn load_spell_ranges(chain: &mut Chain) -> Result<SpellRangeCatalog> {
     let bytes = chain
         .read_file(SPELL_RANGE)
@@ -241,7 +264,9 @@ pub fn load_spell_ranges(chain: &mut Chain) -> Result<SpellRangeCatalog> {
             id,
             SpellRange {
                 min: f32_at(r, 1).unwrap_or(0.0),
+                friendly_min: f32_at(r, 2).unwrap_or(0.0),
                 max: f32_at(r, 3).unwrap_or(0.0),
+                friendly_max: f32_at(r, 4).unwrap_or(0.0),
                 flags: u32_at(r, 5).unwrap_or(0),
             },
         );
@@ -290,16 +315,22 @@ mod tests {
     const MELEE: SpellRange = SpellRange {
         min: 0.0,
         max: 5.0,
+        friendly_min: 0.0,
+        friendly_max: 5.0,
         flags: 1,
     };
     const CHARGE: SpellRange = SpellRange {
         min: 8.0,
         max: 25.0,
+        friendly_min: 8.0,
+        friendly_max: 25.0,
         flags: 0,
     };
     const FIREBALL: SpellRange = SpellRange {
         min: 0.0,
         max: 35.0,
+        friendly_min: 0.0,
+        friendly_max: 35.0,
         flags: 0,
     };
 
@@ -382,6 +413,8 @@ mod tests {
         let self_row = SpellRange {
             min: 0.0,
             max: 0.0,
+            friendly_min: 0.0,
+            friendly_max: 0.0,
             flags: 0,
         };
         assert_eq!(
@@ -397,6 +430,54 @@ mod tests {
 
     /// The ranged arm pads only for the target passed in (`0x6e35d8 test ecx,ecx`, `0x6e35ec je`),
     /// never for the caster's auto-attack target, which the ranged arm does not read.
+    /// A row whose friendly pair is wider, as row 161's is: a unit target picks the pair by
+    /// `CanAssist`, no target by the spell's own `IsHelpfulOrHarmful` (`0x801650`).
+    #[test]
+    fn the_target_relation_picks_the_hostile_or_friendly_pair() {
+        const SPLIT: SpellRange = SpellRange {
+            min: 0.0,
+            max: 20.0,
+            friendly_min: 0.0,
+            friendly_max: 40.0,
+            flags: 0,
+        };
+        let d = spell(161, 0);
+        let caster = RangeUnit::still(0.0);
+        let at = |assist| RangeTargets {
+            target: Some(RangeUnit {
+                assist,
+                ..RangeUnit::still(0.0)
+            }),
+            attack_target: None,
+        };
+        assert_eq!(
+            min_max_range(&d, Some(&SPLIT), caster, at(false)),
+            Some((0.0, 20.0))
+        );
+        assert_eq!(
+            min_max_range(&d, Some(&SPLIT), caster, at(true)),
+            Some((0.0, 40.0))
+        );
+        let none = RangeTargets::default();
+        assert_eq!(
+            min_max_range(&d, Some(&SPLIT), caster, none),
+            Some((0.0, 20.0))
+        );
+        let helpful = crate::spells::SpellDisplay {
+            effect_implicit_target_a: [21, 0, 0],
+            ..spell(161, 0)
+        };
+        assert_eq!(
+            min_max_range(&helpful, Some(&SPLIT), caster, none),
+            Some((0.0, 40.0))
+        );
+        // A unit target decides even against the spell's own kind.
+        assert_eq!(
+            min_max_range(&helpful, Some(&SPLIT), caster, at(false)),
+            Some((0.0, 20.0))
+        );
+    }
+
     #[test]
     fn the_ranged_arm_pads_only_for_the_explicit_target() {
         let d = spell(4, 0);
@@ -471,7 +552,15 @@ mod tests {
     /// auto-attack target's reach, motion or presence, moves [`min_max_range`]'s answer.
     #[test]
     fn the_units_predicate_matches_what_min_max_range_reads_with_no_target() {
-        let row = |min, max, flags| Some(SpellRange { min, max, flags });
+        let row = |min, max, flags| {
+            Some(SpellRange {
+                min,
+                max,
+                friendly_min: min,
+                friendly_max: max,
+                flags,
+            })
+        };
         let rows = [
             None,
             row(0.0, 0.0, 0),

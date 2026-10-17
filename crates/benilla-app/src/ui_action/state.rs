@@ -528,6 +528,8 @@ mod tests {
             let row = benilla_formats::SpellRange {
                 min: 0.0,
                 max: 35.0,
+                friendly_min: 0.0,
+                friendly_max: 35.0,
                 flags: 0,
             };
             app.insert_resource(actions)
@@ -637,6 +639,8 @@ mod tests {
             let melee = benilla_formats::SpellRange {
                 min: 0.0,
                 max: 5.0,
+                friendly_min: 0.0,
+                friendly_max: 5.0,
                 flags: 1,
             };
             app.insert_resource(actions)

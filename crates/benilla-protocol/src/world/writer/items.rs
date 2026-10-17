@@ -16,18 +16,21 @@ impl WorldWriter {
         )
     }
 
-    /// `CMSG_USE_ITEM`: use the item at a bag position; a GameObject `target` is how a key opens a
-    /// locked door. Refused with `SMSG_CAST_RESULT`.
+    /// `CMSG_USE_ITEM`: use the item at a bag position, casting `spell_id`; a GameObject `target`
+    /// is how a key opens a locked door. It takes the cast counter's next `castCount`, so the
+    /// server's `SMSG_SPELL_START` or `SMSG_CAST_FAILED` keys to it.
     pub fn use_item(
         &mut self,
         bag_index: u8,
         slot: u8,
-        spell_slot: u8,
+        spell_id: u32,
+        item_guid: u64,
         target: messages::UseItemTarget,
     ) -> Result<()> {
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_USE_ITEM,
-            &messages::use_item(bag_index, slot, spell_slot, target),
+            &messages::use_item(count, bag_index, slot, spell_id, item_guid, target),
         )
     }
 

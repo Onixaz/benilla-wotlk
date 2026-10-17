@@ -213,6 +213,8 @@ pub(crate) mod fixture {
             benilla_formats::SpellRange {
                 min: 0.0,
                 max: 30.0,
+                friendly_min: 0.0,
+                friendly_max: 30.0,
                 flags: 0,
             },
         )]));

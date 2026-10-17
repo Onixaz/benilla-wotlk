@@ -312,12 +312,8 @@ pub(crate) fn use_action(
                 );
             } else {
                 // The shared `CGItem::Use` fork (called at `0x4e607b`): a quest-starter offers
-                // its quest, and the use runs the whole cast ladder. The wire's third byte is
-                // the spell block ordinal, not a flag.
-                let spell_index = template.use_spell_index().unwrap_or(0);
-                debug!(
-                    "ui_action: item action {action} use (wire {bag_index}/{slot0}, spell #{spell_index})"
-                );
+                // its quest, and the use runs the whole cast ladder.
+                debug!("ui_action: item action {action} use (wire {bag_index}/{slot0})");
                 crate::ui_items::send_item_use(
                     crate::ui_items::ItemUse {
                         guid: Some(guid),
@@ -325,7 +321,6 @@ pub(crate) fn use_action(
                         bag_index,
                         slot: slot0,
                         entry: b.action,
-                        spell_index,
                         use_spell: template.use_spell.map(|u| u.spell_id),
                         on_object: None,
                         is_charter: template.flags & benilla_protocol::messages::ITEM_FLAG_CHARTER

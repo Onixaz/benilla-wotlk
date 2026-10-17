@@ -771,8 +771,10 @@ fn parse_server_body(
         opcode::SMSG_PET_ACTION_FEEDBACK => ServerPacket::PetActionFeedback {
             reason: pet::read_pet_action_feedback(&mut r)?,
         },
+        // The 12340 handler (`0x806c30`) reads `SMSG_CAST_FAILED`'s body; the pet's own cast
+        // count is not ours to match.
         opcode::SMSG_PET_CAST_FAILED => {
-            let (spell_id, outcome) = pet::read_pet_cast_failed(&mut r)?;
+            let (_cast_count, spell_id, outcome) = spells::read_cast_result(&mut r)?;
             ServerPacket::PetCastFailed { spell_id, outcome }
         }
         opcode::SMSG_PET_TAME_FAILURE => ServerPacket::PetTameFailure {

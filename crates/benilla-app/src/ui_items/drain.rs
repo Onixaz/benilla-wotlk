@@ -185,7 +185,7 @@ impl ScriptItemUse<'_, '_> {
             return;
         }
         let slot = (id - 1) as u8;
-        let (guid, start_quest, spell_index, use_spell, entry, is_charter) = self_q
+        let (guid, start_quest, use_spell, entry, is_charter) = self_q
             .iter()
             .next()
             .and_then(|store| slot_guid(&store.0, EQUIPMENT_BAG, slot, &ladder.objects))
@@ -195,13 +195,12 @@ impl ScriptItemUse<'_, '_> {
                 Some((
                     Some(guid),
                     t.start_quest,
-                    t.use_spell_index().unwrap_or(0),
                     t.use_spell.map(|u| u.spell_id),
                     Some(entry),
                     t.flags & benilla_protocol::messages::ITEM_FLAG_CHARTER != 0,
                 ))
             })
-            .unwrap_or((None, 0, 0, None, None, false));
+            .unwrap_or((None, 0, None, None, false));
         debug!("ui_items: use equipped item, lua slot {id} (wire 255/{slot})");
         super::send_item_use(
             super::ItemUse {
@@ -210,7 +209,6 @@ impl ScriptItemUse<'_, '_> {
                 bag_index: BAG_PLAYER_INVENTORY,
                 slot,
                 entry: entry.unwrap_or(0),
-                spell_index,
                 use_spell,
                 on_object: None,
                 is_charter,
@@ -307,7 +305,6 @@ impl ScriptItemUse<'_, '_> {
                     inventory_type: t.inventory_type,
                     display_info_id: t.display_info_id,
                     start_quest: t.start_quest,
-                    spell_index: t.use_spell_index().unwrap_or(0),
                     use_spell: t.use_spell.map(|u| u.spell_id),
                     unwraps_gift: t.unwraps_gift(inst_flags),
                     begins_gift_wrap: t.begins_gift_wrap(inst_flags),
@@ -376,7 +373,6 @@ impl ScriptItemUse<'_, '_> {
                     bag_index,
                     slot: wire_slot,
                     entry: c.entry,
-                    spell_index: c.spell_index,
                     use_spell: c.use_spell,
                     on_object: None,
                     is_charter: c.is_charter,
@@ -466,7 +462,6 @@ impl ScriptItemUse<'_, '_> {
                 bag_index,
                 slot: wire_slot,
                 entry: clicked.map_or(0, |c| c.entry),
-                spell_index: clicked.map_or(0, |c| c.spell_index),
                 use_spell: clicked.and_then(|c| c.use_spell),
                 on_object: None,
                 is_charter: clicked.is_some_and(|c| c.is_charter),
@@ -551,7 +546,6 @@ struct Clicked {
     inventory_type: u32,
     display_info_id: u32,
     start_quest: u32,
-    spell_index: u8,
     /// The template's on-use spell, the key of the cast tail's in-flight guard.
     use_spell: Option<u32>,
     unwraps_gift: bool,

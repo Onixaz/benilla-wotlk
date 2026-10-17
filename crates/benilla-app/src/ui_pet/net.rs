@@ -55,8 +55,13 @@ fn on_action_feedback(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>)
 }
 
 fn on_cast_failed(In(ev): In<SessionEvent>, mut errors: ResMut<CastErrors>) {
-    if let SessionEvent::PetCastFailed { spell_id, reason } = ev {
-        pet_cast_failed(spell_id, reason, &mut errors);
+    if let SessionEvent::PetCastFailed {
+        spell_id,
+        reason,
+        arg,
+    } = ev
+    {
+        pet_cast_failed(spell_id, reason, arg, &mut errors);
     }
 }
 
@@ -257,11 +262,9 @@ fn pet_dismiss_sound(
 /// `SMSG_PET_CAST_FAILED`: queued as the pet's, so the display uses the reference's pet table
 /// (`0x6e8eb0`, not the player's `0x6e1a00`). Our cast state is untouched, and unlike the
 /// player's it writes no combat-log line and plays no error sound (`0x62c360`, `0x458a50`).
-fn pet_cast_failed(spell_id: u32, reason: Option<u8>, errors: &mut CastErrors) {
-    debug!("net: pet cast failed — spell {spell_id} reason {reason:?}");
-    if let Some(reason) = reason {
-        errors.push_pet(spell_id, reason);
-    }
+fn pet_cast_failed(spell_id: u32, reason: u8, arg: Option<u32>, errors: &mut CastErrors) {
+    debug!("net: pet cast failed — spell {spell_id} reason {reason:#04x} arg {arg:?}");
+    errors.push_pet(spell_id, reason, arg);
 }
 
 #[cfg(test)]

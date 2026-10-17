@@ -512,7 +512,6 @@ fn drain_death(
                             bag_index,
                             slot,
                             entry,
-                            spell_index: t.as_ref().and_then(|t| t.use_spell_index()).unwrap_or(0),
                             use_spell: t.as_ref().and_then(|t| t.use_spell).map(|u| u.spell_id),
                             on_object: None,
                             is_charter: false,

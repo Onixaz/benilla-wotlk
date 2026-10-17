@@ -477,8 +477,8 @@ impl Dispatch<'_, '_> {
             }
             GoAction::OpenByKey(it) => {
                 debug!(
-                    "right-click gameobject open-by-key: use item ({},{}) blk {} at {guid:#x}",
-                    it.bag_index, it.slot, it.spell_index
+                    "right-click gameobject open-by-key: use item ({},{}) at {guid:#x}",
+                    it.bag_index, it.slot
                 );
                 self.feedback
                     .openers
@@ -1193,9 +1193,8 @@ pub(crate) fn resolve_go_action(
             ));
         }
     };
-    // A key we carry is used at the object: the sender `0x6e54f0` takes its item arm
-    // (`0x6e57d8 push 0xab`), `CMSG_USE_ITEM {u8 bag, u8 slot, u8 spellSlot, targets}` with no
-    // spell id, so the wire needs the key's position.
+    // A key we carry is used at the object: the cast sender's item arm (`0x80b28b push 0xab`),
+    // `CMSG_USE_ITEM`, names the key by position and guid.
     let Some(store) = me_store else {
         return GoAction::Refuse(None);
     };
@@ -1208,12 +1207,12 @@ pub(crate) fn resolve_go_action(
         // Held when the resolver ran, gone now: nothing to send.
         return GoAction::Refuse(None);
     };
-    // An uncached template queries and does nothing this click. `use_spell_index` is the spell
-    // block ordinal, the packet's third byte.
+    // An uncached template queries and does nothing this click; a key without an on-use spell
+    // has nothing to cast.
     let Some(tmpl) = inputs.items.template(key_entry, 0, net) else {
         return GoAction::Refuse(None);
     };
-    let Some(spell_index) = tmpl.use_spell_index() else {
+    let Some(use_spell) = tmpl.use_spell.as_ref().map(|u| u.spell_id) else {
         return GoAction::Refuse(None);
     };
     GoAction::OpenByKey(crate::ui_items::ItemUse {
@@ -1222,8 +1221,7 @@ pub(crate) fn resolve_go_action(
         bag_index,
         slot,
         entry: key_entry,
-        spell_index,
-        use_spell: tmpl.use_spell.as_ref().map(|u| u.spell_id),
+        use_spell: Some(use_spell),
         on_object: Some(guid),
         is_charter: tmpl.flags & benilla_protocol::messages::ITEM_FLAG_CHARTER != 0,
     })
