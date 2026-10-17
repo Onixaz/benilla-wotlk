@@ -390,7 +390,7 @@ mod tests {
             class,
             sound_id: 1,
             vertex_format: Some(lvf),
-            depth_ramp: Some(ramp).filter(|_| lvf != VertexFormat::HeightUv),
+            depth_ramp: (lvf != VertexFormat::HeightUv).then_some(ramp),
         }
     }
 

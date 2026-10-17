@@ -225,8 +225,8 @@ mod tests {
     #[test]
     fn real_tables_resolve_the_shipped_terrain_liquids() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let types = load_liquid_types(&mut chain).expect("load LiquidType");
+        let chain = crate::open_chain(&data).expect("open chain");
+        let types = load_liquid_types(&chain).expect("load LiquidType");
         assert!(!types.is_empty());
         // The four MCLQ ids (header bit + 1) and Outland's magma (15), by class and format.
         for (id, kind, lvf) in [
