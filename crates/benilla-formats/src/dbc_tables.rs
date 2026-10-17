@@ -136,7 +136,6 @@ tables! {
         "QuestSort" => quest_headers::quest_sort_schema(),
         "QuestXP" => quest_rewards::quest_xp_schema(),
         "ServerMessages" => server_messages::schema(&LAYOUTS.server_messages),
-        "SheatheSoundLookups" => sheathe::schema(),
         "SkillLine" => skill_lines::skill_line_schema(),
         "SkillLineAbility" => skill_lines::skill_line_ability_schema(),
         "SkillLineCategory" => skill_lines::skill_line_category_schema(),

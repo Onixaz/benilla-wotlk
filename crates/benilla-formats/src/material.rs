@@ -3,7 +3,8 @@
 //! `0x62fa30` for a player) before the terrain step and its gates, so a creature of footstep class
 //! 0 still rustles; the foley is on the uncapped bus 0, the step on bus 9 (cap 6). `FoleySoundID`
 //! (row `+0x8`, read at `0x4584e0`) plays at the feet plus 2.0 yd (`0x45851d`, `[0x801628]`) at
-//! volume 1.0; only chain, plate and leather have one.
+//! volume 1.0; only chain, plate and leather have one. The weapon draw and stow sounds are its
+//! `SheatheSoundID` and `UnsheatheSoundID` (`0x4d07b0`).
 
 use std::collections::HashMap;
 
@@ -18,6 +19,8 @@ pub struct MaterialCatalog {
     foley: HashMap<u32, u32>,
     /// The `Flags` column: the metal or wood side of a weapon impact and a chest's armor slot.
     flags: HashMap<u32, u32>,
+    /// `(SheatheSoundID, UnsheatheSoundID)`, for materials with either.
+    sheathe: HashMap<u32, (u32, u32)>,
 }
 
 impl MaterialCatalog {
@@ -50,6 +53,13 @@ impl MaterialCatalog {
         }
     }
 
+    /// The kit an item of `material` plays as it is stowed (`sheathe`) or drawn: row `+0xc` or
+    /// `+0x10` (`0x4d07b0`). `None` for no row or a zero kit, which plays nothing there.
+    pub fn sheathe_kit(&self, material: u32, sheathe: bool) -> Option<u32> {
+        let &(stow, draw) = self.sheathe.get(&material)?;
+        Some(if sheathe { stow } else { draw }).filter(|&k| k != 0)
+    }
+
     pub fn len(&self) -> usize {
         self.foley.len()
     }
@@ -61,7 +71,6 @@ impl MaterialCatalog {
 
 pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("Material");
-    // 12340 adds the sheathe and unsheathe kits, set on materials 1, 2, 6 and 7 and not read.
     for name in [
         "ID",
         "Flags",
@@ -82,13 +91,22 @@ pub fn load_material_catalog(chain: &mut Chain) -> Result<MaterialCatalog> {
     let rs = parse(&bytes, schema(), "Material")?;
     let mut foley = HashMap::with_capacity(rs.records().len());
     let mut flags = HashMap::with_capacity(rs.records().len());
+    let mut sheathe = HashMap::new();
     for r in rs.records() {
         if let Some(id) = u32_at(r, 0) {
             foley.insert(id, u32_at(r, 2).unwrap_or(0));
             flags.insert(id, u32_at(r, 1).unwrap_or(0));
+            let pair = (u32_at(r, 3).unwrap_or(0), u32_at(r, 4).unwrap_or(0));
+            if pair != (0, 0) {
+                sheathe.insert(id, pair);
+            }
         }
     }
-    Ok(MaterialCatalog { foley, flags })
+    Ok(MaterialCatalog {
+        foley,
+        flags,
+        sheathe,
+    })
 }
 
 #[cfg(test)]
@@ -117,6 +135,28 @@ mod tests {
         // 0 is the wire's no-material id; 9 is past the table.
         assert_eq!(cat.foley_kit(0), None);
         assert_eq!(cat.foley_kit(9), None);
+    }
+
+    /// The draw and stow kits by material (`0x4d07b0`): metal and wood weapons, plate and cloth
+    /// carry a pair; the rest play nothing.
+    #[test]
+    fn the_sheathe_kits_come_from_the_material() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let cat = load_material_catalog(&mut chain).expect("load materials");
+        assert_eq!(cat.sheathe_kit(1, true), Some(698), "metal stow");
+        assert_eq!(cat.sheathe_kit(1, false), Some(700), "metal draw");
+        assert_eq!(cat.sheathe_kit(2, true), Some(697), "wood stow");
+        assert_eq!(cat.sheathe_kit(2, false), Some(699), "wood draw");
+        for m in [6, 7] {
+            assert!(
+                cat.sheathe_kit(m, false).is_some(),
+                "material {m} draws a sound"
+            );
+        }
+        for silent in [0, 3, 4, 5, 8, 99] {
+            assert_eq!(cat.sheathe_kit(silent, false), None, "material {silent}");
+        }
     }
 
     /// The `Flags` column on 12340; a missing material, as a creature without virtual-item info

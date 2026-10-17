@@ -198,8 +198,6 @@ mod weapon_impact;
 pub use weapon_impact::{
     impact_slot, load_weapon_impact_catalog, WeaponImpactCatalog, WeaponImpactRow,
 };
-mod sheathe;
-pub use sheathe::{load_sheathe_sound_catalog, SheatheSoundCatalog, SheatheSounds};
 mod weapon_swing;
 pub use weapon_swing::{load_weapon_swing_catalog, WeaponSwingCatalog};
 mod material;

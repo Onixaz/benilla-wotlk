@@ -190,7 +190,7 @@ pub(crate) struct HeldTemplate {
     pub(crate) class: u32,
     pub(crate) subclass: u32,
     /// `Material.dbc` id (1 metal, 2 wood, 5 chain, 6 plate, 7 cloth, 8 leather, 0 undefined), the
-    /// only input to the draw/stow sound: every `SheatheSoundLookups` row of a material agrees.
+    /// only input to the draw/stow sound (`0x4d07b0`).
     pub(crate) material: u32,
 }
 

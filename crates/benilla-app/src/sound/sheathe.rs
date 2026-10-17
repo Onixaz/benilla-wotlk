@@ -1,50 +1,30 @@
-//! Draw and stow sounds through `SheatheSoundLookups`.
+//! Draw and stow sounds, as 12340's `SI2::PlaySheatheSound` (`0x4d07b0`) picks them: the moved
+//! item's `Material.dbc` row names the kit, `SheatheSoundID` to stow and `UnsheatheSoundID` to draw,
+//! played 2 yd above the unit. The material rides the wire (`SMSG_ITEM_QUERY_SINGLE_RESPONSE` for
+//! players, `UNIT_VIRTUAL_ITEM_INFO` for creatures) into `Wielded`.
 //!
 //! The trigger is [`SheathSwapMessage`], fired once per arm as that arm's sheath one-shot crosses
 //! its swap point. Snap transitions (attack auto-draw, reactive stows, remote units) are silent,
 //! as the reference's instant paths play no clip. It is not the `$SHL`/`$SHR` anim tags: HipSheath
 //! (90, every one-hand draw) carries no sound events.
-//!
-//! `SheatheSoundLookups` maps `(class, subclass, material)` to a stow/draw kit pair; in 1.12.1
-//! every row of a material carries the same pair (metal 698/700, wood 697/699), so the item's
-//! `Material` decides. It rides the wire (`SMSG_ITEM_QUERY_SINGLE_RESPONSE` for players,
-//! `UNIT_VIRTUAL_ITEM_INFO` for creatures) into `Wielded`. Shields resolve on their own class-4
-//! rows through the lookup's fallback.
 
 use bevy::prelude::*;
 
-use benilla_formats::SheatheSoundCatalog;
-
 use crate::creature_anim::{SheathSwapMessage, Wielded};
 use crate::net::NetEntity;
-use benilla_assets::{AssetSet, LockRecover, WorldAssets};
+use benilla_assets::WorldAssets;
 use benilla_world::schedule::WorldStage;
 
 use super::kit::{play_kit, KitRef, SoundCategory, SoundKits};
-use super::{AudioListener, SoundConfig, SoundOutput};
+use super::{AudioListener, Materials, SoundConfig, SoundOutput};
 
-#[derive(Resource)]
-struct SheatheSounds(SheatheSoundCatalog);
-
-fn load_sheathe_sounds(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
-    let Some(assets) = assets else { return };
-    let loaded = {
-        let mut chain = assets.chain.lock_recover();
-        benilla_formats::load_sheathe_sound_catalog(&mut chain)
-    };
-    match loaded {
-        Ok(cat) => {
-            info!("sound: {} sheathe sound rows", cat.len());
-            commands.insert_resource(SheatheSounds(cat));
-        }
-        Err(e) => warn!("sound: sheathe sounds failed to load: {e:#}"),
-    }
-}
+/// The lift over the unit's position the sound plays at (yd, `[0xa4040c]` at `0x4d07ff`).
+const SOUND_LIFT: f32 = 2.0;
 
 fn sheathe_sounds(
     mut swaps: MessageReader<SheathSwapMessage>,
     units: Query<(&Transform, &Wielded), With<NetEntity>>,
-    sounds: Option<Res<SheatheSounds>>,
+    materials: Option<Res<Materials>>,
     kits: Option<ResMut<SoundKits>>,
     assets: Option<Res<WorldAssets>>,
     mut out: NonSendMut<SoundOutput>,
@@ -54,7 +34,7 @@ fn sheathe_sounds(
     if swaps.is_empty() {
         return;
     }
-    let (Some(sounds), Some(mut kits), Some(assets)) = (sounds, kits, assets) else {
+    let (Some(materials), Some(mut kits), Some(assets)) = (materials, kits, assets) else {
         return;
     };
     let listener = listener.pos;
@@ -69,21 +49,17 @@ fn sheathe_sounds(
             1 => wielded.off,
             _ => wielded.ranged,
         };
-        let Some((class, subclass)) = item else {
+        if item.is_none() {
             continue; // an empty slot is silent
-        };
+        }
         let material = u32::from(wielded.materials[usize::from(swap.slot).min(2)]);
-        let Some(pair) = sounds
-            .0
-            .get(u32::from(class), u32::from(subclass), material)
-        else {
+        let Some(kit) = materials.0.sheathe_kit(material, !swap.drawing) else {
             continue;
         };
-        let kit = if swap.drawing {
-            pair.unsheathe
-        } else {
-            pair.sheathe
-        };
+        debug!(
+            "sheathe: slot {} material {material} drawing {} kit {kit}",
+            swap.slot, swap.drawing
+        );
         if let Err(e) = play_kit(
             &mut kits,
             &assets,
@@ -91,7 +67,7 @@ fn sheathe_sounds(
             &config,
             listener,
             KitRef::Id(kit),
-            Some(transform.translation),
+            Some(transform.translation + Vec3::Y * SOUND_LIFT),
             SoundCategory::Sfx,
         ) {
             warn!("sheathe (kit {kit}): {e:#}");
@@ -101,6 +77,5 @@ fn sheathe_sounds(
 
 /// Registration hook for [`super::SoundPlugin`].
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(Startup, load_sheathe_sounds.after(AssetSet::Open))
-        .add_systems(Update, sheathe_sounds.in_set(WorldStage::Present));
+    app.add_systems(Update, sheathe_sounds.in_set(WorldStage::Present));
 }

@@ -146,7 +146,7 @@ const NOT_READ: &[(&str, &str)] = &[
 
 /// Tables benilla reads that 12340 loads and never reads: each is a reader the reference does
 /// not have, so each names what reads it here.
-const READ_PAST_12340: &[(&str, &str)] = &[("SheatheSoundLookups", "#232 the sheathe sounds")];
+const READ_PAST_12340: &[(&str, &str)] = &[];
 
 struct Table {
     columns: usize,
