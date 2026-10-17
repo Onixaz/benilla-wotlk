@@ -331,7 +331,9 @@ pub use mail::{
     MailInboxRow, MailInvoice, MailSendRequest, MailState, PackageView, StationeryView,
 };
 pub use measure::TextMeasure;
-pub use merchant::{ItemStatsHead, MerchantItem, MerchantState, RepairCosts};
+pub use merchant::{
+    CostItem, ExtendedCost, ItemStatsHead, MerchantItem, MerchantState, RepairCosts,
+};
 pub(crate) use minimap::apply_model_attrs as apply_minimap_model_attrs;
 pub use model::{FontProbe, MacroIconSource, TextureProbe, TextureSizeProbe};
 pub(crate) use model::{Model, ModelCell};

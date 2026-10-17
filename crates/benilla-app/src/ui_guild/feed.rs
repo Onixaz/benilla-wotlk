@@ -105,7 +105,21 @@ pub(super) fn feed_guild(
             .collect(),
         selection,
         show_offline: guild.show_offline,
+        bank_money: guild.bank_money,
+        bank_withdraw_money: guild.bank_withdraw_money,
     });
+
+    if std::mem::take(&mut guild.bank_withdraw_ask) {
+        let _ = commands
+            .0
+            .send(ClientCommand::GuildBankMoneyWithdrawnRequest);
+    }
+    if std::mem::take(&mut guild.bank_money_event) {
+        script.fire_event("GUILDBANK_UPDATE_MONEY", Vec::new());
+    }
+    if std::mem::take(&mut guild.bank_withdraw_event) {
+        script.fire_event("GUILDBANK_UPDATE_WITHDRAWMONEY", Vec::new());
+    }
 
     // `GUILD_ROSTER_UPDATE`; `super::RosterUpdate` decides whether it carries arg1.
     let first = !fed.seeded;
@@ -465,6 +479,7 @@ mod tests {
             rank_id: 1,
             level: 42,
             class: 8, // Mage
+            gender: 0,
             zone: 12,
             last_online_days: 3.5,
             public_note: "alt".into(),

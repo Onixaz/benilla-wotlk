@@ -146,12 +146,13 @@ pub use group::{
     ReadyCheck, GROUP_MEMBER_ASSISTANT,
 };
 pub use guild::{
-    guild_accept, guild_add_rank, guild_command, guild_command_error, guild_create, guild_decline,
-    guild_default_rank, guild_del_rank, guild_demote, guild_disband, guild_event, guild_info,
-    guild_info_text, guild_invite, guild_leader, guild_leave, guild_motd, guild_presence,
-    guild_promote, guild_query, guild_rank, guild_rank_right, guild_remove, guild_roster,
-    guild_set_officer_note, guild_set_public_note, GuildCommandResult, GuildEventNotice, GuildInfo,
-    GuildQueryResponse, GuildRoster, GuildRosterMember, GUILD_INFO_MAX_LENGTH,
+    guild_accept, guild_add_rank, guild_bank_money_param, guild_bank_money_withdrawn,
+    guild_command, guild_command_error, guild_create, guild_decline, guild_default_rank,
+    guild_del_rank, guild_demote, guild_disband, guild_event, guild_info, guild_info_text,
+    guild_invite, guild_leader, guild_leave, guild_motd, guild_presence, guild_promote,
+    guild_query, guild_rank, guild_rank_right, guild_remove, guild_roster, guild_set_officer_note,
+    guild_set_public_note, GuildCommandResult, GuildEventNotice, GuildInfo, GuildQueryResponse,
+    GuildRankBank, GuildRoster, GuildRosterMember, GUILD_BANK_TABS, GUILD_INFO_MAX_LENGTH,
     GUILD_MOTD_MAX_LENGTH, GUILD_NAME_MAX_LENGTH, GUILD_NOTE_MAX_LENGTH, GUILD_RANKS_MAX_COUNT,
     GUILD_RANKS_MIN_COUNT, GUILD_RANK_MAX_LENGTH, GUILD_RANK_RIGHT_ORDER,
 };
@@ -278,7 +279,7 @@ pub use update_object::{
 };
 pub use vendor::{
     buy_item, buy_item_in_slot, buy_result, buyback_item, list_inventory, repair_item, sell_item,
-    sell_result, VendorItem,
+    sell_result, VendorItem, VendorList, VENDOR_ROWS_MAX,
 };
 pub use world_state::InitWorldStates;
 

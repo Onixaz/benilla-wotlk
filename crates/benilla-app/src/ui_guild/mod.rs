@@ -123,6 +123,16 @@ pub(crate) struct GuildState {
     /// `/ginfo` answers for [`feed`], which builds their lines where the VM is: their templates are
     /// not catalog rows (`0x5e6fb0`), so they cannot ride [`crate::ui_action::UiErrorKeys`].
     pending_info: Vec<GuildInfo>,
+    /// The guild bank's copper, `GetGuildBankMoney` (`0xc1dc20`), 0 until a bank-money event.
+    bank_money: u64,
+    /// Today's remaining withdrawal, `GetGuildBankWithdrawMoney` (`0xc1dc34`), -1 unlimited.
+    bank_withdraw_money: i32,
+    /// `GE_BANK_MONEY_SET` owes the server `MSG_GUILD_BANK_MONEY_WITHDRAWN`'s ask.
+    bank_withdraw_ask: bool,
+    /// `GUILDBANK_UPDATE_MONEY` is owed.
+    bank_money_event: bool,
+    /// `GUILDBANK_UPDATE_WITHDRAWMONEY` is owed.
+    bank_withdraw_event: bool,
 }
 
 impl crate::query_cache::AskOnce for GuildState {
@@ -157,6 +167,8 @@ impl GuildState {
             self.rank_rights.clear();
             self.members.clear();
             self.selection = 0;
+            self.bank_money = 0;
+            self.bank_withdraw_money = 0;
         }
         if moved {
             self.note_roster_update(RosterUpdate::Applied);
@@ -270,6 +282,19 @@ impl GuildState {
     /// `SMSG_GUILD_EVENT`'s effect on the mirror; its line is [`lines`]'.
     fn apply_event(&mut self, notice: &GuildEventNotice) {
         match notice.event {
+            guild_event::BANK_MONEY_SET => {
+                // Stored, then the withdraw ask and `GUILDBANK_UPDATE_MONEY` (`0x6d9748`).
+                if let Some(copper) = notice
+                    .params
+                    .first()
+                    .and_then(|p| benilla_protocol::messages::guild_bank_money_param(p))
+                {
+                    self.bank_money = copper;
+                }
+                self.bank_withdraw_ask = true;
+                self.bank_money_event = true;
+                self.dirty = true;
+            }
             guild_event::MOTD => {
                 // Stored so `GetGuildRosterMOTD` agrees with the event before the next roster.
                 self.motd = notice.params.first().cloned().unwrap_or_default();
@@ -375,6 +400,14 @@ impl GuildState {
         } else {
             self.members.iter().filter(|m| m.is_online()).count()
         }
+    }
+
+    /// `MSG_GUILD_BANK_MONEY_WITHDRAWN`'s answer, then `GUILDBANK_UPDATE_WITHDRAWMONEY`
+    /// (`0x5a4ab0`).
+    pub(crate) fn apply_bank_withdraw_money(&mut self, remaining: i32) {
+        self.bank_withdraw_money = remaining;
+        self.bank_withdraw_event = true;
+        self.dirty = true;
     }
 
     /// Our rank's rights word, which every `Can*` predicate tests; `0` (none) before a roster.
@@ -497,6 +530,7 @@ pub(crate) mod net {
             .net_handler(K::GuildInvite, on_invite)
             .net_handler(K::GuildDecline, on_decline)
             .net_handler(K::GuildInfo, on_info)
+            .net_handler(K::GuildBankWithdrawMoney, on_bank_withdraw_money)
             .net_handler(K::Disconnected, on_session_end);
     }
 
@@ -562,6 +596,12 @@ pub(crate) mod net {
     fn on_info(In(ev): In<SessionEvent>, mut guild: ResMut<GuildState>) {
         if let SessionEvent::GuildInfo(i) = ev {
             info(&mut guild, i);
+        }
+    }
+
+    fn on_bank_withdraw_money(In(ev): In<SessionEvent>, mut guild: ResMut<GuildState>) {
+        if let SessionEvent::GuildBankWithdrawMoney { remaining } = ev {
+            guild.apply_bank_withdraw_money(remaining);
         }
     }
 

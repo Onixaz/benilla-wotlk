@@ -41,6 +41,9 @@ pub struct CreatureQueryInfo {
     pub name: String,
     /// The NPC subtitle ("Stable Master"), the unit tooltip's second line.
     pub subname: String,
+    /// The template's cursor (`IconName`), a stem of `Interface\Cursor\`; empty for none
+    /// (`0x715ea0` reads it at record `+8`).
+    pub cursor_name: String,
     /// `CreatureType.dbc` id: the tooltip level line's type word and the TAB-target filter.
     pub creature_type: u32,
     /// `CreatureFamily.dbc` id; `0`, read as nil, for all but tameable beasts and warlock minions.
@@ -53,8 +56,8 @@ pub struct CreatureQueryInfo {
     pub civilian: bool,
     /// The tooltip's white LEADER line (`0x6125c0`).
     pub racial_leader: bool,
-    /// `creature_template.display_id[0]` (`QueryHandler.cpp:179`), `0` if none, for drawing an
-    /// unseen creature; a spawned unit may use any of its four ids, so its own display id wins.
+    /// The template's first display id, `0` if none, for drawing an unseen creature; a spawned
+    /// unit may use any of its four ids, so its own display id wins.
     pub display_id: u32,
 }
 
@@ -786,11 +789,11 @@ pub enum ServerPacket {
         text_id: u32,
         blocks: Vec<super::gossip::NpcTextBlock>,
     },
-    /// `SMSG_LIST_INVENTORY`: a vendor's stock (`ItemHandler.cpp:741-810`); an empty stock sends
-    /// `count = 0` and one error byte, always 0, which is dropped.
+    /// `SMSG_LIST_INVENTORY`: a vendor's stock (`0x6d9960`); an empty stock carries its reason.
     VendorList {
         vendor: u64,
         items: Vec<VendorItem>,
+        error: Option<u8>,
     },
     /// `SMSG_BUY_ITEM`: the vendor's stock after a purchase (`Server/Packets/Item.cpp:190-196`).
     BuyItem {
@@ -1119,6 +1122,10 @@ pub enum ServerPacket {
     },
     /// `SMSG_GUILD_INFO`: the founded, members and accounts summary, apart from the roster.
     GuildInfo(GuildInfo),
+    /// `MSG_GUILD_BANK_MONEY_WITHDRAWN`: the copper we may still take from the guild bank today.
+    GuildBankWithdrawMoney {
+        remaining: i32,
+    },
     /// `SMSG_PETITION_SHOWLIST`: a registrar's charter list, always one row; opens the window.
     PetitionShowList(PetitionShowList),
     /// `SMSG_PETITION_SHOW_SIGNATURES`: a charter's signers, answering our ask or someone's offer
@@ -1617,6 +1624,7 @@ impl ServerPacket {
             ServerPacket::GuildInvite { .. } => "SMSG_GUILD_INVITE".into(),
             ServerPacket::GuildDecline { .. } => "SMSG_GUILD_DECLINE".into(),
             ServerPacket::GuildInfo(..) => "SMSG_GUILD_INFO".into(),
+            ServerPacket::GuildBankWithdrawMoney { .. } => "MSG_GUILD_BANK_MONEY_WITHDRAWN".into(),
             ServerPacket::PetitionShowList(..) => "SMSG_PETITION_SHOWLIST".into(),
             ServerPacket::PetitionShowSignatures(..) => "SMSG_PETITION_SHOW_SIGNATURES".into(),
             ServerPacket::PetitionSignResults(..) => "SMSG_PETITION_SIGN_RESULTS".into(),

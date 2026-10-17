@@ -396,9 +396,15 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::NpcText { text_id, blocks } => {
             vec![SessionEvent::NpcGreeting { text_id, blocks }]
         }
-        ServerPacket::VendorList { vendor, items } => {
-            vec![SessionEvent::VendorInventory { vendor, items }]
-        }
+        ServerPacket::VendorList {
+            vendor,
+            items,
+            error,
+        } => vec![SessionEvent::VendorInventory {
+            vendor,
+            items,
+            error,
+        }],
         ServerPacket::TrainerList {
             trainer,
             trainer_type,
@@ -647,6 +653,9 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         }
         ServerPacket::GuildDecline { name } => vec![SessionEvent::GuildDecline { name }],
         ServerPacket::GuildInfo(info) => vec![SessionEvent::GuildInfo(info)],
+        ServerPacket::GuildBankWithdrawMoney { remaining } => {
+            vec![SessionEvent::GuildBankWithdrawMoney { remaining }]
+        }
         ServerPacket::PetitionShowList(list) => vec![SessionEvent::PetitionShowList(list)],
         ServerPacket::PetitionShowSignatures(sigs) => {
             vec![SessionEvent::PetitionShowSignatures(sigs)]
@@ -881,6 +890,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             let (
                 name,
                 subname,
+                cursor_name,
                 creature_type,
                 pet_family,
                 rank,
@@ -893,6 +903,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                     Some(i.name),
                     // An empty subname is none: the reference draws no line for it (`0x608f50`).
                     Some(i.subname).filter(|s| !s.is_empty()),
+                    Some(i.cursor_name).filter(|s| !s.is_empty()),
                     Some(i.creature_type),
                     // Not an `Option`: `CreatureFamily.dbc` has no row 0, so 0 means none.
                     i.pet_family,
@@ -902,12 +913,13 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                     i.civilian,
                     i.racial_leader,
                 ),
-                None => (None, None, None, 0, 0, 0, 0, false, false),
+                None => (None, None, None, None, 0, 0, 0, 0, false, false),
             };
             vec![SessionEvent::CreatureName {
                 entry,
                 name,
                 subname,
+                cursor_name,
                 creature_type,
                 pet_family,
                 rank,

@@ -90,14 +90,14 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
         // server equips or refuses. A stale row buys nothing: of the reference's three drop sites
         // only this one checks it; the other two (`0x4f9f35`, `0x4c7ea5`) dereference it.
         Some(CursorPayload::Merchant(held)) => {
-            let entry = model
+            let row = model
                 .merchant
                 .as_ref()
                 .and_then(|m| m.items.get(held.row as usize))
                 .filter(|it| it.item_id == held.item_id)
-                .map(|it| it.item_id);
-            if let Some(entry) = entry {
-                model.merchant_slot_buys.push((EQUIPMENT_BAG, id, entry));
+                .map(|_| held.row + 1);
+            if let Some(row) = row {
+                model.merchant_slot_buys.push((EQUIPMENT_BAG, id, row));
             }
             queue_cursor_update(model);
             true

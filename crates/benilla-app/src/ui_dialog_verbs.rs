@@ -87,8 +87,8 @@ impl InstanceBoot {
     }
 }
 
-/// `UNIT_NPC_FLAGS` bit 6, `SPIRITGUIDE`, which the acquire callback `0x4924c0` tests (`0x4924fc`).
-const NPC_FLAG_SPIRITGUIDE: u32 = 1 << 6;
+/// `UNIT_NPC_FLAGS` `SPIRITGUIDE`, which the area spirit healer's acquire callback tests.
+const NPC_FLAG_SPIRITGUIDE: u32 = crate::target::cursor_mode::npc_flags::SPIRITGUIDE;
 
 /// The area spirit healer's aura, cancelled by `0x4921c0` and `CancelAreaSpiritHeal`; `0x6e7040`
 /// fires `AREA_SPIRIT_HEALER_OUT_OF_RANGE` for this spell id alone (`0x6e70b6`).
@@ -1175,7 +1175,10 @@ mod tests {
                 scale: 1.0,
             },
             fields(&[
-                (NPC_FLAGS_FIELD, if guide { 1 << 6 } else { 0 }),
+                (
+                    NPC_FLAGS_FIELD,
+                    if guide { NPC_FLAG_SPIRITGUIDE } else { 0 },
+                ),
                 (UNIT_FLAGS_FIELD, 0x1000),
                 (FACTION_TEMPLATE_FIELD, 35),
             ]),

@@ -383,14 +383,14 @@ fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u32) {
         // either way. Deviation: a row that no longer resolves is refused, as `0x4c7300` does,
         // because this path dereferences it unchecked (`0x4f9f35`), a latent null deref.
         Some(CursorPayload::Merchant(held)) => {
-            let entry = model
+            let row = model
                 .merchant
                 .as_ref()
                 .and_then(|m| m.items.get(held.row as usize))
                 .filter(|it| it.item_id == held.item_id)
-                .map(|it| it.item_id);
-            if let Some(entry) = entry {
-                model.merchant_slot_buys.push((bag, slot, entry));
+                .map(|_| held.row + 1);
+            if let Some(row) = row {
+                model.merchant_slot_buys.push((bag, slot, row));
             }
             cursor::queue_cursor_update(model);
         }
@@ -1404,7 +1404,7 @@ mod tests {
         assert!(s.cursor_payload().is_some());
 
         s.run("PickupContainerItem(0, 1)").unwrap();
-        assert_eq!(s.take_merchant_slot_buys(), vec![(0, 1, 159)]);
+        assert_eq!(s.take_merchant_slot_buys(), vec![(0, 1, 1)]);
         assert!(s.cursor_payload().is_none());
         assert!(s.take_container_repairs().is_empty());
         assert!(s.take_sounds().is_empty());

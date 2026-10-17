@@ -1,6 +1,7 @@
-//! The engine item-tooltip renderer: every item hover renders through one line law, as 8 of the
-//! reference's 9 `Set*Item` bindings share the builder `0x52b650`. The methods register into the
-//! GameTooltip kind table beside the widget verbs ([`super::tooltip`]). Every family's order,
+//! The engine item-tooltip renderer: every item hover renders through one line law, as the
+//! reference's `Set*Item` bindings share the builder `CGTooltip::SetItem 0x6277f0`. A template in
+//! flight shows `RETRIEVING_ITEM_INFO` and repaints on arrival ([`wait`]). The methods register
+//! into the GameTooltip kind table beside the widget verbs ([`super::tooltip`]). Every family's order,
 //! gate and colour is the reference's, and every sentence is a key resolved off the player's own
 //! `GlobalStrings.lua` at render time. Red (`0xc0d390`, `0xffff2020`) marks unmet requirements,
 //! LOCKED, broken durability and "Already known"; the name never recolors.
@@ -13,15 +14,17 @@
 use mlua::{Lua, MultiValue, Table, Value};
 
 use super::object::frame_handle_of;
-use super::tooltip::{append_line, clear_content, fire_cleared, show_or_hide_empty};
+use super::tooltip::{clear_content, fire_cleared, show_or_hide_empty};
 use super::ItemTemplateView;
 
 mod names;
 mod render;
+mod wait;
 
-use names::{quality_color, GRAY, WHITE};
 pub(super) use render::Sell;
 use render::{render_view, BuilderFlags};
+use wait::{note_item_miss, retrieving};
+pub(crate) use wait::{note_set_miss, wrap_setters, ItemRender, ItemWait};
 
 /// The body both compare bindings run (`0x536080`, `0x535d70`): walk `0x809200[InventoryType]`'s
 /// slots, skipping empty ones uncounted and ones whose worn item's class differs (`0x5d9f30`),
@@ -76,12 +79,13 @@ fn compare_against_worn(
     Ok(Value::Integer(1))
 }
 
-/// The cached template; a miss records the ask, and the hover's re-enter loop repaints on arrival.
+/// The cached template; a miss records the ask and the running setter's wait.
 fn view_of(lua: &Lua, item_id: u32) -> Option<ItemTemplateView> {
     let mut model = crate::script::model_mut_of(lua);
     let v = model.item_templates.get(&item_id).cloned();
     if v.is_none() && item_id != 0 {
         model.item_stat_asks.insert(item_id);
+        note_item_miss(&mut model, item_id);
     }
     v
 }
@@ -145,17 +149,9 @@ fn hyperlink_item_fields(link: &str) -> Option<(u32, u32, u32)> {
     (item_id != 0).then_some((item_id, enchant_id, random_property_id))
 }
 
-/// The id-keyed render; on a miss, the ask and a name-only line, as `SetBagItem`'s miss path. The
-/// engine's own item hovers reach it from Rust (the action bar's, `SetTrainerService`,
-/// `SetCraftSpell`): 1.12's `Set*Item` bindings all name a container, so no Lua method takes an id.
-pub(super) fn render_by_id(
-    lua: &Lua,
-    this: &Table,
-    item_id: u32,
-    fb_name: Option<String>,
-    fb_q: Option<u32>,
-    sell: Sell,
-) -> mlua::Result<()> {
+/// The id-keyed render; on a miss, the ask and the retrieving line. The engine's own item hovers
+/// reach it from Rust (the action bar's, `SetTrainerService`, `SetCraftSpell`).
+pub(super) fn render_by_id(lua: &Lua, this: &Table, item_id: u32, sell: Sell) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     {
         let mut model = crate::script::model_mut_of(lua);
@@ -170,17 +166,7 @@ pub(super) fn render_by_id(
             };
             render_view(lua, this, &v, flags, None)?;
         }
-        None => {
-            if let Some(name) = fb_name {
-                append_line(
-                    lua,
-                    this,
-                    (name, quality_color(fb_q.unwrap_or(1))),
-                    None,
-                    false,
-                )?;
-            }
-        }
+        None => retrieving(lua, this)?,
     }
     show_or_hide_empty(lua, h);
     Ok(())
@@ -243,8 +229,6 @@ fn set_quest_item_view(
             lua,
             this,
             it.item_id,
-            it.name.clone(),
-            Some(it.quality),
             Sell::Block {
                 stack: it.count,
                 max: None,
@@ -385,17 +369,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 Some(v) => {
                     render_view(lua, &this, &v, flags, Some(&inst))?;
                 }
-                None => {
-                    if let Some(name) = link_name(&link) {
-                        append_line(
-                            lua,
-                            &this,
-                            (name.to_string(), quality_color(1)),
-                            None,
-                            false,
-                        )?;
-                    }
-                }
+                None => retrieving(lua, &this)?,
             }
             show_or_hide_empty(lua, h);
             Ok(())
@@ -418,7 +392,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 // (`0x533027..0x53304c`); anything else builds the ordinary tooltip, without an
                 // error. Three of the binding's four builder legs pass it on, not `0x533106`.
                 let name_only = super::binding_abi::positive_number_flag(lua, name_only)?;
-                let (item_id, name, quality, inst, repair_cost, currently_equipped, stack) = {
+                let (item_id, inst, repair_cost, currently_equipped, stack) = {
                     let mut model = crate::script::model_mut_of(lua);
                     let armed = match super::tooltip::tip_mut(&mut model, h) {
                         Ok(t) => std::mem::take(&mut t.equipped_header_armed),
@@ -430,8 +404,6 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                         .map(|s| {
                             (
                                 s.item_id,
-                                s.name.clone(),
-                                s.quality,
                                 s.count,
                                 render::ItemInstance {
                                     // App-composed, with the suffix off
@@ -458,7 +430,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                         0
                     };
                     match view {
-                        Some((id, name, q, stack, inst)) => (id, name, q, inst, cost, armed, stack),
+                        Some((id, stack, inst)) => (id, inst, cost, armed, stack),
                         // An empty slot answers nil and still pushes the other two: callers
                         // destructure all three first, and an addon may add up repairCost.
                         None => {
@@ -492,23 +464,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 fire_cleared(lua, h);
                 match view_of(lua, item_id) {
                     Some(v) => render_view(lua, &this, &v, flags, Some(&inst))?,
-                    None => {
-                        // Template in flight: the header and the slot's own name, as
-                        // `SetBagItem`'s miss path.
-                        if flags.currently_equipped {
-                            if let Some(t) = crate::strings::global(lua, "CURRENTLY_EQUIPPED") {
-                                append_line(lua, &this, (t, GRAY), None, false)?;
-                            }
-                        }
-                        if let Some(name) = name {
-                            let color = if flags.name_only {
-                                WHITE
-                            } else {
-                                quality_color(quality.max(0) as u32)
-                            };
-                            append_line(lua, &this, (name, color), None, false)?;
-                        }
-                    }
+                    None => retrieving(lua, &this)?,
                 }
                 show_or_hide_empty(lua, h);
                 Ok(MultiValue::from_vec(vec![
@@ -533,7 +489,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetBagItem",
         lua.create_function(|lua, (this, bag, slot): (Table, i64, u32)| {
             let h = frame_handle_of(lua, &this)?;
-            let (item_id, count, has_cd, link, quality, inst, repair_cost) = {
+            let (item_id, count, has_cd, inst, repair_cost) = {
                 let model = crate::script::model_mut_of(lua);
                 let cost = model.repair_costs.bags.get(&(bag, slot)).copied();
                 match model
@@ -553,8 +509,6 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             s.item_id,
                             s.count.max(1),
                             has_cd,
-                            s.link.clone(),
-                            s.quality.unwrap_or(1),
                             render::ItemInstance {
                                 // The link's name: the reference builds both from `0x5d8b00`.
                                 name: s.link.as_deref().and_then(link_name).map(str::to_string),
@@ -593,20 +547,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     };
                     render_view(lua, &this, &v, flags, Some(&inst))?;
                 }
-                None => {
-                    // Deviation: while the template is in flight the reference leaves the tooltip
-                    // empty (`0x52b6a3`); this shows the slot's name, because a blank plate under
-                    // an on-screen name reads as broken. The re-enter loop repaints on arrival.
-                    if let Some(name) = link.as_deref().and_then(link_name) {
-                        append_line(
-                            lua,
-                            &this,
-                            (name.to_string(), quality_color(quality)),
-                            None,
-                            false,
-                        )?;
-                    }
-                }
+                None => retrieving(lua, &this)?,
             }
             show_or_hide_empty(lua, h);
             Ok(MultiValue::from_vec(vec![
@@ -668,17 +609,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 };
                 match view_of(lua, item.item_id) {
                     Some(v) => render_view(lua, &this, &v, flags, Some(&inst))?,
-                    None => {
-                        if let Some(name) = item.name.clone() {
-                            append_line(
-                                lua,
-                                &this,
-                                (name, quality_color(item.quality.unwrap_or(1))),
-                                None,
-                                false,
-                            )?;
-                        }
-                    }
+                    None => retrieving(lua, &this)?,
                 }
                 show_or_hide_empty(lua, h);
                 Ok(())
@@ -728,18 +659,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             };
             match view_of(lua, row.item_id) {
                 Some(v) => render_view(lua, &this, &v, flags, Some(&inst))?,
-                // Template in flight: the row's name, as `SetBagItem`'s miss path.
-                None => {
-                    if let Some(name) = row.name.clone() {
-                        append_line(
-                            lua,
-                            &this,
-                            (name, quality_color(row.quality.unwrap_or(1))),
-                            None,
-                            false,
-                        )?;
-                    }
-                }
+                None => retrieving(lua, &this)?,
             }
             show_or_hide_empty(lua, h);
             Ok(())
@@ -786,17 +706,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             };
             match view_of(lua, entry.item_id) {
                 Some(v) => render_view(lua, &this, &v, flags, Some(&inst))?,
-                None => {
-                    if let Some(name) = entry.name.clone() {
-                        append_line(
-                            lua,
-                            &this,
-                            (name, quality_color(entry.quality.unwrap_or(1))),
-                            None,
-                            false,
-                        )?;
-                    }
-                }
+                None => retrieving(lua, &this)?,
             }
             show_or_hide_empty(lua, h);
             Ok(())
@@ -974,40 +884,59 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     },
                     ..Default::default()
                 };
+                // Nothing to arm: the vendor tab's row seats `ShoppingTooltip1/2` itself, and the
+                // buyback tab seats none.
                 match view_of(lua, row.item_id) {
-                    Some(v) => {
-                        render_view(lua, &this, &v, flags, None)?;
-                        // Nothing to arm: the vendor tab's row seats `ShoppingTooltip1/2` itself
-                        // (`MerchantFrame.xml:67-80`), and the buyback tab seats none.
-                    }
-                    None => {
-                        // Template in flight: the row's own stat head as a minimal view, the
-                        // same deviation as `SetBagItem`'s miss path.
-                        let head = row.stats.unwrap_or_default();
-                        let v = ItemTemplateView {
-                            name: row.name.clone().unwrap_or_default(),
-                            quality: head.quality,
-                            class: head.class,
-                            subclass: head.subclass,
-                            inventory_type: head.inventory_type,
-                            damages: if head.dmg_max > 0.0 {
-                                vec![(head.dmg_min, head.dmg_max, head.dmg_type)]
-                            } else {
-                                Vec::new()
-                            },
-                            delay_ms: head.delay_ms,
-                            armor: head.armor,
-                            block: head.block,
-                            ..Default::default()
-                        };
-                        render_view(lua, &this, &v, flags, None)?;
-                    }
+                    Some(v) => render_view(lua, &this, &v, flags, None)?,
+                    None => retrieving(lua, &this)?,
                 }
                 show_or_hide_empty(lua, h);
                 Ok(())
             })?,
         )?;
     }
+
+    // GameTooltip:SetMerchantCostItem(index, itemIndex) (`0x62ee70`): the itemIndex-th item a
+    // row's extended cost asks for, built with the sell price skipped. A non-number argument
+    // raises; an invalid row or item index leaves the tooltip as it is.
+    m.set(
+        "SetMerchantCostItem",
+        lua.create_function(|lua, (this, index, item_index): (Table, Value, Value)| {
+            let as_index = |v: &Value| match v {
+                Value::Integer(i) => Some(*i as f64),
+                Value::Number(n) => Some(*n),
+                Value::String(s) => s.to_str().ok().and_then(|s| s.trim().parse::<f64>().ok()),
+                _ => None,
+            };
+            let (Some(index), Some(item_index)) = (as_index(&index), as_index(&item_index)) else {
+                return Err(mlua::Error::runtime(
+                    "Invalid merchant slot in SetMerchantCostItem",
+                ));
+            };
+            let cost_item = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                let at = |n: f64| usize::try_from((n - 1.0).round() as i64).ok();
+                at(index).zip(at(item_index)).and_then(|(row, item)| {
+                    model
+                        .merchant
+                        .as_ref()?
+                        .items
+                        .get(row)?
+                        .extended_cost
+                        .as_ref()?
+                        .items
+                        .get(item)
+                        .map(|c| c.item_id)
+                })
+            };
+            let Some(item_id) = cost_item else {
+                return Ok(());
+            };
+            render_by_id(lua, &this, item_id, Sell::Skip)
+        })?,
+    )?;
 
     // GameTooltip:SetInboxItem(index): the mail item hover (`MailFrame.lua:218`,
     // `MailFrame.lua:470`). A row with no item does nothing; stock calls it only when there is one.
@@ -1049,8 +978,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 sell: Sell::Block { stack, max: None },
                 ..Default::default()
             };
-            if let Some(v) = view_of(lua, item_id) {
-                render_view(lua, &this, &v, flags, Some(&inst))?;
+            match view_of(lua, item_id) {
+                Some(v) => render_view(lua, &this, &v, flags, Some(&inst))?,
+                None => retrieving(lua, &this)?,
             }
             show_or_hide_empty(lua, h);
             Ok(())
@@ -1092,8 +1022,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 ..Default::default()
             };
             // A listing skips the sell price (`0x62fcf0`).
-            if let Some(v) = view_of(lua, item_id) {
-                render_view(lua, &this, &v, BuilderFlags::default(), Some(&inst))?;
+            match view_of(lua, item_id) {
+                Some(v) => render_view(lua, &this, &v, BuilderFlags::default(), Some(&inst))?,
+                None => retrieving(lua, &this)?,
             }
             show_or_hide_empty(lua, h);
             Ok(())
@@ -1131,8 +1062,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 },
                 ..Default::default()
             };
-            if let Some(v) = view_of(lua, item_id) {
-                render_view(lua, &this, &v, flags, None)?;
+            match view_of(lua, item_id) {
+                Some(v) => render_view(lua, &this, &v, flags, None)?,
+                None => retrieving(lua, &this)?,
             }
             show_or_hide_empty(lua, h);
             Ok(())
@@ -1169,8 +1101,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 },
                 ..Default::default()
             };
-            if let Some(v) = view_of(lua, item_id) {
-                render_view(lua, &this, &v, flags, None)?;
+            match view_of(lua, item_id) {
+                Some(v) => render_view(lua, &this, &v, flags, None)?,
+                None => retrieving(lua, &this)?,
             }
             show_or_hide_empty(lua, h);
             Ok(())
@@ -1178,8 +1111,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
     )?;
 
     // GameTooltip:SetTradeSkillItem(skillIndex [, reagentIndex]): the reagent's item, or without
-    // `reagentIndex` the recipe's product. A product id of 0 or an uncached template shows the
-    // recipe's or the reagent's name alone (`render_by_id`); a bad index does nothing.
+    // `reagentIndex` the recipe's product; a bad index does nothing.
     m.set(
         "SetTradeSkillItem",
         lua.create_function(
@@ -1202,12 +1134,11 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                                         stack: r.need,
                                         max: None,
                                     };
-                                    (r.item, r.name.clone(), sell)
+                                    (r.item, sell)
                                 })
                         }
                         None => Some((
                             recipe.product_item,
-                            Some(recipe.name.clone()),
                             Sell::Block {
                                 stack: recipe.min_made,
                                 max: Some(recipe.max_made),
@@ -1215,10 +1146,10 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                         )),
                     }
                 };
-                let Some((item_id, fb_name, sell)) = found else {
+                let Some((item_id, sell)) = found else {
                     return Ok(());
                 };
-                render_by_id(lua, &this, item_id, fb_name, None, sell)
+                render_by_id(lua, &this, item_id, sell)
             },
         )?,
     )?;
@@ -1244,12 +1175,12 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     reagent_index
                         .checked_sub(1)
                         .and_then(|i| recipe.reagents.get(i))
-                        .map(|r| (r.item, r.name.clone()))
+                        .map(|r| r.item)
                 };
-                let Some((item_id, fb_name)) = found else {
+                let Some(item_id) = found else {
                     return Ok(());
                 };
-                render_by_id(lua, &this, item_id, fb_name, None, Sell::Skip)
+                render_by_id(lua, &this, item_id, Sell::Skip)
             },
         )?,
     )?;

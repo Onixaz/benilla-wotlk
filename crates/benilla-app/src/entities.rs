@@ -920,6 +920,10 @@ fn setup_entities(
         Ok(tables) => commands.insert_resource(crate::ui_merchant::RepairTables(tables)),
         Err(e) => warn!("durability tables unavailable, repair costs show 0: {e:#}"),
     }
+    match benilla_formats::load_item_extended_costs(&mut chain) {
+        Ok(costs) => commands.insert_resource(crate::ui_merchant::ExtendedCosts(costs)),
+        Err(e) => warn!("item extended costs unavailable, token rows read copper only: {e:#}"),
+    }
     match benilla_formats::load_bank_bag_slot_prices(&mut chain) {
         Ok(prices) => commands.insert_resource(crate::ui_bank::BankPrices(prices)),
         Err(e) => warn!("bank bag slot prices unavailable, the purchase row shows 0: {e:#}"),

@@ -66,33 +66,6 @@ fn wire_slots(object_type: ObjectType) -> &'static [Slot] {
     })
 }
 
-/// 3.3.5a's `UNIT_NPC_FLAGS` bits (AzerothCore `NPCFlags`) and 1.12.1's (vmangos `NPCFlags`).
-/// 3.3.5a splits trainer and vendor into kinds; any vendor kind is 1.12.1's vendor.
-const NPC_FLAGS: [(u32, u32); 15] = [
-    (0x1, 0x1),                                  // gossip
-    (0x2, 0x2),                                  // quest giver
-    (0x80 | 0x100 | 0x200 | 0x400 | 0x800, 0x4), // vendor, ammo, food, poison, reagent
-    (0x2000, 0x8),                               // flight master
-    (0x10, 0x10),                                // trainer
-    (0x4000, 0x20),                              // spirit healer
-    (0x8000, 0x40),                              // spirit guide
-    (0x1_0000, 0x80),                            // innkeeper
-    (0x2_0000, 0x100),                           // banker
-    (0x4_0000, 0x200),                           // petitioner
-    (0x8_0000, 0x400),                           // tabard designer
-    (0x10_0000, 0x800),                          // battlemaster
-    (0x20_0000, 0x1000),                         // auctioneer
-    (0x40_0000, 0x2000),                         // stable master
-    (0x1000, 0x4000),                            // repair
-];
-
-fn classic_npc_flags(wotlk: u32) -> u32 {
-    NPC_FLAGS
-        .iter()
-        .filter(|(w, _)| wotlk & w != 0)
-        .fold(0, |acc, (_, c)| acc | c)
-}
-
 impl ObjectFields {
     /// `raw`, read off a 3.3.5a wire for an `object_type`, in the shared indices.
     pub(in crate::messages::update_object) fn from_wotlk(
@@ -129,7 +102,6 @@ impl ObjectFields {
             ),
             // Sheath byte 0, flags byte 1 (`+0x1d1`) and form byte 3 (`+0x1d3`, `0x71af70`).
             Field::UnitBytes2 => put(field, element, value & 0xff00_ffff),
-            Field::UnitNpcFlags => put(field, element, classic_npc_flags(value)),
             // Gender and drunkenness; bytes 2 and 3 are the PvP title and arena faction, where
             // 1.12.1 keeps the city protector and the honor rank.
             Field::PlayerBytes3 => put(field, element, value & 0xffff),
@@ -280,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn unit_bytes_and_npc_flags_take_1_12_1_s_bits() {
+    fn unit_bytes_take_1_12_1_s_bits_and_npc_flags_stay_3_3_5a_s() {
         // Sitting (1), pet talents 3, creep (0x02) in byte 2, anim tier 1.
         let f = ObjectFields::from_wotlk(
             wire(&[(74, 0x0102_0301), (82, 0x80 | 0x1000 | 0x2000 | 0x1)]),
@@ -290,7 +262,7 @@ mod tests {
         assert_eq!(f.unit_loyalty_level(), 0);
         assert!(f.unit_is_stealthed());
         assert!(!f.unit_is_ghost_visual());
-        assert_eq!(f.unit_npc_flags(), 0x4 | 0x4000 | 0x8 | 0x1);
+        assert_eq!(f.unit_npc_flags(), 0x80 | 0x1000 | 0x2000 | 0x1);
         // Sheathed melee, PvP and sanctuary flags, pet flags 0x3, form 0x10.
         let f = ObjectFields::from_wotlk(wire(&[(122, 0x1003_0901)]), ObjectType::Unit);
         assert_eq!(f.unit_sheath_state(), Some(1));

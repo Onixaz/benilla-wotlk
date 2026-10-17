@@ -39,6 +39,14 @@ impl WorldWriter {
         self.send(opcode::CMSG_GUILD_INFO, &messages::guild_info())
     }
 
+    /// `MSG_GUILD_BANK_MONEY_WITHDRAWN`, empty: answered in kind with today's remaining withdrawal.
+    pub fn guild_bank_money_withdrawn(&mut self) -> Result<()> {
+        self.send(
+            opcode::MSG_GUILD_BANK_MONEY_WITHDRAWN,
+            &messages::guild_bank_money_withdrawn(),
+        )
+    }
+
     /// `CMSG_GUILD_ROSTER`, empty: a refresh; the server also pushes the roster after every change.
     pub fn guild_roster(&mut self) -> Result<()> {
         self.send(opcode::CMSG_GUILD_ROSTER, &messages::guild_roster())

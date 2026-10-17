@@ -1460,24 +1460,28 @@ pub(super) fn writer_loop(
                     ClientCommand::BuyItem {
                         vendor,
                         entry,
+                        slot,
                         count,
-                    } => w.buy_item(vendor, entry, count),
+                    } => w.buy_item(vendor, entry, slot, count),
                     ClientCommand::BuyItemInSlot {
                         vendor,
                         entry,
+                        slot,
                         bag_guid,
                         bag_slot,
                         count,
-                    } => w.buy_item_in_slot(vendor, entry, bag_guid, bag_slot, count),
+                    } => w.buy_item_in_slot(vendor, entry, slot, bag_guid, bag_slot, count),
                     ClientCommand::SellItem {
                         vendor,
                         item_guid,
                         count,
                     } => w.sell_item(vendor, item_guid, count),
                     ClientCommand::BuybackItem { vendor, slot } => w.buyback_item(vendor, slot),
-                    ClientCommand::RepairItem { vendor, item_guid } => {
-                        w.repair_item(vendor, item_guid)
-                    }
+                    ClientCommand::RepairItem {
+                        vendor,
+                        item_guid,
+                        guild_bank,
+                    } => w.repair_item(vendor, item_guid, guild_bank),
                     ClientCommand::GmTicketCreate {
                         map,
                         pos,
@@ -1821,6 +1825,7 @@ pub(super) fn writer_loop(
                     ClientCommand::GuildAccept => w.guild_accept(),
                     ClientCommand::GuildDecline => w.guild_decline(),
                     ClientCommand::GuildInfoRequest => w.guild_info(),
+                    ClientCommand::GuildBankMoneyWithdrawnRequest => w.guild_bank_money_withdrawn(),
                     ClientCommand::GuildRosterRequest => w.guild_roster(),
                     ClientCommand::GuildPromote { name } => w.guild_promote(&name),
                     ClientCommand::GuildDemote { name } => w.guild_demote(&name),

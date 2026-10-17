@@ -65,10 +65,6 @@ const NOT_READ: &[(&str, &str)] = &[
         "#239 item class, display and sheath by id: GetItemIcon, PickupItem",
     ),
     (
-        "ItemExtendedCost",
-        "#198 merchant costs in items and points: GetMerchantItemCostInfo",
-    ),
-    (
         "ItemLimitCategory",
         "#239 unique-equipped limits: GetItemUniqueness",
     ),

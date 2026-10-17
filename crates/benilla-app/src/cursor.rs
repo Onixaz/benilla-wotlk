@@ -119,6 +119,19 @@ const CURSOR_STEMS: &[&str] = &[
     // The spell-targeting pair (`0x4820f0`): Cast(2) and UnableCast(22).
     "Cast",
     "UnableCast",
+    // The NPC cursors the 3.3.5a table adds (`0xad280c`).
+    "RepairNPC",
+    "UnableRepairNPC",
+    "Innkeeper",
+    "UnableInnkeeper",
+    "Quest",
+    "UnableQuest",
+    "QuestRepeatable",
+    "UnableQuestRepeatable",
+    "QuestTurnIn",
+    "UnableQuestTurnIn",
+    "vehichleCursor",
+    "UnablevehichleCursor",
 ];
 
 /// A cursor stem's archive path.

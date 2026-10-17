@@ -448,6 +448,8 @@ pub enum SessionEvent {
         entry: u32,
         name: Option<String>,
         subname: Option<String>,
+        /// The template's cursor name, `None` when empty.
+        cursor_name: Option<String>,
         /// `CreatureType.dbc` id; the TAB-target critter/totem filter reads it.
         creature_type: Option<u32>,
         /// `CreatureFamily.dbc` id for `UnitCreatureFamily` and the diet tooltip; `0` is none.
@@ -814,8 +816,13 @@ pub enum SessionEvent {
         text_id: u32,
         blocks: Vec<crate::messages::NpcTextBlock>,
     },
-    /// A vendor's stock (`SMSG_LIST_INVENTORY`); `current_count == 0xFFFF_FFFF` is unlimited.
-    VendorInventory { vendor: u64, items: Vec<VendorItem> },
+    /// A vendor's stock (`SMSG_LIST_INVENTORY`); `current_count == 0xFFFF_FFFF` is unlimited. An
+    /// empty stock carries its `error` reason, and only reason 0 opens the window (`0x6d9ad0`).
+    VendorInventory {
+        vendor: u64,
+        items: Vec<VendorItem>,
+        error: Option<u8>,
+    },
     /// Trainer list (`SMSG_TRAINER_LIST`); `trainer_type` 0 class, 1 mount, 2 tradeskill, 3 pet.
     TrainerList {
         trainer: u64,
@@ -1092,6 +1099,9 @@ pub enum SessionEvent {
     GuildDecline { name: String },
     /// The guild's founding date, member and account counts (`SMSG_GUILD_INFO`).
     GuildInfo(GuildInfo),
+    /// The copper we may still withdraw from the guild bank today, -1 unlimited
+    /// (`MSG_GUILD_BANK_MONEY_WITHDRAWN`).
+    GuildBankWithdrawMoney { remaining: i32 },
     /// A registrar's charter list (`SMSG_PETITION_SHOWLIST`), opening its window; one row in 1.12.
     PetitionShowList(PetitionShowList),
     /// A charter's signers (`SMSG_PETITION_SHOW_SIGNATURES`): our own ask or an offer to sign, told

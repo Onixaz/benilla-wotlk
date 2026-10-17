@@ -3521,6 +3521,7 @@ fn a_no_wound_creature_takes_no_flinch() {
 
     let mut app = app();
     let record = |type_flags: u32| crate::names::CreatureRecord {
+        cursor_name: None,
         name: "victim".into(),
         subname: None,
         creature_type: 6, // Undead
@@ -3607,6 +3608,7 @@ fn the_no_wound_flag_takes_the_parry_but_not_the_dodge() {
 
     let mut app = app();
     let record = |type_flags: u32| crate::names::CreatureRecord {
+        cursor_name: None,
         name: "victim".into(),
         subname: None,
         creature_type: 6,

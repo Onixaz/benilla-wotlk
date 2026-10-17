@@ -26,7 +26,7 @@ const BANKER_AT: [f32; 3] = [-4895.64, -1004.66, 504.024];
 /// Her creature template entry, one of the two identity checks.
 const BANKER_ENTRY: u32 = 5099;
 /// `UNIT_NPC_FLAG_BANKER` (bit 8), the other identity check.
-const NPC_FLAG_BANKER: u32 = 0x100;
+const NPC_FLAG_BANKER: u32 = crate::target::cursor_mode::npc_flags::BANKER;
 /// Wider than the server's interact range, so a slightly-off `.go` landing still finds her.
 const SCAN_RANGE: f32 = 12.0;
 /// The deposit/withdraw fixture: Linen Cloth.

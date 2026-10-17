@@ -1,6 +1,6 @@
 //! The vendor window's packet handlers: they fill [`MerchantOpen`] and [`MerchantErrors`].
 
-use benilla_protocol::messages::VendorItem;
+use benilla_protocol::messages::VendorList;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
@@ -18,8 +18,20 @@ pub(super) fn register(app: &mut App) {
 }
 
 fn on_inventory(In(ev): In<SessionEvent>, mut merchant: ResMut<MerchantOpen>) {
-    if let SessionEvent::VendorInventory { vendor, items } = ev {
-        vendor_inventory(vendor, items, &mut merchant);
+    if let SessionEvent::VendorInventory {
+        vendor,
+        items,
+        error,
+    } = ev
+    {
+        vendor_inventory(
+            VendorList {
+                vendor,
+                items,
+                error,
+            },
+            &mut merchant,
+        );
     }
 }
 
@@ -61,10 +73,22 @@ fn on_session_end(In(_): In<SessionEvent>, mut merchant: ResMut<MerchantOpen>) {
     merchant.clear_session();
 }
 
-/// `SMSG_LIST_INVENTORY` opens the window on the vendor's rows.
-fn vendor_inventory(vendor: u64, items: Vec<VendorItem>, merchant: &mut MerchantOpen) {
-    debug!("net: vendor {vendor:#x} listed {} items", items.len());
-    merchant.open(vendor, items);
+/// `SMSG_LIST_INVENTORY` opens the window on the vendor's rows; an empty list's refusal opens
+/// nothing (`0x6d9ad0`) and only reaches the console.
+fn vendor_inventory(list: VendorList, merchant: &mut MerchantOpen) {
+    if !list.opens() {
+        debug!(
+            "net: vendor {:#x} refused its list (reason {:?})",
+            list.vendor, list.error
+        );
+        return;
+    }
+    debug!(
+        "net: vendor {:#x} listed {} items",
+        list.vendor,
+        list.items.len()
+    );
+    merchant.open(list.vendor, list.items);
 }
 
 /// `SMSG_BUY_ITEM`'s new stock count, applied only to the open vendor.
@@ -75,11 +99,10 @@ fn vendor_buy_result(vendor: u64, slot: u32, new_count: u32, merchant: &mut Merc
 }
 
 /// `SMSG_BUY_FAILED`: queue the message line, and for `ITEM_ALREADY_SOLD` zero the refused row of
-/// the open vendor, as the reference does (`0x5dcda7`..`0x5dcdd6`). vmangos sends that code only
-/// for a limited row short of stock (`Player.cpp:18541`).
+/// the open vendor, as the reference does (`0x6cdba0`).
 ///
 /// Deviation: the row is matched by item entry, where the reference matches its vendor slot word
-/// (`+0x00`), because vmangos writes the entry in that field (`Player.cpp:11718`).
+/// (`+0x00`), because the server writes the item entry in that field.
 fn vendor_buy_failed(
     vendor: u64,
     item_entry: u32,

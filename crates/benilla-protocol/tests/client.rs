@@ -535,22 +535,32 @@ fn name_and_creature_query_roundtrip() {
         _ => panic!("name query response"),
     }
 
-    // A hit. Family, rank and display id get distinct non-zero values so a one-dword slip between
-    // adjacent fields cannot read as plausible data.
+    // A hit, in `CreatureStats::Unpack 0x98d4c0`'s layout. Family, rank and display id get
+    // distinct non-zero values so a one-dword slip between adjacent fields cannot read as
+    // plausible data.
     let body = hx(concat!(
         "45000000",
-        "596f756e6720576f6c6600", // "Young Wolf"
-        "000000",                 // name2..4 empty
-        "5465737400",             // subname "Test"
-        "10000000",               // type_flags = 0x10 (hide-faction-tooltip)
-        "01000000",               // type = 1 (Beast)
-        "01000000",               // pet_family = 1 (Wolf)
-        "02000000",               // rank = 2 (rare elite)
-        "0000000000000000",       // unk, pet_spell_list_id
-        "15020000",               // display_id = 533, the model a stabled pet is drawn from
-        "0101"                    // civilian, racial_leader
+        "596f756e6720576f6c6600",                           // "Young Wolf"
+        "000000",                                           // name2..4 empty
+        "5465737400",                                       // subname "Test"
+        "537065616b00",                                     // cursor name "Speak"
+        "10000000",                 // type_flags = 0x10 (hide-faction-tooltip)
+        "01000000",                 // type = 1 (Beast)
+        "01000000",                 // pet_family = 1 (Wolf)
+        "02000000",                 // rank = 2 (rare elite)
+        "0000000000000000",         // two kill credits
+        "15020000",                 // display_id = 533, the model a stabled pet is drawn from
+        "000000000000000000000000", // display ids 2..4
+        "0000803f0000803f",         // health and power modifiers
+        "01",                       // racial_leader
+        "000000000000000000000000000000000000000000000000", // six quest items
+        "00000000"                  // movement id
     ));
-    match messages::parse_server(messages::opcode::SMSG_CREATURE_QUERY_RESPONSE, &body).unwrap() {
+    let (packet, tail) =
+        messages::parse_server_with_tail(messages::opcode::SMSG_CREATURE_QUERY_RESPONSE, &body)
+            .unwrap();
+    assert_eq!(tail, 0, "the whole 3.3.5a record is read");
+    match packet {
         ServerPacket::CreatureQueryResponse { entry, info } => {
             assert_eq!(entry, 69);
             assert_eq!(
@@ -558,11 +568,12 @@ fn name_and_creature_query_roundtrip() {
                 Some(benilla_protocol::messages::CreatureQueryInfo {
                     name: "Young Wolf".into(),
                     subname: "Test".into(),
+                    cursor_name: "Speak".into(),
                     creature_type: 1,
                     pet_family: 1,
                     rank: 2,
                     type_flags: 0x10,
-                    civilian: true,
+                    civilian: false,
                     racial_leader: true,
                     display_id: 533,
                 })
@@ -588,11 +599,15 @@ fn name_and_creature_query_roundtrip() {
 fn creature_query_empty_subname_decodes_to_none() {
     let body = |subname_hex: &str| {
         hx(&format!(
-            "45000000{}000000{}{}",
+            "45000000{}000000{}00{}{}{}",
             "4465707574792057696c6c656d00", // "Deputy Willem" (+3 empty names after)
             subname_hex,
-            // type_flags, type=7 Humanoid, family..display_id (5 × u32), civilian, racial_leader
-            "000000000700000000000000000000000000000000000000000000000000"
+            // empty cursor name, then type_flags, type=7 Humanoid, family, rank, two kill
+            // credits, four display ids, two modifiers
+            "00000000070000000000000000000000000000000000000000000000000000000000000000000000",
+            "0000000000000000",
+            // racial_leader, six quest items, movement id
+            "0000000000000000000000000000000000000000000000000000000000"
         ))
     };
     let parse = |b: &[u8]| {

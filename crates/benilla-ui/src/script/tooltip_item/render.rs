@@ -119,6 +119,7 @@ pub(super) fn render_view(
                 let view = model.item_sets.get(&v.item_set).cloned();
                 if view.is_none() {
                     model.item_set_asks.insert(v.item_set);
+                    super::note_set_miss(&mut model, v.item_set);
                 }
                 view
             })

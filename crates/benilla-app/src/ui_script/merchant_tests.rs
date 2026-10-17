@@ -79,6 +79,7 @@ fn shipped_merchant_frame_drives_end_to_end() {
                 stats: None,
                 link: None,
                 max_stack: Some(1),
+                extended_cost: None,
             },
             MerchantItem {
                 name: Some("Linen Bandage".into()),
@@ -90,6 +91,7 @@ fn shipped_merchant_frame_drives_end_to_end() {
                 stats: None,
                 link: None,
                 max_stack: Some(1),
+                extended_cost: None,
             },
         ],
         ..Default::default()
@@ -621,6 +623,7 @@ fn shipped_merchant_hover_scopes_highlight_and_anchors_item_tooltip() {
                 }),
                 link: None,
                 max_stack: Some(1),
+                extended_cost: None,
             },
             MerchantItem {
                 name: Some("Chipped Buckler".into()),
@@ -645,6 +648,7 @@ fn shipped_merchant_hover_scopes_highlight_and_anchors_item_tooltip() {
                 }),
                 link: None,
                 max_stack: Some(1),
+                extended_cost: None,
             },
         ],
         ..Default::default()
@@ -826,6 +830,7 @@ fn merchant_tabs_drive_buyback_page_and_repair_pair() {
             stats: None,
             link: None,
             max_stack: Some(1),
+            extended_cost: None,
         }],
         buyback: vec![
             buyback_item("Bandit Cloak", 116),
@@ -833,7 +838,7 @@ fn merchant_tabs_drive_buyback_page_and_repair_pair() {
         ],
         can_repair: true,
     }));
-    s.set_repair_all_cost(76);
+    s.set_repair_all_cost(76, true);
     s.fire_event(
         "MERCHANT_SHOW",
         vec![ScriptValue::Str("Kurdram Stonehammer".into())],
@@ -861,7 +866,7 @@ fn merchant_tabs_drive_buyback_page_and_repair_pair() {
     assert_eq!(s.take_merchant_buybacks(), vec![2]);
 
     s.run("MerchantRepairAllButton:Click()").unwrap();
-    assert!(s.take_repair_all());
+    assert_eq!(s.take_repair_all(), Some(false));
     s.take_sounds();
 
     s.run("MerchantFrameTab2:Click()").unwrap();
@@ -977,6 +982,7 @@ fn shipped_merchant_frame_arms_the_buy_cursor_on_hover() {
                 stats: None,
                 link: None,
                 max_stack: Some(1),
+                extended_cost: None,
             },
             MerchantItem {
                 name: Some("Linen Bandage".into()),
@@ -988,6 +994,7 @@ fn shipped_merchant_frame_arms_the_buy_cursor_on_hover() {
                 stats: None,
                 link: None,
                 max_stack: Some(1),
+                extended_cost: None,
             },
         ],
         ..Default::default()
@@ -1137,6 +1144,7 @@ fn ctrl_and_shift_on_a_vendor_row_preview_and_post_without_buying() {
             // As `ui_merchant` builds it from the row's item template.
             link: Some(WATER_LINK.into()),
             max_stack: Some(1),
+            extended_cost: None,
         }],
         ..Default::default()
     }));

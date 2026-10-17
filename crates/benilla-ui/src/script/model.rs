@@ -656,17 +656,19 @@ pub(crate) struct Model {
     pub(crate) merchant: Option<merchant::MerchantState>,
     /// `GetRepairAllCost`'s total; 0 unless a repairer is open.
     pub(crate) repair_all_cost: u32,
+    /// `GetRepairAllCost`'s second return: a swept item is damaged.
+    pub(crate) repair_all_damaged: bool,
     /// The repair costs `SetInventoryItem` and `SetBagItem` return.
     pub(crate) repair_costs: merchant::RepairCosts,
     pub(crate) merchant_buys: Vec<(u32, u32)>,
     /// The held `(bag, slot)` when `PickupMerchantItem` sells, sent as `CMSG_SELL_ITEM`.
     pub(crate) merchant_cursor_sells: Vec<(i64, u32)>,
-    /// A held vendor row dropped in a bag, `(bag, slot, item entry)`, for `CMSG_BUY_ITEM_IN_SLOT`.
+    /// A held vendor row dropped in a bag, `(bag, slot, 1-based row)`, for `CMSG_BUY_ITEM_IN_SLOT`.
     pub(crate) merchant_slot_buys: Vec<(i64, u32, u32)>,
     pub(crate) merchant_close: bool,
     /// `BuybackItem` 1-based slots, the `RepairAllItems` flag and repair mode (`InRepairMode`).
     pub(crate) merchant_buybacks: Vec<u32>,
-    pub(crate) repair_all: bool,
+    pub(crate) repair_all: Option<bool>,
     pub(crate) repair_mode: bool,
 
     /// The stable window: snapshot, selection, drag and queued calls, reset together on close.
@@ -853,6 +855,10 @@ pub(crate) struct Model {
     pub(crate) pet_spell_tooltip_asks: HashSet<u32>,
     /// The tooltips whose spell render missed its view, re-rendered when the app answers.
     pub(crate) spell_tooltip_waits: HashMap<FrameHandle, super::tooltip_spell::SpellWait>,
+    /// The tooltips whose item setter missed a record, re-run when it lands.
+    pub(crate) item_tooltip_waits: HashMap<FrameHandle, super::tooltip_item::ItemWait>,
+    /// The item setter call running, collecting what it misses.
+    pub(crate) item_render: Option<super::tooltip_item::ItemRender>,
     /// `CollapseQuestHeader`/`ExpandQuestHeader` as `(1-based entry, collapse)`, entry 0 for all.
     pub(crate) quest_log_collapses: Vec<(u32, bool)>,
     /// Watched quest ids in watch order, pruned when a quest leaves the log.
@@ -1360,13 +1366,14 @@ impl Model {
             gossip_quest_selects: Vec::new(),
             merchant: None,
             repair_all_cost: 0,
+            repair_all_damaged: false,
             repair_costs: Default::default(),
             merchant_buys: Vec::new(),
             merchant_cursor_sells: Vec::new(),
             merchant_slot_buys: Vec::new(),
             merchant_close: false,
             merchant_buybacks: Vec::new(),
-            repair_all: false,
+            repair_all: None,
             repair_mode: false,
             stable: Default::default(),
             bank: None,
@@ -1474,6 +1481,8 @@ impl Model {
             pet_spell_tooltips: HashMap::new(),
             pet_spell_tooltip_asks: HashSet::new(),
             spell_tooltip_waits: HashMap::new(),
+            item_tooltip_waits: HashMap::new(),
+            item_render: None,
             quest_log_collapses: Vec::new(),
             quest_log_watched: Vec::new(),
             server_unix_time: std::cell::Cell::new(None),

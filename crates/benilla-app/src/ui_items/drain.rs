@@ -506,6 +506,7 @@ pub(super) fn drain_container_repairs(
                 let _ = commands.0.send(ClientCommand::RepairItem {
                     vendor,
                     item_guid: guid,
+                    guild_bank: false,
                 });
             }
             None => debug!("ui_items: repair on empty slot (bag {bag} slot {slot}) — ignored"),
@@ -529,6 +530,7 @@ pub(super) fn drain_container_repairs(
                 let _ = commands.0.send(ClientCommand::RepairItem {
                     vendor,
                     item_guid: guid,
+                    guild_bank: false,
                 });
             }
             _ => debug!("ui_items: repair on worn lua slot {id}, empty or out of range — ignored"),
@@ -922,7 +924,8 @@ mod tests {
             rx.try_recv(),
             Ok(ClientCommand::RepairItem {
                 vendor: VENDOR,
-                item_guid: CLAM
+                item_guid: CLAM,
+                guild_bank: false,
             })
         ));
         assert!(rx.try_recv().is_err(), "the repair alone: no use or sale");
@@ -981,7 +984,8 @@ mod tests {
             rx.try_recv(),
             Ok(ClientCommand::RepairItem {
                 vendor: VENDOR,
-                item_guid: HELM
+                item_guid: HELM,
+                guild_bank: false,
             })
         ));
         let mut script = app.world_mut().non_send_resource_mut::<UiScript>();
@@ -1095,7 +1099,8 @@ mod tests {
                 exact.sent.as_slice(),
                 [ClientCommand::RepairItem {
                     vendor: VENDOR,
-                    item_guid: SWORD
+                    item_guid: SWORD,
+                    guild_bank: false,
                 }]
             ),
             "{discounted} in the purse pays the discounted {discounted}, short of the full {full}"

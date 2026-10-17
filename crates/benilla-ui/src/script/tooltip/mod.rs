@@ -292,8 +292,9 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
         t.unit_guid = None;
         t.world_owned = false;
     }
-    // New content replaces a spell render still waiting on its view.
+    // New content replaces a spell or item render still waiting on its record.
     model.spell_tooltip_waits.remove(&h);
+    model.item_tooltip_waits.remove(&h);
     model.achievement.tooltips.remove(&h);
     // The `<name>StatusBar` health bar is unit content: it hides with the lines, and the next
     // unit render re-shows it.
@@ -318,9 +319,8 @@ pub(super) fn fire_cleared(lua: &Lua, h: FrameHandle) {
     }
 }
 
-/// A content `Set*`'s tail: shown with lines, hidden without. The reference leaves an uncached
-/// tooltip cleared and collapsed to nothing; this plate keeps its declared size, so it hides. It
-/// hides without [`hide_tooltip`] to keep the owner, which the hover loop's `IsOwned` needs.
+/// A content `Set*`'s tail: shown with lines, hidden without. It hides without [`hide_tooltip`] to
+/// keep the owner, which the hover loop's `IsOwned` needs.
 pub(super) fn show_or_hide_empty(lua: &Lua, h: FrameHandle) {
     let lines = {
         let mut model = crate::script::model_mut_of(lua);

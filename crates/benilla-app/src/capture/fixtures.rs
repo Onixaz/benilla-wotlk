@@ -152,6 +152,7 @@ pub(super) fn seed_ui_fixture(
             names.insert_creature(
                 NPC_ENTRY,
                 Some(crate::names::CreatureRecord {
+                    cursor_name: None,
                     name: "Godric Rothgar".into(),
                     subname: None,
                     creature_type: 0,
@@ -192,6 +193,7 @@ pub(super) fn seed_ui_fixture(
                         price: *price,
                         max_durability: 40,
                         buy_count: 1,
+                        extended_cost: 0,
                     }
                 })
                 .collect();
@@ -211,6 +213,7 @@ pub(super) fn seed_ui_fixture(
             names.insert_creature(
                 NPC_ENTRY,
                 Some(crate::names::CreatureRecord {
+                    cursor_name: None,
                     name: "Marshal McBride".into(),
                     subname: None,
                     creature_type: 0,
@@ -279,6 +282,7 @@ pub(super) fn seed_ui_fixture(
             names.insert_creature(
                 NPC_ENTRY,
                 Some(crate::names::CreatureRecord {
+                    cursor_name: None,
                     name: "Soleil Stonemantle".into(),
                     subname: Some("Banker".into()),
                     creature_type: 7,
@@ -371,6 +375,7 @@ pub(super) fn seed_ui_fixture(
             names.insert_creature(
                 NPC_ENTRY,
                 Some(crate::names::CreatureRecord {
+                    cursor_name: None,
                     name: "Marshal McBride".into(),
                     subname: None,
                     creature_type: 0,
@@ -418,6 +423,7 @@ pub(super) fn seed_ui_fixture(
             names.insert_creature(
                 NPC_ENTRY,
                 Some(crate::names::CreatureRecord {
+                    cursor_name: None,
                     name: "Marshal McBride".into(),
                     subname: None,
                     creature_type: 0,
@@ -468,6 +474,7 @@ pub(super) fn seed_ui_fixture(
             names.insert_creature(
                 KOBOLD_ENTRY,
                 Some(crate::names::CreatureRecord {
+                    cursor_name: None,
                     name: "Kobold Vermin".into(),
                     subname: None,
                     creature_type: 0,
@@ -916,6 +923,7 @@ pub(super) fn seed_ui_fixture(
             names.insert_creature(
                 WOLF_ENTRY,
                 Some(crate::names::CreatureRecord {
+                    cursor_name: None,
                     name: "Timber Wolf".into(),
                     subname: None,
                     creature_type: 1,
@@ -1245,6 +1253,7 @@ pub(super) fn seed_ui_fixture(
             names.insert_creature(
                 WOLF_ENTRY,
                 Some(crate::names::CreatureRecord {
+                    cursor_name: None,
                     name: "Timber Wolf".into(),
                     subname: None,
                     creature_type: 1,

@@ -71,6 +71,7 @@ impl Probe for Vendor {
                 if let SessionEvent::VendorInventory {
                     vendor,
                     items: rows,
+                    ..
                 } = ev
                 {
                     if vendor == vendor_guid {
@@ -106,7 +107,7 @@ impl Probe for Vendor {
             "buying cheapest: entry {} @ {}c → CMSG_BUY_ITEM",
             cheapest.entry, cheapest.price
         );
-        session.buy_item(vendor_guid, cheapest.entry, 1)?;
+        session.buy_item(vendor_guid, cheapest.entry, cheapest.slot, 1)?;
 
         // Keep draining past the first reaction: the coinage delta can trail the item create.
         let mut round_trip: Option<String> = None;

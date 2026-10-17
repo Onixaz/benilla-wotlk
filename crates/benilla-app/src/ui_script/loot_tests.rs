@@ -486,6 +486,7 @@ fn shipped_loot_pushed_to_center_by_merchant() {
             stats: None,
             link: None,
             max_stack: Some(1),
+            extended_cost: None,
         }],
         ..Default::default()
     }));

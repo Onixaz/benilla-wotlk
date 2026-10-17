@@ -930,6 +930,7 @@ pub(in crate::ui_party) mod tests {
         app.world_mut().resource_mut::<NameCache>().insert_creature(
             69,
             Some(crate::names::CreatureRecord {
+                cursor_name: None,
                 name: "Imp".into(),
                 subname: None,
                 creature_type: 3,

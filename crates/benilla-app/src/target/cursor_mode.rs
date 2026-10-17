@@ -47,6 +47,77 @@ pub(crate) enum CursorKind {
     /// Cast(2): the spell-targeting cursor (`0x4820f0`), which pre-empts the whole object
     /// classifier while a spell awaits a target; the classifier here never sets it.
     Cast,
+    /// RepairNPC(18): a repairer's (`0x4f7a50`).
+    RepairNpc,
+    /// Innkeeper(22).
+    Innkeeper,
+    /// Quest(23), QuestRepeatable(24) and QuestTurnIn(25): a questgiver by its status
+    /// (`0x744640`).
+    Quest,
+    QuestRepeatable,
+    QuestTurnIn,
+    /// vehichleCursor(26), the table's own spelling: a player vehicle with a free seat.
+    Vehicle,
+    /// A creature cursor name outside the mode table, drawn from its own file (mode `0x35`,
+    /// `0x715f20`).
+    Named(&'static str),
+}
+
+/// The 3.3.5a mode table's names (`0xad280c`), 1-based modes, `Unable<Name>` at `+0x1a`.
+const CURSOR_TABLE: [(&str, CursorKind); 26] = [
+    ("Point", CursorKind::Point),
+    ("Cast", CursorKind::Cast),
+    ("Buy", CursorKind::Buy),
+    ("Attack", CursorKind::Attack),
+    ("Interact", CursorKind::Interact),
+    ("Speak", CursorKind::Speak),
+    ("Inspect", CursorKind::Inspect),
+    ("Pickup", CursorKind::Pickup),
+    ("Taxi", CursorKind::Taxi),
+    ("Trainer", CursorKind::Trainer),
+    ("Mine", CursorKind::Mine),
+    ("Skin", CursorKind::Skin),
+    ("GatherHerbs", CursorKind::GatherHerbs),
+    ("PickLock", CursorKind::PickLock),
+    ("Mail", CursorKind::Mail),
+    ("LootAll", CursorKind::LootAll),
+    ("Repair", CursorKind::Repair),
+    ("RepairNPC", CursorKind::RepairNpc),
+    // Item(19), the use-item cursor; no world unit names it.
+    ("Item", CursorKind::Interact),
+    ("SkinHorde", CursorKind::Skin),
+    ("SkinAlliance", CursorKind::Skin),
+    ("Innkeeper", CursorKind::Innkeeper),
+    ("Quest", CursorKind::Quest),
+    ("QuestRepeatable", CursorKind::QuestRepeatable),
+    ("QuestTurnIn", CursorKind::QuestTurnIn),
+    ("vehichleCursor", CursorKind::Vehicle),
+];
+
+/// A creature's cursor name as `CursorGetModeFromName 0x616290` reads it: a table name to its
+/// mode, any other name to its own file.
+fn cursor_from_name(name: &str) -> CursorKind {
+    CURSOR_TABLE
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .map_or_else(|| CursorKind::Named(intern(name)), |(_, kind)| *kind)
+}
+
+/// A creature cursor name kept for the life of the process; the set is the templates' few names.
+fn intern(name: &str) -> &'static str {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static NAMES: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    let mut names = NAMES
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(n) = names.get(name) {
+        return n;
+    }
+    let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    names.insert(leaked);
+    leaked
 }
 
 impl CursorKind {
@@ -70,12 +141,19 @@ impl CursorKind {
             CursorKind::GatherHerbs => "GatherHerbs",
             CursorKind::PickLock => "PickLock",
             CursorKind::Cast => "Cast",
+            CursorKind::RepairNpc => "RepairNPC",
+            CursorKind::Innkeeper => "Innkeeper",
+            CursorKind::Quest => "Quest",
+            CursorKind::QuestRepeatable => "QuestRepeatable",
+            CursorKind::QuestTurnIn => "QuestTurnIn",
+            CursorKind::Vehicle => "vehichleCursor",
+            CursorKind::Named(name) => name,
         }
     }
 }
 
 /// This frame's world cursor, written by [`classify_cursor`]; `unable` picks the grayed
-/// `Unable<Name>` twin (the reference's `mode + 20`).
+/// `Unable<Name>` twin (the reference's `mode + 0x1a`).
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct WorldCursor {
     pub(crate) kind: CursorKind,
@@ -102,23 +180,33 @@ impl WorldCursor {
     }
 }
 
-/// `UNIT_NPC_FLAGS` bits, 1.12 values (vmangos `UnitDefines.h`); REPAIR (`0x4000`) is left out
-/// because the ladder never tests it.
+/// `UNIT_NPC_FLAGS` bits, as the 12340 right-click ladder (`0x6ddbb0`) and the cursor classifier
+/// (`0x4f7a50`) test them.
 pub(crate) mod npc_flags {
     pub const GOSSIP: u32 = 0x1;
     pub const QUESTGIVER: u32 = 0x2;
-    pub const VENDOR: u32 = 0x4;
-    pub const FLIGHTMASTER: u32 = 0x8;
     pub const TRAINER: u32 = 0x10;
-    pub const SPIRITHEALER: u32 = 0x20;
-    pub const SPIRITGUIDE: u32 = 0x40;
-    pub const INNKEEPER: u32 = 0x80;
-    pub const BANKER: u32 = 0x100;
-    pub const PETITIONER: u32 = 0x200;
-    pub const TABARDDESIGNER: u32 = 0x400;
-    pub const BATTLEMASTER: u32 = 0x800;
-    pub const AUCTIONEER: u32 = 0x1000;
-    pub const STABLEMASTER: u32 = 0x2000;
+    /// The vendor bit the ladders test; the ammo, food, poison and reagent kinds ride beside it.
+    pub const VENDOR: u32 = 0x80;
+    pub const REPAIR: u32 = 0x1000;
+    pub const FLIGHTMASTER: u32 = 0x2000;
+    pub const SPIRITHEALER: u32 = 0x4000;
+    pub const SPIRITGUIDE: u32 = 0x8000;
+    pub const INNKEEPER: u32 = 0x1_0000;
+    pub const BANKER: u32 = 0x2_0000;
+    pub const PETITIONER: u32 = 0x4_0000;
+    pub const TABARDDESIGNER: u32 = 0x8_0000;
+    pub const BATTLEMASTER: u32 = 0x10_0000;
+    pub const AUCTIONEER: u32 = 0x20_0000;
+    pub const STABLEMASTER: u32 = 0x40_0000;
+    pub const GUILD_BANKER: u32 = 0x80_0000;
+    pub const SPELLCLICK: u32 = 0x100_0000;
+    pub const MAILBOX: u32 = 0x400_0000;
+
+    /// `CGUnit::IsGuildMaster 0x4f5f80`: petitioner and tabard designer both.
+    pub fn is_guild_master(flags: u32) -> bool {
+        flags & PETITIONER != 0 && flags & TABARDDESIGNER != 0
+    }
 }
 
 pub(super) const UNIT_FLAG_SKINNABLE: u32 = 0x0400_0000;
@@ -143,6 +231,13 @@ pub(crate) fn player_attack_legs(own: &ObjectStore, control_lost: bool) -> bool 
 /// NPC-service range, squared: gray beyond 5.5556 yd (`0xb4b32c` = `[0x804328]²`, checked
 /// boundary-inclusive at `0x482320`). The NPC windows' walk-away close uses the same constant.
 pub(crate) const SERVICE_RANGE_SQ: f32 = 30.864;
+
+/// A unit's interact reach, squared: its combat reach plus 4 (`0x4f7b0f`, the right-click's
+/// `0x6ddcc6`), boundary-inclusive.
+pub(crate) fn unit_interact_reach_sq(unit: &ObjectStore) -> f32 {
+    let reach = unit.0.unit_combat_reach() + 4.0;
+    reach * reach
+}
 /// Attack's range, squared: gray beyond a fixed 10.45 yd (`0x80447c`, checked at `0x4826a7`), not
 /// the melee reach.
 const ATTACK_RANGE_SQ: f32 = 109.2025;
@@ -426,43 +521,64 @@ fn go_cursor_kind(type_id: i32, lock_cursor: Option<CursorKind>) -> CursorKind {
     }
 }
 
-/// The QUESTGIVER bit's own gate (`0x5df490`): the cached `SMSG_QUESTGIVER_STATUS`
-/// (`[unit+0xcb8]`) is neither NONE nor UNAVAILABLE, and a missing one reads as NONE since the
-/// server sends it unprompted. Without the gate a quest-less questgiver opens an empty gossip frame
-/// that vmangos fills with placeholder "Greetings $N" text (`QueryHandler.cpp:313-319`).
+/// `CGUnit_C::UnitCanGossip 0x6d1de0`'s status half: the cached `SMSG_QUESTGIVER_STATUS` is 2
+/// or above, and a missing one reads as NONE since the server sends it unprompted.
 pub(crate) fn questgiver_has_quest(quest_status: Option<u32>) -> bool {
-    use benilla_protocol::messages::dialog_status::{NONE, UNAVAILABLE};
-    !matches!(quest_status, None | Some(NONE) | Some(UNAVAILABLE))
+    quest_status.is_some_and(|s| s >= 2)
 }
 
-/// The service ladder (`0x482336..0x4824e3`, unrolled): lowest set bit wins. `None` when no tested
-/// bit is set, repair-only units included: bit 14 is never tested.
-fn service_cursor(service: u32, quest_status: Option<u32>) -> Option<CursorKind> {
-    use npc_flags::*;
-    // Bits 0 and 1 both give Speak, so they fold into one test; only bit 1 is gated.
-    if service & GOSSIP != 0 || (service & QUESTGIVER != 0 && questgiver_has_quest(quest_status)) {
-        Some(CursorKind::Speak)
-    } else if service & VENDOR != 0 {
-        Some(CursorKind::Pickup)
-    } else if service & FLIGHTMASTER != 0 {
-        Some(CursorKind::Taxi)
-    } else if service & TRAINER != 0 {
-        Some(CursorKind::Trainer)
-    } else if service & (SPIRITHEALER | SPIRITGUIDE) != 0 {
-        Some(CursorKind::Speak)
-    } else if service & INNKEEPER != 0 {
-        Some(CursorKind::Interact)
-    } else if service & BANKER != 0 {
-        Some(CursorKind::Buy)
-    } else if service & (PETITIONER | TABARDDESIGNER | BATTLEMASTER) != 0 {
-        Some(CursorKind::Speak)
-    } else if service & AUCTIONEER != 0 {
-        Some(CursorKind::Buy)
-    } else if service & STABLEMASTER != 0 {
-        Some(CursorKind::Speak)
-    } else {
-        None
+/// The questgiver cursor `0x744640`, by the cached status alone, before any flag.
+fn quest_cursor(quest_status: Option<u32>) -> Option<CursorKind> {
+    match quest_status? {
+        2..=5 | 7 | 8 => Some(CursorKind::Quest),
+        6 => Some(CursorKind::QuestRepeatable),
+        9 | 10 => Some(CursorKind::QuestTurnIn),
+        _ => None,
     }
+}
+
+/// The unit cursor of a unit with any service bit (`0x4f7a50`): the quest cursor, then the
+/// template's own cursor name (`0x715ea0`), then the flag ladder. `None` when nothing matches.
+fn service_cursor(
+    service: u32,
+    quest_status: Option<u32>,
+    cursor_name: Option<&str>,
+) -> Option<CursorKind> {
+    use npc_flags::*;
+    if let Some(kind) = quest_cursor(quest_status) {
+        return Some(kind);
+    }
+    if let Some(name) = cursor_name.filter(|n| !n.is_empty()) {
+        return Some(cursor_from_name(name));
+    }
+    let bit = |m: u32| service & m != 0;
+    Some(if bit(REPAIR) {
+        CursorKind::RepairNpc
+    } else if bit(INNKEEPER) {
+        CursorKind::Innkeeper
+    } else if bit(FLIGHTMASTER) {
+        CursorKind::Taxi
+    } else if bit(TRAINER) {
+        CursorKind::Trainer
+    } else if bit(SPIRITHEALER | SPIRITGUIDE) {
+        CursorKind::Speak
+    } else if bit(BANKER | GUILD_BANKER) {
+        CursorKind::Buy
+    } else if bit(PETITIONER | TABARDDESIGNER | BATTLEMASTER) || is_guild_master(service) {
+        CursorKind::Speak
+    } else if bit(AUCTIONEER) {
+        CursorKind::Buy
+    } else if bit(STABLEMASTER) {
+        CursorKind::Speak
+    } else if bit(VENDOR) {
+        CursorKind::Pickup
+    } else if bit(GOSSIP) {
+        CursorKind::Speak
+    } else if bit(SPELLCLICK) {
+        CursorKind::Interact
+    } else {
+        return None;
+    })
 }
 
 /// The loot leg's mode, `8 + (keyDown(0) ? 8 : 0)` in the reference (`0x48252c`): LootAll while
@@ -565,6 +681,8 @@ pub(super) struct CursorInputs<'w, 's> {
     loot_latch: Res<'w, crate::ui_loot::LootLatch>,
     // `[0xb72038]`, the queued area; absent in a headless build, which reads as not queued.
     stone: Option<Res<'w, crate::ui_dialog_verbs::MeetingStone>>,
+    // The creature records, whose cursor name `0x715ea0` reads; absent reads no name.
+    names: Option<Res<'w, crate::names::NameCache>>,
 }
 
 /// The cursor and the attack fork over a pick; no pick, or nothing resolvable, reads Point.
@@ -588,6 +706,7 @@ pub(super) fn classify(
         keys,
         loot_latch,
         stone,
+        names,
     } = inputs;
     let can_auto_interact = crate::player::can_auto_interact(
         approach.enabled,
@@ -689,10 +808,15 @@ pub(super) fn classify(
             Some(self_store),
         ) {
             let status = hovered.guid.and_then(|g| quest.status(g));
-            // No matching bit clears the cursor (`je 0x4826cb`) without reaching the attack leg:
-            // Point, never the sword.
-            return service_cursor(store.0.unit_npc_flags(), status)
-                .map(|kind| (kind, dist_sq > SERVICE_RANGE_SQ));
+            let cursor_name = store
+                .0
+                .object_entry()
+                .and_then(|entry| names.as_deref()?.creature_record(entry))
+                .and_then(|rec| rec.cursor_name.as_deref());
+            // No matching bit clears the cursor without reaching the attack leg: Point, never the
+            // sword.
+            return service_cursor(store.0.unit_npc_flags(), status, cursor_name)
+                .map(|kind| (kind, dist_sq > unit_interact_reach_sq(store)));
         }
         // `CanAttack 0x606980` (`0x482680`), the predicate TAB, the combat flash and
         // `UnitCanAttack` share; not attackable clears the cursor (`0x4826cb`): Point.
@@ -1270,118 +1394,119 @@ mod tests {
         assert!(((3.0_f32 + 3.0 + MELEE_OFFSET).max(MELEE_FLOOR) - 7.333_33).abs() < 1e-4);
     }
 
+    /// The flag ladder after the quest cursor and the cursor name (`0x4f7a50`): repair first,
+    /// gossip near the bottom.
     #[test]
-    fn service_ladder_matches_the_unrolled_binary() {
+    fn service_ladder_walks_the_3_3_5a_order() {
         use npc_flags::*;
-        // A quest on offer, so the QUESTGIVER row passes its gate.
-        let has = Some(dialog_status::AVAILABLE);
-        assert_eq!(service_cursor(GOSSIP, None), Some(CursorKind::Speak));
-        assert_eq!(service_cursor(QUESTGIVER, has), Some(CursorKind::Speak));
-        assert_eq!(service_cursor(VENDOR, None), Some(CursorKind::Pickup));
-        assert_eq!(service_cursor(FLIGHTMASTER, None), Some(CursorKind::Taxi));
-        assert_eq!(service_cursor(TRAINER, None), Some(CursorKind::Trainer));
-        assert_eq!(service_cursor(SPIRITHEALER, None), Some(CursorKind::Speak));
-        assert_eq!(service_cursor(INNKEEPER, None), Some(CursorKind::Interact));
-        assert_eq!(service_cursor(BANKER, None), Some(CursorKind::Buy));
-        assert_eq!(service_cursor(BATTLEMASTER, None), Some(CursorKind::Speak));
-        assert_eq!(service_cursor(AUCTIONEER, None), Some(CursorKind::Buy));
-        assert_eq!(service_cursor(STABLEMASTER, None), Some(CursorKind::Speak));
+        let cursor = |flags| service_cursor(flags, None, None);
+        for (flags, kind) in [
+            (REPAIR, CursorKind::RepairNpc),
+            (INNKEEPER, CursorKind::Innkeeper),
+            (FLIGHTMASTER, CursorKind::Taxi),
+            (TRAINER, CursorKind::Trainer),
+            (SPIRITHEALER, CursorKind::Speak),
+            (SPIRITGUIDE, CursorKind::Speak),
+            (BANKER, CursorKind::Buy),
+            (GUILD_BANKER, CursorKind::Buy),
+            (PETITIONER, CursorKind::Speak),
+            (TABARDDESIGNER, CursorKind::Speak),
+            (BATTLEMASTER, CursorKind::Speak),
+            (AUCTIONEER, CursorKind::Buy),
+            (STABLEMASTER, CursorKind::Speak),
+            (VENDOR, CursorKind::Pickup),
+            (GOSSIP, CursorKind::Speak),
+            (SPELLCLICK, CursorKind::Interact),
+        ] {
+            assert_eq!(cursor(flags), Some(kind), "flags {flags:#x}");
+        }
         assert_eq!(
-            service_cursor(GOSSIP | VENDOR, None),
+            cursor(GOSSIP | VENDOR),
+            Some(CursorKind::Pickup),
+            "vendor before gossip"
+        );
+        assert_eq!(cursor(VENDOR | REPAIR), Some(CursorKind::RepairNpc));
+        assert_eq!(cursor(GOSSIP | INNKEEPER), Some(CursorKind::Innkeeper));
+        // The questgiver bit and the vendor kinds are not on the ladder: Point, never the sword.
+        assert_eq!(cursor(QUESTGIVER), None);
+        assert_eq!(cursor(0x100), None);
+        assert_eq!(cursor(0), None);
+    }
+
+    /// The questgiver cursor `0x744640` reads the status alone, before the cursor name and every
+    /// flag, over all eleven statuses.
+    #[test]
+    fn the_quest_cursor_comes_first_by_status() {
+        use npc_flags::*;
+        for (status, want) in [
+            (dialog_status::NONE, None),
+            (dialog_status::UNAVAILABLE, None),
+            (dialog_status::LOW_LEVEL_AVAILABLE, Some(CursorKind::Quest)),
+            (dialog_status::LOW_LEVEL_REWARD_REP, Some(CursorKind::Quest)),
+            (
+                dialog_status::LOW_LEVEL_AVAILABLE_REP,
+                Some(CursorKind::Quest),
+            ),
+            (dialog_status::INCOMPLETE, Some(CursorKind::Quest)),
+            (dialog_status::REWARD_REP, Some(CursorKind::QuestRepeatable)),
+            (dialog_status::AVAILABLE_REP, Some(CursorKind::Quest)),
+            (dialog_status::AVAILABLE, Some(CursorKind::Quest)),
+            (dialog_status::REWARD2, Some(CursorKind::QuestTurnIn)),
+            (dialog_status::REWARD, Some(CursorKind::QuestTurnIn)),
+        ] {
+            assert_eq!(quest_cursor(Some(status)), want, "status {status}");
+            assert_eq!(
+                service_cursor(GOSSIP | QUESTGIVER, Some(status), Some("Buy")),
+                want.or(Some(CursorKind::Buy)),
+                "status {status} over a cursor name"
+            );
+        }
+        assert_eq!(quest_cursor(None), None);
+    }
+
+    /// A template's cursor name comes before the flags (`0x715ea0`), by table name; any other name
+    /// is drawn from its own file (mode `0x35`).
+    #[test]
+    fn the_cursor_name_comes_before_the_flags() {
+        use npc_flags::*;
+        assert_eq!(
+            service_cursor(GOSSIP | VENDOR, None, Some("Speak")),
             Some(CursorKind::Speak)
         );
         assert_eq!(
-            service_cursor(INNKEEPER | BANKER, None),
-            Some(CursorKind::Interact)
-        );
-        // REPAIR (`0x4000`) is never tested.
-        assert_eq!(service_cursor(0x4000, None), None);
-        assert_eq!(service_cursor(0, None), None);
-    }
-
-    #[test]
-    fn the_ladder_falls_out_to_point_not_to_the_sword() {
-        use npc_flags::*;
-        assert_eq!(service_cursor(REPAIR_ONLY, None), None);
-        assert_eq!(service_cursor(QUESTGIVER, Some(dialog_status::NONE)), None);
-        // `resolve_unit`'s own expression for the branch: a `None` stays `None`, which reads Point.
-        let unable = 20.0 > SERVICE_RANGE_SQ;
-        assert_eq!(
-            service_cursor(REPAIR_ONLY, None).map(|kind| (kind, unable)),
-            None,
-            "repair-only reads Point, not UnableAttack"
+            service_cursor(VENDOR, None, Some("repair")),
+            Some(CursorKind::Repair),
+            "case-insensitive"
         );
         assert_eq!(
-            service_cursor(GOSSIP, None).map(|kind| (kind, unable)),
-            Some((CursorKind::Speak, false)),
-            "…while a bit that IS consulted still reaches its cursor"
+            service_cursor(GOSSIP, None, Some("vehichleCursor")),
+            Some(CursorKind::Vehicle)
         );
-    }
-
-    /// The sword's player legs (`0x48264a`–`0x4826a2`): a corpse, a ghost at health 1, a rider, a
-    /// pacified player and one without control each see the pointer.
-    #[test]
-    fn the_sword_needs_a_live_unmounted_unpacified_player_in_control() {
-        // Health 22, max health 28, unit flags 46, mount display 133, player flags 190.
-        let own = |pairs: &[(u16, u32)]| {
-            let mut all = vec![(22, 100), (28, 100)];
-            all.extend_from_slice(pairs);
-            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&all))
+        let named = service_cursor(GOSSIP, None, Some("Directions")).unwrap();
+        assert_eq!(named, CursorKind::Named("Directions"));
+        let unable = WorldCursor {
+            kind: named,
+            unable: true,
         };
-        assert!(player_attack_legs(&own(&[]), false));
-        assert!(!player_attack_legs(&own(&[(22, 0)]), false), "dead");
-        assert!(
-            !player_attack_legs(&own(&[(22, 1), (190, 0x10)]), false),
-            "a ghost"
+        assert_eq!(unable.stem(), "UnableDirections");
+        assert_eq!(
+            service_cursor(GOSSIP, None, Some("")),
+            Some(CursorKind::Speak),
+            "an empty name is none"
         );
-        assert!(!player_attack_legs(&own(&[(133, 1147)]), false), "mounted");
-        assert!(
-            !player_attack_legs(&own(&[(46, UNIT_FLAG_PACIFIED)]), false),
-            "pacified"
-        );
-        assert!(!player_attack_legs(&own(&[]), true), "no control");
     }
 
-    /// `UNIT_NPC_FLAGS` REPAIR, the service bit the ladder never tests.
-    const REPAIR_ONLY: u32 = 0x4000;
-
+    /// The reach is the unit's combat reach plus 4 (`0x4f7b0f`).
     #[test]
-    fn questgiver_flag_alone_is_not_talkable() {
-        use npc_flags::*;
-        for status in [
-            None,
-            Some(dialog_status::NONE),
-            Some(dialog_status::UNAVAILABLE),
-        ] {
-            assert_eq!(
-                service_cursor(QUESTGIVER, status),
-                None,
-                "status {status:?} must not classify Speak"
-            );
-        }
-        for status in [
-            dialog_status::LOW_LEVEL_AVAILABLE,
-            dialog_status::INCOMPLETE,
-            dialog_status::REWARD_REP,
-            dialog_status::AVAILABLE_REP,
-            dialog_status::AVAILABLE,
-            dialog_status::REWARD2,
-            dialog_status::REWARD,
-        ] {
-            assert_eq!(
-                service_cursor(QUESTGIVER, Some(status)),
-                Some(CursorKind::Speak),
-                "status {status} must classify Speak"
-            );
-        }
-        assert_eq!(
-            service_cursor(GOSSIP | QUESTGIVER, None),
-            Some(CursorKind::Speak)
-        );
-        assert_eq!(
-            service_cursor(QUESTGIVER | VENDOR, None),
-            Some(CursorKind::Pickup)
-        );
+    fn the_service_reach_follows_the_units_combat_reach() {
+        let unit = |reach: f32| {
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                130, // UNIT_FIELD_COMBATREACH
+                reach.to_bits(),
+            )]))
+        };
+        assert_eq!(unit_interact_reach_sq(&unit(1.5)), 30.25);
+        assert_eq!(unit_interact_reach_sq(&unit(6.0)), 100.0);
     }
 
     #[test]

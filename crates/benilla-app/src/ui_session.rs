@@ -19,13 +19,16 @@ impl Plugin for UiSessionPlugin {
     fn build(&self, app: &mut App) {
         // Inside the net chain, after the apply pass that opens and swaps sessions and before the
         // facing chain: a `MERCHANT_SHOW` handler reads `UnitName("NPC")` the frame it opens.
-        app.init_resource::<InteractNpc>().add_systems(
-            Update,
-            feed_interact_npc
-                .in_set(WorldStage::Net)
-                .after(crate::net::apply_net_updates)
-                .before(crate::net::drive_display_facing),
-        );
+        app.init_resource::<InteractNpc>()
+            .add_systems(
+                Update,
+                feed_interact_npc
+                    .in_set(WorldStage::Net)
+                    .after(crate::net::apply_net_updates)
+                    .before(crate::net::drive_display_facing),
+            )
+            // After every window's close in the frame, which it detects against the last frame.
+            .add_systems(PostUpdate, close_interaction);
     }
 }
 
@@ -97,6 +100,89 @@ pub(crate) fn close_npc_session_out_of_range<T: NpcSession>(
         }
         session.close();
     }
+}
+
+/// The windows `CloseInteraction 0x512e60` walks, in its order; trade, the item text, the mail
+/// and the guild bank close by their own paths.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct InteractWindows<'w> {
+    gossip: Option<ResMut<'w, crate::ui_gossip::GossipState>>,
+    quest: Option<ResMut<'w, crate::ui_quest::QuestGiver>>,
+    merchant: Option<ResMut<'w, crate::ui_merchant::MerchantOpen>>,
+    taxi: Option<ResMut<'w, crate::ui_taxi::TaxiState>>,
+    trainer: Option<ResMut<'w, crate::ui_trainer::TrainerOpen>>,
+    bank: Option<ResMut<'w, crate::ui_bank::BankOpen>>,
+    registrar: Option<ResMut<'w, crate::ui_petition::GuildRegistrarState>>,
+    tabard: Option<ResMut<'w, crate::ui_tabard::TabardOpen>>,
+    auction: Option<ResMut<'w, crate::ui_auction::AuctionOpen>>,
+    stable: Option<ResMut<'w, crate::ui_stable::StableOpen>>,
+}
+
+/// [`InteractWindows`]' count; the gossip menu is first.
+const INTERACT_WINDOWS: usize = 10;
+
+impl InteractWindows<'_> {
+    fn npcs(&self) -> [Option<u64>; INTERACT_WINDOWS] {
+        fn npc<T: NpcSession>(s: &Option<ResMut<T>>) -> Option<u64> {
+            s.as_ref().and_then(|s| s.npc())
+        }
+        [
+            npc(&self.gossip),
+            npc(&self.quest),
+            npc(&self.merchant),
+            npc(&self.taxi),
+            npc(&self.trainer),
+            npc(&self.bank),
+            npc(&self.registrar),
+            npc(&self.tabard),
+            npc(&self.auction),
+            npc(&self.stable),
+        ]
+    }
+
+    fn close(&mut self, window: usize) {
+        fn close<T: NpcSession>(s: &mut Option<ResMut<T>>) {
+            if let Some(s) = s.as_mut() {
+                s.close();
+            }
+        }
+        match window {
+            0 => close(&mut self.gossip),
+            1 => close(&mut self.quest),
+            2 => close(&mut self.merchant),
+            3 => close(&mut self.taxi),
+            4 => close(&mut self.trainer),
+            5 => close(&mut self.bank),
+            6 => close(&mut self.registrar),
+            7 => close(&mut self.tabard),
+            8 => close(&mut self.auction),
+            _ => close(&mut self.stable),
+        }
+    }
+}
+
+/// The interact slot's clear (`ClearInteractTarget 0x518d50`): a window closing on an NPC closes
+/// the first window, in `CloseInteraction`'s order, still open on it. A lone-option gossip that
+/// handed off to a trainer, vendor or flight master is that window, so closing the hand-off's
+/// window frees the re-click gate. The gossip menu's own close finds itself first (`0x58a576`).
+pub(crate) fn close_interaction(
+    mut windows: InteractWindows,
+    mut last: Local<[Option<u64>; INTERACT_WINDOWS]>,
+) {
+    let now = windows.npcs();
+    for (window, (was, is)) in last.iter().zip(now).enumerate() {
+        let (Some(npc), None) = (*was, is) else {
+            continue;
+        };
+        if window == 0 {
+            continue;
+        }
+        if let Some(other) = now.iter().position(|n| *n == Some(npc)) {
+            debug!("ui_session: window {window} closed on {npc:#x} — closing window {other} too");
+            windows.close(other);
+        }
+    }
+    *last = windows.npcs();
 }
 
 /// The `"npc"` unit: the open [`NpcSession`]'s world entity and guid, read by the portrait booth
@@ -202,6 +288,67 @@ mod tests {
             .remove(&VENDOR);
         app.update();
         assert!(!app.world().resource::<MerchantOpen>().is_open());
+    }
+
+    /// The stock lone-option shortcut (`GOSSIP_SHOW` → `SelectGossipOption(1)`) leaves the gossip
+    /// session open behind the trainer list; closing the trainer closes it too, so the gate reads
+    /// no NPC and the next right-click goes out.
+    #[test]
+    fn closing_a_hand_off_window_closes_the_gossip_behind_it() {
+        use crate::ui_gossip::GossipState;
+        use crate::ui_trainer::TrainerOpen;
+        const TRAINER: u64 = 0xF130_0000_0000_0911;
+        const OTHER: u64 = 0xF130_0000_0000_0912;
+
+        let mut app = App::new();
+        app.init_resource::<GossipState>()
+            .init_resource::<MerchantOpen>()
+            .init_resource::<TrainerOpen>()
+            .init_resource::<InteractNpc>()
+            .add_systems(Update, (close_interaction, feed_interact_npc).chain());
+        app.world_mut().resource_mut::<GossipState>().npc = Some(TRAINER);
+        app.world_mut().resource_mut::<TrainerOpen>().trainer = Some(TRAINER);
+        app.update();
+        assert_eq!(app.world().resource::<InteractNpc>().1, Some(TRAINER));
+
+        // `CloseTrainer()`.
+        app.world_mut().resource_mut::<TrainerOpen>().close();
+        app.update();
+        assert_eq!(app.world().resource::<GossipState>().npc, None);
+        app.update();
+        assert_eq!(
+            app.world().resource::<InteractNpc>().1,
+            None,
+            "the re-click gate is free"
+        );
+
+        // A vendor hand-off the same way.
+        app.world_mut().resource_mut::<GossipState>().npc = Some(TRAINER);
+        app.world_mut()
+            .resource_mut::<MerchantOpen>()
+            .open(TRAINER, vec![]);
+        app.update();
+        app.world_mut().resource_mut::<MerchantOpen>().clear();
+        app.update();
+        assert_eq!(app.world().resource::<GossipState>().npc, None);
+
+        // The gossip menu closing leaves another window on the same NPC open, and a window
+        // closing on another NPC leaves the gossip alone.
+        app.world_mut().resource_mut::<GossipState>().npc = Some(TRAINER);
+        app.world_mut()
+            .resource_mut::<MerchantOpen>()
+            .open(TRAINER, vec![]);
+        app.update();
+        app.world_mut().resource_mut::<GossipState>().npc = None;
+        app.update();
+        assert!(app.world().resource::<MerchantOpen>().is_open());
+        app.world_mut().resource_mut::<MerchantOpen>().clear();
+        app.world_mut().resource_mut::<GossipState>().npc = Some(OTHER);
+        app.world_mut().resource_mut::<TrainerOpen>().trainer = Some(TRAINER);
+        app.update();
+        app.world_mut().resource_mut::<TrainerOpen>().close();
+        app.update();
+        assert_eq!(app.world().resource::<GossipState>().npc, Some(OTHER));
     }
 
     /// A player-latched quest panel is leashed at 14 yd and an NPC-latched one at 5.56 yd; walking

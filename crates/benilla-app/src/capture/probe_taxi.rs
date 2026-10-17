@@ -26,7 +26,7 @@ const TAXI_PATH: u32 = 6;
 /// is then found in the streamed world by his npc flag.
 const FLIGHTMASTER_AT: [f32; 3] = [-8835.8, 490.1, 109.7];
 /// `UNIT_NPC_FLAG_FLIGHTMASTER` (bit 3).
-const NPC_FLAG_FLIGHTMASTER: u32 = 0x8;
+const NPC_FLAG_FLIGHTMASTER: u32 = crate::target::cursor_mode::npc_flags::FLIGHTMASTER;
 /// vmangos `PLAYER_FLIGHT_SPEED` in yd/s (`WaypointMovementGenerator.cpp:390`).
 const FLIGHT_SPEED: f32 = 32.0;
 

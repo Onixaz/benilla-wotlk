@@ -983,6 +983,7 @@ fn a_held_pet_names_its_templates_creature_type() {
     names.insert_creature(
         IMP,
         Some(crate::names::CreatureRecord {
+            cursor_name: None,
             name: "Imp".into(),
             subname: None,
             creature_type: 3,

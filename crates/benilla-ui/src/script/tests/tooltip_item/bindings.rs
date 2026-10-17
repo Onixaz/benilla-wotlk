@@ -446,6 +446,25 @@ fn set_trade_skill_item_indexes_visible_rows_not_raw_recipes() {
         repeat_count: 1,
     }));
     assert_eq!(s.eval::<i64>("return GetNumTradeSkills()").unwrap(), 6);
+    for (spell, name) in [
+        (1, "Beta Bolt"),
+        (2, "Alpha Bolt"),
+        (3, "Beta Cloak"),
+        (4, "Alpha Cloak"),
+    ] {
+        for (item, name) in [
+            (spell + 10_000, name.to_string()),
+            (spell + 20_000, format!("{name} Reagent")),
+        ] {
+            s.set_item_template(
+                item,
+                ItemTemplateView {
+                    name,
+                    ..Default::default()
+                },
+            );
+        }
+    }
 
     // `TTTextLeft1` may not exist when nothing renders, so it is read defensively.
     let name_at = |s: &mut UiScript, row: i64, reagent: &str| -> String {

@@ -887,6 +887,9 @@ pub const CMSG_GUILD_ROSTER: u16 = 0x0089; // 137
 /// The roster, cut by the sender at `0x8000 - 4` bytes; one field is conditional (see
 /// `super::guild::read_guild_roster`).
 pub const SMSG_GUILD_ROSTER: u16 = 0x008A; // 138
+/// Both ways: our empty ask, and the reply's `i32` of the day's remaining guild-bank withdrawal
+/// (`0x5a4ab0`), -1 unlimited.
+pub const MSG_GUILD_BANK_MONEY_WITHDRAWN: u16 = 0x03FE; // 1022
 pub const CMSG_GUILD_PROMOTE: u16 = 0x008B; // 139
 pub const CMSG_GUILD_DEMOTE: u16 = 0x008C; // 140
 pub const CMSG_GUILD_LEAVE: u16 = 0x008D; // 141

@@ -37,7 +37,7 @@ const AUCTIONEER_AT: [f32; 3] = [-8821.53, 659.886, 97.4645];
 /// right-click route sends `AuctionHello` with no gossip in between.
 const AUCTIONEER_ENTRY: u32 = 8719;
 /// `UNIT_NPC_FLAG_AUCTIONEER` (bit 12).
-const NPC_FLAG_AUCTIONEER: u32 = 0x1000;
+const NPC_FLAG_AUCTIONEER: u32 = crate::target::cursor_mode::npc_flags::AUCTIONEER;
 /// Wider than the interact range, so a slightly-off `.go` landing still finds one; the nearest is
 /// greeted, as several auctioneers stand a few yards apart.
 const SCAN_RANGE: f32 = 12.0;

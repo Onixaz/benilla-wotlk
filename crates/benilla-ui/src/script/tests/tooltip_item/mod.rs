@@ -124,8 +124,6 @@ fn script() -> UiScript {
                 lua,
                 &tt,
                 id,
-                None,
-                None,
                 crate::script::tooltip_item::Sell::Skip,
             )
         })
@@ -206,4 +204,5 @@ fn right_color(s: &mut UiScript, needle: &str) -> [f32; 4] {
 mod bindings;
 mod law;
 mod mechanics;
+mod retrieving;
 mod set;

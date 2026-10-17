@@ -888,6 +888,7 @@ mod tests {
                 names.insert_creature(
                     entry,
                     Some(CreatureRecord {
+                        cursor_name: None,
                         name: String::new(),
                         subname: None,
                         creature_type,

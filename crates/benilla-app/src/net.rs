@@ -1222,37 +1222,42 @@ pub(crate) enum ClientCommand {
     ListInventory {
         guid: u64,
     },
-    /// `CMSG_BUY_ITEM` by template entry, not row; `count` stacks go to the first free slot.
+    /// `CMSG_BUY_ITEM`: the item `entry` at 1-based row `slot`; `count` stacks go to the first
+    /// free slot.
     BuyItem {
         vendor: u64,
         entry: u32,
-        count: u8,
+        slot: u32,
+        count: u32,
     },
     /// `CMSG_BUY_ITEM_IN_SLOT`: a vendor row dropped on a slot. `bag_guid` is the container's, or
     /// the player's own for the backpack and equipment.
     BuyItemInSlot {
         vendor: u64,
         entry: u32,
+        slot: u32,
         bag_guid: u64,
         bag_slot: u8,
-        count: u8,
+        count: u32,
     },
     /// `CMSG_SELL_ITEM`; `count` 0 is the whole stack. Success is silent; a refusal is
     /// `SMSG_SELL_ITEM`'s error shape.
     SellItem {
         vendor: u64,
         item_guid: u64,
-        count: u8,
+        count: u32,
     },
-    /// `CMSG_BUYBACK_ITEM`: `slot` is the absolute player-array buyback slot 69-80.
+    /// `CMSG_BUYBACK_ITEM`: `slot` is the absolute player-array buyback slot 74-85.
     BuybackItem {
         vendor: u64,
         slot: u32,
     },
-    /// `CMSG_REPAIR_ITEM`; `item_guid` 0 repairs everything. No answer packet.
+    /// `CMSG_REPAIR_ITEM`; `item_guid` 0 repairs everything, `guild_bank` from the guild's purse.
+    /// No answer packet.
     RepairItem {
         vendor: u64,
         item_guid: u64,
+        guild_bank: bool,
     },
     /// `CMSG_GMTICKET_CREATE` from `map`/`pos` where we stand; `more_help` is the follow-up to a
     /// GM's answer.
@@ -2014,6 +2019,8 @@ pub(crate) enum ClientCommand {
     GuildDecline,
     /// `CMSG_GUILD_INFO`: founding date and counts.
     GuildInfoRequest,
+    /// `MSG_GUILD_BANK_MONEY_WITHDRAWN`: today's remaining guild-bank withdrawal.
+    GuildBankMoneyWithdrawnRequest,
     /// `CMSG_GUILD_ROSTER`.
     GuildRosterRequest,
     /// `CMSG_GUILD_PROMOTE`.

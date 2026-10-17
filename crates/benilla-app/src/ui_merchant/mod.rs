@@ -8,7 +8,8 @@ use benilla_world::interact::WorldRightPress;
 use bevy::prelude::*;
 
 use benilla_ui::script::{
-    ItemStatsHead, MerchantItem, MerchantState, RepairCosts, ScriptValue, UiScript,
+    CostItem, ExtendedCost, ItemStatsHead, MerchantItem, MerchantState, RepairCosts, ScriptValue,
+    UiScript,
 };
 
 use crate::entities::ItemDisplays;
@@ -20,19 +21,24 @@ use crate::ui_script::{gate, UiFeed, UiInput};
 use crate::ui_session::{close_npc_session_out_of_range, npc_switched, NpcSession};
 use benilla_protocol::messages::BAG_PLAYER_INVENTORY;
 
-/// A vendor row's unlimited `current_count` (vmangos `ItemHandler.cpp:795`), `-1` to Lua.
+/// A vendor row's unlimited `current_count`, `-1` to Lua.
 const STOCK_UNLIMITED: u32 = 0xFFFF_FFFF;
 
-/// `UNIT_NPC_FLAG_REPAIR`, the bit `CanMerchantRepair` tests (`0x4fadb0`).
-const NPC_FLAG_REPAIR: u32 = 0x4000;
+/// `UNIT_NPC_FLAG_REPAIR`, the bit `CanMerchantRepair` tests (`CGMerchantInfo::CanRepair
+/// 0x5845b0`).
+const NPC_FLAG_REPAIR: u32 = 0x1000;
 
-/// The first absolute buyback slot (`BUYBACK_SLOT_START`, slots 69-80).
-const BUYBACK_SLOT_FIRST: u32 = 69;
+/// The first absolute buyback slot, 74-85 (`0x584bb0` stores `0x4b - 1`).
+const BUYBACK_SLOT_FIRST: u32 = 74;
 
 /// `DurabilityCosts.dbc` and `DurabilityQuality.dbc`, the client's repair prices; absent, every
 /// cost shows 0.
 #[derive(Resource)]
 pub(crate) struct RepairTables(pub(crate) benilla_formats::DurabilityTables);
+
+/// `ItemExtendedCost.dbc`, a row's costs beyond copper; absent, no row has an extended cost.
+#[derive(Resource)]
+pub(crate) struct ExtendedCosts(pub(crate) benilla_formats::ItemExtendedCosts);
 
 /// The open vendor and its `SMSG_LIST_INVENTORY` rows, until a close or a disconnect.
 #[derive(Resource, Default)]
@@ -52,12 +58,12 @@ impl MerchantOpen {
         self.vendor.is_some()
     }
 
-    /// The item entry at a 1-based row: `CMSG_BUY_ITEM` buys by entry, not by vendor slot.
-    pub(crate) fn entry_at(&self, index_1based: u32) -> Option<u32> {
+    /// The item entry and the row's own slot at a 1-based row, the pair `CMSG_BUY_ITEM` names.
+    pub(crate) fn row_at(&self, index_1based: u32) -> Option<(u32, u32)> {
         index_1based
             .checked_sub(1)
             .and_then(|i| self.items.get(i as usize))
-            .map(|it| it.entry)
+            .map(|it| (it.entry, it.slot))
     }
 
     /// `SMSG_BUY_ITEM`'s new count for the row at 1-based vendor `slot`; the bought item itself
@@ -68,8 +74,8 @@ impl MerchantOpen {
         }
     }
 
-    /// Zero every row of `entry`, as the reference's `ITEM_ALREADY_SOLD` arm writes 0 (`0x5dcdbf`)
-    /// into each matching row of its 128-row cache (`0x5dcdcd`).
+    /// Zero every row of `entry`, as the reference's `ITEM_ALREADY_SOLD` arm writes 0 into each
+    /// matching row of its 150-row cache (`0x6cdba0`).
     pub(crate) fn sold_out(&mut self, entry: u32) {
         for it in self.items.iter_mut().filter(|it| it.entry == entry) {
             it.current_count = 0;
@@ -126,15 +132,15 @@ impl Plugin for UiMerchantPlugin {
     }
 }
 
-/// The one `BuyResult` code the reference shows nothing for: `0x5dcde7`'s jump table sends 6 to
-/// the handler's `ret`. vmangos never sends it.
+/// The one `BuyResult` code the reference shows nothing for: `0x6cdba0`'s switch sends 6 to the
+/// handler's `ret`.
 const BUY_SILENT: u8 = 6;
 
 /// The message a `SMSG_BUY_FAILED` code shows, from 12340's switch at `0x6cdc23`; its default arm
 /// shows `ERR_ITEM_NOT_FOUND` for 0, 3, 9, 10 and 13 up.
 fn buy_error_key(reason: u8) -> Option<&'static str> {
     Some(match reason {
-        // One arm (`0x5dcdee`) for both; only code 1 also zeroes the row.
+        // One arm for both; only code 1 also zeroes the row.
         buy_result::ITEM_ALREADY_SOLD | buy_result::ITEM_SOLD_OUT => "ERR_VENDOR_SOLD_OUT", // 0x23
         buy_result::NOT_ENOUGH_MONEY => "ERR_NOT_ENOUGH_MONEY", // 0x25, speaks line 0x28
         buy_result::SELLER_DONT_LIKE_YOU => "ERR_VENDOR_HATES_YOU", // 0x22
@@ -164,12 +170,65 @@ fn sell_error_key(reason: u8) -> Option<&'static str> {
     })
 }
 
+/// An item's icon and link once its template answers.
+fn icon_and_link(
+    entry: u32,
+    items: &Items,
+    icons: Option<&ItemDisplays>,
+    commands: &NetCommands,
+) -> (Option<String>, Option<String>) {
+    let template = items.template(entry, 0, commands);
+    let texture = template.and_then(|t| {
+        icons
+            .and_then(|i| i.catalog.get(t.display_info_id))
+            .and_then(|d| d.icon.clone())
+    });
+    (
+        texture,
+        template.map(|t| item_link(entry, &t.name, t.quality)),
+    )
+}
+
+/// A row's `ItemExtendedCost.dbc` record, its required items resolved. A personal-rating demand
+/// passes only through `CheckPersonalAndTeamRating 0x5a37b0`, which needs a team in the bracket;
+/// arena teams are not built, so it fails as for a player in none.
+fn resolve_extended_cost(
+    id: u32,
+    costs: Option<&ExtendedCosts>,
+    items: &Items,
+    icons: Option<&ItemDisplays>,
+    commands: &NetCommands,
+) -> Option<ExtendedCost> {
+    let row = costs?.0.get(id)?;
+    let items = row
+        .items
+        .iter()
+        .filter(|(item, _)| *item != 0)
+        .map(|&(item_id, count)| {
+            let (texture, link) = icon_and_link(item_id, items, icons, commands);
+            CostItem {
+                item_id,
+                count,
+                texture,
+                link,
+            }
+        })
+        .collect();
+    Some(ExtendedCost {
+        honor: row.honor,
+        arena: row.arena,
+        items,
+        rating_met: row.personal_rating == 0,
+    })
+}
+
 /// One wire row as a Lua row: the icon from the wire `display_id` at once, the name and stats once
 /// the item template answers.
 fn resolve_item(
     item: &VendorItem,
     items: &Items,
     icons: Option<&ItemDisplays>,
+    costs: Option<&ExtendedCosts>,
     commands: &NetCommands,
 ) -> MerchantItem {
     let template = items.template(item.entry, 0, commands);
@@ -195,8 +254,7 @@ fn resolve_item(
     } else {
         item.current_count as i32
     };
-    // `GetMerchantItemLink`'s link, built as the reference's `0x52adb0` builds it; a vendor row
-    // has no enchant or random property.
+    // `GetMerchantItemLink`'s link; a vendor row has no enchant or random property.
     let link = template.map(|t| item_link(item.entry, &t.name, t.quality));
     MerchantItem {
         name,
@@ -208,10 +266,11 @@ fn resolve_item(
         stats,
         link,
         max_stack: template.map(|t| t.stackable),
+        extended_cost: resolve_extended_cost(item.extended_cost, costs, items, icons, commands),
     }
 }
 
-/// The occupied buyback slots (0-11) in the reference's display order, oldest first: `0x4fafd0`
+/// The occupied buyback slots (0-11) in the reference's display order, oldest first: `0x584bb0`
 /// takes the slots with a guid and a price and sorts them by timestamp. Entry `i` is
 /// `GetBuybackItemInfo(i + 1)`.
 fn buyback_order(store: &benilla_protocol::ObjectFields) -> Vec<u8> {
@@ -267,17 +326,16 @@ fn resolve_buyback(
         num_available: 0,
         item_id: entry,
         stats,
-        // No link: 1.12 has no `GetBuybackItemLink`, and the buyback click is a bare
-        // `BuybackItem(this:GetID())` (`MerchantFrame.lua:358-361`).
-        link: None,
+        link: template.map(|t| item_link(entry, &t.name, t.quality)),
         // No max stack: `GetMerchantItemMaxStack` indexes the merchant list, and a buyback row
         // is bought whole.
         max_stack: None,
+        extended_cost: None,
     }
 }
 
-/// One item's repair cost, by the reference's `0x4faf30` arithmetic
-/// ([`benilla_formats::DurabilityTables`]), after the price `discount` (`0x4faf8a`).
+/// One item's repair cost, by `CGMerchantInfo::GetRepairCost 0x584b20`'s arithmetic
+/// ([`benilla_formats::DurabilityTables`]), after the price `discount`.
 fn item_repair_cost(
     guid: u64,
     objects: &Objects,
@@ -305,7 +363,7 @@ fn item_repair_cost(
         .repair_cost(points, level, quality, class, subclass, discount)
 }
 
-/// Each damaged carried or banked item's cost (`0x4faf30`), keyed as the bindings take it.
+/// Each damaged carried or banked item's cost (`0x584b20`), keyed as the bindings take it.
 fn repair_costs(
     store: &benilla_protocol::ObjectFields,
     objects: &Objects,
@@ -364,7 +422,37 @@ fn repair_costs(
     costs
 }
 
-/// `GetRepairAllCost`'s sum of the per-item costs (`0x4fbd60`): equipped and bags, never the bank.
+/// The guids `RepairAllItems` (`0x585c90`) and `GetRepairAllCost` (`0x585990`) sweep: equipment
+/// 0-18, the backpack 23-38 and the contents of bags 19-22, never the bank.
+fn carried_item_guids(store: &benilla_protocol::ObjectFields, objects: &Objects) -> Vec<u64> {
+    let mut guids: Vec<u64> = (0..19u8)
+        .filter_map(|i| store.player_inv_slot(i))
+        .chain((0..16u8).filter_map(|i| store.player_pack_slot(i)))
+        .collect();
+    for b in 1..=4u8 {
+        let Some(bag) = store
+            .player_inv_slot(18 + b)
+            .filter(|g| *g != 0)
+            .and_then(|g| objects.object(g))
+        else {
+            continue;
+        };
+        let n = bag.container_num_slots().unwrap_or(0).min(36) as u8;
+        guids.extend((0..n).filter_map(|j| bag.container_slot(j)));
+    }
+    guids.retain(|g| *g != 0);
+    guids
+}
+
+/// Whether a swept item is below its maximum durability, `GetRepairAllCost`'s second return.
+fn any_damaged(guids: &[u64], objects: &Objects) -> bool {
+    guids.iter().filter_map(|&g| objects.object(g)).any(|o| {
+        let max = o.item_max_durability().unwrap_or(0);
+        max != 0 && o.item_durability().unwrap_or(0) < max
+    })
+}
+
+/// `GetRepairAllCost`'s sum of the per-item costs (`0x585990`): equipped and bags, never the bank.
 fn repair_all_cost(costs: &RepairCosts) -> u32 {
     let carried = costs
         .bags
@@ -412,10 +500,10 @@ pub(crate) struct RepairPurse<'w, 's> {
 }
 
 impl RepairPurse<'_, '_> {
-    /// The purse test of the four item-click repair arms (`0x4f9cc8`–`0x4f9ccf`) and of
-    /// `RepairAllItems` (`0x4fc08e`): the `0x4faf30` costs of `guids`, summed in a u32, above
-    /// `PLAYER_FIELD_COINAGE` (unsigned, so an equal cost passes) raise `ERR_NOT_ENOUGH_MONEY`
-    /// (`0x496720(0x25)`, speech line 0x28) and answer `true`, and the caller sends nothing.
+    /// The purse test of the four item-click repair arms and of `RepairAllItems` (`0x585c90`):
+    /// the `0x584b20` costs of `guids`, summed in a u32, above `PLAYER_FIELD_COINAGE` (unsigned, so
+    /// an equal cost passes) raise `ERR_NOT_ENOUGH_MONEY` and answer `true`, and the caller sends
+    /// nothing.
     pub(crate) fn refuses(
         &mut self,
         script: &mut UiScript,
@@ -423,7 +511,7 @@ impl RepairPurse<'_, '_> {
         player: &ObjectStore,
         guids: impl IntoIterator<Item = u64>,
     ) -> bool {
-        // `0x4faf30` keeps the full price unless it resolves the vendor's unit.
+        // `0x584b20` keeps the full price unless it resolves the vendor's unit.
         let discount = vendor_store(open, &self.units).map_or(0.0, |vendor| {
             crate::target::vendor_price_discount(
                 self.reactions.factions.as_deref(),
@@ -456,7 +544,7 @@ struct RepairFeedMemo {
     templates: gate::Watch,
     discount: gate::Watch,
     repairer: gate::Watch,
-    pushed: Option<(u32, RepairCosts)>,
+    pushed: Option<(u32, bool, RepairCosts)>,
 }
 
 /// Push each item's repair cost, and `GetRepairAllCost`'s total while a repairer is open.
@@ -480,7 +568,7 @@ fn feed_repair_costs(
         return;
     };
     let vendor = vendor_store(&open, &units);
-    // The open vendor's price discount (`0x4faf8a`), 0 with none open.
+    // The open vendor's price discount, 0 with none open.
     let discount = vendor.map_or(0.0, |vendor| {
         crate::target::vendor_price_discount(
             reactions.factions.as_deref(),
@@ -524,15 +612,17 @@ fn feed_repair_costs(
         repair_costs(&player.0, &inv.objects, &items, t, &commands, discount)
     });
     let total = if repairer { repair_all_cost(&costs) } else { 0 };
+    let damaged =
+        repairer && any_damaged(&carried_item_guids(&player.0, &inv.objects), &inv.objects);
     if memo
         .pushed
         .as_ref()
-        .is_none_or(|(t, c)| *t != total || *c != costs)
+        .is_none_or(|(t, d, c)| *t != total || *d != damaged || *c != costs)
     {
         gate.audit("feed_repair_costs", "the repair costs");
-        script.set_repair_all_cost(total);
+        script.set_repair_all_cost(total, damaged);
         script.set_repair_costs(costs.clone());
-        memo.pushed = Some((total, costs));
+        memo.pushed = Some((total, damaged, costs));
     }
 }
 
@@ -541,6 +631,7 @@ fn snapshot(
     objects: &Objects,
     items: &Items,
     icons: Option<&ItemDisplays>,
+    costs: Option<&ExtendedCosts>,
     commands: &NetCommands,
     player: Option<&benilla_protocol::ObjectFields>,
     vendor_npc_flags: u32,
@@ -558,7 +649,7 @@ fn snapshot(
         items: open
             .items
             .iter()
-            .map(|it| resolve_item(it, items, icons, commands))
+            .map(|it| resolve_item(it, items, icons, costs, commands))
             .collect(),
         buyback,
         can_repair: vendor_npc_flags & NPC_FLAG_REPAIR != 0,
@@ -573,6 +664,7 @@ fn feed_merchant(
     objects: Objects,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
+    costs: Option<Res<ExtendedCosts>>,
     commands: Res<NetCommands>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     units: Query<(&Guid, &ObjectStore), Without<SelfPlayer>>,
@@ -624,13 +716,13 @@ fn feed_merchant(
         &objects,
         &items,
         icons.as_deref(),
+        costs.as_deref(),
         &commands,
         player,
         vendor_npc_flags(&open, &units),
     );
     // The vendor's name rides `MERCHANT_SHOW` and `MERCHANT_UPDATE` as arg1, and its landing alone
-    // re-fires `MERCHANT_UPDATE`; the reference fires both bare (`0x4fad92`, `0x4facaa`), and
-    // stock `MerchantFrame.lua:67` titles with `UnitName("NPC")`.
+    // re-fires `MERCHANT_UPDATE`; stock `MerchantFrame.lua` titles with `UnitName("NPC")`.
     let vendor_name = open
         .vendor
         .and_then(|g| names.resolve(g, &commands).map(str::to_string));
@@ -675,9 +767,10 @@ impl NpcSession for MerchantOpen {
     }
 }
 
-/// Drain the Lua intents: a buy sends `CMSG_BUY_ITEM` by item entry, a buyback
-/// `CMSG_BUYBACK_ITEM` with the absolute slot (69-80), a repair-all `CMSG_REPAIR_ITEM` with guid
-/// 0 when the purse covers the worn gear, and a close clears locally, as there is no close packet.
+/// Drain the Lua intents: a buy sends `CMSG_BUY_ITEM` by item entry and row slot, a buyback
+/// `CMSG_BUYBACK_ITEM` with the absolute slot (74-85), a repair-all `CMSG_REPAIR_ITEM` with guid
+/// 0 when the guild pays or the purse covers the carried gear, and a close clears locally, as there
+/// is no close packet.
 fn drain_merchant(
     script: Option<NonSendMut<UiScript>>,
     mut open: ResMut<MerchantOpen>,
@@ -710,39 +803,39 @@ fn drain_merchant(
             None => debug!("ui_merchant: BuybackItem({index}) out of range — ignored"),
         }
     }
-    if script.take_repair_all() {
+    if let Some(guild_bank) = script.take_repair_all() {
         if let (Some(vendor), Some(me)) = (open.vendor, self_store) {
-            // `RepairAllItems` (`0x4fbfe0`) prices only the equipped slots 0-18 for its purse test
-            // (`0x4fc026`–`0x4fc063`), not the bags `GetRepairAllCost` also sweeps.
-            let worn = (0..19u8).filter_map(|i| me.0.player_inv_slot(i));
-            if !purse.refuses(&mut script, &open, me, worn) {
-                debug!("ui_merchant: repair all");
+            // `RepairAllItems` (`0x585c90`) prices the carried gear for its purse test, which the
+            // guild-bank flag skips.
+            let carried = carried_item_guids(&me.0, &objects);
+            if guild_bank || !purse.refuses(&mut script, &open, me, carried) {
+                debug!("ui_merchant: repair all (guild bank {guild_bank})");
                 let _ = commands.0.send(ClientCommand::RepairItem {
                     vendor,
                     item_guid: 0,
+                    guild_bank,
                 });
             }
         }
     }
     for (index, quantity) in script.take_merchant_buys() {
         let Some(vendor) = open.vendor else { continue };
-        match open.entry_at(index) {
-            Some(entry) => {
-                // Stack count is a u8 on the wire (`CMSG_BUY_ITEM`); clamp the Lua quantity.
-                let count = quantity.clamp(1, u32::from(u8::MAX)) as u8;
-                debug!("ui_merchant: buy row {index} (entry {entry} ×{count})");
+        match open.row_at(index) {
+            Some((entry, slot)) => {
+                debug!("ui_merchant: buy row {index} (entry {entry}, slot {slot}, ×{quantity})");
                 let _ = commands.0.send(ClientCommand::BuyItem {
                     vendor,
                     entry,
-                    count,
+                    slot,
+                    count: quantity,
                 });
             }
             None => debug!("ui_merchant: BuyMerchantItem({index}) out of range — ignored"),
         }
     }
     // `PickupMerchantItem`'s sell arm, a bag item dropped on the window, sold by its item guid so
-    // an emptied slot is a no-op. It runs before the close below, as `0x4fb760`'s sell arm runs
-    // before its vendor check (`0x4fb7f7`), so a drop on a closing window still sells.
+    // an emptied slot is a no-op. It runs before the close below, as `0x5853a0`'s sell arm runs
+    // before its vendor check, so a drop on a closing window still sells.
     for (bag, slot) in script.take_merchant_cursor_sells() {
         let Some(vendor) = open.vendor else { continue };
         let slot0 = u8::try_from(slot.saturating_sub(1)).unwrap_or(0);
@@ -760,8 +853,12 @@ fn drain_merchant(
     }
     // A held vendor row dropped into a slot: `CMSG_BUY_ITEM_IN_SLOT` with count 1, the
     // reference's fixed count on all three drop paths.
-    for (bag, slot, entry) in script.take_merchant_slot_buys() {
+    for (bag, slot, row) in script.take_merchant_slot_buys() {
         let Some(vendor) = open.vendor else { continue };
+        let Some((entry, row_slot)) = open.row_at(row) else {
+            debug!("ui_merchant: slot buy of a row no longer listed ({row}) — ignored");
+            continue;
+        };
         let (Some(store), Some((bag_index, bag_slot))) = (self_store, wire_pos(bag, slot)) else {
             debug!("ui_merchant: slot buy to an unaddressable slot ({bag}, {slot}) — ignored");
             continue;
@@ -782,6 +879,7 @@ fn drain_merchant(
                 let _ = commands.0.send(ClientCommand::BuyItemInSlot {
                     vendor,
                     entry,
+                    slot: row_slot,
                     bag_guid,
                     bag_slot,
                     count: 1,
@@ -796,9 +894,9 @@ fn drain_merchant(
     }
 }
 
-/// A right mouse-down in the world ends repair mode: the WorldFrame hook `0x492c20` resets the
-/// Repair base mode to Point (`0x492c68`) and consumes nothing. A held payload pre-empts the hook
-/// (`0x492b50`), and a press over a UI frame never reaches it.
+/// A right mouse-down in the world ends repair mode: the WorldFrame hook resets the Repair base mode
+/// to Point and consumes nothing. A held payload pre-empts the hook, and a press over a UI frame
+/// never reaches it.
 pub(crate) fn end_repair_mode_on_right_press(
     mut presses: MessageReader<WorldRightPress>,
     payload_held: Res<crate::ui_script::CursorPayloadHeld>,
@@ -1094,6 +1192,16 @@ mod tests {
         slot_field: u16,
         money: u32,
     ) -> (Vec<ClientCommand>, Vec<String>, Vec<&'static str>) {
+        repair_all_with(npc_flags, slot_field, money, "RepairAllItems()")
+    }
+
+    /// [`repair_all`] with the Lua call `call`.
+    fn repair_all_with(
+        npc_flags: u32,
+        slot_field: u16,
+        money: u32,
+        call: &str,
+    ) -> (Vec<ClientCommand>, Vec<String>, Vec<&'static str>) {
         use benilla_protocol::field::FIELD_UNIT_NPC_FLAGS;
         use benilla_protocol::ObjectFields;
         use bevy::ecs::system::RunSystemOnce;
@@ -1127,7 +1235,7 @@ mod tests {
         while rx.try_recv().is_ok() {} // the feed's name query for the vendor
         app.world()
             .non_send_resource::<UiScript>()
-            .run("RepairAllItems()")
+            .run(call)
             .unwrap();
         app.world_mut().run_system_once(drain_merchant).unwrap();
         let sent = rx.try_iter().collect();
@@ -1136,8 +1244,8 @@ mod tests {
     }
 
     /// At a vendor that does not repair, `RepairAllItems` sends nothing and says nothing: it
-    /// returns (`0x4fbff0`) unless `0x4fadb0` finds the repair flag on the open merchant, before
-    /// its purse test. The same worn sword at a repairer goes out.
+    /// returns unless the open merchant carries the repair flag (`0x585c90`), before its purse
+    /// test. The same worn sword at a repairer goes out.
     #[test]
     fn repair_all_does_nothing_at_a_vendor_that_does_not_repair() {
         use crate::target::cursor_mode::npc_flags::VENDOR as NPC_FLAG_VENDOR;
@@ -1159,50 +1267,59 @@ mod tests {
             sent.as_slice(),
             [ClientCommand::RepairItem {
                 vendor: VENDOR,
-                item_guid: 0
+                item_guid: 0,
+                guild_bank: false,
             }]
         ));
     }
 
-    /// `RepairAllItems` prices only the equipped slots for its purse test (`0x4fc026`–`0x4fc063`,
-    /// `0x4fc08e`): the sword worn and over the purse is refused with `ERR_NOT_ENOUGH_MONEY` and
-    /// no send; the same sword in the backpack, which `GetRepairAllCost` would count, leaves a worn
-    /// total of 0 and the repair-all goes out.
+    /// `RepairAllItems` prices the equipment, the backpack and the bags for its purse test
+    /// (`0x585c90`): the sword worn or in the backpack and over the purse is refused with
+    /// `ERR_NOT_ENOUGH_MONEY` and no send.
     #[test]
-    fn repair_all_tests_the_purse_against_the_worn_gear_alone() {
+    fn repair_all_tests_the_purse_against_the_carried_gear() {
         use benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD;
         use purse_fixture::*;
 
         let (_, discounted) = sword_prices();
+        // The main hand (slot 15), then backpack slot 1 (inventory slot 23).
+        for slot in [15, 23] {
+            let field = FIELD_PLAYER_INV_SLOT_HEAD + 2 * slot;
+            let (sent, lines, rows) = repair_all(NPC_FLAG_REPAIR, field, discounted - 1);
+            assert!(
+                sent.is_empty(),
+                "slot {slot}, one copper short: nothing goes out"
+            );
+            assert_eq!(lines, [NOT_ENOUGH_MONEY]);
+            assert_eq!(rows, ["ERR_NOT_ENOUGH_MONEY"]);
+        }
+    }
 
-        // The main hand (slot 15).
+    /// `RepairAllItems(1)`, the guild-bank button's call, skips the purse test and sends the
+    /// guild-bank byte (`0x585ef8`).
+    #[test]
+    fn a_guild_bank_repair_skips_the_purse_and_sends_the_flag() {
+        use benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD;
+        use purse_fixture::*;
+
         let main_hand = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15;
-        let (sent, lines, rows) = repair_all(NPC_FLAG_REPAIR, main_hand, discounted - 1);
-        assert!(sent.is_empty(), "worn, one copper short: nothing goes out");
-        assert_eq!(lines, [NOT_ENOUGH_MONEY]);
-        assert_eq!(
-            rows,
-            ["ERR_NOT_ENOUGH_MONEY"],
-            "the row that speaks line 0x28"
-        );
-
-        // Backpack slot 1, inventory slot 23.
-        let backpack_1 = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 23;
-        let (sent, lines, rows) = repair_all(NPC_FLAG_REPAIR, backpack_1, discounted - 1);
+        let (sent, lines, rows) =
+            repair_all_with(NPC_FLAG_REPAIR, main_hand, 0, "RepairAllItems(1)");
         assert!(
             matches!(
                 sent.as_slice(),
                 [ClientCommand::RepairItem {
                     vendor: VENDOR,
-                    item_guid: 0
+                    item_guid: 0,
+                    guild_bank: true,
                 }]
             ),
-            "the bag's {discounted} is not in the purse test"
+            "{sent:?}"
         );
         assert!(lines.is_empty() && rows.is_empty());
     }
 
-    /// An item's cost is discounted at the vendor and full once it closes (`0x4faf30`).
+    /// An item's cost is discounted at the vendor and full once it closes (`0x584b20`).
     #[test]
     fn each_items_cost_takes_the_open_vendors_discount() {
         use benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD;
@@ -1242,7 +1359,7 @@ mod tests {
     }
 
     /// Each gate input alone reopens the feed, through `App::update` so the memo persists; a bank
-    /// item is priced but left out of the total (`0x4fbd60`).
+    /// item is priced but left out of the total (`0x585990`).
     #[test]
     fn each_input_alone_reopens_the_repair_cost_gate() {
         use benilla_protocol::field::{FIELD_PLAYER_INV_SLOT_HEAD, FIELD_UNIT_FLAGS};
@@ -1346,6 +1463,7 @@ mod tests {
             price: 500,
             max_durability: 0,
             buy_count: 1,
+            extended_cost: 0,
         }
     }
 
@@ -1440,16 +1558,65 @@ mod tests {
         );
     }
 
+    /// A 1-based row maps to its entry and its own wire slot, the pair `CMSG_BUY_ITEM` names.
     #[test]
-    fn entry_at_maps_the_one_based_row() {
+    fn row_at_maps_the_one_based_row() {
         let mut open = MerchantOpen::default();
         assert!(!open.is_open());
-        open.open(0x42, vec![row(159, 1, STOCK_UNLIMITED), row(4540, 2, 5)]);
+        open.open(0x42, vec![row(159, 1, STOCK_UNLIMITED), row(4540, 7, 5)]);
         assert!(open.is_open());
-        assert_eq!(open.entry_at(1), Some(159));
-        assert_eq!(open.entry_at(2), Some(4540));
-        assert_eq!(open.entry_at(3), None); // out of range
-        assert_eq!(open.entry_at(0), None); // 0 has no row (1-based)
+        assert_eq!(open.row_at(1), Some((159, 1)));
+        assert_eq!(open.row_at(2), Some((4540, 7)));
+        assert_eq!(open.row_at(3), None); // out of range
+        assert_eq!(open.row_at(0), None); // 0 has no row (1-based)
+    }
+
+    /// A row's extended cost resolves from `ItemExtendedCost.dbc`: points, the non-zero items in
+    /// record order, and a personal-rating demand that fails with no arena team.
+    #[test]
+    fn an_extended_cost_row_resolves_its_record() {
+        use benilla_formats::{ExtendedCostRow, ItemExtendedCosts};
+        let items = Items::default();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let commands = NetCommands(tx);
+        let costs = ExtendedCosts(ItemExtendedCosts::from_iter([
+            (
+                2276,
+                ExtendedCostRow {
+                    honor: 7000,
+                    items: [(0, 0), (20560, 3), (0, 0), (0, 0), (0, 0)],
+                    ..Default::default()
+                },
+            ),
+            (
+                2277,
+                ExtendedCostRow {
+                    arena: 150,
+                    personal_rating: 1800,
+                    ..Default::default()
+                },
+            ),
+        ]));
+        let mut token = row(42133, 1, STOCK_UNLIMITED);
+        token.extended_cost = 2276;
+        let cost = resolve_item(&token, &items, None, Some(&costs), &commands)
+            .extended_cost
+            .expect("the record");
+        assert_eq!((cost.honor, cost.arena), (7000, 0));
+        assert_eq!(cost.items.len(), 1);
+        assert_eq!((cost.items[0].item_id, cost.items[0].count), (20560, 3));
+        assert!(cost.rating_met);
+
+        token.extended_cost = 2277;
+        let rated = resolve_item(&token, &items, None, Some(&costs), &commands);
+        assert!(!rated.extended_cost.expect("the record").rating_met);
+
+        token.extended_cost = 9;
+        assert_eq!(
+            resolve_item(&token, &items, None, Some(&costs), &commands).extended_cost,
+            None,
+            "an id with no record"
+        );
     }
 
     #[test]
@@ -1458,10 +1625,10 @@ mod tests {
         let (tx, _rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
         // Unlimited stock is `numAvailable` -1; a finite count passes through.
-        let unlimited = resolve_item(&row(159, 1, STOCK_UNLIMITED), &items, None, &commands);
+        let unlimited = resolve_item(&row(159, 1, STOCK_UNLIMITED), &items, None, None, &commands);
         assert_eq!(unlimited.num_available, -1);
         assert_eq!(unlimited.item_id, 159);
-        let finite = resolve_item(&row(4540, 2, 5), &items, None, &commands);
+        let finite = resolve_item(&row(4540, 2, 5), &items, None, None, &commands);
         assert_eq!(finite.num_available, 5);
         // No template answer yet: no name or stats, the rest present.
         assert!(finite.name.is_none());
@@ -1532,7 +1699,7 @@ mod tests {
                 totem_category: 0,
             }),
         );
-        let resolved = resolve_item(&row(2129, 1, 3), &items, None, &commands);
+        let resolved = resolve_item(&row(2129, 1, 3), &items, None, None, &commands);
         let stats = resolved.stats.expect("template answered → stats present");
         assert_eq!(
             (

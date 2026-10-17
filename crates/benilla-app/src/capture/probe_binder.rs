@@ -36,7 +36,7 @@ const INNKEEPER_MAP: u32 = 1;
 /// Her creature template entry, the primary identity check.
 const INNKEEPER_ENTRY: u32 = 6736;
 /// `UNIT_NPC_FLAG_INNKEEPER` on 1.12, the scan's fallback identity check.
-const NPC_FLAG_INNKEEPER: u32 = 0x80;
+const NPC_FLAG_INNKEEPER: u32 = crate::target::cursor_mode::npc_flags::INNKEEPER;
 /// The wire `GOSSIP_ICON` byte every `GOSSIP_OPTION_INNKEEPER` row sends.
 const ICON_INNKEEPER: u8 = 5;
 /// The type string [`crate::ui_gossip`]'s table must produce for [`ICON_INNKEEPER`].

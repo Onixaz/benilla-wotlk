@@ -303,10 +303,9 @@ pub fn parse_server_with_tail(opcode: u16, body: &[u8]) -> io::Result<(ServerPac
 /// The opcodes whose 3.3.5a body is known to differ from the layout their arm reads and has no
 /// 3.3.5a decoder yet: each failed or left bytes unread against AzerothCore, and
 /// `SMSG_COMPRESSED_MOVES`, which AzerothCore never sends, frames its records unverified.
-const UNDECODED: [u16; 4] = [
+const UNDECODED: [u16; 3] = [
     opcode::SMSG_INIT_WORLD_STATES,
     opcode::SMSG_FRIEND_LIST,
-    opcode::SMSG_GUILD_ROSTER,
     opcode::SMSG_COMPRESSED_MOVES,
 ];
 
@@ -1038,8 +1037,16 @@ fn parse_server_body(
             ServerPacket::NpcText { text_id, blocks }
         }
         opcode::SMSG_LIST_INVENTORY => {
-            let (vendor, items) = vendor::read_list_inventory(&mut r)?;
-            ServerPacket::VendorList { vendor, items }
+            let vendor::VendorList {
+                vendor,
+                items,
+                error,
+            } = vendor::read_list_inventory(&mut r)?;
+            ServerPacket::VendorList {
+                vendor,
+                items,
+                error,
+            }
         }
         opcode::SMSG_BUY_ITEM => {
             let (vendor, slot, new_count, purchase_count) = vendor::read_buy_item(&mut r)?;
@@ -1287,33 +1294,45 @@ fn parse_server_body(
                     info: None,
                 }
             } else {
+                // `CreatureStats::Unpack 0x98d4c0`: four names, the subname, the cursor name, ten
+                // `u32`s, two `f32`s, the leader byte, six quest items and the movement id.
                 let name = read_cstring(&mut r)?;
                 for _ in 0..3 {
-                    let _ = read_cstring(&mut r)?; // name2..name4, always empty in 5875
+                    let _ = read_cstring(&mut r)?;
                 }
                 let subname = read_cstring(&mut r)?;
-                // `HandleCreatureQueryOpcode`: seven `u32`s (type_flags, type, pet_family, rank,
-                // unk, pet_spell_list_id, display_id), then civilian and racial_leader as `u8`s.
+                let cursor_name = read_cstring(&mut r)?;
                 let type_flags = read_u32_le(&mut r)?;
                 let creature_type = read_u32_le(&mut r)?;
                 let pet_family = read_u32_le(&mut r)?;
                 let rank = read_u32_le(&mut r)?;
-                let _unk = read_u32_le(&mut r)?;
-                let _pet_spell_list = read_u32_le(&mut r)?;
+                let _kill_credits = [read_u32_le(&mut r)?, read_u32_le(&mut r)?];
                 let display_id = read_u32_le(&mut r)?;
-                let civilian = read_u8(&mut r)? != 0;
+                let _other_display_ids = [
+                    read_u32_le(&mut r)?,
+                    read_u32_le(&mut r)?,
+                    read_u32_le(&mut r)?,
+                ];
+                let _health_mod = read_f32_le(&mut r)?;
+                let _power_mod = read_f32_le(&mut r)?;
                 let racial_leader = read_u8(&mut r)? != 0;
+                for _ in 0..6 {
+                    let _quest_item = read_u32_le(&mut r)?;
+                }
+                let _movement_id = read_u32_le(&mut r)?;
                 ServerPacket::CreatureQueryResponse {
                     entry,
                     info: Some(CreatureQueryInfo {
                         name,
                         subname,
+                        cursor_name,
                         creature_type,
                         pet_family,
                         rank,
                         type_flags,
                         display_id,
-                        civilian,
+                        // The 3.3.5a record has no civilian byte.
+                        civilian: false,
                         racial_leader,
                     }),
                 }
@@ -1516,6 +1535,9 @@ fn parse_server_body(
             name: guild::read_guild_decline(&mut r)?,
         },
         opcode::SMSG_GUILD_INFO => ServerPacket::GuildInfo(guild::read_guild_info(&mut r)?),
+        opcode::MSG_GUILD_BANK_MONEY_WITHDRAWN => ServerPacket::GuildBankWithdrawMoney {
+            remaining: read_u32_le(&mut r)? as i32,
+        },
         // Guild founding; the two `MSG_` opcodes read a different body from the one they write.
         opcode::SMSG_PETITION_SHOWLIST => {
             ServerPacket::PetitionShowList(petition::read_petition_show_list(&mut r)?)

@@ -299,6 +299,100 @@ fn guild_event_trailing_guid_rides_on_the_event_id() {
     }
 }
 
+/// `SMSG_GUILD_ROSTER` (`0x5cc5d0`): each rank is a 56-byte record (rights, gold per day, six tab
+/// pairs) and each member carries a third `u8` after level and class; the float rides only on an
+/// offline member.
+#[test]
+fn guild_roster_reads_the_3_3_5a_records() {
+    use benilla_protocol::messages::GuildRankBank;
+    let mut body = Vec::new();
+    body.extend_from_slice(&2u32.to_le_bytes()); // members
+    body.extend_from_slice(b"Raid at 8\0Info\0");
+    body.extend_from_slice(&2u32.to_le_bytes()); // ranks
+    for (rights, gold) in [(0x000F_F1FFu32, 0xFFFF_FFFFu32), (0x0004_0043, 5000)] {
+        body.extend_from_slice(&rights.to_le_bytes());
+        body.extend_from_slice(&gold.to_le_bytes());
+        for tab in 0..6u32 {
+            body.extend_from_slice(&(tab + 1).to_le_bytes());
+            body.extend_from_slice(&(tab * 10).to_le_bytes());
+        }
+    }
+    // Online: no float.
+    body.extend_from_slice(&0x11u64.to_le_bytes());
+    body.push(1);
+    body.extend_from_slice(b"Alice\0");
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&[80, 2, 1]);
+    body.extend_from_slice(&12u32.to_le_bytes());
+    body.extend_from_slice(b"pub\0off\0");
+    // Offline: the float follows the zone.
+    body.extend_from_slice(&0x22u64.to_le_bytes());
+    body.push(0);
+    body.extend_from_slice(b"Bob\0");
+    body.extend_from_slice(&1u32.to_le_bytes());
+    body.extend_from_slice(&[10, 1, 0]);
+    body.extend_from_slice(&40u32.to_le_bytes());
+    body.extend_from_slice(&1.5f32.to_le_bytes());
+    body.extend_from_slice(b"\0\0");
+
+    let (packet, tail) =
+        messages::parse_server_with_tail(opcode::SMSG_GUILD_ROSTER, &body).unwrap();
+    assert_eq!(tail, 0);
+    let ServerPacket::GuildRoster(roster) = packet else {
+        panic!("expected GuildRoster, got {}", packet.name());
+    };
+    assert_eq!(
+        (roster.motd.as_str(), roster.info.as_str()),
+        ("Raid at 8", "Info")
+    );
+    assert_eq!(roster.rank_rights, vec![0x000F_F1FF, 0x0004_0043]);
+    assert_eq!(
+        roster.rank_bank[1],
+        GuildRankBank {
+            gold_per_day: 5000,
+            tabs: [(1, 0), (2, 10), (3, 20), (4, 30), (5, 40), (6, 50)],
+        }
+    );
+    let [alice, bob] = roster.members.as_slice() else {
+        panic!("two members, got {}", roster.members.len());
+    };
+    assert_eq!(
+        (alice.level, alice.class, alice.gender, alice.zone),
+        (80, 2, 1, 12)
+    );
+    assert_eq!(
+        (alice.public_note.as_str(), alice.officer_note.as_str()),
+        ("pub", "off")
+    );
+    assert_eq!((bob.rank_id, bob.zone, bob.last_online_days), (1, 40, 1.5));
+}
+
+/// `GE_BANK_MONEY_SET`'s parameter is the bank's copper in hex (`0x6d9758`).
+#[test]
+fn the_bank_money_event_parameter_is_hex_copper() {
+    assert_eq!(
+        messages::guild_bank_money_param("00000000000F4240"),
+        Some(1_000_000)
+    );
+    assert_eq!(messages::guild_bank_money_param("not money"), None);
+}
+
+/// `MSG_GUILD_BANK_MONEY_WITHDRAWN` (`0x5a4ab0`): the reply is one signed `u32`, and our ask is
+/// empty.
+#[test]
+fn guild_bank_money_withdrawn_wire() {
+    assert!(messages::guild_bank_money_withdrawn().is_empty());
+    let packet = messages::parse_server(
+        opcode::MSG_GUILD_BANK_MONEY_WITHDRAWN,
+        &(-1i32).to_le_bytes(),
+    )
+    .unwrap();
+    assert!(matches!(
+        decode(packet).as_slice(),
+        [SessionEvent::GuildBankWithdrawMoney { remaining: -1 }]
+    ));
+}
+
 /// `SMSG_GUILD_COMMAND_RESULT` (Server/Packets/Guild.cpp:96-101): `u32` command, a cstring in the
 /// middle, `u32` result.
 #[test]

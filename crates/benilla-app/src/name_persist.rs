@@ -193,6 +193,7 @@ mod tests {
         on_disk.insert_creature(
             CREATURE_ENTRY,
             Some(crate::names::CreatureRecord {
+                cursor_name: None,
                 name: "Stormwind Guard".into(),
                 subname: None,
                 creature_type: 7,

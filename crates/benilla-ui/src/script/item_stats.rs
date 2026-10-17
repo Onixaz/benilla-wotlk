@@ -202,9 +202,12 @@ pub struct ItemSetView {
 impl super::UiScript {
     /// Stores or replaces an item's template view, clearing its ask.
     pub fn set_item_template(&mut self, item_id: u32, view: ItemTemplateView) {
-        let mut model = self.model_mut();
-        model.item_stat_asks.remove(&item_id);
-        model.item_templates.insert(item_id, view);
+        {
+            let mut model = self.model_mut();
+            model.item_stat_asks.remove(&item_id);
+            model.item_templates.insert(item_id, view);
+        }
+        self.answer_item_waits(|m| m.items.contains(&item_id));
     }
 
     /// Asks for the templates of `ids` the store lacks, for the trade-skill and craft lists,
@@ -225,9 +228,12 @@ impl super::UiScript {
 
     /// Stores or replaces a set's view, re-pushed as member names resolve.
     pub fn set_item_set(&mut self, set_id: u32, view: ItemSetView) {
-        let mut model = self.model_mut();
-        model.item_set_asks.remove(&set_id);
-        model.item_sets.insert(set_id, view);
+        {
+            let mut model = self.model_mut();
+            model.item_set_asks.remove(&set_id);
+            model.item_sets.insert(set_id, view);
+        }
+        self.answer_item_waits(|m| m.sets.contains(&set_id));
     }
 
     /// Drains the set ids the renderer asked for that the store did not hold.

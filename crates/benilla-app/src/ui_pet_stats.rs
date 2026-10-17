@@ -299,6 +299,7 @@ mod tests {
         names.insert_creature(
             entry,
             Some(crate::names::CreatureRecord {
+                cursor_name: None,
                 name: "Snarl".into(),
                 subname: None,
                 creature_type: 1,

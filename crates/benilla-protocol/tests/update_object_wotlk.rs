@@ -202,7 +202,7 @@ fn a_3_3_5a_world_entry_update_decodes_into_the_shared_events() {
         [1.0, 2.0, 3.0]
     );
     assert_eq!(transport.orientation, 0.25);
-    assert_eq!(fields.unit_npc_flags(), 0x4); // a vendor
+    assert_eq!(fields.unit_npc_flags(), 0x80); // a vendor, in 3.3.5a bits
     assert_eq!(fields.unit_health(), Some(100));
 
     let SessionEvent::ObjectCreate {
@@ -296,9 +296,7 @@ fn a_3_3_5a_move_relay_carries_its_pitch_and_1_12_1_flags() {
 
 #[test]
 fn a_3_3_5a_body_with_no_decoder_yet_is_refused_not_read_as_1_12_1() {
-    for op in [opcode::SMSG_GUILD_ROSTER, opcode::SMSG_FRIEND_LIST] {
-        assert!(messages::parse_server_with_tail(op, &[0; 64]).is_err());
-    }
+    assert!(messages::parse_server_with_tail(opcode::SMSG_FRIEND_LIST, &[0; 64]).is_err());
 }
 
 #[test]

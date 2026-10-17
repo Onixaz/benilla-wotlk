@@ -558,11 +558,11 @@ impl WorldSession {
         )
     }
 
-    /// Buy from a vendor (`CMSG_BUY_ITEM`); `entry` is the item template, not the row's `muid`.
-    pub fn buy_item(&mut self, vendor_guid: u64, entry: u32, count: u8) -> Result<()> {
+    /// Buy from a vendor (`CMSG_BUY_ITEM`): the item `entry` at 1-based row `slot`.
+    pub fn buy_item(&mut self, vendor_guid: u64, entry: u32, slot: u32, count: u32) -> Result<()> {
         self.send(
             opcode::CMSG_BUY_ITEM,
-            &messages::buy_item(vendor_guid, entry, count),
+            &messages::buy_item(vendor_guid, entry, slot, count),
         )
     }
 
@@ -571,25 +571,26 @@ impl WorldSession {
         &mut self,
         vendor_guid: u64,
         entry: u32,
+        slot: u32,
         bag_guid: u64,
         bag_slot: u8,
-        count: u8,
+        count: u32,
     ) -> Result<()> {
         self.send(
             opcode::CMSG_BUY_ITEM_IN_SLOT,
-            &messages::buy_item_in_slot(vendor_guid, entry, bag_guid, bag_slot, count),
+            &messages::buy_item_in_slot(vendor_guid, entry, slot, bag_guid, bag_slot, count),
         )
     }
 
     /// Sell an item to a vendor (`CMSG_SELL_ITEM`); `count` 0 sells the whole stack.
-    pub fn sell_item(&mut self, vendor_guid: u64, item_guid: u64, count: u8) -> Result<()> {
+    pub fn sell_item(&mut self, vendor_guid: u64, item_guid: u64, count: u32) -> Result<()> {
         self.send(
             opcode::CMSG_SELL_ITEM,
             &messages::sell_item(vendor_guid, item_guid, count),
         )
     }
 
-    /// Buy a sold item back (`CMSG_BUYBACK_ITEM`); `slot` is the absolute buyback slot 69-80.
+    /// Buy a sold item back (`CMSG_BUYBACK_ITEM`); `slot` is the absolute buyback slot 74-85.
     pub fn buyback_item(&mut self, vendor_guid: u64, slot: u32) -> Result<()> {
         self.send(
             opcode::CMSG_BUYBACK_ITEM,
@@ -598,10 +599,15 @@ impl WorldSession {
     }
 
     /// Repair at a vendor (`CMSG_REPAIR_ITEM`); `item_guid` 0 repairs everything.
-    pub fn repair_item(&mut self, vendor_guid: u64, item_guid: u64) -> Result<()> {
+    pub fn repair_item(
+        &mut self,
+        vendor_guid: u64,
+        item_guid: u64,
+        guild_bank: bool,
+    ) -> Result<()> {
         self.send(
             opcode::CMSG_REPAIR_ITEM,
-            &messages::repair_item(vendor_guid, item_guid),
+            &messages::repair_item(vendor_guid, item_guid, guild_bank),
         )
     }
 

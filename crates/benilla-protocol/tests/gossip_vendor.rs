@@ -46,25 +46,67 @@ fn gossip_bodies_golden() {
 
 #[test]
 fn vendor_bodies_golden() {
-    // CMSG_LIST_INVENTORY (vmangos Item.cpp:94): a full guid.
+    // CMSG_LIST_INVENTORY: a full guid.
     assert_eq!(
         messages::list_inventory(0x1234_5678_9abc_def0),
         hx("f0debc9a78563412"),
         "CMSG_LIST_INVENTORY body"
     );
 
-    // CMSG_BUY_ITEM (vmangos Item.cpp:104-110): vendorGuid, item entry (not muid), count, unk1 (0).
+    // CMSG_BUY_ITEM (`0x6d2de0`): vendorGuid, item entry, row slot, `u32` count, `u8` 1.
     assert_eq!(
-        messages::buy_item(0x1234_5678_9abc_def0, 2488, 1),
-        hx(concat!("f0debc9a78563412", "b8090000", "01", "00")),
+        messages::buy_item(0x1234_5678_9abc_def0, 2488, 3, 5),
+        hx(concat!(
+            "f0debc9a78563412",
+            "b8090000",
+            "03000000",
+            "05000000",
+            "01"
+        )),
         "CMSG_BUY_ITEM body"
     );
 
-    // CMSG_SELL_ITEM (vmangos Item.cpp:87-92): vendorGuid, itemGuid, count (0 = whole stack).
+    // CMSG_BUY_ITEM_IN_SLOT (`0x6d2ea0`): vendorGuid, entry, row slot, bagGuid, bagSlot, `u32`
+    // count.
     assert_eq!(
-        messages::sell_item(0x1234_5678_9abc_def0, 0x42, 0),
-        hx(concat!("f0debc9a78563412", "4200000000000000", "00")),
+        messages::buy_item_in_slot(0x1234_5678_9abc_def0, 2488, 3, 0x77, 4, 1),
+        hx(concat!(
+            "f0debc9a78563412",
+            "b8090000",
+            "03000000",
+            "7700000000000000",
+            "04",
+            "01000000"
+        )),
+        "CMSG_BUY_ITEM_IN_SLOT body"
+    );
+
+    // CMSG_SELL_ITEM (`0x6d2d40`): vendorGuid, itemGuid, `u32` count (0 = whole stack), 20 bytes.
+    let sell = messages::sell_item(0x1234_5678_9abc_def0, 0x42, 0);
+    assert_eq!(
+        sell,
+        hx(concat!("f0debc9a78563412", "4200000000000000", "00000000")),
         "CMSG_SELL_ITEM body"
+    );
+    assert_eq!(sell.len(), 20);
+
+    // CMSG_BUYBACK_ITEM (`0x5855c0`): vendorGuid, the absolute buyback slot.
+    assert_eq!(
+        messages::buyback_item(0x1234_5678_9abc_def0, 74),
+        hx(concat!("f0debc9a78563412", "4a000000")),
+        "CMSG_BUYBACK_ITEM body"
+    );
+
+    // CMSG_REPAIR_ITEM (`0x585ebf`): vendorGuid, itemGuid (0 = all), `u8` guildBank.
+    assert_eq!(
+        messages::repair_item(0x1234_5678_9abc_def0, 0, true),
+        hx(concat!("f0debc9a78563412", "0000000000000000", "01")),
+        "CMSG_REPAIR_ITEM body, repair all from the guild bank"
+    );
+    assert_eq!(
+        messages::repair_item(0x1234_5678_9abc_def0, 0x42, false),
+        hx(concat!("f0debc9a78563412", "4200000000000000", "00")),
+        "CMSG_REPAIR_ITEM body, one item"
     );
 }
 
@@ -328,21 +370,25 @@ fn greeting_draw_follows_the_weighted_law() {
 fn vendor_list_inventory_wire() {
     use benilla_protocol::messages::VendorItem;
 
-    // SMSG_LIST_INVENTORY (vmangos ItemHandler.cpp:741-810): vendorGuid, `u8` count, then per row
-    // `u32` muid, entry, displayId, currentCount, price, maxDurability and buyCount.
+    // SMSG_LIST_INVENTORY (`0x6d9960`): vendorGuid, `u8` count, then per row eight `u32`s: slot,
+    // entry, displayId, currentCount, price, maxDurability, buyCount and extendedCost.
     let mut body = 0xCCu64.to_le_bytes().to_vec();
     body.push(2); // count
-    for v in [1u32, 2488, 22078, 0xFFFF_FFFF, 536, 35, 1] {
+    for v in [1u32, 2488, 22078, 0xFFFF_FFFF, 536, 35, 1, 0] {
         body.extend_from_slice(&v.to_le_bytes());
     }
-    for v in [2u32, 2489, 22079, 5, 342, 40, 1] {
+    for v in [2u32, 2489, 22079, 5, 342, 40, 1, 2276] {
         body.extend_from_slice(&v.to_le_bytes());
     }
     body.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // trailing junk, must not become a third row
 
     match messages::parse_server(messages::opcode::SMSG_LIST_INVENTORY, &body).unwrap() {
-        ServerPacket::VendorList { vendor, items } => {
-            assert_eq!(vendor, 0xCC);
+        ServerPacket::VendorList {
+            vendor,
+            items,
+            error,
+        } => {
+            assert_eq!((vendor, error), (0xCC, None));
             assert_eq!(
                 items,
                 vec![
@@ -354,6 +400,7 @@ fn vendor_list_inventory_wire() {
                         price: 536,
                         max_durability: 35,
                         buy_count: 1,
+                        extended_cost: 0,
                     },
                     VendorItem {
                         slot: 2,
@@ -363,6 +410,7 @@ fn vendor_list_inventory_wire() {
                         price: 342,
                         max_durability: 40,
                         buy_count: 1,
+                        extended_cost: 2276,
                     },
                 ]
             );
@@ -372,23 +420,27 @@ fn vendor_list_inventory_wire() {
 
     let packet = messages::parse_server(messages::opcode::SMSG_LIST_INVENTORY, &body).unwrap();
     match decode(packet).pop().unwrap() {
-        SessionEvent::VendorInventory { vendor, items } => {
+        SessionEvent::VendorInventory { vendor, items, .. } => {
             assert_eq!((vendor, items.len()), (0xCC, 2));
         }
         other => panic!("vendor inventory event, got {other:?}"),
     }
 
-    // Empty stock: count 0, then an error byte (vmangos ItemHandler.cpp:728-733, 806-809).
+    // Empty stock: count 0, then the reason byte, kept (`0x6d99c5`).
     let mut empty_body = 0xDDu64.to_le_bytes().to_vec();
     empty_body.push(0); // count
-    empty_body.push(0); // trailing errorByte(0)
+    empty_body.push(2); // too far away
     let (packet, tail) =
         messages::parse_server_with_tail(messages::opcode::SMSG_LIST_INVENTORY, &empty_body)
             .unwrap();
     assert_eq!(tail, 0, "the error byte is part of the layout, not a tail");
     match packet {
-        ServerPacket::VendorList { vendor, items } => {
-            assert_eq!(vendor, 0xDD);
+        ServerPacket::VendorList {
+            vendor,
+            items,
+            error,
+        } => {
+            assert_eq!((vendor, error), (0xDD, Some(2)));
             assert!(items.is_empty());
         }
         other => panic!("empty vendor list, got {}", other.name()),
@@ -396,6 +448,42 @@ fn vendor_list_inventory_wire() {
     // The error byte is required: count 0 with nothing after it is a short read.
     let truncated = &empty_body[..empty_body.len() - 1];
     assert!(messages::parse_server(messages::opcode::SMSG_LIST_INVENTORY, truncated).is_err());
+}
+
+/// `0x6d999f` rejects a row count above 150; 150 itself reads.
+#[test]
+fn vendor_list_inventory_caps_at_150_rows() {
+    let list = |count: u8| {
+        let mut body = 0xCCu64.to_le_bytes().to_vec();
+        body.push(count);
+        for slot in 1..=u32::from(count) {
+            for v in [slot, 2488, 22078, 1, 9, 0, 1, 0] {
+                body.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        body
+    };
+    match messages::parse_server(messages::opcode::SMSG_LIST_INVENTORY, &list(150)).unwrap() {
+        ServerPacket::VendorList { items, .. } => assert_eq!(items.len(), 150),
+        other => panic!("vendor list, got {}", other.name()),
+    }
+    assert!(messages::parse_server(messages::opcode::SMSG_LIST_INVENTORY, &list(151)).is_err());
+}
+
+/// Only the empty list's reason 0 opens the window (`0x6d9ad0`); a refusal such as "too far" opens
+/// nothing.
+#[test]
+fn an_empty_vendor_list_opens_only_on_reason_zero() {
+    use benilla_protocol::messages::VendorList;
+    let empty = |error| VendorList {
+        vendor: 1,
+        items: Vec::new(),
+        error,
+    };
+    assert!(empty(Some(0)).opens());
+    for refusal in 1..=4 {
+        assert!(!empty(Some(refusal)).opens(), "reason {refusal}");
+    }
 }
 
 /// A `u32` option count of `0xFFFF_FFFF` over one valid option is a short-read `Err`: the decoder
@@ -419,7 +507,7 @@ fn a_lying_gossip_option_count_is_a_short_read_not_an_allocation() {
 fn vendor_buy_sell_result_wire() {
     use benilla_protocol::messages::{buy_result, sell_result};
 
-    // SMSG_BUY_ITEM (vmangos Item.cpp:190-196): vendorGuid, 1-based vendorSlot, newCount
+    // SMSG_BUY_ITEM (`0x6cdd10`): vendorGuid, 1-based vendorSlot, newCount
     // (0xFFFF_FFFF unlimited), purchaseCount.
     let mut body = 0xCCu64.to_le_bytes().to_vec();
     for v in [1u32, 0xFFFF_FFFF, 1] {
@@ -447,7 +535,7 @@ fn vendor_buy_sell_result_wire() {
         other => panic!("vendor buy result event, got {other:?}"),
     }
 
-    // SMSG_SELL_ITEM (vmangos Item.cpp:183-188), the error path only: vendorGuid, itemGuid, reason.
+    // SMSG_SELL_ITEM (`0x6d1540`), the error path only: vendorGuid, itemGuid, reason.
     let mut body = 0xCCu64.to_le_bytes().to_vec();
     body.extend_from_slice(&0x42u64.to_le_bytes());
     body.push(sell_result::CANT_FIND_ITEM);
@@ -472,7 +560,7 @@ fn vendor_buy_sell_result_wire() {
         other => panic!("vendor sell failed event, got {other:?}"),
     }
 
-    // SMSG_BUY_FAILED (vmangos Item.h:277): vendorGuid, itemEntry, reason.
+    // SMSG_BUY_FAILED (`0x6cdba0`): vendorGuid, item, reason.
     let mut body = 0xCCu64.to_le_bytes().to_vec();
     body.extend_from_slice(&2488u32.to_le_bytes());
     body.push(buy_result::NOT_ENOUGH_MONEY);
@@ -497,7 +585,7 @@ fn vendor_buy_sell_result_wire() {
         other => panic!("vendor buy failed event, got {other:?}"),
     }
 
-    // The result codes (vmangos ItemDefines.h:120-141).
+    // The result codes `0x6cdba0` switches on.
     assert_eq!(
         (
             buy_result::CANT_FIND_ITEM,

@@ -102,6 +102,10 @@ mod exhaustion;
 pub use exhaustion::{load_exhaustion, ExhaustionRow};
 mod bank_bag_slot_prices;
 pub use bank_bag_slot_prices::{load_bank_bag_slot_prices, BankBagSlotPrices};
+mod item_extended_cost;
+pub use item_extended_cost::{
+    load_item_extended_costs, ExtendedCostRow, ItemExtendedCosts, EXTENDED_COST_ITEMS,
+};
 mod stable_slot_prices;
 pub use stable_slot_prices::{load_stable_slot_prices, StableSlotPrices};
 mod page_text_material;

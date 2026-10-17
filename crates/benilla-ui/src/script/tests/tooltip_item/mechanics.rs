@@ -10,7 +10,7 @@ use crate::script::*;
 /// `SetHyperlink` fire `OnTooltipAddMoney` with no vendor open, an item object's price less its
 /// repair cost. Repair mode and a vendor's own goods (`skipSellPrice`) fire nothing. Price 0 prints
 /// `ITEM_UNSELLABLE` only at an open vendor and never for a worn slot. A template in flight
-/// renders the link name.
+/// renders the retrieving line.
 #[test]
 fn bag_item_money_law_and_fallback() {
     let mut s = script();
@@ -117,10 +117,11 @@ fn bag_item_money_law_and_fallback() {
         assert(money_fired == 13, "a link is one of the item, got " .. tostring(money_fired))
         Hover(function() TT:SetInventoryItem("target", 16) end)
         assert(money_fired == nil, "no inspected item here")
-        -- The unresolved key: the link-name fallback line + nothing else.
+        -- The unresolved key: the retrieving line and nothing else.
+        RETRIEVING_ITEM_INFO = "Retrieving item information"
         Hover(function() TT:SetBagItem(0, 2) end)
-        assert(TT:NumLines() == 1, "fallback one-liner")
-        assert(TTTextLeft1:GetText() == "Shadowforge Key", "fallback carries the link name")
+        assert(TT:NumLines() == 1, "one line")
+        assert(TTTextLeft1:GetText() == RETRIEVING_ITEM_INFO, "the retrieving line")
     "#,
     )
     .unwrap();

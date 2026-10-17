@@ -92,6 +92,7 @@ mod tests {
         names.insert_creature(
             entry,
             Some(CreatureRecord {
+                cursor_name: None,
                 name: "Test".into(),
                 subname: None,
                 creature_type,

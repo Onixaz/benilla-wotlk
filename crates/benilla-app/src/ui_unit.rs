@@ -3234,6 +3234,7 @@ mod tests {
         names.insert_creature(
             ENTRY,
             Some(crate::names::CreatureRecord {
+                cursor_name: None,
                 name: "Ol' Sooty".into(),
                 subname: None,
                 creature_type: 1,
@@ -3324,6 +3325,7 @@ mod tests {
         );
 
         let record = |type_flags: u32| crate::names::CreatureRecord {
+            cursor_name: None,
             name: "Stormwind Guard".into(),
             subname: None,
             creature_type: 7,
@@ -3531,6 +3533,7 @@ mod tests {
         const DRUID: u64 = 0xF130_0000_4600_0001;
 
         let record = |name: &str, creature_type| CreatureRecord {
+            cursor_name: None,
             name: name.into(),
             subname: None,
             creature_type,

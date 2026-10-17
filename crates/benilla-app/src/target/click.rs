@@ -600,8 +600,8 @@ impl Dispatch<'_, '_> {
         }
     }
 
-    /// `0x5f0130`: the NPC-service ladder. Out of the 5.5556 yd reach it walks there when `walk`,
-    /// returning before the ladder and the gesture (`0x5f022f`), and otherwise sends nothing.
+    /// `0x6ddbb0`: the NPC-service ladder. Out of the unit's interact reach it walks there when
+    /// `walk`, returning before the ladder and the gesture, and otherwise sends nothing.
     fn talk(&mut self, entity: Entity, guid: u64, in_reach: bool, walk: bool) {
         if !in_reach {
             if walk {
@@ -615,8 +615,8 @@ impl Dispatch<'_, '_> {
             }
             return;
         }
-        // The reference's own `UNIT_NPC_FLAGS` ladder (`0x5f0289`), not the cursor kind, which its
-        // cursor ladder (`0x482336`) projects lossily; the re-click gate comes first.
+        // The reference's own `UNIT_NPC_FLAGS` ladder, not the cursor kind, which the cursor
+        // classifier projects lossily; the re-click gate comes first.
         if interaction_already_open_on(guid, &self.service.interact) {
             debug!("right-click interact: {guid:#x} — its window is already open, nothing sent");
             return;
@@ -644,7 +644,7 @@ impl Dispatch<'_, '_> {
             });
         let ghost = self_store.is_some_and(|s| s.0.player_is_ghost());
         let Some(arm) = service_arm(npc_flags, self.service.quest.status(guid)) else {
-            // `0x5f05ca`: no consulted bit does nothing, gesture included.
+            // No consulted bit does nothing, gesture included.
             debug!("right-click interact: {guid:#x} matches no service bit — nothing sent");
             return;
         };
@@ -1061,7 +1061,15 @@ pub(super) fn act_on_arrival(
         d2.sqrt()
     );
     match verb {
-        ApproachVerb::Talk if unit => dispatch.talk(entity, guid, d2 <= SERVICE_RANGE_SQ, false),
+        ApproachVerb::Talk if unit => {
+            let reach_sq = dispatch
+                .stores
+                .get(entity)
+                .map_or(SERVICE_RANGE_SQ, |(s, _)| {
+                    cursor_mode::unit_interact_reach_sq(s)
+                });
+            dispatch.talk(entity, guid, d2 <= reach_sq, false)
+        }
         // `0x5df2a0`'s own lootable test (`0x6003a0`), which the click's dead fork made earlier.
         ApproachVerb::Loot if unit => {
             if dispatch
@@ -1342,55 +1350,61 @@ fn unit_branch(attack: bool, dead_fork: bool, leg: DeadUnitLeg) -> UnitBranch {
     }
 }
 
-/// The reference's NPC-service ladder, `0x5f0130`'s first-match-wins walk over `UNIT_NPC_FLAGS`,
-/// low bit to high. The cursor classifier `0x482200` walks the same bits but projects them lossily
-/// (Speak is bits 0, 1, 5, 6, 9, 10, 11 and 13; Buy is 8 and 12), so the send keys on the bit.
+/// The reference's NPC-service ladder, `CGPlayer_C::HandleOnRightClick 0x6ddbb0`'s first-match-wins
+/// walk over `UNIT_NPC_FLAGS`. The cursor classifier `0x4f7a50` walks the bits in another order and
+/// projects them lossily, so the send keys on the bit.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ServiceArm {
-    /// Bit 0: `0x5f02a4` → `0x5df4d0`.
+    /// `0x1`: `CMSG_GOSSIP_HELLO`.
     Gossip,
-    /// Bit 1, and the target's cached questgiver status ∉ {0, 1} (`0x5f02c0` → `0x5df490`).
+    /// `UnitCanGossip 0x6d1de0`: the questgiver bit and a cached status of 2 or above.
     Questgiver,
-    /// Bit 2: `0x5f0317` → `0x5df5d0`.
-    Vendor,
-    /// Bit 3: `0x5f034e` → `0x5ed020`.
+    /// `0x2000`: `QueryTaxiNodes 0x6d6320`.
     FlightMaster,
-    /// Bit 4: `0x5f0385` → `0x5df680`.
+    /// `0x80`: `ShopFromMerchant 0x6daf60`.
+    Vendor,
+    /// `0x10`: `TalkToTrainer 0x6d1f20`.
     Trainer,
-    /// Bit 5: `0x5f03bc` → `0x5df730`. Ghost-gated, and sends nothing.
+    /// `0x4000`: `TalkToSpiritHealer 0x6db010`. Ghost-gated, and sends nothing.
     SpiritHealer,
-    /// Bit 6: `0x5f03f3` → `0x5df950`. Ghost-gated.
+    /// `0x8000`: `TalkToSpiritGuide 0x6db180`. Ghost-gated.
     SpiritGuide,
-    /// Bit 7: `0x5f042a` → `0x5dfdc0`. Sends nothing.
+    /// `0x10000`: `TalkToBinder 0x6d2120`. Sends nothing.
     Innkeeper,
-    /// Bit 8: `0x5f0461` → `0x5dffe0`.
+    /// `0x20000`.
     Banker,
-    /// Bit 9: `0x5f04e3` → `0x5e0060`.
+    /// `0x40000`, or `IsGuildMaster 0x4f5f80` ahead of it.
     Petitioner,
-    /// Bit 10: `0x5f051a` → `0x5e00e0`.
+    /// `0x80000`.
     TabardDesigner,
-    /// Bit 11: `0x5f0551` → `0x5e01a0`.
+    /// `0x100000`.
     Battlemaster,
-    /// Bit 12: `0x5f0588` → `0x5e0220`.
+    /// `0x200000`.
     Auctioneer,
-    /// Bit 13: `0x5f05bc` → `0x5e02a0`.
+    /// `0x400000`.
     StableMaster,
+    /// `0x800000`: `TalkToGuildBanker`, `CMSG_GUILD_BANKER_ACTIVATE`.
+    GuildBanker,
+    /// `0x1000000` with `UNIT_FIELD_FLAGS_2` allowing it (`0x71c570`): `CMSG_SPELLCLICK`.
+    SpellClick,
+    /// `0x4000000`.
+    Mailbox,
 }
 
-/// The ladder; `None` when no consulted bit is set (`0x5f05ca`). REPAIR (bit 14) has no arm, and
-/// the reference's redundant `bits 9 AND 10` test reaches bit 9's handler, so it is omitted.
+/// The ladder; `None` when no consulted bit is set. The repairer and the vendor kinds have no arm.
+/// The player-vehicle arm (`0x723050`) never takes an NPC. `UNIT_FIELD_FLAGS_2` is not mirrored,
+/// so the spellclick arm reads it as 0.
 pub(crate) fn service_arm(npc_flags: u32, quest_status: Option<u32>) -> Option<ServiceArm> {
     use cursor_mode::npc_flags as f;
     let bit = |m: u32| npc_flags & m != 0;
     Some(if bit(f::GOSSIP) {
         ServiceArm::Gossip
     } else if bit(f::QUESTGIVER) && cursor_mode::questgiver_has_quest(quest_status) {
-        // The cursor ladder's own predicate (`0x482362`), shared so the two cannot disagree.
         ServiceArm::Questgiver
-    } else if bit(f::VENDOR) {
-        ServiceArm::Vendor
     } else if bit(f::FLIGHTMASTER) {
         ServiceArm::FlightMaster
+    } else if bit(f::VENDOR) {
+        ServiceArm::Vendor
     } else if bit(f::TRAINER) {
         ServiceArm::Trainer
     } else if bit(f::SPIRITHEALER) {
@@ -1401,7 +1415,7 @@ pub(crate) fn service_arm(npc_flags: u32, quest_status: Option<u32>) -> Option<S
         ServiceArm::Innkeeper
     } else if bit(f::BANKER) {
         ServiceArm::Banker
-    } else if bit(f::PETITIONER) {
+    } else if bit(f::PETITIONER) || f::is_guild_master(npc_flags) {
         ServiceArm::Petitioner
     } else if bit(f::TABARDDESIGNER) {
         ServiceArm::TabardDesigner
@@ -1411,6 +1425,12 @@ pub(crate) fn service_arm(npc_flags: u32, quest_status: Option<u32>) -> Option<S
         ServiceArm::Auctioneer
     } else if bit(f::STABLEMASTER) {
         ServiceArm::StableMaster
+    } else if bit(f::GUILD_BANKER) {
+        ServiceArm::GuildBanker
+    } else if bit(f::SPELLCLICK) {
+        ServiceArm::SpellClick
+    } else if bit(f::MAILBOX) {
+        ServiceArm::Mailbox
     } else {
         return None;
     })
@@ -1433,9 +1453,9 @@ pub(crate) enum ServiceAction {
 }
 
 /// A taken arm → what benilla does. `cursor_sale` is the guid of a mode-1 item on the cursor, as
-/// the reference's `GetCursorItem 0x494c60`. The spirit arms are ghost-gated (`0x5df74a`,
-/// `0x5df962`: `PLAYER_FLAGS` bit 4), silent for the living. The tabard arm's shapeshift refusal
-/// (`ERR_EMBLEMERROR_NOTABARDGEOSET`) and same-vendor no-op are not built.
+/// the reference's `GetCursorItem`. The spirit arms are ghost-gated (`PLAYER_FLAGS` bit 4), silent
+/// for the living. The tabard arm's shapeshift refusal (`ERR_EMBLEMERROR_NOTABARDGEOSET`) and
+/// same-vendor no-op are not built.
 pub(crate) fn service_action(
     arm: ServiceArm,
     guid: u64,
@@ -1451,8 +1471,7 @@ pub(crate) fn service_action(
             Some(item_guid) => ServiceAction::SellFromCursor(ClientCommand::SellItem {
                 vendor: guid,
                 item_guid,
-                // Always 0 (`xor ecx,ecx` at `0x5df5ee`): the whole stack
-                // (`ItemHandler.cpp:495`).
+                // Always 0 (`0x6daf6e`): the whole stack.
                 count: 0,
             }),
             None => ServiceAction::Send(ClientCommand::ListInventory { guid }),
@@ -1482,6 +1501,11 @@ pub(crate) fn service_action(
         ServiceArm::StableMaster => {
             ServiceAction::Send(ClientCommand::ListStabledPets { npc: guid })
         }
+        ServiceArm::GuildBanker => {
+            ServiceAction::Silent("guild banker, and the guild bank is not built")
+        }
+        ServiceArm::SpellClick => ServiceAction::Silent("spell click, which is not built"),
+        ServiceArm::Mailbox => ServiceAction::Silent("mailbox NPC, which is not built"),
     }
 }
 
@@ -1747,15 +1771,15 @@ mod tests {
         );
     }
 
-    /// Every arm of `0x5f0130`'s walk over `UNIT_NPC_FLAGS`, in the reference's order.
+    /// Every arm of `0x6ddbb0`'s walk over `UNIT_NPC_FLAGS`, in the reference's order.
     #[test]
     fn the_service_ladder_walks_the_reference_bit_order() {
         use cursor_mode::npc_flags as f;
         let has = Some(benilla_protocol::messages::dialog_status::AVAILABLE);
         for (flags, arm) in [
             (f::GOSSIP, ServiceArm::Gossip),
-            (f::VENDOR, ServiceArm::Vendor),
             (f::FLIGHTMASTER, ServiceArm::FlightMaster),
+            (f::VENDOR, ServiceArm::Vendor),
             (f::TRAINER, ServiceArm::Trainer),
             (f::SPIRITHEALER, ServiceArm::SpiritHealer),
             (f::SPIRITGUIDE, ServiceArm::SpiritGuide),
@@ -1766,17 +1790,21 @@ mod tests {
             (f::BATTLEMASTER, ServiceArm::Battlemaster),
             (f::AUCTIONEER, ServiceArm::Auctioneer),
             (f::STABLEMASTER, ServiceArm::StableMaster),
+            (f::GUILD_BANKER, ServiceArm::GuildBanker),
+            (f::SPELLCLICK, ServiceArm::SpellClick),
+            (f::MAILBOX, ServiceArm::Mailbox),
         ] {
             assert_eq!(service_arm(flags, None), Some(arm), "flags {flags:#x}");
         }
-        // Bit 1 is the one arm with a second conjunct: the target's cached questgiver status.
+        // The questgiver arm's second conjunct is the target's cached status (`0x6d1de0`).
         assert_eq!(
             service_arm(f::QUESTGIVER, has),
             Some(ServiceArm::Questgiver)
         );
         assert_eq!(service_arm(f::QUESTGIVER, None), None);
-        // REPAIR (bit 14) has no arm, and an empty field matches nothing.
-        assert_eq!(service_arm(0x4000, None), None);
+        // The repairer and the vendor kinds have no arm, and an empty field matches nothing.
+        assert_eq!(service_arm(f::REPAIR, None), None);
+        assert_eq!(service_arm(0x100 | 0x200 | 0x400 | 0x800, None), None);
         assert_eq!(service_arm(0, None), None);
     }
 
@@ -1796,15 +1824,25 @@ mod tests {
                 Some(ServiceArm::Gossip)
             );
         }
-        // Banker (bit 8) before auctioneer (bit 12), both Buy(3) to the cursor.
+        // Flight master before vendor, the reverse of the bit order.
+        assert_eq!(
+            service_arm(f::VENDOR | f::FLIGHTMASTER, None),
+            Some(ServiceArm::FlightMaster)
+        );
+        // A vendor that also repairs lists its goods.
+        assert_eq!(
+            service_arm(f::VENDOR | f::REPAIR, None),
+            Some(ServiceArm::Vendor)
+        );
+        // The questgiver with a quest before the trainer it also is.
+        let has = Some(benilla_protocol::messages::dialog_status::AVAILABLE);
+        assert_eq!(
+            service_arm(f::QUESTGIVER | f::TRAINER, has),
+            Some(ServiceArm::Questgiver)
+        );
         assert_eq!(
             service_arm(f::BANKER | f::AUCTIONEER, None),
             Some(ServiceArm::Banker)
-        );
-        // Trainer (bit 4) before innkeeper (bit 7).
-        assert_eq!(
-            service_arm(f::TRAINER | f::INNKEEPER, None),
-            Some(ServiceArm::Trainer)
         );
     }
 
@@ -1856,6 +1894,14 @@ mod tests {
         assert_eq!(sent(ServiceArm::SpiritHealer, false), "silent");
         assert_eq!(sent(ServiceArm::SpiritGuide, false), "silent");
         assert_eq!(sent(ServiceArm::SpiritHealer, true), "ask-spirit-healer");
+        // Taken, but nothing benilla builds answers them yet.
+        for arm in [
+            ServiceArm::GuildBanker,
+            ServiceArm::SpellClick,
+            ServiceArm::Mailbox,
+        ] {
+            assert_eq!(sent(arm, false), "silent", "{arm:?}");
+        }
         assert!(matches!(
             service_action(ServiceArm::TabardDesigner, 0x42, false, None),
             ServiceAction::Send(ClientCommand::TabardVendorActivate { npc: 0x42 })
@@ -2323,7 +2369,7 @@ mod tests {
         let vendor = world
             .spawn((
                 Guid(VENDOR),
-                store(&[(F_HEALTH, 100), (F_MAXHEALTH, 100), (F_NPC_FLAGS, 0x4)]),
+                store(&[(F_HEALTH, 100), (F_MAXHEALTH, 100), (F_NPC_FLAGS, 0x80)]),
                 Transform::from_translation(at),
                 crate::net::NetEntity {
                     kind: benilla_protocol::EntityKind::Unit,

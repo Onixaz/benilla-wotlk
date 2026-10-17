@@ -306,6 +306,7 @@ mod tests {
                 names.insert_creature(
                     benilla_protocol::guid::entry(guid).unwrap(),
                     Some(CreatureRecord {
+                        cursor_name: None,
                         name: name.to_string(),
                         subname: None,
                         creature_type: 0,

@@ -180,9 +180,9 @@ pub(crate) struct SpellWait {
 }
 
 /// Each shown line's left and right cell as `(text, colour)`.
-type Drawn = Vec<(Option<String>, Option<[f32; 4]>)>;
+pub(super) type Drawn = Vec<(Option<String>, Option<[f32; 4]>)>;
 
-fn drawn_lines(model: &mut Model, h: FrameHandle) -> mlua::Result<Drawn> {
+pub(super) fn drawn_lines(model: &mut Model, h: FrameHandle) -> mlua::Result<Drawn> {
     let t = tip_mut(model, h)?;
     let n = t.num_lines;
     let cells: Vec<_> = t
@@ -852,7 +852,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 ),
                 0x80 => {
                     let sell = super::tooltip_item::carried_sell(lua, a.action);
-                    super::tooltip_item::render_by_id(lua, &this, a.action, None, None, sell)
+                    super::tooltip_item::render_by_id(lua, &this, a.action, sell)
                 }
                 0x40 => {
                     let h = frame_handle_of(lua, &this)?;
@@ -899,8 +899,6 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     lua,
                     &this,
                     item_id,
-                    None,
-                    None,
                     super::tooltip_item::Sell::Skip,
                 ),
                 TrainerTooltip::Spell {
@@ -944,8 +942,6 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     lua,
                     &this,
                     item_id,
-                    None,
-                    None,
                     super::tooltip_item::Sell::Skip,
                 ),
                 CraftTooltip::Spell(spell_id) => {

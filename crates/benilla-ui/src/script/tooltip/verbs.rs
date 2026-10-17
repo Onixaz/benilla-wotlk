@@ -421,6 +421,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     crate::script::tooltip_spell::install_methods(lua, &m)?;
     crate::script::talent::install_tooltip_method(lua, &m)?;
     crate::script::tooltip_unit::install_methods(lua, &m)?;
+    crate::script::tooltip_item::wrap_setters(lua, &m)?;
 
     lua.set_named_registry_value(REG_TOOLTIP_METHODS, m)?;
     Ok(())

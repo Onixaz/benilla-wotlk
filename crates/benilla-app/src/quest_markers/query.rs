@@ -25,7 +25,7 @@ use crate::ui_quest::QuestGiver;
 const NPC_FLAG_QUESTGIVER: u32 = 0x2;
 /// `UNIT_NPC_FLAGS` flightmaster service bit, the other half of `0x607380`'s re-gate (`0x6073de`)
 /// and the gate on the only `0x1aa` sender.
-const NPC_FLAG_FLIGHTMASTER: u32 = 0x8;
+const NPC_FLAG_FLIGHTMASTER: u32 = crate::target::cursor_mode::npc_flags::FLIGHTMASTER;
 /// `GAMEOBJECT_FLAGS` bit 2, the sweep's whole GameObject gate (`0x5eb0ef`..`0x5eb0f5`: shift 2,
 /// so mask `0x4`, not the unit leg's `0x2`). The name is vmangos's (`GameObjectDefines.h:76`).
 const GO_FLAG_INTERACT_COND: u32 = 0x4;
@@ -1054,14 +1054,20 @@ mod tests {
         };
         set_npc(
             &mut app,
-            &[(FIELD_NPC_FLAGS, 0x2 | 0x8), (FIELD_FACTION, 35)],
+            &[
+                (FIELD_NPC_FLAGS, 0x2 | NPC_FLAG_FLIGHTMASTER),
+                (FIELD_FACTION, 35),
+            ],
         );
         assert_eq!(asked(&mut app), 1, "its flightmaster bit — re-ask that one");
         assert_eq!(asked(&mut app), 0, "exactly once");
 
         set_npc(
             &mut app,
-            &[(FIELD_NPC_FLAGS, 0x2 | 0x8), (FIELD_FACTION, 12)],
+            &[
+                (FIELD_NPC_FLAGS, 0x2 | NPC_FLAG_FLIGHTMASTER),
+                (FIELD_FACTION, 12),
+            ],
         );
         assert_eq!(asked(&mut app), 1, "its faction template — re-ask that one");
         assert_eq!(asked(&mut app), 0, "exactly once");

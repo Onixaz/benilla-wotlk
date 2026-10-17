@@ -73,6 +73,9 @@ pub mod guild_rank_right {
     pub const EDIT_OFFICER_NOTE: u32 = 0x0000_8000;
     /// Edit the guild information text (`GR_RIGHT_MODIFY_GUILD_INFO`, vmangos `0x10040`).
     pub const MODIFY_GUILD_INFO: u32 = 0x0001_0000;
+    /// Repair from the guild bank (`GR_RIGHT_WITHDRAW_REPAIR`), `CanGuildBankRepair`'s bit
+    /// (`0x5cc23a`).
+    pub const WITHDRAW_REPAIR: u32 = 0x0004_0000;
     /// `GR_RIGHT_ALL`, forced onto rank 0 by the server. A raw vmangos value: it includes
     /// [`EMPTY`] and bits no 1.12 right owns, so test ranks against the named bits, never this.
     pub const ALL: u32 = 0x000F_F1FF;
@@ -144,6 +147,15 @@ pub mod guild_event {
     pub const SIGNED_ON: u8 = 0x0C;
     /// `GE_SIGNED_OFF`, param: the guildmate's name; carries the trailing guid.
     pub const SIGNED_OFF: u8 = 0x0D;
+    /// `GE_BANK_MONEY_SET`, param: the bank's copper as 16 hex digits; the reference stores it and
+    /// asks `MSG_GUILD_BANK_MONEY_WITHDRAWN` (`0x6d9748`).
+    pub const BANK_MONEY_SET: u8 = 0x11;
+}
+
+/// `GE_BANK_MONEY_SET`'s parameter, read as `"%016I64X"` (`0x6d9758`); `None` when it does not
+/// parse.
+pub fn guild_bank_money_param(param: &str) -> Option<u64> {
+    u64::from_str_radix(param.trim(), 16).ok()
 }
 
 /// `SMSG_GUILD_COMMAND_RESULT`'s leading `u32`, the verb the result is about
@@ -275,6 +287,8 @@ pub struct GuildRosterMember {
     pub level: u8,
     /// Class id (`ChrClasses.dbc`).
     pub class: u8,
+    /// The third byte 3.3.5a reads after the class (`0x5cc806`), kept at member `+0x40`.
+    pub gender: u8,
     /// Zone id (`AreaTable.dbc`); an offline member's last known zone.
     pub zone: u32,
     /// Fractional days since logout (`Guild/Guild.cpp:841`), sent for offline members only;
@@ -304,21 +318,35 @@ pub struct GuildRoster {
     pub info: String,
     /// One [`guild_rank_right`] mask per rank, by rank id; the length is the guild's real rank
     /// count. More than [`GUILD_RANKS_MAX_COUNT`] is malformed but read in full, so a ten-slot
-    /// consumer bounds itself (the reference overruns its array at `0xb726d0`).
+    /// consumer bounds itself (the reference overruns its 56-byte-stride table at `0xc21e60`).
     pub rank_rights: Vec<u32>,
+    /// Each rank's guild-bank half of the record, by rank id, as long as [`Self::rank_rights`].
+    pub rank_bank: Vec<GuildRankBank>,
     /// The members in wire order, by low guid; the reference re-sorts its own copy after every
     /// packet (`0x4d0d32`), so sorting is the consumer's job.
     pub members: Vec<GuildRosterMember>,
 }
 
+/// The guild-bank half of a rank's 56-byte roster record (`0xc21e60`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GuildRankBank {
+    /// The daily gold withdraw limit in copper.
+    pub gold_per_day: u32,
+    /// Per bank tab: its rights mask and its daily slot withdrawals.
+    pub tabs: [(u32, u32); GUILD_BANK_TABS],
+}
+
+/// The bank tabs each rank record carries (`0x5cc6f6`'s inner loop of 6).
+pub const GUILD_BANK_TABS: usize = 6;
+
 /// Allocation cap for the wire member count; a `0x8000`-byte roster fits about 1.4k members.
 const ROSTER_CAPACITY_HINT_CAP: usize = 2048;
 
-/// Read `SMSG_GUILD_ROSTER` (`Server/Packets/Guild.cpp:143-173`, reference `0x4d0ad0`): `u32`
-/// member count, MOTD, info text, `u32` rank count and that many `u32` rights, then per member
-/// `u64` guid, `u8` presence, name, `u32` rank, `u8` level, `u8` class, `u32` zone, an `f32`
-/// last-online time only when presence is `0` (`0x4d0cad`), public note and officer note.
-/// Reading the float unconditionally misparses every later member.
+/// Read `SMSG_GUILD_ROSTER` (`0x5cc5d0`): `u32` member count, MOTD, info text, `u32` rank count
+/// and that many rank records (`u32` rights, `u32` gold per day, six tab rights and slot pairs),
+/// then per member `u64` guid, `u8` presence, name, `u32` rank, three `u8`s (level, class,
+/// gender), `u32` zone, an `f32` last-online time only when presence is `0` (`0x5cc885`), public
+/// note and officer note. Reading the float unconditionally misparses every later member.
 pub(super) fn read_guild_roster(r: &mut impl Read) -> io::Result<GuildRoster> {
     let member_count = read_u32_le(r)?;
     let motd = read_cstring(r)?;
@@ -326,8 +354,17 @@ pub(super) fn read_guild_roster(r: &mut impl Read) -> io::Result<GuildRoster> {
 
     let rank_count = read_u32_le(r)?;
     let mut rank_rights = Vec::with_capacity(capacity_hint(rank_count, GUILD_RANKS_MAX_COUNT));
+    let mut rank_bank = Vec::with_capacity(capacity_hint(rank_count, GUILD_RANKS_MAX_COUNT));
     for _ in 0..rank_count {
         rank_rights.push(read_u32_le(r)?);
+        let mut bank = GuildRankBank {
+            gold_per_day: read_u32_le(r)?,
+            ..Default::default()
+        };
+        for tab in &mut bank.tabs {
+            *tab = (read_u32_le(r)?, read_u32_le(r)?);
+        }
+        rank_bank.push(bank);
     }
 
     let mut members = Vec::with_capacity(capacity_hint(member_count, ROSTER_CAPACITY_HINT_CAP));
@@ -339,6 +376,7 @@ pub(super) fn read_guild_roster(r: &mut impl Read) -> io::Result<GuildRoster> {
             rank_id: read_u32_le(r)?,
             level: read_u8(r)?,
             class: read_u8(r)?,
+            gender: read_u8(r)?,
             zone: read_u32_le(r)?,
             ..Default::default()
         };
@@ -354,6 +392,7 @@ pub(super) fn read_guild_roster(r: &mut impl Read) -> io::Result<GuildRoster> {
         motd,
         info,
         rank_rights,
+        rank_bank,
         members,
     })
 }
@@ -484,6 +523,11 @@ pub fn guild_decline() -> Vec<u8> {
 
 /// Body of `CMSG_GUILD_INFO`: empty (`Server/Protocol/Opcodes.cpp:216`); asks about our guild.
 pub fn guild_info() -> Vec<u8> {
+    Vec::new()
+}
+
+/// Body of the `MSG_GUILD_BANK_MONEY_WITHDRAWN` ask: empty (`0x6d9776`).
+pub fn guild_bank_money_withdrawn() -> Vec<u8> {
     Vec::new()
 }
 

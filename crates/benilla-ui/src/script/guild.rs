@@ -37,6 +37,9 @@ pub const RANK_RIGHT_BITS: [u32; 13] = [
     0x0001_0000, // 13 Modify Guild Info
 ];
 
+/// `GR_RIGHT_WITHDRAW_REPAIR`, the bit `CanGuildBankRepair` tests (`0x5cc23a`).
+const WITHDRAW_REPAIR: u32 = 0x0004_0000;
+
 /// One-based indices into [`RANK_RIGHT_BITS`], numbered as `GUILDCONTROL_OPTION<n>`.
 mod right {
     pub(super) const PROMOTE: usize = 5;
@@ -151,6 +154,10 @@ pub struct GuildState {
     pub selection: u32,
     /// Changes [`Self::num_members`] only, never [`Self::roster`].
     pub show_offline: bool,
+    /// `GetGuildBankMoney`: the guild bank's copper, 0 before any bank-money event.
+    pub bank_money: u64,
+    /// `GetGuildBankWithdrawMoney`: today's remaining withdrawal in copper, -1 unlimited.
+    pub bank_withdraw_money: i32,
 }
 
 /// The rank-control popup's staging buffer, kept out of [`GuildState`] so a push mid-edit does not
@@ -290,6 +297,40 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
     // ── Membership and identity ──────────────────────────────────────────────────────────────
+    // CanGuildBankRepair() (`0x5cc200`): 1 while in a guild whose rank table gives our rank
+    // `GR_RIGHT_WITHDRAW_REPAIR` (`0x5cc23a`); it tests neither the bank's money nor the cost.
+    g.set(
+        "CanGuildBankRepair",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(binding_abi::flag(
+                model.guild.in_guild && model.guild.rights & WITHDRAW_REPAIR != 0,
+            ))
+        })?,
+    )?;
+    // GetGuildBankMoney() (`0x5a4440`) and GetGuildBankWithdrawMoney() (`0x5a44a0`): the two stored
+    // values as numbers.
+    g.set(
+        "GetGuildBankMoney",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(model.guild.bank_money as f64)
+        })?,
+    )?;
+    g.set(
+        "GetGuildBankWithdrawMoney",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(i64::from(model.guild.bank_withdraw_money))
+        })?,
+    )?;
+
     // IsInGuild() (`0x516de0`) reads the player's own `PLAYER_GUILDID`, so it answers before any
     // roster arrives.
     g.set(
@@ -782,6 +823,57 @@ mod tests {
         assert!(s
             .eval::<i64>(r#"return GetGuildInfo("nosuchunit")"#)
             .is_err());
+    }
+
+    /// `CanGuildBankRepair` (`0x5cc200`) is our rank's `GR_RIGHT_WITHDRAW_REPAIR` while in a
+    /// guild; the two money getters (`0x5a4440`, `0x5a44a0`) answer the stored values.
+    #[test]
+    fn the_guild_bank_repair_verbs_read_the_rank_and_the_stored_money() {
+        let mut s = crate::script::UiScript::new().unwrap();
+        assert!(s
+            .eval::<bool>("return CanGuildBankRepair() == nil")
+            .unwrap());
+        assert_eq!(s.eval::<i64>("return GetGuildBankMoney()").unwrap(), 0);
+        assert_eq!(
+            s.eval::<i64>("return GetGuildBankWithdrawMoney()").unwrap(),
+            0
+        );
+
+        s.set_guild(GuildState {
+            in_guild: true,
+            rights: 0x0004_0003,
+            bank_money: 12_345_678,
+            bank_withdraw_money: -1,
+            ..Default::default()
+        });
+        assert!(s.eval::<bool>("return CanGuildBankRepair() == 1").unwrap());
+        assert_eq!(
+            s.eval::<i64>("return GetGuildBankMoney()").unwrap(),
+            12_345_678
+        );
+        assert_eq!(
+            s.eval::<i64>("return GetGuildBankWithdrawMoney()").unwrap(),
+            -1,
+            "the guild master's unlimited"
+        );
+
+        s.set_guild(GuildState {
+            in_guild: true,
+            rights: 0x0000_0003,
+            ..Default::default()
+        });
+        assert!(s
+            .eval::<bool>("return CanGuildBankRepair() == nil")
+            .unwrap());
+        s.set_guild(GuildState {
+            rights: 0x0004_0000,
+            ..Default::default()
+        });
+        assert!(
+            s.eval::<bool>("return CanGuildBankRepair() == nil")
+                .unwrap(),
+            "guildless"
+        );
     }
 
     #[test]

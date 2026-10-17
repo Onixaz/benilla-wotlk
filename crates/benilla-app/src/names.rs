@@ -69,6 +69,8 @@ pub(crate) struct NameCache {
 pub(crate) struct CreatureRecord {
     pub(crate) name: String,
     pub(crate) subname: Option<String>,
+    /// The template's cursor (`IconName`), which the unit cursor `0x715ea0` resolves by name.
+    pub(crate) cursor_name: Option<String>,
     pub(crate) creature_type: u32,
     /// `CreatureFamily.dbc` id, 0 for anything not a tameable beast or warlock minion (the table
     /// has no row 0).
@@ -337,9 +339,9 @@ impl crate::query_cache::AskOnce for NameCache {
 /// reference's rule for its `.wdb` header (`[FourCC | build 0x3034 | locale | recordSize |
 /// version 1]`, no checksum, no timestamp, no TTL).
 const CACHE_MAGIC: &str = "benilla-namecache";
-/// Our record-layout version; bump it when a column changes. Version 2 holds creature records
-/// only.
-const CACHE_FORMAT: u32 = 2;
+/// Our record-layout version; bump it when a column changes. Version 3 holds creature records
+/// only, with the cursor name last.
+const CACHE_FORMAT: u32 = 3;
 /// The client build, the reference's `0x3034`.
 const CACHE_BUILD: u32 = benilla_protocol::CLIENT_BUILD as u32;
 /// In the header as in the reference's; benilla reads DBC locale slot 0 only.
@@ -354,7 +356,7 @@ impl NameCache {
         for (entry, rec) in self.creatures.iter() {
             match rec {
                 Some(r) => out.push_str(&format!(
-                    "C\t{entry}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                    "C\t{entry}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
                     r.creature_type,
                     r.pet_family,
                     r.rank,
@@ -363,7 +365,8 @@ impl NameCache {
                     u8::from(r.racial_leader),
                     r.display_id,
                     r.name,
-                    r.subname.as_deref().unwrap_or("")
+                    r.subname.as_deref().unwrap_or(""),
+                    r.cursor_name.as_deref().unwrap_or("")
                 )),
                 None => out.push_str(&format!("c\t{entry}\n")),
             }
@@ -389,7 +392,7 @@ impl NameCache {
         for line in lines {
             let f: Vec<&str> = line.split('\t').collect();
             match f.first().copied() {
-                Some("C") if f.len() >= 11 => {
+                Some("C") if f.len() >= 12 => {
                     let Ok(entry) = f[1].parse::<u32>() else {
                         continue;
                     };
@@ -407,6 +410,7 @@ impl NameCache {
                             name: f[9].to_string(),
                             // Empty is no subname, as in the wire decode.
                             subname: (!f[10].is_empty()).then(|| f[10].to_string()),
+                            cursor_name: (!f[11].is_empty()).then(|| f[11].to_string()),
                             creature_type,
                             pet_family,
                             rank,
@@ -483,6 +487,7 @@ pub(crate) mod net {
             entry,
             name,
             subname,
+            cursor_name,
             creature_type,
             pet_family,
             rank,
@@ -496,6 +501,7 @@ pub(crate) mod net {
                 entry,
                 name,
                 subname,
+                cursor_name,
                 creature_type,
                 pet_family,
                 rank,
@@ -544,6 +550,7 @@ pub(crate) mod net {
         entry: u32,
         name: Option<String>,
         subname: Option<String>,
+        cursor_name: Option<String>,
         creature_type: Option<u32>,
         pet_family: u32,
         rank: u32,
@@ -558,6 +565,7 @@ pub(crate) mod net {
             name.map(|n| CreatureRecord {
                 name: n,
                 subname,
+                cursor_name,
                 creature_type: creature_type.unwrap_or(0),
                 pet_family,
                 rank,
@@ -679,6 +687,7 @@ mod tests {
             Some(CreatureRecord {
                 name: "Stable Master Kitrik".into(),
                 subname: Some("Stable Master".into()),
+                cursor_name: Some("Speak".into()),
                 creature_type: 7,
                 pet_family: 0,
                 rank: 1,
@@ -698,6 +707,7 @@ mod tests {
         let rec = back.creature_record(69).expect("creature survived");
         assert_eq!(rec.name, "Stable Master Kitrik");
         assert_eq!(rec.subname.as_deref(), Some("Stable Master"));
+        assert_eq!(rec.cursor_name.as_deref(), Some("Speak"));
         assert_eq!((rec.creature_type, rec.rank, rec.type_flags), (7, 1, 0x10));
         assert_eq!((rec.civilian, rec.racial_leader), (true, false));
         assert_eq!(rec.display_id, 533, "the model a stabled pet is drawn from");
@@ -708,6 +718,7 @@ mod tests {
         cache.insert_creature(
             70,
             Some(CreatureRecord {
+                cursor_name: None,
                 name: "Boar".into(),
                 subname: None,
                 creature_type: 1,
@@ -733,6 +744,7 @@ mod tests {
         cache.insert_creature(
             69,
             Some(CreatureRecord {
+                cursor_name: None,
                 name: "Stable Master Kitrik".into(),
                 subname: Some("Stable Master".into()),
                 creature_type: 7,
@@ -884,6 +896,7 @@ mod tests {
         cache.insert_creature(
             69,
             Some(CreatureRecord {
+                cursor_name: None,
                 name: "Young Wolf".into(),
                 subname: None,
                 creature_type: 0,
@@ -941,6 +954,7 @@ mod tests {
 
     fn record(name: &str) -> CreatureRecord {
         CreatureRecord {
+            cursor_name: None,
             name: name.into(),
             subname: None,
             creature_type: 0,
