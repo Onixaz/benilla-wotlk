@@ -2179,3 +2179,51 @@ fn the_backpack_buttons_ring_follows_its_own_window_through_real_clicks() {
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
+
+/// `SetTooltipMoney` (`GameTooltip.lua:97`) reads the money frame's width, which resolves inside
+/// the setter, and only then raises the floor (`SetMinimumWidth`, `0x61d040`). The reference sizes
+/// after the setter (`CalculateSize` `0x61caf0`, called at `0x62d8b4`), so the floor holds on
+/// every frame of the hover loop (#312). Here and not in `benilla-ui`, whose own tests run under
+/// `WOW_LAYOUT_VERIFY`: its fall-through past the gate re-sizes the tooltip and hides the miss.
+#[test]
+fn a_money_floor_raised_after_a_mid_call_resolve_holds_on_every_frame() {
+    let mut s = UiScript::new().unwrap();
+    s.set_screen_size(800.0, 600.0);
+    s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
+    s.run(
+        r#"
+        local owner = CreateFrame("Button", "Slot")
+        owner:SetPoint("TOPLEFT", 100, -100); owner:SetWidth(40); owner:SetHeight(40)
+        -- Something else on screen moves every frame (a cast bar's spark), so the setter's width
+        -- read resolves against an open gate.
+        local bar = CreateFrame("Frame", "Bar")
+        bar:SetPoint("TOPLEFT", 10, -10); bar:SetWidth(100); bar:SetHeight(10)
+        local spark = bar:CreateTexture()
+        spark:SetWidth(8); spark:SetHeight(8)
+        CreateFrame("GameTooltip", "TT")
+        local money = CreateFrame("Frame", "Money", TT)
+        money:SetWidth(150); money:SetHeight(12)
+        function reenter(frame)
+            spark:SetPoint("CENTER", bar, "LEFT", frame + 0.5, 0)
+            TT:SetOwner(Slot, "ANCHOR_RIGHT")
+            TT:AddLine("Ruined Pelt")
+            TT:Show()
+            TT:AddLine(" ")
+            money:SetPoint("LEFT", "TTTextLeft2", "LEFT", 4, 0)
+            local w = money:GetWidth()
+            if TT:GetMinimumWidth() < w then TT:SetMinimumWidth(w) end
+        end
+        "#,
+    )
+    .expect("setup");
+    for frame in 0..8 {
+        s.run(&format!("reenter({frame})")).expect("re-enter");
+        s.resolve();
+        let w: f64 = s.eval("return TT:GetWidth()").unwrap();
+        assert_eq!(
+            w, 170.0,
+            "frame {frame}: the 150 floor plus padding, not the 66-wide name"
+        );
+    }
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}

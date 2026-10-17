@@ -5,14 +5,6 @@
 use super::common::script;
 use crate::script::UiScript;
 
-/// The mutation epoch (tier 1's input): bumped by every write into the layout read set.
-fn epoch(s: &UiScript) -> u64 {
-    s.lua()
-        .app_data_ref::<crate::script::ModelCell>()
-        .expect("model app_data")
-        .layout_epoch
-}
-
 /// How many times the fixpoint has run.
 fn solves(s: &UiScript) -> u64 {
     s.lua()
@@ -239,16 +231,17 @@ fn the_hover_re_enter_loop_neither_re_measures_nor_re_solves() {
         solves_before,
         "a re-enter with identical content must not reopen the layout gate"
     );
-    // Nor may it reach tier 2, which hashes the whole UI: identical content leaves the epoch alone.
-    let epoch_before = epoch(&s);
+    // Nor may it reach tier 2, which hashes the whole UI: the clear blanks and the rebuild refills
+    // each row, which names it on the ledger, so the gate re-hashes those rows alone.
+    let derives_before = s.layout_derivations();
     for _ in 0..10 {
         frame(&mut s);
     }
     assert_eq!(
-        epoch(&s),
-        epoch_before,
-        "a re-enter with identical content must not touch the layout epoch at all — tier 1 has to \
-         hold, or every hover frame pays the whole-UI fingerprint"
+        s.layout_derivations(),
+        derives_before,
+        "a re-enter with identical content must stay on the named ledger — a whole-graph \
+         derivation on every hover frame pays the whole-UI fingerprint"
     );
 
     // Changed content re-measures only its own line, and a measure that widens the auto-sized
@@ -294,6 +287,66 @@ fn the_hover_re_enter_loop_neither_re_measures_nor_re_solves() {
         solves(&s) > solves_before,
         "changed content must reopen the gate"
     );
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
+/// A test font: 6 units a character, 12 a row, greedily wrapped at the pinned width.
+struct TooltipFont;
+
+impl crate::script::TextMeasure for TooltipFont {
+    fn measure(&mut self, req: &crate::script::MeasureRequest) -> (f32, f32, f32) {
+        let natural = req.text.chars().count() as f32 * 6.0;
+        match req.wrap_width {
+            Some(w) if w > 0.0 && natural > w => (w, 12.0 * (natural / w).ceil(), natural),
+            _ => (natural, 12.0, natural),
+        }
+    }
+}
+
+/// A drag onto an empty bag slot re-owns the tooltip while its rows are blank, and the resolve
+/// that follows lays them at the one-unit floor (`0x772a60`). The item then lands and
+/// `ContainerFrame_Update` rebuilds the same text: nothing re-measures and the plate keeps its
+/// size, yet the rows must stack again rather than pile onto the first (#315).
+#[test]
+fn a_row_laid_while_blank_stacks_again_when_the_same_text_returns() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.set_text_measurer(Box::new(TooltipFont));
+    s.run(
+        r#"
+        for i, x in ipairs({100, 200}) do
+            local b = CreateFrame("Button", "Slot" .. i)
+            b:SetPoint("TOPLEFT", x, -100); b:SetWidth(40); b:SetHeight(40)
+        end
+        CreateFrame("GameTooltip", "TT")
+        function fill(owner)
+            TT:SetOwner(owner, "ANCHOR_RIGHT")
+            TT:AddLine("Blue Firework")
+            TT:AddLine("Use: Shoots a firework into the air that bursts into blue sparks.", 0, 1, 0, 1)
+            TT:Show()
+        end
+        function rows()
+            return TT:GetTop() - TTTextLeft1:GetTop(), TT:GetTop() - TTTextLeft2:GetTop(),
+                TTTextLeft2:GetHeight()
+        end
+        "#,
+    )
+    .expect("setup");
+    s.run("fill(Slot1)").expect("hover the source");
+    s.resolve();
+    let laid: (f64, f64, f64) = s.eval("return rows()").unwrap();
+    assert_eq!(laid.0, 10.0, "the name row at the inset");
+    assert_eq!(laid.2, 24.0, "the Use row wrapped to two rows");
+
+    // The pointer on the empty slot: re-owned, nothing to show, and a resolve while blank.
+    s.run("TT:SetOwner(Slot2, 'ANCHOR_RIGHT') TT:Hide()")
+        .expect("hover the empty slot");
+    s.resolve();
+    // The item lands under the pointer.
+    s.run("fill(Slot2)").expect("the bag update's rebuild");
+    s.resolve();
+    let back: (f64, f64, f64) = s.eval("return rows()").unwrap();
+    assert_eq!(back, laid, "the rebuilt rows stack as before the move");
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 

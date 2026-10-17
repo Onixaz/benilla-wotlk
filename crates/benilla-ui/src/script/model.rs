@@ -1587,8 +1587,7 @@ impl Model {
         id
     }
 
-    /// A layout write that names no node. The resolve's tooltip pre-pass must not call this, or
-    /// the gate never closes; a missed call is caught by `WOW_LAYOUT_VERIFY`.
+    /// A layout write that names no node; a missed call is caught by `WOW_LAYOUT_VERIFY`.
     pub(crate) fn touch_layout(&mut self) {
         // Naming nothing, the next resolve derives the graph in full: slow, never wrong.
         self.give_up_naming();
@@ -1671,6 +1670,19 @@ impl Model {
         }
     }
 
+    /// Stores a region's text and names it on the measure ledger; on the layout ledger too when
+    /// the string turns empty or back, as the layout reads no measure for empty text.
+    pub(crate) fn set_region_text(&mut self, rh: RegionHandle, text: Option<String>) {
+        let d = self.region_data.entry(rh).or_default();
+        let had = d.laid_measure().is_some();
+        d.text = text;
+        let has = d.laid_measure().is_some();
+        self.touch_measure(rh);
+        if had != has {
+            self.touch_layout_region(rh);
+        }
+    }
+
     /// Names `rh` on the measure ledger for a write that may move its measure key.
     pub(crate) fn touch_measure(&mut self, rh: RegionHandle) {
         if let Some(list) = &mut self.measure_dirty {
@@ -1681,37 +1693,6 @@ impl Model {
     /// A measure-key write that names no region, such as a font object: the next sweep walks all.
     pub(crate) fn touch_measure_all(&mut self) {
         self.measure_dirty = None;
-    }
-
-    /// Names a frame without bumping the epoch, for the resolve's own tooltip pre-pass: a bump
-    /// inside a resolve would hold the gate open for good, yet an unnamed write could go stale.
-    pub(crate) fn note_layout_frame_write(&mut self, h: FrameHandle) {
-        if self.layout_touched.is_some() {
-            match self.frame_to_id.get(&h) {
-                Some(&id) if self.layout_scope.has_node(id) => {
-                    self.layout_touched
-                        .as_mut()
-                        .expect("checked above")
-                        .push(id);
-                }
-                _ => self.give_up_naming(),
-            }
-        }
-    }
-
-    /// `note_layout_frame_write` for a region.
-    pub(crate) fn note_layout_region_write(&mut self, rh: RegionHandle) {
-        if self.layout_touched.is_some() {
-            match self.region_to_id.get(&rh) {
-                Some(&id) if self.layout_scope.has_node(id) => {
-                    self.layout_touched
-                        .as_mut()
-                        .expect("checked above")
-                        .push(id);
-                }
-                _ => self.give_up_naming(),
-            }
-        }
     }
 
     /// Names `id` as what this write moved, if the cached graph has it and naming is still on.

@@ -482,6 +482,13 @@ impl MeasuredText {
 }
 
 impl RegionData {
+    /// The measure the layout sizes by: none for empty text, which is never measured and spans
+    /// the one-unit floor, so a text write that empties or refills the string moves the rect.
+    pub(crate) fn laid_measure(&self) -> Option<MeasuredText> {
+        self.measured
+            .filter(|_| self.text.as_deref().is_some_and(|t| !t.is_empty()))
+    }
+
     /// The measure-cache key of the text, font, wrap width, outline and owner scale. A Lua metric
     /// read treats a measure under another key as absent; the layout keeps the old box until the
     /// new one lands, except for empty text, which is never measured.

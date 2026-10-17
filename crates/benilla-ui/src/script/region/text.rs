@@ -11,13 +11,11 @@ use super::region_handle_of;
 fn set_text(lua: &Lua, this: &Table, text: Option<String>) -> mlua::Result<()> {
     let rh = region_handle_of(lua, this)?;
     let mut model = crate::script::model_mut_of(lua);
-    let data = model.region_data.entry(rh).or_default();
-    data.text = text.map(crate::language::process_owned);
+    // The layout is touched only when the string empties or refills: a new string's extent has
+    // not moved until its measure lands.
+    model.set_region_text(rh, text.map(crate::language::process_owned));
     // Fresh text draws whole: an armed write-on gradient belongs to the old string.
-    data.alpha_gradient = None;
-    // SetText must not touch the layout, since the extent has not moved yet; it names itself on
-    // the measure ledger.
-    model.touch_measure(rh);
+    model.region_data.entry(rh).or_default().alpha_gradient = None;
     Ok(())
 }
 

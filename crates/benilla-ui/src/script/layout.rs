@@ -114,7 +114,7 @@ fn region_node_hash(data: &RegionData) -> u64 {
         }
         None => node.feed(u64::MAX),
     }
-    match data.measured {
+    match data.laid_measure() {
         Some(m) => {
             node.f32(m.w);
             node.f32(m.h);
@@ -546,6 +546,11 @@ impl UiScript {
     }
 
     fn resolve_layout_inner(model: &mut Model) {
+        // The GameTooltip auto-size runs ahead of the gate and touches only what it moves: its
+        // inputs (lines, the money floor, padding) are written with no touch of their own.
+        let mut pre = PreambleProf::new(layout_prof_enabled());
+        super::tooltip::layout_tooltips(model);
+        pre.tooltip = pre.lap();
         // ── Tier 1: the mutation epoch ────────────────────────────────────────────────────────
         // No layout touch since the last converged resolve: nothing the fingerprint reads moved,
         // so skip everything. Under verify, fall through so tier 2 checks the claim.
@@ -557,10 +562,6 @@ impl UiScript {
         let epoch_at_entry = model.layout_epoch;
         // Every call past tier 1 counts, verify's re-walks included: the walk is the cost.
         model.layout_gate_walks = model.layout_gate_walks.wrapping_add(1);
-        let mut pre = PreambleProf::new(layout_prof_enabled());
-        // The GameTooltip pre-pass writes tooltip sizes and offsets from cached measures.
-        super::tooltip::layout_tooltips(model);
-        pre.tooltip = pre.lap();
         // ── `OnSizeChanged`'s "before" ───────────────────────────────────────────────────────
         // The reference fires it per rect application (`ApplyRect 0x76b580`); our batch fixpoint
         // fires on the entry-vs-convergence diff, never on a half-solved round. Only frames with
@@ -828,9 +829,7 @@ impl UiScript {
                 // reference sizes a zero width to the unwrapped line. The measure is used without
                 // a key check, so changed text keeps its last box while the re-measure is in
                 // flight; empty text is never measured, so it counts as zero, never a stale box.
-                let measured = data
-                    .measured
-                    .filter(|_| data.text.as_deref().is_some_and(|t| !t.is_empty()));
+                let measured = data.laid_measure();
                 let mut height = data.size.map_or(0.0, |s| s.1);
                 let mut width = data.size.map_or(0.0, |s| s.0);
                 if let Some(m) = &measured {
@@ -948,7 +947,7 @@ impl UiScript {
                 // Under verify, `resolve_layout` re-derives this frame from scratch and compares.
                 *layout_verify_recheck = touched.is_some() && verify;
                 // A converged solve closes tier 1, at `epoch_at_entry` rather than the live epoch,
-                // so a touch during this pass (the tooltip pre-pass, a minted id) re-opens it. The
+                // so a touch during this pass (a minted id) re-opens it. The
                 // fingerprint hashes inputs only, so the next unmutated resolve would match it.
                 *layout_epoch_resolved = Some(epoch_at_entry);
                 queue_size_changes(&watched, resolved, frame_to_id, pending_size_changed);
@@ -1122,7 +1121,7 @@ impl UiScript {
                 }
                 None => fp.feed(u64::MAX),
             }
-            match data.measured {
+            match data.laid_measure() {
                 Some(m) => {
                     fp.f32(m.w);
                     fp.f32(m.h);

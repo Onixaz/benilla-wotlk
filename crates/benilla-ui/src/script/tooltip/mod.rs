@@ -256,14 +256,13 @@ pub(super) fn write_cell(
     text: &str,
     color: [f32; 4],
 ) {
+    model.set_region_text(rh, Some(crate::language::process(text).into_owned()));
     let d = model.region_data.entry(rh).or_default();
-    d.text = Some(crate::language::process(text).into_owned());
     d.vertex_color = Some(color);
     // The line's own colour, as if set by `SetTextColor`: a later
     // `GameTooltipText:SetTextColor` must not repaint it.
     d.font_explicit.color = true;
     d.hidden = false;
-    model.touch_measure(rh);
 }
 
 /// Hides and blanks every line cell and resets the counters; the caller fires `OnTooltipCleared`
@@ -274,14 +273,16 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
         _ => return,
     };
     for rh in lefts.into_iter().chain(rights) {
-        if let Some(d) = model.region_data.get_mut(&rh) {
-            d.text = None;
-            d.hidden = true;
-            // `measured` and the wrap pin (`size`) stay: the measure cache is keyed by content
-            // ([`RegionData::measure_key`]) and `append_line` rewrites the pin, so the hover
-            // loop's per-frame clear and rebuild (`ContainerFrameItemButton_OnUpdate`) re-measures
-            // and re-lays out nothing.
-        }
+        let Some(d) = model.region_data.get_mut(&rh) else {
+            continue;
+        };
+        d.hidden = true;
+        // `measured` and the wrap pin (`size`) stay: the measure cache is keyed by content
+        // ([`RegionData::measure_key`]) and `append_line` rewrites the pin, so the hover loop's
+        // clear and rebuild (`GameTooltip_OnUpdate` → `UpdateTooltip`) re-measures nothing. The
+        // blank still names the row: a resolve before the rebuild (`OnTooltipCleared`'s money
+        // reset reads widths) lays it at the one-unit floor, and the refill must lay it back.
+        model.set_region_text(rh, None);
     }
     if let Ok(t) = tip_mut(model, h) {
         t.num_lines = 0;
@@ -587,17 +588,18 @@ fn cursor_anchor(model: &mut Model, h: FrameHandle) {
     model.touch_layout_retarget_frame(h, &old_targets, &[super::SCREEN]);
 }
 
+/// The auto-size (`CGTooltip::CalculateSize` `0x61caf0`), run before every resolve's gate: the
+/// reference sizes at each Show, line add and item build, so the floor `SetTooltipMoney` writes
+/// after a mid-call `GetWidth` still lands. Its inputs (lines, floor, padding) name no node, so
+/// it touches only what it moves, and an unchanged tooltip leaves the gate shut.
 pub(super) fn layout_tooltips(model: &mut Model) {
     // Only tooltips in the resolve's roster: one outside it would mint an id here and take the
     // layout ledger's conservative branch.
-    let tips: Vec<FrameHandle> = model
-        .arena
-        .tooltip_kinds()
-        .iter()
-        .copied()
-        .filter(|h| model.frame_to_id.contains_key(h))
-        .collect();
-    for h in tips {
+    for i in 0..model.arena.tooltip_kinds().len() {
+        let h = model.arena.tooltip_kinds()[i];
+        if !model.frame_to_id.contains_key(&h) {
+            continue;
+        }
         // Mode 6 runs before the line gate: the reference re-anchors any shown plate, lines or not.
         let cursor_mode = match model.arena.frame(h).map(|f| (&f.kind_state, f.shown)) {
             Some((KindState::Tooltip(t), shown)) => shown && t.anchor == TooltipAnchor::Cursor,
@@ -606,8 +608,9 @@ pub(super) fn layout_tooltips(model: &mut Model) {
         if cursor_mode {
             cursor_anchor(model, h);
         }
+        // The line gate first: this runs at every resolve, and an empty tooltip clones nothing.
         let (num, lefts, rights, min_w, pad_w) = match model.arena.frame(h).map(|f| &f.kind_state) {
-            Some(KindState::Tooltip(t)) => (
+            Some(KindState::Tooltip(t)) if t.num_lines > 0 => (
                 t.num_lines,
                 t.left_lines.clone(),
                 t.right_lines.clone(),
@@ -616,9 +619,6 @@ pub(super) fn layout_tooltips(model: &mut Model) {
             ),
             _ => continue,
         };
-        if num == 0 {
-            continue;
-        }
         let n = num.min(lefts.len()).min(rights.len());
         let rows: Vec<(Cell, Cell)> = (0..n)
             .map(|i| (cell(model, lefts[i]), cell(model, rights[i])))
@@ -646,28 +646,34 @@ pub(super) fn layout_tooltips(model: &mut Model) {
         if maxw <= 0.0 || totalh <= 0.0 {
             continue;
         }
-        let input = model.layout_inputs.entry(h).or_default();
         // `pad_w` is `SetPadding`'s extra width (ItemRefTooltip's room for its close button).
-        input.width = maxw + 2.0 * TOOLTIP_PAD + pad_w;
-        input.height = totalh + 2.0 * TOOLTIP_PAD;
-        // Inside the resolve, so a note and not a touch; the incremental pass still has to hear
-        // that these inputs changed.
-        model.note_layout_frame_write(h);
+        let width = maxw + 2.0 * TOOLTIP_PAD + pad_w;
+        let height = totalh + 2.0 * TOOLTIP_PAD;
+        let input = model.layout_inputs.entry(h).or_default();
+        if input.width.to_bits() != width.to_bits() || input.height.to_bits() != height.to_bits() {
+            input.width = width;
+            input.height = height;
+            model.touch_layout_frame(h);
+        }
         // Right-flush each double line: left.right + (maxw - left.width) is the text inset.
         for (i, (l, r)) in rows.iter().enumerate() {
             if r.is_none() {
                 continue;
             }
-            let lw = l.map_or(0.0, |(w, _)| w);
-            let mut wrote = false;
-            if let Some(d) = model.region_data.get_mut(&rights[i]) {
-                if let Some(a) = d.anchors.first_mut() {
-                    a.x_off = maxw - lw;
-                    wrote = true;
+            let x_off = maxw - l.map_or(0.0, |(w, _)| w);
+            let mut moved = false;
+            if let Some(a) = model
+                .region_data
+                .get_mut(&rights[i])
+                .and_then(|d| d.anchors.first_mut())
+            {
+                if a.x_off.to_bits() != x_off.to_bits() {
+                    a.x_off = x_off;
+                    moved = true;
                 }
             }
-            if wrote {
-                model.note_layout_region_write(rights[i]);
+            if moved {
+                model.touch_layout_region(rights[i]);
             }
         }
     }

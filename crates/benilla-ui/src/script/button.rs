@@ -417,8 +417,7 @@ fn set_label(lua: &Lua, this: &Table, text: String) -> mlua::Result<()> {
     let id = ensure_slot(lua, this, Slot::Text)?;
     let mut model = crate::script::model_mut_of(lua);
     let rh = *model.id_to_region.get(&id).expect("text region id");
-    model.region_data.entry(rh).or_default().text = Some(crate::language::process_owned(text));
-    model.touch_measure(rh);
+    model.set_region_text(rh, Some(crate::language::process_owned(text)));
     Ok(())
 }
 

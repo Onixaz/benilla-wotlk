@@ -378,8 +378,7 @@ fn sync_text_region(lua: &Lua, h: FrameHandle) {
     });
     if let Some(display) = display {
         let mut model = crate::script::model_mut_of(lua);
-        model.region_data.entry(rh).or_default().text = Some(display);
-        model.touch_measure(rh);
+        model.set_region_text(rh, Some(display));
     }
 }
 
