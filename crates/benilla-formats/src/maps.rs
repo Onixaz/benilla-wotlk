@@ -156,6 +156,17 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
     })
 }
 
+/// Every map's `(id, Directory)`, read through a shared chain.
+pub(crate) fn map_directories(chain: &Chain) -> Result<Vec<(u32, String)>> {
+    let bytes = chain.read(MAP).with_context(|| format!("reading {MAP}"))?;
+    let rs = parse(&bytes, map_schema(&crate::dbc_layout::LAYOUTS.map), "Map")?;
+    Ok(rs
+        .records()
+        .iter()
+        .filter_map(|r| Some((u32_at(r, 0)?, str_at(&rs, r, 1)?)))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

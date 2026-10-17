@@ -87,7 +87,11 @@ fn main() -> anyhow::Result<()> {
         [pin[0] - origin[0], pin[1] - origin[1], pin[2] - origin[2]],
     );
     println!("{model}  pin in model space {pm:?}");
-    let stem = model.trim_end_matches(".wmo").to_string();
+    let stem = model
+        .strip_suffix(".wmo")
+        .or_else(|| model.strip_suffix(".WMO"))
+        .unwrap_or(&model)
+        .to_string();
     let root = benilla_formats::parse_wmo_root(&chain.read_file(&format!("{stem}.wmo"))?)?;
     let rule = benilla_formats::WmoLiquidRule::for_root(&root);
 

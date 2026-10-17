@@ -77,7 +77,7 @@ impl LiquidPath {
     }
 }
 
-/// Which shared material a surface takes. The scroll is per nibble and per path, which
+/// Which shared material a surface takes. The scroll is per type and per path, which
 /// [`LiquidKind`] collapses (2 and 6 are both `Magma`), so it keys the material too.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct LiquidKey {
@@ -93,9 +93,10 @@ struct LiquidKey {
 /// the v-translate. Nibbles 2 and 3 reach the same kernel and stay still (the Great Forge is 2,
 /// Blackrock 6). ADT liquid never scrolls, though open-world lava is nibble 6: its kernel
 /// `0x68dca0` zeroes element 13 at `0x68dda1`, so the caller gates the path. The phase runs off
-/// the reference's uptime clock; only its rate and period are reproducible.
-fn scrolls(nibble: u8) -> bool {
-    matches!(nibble, 6 | 7)
+/// the reference's uptime clock; only its rate and period are reproducible. Keyed by
+/// `LiquidType` id, the nibble + 1.
+fn scrolls(liquid_type: u32) -> bool {
+    matches!(liquid_type, 7 | 8)
 }
 
 struct LiquidEntry {
@@ -131,12 +132,11 @@ pub(super) fn hide_liquid_surfaces(mut surfaces: Query<&mut Visibility, With<Liq
     }
 }
 
-/// The ambient loop's sound-class nibble, resolved through `SoundWaterType.dbc` (`0x54e0a0`), on
-/// every liquid surface; the driver reads the geometry off the same entity's `WaterChunkInfo`.
+/// The surface's `LiquidType` id, whose row names the ambient loop (`0x4d2390`), on every liquid
+/// surface; the driver reads the geometry off the same entity's `WaterChunkInfo`.
 #[derive(Component)]
 pub(crate) struct LiquidSoundSource {
-    /// The surface's sound-class nibble (`class = n & 3`, `FluidSpeed = n & 0xc`).
-    pub(crate) nibble: u8,
+    pub(crate) liquid_type: u32,
 }
 
 /// Spawn an ADT tile's liquid surfaces into `entities`, to despawn with the tile.
@@ -172,7 +172,7 @@ pub(crate) fn spawn_liquids<'a>(
                     crate::exterior_cull::ExteriorScene,
                     info,
                     LiquidSoundSource {
-                        nibble: lq.sound_nibble,
+                        liquid_type: lq.liquid_type,
                     },
                 ))
                 .id(),
@@ -256,8 +256,8 @@ pub(crate) fn spawn_wmo_liquids<'a>(
     };
     let path = LiquidPath::wmo(interior);
     for lq in liquids {
-        // The one path that can scroll, decided by the nibble, not the kind (`scrolls`).
-        let scroll = scrolls(lq.sound_nibble);
+        // The one path that can scroll, decided by the type, not the kind (`scrolls`).
+        let scroll = scrolls(lq.liquid_type);
         // The interior arm's body colour via the pool's MLIQ `materialId`; none when fullbright.
         let body_color = (path.takes_material_body_color() && !lq.kind.is_fullbright())
             .then(|| {
@@ -271,8 +271,8 @@ pub(crate) fn spawn_wmo_liquids<'a>(
         };
         if scroll {
             debug!(
-                "liquid: {:?} nibble {} takes the scroll lane",
-                lq.kind, lq.sound_nibble
+                "liquid: {:?} LiquidType {} takes the scroll lane",
+                lq.kind, lq.liquid_type
             );
         }
         let surface = commands
@@ -286,7 +286,7 @@ pub(crate) fn spawn_wmo_liquids<'a>(
                 bevy::mesh::MeshTag(0),
                 // Every kind, the lava and slime hum too.
                 LiquidSoundSource {
-                    nibble: lq.sound_nibble,
+                    liquid_type: lq.liquid_type,
                 },
             ))
             .id();
@@ -469,20 +469,20 @@ mod tests {
 
     #[test]
     fn only_nibbles_six_and_seven_scroll() {
-        // Blackrock's lava and Stratholme's slime.
-        assert!(scrolls(6), "magma variant 6 takes the animated matrix");
-        assert!(scrolls(7), "slime variant 7 takes the animated matrix");
+        // The ids are the nibble + 1. Blackrock's lava and Stratholme's slime.
+        assert!(scrolls(7), "magma variant 6 takes the animated matrix");
+        assert!(scrolls(8), "slime variant 7 takes the animated matrix");
 
         // Same kernel, same sheet, still static: the Great Forge (2) and Undercity's slime (3).
-        assert!(!scrolls(2), "the Great Forge's lava is static");
-        assert!(!scrolls(3), "nibble-3 slime is static");
+        assert!(!scrolls(3), "the Great Forge's lava is static");
+        assert!(!scrolls(4), "nibble-3 slime is static");
 
         // 4 passes a bare `nibble & 0xc == 4` test but is a river variant, never the kernel's.
-        assert!(!scrolls(4), "nibble 4 is lake_a, not a hazard liquid");
+        assert!(!scrolls(5), "nibble 4 is lake_a, not a hazard liquid");
 
         // Everything else in the table, including the hole nibble.
-        for n in [0u8, 1, 5, 8, 0xf] {
-            assert!(!scrolls(n), "nibble {n} must not scroll");
+        for n in [0u32, 1, 5, 8, 0xf] {
+            assert!(!scrolls(n + 1), "nibble {n} must not scroll");
         }
     }
 
@@ -495,7 +495,7 @@ mod tests {
                 wants_lane,
                 [2u8, 3, 6, 7]
                     .iter()
-                    .any(|&n| scrolls(n) && LiquidKind::from_nibble(n) == Some(kind)),
+                    .any(|&n| scrolls(u32::from(n) + 1) && LiquidKind::from_nibble(n) == Some(kind)),
                 "{kind:?}: scroll lane and the nibbles that can ask for one must agree"
             );
         }
@@ -517,7 +517,7 @@ mod tests {
             uvs: vec![[0.0, 0.0]; 4],
             depths: vec![1.0; 4],
             indices: vec![0, 1, 2, 1, 3, 2],
-            sound_nibble: 0,
+            liquid_type: 1,
             material_id: None,
             kind: LiquidKind::Still,
         }
@@ -600,8 +600,8 @@ mod real_data {
     fn only_the_nibble_six_and_seven_pools_scroll_in_the_shipped_data() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
-        // Every liquid-bearing group of a WMO, as `(nibble, kind)` → count.
-        let mut census = |root_path: &str| -> HashMap<(u8, LiquidKind), usize> {
+        // Every liquid-bearing group of a WMO, as `(LiquidType, kind)` → count.
+        let mut census = |root_path: &str| -> HashMap<(u32, LiquidKind), usize> {
             let bytes = chain.read_file(root_path).expect("root readable");
             let root = parse_wmo_root(&bytes).expect("parse root");
             let rule = WmoLiquidRule::for_root(&root);
@@ -615,7 +615,7 @@ mod real_data {
                     continue;
                 };
                 if let Some(m) = wmo_group_liquid_mesh(&gb, rule) {
-                    *tally.entry((m.sound_nibble, m.kind)).or_default() += 1;
+                    *tally.entry((m.liquid_type, m.kind)).or_default() += 1;
                 }
             }
             tally

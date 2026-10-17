@@ -192,6 +192,12 @@ fn strip_sampler_marker(path: &str) -> Option<String> {
 /// `AssetPlugin` builds (before `DefaultPlugins`), which reads the sources.
 pub fn register_mpq_source(app: &mut App, data_dir: &Path) -> Result<()> {
     let reader = MpqAssetReader::open(data_dir)?;
+    match benilla_formats::TerrainLiquid::load(&reader.chain) {
+        Ok(liquid) => {
+            app.insert_resource(LiquidTables(Arc::new(liquid)));
+        }
+        Err(e) => warn!("liquid tables failed to load, terrain liquid is dry: {e:#}"),
+    }
     app.register_asset_source(
         MPQ_SOURCE,
         AssetSourceBuilder::new(move || -> Box<dyn ErasedAssetReader> { Box::new(reader.clone()) }),
@@ -199,8 +205,18 @@ pub fn register_mpq_source(app: &mut App, data_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The install's `LiquidType`, `LiquidMaterial` and map ids, read with the `mpq://` source: ADT
+/// liquid is meshed with them, and the liquid loops key their sounds off the same rows.
+#[derive(Resource, Clone, Default)]
+pub struct LiquidTables(pub Arc<benilla_formats::TerrainLiquid>);
+
 /// Register benilla's asset loaders on `app`, after `AssetPlugin`, into its live `AssetServer`.
 pub fn register_asset_loaders(app: &mut App) {
+    let liquid = app
+        .world_mut()
+        .get_resource_or_init::<LiquidTables>()
+        .0
+        .clone();
     app.init_asset::<M2Model>();
     app.init_asset::<WmoModel>();
     app.init_asset::<AdtTile>();
@@ -210,7 +226,7 @@ pub fn register_asset_loaders(app: &mut App) {
     app.register_asset_loader(BlpImageLoader);
     app.register_asset_loader(M2ModelLoader);
     app.register_asset_loader(WmoModelLoader);
-    app.register_asset_loader(AdtLoader);
+    app.register_asset_loader(AdtLoader::new(liquid));
     app.register_asset_loader(WdtIndexLoader);
     // The materials' WGSL, compiled in; it too needs `AssetPlugin` first.
     materials::register_shaders(app);

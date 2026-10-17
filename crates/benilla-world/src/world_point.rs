@@ -70,14 +70,14 @@ pub fn init_world_point_resources(world: &mut bevy::prelude::World) {
     world.init_resource::<CurrentAreaInterior>();
 }
 
-/// The nearest wet point of one liquid sound class ([`WorldPoint::nearest_liquid_per_class`]).
+/// The liquid whose loop plays ([`WorldPoint::nearest_liquid`]).
 pub struct NearestLiquid {
-    /// Squared distance from the query point, in WoW yards.
+    /// Squared horizontal distance from the query point, in WoW yards.
     pub(crate) dist_sq: f32,
-    /// The wet point, WoW space: the slew target.
+    /// The wet point, WoW space: the emitter's position.
     pub point: [f32; 3],
-    /// The surface's sound-class nibble (`class = n & 3`, `FluidSpeed = n & 0xc`).
-    pub nibble: u8,
+    /// The surface's `LiquidType` id.
+    pub liquid_type: u32,
 }
 
 impl WorldPoint<'_, '_> {
@@ -221,29 +221,30 @@ impl WorldPoint<'_, '_> {
         self.area_interior.0
     }
 
-    /// The nearest wet point to `wow` within `radius` for each liquid sound class (`nibble & 3`),
-    /// the scan behind the ambient liquid loops (reference: `0x6723f0` → `0x68af10` →
-    /// `0x68b0d0`). The class split and the AABB-clamped nearest point are the world's; priority,
-    /// the voice cap and the slew are the sound system's.
-    pub fn nearest_liquid_per_class(
+    /// The liquid whose ambient loop plays at `wow`: of the surfaces within `radius` in 3D whose
+    /// `LiquidType` `keep` accepts, the one horizontally nearest (`World::QueryLiquidSounds`
+    /// `0x77f390`, picked by `0x4d21b0`). The point is the footprint's AABB clamp where the
+    /// reference walks tiles.
+    pub fn nearest_liquid(
         &self,
         wow: [f32; 3],
         radius: f32,
-    ) -> [Option<NearestLiquid>; 4] {
-        let mut best: [Option<NearestLiquid>; 4] = [None, None, None, None];
+        keep: impl Fn(u32) -> bool,
+    ) -> Option<NearestLiquid> {
+        let mut best: Option<NearestLiquid> = None;
         for (src, info) in &self.sound_sources {
+            if !keep(src.liquid_type) {
+                continue;
+            }
             let point = info.nearest_point_wow(wow[0], wow[1]);
-            let dist_sq = (point[0] - wow[0]).powi(2)
-                + (point[1] - wow[1]).powi(2)
-                + (point[2] - wow[2]).powi(2);
-            let class = (src.nibble & 3) as usize;
-            if dist_sq <= radius * radius
-                && best[class].as_ref().is_none_or(|b| dist_sq < b.dist_sq)
+            let flat_sq = (point[0] - wow[0]).powi(2) + (point[1] - wow[1]).powi(2);
+            if flat_sq + (point[2] - wow[2]).powi(2) <= radius * radius
+                && best.as_ref().is_none_or(|b| flat_sq < b.dist_sq)
             {
-                best[class] = Some(NearestLiquid {
-                    dist_sq,
+                best = Some(NearestLiquid {
+                    dist_sq: flat_sq,
                     point,
-                    nibble: src.nibble,
+                    liquid_type: src.liquid_type,
                 });
             }
         }

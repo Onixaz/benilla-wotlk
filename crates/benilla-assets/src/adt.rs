@@ -6,10 +6,11 @@
 //! shares one material.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use benilla_formats::{
-    adt_to_tile_mesh, blp_bytes_to_native_chain, ChunkMesh, Doodad, WmoInstance, ALPHA_MAP_SIZE,
-    SHADOW_MAP_SIZE,
+    adt_to_tile_mesh, blp_bytes_to_native_chain, ChunkMesh, Doodad, TerrainLiquid, WmoInstance,
+    ALPHA_MAP_SIZE, SHADOW_MAP_SIZE,
 };
 use bevy::asset::io::Reader;
 use bevy::asset::{Asset, AssetLoader, LoadContext, RenderAssetUsages};
@@ -125,9 +126,17 @@ pub fn chunks_to_mesh(parts: &[(&ChunkMesh, &ChunkShading)]) -> Option<Mesh> {
     Some(mesh)
 }
 
-/// Loads a `*.adt` tile into an [`AdtTile`].
+/// Loads a `*.adt` tile into an [`AdtTile`], its liquid typed by the install's liquid tables.
 #[derive(Default, TypePath)]
-pub struct AdtLoader;
+pub struct AdtLoader {
+    liquid: Arc<TerrainLiquid>,
+}
+
+impl AdtLoader {
+    pub fn new(liquid: Arc<TerrainLiquid>) -> Self {
+        AdtLoader { liquid }
+    }
+}
 
 impl AssetLoader for AdtLoader {
     type Asset = AdtTile;
@@ -143,7 +152,16 @@ impl AssetLoader for AdtLoader {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
         let to_io = |e: anyhow::Error| std::io::Error::other(format!("{e:#}"));
-        let tile = adt_to_tile_mesh(&bytes).map_err(to_io)?;
+        // `world/maps/<map>/<map>_x_y.adt`: the directory names the map.
+        let map = ctx
+            .path()
+            .path()
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        let tile =
+            adt_to_tile_mesh(&bytes, &self.liquid, self.liquid.map_id(map)).map_err(to_io)?;
 
         // Layer array: a solid-green fallback at index 0, then each unique layer texture, packed
         // once the whole tile is read.

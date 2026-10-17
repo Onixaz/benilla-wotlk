@@ -106,6 +106,14 @@ impl WmoLiquidRule {
     /// A group's own liquid as a type nibble, [`NO_GROUP_LIQUID`] when it has none, from its MOGP
     /// `groupLiquid` and flags.
     pub fn group_liquid(self, group_liquid: u32, mogp_flags: u32) -> u32 {
+        self.group_liquid_type(group_liquid, mogp_flags)
+            .and_then(class_nibble)
+            .map_or(NO_GROUP_LIQUID, u32::from)
+    }
+
+    /// A group's own liquid as the `LiquidType` id the group stores (`0x7d7310`), `None` when
+    /// it has none.
+    fn group_liquid_type(self, group_liquid: u32, mogp_flags: u32) -> Option<u32> {
         let id = if self.mohd_ids {
             group_liquid
         } else if group_liquid == NO_GROUP_LIQUID {
@@ -113,7 +121,7 @@ impl WmoLiquidRule {
         } else {
             group_liquid.wrapping_add(1)
         };
-        liquid_type_nibble(id, mogp_flags).map_or(NO_GROUP_LIQUID, u32::from)
+        stored_liquid_type(id, mogp_flags)
     }
 
     /// The kind a group is wholly submerged in, as a type nibble, [`NO_GROUP_LIQUID`] when it is
@@ -127,25 +135,40 @@ impl WmoLiquidRule {
         }
     }
 
-    /// An MLIQ tile's type nibble as the client reads it; the tile id is the nibble + 1
+    /// An MLIQ tile's `LiquidType` id as the client stores it; the tile id is the nibble + 1
     /// (`0x7c8d80`).
-    fn tile_nibble(self, nibble: u8, mogp_flags: u32) -> Option<u8> {
-        liquid_type_nibble(u32::from(nibble) + 1, mogp_flags)
+    fn tile_liquid_type(self, nibble: u8, mogp_flags: u32) -> Option<u32> {
+        stored_liquid_type(u32::from(nibble) + 1, mogp_flags)
     }
 }
 
-/// A `LiquidType` id as the type nibble of its WMO kind, `None` for 0 (no liquid). The
-/// client maps ids 1..=20 by `(id − 1) & 3` (`0x7d7310`): water (13, or ocean 14 under MOGP
-/// `0x80000`), ocean (14), magma (19), slime (20). A higher id is kept as a `LiquidType` row whose
-/// class benilla does not read; no 12340 group or tile carries one (`tests/wmo_liquid.rs`).
-fn liquid_type_nibble(id: u32, mogp_flags: u32) -> Option<u8> {
+/// WMO `LiquidType` ids by class: water, ocean, magma, slime (`0x7d7310`).
+const WMO_WATER: u32 = 13;
+const WMO_OCEAN: u32 = 14;
+const WMO_MAGMA: u32 = 19;
+const WMO_SLIME: u32 = 20;
+
+/// The `LiquidType` id a group stores for `id`, `None` for 0 (no liquid): ids 1..=20 become the
+/// WMO row of their class `(id − 1) & 3`, water the ocean row under MOGP `0x80000`; a higher id is
+/// kept (`0x7d7310`).
+fn stored_liquid_type(id: u32, mogp_flags: u32) -> Option<u32> {
     match id {
+        0 => None,
         1..=20 => Some(match (id - 1) & 3 {
-            0 if mogp_flags & MOGP_WATER_IS_OCEAN != 0 => 1,
-            class => class as u8,
+            0 if mogp_flags & MOGP_WATER_IS_OCEAN != 0 => WMO_OCEAN,
+            0 => WMO_WATER,
+            1 => WMO_OCEAN,
+            2 => WMO_MAGMA,
+            _ => WMO_SLIME,
         }),
-        _ => None,
+        _ => Some(id),
     }
+}
+
+/// A stored WMO `LiquidType` id's class as a type nibble, `None` for a higher id, whose class
+/// lives in `LiquidType.dbc`; no 12340 group or tile carries one (`tests/wmo_liquid.rs`).
+fn class_nibble(id: u32) -> Option<u8> {
+    matches!(id, WMO_WATER | WMO_OCEAN | WMO_MAGMA | WMO_SLIME).then_some(((id - 1) & 3) as u8)
 }
 
 /// A group's MOGP header fields. `flags` sits at `0x08` and the portal-ref slice at `0x24`/`0x26`,
@@ -366,15 +389,15 @@ fn build_wmo_liquid_mesh(
         return None;
     }
 
-    // One kind per surface: the `groupLiquid` override, else the first wet nibble (`0x6ba970`).
-    let group_nibble = rule.group_liquid(group_liquid, mogp_flags);
-    let type_nibble = if group_nibble != NO_GROUP_LIQUID {
-        (group_nibble & 0xf) as u8
-    } else {
-        let first_wet = lq.tile_flags.iter().map(|&f| f & 0xf).find(|&n| n != 0xf)?;
-        rule.tile_nibble(first_wet, mogp_flags)?
+    // One type per surface: the `groupLiquid` override, else the first wet nibble (`0x6ba970`).
+    let liquid_type = match rule.group_liquid_type(group_liquid, mogp_flags) {
+        Some(id) => id,
+        None => {
+            let first_wet = lq.tile_flags.iter().map(|&f| f & 0xf).find(|&n| n != 0xf)?;
+            rule.tile_liquid_type(first_wet, mogp_flags)?
+        }
     };
-    let kind = LiquidKind::from_nibble(type_nibble)?;
+    let kind = LiquidKind::from_nibble(class_nibble(liquid_type)?)?;
     // Fullbright kinds read no ramp and their vertex bytes are a UV pair: the channel stays 0.
     let water = !kind.is_fullbright();
 
@@ -447,8 +470,7 @@ fn build_wmo_liquid_mesh(
         uvs,
         depths,
         indices,
-        // The resolved nibble is also the surface's ambient-sound key.
-        sound_nibble: type_nibble,
+        liquid_type,
         // The body colour's MOMT index; MOMT is in the root, so the spawner resolves it.
         material_id: Some(lq.material_id),
         kind,

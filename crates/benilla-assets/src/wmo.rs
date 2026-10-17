@@ -643,6 +643,7 @@ mod doodad_base_tests {
         WmoGroupInfo {
             interior,
             show_skybox: false,
+            liquid_queried: !interior,
             bbox_min: [-1.0; 3],
             bbox_max: [1.0; 3],
         }

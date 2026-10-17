@@ -45,6 +45,9 @@ pub struct WmoGroupInfo {
     /// `groupFlags & 0x40000`: draw [`WmoRoot::skybox`] instead of the `Light.dbc` dome. A corpus
     /// correlation (`benilla-extract skyboxscan`): only roots with a non-empty MOSB set it.
     pub show_skybox: bool,
+    /// `groupFlags & 0x2000 == 0`: the world liquid query searches this group's MLIQ for any
+    /// subject, as `0x7a09d0` passes `0x2000` as the skip mask to `0x7aeb90`.
+    pub liquid_queried: bool,
     pub bbox_min: [f32; 3],
     pub bbox_max: [f32; 3],
 }
@@ -207,6 +210,7 @@ fn parse_wmo_group_infos(bytes: &[u8]) -> Vec<WmoGroupInfo> {
             WmoGroupInfo {
                 interior: (flags & 0x48) == 0,
                 show_skybox: (flags & 0x40000) != 0,
+                liquid_queried: (flags & 0x2000) == 0,
                 bbox_min: [f(4), f(8), f(12)],
                 bbox_max: [f(16), f(20), f(24)],
             }

@@ -149,7 +149,9 @@ pub use light::{Atmosphere, LightCatalog, Submersion, ZERO_KEY_COLOR, ZERO_KEY_S
 mod loading_screen;
 pub use loading_screen::{load_loading_screens, LoadingScreenCatalog};
 mod liquid;
-pub use liquid::{LiquidKind, LiquidMesh};
+pub use liquid::{mclq_liquid_type, LiquidKind, LiquidMesh};
+mod liquid_type;
+pub use liquid_type::{load_liquid_types, DepthRamp, LiquidTypeRow, LiquidTypes, VertexFormat};
 mod maps;
 pub use maps::{load_map_catalog, MapCatalog};
 mod anim_data;
@@ -186,8 +188,6 @@ mod sound_entries;
 pub use sound_entries::{load_sound_kit_catalog, sound_kit_flags, SoundKit, SoundKitCatalog};
 mod sound_provider;
 pub use sound_provider::{load_sound_provider_catalog, SoundProvider, SoundProviderCatalog};
-mod sound_water;
-pub use sound_water::{load_water_sound_catalog, WaterSoundCatalog};
 mod weather;
 pub use weather::{load_weather_catalog, WeatherCatalog, WeatherRow};
 mod vocal_ui_sounds;
@@ -291,9 +291,9 @@ pub use models::{
 mod terrain;
 pub use terrain::{
     adt_to_tile_mesh, area_id_at, find_tile_near, ground_effect_at, impassable_at, load_tile_mesh,
-    load_tiles_around, mcsh_shadowed_at, terrain_height_at, triangle_z_at, ChunkMesh, Doodad,
-    MapTiles, TileMesh, WmoInstance, ALPHA_MAP_SIZE, CHUNK_SIZE, SHADOW_MAP_SIZE, STORMWIND_XY,
-    TERRAIN_LAYER_TILES, TILE_SIZE,
+    load_tile_mesh_with, load_tiles_around, mcsh_shadowed_at, terrain_height_at, triangle_z_at,
+    ChunkMesh, Doodad, MapTiles, TerrainLiquid, TileMesh, WmoInstance, ALPHA_MAP_SIZE, CHUNK_SIZE,
+    SHADOW_MAP_SIZE, STORMWIND_XY, TERRAIN_LAYER_TILES, TILE_SIZE,
 };
 mod wdl;
 /// World (x, y) to ADT tile `(col, row)`; minimap `map<X>_<Y>.blp` names use the same order.

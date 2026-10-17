@@ -84,12 +84,12 @@ fn main() -> anyhow::Result<()> {
                 dhi = dhi.max(liq.depths[n]);
             }
             println!(
-                "  chunk[{ci:3}] {:>2}_{:<2} block[{bi}] {:?} nibble {} — {wet_n:2}/{} wet, \
+                "  chunk[{ci:3}] {:>2}_{:<2} block[{bi}] {:?} LiquidType {} — {wet_n:2}/{} wet, \
                  z {zlo:.3}..{zhi:.3} (span {:.3}), depthV {dlo:.3}..{dhi:.3}",
                 chunk.index_x,
                 chunk.index_y,
                 liq.kind,
-                liq.sound_nibble,
+                liq.liquid_type,
                 (cols - 1) * (rows - 1),
                 zhi - zlo,
             );

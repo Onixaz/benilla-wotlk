@@ -67,7 +67,8 @@ pub struct ChunkMesh {
     /// MCNK flag bit 1 ([`benilla_adt::MCNK_IMPASSABLE`]): an invisible wall over the whole chunk
     /// at every height, where the reference stops a mover.
     pub impassable: bool,
-    /// The chunk's MCLQ liquid surfaces, one per block; a river mouth has a stream and a sea.
+    /// The chunk's liquid surfaces, its MCLQ blocks then its MH2O instances (`0x7c5690`); a river
+    /// mouth has a stream and a sea.
     pub liquids: Vec<crate::liquid::LiquidMesh>,
 }
 
@@ -292,11 +293,47 @@ pub(crate) fn snap_to_lattice(coord: f32) -> f32 {
     (map_center - idx * unit) as f32
 }
 
-/// Build per-chunk meshes from one vanilla (monolithic) ADT file's bytes.
-pub fn adt_to_tile_mesh(adt_bytes: &[u8]) -> Result<TileMesh> {
+/// What a tile's liquid reads beyond the ADT: the `LiquidType` rows and the map's id, by its
+/// directory, for the MCLQ type rule (`0x7c5690`).
+#[derive(Debug, Clone, Default)]
+pub struct TerrainLiquid {
+    pub types: crate::LiquidTypes,
+    /// `Map.dbc` directory, lowercased, to map id.
+    map_ids: std::collections::HashMap<String, u32>,
+}
+
+impl TerrainLiquid {
+    /// Read `LiquidType`, `LiquidMaterial` and `Map` off the chain.
+    pub fn load(chain: &Chain) -> Result<Self> {
+        let types = crate::load_liquid_types(chain)?;
+        let map_ids = crate::maps::map_directories(chain)?
+            .into_iter()
+            .map(|(id, dir)| (dir.to_ascii_lowercase(), id))
+            .collect();
+        Ok(TerrainLiquid { types, map_ids })
+    }
+
+    /// The table with explicit types and no maps, for tests without an install.
+    pub fn from_types(types: crate::LiquidTypes) -> Self {
+        TerrainLiquid {
+            types,
+            map_ids: Default::default(),
+        }
+    }
+
+    /// The map id of the directory `map` ("Expansion01"), any case; 0 where unknown.
+    pub fn map_id(&self, map: &str) -> u32 {
+        self.map_ids
+            .get(&map.to_ascii_lowercase())
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+/// Build per-chunk meshes from one monolithic ADT file's bytes on map `map_id`.
+pub fn adt_to_tile_mesh(adt_bytes: &[u8], liquid: &TerrainLiquid, map_id: u32) -> Result<TileMesh> {
     let mut cursor = Cursor::new(adt_bytes);
     let parsed = parse_adt(&mut cursor).map_err(|e| anyhow::anyhow!("parsing ADT: {e}"))?;
-    // A vanilla ADT is always one monolithic root.
     let ParsedAdt::Root(root) = parsed;
 
     let mut chunks = Vec::new();
@@ -433,11 +470,16 @@ pub fn adt_to_tile_mesh(adt_bytes: &[u8]) -> Result<TileMesh> {
             no_effect_doodad[k] = (ned8[k / 8] >> (k % 8)) & 0x1 == 1;
         }
 
-        let liquids: Vec<_> = mcnk
-            .liquids
+        let types = &liquid.types;
+        let mclq = mcnk.liquids.iter().filter_map(|b| {
+            let ty = crate::liquid::mclq_liquid_type(b.slot, map_id);
+            crate::liquid::build_mclq_mesh(b, h.position, ty, types)
+        });
+        let mh2o = root
+            .mh2o_instances(h.index_x, h.index_y)
             .iter()
-            .filter_map(|mclq| crate::liquid::build_liquid_mesh(mclq, h.position))
-            .collect();
+            .filter_map(|i| crate::liquid::build_mh2o_mesh(i, h.position, types));
+        let liquids: Vec<_> = mclq.chain(mh2o).collect();
 
         chunks.push(ChunkMesh {
             positions,
@@ -606,11 +648,23 @@ impl MapTiles {
 
 /// Read and mesh one ADT tile from the chain.
 pub fn load_tile_mesh(chain: &mut Chain, map: &str, tile_x: u32, tile_y: u32) -> Result<TileMesh> {
+    let liquid = TerrainLiquid::load(chain)?;
+    load_tile_mesh_with(chain, &liquid, map, tile_x, tile_y)
+}
+
+/// [`load_tile_mesh`] with the liquid tables already read.
+pub fn load_tile_mesh_with(
+    chain: &mut Chain,
+    liquid: &TerrainLiquid,
+    map: &str,
+    tile_x: u32,
+    tile_y: u32,
+) -> Result<TileMesh> {
     let path = format!("World\\Maps\\{map}\\{map}_{tile_x}_{tile_y}.adt");
     let bytes = chain
         .read_file(&path)
         .with_context(|| format!("reading {path}"))?;
-    adt_to_tile_mesh(&bytes)
+    adt_to_tile_mesh(&bytes, liquid, liquid.map_id(map))
 }
 
 /// Load every existing ADT tile within `radius` tiles of the world (x, y) on `map`.
@@ -622,6 +676,7 @@ pub fn load_tiles_around(
     radius: u32,
 ) -> Result<Vec<((u32, u32), TileMesh)>> {
     let wdt = read_wdt(chain, map)?;
+    let liquid = TerrainLiquid::load(chain)?;
     let (cx, cy) = benilla_wdt::world_to_tile(world_x, world_y);
     let r = radius as i32;
 
@@ -637,7 +692,7 @@ pub fn load_tiles_around(
                 continue;
             }
             // An unparseable tile is skipped, not fatal.
-            if let Ok(mesh) = load_tile_mesh(chain, map, tx, ty) {
+            if let Ok(mesh) = load_tile_mesh_with(chain, &liquid, map, tx, ty) {
                 out.push(((tx, ty), mesh));
             }
         }

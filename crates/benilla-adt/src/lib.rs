@@ -1,5 +1,6 @@
-//! A reader for 1.12.1's monolithic root ADTs: IFF chunks (a reversed magic, a `u32` size, the
-//! payload) holding the asset names, the placements and 256 `MCNK` terrain chunks.
+//! A reader for 3.3.5a's monolithic root ADTs: IFF chunks (a reversed magic, a `u32` size, the
+//! payload) holding the asset names, the placements, the `MH2O` terrain liquid and 256 `MCNK`
+//! terrain chunks.
 
 use std::io::Cursor;
 
@@ -88,7 +89,8 @@ impl McshChunk {
 }
 
 /// One MCLQ liquid vertex, 8 bytes: 4 union bytes and an absolute height. The union follows the
-/// cell's liquid type: a depth byte and flow for water and ocean, a UV pair for magma and slime.
+/// block type's vertex format: a depth byte for water and ocean, a UV pair for magma and slime
+/// (`0x8a3200`-`0x8a3250`).
 #[derive(Debug, Clone, Copy)]
 pub struct LiquidVertex {
     pub union_data: [u8; 4],
@@ -96,14 +98,14 @@ pub struct LiquidVertex {
 }
 
 impl LiquidVertex {
-    /// The water or ocean depth byte (union byte 0).
+    /// The water or ocean depth byte (union byte 0, `0x8a3220`).
     pub fn depth_byte(&self) -> u8 {
         self.union_data[0]
     }
 
-    /// A magma block's authored `(s, t)`, two little-endian `u16`s the reference's lava fill takes
-    /// as its UV (`0x68d890`: `u = (s as i32 as f64 · 3/256) as f32`, same for `t`). The field is
-    /// world-continuous, so lava tiles seamlessly across MCNK borders.
+    /// A magma block's authored `(s, t)`, two little-endian `u16`s (`0x8a3250`) the vertex fill
+    /// scales by 3/256 into its UV (`0x7ce390`). The field is world-continuous, so lava tiles
+    /// seamlessly across MCNK borders.
     pub fn texcoords(&self) -> [u16; 2] {
         [
             u16::from_le_bytes([self.union_data[0], self.union_data[1]]),
@@ -113,17 +115,82 @@ impl LiquidVertex {
 }
 
 /// One MCLQ liquid block: a 9×9 absolute-height grid and an 8×8 cell-flag grid. An MCNK carries
-/// one per set liquid header bit, back to back (`0x6af7a3`–`0x6af7cb`): two at the 28 shipped river
-/// mouths. The liquid type is each cell's flag nibble (`0x6ba970`, `0x68d9b0`), not a header bit.
+/// one per set liquid header bit, back to back, and 12340 makes each a liquid of `LiquidType`
+/// `slot + 1` (`0x7c5690`); a cell is wet where its nibble is not `0xf` and shares that type's
+/// class (`0x7ce180`).
 #[derive(Debug, Clone)]
 pub struct MclqChunk {
+    /// Which liquid header bit (2–5) this block answers, as 0–3.
+    pub slot: u8,
     pub min_height: f32,
     pub max_height: f32,
     pub vertices: Vec<LiquidVertex>,
-    /// Per-cell flags, row-major 8×8: the low nibble is the liquid type (`0xf` dry), `0x80`
-    /// shared. `0x40`, fishable, is unread: the reference's only reader (`0x69b5d0`) has no
-    /// caller, and the server decides fishability.
+    /// Per-cell flags, row-major 8×8: the low nibble is the liquid type (`0xf` dry); `0x40` and
+    /// `0x80` are unread.
     pub tile_flags: [u8; 64],
+}
+
+/// One MH2O liquid instance (`SMLiquidInstance`, 24 bytes): a `width`×`height` tile rectangle at
+/// `(x_offset, y_offset)` in its chunk's 8×8 cells, over a `(width+1)`×`(height+1)` vertex grid,
+/// row-major (`0x7cdf80`).
+#[derive(Debug, Clone)]
+pub struct Mh2oInstance {
+    /// The `LiquidType.dbc` id.
+    pub liquid_type: u16,
+    /// The instance's own vertex format, which the accessors read (`0x8a3130`).
+    pub vertex_format: u16,
+    pub min_height: f32,
+    pub max_height: f32,
+    /// First tile column, stepping east (−Y).
+    pub x_offset: u8,
+    /// First tile row, stepping south (−X).
+    pub y_offset: u8,
+    pub width: u8,
+    pub height: u8,
+    /// Per tile, row-major over `width`×`height`: the exists bitmap, LSB first (`0x95da20`); all
+    /// set where the instance stores none (`0x8a3110`).
+    pub exists: Vec<bool>,
+    /// The vertex data from the instance's offset, as long as its format stores; `None` where the
+    /// offset is 0.
+    vertex_data: Option<Vec<u8>>,
+}
+
+impl Mh2oInstance {
+    /// Vertices in the grid, `(width+1)·(height+1)`.
+    pub fn vertex_count(&self) -> usize {
+        (usize::from(self.width) + 1) * (usize::from(self.height) + 1)
+    }
+
+    /// Vertex `i`'s height: a stored `f32` under formats 0 and 1, otherwise 0 (`0x8a3130`).
+    pub fn height_at(&self, i: usize) -> f32 {
+        match (&self.vertex_data, self.vertex_format) {
+            (Some(d), 0 | 1) => d.f32_at(i * 4).unwrap_or(0.0),
+            _ => 0.0,
+        }
+    }
+
+    /// Vertex `i`'s depth byte: after the heights under format 0, the data itself under format 2
+    /// (`0xff` with none), otherwise 0 (`0x8a3160`).
+    pub fn depth_at(&self, i: usize) -> u8 {
+        match (&self.vertex_data, self.vertex_format) {
+            (Some(d), 0) => d.u8_at(self.vertex_count() * 4 + i).unwrap_or(0),
+            (Some(d), 2) => d.u8_at(i).unwrap_or(0),
+            (None, 2) => 0xff,
+            _ => 0,
+        }
+    }
+
+    /// Vertex `i`'s `u16` texture coordinate pair, after the heights under format 1, otherwise
+    /// `(0, 0)` (`0x8a31b0`).
+    pub fn texcoord_at(&self, i: usize) -> [u16; 2] {
+        match (&self.vertex_data, self.vertex_format) {
+            (Some(d), 1) => {
+                let o = (self.vertex_count() + i) * 4;
+                [d.u16_at(o).unwrap_or(0), d.u16_at(o + 2).unwrap_or(0)]
+            }
+            _ => [0, 0],
+        }
+    }
 }
 
 /// MCNK header flag bit 1: a chunk a mover may not enter, the bands along mountain rims such as
@@ -201,9 +268,20 @@ pub struct RootAdt {
     pub doodad_placements: Vec<DoodadPlacement>,
     pub wmo_placements: Vec<WmoPlacement>,
     pub mcnk_chunks: Vec<McnkChunk>,
+    /// MH2O's instances per chunk, indexed `x + 16·y` like MCIN (`0x8a3070`); empty without MH2O.
+    pub mh2o: Vec<Vec<Mh2oInstance>>,
 }
 
-/// A parsed ADT; vanilla has only the monolithic root.
+impl RootAdt {
+    /// The MH2O instances of the chunk at `(index_x, index_y)`, in layer order.
+    pub fn mh2o_instances(&self, index_x: u32, index_y: u32) -> &[Mh2oInstance] {
+        self.mh2o
+            .get((index_x + 16 * index_y) as usize)
+            .map_or(&[], Vec::as_slice)
+    }
+}
+
+/// A parsed ADT: the monolithic root.
 #[derive(Debug, Clone)]
 pub enum ParsedAdt {
     Root(Box<RootAdt>),
@@ -237,7 +315,7 @@ fn cstring_at(blob: &[u8], offset: usize) -> String {
     String::from_utf8_lossy(&blob[offset.min(blob.len())..end]).into_owned()
 }
 
-/// Parse a vanilla monolithic ADT; the cursor's position is ignored.
+/// Parse a monolithic ADT; the cursor's position is ignored.
 pub fn parse_adt(cursor: &mut Cursor<&[u8]>) -> Result<ParsedAdt> {
     let b: &[u8] = cursor.get_ref();
 
@@ -249,6 +327,7 @@ pub fn parse_adt(cursor: &mut Cursor<&[u8]>) -> Result<ParsedAdt> {
     let mut doodad_placements = Vec::new();
     let mut wmo_placements = Vec::new();
     let mut mcnk_chunks = Vec::new();
+    let mut mh2o = Vec::new();
 
     for (magic, data) in chunks(b) {
         match &magic {
@@ -260,6 +339,7 @@ pub fn parse_adt(cursor: &mut Cursor<&[u8]>) -> Result<ParsedAdt> {
             b"FDDM" => doodad_placements = read_mddf(data)?, // MDDF
             b"FDOM" => wmo_placements = read_modf(data)?,    // MODF
             b"KNCM" => mcnk_chunks.push(read_mcnk(data)?),   // MCNK
+            b"O2HM" => mh2o = read_mh2o(data),               // MH2O
             _ => {}
         }
     }
@@ -281,7 +361,63 @@ pub fn parse_adt(cursor: &mut Cursor<&[u8]>) -> Result<ParsedAdt> {
         doodad_placements,
         wmo_placements,
         mcnk_chunks,
+        mh2o,
     })))
+}
+
+/// MH2O's 256 chunk headers (`SMLiquidChunkDesc`, 12 bytes: instance offset, layer count,
+/// attribute offset), offsets from the payload start (`0x7d6ef0`). An instance the payload cannot
+/// hold ends its chunk's list, not the parse.
+fn read_mh2o(data: &[u8]) -> Vec<Vec<Mh2oInstance>> {
+    (0..256)
+        .map(|c| {
+            let (Some(ofs), Some(count)) = (data.u32_at(c * 12), data.u32_at(c * 12 + 4)) else {
+                return Vec::new();
+            };
+            (0..count as usize)
+                .map_while(|k| read_mh2o_instance(data, (ofs as usize).checked_add(k * 24)?))
+                .collect()
+        })
+        .collect()
+}
+
+fn read_mh2o_instance(data: &[u8], o: usize) -> Option<Mh2oInstance> {
+    let r = data.bytes_at(o, 24)?;
+    let (width, height) = (r.u8_at(14)?, r.u8_at(15)?);
+    let tiles = usize::from(width) * usize::from(height);
+    let exists = match r.u32_at(16)? {
+        0 => vec![true; tiles],
+        ofs => {
+            let bits = data.bytes_at(ofs as usize, tiles.div_ceil(8))?;
+            (0..tiles)
+                .map(|i| bits[i >> 3] & (1 << (i & 7)) != 0)
+                .collect()
+        }
+    };
+    let vertex_format = r.u16_at(2)?;
+    let n = (usize::from(width) + 1) * (usize::from(height) + 1);
+    let stored = match vertex_format {
+        0 => n * 5,
+        1 => n * 8,
+        2 => n,
+        _ => 0,
+    };
+    let vertex_data = match r.u32_at(20)? {
+        0 => None,
+        ofs => Some(data.bytes_at(ofs as usize, stored)?.to_vec()),
+    };
+    Some(Mh2oInstance {
+        liquid_type: r.u16_at(0)?,
+        vertex_format,
+        min_height: r.f32_at(4)?,
+        max_height: r.f32_at(8)?,
+        x_offset: r.u8_at(12)?,
+        y_offset: r.u8_at(13)?,
+        width,
+        height,
+        exists,
+        vertex_data,
+    })
 }
 
 /// Split a NUL-separated, NUL-terminated string blob, dropping empties.
@@ -484,12 +620,15 @@ fn read_mcnk(data: &[u8]) -> Result<McnkChunk> {
         shadow_map[..k].copy_from_slice(&sub[..k]);
         chunk.shadow = Some(McshChunk { shadow_map });
     }
-    // MCLQ's length is the header's `size_liquid` too: its own declared size is always 0.
+    // MCLQ's length is the header's `size_liquid` too: its own declared size is always 0. The
+    // reference takes the blocks only past 8 bytes (`0x7c3a10`).
+    let size_liquid = h.u32_at(0x64).ok_or(Error::Truncated("MCNK header"))? as usize;
     if let Some((p, _)) = locate(
         h.u32_at(0x60).ok_or(Error::Truncated("MCNK header"))?,
         b"QLCM",
-    ) {
-        let size_liquid = h.u32_at(0x64).ok_or(Error::Truncated("MCNK header"))? as usize;
+    )
+    .filter(|_| size_liquid > 8)
+    {
         chunk.liquids = read_mclq_blocks(slice(p, size_liquid), chunk.header.flags);
     }
 
@@ -498,20 +637,15 @@ fn read_mcnk(data: &[u8]) -> Result<McnkChunk> {
 
 /// Bytes per MCLQ block: `{f32 min, f32 max, 81×8B verts, 64B cell flags, u32 nFlow, 2×40B flow}`.
 const MCLQ_BLOCK: usize = 0x324;
-/// Liquid header bits 2–5: how many are set is how many MCLQ blocks there are.
-const MCNK_LIQUID_BITS: u32 = 0x3c;
-
-/// Read the packed MCLQ blocks, stopping at the first one the payload cannot hold. A chunk with an
-/// MCLQ sub-chunk but no liquid bit set still yields one block; the reference creates one per set
-/// bit only (`0x6af760`).
+/// Read the packed MCLQ blocks, one per set liquid header bit 2–5 in bit order (`0x7c5690`),
+/// stopping at the first one the payload cannot hold.
 fn read_mclq_blocks(sub: &[u8], mcnk_flags: u32) -> Vec<MclqChunk> {
-    let want = (mcnk_flags & MCNK_LIQUID_BITS).count_ones().max(1) as usize;
-    let mut out = Vec::with_capacity(want);
-    for i in 0..want {
-        let Some(rest) = sub.get(i * MCLQ_BLOCK..) else {
+    let mut out = Vec::new();
+    for slot in (0..4u8).filter(|s| mcnk_flags & (4 << s) != 0) {
+        let Some(rest) = sub.get(out.len() * MCLQ_BLOCK..) else {
             break;
         };
-        match read_mclq_block(rest) {
+        match read_mclq_block(rest, slot) {
             Some(b) => out.push(b),
             None => break,
         }
@@ -521,7 +655,7 @@ fn read_mclq_blocks(sub: &[u8], mcnk_flags: u32) -> Vec<MclqChunk> {
 
 /// Too-short MCLQ data is no liquid, not an error. The minimum stops short of [`MCLQ_BLOCK`]: the
 /// trailing flow data is unread.
-fn read_mclq_block(sub: &[u8]) -> Option<MclqChunk> {
+fn read_mclq_block(sub: &[u8], slot: u8) -> Option<MclqChunk> {
     const NEED: usize = 8 + 81 * 8 + 64;
     if sub.len() < NEED {
         return None;
@@ -538,6 +672,7 @@ fn read_mclq_block(sub: &[u8]) -> Option<MclqChunk> {
     }
     let tile_flags = sub.bytes_at(8 + 81 * 8, 64)?.try_into().ok()?;
     Some(MclqChunk {
+        slot,
         min_height,
         max_height,
         vertices,
@@ -657,7 +792,8 @@ mod tests {
         assert!(root.mcnk_chunks[0].liquids.is_empty());
     }
 
-    /// Each block keeps its own cell flags, so the river and the ocean tell apart by nibble.
+    /// One block per set liquid bit in bit order, each with its slot (`0x7c5690`); no bit set,
+    /// no block.
     #[test]
     fn a_two_bit_mcnk_yields_two_mclq_blocks_in_disk_order() {
         let block = |height: f32, nibble: u8| {
@@ -673,23 +809,28 @@ mod tests {
         let mut payload = block(5.0, 4); // the river, first on disk
         payload.extend(block(0.0, 1)); // the ocean, second
 
-        let mut data = vec![0u8; 128];
-        data[0x00..0x04].copy_from_slice(&0x0cu32.to_le_bytes()); // liquid bits 2 and 3
-        data[0x60..0x64].copy_from_slice(&128u32.to_le_bytes());
-        data[0x64..0x68].copy_from_slice(&((payload.len() + 8) as u32).to_le_bytes());
-        data.extend(chunk(b"QLCM", &payload));
-        let b = chunk(b"KNCM", &data);
-        let ParsedAdt::Root(root) = parse(&b).expect("parses");
+        let mcnk = |flags: u32| {
+            let mut data = vec![0u8; 128];
+            data[0x00..0x04].copy_from_slice(&flags.to_le_bytes());
+            data[0x60..0x64].copy_from_slice(&128u32.to_le_bytes());
+            data[0x64..0x68].copy_from_slice(&((payload.len() + 8) as u32).to_le_bytes());
+            data.extend(chunk(b"QLCM", &payload));
+            let ParsedAdt::Root(root) = parse(&chunk(b"KNCM", &data)).expect("parses");
+            root.mcnk_chunks[0].liquids.clone()
+        };
 
-        let liquids = &root.mcnk_chunks[0].liquids;
+        let liquids = mcnk(0x18); // liquid bits 3 and 4
         assert_eq!(liquids.len(), 2, "one block per set liquid bit");
-        assert_eq!(liquids[0].tile_flags[0] & 0xf, 4, "block 0 is the river");
+        assert_eq!(liquids[0].slot, 1, "bit 3");
+        assert_eq!(liquids[0].tile_flags[0] & 0xf, 4);
         assert_eq!(liquids[0].min_height, 5.0);
-        assert_eq!(liquids[1].tile_flags[0] & 0xf, 1, "block 1 is the ocean");
+        assert_eq!(liquids[1].slot, 2, "bit 4");
+        assert_eq!(liquids[1].tile_flags[0] & 0xf, 1);
         assert_eq!(liquids[1].min_height, 0.0);
+        assert!(mcnk(0).is_empty(), "no liquid bit, no block");
     }
 
-    /// `0x68d890` reads the magma pair as `u16 → i32`, so `0xffff` is 65535, never −1.
+    /// The texture coordinate pair is two unsigned `u16`s (`0x8a3250`), so `0xffff` is 65535.
     #[test]
     fn magma_union_bytes_read_as_two_unsigned_u16_texcoords() {
         let v = LiquidVertex {

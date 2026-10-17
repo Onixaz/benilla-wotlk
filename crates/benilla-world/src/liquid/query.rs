@@ -91,6 +91,9 @@ pub struct WmoPool {
     /// only, since wet cells reach up to 25 yd outside their group's box in XY (Ahn'Qiraj,
     /// Stratholme). `NEG_INFINITY` for unknown bounds, so a missing box fails open.
     pub(crate) floor: f32,
+    /// The world liquid query searches the group for an outdoor subject too
+    /// ([`benilla_formats::WmoGroupInfo::liquid_queried`]); `false` for unknown bounds.
+    pub(crate) queried_outdoors: bool,
 }
 
 impl WmoPool {
@@ -105,6 +108,7 @@ impl WmoPool {
             return Self {
                 owner,
                 floor: f32::NEG_INFINITY,
+                queried_outdoors: false,
             };
         };
         let mut floor = f32::INFINITY;
@@ -116,7 +120,11 @@ impl WmoPool {
                 }
             }
         }
-        Self { owner, floor }
+        Self {
+            owner,
+            floor,
+            queried_outdoors: g.liquid_queried,
+        }
     }
 }
 
@@ -124,7 +132,7 @@ impl WmoPool {
 /// ([`CameraInteriorClaim`], the reference's `[0xc7b748]`) or a remote unit's own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LiquidClaim {
-    /// In the open world: only the ADT's MCLQ answers.
+    /// In the open world: the ADT's liquid and the pools of groups the world query searches.
     Outdoors,
     /// Inside this placed building: only that placement's MLIQ answers.
     Inside {
@@ -362,7 +370,7 @@ impl WaterChunkInfo {
             (_, LiquidSource::WmoGroup(pool)) if z < pool.floor => false,
             (LiquidClaim::Unknown, _) => true,
             (LiquidClaim::Outdoors, LiquidSource::AdtChunk) => true,
-            (LiquidClaim::Outdoors, LiquidSource::WmoGroup(_)) => false,
+            (LiquidClaim::Outdoors, LiquidSource::WmoGroup(pool)) => pool.queried_outdoors,
             (LiquidClaim::Inside { .. }, LiquidSource::AdtChunk) => false,
             (LiquidClaim::Inside { room, .. }, LiquidSource::WmoGroup(pool)) => {
                 pool.owner.is_some_and(|o| o.instance == room.instance)
@@ -448,11 +456,11 @@ pub struct LiquidHit {
 }
 
 /// The liquid over a WoW-space position under `claim`: the shared query of swimming, submersion,
-/// wading and the enter-water sounds. `Inside` reads only that placement's MLIQ and `Outdoors`
-/// only MCLQ. The reference's terrain query `0x69b6d0` reads the map-object leg first (`0x69b6ec`
-/// → `0x69b520` → `0x6a4e00`, exterior groups only), then the ADT, so an outdoor subject in an
-/// exterior group's pool reads that pool, which `Outdoors` here never does. Where surfaces stack,
-/// the lowest at this XY wins, the one a subject between them is in.
+/// wading and the enter-water sounds. `Inside` reads only that placement's MLIQ. `Outdoors`
+/// reads the ADT's liquid and the pools of every group the reference's world query searches, which
+/// tries the placed map-objects first, skipping groups flagged `0x2000`, then the terrain
+/// (`0x7a0b00` → `0x7a09d0` → `0x7aeb90`, then `0x7a0820`). Where surfaces stack, the lowest at
+/// this XY wins, the one a subject between them is in.
 pub fn liquid_at<'a>(
     liquids: impl Iterator<Item = &'a WaterChunkInfo>,
     wow: [f32; 3],
@@ -793,7 +801,7 @@ mod tests {
             uvs: vec![[0.0, 0.0]; 4],
             depths: vec![1.0; 4],
             indices: vec![0, 1, 2, 1, 3, 2],
-            sound_nibble: 0,
+            liquid_type: 1,
             material_id: None,
             kind: LiquidKind::Still,
         }
@@ -843,6 +851,7 @@ mod tests {
                 group: 0,
             }),
             floor,
+            queried_outdoors: false,
         }
     }
 
@@ -851,6 +860,7 @@ mod tests {
         WmoPool {
             owner: None,
             floor: f32::NEG_INFINITY,
+            queried_outdoors: false,
         }
     }
 
@@ -1034,6 +1044,43 @@ mod tests {
         assert!(liquid_at(all.into_iter(), [99.0, 99.0, 0.0], LiquidClaim::Outdoors).is_none());
     }
 
+    /// An exterior group's pool, the Stormwind canals', answers an outdoor subject over the ADT,
+    /// owned or not; a `0x2000` group's never does (`0x7aeb90`).
+    #[test]
+    fn an_outdoor_subject_reads_the_pools_of_queried_groups() {
+        let lake = flat_info(LiquidSource::AdtChunk, LiquidKind::Still, 50.0);
+        let canal = |owner: Option<u32>, queried_outdoors| {
+            flat_info(
+                LiquidSource::WmoGroup(WmoPool {
+                    owner: owner.map(|o| WmoRoom {
+                        instance: placement(o),
+                        group: 0,
+                    }),
+                    floor: f32::NEG_INFINITY,
+                    queried_outdoors,
+                }),
+                LiquidKind::Still,
+                8.0,
+            )
+        };
+        let feet = [5.0, 5.0, 0.0];
+        for owner in [Some(1), None] {
+            let open = canal(owner, true);
+            let hit = liquid_at([&lake, &open].into_iter(), feet, LiquidClaim::Outdoors).unwrap();
+            assert_eq!(
+                hit.surface_z, 8.0,
+                "the canal under the lake answers ({owner:?})"
+            );
+            let closed = canal(owner, false);
+            let hit = liquid_at([&lake, &closed].into_iter(), feet, LiquidClaim::Outdoors);
+            assert_eq!(
+                hit.unwrap().surface_z,
+                50.0,
+                "a 0x2000 group's pool is not searched"
+            );
+        }
+    }
+
     /// Inside one building, another building's pool never answers, at any height.
     #[test]
     fn another_buildings_pool_never_claims_you() {
@@ -1143,6 +1190,7 @@ mod tests {
         let bounds = benilla_formats::WmoGroupInfo {
             interior: true,
             show_skybox: false,
+            liquid_queried: false,
             bbox_min: [-10.0, -10.0, 0.0],
             bbox_max: [10.0, 10.0, 4.0],
         };

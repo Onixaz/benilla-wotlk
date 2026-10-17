@@ -80,8 +80,6 @@ const NOT_READ: &[(&str, &str)] = &[
         "LfgDungeons",
         "#236 the dungeon finder: GetLFGDungeonInfo, rewards",
     ),
-    ("LiquidMaterial", "#243 liquid materials"),
-    ("LiquidType", "#243 liquid types: WMO and MH2O liquid kinds"),
     ("LoadingScreenTaxiSplines", "#243 the taxi loading screen"),
     ("MailTemplate", "#245 templated mail text: GetInboxText"),
     ("MapDifficulty", "#236 instance difficulty and reset times"),
@@ -148,10 +146,7 @@ const NOT_READ: &[(&str, &str)] = &[
 
 /// Tables benilla reads that 12340 loads and never reads: each is a reader the reference does
 /// not have, so each names what reads it here.
-const READ_PAST_12340: &[(&str, &str)] = &[
-    ("SheatheSoundLookups", "#232 the sheathe sounds"),
-    ("SoundWaterType", "#232 the liquid loops and splashes"),
-];
+const READ_PAST_12340: &[(&str, &str)] = &[("SheatheSoundLookups", "#232 the sheathe sounds")];
 
 struct Table {
     columns: usize,
