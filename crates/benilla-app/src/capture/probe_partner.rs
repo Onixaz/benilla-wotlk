@@ -29,7 +29,7 @@ fn partner_probe(
     }
     if let Some(inviter) = group.pending_invite.take() {
         info!("partner probe: accepting {inviter}'s group invite");
-        let _ = net.0.send(crate::net::ClientCommand::GroupAccept);
+        let _ = net.0.send(crate::net::ClientCommand::GroupAccept { roles: 0 });
     }
     // Taking the challenger discharges the DUEL_REQUESTED popup, as the UI feed would.
     let arbiter = duel.arbiter;

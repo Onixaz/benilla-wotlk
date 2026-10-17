@@ -1767,7 +1767,7 @@ pub(super) fn writer_loop(
                         w.resurrect_response(caster, accept)
                     }
                     ClientCommand::GroupInvite { name, flags } => w.group_invite(&name, flags),
-                    ClientCommand::GroupAccept => w.group_accept(),
+                    ClientCommand::GroupAccept { roles } => w.group_accept(roles),
                     ClientCommand::GroupDecline => w.group_decline(),
                     ClientCommand::GroupUninvite { name } => w.group_uninvite(&name),
                     ClientCommand::GroupUninviteGuid { guid, reason } => {

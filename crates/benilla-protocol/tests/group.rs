@@ -43,11 +43,13 @@ fn cmsg_bodies_golden() {
     );
 
     // ACCEPT, DECLINE, DISBAND and RAID_CONVERT are empty (vmangos Opcodes.cpp: NullClientPacket).
+    // CMSG_GROUP_ACCEPT (`0x6d4450`): the u32 role bits.
     assert_eq!(
-        messages::group_accept(),
-        Vec::<u8>::new(),
+        messages::group_accept(0),
+        hx("00000000"),
         "CMSG_GROUP_ACCEPT body"
     );
+    assert_eq!(messages::group_accept(2 | 8), hx("0a000000"), "the role bits");
     assert_eq!(
         messages::group_decline(),
         Vec::<u8>::new(),

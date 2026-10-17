@@ -16,8 +16,8 @@ impl WorldWriter {
     }
 
     /// Accept a pending group invite (`CMSG_GROUP_ACCEPT`, empty body).
-    pub fn group_accept(&mut self) -> Result<()> {
-        self.send(opcode::CMSG_GROUP_ACCEPT, &messages::group_accept())
+    pub fn group_accept(&mut self, roles: u32) -> Result<()> {
+        self.send(opcode::CMSG_GROUP_ACCEPT, &messages::group_accept(roles))
     }
 
     /// Decline a pending group invite; the inviter gets `SMSG_GROUP_DECLINE`.

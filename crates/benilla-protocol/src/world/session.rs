@@ -749,8 +749,8 @@ impl WorldSession {
     }
 
     /// Accept the group invite we were just offered (`CMSG_GROUP_ACCEPT`, empty body).
-    pub fn group_accept(&mut self) -> Result<()> {
-        self.send(opcode::CMSG_GROUP_ACCEPT, &messages::group_accept())
+    pub fn group_accept(&mut self, roles: u32) -> Result<()> {
+        self.send(opcode::CMSG_GROUP_ACCEPT, &messages::group_accept(roles))
     }
 
     /// Leave or disband our group (`CMSG_GROUP_DISBAND`, empty body).

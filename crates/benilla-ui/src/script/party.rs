@@ -103,8 +103,8 @@ pub struct PartyState {
 /// the matching send.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PartyRequest {
-    /// `AcceptGroup()`.
-    Accept,
+    /// `AcceptGroup([tank, healer, dps])` (`0x51ab20`): role bits 2, 4 and 8.
+    Accept { roles: u32 },
     /// `DeclineGroup()`.
     Decline,
     /// `LeaveParty()`.
@@ -440,9 +440,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // The party verbs queue a `PartyRequest` and return nothing.
     g.set(
         "AcceptGroup",
-        lua.create_function(|lua, ()| {
+        lua.create_function(|lua, args: MultiValue| {
+            let args: Vec<Value> = args.into_iter().collect();
+            let mut roles = 0;
+            for (i, bit) in [(0, 2), (1, 4), (2, 8)] {
+                if bool_or_default(args.get(i), false) {
+                    roles |= bit;
+                }
+            }
             let mut model = crate::script::model_mut_of(lua);
-            model.party_requests.push(PartyRequest::Accept);
+            model.party_requests.push(PartyRequest::Accept { roles });
             Ok(())
         })?,
     )?;
@@ -1106,6 +1113,7 @@ mod tests {
         assert!(s.take_party_requests().is_empty());
 
         s.run("AcceptGroup()").unwrap();
+        s.run("AcceptGroup(nil, 1, 1)").unwrap();
         s.run("DeclineGroup()").unwrap();
         s.run("LeaveParty()").unwrap();
         s.run(r#"InviteUnit("Bob")"#).unwrap();
@@ -1119,7 +1127,8 @@ mod tests {
         assert_eq!(
             s.take_party_requests(),
             vec![
-                PartyRequest::Accept,
+                PartyRequest::Accept { roles: 0 },
+                PartyRequest::Accept { roles: 4 | 8 },
                 PartyRequest::Decline,
                 PartyRequest::Leave,
                 PartyRequest::InviteUnit {

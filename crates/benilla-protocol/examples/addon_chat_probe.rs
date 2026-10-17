@@ -252,7 +252,7 @@ fn main() -> Result<()> {
         }) {
             bail!("no SMSG_GROUP_INVITE in 60s — did the other client send `/invite {name_a}`?");
         }
-        a.group_accept()?;
+        a.group_accept(0)?;
         if !wait_for(&mut a, 20, |p| matches!(p, ServerPacket::GroupList { .. })) {
             bail!("accepted but never got SMSG_GROUP_LIST — the group did not form");
         }
@@ -307,7 +307,7 @@ fn main() -> Result<()> {
             }) {
                 bail!("PARTY lane: {name_b} never saw SMSG_GROUP_INVITE — is {name_a} already grouped?");
             }
-            b.group_accept()?;
+            b.group_accept(0)?;
             // Wait for the roster on both sides: a `/p` sent before the sender's own
             // `SMSG_GROUP_LIST` is dropped by `if (!group) return`.
             if !wait_for(&mut b, 20, |p| matches!(p, ServerPacket::GroupList { .. })) {

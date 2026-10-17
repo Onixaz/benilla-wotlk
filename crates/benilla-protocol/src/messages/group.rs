@@ -604,9 +604,9 @@ pub fn group_invite(member_name: &str, flags: u32) -> Vec<u8> {
     body
 }
 
-/// `CMSG_GROUP_ACCEPT` body: empty (vmangos `NullClientPacket`).
-pub fn group_accept() -> Vec<u8> {
-    Vec::new()
+/// `CMSG_GROUP_ACCEPT` body (`0x6d4450`): the `u32` role bits `AcceptGroup`'s arguments set.
+pub fn group_accept(roles: u32) -> Vec<u8> {
+    roles.to_le_bytes().to_vec()
 }
 
 /// `CMSG_GROUP_DECLINE` body: empty; the inviter gets `SMSG_GROUP_DECLINE`.

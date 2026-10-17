@@ -874,8 +874,8 @@ pub(super) fn drain_party(
             continue;
         }
         match req {
-            PartyRequest::Accept => {
-                let _ = commands.0.send(ClientCommand::GroupAccept);
+            PartyRequest::Accept { roles } => {
+                let _ = commands.0.send(ClientCommand::GroupAccept { roles });
                 group.pending_invite = None;
             }
             PartyRequest::Decline => {

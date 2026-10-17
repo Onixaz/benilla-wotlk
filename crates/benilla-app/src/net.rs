@@ -1870,8 +1870,10 @@ pub(crate) enum ClientCommand {
         name: String,
         flags: u32,
     },
-    /// `CMSG_GROUP_ACCEPT`.
-    GroupAccept,
+    /// `CMSG_GROUP_ACCEPT` with `AcceptGroup`'s role bits.
+    GroupAccept {
+        roles: u32,
+    },
     /// `CMSG_GROUP_DECLINE`.
     GroupDecline,
     /// `CMSG_GROUP_UNINVITE` by name, leader only.
