@@ -386,6 +386,8 @@ fn creature_body_loops(
         let kit = display
             .and_then(|d| voices.0.for_display(d))
             .map(|v| v.loop_sound)
+            // A kit absent from SoundEntries is silent, as `0x4c6a40` returns 5 on it.
+            .filter(|&k| kits.catalog().get(k).is_some())
             .unwrap_or(0);
         // `0x623800`'s gate: raw health (`0x623817`), absent read as 0 so a unit awaiting its
         // snapshot stays silent, and `UNIT_DYNFLAG_DEAD` (`0x62381e`, re-evaluated at `0x60053c`).
