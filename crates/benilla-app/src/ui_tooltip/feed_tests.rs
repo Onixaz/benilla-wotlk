@@ -87,6 +87,7 @@ impl FeedApp {
                     ..Default::default()
                 })
                 .collect(),
+            ..Default::default()
         });
         script
             .run(

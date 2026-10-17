@@ -80,6 +80,17 @@ pub struct PetBookState {
 pub struct SpellBookState {
     pub tabs: Vec<SpellTabView>,
     pub slots: Vec<SpellSlotView>,
+    /// Known spells in the name cache but in no tab: companions, mounts and
+    /// `AttributesEx4 & 0x8000` spells, which `0x542030` names (`0x542699`) before it exits.
+    /// `CastSpellByName` and `CastSpellByID` find them; no book index reaches them.
+    pub unlisted: Vec<SpellSlotView>,
+}
+
+impl SpellBookState {
+    /// Every spell the name cache holds: the book's slots, then [`Self::unlisted`].
+    pub fn named(&self) -> impl Iterator<Item = &SpellSlotView> {
+        self.slots.iter().chain(&self.unlisted)
+    }
 }
 
 /// The book with every lower rank folded away, which `SpellBookFrame.lua` pages through while
@@ -297,8 +308,7 @@ pub fn resolve_spell_by_name<'a>(
     if name.is_empty() {
         return None;
     }
-    book.slots
-        .iter()
+    book.named()
         .filter(|s| !s.passive && s.name.eq_ignore_ascii_case(name))
         .filter(|s| match subtext {
             Some(want) => s
@@ -752,8 +762,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // casts through `0x80da40` past the book's cancel forks (`0x53e177`); an unknown id casts
     // nothing.
     //
-    // Deviation: "knows" is the pushed book, which leaves out the learned spells the book does not
-    // list, and a pet's spell (`0xbe7d98`, sent as `CMSG_PET_ACTION` at `0x53e260`) casts nothing.
+    // Deviation: "knows" is the pushed name cache, which leaves out the `0x80` and `0x20` learns
+    // the reference keeps in its known bits, and a pet's spell (`0xbe7d98`, sent as `CMSG_PET_ACTION` at `0x53e260`) casts nothing.
     g.set(
         "CastSpellByID",
         lua.create_function(|lua, (id, rest): (Value, MultiValue)| {
@@ -766,7 +776,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             };
             let mut model = crate::script::model_mut_of(lua);
-            if spell_id != 0 && model.spellbook.slots.iter().any(|s| s.spell_id == spell_id) {
+            if spell_id != 0 && model.spellbook.named().any(|s| s.spell_id == spell_id) {
                 model.script_calls.push(ScriptCall::CastSpell {
                     spell_id,
                     at,
@@ -952,6 +962,7 @@ mod tests {
                     ..Default::default()
                 },
             ],
+            ..Default::default()
         }
     }
 
@@ -1661,6 +1672,7 @@ mod tests {
                     ..Default::default()
                 },
             ],
+            ..Default::default()
         });
 
         assert_eq!(s.arity(r#"GetSpellName(1, "spell")"#).unwrap(), 2);
@@ -1820,6 +1832,7 @@ mod tests {
                 ranked(116, "Frostbolt", "Rank 1"),
                 ranked(205, "Frostbolt", "Rank 2"),
             ],
+            ..Default::default()
         }
     }
 
@@ -1887,6 +1900,7 @@ mod tests {
                 },
             ],
             slots: vec![ranked(1, "Shared", "Rank 1"), ranked(2, "Shared", "Rank 2")],
+            ..Default::default()
         };
         let view = HighestRankView::of(&book);
         assert_eq!(view.spell_ids, vec![1, 2]);

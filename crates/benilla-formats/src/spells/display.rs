@@ -11,6 +11,21 @@ pub struct OpenLock {
     pub effect: usize,
 }
 
+/// The two companion lists, in the order the reference's token table names them
+/// (`"CRITTER"`, `"MOUNT"`, `0xacccc4`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CompanionKind {
+    Critter,
+    Mount,
+}
+
+/// `SPELL_EFFECT_SUMMON`.
+const SPELL_EFFECT_SUMMON: u32 = 28;
+/// `SPELL_AURA_MOUNTED`.
+pub const SPELL_AURA_MOUNTED: u32 = 78;
+/// `AttributesEx4 & 0x8000`: the spell is known but filed in no tab (`0x542856`).
+const ATTR_EX4_NOT_IN_SPELLBOOK: u32 = 0x8000;
+
 /// One spell's `Spell.dbc` row, as the display, tooltip and cast gates read it.
 pub struct SpellDisplay {
     /// `ID` (column 0): the row's own id, which `GetEffectPoints` hands the level lookup
@@ -505,10 +520,19 @@ impl SpellDisplay {
             && self.attributes_ex2 & ATTR_EX2_DO_NOT_RESET_COMBAT_TIMERS == 0
     }
 
-    /// The spellbook's add gate (`AddSpell` `0x5e9c20`, `0x4b25b0`): a spell stays out for
-    /// `Attributes` `0x80` or `0x20`, or a nonzero `castUI`; passive alone does not hide it.
-    pub fn in_spellbook(&self) -> bool {
-        self.attributes & (ATTR_DO_NOT_DISPLAY | SPELL_ATTR_IS_TRADESKILL) == 0 && self.cast_ui == 0
+    /// The spellbook's add gate, the exits `AddKnownSpell` (`0x542030`) takes before it files a
+    /// tab: `Attributes` `0x80` or `0x20`, a companion or mount (`0x5426a5`), and
+    /// `AttributesEx4 & 0x8000` (`0x542856`). Passive alone does not hide a spell.
+    pub fn in_spellbook(&self, summons: &crate::SummonPropertiesCatalog) -> bool {
+        self.in_name_cache()
+            && !self.is_companion(summons)
+            && self.attributes_ex4 & ATTR_EX4_NOT_IN_SPELLBOOK == 0
+    }
+
+    /// Past `0x542030`'s `0x80` and `0x20` exits a spell joins the name cache (`0x542699`), which
+    /// `CastSpellByName` searches: companions, mounts and `AttributesEx4 & 0x8000` included.
+    pub fn in_name_cache(&self) -> bool {
+        self.attributes & (ATTR_DO_NOT_DISPLAY | SPELL_ATTR_IS_TRADESKILL) == 0
     }
 
     /// The pet book's add gate (`0x4b2f90`) tests only `Attributes & 0x80`, as the sign of its
@@ -709,15 +733,34 @@ impl SpellDisplay {
 
     /// A companion or mount (`0x8009b0`): effect 0 summons into slot 5, or aura 0 is `MOUNTED`.
     pub fn is_companion(&self, summons: &crate::SummonPropertiesCatalog) -> bool {
-        const SPELL_EFFECT_SUMMON: u32 = 28;
-        const SPELL_AURA_MOUNTED: u32 = 78;
+        self.companion_kind(summons).is_some()
+    }
+
+    /// Which list a companion spell joins (`0x53b410`): a summon into slot 5 is a critter, an
+    /// aura-0 `MOUNTED` spell a mount; `None` is not a companion (`0x8009b0`).
+    pub fn companion_kind(
+        &self,
+        summons: &crate::SummonPropertiesCatalog,
+    ) -> Option<CompanionKind> {
         const SUMMON_SLOT_COMPANION: u32 = 5;
-        (self.effects[0] == SPELL_EFFECT_SUMMON
+        if self.effects[0] == SPELL_EFFECT_SUMMON
             && u32::try_from(self.effect_misc_value_b[0])
                 .ok()
                 .and_then(|row| summons.slot(row))
-                == Some(SUMMON_SLOT_COMPANION))
-            || self.effect_apply_aura[0] == SPELL_AURA_MOUNTED
+                == Some(SUMMON_SLOT_COMPANION)
+        {
+            Some(CompanionKind::Critter)
+        } else if self.effect_apply_aura[0] == SPELL_AURA_MOUNTED {
+            Some(CompanionKind::Mount)
+        } else {
+            None
+        }
+    }
+
+    /// The creature a companion spell summons or rides, `EffectMiscValue[0]`, which
+    /// `GetCompanionInfo` (`0x53e2c0`) returns first and names through the creature cache.
+    pub fn companion_creature(&self) -> u32 {
+        u32::try_from(self.effect_misc_value[0]).unwrap_or(0)
     }
 
     /// The name and rank as the client composes them, `"%s (%s)"` (`0x8468b0`), or the bare name

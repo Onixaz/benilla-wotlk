@@ -53,6 +53,7 @@ fn book() -> SpellBookState {
                 ..Default::default()
             },
         ],
+        ..Default::default()
     }
 }
 

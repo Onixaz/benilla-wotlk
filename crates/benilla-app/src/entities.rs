@@ -965,8 +965,12 @@ fn update_display_models(
     // The glue screens' body display, wanted with no wire entity.
     glue_preview: Option<Res<crate::portrait::GluePreview>>,
     char_create: Option<Res<CharCreate>>,
-    // The stable pane's pet (`SetPetStablePaperdoll`, `0x4cb870`), with no wire entity.
-    stable_booth: Option<Res<crate::portrait::StableBooth>>,
+    // The stable pane's pet (`SetPetStablePaperdoll`, `0x4cb870`) and the companion page's
+    // creature (`SetCreature`, `0x597960`), neither with a wire entity.
+    (stable_booth, companion_booth): (
+        Option<Res<crate::portrait::StableBooth>>,
+        Option<Res<crate::portrait::CompanionBooth>>,
+    ),
 ) {
     if !mats.ready() {
         return; // no lighting yet → no materials to build
@@ -1019,6 +1023,10 @@ fn update_display_models(
 
     // The stable window's selected pet, a plain creature display too; a repeat is free.
     if let Some(display) = stable_booth.as_deref().and_then(|b| b.display_id) {
+        actives.push((EntityKind::Unit, display));
+    }
+    // The companion page's preview, likewise.
+    if let Some(display) = companion_booth.as_deref().and_then(|b| b.display_id) {
         actives.push((EntityKind::Unit, display));
     }
 

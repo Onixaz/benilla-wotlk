@@ -92,18 +92,22 @@ const PETDOLL_SLOT: &str = "petdoll";
 /// The stable window's pane (`0x4cb870`), whose subject may be a stabled pet with no world object
 /// ([`StableBooth`]).
 const STABLE_SLOT: &str = "stable";
+/// The companion page's pane, whose subject is a creature with no world object
+/// ([`CompanionBooth`]).
+const COMPANION_SLOT: &str = "companion";
 
 /// Which booth a `<Model>`/`<PlayerModel>` pane samples, keyed by the pane's global name from the
 /// stock file (`PaperDollFrame.xml`, `TabardFrame.xml`, `PetPaperDollFrame.xml`,
 /// `InspectPaperDollFrame.xml`, `PetStable.xml`, `DressUpFrame.xml`,
 /// `Blizzard_AuctionDressUp.xml`). A pane not in this table draws nothing.
-const MODEL_PANE_BOOTHS: [(&str, &str); 7] = [
+const MODEL_PANE_BOOTHS: [(&str, &str); 8] = [
     ("CharacterModelFrame", PAPERDOLL_SLOT),
     // The tabard designer's pane: the paper doll's bake, wearing the design under preview.
     ("TabardModel", PAPERDOLL_SLOT),
     ("PetModelFrame", PETDOLL_SLOT),
     ("InspectModelFrame", INSPECT_SLOT),
     ("PetStableModel", STABLE_SLOT),
+    ("CompanionModelFrame", COMPANION_SLOT),
     ("DressUpModel", dressup::DRESSUP_SLOT),
     // Deviation: the auction house's dressing room shares the one dressing-room booth, because the
     // app's `TryOn`/`Dress` intents are not per-widget; the reference's two widgets each clone
@@ -124,6 +128,11 @@ pub(crate) fn model_pane_booth(name: &str) -> Option<&'static str> {
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct GluePreviewFeed;
 
+/// The systems that point a creature booth at its subject ([`CompanionBooth`]); the booths read
+/// it after them, the same frame.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct CreatureBoothFeed;
+
 /// World is layer 0, the UI pass layer 1; each portrait slot gets its own layer from here up.
 const PORTRAIT_LAYER_BASE: usize = 2;
 /// The paper-doll booth's layer, the first past the portrait slots.
@@ -131,10 +140,11 @@ const PAPERDOLL_LAYER: usize = PORTRAIT_LAYER_BASE + SLOTS.len();
 const INSPECT_LAYER: usize = PAPERDOLL_LAYER + 1;
 const PETDOLL_LAYER: usize = INSPECT_LAYER + 1;
 const STABLE_LAYER: usize = PETDOLL_LAYER + 1;
+const COMPANION_LAYER: usize = STABLE_LAYER + 1;
 /// The glue booth's layer. Every booth layer is computed in this one ladder: two cameras on one
 /// layer collide silently, in rendering and in the emitter-to-camera match (`particles::sim` takes
 /// the first camera whose layers intersect).
-pub(super) const GLUE_LAYER: usize = STABLE_LAYER + 1;
+pub(super) const GLUE_LAYER: usize = COMPANION_LAYER + 1;
 /// The dressing room's layer.
 pub(super) const DRESSUP_LAYER: usize = GLUE_LAYER + 1;
 /// The warm pass's twin booth layer; only the warm menagerie rides it, only while the pass runs
@@ -160,6 +170,8 @@ const _: () = assert!(
         && INSPECT_LAYER != PETDOLL_LAYER
         && PETDOLL_LAYER != STABLE_LAYER
         && STABLE_LAYER != GLUE_LAYER
+        && COMPANION_LAYER > STABLE_LAYER
+        && GLUE_LAYER > COMPANION_LAYER
         && PAPERDOLL_LAYER != STABLE_LAYER
         && INSPECT_LAYER != STABLE_LAYER
         && PETDOLL_LAYER != GLUE_LAYER
@@ -379,6 +391,24 @@ impl Default for StableBooth {
             // `Model_OnLoad`'s default facing (`UIParent.lua:1422`).
             yaw: 0.61,
             unit: None,
+            display_id: None,
+        }
+    }
+}
+
+/// The companion page's pane input: `SetCreature`'s creature (`0x597960`) by its cached display,
+/// `None` empty. Like the stable's cached branch, no size ramp and no live unit.
+#[derive(Resource)]
+pub(crate) struct CompanionBooth {
+    pub(crate) yaw: f32,
+    pub(crate) display_id: Option<u32>,
+}
+
+impl Default for CompanionBooth {
+    fn default() -> Self {
+        Self {
+            // `Model_OnLoad`'s default facing (`UIParent.lua:1422`).
+            yaw: 0.61,
             display_id: None,
         }
     }
@@ -763,6 +793,8 @@ impl Plugin for PortraitPlugin {
             .init_resource::<PetDollBooth>()
             .init_resource::<StableBooth>()
             .init_resource::<StableStandIn>()
+            .init_resource::<CompanionBooth>()
+            .init_resource::<CompanionStandIn>()
             .init_resource::<glue_booth::GluePreview>()
             .init_resource::<glue_booth::GluePreviewBake>()
             .init_resource::<glue_booth::GluePetBake>()
@@ -789,8 +821,8 @@ impl Plugin for PortraitPlugin {
                     sync_inspect_booth,
                     sync_petdoll_booth,
                     // The stand-in must exist before the booth mirrors it.
-                    sync_stable_standin,
-                    sync_stable_booth,
+                    sync_creature_standins,
+                    sync_creature_booths,
                     // The scene before the character standing in it: they commit as one pair
                     // (`glue_booth::PendingSwap`), and the booth reads the stage off the scene.
                     glue_booth::sync_glue_scene,
@@ -808,7 +840,8 @@ impl Plugin for PortraitPlugin {
                     gate_booth_cameras,
                 )
                     .chain()
-                    .after(GluePreviewFeed),
+                    .after(GluePreviewFeed)
+                    .after(CreatureBoothFeed),
             )
             // Re-face each booth's eye-glow cards to its own camera.
             .add_systems(Update, booth::face_booth_billboards)
@@ -984,13 +1017,14 @@ fn setup_booths(
         );
     }
 
-    // The four body booths: the paper doll, inspect, the pet paper doll and the stable
-    // (`0x4cb870`), at 512², aimed per bake by `sync_body_booth`.
+    // The five body booths: the paper doll, inspect, the pet paper doll, the stable (`0x4cb870`)
+    // and the companion page, at 512², aimed per bake by `sync_body_booth`.
     for (i, (slot, layer_index)) in [
         (PAPERDOLL_SLOT, PAPERDOLL_LAYER),
         (INSPECT_SLOT, INSPECT_LAYER),
         (PETDOLL_SLOT, PETDOLL_LAYER),
         (STABLE_SLOT, STABLE_LAYER),
+        (COMPANION_SLOT, COMPANION_LAYER),
     ]
     .into_iter()
     .enumerate()
@@ -1684,10 +1718,10 @@ fn sync_petdoll_booth(
     );
 }
 
-/// The stable pane's stand-in subject ([`PortraitStandIn`]), keyed on the display: two pets that
+/// A body pane's stand-in subject ([`PortraitStandIn`]), keyed on the display: two subjects that
 /// share one are the same model, as in the reference's cached branch.
-#[derive(Resource, Default)]
-struct StableStandIn {
+#[derive(Default)]
+struct StandIn {
     /// The stand-in, while one exists.
     entity: Option<Entity>,
     /// The display it was spawned for.
@@ -1696,16 +1730,53 @@ struct StableStandIn {
     built: bool,
 }
 
-/// Keep [`StableStandIn`] on the selected stabled pet, rebuilding it when the want changes.
-fn sync_stable_standin(
+/// The stable pane's stand-in.
+#[derive(Resource, Default)]
+struct StableStandIn(StandIn);
+
+/// The companion pane's stand-in, its only subject.
+#[derive(Resource, Default)]
+struct CompanionStandIn(StandIn);
+
+/// Keep [`StableStandIn`] on the selected stabled pet and [`CompanionStandIn`] on the selected
+/// companion, rebuilding each when its want changes.
+fn sync_creature_standins(
     mut commands: Commands,
     stable: Res<StableBooth>,
+    companion: Res<CompanionBooth>,
     creatures: Option<Res<Creatures>>,
-    mut state: ResMut<StableStandIn>,
+    mut stable_state: ResMut<StableStandIn>,
+    mut companion_state: ResMut<CompanionStandIn>,
 ) {
     // The live pet wins: the reference reaches the creature cache only after the GUID
     // resolve fails (`0x4cb9bc`).
     let want = stable.unit.is_none().then_some(stable.display_id).flatten();
+    let creatures = creatures.as_deref();
+    keep_stand_in(
+        &mut commands,
+        want,
+        &mut stable_state.0,
+        creatures,
+        "stable",
+    );
+    keep_stand_in(
+        &mut commands,
+        companion.display_id,
+        &mut companion_state.0,
+        creatures,
+        "companion",
+    );
+}
+
+/// Point `state` at `want`, respawning the stand-in on a change and mirroring its parts once the
+/// display's model has loaded.
+fn keep_stand_in(
+    commands: &mut Commands,
+    want: Option<u32>,
+    state: &mut StandIn,
+    creatures: Option<&Creatures>,
+    booth: &str,
+) {
     if state.display != want {
         if let Some(old) = state.entity.take() {
             commands.entity(old).despawn();
@@ -1726,8 +1797,7 @@ fn sync_stable_standin(
     if state.built {
         return;
     }
-    let (Some(root), Some(disp), Some(creatures)) = (state.entity, want, creatures.as_deref())
-    else {
+    let (Some(root), Some(disp), Some(creatures)) = (state.entity, want, creatures) else {
         return;
     };
     // `None` while the display's model loads.
@@ -1745,12 +1815,14 @@ fn sync_stable_standin(
     });
     state.built = true;
     debug!(
-        "stable booth: stand-in for display {disp} — {n_parts} part(s), {n_cards} camera-facing"
+        "{booth} booth: stand-in for display {disp} — {n_parts} part(s), {n_cards} camera-facing"
     );
 }
 
-/// The stable window's pane, with the stand-in as the fallback subject.
-fn sync_stable_booth(
+/// The two creature-subject panes: the stable window's, with the stand-in as the fallback
+/// subject, and the companion page's, the stand-in its only subject.
+#[allow(clippy::too_many_arguments)] // a Bevy system's full input set
+fn sync_creature_booths(
     mut commands: Commands,
     mut booths: ResMut<Booths>,
     mut portraits: ResMut<PortraitImages>,
@@ -1758,12 +1830,12 @@ fn sync_stable_booth(
     creatures: Option<Res<Creatures>>,
     ent_q: Query<&NetEntity>,
     look: DressedLook,
-    stable: Res<StableBooth>,
-    stand_in: Res<StableStandIn>,
+    (stable, companion): (Res<StableBooth>, Res<CompanionBooth>),
+    (stable_in, companion_in): (Res<StableStandIn>, Res<CompanionStandIn>),
     mut palettes: ResMut<benilla_world::rig_palette::RigPalettes>,
     mut wow_mats: ResMut<Assets<WowModelMaterial>>,
     mut env_cache: Local<Option<bool>>,
-    mut last_pose: Local<Option<(f32, f32)>>,
+    mut last_pose: Local<[Option<(f32, f32)>; 2]>,
     mut cams: Query<(&BoothCam, &mut Transform, &mut Projection)>,
     framing_in: BoothFraming,
     anim_data: Option<Res<crate::creature_anim::AnimData>>,
@@ -1771,28 +1843,34 @@ fn sync_stable_booth(
     if test_mode(&mut env_cache) {
         return;
     }
-    sync_body_booth(
-        &mut palettes,
-        STABLE_SLOT,
-        stable.unit.or(stand_in.entity),
-        stable.yaw,
-        &mut last_pose,
-        framing_in.gx.0,
-        &mut commands,
-        &mut booths,
-        &mut portraits,
-        &mut booth_light,
-        creatures.as_deref(),
-        &ent_q,
-        &look,
-        &mut wow_mats,
-        &mut cams,
-        anim_data.as_deref(),
-        &framing_in.panes,
-    );
+    let subjects = [
+        (STABLE_SLOT, stable.unit.or(stable_in.0.entity), stable.yaw),
+        (COMPANION_SLOT, companion_in.0.entity, companion.yaw),
+    ];
+    for ((slot, unit, yaw), last_pose) in subjects.into_iter().zip(last_pose.iter_mut()) {
+        sync_body_booth(
+            &mut palettes,
+            slot,
+            unit,
+            yaw,
+            last_pose,
+            framing_in.gx.0,
+            &mut commands,
+            &mut booths,
+            &mut portraits,
+            &mut booth_light,
+            creatures.as_deref(),
+            &ent_q,
+            &look,
+            &mut wow_mats,
+            &mut cams,
+            anim_data.as_deref(),
+            &framing_in.panes,
+        );
+    }
 }
 
-/// Bake `unit`'s full-body dressed look into the `slot` booth at `yaw`, for all four body panes;
+/// Bake `unit`'s full-body dressed look into the `slot` booth at `yaw`, for all five body panes;
 /// `None` empties it. `unit` may be a [`PortraitStandIn`].
 fn sync_body_booth(
     palettes: &mut benilla_world::rig_palette::RigPalettes,

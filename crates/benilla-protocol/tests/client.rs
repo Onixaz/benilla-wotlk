@@ -576,6 +576,8 @@ fn name_and_creature_query_roundtrip() {
                     civilian: false,
                     racial_leader: true,
                     display_id: 533,
+                    health_modifier: 1.0,
+                    power_modifier: 1.0,
                 })
             );
         }

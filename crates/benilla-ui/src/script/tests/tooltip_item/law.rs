@@ -140,6 +140,7 @@ fn verified_families_signable_locked_resists_known() {
             spell_id: 2020,
             ..Default::default()
         }],
+        ..Default::default()
     });
     s.run(
         r#"

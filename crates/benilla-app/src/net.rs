@@ -1113,6 +1113,10 @@ pub(crate) enum ClientCommand {
     CancelAura {
         spell_id: u32,
     },
+    /// `CMSG_DISMISS_CRITTER`, the companion out by guid; it leaves as a `UNIT_FIELD_CRITTER` delta.
+    DismissCritter {
+        guid: u64,
+    },
     /// `CMSG_SET_ACTION_BUTTON`: `button` is the Lua action id minus 1, `packed` is
     /// `kind<<24 | action` (0 clears). Client-authoritative, no answer.
     SetActionButton {

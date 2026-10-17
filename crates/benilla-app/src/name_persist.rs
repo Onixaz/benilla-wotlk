@@ -203,6 +203,7 @@ mod tests {
                 civilian: false,
                 racial_leader: false,
                 display_id: 0,
+                ..Default::default()
             }),
         );
         let path = crate::local_state::name_cache_path("Realm").expect("a state folder");

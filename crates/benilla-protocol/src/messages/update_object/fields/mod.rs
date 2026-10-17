@@ -41,6 +41,9 @@ const FIELD_UNIT_SUMMON: u16 = 8;
 /// The charmer, 0 for none. The attack-start check `0x612df0` refuses a swing when it is set and
 /// is not us (`ERR_ATTACK_CHARMED`); `0x5ee5a0` and `0x5ff580` prefer it as the owner.
 const FIELD_UNIT_CHARMEDBY: u16 = 10;
+/// 3.3.5a's `UNIT_FIELD_CRITTER`, the summoned companion, kept in 1.12.1's unread
+/// `UNIT_FIELD_PERSUADED` words.
+const FIELD_UNIT_CRITTER: u16 = 18;
 /// The summoner of a pet, guardian or totem; with CREATEDBY, the "owned by me" test of `0x5efea0`.
 const FIELD_UNIT_SUMMONEDBY: u16 = 12;
 const FIELD_UNIT_CREATEDBY: u16 = 14;
@@ -193,6 +196,7 @@ const FIELD_PLAYER_MOD_TARGET_RESISTANCE: u16 = 1444;
 const FIELD_PLAYER_COMBAT_RATING_1: u16 = 1445; // ×25, INT
 const FIELD_PLAYER_MOD_HEALING_PCT: u16 = 1470; // FLOAT
 const FIELD_PLAYER_MOD_HEALING_DONE_PCT: u16 = 1471; // FLOAT
+const FIELD_PLAYER_PET_SPELL_POWER: u16 = 1472;
 /// The combat ratings, 25 in 3.3.5a (`GetCombatRating` refuses an index past `0x19`).
 pub const PLAYER_COMBAT_RATINGS: u8 = 25;
 // 3.3.5a's power regen pairs and max-health modifier, in 1.12.1's unread power-cost words.
@@ -383,7 +387,7 @@ fn descriptor_len(object_type: ObjectType) -> u16 {
         ObjectType::Container => 122, // CONTAINER_END = ITEM_END + 0x4A
         ObjectType::Unit => 188,      // UNIT_END = OBJECT_END + 0xB6
         // 1.12.1's PLAYER_END (UNIT_END + 0x446), plus the 3.3.5a fields kept past it.
-        ObjectType::Player => 1472,
+        ObjectType::Player => 1473,
         ObjectType::GameObject => 26, // GAMEOBJECT_END = OBJECT_END + 0x14
         ObjectType::DynamicObject => 16, // DYNAMICOBJECT_END = OBJECT_END + 0xA
         ObjectType::Corpse => 38,     // CORPSE_END = OBJECT_END + 0x20

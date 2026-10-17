@@ -32,6 +32,8 @@ fn feed_pet_doll(
     mut booth: ResMut<PetDollBooth>,
     mut last: Local<crate::ui_script::VmMemo<Option<UnitCombatStats>>>,
     tables: Option<Res<crate::ui_char::SheetTables>>,
+    names: Res<crate::names::NameCache>,
+    self_q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -46,7 +48,16 @@ fn feed_pet_doll(
     // A guid whose object never streamed is no pet: `None` empties the booth.
     booth.unit = (pet_guid != 0).then(|| pet.entity(pet_guid)).flatten();
 
-    let fresh = store.map(|s| unit_combat_stats(s, tables.as_deref()));
+    let owner_class = self_q
+        .iter()
+        .next()
+        .and_then(|s| s.0.unit_bytes_0())
+        .map(|b| ((b >> 8) & 0xff) as u8);
+    let fresh = store.map(|s| {
+        let mut stats = unit_combat_stats(s, tables.as_deref());
+        (stats.health_modifier, stats.power_modifier) = pet_modifiers(s, owner_class, &names);
+        stats
+    });
     // Push only on change: the page repaints off the `UNIT_*` events below.
     if *last == fresh {
         return;
@@ -66,6 +77,23 @@ fn feed_pet_doll(
     }
     // A pet going away fires nothing here: the page hides on `crate::ui_pet`'s `UNIT_PET`.
     *last = fresh;
+}
+
+/// `CGUnit_C::GetHealthModifier`/`GetPowerModifier` (`0x71b8d0`, `0x71b960`) for our pet: 1.0
+/// under a hunter (`0x71b99e`, class 3), else its creature record's multipliers, 0.0 uncached.
+fn pet_modifiers(
+    pet: &crate::net::ObjectStore,
+    owner_class: Option<u8>,
+    names: &crate::names::NameCache,
+) -> (f32, f32) {
+    const CLASS_HUNTER: u8 = 3;
+    if pet.0.unit_is_pet_or_charm() && owner_class == Some(CLASS_HUNTER) {
+        return (1.0, 1.0);
+    }
+    pet.0
+        .object_entry()
+        .and_then(|e| names.creature_record(e))
+        .map_or((0.0, 0.0), |r| (r.health_modifier, r.power_modifier))
 }
 
 #[cfg(test)]

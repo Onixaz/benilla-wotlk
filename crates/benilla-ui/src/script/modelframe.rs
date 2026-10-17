@@ -558,9 +558,24 @@ pub(super) fn install_player_model(lua: &Lua) -> mlua::Result<()> {
             with_model(lua, &this, |m| {
                 m.unit = unit;
                 m.path = None;
+                m.creature = None;
             })?;
             // A dress-up pane rebuilds from the unit's live model, dropping try-ons (`0x5059a0`).
             super::dressup::redress_if_dressup(lua, &this)
+        })?,
+    )?;
+
+    // `SetCreature(creatureID)` (`0x597960`): the id is a number or `Usage:`; the pane drops its
+    // unit and draws the creature's cached record, which the host resolves at render.
+    m.set(
+        "SetCreature",
+        lua.create_function(|lua, (this, id): (Table, Value)| {
+            let id = super::binding_abi::number_arg(lua, id, "Usage: SetCreature(creatureID)")?;
+            with_model(lua, &this, |m| {
+                m.unit = None;
+                m.path = None;
+                m.creature = u32::try_from(id).ok().filter(|&id| id != 0);
+            })
         })?,
     )?;
 

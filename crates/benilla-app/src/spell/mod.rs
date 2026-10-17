@@ -67,6 +67,15 @@ pub(crate) struct SpellPlugin;
 #[derive(Resource, Default)]
 pub(crate) struct SummonSlots(pub(crate) benilla_formats::SummonPropertiesCatalog);
 
+/// Companion learns and unlearns mid-session, queued for [`crate::ui_companion`]: a learn's line
+/// and `COMPANION_LEARNED` wait on its creature record (`0x54278e`), an unlearn fires
+/// `COMPANION_UNLEARNED` (`0x53fad0`). The `SMSG_INITIAL_SPELLS` load queues nothing.
+#[derive(Resource, Default)]
+pub(crate) struct CompanionEdges {
+    pub(crate) learned: Vec<u32>,
+    pub(crate) unlearned: Vec<u32>,
+}
+
 fn load_summon_slots(mut commands: Commands, assets: Option<Res<benilla_assets::WorldAssets>>) {
     use benilla_assets::LockRecover;
     let Some(assets) = assets else { return };
@@ -85,6 +94,7 @@ fn load_summon_slots(mut commands: Commands, assets: Option<Res<benilla_assets::
 impl Plugin for SpellPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PendingCast>()
+            .init_resource::<CompanionEdges>()
             .init_resource::<QueuedMeleeSpell>()
             .init_resource::<ActiveChannel>()
             .init_resource::<LocalMoveStart>()

@@ -280,23 +280,21 @@ mod tests {
 
     #[test]
     fn the_pet_books_gate_is_do_not_display_alone() {
-        let shown = |attributes: u32, cast_ui: u32| SpellDisplay {
+        let shown = |attributes: u32| SpellDisplay {
             attributes,
-            cast_ui,
             ..Default::default()
         };
-        assert!(shown(0, 0).in_pet_book());
-        assert!(!shown(0x80, 0).in_pet_book(), "DO_NOT_DISPLAY hides it");
-        // The two the player book also refuses.
+        let summons = benilla_formats::SummonPropertiesCatalog::default();
+        assert!(shown(0).in_pet_book());
+        assert!(!shown(0x80).in_pet_book(), "DO_NOT_DISPLAY hides it");
+        // The one the player book also refuses.
         assert!(
-            shown(0x20, 0).in_pet_book(),
+            shown(0x20).in_pet_book(),
             "IS_TRADESKILL is not a pet-book gate"
         );
-        assert!(!shown(0x20, 0).in_spellbook());
-        assert!(shown(0, 1).in_pet_book(), "castUI is not a pet-book gate");
-        assert!(!shown(0, 1).in_spellbook());
+        assert!(!shown(0x20).in_spellbook(&summons));
         // A passive shows in both.
-        assert!(shown(0x40, 0).in_pet_book() && shown(0x40, 0).in_spellbook());
+        assert!(shown(0x40).in_pet_book() && shown(0x40).in_spellbook(&summons));
     }
 
     #[test]

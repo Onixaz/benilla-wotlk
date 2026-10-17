@@ -31,6 +31,7 @@ fn spellbook_hover_renders_the_verified_shape() {
             name: "Fireball".into(),
             ..Default::default()
         }],
+        ..Default::default()
     });
     s.run(
         r#"
@@ -84,6 +85,7 @@ fn a_pet_book_hover_reads_the_pets_book_not_the_players() {
             name: "Fireball".into(),
             ..Default::default()
         }],
+        ..Default::default()
     });
     s.set_pet_book(PetBookState {
         token: Some("DEMON".into()),
@@ -195,6 +197,7 @@ fn passive_omits_the_casttime_line() {
             name: "Frost Warding".into(),
             ..Default::default()
         }],
+        ..Default::default()
     });
     s.run(
         r#"
@@ -355,6 +358,7 @@ fn requirement_and_reagent_lines_render_in_law_order() {
             name: "Shoot".into(),
             ..Default::default()
         }],
+        ..Default::default()
     });
     s.run(
         r#"
@@ -1193,6 +1197,7 @@ fn the_unit_selector_setters_read_the_pet_view() {
     s.set_spellbook(SpellBookState {
         tabs: Vec::new(),
         slots: vec![slot],
+        ..Default::default()
     });
     let service = |alt_caster| {
         trainer_service(

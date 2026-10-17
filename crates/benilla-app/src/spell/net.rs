@@ -64,6 +64,7 @@ pub(crate) struct Lifecycle<'w> {
     actions: ResMut<'w, PlayerActions>,
     learned_in_tab: ResMut<'w, LearnedInTab>,
     summons: Res<'w, super::SummonSlots>,
+    companions: ResMut<'w, super::CompanionEdges>,
     multicast: ResMut<'w, super::multicast::MultiCastLists>,
     cast_bar: ResMut<'w, CastBarFeed>,
     pending: ResMut<'w, PendingCast>,
@@ -113,7 +114,7 @@ fn on_spell_book(In(ev): In<SessionEvent>, mut l: Lifecycle) {
                 .iter()
                 .filter_map(|&id| spells.catalog.get(id))
             {
-                if files_in_book(d, &l.summons.0) {
+                if d.in_spellbook(&l.summons.0) {
                     l.multicast.learn(d, &spells.catalog);
                 }
             }
@@ -156,7 +157,13 @@ fn on_spell_learned(
             .spells
             .as_deref()
             .and_then(|s| Some((s, s.catalog.get(spell_id)?)));
-        if let Some((spells, d)) = display.filter(|(_, d)| files_in_book(d, &l.summons.0)) {
+        // A live companion learn's line and `COMPANION_LEARNED` wait on its creature (`0x54278e`).
+        if learner.is_some()
+            && display.is_some_and(|(_, d)| d.in_name_cache() && d.is_companion(&l.summons.0))
+        {
+            l.companions.learned.push(spell_id);
+        }
+        if let Some((spells, d)) = display.filter(|(_, d)| d.in_spellbook(&l.summons.0)) {
             let changed = l.multicast.learn(d, &spells.catalog);
             if learner.is_some() && (changed || super::multicast::CALL_SPELLS.contains(&spell_id)) {
                 l.multicast.refill_due = true;
@@ -167,6 +174,15 @@ fn on_spell_learned(
 
 fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut errors: ResMut<UiErrorKeys>) {
     if let SessionEvent::SpellRemoved { spell_id } = ev {
+        // `DelKnownSpell` drops a companion from its list (`0x53fad0`).
+        let companion = l
+            .spells
+            .as_deref()
+            .and_then(|s| s.catalog.get(spell_id))
+            .is_some_and(|d| d.is_companion(&l.summons.0));
+        if companion {
+            l.companions.unlearned.push(spell_id);
+        }
         removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut errors);
         unlearn_totem(&mut l.multicast, spell_id);
     }
@@ -177,16 +193,6 @@ fn unlearn_totem(lists: &mut super::multicast::MultiCastLists, spell_id: u32) {
     if lists.unlearn(spell_id) || super::multicast::CALL_SPELLS.contains(&spell_id) {
         lists.refill_due = true;
     }
-}
-
-/// Past the registrar's exits (`0x54265c`..`0x542856`): the spell is filed in the book's lists.
-fn files_in_book(
-    d: &benilla_formats::SpellDisplay,
-    summons: &benilla_formats::SummonPropertiesCatalog,
-) -> bool {
-    d.attributes & (ATTR_DO_NOT_DISPLAY | benilla_formats::SPELL_ATTR_IS_TRADESKILL) == 0
-        && !d.is_companion(summons)
-        && d.attributes_ex4 & ATTR_EX4_NOT_IN_SPELLBOOK == 0
 }
 
 fn on_spell_superceded(
@@ -213,7 +219,7 @@ fn on_spell_superceded(
             .spells
             .as_deref()
             .and_then(|s| Some((s, s.catalog.get(new_spell_id)?)));
-        if let Some((spells, d)) = display.filter(|(_, d)| files_in_book(d, &l.summons.0)) {
+        if let Some((spells, d)) = display.filter(|(_, d)| d.in_spellbook(&l.summons.0)) {
             if l.multicast.learn(d, &spells.catalog) {
                 l.multicast.refill_due = true;
             }

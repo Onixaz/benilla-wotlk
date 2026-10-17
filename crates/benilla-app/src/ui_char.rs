@@ -574,6 +574,7 @@ fn combat_stats(
         }),
         spell_healing_bonus: f.player_mod_healing_done_pos().unwrap_or(0),
         target_resistance_mod: f.player_mod_target_resistance().unwrap_or(0),
+        pet_spell_power: f.player_pet_spell_power(),
         shield_block: f.player_shield_block().unwrap_or(0),
         expertise: [
             f.player_expertise(0).unwrap_or(0),

@@ -36,7 +36,7 @@ pub enum MonsterMoveFacing {
 }
 
 /// One creature template's UI-visible head, from `SMSG_CREATURE_QUERY_RESPONSE`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CreatureQueryInfo {
     pub name: String,
     /// The NPC subtitle ("Stable Master"), the unit tooltip's second line.
@@ -59,6 +59,10 @@ pub struct CreatureQueryInfo {
     /// The template's first display id, `0` if none, for drawing an unseen creature; a spawned
     /// unit may use any of its four ids, so its own display id wins.
     pub display_id: u32,
+    /// The health and power multipliers, which `GetUnitHealthModifier`/`GetUnitPowerModifier`
+    /// answer for a non-hunter's pet (`0x71b8d0`, `0x71b960`).
+    pub health_modifier: f32,
+    pub power_modifier: f32,
 }
 
 /// A decoded server packet; an unmodelled opcode is [`Self::Other`].

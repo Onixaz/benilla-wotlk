@@ -103,6 +103,7 @@ mod class_list;
 mod clip;
 mod colorselect;
 mod combat_log;
+mod companion;
 mod container;
 mod craft;
 mod cursor;
@@ -320,6 +321,7 @@ pub use achievement::{
     achievement_hyperlink, AchievementBook, AchievementCategoryRow, AchievementCriteriaRow,
     AchievementDb, AchievementRow, AchievementUpdate, CriteriaWire, WowDate,
 };
+pub use companion::{CompanionIntent, CompanionState, CompanionType, CompanionView};
 pub use inspect::{InspectView, UnitReach};
 pub use item_stats::{item_usable, ItemSetView, ItemTemplateView, PlayerReqState};
 pub use item_text::ItemTextState;
@@ -939,6 +941,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     container::install(lua)?;
     cursor::install(lua)?;
     spellbook::install(lua)?;
+    companion::install(lua)?;
     macros::install(lua)?;
     talent::install(lua)?;
     achievement::install(lua)?;

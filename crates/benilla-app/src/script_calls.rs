@@ -221,6 +221,7 @@ mod tests {
                 name: "Heal".into(),
                 ..Default::default()
             }],
+            ..Default::default()
         });
         if selected {
             // The frame's unit snapshot, as the feed pushed it before the input pass.
@@ -413,6 +414,7 @@ mod tests {
                     name: "Fortitude".into(),
                     ..Default::default()
                 }],
+                ..Default::default()
             });
     }
 

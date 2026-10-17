@@ -319,6 +319,7 @@ fn chat_click_dismisses_a_stuck_spell_but_not_an_item() {
             cooldown: None,
             ..Default::default()
         }],
+        ..Default::default()
     });
     s.run("ToggleSpellBook(BOOKTYPE_SPELL)").unwrap();
     s.resolve();

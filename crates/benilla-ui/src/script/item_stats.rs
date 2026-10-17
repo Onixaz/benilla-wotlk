@@ -119,7 +119,7 @@ pub(super) fn item_usable_by_id(model: &super::Model, item_id: u32) -> bool {
     item_id == 0
         || model.item_templates.get(&item_id).is_none_or(|v| {
             item_usable(v, &model.player_req, |id| {
-                model.spellbook.slots.iter().any(|s| s.spell_id == id)
+                model.spellbook.named().any(|s| s.spell_id == id)
             })
         })
 }

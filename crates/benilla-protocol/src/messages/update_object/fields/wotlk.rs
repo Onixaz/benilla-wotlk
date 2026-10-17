@@ -394,6 +394,7 @@ mod tests {
             (Field::ContainerSlots, FIELD_CONTAINER_SLOT_1),
             (Field::UnitCharm, FIELD_UNIT_CHARM),
             (Field::UnitSummon, FIELD_UNIT_SUMMON),
+            (Field::UnitCritter, FIELD_UNIT_CRITTER),
             (Field::UnitCharmedBy, FIELD_UNIT_CHARMEDBY),
             (Field::UnitSummonedBy, FIELD_UNIT_SUMMONEDBY),
             (Field::UnitCreatedBy, FIELD_UNIT_CREATEDBY),

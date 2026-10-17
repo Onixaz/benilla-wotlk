@@ -254,15 +254,9 @@ fn the_two_model_tables_are_the_references_own() {
             "GuardM.{name}: 0x84f1fc is NOT reachable from CSimpleModel's lookup"
         );
     }
-    // Later-expansion verbs, absent from the 1.12 client image in any form.
-    for name in ["SetCreature", "SetCustomRace"] {
-        for frame in ["GuardM", "GuardPM"] {
-            assert!(
-                !is_fn(&s, frame, name),
-                "{frame}.{name} does not exist in 1.12.1.5875"
-            );
-        }
-    }
+    // `SetCreature` is `CharacterModelBase`'s (table `0xacf514`), never plain `Model`'s.
+    assert!(is_fn(&s, "GuardPM", "SetCreature"));
+    assert!(!is_fn(&s, "GuardM", "SetCreature"));
 }
 
 /// `SetSequence` and `SetSequenceTime` share one arm (`0x7121a0`): each interrupts what plays and

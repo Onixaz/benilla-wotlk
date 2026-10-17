@@ -1243,6 +1243,7 @@ fn seat_a_session(script: &mut UiScript) {
             spell_slot(100, "Charge", Some("Rank 1")),
             spell_slot(772, "Rend", Some("Rank 1")),
         ],
+        ..Default::default()
     });
 
     // ── The login-scoped catalogues ──

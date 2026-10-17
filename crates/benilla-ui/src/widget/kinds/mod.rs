@@ -248,6 +248,9 @@ pub struct ModelState {
     pub path: Option<String>,
     /// `PlayerModel:SetUnit`'s unit (`0x505d70`); it and [`Self::path`] each clear the other.
     pub unit: Option<String>,
+    /// `PlayerModel:SetCreature`'s creature entry (`0x597960`), drawn from its cached record's
+    /// display; `SetUnit`, `SetModel` and `ClearModel` drop it.
+    pub creature: Option<u32>,
     /// The last `SetSequence` id (`[bone0 block + 0xf8]`); what plays is [`Self::armed`].
     pub sequence: i32,
     /// The pane's own scene clock in ms (`0x76cfc0`): its `OnUpdate` (`0x76d7f0`) adds
@@ -363,6 +366,7 @@ impl Default for ModelState {
         Self {
             path: None,
             unit: None,
+            creature: None,
             sequence: 0,
             clock_ms: 0,
             armed: None,
@@ -483,6 +487,7 @@ impl ModelState {
     pub fn set_file(&mut self, path: String, facts: Option<&ModelFileFacts>) {
         self.path = Some(path);
         self.unit = None;
+        self.creature = None;
         self.icon = None;
         self.armed = None;
         self.pending_seed = true;
@@ -496,6 +501,7 @@ impl ModelState {
     pub fn clear_file(&mut self) {
         self.path = None;
         self.unit = None;
+        self.creature = None;
         self.icon = None;
         self.armed = None;
         self.pending_seed = false;

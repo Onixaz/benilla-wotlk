@@ -1,6 +1,7 @@
 //! The spellbook feed: builds the book from the known spells and the `SpellCatalog` ×
 //! `SkillLineCatalog` join, behind the stock `SpellBookFrame.xml`. A known spell is booked when
-//! [`SpellDisplay::in_spellbook`](benilla_formats::SpellDisplay::in_spellbook) passes (`0x4b25b0`).
+//! [`SpellDisplay::in_spellbook`](benilla_formats::SpellDisplay::in_spellbook) passes (`0x542030`);
+//! a companion, a mount or an `AttributesEx4 & 0x8000` spell is named but listed in no tab.
 //!
 //! A spell's tab (`0x4b24f0`) is its skill line, or General (key 0) when the
 //! `SkillRaceClassInfo.dbc` lookup (`0x6ddf90`) finds no row for the player's race and class, or
@@ -15,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::prelude::*;
 
-use benilla_formats::{SkillLineCatalog, SpellCatalog};
+use benilla_formats::{SkillLineCatalog, SpellCatalog, SummonPropertiesCatalog};
 use benilla_ui::script::{ScriptValue, SpellBookState, SpellSlotView, SpellTabView, UiScript};
 
 use crate::entities::ItemDisplays;
@@ -48,6 +49,10 @@ pub(crate) struct LearnedInTab(pub(crate) Vec<u32>);
 
 pub(crate) struct UiSpellbookPlugin;
 
+/// The book's feed, which the companion feed follows (a learn's book change before its line).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct BookFeed;
+
 impl Plugin for UiSpellbookPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LearnedInTab>()
@@ -60,6 +65,7 @@ impl Plugin for UiSpellbookPlugin {
                 // cooldowns. A click's cast is a script call (`cast_spell`).
                 feed_spellbook
                     .in_set(UnitFeed)
+                    .in_set(BookFeed)
                     .before(crate::ui_action::SlotIdentityFeed)
                     .before(crate::ui_action::CooldownEvents),
             );
@@ -111,6 +117,7 @@ fn feed_spellbook(
     clock: Res<crate::ui_script::UiClock>,
     mut memory: Local<crate::ui_script::VmMemo<FeedMemory>>,
     mut learned: ResMut<LearnedInTab>,
+    summons: Res<crate::spell::SummonSlots>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -130,6 +137,7 @@ fn feed_spellbook(
     let actions_changed = actions.is_changed();
     let spells_changed = spells.as_ref().is_some_and(|r| r.is_changed());
     let lines_changed = skill_lines.as_ref().is_some_and(|r| r.is_changed());
+    let summons_changed = summons.is_changed();
     // `is_added`: only the load-once icon column is read; the model cache churns every frame.
     let icons_added = icons.as_ref().is_some_and(|r| r.is_added());
     gate::trace(
@@ -145,6 +153,7 @@ fn feed_spellbook(
             ("actions", actions_changed),
             ("spells", spells_changed),
             ("skill_lines", lines_changed),
+            ("summons", summons_changed),
             ("icons", icons_added),
             // A queued learn never waits behind a skipped frame.
             ("learned", !learned.0.is_empty()),
@@ -161,6 +170,7 @@ fn feed_spellbook(
             || actions_changed
             || spells_changed
             || lines_changed
+            || summons_changed
             || icons_added
             || !learned.0.is_empty(),
     );
@@ -194,6 +204,7 @@ fn feed_spellbook(
     let (mut fresh, tab_lines) = build_book(
         &actions.spells,
         &spells.catalog,
+        &summons.0,
         skill_lines.as_deref().map(|s| &s.catalog),
         race,
         class,
@@ -242,6 +253,7 @@ fn feed_spellbook(
         );
         script.set_spellbook(fresh.clone());
         memory.pushed = fresh;
+        // A companion's learn leaves the book as it was (`0x5427a4` returns before `0x542cd4`).
         if book_changed {
             script.fire_event("SPELLS_CHANGED", vec![]);
         }
@@ -256,6 +268,7 @@ fn feed_spellbook(
         &learned,
         &tab_lines,
         spells,
+        &summons.0,
         skill_lines.as_deref().map(|s| &s.catalog),
         race,
         class,
@@ -263,20 +276,28 @@ fn feed_spellbook(
 }
 
 /// Fire `LEARNED_SPELL_IN_TAB` with the 1-based index of each learned spell's tab in the strip
-/// `build_book` just published (`0x4b2b86 inc edi`), which `SpellBookFrame.lua:81` flashes. The
-/// reference's three early returns (`0x4b2911`, `0x4b2944`, `0x4b29c4`) are `in_spellbook`.
+/// `build_book` just published (`0x542d16`), which `SpellBookFrame.lua` flashes. The registrar's
+/// exits before it are `in_spellbook`.
 fn fire_tab_flashes(
     script: &mut UiScript,
     learned: &[u32],
     tab_lines: &[u32],
     spells: &Spells,
+    summons: &SummonPropertiesCatalog,
     skill_lines: Option<&SkillLineCatalog>,
     race: u8,
     class: u8,
 ) {
     for &spell_id in learned {
-        let Some(index) = tab_flash_index(spell_id, tab_lines, spells, skill_lines, race, class)
-        else {
+        let Some(index) = tab_flash_index(
+            spell_id,
+            tab_lines,
+            spells,
+            summons,
+            skill_lines,
+            race,
+            class,
+        ) else {
             continue;
         };
         debug!("ui_spellbook: spell {spell_id} landed in tab {index} — flash");
@@ -289,6 +310,7 @@ fn tab_flash_index(
     spell_id: u32,
     tab_lines: &[u32],
     spells: &Spells,
+    summons: &SummonPropertiesCatalog,
     skill_lines: Option<&SkillLineCatalog>,
     race: u8,
     class: u8,
@@ -296,7 +318,7 @@ fn tab_flash_index(
     if !spells
         .catalog
         .get(spell_id)
-        .is_some_and(|d| d.in_spellbook())
+        .is_some_and(|d| d.in_spellbook(summons))
     {
         return None;
     }
@@ -310,6 +332,7 @@ fn tab_flash_index(
 fn build_book(
     known: &BTreeSet<u32>,
     catalog: &SpellCatalog,
+    summons: &SummonPropertiesCatalog,
     skill_lines: Option<&SkillLineCatalog>,
     race: u8,
     class: u8,
@@ -317,9 +340,21 @@ fn build_book(
     ranged_icon: Option<String>,
 ) -> (SpellBookState, Vec<u32>) {
     let mut by_line: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    let mut unlisted = Vec::new();
     for &spell_id in known {
         // The add-gate (module doc); a spell missing from `Spell.dbc` is dropped too.
-        if !catalog.get(spell_id).is_some_and(|d| d.in_spellbook()) {
+        let Some(d) = catalog.get(spell_id).filter(|d| d.in_name_cache()) else {
+            continue;
+        };
+        if !d.in_spellbook(summons) {
+            unlisted.push(SpellSlotView {
+                spell_id,
+                name: d.name.clone(),
+                rank: d.rank.clone(),
+                texture: d.icon.clone(),
+                passive: d.passive,
+                ..SpellSlotView::default()
+            });
             continue;
         }
         // The tab after the General collapse; with no skill-line catalog, General.
@@ -392,7 +427,14 @@ fn build_book(
             num_spells,
         });
     }
-    (SpellBookState { tabs, slots }, tab_lines)
+    (
+        SpellBookState {
+            tabs,
+            slots,
+            unlisted,
+        },
+        tab_lines,
+    )
 }
 
 /// `0x4b30c0`'s tail: name, then the parsed rank number, then the rank string. The rank is the
@@ -506,19 +548,43 @@ mod tests {
         }
     }
 
-    /// With no skill-line catalog every booked spell is in General, index 1 (`0x4b2b86 inc edi`).
+    /// A mount: aura 0 is `MOUNTED`, which `0x5426a5` files in the mount list, not a tab.
+    fn mount(name: &str) -> SpellDisplay {
+        SpellDisplay {
+            effect_apply_aura: [benilla_formats::SPELL_AURA_MOUNTED, 0, 0],
+            ..spell(name, None, 0)
+        }
+    }
+
+    /// `AttributesEx4 & 0x8000`: known and named, filed in no tab (`0x542856`).
+    fn unbooked(name: &str) -> SpellDisplay {
+        SpellDisplay {
+            attributes_ex4: 0x8000,
+            ..spell(name, None, 0)
+        }
+    }
+
+    /// With no skill-line catalog every booked spell is in General, index 1.
     #[test]
     fn the_flash_index_is_one_based_into_the_published_tab_strip() {
         let mut map = HashMap::new();
         map.insert(133, spell("Fireball", Some("Rank 2"), 0x10000));
         map.insert(668, spell("Language: Common", None, 0x80)); // DO_NOT_DISPLAY
         map.insert(818, spell("Cooking", None, 0x20)); // IS_TRADESKILL
-        let mut castbar = spell("Some Castbar Spell", None, 0);
-        castbar.cast_ui = 2;
-        map.insert(1234, castbar);
+        map.insert(458, mount("Brown Horse"));
+        map.insert(1234, unbooked("Unbooked"));
         let catalog = SpellCatalog::from_displays(map);
-        let known: BTreeSet<u32> = [133, 668, 818, 1234].into_iter().collect();
-        let (book, tab_lines) = build_book(&known, &catalog, None, 1, 1, None, None);
+        let known: BTreeSet<u32> = [133, 668, 818, 458, 1234].into_iter().collect();
+        let (book, tab_lines) = build_book(
+            &known,
+            &catalog,
+            &SummonPropertiesCatalog::default(),
+            None,
+            1,
+            1,
+            None,
+            None,
+        );
 
         assert_eq!(
             tab_lines.len(),
@@ -532,29 +598,84 @@ mod tests {
             ..Spells::empty_for_tests()
         };
         assert_eq!(
-            tab_flash_index(133, &tab_lines, &spells, None, 1, 1),
+            tab_flash_index(
+                133,
+                &tab_lines,
+                &spells,
+                &SummonPropertiesCatalog::default(),
+                None,
+                1,
+                1
+            ),
             Some(1),
             "a booked spell flashes its tab, 1-based"
         );
 
-        // The reference's three returns before `0x4b2b92`, the book add-gate.
+        // The registrar's returns before `LEARNED_SPELL_IN_TAB`, the book add-gate.
         for (id, why) in [
-            (668u32, "DO_NOT_DISPLAY returns at 0x4b2911"),
-            (818, "IS_TRADESKILL returns at 0x4b2944"),
-            (1234, "castUI > 0 returns at 0x4b29c4"),
+            (668u32, "DO_NOT_DISPLAY returns at 0x54265c"),
+            (818, "IS_TRADESKILL returns before the name cache"),
+            (458, "a mount takes the companion exit at 0x5426a5"),
+            (1234, "AttributesEx4 0x8000 returns at 0x542856"),
         ] {
             assert_eq!(
-                tab_flash_index(id, &tab_lines, &spells, None, 1, 1),
+                tab_flash_index(
+                    id,
+                    &tab_lines,
+                    &spells,
+                    &SummonPropertiesCatalog::default(),
+                    None,
+                    1,
+                    1
+                ),
                 None,
                 "{why}"
             );
         }
 
         assert_eq!(
-            tab_flash_index(99999, &tab_lines, &spells, None, 1, 1),
+            tab_flash_index(
+                99999,
+                &tab_lines,
+                &spells,
+                &SummonPropertiesCatalog::default(),
+                None,
+                1,
+                1
+            ),
             None,
             "an id with no Spell.dbc record flashes nothing"
         );
+    }
+
+    /// A mount and an `AttributesEx4 & 0x8000` spell are named but in no tab (`0x542699` before
+    /// the exits): `unlisted`, which `CastSpellByName` finds and no book index reaches. A
+    /// `0x80`/`0x20` spell is neither.
+    #[test]
+    fn companions_and_unbooked_spells_are_named_but_listed_in_no_tab() {
+        let mut map = HashMap::new();
+        map.insert(133, spell("Fireball", Some("Rank 1"), 0));
+        map.insert(458, mount("Brown Horse"));
+        map.insert(1234, unbooked("Unbooked"));
+        map.insert(668, spell("Language: Common", None, 0x80));
+        map.insert(818, spell("Cooking", None, 0x20));
+        let catalog = SpellCatalog::from_displays(map);
+        let known: BTreeSet<u32> = [133, 458, 1234, 668, 818].into_iter().collect();
+        let (book, _) = build_book(
+            &known,
+            &catalog,
+            &SummonPropertiesCatalog::default(),
+            None,
+            1,
+            1,
+            None,
+            None,
+        );
+        let ids = |slots: &[SpellSlotView]| slots.iter().map(|s| s.spell_id).collect::<Vec<_>>();
+        assert_eq!(ids(&book.slots), [133]);
+        assert_eq!(book.tabs[0].num_spells, 1);
+        assert_eq!(ids(&book.unlisted), [458, 1234]);
+        assert_eq!(book.unlisted[0].name, "Brown Horse");
     }
 
     /// Shown spells sort name then rank, and General takes the fixed name and icon.
@@ -570,7 +691,17 @@ mod tests {
         let known: BTreeSet<u32> = [133, 145, 2136, 668, 818].into_iter().collect();
 
         // No skill-line catalog: every shown spell lands in General.
-        let book = build_book(&known, &catalog, None, 1, 1, None, None).0;
+        let book = build_book(
+            &known,
+            &catalog,
+            &SummonPropertiesCatalog::default(),
+            None,
+            1,
+            1,
+            None,
+            None,
+        )
+        .0;
 
         assert_eq!(book.tabs.len(), 1);
         assert_eq!(book.tabs[0].name, "General");
@@ -606,14 +737,34 @@ mod tests {
             "Interface\\Icons\\INV_Sword_04",
             "Interface\\Buttons\\Spell-Reset",
         ] {
-            let book = build_book(&known, &catalog, None, 1, 1, Some(resolved.into()), None).0;
+            let book = build_book(
+                &known,
+                &catalog,
+                &SummonPropertiesCatalog::default(),
+                None,
+                1,
+                1,
+                Some(resolved.into()),
+                None,
+            )
+            .0;
             assert_eq!(book.slots.len(), 1);
             assert_eq!(book.slots[0].spell_id, ATTACK);
             assert_eq!(book.slots[0].texture.as_deref(), Some(resolved));
         }
 
         // No character: the spell's own icon.
-        let bare = build_book(&known, &catalog, None, 1, 1, None, None).0;
+        let bare = build_book(
+            &known,
+            &catalog,
+            &SummonPropertiesCatalog::default(),
+            None,
+            1,
+            1,
+            None,
+            None,
+        )
+        .0;
         assert_eq!(
             bare.slots[0].texture.as_deref(),
             Some("Interface\\Icons\\Temp")
@@ -636,7 +787,17 @@ mod tests {
         let known: BTreeSet<u32> = [AUTO_SHOT, THROW].into_iter().collect();
 
         let bow = "Interface\\Icons\\INV_Weapon_Bow_02";
-        let book = build_book(&known, &catalog, None, 1, 1, None, Some(bow.into())).0;
+        let book = build_book(
+            &known,
+            &catalog,
+            &SummonPropertiesCatalog::default(),
+            None,
+            1,
+            1,
+            None,
+            Some(bow.into()),
+        )
+        .0;
         let icon_of = |b: &SpellBookState, id: u32| {
             b.slots
                 .iter()
@@ -651,7 +812,17 @@ mod tests {
         );
 
         // No ranged weapon: Auto Shot keeps its own icon.
-        let bare = build_book(&known, &catalog, None, 1, 1, None, None).0;
+        let bare = build_book(
+            &known,
+            &catalog,
+            &SummonPropertiesCatalog::default(),
+            None,
+            1,
+            1,
+            None,
+            None,
+        )
+        .0;
         assert_eq!(
             icon_of(&bare, AUTO_SHOT).as_deref(),
             Some("Interface\\Icons\\Ability_AutoShot")

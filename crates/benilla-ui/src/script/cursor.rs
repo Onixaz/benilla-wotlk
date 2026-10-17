@@ -447,14 +447,21 @@ pub enum EnchantConfirm {
 /// - 4 (a pet action), 10 (a stabled pet) and an empty cursor: nothing.
 ///
 /// A bar-slot pickup answers as the payload the reference would hold for it: an item by id, whose
-/// link needs the template (`0x5153a9`), else nothing; a macro; a spell. Deviation: a companion
-/// spell answers as a spell, not `"companion", index, "CRITTER"|"MOUNT"` (`0x5152c0`), as
-/// `GetActionInfo` does; benilla keeps no companion list, guild bank or equipment sets, so modes
-/// 12 (`"guildbankmoney"`) and 13 (`"equipmentset"`) never arise.
+/// link needs the template (`0x5153a9`), else nothing; a macro; a spell. A companion spell
+/// answers `"companion", index, "CRITTER"|"MOUNT"` (`0x5152c0`), as `GetActionInfo` does. benilla
+/// keeps no guild bank or equipment sets, so modes 12 (`"guildbankmoney"`) and 13
+/// (`"equipmentset"`) never arise.
 fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
     let str = |s: &str| lua.create_string(s).map(Value::String);
     let int = |n: u32| Value::Integer(i64::from(n));
     let spell = |spell_id: u32, fallback: Option<(u32, &str)>| -> mlua::Result<Vec<Value>> {
+        if let Some((ty, at)) = model.companions.find(spell_id) {
+            return Ok(vec![
+                str("companion")?,
+                int(at as u32 + 1),
+                str(ty.token())?,
+            ]);
+        }
         let in_book = model
             .spellbook
             .slots

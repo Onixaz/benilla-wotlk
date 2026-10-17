@@ -151,6 +151,13 @@ pub struct UnitCombatStats {
     pub mana_regen_from_spirit: f32,
     /// `UNIT_FIELD_MAXHEALTHMODIFIER`, the multiplier less one.
     pub max_health_modifier: f32,
+    /// `CGUnit_C::GetHealthModifier` (`0x71b8d0`) and `GetPowerModifier` (`0x71b960`): 1.0 for a
+    /// hunter's pet, else the creature record's multipliers; 0.0 for the player, whose entry
+    /// names no record.
+    pub health_modifier: f32,
+    pub power_modifier: f32,
+    /// `PLAYER_PET_SPELL_POWER`, the player's only (`GetPetSpellBonusDamage` `0x60e410`).
+    pub pet_spell_power: i32,
 }
 
 impl Default for UnitCombatStats {
@@ -208,6 +215,9 @@ impl Default for UnitCombatStats {
             health_regen_from_spirit: 0.0,
             mana_regen_from_spirit: 0.0,
             max_health_modifier: 0.0,
+            health_modifier: 0.0,
+            power_modifier: 0.0,
+            pet_spell_power: 0,
         }
     }
 }

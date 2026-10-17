@@ -65,7 +65,7 @@ pub(crate) struct NameCache {
 }
 
 /// One cached creature template head.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct CreatureRecord {
     pub(crate) name: String,
     pub(crate) subname: Option<String>,
@@ -86,6 +86,9 @@ pub(crate) struct CreatureRecord {
     /// The only model for a unit with no world object, such as a stabled pet; an on-screen unit's
     /// own `UNIT_FIELD_DISPLAYID` wins.
     pub(crate) display_id: u32,
+    /// The template's health and power multipliers (`0x71b8d0`, `0x71b960`).
+    pub(crate) health_modifier: f32,
+    pub(crate) power_modifier: f32,
 }
 
 /// The 1.12 client's creature-rank getter (`0x605620`): 0 before the record is queried and 0 for
@@ -339,9 +342,9 @@ impl crate::query_cache::AskOnce for NameCache {
 /// reference's rule for its `.wdb` header (`[FourCC | build 0x3034 | locale | recordSize |
 /// version 1]`, no checksum, no timestamp, no TTL).
 const CACHE_MAGIC: &str = "benilla-namecache";
-/// Our record-layout version; bump it when a column changes. Version 3 holds creature records
-/// only, with the cursor name last.
-const CACHE_FORMAT: u32 = 3;
+/// Our record-layout version; bump it when a column changes. Version 4 holds creature records
+/// only, with the cursor name and then the two multipliers last.
+const CACHE_FORMAT: u32 = 4;
 /// The client build, the reference's `0x3034`.
 const CACHE_BUILD: u32 = benilla_protocol::CLIENT_BUILD as u32;
 /// In the header as in the reference's; benilla reads DBC locale slot 0 only.
@@ -356,7 +359,7 @@ impl NameCache {
         for (entry, rec) in self.creatures.iter() {
             match rec {
                 Some(r) => out.push_str(&format!(
-                    "C\t{entry}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                    "C\t{entry}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
                     r.creature_type,
                     r.pet_family,
                     r.rank,
@@ -366,7 +369,9 @@ impl NameCache {
                     r.display_id,
                     r.name,
                     r.subname.as_deref().unwrap_or(""),
-                    r.cursor_name.as_deref().unwrap_or("")
+                    r.cursor_name.as_deref().unwrap_or(""),
+                    r.health_modifier,
+                    r.power_modifier
                 )),
                 None => out.push_str(&format!("c\t{entry}\n")),
             }
@@ -392,7 +397,7 @@ impl NameCache {
         for line in lines {
             let f: Vec<&str> = line.split('\t').collect();
             match f.first().copied() {
-                Some("C") if f.len() >= 12 => {
+                Some("C") if f.len() >= 14 => {
                     let Ok(entry) = f[1].parse::<u32>() else {
                         continue;
                     };
@@ -402,6 +407,10 @@ impl NameCache {
                         continue;
                     };
                     let Ok(display_id) = f[8].parse() else {
+                        continue;
+                    };
+                    let (Ok(health_modifier), Ok(power_modifier)) = (f[12].parse(), f[13].parse())
+                    else {
                         continue;
                     };
                     cache.creatures.insert(
@@ -418,6 +427,8 @@ impl NameCache {
                             civilian: f[6] == "1",
                             racial_leader: f[7] == "1",
                             display_id,
+                            health_modifier,
+                            power_modifier,
                         }),
                     );
                 }
@@ -495,6 +506,7 @@ pub(crate) mod net {
             display_id,
             civilian,
             racial_leader,
+            modifiers,
         } = ev
         {
             creature_name(
@@ -508,7 +520,7 @@ pub(crate) mod net {
                 type_flags,
                 civilian,
                 racial_leader,
-                display_id,
+                (display_id, modifiers),
                 &mut names,
             );
         }
@@ -557,7 +569,7 @@ pub(crate) mod net {
         type_flags: u32,
         civilian: bool,
         racial_leader: bool,
-        display_id: u32,
+        (display_id, (health_modifier, power_modifier)): (u32, (f32, f32)),
         names: &mut NameCache,
     ) {
         names.insert_creature(
@@ -573,6 +585,8 @@ pub(crate) mod net {
                 civilian,
                 racial_leader,
                 display_id,
+                health_modifier,
+                power_modifier,
             }),
         );
     }
@@ -695,6 +709,7 @@ mod tests {
                 civilian: true,
                 racial_leader: false,
                 display_id: 533,
+                ..Default::default()
             }),
         );
         cache.insert_creature(1234, None); // the server flagged the entry unknown
@@ -728,6 +743,7 @@ mod tests {
                 civilian: false,
                 racial_leader: false,
                 display_id: 1,
+                ..Default::default()
             }),
         );
         let back = NameCache::from_tsv(&cache.to_tsv("R"), "R").expect("header");
@@ -754,6 +770,7 @@ mod tests {
                 civilian: true,
                 racial_leader: false,
                 display_id: 533,
+                ..Default::default()
             }),
         );
 
@@ -906,6 +923,7 @@ mod tests {
                 civilian: false,
                 racial_leader: false,
                 display_id: 0,
+                ..Default::default()
             }),
         );
         assert_eq!(cache.resolve(wolf_b, &cmds), Some("Young Wolf"));
@@ -964,6 +982,7 @@ mod tests {
             civilian: false,
             racial_leader: false,
             display_id: 0,
+            ..Default::default()
         }
     }
 

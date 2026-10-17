@@ -1188,6 +1188,7 @@ mod tests {
                     civilian: false,
                     racial_leader: false,
                     display_id: 0,
+                    ..Default::default()
                 }),
             );
         }

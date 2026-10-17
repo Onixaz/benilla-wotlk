@@ -1313,8 +1313,8 @@ fn parse_server_body(
                     read_u32_le(&mut r)?,
                     read_u32_le(&mut r)?,
                 ];
-                let _health_mod = read_f32_le(&mut r)?;
-                let _power_mod = read_f32_le(&mut r)?;
+                let health_modifier = read_f32_le(&mut r)?;
+                let power_modifier = read_f32_le(&mut r)?;
                 let racial_leader = read_u8(&mut r)? != 0;
                 for _ in 0..6 {
                     let _quest_item = read_u32_le(&mut r)?;
@@ -1331,6 +1331,8 @@ fn parse_server_body(
                         rank,
                         type_flags,
                         display_id,
+                        health_modifier,
+                        power_modifier,
                         // The 3.3.5a record has no civilian byte.
                         civilian: false,
                         racial_leader,

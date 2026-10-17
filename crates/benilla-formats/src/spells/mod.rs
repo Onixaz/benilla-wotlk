@@ -26,7 +26,9 @@ mod tokens;
 pub use cast_times::{load_spell_cast_times, SpellCastTime, SpellCastTimeCatalog};
 pub use desc_vars::{load_spell_description_variables, SpellDescriptionVariablesCatalog};
 pub use dispel_types::{load_spell_dispel_types, SpellDispelTypes};
-pub use display::{FormRefusal, LearnAnnouncement, OpenLock, SpellDisplay};
+pub use display::{
+    CompanionKind, FormRefusal, LearnAnnouncement, OpenLock, SpellDisplay, SPELL_AURA_MOUNTED,
+};
 pub use duration::{load_spell_durations, SpellDuration, SpellDurationCatalog};
 pub use forms::{load_shapeshift_forms, ShapeshiftForm};
 mod immunity;

@@ -106,7 +106,8 @@ pub(super) fn render_view(
 ) -> mlua::Result<()> {
     let (req, known_spell, taught_known, set_view, equipped) = {
         let mut model = crate::script::model_mut_of(lua);
-        let knows = |id: u32| model.spellbook.slots.iter().any(|s| s.spell_id == id);
+        // The known bits (`CGUnit_C::IsSpellKnown` `0x7260e0`): a mount or companion counts.
+        let knows = |id: u32| model.spellbook.named().any(|s| s.spell_id == id);
         let known = v.required_spell != 0 && knows(v.required_spell);
         // A taught spell (trigger 6, learn) the player knows: the always-red ITEM_SPELL_KNOWN.
         let taught = v

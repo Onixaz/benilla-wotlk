@@ -156,7 +156,7 @@ fn real_spell_catalog_gates_the_spellbook() {
     for id in [133, 143, 145, 116, 118] {
         let d = cat.get(id).unwrap_or_else(|| panic!("spell {id}"));
         assert!(
-            d.in_spellbook(),
+            d.in_spellbook(&crate::SummonPropertiesCatalog::default()),
             "spell {id} should show ({:#x})",
             d.attributes
         );
@@ -177,7 +177,10 @@ fn real_spell_catalog_gates_the_spellbook() {
             0xC0,
             "{what} ({id}) is PASSIVE|DO_NOT_DISPLAY"
         );
-        assert!(!d.in_spellbook(), "{what} ({id}) is hidden from the book");
+        assert!(
+            !d.in_spellbook(&crate::SummonPropertiesCatalog::default()),
+            "{what} ({id}) is hidden from the book"
+        );
     }
 }
 

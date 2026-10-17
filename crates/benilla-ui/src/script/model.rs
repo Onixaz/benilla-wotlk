@@ -454,6 +454,10 @@ pub(crate) struct Model {
     pub(crate) spellbook_highest_rank: spellbook::HighestRankView,
     /// The pet's spellbook, a second array as in the reference (`0xb700f0`, `0xb6f098`).
     pub(crate) pet_book: spellbook::PetBookState,
+    /// The critter and mount lists (`0xbe8df4`).
+    pub(crate) companions: super::companion::CompanionState,
+    /// `DismissCompanion` and `SummonRandomCritter` asks, in call order, for the app.
+    pub(crate) companion_intents: Vec<super::companion::CompanionIntent>,
     /// The player's macros, owned here as 1.12 macros have no server side; the app persists them.
     pub(crate) macros: macros::MacroState,
     /// A script changed the macros: the save and `UPDATE_MACROS` cue.
@@ -1273,6 +1277,8 @@ impl Model {
             spellbook: spellbook::SpellBookState::default(),
             spellbook_highest_rank: spellbook::HighestRankView::default(),
             pet_book: spellbook::PetBookState::default(),
+            companions: super::companion::CompanionState::default(),
+            companion_intents: Vec::new(),
             macros: macros::MacroState::default(),
             macros_dirty: false,
             macros_generation: 0,

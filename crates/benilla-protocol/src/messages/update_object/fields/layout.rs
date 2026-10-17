@@ -49,6 +49,8 @@ pub enum Field {
 
     UnitCharm,
     UnitSummon,
+    /// 3.3.5a's summoned companion (`UNIT_FIELD_CRITTER`).
+    UnitCritter,
     UnitCharmedBy,
     UnitSummonedBy,
     UnitCreatedBy,
@@ -168,6 +170,8 @@ pub enum Field {
     PlayerModHealingDonePct,
     /// The spell penetration, a non-positive integer.
     PlayerModTargetResistance,
+    /// `PLAYER_PET_SPELL_POWER`, the pet's spell bonus `GetPetSpellBonusDamage` reads (`0x60e43b`).
+    PlayerPetSpellPower,
     /// The 25 combat ratings.
     PlayerCombatRating,
     PlayerExploredZones,
@@ -312,7 +316,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         item: 48,
         container: 122,
         unit: 188,
-        player: 1472,
+        player: 1473,
         gameobject: 26,
         dynamicobject: 16,
         corpse: 38,
@@ -346,6 +350,8 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         run(F::UnitSummonedBy, Unit, 12, 2),
         run(F::UnitCreatedBy, Unit, 14, 2),
         run(F::UnitTarget, Unit, 16, 2),
+        // 3.3.5a's critter guid, in 1.12.1's unread `UNIT_FIELD_PERSUADED`.
+        run(F::UnitCritter, Unit, 18, 2),
         run(F::UnitChannelObject, Unit, 20, 2),
         one(F::UnitHealth, Unit, 22),
         run(F::UnitPower, Unit, 23, 5),
@@ -426,6 +432,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         // `+0x1054`/`+0x1058`, the spell-text operands `pbh` and `pbhd` (`0x5782d0`).
         one(F::PlayerModHealingPct, Player, 1470),
         one(F::PlayerModHealingDonePct, Player, 1471),
+        one(F::PlayerPetSpellPower, Player, 1472),
         // 19 slots of 12: creator guid, entry, 7 enchants, properties, pad.
         strided(F::PlayerVisibleItemEntry, Player, 260, 19, 12),
         strided(F::PlayerVisibleItemEnchants, Player, 261, 19, 12),
@@ -545,6 +552,7 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         run(F::ContainerSlots, Container, 66, 72),
         run(F::UnitCharm, Unit, 6, 2),
         run(F::UnitSummon, Unit, 8, 2),
+        run(F::UnitCritter, Unit, 10, 2),
         run(F::UnitCharmedBy, Unit, 12, 2),
         run(F::UnitSummonedBy, Unit, 14, 2),
         run(F::UnitCreatedBy, Unit, 16, 2),
@@ -662,6 +670,8 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         one(F::PlayerModHealingPct, Player, 1193),
         one(F::PlayerModHealingDonePct, Player, 1194),
         one(F::PlayerModTargetResistance, Player, 1195),
+        // `UNIT_END + 0x499`, the last player field (`[player+0x1264]`).
+        one(F::PlayerPetSpellPower, Player, 1325),
         one(F::PlayerFieldBytes, Player, 1197),
         one(F::PlayerAmmoId, Player, 1198),
         one(F::PlayerSelfResSpell, Player, 1199),

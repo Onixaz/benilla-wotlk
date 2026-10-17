@@ -272,6 +272,10 @@ impl ObjectFields {
     pub fn player_mod_target_resistance(&self) -> Option<i32> {
         self.get_i32(FIELD_PLAYER_MOD_TARGET_RESISTANCE)
     }
+    /// `PLAYER_PET_SPELL_POWER`: the pet's spell damage bonus, `GetPetSpellBonusDamage`'s answer.
+    pub fn player_pet_spell_power(&self) -> i32 {
+        self.get_i32(FIELD_PLAYER_PET_SPELL_POWER).unwrap_or(0)
+    }
     /// `PLAYER_FIELD_COMBAT_RATING_1 + i`: combat rating `i`, 0-based.
     pub fn player_combat_rating(&self, i: u8) -> Option<i32> {
         (i < PLAYER_COMBAT_RATINGS)

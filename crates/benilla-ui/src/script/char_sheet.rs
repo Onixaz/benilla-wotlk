@@ -245,13 +245,25 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The unit-taking four: the player or the pet, 0 for anything else; a non-string raises.
+    // GetPetSpellBonusDamage() (`0x60e410`): the player's `PLAYER_PET_SPELL_POWER`, 0 without
+    // a player.
+    g.set(
+        "GetPetSpellBonusDamage",
+        lua.create_function(|lua, ()| Ok(player_stats(lua, 0, |s| i64::from(s.pet_spell_power))))?,
+    )?;
+
+    // The unit-taking verbs: the player or the pet, 0 for anything else; a non-string raises.
+    // `GetUnitHealthModifier` (`0x6127f0`) and `GetUnitPowerModifier` (`0x612900`) answer the
+    // player or a unit with a pet number. Deviation: a party member's pet reads 0, as no snapshot
+    // of it is pushed.
     for (name, pick) in [
         ("GetCritChanceFromAgility", 0u8),
         ("GetSpellCritChanceFromIntellect", 1),
         ("GetUnitHealthRegenRateFromSpirit", 2),
         ("GetUnitManaRegenRateFromSpirit", 3),
         ("GetUnitMaxHealthModifier", 4),
+        ("GetUnitHealthModifier", 5),
+        ("GetUnitPowerModifier", 6),
     ] {
         g.set(
             name,
@@ -264,7 +276,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     // `0x612a00` adds 0.001 to the rate.
                     3 => f64::from(s.mana_regen_from_spirit) + 0.001,
                     // `0x612870` adds 1.0 to the modifier, in f32.
-                    _ => f64::from(s.max_health_modifier + 1.0),
+                    4 => f64::from(s.max_health_modifier + 1.0),
+                    5 => f64::from(s.health_modifier),
+                    _ => f64::from(s.power_modifier),
                 }))
             })?,
         )?;

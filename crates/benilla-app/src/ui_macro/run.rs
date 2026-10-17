@@ -210,6 +210,7 @@ mod tests {
                     ..Default::default()
                 },
             ],
+            ..Default::default()
         };
         let t = table();
         // No subtext -> the highest known rank.

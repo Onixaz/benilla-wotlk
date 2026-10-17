@@ -24,6 +24,14 @@ impl WorldWriter {
         self.send(opcode::CMSG_CANCEL_AURA, &messages::cancel_aura(spell_id))
     }
 
+    /// `CMSG_DISMISS_CRITTER`: send the companion out home. No reply: `UNIT_FIELD_CRITTER` clears.
+    pub fn dismiss_critter(&mut self, critter_guid: u64) -> Result<()> {
+        self.send(
+            opcode::CMSG_DISMISS_CRITTER,
+            &messages::dismiss_critter(critter_guid),
+        )
+    }
+
     /// `CMSG_CAST_SPELL` at a GameObject: the open-lock cast on a chest, vein or herb. The server
     /// checks the skill, and a chest answers with its loot.
     pub fn cast_spell_gameobject(&mut self, spell_id: u32, go_guid: u64) -> Result<()> {

@@ -694,6 +694,11 @@ pub fn cancel_aura(spell_id: u32) -> Vec<u8> {
     spell_id.to_le_bytes().to_vec()
 }
 
+/// Body of `CMSG_DISMISS_CRITTER`: the `u64` guid of the companion out (`0x80305b`).
+pub fn dismiss_critter(critter_guid: u64) -> Vec<u8> {
+    critter_guid.to_le_bytes().to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

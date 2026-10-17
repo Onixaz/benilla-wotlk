@@ -134,6 +134,7 @@ mod ui_binder;
 mod ui_cast;
 mod ui_char;
 mod ui_chat;
+mod ui_companion;
 mod ui_craft;
 mod ui_dialog_verbs;
 mod ui_dressup;

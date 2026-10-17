@@ -993,6 +993,7 @@ fn a_held_pet_names_its_templates_creature_type() {
             civilian: false,
             racial_leader: false,
             display_id: 0,
+            ..Default::default()
         }),
     );
     let mut app = App::new();

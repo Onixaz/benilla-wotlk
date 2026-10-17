@@ -1291,6 +1291,7 @@ fn the_feed_builds_the_pet_views_against_the_pet_and_rebuilds_them_on_its_level(
     script.set_spellbook(SpellBookState {
         tabs: Vec::new(),
         slots: vec![slot],
+        ..Default::default()
     });
     script
         .run(

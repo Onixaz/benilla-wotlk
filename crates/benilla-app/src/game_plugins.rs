@@ -216,6 +216,8 @@ impl PluginGroup for GamePlugins {
             // The form list by the reference's admission and order (`0x4b25b0`, `0x4b2bb0`); after
             // UiActionPlugin (`Spells`) and SpellPlugin (the cast tail).
             .add(UiShapeshiftPlugin)
+            // The companion lists; after UiSpellbookPlugin, whose feed it follows.
+            .add(crate::ui_companion::UiCompanionPlugin)
             // The totem slots; after UiActionPlugin, whose `Spells` names each totem's icon.
             .add(UiTotemPlugin)
             // After UiActionPlugin, whose `Spells` and cooldown clock it shares.

@@ -67,6 +67,11 @@ impl ObjectFields {
     pub fn unit_summon(&self) -> Option<u64> {
         self.get_guid(FIELD_UNIT_SUMMON).filter(|&g| g != 0)
     }
+    /// `UNIT_FIELD_CRITTER`: the companion this unit has out; the summon arm of
+    /// `Spell_C_IsActiveSpell` (`0x802cb0`) compares its entry bits with the spell's creature.
+    pub fn unit_critter(&self) -> Option<u64> {
+        self.get_guid(FIELD_UNIT_CRITTER).filter(|&g| g != 0)
+    }
     /// `UNIT_FIELD_CHARM`: the unit this one charms.
     pub fn unit_charm(&self) -> Option<u64> {
         self.get_guid(FIELD_UNIT_CHARM).filter(|&g| g != 0)

@@ -130,6 +130,7 @@ fn seat_a_hunter(root: &Path) -> UiScript {
                 slot(2973, "Raptor Strike", Some("Rank 1")),
                 slot(1978, "Serpent Sting", Some("Rank 1")),
             ],
+            ..Default::default()
         });
     }
 

@@ -258,12 +258,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // GetActionInfo(slot) (`0x5a8f10`): the slot is a number or `Usage:` (`0x5a91a6`). A spell
     // answers `"spell", bookIndex, "spell", spellId`, the index 1-based in the book `0x53b4e0`
     // searches and 0 for a spell not in it (`0x5a9049`); an item `"item", itemId`; a macro
-    // `"macro", index` (`0x5a9133`); an empty slot nothing.
+    // `"macro", index` (`0x5a9133`); an empty slot nothing. A companion answers `"companion",
+    // index, "CRITTER"|"MOUNT", spellId` (`0x5a8fa8`), its 1-based slot in its list.
     //
-    // Deviation: a companion spell answers as a spell, where the reference answers `"companion",
-    // index, "CRITTER"|"MOUNT", spellId` (`0x5a8fa8`), and an equipment-set slot answers nothing
-    // for `"equipmentset", name` (`0x5a9178`): benilla keeps no companion list and no equipment
-    // sets.
+    // Deviation: an equipment-set slot answers nothing for `"equipmentset", name` (`0x5a9178`):
+    // benilla keeps no equipment sets.
     g.set(
         "GetActionInfo",
         lua.create_function(|lua, slot: Value| {
@@ -278,6 +277,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(MultiValue::from_vec(match a.kind & 0xf0 {
                 ACTION_KIND_ITEM => vec![str("item")?, Value::Integer(i64::from(a.action))],
                 ACTION_KIND_MACRO => vec![str("macro")?, Value::Integer(i64::from(a.action))],
+                0x00 if model.companions.find(a.action).is_some() => {
+                    let (ty, at) = model.companions.find(a.action).expect("guarded");
+                    vec![
+                        str("companion")?,
+                        Value::Integer(at as i64 + 1),
+                        str(ty.token())?,
+                        Value::Integer(i64::from(a.action)),
+                    ]
+                }
                 0x00 => {
                     let index = model
                         .spellbook
@@ -786,6 +794,7 @@ mod tests {
                     ..Default::default()
                 })
                 .collect(),
+            ..Default::default()
         });
         let slot = |kind, action| ActionSlot {
             kind,
