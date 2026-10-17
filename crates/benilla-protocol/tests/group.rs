@@ -11,16 +11,30 @@ use benilla_protocol::messages::{
 use benilla_protocol::ServerPacket;
 use common::hx;
 
+/// A 3.3.5a `SMSG_GROUP_LIST` header with no LFG pair.
+fn list_header(group_type: u8, subgroup: u8, flags: u8, count: u32) -> Vec<u8> {
+    let mut body = vec![group_type, subgroup, flags, 0];
+    body.extend_from_slice(&0x1f50_0000_0000_0001u64.to_le_bytes());
+    body.extend_from_slice(&1u32.to_le_bytes());
+    body.extend_from_slice(&count.to_le_bytes());
+    body
+}
+
 #[test]
 fn cmsg_bodies_golden() {
     let guid = 0x1234_5678_9abc_def0u64;
     let guid_hex = "f0debc9a78563412";
 
-    // CMSG_GROUP_INVITE / CMSG_GROUP_UNINVITE (vmangos Group.cpp:4-7 / 9-12): one cstring.
+    // CMSG_GROUP_INVITE (`0x6d4300`): the name, then the u32 flags. CMSG_GROUP_UNINVITE: a cstring.
     assert_eq!(
-        messages::group_invite("Bob"),
-        hx("426f6200"),
+        messages::group_invite("Bob", 0),
+        hx("426f620000000000"),
         "CMSG_GROUP_INVITE body"
+    );
+    assert_eq!(
+        messages::group_invite("Bob", 0x0a),
+        hx("426f62000a000000"),
+        "InviteUnit's flag bits ride the u32"
     );
     assert_eq!(
         messages::group_uninvite("Bob"),
@@ -50,12 +64,18 @@ fn cmsg_bodies_golden() {
         "CMSG_GROUP_RAID_CONVERT body"
     );
 
-    // UNINVITE_GUID, SET_LEADER and REQUEST_PARTY_MEMBER_STATS: a full guid.
+    // UNINVITE_GUID (`0x6d43c0`): a full guid, then the reason cstring, empty without one.
     assert_eq!(
-        messages::group_uninvite_guid(guid),
-        hx(guid_hex),
+        messages::group_uninvite_guid(guid, ""),
+        hx(&format!("{guid_hex}00")),
         "CMSG_GROUP_UNINVITE_GUID body"
     );
+    assert_eq!(
+        messages::group_uninvite_guid(guid, "afk"),
+        hx(&format!("{guid_hex}61666b00")),
+        "CMSG_GROUP_UNINVITE_GUID body with a reason"
+    );
+    // SET_LEADER and REQUEST_PARTY_MEMBER_STATS: a full guid.
     assert_eq!(
         messages::group_set_leader(guid),
         hx(guid_hex),
@@ -145,16 +165,46 @@ fn cmsg_bodies_golden() {
 
 #[test]
 fn group_notification_smsg_wire() {
-    // SMSG_GROUP_INVITE (Group.cpp:107-110): one cstring, the inviter's name.
-    let p = messages::parse_server(opcode::SMSG_GROUP_INVITE, &hx("426f6200")).unwrap();
+    // SMSG_GROUP_INVITE (`0x6df1a0`): can-accept, name, u32, u8 count of u32 dungeons, u32.
+    let (p, tail) = messages::parse_server_with_tail(
+        opcode::SMSG_GROUP_INVITE,
+        &hx(concat!("01", "426f6200", "00000000", "00", "00000000")),
+    )
+    .unwrap();
+    assert_eq!(tail, 0, "the whole body is read");
     match &p {
-        ServerPacket::GroupInvite { inviter } => assert_eq!(inviter, "Bob"),
+        ServerPacket::GroupInvite {
+            can_accept,
+            inviter,
+        } => {
+            assert!(*can_accept);
+            assert_eq!(inviter, "Bob");
+        }
         other => panic!("expected GroupInvite, got {}", other.name()),
     }
     match decode(p).as_slice() {
-        [SessionEvent::GroupInvite { inviter }] => assert_eq!(inviter, "Bob"),
+        [SessionEvent::GroupInvite {
+            can_accept: true,
+            inviter,
+        }] => assert_eq!(inviter, "Bob"),
         other => panic!("group invite decode: {other:?}"),
     }
+    // Already grouped: status 0, and a dungeon list the reader steps over.
+    let (p, tail) = messages::parse_server_with_tail(
+        opcode::SMSG_GROUP_INVITE,
+        &hx(concat!(
+            "00", "426f6200", "00000000", "02", "01000000", "02000000", "00000000"
+        )),
+    )
+    .unwrap();
+    assert_eq!(tail, 0, "the dungeon ids are read");
+    assert!(matches!(
+        p,
+        ServerPacket::GroupInvite {
+            can_accept: false,
+            ..
+        }
+    ));
 
     // SMSG_GROUP_DECLINE (Group.cpp:112-115): one cstring, the declining player's name.
     let p = messages::parse_server(opcode::SMSG_GROUP_DECLINE, &hx("416c69636500")).unwrap();
@@ -198,28 +248,23 @@ fn group_notification_smsg_wire() {
 /// `SMSG_GROUP_LIST`, party shape, master loot: `looterGuid` carries the master looter.
 #[test]
 fn group_list_party_two_members_master_loot() {
-    // Group.cpp:155-180: groupType, own flags, memberCount, the member rows, leaderGuid, then the
-    // loot tail only when memberCount > 0.
-    let mut body = vec![0u8]; // groupType: party
-    body.push(0x00); // ownGroupAndAssistantFlag: subgroup 0, not assistant
-    body.extend_from_slice(&2u32.to_le_bytes()); // memberCount
+    // `0x6d8870`: header, member rows, leader, then the loot tail only with members.
+    let mut body = list_header(0x00, 0, 0, 2);
 
     body.extend_from_slice(b"Alice\0");
     body.extend_from_slice(&0x1111u64.to_le_bytes());
-    body.push(member_status::ONLINE);
-    body.push(0x00);
+    body.extend_from_slice(&[member_status::ONLINE, 0, 0, 0]);
 
     body.extend_from_slice(b"Carol\0");
     body.extend_from_slice(&0x3333u64.to_le_bytes());
-    body.push(member_status::ONLINE | member_status::DEAD);
-    body.push(0x00);
+    body.extend_from_slice(&[member_status::ONLINE | member_status::DEAD, 0, 0, 0]);
 
     body.extend_from_slice(&0x1111u64.to_le_bytes()); // leaderGuid: Alice
 
     body.push(2); // lootMethod: master loot
     body.extend_from_slice(&0x3333u64.to_le_bytes()); // looterGuid: Carol is master looter
     body.push(3); // lootThreshold
-    body.push(0); // dungeonDifficulty (always 0 at 5875)
+    body.extend_from_slice(&[0, 0, 0]); // dungeon, raid and dynamic difficulty
 
     let p = messages::parse_server(opcode::SMSG_GROUP_LIST, &body).unwrap();
     match &p {
@@ -277,25 +322,26 @@ fn group_list_party_two_members_master_loot() {
     }
 }
 
-/// `SMSG_GROUP_LIST`, raid shape (`groupType == 1`), with the assistant bit (`0x80`) and
-/// round-robin loot, whose `looterGuid` is 0: vmangos fills it only for master loot.
+/// `SMSG_GROUP_LIST`: a raid LFG list, its assistant flag (`0x01`) folded to `0x80`, round-robin loot.
 #[test]
 fn group_list_raid_with_assistant_flag() {
-    let mut body = vec![1u8]; // groupType: raid
-    body.push(0x02); // ownGroupAndAssistantFlag: subgroup 2, not assistant
+    let mut body = vec![0x02 | 0x08, 2, 0, 0]; // raid + LFG; own subgroup 2, no flags, no roles
+    body.push(0); // LFG status
+    body.extend_from_slice(&261u32.to_le_bytes()); // LFG slot
+    body.extend_from_slice(&0x1f50_0000_0000_0001u64.to_le_bytes()); // group guid
+    body.extend_from_slice(&7u32.to_le_bytes()); // counter
     body.extend_from_slice(&1u32.to_le_bytes()); // memberCount
 
     body.extend_from_slice(b"Dave\0");
     body.extend_from_slice(&0x4444u64.to_le_bytes());
-    body.push(member_status::ONLINE);
-    body.push(GROUP_MEMBER_ASSISTANT | 0x01); // subgroup 1, assistant
+    body.extend_from_slice(&[member_status::ONLINE, 1, 0x01, 0]); // subgroup 1, assistant
 
     body.extend_from_slice(&0x4444u64.to_le_bytes()); // leaderGuid: Dave
 
     body.push(1); // lootMethod: round-robin
     body.extend_from_slice(&0u64.to_le_bytes()); // looterGuid: 0 (not master loot)
     body.push(2); // lootThreshold
-    body.push(0); // dungeonDifficulty
+    body.extend_from_slice(&[0, 0, 0]); // dungeon, raid and dynamic difficulty
 
     let p = messages::parse_server(opcode::SMSG_GROUP_LIST, &body).unwrap();
     match &p {
@@ -332,16 +378,17 @@ fn group_list_raid_with_assistant_flag() {
     }
 }
 
-/// The "you left the group" shape (`Group.cpp:155-180`, no members): 14 bytes, no loot tail.
+/// The "you left the group" shape (no members): the 20-byte header, a 0 leader, no loot tail.
 #[test]
-fn group_list_empty_you_left_shape_is_14_bytes() {
-    let body = vec![0u8; 14];
-    assert_eq!(body.len(), 14);
+fn group_list_empty_you_left_shape_is_28_bytes() {
+    let mut body = list_header(0x10, 0, 0, 0);
+    body.extend_from_slice(&0u64.to_le_bytes());
+    assert_eq!(body.len(), 28);
     let (_, tail) = messages::parse_server_with_tail(opcode::SMSG_GROUP_LIST, &body).unwrap();
-    assert_eq!(tail, 0, "the parser reads all 14 bytes");
+    assert_eq!(tail, 0, "the parser reads all 28 bytes");
     assert!(
-        messages::parse_server(opcode::SMSG_GROUP_LIST, &body[..13]).is_err(),
-        "13 bytes is a short read"
+        messages::parse_server(opcode::SMSG_GROUP_LIST, &body[..27]).is_err(),
+        "27 bytes is a short read"
     );
 
     let p = messages::parse_server(opcode::SMSG_GROUP_LIST, &body).unwrap();
@@ -379,7 +426,10 @@ fn party_command_result_wire() {
     let mut body = party_operation::INVITE.to_le_bytes().to_vec();
     body.extend_from_slice(b"Bob\0");
     body.extend_from_slice(&party_result::ALREADY_IN_GROUP.to_le_bytes());
-    let p = messages::parse_server(opcode::SMSG_PARTY_COMMAND_RESULT, &body).unwrap();
+    body.extend_from_slice(&0u32.to_le_bytes()); // the LFG boot duration (`0x6cbef6`)
+    let (p, tail) =
+        messages::parse_server_with_tail(opcode::SMSG_PARTY_COMMAND_RESULT, &body).unwrap();
+    assert_eq!(tail, 0, "the trailing u32 is read");
     match &p {
         ServerPacket::PartyCommandResult {
             operation,
@@ -400,6 +450,7 @@ fn party_command_result_wire() {
     let mut body = party_operation::LEAVE.to_le_bytes().to_vec();
     body.push(0); // empty cstring: no member named
     body.extend_from_slice(&party_result::IGNORING_YOU.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes());
     let p = messages::parse_server(opcode::SMSG_PARTY_COMMAND_RESULT, &body).unwrap();
     match &p {
         ServerPacket::PartyCommandResult {

@@ -251,7 +251,7 @@ fn the_friend_buttons_queue_their_verbs() {
     s.run("FriendsFrame_GroupInvite()").unwrap();
     assert!(s.take_party_requests().iter().any(|r| matches!(
         r,
-        benilla_ui::script::PartyRequest::InviteName(n) if n == "Twomage"
+        benilla_ui::script::PartyRequest::InviteUnit { name, .. } if name == "Twomage"
     )));
 
     // Stock `ChatFrame_OpenChat` leaves the text for the box's next `OnUpdate` to apply.

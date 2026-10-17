@@ -272,7 +272,7 @@ pub(crate) struct Model {
     pub(crate) joined_channels: Vec<Option<String>>,
     /// The party or raid roster the app pushes; the default is not in a group.
     pub(crate) party: party::PartyState,
-    /// Party and loot-method calls (`AcceptGroup`, `InviteToParty`, `SetLootMethod`, …) queued.
+    /// Party and loot-method calls (`AcceptGroup`, `InviteUnit`, `SetLootMethod`, …) queued.
     pub(crate) party_requests: Vec<party::PartyRequest>,
     /// The ready-check deadline and the unanswered flags the timeout tick reads.
     pub(crate) ready_check: party::ReadyCheckState,
@@ -338,8 +338,6 @@ pub(crate) struct Model {
     pub(crate) emote_requests: Vec<super::chat_misc::EmoteRequest>,
     /// `RandomRoll` calls queued.
     pub(crate) roll_requests: Vec<(u32, u32)>,
-    /// `UninviteByName` calls queued.
-    pub(crate) uninvite_requests: Vec<String>,
     /// `ConsoleExec` lines that were not CVar writes.
     pub(crate) console_lines: Vec<String>,
     /// `LoggingChat` and `LoggingCombat`'s flags, and their change cue.
@@ -1221,7 +1219,6 @@ impl Model {
             guild_recruitment_changed: false,
             emote_requests: Vec::new(),
             roll_requests: Vec::new(),
-            uninvite_requests: Vec::new(),
             console_lines: Vec::new(),
             logging_chat: false,
             logging_combat: false,

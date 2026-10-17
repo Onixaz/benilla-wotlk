@@ -269,11 +269,14 @@ impl GroupState {
             .take(4)
     }
 
-    /// `SMSG_GROUP_INVITE`: the popup plus a chat line naming the inviter twice, for the
-    /// `|Hplayer:%s|h` link and the bracketed name (12340's `0x6df1a0`, message `0x41`). Its
-    /// leading status byte, which shows `ERR_INVITED_ALREADY_IN_GROUP_SS` and no popup when 0, is
-    /// not read yet (#190).
-    pub fn apply_invited(&mut self, inviter: &str) -> Vec<UiError> {
+    /// `SMSG_GROUP_INVITE` (`0x6df1a0`): the inviter line, and the popup only when we can accept.
+    pub fn apply_invited(&mut self, can_accept: bool, inviter: &str) -> Vec<UiError> {
+        if !can_accept {
+            return vec![UiError::strings(
+                "ERR_INVITED_ALREADY_IN_GROUP_SS",
+                &[inviter, inviter],
+            )];
+        }
         self.pending_invite = Some(inviter.to_string());
         vec![UiError::strings(
             "ERR_INVITED_TO_GROUP_SS",
@@ -1031,7 +1034,15 @@ mod tests {
     fn invite_lines() {
         let mut g = GroupState::default();
         assert_eq!(
-            g.apply_invited("Bob"),
+            g.apply_invited(false, "Bob"),
+            vec![UiError::strings(
+                "ERR_INVITED_ALREADY_IN_GROUP_SS",
+                &["Bob", "Bob"]
+            )]
+        );
+        assert_eq!(g.pending_invite, None, "already grouped: no popup");
+        assert_eq!(
+            g.apply_invited(true, "Bob"),
             vec![UiError::strings("ERR_INVITED_TO_GROUP_SS", &["Bob", "Bob"])]
         );
         assert_eq!(g.pending_invite.as_deref(), Some("Bob"));
@@ -1416,7 +1427,7 @@ mod tests {
         list(&mut g, 1, &[("Alice", 1)], 1);
         list(&mut g, 1, &[("Alice", 1), ("Dave", 4)], 1);
         list(&mut g, 1, &[("Alice", 1)], 1);
-        lines.extend(g.apply_invited("Bob"));
+        lines.extend(g.apply_invited(true, "Bob"));
         lines.extend(g.apply_declined("Carol"));
         lines.extend(g.apply_leader_changed("Alice", Some("Us")));
         lines.extend(g.apply_leader_changed("Us", Some("Us")));

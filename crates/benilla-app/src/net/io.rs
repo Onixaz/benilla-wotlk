@@ -1766,10 +1766,13 @@ pub(super) fn writer_loop(
                     ClientCommand::ResurrectResponse { caster, accept } => {
                         w.resurrect_response(caster, accept)
                     }
-                    ClientCommand::GroupInvite { name } => w.group_invite(&name),
+                    ClientCommand::GroupInvite { name, flags } => w.group_invite(&name, flags),
                     ClientCommand::GroupAccept => w.group_accept(),
                     ClientCommand::GroupDecline => w.group_decline(),
                     ClientCommand::GroupUninvite { name } => w.group_uninvite(&name),
+                    ClientCommand::GroupUninviteGuid { guid, reason } => {
+                        w.group_uninvite_guid(guid, &reason)
+                    }
                     ClientCommand::GroupSetLeader { guid } => w.group_set_leader(guid),
                     ClientCommand::GroupLeave => w.group_disband(),
                     ClientCommand::GroupRaidConvert => w.group_raid_convert(),

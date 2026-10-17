@@ -42,8 +42,12 @@ fn on_invite(
     mut group: ResMut<GroupState>,
     mut errors: ResMut<UiErrorKeys>,
 ) {
-    if let SessionEvent::GroupInvite { inviter } = ev {
-        invited(&mut group, &mut errors, &inviter);
+    if let SessionEvent::GroupInvite {
+        can_accept,
+        inviter,
+    } = ev
+    {
+        invited(&mut group, &mut errors, can_accept, &inviter);
     }
 }
 
@@ -202,8 +206,8 @@ fn ready_check_request(group: &mut GroupState, errors: &mut UiErrorKeys, self_gu
     push_group_lines(errors, group.apply_ready_check_request(we_lead));
 }
 
-fn invited(group: &mut GroupState, errors: &mut UiErrorKeys, inviter: &str) {
-    push_group_lines(errors, group.apply_invited(inviter));
+fn invited(group: &mut GroupState, errors: &mut UiErrorKeys, can_accept: bool, inviter: &str) {
+    push_group_lines(errors, group.apply_invited(can_accept, inviter));
 }
 
 fn declined(group: &mut GroupState, errors: &mut UiErrorKeys, name: &str) {

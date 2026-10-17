@@ -78,6 +78,7 @@ mod backdrop;
 mod bank;
 mod battle_net;
 mod battlefield_positions;
+mod unit_menu;
 mod battlefield_queue;
 mod battlefield_score;
 mod bind_confirm;
@@ -942,6 +943,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     battlefield_score::install(lua)?;
     battlefield_queue::install(lua)?;
     battlefield_positions::install(lua)?;
+    unit_menu::install(lua)?;
     tutorial::install(lua)?;
     worldmap_arrow::install(lua)?;
     shapeshift::install(lua)?;

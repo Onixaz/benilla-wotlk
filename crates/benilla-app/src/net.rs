@@ -1865,9 +1865,10 @@ pub(crate) enum ClientCommand {
         accept: bool,
     },
     // ── Group ──
-    /// `CMSG_GROUP_INVITE` by name; acked by `SMSG_PARTY_COMMAND_RESULT`.
+    /// `CMSG_GROUP_INVITE` by name with `InviteUnit`'s flags; acked by `SMSG_PARTY_COMMAND_RESULT`.
     GroupInvite {
         name: String,
+        flags: u32,
     },
     /// `CMSG_GROUP_ACCEPT`.
     GroupAccept,
@@ -1876,6 +1877,11 @@ pub(crate) enum ClientCommand {
     /// `CMSG_GROUP_UNINVITE` by name, leader only.
     GroupUninvite {
         name: String,
+    },
+    /// `CMSG_GROUP_UNINVITE_GUID`, `UninviteUnit`'s kick, with its reason.
+    GroupUninviteGuid {
+        guid: u64,
+        reason: String,
     },
     /// `CMSG_GROUP_SET_LEADER`, leader only.
     GroupSetLeader {

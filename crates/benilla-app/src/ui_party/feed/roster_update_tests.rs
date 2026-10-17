@@ -282,7 +282,7 @@ fn the_sandbox_answers_a_raid_intent_with_a_raid_roster_update() {
     assert_eq!(fired(&mut app), 1, "the party became a raid");
     intent(&mut app, PartyRequest::LootThreshold(4));
     assert_eq!(fired(&mut app), 1, "a raid intent that moves no member");
-    intent(&mut app, PartyRequest::PromoteUnit("party1".into()));
+    intent(&mut app, PartyRequest::PromoteToLeader("party1".into()));
     assert_eq!(
         fired(&mut app),
         1,

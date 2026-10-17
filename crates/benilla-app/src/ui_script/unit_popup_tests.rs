@@ -82,82 +82,82 @@ fn bake_strings(s: &UiScript) {
     .unwrap();
 }
 
-/// Right-clicking a chat player name opens the FRIEND dropdown (`FriendsFrame_ShowDropdown`),
-/// whose Invite invites by name; a left-click on the name whispers instead.
+/// `/invite`, `/uninvite`, `/promote` and a chat name's Invite row reach the 3.3.5a verbs (#190).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn chat_name_right_click_opens_the_invite_menu() {
-    let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    bake_strings(&s);
-    load_popup_frames(&s);
+fn chat_name_menu_and_the_party_slash_commands_queue_the_3_3_5a_verbs() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, failures) = super::layer_tests::production_load_with("partyverbs", false, "", |_| {});
+    let ours: Vec<_> = failures
+        .iter()
+        .filter(|f| f.contains("ChatFrame.lua") || f.contains("FriendsDropDown"))
+        .collect();
+    assert!(ours.is_empty(), "load failures: {ours:#?}");
     s.resolve();
-    assert!(s.errors().is_empty(), "load errors: {:?}", s.errors());
+    s.take_errors();
+    s.take_party_requests();
 
-    assert!(
-        s.eval::<bool>("return not DropDownList1:IsVisible()")
-            .unwrap(),
-        "no menu before any click"
+    for line in ["/invite Bob", "/uninvite Bob", "/promote Bob"] {
+        s.run(&format!(
+            "local eb = ChatFrame1EditBox \
+             ChatEdit_ActivateChat(eb) eb:SetText({line:?}) ChatEdit_SendText(eb, 1)"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.eval::<String>("return ChatFrame1EditBox:GetText()")
+                .unwrap(),
+            "",
+            "{line} clears the box"
+        );
+    }
+    let errors: Vec<_> = s.take_errors();
+    assert!(errors.is_empty(), "slash errors: {errors:#?}");
+    assert_eq!(
+        s.take_party_requests(),
+        vec![
+            PartyRequest::InviteUnit {
+                name: "Bob".into(),
+                flags: 0
+            },
+            PartyRequest::UninviteUnit {
+                unit: "Bob".into(),
+                reason: String::new()
+            },
+            PartyRequest::PromoteToLeader("Bob".into()),
+        ]
     );
 
-    // Right-click the |Hplayer:Bob|h link the chat frame emits (ChatFrame OnHyperlinkClick →
-    // SetItemRef(link, text, "RightButton")).
+    // Right-click the name link (`SetItemRef`), then the menu's Invite row through the hit path.
     s.run(r#"SetItemRef("player:Bob", "|Hplayer:Bob|h[Bob]|h", "RightButton")"#)
         .unwrap();
     s.resolve();
-    assert!(
-        s.eval::<bool>("return DropDownList1:IsVisible()").unwrap(),
-        "the chat-name right-click opens the FRIEND dropdown"
-    );
-    // Title, Whisper, Invite, Target, Cancel: the FRIEND menu (`UnitPopup.lua:74`) with its two
-    // guild rows hidden (no guild, no guild frame).
-    assert_eq!(
-        s.eval::<i64>("return DropDownList1.numButtons").unwrap(),
-        5,
-        "title + Whisper + Invite + Target + Cancel"
-    );
-    assert_eq!(
-        s.eval::<String>("return DropDownList1Button1:GetText()")
-            .unwrap(),
-        "Bob",
-        "the clicked name titles the menu"
-    );
-    assert_eq!(
-        s.eval::<String>("return DropDownList1Button3:GetText()")
-            .unwrap(),
-        "Invite"
-    );
-
-    // Click Invite through the real hit path → UnitPopup_OnClick → InviteByName("Bob").
-    let (ix, iy) = s
-        .eval::<(f64, f64)>("return DropDownList1Button3:GetCenter()")
+    let row: i64 = s
+        .eval(
+            "for i = 1, DropDownList1.numButtons do \
+               if _G['DropDownList1Button' .. i]:GetText() == PARTY_INVITE then return i end \
+             end return 0",
+        )
         .unwrap();
+    assert!(row > 0, "the FRIEND menu has an Invite row");
+    let (ix, iy) = s
+        .eval::<(f64, f64)>(&format!("return DropDownList1Button{row}:GetCenter()"))
+        .unwrap();
+    s.mouse_move(ix as f32, iy as f32);
     s.mouse_button(ix as f32, iy as f32, "LeftButton", true);
     s.mouse_button(ix as f32, iy as f32, "LeftButton", false);
     assert_eq!(
         s.take_party_requests(),
-        vec![PartyRequest::InviteName("Bob".into())],
-        "Invite on a chat name queues an invite-by-name"
+        vec![PartyRequest::InviteUnit {
+            name: "Bob".into(),
+            flags: 0
+        }],
+        "Invite on a chat name queues InviteUnit(name)"
     );
 
-    // A left-click on the name whispers instead: the stock `ChatFrame_SendTell` opens the box in
-    // WHISPER mode at the name.
-    s.run(r#"SetItemRef("player:Carol", "|Hplayer:Carol|h[Carol]|h", "LeftButton")"#)
-        .unwrap();
-    s.tick(0.05);
-    assert_eq!(
-        s.eval::<(String, String)>("return ChatFrameEditBox.chatType, ChatFrameEditBox.tellTarget")
-            .unwrap(),
-        ("WHISPER".to_string(), "Carol".to_string()),
-        "left-click a chat name opens a whisper"
-    );
-    assert!(
-        s.eval::<bool>("return ChatFrameEditBox:IsVisible()")
-            .unwrap(),
-        "and the box is open"
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    let errors: Vec<_> = s.take_errors();
+    assert!(errors.is_empty(), "script errors: {errors:#?}");
 }
 
 /// Solo, right-clicking a friendly player target opens the PLAYER menu; Invite invites the unit.
@@ -241,7 +241,7 @@ fn solo_target_right_click_invites_a_player() {
         "Duel"
     );
 
-    // Click Invite → UnitPopup_OnClick → InviteToParty("target") → InviteUnit.
+    // Click Invite → UnitPopup_OnClick → InviteUnit(fullname).
     let (ix, iy) = s
         .eval::<(f64, f64)>("return DropDownList1Button4:GetCenter()")
         .unwrap();
@@ -249,8 +249,11 @@ fn solo_target_right_click_invites_a_player() {
     s.mouse_button(ix as f32, iy as f32, "LeftButton", false);
     assert_eq!(
         s.take_party_requests(),
-        vec![PartyRequest::InviteUnit("target".into())],
-        "Invite on a player target queues an invite by unit"
+        vec![PartyRequest::InviteUnit {
+            name: "Ally".into(),
+            flags: 0
+        }],
+        "Invite on a player target invites the target's name"
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }

@@ -1371,9 +1371,13 @@ fn parse_server_body(
         opcode::SMSG_FORCE_SWIM_SPEED_CHANGE => read_force_speed(SpeedKind::Swim, &mut r)?,
         opcode::SMSG_FORCE_SWIM_BACK_SPEED_CHANGE => read_force_speed(SpeedKind::SwimBack, &mut r)?,
         opcode::SMSG_FORCE_TURN_RATE_CHANGE => read_force_speed(SpeedKind::TurnRate, &mut r)?,
-        opcode::SMSG_GROUP_INVITE => ServerPacket::GroupInvite {
-            inviter: group::read_group_invite(&mut r)?,
-        },
+        opcode::SMSG_GROUP_INVITE => {
+            let (can_accept, inviter) = group::read_group_invite(&mut r)?;
+            ServerPacket::GroupInvite {
+                can_accept,
+                inviter,
+            }
+        }
         opcode::SMSG_GROUP_DECLINE => ServerPacket::GroupDecline {
             name: group::read_group_decline(&mut r)?,
         },

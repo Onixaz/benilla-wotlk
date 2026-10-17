@@ -10,7 +10,7 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::binding_abi::number_arg;
+use super::binding_abi::{bool_or_default, number_arg, optional_string};
 use super::Model;
 
 /// One party member; everything else about them is the unit snapshot under their `partyN` token.
@@ -109,14 +109,12 @@ pub enum PartyRequest {
     Decline,
     /// `LeaveParty()`.
     Leave,
-    /// `InviteByName(name)`.
-    InviteName(String),
-    /// `InviteToParty(unit)`, by unit token; the app resolves it to a name.
-    InviteUnit(String),
-    /// `UninviteFromParty(unit)`, by unit token.
-    UninviteUnit(String),
-    /// `PromoteToPartyLeader(unit)`, by unit token.
-    PromoteUnit(String),
+    /// `InviteUnit(name [, a, b, c])` (`0x51a6e0`): a name, and flag bits 2, 4, 8 from arguments 2-4.
+    InviteUnit { name: String, flags: u32 },
+    /// `UninviteUnit(unit [, reason])` (`0x51a7a0`): a token or name, "" the target; the reason.
+    UninviteUnit { unit: String, reason: String },
+    /// `PromoteToLeader(unit [, exact])` (`0x573e10`): a token or a member's name.
+    PromoteToLeader(String),
     /// `SetLootMethod(method[, masterName][, threshold])`; the app resolves the master looter's
     /// name to a roster member.
     LootMethod {
@@ -140,8 +138,6 @@ pub enum PartyRequest {
     /// `SwapRaidSubgroup(index, other)`: trade two raid rows' subgroups
     /// (`CMSG_GROUP_SWAP_SUB_GROUP`, two names on the wire).
     SwapSubgroup { index: u32, other: u32 },
-    /// `PromoteByName(name)` (`CMSG_GROUP_SET_LEADER`, whose guid the app resolves).
-    PromoteName(String),
     /// `PromoteToAssistant(name)` / `DemoteAssistant(name)` (`CMSG_GROUP_ASSISTANT_LEADER`).
     AssistantLeader { name: String, grant: bool },
     /// `UninviteFromRaid(index)`: a 1-based raid row the app resolves to the name
@@ -466,35 +462,56 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
+    // InviteUnit (`0x51a6e0`): no name sends nothing, past 48 bytes raises.
     g.set(
-        "InviteByName",
-        lua.create_function(|lua, name: String| {
+        "InviteUnit",
+        lua.create_function(|lua, args: MultiValue| {
+            let args: Vec<Value> = args.into_iter().collect();
+            let Some(name) = args.first().and_then(|v| optional_string(lua, v)) else {
+                return Ok(());
+            };
+            if name.len() > 48 {
+                return Err(mlua::Error::runtime("Name too long"));
+            }
+            let mut flags = 0;
+            for (i, bit) in [(1, 2), (2, 4), (3, 8)] {
+                if bool_or_default(args.get(i), false) {
+                    flags |= bit;
+                }
+            }
             let mut model = crate::script::model_mut_of(lua);
-            model.party_requests.push(PartyRequest::InviteName(name));
+            model
+                .party_requests
+                .push(PartyRequest::InviteUnit { name, flags });
             Ok(())
         })?,
     )?;
+    // UninviteUnit (`0x51a7a0`): the reason cut to 64 characters (`ScrubString`).
     g.set(
-        "InviteToParty",
-        lua.create_function(|lua, unit: String| {
+        "UninviteUnit",
+        lua.create_function(|lua, (unit, reason): (Value, Value)| {
+            let unit = optional_string(lua, &unit).unwrap_or_default();
+            let reason: String = optional_string(lua, &reason)
+                .unwrap_or_default()
+                .chars()
+                .take(64)
+                .collect();
             let mut model = crate::script::model_mut_of(lua);
-            model.party_requests.push(PartyRequest::InviteUnit(unit));
+            model
+                .party_requests
+                .push(PartyRequest::UninviteUnit { unit, reason });
             Ok(())
         })?,
     )?;
+    // PromoteToLeader(unit [, exact]) (`0x573e10`): a non-string raises the usage error.
     g.set(
-        "UninviteFromParty",
-        lua.create_function(|lua, unit: String| {
+        "PromoteToLeader",
+        lua.create_function(|lua, unit: Value| {
+            let Some(unit) = optional_string(lua, &unit) else {
+                return Err(mlua::Error::runtime("Usage: PromoteToLeader(name)"));
+            };
             let mut model = crate::script::model_mut_of(lua);
-            model.party_requests.push(PartyRequest::UninviteUnit(unit));
-            Ok(())
-        })?,
-    )?;
-    g.set(
-        "PromoteToPartyLeader",
-        lua.create_function(|lua, unit: String| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.party_requests.push(PartyRequest::PromoteUnit(unit));
+            model.party_requests.push(PartyRequest::PromoteToLeader(unit));
             Ok(())
         })?,
     )?;
@@ -581,14 +598,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 index: index.max(0) as u32,
                 other: other.max(0) as u32,
             });
-            Ok(())
-        })?,
-    )?;
-    g.set(
-        "PromoteByName",
-        lua.create_function(|lua, name: String| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.party_requests.push(PartyRequest::PromoteName(name));
             Ok(())
         })?,
     )?;
@@ -1099,10 +1108,11 @@ mod tests {
         s.run("AcceptGroup()").unwrap();
         s.run("DeclineGroup()").unwrap();
         s.run("LeaveParty()").unwrap();
-        s.run(r#"InviteByName("Bob")"#).unwrap();
-        s.run(r#"InviteToParty("target")"#).unwrap();
-        s.run(r#"UninviteFromParty("party2")"#).unwrap();
-        s.run(r#"PromoteToPartyLeader("party2")"#).unwrap();
+        s.run(r#"InviteUnit("Bob")"#).unwrap();
+        s.run(r#"InviteUnit("Bob", 1, nil, "1")"#).unwrap();
+        s.run(r#"UninviteUnit("party2")"#).unwrap();
+        s.run(r#"UninviteUnit("Bob", "afk")"#).unwrap();
+        s.run(r#"PromoteToLeader("party2", 1)"#).unwrap();
         s.run(r#"SetLootMethod("master", "Bob")"#).unwrap();
         s.run(r#"SetLootThreshold(3)"#).unwrap();
 
@@ -1112,10 +1122,23 @@ mod tests {
                 PartyRequest::Accept,
                 PartyRequest::Decline,
                 PartyRequest::Leave,
-                PartyRequest::InviteName("Bob".into()),
-                PartyRequest::InviteUnit("target".into()),
-                PartyRequest::UninviteUnit("party2".into()),
-                PartyRequest::PromoteUnit("party2".into()),
+                PartyRequest::InviteUnit {
+                    name: "Bob".into(),
+                    flags: 0
+                },
+                PartyRequest::InviteUnit {
+                    name: "Bob".into(),
+                    flags: 2 | 8
+                },
+                PartyRequest::UninviteUnit {
+                    unit: "party2".into(),
+                    reason: String::new()
+                },
+                PartyRequest::UninviteUnit {
+                    unit: "Bob".into(),
+                    reason: "afk".into()
+                },
+                PartyRequest::PromoteToLeader("party2".into()),
                 PartyRequest::LootMethod {
                     method: "master".into(),
                     master_name: Some("Bob".into()),
@@ -1314,6 +1337,25 @@ mod tests {
             .unwrap());
     }
 
+    /// The refusals of `InviteUnit` (`0x51a6e0`) and `PromoteToLeader` (`0x573e10`).
+    #[test]
+    fn the_party_verbs_refuse_what_12340_refuses() {
+        let mut s = UiScript::new().unwrap();
+        s.run("InviteUnit() InviteUnit(nil, 1)").unwrap();
+        assert!(s.run(&format!("InviteUnit('{}')", "a".repeat(49))).is_err());
+        assert!(s.run("PromoteToLeader()").is_err());
+        s.run(&format!("UninviteUnit('', '{}')", "r".repeat(70))).unwrap();
+        assert_eq!(
+            s.take_party_requests(),
+            vec![PartyRequest::UninviteUnit {
+                unit: String::new(),
+                reason: "r".repeat(64)
+            }]
+        );
+        s.run(&format!("InviteUnit('{}')", "a".repeat(48))).unwrap();
+        assert_eq!(s.take_party_requests().len(), 1, "48 bytes is allowed");
+    }
+
     #[test]
     fn the_raid_verbs_queue_what_they_name() {
         let mut s = UiScript::new().unwrap();
@@ -1322,7 +1364,7 @@ mod tests {
             ConvertToRaid()
             SetRaidSubgroup(7, 3)
             SwapRaidSubgroup(7, 12)
-            PromoteByName("Alice")
+            PromoteToLeader("Alice")
             PromoteToAssistant("Bob")
             DemoteAssistant("Bob")
             UninviteFromRaid(9)
@@ -1340,7 +1382,7 @@ mod tests {
                     index: 7,
                     other: 12
                 },
-                PartyRequest::PromoteName("Alice".into()),
+                PartyRequest::PromoteToLeader("Alice".into()),
                 PartyRequest::AssistantLeader {
                     name: "Bob".into(),
                     grant: true

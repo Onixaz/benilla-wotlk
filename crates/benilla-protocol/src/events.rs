@@ -968,8 +968,8 @@ pub enum SessionEvent {
         counter: u32,
         launch: crate::messages::JumpInfo,
     },
-    /// Someone invited us to their group (`SMSG_GROUP_INVITE`): the invite popup.
-    GroupInvite { inviter: String },
+    /// Someone invited us (`SMSG_GROUP_INVITE`); `can_accept` false means already grouped, no popup.
+    GroupInvite { can_accept: bool, inviter: String },
     /// An invite we sent was declined (`SMSG_GROUP_DECLINE`).
     GroupDecline { name: String },
     /// We were removed from our group (`SMSG_GROUP_UNINVITE`, empty body), kicked or left.

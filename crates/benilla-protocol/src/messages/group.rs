@@ -103,23 +103,53 @@ pub struct GroupLootInfo {
     pub threshold: u8,
 }
 
-/// Read `SMSG_GROUP_LIST` (`Group.cpp:155-180`): type (0 party, 1 raid), own flags, members,
-/// leader, then the loot tail only with members. "You left the group" is the 14-byte empty list.
+/// 3.3.5a's group-type raid bit (`0x6d8870` tests `& 2`); `& 1` is a battleground group.
+const GROUP_TYPE_RAID: u8 = 0x02;
+/// 3.3.5a's group-type LFG bit: an LFG list carries a status byte and the dungeon slot.
+const GROUP_TYPE_LFG: u8 = 0x08;
+/// 3.3.5a's member-flags assistant bit (`GetRaidRosterInfo` tests `& 1`).
+const MEMBER_FLAG_ASSISTANT: u8 = 0x01;
+
+/// A 3.3.5a subgroup and flags byte folded into one: subgroup in bits 0-2, [`GROUP_MEMBER_ASSISTANT`].
+fn fold_member_flags(subgroup: u8, flags: u8) -> u8 {
+    let assistant = if flags & MEMBER_FLAG_ASSISTANT != 0 {
+        GROUP_MEMBER_ASSISTANT
+    } else {
+        0
+    };
+    (subgroup & 0x07) | assistant
+}
+
+/// Read `SMSG_GROUP_LIST` as `0x6d8870` does; `group_type` is 1 for a raid, flags [`fold_member_flags`].
 #[allow(clippy::type_complexity)]
 pub(super) fn read_group_list(
     r: &mut &[u8],
 ) -> io::Result<(u8, u8, Vec<GroupMemberEntry>, u64, Option<GroupLootInfo>)> {
-    let group_type = read_u8(r)?;
-    let own_flags = read_u8(r)?;
+    let raw_type = read_u8(r)?;
+    let own_subgroup = read_u8(r)?;
+    let own_flags = fold_member_flags(own_subgroup, read_u8(r)?);
+    let _roles = read_u8(r)?;
+    if raw_type & GROUP_TYPE_LFG != 0 {
+        let _lfg_status = read_u8(r)?;
+        let _lfg_slot = read_u32_le(r)?;
+    }
+    let _group_guid = read_u64_le(r)?;
+    let _counter = read_u32_le(r)?;
     let count = read_u32_le(r)?;
-    // A raid is the widest list this carries: vmangos `MAX_RAID_SIZE` 40 (`Group/Group.h:50`).
+    // A raid is the widest list this carries, 40 (`raidGuids[40]` in `0x6d8870`).
     let mut members = Vec::with_capacity(capacity_hint(count, 40));
     for _ in 0..count {
+        let name = read_cstring(r)?;
+        let guid = read_u64_le(r)?;
+        let status = read_u8(r)?;
+        let subgroup = read_u8(r)?;
+        let flags = fold_member_flags(subgroup, read_u8(r)?);
+        let _roles = read_u8(r)?;
         members.push(GroupMemberEntry {
-            name: read_cstring(r)?,
-            guid: read_u64_le(r)?,
-            status: read_u8(r)?,
-            flags: read_u8(r)?,
+            name,
+            guid,
+            status,
+            flags,
         });
     }
     let leader = read_u64_le(r)?;
@@ -127,7 +157,9 @@ pub(super) fn read_group_list(
         let method = read_u8(r)?;
         let master = read_u64_le(r)?;
         let threshold = read_u8(r)?;
-        let _dungeon_difficulty = read_u8(r)?; // always 0 at 5875 (Group.h:281)
+        let _dungeon_difficulty = read_u8(r)?;
+        let _raid_difficulty = read_u8(r)?;
+        let _dynamic_difficulty = read_u8(r)?;
         Some(GroupLootInfo {
             method,
             master,
@@ -136,12 +168,21 @@ pub(super) fn read_group_list(
     } else {
         None
     };
+    let group_type = u8::from(raw_type & GROUP_TYPE_RAID != 0);
     Ok((group_type, own_flags, members, leader, loot))
 }
 
-/// Read `SMSG_GROUP_INVITE`: the inviter's name (`Group.cpp:107-110`).
-pub(super) fn read_group_invite(r: &mut impl Read) -> io::Result<String> {
-    read_cstring(r)
+/// Read `SMSG_GROUP_INVITE` as `0x6df1a0` does: can-accept, inviter, `u32`, `u32` dungeon list, `u32`.
+pub(super) fn read_group_invite(r: &mut impl Read) -> io::Result<(bool, String)> {
+    let can_accept = read_u8(r)? != 0;
+    let inviter = read_cstring(r)?;
+    let _dungeon_type = read_u32_le(r)?;
+    let count = read_u8(r)?;
+    for _ in 0..count {
+        let _dungeon = read_u32_le(r)?;
+    }
+    let _unknown = read_u32_le(r)?;
+    Ok((can_accept, inviter))
 }
 
 /// Read `SMSG_GROUP_DECLINE`: the decliner's name (`Group.cpp:112-115`).
@@ -154,10 +195,13 @@ pub(super) fn read_group_set_leader(r: &mut impl Read) -> io::Result<String> {
     read_cstring(r)
 }
 
-/// Read `SMSG_PARTY_COMMAND_RESULT` (`GroupHandler.cpp:47-54`): operation, member name, result;
-/// the name can be empty, as in the raid-convert confirmation (`GroupHandler.cpp:466`).
+/// Read `SMSG_PARTY_COMMAND_RESULT` as `0x6cbec0` does: operation, name, result, LFG boot duration.
 pub(super) fn read_party_command_result(r: &mut impl Read) -> io::Result<(u32, String, u32)> {
-    Ok((read_u32_le(r)?, read_cstring(r)?, read_u32_le(r)?))
+    let operation = read_u32_le(r)?;
+    let member = read_cstring(r)?;
+    let result = read_u32_le(r)?;
+    let _value = read_u32_le(r)?;
+    Ok((operation, member, result))
 }
 
 /// vmangos `GROUP_UPDATE_FLAG_*` (`Group.h:124-151`): the member stats that follow, in bit order.
@@ -551,11 +595,12 @@ pub(super) fn read_ready_check(r: &mut &[u8]) -> io::Result<ReadyCheck> {
     })
 }
 
-/// `CMSG_GROUP_INVITE` body: the invitee's name (`Group.cpp:4-7`).
-pub fn group_invite(member_name: &str) -> Vec<u8> {
-    let mut body = Vec::with_capacity(member_name.len() + 1);
+/// `CMSG_GROUP_INVITE` body (`0x6d4300`): the name, then `InviteUnit`'s `u32` flags.
+pub fn group_invite(member_name: &str, flags: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(member_name.len() + 5);
     body.extend_from_slice(member_name.as_bytes());
     body.push(0);
+    body.extend_from_slice(&flags.to_le_bytes());
     body
 }
 
@@ -577,9 +622,13 @@ pub fn group_uninvite(member_name: &str) -> Vec<u8> {
     body
 }
 
-/// `CMSG_GROUP_UNINVITE_GUID` body, the raid frame's kick: a full guid (`Group.cpp:14-17`).
-pub fn group_uninvite_guid(guid: u64) -> Vec<u8> {
-    guid.to_le_bytes().to_vec()
+/// `CMSG_GROUP_UNINVITE_GUID` body (`0x6d43c0`): a full guid, then the reason cstring.
+pub fn group_uninvite_guid(guid: u64, reason: &str) -> Vec<u8> {
+    let mut body = Vec::with_capacity(9 + reason.len());
+    body.extend_from_slice(&guid.to_le_bytes());
+    body.extend_from_slice(reason.as_bytes());
+    body.push(0);
+    body
 }
 
 /// `CMSG_GROUP_SET_LEADER` body: a full guid (`Group.cpp:57-64`, vmangos's post-1.11.2 branch).

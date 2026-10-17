@@ -301,7 +301,7 @@ fn main() -> Result<()> {
         Some((user_b, pass_b)) => {
             let (mut b, name_b) = login(&host, &user_b, &pass_b)?;
             println!("probe: — PARTY lane — {name_a} invites {name_b}");
-            a.group_invite(&name_b)?;
+            a.group_invite(&name_b, 0)?;
             if !wait_for(&mut b, 20, |p| {
                 matches!(p, ServerPacket::GroupInvite { .. })
             }) {

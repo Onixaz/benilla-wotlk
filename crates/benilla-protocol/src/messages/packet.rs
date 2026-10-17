@@ -960,8 +960,9 @@ pub enum ServerPacket {
         counter: u32,
         speed: f32,
     },
-    /// `SMSG_GROUP_INVITE`: someone invited us to their group.
+    /// `SMSG_GROUP_INVITE`: an invite; `can_accept` is false when we are already grouped.
     GroupInvite {
+        can_accept: bool,
         inviter: String,
     },
     /// `SMSG_GROUP_DECLINE`: an invite we sent was declined.

@@ -741,10 +741,10 @@ impl WorldSession {
     }
 
     /// Invite a player to our group by name (`CMSG_GROUP_INVITE`).
-    pub fn group_invite(&mut self, member_name: &str) -> Result<()> {
+    pub fn group_invite(&mut self, member_name: &str, flags: u32) -> Result<()> {
         self.send(
             opcode::CMSG_GROUP_INVITE,
-            &messages::group_invite(member_name),
+            &messages::group_invite(member_name, flags),
         )
     }
 

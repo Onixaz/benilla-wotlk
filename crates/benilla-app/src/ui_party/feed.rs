@@ -821,6 +821,36 @@ fn member_for_token<'a>(group: &'a GroupState, token: &str) -> Option<&'a GroupM
         .then(|| group.party_slots().nth(n - 1))?
 }
 
+/// `Script_GetGUIDFromToken(unit, guid, true)` (`0x60abf0`): "" is the target, then a token, then a name.
+fn unit_guid(
+    group: &GroupState,
+    self_guid: Option<u64>,
+    target: Option<u64>,
+    self_name: Option<&str>,
+    unit: &str,
+) -> Option<u64> {
+    let token = unit.to_ascii_lowercase();
+    match token.as_str() {
+        "" | "target" => return target,
+        "player" => return self_guid,
+        _ => {}
+    }
+    if token.strip_prefix("party").is_some_and(|n| n.parse::<u8>().is_ok()) {
+        return member_for_token(group, &token).map(|m| m.guid);
+    }
+    if let Some(n) = token.strip_prefix("raid").and_then(|n| n.parse::<u32>().ok()) {
+        return raid_guid_at(group, self_guid, n);
+    }
+    if self_name.is_some_and(|n| n.eq_ignore_ascii_case(unit)) {
+        return self_guid;
+    }
+    group
+        .members
+        .iter()
+        .find(|m| m.name.eq_ignore_ascii_case(unit))
+        .map(|m| m.guid)
+}
+
 /// Drain the Lua party intents into their `CMSG_*` sends.
 pub(super) fn drain_party(
     script: Option<NonSendMut<UiScript>>,
@@ -830,11 +860,13 @@ pub(super) fn drain_party(
     self_q: Query<&Guid, With<SelfPlayer>>,
     commands: Res<NetCommands>,
     mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
+    mut ui_errors: ResMut<crate::ui_action::UiErrorKeys>,
 ) {
     let Some(mut script) = script else {
         return;
     };
     let self_guid = self_q.iter().next().map(|g| g.0);
+    let self_name = self_guid.and_then(|g| names.peek(g)).map(str::to_string);
     for req in script.take_party_requests() {
         // In the sandbox the server holds no group, so the group-changing intents apply to the
         // mirror as its echo would. Invites and accept/decline stay real: a real group ends it.
@@ -853,46 +885,47 @@ pub(super) fn drain_party(
             PartyRequest::Leave => {
                 let _ = commands.0.send(ClientCommand::GroupLeave);
             }
-            PartyRequest::InviteName(name) => {
+            PartyRequest::InviteUnit { name, flags } => {
+                // `0x51a6e0` needs the active player; `0x6d4300` flags the tutorial, then refuses our name.
+                if self_guid.is_none() {
+                    continue;
+                }
                 if let Some(t) = tutorials.as_mut() {
                     t.write(crate::tutorial::TutorialEvent::Acknowledge {
                         id: crate::tutorial::id::GROUPING,
                     });
                 }
-                let _ = commands.0.send(ClientCommand::GroupInvite { name });
-            }
-            PartyRequest::InviteUnit(token) => {
-                // `target` resolves through the selection when it is a player
-                // (`InviteToParty(unit)`); a roster token already has a name.
-                let name = if token == "target" {
-                    selection
-                        .guid
-                        .filter(|g| benilla_protocol::guid::is_player(*g))
-                        .and_then(|g| names.resolve(g, &commands).map(str::to_string))
-                } else {
-                    member_for_token(&group, &token).map(|m| m.name.clone())
-                };
-                if let Some(name) = name {
-                    if let Some(t) = tutorials.as_mut() {
-                        t.write(crate::tutorial::TutorialEvent::Acknowledge {
-                            id: crate::tutorial::id::GROUPING,
-                        });
-                    }
-                    let _ = commands.0.send(ClientCommand::GroupInvite { name });
+                if self_name
+                    .as_deref()
+                    .is_some_and(|me| me.eq_ignore_ascii_case(&name))
+                {
+                    ui_errors
+                        .0
+                        .push(crate::ui_action::UiError::key("ERR_INVITE_SELF"));
+                    continue;
                 }
+                let _ = commands.0.send(ClientCommand::GroupInvite { name, flags });
             }
-            PartyRequest::UninviteUnit(token) => {
-                if let Some(m) = member_for_token(&group, &token) {
-                    let _ = commands.0.send(ClientCommand::GroupUninvite {
-                        name: m.name.clone(),
-                    });
+            PartyRequest::UninviteUnit { unit, reason } => {
+                // `0x51a7a0` sends by guid only, `CMSG_GROUP_UNINVITE_GUID` with the reason.
+                if self_guid.is_none() {
+                    continue;
                 }
-            }
-            PartyRequest::PromoteUnit(token) => {
-                if let Some(m) = member_for_token(&group, &token) {
+                if let Some(guid) =
+                    unit_guid(&group, self_guid, selection.guid, self_name.as_deref(), &unit)
+                {
                     let _ = commands
                         .0
-                        .send(ClientCommand::GroupSetLeader { guid: m.guid });
+                        .send(ClientCommand::GroupUninviteGuid { guid, reason });
+                }
+            }
+            PartyRequest::PromoteToLeader(unit) => {
+                // `0x573e10` resolves a player (`0x520190`, typemask player) and sends its guid.
+                if let Some(guid) =
+                    unit_guid(&group, self_guid, selection.guid, self_name.as_deref(), &unit)
+                        .filter(|g| benilla_protocol::guid::is_player(*g))
+                {
+                    let _ = commands.0.send(ClientCommand::GroupSetLeader { guid });
                 }
             }
             PartyRequest::LootMethod {
@@ -1006,11 +1039,6 @@ pub(super) fn drain_party(
                         .send(ClientCommand::GroupSwapSubGroup { name, other });
                 }
             }
-            PartyRequest::PromoteName(name) => {
-                if let Some(guid) = raid_guid_for_name(&group, self_guid, &names, &name) {
-                    let _ = commands.0.send(ClientCommand::GroupSetLeader { guid });
-                }
-            }
             PartyRequest::AssistantLeader { name, grant } => {
                 if let Some(guid) = raid_guid_for_name(&group, self_guid, &names, &name) {
                     let _ = commands
@@ -1019,9 +1047,7 @@ pub(super) fn drain_party(
                 }
             }
             PartyRequest::UninviteRaid(index) => {
-                // Sent by name. The reference's `UninviteFromRaid` and `UninviteFromParty` share
-                // the sender `0x5e9510`, which kicks by name when the target's object is present
-                // and by `CMSG_GROUP_UNINVITE_GUID` (`0x5e953e`) only when it is absent.
+                // By name, as 1.12 sent it; 3.3.5a's RaidFrame kicks through `UninviteUnit`.
                 if let Some(name) = raid_guid_at(&group, self_guid, index)
                     .and_then(|g| raid_name_of(&group, self_guid, &names, g))
                 {
@@ -1058,15 +1084,14 @@ fn test_apply_local(
     if matches!(
         req,
         PartyRequest::Leave
-            | PartyRequest::UninviteUnit(_)
-            | PartyRequest::PromoteUnit(_)
+            | PartyRequest::UninviteUnit { .. }
+            | PartyRequest::PromoteToLeader(_)
             | PartyRequest::LootMethod { .. }
             | PartyRequest::LootThreshold(_)
             | PartyRequest::ConvertToRaid
             | PartyRequest::SetSubgroup { .. }
             | PartyRequest::SwapSubgroup { .. }
             | PartyRequest::UninviteRaid(_)
-            | PartyRequest::PromoteName(_)
             | PartyRequest::AssistantLeader { .. }
     ) {
         group.count_list();
@@ -1090,15 +1115,17 @@ fn apply_test_intent(
             group.leave_group();
             true
         }
-        PartyRequest::UninviteUnit(token) => {
-            if let Some(guid) = member_for_token(group, token).map(|m| m.guid) {
+        PartyRequest::UninviteUnit { unit, .. } => {
+            if let Some(guid) = unit_guid(group, self_guid, target_guid, None, unit)
+                .filter(|g| Some(*g) != self_guid)
+            {
                 group.members.retain(|m| m.guid != guid);
                 group.stats.remove(&guid);
             }
             true
         }
-        PartyRequest::PromoteUnit(token) => {
-            if let Some(guid) = member_for_token(group, token).map(|m| m.guid) {
+        PartyRequest::PromoteToLeader(unit) => {
+            if let Some(guid) = unit_guid(group, self_guid, target_guid, None, unit) {
                 group.leader = guid;
             }
             true
@@ -1196,16 +1223,6 @@ fn apply_test_intent(
             {
                 group.members.retain(|m| m.guid != guid);
                 group.stats.remove(&guid);
-            }
-            true
-        }
-        PartyRequest::PromoteName(name) => {
-            if let Some(m) = group
-                .members
-                .iter()
-                .find(|m| m.name.eq_ignore_ascii_case(name))
-            {
-                group.leader = m.guid;
             }
             true
         }
@@ -1960,8 +1977,11 @@ mod tests {
 
         let (me, mob) = (Some(ME), None);
         let intents = [
-            PartyRequest::UninviteUnit("party2".into()),
-            PartyRequest::PromoteUnit("party1".into()),
+            PartyRequest::UninviteUnit {
+                unit: "party2".into(),
+                reason: String::new(),
+            },
+            PartyRequest::PromoteToLeader("party1".into()),
             PartyRequest::LootThreshold(4),
             PartyRequest::Leave,
         ];
@@ -2074,14 +2094,17 @@ mod tests {
         // Promote party1 (Alice), kick party2 (Bob), retune the loot.
         test_apply_local(
             &mut group,
-            &PartyRequest::PromoteUnit("party1".into()),
+            &PartyRequest::PromoteToLeader("party1".into()),
             me,
             None,
         );
         assert_eq!(group.leader, 0xF001);
         test_apply_local(
             &mut group,
-            &PartyRequest::UninviteUnit("party2".into()),
+            &PartyRequest::UninviteUnit {
+                unit: "party2".into(),
+                reason: String::new(),
+            },
             me,
             None,
         );
@@ -2110,7 +2133,10 @@ mod tests {
         // Invites stay real; Leave disbands the sandbox; a real list turns the flag off.
         assert!(!test_apply_local(
             &mut group,
-            &PartyRequest::InviteName("Zed".into()),
+            &PartyRequest::InviteUnit {
+                name: "Zed".into(),
+                flags: 0,
+            },
             me,
             None
         ));
@@ -2337,5 +2363,69 @@ mod tests {
             None
         ));
         assert_eq!(group.members.len(), n - 1);
+    }
+
+    /// The sends of the 12340 party verbs (`0x51a6e0`, `0x51a7a0`, `0x573e10`), own name refused.
+    #[test]
+    fn the_party_verbs_send_what_12340_sends() {
+        let mut app = App::new();
+        app.init_resource::<GroupState>()
+            .init_resource::<NameCache>()
+            .init_resource::<Selection>()
+            .init_resource::<crate::ui_action::UiErrorKeys>();
+        let (tx, rx) = crossbeam_channel::unbounded();
+        app.insert_resource(NetCommands(tx));
+        app.world_mut().spawn((Guid(ME), SelfPlayer));
+        app.world_mut()
+            .resource_mut::<NameCache>()
+            .insert_player(ME, "Me".into(), None);
+        let list = ["Alice", "Bob"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| GroupMemberEntry {
+                name: (*name).into(),
+                guid: member(i as u64 + 1),
+                status: member_status::ONLINE,
+                flags: 0,
+            })
+            .collect();
+        app.world_mut()
+            .resource_mut::<GroupState>()
+            .apply_list(0, 0, list, ME, None, Some(ME));
+        app.insert_non_send_resource(UiScript::new().unwrap());
+        app.add_systems(Update, drain_party);
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run(
+                "InviteUnit('me') InviteUnit('Carol', 1) UninviteUnit('bob', 'afk') \
+                 UninviteUnit('party1') PromoteToLeader('Bob') PromoteToLeader('Nobody')",
+            )
+            .unwrap();
+        app.update();
+        let sent: Vec<String> = rx.try_iter().map(|c| format!("{c:?}")).collect();
+        assert_eq!(
+            sent,
+            vec![
+                format!("{:?}", ClientCommand::GroupInvite {
+                    name: "Carol".into(),
+                    flags: 2
+                }),
+                format!("{:?}", ClientCommand::GroupUninviteGuid {
+                    guid: member(2),
+                    reason: "afk".into()
+                }),
+                format!("{:?}", ClientCommand::GroupUninviteGuid {
+                    guid: member(1),
+                    reason: String::new()
+                }),
+                format!("{:?}", ClientCommand::GroupSetLeader { guid: member(2) }),
+            ]
+        );
+        let errors = &app.world().resource::<crate::ui_action::UiErrorKeys>().0;
+        assert_eq!(
+            errors,
+            &vec![crate::ui_action::UiError::key("ERR_INVITE_SELF")],
+            "our own name is refused before the send"
+        );
     }
 }

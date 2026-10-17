@@ -1,6 +1,6 @@
 //! The engine verbs stock `ChatFrame.lua`'s slash handlers call that are not sends, channels or
 //! window state: `DoEmote` (`0x49fd30`), `RandomRoll` (`0x48c7b0`), `AssistByName` (`0x489c40`),
-//! `UninviteByName` (`0x48a610`), `ConsoleExec`, `LoggingChat` and `LoggingCombat`. Each is a
+//! `ConsoleExec`, `LoggingChat` and `LoggingCombat`. Each is a
 //! queue or a flag the app drains.
 
 use mlua::{Lua, MultiValue, Value};
@@ -49,11 +49,6 @@ impl super::UiScript {
     /// `RandomRoll(min, max)` calls since the last drain, each a `CMSG_RANDOM_ROLL`.
     pub fn take_roll_requests(&mut self) -> Vec<(u32, u32)> {
         drain_field!(self, roll_requests)
-    }
-
-    /// `UninviteByName` calls since the last drain.
-    pub fn take_uninvite_requests(&mut self) -> Vec<String> {
-        drain_field!(self, uninvite_requests)
     }
 
     /// `ConsoleExec` lines that write no CVar: the app's console commands (`reloadui`, …).
@@ -150,18 +145,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    g.set(
-        "UninviteByName",
-        lua.create_function(|lua, name: Option<String>| {
-            let Some(name) = name.filter(|n| !n.trim().is_empty()) else {
-                return Ok(());
-            };
-            let mut model = crate::script::model_mut_of(lua);
-            model.uninvite_requests.push(name);
-            Ok(())
-        })?,
-    )?;
-
     for (name, chat) in [("LoggingChat", true), ("LoggingCombat", false)] {
         g.set(
             name,
@@ -246,15 +229,13 @@ mod tests {
     }
 
     #[test]
-    fn assist_and_uninvite_by_name_queue_their_names() {
+    fn assist_by_name_queues_its_name() {
         let mut s = UiScript::new().unwrap();
-        s.run("AssistByName('Alice') AssistByName('') UninviteByName('Carol') UninviteByName()")
-            .unwrap();
+        s.run("AssistByName('Alice') AssistByName('')").unwrap();
         assert_eq!(
             s.take_selection_requests(),
             vec![SelectionRequest::AssistByName("Alice".into())]
         );
-        assert_eq!(s.take_uninvite_requests(), vec!["Carol".to_string()]);
     }
 
     #[test]
