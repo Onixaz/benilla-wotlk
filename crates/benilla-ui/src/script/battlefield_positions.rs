@@ -140,6 +140,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetNumBattlefieldVehicles",
         lua.create_function(|_, ()| Ok(0))?,
     )?;
+    // GetNumArenaOpponents() (`0x54a2c0`): benilla reads no arena opponents, so 0.
+    g.set("GetNumArenaOpponents", lua.create_function(|_, ()| Ok(0))?)?;
     g.set(
         "GetBattlefieldVehicleInfo",
         lua.create_function(|lua, index: Value| {

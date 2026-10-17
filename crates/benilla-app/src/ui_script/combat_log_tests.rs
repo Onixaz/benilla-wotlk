@@ -185,3 +185,194 @@ fn the_combat_log_docks_behind_general_and_its_bar_hides() {
     let errors = combat_log_errors(&mut s);
     assert!(errors.is_empty(), "addon errors: {errors:#?}");
 }
+
+/// A frame's centre, after a layout pass.
+fn centre(s: &mut UiScript, frame: &str) -> (f32, f32) {
+    s.resolve();
+    let (x, y): (f64, f64) = s
+        .eval(&format!("return {frame}:GetCenter()"))
+        .unwrap_or_else(|e| panic!("{frame}:GetCenter(): {e}"));
+    (x as f32, y as f32)
+}
+
+/// Some frames of `OnUpdate`, the tab drag's stop poll among them.
+fn frames(s: &mut UiScript, n: usize) {
+    for _ in 0..n {
+        s.tick(0.016);
+        s.resolve();
+    }
+}
+
+/// A left drag of `tab` from its centre to `to` through the pointer path, released there.
+fn drag_tab(s: &mut UiScript, tab: &str, to: (f32, f32)) {
+    let (x, y) = centre(s, tab);
+    s.mouse_move(x, y);
+    s.mouse_button(x, y, "LeftButton", true);
+    s.mouse_move(x + 6.0, y); // past the drag threshold: the tab's OnDragStart
+    frames(s, 2);
+    s.mouse_move(to.0, to.1);
+    frames(s, 2);
+    s.mouse_button(to.0, to.1, "LeftButton", false);
+    frames(s, 2);
+}
+
+/// The errors the chat frames raised since the last take.
+fn chat_errors(s: &mut UiScript) -> Vec<String> {
+    s.take_errors()
+        .into_iter()
+        .filter(|e| e.contains("FloatingChatFrame") || e.contains("IsMouseButtonDown"))
+        .collect()
+}
+
+/// An undocked combat log re-docks at 2 by Unlock Window and a tab drag, and undocks again (#319, #320).
+#[test]
+fn an_undocked_combat_log_redocks_at_two_by_its_tab_and_undocks_again() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, failures) = super::layer_tests::production_load_seeded(
+        "chattabdrag",
+        false,
+        "",
+        |_| {},
+        |s| {
+            // The display list the app pushes before the load; `UpdateMenuBarTop` indexes it.
+            let r = benilla_ui::script::ScreenResolution {
+                width: 1600,
+                height: 900,
+            };
+            s.set_screen_resolutions(vec![r], Some(r));
+            let mut log = benilla_ui::script::ChatWindowLook::stock(1);
+            log.docked = None;
+            s.set_chat_window_looks([(1, log)]);
+        },
+    );
+    let ours: Vec<_> = failures
+        .iter()
+        .filter(|f| f.contains("FloatingChatFrame.lua") || f.contains("ChatFrame2"))
+        .collect();
+    assert!(ours.is_empty(), "chat frame load failures: {ours:#?}");
+    super::test_ui::seat_chain_addon(&mut s, "Blizzard_CombatLog");
+    // Login order: the cache's windows, `PLAYER_LOGIN`, then the world-entry layout (`FCF_DockUpdate`).
+    super::fire_chat_login(&mut s);
+    s.fire_event("PLAYER_LOGIN", vec![]);
+    s.run("UIParent_ManageFramePositions()").unwrap();
+    s.resolve();
+    let errors: Vec<_> = s
+        .take_errors()
+        .into_iter()
+        .filter(|e| e.contains("UIParent.lua") || e.contains("ChatFrame") || e.contains("CombatLog"))
+        .collect();
+    assert!(errors.is_empty(), "login errors: {errors:#?}");
+    assert!(
+        s.eval::<bool>(
+            "return ChatFrame2.isDocked == nil and ChatFrame2.isLocked ~= nil \
+               and ChatFrame2:IsShown() ~= nil and ChatFrame2Tab:IsShown() ~= nil"
+        )
+        .unwrap(),
+        "seeded undocked, locked and shown, its tab up"
+    );
+    // Undocked, the background rises over the bar and the tab rides it: tab, bar, then text.
+    assert!(
+        s.eval::<bool>(
+            "return ChatFrame2Tab:GetBottom() >= CombatLogQuickButtonFrame_Custom:GetTop() \
+               and CombatLogQuickButtonFrame_Custom:GetBottom() == ChatFrame2:GetTop()"
+        )
+        .unwrap(),
+        "the tab sits above the quick-button bar"
+    );
+
+    // Right-click the tab, then the menu's first row, `FCF_ToggleLock`'s Unlock Window.
+    let (x, y) = centre(&mut s, "ChatFrame2Tab");
+    s.mouse_move(x, y);
+    s.mouse_button(x, y, "RightButton", true);
+    s.mouse_button(x, y, "RightButton", false);
+    frames(&mut s, 1);
+    assert!(
+        s.eval::<bool>("return DropDownList1:IsShown() ~= nil").unwrap(),
+        "the tab menu opens"
+    );
+    let (x, y) = centre(&mut s, "DropDownList1Button1");
+    s.mouse_move(x, y);
+    s.mouse_button(x, y, "LeftButton", true);
+    s.mouse_button(x, y, "LeftButton", false);
+    frames(&mut s, 1);
+    assert!(
+        s.eval::<bool>("return ChatFrame2.isLocked == nil").unwrap(),
+        "unlocked"
+    );
+
+    // Drop it on the dock, right of General's tab: the insert index past the primary is 2.
+    let to = s
+        .eval::<(f64, f64)>(
+            "return ChatFrame1Tab:GetRight() + 20, select(2, ChatFrame1Tab:GetCenter())",
+        )
+        .unwrap();
+    drag_tab(&mut s, "ChatFrame2Tab", (to.0 as f32, to.1 as f32));
+    let errors = chat_errors(&mut s);
+    assert!(errors.is_empty(), "drag errors: {errors:#?}");
+    assert!(
+        s.eval::<bool>(
+            "return ChatFrame2Tab:GetScript('OnUpdate') == nil and MOVING_CHATFRAME == nil"
+        )
+        .unwrap(),
+        "the release ended the drag"
+    );
+    assert!(
+        s.eval::<bool>(
+            "local i for n, f in ipairs(GENERAL_CHAT_DOCK.DOCKED_CHAT_FRAMES) do \
+               if f == ChatFrame2 then i = n end end \
+             local docked = select(9, GetChatWindowInfo(2)) \
+             return ChatFrame2.isDocked == 1 and i == 2 and docked == 2"
+        )
+        .unwrap(),
+        "docked at 2, and the record says DOCKED 2"
+    );
+    // Docked: the primary's rect less the bar at the top, and the drop selects it (`FCF_StopDragging`).
+    assert!(
+        s.eval::<bool>(
+            "return ChatFrame2:GetLeft() == ChatFrame1:GetLeft() \
+               and ChatFrame2:GetBottom() == ChatFrame1:GetBottom() \
+               and math.abs(ChatFrame1:GetTop() - ChatFrame2:GetTop() \
+                 - CombatLogQuickButtonFrame_Custom:GetHeight()) < 0.01 \
+               and FCFDock_GetSelectedWindow(GENERAL_CHAT_DOCK) == ChatFrame2"
+        )
+        .unwrap(),
+        "docked over the primary, and selected"
+    );
+    // General's tab selects General: the combat log and its bar hide behind it.
+    let (x, y) = centre(&mut s, "ChatFrame1Tab");
+    s.mouse_move(x, y);
+    s.mouse_button(x, y, "LeftButton", true);
+    s.mouse_button(x, y, "LeftButton", false);
+    frames(&mut s, 2);
+    assert!(
+        s.eval::<bool>(
+            "return FCFDock_GetSelectedWindow(GENERAL_CHAT_DOCK) == ChatFrame1 \
+               and ChatFrame2:IsShown() == nil \
+               and CombatLogQuickButtonFrame_Custom:IsVisible() == nil"
+        )
+        .unwrap(),
+        "behind General, the bar hidden"
+    );
+
+    // Adjacent: dragged out of the dock it undocks, stays where it was dropped, saves its spot.
+    let (x, y) = centre(&mut s, "ChatFrame2Tab");
+    drag_tab(&mut s, "ChatFrame2Tab", (x + 300.0, y + 200.0));
+    let errors = chat_errors(&mut s);
+    assert!(errors.is_empty(), "undock errors: {errors:#?}");
+    let left_after: f64 = s.eval("return ChatFrame2:GetLeft()").unwrap();
+    s.mouse_move(x + 500.0, y + 300.0);
+    frames(&mut s, 10);
+    assert!(
+        s.eval::<bool>(
+            "return ChatFrame2.isDocked == nil and ChatFrame2Tab:GetScript('OnUpdate') == nil \
+               and GetChatWindowSavedPosition(2) ~= nil"
+        )
+        .unwrap(),
+        "undocked, the drag over, its position saved"
+    );
+    let left_later: f64 = s.eval("return ChatFrame2:GetLeft()").unwrap();
+    assert_eq!(left_after, left_later, "the frame stopped following the cursor");
+}
