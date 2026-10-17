@@ -835,10 +835,16 @@ fn unit_guid(
         "player" => return self_guid,
         _ => {}
     }
-    if token.strip_prefix("party").is_some_and(|n| n.parse::<u8>().is_ok()) {
+    if token
+        .strip_prefix("party")
+        .is_some_and(|n| n.parse::<u8>().is_ok())
+    {
         return member_for_token(group, &token).map(|m| m.guid);
     }
-    if let Some(n) = token.strip_prefix("raid").and_then(|n| n.parse::<u32>().ok()) {
+    if let Some(n) = token
+        .strip_prefix("raid")
+        .and_then(|n| n.parse::<u32>().ok())
+    {
         return raid_guid_at(group, self_guid, n);
     }
     if self_name.is_some_and(|n| n.eq_ignore_ascii_case(unit)) {
@@ -911,9 +917,13 @@ pub(super) fn drain_party(
                 if self_guid.is_none() {
                     continue;
                 }
-                if let Some(guid) =
-                    unit_guid(&group, self_guid, selection.guid, self_name.as_deref(), &unit)
-                {
+                if let Some(guid) = unit_guid(
+                    &group,
+                    self_guid,
+                    selection.guid,
+                    self_name.as_deref(),
+                    &unit,
+                ) {
                     let _ = commands
                         .0
                         .send(ClientCommand::GroupUninviteGuid { guid, reason });
@@ -921,9 +931,14 @@ pub(super) fn drain_party(
             }
             PartyRequest::PromoteToLeader(unit) => {
                 // `0x573e10` resolves a player (`0x520190`, typemask player) and sends its guid.
-                if let Some(guid) =
-                    unit_guid(&group, self_guid, selection.guid, self_name.as_deref(), &unit)
-                        .filter(|g| benilla_protocol::guid::is_player(*g))
+                if let Some(guid) = unit_guid(
+                    &group,
+                    self_guid,
+                    selection.guid,
+                    self_name.as_deref(),
+                    &unit,
+                )
+                .filter(|g| benilla_protocol::guid::is_player(*g))
                 {
                     let _ = commands.0.send(ClientCommand::GroupSetLeader { guid });
                 }
@@ -2406,18 +2421,27 @@ mod tests {
         assert_eq!(
             sent,
             vec![
-                format!("{:?}", ClientCommand::GroupInvite {
-                    name: "Carol".into(),
-                    flags: 2
-                }),
-                format!("{:?}", ClientCommand::GroupUninviteGuid {
-                    guid: member(2),
-                    reason: "afk".into()
-                }),
-                format!("{:?}", ClientCommand::GroupUninviteGuid {
-                    guid: member(1),
-                    reason: String::new()
-                }),
+                format!(
+                    "{:?}",
+                    ClientCommand::GroupInvite {
+                        name: "Carol".into(),
+                        flags: 2
+                    }
+                ),
+                format!(
+                    "{:?}",
+                    ClientCommand::GroupUninviteGuid {
+                        guid: member(2),
+                        reason: "afk".into()
+                    }
+                ),
+                format!(
+                    "{:?}",
+                    ClientCommand::GroupUninviteGuid {
+                        guid: member(1),
+                        reason: String::new()
+                    }
+                ),
                 format!("{:?}", ClientCommand::GroupSetLeader { guid: member(2) }),
             ]
         );

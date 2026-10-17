@@ -89,7 +89,8 @@ fn chat_name_menu_and_the_party_slash_commands_queue_the_3_3_5a_verbs() {
     let _l = crate::local_state::test_env::ENV_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let (mut s, failures) = super::layer_tests::production_load_with("partyverbs", false, "", |_| {});
+    let (mut s, failures) =
+        super::layer_tests::production_load_with("partyverbs", false, "", |_| {});
     let ours: Vec<_> = failures
         .iter()
         .filter(|f| f.contains("ChatFrame.lua") || f.contains("FriendsDropDown"))

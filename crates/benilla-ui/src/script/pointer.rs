@@ -63,17 +63,20 @@ pub(super) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
                 Value::Integer(i) => index_to_mouse_button(*i as u32),
                 Value::Number(n) => index_to_mouse_button(*n as i64 as u32),
                 // `lua_isnumber` takes a numeric string as a number first.
-                Value::String(s) => match s.to_str().ok().and_then(|t| t.trim().parse::<f64>().ok())
-                {
-                    Some(n) => index_to_mouse_button(n as i64 as u32),
-                    None => string_to_mouse_button(&s.to_string_lossy()),
-                },
+                Value::String(s) => {
+                    match s.to_str().ok().and_then(|t| t.trim().parse::<f64>().ok()) {
+                        Some(n) => index_to_mouse_button(n as i64 as u32),
+                        None => string_to_mouse_button(&s.to_string_lossy()),
+                    }
+                }
                 _ => u32::MAX,
             };
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(super::binding_abi::flag(model.mouse_buttons_down & mask != 0))
+            Ok(super::binding_abi::flag(
+                model.mouse_buttons_down & mask != 0,
+            ))
         })?,
     )?;
     Ok(())

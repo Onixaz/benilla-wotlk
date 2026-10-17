@@ -15,14 +15,23 @@ fn guid_of(model: &Model, unit: &str) -> Option<u64> {
     if let Some(u) = model.unit(unit).filter(|u| u.exists) {
         return Some(u.guid);
     }
-    let raid = model.party.raid.iter().find(|m| m.name.eq_ignore_ascii_case(unit));
+    let raid = model
+        .party
+        .raid
+        .iter()
+        .find(|m| m.name.eq_ignore_ascii_case(unit));
     if let Some(m) = raid {
         return Some(m.guid);
     }
     (1..=4).find_map(|i| {
         model
             .unit(&format!("party{i}"))
-            .filter(|u| u.exists && u.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(unit)))
+            .filter(|u| {
+                u.exists
+                    && u.name
+                        .as_deref()
+                        .is_some_and(|n| n.eq_ignore_ascii_case(unit))
+            })
             .map(|u| u.guid)
     })
 }
@@ -53,7 +62,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, ()| Ok((false, true)))?,
     )?;
     // HasLFGRestrictions() (`0x52c350`): the LFG group's restricted bit; benilla joins none.
-    g.set("HasLFGRestrictions", lua.create_function(|_, ()| Ok(false))?)?;
+    g.set(
+        "HasLFGRestrictions",
+        lua.create_function(|_, ()| Ok(false))?,
+    )?;
     // GetPVPDesired() (`0x51bca0`): the player's PvP-desired flag, 1 or 0.
     g.set(
         "GetPVPDesired",
@@ -87,7 +99,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     // CanExitVehicle() (`0x5fb9c0`): the vehicle seat's exit flag; benilla seats no vehicle (#235).
-    g.set("CanExitVehicle", lua.create_function(|_, ()| Ok(Value::Nil))?)?;
+    g.set(
+        "CanExitVehicle",
+        lua.create_function(|_, ()| Ok(Value::Nil))?,
+    )?;
     // PetCanBeDismissed() (`0x5d3820`): 1 unless `SummonProperties` forbids, which benilla does not read.
     g.set("PetCanBeDismissed", lua.create_function(|_, ()| Ok(1))?)?;
     // GetPartyAssignment (`0x52cf60`): the folded roster keeps no tank or assist marks.
@@ -112,7 +127,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // ── Voice chat, which benilla does not run ─────────────────────────────────────────────────
     // IsVoiceChatEnabled() (`0x4fcbf0`): nil with the voice system down.
-    g.set("IsVoiceChatEnabled", lua.create_function(|_, ()| Ok(Value::Nil))?)?;
+    g.set(
+        "IsVoiceChatEnabled",
+        lua.create_function(|_, ()| Ok(Value::Nil))?,
+    )?;
     // GetVoiceStatus(unit [, channel]) (`0x7db8d0`): nothing for a non-string, nil with no session.
     g.set(
         "GetVoiceStatus",
@@ -138,17 +156,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
     // IsMuted(name) (`0x6b6cf0`): the friend list's mute list, which benilla does not keep.
-    g.set("IsMuted", lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?)?;
+    g.set(
+        "IsMuted",
+        lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
+    )?;
     // IsDisplayChannelOwner/Moderator (`0x4ffa70`/`0x4ffae0`): the channel pane selects none.
     for name in ["IsDisplayChannelOwner", "IsDisplayChannelModerator"] {
         g.set(name, lua.create_function(|_, ()| Ok(Value::Nil))?)?;
     }
 
     // IsArenaTeamCaptain(index) (`0x60dc70`): benilla reads no arena team.
-    g.set("IsArenaTeamCaptain", lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?)?;
+    g.set(
+        "IsArenaTeamCaptain",
+        lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
+    )?;
     // CanGrantLevel/CanSummonFriend (`0x51d230`/`0x51d2b0`): no recruit-a-friend link.
     for name in ["CanGrantLevel", "CanSummonFriend"] {
-        g.set(name, lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?)?;
+        g.set(
+            name,
+            lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
+        )?;
     }
 
     // UnitIsInMyGuild (`0x60c550`): a unit in view shares our guild, else the name is on our roster.

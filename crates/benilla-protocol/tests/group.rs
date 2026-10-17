@@ -49,7 +49,11 @@ fn cmsg_bodies_golden() {
         hx("00000000"),
         "CMSG_GROUP_ACCEPT body"
     );
-    assert_eq!(messages::group_accept(2 | 8), hx("0a000000"), "the role bits");
+    assert_eq!(
+        messages::group_accept(2 | 8),
+        hx("0a000000"),
+        "the role bits"
+    );
     assert_eq!(
         messages::group_decline(),
         Vec::<u8>::new(),

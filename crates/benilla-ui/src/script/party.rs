@@ -518,7 +518,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Err(mlua::Error::runtime("Usage: PromoteToLeader(name)"));
             };
             let mut model = crate::script::model_mut_of(lua);
-            model.party_requests.push(PartyRequest::PromoteToLeader(unit));
+            model
+                .party_requests
+                .push(PartyRequest::PromoteToLeader(unit));
             Ok(())
         })?,
     )?;
@@ -1353,7 +1355,8 @@ mod tests {
         s.run("InviteUnit() InviteUnit(nil, 1)").unwrap();
         assert!(s.run(&format!("InviteUnit('{}')", "a".repeat(49))).is_err());
         assert!(s.run("PromoteToLeader()").is_err());
-        s.run(&format!("UninviteUnit('', '{}')", "r".repeat(70))).unwrap();
+        s.run(&format!("UninviteUnit('', '{}')", "r".repeat(70)))
+            .unwrap();
         assert_eq!(
             s.take_party_requests(),
             vec![PartyRequest::UninviteUnit {

@@ -858,7 +858,11 @@ fn is_mouse_button_down_reads_the_held_buttons_by_name_index_or_any() {
     s.mouse_button(10.0, 10.0, "RightButton", true);
     assert_eq!(ask(&mut s, ""), Some(1));
     assert_eq!(ask(&mut s, "'RightButton'"), Some(1));
-    assert_eq!(ask(&mut s, "'rightbutton'"), Some(1), "names are case-insensitive");
+    assert_eq!(
+        ask(&mut s, "'rightbutton'"),
+        Some(1),
+        "names are case-insensitive"
+    );
     assert_eq!(ask(&mut s, "2"), Some(1), "index 2 is the right button");
     assert_eq!(ask(&mut s, "'2'"), Some(1), "a numeric string is an index");
     assert_eq!(ask(&mut s, "'LeftButton'"), None);

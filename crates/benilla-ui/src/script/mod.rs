@@ -78,7 +78,6 @@ mod backdrop;
 mod bank;
 mod battle_net;
 mod battlefield_positions;
-mod unit_menu;
 mod battlefield_queue;
 mod battlefield_score;
 mod bind_confirm;
@@ -87,6 +86,7 @@ mod binding_abi;
 mod dialog_verbs;
 mod secure_call;
 mod tutorial;
+mod unit_menu;
 mod worldmap_arrow;
 // `camera_view`: the five camera views and `FlipCameraYaw`, the reference's `UIUtil\Camera.cpp`.
 mod button;

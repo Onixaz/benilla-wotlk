@@ -262,7 +262,9 @@ fn an_undocked_combat_log_redocks_at_two_by_its_tab_and_undocks_again() {
     let errors: Vec<_> = s
         .take_errors()
         .into_iter()
-        .filter(|e| e.contains("UIParent.lua") || e.contains("ChatFrame") || e.contains("CombatLog"))
+        .filter(|e| {
+            e.contains("UIParent.lua") || e.contains("ChatFrame") || e.contains("CombatLog")
+        })
         .collect();
     assert!(errors.is_empty(), "login errors: {errors:#?}");
     assert!(
@@ -290,7 +292,8 @@ fn an_undocked_combat_log_redocks_at_two_by_its_tab_and_undocks_again() {
     s.mouse_button(x, y, "RightButton", false);
     frames(&mut s, 1);
     assert!(
-        s.eval::<bool>("return DropDownList1:IsShown() ~= nil").unwrap(),
+        s.eval::<bool>("return DropDownList1:IsShown() ~= nil")
+            .unwrap(),
         "the tab menu opens"
     );
     let (x, y) = centre(&mut s, "DropDownList1Button1");
@@ -374,5 +377,8 @@ fn an_undocked_combat_log_redocks_at_two_by_its_tab_and_undocks_again() {
         "undocked, the drag over, its position saved"
     );
     let left_later: f64 = s.eval("return ChatFrame2:GetLeft()").unwrap();
-    assert_eq!(left_after, left_later, "the frame stopped following the cursor");
+    assert_eq!(
+        left_after, left_later,
+        "the frame stopped following the cursor"
+    );
 }
