@@ -2,15 +2,19 @@
   <img src="docs/assets/benilla-wotlk-banner.png" alt="Benilla WotLK" width="100%">
 </p>
 
-# benilla-wotlk
+# Benilla-Wotlk
 
-A from-scratch World of Warcraft client written in Rust and Bevy, for World of Warcraft 3.3.5a
-(build 12340) alone.
+An open-source World of Warcraft 3.3.5a client built with Rust and Bevy.
 
-The client connects to a 3.3.5a server over the original protocol, reads game data from your own
-3.3.5a installation, and runs the stock 3.3.5a interface from that installation. The file formats,
-network protocol, renderer, and interface engine are implemented from scratch. The 3.3.5a
-reference client is the specification. No original client code or bundled game data is included.
+Benilla-WotLK is an effort to preserve and recreate the original Wrath of the Lich King client experience using a modern, independently developed game engine.
+
+Originally based on the [Benilla](https://github.com/samwhosung/benilla) project, which targets World of Warcraft 1.12.1, Benilla-WotLK has since evolved into a standalone project focused exclusively on version 3.3.5a (build 12340).
+
+The client connects to compatible 3.3.5a servers using the original network protocol, loads game assets from your own WotLK installation, and runs the original interface directly from those files. The rendering engine, file format support, networking, and UI runtime are independently implemented in Rust, with the original 3.3.5a client serving as the behavioral reference.
+
+This project does not distribute Blizzard's original client code or game assets. Users must provide their own game data.
+
+Benilla-WotLK is an independent, community-driven preservation project, developed out of passion for the original game and the desire to keep its legacy playable for years to come.
 
 ## Status
 
@@ -112,16 +116,14 @@ Issues and pull requests are welcome. Bugs, questions, and ideas can also be dis
 
 ## Acknowledgements and legal
 
-Early inspiration and file-format guidance came from the
-[wowemulation-dev](https://github.com/wowemulation-dev) community, particularly
-[warcraft-rs](https://github.com/wowemulation-dev/warcraft-rs).
+The project builds upon the original [Benilla](https://github.com/samwhosung/benilla) client and acknowledges the work of its original author and contributors.
 
-Benilla is an independent fan project and is not affiliated with or endorsed by Blizzard
+Benilla-Wotlk is an independent fan project and is not affiliated with or endorsed by Blizzard
 Entertainment. It ships no assets extracted from World of Warcraft: no models, sounds, maps, MPQ
 contents, or FrameXML. You must provide your own legally obtained 3.3.5a installation. The files
 under `crates/benilla-app/assets/ui/` are project-owned adapters and interface elements, not copies
 from the game.
 
-World of Warcraft is a trademark of Blizzard Entertainment, Inc. Benilla's code is available under
+World of Warcraft is a trademark of Blizzard Entertainment, Inc. Benilla-Wotlk code is available under
 your choice of the [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE) license. Vendored components
 under `third_party/`, including the Kira audio engine and Lua 5.1, retain their own licenses.
