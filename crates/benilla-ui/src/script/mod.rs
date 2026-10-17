@@ -1450,6 +1450,12 @@ impl UiScript {
         if let Some(source) = abandoned {
             self.fire_drag_stop(source);
         }
+        // No release will be fed, so no button reads as held: a chat tab's drag poll then ends.
+        if self.model_ref().mouse_buttons_down != 0 {
+            let quiet = self.visual_epoch();
+            self.model_mut().mouse_buttons_down = 0;
+            self.restore_epoch(quiet);
+        }
         if self.model_ref().mouse_down_on.is_empty() {
             return;
         }

@@ -54,7 +54,61 @@ pub(super) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
             }
         })?,
     )?;
+
+    // `IsMouseButtonDown([button])` (`0x5148b0`): by index, by name, or any button; 1 or nil.
+    lua.globals().set(
+        "IsMouseButtonDown",
+        lua.create_function(|lua, button: Value| {
+            let mask = match &button {
+                Value::Integer(i) => index_to_mouse_button(*i as u32),
+                Value::Number(n) => index_to_mouse_button(*n as i64 as u32),
+                // `lua_isnumber` takes a numeric string as a number first.
+                Value::String(s) => match s.to_str().ok().and_then(|t| t.trim().parse::<f64>().ok())
+                {
+                    Some(n) => index_to_mouse_button(n as i64 as u32),
+                    None => string_to_mouse_button(&s.to_string_lossy()),
+                },
+                _ => u32::MAX,
+            };
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(super::binding_abi::flag(model.mouse_buttons_down & mask != 0))
+        })?,
+    )?;
     Ok(())
+}
+
+/// `IndexToMouseButton` (`0x5eec20`): 1 left, 2 right, 3 middle, `n` up to 31 `Button<n>`.
+fn index_to_mouse_button(index: u32) -> u32 {
+    match index {
+        1 => 0x1,
+        2 => 0x4,
+        3 => 0x2,
+        4..=31 => 1 << (index - 1),
+        _ => 0,
+    }
+}
+
+/// `StringToMouseButton` (`0x7dc010`), case-insensitive: left 1, middle 2, right 4, `Button<n>`.
+pub(super) fn string_to_mouse_button(name: &str) -> u32 {
+    if name.eq_ignore_ascii_case("LeftButton") {
+        return 0x1;
+    }
+    if name.eq_ignore_ascii_case("MiddleButton") {
+        return 0x2;
+    }
+    if name.eq_ignore_ascii_case("RightButton") {
+        return 0x4;
+    }
+    let digits = name
+        .get(..6)
+        .filter(|p| p.eq_ignore_ascii_case("Button"))
+        .and_then(|_| name.get(6..));
+    match digits.and_then(|d| d.parse::<u32>().ok()) {
+        Some(n @ 4..=31) if !digits.is_some_and(|d| d.starts_with(['0', '+'])) => 1 << (n - 1),
+        _ => 0,
+    }
 }
 
 /// Whether `h` is the world frame, whose mouse hits belong to the 3D world; it wins the hover walk
@@ -263,6 +317,15 @@ impl UiScript {
     /// the button name. Returns whether the UI consumed the event.
     pub fn mouse_button(&mut self, x: f32, y: f32, button: &str, down: bool) -> bool {
         let hit_id = self.hit_test(x, y);
+        {
+            let bit = string_to_mouse_button(button);
+            let mut model = self.model_mut();
+            if down {
+                model.mouse_buttons_down |= bit;
+            } else {
+                model.mouse_buttons_down &= !bit;
+            }
+        }
         // ── The raise, first ────────────────────────────────────────────────────────────────────
         //
         // The press handler `0x7662c0` raises the capture (`root+0x80`) else the hover frame

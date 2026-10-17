@@ -843,3 +843,36 @@ fn a_disabled_button_takes_the_hover_but_fires_no_enter_or_leave() {
     );
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
+
+/// `IsMouseButtonDown` (`0x5148b0`) reads the held buttons by name, by index or any; 1 or nil.
+#[test]
+fn is_mouse_button_down_reads_the_held_buttons_by_name_index_or_any() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    let ask = |s: &mut crate::script::UiScript, arg: &str| {
+        s.eval::<Option<i64>>(&format!("return IsMouseButtonDown({arg})"))
+            .unwrap()
+    };
+    assert_eq!(ask(&mut s, ""), None, "nothing held");
+    // A press over no frame still counts.
+    s.mouse_button(10.0, 10.0, "RightButton", true);
+    assert_eq!(ask(&mut s, ""), Some(1));
+    assert_eq!(ask(&mut s, "'RightButton'"), Some(1));
+    assert_eq!(ask(&mut s, "'rightbutton'"), Some(1), "names are case-insensitive");
+    assert_eq!(ask(&mut s, "2"), Some(1), "index 2 is the right button");
+    assert_eq!(ask(&mut s, "'2'"), Some(1), "a numeric string is an index");
+    assert_eq!(ask(&mut s, "'LeftButton'"), None);
+    assert_eq!(ask(&mut s, "3"), None, "index 3 is the middle button");
+    assert_eq!(ask(&mut s, "'Bogus'"), None);
+    s.mouse_button(10.0, 10.0, "LeftButton", true);
+    assert_eq!(ask(&mut s, "1"), Some(1));
+    s.mouse_button(10.0, 10.0, "RightButton", false);
+    assert_eq!(ask(&mut s, "'RightButton'"), None, "released");
+    assert_eq!(ask(&mut s, "'LeftButton'"), Some(1), "the other stays held");
+    s.mouse_button(10.0, 10.0, "Button4", true);
+    assert_eq!(ask(&mut s, "4"), Some(1));
+    // A pointer that left the window feeds no release: nothing reads as held after.
+    s.pointer_left_window();
+    assert_eq!(ask(&mut s, ""), None);
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
