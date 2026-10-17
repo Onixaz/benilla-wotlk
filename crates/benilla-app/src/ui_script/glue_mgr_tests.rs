@@ -83,16 +83,11 @@ fn a_proof_0x0a_changes_no_dialog() {
     assert_eq!(m.state, ScreenState::Logon);
 }
 
-/// `CGlueMgr::Login`'s guards: nothing without both agreements or outside state 0, an `OKAY`
-/// dialog for an empty box, else the `CANCEL` dialog with no text and the attempt.
+/// The session skips the reference's agreement guard, then keeps the state and credential guards.
 #[test]
 fn login_guards_then_starts_the_logon() {
     let mut asks = Vec::new();
     let mut m = GlueMgr::default();
-    m.login("a".into(), "b".into(), &mut asks);
-    assert!(asks.is_empty() && m.outbox.is_empty(), "no TOS, no login");
-
-    let mut m = accepted();
     m.login(String::new(), "b".into(), &mut asks);
     assert_eq!(m.outbox, [open("OKAY", Some("LOGIN_ENTER_NAME"))]);
     m.outbox.clear();
@@ -785,7 +780,9 @@ fn stock_app() -> (
         );
     let mut s = UiScript::new_glue().unwrap();
     s.set_screen_size(1024.0, 768.0);
+    s.register_cvars(crate::cvars::registered_pairs());
     let _ = super::super::glue::load_glue(&mut s);
+    seat_glue_vm(app.world_mut(), &mut s);
     super::super::glue::set_glue_screen(&mut s, super::super::glue::GlueScreen::Login);
     let _ = s.take_errors();
     app.insert_non_send_resource(s);
@@ -884,26 +881,24 @@ fn the_select_cells_outlive_the_glue_vm() {
     );
 }
 
-/// The stock login screen's Login reaches the native login with the typed credentials, under the
-/// `CANCEL` dialog; the logon's stage and a refusal re-text it with the reference's keys; and the
-/// agreements gate it.
+/// The first login skips every stock agreement page without changing its saved CVars, then Login
+/// reaches the native login with the typed credentials under the `CANCEL` dialog.
 #[test]
 fn the_stock_login_reaches_the_native_login_and_shows_its_status() {
     let _ = benilla_formats::wow_data_or_skip!();
     let (mut app, rx, _) = stock_app();
 
-    // A first launch: the EULA stands, and a login before it is accepted does nothing.
+    // A first launch shows the login fields while the reference's agreement CVars remain unset.
     assert_eq!(
         vm(&app)
-            .eval::<(bool, bool)>("return TOSFrame:IsShown() == 1, AccountLoginUI:IsShown() == 1")
+            .eval::<(bool, bool, String, String, String, String)>(
+                "return TOSFrame:IsShown() == 1, AccountLoginUI:IsShown() == 1, \
+                 GetCVar('readTOS'), GetCVar('readEULA'), GetCVar('readScanning'), GetCVar('readContest')"
+            )
             .unwrap(),
-        (true, false),
-        "readEULA 0 puts the EULA up"
+        (false, true, "0".into(), "0".into(), "0".into(), "0".into()),
+        "the login screen bypasses the agreements without recording acceptance"
     );
-    type_and_login(&mut app);
-    assert!(rx.try_recv().is_err(), "no login before the agreements");
-    accept_agreements(&mut app);
-
     type_and_login(&mut app);
     let req = rx.try_recv().expect("the native login gets the attempt");
     assert_eq!((req.user.as_str(), req.pass.as_str()), ("probe", "secret"));

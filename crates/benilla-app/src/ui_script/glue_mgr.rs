@@ -583,7 +583,12 @@ impl GlueMgr {
     }
 
     fn notice(&self, notice: GlueNotice) -> NoticeState {
-        self.notices.map(|n| n[notice as usize]).unwrap_or_default()
+        let mut state = self.notices.map(|n| n[notice as usize]).unwrap_or_default();
+        // Deviation from 3.3.5a: skip the first-run agreement screens for this session. Keep the
+        // read* CVars unchanged; treating a notice as handled is not recording acceptance.
+        state.accepted = true;
+        state.show_notice = false;
+        state
     }
 
     fn open(&mut self, which: &'static str, text: Option<Text>) {
