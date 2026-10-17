@@ -12,7 +12,7 @@ use super::kit::SoundCategory;
 use super::{mixer, SoundConfig, SoundOutput};
 
 /// The theme's own volume, multiplied into the Music slider: `0x45aeb0` starts the glue stream at
-/// 0.8 (`0x3f4ccccd`) on the MusicVolume category (flag word 2, bit `0x2` = `[0x87cef8]`).
+/// 0.8 (`0x3f4ccccd`) on the music category (flag word 2, bit `0x2` = `[0x87cef8]`).
 const GLUE_MUSIC_VOLUME: f32 = 0.8;
 
 /// The stop-fade armed when the world's load drains: 3.0 s (`[0x803248]`, handed to `0x45b050` by

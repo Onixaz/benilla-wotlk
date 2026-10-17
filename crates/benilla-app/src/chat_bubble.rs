@@ -38,7 +38,7 @@ use crate::vplates::{device_snap, gx_px, plate_basis, text_px, VPlateSet, VPlate
 use benilla_assets::{AssetSet, WorldAssets};
 use benilla_world::view::WorldCamera;
 
-/// The two bubble CVars (registrar `0x603280`), booting at the reference's defaults.
+/// The two bubble CVars (`0x51e16a`, `0x51e192`), booting at the reference's defaults, both on.
 #[derive(Resource)]
 pub(crate) struct BubbleConfig {
     /// `ChatBubbles`: say, yell and their monster variants.
@@ -51,7 +51,7 @@ impl Default for BubbleConfig {
     fn default() -> Self {
         Self {
             all: true,
-            party: false,
+            party: true,
         }
     }
 }
@@ -751,14 +751,19 @@ mod tests {
             assert_eq!(bubble_cvar(k, &on), None, "{k:?} must not bubble in v1");
         }
 
-        // Party off with say on is the default pair, so this also pins the boot state.
-        let no_party = BubbleConfig::default();
-        assert!(no_party.all && !no_party.party, "the shipped pair");
+        // Both on is the boot state (`0x51e16a`, `0x51e192`); party off leaves say alone.
+        let shipped = BubbleConfig::default();
+        assert!(shipped.all && shipped.party, "the shipped pair");
         assert_eq!(
-            bubble_cvar(K::Party, &no_party),
-            Some(false),
-            "/p does not bubble out of the box"
+            bubble_cvar(K::Party, &shipped),
+            Some(true),
+            "/p bubbles out of the box"
         );
+        let no_party = BubbleConfig {
+            all: true,
+            party: false,
+        };
+        assert_eq!(bubble_cvar(K::Party, &no_party), Some(false));
         assert_eq!(
             bubble_cvar(K::Say, &no_party),
             Some(true),

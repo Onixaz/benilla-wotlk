@@ -487,7 +487,7 @@ pub(super) fn model_pivot_height(pivot: &CameraPivot, scale: f32, swimming: bool
 }
 
 /// World head height above a unit's feet: the standing preset, or [`CAM_PIVOT_FALLBACK`] with no
-/// model. For the 3D-audio listener (`SoundListenerAtCharacter=1`, `0x457890`) and a far-sight
+/// model. For the 3D-audio listener (`Sound_ListenerAtCharacter=1`) and a far-sight
 /// subject, whose movement flags we do not carry. A camera pivot passes the raw
 /// `OBJECT_FIELD_SCALE_X`, as the reference reads it (`0x469f10`), not the 2 s-eased render scale
 /// only a selection ring uses (`0x4833d3`); the listener passes the rendered scale.

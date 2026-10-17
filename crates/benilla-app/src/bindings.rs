@@ -918,56 +918,6 @@ mod tests {
         );
     }
 
-    /// The whole wheel-bind path: the real Keybindings page over the stock commands, a capsule
-    /// armed by a click, a notch over the page (its OnMouseWheel, as 1.12's window binds it), then
-    /// the bound chord dispatching the stock JUMP body.
-    #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn a_wheel_notch_binds_through_the_real_page_and_then_dispatches() {
-        benilla_formats::wow_data_or_skip!();
-        let mut s = crate::ui_script::keybindings_tests::harness();
-        crate::ui_script::keybindings_tests::on_page(&mut s);
-        const ROW: &str = "BenillaOptionsFrameContainerBodyKeybindingsRow";
-        // Expand Movement and arm JUMP's first capsule: the reference accepts the wheel on any
-        // command.
-        s.run(&format!("{ROW}1Header:Click()")).expect("expand");
-        s.run(&format!("{ROW}9Key1Button:Click()")).expect("select");
-        assert_eq!(
-            s.eval::<String>(&format!("return {ROW}9Description:GetText()"))
-                .unwrap(),
-            crate::ui_script::keybindings_tests::label(&s, "BINDING_NAME_JUMP", "JUMP")
-        );
-        s.resolve();
-        let (x, y): (f32, f32) = s
-            .eval(&format!(
-                "return ({ROW}5:GetLeft() + {ROW}5:GetRight()) / 2, \
-                        ({ROW}5:GetTop() + {ROW}5:GetBottom()) / 2"
-            ))
-            .unwrap();
-        s.mouse_wheel(x, y, 1.0);
-        assert_eq!(
-            s.eval::<String>(r#"return GetBindingAction("MOUSEWHEELUP")"#)
-                .unwrap(),
-            "JUMP",
-            "a notch on an armed capsule is a bind"
-        );
-        assert!(
-            s.eval::<bool>("return BenillaKeyBindingsPage.selected == nil")
-                .unwrap(),
-            "the completed bind disarms"
-        );
-        let mut app = vm_harness(s);
-
-        // The bound chord now dispatches: the next notch jumps rather than binding.
-        wheel(&mut app, 1.0);
-        app.update();
-        assert!(state(&app).fired(Input::Jump));
-        assert!(
-            !state(&app).fired(Input::CameraZoomIn),
-            "JUMP stole the wheel from the camera, the 1.12 steal law"
-        );
-    }
-
     /// A notch is a press and its release (`0x483d6f`, `0x483d82`), so a `runOnUp` binding on the
     /// wheel runs both halves in one frame.
     #[test]

@@ -55,8 +55,6 @@ fn trainer_script_base() -> UiScript {
         "Interface\\FrameXML\\BonusActionBarFrame.xml",
         "Interface\\FrameXML\\ClassTrainerFrameTemplates.xml",
         "ScrollTemplates.xml",
-        "KeyBindingsPage.xml",
-        "OptionsFrame.xml",
     ] {
         load_xml(&s, f);
     }

@@ -417,6 +417,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
+    // `DetectWowMouse` (`0x5fa050`) probes for a WowMouse device and returns nothing; benilla
+    // drives none.
+    inert(lua, &["DetectWowMouse"])?;
     Ok(())
 }
 

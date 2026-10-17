@@ -105,6 +105,50 @@ fn cvar_truth(value: &str) -> bool {
     !(v.is_empty() || v == "0" || v.eq_ignore_ascii_case("false"))
 }
 
+/// `GetCVarMin`/`GetCVarMax` and their absolute pair, the same in both states.
+pub(super) fn install_cvar_ranges(lua: &Lua) -> mlua::Result<()> {
+    let g = lua.globals();
+    // Glue `0x4ddea0`/`0x4ddf80`, in-game `0x514d40`/`0x514e30`, and the absolute pair (`0x4de090`,
+    // `0x4de130`): a range only for `farclip` (177 to 1277) and `extShadowQuality` (0 to the
+    // device's highest shadow mode), nil for any other registered CVar.
+    for (name, which) in [
+        ("GetCVarMin", 0u8),
+        ("GetCVarMax", 1),
+        ("GetCVarAbsoluteMin", 2),
+        ("GetCVarAbsoluteMax", 3),
+    ] {
+        let usage = format!("Usage: {name}(\"cvar\")");
+        g.set(
+            name,
+            lua.create_function(move |lua, args: MultiValue| {
+                let Some(cvar) = string_ish(lua, args.front()) else {
+                    return Err(mlua::Error::runtime(usage.clone()));
+                };
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                let slot = model
+                    .cvars
+                    .get(&cvar.to_ascii_lowercase())
+                    .ok_or_else(|| no_such_cvar(&cvar))?;
+                let key = slot.name.to_ascii_lowercase();
+                // `CShadowCache::GetMaxShadowMode` (`NUM_SHADOW_MODES - 1`): benilla draws no
+                // shadow maps, so the device's highest mode is the lowest.
+                const SHADOW_MAX: f64 = 0.0;
+                let n = match (key.as_str(), which) {
+                    ("extshadowquality", 0 | 2) => Some(0.0),
+                    ("extshadowquality", 1 | 3) => Some(SHADOW_MAX),
+                    ("farclip", 0) => Some(177.0),
+                    ("farclip", 1) => Some(1277.0),
+                    _ => None,
+                };
+                Ok(n.map_or(Value::Nil, Value::Number))
+            })?,
+        )?;
+    }
+    Ok(())
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
@@ -151,44 +195,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `GetCVarMin`/`GetCVarMax` (`0x4ddea0`/`0x4ddf80`) and their absolute pair (`0x4de090`,
-    // `0x4de130`): a range only for `farclip` (177 to 1277) and `extShadowQuality` (0 to the
-    // device's highest shadow mode), nil for any other registered CVar.
-    for (name, which) in [
-        ("GetCVarMin", 0u8),
-        ("GetCVarMax", 1),
-        ("GetCVarAbsoluteMin", 2),
-        ("GetCVarAbsoluteMax", 3),
-    ] {
-        let usage = format!("Usage: {name}(\"cvar\")");
-        g.set(
-            name,
-            lua.create_function(move |lua, args: MultiValue| {
-                let Some(cvar) = string_ish(lua, args.front()) else {
-                    return Err(mlua::Error::runtime(usage.clone()));
-                };
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                let slot = model
-                    .cvars
-                    .get(&cvar.to_ascii_lowercase())
-                    .ok_or_else(|| no_such_cvar(&cvar))?;
-                let key = slot.name.to_ascii_lowercase();
-                // `CShadowCache::GetMaxShadowMode` (`NUM_SHADOW_MODES - 1`): benilla draws no
-                // shadow maps, so the device's highest mode is the lowest.
-                const SHADOW_MAX: f64 = 0.0;
-                let n = match (key.as_str(), which) {
-                    ("extshadowquality", 0 | 2) => Some(0.0),
-                    ("extshadowquality", 1 | 3) => Some(SHADOW_MAX),
-                    ("farclip", 0) => Some(177.0),
-                    ("farclip", 1) => Some(1277.0),
-                    _ => None,
-                };
-                Ok(n.map_or(Value::Nil, Value::Number))
-            })?,
-        )?;
-    }
+    install_cvar_ranges(lua)?;
 
     // `SetCVar(name, value)` (`0x4dce70`): the usage error, `Couldn't find CVar named`, the
     // read-only refusal, then the write; a value with no string form writes "0". The glue's has

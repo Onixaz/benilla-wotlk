@@ -828,7 +828,7 @@ mod ppem_tests {
         assert_eq!(e.ppem(12.0), 12, "an exact size is itself");
         assert_eq!(e.ppem(12.48), 12, "…and a fractional one rounds, not snaps");
         assert_eq!(e.ppem(12.5), 13);
-        // `BENILLA_ERA_WINDOW_SCALE` (0.78), which the Options window and the Game Menu wear.
+        // A 0.78 frame scale: a fractional size rounds to the nearest pixel em.
         assert_eq!(e.ppem(16.0 * 0.78), 12);
         e.dpi = 2.0;
         assert_eq!(e.ppem(12.0), 24);

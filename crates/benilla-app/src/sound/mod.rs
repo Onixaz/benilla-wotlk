@@ -62,7 +62,7 @@ pub(crate) use zone::ExplorationSounds;
 /// `MusicVolume` 0.4 and `AmbienceVolume` 0.6, every other volume 1.0.
 #[derive(Resource)]
 pub(crate) struct SoundConfig {
-    /// `MasterSoundEffects` (default "1", `0x45737a`). The reference pauses the engine
+    /// `Sound_EnableAllSound` (default "1", `0x4d1710`). The reference pauses the engine
     /// (`0x457500` → `0x7a6570`); benilla zeroes every category in [`Self::category_amp`] and
     /// channels run on silently, which sounds the same.
     pub enabled: bool,
@@ -75,17 +75,18 @@ pub(crate) struct SoundConfig {
     pub sfx: f32,
     pub music: f32,
     pub ambience: f32,
-    /// `EnableMusic`/`EnableAmbience` (default "1", `0x45739b`/`0x460a9d`); 1.12 has no SFX-only
-    /// toggle. The reference's `EnableMusic` callback stops and re-picks the stream (`0x457490` →
-    /// `0x45b050`/`0x45aeb0`); benilla keeps it alive at zero and resumes mid-track.
+    /// `Sound_EnableSFX` (default "1", `0x4d1681`): the SFX category's own switch.
+    pub sfx_enabled: bool,
+    /// `Sound_EnableMusic`/`Sound_EnableAmbience` (default "1", `0x4d16ed`/`0x4d16a7`). The
+    /// reference's music callback stops and re-picks the stream; benilla keeps it alive at zero
+    /// and resumes mid-track.
     pub music_enabled: bool,
     pub ambience_enabled: bool,
-    /// `EnableErrorSpeech` (default "1", `0x457877`): gates only your own character's refusal
+    /// `Sound_EnableErrorSpeech` (default "1", `0x4d16c7`): gates only your own character's refusal
     /// lines ([`vocal`]), read in `0x458250` before any escalation state moves.
     pub error_speech: bool,
-    /// Sound while the window is inactive; not a 1.12 CVar (1.12 hardcodes it, and no
-    /// `CVar::Register` site names it), so it takes the later engine's
-    /// `Sound_EnableSoundWhenGameIsInBG`. `false` is the reference: on `WM_ACTIVATE` alone
+    /// `Sound_EnableSoundWhenGameIsInBG` (default "0", `0x4d18c1`), sound while the window is
+    /// inactive. `false` is the reference: on `WM_ACTIVATE` alone
     /// (`0x42d080` → `0x7a4860`) it calls `FSOUND_SetMute(-3, !active)`, muting every channel,
     /// music included. It is a mute, not a pause: playback cursors keep moving.
     ///
@@ -93,13 +94,8 @@ pub(crate) struct SoundConfig {
     /// (`0x7a52bf`); benilla starts everything and gates the output, because a refusal at kit
     /// start would make an unattended capture record silence.
     pub background_sound: bool,
-    /// `SoundReverb` (`0x4573be`, callback `0x4574d0`, flag `[0x835a4c]`): gates both the zone
-    /// preset (`0x45a75b`) and the per-channel wet send (`0x458f13`). Read by
-    /// [`reverb::zone_reverb`].
-    ///
-    /// Deviation: default off where the reference registers "1". Its reverb is FMOD 3's EAX API,
-    /// which renders only with hardware 3D mixing, so off is what the reference is heard to
-    /// produce (inferred: `fmod.dll`'s render side is untraced).
+    /// `Sound_EnableReverb` (default "0", `0x4d125b`): gates both the zone preset and the
+    /// per-channel wet send. Read by [`reverb::zone_reverb`].
     pub reverb: bool,
     /// Not a CVar: set while the loading cover is up ([`feed_world_hold`]). No new sound starts
     /// and the zone beds stay down, since the reference blocks on its world load; sounds already
@@ -119,17 +115,17 @@ pub(crate) struct SoundConfig {
     /// kits are limited rather than clipped. The reference has no headroom mechanism and clips at
     /// full scale, as kira's hard clamp would (see [`limiter`]).
     pub limiter: bool,
-    /// `SoundListenerAtCharacter` (default "1", `0x457890`), read once per frame at `0x483125`.
+    /// `Sound_ListenerAtCharacter` (default "1", `0x4d17c5`), read once per frame at `0x483125`.
     /// `1` puts the listener on the mover with the character's facing, `0` at the camera eye with
     /// its basis; position and orientation always move together, with no velocity. A cinematic
     /// overrides it (`0x483112`, checked first).
     pub listener_at_character: bool,
-    /// `EmoteSounds` (default "1", `0x4573b9`): gates only the received text-emote voice line
+    /// `Sound_EnableEmoteSounds` (default "1", `0x4d17e5`): gates only the received text-emote voice line
     /// ([`emote::emote_sounds`]); a zero fetches no kit at all. The reference's check sits in
     /// `0x623c80` or on the shared `0x623c10` leg, which `$CSD` also enters; which one is
     /// untraced, and benilla gates the received path alone.
     pub emote_sounds: bool,
-    /// `SoundZoneMusicNoDelay` (default "0", `0x4578b3`), the panel's "Loop Music": drops the
+    /// `Sound_ZoneMusicNoDelay` (default "0", `0x4d1808`), the panel's "Loop Music": drops the
     /// `ZoneMusic.dbc` silence interval between plays of one zone's track
     /// ([`zone::next_track_time`], `0x4601f0`). A zone change is immediate either way.
     pub zone_music_no_delay: bool,
@@ -142,7 +138,7 @@ impl SoundConfig {
             return 0.0;
         }
         match cat {
-            kit::SoundCategory::Sfx => self.sfx,
+            kit::SoundCategory::Sfx if self.sfx_enabled => self.sfx,
             kit::SoundCategory::Music if self.music_enabled => self.music,
             kit::SoundCategory::Ambience if self.ambience_enabled => self.ambience,
             _ => 0.0,
@@ -157,6 +153,7 @@ impl Default for SoundConfig {
             muted: false,
             master: 1.0,
             sfx: 1.0,
+            sfx_enabled: true,
             music: 0.4,
             ambience: 0.6,
             music_enabled: true,
@@ -323,20 +320,21 @@ pub(crate) struct SoundPlugin;
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut sound: ResMut<SoundConfig>) {
     let v = ev.num();
     match ev.key().as_str() {
-        "mastervolume" => sound.master = v.clamp(0.0, 1.0),
-        "soundvolume" => sound.sfx = v.clamp(0.0, 1.0),
-        "musicvolume" => sound.music = v.clamp(0.0, 1.0),
-        "ambiencevolume" => sound.ambience = v.clamp(0.0, 1.0),
-        "mastersoundeffects" => sound.enabled = v != 0.0,
-        "enablemusic" => sound.music_enabled = v != 0.0,
-        "enableambience" => sound.ambience_enabled = v != 0.0,
-        "enableerrorspeech" => sound.error_speech = v != 0.0,
+        "sound_mastervolume" => sound.master = v.clamp(0.0, 1.0),
+        "sound_sfxvolume" => sound.sfx = v.clamp(0.0, 1.0),
+        "sound_musicvolume" => sound.music = v.clamp(0.0, 1.0),
+        "sound_ambiencevolume" => sound.ambience = v.clamp(0.0, 1.0),
+        "sound_enableallsound" => sound.enabled = v != 0.0,
+        "sound_enablesfx" => sound.sfx_enabled = v != 0.0,
+        "sound_enablemusic" => sound.music_enabled = v != 0.0,
+        "sound_enableambience" => sound.ambience_enabled = v != 0.0,
+        "sound_enableerrorspeech" => sound.error_speech = v != 0.0,
         "sound_enablesoundwhengameisinbg" => sound.background_sound = v != 0.0,
-        "soundreverb" => sound.reverb = v != 0.0,
+        "sound_enablereverb" => sound.reverb = v != 0.0,
         "soundoutputlimiter" => sound.limiter = v != 0.0,
-        "soundlisteneratcharacter" => sound.listener_at_character = v != 0.0,
-        "emotesounds" => sound.emote_sounds = v != 0.0,
-        "soundzonemusicnodelay" => sound.zone_music_no_delay = v != 0.0,
+        "sound_listeneratcharacter" => sound.listener_at_character = v != 0.0,
+        "sound_enableemotesounds" => sound.emote_sounds = v != 0.0,
+        "sound_zonemusicnodelay" => sound.zone_music_no_delay = v != 0.0,
         _ => {}
     }
 }

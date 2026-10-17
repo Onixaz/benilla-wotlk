@@ -89,26 +89,23 @@ pub(super) enum UiFixture {
     /// The social pane (`FriendsFrame`) opened through the live toggle. Its `FriendsDropDown` has
     /// no anchors, as in the reference, and must draw nothing at the screen origin.
     Social,
-    /// Our Options window opened through the live panel path, Controls selected by default.
+    /// The stock Video options window opened through the live panel path, on its first panel.
     Options,
-    /// The Options window on the Audio page. The options fixtures read the CVar registration
-    /// defaults, since a capture loads no config file.
+    /// The stock Sound & Voice window. The options fixtures read the CVar registration defaults,
+    /// since a capture loads no config file.
     OptionsAudio,
-    /// The Options window on the Graphics page.
+    /// The Video window's Effects panel.
     OptionsGraphics,
-    /// The Options window on the Chat page (1.12's `CHAT_LABEL`), whose rows mix a saved variable
-    /// and CVars in one column.
+    /// The Interface window's Social panel, whose rows mix CVars and dropdowns.
     OptionsChat,
     /// The colour picker seeded at a known colour, so the wheel and brightness markers, on art this
     /// client generates, sit somewhere checkable.
     ColorPicker,
-    /// The Controls page with the Camera Following Style dropdown open: `DropDownList1` at the
-    /// window's effective scale, the stored entry checked.
+    /// The Interface window's Camera panel with the Camera Following Style dropdown open:
+    /// `DropDownList1` at the window's effective scale, the stored entry checked.
     OptionsDropdownList,
-    /// The Options window mid-search: "volume" lists the four volume sliders under the Audio head.
-    OptionsSearch,
-    /// The Options window's Keybindings page, Movement expanded, over the stock commands and
-    /// default bindings the load read off the install, and GlobalStrings.
+    /// The stock Key Bindings window (`Blizzard_BindingUI`) over the commands and default
+    /// bindings the load read off the install.
     KeyBindings,
     /// An overhead name with the river behind it: a named unit 25 yd out in the Elwynn river (the
     /// `water-noon` camera). Deep water is opaque (`WATER_DEEP_ALPHA` 1.0), so a name sorted before
@@ -925,14 +922,6 @@ pub(super) const ON_DEMAND: &[Scenario] = &[
         look: GROUND_LOOK,
         minute: 720,
         ui: Some(UiFixture::KeyBindings),
-    },
-    Scenario {
-        name: "ui-options-search",
-        map: Some(MAP_AZEROTH),
-        eye: GROUND_EYE,
-        look: GROUND_LOOK,
-        minute: 720,
-        ui: Some(UiFixture::OptionsSearch),
     },
     // Same camera as `water-noon`, plus a named unit out in the water.
     Scenario {

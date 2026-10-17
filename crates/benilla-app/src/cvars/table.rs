@@ -201,6 +201,136 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("projectedTextures", "0"),
     same("textureFilteringMode", "1"),
     same("componentTextureLevel", "8"),
+    // The sound system's (`SI2::RegisterCVars`): the chat-duck volumes and the listener seat.
+    same("ChatMusicVolume", "0.3"),
+    same("ChatSoundVolume", "0.4"),
+    same("ChatAmbienceVolume", "0.3"),
+    same("Sound_ListenerAtCharacter", "1"),
+    // The Interface panels' rows (`0x51dc20`-`0x51f239`); flags 0x20 are per character.
+    same("stopAutoAttackOnTargetChange", "0").per_character(),
+    same("showTargetOfTarget", "0"),
+    same("targetOfTargetMode", "5"),
+    same("showTargetCastbar", "1"),
+    same("showVKeyCastbar", "1"),
+    same("rotateMinimap", "0"),
+    same("scriptErrors", "0"),
+    same("screenEdgeFlash", "1"),
+    same("displayFreeBagSlots", "0"),
+    same("displayWorldPVPObjectives", "1"),
+    same("showClock", "1"),
+    same("colorblindMode", "0"),
+    same("questFadingDisable", "1"),
+    same("autoQuestWatch", "1"),
+    same("autoQuestProgress", "1"),
+    same("mapQuestDifficulty", "0").per_character(),
+    same("advancedWorldMap", "0").per_character(),
+    same("watchFrameWidth", "0"),
+    same("removeChatDelay", "0"),
+    same("guildRecruitmentChannel", "1"),
+    same("showTimestamps", "none"),
+    same("lockActionBars", "1"),
+    same("alwaysShowActionBars", "0"),
+    same("secureAbilityToggle", "1"),
+    same("CombatHealing", "1"),
+    same("enableCombatText", "1"),
+    same("combatTextFloatMode", "1"),
+    same("fctCombatState", "0"),
+    same("fctDodgeParryMiss", "0"),
+    same("fctDamageReduction", "0"),
+    same("fctRepChanges", "0"),
+    same("fctReactives", "0"),
+    same("fctFriendlyHealers", "0"),
+    same("fctComboPoints", "0"),
+    same("fctLowManaHealth", "1"),
+    same("fctEnergyGains", "0"),
+    same("fctPeriodicEnergyGains", "0"),
+    same("fctHonorGains", "0"),
+    same("fctAuras", "0"),
+    same("fctSpellMechanics", "0"),
+    same("fctSpellMechanicsOther", "0"),
+    same("xpBarText", "0"),
+    same("playerStatusText", "0"),
+    same("petStatusText", "0"),
+    same("partyStatusText", "0"),
+    same("targetStatusText", "0"),
+    same("statusTextPercentage", "0"),
+    same("showPartyBackground", "0"),
+    same("hidePartyInRaid", "0"),
+    same("showPartyPets", "1").per_character(),
+    same("showRaidRange", "0").per_character(),
+    same("showArenaEnemyFrames", "1").per_character(),
+    same("showArenaEnemyCastbar", "1").per_character(),
+    same("showArenaEnemyPets", "1").per_character(),
+    same("fullSizeFocusFrame", "0").per_character(),
+    same("buffDurations", "1"),
+    same("showDispelDebuffs", "0").per_character(),
+    same("showCastableBuffs", "0").per_character(),
+    same("consolidateBuffs", "0").per_character(),
+    same("showCastableDebuffs", "0").per_character(),
+    same("showToastOnline", "1"),
+    same("showToastOffline", "1"),
+    same("showToastBroadcast", "1"),
+    same("showToastFriendRequest", "1"),
+    same("showToastConversation", "1"),
+    same("showToastWindow", "1"),
+    same("toastDuration", "4"),
+    same("showNewbieTips", "1"),
+    same("showItemLevel", "0"),
+    same("showTutorials", "1"),
+    same("nameplateShowEnemyPets", "1").per_character(),
+    same("nameplateShowEnemyGuardians", "1").per_character(),
+    same("nameplateShowEnemyTotems", "1").per_character(),
+    same("nameplateShowFriendlyPets", "1").per_character(),
+    same("nameplateShowFriendlyGuardians", "1").per_character(),
+    same("nameplateShowFriendlyTotems", "1").per_character(),
+    same("nameplateAllowOverlap", "1").per_character(),
+    // `nameplateShowEnemies`/`nameplateShowFriends` (`0x51ebbe`/`0x51ec4c`) stay out until the
+    // plates follow them: `vplates` still keeps the two script bits FrameXML saves.
+    same("PushToTalkSound", "0"),
+    same("timeMgrAlarmEnabled", "0"),
+    same("threatShowNumeric", "0"),
+    same("threatPlaySounds", "1"),
+    same("ShowClassColorInNameplate", "0").per_character(),
+    same("previewTalents", "0").per_character(),
+    // Voice chat (`0x4d10f4`-`0x4d12e7`): with no voice, these hold the panel's state only.
+    same("OutboundChatVolume", "1.0"),
+    same("InboundChatVolume", "1.0"),
+    same("VoiceChatMode", "0"),
+    same("VoiceActivationSensitivity", "0.4"),
+    same("EnableMicrophone", "1"),
+    same("EnableVoiceChat", "0"),
+    same("PushToTalkButton", "`"),
+    same("Sound_VoiceChatInputDriverIndex", "0"),
+    same("Sound_VoiceChatOutputDriverIndex", "0"),
+    // The Names panel's unit-name rows (`0x7e61f1`-`0x7e630f`).
+    same("UnitNameEnemyPlayerName", "1"),
+    same("UnitNameEnemyPetName", "1"),
+    same("UnitNameEnemyGuardianName", "0"),
+    same("UnitNameEnemyTotemName", "0"),
+    same("UnitNameFriendlyPlayerName", "1"),
+    same("UnitNameFriendlyPetName", "1"),
+    same("UnitNameFriendlyGuardianName", "0"),
+    same("UnitNameFriendlyTotemName", "0"),
+    same("UnitNameNonCombatCreatureName", "0"),
+    // The Controls and Combat panels' rows (`0x51da81`-`0x51dbd3`).
+    same("autoDismountFlying", "0"),
+    same("lootUnderMouse", "1"),
+    same("equipmentManager", "0").per_character(),
+    same("autoRangedCombat", "1"),
+    // The camera's pitch follow speed, which the Mouse panel's Save writes beside the yaw one.
+    same("cameraPitchSmoothSpeed", "45"),
+    // The WowMouse switch (`0x5fd355`).
+    same("enableWowMouse", "0"),
+    // `locale` (`0x4068c6`): the boot writes the install's locale over the registered "****";
+    // benilla is enUS-only. `useEnglishAudio` (`0x40690f`, "0").
+    overridden(
+        "locale",
+        "enUS",
+        "****",
+        "the boot writes the running locale over it before the first frame, and benilla \
+         reads enUS alone",
+    ),
+    same("useEnglishAudio", "0"),
 ];
 
 /// The host-backed CVars, one row per knob that has a reader: a host knob, or a Lua consumer
@@ -230,32 +360,9 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // forward/back, strafe and turn (`0x513d36`/`0x514e23`/`0x514f0b`/`0x514fca`). Off, the clear
     // does nothing at all: no echo, no mirror write, no packet.
     same("autoClearAFK", "1"),
-    same("MasterVolume", "1"),
-    same("SoundVolume", "1"),
-    same("MusicVolume", "0.4"),
-    same("AmbienceVolume", "0.6"),
-    // Registered "1" at `0x45737a`/`0x45739b`/`0x460a9d`. `MasterSoundEffects` is the Enable All
-    // Sound box (`SoundOptionsFrame.lua:6`), which pauses the whole sound engine, not an SFX
-    // toggle.
-    same("MasterSoundEffects", "1"),
-    same("EnableMusic", "1"),
-    same("EnableAmbience", "1"),
-    // The race/sex refusal voice lines (`0x457877`), `SoundOptionsFrame.lua:3`; the master enable
-    // greys it.
-    same("EnableErrorSpeech", "1"),
-    // Not a 1.12 CVar or checkbox; the later-era name. The reference mutes on losing focus, music
-    // included (`WM_ACTIVATE` to `0x7a4860`'s `FSOUND_SetMute(-3, active ? 0 : 1)`), so "0" is its
-    // behaviour. The knob is `SoundConfig::background_sound`.
+    // `0x4d18c1`, "0": the reference mutes on losing focus. The knob is
+    // `SoundConfig::background_sound`.
     same("Sound_EnableSoundWhenGameIsInBG", "0"),
-    // Registered "1" (`0x4573be`); `SoundConfig::reverb` carries the evidence for shipping "0".
-    deviates(
-        "SoundReverb",
-        "0",
-        "1",
-        "the reference's reverb is EAX-over-hardware, and that hardware has not existed since \
-         Vista, so \"1\" would ship audio the real client has never actually produced on any \
-         machine a player runs today",
-    ),
     // FMOD 3's mix-ahead buffer in ms (`0x4571ca`, flags 2: read once at sound init); here it sizes
     // the render thread's ring ahead of the IO callback (`sound::output`). `0x457520` registers
     // "50" or "100" by a host probe (`0x835e10`/`0x835e0c`), which one on a current machine
@@ -378,12 +485,8 @@ pub(crate) const REGISTERED: &[Registered] = &[
         crate::player::camera_view::VIEW_DEFAULTS[4][2],
     ),
     same("mouseInvertPitch", "0"),
-    ours(
-        "autoLootDefault",
-        "0",
-        "1.12 has no auto-loot CVar at all — vanilla offers only the shift gesture, so OFF \
-         IS the reference's own behaviour; the spelling is era's",
-    ),
+    // `autoLootDefault` (`0x51db43`, "0"): a loot opens without the auto-loot modifier's sweep.
+    same("autoLootDefault", "0"),
     // The overhead-name gates, registered at `0x6c7470` into mask `0xce8720`: `UnitNamePlayer`
     // (`0x86c694`) "1" (`0x82e748`), `UnitNameNPC` (`0x86c6a4`) and `UnitNameOwn` (`0x86c6b0`) "0"
     // (`0x82e570`).
@@ -451,17 +554,6 @@ pub(crate) const REGISTERED: &[Registered] = &[
     same(crate::ui_chat::combat::LOG_PERIODIC_CVAR, "1"),
     // `combatLogRetentionTime` (`0x51efed`): seconds the combat log keeps an entry (`0x750400`).
     same(benilla_ui::script::RETENTION_CVAR, "300"),
-    // ── Sound-panel check buttons ────────────────────────────────────────────────────────────────
-    //
-    // Category-7 registrations that keep no handle: the reference looks each up by name at use.
-    //
-    // `SoundListenerAtCharacter` (`0x457890`): the listener at the character, else at the camera
-    // (`update_audio_listener`).
-    same("SoundListenerAtCharacter", "1"),
-    // `EmoteSounds` (`0x4573b9`): the received text-emote voice kit, and only that.
-    same("EmoteSounds", "1"),
-    // `SoundZoneMusicNoDelay` (`0x4578b3`): `next_track_time`'s immediate path.
-    same("SoundZoneMusicNoDelay", "0"),
     // `assistAttack` (`0x48fc50`, record `[0xb4d8f8]`): `/assist` also starts the swing. The "3"
     // beside it is the next registration's, `minimapZoom`: stock `/assist` selects without
     // swinging.
@@ -543,9 +635,9 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // Enhanced Tooltips (`UIOptionsFrame.lua:15`), registered "1" at `0x48fddd` (`0x82e748`); read
     // only by the stock interface.
     same("UberTooltips", "1"),
-    // Registered at `0x603280`: `ChatBubbles` "1", `ChatBubblesParty` "0".
+    // `chatBubbles` (`0x51e16a`) and `chatBubblesParty` (`0x51e192`), both "1".
     same("ChatBubbles", "1"),
-    same("ChatBubblesParty", "0"),
+    same("ChatBubblesParty", "1"),
     // Registered "1" (`0x82e748`), category 4. `profanityFilter` (`0x402e68`, name `0x82e7f4`,
     // callback `0x403570`) masks `ChatProfanity.dbc` spans inside the shared masker `0x4a1a66`,
     // covering all thirteen call sites; `spamFilter` (`0x402e8e`, name `0x82e7d4`, callback

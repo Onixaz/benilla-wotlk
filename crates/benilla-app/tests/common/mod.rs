@@ -218,10 +218,8 @@ const UIPARENT_STAND_INS: &str = r#"
     -- loads no options window raised on the first bag click. In the shipped manifest all four
     -- names are real, and all three options windows are the REFERENCE's own files,
     -- loaded hidden — including `OptionsFrame`, the video window, which used to be our own
-    -- window's name. Ours is `BenillaOptionsFrame` now and is not in this list: it is not a name
-    -- the reference indexes, and the wrappers in `GameMenuAdapters.xml` are what tell these two
-    -- functions about it. A KIT is a prefix of the manifest and may load none of the four, which
-    -- is what these stand-ins are for.
+    -- window's name. A KIT is a prefix of the manifest and may load none of the four, which is
+    -- what these stand-ins are for.
     local function benilla_seat_options()
         benilla_seat({ "GameMenuFrame", "OptionsFrame", "UIOptionsFrame", "SoundOptionsFrame" })
         if not OptionsFrameCancel then

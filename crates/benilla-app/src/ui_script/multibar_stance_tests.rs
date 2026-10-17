@@ -43,8 +43,6 @@ fn load_action_bar(s: &UiScript, extra: &[&str]) -> usize {
             r"Interface\FrameXML\ReputationFrame.xml",
             "Interface\\FrameXML\\BonusActionBarFrame.xml",
             "ScrollTemplates.xml",
-            "KeyBindingsPage.xml",
-            "OptionsFrame.xml",
         ],
         extra,
     ]) {
@@ -439,8 +437,6 @@ fn multibar_hover_renders_the_buttons_own_action() {
         r"Interface\FrameXML\ReputationFrame.xml",
         "Interface\\FrameXML\\BonusActionBarFrame.xml",
         "ScrollTemplates.xml",
-        "KeyBindingsPage.xml",
-        "OptionsFrame.xml",
     ] {
         load_xml(&s, file);
     }
@@ -951,39 +947,6 @@ fn a_bar_toggle_sends_the_byte_its_globals_pack_to() {
     assert!(
         s.take_action_bar_toggle_sends().is_empty(),
         "the seed READS — a login must not post the byte back at the server"
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-}
-
-/// Deviation: the Action Bars row passes `SetActionBarToggles` four arguments, not the fifth
-/// `ALWAYS_SHOW_MULTIBARS` that `UIOptionsFrame_Save` adds (UIOptionsFrame.lua:363), because the
-/// binding never reads it (`0x4e770e cmp esi,4`) and passing it makes the grid option look
-/// server-backed. A fifth argument is invisible from outside, so a Lua spy replaces the binding.
-#[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn the_shipped_setter_passes_exactly_four_arguments() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s, &[]);
-
-    // Lua 5.0's `arg.n`: `...` as a value is not in the 1.12 client's grammar.
-    s.run(
-        r#"
-        BENILLA_TEST_TOGGLE_ARGC = nil
-        function SetActionBarToggles(...)
-            BENILLA_TEST_TOGGLE_ARGC = arg.n
-        end
-        "#,
-    )
-    .unwrap();
-    // The row's setter (our OptionsFrame.xml) calls `SetActionBarToggles`.
-    s.run("BenillaOptionsFrameContainerBodyActionBarsRowMultiBar2Check:Click()")
-        .unwrap();
-    assert_eq!(
-        s.eval::<i64>("return BENILLA_TEST_TOGGLE_ARGC").unwrap(),
-        4,
-        "four — never the reference's five, which the binding drops on the floor"
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }

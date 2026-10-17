@@ -28,6 +28,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     ] {
         g.set(name, lua.create_function(|_, ()| Ok(0))?)?;
     }
+    // `0x5377c0` and `0x5376c0`: without a Real ID connection both return no value and set nothing.
+    for name in ["BNGetMatureLanguageFilter", "BNSetMatureLanguageFilter"] {
+        g.set(
+            name,
+            lua.create_function(|_, _: mlua::MultiValue| Ok(mlua::MultiValue::new()))?,
+        )?;
+    }
     Ok(())
 }
 

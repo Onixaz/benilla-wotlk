@@ -919,6 +919,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     death::install(lua)?;
     aura::install(lua)?;
     cvars::install(lua)?;
+    sound::install_voice(lua)?;
     combat_log::install(lua)?;
     battle_net::install(lua)?;
     autocomplete::install(lua)?;

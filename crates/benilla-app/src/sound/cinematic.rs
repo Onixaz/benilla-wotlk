@@ -113,7 +113,7 @@ fn narrate(
     };
     // No category slider applies: the narration opens (`0x48ef29` → `0x458a40` → `0x45ce60`)
     // with flags `0x15`, and bit `0x10` skips the category multiply at `0x7a5dc0`, so its gain is
-    // the kit volume flat. Only bit `0x2` bypasses the `MasterSoundEffects` gate (`0x7a529c`),
+    // the kit volume flat. Only bit `0x2` bypasses the `Sound_EnableAllSound` gate (`0x7a529c`),
     // so "Enable Sound Effects" still silences it; that gate rides the master track, which
     // re-reads `SoundConfig::enabled` every frame, never this starting amp.
     let amp = kit_vol;

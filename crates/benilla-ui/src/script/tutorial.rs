@@ -60,6 +60,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // `CanResetTutorials()` (`0x530700`): 1 if any word of the bank is non-zero, else nil.
+    g.set(
+        "CanResetTutorials",
+        lua.create_function(|lua, _: mlua::MultiValue| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let any = model
+                .tutorial_bank
+                .as_ref()
+                .is_some_and(|b| b.iter().any(|&byte| byte != 0));
+            Ok(flag(any))
+        })?,
+    )?;
+
     // `FlagTutorial(n)` (`0x4b59b0`): a non-number raises the reference's usage text, which asks
     // for a string; truncated, an `n − 1` outside `0..0x32` is a silent no-op.
     g.set(

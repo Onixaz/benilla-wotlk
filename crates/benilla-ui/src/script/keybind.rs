@@ -450,6 +450,34 @@ pub(crate) fn run_command(lua: &Lua, command: &str, down: bool) -> mlua::Result<
     ran.map(|()| true)
 }
 
+/// A chord and its modifier reductions in `GetReducedKeyBinding`'s order (`0x5622e0`): up to three
+/// `MOD-` prefixes, every subset tried from all of them down to the bare key.
+fn reduced_keys(key: &str) -> Vec<String> {
+    let mut mods = Vec::new();
+    let mut rest = key;
+    while mods.len() < 3 {
+        match rest.find('-') {
+            Some(i) if i > 0 => {
+                mods.push(&rest[..=i]);
+                rest = &rest[i + 1..];
+            }
+            _ => break,
+        }
+    }
+    const MASKS: [&[u8]; 4] = [&[0], &[1, 0], &[3, 2, 1, 0], &[7, 6, 5, 3, 4, 2, 1, 0]];
+    MASKS[mods.len()]
+        .iter()
+        .map(|&mask| {
+            let mut k: String = (0..mods.len())
+                .filter(|j| mask & (1 << j) != 0)
+                .map(|j| mods[j])
+                .collect();
+            k.push_str(rest);
+            k
+        })
+        .collect()
+}
+
 /// The binding globals. `GetBinding(i)` answers the row's name and then every key bound to it
 /// (`0x4b7f60`: `1 + matches` values), so a `HEADER_*` row answers its name alone, which the stock
 /// window reads as three names (`Blizzard_BindingUI.lua:84`, `:87`). Only `GetNumBindings` and
@@ -536,6 +564,40 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             lua.create_string(name)
         })?,
     )?;
+    // `GetBindingByKey(key[, mode])` (`0x5625f0`): the command bound to `key` or to its first
+    // modifier reduction that has one (`0x5622e0`), else no value.
+    lua.globals().set(
+        "GetBindingByKey",
+        lua.create_function(|lua, args: MultiValue| {
+            let key = match args.front() {
+                Some(Value::String(s)) => s.to_string_lossy(),
+                Some(Value::Integer(i)) => i.to_string(),
+                Some(Value::Number(n)) => super::binding_abi::lua_number_text(*n),
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "Usage: GetBindingByKey(\"action\"[, mode])",
+                    ))
+                }
+            };
+            let model = crate::script::model_mut_of(lua);
+            let found = reduced_keys(&key.to_ascii_uppercase())
+                .into_iter()
+                .find_map(|k| {
+                    model
+                        .keybinds
+                        .live
+                        .iter()
+                        .find(|(bound, _)| *bound == k)
+                        .map(|(_, c)| c.clone())
+                });
+            match found {
+                Some(c) => Ok(MultiValue::from_iter([Value::String(
+                    lua.create_string(c)?,
+                )])),
+                None => Ok(MultiValue::new()),
+            }
+        })?,
+    )?;
     lua.globals().set(
         "LoadBindings",
         lua.create_function(|lua, set: u32| {
@@ -564,9 +626,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_bindings_wtf, KeybindRequest};
+    use super::{parse_bindings_wtf, reduced_keys, KeybindRequest};
     use crate::bindings_xml::parse;
     use crate::script::UiScript;
+
+    /// The reduction tries every modifier subset, most first, ending on the bare key.
+    #[test]
+    fn a_chord_reduces_through_its_modifier_subsets() {
+        assert_eq!(reduced_keys("W"), ["W"]);
+        assert_eq!(reduced_keys("SHIFT-W"), ["SHIFT-W", "W"]);
+        assert_eq!(
+            reduced_keys("ALT-CTRL-W"),
+            ["ALT-CTRL-W", "CTRL-W", "ALT-W", "W"]
+        );
+        assert_eq!(reduced_keys("-"), ["-"]);
+    }
 
     /// Three commands in the reference's shape, bodies counting their runs, and their defaults.
     const CORE: &str = r#"<Bindings>

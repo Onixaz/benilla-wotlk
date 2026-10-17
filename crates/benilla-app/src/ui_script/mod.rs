@@ -919,18 +919,10 @@ mod tooltip_template_tests;
 mod escape_tests;
 
 #[cfg(test)]
-mod game_menu_addon_tests;
-#[cfg(test)]
-mod game_menu_tests;
-
-#[cfg(test)]
 mod macro_tests;
 
-// `pub(crate)` for `harness`, `on_page` and `label`, which the bindings dispatch tests use.
 #[cfg(test)]
-pub(crate) mod keybindings_tests;
-#[cfg(test)]
-mod options_tests;
+mod keybindings_tests;
 
 #[cfg(test)]
 mod delete_item_tests;
@@ -1072,9 +1064,8 @@ mod errors_tests;
 #[cfg(test)]
 mod shipped_xml_tests;
 
-/// The stock Video Options window off the chain: open, Okay, Defaults and Cancel.
 #[cfg(test)]
-mod video_options_tests;
+mod stock_options_tests;
 
 #[cfg(test)]
 mod bottom_hud_tests;

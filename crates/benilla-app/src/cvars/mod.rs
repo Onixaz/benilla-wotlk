@@ -981,7 +981,6 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "SoundReverb",
                 "frillDensity",
                 "gxApi",
                 "gxColorBits",
@@ -997,19 +996,28 @@ mod tests {
     /// checked in [`the_string_valued_cvars_are_the_realm_and_the_windowed_size`].
     #[test]
     fn registered_defaults_mirror_the_code_truths() {
-        let d: BTreeMap<&str, f32> = REGISTERED
-            .iter()
+        let d: BTreeMap<&str, f32> = registered_rows()
             .filter_map(|r| r.default.parse::<f32>().ok().map(|f| (r.name, f)))
             .collect();
         let sound = SoundConfig::default();
-        assert_eq!(d["MasterVolume"], sound.master);
-        assert_eq!(d["SoundVolume"], sound.sfx);
-        assert_eq!(d["MusicVolume"], sound.music);
-        assert_eq!(d["AmbienceVolume"], sound.ambience);
-        assert_eq!(d["MasterSoundEffects"] != 0.0, sound.enabled);
-        assert_eq!(d["EnableMusic"] != 0.0, sound.music_enabled);
-        assert_eq!(d["EnableAmbience"] != 0.0, sound.ambience_enabled);
-        assert_eq!(d["EnableErrorSpeech"] != 0.0, sound.error_speech);
+        assert_eq!(d["Sound_MasterVolume"], sound.master);
+        assert_eq!(d["Sound_SFXVolume"], sound.sfx);
+        assert_eq!(d["Sound_MusicVolume"], sound.music);
+        assert_eq!(d["Sound_AmbienceVolume"], sound.ambience);
+        assert_eq!(d["Sound_EnableAllSound"] != 0.0, sound.enabled);
+        assert_eq!(d["Sound_EnableSFX"] != 0.0, sound.sfx_enabled);
+        assert_eq!(d["Sound_EnableMusic"] != 0.0, sound.music_enabled);
+        assert_eq!(d["Sound_EnableAmbience"] != 0.0, sound.ambience_enabled);
+        assert_eq!(d["Sound_EnableErrorSpeech"] != 0.0, sound.error_speech);
+        assert_eq!(
+            d["Sound_ListenerAtCharacter"] != 0.0,
+            sound.listener_at_character
+        );
+        assert_eq!(d["Sound_EnableEmoteSounds"] != 0.0, sound.emote_sounds);
+        assert_eq!(
+            d["Sound_ZoneMusicNoDelay"] != 0.0,
+            sound.zone_music_no_delay
+        );
         assert_eq!(
             d["Sound_EnableSoundWhenGameIsInBG"] != 0.0,
             sound.background_sound
@@ -1018,7 +1026,7 @@ mod tests {
             !sound.background_sound,
             "the reference goes quiet in the background and offers no way out"
         );
-        assert_eq!(d["SoundReverb"] != 0.0, sound.reverb);
+        assert_eq!(d["Sound_EnableReverb"] != 0.0, sound.reverb);
         assert_eq!(d["SoundOutputLimiter"] != 0.0, sound.limiter);
         assert!(sound.limiter, "the output limiter ships on");
         assert!(!sound.reverb, "zone reverb ships off");
@@ -1135,7 +1143,7 @@ mod tests {
         let bubbles = BubbleConfig::default();
         assert_eq!(d["ChatBubbles"] != 0.0, bubbles.all);
         assert_eq!(d["ChatBubblesParty"] != 0.0, bubbles.party);
-        assert!(bubbles.all && !bubbles.party, "the binary's own pair");
+        assert!(bubbles.all && bubbles.party, "the binary's own pair");
         let zoom = MinimapZoom::default();
         assert_eq!(d["minimapZoom"], f32::from(zoom.outdoor));
         assert_eq!(d["minimapInsideZoom"], f32::from(zoom.inside));
@@ -1197,7 +1205,7 @@ mod tests {
     #[test]
     fn the_observers_apply_every_arm() {
         let mut app = cvar_app();
-        apply(&mut app, "MusicVolume", "0.7");
+        apply(&mut app, "Sound_MusicVolume", "0.7");
         assert_eq!(res::<SoundConfig>(&app).music, 0.7);
         // A string row reaches its knob; a value that is not an address leaves the knob alone.
         apply(&mut app, "realmList", "logon.example.org:3724");
@@ -1285,9 +1293,11 @@ mod tests {
         apply(&mut app, "fpsjournal", "0");
         assert!(!res::<crate::perf::FpsJournalSetting>(&app).0);
         // Enable flags: any nonzero is on, zero is off (the client's int-parse + != 0).
-        apply(&mut app, "EnableMusic", "0");
+        apply(&mut app, "Sound_EnableMusic", "0");
         assert!(!res::<SoundConfig>(&app).music_enabled);
-        apply(&mut app, "mastersoundeffects", "1");
+        apply(&mut app, "Sound_EnableSFX", "0");
+        assert!(!res::<SoundConfig>(&app).sfx_enabled);
+        apply(&mut app, "sound_enableallsound", "1");
         assert!(res::<SoundConfig>(&app).enabled);
         apply(&mut app, "deselectonclick", "0");
         assert!(!res::<ClickConfig>(&app).deselect_on_click);
@@ -1567,11 +1577,17 @@ mod tests {
             ]
             .into(),
         );
-        cvars.set("MusicVolume", "0.7"); // moved: written
+        cvars.set("Sound_MusicVolume", "0.7"); // moved: written
         cvars.set("farclip", "350"); // back to default: removed
         let out = cvars.compose();
-        assert_eq!(out.get("MusicVolume").map(String::as_str), Some("0.7"));
-        assert!(!out.contains_key("MasterVolume"), "at default: absent");
+        assert_eq!(
+            out.get("Sound_MusicVolume").map(String::as_str),
+            Some("0.7")
+        );
+        assert!(
+            !out.contains_key("Sound_MasterVolume"),
+            "at default: absent"
+        );
         assert_eq!(out.get("uiScale").map(String::as_str), Some("0.8"));
         assert!(!out.contains_key("farclip"));
         assert_eq!(out.get("FutureKnob").map(String::as_str), Some("3"));
@@ -1619,7 +1635,7 @@ mod tests {
         app.update();
         app.world_mut()
             .non_send_resource_mut::<UiScript>()
-            .run(r#"SetCVar("MusicVolume", 0.75)"#)
+            .run(r#"SetCVar("Sound_MusicVolume", 0.75)"#)
             .unwrap();
         app.update();
         assert!(
@@ -1635,7 +1651,7 @@ mod tests {
         }
         app.update();
         let text = std::fs::read_to_string(tmp.join("config.toml")).unwrap();
-        assert!(text.contains("MusicVolume = \"0.75\""), "{text}");
+        assert!(text.contains("Sound_MusicVolume = \"0.75\""), "{text}");
         assert!(!app.world().resource::<Cvars>().dirty);
         assert!(app.should_exit().is_none());
         std::fs::remove_dir_all(&tmp).ok();
@@ -1656,7 +1672,7 @@ mod tests {
         let _h = EnvGuard::set("BENILLA_HOME", tmp.to_str().unwrap());
         crate::local_state::write_atomic(
             &tmp.join("config.toml"),
-            "[cvars]\nMusicVolume = \"0.1\"\n",
+            "[cvars]\nSound_MusicVolume = \"0.1\"\n",
         )
         .unwrap();
 
@@ -1668,7 +1684,7 @@ mod tests {
         assert_eq!(
             app.world_mut()
                 .non_send_resource_mut::<UiScript>()
-                .cvar("MusicVolume")
+                .cvar("Sound_MusicVolume")
                 .as_deref(),
             Some("0.1")
         );
@@ -1676,7 +1692,7 @@ mod tests {
         // The Lua write (what a settings slider will do) reaches the knob on the next frame…
         app.world_mut()
             .non_send_resource_mut::<UiScript>()
-            .run(r#"SetCVar("MusicVolume", 0.75)"#)
+            .run(r#"SetCVar("Sound_MusicVolume", 0.75)"#)
             .unwrap();
         app.update();
         assert_eq!(app.world().resource::<SoundConfig>().music, 0.75);
@@ -1685,7 +1701,7 @@ mod tests {
         app.world_mut().write_message(AppExit::Success);
         app.update();
         let text = std::fs::read_to_string(tmp.join("config.toml")).unwrap();
-        assert!(text.contains("MusicVolume = \"0.75\""), "{text}");
+        assert!(text.contains("Sound_MusicVolume = \"0.75\""), "{text}");
         assert!(!text.contains("MasterVolume"), "defaults stay out:\n{text}");
         let back: LocalConfig = toml::from_str(&text).unwrap();
         assert_eq!(back.cvars.len(), 1, "a diff, not a dump: {text}");
@@ -1984,7 +2000,7 @@ mod tests {
     #[test]
     fn the_toml_round_trips() {
         let cfg = LocalConfig {
-            cvars: [("MusicVolume".to_string(), "0.7".to_string())].into(),
+            cvars: [("Sound_MusicVolume".to_string(), "0.7".to_string())].into(),
         };
         let text = format!("{HEADER}{}", toml::to_string(&cfg).unwrap());
         let back: LocalConfig = toml::from_str(&text).unwrap();
@@ -2098,8 +2114,8 @@ mod tests {
             Some("200")
         );
         assert!(!cvars.compose().contains_key("SoundBufferSize"));
-        assert_eq!(cvars.set("MusicVolume", "0.7"), SetOutcome::Changed);
-        assert_eq!(cvars.get("MusicVolume"), Some("0.7"));
+        assert_eq!(cvars.set("Sound_MusicVolume", "0.7"), SetOutcome::Changed);
+        assert_eq!(cvars.get("Sound_MusicVolume"), Some("0.7"));
         assert_eq!(cvars.take_events().len(), 1);
     }
 
@@ -2213,7 +2229,7 @@ mod tests {
         let _h = EnvGuard::set("BENILLA_HOME", tmp.to_str().unwrap());
         crate::local_state::write_atomic(
             &tmp.join("config.toml"),
-            "[cvars]\nMusicVolume = \"0.1\"\ngxMultisample = \"4\"\n",
+            "[cvars]\nSound_MusicVolume = \"0.1\"\ngxMultisample = \"4\"\n",
         )
         .unwrap();
         #[derive(Resource, Default)]

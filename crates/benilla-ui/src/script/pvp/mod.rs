@@ -361,6 +361,13 @@ pub(super) fn pvp_name(lua: &Lua, u: &super::UnitState, name: &str, player_level
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
+    // `GetNumArenaOpponents()` (`0x54a2c0`): the arena opponents' count, 0 outside an arena;
+    // `UIParent_ManageFramePositions` reads it on every panel move.
+    g.set(
+        "GetNumArenaOpponents",
+        lua.create_function(|_, _: mlua::MultiValue| Ok(0.0))?,
+    )?;
+
     // TogglePVP(): no argument in 1.12, as the opcode's one-byte state form has no binding.
     // Registered at `0x48d700`; the shipped UI calls it only from `SlashCmdList["PVP"]`.
     g.set(

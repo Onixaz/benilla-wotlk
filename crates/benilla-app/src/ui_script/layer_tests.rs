@@ -35,7 +35,7 @@ fn production_load(tag: &str, stock_ui: bool) -> (UiScript, Vec<String>) {
         std::fs::write(dir.join("ZZOrder.toc"), "## Interface: 30300\nprobe.lua\n").unwrap();
         std::fs::write(
             dir.join("probe.lua"),
-            "ZZORDER_SAW_LAYER = BenillaOptionsFrame ~= nil\n",
+            "ZZORDER_SAW_LAYER = BenillaScriptLogFrame ~= nil\n",
         )
         .unwrap();
     })
@@ -266,9 +266,6 @@ fn the_stock_ui_switch_boots_the_core_without_the_layer() {
     // One global from each layer file that defines a new one.
     for name in [
         "BenillaScrollBar_Step",
-        "BenillaKeyBindings_OnKeyDown",
-        "BenillaOptionsFrame_SelectCategory",
-        "BenillaGameMenuButtonEditMode",
         "BENILLA_BAG_WAS_OPEN",
         "BenillaScriptLog_Toggle",
     ] {
@@ -277,7 +274,9 @@ fn the_stock_ui_switch_boots_the_core_without_the_layer() {
             "{name} is defined: a layer file loaded under WOW_STOCK_UI=1"
         );
     }
-    assert!(!s.eval::<bool>("return BenillaOptionsFrame ~= nil").unwrap());
+    assert!(!s
+        .eval::<bool>("return BenillaScriptLogFrame ~= nil")
+        .unwrap());
     assert!(!s.eval::<bool>("return ZZORDER_SAW_LAYER").unwrap());
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
@@ -436,10 +435,11 @@ fn the_error_log_collects_off_the_error_handler() {
         "load failures: {failures:#?}"
     );
     s.run("ZZErrButton:Click()").unwrap();
-    // A layer handler raising: the window's OnShow calls this.
-    s.run("BenillaOptionsFrame_UpdateScale = function() error('a layer boom') end")
-        .unwrap();
-    s.run("ShowUIPanel(BenillaOptionsFrame)").unwrap();
+    // A layer function raising inside a handler.
+    s.run(
+        "BenillaScrollBar_Step = function() error('a layer boom') end          local b = CreateFrame('Button')          b:SetScript('OnClick', function() BenillaScrollBar_Step(nil, 1) end)          b:Click()",
+    )
+    .unwrap();
     s.dispatch_script_errors_to_handler();
 
     let rows: Vec<String> = s

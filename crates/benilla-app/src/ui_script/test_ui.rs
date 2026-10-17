@@ -108,19 +108,6 @@ fn load_entry(s: &UiScript, entry: &str, strict_templates: bool, no_warnings: bo
         s.run(MULTI_ACTION_BAR_STAND_INS)
             .expect("the multibar stand-ins");
     }
-    // Our options window's Graphics rows read stock `OptionsFrameSliders` (`OptionsFrame.lua`) at
-    // OnLoad; the core loads it before the layer, so a kit seats it before our file.
-    if path
-        .rsplit('/')
-        .next()
-        .is_some_and(|l| l.eq_ignore_ascii_case("OptionsFrame.xml"))
-        && !super::reference_ui::is_chain_entry(&path)
-    {
-        let bytes = read("Interface/FrameXML/OptionsFrame.lua")
-            .expect("the reference's own OptionsFrame.lua");
-        s.run_chunk_named(&bytes, "@Interface\\FrameXML\\OptionsFrame.lua")
-            .expect("the video window's slider table");
-    }
     let report = benilla_ui::loader::load_in(s, &doc, &path, &provider);
     assert!(
         report.errors.is_empty(),
@@ -364,10 +351,8 @@ pub(super) const UIPARENT_STAND_INS: &str = r#"
     -- loads no options window raised on the first bag click. In the shipped manifest all four
     -- names are real, and all three options windows are the REFERENCE's own files,
     -- loaded hidden — including `OptionsFrame`, the video window, which used to be our own
-    -- window's name. Ours is `BenillaOptionsFrame` now and is not in this list: it is not a name
-    -- the reference indexes, and the wrappers in `GameMenuAdapters.xml` are what tell these two
-    -- functions about it. A KIT is a prefix of the manifest and may load none of the four, which
-    -- is what these stand-ins are for.
+    -- window's name. A KIT is a prefix of the manifest and may load none of the four, which is
+    -- what these stand-ins are for.
     local function benilla_seat_options()
         benilla_seat({ "GameMenuFrame", "OptionsFrame", "UIOptionsFrame", "SoundOptionsFrame" })
         if not OptionsFrameCancel then
@@ -627,8 +612,6 @@ pub(super) const SOCIAL_UI: &[&str] = &[
     "Interface\\FrameXML\\RaidFrame.xml",
     "Interface\\FrameXML\\BonusActionBarFrame.xml",
     "ScrollTemplates.xml",
-    "KeyBindingsPage.xml",
-    "OptionsFrame.xml",
 ];
 
 /// Load [`SOCIAL_UI`], then the raid tab's LoadOnDemand addon as the app reaches it: seated off the

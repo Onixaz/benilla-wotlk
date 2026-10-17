@@ -435,6 +435,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     install_cvar_verbs(lua)?;
+    super::glue_system::install_cvar_ranges(lua)?;
+    // `CanUseEquipmentSets()` (`0x5ad880`): the number 1 while `equipmentManager` reads non-zero,
+    // else 0.
+    lua.globals().set(
+        "CanUseEquipmentSets",
+        lua.create_function(|lua, _: mlua::MultiValue| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let on = model
+                .cvars
+                .get("equipmentmanager")
+                .is_some_and(|s| sstr_to_int(&s.value) != 0);
+            Ok(if on { 1.0 } else { 0.0 })
+        })?,
+    )?;
     // ── RestoreVideoDefaults ─────────────────────────────────────────────────────────────────
     // The Defaults button's whole effect: `OptionsFrame_SetDefaults` only sets the widgets, which
     // the button's `OnClick` then hides without `_Save` (`OptionsFrame.xml:688-690`). Ends with a
@@ -443,18 +459,42 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "RestoreVideoDefaults",
         lua.create_function(|lua, ()| {
             let mut model = crate::script::model_mut_of(lua);
-            for name in VIDEO_DEFAULT_CVARS {
-                let Some(default) = model
-                    .cvars
-                    .get(&name.to_ascii_lowercase())
-                    .map(|slot| slot.default.clone())
-                else {
-                    // Unregistered in a bare VM: nothing to restore, nothing to warn about.
-                    continue;
-                };
-                set_from_engine(&mut model, name, default);
-            }
+            restore_defaults(&mut model, VIDEO_DEFAULT_CVARS);
             model.restart_gx_asks += 1;
+            Ok(())
+        })?,
+    )?;
+    // 3.3.5a's three: `ConsoleDeviceDefaults(kind)` (`0x76a130`), kind 0 the device format with a
+    // gx restart (`0x510dc0`), 1 the effects (`0x510dd0`), 2 the stereo rows (`0x4dd420`).
+    lua.globals().set(
+        "RestoreVideoResolutionDefaults",
+        lua.create_function(|lua, _: mlua::MultiValue| {
+            let mut model = crate::script::model_mut_of(lua);
+            restore_defaults(&mut model, &VIDEO_DEFAULT_CVARS[..VIDEO_DEVICE_CVARS]);
+            model.restart_gx_asks += 1;
+            Ok(())
+        })?,
+    )?;
+    lua.globals().set(
+        "RestoreVideoEffectsDefaults",
+        lua.create_function(|lua, _: mlua::MultiValue| {
+            let mut model = crate::script::model_mut_of(lua);
+            restore_defaults(&mut model, &VIDEO_DEFAULT_CVARS[VIDEO_DEVICE_CVARS..]);
+            Ok(())
+        })?,
+    )?;
+    lua.globals().set(
+        "RestoreVideoStereoDefaults",
+        lua.create_function(|lua, _: mlua::MultiValue| {
+            let mut model = crate::script::model_mut_of(lua);
+            restore_defaults(
+                &mut model,
+                &[
+                    "gxStereoEnabled",
+                    "gxStereoConvergence",
+                    "gxStereoSeparation",
+                ],
+            );
             Ok(())
         })?,
     )?;
@@ -665,6 +705,24 @@ pub const VIDEO_DEFAULT_CVARS: &[&str] = &[
     // Ours, restored with `frillDensity` so the pair keeps describing one detail level.
     "WorldDetail",
 ];
+
+/// How many leading [`VIDEO_DEFAULT_CVARS`] rows are the device record's `gx*`.
+const VIDEO_DEVICE_CVARS: usize = 6;
+
+/// Put each registered name in `names` back at its default through the change queue; a name a bare
+/// VM never registered is skipped.
+fn restore_defaults(model: &mut Model, names: &[&str]) {
+    for name in names {
+        let Some(default) = model
+            .cvars
+            .get(&name.to_ascii_lowercase())
+            .map(|slot| slot.default.clone())
+        else {
+            continue;
+        };
+        set_from_engine(model, name, default);
+    }
+}
 
 /// The Video options window's engine verbs that nothing else here provides. Three run at load,
 /// as `UIDropDownMenu_Initialize` calls its initializer at once (`UIDropDownMenu.lua:48-50`):

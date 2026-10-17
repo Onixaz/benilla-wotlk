@@ -172,7 +172,7 @@ fn emote_sounds(
         let EmoteKind::Text(text_id) = m.kind else {
             continue;
         };
-        // The `EmoteSounds` CVar gates the text-emote voice, read at play time; a zero never
+        // The `Sound_EnableEmoteSounds` CVar gates the text-emote voice, read at play time; a zero never
         // fetches the kit.
         if !config.emote_sounds {
             continue;

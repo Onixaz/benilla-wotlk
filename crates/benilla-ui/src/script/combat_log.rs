@@ -471,6 +471,13 @@ fn count_arg(lua: &Lua, args: &MultiValue, usage: &'static str) -> mlua::Result<
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
+    // `CombatTextSetActiveUnit(unit)` (`0x74d580`) keys `COMBAT_TEXT_UPDATE` to the unit's guid
+    // `[0xca1380]` and returns nothing; benilla's feed reports the player, the stock default.
+    g.set(
+        "CombatTextSetActiveUnit",
+        lua.create_function(|_, _: mlua::MultiValue| Ok(()))?,
+    )?;
+
     g.set(
         "CombatLogAddFilter",
         lua.create_function(|lua, args: MultiValue| {

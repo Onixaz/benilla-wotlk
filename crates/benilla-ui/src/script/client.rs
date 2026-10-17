@@ -22,6 +22,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| lua.create_string("enUS"))?,
     )?;
     g.set("IsMacClient", lua.create_function(|_, ()| Ok(Value::Nil))?)?;
+    // `GetExistingLocales()` (`0x511c80`): one string per installed locale, so enUS alone.
+    g.set(
+        "GetExistingLocales",
+        lua.create_function(|lua, _: MultiValue| lua.create_string("enUS"))?,
+    )?;
     // The PC build's other two platform answers: `IsWindowsClient()` (`0x48c960`) pushes the
     // number 1 and `IsLinuxClient()` (`0x48c990`) one nil. Arguments are ignored.
     g.set(

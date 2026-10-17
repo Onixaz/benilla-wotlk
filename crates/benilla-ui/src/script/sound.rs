@@ -201,6 +201,38 @@ fn install_drivers(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
+/// The in-game voice verbs (`ChatFrame` and `ComSatClient` tables), which the glue does not have.
+pub(super) fn install_voice(lua: &Lua) -> mlua::Result<()> {
+    let g = lua.globals();
+    // `IsVoiceChatAllowedByServer` (`0x4fccb0`, the server's flag `[0xbcf004]`),
+    // `IsVoiceChatEnabled` (`0x4fcbf0`, that flag and a voice session) and
+    // `VoiceIsDisabledByClient` (`0x7dc910`): nil, voice off, as on a server that offers none.
+    for name in [
+        "IsVoiceChatAllowedByServer",
+        "IsVoiceChatEnabled",
+        "VoiceIsDisabledByClient",
+    ] {
+        g.set(
+            name,
+            lua.create_function(|_, _: mlua::MultiValue| Ok(Value::Nil))?,
+        )?;
+    }
+    // The device verbs (`0x7dab80`, `0x7dac40`, `0x7dacf0`, `0x7dae40`) return nothing while no
+    // voice session `[0xd37d24]` exists.
+    for name in [
+        "VoiceEnumerateOutputDevices",
+        "VoiceEnumerateCaptureDevices",
+        "VoiceSelectOutputDevice",
+        "VoiceSelectCaptureDevice",
+    ] {
+        g.set(
+            name,
+            lua.create_function(|_, _: mlua::MultiValue| Ok(mlua::MultiValue::new()))?,
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{MusicRequest, SoundRequest};

@@ -290,32 +290,32 @@ mod tests {
     fn a_line_is_a_command_then_a_cvar_then_unknown() {
         let mut app = console_app();
         assert_eq!(
-            run(&mut app, "MusicVolume"),
-            vec!["CVar \"MusicVolume\" is \"0.4\"".to_string()]
+            run(&mut app, "Sound_MusicVolume"),
+            vec!["CVar \"Sound_MusicVolume\" is \"0.4\"".to_string()]
         );
         assert!(
-            run(&mut app, "musicvolume 0.7").is_empty(),
+            run(&mut app, "sound_musicvolume 0.7").is_empty(),
             "a set is quiet"
         );
         assert_eq!(
-            app.world().resource::<Cvars>().get("MusicVolume"),
+            app.world().resource::<Cvars>().get("Sound_MusicVolume"),
             Some("0.7")
         );
         assert_eq!(
-            run(&mut app, "SET MusicVolume 0.2"),
+            run(&mut app, "SET Sound_MusicVolume 0.2"),
             Vec::<String>::new(),
             "`set` is a registered command, matched case-insensitively"
         );
         assert_eq!(
-            app.world().resource::<Cvars>().get("MusicVolume"),
+            app.world().resource::<Cvars>().get("Sound_MusicVolume"),
             Some("0.2")
         );
         assert_eq!(
-            run(&mut app, "cvar_default musicVolume"),
+            run(&mut app, "cvar_default sound_musicVolume"),
             Vec::<String>::new()
         );
         assert_eq!(
-            app.world().resource::<Cvars>().get("MusicVolume"),
+            app.world().resource::<Cvars>().get("Sound_MusicVolume"),
             Some("0.4")
         );
         assert_eq!(
@@ -331,8 +331,8 @@ mod tests {
             "the stated divergence: no record conjured at the console"
         );
         assert_eq!(
-            run(&mut app, "MusicVolume wat"),
-            vec!["console: 'wat' is not a number, and MusicVolume takes one".to_string()]
+            run(&mut app, "Sound_MusicVolume wat"),
+            vec!["console: 'wat' is not a number, and Sound_MusicVolume takes one".to_string()]
         );
         assert_eq!(
             run(&mut app, "  "),

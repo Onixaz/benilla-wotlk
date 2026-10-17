@@ -314,8 +314,6 @@ fn ubertooltips_off_seats_action_bar_plates_beside_the_button() {
         "Interface\\FrameXML\\MultiActionBars.xml",
         "Interface\\FrameXML\\BonusActionBarFrame.xml",
         "ScrollTemplates.xml",
-        "KeyBindingsPage.xml",
-        "OptionsFrame.xml",
     ]);
     s.register_cvars(crate::cvars::registered_pairs());
     s.set_cvar_engine("UberTooltips", "0");
