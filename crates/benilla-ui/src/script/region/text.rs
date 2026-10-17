@@ -39,8 +39,10 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "SetText",
         lua.create_function(|lua, (this, text): (Table, Option<mlua::Value>)| {
-            // `text_arg`, since a Lua string is bytes and a slice of one need not be valid UTF-8.
-            let text = crate::script::binding_abi::text_arg(lua, text)?;
+            // `lua_tolstring` (`0x48d780`): a string or number, anything else clears the text.
+            let text = text
+                .as_ref()
+                .and_then(|v| crate::script::binding_abi::optional_string(lua, v));
             set_text(lua, &this, text)
         })?,
     )?;

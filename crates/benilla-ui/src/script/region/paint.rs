@@ -37,19 +37,18 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetVertexColor (`0x79abd0`) reads r, g and b with a bare `lua_tonumber`, so nil or a table is
-    // 0 and never raises; stock `QuestLogFrame.lua:337` can pass three nils. A missing alpha is 1
-    // here; the reference keeps the region's current alpha (read back at `0x79ac81`, copied over
-    // at `0x79adfe`/`0x79ae0a`), so there a three-argument call cannot restore opacity.
+    // SetVertexColor (`0x48c1c0`): `lua_tonumber` colour, and a non-number alpha keeps the current one.
     m.set(
         "SetVertexColor",
         lua.create_function(
-            |lua, (this, r, g, b, a): (Table, Value, Value, Value, Option<f32>)| {
+            |lua, (this, r, g, b, a): (Table, Value, Value, Value, Value)| {
                 let (r, g, b) = (as_f32(&r), as_f32(&g), as_f32(&b));
+                let alpha = lua.coerce_number(a).ok().flatten().map(|n| n as f32);
                 let rh = region_handle_of(lua, &this)?;
                 let mut model = crate::script::model_mut_of(lua);
                 let d = model.region_data.entry(rh).or_default();
-                d.vertex_color = Some([r, g, b, a.unwrap_or(1.0)]);
+                let current = d.vertex_color.map_or(1.0, |c| c[3]);
+                d.vertex_color = Some([r, g, b, alpha.unwrap_or(current)]);
                 // The slot `SetTextColor` writes on a FontString, so it overrides the font object.
                 d.font_explicit.color = true;
                 Ok(())

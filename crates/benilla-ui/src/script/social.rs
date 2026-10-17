@@ -101,14 +101,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
     // ── The friend list ──
-    // GetNumFriends(): `0x5ad000` over CountFriends `0x5ae490`.
+    // GetNumFriends() (`0x6b4060`): the friend count, then how many are online.
     g.set(
         "GetNumFriends",
         lua.create_function(|lua, ()| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(model.social.friends.len() as i64)
+            let friends = &model.social.friends;
+            let online = friends.iter().filter(|f| f.connected).count();
+            Ok((friends.len() as i64, online as i64))
         })?,
     )?;
 

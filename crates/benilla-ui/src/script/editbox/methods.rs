@@ -190,6 +190,17 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             })
         })?,
     )?;
+    // ClearHistory() (`0x9761a0`): drops every line and the recall cursor.
+    m.set(
+        "ClearHistory",
+        lua.create_function(|lua, this: Table| {
+            with_editbox(lua, &this, |eb| {
+                eb.history.clear();
+                eb.history_pos = None;
+                eb.history_draft = None;
+            })
+        })?,
+    )?;
     m.set(
         "SetHistoryLines",
         lua.create_function(|lua, (this, n): (Table, i64)| {

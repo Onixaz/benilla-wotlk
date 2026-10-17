@@ -1,6 +1,7 @@
 //! 3.3.5a's `GetAutoCompleteResults(text, include, exclude, numReturns [, cursorPosition
 //! [, allowFullMatch]])` (`0x57b3a0`), the name lookup the stock edit box splits a whisper target
-//! with (`ChatEdit_ExtractTellTarget`, `ChatFrame.lua:4125`).
+//! with (`ChatEdit_ExtractTellTarget`, `ChatFrame.lua:4125`), and its registrar sibling
+//! `GetAutoCompletePresenceID`, which the whisper header asks of every target (`BNet.lua:38`).
 //!
 //! The first four arguments are checked (a string, then three numbers) and a miss raises the
 //! usage (`0xa11740`). The prefix is `text` cut at `cursorPosition` when that is a number within
@@ -41,7 +42,7 @@ local function candidates()
         local name, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
         add(name, FLAG_IN_GUILD + (online and FLAG_ONLINE or 0))
     end
-    for i = 1, GetNumFriends() do
+    for i = 1, (GetNumFriends()) do
         local name, _, _, _, connected = GetFriendInfo(i)
         add(name, FLAG_FRIEND + (connected and FLAG_ONLINE or 0))
     end
@@ -72,6 +73,13 @@ function GetAutoCompleteResults(text, include, exclude, numReturns, cursorPositi
         end
     end
     return unpack(results)
+end
+
+-- GetAutoCompletePresenceID(name) (0x57b500): a Battle.net friend's id; with no session, none.
+function GetAutoCompletePresenceID(name)
+    if type(name) ~= "string" and type(name) ~= "number" then
+        error('Usage: GetAutoCompletePresenceID("name")', 2)
+    end
 end
 "##;
 

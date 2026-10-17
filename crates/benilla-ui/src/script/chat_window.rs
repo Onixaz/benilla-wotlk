@@ -265,23 +265,14 @@ fn from_byte(b: u8) -> f64 {
     f64::from(b) / 255.0
 }
 
-/// The 0-based index of a Lua window id. Deviation: an id outside the built windows raises, where
-/// the reference serves ten records and silently ignores any other id (`0x4fbdc4`), because
-/// benilla keeps only the target's `NUM_CHAT_WINDOWS` and every caller loops `1, NUM_CHAT_WINDOWS`.
-fn window_index(lua: &Lua, id: i64) -> mlua::Result<usize> {
+/// A window id's 0-based index, `None` past the ten records, which every verb ignores (`0x4fbdc4`).
+fn window_index(lua: &Lua, id: i64) -> Option<usize> {
     let built = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data")
         .chat_window_looks
         .len();
-    if id < 1 || id as usize > built {
-        return Err(mlua::Error::runtime(format!(
-            "chat window {id} out of range — benilla builds ChatFrame1..ChatFrame{built} \
-             (the client's settings array holds {ENGINE_CHAT_WINDOW_SLOTS} slots, but only \
-             {built} have frames)"
-        )));
-    }
-    Ok(id as usize - 1)
+    (1..=built as i64).contains(&id).then(|| id as usize - 1)
 }
 
 impl super::Model {
@@ -368,7 +359,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetChatWindowInfo",
         lua.create_function(move |lua, id: i64| {
-            let i = window_index(lua, id)?;
+            let Some(i) = window_index(lua, id) else {
+                return Ok(MultiValue::new());
+            };
             let look = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data")
@@ -414,7 +407,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     ))
                 }
             };
-            let i = window_index(lua, id)?;
+            let Some(i) = window_index(lua, id) else {
+                return Ok(());
+            };
             let flag = !matches!(flag, Value::Nil | Value::Boolean(false));
             let mut model = crate::script::model_mut_of(lua);
             if model.chat_window_looks[i].uninteractable != flag {
@@ -430,7 +425,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "SetChatWindowColor",
         lua.create_function(|lua, (id, r, g, b): (i64, f64, f64, f64)| {
-            let i = window_index(lua, id)?;
+            let Some(i) = window_index(lua, id) else {
+                return Ok(());
+            };
             let mut model = crate::script::model_mut_of(lua);
             let look = &mut model.chat_window_looks[i];
             let next = ChatWindowLook {
@@ -451,7 +448,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "SetChatWindowAlpha",
         lua.create_function(|lua, (id, alpha): (i64, f64)| {
-            let i = window_index(lua, id)?;
+            let Some(i) = window_index(lua, id) else {
+                return Ok(());
+            };
             let mut model = crate::script::model_mut_of(lua);
             let look = &mut model.chat_window_looks[i];
             let a = to_byte(alpha);
@@ -470,7 +469,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "SetChatWindowLocked",
         lua.create_function(|lua, (id, locked): (i64, bool)| {
-            let i = window_index(lua, id)?;
+            let Some(i) = window_index(lua, id) else {
+                return Ok(());
+            };
             let mut model = crate::script::model_mut_of(lua);
             let look = &mut model.chat_window_looks[i];
             if locked != look.locked {
@@ -486,7 +487,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "SetChatWindowDocked",
         lua.create_function(|lua, (id, position): (i64, Option<i64>)| {
-            let i = window_index(lua, id)?;
+            let Some(i) = window_index(lua, id) else {
+                return Ok(());
+            };
             let position = position
                 .filter(|p| *p > 0)
                 .and_then(|p| u8::try_from(p).ok());
@@ -503,7 +506,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "SetChatWindowSize",
         lua.create_function(|lua, (id, size): (i64, f64)| {
-            let i = window_index(lua, id)?;
+            let Some(i) = window_index(lua, id) else {
+                return Ok(());
+            };
             let mut model = crate::script::model_mut_of(lua);
             let look = &mut model.chat_window_looks[i];
             // A size `<= 0` after truncation is dropped. Deviation: one past
@@ -527,12 +532,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // `Add/Remove/GetChatWindowMessages` `0x4fc170`/`0x4fc250`/`0x4fc0c0` and
     // `Add/Remove/GetChatWindowChannel(s)` `0x501db0`/`0x4ff0d0`/`0x4fefe0`.
 
-    fn with_look<T>(
+    fn with_look<T: Default>(
         lua: &Lua,
         id: i64,
         f: impl FnOnce(&mut ChatWindowLook) -> T,
     ) -> mlua::Result<T> {
-        let i = window_index(lua, id)?;
+        let Some(i) = window_index(lua, id) else {
+            return Ok(T::default());
+        };
         let mut model = crate::script::model_mut_of(lua);
         let before = model.chat_window_looks[i].clone();
         let out = f(&mut model.chat_window_looks[i]);
@@ -629,7 +636,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetChatWindowMessages",
         lua.create_function(|lua, id: i64| {
-            let i = window_index(lua, id)?;
+            let Some(i) = window_index(lua, id) else {
+                return Ok(MultiValue::new());
+            };
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
@@ -727,7 +736,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetChatWindowChannels",
         lua.create_function(|lua, id: i64| {
-            let i = window_index(lua, id)?;
+            let Some(i) = window_index(lua, id) else {
+                return Ok(MultiValue::new());
+            };
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
@@ -761,12 +772,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Usage: GetChatWindowSavedDimensions(index)",
                 ));
             };
-            let i = window_index(lua, id.trunc() as i64)?;
+            let Some(i) = window_index(lua, id.trunc() as i64) else {
+                return Ok(MultiValue::new());
+            };
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             let (w, h) = model.chat_window_looks[i].dimensions;
-            Ok((f64::from(w), f64::from(h)))
+            Ok(MultiValue::from_vec(vec![
+                Value::Number(f64::from(w)),
+                Value::Number(f64::from(h)),
+            ]))
         })?,
     )?;
 
@@ -799,7 +815,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Usage: GetChatWindowSavedPosition(index)",
                 ));
             };
-            let i = window_index(lua, id.trunc() as i64)?;
+            let Some(i) = window_index(lua, id.trunc() as i64) else {
+                return Ok(MultiValue::new());
+            };
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
@@ -950,11 +968,26 @@ mod tests {
         assert_eq!(found, 0);
     }
 
+    /// Past the ten records every getter answers nothing (`0x4fbdc4`), as the pop-outs need.
     #[test]
-    fn a_window_past_the_last_frame_raises() {
+    fn a_window_past_the_records_answers_nothing() {
         let s = UiScript::new().unwrap();
-        assert!(s.eval::<i64>("return (GetChatWindowInfo(8))").is_err());
-        assert!(s.eval::<i64>("return (GetChatWindowInfo(0))").is_err());
+        for verb in [
+            "GetChatWindowInfo",
+            "GetChatWindowMessages",
+            "GetChatWindowChannels",
+            "GetChatWindowSavedDimensions",
+            "GetChatWindowSavedPosition",
+        ] {
+            for id in [0, 11] {
+                assert_eq!(
+                    s.eval::<i64>(&format!("return select('#', {verb}({id}))"))
+                        .unwrap(),
+                    0,
+                    "{verb}({id})"
+                );
+            }
+        }
     }
 
     /// `SetChatWindowSize` (`0x4fc3d0`) keeps only a positive size.
@@ -1020,12 +1053,19 @@ mod tests {
         assert_eq!(two, 1.0);
     }
 
+    /// Past the ten records every setter writes nothing and raises nothing.
     #[test]
-    fn the_setters_raise_on_a_window_with_no_frame() {
-        let s = UiScript::new().unwrap();
-        assert!(s.run("SetChatWindowAlpha(11, 1)").is_err());
-        assert!(s.run("SetChatWindowColor(0, 1, 1, 1)").is_err());
-        assert!(s.run("SetChatWindowSize(11, 14)").is_err());
+    fn the_setters_ignore_a_window_past_the_records() {
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            "SetChatWindowAlpha(11, 1) SetChatWindowColor(0, 1, 1, 1) SetChatWindowSize(11, 14) \
+             SetChatWindowName(11, 'Bob') SetChatWindowShown(11, 1) SetChatWindowDocked(11, 3) \
+             SetChatWindowLocked(11, nil) AddChatWindowMessages(11, 'SAY') \
+             RemoveChatWindowMessages(11, 'SAY') SetChatWindowSavedDimensions(11, 1, 1) \
+             SetChatWindowSavedPosition(11, 'TOPLEFT', 0.1, 0.1)",
+        )
+        .unwrap();
+        assert!(s.take_chat_window_changes().is_empty(), "no record moved");
     }
 
     /// The deviation: the reference stores the low byte of `(u8)(2.0 · 255)`, answering 254/255.

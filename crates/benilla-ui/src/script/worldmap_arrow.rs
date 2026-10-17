@@ -153,6 +153,7 @@ fn create(lua: &Lua, which: Arrow, parent: Value) -> mlua::Result<()> {
                 Some(Value::String(lua.create_string(name)?)),
                 Some(Value::Table(t.clone())),
                 None,
+                None,
             ),
         )?;
         *slot = decode_id(&wrapper)?;

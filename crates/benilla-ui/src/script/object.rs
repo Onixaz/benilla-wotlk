@@ -584,7 +584,8 @@ fn kind_method_registries(kind: Option<FrameKind>) -> &'static [&'static str] {
     }
 }
 
-/// `CreateFrame(kind, name?, parent?, inherits?)` (`0x7060b0`), the runtime frame factory.
+/// `CreateFrame(kind, name?, parent?, inherits?, id?)` (`0x81bb20`), the runtime frame factory;
+/// `id` is the node's `id=` attribute, so the template's `OnLoad` already reads it.
 /// `inherits` names one template, applied after the frame is made
 /// ([`crate::loader::apply_template`]) so its `OnLoad` sees the frame's real name and its `$parent`
 /// resolves against the caller's name. An unknown template raises `Couldn't find inherited node`
@@ -592,7 +593,13 @@ fn kind_method_registries(kind: Option<FrameKind>) -> &'static [&'static str] {
 /// only warns, since the lookup itself succeeded.
 pub(super) fn create_frame(
     lua: &Lua,
-    (kind, name, parent, inherits): (String, Option<Value>, Option<Value>, Option<Value>),
+    (kind, name, parent, inherits, frame_id): (
+        String,
+        Option<Value>,
+        Option<Value>,
+        Option<Value>,
+        Option<Value>,
+    ),
 ) -> mlua::Result<Table> {
     // An unknown type raises. The reference's message (`0x872fa8`) capitalises `Unknown`, and it
     // tests the template first (`0x7061dd`), raising for the type only at `0x7062a0`.
@@ -689,6 +696,16 @@ pub(super) fn create_frame(
             if let Some((pstrata, plevel)) = model.arena.frame(p).map(|f| (f.strata, f.level)) {
                 model.arena.set_frame_strata(h, pstrata);
                 model.arena.set_frame_level(h, plevel + 1, false);
+            }
+        }
+        // A string or a number, as `id=` text (`0x81bd7a`); anything else sets none.
+        if let Some(n) = frame_id
+            .as_ref()
+            .and_then(|v| optional_string(lua, v))
+            .and_then(|t| t.trim().parse::<f64>().ok())
+        {
+            if let Some(f) = model.arena.frame_mut(h) {
+                f.wow_id = n as i64;
             }
         }
         let id = model.frame_id(h);
