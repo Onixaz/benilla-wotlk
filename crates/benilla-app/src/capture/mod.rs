@@ -627,6 +627,11 @@ impl Plugin for CapturePlugin {
         if let Some(m) = scenario.as_ref().and_then(|s| s.map) {
             std::env::set_var("WOW_MAP", m.to_string());
         }
+        // A glue capture stands for a 3.3.5a account: `SMSG_AUTH_RESPONSE`'s expansion byte 2, so
+        // the create screen offers the Death Knight.
+        if glue.is_some() {
+            app.insert_resource(crate::net::AccountExpansion(2));
+        }
         let shot_name = scenario.map(|s| s.name).or(glue.map(|g| g.name)).unwrap();
         let out = std::env::var("WOW_CAPTURE_OUT")
             .unwrap_or_else(|_| format!("target/visual/{shot_name}.png"));

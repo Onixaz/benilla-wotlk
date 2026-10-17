@@ -37,7 +37,9 @@ pub(super) fn seed_char_create(
         return;
     };
     match *step {
-        0 => {
+        // Once the glue manager has seated the create tables: the screen's OnShow rolls its first
+        // character off them, and rolls none off an empty catalog.
+        0 if glue_press::create_catalog_up(s) => {
             glue_press::press_create_screen(s);
             *step = 1;
         }

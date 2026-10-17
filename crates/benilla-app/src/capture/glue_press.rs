@@ -67,6 +67,12 @@ pub(super) fn press_create_screen(s: &UiScript) {
     press(s, "SetGlueScreen(\"charcreate\")");
 }
 
+/// The glue VM has its create catalog: `GetAvailableRaces` lists a race.
+pub(super) fn create_catalog_up(s: &UiScript) -> bool {
+    s.eval::<bool>("return select('#', GetAvailableRaces()) > 0")
+        .unwrap_or(false)
+}
+
 /// The 1-based position of `file` among a list verb's (name, file, available) triples.
 fn list_index(s: &UiScript, verb: &str, file: &str) -> Option<u32> {
     s.eval::<Option<f64>>(&format!(
