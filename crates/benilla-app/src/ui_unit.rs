@@ -900,6 +900,9 @@ pub(crate) fn snapshot(
         group_leader: store.0.player_is_group_leader(),
         // The raw dword `PLAYER_FLAGS_CHANGED` fires on; 0 on a creature, as in the reference.
         player_flags: store.0.player_flags(),
+        // `PLAYER_FLAGS` AFK `0x2` and DND `0x4` (`0x60ccf3`, `0x60cdd1`); 0 on a creature.
+        afk: store.0.player_flags() & 0x2 != 0,
+        dnd: store.0.player_flags() & 0x4 != 0,
         reaction,
         // The one resolver `0x605570` behind `UnitCreatureType` (`0x51a2bc`) and the tooltip's
         // type slot (`0x52a2e5`): the form's type, else the template's, else the race's.
@@ -1299,6 +1302,7 @@ fn feed_units(
         s.selection_color =
             crate::target::selection_color(store, factions.as_deref(), &reputations, Some(store));
         s.raid_target = group.raid_target_index(guid.0);
+        s.group_roles = group.own_roles;
         s.faction_group = faction_group(store, factions.as_deref());
         s.faction_group_localized = faction_group_localized(store, factions.as_deref());
         // `GetGuildInfo`: the public guild fields (191/192) joined against the lazy guild cache.
@@ -1807,6 +1811,7 @@ mod tests {
                 guid,
                 status: member_status::ONLINE,
                 flags,
+                roles: 0,
             }
         }
 
@@ -1833,7 +1838,7 @@ mod tests {
                 .apply_list(0, 0, list, ME, None, Some(ME));
             for i in 1..=n {
                 let record = PartyMemberStatsInfo {
-                    status: Some(member_status::ONLINE),
+                    status: Some(member_status::ONLINE.into()),
                     pet_guid: Some(pet(i)),
                     ..Default::default()
                 };
@@ -1947,7 +1952,7 @@ mod tests {
             assert_eq!(resolve(&mut app, "partypet1"), Some((held, pet(1))));
 
             let offline = PartyMemberStatsInfo {
-                status: Some(member_status::OFFLINE),
+                status: Some(member_status::OFFLINE.into()),
                 ..Default::default()
             };
             app.world_mut()
@@ -2013,7 +2018,7 @@ mod tests {
         fn a_raid_pet_reads_the_record_of_an_offline_member_a_party_pet_does_not() {
             let mut app = raid();
             let record = PartyMemberStatsInfo {
-                status: Some(member_status::OFFLINE),
+                status: Some(member_status::OFFLINE.into()),
                 pet_guid: Some(pet(1)),
                 ..Default::default()
             };
@@ -2131,6 +2136,7 @@ mod tests {
                 guid,
                 status: member_status::ONLINE,
                 flags: 0,
+                roles: 0,
             }
         }
 
@@ -2418,6 +2424,7 @@ mod tests {
                     guid: A,
                     status: member_status::ONLINE,
                     flags: 0,
+                    roles: 0,
                 }],
                 ME,
                 None,

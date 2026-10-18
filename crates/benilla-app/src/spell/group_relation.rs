@@ -706,6 +706,7 @@ mod tests {
             guid,
             status: 0,
             flags,
+            roles: 0,
         }
     }
 

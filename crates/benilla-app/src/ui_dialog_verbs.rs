@@ -1329,6 +1329,7 @@ mod tests {
                     guid: 0xb000 + i as u64,
                     status: 1,
                     flags: 0,
+                    roles: 0,
                 })
                 .collect(),
             ..GroupState::default()

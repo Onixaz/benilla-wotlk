@@ -396,6 +396,7 @@ pub(super) fn feed_party(
                 let mut s = crate::ui_unit::snapshot(store, *guid, name, 0, chr, types);
                 s.is_player = true;
                 s.raid_target = group.raid_target_index(*guid);
+                s.group_roles = group.own_roles;
                 s.faction_group = own_group.clone();
                 // A same-faction friendly player, as in `member_unit_state`.
                 s.reaction = 5;
@@ -778,8 +779,8 @@ fn member_unit_state(
             exists: true,
             guid: m.guid,
             name: Some(m.name.clone()),
-            health: stats.and_then(|s| s.cur_hp).map_or(0, u32::from),
-            max_health: stats.and_then(|s| s.max_hp).map_or(0, u32::from),
+            health: stats.and_then(|s| s.cur_hp).unwrap_or(0),
+            max_health: stats.and_then(|s| s.max_hp).unwrap_or(0),
             level: stats.and_then(|s| s.level).map_or(0, u32::from),
             power_type: stats.map_or(0, PartyMemberStatsInfo::shown_power_type),
             // Divided as on the live leg (`UnitMana`'s record path, `0x517744`-`0x51775e`).
@@ -792,9 +793,13 @@ fn member_unit_state(
             is_connected: stats.is_some_and(PartyMemberStatsInfo::is_online),
             // Dead and ghost from the record, as the reference's `UnitIsDead` (`0x517b5d`,
             // `+0x08 & 4`) and `UnitIsGhost` (`0x517c32`, `& 8`) read it: fresher than the roster
-            // byte, which only `SMSG_GROUP_LIST` moves. 1.12 has no AFK or DND predicate to feed.
-            dead: stats.is_some_and(|s| s.status.unwrap_or(0) & member_status::DEAD != 0),
-            ghost: stats.is_some_and(|s| s.status.unwrap_or(0) & member_status::GHOST != 0),
+            // byte, which only `SMSG_GROUP_LIST` moves. AFK and DND likewise (`0x60cd0c`,
+            // `0x60cde9`).
+            dead: stats.is_some_and(|s| s.has_status(member_status::DEAD)),
+            ghost: stats.is_some_and(|s| s.has_status(member_status::GHOST)),
+            afk: stats.is_some_and(|s| s.has_status(member_status::AFK)),
+            dnd: stats.is_some_and(|s| s.has_status(member_status::DND)),
+            in_vehicle: stats.is_some_and(PartyMemberStatsInfo::in_vehicle),
             ..Default::default()
         },
     };
@@ -802,6 +807,7 @@ fn member_unit_state(
     // A party member is always a same-faction friendly player: the popup's `UnitCanCooperate`
     // gate reads the reaction, which neither leg resolves for a party token.
     s.raid_target = group.raid_target_index(m.guid);
+    s.group_roles = m.roles;
     s.reaction = 5;
     s.faction_group = own_group;
     // The roster status byte overlays both legs, but for `is_connected`, which is the record leg's.
@@ -1326,24 +1332,28 @@ pub(crate) fn synthetic_roster(
             guid: 0xF001,
             status: member_status::ONLINE,
             flags: 0,
+            roles: 0,
         },
         GroupMemberEntry {
             name: "Bob".into(),
             guid: 0xF002,
             status: member_status::ONLINE | member_status::AFK,
             flags: 0,
+            roles: 0,
         },
         GroupMemberEntry {
             name: "Carol".into(),
             guid: 0xF003,
             status: member_status::ONLINE | member_status::DEAD,
             flags: 0,
+            roles: 0,
         },
         GroupMemberEntry {
             name: "Dave".into(),
             guid: 0xF004,
             status: member_status::OFFLINE,
             flags: 0,
+            roles: 0,
         },
     ];
     let lines = group
@@ -1363,7 +1373,7 @@ pub(crate) fn synthetic_roster(
     // Blip offsets from us on WoW axes (+x north, +y west), truncated to `i16` as on the wire.
     let seat = |dx: f32, dy: f32| player_xy.map(|(px, py)| ((px + dx) as i16, (py + dy) as i16));
     for (guid, hp, max, level, power_type, pos) in [
-        (0xF001u64, 820u16, 1240u16, 32u16, 0u8, seat(30.0, 0.0)),
+        (0xF001u64, 820u32, 1240u32, 32u16, 0u8, seat(30.0, 0.0)),
         (0xF002, 455, 980, 30, 3, seat(0.0, 80.0)),
         (0xF003, 0, 1105, 31, 0, seat(-300.0, 0.0)),
         (0xF004, 0, 0, 0, 0, None),
@@ -1373,7 +1383,7 @@ pub(crate) fn synthetic_roster(
             .members
             .iter()
             .find(|m| m.guid == guid)
-            .map(|m| m.status);
+            .map(|m| u16::from(m.status));
         group.apply_stats(
             guid,
             true,
@@ -1452,6 +1462,7 @@ pub(crate) fn synthetic_raid(
             guid,
             status,
             flags,
+            roles: 0,
         });
     }
     // A raid we lead, so `IsRaidLeader()` is true and the leader-only controls are live.
@@ -1478,7 +1489,7 @@ pub(crate) fn synthetic_raid(
             .members
             .iter()
             .find(|m| m.guid == guid)
-            .map(|m| m.status);
+            .map(|m| u16::from(m.status));
         group.apply_stats(
             guid,
             true,
@@ -1487,7 +1498,7 @@ pub(crate) fn synthetic_raid(
                 cur_hp: Some(if dead {
                     0
                 } else {
-                    2100 + (i as u16 * 37) % 900
+                    2100 + (i as u32 * 37) % 900
                 }),
                 max_hp: Some(3000),
                 level: Some(58 + (i as u16 % 3)),
@@ -1539,9 +1550,10 @@ mod tests {
             guid: 0x1234,
             status: member_status::ONLINE,
             flags: 0,
+            roles: 0,
         };
         let record = PartyMemberStatsInfo {
-            status: Some(member_status::ONLINE),
+            status: Some(member_status::ONLINE.into()),
             cur_hp: Some(2400),
             max_hp: Some(3000),
             level: Some(41),
@@ -1596,9 +1608,10 @@ mod tests {
             // The stale roster echo: online, alive.
             status: member_status::ONLINE,
             flags: 0,
+            roles: 0,
         };
         let dead = PartyMemberStatsInfo {
-            status: Some(member_status::ONLINE | member_status::DEAD),
+            status: Some((member_status::ONLINE | member_status::DEAD).into()),
             ..PartyMemberStatsInfo::default()
         };
         let s = member_unit_state(
@@ -1617,7 +1630,7 @@ mod tests {
         assert!(!s.ghost);
 
         let ghost = PartyMemberStatsInfo {
-            status: Some(member_status::ONLINE | member_status::GHOST),
+            status: Some((member_status::ONLINE | member_status::GHOST).into()),
             ..PartyMemberStatsInfo::default()
         };
         let s = member_unit_state(
@@ -1661,6 +1674,7 @@ mod tests {
                 guid: member(1),
                 status,
                 flags: 0,
+                roles: 0,
             }],
             ME,
             None,
@@ -1765,7 +1779,7 @@ mod tests {
                 member(1),
                 false,
                 PartyMemberStatsInfo {
-                    status: Some(status),
+                    status: Some(status.into()),
                     ..Default::default()
                 },
             );
@@ -1836,6 +1850,7 @@ mod tests {
                 guid: member(i as u64 + 1),
                 status,
                 flags: 0,
+                roles: 0,
             })
             .collect();
         app.world_mut()
@@ -2175,6 +2190,7 @@ mod tests {
             guid,
             status,
             flags,
+            roles: 0,
         };
         let mut group = GroupState {
             group_type: GROUPTYPE_RAID,
@@ -2256,6 +2272,7 @@ mod tests {
             guid,
             status: member_status::ONLINE,
             flags: 0,
+            roles: 0,
         };
         group.members = vec![wire("Alice", 0xA11CE), wire("Bob", 0xB0B)];
         let me = Some(0x5E1Fu64);
@@ -2402,6 +2419,7 @@ mod tests {
                 guid: member(i as u64 + 1),
                 status: member_status::ONLINE,
                 flags: 0,
+                roles: 0,
             })
             .collect();
         app.world_mut()

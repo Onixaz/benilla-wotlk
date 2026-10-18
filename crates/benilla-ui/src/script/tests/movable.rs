@@ -670,3 +670,26 @@ fn the_apply_seats_position_behind_movable_and_size_behind_resizable() {
     );
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
+
+/// `ClearAllPoints` (`0x48a200`) requests no resize, so the cleared frame still reads its last
+/// rect: stock `RaidPulloutStopMoving` stops, clears, reads `GetCenter`/`GetTop` and re-anchors
+/// there, and the pullout stays where it was dropped.
+#[test]
+fn a_cleared_frame_keeps_its_rect_for_the_re_anchor() {
+    let mut s = movable_panel();
+    s.run(
+        r#"
+        Panel:ClearAllPoints()
+        local x, _ = Panel:GetCenter()
+        local y = Panel:GetTop()
+        cleared_x, cleared_y = x, y
+        Panel:SetPoint("TOP", nil, "BOTTOMLEFT", x, y)
+        "#,
+    )
+    .unwrap();
+    let (x, y) = s
+        .eval::<(Option<f64>, Option<f64>)>("return cleared_x, cleared_y")
+        .unwrap();
+    assert_eq!((x, y), (Some(200.0), Some(180.0)), "the last rect stands");
+    assert_eq!(corner(&mut s), (100.0, 100.0), "re-anchored where it was");
+}

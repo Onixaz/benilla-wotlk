@@ -2400,6 +2400,7 @@ mod tests {
                     guid: MEMBER,
                     status,
                     flags: 0,
+                    roles: 0,
                 }],
                 MEMBER,
                 None,
@@ -2408,7 +2409,7 @@ mod tests {
             g.stats.insert(
                 MEMBER,
                 PartyMemberStatsInfo {
-                    status: Some(status),
+                    status: Some(status.into()),
                     pet_guid: Some(PET),
                     ..Default::default()
                 },

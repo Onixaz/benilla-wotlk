@@ -268,6 +268,7 @@ mod tests {
             guid,
             status: member_status::ONLINE,
             flags: 0,
+            roles: 0,
         }
     }
 

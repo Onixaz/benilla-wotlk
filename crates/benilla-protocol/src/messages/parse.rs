@@ -1414,6 +1414,7 @@ fn parse_server_body(
             ServerPacket::GroupList {
                 group_type: list.group_type,
                 own_flags: list.own_flags,
+                own_roles: list.own_roles,
                 members: list.members,
                 leader: list.leader,
                 loot: list.loot,
@@ -1430,10 +1431,11 @@ fn parse_server_body(
             }
         }
         opcode::SMSG_PARTY_MEMBER_STATS | opcode::SMSG_PARTY_MEMBER_STATS_FULL => {
-            let (guid, info) = group::read_party_member_stats(&mut r)?;
+            let full = opcode == opcode::SMSG_PARTY_MEMBER_STATS_FULL;
+            let (guid, info) = group::read_party_member_stats(&mut r, full)?;
             ServerPacket::PartyMemberStats {
                 guid,
-                full: opcode == opcode::SMSG_PARTY_MEMBER_STATS_FULL,
+                full,
                 info: Box::new(info),
             }
         }

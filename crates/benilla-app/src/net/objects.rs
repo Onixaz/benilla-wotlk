@@ -100,6 +100,7 @@ pub(crate) struct Scene<'w, 's> {
     go_templates: ResMut<'w, GameObjectTemplates>,
     death_net: ResMut<'w, crate::death::DeathNet>,
     group: ResMut<'w, crate::ui_party::GroupState>,
+    auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
 }
 
 fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
@@ -302,15 +303,8 @@ fn on_object_values(In(ev): In<SessionEvent>, mut sc: Scene) {
 fn on_object_destroyed(In(ev): In<SessionEvent>, mut sc: Scene) {
     if let SessionEvent::ObjectDestroyed(guid) = ev {
         crate::death::net::forget_corpse(guid, &mut sc.death_net);
-        let held = |g: u64| sc.index.0.get(&g).and_then(|e| sc.stores.get(*e).ok());
-        crate::ui_party::net::member_deactivated(
-            guid,
-            &mut sc.group,
-            held(guid),
-            held,
-            &sc.names,
-            &sc.net,
-        );
+        let held = crate::ui_party::net::held_member(&sc.index, &sc.stores, &sc.auras, guid);
+        crate::ui_party::net::member_deactivated(guid, &mut sc.group, held, &sc.net);
         object_destroyed(guid, &mut sc.commands, &mut sc.index);
     }
 }
@@ -319,16 +313,9 @@ fn on_object_destroyed(In(ev): In<SessionEvent>, mut sc: Scene) {
 /// range also gets the snapshot and `CMSG_REQUEST_PARTY_MEMBER_STATS`.
 fn on_objects_removed(In(ev): In<SessionEvent>, mut sc: Scene) {
     if let SessionEvent::ObjectsRemoved(guids) = ev {
-        for guid in &guids {
-            let held = |g: u64| sc.index.0.get(&g).and_then(|e| sc.stores.get(*e).ok());
-            crate::ui_party::net::member_deactivated(
-                *guid,
-                &mut sc.group,
-                held(*guid),
-                held,
-                &sc.names,
-                &sc.net,
-            );
+        for &guid in &guids {
+            let held = crate::ui_party::net::held_member(&sc.index, &sc.stores, &sc.auras, guid);
+            crate::ui_party::net::member_deactivated(guid, &mut sc.group, held, &sc.net);
         }
         objects_removed(guids, &mut sc.commands, &mut sc.index);
     }

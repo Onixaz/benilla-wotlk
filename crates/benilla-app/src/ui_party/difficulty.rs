@@ -248,6 +248,7 @@ mod tests {
             guid: 0x11,
             status: 1,
             flags: 0,
+            roles: 0,
         });
         g
     }

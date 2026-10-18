@@ -58,8 +58,8 @@ impl super::UiScript {
 }
 
 /// `CGPlayer_C::IsRAFPlayer` (`0x6d7590`), its held-player leg: `UNIT_DYNAMIC_FLAGS` bit 0x40. The
-/// group-record leg (status bit 0x100) and the friend-list leg are not built: the member stats
-/// still arrive in the 1.12.1 layout (#156) and the friend list carries no such bit.
+/// group-record leg (status bit 0x100) and the friend-list leg are not built: the VM holds no
+/// roster record status, and the friend list carries no such bit.
 fn is_raf_player(unit: Option<&UnitState>) -> bool {
     unit.is_some_and(|u| {
         u.has_object && u.is_player && u.dynamic_flags & UNIT_DYNFLAG_REFER_A_FRIEND != 0

@@ -6,7 +6,7 @@ mod common;
 use benilla_protocol::events::{decode, SessionEvent};
 use benilla_protocol::messages::{
     self, member_status, opcode, party_member_mask, party_operation, party_result, patch_auras,
-    GroupDifficulties, GroupLootInfo, GroupMemberEntry, PartyMemberStatsInfo,
+    GroupDifficulties, GroupLootInfo, GroupMemberEntry, PartyMemberStatsInfo, RecordAura,
     GROUP_MEMBER_ASSISTANT,
 };
 use benilla_protocol::ServerPacket;
@@ -278,6 +278,7 @@ fn group_list_party_two_members_master_loot() {
         ServerPacket::GroupList {
             group_type,
             own_flags,
+            own_roles,
             members,
             leader,
             loot,
@@ -295,6 +296,7 @@ fn group_list_party_two_members_master_loot() {
                 })
             );
             assert_eq!(*own_flags, 0x00);
+            assert_eq!(*own_roles, 0);
             assert_eq!(
                 members,
                 &vec![
@@ -303,12 +305,14 @@ fn group_list_party_two_members_master_loot() {
                         guid: 0x1111,
                         status: member_status::ONLINE,
                         flags: 0x00,
+                        roles: 0,
                     },
                     GroupMemberEntry {
                         name: "Carol".into(),
                         guid: 0x3333,
                         status: member_status::ONLINE | member_status::DEAD,
                         flags: 0x00,
+                        roles: 0,
                     },
                 ]
             );
@@ -344,7 +348,7 @@ fn group_list_party_two_members_master_loot() {
 /// round-robin loot.
 #[test]
 fn group_list_raid_with_assistant_flag() {
-    let mut body = vec![0x02 | 0x04 | 0x08, 2, 0, 0]; // raid + LFG restricted + LFG; subgroup 2
+    let mut body = vec![0x02 | 0x04 | 0x08, 2, 0, 0x04]; // raid, LFG restricted, LFG; healer
     body.push(0); // LFG status
     body.extend_from_slice(&261u32.to_le_bytes()); // LFG slot
     body.extend_from_slice(&0x1f50_0000_0000_0001u64.to_le_bytes()); // group guid
@@ -353,7 +357,7 @@ fn group_list_raid_with_assistant_flag() {
 
     body.extend_from_slice(b"Dave\0");
     body.extend_from_slice(&0x4444u64.to_le_bytes());
-    body.extend_from_slice(&[member_status::ONLINE, 1, 0x01, 0]); // subgroup 1, assistant
+    body.extend_from_slice(&[member_status::ONLINE, 1, 0x01, 0x02]); // subgroup 1, assistant, tank
 
     body.extend_from_slice(&0x4444u64.to_le_bytes()); // leaderGuid: Dave
 
@@ -367,6 +371,7 @@ fn group_list_raid_with_assistant_flag() {
         ServerPacket::GroupList {
             group_type,
             own_flags,
+            own_roles,
             members,
             leader,
             loot,
@@ -384,6 +389,7 @@ fn group_list_raid_with_assistant_flag() {
                 })
             );
             assert_eq!(*own_flags, 0x02);
+            assert_eq!(*own_roles, 0x04, "the header's role bits are ours");
             assert_eq!(
                 members,
                 &vec![GroupMemberEntry {
@@ -391,6 +397,7 @@ fn group_list_raid_with_assistant_flag() {
                     guid: 0x4444,
                     status: member_status::ONLINE,
                     flags: GROUP_MEMBER_ASSISTANT | 0x01,
+                    roles: 0x02,
                 }]
             );
             assert!(members[0].flags & GROUP_MEMBER_ASSISTANT != 0);
@@ -426,6 +433,7 @@ fn group_list_empty_you_left_shape_is_28_bytes() {
         ServerPacket::GroupList {
             group_type,
             own_flags,
+            own_roles,
             members,
             leader,
             loot,
@@ -433,7 +441,7 @@ fn group_list_empty_you_left_shape_is_28_bytes() {
             ..
         } => {
             assert_eq!(*group_type, 0);
-            assert_eq!(*own_flags, 0);
+            assert_eq!((*own_flags, *own_roles), (0, 0));
             assert!(difficulties.is_none(), "no tail, no difficulties");
             assert!(members.is_empty());
             assert_eq!(*leader, 0);
@@ -499,22 +507,30 @@ fn party_command_result_wire() {
     }
 }
 
-/// `SMSG_PARTY_MEMBER_STATS` (delta) with mask `0xFF`: every field from `STATUS` to `ZONE`.
+/// Parse a member stats body, which must decode to its last byte.
+fn parse_stats(opcode: u16, body: &[u8]) -> ServerPacket {
+    let (p, tail) = messages::parse_server_with_tail(opcode, body).unwrap();
+    assert_eq!(tail, 0, "every byte read");
+    p
+}
+
+/// `SMSG_PARTY_MEMBER_STATS` (delta) with mask `0xFF`: every field from `STATUS` to `ZONE`, in
+/// 12340's widths (`0x6cf9b0`): a `u16` status and `u32` health.
 #[test]
 fn party_member_stats_delta_status_through_zone() {
     let body = hx(concat!(
         "012a",     // packed guid 0x2A (mask 0x01, one nonzero byte)
         "ff000000", // mask: STATUS|CUR_HP|MAX_HP|POWER_TYPE|CUR_POWER|MAX_POWER|LEVEL|ZONE
-        "01",       // status: ONLINE
-        "6400",     // cur_hp 100
-        "9600",     // max_hp 150
+        "0100",     // status: ONLINE
+        "a0860100", // cur_hp 100000, past a u16
+        "f0490200", // max_hp 150000
         "00",       // power_type: mana
         "c800",     // cur_power 200
         "fa00",     // max_power 250
-        "3c00",     // level 60
+        "5000",     // level 80
         "ef05",     // zone 1519
     ));
-    let p = messages::parse_server(opcode::SMSG_PARTY_MEMBER_STATS, &body).unwrap();
+    let p = parse_stats(opcode::SMSG_PARTY_MEMBER_STATS, &body);
     match &p {
         ServerPacket::PartyMemberStats { guid, full, info } => {
             assert_eq!(*guid, 0x2A);
@@ -522,13 +538,13 @@ fn party_member_stats_delta_status_through_zone() {
             assert_eq!(
                 **info,
                 PartyMemberStatsInfo {
-                    status: Some(member_status::ONLINE),
-                    cur_hp: Some(100),
-                    max_hp: Some(150),
+                    status: Some(member_status::ONLINE.into()),
+                    cur_hp: Some(100_000),
+                    max_hp: Some(150_000),
                     power_type: Some(0),
                     cur_power: Some(200),
                     max_power: Some(250),
-                    level: Some(60),
+                    level: Some(80),
                     zone: Some(1519),
                     ..Default::default()
                 }
@@ -541,18 +557,17 @@ fn party_member_stats_delta_status_through_zone() {
             guid: 0x2A,
             full: false,
             info,
-        }] => assert_eq!(info.level, Some(60)),
+        }] => assert_eq!(info.level, Some(80)),
         other => panic!("party member stats delta decode: {other:?}"),
     }
 }
 
-/// `SMSG_PARTY_MEMBER_STATS_FULL` with position, auras and the whole pet block: every field the
-/// delta test does not cover.
+/// `SMSG_PARTY_MEMBER_STATS_FULL` with position, auras, the whole pet block and the vehicle seat:
+/// every field the delta test does not cover, after `_FULL`'s leading arena byte (`0x6cf9d2`).
 #[test]
-fn party_member_stats_full_position_auras_and_pet_block() {
+fn party_member_stats_full_position_auras_pet_block_and_seat() {
     let mask = party_member_mask::POSITION
         | party_member_mask::AURAS
-        | party_member_mask::AURAS_NEGATIVE
         | party_member_mask::PET_GUID
         | party_member_mask::PET_NAME
         | party_member_mask::PET_MODEL_ID
@@ -562,59 +577,69 @@ fn party_member_stats_full_position_auras_and_pet_block() {
         | party_member_mask::PET_CUR_POWER
         | party_member_mask::PET_MAX_POWER
         | party_member_mask::PET_AURAS
-        | party_member_mask::PET_AURAS_NEGATIVE;
-    assert_eq!(mask, 0x001F_FF00, "sanity: the hand-picked bit set");
+        | party_member_mask::VEHICLE_SEAT;
+    assert_eq!(mask, 0x000F_FF00, "sanity: the hand-picked bit set");
 
-    let mut body = vec![0x01, 0x7F]; // packed guid 0x7F (mask 0x01, one nonzero byte)
+    let mut body = vec![0x00]; // arena byte: not an arena opponent
+    body.extend_from_slice(&[0x01, 0x7F]); // packed guid 0x7F (mask 0x01, one nonzero byte)
     body.extend_from_slice(&mask.to_le_bytes());
 
     // POSITION: i16 x, i16 y (negative, to prove the signed cast).
     body.extend_from_slice(&1234i16.to_le_bytes());
     body.extend_from_slice(&(-5678i16).to_le_bytes());
-    // AURAS: u32 posMask, bits 0 and 5 set -> spell ids 133 (Fireball), 116 (Frostbolt).
-    body.extend_from_slice(&0x0000_0021u32.to_le_bytes());
-    body.extend_from_slice(&133u16.to_le_bytes());
-    body.extend_from_slice(&116u16.to_le_bytes());
-    // AURAS_NEGATIVE: u16 negMask, bit 2 set -> spell id 8050.
-    body.extend_from_slice(&0x0004u16.to_le_bytes());
-    body.extend_from_slice(&8050u16.to_le_bytes());
+    // AURAS: u64 slot mask, bits 0, 5 and 40, each a u32 spell id and a u8 flags byte.
+    body.extend_from_slice(&((1u64 << 0) | (1 << 5) | (1 << 40)).to_le_bytes());
+    for (spell, flags) in [(48469u32, 0x19u8), (116, 0x09), (770, 0x81)] {
+        body.extend_from_slice(&spell.to_le_bytes());
+        body.push(flags);
+    }
     body.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
     body.extend_from_slice(b"Fido\0");
-    // PET_MODEL_ID, PET_CUR_HP, PET_MAX_HP.
+    // PET_MODEL_ID (u16), PET_CUR_HP and PET_MAX_HP (u32).
     body.extend_from_slice(&618u16.to_le_bytes());
-    body.extend_from_slice(&40u16.to_le_bytes());
-    body.extend_from_slice(&50u16.to_le_bytes());
-    // PET_POWER_TYPE: mana.
-    body.push(0);
+    body.extend_from_slice(&70_000u32.to_le_bytes());
+    body.extend_from_slice(&80_000u32.to_le_bytes());
+    // PET_POWER_TYPE: focus.
+    body.push(2);
     // PET_CUR_POWER, PET_MAX_POWER.
     body.extend_from_slice(&80u16.to_le_bytes());
     body.extend_from_slice(&100u16.to_le_bytes());
-    // PET_AURAS: u32 mask, bit 3 set -> spell id 1126 (Mark of the Wild).
-    body.extend_from_slice(&0x0000_0008u32.to_le_bytes());
-    body.extend_from_slice(&1126u16.to_le_bytes());
-    // PET_AURAS_NEGATIVE: u16 mask, bit 1 set -> spell id 770 (Faerie Fire).
-    body.extend_from_slice(&0x0002u16.to_le_bytes());
-    body.extend_from_slice(&770u16.to_le_bytes());
+    // PET_AURAS: bit 63 alone.
+    body.extend_from_slice(&(1u64 << 63).to_le_bytes());
+    body.extend_from_slice(&1126u32.to_le_bytes());
+    body.push(0x11);
+    // VEHICLE_SEAT.
+    body.extend_from_slice(&321u32.to_le_bytes());
 
-    let p = messages::parse_server(opcode::SMSG_PARTY_MEMBER_STATS_FULL, &body).unwrap();
+    let p = parse_stats(opcode::SMSG_PARTY_MEMBER_STATS_FULL, &body);
+    let aura = |slot, spell_id, flags| RecordAura {
+        slot,
+        spell_id,
+        flags,
+    };
     match &p {
         ServerPacket::PartyMemberStats { guid, full, info } => {
             assert_eq!(*guid, 0x7F);
             assert!(*full);
             assert_eq!(info.position, Some((1234, -5678)));
-            assert_eq!(info.auras, Some(vec![(0, 133), (5, 116)]));
-            // The debuff slot is absolute: mask bit 2 is slot 34.
-            assert_eq!(info.auras_negative, Some(vec![(34, 8050)]));
+            assert_eq!(
+                info.auras,
+                Some(vec![
+                    aura(0, 48469, 0x19),
+                    aura(5, 116, 0x09),
+                    aura(40, 770, 0x81)
+                ])
+            );
             assert_eq!(info.pet_guid, Some(0x1122_3344_5566_7788));
             assert_eq!(info.pet_name.as_deref(), Some("Fido"));
             assert_eq!(info.pet_model_id, Some(618));
-            assert_eq!(info.pet_cur_hp, Some(40));
-            assert_eq!(info.pet_max_hp, Some(50));
-            assert_eq!(info.pet_power_type, Some(0));
+            assert_eq!(info.pet_cur_hp, Some(70_000));
+            assert_eq!(info.pet_max_hp, Some(80_000));
+            assert_eq!(info.pet_power_type, Some(2));
             assert_eq!(info.pet_cur_power, Some(80));
             assert_eq!(info.pet_max_power, Some(100));
-            assert_eq!(info.pet_auras, Some(vec![(3, 1126)]));
-            assert_eq!(info.pet_auras_negative, Some(vec![(33, 770)]));
+            assert_eq!(info.pet_auras, Some(vec![aura(63, 1126, 0x11)]));
+            assert_eq!(info.vehicle_seat, Some(321));
             assert_eq!(info.status, None);
             assert_eq!(info.level, None);
         }
@@ -631,53 +656,69 @@ fn party_member_stats_full_position_auras_and_pet_block() {
     }
 }
 
-/// A delta's aura mask names the slots that changed, a 0 id among them for an aura that fell off
-/// (`Player::GetAuraUpdateMask`, `GroupHandler.cpp:627-633`), and the record takes each named slot
-/// and keeps the rest (`0x5e52d0`-`0x5e52f8`).
+/// A delta's aura mask names the slots that changed, a 0 id among them for an aura that fell off,
+/// and the record takes each named slot with its flags and keeps the rest (`0x6cfbd4`).
 #[test]
 fn a_delta_aura_mask_patches_the_named_slots_and_a_zero_clears_one() {
     // Slots 0 and 5 changed: slot 0 lost its aura, slot 5 took 116.
     let body = hx(concat!(
-        "017f",     // packed guid 0x7F
-        "00020000", // mask: AURAS
-        "21000000", // slot mask: bits 0 and 5
-        "0000",     // slot 0: cleared
-        "7400",     // slot 5: 116
+        "017f",             // packed guid 0x7F
+        "00020000",         // mask: AURAS
+        "2100000000000000", // slot mask: bits 0 and 5
+        "0000000000",       // slot 0: cleared
+        "7400000009",       // slot 5: 116, flags 0x09
     ));
-    let p = messages::parse_server(opcode::SMSG_PARTY_MEMBER_STATS, &body).unwrap();
+    let p = parse_stats(opcode::SMSG_PARTY_MEMBER_STATS, &body);
     let ServerPacket::PartyMemberStats { info, full, .. } = &p else {
         panic!("expected PartyMemberStats, got {}", p.name());
     };
     assert!(!*full);
-    assert_eq!(info.auras, Some(vec![(0, 0), (5, 116)]));
+    let aura = |slot, spell_id, flags| RecordAura {
+        slot,
+        spell_id,
+        flags,
+    };
+    assert_eq!(info.auras, Some(vec![aura(0, 0, 0), aura(5, 116, 0x09)]));
 
-    let mut record = Some(vec![(0, 133), (3, 1126), (5, 10)]);
+    let mut record = Some(vec![
+        aura(0, 133, 0x09),
+        aura(3, 1126, 0x11),
+        aura(5, 10, 0x89),
+    ]);
     patch_auras(&mut record, info.auras.as_deref().unwrap());
     assert_eq!(
         record,
-        Some(vec![(3, 1126), (5, 116)]),
-        "slot 0 emptied, slot 3 untouched, slot 5 overwritten"
+        Some(vec![aura(3, 1126, 0x11), aura(5, 116, 0x09)]),
+        "slot 0 emptied, slot 3 untouched, slot 5 overwritten with its flags"
     );
     // A new slot goes in slot order, and clearing an empty slot is a no-op.
-    patch_auras(&mut record, &[(1, 774), (9, 0)]);
-    assert_eq!(record, Some(vec![(1, 774), (3, 1126), (5, 116)]));
+    patch_auras(&mut record, &[aura(1, 774, 0x13), aura(9, 0, 0)]);
+    assert_eq!(
+        record,
+        Some(vec![
+            aura(1, 774, 0x13),
+            aura(3, 1126, 0x11),
+            aura(5, 116, 0x09)
+        ])
+    );
 }
 
-/// The reply for a member not in our group (`Handlers/GroupHandler.cpp:773-789`):
-/// `SMSG_PARTY_MEMBER_STATS_FULL` with only `STATUS`, set to offline (0).
+/// The reply for a member not in our group: `SMSG_PARTY_MEMBER_STATS_FULL` with only `STATUS`,
+/// set to offline (0), behind the arena byte.
 #[test]
 fn party_member_stats_offline_miss_is_status_only() {
     let body = hx(concat!(
+        "00",       // arena byte
         "015c",     // packed guid 0x5C
         "01000000", // mask: STATUS only
-        "00",       // status: offline
+        "0000",     // status: offline
     ));
-    let p = messages::parse_server(opcode::SMSG_PARTY_MEMBER_STATS_FULL, &body).unwrap();
+    let p = parse_stats(opcode::SMSG_PARTY_MEMBER_STATS_FULL, &body);
     match &p {
         ServerPacket::PartyMemberStats { guid, full, info } => {
             assert_eq!(*guid, 0x5C);
             assert!(*full);
-            assert_eq!(info.status, Some(member_status::OFFLINE));
+            assert_eq!(info.status, Some(member_status::OFFLINE.into()));
             assert_eq!(info.cur_hp, None);
         }
         other => panic!("expected PartyMemberStats, got {}", other.name()),

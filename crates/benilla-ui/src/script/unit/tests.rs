@@ -678,6 +678,93 @@ fn set_unit_none_removes_the_token() {
     assert_eq!(s.eval::<i64>(r#"return UnitHealth("player")"#).unwrap(), 0);
 }
 
+/// The raid pullout's unit verbs: `UnitClassBase` (`0x610040`) answers `UnitClass`'s pair,
+/// `UnitInVehicle` (`0x6133d0`) the vehicle bit, and `UnitTargetsVehicleInRaidUI` (`0x613780`)
+/// false on no seat.
+#[test]
+fn raid_pullout_unit_verbs_answer_class_and_vehicle() {
+    let mut s = UiScript::new().unwrap();
+    s.set_unit(
+        "raid2",
+        Some(UnitState {
+            exists: true,
+            class: Some("Paladin".into()),
+            class_file: Some("PALADIN".into()),
+            in_vehicle: true,
+            ..Default::default()
+        }),
+    );
+    assert_eq!(
+        s.eval::<(String, String)>(r#"return UnitClassBase("raid2")"#)
+            .unwrap(),
+        ("Paladin".to_string(), "PALADIN".to_string())
+    );
+    assert_eq!(
+        s.eval::<i64>(r#"return UnitInVehicle("raid2")"#).unwrap(),
+        1
+    );
+    assert!(s
+        .eval::<bool>(r#"return UnitInVehicle("raid3") == nil and UnitClassBase("raid3") == nil"#)
+        .unwrap());
+    assert!(!s
+        .eval::<bool>(r#"return UnitTargetsVehicleInRaidUI("raid2")"#)
+        .unwrap());
+    assert!(s.run("UnitInVehicle()").is_err(), "the usage gate");
+}
+
+/// `UnitGroupRolesAssigned` (`0x60c810`): tank, healer and damage off the unit's role bits;
+/// a token naming nobody reads three falses.
+#[test]
+fn unit_group_roles_assigned_reads_the_role_bits() {
+    let mut s = UiScript::new().unwrap();
+    s.set_unit(
+        "party1",
+        Some(UnitState {
+            exists: true,
+            group_roles: 0x2 | 0x8,
+            ..Default::default()
+        }),
+    );
+    let roles = |s: &mut UiScript, token: &str| {
+        s.eval::<(bool, bool, bool)>(&format!("return UnitGroupRolesAssigned('{token}')"))
+            .unwrap()
+    };
+    assert_eq!(roles(&mut s, "party1"), (true, false, true));
+    assert_eq!(roles(&mut s, "party2"), (false, false, false));
+}
+
+/// `UnitIsAFK` (`0x60cc30`) and `UnitIsDND` (`0x60cd50`) answer 1 or nil; AFK reads nil for a
+/// unit the player can attack, DND does not.
+#[test]
+fn unit_is_afk_and_dnd_report_1_or_nil() {
+    let mut s = UiScript::new().unwrap();
+    let flagged = |afk, dnd, can_attack| UnitState {
+        exists: true,
+        afk,
+        dnd,
+        can_attack,
+        ..Default::default()
+    };
+    let read = |s: &mut UiScript| {
+        s.eval::<(Option<i64>, Option<i64>)>(r#"return UnitIsAFK("party1"), UnitIsDND("party1")"#)
+            .unwrap()
+    };
+    s.set_unit("party1", Some(flagged(true, false, false)));
+    assert_eq!(read(&mut s), (Some(1), None));
+    s.set_unit("party1", Some(flagged(false, true, false)));
+    assert_eq!(read(&mut s), (None, Some(1)));
+    s.set_unit("party1", Some(flagged(true, true, true)));
+    assert_eq!(
+        read(&mut s),
+        (None, Some(1)),
+        "an attackable unit is never AFK"
+    );
+    assert!(s
+        .eval::<bool>(r#"return UnitIsAFK("party2") == nil and UnitIsDND("party2") == nil"#)
+        .unwrap());
+    assert!(s.run("UnitIsAFK()").is_err(), "the usage gate");
+}
+
 #[test]
 fn party_frame_predicates_report_1_or_nil() {
     let mut s = UiScript::new().unwrap();

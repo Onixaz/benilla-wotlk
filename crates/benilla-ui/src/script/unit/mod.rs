@@ -142,6 +142,18 @@ pub struct UnitState {
     /// bit moves on any player, remote ones included: the reference's handler (`0x5ee990`) fires
     /// before any bit test or local-player check. Raw, as most of its bits are not decoded here.
     pub player_flags: u32,
+    /// `UnitIsAFK` (`0x60cc30`): a held player's `PLAYER_FLAGS` `0x2`, else the party record's
+    /// status `0x40`.
+    pub afk: bool,
+    /// `UnitIsDND` (`0x60cd50`): a held player's `PLAYER_FLAGS` `0x4`, else the party record's
+    /// status `0x80`.
+    pub dnd: bool,
+    /// `UnitGroupRolesAssigned` (`0x60c810`): the LFG role bits `SMSG_GROUP_LIST` carries for a
+    /// group member or the player, tank `0x2`, healer `0x4`, damage `0x8`; 0 outside the group.
+    pub group_roles: u8,
+    /// `UnitInVehicle` (`0x6133d0`): a party record's vehicle status bit `0x200`. benilla tracks
+    /// no vehicle, so a held unit rides none.
+    pub in_vehicle: bool,
     /// `UNIT_DYNAMIC_FLAGS` (field 143), raw. The event of the same name fires when any bit
     /// moves: the reference's field watch (`0x51bbb0`) compares the whole dword, and bits such as
     /// `0x2` (tracked) are not decoded here.

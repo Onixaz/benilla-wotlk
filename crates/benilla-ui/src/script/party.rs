@@ -182,6 +182,8 @@ impl super::UiScript {
             }
         } else {
             model.ready_check.deadline = Some(now + READY_CHECK_SECONDS);
+            model.ready_check.ready.clear();
+            model.ready_check.initiator = model.party.leader_guid;
         }
     }
 
@@ -198,7 +200,9 @@ impl super::UiScript {
         };
         let name = member.name.clone();
         model.ready_check.unanswered.retain(|g| *g != guid);
-        if !ready {
+        if ready {
+            model.ready_check.ready.push(guid);
+        } else {
             let template: String = lua
                 .globals()
                 .get::<String>("RAID_MEMBER_NOT_READY")
@@ -650,8 +654,45 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .filter(|g| *g != own)
                 .collect();
             model.ready_check.deadline = Some(now + READY_CHECK_SECONDS);
+            model.ready_check.ready.clear();
+            model.ready_check.initiator = own;
             model.party_requests.push(PartyRequest::ReadyCheckStart);
             Ok(())
+        })?,
+    )?;
+    // GetReadyCheckStatus(unit) (`0x574180`): nil unless a check is armed and unexpired and the
+    // player leads the party (`0x57426e`) or holds raid rank (`0x5741d1`); then the initiator reads
+    // "ready", a pending member "waiting", one who answered ready "ready", the rest "notready". In
+    // a party the player, who is no `partyN` slot, reads only as the initiator (`0x5742d1`).
+    g.set(
+        "GetReadyCheckStatus",
+        lua.create_function(|lua, token: Option<String>| {
+            let now = clock(lua);
+            let model = crate::script::model_mut_of(lua);
+            let guid = token
+                .as_deref()
+                .and_then(|t| model.unit(t))
+                .map_or(0, |u| u.guid);
+            let party = &model.party;
+            let check = &model.ready_check;
+            let armed = check.deadline.is_some_and(|d| now < d);
+            let status = if party.raid.is_empty() {
+                let leads = !party.members.is_empty() && party.leader_guid == party.own_guid;
+                let member = party.members.iter().any(|m| m.guid != 0 && m.guid == guid);
+                match (leads && armed, member) {
+                    (false, _) => None,
+                    (true, false) => (guid != 0 && guid == check.initiator).then_some("ready"),
+                    (true, true) => Some(ready_check_answer(check, guid)),
+                }
+            } else {
+                let officer = party
+                    .raid
+                    .iter()
+                    .any(|m| m.guid == party.own_guid && m.rank > 0);
+                let member = party.raid.iter().any(|m| m.guid != 0 && m.guid == guid);
+                (officer && armed && member).then(|| ready_check_answer(check, guid))
+            };
+            Ok(status)
         })?,
     )?;
     // CheckReadyCheckTime() (`0x4bc120` → `0x4bb310`), called every frame from stock
@@ -759,7 +800,22 @@ const READY_CHECK_SECONDS: f64 = 30.0;
 pub(crate) struct ReadyCheckState {
     pub(crate) deadline: Option<f64>,
     pub(crate) unanswered: Vec<u64>,
+    /// The members whose answer was ready (`[entry+0x324]`; a party slot's `0x572470`), which `GetReadyCheckStatus` reads.
+    pub(crate) ready: Vec<u64>,
+    /// Who started the check (`[0xbeb620]`): `GetReadyCheckStatus` answers `"ready"` for them.
+    pub(crate) initiator: u64,
     pub(crate) lines: Vec<String>,
+}
+
+/// A rostered member's `GetReadyCheckStatus` answer in an armed check (`0x574216`-`0x574233`).
+fn ready_check_answer(check: &ReadyCheckState, guid: u64) -> &'static str {
+    if guid == check.initiator || check.ready.contains(&guid) {
+        "ready"
+    } else if check.unanswered.contains(&guid) {
+        "waiting"
+    } else {
+        "notready"
+    }
 }
 
 /// `GetTime()`'s clock, the session seconds `UiScript::tick` advances.
@@ -1702,5 +1758,70 @@ mod tests {
         s.set_now(130.0);
         s.run("CheckReadyCheckTime()").unwrap();
         assert_eq!(s.take_ready_check_lines(), vec![String::new()]);
+    }
+
+    /// `GetReadyCheckStatus` (`0x574180`): nil outside an armed check and for a raid member
+    /// without rank; in one, the initiator and a ready answer read "ready", a pending member
+    /// "waiting", a not-ready answer "notready".
+    #[test]
+    fn ready_check_status_reads_each_members_answer_while_armed() {
+        let mut s = UiScript::new().unwrap();
+        let mut party = raid_we_lead(&s);
+        party.raid[0].rank = 2;
+        s.set_party(party.clone());
+        for (token, guid) in [("player", 0x5E1F), ("party1", 0xA11CE), ("party2", 0xB0B)] {
+            s.set_unit(token, Some(unit(true, guid)));
+        }
+        let status = |s: &mut UiScript, token: &str| {
+            s.eval::<Option<String>>(&format!("return GetReadyCheckStatus('{token}')"))
+                .unwrap()
+        };
+        s.set_now(100.0);
+        assert_eq!(status(&mut s, "party1"), None, "no check armed");
+
+        s.run("DoReadyCheck()").unwrap();
+        assert_eq!(status(&mut s, "player").as_deref(), Some("ready"));
+        assert_eq!(status(&mut s, "party1").as_deref(), Some("waiting"));
+        s.ready_check_answered(0xA11CE, false);
+        assert_eq!(status(&mut s, "party1").as_deref(), Some("notready"));
+        assert_eq!(status(&mut s, "party2").as_deref(), Some("waiting"));
+        assert_eq!(status(&mut s, "target"), None, "no raid member");
+
+        // Without raid rank the player reads nothing, armed or not.
+        party.raid[0].rank = 0;
+        s.set_party(party);
+        assert_eq!(status(&mut s, "party2"), None);
+    }
+
+    /// In a party the gate is leading it, and the player, no `partyN` slot, reads as the
+    /// initiator alone (`0x5742a0`).
+    #[test]
+    fn a_party_ready_check_status_needs_the_lead() {
+        let mut s = UiScript::new().unwrap();
+        let mut party = raid_we_lead(&s);
+        party.raid.clear();
+        s.set_party(party.clone());
+        for (token, guid) in [("player", 0x5E1F), ("party1", 0xA11CE)] {
+            s.set_unit(token, Some(unit(true, guid)));
+        }
+        let status = |s: &mut UiScript, token: &str| {
+            s.eval::<Option<String>>(&format!("return GetReadyCheckStatus('{token}')"))
+                .unwrap()
+        };
+        s.set_now(100.0);
+        s.run("DoReadyCheck()").unwrap();
+        assert_eq!(status(&mut s, "player").as_deref(), Some("ready"));
+        assert!(status(&mut s, "party1").is_some());
+        s.set_now(130.0);
+        assert_eq!(status(&mut s, "party1"), None, "expired");
+
+        party.leader_guid = 0xA11CE;
+        s.set_party(party);
+        s.set_now(100.0);
+        assert_eq!(
+            status(&mut s, "party1"),
+            None,
+            "a member who does not lead reads nothing"
+        );
     }
 }

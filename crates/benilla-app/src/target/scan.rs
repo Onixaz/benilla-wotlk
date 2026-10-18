@@ -1327,6 +1327,7 @@ mod tests {
             guid,
             status: 1,
             flags,
+            roles: 0,
         };
         // A raid: our subgroup 0 holds PARTY and PARTY_DEAD; RAID is in subgroup 1.
         world.insert_resource(crate::ui_party::GroupState {
