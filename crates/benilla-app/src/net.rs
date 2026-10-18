@@ -1719,7 +1719,9 @@ pub(crate) enum ClientCommand {
     /// vmangos sends `TRADE_STATUS_BUSY` to both. The player's own No is [`Self::CancelTrade`].
     BusyTrade,
     /// `CMSG_ACCEPT_TRADE`: the Trade button, carrying the partner's offer state.
-    AcceptTrade { their_state: u32 },
+    AcceptTrade {
+        their_state: u32,
+    },
     /// `CMSG_UNACCEPT_TRADE`: drop our accept, stay in the trade.
     UnacceptTrade,
     /// `CMSG_CANCEL_TRADE`.

@@ -165,11 +165,11 @@ impl Spells {
     /// The learned spell `CGSpellBook_RegisterLearnedSpell` keeps for an `Effect[0]` (`0x5420a5`),
     /// each learn overwriting it, so the book's last in ascending id order.
     pub(crate) fn learned_with_effect(&self, learned: &BTreeSet<u32>, effect: u32) -> Option<u32> {
-        learned
-            .iter()
-            .rev()
-            .copied()
-            .find(|id| self.catalog.get(*id).is_some_and(|s| s.effects[0] == effect))
+        learned.iter().rev().copied().find(|id| {
+            self.catalog
+                .get(*id)
+                .is_some_and(|s| s.effects[0] == effect)
+        })
     }
 }
 

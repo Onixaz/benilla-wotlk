@@ -498,7 +498,10 @@ mod tests {
             1,
             12_345,
             777,
-            &[(0, Some(0xABCD)), (TRADE_SLOT_NONTRADED as u8, Some(0x1111))],
+            &[
+                (0, Some(0xABCD)),
+                (TRADE_SLOT_NONTRADED as u8, Some(0x1111)),
+            ],
         );
         let ext = read_trade_status_extended(&mut &wire[..]).unwrap();
         assert!(ext.their_window);
@@ -514,7 +517,10 @@ mod tests {
         assert_eq!(slot0.charges, -3);
         assert_eq!(slot0.max_durability, 100);
         assert_eq!(slot0.durability, 80);
-        assert!(ext.slots[TRADE_SLOT_NONTRADED].is_some(), "enchant slot parsed");
+        assert!(
+            ext.slots[TRADE_SLOT_NONTRADED].is_some(),
+            "enchant slot parsed"
+        );
     }
 
     /// A slot the snapshot omits, or lists with a zero block, is empty.

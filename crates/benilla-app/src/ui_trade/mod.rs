@@ -1030,7 +1030,11 @@ mod tests {
         assert_eq!(s.our.gold, 0);
         let theirs = snapshot_of(true, 40, [None; TRADE_SLOT_COUNT]);
         assert_eq!(s.set_offer(&theirs), OfferUpdate::Applied);
-        assert_eq!(s.their_state(), 3, "the accept will echo the partner's state");
+        assert_eq!(
+            s.their_state(),
+            3,
+            "the accept will echo the partner's state"
+        );
     }
 
     #[test]

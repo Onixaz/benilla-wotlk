@@ -112,7 +112,11 @@ impl GroupState {
 
     /// `MSG_SET_RAID_DIFFICULTY` (`0x5255a0`). On a dynamic map the group's value is not written:
     /// the reference asks to change the player difficulty instead (`0x52d8d0`), which is not built.
-    pub(crate) fn apply_raid_difficulty(&mut self, set: DifficultySet, map: RaidMap) -> Vec<UiError> {
+    pub(crate) fn apply_raid_difficulty(
+        &mut self,
+        set: DifficultySet,
+        map: RaidMap,
+    ) -> Vec<UiError> {
         let (raid, dungeon) = (
             self.current_raid_difficulty(),
             self.current_dungeon_difficulty(),
@@ -168,7 +172,10 @@ impl GroupState {
 fn dungeon_changed_line(current: u32) -> UiError {
     UiError::args(
         "ERR_DUNGEON_DIFFICULTY_CHANGED_S",
-        vec![FillArg::Global(format!("DUNGEON_DIFFICULTY{}", current + 1))],
+        vec![FillArg::Global(format!(
+            "DUNGEON_DIFFICULTY{}",
+            current + 1
+        ))],
     )
 }
 
@@ -256,15 +263,28 @@ mod tests {
         let lines = g.apply_dungeon_difficulty(set(1, true, false));
         assert_eq!(g.current_dungeon_difficulty(), 1);
         assert_eq!(keys(&lines), ["ERR_DUNGEON_DIFFICULTY_CHANGED_S"]);
-        assert_eq!(lines[0].args, vec![FillArg::Global("DUNGEON_DIFFICULTY2".into())]);
-        assert!(g.apply_dungeon_difficulty(set(1, true, false)).is_empty(), "no change, no line");
+        assert_eq!(
+            lines[0].args,
+            vec![FillArg::Global("DUNGEON_DIFFICULTY2".into())]
+        );
+        assert!(
+            g.apply_dungeon_difficulty(set(1, true, false)).is_empty(),
+            "no change, no line"
+        );
     }
 
     /// In a party the group's dungeon difficulty rules, so a player-only write is silent.
     #[test]
     fn in_a_party_the_groups_dungeon_difficulty_rules() {
         let mut g = in_party();
-        g.apply_list_tail(Some(GroupDifficulties { dungeon: 1, raid: 0, dynamic: 0 }), false);
+        g.apply_list_tail(
+            Some(GroupDifficulties {
+                dungeon: 1,
+                raid: 0,
+                dynamic: 0,
+            }),
+            false,
+        );
         assert_eq!(g.current_dungeon_difficulty(), 1);
         assert!(g.apply_dungeon_difficulty(set(0, true, false)).is_empty());
         assert_eq!(g.player_difficulty.dungeon, 0);
@@ -286,9 +306,15 @@ mod tests {
         let lines = g.apply_raid_difficulty(set(1, true, true), RaidMap::Dynamic);
         assert_eq!(
             keys(&lines),
-            ["ERR_RAID_LOCKOUT_CHANGED_S", "ERR_PLAYER_DIFFICULTY_CHANGED_S"]
+            [
+                "ERR_RAID_LOCKOUT_CHANGED_S",
+                "ERR_PLAYER_DIFFICULTY_CHANGED_S"
+            ]
         );
-        assert_eq!(g.difficulties.raid, 0, "a dynamic map does not take the group value");
+        assert_eq!(
+            g.difficulties.raid, 0,
+            "a dynamic map does not take the group value"
+        );
     }
 
     /// Every restricted list signals, since the bit was cleared just before.

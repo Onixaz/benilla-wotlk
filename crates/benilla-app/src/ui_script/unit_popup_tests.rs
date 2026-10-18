@@ -996,7 +996,8 @@ fn a_3_3_5a_player_frame_right_click_opens_the_self_menu() {
     assert!(errors.is_empty(), "click errors: {errors:#?}");
     assert!(s.eval::<bool>("return DropDownList1:IsShown()").unwrap());
     assert_eq!(
-        s.eval::<String>("return PlayerFrameDropDown.which").unwrap(),
+        s.eval::<String>("return PlayerFrameDropDown.which")
+            .unwrap(),
         "SELF"
     );
     s.run("UnitPopup_OnUpdate(0.1)").unwrap();

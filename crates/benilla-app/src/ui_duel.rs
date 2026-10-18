@@ -492,8 +492,15 @@ mod tests {
         let mut spells = Spells::empty_for_tests();
         spells.catalog = benilla_formats::load_spell_catalog(&mut chain).expect("Spell.dbc");
         let book = std::collections::BTreeSet::from([6603, 7266, 8386]);
-        assert_eq!(spells.learned_with_effect(&book, SPELL_EFFECT_DUEL), Some(7266));
-        assert_eq!(spells.learned_with_effect(&book, 152), None, "no summon-friend spell");
+        assert_eq!(
+            spells.learned_with_effect(&book, SPELL_EFFECT_DUEL),
+            Some(7266)
+        );
+        assert_eq!(
+            spells.learned_with_effect(&book, 152),
+            None,
+            "no summon-friend spell"
+        );
     }
 
     /// Against the shipped `GlobalStrings.lua`: the retreat template names the loser first.

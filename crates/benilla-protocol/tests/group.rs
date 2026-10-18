@@ -6,7 +6,8 @@ mod common;
 use benilla_protocol::events::{decode, SessionEvent};
 use benilla_protocol::messages::{
     self, member_status, opcode, party_member_mask, party_operation, party_result, patch_auras,
-    GroupDifficulties, GroupLootInfo, GroupMemberEntry, PartyMemberStatsInfo, GROUP_MEMBER_ASSISTANT,
+    GroupDifficulties, GroupLootInfo, GroupMemberEntry, PartyMemberStatsInfo,
+    GROUP_MEMBER_ASSISTANT,
 };
 use benilla_protocol::ServerPacket;
 use common::hx;

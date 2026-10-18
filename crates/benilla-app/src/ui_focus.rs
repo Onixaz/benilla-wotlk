@@ -64,8 +64,10 @@ impl GroupGate<'_, '_> {
 
     /// `CGUnit_C::IsDuelingWith` (`0x71f5c0`), its player arm: one arbiter, opposite teams.
     fn dueling_us(&self, guid: u64) -> bool {
-        let (Some(me), Some(other)) = (self.self_guid.0.and_then(|g| self.store(g)), self.store(guid))
-        else {
+        let (Some(me), Some(other)) = (
+            self.self_guid.0.and_then(|g| self.store(g)),
+            self.store(guid),
+        ) else {
             return false;
         };
         let (me, other) = (&me.0, &other.0);
@@ -95,7 +97,9 @@ fn on_unit_left(In(ev): In<SessionEvent>, gate: GroupGate, mut breaks: ResMut<Fo
         SessionEvent::ObjectsRemoved(guids) => guids,
         _ => return,
     };
-    breaks.0.extend(guids.into_iter().filter(|&g| gate.breaks(g)));
+    breaks
+        .0
+        .extend(guids.into_iter().filter(|&g| gate.breaks(g)));
 }
 
 /// `SMSG_BREAK_TARGET` (`0x526586`): the gated break, which for a group member also needs its
@@ -141,11 +145,14 @@ fn feed_focus(
             .iter()
             .any(|&f| edge.unit_field(f) || edge.unit_field(f + 1));
         let owner = edge.guid;
-        let watched = Some(owner) == gate.self_guid.0
-            || gate.group.party_slots().any(|m| m.guid == owner);
+        let watched =
+            Some(owner) == gate.self_guid.0 || gate.group.party_slots().any(|m| m.guid == owner);
         if pet_field && watched {
             let now = gate.store(owner).map_or([0; 2], |s| {
-                [s.0.unit_charm().unwrap_or(0), s.0.unit_summon().unwrap_or(0)]
+                [
+                    s.0.unit_charm().unwrap_or(0),
+                    s.0.unit_summon().unwrap_or(0),
+                ]
             });
             let was = memo.pets.insert(owner, now).unwrap_or([0; 2]);
             for (old, new) in was.into_iter().zip(now) {
@@ -160,7 +167,10 @@ fn feed_focus(
 
     let focus = script.focus_guid();
     let here = !me.is_empty();
-    if std::mem::replace(&mut memo.in_world, here) && !here && focus != 0 && !gate.member_or_pet(focus)
+    if std::mem::replace(&mut memo.in_world, here)
+        && !here
+        && focus != 0
+        && !gate.member_or_pet(focus)
     {
         breaks.0.push(focus);
     }

@@ -96,7 +96,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "StartDuel",
         lua.create_function(|lua, (name, exact): (Value, Value)| {
             let name = super::binding_abi::optional_string(lua, &name).unwrap_or_default();
-            start_duel(lua, &name, super::binding_abi::bool_or_default(Some(&exact), false));
+            start_duel(
+                lua,
+                &name,
+                super::binding_abi::bool_or_default(Some(&exact), false),
+            );
             Ok(())
         })?,
     )?;

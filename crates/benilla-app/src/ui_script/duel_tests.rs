@@ -8,8 +8,7 @@ fn setup() -> (std::sync::MutexGuard<'static, ()>, UiScript) {
     let lock = crate::local_state::test_env::ENV_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let (mut s, failures) =
-        super::layer_tests::production_load_with("duel", false, "", |_| {});
+    let (mut s, failures) = super::layer_tests::production_load_with("duel", false, "", |_| {});
     let ours: Vec<_> = failures
         .iter()
         .filter(|f| f.contains("StaticPopup"))
@@ -149,5 +148,8 @@ fn the_duel_globals_queue_their_intents() {
         ..Default::default()
     });
     s.run("StartDuel('target', 1)").unwrap();
-    assert!(s.take_duel_requests().is_empty(), "a creature is no duel target");
+    assert!(
+        s.take_duel_requests().is_empty(),
+        "a creature is no duel target"
+    );
 }

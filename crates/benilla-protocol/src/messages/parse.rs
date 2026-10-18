@@ -14,8 +14,7 @@ use super::{
     page_text, pet, petition, pose, progression, pvp, quest, social, spellbook, spells, stable,
     summon, tabard, talents, taxi, totem, trade, trainer, tutorial, update_object, vendor,
     world_state, AttackSwingError, Character, CreatureQueryInfo, DifficultySet, JumpInfo, MoveMode,
-    ServerPacket,
-    SpeedKind, SplineMode,
+    ServerPacket, SpeedKind, SplineMode,
 };
 
 /// Read a `SMSG_FORCE_*_SPEED_CHANGE` body: `[packed guid][u32 counter][f32 speed]`, with a `u8`

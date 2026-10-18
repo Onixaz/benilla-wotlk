@@ -377,7 +377,10 @@ mod tests {
         assert_eq!(g.guid_of("focus"), Some(P1));
         assert_eq!(g.guid_of("focustarget"), Some(ME));
         assert_eq!(guids().guid_of("focus"), None, "no focus, nobody");
-        let mob = UnitGuids { focus: MOB, ..guids() };
+        let mob = UnitGuids {
+            focus: MOB,
+            ..guids()
+        };
         assert_eq!(mob.tokens_naming(MOB), ["target", "focus", "npc"]);
     }
 
