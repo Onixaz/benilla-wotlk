@@ -93,6 +93,7 @@ pub(crate) struct Scene<'w, 's> {
     field_changes: MessageWriter<'w, FieldChanged>,
     speed_changes: MessageWriter<'w, SpeedChangeMessage>,
     self_moves: MessageWriter<'w, super::SelfMoveMessage>,
+    self_creates: MessageWriter<'w, super::SelfCreateMover>,
     hard_landings: MessageWriter<'w, crate::creature_anim::HardLanding>,
     go_custom_anims: MessageWriter<'w, crate::go_anim::GoCustomAnim>,
     names: Res<'w, NameCache>,
@@ -120,6 +121,12 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
     } = ev
     {
         crate::death::net::note_corpse(guid, kind, &fields, &sc.self_guid, &mut sc.death_net);
+        if let Some(m) = mover.filter(|_| sc.self_guid.0 == Some(guid)) {
+            sc.self_creates.write(super::SelfCreateMover {
+                flags: m.flags,
+                pitch: m.pitch,
+            });
+        }
         object_create(
             guid,
             kind,

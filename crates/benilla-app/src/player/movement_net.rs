@@ -45,14 +45,14 @@ const OUTBOUND_FLAG_MASK: u32 = move_flags::FORWARD
     | move_flags::HOVER
     | move_flags::ON_TRANSPORT;
 
+/// The bits the periodic heartbeat runs under, 3.3.5a's `0xc0100f` (`0x6f0b0f`): the directions,
+/// FALLING and the vertical channel. Turning, an idle swim or flight and the modes send none.
+const HEARTBEAT_FLAGS: u32 =
+    move_flags::ANY_MOVE | move_flags::FALLING | move_flags::ASCENDING | move_flags::DESCENDING;
+
 /// The bits under which the position changes every frame and the move stream carries it; the
 /// position reconcile runs only with none set. Turning is absent: a turn in place moves nothing.
-const IN_MOTION: u32 = move_flags::ANY_MOVE
-    | move_flags::FALLING
-    | move_flags::FALLING_FAR
-    | move_flags::SWIMMING
-    | move_flags::FLYING
-    | move_flags::ON_TRANSPORT;
+const IN_MOTION: u32 = HEARTBEAT_FLAGS | move_flags::FALLING_FAR | move_flags::ON_TRANSPORT;
 
 /// This frame's input to the `CMSG_MOVE_TIME_SKIPPED` report ([`stream_skipped_time`]).
 pub(super) struct SkipClock {
@@ -289,10 +289,12 @@ pub(super) fn stream_self_movement(
     if !sent && (added | removed) & move_flags::ON_TRANSPORT != 0 {
         send_move!(MoveKind::Heartbeat);
     }
-    // The heartbeat runs while any sent flag is set; the reference's (`0x616620`) runs only while
-    // `flags & 0x200f`, the directions and FALLING (`0x616725`). Every send re-arms its deadline
+    // The heartbeat runs under [`HEARTBEAT_FLAGS`] alone. Every send re-arms its deadline
     // (`0x600a30` → `0x615b80`), hence the stamp on any send below.
-    if !sent && wire_flags != 0 && now - player.last_heartbeat >= HEARTBEAT_INTERVAL {
+    if !sent
+        && wire_flags & HEARTBEAT_FLAGS != 0
+        && now - player.last_heartbeat >= HEARTBEAT_INTERVAL
+    {
         send_move!(MoveKind::Heartbeat);
     }
     // At rest, a position change goes out the frame it happens: the resolver settles a resting

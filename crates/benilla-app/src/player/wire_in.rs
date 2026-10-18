@@ -13,7 +13,8 @@ use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
 use crate::creature_anim::{move_flags, wrap_pi};
 use crate::net::{
     ClientCommand, ClientControlMessage, Embodied, Guid, KnockBackMessage, MoveModeMessage,
-    NetCommands, SelfMoveMessage, SpeedChangeMessage, TeleportMessage, WorldportMessage,
+    NetCommands, SelfCreateMover, SelfMoveMessage, SpeedChangeMessage, TeleportMessage,
+    WorldportMessage,
 };
 use crate::transport::Transport;
 use benilla_world::world_map::CurrentMap;
@@ -92,6 +93,7 @@ pub(super) fn apply_server_moves(
     knock_msgs: &mut MessageReader<KnockBackMessage>,
     self_moves: &mut MessageReader<SelfMoveMessage>,
     control_msgs: &mut MessageReader<ClientControlMessage>,
+    self_creates: &mut MessageReader<SelfCreateMover>,
     self_guid: Option<u64>,
     transports: &Query<
         (&Transform, &Guid, Option<&avian3d::prelude::ColliderAabb>),
@@ -221,6 +223,12 @@ pub(super) fn apply_server_moves(
             counter: t.counter,
         });
         info!("teleport: snapped to {:?}, acked", t.position);
+    }
+    // Our body's create forces its mover state in (`0x6f1520`), not a possessed unit's.
+    for c in self_creates.read() {
+        if player.foreign_mover.is_none() {
+            apply_self_create(player, c);
+        }
     }
     // Bare self-addressed moves, after the teleports so a same-frame teleport wins the pose.
     for m in self_moves.read() {
@@ -384,6 +392,18 @@ fn snap_near_teleport(player: &mut Player, cam_yaw: &mut f32, t: &TeleportMessag
     player.world_stale = true;
     // Voids any self ride: `drive_self_ride` drops it rather than mirror the stale pose over this.
     player.ride_abort = true;
+}
+
+/// Our body's create-block mover state, forced over a zeroed word (`SetUpdateInfo` `0x6f1520`,
+/// `0x77fffdff` with force set): the modes, root included, swimming, flight, the gait and the
+/// pitch, so a login mid-flight is flying from its first frame.
+fn apply_self_create(player: &mut Player, c: &SelfCreateMover) {
+    player.modes.merge_from_wire(c.flags);
+    player.modes.rooted = c.flags & move_flags::ROOT != 0;
+    player.swimming = c.flags & move_flags::SWIMMING != 0;
+    player.flying = c.flags & move_flags::FLYING != 0;
+    player.walking = c.flags & move_flags::WALK_MODE != 0;
+    player.mover_pitch = c.pitch;
 }
 
 /// The reference's masked merge of a server-authored `MOVEMENTFLAGS` (`0x618c30` at `0x618deb`:
@@ -657,6 +677,10 @@ mod self_move_tests {
             ("FALLING_FAR", f::FALLING_FAR),
             ("SWIMMING", f::SWIMMING),
             ("WATER_WALKING", f::WATER_WALKING),
+            ("ASCENDING", f::ASCENDING),
+            ("DESCENDING", f::DESCENDING),
+            ("CAN_FLY", f::CAN_FLY),
+            ("FLYING", f::FLYING),
         ] {
             assert_eq!(
                 bit & f::SERVER_AUTHORED,
@@ -665,6 +689,31 @@ mod self_move_tests {
             );
         }
         assert_eq!(f::ON_TRANSPORT & f::SERVER_AUTHORED, 0);
+    }
+
+    /// A login mid-flight: the create forces CAN_FLY, FLYING and the pitch in (`0x6f1520`), and a
+    /// later create on the ground takes them away again.
+    #[test]
+    fn our_create_block_seeds_flight_and_the_modes() {
+        let mut p = super::Player::default();
+        super::apply_self_create(
+            &mut p,
+            &crate::net::SelfCreateMover {
+                flags: f::CAN_FLY | f::FLYING | f::HOVER | f::ROOT,
+                pitch: 0.4,
+            },
+        );
+        assert!(p.modes.can_fly && p.flying && p.modes.hover && p.modes.rooted);
+        assert!(!p.swimming);
+        assert_eq!(p.mover_pitch, 0.4);
+        super::apply_self_create(
+            &mut p,
+            &crate::net::SelfCreateMover {
+                flags: 0,
+                pitch: 0.0,
+            },
+        );
+        assert!(!p.modes.can_fly && !p.flying && !p.modes.hover && !p.modes.rooted);
     }
 }
 

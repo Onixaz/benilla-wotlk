@@ -890,6 +890,34 @@ fn swing_ids_cover_both_hands() {
     assert!(!is_swing_id(30));
 }
 
+/// A flyer takes every swim arm (`0x717050`, `0x71e340`): the stroke moving, the swim idle still,
+/// and no ground shuffle; a flying mount keeps its flight cycles in those slots.
+#[test]
+fn a_flyer_strokes_and_idles_as_a_swimmer() {
+    let flyer = MovementState {
+        flags: move_flags::FLYING | move_flags::FORWARD,
+        ..moving_forward(14.0)
+    };
+    assert_eq!(gait_candidates(&flyer, 2.5, None, None), &[42, 41, 0]);
+    let hovering = MovementState {
+        flags: move_flags::FLYING,
+        speed: 0.0,
+        ..flyer
+    };
+    assert!(matches!(
+        base_candidates(&hovering, 2.5, None, None, None),
+        BaseCands::Fixed(&[41, 0])
+    ));
+    let turning = MovementState {
+        flags: move_flags::FLYING | move_flags::TURN_LEFT,
+        ..hovering
+    };
+    assert!(matches!(
+        base_candidates(&turning, 2.5, None, None, None),
+        BaseCands::Fixed(&[41, 0])
+    ));
+}
+
 #[test]
 fn a_flying_spline_is_fly_before_backward_and_speed() {
     // `0x5fd19c`: the fly branch sits between swim and backward, so a 32 yd/s taxi plays Fly 135,

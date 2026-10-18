@@ -49,7 +49,7 @@ pub(super) fn control(
         // `SMSG_STANDSTATE_UPDATE`, applied locally and ungated, with nothing sent back.
         MessageReader<super::ServerStandState>,
     ),
-    speed_capsule: (
+    mut speed_capsule: (
         Res<MoveSpeed>,
         Res<PlayerCapsule>,
         Res<InspectMode>,
@@ -64,6 +64,8 @@ pub(super) fn control(
         Res<scoped_view::ScopedView>,
         // The loading cover blanks input at the source; a gesture in flight is unwound below.
         Res<crate::loading_screen::LoadingScreen>,
+        // Our body's create-block mover state, forced in as the reference's create does.
+        MessageReader<crate::net::SelfCreateMover>,
     ),
     mut commands: Commands,
     mut player: ResMut<Player>,
@@ -296,6 +298,7 @@ pub(super) fn control(
         &mut net.12,
         &mut net.9,
         &mut net.11,
+        &mut speed_capsule.10,
         self_guid,
         transports,
         body.single()

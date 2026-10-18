@@ -108,6 +108,7 @@ impl Plugin for NetPlugin {
             .add_message::<TeleportMessage>()
             .add_message::<FieldChanged>()
             .add_message::<SelfMoveMessage>()
+            .add_message::<SelfCreateMover>()
             .add_message::<SpeedChangeMessage>()
             .add_message::<ClientControlMessage>()
             .add_message::<MoveModeMessage>()
@@ -2335,6 +2336,14 @@ pub(crate) struct SelfMoveMessage {
     /// The server's deck-local pose for us. Never re-derive it from the boat's transform, which
     /// [`crate::transport::tick_transports`] holds at the far pose across a map seam.
     pub(crate) transport: Option<benilla_protocol::TransportPose>,
+}
+
+/// Our own body's create-block mover state: `SetUpdateInfo` (`0x6f1520`) zeroes the active mover's
+/// flags and forces these in, so a login or worldport arriving mid-flight is flying at once.
+#[derive(Message, Clone, Copy)]
+pub(crate) struct SelfCreateMover {
+    pub(crate) flags: u32,
+    pub(crate) pitch: f32,
 }
 
 /// `SMSG_CLIENT_CONTROL_UPDATE`, verbatim; the controller decides. `mover` is the unit spoken

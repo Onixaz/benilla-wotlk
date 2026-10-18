@@ -342,11 +342,11 @@ pub(super) fn base_candidates(
     }
 }
 
-/// The idle fallback (`0x5fd830`), the chain's last resolver: the swim idle on `SWIMMING`
-/// (`0x5fd83c`, `[9e8] & 0x200000`), else the prowl idle, else Stand. The hover idle (193,
-/// `0x5fd88d`) is not modelled.
+/// The idle fallback (`0x5fd830`), the chain's last resolver: the swim idle on `SWIMMING` or
+/// `FLYING` (`ChooseDefaultAnim` `0x71e340`), else the prowl idle, else Stand. The hover idle
+/// (193, `0x5fd88d`) is not modelled.
 fn idle_fallback(state: &MovementState) -> &'static [u16] {
-    if state.flags & move_flags::SWIMMING != 0 {
+    if state.flags & (move_flags::SWIMMING | move_flags::FLYING) != 0 {
         &[41, 0]
     } else if state.stealthed {
         &[STEALTH_STAND, STAND]
@@ -366,10 +366,11 @@ fn claimed_candidates(
 ) -> Option<&'static [u16]> {
     use move_flags::*;
     let f = state.flags;
-    let swimming = f & SWIMMING != 0;
-    // Swimming locomotion (`0x5fd100`): turn, then strafe, then backward, then forward; a flyer
-    // takes the same arm (`ChooseMovementAnim` `0x717050`).
-    if f & (SWIMMING | FLYING) != 0 && f & ANY_MOVE != 0 {
+    // A flyer is a swimmer to every arm here (`ChooseMovementAnim` `0x717050`); a flying mount's
+    // flight cycles sit in the swim slots.
+    let swimming = f & (SWIMMING | FLYING) != 0;
+    // Swimming locomotion (`0x5fd100`): turn, then strafe, then backward, then forward.
+    if swimming && f & ANY_MOVE != 0 {
         return Some(if f & (TURN_LEFT | TURN_RIGHT) != 0 {
             &[41, 0]
         } else if f & STRAFE_LEFT != 0 {
