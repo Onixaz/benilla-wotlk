@@ -3,6 +3,7 @@
 
 mod addon_argument_abi;
 mod addon_index_space;
+mod addon_only;
 mod anchors;
 mod backdrop;
 mod button;

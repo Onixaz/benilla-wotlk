@@ -107,7 +107,7 @@ fn reference() -> HashSet<String> {
 }
 
 /// The string keys of a bare VM's `_G`.
-fn engine_globals() -> HashSet<String> {
+pub(super) fn engine_globals() -> HashSet<String> {
     script()
         .eval::<Vec<String>>(
             "local out = {} \
