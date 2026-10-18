@@ -394,11 +394,6 @@ fn drive_quit(arm: Option<Res<QuitArm>>, time: Res<Time>, mut exit: MessageWrite
     }
 }
 
-/// The realmlist editor's prompt for a value that is not an address; the typed text stays for
-/// editing.
-pub(crate) const REALMLIST_BAD: &str =
-    "That is not a server address.\nTry  logon.example.org  or  127.0.0.1:3724";
-
 // ── The saved account name ────────────────────────────────────────────────────
 
 /// Read the saved account name at `path`; a missing file reads empty.

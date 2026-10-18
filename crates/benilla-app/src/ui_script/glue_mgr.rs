@@ -1469,7 +1469,6 @@ pub(crate) fn drive_glue_mgr(
     mut news: LoginNews,
     mut asks: GlueAsks,
     realms: Option<Res<crate::realm_select::Realms>>,
-    mut realmlist: Option<ResMut<crate::realmlist::Realmlist>>,
     areas: Option<Res<crate::area::AreaTableRes>>,
     create: Option<Res<crate::entities::CharCreate>>,
     classes: Option<Res<crate::chr_classes::ChrClassTable>>,
@@ -1699,20 +1698,7 @@ pub(crate) fn drive_glue_mgr(
     let Some(mut script) = script else {
         return;
     };
-    // The realmlist control's typed value that was not an address reopens its dialog.
-    if let Some(typed) = realmlist.as_deref_mut().and_then(|r| r.take_refused()) {
-        mgr.outbox.push(Outgoing::Open {
-            which: "BENILLA_REALMLIST",
-            text: Some(Text::Raw(crate::login::REALMLIST_BAD.to_string())),
-            data: Some(typed),
-        });
-    }
-    seed(
-        &mut mgr,
-        &mut script,
-        realms.as_deref(),
-        realmlist.as_deref(),
-    );
+    seed(&mut mgr, &mut script, realms.as_deref());
     let names = RosterNames {
         areas: areas.as_deref().map(|a| &a.0),
         create: create.as_deref().map(|c| &c.0),
@@ -1880,12 +1866,7 @@ fn glue_create_catalog(
 }
 
 /// The glue VM's slots, from the manager's state.
-fn seed(
-    mgr: &mut GlueMgr,
-    script: &mut UiScript,
-    realms: Option<&crate::realm_select::Realms>,
-    realmlist: Option<&crate::realmlist::Realmlist>,
-) {
+fn seed(mgr: &mut GlueMgr, script: &mut UiScript, realms: Option<&crate::realm_select::Realms>) {
     for notice in GlueNotice::ALL {
         let want = mgr.notice(notice);
         if script.glue_notice(notice) != want {
@@ -1916,32 +1897,6 @@ fn seed(
         ),
     };
     script.set_glue_server(GlueServer { name, pvp, rp });
-    if let Some(r) = realmlist {
-        seed_realmlist(script, r);
-    }
-}
-
-/// The realmlist control's two globals (`AccountLoginRealmlist.xml`): the address the next logon
-/// dials and whether `$WOW_HOST` fixes it for the session.
-fn seed_realmlist(script: &UiScript, realmlist: &crate::realmlist::Realmlist) {
-    let g = script.lua().globals();
-    let address = realmlist.address();
-    if g.get::<Option<String>>("BENILLA_REALMLIST")
-        .ok()
-        .flatten()
-        .as_deref()
-        != Some(address)
-    {
-        let _ = g.set("BENILLA_REALMLIST", address);
-    }
-    let pinned = realmlist.pinned_by_env().then_some(1);
-    if g.get::<Option<i64>>("BENILLA_REALMLIST_PINNED")
-        .ok()
-        .flatten()
-        != pinned
-    {
-        let _ = g.set("BENILLA_REALMLIST_PINNED", pinned);
-    }
 }
 
 /// Fire the outbox into the glue VM, the texts resolved through its own strings (`0x703bf0`).
@@ -2062,7 +2017,6 @@ pub(super) fn seat_glue_vm(world: &mut World, script: &mut UiScript) {
         &mut mgr,
         script,
         world.get_resource::<crate::realm_select::Realms>(),
-        world.get_resource::<crate::realmlist::Realmlist>(),
     );
     world.insert_resource(mgr);
 }

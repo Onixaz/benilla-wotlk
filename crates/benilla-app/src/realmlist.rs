@@ -3,8 +3,7 @@
 //! The reference registers the CVar `realmList` (help "Address of realm list server", at
 //! `0x5ab6a6`) and loads it from `realmlist.wtf` beside the executable, with no UI. benilla keeps
 //! the name, the shape and the help string. Deviation: the value lives in `config.toml` with every
-//! other CVar and is edited from a login-screen control, because local state is one folder and one
-//! config file.
+//! other CVar, because local state is one folder and one config file.
 //!
 //! `$WOW_HOST` wins for the session, is never written to the file, and is taken verbatim, not
 //! through [`normalize`].
@@ -21,10 +20,7 @@ pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut realmlist: ResMut<R
     }
     match normalize(&ev.new) {
         Some(address) => realmlist.set(&address),
-        None => {
-            warn!("cvar realmList: unusable realmlist '{}' ignored", ev.new);
-            realmlist.refused = Some(ev.new.clone());
-        }
+        None => warn!("cvar realmList: unusable realmlist '{}' ignored", ev.new),
     }
 }
 
@@ -42,8 +38,7 @@ pub(crate) const CVAR_REALMLIST: &str = "realmList";
 /// `us.logon.worldofwarcraft.com:3724`, because that host no longer resolves.
 pub(crate) const DEFAULT_REALMLIST: &str = "localhost";
 
-/// The dialog box's `letters` cap. Deviation: 64, where the reference's login boxes cap at 16
-/// (`AccountLogin.xml`), because a hostname needs more.
+/// Address input bound, long enough for a hostname or IPv6 literal.
 pub(crate) const MAX_LETTERS: usize = 64;
 
 /// The address the next logon attempt dials, as `host[:port]` (the port defaults to
@@ -52,11 +47,8 @@ pub(crate) const MAX_LETTERS: usize = 64;
 #[derive(Resource, Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Realmlist {
     address: String,
-    /// `$WOW_HOST` owns this session: the address shows, the control is disabled, nothing persists.
+    /// `$WOW_HOST` owns this session, so CVar writes cannot retarget the connection.
     pinned_by_env: bool,
-    /// The last `realmList` value that was not an address, for the stock login screen's
-    /// realmlist dialog to reopen on ([`crate::ui_script::glue_mgr`]).
-    refused: Option<String>,
 }
 
 impl Default for Realmlist {
@@ -66,12 +58,10 @@ impl Default for Realmlist {
             Ok(host) if !host.trim().is_empty() => Realmlist {
                 address: host,
                 pinned_by_env: true,
-                refused: None,
             },
             _ => Realmlist {
                 address: DEFAULT_REALMLIST.to_string(),
                 pinned_by_env: false,
-                refused: None,
             },
         }
     }
@@ -84,21 +74,11 @@ impl Realmlist {
         Realmlist {
             address: address.to_string(),
             pinned_by_env: false,
-            refused: None,
         }
     }
 
     pub(crate) fn address(&self) -> &str {
         &self.address
-    }
-
-    pub(crate) fn pinned_by_env(&self) -> bool {
-        self.pinned_by_env
-    }
-
-    /// The last value refused as no address, taken once.
-    pub(crate) fn take_refused(&mut self) -> Option<String> {
-        self.refused.take()
     }
 
     /// Points at an already normalized `address`; ignored while pinned by the env.
@@ -244,11 +224,9 @@ mod tests {
         let mut r = Realmlist {
             address: "harness.example.org".into(),
             pinned_by_env: true,
-            refused: None,
         };
         r.set("somewhere.else.org");
         assert_eq!(r.address(), "harness.example.org");
-        assert!(r.pinned_by_env());
     }
 
     #[test]
@@ -256,7 +234,6 @@ mod tests {
         let mut r = Realmlist {
             address: DEFAULT_REALMLIST.into(),
             pinned_by_env: false,
-            refused: None,
         };
         r.set("logon.example.org");
         assert_eq!(r.address(), "logon.example.org");

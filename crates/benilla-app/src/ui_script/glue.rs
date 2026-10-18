@@ -81,9 +81,6 @@ pub(super) fn load_glue(script: &mut UiScript) -> Vec<String> {
             vec![e]
         }
     };
-    if super::manifest::layer_enabled() {
-        failures.extend(load_glue_layer(script));
-    }
     script.fire_event("FRAMES_LOADED", vec![]);
     failures.extend(
         script
@@ -92,25 +89,6 @@ pub(super) fn load_glue(script: &mut UiScript) -> Vec<String> {
             .map(|e| format!("a handler raised during the glue load: {e}")),
     );
     failures
-}
-
-/// benilla's one glue file, its realmlist control over the stock `AccountLogin`, which loads after
-/// every `GlueXML.toc` row and before `FRAMES_LOADED`, as the in-game layer loads after
-/// `FrameXML.toc` ([`super::manifest::LAYER_MANIFEST`]); `WOW_STOCK_UI=1` drops it with that layer.
-pub(super) const GLUE_LAYER: &str = "AccountLoginRealmlist.xml";
-
-/// Load [`GLUE_LAYER`] off the shipped tree; returns its failures.
-fn load_glue_layer(script: &UiScript) -> Vec<String> {
-    let files = vec![GLUE_LAYER.to_string()];
-    let layer = super::addons::Addon::new(
-        "benilla".to_string(),
-        benilla_ui::toc::Toc {
-            directives: Vec::new(),
-            files: files.clone(),
-        },
-        super::addons::Source::Builtin,
-    );
-    layer.load_files(script, &files)
 }
 
 /// Drain the glue load's record into `Logs\GlueXML.log`, as the builder does after

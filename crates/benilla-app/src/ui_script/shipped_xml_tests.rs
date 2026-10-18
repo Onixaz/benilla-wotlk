@@ -1076,13 +1076,7 @@ fn shipped_frame_parents() -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     for entry in std::fs::read_dir(&dir).expect("assets/ui").flatten() {
         let path = entry.path();
-        // The glue file loads over the stock glue screens, not this in-game load; its own test
-        // reads its parent (`glue_mgr`'s realmlist test).
-        if !path.extension().is_some_and(|e| e == "xml")
-            || path
-                .file_name()
-                .is_some_and(|n| n == super::glue::GLUE_LAYER)
-        {
+        if !path.extension().is_some_and(|e| e == "xml") {
             continue;
         }
         let text = std::fs::read_to_string(&path).expect("read");
@@ -1116,13 +1110,7 @@ pub(super) fn shipped_frame_names() -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     for entry in std::fs::read_dir(&dir).expect("assets/ui").flatten() {
         let path = entry.path();
-        // The glue file loads over the stock glue screens, not this in-game load; its own test
-        // reads its parent (`glue_mgr`'s realmlist test).
-        if !path.extension().is_some_and(|e| e == "xml")
-            || path
-                .file_name()
-                .is_some_and(|n| n == super::glue::GLUE_LAYER)
-        {
+        if !path.extension().is_some_and(|e| e == "xml") {
             continue;
         }
         let text = std::fs::read_to_string(&path).expect("read");
@@ -1383,10 +1371,9 @@ fn the_stock_options_windows_load_and_save_are_reachable_for_addons() {
 }
 
 /// benilla's own interface is one layer, and it does not grow: `layer.toc` names exactly these
-/// files, all ours (none off the chain), and `assets/ui` holds nothing else but that manifest and
-/// the one glue file ([`super::glue::GLUE_LAYER`]). The
-/// core loads every stock window the player's `FrameXML.toc` lists; what changes the stock UI goes
-/// in one of these files.
+/// files, all ours (none off the chain), and `assets/ui` holds only that manifest and its files.
+/// The core loads every stock window the player's `FrameXML.toc` lists; what changes the stock UI
+/// goes in one of these files. The glue screens load only the player's stock `GlueXML.toc`.
 #[test]
 fn the_layer_does_not_grow() {
     const LAYER: &[&str] = &[
@@ -1410,13 +1397,9 @@ fn the_layer_does_not_grow() {
         .filter(|n| !n.starts_with('.'))
         .collect();
     found.sort();
-    // Deviation: one glue file beside the in-game layer, `AccountLoginRealmlist.xml`, the
-    // realmlist control on the stock login screen, because benilla is a client for any server and
-    // 1.12.1 has no interface for the realmlist, only `realmlist.wtf`.
-    assert_eq!(super::glue::GLUE_LAYER, "AccountLoginRealmlist.xml");
     let mut shipped: Vec<String> = LAYER
         .iter()
-        .chain(&["layer.toc", super::glue::GLUE_LAYER])
+        .chain(&["layer.toc"])
         .map(|s| s.to_string())
         .collect();
     shipped.sort();
@@ -1445,9 +1428,8 @@ fn the_layer_speaks_the_3_3_5a_dialect() {
         }
     }
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/ui");
-    let mut files = super::addons::Addon::layer().toc.files;
+    let files = super::addons::Addon::layer().toc.files;
     assert!(files.len() >= 5, "the layer's toc lists {files:?}");
-    files.push(super::glue::GLUE_LAYER.to_string());
     let word = |text: &str, w: &str| {
         text.match_indices(w).any(|(i, _)| {
             let before = text[..i].chars().next_back();

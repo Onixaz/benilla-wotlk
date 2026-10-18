@@ -941,58 +941,19 @@ fn the_status_dialogs_cancel_abandons_the_attempt() {
     assert_eq!(dialog(&app), None);
 }
 
-/// benilla's realmlist control on the stock screen: its button opens the stock dialog on the
-/// current address, and Okay writes `realmList`.
+/// The login screen is built from the stock GlueXML with no address readout or server editor.
 #[test]
-fn the_realmlist_button_writes_realmlist() {
+fn the_login_screen_has_no_realmlist_control() {
     let _ = benilla_formats::wow_data_or_skip!();
-    let (mut app, _rx, _) = stock_app();
-    {
-        let s = app.world_mut().non_send_resource_mut::<UiScript>();
-        s.register_cvars(crate::cvars::registered_pairs());
-        s.run("AcceptEULA() AcceptTOS() AccountLogin_ShowUserAgreements()")
-            .unwrap();
-    }
-    app.update();
-    // The readout follows the host's global on the frame's `OnUpdate`.
-    app.world_mut()
-        .non_send_resource_mut::<UiScript>()
-        .tick(0.05);
+    let (app, _rx, _) = stock_app();
     assert_eq!(
         vm(&app)
-            .eval::<String>("return BenillaRealmlistText:GetText()")
+            .eval::<(bool, bool, bool)>(
+                "return BenillaRealmlistButton == nil, BenillaRealmlistText == nil, \
+                 GlueDialogTypes.BENILLA_REALMLIST == nil"
+            )
             .unwrap(),
-        crate::realmlist::DEFAULT_REALMLIST,
-        "the readout shows the address the next login dials"
-    );
-    assert_eq!(
-        vm(&app)
-            .eval::<String>("return BenillaRealmlistButton:GetParent():GetName()")
-            .unwrap(),
-        "AccountLoginUI"
-    );
-    vm(&app).run("BenillaRealmlistButton:Click()").unwrap();
-    assert_eq!(
-        vm(&app)
-            .eval::<(String, String)>("return GlueDialog.which, GlueDialogEditBox:GetText()")
-            .unwrap(),
-        (
-            "BENILLA_REALMLIST".to_string(),
-            crate::realmlist::DEFAULT_REALMLIST.to_string()
-        )
-    );
-    vm(&app)
-        .run("GlueDialogEditBox:SetText('logon.example.org') GlueDialogButton1:Click()")
-        .unwrap();
-    let changes = app
-        .world_mut()
-        .non_send_resource_mut::<UiScript>()
-        .take_cvar_changes();
-    assert!(
-        changes
-            .iter()
-            .any(|(n, v)| n.eq_ignore_ascii_case("realmList") && v == "logon.example.org"),
-        "{changes:?}"
+        (true, true, true)
     );
     assert!(vm(&app).errors().is_empty(), "{:?}", vm(&app).errors());
 }
