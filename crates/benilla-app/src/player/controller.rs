@@ -503,8 +503,7 @@ pub(super) fn control(
         // the press takes flight instead, airborne or not (`0x5fc070`).
         let was_swimming = player.swimming;
         let was_afloat = was_swimming || player.flying;
-        let jump_press =
-            binds.fired(crate::bindings::Input::Jump) && may_translate && !was_afloat;
+        let jump_press = binds.fired(crate::bindings::Input::Jump) && may_translate && !was_afloat;
         let fly_press = jump_press && player.modes.can_fly;
         let mut want_jump = jump_press && !fly_press;
         let (ascend, descend) = (
@@ -514,7 +513,9 @@ pub(super) fn control(
         // A held bit's change resyncs the vertical channel (`0x5fbbc0`) against the flags the
         // mover had at the call.
         if binds.control_changed() {
-            player.vertical.resync(ascend, descend, was_afloat, may_translate);
+            player
+                .vertical
+                .resync(ascend, descend, was_afloat, may_translate);
         }
 
         // The flight status check, run beside the swim decision and ahead of it (`0x73ab20`); a
@@ -545,7 +546,9 @@ pub(super) fn control(
         if flew {
             player.set_fly_owed = true;
             let afloat = player.flying;
-            player.vertical.resync(ascend, descend, afloat, may_translate);
+            player
+                .vertical
+                .resync(ascend, descend, afloat, may_translate);
             move_trace::flight(player.flying, feet);
         }
 
@@ -740,14 +743,7 @@ pub(super) fn control(
         let afloat = swimming || flying;
         let airborne = !afloat && !held && !player.modes.rooted && (!grounded || jumped);
         // Airborne keeps the attachment, so a jump above a deck lands where it took off.
-        ride::update_attachment(
-            &mut player,
-            transports,
-            child_of,
-            ground,
-            grounded,
-            afloat,
-        );
+        ride::update_attachment(&mut player, transports, child_of, ground, grounded, afloat);
         // The live flag word, the take-off-frozen one the animation reads, and the fall clock.
         let flags::FrameFlags {
             wire: move_flags_now,

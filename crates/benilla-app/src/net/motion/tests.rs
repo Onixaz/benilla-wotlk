@@ -1201,7 +1201,11 @@ fn an_ascending_swimmer_rises_every_frame_at_the_swim_speed() {
             pos[0].abs() < 1e-6 && pos[1].abs() < 1e-6,
             "{flags:#x}: {pos:?}"
         );
-        assert!((pos[2] - dz).abs() < 1e-6, "{flags:#x}: dz {} vs {dz}", pos[2]);
+        assert!(
+            (pos[2] - dz).abs() < 1e-6,
+            "{flags:#x}: dz {} vs {dz}",
+            pos[2]
+        );
         assert_eq!(speed, s.swim);
     }
     // Ten frames climb ten frames' worth: the rise is steady, not a heartbeat snap.

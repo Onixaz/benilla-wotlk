@@ -148,7 +148,11 @@ mod tests {
     #[test]
     fn a_fall_past_its_apex_with_clearance_takes_off() {
         assert_eq!(status(true, false, false, false, 0.0, 1.0, never), None);
-        assert_eq!(status(true, false, true, true, 0.0, 1.0, || 2.0), None, "rising");
+        assert_eq!(
+            status(true, false, true, true, 0.0, 1.0, || 2.0),
+            None,
+            "rising"
+        );
         assert_eq!(
             status(true, false, true, false, 0.0, 1.0, || 2.0),
             Some(Edge::TakeOff)
@@ -174,7 +178,10 @@ mod tests {
             status(true, true, false, false, 10.0, 12.1, || 0.3),
             Some(Edge::Land)
         );
-        assert_eq!(status(true, true, false, false, 10.0, 12.1, || CLEARANCE), None);
+        assert_eq!(
+            status(true, true, false, false, 10.0, 12.1, || CLEARANCE),
+            None
+        );
     }
 
     /// Taking flight ends the swim and the arc, and stamps the hold; no `CAN_FLY` or a root refuses.

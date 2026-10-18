@@ -257,11 +257,7 @@ pub(super) fn apply_server_moves(
             super::flight::land(player);
         }
         let facing = player.face_yaw.rem_euclid(std::f32::consts::TAU);
-        let flying = if player.flying {
-            move_flags::FLYING
-        } else {
-            0
-        };
+        let flying = if player.flying { move_flags::FLYING } else { 0 };
         let _ = net_cmds.0.send(ClientCommand::MoveModeAck {
             guid: m.guid,
             counter: m.counter,

@@ -50,4 +50,5 @@ impl UnitMoveModes {
 /// survives. A one-shot wipe, not a gate: with no direction bits the unit fails the integration
 /// test (`0x616e20`, `move_flags::INTEGRATED`) and stops rather than coasting. 3.3.5a's apply
 /// (`0x9884b8`, `and 0xff203f00`) also clears ascending and descending.
-pub(crate) const ROOT_APPLY_WIPE: u32 = 0xffe0_7f00 & !(move_flags::ASCENDING | move_flags::DESCENDING);
+pub(crate) const ROOT_APPLY_WIPE: u32 =
+    0xffe0_7f00 & !(move_flags::ASCENDING | move_flags::DESCENDING);
