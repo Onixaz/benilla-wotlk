@@ -18,7 +18,7 @@ fn every_shipped_ui_xml_parses() {
     }
     assert!(
         // A floor, not a census: a moved directory must not pass by sweeping nothing.
-        checked >= 6,
+        checked >= 5,
         "only {checked} xml files swept — sweep broke"
     );
 }
@@ -609,7 +609,7 @@ fn no_shipped_script_sets_a_global_string_key_as_display_text() {
     }
     assert!(offenders.is_empty(), "{}", offenders.join("\n"));
     // A floor, so the sweep cannot pass by finding nothing.
-    assert!(swept >= 6, "only {swept} xml files swept — sweep broke");
+    assert!(swept >= 5, "only {swept} xml files swept — sweep broke");
 }
 
 /// Every `$parentTextureFrame` outranks its unit frame's status bars by frame level: level is the

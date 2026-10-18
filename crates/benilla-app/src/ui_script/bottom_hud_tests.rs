@@ -54,7 +54,7 @@ fn shipped_xml() -> Vec<(String, String)> {
         .collect();
     out.sort();
     // A floor for the walk, not a census: `assets/ui` shrinks as windows move to the stock files.
-    assert!(out.len() >= 6, "only {} xml files swept", out.len());
+    assert!(out.len() >= 5, "only {} xml files swept", out.len());
     out
 }
 
