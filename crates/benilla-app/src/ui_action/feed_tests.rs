@@ -527,10 +527,10 @@ fn a_tame_failure_composes_the_reason_string_into_err_tame_failed() {
             .unwrap()
     };
 
-    // 9 is `PETTAME_TOOHIGHLEVEL`; 12, a vmangos value past the reference's `reason - 1 > 0xa`
-    // bound, takes the default arm.
+    // 9 is `PETTAME_TOOHIGHLEVEL`; 13, past the reference's switch (`0x800390`), takes the
+    // default arm.
     app.world_mut().resource_mut::<PetTameFailures>().0.push(9);
-    app.world_mut().resource_mut::<PetTameFailures>().0.push(12);
+    app.world_mut().resource_mut::<PetTameFailures>().0.push(13);
     app.update();
 
     assert!(

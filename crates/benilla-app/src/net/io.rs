@@ -1565,6 +1565,14 @@ pub(super) fn writer_loop(
                     ClientCommand::LearnPreviewTalents { talents } => {
                         w.learn_preview_talents(&talents)
                     }
+                    ClientCommand::PetLearnTalent {
+                        pet_guid,
+                        talent_id,
+                        rank,
+                    } => w.pet_learn_talent(pet_guid, talent_id, rank),
+                    ClientCommand::LearnPreviewTalentsPet { pet_guid, talents } => {
+                        w.learn_preview_talents_pet(pet_guid, &talents)
+                    }
                     ClientCommand::UnlearnSkill { skill_id } => w.unlearn_skill(skill_id),
                     ClientCommand::SetFactionAtWar {
                         rep_list_id,

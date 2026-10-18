@@ -250,6 +250,8 @@ pub enum ServerPacket {
     AllAchievementData(super::AllAchievementData),
     /// `SMSG_TOTEM_CREATED`: a totem took one of the player's four slots.
     TotemCreated(super::TotemCreated),
+    /// `SMSG_EQUIPMENT_SET_LIST`: the saved equipment sets, whole.
+    EquipmentSetList(Vec<super::EquipmentSet>),
     /// `SMSG_ACHIEVEMENT_EARNED`: a unit earned an achievement.
     AchievementEarned(super::AchievementEarned),
     /// `SMSG_CRITERIA_UPDATE`: one criterion's progress.
@@ -351,7 +353,7 @@ pub enum ServerPacket {
         info: Option<CreatureQueryInfo>,
     },
     /// `SMSG_PET_NAME_QUERY_RESPONSE`: keyed by pet number, as the client's pet-name cache is; the
-    /// `nameTimestamp` tail, which only ages that on-disk cache, is read and dropped.
+    /// timestamp and declined forms are read and dropped, and an empty `name` is a negative answer.
     PetNameQueryResponse {
         pet_number: u32,
         name: String,
@@ -1366,6 +1368,7 @@ impl ServerPacket {
             ServerPacket::TalentsInfo(_) => "SMSG_TALENTS_INFO".into(),
             ServerPacket::AllAchievementData(_) => "SMSG_ALL_ACHIEVEMENT_DATA".into(),
             ServerPacket::TotemCreated(_) => "SMSG_TOTEM_CREATED".into(),
+            ServerPacket::EquipmentSetList(_) => "SMSG_EQUIPMENT_SET_LIST".into(),
             ServerPacket::AchievementEarned(_) => "SMSG_ACHIEVEMENT_EARNED".into(),
             ServerPacket::CriteriaUpdate(_) => "SMSG_CRITERIA_UPDATE".into(),
             ServerPacket::InspectAchievements(_) => "SMSG_RESPOND_INSPECT_ACHIEVEMENTS".into(),

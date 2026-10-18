@@ -12,6 +12,7 @@ use super::binding_abi::flag;
 /// The kind byte, bits 24-31 of the packed slot word (vmangos `Player.h:133`). Must match
 /// `benilla_protocol`'s `ACTION_KIND_*`; this crate has no protocol dependency.
 pub(crate) const ACTION_KIND_SPELL: u8 = 0x00;
+pub(crate) const ACTION_KIND_EQUIPMENT_SET: u8 = 0x20;
 pub(crate) const ACTION_KIND_MACRO: u8 = 0x40;
 pub(crate) const ACTION_KIND_ITEM: u8 = 0x80;
 
@@ -77,6 +78,14 @@ pub struct ActionUse {
 }
 
 impl super::UiScript {
+    /// Push the saved equipment sets as `(id, name)`, which set slots answer by id.
+    pub fn set_equipment_sets(&mut self, sets: Vec<(u32, String)>) {
+        let sets: std::collections::HashMap<u32, String> = sets.into_iter().collect();
+        if self.model_ref().equipment_sets != sets {
+            self.model_mut().equipment_sets = sets;
+        }
+    }
+
     /// Push (or clear) one action slot, keyed by Lua action id (1..120).
     pub fn set_action(&mut self, action: u32, slot: Option<ActionSlot>) {
         let mut model = self.model_mut();
@@ -258,11 +267,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // GetActionInfo(slot) (`0x5a8f10`): the slot is a number or `Usage:` (`0x5a91a6`). A spell
     // answers `"spell", bookIndex, "spell", spellId`, the index 1-based in the book `0x53b4e0`
     // searches and 0 for a spell not in it (`0x5a9049`); an item `"item", itemId`; a macro
-    // `"macro", index` (`0x5a9133`); an empty slot nothing. A companion answers `"companion",
+    // `"macro", index` (`0x5a9133`); an equipment set `"equipmentset", name`, or nothing for a
+    // set the list lacks (`0x5a9178`); an empty slot nothing. A companion answers `"companion",
     // index, "CRITTER"|"MOUNT", spellId` (`0x5a8fa8`), its 1-based slot in its list.
-    //
-    // Deviation: an equipment-set slot answers nothing for `"equipmentset", name` (`0x5a9178`):
-    // benilla keeps no equipment sets.
     g.set(
         "GetActionInfo",
         lua.create_function(|lua, slot: Value| {
@@ -277,6 +284,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(MultiValue::from_vec(match a.kind & 0xf0 {
                 ACTION_KIND_ITEM => vec![str("item")?, Value::Integer(i64::from(a.action))],
                 ACTION_KIND_MACRO => vec![str("macro")?, Value::Integer(i64::from(a.action))],
+                ACTION_KIND_EQUIPMENT_SET => match model.equipment_sets.get(&a.action) {
+                    Some(name) => vec![str("equipmentset")?, str(name)?],
+                    None => Vec::new(),
+                },
                 0x00 if model.companions.find(a.action).is_some() => {
                     let (ty, at) = model.companions.find(a.action).expect("guarded");
                     vec![
@@ -805,6 +816,9 @@ mod tests {
         s.set_action(2, Some(slot(super::ACTION_KIND_SPELL, 2050)));
         s.set_action(3, Some(slot(super::ACTION_KIND_ITEM, 117)));
         s.set_action(4, Some(slot(super::ACTION_KIND_MACRO, 2)));
+        s.set_action(6, Some(slot(super::ACTION_KIND_EQUIPMENT_SET, 3)));
+        s.set_action(7, Some(slot(super::ACTION_KIND_EQUIPMENT_SET, 4)));
+        s.set_equipment_sets(vec![(3, "Tank".into())]);
         let info = |s: &UiScript, n: u32| {
             s.eval::<String>(&format!(
                 "local t = {{GetActionInfo({n})}} \
@@ -822,6 +836,16 @@ mod tests {
         assert_eq!(info(&s, 3), "item,117");
         assert_eq!(info(&s, 4), "macro,2");
         assert_eq!(s.arity("GetActionInfo(5)").unwrap(), 0, "an empty slot");
+        assert_eq!(
+            info(&s, 6),
+            "equipmentset,Tank",
+            "the set's name (`0x5a9178`)"
+        );
+        assert_eq!(
+            s.arity("GetActionInfo(7)").unwrap(),
+            0,
+            "a set the list lacks answers nothing"
+        );
         let err = s.run("GetActionInfo()").unwrap_err().to_string();
         assert!(err.contains("Usage: GetActionInfo(slot)"), "{err}");
     }

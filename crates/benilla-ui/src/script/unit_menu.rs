@@ -247,8 +247,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "CanExitVehicle",
         lua.create_function(|_, ()| Ok(Value::Nil))?,
     )?;
-    // PetCanBeDismissed() (`0x5d3820`): 1 unless `SummonProperties` forbids, which benilla does not read.
-    g.set("PetCanBeDismissed", lua.create_function(|_, ()| Ok(1))?)?;
     // GetPartyAssignment (`0x52cf60`): the folded roster keeps no tank or assist marks.
     g.set(
         "GetPartyAssignment",

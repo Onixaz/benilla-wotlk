@@ -16,6 +16,65 @@ use crate::ui_action::Spells;
 
 use super::{PetBar, PetUnit};
 
+/// What `Spell_C_IsUsableAction` (`0x80b5d0`) reads for a pet spell slot besides the pet; with any
+/// of it absent the walk is skipped and the slot reads usable.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct PetSlotWalk<'w, 's> {
+    selection: Option<Res<'w, crate::target::Selection>>,
+    objects: crate::net::Objects<'w, 's>,
+    factions: Option<Res<'w, crate::target::Factions>>,
+    reputations: Option<Res<'w, crate::net::Reputations>>,
+    items: Option<Res<'w, crate::items::Items>>,
+    commands: Option<Res<'w, crate::net::NetCommands>>,
+}
+
+impl PetSlotWalk<'_, '_> {
+    /// The usable walk with the pet as caster: no carried items, no talent modifiers, the pet's
+    /// own cooldowns, and the current target.
+    fn usable(
+        &self,
+        spell_id: u32,
+        d: &benilla_formats::SpellDisplay,
+        spells: Option<&Spells>,
+        pet: &crate::net::ObjectStore,
+        pet_unit: &PetUnit,
+        cooldowns: &crate::spell::Cooldowns,
+    ) -> bool {
+        let (Some(spells), Some(reputations), Some(items), Some(commands)) = (
+            spells,
+            self.reputations.as_deref(),
+            self.items.as_deref(),
+            self.commands.as_deref(),
+        ) else {
+            return true;
+        };
+        let target_store = self
+            .selection
+            .as_ref()
+            .and_then(|s| s.guid)
+            .and_then(|guid| pet_unit.store(guid));
+        let ctx = crate::spell::usable::UsableCtx {
+            store: pet,
+            target_store,
+            factions: self.factions.as_deref(),
+            reputations,
+            cooldowns,
+            spell_mods: &crate::spell::SpellModifiers::default(),
+            carried: &std::collections::HashMap::new(),
+        };
+        crate::spell::usable::spell_usable(
+            spell_id,
+            d,
+            spells,
+            &ctx,
+            &self.objects,
+            items,
+            commands,
+        )
+        .0
+    }
+}
+
 /// What the feed last pushed, so `PET_BAR_UPDATE` fires on a change; the key's leading `u32` is
 /// [`PetBar::bar_signals`], so a press that changes nothing still repaints.
 #[derive(Default)]
@@ -24,6 +83,9 @@ pub(super) struct PetBarMemory {
     /// The ten cooldown triples as last pushed, so a cooldown alone is pushed with no event: its
     /// events are [`fire_pet_cooldown_events`]'s.
     cooldowns: Vec<Option<(i64, u32, bool)>>,
+    /// The ten `GetPetActionSlotUsable` answers as last pushed: the stock bar reads them on its
+    /// own repaints, so a change alone is pushed with no event either.
+    usable: Vec<bool>,
 }
 
 /// A command token's `(name, texture)` pair, both global names (`PetActionBarFrame.lua:98-104`):
@@ -103,8 +165,8 @@ pub(super) fn slot_paint(
         .then(|| reaction_token(action))
         .flatten()
     {
-        // A disabled bar reads as Passive (`0x4bde3c`).
-        let showing = if bar.bar_disabled() {
+        // A vehicle's bar reads as Passive (`CGPetInfo::GetPetMode`, `0x5a7980`).
+        let showing = if bar.vehicle() {
             benilla_protocol::messages::PET_REACT_PASSIVE
         } else {
             bar.react_state()
@@ -175,6 +237,7 @@ pub(super) fn feed_pet_bar(
     spells: Option<Res<Spells>>,
     clock: Res<crate::ui_script::UiClock>,
     pet: PetUnit,
+    walk: PetSlotWalk,
     mut memory: Local<crate::ui_script::VmMemo<PetBarMemory>>,
 ) {
     let Some(mut script) = script else {
@@ -188,6 +251,7 @@ pub(super) fn feed_pet_bar(
     let pet_store = pet.store(bar.spells.pet_guid);
     let pet_flags = pet_store.map(|s| s.0.unit_flags());
     let usable = pet.actions_usable(&bar);
+    let usable_uncontrolled = pet.usable_pet_with(&bar, true);
     // `PickupPetAction`'s gate alone: the pet's object must resolve (`0x4be1f7`) and not be
     // possessed (`0x4be20a`). A possessed unit's bar cannot be rearranged but its buttons work,
     // so possession stays out of `usable`; an unstreamed pet has no flags to test and lifts nothing.
@@ -213,14 +277,31 @@ pub(super) fn feed_pet_bar(
                         .info(entry.action(), 0, Some(d), now)
                         .ui_triple(anchor, ui_now)
                 });
-                slot_view(
+                let mut view = slot_view(
                     entry,
                     &bar.spells,
                     display,
                     cooldown,
                     pet_attacking,
                     active_aura_press(entry, pet.auras(bar.spells.pet_guid), display).is_some(),
-                )
+                );
+                view.slot_usable = super::usable::slot_usable(
+                    entry,
+                    display,
+                    usable,
+                    usable_uncontrolled,
+                    |d, store| {
+                        walk.usable(
+                            entry.action(),
+                            d,
+                            spells.as_deref(),
+                            store,
+                            &pet,
+                            &bar.cooldowns,
+                        )
+                    },
+                );
+                view
             })
             .collect()
     } else {
@@ -230,20 +311,24 @@ pub(super) fn feed_pet_bar(
     // `bar_signals` in the key repaints a press that moved nothing (`0x4bc940`/`0x4bc960`); the
     // cooldown triples are keyed apart, since they carry no `PET_BAR_UPDATE`.
     let cooldowns: Vec<Option<(i64, u32, bool)>> = fresh.iter().map(|s| s.cooldown).collect();
+    let slot_usable: Vec<bool> = fresh.iter().map(|s| s.slot_usable).collect();
     let content: Vec<PetActionView> = fresh
         .iter()
         .cloned()
         .map(|mut s| {
             s.cooldown = None;
+            s.slot_usable = false;
             s
         })
         .collect();
     let key = (bar.bar_signals, has_bar, usable, pickup_allowed, content);
     let bar_changed = memory.pushed.as_ref() != Some(&key);
     let cooldowns_changed = memory.cooldowns != cooldowns;
-    if bar_changed || cooldowns_changed {
+    let usable_changed = memory.usable != slot_usable;
+    if bar_changed || cooldowns_changed || usable_changed {
         script.set_pet_actions(has_bar, usable, pickup_allowed, fresh);
         memory.cooldowns = cooldowns;
+        memory.usable = slot_usable;
     }
     if bar_changed {
         debug!(

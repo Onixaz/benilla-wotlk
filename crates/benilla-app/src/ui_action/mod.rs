@@ -67,6 +67,8 @@ pub(crate) struct PlayerActions {
     /// scans (the lock resolver `0x5f83d0`) pick between equal spells, 6478 and 22810 "Opening",
     /// by array order, which is ascending id: the server sends the book from a `std::map`.
     pub spells: BTreeSet<u32>,
+    /// The saved equipment sets (`SMSG_EQUIPMENT_SET_LIST`), which a set slot names by id.
+    pub equipment_sets: Vec<benilla_protocol::messages::EquipmentSet>,
     /// Set by every book or bar change, cleared once the feed re-resolves slot identity, which a
     /// landed item template ([`crate::items::Items::template_epoch`]) also triggers. Item counts
     /// refresh every frame regardless.

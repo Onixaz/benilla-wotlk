@@ -195,8 +195,7 @@ impl NameCache {
         answered.then_some(None)
     }
 
-    /// There is no negative answer: vmangos sends nothing when the guid is not a live pet with
-    /// that number (`PetHandler.cpp:190-192`).
+    /// A pet name asked once per pet number; an empty answer is cached as negative.
     fn resolve_pet(&self, pet_number: u32, guid: u64, commands: &NetCommands) -> Option<&str> {
         self.pets
             .get_or_ask(pet_number, || {
@@ -282,9 +281,11 @@ impl NameCache {
         self.player_traits.get(&guid).copied()
     }
 
-    /// Record a pet-name answer, keyed by pet number.
+    /// Record a pet-name answer, keyed by pet number; an empty name is a negative answer, which
+    /// the reference denies rather than caching (`DBCache::DenyItem`, `0x635365`).
     pub(crate) fn insert_pet(&mut self, pet_number: u32, name: String) {
-        self.pets.insert(pet_number, Some(name));
+        self.pets
+            .insert(pet_number, (!name.is_empty()).then_some(name));
         self.generation = self.generation.wrapping_add(1);
     }
 
@@ -665,6 +666,25 @@ mod tests {
         // Pet names are per-spawn, so a disconnect drops them.
         cache.clear_pending();
         assert_eq!(cache.peek(voidwalker), None);
+    }
+
+    /// An empty answer is a negative (`DBCache::DenyItem`, `0x635365`): no `""` name, no re-ask.
+    #[test]
+    fn an_empty_pet_name_is_a_negative_answer() {
+        let (cmds, rx) = commands();
+        let mut cache = NameCache::default();
+        let voidwalker = compose(guid::HIGH_PET, 137, 9);
+
+        assert_eq!(cache.resolve(voidwalker, &cmds), None);
+        assert!(rx.try_recv().is_ok());
+        cache.insert_pet(137, String::new());
+
+        assert_eq!(cache.peek(voidwalker), None);
+        assert_eq!(
+            cache.answer(NameKey::Pet(137), voidwalker, &cmds),
+            Some(None)
+        );
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
     }
 
     /// A stable list seeds the same `(pet_number, name)` pair the pet-name query answers, so an

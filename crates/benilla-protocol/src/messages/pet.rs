@@ -8,59 +8,56 @@ use crate::wire::{
     capacity_hint, read_cstring, read_u16_le, read_u32_le, read_u64_le, read_u8, Vector3d,
 };
 
-/// Pet bar slots: vmangos `MAX_UNIT_ACTION_BAR_INDEX`, FrameXML's `NUM_PET_ACTION_SLOTS`.
+/// Pet bar slots, the ten words 12340's handler loops over (`0x5d6c77`).
 pub const PET_ACTION_SLOTS: usize = 10;
 
-/// vmangos `ActiveStates` (`UnitDefines.h:724-732`): the server's top byte of a packed word; the
-/// client decodes the masked [`PetActionEntry::kind`] instead. Passive: shown, never clickable.
+/// The server's top byte for a passive spell: type 1, no autocast bits.
 pub const PET_ACT_PASSIVE: u8 = 0x01;
-/// A castable spell with autocast off: `0x01 | ` [`PET_AUTOCAST_ALLOWED`]`>>24`.
+/// A castable spell with autocast off: type 1 with [`PET_AUTOCAST_ALLOWED`].
 pub const PET_ACT_DISABLED: u8 = 0x81;
-/// A castable spell with autocast on: `0x81 | ` [`PET_AUTOCAST_ON`]`>>24`.
+/// A castable spell with autocast on: type 1 with both autocast bits.
 pub const PET_ACT_ENABLED: u8 = 0xC1;
-/// A command token: the action is a [`PET_COMMAND_STAY`]-family value, not a spell id.
+/// Type 7, an order: the action is a [`PET_COMMAND_STAY`]-family value (`0x5d4ec0`).
 pub const PET_ACT_COMMAND: u8 = 0x07;
-/// A reaction token: the action is a [`PET_REACT_PASSIVE`]-family value, not a spell id.
+/// Type 6, a mode: the action is a [`PET_REACT_PASSIVE`]-family value (`0x5d4ec0`).
 pub const PET_ACT_REACTION: u8 = 0x06;
 
-/// First spell-branch slot type. The client's type is the top byte `& 0x3F` (`0x4bdccd`), which
-/// folds all three spell `ActiveStates` onto 1; types 6 and 7 are reaction and command.
-pub const PET_TYPE_SPELL_FIRST: u8 = 1;
-/// The last type the client's jump table routes to the spell branch.
-pub const PET_TYPE_SPELL_LAST: u8 = 5;
+/// The spell slot type; the client's type is the top byte `& 0x3F` (`0x5d4f60`).
+pub const PET_TYPE_SPELL: u8 = 1;
+/// The other types 12340's switch routes to the spell branch (`0x5d4ec0`, `0x5a80e0`).
+pub const PET_TYPE_SPELL_EXTRA: std::ops::RangeInclusive<u8> = 8..=17;
 
-/// Bit 31 of a packed word: the slot may autocast (`0x4bdd65`), given a `Spell.dbc` record.
+/// Bit 31 of a packed word: the slot may autocast (`0x5d505f`), given a `Spell.dbc` record.
 pub const PET_AUTOCAST_ALLOWED: u32 = 0x8000_0000;
-/// Bit 30: autocast is running (`0x4bdda4`); `TogglePetAutocast` flips it before the send.
+/// Bit 30: autocast is running (`0x5d5074`); `TogglePetAutocast` flips it before the send.
 pub const PET_AUTOCAST_ON: u32 = 0x4000_0000;
 
-/// vmangos `CommandStates` (`UnitDefines.h:755-761`): a [`PET_ACT_COMMAND`] slot's action.
+/// An order slot's action, indexing the `WAIT`/`FOLLOW`/`ATTACK`/`DISMISS` tokens (`0xa1a8c0`).
 pub const PET_COMMAND_STAY: u32 = 0;
 pub const PET_COMMAND_FOLLOW: u32 = 1;
 pub const PET_COMMAND_ATTACK: u32 = 2;
 pub const PET_COMMAND_DISMISS: u32 = 3;
 
-/// vmangos `ReactStates` (`UnitDefines.h:734-739`): a [`PET_ACT_REACTION`] slot's action.
+/// A mode slot's action, indexing the `PASSIVE`/`DEFENSIVE`/`AGGRESSIVE` tokens (`0xa1a860`).
 pub const PET_REACT_PASSIVE: u32 = 0;
 pub const PET_REACT_DEFENSIVE: u32 = 1;
 pub const PET_REACT_AGGRESSIVE: u32 = 2;
 
-/// Bit 27 of [`PetSpells::state`], vmangos's fourth byte `0x8` (`Player.cpp:17536`): the bar is
-/// disabled, its lit reaction reads Passive and it is unusable, but it still draws (`0x4bd08d`).
-pub const PET_STATE_BAR_DISABLED: u32 = 0x0800_0000;
+/// Bit 27 of [`PetSpells::state`], a vehicle's bar: the mode reads Passive (`0x5a7980`) and the
+/// bar works only while we ride the pet (`0x5d3f77`).
+pub const PET_STATE_VEHICLE: u32 = 0x0800_0000;
 
-/// The pet's `UNIT_FIELD_FLAGS` bits that make its bar unusable: stunned, confused, fleeing
-/// (`0x4bd075`). `UNIT_FLAG_POSSESSED` is not among them: a possessed unit's bar must work.
+/// The pet's `UNIT_FIELD_FLAGS` bits that make it uncontrollable: stunned, fleeing, confused
+/// (`CGUnit_C::IsControllable`, `0x5d3310`).
 pub const PET_UNUSABLE_UNIT_FLAGS: u32 = 0x0004_0000 | 0x0040_0000 | 0x0080_0000;
 
 /// The flag bit of a pet cooldown's category duration, which 12340 splits off before using the
 /// rest as a duration (`0x5d6d19`, `0x5d6d2f`).
 pub const PET_COOLDOWN_PERMANENT: u32 = 0x8000_0000;
 
-/// One packed pet action word, as the client decodes it (`0x4bdcc7`/`0x4bdccd`/`0x4bdce3`): the
-/// action in bits 0-23 (12340 masks `0xffffff`, `0x5d6c65`), the type in 24-29, autocast allowed
-/// in 31 and on in 30. The raw word is kept because the client echoes it verbatim in
-/// [`pet_action`].
+/// One packed pet action word, as 12340 decodes it (`0x5d4ec0`): the action in bits 0-23
+/// (`0x5d6c65`), the type in 24-29, autocast allowed in 31 and on in 30. The raw word is kept
+/// because the client echoes it verbatim in [`pet_action`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PetActionEntry {
     pub packed: u32,
@@ -75,13 +72,14 @@ impl PetActionEntry {
     pub fn kind(self) -> u8 {
         ((self.packed >> 24) & 0x3F) as u8
     }
-    /// Client types 1-5 take the spell branch. Deviation: a type outside 1-7 reads as nothing
-    /// rather than the reference's default arm, which under-pushes its returns.
+    /// Types 1 and 8-17 take the spell branch (`0x5d4ec0`). Deviation: any other type but 6 and
+    /// 7 reads as nothing rather than the switch's fallthrough, which under-pushes its returns.
     pub fn is_spell(self) -> bool {
-        (PET_TYPE_SPELL_FIRST..=PET_TYPE_SPELL_LAST).contains(&self.kind())
+        let kind = self.kind();
+        kind == PET_TYPE_SPELL || PET_TYPE_SPELL_EXTRA.contains(&kind)
     }
-    /// Empty is a zero word (`0x4bdcbd`). vmangos's unused slots, `0x8100_0000`, take the spell
-    /// branch instead and come back nil, since spell 0 has no `Spell.dbc` record.
+    /// Empty is a zero word (`0x5d4ec0`). A server's unused slot, `0x8100_0000`, takes the spell
+    /// branch instead and comes back nil, since spell 0 has no `Spell.dbc` record.
     pub fn is_empty(self) -> bool {
         self.packed == 0
     }
@@ -93,7 +91,7 @@ impl PetActionEntry {
     pub fn autocast_on(self) -> bool {
         self.packed & PET_AUTOCAST_ON != 0
     }
-    /// Bit 30 set or cleared: `TogglePetAutocast`'s in-place flip (`0x4bcbff`), before the send.
+    /// Bit 30 set or cleared: `TogglePetAutocast`'s in-place flip (`0x5d5d20`), before the send.
     pub fn with_autocast(self, on: bool) -> Self {
         Self {
             packed: if on {
@@ -126,14 +124,16 @@ pub struct PetSpellCooldown {
 pub struct PetSpells {
     /// The pet, possessed minion or charmed creature; zero means the bar is gone.
     pub pet_guid: u64,
+    /// The pet's `CreatureFamily.dbc` id, which picks its talent tabs (`SetPet`, `0x5d6ab6`).
+    pub family: u16,
     /// The possess or charm aura's remaining ms; 0 for a real pet.
     pub duration_ms: u32,
-    /// The mode word, one dword as the client keeps it (`[0xb71468]`): react state in byte 0,
-    /// command state in byte 1, [`PET_STATE_BAR_DISABLED`] at bit 27. Do not split it into bytes.
+    /// The mode word, one dword as the client keeps it (`[0xc234c8]`): react state in byte 0,
+    /// command state in byte 1, [`PET_STATE_VEHICLE`] at bit 27. Do not split it into bytes.
     pub state: u32,
     /// The ten bar slots, in bar order.
     pub bar: [PetActionEntry; PET_ACTION_SLOTS],
-    /// The pet spellbook, packed like the bar; only a permanent pet has one (`Player.cpp:17547`).
+    /// The pet spellbook, packed like the bar (`AddPetSpell`, `0x5d6ca9`).
     pub spells: Vec<PetActionEntry>,
     pub cooldowns: Vec<PetSpellCooldown>,
 }
@@ -143,14 +143,14 @@ impl PetSpells {
     pub fn react_state(&self) -> u32 {
         self.state & 0xFF
     }
-    /// `state >> 8`, unmasked like the client's compare (`0x4bdf0f`): with bit 27 set it matches
+    /// `state >> 8`, unmasked like the client's compare (`0x5d5202`): with bit 27 set it matches
     /// no command state, so every command button goes dark. Masking it would lose that.
     pub fn command_state(&self) -> u32 {
         self.state >> 8
     }
-    /// Bit 27: the server has disabled the bar.
-    pub fn bar_disabled(&self) -> bool {
-        self.state & PET_STATE_BAR_DISABLED != 0
+    /// Bit 27: the bar is a vehicle's.
+    pub fn vehicle(&self) -> bool {
+        self.state & PET_STATE_VEHICLE != 0
     }
 }
 
@@ -163,8 +163,7 @@ pub(super) fn read_pet_spells(r: &mut &[u8]) -> io::Result<PetSpells> {
     if pet_guid == 0 {
         return Ok(PetSpells::default());
     }
-    // The creature family, which the handler reads and drops.
-    let _family = read_u16_le(r)?;
+    let family = read_u16_le(r)?;
     let duration_ms = read_u32_le(r)?;
     let state = read_u32_le(r)?;
 
@@ -174,7 +173,7 @@ pub(super) fn read_pet_spells(r: &mut &[u8]) -> io::Result<PetSpells> {
     }
 
     let spell_count = read_u8(r)?;
-    // A `u8` count with no tighter server bound (`Player.cpp:17544`).
+    // A `u8` count with no tighter bound (`0x5d6c82`).
     let mut spells = Vec::with_capacity(capacity_hint(spell_count, usize::from(u8::MAX)));
     for _ in 0..spell_count {
         spells.push(read_u32_le(r)?.into());
@@ -184,6 +183,7 @@ pub(super) fn read_pet_spells(r: &mut &[u8]) -> io::Result<PetSpells> {
 
     Ok(PetSpells {
         pet_guid,
+        family,
         duration_ms,
         state,
         bar,
@@ -209,15 +209,16 @@ fn read_cooldown_block(r: &mut &[u8]) -> io::Result<Vec<PetSpellCooldown>> {
     Ok(cooldowns)
 }
 
-/// `SMSG_PET_MODE`: the state word without the bar, for a command or reaction change.
+/// `SMSG_PET_MODE`: the state word without the bar, for a command or reaction change; 12340 takes
+/// it only for the bar's own pet (`0x5d3630`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PetMode {
     pub pet_guid: u64,
-    /// The same dword as [`PetSpells::state`]; the client stores both through `0x4bc930`.
+    /// The same dword as [`PetSpells::state`], stored whole (`[0xc234c8]`).
     pub state: u32,
 }
 
-/// Read `SMSG_PET_MODE`: `u64 petGuid, u32 state` (`0x4bdb10`; vmangos `Packets/Pet.cpp:104-111`).
+/// Read `SMSG_PET_MODE`: `u64 petGuid, u32 state` (`0x5d3630`).
 pub(super) fn read_pet_mode(r: &mut impl Read) -> io::Result<PetMode> {
     Ok(PetMode {
         pet_guid: read_u64_le(r)?,
@@ -225,12 +226,17 @@ pub(super) fn read_pet_mode(r: &mut impl Read) -> io::Result<PetMode> {
     })
 }
 
-/// Read `SMSG_PET_ACTION_FEEDBACK` (vmangos `Packets/Pet.cpp:90-93`): one reason byte.
-pub(super) fn read_pet_action_feedback(r: &mut impl Read) -> io::Result<u8> {
-    read_u8(r)
+/// Read `SMSG_PET_ACTION_FEEDBACK` (`0x5d4da0`): one reason byte. After reasons 2 and 3 the
+/// handler reads a `u32` spell for its cooldown refund, read and dropped here when sent.
+pub(super) fn read_pet_action_feedback(r: &mut &[u8]) -> io::Result<u8> {
+    let reason = read_u8(r)?;
+    if matches!(reason, 2 | 3) && r.len() >= 4 {
+        read_u32_le(r)?;
+    }
+    Ok(reason)
 }
 
-/// Read `SMSG_PET_TAME_FAILURE` (vmangos `Packets/Pet.cpp:122-125`): one reason byte.
+/// Read `SMSG_PET_TAME_FAILURE` (`0x802090`): one reason byte.
 pub(super) fn read_pet_tame_failure(r: &mut impl Read) -> io::Result<u8> {
     read_u8(r)
 }
@@ -242,16 +248,34 @@ pub(super) fn read_pet_tame_failure(r: &mut impl Read) -> io::Result<u8> {
 pub(super) fn read_pet_name_invalid(r: &mut impl Read) -> io::Result<u32> {
     let code = read_u32_le(r)?;
     read_cstring(r)?;
+    skip_declined_names(r)?;
+    Ok(code)
+}
+
+/// The declension block the pet-name packets share: a `u8` flag and, when set, five declined
+/// forms of the name (`0x63532d`, `0x6e2fb1`).
+fn skip_declined_names(r: &mut impl Read) -> io::Result<()> {
     if read_u8(r)? != 0 {
         for _ in 0..5 {
             read_cstring(r)?;
         }
     }
-    Ok(code)
+    Ok(())
+}
+
+/// Read `SMSG_PET_NAME_QUERY_RESPONSE` as 12340's handler does (`0x6352c0`): `u32 petNumber`,
+/// the name, `u32 nameTimestamp`, then the declension block, read and dropped. An empty name is
+/// the negative answer (`DBCache::DenyItem`, `0x635365`); the timestamp only ages the disk cache.
+pub(super) fn read_pet_name_query_response(r: &mut impl Read) -> io::Result<(u32, String)> {
+    let pet_number = read_u32_le(r)?;
+    let name = read_cstring(r)?;
+    let _name_timestamp = read_u32_le(r)?;
+    skip_declined_names(r)?;
+    Ok((pet_number, name))
 }
 
 /// The `GlobalStrings.lua` key filling `ERR_TAME_FAILED`'s `%s`: the reference's table
-/// (`0x6e6ac0`) covers `1..=11`, and anything else, vmangos's 12 included, is the default arm.
+/// (`Spell_C_PetTameFailure`, `0x800390`) covers `1..=12`; anything else is the default arm.
 pub fn pet_tame_failure_key(reason: u8) -> &'static str {
     match reason {
         1 => "PETTAME_INVALIDCREATURE",
@@ -265,30 +289,31 @@ pub fn pet_tame_failure_key(reason: u8) -> &'static str {
         9 => "PETTAME_TOOHIGHLEVEL",
         10 => "PETTAME_DEAD",
         11 => "PETTAME_NOTDEAD",
+        12 => "PETTAME_CANTCONTROLEXOTIC",
         _ => "PETTAME_UNKNOWNERROR",
     }
 }
 
-/// Sound selector for an accepted order (vmangos `PET_TALK_SPECIAL_SPELL`, `PetHandler.cpp:523`).
+/// Sound selector for an accepted order: AI reaction 1 (`0x716b90`).
 pub const PET_TALK_ORDER: u32 = 0;
-/// Sound selector for an attack order (vmangos `PET_TALK_ATTACK`, `Unit.cpp:8961`).
+/// Sound selector for an attack order: AI reaction 2 (`0x716b90`).
 pub const PET_TALK_ATTACK: u32 = 1;
 
-/// Read `SMSG_PET_ACTION_SOUND`: `u64 petGuid, u32 selector` (`0x6040ca`, vmangos
-/// `Packets/Pet.cpp:96-100`). The selector is a `PET_TALK_*` value, not a `SoundEntries` id: the
-/// sound comes off the pet's `CreatureSoundData` row.
+/// Read `SMSG_PET_ACTION_SOUND`: `u64 petGuid, u32 selector` (`0x716b90`). The selector is a
+/// `PET_TALK_*` value, not a `SoundEntries` id: the sound comes off the pet's
+/// `CreatureSoundData` row.
 pub(super) fn read_pet_action_sound(r: &mut impl Read) -> io::Result<(u64, u32)> {
     Ok((read_u64_le(r)?, read_u32_le(r)?))
 }
 
-/// Read `SMSG_PET_DISMISS_SOUND`: `u32 creatureModelDataId, f32 x, y, z` (reader `0x604140`;
-/// vmangos never sends it). The handler's `+1.0` on `z` is a play detail, not applied here.
+/// Read `SMSG_PET_DISMISS_SOUND`: `u32 creatureModelDataId, f32 x, y, z` (`0x716c00`). The
+/// handler's `+1.0` on `z` is a play detail, not applied here.
 pub(super) fn read_pet_dismiss_sound(r: &mut impl Read) -> io::Result<(u32, Vector3d)> {
     Ok((read_u32_le(r)?, Vector3d::read(r)?))
 }
 
-/// Body of `CMSG_PET_ACTION` (opcode 373, vmangos `Packets/Pet.cpp:9-14`): `u64` pet guid, the
-/// slot's `u32` word echoed verbatim, `u64` target guid (0 when the action needs none).
+/// Body of `CMSG_PET_ACTION` (opcode 373, `SendPetAction` `0x5d455e`): `u64` pet guid, the slot's
+/// `u32` word echoed verbatim, `u64` target guid (0 when the action needs none).
 pub fn pet_action(pet_guid: u64, packed: u32, target_guid: u64) -> Vec<u8> {
     let mut body = Vec::with_capacity(20);
     body.extend_from_slice(&pet_guid.to_le_bytes());
@@ -297,15 +322,13 @@ pub fn pet_action(pet_guid: u64, packed: u32, target_guid: u64) -> Vec<u8> {
     body
 }
 
-/// Body of `CMSG_PET_STOP_ATTACK` (opcode 746, vmangos `Packets/Pet.cpp:33-36`): the pet guid,
-/// sent by the Attack button's second press (`PetActionBarFrame.lua:258-262`).
+/// Body of `CMSG_PET_STOP_ATTACK` (opcode 746, `0x5d4665`): the pet guid, sent by the Attack
+/// button's second press.
 pub fn pet_stop_attack(pet_guid: u64) -> Vec<u8> {
     pet_guid.to_le_bytes().to_vec()
 }
 
-/// Body of `CMSG_PET_CANCEL_AURA` (opcode 619, sender `0x4bd25f`): `u64` pet guid, `u32` spell.
-/// The server drops it unless the guid is our pet or charm and answers a dead pet with
-/// `FEEDBACK_PET_DEAD` (vmangos `SpellHandler.cpp:407-432`).
+/// Body of `CMSG_PET_CANCEL_AURA` (opcode 619, sender `0x803495`): `u64` pet guid, `u32` spell.
 pub fn pet_cancel_aura(pet_guid: u64, spell_id: u32) -> Vec<u8> {
     let mut body = Vec::with_capacity(12);
     body.extend_from_slice(&pet_guid.to_le_bytes());
@@ -313,7 +336,7 @@ pub fn pet_cancel_aura(pet_guid: u64, spell_id: u32) -> Vec<u8> {
     body
 }
 
-/// Body of `CMSG_PET_SPELL_AUTOCAST` (opcode 755, sender `0x4bcd5f`): `u64` guid, `u32` spell,
+/// Body of `CMSG_PET_SPELL_AUTOCAST` (opcode 755, sender `0x5d5f6e`): `u64` guid, `u32` spell,
 /// `u8` state. The pet spellbook's autocast verb, with no reply; the bar's is [`pet_set_action`].
 pub fn pet_spell_autocast(pet_guid: u64, spell_id: u32, enabled: bool) -> Vec<u8> {
     let mut body = Vec::with_capacity(13);
@@ -324,10 +347,9 @@ pub fn pet_spell_autocast(pet_guid: u64, spell_id: u32, enabled: bool) -> Vec<u8
 }
 
 /// Body of `CMSG_PET_SET_ACTION` (opcode 372): `u64` pet guid, then one or two
-/// `(u32 position, u32 packed)` pairs, counted by body size alone (24 bytes is two, vmangos
-/// `Packets/Pet.cpp:52-62`), so one pair must not be padded. It carries the bar's autocast toggle
-/// (one pair, bit 30 flipped, `0x4bcc1e`) and its drag (`0x4bc9a0`), whose optional first pair
-/// relocates the target slot's occupant; vmangos requires it when a command or reaction moves.
+/// `(u32 position, u32 packed)` pairs, counted by body size alone, so one pair must not be padded.
+/// It carries the bar's autocast toggle (one pair, bit 30 flipped, `0x5d5d96`) and its drag
+/// (`0x5d5c52`), whose optional first pair relocates the target slot's occupant.
 pub fn pet_set_action(pet_guid: u64, entries: &[(u32, u32)]) -> Vec<u8> {
     let mut body = Vec::with_capacity(8 + 8 * entries.len());
     body.extend_from_slice(&pet_guid.to_le_bytes());
@@ -338,8 +360,7 @@ pub fn pet_set_action(pet_guid: u64, entries: &[(u32, u32)]) -> Vec<u8> {
     body
 }
 
-/// Body of `CMSG_PET_ABANDON` (opcode 374, vmangos `Packets/Pet.cpp:16-19`): the pet guid. The
-/// menu's Abandon and Dismiss both send it; the server deletes a hunter pet and unsummons others.
+/// Body of `CMSG_PET_ABANDON` (opcode 374, `PetAbandon` `0x5d4913`): the pet guid.
 pub fn pet_abandon(pet_guid: u64) -> Vec<u8> {
     pet_guid.to_le_bytes().to_vec()
 }
@@ -438,7 +459,8 @@ mod tests {
         assert_eq!(p.duration_ms, 0);
         assert_eq!(p.react_state(), PET_REACT_DEFENSIVE);
         assert_eq!(p.command_state(), PET_COMMAND_FOLLOW);
-        assert!(!p.bar_disabled());
+        assert!(!p.vehicle());
+        assert_eq!(p.family, 1);
 
         assert_eq!(p.bar[0].kind(), PET_ACT_COMMAND);
         assert_eq!(p.bar[0].action(), PET_COMMAND_ATTACK);
@@ -447,12 +469,12 @@ mod tests {
         assert_eq!(p.bar[9].action(), PET_REACT_PASSIVE);
 
         // The server sent 0xC1; the client's type is 1, with autocast in bits 31/30.
-        assert_eq!(p.bar[3].kind(), PET_TYPE_SPELL_FIRST);
+        assert_eq!(p.bar[3].kind(), PET_TYPE_SPELL);
         assert_eq!(p.bar[3].action(), 3010);
         assert!(p.bar[3].is_spell() && !p.bar[3].is_empty());
         assert!(p.bar[3].autocast_allowed() && p.bar[3].autocast_on());
 
-        // vmangos's unused slot (0, ACT_DISABLED) is not empty; it takes the spell branch.
+        // A server's unused slot (0, ACT_DISABLED) is not empty; it takes the spell branch.
         assert!(!p.bar[4].is_empty());
         assert!(p.bar[4].is_spell() && p.bar[4].action() == 0);
         assert!(
@@ -509,14 +531,14 @@ mod tests {
 
     #[test]
     fn pet_mode_and_the_client_verbs_golden() {
-        // SMSG_PET_MODE: vmangos's fourth state byte 0x8 is the client's bit 27.
+        // SMSG_PET_MODE: a vehicle's fourth state byte 0x8 is the client's bit 27.
         let mut body = 0x2Au64.to_le_bytes().to_vec();
         body.extend_from_slice(&[2, 0, 0, 0x8]);
         let mut r = &body[..];
         let mode = read_pet_mode(&mut r).unwrap();
         assert_eq!(mode.pet_guid, 0x2A);
         assert_eq!(mode.state, 0x0800_0002);
-        assert_eq!(mode.state & PET_STATE_BAR_DISABLED, PET_STATE_BAR_DISABLED);
+        assert_eq!(mode.state & PET_STATE_VEHICLE, PET_STATE_VEHICLE);
 
         let packed = 3010 | (u32::from(PET_ACT_ENABLED) << 24);
         assert_eq!(
@@ -559,6 +581,53 @@ mod tests {
         );
     }
 
+    /// `SMSG_PET_NAME_QUERY_RESPONSE` through the parse arm, fully consumed in each shape.
+    #[test]
+    fn pet_name_query_response_reads_the_declension_block() {
+        use crate::messages::{opcode, parse_server, ServerPacket};
+        let body = |name: &[u8], declined: Option<[&[u8]; 5]>| {
+            let mut b = 7u32.to_le_bytes().to_vec();
+            b.extend_from_slice(name);
+            b.push(0);
+            b.extend_from_slice(&0x6500_0000u32.to_le_bytes()); // timestamp
+            match declined {
+                None => b.push(0),
+                Some(forms) => {
+                    b.push(1);
+                    for f in forms {
+                        b.extend_from_slice(f);
+                        b.push(0);
+                    }
+                }
+            }
+            b
+        };
+        let parse = |b: &[u8]| {
+            let mut r = b;
+            let n = read_pet_name_query_response(&mut r).unwrap();
+            assert!(r.is_empty(), "the body is fully consumed");
+            assert!(matches!(
+                parse_server(opcode::SMSG_PET_NAME_QUERY_RESPONSE, b).unwrap(),
+                ServerPacket::PetNameQueryResponse { pet_number: 7, .. }
+            ));
+            n
+        };
+
+        assert_eq!(parse(&body(b"Rex", None)), (7, "Rex".into()));
+        assert_eq!(
+            parse(&body(
+                b"Rex",
+                Some([b"Rexa", b"Rexu", b"Rexe", b"Rexom", b"Rexy"])
+            )),
+            (7, "Rex".into())
+        );
+        assert_eq!(parse(&body(b"", None)), (7, String::new()));
+
+        // A body without the declension flag is an error rather than a silent success.
+        let short = &body(b"Rex", None)[..12];
+        assert!(read_pet_name_query_response(&mut &short[..]).is_err());
+    }
+
     #[test]
     fn the_autocast_flip_moves_only_bit_30() {
         let on = PetActionEntry::from(3010 | (u32::from(PET_ACT_ENABLED) << 24));
@@ -567,7 +636,7 @@ mod tests {
         let off = on.with_autocast(false);
         assert_eq!(off.packed, 3010 | (u32::from(PET_ACT_DISABLED) << 24));
         assert_eq!(off.action(), 3010);
-        assert_eq!(off.kind(), PET_TYPE_SPELL_FIRST, "the TYPE never moves");
+        assert_eq!(off.kind(), PET_TYPE_SPELL, "the TYPE never moves");
         assert!(off.autocast_allowed() && !off.autocast_on());
         assert_eq!(off.with_autocast(true), on);
 
@@ -580,7 +649,7 @@ mod tests {
     fn the_type_mask_collapses_the_spell_states() {
         for act in [PET_ACT_PASSIVE, PET_ACT_DISABLED, PET_ACT_ENABLED] {
             let e = PetActionEntry::from(3010 | (u32::from(act) << 24));
-            assert_eq!(e.kind(), PET_TYPE_SPELL_FIRST, "{act:#04x} masks to 1");
+            assert_eq!(e.kind(), PET_TYPE_SPELL, "{act:#04x} masks to 1");
             assert!(e.is_spell());
         }
         assert_eq!(
@@ -593,9 +662,14 @@ mod tests {
             PET_ACT_REACTION
         );
 
-        // A type outside 1-7 is neither a spell nor a token.
+        // Types 8-17 take the spell branch too; 2-5 and 18+ are neither a spell nor a token.
+        for kind in [8u32, 17] {
+            assert!(PetActionEntry::from(3010 | (kind << 24)).is_spell());
+        }
+        for kind in [2u32, 5, 18, 0x33] {
+            assert!(!PetActionEntry::from(3010 | (kind << 24)).is_spell());
+        }
         let odd = PetActionEntry::from(3010 | (0x33u32 << 24));
-        assert!(!odd.is_spell());
         assert!(odd.kind() != PET_ACT_COMMAND && odd.kind() != PET_ACT_REACTION);
     }
 }

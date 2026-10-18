@@ -1,5 +1,5 @@
 //! The `"pet"` unit token and the pet frame's events, keyed on [`PetBar`]'s pet guid: the client's
-//! `[0xb714a0]`, whose writer fires `UNIT_PET` (`0x4bc84f`).
+//! `CGPetInfo::GetPet(0)`, whose writer `SetPet` fires `UNIT_PET` (`0x5d6aca`).
 
 use bevy::prelude::*;
 
@@ -34,7 +34,7 @@ pub(super) struct PetUnitMemory {
 pub(super) const UNIT_FLAG_PET_IN_COMBAT: u32 = 0x0000_0800;
 
 /// Feed the `"pet"` token and the pet frame's events. The token follows the bar's guid, as
-/// `UNIT_PET` does (`SetPet`, `0x4bc7e0`), not our `UNIT_FIELD_SUMMON`, so a charmed unit has a
+/// `UNIT_PET` does (`SetPet`, `0x5d6900`), not our `UNIT_FIELD_SUMMON`, so a charmed unit has a
 /// frame. The reaction is 0: the pet frame reads none.
 pub(super) fn feed_pet_unit(
     script: Option<NonSendMut<UiScript>>,
@@ -118,11 +118,21 @@ pub(super) fn feed_pet_unit(
         None => memory.pushed = None,
     }
 
-    // UNIT_PET("player") only on a pet guid change (`0x4bc84f`), not on a same-pet re-send.
-    if memory.guid != Some(pet_guid) {
+    // UNIT_PET("player") on a pet guid change (`0x5d6aca`), not on a same-pet re-send, and on any
+    // move of our `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON`, the unit watches behind event slots 0
+    // and 2 (`ScriptEventsRegisterUnit` `0x614190`): a pet that leaves with no `SMSG_PET_SPELLS`
+    // still repaints the frame. Deviation: only the `"player"` token hears the watch, not another
+    // token naming us.
+    let summon_moved = pet.self_guid.0.is_some_and(|me| {
+        use benilla_protocol::field::{FIELD_UNIT_CHARM, FIELD_UNIT_SUMMON};
+        [FIELD_UNIT_CHARM, FIELD_UNIT_SUMMON]
+            .iter()
+            .any(|&f| edges.moved(me, f) || edges.moved(me, f + 1))
+    });
+    if memory.guid != Some(pet_guid) || summon_moved {
         gate.audit("feed_pet_unit", "the UNIT_PET edge");
         memory.guid = Some(pet_guid);
-        debug!("ui_pet: UNIT_PET — pet is now {pet_guid:#x}");
+        debug!("ui_pet: UNIT_PET — pet is now {pet_guid:#x} (summon field moved: {summon_moved})");
         script.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
     }
 

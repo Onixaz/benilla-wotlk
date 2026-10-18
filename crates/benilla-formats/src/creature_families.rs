@@ -29,6 +29,10 @@ const FAMILY_MIN_SCALE_LEVEL_FIELD: usize = 2;
 const FAMILY_MAX_SCALE_FIELD: usize = 3;
 const FAMILY_MAX_SCALE_LEVEL_FIELD: usize = 4;
 const FAMILY_FOOD_MASK_FIELD: usize = 0x1c / 4;
+/// `petTalentType`, `-1` for none (record `+0x20`, `0x5c64d0`).
+const FAMILY_PET_TALENT_TYPE_FIELD: usize = 8;
+/// `categoryEnumID` (record `+0x24`, `IsTalentAvailableForPet` `0x5c5a20`).
+const FAMILY_CATEGORY_FIELD: usize = 9;
 /// The enUS name, the localized block's first slot.
 const FAMILY_NAME_FIELD: usize = 10;
 /// `iconFile`, after the name block's locale flags.
@@ -48,6 +52,10 @@ pub struct CreatureFamily {
     pub icon: String,
     /// The diet bitfield; 0 on the warlock minions, the Ghoul and row 28, so an empty diet is real.
     pub pet_food_mask: u32,
+    /// The pet talent tree type, `-1` for a family with none.
+    pub pet_talent_type: i32,
+    /// The category a talent's `category_mask` admits, `-1` for none.
+    pub category: i32,
     /// The size ramp: the model scale at `min_scale_level` and at `max_scale_level`.
     pub min_scale: f32,
     pub min_scale_level: u32,
@@ -188,6 +196,8 @@ pub fn load_creature_families(chain: &mut Chain) -> Result<CreatureFamilies> {
                 name,
                 icon: str_at(&rs, r, FAMILY_ICON_FIELD).unwrap_or_default(),
                 pet_food_mask: u32_at(r, FAMILY_FOOD_MASK_FIELD).unwrap_or(0),
+                pet_talent_type: u32_at(r, FAMILY_PET_TALENT_TYPE_FIELD).map_or(-1, |v| v as i32),
+                category: u32_at(r, FAMILY_CATEGORY_FIELD).map_or(-1, |v| v as i32),
                 min_scale: f32_at(r, FAMILY_MIN_SCALE_FIELD).unwrap_or(1.0),
                 min_scale_level: u32_at(r, FAMILY_MIN_SCALE_LEVEL_FIELD).unwrap_or(0),
                 max_scale: f32_at(r, FAMILY_MAX_SCALE_FIELD).unwrap_or(1.0),
@@ -245,6 +255,21 @@ mod tests {
             );
         }
         assert_eq!(fams.icon(9999), None);
+    }
+
+    /// A hunter family has a talent tree and a category; a warlock minion has neither.
+    #[test]
+    fn the_pet_talent_columns_read_off_the_shipped_file() {
+        let Some(mut chain) = chain() else { return };
+        let fams = load_creature_families(&mut chain).expect("families");
+        let wolf = fams.get(1).expect("Wolf");
+        assert!((0..3).contains(&wolf.pet_talent_type), "{wolf:?}");
+        assert!(wolf.category >= 0, "{wolf:?}");
+        let felhunter = fams.get(15).expect("Felhunter");
+        assert_eq!(felhunter.pet_talent_type, -1);
+        for f in fams.0.values().filter(|f| f.pet_food_mask != 0) {
+            assert!((0..3).contains(&f.pet_talent_type), "{} has a tree", f.name);
+        }
     }
 
     #[test]

@@ -4,7 +4,7 @@ use benilla_protocol::messages::{
     PetActionEntry, PetSpells, PET_ACT_COMMAND, PET_ACT_DISABLED, PET_ACT_ENABLED, PET_ACT_PASSIVE,
     PET_ACT_REACTION, PET_COMMAND_ATTACK, PET_COMMAND_DISMISS, PET_COMMAND_FOLLOW,
     PET_COMMAND_STAY, PET_REACT_AGGRESSIVE, PET_REACT_DEFENSIVE, PET_REACT_PASSIVE,
-    PET_STATE_BAR_DISABLED,
+    PET_STATE_VEHICLE,
 };
 use benilla_ui::script::PetActionView;
 
@@ -125,9 +125,9 @@ fn reaction_tokens_use_the_mode_keys_and_light_on_the_current_react() {
 }
 
 #[test]
-fn a_disabled_bar_reads_passive_and_lights_no_command() {
+fn a_vehicle_bar_reads_passive_and_lights_no_command() {
     let mut bar = state(PET_COMMAND_FOLLOW, PET_REACT_DEFENSIVE);
-    bar.state |= PET_STATE_BAR_DISABLED;
+    bar.state |= PET_STATE_VEHICLE;
 
     let passive = view(
         packed(PET_REACT_PASSIVE, PET_ACT_REACTION),
@@ -239,7 +239,8 @@ fn an_unresolvable_spell_draws_nothing() {
     assert!(!v.autocast_allowed && !v.autocast_enabled);
 }
 
-/// A type outside 1-7 draws empty; the reference's default arm under-pushes there (`0x4bde6f`).
+/// A type the switch has no arm for draws empty; the reference falls through and under-pushes
+/// there (`0x5d4ec0`).
 #[test]
 fn an_unknown_type_byte_is_inert() {
     let bar = state(PET_COMMAND_FOLLOW, PET_REACT_DEFENSIVE);
@@ -277,14 +278,14 @@ fn a_press_latches_the_state_the_server_never_echoes() {
         spells: state(PET_COMMAND_FOLLOW, PET_REACT_DEFENSIVE),
         ..Default::default()
     };
-    bar.spells.state |= PET_STATE_BAR_DISABLED;
+    bar.spells.state |= PET_STATE_VEHICLE;
 
     latch_press(&mut bar, packed(PET_COMMAND_STAY, PET_ACT_COMMAND), false);
     assert_eq!(bar.spells.command_state() & 0xFF, PET_COMMAND_STAY);
     assert_eq!(bar.spells.react_state(), PET_REACT_DEFENSIVE, "untouched");
     assert!(
-        bar.spells.bar_disabled(),
-        "the disabled bit is the SERVER's — a command press must preserve it"
+        bar.spells.vehicle(),
+        "the vehicle bit is the SERVER's — a command press must preserve it"
     );
 
     latch_press(
@@ -294,7 +295,7 @@ fn a_press_latches_the_state_the_server_never_echoes() {
     );
     assert_eq!(bar.spells.react_state(), PET_REACT_AGGRESSIVE);
     assert_eq!(bar.spells.command_state() & 0xFF, PET_COMMAND_STAY);
-    assert!(bar.spells.bar_disabled());
+    assert!(bar.spells.vehicle());
 
     latch_press(&mut bar, packed(3010, PET_ACT_DISABLED), false);
     assert_eq!(bar.spells.command_state() & 0xFF, PET_COMMAND_STAY);
@@ -637,7 +638,7 @@ fn toggle_spell() -> benilla_formats::SpellDisplay {
 
 #[test]
 fn a_pet_spell_shows_active_only_while_it_is_a_live_cancelable_aura_on_the_pet() {
-    let slot = packed(2645, benilla_protocol::messages::PET_TYPE_SPELL_FIRST);
+    let slot = packed(2645, benilla_protocol::messages::PET_TYPE_SPELL);
     let running = pet_running(2645, true);
     let d = toggle_spell();
 
@@ -667,7 +668,7 @@ fn a_pet_spell_shows_active_only_while_it_is_a_live_cancelable_aura_on_the_pet()
 
 #[test]
 fn an_active_pet_spell_draws_its_active_icon() {
-    let slot = packed(2645, benilla_protocol::messages::PET_TYPE_SPELL_FIRST);
+    let slot = packed(2645, benilla_protocol::messages::PET_TYPE_SPELL);
     let bar = state(PET_COMMAND_FOLLOW, PET_REACT_DEFENSIVE);
     let d = toggle_spell();
 
@@ -688,7 +689,7 @@ fn an_active_pet_spell_draws_its_active_icon() {
 /// The reference pushes nil when the chosen icon is not in `SpellIcon.dbc` (`0x4bdd50`).
 #[test]
 fn an_unresolvable_active_icon_hides_rather_than_falling_back() {
-    let slot = packed(2645, benilla_protocol::messages::PET_TYPE_SPELL_FIRST);
+    let slot = packed(2645, benilla_protocol::messages::PET_TYPE_SPELL);
     let bar = state(PET_COMMAND_FOLLOW, PET_REACT_DEFENSIVE);
     let d = benilla_formats::SpellDisplay {
         active_icon_id: 9999,
@@ -702,15 +703,15 @@ fn an_unresolvable_active_icon_hides_rather_than_falling_back() {
 
 #[test]
 fn the_menu_fork_reads_abandon_and_rename_off_the_right_bits() {
-    // A freshly tamed hunter pet carries both.
-    assert_eq!(menu_predicates(0x30), (true, true));
+    // A freshly tamed hunter pet carries both pet-flag bits (`UNIT_FIELD_BYTES_2` byte 2).
+    assert_eq!(menu_predicates(0x3), (true, true));
     // After its first rename the server clears the rename bit.
-    assert_eq!(menu_predicates(0x20), (true, false));
+    assert_eq!(menu_predicates(0x2), (true, false));
     // A warlock's demon carries neither.
     assert_eq!(menu_predicates(0), (false, false));
-    assert_eq!(menu_predicates(0x10), (false, true));
-    // 0x8 is PLAYER_CONTROLLED, on every pet; 0x40 is PLUS_MOB.
-    assert_eq!(menu_predicates(0x8 | 0x40), (false, false));
+    assert_eq!(menu_predicates(0x1), (false, true));
+    // The byte's other bits name neither.
+    assert_eq!(menu_predicates(0x4 | 0x8), (false, false));
 }
 
 #[test]
@@ -1036,4 +1037,90 @@ fn a_held_pet_names_its_templates_creature_type() {
         .eval::<Option<String>>("return UnitCreatureType('pet')")
         .unwrap();
     assert_eq!(answer.as_deref(), Some("Demon"));
+}
+
+/// `UNIT_PET("player")` also fires when our `UNIT_FIELD_SUMMON` moves (`0x614190`'s slot 2), so a
+/// pet that leaves with the bar's guid unchanged still repaints the pet frame (#340).
+#[test]
+fn a_moved_summon_field_fires_unit_pet_with_the_bar_unchanged() {
+    use bevy::prelude::*;
+    const PET: u64 = 0xF140_0000_0000_002A;
+    const ME: u64 = 0x19;
+    const SUMMON: u16 = 8;
+
+    let mut app = App::new();
+    app.add_message::<crate::net::FieldChanged>()
+        .init_resource::<crate::net::GuidIndex>()
+        .init_resource::<crate::names::NameCache>()
+        .insert_resource(crate::net::SelfGuid(Some(ME)))
+        .insert_resource(PetBar {
+            spells: PetSpells {
+                pet_guid: PET,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .add_systems(Update, feed_pet_unit);
+    let (tx, rx) = crossbeam_channel::unbounded();
+    std::mem::forget(rx);
+    app.insert_resource(NetCommands(tx));
+    let me = app
+        .world_mut()
+        .spawn((
+            crate::net::Guid(ME),
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                SUMMON, PET as u32,
+            )])),
+        ))
+        .id();
+    app.world_mut()
+        .resource_mut::<crate::net::GuidIndex>()
+        .0
+        .insert(ME, me);
+    let script = benilla_ui::script::UiScript::new().unwrap();
+    script
+        .run(
+            "PetEvents = 0 local f = CreateFrame('Frame') f:RegisterEvent('UNIT_PET') \
+             f:SetScript('OnEvent', function(_, _, unit) if unit == 'player' then \
+             PetEvents = PetEvents + 1 end end)",
+        )
+        .unwrap();
+    app.insert_non_send_resource(script);
+    let events = |app: &mut App| {
+        app.world_mut()
+            .non_send_resource_mut::<benilla_ui::script::UiScript>()
+            .eval::<i64>("return PetEvents")
+            .unwrap()
+    };
+
+    app.update();
+    assert_eq!(
+        events(&mut app),
+        1,
+        "the first feed announces the bar's pet"
+    );
+
+    // The summon field drops with no `SMSG_PET_SPELLS`: the bar keeps its guid.
+    app.world_mut()
+        .get_mut::<ObjectStore>(me)
+        .unwrap()
+        .0
+        .merge(benilla_protocol::ObjectFields::from_pairs(&[(SUMMON, 0)]));
+    app.world_mut().write_message(crate::net::FieldChanged {
+        entity: me,
+        guid: ME,
+        kind: benilla_protocol::messages::ObjectType::Player,
+        index: SUMMON,
+        old: PET as u32,
+        new: 0,
+    });
+    app.update();
+    assert_eq!(
+        events(&mut app),
+        2,
+        "the moved summon field repaints the frame"
+    );
+
+    app.update();
+    assert_eq!(events(&mut app), 2, "a quiet frame fires nothing");
 }

@@ -93,6 +93,20 @@ fn family_for(
     )
 }
 
+/// The pet's talent tree name (`0x5d3d80`): its template's family, that family's talent type, and
+/// the first `TalentTab.dbc` row whose pet mask admits it; `None` without any of them.
+fn tree_for(
+    pet: Option<&ObjectStore>,
+    names: &NameCache,
+    tables: Option<&PetFamilyTables>,
+    talents: Option<&crate::ui_talent::Talents>,
+) -> Option<String> {
+    let entry = pet?.0.object_entry().filter(|&e| e != 0)?;
+    let family = names.creature_record(entry)?.pet_family;
+    let tree = tables?.families.get(family)?.pet_talent_type;
+    Some(talents?.catalog.tabs_for_pet(tree).first()?.name.clone())
+}
+
 /// The whole stat block for the current pet, or [`PetStats::default`] with none.
 fn stats_for(
     pet: Option<&ObjectStore>,
@@ -146,6 +160,7 @@ fn stats_for(
             family,
             icon,
             food_types,
+            talent_tree: None,
         },
     )
 }
@@ -157,6 +172,7 @@ fn feed_pet_stats(
     self_store: Query<&ObjectStore, With<crate::net::SelfPlayer>>,
     tables: Option<Res<PetStatTables>>,
     family_tables: Option<Res<PetFamilyTables>>,
+    talents: Option<Res<crate::ui_talent::Talents>>,
     names: Res<NameCache>,
     commands: Res<NetCommands>,
     mut last: Local<crate::ui_script::VmMemo<Option<(bool, PetStats)>>>,
@@ -167,7 +183,12 @@ fn feed_pet_stats(
     let last = last.get(&script);
     let store = pet.store(bar.spells.pet_guid);
     let family = family_for(store, &names, &commands, family_tables.as_deref());
-    let fresh = stats_for(store, self_store.iter().next(), tables.as_deref(), family);
+    let tree = tree_for(store, &names, family_tables.as_deref(), talents.as_deref());
+    let mut fresh = stats_for(store, self_store.iter().next(), tables.as_deref(), family);
+    // `GetPetTalentTree`'s gate is `CanGainXP`, the hunter pet's: our pet is created by us.
+    if fresh.1.hunter_pet {
+        fresh.1.talent_tree = tree;
+    }
     if last.as_ref() == Some(&fresh) {
         return;
     }

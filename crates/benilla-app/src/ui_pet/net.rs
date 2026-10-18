@@ -114,8 +114,8 @@ fn pet_spells(spells: PetSpells, catalog: Option<&Spells>, bar: &mut PetBar) {
         spells.pet_guid,
         spells.react_state(),
         spells.command_state(),
-        if spells.bar_disabled() {
-            "DISABLED"
+        if spells.vehicle() {
+            "VEHICLE"
         } else {
             "usable"
         },

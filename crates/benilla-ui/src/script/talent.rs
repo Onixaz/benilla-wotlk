@@ -1,14 +1,16 @@
 //! The talent bindings over 3.3.5a's talent groups. The app pushes the class's pages and talents
 //! (`Talent.dbc`, `TalentTab.dbc`, `Spell.dbc`) with each group's learned ranks from
-//! `SMSG_TALENTS_INFO` ([`UiScript::set_talents`]); the VM keeps the preview ranks, which
-//! `AddPreviewTalentPoints` moves and every push resets, as the packet re-seeds them in 12340
-//! (`0x5c9310` sets the preview rank `+0x20` to the learned `+0x1c`).
+//! `SMSG_TALENTS_INFO` ([`UiScript::set_talents`]), and the pet's one group over its family's tree
+//! ([`UiScript::set_pet_talents`]); the VM keeps the preview ranks, which `AddPreviewTalentPoints`
+//! moves and every push resets, as the packet re-seeds them in 12340 (`0x5c9310` sets the preview
+//! rank `+0x20` to the learned `+0x1c`).
 //!
 //! Ranks are 0-based with -1 for none, as 12340 stores them (`TalentRec+0x1c`/`+0x20`); the Lua
 //! sees rank + 1. Tiers and columns are 1-based, as the stock frame indexes
-//! `TALENT_BRANCH_ARRAY[tier][column]`. A group is the caller's `groupIndex`, else the active one
-//! (`0x5c57d0`). Inspect and pet talents are not modelled: their counts answer 0 and their tabs
-//! nothing, which hides the pet spec tab (`PlayerSpecTab_Update`).
+//! `TALENT_BRANCH_ARRAY[tier][column]`. A group is the caller's `groupIndex`, else the player's
+//! active one, for the pet too (`0x5c57d0`); the pet has only group 1. A verb's `isPet` picks the
+//! pet's set, whose tiers take 3 points (`0x5c73d0`, `0x6226ea`). Inspect talents are not
+//! modelled: their counts answer 0 and their tabs nothing.
 //!
 //! `GameTooltip:SetTalent` (`0x62f740` → `0x626e20`) shows the group's rank, or its preview rank
 //! with `isPreview`: the rank line (`TOOLTIP_TALENT_RANK`), the current rank's spell body, the next
@@ -18,9 +20,6 @@ use mlua::{Lua, MultiValue, Table, Value};
 
 use super::tooltip_spell::{spell_view_of, TalentHint, TalentLines};
 use super::{Model, ScriptValue};
-
-/// Points per tier a tab needs before the next unlocks (`PLAYER_TALENTS_PER_TIER`, `0x5c7461`).
-const POINTS_PER_TIER: i32 = 5;
 
 /// The dual-spec activation spells `SetActiveTalentGroup` casts, by group (`0xad05e8`).
 const ACTIVATION_SPELLS: [u32; 2] = [63645, 63644];
@@ -67,6 +66,9 @@ pub struct TalentView {
     pub required_spell_known: bool,
     /// The required spell's name, for the `ITEM_REQ_SKILL` line while it is unknown.
     pub required_spell_name: Option<String>,
+    /// A pet talent the current pet may take (`IsTalentAvailableForPet`, `0x5c5a20`); one it may
+    /// not reads as no talent and cannot be learned. Unread for the player's talents.
+    pub available: bool,
 }
 
 impl TalentView {
@@ -90,25 +92,67 @@ pub struct TalentGroupView {
     pub unspent: u32,
 }
 
-/// The pushed snapshot: the player's pages, talents and groups.
+/// The pushed snapshot: one side's pages, talents and groups.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TalentUiState {
     pub tabs: Vec<TalentTabView>,
     /// `talents[t]` holds tab `t+1`'s talents in `Talent.dbc` row order.
     pub talents: Vec<Vec<TalentView>>,
+    /// The player's groups; the pet's one, or none while it has no tree (`0x5c5df0`).
     pub groups: Vec<TalentGroupView>,
-    /// 0-based.
+    /// 0-based; always 0 for the pet.
     pub active_group: usize,
     /// `UnitCharacterPoints("player")`: unspent talent points, free primary professions.
     pub points: (u32, u32),
 }
 
+/// Which set a call reads: the player's groups or the pet's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Side {
+    Player,
+    Pet,
+}
+
+impl Side {
+    fn of(is_pet: bool) -> Self {
+        if is_pet {
+            Side::Pet
+        } else {
+            Side::Player
+        }
+    }
+
+    /// Points per tier a tab needs before the next unlocks: `(isPet == 0) * 2 + 3`
+    /// (`PLAYER_TALENTS_PER_TIER` 5, `PET_TALENTS_PER_TIER` 3; `0x5c73d0`, `0x6226ea`).
+    fn per_tier(self) -> i32 {
+        match self {
+            Side::Player => 5,
+            Side::Pet => 3,
+        }
+    }
+
+    /// The preview event a move or reset fires: the pet's is the next event id (`0x5c7200`).
+    fn preview_event(self) -> &'static str {
+        match self {
+            Side::Player => "PREVIEW_TALENT_POINTS_CHANGED",
+            Side::Pet => "PREVIEW_PET_TALENT_POINTS_CHANGED",
+        }
+    }
+}
+
 impl super::UiScript {
-    /// Push the whole talent snapshot; the preview ranks restart from the learned ones.
+    /// Push the player's talent snapshot; the preview ranks restart from the learned ones.
     pub fn set_talents(&mut self, state: TalentUiState) {
         let mut model = self.model_mut();
         model.talent_preview = state.groups.iter().map(|g| g.ranks.clone()).collect();
         model.talents = state;
+    }
+
+    /// Push the pet's talent snapshot, at most one group; the preview ranks restart too.
+    pub fn set_pet_talents(&mut self, state: TalentUiState) {
+        let mut model = self.model_mut();
+        model.pet_talent_preview = state.groups.iter().map(|g| g.ranks.clone()).collect();
+        model.pet_talents = state;
     }
 
     /// Drain the `LearnTalent` sends as `(talentId, rank)`, the 0-based rank to learn
@@ -117,10 +161,22 @@ impl super::UiScript {
         drain_field!(self, talent_learns)
     }
 
+    /// Drain the `LearnTalent(tab, index, true)` sends, `CMSG_PET_LEARN_TALENT`'s
+    /// `(talentId, rank)` (`0x5c8291`); the app adds the pet guid.
+    pub fn take_pet_talent_learns(&mut self) -> Vec<(u32, u32)> {
+        drain_field!(self, pet_talent_learns)
+    }
+
     /// Drain the `LearnPreviewTalents` sends, each a `CMSG_LEARN_PREVIEW_TALENTS` body's
     /// `(talentId, previewRank)` list.
     pub fn take_talent_preview_learns(&mut self) -> Vec<Vec<(u32, u32)>> {
         drain_field!(self, talent_preview_learns)
+    }
+
+    /// Drain the `LearnPreviewTalents(true)` sends, each a `CMSG_LEARN_PREVIEW_TALENTS_PET`
+    /// body's list (`0x5c6ab4`); the app adds the pet guid.
+    pub fn take_pet_talent_preview_learns(&mut self) -> Vec<Vec<(u32, u32)>> {
+        drain_field!(self, pet_talent_preview_learns)
     }
 
     /// Drain the count of `ConfirmTalentWipe()` calls, each an outbound `MSG_TALENT_WIPE_CONFIRM`;
@@ -139,18 +195,49 @@ impl super::UiScript {
     }
 }
 
-/// One talent by its 1-based (tab, index).
-fn talent_at(model: &Model, tab: i64, index: i64) -> Option<&TalentView> {
-    let tab = usize::try_from(tab.checked_sub(1)?).ok()?;
-    let index = usize::try_from(index.checked_sub(1)?).ok()?;
-    model.talents.talents.get(tab)?.get(index)
+/// A side's snapshot.
+fn state(model: &Model, side: Side) -> &TalentUiState {
+    match side {
+        Side::Player => &model.talents,
+        Side::Pet => &model.pet_talents,
+    }
 }
 
-/// A `groupIndex` argument (1-based) or the active group, 0-based (`0x5c57d0`).
+/// A side's preview ranks, per group, tab and talent.
+fn previews(model: &Model, side: Side) -> &Vec<Vec<Vec<i32>>> {
+    match side {
+        Side::Player => &model.talent_preview,
+        Side::Pet => &model.pet_talent_preview,
+    }
+}
+
+fn previews_mut(model: &mut Model, side: Side) -> &mut Vec<Vec<Vec<i32>>> {
+    match side {
+        Side::Player => &mut model.talent_preview,
+        Side::Pet => &mut model.pet_talent_preview,
+    }
+}
+
+/// One talent by its 1-based (tab, index).
+fn talent_at(model: &Model, side: Side, tab: i64, index: i64) -> Option<&TalentView> {
+    let tab = usize::try_from(tab.checked_sub(1)?).ok()?;
+    let index = usize::try_from(index.checked_sub(1)?).ok()?;
+    state(model, side).talents.get(tab)?.get(index)
+}
+
+/// A `groupIndex` argument (1-based) or the player's active group, 0-based (`0x5c57d0`).
 fn group_arg(model: &Model, v: &Value) -> usize {
     match number_of(v) {
         Some(n) => (n as i64 - 1).max(-1) as usize,
         None => model.talents.active_group,
+    }
+}
+
+/// The group a learn verb reads: the player's active one, the pet's only one (`0x5c8246`).
+fn learn_group(model: &Model, side: Side) -> usize {
+    match side {
+        Side::Player => model.talents.active_group,
+        Side::Pet => 0,
     }
 }
 
@@ -185,9 +272,8 @@ fn one_or_nil(b: bool) -> Value {
 }
 
 /// A group's learned rank of a talent, -1 when the group or talent is absent.
-fn learned(model: &Model, group: usize, tab: usize, index: usize) -> i32 {
-    model
-        .talents
+fn learned(model: &Model, side: Side, group: usize, tab: usize, index: usize) -> i32 {
+    state(model, side)
         .groups
         .get(group)
         .and_then(|g| g.ranks.get(tab)?.get(index).copied())
@@ -195,18 +281,16 @@ fn learned(model: &Model, group: usize, tab: usize, index: usize) -> i32 {
 }
 
 /// A group's preview rank of a talent, -1 when absent.
-fn preview(model: &Model, group: usize, tab: usize, index: usize) -> i32 {
-    model
-        .talent_preview
+fn preview(model: &Model, side: Side, group: usize, tab: usize, index: usize) -> i32 {
+    previews(model, side)
         .get(group)
         .and_then(|g| g.get(tab)?.get(index).copied())
         .unwrap_or(-1)
 }
 
 /// Points a group has in a tab: learned (`TabInfo+4`) and previewed on top (`TabInfo+8`).
-fn tab_spent(model: &Model, group: usize, tab: usize) -> (i32, i32) {
-    let Some(ranks) = model
-        .talents
+fn tab_spent(model: &Model, side: Side, group: usize, tab: usize) -> (i32, i32) {
+    let Some(ranks) = state(model, side)
         .groups
         .get(group)
         .and_then(|g| g.ranks.get(tab))
@@ -215,22 +299,21 @@ fn tab_spent(model: &Model, group: usize, tab: usize) -> (i32, i32) {
     };
     let spent = ranks.iter().map(|&r| r + 1).sum();
     let previewed = (0..ranks.len())
-        .map(|i| preview(model, group, tab, i) - ranks[i])
+        .map(|i| preview(model, side, group, tab, i) - ranks[i])
         .sum();
     (spent, previewed)
 }
 
 /// The group's preview points across every tab (`0x5c6010`).
-fn group_preview_spent(model: &Model, group: usize) -> i32 {
-    (0..model.talents.tabs.len())
-        .map(|t| tab_spent(model, group, t).1)
+fn group_preview_spent(model: &Model, side: Side, group: usize) -> i32 {
+    (0..state(model, side).tabs.len())
+        .map(|t| tab_spent(model, side, group, t).1)
         .sum()
 }
 
-/// The group's unspent points (`GroupInfo+0x38`), 0 for a group not there.
-fn group_unspent(model: &Model, group: usize) -> i32 {
-    model
-        .talents
+/// The group's unspent points (`GroupInfo+0x38`), 0 for a group not there (`0x5c5f70`).
+fn group_unspent(model: &Model, side: Side, group: usize) -> i32 {
+    state(model, side)
         .groups
         .get(group)
         .map_or(0, |g| g.unspent as i32)
@@ -240,35 +323,38 @@ fn group_unspent(model: &Model, group: usize) -> i32 {
 /// refused. Raising needs a point left; any move needs the tier unlocked and the prerequisites
 /// met in preview; the rank clamps to [learned, max]; lowering refuses when a dependent or a
 /// higher tier's points would lose their footing.
-fn preview_step(model: &Model, group: usize, tab: usize, index: usize, delta: i32) -> i32 {
-    if delta == 0 || group >= model.talents.groups.len() {
+fn preview_step(
+    model: &Model,
+    side: Side,
+    group: usize,
+    tab: usize,
+    index: usize,
+    delta: i32,
+) -> i32 {
+    let set = state(model, side);
+    if delta == 0 || group >= set.groups.len() {
         return 0;
     }
-    let Some(t) = model
-        .talents
-        .talents
-        .get(tab)
-        .and_then(|ts| ts.get(index))
-        .cloned()
-    else {
+    let Some(t) = set.talents.get(tab).and_then(|ts| ts.get(index)).cloned() else {
         return 0;
     };
-    let previewed_total = group_preview_spent(model, group);
-    let unspent = group_unspent(model, group);
+    let per_tier = side.per_tier();
+    let previewed_total = group_preview_spent(model, side, group);
+    let unspent = group_unspent(model, side, group);
     if delta >= 1 && unspent - previewed_total <= 0 {
         return 0;
     }
-    let (spent, previewed) = tab_spent(model, group, tab);
-    if POINTS_PER_TIER * (t.tier as i32 - 1) > spent + previewed {
+    let (spent, previewed) = tab_spent(model, side, group, tab);
+    if per_tier * (t.tier as i32 - 1) > spent + previewed {
         return 0;
     }
     for p in &t.prereqs {
-        if preview(model, group, tab, p.index) < p.rank as i32 {
+        if preview(model, side, group, tab, p.index) < p.rank as i32 {
             return 0;
         }
     }
-    let base = learned(model, group, tab, index);
-    let current = preview(model, group, tab, index);
+    let base = learned(model, side, group, tab, index);
+    let current = preview(model, side, group, tab, index);
     let target = (current + delta).clamp(base, (t.max_rank() - 1).max(base));
     let applied = target - current;
     if applied == 0 {
@@ -276,31 +362,31 @@ fn preview_step(model: &Model, group: usize, tab: usize, index: usize, delta: i3
     }
     if applied < 0 {
         // A dependent with preview points must keep its prerequisite's rank (`0x5c7505`).
-        for (i, other) in model.talents.talents[tab].iter().enumerate() {
+        for (i, other) in set.talents[tab].iter().enumerate() {
             let needs = other
                 .prereqs
                 .iter()
                 .any(|p| p.index == index && current + applied < p.rank as i32);
-            if needs && preview(model, group, tab, i) >= 0 {
+            if needs && preview(model, side, group, tab, i) >= 0 {
                 return 0;
             }
         }
-        // Every higher tier holding points keeps the tiers under it at five per tier
+        // Every higher tier holding points keeps the tiers under it at the per-tier count
         // (`0x5c7631`).
-        let talents = &model.talents.talents[tab];
+        let talents = &set.talents[tab];
         let points_in = |tier: u32| -> i32 {
             talents
                 .iter()
                 .enumerate()
                 .filter(|(_, o)| o.tier == tier)
-                .map(|(i, _)| preview(model, group, tab, i) + 1)
+                .map(|(i, _)| preview(model, side, group, tab, i) + 1)
                 .sum()
         };
         let top = talents.iter().map(|o| o.tier).max().unwrap_or(0);
         let mut below = 0;
         for tier in 1..=top {
             let here = points_in(tier);
-            if tier > t.tier && here > 0 && below + applied < POINTS_PER_TIER * (tier as i32 - 1) {
+            if tier > t.tier && here > 0 && below + applied < per_tier * (tier as i32 - 1) {
                 return 0;
             }
             below += here;
@@ -310,40 +396,54 @@ fn preview_step(model: &Model, group: usize, tab: usize, index: usize, delta: i3
 }
 
 /// Apply [`preview_step`] (`0x5c9450`), returning the delta applied.
-fn add_preview(model: &mut Model, group: usize, tab: usize, index: usize, delta: i32) -> i32 {
-    let applied = preview_step(model, group, tab, index, delta);
+fn add_preview(
+    model: &mut Model,
+    side: Side,
+    group: usize,
+    tab: usize,
+    index: usize,
+    delta: i32,
+) -> i32 {
+    let applied = preview_step(model, side, group, tab, index, delta);
     if applied != 0 {
-        model.talent_preview[group][tab][index] += applied;
+        previews_mut(model, side)[group][tab][index] += applied;
     }
     applied
 }
 
-/// `GetTalentInfo`'s ten values for one talent, or its absent-talent placeholder (`0x5c7c49`).
+/// `GetTalentInfo`'s absent-talent placeholder, ten values (`0x5c7c49`).
+fn placeholder() -> MultiValue {
+    MultiValue::from_vec(vec![
+        Value::Nil,
+        Value::Nil,
+        Value::Integer(1),
+        Value::Integer(1),
+        Value::Integer(0),
+        Value::Integer(0),
+        Value::Integer(0),
+        Value::Nil,
+        Value::Integer(0),
+        Value::Nil,
+    ])
+}
+
+/// `GetTalentInfo`'s ten values for one talent, or its placeholder: an inspect call, a talent
+/// not there, or a pet talent the pet may not take (`0x5c7902`).
 fn talent_info(lua: &Lua, model: &Model, args: &MultiValue) -> mlua::Result<MultiValue> {
     let (tab, index) = (int_arg(args, 0).unwrap_or(0), int_arg(args, 1).unwrap_or(0));
     let inspect = flag_arg(args.get(2));
-    let pet = flag_arg(args.get(3));
-    let t = (!inspect && !pet)
-        .then(|| talent_at(model, tab, index))
-        .flatten();
+    let side = Side::of(flag_arg(args.get(3)));
+    let t = (!inspect)
+        .then(|| talent_at(model, side, tab, index))
+        .flatten()
+        .filter(|t| side == Side::Player || t.available);
     let Some(t) = t else {
-        return Ok(MultiValue::from_vec(vec![
-            Value::Nil,
-            Value::Nil,
-            Value::Integer(1),
-            Value::Integer(1),
-            Value::Integer(0),
-            Value::Integer(0),
-            Value::Integer(0),
-            Value::Nil,
-            Value::Integer(0),
-            Value::Nil,
-        ]));
+        return Ok(placeholder());
     };
     let (tab, index) = (tab as usize - 1, index as usize - 1);
     let group = group_arg(model, &arg(args, 4));
-    let rank = learned(model, group, tab, index);
-    let preview_rank = preview(model, group, tab, index);
+    let rank = learned(model, side, group, tab, index);
+    let preview_rank = preview(model, side, group, tab, index);
     let shown = t.rank_view(rank);
     Ok(MultiValue::from_vec(vec![
         match shown {
@@ -366,9 +466,11 @@ fn talent_info(lua: &Lua, model: &Model, args: &MultiValue) -> mlua::Result<Mult
 }
 
 /// The tooltip's talent part for one group and rank view (`0x626e20`).
+#[allow(clippy::too_many_arguments)]
 fn tooltip_lines(
     lua: &Lua,
     model: &Model,
+    side: Side,
     t: &TalentView,
     tab: usize,
     index: usize,
@@ -377,11 +479,12 @@ fn tooltip_lines(
 ) -> (u32, TalentLines) {
     let rank_of = |i: usize| {
         if use_preview {
-            preview(model, group, tab, i)
+            preview(model, side, group, tab, i)
         } else {
-            learned(model, group, tab, i)
+            learned(model, side, group, tab, i)
         }
     };
+    let set = state(model, side);
     let rank = rank_of(index);
     let max = t.max_rank();
     let display = t.rank_view(rank).map_or(0, |r| r.spell);
@@ -409,20 +512,15 @@ fn tooltip_lines(
         )
     });
     let mut reqs = Vec::new();
-    let (spent, previewed) = tab_spent(model, group, tab);
+    let (spent, previewed) = tab_spent(model, side, group, tab);
     let tab_points = if use_preview {
         spent + previewed
     } else {
         spent
     };
-    let need = POINTS_PER_TIER * (t.tier as i32 - 1);
+    let need = side.per_tier() * (t.tier as i32 - 1);
     if need > tab_points {
-        let tab_name = model
-            .talents
-            .tabs
-            .get(tab)
-            .map(|v| v.name.as_str())
-            .unwrap_or("");
+        let tab_name = set.tabs.get(tab).map(|v| v.name.as_str()).unwrap_or("");
         reqs.extend(get("TOOLTIP_TALENT_TIER_POINTS").map(|f| {
             crate::strings::fill(
                 &f,
@@ -437,7 +535,7 @@ fn tooltip_lines(
         if rank_of(p.index) >= p.rank as i32 {
             continue;
         }
-        let Some(other) = model.talents.talents[tab].get(p.index) else {
+        let Some(other) = set.talents[tab].get(p.index) else {
             continue;
         };
         let name = other.rank_view(0).map_or("", |r| r.name.as_str());
@@ -463,20 +561,23 @@ fn tooltip_lines(
         }
     }
     // The closing hints (`0x622800`): the talent can be learned when it holds a rank or every
-    // requirement line is met (`0x6224f0`); then, without preview, the active group with points
-    // unspent and a rank to go shows the learn line, and with preview each move that would pass.
+    // requirement line is met (`0x6224f0`); then, without preview, the learning group with
+    // points unspent and a rank to go shows the learn line, and with preview each move that
+    // would pass.
     let can_learn = rank >= 0 || reqs.is_empty();
     let mut hints = Vec::new();
     if can_learn && !use_preview {
-        if group == model.talents.active_group && group_unspent(model, group) != 0 && rank + 1 < max
+        if group == learn_group(model, side)
+            && group_unspent(model, side, group) != 0
+            && rank + 1 < max
         {
             hints.push(TalentHint::Learn);
         }
     } else if can_learn {
-        if preview_step(model, group, tab, index, 1) != 0 {
+        if preview_step(model, side, group, tab, index, 1) != 0 {
             hints.push(TalentHint::AddPreview);
         }
-        if preview_step(model, group, tab, index, -1) != 0 {
+        if preview_step(model, side, group, tab, index, -1) != 0 {
             hints.push(TalentHint::RemovePreview);
         }
     }
@@ -504,10 +605,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            if flag_arg(args.front()) || flag_arg(args.get(1)) {
+            if flag_arg(args.front()) {
                 return Ok(0);
             }
-            Ok(model.talents.tabs.len() as i64)
+            let side = Side::of(flag_arg(args.get(1)));
+            Ok(state(&model, side).tabs.len() as i64)
         })?,
     )?;
 
@@ -525,12 +627,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 ));
             };
             let inspect = flag_arg(args.get(1));
-            let pet = flag_arg(args.get(2));
-            let view = (!inspect && !pet)
+            let side = Side::of(flag_arg(args.get(2)));
+            let view = (!inspect)
                 .then(|| {
                     usize::try_from(tab - 1)
                         .ok()
-                        .and_then(|t| model.talents.tabs.get(t).map(|v| (t, v)))
+                        .and_then(|t| state(&model, side).tabs.get(t).map(|v| (t, v)))
                 })
                 .flatten();
             let Some((t, view)) = view else {
@@ -543,7 +645,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 ]));
             };
             let group = group_arg(&model, &arg(&args, 3));
-            let (spent, previewed) = tab_spent(&model, group, t);
+            let (spent, previewed) = tab_spent(&model, side, group, t);
             Ok(MultiValue::from_vec(vec![
                 Value::String(lua.create_string(&view.name)?),
                 match &view.icon {
@@ -569,12 +671,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Usage: GetNumTalents(tabIndex[, isInspect[, isPet]])".into(),
                 ));
             };
-            if flag_arg(args.get(1)) || flag_arg(args.get(2)) {
+            if flag_arg(args.get(1)) {
                 return Ok(0);
             }
+            let side = Side::of(flag_arg(args.get(2)));
             let n = usize::try_from(tab - 1)
                 .ok()
-                .and_then(|t| model.talents.talents.get(t))
+                .and_then(|t| state(&model, side).talents.get(t))
                 .map_or(0, Vec::len);
             Ok(n as i64)
         })?,
@@ -611,25 +714,30 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 int_arg(&args, 1).unwrap_or(0),
             );
             let mut out = Vec::new();
-            if flag_arg(args.get(2)) || flag_arg(args.get(3)) {
+            if flag_arg(args.get(2)) {
                 return Ok(MultiValue::from_vec(out));
             }
-            let Some(t) = talent_at(&model, tab, index) else {
+            let side = Side::of(flag_arg(args.get(3)));
+            let Some(t) = talent_at(&model, side, tab, index) else {
                 return Ok(MultiValue::from_vec(out));
             };
             let tab = tab as usize - 1;
             let group = group_arg(&model, &arg(&args, 4));
-            let in_group = group < model.talents.groups.len();
+            let in_group = group < state(&model, side).groups.len();
             for p in &t.prereqs {
-                let Some(other) = model.talents.talents[tab].get(p.index) else {
+                let Some(other) = state(&model, side).talents[tab].get(p.index) else {
                     continue;
                 };
                 out.push(Value::Integer(i64::from(other.tier)));
                 out.push(Value::Integer(i64::from(other.column)));
                 if in_group {
                     let need = p.rank as i32;
-                    out.push(one_or_nil(learned(&model, group, tab, p.index) >= need));
-                    out.push(one_or_nil(preview(&model, group, tab, p.index) >= need));
+                    out.push(one_or_nil(
+                        learned(&model, side, group, tab, p.index) >= need,
+                    ));
+                    out.push(one_or_nil(
+                        preview(&model, side, group, tab, p.index) >= need,
+                    ));
                 } else {
                     out.push(Value::Nil);
                     out.push(Value::Nil);
@@ -651,18 +759,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 int_arg(&args, 0).unwrap_or(0),
                 int_arg(&args, 1).unwrap_or(0),
             );
-            if flag_arg(args.get(2)) || flag_arg(args.get(3)) {
+            if flag_arg(args.get(2)) {
                 return Ok(Value::Nil);
             }
-            let Some(t) = talent_at(&model, tab, index) else {
+            let side = Side::of(flag_arg(args.get(3)));
+            // A pet talent the pet may not take has no link (`0x5c7ddf`).
+            let Some(t) =
+                talent_at(&model, side, tab, index).filter(|t| side == Side::Player || t.available)
+            else {
                 return Ok(Value::Nil);
             };
             let (tab, index) = (tab as usize - 1, index as usize - 1);
             let group = group_arg(&model, &arg(&args, 4));
             let rank = if flag_arg(args.get(5)) {
-                preview(&model, group, tab, index)
+                preview(&model, side, group, tab, index)
             } else {
-                learned(&model, group, tab, index)
+                learned(&model, side, group, tab, index)
             };
             let Some(view) = t.rank_view(rank) else {
                 return Ok(Value::Nil);
@@ -686,17 +798,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetNumTalentGroups([isInspect[, isPet]]) (`0x5c5df0`).
+    // GetNumTalentGroups([isInspect[, isPet]]) (`0x5c5df0`): the pet's is 1 while it has a tree.
     g.set(
         "GetNumTalentGroups",
         lua.create_function(|lua, args: MultiValue| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            if flag_arg(args.front()) || flag_arg(args.get(1)) {
+            if flag_arg(args.front()) {
                 return Ok(0);
             }
-            Ok(model.talents.groups.len() as i64)
+            let side = Side::of(flag_arg(args.get(1)));
+            Ok(state(&model, side).groups.len() as i64)
         })?,
     )?;
 
@@ -734,11 +847,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            if flag_arg(args.front()) || flag_arg(args.get(1)) {
+            if flag_arg(args.front()) {
                 return Ok(0);
             }
+            let side = Side::of(flag_arg(args.get(1)));
             let group = group_arg(&model, &arg(&args, 2));
-            Ok(i64::from(group_unspent(&model, group)))
+            Ok(i64::from(group_unspent(&model, side, group)))
         })?,
     )?;
 
@@ -749,11 +863,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            if flag_arg(args.front()) {
-                return Ok(0);
-            }
+            let side = Side::of(flag_arg(args.front()));
             let group = group_arg(&model, &arg(&args, 1));
-            Ok(i64::from(group_preview_spent(&model, group)))
+            Ok(i64::from(group_preview_spent(&model, side, group)))
         })?,
     )?;
 
@@ -772,8 +884,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // AddPreviewTalentPoints(tab, index, points[, isPet[, groupIndex]]) (`0x5c9590`): moves the
-    // preview rank and fires `PREVIEW_TALENT_POINTS_CHANGED` (talentIndex, tabIndex, group,
-    // delta) when the group's preview total moved.
+    // preview rank and fires `PREVIEW_TALENT_POINTS_CHANGED`, or the pet's, (talentIndex,
+    // tabIndex, group, delta) when the group's preview total moved.
     g.set(
         "AddPreviewTalentPoints",
         lua.create_function(|lua, args: MultiValue| {
@@ -785,18 +897,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         .into(),
                 ));
             };
-            if flag_arg(args.get(3)) {
-                return Ok(());
-            }
+            let side = Side::of(flag_arg(args.get(3)));
             let mut model = crate::script::model_mut_of(lua);
             let group = group_arg(&model, &arg(&args, 4));
             let (Ok(t), Ok(i)) = (usize::try_from(tab - 1), usize::try_from(index - 1)) else {
                 return Ok(());
             };
-            let delta = add_preview(&mut model, group, t, i, points as i32);
+            let delta = add_preview(&mut model, side, group, t, i, points as i32);
             if delta != 0 {
                 model.pending_events.push((
-                    "PREVIEW_TALENT_POINTS_CHANGED".into(),
+                    side.preview_event().into(),
                     vec![
                         ScriptValue::Int(index),
                         ScriptValue::Int(tab),
@@ -820,59 +930,59 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Usage: ResetPreviewTalentPoints(tabIndex[, isPet[, groupIndex]])".into(),
                 ));
             };
-            if flag_arg(args.get(1)) {
-                return Ok(());
-            }
+            let side = Side::of(flag_arg(args.get(1)));
             let mut model = crate::script::model_mut_of(lua);
             let group = group_arg(&model, &arg(&args, 2));
-            reset_preview(&mut model, group, usize::try_from(tab - 1).ok(), tab);
+            reset_preview(&mut model, side, group, usize::try_from(tab - 1).ok(), tab);
             Ok(())
         })?,
     )?;
     g.set(
         "ResetGroupPreviewTalentPoints",
         lua.create_function(|lua, args: MultiValue| {
-            if flag_arg(args.front()) {
-                return Ok(());
-            }
+            let side = Side::of(flag_arg(args.front()));
             let mut model = crate::script::model_mut_of(lua);
             let group = group_arg(&model, &arg(&args, 1));
-            reset_preview(&mut model, group, None, 0);
+            reset_preview(&mut model, side, group, None, 0);
             Ok(())
         })?,
     )?;
 
-    // LearnPreviewTalents([isPet]) (`0x5c6a10`): the active group's previewed ranks in one send,
-    // when any preview point is spent.
+    // LearnPreviewTalents([isPet]) (`0x5c6a10`): the learning group's previewed ranks in one
+    // send, when any preview point is spent.
     g.set(
         "LearnPreviewTalents",
         lua.create_function(|lua, args: MultiValue| {
-            if flag_arg(args.front()) {
-                return Ok(());
-            }
+            let side = Side::of(flag_arg(args.front()));
             let mut model = crate::script::model_mut_of(lua);
-            let group = model.talents.active_group;
-            if group_preview_spent(&model, group) <= 0 {
+            let group = learn_group(&model, side);
+            if group >= state(&model, side).groups.len()
+                || group_preview_spent(&model, side, group) <= 0
+            {
                 return Ok(());
             }
             let mut sends = Vec::new();
-            for (t, talents) in model.talents.talents.iter().enumerate() {
+            for (t, talents) in state(&model, side).talents.iter().enumerate() {
                 for (i, talent) in talents.iter().enumerate() {
-                    let p = preview(&model, group, t, i);
-                    if learned(&model, group, t, i) < p {
+                    let p = preview(&model, side, group, t, i);
+                    if learned(&model, side, group, t, i) < p {
                         sends.push((talent.id, p as u32));
                     }
                 }
             }
             if !sends.is_empty() {
-                model.talent_preview_learns.push(sends);
+                match side {
+                    Side::Player => model.talent_preview_learns.push(sends),
+                    Side::Pet => model.pet_talent_preview_learns.push(sends),
+                }
             }
             Ok(())
         })?,
     )?;
 
-    // LearnTalent(tab, index[, isPet]) (`0x5c80e0`): the active group's next rank, below the
-    // max; points and prerequisites are the server's to enforce.
+    // LearnTalent(tab, index[, isPet]) (`0x5c80e0`): the learning group's next rank, below the
+    // max; a pet talent the pet may not take sends nothing (`0x5c820c`). Points and
+    // prerequisites are the server's to enforce.
     g.set(
         "LearnTalent",
         lua.create_function(|lua, args: MultiValue| {
@@ -881,18 +991,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Usage: LearnTalent(tabIndex, talentIndex[, isPet])".into(),
                 ));
             };
-            if flag_arg(args.get(2)) {
-                return Ok(());
-            }
+            let side = Side::of(flag_arg(args.get(2)));
             let mut model = crate::script::model_mut_of(lua);
-            let Some(t) = talent_at(&model, tab, index) else {
+            let Some(t) = talent_at(&model, side, tab, index) else {
                 return Ok(());
             };
+            if side == Side::Pet && !t.available {
+                return Ok(());
+            }
             let (id, max) = (t.id, t.max_rank());
-            let group = model.talents.active_group;
-            let rank = learned(&model, group, tab as usize - 1, index as usize - 1);
+            let group = learn_group(&model, side);
+            let rank = learned(&model, side, group, tab as usize - 1, index as usize - 1);
             if rank < max - 1 {
-                model.talent_learns.push((id, (rank + 1) as u32));
+                match side {
+                    Side::Player => model.talent_learns.push((id, (rank + 1) as u32)),
+                    Side::Pet => model.pet_talent_learns.push((id, (rank + 1) as u32)),
+                }
             }
             Ok(())
         })?,
@@ -936,22 +1050,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Reset a group's preview, one tab or all, and fire the event when its total moved.
-fn reset_preview(model: &mut Model, group: usize, tab: Option<usize>, tab_arg: i64) {
-    if group >= model.talents.groups.len() {
+/// Reset a group's preview, one tab or all, and fire the side's event when its total moved.
+fn reset_preview(model: &mut Model, side: Side, group: usize, tab: Option<usize>, tab_arg: i64) {
+    if group >= state(model, side).groups.len() {
         return;
     }
-    let before = group_preview_spent(model, group);
-    let learned = model.talents.groups[group].ranks.clone();
+    let before = group_preview_spent(model, side, group);
+    let learned = state(model, side).groups[group].ranks.clone();
     for (t, ranks) in learned.into_iter().enumerate() {
         if tab.is_none_or(|only| only == t) {
-            model.talent_preview[group][t] = ranks;
+            previews_mut(model, side)[group][t] = ranks;
         }
     }
-    let after = group_preview_spent(model, group);
+    let after = group_preview_spent(model, side, group);
     if after != before {
         model.pending_events.push((
-            "PREVIEW_TALENT_POINTS_CHANGED".into(),
+            side.preview_event().into(),
             vec![
                 ScriptValue::Int(0),
                 ScriptValue::Int(tab_arg),
@@ -976,16 +1090,18 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     int_arg(&args, 0).unwrap_or(0),
                     int_arg(&args, 1).unwrap_or(0),
                 );
-                if flag_arg(args.get(2)) || flag_arg(args.get(3)) {
+                if flag_arg(args.get(2)) {
                     return Ok(());
                 }
-                let Some(t) = talent_at(&model, tab, index) else {
+                let side = Side::of(flag_arg(args.get(3)));
+                let Some(t) = talent_at(&model, side, tab, index) else {
                     return Ok(());
                 };
                 let group = group_arg(&model, &arg(&args, 4));
                 tooltip_lines(
                     lua,
                     &model,
+                    side,
                     t,
                     tab as usize - 1,
                     index as usize - 1,
@@ -1228,5 +1344,146 @@ mod tests {
             "only another existing group casts: {casts:?}"
         );
         assert_eq!(casts[0].0, 63644);
+    }
+
+    /// A pet tree: A (tier 1, three ranks), B (tier 2, one rank, not for this pet's category),
+    /// C (tier 2, one rank). One group with 2 points in A and 4 unspent.
+    fn pet_state() -> TalentUiState {
+        let talent = |id, tier, column, ranks: Vec<TalentRankView>, available| TalentView {
+            id,
+            tier,
+            column,
+            ranks,
+            required_spell_known: true,
+            available,
+            ..Default::default()
+        };
+        TalentUiState {
+            tabs: vec![TalentTabView {
+                name: "Ferocity".into(),
+                icon: None,
+                background: "HunterPetFerocity".into(),
+            }],
+            talents: vec![vec![
+                talent(
+                    20,
+                    1,
+                    1,
+                    vec![rank(200, "A"), rank(201, "A"), rank(202, "A")],
+                    true,
+                ),
+                talent(21, 2, 1, vec![rank(210, "B")], false),
+                talent(22, 2, 2, vec![rank(220, "C")], true),
+            ]],
+            groups: vec![TalentGroupView {
+                ranks: vec![vec![1, -1, -1]],
+                unspent: 4,
+            }],
+            active_group: 0,
+            points: (0, 0),
+        }
+    }
+
+    #[test]
+    fn the_pet_tree_is_its_own_set_with_one_group() {
+        let mut s = script();
+        assert_eq!(
+            s.eval::<i64>("return GetNumTalentGroups(false, true)")
+                .unwrap(),
+            0,
+            "no pet tree: the pet spec tab stays hidden"
+        );
+        s.set_pet_talents(pet_state());
+        let counts: (i64, i64, i64, i64, i64) = s
+            .eval(
+                "return GetNumTalentGroups(false, true), GetNumTalentTabs(false, true),                  GetNumTalents(1, false, true), GetUnspentTalentPoints(false, true, 1),                  GetActiveTalentGroup(false, true)",
+            )
+            .unwrap();
+        assert_eq!(counts, (1, 1, 3, 4, 1));
+        // The player's set is untouched.
+        assert_eq!(s.eval::<i64>("return GetNumTalentGroups()").unwrap(), 2);
+        assert_eq!(
+            s.eval::<String>("return (GetTalentTabInfo(1, false, true, 1))")
+                .unwrap(),
+            "Ferocity"
+        );
+        assert_eq!(
+            s.eval::<i64>("return select(3, GetTalentTabInfo(1, false, true, 1))")
+                .unwrap(),
+            2
+        );
+        let a: (String, i64, i64) = s
+            .eval("local n, _, _, _, r, m = GetTalentInfo(1, 1, false, true, 1) return n, r, m")
+            .unwrap();
+        assert_eq!(a, ("A".into(), 2, 3));
+        // A talent outside the pet's category is the placeholder, and has no link.
+        assert!(s
+            .eval::<bool>("return GetTalentInfo(1, 2, false, true, 1) == nil")
+            .unwrap());
+        assert!(s
+            .eval::<bool>("return GetTalentLink(1, 2, false, true, 1) == nil")
+            .unwrap());
+        // The pet's only group is group 1; a second reads nothing.
+        assert_eq!(
+            s.eval::<i64>("return select(5, GetTalentInfo(1, 1, false, true, 2))")
+                .unwrap(),
+            0
+        );
+    }
+
+    /// Tier 2 opens at 3 points for a pet (`0x5c73d0`), where the player's needs 5.
+    #[test]
+    fn a_pet_tier_takes_three_points_and_previews_fire_the_pet_event() {
+        let mut s = script();
+        s.set_pet_talents(pet_state());
+        s.model_mut().pending_events.clear();
+        s.run("AddPreviewTalentPoints(1, 3, 1, true, 1)").unwrap();
+        assert_eq!(
+            s.eval::<i64>("return GetGroupPreviewTalentPointsSpent(true, 1)")
+                .unwrap(),
+            0,
+            "two points open no tier 2"
+        );
+        s.run("AddPreviewTalentPoints(1, 1, 1, true, 1) AddPreviewTalentPoints(1, 3, 1, true, 1)")
+            .unwrap();
+        assert_eq!(
+            s.eval::<i64>("return GetGroupPreviewTalentPointsSpent(true, 1)")
+                .unwrap(),
+            2,
+            "the third point in A opens C"
+        );
+        let fired: Vec<String> = s
+            .model_ref()
+            .pending_events
+            .iter()
+            .map(|(e, _)| e.clone())
+            .collect();
+        assert_eq!(
+            fired,
+            vec!["PREVIEW_PET_TALENT_POINTS_CHANGED"; 2],
+            "the pet's event, never the player's"
+        );
+        assert_eq!(
+            s.eval::<i64>("return GetGroupPreviewTalentPointsSpent()")
+                .unwrap(),
+            0,
+            "the player's preview is untouched"
+        );
+        s.run("LearnPreviewTalents(true)").unwrap();
+        assert_eq!(
+            s.take_pet_talent_preview_learns(),
+            vec![vec![(20, 2), (22, 0)]]
+        );
+        assert!(s.take_talent_preview_learns().is_empty());
+    }
+
+    #[test]
+    fn a_pet_learn_queues_the_pet_send_and_skips_an_unavailable_talent() {
+        let mut s = script();
+        s.set_pet_talents(pet_state());
+        s.run("LearnTalent(1, 1, true) LearnTalent(1, 2, true) LearnTalent(1, 3, true)")
+            .unwrap();
+        assert_eq!(s.take_pet_talent_learns(), vec![(20, 2), (22, 0)]);
+        assert!(s.take_talent_learns().is_empty());
     }
 }

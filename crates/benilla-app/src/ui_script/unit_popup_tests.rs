@@ -591,7 +591,7 @@ fn the_pet_menu_forks_between_abandon_and_dismiss() {
     a_pet(&mut s, "Bruce");
 
     // A freshly tamed hunter pet: both bits set.
-    s.set_pet_menu(true, true);
+    s.set_pet_menu(true, true, true);
     right_click_the_pet_frame(&mut s);
     assert!(
         s.eval::<bool>("return DropDownList1:IsVisible()").unwrap(),
@@ -617,7 +617,7 @@ fn the_pet_menu_forks_between_abandon_and_dismiss() {
 
     // The same pet after one rename: the server clears only the rename bit, so only that row goes.
     s.run("CloseDropDownMenus()").unwrap();
-    s.set_pet_menu(true, false);
+    s.set_pet_menu(true, false, true);
     right_click_the_pet_frame(&mut s);
     assert_eq!(
         s.eval::<i64>("return DropDownList1.numButtons").unwrap(),
@@ -633,7 +633,7 @@ fn the_pet_menu_forks_between_abandon_and_dismiss() {
 
     // A warlock's demon: neither bit. The menu flips whole.
     s.run("CloseDropDownMenus()").unwrap();
-    s.set_pet_menu(false, false);
+    s.set_pet_menu(false, false, true);
     right_click_the_pet_frame(&mut s);
     assert_eq!(
         s.eval::<i64>("return DropDownList1.numButtons").unwrap(),
@@ -660,7 +660,7 @@ fn dismiss_sends_immediately_and_abandon_waits_for_the_confirm() {
     a_pet(&mut s, "Snuffles");
 
     // A demon: Dismiss is row 2, and clicking it queues the verb with no dialog in between.
-    s.set_pet_menu(false, false);
+    s.set_pet_menu(false, false, true);
     right_click_the_pet_frame(&mut s);
     click_row(&mut s, 2);
     assert!(
@@ -670,7 +670,7 @@ fn dismiss_sends_immediately_and_abandon_waits_for_the_confirm() {
     assert_eq!(s.take_pet_gives_up(), (0, 1), "one dismiss, no abandon");
 
     // A hunter pet: Abandon is row 4, and clicking it only opens the confirm.
-    s.set_pet_menu(true, true);
+    s.set_pet_menu(true, true, true);
     right_click_the_pet_frame(&mut s);
     click_row(&mut s, 4);
     assert!(
@@ -711,7 +711,7 @@ fn renaming_a_pet_reads_the_name_back_before_sending_it() {
     bake_pet_strings(&s);
     load_pet_menu_frames(&s);
     a_pet(&mut s, "Bruce");
-    s.set_pet_menu(true, true);
+    s.set_pet_menu(true, true, true);
 
     right_click_the_pet_frame(&mut s);
     click_row(&mut s, 3);
@@ -763,7 +763,7 @@ fn the_pet_details_row_opens_the_pet_paper_doll() {
     bake_pet_strings(&s);
     load_pet_menu_frames(&s);
     a_pet(&mut s, "Bruce");
-    s.set_pet_menu(true, true);
+    s.set_pet_menu(true, true, true);
 
     right_click_the_pet_frame(&mut s);
     click_row(&mut s, 2);

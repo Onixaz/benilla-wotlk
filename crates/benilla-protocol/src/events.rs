@@ -379,6 +379,8 @@ pub enum SessionEvent {
     AllAchievementData(crate::messages::AllAchievementData),
     /// A totem took one of our four slots (`SMSG_TOTEM_CREATED`).
     TotemCreated(crate::messages::TotemCreated),
+    /// The saved equipment sets, whole (`SMSG_EQUIPMENT_SET_LIST`).
+    EquipmentSetList(Vec<crate::messages::EquipmentSet>),
     /// A unit earned an achievement (`SMSG_ACHIEVEMENT_EARNED`).
     AchievementEarned(crate::messages::AchievementEarned),
     /// One criterion's progress (`SMSG_CRITERIA_UPDATE`).
@@ -441,7 +443,7 @@ pub enum SessionEvent {
         class: u32,
     },
     /// `SMSG_PET_NAME_QUERY_RESPONSE`, keyed by the pet number its guid carries in place of an
-    /// entry ([`crate::guid::pet_number`]). There is no miss reply: the server stays silent.
+    /// entry ([`crate::guid::pet_number`]). An empty `name` is the negative answer.
     PetName { pet_number: u32, name: String },
     /// `SMSG_CREATURE_QUERY_RESPONSE`, keyed by template `entry`. An unknown entry has a `None`
     /// `name`, and every other field then reads `None`, `0` or `false`.

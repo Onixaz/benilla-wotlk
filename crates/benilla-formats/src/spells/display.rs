@@ -757,6 +757,16 @@ impl SpellDisplay {
         }
     }
 
+    /// The `SummonProperties.dbc` row of the first `SUMMON` effect, as
+    /// `CGUnit_C::GetSummonProperties` (`0x71d1f0`) finds a unit's through its creating spell.
+    pub fn summon_properties_row(&self) -> Option<u32> {
+        let effect = self
+            .effects
+            .iter()
+            .position(|&e| e == SPELL_EFFECT_SUMMON)?;
+        u32::try_from(self.effect_misc_value_b[effect]).ok()
+    }
+
     /// The creature a companion spell summons or rides, `EffectMiscValue[0]`, which
     /// `GetCompanionInfo` (`0x53e2c0`) returns first and names through the creature cache.
     pub fn companion_creature(&self) -> u32 {

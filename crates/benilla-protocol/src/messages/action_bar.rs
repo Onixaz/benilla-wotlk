@@ -11,6 +11,8 @@ pub const ACTION_BUTTON_SLOTS: usize = 144;
 
 /// The action-button kind, bits 24-31 of a slot word (`ActionButtonType`, vmangos `Player.h`).
 pub const ACTION_KIND_SPELL: u8 = 0x00;
+/// An equipment set, the action its id (`CGActionBar::IsEquipmentSet`, `0x5a78f0`).
+pub const ACTION_KIND_EQUIPMENT_SET: u8 = 0x20;
 pub const ACTION_KIND_MACRO: u8 = 0x40;
 pub const ACTION_KIND_ITEM: u8 = 0x80;
 

@@ -100,8 +100,9 @@ impl ObjectFields {
                 element,
                 (value & 0xff) | ((value >> 16) & 0xff) << 24,
             ),
-            // Sheath byte 0, flags byte 1 (`+0x1d1`) and form byte 3 (`+0x1d3`, `0x71af70`).
-            Field::UnitBytes2 => put(field, element, value & 0xff00_ffff),
+            // Sheath byte 0, flags byte 1 (`+0x1d1`), pet flags byte 2 (`+0x1d2`) and form byte 3
+            // (`+0x1d3`, `0x71af70`).
+            Field::UnitBytes2 => put(field, element, value),
             // Gender and drunkenness; bytes 2 and 3 are the PvP title and arena faction, where
             // 1.12.1 keeps the city protector and the honor rank.
             Field::PlayerBytes3 => put(field, element, value & 0xffff),

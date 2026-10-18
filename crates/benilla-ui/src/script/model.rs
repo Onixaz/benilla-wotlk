@@ -443,6 +443,8 @@ pub(crate) struct Model {
 
     /// Action slots by Lua action id, 1..120.
     pub(crate) actions: HashMap<u32, ActionSlot>,
+    /// The saved equipment sets by id, their names, which a set slot answers.
+    pub(crate) equipment_sets: HashMap<u32, String>,
     /// Per action, its usable, range, current and cooldown state; an absent one reads cold.
     pub(crate) action_states: HashMap<u32, super::action::StoredActionState>,
     pub(crate) bonus_bar_offset: u8,
@@ -499,6 +501,14 @@ pub(crate) struct Model {
     pub(crate) talent_learns: Vec<(u32, u32)>,
     /// `LearnPreviewTalents` sends queued, one `(talentId, rank)` list each.
     pub(crate) talent_preview_learns: Vec<Vec<(u32, u32)>>,
+    /// The pet's talent snapshot: its family's tree and at most one group.
+    pub(crate) pet_talents: super::talent::TalentUiState,
+    /// The pet group's preview ranks, as [`Self::talent_preview`].
+    pub(crate) pet_talent_preview: Vec<Vec<Vec<i32>>>,
+    /// `LearnTalent(.., true)` sends queued, `(talentId, rank)`.
+    pub(crate) pet_talent_learns: Vec<(u32, u32)>,
+    /// `LearnPreviewTalents(true)` sends queued.
+    pub(crate) pet_talent_preview_learns: Vec<Vec<(u32, u32)>>,
     /// `ConfirmTalentWipe()` calls, one `MSG_TALENT_WIPE_CONFIRM` each; the app holds the trainer.
     pub(crate) talent_wipe_confirms: u32,
     /// `CheckTalentMasterDist()`: the respec question is live and in range; false hides its dialog.
@@ -1300,6 +1310,7 @@ impl Model {
             held_saved_files: Vec::new(),
             keybinds: super::keybind::KeybindState::default(),
             actions: HashMap::new(),
+            equipment_sets: HashMap::new(),
             action_states: HashMap::new(),
             bonus_bar_offset: 0,
             action_bar_page: 0,
@@ -1325,6 +1336,10 @@ impl Model {
             talent_preview: Vec::new(),
             talent_learns: Vec::new(),
             talent_preview_learns: Vec::new(),
+            pet_talents: Default::default(),
+            pet_talent_preview: Vec::new(),
+            pet_talent_learns: Vec::new(),
+            pet_talent_preview_learns: Vec::new(),
             talent_wipe_confirms: 0,
             talent_master_pending: false,
             pet_unlearn_confirms: 0,

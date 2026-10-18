@@ -1442,6 +1442,17 @@ pub(crate) enum ClientCommand {
     LearnPreviewTalents {
         talents: Vec<(u32, u32)>,
     },
+    /// `CMSG_PET_LEARN_TALENT`: the pet's next 0-based rank of a talent.
+    PetLearnTalent {
+        pet_guid: u64,
+        talent_id: u32,
+        rank: u32,
+    },
+    /// `CMSG_LEARN_PREVIEW_TALENTS_PET`: the pet's preview Learn.
+    LearnPreviewTalentsPet {
+        pet_guid: u64,
+        talents: Vec<(u32, u32)>,
+    },
     /// `CMSG_UNLEARN_SKILL`. No ack: the line leaves only by the `PLAYER_SKILL_INFO` update.
     UnlearnSkill {
         skill_id: u32,

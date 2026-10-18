@@ -237,11 +237,11 @@ fn every_pettame_key_is_a_real_reference_global() {
         .filter_map(|l| l.split('\t').next())
         .collect();
 
-    // 1..=11 index the table; everything else is the default arm.
+    // 1..=12 are the switch's arms (`0x800390`); everything else is the default arm.
     let reachable: BTreeSet<&str> = (0..=u8::MAX)
         .map(benilla_protocol::messages::pet_tame_failure_key)
         .collect();
-    assert_eq!(reachable.len(), 12, "eleven arms plus the default");
+    assert_eq!(reachable.len(), 13, "twelve arms plus the default");
     for key in &reachable {
         assert!(globals.contains(key), "{key} is not a reference global");
     }

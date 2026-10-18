@@ -8,7 +8,9 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 
-use benilla_protocol::messages::{ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL};
+use benilla_protocol::messages::{
+    ACTION_KIND_EQUIPMENT_SET, ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL,
+};
 use benilla_ui::script::{ActionSlot, ScriptValue, UiScript};
 
 use crate::entities::ItemDisplays;
@@ -371,6 +373,13 @@ pub(super) fn feed_actions(
         memory.template_epoch = template_epoch;
         memory.macro_generation = macro_generation;
         let macros = script.macros();
+        script.set_equipment_sets(
+            actions
+                .equipment_sets
+                .iter()
+                .map(|s| (s.id, s.name.clone()))
+                .collect(),
+        );
 
         // Each occupied slot's display, diffed against what the VM holds; a changed slot is
         // pushed and fires `ACTIONBAR_SLOT_CHANGED` with its Lua action id.
@@ -418,6 +427,19 @@ pub(super) fn feed_actions(
                     macros
                         .get(button.action as usize)
                         .and_then(|m| m.texture.clone()),
+                    0,
+                    false,
+                    false,
+                ),
+                // A set slot shows `Interface\Icons\` and the set's icon, nothing for a set the
+                // list lacks or an empty icon (`CGEquipmentManager::GetFullIconPath`, `0x5ae6b0`).
+                ACTION_KIND_EQUIPMENT_SET => (
+                    actions
+                        .equipment_sets
+                        .iter()
+                        .find(|s| s.id == button.action)
+                        .filter(|s| !s.icon.is_empty())
+                        .map(|s| format!("Interface\\Icons\\{}", s.icon)),
                     0,
                     false,
                     false,

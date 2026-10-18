@@ -6,8 +6,9 @@
 //!
 //! Order matters: `GetTalentInfo(tab, index)` indexes a tab's talents in native row order
 //! (`TalentTabInfo[+0xC] + (index−1)*0x54`), never a (tier, column) sort, and a class's tabs come
-//! in file order among rows matching both masks (`0x4f2e50`), never by `orderIndex` (column 22).
-//! The three hunter-pet tabs carry neither mask, so no race and class reaches them here.
+//! in file order among rows matching both masks (`0x5c64d0`), never by `orderIndex` (column 22).
+//! The three hunter-pet tabs carry neither mask; a pet reaches them by its family's talent type
+//! against `petTalentMask` (column 21).
 
 use std::collections::HashMap;
 
@@ -29,12 +30,14 @@ const COL_T_PREREQ: usize = 13; // ..=15
 const COL_T_PREREQ_RANK: usize = 16; // ..=18
 const COL_T_FLAGS: usize = 19;
 const COL_T_REQUIRED_SPELL: usize = 20;
+const COL_T_CATEGORY_MASK: usize = 21; // ..=22
 
 const TALENT_TAB_FIELDS: usize = 24;
 const COL_TT_NAME_ENUS: usize = 1;
 const COL_TT_SPELL_ICON: usize = 18;
 const COL_TT_RACE_MASK: usize = 19;
 const COL_TT_CLASS_MASK: usize = 20;
+const COL_TT_PET_MASK: usize = 21;
 const COL_TT_BACKGROUND: usize = 23;
 
 /// The rank ceiling: `Talent.dbc` has nine rank columns, and no 12340 talent fills past five.
@@ -60,12 +63,26 @@ pub struct Talent {
     pub required_spell: u32,
     /// Flags bit 0 (`TalentRec+0x4c`), the Lua API's `isExceptional`: an activatable ability.
     pub exceptional: bool,
+    /// The pet-family categories that may take the talent, bit `n` naming `CreatureFamily.dbc`
+    /// category `n`; all zero is every pet (`IsTalentAvailableForPet`, `0x5c5a20`).
+    pub category_mask: [u32; 2],
 }
 
 impl Talent {
     /// How many ranks this talent has, the count of populated rank spells.
     pub fn max_rank(&self) -> u32 {
         self.ranks.iter().take_while(|&&s| s != 0).count() as u32
+    }
+
+    /// Whether a pet of family category `category` may take it (`0x5c5a20`): an all-zero mask
+    /// or a negative category admits it, a category past the two words never.
+    pub fn available_to_pet_category(&self, category: i32) -> bool {
+        if self.category_mask == [0, 0] || category < 0 {
+            return true;
+        }
+        self.category_mask
+            .get((category / 32) as usize)
+            .is_some_and(|word| word & (1 << (category % 32)) != 0)
     }
 }
 
@@ -78,6 +95,8 @@ pub struct TalentTabInfo {
     /// match (2047, every race, on all class tabs but the Death Knight's `0xfffc07ff`).
     pub race_mask: u32,
     pub class_mask: u32,
+    /// `petTalentMask`: bit `t` admits a pet whose family's talent type is `t`.
+    pub pet_mask: u32,
     /// The `Interface\TalentFrame\<background>-…` art base ("MageFire").
     pub background: String,
     /// `SpellIconID` through `SpellIcon.dbc`, `GetTalentTabInfo`'s icon (`0x5c61c3`); `None`
@@ -104,6 +123,16 @@ impl TalentCatalog {
             .iter()
             .filter(|t| t.class_mask & class_bit != 0 && t.race_mask & race_bit != 0)
             .collect()
+    }
+
+    /// A pet's tabs for its family's talent type in file order (`0x5c64d0` with no player); a
+    /// negative type has none.
+    pub fn tabs_for_pet(&self, pet_talent_type: i32) -> Vec<&TalentTabInfo> {
+        if !(0..32).contains(&pet_talent_type) {
+            return Vec::new();
+        }
+        let bit = 1u32 << pet_talent_type;
+        self.tabs.iter().filter(|t| t.pet_mask & bit != 0).collect()
     }
 
     /// A tab's talents in native row order, the display and index order.
@@ -164,6 +193,7 @@ pub fn load_talent_catalog(chain: &mut Chain) -> Result<TalentCatalog> {
             name: str_at(&tab_set, r, COL_TT_NAME_ENUS).unwrap_or_default(),
             race_mask: u32_at(r, COL_TT_RACE_MASK).unwrap_or(0),
             class_mask: u32_at(r, COL_TT_CLASS_MASK).unwrap_or(0),
+            pet_mask: u32_at(r, COL_TT_PET_MASK).unwrap_or(0),
             background: str_at(&tab_set, r, COL_TT_BACKGROUND).unwrap_or_default(),
             icon: u32_at(r, COL_TT_SPELL_ICON).and_then(|i| icons.get(&i).cloned()),
         });
@@ -192,6 +222,10 @@ pub fn load_talent_catalog(chain: &mut Chain) -> Result<TalentCatalog> {
                 .collect(),
             required_spell: u32_at(r, COL_T_REQUIRED_SPELL).unwrap_or(0),
             exceptional: u32_at(r, COL_T_FLAGS).unwrap_or(0) & 1 != 0,
+            category_mask: [
+                u32_at(r, COL_T_CATEGORY_MASK).unwrap_or(0),
+                u32_at(r, COL_T_CATEGORY_MASK + 1).unwrap_or(0),
+            ],
         };
         // Native row order, never sorted.
         by_tab.entry(t.tab).or_default().push(t);
@@ -258,6 +292,19 @@ mod tests {
                 "the shipped data's (row, col)-ordered authoring"
             );
         }
+
+        // The three pet trees, one per talent type, in file order.
+        for pet_type in 0..3 {
+            let pet_tabs = cat.tabs_for_pet(pet_type);
+            assert_eq!(pet_tabs.len(), 1, "talent type {pet_type} has one tree");
+            assert!(pet_tabs[0].background.starts_with("HunterPet"));
+            assert!(!cat.talents_in_tab(pet_tabs[0].id).is_empty());
+        }
+        assert!(
+            cat.tabs_for_pet(-1).is_empty(),
+            "a family with no type has no tree"
+        );
+        assert!(cat.tabs_for_class(HUMAN, 3).iter().all(|t| t.pet_mask == 0));
 
         let all_ids: std::collections::HashSet<u32> =
             cat.by_tab.values().flatten().map(|t| t.id).collect();

@@ -90,6 +90,24 @@ pub fn learn_preview_talents(talents: &[(u32, u32)]) -> Vec<u8> {
     body
 }
 
+/// Body of `CMSG_PET_LEARN_TALENT` (`0x5c8291`): `u64 pet`, `u32 talentId`, `u32 rank`, the
+/// pet's next 0-based rank.
+pub fn pet_learn_talent(pet_guid: u64, talent_id: u32, rank: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(16);
+    body.extend_from_slice(&pet_guid.to_le_bytes());
+    body.extend_from_slice(&talent_id.to_le_bytes());
+    body.extend_from_slice(&rank.to_le_bytes());
+    body
+}
+
+/// Body of `CMSG_LEARN_PREVIEW_TALENTS_PET` (`0x5c6ab4`): the pet guid, then
+/// [`learn_preview_talents`]' body.
+pub fn learn_preview_talents_pet(pet_guid: u64, talents: &[(u32, u32)]) -> Vec<u8> {
+    let mut body = pet_guid.to_le_bytes().to_vec();
+    body.extend(learn_preview_talents(talents));
+    body
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +176,24 @@ mod tests {
         };
         assert_eq!(unspent, 0, "a negative count reads as 0");
         assert_eq!(talents.len(), 1);
+    }
+
+    #[test]
+    fn the_pet_learn_bodies_lead_with_the_pet_guid() {
+        let pet = 0xF140_0000_0000_002Au64;
+        let body = pet_learn_talent(pet, 2107, 1);
+        assert_eq!(
+            body,
+            [
+                &pet.to_le_bytes()[..],
+                &2107u32.to_le_bytes(),
+                &1u32.to_le_bytes()
+            ]
+            .concat()
+        );
+        let preview = learn_preview_talents_pet(pet, &[(2107, 2)]);
+        assert_eq!(&preview[..8], &pet.to_le_bytes());
+        assert_eq!(&preview[8..], &learn_preview_talents(&[(2107, 2)])[..]);
     }
 
     #[test]

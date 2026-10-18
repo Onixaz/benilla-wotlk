@@ -56,6 +56,8 @@ pub struct PetActionView {
     /// `SPELL_ATTR_PASSIVE` (`Attributes & 0x40`) on a spell slot: the drop silently refuses a
     /// passive source (`0x4bc9f8`-`0x4bca2e`).
     pub passive: bool,
+    /// `GetPetActionSlotUsable` (`0x5d3fd0`): the slot is usable now, which undims its icon.
+    pub slot_usable: bool,
 }
 
 /// [`PetActionView`] as stored, its cooldown converted to `GetTime` seconds at push time.
@@ -97,6 +99,10 @@ pub struct PetStats {
     /// (`0x4bea10`: bit `1 << (id - 1)` of `CreatureFamily` column 7, names from `ItemPetFood`).
     /// Empty for a zero mask (every warlock minion) or a failed hunter gate, which the app applies.
     pub food_types: Vec<String>,
+    /// `GetPetTalentTree()` (`0x5d3d80`): the name of the first `TalentTab.dbc` row the family's
+    /// talent type admits, for a pet that can gain experience (`CGUnit_C::CanGainXP`,
+    /// `0x71b630`); `None` is nil.
+    pub talent_tree: Option<String>,
 }
 
 /// The pushed pet state: the bar's slots and bar-wide bits, the stat block, the menu predicates.
@@ -119,10 +125,13 @@ pub(crate) struct PetBarState {
     /// the cursor and then writes nothing.
     pub(crate) pickup_allowed: bool,
     /// `PetCanBeAbandoned()`: a kept pet rather than a summon. It forks the pet menu: paperdoll,
-    /// rename and abandon show when true, dismiss only when false (`UnitPopup.lua:402-417`).
+    /// rename and abandon show when true, dismiss only when false (`UnitPopup.lua:796-810`).
     pub(crate) can_be_abandoned: bool,
     /// `PetCanBeRenamed()`, ANDed with the above for the rename row; set until the first rename.
     pub(crate) can_be_renamed: bool,
+    /// `PetCanBeDismissed()` answering nil: our summon whose `SummonProperties` row bars it
+    /// (`0x5d3820`). Kept negated, since with no pet it answers 1.
+    pub(crate) cannot_be_dismissed: bool,
     /// The charm or possess expiry `[0xb714a8]` on the `GetTime` clock, in seconds: the last
     /// `SMSG_PET_SPELLS` duration past its arrival, `None` for a packet whose duration is 0.
     pub(crate) expiry: Option<f64>,
@@ -172,17 +181,26 @@ impl super::UiScript {
         set_field!(self, pet_bar.expiry, expiry);
     }
 
-    /// Push the menu's two predicates, which move with the pet's `UNIT_FIELD_FLAGS`.
-    pub fn set_pet_menu(&mut self, can_be_abandoned: bool, can_be_renamed: bool) {
+    /// Push the menu's three predicates, which move with the pet's descriptor.
+    pub fn set_pet_menu(
+        &mut self,
+        can_be_abandoned: bool,
+        can_be_renamed: bool,
+        can_be_dismissed: bool,
+    ) {
         {
             let bar = &self.model_ref().pet_bar;
-            if bar.can_be_abandoned == can_be_abandoned && bar.can_be_renamed == can_be_renamed {
+            if bar.can_be_abandoned == can_be_abandoned
+                && bar.can_be_renamed == can_be_renamed
+                && bar.cannot_be_dismissed != can_be_dismissed
+            {
                 return;
             }
         }
         let bar = &mut self.model_mut().pet_bar;
         bar.can_be_abandoned = can_be_abandoned;
         bar.can_be_renamed = can_be_renamed;
+        bar.cannot_be_dismissed = !can_be_dismissed;
     }
 
     /// Take the `CastPetAction` calls out of the call stream, as 1-based slots; the app decides
@@ -345,6 +363,42 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // GetPetActionSlotUsable(index) (`0x5d5400`): 1 or nil; with no pet or past slot 10 there is
+    // no slot word, which reads usable (`0x5d3fd0`).
+    g.set(
+        "GetPetActionSlotUsable",
+        lua.create_function(move |lua, i: Value| {
+            let i =
+                super::binding_abi::number_arg(lua, i, "Usage: GetPetActionSlotsUsable(index)")?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let usable = u32::try_from(i)
+                .ok()
+                .and_then(|i| slot_at(&model, i))
+                .is_none_or(|s| s.view.slot_usable);
+            Ok(flag(usable))
+        })?,
+    )?;
+
+    // IsPetAttackAction(index) (`0x5d5a10`): a real boolean, true for the Attack order's slot
+    // while there is a pet (`CGPetInfo::IsAttackAction`, `0x5d41b0`).
+    g.set(
+        "IsPetAttackAction",
+        lua.create_function(|lua, i: Value| {
+            let i = super::binding_abi::number_arg(lua, i, "Usage: IsPetAttackAction(index)")?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(u32::try_from(i)
+                .ok()
+                .and_then(|i| slot_at(&model, i))
+                .is_some_and(|s| {
+                    s.view.packed & 0x3f00_0000 == 0x0700_0000 && s.view.packed & 0xff_ffff == 2
+                }))
+        })?,
+    )?;
+
     // The one pet binding that answers a real boolean (`0x6f39f0`), `false` even out of range.
     g.set(
         "IsPetAttackActive",
@@ -500,6 +554,19 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    g.set(
+        "GetPetTalentTree",
+        lua.create_function(move |lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(match model.pet_bar.stats.talent_tree.as_deref() {
+                Some(name) => Value::String(lua.create_string(name)?),
+                None => Value::Nil,
+            })
+        })?,
+    )?;
+
     // One return per diet and never a nil (`0x4bea10`): an empty diet is zero values, for which
     // `BuildListString` answers nil (`PetPaperDollFrame.xml:269`).
     g.set(
@@ -566,6 +633,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             Ok(flag(model.pet_bar.can_be_abandoned))
+        })?,
+    )?;
+
+    g.set(
+        "PetCanBeDismissed",
+        lua.create_function(move |lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(flag(!model.pet_bar.cannot_be_dismissed))
         })?,
     )?;
 
@@ -802,18 +879,67 @@ mod tests {
             .unwrap());
     }
 
+    /// `IsPetAttackAction` reads the slot word, a real boolean (`0x5d5a10`); the stock bar's
+    /// `OnLoad` calls it for every slot.
+    #[test]
+    fn is_pet_attack_action_reads_the_attack_order_word() {
+        let mut s = UiScript::new().unwrap();
+        let mut bar = slots();
+        bar[0].packed = 0x0700_0002;
+        bar[1].packed = 0xC100_0BC2;
+        s.set_pet_actions(true, true, true, bar);
+        assert!(s
+            .eval::<bool>("return IsPetAttackAction(1) == true")
+            .unwrap());
+        assert!(s
+            .eval::<bool>("return IsPetAttackAction(2) == false")
+            .unwrap());
+        assert!(s
+            .eval::<bool>("return IsPetAttackAction(11) == false")
+            .unwrap());
+        let err = s.run("IsPetAttackAction()").unwrap_err().to_string();
+        assert!(err.contains("Usage: IsPetAttackAction(index)"), "{err}");
+    }
+
+    /// `GetPetActionSlotUsable` answers the pushed slot's state, and 1 with no slot (`0x5d5400`).
+    #[test]
+    fn slot_usable_reads_the_pushed_state_and_no_slot_is_usable() {
+        let mut s = UiScript::new().unwrap();
+        assert_eq!(
+            s.eval::<i64>("return GetPetActionSlotUsable(1)").unwrap(),
+            1,
+            "no pet, no slot word"
+        );
+        let mut bar = slots();
+        bar[0].slot_usable = true;
+        s.set_pet_actions(true, true, true, bar);
+        assert_eq!(
+            s.eval::<i64>("return GetPetActionSlotUsable(1)").unwrap(),
+            1
+        );
+        assert!(s
+            .eval::<bool>("return GetPetActionSlotUsable(2) == nil")
+            .unwrap());
+        let err = s.run("GetPetActionSlotUsable()").unwrap_err().to_string();
+        assert!(
+            err.contains("Usage: GetPetActionSlotsUsable(index)"),
+            "{err}"
+        );
+    }
+
     /// The predicates are checked the way `UnitPopup.lua`'s row conditions read them.
     #[test]
     fn the_menu_predicates_fork_the_rows_and_the_verbs_queue() {
         let mut s = UiScript::new().unwrap();
 
-        // No pet pushed: every row is off.
+        // No pet pushed: every row is off, but Dismiss answers 1 (`0x5d3893`).
         assert!(s
             .eval::<bool>("return PetCanBeAbandoned() == nil and PetCanBeRenamed() == nil")
             .unwrap());
+        assert_eq!(s.eval::<i64>("return PetCanBeDismissed()").unwrap(), 1);
 
         // A hunter's freshly tamed pet.
-        s.set_pet_menu(true, true);
+        s.set_pet_menu(true, true, true);
         assert_eq!(s.eval::<i64>("return PetCanBeAbandoned()").unwrap(), 1);
         assert!(
             s.eval::<bool>("return PetCanBeAbandoned() and PetCanBeRenamed()")
@@ -823,13 +949,16 @@ mod tests {
         assert!(!s.eval::<bool>("return not PetCanBeAbandoned()").unwrap());
 
         // The same pet after one rename.
-        s.set_pet_menu(true, false);
+        s.set_pet_menu(true, false, true);
         assert!(s.eval::<bool>("return PetCanBeAbandoned() ~= nil").unwrap());
         assert!(s.eval::<bool>("return PetCanBeRenamed() == nil").unwrap());
 
         // A warlock's demon: only Dismiss shows.
-        s.set_pet_menu(false, false);
+        s.set_pet_menu(false, false, true);
         assert!(s.eval::<bool>("return not PetCanBeAbandoned()").unwrap());
+        // A summon whose `SummonProperties` row bars it: no Dismiss either.
+        s.set_pet_menu(false, false, false);
+        assert!(s.eval::<bool>("return PetCanBeDismissed() == nil").unwrap());
 
         assert_eq!(s.take_pet_gives_up(), (0, 0));
         s.run("PetAbandon() PetDismiss() PetDismiss()").unwrap();
@@ -854,7 +983,7 @@ mod tests {
     #[test]
     fn pushing_the_bar_leaves_the_stats_and_the_menu_alone() {
         let mut s = UiScript::new().unwrap();
-        s.set_pet_menu(true, true);
+        s.set_pet_menu(true, true, true);
         s.set_pet_stats(
             true,
             PetStats {
@@ -933,6 +1062,18 @@ mod tests {
         assert_eq!(s.arity("GetPetIcon()").unwrap(), 1);
     }
 
+    /// `GetPetTalentTree` is the pushed tree name, nil without one (`0x5d3d80`).
+    #[test]
+    fn the_talent_tree_is_the_pushed_name_or_nil() {
+        let mut s = UiScript::new().unwrap();
+        assert!(s.eval::<bool>("return GetPetTalentTree() == nil").unwrap());
+        s.set_pet_stats(true, hunter_stats());
+        assert_eq!(
+            s.eval::<String>("return GetPetTalentTree()").unwrap(),
+            "Tenacity"
+        );
+    }
+
     fn hunter_stats() -> PetStats {
         PetStats {
             hunter_pet: true,
@@ -952,6 +1093,7 @@ mod tests {
                 "Fungus".into(),
                 "Fruit".into(),
             ],
+            talent_tree: Some("Tenacity".into()),
         }
     }
 

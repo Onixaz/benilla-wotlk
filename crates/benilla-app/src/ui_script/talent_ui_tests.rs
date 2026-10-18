@@ -153,3 +153,67 @@ fn the_stock_talent_tree_scrolls_by_wheel_and_arrow() {
     let errors = talent_errors(s.take_errors());
     assert!(errors.is_empty(), "talent window errors: {errors:#?}");
 }
+
+/// A pet with a talent tree (`GetNumTalentGroups(false, true)` 1) gets the pet spec tab; on it the
+/// window shows the pet's tree, and a talent click queues the pet's learn, not the player's.
+#[test]
+fn the_pet_spec_tab_shows_the_pets_tree_and_learns_for_the_pet() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _load_failures) =
+        super::layer_tests::production_load_with("talents", false, "", |_| {});
+    let _ = s.take_errors();
+    push_talents(&mut s);
+
+    let data = benilla_formats::wow_data().expect("install");
+    let mut chain = benilla_formats::open_chain(&data).unwrap();
+    let catalog = benilla_formats::load_talent_catalog(&mut chain).unwrap();
+    let spells = benilla_formats::load_spell_catalog(&mut chain).unwrap();
+    let families = benilla_formats::load_creature_families(&mut chain).unwrap();
+    let wolf = families.get(1).unwrap();
+    let held = crate::ui_talent::PetTalentGroup {
+        unspent: 3,
+        ..Default::default()
+    };
+    let state = crate::ui_talent::build_pet_pages(
+        &catalog,
+        &spells,
+        wolf.pet_talent_type,
+        true,
+        Some(wolf.category),
+        &held,
+    );
+    let first = state.talents[0][0].id;
+    s.set_unit(
+        "pet",
+        Some(benilla_ui::script::UnitState {
+            exists: true,
+            has_object: true,
+            name: Some("Wolf".into()),
+            health: 100,
+            max_health: 100,
+            level: 10,
+            ..Default::default()
+        }),
+    );
+    s.set_pet_talents(state);
+    s.fire_event("PET_TALENT_UPDATE", Vec::<ScriptValue>::new());
+
+    s.run("ToggleTalentFrame()").unwrap();
+    s.run(
+        r#"
+        assert(PlayerSpecTab3:IsShown(), "a pet with a tree has the pet spec tab")
+        PlayerSpecTab3:Click()
+        assert(PlayerTalentFrame.pet, "the pet spec is selected")
+        assert(PlayerTalentFrameTalent1:IsShown(), "the pet's first talent has a button")
+        PlayerTalentFrameTalent1:Click("LeftButton")
+        "#,
+    )
+    .unwrap();
+    assert_eq!(s.take_pet_talent_learns(), vec![(first, 0)]);
+    assert!(s.take_talent_learns().is_empty(), "nothing for the player");
+    let errors = talent_errors(s.take_errors());
+    assert!(errors.is_empty(), "talent window errors: {errors:#?}");
+}

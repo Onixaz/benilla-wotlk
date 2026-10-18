@@ -1,49 +1,78 @@
-//! The pet frame's right-click menu. `UnitPopup.lua:402-416` shows the paper doll and Abandon when
-//! `PetCanBeAbandoned()`, Rename when `PetCanBeRenamed()` too, and Dismiss otherwise. `PetAbandon`
-//! (`0x4be4c0`, `0x4bd740`) sends `CMSG_PET_ABANDON`; `PetDismiss` (`0x4be4d0`) sends no packet
-//! itself but hands the Dismiss command word to the bar's dispatcher (`0x4bd1d0`), so it leaves as
-//! `CMSG_PET_ACTION`, and only past the dispatcher's usability predicate (`0x4bd1f2`). vmangos
-//! unsummons a summon on either, so sending the wrong one goes unseen.
+//! The pet frame's right-click menu. `UnitPopup.lua:796-810` shows the paper doll and Abandon when
+//! `PetCanBeAbandoned()`, Rename when `PetCanBeRenamed()` too, and Dismiss when the pet cannot be
+//! abandoned and `PetCanBeDismissed()`. `PetAbandon` (`0x5d4900`) sends `CMSG_PET_ABANDON`;
+//! `PetDismiss` (`0x5d46f0`) sends the Dismiss order as `CMSG_PET_ACTION`, past the usability
+//! predicate, and fires `PET_DISMISS_START`.
 
 use bevy::prelude::*;
 
+use benilla_formats::{SpellCatalog, SummonPropertiesCatalog};
 use benilla_protocol::messages::{PET_ACT_COMMAND, PET_COMMAND_DISMISS};
-use benilla_ui::script::UiScript;
+use benilla_ui::script::{ScriptValue, UiScript};
 
-use crate::net::{ClientCommand, NetCommands};
+use crate::net::{ClientCommand, NetCommands, ObjectStore};
 use crate::ui_action::{UiError, UiErrorKeys};
 
 use super::{PetBar, PetUnit};
 
-/// `UNIT_FLAG_PET_RENAME`, `0x4be5c4`'s mask: set on a tamed pet not yet renamed. No client code
-/// writes it; the server clears it after a rename (the sender re-checks it at `0x4bd8b5`).
-const UNIT_FLAG_PET_RENAME: u32 = 0x0000_0010;
-/// `UNIT_FLAG_PET_ABANDON`, `0x4be544`'s mask: set on a hunter pet, clear on a summon.
-const UNIT_FLAG_PET_ABANDON: u32 = 0x0000_0020;
+/// The pet-flags byte's can-be-renamed bit (`0x5d38c0`): set on a tamed pet not yet renamed.
+const PET_FLAG_RENAME: u8 = 0x01;
+/// The pet-flags byte's can-be-abandoned bit (`0x5d3780`): set on a hunter pet, clear on a summon.
+const PET_FLAG_ABANDON: u8 = 0x02;
+/// `SummonProperties.dbc` flag that keeps a summon from being dismissed (`0x5d3881`, `0x5d484c`).
+const SUMMON_FLAG_NO_DISMISS: u32 = 0x20;
+/// `PET_DISMISS_START`'s argument, the dismiss cast in ms (`0x5d48c3`).
+const PET_DISMISS_MS: i64 = 10_000;
 
-/// `(PetCanBeAbandoned, PetCanBeRenamed)` (`0x4be500`, `0x4be580`), read off `UNIT_FIELD_FLAGS`
-/// (dword 46), not the TBC's `UNIT_FIELD_BYTES_2`, which this server leaves zero.
-pub(super) fn menu_predicates(pet_flags: u32) -> (bool, bool) {
+/// `(PetCanBeAbandoned, PetCanBeRenamed)` off `UNIT_FIELD_BYTES_2` byte 2.
+pub(super) fn menu_predicates(pet_flags: u8) -> (bool, bool) {
     (
-        pet_flags & UNIT_FLAG_PET_ABANDON != 0,
-        pet_flags & UNIT_FLAG_PET_RENAME != 0,
+        pet_flags & PET_FLAG_ABANDON != 0,
+        pet_flags & PET_FLAG_RENAME != 0,
     )
 }
 
-/// Push the menu's predicates. Their owner test is `UNIT_FIELD_SUMMONEDBY` alone, with no
-/// `CHARMEDBY` leg (`0x4be500`), so a charmed unit gets every row off, and `UnitPopup_ShowMenu`
-/// opens no menu holding only Cancel.
-pub(super) fn feed_pet_menu(script: Option<NonSendMut<UiScript>>, bar: Res<PetBar>, pet: PetUnit) {
+/// Whether the unit's summon row bars a dismiss: `CGUnit_C::GetSummonProperties` (`0x71d1f0`)
+/// through its `UNIT_CREATED_BY_SPELL`, flag `0x20`.
+pub(super) fn summon_bars_dismiss(
+    store: &ObjectStore,
+    spells: &SpellCatalog,
+    summons: &SummonPropertiesCatalog,
+) -> bool {
+    store
+        .0
+        .unit_created_by_spell()
+        .and_then(|spell| spells.get(spell)?.summon_properties_row())
+        .and_then(|row| summons.flags(row))
+        .is_some_and(|flags| flags & SUMMON_FLAG_NO_DISMISS != 0)
+}
+
+/// Push the menu's predicates. Abandon and Rename need us as `UNIT_FIELD_SUMMONEDBY` (`0x5d37cb`),
+/// Dismiss's refusal needs us as `UNIT_FIELD_CREATEDBY` (`0x5d386b`); with no pet it answers 1.
+pub(super) fn feed_pet_menu(
+    script: Option<NonSendMut<UiScript>>,
+    bar: Res<PetBar>,
+    pet: PetUnit,
+    spells: Option<Res<crate::ui_action::Spells>>,
+    summons: Option<Res<crate::spell::SummonSlots>>,
+) {
     let Some(mut script) = script else {
         return;
     };
-    let flags = (bar.spells.pet_guid != 0)
+    let store = (bar.spells.pet_guid != 0)
         .then(|| pet.store(bar.spells.pet_guid))
-        .flatten()
+        .flatten();
+    let flags = store
         .filter(|store| store.0.unit_summoned_by() == pet.self_guid.0)
-        .map_or(0, |store| store.0.unit_flags());
+        .map_or(0, |store| store.0.unit_pet_flags());
     let (can_be_abandoned, can_be_renamed) = menu_predicates(flags);
-    script.set_pet_menu(can_be_abandoned, can_be_renamed);
+    let can_be_dismissed = !store
+        .filter(|store| store.0.unit_created_by() == pet.self_guid.0)
+        .zip(spells.as_deref().zip(summons.as_deref()))
+        .is_some_and(|(store, (spells, summons))| {
+            summon_bars_dismiss(store, &spells.catalog, &summons.0)
+        });
+    script.set_pet_menu(can_be_abandoned, can_be_renamed, can_be_dismissed);
 }
 
 /// Send the menu's verbs under [`PetBar`]'s pet guid. Nothing is applied locally: the server
@@ -54,6 +83,8 @@ pub(super) fn drain_pet_menu(
     commands: Res<NetCommands>,
     mut ui_errors: ResMut<UiErrorKeys>,
     pet: PetUnit,
+    spells: Option<Res<crate::ui_action::Spells>>,
+    summons: Option<Res<crate::spell::SummonSlots>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -78,13 +109,19 @@ pub(super) fn drain_pet_menu(
         debug!("ui_pet: abandoning pet {pet_guid:#x}");
         let _ = commands.0.send(ClientCommand::PetAbandon { pet_guid });
     }
-    // `0x4bd6e0` stages `0x07000003` at target 0 and enters the dispatcher, whose first act is the
-    // usability predicate (`0x4bd1f2`): a pet that fails it is not sent the word.
+    // `0x5d46f0`: the usability predicate first, then a summon whose row bars it sends nothing;
+    // otherwise the Dismiss order at target 0, then `PET_DISMISS_START`.
     let dismiss_word = PET_COMMAND_DISMISS | (u32::from(PET_ACT_COMMAND) << 24);
     for _ in 0..dismisses {
-        if !pet.actions_usable(&bar) {
+        let Some(store) = pet.usable_pet(&bar) else {
             debug!("ui_pet: dismiss refused, the pet's actions are not usable — no packet");
             continue;
+        };
+        if let (Some(spells), Some(summons)) = (spells.as_deref(), summons.as_deref()) {
+            if summon_bars_dismiss(store, &spells.catalog, &summons.0) {
+                debug!("ui_pet: dismiss refused, the summon cannot be dismissed — no packet");
+                continue;
+            }
         }
         debug!("ui_pet: dismissing pet {pet_guid:#x} ({dismiss_word:#010x})");
         let _ = commands.0.send(ClientCommand::PetAction {
@@ -92,6 +129,7 @@ pub(super) fn drain_pet_menu(
             packed: dismiss_word,
             target_guid: 0,
         });
+        script.fire_event("PET_DISMISS_START", vec![ScriptValue::Int(PET_DISMISS_MS)]);
     }
     for name in renames {
         // `PetRename 0x5d5670`: a refused name shows its name error and sends nothing.

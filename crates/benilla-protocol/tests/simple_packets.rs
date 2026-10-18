@@ -479,16 +479,20 @@ fn pet_feedback_family_parses_and_decodes() {
         decode(p)[..],
         [SessionEvent::PetTameFailure { reason: 9 }]
     ));
-    // Reason to GlobalStrings key: the reference bounds `reason - 1` at 0xa (`0x6e6a20`).
+    // Reason to GlobalStrings key: the reference switches over 1..=12 (`0x800390`).
     assert_eq!(messages::pet_tame_failure_key(1), "PETTAME_INVALIDCREATURE");
     assert_eq!(
         messages::pet_tame_failure_key(5),
         "PETTAME_ANOTHERSUMMONACTIVE"
     );
     assert_eq!(messages::pet_tame_failure_key(11), "PETTAME_NOTDEAD");
-    // Out of range on either side, vmangos's 12th value included, falls to the default arm.
+    // Out of range on either side falls to the default arm.
     assert_eq!(messages::pet_tame_failure_key(0), "PETTAME_UNKNOWNERROR");
-    assert_eq!(messages::pet_tame_failure_key(12), "PETTAME_UNKNOWNERROR");
+    assert_eq!(
+        messages::pet_tame_failure_key(12),
+        "PETTAME_CANTCONTROLEXOTIC"
+    );
+    assert_eq!(messages::pet_tame_failure_key(13), "PETTAME_UNKNOWNERROR");
     assert_eq!(messages::pet_tame_failure_key(200), "PETTAME_UNKNOWNERROR");
 
     // SMSG_PET_NAME_INVALID: the name code, the name ("Bruce") and the declension flag, then with

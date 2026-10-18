@@ -94,6 +94,7 @@ mod tests {
             buttons: buttons.iter().map(|b| (b.slot, *b)).collect(),
             spells: spells.iter().copied().collect(),
             dirty: true,
+            ..Default::default()
         })
         .insert_resource(SkillLines { catalog })
         .insert_resource(NetCommands(tx))

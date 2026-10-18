@@ -18,6 +18,7 @@ mod client;
 mod combat_log;
 mod death;
 mod duel;
+mod equipment_set;
 mod gameobject;
 mod gm_ticket;
 mod gossip;
@@ -65,8 +66,8 @@ pub use achievement::{
     InspectAchievements,
 };
 pub use action_bar::{
-    set_action_button, set_actionbar_toggles, ActionButton, ACTION_KIND_ITEM, ACTION_KIND_MACRO,
-    ACTION_KIND_SPELL,
+    set_action_button, set_actionbar_toggles, ActionButton, ACTION_KIND_EQUIPMENT_SET,
+    ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL,
 };
 pub use addons::{
     hidden_from_reply, SecureAddon, STANDARD_MODULUS_CRC, STOCK_SECURE_ADDONS,
@@ -126,6 +127,7 @@ pub use duel::{
     duel_accepted, duel_cancelled, read_duel_complete, read_duel_countdown, read_duel_requested,
     read_duel_winner, DuelRequested, DuelWinner,
 };
+pub use equipment_set::{EquipmentSet, EQUIPMENT_SET_SLOTS, MAX_EQUIPMENT_SETS};
 pub use gameobject::{gameobj_use, gameobject_query, GameObjectQueryInfo};
 pub use gm_ticket::{
     gm_ticket_create, gm_ticket_updatetext, GmResponse, GmTicket, GMTICKET_QUEUE_ENABLED,
@@ -199,8 +201,8 @@ pub use pet::{
     PET_ACT_ENABLED, PET_ACT_PASSIVE, PET_ACT_REACTION, PET_AUTOCAST_ALLOWED, PET_AUTOCAST_ON,
     PET_COMMAND_ATTACK, PET_COMMAND_DISMISS, PET_COMMAND_FOLLOW, PET_COMMAND_STAY,
     PET_COOLDOWN_PERMANENT, PET_REACT_AGGRESSIVE, PET_REACT_DEFENSIVE, PET_REACT_PASSIVE,
-    PET_STATE_BAR_DISABLED, PET_TALK_ATTACK, PET_TALK_ORDER, PET_TYPE_SPELL_FIRST,
-    PET_TYPE_SPELL_LAST, PET_UNUSABLE_UNIT_FLAGS,
+    PET_STATE_VEHICLE, PET_TALK_ATTACK, PET_TALK_ORDER, PET_TYPE_SPELL, PET_TYPE_SPELL_EXTRA,
+    PET_UNUSABLE_UNIT_FLAGS,
 };
 pub use petition::{
     offer_petition, petition_buy, petition_decline, petition_query, petition_rename,
@@ -257,7 +259,10 @@ pub use summon::{summon_response, SummonRequest};
 pub use tabard::{
     battlemaster_hello, save_guild_emblem, tabard_vendor_activate, GUILD_EMBLEM_RESULT_MESSAGES,
 };
-pub use talents::{learn_preview_talents, LearnedTalent, TalentGroupInfo, TalentsInfo};
+pub use talents::{
+    learn_preview_talents, learn_preview_talents_pet, pet_learn_talent, LearnedTalent,
+    TalentGroupInfo, TalentsInfo,
+};
 pub use taxi::{
     activate_taxi, activate_taxi_express, taxi_node_status_query, taxi_query_available_nodes,
     taxi_reply, TaxiMask,

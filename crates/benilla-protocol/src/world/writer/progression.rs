@@ -34,6 +34,27 @@ impl WorldWriter {
         )
     }
 
+    /// `CMSG_PET_LEARN_TALENT`: the pet's next rank of a talent; the server answers with the
+    /// pet's `SMSG_TALENTS_INFO`.
+    pub fn pet_learn_talent(&mut self, pet_guid: u64, talent_id: u32, rank: u32) -> Result<()> {
+        self.send(
+            opcode::CMSG_PET_LEARN_TALENT,
+            &messages::pet_learn_talent(pet_guid, talent_id, rank),
+        )
+    }
+
+    /// `CMSG_LEARN_PREVIEW_TALENTS_PET`: the pet's preview Learn.
+    pub fn learn_preview_talents_pet(
+        &mut self,
+        pet_guid: u64,
+        talents: &[(u32, u32)],
+    ) -> Result<()> {
+        self.send(
+            opcode::CMSG_LEARN_PREVIEW_TALENTS_PET,
+            &messages::learn_preview_talents_pet(pet_guid, talents),
+        )
+    }
+
     /// `MSG_TALENT_WIPE_CONFIRM`: the `CONFIRM_TALENT_WIPE` dialog's Accept; declining sends
     /// nothing. The server resets the talents and has the trainer cast spell 14867.
     pub fn talent_wipe_confirm(&mut self, trainer_guid: u64) -> Result<()> {

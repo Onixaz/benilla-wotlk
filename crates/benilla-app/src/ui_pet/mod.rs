@@ -117,7 +117,10 @@ impl Plugin for UiPetPlugin {
                 drain_pet_actions
                     .after(UiInput)
                     .after(crate::script_calls::apply_script_calls),
-                drain_pet_menu.after(UiInput),
+                // It fires `PET_DISMISS_START`, so it waits for the interface.
+                drain_pet_menu
+                    .after(UiInput)
+                    .run_if(crate::ui_script::ingame_ui_up),
             ),
         );
     }

@@ -153,7 +153,7 @@ pub const SMSG_PET_ACTION_FEEDBACK: u16 = 0x02C6; // 710
 pub const SMSG_PET_CAST_FAILED: u16 = 0x0138; // 312
 
 /// Tame, Call Pet or Revive Pet refused: one `u8` reason. The reference (`0x6e97e0`) shows
-/// `ERR_TAME_FAILED` with the reason's `PETTAME_*` string, `PETTAME_UNKNOWNERROR` outside 1..=11.
+/// `ERR_TAME_FAILED` with the reason's `PETTAME_*` string, `PETTAME_UNKNOWNERROR` outside 1..=12.
 pub const SMSG_PET_TAME_FAILURE: u16 = 0x0173; // 371
 /// A refused pet rename: a `u32` name code, the name, and a declension flag with its forms
 /// (`0x6e2fb1`).
@@ -684,6 +684,8 @@ pub const SMSG_ACHIEVEMENT_DELETED: u16 = 0x049F;
 pub const SMSG_ALL_ACHIEVEMENT_DATA: u16 = 0x047D;
 /// 3.3.5a only: every talent group's ranks, or the pet's (`0x6cd770`).
 pub const SMSG_TALENTS_INFO: u16 = 0x04C0;
+/// 3.3.5a only: the player's saved equipment sets (`0x5af490`).
+pub const SMSG_EQUIPMENT_SET_LIST: u16 = 0x04BC;
 /// 3.3.5a only: a totem took a slot (`0x526530` arm `0x413`).
 pub const SMSG_TOTEM_CREATED: u16 = 0x0413;
 /// 3.3.5a only: dismiss the totem in a slot, `u8 slot` (`DestroyTotem` `0x5197d0`).

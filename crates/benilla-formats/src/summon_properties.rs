@@ -1,4 +1,5 @@
-//! `SummonProperties.dbc`: how a summon effect's unit is held; slot 5 is a companion (`0x8009b0`).
+//! `SummonProperties.dbc`: how a summon effect's unit is held; slot 5 is a companion (`0x8009b0`),
+//! and flag `0x20` keeps the menu's Dismiss off (`PetCanBeDismissed`, `0x5d3820`).
 
 use std::collections::HashMap;
 
@@ -10,22 +11,35 @@ use crate::Chain;
 
 const SUMMON_PROPERTIES: &str = "DBFilesClient\\SummonProperties.dbc";
 
-/// The `Slot` column (4) by row id.
+/// The `Slot` (4) and `Flags` (5) columns by row id.
 #[derive(Debug, Clone, Default)]
 pub struct SummonPropertiesCatalog {
-    slots: HashMap<u32, u32>,
+    slots: HashMap<u32, (u32, u32)>,
 }
 
 impl SummonPropertiesCatalog {
-    /// Build from `(id, slot)` pairs, for tests.
+    /// Build from `(id, slot)` pairs with no flags, for tests.
     pub fn from_slots(rows: impl IntoIterator<Item = (u32, u32)>) -> Self {
+        Self::from_rows(rows.into_iter().map(|(id, slot)| (id, slot, 0)))
+    }
+
+    /// Build from `(id, slot, flags)` rows.
+    pub fn from_rows(rows: impl IntoIterator<Item = (u32, u32, u32)>) -> Self {
         Self {
-            slots: rows.into_iter().collect(),
+            slots: rows
+                .into_iter()
+                .map(|(id, slot, flags)| (id, (slot, flags)))
+                .collect(),
         }
     }
 
     pub fn slot(&self, id: u32) -> Option<u32> {
-        self.slots.get(&id).copied()
+        self.slots.get(&id).map(|&(slot, _)| slot)
+    }
+
+    /// The row's `Flags`, `None` for a row the file lacks.
+    pub fn flags(&self, id: u32) -> Option<u32> {
+        self.slots.get(&id).map(|&(_, flags)| flags)
     }
 
     pub fn len(&self) -> usize {
@@ -51,10 +65,10 @@ pub fn load_summon_properties(chain: &mut Chain) -> Result<SummonPropertiesCatal
         .read_file(SUMMON_PROPERTIES)
         .with_context(|| format!("reading {SUMMON_PROPERTIES}"))?;
     let rs = parse(&bytes, summon_properties_schema(), "SummonProperties")?;
-    Ok(SummonPropertiesCatalog::from_slots(
+    Ok(SummonPropertiesCatalog::from_rows(
         rs.records()
             .iter()
-            .filter_map(|r| Some((u32_at(r, 0)?, u32_at(r, 4)?))),
+            .filter_map(|r| Some((u32_at(r, 0)?, u32_at(r, 4)?, u32_at(r, 5)?))),
     ))
 }
 

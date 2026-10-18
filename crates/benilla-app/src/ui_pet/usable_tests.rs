@@ -1,4 +1,4 @@
-//! The pet-usability predicate `0x4bcf70` and every verb it gates, whole client headless: each of
+//! The pet-usability predicate `0x5d3e80` and every verb it gates, whole client headless: each of
 //! its exits alone must grey `GetPetActionsUsable`, and must stop a press, an order, both autocast
 //! toggles and the drag's writes, while a pet that trips none of them takes all of it as before.
 
@@ -7,7 +7,7 @@ use bevy::prelude::*;
 
 use benilla_protocol::messages::{
     PetActionEntry, PET_ACT_COMMAND, PET_ACT_ENABLED, PET_ACT_REACTION, PET_COMMAND_ATTACK,
-    PET_COMMAND_FOLLOW, PET_COMMAND_STAY, PET_REACT_AGGRESSIVE, PET_STATE_BAR_DISABLED,
+    PET_COMMAND_FOLLOW, PET_COMMAND_STAY, PET_REACT_AGGRESSIVE, PET_STATE_VEHICLE,
 };
 
 use crate::net::{ClientCommand, Guid, GuidIndex};
@@ -19,7 +19,7 @@ use super::press_tests::{
 };
 use super::PetBar;
 
-/// `PLAYER_FARSIGHT`, low word: the view's anchor, the guid `0x4bcfbf`-`0x4bd012` holds against the
+/// `PLAYER_FARSIGHT`, low word: the view's anchor, the guid `0x5d3ec0`-`0x5d3ef3` holds against the
 /// pet's.
 const FARSIGHT: u16 = 712;
 /// Some other guid than ours or the pet's.
@@ -88,7 +88,7 @@ fn scene() -> Rig {
 struct Case {
     name: &'static str,
     apply: fn(&mut Rig),
-    /// What `0x4bcf70` answers.
+    /// What `0x5d3e80` answers.
     usable: bool,
     /// Whether `PickupPetAction`'s own gate lets the drag start: the pet's object must resolve
     /// (`0x4be1f7`) and not be `UNIT_FLAG_POSSESSED` (`0x4be20a`), which is no exit of the
@@ -96,54 +96,54 @@ struct Case {
     draggable: bool,
 }
 
-/// One way `0x4bcf70` answers zero, and nothing else changed.
+/// One way `0x5d3e80` answers zero, and nothing else changed.
 type Exit = (&'static str, fn(&mut Rig));
 
 /// Every exit of the predicate, each alone, in the order the bytes take them.
 const EXITS: [Exit; 11] = [
-    ("the active player does not resolve (0x4bcf92)", |rig| {
+    ("the active player does not resolve (0x5d3ea4)", |rig| {
         rig.app
             .world_mut()
             .resource_mut::<GuidIndex>()
             .0
             .remove(&ME);
     }),
-    ("the player is charmed (0x4bcf98)", |rig| {
+    ("the player is charmed (0x5d3eb0)", |rig| {
         set_player(rig, &guid_pair(CHARMEDBY, OTHER));
     }),
     (
-        "the player's far sight is on another unit (0x4bcfbf)",
+        "the player's far sight is on another unit (0x5d3ec0)",
         |rig| set_player(rig, &guid_pair(FARSIGHT, OTHER)),
     ),
-    ("the pet does not resolve (0x4bd034)", |rig| {
+    ("the pet does not resolve (0x5d3f3c)", |rig| {
         rig.app
             .world_mut()
             .resource_mut::<GuidIndex>()
             .0
             .remove(&PET);
     }),
-    ("the pet is summoned by another (0x4bd054)", |rig| {
+    ("the pet is summoned by another (0x5d3f5b)", |rig| {
         set_pet(rig, &guid_pair(SUMMONEDBY, OTHER));
     }),
     (
-        "the pet has no summoner, whatever created it (0x4bd054)",
+        "the pet has no summoner, whatever created it (0x5d3f5b)",
         |rig| set_pet(rig, &guid_pair(SUMMONEDBY, 0)),
     ),
     (
-        "the pet is charmed by another, summoned by us (0x4bd048)",
+        "the pet is charmed by another, summoned by us (0x5d3f4f)",
         |rig| set_pet(rig, &guid_pair(CHARMEDBY, OTHER)),
     ),
-    ("the pet is stunned (0x4bd075)", |rig| {
+    ("the pet is stunned (0x5d3310)", |rig| {
         set_pet(rig, &[(FLAGS, 0x0004_0000)]);
     }),
-    ("the pet is confused (0x4bd089)", |rig| {
+    ("the pet is confused (0x5d3310)", |rig| {
         set_pet(rig, &[(FLAGS, 0x0040_0000)]);
     }),
-    ("the pet is fleeing (0x4bd081)", |rig| {
+    ("the pet is fleeing (0x5d3310)", |rig| {
         set_pet(rig, &[(FLAGS, 0x0080_0000)]);
     }),
-    ("bit 27 of the bar state (0x4bd08d)", |rig| {
-        rig.app.world_mut().resource_mut::<PetBar>().spells.state |= PET_STATE_BAR_DISABLED;
+    ("a vehicle's bar we do not ride (0x5d3f77)", |rig| {
+        rig.app.world_mut().resource_mut::<PetBar>().spells.state |= PET_STATE_VEHICLE;
     }),
 ];
 
@@ -219,7 +219,7 @@ fn usable_answer(rig: &mut Rig) -> bool {
     })
 }
 
-/// `0x4be0b3`: the display answers nil for each exit alone, and 1 for every pet that trips none.
+/// `0x5d53c0`: the display answers nil for each exit alone, and 1 for every pet that trips none.
 #[test]
 fn each_exit_alone_makes_get_pet_actions_usable_nil() {
     for Case {
@@ -235,7 +235,7 @@ fn each_exit_alone_makes_get_pet_actions_usable_nil() {
     }
 }
 
-/// `0x4bd1f2`: a spell press, and the orders: every one leaves at the gate, before the aura cancel,
+/// `0x5d4210`: a spell press, and the orders: every one leaves at the gate, before the aura cancel,
 /// the latch, the GCD and the send.
 #[test]
 fn each_exit_alone_stops_a_press_and_every_order() {
@@ -282,7 +282,7 @@ fn each_exit_alone_stops_a_press_and_every_order() {
     }
 }
 
-/// `0x4bcbcf`: the bar's `TogglePetAutocast` flips the word and sends only for a usable pet.
+/// `0x5d66f0`: the bar's `TogglePetAutocast` flips the word and sends only for a usable pet.
 #[test]
 fn each_exit_alone_stops_the_bars_autocast_toggle() {
     for Case {
@@ -316,7 +316,7 @@ fn each_exit_alone_stops_the_bars_autocast_toggle() {
     }
 }
 
-/// `0x4bccce`: the pet book's `ToggleSpellAutocast` flips the word, repaints and sends only for a
+/// `0x5d5e10`: the pet book's `ToggleSpellAutocast` flips the word, repaints and sends only for a
 /// usable pet.
 #[test]
 fn each_exit_alone_stops_the_pet_books_autocast_toggle() {
@@ -365,8 +365,8 @@ fn each_exit_alone_stops_the_pet_books_autocast_toggle() {
     }
 }
 
-/// `0x4bd6e0`: the pet menu's Dismiss hands its command word to the dispatcher, so it is refused
-/// at `0x4bd1f2` like any other order.
+/// `0x5d46f0`: the pet menu's Dismiss hands its command word to the dispatcher, so it is refused
+/// at `0x5d4210` like any other order.
 #[test]
 fn each_exit_alone_stops_the_menus_dismiss() {
     const DISMISS: u32 = 0x0700_0003;
@@ -574,7 +574,7 @@ fn click_first_button(rig: &mut Rig) {
 
 /// With the default UI loaded, the stock bar reads `GetPetActionsUsable` for its icons and clicks
 /// `CastPetAction` whatever it answered, so the engine's gate is the only one: a stunned pet's bar
-/// greys, and clicking it sends nothing (`0x4bd1f2`), where the same click on the pet before it was
+/// greys, and clicking it sends nothing (`0x5d4210`), where the same click on the pet before it was
 /// stunned went out.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
@@ -620,7 +620,7 @@ fn the_stock_bar_greys_a_stunned_pet_and_its_click_sends_nothing() {
     assert_eq!(pet_actions(&rig.sent()), 1);
 }
 
-/// `0x4bd06f`-`0x4bd08b` read three flags and never the pet's health: a dead pet's bar is usable,
+/// `0x5d3310` reads three flags and never the pet's health: a dead pet's bar is usable,
 /// its press goes out, and only the Attack order's own validator refuses it (`0x612e10`).
 #[test]
 fn a_dead_pet_is_still_usable() {
@@ -659,10 +659,10 @@ fn the_predicate_reads_exactly_the_reference_fields() {
     let player = store(&[(2, 0x19)]);
     let pet = owned_pet();
 
-    assert!(actions_usable(&bar, me, Some(&player), Some(&pet)));
-    assert!(!actions_usable(&bar, None, Some(&player), Some(&pet)));
-    assert!(!actions_usable(&bar, me, None, Some(&pet)));
-    assert!(!actions_usable(&bar, me, Some(&player), None));
+    assert!(actions_usable(&bar, me, Some(&player), Some(&pet), None));
+    assert!(!actions_usable(&bar, None, Some(&player), Some(&pet), None));
+    assert!(!actions_usable(&bar, me, None, Some(&pet), None));
+    assert!(!actions_usable(&bar, me, Some(&player), None, None));
 
     // The owner is `CHARMEDBY` when set, else `SUMMONEDBY`, and never `CREATEDBY`.
     let created_only = store(&[(14, ME as u32), (15, 0)]);
@@ -670,37 +670,137 @@ fn the_predicate_reads_exactly_the_reference_fields() {
         &bar,
         me,
         Some(&player),
-        Some(&created_only)
+        Some(&created_only),
+        None
     ));
     let unowned = store(&[]);
-    assert!(!actions_usable(&bar, me, Some(&player), Some(&unowned)));
+    assert!(!actions_usable(
+        &bar,
+        me,
+        Some(&player),
+        Some(&unowned),
+        None
+    ));
 
     // A far-sight guid of zero is no view; the pet's own guid is the one that stays usable.
     let zero_view = store(&[(FARSIGHT, 0), (FARSIGHT + 1, 0)]);
-    assert!(actions_usable(&bar, me, Some(&zero_view), Some(&pet)));
+    assert!(actions_usable(&bar, me, Some(&zero_view), Some(&pet), None));
     let on_pet = store(&[(FARSIGHT, PET as u32), (FARSIGHT + 1, 0)]);
-    assert!(actions_usable(&bar, me, Some(&on_pet), Some(&pet)));
+    assert!(actions_usable(&bar, me, Some(&on_pet), Some(&pet), None));
     let elsewhere = store(&[(FARSIGHT, OTHER as u32), (FARSIGHT + 1, 0)]);
-    assert!(!actions_usable(&bar, me, Some(&elsewhere), Some(&pet)));
+    assert!(!actions_usable(
+        &bar,
+        me,
+        Some(&elsewhere),
+        Some(&pet),
+        None
+    ));
     // The high word counts: a view whose low word is the pet's and whose high word is not.
     let high_only = store(&[(FARSIGHT, PET as u32), (FARSIGHT + 1, 1)]);
-    assert!(!actions_usable(&bar, me, Some(&high_only), Some(&pet)));
+    assert!(!actions_usable(
+        &bar,
+        me,
+        Some(&high_only),
+        Some(&pet),
+        None
+    ));
 
     // Each of the three flags alone, and no other.
     for flag in [0x0004_0000, 0x0040_0000, 0x0080_0000] {
         let hurt = owned_pet_with(&[(FLAGS, flag)]);
         assert!(
-            !actions_usable(&bar, me, Some(&player), Some(&hurt)),
+            !actions_usable(&bar, me, Some(&player), Some(&hurt), None),
             "flag {flag:#x} disables"
         );
     }
     let possessed = owned_pet_with(&[(FLAGS, UNIT_FLAG_POSSESSED)]);
-    assert!(actions_usable(&bar, me, Some(&player), Some(&possessed)));
+    assert!(actions_usable(
+        &bar,
+        me,
+        Some(&player),
+        Some(&possessed),
+        None
+    ));
 
     let mut disabled = PetBar {
         spells: bar.spells.clone(),
         ..Default::default()
     };
-    disabled.spells.state |= PET_STATE_BAR_DISABLED;
-    assert!(!actions_usable(&disabled, me, Some(&player), Some(&pet)));
+    disabled.spells.state |= PET_STATE_VEHICLE;
+    assert!(!actions_usable(
+        &disabled,
+        me,
+        Some(&player),
+        Some(&pet),
+        None
+    ));
+    // A vehicle's bar works only while we ride that very pet (`0x5d3f77`).
+    assert!(actions_usable(
+        &disabled,
+        me,
+        Some(&player),
+        Some(&pet),
+        Some(PET)
+    ));
+    assert!(!actions_usable(
+        &disabled,
+        me,
+        Some(&player),
+        Some(&pet),
+        Some(OTHER)
+    ));
+    assert!(actions_usable(
+        &bar,
+        me,
+        Some(&player),
+        Some(&pet),
+        Some(OTHER)
+    ));
+}
+
+/// `0x5d3fd0` per slot: an order follows the bar's predicate; a spell asks it without the control
+/// test, then refuses a stun, fear or confusion its `AttributesEx5` does not exempt, then asks the
+/// usable walk.
+#[test]
+fn a_slot_is_usable_as_its_kind_and_the_spells_exemptions_say() {
+    use super::usable::slot_usable;
+    let order = PetActionEntry::from(PET_COMMAND_FOLLOW | (u32::from(PET_ACT_COMMAND) << 24));
+    let spell = PetActionEntry::from(CLAW | (u32::from(PET_ACT_ENABLED) << 24));
+    let mut d = benilla_formats::SpellDisplay::default();
+    let pet = owned_pet();
+    let walk_ok = |_: &benilla_formats::SpellDisplay, _: &crate::net::ObjectStore| true;
+
+    assert!(slot_usable(order, None, true, None, walk_ok));
+    assert!(!slot_usable(order, None, false, Some(&pet), walk_ok));
+    assert!(slot_usable(spell, Some(&d), false, Some(&pet), walk_ok));
+    assert!(
+        !slot_usable(spell, Some(&d), true, None, walk_ok),
+        "no pet past the gate"
+    );
+    assert!(
+        !slot_usable(spell, None, true, Some(&pet), walk_ok),
+        "no record"
+    );
+    assert!(!slot_usable(spell, Some(&d), true, Some(&pet), |_, _| {
+        false
+    }));
+
+    // Each state alone greys a spell, unless its own exemption bit is set.
+    for (flag, exempt) in [
+        (0x4_0000, 0x8),
+        (0x80_0000, 0x2_0000),
+        (0x40_0000, 0x4_0000),
+    ] {
+        let hurt = owned_pet_with(&[(FLAGS, flag)]);
+        d.attributes_ex5 = 0;
+        assert!(
+            !slot_usable(spell, Some(&d), true, Some(&hurt), walk_ok),
+            "{flag:#x}"
+        );
+        d.attributes_ex5 = exempt;
+        assert!(
+            slot_usable(spell, Some(&d), true, Some(&hurt), walk_ok),
+            "{flag:#x} exempt"
+        );
+    }
 }
