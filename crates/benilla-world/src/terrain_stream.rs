@@ -69,6 +69,8 @@ pub struct TerrainStreamer {
     focus: (i32, i32),
     /// The window's `(inner, outer)` half-widths last frame, logged once per change.
     reach: Option<(i32, i32)>,
+    /// The window last streamed around, focus chunk and radii: an unchanged one skips the walk.
+    window: Option<StreamWindow>,
     /// The map's WDT tile index: ADT requests wait for it and consult its `MAIN` grid.
     wdt: Option<Handle<WdtIndex>>,
     /// The WDT failed to load: stream every tile ungated rather than show no world.
@@ -556,7 +558,8 @@ fn stream_terrain(
     let center = focus.resolve(camera.single().ok().map(|c| c.translation));
     let window = StreamWindow::at(view.farclip, center[0], center[1]);
     let (cx, cy) = window.focus_tile();
-    let same_window = state.focus == (cx, cy) && state.reach == Some((window.inner, window.outer));
+    // Keyed by chunk: the window slides a chunk at a time, so a tile key misses the tile ahead.
+    let same_window = state.window == Some(window);
     // Skip an unchanged frame only in a paced, complete, presentable world, since the tail it
     // bypasses releases a load; even then the undrawn count stays fresh, so a rebake un-skips it.
     if same_window
@@ -574,6 +577,7 @@ fn stream_terrain(
         return;
     }
     state.focus = (cx, cy);
+    state.window = Some(window);
     if state.reach != Some((window.inner, window.outer)) {
         state.reach = Some((window.inner, window.outer));
         info!(

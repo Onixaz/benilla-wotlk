@@ -173,6 +173,18 @@ mod tests {
         }
     }
 
+    /// The streamer's skip key is the whole window: a focus that stays on one tile still slides the
+    /// window onto the next one.
+    #[test]
+    fn a_focus_crossing_one_tile_reaches_the_next() {
+        let entered = at_chunk(397.0, (34, 20), (0, 8));
+        let near_edge = at_chunk(397.0, (34, 20), (13, 8));
+        assert_eq!(entered.focus_tile(), near_edge.focus_tile());
+        assert!(!entered.wanted_tiles().contains(&(35, 20)));
+        assert!(near_edge.wanted_tiles().contains(&(35, 20)));
+        assert_ne!(entered, near_edge);
+    }
+
     #[test]
     fn the_window_clamps_to_the_grid() {
         let w = at_chunk(777.0, (0, 63), (0, 15));
