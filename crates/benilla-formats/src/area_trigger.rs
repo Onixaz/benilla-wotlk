@@ -30,11 +30,12 @@ pub struct AreaTriggerRow {
 }
 
 impl AreaTriggerRow {
-    /// Whether `p` is inside, as the reference's `0x5e22d0` tests it. A sphere is a plain 3D
+    /// Whether `p` is inside, as the reference's `0x6ce140` tests it. A sphere is a plain 3D
     /// distance check, inclusive (`radius² >= Σ(centre − p)²`); a box carries `p` into its frame
-    /// through gx's matrix ops (`0x7bdc40` load, `0x7bdd60` rotate by `-box_yaw`, `0x7bd700`
-    /// apply), strict against half of `box_size` on all six faces. The server re-tests with 5 yd
-    /// of slop (`MiscHandler.cpp:643`).
+    /// through the inverse of its placement (`0x4c1b30` translate, `0x4c3380` rotate by
+    /// `box_yaw`, `0x4c2fc0` inverse), strict against half of `box_size` on all six faces
+    /// (`0x6cb930`). The server re-tests with no slop but an inn's 5 yd (AzerothCore
+    /// `Handlers/MiscHandler.cpp:754`).
     pub fn contains(&self, p: [f32; 3]) -> bool {
         if self.radius != 0.0 {
             let d = [
@@ -62,7 +63,7 @@ impl AreaTriggerRow {
     }
 }
 
-/// Every row bucketed by map, the window the reference narrows to (`0x5e2080`). File order holds
+/// Every row bucketed by map, the window the reference narrows to (`0x6d2f70`). File order holds
 /// in a bucket: the check takes the first containing row, and volumes overlap.
 pub struct AreaTriggerCatalog {
     by_map: HashMap<u32, Vec<AreaTriggerRow>>,
@@ -75,7 +76,7 @@ impl AreaTriggerCatalog {
         self.by_map.get(&map_id).map_or(&[], |v| v.as_slice())
     }
 
-    /// The first trigger on `map_id` containing `p`, where `0x5e2110` stops its scan.
+    /// The first trigger on `map_id` containing `p`, where `0x6dbe30` stops its scan.
     pub fn first_containing(&self, map_id: u32, p: [f32; 3]) -> Option<&AreaTriggerRow> {
         self.on_map(map_id).iter().find(|t| t.contains(p))
     }

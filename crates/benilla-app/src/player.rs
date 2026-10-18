@@ -76,6 +76,8 @@ use controller::control;
 pub(crate) use camera::{head_height, CameraControl, CameraPivot};
 use camera::{model_pivot_height, run_look_session, FlyCam, LookButton};
 use camera_zoom::{apply_zoom_scroll, CAM_DIST_DEFAULT};
+// The area-trigger check's heartbeat ahead of `CMSG_AREATRIGGER`.
+pub(crate) use movement_net::heartbeat_now;
 // `/follow`: chat sends the request, `crate::target` resolves the subject into the state, and
 // `follow` owns the motion.
 pub(crate) use follow::{FollowRequest, FollowState};

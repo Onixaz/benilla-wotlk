@@ -367,6 +367,9 @@ pub(crate) struct Player {
     pub(crate) owes_worldport_ack: bool,
     /// `Time::elapsed_secs` when we last sent a heartbeat.
     pub(super) last_heartbeat: f32,
+    /// The movement tail this frame's stream built, sent or not, which an off-schedule heartbeat
+    /// carries ([`super::movement_net::heartbeat_now`]).
+    pub(super) wire_tail: super::movement_net::WireTail,
     /// Milliseconds of movement the settle hold skipped, sent as `CMSG_MOVE_TIME_SKIPPED` on the
     /// release edge; fractional because it accrues a frame `dt` at a time.
     pub(super) skipped_ms: f32,

@@ -1,14 +1,16 @@
 //! Area triggers: notice the player entering an `AreaTrigger.dbc` volume and send
 //! `CMSG_AREATRIGGER`; the server decides what the trigger does.
 //!
-//! The reference's check (`0x5e2110`, containment `0x5e22d0`): only the current map's rows are
-//! candidates (`0x5e2080`); while the player is still inside the latched trigger nothing is sent;
-//! once they leave, the first containing row in file order is latched and sent; a map change
-//! clears the latch. So a portal fires once per entry, and a portal's destination is authored
-//! outside the return trigger, so a round trip is not a loop.
+//! The reference's check (`0x6dbe30`, containment `0x6ce140`) runs on a 100 ms timer: only the
+//! current map's rows are candidates (`0x6d2f70`); while the player is still inside the latched
+//! trigger nothing is sent; once they leave, the first containing row in file order is latched
+//! and sent, a `MSG_MOVE_HEARTBEAT` first; a map change clears the latch. So a portal fires once
+//! per entry, and a portal's destination is authored outside the return trigger, so a round trip
+//! is not a loop.
 //!
-//! The server re-checks the claim with 5 yd of slop and ignores it while taxi-flying
-//! (vmangos `Handlers/MiscHandler.cpp:622`).
+//! The server re-checks the claim against the last position we reported, with no slop but an
+//! inn's 5 yd, and ignores it while taxi-flying (AzerothCore `Handlers/MiscHandler.cpp:729`); the
+//! heartbeat is what puts that position inside a volume as thin as the Stockades door.
 //!
 //! A GM teleport straight into a volume sends this in the same instant as the teleport ack, and
 //! the server may test it against the pre-teleport position and ignore it; the latch does not
@@ -28,13 +30,13 @@ use benilla_world::world_map::CurrentMap;
 #[derive(Resource)]
 pub(crate) struct AreaTriggers(pub(crate) AreaTriggerCatalog);
 
-/// The latched trigger and its map: the reference's current-trigger pointer (`0xc4d73c`), cleared
+/// The latched trigger and its map: the reference's current-trigger pointer (`0xc9d330`), cleared
 /// on a map change and kept across a same-map reconnect, as the reference does.
 #[derive(Resource, Default)]
 pub(crate) struct InsideTrigger(Option<(u32, u32)>);
 
 impl InsideTrigger {
-    /// One check in the reference's order (`0x5e2110`): nothing while still inside the latched
+    /// One check in the reference's order (`0x6dbe30`): nothing while still inside the latched
     /// volume, else latch and return the first trigger on this map containing `p`.
     fn step(&mut self, triggers: &AreaTriggerCatalog, map_id: u32, p: [f32; 3]) -> Option<u32> {
         if let Some((latched_map, id)) = self.0 {
@@ -84,13 +86,18 @@ fn load_area_triggers(mut commands: Commands, assets: Option<Res<WorldAssets>>) 
     }
 }
 
-/// The per-frame check (`0x5e2110`).
+/// The check's period: the reference re-arms its timer for 100 ms on each run (`0x6dbe42`).
+const CHECK_INTERVAL: f32 = 0.1;
+
+/// The 100 ms check (`0x6dbe30`).
 fn check_area_triggers(
     triggers: Option<Res<AreaTriggers>>,
     map: Option<Res<CurrentMap>>,
-    player: Res<Player>,
+    mut player: ResMut<Player>,
     mut inside: ResMut<InsideTrigger>,
     net: Res<NetCommands>,
+    time: Res<Time>,
+    mut next_check: Local<f32>,
 ) {
     let (Some(triggers), Some(map)) = (triggers, map) else {
         return;
@@ -99,10 +106,17 @@ fn check_area_triggers(
     if !player.active {
         return;
     }
+    let now = time.elapsed_secs();
+    if now < *next_check {
+        return;
+    }
+    *next_check = now + CHECK_INTERVAL;
     let here = bevy_to_wow(player.pos);
     let Some(trigger_id) = inside.step(&triggers.0, map.0, here) else {
         return;
     };
+    // The server tests the claim against our last report, so report here first (`0x6dbf8e`).
+    crate::player::heartbeat_now(&net.0, &mut player, now);
     let _ = net.0.send(ClientCommand::AreaTrigger { trigger_id });
     // At `info`: entries are rare, and this line tells whether the client saw the volume at all.
     info!(
@@ -161,5 +175,55 @@ mod tests {
         let mut inside = InsideTrigger::default();
         assert_eq!(inside.step(&cat, 0, [0.0, 0.0, 0.0]), None);
         assert_eq!(inside.step(&cat, 9999, [8799.41, 969.787, 30.2409]), None);
+    }
+
+    /// The Stockades door (101), a box under 5 yd deep: the frame a run first lands inside it, the
+    /// last 500 ms heartbeat is still outside, so the check reports the live pose before the claim
+    /// the server tests against it. Skips without client data.
+    #[test]
+    fn the_stockades_claim_goes_out_behind_a_heartbeat_from_inside_the_door() {
+        use bevy::ecs::system::RunSystemOnce;
+        let Some(cat) = real_catalog() else { return };
+
+        // A live walk-in: the last scheduled heartbeat and the frame the check fired.
+        let last_heartbeat = [-8765.55, 845.69, 87.83];
+        let entered = [-8763.73, 847.11, 86.97];
+        let door = *cat.get(101).expect("trigger 101 (Stockades entrance)");
+        assert!(!door.contains(last_heartbeat), "{door:?}");
+        assert!(door.contains(entered), "{door:?}");
+
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut world = World::new();
+        world.insert_resource(AreaTriggers(cat));
+        world.insert_resource(CurrentMap(0));
+        world.insert_resource(InsideTrigger::default());
+        world.insert_resource(NetCommands(tx));
+        world.insert_resource(Time::<()>::default());
+        let mut player = Player::default();
+        player.active = true;
+        player.pos = benilla_assets::coords::wow_to_bevy(entered);
+        world.insert_resource(player);
+        world
+            .run_system_once(check_area_triggers)
+            .expect("run_system_once");
+
+        match rx.try_recv().expect("a heartbeat goes first") {
+            ClientCommand::Move {
+                kind: crate::net::MoveKind::Heartbeat,
+                pos,
+                ..
+            } => {
+                let d = (0..3)
+                    .map(|i| (pos[i] - entered[i]).abs())
+                    .fold(0.0, f32::max);
+                assert!(d < 1e-3, "the heartbeat reports the live pose: {pos:?}");
+            }
+            other => panic!("expected a heartbeat, got {other:?}"),
+        }
+        match rx.try_recv().expect("then the claim") {
+            ClientCommand::AreaTrigger { trigger_id } => assert_eq!(trigger_id, 101),
+            other => panic!("expected CMSG_AREATRIGGER, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err());
     }
 }

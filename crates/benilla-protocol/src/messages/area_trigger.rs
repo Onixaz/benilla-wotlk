@@ -6,9 +6,9 @@ use std::io;
 
 use crate::wire::{read_cstring, read_u32_le};
 
-/// `CMSG_AREATRIGGER` (180, as `0x5e2110` sends it): the `u32` `AreaTrigger.dbc` id. The server
-/// obeys only a real row with the player inside the volume (5 yd slop), never while taxi-flying
-/// (`Handlers/MiscHandler.cpp:622`).
+/// `CMSG_AREATRIGGER` (180, as `0x6dbe30` sends it): the `u32` `AreaTrigger.dbc` id. The server
+/// obeys only a real row with our last reported position inside the volume, with no slop but an
+/// inn's 5 yd, never while taxi-flying (AzerothCore `Handlers/MiscHandler.cpp:729`).
 pub fn area_trigger(trigger_id: u32) -> Vec<u8> {
     trigger_id.to_le_bytes().to_vec()
 }

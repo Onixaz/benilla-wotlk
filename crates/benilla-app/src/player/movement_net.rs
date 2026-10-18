@@ -300,6 +300,53 @@ pub(super) fn stream_self_movement(
     // leaves no catch-up `SET_FACING` behind.
     player.last_facing = facing;
     player.move_flags = wire_flags;
+    player.wire_tail = WireTail {
+        pitch: swim_pitch,
+        fall_time,
+        jump: wire_jump,
+        transport,
+    };
+}
+
+/// The parts of a `MSG_MOVE_*` payload the stream derives each frame beyond flags, position and
+/// facing: the swim pitch, the fall clock, the jump quad and the deck pose.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct WireTail {
+    pitch: f32,
+    fall_time: u32,
+    jump: Option<JumpInfo>,
+    transport: Option<TransportPose>,
+}
+
+/// One `MSG_MOVE_HEARTBEAT` now, off the stream's schedule, with this frame's live pose: the
+/// reference's area-trigger check sends one ahead of `CMSG_AREATRIGGER` (`0x6dbf8e`, `0xee` into
+/// `0x724e70`), so the server tests the claim against where we are. A possessed mover owns the
+/// wire, and our body then sends nothing.
+pub(crate) fn heartbeat_now(sender: &Sender<ClientCommand>, player: &mut Player, now: f32) {
+    if player.foreign_mover.is_some() {
+        return;
+    }
+    let pos = bevy_to_wow(player.pos);
+    let facing = player.face_yaw.rem_euclid(std::f32::consts::TAU);
+    let WireTail {
+        pitch,
+        fall_time,
+        jump,
+        transport,
+    } = player.wire_tail;
+    super::move_trace::sent(MoveKind::Heartbeat, player.move_flags, facing, pos);
+    let _ = sender.send(ClientCommand::Move {
+        kind: MoveKind::Heartbeat,
+        flags: player.move_flags,
+        pos,
+        orientation: facing,
+        pitch,
+        fall_time,
+        jump,
+        transport,
+    });
+    player.last_pos = pos;
+    player.last_heartbeat = now;
 }
 
 /// `CMSG_MOVE_TIME_SKIPPED`: the milliseconds the mover advanced through without integrating. The
@@ -350,6 +397,7 @@ pub(super) fn park_mover(sender: &Sender<ClientCommand>, player: &mut Player) {
     });
     player.move_flags = 0;
     player.last_facing = facing;
+    player.wire_tail = WireTail::default();
 }
 
 /// The rider's deck-local pose for the `ON_TRANSPORT` tail, or `None` off a deck. `bevy_to_wow` is

@@ -332,7 +332,7 @@ pub const SMSG_GAMEOBJECT_CUSTOM_ANIM: u16 = 0x00B3; // 179
 /// The client arms substate 12 (AnimationData 157) and the object outlives its
 /// `SMSG_DESTROY_OBJECT` for that play.
 pub const SMSG_GAMEOBJECT_DESPAWN_ANIM: u16 = 0x0215; // 533
-/// We walked into an area trigger: its `AreaTrigger.dbc` id (reference `0x5e2110`).
+/// We walked into an area trigger: its `AreaTrigger.dbc` id (reference `0x6dbe30`).
 pub const CMSG_AREATRIGGER: u16 = 0x00B4; // 180
 /// An area trigger's refusal (level, ghost, faction), shown like `SMSG_NOTIFICATION` (`0x4945b0`).
 pub const SMSG_AREA_TRIGGER_MESSAGE: u16 = 0x02B8; // 696

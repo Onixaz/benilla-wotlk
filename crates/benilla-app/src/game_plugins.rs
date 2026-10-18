@@ -778,12 +778,15 @@ pub(crate) mod schedule_tests {
     ///   (`apply_roster_policy`, `persist_last_character`, `apply_realm_policy`): the refill acts
     ///   only on an in-world learn, they only before world entry;
     /// - `ui_totem::feed_totems` against `ui_items::feed_item_stats` over `Items` and the VM: it
-    ///   only reads templates for the tool check, as `feed_quest_lines` does.
+    ///   only reads templates for the tool check, as `feed_quest_lines` does;
+    /// - `area_trigger::check_area_triggers` against the readers of `Player`: its heartbeat
+    ///   writes only the stream's send bookkeeping (`last_pos`, `last_heartbeat`), which only the
+    ///   controller, ordered before it, reads.
     ///
     /// Raising the ceiling is a claim that a new undeclared order is acceptable: make it with the
     /// reason read off the dump, or declare the order (`.after`, a set, a `chain`). A resource
     /// that commutes by construction belongs in [`Classes`].
-    const UPDATE_ACTIONABLE_CEILING: usize = 4_049;
+    const UPDATE_ACTIONABLE_CEILING: usize = 4_069;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
