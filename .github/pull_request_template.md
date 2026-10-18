@@ -4,6 +4,6 @@
 
 **What this changes**
 
-**What 1.12.1 does, and how you know** (the client's behaviour, a DBC field, a FrameXML line, a capture)
+**What 3.3.5a does, and how you know** (the client's behaviour, a DBC field, a FrameXML line, a capture)
 
-**How you checked it** (`scripts/check.sh` or `scripts/gates.sh`, and before and after)
+**How you checked it** (`scripts/check.sh`, and before and after)
