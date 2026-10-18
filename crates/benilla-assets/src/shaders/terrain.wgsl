@@ -20,6 +20,7 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(104) var alpha_array: texture_2d_array<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(105) var splat_samp: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(110) var shadow_array: texture_2d_array<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(111) var env_cubes: texture_cube_array<f32>;
 
 // Per-tile Vec4 uniforms, packed into one buffer (binding 106); the field order must match the Rust
 // `TerrainExtension`. params.x = layer tiling factor; yzw unused.
@@ -61,6 +62,8 @@ struct TerrainVsOut {
     // carried torch is (1.4, 0.87, 0.40)) saturates one vertex and falls off linearly from it,
     // where clamping per pixel would pin a wide plateau at white.
     @location(6) primary: vec3<f32>,
+    // A reflection base layer's cube lookup, generated per vertex as the reference's texgen is.
+    @location(7) env_dir: vec3<f32>,
 }
 
 // Terrain's point-light candidacy half-width (yd): `w + 10`, `w` being the chunk's bounding-sphere
@@ -131,6 +134,27 @@ fn mcnk_cell_anchor(P: vec3<f32>) -> vec3<f32> {
     return vec3<f32>((ix + 0.5) * cell - half, P.y, (iz + 0.5) * cell - half);
 }
 
+// WoW axes from Bevy's: x north is −z, y west is −x, z up is y.
+fn to_wow(b: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(-b.z, -b.x, b.y);
+}
+
+// The cube lookup of an MCLY `0x400` base layer, which `Terrain0_env.bls` samples as a CUBE: GL
+// reflection-map texgen `reflect(normalize(P − eye), N)` in the reference's eye space, world-aligned
+// with the camera at the origin, then the layer texture matrix (`0x7d06b0`): x and y swapped, the
+// camera-to-chunk-origin offset added, scaled by −geoToTex, of which a cube reads only the sign.
+// The origin is the chunk's NW corner, from its UV; its height is the vertex's, where the reference
+// keeps the MCNK base, which is the surface on the flat ice these layers paint.
+fn env_cube_dir(world: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+    let chunk_yd = 533.33333 / 16.0;
+    let p = to_wow(world);
+    let eye = to_wow(view.world_position.xyz);
+    let r = reflect(normalize(p - eye), to_wow(normal));
+    let origin = vec3<f32>(p.x + uv.y * chunk_yd, p.y + uv.x * chunk_yd, p.z);
+    let q = r + eye - origin;
+    return -vec3<f32>(q.y, q.x, q.z);
+}
+
 @vertex
 fn vertex(in: Vertex) -> TerrainVsOut {
     var out: TerrainVsOut;
@@ -146,6 +170,7 @@ fn vertex(in: Vertex) -> TerrainVsOut {
     // Sun specular per vertex: white material, row-9 colour, shininess `light_spec.w` (20), local
     // viewer; clamped here, then Gouraud-interpolated.
     let n = normalize(world_normal);
+    out.env_dir = env_cube_dir(out.world_position.xyz, n, in.uv);
     let l = -normalize(wow_light.light_sun.xyz); // to-light (the sun travels along +light_sun)
     let v = normalize(view.world_position.xyz - out.world_position.xyz); // to-eye (local viewer)
     let h = normalize(l + v);
@@ -184,7 +209,12 @@ fn fragment(in: TerrainVsOut) -> @location(0) vec4<f32> {
     // `.a` is the `_s` texture's sheen mask, 0 without an `_s`. `view.mip_bias` undoes the coarser
     // mip a render scale below 1 picks; the alpha and shadow arrays have one mip, so only the
     // layers take it.
-    let s0 = textureSampleBias(layer_array, splat_samp, tiled, li.x, view.mip_bias);
+    // A negative base index names a reflection cube (`-1 - index`). Both are sampled, since the
+    // choice varies per vertex and implicit-derivative sampling must stay in uniform control flow.
+    let flat0 = textureSampleBias(layer_array, splat_samp, tiled, max(li.x, 0), view.mip_bias);
+    let env0 =
+        textureSampleBias(env_cubes, splat_samp, in.env_dir, max(-li.x - 1, 0), view.mip_bias);
+    let s0 = select(flat0, env0, li.x < 0);
     let s1 = textureSampleBias(layer_array, splat_samp, tiled, li.y, view.mip_bias);
     let s2 = textureSampleBias(layer_array, splat_samp, tiled, li.z, view.mip_bias);
     let s3 = textureSampleBias(layer_array, splat_samp, tiled, li.w, view.mip_bias);

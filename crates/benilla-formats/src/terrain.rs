@@ -49,6 +49,8 @@ pub struct ChunkMesh {
     pub layer_textures: Vec<String>,
     /// Per-layer MCLY `effectId`, a `GroundEffectTexture.dbc` id (`0xFFFFFFFF` for none).
     pub layer_effect_ids: Vec<u32>,
+    /// MCLY layer 0's flag `0x400`: the base layer is a reflection cube, not a planar texture.
+    pub env_base: bool,
     /// RGBA alpha map (`ALPHA_MAP_SIZE`²), R/G/B for layers 1/2/3; `None` with a single layer.
     pub alpha_map: Option<Vec<u8>>,
     /// The baked MCSH shadow, a byte per texel over `SHADOW_MAP_SIZE`² (255 shadowed, 0 lit).
@@ -433,6 +435,13 @@ pub fn adt_to_tile_mesh(adt_bytes: &[u8], liquid: &TerrainLiquid, map_id: u32) -
         let layer_textures: Vec<String> = layers.iter().map(|(t, _)| t.clone()).collect();
         let layer_effect_ids: Vec<u32> = layers.iter().map(|(_, e)| *e).collect();
         let base_texture = layer_textures.first().cloned();
+        let env_base = mcnk
+            .layers
+            .as_ref()
+            .and_then(|mcly| mcly.layers.first())
+            .is_some_and(|l| {
+                l.flags.cube_reflection() && root.textures.get(l.texture_id as usize).is_some()
+            });
 
         // Layers 1..3 into one RGBA map; 1.12 alpha is 4-bit, last row and column duplicated.
         let alpha_map = (layer_textures.len() > 1).then(|| {
@@ -490,6 +499,7 @@ pub fn adt_to_tile_mesh(adt_bytes: &[u8], liquid: &TerrainLiquid, map_id: u32) -
             base_texture,
             layer_textures,
             layer_effect_ids,
+            env_base,
             alpha_map,
             shadow,
             pred_tex,
@@ -719,6 +729,7 @@ mod tests {
             base_texture: None,
             layer_textures: Vec::new(),
             layer_effect_ids: Vec::new(),
+            env_base: false,
             alpha_map: None,
             shadow: None,
             pred_tex: [0; 64],
@@ -800,6 +811,17 @@ mod tests {
             dm.global_wmo().expect("WMO-only").rotation,
             [0.0, 180.0, 0.0]
         );
+    }
+
+    /// A Storm Peaks frozen lake's chunks carry a reflection base layer; Elwynn's carry none.
+    #[test]
+    fn frozen_lakes_carry_a_reflection_base_layer() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let lake = load_tile_mesh(&mut chain, "Northrend", 37, 18).expect("Northrend_37_18.adt");
+        assert!(lake.chunks.iter().any(|c| c.env_base));
+        let elwynn = load_tile_mesh(&mut chain, "Azeroth", 32, 48).expect("Azeroth_32_48.adt");
+        assert!(!elwynn.chunks.iter().any(|c| c.env_base));
     }
 
     /// The reference stops a mover 1.46 yd east of `.go xyz -6601.98 -531.87 335.60 0`: the MCNK

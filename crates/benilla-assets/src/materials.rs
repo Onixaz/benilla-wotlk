@@ -408,6 +408,9 @@ pub struct TerrainExtension {
     /// Per-chunk MCSH shadow maps (`R` = shadowed); `UV1.y` is the layer, `-1` for none.
     #[texture(110, dimension = "2d_array", visibility(fragment))]
     pub shadow_array: Handle<Image>,
+    /// The reflection base layers' cubes; `COLOR.x = -1 - index` selects one.
+    #[texture(111, dimension = "cube_array", visibility(fragment))]
+    pub env_cubes: Handle<Image>,
 
     // Binding 106's uniforms, in the field order of the WGSL `TerrainParams`.
     /// `x` = texture tiling factor (repeats per chunk); other lanes unused.

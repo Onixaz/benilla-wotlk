@@ -286,6 +286,84 @@ pub(crate) fn shadow_array_image(size: u32, layer_count: u32, data: Vec<u8>) -> 
 
 /// A `2d_array` image with a `D2Array` view. `RENDER_WORLD` only: nothing reads a tile's arrays
 /// main-side, so no main-world copy stays resident.
+/// A reflection base layer's cube: per level, six square faces of `Rgba8Unorm` texels in the
+/// device's face order (+X, −X, +Y, −Y, +Z, −Z).
+pub(crate) struct EnvCube {
+    /// Level 0's face edge.
+    pub(crate) face: u32,
+    pub(crate) levels: Vec<[Vec<u8>; 6]>,
+}
+
+/// The strip slot each device cube face reads (`0x4b5e80`).
+const CUBE_STRIP_SLOT: [usize; 6] = [0, 2, 4, 5, 3, 1];
+
+/// A BLP strip's decoded levels as cube faces: the reference makes any BLP with `width == 6·height`
+/// a cube (`0x4b7bd0`). `None` for any other shape; levels stop where the strip stops being 6:1.
+pub(crate) fn split_cube_strip(chain: &BlpMipChain) -> Option<EnvCube> {
+    if !chain.is_rgba8() || chain.height == 0 || chain.width != 6 * chain.height {
+        return None;
+    }
+    let mut levels = Vec::new();
+    for (i, mip) in chain.mips.iter().enumerate() {
+        let (w, h) = chain.mip_size(i as u32);
+        if w != 6 * h || mip.len() < (w * h * 4) as usize {
+            break;
+        }
+        let (row, edge) = ((w * 4) as usize, (h * 4) as usize);
+        levels.push(CUBE_STRIP_SLOT.map(|slot| {
+            (0..h as usize)
+                .flat_map(|y| &mip[y * row + slot * edge..][..edge])
+                .copied()
+                .collect()
+        }));
+    }
+    (!levels.is_empty()).then_some(EnvCube {
+        face: chain.height,
+        levels,
+    })
+}
+
+/// A tile's reflection cubes as one `cube_array`, every cube at the first's edge and the shortest
+/// level count; a black 1² cube when the tile has none, since the binding always exists.
+pub(crate) fn env_cube_array_image(cubes: &[EnvCube]) -> Image {
+    let (face, mips) = match cubes.first() {
+        Some(c) => (
+            c.face,
+            cubes.iter().map(|c| c.levels.len()).min().unwrap_or(1),
+        ),
+        None => (1, 1),
+    };
+    let mut data = Vec::new();
+    if cubes.is_empty() {
+        data.resize(6 * 4, 0);
+    }
+    for cube in cubes {
+        for f in 0..6 {
+            for level in &cube.levels[..mips] {
+                data.extend_from_slice(&level[f]);
+            }
+        }
+    }
+    let mut image = Image::new_uninit(
+        Extent3d {
+            width: face,
+            height: face,
+            depth_or_array_layers: 6 * cubes.len().max(1) as u32,
+        },
+        TextureDimension::D2,
+        color_format(),
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.data = Some(data);
+    image.texture_descriptor.mip_level_count = mips as u32;
+    image.data_order = TextureDataOrder::LayerMajor;
+    image.texture_view_descriptor = Some(TextureViewDescriptor {
+        dimension: Some(TextureViewDimension::CubeArray),
+        ..default()
+    });
+    image
+}
+
 fn array_image(size: u32, layer_count: u32, format: TextureFormat) -> Image {
     // `new_uninit`, not `new`, which would allocate a mip-0 dummy per tile; the caller sets `data`.
     let mut image = Image::new_uninit(
@@ -308,6 +386,62 @@ fn array_image(size: u32, layer_count: u32, format: TextureFormat) -> Image {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 6:1 strip whose slot `s` is filled with the byte `s`, at `face`² per slot.
+    fn strip(face: u32, levels: u32) -> BlpMipChain {
+        let mips = (0..levels)
+            .map(|i| {
+                let h = (face >> i).max(1);
+                (0..h * 6 * h)
+                    .flat_map(|t| [((t % (6 * h)) / h) as u8; 4])
+                    .collect()
+            })
+            .collect();
+        BlpMipChain {
+            width: 6 * face,
+            height: face,
+            texels: BlpTexels::Rgba8Unorm,
+            mips,
+        }
+    }
+
+    #[test]
+    fn a_cube_strip_splits_in_the_device_face_order() {
+        let cube = split_cube_strip(&strip(4, 3)).expect("a 6:1 strip is a cube");
+        assert_eq!(cube.face, 4);
+        assert_eq!(cube.levels.len(), 3);
+        for level in &cube.levels {
+            let firsts: Vec<u8> = level.iter().map(|f| f[0]).collect();
+            assert_eq!(firsts, CUBE_STRIP_SLOT.map(|s| s as u8));
+            assert!(level
+                .iter()
+                .zip(CUBE_STRIP_SLOT)
+                .all(|(f, s)| f.iter().all(|&b| b == s as u8)));
+        }
+        let mut square = strip(4, 1);
+        square.width = 4;
+        assert!(split_cube_strip(&square).is_none());
+    }
+
+    #[test]
+    fn the_cube_array_is_six_layers_per_cube_viewed_as_cubes() {
+        let cubes = [
+            split_cube_strip(&strip(4, 3)).unwrap(),
+            split_cube_strip(&strip(4, 2)).unwrap(),
+        ];
+        let img = env_cube_array_image(&cubes);
+        assert_eq!(img.texture_descriptor.size.depth_or_array_layers, 12);
+        assert_eq!(img.texture_descriptor.mip_level_count, 2);
+        assert_eq!(
+            img.texture_view_descriptor
+                .as_ref()
+                .and_then(|v| v.dimension),
+            Some(TextureViewDimension::CubeArray)
+        );
+        assert_eq!(img.data.as_ref().unwrap().len(), 12 * (16 + 4) * 4);
+        let empty = env_cube_array_image(&[]);
+        assert_eq!(empty.texture_descriptor.size.depth_or_array_layers, 6);
+    }
 
     /// A synthetic BLP mip chain: `mips` authored levels of a solid grey fill at `size²`.
     fn synthetic_chain(size: u32, mips: u32) -> BlpMipChain {

@@ -48,6 +48,11 @@ impl MclyFlags {
     pub fn alpha_map_compressed(&self) -> bool {
         self.value & 0x200 != 0
     }
+
+    /// Bit 10 (0x400): the layer draws as a reflection cube map (`0x7b931a`).
+    pub fn cube_reflection(&self) -> bool {
+        self.value & 0x400 != 0
+    }
 }
 
 /// MCLY: one texture layer (16 bytes on disk).

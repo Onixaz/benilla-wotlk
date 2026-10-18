@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use benilla_formats::{
-    adt_to_tile_mesh, blp_bytes_to_native_chain, ChunkMesh, Doodad, TerrainLiquid, WmoInstance,
-    ALPHA_MAP_SIZE, SHADOW_MAP_SIZE,
+    adt_to_tile_mesh, blp_bytes_to_mip_chain, blp_bytes_to_native_chain, ChunkMesh, Doodad,
+    TerrainLiquid, WmoInstance, ALPHA_MAP_SIZE, SHADOW_MAP_SIZE,
 };
 use bevy::asset::io::Reader;
 use bevy::asset::{Asset, AssetLoader, LoadContext, RenderAssetUsages};
@@ -20,7 +20,8 @@ use bevy::reflect::TypePath;
 
 use crate::coords::wow_to_bevy;
 use crate::terrain::{
-    alpha_array_image, layer_array_image, pack_layers, shadow_array_image, RawLayer, LAYER_TEX_SIZE,
+    alpha_array_image, env_cube_array_image, layer_array_image, pack_layers, shadow_array_image,
+    split_cube_strip, EnvCube, RawLayer, LAYER_TEX_SIZE,
 };
 
 /// A loaded ADT tile; the app builds its meshes with [`chunk_to_mesh`].
@@ -34,6 +35,8 @@ pub struct AdtTile {
     pub alpha_array: Handle<Image>,
     /// `texture_2d_array` of per-chunk MCSH baked shadow maps.
     pub shadow_array: Handle<Image>,
+    /// `cube_array` of the reflection base layers' cubes (MCLY `0x400`).
+    pub env_cubes: Handle<Image>,
     /// M2 doodad placements (raw WoW coords).
     pub doodads: Vec<Doodad>,
     /// WMO building placements (raw WoW coords).
@@ -53,6 +56,8 @@ pub struct ChunkShading {
     pub alpha: u32,
     /// The shadow-array index (vertex `UV1.y`); `-1.0` when there is no MCSH map.
     pub shadow: f32,
+    /// The env cube-array index of a reflection base layer, baked as `COLOR.x = -1 - index`.
+    pub env: Option<u32>,
 }
 
 impl Default for ChunkShading {
@@ -61,6 +66,7 @@ impl Default for ChunkShading {
             layers: [0; 4],
             alpha: 0,
             shadow: -1.0,
+            env: None,
         }
     }
 }
@@ -102,7 +108,8 @@ pub fn chunks_to_mesh(parts: &[(&ChunkMesh, &ChunkShading)]) -> Option<Mesh> {
             normals.extend(computed_normals(&chunk_positions, &chunk.indices));
         }
         let li = shading.layers;
-        let col = [li[0] as f32, li[1] as f32, li[2] as f32, li[3] as f32];
+        let base_layer = shading.env.map_or(li[0] as f32, |i| -1.0 - i as f32);
+        let col = [base_layer, li[1] as f32, li[2] as f32, li[3] as f32];
         let n = chunk_positions.len();
         uv1.extend(std::iter::repeat_n(
             [shading.alpha as f32, shading.shadow],
@@ -173,6 +180,11 @@ impl AssetLoader for AdtLoader {
         let mut shadow_buf: Vec<u8> = Vec::new();
         let mut shadow_count = 0u32;
 
+        // Reflection cubes by texture, `None` for one that is not a 6:1 strip or not at the first
+        // cube's edge (one array has one size).
+        let mut cubes: Vec<EnvCube> = Vec::new();
+        let mut cube_index: HashMap<String, Option<u32>> = HashMap::new();
+
         let mut shading: Vec<ChunkShading> = Vec::with_capacity(tile.chunks.len());
 
         for chunk in tile.chunks.iter() {
@@ -199,6 +211,24 @@ impl AssetLoader for AdtLoader {
             for slot in chunk.layer_textures.len().min(4)..4 {
                 li[slot] = li[0];
             }
+            let mut env = None;
+            if let Some(name) = chunk.layer_textures.first().filter(|_| chunk.env_base) {
+                let key = normalize_path(name);
+                env = match cube_index.get(&key) {
+                    Some(&i) => i,
+                    None => {
+                        let i = read_env_cube(ctx, &key)
+                            .await
+                            .filter(|c| cubes.first().is_none_or(|f| f.face == c.face))
+                            .map(|c| {
+                                cubes.push(c);
+                                cubes.len() as u32 - 1
+                            });
+                        cube_index.insert(key, i);
+                        i
+                    }
+                };
+            }
 
             let ai = match &chunk.alpha_map {
                 Some(rgba) => {
@@ -220,6 +250,7 @@ impl AssetLoader for AdtLoader {
                 layers: li,
                 alpha: ai,
                 shadow: si,
+                env,
             });
         }
 
@@ -245,12 +276,14 @@ impl AssetLoader for AdtLoader {
         let layer_array = layer_array_image(LAYER_TEX_SIZE, layer_count, packed);
         let alpha_array = alpha_array_image(ALPHA_MAP_SIZE, alpha_count, alpha_buf);
         let shadow_array = shadow_array_image(SHADOW_MAP_SIZE, shadow_count, shadow_buf);
+        let env_cubes = env_cube_array_image(&cubes);
 
         Ok(AdtTile {
             shading,
             layer_array: ctx.add_labeled_asset("layer_array".to_string(), layer_array),
             alpha_array: ctx.add_labeled_asset("alpha_array".to_string(), alpha_array),
             shadow_array: ctx.add_labeled_asset("shadow_array".to_string(), shadow_array),
+            env_cubes: ctx.add_labeled_asset("env_cubes".to_string(), env_cubes),
             doodads: tile.doodads,
             wmos: tile.wmos,
             chunks: tile.chunks,
@@ -278,6 +311,13 @@ async fn read_layer(ctx: &mut LoadContext<'_>, key: &str) -> Option<RawLayer> {
     let bytes = ctx.read_asset_bytes(mpq_url(key)).await.ok()?;
     let chain = blp_bytes_to_native_chain(&bytes).ok()?;
     Some(RawLayer { chain, matte: true })
+}
+
+/// A reflection base layer's texture as a cube: read plain, never as its `_s` variant, as the
+/// reference loads an MTXF-flagged texture (`0x7d6980`).
+async fn read_env_cube(ctx: &mut LoadContext<'_>, key: &str) -> Option<EnvCube> {
+    let bytes = ctx.read_asset_bytes(mpq_url(key)).await.ok()?;
+    split_cube_strip(&blp_bytes_to_mip_chain(&bytes).ok()?)
 }
 
 /// An internal path as an `mpq://` URL.

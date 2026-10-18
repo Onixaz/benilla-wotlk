@@ -299,6 +299,7 @@ mod tests {
             base_texture: None,
             layer_textures: Vec::new(),
             layer_effect_ids: Vec::new(),
+            env_base: false,
             alpha_map: None,
             shadow: None,
             pred_tex: [0; 64],
