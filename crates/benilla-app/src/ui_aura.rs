@@ -8,7 +8,7 @@ mod units;
 use bevy::prelude::*;
 
 use benilla_formats::{SpellCatalog, SpellDurationCatalog};
-use benilla_protocol::messages::{AURA_UPDATE_FLAG_HARMFUL, UNIT_AURA_POSITIVE_SLOTS};
+use benilla_protocol::messages::{RecordAura, AURA_UPDATE_FLAG_HARMFUL};
 use benilla_ui::script::{AuraState, ScriptValue, TrackingState, UiScript};
 
 use crate::char_select::ClientState;
@@ -199,26 +199,23 @@ fn table_inputs<'a>(
         .map(AuraInput::from)
 }
 
-/// A roster record's aura block as the two bindings' roster walk reads it (`0x519763`-`0x5197d2`,
-/// `0x519b53`-`0x519bc5`): ascending slot, the display filter alone (`0x51979f`, `0x519b8f`), no
-/// unit gate. The record holds no flags, so its harmful half is the slots from
-/// [`UNIT_AURA_POSITIVE_SLOTS`]; the stack count is always 1 (`0x51980f`, `0x519c2d`), and nothing
-/// is cancelable or timed.
+/// A roster record's aura block as `UnitAura`'s record walk reads it (`0x614a80`-`0x614b9c`):
+/// ascending slot, the display filter alone, no unit gate. Each aura's own flags byte says
+/// harmful (`0x80`) and cancelable (`0x10`); the stack count is always 1 and nothing is timed
+/// (`0x614bab`).
+///
+/// Deviation: 12340 stops at the first empty slot (`0x614a83`), so a hole an expired aura leaves
+/// hides every aura past it; this walks every occupied slot.
 fn record_inputs<'a>(
-    slots: impl Iterator<Item = (u8, u16)> + 'a,
+    auras: impl Iterator<Item = RecordAura> + 'a,
     catalog: Option<&'a SpellCatalog>,
 ) -> impl Iterator<Item = AuraInput> + 'a {
-    slots
-        .map(|(slot, spell)| (slot, u32::from(spell)))
-        .filter(move |&(_, spell)| spell != 0 && shown_in_aura_ui(catalog, spell))
-        .map(|(slot, spell_id)| AuraInput {
-            spell_id,
+    auras
+        .filter(move |a| a.spell_id != 0 && shown_in_aura_ui(catalog, a.spell_id))
+        .map(|a| AuraInput {
+            spell_id: a.spell_id,
             stacks: 1,
-            flags: if slot >= UNIT_AURA_POSITIVE_SLOTS {
-                AURA_UPDATE_FLAG_HARMFUL
-            } else {
-                0
-            },
+            flags: a.flags,
             caster: 0,
             duration_ms: 0,
             expires_at: 0.0,
@@ -548,15 +545,26 @@ mod tests {
         assert!(!untimed.helpful && !untimed.cancelable);
     }
 
+    /// The record walk reads harmful and cancelable off each aura's own flags (`0x614a8c`,
+    /// `0x614b2c`), whatever its slot.
     #[test]
-    fn a_roster_record_lists_its_harmful_half_by_slot() {
-        let inputs: Vec<AuraInput> =
-            record_inputs([(0u8, 5916u16), (32, 22766), (3, 0)].into_iter(), None).collect();
-        let helpful: Vec<bool> = aura_list(NO_SPELLS, &inputs)
+    fn a_roster_record_reads_harmful_and_cancelable_off_its_flags() {
+        let aura = |slot, spell_id, flags| RecordAura {
+            slot,
+            spell_id,
+            flags,
+        };
+        let block = [aura(0, 5916, 0x19), aura(1, 22766, 0x81), aura(3, 0, 0x19)];
+        let inputs: Vec<AuraInput> = record_inputs(block.into_iter(), None).collect();
+        let read: Vec<(bool, bool)> = aura_list(NO_SPELLS, &inputs)
             .iter()
-            .map(|a| a.helpful)
+            .map(|a| (a.helpful, a.cancelable))
             .collect();
-        assert_eq!(helpful, [true, false], "the empty slot is skipped");
+        assert_eq!(
+            read,
+            [(true, true), (false, false)],
+            "the empty slot is skipped"
+        );
     }
 
     // == `UnitBuff`'s unit-level gate (`0x519500`) ==

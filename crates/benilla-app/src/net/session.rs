@@ -101,6 +101,7 @@ pub(crate) struct Bridge<'w, 's> {
     net: Res<'w, NetCommands>,
     stores: Query<'w, 's, &'static mut ObjectStore>,
     transports: Query<'w, 's, &'static crate::transport::Transport>,
+    auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
 }
 
 fn on_login_edge(In(ev): In<SessionEvent>, mut e: Edges) {
@@ -269,7 +270,7 @@ fn on_worldport(
     } = ev
     {
         // Every streamed roster member is about to be purged; the reference deactivates each.
-        crate::ui_party::net::roster_deactivated(&mut group, &b.index, &b.stores, &b.names, &b.net);
+        crate::ui_party::net::roster_deactivated(&mut group, &b.index, &b.stores, &b.auras, &b.net);
         worldport(
             map_id,
             position,

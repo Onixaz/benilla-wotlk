@@ -1410,10 +1410,12 @@ fn parse_server_body(
         },
         opcode::SMSG_GROUP_DESTROYED => ServerPacket::GroupDestroyed,
         opcode::SMSG_GROUP_LIST => {
-            let (group_type, own_flags, members, leader, loot) = group::read_group_list(&mut r)?;
+            let (group_type, own_flags, own_roles, members, leader, loot) =
+                group::read_group_list(&mut r)?;
             ServerPacket::GroupList {
                 group_type,
                 own_flags,
+                own_roles,
                 members,
                 leader,
                 loot,
@@ -1428,10 +1430,11 @@ fn parse_server_body(
             }
         }
         opcode::SMSG_PARTY_MEMBER_STATS | opcode::SMSG_PARTY_MEMBER_STATS_FULL => {
-            let (guid, info) = group::read_party_member_stats(&mut r)?;
+            let full = opcode == opcode::SMSG_PARTY_MEMBER_STATS_FULL;
+            let (guid, info) = group::read_party_member_stats(&mut r, full)?;
             ServerPacket::PartyMemberStats {
                 guid,
-                full: opcode == opcode::SMSG_PARTY_MEMBER_STATS_FULL,
+                full,
                 info: Box::new(info),
             }
         }

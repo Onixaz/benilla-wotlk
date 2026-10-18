@@ -479,6 +479,7 @@ mod tests {
                 guid,
                 status: 0,
                 flags: 0,
+                roles: 0,
             });
     }
 

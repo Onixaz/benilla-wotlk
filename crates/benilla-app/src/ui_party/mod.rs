@@ -50,6 +50,8 @@ pub struct GroupState {
     pub group_type: u8,
     /// Our subgroup (bits 0-2) and raid-assistant bit (`0x80`).
     pub own_flags: u8,
+    /// Our LFG role bits, the list header's (`0x6d8870`), as [`GroupMemberEntry::roles`].
+    pub own_roles: u8,
     /// The other members in wire order; the list never contains the recipient.
     pub members: Vec<GroupMemberEntry>,
     /// How many `SMSG_GROUP_LIST`s landed, the all-zero and an unchanged one included. The
@@ -386,8 +388,8 @@ impl GroupState {
         }
     }
 
-    /// `SMSG_PARTY_MEMBER_STATS`: a delta patches the record field by field (`0x5e519d`, seeded from
-    /// the stored record), `_FULL` patches an emptied one (`0x5e51b1`). An aura block is patched
+    /// `SMSG_PARTY_MEMBER_STATS`: a delta patches the record field by field (`0x6cfa6e`, seeded from
+    /// the stored record), `_FULL` patches an emptied one (`0x6cfa5f`). An aura block is patched
     /// slot by slot ([`patch_auras`]).
     pub fn apply_stats(&mut self, guid: u64, full: bool, info: PartyMemberStatsInfo) {
         if full {
@@ -416,15 +418,14 @@ impl GroupState {
             pet_power_type,
             pet_cur_power,
             pet_max_power,
+            vehicle_seat,
         );
         if info.pet_name.is_some() {
             entry.pet_name = info.pet_name;
         }
         for (record, patch) in [
             (&mut entry.auras, info.auras),
-            (&mut entry.auras_negative, info.auras_negative),
             (&mut entry.pet_auras, info.pet_auras),
-            (&mut entry.pet_auras_negative, info.pet_auras_negative),
         ] {
             if let Some(patch) = patch {
                 patch_auras(record, &patch);
@@ -467,6 +468,7 @@ impl GroupState {
             in_group,
             group_type,
             own_flags,
+            own_roles,
             members,
             slots_emptied,
             leader,
@@ -489,6 +491,7 @@ impl GroupState {
         *in_group = false;
         *group_type = 0;
         *own_flags = 0;
+        *own_roles = 0;
         members.clear();
         *slots_emptied = false;
         *leader = 0;
@@ -549,6 +552,7 @@ mod tests {
             guid,
             status: 1,
             flags: 0,
+            roles: 0,
         }
     }
 

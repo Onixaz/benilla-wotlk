@@ -200,6 +200,7 @@ mod tests {
                 guid: NEW,
                 status: 1,
                 flags: 0,
+                roles: 0,
             });
         if selected {
             *world.resource_mut::<Selection>() = Selection {

@@ -1917,6 +1917,7 @@ mod tests {
             guid,
             status: 0,
             flags: subgroup,
+            roles: 0,
         };
         let mut raid = GroupState {
             group_type: GROUPTYPE_RAID,

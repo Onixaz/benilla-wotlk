@@ -44,6 +44,7 @@ fn send(app: &mut App, group_type: u8, statuses: &[u8], names_pending: bool) {
             guid: member(i as u64 + 1),
             status,
             flags: 0,
+            roles: 0,
         })
         .collect();
     app.world_mut()

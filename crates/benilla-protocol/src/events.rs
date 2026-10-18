@@ -996,6 +996,8 @@ pub enum SessionEvent {
     GroupList {
         group_type: u8,
         own_flags: u8,
+        /// Our own LFG role bits, as [`GroupMemberEntry::roles`].
+        own_roles: u8,
         members: Vec<GroupMemberEntry>,
         leader: u64,
         loot: Option<GroupLootInfo>,

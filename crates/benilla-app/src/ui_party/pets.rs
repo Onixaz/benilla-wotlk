@@ -186,8 +186,8 @@ fn record_state(group: &GroupState, guid: u64, owner: u64, exists: bool) -> Unit
         guid,
         owner: if exists { owner } else { 0 },
         name: record.map(|r| r.pet_name.clone().unwrap_or_default()),
-        health: record.map_or(0, |r| u32::from(r.pet_cur_hp.unwrap_or(0))),
-        max_health: record.map_or(0, |r| u32::from(r.pet_max_hp.unwrap_or(0))),
+        health: record.and_then(|r| r.pet_cur_hp).unwrap_or(0),
+        max_health: record.and_then(|r| r.pet_max_hp).unwrap_or(0),
         power_type: record.map_or(0, |r| r.shown_pet_power_type()),
         power: record.map_or(0, |r| r.shown_pet_power()),
         max_power: record.map_or(0, |r| r.shown_pet_max_power()),
@@ -334,6 +334,7 @@ pub(in crate::ui_party) mod tests {
                 guid: member(i),
                 status,
                 flags: 0,
+                roles: 0,
             })
             .collect();
         let mut group = app.world_mut().resource_mut::<GroupState>();
@@ -343,7 +344,7 @@ pub(in crate::ui_party) mod tests {
                 member(i),
                 true,
                 PartyMemberStatsInfo {
-                    status: Some(status),
+                    status: Some(status.into()),
                     cur_hp: Some(2000),
                     max_hp: Some(3000),
                     pet_guid: Some(pet(i)),
@@ -370,6 +371,7 @@ pub(in crate::ui_party) mod tests {
                 guid: member(i as u64 + 1),
                 status,
                 flags: 0,
+                roles: 0,
             })
             .collect();
         app.world_mut().resource_mut::<GroupState>().apply_list(
@@ -795,6 +797,7 @@ pub(in crate::ui_party) mod tests {
                     guid: member(i),
                     status: member_status::ONLINE,
                     flags: 0,
+                    roles: 0,
                 })
                 .collect(),
             ME,
@@ -807,7 +810,7 @@ pub(in crate::ui_party) mod tests {
             .stats
             .get_mut(&member(2))
             .unwrap()
-            .status = Some(member_status::OFFLINE);
+            .status = Some(member_status::OFFLINE.into());
         let first = frame(&mut app);
         assert!(
             !first.iter().any(|e| e.starts_with("UNIT_PET:")),
@@ -1009,6 +1012,7 @@ pub(in crate::ui_party) mod tests {
                 guid: member(1),
                 status: member_status::ONLINE,
                 flags: 0,
+                roles: 0,
             }],
             ME,
             None,

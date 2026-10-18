@@ -558,12 +558,14 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::GroupList {
             group_type,
             own_flags,
+            own_roles,
             members,
             leader,
             loot,
         } => vec![SessionEvent::GroupList {
             group_type,
             own_flags,
+            own_roles,
             members,
             leader,
             loot,

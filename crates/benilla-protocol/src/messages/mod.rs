@@ -143,7 +143,7 @@ pub use group::{
     party_operation, party_result, patch_auras, raid_target_request, raid_target_set,
     ready_check_answer, ready_check_start, request_party_member_stats, request_raid_info,
     GroupLootInfo, GroupMemberEntry, PartyMemberStatsInfo, RaidInstanceEntry, RaidTargetUpdate,
-    ReadyCheck, GROUP_MEMBER_ASSISTANT,
+    ReadyCheck, RecordAura, GROUP_MEMBER_ASSISTANT,
 };
 pub use guild::{
     guild_accept, guild_add_rank, guild_bank_money_param, guild_bank_money_withdrawn,

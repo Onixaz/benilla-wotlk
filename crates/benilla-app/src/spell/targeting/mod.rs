@@ -1240,6 +1240,7 @@ mod tests {
                     guid: grouped,
                     status: 0,
                     flags,
+                    roles: 0,
                 };
                 {
                     let mut group = world.resource_mut::<crate::ui_party::GroupState>();

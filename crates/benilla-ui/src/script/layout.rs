@@ -785,7 +785,7 @@ impl UiScript {
             }
             solver.solve();
             for &i in &solve_frames {
-                let (h, id, _) = scope.plan[i as usize];
+                let (h, id, over) = scope.plan[i as usize];
                 match solver.rect(id) {
                     Some(r) => {
                         if resolved.get(&h) != Some(&r) {
@@ -793,6 +793,12 @@ impl UiScript {
                             changed = true;
                         }
                     }
+                    // `ClearAllPoints` (`0x48a200`) requests no resize, so the last rect stands.
+                    // Deviation: a later resize drops it there (`0x489570`); here it stays.
+                    None if over.is_none()
+                        && layout_inputs
+                            .get(&h)
+                            .is_some_and(|input| input.anchors.is_empty()) => {}
                     None => {
                         if resolved.remove(&h).is_some() {
                             changed = true;

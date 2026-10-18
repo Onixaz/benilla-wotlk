@@ -274,7 +274,7 @@ impl UnitAuras {
             None if record_ok => {
                 if let Some(group) = group {
                     self.scratch
-                        .extend(record_inputs(group.roster_aura_slots(guid), catalog));
+                        .extend(record_inputs(group.roster_auras(guid), catalog));
                 }
             }
             None => return,
@@ -311,7 +311,7 @@ impl UnitAuras {
 #[cfg(test)]
 mod tests {
     use benilla_protocol::messages::{
-        member_status, GroupMemberEntry, ObjectFields, PartyMemberStatsInfo,
+        member_status, GroupMemberEntry, ObjectFields, PartyMemberStatsInfo, RecordAura,
     };
     use benilla_ui::script::UiScript;
     use bevy::prelude::*;
@@ -324,6 +324,23 @@ mod tests {
     const ME: u64 = 0x10;
     const MEMBER: u64 = 0x1234;
     const PET: u64 = 0xF140_0000_0000_0077;
+
+    /// A record aura block of `(slot, spell)` buffs and debuffs, flagged as their wire flags.
+    fn block(buffs: &[(u8, u32)], debuffs: &[(u8, u32)]) -> Option<Vec<RecordAura>> {
+        let flagged = |&(slot, spell_id): &(u8, u32), flags| RecordAura {
+            slot,
+            spell_id,
+            flags,
+        };
+        let mut auras: Vec<_> = buffs
+            .iter()
+            .map(|a| flagged(a, HELP))
+            .chain(debuffs.iter().map(|a| flagged(a, HARM)))
+            .collect();
+        auras.sort_by_key(|a| a.slot);
+        Some(auras)
+    }
+
     /// A live helpful and a live harmful aura's wire flags.
     const HELP: u8 = 1;
     const HARM: u8 = benilla_protocol::messages::AURA_UPDATE_FLAG_HARMFUL | 1;
@@ -369,6 +386,7 @@ mod tests {
             guid: MEMBER,
             status: member_status::ONLINE,
             flags: 0,
+            roles: 0,
         };
         app.world_mut().resource_mut::<GroupState>().apply_list(
             0,
@@ -459,8 +477,8 @@ mod tests {
             &mut app,
             true,
             PartyMemberStatsInfo {
-                status: Some(member_status::ONLINE),
-                auras_negative: Some(vec![(40, 770)]),
+                status: Some(member_status::ONLINE.into()),
+                auras: block(&[], &[(40, 770)]),
                 ..Default::default()
             },
         );
@@ -484,9 +502,8 @@ mod tests {
             &mut app,
             true,
             PartyMemberStatsInfo {
-                status: Some(member_status::ONLINE),
-                auras: Some(vec![(0, 1126), (3, 21562)]),
-                auras_negative: Some(vec![(33, 589)]),
+                status: Some(member_status::ONLINE.into()),
+                auras: block(&[(0, 1126), (3, 21562)], &[(33, 589)]),
                 ..Default::default()
             },
         );
@@ -509,7 +526,7 @@ mod tests {
             &mut app,
             false,
             PartyMemberStatsInfo {
-                status: Some(member_status::OFFLINE),
+                status: Some(member_status::OFFLINE.into()),
                 ..Default::default()
             },
         );
@@ -528,9 +545,8 @@ mod tests {
             &mut app,
             true,
             PartyMemberStatsInfo {
-                status: Some(member_status::ONLINE),
-                auras: Some(vec![(0, 1126)]),
-                auras_negative: Some(vec![(33, 589)]),
+                status: Some(member_status::ONLINE.into()),
+                auras: block(&[(0, 1126)], &[(33, 589)]),
                 ..Default::default()
             },
         );
@@ -544,6 +560,7 @@ mod tests {
                 guid: MEMBER,
                 status,
                 flags: 0,
+                roles: 0,
             };
             app.world_mut().resource_mut::<GroupState>().apply_list(
                 0,
@@ -572,8 +589,8 @@ mod tests {
         assert_eq!(listed(&mut app, "party1", true), [589]);
     }
 
-    /// The record is slot-indexed: deltas patch named slots, the halves split at slot 32, and each
-    /// walk is ascending slot whatever order the slots filled in.
+    /// The record is slot-indexed: deltas patch named slots, each aura's flags split buffs from
+    /// debuffs, and each walk is ascending slot whatever order the slots filled in.
     #[test]
     fn record_auras_list_in_slot_order_and_split_buffs_from_debuffs() {
         let mut app = party_app();
@@ -581,9 +598,8 @@ mod tests {
             &mut app,
             true,
             PartyMemberStatsInfo {
-                status: Some(member_status::ONLINE),
-                auras: Some(vec![(5, 1126)]),
-                auras_negative: Some(vec![(40, 770)]),
+                status: Some(member_status::ONLINE.into()),
+                auras: block(&[(5, 1126)], &[(40, 770)]),
                 ..Default::default()
             },
         );
@@ -594,7 +610,7 @@ mod tests {
             &mut app,
             false,
             PartyMemberStatsInfo {
-                auras: Some(vec![(2, 21562)]),
+                auras: block(&[(2, 21562)], &[]),
                 ..Default::default()
             },
         );
@@ -602,7 +618,7 @@ mod tests {
             &mut app,
             false,
             PartyMemberStatsInfo {
-                auras_negative: Some(vec![(34, 589)]),
+                auras: block(&[], &[(34, 589)]),
                 ..Default::default()
             },
         );
@@ -616,7 +632,7 @@ mod tests {
             &mut app,
             false,
             PartyMemberStatsInfo {
-                auras: Some(vec![(5, 0)]),
+                auras: block(&[(5, 0)], &[]),
                 ..Default::default()
             },
         );
@@ -648,10 +664,9 @@ mod tests {
             &mut app,
             true,
             PartyMemberStatsInfo {
-                status: Some(member_status::ONLINE),
+                status: Some(member_status::ONLINE.into()),
                 pet_guid: Some(PET),
-                pet_auras: Some(vec![(1, 1126)]),
-                pet_auras_negative: Some(vec![(32, 770)]),
+                pet_auras: block(&[(1, 1126)], &[(32, 770)]),
                 ..Default::default()
             },
         );
@@ -666,7 +681,7 @@ mod tests {
             &mut app,
             false,
             PartyMemberStatsInfo {
-                pet_auras_negative: Some(vec![(32, 0), (33, 589)]),
+                pet_auras: block(&[], &[(32, 0), (33, 589)]),
                 ..Default::default()
             },
         );
@@ -713,6 +728,7 @@ mod tests {
             guid,
             status,
             flags: subgroup,
+            roles: 0,
         };
         let online = member_status::ONLINE;
         app.world_mut().resource_mut::<GroupState>().apply_list(
@@ -730,10 +746,10 @@ mod tests {
         );
     }
 
-    fn online(auras_negative: Vec<(u8, u16)>) -> PartyMemberStatsInfo {
+    fn online(debuffs: Vec<(u8, u32)>) -> PartyMemberStatsInfo {
         PartyMemberStatsInfo {
-            status: Some(member_status::ONLINE),
-            auras_negative: Some(auras_negative),
+            status: Some(member_status::ONLINE.into()),
+            auras: block(&[], &debuffs),
             ..Default::default()
         }
     }
@@ -767,8 +783,7 @@ mod tests {
             true,
             PartyMemberStatsInfo {
                 pet_guid: Some(FAR_PET),
-                pet_auras: Some(vec![(1, 1126)]),
-                pet_auras_negative: Some(vec![(33, 770)]),
+                pet_auras: block(&[(1, 1126)], &[(33, 770)]),
                 ..online(vec![(32, 589), (35, 11976)])
             },
         );
@@ -863,10 +878,10 @@ mod tests {
             FAR,
             true,
             PartyMemberStatsInfo {
-                status: Some(member_status::OFFLINE),
+                status: Some(member_status::OFFLINE.into()),
                 pet_guid: Some(FAR_PET),
-                pet_auras_negative: Some(vec![(33, 770)]),
-                auras_negative: Some(vec![(32, 589)]),
+                pet_auras: block(&[], &[(33, 770)]),
+                auras: block(&[], &[(32, 589)]),
                 ..Default::default()
             },
         );

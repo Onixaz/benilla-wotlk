@@ -4,7 +4,7 @@
 //! `+0x720`, read back by `0x5ad260` and `0x5ae510`), so a set changes the snapshot at once and
 //! queues the change for the app.
 
-use mlua::{Lua, Value};
+use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::string_arg;
 use super::who_sort::WhoSortChain;
@@ -331,6 +331,54 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // GetMuteStatus(nameOrUnit[, channel]) (`0x4fcdf0`): 1 for a player on the ignore or mute list
+    // (`0x4fce5b`), the argument read as a cached name, else a unit token (`0x4fb580`); no value,
+    // not an error, without a string (`0x4fce0d`). A voice-channel squelch also answers 1, and
+    // benilla joins no voice channel.
+    g.set(
+        "GetMuteStatus",
+        lua.create_function(|lua, args: MultiValue| {
+            let arg = match args.into_iter().next() {
+                Some(Value::String(s)) => s.to_string_lossy(),
+                Some(Value::Integer(n)) => n.to_string(),
+                Some(Value::Number(n)) => n.to_string(),
+                _ => return Ok(MultiValue::new()),
+            };
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let listed = |name: &str| {
+                model
+                    .social
+                    .ignores
+                    .iter()
+                    .any(|i| i.eq_ignore_ascii_case(name))
+            };
+            let ignored = listed(&arg)
+                || model
+                    .unit(&arg)
+                    .and_then(|u| u.name.as_deref())
+                    .is_some_and(listed);
+            Ok(MultiValue::from_vec(vec![super::binding_abi::flag(
+                ignored,
+            )]))
+        })?,
+    )?;
+
+    // UnitIsTalking(nameOrUnit) (`0x7df0b0`): 1 for a player speaking in a voice channel; nil, as
+    // benilla joins none, and no value without a string.
+    g.set(
+        "UnitIsTalking",
+        lua.create_function(|_, args: MultiValue| {
+            Ok(match args.into_iter().next() {
+                Some(Value::String(_) | Value::Integer(_) | Value::Number(_)) => {
+                    MultiValue::from_vec(vec![Value::Nil])
+                }
+                _ => MultiValue::new(),
+            })
+        })?,
+    )?;
+
     // GetSelectedIgnore / SetSelectedIgnore (`0x5ae630` / `0x5ae5f0`), as the friend pair.
     g.set(
         "GetSelectedIgnore",
@@ -530,6 +578,48 @@ mod tests {
             ..Default::default()
         });
         s
+    }
+
+    /// `GetMuteStatus` (`0x4fcdf0`): 1 for an ignored player named directly or through a unit
+    /// token, nil for anyone else, and no value at all without a string.
+    #[test]
+    fn get_mute_status_answers_the_ignore_list_by_name_or_token() {
+        let mut s = UiScript::new().unwrap();
+        s.set_social(SocialState {
+            ignores: vec!["Galas".to_string()],
+            ..Default::default()
+        });
+        s.set_unit(
+            "party1",
+            Some(crate::script::UnitState {
+                exists: true,
+                name: Some("Galas".into()),
+                ..Default::default()
+            }),
+        );
+        let muted = |s: &mut UiScript, arg: &str| {
+            s.eval::<Option<i64>>(&format!("return GetMuteStatus({arg}, 'raid')"))
+                .unwrap()
+        };
+        assert_eq!(muted(&mut s, "'galas'"), Some(1), "a name, any case");
+        assert_eq!(muted(&mut s, "'party1'"), Some(1), "a token's name");
+        assert_eq!(muted(&mut s, "'Erdrin'"), None);
+        assert_eq!(
+            s.eval::<i64>("return select('#', GetMuteStatus())")
+                .unwrap(),
+            0
+        );
+        // `UnitIsTalking` (`0x7df0b0`): nobody speaks with no voice channel joined.
+        assert_eq!(
+            s.eval::<(i64, i64)>(
+                "return select('#', UnitIsTalking('Galas')), select('#', UnitIsTalking())"
+            )
+            .unwrap(),
+            (1, 0)
+        );
+        assert!(s
+            .eval::<bool>("return UnitIsTalking('party1') == nil")
+            .unwrap());
     }
 
     /// A queued event would leave `order` one click stale.

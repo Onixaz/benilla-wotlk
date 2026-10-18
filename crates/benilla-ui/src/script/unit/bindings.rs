@@ -157,6 +157,25 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "UnitHasVehicleUI",
         lua.create_function(|_, _token: Value| Ok(false))?,
     )?;
+    // `UnitTargetsVehicleInRaidUI(unit)` (`0x613780`): the flag `0x8` of the same seat
+    // (`0x613798`), so false on no seat, as above.
+    g.set(
+        "UnitTargetsVehicleInRaidUI",
+        lua.create_function(|_, _token: Value| Ok(false))?,
+    )?;
+    // `UnitInVehicle(unit)` (`0x6133d0`): 1 or nil, a held unit's passenger state, else the party
+    // record's status bit `0x200` (`0x61347b`).
+    g.set(
+        "UnitInVehicle",
+        lua.create_function(|lua, token: Value| {
+            let token = Some(crate::script::binding_abi::string_arg(
+                lua,
+                token,
+                r#"Usage: UnitInVehicle("unit")"#,
+            )?);
+            unit_predicate(lua, &token, |u| u.in_vehicle)
+        })?,
+    )?;
 
     // `IsReferAFriendLinked(unit)` (`0x51d1b0`): 1 or nil, never raising, and nil with no player
     // object. The token resolves to a guid (`0x60c1c0`) and `0x6d7590` asks three places in turn:
@@ -743,6 +762,45 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             unit_predicate(lua, &token, |u| u.is_connected)
         })?,
     )?;
+    // UnitIsAFK(unit) (`0x60cc30`) answers nil for a held player the player can attack, before
+    // the flag (`0x60cccd`); UnitIsDND(unit) (`0x60cd50`) has no such gate.
+    g.set(
+        "UnitIsAFK",
+        lua.create_function(|lua, token: Value| {
+            let token = Some(crate::script::binding_abi::string_arg(
+                lua,
+                token,
+                r#"Usage: UnitIsAFK("unit")"#,
+            )?);
+            unit_predicate(lua, &token, |u| u.afk && !u.can_attack)
+        })?,
+    )?;
+    g.set(
+        "UnitIsDND",
+        lua.create_function(|lua, token: Value| {
+            let token = Some(crate::script::binding_abi::string_arg(
+                lua,
+                token,
+                r#"Usage: UnitIsDND("unit")"#,
+            )?);
+            unit_predicate(lua, &token, |u| u.dnd)
+        })?,
+    )?;
+    // UnitGroupRolesAssigned(unit) (`0x60c810`): three booleans off the role bits, tank, healer,
+    // damage (`0x60c869` on). No usage gate: a bad token is GUID 0, no role.
+    g.set(
+        "UnitGroupRolesAssigned",
+        lua.create_function(|lua, token: Option<String>| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let roles = token
+                .as_deref()
+                .and_then(|t| model.unit(t))
+                .map_or(0, |u| u.group_roles);
+            Ok((roles & 0x2 != 0, roles & 0x4 != 0, roles & 0x8 != 0))
+        })?,
+    )?;
     g.set(
         "UnitIsPVP",
         lua.create_function(|lua, token: Value| {
@@ -826,6 +884,19 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             }
         })?,
     )?;
+    // UnitClassBase(unit) (`0x610040`): `ChrClasses.dbc`'s name and file for the class byte,
+    // the player's from the record (`0x610094`); the pair `UnitClass` answers.
+    g.set(
+        "UnitClassBase",
+        lua.create_function(|lua, token: Value| {
+            let token = Some(crate::script::binding_abi::string_arg(
+                lua,
+                token,
+                r#"Usage: UnitClassBase("unit")"#,
+            )?);
+            class_pair(lua, &token)
+        })?,
+    )?;
     g.set(
         "UnitClass",
         lua.create_function(|lua, token: Value| {
@@ -834,27 +905,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 token,
                 r#"Usage: UnitClass("unit")"#,
             )?);
-            // The `"player"` arm reads the record's class byte (`0x5183b9`, `0xc27e81`); the second
-            // return is the uppercase token.
-            if let Some(pair) = player_record_arm(lua, &token, |r| r.class.clone()) {
-                return match pair {
-                    Some((loc, file)) => Ok((
-                        Value::String(lua.create_string(&loc)?),
-                        Value::String(lua.create_string(&file)?),
-                    )),
-                    None => Ok((Value::Nil, Value::Nil)),
-                };
-            }
-            let pair = with_unit(lua, &token, None, |u| {
-                u.class.clone().zip(u.class_file.clone())
-            })?;
-            match pair {
-                Some((loc, file)) => Ok((
-                    Value::String(lua.create_string(&loc)?),
-                    Value::String(lua.create_string(&file)?),
-                )),
-                None => Ok((Value::Nil, Value::Nil)),
-            }
+            class_pair(lua, &token)
         })?,
     )?;
     // UnitHasRelicSlot(unit) (`0x519e50`): a player unit's class has a relic slot, `ChrClasses.dbc`
@@ -1378,4 +1429,22 @@ fn power_token(ty: u8) -> &'static str {
         "RUNIC_POWER",
     ];
     TOKENS.get(usize::from(ty)).copied().unwrap_or("")
+}
+
+/// `UnitClass`'s two returns, the display name and the uppercase token. The `"player"` arm reads
+/// the record's class byte (`0x5183b9`, `0xc27e81`).
+fn class_pair(lua: &Lua, token: &Option<String>) -> mlua::Result<(Value, Value)> {
+    let pair = match player_record_arm(lua, token, |r| r.class.clone()) {
+        Some(pair) => pair,
+        None => with_unit(lua, token, None, |u| {
+            u.class.clone().zip(u.class_file.clone())
+        })?,
+    };
+    match pair {
+        Some((loc, file)) => Ok((
+            Value::String(lua.create_string(&loc)?),
+            Value::String(lua.create_string(&file)?),
+        )),
+        None => Ok((Value::Nil, Value::Nil)),
+    }
 }
