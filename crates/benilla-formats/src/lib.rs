@@ -707,6 +707,20 @@ mod tests {
     /// `RainDrop01.blp` (16×128 DXT3) stores 16 bytes for its 2×16 and 1×8 levels, which need 64
     /// and 32. The reference completes a short level from the bytes after it (`0x5a5780`); a zero
     /// fill would darken the Mod2x rain streak toward black.
+    /// The Storm Peaks base snow is a single-unit file in `lichking.MPQ`: it reads at its block
+    /// table size and decodes.
+    #[test]
+    fn a_single_unit_texture_reads_and_decodes() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = open_chain(&data).expect("open chain");
+        let path = "TILESET\\Expansion02\\StormPeaks\\SP_SnowA.blp";
+        let bytes = chain
+            .read_file(path)
+            .unwrap_or_else(|e| panic!("{path}: {e:#}"));
+        let native = blp_bytes_to_native_chain(&bytes).expect("decodes natively");
+        assert!(native.width > 0 && native.height > 0 && !native.mips.is_empty());
+    }
+
     #[test]
     fn the_rain_streak_texture_is_neutral_on_every_level_the_sampler_reaches() {
         let data = crate::wow_data_or_skip!();

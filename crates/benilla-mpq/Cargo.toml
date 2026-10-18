@@ -3,7 +3,7 @@ name = "benilla-mpq"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Read-only MPQ archive reader for WoW 1.12.1 (build 5875)"
+description = "Read-only MPQ archive reader for WoW 3.3.5a (build 12340)"
 
 [lints]
 workspace = true
@@ -13,3 +13,6 @@ workspace = true
 benilla-bytes = { path = "../benilla-bytes" }
 # Inflate for the ZLIB (0x02) sector codec, on its pure-Rust miniz_oxide backend.
 flate2 = "1.1"
+# Decompress for the BZIP2 (0x10) codec, which 3.3.5a's lichking.MPQ uses on single-unit files; on
+# its pure-Rust libbz2-rs-sys backend.
+bzip2 = "0.6"
