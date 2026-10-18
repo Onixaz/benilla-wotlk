@@ -12,12 +12,14 @@ pub(super) const MOVEMENT_FLAG_JUMPING: u32 = 0x2000;
 pub(super) const MOVEMENT_FLAG_SWIMMING: u32 = 0x20_0000;
 pub(super) const MOVEMENT_FLAG_SPLINE_ENABLED: u32 = 0x40_0000;
 /// 1.12.1's flying bit, 3.3.5a's `FLYING` (`0x200_0000`) once mapped.
-const MOVEMENT_FLAG_FLYING: u32 = 0x100_0000;
+pub const CLASSIC_FLYING: u32 = 0x100_0000;
 /// 3.3.5a's `ASCENDING` (`0x40_0000`) in the 1.12.1 word: its `MOVEFLAG_UNUSED10`, since 1.12.1's
 /// `0x40_0000` is the spline bit.
 pub const CLASSIC_ASCENDING: u32 = 0x200;
 /// 3.3.5a's `DESCENDING` (`0x80_0000`) in the 1.12.1 word, where that bit is unused.
 pub const CLASSIC_DESCENDING: u32 = 0x80_0000;
+/// 3.3.5a's `CAN_FLY` (`0x100_0000`) in the 1.12.1 word, a bit 1.12.1 never defines.
+pub const CLASSIC_CAN_FLY: u32 = 0x800_0000;
 
 /// `MSG_MOVE_TIME_SKIPPED` inbound: a packed guid and the ms that mover's client skipped
 /// (reference handler `0x603b40`). Our own `CMSG_MOVE_TIME_SKIPPED` has the same shape.
@@ -37,6 +39,8 @@ mod wotlk_flag {
     /// Set by StartAscend `0x9898e0`, cleared with [`DESCENDING`] by StopAscend `0x989940`.
     pub const ASCENDING: u32 = 0x40_0000;
     pub const DESCENDING: u32 = 0x80_0000;
+    /// Set and cleared only by `SMSG_MOVE_SET_CAN_FLY` / `UNSET` (`0x6ef860` events 47, 48).
+    pub const CAN_FLY: u32 = 0x100_0000;
     pub const FLYING: u32 = 0x200_0000;
     pub const SPLINE_ELEVATION: u32 = 0x400_0000;
     pub const SPLINE_ENABLED: u32 = 0x800_0000;
@@ -48,17 +52,18 @@ mod wotlk_flag {
 
 /// 3.3.5a's movement flags in 1.12.1's bits. 3.3.5a moved transport to `0x200` and spline to
 /// `0x0800_0000`, shifted root through the pending bits down by one and added ascending,
-/// descending, can-fly and pending-root. Ascending and descending ride 1.12.1's two unused bits,
-/// [`CLASSIC_ASCENDING`] and [`CLASSIC_DESCENDING`]; can-fly and pending-root are dropped. Its
-/// gravity off is 1.12.1's levitating and its flying 1.12.1's `0x0100_0000`.
+/// descending, can-fly and pending-root. Ascending, descending and can-fly ride 1.12.1's unused
+/// bits ([`CLASSIC_ASCENDING`], [`CLASSIC_DESCENDING`], [`CLASSIC_CAN_FLY`]); pending-root is
+/// dropped. Its gravity off is 1.12.1's levitating and its flying 1.12.1's `0x0100_0000`.
 pub(crate) fn classic_flags_from_wotlk(flags: u32) -> u32 {
     // Forward through walking, and swimming, spline elevation, water walk, safe fall and hover,
     // keep their bit.
     let mut classic = flags & (0x1ff | 0x20_0000 | 0x400_0000 | 0x7000_0000);
-    let moved: [(u32, u32); 15] = [
+    let moved: [(u32, u32); 16] = [
         (wotlk_flag::ON_TRANSPORT, MOVEMENT_FLAG_ON_TRANSPORT),
         (wotlk_flag::ASCENDING, CLASSIC_ASCENDING),
         (wotlk_flag::DESCENDING, CLASSIC_DESCENDING),
+        (wotlk_flag::CAN_FLY, CLASSIC_CAN_FLY),
         (wotlk_flag::DISABLE_GRAVITY, 0x400),
         (wotlk_flag::ROOT, 0x1000),
         (wotlk_flag::FALLING, MOVEMENT_FLAG_JUMPING),
@@ -84,10 +89,11 @@ pub(crate) fn classic_flags_from_wotlk(flags: u32) -> u32 {
 /// bit it produces.
 pub(crate) fn wotlk_flags_from_classic(classic: u32) -> u32 {
     let mut flags = classic & (0x1ff | 0x20_0000 | 0x400_0000 | 0x7000_0000);
-    let moved: [(u32, u32); 15] = [
+    let moved: [(u32, u32); 16] = [
         (MOVEMENT_FLAG_ON_TRANSPORT, wotlk_flag::ON_TRANSPORT),
         (CLASSIC_ASCENDING, wotlk_flag::ASCENDING),
         (CLASSIC_DESCENDING, wotlk_flag::DESCENDING),
+        (CLASSIC_CAN_FLY, wotlk_flag::CAN_FLY),
         (0x400, wotlk_flag::DISABLE_GRAVITY),
         (0x1000, wotlk_flag::ROOT),
         (MOVEMENT_FLAG_JUMPING, wotlk_flag::FALLING),
@@ -98,7 +104,7 @@ pub(crate) fn wotlk_flags_from_classic(classic: u32) -> u32 {
         (0x4_0000, 0x2_0000),  // pending backward
         (0x8_0000, 0x4_0000),  // pending strafe left
         (0x10_0000, 0x8_0000), // pending strafe right
-        (MOVEMENT_FLAG_FLYING, wotlk_flag::FLYING),
+        (CLASSIC_FLYING, wotlk_flag::FLYING),
         (MOVEMENT_FLAG_SPLINE_ENABLED, wotlk_flag::SPLINE_ENABLED),
     ];
     for (shared, wotlk) in moved {
@@ -175,8 +181,8 @@ pub(crate) fn read_movement_info_wotlk(r: &mut impl Read) -> io::Result<Movement
 
 // --- movement vocabulary ---
 
-/// A mover speed, each with its own force-change opcode pair; the order is the `LIVING` block's
-/// speed array and vmangos `UnitMoveType`.
+/// A mover speed, each with its own force-change opcode pair; the order is AzerothCore's
+/// `UnitMoveType`, the `LIVING` block's nine with the turn rate after the flight pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpeedKind {
     Walk,
@@ -185,6 +191,9 @@ pub enum SpeedKind {
     Swim,
     SwimBack,
     TurnRate,
+    Flight,
+    FlightBack,
+    PitchRate,
 }
 
 impl SpeedKind {
@@ -198,6 +207,9 @@ impl SpeedKind {
             SpeedKind::Swim => opcode::CMSG_FORCE_SWIM_SPEED_CHANGE_ACK,
             SpeedKind::SwimBack => opcode::CMSG_FORCE_SWIM_BACK_SPEED_CHANGE_ACK,
             SpeedKind::TurnRate => opcode::CMSG_FORCE_TURN_RATE_CHANGE_ACK,
+            SpeedKind::Flight => opcode::CMSG_FORCE_FLIGHT_SPEED_CHANGE_ACK,
+            SpeedKind::FlightBack => opcode::CMSG_FORCE_FLIGHT_BACK_SPEED_CHANGE_ACK,
+            SpeedKind::PitchRate => opcode::CMSG_FORCE_PITCH_RATE_CHANGE_ACK,
         }
     }
 }
@@ -213,6 +225,9 @@ pub enum MoveMode {
     WaterWalk,
     FeatherFall,
     Hover,
+    /// 3.3.5a's `CAN_FLY`: the mover may take flight, and `SMSG_MOVE_UNSET_CAN_FLY` ends a flight
+    /// in progress (`0x6ef860` event 48 calls StopFlying `0x98c240`).
+    CanFly,
 }
 
 impl MoveMode {
@@ -223,6 +238,7 @@ impl MoveMode {
             MoveMode::WaterWalk => 0x1000_0000,
             MoveMode::FeatherFall => 0x2000_0000,
             MoveMode::Hover => 0x4000_0000,
+            MoveMode::CanFly => CLASSIC_CAN_FLY,
         }
     }
 
@@ -236,11 +252,12 @@ impl MoveMode {
             (MoveMode::WaterWalk, _) => opcode::CMSG_MOVE_WATER_WALK_ACK,
             (MoveMode::FeatherFall, _) => opcode::CMSG_MOVE_FEATHER_FALL_ACK,
             (MoveMode::Hover, _) => opcode::CMSG_MOVE_HOVER_ACK,
+            (MoveMode::CanFly, _) => opcode::CMSG_MOVE_SET_CAN_FLY_ACK,
         }
     }
 
-    /// Whether the ack ends in a `u32 apply`: not root's, whose handler infers it from the opcode
-    /// (vmangos `Server/Packets/Movement.cpp:38-59`).
+    /// Whether the ack ends in the `f32` apply value, 1.0 or 0.0: not root's (`AckMessageHasValue`
+    /// `0x7151f0`, written after the info by `0x71ef80`).
     pub fn ack_carries_apply(self) -> bool {
         !matches!(self, MoveMode::Root)
     }
@@ -486,6 +503,8 @@ mod tests {
         assert_eq!(wotlk_flags_from_classic(0x1000), 0x800, "root");
         assert_eq!(wotlk_flags_from_classic(CLASSIC_ASCENDING), 0x40_0000);
         assert_eq!(wotlk_flags_from_classic(CLASSIC_DESCENDING), 0x80_0000);
+        assert_eq!(wotlk_flags_from_classic(CLASSIC_CAN_FLY), 0x100_0000);
+        assert_eq!(wotlk_flags_from_classic(CLASSIC_FLYING), 0x200_0000);
         assert_eq!(
             classic_flags_from_wotlk(0x40_0000),
             CLASSIC_ASCENDING,
@@ -506,6 +525,19 @@ mod tests {
             &0x00a0_0000u32.to_le_bytes(),
             "SWIMMING | DESCENDING"
         );
+    }
+
+    /// A flyer's report carries CAN_FLY and FLYING in 3.3.5a's places, and the pitch tail.
+    #[test]
+    fn a_flyer_round_trips_with_its_pitch() {
+        let (_, back, len) = round_trip(&info(CLASSIC_CAN_FLY | CLASSIC_FLYING));
+        let (_, _, grounded) = round_trip(&info(CLASSIC_CAN_FLY));
+        assert_eq!(back.flags, CLASSIC_CAN_FLY | CLASSIC_FLYING);
+        assert_eq!(back.pitch, -0.7);
+        assert_eq!(len - grounded, 4, "the pitch rides FLYING, not CAN_FLY");
+        let mut bytes = Vec::new();
+        info(CLASSIC_CAN_FLY | CLASSIC_FLYING).write(MOVER, &mut bytes);
+        assert_eq!(&bytes[3..7], &0x0300_0000u32.to_le_bytes());
     }
 
     #[test]

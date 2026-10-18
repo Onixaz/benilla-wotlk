@@ -297,6 +297,8 @@ fn death_arc_family_parses_and_decodes() {
         (opcode::SMSG_MOVE_NORMAL_FALL, MoveMode::FeatherFall, false),
         (opcode::SMSG_MOVE_SET_HOVER, MoveMode::Hover, true),
         (opcode::SMSG_MOVE_UNSET_HOVER, MoveMode::Hover, false),
+        (opcode::SMSG_MOVE_SET_CAN_FLY, MoveMode::CanFly, true),
+        (opcode::SMSG_MOVE_UNSET_CAN_FLY, MoveMode::CanFly, false),
     ] {
         let pkt = messages::parse_server(op, &body).unwrap();
         match decode(pkt).as_slice() {
@@ -326,7 +328,12 @@ fn death_arc_family_parses_and_decodes() {
         opcode::CMSG_FORCE_MOVE_UNROOT_ACK
     );
     assert!(!MoveMode::Root.ack_carries_apply());
-    for mode in [MoveMode::WaterWalk, MoveMode::FeatherFall, MoveMode::Hover] {
+    for mode in [
+        MoveMode::WaterWalk,
+        MoveMode::FeatherFall,
+        MoveMode::Hover,
+        MoveMode::CanFly,
+    ] {
         assert_eq!(
             mode.ack_opcode(true),
             mode.ack_opcode(false),
@@ -336,8 +343,8 @@ fn death_arc_family_parses_and_decodes() {
     }
 }
 
-/// Root's ack lacks the trailing u32 apply the other modes carry (AzerothCore `HandleMoveRootAck`,
-/// `HandleMoveFlagChangeOpcode`).
+/// Root's ack lacks the trailing `f32` apply the other modes carry (`AckMessageHasValue`
+/// `0x7151f0`).
 #[test]
 fn move_flag_ack_bodies_differ_by_the_apply_tail() {
     use benilla_protocol::messages::{move_flag_ack, MovementInfo};
@@ -361,7 +368,9 @@ fn move_flag_ack_bodies_differ_by_the_apply_tail() {
     let walk = move_flag_ack(0x2A, 7, &info, Some(true));
     assert_eq!(root.len() + 4, walk.len());
     assert_eq!(&walk[..root.len()], root.as_slice());
-    assert_eq!(&walk[root.len()..], 1u32.to_le_bytes());
+    assert_eq!(&walk[root.len()..], 1.0f32.to_le_bytes());
+    let revoke = move_flag_ack(0x2A, 7, &info, Some(false));
+    assert_eq!(&revoke[root.len()..], 0.0f32.to_le_bytes());
     // The ack's guid is packed: mask 0x01, one byte.
     assert_eq!(&root[..2], &[0x01, 0x2A]);
     assert_eq!(&root[2..6], &7u32.to_le_bytes());

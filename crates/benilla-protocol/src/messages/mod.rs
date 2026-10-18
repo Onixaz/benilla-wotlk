@@ -186,7 +186,7 @@ pub use mirror_timer::{
 };
 pub use movement::{
     JumpInfo, MoveMode, MovementInfo, RelayVerb, SpeedKind, SplineMode, TransportPose,
-    CLASSIC_ASCENDING, CLASSIC_DESCENDING,
+    CLASSIC_ASCENDING, CLASSIC_CAN_FLY, CLASSIC_DESCENDING, CLASSIC_FLYING,
 };
 pub use opcode_names::opcode_name;
 pub use packet::{CreatureQueryInfo, MonsterMoveFacing, ServerPacket};

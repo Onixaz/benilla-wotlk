@@ -131,8 +131,8 @@ impl WorldWriter {
         )
     }
 
-    /// Ack a granted root, water-walk, feather-fall or hover: guid, echoed counter and our
-    /// pose, plus a trailing `u32 apply` for all but root. Unacked, the server never applies it.
+    /// Ack a granted root, water-walk, feather-fall, hover or can-fly: guid, echoed counter and
+    /// our pose, plus a trailing `f32` apply for all but root. Unacked, the server never applies it.
     /// `flags` must carry the mode's bit (a root apply-ack without it is a kick, vmangos
     /// `MovementHandler.cpp:715-722`) and no moving bit beside `MOVEFLAG_ROOT`; turn bits are fine.
     pub fn move_mode_ack(

@@ -459,6 +459,13 @@ pub const SMSG_FORCE_SWIM_BACK_SPEED_CHANGE: u16 = 0x02DC; // 732
 pub const CMSG_FORCE_SWIM_BACK_SPEED_CHANGE_ACK: u16 = 0x02DD; // 733
 pub const SMSG_FORCE_TURN_RATE_CHANGE: u16 = 0x02DE; // 734
 pub const CMSG_FORCE_TURN_RATE_CHANGE_ACK: u16 = 0x02DF; // 735
+/// 3.3.5a only, as the five below: the flight speeds and the pitch rate, one handler `0x732450`.
+pub const SMSG_FORCE_FLIGHT_SPEED_CHANGE: u16 = 0x0381; // 897
+pub const CMSG_FORCE_FLIGHT_SPEED_CHANGE_ACK: u16 = 0x0382; // 898
+pub const SMSG_FORCE_FLIGHT_BACK_SPEED_CHANGE: u16 = 0x0383; // 899
+pub const CMSG_FORCE_FLIGHT_BACK_SPEED_CHANGE_ACK: u16 = 0x0384; // 900
+pub const SMSG_FORCE_PITCH_RATE_CHANGE: u16 = 0x045C; // 1116
+pub const CMSG_FORCE_PITCH_RATE_CHANGE_ACK: u16 = 0x045D; // 1117
 
 // Speed changes on units we do not control, never acked. A creature's, or a player's mid-spline,
 // come as `SMSG_SPLINE_SET_*` `[packed guid][f32 speed]`; a freely moving player's come as
@@ -469,6 +476,10 @@ pub const SMSG_SPLINE_SET_SWIM_SPEED: u16 = 0x0300; // 768
 pub const SMSG_SPLINE_SET_WALK_SPEED: u16 = 0x0301; // 769
 pub const SMSG_SPLINE_SET_SWIM_BACK_SPEED: u16 = 0x0302; // 770
 pub const SMSG_SPLINE_SET_TURN_RATE: u16 = 0x0303; // 771
+/// 3.3.5a only, as the two below (`0x741bc0`).
+pub const SMSG_SPLINE_SET_FLIGHT_SPEED: u16 = 0x0385; // 901
+pub const SMSG_SPLINE_SET_FLIGHT_BACK_SPEED: u16 = 0x0386; // 902
+pub const SMSG_SPLINE_SET_PITCH_RATE: u16 = 0x045E; // 1118
 
 // Mode changes on any unit, for observers: a bare packed guid, no counter, no ack
 // (`MovementPacketSender.cpp:399-462`). The reference handles all twelve at `0x603c80`, drops an
@@ -492,6 +503,10 @@ pub const MSG_MOVE_SET_WALK_SPEED: u16 = 0x00D1; // 209
 pub const MSG_MOVE_SET_SWIM_SPEED: u16 = 0x00D3; // 211
 pub const MSG_MOVE_SET_SWIM_BACK_SPEED: u16 = 0x00D5; // 213
 pub const MSG_MOVE_SET_TURN_RATE: u16 = 0x00D8; // 216
+/// 3.3.5a only, as the two below (`0x741b00`).
+pub const MSG_MOVE_SET_FLIGHT_SPEED: u16 = 0x037E; // 894
+pub const MSG_MOVE_SET_FLIGHT_BACK_SPEED: u16 = 0x0380; // 896
+pub const MSG_MOVE_SET_PITCH_RATE: u16 = 0x045B; // 1115
 
 // Mount results: one `u32` code (`Player::SendMountResult`). Success (`MOUNTRESULT_OK` = 10,
 // `DISMOUNTRESULT_OK` = 3) is silent in the reference; any other code is a red error line.
@@ -824,8 +839,8 @@ pub const CMSG_SELF_RES: u16 = 0x02B3; // 691
 pub const SMSG_DURABILITY_DAMAGE_DEATH: u16 = 0x02BD; // 701
 
 // Mover modes, acked (`IsFlagAckOpcode`): the SMSG is a packed guid and `u32 counter`; the ack
-// echoes the full u64 guid, the counter and a `MovementInfo`, plus a `u32 apply` for all but root
-// (`Movement.cpp:38-59`). An unacked change never reaches observers.
+// echoes the packed guid, the counter and a `MovementInfo`, plus an `f32` apply for all but root
+// (`0x71ef80`). An unacked change never reaches observers.
 pub const SMSG_MOVE_WATER_WALK: u16 = 0x00DE; // 222
 pub const SMSG_MOVE_LAND_WALK: u16 = 0x00DF; // 223
 pub const CMSG_MOVE_WATER_WALK_ACK: u16 = 0x02D0; // 720
@@ -839,6 +854,12 @@ pub const SMSG_MOVE_SET_HOVER: u16 = 0x00F4; // 244
 pub const SMSG_MOVE_UNSET_HOVER: u16 = 0x00F5; // 245
 pub const CMSG_MOVE_HOVER_ACK: u16 = 0x00F6; // 246
 pub const CMSG_MOVE_FEATHER_FALL_ACK: u16 = 0x02CF; // 719
+/// 3.3.5a only: `MOVEFLAG_CAN_FLY` granted and revoked (handler `0x732450`), one ack for both.
+pub const SMSG_MOVE_SET_CAN_FLY: u16 = 0x0343; // 835
+pub const SMSG_MOVE_UNSET_CAN_FLY: u16 = 0x0344; // 836
+pub const CMSG_MOVE_SET_CAN_FLY_ACK: u16 = 0x0345; // 837
+/// 3.3.5a only: our mover's flight start or stop, a plain `MovementInfo` report (`0x6ef860`).
+pub const CMSG_MOVE_SET_FLY: u16 = 0x0346; // 838
 
 // The observers' leg of those modes and of teleports (`MovementPacketSender.h:30-60`): the relay
 // shape `[packed guid][MovementInfo]`, handled like the relay opcodes (`0x603bb0`). Only root has
@@ -850,6 +871,8 @@ pub const MSG_MOVE_UNROOT: u16 = 0x00ED; // 237
 pub const MSG_MOVE_HOVER: u16 = 0x00F7; // 247
 pub const MSG_MOVE_FEATHER_FALL: u16 = 0x02B0; // 688
 pub const MSG_MOVE_WATER_WALK: u16 = 0x02B1; // 689
+/// 3.3.5a only: another unit's can-fly change, the relay shape (`0x741b60`).
+pub const MSG_MOVE_UPDATE_CAN_FLY: u16 = 0x03AD; // 941
 
 // Knockback. `SMSG_MOVE_KNOCK_BACK` to the mover: packed guid, `u32 counter`, `f32` vcos, vsin,
 // speedXY, speedZ, with speedZ down-positive like the jump tail. The mandatory ack is full u64

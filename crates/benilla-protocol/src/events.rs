@@ -39,7 +39,8 @@ pub enum CharAction {
     Delete,
 }
 
-/// A unit's six movement speeds from its `LIVING` block: yd/s, except `turn_rate` in rad/s.
+/// A unit's nine movement speeds from its `LIVING` block: yd/s, except `turn_rate` and
+/// `pitch_rate` in rad/s.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct MoveSpeeds {
     pub walk: f32,
@@ -48,17 +49,25 @@ pub struct MoveSpeeds {
     pub swim: f32,
     pub swim_back: f32,
     pub turn_rate: f32,
+    pub flight: f32,
+    pub flight_back: f32,
+    pub pitch_rate: f32,
 }
 
 impl MoveSpeeds {
-    fn from_wire(s: [f32; 6]) -> Self {
+    /// The block's wire order: walk, run, run back, swim, swim back, flight, flight back, turn
+    /// rate, pitch rate.
+    fn from_wire(s: [f32; 9]) -> Self {
         Self {
             walk: s[0],
             run: s[1],
             run_back: s[2],
             swim: s[3],
             swim_back: s[4],
-            turn_rate: s[5],
+            flight: s[5],
+            flight_back: s[6],
+            turn_rate: s[7],
+            pitch_rate: s[8],
         }
     }
 }

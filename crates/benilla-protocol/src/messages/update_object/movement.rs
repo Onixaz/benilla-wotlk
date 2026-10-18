@@ -66,8 +66,9 @@ pub struct MovementBlock {
     /// `0x75a07dff` mask (`0x618c30`) and commits the pitch at once (`0x7c6420`), so a unit
     /// streaming in mid-swim is pitched on its first frame.
     pub mover: Option<MoverState>,
-    /// A `LIVING` block's speeds in wire order `[walk, run, run_back, swim, swim_back, turn_rate]`.
-    pub speeds: Option<[f32; 6]>,
+    /// A `LIVING` block's nine speeds in wire order: walk, run, run back, swim, swim back, flight,
+    /// flight back, turn rate, pitch rate.
+    pub speeds: Option<[f32; 9]>,
     /// A ship's or elevator's path progress in ms at create, the anchor its cycle runs from
     /// (`Object.cpp:590-605`); no other object sets `UPDATE_FLAG_TRANSPORT`.
     pub transport_progress: Option<u32>,

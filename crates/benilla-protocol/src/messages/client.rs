@@ -337,14 +337,15 @@ pub fn ping(sequence: u32, last_rtt_ms: u32) -> Vec<u8> {
 }
 
 /// Body of a movement-mode ack: the mover's packed guid, the echoed counter, our `MovementInfo`,
-/// then `u32 apply` for every mode but root (`HandleMoveFlagChangeOpcode`, `HandleMoveRootAck`).
-/// `info.flags` must carry the applied mode bit.
+/// then for every mode but root the apply as an `f32` 1.0 or 0.0 (`0x71ef80`, the value the event
+/// arm passes, `0x6ef860`). `info.flags` must carry the applied mode bit.
 pub fn move_flag_ack(guid: u64, counter: u32, info: &MovementInfo, apply: Option<bool>) -> Vec<u8> {
     let mut body = packed(guid);
     body.extend_from_slice(&counter.to_le_bytes());
     info.write_body(&mut body);
     if let Some(apply) = apply {
-        body.extend_from_slice(&u32::from(apply).to_le_bytes());
+        let value: f32 = if apply { 1.0 } else { 0.0 };
+        body.extend_from_slice(&value.to_le_bytes());
     }
     body
 }
@@ -416,6 +417,6 @@ mod tests {
         let mut bare = Vec::new();
         info.write_body(&mut bare);
         assert_eq!(&ack[7..ack.len() - 4], &bare[..]);
-        assert_eq!(&ack[ack.len() - 4..], &1u32.to_le_bytes());
+        assert_eq!(&ack[ack.len() - 4..], &1.0f32.to_le_bytes());
     }
 }

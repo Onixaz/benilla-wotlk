@@ -155,7 +155,7 @@ fn read_movement_block(r: &mut impl Read) -> io::Result<WotlkMovement> {
         for slot in &mut s {
             *slot = read_f32_le(r)?;
         }
-        speeds = Some([s[0], s[1], s[2], s[3], s[4], s[7]]);
+        speeds = Some(s);
         if info.flags & crate::messages::movement::MOVEMENT_FLAG_SPLINE_ENABLED != 0 {
             spline = read_create_spline(r)?;
         }

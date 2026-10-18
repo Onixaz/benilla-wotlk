@@ -156,6 +156,7 @@ const fn is_movement_relay(o: u16) -> bool {
             | opcode::MSG_MOVE_HOVER
             | opcode::MSG_MOVE_FEATHER_FALL
             | opcode::MSG_MOVE_WATER_WALK
+            | opcode::MSG_MOVE_UPDATE_CAN_FLY
             | opcode::MSG_MOVE_TELEPORT
     )
 }
@@ -1171,8 +1172,8 @@ fn parse_server_body(
         opcode::SMSG_SPIRIT_HEALER_CONFIRM => ServerPacket::SpiritHealerConfirm {
             npc: death::read_spirit_healer_confirm(&mut r)?,
         },
-        // The acked mode family, all eight `packed guid, u32 counter`
-        // (`MovementPacketSender.cpp:342-366`); unacked, the server never applies the change.
+        // The acked mode family, all ten `packed guid, u32 counter` (`0x732450`, then `0x7307a0`
+        // reads the counter); unacked, the server never applies the change.
         opcode::SMSG_FORCE_MOVE_ROOT
         | opcode::SMSG_FORCE_MOVE_UNROOT
         | opcode::SMSG_MOVE_WATER_WALK
@@ -1180,7 +1181,9 @@ fn parse_server_body(
         | opcode::SMSG_MOVE_FEATHER_FALL
         | opcode::SMSG_MOVE_NORMAL_FALL
         | opcode::SMSG_MOVE_SET_HOVER
-        | opcode::SMSG_MOVE_UNSET_HOVER => {
+        | opcode::SMSG_MOVE_UNSET_HOVER
+        | opcode::SMSG_MOVE_SET_CAN_FLY
+        | opcode::SMSG_MOVE_UNSET_CAN_FLY => {
             let (mode, apply) = match opcode {
                 opcode::SMSG_FORCE_MOVE_ROOT => (MoveMode::Root, true),
                 opcode::SMSG_FORCE_MOVE_UNROOT => (MoveMode::Root, false),
@@ -1189,7 +1192,9 @@ fn parse_server_body(
                 opcode::SMSG_MOVE_FEATHER_FALL => (MoveMode::FeatherFall, true),
                 opcode::SMSG_MOVE_NORMAL_FALL => (MoveMode::FeatherFall, false),
                 opcode::SMSG_MOVE_SET_HOVER => (MoveMode::Hover, true),
-                _ => (MoveMode::Hover, false),
+                opcode::SMSG_MOVE_UNSET_HOVER => (MoveMode::Hover, false),
+                opcode::SMSG_MOVE_SET_CAN_FLY => (MoveMode::CanFly, true),
+                _ => (MoveMode::CanFly, false),
             };
             let guid = read_packed_guid(&mut r)?;
             let counter = read_u32_le(&mut r)?;
@@ -1394,6 +1399,11 @@ fn parse_server_body(
         opcode::SMSG_FORCE_SWIM_SPEED_CHANGE => read_force_speed(SpeedKind::Swim, &mut r)?,
         opcode::SMSG_FORCE_SWIM_BACK_SPEED_CHANGE => read_force_speed(SpeedKind::SwimBack, &mut r)?,
         opcode::SMSG_FORCE_TURN_RATE_CHANGE => read_force_speed(SpeedKind::TurnRate, &mut r)?,
+        opcode::SMSG_FORCE_FLIGHT_SPEED_CHANGE => read_force_speed(SpeedKind::Flight, &mut r)?,
+        opcode::SMSG_FORCE_FLIGHT_BACK_SPEED_CHANGE => {
+            read_force_speed(SpeedKind::FlightBack, &mut r)?
+        }
+        opcode::SMSG_FORCE_PITCH_RATE_CHANGE => read_force_speed(SpeedKind::PitchRate, &mut r)?,
         opcode::SMSG_GROUP_INVITE => {
             let (can_accept, inviter) = group::read_group_invite(&mut r)?;
             ServerPacket::GroupInvite {
@@ -1587,12 +1597,22 @@ fn parse_server_body(
         opcode::SMSG_SPLINE_SET_SWIM_SPEED => read_spline_speed(SpeedKind::Swim, &mut r)?,
         opcode::SMSG_SPLINE_SET_SWIM_BACK_SPEED => read_spline_speed(SpeedKind::SwimBack, &mut r)?,
         opcode::SMSG_SPLINE_SET_TURN_RATE => read_spline_speed(SpeedKind::TurnRate, &mut r)?,
+        opcode::SMSG_SPLINE_SET_FLIGHT_SPEED => read_spline_speed(SpeedKind::Flight, &mut r)?,
+        opcode::SMSG_SPLINE_SET_FLIGHT_BACK_SPEED => {
+            read_spline_speed(SpeedKind::FlightBack, &mut r)?
+        }
+        opcode::SMSG_SPLINE_SET_PITCH_RATE => read_spline_speed(SpeedKind::PitchRate, &mut r)?,
         opcode::MSG_MOVE_SET_WALK_SPEED => read_move_set_speed(SpeedKind::Walk, &mut r)?,
         opcode::MSG_MOVE_SET_RUN_SPEED => read_move_set_speed(SpeedKind::Run, &mut r)?,
         opcode::MSG_MOVE_SET_RUN_BACK_SPEED => read_move_set_speed(SpeedKind::RunBack, &mut r)?,
         opcode::MSG_MOVE_SET_SWIM_SPEED => read_move_set_speed(SpeedKind::Swim, &mut r)?,
         opcode::MSG_MOVE_SET_SWIM_BACK_SPEED => read_move_set_speed(SpeedKind::SwimBack, &mut r)?,
         opcode::MSG_MOVE_SET_TURN_RATE => read_move_set_speed(SpeedKind::TurnRate, &mut r)?,
+        opcode::MSG_MOVE_SET_FLIGHT_SPEED => read_move_set_speed(SpeedKind::Flight, &mut r)?,
+        opcode::MSG_MOVE_SET_FLIGHT_BACK_SPEED => {
+            read_move_set_speed(SpeedKind::FlightBack, &mut r)?
+        }
+        opcode::MSG_MOVE_SET_PITCH_RATE => read_move_set_speed(SpeedKind::PitchRate, &mut r)?,
         opcode::SMSG_MOUNTRESULT => ServerPacket::MountResult {
             mount: true,
             code: read_u32_le(&mut r)?,
