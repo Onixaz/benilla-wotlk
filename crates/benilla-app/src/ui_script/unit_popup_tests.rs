@@ -792,8 +792,7 @@ fn click_frame(s: &mut UiScript, name: &str) {
 /// The stock 3.3.5a files a target-frame right-click runs through, in `FrameXML.toc` order:
 /// `SecureTemplates.xml` for the target frame's `SecureUnitButtonTemplate` click,
 /// `PlayerFrame.xml` for the `PlayerFrame` `TargetFrame_UpdateAuras` reads, and `PVPFrame.xml`
-/// for the `PVPTeamDetails` `UnitPopup_OnUpdate` reads. The load's own errors are returned, not
-/// asserted: the player frame's SELF menu still lacks `GetDungeonDifficulty`.
+/// for the `PVPTeamDetails` `UnitPopup_OnUpdate` reads. The load's own errors are returned.
 fn load_target_menu_335(s: &mut UiScript) -> Vec<String> {
     let mut errors = Vec::new();
     s.register_cvars(crate::cvars::registered_pairs());
@@ -928,4 +927,121 @@ fn a_3_3_5a_target_frame_right_click_opens_the_player_menu() {
         update_errors.is_empty(),
         "update errors: {update_errors:#?}"
     );
+}
+
+/// The 3.3.5a chain with us and a friendly, held player targeted, the target frame shown.
+fn targeting_a_player_335() -> UiScript {
+    let mut s = UiScript::new().unwrap();
+    s.set_screen_size(1024.0, 768.0);
+    load_target_menu_335(&mut s);
+    let held_player = |name: &str, guid: u64, reaction: u8| UnitState {
+        exists: true,
+        has_object: true,
+        name: Some(name.into()),
+        health: 40,
+        max_health: 40,
+        level: 5,
+        is_player: true,
+        player_controlled: true,
+        is_connected: true,
+        reaction,
+        guid,
+        ..UnitState::default()
+    };
+    s.set_unit("player", Some(held_player("Me", 1, 0)));
+    s.set_unit("target", Some(held_player("Ally", 2, 5)));
+    s.set_unit_guids(&benilla_ui::script::UnitGuids {
+        player: 1,
+        target: 2,
+        ..Default::default()
+    });
+    s.fire_event("PLAYER_TARGET_CHANGED", vec![]);
+    s.resolve();
+    s.take_errors();
+    s
+}
+
+/// Right-click `frame` through the hit path, then click the open menu's row whose value is `value`.
+fn menu_row(s: &mut UiScript, frame: &str, value: &str) {
+    let (cx, cy) = s
+        .eval::<(f64, f64)>(&format!("return {frame}:GetCenter()"))
+        .unwrap();
+    s.mouse_button(cx as f32, cy as f32, "RightButton", true);
+    s.mouse_button(cx as f32, cy as f32, "RightButton", false);
+    s.resolve();
+    let row: i64 = s
+        .eval(&format!(
+            "for i = 1, DropDownList1.numButtons do \
+               if _G['DropDownList1Button' .. i].value == {value:?} then return i end \
+             end return 0"
+        ))
+        .unwrap();
+    assert!(row > 0, "{frame}'s menu has a {value} row");
+    click_row(s, row as u32);
+}
+
+/// The player frame's SELF menu opens: its dungeon and raid difficulty rows ask
+/// `GetDungeonDifficulty` and `GetRaidDifficulty` (`UnitPopup.lua:309`, `:331`).
+#[test]
+fn a_3_3_5a_player_frame_right_click_opens_the_self_menu() {
+    benilla_formats::wow_data_or_skip!();
+    let mut s = targeting_a_player_335();
+    let (cx, cy) = s
+        .eval::<(f64, f64)>("return PlayerFrame:GetCenter()")
+        .unwrap();
+    s.mouse_button(cx as f32, cy as f32, "RightButton", true);
+    s.mouse_button(cx as f32, cy as f32, "RightButton", false);
+    s.resolve();
+    let errors = s.take_errors();
+    assert!(errors.is_empty(), "click errors: {errors:#?}");
+    assert!(s.eval::<bool>("return DropDownList1:IsShown()").unwrap());
+    assert_eq!(
+        s.eval::<String>("return PlayerFrameDropDown.which").unwrap(),
+        "SELF"
+    );
+    s.run("UnitPopup_OnUpdate(0.1)").unwrap();
+    let errors = s.take_errors();
+    assert!(errors.is_empty(), "update errors: {errors:#?}");
+}
+
+/// The target menu's Set Focus row focuses the target: the stock focus frame shows with its name,
+/// and `ClearFocus()` hides it again (#271).
+#[test]
+fn the_target_menus_set_focus_row_shows_the_focus_frame() {
+    benilla_formats::wow_data_or_skip!();
+    let mut s = targeting_a_player_335();
+    assert!(!s.eval::<bool>("return FocusFrame:IsShown()").unwrap());
+    menu_row(&mut s, "TargetFrame", "SET_FOCUS");
+    let errors = s.take_errors();
+    assert!(errors.is_empty(), "set focus errors: {errors:#?}");
+    assert_eq!(s.focus_guid(), 2);
+    assert!(s.eval::<bool>("return FocusFrame:IsShown()").unwrap());
+    assert_eq!(
+        s.eval::<String>("return FocusFrameTextureFrameName:GetText()")
+            .unwrap(),
+        "Ally"
+    );
+    s.run("ClearFocus()").unwrap();
+    s.resolve();
+    assert!(!s.eval::<bool>("return FocusFrame:IsShown()").unwrap());
+    let errors = s.take_errors();
+    assert!(errors.is_empty(), "clear focus errors: {errors:#?}");
+}
+
+/// The target menu's Duel and Trade rows reach their verbs: `StartDuel("target", 1)` resolves the
+/// target's guid (#341), `InitiateTrade("target")` queues the token.
+#[test]
+fn the_target_menus_duel_and_trade_rows_queue_their_verbs() {
+    benilla_formats::wow_data_or_skip!();
+    let mut s = targeting_a_player_335();
+    s.take_duel_requests();
+    menu_row(&mut s, "TargetFrame", "DUEL");
+    assert_eq!(
+        s.take_duel_requests(),
+        vec![benilla_ui::script::DuelRequest::ChallengeGuid(2)]
+    );
+    menu_row(&mut s, "TargetFrame", "TRADE");
+    assert_eq!(s.take_trade_initiates(), vec!["target".to_string()]);
+    let errors = s.take_errors();
+    assert!(errors.is_empty(), "row errors: {errors:#?}");
 }

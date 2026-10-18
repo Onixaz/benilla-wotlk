@@ -106,7 +106,10 @@ impl ObjectFields {
             // 1.12.1 keeps the city protector and the honor rank.
             Field::PlayerBytes3 => put(field, element, value & 0xffff),
             // Byte 1 is the refer-a-friend level, where 1.12.1 keeps the combo points.
-            Field::PlayerFieldBytes => put(field, element, value & !0xff00),
+            Field::PlayerFieldBytes => {
+                put(field, element, value & !0xff00);
+                put(Field::PlayerRafGrantableLevel, 0, (value >> 8) & 0xff);
+            }
             // Byte 3 is the aura vision; bytes 0-2 are the override-spells id and the regen
             // prediction mask, where 1.12.1 keeps the honor rank bar.
             Field::PlayerFieldBytes2 => put(field, element, value & 0xff00_0000),

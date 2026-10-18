@@ -50,6 +50,7 @@ use crate::ui_chat::UiChatPlugin;
 use crate::ui_craft::UiCraftPlugin;
 use crate::ui_dialog_verbs::UiDialogVerbsPlugin;
 use crate::ui_duel::UiDuelPlugin;
+use crate::ui_focus::UiFocusPlugin;
 use crate::ui_follow::UiFollowPlugin;
 use crate::ui_gm_ticket::UiGmTicketPlugin;
 use crate::ui_gossip::UiGossipPlugin;
@@ -169,6 +170,7 @@ impl PluginGroup for GamePlugins {
             .add(UiUnitPlugin)
             .add(UiPartyPlugin)
             .add(UiDuelPlugin)
+            .add(UiFocusPlugin)
             .add(UiBinderPlugin)
             .add(UiDialogVerbsPlugin)
             .add(BattlefieldScorePlugin)

@@ -24,6 +24,8 @@ pub struct UnitGuids {
     pub mouseover: u64,
     /// The interaction NPC `[0xb4e2d0]`.
     pub npc: u64,
+    /// The focus `[0xbd07d0]`, which `FocusUnit` sets in the VM; a push keeps the VM's.
+    pub focus: u64,
     /// `partyN`'s guid, index N-1 (`0x4e81a0`).
     pub party: [u64; 4],
     /// `partypetN`'s guid, index N-1 (`0x4e81d0`).
@@ -202,6 +204,33 @@ pub fn parse_unit_token(token: &str) -> UnitTokenParse {
 }
 
 impl UnitGuids {
+    /// Equal in everything a push carries: the focus is the VM's own.
+    pub(crate) fn same_push(&self, other: &Self) -> bool {
+        let Self {
+            player,
+            pet,
+            target,
+            mouseover,
+            npc,
+            focus: _,
+            party,
+            party_pets,
+            raid,
+            raid_pets,
+            held,
+        } = self;
+        *player == other.player
+            && *pet == other.pet
+            && *target == other.target
+            && *mouseover == other.mouseover
+            && *npc == other.npc
+            && *party == other.party
+            && *party_pets == other.party_pets
+            && *raid == other.raid
+            && *raid_pets == other.raid_pets
+            && *held == other.held
+    }
+
     /// The guid `token` names, or `None` for nobody; `Err` for a token none of the compares
     /// match, where the reference raises `Unknown unit name: %s` (`0x515c14`). An empty token is
     /// nobody (`0x51599d`).
@@ -239,9 +268,9 @@ impl UnitGuids {
             UnitBase::Raid(row) => at(&self.raid, row),
             UnitBase::Mouseover if !self.held.contains_key(&self.mouseover) => return None,
             UnitBase::Mouseover => self.mouseover,
+            UnitBase::Focus => self.focus,
             // No guid pushed for these yet (#90).
             UnitBase::Vehicle
-            | UnitBase::Focus
             | UnitBase::QuestNpc
             | UnitBase::Boss(_)
             | UnitBase::Arena(_)
@@ -257,7 +286,12 @@ impl UnitGuids {
     /// A guid repeats when two units share a target, and the last hop's unit need not be held: the
     /// lookup that finds its object is the reader's.
     pub(crate) fn chain_ends(&self) -> impl Iterator<Item = u64> + '_ {
-        self.held.values().copied().filter(|&guid| guid != 0)
+        // The focus too: `focus` reads its unit by guid, the way a hop's end is read.
+        self.held
+            .values()
+            .copied()
+            .chain(std::iter::once(self.focus))
+            .filter(|&guid| guid != 0 && guid != crate::script::focus::NOBODY)
     }
 
     /// [`Self::resolve`], an unrecognised token naming nobody: the client's resolver raises for
@@ -267,9 +301,9 @@ impl UnitGuids {
     }
 
     /// Every token naming `guid`, in the order 12340's unit-event fan-out lists them (`0x60bb70`):
-    /// `player`, `pet`, `partyN`, `partypetN`, `raidN`, `raidpetN`, `target`, `npc`. No `target`
-    /// hop and no `mouseover`. The reference also lists `vehicle`, `arenaN`, `arenapetN`, `bossN`
-    /// and `focus`, which this resolver has no base for.
+    /// `player`, `pet`, `partyN`, `partypetN`, `raidN`, `raidpetN`, `target`, `focus`, `npc`. No
+    /// `target` hop and no `mouseover`. The reference also lists `vehicle`, `arenaN`, `arenapetN`
+    /// and `bossN`, which this resolver has no base for.
     pub(crate) fn tokens_naming(&self, guid: u64) -> Vec<String> {
         let mut out = Vec::new();
         if guid == 0 {
@@ -295,6 +329,9 @@ impl UnitGuids {
         }
         if self.target == guid {
             out.push("target".into());
+        }
+        if self.focus == guid {
+            out.push("focus".into());
         }
         if self.npc == guid {
             out.push("npc".into());
@@ -329,6 +366,21 @@ mod tests {
 
     /// Us targeting a mob that targets party1, who targets us; party1's pet and raid row 3 held,
     /// `FAR` a roster member out of range.
+    /// `focus` names the focus guid, `focustarget` hops off it, and the fan-out lists `focus`
+    /// between `target` and `npc` (`0x60bb70`).
+    #[test]
+    fn the_focus_is_a_base_and_is_fanned_out() {
+        let g = UnitGuids {
+            focus: P1,
+            ..guids()
+        };
+        assert_eq!(g.guid_of("focus"), Some(P1));
+        assert_eq!(g.guid_of("focustarget"), Some(ME));
+        assert_eq!(guids().guid_of("focus"), None, "no focus, nobody");
+        let mob = UnitGuids { focus: MOB, ..guids() };
+        assert_eq!(mob.tokens_naming(MOB), ["target", "focus", "npc"]);
+    }
+
     fn guids() -> UnitGuids {
         UnitGuids {
             player: ME,
@@ -336,6 +388,7 @@ mod tests {
             target: MOB,
             mouseover: MOB,
             npc: MOB,
+            focus: 0,
             party: [P1, FAR, 0, 0],
             party_pets: [P1_PET, 0, 0, 0],
             raid: vec![ME, P1, R3],

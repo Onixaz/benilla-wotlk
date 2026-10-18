@@ -7,7 +7,7 @@ use super::{
     AuctionListEntry, AuctionOwnerNotification, CastOutcome, ChannelNotify, Character, ChatMessage,
     CorpseLocation, DamageShield, DispelFailed, EnchantmentLog, EnvironmentalDamageLog,
     ExplorationXp, FriendEntry, FriendStatusUpdate, GameObjectQueryInfo, GmResponse, GmTicket,
-    GossipMenu, GossipPoi, GroupLootInfo, GroupMemberEntry, GuildCommandResult, GuildEventNotice,
+    DifficultySet, GossipMenu, GossipPoi, GroupDifficulties, GroupLootInfo, GroupMemberEntry, GuildCommandResult, GuildEventNotice,
     GuildInfo, GuildQueryResponse, GuildRoster, InitWorldStates, InspectHonorStats, ItemInfo,
     ItemPushResult, JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon,
     LootStartRoll, MailListEntry, MirrorTimerStart, MoveMode, Object, PartyKillLog,
@@ -992,6 +992,10 @@ pub enum ServerPacket {
         members: Vec<GroupMemberEntry>,
         leader: u64,
         loot: Option<GroupLootInfo>,
+        /// Present with `loot`; the group's difficulties.
+        difficulties: Option<GroupDifficulties>,
+        /// Group-type bit `0x04`, `HasLFGRestrictions`.
+        lfg_restricted: bool,
     },
     /// `SMSG_PARTY_COMMAND_RESULT`: `operation` a [`super::group::party_operation`], `result` a
     /// [`super::group::party_result`].
@@ -1078,6 +1082,14 @@ pub enum ServerPacket {
     /// `SMSG_DUEL_COUNTDOWN`: the "Duel starting: N" tick, converted from the wire's milliseconds.
     DuelCountdown {
         seconds: u32,
+    },
+    /// `MSG_SET_DUNGEON_DIFFICULTY`.
+    DungeonDifficulty(DifficultySet),
+    /// `MSG_SET_RAID_DIFFICULTY`.
+    RaidDifficulty(DifficultySet),
+    /// `SMSG_BREAK_TARGET`: stop targeting and focusing `guid`.
+    BreakTarget {
+        guid: u64,
     },
     /// The `MSG_INSPECT_HONOR_STATS` reply, only ever to our ask; a refused ask gets silence.
     InspectHonorStats(InspectHonorStats),
@@ -1612,6 +1624,9 @@ impl ServerPacket {
             ServerPacket::DuelComplete { .. } => "SMSG_DUEL_COMPLETE".into(),
             ServerPacket::DuelWinner { .. } => "SMSG_DUEL_WINNER".into(),
             ServerPacket::DuelCountdown { .. } => "SMSG_DUEL_COUNTDOWN".into(),
+            ServerPacket::DungeonDifficulty(..) => "MSG_SET_DUNGEON_DIFFICULTY".into(),
+            ServerPacket::RaidDifficulty(..) => "MSG_SET_RAID_DIFFICULTY".into(),
+            ServerPacket::BreakTarget { .. } => "SMSG_BREAK_TARGET".into(),
             ServerPacket::InspectHonorStats(..) => "MSG_INSPECT_HONOR_STATS".into(),
             ServerPacket::PvpCredit(..) => "SMSG_PVP_CREDIT".into(),
             ServerPacket::MirrorTimerStart(..) => "SMSG_START_MIRROR_TIMER".into(),

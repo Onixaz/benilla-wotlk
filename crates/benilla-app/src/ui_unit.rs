@@ -105,6 +105,8 @@ struct UnitFeedMemo {
     /// The lazy caches' landing counters: their per-frame `&mut` misses would trip `is_changed`.
     names_generation: gate::Watch,
     guild_generation: gate::Watch,
+    /// The VM's focus guid, which `FocusUnit` moves with no other input changing.
+    focus_guid: gate::Watch,
     /// Whether `PLAYER_ENTERING_WORLD` has fired for this world entry.
     entered_world: bool,
     /// Per token, the last snapshot pushed.
@@ -1240,6 +1242,8 @@ fn feed_units(
     // The gate: every input read below, despawns included (invisible to `Changed`).
     let names_moved = memo.names_generation.moved(names.generation());
     let guild_moved = memo.guild_generation.moved(guild.identity_generation());
+    let focus_guid = script.focus_guid();
+    let focus_moved = memo.focus_guid.moved(focus_guid);
     let selection_changed = selection.is_changed();
     let stores_changed = !stores.changed.is_empty();
     let stores_removed = !stores.removed.is_empty();
@@ -1254,6 +1258,7 @@ fn feed_units(
             ("vm_reset", vm_reset),
             ("names", names_moved),
             ("guild", guild_moved),
+            ("focus", focus_moved),
             ("selection", selection_changed),
             ("stores", stores_changed),
             ("removed", stores_removed),
@@ -1267,6 +1272,7 @@ fn feed_units(
         vm_reset
             || names_moved
             || guild_moved
+            || focus_moved
             || selection_changed
             || stores_changed
             || stores_removed
@@ -1337,6 +1343,17 @@ fn feed_units(
         Some(s)
     });
 
+    // `"focus"`: the VM's focus guid while the object manager holds it, as `"target"` is read.
+    let focus = index
+        .as_ref()
+        .and_then(|i| i.0.get(&focus_guid))
+        .and_then(|&e| stores.all.get(e).ok())
+        .map(|store| {
+            let mut s = held.state(store, focus_guid);
+            s.guild = crate::ui_guild::unit_guild(&store.0, &mut guild, &commands);
+            s
+        });
+
     // `"targettarget"`: one hop off the target's `UNIT_FIELD_TARGET`, streamed guids only. No guild
     // leg: nothing asks it for one, and a lazy-cache miss sends a query.
     let tot = selection
@@ -1374,6 +1391,15 @@ fn feed_units(
     if tot_dirty {
         gate.audit("feed_units", "the target-of-target snapshot");
         script.set_unit("targettarget", tot.clone());
+    }
+    let focus_dirty = match (&focus, memo.last.get("focus")) {
+        (Some(cur), Some(prev)) => cur != prev,
+        (None, None) => false,
+        _ => true,
+    };
+    if focus_dirty {
+        gate.audit("feed_units", "the focus snapshot");
+        script.set_unit("focus", focus.clone());
     }
 
     // `"npc"`: the interaction NPC, the reference's `[0xb4e2d0]` that `CGGameUI::SetInteractNPC`
@@ -1548,6 +1574,7 @@ fn feed_units(
         ("player", &player),
         ("target", &target),
         ("targettarget", &tot),
+        ("focus", &focus),
     ] {
         match snap {
             Some(cur) => {

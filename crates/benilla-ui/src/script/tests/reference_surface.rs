@@ -76,7 +76,6 @@ const BEYOND_REFERENCE: &[&str] = &[
     "ShowBattlefieldList",
     "ShowFriendNameplates",
     "ShowNameplates",
-    "StartDuelUnit",
     "TargetByName",
     "ToggleMouseMove",
     "TutorialsEnabled",

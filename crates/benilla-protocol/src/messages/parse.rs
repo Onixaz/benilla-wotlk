@@ -13,7 +13,8 @@ use super::{
     instance, items, loot, mail, meeting_stone, mirror_timer, monster_move, movement, opcode,
     page_text, pet, petition, pose, progression, pvp, quest, social, spellbook, spells, stable,
     summon, tabard, talents, taxi, totem, trade, trainer, tutorial, update_object, vendor,
-    world_state, AttackSwingError, Character, CreatureQueryInfo, JumpInfo, MoveMode, ServerPacket,
+    world_state, AttackSwingError, Character, CreatureQueryInfo, DifficultySet, JumpInfo, MoveMode,
+    ServerPacket,
     SpeedKind, SplineMode,
 };
 
@@ -1410,13 +1411,15 @@ fn parse_server_body(
         },
         opcode::SMSG_GROUP_DESTROYED => ServerPacket::GroupDestroyed,
         opcode::SMSG_GROUP_LIST => {
-            let (group_type, own_flags, members, leader, loot) = group::read_group_list(&mut r)?;
+            let list = group::read_group_list(&mut r)?;
             ServerPacket::GroupList {
-                group_type,
-                own_flags,
-                members,
-                leader,
-                loot,
+                group_type: list.group_type,
+                own_flags: list.own_flags,
+                members: list.members,
+                leader: list.leader,
+                loot: list.loot,
+                difficulties: list.difficulties,
+                lfg_restricted: list.lfg_restricted,
             }
         }
         opcode::SMSG_PARTY_COMMAND_RESULT => {
@@ -1495,6 +1498,21 @@ fn parse_server_body(
         }
         opcode::SMSG_DUEL_COUNTDOWN => ServerPacket::DuelCountdown {
             seconds: duel::read_duel_countdown(&mut r)?,
+        },
+        opcode::MSG_SET_DUNGEON_DIFFICULTY | opcode::MSG_SET_RAID_DIFFICULTY => {
+            let set = DifficultySet {
+                difficulty: read_u32_le(&mut r)?,
+                set_player: read_u32_le(&mut r)? != 0,
+                set_group: read_u32_le(&mut r)? != 0,
+            };
+            if opcode == opcode::MSG_SET_DUNGEON_DIFFICULTY {
+                ServerPacket::DungeonDifficulty(set)
+            } else {
+                ServerPacket::RaidDifficulty(set)
+            }
+        }
+        opcode::SMSG_BREAK_TARGET => ServerPacket::BreakTarget {
+            guid: read_packed_guid(&mut r)?,
         },
         // `0x2D6` carries our 8-byte request and the 50-byte reply; only the reply reaches here.
         opcode::MSG_INSPECT_HONOR_STATS => {

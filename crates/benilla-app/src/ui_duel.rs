@@ -1,25 +1,23 @@
-//! Duels: the challenge, the countdown, the bounds and the outcome line, after the 1.12 client's
-//! handlers (registered at `0x4d4710`). The challenge (`0x4d49d0`) reaches both players, and the
-//! challenger's own copy accepts at once (`0x4d4830`). Bounds (`0x4d4aa0`, `0x4d4ac0`) only fire
-//! events: the server enforces them (`Player::CheckDuelDistance`: 75 yd out, 70 yd back in, 10 s
-//! to return).
+//! Duels: the challenge, the countdown, the bounds and the outcome line, after 12340's handlers
+//! (registered at `0x5cfdd0`). The challenge (`0x5cfcd0`) reaches both players, and the
+//! challenger's own copy accepts at once (`0x5cfd12`). Bounds (`0x5cf910`, `0x5cf930`) only fire
+//! events: the server enforces them.
 //!
 //! Deviation: the challenger's name comes from the [`NameCache`], so a name still being queried
 //! delays the popup rather than dropping it; the reference reads it off the streamed player and
-//! fires nothing without one (`0x4d4a72`).
+//! fires nothing without one (`0x5cfd69`).
 
 use benilla_ui::script::{DuelRequest, ScriptValue, UiScript};
 use bevy::prelude::*;
 
 use crate::names::NameCache;
-use crate::net::{ClientCommand, Guid, GuidIndex, NetCommands, SelfPlayer};
-use crate::target::Selection;
+use crate::net::{ClientCommand, NetCommands};
+use crate::target::{NameMatch, PlayerLookup};
 use crate::ui_action::Spells;
 use crate::ui_script::{UiFeed, UiInput};
 
-/// The `Effect[0]` that marks the duel spell (7266 on 1.12 data): the reference's spell-learned
-/// walk stores any learned spell with `SpellRec+0xf4 == 0x53` in `[0xb71130]` (`0x4b2605`), which
-/// `0x4d4810` casts.
+/// The `Effect[0]` that marks the duel spell: the spell-learned walk keeps such a spell in
+/// `[0xbe7d90]` (`0x5420ac`), which `StartDuel` casts (`0x5cf9a1`).
 const SPELL_EFFECT_DUEL: u32 = 83;
 
 /// A line named by its `GlobalStrings` key, resolved in [`feed_duel`] where the VM is. The three
@@ -42,7 +40,7 @@ enum OwedLine {
 #[derive(Resource, Default)]
 pub(crate) struct DuelState {
     owed: Vec<OwedLine>,
-    /// The duel flag's guid, `[0xb73240]`: set by the request, echoed on accept and cancel, and
+    /// The duel flag's guid, `[0xc22b58]`: set by the request, echoed on accept and cancel, and
     /// cleared only by completion, which fires `DUEL_FINISHED`. `0` is no duel.
     pub(crate) arbiter: u64,
     /// Set while the challenge popup is owed; the challenger never gets one.
@@ -51,7 +49,7 @@ pub(crate) struct DuelState {
     countdown: Option<Countdown>,
 }
 
-/// The `ProcessCountdown` timer (`0x4d4930`).
+/// The `ProcessCountdown` timer (`0x5cf870`).
 struct Countdown {
     remaining: u32,
     tick: Timer,
@@ -59,7 +57,7 @@ struct Countdown {
 
 impl DuelState {
     /// `SMSG_DUEL_REQUESTED`: true when the challenge is our own, and the caller then shows
-    /// `ERR_DUEL_REQUESTED` and accepts inline, as the reference's handler does (`0x4d4a12`).
+    /// `ERR_DUEL_REQUESTED` and accepts inline, as the reference's handler does (`0x5cfd0a`).
     fn apply_requested(&mut self, arbiter: u64, challenger: u64, own: Option<u64>) -> bool {
         self.arbiter = arbiter;
         let ours = Some(challenger) == own;
@@ -74,7 +72,7 @@ impl DuelState {
     }
 
     /// `SMSG_DUEL_COMPLETE`: true when "Duel cancelled." is owed. Gated on an arbiter, as
-    /// `0x4d4b20` is, except the countdown cancel, which the reference also runs outside the gate.
+    /// `0x5cfa90` is, except the countdown cancel, which the reference also runs outside the gate.
     fn apply_complete(&mut self, started: bool) -> bool {
         self.countdown = None;
         if self.arbiter == 0 {
@@ -203,7 +201,7 @@ pub(crate) mod net {
     }
 
     /// `SMSG_DUEL_REQUESTED`. A challenge from an ignored player is declined with
-    /// `CMSG_DUEL_CANCELLED` and shows nothing (`0x4d4a33`).
+    /// `CMSG_DUEL_CANCELLED` and shows nothing (`0x5cfd33`).
     pub(crate) fn requested(
         duel: &mut DuelState,
         errors: &mut crate::ui_action::UiErrorKeys,
@@ -237,7 +235,7 @@ pub(crate) mod net {
         }
     }
 
-    /// `SMSG_DUEL_WINNER`: the outcome line, composed client-side (`0x4d4ba0`); the server
+    /// `SMSG_DUEL_WINNER`: the outcome line, composed client-side (`0x5cfb20`); the server
     /// broadcasts it, so bystanders see it too.
     pub(crate) fn winner(duel: &mut DuelState, fled: bool, winner: &str, loser: &str) {
         duel.owed.push(OwedLine::Winner {
@@ -292,14 +290,14 @@ fn feed_duel(
         }
     }
 
-    // `DUEL_FINISHED` when the arbiter clears (`0x4d4b51`).
+    // `DUEL_FINISHED` when the arbiter clears (`0x5cfad8`).
     let held = duel.arbiter != 0;
     if fed.held && !held {
         script.fire_event("DUEL_FINISHED", Vec::new());
     }
     fed.held = held;
 
-    // The bounds pair (`0x4d4aa0`, `0x4d4ac0`).
+    // The bounds pair (`0x5cf917`, `0x5cf937`).
     if fed.out_of_bounds != duel.out_of_bounds {
         fed.out_of_bounds = duel.out_of_bounds;
         let event = if duel.out_of_bounds {
@@ -318,7 +316,7 @@ struct FedDuel {
     out_of_bounds: bool,
 }
 
-/// `ProcessCountdown` (`0x4d4930`, armed by `0x4d4ae0`): a `DUEL_COUNTDOWN` system chat line on
+/// `ProcessCountdown` (`0x5cf870`, armed by `0x5cfa50`): a `DUEL_COUNTDOWN` system chat line on
 /// arrival, since the reference runs the tick body before arming its timer, then one a second.
 fn tick_countdown(time: Res<Time>, mut duel: ResMut<DuelState>, mut started: Local<bool>) {
     let Some(countdown) = duel.countdown.as_mut() else {
@@ -350,9 +348,7 @@ fn drain_duel(
     duel: Res<DuelState>,
     spells: Option<Res<Spells>>,
     actions: Res<crate::ui_action::PlayerActions>,
-    selection: Res<Selection>,
-    index: Res<GuidIndex>,
-    self_q: Query<&Guid, With<SelfPlayer>>,
+    players: PlayerLookup,
     names: Res<NameCache>,
     commands: Res<NetCommands>,
 ) {
@@ -363,96 +359,64 @@ fn drain_duel(
     if requests.is_empty() {
         return;
     }
-    let self_guid = self_q.iter().next().map(|g| g.0);
     for req in requests {
         match req {
+            // `AcceptDuel` and `CancelDuel` send the held arbiter, whatever it is (`0x5cfbd0`,
+            // `0x5cfc50`).
             DuelRequest::Accept => {
-                if duel.arbiter != 0 {
-                    let _ = commands.0.send(ClientCommand::DuelAccepted {
-                        arbiter: duel.arbiter,
-                    });
-                }
+                let _ = commands.0.send(ClientCommand::DuelAccepted {
+                    arbiter: duel.arbiter,
+                });
             }
             DuelRequest::Cancel => {
-                if duel.arbiter != 0 {
-                    let _ = commands.0.send(ClientCommand::DuelCancelled {
-                        arbiter: duel.arbiter,
-                    });
-                }
+                let _ = commands.0.send(ClientCommand::DuelCancelled {
+                    arbiter: duel.arbiter,
+                });
             }
-            DuelRequest::StartByUnit(token) => {
-                // `StartDuelUnit` (`0x4d4c90`) resolves the token through `0x515970`, with no
-                // player gate; these are the tokens the unit popup passes.
-                let guid = match token.as_str() {
-                    "target" => selection.guid,
-                    "player" => self_guid,
-                    _ => None,
+            DuelRequest::ChallengeGuid(guid) => {
+                challenge(Some(guid), &spells, &actions, &commands);
+            }
+            // The name walk with typemask `0x10`, any distance (`0x5cf953`).
+            DuelRequest::ChallengeName { name, exact } => {
+                let mode = if exact {
+                    NameMatch::ExactOnly
+                } else {
+                    NameMatch::PrefixOk
                 };
-                challenge(guid, self_guid, &index, &spells, &actions, &commands);
-            }
-            DuelRequest::StartByName(name) => {
-                // `/duel <name>`: `StartDuel` (`0x4d4c40`) matches the name through `0x493aa0`
-                // with typemask `0x10` (`0x4d4c66`), players only; here, the streamed guid index
-                // named through the cache.
-                let guid = streamed_player_named(&name, &index, &names);
-                challenge(guid, self_guid, &index, &spells, &actions, &commands);
+                let guid = players.find_as(&names, &name, mode).map(|(_, g)| g);
+                if guid.is_none() {
+                    info!(target: "duel", "StartDuel({name:?}): no player matches; nothing cast");
+                }
+                challenge(guid, &spells, &actions, &commands);
             }
         }
     }
 }
 
-/// A streamed player by name, case-insensitive, for a typed `/duel` argument.
-pub(crate) fn streamed_player_named(
-    name: &str,
-    index: &GuidIndex,
-    names: &NameCache,
-) -> Option<u64> {
-    index
-        .0
-        .keys()
-        .copied()
-        .filter(|g| benilla_protocol::guid::is_player(*g))
-        .find(|g| names.peek(*g).is_some_and(|n| n.eq_ignore_ascii_case(name)))
-}
-
-/// Cast the duel spell at `guid`, a plain spell cast as in the reference's `0x4d4810`, not a duel
-/// opcode. Drops a missing, self, non-player or unstreamed target; the reference's bindings drop
-/// only a zero guid, plus a non-player in `StartDuel`'s name match.
+/// Cast the duel spell at `guid`, a plain spell cast as `StartDuel` makes it (`0x5cf9a1`), not a
+/// duel opcode. Deviation: with no duel spell learned nothing is sent, where the reference casts
+/// spell 0, which its own cast check refuses.
 fn challenge(
     guid: Option<u64>,
-    own: Option<u64>,
-    index: &GuidIndex,
     spells: &Option<Res<Spells>>,
     actions: &crate::ui_action::PlayerActions,
     commands: &NetCommands,
 ) {
-    let Some(guid) = guid.filter(|g| *g != 0 && Some(*g) != own) else {
+    let Some(guid) = guid else {
         return;
     };
-    if !benilla_protocol::guid::is_player(guid) || !index.0.contains_key(&guid) {
-        return;
-    }
-    let Some(spell_id) = duel_spell(spells, actions) else {
+    let Some(spell_id) = spells
+        .as_deref()
+        .and_then(|s| s.learned_with_effect(&actions.spells, SPELL_EFFECT_DUEL))
+    else {
+        info!(target: "duel", "StartDuel at {guid:#x}: no duel spell learned; nothing cast");
         return;
     };
+    info!(target: "duel", "StartDuel at {guid:#x}: casting duel spell {spell_id}");
     let _ = commands.0.send(ClientCommand::CastSpell {
         spell_id,
         target: Some(guid),
     });
-}
-
-/// The learned spell whose `Effect[0]` is [`SPELL_EFFECT_DUEL`], the reference's `[0xb71130]`.
-fn duel_spell(
-    spells: &Option<Res<Spells>>,
-    actions: &crate::ui_action::PlayerActions,
-) -> Option<u32> {
-    let spells = spells.as_ref()?;
-    actions.spells.iter().copied().find(|id| {
-        spells
-            .catalog
-            .get(*id)
-            .is_some_and(|s| s.effects[0] == SPELL_EFFECT_DUEL)
-    })
 }
 
 /// Duels: the wire session, the countdown tick, the events and the outbound intents.
@@ -519,22 +483,17 @@ mod tests {
         assert_eq!(duel.countdown.as_ref().map(|c| c.remaining), Some(3));
     }
 
-    /// 7266 "Duel", which vmangos grants every race and class (`playercreateinfo_spell`), is the
-    /// only `SPELL_EFFECT_DUEL` spell in the shipped `Spell.dbc`, so `[0xb71130]` is unambiguous.
+    /// 7266 "Duel", which every character starts with, carries `SPELL_EFFECT_DUEL`, so a starting
+    /// book resolves the duel spell to it.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_duel_spell_resolves_to_7266_on_real_data() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
-        let catalog = benilla_formats::load_spell_catalog(&mut chain).expect("Spell.dbc");
-        let mut hits: Vec<u32> = catalog
-            .iter()
-            .filter(|(_, s)| s.effects[0] == SPELL_EFFECT_DUEL)
-            .map(|(id, _)| id)
-            .collect();
-        hits.sort_unstable();
-        assert_eq!(hits, vec![7266], "exactly one SPELL_EFFECT_DUEL spell");
-        assert_eq!(catalog.get(7266).unwrap().name, "Duel");
+        let mut spells = Spells::empty_for_tests();
+        spells.catalog = benilla_formats::load_spell_catalog(&mut chain).expect("Spell.dbc");
+        let book = std::collections::BTreeSet::from([6603, 7266, 8386]);
+        assert_eq!(spells.learned_with_effect(&book, SPELL_EFFECT_DUEL), Some(7266));
+        assert_eq!(spells.learned_with_effect(&book, 152), None, "no summon-friend spell");
     }
 
     /// Against the shipped `GlobalStrings.lua`: the retreat template names the loser first.

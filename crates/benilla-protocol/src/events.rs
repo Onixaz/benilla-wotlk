@@ -4,7 +4,8 @@ use crate::messages::{
     ActionButton, AttackSwingError, AttackerState, AuctionBidderNotification, AuctionCommandTail,
     AuctionListEntry, AuctionOwnerNotification, ChannelNoticeTail, Character, CreateSpline,
     DamageShield, DispelFailed, EnchantmentLog, EnvironmentalDamageLog, ExplorationXp, FriendEntry,
-    FriendStatusUpdate, GmResponse, GmTicket, GossipMenu, GroupLootInfo, GroupMemberEntry,
+    DifficultySet, FriendStatusUpdate, GmResponse, GmTicket, GossipMenu, GroupDifficulties, GroupLootInfo,
+    GroupMemberEntry,
     GuildCommandResult, GuildEventNotice, GuildInfo, GuildQueryResponse, GuildRoster,
     InspectHonorStats, ItemInfo, ItemPushResult, JumpInfo, LevelUpInfo, LootAllPassed, LootItem,
     LootRoll, LootRollWon, LootStartRoll, MailListEntry, MirrorTimerStart, MonsterMoveFacing,
@@ -999,6 +1000,10 @@ pub enum SessionEvent {
         members: Vec<GroupMemberEntry>,
         leader: u64,
         loot: Option<GroupLootInfo>,
+        /// Present with `loot`; the group's difficulties.
+        difficulties: Option<GroupDifficulties>,
+        /// Group-type bit `0x04`, `HasLFGRestrictions`.
+        lfg_restricted: bool,
     },
     /// A group command's verdict (`SMSG_PARTY_COMMAND_RESULT`): a
     /// [`crate::messages::party_operation`] and a [`crate::messages::party_result`] code.
@@ -1064,6 +1069,12 @@ pub enum SessionEvent {
     },
     /// Start the duel countdown (`SMSG_DUEL_COUNTDOWN`), already in whole seconds.
     DuelCountdown { seconds: u32 },
+    /// A dungeon difficulty for the player, the group or both (`MSG_SET_DUNGEON_DIFFICULTY`).
+    DungeonDifficulty(DifficultySet),
+    /// A raid difficulty for the player, the group or both (`MSG_SET_RAID_DIFFICULTY`).
+    RaidDifficulty(DifficultySet),
+    /// Stop targeting and focusing `guid` (`SMSG_BREAK_TARGET`).
+    BreakTarget { guid: u64 },
     /// Another player's honor stats (`MSG_INSPECT_HONOR_STATS`); a refused ask gets no reply.
     InspectHonorStats(InspectHonorStats),
     /// A kill paid out honor (`SMSG_PVP_CREDIT`); a dishonorable kill's `honor` is negative.

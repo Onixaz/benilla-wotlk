@@ -40,6 +40,12 @@ pub(crate) struct TradeSession {
     initiated: bool,
     /// `OPEN_WINDOW` arrived; `partner` is set before it.
     open: bool,
+    /// `OPEN_WINDOW`'s trade id `[0xca0b68]`, which every snapshot must carry.
+    trade_id: u32,
+    /// Our own offer changes sent this trade, from 1 at the open `[0xca0b7c]`.
+    own_state: u32,
+    /// The partner offer's state from its last snapshot `[0xca0b70]`, echoed by our accept.
+    their_state: u32,
     our: TradeOffer,
     their: TradeOffer,
     /// We pressed Trade: optimistic, dropped by `BACK_TO_TRADE`, an offer change or a close.
@@ -54,6 +60,16 @@ pub(crate) struct TradeSession {
     /// a hit, the query callback `0x5d4080` at `0x5d40ca` on a miss); the lines survive
     /// [`Self::close_window`], since that callback hangs off the name query, not the trade.
     named_lines: Vec<NamedLine>,
+}
+
+/// What a snapshot did to the session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OfferUpdate {
+    Applied,
+    /// An own snapshot older than our last sent change, dropped (`0x7046d7`).
+    Stale,
+    /// Not the open trade's id: the reference sends `CMSG_CANCEL_TRADE` (`0x7046b6`).
+    OtherTrade,
 }
 
 /// A line owed whose `%s` names a player.
@@ -107,14 +123,29 @@ impl TradeSession {
         };
     }
 
-    /// `OPEN_WINDOW`: the feed's open edge fires `TRADE_SHOW`.
-    pub(crate) fn open_window(&mut self) {
+    /// `OPEN_WINDOW` (`0x704517`): both offers empty, both states 1, the trade id kept; the feed's
+    /// open edge fires `TRADE_SHOW`.
+    pub(crate) fn open_window(&mut self, trade_id: u32) {
         self.open = true;
+        self.trade_id = trade_id;
+        self.own_state = 1;
+        self.their_state = 1;
+        self.our = TradeOffer::default();
+        self.their = TradeOffer::default();
     }
 
-    /// `SMSG_TRADE_STATUS_EXTENDED`: one side's new offer, which drops both accepts.
-    pub(crate) fn set_offer(&mut self, ext: &TradeStatusExtended) {
+    /// `SMSG_TRADE_STATUS_EXTENDED` as `0x704680` takes it: another trade's snapshot is answered
+    /// with a cancel, an own snapshot behind our sent changes is dropped, and otherwise the side's
+    /// offer is replaced whole, which drops both accepts.
+    pub(crate) fn set_offer(&mut self, ext: &TradeStatusExtended) -> OfferUpdate {
+        if ext.trade_id != self.trade_id {
+            return OfferUpdate::OtherTrade;
+        }
+        if !ext.their_window && ext.state_index < self.own_state {
+            return OfferUpdate::Stale;
+        }
         let side = if ext.their_window {
+            self.their_state = ext.side_state;
             &mut self.their
         } else {
             &mut self.our
@@ -124,6 +155,18 @@ impl TradeSession {
         side.enchant_spell_id = ext.enchant_spell_id;
         self.our_accept = false;
         self.their_accept = false;
+        OfferUpdate::Applied
+    }
+
+    /// One own change went out (`CMSG_SET_TRADE_ITEM`, `_CLEAR_TRADE_ITEM`, `_SET_TRADE_GOLD`),
+    /// each of which counts `[0xca0b7c]` up (`0x70415f`, `0x7041dc`, `0x70444f`).
+    pub(crate) fn own_change_sent(&mut self) {
+        self.own_state += 1;
+    }
+
+    /// The partner offer state our `CMSG_ACCEPT_TRADE` carries (`0x703f50`).
+    pub(crate) fn their_state(&self) -> u32 {
+        self.their_state
     }
 
     /// Place our item in trade slot `id_1based` client-side: vmangos sends a placement to the
@@ -248,8 +291,9 @@ impl TradeSession {
         self.their_accept = false;
     }
 
-    /// `ONLY_CONJURED` (case 22, `0x4bf9ec` → `0x4bfbd0`): empty the offending slot of our offer,
-    /// or the gold for `0xff`; the feed's diff raises the repaint events. Deviation: an
+    /// `ONLY_CONJURED` and `NOT_ELIGIBLE` (cases 22 and 23, `0x587727`/`0x587742` → `0x586410`):
+    /// empty the offending slot of our offer, or the gold for `0xff` (`0x7045eb`); the feed's diff
+    /// raises the repaint events. Deviation: an
     /// out-of-range slot is dropped, where the reference indexes its 7-slot mirror unchecked,
     /// because an out-of-bounds write is not a behaviour to reproduce.
     pub(crate) fn bounce_own_offer(&mut self, slot: u8) {
@@ -495,6 +539,7 @@ fn own_item_at(
         wrapped: false,
         gift_creator: 0,
         perm_enchant: 0,
+        socket_enchants: [0; 3],
         creator: 0,
         charges: 0,
         suffix_factor: 0,
@@ -702,7 +747,9 @@ fn drain_trade(
     // The accept verbs need an open window; close always clears, even a stale session.
     if script.take_trade_accept() && trade.is_open() {
         trade.accept();
-        let _ = commands.0.send(ClientCommand::AcceptTrade);
+        let _ = commands.0.send(ClientCommand::AcceptTrade {
+            their_state: trade.their_state(),
+        });
     }
     if script.take_trade_unaccept() && trade.is_open() {
         trade.unaccept();
@@ -715,6 +762,7 @@ fn drain_trade(
             trade.set_own_gold(copper);
             info!(target: "trade", "set gold: {copper} copper; sending CMSG_SET_TRADE_GOLD");
             let _ = commands.0.send(ClientCommand::SetTradeGold { copper });
+            trade.own_change_sent();
         }
     }
     // Placements and clears, while open: the UI id is 1-based, the wire slot 0-based, and the
@@ -738,6 +786,7 @@ fn drain_trade(
                 bag: wire_bag,
                 slot: wire_slot,
             });
+            trade.own_change_sent();
         }
     }
     for id in script.take_trade_clear_items() {
@@ -750,6 +799,7 @@ fn drain_trade(
             let _ = commands
                 .0
                 .send(ClientCommand::ClearTradeItem { trade_slot });
+            trade.own_change_sent();
         }
     }
     if script.take_trade_close() {
@@ -798,6 +848,7 @@ fn trim_offer_to_purse(
         let _ = commands
             .0
             .send(ClientCommand::SetTradeGold { copper: trimmed });
+        trade.own_change_sent();
     }
 }
 
@@ -819,6 +870,7 @@ mod tests {
             wrapped: false,
             gift_creator: 0,
             perm_enchant: 0,
+            socket_enchants: [0; 3],
             creator: 0,
             charges: 0,
             suffix_factor: 0,
@@ -839,7 +891,7 @@ mod tests {
         assert!(!s.is_open());
         assert_eq!(s.npc(), None);
 
-        s.open_window();
+        s.open_window(0);
         assert!(s.is_open());
         assert_eq!(s.npc(), Some(0x1234));
 
@@ -881,7 +933,7 @@ mod tests {
     fn a_request_leaves_a_live_trade_alone() {
         let mut s = TradeSession::default();
         s.initiate(0x1);
-        s.open_window();
+        s.open_window(0);
         s.partner_accepted();
 
         s.request(0x2);
@@ -900,40 +952,92 @@ mod tests {
     fn extended_fills_the_right_side_and_resets_accepts() {
         let mut s = TradeSession::default();
         s.begin(0x1);
-        s.open_window();
+        s.open_window(0);
         s.partner_accepted();
         assert!(s.their_accept);
 
         let mut slots = [None; TRADE_SLOT_COUNT];
         slots[0] = Some(wire_item(2589));
-        let ext = TradeStatusExtended {
-            their_window: true,
-            gold: 500,
-            enchant_spell_id: 0,
-            slots,
-        };
-        s.set_offer(&ext);
+        let ext = snapshot_of(true, 500, slots);
+        assert_eq!(s.set_offer(&ext), OfferUpdate::Applied);
         assert!(s.their.slots[0].is_some());
         assert_eq!(s.their.gold, 500);
         assert_eq!(s.our.gold, 0);
         assert!(!s.their_accept, "an offer change resets accepts");
 
-        let our_ext = TradeStatusExtended {
-            their_window: false,
-            gold: 999,
-            enchant_spell_id: 0,
-            slots: [None; TRADE_SLOT_COUNT],
-        };
-        s.set_offer(&our_ext);
+        let our_ext = snapshot_of(false, 999, [None; TRADE_SLOT_COUNT]);
+        assert_eq!(s.set_offer(&our_ext), OfferUpdate::Applied);
         assert_eq!(s.our.gold, 999);
         assert_eq!(s.their.gold, 500, "the other side is untouched");
+    }
+
+    /// A snapshot for trade id 0 with state index 1 and side state 3.
+    fn snapshot_of(
+        their_window: bool,
+        gold: u32,
+        slots: [Option<TradeItem>; TRADE_SLOT_COUNT],
+    ) -> TradeStatusExtended {
+        TradeStatusExtended {
+            their_window,
+            trade_id: 0,
+            state_index: 1,
+            side_state: 3,
+            gold,
+            enchant_spell_id: 0,
+            slots,
+        }
+    }
+
+    /// The partner's offer replaces the whole column: a slot it no longer lists empties.
+    #[test]
+    fn a_fresh_partner_snapshot_clears_the_slots_it_omits() {
+        let mut s = TradeSession::default();
+        s.begin(0x1);
+        s.open_window(0);
+        let mut slots = [None; TRADE_SLOT_COUNT];
+        slots[0] = Some(wire_item(2589));
+        slots[3] = Some(wire_item(2590));
+        s.set_offer(&snapshot_of(true, 0, slots));
+        slots[0] = None;
+        s.set_offer(&snapshot_of(true, 0, slots));
+        assert!(s.their.slots[0].is_none() && s.their.slots[3].is_some());
+    }
+
+    /// A snapshot of another trade id is not applied and asks for a cancel (`0x7046ae`).
+    #[test]
+    fn another_trades_snapshot_is_refused() {
+        let mut s = TradeSession::default();
+        s.begin(0x1);
+        s.open_window(5);
+        let mut slots = [None; TRADE_SLOT_COUNT];
+        slots[0] = Some(wire_item(2589));
+        assert_eq!(
+            s.set_offer(&snapshot_of(true, 7, slots)),
+            OfferUpdate::OtherTrade
+        );
+        assert!(s.their.slots[0].is_none() && s.their.gold == 0);
+    }
+
+    /// Our own snapshot behind the changes we sent is dropped; the partner's never is.
+    #[test]
+    fn an_own_snapshot_behind_our_sends_is_stale() {
+        let mut s = TradeSession::default();
+        s.begin(0x1);
+        s.open_window(0);
+        s.own_change_sent();
+        let own = snapshot_of(false, 40, [None; TRADE_SLOT_COUNT]);
+        assert_eq!(s.set_offer(&own), OfferUpdate::Stale, "index 1 < our 2");
+        assert_eq!(s.our.gold, 0);
+        let theirs = snapshot_of(true, 40, [None; TRADE_SLOT_COUNT]);
+        assert_eq!(s.set_offer(&theirs), OfferUpdate::Applied);
+        assert_eq!(s.their_state(), 3, "the accept will echo the partner's state");
     }
 
     #[test]
     fn accept_glow_tracks_both_sides() {
         let mut s = TradeSession::default();
         s.begin(0x1);
-        s.open_window();
+        s.open_window(0);
         s.accept();
         s.partner_accepted();
         assert_eq!((s.our_accept, s.their_accept), (true, true));
@@ -945,7 +1049,7 @@ mod tests {
     fn own_offer_is_tracked_optimistically() {
         let mut s = TradeSession::default();
         s.begin(0x7);
-        s.open_window();
+        s.open_window(0);
         s.accept();
         s.partner_accepted();
         assert_eq!((s.our_accept, s.their_accept), (true, true));
@@ -976,7 +1080,7 @@ mod tests {
 
     #[test]
     fn status_codes_are_stable() {
-        assert_eq!(TradeStatus::OpenWindow.code(), 2);
+        assert_eq!(TradeStatus::OpenWindow { trade_id: 0 }.code(), 2);
         assert_eq!(TradeStatus::Accept.code(), 4);
         assert_eq!(TradeStatus::BackToTrade.code(), 7);
     }
@@ -1437,7 +1541,7 @@ mod tests {
         {
             let mut trade = app.world_mut().resource_mut::<TradeSession>();
             trade.begin(0x7);
-            trade.open_window();
+            trade.open_window(0);
         }
         app.world_mut()
             .non_send_resource_mut::<UiScript>()
@@ -1469,7 +1573,7 @@ mod tests {
         {
             let mut trade = app.world_mut().resource_mut::<TradeSession>();
             trade.begin(0x7);
-            trade.open_window();
+            trade.open_window(0);
         }
 
         // Our slot 1 filled, then an empty-cursor click on it.

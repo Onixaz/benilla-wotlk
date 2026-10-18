@@ -19,7 +19,7 @@ use crate::unit_auras::UnitAuras as AuraTable;
 
 /// The tokens `UNIT_AURA` fires for besides `"player"`, in firing order: [`EVENT_UNITS`], then the
 /// group's, each resolved by [`event_guid`].
-const EVENT_UNITS: [&str; 3] = ["pet", "target", "targettarget"];
+const EVENT_UNITS: [&str; 4] = ["pet", "target", "targettarget", "focus"];
 
 const EVENT_TOKEN_COUNT: usize = EVENT_UNITS.len()
     + PARTY_TOKENS.len()
@@ -44,10 +44,11 @@ fn event_guid(g: &UnitGuids, i: usize) -> u64 {
         1 => g.target,
         // One hop, as the resolver's `target` loop makes it: off a held target only.
         2 => g.held.get(&g.target).copied().unwrap_or(0),
-        3..=6 => g.party[i - 3],
-        7..=10 => g.party_pets[i - 7],
-        11..=50 => at(&g.raid, i - 11),
-        _ => at(&g.raid_pets, i - 51),
+        3 => g.focus,
+        4..=7 => g.party[i - 4],
+        8..=11 => g.party_pets[i - 8],
+        12..=51 => at(&g.raid, i - 12),
+        _ => at(&g.raid_pets, i - 52),
     }
 }
 
@@ -86,11 +87,12 @@ pub(super) struct Inputs<'g, 'a, H, T, V> {
     /// Our guid, and whether the player's list moved this frame: a token naming us reads the
     /// player's list, which the caller pushes.
     pub(super) me: (u64, bool),
-    /// `pet`, `target`, `mouseover` and `npc`'s guids, 0 for none.
+    /// `pet`, `target`, `mouseover`, `npc` and `focus`'s guids, 0 for none.
     pub(super) pet: u64,
     pub(super) target: u64,
     pub(super) mouseover: u64,
     pub(super) npc: u64,
+    pub(super) focus: u64,
     /// The object manager's lookup (`0x468460`).
     pub(super) held: H,
     /// A held unit's aura table, by guid.
@@ -156,6 +158,7 @@ impl UnitAuras {
             target,
             mouseover,
             npc,
+            focus,
             held,
             table_of,
             buffs_visible,
@@ -178,11 +181,12 @@ impl UnitAuras {
         // its roster record while out of view; any other lists only while held.
         let mut g = std::mem::take(&mut self.guids);
         let mut walk = std::mem::take(&mut self.walk);
-        (g.player, g.pet, g.target, g.mouseover, g.npc) = (me, pet, target, mouseover, npc);
+        (g.player, g.pet, g.target, g.mouseover, g.npc, g.focus) =
+            (me, pet, target, mouseover, npc, focus);
         fill_group(&mut g, group, me, &held);
         g.held.clear();
         walk.clear();
-        walk.extend([me, pet, target, mouseover, npc].map(|g| (g, false)));
+        walk.extend([me, pet, target, mouseover, npc, focus].map(|g| (g, false)));
         walk.extend(g.party.iter().chain(&g.party_pets).map(|&g| (g, true)));
         walk.extend(g.raid.iter().chain(&g.raid_pets).map(|&g| (g, true)));
         while let Some((guid, record_ok)) = walk.pop() {

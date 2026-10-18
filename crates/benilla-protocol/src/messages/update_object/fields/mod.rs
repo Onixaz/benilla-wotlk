@@ -34,10 +34,10 @@ pub const FIELD_CORPSE_DYNAMIC_FLAGS: u16 = 36;
 /// The unit's target; the client turns an idle unit to face it, and no packet carries that facing.
 const FIELD_UNIT_TARGET: u16 = 16;
 /// The unit this one charms (`UpdateFields_1_12_1.h:41`), descriptor byte 0.
-const FIELD_UNIT_CHARM: u16 = 6;
+pub const FIELD_UNIT_CHARM: u16 = 6;
 /// The unit this one summoned (`UpdateFields_1_12_1.h:42`); on us, the `"pet"` unit. The pet bar
 /// reads its guid off `SMSG_PET_SPELLS`, so the two can disagree briefly around a summon.
-const FIELD_UNIT_SUMMON: u16 = 8;
+pub const FIELD_UNIT_SUMMON: u16 = 8;
 /// The charmer, 0 for none. The attack-start check `0x612df0` refuses a swing when it is set and
 /// is not us (`ERR_ATTACK_CHARMED`); `0x5ee5a0` and `0x5ff580` prefer it as the owner.
 const FIELD_UNIT_CHARMEDBY: u16 = 10;
@@ -197,6 +197,7 @@ const FIELD_PLAYER_COMBAT_RATING_1: u16 = 1445; // ×25, INT
 const FIELD_PLAYER_MOD_HEALING_PCT: u16 = 1470; // FLOAT
 const FIELD_PLAYER_MOD_HEALING_DONE_PCT: u16 = 1471; // FLOAT
 const FIELD_PLAYER_PET_SPELL_POWER: u16 = 1472;
+const FIELD_PLAYER_RAF_GRANTABLE_LEVEL: u16 = 1473;
 /// The combat ratings, 25 in 3.3.5a (`GetCombatRating` refuses an index past `0x19`).
 pub const PLAYER_COMBAT_RATINGS: u8 = 25;
 // 3.3.5a's power regen pairs and max-health modifier, in 1.12.1's unread power-cost words.
@@ -213,9 +214,9 @@ pub mod field {
         FIELD_PLAYER_FIELD_COINAGE, FIELD_PLAYER_FLAGS, FIELD_PLAYER_INV_SLOT_HEAD,
         FIELD_PLAYER_QUEST_LOG_1_1, FIELD_PLAYER_SKILL_INFO_1_1, FIELD_UNIT_AURA,
         FIELD_UNIT_AURAAPPLICATIONS, FIELD_UNIT_AURAFLAGS, FIELD_UNIT_BYTES_1,
-        FIELD_UNIT_CHANNEL_SPELL, FIELD_UNIT_DYNAMIC_FLAGS, FIELD_UNIT_FACTIONTEMPLATE,
+        FIELD_UNIT_CHANNEL_SPELL, FIELD_UNIT_CHARM, FIELD_UNIT_DYNAMIC_FLAGS, FIELD_UNIT_FACTIONTEMPLATE,
         FIELD_UNIT_FLAGS, FIELD_UNIT_HEALTH, FIELD_UNIT_LEVEL, FIELD_UNIT_MAXHEALTH,
-        FIELD_UNIT_MOUNTDISPLAYID, FIELD_UNIT_NPC_FLAGS,
+        FIELD_UNIT_MOUNTDISPLAYID, FIELD_UNIT_NPC_FLAGS, FIELD_UNIT_SUMMON,
     };
 }
 
@@ -387,7 +388,7 @@ fn descriptor_len(object_type: ObjectType) -> u16 {
         ObjectType::Container => 122, // CONTAINER_END = ITEM_END + 0x4A
         ObjectType::Unit => 188,      // UNIT_END = OBJECT_END + 0xB6
         // 1.12.1's PLAYER_END (UNIT_END + 0x446), plus the 3.3.5a fields kept past it.
-        ObjectType::Player => 1473,
+        ObjectType::Player => 1474,
         ObjectType::GameObject => 26, // GAMEOBJECT_END = OBJECT_END + 0x14
         ObjectType::DynamicObject => 16, // DYNAMICOBJECT_END = OBJECT_END + 0xA
         ObjectType::Corpse => 38,     // CORPSE_END = OBJECT_END + 0x20

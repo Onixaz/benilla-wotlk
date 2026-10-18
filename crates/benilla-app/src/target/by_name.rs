@@ -351,6 +351,16 @@ impl PlayerLookup<'_, '_> {
     /// `0x493aa0` with typemask `0x10`, filter mode 0 and no exact-only flag, as `/assist <name>`
     /// calls it: any player in the object list, whole name or longest prefix. Selects nothing.
     pub(crate) fn find(&self, names: &NameCache, name: &str) -> Option<(Entity, u64)> {
+        self.find_as(names, name, Match::PrefixOk)
+    }
+
+    /// [`Self::find`] with the exact-only flag, as `StartDuel`'s second argument sets it.
+    pub(crate) fn find_as(
+        &self,
+        names: &NameCache,
+        name: &str,
+        mode: Match,
+    ) -> Option<(Entity, u64)> {
         let origin = self.self_q.single().ok().map(|tf| tf.translation());
         scan_units(
             self.units
@@ -360,7 +370,7 @@ impl PlayerLookup<'_, '_> {
             names,
             name,
             NameSearch::PlayerOnly,
-            Match::PrefixOk,
+            mode,
             |_| true,
         )
         .map(|(e, g, _)| (e, g))

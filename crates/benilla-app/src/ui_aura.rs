@@ -419,6 +419,7 @@ fn feed_auras(
             )
     };
     let target_guid = units.selection.guid.unwrap_or(0);
+    let focus_guid = script.focus_guid();
     let catalog_moved = spells.as_ref().is_some_and(|s| s.is_changed());
     let unit_changed = memo.units.feed(
         &mut script,
@@ -436,6 +437,7 @@ fn feed_auras(
                 })
                 .map_or(0, |(_, guid)| guid),
             npc: units.interact.as_deref().and_then(|i| i.1).unwrap_or(0),
+            focus: focus_guid,
             held,
             table_of,
             buffs_visible,

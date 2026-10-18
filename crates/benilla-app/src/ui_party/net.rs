@@ -8,6 +8,7 @@ use bevy::prelude::*;
 
 use benilla_protocol::{SessionEvent, SessionEventKind};
 
+use super::difficulty::RaidMap;
 use super::{GroupState, GROUPTYPE_RAID};
 use crate::names::NameCache;
 use crate::net::{ClientCommand, GuidIndex, NetCommands, NetHandlerApp, ObjectStore, SelfGuid};
@@ -34,7 +35,37 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::ReadyCheckRequest, on_ready_check_request)
         .net_handler(K::ReadyCheckAnswer, on_ready_check_answer)
         .net_handler(K::RaidInstanceInfo, on_raid_instance_info)
+        .net_handler(K::DungeonDifficulty, on_difficulty)
+        .net_handler(K::RaidDifficulty, on_difficulty)
         .net_handler(K::Disconnected, on_session_end);
+}
+
+/// The current map's raid wording, off `Map.dbc`.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct CurrentRaidMap<'w> {
+    maps: Option<Res<'w, benilla_assets::MapCatalogRes>>,
+    here: Option<Res<'w, benilla_world::world_map::CurrentMap>>,
+}
+
+impl CurrentRaidMap<'_> {
+    fn kind(&self) -> RaidMap {
+        RaidMap::of(self.here.as_ref().map(|m| m.0), self.maps.as_deref())
+    }
+}
+
+/// `MSG_SET_DUNGEON_DIFFICULTY` and `MSG_SET_RAID_DIFFICULTY` (both arms of `0x526530`).
+fn on_difficulty(
+    In(ev): In<SessionEvent>,
+    mut group: ResMut<GroupState>,
+    mut errors: ResMut<UiErrorKeys>,
+    map: CurrentRaidMap,
+) {
+    let lines = match ev {
+        SessionEvent::DungeonDifficulty(set) => group.apply_dungeon_difficulty(set),
+        SessionEvent::RaidDifficulty(set) => group.apply_raid_difficulty(set, map.kind()),
+        _ => return,
+    };
+    push_group_lines(&mut errors, lines);
 }
 
 fn on_invite(
@@ -65,10 +96,34 @@ fn on_uninvited(
     In(ev): In<SessionEvent>,
     mut group: ResMut<GroupState>,
     mut errors: ResMut<UiErrorKeys>,
+    map: CurrentRaidMap,
 ) {
     if let SessionEvent::GroupUninvited = ev {
+        let before = removal_start(&group);
         uninvited(&mut group, &mut errors);
+        removal_end(&mut group, &mut errors, before, map.kind());
     }
+}
+
+/// The current difficulties before `CGPartyInfo::RemoveAll(1)` empties the party (`0x52d6e8`).
+fn removal_start(group: &GroupState) -> (u32, u32) {
+    (
+        group.current_dungeon_difficulty(),
+        group.current_raid_difficulty(),
+    )
+}
+
+/// `RemoveAll(1)`'s tail: the LFG bit cleared without a signal (`0x52d85e`), then the lines for a
+/// difficulty the emptied party changed (`0x52d87b`).
+fn removal_end(
+    group: &mut GroupState,
+    errors: &mut UiErrorKeys,
+    (dungeon, raid): (u32, u32),
+    map: RaidMap,
+) {
+    group.lfg_restricted = false;
+    let lines = group.difficulty_lines(dungeon, raid, map);
+    push_group_lines(errors, lines);
 }
 
 fn on_leader_changed(
@@ -95,9 +150,12 @@ fn on_destroyed(
     In(ev): In<SessionEvent>,
     mut group: ResMut<GroupState>,
     mut errors: ResMut<UiErrorKeys>,
+    map: CurrentRaidMap,
 ) {
     if let SessionEvent::GroupDestroyed = ev {
+        let before = removal_start(&group);
         destroyed(&mut group, &mut errors);
+        removal_end(&mut group, &mut errors, before, map.kind());
     }
 }
 
@@ -118,8 +176,11 @@ fn on_list(
         members,
         leader,
         loot,
+        difficulties,
+        lfg_restricted,
     } = ev
     {
+        group.apply_list_tail(difficulties, lfg_restricted);
         list(
             &mut group,
             &mut errors,

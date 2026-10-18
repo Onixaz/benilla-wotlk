@@ -17,6 +17,20 @@ use crate::target::Selection;
 
 /// The target half of `GetSlashCmdTarget` (`ChatFrame.lua:650-658`): a bare command falls back
 /// to the selection only when it is a player. A streamed player's name is always cached.
+/// A streamed player by name, case-insensitive, for `/reaction`'s typed argument.
+fn streamed_player_named(
+    name: &str,
+    index: &crate::net::GuidIndex,
+    names: &crate::names::NameCache,
+) -> Option<u64> {
+    index
+        .0
+        .keys()
+        .copied()
+        .filter(|g| benilla_protocol::guid::is_player(*g))
+        .find(|g| names.peek(*g).is_some_and(|n| n.eq_ignore_ascii_case(name)))
+}
+
 fn target_player_name(
     selection: &Selection,
     names: &crate::names::NameCache,
@@ -343,7 +357,7 @@ pub(super) fn drain_chat_input(
             ParsedChat::Reaction { name } => {
                 // In the ladder's order: the duel gates, the faction work, then `can_attack`.
                 let subject_guid = match &name {
-                    Some(n) => crate::ui_duel::streamed_player_named(n, guids, &names),
+                    Some(n) => streamed_player_named(n, guids, &names),
                     None => selection.guid,
                 };
                 let subject_entity = subject_guid.and_then(|g| guids.0.get(&g).copied());
@@ -601,13 +615,9 @@ pub(super) fn drain_chat_input(
                 }
             }
             // The duel verbs join the intent queue `StartDuel` and `CancelDuel` feed: the stock
-            // handlers are one-line calls to them.
+            // handlers are one-line calls to them, and `StartDuel` reads no name as the target.
             ParsedChat::Duel { name } => {
-                if let Some(name) =
-                    name.or_else(|| target_player_name(&selection, &names, &commands))
-                {
-                    script.queue_duel_request(benilla_ui::script::DuelRequest::StartByName(name));
-                }
+                script.start_duel(name.as_deref().unwrap_or(""));
             }
             ParsedChat::Forfeit => {
                 script.queue_duel_request(benilla_ui::script::DuelRequest::Cancel);

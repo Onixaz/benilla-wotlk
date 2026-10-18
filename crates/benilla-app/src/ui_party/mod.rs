@@ -14,6 +14,7 @@ use bevy::prelude::*;
 
 use crate::ui_script::{UiFeed, UiInput};
 
+pub(crate) mod difficulty;
 mod feed;
 pub(crate) mod net;
 mod pets;
@@ -35,6 +36,7 @@ impl Plugin for UiPartyPlugin {
                 Update,
                 (
                     feed::feed_party.in_set(UiFeed),
+                    difficulty::feed_menu_gates.in_set(UiFeed),
                     feed::drain_party.after(UiInput),
                 ),
             );
@@ -91,6 +93,14 @@ pub struct GroupState {
     pub ready_check_requests: u32,
     /// The answers forwarded to us as leader, append-only until the next request clears them.
     pub ready_check_answers: Vec<(u64, bool)>,
+    /// The player's own instance difficulties: the character's, kept across groups.
+    pub player_difficulty: difficulty::PlayerDifficulty,
+    /// The group's difficulties from its last list with members.
+    pub difficulties: benilla_protocol::messages::GroupDifficulties,
+    /// The list's LFG-restricted bit `[0xbd19a8]`, `HasLFGRestrictions`.
+    pub lfg_restricted: bool,
+    /// Each list that set the LFG bit, one `PARTY_LFG_RESTRICTED` apiece.
+    pub lfg_signals: u32,
 }
 
 /// What one `SMSG_GROUP_LIST` shows: its lines, and whether it plays `igPlayerInviteAccept`
@@ -485,6 +495,12 @@ impl GroupState {
             ready_check: _,
             ready_check_requests: _,
             ready_check_answers: _,
+            // The character's own pair, and the list tail's: only a list with members writes the
+            // group's difficulties (`0x6d8fc3`), and every list sets the LFG bit itself.
+            player_difficulty: _,
+            difficulties: _,
+            lfg_restricted: _,
+            lfg_signals: _,
         } = self;
         *in_group = false;
         *group_type = 0;

@@ -70,7 +70,7 @@ pub(crate) use relations::{
 // pet bar's; the melee probe's press with nothing selected.
 pub(crate) use scan::{AttackNearestRequest, AttackPick};
 // The chat layer's by-name asks (`/target`, `/assist`).
-pub(crate) use by_name::{AssistRequest, PlayerLookup, TargetByNameRequest};
+pub(crate) use by_name::{AssistRequest, Match as NameMatch, PlayerLookup, TargetByNameRequest};
 // The one SetSelection path, for the loot response's select (`0x48f3a0`).
 pub(crate) use by_name::SelectCommit;
 // The reaction decode and its faction catalog, which also tint the target frame

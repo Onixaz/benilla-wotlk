@@ -161,6 +161,16 @@ impl Spells {
     ) -> u32 {
         self.cast_time_unclamped_ms(def, caster_level, mods).max(0) as u32
     }
+
+    /// The learned spell `CGSpellBook_RegisterLearnedSpell` keeps for an `Effect[0]` (`0x5420a5`),
+    /// each learn overwriting it, so the book's last in ascending id order.
+    pub(crate) fn learned_with_effect(&self, learned: &BTreeSet<u32>, effect: u32) -> Option<u32> {
+        learned
+            .iter()
+            .rev()
+            .copied()
+            .find(|id| self.catalog.get(*id).is_some_and(|s| s.effects[0] == effect))
+    }
 }
 
 #[cfg(test)]

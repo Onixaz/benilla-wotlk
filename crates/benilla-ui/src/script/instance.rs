@@ -143,8 +143,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // `GetInstanceInfo()` (`0x51a8c0`): name, type word (`0xac8074`, "none" from 5 up), difficulty
     // + 1, the `MapDifficulty` row's name and size, the dynamic difficulty, and whether the map's
-    // difficulty is dynamic. Deviations: the difficulty stays 0, as `MSG_SET_DUNGEON_DIFFICULTY`
-    // is not parsed; `MapDifficulty.dbc` is not loaded, so the name and size read "" and 0, which
+    // difficulty is dynamic. Deviations: the difficulty stays 0, as the map's own `[0xbd0894]` is
+    // not held; `MapDifficulty.dbc` is not loaded, so the name and size read "" and 0, which
     // is right only for a map with no row; and with no map row the reference pushes six values
     // for its seven, a stack bug, where this answers the six and a nil.
     g.set(

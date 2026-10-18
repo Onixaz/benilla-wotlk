@@ -373,10 +373,14 @@ impl super::UiScript {
 
     /// Push the unit-token resolver's inputs, copied only when they moved.
     pub fn set_unit_guids(&mut self, guids: &super::UnitGuids) {
-        if self.model_ref().unit_guids == *guids {
+        if self.model_ref().unit_guids.same_push(guids) {
             return;
         }
-        self.model_mut().unit_guids.clone_from(guids);
+        let mut model = self.model_mut();
+        // The focus is the VM's own: `FocusUnit` sets it, never a push.
+        let focus = model.unit_guids.focus;
+        model.unit_guids.clone_from(guids);
+        model.unit_guids.focus = focus;
     }
 
     /// Push or clear the player's active [`TrackingState`].

@@ -1718,8 +1718,8 @@ pub(crate) enum ClientCommand {
     /// `CMSG_BUSY_TRADE` (`0x118`, sent by `0x5d4150`): five of the ladder's eight refusal legs;
     /// vmangos sends `TRADE_STATUS_BUSY` to both. The player's own No is [`Self::CancelTrade`].
     BusyTrade,
-    /// `CMSG_ACCEPT_TRADE`: the Trade button.
-    AcceptTrade,
+    /// `CMSG_ACCEPT_TRADE`: the Trade button, carrying the partner's offer state.
+    AcceptTrade { their_state: u32 },
     /// `CMSG_UNACCEPT_TRADE`: drop our accept, stay in the trade.
     UnacceptTrade,
     /// `CMSG_CANCEL_TRADE`.

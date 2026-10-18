@@ -6,7 +6,7 @@ mod common;
 use benilla_protocol::events::{decode, SessionEvent};
 use benilla_protocol::messages::{
     self, member_status, opcode, party_member_mask, party_operation, party_result, patch_auras,
-    GroupLootInfo, GroupMemberEntry, PartyMemberStatsInfo, GROUP_MEMBER_ASSISTANT,
+    GroupDifficulties, GroupLootInfo, GroupMemberEntry, PartyMemberStatsInfo, GROUP_MEMBER_ASSISTANT,
 };
 use benilla_protocol::ServerPacket;
 use common::hx;
@@ -270,7 +270,7 @@ fn group_list_party_two_members_master_loot() {
     body.push(2); // lootMethod: master loot
     body.extend_from_slice(&0x3333u64.to_le_bytes()); // looterGuid: Carol is master looter
     body.push(3); // lootThreshold
-    body.extend_from_slice(&[0, 0, 0]); // dungeon, raid and dynamic difficulty
+    body.extend_from_slice(&[1, 0, 0]); // dungeon (heroic), raid and dynamic difficulty
 
     let p = messages::parse_server(opcode::SMSG_GROUP_LIST, &body).unwrap();
     match &p {
@@ -280,8 +280,19 @@ fn group_list_party_two_members_master_loot() {
             members,
             leader,
             loot,
+            difficulties,
+            lfg_restricted,
         } => {
             assert_eq!(*group_type, 0);
+            assert!(!lfg_restricted);
+            assert_eq!(
+                *difficulties,
+                Some(GroupDifficulties {
+                    dungeon: 1,
+                    raid: 0,
+                    dynamic: 0,
+                })
+            );
             assert_eq!(*own_flags, 0x00);
             assert_eq!(
                 members,
@@ -328,10 +339,11 @@ fn group_list_party_two_members_master_loot() {
     }
 }
 
-/// `SMSG_GROUP_LIST`: a raid LFG list, its assistant flag (`0x01`) folded to `0x80`, round-robin loot.
+/// `SMSG_GROUP_LIST`: a restricted raid LFG list, its assistant flag (`0x01`) folded to `0x80`,
+/// round-robin loot.
 #[test]
 fn group_list_raid_with_assistant_flag() {
-    let mut body = vec![0x02 | 0x08, 2, 0, 0]; // raid + LFG; own subgroup 2, no flags, no roles
+    let mut body = vec![0x02 | 0x04 | 0x08, 2, 0, 0]; // raid + LFG restricted + LFG; subgroup 2
     body.push(0); // LFG status
     body.extend_from_slice(&261u32.to_le_bytes()); // LFG slot
     body.extend_from_slice(&0x1f50_0000_0000_0001u64.to_le_bytes()); // group guid
@@ -347,7 +359,7 @@ fn group_list_raid_with_assistant_flag() {
     body.push(1); // lootMethod: round-robin
     body.extend_from_slice(&0u64.to_le_bytes()); // looterGuid: 0 (not master loot)
     body.push(2); // lootThreshold
-    body.extend_from_slice(&[0, 0, 0]); // dungeon, raid and dynamic difficulty
+    body.extend_from_slice(&[0, 1, 2]); // dungeon, raid and dynamic difficulty
 
     let p = messages::parse_server(opcode::SMSG_GROUP_LIST, &body).unwrap();
     match &p {
@@ -357,8 +369,19 @@ fn group_list_raid_with_assistant_flag() {
             members,
             leader,
             loot,
+            difficulties,
+            lfg_restricted,
         } => {
             assert_eq!(*group_type, 1);
+            assert!(lfg_restricted, "type bit 0x04");
+            assert_eq!(
+                *difficulties,
+                Some(GroupDifficulties {
+                    dungeon: 0,
+                    raid: 1,
+                    dynamic: 2,
+                })
+            );
             assert_eq!(*own_flags, 0x02);
             assert_eq!(
                 members,
@@ -405,9 +428,12 @@ fn group_list_empty_you_left_shape_is_28_bytes() {
             members,
             leader,
             loot,
+            difficulties,
+            ..
         } => {
             assert_eq!(*group_type, 0);
             assert_eq!(*own_flags, 0);
+            assert!(difficulties.is_none(), "no tail, no difficulties");
             assert!(members.is_empty());
             assert_eq!(*leader, 0);
             assert!(loot.is_none(), "empty member list carries no loot tail");

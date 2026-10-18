@@ -1,5 +1,5 @@
 //! Player-to-player trade wire: the trade window's request verbs and the two status packets the
-//! server pushes back (vmangos `TradeHandler.cpp`, `Server/Packets/Trade.cpp`).
+//! server pushes back, read as 12340's handlers `0x7044a0` and `0x704680` read them.
 
 use std::io;
 
@@ -19,8 +19,8 @@ pub enum TradeStatus {
     Busy,
     /// To the target of `CMSG_INITIATE_TRADE`; its `CMSG_BEGIN_TRADE` opens both windows.
     BeginTrade { partner: u64 },
-    /// Opens the window on both sides (the client's `TRADE_SHOW`).
-    OpenWindow,
+    /// Opens the window on both sides; `trade_id` is the id every snapshot must carry (`0x70453e`).
+    OpenWindow { trade_id: u32 },
     /// The trade was cancelled; both windows close.
     Canceled,
     /// The partner pressed Trade (the accept highlight on their column).
@@ -64,7 +64,9 @@ pub enum TradeStatus {
     TrialAccount,
     /// "You can only trade conjured items"; `slot` is the offending trade slot.
     OnlyConjured { slot: u8 },
-    /// A code outside 0..=22, which vmangos never sends; read with no tail.
+    /// The item is soulbound to a tap list the partner is not on; `slot` is its trade slot.
+    NotEligible { slot: u8 },
+    /// A code outside 0..=23; read with no tail.
     Unknown(u32),
 }
 
@@ -74,7 +76,7 @@ impl TradeStatus {
         match self {
             TradeStatus::Busy => 0,
             TradeStatus::BeginTrade { .. } => 1,
-            TradeStatus::OpenWindow => 2,
+            TradeStatus::OpenWindow { .. } => 2,
             TradeStatus::Canceled => 3,
             TradeStatus::Accept => 4,
             TradeStatus::Busy2 => 5,
@@ -95,12 +97,13 @@ impl TradeStatus {
             TradeStatus::TargetLogout => 20,
             TradeStatus::TrialAccount => 21,
             TradeStatus::OnlyConjured { .. } => 22,
+            TradeStatus::NotEligible { .. } => 23,
             TradeStatus::Unknown(code) => code,
         }
     }
 }
 
-/// One trade slot's 60-byte item block; an all-zero block is an empty slot.
+/// One trade slot's 72-byte item block; an all-zero block is an empty slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TradeItem {
     /// `Item.dbc` entry (`OBJECT_FIELD_ENTRY`), the key for name and icon via `ITEM_QUERY_SINGLE`.
@@ -111,6 +114,8 @@ pub struct TradeItem {
     pub wrapped: bool,
     pub gift_creator: u64,
     pub perm_enchant: u32,
+    /// The three socket enchantments, the gems.
+    pub socket_enchants: [u32; 3],
     pub creator: u64,
     /// Signed: a negative count means N uses left on some items.
     pub charges: i32,
@@ -126,10 +131,17 @@ pub struct TradeItem {
 pub struct TradeStatusExtended {
     /// The partner's (right) column when the wire byte is 1, ours (left) when 0.
     pub their_window: bool,
+    /// The trade's id; one other than `OPEN_WINDOW`'s cancels the trade (`0x7046ae`).
+    pub trade_id: u32,
+    /// The sender's count of our own changes; an own snapshot behind ours is stale (`0x7046cf`).
+    pub state_index: u32,
+    /// This side's offer state, which our `CMSG_ACCEPT_TRADE` echoes for the partner's (`0x7046eb`).
+    pub side_state: u32,
     /// In copper.
     pub gold: u32,
     /// The spell cast on this side's non-traded slot item, 0 for none.
     pub enchant_spell_id: u32,
+    /// Every slot the snapshot lists; one it omits is empty (`0x704852`).
     pub slots: [Option<TradeItem>; TRADE_SLOT_COUNT],
 }
 
@@ -140,9 +152,9 @@ pub fn initiate_trade(target: u64) -> Vec<u8> {
     target.to_le_bytes().to_vec()
 }
 
-/// `CMSG_ACCEPT_TRADE`: a `u32` the server skips; the 1.12 client sends 1.
-pub fn accept_trade() -> Vec<u8> {
-    1u32.to_le_bytes().to_vec()
+/// `CMSG_ACCEPT_TRADE`: the partner's offer state being accepted (`0x703f50`).
+pub fn accept_trade(their_state: u32) -> Vec<u8> {
+    their_state.to_le_bytes().to_vec()
 }
 
 /// `CMSG_SET_TRADE_ITEM`: puts the item at (`bag`, `slot`) into `trade_slot`.
@@ -165,7 +177,7 @@ pub fn set_trade_gold(copper: u32) -> Vec<u8> {
 
 // ── Server → client parses ──
 
-/// `SMSG_TRADE_STATUS` (vmangos `TradeStatus::AppendBodyTo`): a `u32` code, then its tail.
+/// `SMSG_TRADE_STATUS` as `0x7044a0` reads it: a `u32` code, then its tail.
 pub(super) fn read_trade_status(r: &mut &[u8]) -> io::Result<TradeStatus> {
     let code = read_u32_le(r)?;
     Ok(match code {
@@ -173,7 +185,9 @@ pub(super) fn read_trade_status(r: &mut &[u8]) -> io::Result<TradeStatus> {
         1 => TradeStatus::BeginTrade {
             partner: read_u64_le(r)?,
         },
-        2 => TradeStatus::OpenWindow,
+        2 => TradeStatus::OpenWindow {
+            trade_id: read_u32_le(r)?,
+        },
         3 => TradeStatus::Canceled,
         4 => TradeStatus::Accept,
         5 => TradeStatus::Busy2,
@@ -185,7 +199,7 @@ pub(super) fn read_trade_status(r: &mut &[u8]) -> io::Result<TradeStatus> {
         11 => TradeStatus::WrongFaction,
         12 => {
             let result = read_u32_le(r)?;
-            let _unk = read_u8(r)?; // vmangos writes it; carries nothing for player trade
+            let _unk = read_u8(r)?;
             let item_limit_category = read_u32_le(r)?;
             TradeStatus::CloseWindow {
                 result,
@@ -202,21 +216,23 @@ pub(super) fn read_trade_status(r: &mut &[u8]) -> io::Result<TradeStatus> {
         20 => TradeStatus::TargetLogout,
         21 => TradeStatus::TrialAccount,
         22 => TradeStatus::OnlyConjured { slot: read_u8(r)? },
+        23 => TradeStatus::NotEligible { slot: read_u8(r)? },
         other => TradeStatus::Unknown(other),
     })
 }
 
-/// `SMSG_TRADE_STATUS_EXTENDED` (vmangos `WorldSession::SendUpdateTrade`): `u8 which`, the slot
-/// count twice, gold, enchant spell, then seven records of `u8 index` and a 60-byte item block.
+/// `SMSG_TRADE_STATUS_EXTENDED` as `0x704680` reads it: `u8` side, trade id, state index, a
+/// per-side `u32`, gold, enchant spell, then `u8` slot and a 72-byte item block until the body ends.
 pub(super) fn read_trade_status_extended(r: &mut &[u8]) -> io::Result<TradeStatusExtended> {
     let which = read_u8(r)?;
-    let _slot_count_a = read_u32_le(r)?;
-    let _slot_count_b = read_u32_le(r)?;
+    let trade_id = read_u32_le(r)?;
+    let state_index = read_u32_le(r)?;
+    let side_state = read_u32_le(r)?;
     let gold = read_u32_le(r)?;
     let enchant_spell_id = read_u32_le(r)?;
 
     let mut slots: [Option<TradeItem>; TRADE_SLOT_COUNT] = [None; TRADE_SLOT_COUNT];
-    for _ in 0..TRADE_SLOT_COUNT {
+    while !r.is_empty() {
         let index = read_u8(r)? as usize;
         let entry = read_u32_le(r)?;
         let display_id = read_u32_le(r)?;
@@ -224,6 +240,7 @@ pub(super) fn read_trade_status_extended(r: &mut &[u8]) -> io::Result<TradeStatu
         let wrapped = read_u32_le(r)? != 0;
         let gift_creator = read_u64_le(r)?;
         let perm_enchant = read_u32_le(r)?;
+        let socket_enchants = [read_u32_le(r)?, read_u32_le(r)?, read_u32_le(r)?];
         let creator = read_u64_le(r)?;
         let charges = read_i32_le(r)?;
         let suffix_factor = read_u32_le(r)?;
@@ -231,6 +248,7 @@ pub(super) fn read_trade_status_extended(r: &mut &[u8]) -> io::Result<TradeStatu
         let lock_id = read_u32_le(r)?;
         let max_durability = read_u32_le(r)?;
         let durability = read_u32_le(r)?;
+        // Deviation: 12340 indexes its 7-slot mirror with the wire byte unchecked; past it, dropped.
         if entry != 0 && index < TRADE_SLOT_COUNT {
             slots[index] = Some(TradeItem {
                 entry,
@@ -239,6 +257,7 @@ pub(super) fn read_trade_status_extended(r: &mut &[u8]) -> io::Result<TradeStatu
                 wrapped,
                 gift_creator,
                 perm_enchant,
+                socket_enchants,
                 creator,
                 charges,
                 suffix_factor,
@@ -251,6 +270,9 @@ pub(super) fn read_trade_status_extended(r: &mut &[u8]) -> io::Result<TradeStatu
     }
     Ok(TradeStatusExtended {
         their_window: which == 1,
+        trade_id,
+        state_index,
+        side_state,
         gold,
         enchant_spell_id,
         slots,
@@ -272,8 +294,8 @@ mod tests {
     }
 
     #[test]
-    fn accept_trade_is_u32_one() {
-        assert_eq!(accept_trade(), vec![1, 0, 0, 0]);
+    fn accept_trade_is_the_partners_state() {
+        assert_eq!(accept_trade(3), vec![3, 0, 0, 0]);
     }
 
     #[test]
@@ -298,7 +320,6 @@ mod tests {
     fn trade_status_bare_code_has_no_tail() {
         for (code, want) in [
             (0, TradeStatus::Busy),
-            (2, TradeStatus::OpenWindow),
             (3, TradeStatus::Canceled),
             (4, TradeStatus::Accept),
             (5, TradeStatus::Busy2),
@@ -347,6 +368,18 @@ mod tests {
     }
 
     #[test]
+    fn trade_status_open_window_reads_the_trade_id() {
+        let mut buf = 2u32.to_le_bytes().to_vec();
+        buf.extend_from_slice(&0x55u32.to_le_bytes());
+        let mut r = &buf[..];
+        assert_eq!(
+            read_trade_status(&mut r).unwrap(),
+            TradeStatus::OpenWindow { trade_id: 0x55 }
+        );
+        assert!(r.is_empty());
+    }
+
+    #[test]
     fn trade_status_close_window_consumes_u32_u8_u32() {
         let mut buf = Vec::new();
         buf.extend_from_slice(&12u32.to_le_bytes()); // CLOSE_WINDOW
@@ -378,6 +411,18 @@ mod tests {
     }
 
     #[test]
+    fn trade_status_not_eligible_reads_the_slot_byte() {
+        let mut buf = 23u32.to_le_bytes().to_vec();
+        buf.push(3);
+        let mut r = &buf[..];
+        assert_eq!(
+            read_trade_status(&mut r).unwrap(),
+            TradeStatus::NotEligible { slot: 3 }
+        );
+        assert!(r.is_empty());
+    }
+
+    #[test]
     fn trade_status_out_of_range_is_unknown_no_tail() {
         let buf = 99u32.to_le_bytes();
         let mut r = &buf[..];
@@ -385,82 +430,79 @@ mod tests {
         assert!(r.is_empty());
     }
 
-    // ── SMSG_TRADE_STATUS_EXTENDED parse golden ──
+    // ── SMSG_TRADE_STATUS_EXTENDED parse goldens ──
 
-    /// A 444-byte snapshot as vmangos builds it; `Some(entry)` fills a slot, `None` zeroes it.
-    fn extended_wire(
-        which: u8,
-        gold: u32,
-        spell: u32,
-        entries: [Option<u32>; TRADE_SLOT_COUNT],
-    ) -> Vec<u8> {
-        let mut b = Vec::new();
-        b.push(which);
-        b.extend_from_slice(&(TRADE_SLOT_COUNT as u32).to_le_bytes());
-        b.extend_from_slice(&(TRADE_SLOT_COUNT as u32).to_le_bytes());
-        b.extend_from_slice(&gold.to_le_bytes());
-        b.extend_from_slice(&spell.to_le_bytes());
-        for (i, entry) in entries.iter().enumerate() {
-            b.push(i as u8);
-            match entry {
-                Some(e) => {
-                    b.extend_from_slice(&e.to_le_bytes()); // entry
-                    b.extend_from_slice(&11u32.to_le_bytes()); // display_id
-                    b.extend_from_slice(&5u32.to_le_bytes()); // count
-                    b.extend_from_slice(&0u32.to_le_bytes()); // wrapped
-                    b.extend_from_slice(&0u64.to_le_bytes()); // gift_creator
-                    b.extend_from_slice(&0u32.to_le_bytes()); // perm_enchant
-                    b.extend_from_slice(&0u64.to_le_bytes()); // creator
-                    b.extend_from_slice(&(-3i32).to_le_bytes()); // charges (signed)
-                    b.extend_from_slice(&0u32.to_le_bytes()); // suffix_factor
-                    b.extend_from_slice(&0u32.to_le_bytes()); // random_prop_id
-                    b.extend_from_slice(&0u32.to_le_bytes()); // lock_id
-                    b.extend_from_slice(&100u32.to_le_bytes()); // max_durability
-                    b.extend_from_slice(&80u32.to_le_bytes()); // durability
+    /// One 73-byte slot record: the index byte and a 72-byte block, `None` all zeroes.
+    fn slot_record(index: u8, entry: Option<u32>) -> Vec<u8> {
+        let mut b = vec![index];
+        match entry {
+            Some(e) => {
+                b.extend_from_slice(&e.to_le_bytes()); // entry
+                b.extend_from_slice(&11u32.to_le_bytes()); // display_id
+                b.extend_from_slice(&5u32.to_le_bytes()); // count
+                b.extend_from_slice(&0u32.to_le_bytes()); // wrapped
+                b.extend_from_slice(&0u64.to_le_bytes()); // gift_creator
+                b.extend_from_slice(&0u32.to_le_bytes()); // perm_enchant
+                for gem in [21u32, 22, 23] {
+                    b.extend_from_slice(&gem.to_le_bytes()); // socket enchants
                 }
-                None => b.extend_from_slice(&[0u8; 60]),
+                b.extend_from_slice(&0u64.to_le_bytes()); // creator
+                b.extend_from_slice(&(-3i32).to_le_bytes()); // charges (signed)
+                b.extend_from_slice(&0u32.to_le_bytes()); // suffix_factor
+                b.extend_from_slice(&0u32.to_le_bytes()); // random_prop_id
+                b.extend_from_slice(&0u32.to_le_bytes()); // lock_id
+                b.extend_from_slice(&100u32.to_le_bytes()); // max_durability
+                b.extend_from_slice(&80u32.to_le_bytes()); // durability
             }
+            None => b.extend_from_slice(&[0u8; 72]),
         }
         b
     }
 
-    /// The parser reads exactly 444 bytes, whether the slots are empty, full or mixed.
-    #[test]
-    fn extended_snapshot_is_always_444_bytes() {
-        // A 17-byte header (u8 and four u32), then 7 records of u8 index and a 60-byte block.
-        let mut mixed = [None; TRADE_SLOT_COUNT];
-        mixed[0] = Some(0xABCD);
-        mixed[TRADE_SLOT_NONTRADED] = Some(0x1111);
-        for entries in [
-            [None; TRADE_SLOT_COUNT],
-            [Some(0xABCD); TRADE_SLOT_COUNT],
-            mixed,
-        ] {
-            let mut wire = extended_wire(0, 0, 0, entries);
-            assert_eq!(wire.len(), 17 + TRADE_SLOT_COUNT * 61);
-            assert_eq!(wire.len(), 444);
-            assert!(
-                read_trade_status_extended(&mut &wire[..443]).is_err(),
-                "443 bytes is a short read"
-            );
-            wire.push(0xEE); // a byte past the snapshot
-            let mut r = &wire[..];
-            read_trade_status_extended(&mut r).unwrap();
-            assert_eq!(r, [0xEE], "the parser stops at byte 444");
+    /// A 3.3.5a snapshot: the 21-byte header, then one record per listed `(slot, entry)`.
+    fn extended_wire(which: u8, gold: u32, spell: u32, records: &[(u8, Option<u32>)]) -> Vec<u8> {
+        let mut b = vec![which];
+        b.extend_from_slice(&9u32.to_le_bytes()); // trade id
+        b.extend_from_slice(&4u32.to_le_bytes()); // state index
+        b.extend_from_slice(&5u32.to_le_bytes()); // per-side state
+        b.extend_from_slice(&gold.to_le_bytes());
+        b.extend_from_slice(&spell.to_le_bytes());
+        for &(index, entry) in records {
+            b.extend(slot_record(index, entry));
         }
+        b
+    }
+
+    /// The full seven-slot snapshot a server sends is 21 + 7 × 73 = 532 bytes, all read.
+    #[test]
+    fn a_seven_slot_snapshot_is_532_bytes_and_read_whole() {
+        let records: Vec<_> = (0..TRADE_SLOT_COUNT as u8)
+            .map(|i| (i, (i == 0).then_some(0xABCD)))
+            .collect();
+        let wire = extended_wire(1, 0, 0, &records);
+        assert_eq!(wire.len(), 532);
+        let mut r = &wire[..];
+        let ext = read_trade_status_extended(&mut r).unwrap();
+        assert!(r.is_empty());
+        assert_eq!(ext.slots[0].map(|s| s.entry), Some(0xABCD));
+        assert!(ext.slots[1..].iter().all(Option::is_none));
+        assert!(
+            read_trade_status_extended(&mut &wire[..531]).is_err(),
+            "a cut record is a short read"
+        );
     }
 
     #[test]
-    fn extended_parses_header_slots_and_signed_charges() {
-        let mut entries = [None; TRADE_SLOT_COUNT];
-        entries[0] = Some(0xABCD);
-        entries[TRADE_SLOT_NONTRADED] = Some(0x1111); // the enchant slot carries an item too
-        let wire = extended_wire(1, 12_345, 777, entries);
-        let mut r = &wire[..];
-        let ext = read_trade_status_extended(&mut r).unwrap();
-        assert!(r.is_empty(), "the whole snapshot must be consumed");
-
+    fn extended_parses_header_slots_gems_and_signed_charges() {
+        let wire = extended_wire(
+            1,
+            12_345,
+            777,
+            &[(0, Some(0xABCD)), (TRADE_SLOT_NONTRADED as u8, Some(0x1111))],
+        );
+        let ext = read_trade_status_extended(&mut &wire[..]).unwrap();
         assert!(ext.their_window);
+        assert_eq!((ext.trade_id, ext.state_index, ext.side_state), (9, 4, 5));
         assert_eq!(ext.gold, 12_345);
         assert_eq!(ext.enchant_spell_id, 777);
 
@@ -468,23 +510,28 @@ mod tests {
         assert_eq!(slot0.entry, 0xABCD);
         assert_eq!(slot0.display_id, 11);
         assert_eq!(slot0.count, 5);
+        assert_eq!(slot0.socket_enchants, [21, 22, 23]);
         assert_eq!(slot0.charges, -3);
         assert_eq!(slot0.max_durability, 100);
         assert_eq!(slot0.durability, 80);
-
-        assert!(
-            ext.slots[TRADE_SLOT_NONTRADED].is_some(),
-            "enchant slot parsed"
-        );
-        assert!(ext.slots[1].is_none(), "empty slot folds to None");
-        assert!(ext.slots[5].is_none());
+        assert!(ext.slots[TRADE_SLOT_NONTRADED].is_some(), "enchant slot parsed");
     }
 
+    /// A slot the snapshot omits, or lists with a zero block, is empty.
     #[test]
-    fn extended_own_window_flag() {
-        let wire = extended_wire(0, 0, 0, [None; TRADE_SLOT_COUNT]);
-        let mut r = &wire[..];
-        let ext = read_trade_status_extended(&mut r).unwrap();
+    fn omitted_and_zeroed_slots_are_empty() {
+        let wire = extended_wire(0, 0, 0, &[(2, Some(0x22)), (4, None)]);
+        let ext = read_trade_status_extended(&mut &wire[..]).unwrap();
         assert!(!ext.their_window, "which == 0 is our own column");
+        let filled: Vec<bool> = ext.slots.iter().map(Option::is_some).collect();
+        assert_eq!(filled, [false, false, true, false, false, false, false]);
+    }
+
+    /// A slot byte past the seven slots is dropped rather than written out of bounds.
+    #[test]
+    fn an_out_of_range_slot_is_dropped() {
+        let wire = extended_wire(1, 0, 0, &[(7, Some(0x77)), (200, Some(0x78))]);
+        let ext = read_trade_status_extended(&mut &wire[..]).unwrap();
+        assert!(ext.slots.iter().all(Option::is_none));
     }
 }

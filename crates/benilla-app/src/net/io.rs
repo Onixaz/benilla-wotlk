@@ -1729,7 +1729,7 @@ pub(super) fn writer_loop(
                     ClientCommand::BeginTrade => w.begin_trade(),
                     ClientCommand::BusyTrade => w.busy_trade(),
                     ClientCommand::IgnoreTrade => w.ignore_trade(),
-                    ClientCommand::AcceptTrade => w.accept_trade(),
+                    ClientCommand::AcceptTrade { their_state } => w.accept_trade(their_state),
                     ClientCommand::UnacceptTrade => w.unaccept_trade(),
                     ClientCommand::CancelTrade => w.cancel_trade(),
                     ClientCommand::SetTradeGold { copper } => w.set_trade_gold(copper),

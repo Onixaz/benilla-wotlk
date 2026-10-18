@@ -172,6 +172,8 @@ pub enum Field {
     PlayerModTargetResistance,
     /// `PLAYER_PET_SPELL_POWER`, the pet's spell bonus `GetPetSpellBonusDamage` reads (`0x60e43b`).
     PlayerPetSpellPower,
+    /// 3.3.5a's Refer-a-Friend levels left to grant, `PLAYER_FIELD_BYTES` byte 1.
+    PlayerRafGrantableLevel,
     /// The 25 combat ratings.
     PlayerCombatRating,
     PlayerExploredZones,
@@ -316,7 +318,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         item: 48,
         container: 122,
         unit: 188,
-        player: 1473,
+        player: 1474,
         gameobject: 26,
         dynamicobject: 16,
         corpse: 38,
@@ -433,6 +435,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         one(F::PlayerModHealingPct, Player, 1470),
         one(F::PlayerModHealingDonePct, Player, 1471),
         one(F::PlayerPetSpellPower, Player, 1472),
+        one(F::PlayerRafGrantableLevel, Player, 1473),
         // 19 slots of 12: creator guid, entry, 7 enchants, properties, pad.
         strided(F::PlayerVisibleItemEntry, Player, 260, 19, 12),
         strided(F::PlayerVisibleItemEnchants, Player, 261, 19, 12),

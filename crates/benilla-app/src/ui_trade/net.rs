@@ -6,7 +6,7 @@ use benilla_protocol::messages::{TradeStatus, TradeStatusExtended};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
-use super::{NamedLine, TradeSession};
+use super::{NamedLine, OfferUpdate, TradeSession};
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp};
 use crate::ui_action::{UiError, UiErrorKeys};
 
@@ -29,9 +29,13 @@ fn on_trade_status(
     }
 }
 
-fn on_trade_status_extended(In(ev): In<SessionEvent>, mut trade: ResMut<TradeSession>) {
+fn on_trade_status_extended(
+    In(ev): In<SessionEvent>,
+    mut trade: ResMut<TradeSession>,
+    commands: Res<NetCommands>,
+) {
     if let SessionEvent::TradeStatusExtended { state } = ev {
-        trade_status_extended(&state, &mut trade);
+        trade_status_extended(&state, &mut trade, &commands);
     }
 }
 
@@ -72,7 +76,7 @@ fn trade_status(
 
     match status {
         TradeStatus::BeginTrade { partner } => trade.request(partner),
-        TradeStatus::OpenWindow => trade.open_window(),
+        TradeStatus::OpenWindow { trade_id } => trade.open_window(trade_id),
         // Case 4 (`0x4bf80b`) sets the partner's accept flag and case 9 (`0x4bf821`) clears it;
         // neither touches ours, closes anything or is in the tail's clear set.
         TradeStatus::Accept => trade.partner_accepted(),
@@ -95,8 +99,10 @@ fn trade_status(
             trade.close_window();
         }
         TradeStatus::Complete | TradeStatus::CloseWindow { .. } => trade.close_window(),
-        // The placement is bounced, not the window (case 22, `0x4bf9ec` → `0x4bfbd0`).
-        TradeStatus::OnlyConjured { slot } => trade.bounce_own_offer(slot),
+        // The placement is bounced, not the window.
+        TradeStatus::OnlyConjured { slot } | TradeStatus::NotEligible { slot } => {
+            trade.bounce_own_offer(slot)
+        }
         // The initiate refusals: the tail's clear alone, each line already queued above.
         TradeStatus::Busy
         | TradeStatus::Busy2
@@ -146,9 +152,10 @@ fn status_message(status: TradeStatus) -> Option<Line> {
         TradeStatus::TargetLogout => Line::Plain("ERR_TARGET_LOGGING_OUT"),
         TradeStatus::TrialAccount => Line::Plain("ERR_RESTRICTED_ACCOUNT"),
         TradeStatus::OnlyConjured { .. } => Line::Plain("ERR_TRADE_WRONG_REALM"),
+        TradeStatus::NotEligible { .. } => Line::Plain("ERR_TRADE_NOT_ON_TAPLIST"),
         // Silent, plus `BEGIN_TRADE` (the ladder's line) and `CLOSE_WINDOW` (not built).
         TradeStatus::BeginTrade { .. }
-        | TradeStatus::OpenWindow
+        | TradeStatus::OpenWindow { .. }
         | TradeStatus::Accept
         | TradeStatus::BackToTrade
         | TradeStatus::Rejected
@@ -159,15 +166,24 @@ fn status_message(status: TradeStatus) -> Option<Line> {
 }
 
 /// `SMSG_TRADE_STATUS_EXTENDED`: replace one side's offer; the feed repaints on the change.
-fn trade_status_extended(ext: &TradeStatusExtended, trade: &mut TradeSession) {
+fn trade_status_extended(
+    ext: &TradeStatusExtended,
+    trade: &mut TradeSession,
+    commands: &NetCommands,
+) {
+    let update = trade.set_offer(ext);
     bevy::log::info!(
         target: "trade",
-        "SMSG_TRADE_STATUS_EXTENDED their_window={} gold={} items={}",
+        "SMSG_TRADE_STATUS_EXTENDED their_window={} trade_id={} state={} gold={} items={:?} -> {update:?}",
         ext.their_window,
+        ext.trade_id,
+        ext.state_index,
         ext.gold,
-        ext.slots.iter().filter(|s| s.is_some()).count(),
+        ext.slots.map(|s| s.map(|i| i.entry)),
     );
-    trade.set_offer(ext);
+    if update == OfferUpdate::OtherTrade {
+        let _ = commands.0.send(ClientCommand::CancelTrade);
+    }
 }
 
 #[cfg(test)]
@@ -180,7 +196,7 @@ mod tests {
         vec![
             TradeStatus::Busy,
             TradeStatus::BeginTrade { partner: 0x7 },
-            TradeStatus::OpenWindow,
+            TradeStatus::OpenWindow { trade_id: 0 },
             TradeStatus::Canceled,
             TradeStatus::Accept,
             TradeStatus::Busy2,
@@ -204,6 +220,7 @@ mod tests {
             TradeStatus::TargetLogout,
             TradeStatus::TrialAccount,
             TradeStatus::OnlyConjured { slot: 2 },
+            TradeStatus::NotEligible { slot: 2 },
         ]
     }
 
@@ -215,6 +232,7 @@ mod tests {
             wrapped: false,
             gift_creator: 0,
             perm_enchant: 0,
+            socket_enchants: [0; 3],
             creator: 0,
             charges: 0,
             suffix_factor: 0,
@@ -238,7 +256,7 @@ mod tests {
     fn open_trade() -> TradeSession {
         let mut trade = TradeSession::default();
         trade.initiate(0x7);
-        trade.open_window();
+        trade.open_window(0);
         trade.accept();
         trade.partner_accepted();
         trade.take_named_lines_for_test();
@@ -258,7 +276,7 @@ mod tests {
         crate::net::handlers::dispatch(
             app.world_mut(),
             vec![SessionEvent::TradeStatus {
-                status: TradeStatus::OpenWindow,
+                status: TradeStatus::OpenWindow { trade_id: 0 },
             }],
         );
         assert!(app.world().resource::<TradeSession>().is_open());
@@ -274,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn sixteen_arms_print_here_and_the_seven_silent_ones_are_pinned() {
+    fn seventeen_arms_print_here_and_the_seven_silent_ones_are_pinned() {
         let silent: Vec<u32> = every_status()
             .into_iter()
             .filter(|s| status_message(*s).is_none())

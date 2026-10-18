@@ -276,6 +276,10 @@ impl ObjectFields {
     pub fn player_pet_spell_power(&self) -> i32 {
         self.get_i32(FIELD_PLAYER_PET_SPELL_POWER).unwrap_or(0)
     }
+    /// `PLAYER_FIELD_BYTES` byte 1: the Refer-a-Friend levels left to grant (`0x6deb08`).
+    pub fn player_raf_grantable_level(&self) -> u8 {
+        self.get_u32(FIELD_PLAYER_RAF_GRANTABLE_LEVEL).unwrap_or(0) as u8
+    }
     /// `PLAYER_FIELD_COMBAT_RATING_1 + i`: combat rating `i`, 0-based.
     pub fn player_combat_rating(&self, i: u8) -> Option<i32> {
         (i < PLAYER_COMBAT_RATINGS)

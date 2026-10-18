@@ -2,29 +2,29 @@
 
 use benilla_ui::script::{DuelRequest, ScriptValue, UiScript};
 
-use super::test_ui::load_ui as load_xml;
-
-fn setup() -> UiScript {
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_xml(&s, r"Interface\FrameXML\GlobalStrings.lua");
-    load_xml(&s, "Interface\\FrameXML\\Fonts.xml");
-    load_xml(&s, r"Interface\FrameXML\BasicControls.xml");
-    load_xml(&s, r"Interface\FrameXML\LocaleProperties.lua");
-    load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    load_xml(&s, r"Interface\FrameXML\StaticPopup.xml");
-    s
+/// The production interface load, the popups' own file chain in `FrameXML.toc` order, with the
+/// environment lock the load needs held for the test.
+fn setup() -> (std::sync::MutexGuard<'static, ()>, UiScript) {
+    let lock = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, failures) =
+        super::layer_tests::production_load_with("duel", false, "", |_| {});
+    let ours: Vec<_> = failures
+        .iter()
+        .filter(|f| f.contains("StaticPopup"))
+        .collect();
+    assert!(ours.is_empty(), "load failures: {ours:#?}");
+    s.resolve();
+    s.take_errors();
+    s.take_duel_requests();
+    (lock, s)
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_challenge_popup_shows_the_name_and_accept_queues_the_accept() {
     benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
+    let (_lock, mut s) = setup();
     s.fire_event(
         "DUEL_REQUESTED",
         vec![ScriptValue::Str("Onerogue".to_string())],
@@ -49,10 +49,9 @@ fn the_challenge_popup_shows_the_name_and_accept_queues_the_accept() {
 
 /// Escape runs a `hideOnEscape` popup's OnCancel (`StaticPopup.lua:1884`), so it declines too.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn decline_and_escape_both_cancel() {
     benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
+    let (_lock, mut s) = setup();
     s.fire_event("DUEL_REQUESTED", vec![ScriptValue::Str("Twomage".into())]);
     s.run("StaticPopup_OnClick(StaticPopup1, 2)").unwrap();
     assert_eq!(s.take_duel_requests(), vec![DuelRequest::Cancel]);
@@ -65,10 +64,9 @@ fn decline_and_escape_both_cancel() {
 
 /// `DUEL_OUTOFBOUNDS` has no buttons and a 10 s timeout; `StaticPopup_OnUpdate` renders the count.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn out_of_bounds_counts_down_and_inbounds_dismisses_it() {
     benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
+    let (_lock, mut s) = setup();
     s.fire_event("DUEL_OUTOFBOUNDS", vec![]);
     assert!(s.eval::<bool>("return StaticPopup1:IsVisible()").unwrap());
     assert!(
@@ -96,10 +94,9 @@ fn out_of_bounds_counts_down_and_inbounds_dismisses_it() {
 
 /// `DUEL_FINISHED` hides both popups (`UIParent.lua:390`); a hide runs no OnCancel, so no decline.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn finishing_sweeps_both_dialogs_silently() {
     benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
+    let (_lock, mut s) = setup();
     s.fire_event("DUEL_REQUESTED", vec![ScriptValue::Str("Twomage".into())]);
     assert!(s.eval::<bool>("return StaticPopup1:IsVisible()").unwrap());
     s.fire_event("DUEL_FINISHED", vec![]);
@@ -118,21 +115,39 @@ fn finishing_sweeps_both_dialogs_silently() {
     assert!(s.take_duel_requests().is_empty());
 }
 
-/// The four 1.12 duel verbs; `StartDuel` and `StartDuelUnit` pass their argument to the app.
+/// The three duel verbs. `StartDuel` resolves a token to a player's guid, reads no argument as the
+/// target, drops a token naming no player, and passes anything else on as a name.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn the_era_globals_queue_their_intents() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
-    s.run("AcceptDuel(); CancelDuel(); StartDuel('Onerogue'); StartDuelUnit('target')")
-        .unwrap();
+fn the_duel_globals_queue_their_intents() {
+    const PLAYER: u64 = 0x22;
+    let mut s = UiScript::new().unwrap();
+    s.set_unit_guids(&benilla_ui::script::UnitGuids {
+        player: 0x10,
+        target: PLAYER,
+        ..Default::default()
+    });
+    s.run(
+        "AcceptDuel() CancelDuel() StartDuel('Onerogue') StartDuel('target', 1) StartDuel()          StartDuel('party1')",
+    )
+    .unwrap();
     assert_eq!(
         s.take_duel_requests(),
         vec![
             DuelRequest::Accept,
             DuelRequest::Cancel,
-            DuelRequest::StartByName("Onerogue".into()),
-            DuelRequest::StartByUnit("target".into()),
+            DuelRequest::ChallengeName {
+                name: "Onerogue".into(),
+                exact: false,
+            },
+            DuelRequest::ChallengeGuid(PLAYER),
+            DuelRequest::ChallengeGuid(PLAYER),
         ]
     );
+    s.set_unit_guids(&benilla_ui::script::UnitGuids {
+        player: 0x10,
+        target: 0xF130_0000_0000_0001,
+        ..Default::default()
+    });
+    s.run("StartDuel('target', 1)").unwrap();
+    assert!(s.take_duel_requests().is_empty(), "a creature is no duel target");
 }

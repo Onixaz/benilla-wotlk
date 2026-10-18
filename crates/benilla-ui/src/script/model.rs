@@ -8,7 +8,7 @@ use super::{
     combat_log, container, craft, cursor, death, duel, follow, gossip, guild, inspect, item_text,
     loot, loot_roll, macros, mail, merchant, parse_unit_token, party, petition, pvp, quest,
     quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable, taxi,
-    trade, tradeskill, trainer, weapon_enchant, ActionSlot, AuraState, FontObject,
+    trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
     ItemTemplateView, MusicRequest, PlayerReqState, RegionData, ScriptValue, SoundRequest,
     UnitState, UnitTokenParse,
 };
@@ -272,6 +272,12 @@ pub(crate) struct Model {
     pub(crate) joined_channels: Vec<Option<String>>,
     /// The party or raid roster the app pushes; the default is not in a group.
     pub(crate) party: party::PartyState,
+    /// The instance difficulties the app pushes, `GetDungeonDifficulty`'s and `GetRaidDifficulty`'s.
+    pub(crate) difficulty: unit_menu::DifficultyState,
+    /// The group list's LFG-restricted bit `[0xbd19a8]`, `HasLFGRestrictions`.
+    pub(crate) lfg_restricted: bool,
+    /// What `CanGrantLevel` and `CanSummonFriend` read beside the unit: the app's push.
+    pub(crate) refer_a_friend: unit_menu::ReferAFriendState,
     /// Party and loot-method calls (`AcceptGroup`, `InviteUnit`, `SetLootMethod`, …) queued.
     pub(crate) party_requests: Vec<party::PartyRequest>,
     /// The ready-check deadline and the unanswered flags the timeout tick reads.
@@ -348,7 +354,7 @@ pub(crate) struct Model {
     pub(crate) user_placed_changed: bool,
     /// The default chat language; `None` is no player, so `GetDefaultLanguage()` returns nothing.
     pub(crate) default_language: Option<String>,
-    /// `AcceptDuel`, `CancelDuel` and `StartDuel*` calls; Lua sees duels only through events.
+    /// `AcceptDuel`, `CancelDuel` and `StartDuel` calls; Lua sees duels only through events.
     pub(crate) duel_requests: Vec<duel::DuelRequest>,
     /// `FollowUnit` and `FollowByName` calls; Lua sees following only as `AUTOFOLLOW_*` events.
     pub(crate) follow_requests: Vec<follow::FollowRequest>,
@@ -1076,7 +1082,29 @@ impl Model {
     /// The state of the unit `token` names, as the `Unit*` getters read it: the snapshot the app
     /// pushed under the token, else, for a token with a `target` hop, the chain's end.
     pub(crate) fn unit(&self, token: &str) -> Option<&UnitState> {
+        if token.eq_ignore_ascii_case("focus") {
+            return self.focus_unit();
+        }
         self.pushed_unit(token).or_else(|| self.chained_unit(token))
+    }
+
+    /// The focus's unit by guid, as the getters look its object up (`0x468460`): the app's `focus`
+    /// push while it names that guid, else whichever snapshot holds it, so `FocusUnit` resolves
+    /// the frame it runs.
+    fn focus_unit(&self) -> Option<&UnitState> {
+        let guid = self.unit_guids.focus;
+        if guid == 0 || guid == super::focus::NOBODY {
+            return None;
+        }
+        self.units_by_lower
+            .get("focus")
+            .filter(|u| u.guid == guid)
+            .or_else(|| self.units_by_guid.get(&guid))
+            .or_else(|| {
+                self.units_by_lower
+                    .values()
+                    .find(|u| u.exists && u.guid == guid)
+            })
     }
 
     /// The snapshot pushed under `token` itself, folded as 1.12's resolver `0x515970` folds
@@ -1193,6 +1221,9 @@ impl Model {
             drop_item_on_unit: Vec::new(),
             joined_channels: Vec::new(),
             party: party::PartyState::default(),
+            difficulty: Default::default(),
+            lfg_restricted: false,
+            refer_a_friend: Default::default(),
             party_requests: Vec::new(),
             ready_check: party::ReadyCheckState::default(),
             saved_instances: Vec::new(),

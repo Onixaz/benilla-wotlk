@@ -57,8 +57,11 @@ impl WorldWriter {
 
     /// `CMSG_ACCEPT_TRADE`: bounced (`TRADE_STATUS_BACK_TO_TRADE`) within 200 ms of a change; once
     /// both sides accept, the server swaps and sends both `COMPLETE`.
-    pub fn accept_trade(&mut self) -> Result<()> {
-        self.send(opcode::CMSG_ACCEPT_TRADE, &messages::accept_trade())
+    pub fn accept_trade(&mut self, their_state: u32) -> Result<()> {
+        self.send(
+            opcode::CMSG_ACCEPT_TRADE,
+            &messages::accept_trade(their_state),
+        )
     }
 
     /// `CMSG_UNACCEPT_TRADE`, empty: withdraws our accept.

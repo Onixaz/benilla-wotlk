@@ -105,7 +105,7 @@ pub const SMSG_OPEN_CONTAINER: u16 = 0x0113; // 275
 
 // Trade. CMSG bodies: INITIATE u64 target, ACCEPT u32 (ignored), SET_ITEM 3×u8 (tradeSlot, bag,
 // slot), CLEAR_ITEM u8, SET_GOLD u32 copper, the rest empty. SMSG: TRADE_STATUS u32 plus a
-// per-status tail; TRADE_STATUS_EXTENDED the 444-byte item/gold snapshot.
+// per-status tail; TRADE_STATUS_EXTENDED a 21-byte header and 73-byte slot records.
 pub const CMSG_INITIATE_TRADE: u16 = 0x0116; // 278
 pub const CMSG_BEGIN_TRADE: u16 = 0x0117; // 279
 pub const CMSG_BUSY_TRADE: u16 = 0x0118; // 280
@@ -973,6 +973,12 @@ pub const CMSG_DUEL_CANCELLED: u16 = 0x016D; // 365
 /// The duel countdown in milliseconds; the client divides by 1000 (`0x4d4aef`). Registered with
 /// the 0x167 block (`0x4d474a`) despite its number.
 pub const SMSG_DUEL_COUNTDOWN: u16 = 0x02B7; // 695
+
+// Instance difficulty, both `u32 difficulty, u32 set the player's, u32 set the group's` (`0x526b04`).
+pub const MSG_SET_DUNGEON_DIFFICULTY: u16 = 0x0329; // 809
+pub const MSG_SET_RAID_DIFFICULTY: u16 = 0x04EB; // 1259
+/// A packed guid the client stops targeting and focusing (`0x526586`).
+pub const SMSG_BREAK_TARGET: u16 = 0x0152; // 338
 
 // Mirror timers (breath, fatigue, feign death): server countdowns; any change re-sends a START.
 pub const SMSG_START_MIRROR_TIMER: u16 = 0x01D9; // 473
