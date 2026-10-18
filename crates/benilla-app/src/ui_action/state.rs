@@ -851,4 +851,107 @@ mod tests {
             "in combat the food's on-use spell fails leg 8 and the button greys"
         );
     }
+
+    /// A GCD armed mid-frame, after the clock pair's anchor, reaches `GetActionCooldown` at or
+    /// before `GetTime()`, so the `Cooldown` frame `CooldownFrame_SetTimer` arms with it sweeps the
+    /// full 1.5 s and flashes, instead of finishing on its first update (`0x5ec91b`).
+    #[test]
+    fn a_mid_frame_gcd_sweeps_its_whole_duration() {
+        use benilla_protocol::messages::ActionButton;
+
+        const SPELL: u32 = 20154;
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        let mut actions = PlayerActions::default();
+        actions.buttons.insert(
+            0,
+            ActionButton {
+                slot: 0,
+                action: SPELL,
+                kind: ACTION_KIND_SPELL,
+            },
+        );
+        let seal = SpellDisplay {
+            start_recovery_category: 133,
+            start_recovery_ms: 1500,
+            ..Default::default()
+        };
+        // The frame's pair, with a fraction that rounds up: 12.0006 s reads 12_000 in the widget.
+        let anchor = Instant::now();
+        let ui_now = 12.0006;
+        let mut cooldowns = Cooldowns::default();
+        cooldowns.start_gcd(
+            SPELL,
+            &seal,
+            anchor + std::time::Duration::from_millis(4),
+            &crate::spell::SpellModifiers::default(),
+        );
+        app.insert_resource(actions)
+            .insert_resource(crate::ui_macro::MacroBoundSpells::default())
+            .insert_resource(Spells {
+                catalog: benilla_formats::SpellCatalog::from_displays(
+                    [(SPELL, seal)].into_iter().collect(),
+                ),
+                forms: Default::default(),
+                ranges: Default::default(),
+                cast_times: Default::default(),
+                durations: Default::default(),
+                radii: Default::default(),
+            })
+            .insert_resource(cooldowns)
+            .init_resource::<crate::spell::SpellModifiers>()
+            .insert_resource(crate::ui_script::UiClock { anchor, ui_now })
+            .init_resource::<AutoRepeatActive>()
+            .init_resource::<crate::spell::PendingCast>()
+            .init_resource::<crate::spell::QueuedMeleeSpell>()
+            .init_resource::<crate::spell::ActiveChannel>()
+            .init_resource::<crate::spell::SpellTargeting>()
+            .init_resource::<crate::spell::HeldForPick>()
+            .init_resource::<Selection>()
+            .init_resource::<crate::net::GuidIndex>()
+            .init_resource::<crate::net::Reputations>()
+            .init_resource::<Items>()
+            .insert_resource(NetCommands(tx));
+        let mut script = UiScript::new().unwrap();
+        script.set_now(ui_now);
+        // Stock `CooldownFrame_SetTimer` (`Cooldown.lua`) on the bar's event.
+        script
+            .run(
+                "Sweep = CreateFrame('Cooldown', 'Sweep') Sweep:Hide()
+                 local f = CreateFrame('Frame')
+                 f:RegisterEvent('ACTIONBAR_UPDATE_COOLDOWN')
+                 f:SetScript('OnEvent', function()
+                   local start, duration, enable = GetActionCooldown(1)
+                   SeenStart, SeenNow = start, GetTime()
+                   if start > 0 and duration > 0 and enable > 0 then
+                     Sweep:SetCooldown(start, duration)
+                   end
+                 end)",
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
+        app.add_systems(Update, feed_action_state);
+        app.update();
+
+        let mut script = app.world_mut().non_send_resource_mut::<UiScript>();
+        // The event may queue for the next tick's head; a zero step fires it without moving time.
+        script.tick(0.0);
+        let (start, now): (f64, f64) = script.eval("return SeenStart, SeenNow").unwrap();
+        assert!(
+            start > 0.0 && start <= now,
+            "GetActionCooldown's start {start} must not pass GetTime() {now}"
+        );
+        let shown = |s: &UiScript| s.eval::<bool>("return Sweep:IsShown() ~= nil").unwrap();
+        let mut at = 0.0;
+        for _ in 0..14 {
+            script.tick(0.1);
+            at += 0.1;
+            assert!(shown(&script), "the sweep hid {at:.1} s into a 1.5 s GCD");
+        }
+        // Past the sweep and its one-second flash, it hides itself.
+        for _ in 0..12 {
+            script.tick(0.1);
+        }
+        assert!(!shown(&script), "the sweep and its flash end on their own");
+    }
 }

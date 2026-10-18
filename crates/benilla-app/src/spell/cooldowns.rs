@@ -76,16 +76,16 @@ impl CooldownInfo {
     /// `(start_ms on the GetTime clock, duration_ms, enabled)`, or `None` when cold. `anchor` and
     /// `ui_now` must be the frame's one clock pair ([`crate::ui_script::UiClock`]), so one arm
     /// derives the same start every frame; a fresh `Instant::now()` here would jitter it.
+    /// The start is capped at this frame's `GetTime()` ms: 12340 stamps and reads one live clock
+    /// (`0x6081f0`), and a later start wraps the widget's unsigned `now − start` (`0x5ec91b`).
     pub(crate) fn ui_triple(&self, anchor: Instant, ui_now: f64) -> Option<(i64, u32, bool)> {
         (self.remaining_ms > 0).then(|| {
-            // Signed both ways: a timer armed after the anchor sample projects forward.
-            let start = match self.start.checked_duration_since(anchor) {
-                Some(ahead) => ui_now + ahead.as_secs_f64(),
-                None => ui_now - anchor.duration_since(self.start).as_secs_f64(),
-            };
+            // A timer armed after the anchor sample reads as `GetTime()` until the next frame's.
+            let start = ui_now - anchor.saturating_duration_since(self.start).as_secs_f64();
             #[allow(clippy::cast_possible_truncation)] // session-clock ms fit i64
             (
-                (start * 1000.0).round() as i64,
+                // Floored: the widget truncates `GetTime()` (`0x86ae20`).
+                ((start * 1000.0).round() as i64).min((ui_now * 1000.0).floor() as i64),
                 self.duration_ms,
                 self.enabled,
             )
@@ -1144,8 +1144,10 @@ mod tests {
         );
     }
 
+    /// A start past `GetTime()` is a finished sweep (`0x5ec91b`), so a mid-frame arm reads as the
+    /// frame's `GetTime()` in whole ms, then settles on its own start.
     #[test]
-    fn a_mid_frame_arm_derives_the_same_start_as_the_next_frames_pair() {
+    fn a_mid_frame_arm_never_reads_ahead_of_get_time() {
         let anchor0 = Instant::now();
         let mut cds = Cooldowns::default();
         // Armed 4 ms after this frame's anchor sample.
@@ -1156,25 +1158,21 @@ mod tests {
             &super::SpellModifiers::default(),
         );
 
-        // Frame 1 converts through the pre-arm pair, frame 2 through the next, 16 ms on.
-        let read1 = cds
-            .info(
+        // Frame 1 converts through the pre-arm pair, frames 2 and 3 through the next ones.
+        let read = |at: u64, ui_now: f64| {
+            cds.info(
                 133,
                 0,
                 Some(&fireball()),
-                anchor0 + Duration::from_millis(4),
+                anchor0 + Duration::from_millis(at + 4),
             )
-            .ui_triple(anchor0, 10.000);
-        let read2 = cds
-            .info(
-                133,
-                0,
-                Some(&fireball()),
-                anchor0 + Duration::from_millis(20),
-            )
-            .ui_triple(anchor0 + Duration::from_millis(16), 10.016);
-        assert_eq!(read1, Some((10_004, 1500, true)));
-        assert_eq!(read1, read2, "the projected start IS the settled start");
+            .ui_triple(anchor0 + Duration::from_millis(at), ui_now)
+        };
+        // 10.0006 s: a rounded start would land on 10_001, past the widget's truncated 10_000.
+        assert_eq!(read(0, 10.0006), Some((10_000, 1500, true)));
+        let settled = read(16, 10.0166);
+        assert_eq!(settled, Some((10_005, 1500, true)));
+        assert_eq!(read(32, 10.0326), settled, "settled, every frame after");
     }
 
     /// The GCD leg (`0x6e15cc`) ignores the pressed spell's own time: a `{133, 0}` scroll press
