@@ -179,7 +179,15 @@ pub(super) fn rig(
     for (i, &spell_id) in slots.iter().enumerate() {
         bar.spells.bar[i] = PetActionEntry::from(spell_id | (u32::from(PET_ACT_ENABLED) << 24));
     }
-    world.insert_non_send_resource(listening_vm());
+    // A session's clock, past zero as `seed_vm_clock` leaves it: a start capped at `GetTime()` 0
+    // would fail stock `Cooldown.lua`'s `start > 0`.
+    let mut vm = listening_vm();
+    vm.set_now(10.0);
+    world.insert_non_send_resource(vm);
+    world.insert_resource(crate::ui_script::UiClock {
+        anchor: Instant::now(),
+        ui_now: 10.0,
+    });
     // The order the plugin gives them: the feeds that push a pet cooldown, then the flush.
     let mut feed = Schedule::default();
     feed.add_systems(
