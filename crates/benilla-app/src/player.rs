@@ -42,6 +42,7 @@ pub(crate) mod camera_view;
 mod drunk;
 mod embody;
 mod flags;
+mod flight;
 mod follow;
 
 mod gait;

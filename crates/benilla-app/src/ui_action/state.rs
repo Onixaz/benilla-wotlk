@@ -690,6 +690,7 @@ mod tests {
                 swim: 4.7,
                 swim_back: 2.5,
                 turn_rate: 3.1,
+                ..Default::default()
             });
             app.world_mut().spawn((
                 SelfPlayer,

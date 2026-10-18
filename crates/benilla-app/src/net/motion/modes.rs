@@ -48,5 +48,6 @@ impl UnitMoveModes {
 /// What `SetRoot` `0x7c7340` clears from the flags word at apply, as an AND mask: the direction,
 /// turn and pitch bits (`0xff`), the `0x8000` latch and the input latches (`0x1f0000`); `ROOT`
 /// survives. A one-shot wipe, not a gate: with no direction bits the unit fails the integration
-/// test (`0x616e20`, `move_flags::INTEGRATED`) and stops rather than coasting.
-pub(crate) const ROOT_APPLY_WIPE: u32 = 0xffe0_7f00;
+/// test (`0x616e20`, `move_flags::INTEGRATED`) and stops rather than coasting. 3.3.5a's apply
+/// (`0x9884b8`, `and 0xff203f00`) also clears ascending and descending.
+pub(crate) const ROOT_APPLY_WIPE: u32 = 0xffe0_7f00 & !(move_flags::ASCENDING | move_flags::DESCENDING);

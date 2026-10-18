@@ -931,6 +931,7 @@ mod tests {
                 swim: 4.7,
                 swim_back: 2.5,
                 turn_rate: 3.1,
+                ..Default::default()
             });
             let live = || {
                 crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(22, 100)]))

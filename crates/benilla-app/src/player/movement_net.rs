@@ -28,12 +28,15 @@ const OUTBOUND_FLAG_MASK: u32 = move_flags::FORWARD
     | move_flags::FALLING
     | move_flags::FALLING_FAR
     | move_flags::SWIMMING
+    | move_flags::FLYING
     | move_flags::ASCENDING
     | move_flags::DESCENDING
     // The granted modes echo back: the reference builds its packets from the flags word the
     // server's merges land in. vmangos stores what we report, so a dropped `LEVITATING` returns
     // cleared on the next server-authored move and ends GM flight.
     | move_flags::LEVITATING
+    // AzerothCore takes an ack's word as our flags and its anticheat reads `CAN_FLY` there.
+    | move_flags::CAN_FLY
     // vmangos re-adds `ROOT` to a rooted mover's report (`MovementHandler.cpp:1064-1065`) and kicks
     // a root-apply ack without it (`MovementHandler.cpp:715-722`).
     | move_flags::ROOT
@@ -48,6 +51,7 @@ const IN_MOTION: u32 = move_flags::ANY_MOVE
     | move_flags::FALLING
     | move_flags::FALLING_FAR
     | move_flags::SWIMMING
+    | move_flags::FLYING
     | move_flags::ON_TRANSPORT;
 
 /// This frame's input to the `CMSG_MOVE_TIME_SKIPPED` report ([`stream_skipped_time`]).
@@ -215,6 +219,11 @@ pub(super) fn stream_self_movement(
     // the JUMPING bit as movement and stand a seated player up (`Unit.cpp:10398-10399`). A
     // server-driven take-off sends no JUMP: vmangos flags a JUMP faster than run speed as a cheat,
     // knockbacks included (`MovementAnticheat.cpp:650`).
+    // A flight edge's report, then the resync it triggers (`0x7413f0`), so a held key's
+    // `START_ASCEND` follows it.
+    if std::mem::take(&mut player.set_fly_owed) {
+        send_move!(MoveKind::SetFly);
+    }
     // The vertical channel's command goes out as the executor runs it (`0x6ef860` cases 6-8),
     // ahead of a hop it may end in this same frame.
     if let Some(kind) = player.vertical.take_sent() {
@@ -1481,6 +1490,57 @@ mod tests {
                 (MoveKind::StartAscend, move_flags::FALLING),
                 (MoveKind::Jump, move_flags::FALLING)
             ]
+        );
+    }
+
+    /// A take-off with Space held: `CMSG_MOVE_SET_FLY` with FLYING, then the resync's
+    /// `START_ASCEND`; the landing sends `CMSG_MOVE_SET_FLY` again without FLYING.
+    #[test]
+    fn a_take_off_reports_set_fly_ahead_of_the_ascent() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut player = Player::default();
+        player.modes.can_fly = true;
+        let base = move_flags::CAN_FLY;
+        let frame = |player: &mut Player, flags: u32, now: f32| {
+            stream_self_movement(
+                &tx,
+                player,
+                flags,
+                0.0,
+                ArcEdges {
+                    jumped: false,
+                    wire_launch: false,
+                    air_nudged: false,
+                    landed: false,
+                    fall_time: 0,
+                },
+                now,
+                &[],
+                None,
+                None,
+                no_skip(),
+            );
+            rx.try_iter()
+                .filter_map(|c| match c {
+                    ClientCommand::Move { kind, flags, .. } => Some((kind, flags)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(crate::player::flight::take_off(&mut player, 0.0));
+        player.set_fly_owed = true;
+        player.vertical.resync(true, false, true, true);
+        let up = base | move_flags::FLYING | move_flags::ASCENDING;
+        assert_eq!(
+            frame(&mut player, up, 0.0),
+            vec![(MoveKind::SetFly, up), (MoveKind::StartAscend, up)]
+        );
+        assert!(!player.set_fly_owed, "sent once");
+        crate::player::flight::land(&mut player);
+        player.set_fly_owed = true;
+        assert_eq!(
+            frame(&mut player, base, 3.0).first(),
+            Some(&(MoveKind::SetFly, base))
         );
     }
 

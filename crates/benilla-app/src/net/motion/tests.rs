@@ -25,6 +25,9 @@ fn speeds() -> MoveSpeeds {
         swim: 4.0,
         swim_back: 0.0,
         turn_rate: std::f32::consts::PI,
+        flight: 14.0,
+        flight_back: 4.5,
+        pitch_rate: std::f32::consts::PI,
     }
 }
 
@@ -1172,6 +1175,115 @@ fn the_teleport_is_the_only_relay_the_reconcile_skips() {
     assert_eq!(
         there.wow_pos, dest,
         "the teleport pose lands outright: excluded from the blend, never from the apply"
+    );
+}
+
+// ── The vertical channel and flight on observed movers ────────────────────────
+
+/// One 60 fps frame.
+const FRAME_S: f32 = 1.0 / 60.0;
+
+/// The vertical channel alone moves straight up or down at the current speed (`0x987b50` cases
+/// 0x10 and 0x12), every frame between heartbeats; ascending wins when both are set.
+#[test]
+fn an_ascending_swimmer_rises_every_frame_at_the_swim_speed() {
+    let s = speeds();
+    let up = s.swim * FRAME_S;
+    for (flags, dz) in [
+        (move_flags::ASCENDING, up),
+        (move_flags::DESCENDING, -up),
+        (move_flags::ASCENDING | move_flags::DESCENDING, up),
+    ] {
+        let mut rm = motion(move_flags::SWIMMING | flags, 0.0);
+        rm.pitch = 0.6; // the vertical arm reads no pitch
+        let (pos, _, _, speed) = rm.advance(s, FRAME_S);
+        assert!(
+            pos[0].abs() < 1e-6 && pos[1].abs() < 1e-6,
+            "{flags:#x}: {pos:?}"
+        );
+        assert!((pos[2] - dz).abs() < 1e-6, "{flags:#x}: dz {} vs {dz}", pos[2]);
+        assert_eq!(speed, s.swim);
+    }
+    // Ten frames climb ten frames' worth: the rise is steady, not a heartbeat snap.
+    let mut rm = motion(move_flags::SWIMMING | move_flags::ASCENDING, 0.0);
+    for _ in 0..10 {
+        rm.wow_pos = rm.advance(s, FRAME_S).0;
+    }
+    assert!((rm.wow_pos[2] - 10.0 * up).abs() < 1e-5, "{:?}", rm.wow_pos);
+}
+
+/// Translating too, the channel climbs at 45° along the level heading (`0x987700`), whatever the
+/// pitch.
+#[test]
+fn an_ascent_while_swimming_forward_climbs_at_forty_five_degrees() {
+    let s = speeds();
+    let k = std::f32::consts::FRAC_1_SQRT_2 * s.swim * FRAME_S;
+    let mut rm = motion(
+        move_flags::SWIMMING | move_flags::FORWARD | move_flags::ASCENDING,
+        0.0,
+    );
+    rm.pitch = -0.8;
+    let (pos, ..) = rm.advance(s, FRAME_S);
+    assert!((pos[0] - k).abs() < 1e-6 && pos[1].abs() < 1e-6, "{pos:?}");
+    assert!((pos[2] - k).abs() < 1e-6, "{pos:?}");
+    // Strafing left and descending: the level heading is the strafe's.
+    let rm = motion(
+        move_flags::SWIMMING | move_flags::STRAFE_LEFT | move_flags::DESCENDING,
+        0.0,
+    );
+    let (pos, ..) = rm.advance(s, FRAME_S);
+    assert!(pos[0].abs() < 1e-6 && (pos[1] - k).abs() < 1e-6, "{pos:?}");
+    assert!((pos[2] + k).abs() < 1e-6, "{pos:?}");
+}
+
+/// A flyer strokes like a swimmer at the flight speeds: pitched forward, and the vertical channel
+/// at the flight speed (`GetBaseSpeed` `0x987570` puts flight first).
+#[test]
+fn a_flyer_takes_the_flight_speed_along_its_pitch() {
+    let s = speeds();
+    let mut rm = motion(move_flags::FLYING | move_flags::FORWARD, 0.0);
+    rm.pitch = 0.3;
+    let (pos, _, _, speed) = rm.advance(s, FRAME_S);
+    assert_eq!(speed, s.flight);
+    let d = s.flight * FRAME_S;
+    assert!((pos[0] - d * 0.3f32.cos()).abs() < 1e-5, "{pos:?}");
+    assert!((pos[2] - d * 0.3f32.sin()).abs() < 1e-5, "{pos:?}");
+    let (pos, _, _, speed) =
+        motion(move_flags::FLYING | move_flags::ASCENDING, 0.0).advance(s, FRAME_S);
+    assert_eq!(speed, s.flight);
+    assert!((pos[2] - d).abs() < 1e-6, "{pos:?}");
+    let (_, _, _, back) =
+        motion(move_flags::FLYING | move_flags::BACKWARD, 0.0).advance(s, FRAME_S);
+    assert_eq!(back, s.flight_back);
+}
+
+/// The relay merge lands ASCENDING (3.3.5a's `0x77fffdff`, `0x6eb730`), which integrates the mover,
+/// and a root's wipe clears both vertical bits (`0x9884b8`).
+#[test]
+fn a_relayed_ascent_lands_integrates_and_a_root_ends_it() {
+    let swimmer = motion(move_flags::SWIMMING, 0.0);
+    assert_eq!(swimmer.flags & move_flags::INTEGRATED, 0);
+    let rising = apply_observed(
+        swimmer,
+        &observed(
+            move_flags::SWIMMING | move_flags::ASCENDING,
+            [0.0; 3],
+            RelayVerb::Pose,
+        ),
+    );
+    assert_ne!(rising.flags & move_flags::ASCENDING, 0, "the bit lands");
+    assert_ne!(rising.flags & move_flags::INTEGRATED, 0, "and is stepped");
+    let rooted = apply_observed(
+        rising,
+        &observed(
+            move_flags::SWIMMING | move_flags::ASCENDING,
+            [0.0; 3],
+            RelayVerb::Root(true),
+        ),
+    );
+    assert_eq!(
+        rooted.flags & (move_flags::ASCENDING | move_flags::DESCENDING),
+        0
     );
 }
 

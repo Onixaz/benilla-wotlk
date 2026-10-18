@@ -1079,6 +1079,9 @@ fn set_speed(
         SpeedKind::Swim => s.swim = speed,
         SpeedKind::SwimBack => s.swim_back = speed,
         SpeedKind::TurnRate => s.turn_rate = speed,
+        SpeedKind::Flight => s.flight = speed,
+        SpeedKind::FlightBack => s.flight_back = speed,
+        SpeedKind::PitchRate => s.pitch_rate = speed,
     }
     true
 }

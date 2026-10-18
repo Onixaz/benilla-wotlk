@@ -209,14 +209,22 @@ pub(crate) struct UnitSpeeds(pub(crate) MoveSpeeds);
 /// A mover's speed from its move flags (`CMovement::GetCurrentSpeed 0x7c4c90`). The order is the
 /// fact: no direction bit is 0 (`0x7c4c99`); swimming first (`0x7c4cd9`); then walk mode as
 /// `min(walk, run)` even backward (`0x7c4d11`); then run, backward as `min(run_back, run)`
-/// (`0x7c4d1d`). Each min is x87 `fcompp`, ties and NaN taking the forward field.
+/// (`0x7c4d1d`). Each min is x87 `fcompp`, ties and NaN taking the forward field. 3.3.5a's
+/// `GetBaseSpeed` (`0x987570`) counts the vertical bits as moving and puts flight ahead of swim.
 ///
 /// No zero-`walk` fallback: the ctor's zeroed speeds (`0x7c48e8`) are never observable, since
 /// the post-create apply `0x5fad50` applies our own speed block as it does a remote one.
 pub(crate) fn current_speed(s: &MoveSpeeds, flags: u32) -> f32 {
     use crate::creature_anim::move_flags as f;
-    if flags & f::ANY_MOVE == 0 {
+    if flags & (f::ANY_MOVE | f::ASCENDING | f::DESCENDING) == 0 {
         return 0.0;
+    }
+    if flags & f::FLYING != 0 {
+        return if flags & f::BACKWARD != 0 {
+            s.flight_back.min(s.flight)
+        } else {
+            s.flight
+        };
     }
     if flags & f::SWIMMING != 0 {
         return if flags & f::BACKWARD != 0 {
@@ -792,6 +800,8 @@ pub(crate) enum MoveKind {
     StartAscend,
     StartDescend,
     StopAscend,
+    /// 3.3.5a's `CMSG_MOVE_SET_FLY`, the report of a flight starting or ending.
+    SetFly,
     /// The walk/run toggle: sent from the toggle handler (`ToggleRun 0x513d50` to `0x617de0`),
     /// not the move broadcaster, so it goes out standing still (`0x61a99d` gates the latter).
     SetWalkMode,
@@ -820,6 +830,7 @@ impl MoveKind {
             MoveKind::StartAscend => op::MSG_MOVE_START_ASCEND,
             MoveKind::StartDescend => op::MSG_MOVE_START_DESCEND,
             MoveKind::StopAscend => op::MSG_MOVE_STOP_ASCEND,
+            MoveKind::SetFly => op::CMSG_MOVE_SET_FLY,
             MoveKind::SetWalkMode => op::MSG_MOVE_SET_WALK_MODE,
             MoveKind::SetRunMode => op::MSG_MOVE_SET_RUN_MODE,
             MoveKind::SetFacing => op::MSG_MOVE_SET_FACING,
@@ -2565,6 +2576,7 @@ mod tests {
             swim: 4.722,
             swim_back: 2.5,
             turn_rate: std::f32::consts::PI,
+            ..Default::default()
         }
     }
 
@@ -2613,6 +2625,7 @@ mod tests {
             swim: 4.0,
             swim_back: 9.0, // a swim-back above swim
             turn_rate: std::f32::consts::PI,
+            ..Default::default()
         };
         assert_eq!(current_speed(&s, f::FORWARD | f::WALK_MODE), 7.0);
         assert_eq!(current_speed(&s, f::BACKWARD), 7.0);

@@ -157,6 +157,7 @@ mod tests {
             swim: 4.722_222,
             swim_back: 2.5,
             turn_rate: std::f32::consts::PI,
+            ..Default::default()
         }
     }
 

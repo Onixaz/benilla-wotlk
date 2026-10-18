@@ -89,6 +89,10 @@ pub(crate) mod move_flags {
     pub const ASCENDING: u32 = benilla_protocol::messages::CLASSIC_ASCENDING;
     /// 3.3.5a's `MOVEFLAG_DESCENDING` (`0x80_0000`).
     pub const DESCENDING: u32 = benilla_protocol::messages::CLASSIC_DESCENDING;
+    /// 3.3.5a's `MOVEFLAG_CAN_FLY` (`0x100_0000`): the mover may take flight (`0x989890`).
+    pub const CAN_FLY: u32 = benilla_protocol::messages::CLASSIC_CAN_FLY;
+    /// 3.3.5a's `MOVEFLAG_FLYING` (`0x200_0000`): gravity off, the pitched stroke at flight speed.
+    pub const FLYING: u32 = benilla_protocol::messages::CLASSIC_FLYING;
     /// `MOVEFLAG_ONTRANSPORT` (`MovementInfo.h:56`, not TBC's 0x200): every packet carrying it
     /// also carries the transport-local pose.
     pub const ON_TRANSPORT: u32 = 0x0200_0000;
@@ -104,8 +108,9 @@ pub(crate) mod move_flags {
 
     /// The bits a server-authored move packet owns, the reference's merge mask (`0x618c30` @
     /// `0x618deb`). [`ON_TRANSPORT`] is outside it: a server pose relocates a rider but never
-    /// boards or deboards them.
-    pub const SERVER_AUTHORED: u32 = 0x75a0_7dff;
+    /// boards or deboards them. 3.3.5a's masks (`0x6eb730`: `0x77fffdff`, our own `0x77e00dff`)
+    /// also hold [`ASCENDING`] and [`CAN_FLY`].
+    pub const SERVER_AUTHORED: u32 = 0x75a0_7dff | ASCENDING | CAN_FLY;
 
     /// Merge a server-authored packet's flags under [`SERVER_AUTHORED`] (`0x618de7`), for our mover
     /// and every watched one: all thirty relay opcodes take this mask (`0x618f20`).
@@ -119,10 +124,10 @@ pub(crate) mod move_flags {
     /// The low byte: forward, back, strafe, turn and pitch, the loot response's test (`0x5ebc40`).
     pub const STEERING: u32 = 0xff;
 
-    /// The bits that get a mover integrated at all, the client's `0x20ff` (`0x616e20`, `0x6166f5`):
-    /// without one a mover keeps its last packet's pose, and a flag-less unit is not even in the
-    /// mover list (`0x618940`). Swim and the mode bits are not among them.
-    pub const INTEGRATED: u32 = STEERING | FALLING;
+    /// The bits that get a mover integrated at all, 3.3.5a's `0xc010ff` (`0x6eb730`, and the
+    /// kernel's moving set `0x987b50`): without one a mover keeps its last packet's pose. Swim,
+    /// flight and the mode bits are not among them.
+    pub const INTEGRATED: u32 = STEERING | FALLING | ASCENDING | DESCENDING;
 
     /// The committed-lower-body test routing a one-shot to the masked overlay (`0x5fe6dc`); the
     /// client's separate mouse-turn test (`d58 & 0x1800`) reads a field benilla does not model.
@@ -169,9 +174,9 @@ pub(crate) fn strafe_body_offset(flags: u32) -> f32 {
 
 /// The swim body pitch for every mover with a reported pitch (`0x60a110` to `0x710620`): the
 /// reference's `Rz(facing)·Ry(2π − pitch)` is `Ry(yaw)·Rx(pitch)` here, nose up positive, and
-/// only SWIMMING with forward or back pitches (`CMovement+0x40 & 3` at `0x60857d`).
+/// only SWIMMING or FLYING with forward or back pitches (`Animate` `0x71fd80`).
 pub(crate) fn swim_body_rotation(yaw: f32, flags: u32, pitch: f32) -> Quat {
-    if flags & move_flags::SWIMMING != 0
+    if flags & (move_flags::SWIMMING | move_flags::FLYING) != 0
         && flags & (move_flags::FORWARD | move_flags::BACKWARD) != 0
     {
         Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch)
@@ -362,8 +367,9 @@ fn claimed_candidates(
     use move_flags::*;
     let f = state.flags;
     let swimming = f & SWIMMING != 0;
-    // Swimming locomotion (`0x5fd100`): turn, then strafe, then backward, then forward.
-    if swimming && f & ANY_MOVE != 0 {
+    // Swimming locomotion (`0x5fd100`): turn, then strafe, then backward, then forward; a flyer
+    // takes the same arm (`ChooseMovementAnim` `0x717050`).
+    if f & (SWIMMING | FLYING) != 0 && f & ANY_MOVE != 0 {
         return Some(if f & (TURN_LEFT | TURN_RIGHT) != 0 {
             &[41, 0]
         } else if f & STRAFE_LEFT != 0 {

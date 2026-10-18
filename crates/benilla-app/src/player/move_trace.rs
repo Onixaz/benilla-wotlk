@@ -117,6 +117,24 @@ pub(super) fn knockback(flown: bool, launch: benilla_protocol::JumpInfo) {
     );
 }
 
+/// One `fly` line per flight edge, a take-off or a landing, with the feet where the check ran.
+pub(super) fn flight(took_off: bool, feet: bevy::prelude::Vec3) {
+    if !trace::enabled() {
+        return;
+    }
+    let wow = benilla_assets::coords::bevy_to_wow(feet);
+    trace::line(
+        "fly",
+        &format!(
+            "{} pos=[{:.2},{:.2},{:.2}]",
+            if took_off { "take-off" } else { "land" },
+            wow[0],
+            wow[1],
+            wow[2]
+        ),
+    );
+}
+
 /// One `mvr` line per `CMSG_SET_ACTIVE_MOVER` or `CMSG_MOVE_NOT_ACTIVE_MOVER`. vmangos checks every
 /// movement packet against the confirmed mover and logs a mismatch only server-side.
 pub(super) fn mover_claim(what: &str, guid: u64) {

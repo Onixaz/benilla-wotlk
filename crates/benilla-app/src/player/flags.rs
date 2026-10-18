@@ -20,8 +20,8 @@ pub(super) struct FrameFlags {
     pub fall_time: u32,
 }
 
-/// Builds this frame's two flag words. `swim` is `Some((fwd, side))` while swimming, the netted
-/// amounts that drove the mover.
+/// Builds this frame's two flag words. `swim` is `Some((fwd, side))` while swimming or flying, the
+/// netted amounts that drove the stroke.
 pub(super) fn this_frame(
     player: &mut Player,
     axes: &input::MoveAxes,
@@ -58,8 +58,13 @@ pub(super) fn this_frame(
         // SWIMMING (its pitch tail rides with it) and the direction bits of the netted swim
         // amounts, which the swim gait selector cascades on (`0x5fd100`: turn 41, strafe 43/44,
         // back 45, forward 42, idle 41), and the vertical channel's flags. No FALLING, and the arc
-        // is cleared.
-        move_flags_now |= move_flags::SWIMMING | player.vertical.flags();
+        // is cleared. A flyer carries FLYING in SWIMMING's place (`0x989890`).
+        let medium = if player.flying {
+            move_flags::FLYING
+        } else {
+            move_flags::SWIMMING
+        };
+        move_flags_now |= medium | player.vertical.flags();
         if swim_fwd < 0.0 {
             move_flags_now |= move_flags::BACKWARD;
         } else if swim_fwd > 0.0 {

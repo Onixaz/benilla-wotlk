@@ -267,6 +267,24 @@ pub(super) fn swim_step(
     }
 }
 
+/// The stroke's unit direction, shared with flight: the travel basis (`0x7c5880`) pitches forward
+/// by `pitch` and keeps strafe level, and an ascent or descent replaces it with its own
+/// ([`super::vertical::stroke`]). `basis` and `amounts` are as [`drive_step`] takes them.
+pub(super) fn stroke_direction(
+    pitch: f32,
+    basis: (Vec3, Vec3),
+    amounts: (f32, f32),
+    vertical: f32,
+) -> Vec3 {
+    let (fwd, side) = amounts;
+    if vertical != 0.0 {
+        return super::vertical::stroke(basis.0 * fwd + basis.1 * side, vertical);
+    }
+    let (sp, cp) = pitch.sin_cos();
+    let fwd_axis = basis.0 * cp + Vec3::Y * sp;
+    (fwd_axis * fwd + basis.1 * side).normalize_or_zero()
+}
+
 /// One swim frame's mover outcome and its presented pitch, for the pose and the wire: the raw aim,
 /// or the level travel pitch after a surface redirect.
 pub(super) struct SwimFrame {
@@ -293,7 +311,7 @@ pub(super) fn drive_step(
     move_speed: &super::MoveSpeed,
     wobble: f32,
 ) -> SwimFrame {
-    let (swim_fwd, swim_side) = amounts;
+    let swim_fwd = amounts.0;
     // Drunk and swimming, the pitch wobbles too, by the facing veer's angle × 4.0 each frame
     // (`0x60aabc`-`0x60ab0a`, `[0x80306c]`, committed through `0x60de70`), clamped to ±π/2
     // (`0x60aba0`, `0x808acc`/`0x80c5e4`), not the mouselook's ±89°.
@@ -302,16 +320,7 @@ pub(super) fn drive_step(
             .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
     }
     let mut pitch = player.mover_pitch;
-    // The travel basis (`0x7c5880`): forward is the facing pitched by the swim pitch and strafe
-    // stays level; an ascent or descent replaces it with its own ([`super::vertical::stroke`]).
-    let (sp, cp) = player.mover_pitch.sin_cos();
-    let fwd_axis = basis.0 * cp + Vec3::Y * sp;
-    let v = fwd_axis * swim_fwd + basis.1 * swim_side;
-    let dir3 = if vertical == 0.0 {
-        v.normalize_or_zero()
-    } else {
-        super::vertical::stroke(basis.0 * swim_fwd + basis.1 * swim_side, vertical)
-    };
+    let dir3 = stroke_direction(player.mover_pitch, basis, amounts, vertical);
     let rest_line = rest_line(player, surface_y);
     // The directional speed (`0x7c4c90`'s swim arm): backward takes `min(swimBack, swim)`,
     // forward and strafe the swim speed.

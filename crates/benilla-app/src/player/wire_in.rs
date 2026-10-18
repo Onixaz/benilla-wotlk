@@ -251,13 +251,23 @@ pub(super) fn apply_server_moves(
         else if m.mode == MoveMode::Hover && m.apply {
             player.hover_launch = true;
         }
+        // A revoke ends a flight in progress before its ack (`0x6ef860` event 48, StopFlying
+        // `0x98c240`), with no `CMSG_MOVE_SET_FLY` of its own.
+        else if m.mode == MoveMode::CanFly && !m.apply && player.flying {
+            super::flight::land(player);
+        }
         let facing = player.face_yaw.rem_euclid(std::f32::consts::TAU);
+        let flying = if player.flying {
+            move_flags::FLYING
+        } else {
+            0
+        };
         let _ = net_cmds.0.send(ClientCommand::MoveModeAck {
             guid: m.guid,
             counter: m.counter,
             mode: m.mode,
             apply: m.apply,
-            flags: player.modes.wire_flags(),
+            flags: player.modes.wire_flags() | flying,
             pos: bevy_to_wow(player.pos),
             orientation: facing,
         });
@@ -416,6 +426,8 @@ fn apply_self_move(
     // reference's merge applies swimming too (`0x61a1af` → `0x61a230`). `.cheat fly` sends
     // SWIMMING with LEVITATING.
     player.swimming = player.move_flags & move_flags::SWIMMING != 0;
+    // 3.3.5a's own-mover mask holds FLYING too (`0x6eb730`, `0x77e00dff`).
+    player.flying = player.move_flags & move_flags::FLYING != 0;
     // The walk bit is lifted too, normally our own echoed back; else a server move would clear it
     // under a set latch, and the next frame would re-announce the gait.
     player.walking = player.move_flags & move_flags::WALK_MODE != 0;
@@ -522,6 +534,7 @@ mod session_end_tests {
             feather_fall: true,
             hover: true,
             levitating: true,
+            can_fly: true,
         };
         p.autorun = true;
         p.control_lost = true;

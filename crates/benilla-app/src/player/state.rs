@@ -157,6 +157,9 @@ pub(crate) struct MoveModes {
     /// `MOVEFLAG_LEVITATING` (GM `.cheat fly`), merged unacked from a server-authored move: the
     /// swim decision does not run while it is set (`0x6030d2`), so a server-set swim is flight.
     pub(crate) levitating: bool,
+    /// 3.3.5a's `CAN_FLY` (`SMSG_MOVE_SET_CAN_FLY`, a flying mount or `.gm fly on`): the jump key
+    /// takes flight and a fall off a ledge becomes one ([`super::flight`]).
+    pub(crate) can_fly: bool,
 }
 
 impl MoveModes {
@@ -167,6 +170,7 @@ impl MoveModes {
             MoveMode::WaterWalk => self.water_walking = apply,
             MoveMode::FeatherFall => self.feather_fall = apply,
             MoveMode::Hover => self.hover = apply,
+            MoveMode::CanFly => self.can_fly = apply,
         }
     }
 
@@ -191,6 +195,9 @@ impl MoveModes {
         if self.levitating {
             flags |= f::LEVITATING;
         }
+        if self.can_fly {
+            flags |= f::CAN_FLY;
+        }
         flags
     }
 
@@ -205,6 +212,7 @@ impl MoveModes {
         self.feather_fall = wire & f::SAFE_FALL != 0;
         self.hover = wire & f::HOVER != 0;
         self.levitating = wire & f::LEVITATING != 0;
+        self.can_fly = wire & f::CAN_FLY != 0;
     }
 }
 
@@ -427,6 +435,15 @@ pub(crate) struct Player {
     pub(crate) swimming: bool,
     /// 3.3.5a's vertical channel: the ascend and descend flags the held keys drive while swimming.
     pub(super) vertical: super::vertical::Vertical,
+    /// Flying (3.3.5a `MOVEFLAG_FLYING`): taken off under [`MoveModes::can_fly`], ended by the
+    /// landing check, a revoke or the water ([`super::flight`]).
+    pub(crate) flying: bool,
+    /// When flight last started (`Time::elapsed_secs`), the reference's `s_flightStatusTime`: the
+    /// landing check waits 2 s past it (`0x73aa59`).
+    pub(super) flight_since: f32,
+    /// A flight edge owes `CMSG_MOVE_SET_FLY`, which the move stream sends ahead of this frame's
+    /// vertical command (`0x6ef860` events 45, 46).
+    pub(super) set_fly_owed: bool,
     /// Our body's collision height, of which every swim depth line is a fraction. The component's
     /// own type, so `Player::default()` gives [`DEFAULT_COLLISION_HEIGHT`] rather than 0, which
     /// would swim on dry land.

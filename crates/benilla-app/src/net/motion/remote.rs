@@ -375,10 +375,10 @@ pub(in crate::net) fn extrapolate_remote_units(
         // Horizontal travel the world took away, measured before the reconcile lerp.
         let mut held = 0.0f32;
         // The step meets the world: grounded, the swept capsule and step election; airborne, walls
-        // only, since the arc owns its Z. A swimmer (the wire Z is its depth) and a transport rider
-        // (a transport-local pose) are not resolved.
+        // only, since the arc owns its Z. A swimmer or flyer (the stroke owns its Z) and a
+        // transport rider (a transport-local pose) are not resolved.
         let airborne = rm.flags & move_flags::FALLING != 0;
-        let afloat = rm.flags & move_flags::SWIMMING != 0;
+        let afloat = rm.flags & (move_flags::SWIMMING | move_flags::FLYING) != 0;
         // A flag-still mover is not integrated: `CMovement::Update`'s substep loop (`0x616e20`)
         // and the per-mover tick (`0x6166f5`) both bail on `0x20ff`, so its pose is the last
         // packet's. This also keeps a standing mover from sinking where a WMO floor collider has
@@ -495,10 +495,9 @@ pub(in crate::net) fn extrapolate_remote_units(
         if t.translation != translation {
             t.translation = translation;
         }
-        // The strafe body pose, as our own avatar's; swimming snaps the display facing to the aim
-        // (`0x607ed0`'s `mov [esi+0xc94],[esi+0xc98]`).
-        let swimming = rm.flags & move_flags::SWIMMING != 0;
-        let offset = if swimming {
+        // The strafe body pose, as our own avatar's; swimming or flying snaps the display facing to
+        // the aim (`0x607ed0`'s `mov [esi+0xc94],[esi+0xc98]`).
+        let offset = if afloat {
             0.0
         } else {
             strafe_body_offset(rm.flags)
@@ -601,10 +600,10 @@ impl RemoteMotion {
         }
         let orientation = self.orientation + turn * speeds.turn_rate * dt;
 
-        // Swimming, the forward axis is pitched: `0x7c5880` writes `(cosY cosP, sinY cosP, sinP)`;
-        // the strafe axis stays level.
-        let swimming = self.flags & move_flags::SWIMMING != 0;
-        let (hp, vp) = if swimming {
+        // Swimming or flying, the forward axis is pitched: `0x7c5880` writes
+        // `(cosY cosP, sinY cosP, sinP)`; the strafe axis stays level.
+        let afloat = self.flags & (move_flags::SWIMMING | move_flags::FLYING) != 0;
+        let (hp, vp) = if afloat {
             (self.pitch.cos(), self.pitch.sin())
         } else {
             (1.0, 0.0)
@@ -627,9 +626,31 @@ impl RemoteMotion {
         if self.flags & move_flags::STRAFE_RIGHT != 0 {
             left_amt -= 1.0;
         }
-        let dx = fwd_amt * fwd[0] * hp + left_amt * left[0];
-        let dy = fwd_amt * fwd[1] * hp + left_amt * left[1];
-        let dz = fwd_amt * vp;
+        // The vertical channel (`0x987b50` cases 0x10-0x17): alone straight up or down, else 45°
+        // along the level heading whatever the pitch (`0x987700`); ascending wins over descending.
+        let rise = if self.flags & move_flags::ASCENDING != 0 {
+            1.0
+        } else if self.flags & move_flags::DESCENDING != 0 {
+            -1.0
+        } else {
+            0.0
+        };
+        let (dx, dy, dz) = if rise != 0.0 {
+            let lx = fwd_amt * fwd[0] + left_amt * left[0];
+            let ly = fwd_amt * fwd[1] + left_amt * left[1];
+            let level = lx.hypot(ly);
+            if level > 1.0e-4 {
+                (lx / level, ly / level, rise)
+            } else {
+                (0.0, 0.0, rise)
+            }
+        } else {
+            (
+                fwd_amt * fwd[0] * hp + left_amt * left[0],
+                fwd_amt * fwd[1] * hp + left_amt * left[1],
+                fwd_amt * vp,
+            )
+        };
 
         let len = (dx * dx + dy * dy + dz * dz).sqrt();
         // `GetCurrentSpeed` (`0x7c4c90`), shared with the local controller; its walk arm
@@ -645,7 +666,7 @@ impl RemoteMotion {
         } else {
             0.0
         };
-        // A swimmer's vertical is in the pitched axis, not a persisted velocity.
+        // A swimmer's or flyer's vertical is in the stroke, not a persisted velocity.
         (pos, orientation, 0.0, speed)
     }
 }
@@ -806,6 +827,7 @@ mod under_floor {
                 swim: 2.0,
                 swim_back: 2.0,
                 turn_rate: 0.0,
+                ..Default::default()
             },
         ));
         // A floor 0.06 under the wire Z: past the standing slack (0.028), inside the moving reach.

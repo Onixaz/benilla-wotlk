@@ -499,19 +499,54 @@ pub(super) fn control(
         // `JumpOrAscendStart`'s ground arm, refused to a mover swimming or flying at the call
         // (`0x5fbfed`), whose press is the ascent alone; its predicate `0x5fa9e0` is `may_translate`
         // term for term: health, root and stand state 7. Hover's refusal is the movement handler's
-        // (`0x9883f0`), which keeps the mounted flourish reachable while hovering.
+        // (`0x9883f0`), which keeps the mounted flourish reachable while hovering. Under `CAN_FLY`
+        // the press takes flight instead, airborne or not (`0x5fc070`).
         let was_swimming = player.swimming;
-        let mut want_jump =
-            binds.fired(crate::bindings::Input::Jump) && may_translate && !was_swimming;
+        let was_afloat = was_swimming || player.flying;
+        let jump_press =
+            binds.fired(crate::bindings::Input::Jump) && may_translate && !was_afloat;
+        let fly_press = jump_press && player.modes.can_fly;
+        let mut want_jump = jump_press && !fly_press;
+        let (ascend, descend) = (
+            binds.pressed(crate::bindings::Input::Ascend),
+            binds.pressed(crate::bindings::Input::Descend),
+        );
         // A held bit's change resyncs the vertical channel (`0x5fbbc0`) against the flags the
         // mover had at the call.
         if binds.control_changed() {
-            player.vertical.resync(
-                binds.pressed(crate::bindings::Input::Ascend),
-                binds.pressed(crate::bindings::Input::Descend),
-                was_swimming,
-                may_translate,
-            );
+            player.vertical.resync(ascend, descend, was_afloat, may_translate);
+        }
+
+        // The flight status check, run beside the swim decision and ahead of it (`0x73ab20`); a
+        // press is the same take-off. Each edge reports and then resyncs (`0x7413f0`).
+        let now = time.elapsed_secs();
+        let feet = player.pos;
+        let edge = if fly_press {
+            Some(flight::Edge::TakeOff)
+        } else {
+            flight::status(
+                player.modes.can_fly,
+                player.flying,
+                player.airborne_since.is_some(),
+                player.airborne_since.is_some() && player.vel_y > 0.0,
+                player.flight_since,
+                now,
+                || flight::height_above_ground(&collide, feet),
+            )
+        };
+        let flew = match edge {
+            Some(flight::Edge::TakeOff) => flight::take_off(&mut player, now),
+            Some(flight::Edge::Land) => {
+                flight::land(&mut player);
+                true
+            }
+            None => false,
+        };
+        if flew {
+            player.set_fly_owed = true;
+            let afloat = player.flying;
+            player.vertical.resync(ascend, descend, afloat, may_translate);
+            move_trace::flight(player.flying, feet);
         }
 
         // Swim or walk, latched with hysteresis at the `0x6030c0` boundary against flicker.
@@ -526,6 +561,10 @@ pub(super) fn control(
         let swimming = swim::update_swimming(&mut player, surface_y, time.elapsed_secs());
         if let Some(surface) = surface_y {
             move_trace::swim(player.pos.y, surface, swimming, player.collision_height.0);
+        }
+        // Into the water a flyer swims: StartSwim clears FLYING (`0x989660`).
+        if swimming {
+            player.flying = false;
         }
         // A swimmer leaves through the top by a jump, which clears SWIMMING before the mover
         // (StartFalling `0x988370`), so this frame's mover, flags and wire see a jump. The swim
@@ -558,14 +597,21 @@ pub(super) fn control(
             player.swimming = false;
         }
         let swimming = swimming && !breach && !knock_breach;
+        // A knockback ends a flight and takes `CAN_FLY` with it (`Launch` `0x6e9ff0`), sending no
+        // `CMSG_MOVE_SET_FLY`; the land mover flies it.
+        if player.flying && knock_launch.is_some() {
+            flight::land(&mut player);
+            player.modes.can_fly = false;
+        }
+        let flying = player.flying;
         // Out of the water by depth or by a jump, or rooted, the vertical flags end with no packet
         // of their own.
-        if !swimming || player.modes.rooted {
+        if !(swimming || flying) || player.modes.rooted {
             player.vertical.end();
         }
 
-        // Read by both the swim mover and the flag build, so the two cannot disagree.
-        let (swim_fwd, swim_side) = if swimming {
+        // Read by both the stroke and the flag build, so the two cannot disagree.
+        let (swim_fwd, swim_side) = if swimming || flying {
             swim::translate_amounts(&axes, !may_translate)
         } else {
             (0.0, 0.0)
@@ -636,6 +682,25 @@ pub(super) fn control(
             );
             swim_pitch = frame.pitch;
             frame.outcome
+        } else if flying {
+            let vertical = if may_translate {
+                player.vertical.direction()
+            } else {
+                0.0
+            };
+            // The flyer's pitch rides the wire and the body as a swimmer's does.
+            swim_pitch = player.mover_pitch;
+            flight::drive_step(
+                &mut player,
+                &time,
+                &collide,
+                capsule,
+                (move_fwd, move_right),
+                (swim_fwd, swim_side),
+                vertical,
+                mover_speeds,
+                move_speed,
+            )
         } else {
             // Water walking hands the mover the liquid surface as ground ([`mover::water_floor`]),
             // where the reference ORs the liquid layers into the walk trace's class mask
@@ -669,10 +734,11 @@ pub(super) fn control(
             move_trace::knockback(knocked, k.launch);
         }
 
-        let now = time.elapsed_secs();
-        // Our FALLING: never while swimming, and a root ends it outright (`SetRoot` `0x7c7340`
-        // calls `StopFalling` `0x7c6290`), leaving the body hanging; `grounded` keeps true contact.
-        let airborne = !swimming && !held && !player.modes.rooted && (!grounded || jumped);
+        // Our FALLING: never while swimming or flying, and a root ends it outright (`SetRoot`
+        // `0x7c7340` calls `StopFalling` `0x7c6290`), leaving the body hanging; `grounded` keeps
+        // true contact.
+        let afloat = swimming || flying;
+        let airborne = !afloat && !held && !player.modes.rooted && (!grounded || jumped);
         // Airborne keeps the attachment, so a jump above a deck lands where it took off.
         ride::update_attachment(
             &mut player,
@@ -680,7 +746,7 @@ pub(super) fn control(
             child_of,
             ground,
             grounded,
-            swimming,
+            afloat,
         );
         // The live flag word, the take-off-frozen one the animation reads, and the fall clock.
         let flags::FrameFlags {
@@ -691,7 +757,7 @@ pub(super) fn control(
         } = flags::this_frame(
             &mut player,
             &axes,
-            swimming.then_some((swim_fwd, swim_side)),
+            afloat.then_some((swim_fwd, swim_side)),
             airborne,
             jumped,
             held,
@@ -705,7 +771,7 @@ pub(super) fn control(
             &mut player,
             pose_flags,
             dt,
-            swimming,
+            afloat,
             moving,
             airborne,
             turning || mouselook,
@@ -715,7 +781,7 @@ pub(super) fn control(
             &player,
             &mut body,
             &mut net.6,
-            swimming,
+            afloat,
             swim_pitch,
             move_flags_now,
             anim_flags,
