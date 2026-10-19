@@ -1128,7 +1128,7 @@ fn every_kind_is_in_all() {
     seen.sort_unstable();
     seen.dedup();
     assert_eq!(seen.len(), before, "a kind is listed twice in ALL");
-    assert_eq!(before, 95, "95 kinds — update this when the kind set grows");
+    assert_eq!(before, 45, "45 kinds — update this when the kind set grows");
 }
 
 #[test]
@@ -1971,39 +1971,6 @@ fn a_speaker_that_cannot_animate_queues_no_talk_gesture() {
 }
 
 // ── the combat log reaches addons ────────────────────────────────────────────────────────────
-
-/// Combat-log addons parse arg1 with patterns built from the GlobalStrings, so arg1 is the whole
-/// sentence.
-#[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn an_addon_sees_the_combat_log_line_it_registers_for() {
-    let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = chat_vm();
-    let mut windows = super::frames::ChatWindows::default();
-    s.run(SPY).unwrap();
-    s.run(r#"BenillaChatSpy:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")"#)
-        .unwrap();
-
-    let line = "Your Fireball hits Kobold Vermin for 120 fire damage.";
-    super::frames::route(
-        &mut s,
-        &mut windows,
-        &ChatEvent::text_only(K::SpellSelfDamage, line.into()),
-    );
-
-    assert_eq!(
-        s.eval::<String>("return SpyEvent").unwrap(),
-        "CHAT_MSG_SPELL_SELF_DAMAGE",
-        "the event an addon registered is the event that fired"
-    );
-    assert_eq!(s.eval::<i64>("return SpyN").unwrap(), 1);
-    let seen: String = s.eval("return SpyLine").unwrap();
-    assert!(
-        seen.starts_with(&format!("{line}|")),
-        "arg1 must be the whole sentence, not a fragment — got {seen:?}"
-    );
-    assert!(s.errors().is_empty(), "handler errors: {:?}", s.errors());
-}
 
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]

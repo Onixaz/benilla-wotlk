@@ -52,141 +52,25 @@ pub(crate) enum ChatEventKind {
     /// 3.3.5a's award lines, the `$a` link already written.
     Achievement,
     GuildAchievement,
-    // ── the combat log ───────────────────────────────────────────────────────────────
-    // Every kind below has a producer.
-    /// `0x19`, the reference's catch-all combat line: `DURABILITYDAMAGE_DEATH`, `SPELLDISMISSPET*`,
-    /// `PET_LOYALTY_*`, `SPELLHAPPINESSDRAIN*` and the "string not found" warning.
+    // ── the lines beside the combat log ──────────────────────────────────────────────
+    /// `CHAT_MSG_COMBAT_MISC_INFO`: the death's durability loss.
     CombatMiscInfo,
-    CombatSelfHits,
-    CombatSelfMisses,
-    CombatPetHits,
-    CombatPetMisses,
-    CombatPartyHits,
-    CombatPartyMisses,
-    CombatFriendlyPlayerHits,
-    CombatFriendlyPlayerMisses,
-    CombatHostilePlayerHits,
-    CombatHostilePlayerMisses,
-    CombatCreatureVsSelfHits,
-    CombatCreatureVsSelfMisses,
-    CombatCreatureVsPartyHits,
-    CombatCreatureVsPartyMisses,
-    CombatCreatureVsCreatureHits,
-    CombatCreatureVsCreatureMisses,
-    /// `0x2b`, a death whose victim classifies 0..5 (you, yours, a friendly player or their pet).
-    CombatFriendlyDeath,
-    /// `0x2c`, every other death: a hostile player, a creature, an unresolvable victim.
-    CombatHostileDeath,
-    SpellSelfDamage,
-    SpellSelfBuff,
-    SpellPetDamage,
-    SpellPetBuff,
-    SpellPartyDamage,
-    SpellPartyBuff,
-    SpellFriendlyPlayerDamage,
-    SpellFriendlyPlayerBuff,
-    SpellHostilePlayerDamage,
-    SpellHostilePlayerBuff,
-    SpellCreatureVsSelfDamage,
-    SpellCreatureVsSelfBuff,
-    SpellCreatureVsPartyDamage,
-    SpellCreatureVsPartyBuff,
-    SpellCreatureVsCreatureDamage,
-    SpellCreatureVsCreatureBuff,
-    /// `0x3e`, the item a cast produced: `TRADESKILL_LOG_*` and `FEEDPET_LOG_*`.
-    SpellTradeskills,
-    SpellDamageShieldsOnSelf,
-    SpellDamageShieldsOnOthers,
-    /// `0x41`, an aura leaving you or your pet (`AURAREMOVED*`).
-    SpellAuraGoneSelf,
-    /// `0x42`, an aura leaving a party member or their pet.
-    SpellAuraGoneParty,
-    /// `0x43`, an aura leaving anyone else.
-    SpellAuraGoneOther,
-    /// `0x44`, an enchant landing on or fading from an item (`ITEMENCHANTMENT*`).
-    SpellItemEnchantments,
-    /// `0x45`, an aura dispelled or stolen (`AURADISPEL*`, `AURASTOLEN*`).
-    SpellBreakAura,
-    SpellPeriodicSelfDamage,
-    SpellPeriodicSelfBuffs,
-    SpellPeriodicPartyDamage,
-    SpellPeriodicPartyBuffs,
-    SpellPeriodicFriendlyPlayerDamage,
-    SpellPeriodicFriendlyPlayerBuffs,
-    SpellPeriodicHostilePlayerDamage,
-    SpellPeriodicHostilePlayerBuffs,
-    SpellPeriodicCreatureDamage,
-    SpellPeriodicCreatureBuffs,
-    /// `0x50`, your own cast that failed (`SPELLFAIL{CAST,PERFORM}SELF`).
-    SpellFailedLocalPlayer,
-    /// `0x55`, a reputation delta (`FACTION_STANDING_INCREASED`/`_DECREASED`).
+    /// `CHAT_MSG_COMBAT_FACTION_CHANGE`, a reputation delta.
     CombatFactionChange,
+    /// `CHAT_MSG_TRADESKILLS`, a created item (`0x50bd90`).
+    Tradeskills,
+    /// `CHAT_MSG_PET_INFO`: a pet fed, dismissed or drained of happiness.
+    PetInfo,
+    /// `CHAT_MSG_OPENING`, a lock opened (`0x50dde0`).
+    Opening,
 }
 
 impl ChatEventKind {
-    /// The combat log's own kinds. The reference tests the `COMBAT_`/`SPELL_` prefix
-    /// (`ChatFrame.lua:1397-1399`); `COMBAT_XP_GAIN` and `COMBAT_HONOR_GAIN`, composed apart from
-    /// the combat log, are outside this set.
+    /// The `COMBAT_` lines the stock frame prints verbatim by their prefix; `COMBAT_XP_GAIN` and
+    /// `COMBAT_HONOR_GAIN`, composed apart, are outside this set.
     pub(crate) fn is_combat_log(self) -> bool {
         use ChatEventKind as K;
-        matches!(
-            self,
-            K::CombatMiscInfo
-                | K::CombatSelfHits
-                | K::CombatSelfMisses
-                | K::CombatPetHits
-                | K::CombatPetMisses
-                | K::CombatPartyHits
-                | K::CombatPartyMisses
-                | K::CombatFriendlyPlayerHits
-                | K::CombatFriendlyPlayerMisses
-                | K::CombatHostilePlayerHits
-                | K::CombatHostilePlayerMisses
-                | K::CombatCreatureVsSelfHits
-                | K::CombatCreatureVsSelfMisses
-                | K::CombatCreatureVsPartyHits
-                | K::CombatCreatureVsPartyMisses
-                | K::CombatCreatureVsCreatureHits
-                | K::CombatCreatureVsCreatureMisses
-                | K::CombatFriendlyDeath
-                | K::CombatHostileDeath
-                | K::SpellSelfDamage
-                | K::SpellSelfBuff
-                | K::SpellPetDamage
-                | K::SpellPetBuff
-                | K::SpellPartyDamage
-                | K::SpellPartyBuff
-                | K::SpellFriendlyPlayerDamage
-                | K::SpellFriendlyPlayerBuff
-                | K::SpellHostilePlayerDamage
-                | K::SpellHostilePlayerBuff
-                | K::SpellCreatureVsSelfDamage
-                | K::SpellCreatureVsSelfBuff
-                | K::SpellCreatureVsPartyDamage
-                | K::SpellCreatureVsPartyBuff
-                | K::SpellCreatureVsCreatureDamage
-                | K::SpellCreatureVsCreatureBuff
-                | K::SpellTradeskills
-                | K::SpellDamageShieldsOnSelf
-                | K::SpellDamageShieldsOnOthers
-                | K::SpellAuraGoneSelf
-                | K::SpellAuraGoneParty
-                | K::SpellAuraGoneOther
-                | K::SpellItemEnchantments
-                | K::SpellBreakAura
-                | K::SpellPeriodicSelfDamage
-                | K::SpellPeriodicSelfBuffs
-                | K::SpellPeriodicPartyDamage
-                | K::SpellPeriodicPartyBuffs
-                | K::SpellPeriodicFriendlyPlayerDamage
-                | K::SpellPeriodicFriendlyPlayerBuffs
-                | K::SpellPeriodicHostilePlayerDamage
-                | K::SpellPeriodicHostilePlayerBuffs
-                | K::SpellPeriodicCreatureDamage
-                | K::SpellPeriodicCreatureBuffs
-                | K::SpellFailedLocalPlayer
-                | K::CombatFactionChange
-        )
+        matches!(self, K::CombatMiscInfo | K::CombatFactionChange)
     }
 
     /// Every kind, for the exhaustive sweeps; `ui_chat::tests::every_kind_is_in_all` fails when one
@@ -236,60 +120,10 @@ impl ChatEventKind {
             K::Achievement,
             K::GuildAchievement,
             K::CombatMiscInfo,
-            K::CombatSelfHits,
-            K::CombatSelfMisses,
-            K::CombatPetHits,
-            K::CombatPetMisses,
-            K::CombatPartyHits,
-            K::CombatPartyMisses,
-            K::CombatFriendlyPlayerHits,
-            K::CombatFriendlyPlayerMisses,
-            K::CombatHostilePlayerHits,
-            K::CombatHostilePlayerMisses,
-            K::CombatCreatureVsSelfHits,
-            K::CombatCreatureVsSelfMisses,
-            K::CombatCreatureVsPartyHits,
-            K::CombatCreatureVsPartyMisses,
-            K::CombatCreatureVsCreatureHits,
-            K::CombatCreatureVsCreatureMisses,
-            K::CombatFriendlyDeath,
-            K::CombatHostileDeath,
-            K::SpellSelfDamage,
-            K::SpellSelfBuff,
-            K::SpellPetDamage,
-            K::SpellPetBuff,
-            K::SpellPartyDamage,
-            K::SpellPartyBuff,
-            K::SpellFriendlyPlayerDamage,
-            K::SpellFriendlyPlayerBuff,
-            K::SpellHostilePlayerDamage,
-            K::SpellHostilePlayerBuff,
-            K::SpellCreatureVsSelfDamage,
-            K::SpellCreatureVsSelfBuff,
-            K::SpellCreatureVsPartyDamage,
-            K::SpellCreatureVsPartyBuff,
-            K::SpellCreatureVsCreatureDamage,
-            K::SpellCreatureVsCreatureBuff,
-            K::SpellTradeskills,
-            K::SpellDamageShieldsOnSelf,
-            K::SpellDamageShieldsOnOthers,
-            K::SpellAuraGoneSelf,
-            K::SpellAuraGoneParty,
-            K::SpellAuraGoneOther,
-            K::SpellItemEnchantments,
-            K::SpellBreakAura,
-            K::SpellPeriodicSelfDamage,
-            K::SpellPeriodicSelfBuffs,
-            K::SpellPeriodicPartyDamage,
-            K::SpellPeriodicPartyBuffs,
-            K::SpellPeriodicFriendlyPlayerDamage,
-            K::SpellPeriodicFriendlyPlayerBuffs,
-            K::SpellPeriodicHostilePlayerDamage,
-            K::SpellPeriodicHostilePlayerBuffs,
-            K::SpellPeriodicCreatureDamage,
-            K::SpellPeriodicCreatureBuffs,
-            K::SpellFailedLocalPlayer,
             K::CombatFactionChange,
+            K::Tradeskills,
+            K::PetInfo,
+            K::Opening,
         ]
     };
 }
@@ -442,60 +276,10 @@ pub(crate) fn event_name(kind: ChatEventKind) -> &'static str {
         K::Achievement => "CHAT_MSG_ACHIEVEMENT",
         K::GuildAchievement => "CHAT_MSG_GUILD_ACHIEVEMENT",
         K::CombatMiscInfo => "CHAT_MSG_COMBAT_MISC_INFO",
-        K::CombatSelfHits => "CHAT_MSG_COMBAT_SELF_HITS",
-        K::CombatSelfMisses => "CHAT_MSG_COMBAT_SELF_MISSES",
-        K::CombatPetHits => "CHAT_MSG_COMBAT_PET_HITS",
-        K::CombatPetMisses => "CHAT_MSG_COMBAT_PET_MISSES",
-        K::CombatPartyHits => "CHAT_MSG_COMBAT_PARTY_HITS",
-        K::CombatPartyMisses => "CHAT_MSG_COMBAT_PARTY_MISSES",
-        K::CombatFriendlyPlayerHits => "CHAT_MSG_COMBAT_FRIENDLYPLAYER_HITS",
-        K::CombatFriendlyPlayerMisses => "CHAT_MSG_COMBAT_FRIENDLYPLAYER_MISSES",
-        K::CombatHostilePlayerHits => "CHAT_MSG_COMBAT_HOSTILEPLAYER_HITS",
-        K::CombatHostilePlayerMisses => "CHAT_MSG_COMBAT_HOSTILEPLAYER_MISSES",
-        K::CombatCreatureVsSelfHits => "CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS",
-        K::CombatCreatureVsSelfMisses => "CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES",
-        K::CombatCreatureVsPartyHits => "CHAT_MSG_COMBAT_CREATURE_VS_PARTY_HITS",
-        K::CombatCreatureVsPartyMisses => "CHAT_MSG_COMBAT_CREATURE_VS_PARTY_MISSES",
-        K::CombatCreatureVsCreatureHits => "CHAT_MSG_COMBAT_CREATURE_VS_CREATURE_HITS",
-        K::CombatCreatureVsCreatureMisses => "CHAT_MSG_COMBAT_CREATURE_VS_CREATURE_MISSES",
-        K::CombatFriendlyDeath => "CHAT_MSG_COMBAT_FRIENDLY_DEATH",
-        K::CombatHostileDeath => "CHAT_MSG_COMBAT_HOSTILE_DEATH",
-        K::SpellSelfDamage => "CHAT_MSG_SPELL_SELF_DAMAGE",
-        K::SpellSelfBuff => "CHAT_MSG_SPELL_SELF_BUFF",
-        K::SpellPetDamage => "CHAT_MSG_SPELL_PET_DAMAGE",
-        K::SpellPetBuff => "CHAT_MSG_SPELL_PET_BUFF",
-        K::SpellPartyDamage => "CHAT_MSG_SPELL_PARTY_DAMAGE",
-        K::SpellPartyBuff => "CHAT_MSG_SPELL_PARTY_BUFF",
-        K::SpellFriendlyPlayerDamage => "CHAT_MSG_SPELL_FRIENDLYPLAYER_DAMAGE",
-        K::SpellFriendlyPlayerBuff => "CHAT_MSG_SPELL_FRIENDLYPLAYER_BUFF",
-        K::SpellHostilePlayerDamage => "CHAT_MSG_SPELL_HOSTILEPLAYER_DAMAGE",
-        K::SpellHostilePlayerBuff => "CHAT_MSG_SPELL_HOSTILEPLAYER_BUFF",
-        K::SpellCreatureVsSelfDamage => "CHAT_MSG_SPELL_CREATURE_VS_SELF_DAMAGE",
-        K::SpellCreatureVsSelfBuff => "CHAT_MSG_SPELL_CREATURE_VS_SELF_BUFF",
-        K::SpellCreatureVsPartyDamage => "CHAT_MSG_SPELL_CREATURE_VS_PARTY_DAMAGE",
-        K::SpellCreatureVsPartyBuff => "CHAT_MSG_SPELL_CREATURE_VS_PARTY_BUFF",
-        K::SpellCreatureVsCreatureDamage => "CHAT_MSG_SPELL_CREATURE_VS_CREATURE_DAMAGE",
-        K::SpellCreatureVsCreatureBuff => "CHAT_MSG_SPELL_CREATURE_VS_CREATURE_BUFF",
-        K::SpellTradeskills => "CHAT_MSG_SPELL_TRADESKILLS",
-        K::SpellDamageShieldsOnSelf => "CHAT_MSG_SPELL_DAMAGESHIELDS_ON_SELF",
-        K::SpellDamageShieldsOnOthers => "CHAT_MSG_SPELL_DAMAGESHIELDS_ON_OTHERS",
-        K::SpellAuraGoneSelf => "CHAT_MSG_SPELL_AURA_GONE_SELF",
-        K::SpellAuraGoneParty => "CHAT_MSG_SPELL_AURA_GONE_PARTY",
-        K::SpellAuraGoneOther => "CHAT_MSG_SPELL_AURA_GONE_OTHER",
-        K::SpellItemEnchantments => "CHAT_MSG_SPELL_ITEM_ENCHANTMENTS",
-        K::SpellBreakAura => "CHAT_MSG_SPELL_BREAK_AURA",
-        K::SpellPeriodicSelfDamage => "CHAT_MSG_SPELL_PERIODIC_SELF_DAMAGE",
-        K::SpellPeriodicSelfBuffs => "CHAT_MSG_SPELL_PERIODIC_SELF_BUFFS",
-        K::SpellPeriodicPartyDamage => "CHAT_MSG_SPELL_PERIODIC_PARTY_DAMAGE",
-        K::SpellPeriodicPartyBuffs => "CHAT_MSG_SPELL_PERIODIC_PARTY_BUFFS",
-        K::SpellPeriodicFriendlyPlayerDamage => "CHAT_MSG_SPELL_PERIODIC_FRIENDLYPLAYER_DAMAGE",
-        K::SpellPeriodicFriendlyPlayerBuffs => "CHAT_MSG_SPELL_PERIODIC_FRIENDLYPLAYER_BUFFS",
-        K::SpellPeriodicHostilePlayerDamage => "CHAT_MSG_SPELL_PERIODIC_HOSTILEPLAYER_DAMAGE",
-        K::SpellPeriodicHostilePlayerBuffs => "CHAT_MSG_SPELL_PERIODIC_HOSTILEPLAYER_BUFFS",
-        K::SpellPeriodicCreatureDamage => "CHAT_MSG_SPELL_PERIODIC_CREATURE_DAMAGE",
-        K::SpellPeriodicCreatureBuffs => "CHAT_MSG_SPELL_PERIODIC_CREATURE_BUFFS",
-        K::SpellFailedLocalPlayer => "CHAT_MSG_SPELL_FAILED_LOCALPLAYER",
         K::CombatFactionChange => "CHAT_MSG_COMBAT_FACTION_CHANGE",
+        K::Tradeskills => "CHAT_MSG_TRADESKILLS",
+        K::PetInfo => "CHAT_MSG_PET_INFO",
+        K::Opening => "CHAT_MSG_OPENING",
     }
 }
 
@@ -594,59 +378,9 @@ pub(crate) fn default_color(kind: ChatEventKind) -> [u8; 3] {
         K::Achievement => [255, 255, 0],
         K::GuildAchievement => [64, 255, 64],
         K::CombatMiscInfo | K::CombatFactionChange => [128, 128, 255],
-        // ── the combat log ───────────────────────────────────────────────────────────────
-        // White but for your own spells and what hits you.
-        K::SpellSelfDamage | K::SpellSelfBuff => [255, 255, 0],
-        K::CombatCreatureVsSelfHits | K::CombatCreatureVsSelfMisses => [255, 47, 47],
-        K::SpellCreatureVsSelfDamage => [202, 76, 217],
-        K::CombatSelfHits
-        | K::CombatSelfMisses
-        | K::CombatPetHits
-        | K::CombatPetMisses
-        | K::CombatPartyHits
-        | K::CombatPartyMisses
-        | K::CombatFriendlyPlayerHits
-        | K::CombatFriendlyPlayerMisses
-        | K::CombatHostilePlayerHits
-        | K::CombatHostilePlayerMisses
-        | K::CombatCreatureVsPartyHits
-        | K::CombatCreatureVsPartyMisses
-        | K::CombatCreatureVsCreatureHits
-        | K::CombatCreatureVsCreatureMisses
-        | K::SpellPetDamage
-        | K::SpellPetBuff
-        | K::SpellPartyDamage
-        | K::SpellPartyBuff
-        | K::SpellFriendlyPlayerDamage
-        | K::SpellFriendlyPlayerBuff
-        | K::SpellHostilePlayerDamage
-        | K::SpellHostilePlayerBuff
-        | K::SpellCreatureVsSelfBuff
-        | K::SpellCreatureVsPartyDamage
-        | K::SpellCreatureVsPartyBuff
-        | K::SpellCreatureVsCreatureDamage
-        | K::SpellCreatureVsCreatureBuff
-        | K::SpellDamageShieldsOnSelf
-        | K::SpellDamageShieldsOnOthers
-        | K::SpellPeriodicSelfDamage
-        | K::SpellPeriodicSelfBuffs
-        | K::SpellPeriodicPartyDamage
-        | K::SpellPeriodicPartyBuffs
-        | K::SpellPeriodicFriendlyPlayerDamage
-        | K::SpellPeriodicFriendlyPlayerBuffs
-        | K::SpellPeriodicHostilePlayerDamage
-        | K::SpellPeriodicHostilePlayerBuffs
-        | K::SpellPeriodicCreatureDamage
-        | K::SpellPeriodicCreatureBuffs
-        | K::CombatFriendlyDeath
-        | K::CombatHostileDeath
-        | K::SpellTradeskills
-        | K::SpellAuraGoneSelf
-        | K::SpellAuraGoneParty
-        | K::SpellAuraGoneOther
-        | K::SpellItemEnchantments
-        | K::SpellBreakAura
-        | K::SpellFailedLocalPlayer => [255, 255, 255],
+        // `s_chatTypeInfo` (`0x9fa558`): opening and pet lines blue, created items white.
+        K::Opening | K::PetInfo => [128, 128, 255],
+        K::Tradeskills => [255, 255, 255],
     }
 }
 

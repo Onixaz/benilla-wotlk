@@ -60,12 +60,15 @@ pub(crate) fn compose(
         | K::Skill
         | K::Loot
         | K::Money
+        | K::Opening
+        | K::Tradeskills
+        | K::PetInfo
         | K::CombatXpGain
         | K::CombatHonorGain
         | K::BgSystemNeutral
         | K::BgSystemAlliance
         | K::BgSystemHorde => event.text.clone(),
-        // The combat log is verbatim too, by prefix: `COMBAT_` and `SPELL_` (`:1397-1400`).
+        // The other `COMBAT_` lines are verbatim too, by prefix.
         k if k.is_combat_log() => event.text.clone(),
         // `format(arg1, "|Hplayer:"..arg2.."|h["..arg2.."]|h")`, 3.3.5a's award line.
         K::Achievement | K::GuildAchievement => fill(

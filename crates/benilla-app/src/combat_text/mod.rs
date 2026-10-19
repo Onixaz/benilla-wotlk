@@ -1,15 +1,15 @@
 //! Floating combat text, the reference's WORLDTEXTSTRING engine.
 //!
-//! A combat-log handler picks a category 0-5 and submits a string over the recipient. The text is
+//! A combat-log handler picks a category 0-9 and submits a string over the recipient. The text is
 //! world-anchored: the unit's overhead anchor is snapshotted at spawn (`0x6c73f0` to `0x608640`:
 //! the PlayerName attachment, slot 18, else `feet + scale × bbox_z × 1.25`), moved `z − 1/3`, and
 //! re-projected every frame (`0x483ee0`), rising and fading per its row of `0xce8828`. Numbers
 //! are bare `"%d"`, misses localized words; at most 4 texts per unit, a hard drop (`0x6c73f0`).
-//! Damage over yourself is suppressed at the emitters (Gate A, `0x607140`/`0x6128b0`); the XP
-//! emitter (category 4) is self-anchored and skips it. Heals and energize never float in 1.12.
+//! Damage over yourself is suppressed at the emitters (Gate A, `0x71f990`/`0x722340`); the XP
+//! emitter (category 4) is self-anchored and skips it. Your own heals float green (`0x722440`).
 //!
 //! Colour: the emitters key `B` (no spell record, or `AttributesEx3` bit 15, the sign of byte
-//! `SpellRec+0x25`) and `K` (the `0x5efea0` source class). Under the `CombatDamage` master, self
+//! `SpellRec+0x25`) and `K` (the `0x7190a0` source class). Under the `CombatDamage` master, self
 //! melee is white, self spell gold `0xFFFFDE00`, pet melee orange `0xFFFF8400` (`PetMeleeDamage`),
 //! pet spell gold (`PetSpellDamage`), and any other source floats nothing. Crit does not recolour
 //! and there is no school colour. Bit 15 is [`melee_styled`]'s (vmangos
@@ -19,8 +19,7 @@
 //! and gates, so a spell's miss word is gold like its number.
 //!
 //! A travelling spell's word waits for the projectile: `SMSG_SPELL_GO`'s inline emit is skipped
-//! when `Spell.dbc` Speed is nonzero (`0x6e7d4e`), and the arrival calls the same emitter
-//! ([`missile_miss_text`]).
+//! when `Spell.dbc` Speed is nonzero, and the arrival calls the same emitter (`0x702fc0`).
 //!
 //! The rise is added to world z before projection; the block is h-centred with its bottom at the
 //! projected point and clamped on-screen, but a point the projector rejects destroys the text and
@@ -49,9 +48,7 @@ use law::{
     argb, claimed_box_px, fade_alpha, melee_text, scale_value, shadow_offset_px, text_px,
     CATEGORIES,
 };
-pub(crate) use law::{
-    damage_color, melee_styled, miss_word, spell_text, DamageSource, DamageTextGates,
-};
+pub(crate) use law::{damage_color, melee_styled, miss_word, DamageSource, DamageTextGates};
 
 use bevy::prelude::*;
 
@@ -68,7 +65,7 @@ use benilla_world::view::WorldCamera;
 pub(crate) struct CombatTextSpawn {
     pub(crate) anchor: Entity,
     pub(crate) text: String,
-    /// Config category 0-5 ([`CATEGORIES`]).
+    /// Config category 0-9 ([`CATEGORIES`]).
     pub(crate) category: u8,
     /// The emitter override ([`damage_color`]); `None` is the row's default.
     pub(crate) color: Option<u32>,
@@ -335,58 +332,28 @@ fn drop_indices<T>(v: &mut Vec<T>, mut idx: Vec<usize>) {
     });
 }
 
-/// The `0x5efea0` source class (`K`) of an attacker entity; `None` suppresses the emit. Must agree
-/// with `combat_log::text::classify_source`, which classifies by guid.
-fn source_class(
-    attacker: Entity,
-    self_player: &Query<(), With<crate::net::SelfPlayer>>,
-    self_guid: &crate::net::SelfGuid,
-    stores: &Query<&crate::net::ObjectStore>,
-) -> Option<DamageSource> {
-    if self_player.contains(attacker) {
-        return Some(DamageSource::Player);
-    }
-    let me = self_guid.0?;
-    stores
-        .get(attacker)
-        .is_ok_and(|st| st.0.unit_summoned_by() == Some(me) || st.0.unit_created_by() == Some(me))
-        .then_some(DamageSource::Pet)
+/// `CharmedBy`, else `CreatedBy`, when set (`0x4f5f20`).
+fn charmer_or_creator(store: &crate::net::ObjectStore) -> Option<u64> {
+    let set = |g: Option<u64>| g.filter(|&g| g != 0);
+    set(store.0.unit_charmed_by()).or_else(|| set(store.0.unit_created_by()))
 }
 
-/// A travelling spell's miss word, floated when the projectile lands. `0x6e7a70` skips its inline
-/// emit when Speed (`SpellRec+0x94`) is nonzero (`0x6e7d4e`); the arrival re-resolves the record
-/// from `[missile+0x18]` and calls `0x607140`, so the word takes the spell's colour.
-fn missile_miss_text(
-    mut arrivals: MessageReader<crate::entities::MissileMiss>,
-    self_player: Query<(), With<crate::net::SelfPlayer>>,
-    self_guid: Res<crate::net::SelfGuid>,
-    stores: Query<&crate::net::ObjectStore>,
-    gates: Res<DamageTextGates>,
-    spells: Option<Res<crate::ui_action::Spells>>,
-    mut text: MessageWriter<CombatTextSpawn>,
-) {
-    for arrival in arrivals.read() {
-        if self_player.contains(arrival.anchor) {
-            continue; // Gate A: never over your own head
-        }
-        let Some(source) = source_class(arrival.caster, &self_player, &self_guid, &stores) else {
-            continue; // K = other: never drawn
-        };
-        let display = spells
-            .as_ref()
-            .and_then(|s| s.catalog.get(arrival.spell_id));
-        let Some(color) = damage_color(*gates, source, melee_styled(display)) else {
-            continue; // the CombatDamage and Pet* gates, read inside `0x607140`
-        };
-        if let Some((word, category)) = miss_word(arrival.code) {
-            text.write(CombatTextSpawn {
-                anchor: arrival.anchor,
-                text: word.to_string(),
-                category,
-                color,
-            });
-        }
+/// `IsOwnedByActivePlayer` (`0x7190a0`), the source class `K`: the player, or a unit whose charmer
+/// or creator, or whose owner's, is the player; `None` floats nothing.
+pub(crate) fn owned_by_active_player<'a>(
+    source: u64,
+    me: Option<u64>,
+    store_of: impl Fn(u64) -> Option<&'a crate::net::ObjectStore>,
+) -> Option<DamageSource> {
+    let me = me?;
+    if source == me {
+        return Some(DamageSource::Player);
     }
+    let owner = store_of(source)
+        .filter(|s| s.is_unit())
+        .and_then(charmer_or_creator)?;
+    let up = store_of(owner).and_then(charmer_or_creator);
+    (owner == me || up == Some(me)).then_some(DamageSource::Pet)
 }
 
 /// The melee number or word, floated on [`SwingImpact`], the swing's impact keyframe (the
@@ -395,10 +362,13 @@ fn melee_impact_text(
     mut impacts: MessageReader<crate::creature_anim::SwingImpact>,
     self_player: Query<(), With<crate::net::SelfPlayer>>,
     self_guid: Res<crate::net::SelfGuid>,
+    index: Res<crate::net::GuidIndex>,
+    guids: Query<&crate::net::Guid>,
     stores: Query<&crate::net::ObjectStore>,
     gates: Res<DamageTextGates>,
     mut text: MessageWriter<CombatTextSpawn>,
 ) {
+    let store_of = |g: u64| index.0.get(&g).and_then(|&e| stores.get(e).ok());
     for crate::creature_anim::SwingImpact { swing: s, .. } in impacts.read() {
         // `0x62440d`, first in `0x6243e0`: a swing the `0x625e40` verdict hides floats nothing;
         // the flinch, blood and sounds still fire.
@@ -409,7 +379,11 @@ fn melee_impact_text(
         if self_player.contains(victim) {
             continue; // Gate A: never over your own head
         }
-        let Some(source) = source_class(s.attacker, &self_player, &self_guid, &stores) else {
+        let Some(source) = guids
+            .get(s.attacker)
+            .ok()
+            .and_then(|g| owned_by_active_player(g.0, self_guid.0, store_of))
+        else {
             continue; // K = other: never drawn
         };
         let Some(color) = damage_color(*gates, source, true) else {
@@ -430,12 +404,14 @@ fn melee_impact_text(
 /// inside the append window the mesh rebuild waits on).
 pub(crate) struct CombatTextPlugin;
 
-/// The damage-text rows' change callback: three flags.
+/// The floating-text gates' change callback: five flags.
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut gates: ResMut<DamageTextGates>) {
     match ev.key().as_str() {
         "combatdamage" => gates.combat_damage = ev.flag(),
         "petmeleedamage" => gates.pet_melee = ev.flag(),
         "petspelldamage" => gates.pet_spell = ev.flag(),
+        "combatlogperiodicspells" => gates.periodic = ev.flag(),
+        "combathealing" => gates.healing = ev.flag(),
         _ => {}
     }
 }
@@ -450,7 +426,7 @@ impl Plugin for CombatTextPlugin {
             .add_message::<CombatTextSpawn>()
             .add_systems(
                 Update,
-                (melee_impact_text, missile_miss_text, float_combat_text)
+                (melee_impact_text, float_combat_text)
                     .chain()
                     .in_set(UiQuadAppend),
             );
@@ -501,100 +477,6 @@ mod tests {
         assert_eq!(texts.0[0].color, 0xFFFF_FFFF);
         let gold = texts.0.iter().find(|t| t.anchor == other).unwrap();
         assert_eq!(gold.color, COLOR_SPELL_GOLD);
-    }
-
-    /// The arrival word: gold for Fireball, white for Auto Shot (`AttributesEx3` bit 15), and
-    /// silenced by Gate A and by `CombatDamage 0`.
-    #[test]
-    fn a_travelling_spells_miss_word_is_gold_and_deferred_to_arrival() {
-        use crate::entities::MissileMiss;
-        use crate::net::{ObjectStore, SelfGuid, SelfPlayer};
-
-        const FIREBALL: u32 = 133;
-        const AUTO_SHOT: u32 = 75;
-
-        let catalog = || {
-            benilla_formats::SpellCatalog::from_displays(
-                [
-                    (
-                        FIREBALL,
-                        benilla_formats::SpellDisplay {
-                            name: "Fireball".into(),
-                            speed: 24.0,
-                            ..Default::default()
-                        },
-                    ),
-                    (
-                        AUTO_SHOT,
-                        benilla_formats::SpellDisplay {
-                            name: "Auto Shot".into(),
-                            speed: 40.0,
-                            attributes_ex3: 0x8000,
-                            ..Default::default()
-                        },
-                    ),
-                ]
-                .into_iter()
-                .collect(),
-            )
-        };
-
-        // `(spell, anchor-is-me, CombatDamage)` to the words the arrival floats.
-        let fire = |spell: u32, over_self: bool, combat_damage: bool| {
-            let mut app = App::new();
-            app.add_message::<MissileMiss>()
-                .add_message::<CombatTextSpawn>()
-                .init_resource::<SelfGuid>()
-                .insert_resource(DamageTextGates {
-                    combat_damage,
-                    ..Default::default()
-                })
-                .insert_resource(crate::ui_action::Spells {
-                    catalog: catalog(),
-                    forms: Default::default(),
-                    ranges: Default::default(),
-                    cast_times: Default::default(),
-                    durations: Default::default(),
-                    radii: Default::default(),
-                })
-                .add_systems(Update, missile_miss_text);
-            let me = app
-                .world_mut()
-                .spawn((SelfPlayer, ObjectStore::default()))
-                .id();
-            let victim = app.world_mut().spawn(ObjectStore::default()).id();
-            app.world_mut().write_message(MissileMiss {
-                caster: me,
-                anchor: if over_self { me } else { victim },
-                spell_id: spell,
-                code: 2, // RESIST
-            });
-            app.update();
-            app.world_mut()
-                .resource_mut::<Messages<CombatTextSpawn>>()
-                .drain()
-                .map(|s| (s.text, s.category, s.color))
-                .collect::<Vec<_>>()
-        };
-
-        assert_eq!(
-            fire(FIREBALL, false, true),
-            vec![("Resist".to_string(), 3, Some(law::COLOR_SPELL_GOLD))],
-            "my Fireball's resist word is spell gold, category 3, over the victim"
-        );
-        assert_eq!(
-            fire(AUTO_SHOT, false, true),
-            vec![("Resist".to_string(), 3, None)],
-            "AttributesEx3 bit 15 keeps a ranged basic shot's word melee-white"
-        );
-        assert!(
-            fire(FIREBALL, true, true).is_empty(),
-            "Gate A: never over your own head"
-        );
-        assert!(
-            fire(FIREBALL, false, false).is_empty(),
-            "CombatDamage 0 is read inside the word emitter — it silences words too"
-        );
     }
 
     /// The cull's walk collects indices unsorted, against the list before removal.

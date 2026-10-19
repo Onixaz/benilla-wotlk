@@ -15,7 +15,7 @@ mod away;
 /// The world broadcasts: `SMSG_ZONE_UNDER_ATTACK`/`_DEFENSE_MESSAGE`/`_SERVER_MESSAGE`.
 mod broadcast;
 mod channels;
-/// The combat log's chat lines: classification, chat type and each sentence's GlobalString key.
+/// The chat lines beside the combat log: created items, pet lines, openings, reputation.
 pub(crate) mod combat;
 pub(crate) mod commands;
 /// The edit box's send path: the chat-type token passed to `SendChatMessage` and its wire kind.
@@ -68,7 +68,6 @@ pub(crate) struct ChatDrain;
 impl Plugin for UiChatPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.add_observer(combat::on_cvar);
         app.init_resource::<ChatLog>()
             .init_resource::<away::AfkMirror>()
             .init_resource::<away::AfkMirrorMemo>()
@@ -78,10 +77,6 @@ impl Plugin for UiChatPlugin {
             .init_resource::<channels::ZoneChannelWalk>()
             .init_resource::<recruitment::GuildRecruitmentCascade>()
             .init_resource::<language::ChatLanguages>()
-            .init_resource::<combat::CombatLogRanges>()
-            // `combat::on_cvar` writes this and the range set: a missing one panics on the first
-            // write, which only `scripts/smoke.sh` sees (the unit suites build their own worlds).
-            .init_resource::<combat::LogPeriodicSpells>()
             // These DBC loads must follow `AssetSet::Open`: before it there is no chain, and each
             // silently loads nothing.
             .add_systems(
@@ -103,16 +98,6 @@ impl Plugin for UiChatPlugin {
                     // After the totem refill, the frame's other book-side writer.
                     language::feed_language_skills.after(crate::spell::multicast::run_refill),
                     language::feed_default_language,
-                )
-                    .before(feed::feed_chat),
-            )
-            // Descriptor-diff combat-log lines, ahead of the drain so none lands a frame late.
-            .add_systems(
-                Update,
-                (
-                    combat::watch::death_lines,
-                    combat::watch::aura_lines,
-                    combat::watch::pet_loyalty_lines,
                 )
                     .before(feed::feed_chat),
             )

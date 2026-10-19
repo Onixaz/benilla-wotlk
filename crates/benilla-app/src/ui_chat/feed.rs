@@ -1061,20 +1061,16 @@ pub(super) fn feed_chat(
                 route(&mut script, &mut windows, &event);
             }
             Pending::Combat(mut line) => {
-                // Both names, ask-once within `tries`; guid 0 is already filled (`/chattest`).
+                // The subject's name, ask-once within `tries`; guid 0 needs none.
                 let mut wait = false;
-                for (guid, slot) in [(line.subject, 0usize), (line.object, 1usize)] {
-                    if guid == 0 {
-                        continue;
-                    }
+                if line.subject != 0 {
                     match super::combat::object_name(
-                        guid,
-                        guids.0.get(&guid).and_then(|e| stores.get(*e).ok()),
+                        line.subject,
+                        guids.0.get(&line.subject).and_then(|e| stores.get(*e).ok()),
                         &names,
                         &commands,
                     ) {
-                        Some(name) if slot == 0 => line.fills.attacker = name,
-                        Some(name) => line.fills.victim = name,
+                        Some(name) => line.fills.subject = name,
                         None => wait = true,
                     }
                 }
@@ -1109,7 +1105,7 @@ pub(super) fn feed_chat(
                     continue;
                 }
                 let composed =
-                    super::combat::compose_line(&script, line.family, line.variant, &line.fills);
+                    super::combat::compose_line(&script, line.family, line.me, &line.fills);
                 if let Some(text) = composed {
                     route(
                         &mut script,

@@ -1731,9 +1731,7 @@ mod tests {
             })
             .init_resource::<LookConfig>()
             .init_resource::<crate::player::camera_dynamics::CameraOptions>()
-            .init_resource::<crate::ui_chat::combat::CombatLogRanges>()
             .init_resource::<crate::combat_text::DamageTextGates>()
-            .init_resource::<crate::ui_chat::combat::LogPeriodicSpells>()
             .init_resource::<benilla_world::weather::WeatherState>()
             .init_resource::<benilla_world::particles::ParticleTuning>()
             .init_resource::<crate::video::SpellEffectLevel>()
@@ -1796,9 +1794,6 @@ mod tests {
         },
         |app| {
             app.add_observer(crate::combat_text::on_cvar);
-        },
-        |app| {
-            app.add_observer(crate::ui_chat::combat::on_cvar);
         },
         |app| {
             app.add_observer(crate::ui_loot::on_cvar);

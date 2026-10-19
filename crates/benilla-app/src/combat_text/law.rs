@@ -3,9 +3,9 @@
 
 use bevy::prelude::*;
 
-/// One config-table row (`0xce8828`, stride 0x1c, filled by `0x6c79a0`): rise in world units over
-/// the whole life, fade-in end, fade-out start and duration in ms, the scale pair (equal except
-/// the crit row, whose keyframes ramp `valueHi`) and the ARGB default colour (`0x4a2c10`).
+/// One `WORLDTEXTTYPE` row (`0xaf4748`, stride 0x1c, colours set by `0x9d04d0`): rise in world
+/// units over the whole life, fade-in end, fade-out start and duration in ms, the scale pair (equal
+/// except the keyframed rows, which ramp `valueHi`) and the ARGB default colour.
 pub(super) struct Category {
     pub(super) rise: f32,
     fade_in_ms: f32,
@@ -20,9 +20,10 @@ pub(super) struct Category {
 const VALUE_NORMAL: f32 = f32::from_bits(0x3c96_2fc9);
 const VALUE_CRIT: f32 = f32::from_bits(0x3ce1_47ad);
 
-/// Rows: 0 number, 1 ABSORB word, 2 crit number, 3 miss/dodge/parry word, 4 XP, 5 honor. Row 1's
-/// `fade_out(90) < fade_in(150)` is real, a quick flicker.
-pub(super) const CATEGORIES: [Category; 6] = [
+/// Rows: 0 number, 1 ABSORB word, 2 crit number, 3 miss/dodge/parry word, 4 XP, 5 honor, 6 heal,
+/// 7 crit heal, 8 and 9 the large white and green rows. Row 1's `fade_out(90) < fade_in(150)` is
+/// real, a quick flicker.
+pub(super) const CATEGORIES: [Category; 10] = [
     Category {
         rise: 2.0,
         fade_in_ms: 150.0,
@@ -77,10 +78,46 @@ pub(super) const CATEGORIES: [Category; 6] = [
         value_hi: VALUE_NORMAL,
         color: 0xFFE0_CA0A,
     },
+    Category {
+        rise: 2.0,
+        fade_in_ms: 150.0,
+        fade_out_ms: 760.0,
+        dur_ms: 1500.0,
+        value_lo: VALUE_NORMAL,
+        value_hi: VALUE_NORMAL,
+        color: 0xFF00_FF00,
+    },
+    Category {
+        rise: 0.0,
+        fade_in_ms: 150.0,
+        fade_out_ms: 1000.0,
+        dur_ms: 1500.0,
+        value_lo: 0.0,
+        value_hi: VALUE_CRIT,
+        color: 0xFF00_FF00,
+    },
+    Category {
+        rise: 6.0,
+        fade_in_ms: 150.0,
+        fade_out_ms: 760.0,
+        dur_ms: 1500.0,
+        value_lo: VALUE_CRIT,
+        value_hi: VALUE_CRIT,
+        color: 0xFFFF_FFFF,
+    },
+    Category {
+        rise: 6.0,
+        fade_in_ms: 150.0,
+        fade_out_ms: 760.0,
+        dur_ms: 1500.0,
+        value_lo: VALUE_CRIT,
+        value_hi: VALUE_CRIT,
+        color: 0xFF00_FF00,
+    },
 ];
 
-/// The crit pop keyframes (`0x8112dc`, category 2): `{t0, t1, s0, s1}` factors on `valueHi`, up to
-/// 2x by 10% of life and back to 1x by 20%.
+/// The crit pop keyframes (`0xa41618`, categories 2 and 7): `{t0, t1, s0, s1}` factors on
+/// `valueHi`, up to 2x by 10% of life and back to 1x by 20%.
 const CRIT_KEYFRAMES: [(f32, f32, f32, f32); 3] = [
     (0.0, 0.1, 0.1, 2.0),
     (0.1, 0.2, 2.0, 1.0),
@@ -105,20 +142,20 @@ pub(crate) fn miss_word(code: u8) -> Option<(&'static str, u8)> {
 pub(crate) const COLOR_SPELL_GOLD: u32 = 0xFFFF_DE00;
 pub(crate) const COLOR_PET_MELEE_ORANGE: u32 = 0xFFFF_8400;
 
-/// The three combat-text CVar gates: `CombatDamage` (`[0xc4d944]`), `PetMeleeDamage`
-/// (`[0xc4d9cc]`) and `PetSpellDamage` (`[0xc4d99c]`), each read as the record's int `+0x28`.
-/// Their only reads are in the word emitter `0x607140` and the number emitter `0x6128b0`, and a
-/// failed gate suppresses the emit entirely.
+/// The floating-text CVar gates, read by the word, number and heal emitters (`0x71f990`,
+/// `0x722340`, `0x722440`); a failed gate suppresses the emit entirely.
 ///
-/// `CombatDamage` is the master and silences words as well as numbers. The `Pet*` pair gate only
-/// the owned-by-you branch, split by `B`: no spell record, or `AttributesEx3` bit 15 (vmangos
-/// `SPELL_ATTR_EX3_NORMAL_RANGED_ATTACK`, `SpellDefines.h:924`, the basic ranged shots), goes to
-/// `PetMeleeDamage`.
+/// `CombatDamage` is the master for words and numbers. The `Pet*` pair gate only the owned-by-you
+/// branch, split by `B`: no spell record, or `AttributesEx3` bit 15 (the basic ranged shots), goes
+/// to `PetMeleeDamage`. `CombatLogPeriodicSpells` gates a periodic tick's word or number, and
+/// `CombatHealing` the heal numbers.
 #[derive(Resource, Clone, Copy)]
 pub(crate) struct DamageTextGates {
     pub(crate) combat_damage: bool,
     pub(crate) pet_melee: bool,
     pub(crate) pet_spell: bool,
+    pub(crate) periodic: bool,
+    pub(crate) healing: bool,
 }
 
 impl Default for DamageTextGates {
@@ -128,6 +165,8 @@ impl Default for DamageTextGates {
             combat_damage: true,
             pet_melee: true,
             pet_spell: true,
+            periodic: true,
+            healing: true,
         }
     }
 }
@@ -199,27 +238,6 @@ pub(crate) fn melee_text(hit_info: u32, victim_state: u32, damage: u32) -> Optio
     miss_word(code).map(|(w, c)| (c, w.to_string()))
 }
 
-/// The spell and periodic emitter split (`0x5e85e0`/`0x626dd0`): damage floats a number, category
-/// 2 on `SPELL_HIT_TYPE_CRIT 0x2` (periodic ticks never crit); zero damage floats ABSORB or
-/// RESIST, a choice inferred from the packet's fields, as `0x5e88d1` is untraced.
-pub(crate) fn spell_text(
-    damage: u32,
-    absorb: u32,
-    resist: i32,
-    crit: bool,
-) -> Option<(u8, String)> {
-    if damage > 0 {
-        return Some((if crit { 2 } else { 0 }, damage.to_string()));
-    }
-    if absorb > 0 {
-        return miss_word(10).map(|(w, c)| (c, w.to_string()));
-    }
-    if resist > 0 {
-        return miss_word(2).map(|(w, c)| (c, w.to_string()));
-    }
-    None
-}
-
 /// The gx pixel round (`0x5c7010`/`0x5c6fa0`): add 0.5 and truncate, half away from zero.
 fn round_px(t: f64) -> f32 {
     let r = if t > 0.0 { t + 0.5 } else { t - 0.5 };
@@ -283,16 +301,18 @@ pub(super) fn fade_alpha(cat: &Category, elapsed_ms: f32) -> (u8, u8) {
     (text, shadow.min(text))
 }
 
-/// The scale value at normalized life `t` (`0x6c80b0`): category 2 runs the crit keyframes on
-/// `valueHi`, the rest `lo + (hi − lo)·t`; floored at 0.001.
+/// The scale value at normalized life `t` (`0x7e6cc0`): categories 2 and 7 run the crit keyframes
+/// on `valueHi`, each `[t0, t1)`, and 1x past them; the rest `lo + (hi − lo)·t`; floored at 0.001.
 pub(super) fn scale_value(category: u8, t: f32) -> f32 {
     let cat = &CATEGORIES[category as usize];
-    let v = if category == 2 {
-        let (t0, t1, s0, s1) = *CRIT_KEYFRAMES
+    let v = if category == 2 || category == 7 {
+        let factor = CRIT_KEYFRAMES
             .iter()
-            .find(|(t0, t1, _, _)| (*t0..=*t1).contains(&t))
-            .unwrap_or(&CRIT_KEYFRAMES[2]);
-        (s0 + (s1 - s0) * ((t - t0) / (t1 - t0))) * cat.value_hi
+            .find(|(t0, t1, _, _)| (*t0..*t1).contains(&t))
+            .map_or(1.0, |&(t0, t1, s0, s1)| {
+                s0 + (s1 - s0) * ((t - t0) / (t1 - t0))
+            });
+        factor * cat.value_hi
     } else {
         cat.value_lo + (cat.value_hi - cat.value_lo) * t
     };
@@ -365,6 +385,18 @@ mod tests {
         assert_eq!(CATEGORIES[1].fade_out_ms, 90.0); // the ABSORB flicker row
         assert_eq!(CATEGORIES[4].color, 0x8094_008B);
         assert_eq!(CATEGORIES[5].color, 0xFFE0_CA0A);
+        // The heal rows are green, 7 keyframed like 2.
+        assert_eq!(CATEGORIES[6].color, 0xFF00_FF00);
+        assert_eq!(CATEGORIES[7].value_lo, 0.0);
+        assert_eq!(CATEGORIES[8].rise, 6.0);
+    }
+
+    /// A crit heal pops like a crit number and settles at the same size.
+    #[test]
+    fn a_crit_heal_pops_like_a_crit() {
+        assert_eq!(scale_value(7, 0.1), scale_value(2, 0.1));
+        assert!((scale_value(7, 0.5) - VALUE_CRIT).abs() < 1e-7);
+        assert_eq!(scale_value(6, 0.5), scale_value(0, 0.5));
     }
 
     /// Row 0 (in 150, out 760, duration 1500) and row 1 at their pinned points, as rendered.
@@ -424,11 +456,6 @@ mod tests {
         // `NO_MISS_WORD` and `FAKE_DAMAGE` float no word at zero damage.
         assert_eq!(melee_text(0x4002, 1, 0), None);
         assert_eq!(melee_text(0x1000002, 1, 0), None);
-        assert_eq!(spell_text(120, 0, 0, false), Some((0, "120".into())));
-        assert_eq!(spell_text(240, 0, 0, true), Some((2, "240".into())));
-        assert_eq!(spell_text(0, 50, 0, false), Some((1, "Absorb".into())));
-        assert_eq!(spell_text(0, 0, 80, false), Some((3, "Resist".into())));
-        assert_eq!(spell_text(0, 0, 0, false), None);
         assert_eq!(miss_word(11), Some(("Reflect", 3)));
         assert_eq!(miss_word(0), None);
         assert_eq!(miss_word(12), None);

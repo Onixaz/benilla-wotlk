@@ -191,19 +191,15 @@ fn spirit_healer_confirm(npc: u64, death_net: &mut DeathNet) {
     death_net.ask_spirit_healer(npc);
 }
 
-/// `SMSG_DURABILITY_DAMAGE_DEATH`, the 10% death durability loss: a combat-log line at chat type
-/// `0x19` `COMBAT_MISC_INFO` with no arguments (`0x628e60`), not an error; the body is ignored.
+/// `SMSG_DURABILITY_DAMAGE_DEATH`, the 10% death durability loss: a `CHAT_MSG_COMBAT_MISC_INFO`
+/// line with no arguments, not an error; the body is ignored.
 fn durability_damage_death(log: &mut crate::ui_chat::ChatLog) {
-    log.push_combat(crate::ui_chat::combat::PendingCombat {
-        kind: crate::ui_chat::ChatEventKind::CombatMiscInfo,
-        family: crate::ui_chat::combat::DURABILITYDAMAGE_DEATH,
-        variant: crate::ui_chat::combat::Variant::OtherOther,
-        subject: 0,
-        object: 0,
-        fills: crate::ui_chat::combat::Fills::default(),
-        named: crate::ui_chat::combat::Named::Ready,
-        tries: 0,
-    });
+    use crate::ui_chat::combat;
+    log.push_combat(combat::ready(
+        crate::ui_chat::ChatEventKind::CombatMiscInfo,
+        combat::DURABILITYDAMAGE_DEATH,
+        combat::Fills::default(),
+    ));
 }
 
 /// The acked movement modes, root, water-walk, feather-fall and hover, addressed only to our own

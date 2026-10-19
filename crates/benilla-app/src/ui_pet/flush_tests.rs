@@ -60,6 +60,7 @@ fn go(caster: u64, spell_id: u32) -> SessionEvent {
         cast_flags: 0,
         hits: vec![],
         misses: vec![],
+        reflects: vec![],
         target: None,
         go_target: None,
         dest: None,

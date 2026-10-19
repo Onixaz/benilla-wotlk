@@ -530,33 +530,17 @@ pub(crate) const REGISTERED: &[Registered] = &[
          stop at all, so every stop diverges; Medium (32) is the nearest one no sparser than a \
          fresh install, and erring sparse is the worse failure for ground cover",
     ),
-    // ── Combat log display ranges, in yards ──────────────────────────────────────────────────────
-    //
-    // Registered by `0x626d00` from the `{name, default}` pairs at `0x8629e0`, read as the record's
-    // float (`+0x24`). Classes 0 and 1, you and your pet, have no CVar there, only the `100000.0`
-    // sentinel.
-    same("CombatLogRangeParty", "50"),
-    same("CombatLogRangePartyPet", "50"),
-    same("CombatLogRangeFriendlyPlayers", "50"),
-    same("CombatLogRangeFriendlyPlayersPets", "50"),
-    same("CombatLogRangeHostilePlayers", "50"),
-    same("CombatLogRangeHostilePlayersPets", "50"),
-    same("CombatLogRangeCreature", "30"),
-    // Outside that table (`0x626d5f`, "60" at `0x862e14`): `0x62c160` reads it first and falls back
-    // to the per-class range only when the lookup fails.
-    same(crate::ui_chat::combat::DEATH_LOG_RANGE_CVAR, "60"),
     // ── Floating combat text ─────────────────────────────────────────────────────────────────────
     //
-    // `CombatDamage` (`0x6032df`, record `[0xc4d944]`) is the master: its two readers, the word
-    // emitter `0x607140` and the number emitter `0x6128b0`, both return at "0", so nothing floats.
-    // The `Pet*` rows gate only the owned-by-you branch; the stock Pet Melee Damage box writes both
-    // (`UIOptionsFrame.lua:335-336`).
+    // `CombatDamage` (`0x51e3ee`, `[0xbd0980]`) is the master: the word and number emitters
+    // (`0x71f990`, `0x722340`) return at "0", so nothing floats. The `Pet*` rows gate only the
+    // owned-by-you branch.
     same("CombatDamage", "1"),
     same("PetMeleeDamage", "1"),
     same("PetSpellDamage", "1"),
-    // `CombatLogPeriodicSpells` (`0x6033b3`): the handle is discarded and every use looks it up by
-    // name; read as the record's int.
-    same(crate::ui_chat::combat::LOG_PERIODIC_CVAR, "1"),
+    // `CombatLogPeriodicSpells` (`0x51e411`, `[0xbd0984]`): a periodic tick's floating word or
+    // number.
+    same("CombatLogPeriodicSpells", "1"),
     // `combatLogRetentionTime` (`0x51efed`): seconds the combat log keeps an entry (`0x750400`).
     same(benilla_ui::script::RETENTION_CVAR, "300"),
     // `assistAttack` (`0x48fc50`, record `[0xb4d8f8]`): `/assist` also starts the swing. The "3"

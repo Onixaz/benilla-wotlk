@@ -434,9 +434,8 @@ fn pre_resolved_lines_land_on_the_errors_frame_in_the_arms_colour() {
     );
 }
 
-/// `HandleCastFailed 0x6e1a00` logs through `0x62c360`; `HandlePetCastFailed 0x6e8eb0` calls only
-/// the packet readers and `0x496720`, with no log line and no error sound. Both entries name the
-/// same spell, so only the caster differs.
+/// The player's refused cast logs (`0x751ad0`) and the pet's does not. Both entries name the same
+/// spell, so only the caster differs.
 #[test]
 fn a_pets_refused_cast_writes_no_combat_log_line() {
     use crate::ui_action::{CastFail, Caster, Spells};
@@ -477,22 +476,25 @@ fn a_pets_refused_cast_writes_no_combat_log_line() {
         .init_resource::<UiErrorTexts>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
+        .add_message::<crate::combat_log::SpellCastFailedLog>()
         .insert_resource(NetCommands(tx));
     let script = UiScript::new().unwrap();
-    // Only what the log line needs; the red line's text has its own tests.
-    script
-        .run(r#"SPELL_FAILED_ROOTED = "You are unable to move";"#)
-        .unwrap();
+    // Only what the log entry needs; the red line's text has its own tests.
+    script.run(r#"SPELL_FAILED_ROOTED = "A reason";"#).unwrap();
     app.insert_non_send_resource(script);
     app.add_systems(Update, feed_actions);
     app.update();
 
+    let logged: Vec<(u32, String)> = app
+        .world_mut()
+        .resource_mut::<Messages<crate::combat_log::SpellCastFailedLog>>()
+        .drain()
+        .map(|f| (f.spell_id, f.reason))
+        .collect();
     assert_eq!(
-        app.world()
-            .resource::<crate::ui_chat::ChatLog>()
-            .pending_len(),
-        1,
-        "the player's failure logs and the pet's does not"
+        logged,
+        [(GROWL, "A reason".to_string())],
+        "the player's failure logs, with the shown text, and the pet's does not"
     );
 }
 

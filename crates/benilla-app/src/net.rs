@@ -286,10 +286,6 @@ impl FieldChanged {
     pub fn unit_field(&self, index: u16) -> bool {
         self.is_unit() && self.index == index
     }
-    /// The edge's slot in a unit-block array of `len` dwords at `base` (`UNIT_FIELD_AURA[48]`).
-    pub fn unit_array_slot(&self, base: u16, len: u16) -> Option<u16> {
-        (self.is_unit() && (base..base + len).contains(&self.index)).then(|| self.index - base)
-    }
 }
 
 /// The field edges one feed saw this run, by guid and index: the reference fans a moved field out

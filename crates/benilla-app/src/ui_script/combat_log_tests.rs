@@ -1,7 +1,8 @@
 //! The stock 3.3.5a `Blizzard_CombatLog` over benilla's combat-log store, on the production load.
 
 use benilla_ui::script::{
-    CombatLogEntry, CombatLogPayload, CombatLogUnit, Damage, MissType, UiScript,
+    CombatLogEntry, CombatLogEvent, CombatLogInfo, CombatLogItem, CombatLogSpell, CombatLogUnit,
+    Damage, Drain, Heal, Miss, MissType, UiScript,
 };
 
 use crate::local_state::test_env::ENV_LOCK;
@@ -21,18 +22,38 @@ fn unit(guid: u64, name: &str, flags: u32) -> CombatLogUnit {
     }
 }
 
+fn me() -> CombatLogUnit {
+    unit(ME, "Claude", ME_FLAGS)
+}
+
+fn mob() -> CombatLogUnit {
+    unit(MOB, "Kobold Vermin", MOB_FLAGS)
+}
+
+fn spell(id: u32, name: &str, school: u32) -> Option<CombatLogSpell> {
+    Some(CombatLogSpell {
+        id,
+        name: Some(name.into()),
+        school,
+    })
+}
+
 fn entry(
     time_ms: u64,
+    event: CombatLogEvent,
     source: CombatLogUnit,
     dest: CombatLogUnit,
-    payload: CombatLogPayload,
+    spell: Option<CombatLogSpell>,
+    info: CombatLogInfo,
 ) -> CombatLogEntry {
     CombatLogEntry {
         time_ms,
         timestamp: 1_000_000.0 + time_ms as f64 * 0.001,
+        event,
         source,
         dest,
-        payload,
+        spell,
+        info,
     }
 }
 
@@ -82,21 +103,31 @@ fn a_swing_reaches_the_stock_combat_log_tab() {
     let mut s = combat_log_ui();
     s.push_combat_log(entry(
         6_000,
-        unit(ME, "Claude", ME_FLAGS),
-        unit(MOB, "Kobold Vermin", MOB_FLAGS),
-        CombatLogPayload::SwingDamage(Damage {
-            amount: 17,
-            school: 1,
-            ..Damage::default()
-        }),
+        CombatLogEvent::SwingDamage,
+        me(),
+        mob(),
+        None,
+        CombatLogInfo {
+            damage: Some(Damage {
+                amount: 17,
+                school: 1,
+                ..Damage::default()
+            }),
+            ..CombatLogInfo::default()
+        },
     ));
     s.push_combat_log(entry(
         6_400,
-        unit(MOB, "Kobold Vermin", MOB_FLAGS),
-        unit(ME, "Claude", ME_FLAGS),
-        CombatLogPayload::SwingMissed {
-            miss: MissType::Dodge,
-            amount: None,
+        CombatLogEvent::SwingMissed,
+        mob(),
+        me(),
+        None,
+        CombatLogInfo {
+            miss: Some(Miss {
+                kind: MissType::Dodge,
+                amount: None,
+            }),
+            ..CombatLogInfo::default()
         },
     ));
     s.resolve();
@@ -133,6 +164,285 @@ fn a_swing_reaches_the_stock_combat_log_tab() {
         refiltered.len(),
         2,
         "the refilter reads both: {refiltered:#?}"
+    );
+}
+
+/// One entry of every shape the producers build, through the stock formatter under the Everything
+/// filter: no Lua error, and each prints.
+#[test]
+fn every_entry_shape_renders_in_the_stock_tab() {
+    use CombatLogEvent as E;
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut s = combat_log_ui();
+    s.run("Blizzard_CombatLog_QuickButton_OnClick(2)").unwrap();
+    s.resolve();
+    s.take_errors();
+    s.run("LINES = {}").unwrap();
+
+    let fireball = || spell(133, "Fireball", 4);
+    let nova = || spell(122, "Frost Nova", 16);
+    let damage = |amount, critical| CombatLogInfo {
+        damage: Some(Damage {
+            amount,
+            school: 4,
+            resisted: 5,
+            critical,
+            ..Damage::default()
+        }),
+        ..CombatLogInfo::default()
+    };
+    let heal = CombatLogInfo {
+        heal: Some(Heal {
+            amount: 120,
+            overheal: 30,
+            absorbed: 0,
+            critical: true,
+        }),
+        ..CombatLogInfo::default()
+    };
+    let miss = |kind, amount| CombatLogInfo {
+        miss: Some(Miss { kind, amount }),
+        ..CombatLogInfo::default()
+    };
+    let aura = |harmful| CombatLogInfo {
+        harmful: Some(harmful),
+        ..CombatLogInfo::default()
+    };
+    let removed = CombatLogInfo {
+        extra_spell: nova(),
+        harmful: Some(true),
+        ..CombatLogInfo::default()
+    };
+    let item = || {
+        Some(CombatLogItem {
+            id: 25,
+            name: Some("An item".into()),
+        })
+    };
+    let none = CombatLogInfo::default;
+    let nobody = CombatLogUnit::none;
+    let shapes: Vec<(
+        E,
+        CombatLogUnit,
+        CombatLogUnit,
+        Option<CombatLogSpell>,
+        CombatLogInfo,
+    )> = vec![
+        (E::SpellDamage, me(), mob(), fireball(), damage(300, true)),
+        (
+            E::SpellPeriodicDamage,
+            me(),
+            mob(),
+            nova(),
+            damage(80, true),
+        ),
+        (
+            E::RangeDamage,
+            me(),
+            mob(),
+            spell(75, "Auto Shot", 1),
+            damage(40, false),
+        ),
+        (E::DamageSplit, mob(), me(), fireball(), damage(20, false)),
+        (
+            E::DamageShield,
+            me(),
+            mob(),
+            spell(467, "Thorns", 8),
+            damage(9, false),
+        ),
+        (
+            E::SpellHeal,
+            me(),
+            me(),
+            spell(2050, "Lesser Heal", 2),
+            heal.clone(),
+        ),
+        (
+            E::SpellPeriodicHeal,
+            me(),
+            me(),
+            spell(139, "Renew", 2),
+            heal,
+        ),
+        (
+            E::SpellEnergize,
+            me(),
+            me(),
+            spell(5229, "Enrage", 1),
+            CombatLogInfo {
+                energize: Some((20, 1)),
+                ..CombatLogInfo::default()
+            },
+        ),
+        (
+            E::SpellLeech,
+            me(),
+            mob(),
+            spell(5138, "Drain Mana", 32),
+            CombatLogInfo {
+                drain: Some(Drain {
+                    amount: 50,
+                    power: 0,
+                    extra: 50,
+                }),
+                ..CombatLogInfo::default()
+            },
+        ),
+        (
+            E::SpellMissed,
+            me(),
+            mob(),
+            fireball(),
+            miss(MissType::Resist, Some(0)),
+        ),
+        (
+            E::RangeMissed,
+            me(),
+            mob(),
+            spell(75, "Auto Shot", 1),
+            miss(MissType::Dodge, None),
+        ),
+        (
+            E::SpellPeriodicMissed,
+            me(),
+            mob(),
+            nova(),
+            miss(MissType::Immune, None),
+        ),
+        (
+            E::DamageShieldMissed,
+            me(),
+            mob(),
+            nova(),
+            miss(MissType::Immune, None),
+        ),
+        (E::SpellCastStart, me(), nobody(), fireball(), none()),
+        (E::SpellCastSuccess, me(), mob(), nova(), none()),
+        (
+            E::SpellCastFailed,
+            me(),
+            nobody(),
+            fireball(),
+            CombatLogInfo {
+                fail_reason: Some("A reason".into()),
+                ..CombatLogInfo::default()
+            },
+        ),
+        (E::SpellAuraApplied, me(), mob(), nova(), aura(true)),
+        (
+            E::SpellAuraAppliedDose,
+            me(),
+            mob(),
+            nova(),
+            CombatLogInfo {
+                harmful: Some(true),
+                dose: Some(2),
+                ..CombatLogInfo::default()
+            },
+        ),
+        (E::SpellAuraRefresh, me(), mob(), nova(), aura(true)),
+        (E::SpellAuraRemoved, me(), mob(), nova(), aura(true)),
+        (
+            E::SpellDispel,
+            me(),
+            mob(),
+            spell(527, "Dispel Magic", 2),
+            removed.clone(),
+        ),
+        (
+            E::SpellStolen,
+            me(),
+            mob(),
+            spell(30449, "Spellsteal", 64),
+            removed.clone(),
+        ),
+        (E::SpellAuraBroken, me(), mob(), nova(), aura(true)),
+        (
+            E::SpellAuraBrokenSpell,
+            me(),
+            mob(),
+            nova(),
+            removed.clone(),
+        ),
+        (
+            E::SpellInterrupt,
+            me(),
+            mob(),
+            spell(2139, "Counterspell", 64),
+            removed.clone(),
+        ),
+        (
+            E::SpellDispelFailed,
+            me(),
+            mob(),
+            spell(527, "Dispel Magic", 2),
+            removed,
+        ),
+        (
+            E::SpellExtraAttacks,
+            me(),
+            me(),
+            spell(15494, "Extra Attack", 1),
+            CombatLogInfo {
+                amount: Some(1),
+                ..CombatLogInfo::default()
+            },
+        ),
+        (E::SpellInstakill, me(), mob(), fireball(), none()),
+        (E::SpellSummon, me(), mob(), fireball(), none()),
+        (E::SpellResurrect, me(), me(), fireball(), none()),
+        (E::SpellDurabilityDamageAll, mob(), me(), fireball(), none()),
+        (
+            E::SpellDurabilityDamage,
+            mob(),
+            me(),
+            fireball(),
+            CombatLogInfo {
+                item: item(),
+                ..CombatLogInfo::default()
+            },
+        ),
+        (
+            E::EnchantApplied,
+            me(),
+            me(),
+            None,
+            CombatLogInfo {
+                enchant: Some("An enchant".into()),
+                item: item(),
+                ..CombatLogInfo::default()
+            },
+        ),
+        (
+            E::EnvironmentalDamage,
+            nobody(),
+            me(),
+            None,
+            CombatLogInfo {
+                environmental: Some(2),
+                ..damage(23, false)
+            },
+        ),
+        (E::PartyKill, me(), mob(), None, none()),
+        (E::UnitDied, nobody(), mob(), None, none()),
+    ];
+    let count = shapes.len();
+    for (i, (event, source, dest, spell, info)) in shapes.into_iter().enumerate() {
+        s.push_combat_log(entry(6_000 + i as u64, event, source, dest, spell, info));
+        s.resolve();
+        let errors = combat_log_errors(&mut s);
+        assert!(errors.is_empty(), "{}: {errors:#?}", event.name());
+    }
+    let lines: Vec<String> = s.eval("return LINES").unwrap();
+    assert_eq!(lines.len(), count, "one line per entry: {lines:#?}");
+    assert!(
+        lines[0].contains("Fireball") && lines[0].contains("300"),
+        "the crit names its spell and amount: {}",
+        lines[0]
     );
 }
 

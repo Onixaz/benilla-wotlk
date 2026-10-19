@@ -32,33 +32,30 @@ pub(crate) struct UnitFeed;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct EnterWorldFeed;
 
-/// One `UNIT_COMBAT` over a unit, the portrait hit indicator's feed. The emitter `0x494600` fires
-/// `(token, action, descriptor, amount, type)` once per token naming the unit, with no
-/// self-suppression and no CVar gate; `type` is the school on the melee and spell-damage paths, 0
-/// from the miss and heal wrappers, and the 1.12 binary never emits `ENERGIZE`. The melee victim
-/// event waits for the impact keyframe (`0x6243e0`, reached only from `0x624530`).
+/// One `UNIT_COMBAT` over a unit, the portrait hit indicator's feed: `SignalUnitCombat` (`0x5132c0`)
+/// fires `(token, action, descriptor, amount, school)` once per token naming the guid
+/// (`0x60bb70`), with no self-suppression and no CVar gate. The melee victim event waits for the
+/// impact keyframe.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct UnitCombatFeedback {
-    pub(crate) unit: Entity,
+    pub(crate) guid: u64,
     /// `arg2`, the action word (`WOUND`, `MISS`, `DODGE`, `PARRY`, `BLOCK`, `HEAL`, …).
     pub(crate) action: &'static str,
     /// `arg3`, the descriptor: `CRITICAL`/`CRUSHING`/`GLANCING`/`ABSORB`/`BLOCK`/`RESIST`, or `""`.
     pub(crate) flags: &'static str,
     /// `arg4`, the amount; 0 for a word alone.
-    pub(crate) amount: u32,
-    /// `arg5`, the school (0 physical); stock draws a `type > 0` number spell-yellow.
+    pub(crate) amount: i32,
+    /// `arg5`, the school mask.
     pub(crate) school: u32,
 }
 
-/// One `COMBAT_TEXT_UPDATE` (event `0x21E`, via `0x703f50`), fired at packet parse by every
-/// producer, melee included (`0x6255b0` → `0x629d30`); `data`/`extra` are `arg2`/`arg3`. Fired only
-/// when the unit the line is about is the player: each emitter tests that unit's class (`0x5efea0`)
-/// for 0 before its helper (`0x629ef1`, `0x62d046`, `0x62834b`).
+/// One `COMBAT_TEXT_UPDATE` (`SendToCombatText`, `0x74d460`-`0x74d550`): the type word, then the
+/// fire's own `%s`/`%d` arguments. The combat log fires it only for the combat-text unit, the
+/// player (`0x74d430`).
 #[derive(Message, Clone)]
 pub(crate) struct CombatTextEvent {
     pub(crate) message_type: &'static str,
-    pub(crate) data: Option<String>,
-    pub(crate) extra: Option<String>,
+    pub(crate) args: Vec<ScriptValue>,
 }
 
 /// `PLAYER_LEAVING_WORLD` on a cross-map worldport. The reference fires event `0x111` at one site
@@ -438,17 +435,20 @@ fn melee_feedback(hit_info: u32, victim_state: u32, damage: u32) -> (&'static st
 /// the center combat text is not here, as the reference fires it at packet parse.
 fn melee_unit_combat(
     mut impacts: MessageReader<crate::creature_anim::SwingImpact>,
+    guids: Query<&crate::net::Guid>,
     mut out: MessageWriter<UnitCombatFeedback>,
 ) {
     for crate::creature_anim::SwingImpact { swing: s, .. } in impacts.read() {
-        let Some(victim) = s.victim else { continue };
+        let Some(victim) = s.victim.and_then(|v| guids.get(v).ok()) else {
+            continue;
+        };
         let (action, flags) = melee_feedback(s.hit_info, s.victim_state, s.damage);
         out.write(UnitCombatFeedback {
-            unit: victim,
+            guid: victim.0,
             action,
             flags,
-            amount: s.damage,
-            school: 0, // the reference passes sub-damage 0's school (`0x4946fc`), not carried here
+            amount: s.damage as i32,
+            school: 1, // the swing's first sub-damage school, physical for a weapon
         });
     }
 }
@@ -462,47 +462,33 @@ fn fire_combat_text(
         return;
     };
     for ev in events.read() {
-        let arg = |v: &Option<String>| v.clone().map_or(ScriptValue::Nil, ScriptValue::Str);
-        script.fire_event(
-            "COMBAT_TEXT_UPDATE",
-            vec![
-                ScriptValue::Str(ev.message_type.to_string()),
-                arg(&ev.data),
-                arg(&ev.extra),
-            ],
-        );
+        let mut args = Vec::with_capacity(ev.args.len() + 1);
+        args.push(ScriptValue::Str(ev.message_type.to_string()));
+        args.extend(ev.args.iter().cloned());
+        script.fire_event("COMBAT_TEXT_UPDATE", args);
     }
 }
 
-/// Drain [`UnitCombatFeedback`] into `UNIT_COMBAT` for `"player"` and `"target"` only; the
-/// reference fires once per token naming the unit, and stock `PetFrame.lua:13` listens for `"pet"`.
+/// Drain [`UnitCombatFeedback`] into `UNIT_COMBAT`, once per token naming the guid (`0x60bb70`).
 fn fire_unit_combat(
     script: Option<NonSendMut<UiScript>>,
     mut events: MessageReader<UnitCombatFeedback>,
-    self_q: Query<(), With<SelfPlayer>>,
-    selection: Res<Selection>,
 ) {
     let Some(mut script) = script else {
         return;
     };
     for ev in events.read() {
-        let mut fire = |token: &str| {
+        for token in script.unit_tokens(ev.guid) {
             script.fire_event(
                 "UNIT_COMBAT",
                 vec![
-                    ScriptValue::Str(token.to_string()),
+                    ScriptValue::Str(token),
                     ScriptValue::Str(ev.action.to_string()),
                     ScriptValue::Str(ev.flags.to_string()),
                     ScriptValue::Int(i64::from(ev.amount)),
                     ScriptValue::Int(i64::from(ev.school)),
                 ],
             );
-        };
-        if self_q.contains(ev.unit) {
-            fire("player");
-        }
-        if selection.target == Some(ev.unit) {
-            fire("target");
         }
     }
 }

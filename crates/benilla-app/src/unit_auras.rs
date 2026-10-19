@@ -55,6 +55,20 @@ impl UnitAura {
     }
 }
 
+/// One aura change the combat log reads (`0x727760`, `0x722090`, `0x752860`, `0x752ba0`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum AuraEdge {
+    Added(UnitAura),
+    Removed(UnitAura),
+    /// The same aura with another stack count: the old count and the aura now.
+    Dose {
+        old: u8,
+        aura: UnitAura,
+    },
+    /// The same aura and count with a new expiry.
+    Refreshed(UnitAura),
+}
+
 /// A unit's live auras by slot, and the order the aura UI lists them in. A record without an
 /// effect bit is an empty slot to every reader the client has (`0x72f7a5`, `0x72c5e6`), so it is
 /// not kept.
@@ -89,6 +103,40 @@ impl UnitAuras {
         }
         self.reorder();
     }
+    /// What one packet would change, as `0x72f5d0` diffs it for the log: an `ALL` packet nothing,
+    /// else every removal first, then each slot's arrival, stack change or new expiry.
+    pub(crate) fn edges(&self, update: &AuraUpdate, now: f64) -> Vec<AuraEdge> {
+        if update.all {
+            return Vec::new();
+        }
+        let mut after = self.clone();
+        after.apply(update, now);
+        let slots: Vec<u8> = update.slots.iter().map(|(slot, _)| *slot).collect();
+        let pair = |slot: &u8| (self.by_slot.get(slot), after.by_slot.get(slot));
+        let mut out: Vec<AuraEdge> = slots
+            .iter()
+            .filter_map(|slot| match pair(slot) {
+                (Some(old), new) if new.is_none_or(|n| n.spell_id != old.spell_id) => {
+                    Some(AuraEdge::Removed(*old))
+                }
+                _ => None,
+            })
+            .collect();
+        out.extend(slots.iter().filter_map(|slot| match pair(slot) {
+            (None, Some(new)) => Some(AuraEdge::Added(*new)),
+            (Some(old), Some(new)) if old.spell_id != new.spell_id => Some(AuraEdge::Added(*new)),
+            (Some(old), Some(new)) if old.stacks != new.stacks => Some(AuraEdge::Dose {
+                old: old.stacks,
+                aura: *new,
+            }),
+            (Some(old), Some(new)) if old.expires_at != new.expires_at => {
+                Some(AuraEdge::Refreshed(*new))
+            }
+            _ => None,
+        }));
+        out
+    }
+
     /// `0x72c510`'s two passes: drop each entry whose slot no longer holds its spell, closing the
     /// gap (`0x72c535`-`0x72c695`), then append each live slot not listed, highest slot first.
     fn reorder(&mut self) {
@@ -231,6 +279,62 @@ mod tests {
             all,
             slots,
         }
+    }
+
+    /// `0x72f5d0`'s log diff: removals first, then arrivals, a stack change, a new expiry; an
+    /// `ALL` packet and an unchanged slot log nothing.
+    #[test]
+    fn edges_follow_the_reference_diff() {
+        let timed = AURA_UPDATE_FLAG_DURATION | 1;
+        let mut t = UnitAuras::default();
+        t.apply(
+            &update(
+                false,
+                vec![
+                    (0, Some(rec(100, 1, Some(9)))),
+                    (1, Some(rec(200, timed, Some(9)))),
+                    (2, Some(rec(300, 1, Some(9)))),
+                ],
+            ),
+            0.0,
+        );
+        assert!(t.edges(&update(true, vec![]), 1.0).is_empty());
+        let stacked = AuraRecord {
+            stacks: 3,
+            ..rec(300, 1, Some(9))
+        };
+        let edges = t.edges(
+            &update(
+                false,
+                vec![
+                    (0, Some(rec(101, 1, Some(9)))),
+                    (1, Some(rec(200, timed, Some(9)))),
+                    (2, Some(stacked)),
+                    (3, Some(rec(400, AURA_UPDATE_FLAG_HARMFUL | 1, Some(9)))),
+                ],
+            ),
+            5.0,
+        );
+        let kinds: Vec<(&str, u32)> = edges
+            .iter()
+            .map(|e| match e {
+                AuraEdge::Added(a) => ("added", a.spell_id),
+                AuraEdge::Removed(a) => ("removed", a.spell_id),
+                AuraEdge::Dose { aura, .. } => ("dose", aura.spell_id),
+                AuraEdge::Refreshed(a) => ("refreshed", a.spell_id),
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("removed", 100),
+                ("added", 101),
+                ("refreshed", 200),
+                ("dose", 300),
+                ("added", 400)
+            ]
+        );
+        assert!(matches!(edges[3], AuraEdge::Dose { old: 1, .. }));
     }
 
     #[test]
