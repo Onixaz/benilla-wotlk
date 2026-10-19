@@ -117,6 +117,26 @@ pub(crate) fn place_action(model: &mut Model, id: u32) -> bool {
     true
 }
 
+/// `UseAction`'s place fork (`0x5abbe1`-`0x5abc2c`): a press outside a key binding, on a slot
+/// outside 121-132, with a spell, an item, a macro or a picked-up action held places it there
+/// instead of using the slot, refused or not. Whether the fork took the press.
+pub(crate) fn use_action_places(model: &mut Model, id: u32, in_binding: bool) -> bool {
+    let held = matches!(
+        model.cursor,
+        Some(
+            CursorPayload::Spell(_)
+                | CursorPayload::Item(_)
+                | CursorPayload::Macro(_)
+                | CursorPayload::Action(_)
+        )
+    );
+    if in_binding || (121..=132).contains(&id) || !held {
+        return false;
+    }
+    place_action(model, id);
+    true
+}
+
 /// Register `PickupAction` and `PlaceAction` as globals.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();

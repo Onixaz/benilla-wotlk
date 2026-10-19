@@ -817,6 +817,9 @@ mod dropdown_tests;
 mod action_bar_tests;
 
 #[cfg(test)]
+mod action_bar_move_tests;
+
+#[cfg(test)]
 mod exp_bar_tests;
 
 #[cfg(test)]

@@ -135,7 +135,7 @@ impl UiScript {
 }
 
 /// The hardware-event gate `0x494a50(0)`: inside a binding body.
-fn in_binding(lua: &Lua) -> bool {
+pub(super) fn in_binding(lua: &Lua) -> bool {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");

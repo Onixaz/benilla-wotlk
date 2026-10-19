@@ -319,8 +319,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // UseAction(slot [, unit [, button]]) (`0x5ac000`): the slot is a number or `Usage:`
     // (`0x5ac06f`), and the unit goes through the cast target parse (`0x5ac043`), where a token
     // the resolver does not know uses nothing. The button string reaches only the possess-bar and
-    // macro arms of `0x5abbc0`. Nothing here reads the cursor: the stock bar places a payload
-    // through `OnReceiveDrag` (`ActionBarFrame.xml:25-29`).
+    // macro arms of `0x5abbc0`, which first places a held payload instead of using the slot.
     g.set(
         "UseAction",
         lua.create_function(|lua, (action, rest): (Value, MultiValue)| {
@@ -335,7 +334,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Ok(action) = u32::try_from(action) else {
                 return Ok(());
             };
+            let in_binding = super::input_verbs::in_binding(lua);
             let mut model = crate::script::model_mut_of(lua);
+            if super::cursor::use_action_places(&mut model, action, in_binding) {
+                return Ok(());
+            }
             model
                 .script_calls
                 .push(super::ScriptCall::UseAction(ActionUse { action, at }));
@@ -850,22 +853,52 @@ mod tests {
         assert!(err.contains("Usage: GetActionInfo(slot)"), "{err}");
     }
 
-    /// `UseAction` reads no cursor (`0x5abbc0`): a held payload stays held and the press queues.
-    #[test]
-    fn use_action_never_places_the_cursor() {
+    fn held_action(s: &mut UiScript) {
         use crate::script::cursor::{CursorAction, CursorPayload};
-
-        let mut s = UiScript::new().unwrap();
         s.set_cursor_for_test(CursorPayload::Action(CursorAction {
             src_slot: 1,
             kind: 0x00,
             action: 111,
             texture: Some("Interface\\Icons\\Spell_A".into()),
         }));
+    }
+
+    /// A click with a held action places it instead of using the slot (`0x5abc2c`).
+    #[test]
+    fn use_action_places_a_held_payload() {
+        let mut s = UiScript::new().unwrap();
+        held_action(&mut s);
         s.run("UseAction(9, nil, 'LeftButton')").unwrap();
-        assert_eq!(uses(&mut s), vec![(9, CastAt::Selection)]);
+        assert!(uses(&mut s).is_empty(), "the press is not a use");
+        assert!(s.cursor_payload().is_none());
+        assert_eq!(s.take_action_sets(), vec![(9, 111)]);
+    }
+
+    /// The fork is skipped inside a key binding (`m_keyStateOverride`, `0x5abbe6`) and on slots
+    /// 121-132 (`0x5abbee`): the press uses the slot and the payload stays held.
+    #[test]
+    fn a_binding_or_a_possess_slot_uses_with_the_payload_held() {
+        let mut s = UiScript::new().unwrap();
+        held_action(&mut s);
+        s.run_binding("UseAction(9)").unwrap();
+        s.run("UseAction(121)").unwrap();
+        assert_eq!(
+            uses(&mut s),
+            vec![(9, CastAt::Selection), (121, CastAt::Selection)]
+        );
         assert!(s.cursor_payload().is_some());
         assert!(s.take_action_sets().is_empty());
+    }
+
+    /// Money is none of the payloads the fork tests (`0x5abbfb`-`0x5abc29`): the press uses.
+    #[test]
+    fn held_money_does_not_take_the_place_fork() {
+        use crate::script::cursor::{CursorMoney, CursorPayload};
+        let mut s = UiScript::new().unwrap();
+        s.set_cursor_for_test(CursorPayload::Money(CursorMoney { copper: 5 }));
+        s.run("UseAction(9)").unwrap();
+        assert_eq!(uses(&mut s), vec![(9, CastAt::Selection)]);
+        assert!(s.cursor_payload().is_some());
     }
 
     // ── `GetActionText` (`0x4e7050`) ──
