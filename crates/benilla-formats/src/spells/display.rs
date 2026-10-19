@@ -59,6 +59,9 @@ pub struct SpellDisplay {
     /// `AttributesExE` (column 9, `+0x24`): `0x200` counts one more tick in `$o`, `0x2000` scales a
     /// periodic spell's `$d` and `$t` by cast speed.
     pub attributes_ex5: u32,
+    /// `AttributesExF` (column 10, `+0x28`): `0x40` floats a cast's name in the combat text
+    /// (`0x7519e0`), `0x400` keeps its aura out of the combat log (`0x752710`).
+    pub attributes_ex6: u32,
     /// `AttributesEx7` (column 11, `+0x2c`); `0x20` files a totem in the totem bar's lists.
     pub attributes_ex7: u32,
     /// `TotemCategory[2]` (columns 222-223): the tool rows the spell needs, a totem's element.
@@ -341,6 +344,7 @@ impl Default for SpellDisplay {
             effect_misc_value: [0; 3],
             effect_misc_value_b: [0; 3],
             attributes_ex5: 0,
+            attributes_ex6: 0,
             attributes_ex7: 0,
             totem_categories: [0; 2],
         }

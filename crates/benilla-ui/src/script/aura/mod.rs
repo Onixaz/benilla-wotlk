@@ -383,6 +383,11 @@ impl super::UiScript {
         model.unit_guids.focus = focus;
     }
 
+    /// Every token naming `guid` against the last push, for a per-token unit event (`0x60bb70`).
+    pub fn unit_tokens(&self, guid: u64) -> Vec<String> {
+        self.model_ref().unit_guids.tokens_naming(guid)
+    }
+
     /// Push or clear the player's active [`TrackingState`].
     pub fn set_tracking(&mut self, tracking: Option<TrackingState>) {
         set_field!(self, tracking, tracking);

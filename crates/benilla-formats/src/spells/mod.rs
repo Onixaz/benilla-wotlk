@@ -120,6 +120,8 @@ const COL_ATTRIBUTES_EX4: usize = 8;
 /// `AttributesExE` (`+0x24`): `0x200` and `0x2000` reach the description's over-time and haste
 /// terms.
 const COL_ATTRIBUTES_EX5: usize = 9;
+/// `AttributesExF` (`SpellRec+0x28`).
+const COL_ATTRIBUTES_EX6: usize = 10;
 const COL_ATTRIBUTES_EX7: usize = 11;
 const COL_TOTEM_CATEGORY_1: usize = 222;
 const COL_SPEED: usize = 47;
@@ -591,6 +593,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 attributes_ex3: u32_at(r, COL_ATTRIBUTES_EX3).unwrap_or(0),
                 attributes_ex4: u32_at(r, COL_ATTRIBUTES_EX4).unwrap_or(0),
                 attributes_ex5: u32_at(r, COL_ATTRIBUTES_EX5).unwrap_or(0),
+                attributes_ex6: u32_at(r, COL_ATTRIBUTES_EX6).unwrap_or(0),
                 attributes_ex7: u32_at(r, COL_ATTRIBUTES_EX7).unwrap_or(0),
                 totem_categories: std::array::from_fn(|i| {
                     u32_at(r, COL_TOTEM_CATEGORY_1 + i).unwrap_or(0)

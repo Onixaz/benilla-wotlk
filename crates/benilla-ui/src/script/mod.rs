@@ -275,8 +275,8 @@ pub use chat_window::{
 };
 pub use class_list::ClassNames;
 pub use combat_log::{
-    CombatLogEntry, CombatLogPayload, CombatLogStore, CombatLogUnit, Damage, MissType, OBJECT_NONE,
-    RETENTION_CVAR,
+    CombatLogEntry, CombatLogEvent, CombatLogInfo, CombatLogItem, CombatLogSpell, CombatLogStore,
+    CombatLogUnit, Damage, Drain, Heal, Miss, MissType, OBJECT_NONE, RETENTION_CVAR,
 };
 pub use container::{
     BagAutoStore, ContainerMove, ContainerSlot, ContainerState, EnchantView, PendingWrap,

@@ -61,13 +61,80 @@ pub const EVENTS: [&str; 50] = [
     "UNIT_DISSIPATES",
 ];
 
+/// An entry's event, its index into [`EVENTS`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum CombatLogEvent {
+    EnvironmentalDamage,
+    SwingDamage,
+    SwingMissed,
+    RangeDamage,
+    RangeMissed,
+    SpellCastStart,
+    SpellCastSuccess,
+    SpellCastFailed,
+    SpellMissed,
+    SpellDamage,
+    SpellHeal,
+    SpellEnergize,
+    SpellDrain,
+    SpellLeech,
+    SpellInstakill,
+    SpellSummon,
+    SpellCreate,
+    SpellInterrupt,
+    SpellExtraAttacks,
+    SpellDurabilityDamage,
+    SpellDurabilityDamageAll,
+    SpellAuraApplied,
+    SpellAuraAppliedDose,
+    SpellAuraRemovedDose,
+    SpellAuraRemoved,
+    SpellAuraRefresh,
+    SpellDispel,
+    SpellStolen,
+    SpellAuraBroken,
+    SpellAuraBrokenSpell,
+    DamageAuraBroken,
+    EnchantApplied,
+    EnchantRemoved,
+    SpellPeriodicMissed,
+    SpellPeriodicDamage,
+    SpellPeriodicHeal,
+    SpellPeriodicEnergize,
+    SpellPeriodicDrain,
+    SpellPeriodicLeech,
+    SpellDispelFailed,
+    DamageShield,
+    DamageShieldMissed,
+    DamageSplit,
+    PartyKill,
+    UnitDied,
+    UnitDestroyed,
+    SpellResurrect,
+    SpellBuildingDamage,
+    SpellBuildingHeal,
+    UnitDissipates,
+}
+
+impl CombatLogEvent {
+    /// The event's name, the entry's second value.
+    pub fn name(self) -> &'static str {
+        EVENTS[self as usize]
+    }
+}
+
 /// The CVar that bounds how long an entry is kept, in seconds (`0x51efed`).
 pub const RETENTION_CVAR: &str = "combatLogRetentionTime";
 
 /// The flags of an absent endpoint, `COMBATLOG_OBJECT_NONE` (`0x74dcb0`, `0x74d920`).
 pub const OBJECT_NONE: u32 = 0x8000_0000;
 
-/// One end of an entry: its guid, its name once known, and its `COMBATLOG_OBJECT_*` flags.
+/// The text an unresolved name reads as (`0x74f720`, `0x74fd40`).
+const UNKNOWN_OBJECT: &str = "UNKNOWNOBJECT";
+
+/// One end of an entry: its guid, its name once known, and its `COMBATLOG_OBJECT_*` flags. A name
+/// still `None` on a nonzero guid reads as `UNKNOWNOBJECT`, as an unresolved one does (`0x74f720`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CombatLogUnit {
     pub guid: u64,
@@ -86,6 +153,15 @@ impl CombatLogUnit {
     }
 }
 
+/// A spell as an entry carries it: the id, and the record's name and school mask, `None` and 0
+/// when the record is missing (`0x74e290`, `0x750400`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CombatLogSpell {
+    pub id: u32,
+    pub name: Option<String>,
+    pub school: u32,
+}
+
 /// A miss type, by its index in the reference's word table (`0xadbfac`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MissType {
@@ -96,12 +172,32 @@ pub enum MissType {
     Block = 5,
     Evade = 6,
     Immune = 7,
+    /// The second immune code, worded alike.
+    Immune2 = 8,
     Deflect = 9,
     Absorb = 10,
     Reflect = 11,
 }
 
 impl MissType {
+    /// The wire's miss code, 1 to 11; 0 and anything past the table is none.
+    pub fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            1 => Self::Miss,
+            2 => Self::Resist,
+            3 => Self::Dodge,
+            4 => Self::Parry,
+            5 => Self::Block,
+            6 => Self::Evade,
+            7 => Self::Immune,
+            8 => Self::Immune2,
+            9 => Self::Deflect,
+            10 => Self::Absorb,
+            11 => Self::Reflect,
+            _ => return None,
+        })
+    }
+
     /// The word the event carries.
     pub fn word(self) -> &'static str {
         match self {
@@ -111,12 +207,19 @@ impl MissType {
             MissType::Parry => "PARRY",
             MissType::Block => "BLOCK",
             MissType::Evade => "EVADE",
-            MissType::Immune => "IMMUNE",
+            MissType::Immune | MissType::Immune2 => "IMMUNE",
             MissType::Deflect => "DEFLECT",
             MissType::Absorb => "ABSORB",
             MissType::Reflect => "REFLECT",
         }
     }
+}
+
+/// A miss, and the amount an absorb, resist or block carries (`0x74d980`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Miss {
+    pub kind: MissType,
+    pub amount: Option<i32>,
 }
 
 /// A damage block, the nine values `0x74e290` pushes for its `0x10` arm.
@@ -134,33 +237,61 @@ pub struct Damage {
     pub crushing: bool,
 }
 
-/// What an entry says past its two endpoints.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CombatLogPayload {
-    /// `SWING_DAMAGE`.
-    SwingDamage(Damage),
-    /// `SWING_MISSED`; an absorb, resist or block also carries the amount it stopped.
-    SwingMissed { miss: MissType, amount: Option<i32> },
+/// A heal block, the `0x20` arm's four values.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Heal {
+    pub amount: i32,
+    pub overheal: i32,
+    pub absorbed: i32,
+    pub critical: bool,
 }
 
-impl CombatLogPayload {
-    /// The entry kind, the index into [`EVENTS`].
-    fn kind(&self) -> usize {
-        match self {
-            CombatLogPayload::SwingDamage(_) => 1,
-            CombatLogPayload::SwingMissed { .. } => 2,
-        }
-    }
+/// A drain block, the `0x80` arm: the amount, the power type and what the caster gained.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Drain {
+    pub amount: i32,
+    pub power: i32,
+    pub extra: i32,
+}
 
-    /// The spell id a filter's spell test reads; swings have none.
-    fn spell_id(&self) -> u32 {
-        0
-    }
+/// An item an entry names, with its name once the item cache answers (`0x750210`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CombatLogItem {
+    pub id: u32,
+    pub name: Option<String>,
+}
 
-    /// The spell name a filter's spell test reads; swings have none.
-    fn spell_name(&self) -> Option<&str> {
-        None
-    }
+/// What an entry says past its spell, one field per `m_infoFlags` bit, pushed in `0x74e290`'s
+/// order: `0x1`, `0x2`, `0x4`, `0x8`, `0x10`, the miss amounts, `0x20`, `0x40`, `0x80`, `0x100`,
+/// `0x1000`, `0x200`, `0x400`, `0x800`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CombatLogInfo {
+    /// `0x1`: one integer, the extra-attack count.
+    pub amount: Option<i32>,
+    /// `0x2`: a failed cast's reason.
+    pub fail_reason: Option<String>,
+    /// `0x4`, with `0x2000`/`0x4000`/`0x8000` for its amount.
+    pub miss: Option<Miss>,
+    /// `0x8`: the environmental type, 0 fatigue to 5 fire (`0xad671c`).
+    pub environmental: Option<u8>,
+    /// `0x10`.
+    pub damage: Option<Damage>,
+    /// `0x20`.
+    pub heal: Option<Heal>,
+    /// `0x40`: amount and power type.
+    pub energize: Option<(i32, i32)>,
+    /// `0x80`.
+    pub drain: Option<Drain>,
+    /// `0x100`: the dispelled, stolen, interrupted or broken-by spell.
+    pub extra_spell: Option<CombatLogSpell>,
+    /// `0x1000`: an enchantment's name.
+    pub enchant: Option<String>,
+    /// `0x200`.
+    pub item: Option<CombatLogItem>,
+    /// `0x400`: true for a harmful aura, `"DEBUFF"`.
+    pub harmful: Option<bool>,
+    /// `0x800`: an aura's new stack count.
+    pub dose: Option<i32>,
 }
 
 /// One combat-log entry as the app hands it over, names and flags resolved.
@@ -170,9 +301,23 @@ pub struct CombatLogEntry {
     pub time_ms: u64,
     /// The event's first value: `time()` at world entry plus the seconds since (`0x74e290`).
     pub timestamp: f64,
+    pub event: CombatLogEvent,
     pub source: CombatLogUnit,
     pub dest: CombatLogUnit,
-    pub payload: CombatLogPayload,
+    pub spell: Option<CombatLogSpell>,
+    pub info: CombatLogInfo,
+}
+
+impl CombatLogEntry {
+    /// The spell id a filter's spell test reads; 0 without a spell.
+    fn spell_id(&self) -> u32 {
+        self.spell.as_ref().map_or(0, |s| s.id)
+    }
+
+    /// The spell name a filter's spell test reads.
+    fn spell_name(&self) -> Option<&str> {
+        self.spell.as_ref()?.name.as_deref()
+    }
 }
 
 /// One `CombatLogAddFilter` row (`0x74e050`).
@@ -191,7 +336,7 @@ struct Filter {
 impl Filter {
     /// `CombatLogFilter::MatchesFilter` (`0x74e1a0`).
     fn matches(&self, e: &CombatLogEntry) -> bool {
-        if self.events & (1 << e.payload.kind()) == 0 {
+        if self.events & (1 << e.event as u8) == 0 {
             return false;
         }
         let end = |guid: u64, mask: u32, unit: &CombatLogUnit| {
@@ -207,13 +352,12 @@ impl Filter {
             return false;
         }
         if self.spell_id != 0 {
-            return e.payload.spell_id() == self.spell_id;
+            return e.spell_id() == self.spell_id;
         }
         match &self.spell_name {
             Some(want) => e
-                .payload
                 .spell_name()
-                .is_some_and(|n| n.eq_ignore_ascii_case(want)),
+                .is_some_and(|n| n.to_lowercase() == want.to_lowercase()),
             None => true,
         }
     }
@@ -306,57 +450,143 @@ impl CombatLogStore {
                 })
         }
     }
+}
 
-    /// The values `0x74e290` pushes for an entry.
-    fn args(&self, e: &CombatLogEntry) -> Vec<ScriptValue> {
-        let mut out = vec![
-            ScriptValue::Number(e.timestamp),
-            ScriptValue::Str(EVENTS[e.payload.kind()].to_string()),
-        ];
-        for unit in [&e.source, &e.dest] {
-            out.push(ScriptValue::Str(guid_text(unit.guid)));
-            out.push(match &unit.name {
-                Some(n) if !n.is_empty() => ScriptValue::Str(n.clone()),
-                _ => ScriptValue::Nil,
-            });
-            // `lua_pushinteger` of the int: `OBJECT_NONE` reads negative.
-            out.push(ScriptValue::Int(i64::from(unit.flags as i32)));
+/// The values `0x74e290` pushes for an entry; `unknown` is the `UNKNOWNOBJECT` text.
+fn args(e: &CombatLogEntry, unknown: &str) -> Vec<ScriptValue> {
+    let num = |n: i32| ScriptValue::Number(f64::from(n));
+    let int = |n: i32| ScriptValue::Int(i64::from(n));
+    let or_nil = |n: i32| if n == 0 { ScriptValue::Nil } else { num(n) };
+    let one = |b: bool| {
+        if b {
+            ScriptValue::Number(1.0)
+        } else {
+            ScriptValue::Nil
         }
-        let or_nil = |n: i32| {
-            if n == 0 {
-                ScriptValue::Nil
-            } else {
-                ScriptValue::Number(f64::from(n))
-            }
-        };
-        let one = |b: bool| {
-            if b {
-                ScriptValue::Number(1.0)
-            } else {
-                ScriptValue::Nil
-            }
-        };
-        match &e.payload {
-            CombatLogPayload::SwingDamage(d) => out.extend([
-                ScriptValue::Number(f64::from(d.amount)),
-                ScriptValue::Number(f64::from(d.overkill)),
-                ScriptValue::Int(i64::from(d.school as i32)),
-                or_nil(d.resisted),
-                or_nil(d.blocked),
-                or_nil(d.absorbed),
-                one(d.critical),
-                one(d.glancing),
-                one(d.crushing),
-            ]),
-            CombatLogPayload::SwingMissed { miss, amount } => {
-                out.push(ScriptValue::Str(miss.word().to_string()));
-                if let Some(n) = amount {
-                    out.push(ScriptValue::Int(i64::from(*n)));
-                }
-            }
-        }
-        out
+    };
+    let text = |s: &Option<String>| match s {
+        Some(s) if s.is_empty() => ScriptValue::Nil,
+        Some(s) => ScriptValue::Str(s.clone()),
+        None => ScriptValue::Str(unknown.to_string()),
+    };
+    let mut out = vec![
+        ScriptValue::Number(e.timestamp),
+        ScriptValue::Str(e.event.name().to_string()),
+    ];
+    for unit in [&e.source, &e.dest] {
+        out.push(ScriptValue::Str(guid_text(unit.guid)));
+        out.push(if unit.guid == 0 {
+            ScriptValue::Nil
+        } else {
+            text(&unit.name)
+        });
+        // `lua_pushinteger` of the int: `OBJECT_NONE` reads negative.
+        out.push(int(unit.flags as i32));
     }
+    let spell = |s: &CombatLogSpell, out: &mut Vec<ScriptValue>| {
+        out.push(ScriptValue::Int(i64::from(s.id)));
+        match &s.name {
+            Some(name) => {
+                out.push(ScriptValue::Str(name.clone()));
+                out.push(int(s.school as i32));
+            }
+            None => out.extend([ScriptValue::Nil, ScriptValue::Int(0)]),
+        }
+    };
+    if let Some(s) = &e.spell {
+        spell(s, &mut out);
+    }
+    let i = &e.info;
+    if let Some(n) = i.amount {
+        out.push(int(n));
+    }
+    if let Some(reason) = &i.fail_reason {
+        out.push(ScriptValue::Str(reason.clone()));
+    }
+    if let Some(m) = i.miss {
+        out.push(ScriptValue::Str(m.kind.word().to_string()));
+    }
+    if let Some(ty) = i.environmental {
+        const TYPES: [&str; 6] = ["FATIGUE", "DROWNING", "FALLING", "LAVA", "SLIME", "FIRE"];
+        out.push(ScriptValue::Str(
+            TYPES
+                .get(usize::from(ty))
+                .copied()
+                .unwrap_or("")
+                .to_string(),
+        ));
+    }
+    if let Some(d) = i.damage {
+        out.extend([
+            num(d.amount),
+            num(d.overkill),
+            int(d.school as i32),
+            or_nil(d.resisted),
+            or_nil(d.blocked),
+            or_nil(d.absorbed),
+            one(d.critical),
+            one(d.glancing),
+            one(d.crushing),
+        ]);
+    }
+    if let Some(Miss {
+        amount: Some(n), ..
+    }) = i.miss
+    {
+        out.push(int(n));
+    }
+    if let Some(h) = i.heal {
+        out.extend([
+            num(h.amount),
+            num(h.overheal),
+            num(h.absorbed),
+            one(h.critical),
+        ]);
+    }
+    if let Some((amount, power)) = i.energize {
+        out.extend([num(amount), num(power)]);
+    }
+    if let Some(d) = i.drain {
+        out.extend([num(d.amount), num(d.power), or_nil(d.extra)]);
+    }
+    if let Some(s) = &i.extra_spell {
+        out.push(ScriptValue::Int(i64::from(s.id)));
+        match &s.name {
+            Some(name) => {
+                out.push(ScriptValue::Str(name.clone()));
+                out.push(int(s.school as i32));
+            }
+            None => out.extend([ScriptValue::Nil, ScriptValue::Number(0.0)]),
+        }
+    }
+    if let Some(name) = &i.enchant {
+        out.push(ScriptValue::Str(name.clone()));
+    }
+    if let Some(item) = &i.item {
+        out.push(ScriptValue::Int(i64::from(item.id)));
+        out.push(match &item.name {
+            Some(name) => ScriptValue::Str(name.clone()),
+            None => ScriptValue::Str(unknown.to_string()),
+        });
+    }
+    if let Some(harmful) = i.harmful {
+        out.push(ScriptValue::Str(
+            if harmful { "DEBUFF" } else { "BUFF" }.to_string(),
+        ));
+    }
+    if let Some(n) = i.dose {
+        out.push(int(n));
+    }
+    out
+}
+
+/// The `UNKNOWNOBJECT` global, as `FrameScript_GetText` reads it.
+fn unknown_text(lua: &Lua) -> String {
+    lua.globals()
+        .get::<Option<String>>(UNKNOWN_OBJECT)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| UNKNOWN_OBJECT.to_string())
 }
 
 /// `0x74d0d0`: `0x` and sixteen upper-case hex digits.
@@ -407,6 +637,7 @@ impl super::UiScript {
 
     /// Store and fire an entry (`0x750400`, `0x74f910`), first dropping one expired oldest entry.
     pub fn push_combat_log(&mut self, entry: CombatLogEntry) {
+        let unknown = unknown_text(self.lua());
         let (args, passes) = {
             let mut model = self.model_mut();
             let retention_ms = retention_secs(&model) * 1000;
@@ -417,7 +648,7 @@ impl super::UiScript {
             if expired {
                 log.pop_oldest();
             }
-            let out = (log.args(&entry), log.passes(&entry));
+            let out = (args(&entry, &unknown), log.passes(&entry));
             log.entries.push_back(entry);
             out
         };
@@ -571,12 +802,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CombatLogGetCurrentEntry",
         lua.create_function(|lua, ()| {
+            let unknown = unknown_text(lua);
             let args = {
                 let model = super::model_mut_of(lua);
                 let log = &model.combat_log;
                 log.current
                     .and_then(|id| log.get(id))
-                    .map(|e| log.args(e))
+                    .map(|e| args(e, &unknown))
                     .unwrap_or_default()
             };
             args.into_iter()
@@ -647,13 +879,18 @@ mod tests {
         CombatLogEntry {
             time_ms,
             timestamp: 1_000_000.0 + time_ms as f64 * 0.001,
+            event: CombatLogEvent::SwingDamage,
             source: unit(ME_GUID, "Claude", ME),
             dest: unit(MOB_GUID, "Kobold Vermin", MOB),
-            payload: CombatLogPayload::SwingDamage(Damage {
-                amount,
-                school: 1,
-                ..Damage::default()
-            }),
+            spell: None,
+            info: CombatLogInfo {
+                damage: Some(Damage {
+                    amount,
+                    school: 1,
+                    ..Damage::default()
+                }),
+                ..CombatLogInfo::default()
+            },
         }
     }
 
@@ -661,13 +898,39 @@ mod tests {
         CombatLogEntry {
             time_ms,
             timestamp: 1_000_000.0 + time_ms as f64 * 0.001,
+            event: CombatLogEvent::SwingMissed,
             source: unit(MOB_GUID, "Kobold Vermin", MOB),
             dest: unit(ME_GUID, "Claude", ME),
-            payload: CombatLogPayload::SwingMissed {
-                miss: MissType::Dodge,
-                amount: None,
+            spell: None,
+            info: CombatLogInfo {
+                miss: Some(Miss {
+                    kind: MissType::Dodge,
+                    amount: None,
+                }),
+                ..CombatLogInfo::default()
             },
         }
+    }
+
+    fn fireball() -> CombatLogSpell {
+        CombatLogSpell {
+            id: 133,
+            name: Some("Fireball".into()),
+            school: 4,
+        }
+    }
+
+    /// Every value an entry pushes, as `tostring` prints it.
+    fn pushed(s: &mut UiScript, entry: CombatLogEntry) -> String {
+        s.push_combat_log(entry);
+        s.eval(
+            "CombatLogSetCurrentEntry(0)
+             local t = {CombatLogGetCurrentEntry()}
+             local out = {}
+             for i = 1, select('#', CombatLogGetCurrentEntry()) do out[i] = tostring(t[i]) end
+             return table.concat(out, ',')",
+        )
+        .unwrap()
     }
 
     fn script() -> UiScript {
@@ -680,29 +943,196 @@ mod tests {
     #[test]
     fn a_swing_reads_back_in_the_12340_shape() {
         let mut s = script();
-        s.push_combat_log(CombatLogEntry {
-            payload: CombatLogPayload::SwingDamage(Damage {
-                amount: 17,
-                overkill: 3,
-                school: 1,
-                critical: true,
-                ..Damage::default()
-            }),
-            ..hit(7_500, 0)
-        });
-        let got: String = s
-            .eval(
-                "CombatLogSetCurrentEntry(0)
-                 local t = {CombatLogGetCurrentEntry()}
-                 local out = {}
-                 for i = 1, 17 do out[i] = tostring(t[i]) end
-                 return table.concat(out, ',')",
-            )
-            .unwrap();
+        let got = pushed(
+            &mut s,
+            CombatLogEntry {
+                info: CombatLogInfo {
+                    damage: Some(Damage {
+                        amount: 17,
+                        overkill: 3,
+                        school: 1,
+                        critical: true,
+                        ..Damage::default()
+                    }),
+                    ..CombatLogInfo::default()
+                },
+                ..hit(7_500, 0)
+            },
+        );
         assert_eq!(
             got,
             "1000007.5,SWING_DAMAGE,0x00000000000003EE,Claude,1297,0xF1300000060C281E,\
              Kobold Vermin,2632,17,3,1,nil,nil,nil,1,nil,nil"
+        );
+    }
+
+    /// A spell entry pushes the id, name and school before its damage block (`0x74e290`).
+    #[test]
+    fn a_spell_hit_carries_its_spell_before_the_damage() {
+        let mut s = script();
+        let got = pushed(
+            &mut s,
+            CombatLogEntry {
+                event: CombatLogEvent::SpellDamage,
+                spell: Some(fireball()),
+                info: CombatLogInfo {
+                    damage: Some(Damage {
+                        amount: 300,
+                        school: 4,
+                        resisted: 20,
+                        critical: true,
+                        ..Damage::default()
+                    }),
+                    ..CombatLogInfo::default()
+                },
+                ..hit(7_000, 0)
+            },
+        );
+        assert_eq!(
+            got,
+            "1000007,SPELL_DAMAGE,0x00000000000003EE,Claude,1297,0xF1300000060C281E,\
+             Kobold Vermin,2632,133,Fireball,4,300,0,4,20,nil,nil,1,nil,nil"
+        );
+    }
+
+    /// A heal's block is amount, overheal, absorbed and the crit flag; a missing record pushes a
+    /// nil name and school 0.
+    #[test]
+    fn a_heal_pushes_its_four_values() {
+        let mut s = script();
+        let got = pushed(
+            &mut s,
+            CombatLogEntry {
+                event: CombatLogEvent::SpellHeal,
+                dest: unit(ME_GUID, "Claude", ME),
+                spell: Some(CombatLogSpell {
+                    id: 9999,
+                    name: None,
+                    school: 0,
+                }),
+                info: CombatLogInfo {
+                    heal: Some(Heal {
+                        amount: 120,
+                        overheal: 30,
+                        absorbed: 0,
+                        critical: false,
+                    }),
+                    ..CombatLogInfo::default()
+                },
+                ..hit(7_000, 0)
+            },
+        );
+        assert!(
+            got.ends_with(",9999,nil,0,120,30,0,nil"),
+            "heal tail, got {got}"
+        );
+    }
+
+    /// The `0x400`/`0x800` pair: aura type, then the new stack count.
+    #[test]
+    fn an_aura_dose_pushes_its_type_and_count() {
+        let mut s = script();
+        let got = pushed(
+            &mut s,
+            CombatLogEntry {
+                event: CombatLogEvent::SpellAuraAppliedDose,
+                spell: Some(fireball()),
+                info: CombatLogInfo {
+                    harmful: Some(true),
+                    dose: Some(3),
+                    ..CombatLogInfo::default()
+                },
+                ..hit(7_000, 0)
+            },
+        );
+        assert!(got.ends_with(",133,Fireball,4,DEBUFF,3"), "dose, got {got}");
+    }
+
+    /// A dispel names the removed aura as a second spell, then its type (`0x500`).
+    #[test]
+    fn a_dispel_pushes_the_removed_spell_then_its_type() {
+        let mut s = script();
+        let got = pushed(
+            &mut s,
+            CombatLogEntry {
+                event: CombatLogEvent::SpellDispel,
+                spell: Some(CombatLogSpell {
+                    id: 527,
+                    name: Some("Dispel Magic".into()),
+                    school: 2,
+                }),
+                info: CombatLogInfo {
+                    extra_spell: Some(fireball()),
+                    harmful: Some(false),
+                    ..CombatLogInfo::default()
+                },
+                ..hit(7_000, 0)
+            },
+        );
+        assert!(
+            got.ends_with(",527,Dispel Magic,2,133,Fireball,4,BUFF"),
+            "dispel, got {got}"
+        );
+    }
+
+    /// An enchant pushes the enchantment's name before the item (`0x1000` before `0x200`), and
+    /// an unanswered name reads as `UNKNOWNOBJECT`.
+    #[test]
+    fn an_enchant_names_the_enchantment_before_the_item() {
+        let mut s = script();
+        s.run("UNKNOWNOBJECT = 'Unknown'").unwrap();
+        let got = pushed(
+            &mut s,
+            CombatLogEntry {
+                event: CombatLogEvent::EnchantApplied,
+                source: CombatLogUnit {
+                    guid: ME_GUID,
+                    name: None,
+                    flags: ME,
+                },
+                dest: CombatLogUnit::none(),
+                info: CombatLogInfo {
+                    enchant: Some("An enchant".into()),
+                    item: Some(CombatLogItem {
+                        id: 2504,
+                        name: None,
+                    }),
+                    ..CombatLogInfo::default()
+                },
+                ..hit(7_000, 0)
+            },
+        );
+        assert_eq!(
+            got,
+            "1000007,ENCHANT_APPLIED,0x00000000000003EE,Unknown,1297,0x0000000000000000,nil,\
+             -2147483648,An enchant,2504,Unknown"
+        );
+    }
+
+    /// Environmental damage pushes its type word, then the damage block.
+    #[test]
+    fn environmental_damage_words_its_type() {
+        let mut s = script();
+        let got = pushed(
+            &mut s,
+            CombatLogEntry {
+                event: CombatLogEvent::EnvironmentalDamage,
+                source: CombatLogUnit::none(),
+                info: CombatLogInfo {
+                    environmental: Some(2),
+                    damage: Some(Damage {
+                        amount: 23,
+                        school: 1,
+                        ..Damage::default()
+                    }),
+                    ..CombatLogInfo::default()
+                },
+                ..hit(7_000, 0)
+            },
+        );
+        assert!(
+            got.contains(",2632,FALLING,23,0,1,nil,nil,nil,nil,nil,nil"),
+            "environmental, got {got}"
         );
     }
 
@@ -711,9 +1141,12 @@ mod tests {
         let mut s = script();
         s.push_combat_log(dodge(6_000));
         s.push_combat_log(CombatLogEntry {
-            payload: CombatLogPayload::SwingMissed {
-                miss: MissType::Absorb,
-                amount: Some(40),
+            info: CombatLogInfo {
+                miss: Some(Miss {
+                    kind: MissType::Absorb,
+                    amount: Some(40),
+                }),
+                ..CombatLogInfo::default()
             },
             ..dodge(6_100)
         });
