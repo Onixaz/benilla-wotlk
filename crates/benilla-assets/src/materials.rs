@@ -413,7 +413,8 @@ pub struct TerrainExtension {
     pub env_cubes: Handle<Image>,
 
     // Binding 106's uniforms, in the field order of the WGSL `TerrainParams`.
-    /// `x` = texture tiling factor (repeats per chunk); other lanes unused.
+    /// `x` = texture tiling factor (repeats per chunk); `y` = 1 on a big-alpha map, where the
+    /// layers blend as a weighted sum; other lanes unused.
     #[uniform(106)]
     pub params: Vec4,
 

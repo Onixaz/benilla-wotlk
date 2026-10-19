@@ -44,6 +44,8 @@ pub struct AdtTile {
     /// The decoded MCNK chunks, kept resident: the app derives the collider, the MCLQ liquids and
     /// the ground clutter from them.
     pub chunks: Vec<ChunkMesh>,
+    /// The map's WDT big-alpha bit: the layers blend as a weighted sum, not one over another.
+    pub big_alpha: bool,
 }
 
 /// One drawn chunk's array indices, uniform over its vertices.
@@ -310,6 +312,7 @@ impl AssetLoader for AdtLoader {
             doodads: tile.doodads,
             wmos: tile.wmos,
             chunks: tile.chunks,
+            big_alpha,
         })
     }
 

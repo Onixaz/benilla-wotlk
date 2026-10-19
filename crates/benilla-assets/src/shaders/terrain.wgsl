@@ -23,7 +23,7 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(111) var env_cubes: texture_cube_array<f32>;
 
 // Per-tile Vec4 uniforms, packed into one buffer (binding 106); the field order must match the Rust
-// `TerrainExtension`. params.x = layer tiling factor; yzw unused.
+// `TerrainExtension`. params.x = layer tiling factor; params.y = 1 on a big-alpha map; zw unused.
 struct TerrainParams {
     params: vec4<f32>,
 };
@@ -223,17 +223,20 @@ fn fragment(in: TerrainVsOut) -> @location(0) vec4<f32> {
     let auv = clamp(in.uv, vec2<f32>(0.5 / 64.0), vec2<f32>(1.0 - 0.5 / 64.0));
     let a = textureSample(alpha_array, splat_samp, auv, ai);
 
-    var color = s0.rgb;
-    color = mix(color, s1.rgb, a.r);
-    color = mix(color, s2.rgb, a.g);
-    color = mix(color, s3.rgb, a.b);
-
-    // The sheen mask, blended with the colour's splat weights (the fragment program's
-    // `secondary · texture[0].w`).
-    var specmask = s0.a;
-    specmask = mix(specmask, s1.a, a.r);
-    specmask = mix(specmask, s2.a, a.g);
-    specmask = mix(specmask, s3.a, a.b);
+    // The splat. On a big-alpha map the layers are a weighted sum: the base pass scales layer 0 by
+    // `1 − saturate(a.r + a.g + a.b)` and each later pass adds its layer times its own weight
+    // (`GxBlend_NoAlphaAdd`, `0x7d13f0`). Otherwise each layer lerps over the result so far
+    // (`GxBlend_Alpha`, `0x7d1ad0`). The `.a` sheen mask blends with the colour's weights (the
+    // fragment program's `secondary · texture[0].w`).
+    var texel: vec4<f32>;
+    if (t.params.y > 0.5) {
+        let base_w = 1.0 - saturate(a.r + a.g + a.b);
+        texel = s0 * base_w + s1 * a.r + s2 * a.g + s3 * a.b;
+    } else {
+        texel = mix(mix(mix(s0, s1, a.r), s2, a.g), s3, a.b);
+    }
+    let color = texel.rgb;
+    let specmask = texel.a;
 
     let primary = in.primary;
 

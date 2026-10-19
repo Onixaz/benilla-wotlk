@@ -714,7 +714,12 @@ fn stream_terrain(
                 alpha_array: adt.alpha_array.clone(),
                 shadow_array: adt.shadow_array.clone(),
                 env_cubes: adt.env_cubes.clone(),
-                params: Vec4::new(benilla_formats::TERRAIN_LAYER_TILES, 0.0, 0.0, 0.0),
+                params: Vec4::new(
+                    benilla_formats::TERRAIN_LAYER_TILES,
+                    f32::from(u8::from(adt.big_alpha)),
+                    0.0,
+                    0.0,
+                ),
                 light_buf: shared_light.0.clone(),
             },
         });
