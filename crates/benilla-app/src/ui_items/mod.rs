@@ -22,6 +22,7 @@ use crate::ui_unit::UnitFeed;
 
 mod drain;
 mod equip_error;
+pub(crate) use equip_error::equip_error_key;
 pub(crate) mod feed;
 mod net;
 

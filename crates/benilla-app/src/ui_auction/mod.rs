@@ -1,18 +1,17 @@
-//! The auction window's app side: [`net`] fills [`AuctionOpen`] from the wire, [`feed_auction`]
-//! pushes it into the VM and fires its events, and [`drain_auction`] sends the Lua intents.
+//! The auction window's app side, after the 12340 `CGAuctionHouse`: [`net`] fills
+//! [`AuctionOpen`] from the wire, [`feed_auction`] pushes it into the VM and fires its events,
+//! and [`drain_auction`] sends the Lua intents through the house's query throttle.
 //!
-//! The hello reply opens the window, not the click (`0x4cd570` fires `AUCTION_HOUSE_SHOW` inside
-//! the hello handler). Browse, Bids and Auctions are independent lists, as in the reference's
-//! three arrays (`0x4cc0f0`), each one 50-row page with its own match count, sort stack and update
-//! event. Walking out of the 5.56 yd service range closes the window with no packet (`[0xb72410]`
-//! holds 30.864, that radius squared).
+//! The hello reply opens the window, not the click (`SetAuctioneer` `0x59f000` fires
+//! `AUCTION_HOUSE_SHOW`). Browse, Bids and Auctions are independent lists, each with its own
+//! query gate (`CanSendQuery` `0x59a2f0`). Walking out of range closes the window with no packet.
 
 use bevy::prelude::*;
 
-use benilla_protocol::messages::{auction_filter, AuctionListEntry};
+use benilla_protocol::messages::{AuctionListEntry, AuctionListQuery};
 use benilla_ui::script::{
     AuctionCategory, AuctionHighBidder, AuctionItemRow, AuctionListState, AuctionState,
-    AuctionSubCategory, UiScript, BIDDER, LIST, OWNER,
+    AuctionSubCategory, ScriptValue, UiScript, BIDDER, LIST, OWNER,
 };
 
 use crate::entities::ItemDisplays;
@@ -23,233 +22,363 @@ use crate::ui_action::{show_messages, ui_error_text, MessageSink, Shown, UiError
 use crate::ui_script::{UiFeed, UiInput};
 use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
 
-mod sort;
-
-use sort::SortStack;
-
 mod net;
 
-/// The browse rate limit: `0x4ce980` arms `tick + 0x1388` once sent; a refused query fires nothing.
-const QUERY_THROTTLE_SECS: f64 = 5.0;
+/// The query delay until a list result says otherwise (`[0xacf628]`, 5000 ms).
+const DEFAULT_QUERY_DELAY_SECS: f64 = 5.0;
 
-/// The upper bounds, in ms, of time-left buckets 1 to 3 (the reference's table at `0x8072a8`).
-const TIME_LEFT_SHORT_MS: u32 = 30 * 60 * 1000;
-const TIME_LEFT_MEDIUM_MS: u32 = 2 * 60 * 60 * 1000;
-const TIME_LEFT_LONG_MS: u32 = 8 * 60 * 60 * 1000;
+/// The get-all query's own cooldown, 15 minutes (`0x59bcf0`, `0x59c740`).
+const GET_ALL_COOLDOWN_SECS: f64 = 900.0;
 
-/// Past this, `time_left_ms` is an underflow and reads as expired: vmangos writes it unclamped
-/// (`AuctionHouseMgr.cpp:838`) and sweeps expiry every 60 s, and no auction runs past 24 h.
-const TIME_LEFT_IMPLAUSIBLE_MS: u32 = 7 * 24 * 60 * 60 * 1000;
+/// A bid holds the auction open at least this long (`0x59ffb0`, `0x5a0480`).
+const BID_EXTENSION_SECS: f64 = 90.0;
 
-/// `ItemSubClass.dbc` `DisplayFlags` bit 1: left out of the auction category filter (`0x4cf9c0`).
+/// `ItemSubClass.dbc` `DisplayFlags` bit 1: left out of the auction category filter (`0x59c480`).
 const SUBCLASS_HIDDEN_FROM_AUCTIONS: u32 = 0x2;
 
-/// The reference's `0x807060` rows `{itemClassId, hasSubclassFilter}` in menu order; a class with
-/// the flag clear offers no subclass or slot rows. The names come from `ItemClass.dbc`.
-const AUCTION_CLASSES: [(u32, bool); 10] = [
+/// `ItemSubClass.dbc` `Flags` bit `0x200`: the subclass offers the inventory-slot rows.
+const SUBCLASS_OFFERS_INV_TYPES: u32 = 0x200;
+
+/// The class table at `0xa14f70`, `{classId, hasSubClasses}` in menu order.
+const AUCTION_CLASSES: [(u32, bool); 12] = [
     (2, true),   // Weapon
     (4, true),   // Armor
     (1, true),   // Container
-    (0, false),  // Consumable
-    (7, false),  // Trade Goods
+    (0, true),   // Consumable
+    (16, true),  // Glyph
+    (7, true),   // Trade Goods
     (6, true),   // Projectile
     (11, true),  // Quiver
     (9, true),   // Recipe
-    (5, false),  // Reagent
-    (15, false), // Miscellaneous
+    (3, true),   // Gem
+    (15, true),  // Miscellaneous
+    (12, false), // Quest
 ];
 
-/// `ItemSubClass.dbc` `Flags` bit `0x200`: the subclass offers the inventory-slot rows beneath it
-/// (`GetAuctionInvTypes`, `0x4cfb63`). Set on Armor 0 to 4 only, not Shield, Libram, Idol or Totem.
-const SUBCLASS_OFFERS_INV_TYPES: u32 = 0x200;
+/// The emote a placed bid plays (`0x5a019d`).
+const BID_EMOTE: u32 = 3;
 
 /// The `AuctionHouse.dbc` catalog; without it the sell pane shows no deposit.
 #[derive(Resource)]
 pub(crate) struct AuctionHouses(pub(crate) benilla_formats::AuctionHouseCatalog);
 
-/// A wire row resolved for display. Its 1-based position after the sort is the index the Lua API
-/// uses, so the drain maps a click back to [`Self::auction_id`] through the same sort.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct AuctionRow {
-    pub(crate) auction_id: u32,
-    pub(crate) item_entry: u32,
-    /// The random-suffix roll behind the name's suffix, the hover's enchant lines and the link.
-    pub(crate) random_property_id: u32,
-    pub(crate) count: u32,
-    pub(crate) name: Option<String>,
-    pub(crate) texture: Option<String>,
-    pub(crate) quality: Option<u32>,
-    /// The item's `RequiredLevel`, 0 until its template lands.
-    pub(crate) level: u32,
-    pub(crate) start_bid: u32,
-    pub(crate) min_increment: u32,
-    pub(crate) buyout: u32,
-    pub(crate) current_bid: u32,
-    /// The time-left bucket, `1..=4`.
-    pub(crate) time_left: u32,
-    /// Whether the player holds the high bid; the status sort's key.
-    pub(crate) player_holds_bid: bool,
-    /// `GetAuctionItemInfo`'s eleventh value, per [`high_bidder`].
-    pub(crate) high_bidder: AuctionHighBidder,
-    pub(crate) owner: Option<String>,
-    pub(crate) link: Option<String>,
+/// One row of a list as the reference keeps it (`AuctionItemInfo`): the wire record, its expiry
+/// and whether it is a sold auction from the pending sales.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AuctionEntry {
+    pub(crate) wire: AuctionListEntry,
+    /// The time left at arrival, seconds; the feed stamps [`Self::expires_at`] from it.
+    left_secs: f64,
+    /// The expiry on the VM's `GetTime` clock, stamped by the first feed after arrival.
+    expires_at: Option<f64>,
+    /// A bid landed: the feed holds the expiry at least [`BID_EXTENSION_SECS`] out.
+    extend: bool,
+    pub(crate) sold: bool,
 }
 
-impl AuctionRow {
-    /// The "current bid" column: the opening price until someone bids, since 0 means no bids.
-    pub(crate) fn displayed_bid(&self) -> u32 {
-        if self.current_bid == 0 {
-            self.start_bid
-        } else {
-            self.current_bid
+impl AuctionEntry {
+    pub(crate) fn live(wire: AuctionListEntry) -> Self {
+        Self {
+            left_secs: f64::from(wire.time_left_ms) / 1000.0,
+            wire,
+            expires_at: None,
+            extend: false,
+            sold: false,
         }
     }
+}
+
+/// A row patch from a bid notice: the new bid and step, and the bidder (`None` = the player).
+pub(crate) struct Patch {
+    pub(crate) bid: u32,
+    pub(crate) min_increment: u32,
+    pub(crate) bidder: Option<u64>,
+    pub(crate) extend: bool,
 }
 
 /// One of the three lists.
 #[derive(Debug, Default)]
 pub(crate) struct AuctionListSlot {
-    /// The current page in wire order.
-    pub(crate) entries: Vec<AuctionListEntry>,
-    /// `totalCount`, the match count before the page cap; the pager reads it.
+    pub(crate) entries: Vec<AuctionEntry>,
+    /// The match count before the page cap.
     pub(crate) total: u32,
-    /// A result for this list landed, an empty page included; the refreshes gate on it.
+    /// A result for this list landed since the window opened.
     received: bool,
-    sort: SortStack,
 }
 
-/// What the live probe (`crate::capture::ProbeAuctionPlugin`) reads to tell an empty answer from
-/// none; the client never reads it, and [`AuctionOpen::clear`] does not reset it.
+/// Stacks to sell from, `(bag, slot, count)`.
+type Stacks = Vec<(i64, u32, u32)>;
+
+/// A multi-sell in progress (`m_multisell*`, `m_sellItems`): the stacks it draws from, consumed
+/// from the end, and the stacks still to list.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct MultiSell {
+    auctioneer: u64,
+    /// `(bag, slot, count)` left to draw from.
+    items: Vec<(i64, u32, u32)>,
+    stack_size: u32,
+    pub(crate) remaining: u32,
+    pub(crate) total: u32,
+    bid: u32,
+    buyout: u32,
+    minutes: u32,
+    /// The listing's events fire: more than one stack (`m_havePendingSell`).
+    pending: bool,
+    /// Send the next stack in the drain.
+    send_next: bool,
+}
+
+/// What the live probe reads to tell an empty answer from none; the client never reads it.
 #[derive(Default)]
 pub(crate) struct AuctionWireLog {
     /// List results landed, per list, in [`LIST`]/[`BIDDER`]/[`OWNER`] order.
     pub(crate) list_results: [u32; 3],
-    /// Browse queries that went out; a throttled one does not count.
+    /// Browse queries that went out.
     pub(crate) browse_sent: u32,
     /// The latest `SMSG_AUCTION_COMMAND_RESULT` as `(auction_id, action, error)`.
     pub(crate) last_command: Option<(u32, u32, u32)>,
+    /// Every command result, in arrival order.
+    pub(crate) results: Vec<(u32, u32, u32)>,
+    /// The latest `CMSG_AUCTION_LIST_ITEMS` `(slot, class, subclass)` filters.
+    pub(crate) last_filter: Option<(u32, u32, u32)>,
+    /// The latest `CMSG_AUCTION_LIST_ITEMS` sort criteria.
+    pub(crate) last_sort: Vec<(u8, bool)>,
+    /// Every `CMSG_AUCTION_SELL_ITEM` sent: its `(count per item)` list.
+    pub(crate) sells: Vec<Vec<u32>>,
 }
 
 /// The open auctioneer session; cleared on a client-side close, on walking away and on disconnect.
 #[derive(Resource, Default)]
 pub(crate) struct AuctionOpen {
     pub(crate) auctioneer: Option<u64>,
-    /// The `AuctionHouse.dbc` row (1..=7), which keys the deposit rate.
+    /// The `AuctionHouse.dbc` row, which keys the deposit rate.
     pub(crate) house_id: u32,
     pub(crate) lists: [AuctionListSlot; 3],
-    /// Fire `AUCTION_HOUSE_SHOW` next feed: a hello reply landed.
+    /// The player's guid, which the feed keeps current for row patches.
+    player: u64,
     show_requested: bool,
-    /// Fire `NEW_AUCTION_UPDATE` next feed: the sell slot changed.
-    sell_slot_dirty: bool,
-    /// Per list, a result landed, so its event is owed even for an identical page: the Browse
-    /// pane leaves "Searching" only on it (`Blizzard_AuctionUI.lua:187`). Only that list's: the
-    /// Auctions tab's update needs the `page` its `OnShow` sets (`Blizzard_AuctionUI.lua:817`).
+    /// A closed house answered the hello: fire `AUCTION_HOUSE_DISABLED`.
+    disabled_requested: bool,
+    /// Per list, a result landed, so its event is owed even for an identical page.
     list_result_landed: [bool; 3],
-    /// Empty the sell slot next feed: a listing was accepted, and the stale `(bag, slot)` would
-    /// auction whatever lands there next.
-    sell_slot_taken: bool,
-    /// The `Time::elapsed_secs_f64` before which a browse query is refused; opening clears it.
-    query_gate: Option<f64>,
-    /// Messages queued for [`feed_auction`]; [`Self::clear`] keeps them, since a sale notice can
-    /// land after a close.
+    /// Messages queued for [`feed_auction`]; kept across a close, as a sale notice can land after.
     pub(crate) messages: Vec<AuctionMessage>,
-    /// A list we hold went stale (a sale, an outbid, a cancel): the drain re-asks its page 0.
-    pending_owner_refresh: bool,
-    pending_bidder_refresh: bool,
+    /// `m_lastQueryTime`, on `Time::elapsed_secs_f64`.
+    last_query: [Option<f64>; 3],
+    /// `m_queryPending`: sends not yet answered.
+    pending: [i32; 3],
+    /// `m_desiredDelayTime`, seconds.
+    delay_secs: f64,
+    last_get_all: Option<f64>,
+    /// `m_canGetOwnerList` / `m_canGetBidderList`.
+    can_get_owner: bool,
+    can_get_bidder: bool,
+    last_bidder_page: u32,
+    /// The bid in flight, which a `BID_PLACED` result writes into the browse row.
+    last_bid_amount: u32,
+    /// `m_outbidItems`, `(house, auction)`: kept across sessions, sent with each bidder query.
+    pub(crate) outbid: Vec<(u32, u32)>,
+    /// Sends the drain owes: the owner list after a listing, the sales after a removal, the
+    /// bidder list after a bid, the bid emote.
+    owner_list_wanted: bool,
+    pending_sales_wanted: bool,
+    bidder_list_wanted: Option<u32>,
+    emote_wanted: bool,
+    pub(crate) multisell: Option<MultiSell>,
+    /// `AUCTION_MULTISELL_*` events for the feed, in order.
+    multisell_events: Vec<(&'static str, Vec<ScriptValue>)>,
+    /// Empty the VM's sell slot next feed (`ClearSellItem`).
+    sell_slot_clear: bool,
+    /// The drain took a query: the feed re-pushes the gate even if it reads unchanged.
+    gate_dirty: bool,
     pub(crate) wire: AuctionWireLog,
 }
 
-/// One of the reference's twenty auction message rows: the twelve refusals (`0x16c`-`0x177`) are
-/// kind 2, on the red `UIErrorsFrame`; the eight outcomes (`0x178`-`0x17f`) are kind 0, in chat.
+/// One of the reference's auction message rows, with the item whose name fills a `%s`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AuctionMessage {
     pub(crate) key: &'static str,
-    /// The entry whose name fills the `%s`. The reference fills a plain name, never a link
-    /// (`0x5d8b00`), with its random suffix; this carries no roll, so the name is unsuffixed.
-    pub(crate) item: Option<u32>,
+    /// The entry and random property whose suffixed name fills the `%s` (`BuildItemName`).
+    pub(crate) item: Option<(u32, i32)>,
 }
 
 impl AuctionMessage {
-    pub(crate) fn chat(key: &'static str) -> Self {
+    pub(crate) fn key(key: &'static str) -> Self {
         Self { key, item: None }
     }
 
-    /// A line naming one item: the five `_S` outcomes.
-    pub(crate) fn chat_item(key: &'static str, item: u32) -> Self {
+    pub(crate) fn item(key: &'static str, entry: u32, property: i32) -> Self {
         Self {
             key,
-            item: Some(item),
+            item: Some((entry, property)),
         }
-    }
-
-    /// A refusal; none of the twelve takes a fill.
-    pub(crate) fn error(key: &'static str) -> Self {
-        Self { key, item: None }
     }
 }
 
 impl AuctionOpen {
-    /// The hello reply: a new auctioneer resets the lists and sort stacks; the same one keeps them
-    /// and re-shows, as the reference re-fires its show on every greeting.
+    /// `SetAuctioneer` (`0x59f000`): the gates open, the lists empty and the window shows.
     pub(crate) fn open(&mut self, auctioneer: u64, house_id: u32) {
-        if self.auctioneer != Some(auctioneer) {
-            self.auctioneer = Some(auctioneer);
-            self.lists = Default::default();
-        }
+        self.auctioneer = Some(auctioneer);
         self.house_id = house_id;
-        // The reference zeroes the browse gate in the handler that stores the auctioneer.
-        self.query_gate = None;
+        self.lists = Default::default();
+        self.last_query = [None; 3];
+        self.pending = [0; 3];
+        self.delay_secs = DEFAULT_QUERY_DELAY_SECS;
+        self.can_get_owner = true;
+        self.can_get_bidder = true;
+        self.last_bidder_page = 0;
+        self.sell_slot_clear = true;
         self.show_requested = true;
+        self.disabled_requested = false;
+        self.gate_dirty = true;
     }
 
-    /// Replace one list's page; that list's event is owed even for an identical page.
-    pub(crate) fn set_list(&mut self, which: usize, entries: Vec<AuctionListEntry>, total: u32) {
+    /// `CanSendQuery` (`0x59a2f0`): nothing in flight, and the delay past the last send or answer.
+    pub(crate) fn can_send(&self, list: usize, now: f64) -> bool {
+        self.pending[list] <= 0 && self.last_query[list].is_none_or(|t| now - t >= self.delay_secs)
+    }
+
+    fn can_get_all(&self, now: f64) -> bool {
+        self.last_get_all
+            .is_none_or(|t| now - t >= GET_ALL_COOLDOWN_SECS)
+    }
+
+    /// A query of `list` went out.
+    pub(crate) fn sent(&mut self, list: usize, now: f64) {
+        self.pending[list] = (self.pending[list] + 1).max(0);
+        self.last_query[list] = Some(now);
+    }
+
+    /// A result of `list` landed: one query answered, and its delay paces the next.
+    pub(crate) fn answered(&mut self, list: usize, now: f64, delay_ms: Option<u32>) {
+        self.pending[list] = (self.pending[list] - 1).max(0);
+        self.last_query[list] = Some(now);
+        if let Some(ms) = delay_ms {
+            self.delay_secs = f64::from(ms) / 1000.0;
+        }
+    }
+
+    /// Replace a list's page. The owner list keeps its sold rows (`0x59e480`).
+    pub(crate) fn set_list(&mut self, which: usize, entries: Vec<AuctionEntry>, total: u32) {
         self.list_result_landed[which] = true;
         let slot = &mut self.lists[which];
         slot.received = true;
-        slot.entries = entries;
-        slot.total = total.max(slot.entries.len() as u32);
+        if which == OWNER {
+            slot.entries.retain(|e| e.sold);
+            slot.entries.extend(entries);
+        } else {
+            slot.entries = entries;
+        }
+        slot.total = total;
     }
 
-    /// The auction id at a 1-based row of the sorted view, the order the player clicked in.
-    fn auction_id_at(index_1based: u32, rows: &[AuctionRow]) -> Option<u32> {
-        index_1based
-            .checked_sub(1)
-            .and_then(|i| rows.get(i as usize))
-            .map(|r| r.auction_id)
+    /// Replace the owner list's sold rows, keeping the live ones (`0x59e880`).
+    pub(crate) fn set_sold(&mut self, sold: Vec<AuctionEntry>) {
+        self.list_result_landed[OWNER] = true;
+        let slot = &mut self.lists[OWNER];
+        slot.received = true;
+        slot.entries.retain(|e| !e.sold);
+        slot.entries.extend(sold);
     }
 
-    pub(crate) fn sell_slot_taken(&mut self) {
-        self.sell_slot_taken = true;
+    /// Patch one auction's bid on `list`.
+    pub(crate) fn patch(&mut self, list: usize, auction_id: u32, p: Patch) {
+        let player = self.player;
+        if let Some(e) = self.lists[list]
+            .entries
+            .iter_mut()
+            .find(|e| e.wire.auction_id == auction_id)
+        {
+            e.wire.current_bid = p.bid;
+            e.wire.min_increment = p.min_increment;
+            e.wire.bidder_guid = p.bidder.unwrap_or(player);
+            e.extend |= p.extend;
+        }
     }
 
-    /// Re-query our listings next frame, only if we hold them: the reference patches its cached
-    /// rows, so a list it never fetched announces nothing.
-    pub(crate) fn refresh_owner(&mut self) {
-        self.pending_owner_refresh |= self.lists[OWNER].received;
+    /// `AuctionItemExpired` (`0x59f2f0`): the auction leaves every list; leaving the owner list
+    /// asks the pending sales again.
+    pub(crate) fn expire(&mut self, auction_id: u32) {
+        for list in [LIST, OWNER, BIDDER] {
+            let slot = &mut self.lists[list];
+            if let Some(pos) = slot
+                .entries
+                .iter()
+                .position(|e| e.wire.auction_id == auction_id)
+            {
+                slot.entries.remove(pos);
+                slot.total = slot.total.saturating_sub(1);
+                if list == OWNER {
+                    self.pending_sales_wanted = true;
+                }
+            }
+        }
     }
 
-    /// Re-query our bids next frame, under [`Self::refresh_owner`]'s rule.
-    pub(crate) fn refresh_bidder(&mut self) {
-        self.pending_bidder_refresh |= self.lists[BIDDER].received;
+    fn queue_multisell_event(&mut self, event: &'static str, args: &[u32]) {
+        self.multisell_events.push((
+            event,
+            args.iter()
+                .map(|&n| ScriptValue::Int(i64::from(n)))
+                .collect(),
+        ));
     }
 
-    /// Close the window client-side; the reference sends nothing.
+    /// `OnMultisellFailure` (`0x59ab20`): a pending multi-sell ends, unlocked, its slot emptied,
+    /// and fires `AUCTION_MULTISELL_FAILURE`.
+    pub(crate) fn multisell_failure(&mut self) {
+        if let Some(ms) = self.multisell.take() {
+            if ms.pending {
+                self.queue_multisell_event("AUCTION_MULTISELL_FAILURE", &[]);
+            }
+            self.sell_slot_clear = true;
+        }
+    }
+
+    /// `SellNextItem` (`0x59ba80`): draw one stack from the end of the gathered items, as
+    /// `(bag, slot, count)` per item; `None` once every stack is out, or on running dry.
+    fn next_stack(&mut self) -> Option<(Stacks, MultiSell)> {
+        let ms = self.multisell.as_mut()?;
+        if ms.remaining == 0 {
+            self.multisell = None;
+            self.sell_slot_clear = true;
+            return None;
+        }
+        ms.remaining -= 1;
+        let mut rest = ms.stack_size;
+        let mut last = ms.items.len().checked_sub(1)?;
+        while rest > ms.items[last].2 {
+            rest -= ms.items[last].2;
+            let Some(prev) = last.checked_sub(1) else {
+                self.multisell_failure();
+                return None;
+            };
+            last = prev;
+        }
+        let mut send: Vec<(i64, u32, u32)> = ms.items[last + 1..].iter().rev().copied().collect();
+        send.push((ms.items[last].0, ms.items[last].1, rest));
+        let emptied = ms.items[last].2 == rest;
+        ms.items[last].2 -= rest;
+        ms.items.truncate(if emptied { last } else { last + 1 });
+        let snapshot = ms.clone();
+        Some((send, snapshot))
+    }
+
+    /// Close the window client-side (`CloseAuctionHouse` `0x59f150`); the reference sends nothing.
     pub(crate) fn clear(&mut self) {
+        self.multisell_failure();
         self.auctioneer = None;
         self.house_id = 0;
         self.lists = Default::default();
         self.show_requested = false;
-        self.sell_slot_dirty = false;
-        self.query_gate = None;
-        self.pending_owner_refresh = false;
-        self.pending_bidder_refresh = false;
         self.list_result_landed = [false; 3];
-        self.sell_slot_taken = false;
-    }
-
-    pub(crate) fn clear_session(&mut self) {
-        self.clear();
+        self.can_get_owner = false;
+        self.can_get_bidder = false;
+        self.owner_list_wanted = false;
+        self.pending_sales_wanted = false;
+        self.bidder_list_wanted = None;
+        self.emote_wanted = false;
+        self.sell_slot_clear = true;
     }
 }
 
@@ -287,106 +416,110 @@ impl Plugin for UiAuctionPlugin {
     }
 }
 
-/// The wire's unclamped milliseconds left, as the reference's bucket 1 to 4.
-fn time_left_bucket(ms: u32) -> u32 {
-    if ms >= TIME_LEFT_IMPLAUSIBLE_MS {
-        return 1;
-    }
-    if ms < TIME_LEFT_SHORT_MS {
-        1
-    } else if ms < TIME_LEFT_MEDIUM_MS {
-        2
-    } else if ms < TIME_LEFT_LONG_MS {
-        3
-    } else {
-        4
-    }
-}
-
-/// `GetAuctionItemInfo`'s `highBidder` for a row of `list` (`0x4cf12a`–`0x4cf1a0`). On an
-/// `"owner"` row the player owns (`0x4cf131`–`0x4cf142` compare its owner guid with the player's),
-/// the bidder guid (vmangos `AuctionHouseMgr.cpp:840`) goes through the name cache: nil with no
-/// bid (`0x4cf150`) or until the asked name lands (`0x4cf16e`), whose arrival re-fires the owned
-/// list's update (`0x4cf2b0`), here the feed's diff. Any other row: `1` if the player holds the
-/// bid, else nil (`0x4cf17b`–`0x4cf1a0`).
+/// `GetAuctionItemInfo`'s `highBidder` for a row of `list` (`0x59d5e0`): on an `"owner"` row the
+/// player owns, the bidder's name through the name cache (nil with no bid or until it lands);
+/// any other row, `1` if the player holds the bid, else nil.
 fn high_bidder(
     list: usize,
-    entry: &AuctionListEntry,
+    entry: &AuctionEntry,
     self_guid: Option<u64>,
     names: &NameCache,
     commands: &NetCommands,
 ) -> AuctionHighBidder {
-    let owned = list == OWNER && self_guid.is_some_and(|g| g == entry.owner_guid);
+    let owner = if entry.sold {
+        self_guid.unwrap_or(0)
+    } else {
+        entry.wire.owner_guid
+    };
+    let owned = list == OWNER && self_guid.is_some_and(|g| g == owner);
     if owned {
-        if entry.bidder_guid == 0 {
+        if entry.wire.bidder_guid == 0 {
             return AuctionHighBidder::Nil;
         }
         return names
-            .resolve(entry.bidder_guid, commands)
+            .resolve(entry.wire.bidder_guid, commands)
             .map_or(AuctionHighBidder::Nil, |n| {
                 AuctionHighBidder::Name(n.to_string())
             });
     }
-    if self_guid.is_some_and(|g| g == entry.bidder_guid) {
+    if self_guid.is_some_and(|g| g == entry.wire.bidder_guid) {
         AuctionHighBidder::Player
     } else {
         AuctionHighBidder::Nil
     }
 }
 
-/// One wire entry of `list` as a display row, through the ask-once template and name caches; a
-/// `None` fills in when its answer lands. The link carries the row's enchant, property and suffix.
+/// The DBC catalogs a row resolves through.
+struct RowCatalogs<'a> {
+    items: &'a Items,
+    icons: Option<&'a ItemDisplays>,
+    names: &'a NameCache,
+    commands: &'a NetCommands,
+    rolls: crate::items::RollCatalogs<'a>,
+}
+
+/// One entry of `list` as a VM row, through the ask-once template and name caches; a `None`
+/// fills in when its answer lands.
 fn resolve_row(
     list: usize,
-    entry: &AuctionListEntry,
+    entry: &AuctionEntry,
     self_guid: Option<u64>,
-    items: &Items,
-    icons: Option<&ItemDisplays>,
-    names: &NameCache,
-    commands: &NetCommands,
-    rolls: crate::items::RollCatalogs,
-) -> AuctionRow {
-    let template = items.template(entry.item_entry, 0, commands);
-    let roll = entry.random_property_id as u32;
-    let name = template.map(|t| rolls.name(&t.name, roll));
+    c: &RowCatalogs,
+) -> AuctionItemRow {
+    let w = &entry.wire;
+    let template = c.items.template(w.item_entry, 0, c.commands);
+    let roll = w.random_property_id as u32;
+    let name = template.map(|t| c.rolls.name(&t.name, roll));
     let quality = template.map(|t| t.quality);
     let level = template.map_or(0, |t| t.required_level);
-    let texture = crate::ui_items::item_icon(icons, template.map_or(0, |t| t.display_info_id));
+    let texture = crate::ui_items::item_icon(c.icons, template.map_or(0, |t| t.display_info_id));
     let link = name.as_ref().map(|n| {
         crate::ui_items::item_link_full(
-            entry.item_entry,
-            entry.perm_enchant,
+            w.item_entry,
+            w.enchants[0].id,
             roll,
-            entry.suffix_factor,
+            w.suffix_factor,
             n,
             quality.unwrap_or(0),
         )
     });
-
-    AuctionRow {
-        auction_id: entry.auction_id,
-        item_entry: entry.item_entry,
+    let owner_guid = if entry.sold {
+        self_guid.unwrap_or(0)
+    } else {
+        w.owner_guid
+    };
+    let bidder_status = if w.bidder_guid == 0 {
+        0
+    } else if self_guid == Some(w.bidder_guid) {
+        2
+    } else {
+        1
+    };
+    AuctionItemRow {
+        auction_id: w.auction_id,
+        item_id: w.item_entry,
         random_property_id: roll,
-        count: entry.count,
         name,
         texture,
+        count: w.count,
         quality,
         level,
-        start_bid: entry.start_bid,
-        min_increment: entry.min_increment,
-        buyout: entry.buyout,
-        current_bid: entry.current_bid,
-        time_left: time_left_bucket(entry.time_left_ms),
-        player_holds_bid: self_guid.is_some_and(|g| g == entry.bidder_guid),
-        high_bidder: high_bidder(list, entry, self_guid, names, commands),
-        owner: names
-            .resolve(entry.owner_guid, commands)
-            .map(str::to_string),
+        min_bid: w.start_bid,
+        min_increment: w.min_increment,
+        buyout_price: w.buyout,
+        bid_amount: w.current_bid,
+        high_bidder: high_bidder(list, entry, self_guid, c.names, c.commands),
+        owner: c.names.resolve(owner_guid, c.commands).map(str::to_string),
+        owner_guid,
+        bidder_status,
+        expires_at: entry.expires_at.unwrap_or(0.0),
+        sold: entry.sold,
         link,
     }
 }
 
-/// The Browse tab's category tree from the player's own DBCs; the addon-corpus survey reuses it.
+/// The Browse tab's category tree from the player's own DBCs, the twelve rows of the class
+/// table; the addon-corpus survey reuses it.
 pub(crate) fn categories(
     classes: Option<&crate::ui_items::ItemClasses>,
     subclasses: Option<&crate::ui_items::ItemSubClasses>,
@@ -396,8 +529,8 @@ pub(crate) fn categories(
     };
     AUCTION_CLASSES
         .iter()
-        .filter_map(|&(class_id, has_subclass_filter)| {
-            let name = classes.0.name(class_id)?.to_string();
+        .map(|&(class_id, has_subclass_filter)| {
+            let name = classes.0.name(class_id).unwrap_or("").to_string();
             let subs = subclasses
                 .0
                 .subclasses_of(class_id)
@@ -405,69 +538,24 @@ pub(crate) fn categories(
                 .filter(|&sub| {
                     subclasses.0.display_flags(class_id, sub) & SUBCLASS_HIDDEN_FROM_AUCTIONS == 0
                 })
-                .filter_map(|sub| {
-                    Some(AuctionSubCategory {
-                        sub_id: sub,
-                        name: subclasses.0.name(class_id, sub)?.to_string(),
-                        has_inv_types: subclasses.0.flags(class_id, sub)
-                            & SUBCLASS_OFFERS_INV_TYPES
-                            != 0,
-                    })
+                .map(|sub| AuctionSubCategory {
+                    sub_id: sub,
+                    name: subclasses.0.name(class_id, sub).unwrap_or("").to_string(),
+                    has_inv_types: subclasses.0.flags(class_id, sub) & SUBCLASS_OFFERS_INV_TYPES
+                        != 0,
                 })
                 .collect();
-            Some(AuctionCategory {
+            AuctionCategory {
                 class_id,
                 name,
                 has_subclass_filter,
                 subclasses: subs,
-            })
+            }
         })
         .collect()
 }
 
-/// List `list`'s rows in display order.
-fn rows_for(
-    list: usize,
-    slot: &AuctionListSlot,
-    self_guid: Option<u64>,
-    items: &Items,
-    icons: Option<&ItemDisplays>,
-    names: &NameCache,
-    commands: &NetCommands,
-    rolls: crate::items::RollCatalogs,
-) -> Vec<AuctionRow> {
-    let mut rows: Vec<AuctionRow> = slot
-        .entries
-        .iter()
-        .map(|e| resolve_row(list, e, self_guid, items, icons, names, commands, rolls))
-        .collect();
-    slot.sort.apply(&mut rows);
-    rows
-}
-
-fn to_script_row(r: &AuctionRow) -> AuctionItemRow {
-    AuctionItemRow {
-        auction_id: r.auction_id,
-        item_id: r.item_entry,
-        random_property_id: r.random_property_id,
-        name: r.name.clone(),
-        texture: r.texture.clone(),
-        count: r.count,
-        quality: r.quality,
-        level: r.level,
-        min_bid: r.start_bid,
-        min_increment: r.min_increment,
-        buyout_price: r.buyout,
-        bid_amount: r.current_bid,
-        high_bidder: r.high_bidder.clone(),
-        owner: r.owner.clone(),
-        time_left: r.time_left,
-        link: r.link.clone(),
-    }
-}
-
-/// The DBC catalogs as one system param, since [`feed_auction`] is at Bevy's 16-param limit: the
-/// class tables for the category tree and the random-suffix pair for a rolled listing.
+/// The DBC catalogs as one system param, since [`feed_auction`] is at Bevy's 16-param limit.
 type AuctionCatalogs<'w> = (
     Option<Res<'w, crate::ui_items::ItemClasses>>,
     Option<Res<'w, crate::ui_items::ItemSubClasses>>,
@@ -490,7 +578,7 @@ fn feed_auction(
     self_q: Query<&crate::net::Guid, With<SelfPlayer>>,
     mut last: Local<crate::ui_script::VmMemo<Option<AuctionState>>>,
     mut last_open: Local<crate::ui_script::VmMemo<Option<u64>>>,
-    mut last_can_query: Local<crate::ui_script::VmMemo<bool>>,
+    mut last_gate: Local<crate::ui_script::VmMemo<([bool; 3], bool)>>,
     mut last_sell: Local<crate::ui_script::VmMemo<Option<(i64, u32)>>>,
     mut last_classes: Local<crate::ui_script::VmMemo<Vec<AuctionCategory>>>,
 ) {
@@ -499,11 +587,10 @@ fn feed_auction(
     };
     let last = last.get(&script);
     let last_open = last_open.get(&script);
-    let last_can_query = last_can_query.get(&script);
+    let last_gate = last_gate.get(&script);
     let last_sell = last_sell.get(&script);
 
-    // The class tree needs no session: the stock `AuctionFrameBrowse_OnLoad` reads
-    // `GetAuctionItemClasses()` when the addon loads (`Blizzard_AuctionUI.lua:174`).
+    // The class tree needs no session: the stock `AuctionFrameBrowse_OnLoad` reads it at load.
     let classes_now = categories(catalogs.0.as_deref(), catalogs.1.as_deref());
     let last_classes = last_classes.get(&script);
     if *last_classes != classes_now {
@@ -511,16 +598,21 @@ fn feed_auction(
         script.set_auction_item_classes(classes_now);
     }
 
+    let rolls = crate::items::RollCatalogs {
+        props: catalogs.2.as_deref(),
+        enchants: catalogs.3.as_deref(),
+    };
+
     // A `_S` line whose item is not cached yet stays queued, as the reference defers it through
-    // `0x4cd190`; the `items.template` call below asks for it.
+    // its item-cache callback (`0x59a400`).
     {
         let mut deferred = Vec::new();
         let mut lines = Vec::new();
         for msg in std::mem::take(&mut auction.messages) {
             let fill = match msg.item {
                 None => None,
-                Some(entry) => match items.template(entry, 0, &commands) {
-                    Some(t) => Some(t.name.clone()),
+                Some((entry, property)) => match items.template(entry, 0, &commands) {
+                    Some(t) => Some(rolls.name(&t.name, property as u32)),
                     None => {
                         deferred.push(msg);
                         continue;
@@ -541,27 +633,36 @@ fn feed_auction(
     }
 
     let self_guid = self_q.iter().next().map(|g| g.0);
-    let rolls = crate::items::RollCatalogs {
-        props: catalogs.2.as_deref(),
-        enchants: catalogs.3.as_deref(),
+    auction.player = self_guid.unwrap_or(0);
+
+    // Stamp each new row's expiry on the VM clock, and hold a bid row open the extension.
+    let vm_now = script.now();
+    for slot in &mut auction.lists {
+        for e in &mut slot.entries {
+            let at = *e.expires_at.get_or_insert(vm_now + e.left_secs);
+            if std::mem::take(&mut e.extend) {
+                e.expires_at = Some(at.max(vm_now + BID_EXTENSION_SECS));
+            }
+        }
+    }
+
+    let row_catalogs = RowCatalogs {
+        items: &items,
+        icons: icons.as_deref(),
+        names: &names,
+        commands: &commands,
+        rolls,
     };
     let fresh = auction.auctioneer.map(|_| {
         let lists = [LIST, BIDDER, OWNER].map(|i| {
             let slot = &auction.lists[i];
-            let rows = rows_for(
-                i,
-                slot,
-                self_guid,
-                &items,
-                icons.as_deref(),
-                &names,
-                &commands,
-                rolls,
-            );
             AuctionListState {
-                rows: rows.iter().map(to_script_row).collect(),
-                total: slot.total.max(rows.len() as u32),
-                sort: slot.sort.pairs(),
+                rows: slot
+                    .entries
+                    .iter()
+                    .map(|e| resolve_row(i, e, self_guid, &row_catalogs))
+                    .collect(),
+                total: slot.total,
             }
         });
         AuctionState {
@@ -576,20 +677,27 @@ fn feed_auction(
     let opened = last_open.is_none() && auction.auctioneer.is_some();
     let closed = last_open.is_some() && auction.auctioneer.is_none();
     let show_requested = std::mem::take(&mut auction.show_requested);
-    let landed = std::mem::take(&mut auction.list_result_landed);
+    // The owner list announces itself only with both of its replies in (`0x59e86a`).
+    let owner_settled = auction.pending[OWNER] <= 0;
+    let mut landed = std::mem::take(&mut auction.list_result_landed);
+    if !owner_settled && landed[OWNER] {
+        landed[OWNER] = false;
+        auction.list_result_landed[OWNER] = true;
+    }
     let changed = fresh != *last;
-    // Owed per list: a result landed, or an async name or template filled one of its rows.
     let owed: [bool; 3] = std::array::from_fn(|i| {
         landed[i] || fresh.as_ref().map(|s| &s.lists[i]) != last.as_ref().map(|s| &s.lists[i])
     });
     if changed {
         script.set_auction(fresh.clone());
     }
+    if std::mem::take(&mut auction.disabled_requested) {
+        script.fire_event("AUCTION_HOUSE_DISABLED", vec![]);
+    }
     if opened {
         script.fire_event("AUCTION_HOUSE_SHOW", vec![]);
     } else if closed {
         script.fire_event("AUCTION_HOUSE_CLOSED", vec![]);
-        script.clear_auction_sell_item();
     } else if auction.auctioneer.is_some() {
         if show_requested {
             script.fire_event("AUCTION_HOUSE_SHOW", vec![]);
@@ -601,30 +709,102 @@ fn feed_auction(
         if owed[BIDDER] {
             script.fire_event("AUCTION_BIDDER_LIST_UPDATE", vec![]);
         }
-        if owed[OWNER] {
+        if owed[OWNER] && owner_settled {
             script.fire_event("AUCTION_OWNED_LIST_UPDATE", vec![]);
         }
     }
     *last = fresh;
     *last_open = auction.auctioneer;
 
-    // A listing was accepted: drop the staged item before anything reads the slot.
-    if std::mem::take(&mut auction.sell_slot_taken) {
+    for (event, args) in std::mem::take(&mut auction.multisell_events) {
+        match event {
+            "AUCTION_MULTISELL_START" => script.fire_event("AUCTION_MULTISELL_START", args),
+            "AUCTION_MULTISELL_UPDATE" => script.fire_event("AUCTION_MULTISELL_UPDATE", args),
+            _ => script.fire_event("AUCTION_MULTISELL_FAILURE", args),
+        }
+    }
+    if std::mem::take(&mut auction.sell_slot_clear) {
         script.clear_auction_sell_item();
     }
+    let locked: Vec<(i64, u32)> = auction
+        .multisell
+        .as_ref()
+        .filter(|ms| ms.pending)
+        .map(|ms| ms.items.iter().map(|&(b, s, _)| (b, s)).collect())
+        .unwrap_or_default();
+    script.set_auction_locked(locked);
 
     let sell = script.auction_sell_item();
-    if sell != *last_sell || std::mem::take(&mut auction.sell_slot_dirty) {
+    if sell != *last_sell {
         *last_sell = sell;
         script.fire_event("NEW_AUCTION_UPDATE", vec![]);
     }
 
-    // The browse gate, pushed when it changes; the Search button polls it every frame.
+    // The throttle, pushed when it changes or the drain took a query; the Search button polls it.
     let now = time.elapsed_secs_f64();
-    let can_query = auction.query_gate.is_none_or(|gate| now >= gate);
-    if can_query != *last_can_query {
-        script.set_auction_can_query(can_query);
-        *last_can_query = can_query;
+    let gate = (
+        [LIST, BIDDER, OWNER].map(|i| auction.can_send(i, now)),
+        auction.can_get_all(now),
+    );
+    if gate != *last_gate || std::mem::take(&mut auction.gate_dirty) {
+        script.set_auction_can_query(gate.0, gate.1);
+        *last_gate = gate;
+    }
+}
+
+/// The sends the drain makes, sharing one command channel.
+struct Sender<'a> {
+    commands: &'a NetCommands,
+    auctioneer: u64,
+}
+
+impl Sender<'_> {
+    fn send(&self, command: ClientCommand) {
+        let _ = self.commands.0.send(command);
+    }
+
+    /// `GetOwnerList` (`0x59cc50`): the owner list and the pending sales, two answers owed.
+    fn owner_list(&self, auction: &mut AuctionOpen, now: f64) {
+        if !auction.can_get_owner || !auction.can_send(OWNER, now) {
+            debug!(
+                "ui_auction: owner list held: can_get {} pending {}",
+                auction.can_get_owner, auction.pending[OWNER]
+            );
+            return;
+        }
+        debug!("ui_auction: owner list and pending sales asked");
+        self.send(ClientCommand::AuctionListOwnerItems {
+            auctioneer: self.auctioneer,
+            list_from: 0,
+        });
+        self.send(ClientCommand::AuctionListPendingSales {
+            auctioneer: self.auctioneer,
+        });
+        auction.sent(OWNER, now);
+        auction.pending[OWNER] += 1;
+        auction.can_get_owner = false;
+    }
+
+    /// `BidderListItems` (`0x59ce50`) with this house's outbid ids.
+    fn bidder_list(&self, auction: &mut AuctionOpen, list_from: u32, now: f64) {
+        if !auction.can_get_bidder {
+            return;
+        }
+        let house = auction.house_id;
+        let auction_ids = auction
+            .outbid
+            .iter()
+            .filter(|&&(h, _)| h == house)
+            .map(|&(_, id)| id)
+            .collect();
+        self.send(ClientCommand::AuctionListBidderItems {
+            auctioneer: self.auctioneer,
+            list_from,
+            auction_ids,
+        });
+        auction.sent(BIDDER, now);
+        auction.can_get_bidder = false;
+        auction.last_bidder_page = list_from;
     }
 }
 
@@ -635,157 +815,169 @@ fn drain_auction(
     commands: Res<NetCommands>,
     time: Res<Time>,
     objects: Objects,
-    items: Res<Items>,
-    icons: Option<Res<ItemDisplays>>,
-    names: Res<NameCache>,
-    self_q: Query<(&ObjectStore, &crate::net::Guid), With<SelfPlayer>>,
-    props: Option<Res<crate::items::RandomProperties>>,
-    enchants: Option<Res<crate::items::Enchants>>,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
 ) {
-    let rolls = crate::items::RollCatalogs {
-        props: props.as_deref(),
-        enchants: enchants.as_deref(),
-    };
     let Some(mut script) = script else {
         return;
     };
     let Some(auctioneer) = auction.auctioneer else {
-        // No session: honor a stray close and drop every other intent.
-        if script.take_auction_close() {
-            auction.clear();
-        }
+        // No session: drop every intent.
+        let _ = script.take_auction_close();
         let _ = script.take_auction_query();
         let _ = script.take_auction_owner_query();
         let _ = script.take_auction_bidder_query();
         let _ = script.take_auction_bids();
         let _ = script.take_auction_cancels();
         let _ = script.take_auction_start();
-        let _ = script.take_auction_sorts();
+        let _ = script.take_auction_cancel_sell();
         return;
     };
+    let now = time.elapsed_secs_f64();
+    let tx = Sender {
+        commands: &commands,
+        auctioneer,
+    };
+    let guid_of = |bag: i64, slot: u32| -> Option<u64> {
+        let store = self_q.iter().next()?;
+        crate::ui_items::slot_guid(&store.0, bag, slot.saturating_sub(1) as u8, &objects)
+    };
 
-    // The browse query, behind the gate the Search button reads.
+    // The browse query, behind the gate the binding already read (`0x59bcf0`).
     if let Some(q) = script.take_auction_query() {
-        let now = time.elapsed_secs_f64();
-        if auction.query_gate.is_none_or(|gate| now >= gate) {
-            auction.query_gate = Some(now + QUERY_THROTTLE_SECS);
+        auction.gate_dirty = true;
+        if auction.can_send(LIST, now) && (!q.get_all || auction.can_get_all(now)) {
             auction.wire.browse_sent += 1;
-            let _ = commands.0.send(ClientCommand::AuctionListItems {
+            auction.wire.last_sort = q.sort.clone();
+            auction.wire.last_filter = Some((q.inv_type, q.class, q.sub_class));
+            tx.send(ClientCommand::AuctionListItems {
                 auctioneer,
-                list_from: q.page.saturating_mul(50),
-                searched_name: q.name,
-                level_min: u8::try_from(q.min_level).unwrap_or(u8::MAX),
-                level_max: u8::try_from(q.max_level).unwrap_or(u8::MAX),
-                slot_id: q.inv_type.unwrap_or(auction_filter::ANY),
-                // Already ids: the binding maps menu positions as `0x4ce980` does.
-                main_category: q.class.unwrap_or(auction_filter::ANY),
-                sub_category: q.sub_class.unwrap_or(auction_filter::ANY),
-                quality: q.quality.unwrap_or(auction_filter::ANY),
-                usable: u8::from(q.usable_only),
+                query: AuctionListQuery {
+                    list_from: q.list_from,
+                    searched_name: q.name,
+                    level_min: q.min_level,
+                    level_max: q.max_level,
+                    slot_id: q.inv_type,
+                    main_category: q.class,
+                    sub_category: q.sub_class,
+                    quality: q.quality,
+                    usable: q.usable,
+                    get_all: q.get_all,
+                    sort: q.sort,
+                },
             });
-        }
-    }
-
-    if std::mem::take(&mut auction.pending_owner_refresh) {
-        let _ = commands.0.send(ClientCommand::AuctionListOwnerItems {
-            auctioneer,
-            list_from: 0,
-        });
-    }
-    if std::mem::take(&mut auction.pending_bidder_refresh) {
-        let _ = commands.0.send(ClientCommand::AuctionListBidderItems {
-            auctioneer,
-            list_from: 0,
-            auction_ids: Vec::new(),
-        });
-    }
-
-    if let Some(page) = script.take_auction_owner_query() {
-        let _ = commands.0.send(ClientCommand::AuctionListOwnerItems {
-            auctioneer,
-            list_from: page.saturating_mul(50),
-        });
-    }
-    if let Some(page) = script.take_auction_bidder_query() {
-        // An empty refresh set: the reference sends the ids it was outbid on (it keeps eight),
-        // which this does not track, so only the auctions we lead are listed.
-        let _ = commands.0.send(ClientCommand::AuctionListBidderItems {
-            auctioneer,
-            list_from: page.saturating_mul(50),
-            auction_ids: Vec::new(),
-        });
-    }
-
-    // Bids and cancels map the clicked row through the sorted view the feed pushed, roll included.
-    let self_guid = self_q.iter().next().map(|(_, g)| g.0);
-    let bids = script.take_auction_bids();
-    let cancels = script.take_auction_cancels();
-    if !bids.is_empty() || !cancels.is_empty() {
-        for bid in bids {
-            let rows = rows_for(
-                bid.list,
-                &auction.lists[bid.list],
-                self_guid,
-                &items,
-                icons.as_deref(),
-                &names,
-                &commands,
-                rolls,
-            );
-            if let Some(auction_id) = AuctionOpen::auction_id_at(bid.index, &rows) {
-                let _ = commands.0.send(ClientCommand::AuctionPlaceBid {
-                    auctioneer,
-                    auction_id,
-                    price: bid.amount,
-                });
-            }
-        }
-        for index in cancels {
-            let rows = rows_for(
-                OWNER,
-                &auction.lists[OWNER],
-                self_guid,
-                &items,
-                icons.as_deref(),
-                &names,
-                &commands,
-                rolls,
-            );
-            if let Some(auction_id) = AuctionOpen::auction_id_at(index, &rows) {
-                let _ = commands.0.send(ClientCommand::AuctionRemoveItem {
-                    auctioneer,
-                    auction_id,
-                });
+            auction.sent(LIST, now);
+            if q.get_all {
+                auction.last_get_all = Some(now);
             }
         }
     }
 
-    // The `(bag, slot)` resolves at send time, as the reference re-reads the slot on create.
+    if script.take_auction_owner_query() || std::mem::take(&mut auction.owner_list_wanted) {
+        tx.owner_list(&mut auction, now);
+    }
+    if std::mem::take(&mut auction.pending_sales_wanted) && auction.can_send(OWNER, now) {
+        tx.send(ClientCommand::AuctionListPendingSales { auctioneer });
+        auction.sent(OWNER, now);
+    }
+    if let Some(list_from) = script.take_auction_bidder_query() {
+        if auction.can_send(BIDDER, now) {
+            tx.bidder_list(&mut auction, list_from, now);
+        }
+    }
+    if let Some(list_from) = auction.bidder_list_wanted.take() {
+        tx.bidder_list(&mut auction, list_from, now);
+    }
+
+    for bid in script.take_auction_bids() {
+        tx.send(ClientCommand::AuctionPlaceBid {
+            auctioneer,
+            auction_id: bid.auction_id,
+            price: bid.amount,
+        });
+        auction.last_bid_amount = bid.amount;
+    }
+    for auction_id in script.take_auction_cancels() {
+        tx.send(ClientCommand::AuctionRemoveItem {
+            auctioneer,
+            auction_id,
+        });
+    }
+    if std::mem::take(&mut auction.emote_wanted) {
+        tx.send(ClientCommand::Emote {
+            emote_id: BID_EMOTE,
+        });
+    }
+
+    // StartAuction (`0x59f990`): the direct sale goes out as is; anything else is a multi-sell
+    // whose stacks go out one per `STARTED` answer.
     if let Some(req) = script.take_auction_start() {
-        let item_guid = script
-            .auction_sell_item()
-            .and_then(|(bag, slot)| {
-                self_q.iter().next().and_then(|(store, _)| {
-                    crate::ui_items::slot_guid(&store.0, bag, (slot.max(1) - 1) as u8, &objects)
-                })
-            })
-            .unwrap_or(0);
-        if item_guid != 0 {
-            let _ = commands.0.send(ClientCommand::AuctionSellItem {
+        if req.direct {
+            let items: Vec<(u64, u32)> = req
+                .items
+                .iter()
+                .filter_map(|&(bag, slot, count)| Some((guid_of(bag, slot)?, count)))
+                .collect();
+            if !items.is_empty() {
+                auction.wire.sells.push(items.iter().map(|i| i.1).collect());
+                debug!("ui_auction: sell {items:?}");
+                tx.send(ClientCommand::AuctionSellItem {
+                    auctioneer,
+                    items,
+                    bid: req.min_bid,
+                    buyout: req.buyout,
+                    etime_minutes: req.run_time_minutes,
+                });
+            }
+        } else {
+            let pending = req.num_stacks > 1;
+            auction.multisell = Some(MultiSell {
                 auctioneer,
-                item_guid,
+                items: req.items,
+                stack_size: req.stack_size,
+                remaining: req.num_stacks,
+                total: req.num_stacks,
                 bid: req.min_bid,
                 buyout: req.buyout,
-                etime_minutes: req.duration,
+                minutes: req.run_time_minutes,
+                pending,
+                send_next: true,
             });
+            if pending {
+                auction.queue_multisell_event("AUCTION_MULTISELL_START", &[req.num_stacks]);
+            }
         }
     }
-
-    // Header clicks last: a row pick above indexes last frame's order, so sorting first would
-    // point it at another auction. A sort sends nothing.
-    for (which, key) in script.take_auction_sorts() {
-        if let Some(slot) = auction.lists.get_mut(which) {
-            slot.sort.click(&key);
+    if script.take_auction_cancel_sell() {
+        auction.multisell_failure();
+    }
+    let send_next = auction.multisell.as_ref().is_some_and(|ms| ms.send_next);
+    if send_next {
+        if let Some(ms) = auction.multisell.as_mut() {
+            ms.send_next = false;
+        }
+        if let Some((stack, ms)) = auction.next_stack() {
+            let items: Vec<(u64, u32)> = stack
+                .iter()
+                .filter_map(|&(bag, slot, count)| Some((guid_of(bag, slot)?, count)))
+                .collect();
+            if items.len() == stack.len() {
+                auction.wire.sells.push(items.iter().map(|i| i.1).collect());
+                debug!("ui_auction: sell {items:?}");
+                tx.send(ClientCommand::AuctionSellItem {
+                    auctioneer: ms.auctioneer,
+                    items,
+                    bid: ms.bid,
+                    buyout: ms.buyout,
+                    etime_minutes: ms.minutes,
+                });
+                // A single stack is one send; nothing waits on its answer.
+                if !ms.pending {
+                    auction.multisell = None;
+                    auction.sell_slot_clear = true;
+                }
+            } else {
+                auction.multisell_failure();
+            }
         }
     }
 
@@ -798,359 +990,96 @@ fn drain_auction(
 mod tests {
     use super::*;
 
-    /// The reference's gates: the `0x807060` class flag, and `Flags & 0x200` (`0x4cfb63`), which
-    /// Shield lacks though it is Armor.
-    #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn the_tree_carries_the_reference_gates() {
-        let data = benilla_formats::wow_data_or_skip!();
-        let mut chain = benilla_formats::open_chain(&data).unwrap();
-        let classes =
-            crate::ui_items::ItemClasses(benilla_formats::load_item_classes(&mut chain).unwrap());
-        let subclasses = crate::ui_items::ItemSubClasses(
-            benilla_formats::load_item_sub_classes(&mut chain).unwrap(),
-        );
-        let tree = categories(Some(&classes), Some(&subclasses));
-        let ids: Vec<(u32, bool)> = tree
-            .iter()
-            .map(|c| (c.class_id, c.has_subclass_filter))
-            .collect();
-        assert_eq!(ids, AUCTION_CLASSES.to_vec());
-
-        let weapon = &tree[0];
-        assert_eq!(weapon.subclasses[0].sub_id, 0, "Axe leads, in file order");
-        assert!(
-            !weapon
-                .subclasses
-                .iter()
-                .any(|s| [9, 11, 12, 17].contains(&s.sub_id)),
-            "the excluded weapon rows are not offered"
-        );
-        assert!(weapon.subclasses.iter().all(|s| !s.has_inv_types));
-
-        let armor = &tree[1];
-        let offering: Vec<u32> = armor
-            .subclasses
-            .iter()
-            .filter(|s| s.has_inv_types)
-            .map(|s| s.sub_id)
-            .collect();
-        assert_eq!(
-            offering,
-            vec![0, 1, 2, 3, 4],
-            "not Shield, Libram, Idol, Totem"
-        );
-
-        // Consumable's flag is 0, yet its subclass list stays for the query's own scan.
-        assert!(!tree[3].has_subclass_filter);
-        assert!(!tree[3].subclasses.is_empty());
-    }
-
-    #[test]
-    fn the_time_left_buckets_read_an_underflow_as_expired() {
-        assert_eq!(time_left_bucket(0), 1, "already gone");
-        assert_eq!(time_left_bucket(29 * 60 * 1000), 1);
-        assert_eq!(time_left_bucket(31 * 60 * 1000), 2);
-        assert_eq!(time_left_bucket(3 * 60 * 60 * 1000), 3);
-        assert_eq!(time_left_bucket(20 * 60 * 60 * 1000), 4, "a 24h auction");
-        // `(expireTime - now) * 1000` one second past the deadline, unclamped.
-        assert_eq!(
-            time_left_bucket(u32::MAX - 1000),
-            1,
-            "an underflow is expired, not eternal"
-        );
-    }
-
-    #[test]
-    fn an_identical_list_result_still_owes_its_events() {
-        let mut open = AuctionOpen::default();
-        open.open(0x1234, 1);
-
-        open.set_list(LIST, Vec::new(), 0);
-        assert!(open.list_result_landed[LIST], "the first empty page");
-
-        // The feed consumes the flag when it fires.
-        open.list_result_landed = [false; 3];
-
-        open.set_list(LIST, Vec::new(), 0);
-        assert!(
-            open.list_result_landed[LIST],
-            "an identical page owes the event too — this is the whole bug"
-        );
-    }
-
-    #[test]
-    fn a_result_owes_only_its_own_lists_event() {
-        let mut open = AuctionOpen::default();
-        open.open(0x1234, 1);
-
-        open.set_list(LIST, Vec::new(), 0);
-        assert_eq!(
-            open.list_result_landed,
-            [true, false, false],
-            "a browse result is not news about the player's bids or listings"
-        );
-
-        open.list_result_landed = [false; 3];
-        open.set_list(OWNER, Vec::new(), 0);
-        assert_eq!(open.list_result_landed, [false, false, true]);
-
-        open.list_result_landed = [false; 3];
-        open.set_list(BIDDER, Vec::new(), 0);
-        assert_eq!(open.list_result_landed, [false, true, false]);
-    }
-
-    #[test]
-    fn a_refresh_never_introduces_a_list_the_interface_never_asked_for() {
-        let mut open = AuctionOpen::default();
-        open.open(0x1234, 1);
-
-        open.refresh_owner();
-        open.refresh_bidder();
-        assert!(
-            !open.pending_owner_refresh && !open.pending_bidder_refresh,
-            "we hold neither list, so neither can have gone stale"
-        );
-
-        // The Auctions tab was shown and answered, even empty: now a sale makes it stale.
-        open.set_list(OWNER, Vec::new(), 0);
-        open.refresh_owner();
-        assert!(open.pending_owner_refresh, "a list we hold can go stale");
-        assert!(
-            !open.pending_bidder_refresh,
-            "and the other one still cannot"
-        );
-
-        // Closing forgets it: a notice after the close re-asks nothing.
-        open.clear();
-        open.refresh_owner();
-        assert!(!open.pending_owner_refresh);
-    }
-
-    #[test]
-    fn an_accepted_listing_releases_the_sell_slot() {
-        let mut open = AuctionOpen::default();
-        open.open(0x1234, 1);
-        assert!(!open.sell_slot_taken, "nothing listed yet");
-
-        open.sell_slot_taken();
-        assert!(open.sell_slot_taken, "the feed owes the slot a clear");
-
-        // A closed session forgets it rather than clearing a slot it does not own.
-        open.clear();
-        assert!(!open.sell_slot_taken);
-    }
-
-    const ME: u64 = 0x77;
-    const BIDDER_GUID: u64 = 0x99;
-
-    /// A wire row owned by `owner` with `bidder` on it (0 for no bid).
-    fn entry(owner: u64, bidder: u64) -> AuctionListEntry {
-        AuctionListEntry {
-            auction_id: 1,
-            item_entry: 2589,
-            perm_enchant: 0,
-            random_property_id: 0,
-            suffix_factor: 0,
-            count: 1,
-            spell_charges: 0,
-            owner_guid: owner,
-            start_bid: 1000,
-            min_increment: if bidder == 0 { 0 } else { 125 },
+    fn multisell(items: Vec<(i64, u32, u32)>, stack: u32, stacks: u32) -> AuctionOpen {
+        let mut a = AuctionOpen::default();
+        a.open(0x1234, 1);
+        a.multisell = Some(MultiSell {
+            auctioneer: 0x1234,
+            items,
+            stack_size: stack,
+            remaining: stacks,
+            total: stacks,
+            bid: 100,
             buyout: 0,
-            time_left_ms: 60_000,
-            bidder_guid: bidder,
-            current_bid: if bidder == 0 { 0 } else { 2500 },
-        }
+            minutes: 720,
+            pending: stacks > 1,
+            send_next: true,
+        });
+        a
     }
 
-    fn name_queries(rx: &crossbeam_channel::Receiver<ClientCommand>) -> Vec<u64> {
-        rx.try_iter()
-            .filter_map(|c| match c {
-                ClientCommand::NameQuery { guid } => Some(guid),
-                _ => None,
-            })
-            .collect()
-    }
-
-    /// The player's own auction names its bidder from the cache (`0x4cf144`–`0x4cf174`).
     #[test]
-    fn an_owned_row_names_its_bidder() {
+    fn sell_next_draws_each_stack_from_the_end() {
+        // Three stacks of 4, 3 and 5; two auctions of 5 each.
+        let mut a = multisell(vec![(0, 1, 4), (0, 2, 3), (0, 3, 5)], 5, 2);
+        let (first, _) = a.next_stack().unwrap();
+        assert_eq!(
+            first,
+            vec![(0, 3, 5)],
+            "the last stack covers the first auction"
+        );
+        let (second, _) = a.next_stack().unwrap();
+        assert_eq!(
+            second,
+            vec![(0, 2, 3), (0, 1, 2)],
+            "the next takes the 3, then 2 of the 4"
+        );
+        assert_eq!(a.multisell.as_ref().unwrap().items, vec![(0, 1, 2)]);
+        assert!(a.next_stack().is_none(), "two of two: done");
+        assert!(a.multisell.is_none());
+        assert!(a.sell_slot_clear);
+    }
+
+    #[test]
+    fn running_dry_is_a_multisell_failure() {
+        let mut a = multisell(vec![(0, 1, 2)], 5, 2);
+        assert!(a.next_stack().is_none());
+        assert!(a.multisell.is_none());
+        assert_eq!(a.multisell_events.len(), 1);
+        assert_eq!(a.multisell_events[0].0, "AUCTION_MULTISELL_FAILURE");
+    }
+
+    #[test]
+    fn the_owner_query_owes_two_answers() {
         let (tx, rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
-        let mut names = NameCache::default();
-        names.insert_player(BIDDER_GUID, "Bidder".into(), None);
-        assert_eq!(
-            high_bidder(OWNER, &entry(ME, BIDDER_GUID), Some(ME), &names, &commands),
-            AuctionHighBidder::Name("Bidder".into())
-        );
-        assert!(name_queries(&rx).is_empty(), "a cached name asks nothing");
-    }
-
-    /// An unknown bidder is nil and asked for; no bid is nil and asks nothing (`0x4cf150`).
-    #[test]
-    fn an_owned_row_is_nil_until_the_name_lands_and_with_no_bid() {
-        let (tx, rx) = crossbeam_channel::unbounded();
-        let commands = NetCommands(tx);
-        let mut names = NameCache::default();
-        assert_eq!(
-            high_bidder(OWNER, &entry(ME, BIDDER_GUID), Some(ME), &names, &commands),
-            AuctionHighBidder::Nil
-        );
-        assert_eq!(
-            name_queries(&rx),
-            vec![BIDDER_GUID],
-            "the name goes out once"
-        );
-
-        assert_eq!(
-            high_bidder(OWNER, &entry(ME, 0), Some(ME), &names, &commands),
-            AuctionHighBidder::Nil
-        );
-        assert!(name_queries(&rx).is_empty(), "no bidder, no query");
-
-        names.insert_player(BIDDER_GUID, "Bidder".into(), None);
-        assert_eq!(
-            high_bidder(OWNER, &entry(ME, BIDDER_GUID), Some(ME), &names, &commands),
-            AuctionHighBidder::Name("Bidder".into())
-        );
-    }
-
-    /// Browse, Bids and an owner row the player does not own answer `1` or nil, never a name,
-    /// even with the bidder's name cached (`0x4cf17b`–`0x4cf1a0`).
-    #[test]
-    fn other_rows_answer_one_or_nil() {
-        let (tx, rx) = crossbeam_channel::unbounded();
-        let commands = NetCommands(tx);
-        let mut names = NameCache::default();
-        names.insert_player(BIDDER_GUID, "Bidder".into(), None);
-        const SELLER: u64 = 0x55;
-        for list in [LIST, BIDDER] {
-            assert_eq!(
-                high_bidder(list, &entry(SELLER, ME), Some(ME), &names, &commands),
-                AuctionHighBidder::Player
-            );
-            assert_eq!(
-                high_bidder(
-                    list,
-                    &entry(SELLER, BIDDER_GUID),
-                    Some(ME),
-                    &names,
-                    &commands
-                ),
-                AuctionHighBidder::Nil
-            );
-            assert_eq!(
-                high_bidder(list, &entry(SELLER, 0), Some(ME), &names, &commands),
-                AuctionHighBidder::Nil
-            );
-            // The player's own auction, seen on a browse page, is not named either.
-            assert_eq!(
-                high_bidder(list, &entry(ME, BIDDER_GUID), Some(ME), &names, &commands),
-                AuctionHighBidder::Nil
-            );
+        let mut a = AuctionOpen::default();
+        a.open(0x1234, 1);
+        Sender {
+            commands: &commands,
+            auctioneer: 0x1234,
         }
-        // The owner list gates on the row's owner, not the list alone (`0x4cf131`).
-        assert_eq!(
-            high_bidder(OWNER, &entry(SELLER, ME), Some(ME), &names, &commands),
-            AuctionHighBidder::Player
+        .owner_list(&mut a, 0.0);
+        let sent: Vec<ClientCommand> = rx.try_iter().collect();
+        assert!(matches!(
+            sent[0],
+            ClientCommand::AuctionListOwnerItems { .. }
+        ));
+        assert!(matches!(
+            sent[1],
+            ClientCommand::AuctionListPendingSales { .. }
+        ));
+        assert_eq!(a.pending[OWNER], 2);
+        assert!(
+            !a.can_get_owner,
+            "one owner list per opening until a listing reopens it"
         );
-        assert_eq!(
-            high_bidder(
-                OWNER,
-                &entry(SELLER, BIDDER_GUID),
-                Some(ME),
-                &names,
-                &commands
-            ),
-            AuctionHighBidder::Nil
-        );
-        assert!(name_queries(&rx).is_empty());
-    }
-
-    /// A bidder's name landing after the owned list re-fires `AUCTION_OWNED_LIST_UPDATE` and the
-    /// row then answers it (the `0x4cf2b0` callback fires event `0x1a9`).
-    #[test]
-    fn a_landed_bidder_name_refires_the_owned_list() {
-        let mut app = App::new();
-        app.init_resource::<AuctionOpen>()
-            .init_resource::<Items>()
-            .init_resource::<NameCache>()
-            .init_resource::<Time>()
-            .init_resource::<crate::ui_chat::ChatLog>()
-            .init_resource::<crate::sound::MessageSounds>();
-        let (tx, rx) = crossbeam_channel::unbounded();
-        app.insert_resource(NetCommands(tx));
-        app.world_mut()
-            .resource_mut::<NameCache>()
-            .insert_player(ME, "Seller".into(), None);
-        let script = UiScript::new().unwrap();
-        script
-            .run(
-                r#"
-                SEEN = {}
-                local f = CreateFrame("Frame")
-                f:RegisterEvent("AUCTION_OWNED_LIST_UPDATE")
-                f:SetScript("OnEvent", function() table.insert(SEEN, event) end)
-            "#,
-            )
-            .unwrap();
-        app.insert_non_send_resource(script);
-        app.world_mut().spawn((SelfPlayer, crate::net::Guid(ME)));
-        {
-            let mut open = app.world_mut().resource_mut::<AuctionOpen>();
-            open.open(0x1234, 1);
-            open.set_list(OWNER, vec![entry(ME, BIDDER_GUID)], 1);
-        }
-
-        // One registered system, so its `VmMemo` locals persist from frame to frame.
-        let feed = app.world_mut().register_system(feed_auction);
-        let step = |app: &mut App| -> (Vec<String>, Option<String>) {
-            app.world_mut().run_system(feed).unwrap();
-            let mut s = app.world_mut().non_send_resource_mut::<UiScript>();
-            s.resolve();
-            let seen = s.eval::<Vec<String>>("return SEEN").unwrap();
-            s.run("SEEN = {}").unwrap();
-            let bidder = s
-                .eval::<Option<String>>(
-                    r#"local _,_,_,_,_,_,_,_,_,_,h = GetAuctionItemInfo("owner", 1) return h"#,
-                )
-                .unwrap();
-            (seen, bidder)
-        };
-
-        // The window opens with the page; the bidder is unknown, so nil and asked for.
-        let (_, bidder) = step(&mut app);
-        assert_eq!(bidder, None);
-        assert_eq!(name_queries(&rx), vec![BIDDER_GUID]);
-
-        let (seen, bidder) = step(&mut app);
-        assert!(seen.is_empty(), "nothing new, nothing fired: {seen:?}");
-        assert_eq!(bidder, None);
-
-        app.world_mut().resource_mut::<NameCache>().insert_player(
-            BIDDER_GUID,
-            "Bidder".into(),
-            None,
-        );
-        let (seen, bidder) = step(&mut app);
-        assert_eq!(bidder.as_deref(), Some("Bidder"));
-        assert_eq!(seen, vec!["AUCTION_OWNED_LIST_UPDATE".to_string()]);
+        a.answered(OWNER, 0.1, Some(0));
+        assert!(!a.can_send(OWNER, 1.0), "the sales are still owed");
+        a.answered(OWNER, 0.2, None);
+        assert!(a.can_send(OWNER, 0.2));
     }
 
     #[test]
-    fn an_unbid_row_shows_its_opening_price() {
-        let unbid = AuctionRow {
-            start_bid: 5000,
-            current_bid: 0,
-            ..Default::default()
-        };
-        assert_eq!(unbid.displayed_bid(), 5000);
-        let bid = AuctionRow {
-            start_bid: 5000,
-            current_bid: 7500,
-            ..Default::default()
-        };
-        assert_eq!(bid.displayed_bid(), 7500);
+    fn categories_follow_the_twelve_row_table() {
+        let tree = categories(None, None);
+        assert!(tree.is_empty(), "no DBCs, no tree");
+        assert_eq!(AUCTION_CLASSES.len(), 12);
+        assert_eq!(AUCTION_CLASSES[4], (16, true), "Glyph is the fifth class");
+        assert_eq!(
+            AUCTION_CLASSES[11],
+            (12, false),
+            "Quest offers no subclass rows"
+        );
     }
 }

@@ -1094,6 +1094,10 @@ pub(crate) enum ClientCommand {
         slot: u8,
         count: u8,
     },
+    /// `CMSG_EMOTE`: an `Emotes.dbc` animation id.
+    Emote {
+        emote_id: u32,
+    },
     /// `CMSG_TEXT_EMOTE`; our own sound and animation ride the `SMSG_TEXT_EMOTE` echo.
     TextEmote {
         text_id: u32,
@@ -1658,54 +1662,47 @@ pub(crate) enum ClientCommand {
     /// `MSG_QUERY_NEXT_MAIL_TIME`, on entering the world, to seed `HasNewMail()`.
     QueryNextMailTime,
     // ── The auction house ──
-    // Every verb carries the auctioneer guid, range-checked (5 yd) each time. Several refusals
-    // get no packet: a zero bid or duration, an unaffordable bid, a cancel whose cut cannot be
-    // paid, a list request in flight.
+    // Every verb carries the auctioneer guid.
     /// `MSG_AUCTION_HELLO`: the reply, with the `AuctionHouse.dbc` id, opens the window.
     AuctionHello {
         auctioneer: u64,
     },
-    /// `CMSG_AUCTION_LIST_ITEMS`: unset filters use `auction_filter`'s sentinels. No sort rides
-    /// the wire; `list_from` pages by 50.
+    /// `CMSG_AUCTION_LIST_ITEMS`: the Browse filters and the Browse list's sort criteria.
     AuctionListItems {
         auctioneer: u64,
-        list_from: u32,
-        searched_name: String,
-        level_min: u8,
-        level_max: u8,
-        slot_id: u32,
-        main_category: u32,
-        sub_category: u32,
-        quality: u32,
-        usable: u8,
+        query: benilla_protocol::messages::AuctionListQuery,
     },
     /// `CMSG_AUCTION_LIST_OWNER_ITEMS`: our own listings.
     AuctionListOwnerItems {
         auctioneer: u64,
         list_from: u32,
     },
-    /// `CMSG_AUCTION_LIST_BIDDER_ITEMS`: `auction_ids` are listed first, then every auction we
-    /// hold the bid on; not a filter.
+    /// `CMSG_AUCTION_LIST_PENDING_SALES`: our sold auctions whose money is in the mail.
+    AuctionListPendingSales {
+        auctioneer: u64,
+    },
+    /// `CMSG_AUCTION_LIST_BIDDER_ITEMS` with the outbid auction ids of this house.
     AuctionListBidderItems {
         auctioneer: u64,
         list_from: u32,
         auction_ids: Vec<u32>,
     },
-    /// `CMSG_AUCTION_SELL_ITEM`: `etime_minutes` is 120, 480 or 1440; the deposit is taken at once.
+    /// `CMSG_AUCTION_SELL_ITEM`: one auction of `items` `(guid, count)`; `etime_minutes` is 720,
+    /// 1440 or 2880.
     AuctionSellItem {
         auctioneer: u64,
-        item_guid: u64,
+        items: Vec<(u64, u32)>,
         bid: u32,
         buyout: u32,
         etime_minutes: u32,
     },
-    /// `CMSG_AUCTION_PLACE_BID`: a `price` at or above a nonzero buyout is the buyout.
+    /// `CMSG_AUCTION_PLACE_BID`: a `price` equal to a nonzero buyout is the buyout.
     AuctionPlaceBid {
         auctioneer: u64,
         auction_id: u32,
         price: u32,
     },
-    /// `CMSG_AUCTION_REMOVE_ITEM`: the deposit is forfeit; with a bid, the 5% cut is charged.
+    /// `CMSG_AUCTION_REMOVE_ITEM`: the seller's cancel.
     AuctionRemoveItem {
         auctioneer: u64,
         auction_id: u32,

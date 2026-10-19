@@ -1479,6 +1479,7 @@ pub(super) fn writer_loop(
                     ClientCommand::SetSheathed { state } => w.set_sheathed(state),
                     ClientCommand::StandStateChange { state } => w.stand_state_change(state),
                     ClientCommand::MountSpecial => w.mount_special(),
+                    ClientCommand::Emote { emote_id } => w.emote(emote_id),
                     ClientCommand::TextEmote { text_id, target } => w.text_emote(text_id, target),
                     ClientCommand::GossipHello { guid } => w.gossip_hello(guid),
                     ClientCommand::GossipSelectOption {
@@ -1708,33 +1709,16 @@ pub(super) fn writer_loop(
                     ClientCommand::QueryNextMailTime => w.query_next_mail_time(),
                     // The auction house: the auctioneer guid rides on every verb.
                     ClientCommand::AuctionHello { auctioneer } => w.auction_hello(auctioneer),
-                    ClientCommand::AuctionListItems {
-                        auctioneer,
-                        list_from,
-                        searched_name,
-                        level_min,
-                        level_max,
-                        slot_id,
-                        main_category,
-                        sub_category,
-                        quality,
-                        usable,
-                    } => w.auction_list_items(
-                        auctioneer,
-                        list_from,
-                        &searched_name,
-                        level_min,
-                        level_max,
-                        slot_id,
-                        main_category,
-                        sub_category,
-                        quality,
-                        usable,
-                    ),
+                    ClientCommand::AuctionListItems { auctioneer, query } => {
+                        w.auction_list_items(auctioneer, &query)
+                    }
                     ClientCommand::AuctionListOwnerItems {
                         auctioneer,
                         list_from,
                     } => w.auction_list_owner_items(auctioneer, list_from),
+                    ClientCommand::AuctionListPendingSales { auctioneer } => {
+                        w.auction_list_pending_sales(auctioneer)
+                    }
                     ClientCommand::AuctionListBidderItems {
                         auctioneer,
                         list_from,
@@ -1742,11 +1726,11 @@ pub(super) fn writer_loop(
                     } => w.auction_list_bidder_items(auctioneer, list_from, &auction_ids),
                     ClientCommand::AuctionSellItem {
                         auctioneer,
-                        item_guid,
+                        items,
                         bid,
                         buyout,
                         etime_minutes,
-                    } => w.auction_sell_item(auctioneer, item_guid, bid, buyout, etime_minutes),
+                    } => w.auction_sell_item(auctioneer, &items, bid, buyout, etime_minutes),
                     ClientCommand::AuctionPlaceBid {
                         auctioneer,
                         auction_id,

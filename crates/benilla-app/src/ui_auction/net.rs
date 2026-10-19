@@ -1,15 +1,16 @@
-//! The auction house's packet handlers: every `SMSG_AUCTION_*` becomes state on [`AuctionOpen`],
-//! which [`super::feed_auction`] turns into the window's events; nothing here touches the VM.
+//! The auction house's packet handlers, after the 12340 handlers they name: every
+//! `SMSG_AUCTION_*` becomes state on [`AuctionOpen`], which [`super::feed_auction`] turns into
+//! the window's events and [`super::drain_auction`] into the follow-up sends.
 
 use benilla_protocol::messages::{
-    auction_action, auction_error, AuctionBidderNotification, AuctionCommandTail, AuctionListEntry,
-    AuctionOwnerNotification,
+    auction_action, auction_error, AuctionBidderNotification, AuctionCommandTail, AuctionListPage,
+    AuctionOwnerNotification, AuctionPendingSale,
 };
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{BIDDER, LIST, OWNER};
 use bevy::prelude::*;
 
-use super::{AuctionMessage, AuctionOpen};
+use super::{AuctionEntry, AuctionMessage, AuctionOpen, Patch};
 use crate::net::NetHandlerApp;
 
 /// One handler per `SMSG_AUCTION_*` kind, plus the session-end listener.
@@ -20,19 +21,31 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::AuctionListResult, on_list_result)
         .net_handler(K::AuctionOwnerListResult, on_owner_list_result)
         .net_handler(K::AuctionBidderListResult, on_bidder_list_result)
+        .net_handler(K::AuctionPendingSales, on_pending_sales)
         .net_handler(K::AuctionBidderNotification, on_bidder_notification)
         .net_handler(K::AuctionOwnerNotification, on_owner_notification)
         .net_handler(K::AuctionRemovedNotification, on_removed_notification)
         .net_handler(K::Disconnected, on_session_end);
 }
 
+fn now(time: &Time) -> f64 {
+    time.elapsed_secs_f64()
+}
+
+/// `MSG_AUCTION_HELLO`'s reply (`0x59ff40`): an open house sets the auctioneer and shows the
+/// window (`SetAuctioneer` `0x59f000`); a closed one fires `AUCTION_HOUSE_DISABLED`.
 fn on_hello(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>) {
     if let SessionEvent::AuctionHello {
         auctioneer,
         house_id,
+        enabled,
     } = ev
     {
-        auction_hello(auctioneer, house_id, &mut auction);
+        if enabled {
+            auction.open(auctioneer, house_id);
+        } else {
+            auction.disabled_requested = true;
+        }
     }
 }
 
@@ -48,33 +61,35 @@ fn on_command_result(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>)
     }
 }
 
-fn on_list_result(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>) {
-    if let SessionEvent::AuctionListResult {
-        auctions,
-        total_count,
-    } = ev
-    {
-        auction_list_result(auctions, total_count, &mut auction);
+fn on_list_result(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>, time: Res<Time>) {
+    if let SessionEvent::AuctionListResult(page) = ev {
+        list_result(LIST, page, now(&time), &mut auction);
     }
 }
 
-fn on_owner_list_result(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>) {
-    if let SessionEvent::AuctionOwnerListResult {
-        auctions,
-        total_count,
-    } = ev
-    {
-        auction_owner_list_result(auctions, total_count, &mut auction);
+fn on_owner_list_result(
+    In(ev): In<SessionEvent>,
+    mut auction: ResMut<AuctionOpen>,
+    time: Res<Time>,
+) {
+    if let SessionEvent::AuctionOwnerListResult(page) = ev {
+        list_result(OWNER, page, now(&time), &mut auction);
     }
 }
 
-fn on_bidder_list_result(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>) {
-    if let SessionEvent::AuctionBidderListResult {
-        auctions,
-        total_count,
-    } = ev
-    {
-        auction_bidder_list_result(auctions, total_count, &mut auction);
+fn on_bidder_list_result(
+    In(ev): In<SessionEvent>,
+    mut auction: ResMut<AuctionOpen>,
+    time: Res<Time>,
+) {
+    if let SessionEvent::AuctionBidderListResult(page) = ev {
+        list_result(BIDDER, page, now(&time), &mut auction);
+    }
+}
+
+fn on_pending_sales(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>, time: Res<Time>) {
+    if let SessionEvent::AuctionPendingSales { sales } = ev {
+        pending_sales(&sales, now(&time), &mut auction);
     }
 }
 
@@ -91,71 +106,110 @@ fn on_owner_notification(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOp
 }
 
 fn on_removed_notification(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>) {
-    if let SessionEvent::AuctionRemovedNotification { item_entry, .. } = ev {
-        auction_removed_notification(item_entry, &mut auction);
+    if let SessionEvent::AuctionRemovedNotification {
+        auction_id,
+        item_entry,
+        random_property_id,
+    } = ev
+    {
+        auction.messages.push(AuctionMessage::item(
+            "ERR_AUCTION_REMOVED_S",
+            item_entry,
+            random_property_id,
+        ));
+        auction.expire(auction_id);
     }
 }
 
-/// The window dies with the socket: the server re-validates the auctioneer on every command, so
-/// a window kept across a reconnect would fail silently.
+/// The window dies with the socket.
 fn on_session_end(In(_): In<SessionEvent>, mut auction: ResMut<AuctionOpen>) {
-    auction.clear_session();
+    auction.clear();
 }
 
-/// The `MSG_AUCTION_HELLO` reply opens the window, as in the reference's hello handler `0x4cc420`.
-fn auction_hello(auctioneer: u64, house_id: u32, auction: &mut AuctionOpen) {
-    auction.open(auctioneer, house_id);
-}
-
-/// Any of the three list results, which share a record and differ only in their tab.
-fn auction_list(
-    which: usize,
-    auctions: Vec<AuctionListEntry>,
-    total_count: u32,
-    auction: &mut AuctionOpen,
-) {
-    // Counted before the drop below, so a dropped result still shows as arrived.
+/// Any of the three list results (`0x59e160`, `0x59e480`, `0x59ecd0`): the query is answered,
+/// the page replaces the list's, and its delay paces the next query.
+fn list_result(which: usize, page: AuctionListPage, now: f64, auction: &mut AuctionOpen) {
+    debug!(
+        "ui_auction: list {which} result: {} row(s) {:?}, total {}, delay {:?}",
+        page.auctions.len(),
+        page.auctions
+            .iter()
+            .map(|a| a.auction_id)
+            .collect::<Vec<_>>(),
+        page.total_count,
+        page.query_delay_ms
+    );
     auction.wire.list_results[which] += 1;
-    // A page in flight when the window closed is dropped: the reference has nowhere to put it.
+    auction.answered(which, now, page.query_delay_ms);
+    // A page in flight when the window closed has nowhere to go.
     if auction.auctioneer.is_none() {
         return;
     }
-    auction.set_list(which, auctions, total_count);
+    let count = page.auctions.len() as u32;
+    let entries = page.auctions.into_iter().map(AuctionEntry::live).collect();
+    if which == BIDDER && count != page.total_count {
+        auction.can_get_bidder = true;
+    }
+    auction.set_list(which, entries, page.total_count);
 }
 
-fn auction_list_result(
-    auctions: Vec<AuctionListEntry>,
-    total_count: u32,
-    auction: &mut AuctionOpen,
-) {
-    auction_list(LIST, auctions, total_count, auction);
+/// `SMSG_AUCTION_LIST_PENDING_SALES` (`0x59e880`): the owner list's sold rows are replaced by
+/// the auction mails in transit whose subject reads `item:property:2:auction`.
+fn pending_sales(sales: &[AuctionPendingSale], now: f64, auction: &mut AuctionOpen) {
+    debug!("ui_auction: pending sales: {} row(s)", sales.len());
+    auction.answered(OWNER, now, None);
+    if auction.auctioneer.is_none() {
+        return;
+    }
+    let sold: Vec<AuctionEntry> = sales.iter().filter_map(sold_entry).collect();
+    auction.set_sold(sold);
 }
 
-fn auction_owner_list_result(
-    auctions: Vec<AuctionListEntry>,
-    total_count: u32,
-    auction: &mut AuctionOpen,
-) {
-    auction_list(OWNER, auctions, total_count, auction);
-}
-
-/// The bidder page, deduped by auction id: the server lists the refreshed ids, then every auction
-/// we lead, so one auction can appear twice.
-fn auction_bidder_list_result(
-    auctions: Vec<AuctionListEntry>,
-    total_count: u32,
-    auction: &mut AuctionOpen,
-) {
-    let mut seen = std::collections::HashSet::with_capacity(auctions.len());
-    let deduped: Vec<AuctionListEntry> = auctions
-        .into_iter()
-        .filter(|e| seen.insert(e.auction_id))
+/// One pending sale as a sold owner row (`0x59a4a0` parses the subject, the body is
+/// `buyer:bid:buyout:deposit:cut` with the buyer in hex), or `None` for any other mail.
+fn sold_entry(sale: &AuctionPendingSale) -> Option<AuctionEntry> {
+    let fields: Vec<u32> = sale
+        .subject
+        .split(':')
+        .map(|f| f.trim().parse::<i64>().unwrap_or(0) as u32)
         .collect();
-    auction_list(BIDDER, deduped, total_count, auction);
+    let [item, property, action, auction_id] = fields[..] else {
+        return None;
+    };
+    if action != 2 {
+        return None;
+    }
+    let mut body = sale.body.split(':');
+    let buyer = body
+        .next()
+        .and_then(|h| u64::from_str_radix(h.trim(), 16).ok())
+        .unwrap_or(0);
+    let mut num = || {
+        body.next()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .unwrap_or(0) as u32
+    };
+    let bid = num();
+    let buyout = num();
+    let wire = benilla_protocol::messages::AuctionListEntry {
+        auction_id,
+        item_entry: item,
+        random_property_id: property as i32,
+        bidder_guid: buyer,
+        current_bid: bid,
+        buyout,
+        ..Default::default()
+    };
+    Some(AuctionEntry {
+        wire,
+        left_secs: f64::from(sale.days_left) * 86_400.0,
+        expires_at: None,
+        extend: false,
+        sold: true,
+    })
 }
 
-/// `SMSG_AUCTION_COMMAND_RESULT`, the verdict on a sell, a cancel or a bid. `auction_id` is 0 on
-/// most failures, and some refusals send nothing at all, so nothing waits on this.
+/// `SMSG_AUCTION_COMMAND_RESULT` (`0x59ffb0`), the verdict on a sell, a cancel or a bid.
 fn auction_command_result(
     auction_id: u32,
     action: u32,
@@ -163,108 +217,226 @@ fn auction_command_result(
     tail: &AuctionCommandTail,
     auction: &mut AuctionOpen,
 ) {
-    let _ = tail;
-    // For the live probe: a success otherwise leaves no trace but a re-query.
     auction.wire.last_command = Some((auction_id, action, error));
-    if error == auction_error::OK {
-        // A success re-asks page 0 and patches nothing. The reference re-asks at the saved page
-        // (`[0xb72650]`, `[0xb72654]`) on `STARTED` (`0x4cc4e0`) and `BID_PLACED` (`0x4cc528`,
-        // then patches the browse row), deletes the row locally on `REMOVED` (`0x4cdfe0`), and
-        // prints each success in chat with no fill (`0x4cc4be`).
-        match action {
+    auction.wire.results.push((auction_id, action, error));
+    debug!("ui_auction: command result id {auction_id} action {action} error {error} {tail:?}");
+    // Any failed listing ends a multi-sell.
+    if action == auction_action::STARTED && error != auction_error::OK {
+        auction.multisell_failure();
+    }
+    match error {
+        auction_error::OK => match action {
             auction_action::STARTED => {
-                auction.sell_slot_taken();
-                auction.refresh_owner();
+                if let Some(ms) = auction.multisell.as_mut() {
+                    let done = ms.total - ms.remaining;
+                    let total = ms.total;
+                    ms.send_next = true;
+                    auction.queue_multisell_event("AUCTION_MULTISELL_UPDATE", &[done, total]);
+                }
                 auction
                     .messages
-                    .push(AuctionMessage::chat("ERR_AUCTION_STARTED"));
-            }
-            auction_action::REMOVED => {
-                auction.refresh_owner();
-                auction
-                    .messages
-                    .push(AuctionMessage::chat("ERR_AUCTION_REMOVED"));
+                    .push(AuctionMessage::key("ERR_AUCTION_STARTED"));
+                auction.can_get_owner = true;
+                auction.owner_list_wanted = true;
             }
             auction_action::BID_PLACED => {
-                auction.refresh_bidder();
                 auction
                     .messages
-                    .push(AuctionMessage::chat("ERR_AUCTION_BID_PLACED"));
+                    .push(AuctionMessage::key("ERR_AUCTION_BID_PLACED"));
+                auction.outbid.retain(|&(_, id)| id != auction_id);
+                auction.can_get_bidder = true;
+                auction.bidder_list_wanted = Some(auction.last_bidder_page);
+                let min_increment = match tail {
+                    AuctionCommandTail::BidPlaced { new_min_outbid } => *new_min_outbid,
+                    _ => 0,
+                };
+                if auction.auctioneer.is_some() {
+                    let bid = auction.last_bid_amount;
+                    auction.patch(
+                        LIST,
+                        auction_id,
+                        Patch {
+                            bid,
+                            min_increment,
+                            bidder: None,
+                            extend: true,
+                        },
+                    );
+                }
+                // The reference plays emote 3 for a placed bid.
+                auction.emote_wanted = true;
+            }
+            auction_action::REMOVED => {
+                auction
+                    .messages
+                    .push(AuctionMessage::key("ERR_AUCTION_REMOVED"));
+                auction.expire(auction_id);
             }
             _ => {}
+        },
+        auction_error::INVENTORY => {
+            if let AuctionCommandTail::Inventory { result } = tail {
+                let key = crate::ui_items::equip_error_key(*result as u8);
+                auction.messages.push(AuctionMessage::key(key));
+            }
         }
-        return;
-    }
-    // `HIGHER_BID` prints nothing: its arm (`0x4cc672`) patches the row, and the player's line is
-    // `ERR_AUCTION_OUTBID_S` from the bidder notification.
-    if error == auction_error::HIGHER_BID {
-        auction.refresh_bidder();
-        return;
-    }
-    if let Some(key) = command_error_key(error) {
-        auction.messages.push(AuctionMessage::error(key));
+        auction_error::NOT_ENOUGH_MONEY => {
+            auction
+                .messages
+                .push(AuctionMessage::key("ERR_NOT_ENOUGH_MONEY"));
+        }
+        auction_error::ITEM_NOT_FOUND => {
+            auction
+                .messages
+                .push(AuctionMessage::key("ERR_ITEM_NOT_FOUND"));
+        }
+        auction_error::HIGHER_BID => {
+            if let AuctionCommandTail::HigherBid {
+                new_bidder_guid,
+                new_bid,
+                new_min_outbid,
+            } = *tail
+            {
+                if auction.auctioneer.is_some() {
+                    for list in [LIST, BIDDER] {
+                        auction.patch(
+                            list,
+                            auction_id,
+                            Patch {
+                                bid: new_bid,
+                                min_increment: new_min_outbid,
+                                bidder: Some(new_bidder_guid),
+                                extend: false,
+                            },
+                        );
+                    }
+                }
+            }
+            auction
+                .messages
+                .push(AuctionMessage::key("ERR_AUCTION_HIGHER_BID"));
+        }
+        auction_error::BID_INCREMENT => {
+            auction
+                .messages
+                .push(AuctionMessage::key("ERR_AUCTION_BID_INCREMENT"));
+        }
+        auction_error::BID_OWN => {
+            auction
+                .messages
+                .push(AuctionMessage::key("ERR_AUCTION_BID_OWN"));
+        }
+        auction_error::RESTRICTED_ACCOUNT => {
+            auction
+                .messages
+                .push(AuctionMessage::key("ERR_RESTRICTED_ACCOUNT"));
+        }
+        _ => {
+            auction
+                .messages
+                .push(AuctionMessage::key("ERR_AUCTION_DATABASE_ERROR"));
+        }
     }
 }
 
-/// The failed command's GlobalStrings key, per the reference's dispatch (`0x4cc460`), whose
-/// default arm takes 2, 6, 8, 9, 11, 12 and anything past 13. Codes 1, 4 and 13 fall to that
-/// default here; the reference formats 1 through the inventory results (`0x622630`) and raises
-/// `ERR_ITEM_NOT_FOUND` (`0x17`) for 4 and `ERR_RESTRICTED_ACCOUNT` (`0x1be`) for 13.
-fn command_error_key(error: u32) -> Option<&'static str> {
-    Some(match error {
-        auction_error::NOT_ENOUGH_MONEY => "ERR_NOT_ENOUGH_MONEY", // `0x25`, the shared id
-        auction_error::BID_INCREMENT => "ERR_AUCTION_BID_INCREMENT", // `0x174`
-        auction_error::BID_OWN => "ERR_AUCTION_BID_OWN",           // `0x173`
-        // `0x172`, the server's catch-all and the reference's default arm.
-        _ => "ERR_AUCTION_DATABASE_ERROR",
-    })
-}
-
-/// `SMSG_AUCTION_BIDDER_NOTIFICATION`: a zero `bid_or_zero` means we won, else we were outbid.
+/// `SMSG_AUCTION_BIDDER_NOTIFICATION` (`0x5a0480`): outbid patches the bidder and browse rows of
+/// this house and remembers the id for the next bidder query; won removes the auction.
 fn auction_bidder_notification(notice: &AuctionBidderNotification, auction: &mut AuctionOpen) {
     let won = notice.bid_or_zero == 0;
-    auction.messages.push(AuctionMessage::chat_item(
+    auction.messages.push(AuctionMessage::item(
         if won {
             "ERR_AUCTION_WON_S"
         } else {
             "ERR_AUCTION_OUTBID_S"
         },
         notice.item_entry,
+        notice.random_property_id,
     ));
-    auction.refresh_bidder();
-}
-
-/// `SMSG_AUCTION_OWNER_NOTIFICATION`: one of ours took a bid, sold or expired.
-fn auction_owner_notification(notice: &AuctionOwnerNotification, auction: &mut AuctionOpen) {
-    // A bidder guid means a new bid, which the reference does not announce (no display call in
-    // `[0x4cd25f, 0x4cd3bd)`); a zero guid is a close, sold if the bid is non-zero (`0x4cd1f0`).
-    if notice.bidder_guid == 0 {
-        auction.messages.push(AuctionMessage::chat_item(
-            if notice.bid != 0 {
-                "ERR_AUCTION_SOLD_S"
-            } else {
-                "ERR_AUCTION_EXPIRED_S"
-            },
-            notice.item_entry,
-        ));
+    if won {
+        auction.expire(notice.auction_id);
+        return;
     }
-    auction.refresh_owner();
+    auction.outbid.push((notice.house_id, notice.auction_id));
+    if auction.house_id == notice.house_id {
+        for list in [BIDDER, LIST] {
+            auction.patch(
+                list,
+                notice.auction_id,
+                Patch {
+                    bid: notice.bid_or_zero,
+                    min_increment: notice.out_bid,
+                    bidder: Some(notice.bidder_guid),
+                    extend: true,
+                },
+            );
+        }
+    }
 }
 
-/// `SMSG_AUCTION_REMOVED_NOTIFICATION`: the seller cancelled an auction we bid on; the reference
-/// always prints `ERR_AUCTION_REMOVED_S` (`0x4cd480`).
-fn auction_removed_notification(item_entry: u32, auction: &mut AuctionOpen) {
-    auction.messages.push(AuctionMessage::chat_item(
-        "ERR_AUCTION_REMOVED_S",
-        item_entry,
+/// `SMSG_AUCTION_OWNER_NOTIFICATION` (`0x5a0790`): a bidder patches our rows silently; a zero
+/// bidder closes the auction, sold with a bid and expired without.
+fn auction_owner_notification(notice: &AuctionOwnerNotification, auction: &mut AuctionOpen) {
+    if notice.bidder_guid != 0 {
+        if auction.auctioneer.is_none() {
+            return;
+        }
+        for list in [OWNER, LIST] {
+            auction.patch(
+                list,
+                notice.auction_id,
+                Patch {
+                    bid: notice.bid,
+                    min_increment: notice.out_bid,
+                    bidder: Some(notice.bidder_guid),
+                    extend: true,
+                },
+            );
+        }
+        return;
+    }
+    auction.messages.push(AuctionMessage::item(
+        if notice.bid != 0 {
+            "ERR_AUCTION_SOLD_S"
+        } else {
+            "ERR_AUCTION_EXPIRED_S"
+        },
+        notice.item_entry,
+        notice.random_property_id,
     ));
-    auction.refresh_bidder();
+    auction.expire(notice.auction_id);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use benilla_protocol::messages::AuctionListEntry;
     use benilla_ui::messages::MsgKind;
+
+    fn keys(auction: &AuctionOpen) -> Vec<(&'static str, MsgKind)> {
+        auction
+            .messages
+            .iter()
+            .map(|m| (m.key, benilla_ui::messages::kind_of(m.key)))
+            .collect()
+    }
+
+    fn row(auction_id: u32) -> AuctionListEntry {
+        AuctionListEntry {
+            auction_id,
+            item_entry: 2589,
+            count: 5,
+            start_bid: 100,
+            ..Default::default()
+        }
+    }
+
+    fn page(rows: Vec<AuctionListEntry>) -> AuctionListPage {
+        AuctionListPage {
+            total_count: rows.len() as u32,
+            auctions: rows,
+            query_delay_ms: Some(300),
+        }
+    }
 
     #[test]
     fn the_table_routes_the_hello_and_the_session_end_to_the_house() {
@@ -277,6 +449,7 @@ mod tests {
             vec![SessionEvent::AuctionHello {
                 auctioneer: 0x10,
                 house_id: 1,
+                enabled: true,
             }],
         );
         assert_eq!(app.world().resource::<AuctionOpen>().auctioneer, Some(0x10));
@@ -290,131 +463,178 @@ mod tests {
         assert_eq!(app.world().resource::<AuctionOpen>().auctioneer, None);
     }
 
-    fn keys(auction: &AuctionOpen) -> Vec<(&'static str, MsgKind, Option<u32>)> {
-        auction
-            .messages
+    #[test]
+    fn a_closed_house_opens_nothing() {
+        let mut a = AuctionOpen::default();
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<AuctionOpen>();
+        register(&mut app);
+        crate::net::handlers::dispatch(
+            app.world_mut(),
+            vec![SessionEvent::AuctionHello {
+                auctioneer: 0x10,
+                house_id: 1,
+                enabled: false,
+            }],
+        );
+        let open = app.world().resource::<AuctionOpen>();
+        assert_eq!(open.auctioneer, None);
+        assert!(open.disabled_requested);
+        a.open(0x10, 1);
+        assert!(!a.disabled_requested);
+    }
+
+    #[test]
+    fn a_result_answers_its_query_and_paces_the_next() {
+        let mut a = AuctionOpen::default();
+        a.open(0x10, 1);
+        a.sent(LIST, 10.0);
+        assert!(!a.can_send(LIST, 50.0), "one query in flight");
+        list_result(LIST, page(vec![row(1)]), 20.0, &mut a);
+        assert!(!a.can_send(LIST, 20.1), "the page's 300 ms");
+        assert!(a.can_send(LIST, 20.31));
+        assert!(a.can_send(OWNER, 0.0), "each list paces itself");
+    }
+
+    #[test]
+    fn the_owner_list_keeps_its_sold_rows_and_the_sales_keep_the_live_ones() {
+        let mut a = AuctionOpen::default();
+        a.open(0x10, 1);
+        list_result(OWNER, page(vec![row(1), row(2)]), 0.0, &mut a);
+        let sale = AuctionPendingSale {
+            subject: "2589:0:2:9".into(),
+            body: "0000000000000505:150:400:20:5".into(),
+            mail_id: 1,
+            mail_template: 0,
+            days_left: 0.5,
+        };
+        // A non-sale mail is not a row.
+        let other = AuctionPendingSale {
+            subject: "2589:0:1:8".into(),
+            ..sale.clone()
+        };
+        pending_sales(&[sale, other], 0.0, &mut a);
+        let ids: Vec<(u32, bool)> = a.lists[OWNER]
+            .entries
             .iter()
-            .map(|m| (m.key, benilla_ui::messages::kind_of(m.key), m.item))
-            .collect()
-    }
-
-    fn owner(bidder_guid: u64, bid: u32) -> AuctionOwnerNotification {
-        AuctionOwnerNotification {
-            auction_id: 7,
-            bid,
-            out_bid: 5,
-            bidder_guid,
-            item_entry: 2589,
-            random_property_id: 0,
-        }
-    }
-
-    fn bidder(bid_or_zero: u32) -> AuctionBidderNotification {
-        AuctionBidderNotification {
-            house_id: 1,
-            auction_id: 7,
-            bidder_guid: 0x6C,
-            bid_or_zero,
-            out_bid: 5,
-            item_entry: 2589,
-            random_property_id: 0,
-        }
-    }
-
-    #[test]
-    fn a_bid_on_your_auction_updates_the_row_and_says_nothing() {
-        let mut a = AuctionOpen::default();
-        auction_owner_notification(&owner(0x6C, 500), &mut a);
-        assert!(
-            a.messages.is_empty(),
-            "a live bid raises no message; `[0x4cd25f, 0x4cd3bd)` holds no display call"
-        );
-
-        // Sold: guid zeroed, and a price paid.
-        let mut a = AuctionOpen::default();
-        auction_owner_notification(&owner(0, 10_000), &mut a);
+            .map(|e| (e.wire.auction_id, e.sold))
+            .collect();
+        assert_eq!(ids, vec![(1, false), (2, false), (9, true)]);
+        let sold = &a.lists[OWNER].entries[2];
         assert_eq!(
-            keys(&a),
-            vec![("ERR_AUCTION_SOLD_S", MsgKind::Chat, Some(2589))]
+            (
+                sold.wire.bidder_guid,
+                sold.wire.current_bid,
+                sold.wire.buyout
+            ),
+            (0x505, 150, 400)
         );
-
-        // Expired: guid zeroed, and nobody paid anything.
-        let mut a = AuctionOpen::default();
-        auction_owner_notification(&owner(0, 0), &mut a);
+        list_result(OWNER, page(vec![row(3)]), 0.0, &mut a);
+        let ids: Vec<u32> = a.lists[OWNER]
+            .entries
+            .iter()
+            .map(|e| e.wire.auction_id)
+            .collect();
         assert_eq!(
-            keys(&a),
-            vec![("ERR_AUCTION_EXPIRED_S", MsgKind::Chat, Some(2589))],
-            "a zero bid on a closed auction is an expiry, not a sale"
+            ids,
+            vec![9, 3],
+            "the sold row stays, the live ones are replaced"
         );
     }
 
     #[test]
-    fn a_zero_bid_field_means_you_won() {
-        let mut a = AuctionOpen::default();
-        auction_bidder_notification(&bidder(0), &mut a);
-        assert_eq!(
-            keys(&a),
-            vec![("ERR_AUCTION_WON_S", MsgKind::Chat, Some(2589))]
-        );
-
-        let mut a = AuctionOpen::default();
-        auction_bidder_notification(&bidder(9_000), &mut a);
-        assert_eq!(
-            keys(&a),
-            vec![("ERR_AUCTION_OUTBID_S", MsgKind::Chat, Some(2589))]
-        );
-    }
-
-    #[test]
-    fn the_outcomes_are_chat_and_the_refusals_are_the_error_frame() {
+    fn outcomes_go_to_chat_and_refusals_to_the_error_frame() {
         let tail = AuctionCommandTail::Empty;
         for (action, key) in [
             (auction_action::STARTED, "ERR_AUCTION_STARTED"),
             (auction_action::REMOVED, "ERR_AUCTION_REMOVED"),
-            (auction_action::BID_PLACED, "ERR_AUCTION_BID_PLACED"),
         ] {
             let mut a = AuctionOpen::default();
             auction_command_result(7, action, auction_error::OK, &tail, &mut a);
-            assert_eq!(
-                keys(&a),
-                vec![(key, MsgKind::Chat, None)],
-                "a successful {action} says so in chat, with no item fill"
-            );
+            assert_eq!(keys(&a), vec![(key, MsgKind::Chat)]);
         }
-
-        let mut a = AuctionOpen::default();
-        auction_removed_notification(2589, &mut a);
-        assert_eq!(
-            keys(&a),
-            vec![("ERR_AUCTION_REMOVED_S", MsgKind::Chat, Some(2589))]
-        );
-
-        // A refusal, on the red frame.
         let mut a = AuctionOpen::default();
         auction_command_result(0, auction_action::BID_PLACED, 10, &tail, &mut a);
+        assert_eq!(keys(&a), vec![("ERR_AUCTION_BID_OWN", MsgKind::Error)]);
+        let mut a = AuctionOpen::default();
+        auction_command_result(0, auction_action::BID_PLACED, 5, &tail, &mut a);
+        assert_eq!(keys(&a), vec![("ERR_AUCTION_HIGHER_BID", MsgKind::Error)]);
+        let mut a = AuctionOpen::default();
+        auction_command_result(0, auction_action::STARTED, 9, &tail, &mut a);
         assert_eq!(
             keys(&a),
-            vec![("ERR_AUCTION_BID_OWN", MsgKind::Error, None)]
-        );
-
-        // `HIGHER_BID` patches the row; the outbid line comes from the bidder notification.
-        let mut a = AuctionOpen::default();
-        auction_command_result(7, auction_action::BID_PLACED, 5, &tail, &mut a);
-        assert!(
-            a.messages.is_empty(),
-            "code 5 patches the row, it does not talk"
+            vec![("ERR_AUCTION_DATABASE_ERROR", MsgKind::Error)]
         );
     }
 
     #[test]
-    fn closing_the_window_does_not_swallow_a_pending_notice() {
+    fn a_placed_bid_patches_the_browse_row_and_asks_the_bids_again() {
         let mut a = AuctionOpen::default();
-        a.open(0x42, 1);
-        auction_owner_notification(&owner(0, 10_000), &mut a);
-        a.clear();
-        assert_eq!(
-            keys(&a),
-            vec![("ERR_AUCTION_SOLD_S", MsgKind::Chat, Some(2589))]
+        a.open(0x10, 1);
+        list_result(LIST, page(vec![row(4)]), 0.0, &mut a);
+        a.outbid.push((1, 4));
+        a.last_bid_amount = 250;
+        auction_command_result(
+            4,
+            auction_action::BID_PLACED,
+            auction_error::OK,
+            &AuctionCommandTail::BidPlaced { new_min_outbid: 13 },
+            &mut a,
         );
+        let e = &a.lists[LIST].entries[0];
+        assert_eq!((e.wire.current_bid, e.wire.min_increment), (250, 13));
+        assert!(e.extend, "the bid holds the auction open at least 90 s");
+        assert!(a.outbid.is_empty());
+        assert_eq!(a.bidder_list_wanted, Some(0));
+        assert!(a.emote_wanted);
+    }
+
+    #[test]
+    fn a_sale_removes_the_auction_everywhere() {
+        let mut a = AuctionOpen::default();
+        a.open(0x10, 1);
+        list_result(OWNER, page(vec![row(7), row(8)]), 0.0, &mut a);
+        list_result(LIST, page(vec![row(7)]), 0.0, &mut a);
+        auction_owner_notification(
+            &AuctionOwnerNotification {
+                auction_id: 7,
+                bid: 500,
+                out_bid: 0,
+                bidder_guid: 0,
+                item_entry: 2589,
+                random_property_id: 0,
+                mail_delay: 3600.0,
+            },
+            &mut a,
+        );
+        assert_eq!(keys(&a), vec![("ERR_AUCTION_SOLD_S", MsgKind::Chat)]);
+        assert_eq!(a.lists[OWNER].entries.len(), 1);
+        assert!(a.lists[LIST].entries.is_empty());
+        assert!(
+            a.pending_sales_wanted,
+            "the owner list asks the sales again"
+        );
+    }
+
+    #[test]
+    fn an_outbid_patches_this_house_and_remembers_the_id() {
+        let mut a = AuctionOpen::default();
+        a.open(0x10, 2);
+        list_result(BIDDER, page(vec![row(3)]), 0.0, &mut a);
+        let notice = AuctionBidderNotification {
+            house_id: 2,
+            auction_id: 3,
+            bidder_guid: 0x66,
+            bid_or_zero: 900,
+            out_bid: 45,
+            item_entry: 2589,
+            random_property_id: 0,
+        };
+        auction_bidder_notification(&notice, &mut a);
+        let e = &a.lists[BIDDER].entries[0];
+        assert_eq!((e.wire.current_bid, e.wire.bidder_guid), (900, 0x66));
+        assert_eq!(a.outbid, vec![(2, 3)]);
+        assert_eq!(keys(&a), vec![("ERR_AUCTION_OUTBID_S", MsgKind::Chat)]);
     }
 }

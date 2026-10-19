@@ -235,8 +235,13 @@ pub(crate) const PROBE_VARS: &[ProbeVar] = &[
     },
     ProbeVar {
         name: "WOW_PROBE_AUCTION",
-        purpose: "1 — GM-hop to a Stormwind auctioneer and drive browse/throttle/sell/owner-list/cancel through the VM",
+        purpose: "1 — GM-hop to a Stormwind auctioneer and drive the stock auction window: open state, browse and re-sort, the filter tree, a two-stack multi-sell, bid and buyout, cancel",
         wall_clock: true,
+    },
+    ProbeVar {
+        name: "WOW_PROBE_AUCTION_KEEP",
+        purpose: "1 — with WOW_PROBE_AUCTION, keep the listings and skip bidding: the seller half of a two-account run",
+        wall_clock: false,
     },
     ProbeVar {
         name: "WOW_PROBE_BANK",
