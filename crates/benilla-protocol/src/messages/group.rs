@@ -13,6 +13,10 @@ use crate::wire::{
 /// The raid-assistant bit of a member's flags byte; bits 0-2 are the subgroup
 /// (`Group/Group.cpp:1382,1394`).
 pub const GROUP_MEMBER_ASSISTANT: u8 = 0x80;
+/// A member's main-tank assignment, folded from the row's flags.
+pub const GROUP_MEMBER_MAIN_TANK: u8 = 0x08;
+/// A member's main-assist assignment, folded from the row's flags.
+pub const GROUP_MEMBER_MAIN_ASSIST: u8 = 0x10;
 
 /// The member status bits: an `SMSG_GROUP_LIST` row's byte and the low byte of a member record's
 /// `u16` (`[rec+8]`, written by `0x6cfa96` and `FillPartyMemberState 0x6e12e0`).
@@ -150,15 +154,18 @@ const GROUP_TYPE_LFG_RESTRICTED: u8 = 0x04;
 const GROUP_TYPE_LFG: u8 = 0x08;
 /// 3.3.5a's member-flags assistant bit (`GetRaidRosterInfo` tests `& 1`).
 const MEMBER_FLAG_ASSISTANT: u8 = 0x01;
+/// The main-tank and main-assist assignments, which the combat log's flags read (`0x74dcb0`).
+const MEMBER_FLAG_MAIN_TANK: u8 = 0x02;
+const MEMBER_FLAG_MAIN_ASSIST: u8 = 0x04;
 
-/// A 3.3.5a subgroup and flags byte folded into one: subgroup in bits 0-2, [`GROUP_MEMBER_ASSISTANT`].
+/// A 3.3.5a subgroup and flags byte folded into one: subgroup in bits 0-2, then
+/// [`GROUP_MEMBER_MAIN_TANK`], [`GROUP_MEMBER_MAIN_ASSIST`] and [`GROUP_MEMBER_ASSISTANT`].
 fn fold_member_flags(subgroup: u8, flags: u8) -> u8 {
-    let assistant = if flags & MEMBER_FLAG_ASSISTANT != 0 {
-        GROUP_MEMBER_ASSISTANT
-    } else {
-        0
-    };
-    (subgroup & 0x07) | assistant
+    let bit = |mask: u8, folded: u8| if flags & mask != 0 { folded } else { 0 };
+    (subgroup & 0x07)
+        | bit(MEMBER_FLAG_ASSISTANT, GROUP_MEMBER_ASSISTANT)
+        | bit(MEMBER_FLAG_MAIN_TANK, GROUP_MEMBER_MAIN_TANK)
+        | bit(MEMBER_FLAG_MAIN_ASSIST, GROUP_MEMBER_MAIN_ASSIST)
 }
 
 /// Read `SMSG_GROUP_LIST` as `0x6d8870` does; `group_type` is 1 for a raid, flags [`fold_member_flags`].

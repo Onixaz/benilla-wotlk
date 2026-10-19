@@ -12,9 +12,9 @@ use crate::messages::{
     PartyMemberStatsInfo, PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse,
     PetitionRename, PetitionShowList, PetitionShowSignatures, PetitionSignResults, PvpCredit,
     QuestComplete, QuestConfirmAccept, QuestDetails, QuestGiverList, QuestOfferReward,
-    QuestRequestItems, QuestShareMsg, QuestTemplate, SpellDamageLog, SpellDispelLog,
-    SpellEnergizeLog, SpellHealLog, SpellInstaKillLog, SpellLogExecute, SpellLogMiss,
-    SpellOutcomeLog, StabledPet, TaxiMask, TradeStatus, TradeStatusExtended, TrainerSpell,
+    QuestRequestItems, QuestShareMsg, QuestTemplate, SpellDamageLog, SpellEnergizeLog,
+    SpellHealLog, SpellInstaKillLog, SpellLogExecute, SpellLogMiss, SpellOutcomeLog,
+    SpellRemoveLog, StabledPet, TaxiMask, TradeStatus, TradeStatusExtended, TrainerSpell,
     TransportPose, VendorItem, WhoResults, XpGain,
 };
 
@@ -669,6 +669,8 @@ pub enum SessionEvent {
         cast_flags: u32,
         hits: Vec<u64>,
         misses: Vec<(u64, u8)>,
+        /// `(guid, outcome)` of each reflect miss, logged back on the caster (`0x80e1b0`).
+        reflects: Vec<(u64, u8)>,
         target: Option<u64>,
         /// The GameObject an open-lock cast targets (`TARGET_FLAG_GAMEOBJECT`), a chest or door.
         go_target: Option<u64>,
@@ -767,14 +769,16 @@ pub enum SessionEvent {
     ProcResist(SpellOutcomeLog),
     /// A target immune to the spell (`SMSG_SPELLORDAMAGE_IMMUNE`).
     SpellOrDamageImmune(SpellOutcomeLog),
-    /// The auras a dispel removed (`SMSG_SPELLDISPELLOG`).
-    SpellDispelLog(SpellDispelLog),
+    /// Auras a dispel, steal or break removed (`SMSG_SPELLDISPELLOG` and its two siblings).
+    SpellRemoveLog(SpellRemoveLog),
     /// The auras a dispel failed to remove (`SMSG_DISPEL_FAILED`).
     DispelFailed(DispelFailed),
     /// An enchant landing on or fading from an item (`SMSG_ENCHANTMENTLOG`).
     EnchantmentLog(EnchantmentLog),
     /// What a cast's effects did (`SMSG_SPELLLOGEXECUTE`).
     SpellLogExecute(SpellLogExecute),
+    /// A siege hit or repair on a building (`SMSG_DESTRUCTIBLE_BUILDING_DAMAGE`).
+    BuildingDamage(crate::messages::BuildingDamage),
     /// An XP award, kill or non-kill (`SMSG_LOG_XPGAIN`).
     XpGain(XpGain),
     /// A first visit to an area and its XP (`SMSG_EXPLORATION_EXPERIENCE`), the "Discovered" line.

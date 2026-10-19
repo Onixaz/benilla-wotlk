@@ -11,14 +11,14 @@ pub const UNIT_DYNFLAG_DEAD: u32 = 0x20;
 /// byte 0.
 const STAND_STATE_DEAD: u8 = 7;
 
-/// The reference's raw-to-shown power divisor (`0x6e7130`, table `0x86f978`): 10 for rage, 1000
-/// for pet happiness, 1 for any other type, `POWER_HEALTH` (-2) included. Every power figure a
-/// player reads divides by it: `UnitMana`, `UnitManaMax`, party power, the energize and periodic
-/// logs, the drain formatter and the spell cost; happiness thresholds stay on the raw scale.
+/// The reference's raw-to-shown power divisor (`0x7fde00`, table `0xaf5220`): 10 for rage and
+/// runic power, 1000 for pet happiness, 1 for any other type, `POWER_HEALTH` (-2) included. Every
+/// power figure a player reads divides by it: `UnitMana`, `UnitManaMax`, party power, the energize
+/// and drain entries and the spell cost; happiness thresholds stay on the raw scale.
 pub fn power_display_scale(ty: u32) -> u32 {
     match ty {
-        1 => 10,   // rage
-        4 => 1000, // happiness
+        1 | 6 => 10, // rage, runic power
+        4 => 1000,   // happiness
         _ => 1,
     }
 }

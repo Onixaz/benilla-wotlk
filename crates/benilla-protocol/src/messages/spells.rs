@@ -427,8 +427,10 @@ pub struct SpellGo {
     pub spell_id: u32,
     pub cast_flags: u32,
     pub hits: Vec<u64>,
-    /// `(guid, SpellMissInfo)`; a reflect's trailing outcome byte is dropped.
+    /// `(guid, SpellMissInfo)`.
     pub misses: Vec<(u64, u8)>,
+    /// `(guid, outcome)` of each reflect miss, the reflected spell's result on the caster.
+    pub reflects: Vec<(u64, u8)>,
     pub targets: SpellCastTargets,
     pub ammo_display_id: Option<u32>,
 }
@@ -452,11 +454,12 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
     }
     let miss_count = read_u8(r)?;
     let mut misses = Vec::with_capacity(capacity_hint(miss_count, usize::from(u8::MAX)));
+    let mut reflects = Vec::new();
     for _ in 0..miss_count {
         let guid = read_u64_le(r)?;
         let reason = read_u8(r)?;
         if reason == SPELL_MISS_REFLECT {
-            let _reflect_result = read_u8(r)?;
+            reflects.push((guid, read_u8(r)?));
         }
         misses.push((guid, reason));
     }
@@ -499,6 +502,7 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
         cast_flags,
         hits,
         misses,
+        reflects,
         targets,
         ammo_display_id,
     })
@@ -808,6 +812,27 @@ mod tests {
         assert!(go.misses.is_empty());
         assert_eq!(go.targets.mask, TARGET_FLAG_UNIT);
         assert_eq!(go.targets.unit_target, Some(0));
+    }
+
+    /// A reflect miss carries one more byte, the reflected spell's own outcome on the caster.
+    #[test]
+    fn spell_go_keeps_a_reflects_outcome() {
+        let mut body = vec![0x01, 0x05, 0x01, 0x05, 0];
+        body.extend(133u32.to_le_bytes());
+        body.extend(0u32.to_le_bytes()); // cast flags
+        body.extend(0u32.to_le_bytes()); // timestamp
+        body.push(0); // no hits
+        body.push(2); // two misses
+        body.extend(0x10u64.to_le_bytes());
+        body.extend([SPELL_MISS_REFLECT, 7]);
+        body.extend(0x11u64.to_le_bytes());
+        body.push(3);
+        body.extend(0u32.to_le_bytes()); // targets: none
+        let mut r = &body[..];
+        let go = read_spell_go(&mut r).unwrap();
+        assert!(r.is_empty(), "{} bytes left", r.len());
+        assert_eq!(go.misses, vec![(0x10, SPELL_MISS_REFLECT), (0x11, 3)]);
+        assert_eq!(go.reflects, vec![(0x10, 7)]);
     }
 
     #[test]

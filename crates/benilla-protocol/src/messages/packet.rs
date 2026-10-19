@@ -16,8 +16,8 @@ use super::{
     PetitionShowSignatures, PetitionSignResults, PvpCredit, QuestComplete, QuestConfirmAccept,
     QuestDetails, QuestGiverList, QuestOfferReward, QuestPushResult, QuestRequestItems,
     QuestTemplate, ResurrectRequestBody, SpeedKind, SpellChainTargets, SpellCooldown,
-    SpellDamageLog, SpellDispelLog, SpellEnergizeLog, SpellGo, SpellHealLog, SpellInstaKillLog,
-    SpellLogExecute, SpellLogMiss, SpellOutcomeLog, SpellStart, SplineMode, StabledPet, TaxiMask,
+    SpellDamageLog, SpellEnergizeLog, SpellGo, SpellHealLog, SpellInstaKillLog, SpellLogExecute,
+    SpellLogMiss, SpellOutcomeLog, SpellRemoveLog, SpellStart, SplineMode, StabledPet, TaxiMask,
     TradeStatus, TradeStatusExtended, TrainerSpell, TransportPose, VendorItem, WhoResults, XpGain,
 };
 
@@ -715,14 +715,16 @@ pub enum ServerPacket {
     ProcResist(SpellOutcomeLog),
     /// `SMSG_SPELLORDAMAGE_IMMUNE`: a target immune to the spell.
     SpellOrDamageImmune(SpellOutcomeLog),
-    /// `SMSG_SPELLDISPELLOG`: the auras a dispel removed.
-    SpellDispelLog(SpellDispelLog),
+    /// `SMSG_SPELLDISPELLOG`, `SMSG_SPELLSTEALLOG` or `SMSG_SPELLBREAKLOG`: auras removed.
+    SpellRemoveLog(SpellRemoveLog),
     /// `SMSG_DISPEL_FAILED`: the auras a dispel failed to remove.
     DispelFailed(DispelFailed),
     /// `SMSG_ENCHANTMENTLOG`: an enchant landing on or fading from an item.
     EnchantmentLog(EnchantmentLog),
     /// `SMSG_SPELLLOGEXECUTE`: what a cast's effects did: created items, interrupts, drains, ….
     SpellLogExecute(SpellLogExecute),
+    /// `SMSG_DESTRUCTIBLE_BUILDING_DAMAGE`: a siege hit or repair on a building.
+    BuildingDamage(super::BuildingDamage),
     /// `SMSG_LOG_XPGAIN`: an XP award, kill or non-kill.
     XpGain(XpGain),
     /// `SMSG_EXPLORATION_EXPERIENCE`: a first visit to an area, its id and XP award.
@@ -1517,10 +1519,15 @@ impl ServerPacket {
             ServerPacket::SpellInstaKillLog(_) => "SMSG_SPELLINSTAKILLLOG".into(),
             ServerPacket::ProcResist(_) => "SMSG_PROCRESIST".into(),
             ServerPacket::SpellOrDamageImmune(_) => "SMSG_SPELLORDAMAGE_IMMUNE".into(),
-            ServerPacket::SpellDispelLog(_) => "SMSG_SPELLDISPELLOG".into(),
+            ServerPacket::SpellRemoveLog(l) => match l.kind {
+                super::SpellRemoveKind::Break => "SMSG_SPELLBREAKLOG".into(),
+                super::SpellRemoveKind::Dispel => "SMSG_SPELLDISPELLOG".into(),
+                super::SpellRemoveKind::Steal => "SMSG_SPELLSTEALLOG".into(),
+            },
             ServerPacket::DispelFailed(_) => "SMSG_DISPEL_FAILED".into(),
             ServerPacket::EnchantmentLog(_) => "SMSG_ENCHANTMENTLOG".into(),
             ServerPacket::SpellLogExecute(_) => "SMSG_SPELLLOGEXECUTE".into(),
+            ServerPacket::BuildingDamage(_) => "SMSG_DESTRUCTIBLE_BUILDING_DAMAGE".into(),
             ServerPacket::XpGain(_) => "SMSG_LOG_XPGAIN".into(),
             ServerPacket::ExplorationXp(_) => "SMSG_EXPLORATION_EXPERIENCE".into(),
             ServerPacket::LevelUp(_) => "SMSG_LEVELUP_INFO".into(),

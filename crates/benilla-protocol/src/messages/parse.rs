@@ -988,8 +988,13 @@ fn parse_server_body(
         opcode::SMSG_SPELLORDAMAGE_IMMUNE => {
             ServerPacket::SpellOrDamageImmune(combat_log::read_spell_outcome_log(&mut r)?)
         }
-        opcode::SMSG_SPELLDISPELLOG => {
-            ServerPacket::SpellDispelLog(combat_log::read_spell_dispel_log(&mut r)?)
+        opcode::SMSG_SPELLDISPELLOG | opcode::SMSG_SPELLSTEALLOG | opcode::SMSG_SPELLBREAKLOG => {
+            let kind = match opcode {
+                opcode::SMSG_SPELLSTEALLOG => combat_log::SpellRemoveKind::Steal,
+                opcode::SMSG_SPELLBREAKLOG => combat_log::SpellRemoveKind::Break,
+                _ => combat_log::SpellRemoveKind::Dispel,
+            };
+            ServerPacket::SpellRemoveLog(combat_log::read_spell_remove_log(&mut r, kind)?)
         }
         opcode::SMSG_DISPEL_FAILED => {
             ServerPacket::DispelFailed(combat_log::read_dispel_failed(&mut r)?)
@@ -999,6 +1004,9 @@ fn parse_server_body(
         }
         opcode::SMSG_SPELLLOGEXECUTE => {
             ServerPacket::SpellLogExecute(combat_log::read_spell_log_execute(&mut r)?)
+        }
+        opcode::SMSG_DESTRUCTIBLE_BUILDING_DAMAGE => {
+            ServerPacket::BuildingDamage(combat_log::read_building_damage(&mut r)?)
         }
         opcode::SMSG_LOG_XPGAIN => ServerPacket::XpGain(progression::read_xp_gain(&mut r)?),
         opcode::SMSG_EXPLORATION_EXPERIENCE => {

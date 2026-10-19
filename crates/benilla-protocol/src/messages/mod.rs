@@ -116,9 +116,10 @@ pub use client::{
     movement, pet_name_query, ping, played_time, query_time, random_roll, teleport_ack, text_emote,
 };
 pub use combat_log::{
-    DamageShield, DispelFailed, EnchantmentLog, EnvironmentalDamageLog, ExecuteLog, PartyKillLog,
-    PeriodicAuraLog, PeriodicTick, SpellDamageLog, SpellDispelLog, SpellEnergizeLog, SpellHealLog,
-    SpellInstaKillLog, SpellLogExecute, SpellLogMiss, SpellOutcomeLog,
+    spell_hit_info, BuildingDamage, DamageShield, DispelFailed, EnchantmentLog,
+    EnvironmentalDamageLog, ExecuteLog, PartyKillLog, PeriodicAuraLog, PeriodicTick,
+    SpellDamageLog, SpellEnergizeLog, SpellHealLog, SpellInstaKillLog, SpellLogExecute,
+    SpellLogMiss, SpellOutcomeLog, SpellRemoveKind, SpellRemoveLog,
 };
 pub use death::{
     area_spirit_healer, reclaim_corpse, repop_request, resurrect_response, spirit_healer_activate,
@@ -147,6 +148,7 @@ pub use group::{
     ready_check_answer, ready_check_start, request_party_member_stats, request_raid_info,
     DifficultySet, GroupDifficulties, GroupLootInfo, GroupMemberEntry, PartyMemberStatsInfo,
     RaidInstanceEntry, RaidTargetUpdate, ReadyCheck, RecordAura, GROUP_MEMBER_ASSISTANT,
+    GROUP_MEMBER_MAIN_ASSIST, GROUP_MEMBER_MAIN_TANK,
 };
 pub use guild::{
     guild_accept, guild_add_rank, guild_bank_money_param, guild_bank_money_withdrawn,
