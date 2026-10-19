@@ -150,7 +150,7 @@ fn hyperlink_item_fields(link: &str) -> Option<(u32, u32, u32)> {
 }
 
 /// The id-keyed render; on a miss, the ask and the retrieving line. The engine's own item hovers
-/// reach it from Rust (the action bar's, `SetTrainerService`, `SetCraftSpell`).
+/// reach it from Rust (the action bar's, `SetTrainerService`, `SetTradeSkillItem`).
 pub(super) fn render_by_id(lua: &Lua, this: &Table, item_id: u32, sell: Sell) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     {
@@ -326,9 +326,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             if super::achievement::set_achievement_link(lua, &this, &link)? {
                 return Ok(());
             }
-            // The only other link it takes, the craft window's `|Henchant:<spellId>|h[name]|h`
-            // (`GetCraftItemLink`): the spell's own tooltip, behind its producer's castUI gate
-            // (`0x532243`).
+            // The only other link it takes, a recipe's `|Henchant:<spellId>|h[name]|h`
+            // (`GetTradeSkillRecipeLink`): the spell's own tooltip.
             if let Some(spell) = hyperlink_enchant_spell(&link) {
                 return super::tooltip_spell::set_spell_by_id(
                     lua,
@@ -1110,77 +1109,64 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GameTooltip:SetTradeSkillItem(skillIndex [, reagentIndex]): the reagent's item, or without
-    // `reagentIndex` the recipe's product; a bad index does nothing.
+    // GameTooltip:SetTradeSkillItem(skillIndex [, reagentIndex]) (`0x62eae0`): the reagent's
+    // item, else the product with its made counts, else the recipe's own spell; a header or a bad
+    // reagent raises.
     m.set(
         "SetTradeSkillItem",
         lua.create_function(
-            |lua, (this, skill_index, reagent_index): (Table, usize, Option<usize>)| {
-                let found = {
+            |lua, (this, skill_index, reagent_index): (Table, Value, Value)| {
+                let invalid = || {
+                    mlua::Error::RuntimeError(
+                        "Invalid trade skill item in SetTradeSkillItem(index [,reagent])".into(),
+                    )
+                };
+                let index = lua.coerce_number(skill_index)?.ok_or_else(invalid)? as i64;
+                let reagent = lua.coerce_number(reagent_index)?.map(|n| n as i64);
+                enum Hover {
+                    Item(u32, Sell),
+                    Spell(u32),
+                }
+                let hover = {
                     let model = lua
                         .app_data_ref::<crate::script::ModelCell>()
                         .expect("model app_data");
-                    // A visible-row index, headers included (`0x4fca20`); a header is None.
-                    let Some(recipe) = super::tradeskill::recipe_at(&model, skill_index) else {
-                        return Ok(());
-                    };
-                    // The reagent's count, or the product's min and max made (`0x62eae0`).
-                    match reagent_index {
+                    let recipe = super::tradeskill::recipe_at(&model, index).ok_or_else(invalid)?;
+                    match reagent {
                         Some(ri) => {
-                            ri.checked_sub(1)
+                            let r = usize::try_from(ri - 1)
+                                .ok()
                                 .and_then(|i| recipe.reagents.get(i))
-                                .map(|r| {
-                                    let sell = Sell::Block {
-                                        stack: r.need,
-                                        max: None,
-                                    };
-                                    (r.item, sell)
-                                })
+                                .ok_or_else(invalid)?;
+                            Hover::Item(
+                                r.item,
+                                Sell::Block {
+                                    stack: r.need,
+                                    max: None,
+                                },
+                            )
                         }
-                        None => Some((
+                        None if recipe.creates_item && recipe.product_item != 0 => Hover::Item(
                             recipe.product_item,
                             Sell::Block {
                                 stack: recipe.min_made,
                                 max: Some(recipe.max_made),
                             },
-                        )),
+                        ),
+                        None => Hover::Spell(recipe.spell_id),
                     }
                 };
-                let Some((item_id, sell)) = found else {
-                    return Ok(());
-                };
-                render_by_id(lua, &this, item_id, sell)
-            },
-        )?,
-    )?;
-
-    // GameTooltip:SetCraftItem(craftIndex, reagentIndex): the reagent's item
-    // (`Blizzard_CraftUI.xml:33`); a craft has no product item, so both arguments are required. A
-    // bad index does nothing.
-    m.set(
-        "SetCraftItem",
-        lua.create_function(
-            |lua, (this, craft_index, reagent_index): (Table, usize, usize)| {
-                let found = {
-                    let model = lua
-                        .app_data_ref::<crate::script::ModelCell>()
-                        .expect("model app_data");
-                    let Some(c) = &model.craft else {
-                        return Ok(());
-                    };
-                    let Some(recipe) = craft_index.checked_sub(1).and_then(|i| c.recipes.get(i))
-                    else {
-                        return Ok(());
-                    };
-                    reagent_index
-                        .checked_sub(1)
-                        .and_then(|i| recipe.reagents.get(i))
-                        .map(|r| r.item)
-                };
-                let Some(item_id) = found else {
-                    return Ok(());
-                };
-                render_by_id(lua, &this, item_id, Sell::Skip)
+                match hover {
+                    Hover::Item(item_id, sell) => render_by_id(lua, &this, item_id, sell),
+                    Hover::Spell(spell) => super::tooltip_spell::set_spell_by_id(
+                        lua,
+                        &this,
+                        spell,
+                        None,
+                        Default::default(),
+                        None,
+                    ),
+                }
             },
         )?,
     )?;

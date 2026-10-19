@@ -766,10 +766,10 @@ fn set_trainer_service_selects_the_builder_and_never_renders_its_own_line() {
     assert!(s.take_errors().is_empty());
 }
 
-/// `SetCraftSpell` is a selector like `SetTrainerService`: a rod recipe hovers the rod's item
-/// tooltip while its row's icon is the spell's, which is the reference's shape, not a bug.
+/// `SetTradeSkillItem` is a selector like `SetTrainerService` (`0x62eae0`): an enchant hovers its
+/// own spell, a rod recipe the rod's item.
 #[test]
-fn set_craft_spell_selects_the_builder_like_the_trainer_hover_does() {
+fn set_trade_skill_item_selects_the_spell_or_the_product() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
     s.set_item_template(
@@ -789,41 +789,28 @@ fn set_craft_spell_selects_the_builder_like_the_trainer_hover_does() {
             ..Default::default()
         },
     );
-    let recipe = |spell_id: u32, name: &str, tooltip: CraftTooltip| CraftRecipe {
-        spell_id,
-        tooltip,
-        name: name.into(),
-        sub_name: String::new(),
-        difficulty: TradeSkillDifficulty::Optimal,
-        num_available: 1,
-        icon: Some("Interface\\Icons\\Spell_Holy_Heal".into()),
-        description: Some("the OLD two-line stub's second line".into()),
-        needs_item_target: false,
-        reagents: vec![],
-        tools: vec![],
-        spell_level: 0,
-    };
-    s.set_craft(Some(CraftState {
-        name: "Enchanting".into(),
-        rank: 100,
-        max_rank: 150,
-        craft_type: 3,
-        recipes: vec![
-            recipe(
-                7420,
-                "Enchant Bracer - Minor Health",
-                CraftTooltip::Spell(7420),
-            ),
-            recipe(7421, "Runed Copper Rod", CraftTooltip::Item(6218)),
-        ],
-    }));
+    let mut book = enchant_book(&[(7420, "Enchant Bracer - Minor Health")]);
+    let mut rod = book.recipes[0].clone();
+    rod.spell_id = 7421;
+    rod.name = "Runed Copper Rod".into();
+    rod.creates_item = true;
+    rod.product_item = 6218;
+    rod.group = Some(TradeSkillGroup::SubClass {
+        class: 7,
+        subclass: 12,
+        name: Some("Enchanting".into()),
+    });
+    book.recipes.push(rod);
+    book.recipes[0].description = Some("the row's own description".into());
+    s.set_trade_skill(Some(book));
 
+    // [1] the verb header, [2] the enchant, [3] the rod's header, [4] the rod.
     s.run(
         r#"
         local a = CreateFrame("Button", "AB2"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         CreateFrame("GameTooltip", "TT")
         TT:SetOwner(a, "ANCHOR_RIGHT")
-        TT:SetCraftSpell(1)
+        TT:SetTradeSkillItem(2)
     "#,
     )
     .unwrap();
@@ -831,26 +818,24 @@ fn set_craft_spell_selects_the_builder_like_the_trainer_hover_does() {
     assert_eq!(texts[0], "Enchant Bracer - Minor Health");
     assert!(
         texts.iter().any(|t| t == "Instant cast"),
-        "the SHARED spell builder's law, not a two-line stub: {texts:?}"
+        "the shared spell builder: {texts:?}"
     );
     assert!(
-        !texts
-            .iter()
-            .any(|t| t == "the OLD two-line stub's second line"),
-        "the row's own `description` field is no longer the tooltip's source: {texts:?}"
+        !texts.iter().any(|t| t == "the row's own description"),
+        "the spell's tooltip, not the row's description: {texts:?}"
     );
 
     s.run(
         r#"
         TT:SetOwner(AB2, "ANCHOR_RIGHT")
-        TT:SetCraftSpell(2)
+        TT:SetTradeSkillItem(4)
     "#,
     )
     .unwrap();
     let texts = left_lines(&mut s);
     assert_eq!(
         texts[0], "Runed Copper Rod",
-        "a CREATE_ITEM recipe hovers the ITEM, though its icon is the spell's: {texts:?}"
+        "a CREATE_ITEM recipe hovers the item"
     );
     assert!(s.take_errors().is_empty());
 }
@@ -1040,21 +1025,39 @@ fn quest_reward_spell_getters_and_hovers() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// A craft recipe row whose detail icon hovers `tooltip`.
-fn craft_recipe(spell_id: u32, name: &str, tooltip: CraftTooltip) -> CraftRecipe {
-    CraftRecipe {
-        spell_id,
-        tooltip,
-        name: name.into(),
-        sub_name: String::new(),
-        difficulty: TradeSkillDifficulty::Optimal,
-        num_available: 1,
-        icon: None,
-        description: None,
-        needs_item_target: false,
-        reagents: vec![],
-        tools: vec![],
-        spell_level: 0,
+/// An enchanting book of enchants, each hovering its own spell; the first is display row 2.
+fn enchant_book(recipes: &[(u32, &str)]) -> TradeSkillState {
+    TradeSkillState {
+        line: 333,
+        line_name: "Enchanting".into(),
+        alt_verb: "Enchant".into(),
+        rank: 1,
+        max_rank: 75,
+        list_link: None,
+        recipes: recipes
+            .iter()
+            .map(|&(spell_id, name)| TradeSkillRecipe {
+                spell_id,
+                name: name.into(),
+                difficulty: TradeSkillDifficulty::Optimal,
+                num_available: 1,
+                trivial_high: 0,
+                group: Some(TradeSkillGroup::Verb),
+                item_level: 0,
+                inv_slots: 1,
+                creates_item: false,
+                product_item: 0,
+                required_level: None,
+                icon: None,
+                min_made: 1,
+                max_made: 1,
+                cooldown_end: None,
+                description: None,
+                search_text: Vec::new(),
+                reagents: vec![],
+                tools: vec![],
+            })
+            .collect(),
     }
 }
 
@@ -1079,7 +1082,7 @@ fn firebolt() -> SpellTooltipView {
     }
 }
 
-/// Pet-bar tokens and craft item subjects name no spell, so they are left out.
+/// Pet-bar tokens and recipes that hover their product name no spell, so they are left out.
 #[test]
 fn the_spell_subjects_are_what_the_setters_read_from_the_vm() {
     let mut s = script();
@@ -1126,16 +1129,10 @@ fn the_spell_subjects_are_what_the_setters_read_from_the_vm() {
         }],
         ..Default::default()
     });
-    s.set_craft(Some(CraftState {
-        name: "Beast Training".into(),
-        rank: 0,
-        max_rank: 0,
-        craft_type: 1,
-        recipes: vec![
-            craft_recipe(24599, "Bite", CraftTooltip::Spell(17253)),
-            craft_recipe(7421, "Runed Copper Rod", CraftTooltip::Item(6218)),
-        ],
-    }));
+    let mut book = enchant_book(&[(17253, "Bite"), (7421, "Runed Copper Rod")]);
+    book.recipes[1].creates_item = true;
+    book.recipes[1].product_item = 6218;
+    s.set_trade_skill(Some(book));
     let aura = |spell_id| AuraState {
         spell_id,
         ..Default::default()
@@ -1163,7 +1160,7 @@ fn the_spell_subjects_are_what_the_setters_read_from_the_vm() {
 
 /// The builder's unit selector picks the view built against the pet: `SetPetAction` passes it
 /// (`0x532888`, `0x5328d0`), `SetSpell` on the pet book (`0x532e23`) and a pet-learn
-/// `SetTrainerService` (`0x533a7f`); the player's book, a class service and a craft pass 0.
+/// `SetTrainerService` (`0x533a7f`); the player's book, a class service and a recipe pass 0.
 #[test]
 fn the_unit_selector_setters_read_the_pet_view() {
     let mut s = script();
@@ -1213,13 +1210,7 @@ fn the_unit_selector_setters_read_the_pet_view() {
         services: vec![service(true), service(false)],
         ..Default::default()
     }));
-    s.set_craft(Some(CraftState {
-        name: "Beast Training".into(),
-        rank: 0,
-        max_rank: 0,
-        craft_type: 1,
-        recipes: vec![craft_recipe(24599, "Sacrifice", CraftTooltip::Spell(7812))],
-    }));
+    s.set_trade_skill(Some(enchant_book(&[(7812, "Sacrifice")])));
     s.run(
         r#"
         local a = CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
@@ -1233,7 +1224,7 @@ fn the_unit_selector_setters_read_the_pet_view() {
         -- Row 1 is the group header.
         PET_SERVICE = desc(function() TT:SetTrainerService(2) end)
         SERVICE = desc(function() TT:SetTrainerService(3) end)
-        CRAFT = desc(function() TT:SetCraftSpell(1) end)
+        CRAFT = desc(function() TT:SetTradeSkillItem(2) end)
     "#,
     )
     .unwrap();
@@ -1325,25 +1316,19 @@ fn a_missed_view_re_renders_the_tooltip_when_the_app_answers() {
     assert!(s.take_errors().is_empty());
 }
 
-/// Beast Training's icon has no fallback name, so its miss is a hidden plate.
+/// A recipe's spell hover has no fallback name, so its miss is a hidden plate.
 #[test]
 fn a_hidden_miss_shows_and_an_enchant_link_fills_when_answered() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
-    s.set_craft(Some(CraftState {
-        name: "Beast Training".into(),
-        rank: 0,
-        max_rank: 0,
-        craft_type: 1,
-        recipes: vec![craft_recipe(24599, "Bite", CraftTooltip::Spell(17253))],
-    }));
+    s.set_trade_skill(Some(enchant_book(&[(17253, "Bite")])));
     s.run(
         r#"
         local a = CreateFrame("Button", "CI"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         CreateFrame("GameTooltip", "TT")
         CreateFrame("GameTooltip", "REF")
         TT:SetOwner(CI, "ANCHOR_RIGHT")
-        TT:SetCraftSpell(1)
+        TT:SetTradeSkillItem(2)
         REF:SetOwner(CI, "ANCHOR_PRESERVE")
         REF:SetHyperlink("|cffffd000|Henchant:20034|h[Enchant Weapon - Crusader]|h|r")
     "#,
@@ -1478,22 +1463,16 @@ fn a_line_rewritten_in_place_ends_the_wait() {
 fn a_wait_replaced_by_an_earlier_re_render_is_not_replayed() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
-    s.set_craft(Some(CraftState {
-        name: "Beast Training".into(),
-        rank: 0,
-        max_rank: 0,
-        craft_type: 1,
-        recipes: vec![craft_recipe(24599, "Firebolt", CraftTooltip::Spell(3110))],
-    }));
+    s.set_trade_skill(Some(enchant_book(&[(3110, "Firebolt")])));
     s.run(
         r#"
         local a = CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         CreateFrame("GameTooltip", "A")
         CreateFrame("GameTooltip", "B")
         A:SetOwner(PB1, "ANCHOR_RIGHT")
-        A:SetCraftSpell(1)
+        A:SetTradeSkillItem(2)
         B:SetOwner(PB1, "ANCHOR_RIGHT")
-        B:SetCraftSpell(1)
+        B:SetTradeSkillItem(2)
         A:SetScript("OnShow", function()
             B:SetOwner(PB1, "ANCHOR_RIGHT")
             B:SetHyperlink("|cffffd000|Henchant:20034|h[Enchant Weapon - Crusader]|h|r")

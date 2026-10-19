@@ -398,18 +398,27 @@ fn set_hyperlink_renders_items_and_ignores_other_links() {
 /// A recipe whose product id is `spell_id + 10_000`, so the tooltip's name shows which row it hit.
 fn ts_recipe(spell_id: u32, name: &str, group: (u32, u32, &str)) -> TradeSkillRecipe {
     TradeSkillRecipe {
-        group: Some((group.0, group.1, group.2.to_string())),
         spell_id,
         name: name.into(),
         difficulty: TradeSkillDifficulty::Optimal,
         num_available: 1,
+        trivial_high: 0,
+        group: Some(TradeSkillGroup::SubClass {
+            class: group.0,
+            subclass: group.1,
+            name: Some(group.2.to_string()),
+        }),
+        item_level: 0,
+        inv_slots: 1,
+        creates_item: true,
+        product_item: spell_id + 10_000,
+        required_level: None,
         icon: None,
         min_made: 1,
         max_made: 1,
-        cooldown_secs: None,
-        product_item: spell_id + 10_000,
-        product_inv_type: 0,
-        product_item_level: 0,
+        cooldown_end: None,
+        description: None,
+        search_text: Vec::new(),
         reagents: vec![TradeSkillReagent {
             item: spell_id + 20_000,
             name: Some(format!("{name} Reagent")),
@@ -421,29 +430,30 @@ fn ts_recipe(spell_id: u32, name: &str, group: (u32, u32, &str)) -> TradeSkillRe
     }
 }
 
-/// `SetTradeSkillItem` takes a visible row index, headers included, not a position in `recipes`;
-/// the product and reagent hovers both pass one, and a header row is a no-op.
+/// `SetTradeSkillItem` takes a display index, headers included, not a position in `recipes`;
+/// the product and reagent hovers both pass one, and a header raises (`0x62eae0`).
 #[test]
-fn set_trade_skill_item_indexes_visible_rows_not_raw_recipes() {
+fn set_trade_skill_item_indexes_display_entries_not_raw_recipes() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
     s.run(r#"local tt = CreateFrame("GameTooltip", "TT")"#)
         .unwrap();
 
-    // Two groups, two recipes each. Visible order: [1] "Bolts" header, [2] Alpha Bolt,
+    // Two groups, two recipes each. Display order: [1] "Bolts" header, [2] Alpha Bolt,
     // [3] Beta Bolt, [4] "Cloak" header, [5] Alpha Cloak, [6] Beta Cloak.
     s.set_trade_skill(Some(TradeSkillState {
         line: 197,
         line_name: "Tailoring".into(),
+        alt_verb: "Embroider".into(),
         rank: 57,
         max_rank: 75,
+        list_link: None,
         recipes: vec![
             ts_recipe(1, "Beta Bolt", (1, 2, "Bolts")),
             ts_recipe(2, "Alpha Bolt", (1, 2, "Bolts")),
             ts_recipe(3, "Beta Cloak", (2, 1, "Cloak")),
             ts_recipe(4, "Alpha Cloak", (2, 1, "Cloak")),
         ],
-        repeat_count: 1,
     }));
     assert_eq!(s.eval::<i64>("return GetNumTradeSkills()").unwrap(), 6);
     for (spell, name) in [
@@ -479,8 +489,13 @@ fn set_trade_skill_item_indexes_visible_rows_not_raw_recipes() {
 
     assert_eq!(name_at(&mut s, 5, ", 1"), "Alpha Cloak Reagent");
 
-    // A header row is a no-op: the previous render stands.
-    assert_eq!(name_at(&mut s, 4, ""), "Alpha Cloak Reagent");
+    // A header raises the reference's error.
+    let err =
+        s.eval::<String>("local ok, e = pcall(TT.SetTradeSkillItem, TT, 4) return tostring(e)");
+    assert!(
+        err.unwrap().contains("Invalid trade skill item"),
+        "a header raises"
+    );
 }
 
 /// `SetMerchantCompareItem(index [, offset])` returns the number 1 or nil, one value, and the stock

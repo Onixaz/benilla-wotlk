@@ -210,7 +210,7 @@ impl super::UiScript {
         self.answer_item_waits(|m| m.items.contains(&item_id));
     }
 
-    /// Asks for the templates of `ids` the store lacks, for the trade-skill and craft lists,
+    /// Asks for the templates of `ids` the store lacks, for the trade-skill list,
     /// whose link verbs never query: the reference has them cached before the list shows.
     pub fn ask_item_templates(&mut self, ids: impl IntoIterator<Item = u32>) {
         let mut model = self.model_mut();
@@ -269,7 +269,7 @@ const QUALITY_COLORS: [(u8, u8, u8, &str); 7] = [
     (0xe6, 0xcc, 0x80, "|cffe6cc80"), // 6 Artifact
 ];
 
-/// The client's item-link builder `0x52adb0` as the trade-skill and craft link verbs call it:
+/// The client's item-link builder `0x52adb0` as the trade-skill link verbs call it:
 /// `|c<rrggbb>|Hitem:<id>:0:0:0|h[<name>]|h|r`. A quality of 7 or more selects index 1, white,
 /// by `0x52ad90`'s unsigned `cmp ecx,7; jb`.
 pub(super) fn item_link(item_id: u32, name: &str, quality: u32) -> String {

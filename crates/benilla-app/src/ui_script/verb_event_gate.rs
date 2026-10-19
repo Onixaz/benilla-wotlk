@@ -30,14 +30,6 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
         "MAIL_INBOX_UPDATE",
         "benilla-app/src/ui_mail/mod.rs",
     ),
-    // `craft_close` / `trade_skill_close` are drained by the app, whose store transition
-    // `(Some, None)` is the fire.
-    ("CloseCraft", "CRAFT_CLOSE", "benilla-app/src/ui_craft.rs"),
-    (
-        "CloseTradeSkill",
-        "TRADE_SKILL_CLOSE",
-        "benilla-app/src/ui_tradeskill.rs",
-    ),
     // `take_quest_log_collapses`: the app owns the collapse set, re-feeds the list, fires.
     (
         "CollapseQuestHeader",
@@ -48,33 +40,6 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
         "ExpandQuestHeader",
         "QUEST_LOG_UPDATE",
         "benilla-app/src/ui_quest_log.rs",
-    ),
-    // `trade_skill_touched`, set by all four verbs, drained by `take_trade_skill_touched`.
-    (
-        "CollapseTradeSkillSubClass",
-        "TRADE_SKILL_UPDATE",
-        "benilla-app/src/ui_tradeskill.rs",
-    ),
-    (
-        "ExpandTradeSkillSubClass",
-        "TRADE_SKILL_UPDATE",
-        "benilla-app/src/ui_tradeskill.rs",
-    ),
-    (
-        "SetTradeSkillInvSlotFilter",
-        "TRADE_SKILL_UPDATE",
-        "benilla-app/src/ui_tradeskill.rs",
-    ),
-    (
-        "SetTradeSkillSubClassFilter",
-        "TRADE_SKILL_UPDATE",
-        "benilla-app/src/ui_tradeskill.rs",
-    ),
-    // `repeat_count` moved (`repeat_changed`).
-    (
-        "DoTradeSkill",
-        "UPDATE_TRADESKILL_RECAST",
-        "benilla-app/src/ui_tradeskill.rs",
     ),
     // `take_loot_roll_confirms`: a Need/Greed on a bind-on-pickup roll is diverted to the popup.
     (
@@ -142,20 +107,6 @@ const GAP: &[(&str, &str, &str)] = &[
          zeroing the cancelled offer under a frame TRADE_CLOSED \
          hides; here `TradeSession::begin` resets the whole session at the next trade, so the \
          next window opens at zero either way",
-    ),
-    (
-        "CollapseCraftSkillLine",
-        "CRAFT_UPDATE",
-        "the reference commits through the 21-byte thunk 0x4f6be0 (the trainer's 0x4d8c90 shape); \
-         a no-op here because the craft list is flat — the header law was never ported from \
-         TradeSkill — so there is nothing to repaint. Whether any 1.12 \
-         craft list carries more than one group is not established: Enchanting's does not, \
-         Beast Training is unchecked",
-    ),
-    (
-        "ExpandCraftSkillLine",
-        "CRAFT_UPDATE",
-        "the same thunk and the same no-op as CollapseCraftSkillLine",
     ),
     (
         "PetDismiss",

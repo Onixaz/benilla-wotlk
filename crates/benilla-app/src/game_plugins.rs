@@ -47,7 +47,6 @@ use crate::ui_binder::UiBinderPlugin;
 use crate::ui_cast::UiCastPlugin;
 use crate::ui_char::UiCharPlugin;
 use crate::ui_chat::UiChatPlugin;
-use crate::ui_craft::UiCraftPlugin;
 use crate::ui_dialog_verbs::UiDialogVerbsPlugin;
 use crate::ui_duel::UiDuelPlugin;
 use crate::ui_focus::UiFocusPlugin;
@@ -252,7 +251,6 @@ impl PluginGroup for GamePlugins {
             .add(UiTrainerPlugin)
             .add(UiTaxiPlugin)
             .add(UiTradeSkillPlugin)
-            .add(UiCraftPlugin)
             .add(UiLootPlugin)
             .add(UiLootRollPlugin)
             .add(UiQuestPlugin)
@@ -788,7 +786,7 @@ pub(crate) mod schedule_tests {
     /// Raising the ceiling is a claim that a new undeclared order is acceptable: make it with the
     /// reason read off the dump, or declare the order (`.after`, a set, a `chain`). A resource
     /// that commutes by construction belongs in [`Classes`].
-    const UPDATE_ACTIONABLE_CEILING: usize = 4_069;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_994;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
@@ -1282,8 +1280,6 @@ pub(crate) mod schedule_tests {
          "`MSG_TALENT_WIPE_CONFIRM` answers the trainer's gossip option"),
         ("ui_taxi/mod.rs", "feed_taxi", Because::PlayerRoundTrip,
          "both packets follow talking to a flight master"),
-        ("ui_tradeskill.rs", "drain_trade_skill", Because::FilledByVm,
-         "every consumed queue is Lua's; the cast-event continuation is inert until a Lua `DoTradeSkill` latched a count"),
         ("ui_trainer/mod.rs", "feed_trainer", Because::PlayerRoundTrip,
          "a refusal answers a Train click and a list answers a trainer gossip click; the edges ride `VmMemo`s"),
     ];

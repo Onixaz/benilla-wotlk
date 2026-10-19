@@ -29,10 +29,14 @@ const SKILL_LINE_FIELDS: usize = 56;
 const COL_SL_NAME_ENUS: usize = 3;
 const COL_SL_DESC_ENUS: usize = 20;
 const COL_SL_SPELL_ICON: usize = 37;
+const COL_SL_ALT_VERB_ENUS: usize = 38;
+const COL_SL_CAN_LINK: usize = 55;
 
 const SKILL_LINE_ABILITY_FIELDS: usize = 14;
 const COL_SLA_SKILL_ID: usize = 1;
 const COL_SLA_SPELL_ID: usize = 2;
+const COL_SLA_RACE_MASK: usize = 3;
+const COL_SLA_CLASS_MASK: usize = 4;
 const COL_SLA_REQ_SKILL_VALUE: usize = 7;
 const COL_SLA_FORWARD_SPELL: usize = 8;
 const COL_SLA_TRIVIAL_HIGH: usize = 10;
@@ -87,6 +91,30 @@ pub struct SkillLineInfo {
     pub icon: Option<String>,
     /// enUS `description_lang`, column 20: `GetSkillLineInfo`'s 13th return.
     pub description: String,
+    /// enUS `alternateVerb_lang`, column 38: the crafting book's verb for a recipe that makes no
+    /// item ("Enchant"), possibly empty.
+    pub alternate_verb: String,
+    /// `canLink`, column 55: the crafting book offers a `|Htrade:` link.
+    pub can_link: bool,
+}
+
+/// One row of a linkable line's `SkillLineAbility.dbc` run, a bit of its `|Htrade:` link.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LinkAbility {
+    pub spell_id: u32,
+    /// `racemask`, column 3; 0 admits every race.
+    pub race_mask: u32,
+    /// `classmask`, column 4; 0 admits every class.
+    pub class_mask: u32,
+}
+
+impl LinkAbility {
+    /// `SpellTableMatchRaceClass` (`0x810320`) with no exclusions: a zero mask admits all.
+    pub fn admits(&self, race: u8, class: u8) -> bool {
+        let bit = |n: u8| 1u32.wrapping_shl(u32::from(n).wrapping_sub(1));
+        (self.race_mask == 0 || self.race_mask & bit(race) != 0)
+            && (self.class_mask == 0 || self.class_mask & bit(class) != 0)
+    }
 }
 
 /// One `SkillRaceClassInfo.dbc` row: the race and class masks, and its [`SkillRaceClass`].
@@ -168,6 +196,8 @@ pub struct SkillLineCatalog {
     race_class: HashMap<u32, Vec<SrciRow>>,
     /// `forward_spellid` inverted, next rank to previous; injective on the 5875 data.
     rank_prev: HashMap<u32, u32>,
+    /// Each linkable line's first contiguous run of rows in file order (`0x812030`).
+    link_runs: HashMap<u32, Vec<LinkAbility>>,
 }
 
 impl SkillLineCatalog {
@@ -193,6 +223,7 @@ impl SkillLineCatalog {
             categories: HashMap::new(),
             race_class: HashMap::new(),
             rank_prev: HashMap::new(),
+            link_runs: HashMap::new(),
         }
     }
 
@@ -260,7 +291,31 @@ impl SkillLineCatalog {
             categories: HashMap::new(),
             race_class: HashMap::new(),
             rank_prev,
+            link_runs: HashMap::new(),
         }
+    }
+
+    /// One line with its link flag and run, for tests.
+    pub fn from_link_run_for_tests(line_id: u32, can_link: bool, run: Vec<LinkAbility>) -> Self {
+        let mut s = Self::from_abilities([]);
+        s.lines.insert(
+            line_id,
+            SkillLineInfo {
+                name: String::new(),
+                category_id: 0,
+                icon: None,
+                description: String::new(),
+                alternate_verb: String::new(),
+                can_link,
+            },
+        );
+        s.link_runs.insert(line_id, run);
+        s
+    }
+
+    /// A linkable line's rows in link-bit order (`SpellTableGetSkillLineLinkInfo 0x8104a0`).
+    pub fn link_run(&self, line_id: u32) -> Option<&[LinkAbility]> {
+        self.link_runs.get(&line_id).map(Vec::as_slice)
     }
 
     /// The highest known rank of `spell_id`'s chain, the rank an action-bar slot must hold. It
@@ -369,6 +424,8 @@ pub(crate) fn skill_line_schema() -> Schema {
             s.add_field(SchemaField::new("NameEnUs", FieldType::String));
         } else if i == COL_SL_DESC_ENUS {
             s.add_field(SchemaField::new("DescEnUs", FieldType::String));
+        } else if i == COL_SL_ALT_VERB_ENUS {
+            s.add_field(SchemaField::new("AltVerbEnUs", FieldType::String));
         } else {
             s.add_field(SchemaField::new(format!("F{i}"), FieldType::UInt32));
         }
@@ -476,6 +533,8 @@ pub fn load_skill_line_catalog(chain: &mut Chain) -> Result<SkillLineCatalog> {
             .and_then(|i| icons.get(&i).cloned());
         let category_id = u32_at(r, 1).unwrap_or(0);
         let description = str_at(&sl_set, r, COL_SL_DESC_ENUS).unwrap_or_default();
+        let alternate_verb = str_at(&sl_set, r, COL_SL_ALT_VERB_ENUS).unwrap_or_default();
+        let can_link = u32_at(r, COL_SL_CAN_LINK).unwrap_or(0) != 0;
         lines.insert(
             id,
             SkillLineInfo {
@@ -483,6 +542,8 @@ pub fn load_skill_line_catalog(chain: &mut Chain) -> Result<SkillLineCatalog> {
                 category_id,
                 icon,
                 description,
+                alternate_verb,
+                can_link,
             },
         );
     }
@@ -496,10 +557,33 @@ pub fn load_skill_line_catalog(chain: &mut Chain) -> Result<SkillLineCatalog> {
         "SkillLineAbility.dbc",
     )?;
     let mut abilities: HashMap<u32, SlaInfo> = HashMap::new();
+    let mut link_runs: HashMap<u32, Vec<LinkAbility>> = HashMap::new();
+    // The open run's line; a non-linkable row ends it without starting one (`0x812030`).
+    let mut run: Option<u32> = None;
+    let mut last_linkable: Option<u32> = None;
     for r in sla_set.records() {
         if let (Some(skill_id), Some(spell_id)) =
             (u32_at(r, COL_SLA_SKILL_ID), u32_at(r, COL_SLA_SPELL_ID))
         {
+            let row = LinkAbility {
+                spell_id,
+                race_mask: u32_at(r, COL_SLA_RACE_MASK).unwrap_or(0),
+                class_mask: u32_at(r, COL_SLA_CLASS_MASK).unwrap_or(0),
+            };
+            if last_linkable == Some(skill_id) {
+                if let Some(line) = run {
+                    link_runs.entry(line).or_default().push(row);
+                }
+            } else if lines.get(&skill_id).is_some_and(|l| l.can_link) {
+                last_linkable = Some(skill_id);
+                // Only the line's first run is ever looked up.
+                run = (!link_runs.contains_key(&skill_id)).then_some(skill_id);
+                if run.is_some() {
+                    link_runs.insert(skill_id, vec![row]);
+                }
+            } else {
+                run = None;
+            }
             let forward_spell_id = u32_at(r, COL_SLA_FORWARD_SPELL).unwrap_or(0);
             // The first row in file order wins.
             let slot = abilities.entry(spell_id).or_insert(SlaInfo {
@@ -530,6 +614,7 @@ pub fn load_skill_line_catalog(chain: &mut Chain) -> Result<SkillLineCatalog> {
         categories,
         race_class,
         rank_prev,
+        link_runs,
     })
 }
 

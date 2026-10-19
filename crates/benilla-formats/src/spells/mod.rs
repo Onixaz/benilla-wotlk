@@ -302,7 +302,7 @@ pub const SPELL_EFFECT_SKINNING: u32 = 95;
 /// `SPELL_EFFECT_LANGUAGE`: its `EffectMiscValue` is the `Languages.dbc` id.
 pub const SPELL_EFFECT_LANGUAGE: u32 = 39;
 
-/// The permanent and temporary enchants, cast by the CraftFrame with `TARGET_FLAG_ITEM`.
+/// The permanent and temporary enchants, cast on an item (`TARGET_FLAG_ITEM`).
 pub const SPELL_EFFECT_ENCHANT_ITEM: u32 = 53;
 pub const SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY: u32 = 54;
 

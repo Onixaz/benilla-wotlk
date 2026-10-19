@@ -107,7 +107,6 @@ mod colorselect;
 mod combat_log;
 mod companion;
 mod container;
-mod craft;
 mod cursor;
 mod death;
 pub mod diagnostics;
@@ -282,7 +281,6 @@ pub use container::{
     BagAutoStore, ContainerMove, ContainerSlot, ContainerState, EnchantView, PendingWrap,
     PetitionSlotView, RandomPropertyView, UiCursorMode,
 };
-pub use craft::{CraftReagent, CraftRecipe, CraftState, CraftTooltip};
 pub use cursor::money::coin_icon;
 pub use cursor::{
     CursorAction, CursorItem, CursorMacro, CursorMerchantItem, CursorMoney, CursorPayload,
@@ -373,7 +371,9 @@ pub use taxi::{TaxiNodeType, TaxiUiNode, TaxiUiState};
 pub use tooltip_spell::SpellTooltipView;
 pub use totem::{TotemSlots, TotemView, MAX_TOTEM_SLOTS};
 pub use trade::{TradeSideState, TradeSlotItem, TradeState, TRADE_SLOTS};
-pub use tradeskill::{TradeSkillDifficulty, TradeSkillReagent, TradeSkillRecipe, TradeSkillState};
+pub use tradeskill::{
+    TradeSkillDifficulty, TradeSkillGroup, TradeSkillReagent, TradeSkillRecipe, TradeSkillState,
+};
 pub use trainer::{
     TrainerAbilityReq, TrainerGroup, TrainerService, TrainerServiceCategory, TrainerSkillReq,
     TrainerState, TrainerTooltip, TRAINER_GROUP_KNOWN,
@@ -973,7 +973,6 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     dressup::install(lua)?;
     tabard::install(lua)?;
     tradeskill::install(lua)?;
-    craft::install(lua)?;
     reputation::install(lua)?;
     skills::install(lua)?;
     item_stats::install(lua)?;

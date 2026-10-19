@@ -5,10 +5,10 @@ use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
     auction, backdrop, bank, bind_confirm, camera_view, char_stats, chat_window, colorselect,
-    combat_log, container, craft, cursor, death, duel, follow, gossip, guild, inspect, item_text,
-    loot, loot_roll, macros, mail, merchant, parse_unit_token, party, petition, pvp, quest,
-    quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable, taxi,
-    trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
+    combat_log, container, cursor, death, duel, follow, gossip, guild, inspect, item_text, loot,
+    loot_roll, macros, mail, merchant, parse_unit_token, party, petition, pvp, quest, quest_log,
+    reputation, session, simplehtml, skills, slider, social, spellbook, stable, taxi, trade,
+    tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
     ItemTemplateView, MusicRequest, PlayerReqState, RegionData, ScriptValue, SoundRequest,
     UnitState, UnitTokenParse,
 };
@@ -716,38 +716,8 @@ pub(crate) struct Model {
     pub(crate) taxi_close: bool,
     pub(crate) taxi_riding: bool,
 
-    /// The open tradeskill window's recipes.
-    pub(crate) trade_skill: Option<tradeskill::TradeSkillState>,
-    /// `DoTradeSkill` calls, `(spell id, count)`.
-    pub(crate) trade_skill_dos: Vec<(u32, u32)>,
-    /// The 1-based selection, 0 for none, carried across a re-push by the recipe's spell id.
-    pub(crate) trade_skill_selection: u32,
-    pub(crate) trade_skill_close: bool,
-    /// Collapsed recipe groups by `(ItemClass, ItemSubClass)` (`0x55ba30`), kept across a re-push
-    /// and a same-profession reopen like the mask `0x84dd68`; a profession switch resets them.
-    pub(crate) trade_skill_collapsed: HashSet<(u32, u32)>,
-    /// Groups the SubClass filter hides, empty for all, kept by key like the client's header flag
-    /// (`header+0xc`, `0x4fca20`, mask `0x84dd60`); a profession switch resets them.
-    pub(crate) trade_skill_subclass_hidden: HashSet<(u32, u32)>,
-    /// The InvSlot filter mask (`0x84dd64`), a set bit shown and all ones for all slots. Never
-    /// pruned on a re-push, as in the client, so a later slot stays hidden; a switch resets it.
-    pub(crate) trade_skill_invslot_mask: u32,
-    /// The skill line the state was last built for (`0xbde064`): a push for another line resets
-    /// the filters, collapses and selection; the same line keeps them, even across a reopen.
-    pub(crate) trade_skill_last_line: u32,
-    /// The selected recipe's spell id (`0xbde044`), which carries it across reopen and re-push.
-    pub(crate) trade_skill_selected_spell: u32,
-    /// A filter or subclass collapse changed: `TRADE_SKILL_UPDATE` (`0x13a`) is owed this frame, as
-    /// the client fires it inside the call (`0x4fd710`/`0x4fd730`/`0x4fd750`, `0x4fd180`).
-    pub(crate) trade_skill_touched: bool,
-
-    /// The open craft window's recipes.
-    pub(crate) craft: Option<craft::CraftState>,
-    /// `DoCraft` spell ids; no count, as the 1.12 CraftFrame has no Create All.
-    pub(crate) craft_dos: Vec<u32>,
-    /// The 1-based selection, 0 for none, carried across a re-push by the recipe's spell id.
-    pub(crate) craft_selection: u32,
-    pub(crate) craft_close: bool,
+    /// The open tradeskill window, its filters and repeat (`CGTradeSkillInfo`).
+    pub(crate) trade_skill: tradeskill::TradeSkillModel,
 
     /// `EquipPendingItem`/`CancelPendingEquip` answers in order, and `ConfirmBindOnUse()` calls.
     pub(crate) pending_equip_answers: Vec<bind_confirm::PendingEquipAnswer>,
@@ -1441,20 +1411,7 @@ impl Model {
             taxi_takes: Vec::new(),
             taxi_close: false,
             taxi_riding: false,
-            trade_skill: None,
-            trade_skill_dos: Vec::new(),
-            trade_skill_selection: 0,
-            trade_skill_close: false,
-            trade_skill_collapsed: HashSet::new(),
-            trade_skill_subclass_hidden: HashSet::new(),
-            trade_skill_invslot_mask: u32::MAX,
-            trade_skill_last_line: 0,
-            trade_skill_selected_spell: 0,
-            trade_skill_touched: false,
-            craft: None,
-            craft_dos: Vec::new(),
-            craft_selection: 0,
-            craft_close: false,
+            trade_skill: Default::default(),
             loot: None,
             pending_equip_answers: Vec::new(),
             bind_on_use_confirms: 0,

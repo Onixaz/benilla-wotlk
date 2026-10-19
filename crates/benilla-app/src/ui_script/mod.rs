@@ -1051,6 +1051,8 @@ mod loot_ui_tests;
 mod paperdoll_stats_tests;
 #[cfg(test)]
 mod talent_ui_tests;
+#[cfg(test)]
+mod tradeskill_ui_tests;
 
 #[cfg(test)]
 mod quest_ui_tests;

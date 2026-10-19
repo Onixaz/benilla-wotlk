@@ -1106,11 +1106,12 @@ fn the_spell_feed_runs_after_the_quest_feed() {
     ));
 }
 
-/// The pet bar, Beast Training and target-of-target hovers are whole on the first hover.
+/// The pet bar, recipe and target-of-target hovers are whole on the first hover.
 #[test]
 fn the_feed_pushes_the_spells_the_vm_holds_before_a_hover() {
     use benilla_ui::script::{
-        AuraState, CraftRecipe, CraftState, CraftTooltip, PetActionView, TradeSkillDifficulty,
+        AuraState, PetActionView, TradeSkillDifficulty, TradeSkillGroup, TradeSkillRecipe,
+        TradeSkillState,
     };
     let spell = |name: &str, description: &str| benilla_formats::SpellDisplay {
         name: name.into(),
@@ -1145,24 +1146,34 @@ fn the_feed_pushes_the_spells_the_vm_holds_before_a_hover() {
             ..Default::default()
         }],
     );
-    script.set_craft(Some(CraftState {
-        name: "Beast Training".into(),
-        rank: 0,
-        max_rank: 0,
-        craft_type: 1,
-        recipes: vec![CraftRecipe {
-            spell_id: 24599,
-            tooltip: CraftTooltip::Spell(17253),
+    // A recipe that makes no item hovers its own spell; row 1 is its header.
+    script.set_trade_skill(Some(TradeSkillState {
+        line: 333,
+        line_name: "Enchanting".into(),
+        alt_verb: "Enchant".into(),
+        rank: 1,
+        max_rank: 75,
+        list_link: None,
+        recipes: vec![TradeSkillRecipe {
+            spell_id: 17253,
             name: "Bite".into(),
-            sub_name: String::new(),
             difficulty: TradeSkillDifficulty::Optimal,
             num_available: 1,
+            trivial_high: 0,
+            group: Some(TradeSkillGroup::Verb),
+            item_level: 0,
+            inv_slots: 1,
+            creates_item: false,
+            product_item: 0,
+            required_level: None,
             icon: None,
+            min_made: 1,
+            max_made: 1,
+            cooldown_end: None,
             description: None,
-            needs_item_target: false,
+            search_text: Vec::new(),
             reagents: vec![],
             tools: vec![],
-            spell_level: 0,
         }],
     }));
     // We target a mob that targets party1, whose list the VM holds by guid.
@@ -1199,7 +1210,7 @@ fn the_feed_pushes_the_spells_the_vm_holds_before_a_hover() {
                 return table.concat(t, " | ")
             end
             TT:SetOwner(B, "ANCHOR_RIGHT"); TT:SetPetAction(1); PET = lines()
-            TT:SetOwner(B, "ANCHOR_RIGHT"); TT:SetCraftSpell(1); CRAFT = lines()
+            TT:SetOwner(B, "ANCHOR_RIGHT"); TT:SetTradeSkillItem(2); CRAFT = lines()
             TT:SetOwner(B, "ANCHOR_RIGHT"); TT:SetUnitDebuff("targettarget", 1); TOT = lines()
             "#,
         )
