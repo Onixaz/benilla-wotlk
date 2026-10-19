@@ -4,15 +4,15 @@ use crate::wire::Vector3d;
 
 use super::{
     ActionButton, AttackSwingError, AttackerState, AuctionBidderNotification, AuctionCommandTail,
-    AuctionListEntry, AuctionOwnerNotification, CastOutcome, ChannelNotify, Character, ChatMessage,
-    CorpseLocation, DamageShield, DifficultySet, DispelFailed, EnchantmentLog,
-    EnvironmentalDamageLog, ExplorationXp, FriendEntry, FriendStatusUpdate, GameObjectQueryInfo,
-    GmResponse, GmTicket, GossipMenu, GossipPoi, GroupDifficulties, GroupLootInfo,
-    GroupMemberEntry, GuildCommandResult, GuildEventNotice, GuildInfo, GuildQueryResponse,
-    GuildRoster, InitWorldStates, InspectHonorStats, ItemInfo, ItemPushResult, JumpInfo,
-    LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon, LootStartRoll, MailListEntry,
-    MirrorTimerStart, MoveMode, Object, PartyKillLog, PartyMemberStatsInfo, PeriodicAuraLog,
-    PetMode, PetSpells, PetitionQueryResponse, PetitionRename, PetitionShowList,
+    AuctionListPage, AuctionOwnerNotification, AuctionPendingSale, CastOutcome, ChannelNotify,
+    Character, ChatMessage, CorpseLocation, DamageShield, DifficultySet, DispelFailed,
+    EnchantmentLog, EnvironmentalDamageLog, ExplorationXp, FriendEntry, FriendStatusUpdate,
+    GameObjectQueryInfo, GmResponse, GmTicket, GossipMenu, GossipPoi, GroupDifficulties,
+    GroupLootInfo, GroupMemberEntry, GuildCommandResult, GuildEventNotice, GuildInfo,
+    GuildQueryResponse, GuildRoster, InitWorldStates, InspectHonorStats, ItemInfo, ItemPushResult,
+    JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon, LootStartRoll,
+    MailListEntry, MirrorTimerStart, MoveMode, Object, PartyKillLog, PartyMemberStatsInfo,
+    PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse, PetitionRename, PetitionShowList,
     PetitionShowSignatures, PetitionSignResults, PvpCredit, QuestComplete, QuestConfirmAccept,
     QuestDetails, QuestGiverList, QuestOfferReward, QuestPushResult, QuestRequestItems,
     QuestTemplate, ResurrectRequestBody, SpeedKind, SpellChainTargets, SpellCooldown,
@@ -1264,36 +1264,29 @@ pub enum ServerPacket {
     NextMailTime {
         seconds: f32,
     },
-    /// `MSG_AUCTION_HELLO` reply: the auctioneer and its `AuctionHouse.dbc` row (1..7, the deposit
-    /// and cut rates); this reply, not our send, opens the window.
+    /// `MSG_AUCTION_HELLO` reply: the auctioneer, its `AuctionHouse.dbc` row and whether the
+    /// house is open; a closed one fires `AUCTION_HOUSE_DISABLED` instead (`0x59ff40`).
     AuctionHello {
         auctioneer: u64,
         house_id: u32,
+        enabled: bool,
     },
-    /// `SMSG_AUCTION_COMMAND_RESULT`: `action` an [`super::auction::auction_action`], `error` an
-    /// [`super::auction::auction_error`] that selects `tail`; `auction_id` is 0 on most failures.
+    /// `SMSG_AUCTION_COMMAND_RESULT`: a sell, cancel or bid verdict; `error` selects `tail`.
     AuctionCommandResult {
         auction_id: u32,
         action: u32,
         error: u32,
         tail: AuctionCommandTail,
     },
-    /// `SMSG_AUCTION_LIST_RESULT`: a Browse page; `total_count` is the match count before the
-    /// 50-row cap and rides at the end of the body.
-    AuctionListResult {
-        auctions: Vec<AuctionListEntry>,
-        total_count: u32,
-    },
-    /// `SMSG_AUCTION_OWNER_LIST_RESULT`: the Auctions tab (our listings), shaped as a Browse page.
-    AuctionOwnerListResult {
-        auctions: Vec<AuctionListEntry>,
-        total_count: u32,
-    },
-    /// `SMSG_AUCTION_BIDDER_LIST_RESULT`: the Bid tab; the server lists the refreshed ids, then
-    /// our live bids, so a row can appear twice.
-    AuctionBidderListResult {
-        auctions: Vec<AuctionListEntry>,
-        total_count: u32,
+    /// `SMSG_AUCTION_LIST_RESULT`: a Browse page, at most 50 rows.
+    AuctionListResult(AuctionListPage),
+    /// `SMSG_AUCTION_OWNER_LIST_RESULT`: the Auctions tab, our listings.
+    AuctionOwnerListResult(AuctionListPage),
+    /// `SMSG_AUCTION_BIDDER_LIST_RESULT`: the Bids tab.
+    AuctionBidderListResult(AuctionListPage),
+    /// `SMSG_AUCTION_LIST_PENDING_SALES`: sold auctions whose money is still in the mail.
+    AuctionPendingSales {
+        sales: Vec<AuctionPendingSale>,
     },
     /// `SMSG_AUCTION_BIDDER_NOTIFICATION`: we won (`bid_or_zero == 0`) or were outbid.
     AuctionBidderNotification(AuctionBidderNotification),
@@ -1687,11 +1680,10 @@ impl ServerPacket {
             ServerPacket::NextMailTime { .. } => "MSG_QUERY_NEXT_MAIL_TIME".into(),
             ServerPacket::AuctionHello { .. } => "MSG_AUCTION_HELLO".into(),
             ServerPacket::AuctionCommandResult { .. } => "SMSG_AUCTION_COMMAND_RESULT".into(),
-            ServerPacket::AuctionListResult { .. } => "SMSG_AUCTION_LIST_RESULT".into(),
-            ServerPacket::AuctionOwnerListResult { .. } => "SMSG_AUCTION_OWNER_LIST_RESULT".into(),
-            ServerPacket::AuctionBidderListResult { .. } => {
-                "SMSG_AUCTION_BIDDER_LIST_RESULT".into()
-            }
+            ServerPacket::AuctionListResult(_) => "SMSG_AUCTION_LIST_RESULT".into(),
+            ServerPacket::AuctionOwnerListResult(_) => "SMSG_AUCTION_OWNER_LIST_RESULT".into(),
+            ServerPacket::AuctionPendingSales { .. } => "SMSG_AUCTION_LIST_PENDING_SALES".into(),
+            ServerPacket::AuctionBidderListResult(_) => "SMSG_AUCTION_BIDDER_LIST_RESULT".into(),
             ServerPacket::AuctionBidderNotification(_) => "SMSG_AUCTION_BIDDER_NOTIFICATION".into(),
             ServerPacket::AuctionOwnerNotification(_) => "SMSG_AUCTION_OWNER_NOTIFICATION".into(),
             ServerPacket::AuctionRemovedNotification { .. } => {

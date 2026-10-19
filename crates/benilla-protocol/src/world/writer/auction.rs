@@ -1,7 +1,5 @@
-//! The auction house sends. Each carries the auctioneer guid, and the server re-checks the 5 yd
-//! range on each (`GetCheckedAuctionHouseForAuctioneer`). Sell, bid and cancel answer
-//! `SMSG_AUCTION_COMMAND_RESULT`, but some refusals are silent: a zero bid or duration, an
-//! unaffordable bid or cancel cut, and a list request while one is in flight.
+//! The auction house sends of `CGAuctionHouse`; each carries the auctioneer guid. Sell, bid and
+//! cancel answer `SMSG_AUCTION_COMMAND_RESULT`.
 
 use anyhow::Result;
 
@@ -18,35 +16,15 @@ impl WorldWriter {
         )
     }
 
-    /// Ask a Browse page; unset filters are [`messages::auction_filter`]'s sentinels, no sort rides
-    /// the wire, and `list_from` pages by [`messages::AUCTION_PAGE_SIZE`].
+    /// Ask a Browse page with the Browse list's sort criteria (`QueryAuctionItems`, `0x59bcf0`).
     pub fn auction_list_items(
         &mut self,
         auctioneer: u64,
-        list_from: u32,
-        searched_name: &str,
-        level_min: u8,
-        level_max: u8,
-        slot_id: u32,
-        main_category: u32,
-        sub_category: u32,
-        quality: u32,
-        usable: u8,
+        query: &messages::AuctionListQuery,
     ) -> Result<()> {
         self.send(
             opcode::CMSG_AUCTION_LIST_ITEMS,
-            &messages::auction_list_items(
-                auctioneer,
-                list_from,
-                searched_name,
-                level_min,
-                level_max,
-                slot_id,
-                main_category,
-                sub_category,
-                quality,
-                usable,
-            ),
+            &messages::auction_list_items(auctioneer, query),
         )
     }
 
@@ -58,8 +36,15 @@ impl WorldWriter {
         )
     }
 
-    /// Ask a Bid tab page (`CMSG_AUCTION_LIST_BIDDER_ITEMS`). `auction_ids` is a refresh set, not
-    /// a filter: the server lists those first, then every auction we are the current bidder on.
+    /// Ask the sold auctions still in the mail (`CMSG_AUCTION_LIST_PENDING_SALES`).
+    pub fn auction_list_pending_sales(&mut self, auctioneer: u64) -> Result<()> {
+        self.send(
+            opcode::CMSG_AUCTION_LIST_PENDING_SALES,
+            &messages::auction_list_pending_sales(auctioneer),
+        )
+    }
+
+    /// Ask the Bid tab (`CMSG_AUCTION_LIST_BIDDER_ITEMS`) with the outbid ids of this house.
     pub fn auction_list_bidder_items(
         &mut self,
         auctioneer: u64,
@@ -72,22 +57,22 @@ impl WorldWriter {
         )
     }
 
-    /// List an item; `etime_minutes` is 120, 480 or 1440, and the deposit is charged at once.
+    /// List one auction made of `items` `(guid, count)`; `etime_minutes` is 720, 1440 or 2880.
     pub fn auction_sell_item(
         &mut self,
         auctioneer: u64,
-        item_guid: u64,
+        items: &[(u64, u32)],
         bid: u32,
         buyout: u32,
         etime_minutes: u32,
     ) -> Result<()> {
         self.send(
             opcode::CMSG_AUCTION_SELL_ITEM,
-            &messages::auction_sell_item(auctioneer, item_guid, bid, buyout, etime_minutes),
+            &messages::auction_sell_item(auctioneer, items, bid, buyout, etime_minutes),
         )
     }
 
-    /// Bid on an auction; a `price` at or above a nonzero buyout is the buyout.
+    /// Bid on an auction; a `price` equal to a nonzero buyout is the buyout.
     pub fn auction_place_bid(
         &mut self,
         auctioneer: u64,
@@ -100,7 +85,7 @@ impl WorldWriter {
         )
     }
 
-    /// Cancel one of our auctions; the deposit is forfeit, and with a bid the seller pays 5%.
+    /// Cancel one of our auctions.
     pub fn auction_remove_item(&mut self, auctioneer: u64, auction_id: u32) -> Result<()> {
         self.send(
             opcode::CMSG_AUCTION_REMOVE_ITEM,

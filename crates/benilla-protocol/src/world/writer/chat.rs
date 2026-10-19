@@ -57,6 +57,11 @@ impl WorldWriter {
         self.send(opcode::MSG_RANDOM_ROLL, &messages::random_roll(min, max))
     }
 
+    /// Play an `Emotes.dbc` animation (`CMSG_EMOTE`, one `u32`).
+    pub fn emote(&mut self, emote_id: u32) -> Result<()> {
+        self.send(opcode::CMSG_EMOTE, &emote_id.to_le_bytes())
+    }
+
     /// Perform a text emote (EmotesText id, target or 0), echoed to everyone in range, us included.
     pub fn text_emote(&mut self, text_id: u32, target: u64) -> Result<()> {
         self.send(

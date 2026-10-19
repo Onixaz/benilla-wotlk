@@ -78,9 +78,11 @@ pub use area_trigger::area_trigger;
 pub use attack::{attack_swing, hit_info, AttackSwingError, AttackerState};
 pub use auction::{
     auction_action, auction_duration, auction_error, auction_filter, auction_hello,
-    auction_list_bidder_items, auction_list_items, auction_list_owner_items, auction_place_bid,
-    auction_remove_item, auction_sell_item, AuctionBidderNotification, AuctionCommandTail,
-    AuctionListEntry, AuctionOwnerNotification, AUCTION_PAGE_SIZE, AUCTION_RECORD_BYTES,
+    auction_list_bidder_items, auction_list_items, auction_list_owner_items,
+    auction_list_pending_sales, auction_place_bid, auction_remove_item, auction_sell_item,
+    auction_sort, AuctionBidderNotification, AuctionCommandTail, AuctionEnchant, AuctionListEntry,
+    AuctionListPage, AuctionListQuery, AuctionOwnerNotification, AuctionPendingSale,
+    AUCTION_ENCHANT_SLOTS, AUCTION_PAGE_SIZE, AUCTION_RECORD_BYTES,
 };
 pub use aura::{
     AuraRecord, AuraUpdate, AURA_UPDATE_EFF_INDEX_MASK, AURA_UPDATE_FLAG_CANCELABLE,

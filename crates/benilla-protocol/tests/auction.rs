@@ -1,10 +1,11 @@
-//! Golden tests for the auction house wire: every client body byte-exact, and hand-built server
-//! bodies through `parse_server` and `decode`.
+//! Golden tests for the 12340 auction house wire: every client body byte-exact, and hand-built
+//! server bodies through `parse_server_with_tail` (no byte left unread) and `decode`.
 
 use benilla_protocol::events::{decode, SessionEvent};
 use benilla_protocol::messages::{
-    self, auction_action, auction_duration, auction_error, auction_filter,
-    AuctionBidderNotification, AuctionCommandTail, AuctionListEntry, AuctionOwnerNotification,
+    self, auction_action, auction_duration, auction_error, auction_filter, auction_sort,
+    AuctionBidderNotification, AuctionCommandTail, AuctionEnchant, AuctionListEntry,
+    AuctionListPage, AuctionListQuery, AuctionOwnerNotification, AuctionPendingSale,
     AUCTION_RECORD_BYTES,
 };
 use benilla_protocol::ServerPacket;
@@ -16,6 +17,13 @@ fn hx(s: &str) -> Vec<u8> {
         .collect()
 }
 
+/// Parse a server body and require that the decoder read every byte of it.
+fn parse_whole(opcode: u16, body: &[u8]) -> ServerPacket {
+    let (packet, tail) = messages::parse_server_with_tail(opcode, body).unwrap();
+    assert_eq!(tail, 0, "{} left {tail} byte(s) unread", packet.name());
+    packet
+}
+
 const AUCTIONEER: u64 = 0x00F1_3000_0000_0055;
 
 #[test]
@@ -25,24 +33,6 @@ fn auction_send_bodies_golden() {
         messages::auction_hello(AUCTIONEER),
         hx("550000000030f100"),
         "MSG_AUCTION_HELLO body"
-    );
-
-    assert_eq!(
-        messages::auction_sell_item(
-            AUCTIONEER,
-            0x0000_0000_0100_00AB,
-            10_000,
-            50_000,
-            auction_duration::MEDIUM_MINUTES,
-        ),
-        hx(concat!(
-            "550000000030f100", // auctioneer
-            "ab00000100000000", // item guid
-            "10270000",         // bid 10000
-            "50c30000",         // buyout 50000
-            "e0010000",         // etime 480 minutes
-        )),
-        "CMSG_AUCTION_SELL_ITEM body"
     );
 
     // CMSG_AUCTION_REMOVE_ITEM: u64 auctioneer, u32 auctionId.
@@ -61,17 +51,77 @@ fn auction_send_bodies_golden() {
 
     // CMSG_AUCTION_LIST_OWNER_ITEMS: u64 auctioneer, u32 listfrom.
     assert_eq!(
-        messages::auction_list_owner_items(AUCTIONEER, 50),
-        hx("550000000030f10032000000"),
+        messages::auction_list_owner_items(AUCTIONEER, 0),
+        hx("550000000030f10000000000"),
         "CMSG_AUCTION_LIST_OWNER_ITEMS body"
+    );
+
+    // CMSG_AUCTION_LIST_PENDING_SALES: the auctioneer guid alone.
+    assert_eq!(
+        messages::auction_list_pending_sales(AUCTIONEER),
+        hx("550000000030f100"),
+        "CMSG_AUCTION_LIST_PENDING_SALES body"
     );
 }
 
 #[test]
-fn auction_list_items_body_golden() {
-    // Ten fields and nothing after them: 1.12 has no sort column, sort count or padding.
+fn auction_sell_item_body_golden() {
+    // One stack: count 1, then (guid, stack size), bid, buyout, run time in minutes.
     assert_eq!(
-        messages::auction_list_items(AUCTIONEER, 50, "Copper", 10, 20, 1, 2, 3, 4, 1),
+        messages::auction_sell_item(
+            AUCTIONEER,
+            &[(0x4000_0000_0100_00AB, 20)],
+            10_000,
+            50_000,
+            auction_duration::MEDIUM_MINUTES,
+        ),
+        hx(concat!(
+            "550000000030f100", // auctioneer
+            "01000000",         // one item
+            "ab00000100000040", // item guid
+            "14000000",         // 20 of it
+            "10270000",         // bid 10000
+            "50c30000",         // buyout 50000
+            "a0050000",         // etime 1440 minutes
+        )),
+        "CMSG_AUCTION_SELL_ITEM body (one stack)"
+    );
+
+    // A stack assembled from two partial stacks, as SellNextItem builds it.
+    let body = messages::auction_sell_item(
+        AUCTIONEER,
+        &[(0x4000_0000_0000_0001, 3), (0x4000_0000_0000_0002, 2)],
+        100,
+        0,
+        auction_duration::SHORT_MINUTES,
+    );
+    assert_eq!(body.len(), 8 + 4 + 2 * 12 + 12);
+    assert_eq!(
+        &body[8..12],
+        &2u32.to_le_bytes(),
+        "the item count leads the items"
+    );
+    assert_eq!(&body[body.len() - 4..], &720u32.to_le_bytes());
+}
+
+#[test]
+fn auction_list_items_body_golden() {
+    // The filters, getAll, then the sort count and (column, reversed) per criterion.
+    let q = AuctionListQuery {
+        list_from: 50,
+        searched_name: "Copper".into(),
+        level_min: 10,
+        level_max: 20,
+        slot_id: 1,
+        main_category: 2,
+        sub_category: 3,
+        quality: 4,
+        usable: 1,
+        get_all: false,
+        sort: vec![(auction_sort::QUALITY, false), (auction_sort::LEVEL, true)],
+    };
+    assert_eq!(
+        messages::auction_list_items(AUCTIONEER, &q),
         hx(concat!(
             "550000000030f100", // auctioneer
             "32000000",         // listfrom 50
@@ -81,43 +131,49 @@ fn auction_list_items_body_golden() {
             "01000000",         // slotId
             "02000000",         // mainCategory
             "03000000",         // subCategory
-            "04000000",         // quality, a minimum, not an equality
+            "04000000",         // quality
             "01",               // usable
+            "00",               // getAll
+            "02",               // two criteria
+            "0100",             // quality, not reversed
+            "0001",             // level, reversed
         )),
-        "CMSG_AUCTION_LIST_ITEMS body (filters set)"
+        "CMSG_AUCTION_LIST_ITEMS body (filters and sort)"
     );
 
-    // Every filter at its sentinel: the body that takes vmangos's no-filter fast path.
+    // Every filter at its sentinel, getAll, no criteria.
     let body = messages::auction_list_items(
         AUCTIONEER,
-        0,
-        "",
-        auction_filter::ANY_LEVEL,
-        auction_filter::ANY_LEVEL,
-        auction_filter::ANY,
-        auction_filter::ANY,
-        auction_filter::ANY,
-        auction_filter::ANY,
-        auction_filter::ANY_USABILITY,
+        &AuctionListQuery {
+            level_min: auction_filter::ANY_LEVEL,
+            level_max: auction_filter::ANY_LEVEL,
+            slot_id: auction_filter::ANY,
+            main_category: auction_filter::ANY,
+            sub_category: auction_filter::ANY,
+            quality: auction_filter::ANY,
+            usable: auction_filter::ANY_USABILITY,
+            get_all: true,
+            ..Default::default()
+        },
     );
     assert_eq!(
         body,
         hx(concat!(
-            "550000000030f100", // auctioneer
-            "00000000",         // listfrom 0
-            "00",               // "": the lone NUL is the whole name field
-            "00",               // levelmin 0
-            "00",               // levelmax 0
-            "ffffffff",         // slotId    ANY
-            "ffffffff",         // mainCategory ANY
-            "ffffffff",         // subCategory  ANY
-            "ffffffff",         // quality      ANY
-            "00",               // usable 0
+            "550000000030f100",
+            "00000000",
+            "00",
+            "00",
+            "00",
+            "ffffffff",
+            "ffffffff",
+            "ffffffff",
+            "ffffffff",
+            "00",
+            "01", // getAll
+            "00", // no criteria
         )),
-        "CMSG_AUCTION_LIST_ITEMS body (empty name, all sentinels)"
+        "CMSG_AUCTION_LIST_ITEMS body (no filters, getAll)"
     );
-    // 8 + 4 + 1 + 1 + 1 + 4 * 4 + 1: the smallest browse body.
-    assert_eq!(body.len(), 32, "no trailing sort bytes ride this opcode");
 }
 
 #[test]
@@ -128,41 +184,50 @@ fn auction_list_bidder_items_body_golden() {
         hx("550000000030f1000000000000000000"),
         "CMSG_AUCTION_LIST_BIDDER_ITEMS body (no ids)"
     );
-
     assert_eq!(
-        messages::auction_list_bidder_items(AUCTIONEER, 50, &[7, 4242, 0xDEAD_BEEF]),
+        messages::auction_list_bidder_items(AUCTIONEER, 50, &[7, 4242]),
         hx(concat!(
-            "550000000030f100", // auctioneer
-            "32000000",         // listfrom 50
-            "03000000",         // 3 ids follow
-            "07000000",         // id 7
-            "92100000",         // id 4242
-            "efbeadde",         // id 0xDEADBEEF
+            "550000000030f100",
+            "32000000",
+            "02000000",
+            "07000000",
+            "92100000",
         )),
-        "CMSG_AUCTION_LIST_BIDDER_ITEMS body (3 ids)"
+        "CMSG_AUCTION_LIST_BIDDER_ITEMS body (2 ids)"
     );
 }
 
 #[test]
 fn auction_hello_reply_wire() {
-    // The reply rides the request's opcode: u64 auctioneer, u32 houseId.
+    // u64 auctioneer, u32 houseId, u8 enabled.
     let mut body = AUCTIONEER.to_le_bytes().to_vec();
-    body.extend_from_slice(&6u32.to_le_bytes()); // houseId 6 (Orgrimmar), AuctionHouse.dbc 1..7
-    match messages::parse_server(messages::opcode::MSG_AUCTION_HELLO, &body).unwrap() {
+    body.extend_from_slice(&6u32.to_le_bytes());
+    body.push(1);
+    match parse_whole(messages::opcode::MSG_AUCTION_HELLO, &body) {
         ServerPacket::AuctionHello {
             auctioneer,
             house_id,
-        } => assert_eq!((auctioneer, house_id), (AUCTIONEER, 6)),
+            enabled,
+        } => assert_eq!((auctioneer, house_id, enabled), (AUCTIONEER, 6, true)),
         other => panic!("auction hello, got {}", other.name()),
     }
-    let packet = messages::parse_server(messages::opcode::MSG_AUCTION_HELLO, &body).unwrap();
-    match decode(packet).pop().unwrap() {
-        SessionEvent::AuctionHello {
-            auctioneer,
-            house_id,
-        } => assert_eq!((auctioneer, house_id), (AUCTIONEER, 6)),
-        other => panic!("auction hello event, got {other:?}"),
-    }
+    let packet = parse_whole(messages::opcode::MSG_AUCTION_HELLO, &body);
+    assert!(matches!(
+        decode(packet).pop().unwrap(),
+        SessionEvent::AuctionHello { enabled: true, .. }
+    ));
+
+    // Zero is a closed house, and so is a body that ends before the byte.
+    body[12] = 0;
+    assert!(matches!(
+        parse_whole(messages::opcode::MSG_AUCTION_HELLO, &body),
+        ServerPacket::AuctionHello { enabled: false, .. }
+    ));
+    body.pop();
+    assert!(matches!(
+        parse_whole(messages::opcode::MSG_AUCTION_HELLO, &body),
+        ServerPacket::AuctionHello { enabled: false, .. }
+    ));
 }
 
 /// Build one `SMSG_AUCTION_COMMAND_RESULT` head: `u32 auctionId, u32 action, u32 error`.
@@ -174,7 +239,7 @@ fn command_head(auction_id: u32, action: u32, error: u32) -> Vec<u8> {
 }
 
 fn parse_command(body: &[u8]) -> (u32, u32, u32, AuctionCommandTail) {
-    match messages::parse_server(messages::opcode::SMSG_AUCTION_COMMAND_RESULT, body).unwrap() {
+    match parse_whole(messages::opcode::SMSG_AUCTION_COMMAND_RESULT, body) {
         ServerPacket::AuctionCommandResult {
             auction_id,
             action,
@@ -186,12 +251,14 @@ fn parse_command(body: &[u8]) -> (u32, u32, u32, AuctionCommandTail) {
 }
 
 #[test]
-fn auction_command_result_bare_wire() {
-    // OK carries a tail only with BID_PLACED, so a successful listing or cancel is bare.
-    let body = command_head(4242, auction_action::STARTED, auction_error::OK);
-    assert_eq!(body.len(), 12);
+fn auction_command_result_tails_wire() {
+    // A listing is bare.
     assert_eq!(
-        parse_command(&body),
+        parse_command(&command_head(
+            4242,
+            auction_action::STARTED,
+            auction_error::OK
+        )),
         (
             4242,
             auction_action::STARTED,
@@ -200,126 +267,63 @@ fn auction_command_result_bare_wire() {
         )
     );
 
-    assert_eq!(
-        parse_command(&command_head(
-            4242,
-            auction_action::REMOVED,
-            auction_error::OK
-        ))
-        .3,
-        AuctionCommandTail::Empty
-    );
-
-    // `auction_id` is 0 when the server had no auction to name.
-    assert_eq!(
-        parse_command(&command_head(
-            0,
-            auction_action::BID_PLACED,
-            auction_error::NOT_ENOUGH_MONEY
-        )),
-        (
-            0,
-            auction_action::BID_PLACED,
-            auction_error::NOT_ENOUGH_MONEY,
-            AuctionCommandTail::Empty
-        )
-    );
-
-    // Codes 6, 8, 9, 11 and 12 have no vmangos name; the 1.12 client shows a generic failure.
-    assert_eq!(
-        parse_command(&command_head(0, auction_action::BID_PLACED, 9)).3,
-        AuctionCommandTail::Empty
-    );
-
-    let packet = messages::parse_server(
-        messages::opcode::SMSG_AUCTION_COMMAND_RESULT,
-        &command_head(4242, auction_action::STARTED, auction_error::OK),
-    )
-    .unwrap();
-    match decode(packet).pop().unwrap() {
-        SessionEvent::AuctionCommandResult {
-            auction_id,
-            action,
-            error,
-            tail,
-        } => assert_eq!(
-            (auction_id, action, error, tail),
-            (
-                4242,
-                auction_action::STARTED,
-                auction_error::OK,
-                AuctionCommandTail::Empty
-            )
-        ),
-        other => panic!("auction command result event, got {other:?}"),
-    }
-}
-
-#[test]
-fn auction_command_result_bid_placed_tail_wire() {
+    // A placed bid carries the next step.
     let mut body = command_head(4242, auction_action::BID_PLACED, auction_error::OK);
     body.extend_from_slice(&617u32.to_le_bytes());
     assert_eq!(
-        parse_command(&body),
-        (
-            4242,
-            auction_action::BID_PLACED,
-            auction_error::OK,
-            AuctionCommandTail::BidPlaced {
-                new_min_outbid: 617
-            }
-        )
+        parse_command(&body).3,
+        AuctionCommandTail::BidPlaced {
+            new_min_outbid: 617
+        }
     );
-}
 
-#[test]
-fn auction_command_result_inventory_tail_wire() {
-    // The INVENTORY tail is keyed on the error alone, whatever the action.
+    // The inventory tail is keyed on the error alone.
     let mut body = command_head(0, auction_action::STARTED, auction_error::INVENTORY);
-    body.extend_from_slice(&2u32.to_le_bytes()); // EQUIP_ERR_* code
+    body.extend_from_slice(&2u32.to_le_bytes());
     assert_eq!(
-        parse_command(&body),
-        (
-            0,
-            auction_action::STARTED,
-            auction_error::INVENTORY,
-            AuctionCommandTail::Inventory { result: 2 }
-        )
+        parse_command(&body).3,
+        AuctionCommandTail::Inventory { result: 2 }
     );
-}
 
-#[test]
-fn auction_command_result_higher_bid_tail_wire() {
+    // Outbid in flight: the new bidder, bid and step.
     let mut body = command_head(4242, auction_action::BID_PLACED, auction_error::HIGHER_BID);
-    body.extend_from_slice(&0x0000_0000_0000_07D1u64.to_le_bytes()); // new bidder
-    body.extend_from_slice(&25_000u32.to_le_bytes()); // new bid
-    body.extend_from_slice(&1_250u32.to_le_bytes()); // new min outbid
-    assert_eq!(body.len(), 12 + 16);
+    body.extend_from_slice(&0x07D1u64.to_le_bytes());
+    body.extend_from_slice(&25_000u32.to_le_bytes());
+    body.extend_from_slice(&1_250u32.to_le_bytes());
     assert_eq!(
-        parse_command(&body),
-        (
-            4242,
-            auction_action::BID_PLACED,
-            auction_error::HIGHER_BID,
-            AuctionCommandTail::HigherBid {
-                new_bidder_guid: 0x07D1,
-                new_bid: 25_000,
-                new_min_outbid: 1_250,
-            }
-        )
+        parse_command(&body).3,
+        AuctionCommandTail::HigherBid {
+            new_bidder_guid: 0x07D1,
+            new_bid: 25_000,
+            new_min_outbid: 1_250,
+        }
     );
+
+    let packet = parse_whole(
+        messages::opcode::SMSG_AUCTION_COMMAND_RESULT,
+        &command_head(9, auction_action::REMOVED, auction_error::OK),
+    );
+    assert!(matches!(
+        decode(packet).pop().unwrap(),
+        SessionEvent::AuctionCommandResult { auction_id: 9, .. }
+    ));
 }
 
-/// Append one 64-byte list-result record in `AuctionEntry::BuildAuctionInfo`'s order.
+/// Append one 148-byte list record in the order `0x59e160` reads it.
 fn push_record(body: &mut Vec<u8>, e: &AuctionListEntry) {
     let before = body.len();
     body.extend_from_slice(&e.auction_id.to_le_bytes());
     body.extend_from_slice(&e.item_entry.to_le_bytes());
-    body.extend_from_slice(&e.perm_enchant.to_le_bytes());
+    for en in &e.enchants {
+        body.extend_from_slice(&en.id.to_le_bytes());
+        body.extend_from_slice(&en.duration.to_le_bytes());
+        body.extend_from_slice(&en.charges.to_le_bytes());
+    }
     body.extend_from_slice(&e.random_property_id.to_le_bytes());
     body.extend_from_slice(&e.suffix_factor.to_le_bytes());
     body.extend_from_slice(&e.count.to_le_bytes());
     body.extend_from_slice(&e.spell_charges.to_le_bytes());
+    body.extend_from_slice(&e.flags.to_le_bytes());
     body.extend_from_slice(&e.owner_guid.to_le_bytes());
     body.extend_from_slice(&e.start_bid.to_le_bytes());
     body.extend_from_slice(&e.min_increment.to_le_bytes());
@@ -327,242 +331,155 @@ fn push_record(body: &mut Vec<u8>, e: &AuctionListEntry) {
     body.extend_from_slice(&e.time_left_ms.to_le_bytes());
     body.extend_from_slice(&e.bidder_guid.to_le_bytes());
     body.extend_from_slice(&e.current_bid.to_le_bytes());
-    // The record width is the reader's short-buffer bound.
     assert_eq!(body.len() - before, AUCTION_RECORD_BYTES);
-    assert_eq!(AUCTION_RECORD_BYTES, 64);
+    assert_eq!(AUCTION_RECORD_BYTES, 148);
 }
 
-/// A no-bids row: `min_increment`/`bidder_guid`/`current_bid` all zero, a buyout set.
-fn unbid_row(auction_id: u32) -> AuctionListEntry {
+/// Every field distinct, so a misread slot cannot pass for the right one.
+fn distinct_row(auction_id: u32) -> AuctionListEntry {
+    let mut enchants = [AuctionEnchant::default(); 7];
+    for (i, e) in enchants.iter_mut().enumerate() {
+        let base = 100 + 10 * i as u32;
+        *e = AuctionEnchant {
+            id: base,
+            duration: base + 1,
+            charges: base + 2,
+        };
+    }
     AuctionListEntry {
         auction_id,
-        item_entry: 2589, // Linen Cloth
-        perm_enchant: 0,
-        random_property_id: 0,
-        suffix_factor: 0,
-        count: 20,
-        spell_charges: 0,
-        owner_guid: 0x0000_0000_0000_0101,
-        start_bid: 5_000,
-        min_increment: 0,
+        item_entry: 12_640,
+        enchants,
+        random_property_id: -19,
+        suffix_factor: 143,
+        count: 5,
+        spell_charges: -3,
+        flags: 0x8,
+        owner_guid: 0x0202,
+        start_bid: 1_000,
+        min_increment: 60,
         buyout: 20_000,
-        time_left_ms: 7_200_000,
-        bidder_guid: 0,
-        current_bid: 0,
+        time_left_ms: 43_200_000,
+        bidder_guid: 0x0303,
+        current_bid: 1_200,
     }
 }
 
-fn parse_list(opcode: u16, body: &[u8]) -> (Vec<AuctionListEntry>, u32) {
-    match messages::parse_server(opcode, body).unwrap() {
-        ServerPacket::AuctionListResult {
-            auctions,
-            total_count,
-        }
-        | ServerPacket::AuctionOwnerListResult {
-            auctions,
-            total_count,
-        }
-        | ServerPacket::AuctionBidderListResult {
-            auctions,
-            total_count,
-        } => (auctions, total_count),
+fn parse_list(opcode: u16, body: &[u8]) -> AuctionListPage {
+    match parse_whole(opcode, body) {
+        ServerPacket::AuctionListResult(page)
+        | ServerPacket::AuctionOwnerListResult(page)
+        | ServerPacket::AuctionBidderListResult(page) => page,
         other => panic!("auction list result, got {}", other.name()),
     }
 }
 
 #[test]
-fn auction_list_result_empty_wire() {
-    // Count 0, then a totalCount that is still nonzero when a page past the end is asked.
-    let mut body = 0u32.to_le_bytes().to_vec();
-    body.extend_from_slice(&37u32.to_le_bytes());
-    assert_eq!(body.len(), 8);
+fn auction_list_result_reads_the_148_byte_record_then_total_and_delay() {
+    let rows = [distinct_row(1), distinct_row(2)];
+    let mut body = (rows.len() as u32).to_le_bytes().to_vec();
+    for row in &rows {
+        push_record(&mut body, row);
+    }
+    body.extend_from_slice(&129u32.to_le_bytes()); // totalCount
+    body.extend_from_slice(&300u32.to_le_bytes()); // query delay ms
 
     for opcode in [
         messages::opcode::SMSG_AUCTION_LIST_RESULT,
         messages::opcode::SMSG_AUCTION_OWNER_LIST_RESULT,
         messages::opcode::SMSG_AUCTION_BIDDER_LIST_RESULT,
     ] {
-        let (auctions, total_count) = parse_list(opcode, &body);
-        assert!(auctions.is_empty());
-        assert_eq!(total_count, 37);
-    }
-}
-
-#[test]
-fn auction_list_result_records_wire() {
-    let rows = [
-        unbid_row(1),
-        AuctionListEntry {
-            auction_id: 2,
-            item_entry: 12_640, // Lionheart Helm
-            perm_enchant: 2_504,
-            random_property_id: 0,
-            suffix_factor: 0,
-            count: 1,
-            spell_charges: 0,
-            owner_guid: 0x0000_0000_0000_0202,
-            start_bid: 1_000_000,
-            min_increment: 60_000,
-            buyout: 0, // no buyout
-            time_left_ms: 86_400_000,
-            bidder_guid: 0x0000_0000_0000_0303,
-            current_bid: 1_200_000,
-        },
-        unbid_row(3),
-    ];
-    let mut body = (rows.len() as u32).to_le_bytes().to_vec();
-    for row in &rows {
-        push_record(&mut body, row);
-    }
-    body.extend_from_slice(&129u32.to_le_bytes()); // totalCount, well past the 50-row page cap
-    assert_eq!(body.len(), 4 + 3 * AUCTION_RECORD_BYTES + 4);
-
-    let (auctions, total_count) = parse_list(messages::opcode::SMSG_AUCTION_LIST_RESULT, &body);
-    assert_eq!(auctions, rows);
-    assert_eq!(total_count, 129);
-
-    // `min_increment` is 0 until a bid, `buyout` 0 means none, `start_bid` is not the current bid.
-    assert_eq!(auctions[0].min_increment, 0);
-    assert_eq!(auctions[0].current_bid, 0);
-    assert_eq!(auctions[1].buyout, 0);
-    assert_ne!(auctions[1].start_bid, auctions[1].current_bid);
-
-    let packet = messages::parse_server(messages::opcode::SMSG_AUCTION_LIST_RESULT, &body).unwrap();
-    match decode(packet).pop().unwrap() {
-        SessionEvent::AuctionListResult {
-            auctions,
-            total_count,
-        } => {
-            assert_eq!(auctions.len(), 3);
-            assert_eq!(total_count, 129);
-        }
-        other => panic!("auction list result event, got {other:?}"),
+        let page = parse_list(opcode, &body);
+        assert_eq!(page.auctions, rows, "every record intact, the second too");
+        assert_eq!(page.total_count, 129);
+        assert_eq!(page.query_delay_ms, Some(300));
     }
 
-    let packet =
-        messages::parse_server(messages::opcode::SMSG_AUCTION_OWNER_LIST_RESULT, &body).unwrap();
+    let packet = parse_whole(messages::opcode::SMSG_AUCTION_LIST_RESULT, &body);
     assert!(matches!(
         decode(packet).pop().unwrap(),
-        SessionEvent::AuctionOwnerListResult { .. }
+        SessionEvent::AuctionListResult(AuctionListPage {
+            total_count: 129,
+            ..
+        })
     ));
-    let packet =
-        messages::parse_server(messages::opcode::SMSG_AUCTION_BIDDER_LIST_RESULT, &body).unwrap();
+    let packet = parse_whole(messages::opcode::SMSG_AUCTION_OWNER_LIST_RESULT, &body);
     assert!(matches!(
         decode(packet).pop().unwrap(),
-        SessionEvent::AuctionBidderListResult { .. }
+        SessionEvent::AuctionOwnerListResult(_)
+    ));
+    let packet = parse_whole(messages::opcode::SMSG_AUCTION_BIDDER_LIST_RESULT, &body);
+    assert!(matches!(
+        decode(packet).pop().unwrap(),
+        SessionEvent::AuctionBidderListResult(_)
     ));
 }
 
 #[test]
-fn auction_list_result_total_count_rides_after_the_records() {
-    // Neither the leading count nor any record field is 9999, so only the trailing total can be.
-    let row = AuctionListEntry {
-        auction_id: 11,
-        item_entry: 12,
-        perm_enchant: 13,
-        random_property_id: 14,
-        suffix_factor: 15,
-        count: 16,
-        spell_charges: 17,
-        owner_guid: 18,
-        start_bid: 19,
-        min_increment: 20,
-        buyout: 21,
-        time_left_ms: 22,
-        bidder_guid: 23,
-        current_bid: 24,
-    };
-    let mut body = 1u32.to_le_bytes().to_vec();
-    push_record(&mut body, &row);
-    body.extend_from_slice(&9_999u32.to_le_bytes());
+fn auction_list_result_survives_a_short_body() {
+    // An empty page with only its total: no delay rides.
+    let mut body = 0u32.to_le_bytes().to_vec();
+    body.extend_from_slice(&37u32.to_le_bytes());
+    let page = parse_list(messages::opcode::SMSG_AUCTION_LIST_RESULT, &body);
+    assert!(page.auctions.is_empty());
+    assert_eq!((page.total_count, page.query_delay_ms), (37, None));
 
-    let (auctions, total_count) = parse_list(messages::opcode::SMSG_AUCTION_LIST_RESULT, &body);
-    assert_eq!(auctions, [row], "the record reads intact");
-    assert_eq!(
-        total_count, 9_999,
-        "totalCount comes from AFTER the records, not from the head or a record field"
-    );
-}
-
-#[test]
-fn auction_list_record_round_trips_negative_signed_fields() {
-    // Both are int32: a negative property id is a suffix; negative charges destroy when spent.
-    let row = AuctionListEntry {
-        auction_id: 77,
-        item_entry: 7_078,
-        perm_enchant: 0,
-        random_property_id: -19, // a suffix id
-        suffix_factor: 143,
-        count: 1,
-        spell_charges: -5, // 5 charges, then destroy
-        owner_guid: 0x0000_0000_0000_0404,
-        start_bid: 1,
-        min_increment: 0,
-        buyout: 0,
-        time_left_ms: 1_000,
-        bidder_guid: 0,
-        current_bid: 0,
-    };
-    let mut body = 1u32.to_le_bytes().to_vec();
-    push_record(&mut body, &row);
-    body.extend_from_slice(&1u32.to_le_bytes());
-
-    let (auctions, _) = parse_list(messages::opcode::SMSG_AUCTION_LIST_RESULT, &body);
-    assert_eq!(auctions[0].random_property_id, -19);
-    assert_eq!(auctions[0].spell_charges, -5);
-    assert_eq!(auctions[0].suffix_factor, 143);
-
-    // An expired but unswept auction's time left wraps instead of clamping; it passes through.
-    let mut expired = unbid_row(78);
-    expired.time_left_ms = u32::MAX - 500; // (expire - now) * 1000 on a negative difference
-    let mut body = 1u32.to_le_bytes().to_vec();
-    push_record(&mut body, &expired);
-    body.extend_from_slice(&1u32.to_le_bytes());
-    let (auctions, _) = parse_list(messages::opcode::SMSG_AUCTION_LIST_RESULT, &body);
-    assert_eq!(auctions[0].time_left_ms, u32::MAX - 500);
-}
-
-#[test]
-fn auction_list_result_survives_a_count_larger_than_the_records() {
-    // vmangos's browse fast path counts a stale auction whose item is gone but writes no bytes.
-    let rows = [unbid_row(1), unbid_row(2)];
-    let mut body = 3u32.to_le_bytes().to_vec(); // the server's inflated count
-    for row in &rows {
-        push_record(&mut body, row);
-    }
-    body.extend_from_slice(&2u32.to_le_bytes()); // totalCount still rides at the end
-
-    let (auctions, total_count) = parse_list(messages::opcode::SMSG_AUCTION_LIST_RESULT, &body);
-    assert_eq!(auctions, rows, "the records that DID arrive come back");
-    assert_eq!(total_count, 2);
-
-    // With the trailing total missing too, the total falls back to the records read.
+    // A count past the records yields the records that arrived.
     let mut body = 3u32.to_le_bytes().to_vec();
-    for row in &rows {
-        push_record(&mut body, row);
-    }
-    let (auctions, total_count) = parse_list(messages::opcode::SMSG_AUCTION_LIST_RESULT, &body);
-    assert_eq!(auctions, rows);
-    assert_eq!(total_count, 2, "falls back to the records actually read");
+    push_record(&mut body, &distinct_row(1));
+    let page = parse_list(messages::opcode::SMSG_AUCTION_LIST_RESULT, &body);
+    assert_eq!(page.auctions, [distinct_row(1)]);
+    assert_eq!(page.total_count, 1, "falls back to the records read");
+}
 
-    // A nonsense count yields the one record the buffer holds.
-    let mut body = u32::MAX.to_le_bytes().to_vec();
-    push_record(&mut body, &rows[0]);
-    let (auctions, _) = parse_list(messages::opcode::SMSG_AUCTION_LIST_RESULT, &body);
-    assert_eq!(auctions, [rows[0]]);
+#[test]
+fn auction_pending_sales_wire() {
+    // u32 count, then (subject, body, u32 mail id, u32 template, f32 days) per row.
+    let mut body = 1u32.to_le_bytes().to_vec();
+    body.extend_from_slice(b"2589:0:2:77\0");
+    body.extend_from_slice(b"0000000000000505:150:0:20:5\0");
+    body.extend_from_slice(&900u32.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&0.04f32.to_le_bytes());
+    let expected = AuctionPendingSale {
+        subject: "2589:0:2:77".into(),
+        body: "0000000000000505:150:0:20:5".into(),
+        mail_id: 900,
+        mail_template: 0,
+        days_left: 0.04,
+    };
+    match parse_whole(messages::opcode::SMSG_AUCTION_LIST_PENDING_SALES, &body) {
+        ServerPacket::AuctionPendingSales { sales } => {
+            assert_eq!(sales, std::slice::from_ref(&expected))
+        }
+        other => panic!("pending sales, got {}", other.name()),
+    }
+    let packet = parse_whole(messages::opcode::SMSG_AUCTION_LIST_PENDING_SALES, &body);
+    match decode(packet).pop().unwrap() {
+        SessionEvent::AuctionPendingSales { sales } => assert_eq!(sales, [expected]),
+        other => panic!("pending sales event, got {other:?}"),
+    }
+
+    // AzerothCore's reply: a zero count and nothing else.
+    match parse_whole(
+        messages::opcode::SMSG_AUCTION_LIST_PENDING_SALES,
+        &0u32.to_le_bytes(),
+    ) {
+        ServerPacket::AuctionPendingSales { sales } => assert!(sales.is_empty()),
+        other => panic!("pending sales, got {}", other.name()),
+    }
 }
 
 #[test]
 fn auction_bidder_notification_wire() {
-    // House id first and the guid third, unlike the owner notification.
-    let mut body = 6u32.to_le_bytes().to_vec(); // houseId
-    body.extend_from_slice(&4242u32.to_le_bytes()); // auctionId
-    body.extend_from_slice(&0x0000_0000_0000_0505u64.to_le_bytes()); // bidderGuid
-    body.extend_from_slice(&15_000u32.to_le_bytes()); // bidOrZero, nonzero: outbid
-    body.extend_from_slice(&750u32.to_le_bytes()); // outBid
-    body.extend_from_slice(&12_640u32.to_le_bytes()); // itemEntry
-    body.extend_from_slice(&(-19i32).to_le_bytes()); // randomPropertyId, signed
-
+    // House id first and the guid third.
+    let mut body = 6u32.to_le_bytes().to_vec();
+    body.extend_from_slice(&4242u32.to_le_bytes());
+    body.extend_from_slice(&0x0505u64.to_le_bytes());
+    body.extend_from_slice(&15_000u32.to_le_bytes()); // nonzero: outbid
+    body.extend_from_slice(&750u32.to_le_bytes());
+    body.extend_from_slice(&12_640u32.to_le_bytes());
+    body.extend_from_slice(&(-19i32).to_le_bytes());
     let expected = AuctionBidderNotification {
         house_id: 6,
         auction_id: 4242,
@@ -572,41 +489,11 @@ fn auction_bidder_notification_wire() {
         item_entry: 12_640,
         random_property_id: -19,
     };
-    match messages::parse_server(messages::opcode::SMSG_AUCTION_BIDDER_NOTIFICATION, &body).unwrap()
-    {
+    match parse_whole(messages::opcode::SMSG_AUCTION_BIDDER_NOTIFICATION, &body) {
         ServerPacket::AuctionBidderNotification(n) => assert_eq!(n, expected),
         other => panic!("auction bidder notification, got {}", other.name()),
     }
-
-    // bidOrZero 0 means won, not no bid.
-    let mut won = body.clone();
-    won[16..20].copy_from_slice(&0u32.to_le_bytes());
-    match messages::parse_server(messages::opcode::SMSG_AUCTION_BIDDER_NOTIFICATION, &won).unwrap()
-    {
-        ServerPacket::AuctionBidderNotification(n) => {
-            assert_eq!(n.bid_or_zero, 0, "0 = WON");
-            assert_eq!(n.auction_id, 4242, "the rest of the row is unmoved");
-            assert_eq!(n.out_bid, 750);
-        }
-        other => panic!("auction bidder notification (won), got {}", other.name()),
-    }
-
-    // The owner reader takes 28 of these 32 bytes and misplaces every field.
-    match messages::parse_server(messages::opcode::SMSG_AUCTION_OWNER_NOTIFICATION, &body).unwrap()
-    {
-        ServerPacket::AuctionOwnerNotification(n) => {
-            assert_eq!(
-                n.auction_id, 6,
-                "the owner reader eats houseId as auctionId"
-            );
-            assert_ne!(n.bidder_guid, expected.bidder_guid, "the guid slides");
-            assert_ne!(n.item_entry, expected.item_entry);
-        }
-        other => panic!("auction owner notification, got {}", other.name()),
-    }
-
-    let packet =
-        messages::parse_server(messages::opcode::SMSG_AUCTION_BIDDER_NOTIFICATION, &body).unwrap();
+    let packet = parse_whole(messages::opcode::SMSG_AUCTION_BIDDER_NOTIFICATION, &body);
     match decode(packet).pop().unwrap() {
         SessionEvent::AuctionBidderNotification(n) => assert_eq!(n, expected),
         other => panic!("auction bidder notification event, got {other:?}"),
@@ -615,15 +502,15 @@ fn auction_bidder_notification_wire() {
 
 #[test]
 fn auction_owner_notification_wire() {
-    // No house id and the guid fourth, unlike the bidder notification.
-    let mut body = 4242u32.to_le_bytes().to_vec(); // auctionId
-    body.extend_from_slice(&15_000u32.to_le_bytes()); // bid
-    body.extend_from_slice(&750u32.to_le_bytes()); // outBid
-    body.extend_from_slice(&0x0000_0000_0000_0505u64.to_le_bytes()); // bidderGuid
-    body.extend_from_slice(&12_640u32.to_le_bytes()); // itemEntry
-    body.extend_from_slice(&(-19i32).to_le_bytes()); // randomPropertyId, signed
-    assert_eq!(body.len(), 28, "four bytes shorter than the bidder notice");
-
+    // 3 u32, the bidder u64, item, property, then the f32 mail delay.
+    let mut body = 4242u32.to_le_bytes().to_vec();
+    body.extend_from_slice(&15_000u32.to_le_bytes());
+    body.extend_from_slice(&750u32.to_le_bytes());
+    body.extend_from_slice(&0x0505u64.to_le_bytes());
+    body.extend_from_slice(&12_640u32.to_le_bytes());
+    body.extend_from_slice(&(-19i32).to_le_bytes());
+    body.extend_from_slice(&3600.0f32.to_le_bytes());
+    assert_eq!(body.len(), 32);
     let expected = AuctionOwnerNotification {
         auction_id: 4242,
         bid: 15_000,
@@ -631,27 +518,13 @@ fn auction_owner_notification_wire() {
         bidder_guid: 0x0505,
         item_entry: 12_640,
         random_property_id: -19,
+        mail_delay: 3600.0,
     };
-    match messages::parse_server(messages::opcode::SMSG_AUCTION_OWNER_NOTIFICATION, &body).unwrap()
-    {
+    match parse_whole(messages::opcode::SMSG_AUCTION_OWNER_NOTIFICATION, &body) {
         ServerPacket::AuctionOwnerNotification(n) => assert_eq!(n, expected),
         other => panic!("auction owner notification, got {}", other.name()),
     }
-
-    // An all-zero bidder guid means sold, not a missing bidder.
-    let mut sold = body.clone();
-    sold[12..20].copy_from_slice(&0u64.to_le_bytes());
-    match messages::parse_server(messages::opcode::SMSG_AUCTION_OWNER_NOTIFICATION, &sold).unwrap()
-    {
-        ServerPacket::AuctionOwnerNotification(n) => {
-            assert_eq!(n.bidder_guid, 0, "0 = sold");
-            assert_eq!(n.item_entry, 12_640, "the rest of the row is unmoved");
-        }
-        other => panic!("auction owner notification (sold), got {}", other.name()),
-    }
-
-    let packet =
-        messages::parse_server(messages::opcode::SMSG_AUCTION_OWNER_NOTIFICATION, &body).unwrap();
+    let packet = parse_whole(messages::opcode::SMSG_AUCTION_OWNER_NOTIFICATION, &body);
     match decode(packet).pop().unwrap() {
         SessionEvent::AuctionOwnerNotification(n) => assert_eq!(n, expected),
         other => panic!("auction owner notification event, got {other:?}"),
@@ -660,13 +533,11 @@ fn auction_owner_notification_wire() {
 
 #[test]
 fn auction_removed_notification_wire() {
-    // SMSG_AUCTION_REMOVED_NOTIFICATION: u32 auctionId, u32 itemEntry, i32 randomPropertyId.
+    // u32 auctionId, u32 itemEntry, i32 randomPropertyId.
     let mut body = 4242u32.to_le_bytes().to_vec();
     body.extend_from_slice(&2589u32.to_le_bytes());
     body.extend_from_slice(&(-7i32).to_le_bytes());
-    match messages::parse_server(messages::opcode::SMSG_AUCTION_REMOVED_NOTIFICATION, &body)
-        .unwrap()
-    {
+    match parse_whole(messages::opcode::SMSG_AUCTION_REMOVED_NOTIFICATION, &body) {
         ServerPacket::AuctionRemovedNotification {
             auction_id,
             item_entry,
@@ -676,19 +547,5 @@ fn auction_removed_notification_wire() {
             (4242, 2589, -7)
         ),
         other => panic!("auction removed notification, got {}", other.name()),
-    }
-
-    let packet =
-        messages::parse_server(messages::opcode::SMSG_AUCTION_REMOVED_NOTIFICATION, &body).unwrap();
-    match decode(packet).pop().unwrap() {
-        SessionEvent::AuctionRemovedNotification {
-            auction_id,
-            item_entry,
-            random_property_id,
-        } => assert_eq!(
-            (auction_id, item_entry, random_property_id),
-            (4242, 2589, -7)
-        ),
-        other => panic!("auction removed notification event, got {other:?}"),
     }
 }

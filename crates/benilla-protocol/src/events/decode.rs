@@ -1098,9 +1098,11 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::AuctionHello {
             auctioneer,
             house_id,
+            enabled,
         } => vec![SessionEvent::AuctionHello {
             auctioneer,
             house_id,
+            enabled,
         }],
         ServerPacket::AuctionCommandResult {
             auction_id,
@@ -1113,27 +1115,16 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             error,
             tail,
         }],
-        ServerPacket::AuctionListResult {
-            auctions,
-            total_count,
-        } => vec![SessionEvent::AuctionListResult {
-            auctions,
-            total_count,
-        }],
-        ServerPacket::AuctionOwnerListResult {
-            auctions,
-            total_count,
-        } => vec![SessionEvent::AuctionOwnerListResult {
-            auctions,
-            total_count,
-        }],
-        ServerPacket::AuctionBidderListResult {
-            auctions,
-            total_count,
-        } => vec![SessionEvent::AuctionBidderListResult {
-            auctions,
-            total_count,
-        }],
+        ServerPacket::AuctionListResult(page) => vec![SessionEvent::AuctionListResult(page)],
+        ServerPacket::AuctionOwnerListResult(page) => {
+            vec![SessionEvent::AuctionOwnerListResult(page)]
+        }
+        ServerPacket::AuctionBidderListResult(page) => {
+            vec![SessionEvent::AuctionBidderListResult(page)]
+        }
+        ServerPacket::AuctionPendingSales { sales } => {
+            vec![SessionEvent::AuctionPendingSales { sales }]
+        }
         ServerPacket::AuctionBidderNotification(n) => {
             vec![SessionEvent::AuctionBidderNotification(n)]
         }

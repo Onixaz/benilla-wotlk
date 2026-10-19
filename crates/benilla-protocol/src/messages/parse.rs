@@ -1713,13 +1713,12 @@ fn parse_server_body(
         opcode::MSG_QUERY_NEXT_MAIL_TIME => ServerPacket::NextMailTime {
             seconds: mail::read_query_next_mail_time(&mut r)?,
         },
-        // The three list results share one frame and a 64-byte record; the reader is bounded by
-        // the buffer too, since vmangos's browse fast path can count a record it never writes.
         opcode::MSG_AUCTION_HELLO => {
-            let (auctioneer, house_id) = auction::read_auction_hello(&mut r)?;
+            let (auctioneer, house_id, enabled) = auction::read_auction_hello(&mut r)?;
             ServerPacket::AuctionHello {
                 auctioneer,
                 house_id,
+                enabled,
             }
         }
         opcode::SMSG_AUCTION_COMMAND_RESULT => {
@@ -1731,27 +1730,19 @@ fn parse_server_body(
                 tail,
             }
         }
+        // The three list results share one body and the 148-byte record.
         opcode::SMSG_AUCTION_LIST_RESULT => {
-            let (auctions, total_count) = auction::read_auction_list_result(&mut r)?;
-            ServerPacket::AuctionListResult {
-                auctions,
-                total_count,
-            }
+            ServerPacket::AuctionListResult(auction::read_auction_list_result(&mut r)?)
         }
         opcode::SMSG_AUCTION_OWNER_LIST_RESULT => {
-            let (auctions, total_count) = auction::read_auction_list_result(&mut r)?;
-            ServerPacket::AuctionOwnerListResult {
-                auctions,
-                total_count,
-            }
+            ServerPacket::AuctionOwnerListResult(auction::read_auction_list_result(&mut r)?)
         }
         opcode::SMSG_AUCTION_BIDDER_LIST_RESULT => {
-            let (auctions, total_count) = auction::read_auction_list_result(&mut r)?;
-            ServerPacket::AuctionBidderListResult {
-                auctions,
-                total_count,
-            }
+            ServerPacket::AuctionBidderListResult(auction::read_auction_list_result(&mut r)?)
         }
+        opcode::SMSG_AUCTION_LIST_PENDING_SALES => ServerPacket::AuctionPendingSales {
+            sales: auction::read_auction_pending_sales(&mut r)?,
+        },
         // Different field orders, and no house id on the owner's: two readers, never one.
         opcode::SMSG_AUCTION_BIDDER_NOTIFICATION => ServerPacket::AuctionBidderNotification(
             auction::read_auction_bidder_notification(&mut r)?,

@@ -89,6 +89,8 @@ pub const SMSG_PLAY_SOUND: u16 = 0x02D2;
 pub const SMSG_WEATHER: u16 = 0x02F4;
 pub const SMSG_EMOTE: u16 = 0x0103;
 pub const CMSG_TEXT_EMOTE: u16 = 0x0104;
+/// An `Emotes.dbc` animation: one `u32` emote id.
+pub const CMSG_EMOTE: u16 = 0x0102;
 pub const SMSG_TEXT_EMOTE: u16 = 0x0105;
 /// Answers `CMSG_ITEM_QUERY_SINGLE` with the item's template.
 pub const SMSG_ITEM_QUERY_SINGLE_RESPONSE: u16 = 0x0058;
@@ -1027,32 +1029,32 @@ pub const MSG_QUERY_NEXT_MAIL_TIME: u16 = 0x0284; // 644
 /// A mail arrived (text-only at once, else when its delivery timer ends): one `u32`, always 0.
 pub const SMSG_RECEIVED_MAIL: u16 = 0x0285; // 645
 
-// The auction house: every CMSG leads with the auctioneer guid, and the server checks 5 yd on
-// each, so the hello is no session token.
-/// Both ways: we send the auctioneer guid; the reply echoes it with `u32 houseId`
-/// (`AuctionHouse.dbc` 1..7) and opens the window.
+// The auction house (`CGAuctionHouse`): every CMSG leads with the auctioneer guid.
+/// Both ways: we send the auctioneer guid; the reply adds `u32 houseId` and `u8 enabled`.
 pub const MSG_AUCTION_HELLO: u16 = 0x0255; // 597
 pub const CMSG_AUCTION_SELL_ITEM: u16 = 0x0256; // 598
 pub const CMSG_AUCTION_REMOVE_ITEM: u16 = 0x0257; // 599
-/// The Browse search: ten fields and no sort bytes; the server filters, the client sorts.
+/// The Browse search: the filters, `getAll`, then the Browse list's sort criteria (`0x59bcf0`).
 pub const CMSG_AUCTION_LIST_ITEMS: u16 = 0x0258; // 600
 pub const CMSG_AUCTION_LIST_OWNER_ITEMS: u16 = 0x0259; // 601
-/// Bid or buy out: a buyout is `price >= buyout && buyout != 0`, never flagged.
 pub const CMSG_AUCTION_PLACE_BID: u16 = 0x025A; // 602
-/// The sell, cancel or bid verdict, with a tail keyed on its error; some refusals send nothing.
+/// The sell, cancel or bid verdict, with a tail keyed on its error (`0x59ffb0`).
 pub const SMSG_AUCTION_COMMAND_RESULT: u16 = 0x025B; // 603
-/// Shared with the owner and bidder list results: `u32 count`, 64-byte records, then
-/// `u32 totalCount`, the matches before the 50-row page cap.
+/// Shared with the owner and bidder list results: `u32 count`, 148-byte records, `u32 totalCount`
+/// and the `u32` query delay (`0x59e160`).
 pub const SMSG_AUCTION_LIST_RESULT: u16 = 0x025C; // 604
 pub const SMSG_AUCTION_OWNER_LIST_RESULT: u16 = 0x025D; // 605
-/// To the bidder, won or outbid: `bidOrZero == 0` means won, not "no bid".
+/// To the bidder, won or outbid: `bidOrZero == 0` means won (`0x5a0480`).
 pub const SMSG_AUCTION_BIDDER_NOTIFICATION: u16 = 0x025E; // 606
-/// To the seller: a different field order from the bidder notification, and no `houseId`.
+/// To the seller: a new bid, a sale or an expiry (`0x5a0790`).
 pub const SMSG_AUCTION_OWNER_NOTIFICATION: u16 = 0x025F; // 607
 pub const CMSG_AUCTION_LIST_BIDDER_ITEMS: u16 = 0x0264; // 612
 pub const SMSG_AUCTION_BIDDER_LIST_RESULT: u16 = 0x0265; // 613
-/// Pushed to a bidder whose auction the seller cancelled.
+/// Pushed to a bidder whose auction the seller cancelled (`0x5a0ac0`).
 pub const SMSG_AUCTION_REMOVED_NOTIFICATION: u16 = 0x028D; // 653
+/// Sold auctions whose money mail is still in transit, asked beside the owner list (`0x59cc50`).
+pub const CMSG_AUCTION_LIST_PENDING_SALES: u16 = 0x048F; // 1167
+pub const SMSG_AUCTION_LIST_PENDING_SALES: u16 = 0x0490; // 1168
 
 // The world-state table; these two are its only writers (reference `0x48f690`). NPC text's
 // `$<n>w`/`$<n>e` tokens read it.

@@ -2,14 +2,14 @@
 
 use crate::messages::{
     ActionButton, AttackSwingError, AttackerState, AuctionBidderNotification, AuctionCommandTail,
-    AuctionListEntry, AuctionOwnerNotification, ChannelNoticeTail, Character, CreateSpline,
-    DamageShield, DifficultySet, DispelFailed, EnchantmentLog, EnvironmentalDamageLog,
-    ExplorationXp, FriendEntry, FriendStatusUpdate, GmResponse, GmTicket, GossipMenu,
-    GroupDifficulties, GroupLootInfo, GroupMemberEntry, GuildCommandResult, GuildEventNotice,
-    GuildInfo, GuildQueryResponse, GuildRoster, InspectHonorStats, ItemInfo, ItemPushResult,
-    JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon, LootStartRoll,
-    MailListEntry, MirrorTimerStart, MonsterMoveFacing, MoverState, ObjectFields, PartyKillLog,
-    PartyMemberStatsInfo, PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse,
+    AuctionListPage, AuctionOwnerNotification, AuctionPendingSale, ChannelNoticeTail, Character,
+    CreateSpline, DamageShield, DifficultySet, DispelFailed, EnchantmentLog,
+    EnvironmentalDamageLog, ExplorationXp, FriendEntry, FriendStatusUpdate, GmResponse, GmTicket,
+    GossipMenu, GroupDifficulties, GroupLootInfo, GroupMemberEntry, GuildCommandResult,
+    GuildEventNotice, GuildInfo, GuildQueryResponse, GuildRoster, InspectHonorStats, ItemInfo,
+    ItemPushResult, JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon,
+    LootStartRoll, MailListEntry, MirrorTimerStart, MonsterMoveFacing, MoverState, ObjectFields,
+    PartyKillLog, PartyMemberStatsInfo, PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse,
     PetitionRename, PetitionShowList, PetitionShowSignatures, PetitionSignResults, PvpCredit,
     QuestComplete, QuestConfirmAccept, QuestDetails, QuestGiverList, QuestOfferReward,
     QuestRequestItems, QuestShareMsg, QuestTemplate, SpellDamageLog, SpellDispelLog,
@@ -1190,33 +1190,28 @@ pub enum SessionEvent {
     ReceivedMail { seconds: f32 },
     /// `MSG_QUERY_NEXT_MAIL_TIME`'s reply: `0.0` unread mail, `-86400.0` none; for `HasNewMail()`.
     NextMailTime { seconds: f32 },
-    /// `MSG_AUCTION_HELLO`'s reply, which opens the auction window: the auctioneer and its
-    /// `AuctionHouse.dbc` row (1..7, the deposit and cut rates).
-    AuctionHello { auctioneer: u64, house_id: u32 },
-    /// A sell, cancel or bid verdict (`SMSG_AUCTION_COMMAND_RESULT`); `error` selects `tail`,
-    /// `auction_id` is 0 on most failures, and several refusals send nothing.
+    /// `MSG_AUCTION_HELLO`'s reply: an open house opens the auction window, a closed one fires
+    /// `AUCTION_HOUSE_DISABLED`; `house_id` is the `AuctionHouse.dbc` row.
+    AuctionHello {
+        auctioneer: u64,
+        house_id: u32,
+        enabled: bool,
+    },
+    /// A sell, cancel or bid verdict (`SMSG_AUCTION_COMMAND_RESULT`); `error` selects `tail`.
     AuctionCommandResult {
         auction_id: u32,
         action: u32,
         error: u32,
         tail: AuctionCommandTail,
     },
-    /// A Browse page (`SMSG_AUCTION_LIST_RESULT`), at most 50 rows; `total_count` is pre-cap.
-    AuctionListResult {
-        auctions: Vec<AuctionListEntry>,
-        total_count: u32,
-    },
+    /// A Browse page (`SMSG_AUCTION_LIST_RESULT`).
+    AuctionListResult(AuctionListPage),
     /// The Auctions tab page, our own listings (`SMSG_AUCTION_OWNER_LIST_RESULT`).
-    AuctionOwnerListResult {
-        auctions: Vec<AuctionListEntry>,
-        total_count: u32,
-    },
-    /// The Bids tab page (`SMSG_AUCTION_BIDDER_LIST_RESULT`): refreshed ids first, then live bids,
-    /// so a row can appear twice.
-    AuctionBidderListResult {
-        auctions: Vec<AuctionListEntry>,
-        total_count: u32,
-    },
+    AuctionOwnerListResult(AuctionListPage),
+    /// The Bids tab page (`SMSG_AUCTION_BIDDER_LIST_RESULT`).
+    AuctionBidderListResult(AuctionListPage),
+    /// Sold auctions whose money is still in the mail (`SMSG_AUCTION_LIST_PENDING_SALES`).
+    AuctionPendingSales { sales: Vec<AuctionPendingSale> },
     /// We won or were outbid (`SMSG_AUCTION_BIDDER_NOTIFICATION`); `bid_or_zero == 0` means won.
     AuctionBidderNotification(AuctionBidderNotification),
     /// Our auction sold or took a bid (`SMSG_AUCTION_OWNER_NOTIFICATION`); `bidder_guid` 0 is sold.
