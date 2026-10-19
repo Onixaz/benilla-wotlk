@@ -78,7 +78,7 @@ fn candidates_from(
     let mut out = Vec::with_capacity(4);
 
     // 1. The override; set and empty is no install at all, even in a dev build
-    // (`WOW_DATA= cargo debug` runs as a player without data).
+    // (`WOW_DATA= cargo dev` runs as a player without data).
     if let Some(over) = override_dir {
         if over.as_os_str().is_empty() {
             return Vec::new();

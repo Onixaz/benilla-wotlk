@@ -93,9 +93,9 @@ ln -s /path/to/WoW target/release/WoW
 
 ### Development build
 
-`cargo debug` builds and runs the development build: incremental, with debug assertions and the
-developer instruments compiled in, so it is the one to work on Benilla with and not the one to play
-on. It also finds a `WoW` link at the repository root. See
+`cargo dev` (or `cargo debug`) builds and runs the development build: incremental, with debug
+assertions and the developer instruments compiled in, so it is the one to work on Benilla with and
+not the one to play on. It also finds a `WoW` link at the repository root. See
 [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md).
 
 ## Configuration
@@ -109,7 +109,7 @@ on. It also finds a `WoW` link at the repository root. See
 
 The Realmlist button on the login screen can also set and remember the server endpoint. Player
 settings, screenshots, logs, and addons live under `benilla-config/` beside the binary
-(`target/release/benilla-config/`), or at the repository root for `cargo debug`. Place addons in
+(`target/release/benilla-config/`), or at the repository root for `cargo dev`. Place addons in
 `benilla-config/AddOns/`.
 
 ## Documentation

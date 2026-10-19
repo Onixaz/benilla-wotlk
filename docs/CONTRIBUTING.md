@@ -144,7 +144,7 @@ out of scope is closed with the reason.
   - A capture runs through `scripts/visual.sh`, whose recipe is the header of
     `crates/benilla-app/src/capture/mod.rs`. Pixel questions go through `benilla-visual crop`,
     `series` and `hotspot`.
-- **The loop.** There are two builds. `cargo debug` builds and runs `dev`, the dev build, and a
+- **The loop.** There are two builds. `cargo dev` builds and runs `dev`, the dev build, and a
   probe, every test and both scripts below build the same, so nothing compiles twice. Its debug
   assertions make it no place to read frame time. `--release` is the played, shipped and
   measured profile, fat LTO over one codegen unit, so it is built to play (`cargo play`), for a

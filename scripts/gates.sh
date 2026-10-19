@@ -8,7 +8,7 @@
 # machine with the data.
 # `scripts/check.sh` runs all of it and the tests that read the data, so our own pull requests run
 # that instead. Everything builds in `dev`, so the chain reuses the artifacts a
-# `cargo debug` or a probe build left.
+# `cargo dev` or a probe build left.
 # A failure prints the gate's log tail and exits nonzero; a green run stamps the tree, which then
 # re-greens without running. GATES_FORCE=1 runs the chain anyway; TMPDIR holds the scratch files.
 # `.github/workflows/ci.yml` runs this script on a fork's pull request.

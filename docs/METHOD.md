@@ -72,7 +72,7 @@ crate of its own or a fork, and benilla opens a piece of itself to such a crate 
 
 ## Gates
 
-- **Two builds.** `dev` (`cargo debug`) is optimized, incremental, with debug assertions and
+- **Two builds.** `dev` (`cargo dev`) is optimized, incremental, with debug assertions and
   overflow checks on benilla's own crates. Every scripted run, probe, test and gate builds it, so
   they share one set of artifacts. `release` is built, never tested: `cargo play` (without `dev`)
   to play on it, `cargo ship` to ship, `cargo build --release -p benilla` to measure frame time,
