@@ -7,8 +7,8 @@
 # `BENILLA_ADDON_CORPUS=`, set and empty), so it runs the same on a fresh clone, a CI runner and a
 # machine with the data.
 # `scripts/check.sh` runs all of it and the tests that read the data, so our own pull requests run
-# that instead. Everything builds in `dev`, the play build, so the chain reuses the artifacts a
-# `cargo play` or a probe build left.
+# that instead. Everything builds in `dev`, so the chain reuses the artifacts a
+# `cargo debug` or a probe build left.
 # A failure prints the gate's log tail and exits nonzero; a green run stamps the tree, which then
 # re-greens without running. GATES_FORCE=1 runs the chain anyway; TMPDIR holds the scratch files.
 # `.github/workflows/ci.yml` runs this script on a fork's pull request.
@@ -137,7 +137,7 @@ run player-tests cargo test -p benilla-formats -p benilla-app --no-default-featu
 # inserted only by gameplay or by client data, a coupling no compiler sees. Five seconds suffice:
 # with nothing to stream, every system validates in the first frames. CI runs it under Xvfb.
 # Built beside `benilla`: alone, `benilla-worldview` resolves fewer dependency features and would
-# rebuild Bevy rather than reuse the play build's.
+# rebuild Bevy rather than reuse the dev build's.
 run enforcer-build cargo build -p benilla -p benilla-worldview
 run enforcer-no-install env WOW_WORLDVIEW_CHECK=5 "${CARGO_TARGET_DIR:-target}/debug/benilla-worldview"
 

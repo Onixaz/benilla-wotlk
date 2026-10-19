@@ -46,8 +46,9 @@ lua-src = { path = "third_party/lua-src" }
 # interpolate them, not per sample frame (`third_party/kira/BENILLA.md`).
 kira = { path = "third_party/kira" }
 
-# Two builds. `dev` is the play build: every run, probe, test and gate builds it, so they share one
-# set of compiled artifacts. `release` is built, never tested: to ship (`cargo ship`) or to measure.
+# Two builds. `dev` (`cargo debug`): every run, probe, test and gate builds it, so they share one
+# set of compiled artifacts. `release` is built, never tested: to play (`cargo play`), to ship
+# (`cargo ship`) or to measure.
 
 # Optimized as a run needs it, incremental for our crates.
 [profile.dev]

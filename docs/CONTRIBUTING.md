@@ -126,7 +126,7 @@ out of scope is closed with the reason.
   after it (its first six letters).
 - **Running it unattended.** The rules are `docs/METHOD.md`, "The local server"; these are the
   switches.
-  - The build a probe runs is the play build: `cargo build -p benilla`, then
+  - The build a probe runs is the dev build: `cargo build -p benilla`, then
     `target/debug/benilla.exe` with the switches in its environment. It relinks in a minute where
     `--release` (fat LTO, one codegen unit) takes many. `--release` is for a frame-time
     measurement or a release, or when asked for.
@@ -144,11 +144,11 @@ out of scope is closed with the reason.
   - A capture runs through `scripts/visual.sh`, whose recipe is the header of
     `crates/benilla-app/src/capture/mod.rs`. Pixel questions go through `benilla-visual crop`,
     `series` and `hotspot`.
-- **The loop.** There are two builds. `cargo play` builds and runs `dev`, the play build, and a
+- **The loop.** There are two builds. `cargo debug` builds and runs `dev`, the dev build, and a
   probe, every test and both scripts below build the same, so nothing compiles twice. Its debug
-  assertions make it no place to read frame time. `--release` is the shipped and the measured
-  profile, fat LTO over one codegen unit, so it is built for a frame-time number or a release
-  (`cargo ship`), not per round. `scripts/check.sh` verifies a round on the whole workspace,
+  assertions make it no place to read frame time. `--release` is the played, shipped and
+  measured profile, fat LTO over one codegen unit, so it is built to play (`cargo play`), for a
+  frame-time number or for a release (`cargo ship`), not per round. `scripts/check.sh` verifies a round on the whole workspace,
   with the data and without it; `scripts/gates.sh` is its chain without the data, the one your
   pull request needs green. Both open a window for the engine boot, so they need a display. `WOW_STOCK_UI=1` boots a dev build on the stock interface alone,
   without benilla's layer. Work on a branch.

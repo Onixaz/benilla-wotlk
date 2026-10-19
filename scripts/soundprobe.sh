@@ -4,7 +4,7 @@
 #   scripts/soundprobe.sh [client args…]   # play normally, press F9 when you hear it
 #   scripts/soundprobe.py                  # …then read the capture back
 #
-# Builds `dev`, the optimized play build: an unoptimized build stutters, and a stutter is a missed
+# Builds `dev`, which is optimized: an unoptimized build stutters, and a stutter is a missed
 # mix deadline, one of the mechanisms the capture has to tell apart.
 set -euo pipefail
 cd "$(dirname "$0")/.."

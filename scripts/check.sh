@@ -196,7 +196,7 @@ fi
 # small window, and refuses any system whose parameters need a gameplay resource: against the
 # install, then with no client data at all, as gates.sh boots it.
 if in_scope benilla-worldview; then
-    # Beside `benilla`, so it reuses the play build's dependencies (gates.sh says why).
+    # Beside `benilla`, so it reuses the dev build's dependencies (gates.sh says why).
     run enforcer-build cargo build -p benilla -p benilla-worldview
     if [ -n "$wow_data" ]; then
         run enforcer env WOW_DATA="$wow_data" WOW_WORLDVIEW_CHECK=10 \

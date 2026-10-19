@@ -59,8 +59,8 @@ subsystems, instruments, and scripts.
 
 ## Quick start
 
-Clone the repository, enter its directory, and point `WOW_DATA` at the `Data` directory of your
-3.3.5a installation.
+Clone the repository, point `WOW_DATA` at the `Data` directory of your 3.3.5a installation, and
+run `cargo play`. It builds the player binary and starts it; the first build takes a while.
 
 ### Windows PowerShell
 
@@ -68,7 +68,7 @@ Clone the repository, enter its directory, and point `WOW_DATA` at the `Data` di
 git clone https://github.com/Onixaz/benilla-wotlk.git
 Set-Location benilla-wotlk
 $env:WOW_DATA = "C:\Games\World of Warcraft 3.3.5a\Data"
-cargo run --release -p benilla
+cargo play
 ```
 
 ### Linux and macOS
@@ -76,19 +76,27 @@ cargo run --release -p benilla
 ```sh
 git clone https://github.com/Onixaz/benilla-wotlk.git
 cd benilla-wotlk
-WOW_DATA=/path/to/WoW/Data cargo run --release -p benilla
+WOW_DATA=/path/to/WoW/Data cargo play
 ```
 
-Instead of setting `WOW_DATA`, you can create a `WoW` link at the repository root that points to
-the installation directory:
+`cargo ship` builds the same binary without starting it, into `target/release/`. The binary is
+self-contained and can be copied anywhere. Instead of setting `WOW_DATA`, you can put a `WoW` link
+beside the binary that points to the installation directory:
 
 ```powershell
-New-Item -ItemType Junction -Path WoW -Target "C:\Games\World of Warcraft 3.3.5a"
+New-Item -ItemType Junction -Path target\release\WoW -Target "C:\Games\World of Warcraft 3.3.5a"
 ```
 
 ```sh
-ln -s /path/to/WoW WoW
+ln -s /path/to/WoW target/release/WoW
 ```
+
+### Development build
+
+`cargo debug` builds and runs the development build: incremental, with debug assertions and the
+developer instruments compiled in, so it is the one to work on Benilla with and not the one to play
+on. It also finds a `WoW` link at the repository root. See
+[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md).
 
 ## Configuration
 
@@ -100,8 +108,9 @@ ln -s /path/to/WoW WoW
 | `WOW_CHAR` | Optional character name for automatic selection. |
 
 The Realmlist button on the login screen can also set and remember the server endpoint. Player
-settings, screenshots, logs, and addons live under `benilla-config/` at the repository root. Place
-addons in `benilla-config/AddOns/`.
+settings, screenshots, logs, and addons live under `benilla-config/` beside the binary
+(`target/release/benilla-config/`), or at the repository root for `cargo debug`. Place addons in
+`benilla-config/AddOns/`.
 
 ## Documentation
 

@@ -1,6 +1,7 @@
-# `cargo play` runs the client, the build every probe and test shares; `cargo ship` builds the
-# player's binary, `release` without `dev`. Env vars still prefix them:
-# `WOW_USER=<account> WOW_PASS=<password> cargo play`.
+# `cargo play` builds and runs the player's binary, `release` without `dev`, which `cargo ship`
+# builds alone; `cargo debug` runs `dev`, the build every probe and test shares. Env vars still
+# prefix them: `WOW_USER=<account> WOW_PASS=<password> cargo play`.
 [alias]
-play = "run -p benilla"
+play = "run --release -p benilla --no-default-features"
+debug = "run -p benilla"
 ship = "build --release -p benilla --no-default-features"
