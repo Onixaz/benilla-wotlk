@@ -10,11 +10,11 @@ use crate::wire::{
 use super::{
     achievement, action_bar, area_trigger, attack, auction, aura, bank, battlefield, binder,
     broadcast, channel, chat, combat_log, death, duel, equipment_set, gameobject, gm_ticket,
-    gossip, group, guild, instance, items, loot, mail, meeting_stone, mirror_timer, monster_move,
-    movement, opcode, page_text, pet, petition, pose, progression, pvp, quest, social, spellbook,
-    spells, stable, summon, tabard, talents, taxi, totem, trade, trainer, tutorial, update_object,
-    vendor, world_state, AttackSwingError, Character, CreatureQueryInfo, DifficultySet, JumpInfo,
-    MoveMode, ServerPacket, SpeedKind, SplineMode,
+    gossip, group, guild, instance, items, lfg, loot, mail, meeting_stone, mirror_timer,
+    monster_move, movement, opcode, page_text, pet, petition, pose, progression, pvp, quest,
+    social, spellbook, spells, stable, summon, tabard, talents, taxi, totem, trade, trainer,
+    tutorial, update_object, vendor, world_state, AttackSwingError, Character, CreatureQueryInfo,
+    DifficultySet, JumpInfo, LfgPacket, MoveMode, ServerPacket, SpeedKind, SplineMode,
 };
 
 /// Read a `SMSG_FORCE_*_SPEED_CHANGE` body: `[packed guid][u32 counter][f32 speed]`, with a `u8`
@@ -603,9 +603,6 @@ fn parse_server_body(
         opcode::SMSG_MEETINGSTONE_MEMBER_ADDED => ServerPacket::MeetingStoneNotice(
             meeting_stone::read_meeting_stone_member_added(&mut r)?,
         ),
-        opcode::SMSG_MEETINGSTONE_JOIN_FAILED => {
-            ServerPacket::MeetingStoneNotice(meeting_stone::read_meeting_stone_join_failed(&mut r)?)
-        }
         opcode::SMSG_TUTORIAL_FLAGS => {
             ServerPacket::TutorialFlags(tutorial::read_tutorial_flags(&mut r)?)
         }
@@ -712,6 +709,48 @@ fn parse_server_body(
         opcode::SMSG_DEFENSE_MESSAGE => {
             let (zone_id, text) = broadcast::read_defense_message(&mut r)?;
             ServerPacket::DefenseMessage { zone_id, text }
+        }
+        opcode::SMSG_INSTANCE_DIFFICULTY => ServerPacket::InstanceDifficulty {
+            difficulty: read_u32_le(&mut r)?,
+            dynamic: read_u32_le(&mut r)?,
+        },
+        opcode::SMSG_LFG_UPDATE_PLAYER => {
+            ServerPacket::Lfg(LfgPacket::UpdatePlayer(lfg::read_update_player(&mut r)?))
+        }
+        opcode::SMSG_LFG_UPDATE_PARTY => {
+            ServerPacket::Lfg(LfgPacket::UpdateParty(lfg::read_update_party(&mut r)?))
+        }
+        opcode::SMSG_LFG_UPDATE_SEARCH => ServerPacket::Lfg(LfgPacket::UpdateSearch {
+            joined: read_u8(&mut r)? != 0,
+        }),
+        opcode::SMSG_LFG_QUEUE_STATUS => {
+            ServerPacket::Lfg(LfgPacket::QueueStatus(lfg::read_queue_status(&mut r)?))
+        }
+        opcode::SMSG_LFG_DISABLED => ServerPacket::Lfg(LfgPacket::Disabled),
+        opcode::SMSG_LFG_PROPOSAL_UPDATE => {
+            ServerPacket::Lfg(LfgPacket::Proposal(lfg::read_proposal(&mut r)?))
+        }
+        opcode::SMSG_LFG_ROLE_CHECK_UPDATE => {
+            ServerPacket::Lfg(LfgPacket::RoleCheck(lfg::read_role_check(&mut r)?))
+        }
+        opcode::SMSG_LFG_ROLE_CHOSEN => ServerPacket::Lfg(lfg::read_role_chosen(&mut r)?),
+        opcode::SMSG_LFG_JOIN_RESULT => ServerPacket::Lfg(lfg::read_join_result(&mut r)?),
+        opcode::SMSG_LFG_BOOT_PROPOSAL_UPDATE => {
+            ServerPacket::Lfg(LfgPacket::Boot(lfg::read_boot(&mut r)?))
+        }
+        opcode::SMSG_LFG_PLAYER_INFO => ServerPacket::Lfg(lfg::read_player_info(&mut r)?),
+        opcode::SMSG_LFG_PARTY_INFO => ServerPacket::Lfg(lfg::read_party_info(&mut r)?),
+        opcode::SMSG_LFG_PLAYER_REWARD => {
+            ServerPacket::Lfg(LfgPacket::Reward(lfg::read_reward(&mut r)?))
+        }
+        opcode::SMSG_LFG_TELEPORT_DENIED => {
+            ServerPacket::Lfg(LfgPacket::TeleportDenied(read_u32_le(&mut r)?))
+        }
+        opcode::SMSG_LFG_OFFER_CONTINUE => {
+            ServerPacket::Lfg(LfgPacket::OfferContinue(read_u32_le(&mut r)?))
+        }
+        opcode::SMSG_OPEN_LFG_DUNGEON_FINDER => {
+            ServerPacket::Lfg(LfgPacket::OpenFromGossip(read_u32_le(&mut r)?))
         }
         opcode::SMSG_CHAT_RESTRICTED => ServerPacket::ChatRestricted,
         opcode::SMSG_PLAYED_TIME => {
@@ -1429,6 +1468,8 @@ fn parse_server_body(
                 loot: list.loot,
                 difficulties: list.difficulties,
                 lfg_restricted: list.lfg_restricted,
+                lfg_status: list.lfg_status,
+                lfg_slot: list.lfg_slot,
             }
         }
         opcode::SMSG_PARTY_COMMAND_RESULT => {

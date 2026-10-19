@@ -39,18 +39,12 @@ pub enum MeetingStoneNotice {
     InProgress,
     /// `0x299`, `u64 guid`; the line waits for the name cache.
     MemberAdded { guid: u64 },
-    /// `0x2BB`, `u8 code`.
-    JoinFailed { code: u8 },
 }
 
 pub(super) fn read_meeting_stone_member_added(r: &mut impl Read) -> io::Result<MeetingStoneNotice> {
     Ok(MeetingStoneNotice::MemberAdded {
         guid: crate::wire::read_u64_le(r)?,
     })
-}
-
-pub(super) fn read_meeting_stone_join_failed(r: &mut impl Read) -> io::Result<MeetingStoneNotice> {
-    Ok(MeetingStoneNotice::JoinFailed { code: read_u8(r)? })
 }
 
 #[cfg(test)]

@@ -611,6 +611,10 @@ pub enum SessionEvent {
     ZoneUnderAttack { area_id: u32 },
     /// A defense broadcast (`SMSG_DEFENSE_MESSAGE`), shown where [`Self::ZoneUnderAttack`] is.
     DefenseMessage { zone_id: u32, text: String },
+    /// A dungeon finder message, applied by the app's `CGLookingForGroup` port.
+    Lfg(crate::messages::LfgPacket),
+    /// `SMSG_INSTANCE_DIFFICULTY`: the entered map's difficulty, 0-based, and the dynamic one.
+    InstanceDifficulty { difficulty: u32, dynamic: u32 },
     /// A trial account's whisper cap (`SMSG_CHAT_RESTRICTED`, empty body): `DisplayError(0x1c3)`.
     ChatRestricted,
     /// `/played` (`SMSG_PLAYED_TIME`): total and this-level played time, in seconds.
@@ -1017,6 +1021,10 @@ pub enum SessionEvent {
         difficulties: Option<GroupDifficulties>,
         /// Group-type bit `0x04`, `HasLFGRestrictions`.
         lfg_restricted: bool,
+        /// Group-type bit `0x08`'s status byte, `CGPartyInfo::m_playerLFGFlags`; 0 otherwise.
+        lfg_status: u8,
+        /// Group-type bit `0x08`'s dungeon slot, `CGPartyInfo::m_lfgSlot`; 0 otherwise.
+        lfg_slot: u32,
     },
     /// A group command's verdict (`SMSG_PARTY_COMMAND_RESULT`): a
     /// [`crate::messages::party_operation`] and a [`crate::messages::party_result`] code.

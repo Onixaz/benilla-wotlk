@@ -284,9 +284,16 @@ fn group_list_party_two_members_master_loot() {
             loot,
             difficulties,
             lfg_restricted,
+            lfg_status,
+            lfg_slot,
         } => {
             assert_eq!(*group_type, 0);
             assert!(!lfg_restricted);
+            assert_eq!(
+                (*lfg_status, *lfg_slot),
+                (0, 0),
+                "no LFG bit, no LFG fields"
+            );
             assert_eq!(
                 *difficulties,
                 Some(GroupDifficulties {
@@ -377,9 +384,16 @@ fn group_list_raid_with_assistant_flag() {
             loot,
             difficulties,
             lfg_restricted,
+            lfg_status,
+            lfg_slot,
         } => {
             assert_eq!(*group_type, 1);
             assert!(lfg_restricted, "type bit 0x04");
+            assert_eq!(
+                (*lfg_status, *lfg_slot),
+                (0, 261),
+                "type bit 0x08's status and slot"
+            );
             assert_eq!(
                 *difficulties,
                 Some(GroupDifficulties {

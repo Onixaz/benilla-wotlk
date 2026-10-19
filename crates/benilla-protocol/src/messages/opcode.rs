@@ -384,8 +384,8 @@ pub const SMSG_SERVER_MESSAGE: u16 = 0x0291; // 657
 /// A trial account hit its whisper cap: empty body; the client (`0x5e4a09`) shows error `0x1c3`.
 pub const SMSG_CHAT_RESTRICTED: u16 = 0x02FD; // 765
 /// A defense broadcast (the Eastern Plaguelands towers): `u32 zoneId`, `u32 length`, the text
-/// (`Map.cpp:1868-1884`). Posted like [`SMSG_ZONE_UNDER_ATTACK`] (`0x49de30`).
-pub const SMSG_DEFENSE_MESSAGE: u16 = 0x033B; // 827
+/// (`Map.cpp:1868-1884`); 12340 reads it at `0x50c850`.
+pub const SMSG_DEFENSE_MESSAGE: u16 = 0x033A; // 826
 
 /// `/played`: an empty request; the reply is `u32 total`, `u32 level` seconds (`Misc.cpp:278-282`).
 pub const CMSG_PLAYED_TIME: u16 = 0x01CC; // 460
@@ -767,17 +767,12 @@ pub const CMSG_MEETINGSTONE_LEAVE: u16 = 0x0293; // 659
 /// The meeting-stone queue state: `u32 areaId`, `u8 status`; always stored, a message per
 /// status, then `MEETINGSTONE_CHANGED`.
 pub const SMSG_MEETINGSTONE_SETQUEUE: u16 = 0x0295; // 661
-/// The world-entry meeting-stone status query: empty, once per session; answered by `0x295`.
-/// vmangos names it `CMSG_MEETINGSTONE_INFO`.
-pub const CMSG_MEETINGSTONE_STATUS_QUERY: u16 = 0x0296; // 662
 /// Display only: empty; `ERR_MEETING_STONE_SUCCESS`.
 pub const SMSG_MEETINGSTONE_SUCCESS: u16 = 0x0297; // 663
 /// Display only: empty; `ERR_MEETING_STONE_IN_PROGRESS`.
 pub const SMSG_MEETINGSTONE_IN_PROGRESS: u16 = 0x0298; // 664
 /// Display only: `u64 guid`; `ERR_MEETING_STONE_MEMBER_ADDED_S` once the name resolves.
 pub const SMSG_MEETINGSTONE_MEMBER_ADDED: u16 = 0x0299; // 665
-/// Display only: `u8 code`, 1 must be leader, 2 group full, 3 no raid group, else nothing.
-pub const SMSG_MEETINGSTONE_JOIN_FAILED: u16 = 0x02BB; // 699
 /// `ConfirmPetUnlearn()`: the latched `u64 trainerGuid`, never an argument.
 pub const CMSG_PET_UNLEARN: u16 = 0x02F0; // 752
 /// The pet trainer asks: `u64 trainerGuid`, `u32 costCopper`, latched for
@@ -1083,3 +1078,50 @@ pub const SMSG_INSTANCE_RESET_FAILED: u16 = 0x031F; // 799
 pub const SMSG_UPDATE_LAST_INSTANCE: u16 = 0x0320; // 800
 /// Whether we hold any permanent bind: `u32` flag (`0x49e6c0`), half of `CanShowResetInstances()`.
 pub const SMSG_UPDATE_INSTANCE_OWNERSHIP: u16 = 0x032B; // 811
+
+// ── The dungeon finder (`CGLookingForGroup`, handlers set by `InitializeGame 0x55d440`) ──
+
+/// The world-enter status request (`RequestLFGStatus 0x555920`): empty; answered by
+/// `SMSG_LFG_UPDATE_PLAYER` and `SMSG_LFG_UPDATE_PARTY`.
+pub const CMSG_LFG_GET_STATUS: u16 = 0x0296; // 662
+/// `JoinLFG` (`0x5572d0`): see [`super::lfg_join`].
+pub const CMSG_LFG_JOIN: u16 = 0x035C; // 860
+/// `LeaveLFG` (`0x553ab0`): empty.
+pub const CMSG_LFG_LEAVE: u16 = 0x035D; // 861
+/// `SearchLFGJoin` (`0x558ed0`): the raid browser's `u32` slot.
+pub const CMSG_LFG_LFR_JOIN: u16 = 0x035E; // 862
+/// `SearchLFGLeave` (`0x558f90`): the joined `u32` slot.
+pub const CMSG_LFG_LFR_LEAVE: u16 = 0x035F; // 863
+/// `AcceptProposal`/`RejectProposal` (`0x554450`): `u32` proposal id, `u8` answer.
+pub const CMSG_LFG_PROPOSAL_RESULT: u16 = 0x0362; // 866
+/// `SetLFGComment` while joined (`0x5539a0`): the cstring.
+pub const CMSG_SET_LFG_COMMENT: u16 = 0x0366; // 870
+/// `CompleteLFGRoleCheck` (`0x553e20`): the `u8` roles, 0 to decline.
+pub const CMSG_LFG_SET_ROLES: u16 = 0x036A; // 874
+/// `SetLFGBootVote` (`0x554960`): the `u8` vote.
+pub const CMSG_LFG_SET_BOOT_VOTE: u16 = 0x036C; // 876
+/// `RequestLFDPlayerLockInfo` (`0x555990`): empty; answered by `SMSG_LFG_PLAYER_INFO`.
+pub const CMSG_LFG_PLAYER_LOCK_INFO_REQUEST: u16 = 0x036E; // 878
+/// `LFGTeleport` (`0x556bc0`): `u8` out of the dungeon.
+pub const CMSG_LFG_TELEPORT: u16 = 0x0370; // 880
+/// `RequestLFDPartyLockInfo` (`0x555a00`): empty; answered by `SMSG_LFG_PARTY_INFO`.
+pub const CMSG_LFG_PARTY_LOCK_INFO_REQUEST: u16 = 0x0371; // 881
+
+pub const SMSG_LFG_PLAYER_REWARD: u16 = 0x01FF; // 511
+pub const SMSG_LFG_TELEPORT_DENIED: u16 = 0x0200; // 512
+pub const SMSG_LFG_OFFER_CONTINUE: u16 = 0x0293; // 659
+pub const SMSG_LFG_ROLE_CHOSEN: u16 = 0x02BB; // 699
+pub const SMSG_LFG_PROPOSAL_UPDATE: u16 = 0x0361; // 865
+pub const SMSG_LFG_ROLE_CHECK_UPDATE: u16 = 0x0363; // 867
+pub const SMSG_LFG_JOIN_RESULT: u16 = 0x0364; // 868
+pub const SMSG_LFG_QUEUE_STATUS: u16 = 0x0365; // 869
+pub const SMSG_LFG_UPDATE_PLAYER: u16 = 0x0367; // 871
+pub const SMSG_LFG_UPDATE_PARTY: u16 = 0x0368; // 872
+pub const SMSG_LFG_UPDATE_SEARCH: u16 = 0x0369; // 873
+pub const SMSG_LFG_BOOT_PROPOSAL_UPDATE: u16 = 0x036D; // 877
+pub const SMSG_LFG_PLAYER_INFO: u16 = 0x036F; // 879
+pub const SMSG_LFG_PARTY_INFO: u16 = 0x0372; // 882
+pub const SMSG_LFG_DISABLED: u16 = 0x0398; // 920
+pub const SMSG_OPEN_LFG_DUNGEON_FINDER: u16 = 0x0515; // 1301
+/// The map's difficulty on entry: `u32` difficulty, `u32` dynamic difficulty (`0x526530`).
+pub const SMSG_INSTANCE_DIFFICULTY: u16 = 0x033B; // 827

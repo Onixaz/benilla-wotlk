@@ -138,6 +138,8 @@ pub(super) struct GroupList {
     pub loot: Option<GroupLootInfo>,
     pub difficulties: Option<GroupDifficulties>,
     pub lfg_restricted: bool,
+    pub lfg_status: u8,
+    pub lfg_slot: u32,
 }
 
 /// 3.3.5a's group-type raid bit (`0x6d8870` tests `& 2`); `& 1` is a battleground group.
@@ -165,10 +167,11 @@ pub(super) fn read_group_list(r: &mut &[u8]) -> io::Result<GroupList> {
     let own_subgroup = read_u8(r)?;
     let own_flags = fold_member_flags(own_subgroup, read_u8(r)?);
     let own_roles = read_u8(r)?;
-    if raw_type & GROUP_TYPE_LFG != 0 {
-        let _lfg_status = read_u8(r)?;
-        let _lfg_slot = read_u32_le(r)?;
-    }
+    let (lfg_status, lfg_slot) = if raw_type & GROUP_TYPE_LFG != 0 {
+        (read_u8(r)?, read_u32_le(r)?)
+    } else {
+        (0, 0)
+    };
     let _group_guid = read_u64_le(r)?;
     let _counter = read_u32_le(r)?;
     let count = read_u32_le(r)?;
@@ -217,6 +220,8 @@ pub(super) fn read_group_list(r: &mut &[u8]) -> io::Result<GroupList> {
         loot,
         difficulties,
         lfg_restricted: raw_type & GROUP_TYPE_LFG_RESTRICTED != 0,
+        lfg_status,
+        lfg_slot,
     })
 }
 

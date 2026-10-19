@@ -26,6 +26,7 @@ mod group;
 mod guild;
 mod instance;
 mod items;
+mod lfg;
 mod lifecycle;
 mod loot;
 mod mail;

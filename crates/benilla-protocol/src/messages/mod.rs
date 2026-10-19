@@ -26,6 +26,7 @@ mod group;
 mod guild;
 mod instance;
 mod items;
+mod lfg;
 mod loot;
 mod mail;
 mod meeting_stone;
@@ -168,6 +169,11 @@ pub use items::{
     ItemInfo, ItemSpellEntry, ItemUseSpell, UseItemTarget, BAG_PLAYER_INVENTORY,
     ITEM_DYNFLAG_UNLOCKED, ITEM_DYNFLAG_WRAPPED, ITEM_FLAG_LOOTABLE, ITEM_FLAG_WRAPPER,
     SLOT_BAG_FIRST, SLOT_PACK_FIRST,
+};
+pub use lfg::{
+    lfg_comment, lfg_join, lfg_proposal_result, LfgBootProposal, LfgCompletionReward,
+    LfgDungeonReward, LfgJoin, LfgMemberLocks, LfgPacket, LfgProposal, LfgProposalMember,
+    LfgQueueStatus, LfgRewardItem, LfgRoleCheck, LfgRoleCheckMember, LfgUpdate,
 };
 pub use loot::{
     autostore_loot_item, loot, loot_error, loot_master_give, loot_money, loot_release, loot_roll,

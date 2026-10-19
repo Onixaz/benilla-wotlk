@@ -164,6 +164,14 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::ZoneUnderAttack { area_id } => {
             vec![SessionEvent::ZoneUnderAttack { area_id }]
         }
+        ServerPacket::Lfg(packet) => vec![SessionEvent::Lfg(packet)],
+        ServerPacket::InstanceDifficulty {
+            difficulty,
+            dynamic,
+        } => vec![SessionEvent::InstanceDifficulty {
+            difficulty,
+            dynamic,
+        }],
         ServerPacket::DefenseMessage { zone_id, text } => {
             vec![SessionEvent::DefenseMessage { zone_id, text }]
         }
@@ -564,6 +572,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             loot,
             difficulties,
             lfg_restricted,
+            lfg_status,
+            lfg_slot,
         } => vec![SessionEvent::GroupList {
             group_type,
             own_flags,
@@ -573,6 +583,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             loot,
             difficulties,
             lfg_restricted,
+            lfg_status,
+            lfg_slot,
         }],
         ServerPacket::PartyCommandResult {
             operation,

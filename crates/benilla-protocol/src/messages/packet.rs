@@ -478,6 +478,13 @@ pub enum ServerPacket {
         zone_id: u32,
         text: String,
     },
+    /// The dungeon finder's server messages.
+    Lfg(crate::messages::LfgPacket),
+    /// `SMSG_INSTANCE_DIFFICULTY`: the entered map's difficulty and its dynamic difficulty.
+    InstanceDifficulty {
+        difficulty: u32,
+        dynamic: u32,
+    },
     /// `SMSG_CHAT_RESTRICTED`: a trial account hit its whisper cap; empty body.
     ChatRestricted,
     /// `SMSG_PLAYED_TIME` (`/played`): total and this-level played time, in seconds.
@@ -1000,6 +1007,10 @@ pub enum ServerPacket {
         difficulties: Option<GroupDifficulties>,
         /// Group-type bit `0x04`, `HasLFGRestrictions`.
         lfg_restricted: bool,
+        /// Group-type bit `0x08`'s status byte, `CGPartyInfo::m_playerLFGFlags`; 0 otherwise.
+        lfg_status: u8,
+        /// Group-type bit `0x08`'s dungeon slot, `CGPartyInfo::m_lfgSlot`; 0 otherwise.
+        lfg_slot: u32,
     },
     /// `SMSG_PARTY_COMMAND_RESULT`: `operation` a [`super::group::party_operation`], `result` a
     /// [`super::group::party_result`].
@@ -1400,9 +1411,6 @@ impl ServerPacket {
             ServerPacket::MeetingStoneNotice(
                 crate::messages::MeetingStoneNotice::MemberAdded { .. },
             ) => "SMSG_MEETINGSTONE_MEMBER_ADDED".into(),
-            ServerPacket::MeetingStoneNotice(crate::messages::MeetingStoneNotice::JoinFailed {
-                ..
-            }) => "SMSG_MEETINGSTONE_JOIN_FAILED".into(),
             ServerPacket::TutorialFlags(_) => "SMSG_TUTORIAL_FLAGS".into(),
             ServerPacket::SetProficiency { .. } => "SMSG_SET_PROFICIENCY".into(),
             ServerPacket::InitializeFactions { .. } => "SMSG_INITIALIZE_FACTIONS".into(),
@@ -1438,6 +1446,8 @@ impl ServerPacket {
             ServerPacket::ServerMessage { .. } => "SMSG_SERVER_MESSAGE".into(),
             ServerPacket::ZoneUnderAttack { .. } => "SMSG_ZONE_UNDER_ATTACK".into(),
             ServerPacket::DefenseMessage { .. } => "SMSG_DEFENSE_MESSAGE".into(),
+            ServerPacket::Lfg(p) => p.name().into(),
+            ServerPacket::InstanceDifficulty { .. } => "SMSG_INSTANCE_DIFFICULTY".into(),
             ServerPacket::ChatRestricted => "SMSG_CHAT_RESTRICTED".into(),
             ServerPacket::PlayedTime { .. } => "SMSG_PLAYED_TIME".into(),
             ServerPacket::RandomRoll { .. } => "MSG_RANDOM_ROLL".into(),

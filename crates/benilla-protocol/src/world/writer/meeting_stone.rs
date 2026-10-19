@@ -24,10 +24,4 @@ impl WorldWriter {
             &messages::meeting_stone_leave(),
         )
     }
-
-    /// `CMSG_MEETINGSTONE_STATUS_QUERY`, empty: the reference sends it at each world-enter
-    /// cascade, so at login, after every cross-map worldport and on every `/reload`.
-    pub fn meeting_stone_status_query(&mut self) -> Result<()> {
-        self.send(opcode::CMSG_MEETINGSTONE_STATUS_QUERY, &[])
-    }
 }
