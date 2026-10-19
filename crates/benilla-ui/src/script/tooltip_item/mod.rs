@@ -317,6 +317,70 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
+    // GameTooltip:SetLFGDungeonReward(dungeonID, index) (`0x630a80`) and
+    // :SetLFGCompletionReward(index) (`0x630b90`): a dungeon finder reward item by entry, its
+    // count as the link-info stack; no reward leaves the tooltip as it was.
+    m.set(
+        "SetLFGDungeonReward",
+        lua.create_function(|lua, (this, id, index): (Table, Value, Value)| {
+            let usage = "Usage: Tooltip:SetLFGDungeonReward(dungeonID, lootIndex)";
+            let id = crate::script::binding_abi::number_arg(lua, id, usage)?;
+            let index = crate::script::binding_abi::number_arg(lua, index, usage)?;
+            let item = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                let lfg = &model.lfg;
+                lfg.catalog.dungeon(id).and_then(|d| {
+                    let slot = (d.id as u32 & 0xff_ffff) | ((d.type_id as u32) << 24);
+                    lfg.reward_item(slot, i64::from(index) - 1)
+                })
+            };
+            match item {
+                Some(it) => render_by_id(
+                    lua,
+                    &this,
+                    it.item,
+                    Sell::Block {
+                        stack: it.count,
+                        max: None,
+                    },
+                ),
+                None => Ok(()),
+            }
+        })?,
+    )?;
+    m.set(
+        "SetLFGCompletionReward",
+        lua.create_function(|lua, (this, index): (Table, Value)| {
+            let index = crate::script::binding_abi::number_arg(
+                lua,
+                index,
+                "Usage: Tooltip:SetLFGCompletionReward(lootIndex)",
+            )?;
+            let item = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                usize::try_from(index - 1)
+                    .ok()
+                    .and_then(|i| model.lfg.reward.items.get(i).copied())
+            };
+            match item {
+                Some(it) => render_by_id(
+                    lua,
+                    &this,
+                    it.item,
+                    Sell::Block {
+                        stack: it.count,
+                        max: None,
+                    },
+                ),
+                None => Ok(()),
+            }
+        })?,
+    )?;
+
     // GameTooltip:SetHyperlink(link): the chat-link tooltip (`ItemRef.lua:60`). Takes an item
     // link, escaped or a bare "item:<id>", an enchant link or an achievement link; any other
     // link does nothing.

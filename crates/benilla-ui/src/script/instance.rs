@@ -141,12 +141,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `GetInstanceInfo()` (`0x51a8c0`): name, type word (`0xac8074`, "none" from 5 up), difficulty
-    // + 1, the `MapDifficulty` row's name and size, the dynamic difficulty, and whether the map's
-    // difficulty is dynamic. Deviations: the difficulty stays 0, as the map's own `[0xbd0894]` is
-    // not held; `MapDifficulty.dbc` is not loaded, so the name and size read "" and 0, which
-    // is right only for a map with no row; and with no map row the reference pushes six values
-    // for its seven, a stack bug, where this answers the six and a nil.
+    // `GetInstanceInfo()` (`0x51a8c0`): name, type word (`0xac8074`, "none" from 5 up),
+    // `SMSG_INSTANCE_DIFFICULTY`'s difficulty + 1, its `MapDifficulty` row's name and size ("" and
+    // 0 with no row), the dynamic difficulty, and whether the map's difficulty is dynamic.
+    // Deviation: with no map row the reference pushes six values for its seven, a stack bug,
+    // where this answers the six and a nil.
     g.set(
         "GetInstanceInfo",
         lua.create_function(|lua, ()| {
@@ -165,13 +164,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 ),
                 None => (Value::Nil, Value::Nil),
             };
+            let (map, difficulty, dynamic_difficulty) = model.lfg.world;
+            let (size_name, size) = match model.lfg.catalog.map_difficulty(map, difficulty as i32) {
+                Some(row) => (
+                    crate::strings::global(lua, &row.difficulty_string)
+                        .unwrap_or_else(|| row.difficulty_string.clone()),
+                    row.max_players,
+                ),
+                None => (String::new(), 0),
+            };
             Ok(MultiValue::from_vec(vec![
                 name,
                 Value::String(lua.create_string(word)?),
-                Value::Number(1.0),
-                Value::String(lua.create_string("")?),
-                Value::Number(0.0),
-                Value::Number(0.0),
+                Value::Number(f64::from(difficulty) + 1.0),
+                Value::String(lua.create_string(&size_name)?),
+                Value::Number(f64::from(size)),
+                Value::Number(f64::from(dynamic_difficulty)),
                 dynamic,
             ]))
         })?,

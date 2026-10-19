@@ -208,6 +208,7 @@ impl super::UiScript {
             model.item_templates.insert(item_id, view);
         }
         self.answer_item_waits(|m| m.items.contains(&item_id));
+        self.lfg_item_arrived(item_id);
     }
 
     /// Asks for the templates of `ids` the store lacks, for the trade-skill list,

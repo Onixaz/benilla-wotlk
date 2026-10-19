@@ -78,6 +78,8 @@ const ITEM_SETTERS: &[&str] = &[
     "SetHyperlink",
     "SetInboxItem",
     "SetInventoryItem",
+    "SetLFGCompletionReward",
+    "SetLFGDungeonReward",
     "SetLootItem",
     "SetLootRollItem",
     "SetMerchantCompareItem",

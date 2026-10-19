@@ -172,6 +172,7 @@ pub mod keybind;
 mod keyboard;
 mod layout;
 mod layout_cache;
+mod lfg;
 mod loot;
 mod loot_roll;
 mod lua51;
@@ -326,6 +327,12 @@ pub use inspect::{InspectView, UnitReach};
 pub use item_stats::{item_usable, ItemSetView, ItemTemplateView, PlayerReqState};
 pub use item_text::ItemTextState;
 pub use layout_cache::{FrameLayout, LayoutPoint};
+pub use lfg::{
+    EncounterView, LfgBootView, LfgCatalogView, LfgCompletionRewardView, LfgDungeonRewardView,
+    LfgDungeonView, LfgExpansionView, LfgGroupView, LfgLine, LfgMemberLocksView, LfgName,
+    LfgPartyView, LfgProposalMemberView, LfgProposalView, LfgQueueStatusView, LfgRequest,
+    LfgRewardItemView, LfgRoleCheckMemberView, LfgRoleCheckView, LfgUpdateView, MapDifficultyView,
+};
 pub use loot::{LootRow, LootState, LOOT_PORTRAIT_UNIT};
 pub use loot_roll::{LootRollEntry, LootRollsState};
 pub use macros::{MacroBinding, MacroState, MacroView, MAX_MACROS, MAX_MACRO_BODY, MAX_MACRO_NAME};
@@ -973,6 +980,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     dressup::install(lua)?;
     tabard::install(lua)?;
     tradeskill::install(lua)?;
+    lfg::install(lua)?;
     reputation::install(lua)?;
     skills::install(lua)?;
     item_stats::install(lua)?;

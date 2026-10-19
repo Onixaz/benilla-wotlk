@@ -5,10 +5,10 @@ use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
     auction, backdrop, bank, bind_confirm, camera_view, char_stats, chat_window, colorselect,
-    combat_log, container, cursor, death, duel, follow, gossip, guild, inspect, item_text, loot,
-    loot_roll, macros, mail, merchant, parse_unit_token, party, petition, pvp, quest, quest_log,
-    reputation, session, simplehtml, skills, slider, social, spellbook, stable, taxi, trade,
-    tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
+    combat_log, container, cursor, death, duel, follow, gossip, guild, inspect, item_text, lfg,
+    loot, loot_roll, macros, mail, merchant, parse_unit_token, party, petition, pvp, quest,
+    quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable, taxi,
+    trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
     ItemTemplateView, MusicRequest, PlayerReqState, RegionData, ScriptValue, SoundRequest,
     UnitState, UnitTokenParse,
 };
@@ -719,6 +719,9 @@ pub(crate) struct Model {
     /// The open tradeskill window, its filters and repeat (`CGTradeSkillInfo`).
     pub(crate) trade_skill: tradeskill::TradeSkillModel,
 
+    /// The dungeon finder (`CGLookingForGroup`).
+    pub(crate) lfg: lfg::LfgModel,
+
     /// `EquipPendingItem`/`CancelPendingEquip` answers in order, and `ConfirmBindOnUse()` calls.
     pub(crate) pending_equip_answers: Vec<bind_confirm::PendingEquipAnswer>,
     pub(crate) bind_on_use_confirms: u32,
@@ -1412,6 +1415,7 @@ impl Model {
             taxi_close: false,
             taxi_riding: false,
             trade_skill: Default::default(),
+            lfg: Default::default(),
             loot: None,
             pending_equip_answers: Vec::new(),
             bind_on_use_confirms: 0,
