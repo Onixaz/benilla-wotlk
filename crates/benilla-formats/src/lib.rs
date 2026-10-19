@@ -320,6 +320,14 @@ pub use world_map_transforms::{
 };
 mod dungeon_map;
 pub use dungeon_map::{load_dungeon_map_catalog, DungeonMap, DungeonMapCatalog};
+mod dungeon_encounter;
+pub use dungeon_encounter::{load_dungeon_encounters, DungeonEncounter};
+mod lfg_dungeons;
+pub use lfg_dungeons::{
+    load_lfg_catalog, LfgCatalog, LfgDungeon, LfgDungeonExpansion, LfgDungeonGroup,
+};
+mod map_difficulty;
+pub use map_difficulty::{find_map_difficulty, load_map_difficulties, MapDifficulty};
 mod world_map_continent;
 pub use world_map_continent::{
     load_world_map_continent_catalog, WorldMapContinent, WorldMapContinentCatalog,
