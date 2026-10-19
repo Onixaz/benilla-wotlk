@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use benilla_formats::{
     adt_to_tile_mesh, blp_bytes_to_mip_chain, blp_bytes_to_native_chain, ChunkMesh, Doodad,
-    TerrainLiquid, WmoInstance, ALPHA_MAP_SIZE, SHADOW_MAP_SIZE,
+    TerrainLiquid, WdtReader, WmoInstance, WowVersion, ALPHA_MAP_SIZE, SHADOW_MAP_SIZE,
 };
 use bevy::asset::io::Reader;
 use bevy::asset::{Asset, AssetLoader, LoadContext, RenderAssetUsages};
@@ -137,11 +137,32 @@ pub fn chunks_to_mesh(parts: &[(&ChunkMesh, &ChunkShading)]) -> Option<Mesh> {
 #[derive(Default, TypePath)]
 pub struct AdtLoader {
     liquid: Arc<TerrainLiquid>,
+    /// Each map's WDT big-alpha bit, read once per map.
+    big_alpha: std::sync::Mutex<HashMap<String, bool>>,
 }
 
 impl AdtLoader {
     pub fn new(liquid: Arc<TerrainLiquid>) -> Self {
-        AdtLoader { liquid }
+        AdtLoader {
+            liquid,
+            big_alpha: Default::default(),
+        }
+    }
+
+    /// The map's WDT big-alpha bit; a WDT that cannot be read leaves the 4-bit decode.
+    async fn big_alpha(&self, ctx: &mut LoadContext<'_>, map: &str) -> bool {
+        if let Some(&b) = self.big_alpha.lock().unwrap().get(map) {
+            return b;
+        }
+        let url = format!("mpq://World/Maps/{map}/{map}.wdt");
+        let b = match ctx.read_asset_bytes(url).await {
+            Ok(bytes) => WdtReader::new(std::io::Cursor::new(bytes), WowVersion::Classic)
+                .read()
+                .is_ok_and(|w| w.big_alpha()),
+            Err(_) => false,
+        };
+        self.big_alpha.lock().unwrap().insert(map.to_owned(), b);
+        b
     }
 }
 
@@ -166,9 +187,11 @@ impl AssetLoader for AdtLoader {
             .parent()
             .and_then(|p| p.file_name())
             .and_then(|s| s.to_str())
-            .unwrap_or_default();
-        let tile =
-            adt_to_tile_mesh(&bytes, &self.liquid, self.liquid.map_id(map)).map_err(to_io)?;
+            .unwrap_or_default()
+            .to_owned();
+        let big_alpha = self.big_alpha(ctx, &map).await;
+        let tile = adt_to_tile_mesh(&bytes, &self.liquid, self.liquid.map_id(&map), big_alpha)
+            .map_err(to_io)?;
 
         // Layer array: a solid-green fallback at index 0, then each unique layer texture, packed
         // once the whole tile is read.

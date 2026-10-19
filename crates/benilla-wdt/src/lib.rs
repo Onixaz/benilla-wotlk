@@ -88,6 +88,8 @@ pub struct WdtFile {
     /// `has_adt` per tile, indexed `y * 64 + x` (the on-disk MAIN order).
     has_adt: Vec<bool>,
     global_wmo: Option<GlobalWmo>,
+    /// `MPHD` dword 0.
+    flags: u32,
 }
 
 impl WdtFile {
@@ -100,6 +102,12 @@ impl WdtFile {
             y,
             has_adt: self.has_adt[y * MAP_SIZE + x],
         })
+    }
+
+    /// `MPHD` bit 2: the map's uncompressed alpha layers are 8-bit, 64×64 bytes, not 4-bit
+    /// (`0x7b9890`).
+    pub fn big_alpha(&self) -> bool {
+        self.flags & 0x4 != 0
     }
 
     /// The map's one building, on a WMO-only map (`MPHD` bit 0).
@@ -143,6 +151,7 @@ impl<R: Read + Seek> WdtReader<R> {
         self.reader.seek(SeekFrom::Start(start))?;
         let mut has_adt: Option<Vec<bool>> = None;
         let mut wmo_only = false;
+        let mut flags = 0u32;
         let mut wmo_path: Option<String> = None;
         let mut modf: Option<Vec<u8>> = None;
         loop {
@@ -153,10 +162,11 @@ impl<R: Read + Seek> WdtReader<R> {
             // Chunk magics are stored reversed on disk: MAIN is "NIAM".
             let size = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as u64;
             match &hdr[0..4] {
-                // MPHD: the reference reads only dword 0 bit 0, the no-terrain flag (`0x694810`).
+                // MPHD dword 0: bit 0 the no-terrain flag (`0x694810`), bit 2 big alpha.
                 b"DHPM" if size >= 4 => {
                     let buf = self.read_payload(size, stream_end)?;
-                    wmo_only = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) & 0x1 != 0;
+                    flags = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                    wmo_only = flags & 0x1 != 0;
                 }
                 b"NIAM" => {
                     // 64×64 entries × 8 bytes (flags u32, area_id u32); bit 0 of flags = has_adt.
@@ -214,6 +224,7 @@ impl<R: Read + Seek> WdtReader<R> {
         Ok(WdtFile {
             has_adt,
             global_wmo,
+            flags,
         })
     }
 }
@@ -284,6 +295,19 @@ mod tests {
             chunk(b"FOOB", &[0xAB; 16], &mut out);
         }
         out
+    }
+
+    #[test]
+    fn mphd_bit_2_is_big_alpha() {
+        let mut bytes = synth_wdt(&[], false);
+        assert!(!parse(bytes.clone()).unwrap().big_alpha());
+        bytes[20] = 0x4; // MPHD dword 0: past MVER (12 bytes) and the MPHD header (8)
+        let wdt = parse(bytes).unwrap();
+        assert!(wdt.big_alpha());
+        assert!(
+            wdt.global_wmo().is_none(),
+            "bit 2 is not the no-terrain bit"
+        );
     }
 
     fn parse(bytes: Vec<u8>) -> std::io::Result<WdtFile> {

@@ -333,7 +333,13 @@ impl TerrainLiquid {
 }
 
 /// Build per-chunk meshes from one monolithic ADT file's bytes on map `map_id`.
-pub fn adt_to_tile_mesh(adt_bytes: &[u8], liquid: &TerrainLiquid, map_id: u32) -> Result<TileMesh> {
+/// `big_alpha` is the map WDT's [`WdtFile::big_alpha`]: uncompressed alpha layers are 8-bit.
+pub fn adt_to_tile_mesh(
+    adt_bytes: &[u8],
+    liquid: &TerrainLiquid,
+    map_id: u32,
+    big_alpha: bool,
+) -> Result<TileMesh> {
     let mut cursor = Cursor::new(adt_bytes);
     let parsed = parse_adt(&mut cursor).map_err(|e| anyhow::anyhow!("parsing ADT: {e}"))?;
     let ParsedAdt::Root(root) = parsed;
@@ -443,13 +449,13 @@ pub fn adt_to_tile_mesh(adt_bytes: &[u8], liquid: &TerrainLiquid, map_id: u32) -
                 l.flags.cube_reflection() && root.textures.get(l.texture_id as usize).is_some()
             });
 
-        // Layers 1..3 into one RGBA map; 1.12 alpha is 4-bit, last row and column duplicated.
+        // Layers 1..3 into one RGBA map: 8-bit on a big-alpha map, else 4-bit; the last row and
+        // column duplicated unless the chunk sets `0x8000` (`0x7b8e20`).
         let alpha_map = (layer_textures.len() > 1).then(|| {
-            CombinedAlphaMap::new(
-                mcnk, /* has_big_alpha */ false, /* fix_alpha */ true,
-            )
-            .as_slice()
-            .to_vec()
+            let fix_alpha = mcnk.header.flags & 0x8000 == 0;
+            CombinedAlphaMap::new(mcnk, big_alpha, fix_alpha)
+                .as_slice()
+                .to_vec()
         });
 
         let shadow = mcnk.shadow.as_ref().map(|sh| {
@@ -670,11 +676,12 @@ pub fn load_tile_mesh_with(
     tile_x: u32,
     tile_y: u32,
 ) -> Result<TileMesh> {
+    let big_alpha = read_wdt(chain, map)?.big_alpha();
     let path = format!("World\\Maps\\{map}\\{map}_{tile_x}_{tile_y}.adt");
     let bytes = chain
         .read_file(&path)
         .with_context(|| format!("reading {path}"))?;
-    adt_to_tile_mesh(&bytes, liquid, liquid.map_id(map))
+    adt_to_tile_mesh(&bytes, liquid, liquid.map_id(map), big_alpha)
 }
 
 /// Load every existing ADT tile within `radius` tiles of the world (x, y) on `map`.
@@ -811,6 +818,45 @@ mod tests {
             dm.global_wmo().expect("WMO-only").rotation,
             [0.0, 180.0, 0.0]
         );
+    }
+
+    /// Northrend's WDT sets big alpha and the old continents' do not; there a raw layer is 64×64
+    /// bytes, decoded verbatim with no last row and column fix-up, as its chunks set `0x8000`.
+    #[test]
+    fn northrend_raw_alpha_layers_decode_as_8_bit() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        assert!(read_wdt(&mut chain, "Northrend").unwrap().big_alpha());
+        assert!(!read_wdt(&mut chain, "Azeroth").unwrap().big_alpha());
+
+        let bytes = chain
+            .read_file("World\\Maps\\Northrend\\Northrend_36_18.adt")
+            .unwrap();
+        let ParsedAdt::Root(root) = parse_adt(&mut Cursor::new(&bytes[..])).unwrap();
+        // A chunk whose layer 1 is stored raw: its 4096 MCAL bytes are the expected R channel.
+        let (want, ix, iy) = root
+            .mcnk_chunks
+            .iter()
+            .find_map(|c| {
+                let layer = c.layers.as_ref()?.layers.get(1)?;
+                let mcal = c.alpha.as_ref()?;
+                let at = layer.offset_in_mcal as usize;
+                (!layer.flags.alpha_map_compressed() && c.header.flags & 0x8000 != 0)
+                    .then(|| mcal.data.get(at..at + 4096))
+                    .flatten()
+                    .map(|raw| (raw.to_vec(), c.header.index_x, c.header.index_y))
+            })
+            .expect("a raw 8-bit layer in Northrend_36_18");
+        let liquid = TerrainLiquid::load(&chain).unwrap();
+        let tile = adt_to_tile_mesh(&bytes, &liquid, liquid.map_id("Northrend"), true).unwrap();
+        let chunk = tile
+            .chunks
+            .iter()
+            .find(|c| (c.index_x, c.index_y) == (ix, iy))
+            .unwrap();
+        let alpha = chunk.alpha_map.as_ref().unwrap();
+        let got: Vec<u8> = alpha.as_chunks::<4>().0.iter().map(|px| px[0]).collect();
+        assert_eq!(got, want);
     }
 
     /// A Storm Peaks frozen lake's chunks carry a reflection base layer; Elwynn's carry none.
