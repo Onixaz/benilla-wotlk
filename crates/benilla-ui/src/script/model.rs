@@ -774,19 +774,26 @@ pub(crate) struct Model {
     pub(crate) has_new_mail: bool,
 
     /// The open auction house and the auction calls. `auction_selected` is each list's selected
-    /// auction id, 0 for none (`0x4cfda0`/`0x4cfec0`); `auction_can_query` is the 5 s throttle.
+    /// auction id, 0 for none (`0x59b2e0`); `auction_sort` each list's criteria, front first.
     pub(crate) auction: Option<auction::AuctionState>,
     /// The Browse tab's class tree, pushed once per login.
     pub(crate) auction_item_classes: Vec<auction::AuctionCategory>,
     pub(crate) auction_selected: [u32; 3],
-    pub(crate) auction_can_query: bool,
+    pub(crate) auction_sort: [Vec<(u8, bool)>; 3],
+    /// `CanSendQuery` per list and the get-all gate, the app's throttle.
+    pub(crate) auction_can_query: [bool; 3],
+    pub(crate) auction_can_get_all: bool,
+    /// `SetAuctionsTabShowing`, which routes a bag right-click to the sell slot.
+    pub(crate) auction_tab_showing: bool,
+    /// The slots a multi-sell holds locked.
+    pub(crate) auction_locked: Vec<(i64, u32)>,
     pub(crate) auction_query: Option<auction::AuctionQuery>,
-    pub(crate) auction_owner_query: Option<u32>,
+    pub(crate) auction_owner_query: bool,
     pub(crate) auction_bidder_query: Option<u32>,
     pub(crate) auction_bids: Vec<auction::AuctionBid>,
     pub(crate) auction_cancels: Vec<u32>,
     pub(crate) auction_start: Option<auction::AuctionStartRequest>,
-    pub(crate) auction_sorts: Vec<(usize, String)>,
+    pub(crate) auction_cancel_sell: bool,
     pub(crate) auction_close: bool,
     /// The sell slot's item, resolved to its guid when `StartAuction` fires.
     pub(crate) auction_sell_item: Option<cursor::CursorItem>,
@@ -1451,14 +1458,18 @@ impl Model {
             auction: None,
             auction_item_classes: Vec::new(),
             auction_selected: [0; 3],
-            auction_can_query: true,
+            auction_sort: auction::initial_sort_criteria(),
+            auction_can_query: [true; 3],
+            auction_can_get_all: true,
+            auction_tab_showing: false,
+            auction_locked: Vec::new(),
             auction_query: None,
-            auction_owner_query: None,
+            auction_owner_query: false,
             auction_bidder_query: None,
             auction_bids: Vec::new(),
             auction_cancels: Vec::new(),
             auction_start: None,
-            auction_sorts: Vec::new(),
+            auction_cancel_sell: false,
             auction_close: false,
             auction_sell_item: None,
             trade: None,

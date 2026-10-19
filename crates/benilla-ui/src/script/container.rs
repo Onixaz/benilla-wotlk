@@ -694,7 +694,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     matches!(
                         &model.pending_wrap,
                         Some(w) if w.bag == bag && w.slot == slot
-                    );
+                    ) ||
+                // The auction sell slot and a multi-sell's items read locked (`LockItem`).
+                    super::auction::holds_slot(&model, bag, slot);
                 (
                     model
                         .containers
@@ -742,7 +744,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 if occupied {
                     model.container_repairs.push((bag, slot));
                 }
-            } else {
+            } else if !super::auction::use_container_item(&mut model, bag, slot) {
+                // Past repair, the Auctions tab takes the item for the sell slot (`0x5d88e0`).
                 model
                     .script_calls
                     .push(super::ScriptCall::UseContainerItem { bag, slot });
