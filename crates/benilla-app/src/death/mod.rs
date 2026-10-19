@@ -125,12 +125,46 @@ const CORPSE_RANGE_SQ: f32 = 40.0 * 40.0;
 /// The spirit-healer dialog range: `CheckSpiritHealerDist` compares d² ≤ `[0xc4c28c]` (30.864).
 const SPIRIT_HEALER_RANGE_SQ: f32 = 5.5556 * 5.5556;
 
+/// `PLAYER_FLAGS_IS_OUT_OF_BOUNDS`, the bit `IsOutOfBounds` tests (`0x6123eb`).
+const PLAYER_FLAGS_OUT_OF_BOUNDS: u32 = 0x4000;
+
+/// `SPELL_AURA_PREVENT_RESURRECTION`, the aura-effect bit `CannotBeResurrected` tests
+/// (`0x802292`: byte `+0xf47` bit 2 is effect 314).
+const AURA_PREVENT_RESURRECTION: u32 = 314;
+
+/// `IsFalling`'s test (`0x61245b`): falling and not rooted.
+fn is_falling(move_flags: u32) -> bool {
+    use crate::creature_anim::move_flags::{FALLING, ROOT};
+    move_flags & FALLING != 0 && move_flags & ROOT == 0
+}
+
+/// Whether a live effect of the unit's auras is [`AURA_PREVENT_RESURRECTION`]: each aura's effect
+/// bits name which of its spell's three effects are applied.
+fn prevents_resurrection(
+    auras: &crate::unit_auras::UnitAuras,
+    effects: impl Fn(u32) -> Option<[u32; 3]>,
+) -> bool {
+    auras.iter().any(|a| {
+        effects(a.spell_id).is_some_and(|types| {
+            (0..3).any(|i| a.flags & (1 << i) != 0 && types[i] == AURA_PREVENT_RESURRECTION)
+        })
+    })
+}
+
 /// Derive the death state from the self descriptor, push the snapshot, and fire the death events
 /// on its edges.
 fn feed_death(
     script: Option<NonSendMut<UiScript>>,
-    self_q: Query<(&ObjectStore, &Transform), With<SelfPlayer>>,
+    self_q: Query<
+        (
+            &ObjectStore,
+            &Transform,
+            Option<&crate::unit_auras::UnitAuras>,
+        ),
+        With<SelfPlayer>,
+    >,
     self_guid: Res<SelfGuid>,
+    player: Option<Res<crate::player::Player>>,
     death_net: Res<DeathNet>,
     // Real time: `reclaim_at` is stamped on `Time<Real>` by the net path.
     time: Res<Time<Real>>,
@@ -155,7 +189,7 @@ fn feed_death(
     let Some(guid) = self_guid.0 else {
         return;
     };
-    let Ok((store, self_t)) = self_q.single() else {
+    let Ok((store, self_t, auras)) = self_q.single() else {
         return;
     };
     let now = time.elapsed_secs_f64();
@@ -199,6 +233,18 @@ fn feed_death(
         // `HasSoulstone()`; the dead gate is first, so the inventory walk runs only while dead.
         self_res_label: resolve_self_res(&store.0, &objects, &items, spells.as_deref(), &net)
             .map(|r| r.label().to_owned()),
+        falling: player
+            .as_deref()
+            .is_some_and(|p| is_falling(p.move_flags())),
+        out_of_bounds: store.0.player_flags() & PLAYER_FLAGS_OUT_OF_BOUNDS != 0,
+        cannot_be_resurrected: auras.is_some_and(|a| {
+            prevents_resurrection(a, |id| {
+                spells
+                    .as_deref()
+                    .and_then(|s| s.catalog.get(id))
+                    .map(|d| d.effect_apply_aura)
+            })
+        }),
     });
 
     // ── The world edges: the release window and the corpse asks, which a `/reload` must not

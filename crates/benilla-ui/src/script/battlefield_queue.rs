@@ -241,6 +241,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // `IsActiveBattlefieldArena()` (`0x549ad0`): `1` when the active battlefield's map is an arena
+    // (`InstanceType` 4, stamped on the status-3 arm), then `1` for a rated match. Inside the
+    // active battlefield the current map is its map. The status reader carries no rated byte
+    // yet, so the second answer is nil.
+    g.set(
+        "IsActiveBattlefieldArena",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let active = model.battlefield_slots.iter().any(|s| s.status == 3);
+            let arena = (active && model.instance_type == Some(4)).then_some(1.0);
+            Ok((arena, Value::Nil))
+        })?,
+    )?;
+
     // Five values on every leg (`0x4ab5c7`): `(nil, nil, 0, 0, 0)` off slots 1..3.
     g.set(
         "GetBattlefieldStatus",

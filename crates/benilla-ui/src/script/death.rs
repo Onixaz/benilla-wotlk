@@ -29,6 +29,14 @@ pub struct DeathUiState {
     /// `PLAYER_SELF_RES_SPELL`'s `Spell.dbc` name (3026 and 20758-20761 "Use Soulstone", 21169
     /// "Reincarnation", 23700 "Twisting Nether"), else a carried self-resurrect item's name.
     pub self_res_label: Option<String>,
+    /// `IsFalling()` (`0x612430`): the mover is falling and not rooted; the DEATH dialog
+    /// disables its buttons while it holds.
+    pub falling: bool,
+    /// `IsOutOfBounds()` (`0x6123c0`): `PLAYER_FLAGS` bit `0x4000`.
+    pub out_of_bounds: bool,
+    /// `CannotBeResurrected()` (`0x802270`): a live aura effect of type 314, which keeps the
+    /// DEATH dialog up after its release (`StaticPopup.lua`, `OnAccept`).
+    pub cannot_be_resurrected: bool,
 }
 
 /// One drained death intent.
@@ -144,6 +152,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })
         })?,
     )?;
+
+    // The three answer `1` or nil, as the reference pushes them.
+    fn install_flag(lua: &Lua, name: &str, read: fn(&DeathUiState) -> bool) -> mlua::Result<()> {
+        lua.globals().set(
+            name,
+            lua.create_function(move |lua, ()| {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                Ok(read(&model.death).then_some(1.0))
+            })?,
+        )
+    }
+    install_flag(lua, "IsFalling", |d| d.falling)?;
+    install_flag(lua, "IsOutOfBounds", |d| d.out_of_bounds)?;
+    install_flag(lua, "CannotBeResurrected", |d| d.cannot_be_resurrected)?;
 
     // Nil, never `0`, when there is none: the DEATH dialog shows its second button on any truthy
     // answer, stamps the answer on it and picks soulstone over release by it.
