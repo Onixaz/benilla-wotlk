@@ -1281,3 +1281,31 @@ fn tex_coord_modifies_rect_is_one_slash_nil_and_moves_no_rect_yet() {
         "cleared back to nil"
     );
 }
+
+/// `SetText` (`0x483910`) with the string the FontString holds, or empty over empty, returns
+/// before any write: the model's mutation count stands, so a clock re-set every frame to the same
+/// minute does not force the extract walk.
+#[test]
+fn set_text_with_the_held_string_writes_nothing() {
+    let s = script();
+    s.run(
+        r#"
+        local f = CreateFrame("Frame", "Owner", UIParent)
+        Clock = f:CreateFontString("Clock", "ARTWORK")
+        Clock:SetText("12:00")
+        Blank = f:CreateFontString("Blank", "ARTWORK")
+        "#,
+    )
+    .unwrap();
+    let settled = s.visual_epoch();
+    s.run(r#"Clock:SetText("12:00") Clock:SetFormattedText("%d:%02d", 12, 0) Blank:SetText("") Blank:SetText(nil)"#)
+        .unwrap();
+    assert_eq!(
+        s.visual_epoch(),
+        settled,
+        "the same string, or empty over empty"
+    );
+    s.run(r#"Clock:SetText("12:01")"#).unwrap();
+    assert_ne!(s.visual_epoch(), settled, "a new string is a write");
+    assert_eq!(s.eval::<String>("return Clock:GetText()").unwrap(), "12:01");
+}

@@ -313,6 +313,25 @@ pub(super) fn write_cvar(model: &mut Model, name: &str, value: String) -> bool {
     true
 }
 
+/// A read verb's lookup through a shared borrow, so a read repeated every frame leaves the model's
+/// mutation count standing; an unknown name takes the mutable borrow only for its one warning.
+fn read_cvar<T>(lua: &Lua, name: &str, read: impl FnOnce(&CvarSlot) -> T) -> Option<T> {
+    let key = name.to_ascii_lowercase();
+    let warned = {
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data set");
+        if let Some(slot) = model.cvars.get(&key) {
+            return Some(read(slot));
+        }
+        model.cvars_warned.contains(&key)
+    };
+    if !warned {
+        warn_unknown(&mut crate::script::model_mut_of(lua), name);
+    }
+    None
+}
+
 fn warn_unknown(model: &mut Model, name: &str) {
     let key = name.to_ascii_lowercase();
     if model.cvars_warned.insert(key) {
@@ -509,26 +528,18 @@ pub(super) fn install_cvar_verbs(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetCVar",
         lua.create_function(|lua, name: String| {
-            let mut model = crate::script::model_mut_of(lua);
-            match model.cvars.get(&name.to_ascii_lowercase()) {
-                Some(slot) => Ok(Value::String(lua.create_string(&slot.value)?)),
-                None => {
-                    warn_unknown(&mut model, &name);
-                    Ok(Value::Nil)
-                }
+            match read_cvar(lua, &name, |slot| slot.value.clone()) {
+                Some(value) => Ok(Value::String(lua.create_string(&value)?)),
+                None => Ok(Value::Nil),
             }
         })?,
     )?;
     lua.globals().set(
         "GetCVarDefault",
         lua.create_function(|lua, name: String| {
-            let mut model = crate::script::model_mut_of(lua);
-            match model.cvars.get(&name.to_ascii_lowercase()) {
-                Some(slot) => Ok(Value::String(lua.create_string(&slot.default)?)),
-                None => {
-                    warn_unknown(&mut model, &name);
-                    Ok(Value::Nil)
-                }
+            match read_cvar(lua, &name, |slot| slot.default.clone()) {
+                Some(default) => Ok(Value::String(lua.create_string(&default)?)),
+                None => Ok(Value::Nil),
             }
         })?,
     )?;
@@ -540,14 +551,7 @@ pub(super) fn install_cvar_verbs(lua: &Lua) -> mlua::Result<()> {
             let Some(name) = cvar_arg(args.front()) else {
                 return Err(mlua::Error::runtime(USAGE_GET_CVAR_BOOL));
             };
-            let mut model = crate::script::model_mut_of(lua);
-            let truth = match model.cvars.get(&name.to_ascii_lowercase()) {
-                Some(slot) => cvar_truth(&slot.value),
-                None => {
-                    warn_unknown(&mut model, &name);
-                    false
-                }
-            };
+            let truth = read_cvar(lua, &name, |slot| cvar_truth(&slot.value)).unwrap_or(false);
             Ok(if truth {
                 Value::Number(1.0)
             } else {

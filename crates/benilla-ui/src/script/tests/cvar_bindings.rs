@@ -247,3 +247,21 @@ fn register_cvar_defaults_to_zero_and_reads_numbers_as_lua_text() {
         );
     }
 }
+
+/// A read leaves the model's mutation count standing, so a handler polling a CVar every frame
+/// does not force the extract walk; an unknown name moves it once, for its one warning.
+#[test]
+fn cvar_reads_leave_the_mutation_count_standing() {
+    let s = script_with(&[("EnableMusic", "1")]);
+    let read_all = "GetCVar(\"EnableMusic\") GetCVarBool(\"EnableMusic\") \
+                    GetCVarDefault(\"EnableMusic\") GetCVar(\"NoSuchCVar\") \
+                    GetCVarBool(\"NoSuchCVar\") GetCVarDefault(\"NoSuchCVar\")";
+    s.run(read_all).unwrap();
+    let settled = s.visual_epoch();
+    s.run(read_all).unwrap();
+    assert_eq!(
+        s.visual_epoch(),
+        settled,
+        "a repeated read, known or unknown"
+    );
+}

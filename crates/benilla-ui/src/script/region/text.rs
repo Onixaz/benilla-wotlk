@@ -10,10 +10,22 @@ use super::region_handle_of;
 /// The string `SetText` (`0x483910`) stores, after its grammar pass ([`crate::language`]).
 fn set_text(lua: &Lua, this: &Table, text: Option<String>) -> mlua::Result<()> {
     let rh = region_handle_of(lua, this)?;
+    let text = text.map(crate::language::process_owned);
+    // The string it holds, or empty over empty, returns untouched (`SStrCmp` at `0x483969`, the
+    // empty arm before it): no `ClearString`, so an armed gradient stays, and no model write.
+    {
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data set");
+        let held = model.region_data.get(&rh).and_then(|d| d.text.as_deref());
+        if held.filter(|t| !t.is_empty()) == text.as_deref().filter(|t| !t.is_empty()) {
+            return Ok(());
+        }
+    }
     let mut model = crate::script::model_mut_of(lua);
     // The layout is touched only when the string empties or refills: a new string's extent has
     // not moved until its measure lands.
-    model.set_region_text(rh, text.map(crate::language::process_owned));
+    model.set_region_text(rh, text);
     // Fresh text draws whole: an armed write-on gradient belongs to the old string.
     model.region_data.entry(rh).or_default().alpha_gradient = None;
     Ok(())
