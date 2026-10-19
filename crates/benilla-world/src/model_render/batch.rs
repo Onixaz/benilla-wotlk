@@ -139,6 +139,7 @@ impl M2BatchMaterials<'_> {
                 true, // the sky lane
                 &light,
                 None, // one shared sky material, no per-sequence channel to key on
+                None, // a skybox batch draws one stage
             )
         };
         let steady = mk(false);
@@ -313,6 +314,7 @@ impl M2BatchMaterials<'_> {
                 false, // a character composite is never a skybox
                 &light,
                 None, // a composite sheet carries no animated UV/tint channel at all
+                None, // a composite sheet is one stage
             )
         };
         Some(BatchVariants {
@@ -409,6 +411,7 @@ impl M2BatchMaterials<'_> {
             // Entity batches share one material per batch: an entity resolves its sequence
             // through `MatAnim::host`, so only the world streamer keys one per placement.
             None,
+            super::Stage2::of(sub),
         )
     }
 }

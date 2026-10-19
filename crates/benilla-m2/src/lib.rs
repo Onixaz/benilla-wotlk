@@ -63,7 +63,8 @@ pub fn parse_m2(cursor: &mut Cursor<&[u8]>) -> Result<M2Format> {
     let mut p = 8;
     let _name = arr(p)?;
     p += 8;
-    p += 4; // flags u32
+    let global_flags = b.u32_at(p).ok_or(Error::Truncated)?;
+    p += 4;
     let _global = arr(p)?;
     p += 8;
     let _anim = arr(p)?;
@@ -178,6 +179,10 @@ pub fn parse_m2(cursor: &mut Cursor<&[u8]>) -> Result<M2Format> {
             tex_coords: C2 {
                 x: v.f32_at(32).ok_or(Error::Truncated)?,
                 y: v.f32_at(36).ok_or(Error::Truncated)?,
+            },
+            tex_coords2: C2 {
+                x: v.f32_at(40).ok_or(Error::Truncated)?,
+                y: v.f32_at(44).ok_or(Error::Truncated)?,
             },
         });
     }
@@ -412,6 +417,20 @@ pub fn parse_m2(cursor: &mut Cursor<&[u8]>) -> Result<M2Format> {
         );
     }
 
+    // The texture combiner ops past the particle array (`+0x144`), present under flag `0x8` alone.
+    let texture_combiner_combos = if global_flags & 8 != 0 {
+        arr(0x144).map_or_else(
+            |_| Vec::new(),
+            |(n, o)| {
+                (0..n as usize)
+                    .map_while(|i| b.u16_at(o as usize + i * 2))
+                    .collect()
+            },
+        )
+    } else {
+        Vec::new()
+    };
+
     // Global-sequence durations (`0x14`, u32 ms): the clocks `gseq` tracks wrap on.
     let gseq_arr = (
         b.u32_at(0x14).ok_or(Error::Truncated)?,
@@ -473,6 +492,8 @@ pub fn parse_m2(cursor: &mut Cursor<&[u8]>) -> Result<M2Format> {
             event_markers,
             animation_lookup,
             playable_animation_lookup,
+            global_flags,
+            texture_combiner_combos,
             views,
             version,
         },

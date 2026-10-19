@@ -130,6 +130,8 @@ mod h264 {
     pub const LIGHTS: usize = 0x108;
     pub const CAMERAS: usize = 0x110;
     pub const CAMERA_LOOKUP: usize = 0x118;
+    /// The texture combiner ops, present under global flag `0x8`.
+    pub const TEXTURE_COMBINER_COMBOS: usize = 0x130;
 }
 
 /// The version-256 header, at the offsets the 1.12.1 readers take.
@@ -164,8 +166,11 @@ mod h256 {
     pub const LIGHTS: usize = 0x11c;
     pub const CAMERAS: usize = 0x124;
     pub const CAMERA_LOOKUP: usize = 0x12c;
-    /// The header's length; the ribbon and particle arrays (`0x134`, `0x13c`) stay empty.
-    pub const LEN: usize = 0x144;
+    /// The texture combiner ops after the ribbon and particle arrays (`0x134`, `0x13c`), which
+    /// stay empty; read under global flag `0x8`, as version 260 places them.
+    pub const TEXTURE_COMBINER_COMBOS: usize = 0x144;
+    /// The header's length.
+    pub const LEN: usize = 0x14c;
 }
 
 /// Track header lengths: 3.3.5a's `interp, gseq, times, values`; 1.12.1's adds `ranges` after
@@ -595,6 +600,13 @@ impl<'a> Writer<'a> {
         )?;
         self.convert_arr(h264::CAMERAS, h256::CAMERAS, 0x64, Self::camera)?;
         self.copy_arr(h264::CAMERA_LOOKUP, h256::CAMERA_LOOKUP, 2)?;
+        if flags & 8 != 0 {
+            self.copy_arr(
+                h264::TEXTURE_COMBINER_COMBOS,
+                h256::TEXTURE_COMBINER_COMBOS,
+                2,
+            )?;
+        }
         Ok(())
     }
 

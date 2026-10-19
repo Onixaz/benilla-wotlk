@@ -565,6 +565,8 @@ impl WorldAssets {
                 sidn: Vec4::ZERO, // clutter is never SIDN/WINDOW glass (WMO-only)
                 anim_slots: Vec4::ZERO,
                 wmo_unified: Vec4::ZERO, // clutter is never a WMO batch
+                combiner: Vec4::ZERO,    // …nor a combiner batch
+                texture2: None,
                 light_buf: self.shared_light.clone(),
             },
         });

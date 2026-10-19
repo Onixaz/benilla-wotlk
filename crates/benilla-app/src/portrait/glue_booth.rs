@@ -923,59 +923,85 @@ pub(super) fn sync_glue_scene(
         forms.ensure_now_rigged(scene_handle, &model.submeshes, &mut mesh_assets);
         let built = forms.slices(scene_handle);
         let (stat_forms, skin_forms) = (built.stat, built.skin.unwrap_or(&[]));
-        let scene_parts: Vec<BoothPart> = model
-            .submeshes
-            .iter()
-            .enumerate()
-            .map(|(pi, s)| {
-                // The authored batch order (index + 1) is all that separates batches sharing the
-                // scene root's sort distance.
-                let order = u16::try_from(pi + 1).unwrap_or(u16::MAX);
-                let material = mats.off_world(s, s.texture.clone(), order, &light, true);
-                // Texture transforms and M2Color tints run live, as in the reference's
-                // per-frame animate kernel (`0x715f25`-`0x7163bc`). Every glue model's loops are
-                // shared, none per-placement, so `host: None` is exact.
-                let loops = benilla_world::doodad_anim::UvLoops::of(s);
-                let mut mat_anim = false;
-                if loops.animates() {
-                    benilla_world::doodad_anim::register_entity_uv(
-                        &mut uv_reg,
-                        &mut anim_table,
-                        mats.materials(),
-                        material.id(),
-                        &loops,
-                        None,
-                    );
-                    mat_anim = true;
-                }
-                if let Some(rgb) = s.rgb_anim.as_ref().filter(|a| a.period > 0.0) {
-                    benilla_world::doodad_anim::register_tint(
-                        &mut tint_reg,
-                        &mut anim_table,
-                        mats.materials(),
-                        material.id(),
-                        benilla_world::doodad_anim::TintLoop::Shared(rgb.clone()),
-                    );
-                    mat_anim = true;
-                }
-                BoothPart {
-                    skinned: skin_forms.get(pi).cloned(),
-                    static_mesh: stat_forms
-                        .get(pi)
-                        .map(|(h, _)| h.clone())
-                        .unwrap_or_default(),
+        let ranks = transparent_ranks(model, model.camera0.as_ref().map(|c| c.eye));
+        // A batch on a split billboard bone is a card: its mesh is centred on the bone's pivot,
+        // seated under the bone and faced to the booth camera (the snow sheets, `LockZ`).
+        let mut scene_parts: Vec<BoothPart> = Vec::new();
+        let mut scene_cards: Vec<BoothBillboardSpec> = Vec::new();
+        for (pi, s) in model.submeshes.iter().enumerate() {
+            // The reference's transparent order is all that separates batches sharing the scene
+            // root's sort distance.
+            let order = ranks[pi];
+            let material = mats.off_world(s, s.texture.clone(), order, &light, true);
+            // Texture transforms and M2Color tints run live, as in the reference's per-frame
+            // animate kernel (`0x715f25`-`0x7163bc`). Every glue model's loops are shared, none
+            // per-placement, so `host: None` is exact.
+            let loops = benilla_world::doodad_anim::UvLoops::of(s);
+            let mut mat_anim = false;
+            if loops.animates() {
+                benilla_world::doodad_anim::register_entity_uv(
+                    &mut uv_reg,
+                    &mut anim_table,
+                    mats.materials(),
+                    material.id(),
+                    &loops,
+                    None,
+                );
+                mat_anim = true;
+            }
+            if let Some(rgb) = s.rgb_anim.as_ref().filter(|a| a.period > 0.0) {
+                benilla_world::doodad_anim::register_tint(
+                    &mut tint_reg,
+                    &mut anim_table,
+                    mats.materials(),
+                    material.id(),
+                    benilla_world::doodad_anim::TintLoop::Shared(rgb.clone()),
+                );
+                mat_anim = true;
+            }
+            let static_mesh = stat_forms
+                .get(pi)
+                .map(|(h, _)| h.clone())
+                .unwrap_or_default();
+            if let Some(bb) = &s.geometry.billboard {
+                scene_cards.push(BoothBillboardSpec {
+                    mesh: static_mesh,
                     material,
-                    // The scene's authored per-batch alpha (UI_Tauren's 0.55 corner vignette).
-                    alpha_anim: s.alpha_anim.clone(),
+                    bone: bb.bone,
+                    offset: Vec3::ZERO,
+                    kind: bb.kind,
                     twins: BoothTwins::default(),
+                    alpha_anim: s.alpha_anim.clone(),
                     mat_anim,
-                }
-            })
-            .collect();
+                });
+                continue;
+            }
+            scene_parts.push(BoothPart {
+                skinned: skin_forms.get(pi).cloned(),
+                static_mesh,
+                material,
+                // The scene's authored per-batch alpha (UI_Tauren's 0.55 corner vignette).
+                alpha_anim: s.alpha_anim.clone(),
+                twins: BoothTwins::default(),
+                mat_anim,
+            });
+        }
         info!(
-            "create scene: UI_{token} material lane — {} of {} batches animate (UV/tint registered)",
-            scene_parts.iter().filter(|p| p.mat_anim).count(),
-            scene_parts.len(),
+            "create scene: UI_{token} material lane — {} of {} batches animate (UV/tint registered), \
+             {} combine ({} with a second UV set)",
+            scene_parts.iter().filter(|p| p.mat_anim).count()
+                + scene_cards.iter().filter(|c| c.mat_anim).count(),
+            scene_parts.len() + scene_cards.len(),
+            model
+                .submeshes
+                .iter()
+                .filter(|s| s.geometry.combiner.is_some())
+                .count(),
+            model
+                .submeshes
+                .iter()
+                .filter(|s| !s.geometry.uvs2.is_empty())
+                .count(),
         );
         let mut scene_rig = spawn_booth_model(
             &mut commands,
@@ -992,7 +1018,7 @@ pub(super) fn sync_glue_scene(
             anim_data.as_deref().map(|a| &a.0),
             BoothMotion::Loop, // sequence 0 loops: flags wave, clouds drift
             [false, false],    // the backdrop scene has no hands to grip
-            &[],               // …nor a character's eye-glow
+            &scene_cards,
             BoothInstance::default(),
         );
         // The scene's own emitters, fogged by the scene's buffer: the ModelFFX fog covers them.
@@ -1095,6 +1121,49 @@ pub(super) fn sync_glue_scene(
         );
         aim(&mut cams, GLUE_SLOT, &rig);
     }
+}
+
+/// Each submesh's place (1-based) in the reference's transparent order for one model. Under
+/// global flag `0x10` every batch shares the model's sort depth, so the priority plane decides,
+/// then the section farther from `eye`, then file order (`CM2Scene::SortTransparent 0x81ef30`,
+/// depths from `0x821a20`); the section's sort centre is approximated by its bounds' centre.
+/// Without the flag each batch sorts by its own depth first, which is not built: file order.
+fn transparent_ranks(model: &M2Model, eye: Option<Vec3>) -> Vec<u16> {
+    let mut by: Vec<usize> = (0..model.submeshes.len()).collect();
+    if model.global_flags & 0x10 != 0 {
+        let depth: Vec<f32> = model
+            .submeshes
+            .iter()
+            .map(|s| {
+                let p = &s.geometry.positions;
+                let (Some(eye), false) = (eye, p.is_empty()) else {
+                    return 0.0;
+                };
+                let (lo, hi) = p
+                    .iter()
+                    .fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), v| {
+                        (
+                            std::array::from_fn(|k| lo[k].min(v[k])),
+                            std::array::from_fn(|k| hi[k].max(v[k])),
+                        )
+                    });
+                let centre: [f32; 3] = std::array::from_fn(|k| 0.5 * (lo[k] + hi[k]));
+                benilla_assets::coords::wow_to_bevy(centre).distance_squared(eye)
+            })
+            .collect();
+        let plane = |i: usize| model.submeshes[i].geometry.priority_plane;
+        by.sort_by(|&a, &b| {
+            plane(a)
+                .cmp(&plane(b))
+                .then(depth[b].total_cmp(&depth[a]))
+                .then(a.cmp(&b))
+        });
+    }
+    let mut ranks = vec![0u16; by.len()];
+    for (r, &i) in by.iter().enumerate() {
+        ranks[i] = u16::try_from(r + 1).unwrap_or(u16::MAX);
+    }
+    ranks
 }
 
 /// The scene camera's vertical opening for its record's diagonal `fov`: at a stock pane's own
@@ -1323,6 +1392,8 @@ pub(super) fn sync_glue_booth(
                 offset: b.offset,
                 kind: b.kind,
                 twins: relight_twins(&b.twins, &mut scene, &mut booth_light, &mut materials),
+                alpha_anim: None,
+                mat_anim: false,
             })
             .collect();
         // `WOW_BOOTH_LOG=1`: which display was baked, and whether the look or the scene rig
@@ -1505,6 +1576,8 @@ pub(super) fn sync_glue_pet(
             offset: b.offset,
             kind: b.kind,
             twins: BoothTwins::default(),
+            alpha_anim: None,
+            mat_anim: false,
         })
         .collect();
     commands

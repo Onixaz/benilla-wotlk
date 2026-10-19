@@ -295,8 +295,13 @@ impl AssetLoader for M2ModelLoader {
                 .texture
                 .as_deref()
                 .map(|t| ctx.load::<Image>(crate::texture_url(t, (sub.wrap_x, sub.wrap_y))));
+            let texture2 = sub.combiner.as_ref().and_then(|c| {
+                let t = c.texture2.as_deref()?;
+                Some(ctx.load::<Image>(crate::texture_url(t, c.wrap2)))
+            });
             submeshes.push(ModelSubmesh {
                 texture,
+                texture2,
                 skin_slot: sub.skin_slot,
                 geoset_id: sub.geoset_id,
                 char_slot: sub.char_slot,

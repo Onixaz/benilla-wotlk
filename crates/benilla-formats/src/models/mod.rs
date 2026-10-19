@@ -14,6 +14,7 @@ mod bounds;
 mod collision;
 mod key_anim;
 mod m2_batches;
+mod m2_combiner;
 mod mat_anim;
 mod records;
 mod tex_anim;
@@ -133,6 +134,9 @@ fn remap_submesh(
             wmo_batch: None,
             env_map: false,
             section: None,
+            combiner: None,
+            uvs2: Vec::new(),
+            priority_plane: 0,
         },
         globals,
     )

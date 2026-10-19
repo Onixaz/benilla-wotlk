@@ -298,6 +298,18 @@ impl Default for UiScaleCvar {
     }
 }
 
+impl UiScaleCvar {
+    /// The dial as `kind`'s VM sees it: the game UI's parent alone takes the scale
+    /// (`CGGameUI::SetUIScale 0x513240` scales the frame at `[0xbd0778]`), so the glue screens
+    /// stay 768 units tall.
+    pub(crate) fn for_vm(&self, kind: benilla_ui::script::VmKind) -> f32 {
+        match kind {
+            benilla_ui::script::VmKind::Glue => 1.0,
+            _ => self.0,
+        }
+    }
+}
+
 /// The shipped `uiScale`. Deviation: a flat 0.9, because 1.0 reads oversized. With `useUiScale`
 /// off, its default (`0x8430c0`), the reference sets `max(768/H, 0.9)` above 768 px tall and 1.0
 /// at or below (`0x492f70`, on a mode set and from `0x4908ad`), so the two agree from ~853 px up.
@@ -1095,6 +1107,13 @@ mod world_map_tests;
 #[cfg(test)]
 mod seam_scale_tests {
     use super::seam_scale;
+
+    #[test]
+    fn the_glue_screens_ignore_the_ui_scale_dial() {
+        let dial = super::UiScaleCvar(0.9);
+        assert_eq!(dial.for_vm(benilla_ui::script::VmKind::Glue), 1.0);
+        assert_eq!(dial.for_vm(benilla_ui::script::VmKind::InGame), 0.9);
+    }
 
     #[test]
     fn seam_scale_is_the_768_base_times_the_dial() {

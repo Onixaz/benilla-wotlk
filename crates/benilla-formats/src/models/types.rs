@@ -350,10 +350,97 @@ pub struct RenderSubmesh {
     /// over its base); the reference draws both from one vertex array under LEQUAL, the later
     /// winning exactly (`0x70c190`), so consolidators refuse a section they cannot take whole.
     pub section: Option<u16>,
-    /// Texture coordinates generated as a view-space sphere map, not read from [`Self::uvs`]
-    /// (`texture_unit_lookup[texCoordSet] > 2`): `uv = normalize(P − 2(P·N)N).xy · 0.5 + 0.5`.
-    /// Such a mesh parks its UVs at one point (`GnomeSubwayGlass.m2`).
+    /// Stage 0's texture coordinates generated as a view-space sphere map, not read from
+    /// [`Self::uvs`] (`texture_unit_lookup[texCoordSet] > 2`; `Diffuse_Env`). Such a mesh parks
+    /// its UVs at one point (`GnomeSubwayGlass.m2`).
     pub env_map: bool,
+    /// The batch's pixel combiner where it is not the one-stage modulate every other batch draws
+    /// with ([`Combiner`]).
+    pub combiner: Option<Combiner>,
+    /// The second UV set (`T2`), per vertex like [`Self::uvs`]; empty unless [`Self::combiner`]
+    /// reads it.
+    pub uvs2: Vec<[f32; 2]>,
+    /// The M2 batch's priority plane (texUnit `+0x01`), the transparent sort's key after the
+    /// model's depth (`CM2Scene::SortTransparent 0x81ef30`); 0 on WMO.
+    pub priority_plane: i8,
+}
+
+/// A 3.3.5a M2 batch's pixel shader, `CM2Shared::GetEffect` (`0x836600`, `0x836c90`): each texture
+/// stage's op, named as `Combiners_<op0>[_<op1>]`, or one of the specialized layered shaders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CombinerShader {
+    /// One stage: `Opaque`, `Mod`, `Add` or `Mod2x` (`Decal` and `Fade` are not built).
+    One(CombinerOp),
+    /// Two stages, each texel combined by its op.
+    Two(CombinerOp, CombinerOp),
+    /// `0x8001`, `Combiners_Opaque_Mod2xNA_Alpha`: an opaque base and its env layer.
+    OpaqueMod2xNaAlpha,
+    /// `0x8002`, `Combiners_Opaque_AddAlpha`.
+    OpaqueAddAlpha,
+    /// `0x8003`, `Combiners_Opaque_AddAlpha_Alpha`.
+    OpaqueAddAlphaAlpha,
+}
+
+/// A texture stage's op, the shader word's 3-bit field (`s_colorOps` `0xaf5a08`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CombinerOp {
+    Opaque,
+    Mod,
+    Add,
+    Mod2x,
+    /// `Mod2xNA`: a two-stage op 6, `Mod2x` on colour that keeps the alpha.
+    Mod2xNa,
+    /// `AddNA`: a two-stage op 7, `Add` on colour that keeps the alpha.
+    AddNa,
+}
+
+/// The combiner of a batch whose effect is not the one-stage modulate: its shader, the second
+/// texture and where each stage reads its coordinates.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Combiner {
+    pub shader: CombinerShader,
+    /// Stage 1's texture, `None` for one stage or an unfilled skin slot.
+    pub texture2: Option<String>,
+    /// Stage 1's address mode from its texture record's flags.
+    pub wrap2: (bool, bool),
+    /// Stage 0 reads the second UV set (`Diffuse_T2`).
+    pub stage0_t2: bool,
+    /// Stage 1 reads the generated sphere map (`Diffuse_T1_Env`), else the second UV set
+    /// (`Diffuse_T1_T2`).
+    pub stage1_env: bool,
+}
+
+impl CombinerShader {
+    /// The code `wow_model.wgsl` decodes: one stage `op0`, two stages `8 + 8·op0 + op1`, the
+    /// layered shaders 64-66; each op by [`CombinerOp::code`].
+    pub fn code(self) -> u32 {
+        match self {
+            CombinerShader::One(a) => a.code(),
+            CombinerShader::Two(a, b) => 8 + 8 * a.code() + b.code(),
+            CombinerShader::OpaqueMod2xNaAlpha => 64,
+            CombinerShader::OpaqueAddAlpha => 65,
+            CombinerShader::OpaqueAddAlphaAlpha => 66,
+        }
+    }
+
+    /// Whether the shader samples a second texture.
+    pub fn two_stages(self) -> bool {
+        !matches!(self, CombinerShader::One(_))
+    }
+}
+
+impl CombinerOp {
+    /// The op's number in the shader word.
+    pub fn code(self) -> u32 {
+        match self {
+            CombinerOp::Opaque => 0,
+            CombinerOp::Mod => 1,
+            CombinerOp::Add => 3,
+            CombinerOp::Mod2x => 4,
+            CombinerOp::Mod2xNa => 6,
+            CombinerOp::AddNa => 7,
+        }
+    }
 }
 
 /// A flat ground-plane quad: four vertices on one horizontal plane at or just above z = 0 (hover
@@ -421,6 +508,9 @@ impl Default for RenderSubmesh {
             wmo_batch: None,
             env_map: false,
             section: None,
+            combiner: None,
+            uvs2: Vec::new(),
+            priority_plane: 0,
         }
     }
 }

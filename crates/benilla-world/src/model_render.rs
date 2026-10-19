@@ -82,6 +82,35 @@ pub struct MatKey {
     /// The placement owning this material when its animated loop follows the instance's sequence
     /// (the BRM lava bubbles' flipbook); `None` for the shared material.
     instance: Option<Entity>,
+    /// The combiner's shader code and stage flags ([`Stage2::lanes`]) and its stage-1 texture.
+    stage2: Option<(u32, u32, Option<AssetId<Image>>)>,
+}
+
+/// A batch's pixel combiner ([`benilla_formats::Combiner`]) and its loaded stage-1 texture.
+#[derive(Clone, Copy)]
+pub struct Stage2<'a> {
+    pub combiner: &'a benilla_formats::Combiner,
+    pub texture: Option<&'a Handle<Image>>,
+}
+
+impl<'a> Stage2<'a> {
+    /// The stage of an authored batch, `None` where it draws the one-stage modulate.
+    pub fn of(sub: &'a benilla_assets::ModelSubmesh) -> Option<Self> {
+        Some(Self {
+            combiner: sub.geometry.combiner.as_ref()?,
+            texture: sub.texture2.as_ref(),
+        })
+    }
+
+    /// `WowModelExt::combiner`'s `(x, y)`: the shader code + 1, and bit 0 stage 1 on the sphere
+    /// map, bit 1 stage 0 on the second UV set.
+    fn lanes(self) -> (u32, u32) {
+        let c = self.combiner;
+        (
+            c.shader.code() + 1,
+            u32::from(c.stage1_env) | (u32::from(c.stage0_t2) << 1),
+        )
+    }
 }
 
 /// The static terrain-shade selector in `sun_scale.x`, which the shader thresholds into the
@@ -150,7 +179,9 @@ pub fn model_material(
     sky_depth: bool,
     light: &Buffer,
     instance: Option<Entity>,
+    stage2: Option<Stage2<'_>>,
 ) -> Handle<WowModelMaterial> {
+    let lanes = stage2.map(Stage2::lanes);
     let key = MatKey {
         light: light.id(),
         texture: texture.as_ref().map(Handle::id),
@@ -176,6 +207,9 @@ pub fn model_material(
         zfill: false,
         sky_depth,
         instance,
+        stage2: stage2
+            .zip(lanes)
+            .map(|(s, (code, flags))| (code, flags, s.texture.map(Handle::id))),
     };
     if let Some(h) = cache.fetch(&key) {
         return h;
@@ -331,6 +365,10 @@ pub fn model_material(
                         1.0,
                     )
                 }),
+                combiner: lanes.map_or(Vec4::ZERO, |(code, flags)| {
+                    Vec4::new(code as f32, flags as f32, 0.0, 0.0)
+                }),
+                texture2: stage2.and_then(|s| s.texture.cloned()),
                 light_buf: light.clone(),
             },
         },
@@ -420,6 +458,7 @@ pub fn zfill_material(
         // No skybox batch has a twin: the sky writes no depth.
         sky_depth: false,
         instance: None,
+        stage2: None,
     };
     if let Some(h) = cache.fetch(&key) {
         return h;
@@ -452,6 +491,9 @@ pub fn zfill_material(
                 sidn: Vec4::ZERO,
                 anim_slots: Vec4::ZERO,
                 wmo_unified: Vec4::ZERO,
+                // Depth only: the cutout reads stage 0's alpha.
+                combiner: Vec4::ZERO,
+                texture2: None,
                 light_buf: light.clone(),
             },
         },

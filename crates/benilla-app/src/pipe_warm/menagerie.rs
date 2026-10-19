@@ -20,10 +20,11 @@ use benilla_world::sun::{CelestialMaterial, StarMaterial};
 use super::WarmRig;
 
 // --------------------------------------------------------------------------------------------
-// The warm set: the model lane (4 vertex layouts by the blend and depth-flag families), its
-// shard-rung and far-side-of-water twins, and the sky and water lanes. Each rig is 1 cm on a
-// camera that renders under the cover, so its draw queues its pipeline through the production
-// specialize path. A variant this misses shows as the tripwire's "compiled LIVE" warn.
+// The warm set: the model lane (4 vertex layouts by the blend and depth-flag families, 4 more
+// with a combiner's second UV set), its shard-rung and far-side-of-water twins, and the sky and
+// water lanes. Each rig is 1 cm on a camera that renders under the cover, so its draw queues its
+// pipeline through the production specialize path. A variant this misses shows as the tripwire's
+// "compiled LIVE" warn.
 
 /// The lanes' material stores, bundled for [`run_warm_pass`]'s arity. The sky and water stores
 /// are complete at `Startup`, so iterating them is the reachable set; the WMO skybox is a cross of
@@ -71,15 +72,21 @@ pub(super) fn spawn_menagerie(
     cache: &mut MaterialCache,
     light: &Buffer,
 ) -> usize {
-    // The model lane's four layouts (strides 32/48/56/72): static and skinned, plain and
-    // vertex-coloured. Statics are render-world-only, so their Aabb is inserted explicitly.
+    // The model lane's layouts: static and skinned, plain and vertex-coloured (strides
+    // 32/48/56/72). Statics are render-world-only, so their Aabb is inserted explicitly.
     let mut layouts: Vec<(Handle<Mesh>, Option<bevy::camera::primitives::Aabb>, bool)> = Vec::new();
-    for colors in [false, true] {
-        let stat = benilla_assets::submesh_to_static_mesh(&warm_quad(colors, false));
-        let aabb = stat.compute_aabb();
-        layouts.push((meshes.add(stat), aabb, false));
-        let skin = benilla_assets::submesh_to_skinned_mesh(&warm_quad(colors, true));
-        layouts.push((meshes.add(skin), None, true));
+    // The same four with a combiner's second UV set, an M2 entity's or a booth's: the main cross
+    // only, never far-twinned, on a UI tile or a shard rung.
+    let mut uv2_layouts = Vec::new();
+    for uv2 in [false, true] {
+        for colors in [false, true] {
+            let stat = benilla_assets::submesh_to_static_mesh(&warm_quad(colors, false, uv2));
+            let aabb = stat.compute_aabb();
+            let skin = benilla_assets::submesh_to_skinned_mesh(&warm_quad(colors, true, uv2));
+            let into = if uv2 { &mut uv2_layouts } else { &mut layouts };
+            into.push((meshes.add(stat), aabb, false));
+            into.push((meshes.add(skin), None, true));
+        }
     }
 
     // The full cross is deliberate: every branch is authorable in an M2 or WMO (blends, the
@@ -126,6 +133,7 @@ pub(super) fn spawn_menagerie(
                         // The shared batch material; a per-placement clone has the same
                         // pipeline.
                         None,
+                        None,
                     ));
                 }
             }
@@ -161,6 +169,7 @@ pub(super) fn spawn_menagerie(
                         None,
                         false, // the world lane
                         light,
+                        None,
                         None,
                     ));
                 }
@@ -209,6 +218,7 @@ pub(super) fn spawn_menagerie(
                     true, // the sky lane
                     light,
                     None, // the shared lane
+                    None,
                 ));
             }
         }
@@ -245,6 +255,7 @@ pub(super) fn spawn_menagerie(
                 false, // the world lane
                 light,
                 None, // the shared lane
+                None,
             );
             // `model_render::lazy` parks a built material until something binds it.
             benilla_world::model_render::lazy::realize_all(materials);
@@ -293,6 +304,7 @@ pub(super) fn spawn_menagerie(
                         false, // the world lane
                         light,
                         None, // the shared lane
+                        None,
                     );
                     benilla_world::model_render::lazy::realize_all(materials);
                     if let Some(m) = materials.get(&h) {
@@ -311,6 +323,24 @@ pub(super) fn spawn_menagerie(
     let far_shard_mats = far_twins_of(materials, &shard_mats);
 
     let mut count = 0;
+    for (mesh, aabb, skinned) in &uv2_layouts {
+        for mat in &mats {
+            spawn_model_rig(commands, cam, None, mesh, aabb, *skinned, mat);
+            count += 1;
+            if let Some((booth_cam, layers)) = booth {
+                spawn_model_rig(
+                    commands,
+                    booth_cam,
+                    Some(layers.clone()),
+                    mesh,
+                    aabb,
+                    *skinned,
+                    mat,
+                );
+                count += 1;
+            }
+        }
+    }
     // The main cross and its far twins ride every layout, on the world camera, one real booth and
     // the twin booth; the orthographic twin (the UI model tile camera) takes the main cross only,
     // as no water classify runs over a tile. Shard rows ride the static layouts on the world
@@ -368,7 +398,7 @@ pub(super) fn spawn_menagerie(
     // reaches a booth.
     for colors in [false, true] {
         for slot in [false, true] {
-            let part = std::sync::Arc::new(warm_quad(colors, false));
+            let part = std::sync::Arc::new(warm_quad(colors, false, false));
             let (mesh, mn, mx, _center) = benilla_assets::merged_static_mesh_faded(
                 &[(part, Transform::IDENTITY)],
                 &[Vec4::new(0.0, 0.0, 0.0, 1.0)],
@@ -703,7 +733,7 @@ fn warm_liquid_mesh(body_color: bool) -> Mesh {
 
 /// A unit quad in each attribute combination the model lane ships. Every `RenderSubmesh` field is
 /// spelled out so a new field breaks this build.
-fn warm_quad(colors: bool, skinned: bool) -> RenderSubmesh {
+fn warm_quad(colors: bool, skinned: bool, uv2: bool) -> RenderSubmesh {
     let n = 4usize;
     RenderSubmesh {
         positions: vec![
@@ -756,6 +786,14 @@ fn warm_quad(colors: bool, skinned: bool) -> RenderSubmesh {
         rgb_seq: None,
         wmo_batch: None,
         section: None,
+        priority_plane: 0,
+        // The layout is the axis: a combiner's second UV set.
+        combiner: None,
+        uvs2: if uv2 {
+            vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+        } else {
+            Vec::new()
+        },
     }
 }
 

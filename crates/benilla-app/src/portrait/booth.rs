@@ -130,6 +130,10 @@ pub(super) struct BoothBillboardSpec {
     pub(super) kind: BillboardKind,
     /// A card takes the instance alpha like every other batch of the model.
     pub(super) twins: BoothTwins,
+    /// The batch's animated material alpha, as [`BoothPart::alpha_anim`] (a glue scene's cards).
+    pub(super) alpha_anim: Option<std::sync::Arc<benilla_formats::AlphaAnim>>,
+    /// As [`BoothPart::mat_anim`]: the material is on the UV and tint lane.
+    pub(super) mat_anim: bool,
 }
 
 /// A spawned booth billboard card, faced to its own booth's camera every frame by
@@ -599,7 +603,21 @@ pub(super) fn spawn_booth_model(
             ChildOf(anchor),
             BoothBillboard { kind: bb.kind },
         ));
-        if instance.feathering() || rig_slot != 0 {
+        if bb.mat_anim {
+            card.insert(benilla_world::doodad_anim::AnimMatPart);
+        }
+        if let Some(anim) = &bb.alpha_anim {
+            let mat_anim =
+                benilla_world::doodad_anim::MatAnim::driving_tag(anim.clone(), 0.0, None);
+            card.insert((
+                bevy::mesh::MeshTag(benilla_world::mesh_tag::spawn_tag(
+                    rig_slot,
+                    mat_anim.current * instance.alpha,
+                )),
+                mat_anim,
+                BoothMatAlpha,
+            ));
+        } else if instance.feathering() || rig_slot != 0 {
             card.insert(bevy::mesh::MeshTag(benilla_world::mesh_tag::spawn_tag(
                 rig_slot,
                 instance.alpha,

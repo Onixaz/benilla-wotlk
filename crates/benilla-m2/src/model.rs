@@ -106,7 +106,7 @@ impl M2Bone {
 }
 
 /// One M2 vertex, 48 bytes: position @0, weights @0x0c, indices @0x10, normal @0x14, UV @0x20,
-/// and an unread second UV @0x28.
+/// second UV @0x28.
 pub struct M2Vertex {
     pub position: C3,
     /// Per-vertex bone influence weights (`/255`), paired with [`Self::bone_indices`].
@@ -114,6 +114,8 @@ pub struct M2Vertex {
     pub bone_indices: [u8; 4],
     pub normal: C3,
     pub tex_coords: C2,
+    /// The second UV set, which a texture stage reads as `T2` (`Diffuse_T1_T2`, `Diffuse_T2`).
+    pub tex_coords2: C2,
 }
 
 /// The texture lookup table and the collision hull's raw bytes.
@@ -253,6 +255,11 @@ pub struct M2Model {
     pub animation_lookup: Vec<u16>,
     /// The PlayableAnimationLookup: row `i` is the model's substitute for requested id `i`.
     pub playable_animation_lookup: Vec<M2PlayableAnim>,
+    /// The header's global flags (`+0x10`); `0x8` makes the batch shader word a
+    /// [`Self::texture_combiner_combos`] index (`CM2Shared::SubstituteSimpleShaders 0x836980`).
+    pub global_flags: u32,
+    /// The texture combiner ops (header `+0x144` in this layout), read only under global flag `0x8`.
+    pub texture_combiner_combos: Vec<u16>,
     /// The embedded skin profiles' `(count, file_offset)`.
     pub(crate) views: (u32, u32),
     pub(crate) version: u32,

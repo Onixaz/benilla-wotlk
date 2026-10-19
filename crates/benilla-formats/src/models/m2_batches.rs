@@ -12,12 +12,13 @@ use crate::Chain;
 
 use super::anim::parse_m2_animations;
 use super::key_anim::SeqSlot;
+use super::m2_combiner;
 use super::mat_anim;
 use super::tex_anim;
 use super::{le_u16, le_u32, read_model, remap_submesh};
 use super::{
-    AlphaAnim, Billboard, BillboardKind, BoneScaleAnim, CharSkinSlot, FogPolicy, ModelBlend,
-    RenderSubmesh,
+    AlphaAnim, Billboard, BillboardKind, BoneScaleAnim, CharSkinSlot, Combiner, CombinerOp,
+    CombinerShader, FogPolicy, ModelBlend, RenderSubmesh,
 };
 
 fn parent_dir(path: &str) -> &str {
@@ -353,8 +354,13 @@ pub fn parse_m2_render_submeshes(
     let seq0_slot = seq_slots.first().copied();
 
     let sections = skin.submeshes();
+    let effects = m2_combiner::batch_effects(model, skin.batches());
     let mut out = Vec::new();
-    for batch in skin.batches() {
+    for (batch, effect) in skin.batches().iter().zip(&effects) {
+        // A layer folded into its base's specialized shader is never drawn (`0x821e97`).
+        if effect.parked {
+            continue;
+        }
         let Some(section) = sections.get(batch.skin_section_index as usize) else {
             continue;
         };
@@ -374,6 +380,31 @@ pub fn parse_m2_render_submeshes(
             .map(|t| resolve_texture(t, dir, skins))
             .unwrap_or((None, None, None, false));
         let material = model.materials.get(batch.material_index as usize);
+        // The one-stage modulate on the first UV set, and an opaque batch's `Combiners_Opaque`,
+        // are the plain textured draw; any other effect rides a [`Combiner`].
+        let plain = !effect.stage0_t2
+            && match effect.shader {
+                CombinerShader::One(CombinerOp::Mod) => true,
+                CombinerShader::One(CombinerOp::Opaque) => {
+                    material.is_none_or(|m| m.blend_mode.bits() == 0)
+                }
+                _ => false,
+            };
+        let combiner = (!plain).then(|| {
+            let record = effect
+                .texture2
+                .and_then(|t| model.textures.get(usize::from(t)));
+            Combiner {
+                shader: effect.shader,
+                texture2: record.and_then(|t| resolve_texture(t, dir, skins).0),
+                wrap2: record.map_or((true, true), |t| (t.wrap_x, t.wrap_y)),
+                stage0_t2: effect.stage0_t2,
+                stage1_env: effect.stage1_env,
+            }
+        });
+        let reads_t2 = combiner
+            .as_ref()
+            .is_some_and(|c| c.stage0_t2 || (c.shader.two_stages() && !c.stage1_env));
         let blend = match material.map(|m| m.blend_mode.bits()) {
             Some(0) | None => ModelBlend::Opaque,
             Some(1) => ModelBlend::AlphaTest,
@@ -585,6 +616,17 @@ pub fn parse_m2_render_submeshes(
             sub.uv_scale_seq = uv_scale_seq.clone();
             sub.rgb_anim = rgb_anim.clone();
             sub.rgb_seq = rgb_seq.clone();
+            sub.combiner = combiner.clone();
+            sub.priority_plane = batch.flags.to_le_bytes()[1] as i8;
+            if reads_t2 {
+                sub.uvs2 = globals
+                    .iter()
+                    .map(|&g| {
+                        let t = &model.vertices[g as usize].tex_coords2;
+                        [t.x, t.y]
+                    })
+                    .collect();
+            }
             out.push(sub);
         }
     }

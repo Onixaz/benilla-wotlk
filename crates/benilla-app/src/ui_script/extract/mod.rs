@@ -484,7 +484,7 @@ pub(super) fn tick_script(
     // The client's UI space is 768 units tall at every aspect (`f(screenH) = 768`, `0x41ad10`; the
     // caret's `H_px/192`, `0x77b8c0`), `768/uiScale` with the dial. The VM lives in it: quads
     // scale ×s out, and the mouse and the measures ÷s in.
-    let s = super::seam_scale(h, ui_scale.0);
+    let s = super::seam_scale(h, ui_scale.for_vm(script.vm_kind()));
     // A moved seam scale or DPI stales every text metric the engine caches: integer-stepped
     // advances do not rescale, and the size snap moves a string's width by several percent,
     // enough for the ellipsis to eat fitting text. A monitor hop moves the DPI alone.

@@ -1,48 +1,65 @@
-//! Glue-screen music: `GlueParent.lua`'s `CurrentGlueMusic`, which the stock screens' music verbs
-//! stream and keep across the glue screens. Entering the world does not end it (`0x46c258`): it
-//! plays through the map load and fades over 3.0 s once the load drains, still behind the loading
-//! screen.
+//! Glue-screen music: `GlueParent.lua`'s `CurrentGlueMusic`, a SoundEntries kit by name
+//! (`GS_LichKing`), which the stock screens' music verbs stream and keep across the glue screens
+//! (`SI2::StartGlueMusic 0x9861c0`), starting a new variation each time one ends
+//! (`SI2::GlueMusicUpdate 0x986080`). Entering the world does not end it: it plays through the map
+//! load and fades over 3.0 s once the load drains, still behind the loading screen.
 
 use bevy::prelude::*;
 
 use crate::char_select::ClientState;
 use benilla_assets::{LockRecover, WorldAssets};
 
-use super::kit::SoundCategory;
+use super::kit::{SoundCategory, SoundKits};
 use super::{mixer, SoundConfig, SoundOutput};
 
-/// The theme's own volume, multiplied into the Music slider: `0x45aeb0` starts the glue stream at
-/// 0.8 (`0x3f4ccccd`) on the music category (flag word 2, bit `0x2` = `[0x87cef8]`).
-const GLUE_MUSIC_VOLUME: f32 = 0.8;
-
-/// The stop-fade armed when the world's load drains: 3.0 s (`[0x803248]`, handed to `0x45b050` by
-/// `0x45aeb0`'s NULL arm), linear in amplitude (`0x7a5a50`). `StopGlueMusic`'s 1.0 s is a
-/// movie-screen call the world entry never makes.
+/// The stop-fade armed when the world's load drains, and on a switch to another kit: 3.0 s,
+/// linear in amplitude. The 12340 stops pass the sound object a fade of −1 (`0x4c6390`), whose
+/// length is not traced; this is the 1.12.1 hand-off's.
 const GLUE_MUSIC_FADE_OUT_MS: u64 = 3000;
 
 /// The stock glue screens' music verbs, which drive the theme.
-#[derive(Message, Clone, Debug, PartialEq, Eq)]
+#[derive(Message, Clone, Debug, PartialEq)]
 pub(crate) enum GlueMusicRequest {
-    /// `PlayGlueMusic(file)` (`0x45aeb0`): the same file still streaming plays on; another stops
-    /// the old one over 3.0 s and starts at 0.8; an empty name restarts the remembered file if
-    /// nothing streams.
+    /// `PlayGlueMusic(name)` (`0x4dc070` → `0x9861c0`): the same kit still streaming plays on; the
+    /// remembered name is kept (its poll restarts it); another name stops the old kit and starts.
     Play(String),
-    /// `StopGlueMusic()` (`0x4dc1a0`): a 1.0 s fade (`0x45b050(1.0)`), the file still remembered.
+    /// `StopGlueMusic()` (`0x4dc1a0` → `0x9860e0`): forgets the name, so nothing restarts it.
     Stop,
+    /// `PlayGlueAmbience(name [, fade])` (`0x4dc0c0` → `SI2::StartGlueAmbience 0x985fb0`): the
+    /// same kit still playing plays on; else the old one stops over 3.0 s and the kit starts
+    /// looping on the ambience slider, faded in over `fade` seconds.
+    Ambience { name: String, fade: Option<f32> },
+    /// `StopGlueAmbience()` (`0x4dc130`): a 1.0 s fade (`0x985f70(1.0)`).
+    StopAmbience,
 }
 
-/// `StopGlueMusic`'s fade, `0x3f800000` pushed at `0x4dc1a0`.
+/// `StartGlueAmbience`'s stop of the kit it replaces, `3.0f` (`0x985fb0`).
+const GLUE_AMBIENCE_SWITCH_FADE_MS: u64 = 3000;
+
+/// `StopGlueAmbience`'s fade, `1.0f` (`0x4dc130`).
+const STOP_GLUE_AMBIENCE_FADE_MS: u64 = 1000;
+
+/// `StopGlueMusic`'s fade; like [`GLUE_MUSIC_FADE_OUT_MS`] untraced past the −1 it passes.
 const STOP_GLUE_MUSIC_FADE_MS: u64 = 1000;
 
 /// The held glue-music stream and its starvation watch. The handle is kept through the stop-fade
 /// so the watch still sees the stream during the world-entry load burst.
 struct GlueMusic {
     handle: Option<mixer::StreamingSoundHandle<kira::sound::FromFileError>>,
-    /// The file `PlayGlueMusic` last started (`0xb060a0`), the stock screens' theme.
+    /// The kit name `PlayGlueMusic` last started (`s_glueMusicName`, `0xdce968`); empty once
+    /// stopped.
     track: String,
+    /// The streaming kit's id, which a repeated `PlayGlueMusic` compares against.
+    kit: Option<u32>,
+    /// The streaming variation's SoundEntries volume, under the Music slider.
+    volume: f32,
     watch: mixer::StreamWatch,
     /// The stop-fade is running; the per-frame slider feed stands off so it cannot undo the ramp.
     fading: bool,
+    /// The glue ambience (`s_glueAmbience`, `0xdcea90`): its looping stream, kit and volume.
+    ambience: Option<mixer::StreamingSoundHandle<kira::sound::FromFileError>>,
+    ambience_kit: Option<u32>,
+    ambience_volume: f32,
 }
 
 impl Default for GlueMusic {
@@ -50,26 +67,40 @@ impl Default for GlueMusic {
         Self {
             handle: None,
             track: String::new(),
+            kit: None,
+            volume: 1.0,
             watch: mixer::StreamWatch::new("glue music"),
             fading: false,
+            ambience: None,
+            ambience_kit: None,
+            ambience_volume: 1.0,
         }
     }
 }
 
-/// Open `file` off the chain as the held theme at the Music slider times 0.8.
+/// Stream a picked variation of the kit named `name` as the held theme, at its SoundEntries volume
+/// on the Music slider (the glue kits play in sound group 1, music).
 fn open_glue_music(
     music: &mut GlueMusic,
     out: &mut SoundOutput,
     assets: Option<&WorldAssets>,
+    kits: Option<&mut SoundKits>,
     config: &SoundConfig,
-    file: &str,
+    name: &str,
 ) {
-    let (Some(assets), Some(mixer_ref)) = (assets, out.mixer.as_mut()) else {
+    let (Some(assets), Some(kits), Some(mixer_ref)) = (assets, kits, out.mixer.as_mut()) else {
+        return;
+    };
+    let Some(kit) = kits.catalog().by_name(name).map(|k| k.id) else {
+        warn_once!("glue music: no SoundEntries kit named {name:?}");
+        return;
+    };
+    let Some((file, volume)) = kits.pick_stream(kit) else {
         return;
     };
     let bytes = {
         let chain = assets.chain.lock_recover();
-        chain.read(file)
+        chain.read(&file)
     };
     let data = match bytes.and_then(mixer::stream_from_bytes) {
         Ok(d) => d,
@@ -78,16 +109,77 @@ fn open_glue_music(
             return;
         }
     };
-    let amp = config.category_amp(SoundCategory::Music) * GLUE_MUSIC_VOLUME;
+    let amp = config.category_amp(SoundCategory::Music) * volume;
     match mixer_ref.play_stream(data.volume(mixer::amp_to_db(amp))) {
         Ok(h) => {
-            info!("glue music: {file}");
+            info!("glue music: {name} — {file}");
             music.handle = Some(h);
+            music.kit = Some(kit);
+            music.volume = volume;
             music.fading = false;
             music.watch.reset();
         }
         Err(e) => debug!("glue music: {e:#}"),
     }
+}
+
+/// Start the kit named `name` as the glue ambience, looping, faded in over `fade` seconds
+/// (`0x985fb0`: loop mode 1, sound group 2).
+fn open_glue_ambience(
+    music: &mut GlueMusic,
+    out: &mut SoundOutput,
+    assets: Option<&WorldAssets>,
+    kits: Option<&mut SoundKits>,
+    config: &SoundConfig,
+    name: &str,
+    fade: Option<f32>,
+) {
+    let (Some(assets), Some(kits), Some(mixer_ref)) = (assets, kits, out.mixer.as_mut()) else {
+        return;
+    };
+    let Some(kit) = kits.catalog().by_name(name).map(|k| k.id) else {
+        warn_once!("glue ambience: no SoundEntries kit named {name:?}");
+        return;
+    };
+    let Some((file, volume)) = kits.pick_stream(kit) else {
+        return;
+    };
+    let bytes = {
+        let chain = assets.chain.lock_recover();
+        chain.read(&file)
+    };
+    let data = match bytes.and_then(mixer::stream_from_bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            debug!("glue ambience: {file} — {e:#}");
+            return;
+        }
+    };
+    let amp = config.category_amp(SoundCategory::Ambience) * volume;
+    let fade_in = fade
+        .filter(|s| *s > 0.0)
+        .map(|s| mixer::fade((s * 1000.0) as u64));
+    let data = data
+        .loop_region(..)
+        .fade_in_tween(fade_in)
+        .volume(mixer::amp_to_db(amp));
+    match mixer_ref.play_stream(data) {
+        Ok(h) => {
+            info!("glue ambience: {name} — {file}");
+            music.ambience = Some(h);
+            music.ambience_kit = Some(kit);
+            music.ambience_volume = volume;
+        }
+        Err(e) => debug!("glue ambience: {e:#}"),
+    }
+}
+
+/// Stop the glue ambience over `fade_ms`.
+fn fade_glue_ambience(music: &mut GlueMusic, fade_ms: u64) {
+    if let Some(mut h) = music.ambience.take() {
+        h.stop(mixer::fade(fade_ms));
+    }
+    music.ambience_kit = None;
 }
 
 /// Stop the held theme over `fade_ms`; the handle drops once the watch sees it stopped.
@@ -98,25 +190,17 @@ fn fade_glue_music(music: &mut GlueMusic, fade_ms: u64) {
     }
 }
 
-/// What a `PlayGlueMusic(file)` does against the remembered file and whether a stream is live
-/// (`0x45aef9`-`0x45afdb`).
+/// What a `PlayGlueMusic(name)` does (`0x9861c0`): nothing while that kit streams, nothing for the
+/// remembered name (whatever streams), else switch.
 #[derive(Debug, PartialEq, Eq)]
 enum PlayAction {
     Nothing,
-    /// Start the remembered file again (an empty name, nothing streaming).
-    Restart,
-    /// Stop what streams over 3.0 s, remember `file` and start it.
+    /// Stop what streams, remember `name` and start it.
     Switch,
 }
 
-fn play_action(file: &str, remembered: &str, streaming: bool) -> PlayAction {
-    if file.is_empty() {
-        if !streaming && !remembered.is_empty() {
-            PlayAction::Restart
-        } else {
-            PlayAction::Nothing
-        }
-    } else if !remembered.is_empty() && file == remembered && streaming {
+fn play_action(name: &str, remembered: &str, same_kit_streaming: bool) -> PlayAction {
+    if same_kit_streaming || name.eq_ignore_ascii_case(remembered) {
         PlayAction::Nothing
     } else {
         PlayAction::Switch
@@ -129,26 +213,57 @@ fn drive_glue_music_requests(
     mut music: NonSendMut<GlueMusic>,
     mut out: NonSendMut<SoundOutput>,
     assets: Option<Res<WorldAssets>>,
+    mut kits: Option<ResMut<SoundKits>>,
     config: Res<SoundConfig>,
 ) {
     for request in requests.read() {
         match request {
-            GlueMusicRequest::Play(file) => {
+            GlueMusicRequest::Play(name) => {
+                let asked = kits
+                    .as_deref()
+                    .and_then(|k| k.catalog().by_name(name))
+                    .map(|k| k.id);
                 let streaming = music.handle.is_some() && !music.fading;
-                match play_action(file, &music.track, streaming) {
-                    PlayAction::Nothing => {}
-                    PlayAction::Restart => {
-                        let track = music.track.clone();
-                        open_glue_music(&mut music, &mut out, assets.as_deref(), &config, &track);
-                    }
-                    PlayAction::Switch => {
-                        fade_glue_music(&mut music, GLUE_MUSIC_FADE_OUT_MS);
-                        music.track = file.clone();
-                        open_glue_music(&mut music, &mut out, assets.as_deref(), &config, file);
-                    }
+                let same = streaming && asked.is_some() && asked == music.kit;
+                if play_action(name, &music.track, same) == PlayAction::Switch {
+                    fade_glue_music(&mut music, GLUE_MUSIC_FADE_OUT_MS);
+                    music.track = name.clone();
+                    open_glue_music(
+                        &mut music,
+                        &mut out,
+                        assets.as_deref(),
+                        kits.as_deref_mut(),
+                        &config,
+                        name,
+                    );
                 }
             }
-            GlueMusicRequest::Stop => fade_glue_music(&mut music, STOP_GLUE_MUSIC_FADE_MS),
+            GlueMusicRequest::Stop => {
+                music.track.clear();
+                fade_glue_music(&mut music, STOP_GLUE_MUSIC_FADE_MS);
+            }
+            GlueMusicRequest::Ambience { name, fade } => {
+                let asked = kits
+                    .as_deref()
+                    .and_then(|k| k.catalog().by_name(name))
+                    .map(|k| k.id);
+                if asked.is_some() && asked == music.ambience_kit && music.ambience.is_some() {
+                    continue;
+                }
+                fade_glue_ambience(&mut music, GLUE_AMBIENCE_SWITCH_FADE_MS);
+                open_glue_ambience(
+                    &mut music,
+                    &mut out,
+                    assets.as_deref(),
+                    kits.as_deref_mut(),
+                    &config,
+                    name,
+                    *fade,
+                );
+            }
+            GlueMusicRequest::StopAmbience => {
+                fade_glue_ambience(&mut music, STOP_GLUE_AMBIENCE_FADE_MS);
+            }
         }
     }
 }
@@ -176,25 +291,49 @@ fn hand_off_glue_music(
         h.stop(mixer::fade(GLUE_MUSIC_FADE_OUT_MS));
         music.fading = true;
     }
+    // The glue ambience leaves with the theme; its own stop at world entry is not traced.
+    fade_glue_ambience(&mut music, GLUE_MUSIC_FADE_OUT_MS);
 }
 
 /// The starvation watch over the held theme, and the handle's drop once it reaches `Stopped`.
-/// On the glue screens [`start_glue_music`] then restarts it; in the world it runs out and stays
-/// out.
+/// On the glue screens the remembered kit then starts again (`0x986080`); in the world it runs out
+/// and stays out.
 fn watch_glue_music(
     mut music: NonSendMut<GlueMusic>,
     // Wall time: the watch compares against the stream's own position, and the paced virtual
     // clock is snapped and capped by `frame_pace`.
     time: Res<Time<bevy::time::Real>>,
     config: Res<SoundConfig>,
+    state: Option<Res<State<ClientState>>>,
+    mut out: NonSendMut<SoundOutput>,
+    assets: Option<Res<WorldAssets>>,
+    mut kits: Option<ResMut<SoundKits>>,
 ) {
     let music = &mut *music;
+    let on_glue = state.is_none_or(|s| *s.get() != ClientState::InWorld);
+    if music.handle.is_none() && on_glue && !music.track.is_empty() {
+        let track = music.track.clone();
+        open_glue_music(
+            music,
+            &mut out,
+            assets.as_deref(),
+            kits.as_deref_mut(),
+            &config,
+            &track,
+        );
+    }
+    if let Some(h) = music.ambience.as_mut() {
+        h.set_volume(
+            mixer::amp_to_db(config.category_amp(SoundCategory::Ambience) * music.ambience_volume),
+            mixer::glide(),
+        );
+    }
     // The Music slider rescales the playing theme in place (the `MusicVolume` re-apply walker
     // `0x7a6660(ecx=2)` matches the glue stream), except while the stop-fade runs.
     if !music.fading {
         if let Some(h) = music.handle.as_mut() {
             h.set_volume(
-                mixer::amp_to_db(config.category_amp(SoundCategory::Music) * GLUE_MUSIC_VOLUME),
+                mixer::amp_to_db(config.category_amp(SoundCategory::Music) * music.volume),
                 mixer::glide(),
             );
         }
@@ -215,12 +354,13 @@ fn watch_glue_music(
 
 /// Report the glue theme's voice into the global budget; it plays into `InWorld` too.
 fn report_stream_voices(music: NonSend<GlueMusic>, mut out: NonSendMut<super::SoundOutput>) {
-    out.glue_streams = usize::from(
-        music
-            .handle
-            .as_ref()
-            .is_some_and(|h| h.state() != kira::sound::PlaybackState::Stopped),
-    );
+    let live = |h: &Option<mixer::StreamingSoundHandle<kira::sound::FromFileError>>| {
+        usize::from(
+            h.as_ref()
+                .is_some_and(|h| h.state() != kira::sound::PlaybackState::Stopped),
+        )
+    };
+    out.glue_streams = live(&music.handle) + live(&music.ambience);
 }
 
 pub(super) fn plugin(app: &mut App) {
@@ -246,17 +386,39 @@ pub(super) fn plugin(app: &mut App) {
 mod tests {
     use super::*;
 
-    /// `0x45aeb0`'s three legs: an empty name restarts the remembered file only when nothing
-    /// streams; the remembered file still streaming plays on; anything else switches.
+    /// `0x9861c0`'s legs: the asked kit still streaming plays on, the remembered name is kept even
+    /// when nothing streams (the poll restarts it), any other name switches.
     #[test]
-    fn play_glue_music_restarts_keeps_or_switches() {
-        let theme = "Sound\\Music\\GlueScreenMusic\\wow_main_theme.mp3";
-        assert_eq!(play_action("", theme, false), PlayAction::Restart);
-        assert_eq!(play_action("", theme, true), PlayAction::Nothing);
-        assert_eq!(play_action("", "", false), PlayAction::Nothing);
-        assert_eq!(play_action(theme, theme, true), PlayAction::Nothing);
-        assert_eq!(play_action(theme, theme, false), PlayAction::Switch);
-        assert_eq!(play_action(theme, "", false), PlayAction::Switch);
-        assert_eq!(play_action("other.mp3", theme, true), PlayAction::Switch);
+    fn play_glue_music_keeps_the_kit_or_the_name_else_switches() {
+        assert_eq!(play_action("GS_LichKing", "", true), PlayAction::Nothing);
+        assert_eq!(
+            play_action("GS_LichKing", "gs_lichking", false),
+            PlayAction::Nothing
+        );
+        assert_eq!(play_action("GS_LichKing", "", false), PlayAction::Switch);
+        assert_eq!(
+            play_action("GS_BurningCrusade", "GS_LichKing", false),
+            PlayAction::Switch
+        );
+    }
+
+    /// `GlueParent.lua`'s `CurrentGlueMusic` and the login's `GlueAmbienceTracks["DARKPORTAL"]`
+    /// name SoundEntries kits, not files: every variation reads off the chain and opens as a stream.
+    #[test]
+    fn the_stock_glue_music_and_ambience_are_kits_whose_files_stream() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let catalog = benilla_formats::load_sound_kit_catalog(&mut chain).expect("SoundEntries");
+        for name in ["GS_LichKing", "GlueScreenIntro"] {
+            let kit = catalog.by_name(name).expect("the glue kit");
+            assert!(!kit.files.is_empty(), "{name} has variations");
+            for (file, _) in &kit.files {
+                let bytes = chain.read(file).expect("the variation reads");
+                assert!(
+                    mixer::stream_from_bytes(bytes).is_ok(),
+                    "{file} opens as a stream"
+                );
+            }
+        }
     }
 }

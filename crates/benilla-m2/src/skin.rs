@@ -16,9 +16,10 @@ pub struct SkinSection {
 
 /// One skin draw batch (section + material + texture-combo references).
 pub struct SkinBatch {
-    /// Batch flags (texUnit `+0x00`), raw; the renderer ignores them.
+    /// The batch flags (texUnit `+0x00`) and, in the high byte, the priority plane (`+0x01`).
     pub flags: u16,
-    /// Shader or render-order selector (texUnit `+0x02`), raw; the renderer ignores it.
+    /// The shader word (texUnit `+0x02`): under global flag `0x8`, an index into the combiner
+    /// ops.
     pub shader_id: u16,
     pub skin_section_index: u16,
     pub texture_combo_index: u16,
@@ -26,6 +27,8 @@ pub struct SkinBatch {
     /// `+0x12`, `0x70b8a4`).
     pub texture_coord_combo_index: u16,
     pub material_index: u16,
+    /// The batch's layer over the base batch of its section (texUnit `+0x0c`), 0 for the base.
+    pub material_layer: u16,
     /// Index into [`crate::M2Model::color_alpha_tracks`], `0xffff` for none (texUnit `+0x08`).
     pub color_index: u16,
     /// Index into [`crate::M2Model::transparency_lookup`] (texUnit `+0x14`).
@@ -116,6 +119,7 @@ impl M2Model {
                 shader_id: u.u16_at(2).ok_or(Error::Truncated)?,
                 skin_section_index: u.u16_at(4).ok_or(Error::Truncated)?,
                 material_index: u.u16_at(0x0a).ok_or(Error::Truncated)?,
+                material_layer: u.u16_at(0x0c).ok_or(Error::Truncated)?,
                 texture_combo_index: u.u16_at(0x10).ok_or(Error::Truncated)?,
                 texture_coord_combo_index: u.u16_at(0x12).ok_or(Error::Truncated)?,
                 color_index: u.u16_at(0x08).ok_or(Error::Truncated)?,

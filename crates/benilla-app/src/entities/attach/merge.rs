@@ -130,6 +130,7 @@ fn concat_geometry(first: &RenderSubmesh, rest: &[&RenderSubmesh]) -> RenderSubm
             &sub.vertex_colors,
             out.positions.len(),
         );
+        extend_matched(&mut out.uvs2, &sub.uvs2, out.positions.len());
     }
     out
 }

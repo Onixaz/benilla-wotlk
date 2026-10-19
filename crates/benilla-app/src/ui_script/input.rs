@@ -142,7 +142,7 @@ pub(super) fn feed_ui_input(
     {
         // The window cursor is logical px, y-down from the top left; the UI is y-up in 768-high
         // units under uiScale: flip through the window height, then undo the extract seam's scale.
-        let s = super::seam_scale(window.height(), ui_scale.0);
+        let s = super::seam_scale(window.height(), ui_scale.for_vm(script.vm_kind()));
         let (x, y) = (cursor.x / s, (window.height() - cursor.y) / s);
         // `WOW_HIT_COST=1` meters this call's per-frame hit-test rebuild, one line a second.
         static HIT_COST: std::sync::OnceLock<bool> = std::sync::OnceLock::new();

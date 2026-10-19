@@ -1621,12 +1621,16 @@ pub(crate) fn drive_glue_mgr(
                     let roster: Vec<String> = mgr.roster.iter().map(|c| c.name.clone()).collect();
                     super::addons::save_glue_addons(&realm, &roster, &changes);
                 }
-                // The ambience, the sound effects and the credits music have no glue player
-                // yet; the music has ([`crate::sound::GlueMusicRequest`]).
-                GlueRequest::PlayGlueAmbience { .. }
-                | GlueRequest::StopGlueAmbience
-                | GlueRequest::StopAllSfx(_)
-                | GlueRequest::PlayCreditsMusic(_) => {}
+                GlueRequest::PlayGlueAmbience { name, fade } => {
+                    asks.music
+                        .write(crate::sound::GlueMusicRequest::Ambience { name, fade });
+                }
+                GlueRequest::StopGlueAmbience => {
+                    asks.music
+                        .write(crate::sound::GlueMusicRequest::StopAmbience);
+                }
+                // The sound effects and the credits music have no glue player yet.
+                GlueRequest::StopAllSfx(_) | GlueRequest::PlayCreditsMusic(_) => {}
                 GlueRequest::Screenshot
                 | GlueRequest::ReadyForAccountDataTimes
                 | GlueRequest::RealmSplit(_) => {}

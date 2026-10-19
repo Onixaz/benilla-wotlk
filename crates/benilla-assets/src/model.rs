@@ -43,6 +43,8 @@ pub struct ModelSubmesh {
     pub geometry: std::sync::Arc<RenderSubmesh>,
     /// The embedded albedo texture; `None` for a creature skin slot, filled at spawn.
     pub texture: Option<Handle<Image>>,
+    /// The second stage's texture of a two-stage combiner (`geometry.combiner`).
+    pub texture2: Option<Handle<Image>>,
     /// The creature skin variation this batch draws from (`0/1/2` for `Monster1/2/3`).
     pub skin_slot: Option<u8>,
     /// The geoset id, `group * 100 + variant`, by which the character compositor picks parts.
@@ -109,6 +111,10 @@ fn build_submesh_mesh(sub: &RenderSubmesh, usages: RenderAssetUsages) -> Mesh {
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, usages);
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, sub.uvs.clone());
+    // The second UV set, only where a combiner stage reads it (`T2`).
+    if !sub.uvs2.is_empty() && sub.uvs2.len() == sub.positions.len() {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, sub.uvs2.clone());
+    }
     mesh.insert_indices(Indices::U32(sub.indices.clone()));
     if sub.vertex_colors.len() == sub.positions.len() {
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, sub.vertex_colors.clone());

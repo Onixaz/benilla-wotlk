@@ -147,7 +147,7 @@ impl ModelForms {
     ) {
         let e = self.entries.entry(key).or_default();
         e.want |= kinds;
-        build_entry(e, kinds, submeshes, meshes, usize::MAX, &mut 0);
+        build_entry(e, kinds, submeshes, meshes, usize::MAX, &mut 0, usize::MAX);
     }
 
     /// Drop one model's entry (its asset left the store).
@@ -161,7 +161,8 @@ impl ModelForms {
     }
 }
 
-/// Advance one entry's builds within `budget` submeshes and [`VERT_BUDGET`]; returns the count.
+/// Advance one entry's builds within `budget` submeshes and `vert_cap` vertices (the furnisher's
+/// [`VERT_BUDGET`]); returns the count.
 fn build_entry(
     e: &mut Entry,
     kinds: u8,
@@ -169,11 +170,12 @@ fn build_entry(
     meshes: &mut Assets<Mesh>,
     budget: usize,
     verts: &mut usize,
+    vert_cap: usize,
 ) -> usize {
     let mut built = 0usize;
     if kinds & WANT_STATIC != 0 && e.done & WANT_STATIC == 0 {
         while e.stat.len() < submeshes.len() {
-            if built >= budget || *verts >= VERT_BUDGET {
+            if built >= budget || *verts >= vert_cap {
                 return built;
             }
             let geo = &submeshes[e.stat.len()].geometry;
@@ -187,7 +189,7 @@ fn build_entry(
     }
     if kinds & WANT_SKINNED != 0 && e.done & WANT_SKINNED == 0 {
         while e.skin.len() < submeshes.len() {
-            if built >= budget || *verts >= VERT_BUDGET {
+            if built >= budget || *verts >= vert_cap {
                 return built;
             }
             let geo = &submeshes[e.skin.len()].geometry;
@@ -265,7 +267,15 @@ pub(crate) fn furnish_model_forms(
             continue;
         };
         let want = e.want;
-        built += build_entry(e, want, submeshes, &mut meshes, cap - built, &mut verts);
+        built += build_entry(
+            e,
+            want,
+            submeshes,
+            &mut meshes,
+            cap - built,
+            &mut verts,
+            VERT_BUDGET,
+        );
         e.priority = i32::MAX; // re-asserted by next frame's require() calls
     }
     activity.model_meshes_built += built as u32;
@@ -283,5 +293,80 @@ mod tests {
             frames <= 40,
             "a city crossing's models must land within ~2/3 s at 60 Hz, got {frames} frames"
         );
+    }
+
+    /// One submesh of `verts` vertices, every other field at rest.
+    fn sub(verts: usize) -> benilla_assets::ModelSubmesh {
+        let geometry = benilla_formats::RenderSubmesh {
+            positions: vec![[0.0; 3]; verts],
+            normals: vec![[0.0, 0.0, 1.0]; verts],
+            uvs: vec![[0.0; 2]; verts],
+            indices: vec![0, 1, 2],
+            joints: vec![[0; 4]; verts],
+            weights: vec![[1.0, 0.0, 0.0, 0.0]; verts],
+            ..Default::default()
+        };
+        benilla_assets::ModelSubmesh {
+            geometry: std::sync::Arc::new(geometry),
+            texture: None,
+            texture2: None,
+            skin_slot: None,
+            geoset_id: 0,
+            char_slot: None,
+            blend: benilla_formats::ModelBlend::Opaque,
+            two_sided: false,
+            interior: false,
+            emissive: false,
+            icon_slot: false,
+            sidn: None,
+            window: false,
+            additive: false,
+            env_map: false,
+            no_depth_write: false,
+            no_depth_test: false,
+            fog_policy: benilla_formats::FogPolicy::Scene,
+            billboard: None,
+            alpha_anim: None,
+            uv_anim: None,
+            uv_seq: None,
+            uv_rot_seq: None,
+            uv_scale_seq: None,
+            rgb_anim: None,
+            rgb_seq: None,
+            wmo_batch: None,
+            ground_quad: None,
+        }
+    }
+
+    /// The one-off lanes build every form at once, past the furnisher's vertex budget: the login
+    /// scene's static pass alone exceeds it, and a skinned form left unbuilt drew the whole scene
+    /// at its bind pose.
+    #[test]
+    fn ensure_now_builds_both_forms_past_the_vertex_budget() {
+        let subs: Vec<_> = (0..4).map(|_| sub(super::VERT_BUDGET / 2)).collect();
+        let mut meshes = bevy::asset::Assets::<bevy::mesh::Mesh>::default();
+        let mut e = super::Entry::default();
+        super::build_entry(
+            &mut e,
+            super::WANT_STATIC | super::WANT_SKINNED,
+            &subs,
+            &mut meshes,
+            usize::MAX,
+            &mut 0,
+            usize::MAX,
+        );
+        assert_eq!((e.stat.len(), e.skin.len()), (4, 4));
+        // The paced furnisher still stops at its budget.
+        let mut paced = super::Entry::default();
+        super::build_entry(
+            &mut paced,
+            super::WANT_STATIC | super::WANT_SKINNED,
+            &subs,
+            &mut meshes,
+            usize::MAX,
+            &mut 0,
+            super::VERT_BUDGET,
+        );
+        assert_eq!((paced.stat.len(), paced.skin.len()), (2, 0));
     }
 }

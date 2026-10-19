@@ -343,7 +343,7 @@ pub(crate) fn run_pending_entry_load(world: &mut World) {
 fn seat_raster_seam_for_load(world: &mut World, script: &mut UiScript) {
     let ui_scale = world
         .get_resource::<super::UiScaleCvar>()
-        .map_or(1.0, |c| c.0);
+        .map_or(1.0, |c| c.for_vm(script.vm_kind()));
     let (w, h) = {
         let mut q = world.query_filtered::<&Window, With<bevy::window::PrimaryWindow>>();
         q.single(world)

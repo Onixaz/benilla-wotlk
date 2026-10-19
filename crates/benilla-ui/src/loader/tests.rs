@@ -1362,6 +1362,53 @@ mod loader_tests {
         assert!(s.errors().is_empty(), "{:?}", s.errors());
     }
 
+    /// The flags read by `StringToBOOL` (`0x815400`): GlueXML's `AccountLoginPasswordEdit` says
+    /// `password="1"`, and the reference masks it.
+    #[test]
+    fn an_editbox_flag_written_as_a_digit_turns_the_flag_on() {
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(800.0, 600.0);
+        let doc = parse(
+            r#"<Ui>
+                <EditBox name="Pass" password="1">
+                    <Size><AbsDimension x="200" y="20"/></Size>
+                    <Anchors><Anchor point="CENTER"/></Anchors>
+                </EditBox>
+            </Ui>"#,
+        );
+        let report = load(&s, &doc, &no_files);
+        assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+        s.run("Pass:SetText('secret')").unwrap();
+        s.resolve();
+        let shown = s.extract().into_iter().find_map(|q| match q.content {
+            QuadContent::Text { text, .. } => text,
+            _ => None,
+        });
+        assert_eq!(
+            shown.as_deref(),
+            Some("******"),
+            "password=\"1\" masks the box"
+        );
+        assert_eq!(s.eval::<String>("return Pass:GetText()").unwrap(), "secret");
+
+        for (v, want) in [
+            ("1", true),
+            ("9", true),
+            ("Yes", true),
+            ("true", true),
+            ("on", true),
+            ("Enabled", true),
+            ("0", false),
+            ("false", false),
+            ("No", false),
+            ("off", false),
+            ("disabled", false),
+            ("maybe", false),
+        ] {
+            assert_eq!(framexml::string_to_bool(v), want, "{v:?}");
+        }
+    }
+
     // ── TexCoords and font objects ──────────────────────────────────────────────────────────────
 
     /// The extracted quad carries the UV rect as `[left, right, top, bottom]`.

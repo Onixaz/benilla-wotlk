@@ -492,6 +492,7 @@ impl AssetLoader for WmoModelLoader {
                 });
                 submeshes.push(ModelSubmesh {
                     texture,
+                    texture2: None, // a WMO batch draws one stage
                     skin_slot: sub.skin_slot,
                     geoset_id: 0,
                     char_slot: None,

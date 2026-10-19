@@ -241,6 +241,8 @@ pub(super) fn sync_dressup_booth(
                 offset: b.offset,
                 kind: b.kind,
                 twins: BoothTwins::default(),
+                alpha_anim: None,
+                mat_anim: false,
             })
             .collect();
         // Never latch a world-lane material into a pane ([`super::light`]): retry instead.

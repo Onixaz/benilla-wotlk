@@ -120,6 +120,9 @@ fn the_shape_ignores_edge_on_correct_and_degenerate_batches() {
         wmo_batch: None,
         env_map: false,
         section: None,
+        combiner: None,
+        uvs2: Vec::new(),
+        priority_plane: 0,
     };
 
     assert!(

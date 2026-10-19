@@ -119,6 +119,15 @@ pub struct WowModelExt {
     /// ambient, `w` = 1; zero elsewhere.
     #[uniform(100)]
     pub wmo_unified: Vec4,
+    /// An M2 batch's pixel combiner (`benilla_formats::Combiner`): `x` = its shader code + 1, `0`
+    /// for the one-stage modulate; `y` = bit 0 stage 1 on the sphere map, bit 1 stage 0 on the
+    /// second UV set.
+    #[uniform(100)]
+    pub combiner: Vec4,
+    /// The combiner's stage-1 texture; the fallback white where none.
+    #[texture(101)]
+    #[sampler(102)]
+    pub texture2: Option<Handle<Image>>,
     /// The shared global light (`lighting::global_light`), updated in place once a frame; the
     /// vertex stage reads its point-light table, since Bevy's clusterable lights are fragment-only.
     #[storage(90, read_only, buffer, visibility(vertex, fragment))]

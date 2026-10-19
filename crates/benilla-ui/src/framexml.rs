@@ -33,10 +33,12 @@ impl Element {
             .is_some_and(|v| v.eq_ignore_ascii_case("true"))
     }
 
-    /// [`attr_bool`](Self::attr_bool), but `None` when absent, for a flag whose default is on
-    /// (`<EditBox autoFocus="false">`).
+    /// A flag read by `StringToBOOL` (`0x815400`), `None` when absent or empty, as the reference
+    /// skips the setter then (`<EditBox autoFocus="false">`, `password="1"`).
     pub fn attr_bool_opt(&self, name: &str) -> Option<bool> {
-        self.attr(name).map(|v| v.eq_ignore_ascii_case("true"))
+        self.attr(name)
+            .filter(|v| !v.is_empty())
+            .map(string_to_bool)
     }
 
     pub fn name(&self) -> Option<&str> {
@@ -45,6 +47,16 @@ impl Element {
 
     pub fn attrs(&self) -> &[(String, String)] {
         &self.attrs
+    }
+}
+
+/// `StringToBOOL` (`0x815400`): the first character decides (`0`, `F`, `N` false; a digit, `T`, `Y`
+/// true), else `off`/`disabled` and `on`/`enabled`, case-folded; anything else is false.
+pub fn string_to_bool(v: &str) -> bool {
+    match v.as_bytes().first() {
+        Some(b'0' | b'F' | b'N' | b'f' | b'n') => false,
+        Some(b'1'..=b'9' | b'T' | b'Y' | b't' | b'y') => true,
+        _ => v.eq_ignore_ascii_case("on") || v.eq_ignore_ascii_case("enabled"),
     }
 }
 

@@ -98,6 +98,7 @@ pub(super) fn update_model_particles(
                         false, // an effect model is never a skybox
                         &light.0,
                         None, // no animated loop, so no placement key
+                        None,
                     );
                     // Realized now: the over-life ramp writes it every frame.
                     crate::model_render::lazy::realize(&mut materials, material.id());

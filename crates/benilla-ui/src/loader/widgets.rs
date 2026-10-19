@@ -173,8 +173,8 @@ impl Loader<'_> {
         if is_check {
             tex("CheckedTexture", "SetCheckedTexture", self);
             tex("DisabledCheckedTexture", "SetDisabledCheckedTexture", self);
-            if let Some(c) = el.attr("checked") {
-                let checked = c.eq_ignore_ascii_case("true") || c == "1";
+            // `CSimpleCheckbox::LoadXML` (`0x9624c0`) reads it by `StringToBOOL`.
+            if let Some(checked) = el.attr_bool_opt("checked") {
                 self.call(wrapper, "SetChecked", checked, dbg);
             }
         }

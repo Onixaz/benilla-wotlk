@@ -191,6 +191,7 @@ pub fn spawn_model_entities(
             false, // the world streamer never spawns a skybox
             light,
             seq_owner,
+            crate::model_render::Stage2::of(sub),
         );
         // The fade's blend twin, the cutout itself when already blended or never fading. A multiply
         // batch (Mod, Mod2x) keeps its cutout too: it reads no alpha, so the shader fades its
@@ -229,6 +230,7 @@ pub fn spawn_model_entities(
                 false, // the world streamer never spawns a skybox
                 light,
                 seq_owner,
+                crate::model_render::Stage2::of(sub),
             )
         };
         // One classification for the census tally and the diverts, so the two cannot drift.
@@ -238,7 +240,9 @@ pub fn spawn_model_entities(
                 || sub.alpha_anim.is_some()
                 || seq_owner.is_some()
                 || sub.uv_anim.is_some()
-                || sub.rgb_anim.is_some(),
+                || sub.rgb_anim.is_some()
+                // The merged lanes draw one stage on the first UV set.
+                || sub.geometry.combiner.is_some(),
             interior_prop: interior_probe,
             order_free: matches!(sub.blend, ModelBlend::Opaque | ModelBlend::AlphaTest)
                 && !sub.additive,
