@@ -74,6 +74,15 @@ fn sandbox_removes_dangerous_globals() {
         )
         .unwrap();
     assert!(all_nil);
+    // `newproxy` survives: the secure-handler files build their prototypes with it at file scope
+    // (`RestrictedFrames.lua:67`, `RestrictedExecution.lua:230`).
+    assert!(s
+        .eval::<bool>(
+            "local p = newproxy(true); getmetatable(p).__index = { x = 1 } \
+             local q = newproxy(p) \
+             return type(p) == 'userdata' and q.x == 1"
+        )
+        .unwrap());
     // `debugstack` survives the sandbox and returns a real traceback, which addons parse.
     let trace = s.eval::<String>("return debugstack()").unwrap();
     assert!(

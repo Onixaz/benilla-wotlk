@@ -2237,6 +2237,47 @@ mod tests {
         );
     }
 
+    /// The secure-handler files and `BNConversations.lua` run to their end: each calls a global at
+    /// file scope (`newproxy`, `BNGetMaxPlayersInConversation`), and a raise there leaves every
+    /// global after it nil.
+    #[test]
+    fn the_secure_handler_and_conversation_files_load_whole() {
+        let _data = benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new().expect("VM");
+        s.set_screen_size(1024.0, 768.0);
+        seat_a_player(&mut s);
+        let failures = super::super::manifest::load_default_ui(&s);
+        let ours: Vec<&String> = failures
+            .iter()
+            .filter(|f| {
+                [
+                    "RestrictedEnvironment.lua",
+                    "RestrictedFrames.lua",
+                    "RestrictedExecution.lua",
+                    "SecureHandlers.lua",
+                    "BNConversations.lua",
+                ]
+                .iter()
+                .any(|file| f.contains(file))
+            })
+            .collect();
+        assert!(ours.is_empty(), "{ours:#?}");
+        // The last global function each file defines.
+        for name in ["SecureHandler_OnLoad", "BNConversationButton_UpdateTarget"] {
+            assert!(
+                s.eval::<bool>(&format!("return type({name}) == \"function\""))
+                    .unwrap(),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            s.eval::<i64>("return BN_CONVERSATION_MAX_CHANNEL_MEMBERS == nil and 1 or 0")
+                .unwrap(),
+            1,
+            "no Real ID, so the cap reads nil as on the reference"
+        );
+    }
+
     /// Every event benilla fires exists in the 1.12 client: an event it can dispatch is a
     /// NUL-terminated string in `WoW.exe`, and a name missing there no stock listener can ever
     /// receive. Test files are skipped; they fire synthetic names (`E3`) on purpose.

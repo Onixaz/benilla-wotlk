@@ -1,8 +1,8 @@
 //! The sandbox and the 1.12 stdlib layer on top of stock Lua 5.1.
 //!
 //! - [`sandbox`]: no filesystem, OS or native reach (`io`, `os`, `package`, `require`, `dofile`,
-//!   `loadfile`, `load`, `module`, `newproxy` and `debug` removed), the reference's `debugstack`,
-//!   and a text-only `loadstring`.
+//!   `loadfile`, `load`, `module` and `debug` removed), the reference's `debugstack`, and a
+//!   text-only `loadstring`.
 //! - [`install`]: the 1.12 bare globals (string, table and math aliases, the `debug*` family, the
 //!   error-handler pair), `time` and `date`, and a `string.format` that accepts positional `%N$`
 //!   specs as the 1.12 client's does, rewriting them into a sequential format. Mixing positional
@@ -26,10 +26,10 @@ pub(super) fn lua_message(e: &mlua::Error) -> String {
 pub(super) fn sandbox(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // Set to nil explicitly, whatever mlua's safe stdlib already leaves out.
+    // Set to nil explicitly, whatever mlua's safe stdlib already leaves out. `newproxy` stays: it
+    // is in 3.3.5a's `_G`, and `RestrictedFrames.lua:67` calls it at file scope.
     for name in [
-        "io", "os", "package", "require", "dofile", "loadfile", "load", "module", "newproxy",
-        "debug",
+        "io", "os", "package", "require", "dofile", "loadfile", "load", "module", "debug",
     ] {
         g.set(name, Value::Nil)?;
     }

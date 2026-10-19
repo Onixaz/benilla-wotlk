@@ -35,6 +35,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             lua.create_function(|_, _: mlua::MultiValue| Ok(mlua::MultiValue::new()))?,
         )?;
     }
+    // `0x537a00`: 12 only with a Real ID connection (`0x533c40`), else no value.
+    g.set(
+        "BNGetMaxPlayersInConversation",
+        lua.create_function(|_, _: mlua::MultiValue| Ok(mlua::MultiValue::new()))?,
+    )?;
     Ok(())
 }
 
@@ -53,5 +58,11 @@ mod tests {
         assert!(!ui
             .eval::<bool>("return BNFeaturesEnabledAndConnected()")
             .unwrap());
+        // `BNConversations.lua:3` calls it at file scope; without Real ID it answers nothing.
+        assert_eq!(
+            ui.eval::<i64>("return select('#', BNGetMaxPlayersInConversation())")
+                .unwrap(),
+            0
+        );
     }
 }
