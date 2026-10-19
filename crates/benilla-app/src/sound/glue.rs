@@ -2,7 +2,8 @@
 //! (`GS_LichKing`), which the stock screens' music verbs stream and keep across the glue screens
 //! (`SI2::StartGlueMusic 0x9861c0`), starting a new variation each time one ends
 //! (`SI2::GlueMusicUpdate 0x986080`). Entering the world does not end it: it plays through the map
-//! load and fades over 3.0 s once the load drains, still behind the loading screen.
+//! load and fades over 3.0 s once the load drains, still behind the loading screen; the ambience is
+//! cut there.
 
 use bevy::prelude::*;
 
@@ -12,18 +13,18 @@ use benilla_assets::{LockRecover, WorldAssets};
 use super::kit::{SoundCategory, SoundKits};
 use super::{mixer, SoundConfig, SoundOutput};
 
-/// The stop-fade armed when the world's load drains, and on a switch to another kit: 3.0 s,
-/// linear in amplitude. The 12340 stops pass the sound object a fade of −1 (`0x4c6390`), whose
-/// length is not traced; this is the 1.12.1 hand-off's.
+/// The theme's fade when the world's load drains: `StopGlueMusic(3.0f)` at `0x4db91f`
+/// (`[0x9ebbc4]`), linear in amplitude.
 const GLUE_MUSIC_FADE_OUT_MS: u64 = 3000;
 
 /// The stock glue screens' music verbs, which drive the theme.
 #[derive(Message, Clone, Debug, PartialEq)]
 pub(crate) enum GlueMusicRequest {
     /// `PlayGlueMusic(name)` (`0x4dc070` → `0x9861c0`): the same kit still streaming plays on; the
-    /// remembered name is kept (its poll restarts it); another name stops the old kit and starts.
+    /// remembered name is kept (its poll restarts it); another name cuts the old kit and starts.
     Play(String),
-    /// `StopGlueMusic()` (`0x4dc1a0` → `0x9860e0`): forgets the name, so nothing restarts it.
+    /// `StopGlueMusic()` (`0x4dc1a0` → `0x9860e0(−1)`): forgets the name, so nothing restarts it,
+    /// and cuts the stream.
     Stop,
     /// `PlayGlueAmbience(name [, fade])` (`0x4dc0c0` → `SI2::StartGlueAmbience 0x985fb0`): the
     /// same kit still playing plays on; else the old one stops over 3.0 s and the kit starts
@@ -38,9 +39,6 @@ const GLUE_AMBIENCE_SWITCH_FADE_MS: u64 = 3000;
 
 /// `StopGlueAmbience`'s fade, `1.0f` (`0x4dc130`).
 const STOP_GLUE_AMBIENCE_FADE_MS: u64 = 1000;
-
-/// `StopGlueMusic`'s fade; like [`GLUE_MUSIC_FADE_OUT_MS`] untraced past the −1 it passes.
-const STOP_GLUE_MUSIC_FADE_MS: u64 = 1000;
 
 /// The held glue-music stream and its starvation watch. The handle is kept through the stop-fade
 /// so the watch still sees the stream during the world-entry load burst.
@@ -174,18 +172,25 @@ fn open_glue_ambience(
     }
 }
 
-/// Stop the glue ambience over `fade_ms`.
-fn fade_glue_ambience(music: &mut GlueMusic, fade_ms: u64) {
+/// A stop passed −1, which keeps the sound's own fade-out (`SESound::Stop 0x879840`): the glue
+/// kits play with the default 0 (`0x4c6a40`), so the channel stops at once, here behind the
+/// de-click ramp every force-stop takes.
+fn glue_cut() -> kira::Tween {
+    mixer::declick()
+}
+
+/// Stop the glue ambience over `fade`.
+fn fade_glue_ambience(music: &mut GlueMusic, fade: kira::Tween) {
     if let Some(mut h) = music.ambience.take() {
-        h.stop(mixer::fade(fade_ms));
+        h.stop(fade);
     }
     music.ambience_kit = None;
 }
 
-/// Stop the held theme over `fade_ms`; the handle drops once the watch sees it stopped.
-fn fade_glue_music(music: &mut GlueMusic, fade_ms: u64) {
+/// Stop the held theme over `fade`; the handle drops once the watch sees it stopped.
+fn fade_glue_music(music: &mut GlueMusic, fade: kira::Tween) {
     if let Some(h) = music.handle.as_mut() {
-        h.stop(mixer::fade(fade_ms));
+        h.stop(fade);
         music.fading = true;
     }
 }
@@ -226,7 +231,7 @@ fn drive_glue_music_requests(
                 let streaming = music.handle.is_some() && !music.fading;
                 let same = streaming && asked.is_some() && asked == music.kit;
                 if play_action(name, &music.track, same) == PlayAction::Switch {
-                    fade_glue_music(&mut music, GLUE_MUSIC_FADE_OUT_MS);
+                    fade_glue_music(&mut music, glue_cut());
                     music.track = name.clone();
                     open_glue_music(
                         &mut music,
@@ -240,7 +245,7 @@ fn drive_glue_music_requests(
             }
             GlueMusicRequest::Stop => {
                 music.track.clear();
-                fade_glue_music(&mut music, STOP_GLUE_MUSIC_FADE_MS);
+                fade_glue_music(&mut music, glue_cut());
             }
             GlueMusicRequest::Ambience { name, fade } => {
                 let asked = kits
@@ -250,7 +255,7 @@ fn drive_glue_music_requests(
                 if asked.is_some() && asked == music.ambience_kit && music.ambience.is_some() {
                     continue;
                 }
-                fade_glue_ambience(&mut music, GLUE_AMBIENCE_SWITCH_FADE_MS);
+                fade_glue_ambience(&mut music, mixer::fade(GLUE_AMBIENCE_SWITCH_FADE_MS));
                 open_glue_ambience(
                     &mut music,
                     &mut out,
@@ -262,17 +267,17 @@ fn drive_glue_music_requests(
                 );
             }
             GlueMusicRequest::StopAmbience => {
-                fade_glue_ambience(&mut music, STOP_GLUE_AMBIENCE_FADE_MS);
+                fade_glue_ambience(&mut music, mixer::fade(STOP_GLUE_AMBIENCE_FADE_MS));
             }
         }
     }
 }
 
-/// Arm the theme's 3.0 s fade when the world's load drains.
+/// Arm the theme's 3.0 s fade and cut the ambience when the world's load drains.
 ///
-/// The reference's trigger: `CGlueMgr::Update` state 8 spins each frame after entry
-/// (`[0xb41d94] == 1`) while the AsyncFileLoader (`0x443e20`) has reads outstanding; the frame it
-/// drains it calls `0x45aeb0(NULL)` → `0x45b050(3.0f)`, then sends `CMSG_PLAYER_LOGIN`. benilla's
+/// The reference's trigger: `CGlueMgr::Idle` (`0x4dab40`) in its enter-world state waits for the
+/// loading screen, and on the pass after the glue suspends it calls `StopGlueMusic(3.0f)` and
+/// `StopGlueAmbience(−1.0f)` (`0x4db91f`, `0x4db92d`), then sends `CMSG_PLAYER_LOGIN`. benilla's
 /// analogue is `world_hold`'s falling edge ([`crate::loading_screen`]), acted on only in the world
 /// so the logout blackout's drop does not fade the theme the glue just restarted.
 fn hand_off_glue_music(
@@ -291,8 +296,7 @@ fn hand_off_glue_music(
         h.stop(mixer::fade(GLUE_MUSIC_FADE_OUT_MS));
         music.fading = true;
     }
-    // The glue ambience leaves with the theme; its own stop at world entry is not traced.
-    fade_glue_ambience(&mut music, GLUE_MUSIC_FADE_OUT_MS);
+    fade_glue_ambience(&mut music, glue_cut());
 }
 
 /// The starvation watch over the held theme, and the handle's drop once it reaches `Stopped`.
