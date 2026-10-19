@@ -150,6 +150,7 @@ mod ui_instance;
 mod ui_item_text;
 mod ui_items;
 mod ui_layout;
+mod ui_lfg;
 mod ui_logout;
 mod ui_loot;
 mod ui_loot_roll;

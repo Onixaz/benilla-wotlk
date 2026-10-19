@@ -467,15 +467,6 @@ fn feed_meeting_stone(
                 ));
             }
             MeetingStoneNotice::MemberAdded { guid } => stone.pending_members.push(guid),
-            MeetingStoneNotice::JoinFailed { code } => {
-                let key = match code {
-                    1 => "ERR_MEETING_STONE_MUST_BE_LEADER",
-                    2 => "ERR_MEETING_STONE_GROUP_FULL",
-                    3 => "ERR_MEETING_STONE_NO_RAID_GROUP",
-                    _ => continue,
-                };
-                lines.extend(crate::ui_action::keyed_line(&script, key));
-            }
         }
     }
     // `0x299`'s name-cache callback: the line when the name lands, nothing until then.
@@ -508,21 +499,17 @@ fn feed_meeting_stone(
     }
 }
 
-/// The world-enter cascade's meeting-stone leg (`0x490a14` → `0x4c9f40`), after the battlefield
-/// status: the text reset, then the empty `CMSG 0x296` (`0x4ca1c0`). The cascade runs at login,
-/// after every cross-map worldport and on every `/reload`; until the reply fires
-/// `MEETINGSTONE_CHANGED` (`0x4ca38f`) the minimap icon is hidden, as in the reference. The
-/// queued area survives.
+/// The world-enter cascade's meeting-stone leg: the text reset; the queued area survives. 3.3.5a
+/// has no meeting-stone status query: its `CMSG 0x296` is the dungeon finder's status request,
+/// which `crate::ui_lfg::lfg_enter_world` sends.
 pub(crate) fn meeting_stone_enter_world(
     mut cascades: MessageReader<WorldEnterCascadeMessage>,
     mut stone: ResMut<MeetingStone>,
-    commands: Res<NetCommands>,
 ) {
     if cascades.read().next().is_none() {
         return;
     }
     stone.enter_world();
-    let _ = commands.0.send(ClientCommand::MeetingStoneStatusQuery);
 }
 
 /// A right-click on a `GAMEOBJECT_TYPE_MEETINGSTONE` (23) that passed the shared click gates.
@@ -1507,10 +1494,9 @@ mod tests {
         (app, rx)
     }
 
+    /// Every send; the stone's legs send none on 3.3.5a.
     fn stone_queries(rx: &crossbeam_channel::Receiver<ClientCommand>) -> usize {
-        rx.try_iter()
-            .filter(|c| matches!(c, ClientCommand::MeetingStoneStatusQuery))
-            .count()
+        rx.try_iter().count()
     }
 
     /// The server's answer has landed: queued at `area`, the line built.
@@ -1535,10 +1521,10 @@ mod tests {
         }
     }
 
-    /// Each world-enter cascade (`0x490a14` → `0x4c9f40`) resets the text to the bare `UNKNOWN`
-    /// and sends `CMSG 0x296`, a VM or not; frames without one send nothing.
+    /// Each world-enter cascade resets the text to the bare `UNKNOWN`, a VM or not, and sends
+    /// nothing: `CMSG 0x296` is the dungeon finder's on 3.3.5a.
     #[test]
-    fn every_world_enter_cascade_resets_the_text_and_asks_again() {
+    fn every_world_enter_cascade_resets_the_text() {
         let (mut app, rx) = stone_app();
         app.update();
         assert_eq!(stone_queries(&rx), 0, "no cascade, no query");
@@ -1551,7 +1537,7 @@ mod tests {
             answered(&mut app, 1519);
             app.world_mut().write_message(WorldEnterCascadeMessage);
             app.update();
-            assert_eq!(stone_queries(&rx), 1, "{entry} asks the server");
+            assert_eq!(stone_queries(&rx), 0, "{entry} sends nothing");
             assert_eq!(
                 stone_text(&app),
                 StoneText::Unknown,
@@ -1564,7 +1550,7 @@ mod tests {
                 "{entry} keeps the queued area (`[0xb72038]`)"
             );
             app.update();
-            assert_eq!(stone_queries(&rx), 0, "{entry} asks once, not every frame");
+            assert_eq!(stone_queries(&rx), 0, "{entry} sends nothing later either");
         }
     }
 
@@ -1595,27 +1581,27 @@ mod tests {
         let stone = app.world().resource::<MeetingStone>();
         assert!(stone.dirty, "the drop reaches the VM");
         assert_eq!(stone.area, 1519, "the queued area survives the sweep");
-        assert_eq!(
-            stone_queries(&rx),
-            1,
-            "the sweep sends nothing; the new create's cascade will"
-        );
+        assert_eq!(stone_queries(&rx), 0, "the sweep sends nothing");
     }
 
     /// `/reload` sweeps (`0x490c20`) and then re-enters the cascade (`0x490168`) in one frame:
-    /// the drop, then the reset and the query, in that order.
+    /// the drop, then the reset, in that order.
     #[test]
-    fn a_reload_drops_the_text_then_resets_it_and_asks_again() {
+    fn a_reload_drops_the_text_then_resets_it() {
         let (mut app, rx) = stone_app();
         app.world_mut().write_message(WorldEnterCascadeMessage);
         app.update();
-        assert_eq!(stone_queries(&rx), 1);
+        assert_eq!(stone_queries(&rx), 0);
         answered(&mut app, 1519);
 
         app.world_mut().write_message(WorldLeaveSweepMessage);
         app.world_mut().write_message(WorldEnterCascadeMessage);
         app.update();
-        assert_eq!(stone_queries(&rx), 1, "the reload re-asks the server");
+        assert_eq!(
+            stone_queries(&rx),
+            0,
+            "the reload sends nothing for the stone"
+        );
         assert_eq!(
             stone_text(&app),
             StoneText::Unknown,

@@ -157,6 +157,11 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // `0x51e027`, "" with flags 0x120: the tracked achievements, which `LoadTrackedState` reads
     // and the tracking verbs write (`0x5b3840`, `0x5b1fa0`); per character like the dropdowns.
     same("trackedAchievements", "").per_character(),
+    // `0x51f25c`, `0x51f282`, `0x51f2aa`, flags 0x120: the dungeon finder's roles ("0", a bit
+    // mask) and its selected dungeons and collapsed headers ("", bit arrays), per character.
+    same("lfgSelectedRoles", "0").per_character(),
+    same("lfdCollapsedHeaders", "").per_character(),
+    same("lfdSelectedDungeons", "").per_character(),
     // The login screen's third agreement (`readTerminationWithoutNotice`, "0"), and the saved
     // Battle.net account list (`accountList`, "") and authenticator flag
     // (`g_accountUsesToken`, "0") the glue's account verbs read and write.

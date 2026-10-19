@@ -31,6 +31,8 @@ pub(crate) struct MessageSounds {
     /// `PlaySoundByName` cues with no catalog row, such as the tutorial popup's
     /// `"TutorialPopup"` (`0x4b5390`), played on the same 2D SFX path.
     cues: Vec<&'static str>,
+    /// `SI2::PlayUISound` kits by `SoundEntries` id (`0x4c8fc0`), on the same path.
+    kits: Vec<u32>,
 }
 
 impl MessageSounds {
@@ -47,6 +49,11 @@ impl MessageSounds {
     /// Queue a named cue with no message behind it.
     pub(crate) fn push_cue(&mut self, name: &'static str) {
         self.cues.push(name);
+    }
+
+    /// Queue a UI sound kit by id.
+    pub(crate) fn push_kit(&mut self, id: u32) {
+        self.kits.push(id);
     }
 
     /// What is queued, for the producer's tests.
@@ -73,11 +80,12 @@ fn play_message_sounds(
     config: Res<SoundConfig>,
     listener: Res<AudioListener>,
 ) {
-    if queue.records.is_empty() && queue.cues.is_empty() {
+    if queue.records.is_empty() && queue.cues.is_empty() && queue.kits.is_empty() {
         return;
     }
     let records = std::mem::take(&mut queue.records);
     let cues = std::mem::take(&mut queue.cues);
+    let kit_ids = std::mem::take(&mut queue.kits);
     // Drained even with nothing to play it on, so the queue cannot grow unbounded.
     let (Some(mut kits), Some(assets)) = (kits, assets) else {
         return;
@@ -85,6 +93,20 @@ fn play_message_sounds(
     // The reference reads the player's sex per play (`0x49676f` → `0x5ed5b0`); none yet means
     // no voice.
     let sex = self_q.iter().next().and_then(|s| s.0.unit_gender());
+    for id in kit_ids {
+        if let Err(e) = kit::play_kit(
+            &mut kits,
+            &assets,
+            &mut out,
+            &config,
+            listener.pos,
+            KitRef::Id(id),
+            None,
+            SoundCategory::Sfx,
+        ) {
+            warn!("sound(message): kit {id}: {e:#}");
+        }
+    }
     for name in cues {
         if let Err(e) = kit::play_kit(
             &mut kits,

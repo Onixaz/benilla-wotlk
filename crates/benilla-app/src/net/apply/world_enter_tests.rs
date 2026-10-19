@@ -1,8 +1,9 @@
 //! The world-enter sends wait for our own player's create, as the reference's do (`0x5dea50`):
 //! none goes out on the login edge alone, which fires before the server seats the player; the
 //! create sends `CMSG_SET_ACTIVE_MOVER`, then the cascade's `CMSG_QUERY_TIME`,
-//! `MSG_QUERY_NEXT_MAIL_TIME`, `CMSG_BATTLEFIELD_STATUS` and `CMSG 0x296`; a worldport's fresh
-//! create sends all five again.
+//! `MSG_QUERY_NEXT_MAIL_TIME`, `CMSG_BATTLEFIELD_STATUS` and the dungeon finder's
+//! `CMSG_LFG_GET_STATUS` and `CMSG_LFG_PLAYER_LOCK_INFO_REQUEST` (`0x557240`); a worldport's
+//! fresh create sends them all again.
 
 use bevy::prelude::*;
 use crossbeam_channel::Receiver;
@@ -29,6 +30,7 @@ fn app() -> (App, Receiver<ClientCommand>) {
         .init_resource::<crate::ui_mail::MailPending>()
         .init_resource::<crate::ui_battlefield::Battlefield>()
         .init_resource::<crate::ui_dialog_verbs::MeetingStone>()
+        .init_resource::<crate::ui_lfg::LfgFeed>()
         .add_message::<EnteredWorldMessage>()
         .add_message::<WorldEnterCascadeMessage>()
         .add_systems(
@@ -40,6 +42,7 @@ fn app() -> (App, Receiver<ClientCommand>) {
                 crate::ui_mail::send_query_next_mail_time_on_enter,
                 crate::ui_battlefield::reset_on_world_enter,
                 crate::ui_dialog_verbs::meeting_stone_enter_world,
+                crate::ui_lfg::lfg_enter_world,
             )
                 .chain(),
         );
@@ -68,17 +71,18 @@ fn sent(rx: &Receiver<ClientCommand>) -> Vec<String> {
         .collect()
 }
 
-fn the_five() -> Vec<String> {
+fn the_sends() -> Vec<String> {
     vec![
         format!("SetActiveMover {ME:#x}"),
         "QueryTime".into(),
         "QueryNextMailTime".into(),
         "BattlefieldStatusRequest".into(),
-        "MeetingStoneStatusQuery".into(),
+        "Lfg(GetStatus)".into(),
+        "Lfg(PlayerLockInfo)".into(),
     ]
 }
 
-/// cmangos drops each of the five as "the player has not logged in yet" when it beats the load,
+/// cmangos drops each of them as "the player has not logged in yet" when it beats the load,
 /// so the login edge sends none, and the hourly clock resync (the clock never answered, so stale)
 /// waits for the create too.
 #[test]
@@ -92,13 +96,13 @@ fn the_login_edge_alone_sends_nothing() {
 }
 
 #[test]
-fn the_self_create_sends_the_five_in_the_reference_order() {
+fn the_self_create_sends_them_in_the_reference_order() {
     let (mut app, rx) = app();
     log_in(&mut app);
     app.update();
     self_create(&mut app);
     app.update();
-    assert_eq!(sent(&rx), the_five());
+    assert_eq!(sent(&rx), the_sends());
     // The same body on later frames is no new create.
     app.update();
     app.update();
@@ -108,24 +112,25 @@ fn the_self_create_sends_the_five_in_the_reference_order() {
 /// A cross-map worldport purges the streamed world and the server creates us afresh
 /// (`0x401bc0` rebuilds the object manager; the create takes the login's route).
 #[test]
-fn a_worldport_create_sends_the_five_again() {
+fn a_worldport_create_sends_them_again() {
     let (mut app, rx) = app();
     log_in(&mut app);
     let first = self_create(&mut app);
     app.update();
-    assert_eq!(sent(&rx), the_five());
+    assert_eq!(sent(&rx), the_sends());
 
     app.world_mut().despawn(first);
     app.update();
     assert_eq!(sent(&rx), Vec::<String>::new(), "nothing between the two");
     self_create(&mut app);
     app.update();
-    assert_eq!(sent(&rx), the_five());
+    assert_eq!(sent(&rx), the_sends());
 }
 
-/// The production schedule: the self-create edge, then the time, mail, battlefield and meeting
-/// stone sends (`0x4909a1`, `0x4909f6`, `0x4909fb`, `0x490a14`); and a `/reload` frame's sweep
-/// drops the stone's text before its cascade resets it (`0x490c20`, then `0x490168`).
+/// The production schedule: the self-create edge, then the time, mail, battlefield and dungeon
+/// finder sends (`CGGameUI::EnterWorld 0x528010` calls `CGLookingForGroup::EnterWorld` after the
+/// battlefield's); and a `/reload` frame's sweep drops the stone's text before its cascade resets
+/// it (`0x490c20`, then `0x490168`).
 #[test]
 fn the_client_schedules_the_sends_in_the_reference_order() {
     use crate::test_support::runs_before;
@@ -153,7 +158,7 @@ fn the_client_schedules_the_sends_in_the_reference_order() {
     assert!(runs_before(
         &mut app,
         crate::ui_battlefield::reset_on_world_enter,
-        crate::ui_dialog_verbs::meeting_stone_enter_world
+        crate::ui_lfg::lfg_enter_world
     ));
     assert!(runs_before(
         &mut app,

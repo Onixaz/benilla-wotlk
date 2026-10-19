@@ -434,6 +434,10 @@ pub(crate) struct EntityVisualsSet;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct DisplayBuildSet;
 
+/// [`evict_display_caches`]' set: a reader of the display caches orders after it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct DisplayEvictSet;
+
 /// Drop every display and skin cache on a map change; an entry rebuilds on its next use.
 fn evict_display_caches(
     mut changes: MessageReader<benilla_world::world_map::MapChange>,
@@ -612,7 +616,13 @@ impl Plugin for EntitiesPlugin {
         // of `0x60abe0`.
         .add_message::<live_display::DisplaySwapped>()
         .add_systems(Startup, setup_entities.after(AssetSet::Open))
-        .add_systems(Update, (evict_display_caches, scope_entity_art))
+        .add_systems(
+            Update,
+            (
+                evict_display_caches.in_set(DisplayEvictSet),
+                scope_entity_art,
+            ),
+        )
         // An arrival is stamped the frame it streams in, before its visual is asked for.
         .add_systems(
             Update,

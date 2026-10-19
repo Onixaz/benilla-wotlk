@@ -175,7 +175,7 @@ fn quest<'a>(
 /// The turn-in's coin string, 12340's `0x7e7d80`: each paid denomination through its
 /// `GOLD_AMOUNT`, `SILVER_AMOUNT` or `COPPER_AMOUNT` format (`0xaf4914`), gold first, joined by
 /// `", "` (`0x9fc494`).
-fn coin_text(copper: u32, get: &dyn Fn(&str) -> String) -> String {
+pub(crate) fn coin_text(copper: u32, get: &dyn Fn(&str) -> String) -> String {
     let (g, s, c) = (copper / 10000, copper / 100 % 100, copper % 100);
     [
         (g, "GOLD_AMOUNT"),

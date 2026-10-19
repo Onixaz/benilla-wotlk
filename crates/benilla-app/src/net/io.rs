@@ -38,6 +38,37 @@ pub(crate) static INBOUND_PACKETS: AtomicU64 = AtomicU64::new(0);
 static LAST_INBOUND_UNIX_MS: AtomicU64 = AtomicU64::new(0);
 
 /// Counts one packet, parsed or skipped: either proves the socket is alive.
+/// One dungeon finder send on the wire.
+fn lfg_send(w: &mut WorldWriter, request: benilla_ui::script::LfgRequest) -> anyhow::Result<()> {
+    use benilla_ui::script::LfgRequest as R;
+    match request {
+        R::GetStatus => w.lfg_get_status(),
+        R::PlayerLockInfo => w.lfg_player_lock_info_request(),
+        R::PartyLockInfo => w.lfg_party_lock_info_request(),
+        R::Join {
+            roles,
+            no_partial_clear,
+            achievements,
+            slots,
+            needs,
+            comment,
+        } => w.lfg_join(&benilla_protocol::messages::LfgJoin {
+            roles,
+            no_partial_clear,
+            achievements,
+            slots: &slots,
+            needs,
+            comment: &comment,
+        }),
+        R::Leave => w.lfg_leave(),
+        R::ProposalResult { id, accept } => w.lfg_proposal_result(id, accept),
+        R::SetRoles(roles) => w.lfg_set_roles(roles),
+        R::BootVote(vote) => w.lfg_set_boot_vote(vote),
+        R::Teleport(out) => w.lfg_teleport(out),
+        R::SetComment(comment) => w.lfg_set_comment(&comment),
+    }
+}
+
 fn note_inbound() {
     INBOUND_PACKETS.fetch_add(1, Ordering::Relaxed);
     LAST_INBOUND_UNIX_MS.store(unix_ms(), Ordering::Relaxed);
@@ -1514,7 +1545,7 @@ pub(super) fn writer_loop(
                     ClientCommand::LeaveBattlefield { map_id } => w.leave_battlefield(map_id),
                     ClientCommand::MeetingStoneJoin { go_guid } => w.meeting_stone_join(go_guid),
                     ClientCommand::MeetingStoneLeave => w.meeting_stone_leave(),
-                    ClientCommand::MeetingStoneStatusQuery => w.meeting_stone_status_query(),
+                    ClientCommand::Lfg(request) => lfg_send(w, request),
                     ClientCommand::TutorialFlag { id } => w.tutorial_flag(id),
                     ClientCommand::TutorialClear => w.tutorial_clear(),
                     ClientCommand::TutorialReset => w.tutorial_reset(),

@@ -197,7 +197,7 @@ mod lines;
 mod net;
 pub(crate) mod rewards;
 
-pub(crate) use lines::{QuestLine, QuestLines};
+pub(crate) use lines::{coin_text, QuestLine, QuestLines};
 
 pub(crate) struct UiQuestPlugin;
 

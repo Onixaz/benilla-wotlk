@@ -1046,6 +1046,8 @@ mod bag_ui_tests;
 #[cfg(test)]
 mod gossip_ui_tests;
 #[cfg(test)]
+mod lfd_ui_tests;
+#[cfg(test)]
 mod loot_ui_tests;
 #[cfg(test)]
 mod paperdoll_stats_tests;

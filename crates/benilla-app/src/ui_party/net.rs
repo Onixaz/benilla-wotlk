@@ -180,6 +180,7 @@ fn on_list(
         loot,
         difficulties,
         lfg_restricted,
+        ..
     } = ev
     {
         group.own_roles = own_roles;

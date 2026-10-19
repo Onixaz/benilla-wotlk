@@ -168,6 +168,8 @@ impl PluginGroup for GamePlugins {
             .add(crate::bindings::BindingsPlugin)
             .add(UiUnitPlugin)
             .add(UiPartyPlugin)
+            // After the party plugin, so its group-list handler reads the list the party applied.
+            .add(crate::ui_lfg::UiLfgPlugin)
             .add(UiDuelPlugin)
             .add(UiFocusPlugin)
             .add(UiBinderPlugin)
@@ -1223,7 +1225,7 @@ pub(crate) mod schedule_tests {
         ("ui_chat/recruitment.rs", "guild_recruitment_cascade", Because::SelfHealing,
          "`pending` is held until the zone mask and zone id are settled, which happens on the entry VM"),
         ("ui_dialog_verbs.rs", "feed_meeting_stone", Because::SelfHealing,
-         "the query waits for the world-enter cascade (`meeting_stone_enter_world`), our own create a server round trip past the login edge, and every `/reload` re-asks onto its new VM"),
+         "the text waits for the world-enter cascade's reset (`meeting_stone_enter_world`), our own create a server round trip past the login edge, and every `/reload` resets it onto its new VM"),
         ("ui_duel.rs", "feed_duel", Because::PlayerRoundTrip,
          "a duel exists only after someone's Duel cast, and the server ends any duel at logout; FINISHED/bounds ride `VmMemo<FedDuel>` (another player's act: coincidence-only residual)"),
         ("ui_follow.rs", "feed_follow", Because::MemoLatched,
