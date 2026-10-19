@@ -303,7 +303,8 @@ pub(super) fn read_role_check(r: &mut impl Read) -> io::Result<LfgRoleCheck> {
     let beginning = flag(r)?;
     let slots = read_slots(r)?;
     let n = read_u8(r)?;
-    let mut members = Vec::with_capacity(usize::from(n));
+    // A role check polls one group, a raid's 40 at most.
+    let mut members = Vec::with_capacity(capacity_hint(n, 40));
     for _ in 0..n {
         members.push(LfgRoleCheckMember {
             guid: read_u64_le(r)?,
@@ -391,7 +392,8 @@ fn read_items(r: &mut impl Read) -> io::Result<Vec<LfgRewardItem>> {
 /// `SMSG_LFG_PLAYER_INFO`: the random dungeons' rewards, then the lock block.
 pub(super) fn read_player_info(r: &mut impl Read) -> io::Result<LfgPacket> {
     let n = read_u8(r)?;
-    let mut rewards = Vec::with_capacity(usize::from(n));
+    // One entry per random or seasonal dungeon offered; the count is a byte.
+    let mut rewards = Vec::with_capacity(capacity_hint(n, 255));
     for _ in 0..n {
         rewards.push(LfgDungeonReward {
             slot: read_u32_le(r)?,
