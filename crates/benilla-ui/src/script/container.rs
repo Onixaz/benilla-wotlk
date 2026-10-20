@@ -810,27 +810,32 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })
         })?,
     )?;
-    // SetCursor(name) (`0x489490`): POINT, CAST, BUY and ATTACK are modes 1-4, each `*_ERROR` 20
-    // higher, and no argument is a `ResetCursor`. The stock UI calls it only from the unit-frame
-    // hover (`UnitFrame.lua:50`).
+    // SetCursor(name) (`0x5104a0`): a cursor name matched in any case sets its mode and answers 1,
+    // and nil is a `ResetCursor`. Stock `ShowInspectCursor` is `SetCursor("INSPECT_CURSOR")`
+    // (`UIParent.lua:2917-2919`). Deviation: a name whose mode benilla does not draw, or a custom
+    // cursor file, changes nothing and answers nil.
     lua.globals().set(
         "SetCursor",
         lua.create_function(|lua, name: Option<String>| {
-            let mode = match name.as_deref() {
-                None => None, // no-arg == ResetCursor
-                Some("POINT_CURSOR") => Some(UiCursorMode::Point),
-                Some("CAST_CURSOR") => Some(UiCursorMode::Cast),
-                Some("CAST_ERROR_CURSOR") => Some(UiCursorMode::CastError),
-                Some("BUY_CURSOR") => Some(UiCursorMode::Buy),
-                Some("BUY_ERROR_CURSOR") => Some(UiCursorMode::UnableBuy),
-                // Ignored: the reference loads an unknown name as a custom cursor bitmap, which is
-                // not built.
-                Some(_) => return Ok(()),
+            let Some(name) = name else {
+                let mut model = crate::script::model_mut_of(lua);
+                model.ui_cursor = None;
+                model.ui_cursor_dirty = true;
+                return Ok(mlua::MultiValue::new());
+            };
+            let mode = match name.to_ascii_uppercase().as_str() {
+                "POINT_CURSOR" => UiCursorMode::Point,
+                "CAST_CURSOR" => UiCursorMode::Cast,
+                "CAST_ERROR_CURSOR" => UiCursorMode::CastError,
+                "BUY_CURSOR" => UiCursorMode::Buy,
+                "BUY_ERROR_CURSOR" => UiCursorMode::UnableBuy,
+                "INSPECT_CURSOR" => UiCursorMode::Inspect,
+                _ => return Ok(mlua::MultiValue::from_vec(vec![Value::Nil])),
             };
             let mut model = crate::script::model_mut_of(lua);
-            model.ui_cursor = mode;
+            model.ui_cursor = Some(mode);
             model.ui_cursor_dirty = true;
-            Ok(())
+            Ok(mlua::MultiValue::from_vec(vec![Value::Integer(1)]))
         })?,
     )?;
     // ResetCursor() (`0x48ac70` → `0x523d30`): back to the base mode, whatever set the override.
