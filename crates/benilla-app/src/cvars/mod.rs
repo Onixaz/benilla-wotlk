@@ -2305,18 +2305,22 @@ mod tests {
             ),
         ];
         let app_src = crate::test_support::src_dir();
-        let ui_src = app_src
+        let crates = app_src
             .parent()
             .and_then(std::path::Path::parent)
-            .expect("crates/")
-            .join("benilla-ui")
-            .join("src");
+            .expect("crates/");
+        let ui_src = crates.join("benilla-ui").join("src");
         let mut code = String::new();
         for file in crate::test_support::rust_files(&app_src)
             .into_iter()
             .chain(crate::test_support::rust_files(&ui_src))
         {
-            let rel = file.to_string_lossy().replace('\\', "/");
+            // Relative to `crates/`, so a checkout's own directory name never matches.
+            let rel = file
+                .strip_prefix(crates)
+                .unwrap_or(&file)
+                .to_string_lossy()
+                .replace('\\', "/");
             if rel.contains("benilla-app/src/cvars/") || rel.contains("tests") {
                 continue;
             }
