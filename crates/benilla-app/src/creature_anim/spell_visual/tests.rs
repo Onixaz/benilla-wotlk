@@ -1879,10 +1879,10 @@ fn an_earn_arms_the_achievement_base_on_the_earning_player() {
     };
     let world = app.world_mut();
     world
-        .run_system_cached_with(super::arm_achievement_fx, earn(true))
+        .run_system_cached_with(super::super::net::on_achievement_earned, earn(true))
         .unwrap();
     world
-        .run_system_cached_with(super::arm_achievement_fx, earn(false))
+        .run_system_cached_with(super::super::net::on_achievement_earned, earn(false))
         .unwrap();
     let mut msgs = world.resource_mut::<Messages<SpellKitFx>>();
     let begins: Vec<_> = msgs

@@ -29,10 +29,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::PlaySpellVisual, on_play_spell_visual)
         .net_handler(K::AttackerState, on_attacker_state)
         .net_handler(K::EnvironmentalDamageLog, on_environmental_damage_log)
-        .net_handler(
-            K::AchievementEarned,
-            super::spell_visual::arm_achievement_fx,
-        );
+        .net_handler(K::AchievementEarned, on_achievement_earned);
 }
 
 fn on_attack_start(In(ev): In<SessionEvent>, mut commands: Commands, index: Res<GuidIndex>) {
@@ -388,5 +385,33 @@ fn mount_special(
         if let Some(&e) = index.0.get(&guid) {
             out.write(MountFlourish { unit: e });
         }
+    }
+}
+
+/// `SMSG_ACHIEVEMENT_EARNED`'s earn effect on the earning player, any player in view (`0x5b3020`).
+pub(super) fn on_achievement_earned(
+    In(ev): In<SessionEvent>,
+    index: Res<GuidIndex>,
+    db: Option<Res<crate::ui_achievement::Achievements>>,
+    visuals: Option<Res<super::spell_visual::SpellVisuals>>,
+    mut fx: MessageWriter<super::spell_visual::SpellKitFx>,
+) {
+    let SessionEvent::AchievementEarned(e) = ev else {
+        return;
+    };
+    let plays = super::spell_visual::earn_effect_plays(
+        db.as_deref().map(|d| &*d.0),
+        e.achievement,
+        e.silent,
+    );
+    let (true, Some(&entity), Some(visuals)) = (plays, index.0.get(&e.player), visuals) else {
+        return;
+    };
+    if let Some(begin) = super::spell_visual::achievement_earn_fx(&visuals, entity) {
+        debug!(
+            "anim: {:#x} earned {}, the earn effect plays ({entity})",
+            e.player, e.achievement
+        );
+        fx.write(begin);
     }
 }
