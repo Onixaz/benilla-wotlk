@@ -87,13 +87,11 @@ pub(crate) fn fire_leaving_world_on_worldport(
     script.fire_event("PLAYER_LEAVING_WORLD", Vec::new());
 }
 
-/// The feed's change-tracking memory: what we last told the VM, plus one server-side log-once.
+/// The feed's change-tracking memory: what we last told the VM.
 #[derive(Resource, Default)]
 struct UnitFeedState {
     /// What we last told the VM, dying with it, so a `/reload` re-fires everything as a login does.
     vm: crate::ui_script::VmMemo<UnitFeedMemo>,
-    /// Whether the sideless-template warning is logged; outside the VM memo, so `/reload` keeps it.
-    warned_sideless: bool,
 }
 
 /// The per-VM half of [`UnitFeedState`]: the event-trigger diffs.
@@ -1095,6 +1093,17 @@ pub(crate) fn faction_group(store: &ObjectStore, factions: Option<&Factions>) ->
         .map(str::to_string)
 }
 
+/// The character's race's `ChrRaces.dbc` template group mask `& 6`, `UnitFactionGroup("player")`'s
+/// side (`0x60d0f4`), with the catalog that names it.
+fn race_group_mask<'a>(
+    store: &ObjectStore,
+    factions: Option<&'a Factions>,
+) -> Option<(&'a benilla_formats::FactionCatalog, u32)> {
+    let catalog = factions?.catalog();
+    let template = catalog.race_template(store.0.unit_race()?)?;
+    Some((catalog, template.group_mask & 6))
+}
+
 /// `UnitFactionGroup`'s second return, the localized name stock shows as text.
 pub(crate) fn faction_group_localized(
     store: &ObjectStore,
@@ -1238,8 +1247,6 @@ fn feed_units(
     }
     let chr = tables.classes();
     let types = tables.types(&names);
-    // One reborrow, so the memo and `warned_sideless` borrow disjointly rather than alias.
-    let feed = &mut *feed;
     let (memo, vm_reset) = feed.vm.get_reset(&script);
     let edges = FieldEdges::collect(&mut stores.edges);
 
@@ -1304,27 +1311,15 @@ fn feed_units(
             crate::target::selection_color(store, factions.as_deref(), &reputations, Some(store));
         s.raid_target = group.raid_target_index(guid.0);
         s.group_roles = group.own_roles;
-        s.faction_group = faction_group(store, factions.as_deref());
-        s.faction_group_localized = faction_group_localized(store, factions.as_deref());
+        // `UnitFactionGroup("player")` (`0x60d0f4`) reads the character's race, not the live
+        // template, so GM mode's template 35 keeps the side.
+        let side = race_group_mask(store, factions.as_deref());
+        s.faction_group = side.and_then(|(c, m)| c.faction_group_internal_name(m).map(Into::into));
+        s.faction_group_localized = side.and_then(|(c, m)| c.faction_group_name(m).map(Into::into));
         // `GetGuildInfo`: the public guild fields (191/192) joined against the lazy guild cache.
         s.guild = crate::ui_guild::unit_guild(&store.0, &mut guild, &commands);
         s
     });
-    // Log once when our template names no side, almost always GM mode (vmangos forces template
-    // 35, group mask 0): every `UnitFactionGroup` surface loses its side, as in the reference.
-    if let Some(p) = &player {
-        let sideless = p.faction_group.is_none();
-        if sideless && !feed.warned_sideless {
-            warn!(
-                "faction: our own template names no side (usually GM mode — vmangos forces \
-                 template 35, group mask 0). Every UnitFactionGroup-derived surface loses its \
-                 side while this holds — the PvP flag icon stays hidden however flagged you are. \
-                 `.gm off` restores it. (The Honor tab's rank title is NOT one of these: its team \
-                 digit comes from your race, not your template.)"
-            );
-        }
-        feed.warned_sideless = sideless;
-    }
     // What the three snapshots below (target, target-of-target, NPC) read besides a descriptor.
     let held = held::HeldUnits {
         names: &names,
@@ -1527,6 +1522,8 @@ fn feed_units(
                         gain(|l| l.stats[4]),
                     ],
                 );
+                // The player's level watch (`0x6d66e0`): the battleground types' `canEnter` moved.
+                script.fire_event("PVPQUEUE_ANYWHERE_UPDATE_AVAILABLE", vec![]);
             }
         }
     }
@@ -3323,6 +3320,30 @@ mod tests {
         let mut s = UnitState::default();
         enrich_unit(&mut s, GUID ^ (1 << 24), &names, &store, None, None);
         assert_eq!(s.rank, 0, "an un-queried creature has no classification");
+    }
+
+    /// `UnitFactionGroup("player")` takes the side from the race (`0x60d0f4`), so GM mode's
+    /// template 35, which names none, keeps it; any other token reads the live template.
+    #[test]
+    fn the_player_faction_group_follows_the_race_under_a_gm_template() {
+        use benilla_protocol::messages::ObjectFields;
+
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let catalog = benilla_formats::load_faction_catalog(&mut chain).expect("Faction.dbc");
+        let factions = crate::target::Factions::from_catalog(catalog);
+        let side = |race: u32| {
+            let gm = ObjectStore(ObjectFields::from_pairs(&[(36, race), (35, 35)]));
+            assert_eq!(
+                faction_group(&gm, Some(&factions)),
+                None,
+                "template 35 has no side"
+            );
+            race_group_mask(&gm, Some(&factions))
+                .and_then(|(c, m)| c.faction_group_internal_name(m).map(str::to_string))
+        };
+        assert_eq!(side(3).as_deref(), Some("Alliance"), "a dwarf");
+        assert_eq!(side(2).as_deref(), Some("Horde"), "an orc");
     }
 
     /// The entry gate `0x612610` passes with no record; the record's `HIDE_FACTION_TOOLTIP`

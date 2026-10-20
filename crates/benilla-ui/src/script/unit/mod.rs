@@ -209,7 +209,7 @@ pub struct UnitState {
     pub faction_group_localized: Option<String>,
     /// The team digit of `PVP_RANK_<rank>_<team>` (`0x5efe00`): 0 Horde, 1 Alliance, -1 no side.
     /// It follows the race through `ChrRaces` and `FactionTemplate`, never the live template
-    /// `UnitFactionGroup` reads (`0x5166b8`), so a GM on template 35 keeps the rank title. The
+    /// `UnitFactionGroup` reads for any token but `"player"` (`0x60d167`), so a GM keeps it. The
     /// default 0 is the reference's answer for a unit it cannot resolve (`0x51a9af`).
     pub pvp_team: i8,
     /// `OBJECT_FIELD_GUID`, which `UnitIsUnit` and `UnitInParty` compare; 0 is unresolved, and

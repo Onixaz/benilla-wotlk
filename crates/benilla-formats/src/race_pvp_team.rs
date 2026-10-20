@@ -1,8 +1,8 @@
 //! `ChrRaces.dbc` → the PvP team digit, the second `%d` of `PVP_RANK_<rank>_<team>` (`0x5efe00`):
 //! race → `ChrRaces` column 2 (`[0xc0dee0]`) → that FactionTemplate's group mask (`[0xc0dd3c]`);
-//! mask & 4 is 0 (Horde), mask & 2 is 1 (Alliance), else -1. It reads the race, unlike
-//! `UnitFactionGroup`, whose live faction template (`0x5166b8`) loses its side under GM mode. The
-//! runtime uses a frozen copy, `ui_unit::race_pvp_team`; this loader backs the test that pins it.
+//! mask & 4 is 0 (Horde), mask & 2 is 1 (Alliance), else -1. It reads the race, not the live
+//! template, so GM mode keeps the side. The runtime uses a frozen copy, `ui_unit::race_pvp_team`;
+//! this loader backs the test that pins it.
 
 use std::collections::HashMap;
 

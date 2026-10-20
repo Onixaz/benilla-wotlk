@@ -226,6 +226,73 @@ fn queued(status: u32) -> BattlefieldFrame {
     frame
 }
 
+fn tabs_shown(s: &UiScript) -> [bool; 2] {
+    [1, 2].map(|i| {
+        s.eval::<bool>(&format!(
+            "return PVPParentFrameTab{i}:IsShown() and true or false"
+        ))
+        .unwrap()
+    })
+}
+
+/// Stock `PVPBattlegroundFrame_UpdateVisible` reads the type list at `PLAYER_ENTERING_WORLD` and
+/// hides both PvP window tabs when no type reads `canEnter`, so the rows are in before that event;
+/// the level watch's `PVPQUEUE_ANYWHERE_UPDATE_AVAILABLE` (`0x6d66e0`) reads them again.
+#[test]
+fn the_pvp_tabs_follow_the_types_the_player_can_enter() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = lock();
+    let (mut s, _failures) = super::layer_tests::production_load_with("pvp", false, "", |_| {});
+    s.set_unit(
+        "player",
+        Some(UnitState {
+            exists: true,
+            level: 80,
+            faction_group: Some("Alliance".into()),
+            ..Default::default()
+        }),
+    );
+    s.set_battlemaster_rows(battlemaster_rows());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    s.tick(0.0);
+    assert_eq!(tabs_shown(&s), [true, true], "rows in at world entry");
+
+    let (mut s, _failures) = super::layer_tests::production_load_with("pvp", false, "", |_| {});
+    s.set_unit(
+        "player",
+        Some(UnitState {
+            exists: true,
+            level: 9,
+            faction_group: Some("Alliance".into()),
+            ..Default::default()
+        }),
+    );
+    let low: Vec<BattlemasterRow> = battlemaster_rows()
+        .into_iter()
+        .map(|r| BattlemasterRow {
+            can_enter: false,
+            ..r
+        })
+        .collect();
+    s.set_battlemaster_rows(low);
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    s.tick(0.0);
+    assert_eq!(
+        tabs_shown(&s),
+        [false, false],
+        "no type the player can enter"
+    );
+    s.set_battlemaster_rows(battlemaster_rows());
+    s.fire_event(
+        "PVPQUEUE_ANYWHERE_UPDATE_AVAILABLE",
+        Vec::<ScriptValue>::new(),
+    );
+    s.tick(0.0);
+    assert_eq!(tabs_shown(&s), [true, true], "a level that enters one");
+    let errors = pvp_errors(s.take_errors());
+    assert!(errors.is_empty(), "{errors:#?}");
+}
+
 /// The Battlegrounds tab lists the rows the player can enter, joins the selection, and the queue
 /// that answers shows on the minimap icon, the row and, at status 2, the entry popup.
 #[test]

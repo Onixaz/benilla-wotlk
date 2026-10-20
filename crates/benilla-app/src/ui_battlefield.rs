@@ -479,6 +479,30 @@ fn port_refusal(
     None
 }
 
+/// `BattlemasterList.dbc` resolved for the player, before `PLAYER_ENTERING_WORLD`: the reference
+/// builds the type list at `InitializeGame` (`0x54e720`), and stock `PVPBattlegroundFrame.lua`
+/// hides the PvP window's tabs at that event when no type reads `canEnter`.
+fn feed_battlemaster_rows(
+    script: Option<NonSendMut<UiScript>>,
+    table: Option<Res<BattlemasterTable>>,
+    maps: Option<Res<MapCatalogRes>>,
+    states: Res<WorldStates>,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+) {
+    let (Some(mut script), Some(table), Some(store)) = (script, table, self_q.iter().next()) else {
+        return;
+    };
+    let level = store.0.unit_level().unwrap_or(0);
+    let maps = maps.as_deref().map(|m| &m.0);
+    script.set_battlemaster_rows(battlemaster_rows(
+        &table.0,
+        maps,
+        level,
+        side(store),
+        &states,
+    ));
+}
+
 /// The VM's pushes and the handlers' lines and events.
 #[allow(clippy::too_many_arguments)]
 fn feed_battlefield(
@@ -487,7 +511,6 @@ fn feed_battlefield(
     mut queue: ResMut<BattlefieldQueue>,
     table: Option<Res<BattlemasterTable>>,
     maps: Option<Res<MapCatalogRes>>,
-    states: Res<WorldStates>,
     areas: Option<Res<crate::area::AreaTableRes>>,
     area: Option<Res<benilla_world::terrain_stream::CurrentArea>>,
     map: Option<Res<benilla_world::world_map::CurrentMap>>,
@@ -505,11 +528,6 @@ fn feed_battlefield(
     let table = table.as_deref().map(|t| &t.0);
     let maps = maps.as_deref().map(|m| &m.0);
     let store = self_q.iter().next();
-
-    if let (Some(table), Some(store)) = (table, store) {
-        let level = store.0.unit_level().unwrap_or(0);
-        script.set_battlemaster_rows(battlemaster_rows(table, maps, level, side(store), &states));
-    }
 
     for list in std::mem::take(&mut state.lists) {
         script.apply_battlefield_list(BattlefieldListPush {
@@ -868,6 +886,9 @@ impl Plugin for BattlefieldPlugin {
                     feed_battlefield
                         .after(crate::ui_battlefield_score::feed_battlefield_score)
                         .in_set(UiFeed),
+                    feed_battlemaster_rows
+                        .in_set(UiFeed)
+                        .before(crate::ui_unit::EnterWorldFeed),
                     drain_battlefield.after(UiInput),
                 ),
             );
