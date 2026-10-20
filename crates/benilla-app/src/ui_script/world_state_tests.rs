@@ -138,7 +138,7 @@ fn leaving_the_zone_clears_the_readout() {
     );
 }
 
-/// `Icon` and `DynamicIcon` (`0x4c5a70`) feed a 42x42 slot and a 32x32 button off the row's right;
+/// `Icon` and `DynamicIcon` (`0x548d40`) feed a 42x42 slot and a 32x32 button off the row's right;
 /// only state 2, flag taken, lights the button (`WorldStateFrame.lua:86`).
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
@@ -270,14 +270,13 @@ fn a_capture_point_row_is_a_bar_not_a_line_of_text() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// An out-of-range index answers the single number 0 and a non-number argument raises
-/// (`0x4c5a40`, `0x4c5a70`).
+/// `0x548d40`: eleven values, `uiType` first; an out-of-range index answers the single number 0
+/// and a non-number argument raises. The binding reads no install.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bindings_answer_the_reference_shape() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = harness();
+    let mut s = UiScript::new().unwrap();
     s.set_world_state_ui(vec![WorldStateUiView {
+        ui_type: 3,
         ui_state: 7,
         text: "Towers Controlled: 3".into(),
         icon: "Interface\\WorldStateFrame\\AllianceTower".into(),
@@ -289,15 +288,15 @@ fn the_bindings_answer_the_reference_shape() {
     assert_eq!(s.eval::<i64>("return GetNumWorldStateUI()").unwrap(), 1);
     assert_eq!(
         s.eval::<String>(
-            "local a,b,c,d,e,f,g,h,i,j = GetWorldStateUIInfo(1)\n\
-             return a..'|'..b..'|'..c..'|'..d..'|'..e..'|'..f..'|'..g..'|'..h..'|'..i..'|'..j"
+            "local a,b,c,d,e,f,g,h,i,j,k = GetWorldStateUIInfo(1)\n\
+             return a..'|'..b..'|'..c..'|'..d..'|'..e..'|'..f..'|'..g..'|'..h..'|'..i..'|'..j..'|'..k"
         )
         .unwrap(),
-        "7|Towers Controlled: 3|Interface\\WorldStateFrame\\AllianceTower||\
+        "3|7|Towers Controlled: 3|Interface\\WorldStateFrame\\AllianceTower||\
          Alliance Towers Controlled|||1|2|3",
-        "empty columns are empty strings, never nil"
+        "uiType, state, then the strings; empty columns are empty strings, never nil"
     );
-    assert_eq!(s.arity("GetWorldStateUIInfo(1)").unwrap(), 10);
+    assert_eq!(s.arity("GetWorldStateUIInfo(1)").unwrap(), 11);
 
     assert_eq!(s.arity("GetWorldStateUIInfo(2)").unwrap(), 1);
     assert_eq!(s.eval::<i64>("return GetWorldStateUIInfo(2)").unwrap(), 0);
@@ -314,7 +313,72 @@ fn the_bindings_answer_the_reference_shape() {
     // A numeric string coerces, as `lua_isnumber` does.
     assert_eq!(
         s.eval::<i64>("return (GetWorldStateUIInfo('1'))").unwrap(),
-        7
+        3
+    );
+}
+
+/// The stock 3.3.5a `WorldStateFrame.lua` reads `uiType, state, text, ...` (`:121`) and draws a
+/// row whose state is above 0 (`:123`): a battleground's always-up rows reach the screen.
+#[test]
+fn the_3_3_5a_readout_draws_a_battleground_row() {
+    benilla_formats::wow_data_or_skip!();
+    let mut s = UiScript::new().unwrap();
+    s.set_screen_size(1024.0, 768.0);
+    s.register_cvars(crate::cvars::registered_pairs());
+    let mut errors = Vec::new();
+    for entry in super::test_ui::production_order(&[&[
+        r"Interface\FrameXML\GlobalStrings.lua",
+        r"Interface\FrameXML\Fonts.xml",
+        r"Interface\FrameXML\BasicControls.xml",
+        r"Interface\FrameXML\UIParent.xml",
+        r"Interface\FrameXML\GameTooltip.xml",
+        r"Interface\FrameXML\UIPanelTemplates.lua",
+        r"Interface\FrameXML\UIPanelTemplates.xml",
+        r"Interface\FrameXML\ChatFrame.lua",
+        r"Interface\FrameXML\UIDropDownMenu.xml",
+        r"Interface\FrameXML\WorldStateFrame.xml",
+    ]]) {
+        let path = entry.replace('\\', "/");
+        let bytes = super::test_ui::read(&path).unwrap_or_else(|| panic!("{entry}: not found"));
+        if path.to_ascii_lowercase().ends_with(".lua") {
+            if let Err(e) = s.run_chunk_named(&bytes, &format!("@{entry}")) {
+                errors.push(e.to_string());
+            }
+            continue;
+        }
+        let doc = benilla_ui::framexml::parse(&benilla_ui::source::decode(&bytes))
+            .unwrap_or_else(|e| panic!("{entry}: {e}"));
+        let provider = |req: &str| super::test_ui::read(req);
+        errors.extend(benilla_ui::loader::load_in(&s, &doc, &path, &provider).errors);
+    }
+    errors.extend(s.take_errors());
+    s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
+    errors.extend(s.take_errors());
+
+    // An Arathi Basin-shaped row: type 0, no state variable, so state 1.
+    push(
+        &mut s,
+        vec![WorldStateUiView {
+            ui_type: 0,
+            ui_state: 1,
+            text: "Bases: 2  Resources: 1100/1600".into(),
+            icon: "Interface\\TargetingFrame\\UI-PVP-Alliance".into(),
+            tooltip: "Alliance".into(),
+            ..Default::default()
+        }],
+    );
+    errors.extend(s.take_errors());
+    let ours: Vec<_> = errors.iter().filter(|e| e.contains("WorldState")).collect();
+    assert!(ours.is_empty(), "WorldStateFrame errors: {ours:?}");
+    assert!(
+        texts(&mut s).contains(&"Bases: 2  Resources: 1100/1600".to_string()),
+        "the row's text is on screen: {:?}",
+        texts(&mut s)
+    );
+    assert!(
+        s.eval::<bool>("return AlwaysUpFrame1 ~= nil and AlwaysUpFrame1:IsShown()")
+            .unwrap(),
+        "the first always-up frame is shown"
     );
 }
 

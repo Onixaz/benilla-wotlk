@@ -1,5 +1,5 @@
 //! `WorldStateUI.dbc`, the rows behind the always-up PvP readout and the battleground scoreboard's
-//! columns (`GetNumWorldStateUI`, `GetWorldStateUIInfo` `0x4c5a70`). It is client-only: vmangos
+//! columns (`GetNumWorldStateUI`, `GetWorldStateUIInfo` `0x548d40`). It is client-only: vmangos
 //! sends only world-state values, and which are shown, where and with what label is this table's.
 //!
 //! Layout: 63 fields of 252 bytes in 12340, each localized string seventeen dwords.

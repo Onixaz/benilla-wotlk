@@ -1,15 +1,17 @@
 //! `GetNumWorldStateUI` and `GetWorldStateUIInfo`, behind the always-up PvP readout, over rows the
-//! app resolves; the reference re-walks an array of DBC row ids (`0xb71e7c`) on demand. The info
-//! is ten values (`0x4c5a70`), with no `uiType` or `hidden`, which came later.
+//! app resolves; the reference re-walks the admitted DBC row ids on demand. The info is eleven
+//! values, `uiType` first (`0x548d40`, `mov eax,0xb` at `0x548f22`).
 
 use mlua::{Lua, MultiValue, Value};
 
-/// One row of the readout: the ten values `GetWorldStateUIInfo` returns, in order.
+/// One row of the readout: the eleven values `GetWorldStateUIInfo` returns, in order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WorldStateUiView {
-    /// `uiState`: the row's `StateVariable` world state, or 1 (on) when it has none (`0x4c5ad8`).
+    /// `uiType`: the row's `WorldStateUI.dbc` `Type`, 0, 1 (world PvP) or 3.
+    pub ui_type: u32,
+    /// `state`: the row's `StateVariable` world state, 0 when unknown, or 1 (on) when it has none.
     pub ui_state: i32,
-    /// The label, macro-expanded, the only expanded string of the ten.
+    /// The label, macro-expanded, the only expanded string of the eleven.
     pub text: String,
     /// The static icon's texture path, or `""`.
     pub icon: String,
@@ -47,7 +49,7 @@ impl super::UiScript {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // `0x4c5a40`: the count, no validation, always one return.
+    // `0x548720`: the count, no validation, always one return.
     g.set(
         "GetNumWorldStateUI",
         lua.create_function(|lua, ()| {
@@ -59,7 +61,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // A non-number raises (the `luaL_error` longjmps), an out-of-range index answers the single
-    // number 0 (`0x4c5be5`), and no string is ever nil: an empty DBC column reads `""`.
+    // number 0 (`0x548d40`), and no string is ever nil: an empty DBC column reads `""`.
     g.set(
         "GetWorldStateUIInfo",
         lua.create_function(|lua, index: Value| {
@@ -88,6 +90,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let s = |v: &str| -> mlua::Result<Value> { Ok(Value::String(lua.create_string(v)?)) };
             Ok(MultiValue::from_vec(vec![
+                Value::Integer(i64::from(r.ui_type)),
                 Value::Integer(i64::from(r.ui_state)),
                 s(&r.text)?,
                 s(&r.icon)?,

@@ -1055,7 +1055,7 @@ fn census(
             local n = GetNumWorldStateUI()
             local out = tostring(n)
             for i = 1, n do
-                local ui, state, hidden, text, icon = GetWorldStateUIInfo(i)
+                local ui, state, text, icon = GetWorldStateUIInfo(i)
                 out = out .. " | " .. tostring(state) .. " '" .. tostring(text) .. "' icon=" .. tostring(icon)
             end
             return out

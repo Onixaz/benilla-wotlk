@@ -112,11 +112,12 @@ fn admits(row: &WorldStateUiRow, (map, zone, area): (u32, u32, u32)) -> bool {
     map_ok && area_ok && phase_ok && matches!(row.ui_type, 0 | 1 | 3)
 }
 
-/// `GetWorldStateUIInfo` for one row (`0x4c5a70`): only the text is expanded, and the extended
+/// `GetWorldStateUIInfo` for one row (`0x548d40`): only the text is expanded, and the extended
 /// ids answer their states' values.
 fn resolve(row: &WorldStateUiRow, states: &WorldStates) -> WorldStateUiView {
     WorldStateUiView {
-        // No `StateVariable` answers 1 (`0x4c5ad8`).
+        ui_type: row.ui_type,
+        // No `StateVariable` answers 1.
         ui_state: match row.state_variable {
             0 => 1,
             id => states.get(id),
