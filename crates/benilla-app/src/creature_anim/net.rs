@@ -28,7 +28,11 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::Emote, on_emote)
         .net_handler(K::PlaySpellVisual, on_play_spell_visual)
         .net_handler(K::AttackerState, on_attacker_state)
-        .net_handler(K::EnvironmentalDamageLog, on_environmental_damage_log);
+        .net_handler(K::EnvironmentalDamageLog, on_environmental_damage_log)
+        .net_handler(
+            K::AchievementEarned,
+            super::spell_visual::arm_achievement_fx,
+        );
 }
 
 fn on_attack_start(In(ev): In<SessionEvent>, mut commands: Commands, index: Res<GuidIndex>) {

@@ -10,12 +10,12 @@ use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy::prelude::*;
 
 use benilla_formats::{SpellVisualCatalog, VisualKit, VisualStages};
-use benilla_protocol::EntityKind;
+use benilla_protocol::{EntityKind, SessionEvent};
 
 use crate::aura_visual::AuraProc;
 use crate::entities::ItemDisplays;
 use crate::items::{ItemObject, Items};
-use crate::net::{FieldChanged, NetCommands, NetEntity, ObjectStore};
+use crate::net::{FieldChanged, GuidIndex, NetCommands, NetEntity, ObjectStore};
 use crate::unit_auras::UnitAuras;
 use benilla_assets::{LockRecover, WorldAssets};
 
@@ -1286,6 +1286,64 @@ pub(super) fn arm_mount_poof_fx(
             }],
         });
     }
+}
+
+/// The achievement earn effect, hardcoded index 0xb (`0x5b310b`, name at `0xa329a8`).
+const ACHIEVEMENT_EFFECT: &str = "HARDCODED Achievement Base";
+
+/// Whether `SMSG_ACHIEVEMENT_EARNED` plays the earn effect (`0x5b30c5`-`0x5b30d3`): not silent,
+/// a known row, and the row's flag `0x4` clear. Any player in view, not only ours.
+pub(super) fn earn_effect_plays(
+    db: Option<&benilla_ui::script::AchievementDb>,
+    achievement: u32,
+    silent: bool,
+) -> bool {
+    !silent
+        && db
+            .and_then(|d| d.get(achievement))
+            .is_some_and(|a| a.flags & 0x4 == 0)
+}
+
+/// The earn effect on the earning player (`0x5b30d5`-`0x5b311e`): a one-shot at `0x13`
+/// (`[0xa32b20]`), replacing an earlier one through the same-slot replace
+/// (`DestroyMatchingEffects` `0x6f8a60`).
+pub(super) fn arm_achievement_fx(
+    In(ev): In<SessionEvent>,
+    index: Res<GuidIndex>,
+    db: Option<Res<crate::ui_achievement::Achievements>>,
+    visuals: Option<Res<SpellVisuals>>,
+    mut fx: MessageWriter<SpellKitFx>,
+) {
+    let SessionEvent::AchievementEarned(e) = ev else {
+        return;
+    };
+    if !earn_effect_plays(db.as_deref().map(|d| &*d.0), e.achievement, e.silent) {
+        return;
+    }
+    let (Some(&entity), Some((effect, path))) = (
+        index.0.get(&e.player),
+        visuals
+            .as_ref()
+            .and_then(|v| v.0.hardcoded_effect(ACHIEVEMENT_EFFECT)),
+    ) else {
+        return;
+    };
+    debug!(
+        "anim: {:#x} earned {}, the earn effect plays ({entity})",
+        e.player, e.achievement
+    );
+    fx.write(SpellKitFx::Begin {
+        entity,
+        spell_id: 0,
+        persistent: false,
+        class: FxClass::Hold,
+        stage: FxStage::OneShot,
+        effects: vec![FxSlot {
+            tag: HARDCODED_FX_ATTACH,
+            effect,
+            path: path.to_string(),
+        }],
+    });
 }
 
 /// The pending-morph latch, the reference's `[unit+0xd54]`: armed by `0x5ff0c0` on every aura add

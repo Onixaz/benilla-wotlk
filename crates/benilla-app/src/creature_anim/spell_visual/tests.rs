@@ -1818,3 +1818,84 @@ fn a_detection_aura_s_state_kit_follows_our_own_aura_vision() {
         "reaped when the vision goes"
     );
 }
+
+/// `SMSG_ACHIEVEMENT_EARNED`'s effect gates (`0x5b30c5`-`0x5b30d3`): silent, an unknown row, and a
+/// row with flag `0x4` each skip it.
+#[test]
+fn the_earn_effect_plays_only_for_a_loud_known_row_without_flag_4() {
+    use benilla_ui::script::{AchievementDb, AchievementRow};
+    let row = |id, flags| AchievementRow {
+        id,
+        flags,
+        ..Default::default()
+    };
+    let db = AchievementDb::new(vec![row(6, 0), row(7, 0x4)], Vec::new(), Vec::new());
+    assert!(super::earn_effect_plays(Some(&db), 6, false));
+    assert!(!super::earn_effect_plays(Some(&db), 6, true), "silent");
+    assert!(!super::earn_effect_plays(Some(&db), 7, false), "flag 0x4");
+    assert!(
+        !super::earn_effect_plays(Some(&db), 99, false),
+        "unknown row"
+    );
+    assert!(!super::earn_effect_plays(None, 6, false), "no tables");
+}
+
+/// Any player's earn arms the one-shot at attachment `0x13` on that player's entity.
+#[test]
+fn an_earn_arms_the_achievement_base_on_the_earning_player() {
+    use benilla_protocol::messages::AchievementEarned;
+    use benilla_ui::script::{AchievementDb, AchievementRow};
+    const FX: u32 = 4000;
+    const PATH: &str = "Spells/AchievementBase.mdx";
+    let mut app = App::new();
+    app.add_message::<SpellKitFx>();
+    app.insert_resource(SpellVisuals(
+        SpellVisualCatalog::from_tables(HashMap::new(), HashMap::new()).with_hardcoded(
+            "HARDCODED Achievement Base",
+            FX,
+            PATH,
+        ),
+    ));
+    let db = AchievementDb::new(
+        vec![AchievementRow {
+            id: 6,
+            ..Default::default()
+        }],
+        Vec::new(),
+        Vec::new(),
+    );
+    app.insert_resource(crate::ui_achievement::Achievements(std::sync::Arc::new(db)));
+    let unit = app.world_mut().spawn_empty().id();
+    let mut index = crate::net::GuidIndex::default();
+    index.0.insert(0x55, unit);
+    app.insert_resource(index);
+    let earn = |silent| {
+        benilla_protocol::SessionEvent::AchievementEarned(AchievementEarned {
+            player: 0x55,
+            achievement: 6,
+            date: 0,
+            silent,
+        })
+    };
+    let world = app.world_mut();
+    world
+        .run_system_cached_with(super::arm_achievement_fx, earn(true))
+        .unwrap();
+    world
+        .run_system_cached_with(super::arm_achievement_fx, earn(false))
+        .unwrap();
+    let mut msgs = world.resource_mut::<Messages<SpellKitFx>>();
+    let begins: Vec<_> = msgs
+        .drain()
+        .filter_map(|m| match m {
+            SpellKitFx::Begin {
+                entity, effects, ..
+            } => Some((entity, effects)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(begins.len(), 1, "the silent earn plays nothing");
+    assert_eq!(begins[0].0, unit);
+    assert_eq!(begins[0].1[0].tag, 0x13);
+    assert_eq!(begins[0].1[0].effect, FX);
+}
