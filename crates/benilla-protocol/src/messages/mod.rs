@@ -5,6 +5,7 @@ mod achievement;
 mod action_bar;
 pub mod addons;
 mod area_trigger;
+mod arena_team;
 mod attack;
 mod auction;
 mod aura;
@@ -75,6 +76,10 @@ pub use addons::{
     STOCK_SECURE_ADDONS_WOTLK,
 };
 pub use area_trigger::area_trigger;
+pub use arena_team::{
+    arena_team_named, ArenaTeamCommandResult, ArenaTeamEvent, ArenaTeamMember, ArenaTeamRecord,
+    ArenaTeamRoster, ArenaTeamStats,
+};
 pub use attack::{attack_swing, hit_info, AttackSwingError, AttackerState};
 pub use auction::{
     auction_action, auction_duration, auction_error, auction_filter, auction_hello,
@@ -92,9 +97,11 @@ pub use bank::{
     autobank_item, autostore_bank_item, bank_slot_result, banker_activate, buy_bank_slot,
 };
 pub use battlefield::{
-    battlefield_join, battlefield_list, battlefield_port, battlemaster_join, leave_battlefield,
-    BattlefieldList, BattlefieldPosition, BattlefieldPositions, BattlefieldStatus, PvpLogData,
-    PvpLogRow, BATTLEFIELD_POSITIONS_MAX,
+    battlefield_list, battlefield_port, battlemaster_join, battlemaster_join_arena,
+    bf_mgr_response, leave_battlefield, queue_bg_type, queue_team_size, BattlefieldActive,
+    BattlefieldInvite, BattlefieldList, BattlefieldMgrNotice, BattlefieldPosition,
+    BattlefieldPositions, BattlefieldReward, BattlefieldStatus, GroupJoinedBattleground,
+    PvpLogData, PvpLogRow, PvpLogTeam, BATTLEFIELD_POSITIONS_MAX,
 };
 pub use binder::{binder_activate, PlayerBound};
 pub use channel::{channel_notice, ChannelNoticeTail, ChannelNotify};
@@ -216,16 +223,17 @@ pub use pet::{
 };
 pub use petition::{
     offer_petition, petition_buy, petition_decline, petition_query, petition_rename,
-    petition_result, petition_show_list, petition_show_signatures, petition_sign, turn_in_petition,
-    PetitionQueryResponse, PetitionRename, PetitionShowList, PetitionShowListEntry,
-    PetitionShowSignatures, PetitionSignResults, PetitionSignature, CHARTER_DISPLAY_ID,
-    CHARTER_ITEM_ENTRY, CHARTER_NAME_MAX_LENGTH, ITEM_FLAG_CHARTER, MAX_PETITION_SIGNATURES,
+    petition_result, petition_show_list, petition_show_signatures, petition_sign,
+    turn_in_arena_petition, turn_in_petition, ArenaBanner, PetitionQueryResponse, PetitionRename,
+    PetitionShowList, PetitionShowListEntry, PetitionShowSignatures, PetitionSignResults,
+    PetitionSignature, CHARTER_DISPLAY_ID, CHARTER_ITEM_ENTRY, CHARTER_NAME_MAX_LENGTH,
+    ITEM_FLAG_CHARTER, MAX_PETITION_SIGNATURES, PETITION_TYPE_ARENA,
 };
 pub use pose::{set_sheathed, stand_state_change};
 pub use progression::{
     learn_talent, talent_wipe_confirm, ExplorationXp, LevelUpInfo, TalentWipeConfirm, XpGain,
 };
-pub use pvp::{inspect_honor_stats, InspectHonorStats, PvpCredit};
+pub use pvp::{inspect_honor_stats, InspectArenaTeam, InspectHonorStats, PvpCredit};
 pub use quest::{
     dialog_status, push_quest_to_party, quest_confirm_accept, quest_flags, quest_push_result,
     quest_query, questgiver_accept_quest, questgiver_choose_reward, questgiver_complete_quest,

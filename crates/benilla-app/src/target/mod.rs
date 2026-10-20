@@ -52,7 +52,7 @@ pub(crate) struct ReactionInputs<'w> {
 }
 
 pub(crate) use cursor_mode::{
-    corpse_mouseover_eligible, CursorKind, WorldCursor, GO_TYPE_GENERIC, SERVICE_RANGE_SQ,
+    corpse_mouseover_eligible, CursorKind, WorldCursor, SERVICE_RANGE_SQ,
 };
 /// `GO_FLAG_LOCKED`, the bit the lock chain and the GameObject tooltip's "Locked" line read.
 pub(crate) use lock::GO_FLAG_LOCKED;

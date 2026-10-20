@@ -1,14 +1,11 @@
-//! The petition family (opcodes `0x1BB`-`0x1C7`, `0x2C1`): the guild-charter flow. vmangos
-//! registers `CMSG_GUILD_CREATE` as `STATUS_NEVER`, so a guild is founded only by buying a
-//! charter, collecting nine signatures and turning it in. The charter item's enchantment slot 0
-//! holds the petition id (`PetitionsHandler.cpp:126`); the reference tooltip skips enchant lines
-//! on a charter (`0x52c9ee`), so nothing may read that slot as an enchantment.
+//! The petition family (opcodes `0x1BB`-`0x1C7`, `0x2C1`): the guild and arena-team charters. A
+//! team or guild is founded by buying a charter, collecting its signatures and turning it in. The
+//! charter item's enchantment slot 0 holds the petition id (`0x6dd680`); the reference tooltip
+//! skips enchant lines on a charter, so nothing may read that slot as an enchantment.
 
 use std::io::{self, Read};
 
-use crate::wire::{
-    capacity_hint, read_cstring, read_i32_le, read_u16_le, read_u32_le, read_u64_le, read_u8,
-};
+use crate::wire::{capacity_hint, read_cstring, read_u16_le, read_u32_le, read_u64_le, read_u8};
 
 /// The guild charter's item entry, vmangos `GUILD_CHARTER` (`PetitionsHandler.cpp:37`).
 pub const CHARTER_ITEM_ENTRY: u32 = 5863;
@@ -46,23 +43,26 @@ pub mod petition_result {
     pub const NEED_MORE: u32 = 4;
     /// Not on the same realm (`ERR_PETITION_NOT_SAME_SERVER`); vmangos never sends it.
     pub const NOT_SERVER: u32 = 5;
+    /// Turn-in only: the charter is not ours to turn in (`ERR_GUILD_PERMISSIONS`, `0x6cf203`).
+    pub const NOT_AUTHORIZED: u32 = 11;
 }
 
-/// One row of `SMSG_PETITION_SHOWLIST`: a charter the NPC sells. vmangos always sends exactly one
-/// (`Petition.h:176`: "only 1 element is supported in the client").
+/// One row of `SMSG_PETITION_SHOWLIST` (`GuildPetitionInfo`, `0x18` bytes): a charter the NPC
+/// sells. A guild registrar sends one, an arena registrar the three team sizes.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PetitionShowListEntry {
-    /// Row index, 1-based (`PetitionsHandler.cpp:496`).
+    /// Row index, 1-based; `CMSG_PETITION_BUY` echoes it as the charter's `muid`.
     pub index: u32,
-    /// The item entry sold, [`CHARTER_ITEM_ENTRY`] in practice.
+    /// The item entry sold.
     pub charter_entry: u32,
-    /// Its display id, [`CHARTER_DISPLAY_ID`] in practice.
+    /// Its display id, the icon `GetPetitionItemInfo` builds.
     pub charter_display_id: u32,
-    /// Price in copper, an `int32` on the wire (vmangos charges 1000, `PetitionsHandler.cpp:38`).
-    pub charter_cost: i32,
-    /// vmangos sends 1; its header says a row "must be `&1` to show it in the UI"
-    /// (`Petition.h:169`).
-    pub entry_flags: i32,
+    /// Price in copper.
+    pub charter_cost: u32,
+    /// `m_charterType`: 0 a guild charter; 12340's buy refusals test 1 for an arena one.
+    pub charter_type: u32,
+    /// `m_requiredSignatures`; an arena row's is the team size less one.
+    pub required_signatures: u32,
 }
 
 /// `SMSG_PETITION_SHOWLIST`: the registrar NPC's charter list, which opens its window.
@@ -73,21 +73,20 @@ pub struct PetitionShowList {
     pub entries: Vec<PetitionShowListEntry>,
 }
 
-/// Read `SMSG_PETITION_SHOWLIST` (vmangos `Packets/Petition.cpp:115-127`): `u64 npc, u8 count`,
-/// then per row `u32 index, u32 entry, u32 displayId, i32 cost, i32 flags`. The request handler
-/// sends it only for an NPC in range with `UNIT_NPC_FLAG_PETITIONER` (`PetitionsHandler.cpp:484`).
+/// Read `SMSG_PETITION_SHOWLIST` (`0x6d69f0`): `u64 npc, u8 count`, then six `u32` per row.
+/// The client keeps ten rows; the rest are read and dropped there.
 pub(super) fn read_petition_show_list(r: &mut impl Read) -> io::Result<PetitionShowList> {
     let npc = read_u64_le(r)?;
     let count = read_u8(r)?;
-    // vmangos sends exactly one charter (`PetitionsHandler.cpp:504`); 8 is generous.
-    let mut entries = Vec::with_capacity(capacity_hint(count, 8));
+    let mut entries = Vec::with_capacity(capacity_hint(count, 10));
     for _ in 0..count {
         entries.push(PetitionShowListEntry {
             index: read_u32_le(r)?,
             charter_entry: read_u32_le(r)?,
             charter_display_id: read_u32_le(r)?,
-            charter_cost: read_i32_le(r)?,
-            entry_flags: read_i32_le(r)?,
+            charter_cost: read_u32_le(r)?,
+            charter_type: read_u32_le(r)?,
+            required_signatures: read_u32_le(r)?,
         });
     }
     Ok(PetitionShowList { npc, entries })
@@ -161,89 +160,76 @@ pub(super) fn read_petition_sign_results(r: &mut impl Read) -> io::Result<Petiti
     })
 }
 
-/// `SMSG_PETITION_QUERY_RESPONSE`: a petition's record, keyed by petition id.
+/// `SMSG_PETITION_QUERY_RESPONSE`: a petition's record, `CGPetition` (`0x13c4` bytes in the
+/// client), keyed by petition id.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PetitionQueryResponse {
     /// The petition id we asked about.
     pub petition_id: u32,
     /// The charter owner's character guid.
     pub owner: u64,
-    /// The proposed guild's name, carried by no other packet.
+    /// The proposed guild or team's name.
     pub name: String,
-    /// Free text on the charter; empty, as vmangos never sets it (`PetitionsHandler.cpp:177-183`).
+    /// Free text on the charter.
     pub body_text: String,
-    /// vmangos sends 1 (`PetitionsHandler.cpp:181`); meaning unknown.
-    pub flags: u32,
-    /// Signatures required, which the reference's Request-Signature button tests; vmangos sends 9
-    /// even when its `MinPetitionSigns` is lower (`PetitionsHandler.cpp:182`).
+    /// Signatures required (`+0x1110`): `GetPetitionInfo`'s seventh return; an arena charter's is
+    /// the team size less one.
     pub min_signatures: u32,
-    /// Signatures that fit; 9 on vmangos (`PetitionsHandler.cpp:183`).
+    /// Signatures that fit (`+0x1114`), `GetPetitionInfo`'s fourth.
     pub max_signatures: u32,
-    /// Deadline timestamp, 0 on vmangos.
     pub deadline: u32,
-    /// Creation timestamp, 0 on vmangos.
-    pub creation: u32,
-    /// Restricting guild id, 0 on vmangos.
+    pub issue_date: u32,
     pub allowed_guild_id: u32,
-    /// Class mask restriction, 0 on vmangos.
     pub allowed_classes: u32,
-    /// Race mask restriction, 0 on vmangos.
     pub allowed_races: u32,
-    /// Gender restriction: a `u16`, the packet's one odd width (`Packets/Petition.cpp:95`).
-    pub allowed_gender: u16,
-    /// Minimum level, 0 on vmangos.
+    /// The record's one `u16`.
+    pub allowed_genders: u16,
+    /// The level window `OfferPetition` checks a target against (`0x5cf220`); 0 for none.
     pub allowed_min_level: u32,
-    /// Maximum level, 0 on vmangos.
     pub allowed_max_level: u32,
-    /// The petition's multiple-choice options; empty on vmangos.
+    /// The choice count; ten strings follow whatever it says.
+    pub num_choices: u32,
     pub choices: Vec<String>,
-    /// The pre-selected choice, 0 on vmangos.
-    pub default_choice: u32,
+    /// The vendor row the charter was bought from.
+    pub muid: u32,
+    /// `+0x13bc`: 0 a guild charter, 1 an arena charter, else another petition.
+    pub static_type: u32,
 }
 
-/// Read `SMSG_PETITION_QUERY_RESPONSE` (vmangos `Packets/Petition.cpp:81-102`): the fields in
-/// struct order, the choices as a `u32` count of C strings.
+/// The arena charter's `static_type` (`GetPetitionInfo` answers `"arena"`).
+pub const PETITION_TYPE_ARENA: u32 = 1;
+
+/// Read `SMSG_PETITION_QUERY_RESPONSE` (`CGPetition::Unpack`, `0x98d090`): the fields in record
+/// order, then always ten choice strings (`0x98d171`), then `muid` before `static_type`.
 pub(super) fn read_petition_query_response(r: &mut impl Read) -> io::Result<PetitionQueryResponse> {
-    let petition_id = read_u32_le(r)?;
-    let owner = read_u64_le(r)?;
-    let name = read_cstring(r)?;
-    let body_text = read_cstring(r)?;
-    let flags = read_u32_le(r)?;
-    let min_signatures = read_u32_le(r)?;
-    let max_signatures = read_u32_le(r)?;
-    let deadline = read_u32_le(r)?;
-    let creation = read_u32_le(r)?;
-    let allowed_guild_id = read_u32_le(r)?;
-    let allowed_classes = read_u32_le(r)?;
-    let allowed_races = read_u32_le(r)?;
-    let allowed_gender = read_u16_le(r)?;
-    let allowed_min_level = read_u32_le(r)?;
-    let allowed_max_level = read_u32_le(r)?;
-    let choice_count = read_u32_le(r)?;
-    let mut choices = Vec::with_capacity(capacity_hint(choice_count, 64));
-    for _ in 0..choice_count {
-        choices.push(read_cstring(r)?);
+    let mut p = PetitionQueryResponse {
+        petition_id: read_u32_le(r)?,
+        owner: read_u64_le(r)?,
+        name: read_cstring(r)?,
+        body_text: read_cstring(r)?,
+        min_signatures: read_u32_le(r)?,
+        max_signatures: read_u32_le(r)?,
+        deadline: read_u32_le(r)?,
+        issue_date: read_u32_le(r)?,
+        allowed_guild_id: read_u32_le(r)?,
+        allowed_classes: read_u32_le(r)?,
+        allowed_races: read_u32_le(r)?,
+        allowed_genders: read_u16_le(r)?,
+        allowed_min_level: read_u32_le(r)?,
+        allowed_max_level: read_u32_le(r)?,
+        num_choices: read_u32_le(r)?,
+        ..Default::default()
+    };
+    for _ in 0..PETITION_CHOICES {
+        p.choices.push(read_cstring(r)?);
     }
-    Ok(PetitionQueryResponse {
-        petition_id,
-        owner,
-        name,
-        body_text,
-        flags,
-        min_signatures,
-        max_signatures,
-        deadline,
-        creation,
-        allowed_guild_id,
-        allowed_classes,
-        allowed_races,
-        allowed_gender,
-        allowed_min_level,
-        allowed_max_level,
-        choices,
-        default_choice: read_u32_le(r)?,
-    })
+    p.muid = read_u32_le(r)?;
+    p.static_type = read_u32_le(r)?;
+    Ok(p)
 }
+
+/// `CGPetition`'s fixed ten choice rows, packed and unpacked whatever the count says.
+const PETITION_CHOICES: usize = 10;
 
 /// `MSG_PETITION_RENAME`: the server's echo of a successful rename (`PetitionsHandler.cpp:209`);
 /// a rejected name gets `SMSG_GUILD_COMMAND_RESULT`. Any holder of the item may rename it.
@@ -281,21 +267,21 @@ pub fn petition_show_list(npc: u64) -> Vec<u8> {
     npc.to_le_bytes().to_vec()
 }
 
-/// Body of `CMSG_PETITION_BUY` (vmangos `Packets/Petition.cpp:47-67`): `u64 npc, u32 0, u64 0`,
-/// the name, `u32 0` x10, `u16 0, u8 0, u32 index, u32 0`. The server reads only NPC and name.
-/// A bad name gets `SMSG_GUILD_COMMAND_RESULT`, no money `SMSG_BUY_FAILED`, a full bag
-/// `SMSG_INVENTORY_CHANGE_FAILURE`; success is only the item push (`PetitionsHandler.cpp:78-130`).
-pub fn petition_buy(npc: u64, name: &str) -> Vec<u8> {
-    let mut body = Vec::with_capacity(72 + name.len());
+/// Body of `CMSG_PETITION_BUY` (`0x6d6b10`): the NPC, then a zeroed `CGPetition` packed by
+/// `0x98cf70` with the name as its title and the vendor row's index as its `muid`.
+pub fn petition_buy(npc: u64, name: &str, index: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(81 + name.len());
     body.extend_from_slice(&npc.to_le_bytes());
-    body.extend_from_slice(&0u32.to_le_bytes());
-    body.extend_from_slice(&0u64.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes()); // id
+    body.extend_from_slice(&0u64.to_le_bytes()); // owner
     push_cstring(&mut body, name);
-    body.extend_from_slice(&[0u8; 40]); // 10 × u32
-    body.extend_from_slice(&0u16.to_le_bytes());
-    body.push(0);
-    body.extend_from_slice(&0u32.to_le_bytes()); // index, "unused" per the server
-    body.extend_from_slice(&0u32.to_le_bytes());
+    body.push(0); // body text
+    body.extend_from_slice(&[0u8; 28]); // min, max, deadline, issue, guild, classes, races
+    body.extend_from_slice(&0u16.to_le_bytes()); // genders
+    body.extend_from_slice(&[0u8; 12]); // min level, max level, choice count
+    body.extend_from_slice(&[0u8; PETITION_CHOICES]); // ten empty choices
+    body.extend_from_slice(&index.to_le_bytes()); // muid
+    body.extend_from_slice(&0u32.to_le_bytes()); // static type
     body
 }
 
@@ -314,21 +300,46 @@ pub fn petition_sign(item: u64, arg: i8) -> Vec<u8> {
     body
 }
 
-/// Body of `CMSG_OFFER_PETITION` (vmangos `Packets/Petition.cpp:41-45`): item guid, target guid.
-/// Success sends the target `SMSG_PETITION_SHOW_SIGNATURES` (`PetitionsHandler.cpp:390-397`); we
-/// hear only refusals, as `SMSG_GUILD_COMMAND_RESULT`.
-pub fn offer_petition(item: u64, player: u64) -> Vec<u8> {
-    let mut body = Vec::with_capacity(16);
+/// Body of `CMSG_OFFER_PETITION` (`0x5cf220`): a leading word, an arena charter's team size and
+/// 0 for any other, then the item guid and the target's.
+pub fn offer_petition(team_size: u32, item: u64, player: u64) -> Vec<u8> {
+    let mut body = Vec::with_capacity(20);
+    body.extend_from_slice(&team_size.to_le_bytes());
     body.extend_from_slice(&item.to_le_bytes());
     body.extend_from_slice(&player.to_le_bytes());
     body
 }
 
-/// Body of `CMSG_TURN_IN_PETITION` (vmangos `Packets/Petition.cpp:24-27`): the charter item's
-/// guid. Only the owner may turn it in; anyone else gets silence (`PetitionsHandler.cpp:432`).
-/// Success founds the guild with every signer at the lowest rank.
+/// Body of `CMSG_TURN_IN_PETITION` for a guild charter (`0x6dd3a0`): the charter item's guid.
 pub fn turn_in_petition(item: u64) -> Vec<u8> {
     item.to_le_bytes().to_vec()
+}
+
+/// The banner an arena charter is turned in with (`TurnInArenaPetition`, `0x5a26d0`): three
+/// `0xAARRGGBB` colours and two style indices; all `0xFFFFFFFF` when the call carried no colours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArenaBanner {
+    pub background_color: u32,
+    pub emblem_style: u32,
+    pub emblem_color: u32,
+    pub border_style: u32,
+    pub border_color: u32,
+}
+
+/// Body of `CMSG_TURN_IN_PETITION` for an arena charter (`0x6dd680`): the item guid, then the
+/// banner's five words.
+pub fn turn_in_arena_petition(item: u64, banner: ArenaBanner) -> Vec<u8> {
+    let mut body = item.to_le_bytes().to_vec();
+    for v in [
+        banner.background_color,
+        banner.emblem_style,
+        banner.emblem_color,
+        banner.border_style,
+        banner.border_color,
+    ] {
+        body.extend_from_slice(&v.to_le_bytes());
+    }
+    body
 }
 
 /// Body of `CMSG_PETITION_QUERY` (vmangos `Packets/Petition.cpp:13-17`): `u32 petitionId`,
@@ -364,17 +375,64 @@ fn push_cstring(body: &mut Vec<u8>, s: &str) {
 mod tests {
     use super::*;
 
-    /// A body one byte short leaves vmangos's reader mid-field and the buy is silently dropped.
+    /// The packed record: a body short of it leaves the server's reader mid-field.
     #[test]
-    fn petition_buy_body_is_seventy_two_bytes_plus_the_name() {
-        let body = petition_buy(0x1234_5678_9abc_def0, "Test");
-        // 8 npc + 4 + 8 + (4+1) name + 40 + 2 + 1 + 4 + 4
-        assert_eq!(body.len(), 72 + 4, "72 fixed bytes + a 4-char name");
+    fn petition_buy_packs_a_whole_record() {
+        let body = petition_buy(0x1234_5678_9abc_def0, "Test", 2);
+        // 8 npc + 4 id + 8 owner + 5 name + 1 body + 28 + 2 + 12 + 10 choices + 4 muid + 4 type
+        assert_eq!(body.len(), 86);
         assert_eq!(
-            petition_buy(0, "").len(),
-            72,
-            "the empty name still costs its NUL"
+            &body[body.len() - 8..],
+            &[2, 0, 0, 0, 0, 0, 0, 0],
+            "muid, then type 0"
         );
+    }
+
+    /// Ten choice strings follow whatever count the record carries, and `muid` precedes the type.
+    #[test]
+    fn the_query_response_reads_ten_choices_then_muid_then_type() {
+        let mut b = 7u32.to_le_bytes().to_vec();
+        b.extend_from_slice(&0x55u64.to_le_bytes());
+        b.extend_from_slice(b"Probes\0\0");
+        for v in [1u32, 1, 2, 0, 0, 0, 0] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        b.extend_from_slice(&0u16.to_le_bytes());
+        for v in [0u32, 0, 0] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        b.extend_from_slice(&[0u8; 10]);
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&1u32.to_le_bytes());
+        let p = read_petition_query_response(&mut b.as_slice()).unwrap();
+        assert_eq!(
+            (p.petition_id, p.owner, p.name.as_str()),
+            (7, 0x55, "Probes")
+        );
+        assert_eq!(
+            (p.min_signatures, p.max_signatures, p.num_choices),
+            (1, 1, 0)
+        );
+        assert_eq!(
+            (p.choices.len(), p.muid, p.static_type),
+            (10, 0, PETITION_TYPE_ARENA)
+        );
+    }
+
+    #[test]
+    fn the_offer_and_the_arena_turn_in() {
+        let mut want = 2u32.to_le_bytes().to_vec();
+        want.extend_from_slice(&0x99u64.to_le_bytes());
+        want.extend_from_slice(&0x42u64.to_le_bytes());
+        assert_eq!(offer_petition(2, 0x99, 0x42), want);
+        let banner = ArenaBanner {
+            background_color: 0xFF10_2030,
+            emblem_style: 7,
+            emblem_color: 1,
+            border_style: 3,
+            border_color: 2,
+        };
+        assert_eq!(turn_in_arena_petition(0x99, banner).len(), 28);
     }
 
     #[test]

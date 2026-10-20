@@ -37,7 +37,7 @@ use crate::net::{
 use crate::player::Player;
 use crate::target::cursor_mode::npc_flags;
 use crate::ui_battlefield::Battlefield;
-use crate::ui_dialog_verbs::BattlefieldQueue;
+use crate::ui_battlefield::BattlefieldQueue;
 use crate::world_state::WorldStates;
 
 /// One battleground's fixtures. The three battlemasters stand within ~35 yd of each other in
@@ -45,8 +45,10 @@ use crate::world_state::WorldStates;
 struct Arena {
     /// `WOW_PROBE_BG`'s value.
     key: &'static str,
-    /// The Map.dbc row the join carries and the worldport lands on.
+    /// The Map.dbc row the worldport lands on.
     map: u32,
+    /// The `BattlemasterList.dbc` row the join carries and the queue word names.
+    bg_type: u32,
     /// The battlemaster's `creature_template.entry`.
     npc_entry: u32,
     npc_name: &'static str,
@@ -62,6 +64,7 @@ const ARENAS: [Arena; 3] = [
     Arena {
         key: "wsg",
         map: 489,
+        bg_type: 2,
         npc_entry: 14981,
         npc_name: "Elfarran",
         at: [-8454.62, 318.85, 120.97],
@@ -72,6 +75,7 @@ const ARENAS: [Arena; 3] = [
     Arena {
         key: "ab",
         map: 529,
+        bg_type: 3,
         npc_entry: 15008,
         npc_name: "Lady Hoteshem",
         at: [-8420.48, 328.71, 120.89],
@@ -81,6 +85,7 @@ const ARENAS: [Arena; 3] = [
     Arena {
         key: "av",
         map: 30,
+        bg_type: 1,
         npc_entry: 7410,
         npc_name: "Thelman Slatefist",
         at: [-8424.55, 342.81, 120.89],
@@ -533,10 +538,10 @@ fn bg_probe(
         Phase::Greeted { master, sent_at } => {
             // The list's guid is the one the join quotes; its arrival proves the level gate passed.
             if battlefield.battlemaster() == Some(master) {
-                info!("PROBE bg: LISTED — queueing for map {}", arena.map);
+                info!("PROBE bg: LISTED — queueing for type {}", arena.bg_type);
                 let _ = net.0.send(ClientCommand::BattlemasterJoin {
                     battlemaster: master,
-                    map_id: arena.map,
+                    bg_type: arena.bg_type,
                     instance_id: 0,
                     as_group: false,
                 });
@@ -550,11 +555,11 @@ fn bg_probe(
             }
         }
         Phase::Joined { sent_at } => {
-            // Status 2 is "ready, confirm", taken through the stock verb. Matched on the map too:
-            // vmangos re-sends a stale queue's status at login.
+            // Status 2 is "ready, confirm", taken through the stock verb. Matched on the type too:
+            // the server re-sends a stale queue's status at login.
             let ready = queue.slots().iter().position(|s| {
                 s.as_ref()
-                    .is_some_and(|(st, _)| st.status == 2 && st.map_id == arena.map)
+                    .is_some_and(|(st, _)| st.status == 2 && st.bg_type() == arena.bg_type)
             });
             if let Some(index) = ready {
                 let slot = index + 1; // the verbs are 1-based
@@ -597,7 +602,7 @@ fn bg_probe(
                     .map(|s| {
                         s.as_ref().map_or_else(
                             || "-".into(),
-                            |(st, _)| format!("{}:{}", st.map_id, st.status),
+                            |(st, _)| format!("{}:{}", st.bg_type(), st.status),
                         )
                     })
                     .collect();
@@ -720,7 +725,7 @@ fn bg_probe(
             };
             let _ = net.0.send(ClientCommand::BattlemasterJoin {
                 battlemaster: master,
-                map_id: arena.map,
+                bg_type: arena.bg_type,
                 instance_id: 0,
                 as_group: false,
             });

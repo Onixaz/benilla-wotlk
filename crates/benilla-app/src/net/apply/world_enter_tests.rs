@@ -29,6 +29,7 @@ fn app() -> (App, Receiver<ClientCommand>) {
         .init_resource::<ServerWallClock>()
         .init_resource::<crate::ui_mail::MailPending>()
         .init_resource::<crate::ui_battlefield::Battlefield>()
+        .init_resource::<crate::ui_battlefield::BattlefieldQueue>()
         .init_resource::<crate::ui_dialog_verbs::MeetingStone>()
         .init_resource::<crate::ui_lfg::LfgFeed>()
         .add_message::<EnteredWorldMessage>()

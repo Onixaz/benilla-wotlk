@@ -71,6 +71,7 @@ macro_rules! set_field {
 mod action;
 mod action_bar_toggles;
 mod addon_message;
+mod arena_team;
 mod auction;
 mod aura;
 mod autocomplete;
@@ -249,6 +250,9 @@ pub use action::{ActionSlot, ActionState, ActionUse};
 pub use addon::AddOnInfo;
 pub use addon_enable::EnableHash;
 pub use addon_message::{AddonDistribution, AddonSend};
+pub use arena_team::{
+    ArenaTeamMemberView, ArenaTeamRecordView, ArenaTeamRequest, ArenaTeamSlotView,
+};
 pub use auction::{
     AuctionBid, AuctionCategory, AuctionHighBidder, AuctionItemRow, AuctionListState, AuctionQuery,
     AuctionStartRequest, AuctionState, AuctionSubCategory, BIDDER, LIST, OWNER, SORT_COLUMNS,
@@ -257,8 +261,14 @@ pub use aura::{AuraState, TrackingState};
 pub use backdrop::{inset_atlas_bleed, pieces, Backdrop, BackdropPiece, Insets};
 pub use bank::BankState;
 pub use battlefield_positions::{BattlefieldFlagView, BattlefieldPositionView};
-pub use battlefield_queue::{BattlefieldListView, BattlefieldMapInfo, BattlefieldQueueSlot};
-pub use battlefield_score::{BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn};
+pub use battlefield_queue::{
+    BattlefieldFrame, BattlefieldJoin, BattlefieldListPush, BattlefieldMgrRequest,
+    BattlefieldQueueSlot, BattlefieldRewardView, BattlemasterRow, WorldPvpQueueView,
+    INSTANCE_TYPE_ARENA, RANDOM_BATTLEGROUND,
+};
+pub use battlefield_score::{
+    BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn, BattlefieldTeamView,
+};
 pub use bind_confirm::PendingEquipAnswer;
 pub use calls::{CastAt, NearestMode, ScriptCall};
 pub use camera_view::{CameraViewRequest, CAMERA_VIEW_COUNT};
@@ -308,8 +318,8 @@ pub use input_verbs::{BindingInput, FiredInput, HeldInput};
 pub use macro_options::OptionState;
 pub use modelframe::ModelPaneFrame;
 pub use petition::{
-    validate_guild_name, PetitionRecordView, PetitionRequest, PetitionState, PETITION_TYPE_CHARTER,
-    PETITION_TYPE_PETITION,
+    petition_type_name, validate_guild_name, ArenaBannerChoice, PetitionRecordView,
+    PetitionRequest, PetitionState, PetitionVendorItem, PetitionVendorState,
 };
 pub use tabard::{
     emblem_mask_path, TabardHost, TabardIntent, EMBLEM_MASK_TOKEN, TABARD_COUNTS,
@@ -350,7 +360,10 @@ pub(crate) use model::{Model, ModelCell};
 pub use multicast::MultiCastView;
 pub use party::{PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo};
 pub use pet::{PetActionView, PetStats};
-pub use pvp::{decorated_name, pvp_name_global_keys, HonorState, InspectHonorData, RankTitle};
+pub use pvp::{
+    decorated_name, pvp_name_global_keys, HonorState, InspectArenaTeamView, InspectHonorData,
+    RankTitle, PLAYER_FLAGS_PVP_TIMER,
+};
 pub use quest::{
     QuestAction, QuestItemView, QuestPanel, QuestRewardExtras, QuestRewardSpell, QuestSelect,
     QuestState,
@@ -960,6 +973,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     battlefield_score::install(lua)?;
     battlefield_queue::install(lua)?;
     battlefield_positions::install(lua)?;
+    arena_team::install(lua)?;
     unit_menu::install(lua)?;
     focus::install(lua)?;
     tutorial::install(lua)?;

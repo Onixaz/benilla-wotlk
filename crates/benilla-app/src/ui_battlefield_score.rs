@@ -1,31 +1,37 @@
 //! The battleground scoreboard feed, the app half of the stock `WorldStateFrame.lua` score frame.
 //!
 //! The reference holds a `MSG_PVP_LOG_DATA` board until every row's name has resolved, and the last
-//! name arrival rebuilds it (`0x4aa580` → `0x4aa200`); here the board is pushed the frame the last
+//! name arrival rebuilds it (`0x54ca30` → `0x54aa30`); here the board is pushed the frame the last
 //! name lands. `UPDATE_BATTLEFIELD_SCORE` fires on a pushed board and on the status-3 arrival,
-//! before `UPDATE_BATTLEFIELD_STATUS` (`0x4aaa5a` before `0x4aab05`).
+//! before `UPDATE_BATTLEFIELD_STATUS` (`0x54b148` before `0x54b1a9`).
 
 use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
 use benilla_protocol::messages::PvpLogData;
-use benilla_ui::script::{BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn, UiScript};
+use benilla_ui::script::{
+    BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn, BattlefieldTeamView, UiScript,
+};
 
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
-use crate::ui_dialog_verbs::BattlefieldQueue;
+use crate::ui_battlefield::BattlefieldQueue;
 use crate::ui_script::{UiFeed, UiInput};
 use crate::world_state_ui::WorldStateUiRes;
 
-/// `RequestBattlefieldScoreData`'s throttle (`0x4aa170`).
+/// `RequestBattlefieldScoreData`'s throttle (`0x54ce30`).
 const REQUEST_THROTTLE: Duration = Duration::from_millis(5000);
+
+/// An arena's `InstanceType`; its board is asked once.
+const INSTANCE_TYPE_ARENA: u32 = 4;
 
 /// The last `MSG_PVP_LOG_DATA` and the request stamp, both zeroed when the session ends.
 #[derive(Resource, Default)]
 pub(crate) struct BattlefieldScoreboard {
     log: Option<PvpLogData>,
-    last_request: Option<Instant>,
+    /// `m_nextLogUpdate` (`0xbea584`): the next request's earliest moment, `None` until the first.
+    next_request: Option<Instant>,
 }
 
 impl BattlefieldScoreboard {
@@ -35,8 +41,7 @@ impl BattlefieldScoreboard {
 }
 
 /// The column headers for `map`: the first contiguous run of matching `WorldStateUI.dbc` rows in
-/// table order, as the status-3 arm builds them (`0x4aa9c3`–`0x4aaa17`; the run ends at
-/// `0x4aa9fe`).
+/// table order, as the status-3 arm builds them (`0x54b0c0`).
 pub(crate) fn score_columns(catalog: &WorldStateUiRes, map: u32) -> Vec<BattlefieldStatColumn> {
     let mut out = Vec::new();
     for (_, row) in catalog.0.rows() {
@@ -55,9 +60,12 @@ pub(crate) fn score_columns(catalog: &WorldStateUiRes, map: u32) -> Vec<Battlefi
 }
 
 /// Resolve the raw board through the name cache; `None` while any name is still in flight.
+/// A row's race and class are the name cache's; a streamed unit's own fields stand in where the
+/// cache has none, as for ourselves, whose name the reference queries at login.
 fn resolve_board(
     log: &PvpLogData,
     names: &NameCache,
+    unit_traits: impl Fn(u64) -> Option<(u8, u8)>,
     commands: &NetCommands,
 ) -> Option<Vec<BattlefieldScoreRow>> {
     let mut rows = Vec::with_capacity(log.rows.len());
@@ -65,10 +73,15 @@ fn resolve_board(
         let name = names.resolve(r.guid, commands)?.to_string();
         let (race, class) = names
             .player_traits(r.guid)
-            .map_or((0, 0), |(race, class, _)| (race, class));
-        // The team comes from race, never the wire (`0x4aa200`, `0x5efe00`'s walk): 0 Horde,
-        // 1 Alliance, -1 neither.
-        let faction = i32::from(crate::ui_unit::race_pvp_team(race));
+            .map(|(race, class, _)| (race, class))
+            .or_else(|| unit_traits(r.guid))
+            .unwrap_or((0, 0));
+        // An arena row keeps its wire team; a battleground's side comes from the race
+        // (`0x54aa94`): 0 Horde, 1 Alliance, -1 neither.
+        let faction = match r.arena_team {
+            Some(team) => i32::from(team),
+            None => i32::from(crate::ui_unit::race_pvp_team(race)),
+        };
         let mut stats = [0u32; 8];
         for (slot, v) in stats.iter_mut().zip(&r.stats) {
             *slot = *v;
@@ -78,11 +91,13 @@ fn resolve_board(
             killing_blows: r.killing_blows,
             honorable_kills: r.honorable_kills,
             deaths: r.deaths,
-            honor_gained: r.honor_gained,
+            bonus_honor: r.bonus_honor,
             faction,
-            rank: i32::try_from(r.rank).unwrap_or(i32::MAX),
             race: crate::ui_unit::race_names(race).map(|(n, _)| n.to_string()),
-            class: crate::ui_unit::class_names(class).map(|(n, _)| n.to_string()),
+            class: crate::ui_unit::class_names(class).map(|(n, t)| (n.to_string(), t.to_string())),
+            class_id: u32::from(class),
+            damage_done: r.damage_done,
+            healing_done: r.healing_done,
             stats,
         });
     }
@@ -95,31 +110,46 @@ pub(crate) fn feed_battlefield_score(
     mut queue: ResMut<BattlefieldQueue>,
     catalog: Option<Res<WorldStateUiRes>>,
     names: Res<NameCache>,
+    guids: Res<crate::net::GuidIndex>,
+    stores: Query<&crate::net::ObjectStore>,
     commands: Res<NetCommands>,
     mut last: Local<crate::ui_script::VmMemo<Option<BattlefieldScores>>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
-    let now = Instant::now();
-    script.set_battlefield_run_time_ms(queue.run_time_ms(now));
-
     let fresh = board.log.as_ref().and_then(|log| {
-        let rows = resolve_board(log, &names, &commands)?;
+        let unit_traits = |guid: u64| {
+            let f = &stores.get(*guids.0.get(&guid)?).ok()?.0;
+            Some((f.unit_race()?, f.unit_class()?))
+        };
+        let rows = resolve_board(log, &names, unit_traits, &commands)?;
         let columns = queue
             .active_map()
             .zip(catalog.as_deref())
             .map(|(map, cat)| score_columns(cat, map))
             .unwrap_or_default();
+        let teams = log.arena_teams.as_ref().map_or_else(Default::default, |t| {
+            t.clone().map(|t| BattlefieldTeamView {
+                name: t.name,
+                rating: t.rating,
+                new_rating: t.new_rating,
+                matchmaking: t.matchmaking,
+            })
+        });
         Some(BattlefieldScores {
             rows,
             ended: log.ended,
             winner: log.winner.unwrap_or(0),
             columns,
+            teams,
         })
     });
+    let status_rebuild = queue.take_became_active();
+    if status_rebuild {
+        script.reset_battlefield_score_filter();
+    }
     let last = last.get(&script);
-    let status_rebuild = queue.take_score_dirty();
     let changed = fresh.is_some() && fresh != *last;
     if changed {
         script.set_battlefield_scores(fresh.clone().expect("checked"));
@@ -130,29 +160,43 @@ pub(crate) fn feed_battlefield_score(
     }
 }
 
+/// `RequestScoreData` (`0x54ce30`): once asked, a finished match's or an arena's board is not
+/// asked again; otherwise once per 5000 ms.
 fn drain_battlefield_score(
     script: Option<NonSendMut<UiScript>>,
     mut board: ResMut<BattlefieldScoreboard>,
     queue: Res<BattlefieldQueue>,
+    maps: Option<Res<benilla_assets::MapCatalogRes>>,
     commands: Res<NetCommands>,
 ) {
     let Some(mut script) = script else {
         return;
     };
-    if script.take_battlefield_score_requests() > 0 {
-        let now = Instant::now();
-        let throttled = board
-            .last_request
-            .is_some_and(|t| now.duration_since(t) < REQUEST_THROTTLE);
-        if !throttled {
-            board.last_request = Some(now);
-            let _ = commands.0.send(ClientCommand::RequestBattlefieldScoreData);
-        }
+    if script.take_battlefield_score_requests() == 0 {
+        return;
     }
-    if script.take_battlefield_leave_requests() > 0 {
-        let _ = commands.0.send(ClientCommand::LeaveBattlefield {
-            map_id: queue.active_map().unwrap_or(0),
-        });
+    let in_arena = queue
+        .active_map()
+        .and_then(|m| maps.as_deref()?.0.instance_type(m))
+        == Some(INSTANCE_TYPE_ARENA);
+    let done = board.log.as_ref().is_some_and(|l| l.ended);
+    if board.next_request.is_some() && (done || in_arena) {
+        return;
+    }
+    let now = Instant::now();
+    if board.next_request.is_none_or(|t| now >= t) {
+        board.next_request = Some(now + REQUEST_THROTTLE);
+        let _ = commands.0.send(ClientCommand::RequestBattlefieldScoreData);
+    }
+}
+
+/// The world-enter reset (`EnterWorld`, `0x54ca50`): the request stamp and the finished flag.
+fn reset_score_on_world_enter(
+    mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
+    mut board: ResMut<BattlefieldScoreboard>,
+) {
+    if cascades.read().next().is_some() {
+        *board = BattlefieldScoreboard::default();
     }
 }
 
@@ -190,10 +234,10 @@ impl Plugin for BattlefieldScorePlugin {
         app.init_resource::<BattlefieldScoreboard>().add_systems(
             Update,
             (
-                // Before the queue feed: on status 3 the score event precedes the status event.
-                feed_battlefield_score
-                    .before(crate::ui_dialog_verbs::feed_dialog_verbs)
-                    .in_set(UiFeed),
+                reset_score_on_world_enter
+                    .after(benilla_world::schedule::WorldStage::Net)
+                    .before(feed_battlefield_score),
+                feed_battlefield_score.in_set(UiFeed),
                 drain_battlefield_score.after(UiInput),
             ),
         );
@@ -207,6 +251,7 @@ mod tests {
 
     fn row(map_id: u32, ui_type: u32, text: &str) -> WorldStateUiRow {
         WorldStateUiRow {
+            phase_shift: 0,
             map_id,
             area_id: 0,
             icon: String::new(),
@@ -254,9 +299,9 @@ mod tests {
             board.apply(PvpLogData {
                 ended: true,
                 winner: Some(1),
-                rows: Vec::new(),
+                ..Default::default()
             });
-            board.last_request = Some(Instant::now());
+            board.next_request = Some(Instant::now());
         }
 
         crate::net::handlers::dispatch(
@@ -269,6 +314,6 @@ mod tests {
 
         let board = app.world().resource::<BattlefieldScoreboard>();
         assert!(board.log.is_none());
-        assert!(board.last_request.is_none());
+        assert!(board.next_request.is_none());
     }
 }

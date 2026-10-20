@@ -26,6 +26,10 @@ pub struct MapCatalog {
     instance_types: HashMap<u32, u32>,
     /// `Flags` (column 3, `+0xc`), for maps with a non-zero one.
     flags: HashMap<u32, u32>,
+    /// `MapDescription0`/`1` (`+0x1c`/`+0x20`), the Horde and Alliance battleground texts.
+    descriptions: HashMap<u32, [String; 2]>,
+    /// `MinimapIconScale` (`+0x28`), for maps whose scale is not 1.
+    icon_scales: HashMap<u32, f32>,
     /// The entrance (`+0x2c` map, `+0x30`/`+0x34` x and y), for maps with a non-zero one.
     entrances: HashMap<u32, (u32, f32, f32)>,
 }
@@ -53,6 +57,20 @@ impl MapCatalog {
     /// `InstanceType` for `map_id`. The client treats a missing row as type 0 wherever it asks.
     pub fn instance_type(&self, map_id: u32) -> Option<u32> {
         self.instance_types.get(&map_id).copied()
+    }
+
+    /// `map_id`'s description for a side, 0 Horde and 1 Alliance (`GetBattlefieldInfo`,
+    /// `0x54d7c0`); empty where the row has none.
+    pub fn description(&self, map_id: u32, side: usize) -> Option<&str> {
+        self.descriptions
+            .get(&map_id)
+            .and_then(|d| d.get(side))
+            .map(String::as_str)
+    }
+
+    /// `MinimapIconScale` for `map_id`, 1.0 for a map with no row (`0x54c740`).
+    pub fn icon_scale(&self, map_id: u32) -> f32 {
+        self.icon_scales.get(&map_id).copied().unwrap_or(1.0)
     }
 
     /// Whether `map_id`'s difficulty can change inside it ([`FLAG_DYNAMIC_DIFFICULTY`]).
@@ -95,7 +113,7 @@ const FLAGS_FIELD: usize = 3;
 pub(crate) fn map_schema(l: &MapLayout) -> Schema {
     let mut s = Schema::new("Map");
     for i in 0..l.fields {
-        let ty = if i == 1 || i == l.map_name {
+        let ty = if i == 1 || i == l.map_name || l.description.contains(&i) {
             FieldType::String
         } else {
             FieldType::UInt32
@@ -118,6 +136,8 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
     let mut instance_types = HashMap::with_capacity(rs.records().len());
     let mut flags = HashMap::new();
     let mut entrances = HashMap::new();
+    let mut descriptions = HashMap::new();
+    let mut icon_scales = HashMap::new();
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
         if let Some(dir) = str_at(&rs, r, 1) {
@@ -136,6 +156,16 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
         if let Some(f) = u32_at(r, FLAGS_FIELD).filter(|&v| v != 0) {
             flags.insert(id, f);
         }
+        let [h, a] = l.description.map(|c| str_at(&rs, r, c).unwrap_or_default());
+        if !h.is_empty() || !a.is_empty() {
+            descriptions.insert(id, [h, a]);
+        }
+        // `MinimapIconScale`, the column after the loading screen, typed `u32` like the rest.
+        if let Some(scale) = u32_at(r, l.loading_screen + 1).map(f32::from_bits) {
+            if scale != 1.0 {
+                icon_scales.insert(id, scale);
+            }
+        }
         // The three columns after `MinimapIconScale`, two past the loading screen; the schema
         // types them as `u32`, so the floats are read by their bits.
         let at = |i: usize| u32_at(r, l.loading_screen + i);
@@ -153,6 +183,8 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
         instance_types,
         flags,
         entrances,
+        descriptions,
+        icon_scales,
     })
 }
 

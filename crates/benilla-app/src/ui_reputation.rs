@@ -26,13 +26,15 @@ pub(crate) struct UiReputationPlugin;
 
 impl Plugin for UiReputationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (
-                feed_reputation.in_set(UiFeed),
-                drain_reputation_sends.after(UiInput),
-            ),
-        );
+        app.init_resource::<LocalFlagWrites>()
+            .add_systems(
+                Update,
+                (
+                    feed_reputation.in_set(UiFeed),
+                    drain_reputation_sends.after(UiInput),
+                ),
+            )
+            .add_systems(PostUpdate, apply_local_flag_writes);
     }
 }
 
@@ -140,12 +142,16 @@ fn feed_reputation(
     script.fire_event("UPDATE_FACTION", vec![]);
 }
 
-/// Send the pane's queued verbs. None is acked, so the war and inactive flags are written into
-/// the store the way the client writes its own (`0x5d0a10`, `0x5d1c10`): the next push keeps them.
+/// The pane's unacked flag writes, `(slot, flag, set)`, for [`apply_local_flag_writes`].
+#[derive(Resource, Default)]
+struct LocalFlagWrites(Vec<(u32, u8, bool)>);
+
+/// Send the pane's queued verbs. None is acked, so the war and inactive flags go into the store
+/// the way the client writes its own (`0x5d0a10`, `0x5d1c10`): the next push keeps them.
 fn drain_reputation_sends(
     script: Option<NonSendMut<UiScript>>,
     commands: Res<NetCommands>,
-    mut reputations: ResMut<Reputations>,
+    mut writes: ResMut<LocalFlagWrites>,
 ) {
     use benilla_formats::faction_flags as flag;
     let Some(mut script) = script else {
@@ -157,13 +163,7 @@ fn drain_reputation_sends(
                 rep_list_id,
                 at_war,
             } => {
-                if let Some((flags, _)) = reputations.0.get_mut(rep_list_id as usize) {
-                    if at_war && *flags & flag::PEACE_FORCED == 0 {
-                        *flags |= flag::AT_WAR;
-                    } else {
-                        *flags &= !flag::AT_WAR;
-                    }
-                }
+                writes.0.push((rep_list_id, flag::AT_WAR, at_war));
                 ClientCommand::SetFactionAtWar {
                     rep_list_id,
                     at_war,
@@ -173,13 +173,7 @@ fn drain_reputation_sends(
                 rep_list_id,
                 inactive,
             } => {
-                if let Some((flags, _)) = reputations.0.get_mut(rep_list_id as usize) {
-                    if inactive {
-                        *flags |= flag::INACTIVE;
-                    } else {
-                        *flags &= !flag::INACTIVE;
-                    }
-                }
+                writes.0.push((rep_list_id, flag::INACTIVE, inactive));
                 ClientCommand::SetFactionInactive {
                     rep_list_id,
                     inactive,
@@ -193,6 +187,29 @@ fn drain_reputation_sends(
             },
         };
         let _ = commands.0.send(cmd);
+    }
+}
+
+/// Write the pane's flags into the store, after `Update`'s readers: war never takes on a
+/// peace-forced faction (`0x5d0a10`).
+fn apply_local_flag_writes(
+    mut writes: ResMut<LocalFlagWrites>,
+    mut reputations: ResMut<Reputations>,
+) {
+    use benilla_formats::faction_flags as flag;
+    if writes.0.is_empty() {
+        return;
+    }
+    for (slot, bit, set) in std::mem::take(&mut writes.0) {
+        let Some((flags, _)) = reputations.0.get_mut(slot as usize) else {
+            continue;
+        };
+        let set = set && !(bit == flag::AT_WAR && *flags & flag::PEACE_FORCED != 0);
+        if set {
+            *flags |= bit;
+        } else {
+            *flags &= !bit;
+        }
     }
 }
 

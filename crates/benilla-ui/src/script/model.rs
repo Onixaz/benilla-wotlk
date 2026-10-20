@@ -317,6 +317,8 @@ pub(crate) struct Model {
     pub(crate) petition: petition::PetitionState,
     /// Charter calls (`BuyGuildCharter`, `SignPetition`, `TurnInGuildCharter`, …) queued.
     pub(crate) petition_requests: Vec<petition::PetitionRequest>,
+    /// The arena registrar's petition vendor, as pushed.
+    pub(crate) petition_vendor: petition::PetitionVendorState,
     /// Per chat window from `ChatFrame1`, the tint, alpha and font size its tab menu can change.
     /// One per frame the target's FrameXML builds (`NUM_CHAT_WINDOWS`).
     pub(crate) chat_window_looks: Vec<chat_window::ChatWindowLook>,
@@ -367,6 +369,14 @@ pub(crate) struct Model {
     pub(crate) glue: super::glue_core::GlueCore,
     /// `TogglePVP` calls, a count because `CMSG_TOGGLE_PVP` has no body.
     pub(crate) pvp_toggles: u32,
+    /// `SetPVP` calls, each the byte its `CMSG_TOGGLE_PVP` carries.
+    pub(crate) pvp_sets: Vec<u8>,
+    /// `CGPlayer_C::GetPVPToggleTimer` (`0x6de7a0`) as the app computed it this frame, ms.
+    pub(crate) pvp_toggle_timer: i32,
+    /// The inspected player's arena teams by slot, resolved by the app.
+    pub(crate) inspect_arena_teams: [Option<pvp::InspectArenaTeamView>; 3],
+    /// The `CGArenaTeamInfo` mirror: the three teams, the roster's sort and selection.
+    pub(crate) arena_teams: super::arena_team::ArenaTeams,
     /// The player's private honor fields; before the first push the six self getters read zeros.
     pub(crate) honor: Option<pvp::HonorState>,
     /// The last `MSG_INSPECT_HONOR_STATS` reply; its presence is `HasInspectHonorData`'s answer.
@@ -525,33 +535,15 @@ pub(crate) struct Model {
     pub(crate) area_spirit_secs: u32,
     /// `AcceptAreaSpiritHeal()` calls, one `CMSG_AREA_SPIRIT_HEALER_QUEUE` each.
     pub(crate) area_spirit_accepts: u32,
-    /// `AcceptBattlefieldPort(index, accept)` calls: the 1-based slot and the normalised answer.
-    pub(crate) battlefield_port_requests: Vec<(u8, bool)>,
     /// The battleground scoreboard: pushed rows, faction filter, sort order.
     pub(crate) battlefield_board: super::battlefield_score::ScoreBoard,
-    /// `GetBattlefieldInstanceRunTime()`, pushed each frame.
-    pub(crate) battlefield_run_time_ms: u32,
     /// `RequestBattlefieldScoreData()` calls.
     pub(crate) battlefield_score_requests: u32,
-    /// `LeaveBattlefield()` calls that passed the "ended" gate.
-    pub(crate) battlefield_leave_requests: u32,
-    /// The battleground instance list and its scalars, as pushed.
-    pub(crate) battlefield_list: super::battlefield_queue::BattlefieldListView,
-    /// The selected instance id (`[0xb6eba0]`), not an index; written by `SetSelectedBattlefield`.
-    pub(crate) battlefield_selected: u32,
-    /// The three queue slots, pushed each frame with their clocks reduced to values. Zeroed
-    /// until the first push, as the reference's static slots (`0xb6e9d0`) are, so each answers
-    /// "none" from the first frame.
-    pub(crate) battlefield_slots: [super::battlefield_queue::BattlefieldQueueSlot; 3],
-    /// `GetBattlefieldInstanceExpiration()`, pushed each frame.
-    pub(crate) battlefield_instance_expiration_ms: u32,
-    /// `JoinBattlefield` calls, `(instance id, as group)`.
-    pub(crate) battlefield_join_requests: Vec<(u32, bool)>,
-    /// `ShowBattlefieldList` calls that passed their gates: the queued slot's map id.
-    pub(crate) battlefield_list_requests: Vec<u32>,
-    /// Teammates' map positions, the flag carrier, the icon scale and position requests.
+    /// The `CGBattlefieldInfo` queue mirror: types, list, selection, slots and the sends.
+    pub(crate) battlefield: super::battlefield_queue::BattlefieldInfo,
+    /// Teammates' map positions, the flag carriers, the icon scale and position requests.
     pub(crate) battlefield_positions: Vec<super::battlefield_positions::BattlefieldPositionView>,
-    pub(crate) battlefield_flag: Option<super::battlefield_positions::BattlefieldFlagView>,
+    pub(crate) battlefield_flags: Vec<super::battlefield_positions::BattlefieldFlagView>,
     pub(crate) battlefield_icon_scale: f32,
     /// A `Cell`: the stock `UIParent` OnUpdate calls the verb every frame and the app drains it
     /// every frame, and neither is anything drawn (`ModelCell`).
@@ -1228,6 +1220,7 @@ impl Model {
             guild_requests: Vec::new(),
             petition: petition::PetitionState::default(),
             petition_requests: Vec::new(),
+            petition_vendor: Default::default(),
             // Per window, as the stock dock differs: 1 and 2 are the dock, the rest undocked.
             chat_window_looks: (0..chat_window::ENGINE_CHAT_WINDOW_SLOTS)
                 .map(chat_window::ChatWindowLook::stock)
@@ -1257,6 +1250,10 @@ impl Model {
             session_requests: Vec::new(),
             glue: Default::default(),
             pvp_toggles: 0,
+            pvp_sets: Vec::new(),
+            pvp_toggle_timer: 0,
+            inspect_arena_teams: Default::default(),
+            arena_teams: Default::default(),
             honor: None,
             inspect_honor: None,
             inspect_honor_requests: 0,
@@ -1323,19 +1320,11 @@ impl Model {
             area_spirit_healer_cached: false,
             area_spirit_secs: 0,
             area_spirit_accepts: 0,
-            battlefield_port_requests: Vec::new(),
             battlefield_board: Default::default(),
-            battlefield_run_time_ms: 0,
             battlefield_score_requests: 0,
-            battlefield_leave_requests: 0,
-            battlefield_list: Default::default(),
-            battlefield_selected: 0,
-            battlefield_slots: Default::default(),
-            battlefield_instance_expiration_ms: 0,
-            battlefield_join_requests: Vec::new(),
-            battlefield_list_requests: Vec::new(),
+            battlefield: Default::default(),
             battlefield_positions: Vec::new(),
-            battlefield_flag: None,
+            battlefield_flags: Vec::new(),
             battlefield_icon_scale: 1.0,
             battlefield_position_requests: std::cell::Cell::new(0),
             meeting_stone_cancels: 0,

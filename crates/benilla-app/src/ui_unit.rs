@@ -505,6 +505,8 @@ pub(crate) fn race_names(race: u8) -> Option<(&'static str, &'static str)> {
         6 => ("Tauren", "Tauren"),
         7 => ("Gnome", "Gnome"),
         8 => ("Troll", "Troll"),
+        10 => ("Blood Elf", "BloodElf"),
+        11 => ("Draenei", "Draenei"),
         _ => return None,
     })
 }
@@ -517,6 +519,7 @@ pub(crate) fn class_names(class: u8) -> Option<(&'static str, &'static str)> {
         3 => ("Hunter", "HUNTER"),
         4 => ("Rogue", "ROGUE"),
         5 => ("Priest", "PRIEST"),
+        6 => ("Death Knight", "DEATHKNIGHT"),
         7 => ("Shaman", "SHAMAN"),
         8 => ("Mage", "MAGE"),
         9 => ("Warlock", "WARLOCK"),
@@ -541,13 +544,13 @@ pub(crate) fn race_faction_group(race: u8) -> Option<&'static str> {
 /// never the live template: `ChrRaces.dbc` field 2 to `FactionTemplate.dbc` field 3's group mask,
 /// `& 4` Horde, else `& 2` Alliance, so a template-35 GM keeps his rank title. Read by
 /// `GetPVPRankInfo` (`0x51a9af`, `0x51a9c8`), `UnitPVPName` (`0x5efe60`) and the scoreboard
-/// (`0x4aa200`). A frozen copy of the shipped nine rows; race 9 (Goblin) answers Alliance.
+/// (`0x4aa200`). A frozen copy of the shipped eleven rows; race 9 (Goblin) answers Alliance.
 pub(crate) fn race_pvp_team(race: u8) -> i8 {
     match race {
         // Group mask 3, Player|Alliance: `& 4` clear, `& 2` set.
-        1 | 3 | 4 | 7 | 9 => 1,
+        1 | 3 | 4 | 7 | 9 | 11 => 1,
         // Group mask 5, Player|Horde: `& 4` set, tested first.
-        2 | 5 | 6 | 8 => 0,
+        2 | 5 | 6 | 8 | 10 => 0,
         // No `ChrRaces` row: the engine's bounds-failure `-1`, which names no GlobalString.
         _ => -1,
     }
@@ -987,13 +990,17 @@ pub(crate) fn enrich_unit(
     }
 }
 
-/// Drain `TogglePVP` into `CMSG_TOGGLE_PVP`; `/pvp` is the reference's only caller.
+/// Drain `TogglePVP` into the bare `CMSG_TOGGLE_PVP` and `SetPVP(state)` into its one-byte form,
+/// in that order within a frame.
 fn drain_pvp_toggles(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
     let Some(mut script) = script else {
         return;
     };
     for _ in 0..script.take_pvp_toggles() {
         let _ = commands.0.send(crate::net::ClientCommand::TogglePvp);
+    }
+    for state in script.take_pvp_sets() {
+        let _ = commands.0.send(crate::net::ClientCommand::SetPvp { state });
     }
 }
 

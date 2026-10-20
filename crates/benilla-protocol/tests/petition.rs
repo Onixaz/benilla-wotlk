@@ -1,11 +1,9 @@
-//! The petition wire: the guild-charter flow that founds a guild, laid out per vmangos.
+//! The petition wire: the guild and arena charters, laid out as 12340 reads and writes them.
 
 mod common;
 
 use benilla_protocol::events::{decode, SessionEvent};
-use benilla_protocol::messages::{
-    self, opcode, petition_result, CHARTER_DISPLAY_ID, CHARTER_ITEM_ENTRY, MAX_PETITION_SIGNATURES,
-};
+use benilla_protocol::messages::{self, opcode, petition_result, MAX_PETITION_SIGNATURES};
 use benilla_protocol::ServerPacket;
 use common::hx;
 
@@ -52,10 +50,10 @@ fn cmsg_bodies_golden() {
         "…and a negative argument rides as its two's complement"
     );
 
-    // CMSG_OFFER_PETITION (Petition.cpp:41-45): u64 item, u64 target player.
+    // CMSG_OFFER_PETITION (`0x5cf220`): the team size word, u64 item, u64 target player.
     assert_eq!(
-        messages::offer_petition(0x0000_0000_0001_0203, 0x0000_0000_0000_00aa),
-        hx("0302010000000000aa00000000000000"),
+        messages::offer_petition(0, 0x0000_0000_0001_0203, 0x0000_0000_0000_00aa),
+        hx("000000000302010000000000aa00000000000000"),
         "CMSG_OFFER_PETITION body"
     );
 
@@ -74,78 +72,70 @@ fn cmsg_bodies_golden() {
     );
 }
 
-/// `CMSG_PETITION_BUY` is 72 fixed bytes plus the name, in vmangos's read order
-/// (`Server/Packets/Petition.cpp:47-67`); a short body gets no reply at all, since the server has
-/// no error packet for a malformed buy.
+/// `CMSG_PETITION_BUY` is the NPC and a whole packed `CGPetition` (`0x98cf70`): the name is its
+/// title and the vendor row's index its `muid`, the word before the type.
 #[test]
-fn petition_buy_body_is_the_full_seventy_two_byte_frame() {
-    let body = messages::petition_buy(0x0000_0000_0000_2a1f, "Legacy");
+fn petition_buy_body_is_the_packed_record() {
+    let body = messages::petition_buy(0x0000_0000_0000_2a1f, "Legacy", 1);
     assert_eq!(
         body,
         hx(concat!(
             "1f2a000000000000", // u64 npcGuid
-            "00000000",         // u32 skipped
-            "0000000000000000", // u64 skipped
-            "4c656761637900",   // cstring "Legacy"
-            // 10 × u32 skipped
-            "00000000000000000000000000000000000000000000000000000000000000000000000000000000",
-            "0000",     // u16 skipped
-            "00",       // u8 skipped
-            "00000000", // u32 index, unused by the server
-            "00000000", // u32 skipped
+            "00000000",         // u32 id
+            "0000000000000000", // u64 owner
+            "4c656761637900",   // cstring title "Legacy"
+            "00",               // cstring body text
+            // 7 x u32: min, max, deadline, issue, guild, classes, races
+            "00000000000000000000000000000000000000000000000000000000",
+            "0000",                     // u16 genders
+            "000000000000000000000000", // u32 min level, max level, choice count
+            "00000000000000000000",     // ten empty choices
+            "01000000",                 // u32 muid, the row index
+            "00000000",                 // u32 static type
         )),
         "CMSG_PETITION_BUY body"
     );
-    assert_eq!(body.len(), 72 + "Legacy".len(), "72 fixed bytes + the name");
-
-    // The name, the only variable part, starts at offset 20 (8 + 4 + 8).
-    assert_eq!(
-        &body[20..27],
-        b"Legacy\0",
-        "the name starts at offset 20, NUL-terminated"
-    );
+    assert_eq!(&body[20..27], b"Legacy\0", "the title starts at offset 20");
 }
 
-/// `SMSG_PETITION_SHOWLIST` opens the guild registrar (`Server/Packets/Petition.cpp:115-127`).
-/// The list is counted: vmangos sends one row, the fixture two, so a one-row reader fails.
+/// `SMSG_PETITION_SHOWLIST` (`0x6d69f0`): six words a row. An arena registrar sends the three
+/// team sizes, the required signatures one less than each.
 #[test]
-fn petition_show_list_parses_a_counted_list() {
+fn petition_show_list_parses_six_word_rows() {
     let body = hx(concat!(
         "1f2a000000000000", // u64 npcGuid
-        "02",               // u8 count, not vmangos's 1
-        // row 1: index 1, entry 5863, display 16161, cost 1000, flags 1
+        "02",               // u8 count
+        // row 1: index 1, entry 23560, display 16161, cost 800000, type 2, signatures 2
         "01000000",
-        "e7160000",
+        "085c0000",
         "213f0000",
-        "e8030000",
-        "01000000",
-        // row 2: index 2, entry 5863, display 16161, cost 2000, flags 0 (the "hidden" case)
+        "00350c00",
         "02000000",
-        "e7160000",
+        "02000000",
+        // row 2: index 2, the 3v3 charter
+        "02000000",
+        "095c0000",
         "213f0000",
-        "d0070000",
-        "00000000",
+        "80841e00",
+        "03000000",
+        "03000000",
     ));
     let packet = messages::parse_server(opcode::SMSG_PETITION_SHOWLIST, &body).unwrap();
     let ServerPacket::PetitionShowList(list) = &packet else {
         panic!("expected PetitionShowList, got {}", packet.name());
     };
     assert_eq!(list.npc, 0x2a1f);
+    assert_eq!(list.entries.len(), 2);
+    let r = &list.entries[0];
     assert_eq!(
-        list.entries.len(),
-        2,
-        "both rows parsed, not just the first"
+        (r.index, r.charter_entry, r.charter_display_id),
+        (1, 23560, 16161)
     );
-    assert_eq!(list.entries[0].index, 1);
-    assert_eq!(list.entries[0].charter_entry, CHARTER_ITEM_ENTRY);
-    assert_eq!(list.entries[0].charter_display_id, CHARTER_DISPLAY_ID);
-    assert_eq!(list.entries[0].charter_cost, 1000, "10 silver, in copper");
-    assert_eq!(list.entries[0].entry_flags, 1);
-    assert_eq!(list.entries[1].charter_cost, 2000);
     assert_eq!(
-        list.entries[1].entry_flags, 0,
-        "the flag is kept raw, not folded into a bool"
+        (r.charter_cost, r.charter_type, r.required_signatures),
+        (800_000, 2, 2)
     );
+    assert_eq!(list.entries[1].charter_cost, 2_000_000);
 
     let events = decode(packet);
     assert!(
@@ -192,45 +182,45 @@ fn petition_show_signatures_stride_is_twelve_bytes() {
     );
 }
 
-/// `SMSG_PETITION_QUERY_RESPONSE`: sixteen fields, of which `allowedGender` alone is a `u16`; the
-/// fields after it get distinct values so a 32-bit read cannot land on a lucky zero.
+/// `SMSG_PETITION_QUERY_RESPONSE` (`CGPetition::Unpack`, `0x98d090`): `allowedGenders` alone is
+/// a `u16`, ten choice strings follow whatever the count says, and `muid` precedes the type.
 #[test]
-fn petition_query_response_gender_is_sixteen_bit() {
+fn petition_query_response_reads_the_12340_record() {
     let body = hx(concat!(
         "07000000",         // u32 petitionId
         "aa00000000000000", // u64 ownerGuid
         "4c656761637900",   // cstring name "Legacy"
         "00",               // cstring bodyText ""
-        "01000000",         // u32 flags
-        "09000000",         // u32 minSignatures
-        "09000000",         // u32 maxSignatures
+        "01000000",         // u32 minSignatures
+        "01000000",         // u32 maxSignatures
         "11111111",         // u32 deadline
-        "22222222",         // u32 creation
+        "22222222",         // u32 issue date
         "33333333",         // u32 allowedGuildID
         "44444444",         // u32 allowedClasses
         "55555555",         // u32 allowedRaces
-        "6666",             // u16 allowedGender  <-- sixteen bits
+        "6666",             // u16 allowedGenders  <-- sixteen bits
         "77777777",         // u32 allowedMinLevel
         "88888888",         // u32 allowedMaxLevel
-        "01000000",         // u32 choiceCount
-        "59657300",         // cstring "Yes"
-        "99999999",         // u32 defaultChoice
+        "00000000",         // u32 choiceCount
+        "00000000000000000000",
+        "99999999", // u32 muid
+        "01000000", // u32 static type: arena
     ));
     let packet = messages::parse_server(opcode::SMSG_PETITION_QUERY_RESPONSE, &body).unwrap();
     let ServerPacket::PetitionQueryResponse(r) = &packet else {
         panic!("expected PetitionQueryResponse, got {}", packet.name());
     };
-    assert_eq!(r.petition_id, 7);
-    assert_eq!(r.owner, 0xaa);
-    assert_eq!(r.name, "Legacy");
-    assert_eq!(r.body_text, "", "vmangos always sends this empty");
-    assert_eq!(r.min_signatures, 9);
-    assert_eq!(r.max_signatures, 9);
-    assert_eq!(r.allowed_gender, 0x6666, "sixteen bits, not thirty-two");
+    assert_eq!(
+        (r.petition_id, r.owner, r.name.as_str()),
+        (7, 0xaa, "Legacy")
+    );
+    assert_eq!((r.min_signatures, r.max_signatures), (1, 1));
+    assert_eq!(r.allowed_genders, 0x6666, "sixteen bits, not thirty-two");
     assert_eq!(r.allowed_min_level, 0x7777_7777);
     assert_eq!(r.allowed_max_level, 0x8888_8888);
-    assert_eq!(r.choices, vec!["Yes".to_string()], "the counted tail");
-    assert_eq!(r.default_choice, 0x9999_9999);
+    assert_eq!(r.choices.len(), 10, "ten rows whatever the count");
+    assert_eq!(r.muid, 0x9999_9999);
+    assert_eq!(r.static_type, messages::PETITION_TYPE_ARENA);
 
     let events = decode(packet);
     assert!(

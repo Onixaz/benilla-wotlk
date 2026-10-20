@@ -47,7 +47,8 @@ pub(crate) use broadcast::Broadcast;
 /// The zone-channel catalog's seed, called from the world-entry UI load: addons read the catalog
 /// at file scope, before an `Update` push would land.
 pub(crate) use channels::seed_zone_channel_catalog;
-/// The joined-channel roster and the `ChatChannels.dbc` catalog.
+/// The joined-channel roster and the `ChatChannels.dbc` catalog, named by `net`'s docs and tests.
+#[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use edit::ChannelState;
 /// Test-only: `ui_script::chat_tests` checks every fired name against the live `ChatTypeInfo`.
 #[cfg(test)]

@@ -294,8 +294,9 @@ mod tests {
         let s = subject(0);
         assert_eq!(expand("A $C of $R", Some(&s)), "A Priest of Night Elf");
         assert_eq!(expand("a $c of $r", Some(&s)), "a priest of night elf");
+        // 10 is the id 3.3.5a's ChrClasses leaves unused.
         let unknown = Subject {
-            class: 6,
+            class: 10,
             ..subject(0)
         };
         assert_eq!(expand("[$C]", Some(&unknown)), "[]");

@@ -998,7 +998,7 @@ mod quest_tests;
 mod quest_timer_tests;
 
 #[cfg(test)]
-mod battlefield_tests;
+mod pvp_ui_tests;
 
 /// The battle map: the stock `Blizzard_BattlefieldMinimap` addon, demand-loaded as SHIFT-M does.
 #[cfg(test)]
@@ -1027,9 +1027,6 @@ mod skills_frame_tests;
 
 #[cfg(test)]
 mod reputation_frame_tests;
-
-#[cfg(test)]
-mod honor_frame_tests;
 
 #[cfg(test)]
 mod pet_paperdoll_tests;

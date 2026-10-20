@@ -32,11 +32,12 @@ pub(super) fn signed_by_other(name: &str) -> Line {
     UiError::s("ERR_PETITION_SIGNED_S", name)
 }
 
-/// The line `SMSG_TURN_IN_PETITION_RESULTS` prints; success prints nothing (`0x5ef166`).
+/// The line `SMSG_TURN_IN_PETITION_RESULTS` prints; success prints nothing (`0x6cf1a0`).
 pub(super) fn turn_in_line(result: u32) -> Option<Line> {
     Some(UiError::key(match result {
         petition_result::ALREADY_IN_GUILD => "ERR_PETITION_IN_GUILD",
         petition_result::NEED_MORE => "ERR_PETITION_NOT_ENOUGH_SIGNATURES",
+        petition_result::NOT_AUTHORIZED => "ERR_GUILD_PERMISSIONS",
         _ => return None,
     }))
 }
@@ -63,6 +64,11 @@ pub(super) fn self_offer_line() -> Line {
 /// emits id `0x7c`, kind 2).
 pub(super) fn no_charter_line() -> Line {
     UiError::key("ERR_NO_GUILD_CHARTER")
+}
+
+/// `TurnInArenaPetition` found no arena charter of that size in the bags (`0x6dd680`).
+pub(super) fn no_arena_charter_line() -> Line {
+    UiError::key("ERR_NO_ARENA_CHARTER")
 }
 
 /// A name the client's own validator refused ([`benilla_ui::script::validate_guild_name`]): the

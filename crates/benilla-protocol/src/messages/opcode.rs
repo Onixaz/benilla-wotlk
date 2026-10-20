@@ -425,6 +425,9 @@ pub const SMSG_INSPECT: u16 = 0x0115; // 277
 /// The inspect Honor tab, both ways: we send a raw 8-byte guid, the reply is a 50-byte body.
 /// Refused silently like [`CMSG_INSPECT`], but without selecting (`MiscHandler.cpp:962-972`).
 pub const MSG_INSPECT_HONOR_STATS: u16 = 0x02D6; // 726
+/// Another player's arena teams, both ways: we send the raw guid, each reply is one team slot
+/// (`0x5e7b00`); it fires `INSPECT_HONOR_UPDATE`.
+pub const MSG_INSPECT_ARENA_TEAMS: u16 = 0x0377; // 887
 /// Right-click a battlemaster (`0x5e01a0`): a `u64` guid; answered by `SMSG_BATTLEFIELD_LIST`.
 pub const CMSG_BATTLEMASTER_HELLO: u16 = 0x02D7; // 727
 pub const CMSG_SET_SELECTION: u16 = 0x013D; // 317
@@ -721,41 +724,77 @@ pub const MSG_TALENT_WIPE_CONFIRM: u16 = 0x02AA; // 682
 /// The instance boot timer: `u32 delayMs`, `u32 reason`; boot START for a positive delay, STOP for
 /// zero, and with reason 1 or 2 a zero delay also shows `ERR_RAID_GROUP_ONLY` or `_FULL`.
 pub const SMSG_RAID_GROUP_ONLY: u16 = 0x0286; // 646
-/// A battleground queue slot: `u32 slot`, `u32 mapId`, `u8 bracket`, `u32`, `u32 status`, then
-/// one `u32` for status 2, two for 3; fires `UPDATE_BATTLEFIELD_STATUS`.
+/// A queue slot (`0x54ae40`): `u32 slot`, `u64 queue`, then unless the word is 0 `u8` min and
+/// max level, `u32 instance`, `u8 rated`, `u32 status` and the status's tail.
 pub const SMSG_BATTLEFIELD_STATUS: u16 = 0x02D4; // 724
-/// `AcceptBattlefieldPort(index, accept)`: `u32 mapId` (the slot's Map.dbc row), `u8 accept`.
+/// `AcceptBattlefieldPort(index, accept)` (`0x54da10`): the slot's `u64 queue`, `u8 accept`.
 pub const CMSG_BATTLEFIELD_PORT: u16 = 0x02D5; // 725
-/// The battleground scoreboard, both ways: an empty request (throttled to 5000 ms); the reply is
-/// `u8 ended`, `u8 winner` if ended, `u32 count`, then per row `u64 guid`, `u32` rank,
-/// killingBlows, honorableKills, deaths, honorGained, statCount, and statCount `u32` (the client
-/// keeps eight). Fires `UPDATE_BATTLEFIELD_SCORE` once every row's name resolves.
+/// The scoreboard, both ways: an empty request (5000 ms throttle, once only after the end or in
+/// an arena, `0x54ce30`); the reply is read by `0x54d280`.
 pub const MSG_PVP_LOG_DATA: u16 = 0x02E0; // 736
-/// `LeaveBattlefield()`: `u32 mapId`, sent only once the scoreboard's ended byte has arrived.
+/// `LeaveBattlefield()` (`0x54c250`): the active slot's `u64 queue`, 0 with none active.
 pub const CMSG_LEAVE_BATTLEFIELD: u16 = 0x02E1; // 737
-/// Battleground teammate positions, both ways: an empty request (5000 ms throttle, active slot
-/// only); the reply is `u32 count`, count × `(u64 guid, f32 x, f32 y)`, `u8 hasCarrier`, and if
-/// set one more such triple for the flag carrier. No event fires; the UI polls.
+/// Teammate positions, both ways: an empty request (5000 ms throttle, an active slot only); the
+/// reply is `u32 count` × `(u64, f32, f32)`, then `u32 carriers` × the same (`0x54b3f0`).
 pub const MSG_BATTLEGROUND_PLAYER_POSITIONS: u16 = 0x02E9; // 745
-/// `ShowBattlefieldList(index)`: a queued slot's `u32 mapId`, reopening the list without an NPC.
+/// `RequestBattlegroundInstanceInfo(index)` (`0x54e5b0`): `u32 type`, `u8 1`, `u8 xpDisabled`.
 pub const CMSG_BATTLEFIELD_LIST: u16 = 0x023C; // 572
-/// The battleground instance list: `u64 battlemaster` (0 away from an NPC), `u32 mapId`,
-/// `u8 bracket`, `u32 count`, count × `u32 instanceId`. Fires `BATTLEFIELDS_SHOW`; the
-/// battlemaster guid decides which join opcode `JoinBattlefield` sends.
+/// One battleground type's instance list and rewards (`0x54e390`).
 pub const SMSG_BATTLEFIELD_LIST: u16 = 0x023D; // 573
-/// `JoinBattlefield`, no battlemaster: `u32 mapId`, `u32 instanceId` (0 = any), `u8 asGroup`.
-pub const CMSG_BATTLEFIELD_JOIN: u16 = 0x023E; // 574
-/// `JoinBattlefield` at a battlemaster: `u64 guid`, then the body of [`CMSG_BATTLEFIELD_JOIN`].
+/// `JoinBattlefield` for a battleground (`0x54cc70`): `u64 battlemaster` (0 from the PvP window),
+/// `u32 type`, `u32 instance` (0 first available), `u8 asGroup`.
 pub const CMSG_BATTLEMASTER_JOIN: u16 = 0x02EE; // 750
-/// The world-entry status request: empty; answered by one `SMSG_BATTLEFIELD_STATUS` per live slot.
+/// `JoinBattlefield` for an arena (`0x54cc70`): `u64 battlemaster`, `u8 slot`, `u8 asGroup`,
+/// `u8 rated`.
+pub const CMSG_BATTLEMASTER_JOIN_ARENA: u16 = 0x0358; // 856
+/// The world-entry status request (`0x54ca50`): empty; one `SMSG_BATTLEFIELD_STATUS` per slot.
 pub const CMSG_BATTLEFIELD_STATUS: u16 = 0x02D3; // 723
-/// A group join's verdict: `u32`, `0xFFFFFFFE` for deserters (message 439), a Map.dbc id joined
-/// (440), anything else failure (441).
+/// A join's verdict (`0x54b1c0`): `i32`, a `BattlemasterList.dbc` id or a negative error, the two
+/// timed-out codes followed by the `u64` player at fault.
 pub const SMSG_GROUP_JOINED_BATTLEGROUND: u16 = 0x02E8; // 744
-/// A player joined the battleground: `u64 guid`, printed as message 444 once the name resolves.
+/// A player joined the battleground: `u64 guid`, printed once the name resolves (`0x54b510`).
 pub const SMSG_BATTLEGROUND_PLAYER_JOINED: u16 = 0x02EC; // 748
-/// A player left the battleground: `u64 guid`, message 445.
+/// A player left the battleground: `u64 guid` (`0x54b510`).
 pub const SMSG_BATTLEGROUND_PLAYER_LEFT: u16 = 0x02ED; // 749
+/// The port was refused because the player is dead: empty (`0x54d4b0`).
+pub const SMSG_BATTLEFIELD_PORT_DENIED: u16 = 0x014B; // 331
+/// An arena opponent's unit left the world: `u64 guid` (`0x54b5e0`).
+pub const SMSG_ARENA_UNIT_DESTROYED: u16 = 0x04C7; // 1223
+/// `HearthAndResurrectFromArea()` (`0x54c7a0`): empty.
+pub const CMSG_HEARTH_AND_RESURRECT: u16 = 0x049C; // 1180
+/// `ReportPlayerIsPVPAFK(unit)`: `u64 guid`.
+pub const CMSG_REPORT_PVP_AFK: u16 = 0x03E4; // 996
+/// The world-PvP battle manager (Wintergrasp), handlers `0x54b610`..`0x54b7f0`.
+pub const SMSG_BATTLEFIELD_MGR_ENTRY_INVITE: u16 = 0x04DE; // 1246
+pub const CMSG_BATTLEFIELD_MGR_ENTRY_INVITE_RESPONSE: u16 = 0x04DF; // 1247
+pub const SMSG_BATTLEFIELD_MGR_ENTERED: u16 = 0x04E0; // 1248
+pub const SMSG_BATTLEFIELD_MGR_QUEUE_INVITE: u16 = 0x04E1; // 1249
+pub const CMSG_BATTLEFIELD_MGR_QUEUE_INVITE_RESPONSE: u16 = 0x04E2; // 1250
+pub const CMSG_BATTLEFIELD_MGR_QUEUE_REQUEST: u16 = 0x04E3; // 1251
+pub const SMSG_BATTLEFIELD_MGR_QUEUE_REQUEST_RESPONSE: u16 = 0x04E4; // 1252
+pub const SMSG_BATTLEFIELD_MGR_EJECT_PENDING: u16 = 0x04E5; // 1253
+pub const SMSG_BATTLEFIELD_MGR_EJECTED: u16 = 0x04E6; // 1254
+pub const CMSG_BATTLEFIELD_MGR_EXIT_REQUEST: u16 = 0x04E7; // 1255
+pub const SMSG_BATTLEFIELD_MGR_STATE_CHANGE: u16 = 0x04E8; // 1256
+
+/// The arena-team family (`CGArenaTeamInfo`, `0x5a40e0`, and the player's `0x6cc910`..).
+pub const SMSG_ARENA_TEAM_COMMAND_RESULT: u16 = 0x0349; // 841
+/// The team cache's ask (`DBCache<ArenaTeamCache>`): `u32 teamId`.
+pub const CMSG_ARENA_TEAM_QUERY: u16 = 0x034B; // 843
+pub const SMSG_ARENA_TEAM_QUERY_RESPONSE: u16 = 0x034C; // 844
+/// `ArenaTeamRoster(team)` (`0x5a3600`): `u32 teamId`, 10 s apart per team.
+pub const CMSG_ARENA_TEAM_ROSTER: u16 = 0x034D; // 845
+pub const SMSG_ARENA_TEAM_ROSTER: u16 = 0x034E; // 846
+pub const CMSG_ARENA_TEAM_INVITE: u16 = 0x034F; // 847
+pub const SMSG_ARENA_TEAM_INVITE: u16 = 0x0350; // 848
+pub const CMSG_ARENA_TEAM_ACCEPT: u16 = 0x0351; // 849
+pub const CMSG_ARENA_TEAM_DECLINE: u16 = 0x0352; // 850
+pub const CMSG_ARENA_TEAM_LEAVE: u16 = 0x0353; // 851
+pub const CMSG_ARENA_TEAM_REMOVE: u16 = 0x0354; // 852
+pub const CMSG_ARENA_TEAM_DISBAND: u16 = 0x0355; // 853
+pub const CMSG_ARENA_TEAM_LEADER: u16 = 0x0356; // 854
+pub const SMSG_ARENA_TEAM_EVENT: u16 = 0x0357; // 855
+pub const SMSG_ARENA_TEAM_STATS: u16 = 0x035B; // 859
 /// Sent on adopting a new area spirit healer: `u64 guid`; [`SMSG_AREA_SPIRIT_HEALER_TIME`] answers.
 pub const CMSG_AREA_SPIRIT_HEALER_QUERY: u16 = 0x02E2; // 738
 /// `AcceptAreaSpiritHeal()`: the cached area healer's `u64 guid`, never an argument.
@@ -792,9 +831,9 @@ pub const CMSG_SUMMON_RESPONSE: u16 = 0x02AC; // 684
 /// Abandon a skill line; no ack, the removal arrives as a `PLAYER_SKILL_INFO` update.
 pub const CMSG_UNLEARN_SKILL: u16 = 0x0202; // 514
 
-/// Toggle our PvP flag: we send the empty body, a toggle; one byte would set a state instead
-/// (`TogglePvP`). No ack; the flag arrives in `UNIT_FIELD_FLAGS`, and turning it off waits out
-/// the server's 300 s timer.
+/// Our PvP flag: an empty body toggles it (`TogglePVP`, `0x516840`), one byte sets a state
+/// (`SetPVP`, `0x5168b0`). No ack; the flag arrives in `UNIT_FIELD_FLAGS`, and turning it off
+/// waits out the server's timer.
 pub const CMSG_TOGGLE_PVP: u16 = 0x0253; // 595
 
 /// Toggle `PLAYER_FLAGS_HIDE_HELM`: an empty body and a pure toggle, so send only when the held

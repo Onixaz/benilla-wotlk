@@ -277,17 +277,19 @@ fn until_cancelled(
                 .any(|e| matches!(e, 0x23 | 0x77 | 0x80 | 0x81)))
 }
 
-/// The filter of every aura display, the player's bar and other units' rows alike: never-display
-/// and tracking spells are hidden. The player's rebuild tests the attributes
-/// (`0x4e42b6`-`0x4e42c8`), then diverts a tracking aura to the tracking global instead of the
-/// cache (`0x4e42d6`-`0x4e4308`); `IsAuraDisplayable 0x519860` hides both from other units' rows.
-/// Deviation: on other units' rows an id the catalog lacks stays visible, because every wire id is
-/// a real spell and failing closed would blank every aura on a catalog failure; the reference
-/// skips one there (`[0xc0d78c]`), though its player cache inserts one, as here.
+/// The filter of every aura display, the player's bar and other units' rows alike, as the display
+/// index rebuild admits a slot (`0x72c510`): an id with no `Spell.dbc` row is never indexed
+/// (`0x72c73d`-`0x72c75f`), so a server-only spell takes no `UnitAura` index; then
+/// `CanShowAura 0x53d580`, whose never-display attributes are modelled here, not its area-aura,
+/// caster or aura-vision arms. Tracking spells go to the tracking feed instead. With no catalog
+/// at all every aura stays listed.
 fn shown_in_aura_ui(catalog: Option<&SpellCatalog>, spell_id: u32) -> bool {
+    let Some(catalog) = catalog else {
+        return true;
+    };
     catalog
-        .and_then(|c| c.get(spell_id))
-        .is_none_or(|d| !d.hidden_from_aura_bar() && !d.tracking_aura())
+        .get(spell_id)
+        .is_some_and(|d| !d.hidden_from_aura_bar() && !d.tracking_aura())
 }
 
 /// The player's tracking aura, the reference's global `0xbc6378`: the rebuild's walk overwrites
@@ -567,6 +569,52 @@ mod tests {
             [(true, true), (false, false)],
             "the empty slot is skipped"
         );
+    }
+
+    /// A server-only spell (AzerothCore's Defensive State 5302, no `Spell.dbc` row) ahead of a
+    /// known one takes no index (`0x72c73d`): Battle Shout lists first, by name, on the player's
+    /// list and a roster record alike.
+    #[test]
+    fn an_aura_without_a_spell_row_takes_no_index() {
+        let catalog = SpellCatalog::from_displays(std::collections::HashMap::from([(
+            6673,
+            benilla_formats::SpellDisplay {
+                id: 6673,
+                name: "Battle Shout".into(),
+                ..Default::default()
+            },
+        )]));
+        let table = UnitAuras::of(7, &[(1, 5302, 0x39), (2, 6673, 0x3b)]);
+        let ctx = ListCtx {
+            catalog: Some(&catalog),
+            ..NO_SPELLS
+        };
+        let inputs: Vec<AuraInput> = table_inputs(&table, Some(&catalog), true).collect();
+        let listed: Vec<(u32, Option<String>)> = aura_list(ctx, &inputs)
+            .into_iter()
+            .map(|a| (a.spell_id, a.name))
+            .collect();
+        assert_eq!(listed, [(6673, Some("Battle Shout".into()))]);
+
+        let block = [
+            RecordAura {
+                slot: 0,
+                spell_id: 5302,
+                flags: 0x19,
+            },
+            RecordAura {
+                slot: 1,
+                spell_id: 6673,
+                flags: 0x19,
+            },
+        ];
+        let roster: Vec<u32> = record_inputs(block.into_iter(), Some(&catalog))
+            .map(|a| a.spell_id)
+            .collect();
+        assert_eq!(roster, [6673]);
+
+        // No catalog at all: nothing is known to be missing, so both stay.
+        assert_eq!(table_inputs(&table, None, true).count(), 2);
     }
 
     // == `UnitBuff`'s unit-level gate (`0x519500`) ==

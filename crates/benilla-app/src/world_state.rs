@@ -7,10 +7,10 @@
 //! `mask & key`, value at node `+0x18`); keys stay raw because `$<n>e` reads the negated key
 //! (`$2077e` looks up `0xFFFFF7E3`).
 //!
-//! An init first runs `0x4c5650(ecx = map, edx = area)`: it frees every entry, stores the pair as
-//! the display filter `[0xb71e84]`/`[0xb71ea8]` ([`WorldStates::scope`]) and rebuilds the
-//! world-state UI list, and only then are the packet's pairs applied. The filter is the server's
-//! last init, never the avatar's position; only this clear and the logout reset write it.
+//! An init first runs `InitWorldStates` (`0x548970`): it stores map, zone and area as the display
+//! filter ([`WorldStates::scope`]) and rebuilds the world-state UI list, and only then are the
+//! packet's pairs applied. It keeps the table, so values persist across zones. The filter is the
+//! server's last init, never the avatar's position.
 
 use std::collections::HashMap;
 
@@ -21,7 +21,7 @@ use bevy::prelude::*;
 pub(crate) struct WorldStates {
     values: HashMap<u32, u32>,
     generation: u64,
-    scope: Option<(u32, u32)>,
+    scope: Option<(u32, u32, u32)>,
 }
 
 impl WorldStates {
@@ -43,17 +43,16 @@ impl WorldStates {
         self.values.iter().map(|(&k, &v)| (k, v as i32))
     }
 
-    /// The `(map, area)` of the last init, `[0xb71e84]`/`[0xb71ea8]`; `None` before any init, the
-    /// reference's `-1`.
-    pub(crate) fn scope(&self) -> Option<(u32, u32)> {
+    /// The `(map, zone, area)` of the last init (`[0xbe8f54]`, `[0xbe8f50]`, `[0xbe8f4c]`);
+    /// `None` before any init.
+    pub(crate) fn scope(&self) -> Option<(u32, u32, u32)> {
         self.scope
     }
 
-    /// An init's leading half (`0x4c5650`): drops every entry, then records the filter. The caller
+    /// An init's leading half (`0x548970`): records the filter and keeps every entry. The caller
     /// applies the pairs after.
-    pub(crate) fn init_scope(&mut self, map: u32, area: u32) {
-        self.values.clear();
-        self.scope = Some((map, area));
+    pub(crate) fn init_scope(&mut self, map: u32, zone: u32, area: u32) {
+        self.scope = Some((map, zone, area));
         self.generation = self.generation.wrapping_add(1);
     }
 

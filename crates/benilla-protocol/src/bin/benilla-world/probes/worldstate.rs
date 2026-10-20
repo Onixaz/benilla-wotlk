@@ -24,10 +24,11 @@ const HOP_AFTER: Duration = Duration::from_secs(4);
 const PROBE_ID: u32 = 0xBEEF;
 const PROBE_VALUE: u32 = 1_234_567;
 
-/// One `SMSG_INIT_WORLD_STATES`: its `(map, zone)` scope and its pairs, terminator included.
+/// One `SMSG_INIT_WORLD_STATES`: its `(map, zone, area)` scope and its pairs.
 struct Init {
     map: u32,
     zone: u32,
+    area: u32,
     states: Vec<(u32, u32)>,
 }
 
@@ -65,9 +66,10 @@ impl Probe for WorldState {
     fn on_event(&mut self, ev: &SessionEvent, _cx: &mut Ctx) -> Result<()> {
         if let SessionEvent::WorldStates { scope, states } = ev {
             match *scope {
-                Some((map, zone)) => self.inits.push(Init {
+                Some((map, zone, area)) => self.inits.push(Init {
                     map,
                     zone,
+                    area,
                     states: states.clone(),
                 }),
                 None => self.updates.extend(states.iter().copied()),
@@ -80,9 +82,10 @@ impl Probe for WorldState {
         println!("\n--- world states ---");
         for init in &self.inits {
             println!(
-                "SMSG_INIT_WORLD_STATES  map {} zone {}  {} pair(s)",
+                "SMSG_INIT_WORLD_STATES  map {} zone {} area {}  {} pair(s)",
                 init.map,
                 init.zone,
+                init.area,
                 init.states.len()
             );
             for (id, value) in &init.states {

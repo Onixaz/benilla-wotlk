@@ -74,6 +74,9 @@ pub struct Map {
     pub fields: usize,
     /// `MapName_lang`, its enUS column.
     pub map_name: usize,
+    /// `MapDescription0_lang` and `MapDescription1_lang`, the Horde and Alliance texts, their
+    /// enUS columns.
+    pub description: [usize; 2],
     pub loading_screen: usize,
 }
 
@@ -255,6 +258,7 @@ pub const LAYOUTS: DbcLayouts = DbcLayouts {
     map: Map {
         fields: 66,
         map_name: 5,
+        description: [23, 40],
         loading_screen: 57,
     },
     // `HasWideScreen` closes the record: 1 on the continents, which ship a `…Wide.blp` beside the

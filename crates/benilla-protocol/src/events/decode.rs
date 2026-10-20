@@ -655,6 +655,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::RaidDifficulty(set) => vec![SessionEvent::RaidDifficulty(set)],
         ServerPacket::BreakTarget { guid } => vec![SessionEvent::BreakTarget { guid }],
         ServerPacket::InspectHonorStats(stats) => vec![SessionEvent::InspectHonorStats(stats)],
+        ServerPacket::InspectArenaTeam(t) => vec![SessionEvent::InspectArenaTeam(t)],
         ServerPacket::PvpCredit(credit) => vec![SessionEvent::PvpCredit(credit)],
         ServerPacket::MirrorTimerStart(start) => vec![SessionEvent::MirrorTimerStart(start)],
         ServerPacket::MirrorTimerPause { kind, paused } => {
@@ -864,8 +865,17 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::BattlefieldPositions(p) => vec![SessionEvent::BattlefieldPositions(p)],
         ServerPacket::TabardVendorActivate(g) => vec![SessionEvent::TabardVendorActivate(g)],
         ServerPacket::SaveGuildEmblemResult(r) => vec![SessionEvent::SaveGuildEmblemResult(r)],
-        ServerPacket::GroupJoinedBattleground { result } => {
-            vec![SessionEvent::GroupJoinedBattleground { result }]
+        ServerPacket::GroupJoinedBattleground(j) => vec![SessionEvent::GroupJoinedBattleground(j)],
+        ServerPacket::BattlefieldPortDenied => vec![SessionEvent::BattlefieldPortDenied],
+        ServerPacket::ArenaUnitDestroyed(g) => vec![SessionEvent::ArenaUnitDestroyed(g)],
+        ServerPacket::BattlefieldMgr(n) => vec![SessionEvent::BattlefieldMgr(n)],
+        ServerPacket::ArenaTeamQueryResponse(t) => vec![SessionEvent::ArenaTeamQueryResponse(t)],
+        ServerPacket::ArenaTeamRoster(t) => vec![SessionEvent::ArenaTeamRoster(t)],
+        ServerPacket::ArenaTeamStats(t) => vec![SessionEvent::ArenaTeamStats(t)],
+        ServerPacket::ArenaTeamCommandResult(t) => vec![SessionEvent::ArenaTeamCommandResult(t)],
+        ServerPacket::ArenaTeamEvent(t) => vec![SessionEvent::ArenaTeamEvent(t)],
+        ServerPacket::ArenaTeamInvite { inviter, team } => {
+            vec![SessionEvent::ArenaTeamInvite { inviter, team }]
         }
         ServerPacket::BattlegroundPlayer { guid, joined } => {
             vec![SessionEvent::BattlegroundPlayer { guid, joined }]
@@ -1147,7 +1157,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             vec![SessionEvent::TradeStatusExtended { state }]
         }
         ServerPacket::InitWorldStates(w) => vec![SessionEvent::WorldStates {
-            scope: Some((w.map, w.zone)),
+            scope: Some((w.map, w.zone, w.area)),
             states: w.states,
         }],
         ServerPacket::UpdateWorldState { id, value } => vec![SessionEvent::WorldStates {

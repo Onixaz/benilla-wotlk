@@ -8,26 +8,16 @@ use benilla_protocol::messages;
 use benilla_protocol::ServerPacket;
 use common::hx;
 
-/// The 50-byte `MSG_INSPECT_HONOR_STATS` reply, in vmangos
-/// `InspectHonorStatsResponse::AppendBodyTo` order.
+/// The 25-byte `MSG_INSPECT_HONOR_STATS` reply, as `0x5e7a50` reads it.
 fn inspect_honor_body() -> Vec<u8> {
     hx(concat!(
         "b32a000001000000", // u64 playerGuid
         "0b",               // u8  highestRank
-        "11000200",         // u32 sessionKills (17 HK | 2 DK)
-        "2900",             // u16 yesterdayHK
-        "0000",             // u16 unknownOld1
-        "a401",             // u16 lastWeekHK
-        "0000",             // u16 unknownOld2
-        "7b00",             // u16 thisWeekHK
-        "0000",             // u16 unknownOld3
-        "430f0000",         // u32 lifetimeHK
-        "0c000000",         // u32 lifetimeDHK
-        "80020000",         // u32 yesterdayHonor
-        "ef200000",         // u32 lastWeekHonor
-        "e2040000",         // u32 thisWeekHonor
-        "39000000",         // u32 lastWeekRank (the standing)
-        "bf",               // u8  rankBar
+        "1100",             // u16 today's HK
+        "0200",             // u16 yesterday's HK
+        "80020000",         // u32 today's honor
+        "ef200000",         // u32 yesterday's honor
+        "430f0000",         // u32 lifetime HK
     ))
 }
 
@@ -36,35 +26,20 @@ fn inspect_honor_body() -> Vec<u8> {
 #[test]
 fn inspect_honor_stats_wire() {
     let body = inspect_honor_body();
-    assert_eq!(body.len(), 50, "the 1.12.1 reply body is exactly 50 bytes");
     let packet = messages::parse_server(messages::opcode::MSG_INSPECT_HONOR_STATS, &body).unwrap();
     assert_eq!(packet.name(), "MSG_INSPECT_HONOR_STATS");
     let ServerPacket::InspectHonorStats(stats) = packet else {
         panic!("inspect honor stats");
     };
     assert_eq!(stats.player_guid, 0x0000_0001_0000_2AB3);
-    assert_eq!(stats.highest_rank, 11);
-    assert_eq!(stats.session_kills(), (17, 2));
     assert_eq!(
-        (stats.yesterday_hk, stats.last_week_hk, stats.this_week_hk),
-        (41, 420, 123)
+        (stats.highest_rank, stats.today_hk, stats.yesterday_hk),
+        (11, 17, 2)
     );
     assert_eq!(
-        (stats.unknown_old1, stats.unknown_old2, stats.unknown_old3),
-        (0, 0, 0),
-        "vmangos writes all three deprecated slots as 0"
+        (stats.today_honor, stats.yesterday_honor, stats.lifetime_hk),
+        (640, 8_431, 3_907)
     );
-    assert_eq!((stats.lifetime_hk, stats.lifetime_dhk), (3_907, 12));
-    assert_eq!(
-        (
-            stats.yesterday_honor,
-            stats.last_week_honor,
-            stats.this_week_honor
-        ),
-        (640, 8_431, 1_250)
-    );
-    assert_eq!(stats.last_week_rank, 57, "the STANDING, not a rank");
-    assert_eq!(stats.rank_bar, 191);
 
     match decode(ServerPacket::InspectHonorStats(stats)).as_slice() {
         [SessionEvent::InspectHonorStats(ev)] => assert_eq!(*ev, stats),
@@ -75,6 +50,27 @@ fn inspect_honor_stats_wire() {
         messages::inspect_honor_stats(0x0000_0001_0000_2AB3),
         hx("b32a000001000000")
     );
+}
+
+/// `MSG_INSPECT_ARENA_TEAMS` (0x377): one team slot per packet.
+#[test]
+fn inspect_arena_teams_wire() {
+    let body = hx("b32a00000100000001090000004006000014000000");
+    let mut full = body.clone();
+    full.extend_from_slice(&hx("0c00000012000000"));
+    full.extend_from_slice(&hx("2c060000"));
+    let packet = messages::parse_server(messages::opcode::MSG_INSPECT_ARENA_TEAMS, &full).unwrap();
+    let ServerPacket::InspectArenaTeam(t) = packet else {
+        panic!("inspect arena team");
+    };
+    assert_eq!(
+        (t.slot, t.team_id, t.rating, t.personal_rating),
+        (1, 9, 1600, 1580)
+    );
+    assert!(matches!(
+        decode(ServerPacket::InspectArenaTeam(t)).as_slice(),
+        [SessionEvent::InspectArenaTeam(_)]
+    ));
 }
 
 /// `SMSG_PVP_CREDIT` (0x28C): honor, victim guid, and the victim's internal rank (vmangos
@@ -112,7 +108,7 @@ fn pvp_credit_wire() {
 fn truncated_honor_bodies_error_at_the_dispatch() {
     let full = inspect_honor_body();
     assert!(
-        messages::parse_server(messages::opcode::MSG_INSPECT_HONOR_STATS, &full[..49]).is_err()
+        messages::parse_server(messages::opcode::MSG_INSPECT_HONOR_STATS, &full[..24]).is_err()
     );
     assert!(messages::parse_server(messages::opcode::SMSG_PVP_CREDIT, &[0u8; 15]).is_err());
 }

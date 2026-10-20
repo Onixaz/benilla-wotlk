@@ -116,10 +116,12 @@ pub(crate) struct InteractWindows<'w> {
     tabard: Option<ResMut<'w, crate::ui_tabard::TabardOpen>>,
     auction: Option<ResMut<'w, crate::ui_auction::AuctionOpen>>,
     stable: Option<ResMut<'w, crate::ui_stable::StableOpen>>,
+    petition_vendor: Option<ResMut<'w, crate::ui_petition::PetitionVendorState>>,
+    battlemaster: Option<ResMut<'w, crate::ui_battlefield::Battlefield>>,
 }
 
 /// [`InteractWindows`]' count; the gossip menu is first.
-const INTERACT_WINDOWS: usize = 10;
+const INTERACT_WINDOWS: usize = 12;
 
 impl InteractWindows<'_> {
     fn npcs(&self) -> [Option<u64>; INTERACT_WINDOWS] {
@@ -137,6 +139,8 @@ impl InteractWindows<'_> {
             npc(&self.tabard),
             npc(&self.auction),
             npc(&self.stable),
+            npc(&self.petition_vendor),
+            npc(&self.battlemaster),
         ]
     }
 
@@ -156,7 +160,9 @@ impl InteractWindows<'_> {
             6 => close(&mut self.registrar),
             7 => close(&mut self.tabard),
             8 => close(&mut self.auction),
-            _ => close(&mut self.stable),
+            9 => close(&mut self.stable),
+            10 => close(&mut self.petition_vendor),
+            _ => close(&mut self.battlemaster),
         }
     }
 }
@@ -209,6 +215,10 @@ pub(crate) fn feed_interact_npc(
     // `0x5f05bc` path, with no gossip session behind it.
     stable: Option<Res<crate::ui_stable::StableOpen>>,
     tabard: Option<Res<crate::ui_tabard::TabardOpen>>,
+    // The arena registrar's vendor and the battlemaster each set the interact target
+    // (`0x5a22a0`, `SetBattlemaster` `0x5496d0`).
+    petition_vendor: Option<Res<crate::ui_petition::PetitionVendorState>>,
+    battlemaster: Option<Res<crate::ui_battlefield::Battlefield>>,
     index: Option<Res<GuidIndex>>,
     mut out: ResMut<InteractNpc>,
 ) {
@@ -223,7 +233,9 @@ pub(crate) fn feed_interact_npc(
         .or_else(|| auction.and_then(|s| s.npc()))
         .or_else(|| registrar.and_then(|s| s.npc()))
         .or_else(|| stable.and_then(|s| s.npc()))
-        .or_else(|| tabard.and_then(|s| s.npc()));
+        .or_else(|| tabard.and_then(|s| s.npc()))
+        .or_else(|| petition_vendor.and_then(|s| s.npc()))
+        .or_else(|| battlemaster.and_then(|s| s.npc()));
     // Field 0 is the entity the booth bakes and the facing chain steers by; field 1 is the guid
     // `crate::ui_unit` names the token by, which holds even when the entity is not streamed.
     // Written only on a change: the unit feed's dirty gate reads `is_changed()` on it.

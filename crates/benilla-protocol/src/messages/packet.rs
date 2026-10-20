@@ -277,7 +277,7 @@ pub enum ServerPacket {
         healer: u64,
         ms: u32,
     },
-    /// `SMSG_BATTLEFIELD_STATUS`: one of the three queue slots.
+    /// `SMSG_BATTLEFIELD_STATUS`: one of the two queue slots.
     BattlefieldStatus(crate::messages::BattlefieldStatus),
     /// `MSG_PVP_LOG_DATA` inbound: the battleground scoreboard.
     PvpLogData(crate::messages::PvpLogData),
@@ -289,9 +289,28 @@ pub enum ServerPacket {
     TabardVendorActivate(u64),
     /// `MSG_SAVE_GUILD_EMBLEM` inbound: the save's result row.
     SaveGuildEmblemResult(u32),
-    /// `SMSG_GROUP_JOINED_BATTLEGROUND`: a group join's verdict.
-    GroupJoinedBattleground {
-        result: u32,
+    /// `SMSG_GROUP_JOINED_BATTLEGROUND`: a join's verdict.
+    GroupJoinedBattleground(crate::messages::GroupJoinedBattleground),
+    /// `SMSG_BATTLEFIELD_PORT_DENIED`: the port was refused, the player being dead.
+    BattlefieldPortDenied,
+    /// `SMSG_ARENA_UNIT_DESTROYED`: an arena opponent's unit left the world.
+    ArenaUnitDestroyed(u64),
+    /// The Wintergrasp battle manager's notices.
+    BattlefieldMgr(crate::messages::BattlefieldMgrNotice),
+    /// `SMSG_ARENA_TEAM_QUERY_RESPONSE`: an arena team's cache record.
+    ArenaTeamQueryResponse(crate::messages::ArenaTeamRecord),
+    /// `SMSG_ARENA_TEAM_ROSTER`: one of our teams' members.
+    ArenaTeamRoster(crate::messages::ArenaTeamRoster),
+    /// `SMSG_ARENA_TEAM_STATS`: one of our teams' rating and games.
+    ArenaTeamStats(crate::messages::ArenaTeamStats),
+    /// `SMSG_ARENA_TEAM_COMMAND_RESULT`: a team command's verdict.
+    ArenaTeamCommandResult(crate::messages::ArenaTeamCommandResult),
+    /// `SMSG_ARENA_TEAM_EVENT`: a membership change broadcast to the team.
+    ArenaTeamEvent(crate::messages::ArenaTeamEvent),
+    /// `SMSG_ARENA_TEAM_INVITE`: an invitation to a team.
+    ArenaTeamInvite {
+        inviter: String,
+        team: String,
     },
     /// `SMSG_BATTLEGROUND_PLAYER_JOINED` / `_LEFT`: one guid each.
     BattlegroundPlayer {
@@ -1110,6 +1129,8 @@ pub enum ServerPacket {
     },
     /// The `MSG_INSPECT_HONOR_STATS` reply, only ever to our ask; a refused ask gets silence.
     InspectHonorStats(InspectHonorStats),
+    /// The `MSG_INSPECT_ARENA_TEAMS` reply: one of the inspected player's team slots.
+    InspectArenaTeam(crate::messages::InspectArenaTeam),
     /// `SMSG_PVP_CREDIT`: an attributed honor payout, negative for a dishonorable kill.
     PvpCredit(PvpCredit),
     /// `SMSG_START_MIRROR_TIMER`: start or restate a breath or fatigue bar; resent on each change.
@@ -1389,7 +1410,17 @@ impl ServerPacket {
             ServerPacket::BattlefieldPositions(_) => "MSG_BATTLEGROUND_PLAYER_POSITIONS".into(),
             ServerPacket::TabardVendorActivate(_) => "MSG_TABARDVENDOR_ACTIVATE".into(),
             ServerPacket::SaveGuildEmblemResult(_) => "MSG_SAVE_GUILD_EMBLEM".into(),
-            ServerPacket::GroupJoinedBattleground { .. } => "SMSG_GROUP_JOINED_BATTLEGROUND".into(),
+            ServerPacket::GroupJoinedBattleground(_) => "SMSG_GROUP_JOINED_BATTLEGROUND".into(),
+            ServerPacket::InspectArenaTeam(_) => "MSG_INSPECT_ARENA_TEAMS".into(),
+            ServerPacket::BattlefieldPortDenied => "SMSG_BATTLEFIELD_PORT_DENIED".into(),
+            ServerPacket::ArenaUnitDestroyed(_) => "SMSG_ARENA_UNIT_DESTROYED".into(),
+            ServerPacket::BattlefieldMgr(_) => "SMSG_BATTLEFIELD_MGR".into(),
+            ServerPacket::ArenaTeamQueryResponse(_) => "SMSG_ARENA_TEAM_QUERY_RESPONSE".into(),
+            ServerPacket::ArenaTeamRoster(_) => "SMSG_ARENA_TEAM_ROSTER".into(),
+            ServerPacket::ArenaTeamStats(_) => "SMSG_ARENA_TEAM_STATS".into(),
+            ServerPacket::ArenaTeamCommandResult(_) => "SMSG_ARENA_TEAM_COMMAND_RESULT".into(),
+            ServerPacket::ArenaTeamEvent(_) => "SMSG_ARENA_TEAM_EVENT".into(),
+            ServerPacket::ArenaTeamInvite { .. } => "SMSG_ARENA_TEAM_INVITE".into(),
             ServerPacket::BattlegroundPlayer { joined: true, .. } => {
                 "SMSG_BATTLEGROUND_PLAYER_JOINED".into()
             }

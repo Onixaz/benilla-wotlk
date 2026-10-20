@@ -174,6 +174,16 @@ pub enum Field {
     PlayerPetSpellPower,
     /// 3.3.5a's Refer-a-Friend levels left to grant, `PLAYER_FIELD_BYTES` byte 1.
     PlayerRafGrantableLevel,
+    /// 3.3.5a's honorable kills, today's in the low half and yesterday's in the high.
+    PlayerKills,
+    /// 3.3.5a's honor earned today.
+    PlayerTodayContribution,
+    /// 3.3.5a's three arena-team slots of seven words: team id, type, captain flag, games this
+    /// week, games this season, wins this season and personal rating.
+    PlayerArenaTeamInfo,
+    /// 3.3.5a's honor and arena-point balances.
+    PlayerHonorCurrency,
+    PlayerArenaCurrency,
     /// The 25 combat ratings.
     PlayerCombatRating,
     PlayerExploredZones,
@@ -318,7 +328,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         item: 48,
         container: 122,
         unit: 188,
-        player: 1474,
+        player: 1499,
         gameobject: 26,
         dynamicobject: 16,
         corpse: 38,
@@ -436,6 +446,12 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         one(F::PlayerModHealingDonePct, Player, 1471),
         one(F::PlayerPetSpellPower, Player, 1472),
         one(F::PlayerRafGrantableLevel, Player, 1473),
+        // 3.3.5a's honor, arena-team and currency fields, past the character sheet.
+        one(F::PlayerKills, Player, 1474),
+        one(F::PlayerTodayContribution, Player, 1475),
+        run(F::PlayerArenaTeamInfo, Player, 1476, 21),
+        one(F::PlayerHonorCurrency, Player, 1497),
+        one(F::PlayerArenaCurrency, Player, 1498),
         // 19 slots of 12: creator guid, entry, 7 enchants, properties, pad.
         strided(F::PlayerVisibleItemEntry, Player, 260, 19, 12),
         strided(F::PlayerVisibleItemEnchants, Player, 261, 19, 12),
@@ -681,12 +697,20 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         one(F::PlayerPvpMedals, Player, 1200),
         run(F::PlayerBuybackPrice, Player, 1201, 12),
         run(F::PlayerBuybackTimestamp, Player, 1213, 12),
+        // `+0x1080`/`+0x1084` (`GetPVPSessionStats` `0x611a20`).
+        one(F::PlayerKills, Player, 1225),
+        one(F::PlayerTodayContribution, Player, 1226),
         one(F::PlayerYesterdayContribution, Player, 1227),
         one(F::PlayerLifetimeHonorableKills, Player, 1228),
         one(F::PlayerFieldBytes2, Player, 1229),
         one(F::PlayerWatchedFactionIndex, Player, 1230),
         // `+0x10ec + 4 * index` (`GetCombatRating` `0x60ddb0`).
         run(F::PlayerCombatRating, Player, 1231, 25),
+        // `+0x10ec + 0x64`, three slots of seven (`GetArenaTeam` `0x5a3860`).
+        run(F::PlayerArenaTeamInfo, Player, 1256, 21),
+        // `+0x1144`/`+0x1148` (`GetHonorCurrency` `0x60fc40`, `GetArenaCurrency` `0x60fcc0`).
+        one(F::PlayerHonorCurrency, Player, 1277),
+        one(F::PlayerArenaCurrency, Player, 1278),
         run(F::GameObjectCreatedBy, GameObject, 6, 2),
         one(F::GameObjectDisplayId, GameObject, 8),
         one(F::GameObjectFlags, GameObject, 9),

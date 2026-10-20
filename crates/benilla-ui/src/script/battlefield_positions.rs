@@ -1,7 +1,7 @@
 //! The battleground position verbs `WorldMapFrame.lua` and `Blizzard_BattlefieldMinimap.lua` poll
-//! to place teammates and the flag carrier (opcode `0x2E9`, handler `0x4aad40`). The reference
-//! drops itself, its party and its raid, prefers a live object's position and projects onto the
-//! active slot's map; the app does all that and pushes the finished list here.
+//! to place teammates and the flag carriers (opcode `0x2E9`, handler `0x54b3f0`). The reference
+//! drops its party and its raid (`0x54a040`), prefers a live object's position and projects onto
+//! the active map; the app does all that and pushes the finished list here.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -14,8 +14,8 @@ pub struct BattlefieldPositionView {
     pub name: Option<String>,
 }
 
-/// The flag carrier: the position and the token the viewer's faction picks, `"HordeFlag"` for an
-/// Alliance viewer and `"AllianceFlag"` for a Horde one.
+/// A flag carrier: the position and the flag's token, `"AllianceFlag"` or `"HordeFlag"`
+/// (`GetFlagToken`, `0x54d010`).
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct BattlefieldFlagView {
     pub uv: (f32, f32),
@@ -23,16 +23,16 @@ pub struct BattlefieldFlagView {
 }
 
 impl super::UiScript {
-    /// Push the positions, the carrier and the active map's icon scale.
+    /// Push the positions, the up to two carriers and the active map's icon scale.
     pub fn set_battlefield_positions(
         &mut self,
         players: Vec<BattlefieldPositionView>,
-        flag: Option<BattlefieldFlagView>,
+        flags: Vec<BattlefieldFlagView>,
         icon_scale: f32,
     ) {
         let mut model = self.model_mut();
         model.battlefield_positions = players;
-        model.battlefield_flag = flag;
+        model.battlefield_flags = flags;
         model.battlefield_icon_scale = icon_scale;
     }
 
@@ -92,7 +92,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(i64::from(model.battlefield_flag.is_some()))
+            Ok(model.battlefield_flags.len() as i64)
         })?,
     )?;
 
@@ -103,14 +103,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            match model.battlefield_flag.as_ref().filter(|_| index == 1) {
+            let flag = usize::try_from(index)
+                .ok()
+                .and_then(|i| i.checked_sub(1))
+                .and_then(|i| model.battlefield_flags.get(i));
+            match flag {
                 Some(f) => three(lua, f.uv, f.token.as_deref()),
                 None => three(lua, (0.0, 0.0), None),
             }
         })?,
     )?;
 
-    // The active map's `MinimapIconScale`: map 0's with no slot, 1.0 for a missing row.
+    // The active map's `MinimapIconScale`, 1.0 for a missing row (`0x54c740`).
     g.set(
         "GetBattlefieldMapIconScale",
         lua.create_function(|lua, ()| {
@@ -140,7 +144,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetNumBattlefieldVehicles",
         lua.create_function(|_, ()| Ok(0))?,
     )?;
-    // GetNumArenaOpponents() (`0x54a2c0`): benilla reads no arena opponents, so 0.
+    // GetNumArenaOpponents() (`0x54a2c0`): the opponent slots filled; benilla tracks no arena
+    // opponent yet (#90), so 0.
     g.set("GetNumArenaOpponents", lua.create_function(|_, ()| Ok(0))?)?;
     g.set(
         "GetBattlefieldVehicleInfo",
@@ -177,10 +182,10 @@ mod tests {
                     name: None,
                 },
             ],
-            Some(BattlefieldFlagView {
+            vec![BattlefieldFlagView {
                 uv: (0.375, 0.625),
                 token: Some("HordeFlag".into()),
-            }),
+            }],
             1.25,
         );
         assert_eq!(

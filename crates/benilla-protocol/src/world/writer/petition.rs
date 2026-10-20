@@ -1,6 +1,6 @@
-//! The guild charter sends. A charter is addressed by its item guid; only `petition_query` takes
-//! the petition id. Success is mostly silent, a refusal comes back as the guild family's
-//! `SMSG_GUILD_COMMAND_RESULT`, and a failed range or ownership check drops a send unanswered.
+//! The guild and arena charter sends. A charter is addressed by its item guid; only
+//! `petition_query` takes the petition id. Success is mostly silent, a refusal comes back as the
+//! guild or arena-team command result, and a failed range or ownership check drops a send.
 
 use anyhow::Result;
 
@@ -18,13 +18,11 @@ impl WorldWriter {
         )
     }
 
-    /// `CMSG_PETITION_BUY`, name capped by the caller: success sends only `SMSG_ITEM_PUSH_RESULT`
-    /// (`PetitionsHandler.cpp:130`); a refusal is `SMSG_GUILD_COMMAND_RESULT` (name),
-    /// `SMSG_BUY_FAILED` (money) or `SMSG_INVENTORY_CHANGE_FAILURE` (full bag).
-    pub fn petition_buy(&mut self, npc: u64, name: &str) -> Result<()> {
+    /// `CMSG_PETITION_BUY` for the vendor row `index`: success sends only the item push.
+    pub fn petition_buy(&mut self, npc: u64, name: &str, index: u32) -> Result<()> {
         self.send(
             opcode::CMSG_PETITION_BUY,
-            &messages::petition_buy(npc, name),
+            &messages::petition_buy(npc, name, index),
         )
     }
 
@@ -48,11 +46,11 @@ impl WorldWriter {
     }
 
     /// `CMSG_OFFER_PETITION`: the target gets `SMSG_PETITION_SHOW_SIGNATURES`; we hear back only on
-    /// a refusal (`PetitionsHandler.cpp:390`).
-    pub fn offer_petition(&mut self, item: u64, player: u64) -> Result<()> {
+    /// a refusal. `team_size` is an arena charter's, 0 for any other.
+    pub fn offer_petition(&mut self, team_size: u32, item: u64, player: u64) -> Result<()> {
         self.send(
             opcode::CMSG_OFFER_PETITION,
-            &messages::offer_petition(item, player),
+            &messages::offer_petition(team_size, item, player),
         )
     }
 
@@ -63,6 +61,19 @@ impl WorldWriter {
         self.send(
             opcode::CMSG_TURN_IN_PETITION,
             &messages::turn_in_petition(item),
+        )
+    }
+
+    /// `CMSG_TURN_IN_PETITION` for an arena charter, with its banner: success founds the team
+    /// with every signer and answers `SMSG_TURN_IN_PETITION_RESULTS` 0.
+    pub fn turn_in_arena_petition(
+        &mut self,
+        item: u64,
+        banner: messages::ArenaBanner,
+    ) -> Result<()> {
+        self.send(
+            opcode::CMSG_TURN_IN_PETITION,
+            &messages::turn_in_arena_petition(item, banner),
         )
     }
 

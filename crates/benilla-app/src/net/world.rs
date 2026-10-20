@@ -83,19 +83,19 @@ fn weather(
 }
 
 /// `SMSG_INIT_WORLD_STATES` and `SMSG_UPDATE_WORLD_STATE` share one setter, as in the reference.
-/// An init first clears the table and records `(map, zone)` as the UI's display filter, then
-/// writes its pairs (reference: `0x4c5650`).
+/// An init first records `(map, zone, area)` as the UI's display filter, then writes its pairs
+/// (`0x526530`).
 fn world_states(
-    scope: Option<(u32, u32)>,
+    scope: Option<(u32, u32, u32)>,
     states: Vec<(u32, u32)>,
     world_states: &mut WorldStates,
 ) {
-    if let Some((map, zone)) = scope {
+    if let Some((map, zone, area)) = scope {
         debug!(
-            "world states: map {map} zone {zone}, {} entries",
+            "world states: map {map} zone {zone} area {area}, {} entries",
             states.len()
         );
-        world_states.init_scope(map, zone);
+        world_states.init_scope(map, zone, area);
     }
     world_states.write(&states);
 }

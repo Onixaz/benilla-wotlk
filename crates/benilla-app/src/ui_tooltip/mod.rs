@@ -11,7 +11,7 @@ use benilla_ui::strings::Arg;
 
 use crate::names::NameCache;
 use crate::net::{NetCommands, ObjectStore, SelfPlayer};
-use crate::target::{go_is_nearest, Hovered, HoveredObject, GO_FLAG_LOCKED, GO_TYPE_GENERIC};
+use crate::target::{go_is_nearest, Hovered, HoveredObject, GO_FLAG_LOCKED};
 use crate::ui_script::UiFeed;
 use crate::ui_trainer::TrainerFeed;
 use crate::ui_unit::{enrich_unit, snapshot, unit_reaction, SnapshotTables, UnitFeed};
@@ -220,15 +220,12 @@ fn drive_mouseover_tooltip(
         return;
     }
     if let Some((entity, guid)) = go {
-        // The plate follows the cursor iff `[vtbl+0x5c]` (`0x5f8630`) finds
-        // `data[0x621b00(type, 0x13)]` set, and semantic `0x13` exists only for GENERIC(5), at
-        // `data[0]`. `data[1]` (`0x5f4830`) is whether it can be hovered, not where it sits.
-        let cursor_seated = stores.get(entity).map(|s| s.0.gameobject_type_id())
-            == Ok(GO_TYPE_GENERIC)
-            && go_inputs
-                .templates
-                .get(guid)
-                .is_some_and(|t| t.floating_tooltip);
+        // The plate follows the cursor iff 12340 `CGGameObject_C::FloatingTooltip` (`0x70f630`)
+        // finds the type's property `0x13` slot set; hoverability is a different slot.
+        let cursor_seated = go_inputs
+            .templates
+            .get(guid)
+            .is_some_and(|t| t.floating_tooltip);
         // Window px to the VM's y-up UI units, as the input seam converts.
         let cursor_ui = cursor_seated
             .then(|| {

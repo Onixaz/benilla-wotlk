@@ -2,10 +2,10 @@
 //! resolved into the view behind `GetBattlefieldPosition`, `GetBattlefieldFlagPosition` and
 //! `GetBattlefieldMapIconScale`, which `WorldMapFrame.lua` and the battlefield minimap poll.
 //!
-//! The reference's getter (`0x4abf90`) does the work per call: it skips the player, the party and
-//! the raid roster, prefers a streamed object's live position, and projects under the active queue
-//! slot's map, answering `(0, 0)` off it. The app resolves the list that way each frame. A name
-//! landing fires `WORLD_MAP_NAME_UPDATE`, as in the reference.
+//! The reference's getter (`0x54c2e0`) does the work per call: it skips the party and the raid
+//! roster, prefers a streamed object's live position, and projects under the active map,
+//! answering `(0, 0)` off it. The app resolves the list that way each frame. A name landing fires
+//! `WORLD_MAP_NAME_UPDATE`, as in the reference.
 
 use std::time::{Duration, Instant};
 
@@ -17,12 +17,12 @@ use benilla_ui::script::{BattlefieldFlagView, BattlefieldPositionView, UiScript}
 
 use crate::names::NameCache;
 use crate::net::{ClientCommand, EnteredWorldMessage, GuidIndex, NetCommands, NetEntity, SelfGuid};
-use crate::ui_dialog_verbs::BattlefieldQueue;
+use crate::ui_battlefield::BattlefieldQueue;
 use crate::ui_party::GroupState;
 use crate::ui_script::{UiFeed, UiInput};
 
-/// `RequestBattlefieldPositions` (`0x4aa5c0`) sends at most once per 5000 ms (stamp
-/// `[0xb6ebe0]`), and only with an active queue slot; without one it clears the list.
+/// `RequestBattlefieldPositions` (`0x54cf60`) sends at most once per 5000 ms, and only with an
+/// active queue slot; without one it clears the list.
 pub(crate) const REQUEST_THROTTLE: Duration = Duration::from_millis(5000);
 
 /// The last positions packet and the request stamp.
@@ -57,7 +57,7 @@ impl BattlefieldPositions {
     }
 }
 
-/// The getter's position source (`0x4abf90`): a streamed object's live position, else the
+/// The getter's position source (`0x54c2e0`): a streamed object's live position, else the
 /// packet's, as wow `(x, y)`.
 fn live_or_packet(
     p: &BattlefieldPosition,
@@ -73,23 +73,31 @@ fn live_or_packet(
     }
 }
 
-/// The flag texture token: the friendly carrier holds the other side's flag.
-fn flag_token(faction: Option<&str>) -> Option<&'static str> {
-    match faction {
-        Some("Alliance") => Some("HordeFlag"),
-        Some("Horde") => Some("AllianceFlag"),
-        _ => None,
-    }
+/// `GetFlagToken` (`0x54d010`): the carrier's side indexes `{AllianceFlag, HordeFlag}`, so a
+/// Horde carrier (side 0) holds the Alliance flag; Eye of the Storm (map 566) reverses it.
+fn flag_token(carrier_side: i8, map: u32) -> Option<&'static str> {
+    const TOKENS: [&str; 2] = ["AllianceFlag", "HordeFlag"];
+    let side = usize::try_from(carrier_side).ok().filter(|&s| s < 2)?;
+    Some(if map == EYE_OF_THE_STORM {
+        TOKENS[usize::from(side == 0)]
+    } else {
+        TOKENS[side]
+    })
 }
+
+/// Eye of the Storm's `Map.dbc` row, whose one flag reverses the token (`0x54d0b5`).
+const EYE_OF_THE_STORM: u32 = 566;
 
 fn feed_battlefield_positions(
     script: Option<NonSendMut<UiScript>>,
     mut state: ResMut<BattlefieldPositions>,
     queue: Res<BattlefieldQueue>,
+    maps: Option<Res<benilla_assets::MapCatalogRes>>,
     me: Res<SelfGuid>,
     group: Res<GroupState>,
     guids: Res<GuidIndex>,
     unit_pos: Query<&GlobalTransform, With<NetEntity>>,
+    stores: Query<&crate::net::ObjectStore>,
     names: Res<NameCache>,
     commands: Res<NetCommands>,
     // The last empty push: with no list the engine is told on change, with one every frame.
@@ -99,9 +107,10 @@ fn feed_battlefield_positions(
         return;
     };
     let active = queue.active_map();
-    // `GetBattlefieldMapIconScale`: 1.12.1's `Map.dbc` `MinimapIconScale` column, which 3.3.5a's
-    // `Map.dbc` does not carry; its own source is not read yet, so the scale is 1.
-    let icon_scale: f32 = 1.0;
+    // `GetBattlefieldMapIconScale` (`0x54c740`): the active map's `MinimapIconScale`, 1 without.
+    let icon_scale = maps
+        .as_deref()
+        .map_or(1.0, |m| m.0.icon_scale(active.unwrap_or(0)));
     let BattlefieldPositions {
         packet,
         pending_names,
@@ -112,7 +121,7 @@ fn feed_battlefield_positions(
         let last = last_empty.get(&script);
         if *last != key {
             *last = key;
-            script.set_battlefield_positions(Vec::new(), None, icon_scale);
+            script.set_battlefield_positions(Vec::new(), Vec::new(), icon_scale);
         }
         return;
     };
@@ -146,18 +155,39 @@ fn feed_battlefield_positions(
             name,
         });
     }
-    let flag = packet.carrier.as_ref().map(|c| {
-        let (x, y) = live_or_packet(c, &guids, &unit_pos);
-        let faction = script
-            .eval::<Option<String>>(r#"return (UnitFactionGroup("player"))"#)
-            .ok()
-            .flatten();
-        BattlefieldFlagView {
-            uv: project(x, y),
-            token: flag_token(faction.as_deref()).map(str::to_string),
+    // A streamed carrier's own side; else ours, flipped when the carrier is not in our group.
+    let side_of = |guid: u64| -> i8 {
+        let race = |g: u64| {
+            guids
+                .0
+                .get(&g)
+                .and_then(|e| stores.get(*e).ok())
+                .and_then(|s| s.0.unit_race())
+        };
+        if let Some(r) = race(guid) {
+            return crate::ui_unit::race_pvp_team(r);
         }
-    });
-    script.set_battlefield_positions(players, flag, icon_scale);
+        let mine =
+            me.0.and_then(race)
+                .map_or(-1, crate::ui_unit::race_pvp_team);
+        if group.members.iter().any(|m| m.guid == guid) {
+            mine
+        } else {
+            i8::from(mine == 0)
+        }
+    };
+    let flags = packet
+        .carriers
+        .iter()
+        .map(|c| {
+            let (x, y) = live_or_packet(c, &guids, &unit_pos);
+            BattlefieldFlagView {
+                uv: project(x, y),
+                token: flag_token(side_of(c.guid), map).map(str::to_string),
+            }
+        })
+        .collect();
+    script.set_battlefield_positions(players, flags, icon_scale);
     if name_landed {
         script.fire_event("WORLD_MAP_NAME_UPDATE", Vec::new());
     }
@@ -245,9 +275,10 @@ mod tests {
     }
 
     #[test]
-    fn the_flag_token_is_the_other_sides() {
-        assert_eq!(flag_token(Some("Alliance")), Some("HordeFlag"));
-        assert_eq!(flag_token(Some("Horde")), Some("AllianceFlag"));
-        assert_eq!(flag_token(None), None);
+    fn the_flag_token_is_the_carriers_side_reversed_in_the_eye() {
+        assert_eq!(flag_token(0, 489), Some("AllianceFlag"), "a Horde carrier");
+        assert_eq!(flag_token(1, 489), Some("HordeFlag"));
+        assert_eq!(flag_token(0, EYE_OF_THE_STORM), Some("HordeFlag"));
+        assert_eq!(flag_token(-1, 489), None);
     }
 }

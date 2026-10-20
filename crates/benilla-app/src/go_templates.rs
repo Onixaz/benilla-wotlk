@@ -25,12 +25,11 @@ pub(crate) struct GoTemplate {
     pub(crate) lock_id: u32,
     /// The hover tooltip's first line.
     pub(crate) name: String,
-    /// Mouseover eligibility for the two types that read a column: GENERIC(5) `data[1]`
-    /// (`0x5f4830`) and CAPTURE_POINT(29) `data[19]` (`0x5f6d80`).
+    /// Mouseover eligibility for the two types that read a column (12340 property `0x12`):
+    /// GENERIC(5) `data[1]` and CAPTURE_POINT(29) `data[19]` (`0x70ff80`).
     pub(crate) highlight_column: bool,
-    /// GENERIC(5) `data[0]` (`0x5f8630`, semantic `0x13`, which no other type has): the tooltip
-    /// follows the cursor (`0x492a01`, SetOwner `0x52ffe0` at anchor state 6) or takes the default
-    /// corner (`0x492a42`).
+    /// 12340 `CGGameObject_C::FloatingTooltip` (`0x70f630`, property `0x13`): the tooltip follows
+    /// the cursor instead of taking the default corner.
     /// Placement, not eligibility: a hoverable object can still be corner-seated.
     pub(crate) floating_tooltip: bool,
     /// MEETINGSTONE (type 23) only.
@@ -40,13 +39,13 @@ pub(crate) struct GoTemplate {
     /// TEXT (type 9) only; a right-click reads it only when `page_id` is nonzero.
     pub(crate) text_page: Option<TextPage>,
     /// The `PageTextMaterial.dbc` id `GetQuestBackgroundMaterial` answers for a quest from this
-    /// object (`0x5f5950`): QUESTGIVER (2) and TEXT (9) read `data[2]`, GOOBER (10) `data[9]`.
+    /// object (`0x710300`): QUESTGIVER (2) and TEXT (9) read `data[2]`, GOOBER (10) `data[9]`.
     pub(crate) quest_material: Option<u32>,
 }
 
-/// A MEETINGSTONE template's slots, read through `0x621b00` keys `0x33` to `0x35` (vmangos
-/// `GameObjectInfo::meetingstone`). The area feeds the type's highlightable slot `0x5f6990`, the
-/// levels the use refusal `ERR_MEETING_STONE_INVALID_LEVEL`.
+/// A MEETINGSTONE template's slots, 12340 properties `0x33` to `0x35` (`0x7121e0`, `0x7108d0`).
+/// The area feeds the type's highlightable slot `0x5f6990`, the levels the use refusal
+/// `ERR_MEETING_STONE_INVALID_LEVEL`.
 #[derive(Clone, Copy)]
 pub(crate) struct MeetingStoneTemplate {
     /// `data[0]`.
@@ -65,8 +64,8 @@ pub(crate) struct MoTransport {
     pub(crate) accel_rate: f32,
 }
 
-/// A TEXT template's readable head (vmangos `GameObjectInfo::text`; the client's `0x621b00` key
-/// `0x11` is the same material slot).
+/// A TEXT template's readable head (AzerothCore `GameObjectTemplate::text`; 12340 property `0x11`
+/// is the same material slot).
 #[derive(Clone, Copy)]
 pub(crate) struct TextPage {
     /// `data[0]`, the first `PageText` id; `0` is nothing to read.
@@ -107,14 +106,14 @@ impl GameObjectTemplates {
             .and_then(|slot| data.get(slot))
             .map(|&v| v.max(0) as u32)
             .unwrap_or(0);
-        // The reference resolves both slots by `0x621b00(type, semantic 0x12)`.
+        // 12340 resolves both slots by `CGameObjectDef::GetPropNum(type, 0x12)` (`0x746190`).
         let highlight_column = match type_id {
             5 => data[1] != 0,
             29 => data[19] != 0,
             _ => false,
         };
         // Adjacent to the highlight column but a different question: placement.
-        let floating_tooltip = type_id == 5 && data[0] != 0;
+        let floating_tooltip = floating_tooltip_slot(type_id).is_some_and(|slot| data[slot] != 0);
         let meeting_stone = (type_id == 23).then(|| MeetingStoneTemplate {
             min_level: data[0].max(0) as u32,
             max_level: data[1].max(0) as u32,
@@ -156,7 +155,19 @@ impl GameObjectTemplates {
     }
 }
 
-/// The `data[]` slot of a type's lockId (vmangos `GameObjectInfo::GetLockId`).
+/// The `data[]` slot of a type's floating-tooltip flag, 12340 `GetPropNum(type, 0x13)`.
+fn floating_tooltip_slot(type_id: u32) -> Option<usize> {
+    match type_id {
+        // CHEST(3), GENERIC(5), SPELL_FOCUS(8), GOOBER(10).
+        3 => Some(16),
+        5 => Some(0),
+        8 => Some(6),
+        10 => Some(18),
+        _ => None,
+    }
+}
+
+/// The `data[]` slot of a type's lockId, 12340 `GetLockRec` (`0x70ef30`) by `GetPropNum(type, 4)`.
 fn go_lock_slot(type_id: u32) -> Option<usize> {
     match type_id {
         // DOOR(0), BUTTON(1): data[0] = startOpen, data[1] = lockId.
@@ -173,6 +184,25 @@ fn go_lock_slot(type_id: u32) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 12340 `GetPropNum(type, 0x13)`: CHEST `data[16]`, SPELL_FOCUS `data[6]`, GOOBER `data[18]`.
+    #[test]
+    fn floating_tooltip_reads_each_types_12340_slot() {
+        let mut t = GameObjectTemplates::default();
+        for (type_id, slot) in [(3u32, 16usize), (5, 0), (8, 6), (10, 18)] {
+            let mut data = [0i32; 24];
+            data[slot] = 1;
+            t.insert(8000 + type_id, type_id, format!("type {type_id}"), &data);
+            assert!(
+                t.templates.get(8000 + type_id).unwrap().floating_tooltip,
+                "type {type_id} floats on data[{slot}]"
+            );
+        }
+        let mut data = [0i32; 24];
+        data[16] = 1;
+        t.insert(8099, 2, "Questgiver".into(), &data);
+        assert!(!t.templates.get(8099).unwrap().floating_tooltip);
+    }
 
     #[test]
     fn lock_slot_by_type_matches_getlockid() {
@@ -292,7 +322,7 @@ mod tests {
         );
     }
 
-    /// `0x621b00` answers semantic `0x13` for GENERIC(5) alone.
+    /// 12340 property `0x13` sits in `data[0]` for GENERIC(5) alone.
     #[test]
     fn no_other_type_reads_data0_as_the_placement_fork() {
         let mut t = GameObjectTemplates::default();

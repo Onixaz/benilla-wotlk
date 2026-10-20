@@ -1,9 +1,10 @@
 //! The verbs the stock `StaticPopup.lua` dialogs call: the instance-boot and area spirit healer
-//! clocks, the battlefield port answer, the meeting stone pair and the pet untrain pair.
+//! clocks, the meeting stone pair and the pet untrain pair; the battlefield port answer is
+//! `battlefield_queue`'s.
 
 use mlua::{Lua, Value};
 
-use super::binding_abi::{bool_or_default, coerced_number, flag};
+use super::binding_abi::flag;
 
 /// The area spirit healer's aura (`0xA18`), the only cancel-aura spell that also fires
 /// `AREA_SPIRIT_HEALER_OUT_OF_RANGE` (`0x6e70b6`).
@@ -41,11 +42,6 @@ impl super::UiScript {
     /// `AcceptAreaSpiritHeal()` calls since the last drain, each a `0x2E3` to send.
     pub fn take_area_spirit_accepts(&mut self) -> u32 {
         drain_field!(self, area_spirit_accepts)
-    }
-
-    /// `AcceptBattlefieldPort` calls since the last drain: `(slot 1..=3, accept)`.
-    pub fn take_battlefield_port_requests(&mut self) -> Vec<(u8, bool)> {
-        drain_field!(self, battlefield_port_requests)
     }
 
     /// `CancelMeetingStoneRequest()` calls since the last drain.
@@ -110,35 +106,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             Ok(i64::from(model.area_spirit_secs))
-        })?,
-    )?;
-
-    // `0x4ab3b0`: an index failing `lua_isnumber` raises, one off 1..=3 is silent; the answer takes
-    // the reference's optional-boolean coercion (`0x6f1c10`, default no).
-    g.set(
-        "AcceptBattlefieldPort",
-        lua.create_function(|lua, (index, accept): (Value, Value)| {
-            let is_number = match &index {
-                Value::Integer(_) | Value::Number(_) => true,
-                Value::String(s) => s
-                    .to_str()
-                    .ok()
-                    .is_some_and(|t| t.trim().parse::<f64>().is_ok()),
-                _ => false,
-            };
-            if !is_number {
-                return Err(mlua::Error::runtime(
-                    "Usage: AcceptBattlefieldPort(index, accept)",
-                ));
-            }
-            let slot = coerced_number(lua, Some(index)).trunc();
-            if !(1.0..=3.0).contains(&slot) {
-                return Ok(());
-            }
-            let accept = bool_or_default(Some(&accept), false);
-            let mut model = crate::script::model_mut_of(lua);
-            model.battlefield_port_requests.push((slot as u8, accept));
-            Ok(())
         })?,
     )?;
 
@@ -260,29 +227,6 @@ mod tests {
         assert_eq!(
             s.take_cancel_aura_requests(),
             vec![super::AREA_SPIRIT_HEALER_SPELL]
-        );
-    }
-
-    #[test]
-    fn accept_battlefield_port_raises_on_a_bad_index_and_coerces_the_answer() {
-        let mut s = UiScript::new().unwrap();
-        assert!(
-            s.run("AcceptBattlefieldPort(nil, 1)").is_err(),
-            "a non-number index raises"
-        );
-        assert!(s.run(r#"AcceptBattlefieldPort("x", 1)"#).is_err());
-        s.run("AcceptBattlefieldPort(4, 1) AcceptBattlefieldPort(0, 1)")
-            .unwrap();
-        assert!(
-            s.take_battlefield_port_requests().is_empty(),
-            "off 1..3 is silent"
-        );
-        s.run(r#"AcceptBattlefieldPort(1, 1) AcceptBattlefieldPort("2", "off") AcceptBattlefieldPort(3.9) AcceptBattlefieldPort(2, true)"#)
-            .unwrap();
-        assert_eq!(
-            s.take_battlefield_port_requests(),
-            vec![(1, true), (2, false), (3, false), (2, true)],
-            "truncated index, the optional-bool table, nil defaulting to no"
         );
     }
 

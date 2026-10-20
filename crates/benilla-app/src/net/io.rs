@@ -1537,20 +1537,51 @@ pub(super) fn writer_loop(
                     ClientCommand::AreaSpiritHealerQuery { healer } => {
                         w.area_spirit_healer_query(healer)
                     }
-                    ClientCommand::BattlefieldPort { map_id, accept } => {
-                        w.battlefield_port(map_id, accept)
+                    ClientCommand::BattlefieldPort { queue, accept } => {
+                        w.battlefield_port(queue, accept)
                     }
                     ClientCommand::RequestBattlefieldScoreData => {
                         w.request_battlefield_score_data()
                     }
-                    ClientCommand::LeaveBattlefield { map_id } => w.leave_battlefield(map_id),
+                    ClientCommand::LeaveBattlefield { queue } => w.leave_battlefield(queue),
+                    ClientCommand::HearthAndResurrect => w.hearth_and_resurrect(),
+                    ClientCommand::BattlefieldMgr(r) => {
+                        use benilla_ui::script::BattlefieldMgrRequest as R;
+                        match r {
+                            R::EntryInviteResponse { queue_id, accept } => {
+                                w.bf_mgr_entry_invite_response(queue_id as u32, accept)
+                            }
+                            R::QueueInviteResponse { queue_id, accept } => {
+                                w.bf_mgr_queue_invite_response(queue_id as u32, accept)
+                            }
+                            R::QueueRequest { queue_id } => w.bf_mgr_queue_request(queue_id as u32),
+                            R::ExitRequest { queue_id } => w.bf_mgr_exit_request(queue_id as u32),
+                        }
+                    }
+                    ClientCommand::ArenaTeam(c) => {
+                        use crate::net::ArenaTeamCommand as A;
+                        match c {
+                            A::Query { team_id } => w.arena_team_query(team_id),
+                            A::Roster { team_id } => w.arena_team_roster(team_id),
+                            A::Invite { team_id, name } => w.arena_team_invite(team_id, &name),
+                            A::Remove { team_id, name } => w.arena_team_remove(team_id, &name),
+                            A::Leader { team_id, name } => w.arena_team_leader(team_id, &name),
+                            A::Leave { team_id } => w.arena_team_leave(team_id),
+                            A::Disband { team_id } => w.arena_team_disband(team_id),
+                            A::Accept => w.arena_team_accept(),
+                            A::Decline => w.arena_team_decline(),
+                        }
+                    }
                     ClientCommand::MeetingStoneJoin { go_guid } => w.meeting_stone_join(go_guid),
                     ClientCommand::MeetingStoneLeave => w.meeting_stone_leave(),
                     ClientCommand::Lfg(request) => lfg_send(w, request),
                     ClientCommand::TutorialFlag { id } => w.tutorial_flag(id),
                     ClientCommand::TutorialClear => w.tutorial_clear(),
                     ClientCommand::TutorialReset => w.tutorial_reset(),
-                    ClientCommand::BattlefieldList { map_id } => w.battlefield_list(map_id),
+                    ClientCommand::BattlefieldList {
+                        bg_type,
+                        xp_disabled,
+                    } => w.battlefield_list(bg_type, xp_disabled),
                     ClientCommand::RequestBattlefieldPositions => {
                         w.request_battlefield_positions()
                     }
@@ -1561,15 +1592,16 @@ pub(super) fn writer_loop(
                     ClientCommand::BattlemasterHello { npc } => w.battlemaster_hello(npc),
                     ClientCommand::BattlemasterJoin {
                         battlemaster,
-                        map_id,
+                        bg_type,
                         instance_id,
                         as_group,
-                    } => w.battlemaster_join(battlemaster, map_id, instance_id, as_group),
-                    ClientCommand::BattlefieldJoin {
-                        map_id,
-                        instance_id,
+                    } => w.battlemaster_join(battlemaster, bg_type, instance_id, as_group),
+                    ClientCommand::BattlemasterJoinArena {
+                        battlemaster,
+                        slot,
                         as_group,
-                    } => w.battlefield_join(map_id, instance_id, as_group),
+                        rated,
+                    } => w.battlemaster_join_arena(battlemaster, slot, as_group, rated),
                     ClientCommand::BattlefieldStatusRequest => w.battlefield_status(),
                     ClientCommand::PetUnlearn { trainer } => w.pet_unlearn(trainer),
                     ClientCommand::BankerActivate { guid } => w.banker_activate(guid),
@@ -1744,7 +1776,9 @@ pub(super) fn writer_loop(
                     // No reply is awaited.
                     ClientCommand::Inspect { target } => w.inspect(target),
                     // Answered on the same opcode.
-                    ClientCommand::InspectHonorStats { target } => w.inspect_honor_stats(target),
+                    ClientCommand::InspectHonorStats { target } => w
+                        .inspect_honor_stats(target)
+                        .and_then(|()| w.inspect_arena_teams(target)),
                     ClientCommand::QueryInspectAchievements { target } => {
                         w.query_inspect_achievements(target)
                     }
@@ -1831,6 +1865,7 @@ pub(super) fn writer_loop(
                     ClientCommand::DuelAccepted { arbiter } => w.duel_accepted(arbiter),
                     ClientCommand::DuelCancelled { arbiter } => w.duel_cancelled(arbiter),
                     ClientCommand::TogglePvp => w.toggle_pvp(),
+                    ClientCommand::SetPvp { state } => w.set_pvp(state),
                     ClientCommand::ToggleHelm => w.toggle_helm(),
                     ClientCommand::ToggleCloak => w.toggle_cloak(),
                     ClientCommand::FriendListRequest => w.friend_list(),
@@ -1874,13 +1909,22 @@ pub(super) fn writer_loop(
                     ClientCommand::GuildInfoText { text } => w.guild_info_text(&text),
                     // Petitions: founding a guild.
                     ClientCommand::PetitionShowList { npc } => w.petition_show_list(npc),
-                    ClientCommand::PetitionBuy { npc, name } => w.petition_buy(npc, &name),
+                    ClientCommand::PetitionBuy { npc, name, index } => {
+                        w.petition_buy(npc, &name, index)
+                    }
                     ClientCommand::PetitionShowSignatures { item } => {
                         w.petition_show_signatures(item)
                     }
                     ClientCommand::PetitionSign { item, byte } => w.petition_sign(item, byte),
-                    ClientCommand::OfferPetition { item, player } => w.offer_petition(item, player),
+                    ClientCommand::OfferPetition {
+                        team_size,
+                        item,
+                        player,
+                    } => w.offer_petition(team_size, item, player),
                     ClientCommand::TurnInPetition { item } => w.turn_in_petition(item),
+                    ClientCommand::TurnInArenaPetition { item, banner } => {
+                        w.turn_in_arena_petition(item, banner)
+                    }
                     ClientCommand::PetitionQuery { petition_id, item } => {
                         w.petition_query(petition_id, item)
                     }

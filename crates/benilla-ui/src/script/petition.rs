@@ -1,46 +1,50 @@
-//! The guild-charter globals of the guild registrar and the petition window. The snapshot keeps
-//! the signer list (`[0xbdce20]`) and the cached `CGPetition` record (`[0xbdce28]`) apart, as the
-//! reference does, since the bindings read them independently. Predicates are `1` or nil (no
-//! `lua_pushboolean`: `0x6f3810`, `0x6f37f0`) and an unresolved name is nil. `PETITION_SHOW` waits
-//! for every signer name and the record (`0x4f419b`), a deferral `crate::ui_petition` owns.
+//! The charter globals: the guild registrar (`CGGuildRegistrar`, `0x599f00`..), the arena
+//! registrar's petition vendor (`CGPetitionVendorInfo`, `0x5a1f70`..) and the petition window
+//! (`CGPetitionInfo`, `0x5ceac0`..). The snapshot keeps the signer list and the cached `CGPetition`
+//! record apart, as the reference does, since the bindings read them independently. Predicates
+//! are `1` or nil and an unresolved name is nil. `PETITION_SHOW` waits for every signer name and
+//! the record, a deferral `crate::ui_petition` owns.
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi;
 
-/// `GetPetitionInfo`'s first return when the record's charter bit is set (`0x84cf8c`, selected at
-/// `0x4f43fb`): the literal `PetitionFrame.lua:21` compares against.
-pub const PETITION_TYPE_CHARTER: &str = "charter";
-
-/// `GetPetitionInfo`'s first return when the charter bit is clear (`0x84b8f8`). 1.12 servers send
-/// only charters, but `CanSignPetition`'s guild and full-charter refusals test the same bit.
-pub const PETITION_TYPE_PETITION: &str = "petition";
+/// `GetPetitionInfo`'s first return for a record's `static_type` (`0x5ced0f`): 0 a guild charter,
+/// 1 an arena one, anything else another petition.
+pub fn petition_type_name(static_type: u32) -> &'static str {
+    match static_type {
+        0 => "guild",
+        1 => "arena",
+        _ => "other",
+    }
+}
 
 /// The cached `CGPetition` record `[0xbdce28]`, as `GetPetitionInfo` reads it; `None` in
 /// [`PetitionState::record`] is the no-record leg.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PetitionRecordView {
-    /// [`PETITION_TYPE_CHARTER`] or [`PETITION_TYPE_PETITION`], from the record's `+0x1110` bit 0.
+    /// [`petition_type_name`] of the record's `static_type`.
     pub petition_type: String,
-    /// The proposed guild's name, the record's `char[0x100]` at `+0x10`.
+    /// The proposed guild or team's name, the record's `char[0x100]` at `+0x10`.
     pub title: String,
-    /// The record's `char[0x1000]` body at `+0x110`; empty on every 1.12 server.
+    /// The record's `char[0x1000]` body at `+0x110`.
     pub body_text: String,
-    /// The record's signature cap (`+0x1118`), which `CanSignPetition` tests (`0x4f4634`), not the
-    /// nine name rows; pushed signed (`fild DWORD`).
+    /// The record's signature cap (`+0x1114`), which `CanSignPetition` tests, not the name rows.
     pub max_signatures: i32,
-    /// The owner's name from the `NameCache`, nil while uncached (`0x4f446d`), never `""`.
+    /// The owner's name from the `NameCache`, nil while uncached, never `""`.
     pub originator: Option<String>,
-    /// Whether the active player owns the record (`0x4f447a`, `0x4f4481`).
+    /// Whether the active player owns the record.
     pub is_originator: bool,
+    /// The signatures required (`+0x1110`), `GetPetitionInfo`'s seventh; an arena charter's is
+    /// its team size less one.
+    pub min_signatures: i32,
 }
 
 /// What the two charter windows read, mirroring the reference module's `.data` state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PetitionState {
-    /// `GetGuildCharterCost()`: showlist entry 0's cost (`[0xbdce50]`) in copper, which `0x4f50ed`
-    /// compares against `PLAYER_FIELD_COINAGE`. Unsigned, as the binding zero-extends it
-    /// (`0x4f5245`), so a negative wire cost reads ~4.29e9; 0 before any showlist.
+    /// `GetGuildCharterCost()` (`0x599f40`): the registrar's charter row's cost in copper,
+    /// unsigned; 0 before any showlist.
     pub charter_cost: u32,
     /// The signers in wire order, `None` until the `NameCache` resolves one; filled by the packet,
     /// apart from [`Self::record`]. `GetNumPetitionNames()` counts these, never the owner.
@@ -50,6 +54,38 @@ pub struct PetitionState {
     /// `CanSignPetition()`, computed app-side as three of its four refusals need state the engine
     /// lacks; it is `1` with nothing open, as in the reference.
     pub can_sign: bool,
+}
+
+/// The arena registrar's charter rows, `GetPetitionItemInfo`'s three (`0x5a1fb0`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PetitionVendorItem {
+    /// The item's name and icon path, `None` until the item cache has the row; the binding then
+    /// answers `nil, nil, 0` and the cache's answer fires `PETITION_VENDOR_UPDATE`.
+    pub name: Option<String>,
+    pub texture: Option<String>,
+    pub cost: u32,
+}
+
+/// The petition vendor's session as the app pushes it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PetitionVendorState {
+    /// A vendor is open (`m_vendor`, `0xc0f7c8`).
+    pub open: bool,
+    pub items: Vec<PetitionVendorItem>,
+    /// `HasFilledPetition()` (`0x5a2820`): the bags hold an arena charter whose record is cached.
+    pub has_filled_petition: bool,
+}
+
+/// An arena charter turn-in's banner, as `TurnInArenaPetition` packs it (`0x5a26d0`): three
+/// `0xAARRGGBB` colours and two style indices, all `0xFFFFFFFF` without the eleven numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArenaBannerChoice {
+    pub team_size: u32,
+    pub background_color: u32,
+    pub emblem_style: u32,
+    pub emblem_color: u32,
+    pub border_style: u32,
+    pub border_color: u32,
 }
 
 /// A charter intent queued from Lua for the app to send. Most get no answer of their own (a
@@ -82,12 +118,27 @@ pub enum PetitionRequest {
     ClosePetition,
     /// A name [`validate_guild_name`] refused, with the GlobalStrings key to show; no packet.
     NameRefused(&'static str),
+    /// `BuyPetition(index, name)` at a petition vendor, the row 0-based, after the validator.
+    VendorBuy { index: u32, name: String },
+    /// `TurnInPetition()`: the item the petition button holds, with an empty banner.
+    VendorTurnIn,
+    /// `TurnInArenaPetition(...)`: the bags' arena charter of that size, with its banner.
+    VendorTurnInArena(ArenaBannerChoice),
+    /// `ClickPetitionButton()`: the cursor's item onto the vendor's petition button.
+    VendorClickButton,
+    /// `ClosePetitionVendor()`: the vendor's interaction ends.
+    CloseVendor,
 }
 
 impl super::UiScript {
     /// Replace the charter snapshot; the app fires the four events and defers `PETITION_SHOW`.
     pub fn set_petition(&mut self, state: PetitionState) {
         set_field!(self, petition, state);
+    }
+
+    /// Replace the petition vendor's snapshot; the app fires its three events.
+    pub fn set_petition_vendor(&mut self, state: PetitionVendorState) {
+        set_field!(self, petition_vendor, state);
     }
 
     /// Take the charter intents queued since the last drain.
@@ -138,9 +189,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
     // ── The petition window ──────────────────────────────────────────────────────────────────
-    // GetPetitionInfo() (`0x4f43d0`): six values on both legs (`0x4f4493`, `0x4f44d4`), in the
-    // order `PetitionFrame.lua:9` destructures them; with no record, `nil, nil, nil, 0, nil, nil`,
-    // the fourth the number 0 (`0x4f44b4`).
+    // GetPetitionInfo() (`0x5cece0`): seven values on both legs, in the order `PetitionFrame.lua`
+    // destructures them; with no record, `nil, nil, nil, 0, nil, nil, 0`.
     g.set(
         "GetPetitionInfo",
         lua.create_function(|lua, ()| {
@@ -155,6 +205,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Value::Integer(0),
                     Value::Nil,
                     Value::Nil,
+                    Value::Integer(0),
                 ]));
             };
             Ok(MultiValue::from_vec(vec![
@@ -164,11 +215,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Value::Integer(i64::from(r.max_signatures)),
                 name_value(lua, r.originator.as_ref())?,
                 binding_abi::flag(r.is_originator),
+                Value::Integer(i64::from(r.min_signatures)),
             ]))
         })?,
     )?;
 
-    // GetNumPetitionNames() (`0x4f44e0`): `[0xbdce20]`, unsigned; signatures only, never the owner.
+    // GetNumPetitionNames() (`0x5ceac0`): signatures only, never the owner.
     g.set(
         "GetNumPetitionNames",
         lua.create_function(|lua, ()| {
@@ -179,9 +231,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetPetitionNameInfo(index) (`0x4f4510`): 1-based, one value on every leg. The bound test is
-    // unsigned (`0x4f456c`), so 0 or a negative index wraps and answers nil. A non-numeric
-    // argument raises, through mlua's coercion as through the reference's `Usage:`.
+    // GetPetitionNameInfo(index) (`0x5cee30`): 1-based, one value on every leg. The bound test is
+    // unsigned, so 0 or a negative index wraps and answers nil.
     g.set(
         "GetPetitionNameInfo",
         lua.create_function(|lua, index: i64| {
@@ -199,9 +250,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // CanSignPetition() (`0x4f45e0`), the Sign button's only gate, is `1` with no petition open:
-    // `0x4f45f7` jumps past the three record refusals into a scan of the zeroed signer array. The
-    // window's `isOriginator` branch is what hides the button.
+    // CanSignPetition() (`0x5cf040`), the Sign button's only gate, is `1` with no petition open:
+    // it skips the record refusals into a scan of the empty signer list. The window's
+    // `isOriginator` branch is what hides the button.
     g.set(
         "CanSignPetition",
         lua.create_function(|lua, ()| {
@@ -213,7 +264,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // ── The registrar window ─────────────────────────────────────────────────────────────────
-    // GetGuildCharterCost() (`0x4f5230`): copper, unsigned, 0 before any showlist.
+    // GetGuildCharterCost() (`0x599f40`): copper, unsigned, 0 before any showlist.
     g.set(
         "GetGuildCharterCost",
         lua.create_function(|lua, ()| {
@@ -244,8 +295,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
 
-    // SignPetition([n]) (`0x4f46d0`): the optional argument rides the wire as a byte defaulting to
-    // 1, not 0 (`0x4f46d9`, `0x4f4749 Put8`); the server skips it.
+    // SignPetition([n]) (`0x5cf140`): the optional argument rides the wire as a byte defaulting to
+    // 1, not 0; the server skips it.
     g.set(
         "SignPetition",
         lua.create_function(|lua, n: Option<f64>| {
@@ -258,7 +309,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // BuyGuildCharter(guildName) (`0x59a130`) returns 1 or nil for name validity, not for a send:
-    // `0x59a16d` runs the shared validator, and the action behind it has five silent refusals.
+    // it runs the shared validator, and the action behind it (`0x59a050`) refuses silently.
     g.set(
         "BuyGuildCharter",
         lua.create_function(|lua, name: String| {
@@ -295,7 +346,178 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // ── The petition vendor ──────────────────────────────────────────────────────────────────
+    g.set(
+        "GetNumPetitionItems",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(model.petition_vendor.items.len() as i64)
+        })?,
+    )?;
+
+    // GetPetitionItemInfo(index) (`0x5a1fb0`): name, texture, cost; `nil, nil, 0` off the rows or
+    // while the item is uncached.
+    g.set(
+        "GetPetitionItemInfo",
+        lua.create_function(|lua, index: Value| {
+            let index = (binding_abi::number_arg(lua, index, "Usage: GetPetitionItemInfo(index)")?
+                as u32)
+                .wrapping_sub(1);
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let item = model
+                .petition_vendor
+                .items
+                .get(index as usize)
+                .and_then(|i| Some((i.name.as_ref()?, i.texture.as_ref()?, i.cost)));
+            let Some((name, texture, cost)) = item else {
+                return Ok(MultiValue::from_vec(vec![
+                    Value::Nil,
+                    Value::Nil,
+                    Value::Number(0.0),
+                ]));
+            };
+            Ok(MultiValue::from_vec(vec![
+                Value::String(lua.create_string(name)?),
+                Value::String(lua.create_string(texture)?),
+                Value::Number(f64::from(cost)),
+            ]))
+        })?,
+    )?;
+
+    // BuyPetition(index, name) (`0x5a2530`): the guild validator, then 1 for a valid name.
+    g.set(
+        "BuyPetition",
+        lua.create_function(|lua, (index, name): (Value, Value)| {
+            let usage = "Usage: BuyPetition(index, name)";
+            let index = (binding_abi::number_arg(lua, index, usage)? as u32).wrapping_sub(1);
+            let name = binding_abi::string_arg(lua, name, usage)?;
+            let mut model = crate::script::model_mut_of(lua);
+            match validate_guild_name(&name) {
+                Ok(()) => {
+                    model
+                        .petition_requests
+                        .push(PetitionRequest::VendorBuy { index, name });
+                    Ok(Value::Integer(1))
+                }
+                Err(key) => {
+                    model
+                        .petition_requests
+                        .push(PetitionRequest::NameRefused(key));
+                    Ok(Value::Nil)
+                }
+            }
+        })?,
+    )?;
+
+    // TurnInArenaPetition(teamSize [, r, g, b, emblem, r, g, b, border, r, g, b]) (`0x5a26d0`):
+    // with all eleven numbers the colours pack as opaque `0xAARRGGBB`, else every word is
+    // `0xFFFFFFFF`; nothing without a vendor.
+    g.set(
+        "TurnInArenaPetition",
+        lua.create_function(|lua, args: MultiValue| {
+            let mut args: Vec<Value> = args.into_iter().collect();
+            args.resize(12, Value::Nil);
+            let team_size = binding_abi::number_arg(
+                lua,
+                args[0].clone(),
+                "Usage: TurnInArenaPetition(teamSize)",
+            )? as u32;
+            let numbers: Vec<Option<f64>> = args[1..12]
+                .iter()
+                .map(|v| lua.coerce_number(v.clone()).ok().flatten())
+                .collect();
+            let mut model = crate::script::model_mut_of(lua);
+            if !model.petition_vendor.open {
+                return Ok(());
+            }
+            let banner = if numbers.iter().all(Option::is_some) {
+                let v: Vec<f64> = numbers.into_iter().flatten().collect();
+                let color = |at: usize| pack_color(v[at], v[at + 1], v[at + 2]);
+                ArenaBannerChoice {
+                    team_size,
+                    background_color: color(0),
+                    emblem_style: binding_abi::ftol(v[3]) as u32,
+                    emblem_color: color(4),
+                    border_style: binding_abi::ftol(v[7]) as u32,
+                    border_color: color(8),
+                }
+            } else {
+                ArenaBannerChoice {
+                    team_size,
+                    background_color: u32::MAX,
+                    emblem_style: u32::MAX,
+                    emblem_color: u32::MAX,
+                    border_style: u32::MAX,
+                    border_color: u32::MAX,
+                }
+            };
+            model
+                .petition_requests
+                .push(PetitionRequest::VendorTurnInArena(banner));
+            Ok(())
+        })?,
+    )?;
+
+    // HasFilledPetition() (`0x5a2820`): 1 or nil.
+    g.set(
+        "HasFilledPetition",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(binding_abi::flag(model.petition_vendor.has_filled_petition))
+        })?,
+    )?;
+
+    // ClosePetitionVendor() (`0x5a24f0`): with a vendor open, it closes and fires
+    // `PETITION_VENDOR_CLOSED`.
+    g.set(
+        "ClosePetitionVendor",
+        lua.create_function(|lua, ()| {
+            let mut model = crate::script::model_mut_of(lua);
+            if !model.petition_vendor.open {
+                return Ok(());
+            }
+            model.petition_vendor.open = false;
+            model
+                .pending_events
+                .push(("PETITION_VENDOR_CLOSED".to_string(), Vec::new()));
+            model.petition_requests.push(PetitionRequest::CloseVendor);
+            Ok(())
+        })?,
+    )?;
+
+    for (global, request) in [
+        ("TurnInPetition", PetitionRequest::VendorTurnIn),
+        ("ClickPetitionButton", PetitionRequest::VendorClickButton),
+    ] {
+        g.set(
+            global,
+            lua.create_function(move |lua, ()| {
+                let mut model = crate::script::model_mut_of(lua);
+                if model.petition_vendor.open {
+                    model.petition_requests.push(request.clone());
+                }
+                Ok(())
+            })?,
+        )?;
+    }
+
     Ok(())
+}
+
+/// `FrameScript_GetColorNoAlpha` into `CImVector::Set` (`0x5a2793`): each channel clamped to
+/// `[0, 1]` and rounded as `(int)(f * 255 + 0.5)` in single precision, alpha opaque.
+fn pack_color(r: f64, g: f64, b: f64) -> u32 {
+    let byte = |c: f64| {
+        let c = (c as f32).clamp(0.0, 1.0);
+        (c * 255.0 + 0.5) as u32 & 0xFF
+    };
+    0xFF00_0000 | byte(r) << 16 | byte(g) << 8 | byte(b)
 }
 
 #[cfg(test)]
@@ -305,12 +527,13 @@ mod tests {
 
     fn record() -> PetitionRecordView {
         PetitionRecordView {
-            petition_type: PETITION_TYPE_CHARTER.into(),
+            petition_type: petition_type_name(0).into(),
             title: "Legacy".into(),
             body_text: String::new(),
             max_signatures: 9,
             originator: Some("Founder".into()),
             is_originator: false,
+            min_signatures: 4,
         }
     }
 
@@ -323,15 +546,18 @@ mod tests {
         });
     }
 
-    /// The six returns, in the reference's own destructuring order.
+    /// The seven returns, in the reference's own destructuring order.
     #[test]
-    fn get_petition_info_returns_the_reference_six_in_order() {
+    fn get_petition_info_returns_the_reference_seven_in_order() {
         let mut s = UiScript::new().unwrap();
         open(&mut s, record(), vec![]);
-        let (kind, title, body, max, originator, is_originator) = s
-            .eval::<(String, String, String, i32, String, Option<u32>)>("return GetPetitionInfo()")
+        let (kind, title, body, max, originator, is_originator, min) = s
+            .eval::<(String, String, String, i32, String, Option<u32>, i32)>(
+                "return GetPetitionInfo()",
+            )
             .unwrap();
-        assert_eq!(kind, "charter");
+        assert_eq!(kind, "guild");
+        assert_eq!(min, 4);
         assert_eq!(title, "Legacy");
         assert_eq!(body, "");
         assert_eq!(max, 9);
@@ -355,12 +581,12 @@ mod tests {
     }
 
     #[test]
-    fn the_no_record_leg_is_six_values_with_a_numeric_zero() {
+    fn the_no_record_leg_is_seven_values_with_numeric_zeros() {
         let s = UiScript::new().unwrap();
         assert_eq!(
             s.arity("GetPetitionInfo()").unwrap(),
-            6,
-            "six values even with nothing open"
+            7,
+            "seven values even with nothing open"
         );
         assert_eq!(
             s.eval::<i64>("local _,_,_,m = GetPetitionInfo(); return m")
@@ -538,6 +764,66 @@ mod tests {
         assert_eq!(
             s.take_petition_requests(),
             vec![PetitionRequest::TabardInfo]
+        );
+    }
+
+    #[test]
+    fn the_vendor_answers_its_rows_and_packs_the_banner() {
+        let mut s = UiScript::new().unwrap();
+        s.set_petition_vendor(PetitionVendorState {
+            open: true,
+            items: vec![
+                PetitionVendorItem {
+                    name: Some("Arena Team Charter".into()),
+                    texture: Some("Interface\\Icons\\INV_Misc_Note_01".into()),
+                    cost: 800_000,
+                },
+                PetitionVendorItem::default(),
+            ],
+            has_filled_petition: true,
+        });
+        assert_eq!(s.eval::<i64>("return GetNumPetitionItems()").unwrap(), 2);
+        let got = s
+            .eval::<String>("local n, t, c = GetPetitionItemInfo(1) return n .. '|' .. c")
+            .unwrap();
+        assert_eq!(got, "Arena Team Charter|800000");
+        assert!(s
+            .eval::<bool>("local n, t, c = GetPetitionItemInfo(2) return n == nil and c == 0")
+            .unwrap());
+        assert_eq!(s.eval::<i64>("return HasFilledPetition()").unwrap(), 1);
+        assert_eq!(s.eval::<i64>("return BuyPetition(1, 'Probes')").unwrap(), 1);
+        s.run("TurnInArenaPetition(2, 1, 0.5, 0, 7, 0, 0, 1, 3, 0.2, 0.2, 0.2) TurnInArenaPetition(3)")
+            .unwrap();
+        assert_eq!(
+            s.take_petition_requests(),
+            vec![
+                PetitionRequest::VendorBuy {
+                    index: 0,
+                    name: "Probes".into()
+                },
+                PetitionRequest::VendorTurnInArena(ArenaBannerChoice {
+                    team_size: 2,
+                    background_color: 0xFF_FF_80_00,
+                    emblem_style: 7,
+                    emblem_color: 0xFF_00_00_FF,
+                    border_style: 3,
+                    border_color: 0xFF_33_33_33,
+                }),
+                PetitionRequest::VendorTurnInArena(ArenaBannerChoice {
+                    team_size: 3,
+                    background_color: u32::MAX,
+                    emblem_style: u32::MAX,
+                    emblem_color: u32::MAX,
+                    border_style: u32::MAX,
+                    border_color: u32::MAX,
+                }),
+            ]
+        );
+        s.run("ClosePetitionVendor() ClosePetitionVendor()")
+            .unwrap();
+        assert_eq!(
+            s.take_petition_requests(),
+            vec![PetitionRequest::CloseVendor]
         );
     }
 
