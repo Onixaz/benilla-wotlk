@@ -62,11 +62,13 @@ pub(super) fn read_superceded_spell(r: &mut impl Read) -> io::Result<(u32, u32)>
     Ok((read_u32_le(r)?, read_u32_le(r)?))
 }
 
-/// Read `SMSG_SPELL_COOLDOWN` (vmangos `Server/Packets/Spell.cpp:142-150`, client `0x6e9460`): a
-/// `u64` caster, then `(spell, ms)` pairs to the end, with no flags byte in 1.12. `ms == 0` means
-/// the spell's own `Spell.dbc` recovery times. Sent for school lockouts and pet cooldowns.
+/// Read `SMSG_SPELL_COOLDOWN` (client `0x6e9460`): a `u64` caster, a flags byte (3.3.5a's
+/// `SPELL_COOLDOWN_FLAG_*`, AzerothCore `Unit::SendCooldownEvent`; 1.12 has none), then
+/// `(spell, ms)` pairs to the end. `ms == 0` means the spell's own `Spell.dbc` recovery times.
+/// Sent for school lockouts and pet cooldowns.
 pub(super) fn read_spell_cooldown(r: &mut &[u8]) -> io::Result<(u64, Vec<(u32, u32)>)> {
     let caster = read_u64_le(r)?;
+    let _flags = read_u8(r)?;
     let mut cooldowns = Vec::new();
     while !r.is_empty() {
         let spell_id = read_u32_le(r)?;
@@ -154,9 +156,10 @@ mod tests {
 
     #[test]
     fn cooldown_bodies_golden() {
-        // SMSG_SPELL_COOLDOWN: guid, then (spell, ms) pairs, no flags byte; {133, 0} = Spell.dbc.
+        // SMSG_SPELL_COOLDOWN: guid, a flags byte, then (spell, ms) pairs; {133, 0} = Spell.dbc.
         let body: Vec<u8> = [
             0x10u64.to_le_bytes().to_vec(),
+            vec![0u8],
             133u32.to_le_bytes().to_vec(),
             0u32.to_le_bytes().to_vec(),
             5384u32.to_le_bytes().to_vec(),
