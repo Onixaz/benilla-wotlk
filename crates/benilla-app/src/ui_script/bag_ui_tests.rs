@@ -290,6 +290,77 @@ fn a_bag_and_a_worn_hover_show_the_sell_price_with_no_vendor_open() {
     assert!(errors.is_empty(), "bag errors: {errors:#?}");
 }
 
+/// An item leaving the hovered slot (a right-click equip) hides the tooltip: the bag update re-runs
+/// `ContainerFrameItemButton_OnEnter` on the owner (`ContainerFrame.lua:309`), whose `SetOwner`
+/// hides before `SetBagItem` finds the slot empty (#349).
+#[test]
+fn an_item_leaving_the_hovered_slot_leaves_no_empty_tooltip() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut s = open_backpack("bag-empty-hover");
+    let jerky = backpack_button(&s, 1);
+    hover(&mut s, &jerky);
+    let shown_lines = |s: &UiScript| -> (bool, i64) {
+        s.eval("return GameTooltip:IsShown() == 1, GameTooltip:NumLines()")
+            .unwrap()
+    };
+    let (shown, lines) = shown_lines(&s);
+    assert!(
+        shown && lines > 0,
+        "the jerky hover shows, got {lines} lines"
+    );
+
+    let mut slots = std::collections::HashMap::new();
+    slots.insert(
+        2,
+        ContainerSlot {
+            quest_item: true,
+            ..item(752, "INV_Misc_Bone_01")
+        },
+    );
+    s.set_container(
+        0,
+        Some(ContainerState {
+            name: Some("Backpack".into()),
+            num_slots: 16,
+            slots,
+            bag_family: 0,
+        }),
+    );
+    s.fire_event("BAG_UPDATE", vec![ScriptValue::Int(0)]);
+    assert_eq!(
+        shown_lines(&s),
+        (false, 0),
+        "the emptied slot's refresh hides the tooltip"
+    );
+    assert!(
+        s.eval::<bool>(&format!(
+            "return GameTooltip:IsOwned({jerky}) and true or false"
+        ))
+        .unwrap(),
+        "the refresh still re-owns it to the hovered slot"
+    );
+
+    let bone = backpack_button(&s, 2);
+    hover(&mut s, &bone);
+    let (shown, lines) = shown_lines(&s);
+    assert!(
+        shown && lines > 0,
+        "another item's hover shows, got {lines} lines"
+    );
+    s.run("GameTooltip:SetOwner(UIParent, 'ANCHOR_NONE')")
+        .unwrap();
+    assert_eq!(
+        shown_lines(&s),
+        (false, 0),
+        "a plain owner change keeps no stale text"
+    );
+    let errors = bag_errors(s.take_errors());
+    assert!(errors.is_empty(), "bag errors: {errors:#?}");
+}
+
 /// Real pointer input onto an empty slot: a click picks up and a second click places, and a drag
 /// does the same, each queuing the one move `PickupContainerItem` makes.
 #[test]

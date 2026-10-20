@@ -17,22 +17,27 @@ use super::{
 pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
 
-    // SetOwner(owner, anchorType [, x, y]): the binding `0x5310d0` calls the core `0x52ffe0`,
-    // which sets full alpha (`0x52fff4`), disarms the fade, stores the owner (`0x53000c`), mode
-    // and offsets, then applies the anchor (`0x52fe90`). The content clears and OnTooltipCleared
-    // fires, so a new owner never inherits the last hover's lines or money.
+    // SetOwner(owner, anchorType [, x, y]): the binding `0x61eb40` first hides the tooltip
+    // (`0x61eb76`, before any argument check) with the tooltip's full hide (`0x61eb20`), so a
+    // hover whose content call then finds nothing leaves no empty plate. It then calls the core `0x61ea00`, which clears
+    // the content (`0x61ea06`, OnTooltipCleared), sets full alpha (`0x61ea12`), stores the owner
+    // (`0x61ea7e`), mode and offsets, then applies the anchor (`0x61eaa0`).
     //
     // A missing, non-string or unknown anchorType is mode 0, ANCHOR_LEFT, with no error: the
-    // binding's local starts at 0 (`0x53120d`). The core's pre-store of 7 (`0x530012`) survives
-    // only a NULL owner, the un-own path (`0x530a60`) of every hide.
+    // binding's local starts at 0 (`0x61ec64`). The core's pre-store of 9 (`0x61ea8a`) survives
+    // only a NULL owner, the un-own path (`0x61eb20`) of every hide.
     //
     // The anchor apply returns first for ANCHOR_PRESERVE (8, `0x52fead`), then clears all points
     // (`0x767ed0` at `0x52fec2`) for modes 0..7; modes 0..5 then set a point (`0x52ffbc`).
     m.set(
         "SetOwner",
         lua.create_function(
-            |lua, (this, owner, anchor, x, y): (Table, Table, Value, Option<f32>, Option<f32>)| {
+            |lua, (this, owner, anchor, x, y): (Table, Value, Value, Option<f32>, Option<f32>)| {
                 let h = frame_handle_of(lua, &this)?;
+                hide_tooltip(lua, h);
+                let Value::Table(owner) = owner else {
+                    return Err(mlua::Error::runtime("Usage: SetOwner(frame)"));
+                };
                 let owner_h = frame_handle_of(lua, &owner)?;
                 // The gate is `lua_isstring` (`0x6f3510`): a string or number is read, and any
                 // other type counts as absent rather than raising.
