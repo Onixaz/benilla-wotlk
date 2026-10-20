@@ -70,14 +70,32 @@ fn achievement_first_open_cost() {
                 wrap[k] = v
             end
         end
-        for k, f in pairs(wrap) do
-            _G[k] = function(...)
+        local function timed(name, f)
+            return function(...)
                 local t = __now()
                 local r = { f(...) }
-                local p = PROF[k] or { n = 0, ms = 0 }
+                local p = PROF[name] or { n = 0, ms = 0 }
                 p.n = p.n + 1 p.ms = p.ms + (__now() - t)
-                PROF[k] = p
+                PROF[name] = p
                 return unpack(r)
+            end
+        end
+        for k, f in pairs(wrap) do _G[k] = timed(k, f) end
+        for _, k in ipairs({ "CreateFrame", "HybridScrollFrame_CreateButtons" }) do
+            _G[k] = timed(k, _G[k])
+        end
+        -- Every widget method on the shared frame, texture and fontstring tables.
+        local seen = {}
+        local probe = CreateFrame("Button")
+        for tag, obj in pairs({ f = probe, t = probe:CreateTexture(), s = probe:CreateFontString(),
+                                sf = CreateFrame("ScrollFrame"), sl = CreateFrame("Slider"),
+                                fr = CreateFrame("Frame") }) do
+            local m = getmetatable(obj).__index
+            if type(m) == "table" and not seen[m] then
+                seen[m] = true
+                for k, f in pairs(m) do
+                    if type(f) == "function" then m[k] = timed(tag .. ":" .. k, f) end
+                end
             end
         end"#,
     )
@@ -90,6 +108,19 @@ fn achievement_first_open_cost() {
     let mut at = Instant::now();
     s.run("LoadAddOn('Blizzard_AchievementUI')").unwrap();
     lap("LoadAddOn", &mut at);
+    let load_report: String = s
+        .eval(
+            r#"local t = {}
+            for k, p in pairs(PROF) do t[#t + 1] = { k, p.n, p.ms } end
+            table.sort(t, function(a, b) return a[3] > b[3] end)
+            local out = {}
+            for i = 1, math.min(25, #t) do out[#out + 1] = string.format("  %-40s %6d calls %8.2f ms", t[i][1], t[i][2], t[i][3]) end
+            PROF = {}
+            return table.concat(out, "\n")"#,
+        )
+        .unwrap();
+    eprintln!("load methods:\n{load_report}");
+    at = Instant::now();
     s.run("ToggleAchievementFrame()").unwrap();
     lap("first toggle", &mut at);
     s.resolve();
