@@ -24,13 +24,13 @@ fn inventory_slot_arg(lua: &Lua, v: Value, message: &'static str) -> mlua::Resul
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // KeyRingButtonIDToInvSlotID(buttonID) (`0x4c8150`): the truncated button id plus `0x51`
-    // (`0x4c818b`), so key 1 is live-API slot 82, with no range check; a non-number raises.
+    // KeyRingButtonIDToInvSlotID(buttonID) (`0x5e7700`): the truncated id plus 86 (`0x5e7739`), so
+    // key 1 is inventory slot 87, with no range check; a non-number raises.
     g.set(
         "KeyRingButtonIDToInvSlotID",
         lua.create_function(|lua, id: Value| {
             let id = number_arg(lua, id, "Usage: KeyRingButtonIDToInvSlotID(buttonID)")?;
-            Ok(i64::from(id.wrapping_add(0x51)))
+            Ok(i64::from(id.wrapping_add(86)))
         })?,
     )?;
 
@@ -147,28 +147,28 @@ mod tests {
         assert_eq!(
             s.eval::<i64>("return KeyRingButtonIDToInvSlotID(1)")
                 .unwrap(),
-            82
+            87
         );
         assert_eq!(
             s.eval::<i64>("return KeyRingButtonIDToInvSlotID(32)")
                 .unwrap(),
-            113
+            118
         );
-        // No range check, a truncating cast and a numeric string, as `0x4c8150` reads them.
+        // No range check, a truncating cast and a numeric string, as `0x5e7700` reads them.
         assert_eq!(
             s.eval::<i64>("return KeyRingButtonIDToInvSlotID(0)")
                 .unwrap(),
-            81
+            86
         );
         assert_eq!(
             s.eval::<i64>("return KeyRingButtonIDToInvSlotID(-2.9)")
                 .unwrap(),
-            79
+            84
         );
         assert_eq!(
             s.eval::<i64>("return KeyRingButtonIDToInvSlotID('3')")
                 .unwrap(),
-            84
+            89
         );
         let err = s
             .run("KeyRingButtonIDToInvSlotID()")
@@ -195,13 +195,13 @@ mod tests {
             Some("Interface\\Icons\\INV_Misc_Key_03")
         );
         assert_eq!(
-            s.eval::<Option<String>>("return GetInventoryItemTexture('player', 82)")
+            s.eval::<Option<String>>("return GetInventoryItemTexture('player', 87)")
                 .unwrap(),
             None,
             "key slot 1 is empty"
         );
         assert_eq!(
-            s.eval::<i64>("return GetInventoryItemCount('player', 83)")
+            s.eval::<i64>("return GetInventoryItemCount('player', 88)")
                 .unwrap(),
             1
         );
@@ -236,7 +236,7 @@ mod tests {
             0
         );
 
-        for bad in ["24", "39", "70", "114", "-1", "'x'"] {
+        for bad in ["24", "39", "70", "119", "-1", "'x'"] {
             let err = s
                 .run(&format!("ShowInventorySellCursor({bad})"))
                 .unwrap_err()

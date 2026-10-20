@@ -466,9 +466,9 @@ const BANK_BAG_INV_SLOTS: std::ops::RangeInclusive<usize> = 64..=69;
 /// The vault's container id; must match `ui_items::BANK_CONTAINER` in the app.
 const BANK_CONTAINER: i64 = -1;
 
-/// The keyring's live-API ids: `KeyRingButtonIDToInvSlotID` adds `0x51` to a 1-based button id
-/// (`0x4c818b`), and the slot reader takes 0-based 81..=112 (`0x4c8567`).
-pub(super) const KEYRING_INV_SLOTS: std::ops::RangeInclusive<usize> = 82..=113;
+/// The keyring's inventory ids: `KeyRingButtonIDToInvSlotID` adds 86 to a 1-based button id
+/// (`0x5e7739`), and the slot reader takes 0-based 86..=117 (`0x5e7cd0`).
+pub(super) const KEYRING_INV_SLOTS: std::ops::RangeInclusive<usize> = 87..=118;
 
 /// The keyring's container id (`KEYRING_CONTAINER`, `MainMenuBarBagButtons.lua:1`); must match
 /// `ui_items::KEYRING_CONTAINER` in the app, which feeds the keys as that container.
@@ -541,7 +541,7 @@ pub(super) fn inventory_slot_reader_accepts(slot0: i32) -> bool {
         || (0x00..=0x16).contains(&slot0)  // Lua 1..=23   the doll + the four equipped bags
         || (0x27..=0x3e).contains(&slot0)  // Lua 40..=63  the bank vault
         || (0x3f..=0x44).contains(&slot0)  // Lua 64..=69  the bank bag slots
-        || (0x51..=0x70).contains(&slot0) // Lua 82..=113 the keyring
+        || (0x56..=0x75).contains(&slot0) // Lua 87..=118 the keyring (`0x5e7cd0`)
 }
 
 fn link_item_name(link: &str) -> Option<String> {

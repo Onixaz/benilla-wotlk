@@ -10,12 +10,12 @@ use super::{doll::pickup_inventory_item, EQUIPMENT_BAG};
 
 /// The ids `PutItemInBag` and `PickupBagFromSlot` take: what their argument reader (`0x4c8520`)
 /// accepts above each floor gate (`0x4c8f1f`, `0x4c8fbf`), so the equipped bags 20-23, the
-/// bank's slots 40-63, its bag slots 64-69 and the keyring 82-113.
+/// bank's slots 40-63, its bag slots 64-69 and the keyring 87-118 (`0x5e7cd0`).
 fn accepts(live: u32) -> bool {
     (20..=23).contains(&live)
         || (40..=63).contains(&live)
         || (64..=69).contains(&live)
-        || (82..=113).contains(&live)
+        || (87..=118).contains(&live)
 }
 
 /// The live container id of a bag slot, the inverse of `ContainerIDToInventoryID`. Deviation:
