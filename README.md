@@ -4,8 +4,6 @@
 
 # Benilla-Wotlk
 
-An open-source World of Warcraft 3.3.5a client built with Rust and Bevy.
-
 Benilla-WotLK is an effort to preserve and recreate the original Wrath of the Lich King client experience using a modern, independently developed game engine.
 
 Originally based on the [Benilla](https://github.com/samwhosung/benilla) project, which targets World of Warcraft 1.12.1, Benilla-WotLK has since evolved into a standalone project focused exclusively on version 3.3.5a (build 12340).
@@ -105,8 +103,7 @@ not the one to play on. It also finds a `WoW` link at the repository root. See
 | `WOW_USER` and `WOW_PASS` | Optional credentials for automatic login. Set both or use the login screen. |
 | `WOW_CHAR` | Optional character name for automatic selection. |
 
-The Realmlist button on the login screen can also set and remember the server endpoint. Player
-settings, screenshots, logs, and addons live under `benilla-config/` beside the binary
+Player settings, screenshots, logs, and addons live under `benilla-config/` beside the binary
 (`target/release/benilla-config/`), or at the repository root for `cargo dev`. Place addons in
 `benilla-config/AddOns/`.
 
