@@ -3,9 +3,7 @@ use benilla_ui::script::{
     UiScript,
 };
 
-use super::test_ui::{
-    bag_slot_button, bag_window, centre_of, click, hover, load_ui as load_xml, unhover, BAG_UI,
-};
+use super::test_ui::{bag_slot_button, bag_window, centre_of, click, hover, unhover};
 
 /// Is bag `id` open? Asked of `IsBagOpen`: the twelve `ContainerFrame`s are recycled.
 fn open(s: &UiScript, id: i64) -> bool {
@@ -19,15 +17,12 @@ fn window(s: &UiScript, id: i64) -> String {
 
 /// The stock bag buttons are `MainMenuBarArtFrame`'s children, a level above the bar's art.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bag_bar_icons_draw_above_the_action_bar_art() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     // At this size the bag bar sits over the right end of the XP bar's notched art.
     s.set_screen_size(1600.0, 900.0);
-    for file in BAG_UI {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.resolve();
     let quads = s.extract();
 
@@ -53,14 +48,11 @@ fn bag_bar_icons_draw_above_the_action_bar_art() {
 
 /// Stock `ContainerFrame_OnShow` and `OnHide` play the sounds (`ContainerFrame.lua:140`, `:120`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn backpack_toggle_plays_open_and_close_kits() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in BAG_UI {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.set_money(0);
     // `ToggleBag` opens nothing without slots (its `size > 0` guard).
     s.set_container(
@@ -100,21 +92,11 @@ fn backpack_toggle_plays_open_and_close_kits() {
 /// Stock `ToggleBackpack` (`ContainerFrame.lua:67-82`): with bag 0 shut it opens bag 0 alone, even
 /// beside another open bag; with bag 0 open it hides every container window.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn b_opens_the_backpack_alone_and_closes_every_bag() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.set_money(0);
 
     s.set_container(
@@ -177,21 +159,11 @@ fn b_opens_the_backpack_alone_and_closes_every_bag() {
 /// Stock `OpenAllBags` (`ContainerFrame.lua:662-700`) toggles by a count: all open closes the lot,
 /// anything less opens it, `forceOpen` always opens; the keyring is swept but never counted.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shift_b_toggles_every_bag_at_once() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.set_money(0);
     s.set_container(
         0,
@@ -262,21 +234,11 @@ fn shift_b_toggles_every_bag_at_once() {
 /// An open bag lights its bar button and any close clears it: `ContainerFrame_OnShow` and `OnHide`
 /// write the ring (`ContainerFrame.lua:124-131`, `:84-95`), so it tracks every path.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bag_bar_buttons_light_while_their_bag_is_open() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.set_money(0);
     s.set_container(
         0,
@@ -375,23 +337,13 @@ fn bag_bar_buttons_light_while_their_bag_is_open() {
 /// A slot in the right half of the screen hangs its tooltip left
 /// (`ContainerFrameItemButton_OnEnter`, `ContainerFrame.lua:602-612`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bag_tooltip_hangs_left_when_the_slot_sits_in_the_right_half() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
     // The stock tooltip sizes from its lines, so reading its rect needs a text measurer.
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.set_money(0);
 
     let mut slots = std::collections::HashMap::new();
@@ -458,21 +410,11 @@ fn bag_tooltip_hangs_left_when_the_slot_sits_in_the_right_half() {
 /// Stock `ContainerFrameItemButton_OnUpdate` re-runs `OnEnter` while it owns the tooltip
 /// (`ContainerFrame.lua:645-660`); hiding the tooltip drops ownership.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hovered_bag_tooltip_fills_itself_when_the_stats_land() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.set_money(0);
 
     let mut slots = std::collections::HashMap::new();
@@ -563,27 +505,17 @@ fn hovered_bag_tooltip_fills_itself_when_the_stats_land() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// At a vendor a bag hover shows `SellPrice` times the stack (the money block, `0x62d71b`) or the
-/// `ITEM_UNSELLABLE` line, and arms the sell cursor (`ShowContainerSellCursor`, `0x4fa460`);
-/// leaving resets it.
+/// At a vendor a bag hover shows `SellPrice` times the stack in the tooltip's first money frame,
+/// which `SetTooltipMoney` creates on demand (`GameTooltip.lua:97-127`), or the `ITEM_UNSELLABLE`
+/// line (`0x62d8ce`), and arms the sell cursor; leaving resets it.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn vendor_bag_hover_shows_sell_price_and_arms_the_pouch_cursor() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::{MerchantState, ScriptValue, UiCursorMode};
 
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.set_money(0);
 
     let mut slots = std::collections::HashMap::new();
@@ -676,8 +608,8 @@ fn vendor_bag_hover_shows_sell_price_and_arms_the_pouch_cursor() {
     assert!(s.errors().is_empty(), "hover errors: {:?}", s.errors());
     assert!(s
         .eval::<bool>(
-            "return GameTooltipMoneyFrame:IsShown() \
-             and GameTooltipMoneyFrameCopperButton:GetText() == '52'",
+            "return GameTooltipMoneyFrame1:IsShown() \
+             and GameTooltipMoneyFrame1CopperButton:GetText() == '52'",
         )
         .unwrap());
     assert_eq!(
@@ -689,7 +621,7 @@ fn vendor_bag_hover_shows_sell_price_and_arms_the_pouch_cursor() {
     unhover(&mut s);
     assert_eq!(s.ui_cursor(), None, "ResetCursor on leave");
     assert!(s
-        .eval::<bool>("return not GameTooltipMoneyFrame:IsShown()")
+        .eval::<bool>("return not GameTooltipMoneyFrame1:IsShown()")
         .unwrap());
 
     hover(&mut s, &b2);
@@ -703,31 +635,22 @@ fn vendor_bag_hover_shows_sell_price_and_arms_the_pouch_cursor() {
         .unwrap();
     assert!(has_line, "SellPrice 0 shows the ITEM_UNSELLABLE line");
     assert!(s
-        .eval::<bool>("return not GameTooltipMoneyFrame:IsShown()")
+        .eval::<bool>("return not GameTooltipMoneyFrame1:IsShown()")
         .unwrap());
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 /// A readable bag item (a letter's permanent copy) shows the inspect cursor on hover
-/// (`ContainerFrame.lua:638`, `this.readable`); a plain item does not.
+/// (`ContainerFrame.lua:787-788`, `self.readable`, through stock `ShowInspectCursor`'s
+/// `SetCursor("INSPECT_CURSOR")`); a plain item does not.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn readable_letter_hover_shows_the_inspect_magnifier() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::UiCursorMode;
 
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.set_money(0);
 
     let mut slots = std::collections::HashMap::new();
@@ -786,21 +709,11 @@ fn readable_letter_hover_shows_the_inspect_magnifier() {
 
 /// Real input, so the template's `RegisterForDrag`/`OnDragStart`/`OnReceiveDrag` wiring runs.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn drag_across_two_slots_queues_the_same_move_a_click_pickup_would() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.set_money(0);
 
     let mut slots = std::collections::HashMap::new();
@@ -876,21 +789,11 @@ fn drag_across_two_slots_queues_the_same_move_a_click_pickup_would() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_second_bag_window_feeds_and_paints_via_the_bag_bar() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.set_money(0);
 
     let mut slots = std::collections::HashMap::new();
@@ -955,21 +858,11 @@ fn a_second_bag_window_feeds_and_paints_via_the_bag_bar() {
 /// `top + ((rows - 1) * 41 - 9) + 10`, where `top` is 72 for a size % 4 == 2 bag, 86 for a single
 /// full row and 94 otherwise, and a one-row bag drops the middle term.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn equipped_bag_window_snug_fits_its_row_count() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.set_money(0);
 
     // (bag, slots, height): 6 is 72+32+10, 8 is 94+32+10, 10 is 72+73+10, 20 is 94+155+10, and the
@@ -1021,17 +914,7 @@ fn equipped_bag_window_snug_fits_its_row_count() {
 
 /// Open a backpack holding a five-stack in slot 1; returns that slot button's centre.
 fn open_backpack_with_a_five_stack(s: &mut UiScript) -> (f32, f32) {
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\StackSplitFrame.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(s, file);
-    }
+    super::test_ui::load_stock_ui(s);
     s.set_money(0);
 
     let mut slots = std::collections::HashMap::new();
@@ -1078,7 +961,6 @@ fn open_backpack_with_a_five_stack(s: &mut UiScript) -> (f32, f32) {
 
 /// The shift fork (`ContainerFrame.lua:567-578`) opens the split frame without a pickup.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shift_click_on_a_stack_opens_the_split_frame() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1107,7 +989,6 @@ fn shift_click_on_a_stack_opens_the_split_frame() {
 /// with no anchors, and an anchor-less region gets an implicit `SetAllPoints` at creation, its size
 /// unread; the TexCoords crop 172×96 out of the 256×128 art.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_split_frame_plate_fills_the_dialog() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1158,7 +1039,6 @@ fn the_split_frame_plate_fills_the_dialog() {
 /// The split dialog raises over a same-stratum window shown before it, as an addon bag window is
 /// (`frameStrata="HIGH"`, the dialog's own): stock `toplevel="true"` makes its `Show` raise it.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_split_frame_raises_over_a_same_stratum_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1221,7 +1101,6 @@ fn the_split_frame_raises_over_a_same_stratum_window() {
 /// Digits reach the dialog's `OnChar` (`enableKeyboard`): the first replaces the seeded 1, later
 /// ones append unless they would exceed the stack, and ENTER commits as Okay does.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn typing_a_number_into_the_split_spinner_sets_the_count() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1278,7 +1157,6 @@ fn typing_a_number_into_the_split_spinner_sets_the_count() {
 /// Okay only picks the split up (`SplitContainerItem` is a pickup); the next placement queues the
 /// move with the split count.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn split_okay_then_a_placement_queues_the_split_move() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1323,7 +1201,6 @@ fn split_okay_then_a_placement_queues_the_split_move() {
 
 /// A plain click hides an open split frame (`ContainerFrame.lua:581`), even on an unrelated slot.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_plain_click_hides_an_open_split_frame() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
@@ -1345,23 +1222,14 @@ fn a_plain_click_hides_an_open_split_frame() {
 }
 
 /// Stock `ContainerFrame_UpdateCooldown` reads `GetContainerItemCooldown` into
-/// `CooldownFrame_SetTimer`; a `BAG_UPDATE_COOLDOWN` with the cooldown gone hides the sweep.
+/// `CooldownFrame_SetTimer`, which runs the slot's `Cooldown` widget (`Cooldown.lua:2-9`); a
+/// `BAG_UPDATE_COOLDOWN` with the cooldown gone hides it.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bag_slot_cooldown_sweeps_through_the_xml() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.set_money(0);
     s.tick(100.0); // a nonzero clock epoch
 
@@ -1388,42 +1256,49 @@ fn bag_slot_cooldown_sweeps_through_the_xml() {
     s.set_container(0, Some(backpack(Some((52_000, 60_000, true)))));
     s.run("OpenAllBags()").unwrap();
     s.fire_event("BAG_UPDATE", vec![benilla_ui::script::ScriptValue::Int(0)]);
-    // The next paint's `OnUpdateModel` scrubs the pane's sequence 0 to the elapsed fraction.
-    super::test_ui::cooldown_facts(&mut s);
     s.tick(0.0);
-    s.resolve();
-
-    let sweep = |s: &UiScript| super::test_ui::cooldown_play_any(s);
-    let play = sweep(&s).expect("the bag slot sweeps");
-    assert_eq!(play, (0, 800), "48 of 60 s elapsed: sequence 0 at 800 ms");
+    let cooldown = format!("{}Cooldown", bag_slot_button(&s, 0, 1));
+    assert!(s
+        .eval::<bool>(&format!("return {cooldown}:IsShown() == 1"))
+        .unwrap());
+    let sweep = |s: &mut UiScript| {
+        s.resolve();
+        s.extract().into_iter().find_map(|q| match q.content {
+            QuadContent::Cooldown(p)
+                if s.quad_owner_name(q.target).as_deref() == Some(&cooldown) =>
+            {
+                Some(p)
+            }
+            _ => None,
+        })
+    };
+    let running = sweep(&mut s).expect("the bag slot sweeps");
+    assert!(
+        !running.swipe.is_empty() && running.flash.is_none(),
+        "48 of 60 s elapsed: a dark wedge, no flash yet"
+    );
 
     s.set_container(0, Some(backpack(None)));
     s.fire_event("BAG_UPDATE_COOLDOWN", vec![]);
-    assert_eq!(sweep(&s), None, "cold again after the refresh");
+    assert!(
+        !s.eval::<bool>(&format!("return {cooldown}:IsShown() == 1"))
+            .unwrap(),
+        "cold again after the refresh"
+    );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// Stock plain `SetText` tooltips (`MainMenuBarBagButtons.xml:91-99`, `.lua:86-96`) with the
+/// Stock plain `SetText` tooltips (`BagSlotButton_OnEnter`, `MainMenuBarBagButtons.lua:83-93`) with the
 /// binding key appended; `TOGGLEBAG` numbers the slots right to left, so the one beside the
 /// backpack is `TOGGLEBAG4` (F11 by default).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bar_bag_buttons_name_themselves_on_hover() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     // `GetBindingKey` reads the registered command set, seeded as the app seeds it.
     crate::ui_script::load_stock_bindings(&mut s);
     s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.resolve();
 
     hover(&mut s, "MainMenuBarBackpackButton");
@@ -1474,7 +1349,20 @@ fn the_bar_bag_buttons_name_themselves_on_hover() {
         enchants: Vec::new(),
     });
     s.set_inventory_slots(inv);
-    hover(&mut s, "CharacterBag0Slot");
+    // An equipped bag's template is cached, as the player's own worn items are by login.
+    s.set_item_template(
+        4496,
+        ItemTemplateView {
+            name: "Small Brown Pouch".into(),
+            quality: 1,
+            class: 1,
+            inventory_type: 18,
+            ..Default::default()
+        },
+    );
+    // Still hovered: the tooltip's own `OnUpdate` re-runs its owner's `UpdateTooltip`, which the
+    // slot sets to `BagSlotButton_OnEnter`, every `TOOLTIP_UPDATE_TIME` (`GameTooltip.lua:185-197`).
+    s.tick(0.25);
     let line = s
         .eval::<String>("return GameTooltipTextLeft1:GetText()")
         .unwrap();
@@ -1497,6 +1385,9 @@ fn the_bar_bag_buttons_name_themselves_on_hover() {
 
 /// A keyring container (id -2) fed as the app feeds it, `size` being what `keyring_size(level)`
 /// gives, with a key in slot 1 when `occupied`.
+/// The keyring's slots: `GetContainerNumSlots(KEYRING_CONTAINER)` is a flat 32 (`0x5d74a0`).
+const KEYRING_SLOTS: u32 = 32;
+
 fn keyring(size: u32, occupied: bool) -> ContainerState {
     let mut slots = std::collections::HashMap::new();
     if occupied {
@@ -1520,17 +1411,6 @@ fn keyring(size: u32, occupied: bool) -> ContainerState {
     }
 }
 
-/// Seat a player at `level`: stock `GetKeyRingSize` (`ContainerFrame.lua:773-786`: 4, then 8 at
-/// 40, 12 at 50, 16 above 60) reads `UnitLevel("player")`, so a fixture left at 0 gets 4 slots.
-fn seat_player_at_level(s: &mut UiScript, level: u32) {
-    let mut player = benilla_ui::script::UnitState {
-        level,
-        ..Default::default()
-    };
-    player.name = Some("Tester".into());
-    s.set_unit("player", Some(player));
-}
-
 /// How many drawn quads carry a texture path containing `needle`.
 fn drawn_with(s: &mut UiScript, needle: &str) -> usize {
     s.resolve();
@@ -1540,32 +1420,20 @@ fn drawn_with(s: &mut UiScript, needle: &str) -> usize {
         .count()
 }
 
-/// The bar and bag files the keyring spans, plus `UIErrorsFrame.xml`: `PutKeyInKeyRing` reports a
-/// full ring through `UIErrorsFrame`.
-fn keyring_surface(s: &UiScript) {
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\UIErrorsFrame.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(s, file);
-    }
+/// The interface the keyring spans: the bar, the bags and `UIErrorsFrame`, through which
+/// `PutKeyInKeyRing` reports a full ring.
+fn keyring_surface(s: &mut UiScript) {
+    super::test_ui::load_stock_ui(s);
 }
 
-/// The first key shows the keyring button, swaps the bar's two right-hand strips to the keyring
-/// plate and slides the performance meter from -227 to -235 (`MainMenuBar_UpdateKeyRing`,
-/// `MainMenuBar.lua:174-183`).
+/// The first key sets `showKeyring`, which shows the keyring button and swaps the bar's two
+/// right-hand strips to the keyring plate (`MainMenuBar.lua:243-249`, `:471-479`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_first_key_puts_the_keyring_on_the_bar() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    keyring_surface(&s);
+    keyring_surface(&mut s);
     s.set_money(0);
 
     s.set_has_key(false);
@@ -1582,11 +1450,15 @@ fn the_first_key_puts_the_keyring_on_the_bar() {
 
     // A key lands: `HasKey`, then `BAG_UPDATE` to `MainMenuBarArtFrame`'s `OnEvent`, as at runtime.
     s.set_has_key(true);
-    s.set_container(-2, Some(keyring(8, true)));
+    s.set_container(-2, Some(keyring(KEYRING_SLOTS, true)));
     s.fire_event("BAG_UPDATE", vec![benilla_ui::script::ScriptValue::Int(-2)]);
     assert!(
         s.eval::<bool>("return KeyRingButton:IsShown()").unwrap(),
         "the first key reveals the keyring button"
+    );
+    assert_eq!(
+        s.eval::<String>("return GetCVar('showKeyring')").unwrap(),
+        "1"
     );
     assert_eq!(
         drawn_with(&mut s, "UI-MainMenuBar-KeyRing"),
@@ -1607,29 +1479,19 @@ fn the_first_key_puts_the_keyring_on_the_bar() {
             "{strip} keeps the reference's own band — got {t}..{b}, want {top}..{bottom}"
         );
     }
-    // The stock bar puts `KeyRingButton`'s left edge 234 from the bar's right (backpack at -6,
-    // 37-wide buttons, -5 gaps), into the socket painted on the keyring plate.
+    // The stock bar puts `KeyRingButton`'s left edge 204 from the bar's right: the backpack at -6
+    // and 37 wide, four 30-wide bag slots at -5, -4, -4, -4, then the 18-wide button at -6
+    // (`MainMenuBarBagButtons.xml`).
     let bar_right = s.eval::<f64>("return MainMenuBar:GetRight()").unwrap();
     let button_left = s.eval::<f64>("return KeyRingButton:GetLeft()").unwrap();
     assert!(
-        (bar_right - button_left - 235.0).abs() < 1.5,
-        "the keyring button must land in the plate's painted socket — the ref's own -234, got {}",
+        (bar_right - button_left - 204.0).abs() < 0.01,
+        "the keyring button sits where the stock anchors put it, got {}",
         bar_right - button_left
     );
 
-    // The performance meter clears the new socket (`MainMenuBar.lua:180`: -227 to -235).
-    let perf_right = s
-        .eval::<f64>("return MainMenuBarPerformanceBarFrame:GetRight()")
-        .unwrap();
-    let bar_right = s.eval::<f64>("return MainMenuBar:GetRight()").unwrap();
-    assert!(
-        (bar_right - perf_right - 235.0).abs() < 0.01,
-        "the meter slid to -235 with the keyring up (got {})",
-        bar_right - perf_right
-    );
-
-    // The latch is one-way: `MainMenuBar_UpdateKeyRing` only ever shows the button, and
-    // `SHOW_KEYRING` is a saved variable (`MainMenuBar.lua:174-183`, `MainMenuBar.xml:323-336`).
+    // The latch is one-way: `MainMenuBar_UpdateKeyRing` only ever shows the button, and the
+    // per-character `showKeyring` keeps it.
     s.set_has_key(false);
     s.fire_event("BAG_UPDATE", vec![benilla_ui::script::ScriptValue::Int(-2)]);
     assert!(
@@ -1640,19 +1502,17 @@ fn the_first_key_puts_the_keyring_on_the_bar() {
 }
 
 /// The keyring button opens a container titled "Keyring", stitched from the `-Keyring` plate, with
-/// the level-gated slot count and its own sounds (`ContainerFrame.lua:116-138`).
+/// its own sounds, sized by `GetKeyRingSize` to the rows of four its keys reach
+/// (`ContainerFrame.lua:877-904`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_keyring_button_opens_a_keyring_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    keyring_surface(&s);
+    keyring_surface(&mut s);
     s.set_money(0);
     s.set_has_key(true);
-    // Level 44: 8 slots (the 40..49 rung). The level decides; the feed carries the same 8.
-    seat_player_at_level(&mut s, 44);
-    s.set_container(-2, Some(keyring(8, true)));
+    s.set_container(-2, Some(keyring(KEYRING_SLOTS, true)));
     s.fire_event("BAG_UPDATE", vec![benilla_ui::script::ScriptValue::Int(-2)]);
     let _ = s.take_sounds();
 
@@ -1681,7 +1541,7 @@ fn the_keyring_button_opens_a_keyring_window() {
              if getglobal('{w}Item' .. i):IsShown() then n = n + 1 end end return n"
         ))
         .unwrap();
-    assert_eq!(shown, 8, "only the level-unlocked keyring slots are drawn");
+    assert_eq!(shown, 4, "one key in slot 1 fills one row of four");
     assert_eq!(
         s.eval::<i64>(
             "local _, _, id = string.find(GetContainerItemLink(KEYRING_CONTAINER, 1), 'item:(%d+)') \
@@ -1701,20 +1561,28 @@ fn the_keyring_button_opens_a_keyring_window() {
 }
 
 /// A hovered key's tooltip comes through the stock keyring arm of `ContainerFrameItemButton_OnEnter`
-/// (`ContainerFrame.lua:616-619`): `SetInventoryItem("player", KeyRingButtonIDToInvSlotID(id))`,
-/// the key's inventory slot 82 and up, answered from the keyring container.
+/// (`ContainerFrame.lua:767-768`): `SetInventoryItem("player", KeyRingButtonIDToInvSlotID(id))`,
+/// the key's inventory slot 87 and up (`0x5e7700`), answered from the keyring container.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_hovered_key_shows_its_tooltip_through_its_inventory_slot() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
-    keyring_surface(&s);
+    keyring_surface(&mut s);
     s.set_money(0);
     s.set_has_key(true);
-    seat_player_at_level(&mut s, 44);
-    s.set_container(-2, Some(keyring(8, true)));
+    s.set_container(-2, Some(keyring(KEYRING_SLOTS, true)));
+    // The key's template is cached, as a key in the player's own bags is by login.
+    s.set_item_template(
+        7146,
+        ItemTemplateView {
+            name: "The Scarlet Key".into(),
+            quality: 1,
+            class: 13,
+            ..Default::default()
+        },
+    );
     s.fire_event("BAG_UPDATE", vec![benilla_ui::script::ScriptValue::Int(-2)]);
     s.run("KeyRingButton:Click()").unwrap();
     assert!(open(&s, -2), "fixture: the keyring is open");
@@ -1734,7 +1602,7 @@ fn a_hovered_key_shows_its_tooltip_through_its_inventory_slot() {
     assert!(s.errors().is_empty(), "hover errors: {:?}", s.errors());
     assert_eq!(
         s.eval::<Option<String>>("return ASKED").unwrap().as_deref(),
-        Some("player:82"),
+        Some("player:87"),
         "the stock arm asks for key 1's inventory slot"
     );
     assert!(s.eval::<bool>("return GameTooltip:IsVisible()").unwrap());
@@ -1750,12 +1618,11 @@ fn a_hovered_key_shows_its_tooltip_through_its_inventory_slot() {
 /// Dropping a held key on the button files it in the first free keyring slot (stock
 /// `PutKeyInKeyRing`); a full keyring refuses the drop.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_key_dropped_on_the_button_files_itself() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    keyring_surface(&s);
+    keyring_surface(&mut s);
     s.set_money(0);
     s.set_has_key(true);
 
@@ -1835,23 +1702,13 @@ fn a_key_dropped_on_the_button_files_itself() {
 /// plays sequence 0 once; `ItemAnim_OnAnimFinished` hides it. The pane authored no size, so its
 /// rect is the file's bounding box in layout units.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_item_push_drops_its_icon_into_the_bag_that_took_it() {
     use benilla_ui::widget::{ModelFileFacts, SequenceFacts};
 
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1600.0, 900.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     // `ForcedBackpackItem.m2` (`benilla-extract m2seq`, `m2batch`): one sequence (id 0, 1000 ms,
     // clamp) and a 0.02707 × 0.07962 box, which is 42.41 × 124.72 at 16:9, where a layout unit is
     // 768·√(a²+1) = 1566.4 FrameXML units.
@@ -1999,21 +1856,11 @@ fn an_item_push_drops_its_icon_into_the_bag_that_took_it() {
 /// An addon that replaces the global `ToggleBackpack`, as Bagnon's `Overrides.lua` does, receives
 /// the backpack button's click and suppresses the stock toggle.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_addon_that_hooks_toggle_backpack_receives_the_click() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.set_money(0);
 
     // Bagnon's idiom: capture the original, replace the global.
@@ -2049,21 +1896,11 @@ fn an_addon_that_hooks_toggle_backpack_receives_the_click() {
 /// `CharacterBag0Slot` is bag 1), and their icons the derived `$parentIconTexture`: Bagnon reads
 /// `CharacterBag0Slot`'s `OnClick`, and `Bartender2/Alias.lua:352` takes the icon's name.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bag_slots_carry_the_references_names_and_icon_names() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
 
     for i in 0..4 {
         assert!(
@@ -2104,21 +1941,11 @@ fn the_bag_slots_carry_the_references_names_and_icon_names() {
 /// `ContainerFrame_OnShow`/`OnHide` write the ring, and stock `BackpackButton_OnClick` re-derives
 /// it after the CheckButton's own flip.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_backpack_buttons_ring_follows_its_own_window_through_real_clicks() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kit
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
     s.set_money(0);
     // Stock `ToggleBag` opens nothing for a size-0 container, so the backpack is fed.
     s.set_container(

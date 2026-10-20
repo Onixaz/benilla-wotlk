@@ -4,7 +4,7 @@
 use crate::local_state::test_env::ENV_LOCK;
 
 /// The raises whose frame waits on a port of its own, each by the frame that raises and its issue.
-const UNPORTED: [(&str, &str); 3] = [
+pub(super) const UNPORTED: [(&str, &str); 3] = [
     ("TutorialFrame: OnLoad", "#290, animation groups"),
     ("MiniMapTrackingDropDown: OnLoad", "#424, minimap tracking"),
     ("ChannelFrame: OnLoad", "#470, the channel pane"),

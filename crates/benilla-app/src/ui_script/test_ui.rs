@@ -56,23 +56,6 @@ pub(super) fn cooldown_play(s: &UiScript, owner: &str) -> Option<(u16, u32)> {
     })
 }
 
-/// [`cooldown_play`] for whichever cooldown pane is shown: `ContainerFrame_GenerateFrame` numbers
-/// a bag's slots from the far end, so a one-item test asks for the sweep, not a name.
-pub(super) fn cooldown_play_any(s: &UiScript) -> Option<(u16, u32)> {
-    let heads = s.visible_model_panes();
-    s.extract().into_iter().find_map(|q| match &q.content {
-        QuadContent::ModelPane {
-            handle,
-            model: Some(m),
-            ..
-        } if m.eq_ignore_ascii_case(COOLDOWN_MODEL) => heads
-            .iter()
-            .find(|p| p.handle == *handle)
-            .and_then(|p| p.play.map(|ph| (ph.anim_id, ph.cursor_ms))),
-        _ => None,
-    })
-}
-
 /// [`load_ui`], and a missing template fails too: the loader only warns, and the art is lost.
 pub(super) fn load_ui_strict(s: &UiScript, entry: &str) -> usize {
     load_entry(s, entry, true, false)
@@ -679,6 +662,50 @@ pub(super) const BAG_UI: &[&str] = &[
     // Our adapters over the stock container files, loaded after them and the bar so they win.
     "ContainerFrameAdapters.xml",
 ];
+
+/// The whole production interface, the core then the layer, as the app loads it into a VM with a
+/// seated player, its character record and the display's mode list; fails on any load raise but
+/// the frames still waiting on a port of their own.
+pub(super) fn load_stock_ui(s: &mut UiScript) {
+    s.set_player_record(benilla_ui::script::PlayerRecord {
+        name: "Probesix".into(),
+        race: Some(("Human".into(), "Human".into())),
+        class: Some(("Warrior".into(), "WARRIOR".into())),
+        sex: 2,
+    });
+    if !s
+        .eval::<bool>("return UnitExists('player') == 1")
+        .unwrap_or(false)
+    {
+        s.set_unit(
+            "player",
+            Some(benilla_ui::script::UnitState {
+                exists: true,
+                name: Some("Probesix".into()),
+                level: 60,
+                race: Some("Human".into()),
+                race_file: Some("Human".into()),
+                class: Some("Warrior".into()),
+                class_file: Some("WARRIOR".into()),
+                ..Default::default()
+            }),
+        );
+    }
+    let mode = benilla_ui::script::ScreenResolution {
+        width: 1024,
+        height: 768,
+    };
+    s.set_screen_resolutions(vec![mode], Some(mode));
+    let failures: Vec<String> = super::load_default_ui(s)
+        .into_iter()
+        .filter(|f| {
+            !super::stock_load_tests::UNPORTED
+                .iter()
+                .any(|(at, _)| f.contains(at))
+        })
+        .collect();
+    assert!(failures.is_empty(), "stock load raised: {failures:#?}");
+}
 
 /// The name of the `ContainerFrame` showing bag `id`, asked of `IsBagOpen`: the reference recycles
 /// twelve windows across every container (`ContainerFrame_GetOpenFrame`).
