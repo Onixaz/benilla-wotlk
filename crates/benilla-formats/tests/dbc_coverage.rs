@@ -24,10 +24,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("BannedAddOns", "#245 the addon ban list"),
     ("BarberShopStyle", "#234 the barber shop"),
     (
-        "BattlemasterList",
-        "#237 battleground and arena queues: GetBattlefieldInfo",
-    ),
-    (
         "Cfg_Configs",
         "#245 realm type rules: GetRealmInfo; realm_select hardcodes its rows",
     ),
@@ -94,7 +90,6 @@ const NOT_READ: &[(&str, &str)] = &[
         "PowerDisplay",
         "#240 alternate power display: UnitPowerType",
     ),
-    ("PvpDifficulty", "#237 battleground level brackets"),
     ("RandPropPoints", "#239 random property and suffix stats"),
     ("Resistances", "#233 resistance names"),
     ("ScalingStatDistribution", "#239 heirloom stat scaling"),

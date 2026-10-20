@@ -70,6 +70,10 @@ mod itemclass;
 pub use itemclass::{load_item_classes, ItemClassCatalog};
 mod auction_house;
 pub use auction_house::{load_auction_houses, AuctionHouseCatalog, AuctionHouseInfo};
+mod battlemaster_list;
+pub use battlemaster_list::{
+    load_battlemaster_catalog, BattlemasterCatalog, BattlemasterRec, PvpBracket,
+};
 mod itemsubclass;
 pub use itemsubclass::{load_item_sub_classes, ItemSubClassCatalog, ItemSubClassInfo};
 mod factions;

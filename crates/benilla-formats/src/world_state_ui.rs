@@ -2,9 +2,7 @@
 //! columns (`GetNumWorldStateUI`, `GetWorldStateUIInfo` `0x4c5a70`). It is client-only: vmangos
 //! sends only world-state values, and which are shown, where and with what label is this table's.
 //!
-//! Layout: 63 fields of 252 bytes in 12340, each localized string seventeen dwords; `PhaseShift`
-//! (column 3, `64`, `128` or `256` on 47 rows) is not carried. 5875 had 39 fields, with an unread
-//! column after the tooltip in place of the phase column.
+//! Layout: 63 fields of 252 bytes in 12340, each localized string seventeen dwords.
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
@@ -19,8 +17,10 @@ const WORLD_STATE_UI: &str = "DBFilesClient\\WorldStateUI.dbc";
 pub struct WorldStateUiRow {
     /// The row's `Map.dbc` id: a continent for world PvP, else a battleground map.
     pub map_id: u32,
-    /// The `AreaTable.dbc` id narrowing the row within its map (world PvP only), `0` for all of it.
+    /// The `AreaTable.dbc` id narrowing the row within its map, a zone or an area, `0` for all of it.
     pub area_id: u32,
+    /// `PhaseShift`: the phases the row shows in, `0` for every phase.
+    pub phase_shift: u32,
     /// The static icon's texture path (`Interface\WorldStateFrame\AllianceTower`), or empty.
     pub icon: String,
     /// The label: a `%<id>w` world-state format (`"Towers Controlled: %2327w"`), or plain text on
@@ -31,9 +31,7 @@ pub struct WorldStateUiRow {
     /// `StateVariable` (`+0x5c`), the world-state id whose value the client returns as the row's
     /// `uiState`; `0` is no state, which the binding answers as `1.0`.
     pub state_variable: u32,
-    /// `Type` (`+0x60`), which list the row joins: `0` always up; `1` always up only while the
-    /// player is in a zone-dependent defense channel (`ZONE_DEP | DEFENSE`, LocalDefense alone),
-    /// the world-PvP rows; `2` a scoreboard column, built by another handler.
+    /// `Type`: `0`, `1` (the world-PvP rows) and `3` are always up, `2` a scoreboard column.
     pub ui_type: u32,
     /// The icon shown instead while [`Self::state_variable`] is live: the enemy flag on the two
     /// Warsong Gulch rows, crossed swords on ten others.
@@ -117,6 +115,7 @@ pub fn load_world_state_ui_catalog(chain: &mut Chain) -> Result<WorldStateUiCata
             WorldStateUiRow {
                 map_id: u32_at(r, 1).unwrap_or(0),
                 area_id: u32_at(r, 2).unwrap_or(0),
+                phase_shift: u32_at(r, 3).unwrap_or(0),
                 icon: str_at(&rs, r, 4).unwrap_or_default(),
                 text: str_at(&rs, r, 5).unwrap_or_default(),
                 tooltip: str_at(&rs, r, 22).unwrap_or_default(),
