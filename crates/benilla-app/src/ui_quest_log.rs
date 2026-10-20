@@ -771,7 +771,6 @@ pub(crate) fn feed_quest_log(
     // is the leaderboard line, as the `ERR_QUEST_ADD_*_SII` keys compose the same sentence.
     let progressed = quests_with_progressed_objectives(last, &fresh);
     script.set_quest_log(fresh.clone());
-    script.fire_event("QUEST_LOG_UPDATE", vec![]);
     if !progressed.is_empty() {
         for quest in progressed {
             for line in quest.changed_lines {
@@ -793,15 +792,18 @@ pub(crate) fn feed_quest_log(
                 };
                 crate::ui_action::show_messages(&mut script, &mut sink, "ui_quest_log", line);
             }
-            // The quest's 1-based log row: the reference's arg is `0x4df880`'s search of the row
-            // array `0xbb71c0`, not of the five-slot watch list `0xbb70a0`, and stock
-            // `AutoQuestWatch_Update(questIndex)` takes it (`QuestLogFrame.lua:67-69`).
+            // The quest's 1-based log row (`GetQuestIndex` `0x5deeb0`), for which the stock
+            // `QuestLog_OnEvent` adds a timed watch (`QuestLogFrame.lua:265-271`).
             script.fire_event(
                 "QUEST_WATCH_UPDATE",
                 vec![ScriptValue::Int(i64::from(quest.index))],
             );
         }
     }
+    // Last: `QUEST_WATCH_UPDATE` fires at once from the update handler, while `QUEST_LOG_UPDATE`
+    // is a unique signal flushed after the frame's packets (`Script_SendUniqueSignals`
+    // `0x614760`), so the tracker redraws with the progress watch already added.
+    script.fire_event("QUEST_LOG_UPDATE", vec![]);
     *last = fresh;
 }
 
