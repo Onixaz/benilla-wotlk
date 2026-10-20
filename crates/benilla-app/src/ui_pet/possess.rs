@@ -5,6 +5,10 @@
 //! (`0x6d1ab1`) and on a far-sight change whose subject resolves (`0x6e5034`); a far sight with no
 //! subject clears it (`0x6e5042`), as does leaving the world (`0x5d3360`). Every change fires
 //! `UPDATE_BONUS_ACTIONBAR` (`0x5d30e0`).
+//!
+//! Deviation: the reference walks inside the field callback, against the auras earlier packets
+//! left; this walks once a frame, after all of that frame's packets, so an aura arriving in the
+//! same frame as the field move behind it is already seen.
 
 use bevy::prelude::*;
 
