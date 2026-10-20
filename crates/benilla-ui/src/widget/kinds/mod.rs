@@ -624,6 +624,9 @@ pub struct MinimapState {
     pub mask_texture: Option<String>,
     /// The player-arrow `Model` (`[Minimap+0x338]`), reached by `SetPlayerFacing` (`0x4eb8e0`).
     pub player_arrow: Option<FrameHandle>,
+    /// The player texture's `[width, height]` in frame units (`0x57e280`/`0x57e1c0`), unsized
+    /// from the ctor (`0x57dca0`).
+    pub player_texture_size: [f32; 2],
 }
 
 /// Both zoom CVars register with `"3"` (`0x48fc5a`/`0x48fc76`) and the reset copies the CVar in;
@@ -639,6 +642,7 @@ impl Default for MinimapState {
             mask_texture: None,
             // Set by `WidgetArena::create` on insert, as the ctor builds its children.
             player_arrow: None,
+            player_texture_size: [0.0; 2],
         }
     }
 }

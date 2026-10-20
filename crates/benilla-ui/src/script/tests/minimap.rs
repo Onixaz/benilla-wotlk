@@ -48,7 +48,8 @@ fn minimap_zoom_api_and_extract() {
             &mm.content,
             QuadContent::Minimap {
                 zoom: 0,
-                inside_zoom: 3
+                inside_zoom: 3,
+                ..
             }
         ),
         "extract carries both live indices: the outdoor one we drove to 0, the indoor one still at \
@@ -106,7 +107,8 @@ fn minimap_indoor_and_outdoor_zoom_indices_are_independent() {
             &mm.content,
             QuadContent::Minimap {
                 zoom: 2,
-                inside_zoom: 5
+                inside_zoom: 5,
+                ..
             }
         ),
         "extract carries both indices independently, got {:?}",
@@ -280,5 +282,37 @@ fn frame_effective_alpha_reads_the_shown_frames_alpha() {
         s.frame_effective_alpha("PingModel"),
         None,
         "hidden through the parent"
+    );
+}
+
+/// `MinimapPing_OnLoad` sizes the player texture 40 by 40 (`Minimap.lua:11-12`); it rides the
+/// content quad scaled like the rect, and a non-number raises the named Usage.
+#[test]
+fn the_player_texture_size_rides_extraction_scaled_like_the_rect() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        m = CreateFrame("Minimap", "TestMinimap")
+        m:SetWidth(140); m:SetHeight(140); m:SetPoint("TOPRIGHT", 0, 0)
+        m:SetScale(2)
+        m:SetPlayerTextureHeight(40); m:SetPlayerTextureWidth(30)
+    "#,
+    )
+    .unwrap();
+    s.resolve();
+    let mm = s
+        .extract()
+        .into_iter()
+        .find(|q| matches!(&q.content, QuadContent::Minimap { .. }))
+        .expect("the Minimap content quad");
+    let QuadContent::Minimap { player_texture, .. } = mm.content else {
+        unreachable!()
+    };
+    assert_eq!(player_texture, [60.0, 80.0]);
+    let err = s.run("m:SetPlayerTextureHeight()").unwrap_err().to_string();
+    assert!(
+        err.contains("TestMinimap:SetPlayerTextureHeight(height)"),
+        "{err}"
     );
 }

@@ -67,6 +67,8 @@ pub enum QuadContent {
         zoom: u8,
         /// The indoor zoom index (`0x86f69c`), sent too so the renderer picks by its own test.
         inside_zoom: u8,
+        /// The player texture's `[width, height]`, scaled like the rect.
+        player_texture: [f32; 2],
     },
     /// A `Model` or `PlayerModel` widget's 3D pane: a `model` file draws as a tile, a unit pane
     /// samples the bake of the window its name belongs to, or nothing. The host memoizes on this

@@ -61,11 +61,6 @@ pub(super) const BLIP_BASIS_PX: f32 = 140.8;
 /// The player arrow's art, on the minimap and the world map, whose stock `WorldMapFrame.lua`
 /// `SetModel`s a pane to the same M2.
 pub(crate) const PLAYER_ARROW_TEXTURE: &str = "Interface\\Minimap\\MinimapArrow";
-/// `MinimapArrow.m2` is one 0.0262 × 0.0263-unit quad at 1280 px per model unit.
-pub(crate) const PLAYER_ARROW_QUAD_PX: f32 = 33.6;
-/// The quad's authored centre, (+0.0004, +0.00135) model units off the origin; it turns with
-/// facing.
-pub(crate) const PLAYER_ARROW_OFFSET_PX: bevy::math::Vec2 = bevy::math::Vec2::new(0.51, -1.73);
 /// The rim arrow's quad: `Rotating-MinimapArrow.m2`'s 0.0500-unit full-texture quads at 768 px
 /// per model unit (modelScale 0.6 × 1280), so the sprite needs no uv crop.
 const ARROW_QUAD_PX: f32 = 38.4;

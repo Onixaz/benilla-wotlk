@@ -1197,13 +1197,18 @@ fn convert_entry(
             }
         }
         // The `<Minimap>` content hole, parked for the minimap renderer to fill at this `z`.
-        QuadContent::Minimap { zoom, inside_zoom } => {
+        QuadContent::Minimap {
+            zoom,
+            inside_zoom,
+            player_texture,
+        } => {
             *minimap_slot = Some(crate::minimap::MinimapSlot {
                 rect,
                 z: eq.z,
                 zoom,
                 inside_zoom,
                 alpha: eq.alpha,
+                player_texture: Vec2::from(player_texture) * s,
             });
         }
         // A `<Model>`/`<PlayerModel>` pane draws itself, as the stock files declare a bare pane

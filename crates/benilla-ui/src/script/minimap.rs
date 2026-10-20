@@ -1,5 +1,5 @@
-//! The `Minimap` methods: zoom, the mask, the ping and the model attributes. The reference has six
-//! levels (`0x6da9a0`), a live index per mode (`0x86f698` outdoor, `0x86f69c` indoor) and the
+//! The `Minimap` methods: zoom, the mask, the ping, the player texture and the model attributes.
+//! The reference has six levels (`0x6da9a0`), a live index per mode (`0x86f698` outdoor, `0x86f69c` indoor) and the
 //! `minimapZoom`/`minimapInsideZoom` CVars (default `"3"`) that re-seed it (`0x6d9008`); the app
 //! maps the index to a radius (`0x6da9b0`) and holds the ping as a world point.
 
@@ -135,6 +135,31 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok((x, y))
         })?,
     )?;
+    // SetPlayerTextureHeight/Width (`0x57e1c0`/`0x57e280`): frame units, else the named Usage.
+    for (name, axis, usage) in [
+        ("SetPlayerTextureWidth", 0, "SetPlayerTextureWidth(Width)"),
+        (
+            "SetPlayerTextureHeight",
+            1,
+            "SetPlayerTextureHeight(height)",
+        ),
+    ] {
+        m.set(
+            name,
+            lua.create_function(move |lua, (this, size): (Table, mlua::Value)| {
+                let Some(size) = lua.coerce_number(size)? else {
+                    let who: Option<String> =
+                        this.get::<mlua::Function>("GetName")?.call(this.clone())?;
+                    return Err(mlua::Error::runtime(format!(
+                        "Usage: {}:{usage}",
+                        who.as_deref()
+                            .unwrap_or(super::object::anchor_args::UNNAMED)
+                    )));
+                };
+                with_minimap(lua, &this, |m| m.player_texture_size[axis] = size as f32)
+            })?,
+        )?;
+    }
     lua.set_named_registry_value(REG_MINIMAP_METHODS, m)?;
     Ok(())
 }

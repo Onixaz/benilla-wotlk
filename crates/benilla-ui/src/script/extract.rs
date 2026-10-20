@@ -74,6 +74,7 @@ impl UiScript {
                         Some(crate::widget::KindState::Minimap(m)) => QuadContent::Minimap {
                             zoom: m.zoom,
                             inside_zoom: m.inside_zoom,
+                            player_texture: m.player_texture_size.map(|v| v * scale),
                         },
                         // The layout scale the edge's UV spin reads is the frame's effective one.
                         Some(crate::widget::KindState::Cooldown(c)) => c

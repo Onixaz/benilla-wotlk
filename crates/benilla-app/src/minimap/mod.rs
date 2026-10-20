@@ -149,6 +149,8 @@ fn probe_minimap_widget(mut widget: ResMut<MinimapWidget>, windows: Query<&Windo
         zoom: 3,
         inside_zoom: 3,
         alpha: 1.0,
+        // The stock 40 units of the 140-unit widget (`Minimap.lua:11-12`).
+        player_texture: Vec2::splat(side * 40.0 / 140.0),
     });
 }
 
@@ -204,6 +206,8 @@ pub(crate) struct MinimapSlot {
     pub(crate) zoom: u8,
     pub(crate) inside_zoom: u8,
     pub(crate) alpha: f32,
+    /// The player texture's size in pixels, from `Minimap:SetPlayerTextureWidth/Height`.
+    pub(crate) player_texture: Vec2,
 }
 
 /// The loaded minimap fixtures; absent, the map draws nothing and its XML children still render.
@@ -678,18 +682,15 @@ fn emit_minimap(
         }
     }
 
-    // The player arrow: centered, spun to the facing. WoW orientation 0 = north (screen up),
-    // growing counterclockwise (toward west = screen left); our quad rotation is clockwise on
-    // screen, so the arrow angle is the negated facing.
-    if let Some(arrow) = &assets.arrow {
-        // `blips::PLAYER_ARROW_QUAD_PX`: MinimapArrow.m2's single quad at 1280 px/unit on the
-        // 140.8 basis, its authored centre offset rotating with the facing.
-        let s = side * (blips::PLAYER_ARROW_QUAD_PX / blips::BLIP_BASIS_PX);
+    // The player texture, centred at its set size and turned about its middle (`0x57bcc0`); our
+    // quad turns clockwise and WoW's facing counterclockwise, so the angle is negated.
+    if let Some(arrow) = assets
+        .arrow
+        .as_ref()
+        .filter(|_| slot.player_texture.min_element() > 0.0)
+    {
         let rotation = -player.facing();
-        let (sin, cos) = rotation.sin_cos();
-        let off = blips::PLAYER_ARROW_OFFSET_PX * (side / blips::BLIP_BASIS_PX);
-        let off = Vec2::new(off.x * cos - off.y * sin, off.x * sin + off.y * cos);
-        let rect = Rect::from_center_size(center + off, Vec2::splat(s));
+        let rect = Rect::from_center_size(center, slot.player_texture);
         quads.overlays.push(UiQuad {
             rect,
             z_key: slot.z,
