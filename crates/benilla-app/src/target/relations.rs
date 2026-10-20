@@ -326,12 +326,12 @@ mod tests {
             "nobody can attack: blue"
         );
         assert_eq!(
-            color(&unit(2, pc | UNIT_FLAG_PVP, 0, true)),
+            color(&unit(2, pc, BYTE2_PVP, true)),
             0xFFFF_FF00,
             "a flagged enemy we can attack and who cannot attack us is yellow"
         );
-        let flagged_me = unit(1, pc | UNIT_FLAG_PVP, 0, true);
-        let enemy = unit(2, pc | UNIT_FLAG_PVP, 0, true);
+        let flagged_me = unit(1, pc, BYTE2_PVP, true);
+        let enemy = unit(2, pc, BYTE2_PVP, true);
         assert_eq!(
             selection_color(&enemy, Some(&factions), &reps, Some(&flagged_me)),
             0xFFFF_0000,
@@ -360,6 +360,71 @@ mod tests {
             selection_color(&unit(7, 0, 0, false), Some(&factions), &reps, None),
             0xFF00_00FF
         );
+    }
+
+    /// `CanAttack 0x729740` between players reads the PvP byte of `UNIT_FIELD_BYTES_2`: a flagged
+    /// enemy is attackable, as in a battleground, an unflagged one is not, sanctuary on either
+    /// side refuses, both free-for-all passes, and a flagged ally stays friendly.
+    #[test]
+    fn can_attack_reads_the_pvp_byte_between_players() {
+        use benilla_formats::{FactionCatalog, FactionTemplate};
+        use std::collections::HashMap;
+
+        let tpl = |faction, group_mask, friend_group_mask, enemy_group_mask| FactionTemplate {
+            faction,
+            group_mask,
+            friend_group_mask,
+            enemy_group_mask,
+            enemies: [0; 4],
+            friends: [0; 4],
+        };
+        let factions = Factions::from_catalog(FactionCatalog::from_rows(
+            HashMap::from([(1, tpl(1, 3, 2, 12)), (2, tpl(2, 5, 4, 10))]),
+            HashMap::new(),
+        ));
+        let reps = Reputations::default();
+        let pc = UNIT_FLAG_PLAYER_CONTROLLED;
+        let unit = |template: u32, byte2: u8, player_flags: u32| {
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (2, 0x19),
+                (35, template),
+                (46, pc),
+                (164, u32::from(byte2) << 8),
+                (190, player_flags),
+            ]))
+        };
+        let attack = |target: &ObjectStore, me: &ObjectStore| {
+            can_attack(Some(target), Some(&factions), &reps, Some(me))
+        };
+        let me = unit(1, BYTE2_PVP, 0);
+
+        assert!(attack(&unit(2, BYTE2_PVP, 0), &me), "a flagged enemy");
+        assert!(
+            attack(&unit(2, BYTE2_PVP, 0), &unit(1, 0, 0)),
+            "the target's flag alone decides"
+        );
+        assert!(!attack(&unit(2, 0, 0), &me), "an unflagged enemy");
+        assert!(
+            !attack(&unit(2, BYTE2_PVP | BYTE2_SANCTUARY, 0), &me),
+            "a flagged enemy in a sanctuary"
+        );
+        assert!(
+            !attack(
+                &unit(2, BYTE2_PVP, 0),
+                &unit(1, BYTE2_PVP | BYTE2_SANCTUARY, 0)
+            ),
+            "from a sanctuary"
+        );
+        assert!(!attack(&unit(1, BYTE2_PVP, 0), &me), "a flagged ally");
+        assert!(
+            attack(&unit(1, 0x4, 0), &unit(1, 0x4, 0)),
+            "both free-for-all: an ally too"
+        );
+        assert!(
+            !attack(&unit(2, BYTE2_PVP, 0), &unit(1, BYTE2_PVP, 0x8_0000)),
+            "PLAYER_FLAGS 0x80000 refuses the actor"
+        );
+        assert!(!attack(&unit(2, BYTE2_PVP, 0x10), &me), "a ghost");
     }
 
     /// `0x6067d0`: the caster's template toward the corpse's race's, friendly or better; every gap

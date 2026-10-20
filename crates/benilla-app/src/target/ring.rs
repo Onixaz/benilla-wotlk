@@ -468,20 +468,19 @@ fn duel_reaction(
     }
 }
 
-/// The both-FFA rung of `UnitReaction` (`0x60632c`): two player-controlled units both flagged
-/// free-for-all (`PLAYER_FLAGS` bit 7, vmangos `Player.h:322`) are hostile whatever their factions.
+/// The both-FFA rung of `UnitReaction` (`0x7253af`, `0x7253c1`): two player-controlled units both
+/// carrying the free-for-all bit of `UNIT_FIELD_BYTES_2` byte 1 are hostile whatever their factions.
 /// A plain PvP flag has no such rung: a same-faction player flagged for PvP stays friendly.
 fn ffa_reaction(
     target: &benilla_protocol::ObjectFields,
     own: &benilla_protocol::ObjectFields,
 ) -> bool {
-    const PLAYER_FLAGS_FFA_PVP: u32 = 0x80;
     let player_controlled =
         |u: &benilla_protocol::ObjectFields| u.unit_flags() & UNIT_FLAG_PVP_ATTACKABLE != 0;
     player_controlled(target)
         && player_controlled(own)
-        && target.player_flags() & PLAYER_FLAGS_FFA_PVP != 0
-        && own.player_flags() & PLAYER_FLAGS_FFA_PVP != 0
+        && target.unit_byte2_flags() & BYTE2_FFA_PVP != 0
+        && own.unit_byte2_flags() & BYTE2_FFA_PVP != 0
 }
 
 /// Target `UNIT_FIELD_FLAGS` bits, any one of which makes `CanAttack` refuse
@@ -491,8 +490,15 @@ const CANNOT_BE_ATTACKED: u32 = 0x2 | 0x80 | 0x1_0000 | 0x10_0000 | 0x200_0000;
 /// against the other unit's bit 3.
 const IMMUNE_TO_PLAYER_CONTROLLED: u32 = 0x100;
 const IMMUNE_TO_UNCONTROLLED: u32 = 0x200;
-/// The PvP flag, which `CanAttack`'s player-vs-player arm accepts on its target (`0x606b5c`).
-const UNIT_FLAG_PVP: u32 = 0x1000;
+/// `UNIT_FIELD_BYTES_2` byte 1 (`[unit+0xd0]+0x1d1`), the PvP state `CanAttack 0x729740` reads:
+/// flagged, the bit a contested zone sets, free-for-all and sanctuary (AzerothCore's
+/// `UNIT_BYTE2_FLAG_*`).
+const BYTE2_PVP: u8 = 0x1;
+const BYTE2_CONTESTED: u8 = 0x2;
+const BYTE2_FFA_PVP: u8 = 0x4;
+const BYTE2_SANCTUARY: u8 = 0x8;
+/// `PLAYER_FLAGS` `0x80000`, which refuses every attack by its holder (`0x72975d`).
+const PLAYER_FLAGS_NO_ATTACK: u32 = 0x8_0000;
 
 /// The local player's reaction toward a unit, `0x6061e0` with the player as `this`. This direction
 /// reaches leg 3 (`0x606372`), which answers a reputation faction by the at-war bit alone, never
@@ -573,9 +579,11 @@ pub(crate) fn can_interact_from_player(
         && reaction_from_player(factions, reputations, target_store, self_store) >= NEUTRAL
 }
 
-/// `CanAttack` from the local player (`0x606980`), every leg in the reference's order; the V-plate
+/// `CanAttack` from the local player (`0x729740`), every leg in the reference's order; the V-plate
 /// category turns on it. Not a reaction threshold: an unflagged opposite-faction player on a PvE
 /// realm is hostile yet not attackable, a same-faction duel opponent friendly yet attackable.
+/// Not applied: the vehicle leg (`0x7298a9`–`0x7298db`) and the controller resolve
+/// (`0x729976`), which takes the controller-less arm for a charmed unit.
 pub(crate) fn can_attack_from_player(
     factions: Option<&Factions>,
     reputations: &Reputations,
@@ -586,8 +594,12 @@ pub(crate) fn can_attack_from_player(
     let (Some(target), Some(own)) = (target_store, self_store) else {
         return false; // fields not streamed yet; the reference's null path refuses too
     };
+    // The actor's own refusal (`0x72975d`).
+    if own.0.player_flags() & PLAYER_FLAGS_NO_ATTACK != 0 {
+        return false;
+    }
     let (tflags, oflags) = (target.0.unit_flags(), own.0.unit_flags());
-    // (a) The ghost gate (`0x606987`): only a creature whose type flags carry `0x2` may attack a
+    // (a) The ghost gate (`0x729789`): only a creature whose type flags carry `0x2` may attack a
     // ghost player, so the local player never can.
     const PLAYER_FLAGS_GHOST: u32 = 0x10;
     if target_is_player && target.0.player_flags() & PLAYER_FLAGS_GHOST != 0 {
@@ -611,6 +623,8 @@ pub(crate) fn can_attack_from_player(
     }
     // (d) The three terminal arms, selected by the two bit-3 flags.
     let toward_target = || reaction_from_player(factions, reputations, target_store, self_store);
+    let (tbyte, obyte) = (target.0.unit_byte2_flags(), own.0.unit_byte2_flags());
+    let no_sanctuary = obyte & BYTE2_SANCTUARY == 0 && tbyte & BYTE2_SANCTUARY == 0;
     match (o_controlled, t_controlled) {
         // Neither player-controlled: hostile in either direction suffices.
         (false, false) => {
@@ -618,18 +632,31 @@ pub(crate) fn can_attack_from_player(
                 || ring_reaction(factions, reputations, target_store, self_store)
                     <= Reaction::Hostile as u8
         }
-        // Both: a friendly reaction refuses; else a live duel, the target's PvP flag or mutual
-        // FFA. The reference's charm-owner resolve (`0x606170`) is not applied.
+        // Both (`0x72994e`): a friendly reaction refuses; else a live duel; else the target's PvP
+        // bit; else both free-for-all; else either side's contested bit. Sanctuary on either
+        // side refuses the flag arms (`0x7299b5`–`0x729a0b`).
         (true, true) => {
             if toward_target() >= Reaction::Friendly as u8 {
                 return false;
             }
-            matches!(duel_rung(&target.0, &own.0), DuelRung::Engaged { .. })
-                || tflags & UNIT_FLAG_PVP != 0
-                || ffa_reaction(&target.0, &own.0)
+            if matches!(duel_rung(&target.0, &own.0), DuelRung::Engaged { .. }) {
+                return true;
+            }
+            if tbyte & BYTE2_PVP != 0 {
+                no_sanctuary
+            } else if obyte & BYTE2_FFA_PVP != 0 && tbyte & BYTE2_FFA_PVP != 0 {
+                true
+            } else {
+                (obyte | tbyte) & BYTE2_CONTESTED != 0 && no_sanctuary
+            }
         }
-        // Mixed, the player against an ordinary NPC: attackable when worse than friendly.
-        _ => toward_target() < Reaction::Friendly as u8,
+        // Mixed, the player against an ordinary NPC: refused when the uncontrolled side is in a
+        // sanctuary (`0x729a2d`, `0x729a48`), else attackable when worse than friendly.
+        _ => {
+            !(o_controlled && tbyte & BYTE2_SANCTUARY != 0)
+                && !(t_controlled && obyte & BYTE2_SANCTUARY != 0)
+                && toward_target() < Reaction::Friendly as u8
+        }
     }
 }
 
