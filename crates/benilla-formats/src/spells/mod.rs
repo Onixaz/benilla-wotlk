@@ -328,6 +328,8 @@ pub struct SpellCatalog {
     dispel_types: SpellDispelTypes,
     /// `SpellDescriptionVariables.dbc`, the definitions the texts' `$<name>` read.
     description_variables: SpellDescriptionVariablesCatalog,
+    /// `SpellIcon.dbc` texture paths by row id, for icons a binding names by row.
+    icons: HashMap<u32, String>,
 }
 
 impl SpellCatalog {
@@ -358,7 +360,19 @@ impl SpellCatalog {
             declared_language: HashMap::new(),
             dispel_types: SpellDispelTypes::default(),
             description_variables: SpellDescriptionVariablesCatalog::default(),
+            icons: HashMap::new(),
         }
+    }
+
+    /// A `SpellIcon.dbc` row's texture path, `None` for a row the file lacks.
+    pub fn icon(&self, id: u32) -> Option<&str> {
+        self.icons.get(&id).map(String::as_str)
+    }
+
+    /// The catalog with `icons` as its `SpellIcon.dbc` rows, for tests.
+    pub fn with_icons(mut self, icons: HashMap<u32, String>) -> Self {
+        self.icons = icons;
+        self
     }
 
     /// `SpellDescriptionVariables.dbc` ([`SpellDisplay::description_variables_id`]).
@@ -744,6 +758,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
         declared_language,
         dispel_types,
         description_variables,
+        icons,
     })
 }
 

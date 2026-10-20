@@ -361,7 +361,7 @@ pub use model::{FontProbe, MacroIconSource, TextureProbe, TextureSizeProbe};
 pub(crate) use model::{Model, ModelCell};
 pub use multicast::MultiCastView;
 pub use party::{PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo};
-pub use pet::{PetActionView, PetStats};
+pub use pet::{PetActionView, PetStats, PossessView};
 pub use pvp::{
     decorated_name, pvp_name_global_keys, HonorState, InspectArenaTeamView, InspectHonorData,
     RankTitle, PLAYER_FLAGS_PVP_TIMER,

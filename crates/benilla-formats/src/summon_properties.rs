@@ -1,5 +1,6 @@
 //! `SummonProperties.dbc`: how a summon effect's unit is held; slot 5 is a companion (`0x8009b0`),
-//! and flag `0x20` keeps the menu's Dismiss off (`PetCanBeDismissed`, `0x5d3820`).
+//! flag `0x20` keeps the menu's Dismiss off (`PetCanBeDismissed`, `0x5d3820`), and control 3 is a
+//! possession (`CGPetInfo::FindPossessedSpell`, `0x5d6413`).
 
 use std::collections::HashMap;
 
@@ -11,10 +12,21 @@ use crate::Chain;
 
 const SUMMON_PROPERTIES: &str = "DBFilesClient\\SummonProperties.dbc";
 
-/// The `Slot` (4) and `Flags` (5) columns by row id.
+/// `Control` 3: the summoner possesses the unit.
+pub const SUMMON_CONTROL_POSSESSED: u32 = 3;
+
+/// One row's `Control` (1), `Slot` (4) and `Flags` (5).
+#[derive(Debug, Clone, Copy, Default)]
+struct SummonRow {
+    control: u32,
+    slot: u32,
+    flags: u32,
+}
+
+/// The rows the client reads, by id.
 #[derive(Debug, Clone, Default)]
 pub struct SummonPropertiesCatalog {
-    slots: HashMap<u32, (u32, u32)>,
+    rows: HashMap<u32, SummonRow>,
 }
 
 impl SummonPropertiesCatalog {
@@ -23,31 +35,53 @@ impl SummonPropertiesCatalog {
         Self::from_rows(rows.into_iter().map(|(id, slot)| (id, slot, 0)))
     }
 
-    /// Build from `(id, slot, flags)` rows.
+    /// Build from `(id, slot, flags)` rows with control 0.
     pub fn from_rows(rows: impl IntoIterator<Item = (u32, u32, u32)>) -> Self {
+        Self::from_records(
+            rows.into_iter()
+                .map(|(id, slot, flags)| (id, 0, slot, flags)),
+        )
+    }
+
+    /// Build from `(id, control, slot, flags)` rows.
+    pub fn from_records(rows: impl IntoIterator<Item = (u32, u32, u32, u32)>) -> Self {
         Self {
-            slots: rows
+            rows: rows
                 .into_iter()
-                .map(|(id, slot, flags)| (id, (slot, flags)))
+                .map(|(id, control, slot, flags)| {
+                    (
+                        id,
+                        SummonRow {
+                            control,
+                            slot,
+                            flags,
+                        },
+                    )
+                })
                 .collect(),
         }
     }
 
     pub fn slot(&self, id: u32) -> Option<u32> {
-        self.slots.get(&id).map(|&(slot, _)| slot)
+        self.rows.get(&id).map(|r| r.slot)
     }
 
     /// The row's `Flags`, `None` for a row the file lacks.
     pub fn flags(&self, id: u32) -> Option<u32> {
-        self.slots.get(&id).map(|&(_, flags)| flags)
+        self.rows.get(&id).map(|r| r.flags)
+    }
+
+    /// The row's `Control`, `None` for a row the file lacks.
+    pub fn control(&self, id: u32) -> Option<u32> {
+        self.rows.get(&id).map(|r| r.control)
     }
 
     pub fn len(&self) -> usize {
-        self.slots.len()
+        self.rows.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.slots.is_empty()
+        self.rows.is_empty()
     }
 }
 
@@ -65,10 +99,10 @@ pub fn load_summon_properties(chain: &mut Chain) -> Result<SummonPropertiesCatal
         .read_file(SUMMON_PROPERTIES)
         .with_context(|| format!("reading {SUMMON_PROPERTIES}"))?;
     let rs = parse(&bytes, summon_properties_schema(), "SummonProperties")?;
-    Ok(SummonPropertiesCatalog::from_rows(
+    Ok(SummonPropertiesCatalog::from_records(
         rs.records()
             .iter()
-            .filter_map(|r| Some((u32_at(r, 0)?, u32_at(r, 4)?, u32_at(r, 5)?))),
+            .filter_map(|r| Some((u32_at(r, 0)?, u32_at(r, 1)?, u32_at(r, 4)?, u32_at(r, 5)?))),
     ))
 }
 
@@ -87,5 +121,23 @@ mod tests {
         let squirrel = spells.get(4055).expect("spell 4055");
         let row = squirrel.effect_misc_value_b[0] as u32;
         assert_eq!(props.slot(row), Some(5), "row {row}");
+    }
+
+    /// Eye of Kilrogg (126) summons a possessed unit: its summon row's control is 3.
+    #[test]
+    fn eye_of_kilrogg_summons_through_a_possessed_row() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let props = load_summon_properties(&mut chain).expect("SummonProperties.dbc");
+        let spells = crate::load_spell_catalog(&mut chain).expect("Spell.dbc");
+        let row = spells
+            .get(126)
+            .and_then(|s| s.summon_properties_row())
+            .expect("spell 126 summons");
+        assert_eq!(
+            props.control(row),
+            Some(SUMMON_CONTROL_POSSESSED),
+            "row {row}"
+        );
     }
 }

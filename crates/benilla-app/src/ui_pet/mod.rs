@@ -19,6 +19,7 @@ mod bar;
 mod drain;
 mod menu;
 mod net;
+mod possess;
 mod unit;
 mod usable;
 
@@ -32,6 +33,8 @@ use unit::feed_pet_unit;
 
 #[cfg(test)]
 mod flush_tests;
+#[cfg(test)]
+mod possess_tests;
 #[cfg(test)]
 mod press_tests;
 #[cfg(test)]
@@ -112,14 +115,17 @@ impl Plugin for UiPetPlugin {
                     .in_set(UnitFeed)
                     .after(crate::ui_pet_stats::PetSnapshot),
                 feed_pet_menu.in_set(UnitFeed),
+                possess::feed_possess_spell.in_set(UnitFeed),
                 // After this frame's presses, as the one drain before it ran them ahead of the
                 // toggles, stops and writes.
                 drain_pet_actions
                     .after(UiInput)
                     .after(crate::script_calls::apply_script_calls),
-                // It fires `PET_DISMISS_START`, so it waits for the interface.
+                // It fires `PET_DISMISS_START`, so it waits for the interface. An abandon re-lists
+                // the stable it reads before the stable's own verbs move it.
                 drain_pet_menu
                     .after(UiInput)
+                    .before(crate::ui_stable::drain_stable)
                     .run_if(crate::ui_script::ingame_ui_up),
             ),
         );

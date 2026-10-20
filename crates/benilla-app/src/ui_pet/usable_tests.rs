@@ -804,3 +804,33 @@ fn a_slot_is_usable_as_its_kind_and_the_spells_exemptions_say() {
         );
     }
 }
+
+/// `PetAbandon` (`0x5d4900`) sends `CMSG_PET_ABANDON`, then lists the stable again while a stable
+/// master is held, and only then.
+#[test]
+fn an_abandon_at_a_stable_master_lists_the_stable_again() {
+    const MASTER: u64 = 0x5_0000;
+    for at_stable in [false, true] {
+        let mut rig = scene();
+        if at_stable {
+            rig.app
+                .world_mut()
+                .resource_mut::<crate::ui_stable::StableOpen>()
+                .open(MASTER, 0, Vec::new());
+        }
+        rig.frame();
+        ui(&mut rig, |s| s.run("PetAbandon()").unwrap());
+        rig.app
+            .world_mut()
+            .run_system_once(super::menu::drain_pet_menu)
+            .expect("the drain runs");
+        let sent = rig.sent();
+        assert!(sent
+            .iter()
+            .any(|c| matches!(c, ClientCommand::PetAbandon { pet_guid } if *pet_guid == PET)));
+        let relisted = sent
+            .iter()
+            .any(|c| matches!(c, ClientCommand::ListStabledPets { npc } if *npc == MASTER));
+        assert_eq!(relisted, at_stable, "at a stable master: {at_stable}");
+    }
+}

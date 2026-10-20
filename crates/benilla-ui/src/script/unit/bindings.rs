@@ -147,6 +147,23 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             })?,
         )?;
     }
+    // `UnitIsTappedByAllThreatList(unit)` (`0x611230`): 1 or nil, the held object's
+    // `UNIT_DYNAMIC_FLAGS` bit `0x80` (`0x611276`), every attacker credited; the same
+    // `lua_isstring` gate.
+    g.set(
+        "UnitIsTappedByAllThreatList",
+        lua.create_function(|lua, token: Value| {
+            let token = Some(crate::script::binding_abi::string_arg(
+                lua,
+                token,
+                r#"Usage: UnitIsTappedByAllThreatList("unit")"#,
+            )?);
+            let hit = with_unit(lua, &token, false, |u| {
+                u.has_object && u.dynamic_flags & 0x80 != 0
+            })?;
+            Ok(flag(hit))
+        })?,
+    )?;
 
     // `UnitHasVehicleUI(unit)` (`0x613740`): a Lua boolean, the flag `0x20000000` of the seat the
     // unit rides (`0x613600`: the held unit's vehicle seat, else a party member's seat id). The
@@ -155,6 +172,13 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     // false, as the macro conditions `vehicleui` and `unithasvehicleui` do.
     g.set(
         "UnitHasVehicleUI",
+        lua.create_function(|_, _token: Value| Ok(false))?,
+    )?;
+    // `UnitControllingVehicle(unit)` (`0x613570`): a Lua boolean, true for a unit on a seat of
+    // kind 3 riding its own charm (`0x6135b8`-`0x6135db`); the same non-raising token path, so
+    // false on no seat, as above.
+    g.set(
+        "UnitControllingVehicle",
         lua.create_function(|_, _token: Value| Ok(false))?,
     )?;
     // `UnitTargetsVehicleInRaidUI(unit)` (`0x613780`): the flag `0x8` of the same seat

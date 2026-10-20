@@ -1034,6 +1034,9 @@ mod reputation_frame_tests;
 mod pet_paperdoll_tests;
 
 #[cfg(test)]
+mod possess_bar_tests;
+
+#[cfg(test)]
 mod inspect_tests;
 
 #[cfg(test)]

@@ -627,6 +627,43 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             set_spell_by_id(lua, &this, spell_id, name, opts, None)
         })?,
     )?;
+    // GameTooltip:SetPossession(slot) (`0x6257c0`): the possess bar's spell slot, the held possess
+    // spell's tooltip. A non-number raises; any slot but a rounded 1, or no spell, is a no-op.
+    m.set(
+        "SetPossession",
+        lua.create_function(|lua, (this, slot): (Table, Value)| {
+            let Some(slot) = lua.coerce_number(slot)? else {
+                let who = {
+                    let h = frame_handle_of(lua, &this)?;
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
+                    model
+                        .arena
+                        .frame(h)
+                        .and_then(|f| f.name.clone())
+                        .unwrap_or_else(|| "<unnamed>".to_string())
+                };
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {who}:SetPossession(slot)"
+                )));
+            };
+            let held = {
+                let model = crate::script::model_mut_of(lua);
+                model
+                    .pet_bar
+                    .possess
+                    .as_ref()
+                    .map(|p| (p.spell_id, p.name.clone()))
+            };
+            match held {
+                Some((spell_id, name)) if slot.round() == 1.0 => {
+                    set_spell_by_id(lua, &this, spell_id, name, SpellRenderOpts::default(), None)
+                }
+                _ => Ok(()),
+            }
+        })?,
+    )?;
     // GameTooltip:SetPlayerBuff(buffIndex): the aura variant plus the time-remaining line only
     // this entry appends, its text `0x52fa50`'s (`tooltip::duration_text`). The argument is the
     // 0-based cache position `GetPlayerBuff` returns (`BuffFrame.lua:105`), not a filtered

@@ -249,7 +249,7 @@ fn feed_stable(
 
 /// Drain the Lua intents into the four stable verbs, each aimed at the open session's NPC; a close
 /// clears locally, as there is no close opcode.
-fn drain_stable(
+pub(crate) fn drain_stable(
     script: Option<NonSendMut<UiScript>>,
     mut open: ResMut<StableOpen>,
     commands: Res<NetCommands>,

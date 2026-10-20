@@ -188,6 +188,18 @@ fn drag_verb(from: u8, to: u8, state: &StableState) -> Option<StableIntent> {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
+    // IsAtStableMaster() (`0x5a1090`): a Lua boolean, the stable master's guid `[0xc0f6c0]` is
+    // set; the app pushes a snapshot exactly while one is.
+    g.set(
+        "IsAtStableMaster",
+        lua.create_function(|lua, _: MultiValue| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(model.stable.state.is_some())
+        })?,
+    )?;
+
     // GetStablePetInfo(i) → icon, name, level, family, loyalty: five values on every exit
     // (`0x4cb280`), a miss answering nil, nil, 0, nil, nil.
     g.set(

@@ -57,7 +57,9 @@ pub use gm_ticket_category::{
     load_gm_ticket_categories, GmTicketCategory, GmTicketCategoryCatalog,
 };
 mod summon_properties;
-pub use summon_properties::{load_summon_properties, SummonPropertiesCatalog};
+pub use summon_properties::{
+    load_summon_properties, SummonPropertiesCatalog, SUMMON_CONTROL_POSSESSED,
+};
 mod totem_category;
 pub use totem_category::{load_totem_categories, TotemCategory, TotemCategoryCatalog};
 mod cfg_categories;

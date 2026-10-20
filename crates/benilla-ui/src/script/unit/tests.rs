@@ -2480,3 +2480,36 @@ fn is_refer_a_friend_linked_reads_a_held_player_s_dynamic_flag() {
         );
     }
 }
+
+/// `UnitIsTappedByAllThreatList` (`0x611230`) is the held object's dynamic-flag bit `0x80`, 1 or
+/// nil, and a non-string raises as the tapped pair does.
+#[test]
+fn tapped_by_all_threat_list_reads_its_dynamic_flag() {
+    let mut s = UiScript::new().unwrap();
+    let ask = |s: &UiScript| {
+        s.eval::<Option<i64>>(r#"return UnitIsTappedByAllThreatList("target")"#)
+            .unwrap()
+    };
+    assert_eq!(ask(&s), None, "no unit");
+    for (dynamic_flags, has_object, want) in [
+        (0x80, true, Some(1)),
+        (0x0c, true, None),
+        (0x80, false, None),
+    ] {
+        s.set_unit(
+            "target",
+            Some(UnitState {
+                exists: true,
+                has_object,
+                dynamic_flags,
+                ..Default::default()
+            }),
+        );
+        assert_eq!(
+            ask(&s),
+            want,
+            "flags {dynamic_flags:#x}, object {has_object}"
+        );
+    }
+    assert!(s.run("UnitIsTappedByAllThreatList({})").is_err());
+}

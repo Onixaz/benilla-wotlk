@@ -85,6 +85,7 @@ pub(super) fn drain_pet_menu(
     pet: PetUnit,
     spells: Option<Res<crate::ui_action::Spells>>,
     summons: Option<Res<crate::spell::SummonSlots>>,
+    stable: Option<Res<crate::ui_stable::StableOpen>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -108,6 +109,10 @@ pub(super) fn drain_pet_menu(
     for _ in 0..abandons {
         debug!("ui_pet: abandoning pet {pet_guid:#x}");
         let _ = commands.0.send(ClientCommand::PetAbandon { pet_guid });
+        // `0x5d4900`: with a stable master held, the stable is listed again.
+        if let Some(npc) = stable.as_ref().and_then(|s| s.npc) {
+            let _ = commands.0.send(ClientCommand::ListStabledPets { npc });
+        }
     }
     // `0x5d46f0`: the usability predicate first, then a summon whose row bars it sends nothing;
     // otherwise the Dismiss order at target 0, then `PET_DISMISS_START`.
