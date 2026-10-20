@@ -788,11 +788,14 @@ pub(crate) mod schedule_tests {
     /// - `close_npc_session_out_of_range::<PetitionVendorState>` against the motion and booth
     ///   writers of `Transform`: it reads the NPC's position once per frame to close on a walk-away,
     ///   as the guild registrar's close beside it does.
+    /// - `death::feed_death` and `ui_battlefield::feed_battlefield` against
+    ///   `camera_saved::load_camera_pose` over `Player`: they read the falling state, which the
+    ///   saved pose only seeds once at world entry.
     ///
     /// Raising the ceiling is a claim that a new undeclared order is acceptable: make it with the
     /// reason read off the dump, or declare the order (`.after`, a set, a `chain`). A resource
     /// that commutes by construction belongs in [`Classes`].
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_999;
+    const UPDATE_ACTIONABLE_CEILING: usize = 4_000;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
