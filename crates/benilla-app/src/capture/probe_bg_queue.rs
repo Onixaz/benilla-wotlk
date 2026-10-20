@@ -20,13 +20,13 @@ use crate::net::{ClientCommand, Guid, NetEntity, ObjectStore, SelfPlayer};
 use crate::player::Player;
 use crate::target::cursor_mode::npc_flags;
 use crate::ui_battlefield::Battlefield;
-use crate::ui_dialog_verbs::BattlefieldQueue;
+use crate::ui_battlefield::BattlefieldQueue;
 
 /// Elfarran's spawn (vmangos `creature` guid 54614, entry 14981, map 0), Stormwind's Warsong
 /// Gulch battlemaster; he is then found in the streamed world by his npc flag.
 const BATTLEMASTER_AT: [f32; 3] = [-8454.62, 318.85, 120.97];
-/// Warsong Gulch's Map.dbc row, which `GetBattleGroundTypeIdByMapId` maps to template 2.
-const WSG_MAP: u32 = 489;
+/// Warsong Gulch's `BattlemasterList.dbc` row, the join's type.
+const WSG_BG_TYPE: u32 = 2;
 /// The level the body is raised to: `battleground_template` opens WSG at 10, 20 or 21 by content
 /// patch, and 25 clears all three.
 const QUEUE_LEVEL: u32 = 25;
@@ -138,10 +138,10 @@ fn bg_queue_probe(
         Phase::Greeted { master, sent_at } => {
             // Wait for the list: the join quotes its guid, and it proves the level gate cleared.
             if battlefield.battlemaster() == Some(master) {
-                info!("PROBE bgqueue: list landed — queueing for map {WSG_MAP}");
+                info!("PROBE bgqueue: list landed — queueing for type {WSG_BG_TYPE}");
                 let _ = net.0.send(ClientCommand::BattlemasterJoin {
                     battlemaster: master,
-                    map_id: WSG_MAP,
+                    bg_type: WSG_BG_TYPE,
                     instance_id: 0,
                     as_group: false,
                 });
@@ -162,9 +162,11 @@ fn bg_queue_probe(
                 .find_map(|(i, s)| s.as_ref().map(|(status, _)| (i, status)));
             if let Some((slot, status)) = queued {
                 info!(
-                    "PROBE bgqueue: QUEUED — slot {slot}, map {}, status {}, instance {} \
+                    "PROBE bgqueue: QUEUED — slot {slot}, type {}, status {}, instance {} \
                      (the body stays queued; the next plain login is the measurement)",
-                    status.map_id, status.status, status.instance_id,
+                    status.bg_type(),
+                    status.status,
+                    status.instance_id,
                 );
                 probe.phase = Phase::Done;
             } else if now - sent_at > 15.0 {

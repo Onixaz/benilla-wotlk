@@ -172,8 +172,8 @@ mod tests {
         ("ui_script/extract/mod.rs", "last_dpi"),
         // Pushed unconditionally every frame; there is nothing remembered to go stale.
         ("ui_script/mod.rs", "smoothed"),
-        // A fact about the chat roster (a defense channel joined); its push has its own `VmMemo`.
-        ("world_state_ui.rs", "defense_channel"),
+        // The PvP toggle stamp, a fact about our PLAYER_FLAGS pushed every frame.
+        ("ui_honor.rs", "timer"),
         // The cursor systems on both platforms track OS cursor state, which outlives the VM.
         ("cursor.rs", "was_looking"),
         ("cursor.rs", "rects_disabled"),

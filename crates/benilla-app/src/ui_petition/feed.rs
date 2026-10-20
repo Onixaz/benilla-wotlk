@@ -1,27 +1,61 @@
-//! The charter VM feed and drain: the snapshot the charter windows read, their four events, the
+//! The charter VM feed and drain: the snapshot the charter windows read, their events, the
 //! composed lines, and the sends for the Lua [`PetitionRequest`]s.
 //!
 //! `PETITION_SHOW` waits for the record and every signer name (`0x4f419b`-`0x4f41ad`), then fires
 //! once (`0x4f4320` fires as the pending count reaches zero); the owner's name is not counted
 //! (`0x4f4186`/`0x4f42e8`). The getters answer at any time, nil where nothing has landed.
 
+use benilla_protocol::messages::{ArenaBanner, ITEM_FLAG_CHARTER};
 use benilla_ui::script::{
-    PetitionRecordView, PetitionRequest, PetitionState as VmPetition, UiScript,
-    PETITION_TYPE_CHARTER, PETITION_TYPE_PETITION,
+    petition_type_name, PetitionRecordView, PetitionRequest, PetitionState as VmPetition,
+    PetitionVendorItem, PetitionVendorState as VmVendor, UiScript,
 };
 use bevy::prelude::*;
 
+use crate::entities::ItemDisplays;
+use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfGuid, SelfPlayer};
-use crate::ui_items::{find_item, ItemSearch};
+use crate::ui_items::{find_carried, find_item, ItemSearch};
 use crate::ui_session::{npc_switched, NpcSession};
 
-use super::{lines, GuildRegistrarState, PetitionState};
+use super::{lines, GuildRegistrarState, PetitionState, PetitionVendorState};
+
+/// The carried arena charter `TurnInArenaCharter` (`0x6dd680`) finds: a charter-flagged item
+/// whose cached record is an arena one, of `team_size` when given.
+fn arena_charter(
+    store: &ObjectStore,
+    objects: &Objects,
+    items: &Items,
+    petition: &PetitionState,
+    team_size: Option<u32>,
+    commands: &NetCommands,
+) -> Option<u64> {
+    find_carried(&store.0, objects, |guid| {
+        let Some(f) = objects.object(guid) else {
+            return false;
+        };
+        let charter = f
+            .object_entry()
+            .and_then(|e| items.template(e, guid, commands))
+            .is_some_and(|t| t.flags & ITEM_FLAG_CHARTER != 0);
+        charter
+            && petition.is_arena_charter(
+                f.item_enchant(0).unwrap_or(0) as u32,
+                guid,
+                team_size,
+                commands,
+            )
+    })
+}
 
 /// What the feed last announced, so the events fire on edges rather than every frame.
 #[derive(Default)]
 pub(super) struct FedPetition {
     registrar: Option<u64>,
+    vendor: Option<u64>,
+    vendor_items: Vec<PetitionVendorItem>,
+    has_filled: bool,
     /// The charter shown last frame; `None` while one is still resolving, so the wait is an edge.
     shown_charter: Option<u64>,
     /// The last pushed view and names, so a change while shown re-fires `PETITION_SHOW`.
@@ -29,12 +63,17 @@ pub(super) struct FedPetition {
     shown_signers: Vec<Option<String>>,
 }
 
-/// Build the snapshot, push it, drain the queued lines, and fire the four events on their edges.
+/// Build the snapshot, push it, drain the queued lines, and fire the events on their edges.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn feed_petition(
     script: Option<NonSendMut<UiScript>>,
     registrar: Res<GuildRegistrarState>,
+    mut vendor: ResMut<PetitionVendorState>,
     mut petition: ResMut<PetitionState>,
     names: Res<NameCache>,
+    items: Res<Items>,
+    icons: Option<Res<ItemDisplays>>,
+    objects: Objects,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     self_guid: Res<SelfGuid>,
     commands: Res<NetCommands>,
@@ -78,34 +117,30 @@ pub(super) fn feed_petition(
     let record = open.as_ref().and_then(|o| {
         let r = petition.records.get(o.petition_id)?;
         Some(PetitionRecordView {
-            petition_type: if r.is_charter {
-                PETITION_TYPE_CHARTER
-            } else {
-                PETITION_TYPE_PETITION
-            }
-            .to_string(),
+            petition_type: petition_type_name(r.static_type).to_string(),
             title: r.name.clone(),
             body_text: r.body_text.clone(),
-            max_signatures: r.required,
+            max_signatures: r.max_signatures,
             // Nil until the name lands, and not waited for.
             originator: names.resolve(o.owner, &commands).map(str::to_string),
-            // The record's owner, which the binding compares (`0x4f447a`), not the packet's.
+            // The record's owner, which the binding compares, not the packet's.
             is_originator: r.owner == me,
+            min_signatures: r.min_signatures,
         })
     });
 
-    // `CanSignPetition` (`0x4f45e0`). With no record the reference runs only the signer scan, over
-    // the real signers: the close path zeroes the array, then `0x4f40b0` refills it (`0x5eef29`).
+    // `CanSignPetition` (`0x5cf040`). With no record the reference runs only the signer scan.
     let in_guild = self_q
         .iter()
         .next()
         .is_some_and(|s| s.0.player_guild_id() != 0);
     let can_sign = match (open.as_ref(), record.as_ref()) {
         (Some(o), Some(r)) => {
-            // The guild-member and full-list refusals apply only to a charter.
-            let charter_refusal = r.petition_type == PETITION_TYPE_CHARTER
-                && (in_guild || o.signers.len() as i32 >= r.max_signatures);
-            !charter_refusal && !r.is_originator && !o.signers.contains(&me)
+            // A guild or arena charter refuses a full list, and a guild one a guild member.
+            let kind = r.petition_type.as_str();
+            let full = matches!(kind, "guild" | "arena")
+                && (o.signers.len() as i32 >= r.max_signatures || (kind == "guild" && in_guild));
+            !full && !r.is_originator && !o.signers.contains(&me)
         }
         // No record: only the signer scan runs.
         (Some(o), None) => !o.signers.contains(&me),
@@ -159,14 +194,70 @@ pub(super) fn feed_petition(
     fed.shown_charter = now_charter;
     fed.shown = record;
     fed.shown_signers = signers;
+
+    // ── The petition vendor. `GetPetitionItemInfo` (`0x5a1fb0`) answers once the item cache has
+    //    the row, the icon by the showlist's display id.
+    let vendor_items: Vec<PetitionVendorItem> = vendor
+        .rows()
+        .iter()
+        .map(|row| {
+            let name = items
+                .template(row.charter_entry, 0, &commands)
+                .map(|t| t.name.clone());
+            PetitionVendorItem {
+                texture: name.as_ref().and_then(|_| {
+                    icons
+                        .as_deref()
+                        .and_then(|i| i.catalog.get(row.charter_display_id))
+                        .and_then(|d| d.icon.clone())
+                }),
+                name,
+                cost: row.charter_cost,
+            }
+        })
+        .collect();
+    // `HasFilledPetition` (`0x5a2820`), read only while a vendor is open, its one reader.
+    let has_filled = vendor.npc().is_some()
+        && self_q.iter().next().is_some_and(|store| {
+            arena_charter(store, &objects, &items, &petition, None, &commands).is_some()
+        });
+    script.set_petition_vendor(VmVendor {
+        open: vendor.npc().is_some(),
+        items: vendor_items.clone(),
+        has_filled_petition: has_filled,
+    });
+    let now_vendor = vendor.npc();
+    if std::mem::take(&mut vendor.update) {
+        // `ShowPetitionList` (`0x5a22a0`): the update, then the show, with no close between two.
+        script.fire_event("PETITION_VENDOR_UPDATE", vec![]);
+        script.fire_event("PETITION_VENDOR_SHOW", vec![]);
+    } else if fed.vendor.is_some() && now_vendor.is_none() {
+        // `ClosePetitionVendor` fired its own close in the VM.
+        if !std::mem::take(&mut vendor.closed_by_vm) {
+            script.fire_event("PETITION_VENDOR_CLOSED", vec![]);
+        }
+    } else if now_vendor.is_some()
+        && (fed.vendor_items != vendor_items || (has_filled && !fed.has_filled))
+    {
+        // The item cache's callback (`0x5a1f30`) and a charter record landing (`0x6dd630`).
+        script.fire_event("PETITION_VENDOR_UPDATE", vec![]);
+    }
+    vendor.closed_by_vm = false;
+    fed.vendor = now_vendor;
+    fed.vendor_items = vendor_items;
+    fed.has_filled = has_filled;
 }
 
 /// Turn the Lua charter intents into sends. `ClosePetition` can send `MSG_PETITION_DECLINE`
 /// (`0x4f3f60`, `decline_on_close`); `CloseGuildRegistrar` sends nothing.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn drain_petition(
     script: Option<NonSendMut<UiScript>>,
     mut registrar: ResMut<GuildRegistrarState>,
+    mut vendor: ResMut<PetitionVendorState>,
     mut petition: ResMut<PetitionState>,
+    items: Res<Items>,
+    arena_teams: Res<crate::ui_arena_team::ArenaTeams>,
     names: Res<NameCache>,
     objects: Objects,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -187,12 +278,78 @@ pub(super) fn drain_petition(
     for request in requests {
         match request {
             PetitionRequest::Buy(name) => {
-                // The petition module's latch (`[0xbdceb0]`), not the target or `CGGameUI`'s NPC.
+                // The registrar's own latch, not the target or `CGGameUI`'s NPC.
                 let Some(npc) = registrar.npc() else {
                     debug!("ui_petition: BuyGuildCharter with no registrar open — dropped");
                     continue;
                 };
-                let _ = commands.0.send(ClientCommand::PetitionBuy { npc, name });
+                let index = registrar.index();
+                let _ = commands
+                    .0
+                    .send(ClientCommand::PetitionBuy { npc, name, index });
+            }
+            PetitionRequest::VendorBuy { index, name } => {
+                let (Some(npc), Some(store)) = (vendor.npc(), self_q.iter().next()) else {
+                    continue;
+                };
+                let Some(row) = vendor.rows().get(index as usize).cloned() else {
+                    continue;
+                };
+                if let Some(line) = vendor_buy_refusal(&row, &store.0, &arena_teams) {
+                    petition.lines.push(line);
+                    continue;
+                }
+                // A level off 60, 70 and 80 prints its line and buys anyway (`0x5a2460`).
+                if let Some(line) = arena_level_line(&row, &store.0) {
+                    petition.lines.push(line);
+                }
+                if store.0.player_money().unwrap_or(0) < row.charter_cost {
+                    petition
+                        .lines
+                        .push(crate::ui_action::UiError::key("ERR_NOT_ENOUGH_MONEY"));
+                    continue;
+                }
+                let _ = commands.0.send(ClientCommand::PetitionBuy {
+                    npc,
+                    name,
+                    index: row.index,
+                });
+            }
+            PetitionRequest::VendorTurnInArena(choice) => {
+                let Some(store) = self_q.iter().next() else {
+                    continue;
+                };
+                let charter = arena_charter(
+                    store,
+                    &objects,
+                    &items,
+                    &petition,
+                    Some(choice.team_size),
+                    &commands,
+                );
+                let Some(item) = charter else {
+                    petition.lines.push(lines::no_arena_charter_line());
+                    continue;
+                };
+                let banner = ArenaBanner {
+                    background_color: choice.background_color,
+                    emblem_style: choice.emblem_style,
+                    emblem_color: choice.emblem_color,
+                    border_style: choice.border_style,
+                    border_color: choice.border_color,
+                };
+                let _ = commands
+                    .0
+                    .send(ClientCommand::TurnInArenaPetition { item, banner });
+            }
+            // The petition button's held item: the cursor drop onto it is not built, so the
+            // button is always empty and `TurnInPetition` sends nothing (`0x5a2600`).
+            PetitionRequest::VendorTurnIn | PetitionRequest::VendorClickButton => {
+                debug!("ui_petition: petition button item not built — {request:?} dropped");
+            }
+            PetitionRequest::CloseVendor => {
+                vendor.close();
+                vendor.closed_by_vm = true;
             }
             PetitionRequest::TurnIn => {
                 // A fresh bag scan per call (`0x5ef2b0`); the charter's `max_count` is 1.
@@ -253,9 +410,12 @@ pub(super) fn drain_petition(
                     petition.lines.push(lines::self_offer_line());
                     continue;
                 }
-                let _ = commands
-                    .0
-                    .send(ClientCommand::OfferPetition { item, player });
+                let team_size = petition.offer_team_size();
+                let _ = commands.0.send(ClientCommand::OfferPetition {
+                    team_size,
+                    item,
+                    player,
+                });
                 // Printed on the send, unconfirmed: the server answers only the target.
                 let name = names
                     .resolve(player, &commands)
@@ -277,6 +437,40 @@ pub(super) fn drain_petition(
             }
         }
     }
+}
+
+/// `CGPetitionVendorInfo::BuyPetition`'s refusals (`0x5a2350`): a guild charter for a guild
+/// member, an arena one for a size the player already holds a team of.
+fn vendor_buy_refusal(
+    row: &benilla_protocol::messages::PetitionShowListEntry,
+    player: &benilla_protocol::ObjectFields,
+    teams: &crate::ui_arena_team::ArenaTeams,
+) -> Option<lines::Line> {
+    use crate::ui_action::UiError;
+    match row.charter_type {
+        0 if player.player_guild_id() != 0 => Some(UiError::key("ERR_ALREADY_IN_GUILD")),
+        1 if teams.holds_team_of_size(row.required_signatures + 1) => {
+            Some(UiError::key("ERR_ALREADY_IN_ARENA_TEAM"))
+        }
+        _ => None,
+    }
+}
+
+/// An arena charter bought off level 60, 70 or 80: the level it needs, 80 between 71 and 79, else
+/// 70 (`0x5a2431`).
+fn arena_level_line(
+    row: &benilla_protocol::messages::PetitionShowListEntry,
+    player: &benilla_protocol::ObjectFields,
+) -> Option<lines::Line> {
+    let level = player.unit_level().unwrap_or(0);
+    if row.charter_type != 1 || matches!(level, 60 | 70 | 80) {
+        return None;
+    }
+    let needed = if (71..80).contains(&level) { 80 } else { 70 };
+    Some(crate::ui_action::UiError::args(
+        "ERR_ARENA_TEAM_LEVEL_TOO_LOW_I",
+        vec![crate::ui_action::FillArg::D(needed)],
+    ))
 }
 
 /// `0x5e00e0`, the designer's opener, for `GetTabardInfo` with the registrar's guid `npc`

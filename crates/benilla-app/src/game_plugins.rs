@@ -200,6 +200,7 @@ impl PluginGroup for GamePlugins {
             .add(crate::ui_inspect::InspectUiPlugin)
             // After the inspect feed, whose target it asks about.
             .add(crate::ui_honor::UiHonorPlugin)
+            .add(crate::ui_arena_team::UiArenaTeamPlugin)
             .add(crate::ui_dressup::DressUpUiPlugin)
             .add(UiActionPlugin)
             // The cast lifecycle; after UiActionPlugin, whose feeds and cast ladder read it.
@@ -784,11 +785,14 @@ pub(crate) mod schedule_tests {
     /// - `area_trigger::check_area_triggers` against the readers of `Player`: its heartbeat
     ///   writes only the stream's send bookkeeping (`last_pos`, `last_heartbeat`), which only the
     ///   controller, ordered before it, reads.
+    /// - `close_npc_session_out_of_range::<PetitionVendorState>` against the motion and booth
+    ///   writers of `Transform`: it reads the NPC's position once per frame to close on a walk-away,
+    ///   as the guild registrar's close beside it does.
     ///
     /// Raising the ceiling is a claim that a new undeclared order is acceptable: make it with the
     /// reason read off the dump, or declare the order (`.after`, a set, a `chain`). A resource
     /// that commutes by construction belongs in [`Classes`].
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_994;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_999;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

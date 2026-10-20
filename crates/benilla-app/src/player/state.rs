@@ -512,6 +512,12 @@ pub(super) struct PendingKnockback {
 }
 
 impl Player {
+    /// Airborne at the last mover step: `AcceptBattlefieldPort`'s falling refusal reads
+    /// `MOVEFLAG_FALLING` (`0x54db58`).
+    pub(crate) fn is_airborne(&self) -> bool {
+        self.airborne_since.is_some()
+    }
+
     /// A player whose last streamed movement word is `flags`, for the gates that read it.
     #[cfg(test)]
     pub(crate) fn with_move_flags(flags: u32) -> Self {

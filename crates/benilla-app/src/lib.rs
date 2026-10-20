@@ -123,6 +123,7 @@ mod transport;
 mod tutorial;
 mod ui_achievement;
 mod ui_action;
+mod ui_arena_team;
 mod ui_auction;
 mod ui_aura;
 mod ui_bank;

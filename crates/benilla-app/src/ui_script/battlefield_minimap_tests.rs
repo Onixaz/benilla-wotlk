@@ -489,7 +489,7 @@ fn the_poi_pool_grows_from_the_landmarks_and_parks_its_tail() {
     assert_eq!(num(&s, "BattlefieldMinimapPOI1:GetWidth()"), 12.0);
 
     // A battleground whose map row carries a bigger `MinimapIconScale` grows every icon by it.
-    s.set_battlefield_positions(Vec::new(), None, 1.5);
+    s.set_battlefield_positions(Vec::new(), Vec::new(), 1.5);
     s.run("BattlefieldMinimap_Update()").unwrap();
     assert_eq!(
         (
@@ -538,10 +538,10 @@ fn the_battleground_blips_and_the_flag_follow_the_position_family() {
                 name: None,
             },
         ],
-        Some(BattlefieldFlagView {
+        vec![BattlefieldFlagView {
             uv: (0.4, 0.6),
             token: Some("HordeFlag".into()),
-        }),
+        }],
         1.0,
     );
     feed(&mut s, Some((0.5, 0.25)), 0.0, vec![Some((0.1, 0.2)), None]);
@@ -634,7 +634,7 @@ fn the_battleground_blips_and_the_flag_follow_the_position_family() {
         .unwrap();
     update(&mut s, 0.1);
     assert!(shown(&s, "BattlefieldMinimapRaid1"));
-    s.set_battlefield_positions(Vec::new(), None, 1.0);
+    s.set_battlefield_positions(Vec::new(), Vec::new(), 1.0);
     update(&mut s, 0.1);
     assert!(
         !shown(&s, "BattlefieldMinimapRaid1") && !shown(&s, "BattlefieldMinimapFlag1"),

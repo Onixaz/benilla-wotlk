@@ -912,6 +912,39 @@ impl ChatKind {
 pub(crate) static CAST_TRACE: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| std::env::var("WOW_CAST_TRACE").is_ok());
 
+/// One arena-team send, the team id resolved by the VM from its slot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ArenaTeamCommand {
+    /// The team cache's ask: `CMSG_ARENA_TEAM_QUERY`.
+    Query {
+        team_id: u32,
+    },
+    /// `ArenaTeamRoster(team)`: `CMSG_ARENA_TEAM_ROSTER`.
+    Roster {
+        team_id: u32,
+    },
+    Invite {
+        team_id: u32,
+        name: String,
+    },
+    Remove {
+        team_id: u32,
+        name: String,
+    },
+    Leader {
+        team_id: u32,
+        name: String,
+    },
+    Leave {
+        team_id: u32,
+    },
+    Disband {
+        team_id: u32,
+    },
+    Accept,
+    Decline,
+}
+
 /// A message to the server through the write thread, carrying any pose it needs.
 #[derive(Debug)]
 pub(crate) enum ClientCommand {
@@ -1322,17 +1355,23 @@ pub(crate) enum ClientCommand {
     AreaSpiritHealerQuery {
         healer: u64,
     },
-    /// `AcceptBattlefieldPort(index, accept)`: `CMSG_BATTLEFIELD_PORT`.
+    /// `AcceptBattlefieldPort(index, accept)`: `CMSG_BATTLEFIELD_PORT`, the slot's queue word.
     BattlefieldPort {
-        map_id: u32,
+        queue: u64,
         accept: bool,
     },
     /// `RequestBattlefieldScoreData()`: `MSG_PVP_LOG_DATA`.
     RequestBattlefieldScoreData,
-    /// `LeaveBattlefield()`: `CMSG_LEAVE_BATTLEFIELD`.
+    /// `LeaveBattlefield()`: `CMSG_LEAVE_BATTLEFIELD`, the active slot's queue word.
     LeaveBattlefield {
-        map_id: u32,
+        queue: u64,
     },
+    /// `HearthAndResurrectFromArea()`: `CMSG_HEARTH_AND_RESURRECT`.
+    HearthAndResurrect,
+    /// The Wintergrasp battle manager's four sends.
+    BattlefieldMgr(benilla_ui::script::BattlefieldMgrRequest),
+    /// An arena-team send.
+    ArenaTeam(ArenaTeamCommand),
     /// A meeting stone right-click past the client's four refusals: `CMSG 0x292`.
     MeetingStoneJoin {
         go_guid: u64,
@@ -1351,16 +1390,25 @@ pub(crate) enum ClientCommand {
     /// `ResetTutorials()`: `CMSG_TUTORIAL_RESET`.
     TutorialReset,
     // ── The battleground list window ──
-    /// `ShowBattlefieldList(index)`: `CMSG_BATTLEFIELD_LIST`.
+    /// `RequestBattlegroundInstanceInfo(index)`: `CMSG_BATTLEFIELD_LIST`.
     BattlefieldList {
-        map_id: u32,
+        bg_type: u32,
+        xp_disabled: bool,
     },
-    /// `JoinBattlefield` when the list came from a battlemaster: `CMSG_BATTLEMASTER_JOIN`.
+    /// `JoinBattlefield` for a battleground: `CMSG_BATTLEMASTER_JOIN`, battlemaster 0 from the
+    /// PvP window.
     BattlemasterJoin {
         battlemaster: u64,
-        map_id: u32,
+        bg_type: u32,
         instance_id: u32,
         as_group: bool,
+    },
+    /// `JoinBattlefield` for an arena: `CMSG_BATTLEMASTER_JOIN_ARENA`.
+    BattlemasterJoinArena {
+        battlemaster: u64,
+        slot: u8,
+        as_group: bool,
+        rated: bool,
     },
     /// `RequestBattlefieldPositions()`: `MSG_BATTLEGROUND_PLAYER_POSITIONS`, throttled to the
     /// reference's 5000 ms.
@@ -1378,12 +1426,6 @@ pub(crate) enum ClientCommand {
     /// The ladder's BATTLEMASTER arm: `CMSG_BATTLEMASTER_HELLO`.
     BattlemasterHello {
         npc: u64,
-    },
-    /// `JoinBattlefield` when the list came without one: `CMSG_BATTLEFIELD_JOIN`.
-    BattlefieldJoin {
-        map_id: u32,
-        instance_id: u32,
-        as_group: bool,
     },
     /// The world-enter status request: `CMSG_BATTLEFIELD_STATUS`.
     BattlefieldStatusRequest,
@@ -1710,8 +1752,8 @@ pub(crate) enum ClientCommand {
     Inspect {
         target: u64,
     },
-    /// `MSG_INSPECT_HONOR_STATS`: the only source of another player's honor, whose fields are
-    /// private. A refusal is silence.
+    /// `MSG_INSPECT_HONOR_STATS` and `MSG_INSPECT_ARENA_TEAMS` (`0x5e9140`): the only source of
+    /// another player's honor and teams, whose fields are private. A refusal is silence.
     InspectHonorStats {
         target: u64,
     },
@@ -2015,6 +2057,10 @@ pub(crate) enum ClientCommand {
     /// `CMSG_TOGGLE_PVP`: nothing changes locally; the answer is the PvP bit, and flagging off
     /// waits out the server's 300 s timer.
     TogglePvp,
+    /// `SetPVP(state)`: `CMSG_TOGGLE_PVP` with the state byte.
+    SetPvp {
+        state: u8,
+    },
     /// `CMSG_TOGGLE_HELM`: nothing changes locally; the answer is `PLAYER_FLAGS`' `HIDE_HELM`.
     ToggleHelm,
     /// `CMSG_TOGGLE_CLOAK`, as [`Self::ToggleHelm`].
@@ -2103,10 +2149,11 @@ pub(crate) enum ClientCommand {
     PetitionShowList {
         npc: u64,
     },
-    /// `CMSG_PETITION_BUY`: success is only the new item.
+    /// `CMSG_PETITION_BUY` for the vendor row `index`: success is only the new item.
     PetitionBuy {
         npc: u64,
         name: String,
+        index: u32,
     },
     /// `CMSG_PETITION_SHOW_SIGNATURES`, on use and after a signature lands.
     PetitionShowSignatures {
@@ -2117,14 +2164,21 @@ pub(crate) enum ClientCommand {
         item: u64,
         byte: i8,
     },
-    /// `CMSG_OFFER_PETITION`: success answers the target, not us.
+    /// `CMSG_OFFER_PETITION`: success answers the target, not us; `team_size` is an arena
+    /// charter's, 0 for any other.
     OfferPetition {
+        team_size: u32,
         item: u64,
         player: u64,
     },
     /// `CMSG_TURN_IN_PETITION`, owner only; a name collision answers a guild command result only.
     TurnInPetition {
         item: u64,
+    },
+    /// `CMSG_TURN_IN_PETITION` for an arena charter, with its banner.
+    TurnInArenaPetition {
+        item: u64,
+        banner: benilla_protocol::messages::ArenaBanner,
     },
     /// `CMSG_PETITION_QUERY`: the only source of the guild name and signature requirement.
     PetitionQuery {

@@ -1,20 +1,18 @@
-//! The guild-charter session: the registrar window, the petition window, and the verbs that
-//! found a guild.
+//! The charter sessions: the guild registrar, the arena registrar's petition vendor, the petition
+//! window, and the verbs that found a guild or an arena team.
 //!
-//! The registrar is an NPC session: its `GUILD_REGISTRAR_SHOW` firer (`0x4f4fb0`, firing at
-//! `0x4f5003`) calls `CGGameUI::SetInteractNPC` (`0x4930d0`) like every NPC window. The petition
-//! window is bound to a charter item with no NPC, so walking away from the registrar leaves it
-//! open. vmangos sends `SMSG_GOSSIP_COMPLETE` before the showlist (`Player.cpp:12428-12431`,
-//! `GossipDef.cpp:231-236`), so forcing the gossip close here, as the bank must, would close it
-//! twice.
+//! `SMSG_PETITION_SHOWLIST` (`0x6d69f0`) opens the guild registrar for an NPC that is both a
+//! petitioner and a tabard designer, and the petition vendor for any other; both are NPC sessions
+//! that close on a walk-away. The petition window is bound to a charter item with no NPC, so
+//! walking away leaves it open.
 //!
 //! `SMSG_PETITION_SHOW_SIGNATURES` carries no text: the name and requirement come from
 //! `SMSG_PETITION_QUERY_RESPONSE`, the signer names from the name cache. It answers our request
-//! and delivers an offer alike (`PetitionsHandler.cpp:390-397`); only `owner` tells them apart.
+//! and delivers an offer alike; only `owner` tells them apart.
 
 use benilla_protocol::messages::{
     petition_result, PetitionQueryResponse, PetitionRename, PetitionShowList,
-    PetitionShowSignatures, PetitionSignResults,
+    PetitionShowListEntry, PetitionShowSignatures, PetitionSignResults,
 };
 use bevy::prelude::*;
 
@@ -35,38 +33,33 @@ pub(crate) struct GuildRegistrarState {
 
 #[derive(Clone, Debug)]
 struct Registrar {
-    /// What `BuyGuildCharter` addresses: the petition module's own latch (`[0xbdceb0]`).
+    /// What `BuyGuildCharter` addresses (`m_registrar`, `0xc0e570`).
     npc: u64,
-    /// Price in copper, unsigned because the binding zero-extends it (`fild QWORD`).
+    /// Price in copper, unsigned.
     cost: u32,
+    /// The charter row's index, the bought record's `muid` (`0x59a116`).
+    index: u32,
 }
 
-/// The `UNIT_NPC_FLAGS` bits the 1.12 client requires, both of them, on a showlist's NPC
-/// (`0x5eec33`, `0x5eec3b`); vmangos checks only `PETITIONER` before sending.
+/// The `UNIT_NPC_FLAGS` bits that make a showlist's NPC the guild registrar, both of them
+/// (`0x6d6aaf`); an NPC with fewer opens the petition vendor.
 const REGISTRAR_NPC_FLAGS: u32 = crate::target::cursor_mode::npc_flags::PETITIONER
     | crate::target::cursor_mode::npc_flags::TABARDDESIGNER;
 
 impl GuildRegistrarState {
-    /// `SMSG_PETITION_SHOWLIST` (`0x5eeb80`) opens the registrar only if the NPC resolves as a
-    /// unit (`0x5eec1a`) with both [`REGISTRAR_NPC_FLAGS`] and entry\[0\], never the first visible
-    /// row, has `entryFlags & 1` (`0x5eec42`); anything else is dropped silently.
-    fn open(&mut self, list: &PetitionShowList, npc_flags: Option<u32>) -> bool {
-        if npc_flags.is_none_or(|f| f & REGISTRAR_NPC_FLAGS != REGISTRAR_NPC_FLAGS) {
-            debug!(
-                "ui_petition: showlist from {:#x} without both registrar npc flags — dropped",
-                list.npc
-            );
-            return false;
-        }
-        let Some(first) = list.entries.first().filter(|e| e.entry_flags & 1 != 0) else {
-            debug!("ui_petition: showlist entry[0] not flagged visible — dropped");
-            return false;
-        };
+    /// `SetRegistrar` (`0x599e00`): the first row is the registrar's charter.
+    fn open(&mut self, list: &PetitionShowList) {
+        let first = list.entries.first().cloned().unwrap_or_default();
         self.open = Some(Registrar {
             npc: list.npc,
-            cost: first.charter_cost as u32,
+            cost: first.charter_cost,
+            index: first.index,
         });
-        true
+    }
+
+    /// The charter row's index, `CMSG_PETITION_BUY`'s `muid`.
+    fn index(&self) -> u32 {
+        self.open.as_ref().map_or(0, |r| r.index)
     }
 
     /// `GetGuildCharterCost()`: 0 with no registrar open.
@@ -82,6 +75,44 @@ impl NpcSession for GuildRegistrarState {
 
     fn close(&mut self) {
         self.open = None;
+    }
+}
+
+/// The arena registrar's session (`CGPetitionVendorInfo`, `0xc0f7c8`): its charter rows, up to
+/// ten (`0x5a22f0`).
+#[derive(Resource, Default)]
+pub(crate) struct PetitionVendorState {
+    npc: Option<u64>,
+    items: Vec<PetitionShowListEntry>,
+    /// The VM closed it itself and fired `PETITION_VENDOR_CLOSED` already.
+    closed_by_vm: bool,
+    /// `ShowPetitionList` fires `PETITION_VENDOR_UPDATE` with a vendor (`0x5a22e8`).
+    update: bool,
+}
+
+/// The rows a vendor keeps (`0x5a2305`).
+const VENDOR_ROWS: usize = 10;
+
+impl PetitionVendorState {
+    fn open(&mut self, list: PetitionShowList) {
+        self.npc = Some(list.npc);
+        self.items = list.entries;
+        self.items.truncate(VENDOR_ROWS);
+        self.update = true;
+    }
+
+    pub(crate) fn rows(&self) -> &[PetitionShowListEntry] {
+        &self.items
+    }
+}
+
+impl NpcSession for PetitionVendorState {
+    fn npc(&self) -> Option<u64> {
+        self.npc
+    }
+
+    fn close(&mut self) {
+        self.npc = None;
     }
 }
 
@@ -117,19 +148,20 @@ struct OpenCharter {
 #[derive(Clone, Debug, Default)]
 struct Record {
     /// The record's owner (`+0x8`), not the packet's: `GetPetitionInfo`'s `isOriginator`
-    /// compares against it (`0x4f447a`/`0x4f4481`), as does `CanSignPetition`'s owner refusal.
+    /// compares against it, as does `CanSignPetition`'s owner refusal.
     owner: u64,
-    /// The proposed guild's name.
+    /// The proposed guild or team's name.
     name: String,
-    /// Free text, empty on vmangos.
     body_text: String,
-    /// Signatures required, the record's `+0x1118`: signed, as the binding pushes it with
-    /// `fild DWORD`. The Request-Signature button and `CanSignPetition` (`0x4f4634`) test it.
-    required: i32,
-    /// The record's `+0x1110` bit 0, set for a guild charter: it picks `GetPetitionInfo`'s first
-    /// return and gates `CanSignPetition`'s guild-member and full-list refusals.
-    is_charter: bool,
+    /// Signatures required (`+0x1110`) and that fit (`+0x1114`), pushed signed.
+    min_signatures: i32,
+    max_signatures: i32,
+    /// 0 a guild charter, 1 an arena one (`+0x13bc`).
+    static_type: u32,
 }
+
+/// An arena charter's `static_type`.
+const STATIC_TYPE_ARENA: u32 = benilla_protocol::messages::PETITION_TYPE_ARENA;
 
 impl crate::query_cache::AskOnce for PetitionState {
     fn clear_pending(&mut self) {
@@ -173,8 +205,9 @@ impl PetitionState {
                 owner: response.owner,
                 name: response.name,
                 body_text: response.body_text,
-                required: response.min_signatures as i32,
-                is_charter: response.flags & 1 != 0,
+                min_signatures: response.min_signatures as i32,
+                max_signatures: response.max_signatures as i32,
+                static_type: response.static_type,
             }),
         );
     }
@@ -193,7 +226,7 @@ impl PetitionState {
         }
         self.request_record(petition_id, item, commands);
         let rec = self.records.get(petition_id)?;
-        let (is_charter, title, owner_guid) = (rec.is_charter, rec.name.clone(), rec.owner);
+        let (is_charter, title, owner_guid) = (rec.static_type <= 1, rec.name.clone(), rec.owner);
         Some(benilla_ui::script::PetitionSlotView {
             is_charter,
             title,
@@ -250,6 +283,33 @@ impl PetitionState {
     fn open_item(&self) -> Option<u64> {
         self.open.as_ref().map(|o| o.item)
     }
+
+    /// The open charter's team size for `CMSG_OFFER_PETITION` (`0x5cf3a4`): an arena record's
+    /// `min_signatures + 1`, 0 for any other.
+    fn offer_team_size(&self) -> u32 {
+        self.open
+            .as_ref()
+            .and_then(|o| self.records.get(o.petition_id))
+            .filter(|r| r.static_type == STATIC_TYPE_ARENA)
+            .map_or(0, |r| (r.min_signatures + 1) as u32)
+    }
+
+    /// An arena charter whose record is cached and, for a turn-in of `team_size`, whose
+    /// requirement is `team_size − 1` (`TurnInArenaCharter`, `0x6dd680`); the item's record is
+    /// asked once on the way.
+    pub(crate) fn is_arena_charter(
+        &self,
+        petition_id: u32,
+        item: u64,
+        team_size: Option<u32>,
+        commands: &NetCommands,
+    ) -> bool {
+        self.request_record(petition_id, item, commands);
+        self.records.get(petition_id).is_some_and(|r| {
+            r.static_type == STATIC_TYPE_ARENA
+                && team_size.is_none_or(|n| r.min_signatures + 1 == n as i32)
+        })
+    }
 }
 
 /// The two resources, the registrar's walk-away guard, and the feed and drain.
@@ -260,12 +320,15 @@ impl Plugin for UiPetitionPlugin {
         net::register(app);
         crate::query_cache::register::<PetitionState>(app);
         app.init_resource::<GuildRegistrarState>()
+            .init_resource::<PetitionVendorState>()
             .init_resource::<PetitionState>()
             .add_systems(
                 Update,
                 (
                     // Before the feed, so a walk-away fires GUILD_REGISTRAR_CLOSED the same frame.
                     crate::ui_session::close_npc_session_out_of_range::<GuildRegistrarState>
+                        .before(feed::feed_petition),
+                    crate::ui_session::close_npc_session_out_of_range::<PetitionVendorState>
                         .before(feed::feed_petition),
                     feed::feed_petition.in_set(UiFeed),
                     feed::drain_petition.after(UiInput),
@@ -303,15 +366,18 @@ pub(crate) mod net {
         In(_): In<SessionEvent>,
         mut petition: ResMut<PetitionState>,
         mut registrar: ResMut<GuildRegistrarState>,
+        mut vendor: ResMut<PetitionVendorState>,
     ) {
         petition.clear_session();
         registrar.close();
+        vendor.close();
     }
 
     /// The flags gate reads the live NPC; an unstreamed guid fails, as the client's resolve does.
     fn on_show_list(
         In(ev): In<SessionEvent>,
         mut registrar: ResMut<GuildRegistrarState>,
+        mut vendor: ResMut<PetitionVendorState>,
         index: Res<GuidIndex>,
         stores: Query<&ObjectStore>,
     ) {
@@ -321,7 +387,7 @@ pub(crate) mod net {
                 .get(&list.npc)
                 .and_then(|e| stores.get(*e).ok())
                 .map(|s| s.0.unit_npc_flags());
-            show_list(&mut registrar, list, flags);
+            show_list(&mut registrar, &mut vendor, list, flags);
         }
     }
 
@@ -388,13 +454,26 @@ pub(crate) mod net {
         }
     }
 
-    /// `SMSG_PETITION_SHOWLIST`; `npc_flags` is the NPC's live `UNIT_NPC_FLAGS`.
+    /// `SMSG_PETITION_SHOWLIST` (`0x6d69f0`); `npc_flags` is the NPC's live `UNIT_NPC_FLAGS`. An
+    /// NPC that does not resolve as a unit drops the list.
     pub(crate) fn show_list(
         registrar: &mut GuildRegistrarState,
+        vendor: &mut PetitionVendorState,
         list: PetitionShowList,
         npc_flags: Option<u32>,
     ) {
-        registrar.open(&list, npc_flags);
+        let Some(flags) = npc_flags else {
+            debug!(
+                "ui_petition: showlist from unstreamed {:#x} — dropped",
+                list.npc
+            );
+            return;
+        };
+        if flags & REGISTRAR_NPC_FLAGS == REGISTRAR_NPC_FLAGS {
+            registrar.open(&list);
+        } else {
+            vendor.open(list);
+        }
     }
 
     /// `SMSG_PETITION_SHOW_SIGNATURES`: our charter or one offered to us. An ignored owner
@@ -498,7 +577,7 @@ pub(crate) mod net {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use benilla_protocol::messages::{PetitionShowListEntry, PetitionSignature};
+    use benilla_protocol::messages::PetitionSignature;
     use crossbeam_channel::unbounded;
 
     fn commands() -> (NetCommands, crossbeam_channel::Receiver<ClientCommand>) {
@@ -506,18 +585,19 @@ mod tests {
         (NetCommands(tx), rx)
     }
 
-    fn show_list(npc: u64, rows: &[(i32, i32)]) -> PetitionShowList {
+    fn show_list(npc: u64, rows: &[u32]) -> PetitionShowList {
         PetitionShowList {
             npc,
             entries: rows
                 .iter()
                 .enumerate()
-                .map(|(i, (cost, flags))| PetitionShowListEntry {
+                .map(|(i, cost)| PetitionShowListEntry {
                     index: i as u32 + 1,
-                    charter_entry: benilla_protocol::messages::CHARTER_ITEM_ENTRY,
-                    charter_display_id: benilla_protocol::messages::CHARTER_DISPLAY_ID,
+                    charter_entry: 5863,
+                    charter_display_id: 16161,
                     charter_cost: *cost,
-                    entry_flags: *flags,
+                    charter_type: 0,
+                    required_signatures: 9,
                 })
                 .collect(),
         }
@@ -544,35 +624,37 @@ mod tests {
         }
     }
 
-    /// vmangos always sends one flagged row, so only a hidden first row tells entry\[0\] apart
-    /// from the first visible row.
+    /// Both flags open the guild registrar on the first row; any fewer the petition vendor.
     #[test]
-    fn the_registrar_gates_on_entry_zero_and_on_both_npc_flags() {
-        let both = Some(REGISTRAR_NPC_FLAGS);
+    fn the_showlist_picks_the_registrar_or_the_vendor_by_npc_flags() {
+        let mut r = GuildRegistrarState::default();
+        let mut v = PetitionVendorState::default();
+        net::show_list(
+            &mut r,
+            &mut v,
+            show_list(0x2a1f, &[1000]),
+            Some(REGISTRAR_NPC_FLAGS),
+        );
+        assert_eq!((r.npc(), r.cost(), r.index()), (Some(0x2a1f), 1000, 1));
+        assert_eq!(v.npc(), None);
 
         let mut r = GuildRegistrarState::default();
-        assert!(r.open(&show_list(0x2a1f, &[(1000, 1)]), both));
-        assert_eq!(r.cost(), 1000, "entry[0]'s price, in copper");
-        assert_eq!(r.npc(), Some(0x2a1f));
-
-        // Entry[0] hidden: the whole packet is dropped, though row 1 is visible.
-        let mut r = GuildRegistrarState::default();
-        assert!(!r.open(&show_list(0x2a1f, &[(9999, 0), (1000, 1)]), both));
-        assert_eq!(r.npc(), None, "no window at all — entry[0] is not visible");
-
-        // Either flag alone fails; the client tests both.
-        for flags in [
-            None,
-            Some(0),
+        net::show_list(
+            &mut r,
+            &mut v,
+            show_list(0x77, &[800_000, 1_200_000, 2_000_000]),
             Some(crate::target::cursor_mode::npc_flags::PETITIONER),
-            Some(crate::target::cursor_mode::npc_flags::TABARDDESIGNER),
-        ] {
-            let mut r = GuildRegistrarState::default();
-            assert!(
-                !r.open(&show_list(0x2a1f, &[(1000, 1)]), flags),
-                "flags {flags:?} must not open the registrar"
-            );
-        }
+        );
+        assert_eq!(r.npc(), None);
+        assert_eq!((v.npc(), v.rows().len()), (Some(0x77), 3));
+
+        let mut v = PetitionVendorState::default();
+        net::show_list(&mut r, &mut v, show_list(0x78, &[1]), None);
+        assert_eq!(
+            (r.npc(), v.npc()),
+            (None, None),
+            "an unstreamed NPC drops the list"
+        );
     }
 
     #[test]
@@ -580,7 +662,7 @@ mod tests {
         let (commands, _rx) = commands();
         let mut registrar = GuildRegistrarState::default();
         let mut petition = PetitionState::default();
-        registrar.open(&show_list(0x2a1f, &[(1000, 1)]), Some(REGISTRAR_NPC_FLAGS));
+        registrar.open(&show_list(0x2a1f, &[1000]));
         petition.show(signatures(0x99, 0xaa, 7, &[0xbb]), &commands);
 
         registrar.close();
@@ -668,7 +750,7 @@ mod tests {
         }
         app.world_mut()
             .resource_mut::<GuildRegistrarState>()
-            .open(&show_list(0x2a1f, &[(1000, 1)]), Some(REGISTRAR_NPC_FLAGS));
+            .open(&show_list(0x2a1f, &[1000]));
 
         crate::net::handlers::dispatch(
             app.world_mut(),

@@ -778,11 +778,7 @@ fn charter_probe(
             let kind = vm_petition_str(&script, 1);
             let originator = vm_is_originator(&script);
             let names = vm_num_names(&script);
-            if visible
-                && kind == benilla_ui::script::PETITION_TYPE_CHARTER
-                && originator == 1
-                && names == FRESH_SIGNATURES
-            {
+            if visible && kind == "guild" && originator == 1 && names == FRESH_SIGNATURES {
                 let at_open = vm_petition_str(&script, 2);
                 probe.title_at_open = at_open.clone();
                 probe.pass(

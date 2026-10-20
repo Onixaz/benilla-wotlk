@@ -1,12 +1,13 @@
 //! The app half of the verbs behind the stock `StaticPopup.lua` dialogs: the packet feeds that
 //! raise them and the drains behind their buttons, for the pet trainer's unlearn, the instance
-//! boot countdown, the area spirit healer's wave, the battleground queue and the meeting stone.
+//! boot countdown, the area spirit healer's wave and the meeting stone; the battleground queue
+//! is `crate::ui_battlefield`'s.
 //! A meeting stone's click runs the stone's own use slot, which refuses a join client-side or
 //! sends `CMSG_MEETINGSTONE_JOIN`, never the shared `CMSG_GAMEOBJ_USE`.
 
 use std::time::Instant;
 
-use benilla_protocol::messages::{BattlefieldStatus, MeetingStoneNotice};
+use benilla_protocol::messages::MeetingStoneNotice;
 use benilla_ui::script::{ScriptValue, UiScript};
 use bevy::ecs::system::NonSendMut;
 use bevy::prelude::*;
@@ -170,115 +171,6 @@ impl AreaSpiritHealer {
         self.deadline
             .map(|d| d.saturating_duration_since(now).as_secs())
             .map_or(0, |s| u32::try_from(s).unwrap_or(u32::MAX))
-    }
-}
-
-/// The three battleground queue slots (`0xb6e9d0`, stride `0x20`), each stamped with the moment
-/// its status landed. Kept across an in-session world enter (`0x4a9db0`), zeroed at session end.
-#[derive(Resource, Default)]
-pub(crate) struct BattlefieldQueue {
-    slots: [Option<(BattlefieldStatus, Instant)>; 3],
-    changed: bool,
-    /// The slot the player is in (`[0x8457cc]`, set by status 3) and its map.
-    active: Option<(usize, u32)>,
-    /// The instance's run-time stamp (`[0xb6ebbc]`) and expiration (`[0xb6ebb8]`): set by status
-    /// 3, zeroed by any other non-clearing status for any slot, as the handler `0x4aa850` does.
-    /// The stamp is kept as the status's arrival and the wire's elapsed span, read forwards, so no
-    /// `Instant` precedes the clock's origin.
-    run_started: Option<(Instant, std::time::Duration)>,
-    instance_expiration: Option<Instant>,
-    /// Status 3 fires `UPDATE_BATTLEFIELD_SCORE` before `_STATUS` (`0x4aaa5a`, then `0x4aab05`).
-    score_dirty: bool,
-    /// Tutorials the handler triggers (`0x2f` on queued, `0x30` on confirm), owed to the next feed.
-    tutorials: Vec<u32>,
-}
-
-impl BattlefieldQueue {
-    /// `SMSG_BATTLEFIELD_STATUS` (`0x4aa850`). A zero map clears the slot, and the instance clocks
-    /// only if it was active, but leaves the active index (`[0x8457cc]`) alone.
-    pub(crate) fn apply(&mut self, status: BattlefieldStatus) {
-        self.apply_at(status, Instant::now());
-    }
-
-    fn apply_at(&mut self, status: BattlefieldStatus, now: Instant) {
-        let index = status.slot as usize;
-        let Some(slot) = self.slots.get_mut(index) else {
-            return;
-        };
-        if status.map_id == 0 {
-            if self.active.is_some_and(|(i, _)| i == index) {
-                self.run_started = None;
-                self.instance_expiration = None;
-            }
-            *slot = None;
-            self.changed = true;
-            return;
-        }
-        match status.status {
-            1 => self.tutorials.push(crate::tutorial::id::BATTLEGROUND_QUEUE),
-            2 => self
-                .tutorials
-                .push(crate::tutorial::id::PORT_TO_BATTLEGROUND),
-            _ => {}
-        }
-        match status.in_progress {
-            Some((expires_ms, elapsed_ms)) => {
-                self.active = Some((index, status.map_id));
-                self.instance_expiration = (expires_ms != 0)
-                    .then(|| now + std::time::Duration::from_millis(u64::from(expires_ms)));
-                self.run_started = (elapsed_ms != 0)
-                    .then(|| (now, std::time::Duration::from_millis(u64::from(elapsed_ms))));
-                self.score_dirty = true;
-            }
-            None => {
-                self.run_started = None;
-                self.instance_expiration = None;
-                if self.active.is_some_and(|(i, _)| i == index) {
-                    self.active = None;
-                }
-            }
-        }
-        *slot = Some((status, now));
-        self.changed = true;
-    }
-
-    pub(crate) fn slots(&self) -> &[Option<(BattlefieldStatus, Instant)>; 3] {
-        &self.slots
-    }
-
-    /// `GetBattlefieldInstanceExpiration()`: ms left on `[0xb6ebb8]`, 0 when unset or past.
-    pub(crate) fn instance_expiration_ms(&self, now: Instant) -> u32 {
-        self.instance_expiration.map_or(0, |d| {
-            d.saturating_duration_since(now)
-                .as_millis()
-                .min(u128::from(u32::MAX)) as u32
-        })
-    }
-
-    /// The map of the battleground the player is in, `LeaveBattlefield`'s payload (0 for `None`).
-    pub(crate) fn active_map(&self) -> Option<u32> {
-        self.active.map(|(_, map)| map)
-    }
-
-    /// `GetBattlefieldInstanceRunTime()`: ms since the status-3 stamp, 0 with none.
-    pub(crate) fn run_time_ms(&self, now: Instant) -> u32 {
-        self.run_started.map_or(0, |(at, elapsed)| {
-            (now.saturating_duration_since(at) + elapsed)
-                .as_millis()
-                .min(u128::from(u32::MAX)) as u32
-        })
-    }
-
-    pub(crate) fn take_score_dirty(&mut self) -> bool {
-        std::mem::take(&mut self.score_dirty)
-    }
-
-    /// The map id `AcceptBattlefieldPort` sends for a 1-based slot, if the slot holds a queue.
-    fn map_id(&self, index: u8) -> Option<u32> {
-        self.slots
-            .get(usize::from(index).checked_sub(1)?)
-            .and_then(|s| s.as_ref())
-            .map(|(s, _)| s.map_id)
     }
 }
 
@@ -643,9 +535,7 @@ pub(crate) fn feed_dialog_verbs(
     mut pet: ResMut<PetUnlearnState>,
     mut boot: ResMut<InstanceBoot>,
     mut spirit: ResMut<AreaSpiritHealer>,
-    mut queue: ResMut<BattlefieldQueue>,
     mut sink: crate::ui_action::MessageSink,
-    mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -677,15 +567,6 @@ pub(crate) fn feed_dialog_verbs(
     script.set_area_spirit_healer(spirit.healer().is_some(), secs);
     if std::mem::take(&mut spirit.in_range) {
         script.fire_event("AREA_SPIRIT_HEALER_IN_RANGE", vec![]);
-    }
-
-    for id in std::mem::take(&mut queue.tutorials) {
-        if let Some(t) = tutorials.as_mut() {
-            t.write(crate::tutorial::TutorialEvent::trigger(id));
-        }
-    }
-    if std::mem::take(&mut queue.changed) {
-        script.fire_event("UPDATE_BATTLEFIELD_STATUS", vec![]);
     }
 }
 
@@ -739,10 +620,9 @@ fn drain_latch_verbs(
     }
 }
 
-/// The battleground port and the meeting-stone leave, the two drains over a queue.
+/// The meeting-stone leave.
 fn drain_queue_verbs(
     script: Option<NonSendMut<UiScript>>,
-    queue: Res<BattlefieldQueue>,
     group: Option<Res<GroupState>>,
     self_guid: Res<SelfGuid>,
     commands: Res<NetCommands>,
@@ -751,14 +631,6 @@ fn drain_queue_verbs(
     let Some(mut script) = script else {
         return;
     };
-
-    for (index, accept) in script.take_battlefield_port_requests() {
-        if let Some(map_id) = queue.map_id(index) {
-            let _ = commands
-                .0
-                .send(ClientCommand::BattlefieldPort { map_id, accept });
-        }
-    }
 
     // CancelMeetingStoneRequest: in a party we do not lead, ERR_MEETING_STONE_NOT_LEADER;
     // otherwise `0x293`, queued or not.
@@ -883,7 +755,7 @@ mod net {
     use benilla_protocol::{SessionEvent, SessionEventKind};
     use bevy::prelude::*;
 
-    use super::{AreaSpiritHealer, BattlefieldQueue, InstanceBoot, MeetingStone, PetUnlearnState};
+    use super::{AreaSpiritHealer, InstanceBoot, MeetingStone, PetUnlearnState};
     use crate::net::NetHandlerApp;
 
     pub(super) fn register(app: &mut App) {
@@ -891,16 +763,8 @@ mod net {
         app.net_handler(K::PetUnlearnConfirm, on_pet_unlearn_confirm)
             .net_handler(K::RaidGroupOnly, on_raid_group_only)
             .net_handler(K::AreaSpiritHealerTime, on_area_spirit_healer_time)
-            .net_handler(K::BattlefieldStatus, on_battlefield_status)
             .net_handler(K::MeetingStoneSetQueue, on_meeting_stone)
-            .net_handler(K::MeetingStoneNotice, on_meeting_stone)
-            .net_handler(K::Disconnected, on_session_end);
-    }
-
-    /// Zero the battleground queue at session end, as module init `0x4a9c40` does at every login
-    /// (`[0x8457cc]` to -1); vmangos sends no clear for a player who logged out.
-    fn on_session_end(In(_): In<SessionEvent>, mut queue: ResMut<BattlefieldQueue>) {
-        *queue = BattlefieldQueue::default();
+            .net_handler(K::MeetingStoneNotice, on_meeting_stone);
     }
 
     /// The pet trainer's question; a zero guid shows `ERR_TALENT_WIPE_ERROR` instead.
@@ -934,12 +798,6 @@ mod net {
         }
     }
 
-    fn on_battlefield_status(In(ev): In<SessionEvent>, mut queue: ResMut<BattlefieldQueue>) {
-        if let SessionEvent::BattlefieldStatus(status) = ev {
-            queue.apply(status);
-        }
-    }
-
     fn on_meeting_stone(In(ev): In<SessionEvent>, mut stone: ResMut<MeetingStone>) {
         match ev {
             SessionEvent::MeetingStoneSetQueue { area, status } => stone.apply(area, status),
@@ -957,7 +815,6 @@ impl Plugin for UiDialogVerbsPlugin {
         app.init_resource::<PetUnlearnState>()
             .init_resource::<InstanceBoot>()
             .init_resource::<AreaSpiritHealer>()
-            .init_resource::<BattlefieldQueue>()
             .init_resource::<MeetingStone>()
             .add_message::<MeetingStoneUse>()
             .add_message::<WorldEnterCascadeMessage>()
@@ -1661,109 +1518,6 @@ mod tests {
     }
 
     #[test]
-    fn the_queue_keeps_three_slots_and_answers_a_port_by_map() {
-        let mut q = BattlefieldQueue::default();
-        let status = |slot, map_id| BattlefieldStatus {
-            slot,
-            map_id,
-            bracket: 0,
-            instance_id: 0,
-            status: 2,
-            time_ms: Some(0),
-            in_progress: None,
-            queued: None,
-        };
-        q.apply(status(1, 489));
-        q.apply(status(5, 30));
-        assert_eq!(
-            q.map_id(2),
-            Some(489),
-            "1-based from Lua, 0-based on the wire"
-        );
-        assert_eq!(q.map_id(1), None);
-        assert_eq!(q.map_id(4), None);
-        q.apply(status(1, 0));
-        assert_eq!(q.map_id(2), None, "a zero map clears the slot");
-    }
-
-    #[test]
-    fn a_run_longer_than_any_uptime_reads_forwards() {
-        let mut q = BattlefieldQueue::default();
-        let now = Instant::now();
-        q.apply_at(
-            BattlefieldStatus {
-                slot: 0,
-                map_id: 489,
-                bracket: 0,
-                instance_id: 3,
-                status: 3,
-                time_ms: None,
-                in_progress: Some((0, u32::MAX)),
-                queued: None,
-            },
-            now,
-        );
-        assert_eq!(
-            q.run_time_ms(now),
-            u32::MAX,
-            "49.7 days elapsed, no stamp needed"
-        );
-    }
-
-    #[test]
-    fn the_instance_clocks_follow_the_status_handler() {
-        let mut q = BattlefieldQueue::default();
-        let now = Instant::now();
-        let mut active = BattlefieldStatus {
-            slot: 0,
-            map_id: 489,
-            bracket: 0,
-            instance_id: 3,
-            status: 3,
-            time_ms: None,
-            in_progress: Some((90_000, 30_000)),
-            queued: None,
-        };
-        q.apply_at(active.clone(), now);
-        assert_eq!(q.active_map(), Some(489));
-        assert_eq!(q.instance_expiration_ms(now), 90_000);
-        assert_eq!(q.run_time_ms(now), 30_000);
-        assert_eq!(
-            q.run_time_ms(now + std::time::Duration::from_secs(2)),
-            32_000,
-            "the stamp runs on from the status"
-        );
-        assert!(q.take_score_dirty());
-        // A queued status for slot 2 zeroes both clocks too.
-        let mut queued = active.clone();
-        queued.slot = 1;
-        queued.map_id = 529;
-        queued.status = 1;
-        queued.in_progress = None;
-        queued.queued = Some((60_000, 5_000));
-        q.apply_at(queued, now);
-        assert_eq!(
-            q.active_map(),
-            Some(489),
-            "another slot's status leaves the active index"
-        );
-        assert_eq!(q.instance_expiration_ms(now), 0);
-        assert_eq!(q.run_time_ms(now), 0);
-        assert_eq!(q.map_id(2), Some(529));
-        // Re-arm, then clear the active slot: the clocks go, the index stays (`[0x8457cc]`).
-        q.apply_at(active.clone(), now);
-        active.map_id = 0;
-        q.apply_at(active, now);
-        assert_eq!(q.instance_expiration_ms(now), 0);
-        assert_eq!(q.map_id(1), None);
-        assert_eq!(
-            q.active_map(),
-            Some(489),
-            "the clear arm never resets the active index"
-        );
-    }
-
-    #[test]
     fn the_stone_latches_the_old_area_before_storing_the_new() {
         let mut stone = MeetingStone::default();
         stone.apply(1519, 1);
@@ -1860,60 +1614,5 @@ mod tests {
         pet.close();
         assert_eq!(pet.pending(), None);
         assert_eq!(pet.cost, 0);
-    }
-
-    #[test]
-    fn the_session_end_zeroes_the_battlefield_queue() {
-        let mut app = App::new();
-        app.init_resource::<BattlefieldQueue>();
-        net::register(&mut app);
-        let now = Instant::now();
-        {
-            let mut q = app.world_mut().resource_mut::<BattlefieldQueue>();
-            q.apply_at(
-                BattlefieldStatus {
-                    slot: 0,
-                    map_id: 489,
-                    bracket: 0,
-                    instance_id: 3,
-                    status: 3,
-                    time_ms: None,
-                    in_progress: Some((90_000, 30_000)),
-                    queued: None,
-                },
-                now,
-            );
-            q.apply_at(
-                BattlefieldStatus {
-                    slot: 1,
-                    map_id: 30,
-                    bracket: 0,
-                    instance_id: 0,
-                    status: 1,
-                    time_ms: Some(0),
-                    in_progress: None,
-                    queued: None,
-                },
-                now,
-            );
-        }
-
-        crate::net::handlers::dispatch(
-            app.world_mut(),
-            vec![benilla_protocol::SessionEvent::Disconnected {
-                reason: "logged out".into(),
-                end: benilla_protocol::SessionEnd::LoggedOut,
-            }],
-        );
-
-        let mut q = app.world_mut().resource_mut::<BattlefieldQueue>();
-        assert!(
-            q.slots().iter().all(Option::is_none),
-            "all three slots empty"
-        );
-        assert_eq!(q.active_map(), None);
-        assert_eq!(q.run_time_ms(now), 0);
-        assert_eq!(q.instance_expiration_ms(now), 0);
-        assert!(!q.take_score_dirty());
     }
 }
