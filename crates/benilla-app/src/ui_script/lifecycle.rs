@@ -334,9 +334,9 @@ pub(crate) fn run_pending_entry_load(world: &mut World) {
     );
 }
 
-/// Seat the VM's screen size and text measurer for the load, under the current window and
-/// `uiScale`: the load-edge half of [`super::extract::tick_script`]'s per-frame pair. A fresh VM
-/// answers 1024×768 until then, and a value computed once at load keeps it: stock
+/// Seat the VM's screen size, display modes and text measurer for the load, under the current
+/// window and `uiScale`: the load-edge half of [`super::extract::tick_script`]'s per-frame pair. A
+/// fresh VM answers 1024×768 until then, and a value computed once at load keeps it: stock
 /// `WorldMapFrame_OnLoad` sizes the full-screen `BlackoutWorld` from `GetScreenWidth()` and
 /// `GetScreenHeight()` and never again (`WorldMapFrame.lua:19-28`). With no atlas yet (it bakes on
 /// the first `Update`) the per-frame pass seats the measurer.
@@ -356,6 +356,7 @@ fn seat_raster_seam_for_load(world: &mut World, script: &mut UiScript) {
         // out yet.
         script.set_screen_size(w / s, h / s);
     }
+    crate::video::seed_display_modes_for_vm(world, script);
     let Some(atlas) = world.get_resource::<crate::ui_text::UiFontAtlas>() else {
         return;
     };

@@ -439,14 +439,47 @@ fn publish_display_modes(
     let Ok(window) = windows.single() else {
         return;
     };
+    let (offered, current) = (offered_modes(monitors.iter()), current_mode(window));
+    // Keyed by VM: a `ReloadUI` VM has been pushed nothing, so a plain `Local` would skip it.
+    let memo = last.get(&script);
+    if memo.as_ref() == Some(&(offered.clone(), current)) {
+        return;
+    }
+    *memo = Some((offered.clone(), current));
+    script.set_screen_resolutions(offered, current);
+}
+
+/// [`publish_display_modes`]' push for a VM about to load, which the reference has before
+/// `UI_Init`: `UpdateMenuBarTop` divides the current entry's sides at load (`UIParent.lua:1171`).
+pub(crate) fn seed_display_modes_for_vm(
+    world: &mut World,
+    script: &mut benilla_ui::script::UiScript,
+) {
+    let mut windows = world.query_filtered::<&Window, With<PrimaryWindow>>();
+    let Ok(current) = windows.single(world).map(current_mode) else {
+        return;
+    };
+    let mut monitors = world.query::<&bevy::window::Monitor>();
+    let offered = offered_modes(monitors.iter(world));
+    script.set_screen_resolutions(offered, current);
+}
+
+/// The live window size, the list's current entry.
+fn current_mode(window: &Window) -> Option<ScreenResolution> {
     let res = &window.resolution;
-    let current = Some(ScreenResolution {
+    Some(ScreenResolution {
         width: res.width() as u32,
         height: res.height() as u32,
     })
-    .filter(|r| r.width > 0 && r.height > 0);
+    .filter(|r| r.width > 0 && r.height > 0)
+}
+
+/// The monitors' mode sizes and full sizes through [`offerable`], else [`SCREEN_FALLBACK`].
+fn offered_modes<'a>(
+    monitors: impl Iterator<Item = &'a bevy::window::Monitor>,
+) -> Vec<ScreenResolution> {
     let mut offered: Vec<ScreenResolution> = Vec::new();
-    for m in &monitors {
+    for m in monitors {
         // The monitor's own scale, not the window's: these rows describe the panel.
         let scale = if m.scale_factor > 0.0 {
             m.scale_factor
@@ -466,13 +499,7 @@ fn publish_display_modes(
     }
     offered.sort_by_key(|r| (u64::from(r.width) * u64::from(r.height), r.width, r.height));
     offered.dedup();
-    // Keyed by VM: a `ReloadUI` VM has been pushed nothing, so a plain `Local` would skip it.
-    let memo = last.get(&script);
-    if memo.as_ref() == Some(&(offered.clone(), current)) {
-        return;
-    }
-    *memo = Some((offered.clone(), current));
-    script.set_screen_resolutions(offered, current);
+    offered
 }
 
 /// Check the window got the size `$WOW_WIN` asked for: the window manager may clamp it to the
