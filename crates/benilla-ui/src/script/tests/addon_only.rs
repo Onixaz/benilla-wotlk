@@ -26,8 +26,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "CalendarEventSetSize",
     "CalendarGetAbsMonth",
     "CalendarGetDayEventSequenceInfo",
-    "CalendarGetMaxDate",
-    "CalendarGetMinHistoryDate",
     "CalendarGetMonthNames",
     "CalendarGetWeekdayNames",
     "CanMapChangeDifficulty",

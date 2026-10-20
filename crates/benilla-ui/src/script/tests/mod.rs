@@ -7,6 +7,7 @@ mod addon_only;
 mod anchors;
 mod backdrop;
 mod button;
+mod calendar;
 mod channel;
 mod common;
 mod cooldown;

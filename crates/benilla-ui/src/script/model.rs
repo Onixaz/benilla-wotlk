@@ -1006,6 +1006,14 @@ pub(crate) struct Model {
     pub(crate) summon_confirm: super::summon::SummonConfirmUiState,
     /// `ConfirmSummon()` calls, one `CMSG_SUMMON_RESPONSE` each; the app holds the summoner.
     pub(crate) summon_confirms: u32,
+    /// The calendar snapshot behind the month and day queries.
+    pub(crate) calendar: super::calendar::CalendarUiState,
+    /// The month `CalendarSetMonth` moved to, `None` for the current one.
+    pub(crate) calendar_viewed: Option<(i32, u32)>,
+    /// `OpenCalendar()`'s request byte, up until the reply lands.
+    pub(crate) calendar_request_pending: bool,
+    /// `CMSG_CALENDAR_GET_CALENDAR` sends owed.
+    pub(crate) calendar_get_requests: u32,
     /// `GetFramerate()`, pushed each tick.
     /// A `Cell`: pushed every frame, read by `GetFramerate()` alone (`ModelCell`).
     pub(crate) framerate: std::cell::Cell<f64>,
@@ -1522,6 +1530,10 @@ impl Model {
             binder_pending: false,
             summon_confirm: super::summon::SummonConfirmUiState::default(),
             summon_confirms: 0,
+            calendar: super::calendar::CalendarUiState::default(),
+            calendar_viewed: None,
+            calendar_request_pending: false,
+            calendar_get_requests: 0,
             framerate: std::cell::Cell::new(0.0),
             modifiers: (false, false, false),
             click_button: None,

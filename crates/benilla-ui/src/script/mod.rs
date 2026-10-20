@@ -93,6 +93,7 @@ pub use unit_menu::{DifficultyState, ReferAFriendState};
 mod worldmap_arrow;
 // `camera_view`: the five camera views and `FlipCameraYaw`, the reference's `UIUtil\Camera.cpp`.
 mod button;
+mod calendar;
 mod calls;
 mod camera_view;
 mod channel;
@@ -388,6 +389,7 @@ pub use sound::{MusicRequest, SoundRequest};
 pub use spellbook::{
     resolve_spell_by_name, PetBookState, SpellBookState, SpellSlotView, SpellTabView,
 };
+pub use calendar::{CalendarDate, CalendarEntryView, CalendarUiState};
 pub use stable::{StableIntent, StablePetSlot, StableState, NUM_STABLE_SLOTS};
 pub use summon::SummonConfirmUiState;
 pub use talent::{
@@ -944,6 +946,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     petition::install(lua)?;
     binder::install(lua)?;
     summon::install(lua)?;
+    calendar::install(lua)?;
     bind_confirm::install(lua)?;
     instance::install(lua)?;
     gm_ticket::install(lua)?;
