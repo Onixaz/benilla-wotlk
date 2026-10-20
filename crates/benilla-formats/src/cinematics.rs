@@ -300,9 +300,9 @@ fn sample_against(track: &M2Track<M2SplineKey<[f32; 3]>>, base: [f32; 3], ms: u3
 mod tests {
     use super::*;
 
-    /// The eight race intros, `ChrRaces.dbc` `CinematicSequence` (field 16), which vmangos sends
-    /// on a first login (`CharacterHandler.cpp:581`).
-    const RACE_INTROS: [u32; 8] = [2, 21, 41, 61, 81, 101, 121, 141];
+    /// The first-login intros: the ten races' `ChrRaces.dbc` `CinematicSequenceID` (field 12) and
+    /// the Death Knight's `ChrClasses.dbc` one (field 58).
+    const RACE_INTROS: [u32; 11] = [2, 21, 41, 61, 81, 101, 121, 141, 162, 163, 165];
 
     #[test]
     fn model_paths_map_mdx_to_the_archive_m2() {
@@ -317,13 +317,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_cinematic_tables_are_the_shipped_shape() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_cinematics(&mut chain).expect("load cinematic tables");
-        assert_eq!(cat.sequence_count(), 10);
-        assert_eq!(cat.camera_count(), 10);
+        assert_eq!(cat.sequence_count(), 14);
+        assert_eq!(cat.camera_count(), 14);
 
         for id in RACE_INTROS {
             let seq = cat.sequence(id).unwrap_or_else(|| panic!("sequence {id}"));
@@ -346,7 +345,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_flyby_shots_are_bezier_and_end_on_their_sequence_band() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -399,7 +397,6 @@ mod tests {
     /// The golden points come from a separate evaluator over the raw bytes; the arc passes within
     /// 59.6 yd of all six of vmangos's `cinematic_waypoints` samples for this intro.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_dwarf_intro_flies_the_authored_arc() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -438,7 +435,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_flyby_shots_range_far_from_their_origin() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
