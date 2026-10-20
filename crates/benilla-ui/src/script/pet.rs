@@ -299,6 +299,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // IsPossessBarVisible() (`0x5a8820`): false while no possess spell `[0xc234e0]` is held,
+    // which nothing feeds yet (#471).
+    g.set(
+        "IsPossessBarVisible",
+        lua.create_function(|_, _: mlua::MultiValue| Ok(false))?,
+    )?;
+    // GetPossessInfo(index) (`0x5d5820`): a zero index raises, else three nils with no spell.
+    g.set(
+        "GetPossessInfo",
+        lua.create_function(|lua, index: Value| {
+            if lua.coerce_number(index)?.unwrap_or(0.0) == 0.0 {
+                return Err(mlua::Error::runtime("Usage: GetPossessInfo(index)"));
+            }
+            Ok((Value::Nil, Value::Nil, Value::Nil))
+        })?,
+    )?;
+
     g.set(
         "PetHasActionBar",
         lua.create_function(move |lua, ()| {
@@ -731,6 +748,29 @@ mod tests {
             .eval::<Option<f64>>("return GetPetTimeRemaining()")
             .unwrap()
             .is_none());
+    }
+
+    /// With nothing possessed the bar is hidden by a real `false`, and each slot reads three nils.
+    #[test]
+    fn with_nothing_possessed_the_bar_hides_and_its_slots_are_empty() {
+        let s = UiScript::new().unwrap();
+        assert_eq!(
+            s.eval::<mlua::Value>("return IsPossessBarVisible()")
+                .unwrap(),
+            mlua::Value::Boolean(false)
+        );
+        assert_eq!(s.arity("GetPossessInfo(1)").unwrap(), 3);
+        assert!(s
+            .eval::<Option<String>>("return (GetPossessInfo(2))")
+            .unwrap()
+            .is_none());
+        for bad in [
+            "GetPossessInfo(0)",
+            "GetPossessInfo()",
+            "GetPossessInfo('x')",
+        ] {
+            assert!(s.run(bad).is_err(), "{bad}");
+        }
     }
 
     /// Attack (a token, attacking), Claw (a spell, autocasting, cooling down), an empty slot.
