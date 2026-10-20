@@ -27,6 +27,8 @@ mod load_log;
 mod manifest;
 /// The server alert's fetch and `LaunchURL`'s browser, for the stock glue screens.
 pub(crate) mod server_alert;
+#[cfg(test)]
+mod stock_load_tests;
 
 /// The stock FrameXML this client runs off the player's own patch chain; its header is the rule.
 mod reference_ui;
