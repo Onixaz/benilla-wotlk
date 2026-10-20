@@ -316,6 +316,9 @@ pub(crate) struct Player {
     /// standing. The reference zeroes its mover; vmangos neither roots a charmed player nor refuses
     /// its movement, so nothing else holds the body. Unlike a root, it stops turning too.
     pub(crate) control_lost: bool,
+    /// World entries that handed control back, each a silent `InitClientControlState` (`0x513880`)
+    /// for the UI's control flag.
+    pub(crate) control_inits: u32,
     /// The unit we drive in place of our body (a mind-controlled creature, Eye of Kilrogg), `None`
     /// for our own. Our body must then send nothing: outbound `MSG_MOVE_*` carry no guid, so the
     /// server applies them to whatever we last claimed.

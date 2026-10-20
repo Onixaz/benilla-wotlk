@@ -65,6 +65,16 @@ fn yield_own_body(net_cmds: &NetCommands, player: &mut Player, self_guid: Option
     });
 }
 
+/// The world-entry grant of `OnActivePlayerInit` (`0x6e7f50`): our body is in control again
+/// (`0x6e80b6`) and the UI's flag is re-seeded with no event (`0x513880`). A possession in hand
+/// keeps its own state.
+fn hand_back_control(player: &mut Player) {
+    if player.foreign_mover.is_none() {
+        player.control_lost = false;
+        player.control_inits = player.control_inits.wrapping_add(1);
+    }
+}
+
 /// `self_guid` is `None` before login names us, when no update can be about our body.
 fn control_verdict(mover: u64, allow_move: bool, self_guid: Option<u64>) -> ControlVerdict {
     match (self_guid == Some(mover), allow_move) {
@@ -101,6 +111,12 @@ pub(super) fn apply_server_moves(
     >,
     self_pose: Option<(Vec3, f32)>,
 ) -> Vec<SpeedChangeMessage> {
+    // World entry hands control back before this frame's control packets, so a later revoke wins;
+    // AzerothCore never lifts a battleground's end freeze by packet.
+    let creates: Vec<SelfCreateMover> = self_creates.read().copied().collect();
+    if !creates.is_empty() {
+        hand_back_control(player);
+    }
     // A grant must be claimed: vmangos drops every `MSG_MOVE_*` for an unconfirmed mover
     // (`MovementHandler.cpp:291-293`, `Player.cpp:20257-20272`).
     for c in control_msgs.read() {
@@ -225,7 +241,7 @@ pub(super) fn apply_server_moves(
         info!("teleport: snapped to {:?}, acked", t.position);
     }
     // Our body's create forces its mover state in (`0x6f1520`), not a possessed unit's.
-    for c in self_creates.read() {
+    for c in &creates {
         if player.foreign_mover.is_none() {
             apply_self_create(player, c);
         }
@@ -724,6 +740,35 @@ mod control_tests {
     const ME: u64 = 0x0000_0000_0000_0045;
     const VICTIM: u64 = 0x0000_0000_0000_0099;
     const CREATURE: u64 = 0xF130_000C_1A00_A2B4;
+
+    /// A battleground's end revokes control and never restores it; the world entry after the
+    /// teleport out hands it back (`0x6e80b6`) and re-seeds the UI's flag. A possession keeps its
+    /// own state.
+    #[test]
+    fn a_world_entry_hands_back_a_revoked_control() {
+        let mut p = Player {
+            control_lost: true,
+            ..Player::default()
+        };
+        hand_back_control(&mut p);
+        assert!(!p.control_lost, "the frozen body moves again");
+        assert_eq!(p.control_inits, 1, "the UI's flag is re-seeded");
+
+        hand_back_control(&mut p);
+        assert_eq!(
+            p.control_inits, 2,
+            "every world entry re-seeds, held or not"
+        );
+
+        let mut possessing = Player {
+            control_lost: true,
+            foreign_mover: Some(CREATURE),
+            ..Player::default()
+        };
+        hand_back_control(&mut possessing);
+        assert!(possessing.control_lost);
+        assert_eq!(possessing.control_inits, 0);
+    }
 
     #[test]
     fn naming_us_is_never_a_grant_and_naming_another_is_never_about_our_body() {
