@@ -230,6 +230,19 @@ pub(super) fn install_voice(lua: &Lua) -> mlua::Result<()> {
             lua.create_function(|_, _: mlua::MultiValue| Ok(mlua::MultiValue::new()))?,
         )?;
     }
+    // `GetNumVoiceSessions` (`0x7db030`) counts the live voice sessions: none.
+    g.set(
+        "GetNumVoiceSessions",
+        lua.create_function(|_, _: mlua::MultiValue| Ok(0))?,
+    )?;
+    // `GetActiveVoiceChannel` (`0x4fbd40`) and `GetVoiceCurrentSessionID` (`0x7db1f0`): nil while
+    // no channel carries voice and no session is current.
+    for name in ["GetActiveVoiceChannel", "GetVoiceCurrentSessionID"] {
+        g.set(
+            name,
+            lua.create_function(|_, _: mlua::MultiValue| Ok(Value::Nil))?,
+        )?;
+    }
     Ok(())
 }
 
@@ -324,5 +337,19 @@ mod tests {
             s.take_music(),
             vec![MusicRequest::Play("42".into()), MusicRequest::Stop]
         );
+    }
+
+    /// With no voice session the stock voice menu lists no rows and no channel carries voice.
+    #[test]
+    fn no_voice_session_lists_nothing() {
+        let s = UiScript::new().unwrap();
+        assert_eq!(s.eval::<i64>("return GetNumVoiceSessions()").unwrap(), 0);
+        for verb in ["GetActiveVoiceChannel", "GetVoiceCurrentSessionID"] {
+            assert_eq!(s.arity(&format!("{verb}()")).unwrap(), 1, "{verb}");
+            assert!(s
+                .eval::<Option<i64>>(&format!("return {verb}()"))
+                .unwrap()
+                .is_none());
+        }
     }
 }
