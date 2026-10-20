@@ -125,7 +125,7 @@ fn a_strangers_pet_go_flushes_nothing() {
     assert!(rig.frame().is_empty());
 }
 
-/// `0x6e95b0`, `0x6e95b9`: the flush follows `SMSG_SPELL_COOLDOWN` for the pet's guid, and for it
+/// `0x807033`, `0x807039`: the flush follows `SMSG_SPELL_COOLDOWN` for the pet's guid, and for it
 /// alone; the player's own list flushes through the action state's feed.
 #[test]
 fn a_pet_addressed_spell_cooldown_fires_the_flush() {
@@ -133,6 +133,7 @@ fn a_pet_addressed_spell_cooldown_fires_the_flush() {
 
     rig.receive(vec![SessionEvent::SpellCooldowns {
         caster: ME,
+        flags: 0,
         cooldowns: vec![(GROWL, 3000)],
     }]);
     assert!(
@@ -142,6 +143,7 @@ fn a_pet_addressed_spell_cooldown_fires_the_flush() {
 
     rig.receive(vec![SessionEvent::SpellCooldowns {
         caster: PET,
+        flags: 0,
         cooldowns: vec![(GROWL, 3000)],
     }]);
     assert_eq!(rig.frame(), FLUSH);
@@ -160,6 +162,7 @@ fn the_pets_event_clear_and_cheat_packets_fire_the_flush() {
     let park = |rig: &mut Rig| {
         rig.receive(vec![SessionEvent::SpellCooldowns {
             caster: PET,
+            flags: 0,
             cooldowns: vec![(GROWL, 3000)],
         }]);
         assert_eq!(rig.frame(), FLUSH, "parked");
@@ -192,6 +195,7 @@ fn several_mutations_in_a_frame_fire_the_flush_once() {
         go(PET, GROWL),
         SessionEvent::SpellCooldowns {
             caster: PET,
+            flags: 0,
             cooldowns: vec![(GROWL, 3000)],
         },
     ]);
@@ -468,6 +472,7 @@ fn an_insert_leaves_the_pets_list_its_live_records_alone() {
         // Ten milliseconds, parked until `SMSG_COOLDOWN_EVENT`.
         SessionEvent::SpellCooldowns {
             caster: PET,
+            flags: 0,
             cooldowns: vec![(PARKED, 10)],
         },
     ]);
@@ -549,6 +554,7 @@ fn an_insert_changes_no_bar_read_of_the_records_that_stay() {
         go(PET, GROWL),
         SessionEvent::SpellCooldowns {
             caster: PET,
+            flags: 0,
             cooldowns: vec![(PARKED, 10)],
         },
     ]);

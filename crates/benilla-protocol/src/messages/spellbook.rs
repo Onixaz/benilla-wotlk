@@ -62,20 +62,22 @@ pub(super) fn read_superceded_spell(r: &mut impl Read) -> io::Result<(u32, u32)>
     Ok((read_u32_le(r)?, read_u32_le(r)?))
 }
 
-/// Read `SMSG_SPELL_COOLDOWN` (client `0x6e9460`): a `u64` caster, a flags byte (3.3.5a's
-/// `SPELL_COOLDOWN_FLAG_*`, AzerothCore `Unit::SendCooldownEvent`; 1.12 has none), then
-/// `(spell, ms)` pairs to the end. `ms == 0` means the spell's own `Spell.dbc` recovery times.
-/// Sent for school lockouts and pet cooldowns.
-pub(super) fn read_spell_cooldown(r: &mut &[u8]) -> io::Result<(u64, Vec<(u32, u32)>)> {
+/// `SMSG_SPELL_COOLDOWN`'s `(spell, ms)` pairs.
+type CooldownPairs = Vec<(u32, u32)>;
+
+/// Read `SMSG_SPELL_COOLDOWN` (client `0x806dd0`): a `u64` caster, a flags byte (`0x806df6`),
+/// then `(spell, ms)` pairs to the end. `ms == 0` means the spell's own `Spell.dbc` recovery
+/// times. Sent for school lockouts and pet cooldowns.
+pub(super) fn read_spell_cooldown(r: &mut &[u8]) -> io::Result<(u64, u8, CooldownPairs)> {
     let caster = read_u64_le(r)?;
-    let _flags = read_u8(r)?;
+    let flags = read_u8(r)?;
     let mut cooldowns = Vec::new();
     while !r.is_empty() {
         let spell_id = read_u32_le(r)?;
         let cooldown_ms = read_u32_le(r)?;
         cooldowns.push((spell_id, cooldown_ms));
     }
-    Ok((caster, cooldowns))
+    Ok((caster, flags, cooldowns))
 }
 
 /// Read `SMSG_ITEM_COOLDOWN` (vmangos `Server/Packets/Item.cpp:229-233`): `(item_guid, spell_id)`,
@@ -159,7 +161,7 @@ mod tests {
         // SMSG_SPELL_COOLDOWN: guid, a flags byte, then (spell, ms) pairs; {133, 0} = Spell.dbc.
         let body: Vec<u8> = [
             0x10u64.to_le_bytes().to_vec(),
-            vec![0u8],
+            vec![0x01u8],
             133u32.to_le_bytes().to_vec(),
             0u32.to_le_bytes().to_vec(),
             5384u32.to_le_bytes().to_vec(),
@@ -169,7 +171,7 @@ mod tests {
         let mut r = &body[..];
         assert_eq!(
             read_spell_cooldown(&mut r).unwrap(),
-            (0x10, vec![(133, 0), (5384, 30_000)])
+            (0x10, 0x01, vec![(133, 0), (5384, 30_000)])
         );
         assert!(r.is_empty());
 

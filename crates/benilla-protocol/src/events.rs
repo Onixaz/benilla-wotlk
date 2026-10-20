@@ -724,6 +724,8 @@ pub enum SessionEvent {
     /// spell's own `Spell.dbc` recovery; a normal cast's cooldown is client-tracked.
     SpellCooldowns {
         caster: u64,
+        /// Bit `0x1` starts each spell's GCD, bit `0x2` skips the on-event hold (`0x806dfe`).
+        flags: u8,
         cooldowns: Vec<(u32, u32)>,
     },
     /// Put an item instance on the client's fixed 30 s use cooldown (`SMSG_ITEM_COOLDOWN`).

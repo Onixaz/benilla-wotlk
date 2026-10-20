@@ -1,5 +1,5 @@
 //! The player's cooldowns, the client's `SpellHistory` list (node ops `0x6e12c0`, `0x6e13e0`,
-//! `0x6e1630`, `0x6e1790`; handlers `0x6e9460`, `0x6e95d0`, `0x6e9670`, `0x6e9730`).
+//! `0x6e1630`, `0x6e1790`; handlers `0x806dd0`, `0x6e95d0`, `0x6e9670`, `0x6e9730`).
 //!
 //! - A record holds three timers: the spell's recovery, its category's recovery and the GCD
 //!   (`startRecoveryCategory`, `startRecoveryTime`); `on_hold` parks the first two until
@@ -21,6 +21,11 @@ use bevy::prelude::*;
 use super::{SpellModifiers, OP_GCD};
 use benilla_formats::SpellDisplay;
 use benilla_protocol::messages::ItemUseSpell;
+
+/// `SMSG_SPELL_COOLDOWN` flag bit 0: each entry also starts its spell's GCD (`0x806f8c`).
+pub(crate) const WIRE_INCLUDE_GCD: u8 = 0x1;
+/// `SMSG_SPELL_COOLDOWN` flag bit 1: no entry parks for `SMSG_COOLDOWN_EVENT` (`0x806ee8`).
+pub(crate) const WIRE_IGNORE_ON_EVENT: u8 = 0x2;
 
 /// One timer; a zero duration is untracked.
 #[derive(Clone, Copy, Debug)]
@@ -398,17 +403,21 @@ impl Cooldowns {
         self.wipe();
     }
 
-    /// One `SMSG_SPELL_COOLDOWN` entry (`0x6e9460`): a nonzero duration is the recovery with no
-    /// category timer; zero means the spell's own `Spell.dbc` pair. An on-event spell parks with
-    /// no GCD; any other carries its GCD.
+    /// One `SMSG_SPELL_COOLDOWN` entry (`0x806dd0`): a nonzero duration is the recovery with no
+    /// category timer; zero means the spell's own `Spell.dbc` pair. An on-event spell parks unless
+    /// the packet's [`WIRE_IGNORE_ON_EVENT`] is set; a running one carries its op-21 GCD only
+    /// under [`WIRE_INCLUDE_GCD`].
     pub(crate) fn apply_wire_cooldown(
         &mut self,
         spell_id: u32,
         cooldown_ms: u32,
+        flags: u8,
         spell: Option<&SpellDisplay>,
+        mods: &SpellModifiers,
         now: Instant,
     ) {
-        let on_hold = spell.is_some_and(|s| s.cooldown_on_event());
+        let on_hold =
+            flags & WIRE_IGNORE_ON_EVENT == 0 && spell.is_some_and(|s| s.cooldown_on_event());
         let (recovery_ms, category, category_ms) = if cooldown_ms != 0 {
             (cooldown_ms, spell.map_or(0, |s| s.category), 0)
         } else {
@@ -417,13 +426,12 @@ impl Cooldowns {
                 None => (0, 0, 0),
             }
         };
-        let (gcd_category, gcd_ms) = if on_hold {
-            (0, 0)
-        } else {
-            match spell {
-                Some(s) => (s.start_recovery_category, s.start_recovery_ms),
-                None => (0, 0),
-            }
+        let (gcd_category, gcd_ms) = match spell {
+            Some(s) if flags & WIRE_INCLUDE_GCD != 0 && !on_hold => (
+                s.start_recovery_category,
+                mods.apply(s, OP_GCD, s.start_recovery_ms as i32).max(0) as u32,
+            ),
+            _ => (0, 0),
         };
         self.add(
             now,
@@ -837,15 +845,55 @@ mod tests {
         let t0 = Instant::now();
         let mut cds = Cooldowns::default();
         // A school lockout: nonzero wire ms is the recovery verbatim.
-        cds.apply_wire_cooldown(133, 8_000, Some(&fireball()), t0);
+        let mods = SpellModifiers::default();
+        cds.apply_wire_cooldown(133, 8_000, 0, Some(&fireball()), &mods, t0);
         let locked = cds.info(133, 0, Some(&fireball()), t0 + Duration::from_secs(3));
         assert_eq!((locked.remaining_ms, locked.duration_ms), (5_000, 8_000));
 
         // Zero wire ms: the spell's own Spell.dbc recovery/category pair.
         let mut cds = Cooldowns::default();
-        cds.apply_wire_cooldown(100, 0, Some(&charge()), t0);
+        cds.apply_wire_cooldown(100, 0, 0, Some(&charge()), &mods, t0);
         let ch = cds.info(100, 0, Some(&charge()), t0 + Duration::from_secs(5));
         assert_eq!((ch.remaining_ms, ch.duration_ms), (10_000, 15_000));
+    }
+
+    #[test]
+    fn the_wire_flags_gate_the_gcd_and_the_on_event_hold() {
+        let t0 = Instant::now();
+        let mid = t0 + Duration::from_millis(500);
+        let mods = SpellModifiers::default();
+        let gcd = |cds: &Cooldowns| cds.info(133, 0, Some(&fireball()), mid).duration_ms;
+
+        // No flags: the recovery alone, no GCD.
+        let mut cds = Cooldowns::default();
+        cds.apply_wire_cooldown(116, 8_000, 0, Some(&fireball()), &mods, t0);
+        assert_eq!(gcd(&cds), 0);
+
+        // 0x1: the spell's GCD runs beside it, through op 21.
+        let mut d = fireball();
+        d.spell_family = 3;
+        d.spell_family_flags = 1 << 5;
+        let mut halved = SpellModifiers::default();
+        halved.set_class_family(3);
+        halved.set(false, 5, OP_GCD, -50);
+        let mut cds = Cooldowns::default();
+        cds.apply_wire_cooldown(116, 8_000, WIRE_INCLUDE_GCD, Some(&d), &halved, t0);
+        assert_eq!(gcd(&cds), 750);
+
+        // An on-event spell parks with no GCD; 0x2 runs it now, and 0x1 then carries the GCD.
+        let fd = spell(0, 30_000, 0, (133, 1500), 1 << 25);
+        let flags = WIRE_INCLUDE_GCD;
+        let mut cds = Cooldowns::default();
+        cds.apply_wire_cooldown(5384, 0, flags, Some(&fd), &mods, t0);
+        let parked = cds.info(5384, 0, Some(&fd), mid);
+        assert_eq!((parked.enabled, gcd(&cds)), (false, 0));
+        let mut cds = Cooldowns::default();
+        cds.apply_wire_cooldown(5384, 0, flags | WIRE_IGNORE_ON_EVENT, Some(&fd), &mods, t0);
+        let running = cds.info(5384, 0, Some(&fd), mid);
+        assert_eq!(
+            (running.enabled, running.remaining_ms, gcd(&cds)),
+            (true, 29_500, 1500)
+        );
     }
 
     #[test]

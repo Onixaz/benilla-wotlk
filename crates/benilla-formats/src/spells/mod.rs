@@ -57,7 +57,7 @@ const SPELL_FIELDS: usize = 234;
 /// `Category` (`+0x4`): the shared-cooldown `SpellCategory.dbc` id, such as potions 4.
 const COL_CATEGORY: usize = 1;
 /// `RecoveryTime` (`+0x74`) and `CategoryRecoveryTime` (`+0x78`), in ms, read by `StartCooldown`
-/// (`0x6e2c60`) and the `SMSG_SPELL_COOLDOWN` handler (`0x6e9460`).
+/// (`0x6e2c60`) and the `SMSG_SPELL_COOLDOWN` handler (`0x806dd0`).
 const COL_RECOVERY_TIME: usize = 29;
 const COL_CATEGORY_RECOVERY_TIME: usize = 30;
 /// The three interrupt masks (`+0x7c`, `+0x80`, `+0x84`): cast, applied aura, running channel.
@@ -278,7 +278,7 @@ const ATTR_EX_CHANNELED: u32 = 0x44;
 /// (`0x6e83c0`), not at the send: the stealth openers, positional strikes and Judgement.
 const ATTR_EX2_INITIATE_COMBAT_POST_CAST: u32 = 0x0010_0000;
 
-/// `SPELL_ATTR_COOLDOWN_ON_EVENT`: held by the `SMSG_SPELL_COOLDOWN` handler (`0x6e9460`).
+/// `SPELL_ATTR_COOLDOWN_ON_EVENT`: held by the `SMSG_SPELL_COOLDOWN` handler (`0x801220`).
 const ATTR_COOLDOWN_ON_EVENT: u32 = 0x0200_0000;
 
 /// The usable walk's attribute gates (`0x6e3d60`): bit 23 castable while dead (`0x6e3dbd`), bit

@@ -517,15 +517,17 @@ fn on_cooldown_packet(In(ev): In<SessionEvent>, mut l: Lifecycle) {
         spells,
         cooldowns,
         pet_bar,
+        spell_mods,
         ..
     } = &mut l;
     match ev {
         SessionEvent::SpellCooldowns {
             caster,
+            flags,
             cooldowns: pairs,
         } => {
             if let Some(store) = addressed_store(caster, self_guid, cooldowns, pet_bar) {
-                spell_cooldowns(caster, pairs, spells.as_deref(), store);
+                spell_cooldowns(caster, flags, pairs, spells.as_deref(), spell_mods, store);
             }
         }
         SessionEvent::CooldownEvent { spell_id, caster } => {
@@ -1377,22 +1379,24 @@ fn pet_go_cooldown(
         == Some(me)
 }
 
-/// `SMSG_SPELL_COOLDOWN` (`0x6e9460`): server-pushed cooldowns (school lockouts, the pet's list),
+/// `SMSG_SPELL_COOLDOWN` (`0x806dd0`): server-pushed cooldowns (school lockouts, the pet's list),
 /// into the store [`addressed_store`] picked.
 fn spell_cooldowns(
     caster: u64,
+    flags: u8,
     pairs: Vec<(u32, u32)>,
     spells: Option<&Spells>,
+    mods: &crate::spell::SpellModifiers,
     cooldowns: &mut Cooldowns,
 ) {
     debug!(
-        "net: spell cooldowns for {caster:#x} — {} pair(s)",
+        "net: spell cooldowns for {caster:#x} flags {flags:#x} — {} pair(s)",
         pairs.len()
     );
     let now = Instant::now();
     for (spell_id, cooldown_ms) in pairs {
         let display = spells.and_then(|s| s.catalog.get(spell_id));
-        cooldowns.apply_wire_cooldown(spell_id, cooldown_ms, display, now);
+        cooldowns.apply_wire_cooldown(spell_id, cooldown_ms, flags, display, mods, now);
     }
 }
 

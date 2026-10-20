@@ -347,7 +347,7 @@ pub(super) fn feed_pet_bar(
 /// `ACTIONBAR_UPDATE_COOLDOWN` (`0x4e5c60`, event `0xd8`) then `SPELL_UPDATE_COOLDOWN` (`0x106`),
 /// and `0x4bce90` fires `PET_BAR_UPDATE_COOLDOWN` (`0x162`). Its callers are the pet's
 /// `SMSG_SPELL_GO` leg (`0x6e85fc`), `StartGlobalCooldown` for the list (`0x6e2e77`, `0x6e2e8e`),
-/// `SMSG_SPELL_COOLDOWN` for the pet's guid (`0x6e95b0`, `0x6e95b9`), `SMSG_COOLDOWN_EVENT` and
+/// `SMSG_SPELL_COOLDOWN` for the pet's guid (`0x807033`, `0x807039`), `SMSG_COOLDOWN_EVENT` and
 /// `SMSG_CLEAR_COOLDOWN` (`0x6e3071`, `0x6e3080`) and `SMSG_COOLDOWN_CHEAT` (`0x6e9712`,
 /// `0x6e971c`); each is a change of [`Cooldowns::generation`](crate::spell::Cooldowns), and one
 /// frame's changes fire it once. `SMSG_PET_SPELLS` seeds without it, so the events never fire for

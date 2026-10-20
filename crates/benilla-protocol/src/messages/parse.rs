@@ -925,8 +925,12 @@ fn parse_server_body(
         }
         opcode::SMSG_CANCEL_AUTO_REPEAT => ServerPacket::CancelAutoRepeat,
         opcode::SMSG_SPELL_COOLDOWN => {
-            let (caster, cooldowns) = spellbook::read_spell_cooldown(&mut r)?;
-            ServerPacket::SpellCooldownList { caster, cooldowns }
+            let (caster, flags, cooldowns) = spellbook::read_spell_cooldown(&mut r)?;
+            ServerPacket::SpellCooldownList {
+                caster,
+                flags,
+                cooldowns,
+            }
         }
         opcode::SMSG_ITEM_COOLDOWN => {
             let (item_guid, spell_id) = spellbook::read_item_cooldown(&mut r)?;

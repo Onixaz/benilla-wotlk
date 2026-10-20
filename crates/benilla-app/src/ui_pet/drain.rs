@@ -164,9 +164,9 @@ impl PetPress<'_, '_> {
 /// `bar::fire_pet_cooldown_events`.
 ///
 /// The pet's GCD starts in three places, and this arm is one. A `SMSG_SPELL_COOLDOWN` addressed
-/// to the pet's guid inserts the same pair for every entry whose spell lacks `Attributes` bit 25
-/// (`0x6e9553`-`0x6e9598`, `Cooldowns::apply_wire_cooldown`). The generic cast send starts it too
-/// (`0x6e58fb`), with the list picked by the caster's charmed-by, else summoned-by, guid
+/// to the pet's guid under flag `0x1` inserts the op-21 pair for every entry not parked on its
+/// event (`0x806f8c`-`0x806fdb`, `Cooldowns::apply_wire_cooldown`). The generic cast send starts
+/// it too (`0x6e58fb`), with the list picked by the caster's charmed-by, else summoned-by, guid
 /// (`0x6e58c2`-`0x6e58f3`); the possessed and client-targeted presses above reach it through
 /// `0x6e4b60`. The `SMSG_SPELL_GO` pet leg inserts the spell's own timers and no GCD (`0x6e85f7`).
 pub(super) fn arm_pet_gcd(

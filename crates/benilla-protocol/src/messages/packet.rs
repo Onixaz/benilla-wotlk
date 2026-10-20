@@ -640,6 +640,8 @@ pub enum ServerPacket {
     /// `SMSG_SPELL_COOLDOWN`: server-pushed cooldowns for the player or pet, by caster guid.
     SpellCooldownList {
         caster: u64,
+        /// Bit `0x1` starts each spell's GCD, bit `0x2` skips the on-event hold (`0x806dfe`).
+        flags: u8,
         /// `(spell_id, cooldown_ms)`; `0` ms means the spell's own DBC recovery and category times.
         cooldowns: Vec<(u32, u32)>,
     },

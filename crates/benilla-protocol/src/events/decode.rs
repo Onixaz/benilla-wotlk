@@ -267,9 +267,15 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             reason,
         }],
         ServerPacket::CancelAutoRepeat => vec![SessionEvent::CancelAutoRepeat],
-        ServerPacket::SpellCooldownList { caster, cooldowns } => {
-            vec![SessionEvent::SpellCooldowns { caster, cooldowns }]
-        }
+        ServerPacket::SpellCooldownList {
+            caster,
+            flags,
+            cooldowns,
+        } => vec![SessionEvent::SpellCooldowns {
+            caster,
+            flags,
+            cooldowns,
+        }],
         ServerPacket::ItemCooldown {
             item_guid,
             spell_id,
