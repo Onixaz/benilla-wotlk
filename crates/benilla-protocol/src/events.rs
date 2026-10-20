@@ -408,7 +408,7 @@ pub enum SessionEvent {
     /// A spirit healer's next resurrection wave (`SMSG_AREA_SPIRIT_HEALER_TIME`): arms
     /// `GetAreaSpiritHealerTime` and fires `AREA_SPIRIT_HEALER_IN_RANGE`.
     AreaSpiritHealerTime { healer: u64, ms: u32 },
-    /// One of the client's three battleground queue slots (`SMSG_BATTLEFIELD_STATUS`).
+    /// One of the client's two queue slots (`SMSG_BATTLEFIELD_STATUS`).
     BattlefieldStatus(crate::messages::BattlefieldStatus),
     /// The battleground scoreboard (`MSG_PVP_LOG_DATA`), rows in wire order, unsorted.
     PvpLogData(crate::messages::PvpLogData),
@@ -420,9 +420,27 @@ pub enum SessionEvent {
     TabardVendorActivate(u64),
     /// `MSG_SAVE_GUILD_EMBLEM`: the save's result row.
     SaveGuildEmblemResult(u32),
-    /// `SMSG_GROUP_JOINED_BATTLEGROUND`: `0xFFFFFFFE` deserters, a map id joined, else the
-    /// generic failure; a message line each, no state.
-    GroupJoinedBattleground { result: u32 },
+    /// `SMSG_GROUP_JOINED_BATTLEGROUND`: a `BattlemasterList.dbc` id joined or a negative error;
+    /// a message line each, no state.
+    GroupJoinedBattleground(crate::messages::GroupJoinedBattleground),
+    /// `SMSG_BATTLEFIELD_PORT_DENIED`: `ERR_PLAYER_DEAD` with a player (`0x54d4b0`).
+    BattlefieldPortDenied,
+    /// `SMSG_ARENA_UNIT_DESTROYED`: an arena opponent's unit left the world.
+    ArenaUnitDestroyed(u64),
+    /// The Wintergrasp battle manager's notices, one script event each.
+    BattlefieldMgr(crate::messages::BattlefieldMgrNotice),
+    /// An arena team's cache record (`SMSG_ARENA_TEAM_QUERY_RESPONSE`).
+    ArenaTeamQueryResponse(crate::messages::ArenaTeamRecord),
+    /// One of our arena teams' members (`SMSG_ARENA_TEAM_ROSTER`).
+    ArenaTeamRoster(crate::messages::ArenaTeamRoster),
+    /// One of our arena teams' rating and games (`SMSG_ARENA_TEAM_STATS`).
+    ArenaTeamStats(crate::messages::ArenaTeamStats),
+    /// An arena-team command's verdict (`SMSG_ARENA_TEAM_COMMAND_RESULT`).
+    ArenaTeamCommandResult(crate::messages::ArenaTeamCommandResult),
+    /// A membership change on one of our teams (`SMSG_ARENA_TEAM_EVENT`).
+    ArenaTeamEvent(crate::messages::ArenaTeamEvent),
+    /// An invitation to an arena team (`SMSG_ARENA_TEAM_INVITE`).
+    ArenaTeamInvite { inviter: String, team: String },
     /// `SMSG_BATTLEGROUND_PLAYER_JOINED`/`_LEFT`, printed once the name cache has the guid.
     BattlegroundPlayer { guid: u64, joined: bool },
     /// The meeting-stone queue state (`SMSG 0x295`): the area queued for and a status byte.
@@ -1102,6 +1120,8 @@ pub enum SessionEvent {
     BreakTarget { guid: u64 },
     /// Another player's honor stats (`MSG_INSPECT_HONOR_STATS`); a refused ask gets no reply.
     InspectHonorStats(InspectHonorStats),
+    /// One of another player's arena teams (`MSG_INSPECT_ARENA_TEAMS`).
+    InspectArenaTeam(crate::messages::InspectArenaTeam),
     /// A kill paid out honor (`SMSG_PVP_CREDIT`); a dishonorable kill's `honor` is negative.
     PvpCredit(PvpCredit),
     /// A breath or fatigue bar started or restated (`SMSG_START_MIRROR_TIMER`): with no update
@@ -1230,11 +1250,11 @@ pub enum SessionEvent {
     TradeStatus { status: TradeStatus },
     /// One trade side's items and gold (`SMSG_TRADE_STATUS_EXTENDED`), boxed at about 460 bytes.
     TradeStatusExtended { state: Box<TradeStatusExtended> },
-    /// World states: `SMSG_INIT_WORLD_STATES` with its `(map, zone)` scope and the wire run
-    /// verbatim, terminator included, or `SMSG_UPDATE_WORLD_STATE` as one entry with no scope.
-    /// The reference funnels both into one setter too.
+    /// World states: `SMSG_INIT_WORLD_STATES` with its `(map, zone, area)` scope and the wire run
+    /// verbatim, or `SMSG_UPDATE_WORLD_STATE` as one entry with no scope. The reference funnels
+    /// both into one setter too.
     WorldStates {
-        scope: Option<(u32, u32)>,
+        scope: Option<(u32, u32, u32)>,
         states: Vec<(u32, u32)>,
     },
 }

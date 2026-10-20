@@ -1,4 +1,4 @@
-//! The honor wire messages: the inspect-honor request/reply pair and the honor-gain credit.
+//! The honor wire messages: the inspect request/reply pairs and the honor-gain credit.
 //! Durable honor state rides the player descriptor; these carry what it cannot, another player's
 //! stats and the moment a kill pays out.
 
@@ -6,53 +6,23 @@ use std::io;
 
 use crate::wire::{read_i32_le, read_u16_le, read_u32_le, read_u64_le, read_u8};
 
-/// Another player's honor stats, the `MSG_INSPECT_HONOR_STATS` reply (opcode 726): 50 bytes in
-/// vmangos `Misc.cpp:301-325` order, from the target's `PLAYER_FIELD_*` honor block. Their
-/// current rank is not here; it streams publicly in `PLAYER_BYTES_3`.
+/// Another player's honor stats, the `MSG_INSPECT_HONOR_STATS` reply (handler `0x5e7a50`): the
+/// target's 3.3.5a honor fields, read into `0xc24208`..`0xc24218`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InspectHonorStats {
-    /// Echoed from the request. There is no error reply: a missing, distant (10 yd) or hostile
-    /// target gets no answer at all (`MiscHandler.cpp:977`).
+    /// Echoed from the request. There is no error reply: a missing, distant or hostile target gets
+    /// no answer at all.
     pub player_guid: u64,
-    /// The highest lifetime rank (`MiscHandler.cpp:985`), internal 0..18 like
-    /// [`crate::messages::ObjectFields::player_honor_rank`], not the visual number.
+    /// `GetInspectHonorData`'s sixth return, the lifetime highest rank.
     pub highest_rank: u8,
-    /// Today's kills, the packed `PLAYER_FIELD_SESSION_KILLS` dword (`MiscHandler.cpp:988`).
-    pub session_kills: u32,
-    /// Yesterday's honorable kills, the low half of `PLAYER_FIELD_YESTERDAY_KILLS`.
+    /// `PLAYER_FIELD_KILLS`, low half then high: today's and yesterday's honorable kills.
+    pub today_hk: u16,
     pub yesterday_hk: u16,
-    /// Always 0 from vmangos (`MiscHandler.cpp:994`); decoded, not skipped.
-    pub unknown_old1: u16,
-    /// Last week's honorable kills.
-    pub last_week_hk: u16,
-    /// Always 0 from vmangos.
-    pub unknown_old2: u16,
-    /// This week's honorable kills.
-    pub this_week_hk: u16,
-    /// Always 0 from vmangos.
-    pub unknown_old3: u16,
-    /// Lifetime honorable kills (`PLAYER_FIELD_LIFETIME_HONORBALE_KILLS`, vmangos's spelling).
-    pub lifetime_hk: u32,
-    /// Lifetime dishonorable kills.
-    pub lifetime_dhk: u32,
-    /// Yesterday's honor points (`PLAYER_FIELD_YESTERDAY_CONTRIBUTION`).
+    /// `PLAYER_FIELD_TODAY_CONTRIBUTION` and `_YESTERDAY_CONTRIBUTION`.
+    pub today_honor: u32,
     pub yesterday_honor: u32,
-    /// Last week's honor points.
-    pub last_week_honor: u32,
-    /// This week's honor points.
-    pub this_week_honor: u32,
-    /// Last week's standing, the ladder position and not a rank; 0 if unranked that week.
-    pub last_week_rank: u32,
-    /// Progress within the target's current rank, 0..255, computed as
-    /// [`crate::messages::ObjectFields::player_honor_rank_bar`] is.
-    pub rank_bar: u8,
-}
-
-impl InspectHonorStats {
-    /// The packed field split into `(honorable, dishonorable)`, low half then high half.
-    pub fn session_kills(&self) -> (u16, u16) {
-        (self.session_kills as u16, (self.session_kills >> 16) as u16)
-    }
+    /// `PLAYER_FIELD_LIFETIME_HONORABLE_KILLS`.
+    pub lifetime_hk: u32,
 }
 
 /// Read the `MSG_INSPECT_HONOR_STATS` reply. Our 8-byte request shares the opcode, but only
@@ -61,20 +31,43 @@ pub(super) fn read_inspect_honor_stats(r: &mut &[u8]) -> io::Result<InspectHonor
     Ok(InspectHonorStats {
         player_guid: read_u64_le(r)?,
         highest_rank: read_u8(r)?,
-        session_kills: read_u32_le(r)?,
+        today_hk: read_u16_le(r)?,
         yesterday_hk: read_u16_le(r)?,
-        unknown_old1: read_u16_le(r)?,
-        last_week_hk: read_u16_le(r)?,
-        unknown_old2: read_u16_le(r)?,
-        this_week_hk: read_u16_le(r)?,
-        unknown_old3: read_u16_le(r)?,
-        lifetime_hk: read_u32_le(r)?,
-        lifetime_dhk: read_u32_le(r)?,
+        today_honor: read_u32_le(r)?,
         yesterday_honor: read_u32_le(r)?,
-        last_week_honor: read_u32_le(r)?,
-        this_week_honor: read_u32_le(r)?,
-        last_week_rank: read_u32_le(r)?,
-        rank_bar: read_u8(r)?,
+        lifetime_hk: read_u32_le(r)?,
+    })
+}
+
+/// One of another player's arena teams, the `MSG_INSPECT_ARENA_TEAMS` reply (handler `0x5e7b00`):
+/// six words into the inspect store's slot (`0xc241c0 + 0x18 * slot`), kept positionally as
+/// `GetInspectArenaTeamData` reads them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InspectArenaTeam {
+    /// The player inspected; the handler drops a reply for anyone but its inspect target.
+    pub player_guid: u64,
+    /// 0 2v2, 1 3v3, 2 5v5; the handler drops 3 and above.
+    pub slot: u8,
+    pub team_id: u32,
+    pub rating: u32,
+    /// The third to sixth words: games and wins as the server fills them, then the personal
+    /// rating last (`GetInspectArenaTeamData`'s fourth to seventh returns).
+    pub games: u32,
+    pub wins: u32,
+    pub played: u32,
+    pub personal_rating: u32,
+}
+
+pub(super) fn read_inspect_arena_team(r: &mut &[u8]) -> io::Result<InspectArenaTeam> {
+    Ok(InspectArenaTeam {
+        player_guid: read_u64_le(r)?,
+        slot: read_u8(r)?,
+        team_id: read_u32_le(r)?,
+        rating: read_u32_le(r)?,
+        games: read_u32_le(r)?,
+        wins: read_u32_le(r)?,
+        played: read_u32_le(r)?,
+        personal_rating: read_u32_le(r)?,
     })
 }
 
@@ -117,81 +110,64 @@ mod tests {
     #[test]
     fn inspect_honor_stats_golden() {
         #[rustfmt::skip]
-        let body: [u8; 50] = [
-            // [0..8) u64 playerGuid = 0x0000_0001_0000_2AB3
+        let body: [u8; 25] = [
+            // u64 playerGuid = 0x0000_0001_0000_2AB3
             0xB3, 0x2A, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-            // [8] u8 highestRank = 11 (internal)
+            // u8 highestRank = 11
             0x0B,
-            // [9..13) u32 sessionKills = 0x0002_0011: 17 HK low, 2 DK high
+            // u16 today's HK = 17, u16 yesterday's = 2
             0x11, 0x00, 0x02, 0x00,
-            // [13..15) u16 yesterdayHK = 41
-            0x29, 0x00,
-            // [15..17) u16 unknownOld1 = 0
-            0x00, 0x00,
-            // [17..19) u16 lastWeekHK = 420
-            0xA4, 0x01,
-            // [19..21) u16 unknownOld2 = 0
-            0x00, 0x00,
-            // [21..23) u16 thisWeekHK = 123
-            0x7B, 0x00,
-            // [23..25) u16 unknownOld3 = 0
-            0x00, 0x00,
-            // [25..29) u32 lifetimeHK = 3907
-            0x43, 0x0F, 0x00, 0x00,
-            // [29..33) u32 lifetimeDHK = 12
-            0x0C, 0x00, 0x00, 0x00,
-            // [33..37) u32 yesterdayHonor = 640
+            // u32 today's honor = 640, yesterday's = 8431, lifetime HK = 3907
             0x80, 0x02, 0x00, 0x00,
-            // [37..41) u32 lastWeekHonor = 8431
             0xEF, 0x20, 0x00, 0x00,
-            // [41..45) u32 thisWeekHonor = 1250
-            0xE2, 0x04, 0x00, 0x00,
-            // [45..49) u32 lastWeekRank = 57 (the standing)
-            0x39, 0x00, 0x00, 0x00,
-            // [49] u8 rankBar = 191
-            0xBF,
+            0x43, 0x0F, 0x00, 0x00,
         ];
         let mut r = body.as_slice();
         let stats = read_inspect_honor_stats(&mut r).unwrap();
-        assert!(r.is_empty(), "the whole 50-byte body is consumed");
+        assert!(r.is_empty(), "the whole body is consumed");
         assert_eq!(
             stats,
             InspectHonorStats {
                 player_guid: 0x0000_0001_0000_2AB3,
                 highest_rank: 11,
-                session_kills: 0x0002_0011,
-                yesterday_hk: 41,
-                unknown_old1: 0,
-                last_week_hk: 420,
-                unknown_old2: 0,
-                this_week_hk: 123,
-                unknown_old3: 0,
+                today_hk: 17,
+                yesterday_hk: 2,
+                today_honor: 640,
+                yesterday_honor: 8_431,
                 lifetime_hk: 3_907,
-                lifetime_dhk: 12,
-                yesterday_honor: 640,
-                last_week_honor: 8_431,
-                this_week_honor: 1_250,
-                last_week_rank: 57,
-                rank_bar: 191,
             }
         );
-        assert_eq!(stats.session_kills(), (17, 2));
     }
 
-    /// 49 bytes is everything but the trailing `rankBar`, which is what a pre-1.6.1 server sends.
     #[test]
     fn inspect_honor_stats_truncated_body_errors() {
-        let full = [0u8; 50];
-        for len in [0usize, 8, 13, 49] {
+        let full = [0u8; 25];
+        for len in [0usize, 8, 13, 24] {
             let mut r = &full[..len];
-            assert!(
-                read_inspect_honor_stats(&mut r).is_err(),
-                "a {len}-byte inspect-honor body must be rejected"
-            );
+            assert!(read_inspect_honor_stats(&mut r).is_err(), "{len} bytes");
         }
-        // The full length parses, so the loop above really tests truncation.
         let mut r = full.as_slice();
         assert!(read_inspect_honor_stats(&mut r).is_ok());
+    }
+
+    #[test]
+    fn inspect_arena_team_reads_six_words() {
+        let mut b = 0x42u64.to_le_bytes().to_vec();
+        b.push(1);
+        for v in [9u32, 1600, 20, 12, 18, 1580] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        let mut r = b.as_slice();
+        let t = read_inspect_arena_team(&mut r).unwrap();
+        assert!(r.is_empty());
+        assert_eq!(
+            (t.player_guid, t.slot, t.team_id, t.rating),
+            (0x42, 1, 9, 1600)
+        );
+        assert_eq!(
+            (t.games, t.wins, t.played, t.personal_rating),
+            (20, 12, 18, 1580)
+        );
     }
 
     #[test]

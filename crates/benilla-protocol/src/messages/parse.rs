@@ -8,9 +8,9 @@ use crate::wire::{
 };
 
 use super::{
-    achievement, action_bar, area_trigger, attack, auction, aura, bank, battlefield, binder,
-    broadcast, channel, chat, combat_log, death, duel, equipment_set, gameobject, gm_ticket,
-    gossip, group, guild, instance, items, lfg, loot, mail, meeting_stone, mirror_timer,
+    achievement, action_bar, area_trigger, arena_team, attack, auction, aura, bank, battlefield,
+    binder, broadcast, channel, chat, combat_log, death, duel, equipment_set, gameobject,
+    gm_ticket, gossip, group, guild, instance, items, lfg, loot, mail, meeting_stone, mirror_timer,
     monster_move, movement, opcode, page_text, pet, petition, pose, progression, pvp, quest,
     social, spellbook, spells, stable, summon, tabard, talents, taxi, totem, trade, trainer,
     tutorial, update_object, vendor, world_state, AttackSwingError, Character, CreatureQueryInfo,
@@ -304,11 +304,7 @@ pub fn parse_server_with_tail(opcode: u16, body: &[u8]) -> io::Result<(ServerPac
 /// The opcodes whose 3.3.5a body is known to differ from the layout their arm reads and has no
 /// 3.3.5a decoder yet: each failed or left bytes unread against AzerothCore, and
 /// `SMSG_COMPRESSED_MOVES`, which AzerothCore never sends, frames its records unverified.
-const UNDECODED: [u16; 3] = [
-    opcode::SMSG_INIT_WORLD_STATES,
-    opcode::SMSG_FRIEND_LIST,
-    opcode::SMSG_COMPRESSED_MOVES,
-];
+const UNDECODED: [u16; 2] = [opcode::SMSG_FRIEND_LIST, opcode::SMSG_COMPRESSED_MOVES];
 
 /// The opcode dispatch; `cursor` advances past what the arm read only on success.
 fn parse_server_body(
@@ -576,9 +572,53 @@ fn parse_server_body(
         opcode::MSG_SAVE_GUILD_EMBLEM => {
             ServerPacket::SaveGuildEmblemResult(tabard::read_save_guild_emblem_result(&mut r)?)
         }
-        opcode::SMSG_GROUP_JOINED_BATTLEGROUND => ServerPacket::GroupJoinedBattleground {
-            result: crate::wire::read_u32_le(&mut r)?,
-        },
+        opcode::SMSG_GROUP_JOINED_BATTLEGROUND => ServerPacket::GroupJoinedBattleground(
+            battlefield::read_group_joined_battleground(&mut r)?,
+        ),
+        opcode::SMSG_BATTLEFIELD_PORT_DENIED => ServerPacket::BattlefieldPortDenied,
+        opcode::SMSG_ARENA_UNIT_DESTROYED => {
+            ServerPacket::ArenaUnitDestroyed(crate::wire::read_u64_le(&mut r)?)
+        }
+        opcode::SMSG_BATTLEFIELD_MGR_ENTRY_INVITE => {
+            ServerPacket::BattlefieldMgr(battlefield::read_bf_mgr_entry_invite(&mut r)?)
+        }
+        opcode::SMSG_BATTLEFIELD_MGR_ENTERED => {
+            ServerPacket::BattlefieldMgr(battlefield::read_bf_mgr_entered(&mut r)?)
+        }
+        opcode::SMSG_BATTLEFIELD_MGR_QUEUE_REQUEST_RESPONSE => {
+            ServerPacket::BattlefieldMgr(battlefield::read_bf_mgr_queue_request_response(&mut r)?)
+        }
+        opcode::SMSG_BATTLEFIELD_MGR_EJECT_PENDING => {
+            ServerPacket::BattlefieldMgr(battlefield::read_bf_mgr_eject_pending(&mut r)?)
+        }
+        opcode::SMSG_BATTLEFIELD_MGR_EJECTED => {
+            ServerPacket::BattlefieldMgr(battlefield::read_bf_mgr_ejected(&mut r)?)
+        }
+        opcode::SMSG_BATTLEFIELD_MGR_QUEUE_INVITE => {
+            ServerPacket::BattlefieldMgr(battlefield::read_bf_mgr_queue_invite(&mut r)?)
+        }
+        opcode::SMSG_BATTLEFIELD_MGR_STATE_CHANGE => {
+            ServerPacket::BattlefieldMgr(battlefield::read_bf_mgr_state_change(&mut r)?)
+        }
+        opcode::SMSG_ARENA_TEAM_QUERY_RESPONSE => ServerPacket::ArenaTeamQueryResponse(
+            arena_team::read_arena_team_query_response(&mut r)?,
+        ),
+        opcode::SMSG_ARENA_TEAM_ROSTER => {
+            ServerPacket::ArenaTeamRoster(arena_team::read_arena_team_roster(&mut r)?)
+        }
+        opcode::SMSG_ARENA_TEAM_STATS => {
+            ServerPacket::ArenaTeamStats(arena_team::read_arena_team_stats(&mut r)?)
+        }
+        opcode::SMSG_ARENA_TEAM_COMMAND_RESULT => ServerPacket::ArenaTeamCommandResult(
+            arena_team::read_arena_team_command_result(&mut r)?,
+        ),
+        opcode::SMSG_ARENA_TEAM_EVENT => {
+            ServerPacket::ArenaTeamEvent(arena_team::read_arena_team_event(&mut r)?)
+        }
+        opcode::SMSG_ARENA_TEAM_INVITE => {
+            let (inviter, team) = arena_team::read_arena_team_invite(&mut r)?;
+            ServerPacket::ArenaTeamInvite { inviter, team }
+        }
         opcode::SMSG_BATTLEGROUND_PLAYER_JOINED => ServerPacket::BattlegroundPlayer {
             guid: crate::wire::read_u64_le(&mut r)?,
             joined: true,
@@ -1576,6 +1616,9 @@ fn parse_server_body(
         // `0x2D6` carries our 8-byte request and the 50-byte reply; only the reply reaches here.
         opcode::MSG_INSPECT_HONOR_STATS => {
             ServerPacket::InspectHonorStats(pvp::read_inspect_honor_stats(&mut r)?)
+        }
+        opcode::MSG_INSPECT_ARENA_TEAMS => {
+            ServerPacket::InspectArenaTeam(pvp::read_inspect_arena_team(&mut r)?)
         }
         opcode::SMSG_PVP_CREDIT => ServerPacket::PvpCredit(pvp::read_pvp_credit(&mut r)?),
         opcode::SMSG_START_MIRROR_TIMER => {

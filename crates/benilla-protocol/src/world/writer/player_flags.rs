@@ -8,10 +8,16 @@ use crate::messages::opcode;
 use super::WorldWriter;
 
 impl WorldWriter {
-    /// `CMSG_TOGGLE_PVP`: flagging on shows as the `UNIT_FIELD_FLAGS` PvP bit; flagging off clears
-    /// only the wish, and the flag drops after vmangos's 300 s timer (`Player::UpdatePvP`).
+    /// `CMSG_TOGGLE_PVP` empty, `TogglePVP()` (`0x516840`): the server flips the desired bit;
+    /// flagging off clears only the wish, and the flag drops after the server's timer.
     pub fn toggle_pvp(&mut self) -> Result<()> {
         self.send(opcode::CMSG_TOGGLE_PVP, &[])
+    }
+
+    /// `CMSG_TOGGLE_PVP` with one byte, `SetPVP(state)` (`0x5168b0`): the state requested, the
+    /// argument's number truncated to a byte and 0 for a non-number.
+    pub fn set_pvp(&mut self, state: u8) -> Result<()> {
+        self.send(opcode::CMSG_TOGGLE_PVP, &[state])
     }
 
     /// `CMSG_TOGGLE_HELM`: answered by the `PLAYER_FLAGS` `HIDE_HELM` bit, which every client in

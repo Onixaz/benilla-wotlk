@@ -16,4 +16,10 @@ impl WorldWriter {
             &messages::inspect_honor_stats(guid),
         )
     }
+
+    /// `MSG_INSPECT_ARENA_TEAMS`: the raw guid; one reply per team the target is on, sent with
+    /// the honor ask by `RequestInspectHonorData` (`0x5e9140`).
+    pub fn inspect_arena_teams(&mut self, guid: u64) -> Result<()> {
+        self.send(opcode::MSG_INSPECT_ARENA_TEAMS, &guid.to_le_bytes())
+    }
 }

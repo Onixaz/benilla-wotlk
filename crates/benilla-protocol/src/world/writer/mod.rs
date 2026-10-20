@@ -10,6 +10,7 @@ use super::send_packet;
 
 mod action_bar;
 mod area_trigger;
+mod arena_team;
 mod attack;
 mod auction;
 mod bank;

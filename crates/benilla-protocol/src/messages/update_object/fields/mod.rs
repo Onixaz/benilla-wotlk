@@ -198,6 +198,14 @@ const FIELD_PLAYER_MOD_HEALING_PCT: u16 = 1470; // FLOAT
 const FIELD_PLAYER_MOD_HEALING_DONE_PCT: u16 = 1471; // FLOAT
 const FIELD_PLAYER_PET_SPELL_POWER: u16 = 1472;
 const FIELD_PLAYER_RAF_GRANTABLE_LEVEL: u16 = 1473;
+// 3.3.5a's honor, arena-team and currency fields.
+const FIELD_PLAYER_FIELD_KILLS: u16 = 1474; // TWO_SHORT: today, yesterday
+const FIELD_PLAYER_FIELD_TODAY_CONTRIBUTION: u16 = 1475;
+const FIELD_PLAYER_FIELD_ARENA_TEAM_INFO_1_1: u16 = 1476; // 3 x 7
+const FIELD_PLAYER_FIELD_HONOR_CURRENCY: u16 = 1497;
+const FIELD_PLAYER_FIELD_ARENA_CURRENCY: u16 = 1498;
+/// The words per arena-team slot in `PLAYER_FIELD_ARENA_TEAM_INFO_1_1`.
+pub const ARENA_TEAM_INFO_STRIDE: u16 = 7;
 /// The combat ratings, 25 in 3.3.5a (`GetCombatRating` refuses an index past `0x19`).
 pub const PLAYER_COMBAT_RATINGS: u8 = 25;
 // 3.3.5a's power regen pairs and max-health modifier, in 1.12.1's unread power-cost words.
@@ -388,7 +396,7 @@ fn descriptor_len(object_type: ObjectType) -> u16 {
         ObjectType::Container => 122, // CONTAINER_END = ITEM_END + 0x4A
         ObjectType::Unit => 188,      // UNIT_END = OBJECT_END + 0xB6
         // 1.12.1's PLAYER_END (UNIT_END + 0x446), plus the 3.3.5a fields kept past it.
-        ObjectType::Player => 1474,
+        ObjectType::Player => 1499,
         ObjectType::GameObject => 26, // GAMEOBJECT_END = OBJECT_END + 0x14
         ObjectType::DynamicObject => 16, // DYNAMICOBJECT_END = OBJECT_END + 0xA
         ObjectType::Corpse => 38,     // CORPSE_END = OBJECT_END + 0x20

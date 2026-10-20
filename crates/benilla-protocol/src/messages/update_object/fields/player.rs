@@ -280,6 +280,36 @@ impl ObjectFields {
     pub fn player_raf_grantable_level(&self) -> u8 {
         self.get_u32(FIELD_PLAYER_RAF_GRANTABLE_LEVEL).unwrap_or(0) as u8
     }
+    /// 3.3.5a `PLAYER_FIELD_KILLS` (private): today's honorable kills, the low half.
+    pub fn player_kills_today(&self) -> Option<u16> {
+        self.get_u32(FIELD_PLAYER_FIELD_KILLS).map(|v| v as u16)
+    }
+    /// 3.3.5a `PLAYER_FIELD_KILLS`: yesterday's honorable kills, the high half.
+    pub fn player_kills_yesterday(&self) -> Option<u16> {
+        self.get_u32(FIELD_PLAYER_FIELD_KILLS)
+            .map(|v| (v >> 16) as u16)
+    }
+    /// 3.3.5a `PLAYER_FIELD_TODAY_CONTRIBUTION` (private): honor earned today.
+    pub fn player_today_contribution(&self) -> Option<u32> {
+        self.get_u32(FIELD_PLAYER_FIELD_TODAY_CONTRIBUTION)
+    }
+    /// 3.3.5a `PLAYER_FIELD_ARENA_TEAM_INFO_1_1 + 7 * slot + word`: arena-team slot 0..3's word
+    /// 0..7 (team id, type, captain flag, week games, season games, season wins, rating).
+    pub fn player_arena_team_info(&self, slot: u16, word: u16) -> Option<u32> {
+        (slot < 3 && word < ARENA_TEAM_INFO_STRIDE).then(|| {
+            self.get_u32(
+                FIELD_PLAYER_FIELD_ARENA_TEAM_INFO_1_1 + slot * ARENA_TEAM_INFO_STRIDE + word,
+            )
+        })?
+    }
+    /// 3.3.5a `PLAYER_FIELD_HONOR_CURRENCY` (private): the honor point balance.
+    pub fn player_honor_currency(&self) -> Option<u32> {
+        self.get_u32(FIELD_PLAYER_FIELD_HONOR_CURRENCY)
+    }
+    /// 3.3.5a `PLAYER_FIELD_ARENA_CURRENCY` (private): the arena point balance.
+    pub fn player_arena_currency(&self) -> Option<u32> {
+        self.get_u32(FIELD_PLAYER_FIELD_ARENA_CURRENCY)
+    }
     /// `PLAYER_FIELD_COMBAT_RATING_1 + i`: combat rating `i`, 0-based.
     pub fn player_combat_rating(&self, i: u8) -> Option<i32> {
         (i < PLAYER_COMBAT_RATINGS)
