@@ -22,7 +22,6 @@ fn with_store<R>(lua: &Lua, f: impl FnOnce(&mut AnimStore) -> R) -> R {
 /// `CSimpleAnimGroup::Play` (`0x49a8f0`).
 pub(crate) fn group_play(lua: &Lua, g: u32) -> bool {
     let start = with_store(lua, |s| {
-        let reset: Vec<u32>;
         let group = s.groups.get_mut(&g)?;
         if group.anims.is_empty() {
             return Some(None);
@@ -44,7 +43,7 @@ pub(crate) fn group_play(lua: &Lua, g: u32) -> bool {
         if count == 0 {
             return Some(Some((Vec::new(), false, false)));
         }
-        if group.current < 0 || group.current >= count {
+        let reset = if group.current < 0 || group.current >= count {
             if group.current < 0 {
                 group.current = 0;
                 group.loop_state = FORWARD;
@@ -52,10 +51,10 @@ pub(crate) fn group_play(lua: &Lua, g: u32) -> bool {
                 group.current = count - 1;
                 group.loop_state = REVERSE;
             }
-            reset = group.anims.clone();
+            group.anims.clone()
         } else {
-            reset = Vec::new();
-        }
+            Vec::new()
+        };
         let state = group.loop_state;
         let mut list = group.lists[group.current as usize].clone();
         if state == REVERSE {
