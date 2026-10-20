@@ -566,6 +566,8 @@ pub(crate) struct Model {
     pub(crate) shapeshift_forms: Vec<super::shapeshift::StoredShapeshiftForm>,
     /// The player's raw form byte (`CGUnit_C::GetShapeshiftForm`), 0 unshifted or no player.
     pub(crate) shapeshift_form_byte: u8,
+    /// The rune table `GetRuneType` reads.
+    pub(crate) runes: super::rune::RuneState,
     /// The four totem slots and their tools.
     pub(crate) totems: super::totem::TotemSlots,
     /// `DestroyTotem` calls on live slots, 0-based, for the app to send.
@@ -1342,6 +1344,7 @@ impl Model {
             tutorial_resets: 0,
             shapeshift_forms: Vec::new(),
             shapeshift_form_byte: 0,
+            runes: Default::default(),
             totems: Default::default(),
             totem_destroys: Vec::new(),
             multicast: Default::default(),

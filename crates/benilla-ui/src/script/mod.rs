@@ -207,6 +207,7 @@ mod quest_log;
 pub(crate) mod region;
 mod region_map;
 mod reputation;
+mod rune;
 mod saved;
 mod scrollframe;
 mod session;
@@ -977,6 +978,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     tutorial::install(lua)?;
     worldmap_arrow::install(lua)?;
     shapeshift::install(lua)?;
+    rune::install(lua)?;
     totem::install(lua)?;
     multicast::install(lua)?;
     pet::install(lua)?;
