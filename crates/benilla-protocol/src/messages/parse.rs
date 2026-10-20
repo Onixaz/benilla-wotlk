@@ -1314,7 +1314,7 @@ fn parse_server_body(
         }
         opcode::SMSG_INITIALIZE_FACTIONS => {
             let count = read_u32_le(&mut r)?;
-            // The array is exactly `MAX_FACTION_COUNT` 64 entries long (`FACTION_LIST_LEN`).
+            // The array is at most `FACTION_LIST_LEN` entries long.
             let mut standings =
                 Vec::with_capacity(capacity_hint(count, super::reputation::FACTION_LIST_LEN));
             for _ in 0..count {
@@ -1325,6 +1325,9 @@ fn parse_server_body(
             ServerPacket::InitializeFactions { standings }
         }
         opcode::SMSG_SET_FACTION_STANDING => {
+            // A spillover bonus and a show-effect byte precede the rows (`0x5d20c5`); unread here.
+            let _bonus = read_f32_le(&mut r)?;
+            let _show_effect = read_u8(&mut r)?;
             let count = read_u32_le(&mut r)?;
             // At most one row per reputation-list slot (`FACTION_LIST_LEN`).
             let mut standings =
@@ -1890,7 +1893,9 @@ mod tests {
             .expect("the second row is missing, so the read is short");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 
-        let mut body = 0xFFFF_FFFFu32.to_le_bytes().to_vec();
+        let mut body = 0f32.to_le_bytes().to_vec();
+        body.push(0); // show effect
+        body.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
         body.extend_from_slice(&5u32.to_le_bytes());
         body.extend_from_slice(&(-100i32).to_le_bytes());
         let err = parse_server(opcode::SMSG_SET_FACTION_STANDING, &body)

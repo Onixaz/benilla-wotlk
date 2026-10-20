@@ -718,7 +718,7 @@ fn reputation_visible(list_id: u32, reputations: &mut Reputations) {
 }
 
 /// A wire `repListId` as a store index, or `None` (logged) past the `FACTION_LIST_LEN` array
-/// (vmangos `MAX_FACTION_COUNT` 64); unchecked, `0xFFFF_FFFF` would resize the store to 34 GB.
+/// (128 in 12340); unchecked, `0xFFFF_FFFF` would resize the store to 34 GB.
 fn reputation_slot(list_id: u32, opcode: &str) -> Option<usize> {
     let i = usize::try_from(list_id).ok()?;
     if i >= benilla_protocol::messages::FACTION_LIST_LEN {

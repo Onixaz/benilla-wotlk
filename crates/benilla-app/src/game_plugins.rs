@@ -783,12 +783,15 @@ pub(crate) mod schedule_tests {
     ///   only reads templates for the tool check, as `feed_quest_lines` does;
     /// - `area_trigger::check_area_triggers` against the readers of `Player`: its heartbeat
     ///   writes only the stream's send bookkeeping (`last_pos`, `last_heartbeat`), which only the
-    ///   controller, ordered before it, reads.
+    ///   controller, ordered before it, reads;
+    /// - `ui_reputation::drain_reputation_sends` against the readers of `Reputations`: it writes
+    ///   the pane's unacked war and inactive flags as the client does (`0x5d0a10`, `0x5d1c10`),
+    ///   and a reader a frame either side of the click sees the same reaction.
     ///
     /// Raising the ceiling is a claim that a new undeclared order is acceptable: make it with the
     /// reason read off the dump, or declare the order (`.after`, a set, a `chain`). A resource
     /// that commutes by construction belongs in [`Classes`].
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_994;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_995;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

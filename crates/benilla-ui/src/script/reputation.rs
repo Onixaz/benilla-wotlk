@@ -1,66 +1,62 @@
-//! The reputation pane's twelve `ReputationFrame` globals: the app pushes a flat snapshot, and
-//! the engine groups, sorts and folds it as the reference does (`[0x4d5200, 0x4d6d80)`); every
-//! index the API takes or returns is 1-based into the visible rows. A row is a header by flag
-//! `0x08` (`0x4d5acb`), which emulators name `INVISIBLE_FORCED`, and files under its
-//! `Faction.dbc` `team`, or under `-1` while inactive (flag `0x20`); key `0` reads `FACTION_OTHER`
-//! and `-1` `FACTION_INACTIVE`. A childless header is not a row (`GetNumFactions`, `0xb73764`).
-//! Headers sort by name with the synthetic keys last, `0` first (`0x4d5dc0`); children sort by
-//! name (`0x4d5e70`). The at-war toggle also refuses in combat and applies the -3000 floor only
-//! toward peace (`0x4d5fd0`); only `canToggleAtWar`, what the pane reports, lives here.
+//! The reputation pane's fifteen globals, a port of 12340's `CGReputationInfo`
+//! (`0x5cfe40`..`0x5d2e30`): the app pushes every faction with a reputation slot, and the engine
+//! keeps the client's own faction list and header tree over it. Indexes are 1-based into that
+//! list, whose shown rows come first; every faction lookup goes through one helper
+//! (`GetFactionInfoHelper`, `0x5d0da0`), which answers thirteen values on every path.
 
-use std::collections::HashMap;
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi;
 use super::Model;
 
-/// The synthetic header key for factions the player moved to the inactive bucket.
-const KEY_INACTIVE: i64 = -1;
-/// The synthetic header key for factions with no parent, the "Other" bucket.
-const KEY_OTHER: i64 = 0;
+/// The synthetic header for factions the player moved to the inactive bucket.
+const INACTIVE: i64 = -1;
+/// The synthetic header for factions with no parent, "Other".
+const OTHER: i64 = 0;
+/// A guard on the parent walks; 3.3.5a's tree is two headers deep.
+const MAX_DEPTH: usize = 16;
 
 /// One reputation faction, resolved app-side from `Faction.dbc` and the player's wire slot.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FactionEntry {
     /// `Faction.dbc` id: the row's identity, and what a child's [`Self::parent_id`] names.
     pub faction_id: u32,
-    /// `reputationIndex`: the slot every send addresses and the selection is held by.
+    /// `reputationIndex`: the slot every send addresses.
     pub rep_list_id: u32,
-    /// `Faction.dbc`'s `team`: the header key this row files under, `0` the "Other" bucket, and
-    /// "Inactive" instead while [`Self::inactive`] is set.
+    /// `Faction.dbc`'s `ParentFactionID`, 0 for none: the header this faction files under.
     pub parent_id: u32,
-    /// The localized name: the bar's label, or a header's text.
+    /// The localized name: the row's label, a header's included.
     pub name: String,
     /// The localized description, for the detail popup; often empty.
     pub description: String,
-    /// The DBC race/class base plus the wire standing (`0x4d6370`): `barValue`, absolute.
+    /// The DBC race/class base plus the wire standing (`0x5d05b0`): `barValue`, absolute.
     pub standing: i32,
-    /// The rank, 1..=8 (`FACTION_STANDING_LABEL<n>`); `GetWatchedFactionInfo`'s `reaction` is this
-    /// same scale (`0x4d68a0`), not the unit-reaction one.
+    /// The rank, 1..=8 (`FACTION_STANDING_LABEL<n>`, `0x5d0600` plus one).
     pub standing_id: u8,
-    /// The rank's absolute bounds (`.rdata 0x80928c`), `barMin`/`barMax`; the stock pane
-    /// normalizes them itself (`ReputationFrame.lua:80-82`).
+    /// The rank's absolute bounds (`0xa2d2fc`), `barMin`/`barMax`.
     pub bar_min: i32,
     pub bar_max: i32,
-    /// Flag `0x01`, the only flag gating list membership: off until the player meets the faction.
+    /// One of the four race/class slots fits the player: the login build lists only these
+    /// (`0x5d2bc0`).
+    pub fits_player: bool,
+    /// Flag `0x01`: the player has met the faction, which puts it in the list.
     pub visible: bool,
-    /// Flag `0x08`: this row is a header.
+    /// Flag `0x08`: the list adds this faction as a header row (`0x5d08d0`).
     pub is_header: bool,
-    /// Flag `0x02`; the toggle flips it here, unacked.
+    /// Flag `0x02`; the toggle writes it here, unacked.
     pub at_war: bool,
-    /// Flag `0x10` clear and `standing >= -3000`: what `GetFactionInfo` reports.
-    pub can_toggle_at_war: bool,
-    /// Flag `0x20`; flipped here like [`Self::at_war`], it moves the row under "Inactive" rather
-    /// than hiding it.
+    /// Flag `0x10`: war can never be declared.
+    pub peace_forced: bool,
+    /// Flag `0x20`; it files the row under "Inactive".
     pub inactive: bool,
-    /// A header row that is also a reputation bar (`GetFactionInfoByID`'s `hasRep`, `0x5d0ce0`).
+    /// `FactionHasReputationForPlayer` (`0x5d0ce0`): a header that is also a reputation bar.
     pub has_rep: bool,
-    /// Its parent is itself under a header (`isChild`, `0x5d06e0`): a sub-header's member.
-    pub is_child: bool,
 }
 
-/// A flat, unordered push of every faction the player has a slot for; the engine groups and sorts.
+/// A flat, unordered push of every faction with a reputation slot; the engine builds the list.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct ReputationState {
     pub entries: Vec<FactionEntry>,
@@ -72,7 +68,7 @@ pub struct ReputationState {
 /// One outbound reputation verb the pane queued, drained by the app into its `WorldWriter`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReputationSend {
-    /// `CMSG_SET_FACTION_ATWAR`.
+    /// `CMSG_SET_FACTION_ATWAR`, carrying the asked state.
     AtWar { rep_list_id: u32, at_war: bool },
     /// `CMSG_SET_FACTION_INACTIVE`.
     Inactive { rep_list_id: u32, inactive: bool },
@@ -80,42 +76,105 @@ pub enum ReputationSend {
     Watch(Option<u32>),
 }
 
-/// One header group; `pub(crate)` only because [`super::model::Model`] stores them.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct FactionGroup {
-    /// A `Faction.dbc` id, or [`KEY_OTHER`] or [`KEY_INACTIVE`].
-    key: i64,
-    /// The header row's text; empty for the two synthetic keys, resolved against the VM's global
-    /// strings when read.
-    name: String,
-    /// Positions into [`ReputationState::entries`], sorted by [`collate`]d name.
-    entries: Vec<usize>,
+/// One faction list row (`0xc23480`): a faction, or a header, whose `parent` is itself.
+#[derive(Clone, Copy, Debug)]
+struct Row {
+    rep_list_id: i64,
+    faction_id: i64,
+    is_header: bool,
+    parent: i64,
+    /// Its slot in [`FactionTree::headers`], set by [`sort`].
+    header: usize,
 }
 
-/// One visible row: a header (its group index) or a faction bar (its position in
-/// [`ReputationState::entries`]).
-#[derive(Clone, Copy)]
-enum Row {
-    Header(usize),
-    Entry(usize),
+/// One header (`0xc23370`): a `Faction.dbc` id, or [`OTHER`] or [`INACTIVE`].
+#[derive(Clone, Copy, Debug)]
+struct Header {
+    faction_id: i64,
+    parent: i64,
+    /// Rows filed under it, its sub-headers' included (`0x5d1880`).
+    count: u32,
+    /// Folded with an ancestor (`[+0xc]`), apart from its own fold.
+    nested_collapsed: bool,
+}
+
+/// The client's faction list and header tree; `pub(crate)` only because [`Model`] stores it.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct FactionTree {
+    built: bool,
+    rows: Vec<Row>,
+    headers: Vec<Header>,
+    /// Headers folded by their own button: the clear bits of the mask at `0xad0ae4`.
+    collapsed: HashSet<i64>,
+    /// `GetNumFactions` (`0xc23478`): the leading rows of [`Self::rows`] on screen.
+    shown: usize,
+    /// The selection as a faction id, 0 for none (`0xc2347c`).
+    selected: i64,
+    /// Faction id to its position in [`ReputationState::entries`]: the `Faction.dbc` lookup.
+    index: HashMap<i64, usize>,
+}
+
+impl FactionTree {
+    fn record<'a>(&self, state: &'a ReputationState, id: i64) -> Option<&'a FactionEntry> {
+        state.entries.get(*self.index.get(&id)?)
+    }
+
+    fn header_slot(&self, id: i64) -> Option<usize> {
+        self.headers.iter().position(|h| h.faction_id == id)
+    }
+
+    /// The faction of the row a 1-based index names, 0 past the list: the reference reads
+    /// `index - 1 <= count`, one slot further, which holds no row here.
+    fn faction_at(&self, index: usize) -> i64 {
+        index
+            .checked_sub(1)
+            .and_then(|i| self.rows.get(i))
+            .map_or(0, |r| r.faction_id)
+    }
+
+    fn shown_rows(&self) -> &[Row] {
+        &self.rows[..self.shown.min(self.rows.len())]
+    }
 }
 
 impl super::UiScript {
-    /// Push the reputation snapshot and rebuild the tree: as in the reference, whose fold mask
-    /// (`0x84a0a4`) holds expanded bits, every header expands and then "Inactive" collapses, so a
-    /// fold does not survive a standing tick. The selection is kept by slot.
+    /// Push the reputation snapshot. The first push into a VM builds the list as the login does
+    /// (`0x5d2bc0`); later ones add the factions that turned visible, as the standing and visible
+    /// handlers do (`0x5d20a0`, `0x5d2050`), and re-sort, so a fold survives a standing tick.
+    /// The selection is a faction id and outlives both.
     pub fn set_reputation(&mut self, state: ReputationState) {
         let mut model = self.model_mut();
-        let groups = build_groups(&state.entries);
-        if let Some(slot) = model.reputation_selected {
-            if !state.entries.iter().any(|e| e.rep_list_id == slot) {
-                model.reputation_selected = None;
-            }
+        let m: &mut Model = &mut model;
+        let was_visible: HashSet<u32> = m
+            .reputation
+            .entries
+            .iter()
+            .filter(|e| e.visible)
+            .map(|e| e.rep_list_id)
+            .collect();
+        m.reputation = state;
+        let (tree, state) = (&mut m.reputation_tree, &m.reputation);
+        tree.index = state
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (i64::from(e.faction_id), i))
+            .collect();
+        // A list with no faction yet is rebuilt: the login packet may land after an empty push.
+        if !tree.built || tree.rows.iter().all(|r| r.faction_id == INACTIVE) {
+            enter_world(tree, state);
+            return;
         }
-        model.reputation_collapsed.clear();
-        model.reputation_collapsed.insert(KEY_INACTIVE);
-        model.reputation_groups = groups;
-        model.reputation = state;
+        let mut fresh: Vec<&FactionEntry> = state
+            .entries
+            .iter()
+            .filter(|e| e.visible && !was_visible.contains(&e.rep_list_id))
+            .collect();
+        fresh.sort_by_key(|e| std::cmp::Reverse(e.faction_id));
+        for e in fresh {
+            add_visible(tree, state, e.rep_list_id);
+        }
+        sort(tree, state);
     }
 
     /// Drain the reputation verbs the pane queued since the last call.
@@ -124,17 +183,291 @@ impl super::UiScript {
     }
 }
 
-fn header_key(e: &FactionEntry) -> i64 {
-    if e.inactive {
-        KEY_INACTIVE
+/// The login build (`0x5d2bc0`): every visible faction whose slot fits, walked from the table's
+/// end, then the folded "Inactive" header.
+fn enter_world(tree: &mut FactionTree, state: &ReputationState) {
+    tree.rows.clear();
+    tree.headers.clear();
+    tree.collapsed.clear();
+    let mut met: Vec<&FactionEntry> = state
+        .entries
+        .iter()
+        .filter(|e| e.fits_player && e.visible)
+        .collect();
+    met.sort_by_key(|e| std::cmp::Reverse(e.faction_id));
+    for e in met {
+        add_visible(tree, state, e.rep_list_id);
+    }
+    add_header(tree, INACTIVE, 0);
+    tree.rows.push(Row {
+        rep_list_id: -1,
+        faction_id: INACTIVE,
+        is_header: true,
+        parent: INACTIVE,
+        header: 0,
+    });
+    collapse(tree, state, tree.rows.len() - 1, true);
+    sort(tree, state);
+    tree.built = true;
+}
+
+/// `AddVisibleFaction` (`0x5d08d0`): one row per slot, a header by its wire flag, then the rows
+/// of every ancestor header, "Other" for a parentless one.
+fn add_visible(tree: &mut FactionTree, state: &ReputationState, rep_list_id: u32) {
+    let rep = i64::from(rep_list_id);
+    if tree.rows.iter().any(|r| r.rep_list_id == rep) {
+        return;
+    }
+    let entry = state.entries.iter().find(|e| e.rep_list_id == rep_list_id);
+    let faction_id = entry.map_or(0, |e| i64::from(e.faction_id));
+    let is_header = entry.is_some_and(|e| e.is_header);
+    let parent = entry.map_or(0, |e| i64::from(e.parent_id));
+    tree.rows.push(Row {
+        rep_list_id: rep,
+        faction_id,
+        is_header,
+        parent: if is_header { faction_id } else { parent },
+        header: 0,
+    });
+    if is_header {
+        add_header(tree, faction_id, parent);
+    }
+    add_faction_header(tree, state, parent, 0);
+}
+
+/// `AddFactionHeader` (`0x5d01f0`): the ancestors first, then a header row for `id` unless one
+/// exists.
+fn add_faction_header(tree: &mut FactionTree, state: &ReputationState, id: i64, depth: usize) {
+    let record = tree.record(state, id);
+    let parent = record.map_or(0, |e| i64::from(e.parent_id));
+    let rep = record.map_or(-1, |e| i64::from(e.rep_list_id));
+    if parent != 0 && depth < MAX_DEPTH {
+        add_faction_header(tree, state, parent, depth + 1);
+    }
+    if tree.rows.iter().any(|r| r.is_header && r.faction_id == id) {
+        return;
+    }
+    tree.rows.push(Row {
+        rep_list_id: rep,
+        faction_id: id,
+        is_header: true,
+        parent: id,
+        header: 0,
+    });
+    add_header(tree, id, parent);
+}
+
+/// `AddHeader` (`0x5cfe70`): every call unfolds every header.
+fn add_header(tree: &mut FactionTree, id: i64, parent: i64) {
+    if tree.header_slot(id).is_none() {
+        tree.headers.push(Header {
+            faction_id: id,
+            parent,
+            count: 0,
+            nested_collapsed: false,
+        });
+    }
+    tree.collapsed.clear();
+}
+
+/// The header a row files under: its parent, or "Inactive" for an inactive faction.
+fn bucket(tree: &FactionTree, state: &ReputationState, row: &Row) -> i64 {
+    if tree
+        .record(state, row.faction_id)
+        .is_some_and(|e| e.inactive)
+    {
+        INACTIVE
     } else {
-        i64::from(e.parent_id)
+        row.parent
     }
 }
 
-/// The VM's text for a synthetic header key; the enUS literal in a bare test VM.
+fn has_rep(tree: &FactionTree, state: &ReputationState, id: i64) -> bool {
+    tree.record(state, id).is_some_and(|e| e.has_rep)
+}
+
+/// `FactionSortIsHidden` (`0x5d16b0`): an empty header, unless it is a reputation bar itself.
+fn header_hidden(tree: &FactionTree, state: &ReputationState, h: &Header) -> bool {
+    h.count == 0 && !has_rep(tree, state, h.faction_id)
+}
+
+/// Case-insensitive name order, raw bytes breaking a tie: the client's `SStrSortUTF8I`.
+fn collate(a: &str, b: &str) -> Ordering {
+    a.to_lowercase()
+        .cmp(&b.to_lowercase())
+        .then_with(|| a.as_bytes().cmp(b.as_bytes()))
+}
+
+/// `QSortFactionHeaders` (`0x5d1710`) on two headers of one level: a real faction by name, before
+/// the synthetic ones, "Other" before "Inactive".
+fn header_order(tree: &FactionTree, state: &ReputationState, a: i64, b: i64) -> Ordering {
+    match (tree.record(state, a), tree.record(state, b)) {
+        (Some(x), Some(y)) => collate(&x.name, &y.name).then(a.cmp(&b)),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => b.cmp(&a),
+    }
+}
+
+/// A header's ancestry, root first: sorted as paths, a parent leads its sub-headers and the roots
+/// order the rest, as the reference's comparator does.
+fn header_path(tree: &FactionTree, h: &Header) -> Vec<i64> {
+    let mut path = vec![h.faction_id];
+    let mut parent = h.parent;
+    while parent != 0 && path.len() < MAX_DEPTH {
+        let Some(slot) = tree.header_slot(parent) else {
+            break;
+        };
+        path.push(parent);
+        parent = tree.headers[slot].parent;
+    }
+    path.reverse();
+    path
+}
+
+/// `SortFactions` (`0x5d1880`): count each header's rows, order the headers, count the shown rows
+/// and order the list, shown rows first.
+fn sort(tree: &mut FactionTree, state: &ReputationState) {
+    for h in 0..tree.headers.len() {
+        let id = tree.headers[h].faction_id;
+        let count = tree
+            .rows
+            .iter()
+            .filter(|r| !r.is_header && bucket(tree, state, r) == id)
+            .count();
+        tree.headers[h].count = u32::try_from(count).unwrap_or(u32::MAX);
+    }
+    // A sub-header rolls into its parent, plus one if it is a bar itself; the pass starts at 1.
+    for i in 0..tree.headers.len() {
+        for j in 1..tree.headers.len() {
+            let child = tree.headers[j];
+            if i == j || child.parent == 0 || tree.headers[i].faction_id != child.parent {
+                continue;
+            }
+            tree.headers[i].count += child.count;
+            if has_rep(tree, state, child.faction_id) && child.parent != INACTIVE {
+                tree.headers[i].count += 1;
+            }
+        }
+    }
+
+    let mut keyed: Vec<(bool, Vec<i64>, Header)> = tree
+        .headers
+        .iter()
+        .map(|h| (header_hidden(tree, state, h), header_path(tree, h), *h))
+        .collect();
+    keyed.sort_by(|(ah, ap, _), (bh, bp, _)| {
+        ah.cmp(bh).then_with(|| {
+            ap.iter()
+                .zip(bp)
+                .map(|(&a, &b)| header_order(tree, state, a, b))
+                .find(|o| o.is_ne())
+                .unwrap_or_else(|| ap.len().cmp(&bp.len()))
+        })
+    });
+    tree.headers = keyed.into_iter().map(|(_, _, h)| h).collect();
+
+    let mut shown = tree.rows.len();
+    for i in 0..tree.rows.len() {
+        let b = bucket(tree, state, &tree.rows[i]);
+        let Some(slot) = tree.header_slot(b) else {
+            continue;
+        };
+        tree.rows[i].header = slot;
+        let (row, h) = (&tree.rows[i], &tree.headers[slot]);
+        let folded = if row.is_header {
+            header_hidden(tree, state, h)
+        } else {
+            tree.collapsed.contains(&h.faction_id)
+        };
+        if folded || h.nested_collapsed {
+            shown -= 1;
+        }
+    }
+    tree.shown = shown;
+
+    // `QSortFactions` (`0x5d02f0`): hidden last, then by header, the header's own row first.
+    let keys: Vec<(bool, usize, bool, String, i64)> = tree
+        .rows
+        .iter()
+        .map(|r| {
+            let hidden = tree.headers.get(r.header).is_some_and(|h| {
+                h.nested_collapsed
+                    || if r.is_header {
+                        h.faction_id <= OTHER && h.count == 0
+                    } else {
+                        tree.collapsed.contains(&h.faction_id)
+                    }
+            });
+            let name = tree
+                .record(state, r.faction_id)
+                .map_or(String::new(), |e| e.name.clone());
+            (hidden, r.header, !r.is_header, name, r.faction_id)
+        })
+        .collect();
+    let mut order: Vec<usize> = (0..tree.rows.len()).collect();
+    order.sort_by(|&a, &b| {
+        let (ka, kb) = (&keys[a], &keys[b]);
+        (ka.0, ka.1, ka.2)
+            .cmp(&(kb.0, kb.1, kb.2))
+            .then_with(|| collate(&ka.3, &kb.3))
+            .then(ka.4.cmp(&kb.4))
+    });
+    tree.rows = order.into_iter().map(|i| tree.rows[i]).collect();
+}
+
+/// `IsHeaderDescendant` (`0x5cfee0`): header `slot` sits somewhere under `ancestor`.
+fn is_descendant(tree: &FactionTree, mut slot: usize, ancestor: i64) -> bool {
+    if ancestor == INACTIVE || ancestor == OTHER {
+        return false;
+    }
+    for _ in 0..MAX_DEPTH {
+        let parent = tree.headers[slot].parent;
+        if parent == ancestor {
+            return true;
+        }
+        if parent == OTHER || parent == INACTIVE {
+            return false;
+        }
+        let Some(next) = tree.header_slot(parent) else {
+            return false;
+        };
+        slot = next;
+    }
+    false
+}
+
+/// `CollapseHeader` (`0x5d1d20`) by 0-based row: a header row folds itself and its sub-headers;
+/// any other row, or none, folds or opens every header. `false` when no header matched, the one
+/// arm that neither sorts nor fires `UPDATE_FACTION`.
+fn collapse(tree: &mut FactionTree, state: &ReputationState, row: usize, fold: bool) -> bool {
+    match tree.rows.get(row).filter(|r| r.is_header) {
+        Some(r) => {
+            let Some(slot) = tree.header_slot(r.parent) else {
+                return false;
+            };
+            let id = tree.headers[slot].faction_id;
+            if fold {
+                tree.collapsed.insert(id);
+            } else {
+                tree.collapsed.remove(&id);
+            }
+            for i in 0..tree.headers.len() {
+                if is_descendant(tree, i, id) {
+                    tree.headers[i].nested_collapsed = fold;
+                }
+            }
+        }
+        None if fold => tree.collapsed = tree.headers.iter().map(|h| h.faction_id).collect(),
+        None => tree.collapsed.clear(),
+    }
+    sort(tree, state);
+    true
+}
+
+/// The VM's text for a synthetic header; the enUS literal in a bare test VM.
 fn synthetic_header(lua: &Lua, key: i64) -> String {
-    let (global, fallback) = if key == KEY_INACTIVE {
+    let (global, fallback) = if key == INACTIVE {
         ("FACTION_INACTIVE", "Inactive")
     } else {
         ("FACTION_OTHER", "Other")
@@ -144,195 +477,144 @@ fn synthetic_header(lua: &Lua, key: i64) -> String {
         .unwrap_or_else(|_| fallback.into())
 }
 
-/// Case-insensitive name order, raw bytes breaking a tie: the client's `stricmp`.
-fn collate(a: &str, b: &str) -> std::cmp::Ordering {
-    a.to_lowercase()
-        .cmp(&b.to_lowercase())
-        .then_with(|| a.as_bytes().cmp(b.as_bytes()))
-}
-
-/// Build the header groups: the visible non-header rows by [`header_key`], sorted by name. A group
-/// is named by its pushed header row (the reference synthesizes a missing one, `0x4d5a70`), or left
-/// empty for a synthetic key; a childless header is no group, as the client's count drops it.
-fn build_groups(entries: &[FactionEntry]) -> Vec<FactionGroup> {
-    let name_of: HashMap<i64, &str> = entries
-        .iter()
-        .filter(|e| e.is_header)
-        .map(|e| (i64::from(e.faction_id), e.name.as_str()))
-        .collect();
-
-    let mut by_key: HashMap<i64, Vec<usize>> = HashMap::new();
-    for (i, e) in entries.iter().enumerate() {
-        if e.visible && !e.is_header {
-            by_key.entry(header_key(e)).or_default().push(i);
-        }
-    }
-
-    let mut groups: Vec<FactionGroup> = by_key
-        .into_iter()
-        .map(|(key, mut children)| {
-            children.sort_by(|&a, &b| collate(&entries[a].name, &entries[b].name));
-            FactionGroup {
-                key,
-                name: name_of.get(&key).map_or(String::new(), |n| (*n).into()),
-                entries: children,
-            }
-        })
-        .collect();
-    groups.sort_by(|a, b| {
-        let synthetic = |k: i64| k <= KEY_OTHER;
-        match (synthetic(a.key), synthetic(b.key)) {
-            // Larger raw key first among the synthetics: 0 "Other" before -1 "Inactive".
-            (true, true) => b.key.cmp(&a.key),
-            (true, false) => std::cmp::Ordering::Greater,
-            (false, true) => std::cmp::Ordering::Less,
-            (false, false) => collate(&a.name, &b.name),
-        }
-    });
-    groups
-}
-
-fn rows(model: &Model) -> Vec<Row> {
-    let mut out = Vec::new();
-    for (gi, g) in model.reputation_groups.iter().enumerate() {
-        out.push(Row::Header(gi));
-        if !model.reputation_collapsed.contains(&g.key) {
-            for &ei in &g.entries {
-                out.push(Row::Entry(ei));
-            }
-        }
-    }
-    out
-}
-
-fn num_rows(model: &Model) -> usize {
-    rows(model).len()
-}
-
-fn entry_at(model: &Model, index: usize) -> Option<&FactionEntry> {
-    match rows(model).get(index.checked_sub(1)?)? {
-        Row::Entry(ei) => model.reputation.entries.get(*ei),
-        Row::Header(_) => None,
-    }
-}
-
-fn entry_at_mut(model: &mut Model, index: usize) -> Option<&mut FactionEntry> {
-    let row = *rows(model).get(index.checked_sub(1)?)?;
-    match row {
-        Row::Entry(ei) => model.reputation.entries.get_mut(ei),
-        Row::Header(_) => None,
-    }
-}
-
-/// Fold or unfold by 1-based visible index; `0` or any non-header index acts on every header, the
-/// reference's own fall-through (`0x4d6a50`, `0x4d6aa0`).
-fn set_collapsed(model: &mut Model, index: usize, collapse: bool) {
-    let one = index
-        .checked_sub(1)
-        .and_then(|n| rows(model).get(n).copied())
-        .and_then(|row| match row {
-            Row::Header(gi) => model.reputation_groups.get(gi).map(|g| g.key),
-            Row::Entry(_) => None,
-        });
-    let keys: Vec<i64> = match one {
-        Some(key) => vec![key],
-        None => model.reputation_groups.iter().map(|g| g.key).collect(),
-    };
-    for key in keys {
-        if collapse {
-            model.reputation_collapsed.insert(key);
+/// `GetFactionInfoHelper` (`0x5d0da0`): name, description, standingID, barMin, barMax, barValue,
+/// atWarWith, canToggleAtWar, isHeader, isCollapsed, hasRep, isWatched, isChild.
+fn faction_info(lua: &Lua, model: &Model, faction: i64) -> mlua::Result<MultiValue> {
+    let (tree, state) = (&model.reputation_tree, &model.reputation);
+    let Some(e) = tree.record(state, faction) else {
+        let synthetic =
+            (faction == OTHER || faction == INACTIVE) && tree.header_slot(faction).is_some();
+        let mut out = if synthetic {
+            vec![
+                Value::String(lua.create_string(synthetic_header(lua, faction))?),
+                Value::String(lua.create_string("")?),
+            ]
         } else {
-            model.reputation_collapsed.remove(&key);
+            vec![Value::Nil, Value::Nil]
+        };
+        // The synthetic headers and the miss both push standingID 1 (`0x5d10a8`, `0x5d100a`).
+        out.push(Value::Integer(1));
+        out.extend(std::iter::repeat_n(Value::Integer(0), 3));
+        out.extend([Value::Nil, Value::Nil]);
+        if synthetic {
+            out.push(Value::Integer(1));
+            out.push(binding_abi::flag(tree.collapsed.contains(&faction)));
         }
-    }
+        out.resize(13, Value::Nil);
+        return Ok(MultiValue::from_vec(out));
+    };
+    let header = tree.header_slot(faction).is_some();
+    let is_child = tree
+        .shown_rows()
+        .iter()
+        .find(|r| r.faction_id == faction)
+        .and_then(|r| tree.headers.get(r.header))
+        .is_some_and(|h| h.parent != 0);
+    Ok(MultiValue::from_vec(vec![
+        Value::String(lua.create_string(&e.name)?),
+        Value::String(lua.create_string(&e.description)?),
+        Value::Integer(i64::from(e.standing_id)),
+        Value::Integer(i64::from(e.bar_min)),
+        Value::Integer(i64::from(e.bar_max)),
+        Value::Integer(i64::from(e.standing)),
+        binding_abi::flag(e.at_war),
+        binding_abi::flag(e.standing >= -3000 && !e.peace_forced),
+        binding_abi::flag(header),
+        binding_abi::flag(header && tree.collapsed.contains(&faction)),
+        binding_abi::flag(header && e.has_rep),
+        binding_abi::flag(state.watched == Some(e.rep_list_id)),
+        binding_abi::flag(is_child),
+    ]))
 }
 
-/// `GetFactionInfo`'s miss (`0x4d5fa0`): eleven values, standingID 1, which the stock pane indexes
-/// `FACTION_BAR_COLORS` with unguarded.
-fn unknown_faction() -> MultiValue {
-    let mut out = vec![Value::Nil, Value::Nil, Value::Integer(1)];
-    out.extend(std::iter::repeat_n(Value::Integer(0), 3));
-    out.extend(std::iter::repeat_n(Value::Nil, 5));
-    debug_assert_eq!(out.len(), 11, "the tuple is eleven wide on every path");
-    MultiValue::from_vec(out)
+/// A header in any slot but the first refuses the war and inactive toggles: the reference tests
+/// `index > 0` (`0x5d0a10`, `0x5d1c10`).
+fn header_refuses(tree: &FactionTree, faction: i64) -> bool {
+    tree.header_slot(faction).is_some_and(|slot| slot > 0)
+}
+
+/// `SetAtWar` (`0x5d0a10`): peace needs standing of -3000 or better and no combat; the local flag
+/// takes war only when peace is not forced, and the send carries the asked state either way.
+fn set_at_war(model: &mut Model, faction: i64, at_war: bool) {
+    let tree = &model.reputation_tree;
+    if header_refuses(tree, faction) {
+        return;
+    }
+    let Some(&i) = tree.index.get(&faction) else {
+        return;
+    };
+    let Some(e) = model.reputation.entries.get(i) else {
+        return;
+    };
+    if !at_war && e.standing < -3000 {
+        return;
+    }
+    if !at_war && model.unit("player").is_some_and(|u| u.in_combat) {
+        model.ui_errors.push("ERR_NOT_IN_COMBAT");
+        return;
+    }
+    let e = &mut model.reputation.entries[i];
+    e.at_war = at_war && !e.peace_forced;
+    let send = ReputationSend::AtWar {
+        rep_list_id: e.rep_list_id,
+        at_war,
+    };
+    model.reputation_sends.push(send);
+}
+
+/// `SetFactionInactive` (`0x5d1c10`): the flag is local first, then the list re-sorts. `false`
+/// when refused, which fires no `UPDATE_FACTION`.
+fn set_inactive(model: &mut Model, faction: i64, inactive: bool) -> bool {
+    let tree = &model.reputation_tree;
+    if header_refuses(tree, faction) {
+        return false;
+    }
+    let Some(&i) = tree.index.get(&faction) else {
+        return false;
+    };
+    let Some(e) = model.reputation.entries.get_mut(i) else {
+        return false;
+    };
+    e.inactive = inactive;
+    let send = ReputationSend::Inactive {
+        rep_list_id: e.rep_list_id,
+        inactive,
+    };
+    model.reputation_sends.push(send);
+    sort(&mut model.reputation_tree, &model.reputation);
+    true
+}
+
+fn update_faction(lua: &Lua) {
+    super::event::fire_global(lua, "UPDATE_FACTION", &[]);
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // GetNumFactions() → the visible row count (0 before any push).
+    // GetNumFactions() → the shown row count (`0x5cff20`), 0 before any push.
     g.set(
         "GetNumFactions",
         lua.create_function(|lua, ()| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(num_rows(&model) as i64)
+            Ok(model.reputation_tree.shown as i64)
         })?,
     )?;
 
-    // GetFactionInfo(index) → the stock pane's eleven (`ReputationFrame.lua:51`): name,
-    // description, standingID, barMin, barMax, barValue, atWarWith, canToggleAtWar, isHeader,
-    // isCollapsed, isWatched; eleven wide on every path, a miss included.
+    // GetFactionInfo(index) → the helper on that row's faction, 0 past the list (`0x5d1150`).
     g.set(
         "GetFactionInfo",
         lua.create_function(|lua, index: usize| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let Some(row) = index
-                .checked_sub(1)
-                .and_then(|n| rows(&model).get(n).copied())
-            else {
-                return Ok(unknown_faction());
-            };
-            match row {
-                Row::Header(gi) => {
-                    let grp = &model.reputation_groups[gi];
-                    let collapsed = model.reputation_collapsed.contains(&grp.key);
-                    let name = if grp.name.is_empty() {
-                        synthetic_header(lua, grp.key)
-                    } else {
-                        grp.name.clone()
-                    };
-                    Ok(MultiValue::from_vec(vec![
-                        Value::String(lua.create_string(&name)?),
-                        Value::String(lua.create_string("")?), // description
-                        Value::Integer(0),                     // standingID
-                        Value::Integer(0),                     // barMin
-                        Value::Integer(0),                     // barMax
-                        Value::Integer(0),                     // barValue
-                        Value::Nil,                            // atWarWith
-                        Value::Nil,                            // canToggleAtWar
-                        Value::Integer(1),                     // isHeader
-                        binding_abi::flag(collapsed),          // isCollapsed
-                        Value::Nil,                            // isWatched
-                    ]))
-                }
-                Row::Entry(ei) => {
-                    let e = &model.reputation.entries[ei];
-                    Ok(MultiValue::from_vec(vec![
-                        Value::String(lua.create_string(&e.name)?),
-                        Value::String(lua.create_string(&e.description)?),
-                        Value::Integer(i64::from(e.standing_id)),
-                        Value::Integer(i64::from(e.bar_min)),
-                        Value::Integer(i64::from(e.bar_max)),
-                        Value::Integer(i64::from(e.standing)),
-                        binding_abi::flag(e.at_war),
-                        binding_abi::flag(e.can_toggle_at_war),
-                        Value::Nil, // isHeader
-                        Value::Nil, // isCollapsed
-                        binding_abi::flag(model.reputation.watched == Some(e.rep_list_id)),
-                    ]))
-                }
-            }
+            faction_info(lua, &model, model.reputation_tree.faction_at(index))
         })?,
     )?;
 
-    // GetFactionInfoByID(id) → 3.3.5a's thirteen (`0x5d11e0` → `0x5d0da0`): name, description,
-    // standingID, barMin, barMax, barValue, atWarWith, canToggleAtWar, isHeader, isCollapsed,
-    // hasRep, isWatched, isChild. A faction outside the player's pushed rows answers the
-    // reference's unknown shape, two nils, four zeros and seven nils.
+    // GetFactionInfoByID(id) → the same helper on a faction id (`0x5d11e0`).
     g.set(
         "GetFactionInfoByID",
         lua.create_function(|lua, id: Value| {
@@ -340,154 +622,118 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let Some(e) = model
-                .reputation
-                .entries
-                .iter()
-                .find(|e| i64::from(e.faction_id) == i64::from(id))
-            else {
-                let mut out = vec![Value::Nil, Value::Nil];
-                out.extend(std::iter::repeat_n(Value::Integer(0), 4));
-                out.extend(std::iter::repeat_n(Value::Nil, 7));
-                return Ok(MultiValue::from_vec(out));
-            };
-            let collapsed = e.is_header
-                && model.reputation_groups.iter().any(|g| {
-                    g.key == i64::from(e.faction_id) && model.reputation_collapsed.contains(&g.key)
-                });
-            Ok(MultiValue::from_vec(vec![
-                Value::String(lua.create_string(&e.name)?),
-                Value::String(lua.create_string(&e.description)?),
-                Value::Integer(i64::from(e.standing_id)),
-                Value::Integer(i64::from(e.bar_min)),
-                Value::Integer(i64::from(e.bar_max)),
-                Value::Integer(i64::from(e.standing)),
-                binding_abi::flag(e.at_war),
-                binding_abi::flag(e.can_toggle_at_war),
-                binding_abi::flag(e.is_header),
-                binding_abi::flag(collapsed),
-                binding_abi::flag(e.is_header && e.has_rep),
-                binding_abi::flag(model.reputation.watched == Some(e.rep_list_id)),
-                binding_abi::flag(e.is_child),
-            ]))
+            faction_info(lua, &model, i64::from(id))
         })?,
     )?;
 
-    // GetSelectedFaction() → the selected row's visible index, or 0 for none, as
-    // `ReputationFrame.lua:146` tests; re-found each call, since the selection is held by slot.
+    // GetSelectedFaction() → the selected faction's shown index, or 0 (`0x5d0820`).
     g.set(
         "GetSelectedFaction",
         lua.create_function(|lua, ()| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let Some(slot) = model.reputation_selected else {
-                return Ok(0i64);
-            };
-            let found = rows(&model).iter().position(|r| match r {
-                Row::Entry(ei) => model.reputation.entries[*ei].rep_list_id == slot,
-                Row::Header(_) => false,
-            });
+            let tree = &model.reputation_tree;
+            let found = tree
+                .shown_rows()
+                .iter()
+                .position(|r| r.faction_id == tree.selected);
             Ok(found.map_or(0, |i| i as i64 + 1))
         })?,
     )?;
 
-    // SetSelectedFaction(index): a visible index; a header or an out-of-range index clears it.
+    // SetSelectedFaction(index): that row's faction, a header's included, or none (`0x5d07b0`).
     g.set(
         "SetSelectedFaction",
         lua.create_function(|lua, index: usize| {
             let mut model = crate::script::model_mut_of(lua);
-            model.reputation_selected = entry_at(&model, index).map(|e| e.rep_list_id);
+            let tree = &mut model.reputation_tree;
+            tree.selected = tree.faction_at(index);
             Ok(())
         })?,
     )?;
 
-    // CollapseFactionHeader(index) / ExpandFactionHeader(index): a visible header index. Both fire
-    // `UPDATE_FACTION`, as the reference's do (`0x4d6a50`, `0x4d6aa0` → `0x4d6400` → `0x4d5c40`,
-    // fire site `0x4d5dab`): the stock header's `OnClick` only calls the binding
-    // (`ReputationFrame.xml:9-15`), and the pane repaints on `UPDATE_FACTION` alone.
-    g.set(
-        "CollapseFactionHeader",
-        lua.create_function(|lua, index: usize| {
-            {
-                let mut model = crate::script::model_mut_of(lua);
-                set_collapsed(&mut model, index, true);
-            }
-            super::event::fire_global(lua, "UPDATE_FACTION", &[]);
-            Ok(())
-        })?,
-    )?;
-    g.set(
-        "ExpandFactionHeader",
-        lua.create_function(|lua, index: usize| {
-            {
-                let mut model = crate::script::model_mut_of(lua);
-                set_collapsed(&mut model, index, false);
-            }
-            super::event::fire_global(lua, "UPDATE_FACTION", &[]);
-            Ok(())
-        })?,
-    )?;
+    // Fold verbs (`0x5d1f70`, `0x5d2000`, `0x5d1fc0`, `0x5d1fe0`); the sort fires UPDATE_FACTION.
+    for (name, fold, all) in [
+        ("CollapseFactionHeader", true, false),
+        ("ExpandFactionHeader", false, false),
+        ("CollapseAllFactionHeaders", true, true),
+        ("ExpandAllFactionHeaders", false, true),
+    ] {
+        g.set(
+            name,
+            lua.create_function(move |lua, index: Option<usize>| {
+                let sorted = {
+                    let mut model = crate::script::model_mut_of(lua);
+                    let m: &mut Model = &mut model;
+                    let tree = &mut m.reputation_tree;
+                    let row = if all {
+                        tree.rows.len()
+                    } else {
+                        index.unwrap_or(0).wrapping_sub(1)
+                    };
+                    collapse(tree, &m.reputation, row, fold)
+                };
+                if sorted {
+                    update_faction(lua);
+                }
+                Ok(())
+            })?,
+        )?;
+    }
 
-    // FactionToggleAtWar(index): flip the at-war bit and queue the send; `0x4d6950` writes locally
-    // first, and nothing acks it.
+    // FactionToggleAtWar(index) (`0x5d1390`): flips that row's faction.
     g.set(
         "FactionToggleAtWar",
         lua.create_function(|lua, index: usize| {
             let mut model = crate::script::model_mut_of(lua);
-            let Some(e) = entry_at_mut(&mut model, index) else {
-                return Ok(());
-            };
-            if !e.can_toggle_at_war {
+            let faction = model.reputation_tree.faction_at(index);
+            if faction == 0 {
                 return Ok(());
             }
-            e.at_war = !e.at_war;
-            let send = ReputationSend::AtWar {
-                rep_list_id: e.rep_list_id,
-                at_war: e.at_war,
-            };
-            model.reputation_sends.push(send);
+            let at_war = model
+                .reputation_tree
+                .record(&model.reputation, faction)
+                .is_some_and(|e| e.at_war);
+            set_at_war(&mut model, faction, !at_war);
             Ok(())
         })?,
     )?;
 
-    // IsFactionInactive / SetFactionInactive / SetFactionActive (`0x4d69b0`, `0x4d6a00`): the flip
-    // is local first too, and moves the row under "Inactive", so the tree regroups here
-    // (`0x4d69b0` calls `0x4d5c40`); the folds survive, as only a server rebuild resets them.
+    // IsFactionInactive(index) → that row's flag `0x20` (`0x5d0740`).
     g.set(
         "IsFactionInactive",
         lua.create_function(|lua, index: usize| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(binding_abi::flag(
-                entry_at(&model, index).is_some_and(|e| e.inactive),
-            ))
+            let tree = &model.reputation_tree;
+            let inactive = tree
+                .record(&model.reputation, tree.faction_at(index))
+                .is_some_and(|e| e.inactive);
+            Ok(binding_abi::flag(inactive))
         })?,
     )?;
+
+    // SetFactionInactive / SetFactionActive(index) (`0x5d1e50`, `0x5d1ee0`).
     for (name, inactive) in [("SetFactionInactive", true), ("SetFactionActive", false)] {
         g.set(
             name,
             lua.create_function(move |lua, index: usize| {
-                let mut model = crate::script::model_mut_of(lua);
-                let Some(e) = entry_at_mut(&mut model, index) else {
-                    return Ok(());
+                let sorted = {
+                    let mut model = crate::script::model_mut_of(lua);
+                    let faction = model.reputation_tree.faction_at(index);
+                    faction != 0 && set_inactive(&mut model, faction, inactive)
                 };
-                e.inactive = inactive;
-                let send = ReputationSend::Inactive {
-                    rep_list_id: e.rep_list_id,
-                    inactive,
-                };
-                model.reputation_sends.push(send);
-                let groups = build_groups(&model.reputation.entries);
-                model.reputation_groups = groups;
+                if sorted {
+                    update_faction(lua);
+                }
                 Ok(())
             })?,
         )?;
     }
 
-    // GetWatchedFactionInfo() → name, reaction, min, max, value; `reaction` is the standingID
-    // scale, and a nil name is `ReputationFrame.lua:167`'s nothing-watched gate.
+    // GetWatchedFactionInfo() → name, standingID, min, max, value; nil name for none (`0x5d1240`).
     g.set(
         "GetWatchedFactionInfo",
         lua.create_function(|lua, ()| {
@@ -502,9 +748,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .find(|e| e.rep_list_id == slot)
             });
             let Some(e) = watched else {
-                // Five values here too, `nil, 0, 0, 0, 0`: `0x4d6820`'s four guards share one exit
-                // and none raises. `0x4d5620` maps the out-of-range sentinel to 0, so it is refused
-                // at the null-row guard, not by a range check.
                 return Ok(MultiValue::from_vec(vec![
                     Value::Nil,
                     Value::Integer(0),
@@ -523,15 +766,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetWatchedFactionIndex(index): a visible index, 0 to stop watching. Not local first
-    // (`0x4d6b60`): the watched slot is a server field with no client mirror, so the bar moves when
-    // the descriptor update returns. The app sends none as `-1`, since slot 0 is a real faction.
+    // SetWatchedFactionIndex(index): sends the row's slot when the field differs (`0x5d0ba0`).
     g.set(
         "SetWatchedFactionIndex",
         lua.create_function(|lua, index: usize| {
             let mut model = crate::script::model_mut_of(lua);
-            let slot = entry_at(&model, index).map(|e| e.rep_list_id);
-            model.reputation_sends.push(ReputationSend::Watch(slot));
+            let tree = &model.reputation_tree;
+            let slot = tree
+                .record(&model.reputation, tree.faction_at(index))
+                .map(|e| e.rep_list_id);
+            if slot != model.reputation.watched {
+                model.reputation_sends.push(ReputationSend::Watch(slot));
+            }
             Ok(())
         })?,
     )?;
@@ -542,9 +788,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::UiScript;
+    use crate::script::{UiScript, UnitState};
 
-    /// An ordinary bar row: visible, not a header. `parent` 0 puts it in the "Other" bucket.
+    /// A met faction bar: Friendly, 1000 into its rank window.
     fn entry(faction_id: u32, rep_list_id: u32, parent_id: u32, name: &str) -> FactionEntry {
         FactionEntry {
             faction_id,
@@ -556,39 +802,58 @@ mod tests {
             standing_id: 5,
             bar_min: 3000,
             bar_max: 9000,
+            fits_player: true,
             visible: true,
             is_header: false,
             at_war: false,
-            can_toggle_at_war: true,
+            peace_forced: false,
             inactive: false,
             has_rep: false,
-            is_child: false,
         }
     }
 
-    /// A header row as the wire delivers one: flag `0x08` without `VISIBLE`, as the Steamwheedle
-    /// Cartel's byte is; a header is never drawn as a bar, so its own visibility is irrelevant.
-    fn header(faction_id: u32, rep_list_id: u32, name: &str) -> FactionEntry {
+    /// A header faction as the wire seeds one: flag `0x08`, unmet, at Neutral 0.
+    fn header(faction_id: u32, rep_list_id: u32, parent_id: u32, name: &str) -> FactionEntry {
         FactionEntry {
+            standing: 0,
+            standing_id: 4,
+            bar_min: 0,
+            bar_max: 3000,
             visible: false,
             is_header: true,
-            ..entry(faction_id, rep_list_id, 0, name)
+            ..entry(faction_id, rep_list_id, parent_id, name)
         }
     }
 
-    /// Pushed out of order so the engine's sort shows: Alliance (469) over Stormwind and Ironforge,
-    /// Steamwheedle (169) over Booty Bay, and two parentless factions. Bloodsail Buccaneers holds
-    /// slot 0, which must never read as "watch nothing".
+    /// Two expansion headers, three sub-headers, one of them a met reputation bar, and two
+    /// parentless factions; pushed out of order, with one unmet faction.
     fn state() -> ReputationState {
         ReputationState {
             entries: vec![
                 entry(72, 19, 469, "Stormwind"),
                 entry(529, 13, 0, "Argent Dawn"),
-                header(469, 11, "Alliance"),
+                header(1097, 89, 0, "Wrath of the Lich King"),
+                header(469, 11, 1118, "Alliance"),
+                entry(1050, 92, 1037, "Valiance Expedition"),
                 entry(21, 1, 169, "Booty Bay"),
+                entry(1106, 101, 1097, "Argent Crusade"),
+                FactionEntry {
+                    visible: true,
+                    has_rep: true,
+                    standing: 21500,
+                    standing_id: 7,
+                    bar_min: 21000,
+                    bar_max: 42000,
+                    ..header(1037, 88, 1097, "Alliance Vanguard")
+                },
                 entry(47, 20, 469, "Ironforge"),
-                header(169, 10, "Steamwheedle Cartel"),
+                header(1118, 96, 0, "Classic"),
+                header(169, 10, 1118, "Steamwheedle Cartel"),
                 entry(87, 0, 0, "Bloodsail Buccaneers"),
+                FactionEntry {
+                    visible: false,
+                    ..entry(1090, 99, 1097, "Kirin Tor")
+                },
             ],
             watched: None,
         }
@@ -607,213 +872,288 @@ mod tests {
         .expect("names")
     }
 
-    /// The fixture's headers lack the visible flag, as on the wire, so this also pins that a
-    /// header's own visibility does not gate its group.
+    /// Each shown row's tree shape: `isHeader`, `isChild`, `hasRep`, as the stock pane reads them.
+    fn shapes(s: &UiScript) -> Vec<(bool, bool, bool)> {
+        s.eval::<Vec<Vec<bool>>>(
+            "local t = {} for i = 1, GetNumFactions() do \
+               local _,_,_,_,_,_,_,_,h,_,r,_,c = GetFactionInfo(i) \
+               t[i] = {h ~= nil, c ~= nil, r ~= nil} end return t",
+        )
+        .expect("shapes")
+        .into_iter()
+        .map(|v| (v[0], v[1], v[2]))
+        .collect()
+    }
+
+    const TREE: [&str; 13] = [
+        "Classic",
+        "Alliance",
+        "Ironforge",
+        "Stormwind",
+        "Steamwheedle Cartel",
+        "Booty Bay",
+        "Wrath of the Lich King",
+        "Argent Crusade",
+        "Alliance Vanguard",
+        "Valiance Expedition",
+        "Other",
+        "Argent Dawn",
+        "Bloodsail Buccaneers",
+    ];
+
+    /// Expansions by name, then "Other"; under each, its own factions, then its sub-headers by
+    /// name, each over its factions.
     #[test]
-    fn the_header_flag_builds_the_tree_and_other_comes_last() {
+    fn the_list_nests_sub_headers_under_their_expansion() {
         let s = seated();
+        assert_eq!(names(&s), TREE);
+        let (h, c, r) = (true, true, true);
         assert_eq!(
-            names(&s),
+            shapes(&s),
             [
-                "Alliance",
-                "Ironforge",
-                "Stormwind",
-                "Steamwheedle Cartel",
-                "Booty Bay",
-                "Other",
-                "Argent Dawn",
-                "Bloodsail Buccaneers",
-            ],
-            "two named groups sorted by header, then the bucket; children sorted within"
-        );
-        let (name, _desc, standing_id, _min, _max, _val, at_war, toggle, is_header) = s
-            .eval::<(String, String, i64, i64, i64, i64, Value, Value, i64)>(
-                "return GetFactionInfo(1)",
-            )
-            .unwrap();
-        assert_eq!(name, "Alliance", "named from the flagged header row");
-        assert_eq!(is_header, 1);
-        assert_eq!(standing_id, 0, "a header carries no standing");
-        assert!(at_war.is_nil() && toggle.is_nil(), "nor any war state");
-        assert!(s.errors().is_empty(), "{:#?}", s.errors());
-    }
-
-    #[test]
-    fn a_header_with_no_visible_children_is_dropped() {
-        let mut s = UiScript::new().expect("VM");
-        let mut st = state();
-        // Unmeet both of Alliance's cities; Alliance itself stays in the push.
-        for e in &mut st.entries {
-            if e.parent_id == 469 {
-                e.visible = false;
-            }
-        }
-        s.set_reputation(st);
-        assert!(
-            !names(&s).iter().any(|n| n == "Alliance"),
-            "an empty header is not drawn; got {:?}",
-            names(&s)
-        );
-        assert_eq!(names(&s)[0], "Steamwheedle Cartel");
-        assert!(s.errors().is_empty(), "{:#?}", s.errors());
-    }
-
-    #[test]
-    fn a_bar_row_returns_the_references_eleven_and_so_does_a_miss() {
-        let s = seated();
-        let got = s
-            .eval::<(
-                String,
-                String,
-                i64,
-                i64,
-                i64,
-                i64,
-                Value,
-                Value,
-                Value,
-                Value,
-                Value,
-            )>("return GetFactionInfo(3)")
-            .unwrap();
-        assert_eq!(got.0, "Stormwind");
-        assert_eq!(got.1, "About the Stormwind.");
-        assert_eq!(got.2, 5, "standingID is 1-based: FACTION_STANDING_LABEL5");
-        assert_eq!((got.3, got.4, got.5), (3000, 9000, 4000), "absolute");
-        assert!(got.6.is_nil(), "atWarWith");
-        assert_eq!(got.7, Value::Integer(1), "canToggleAtWar");
-        assert!(got.8.is_nil() && got.9.is_nil(), "isHeader/isCollapsed");
-        assert!(got.10.is_nil(), "isWatched");
-
-        for miss in ["GetFactionInfo(99)", "GetFactionInfo(0)"] {
-            let n = s.arity(miss).unwrap();
-            assert_eq!(n, 11, "{miss} must still be eleven wide");
-            let sid = s
-                .eval::<i64>(&format!("local _,_,s = {miss} return s"))
-                .unwrap();
-            assert_eq!(sid, 1, "{miss}'s standingID slot is the client's 1");
-        }
-        assert!(s.errors().is_empty(), "{:#?}", s.errors());
-    }
-
-    #[test]
-    fn folding_shrinks_the_list_and_index_zero_folds_everything() {
-        let s = seated();
-        s.run("CollapseFactionHeader(1)").unwrap();
-        assert_eq!(
-            names(&s),
-            [
-                "Alliance",
-                "Steamwheedle Cartel",
-                "Booty Bay",
-                "Other",
-                "Argent Dawn",
-                "Bloodsail Buccaneers"
+                (h, !c, !r), // Classic
+                (h, c, !r),  // Alliance
+                (!h, c, !r), // Ironforge
+                (!h, c, !r), // Stormwind
+                (h, c, !r),  // Steamwheedle Cartel
+                (!h, c, !r), // Booty Bay
+                (h, !c, !r), // Wrath of the Lich King
+                (!h, !c, !r),
+                (h, c, r), // Alliance Vanguard, a bar of its own
+                (!h, c, !r),
+                (h, !c, !r), // Other
+                (!h, !c, !r),
+                (!h, !c, !r),
             ]
         );
-        assert_eq!(
-            s.eval::<Value>("local _,_,_,_,_,_,_,_,_,c = GetFactionInfo(1) return c")
-                .unwrap(),
-            Value::Integer(1),
-            "and reports itself collapsed"
-        );
-        s.run("ExpandFactionHeader(1)").unwrap();
-        assert_eq!(names(&s).len(), 8, "expanded again");
-
-        // A bar row is not a header, so it takes the same fall-through: index 2 is Ironforge.
-        s.run("CollapseFactionHeader(2)").unwrap();
-        assert_eq!(
-            names(&s),
-            ["Alliance", "Steamwheedle Cartel", "Other"],
-            "a non-header index folds every header"
-        );
-        // So do index 0 and an index past the end.
-        s.run("ExpandFactionHeader(0)").unwrap();
-        assert_eq!(names(&s).len(), 8, "index 0 unfolds every header");
-        s.run("CollapseFactionHeader(99)").unwrap();
-        assert_eq!(names(&s).len(), 3, "so does an out-of-range index");
         assert!(s.errors().is_empty(), "{:#?}", s.errors());
     }
 
     #[test]
-    fn a_push_resets_the_folds() {
-        let mut s = seated();
-        s.run("CollapseFactionHeader(1)").unwrap();
-        assert_eq!(names(&s).len(), 6, "folded");
-        let mut ticked = state();
-        ticked.entries[0].standing = 12345;
-        s.set_reputation(ticked);
-        assert_eq!(names(&s).len(), 8, "the rebuild unfolded it again");
+    fn every_path_answers_thirteen_values_and_headers_carry_a_standing() {
+        let s = seated();
+        for call in [
+            "GetFactionInfo(1)",
+            "GetFactionInfo(3)",
+            "GetFactionInfo(11)",
+            "GetFactionInfo(99)",
+            "GetFactionInfoByID(1090)",
+            "GetFactionInfoByID(424242)",
+        ] {
+            assert_eq!(s.arity(call).unwrap(), 13, "{call}");
+        }
+        // Every row's standingID indexes `FACTION_BAR_COLORS`, which the stock pane does unguarded.
+        let ids = s
+            .eval::<Vec<i64>>(
+                "local t = {} for i = 1, GetNumFactions() do \
+                   local _,_,s = GetFactionInfo(i) t[i] = s end return t",
+            )
+            .unwrap();
+        assert!(ids.iter().all(|s| (1..=8).contains(s)), "{ids:?}");
+        assert_eq!(ids[0], 4, "a header faction reports its own rank");
+        assert_eq!(ids[8], 7, "and a header bar its own");
+        assert_eq!(ids[10], 1, "the synthetic header reports 1");
+
+        let (name, sid, header) = s
+            .eval::<(Value, i64, Value)>(
+                "local n,_,s,_,_,_,_,_,h = GetFactionInfoByID(424242) return n, s, h",
+            )
+            .unwrap();
+        assert!(name.is_nil() && header.is_nil());
+        assert_eq!(sid, 1, "the miss's standingID is 1 too");
+        // Past the list the reference asks for faction 0, the "Other" header.
+        assert_eq!(
+            s.eval::<String>("return (GetFactionInfo(99))").unwrap(),
+            "Other"
+        );
         assert!(s.errors().is_empty(), "{:#?}", s.errors());
     }
 
     #[test]
-    fn an_inactive_faction_moves_under_the_inactive_header() {
-        let mut s = UiScript::new().expect("VM");
-        let mut st = state();
-        st.entries[1].inactive = true; // Argent Dawn, an "Other" row
-        s.set_reputation(st);
+    fn an_unmet_faction_answers_by_id_but_is_no_row() {
+        let s = seated();
+        let (name, child) = s
+            .eval::<(String, Value)>(
+                "local n,_,_,_,_,_,_,_,_,_,_,_,c = GetFactionInfoByID(1090) return n, c",
+            )
+            .unwrap();
+        assert_eq!(name, "Kirin Tor");
+        assert!(child.is_nil(), "isChild asks the shown rows");
+        assert!(!names(&s).contains(&"Kirin Tor".to_string()));
+    }
+
+    #[test]
+    fn folding_an_expansion_hides_its_sub_headers_and_keeps_their_own_folds() {
+        let s = seated();
+        s.run("CollapseFactionHeader(2)").unwrap(); // Alliance
+        assert_eq!(names(&s).len(), 11, "its two factions leave");
+        s.run("CollapseFactionHeader(1)").unwrap(); // Classic
         assert_eq!(
             names(&s),
             [
-                "Alliance",
-                "Ironforge",
-                "Stormwind",
-                "Steamwheedle Cartel",
-                "Booty Bay",
+                "Classic",
+                "Wrath of the Lich King",
+                "Argent Crusade",
+                "Alliance Vanguard",
+                "Valiance Expedition",
                 "Other",
+                "Argent Dawn",
                 "Bloodsail Buccaneers",
-                "Inactive",
-            ],
-            "Inactive sorts after Other, and arrives COLLAPSED so its child is not listed"
+            ]
         );
-        // Unfolding it reveals exactly the re-parented row.
-        s.run("ExpandFactionHeader(8)").unwrap();
-        assert_eq!(names(&s).last().unwrap(), "Argent Dawn");
-        assert!(s.errors().is_empty(), "{:#?}", s.errors());
-    }
-
-    #[test]
-    fn selection_follows_the_faction_not_the_row_index() {
-        let mut s = seated();
-        assert_eq!(s.eval::<i64>("return GetSelectedFaction()").unwrap(), 0);
-        s.run("SetSelectedFaction(3)").unwrap(); // Stormwind
-        assert_eq!(s.eval::<i64>("return GetSelectedFaction()").unwrap(), 3);
-        // Fold Alliance: Stormwind is no longer a visible row, so there is no index to answer.
-        s.run("CollapseFactionHeader(1)").unwrap();
-        assert_eq!(s.eval::<i64>("return GetSelectedFaction()").unwrap(), 0);
         s.run("ExpandFactionHeader(1)").unwrap();
-        assert_eq!(s.eval::<i64>("return GetSelectedFaction()").unwrap(), 3);
-        // Selecting a header clears the selection rather than selecting the group.
-        s.run("SetSelectedFaction(1)").unwrap();
-        assert_eq!(s.eval::<i64>("return GetSelectedFaction()").unwrap(), 0);
-        // A push that drops the faction entirely drops the selection with it.
-        s.run("SetSelectedFaction(3)").unwrap();
-        let mut without = state();
-        without.entries.retain(|e| e.faction_id != 72);
-        s.set_reputation(without);
-        assert_eq!(s.eval::<i64>("return GetSelectedFaction()").unwrap(), 0);
+        assert_eq!(names(&s).len(), 11, "Alliance comes back still folded");
+        let folded = s
+            .eval::<Value>("local _,_,_,_,_,_,_,_,_,c = GetFactionInfo(2) return c")
+            .unwrap();
+        assert_eq!(folded, Value::Integer(1));
+        s.run("ExpandFactionHeader(2)").unwrap();
+        assert_eq!(names(&s), TREE);
         assert!(s.errors().is_empty(), "{:#?}", s.errors());
     }
 
-    /// A peace-forced faction refuses: the stock pane disables the box, but an addon can still call
-    /// the global.
     #[test]
-    fn the_war_and_inactive_toggles_flip_locally_and_queue_their_sends() {
+    fn the_all_headers_verbs_and_a_non_header_index_fold_every_header() {
+        let s = seated();
+        s.run("CollapseAllFactionHeaders()").unwrap();
+        assert_eq!(
+            names(&s),
+            [
+                "Classic",
+                "Alliance",
+                "Steamwheedle Cartel",
+                "Wrath of the Lich King",
+                "Alliance Vanguard",
+                "Other",
+            ],
+            "every header row stays, sub-headers too"
+        );
+        s.run("ExpandAllFactionHeaders()").unwrap();
+        assert_eq!(names(&s), TREE);
+        s.run("CollapseFactionHeader(3)").unwrap(); // Ironforge, not a header
+        assert_eq!(names(&s).len(), 6);
+        s.run("ExpandFactionHeader(0)").unwrap();
+        assert_eq!(names(&s), TREE);
+        assert!(s.errors().is_empty(), "{:#?}", s.errors());
+    }
+
+    #[test]
+    fn folds_survive_a_standing_push_and_a_new_header_unfolds_them() {
         let mut s = seated();
-        s.run("FactionToggleAtWar(3)").unwrap(); // Stormwind
+        s.run("CollapseFactionHeader(2)").unwrap(); // Alliance
+        let mut st = state();
+        st.entries[0].standing = 5000; // Stormwind ticks
+        s.set_reputation(st.clone());
+        assert_eq!(names(&s).len(), 11, "still folded");
+
+        // Kirin Tor turns visible under a header that exists: the folds stand.
+        st.entries[12].visible = true;
+        s.set_reputation(st.clone());
+        assert_eq!(names(&s).len(), 12);
+        assert!(!names(&s).contains(&"Ironforge".to_string()));
+
+        // A faction under a new header adds it, which unfolds every header.
+        st.entries.push(header(980, 43, 0, "The Burning Crusade"));
+        st.entries.push(entry(932, 50, 980, "The Aldor"));
+        s.set_reputation(st);
+        let got = names(&s);
+        assert!(got.contains(&"Ironforge".to_string()), "{got:?}");
+        assert_eq!(&got[6..8], ["The Burning Crusade", "The Aldor"]);
+        assert!(s.errors().is_empty(), "{:#?}", s.errors());
+    }
+
+    #[test]
+    fn an_empty_header_is_hidden_unless_it_is_a_bar() {
+        let mut s = UiScript::new().expect("VM");
+        let mut st = state();
+        st.entries.push(FactionEntry {
+            visible: true,
+            ..header(980, 43, 0, "The Burning Crusade")
+        });
+        st.entries[4].visible = false; // Valiance Expedition: Alliance Vanguard keeps no member
+        s.set_reputation(st);
+        let got = names(&s);
+        assert!(!got.contains(&"The Burning Crusade".to_string()), "{got:?}");
         assert_eq!(
-            s.eval::<Value>("local _,_,_,_,_,_,w = GetFactionInfo(3) return w")
-                .unwrap(),
-            Value::Integer(1),
-            "the pane shows war immediately — nothing acks this"
+            &got[6..9],
+            [
+                "Wrath of the Lich King",
+                "Argent Crusade",
+                "Alliance Vanguard"
+            ]
         );
-        s.run("SetFactionInactive(3)").unwrap();
+        assert!(s.errors().is_empty(), "{:#?}", s.errors());
+    }
+
+    #[test]
+    fn an_inactive_faction_files_under_the_folded_inactive_header() {
+        let mut s = UiScript::new().expect("VM");
+        let mut st = state();
+        st.entries[1].inactive = true; // Argent Dawn
+        s.set_reputation(st);
+        let got = names(&s);
+        assert_eq!(&got[10..], ["Other", "Bloodsail Buccaneers", "Inactive"]);
+        s.run("ExpandFactionHeader(13)").unwrap();
+        assert_eq!(names(&s).last().unwrap(), "Argent Dawn");
+
+        // The toggle re-sorts and repaints at once.
+        s.run(
+            "UPDATES = 0 local f = CreateFrame('Frame') f:RegisterEvent('UPDATE_FACTION') \
+             f:SetScript('OnEvent', function() UPDATES = UPDATES + 1 end)",
+        )
+        .unwrap();
+        s.run("SetFactionInactive(4)").unwrap(); // Stormwind
+        assert_eq!(s.eval::<i64>("return UPDATES").unwrap(), 1);
+        let got = names(&s);
         assert_eq!(
-            names(&s).last().unwrap(),
-            "Inactive",
-            "and the row re-parents on the spot, without a server rebuild"
+            &got[got.len() - 3..],
+            ["Inactive", "Argent Dawn", "Stormwind"]
         );
+        assert_eq!(
+            s.take_reputation_sends(),
+            [ReputationSend::Inactive {
+                rep_list_id: 19,
+                inactive: true
+            }]
+        );
+        assert!(s.errors().is_empty(), "{:#?}", s.errors());
+    }
+
+    #[test]
+    fn the_selection_is_a_faction_and_a_header_can_hold_it() {
+        let s = seated();
+        s.run("SetSelectedFaction(4)").unwrap(); // Stormwind
+        assert_eq!(s.eval::<i64>("return GetSelectedFaction()").unwrap(), 4);
+        s.run("CollapseFactionHeader(2)").unwrap();
+        assert_eq!(s.eval::<i64>("return GetSelectedFaction()").unwrap(), 0);
+        s.run("ExpandFactionHeader(2)").unwrap();
+        assert_eq!(s.eval::<i64>("return GetSelectedFaction()").unwrap(), 4);
+        s.run("SetSelectedFaction(9)").unwrap(); // Alliance Vanguard
+        assert_eq!(s.eval::<i64>("return GetSelectedFaction()").unwrap(), 9);
+        // None is faction 0, which the "Other" header's row also carries.
+        s.run("SetSelectedFaction(99)").unwrap();
+        assert_eq!(s.eval::<i64>("return GetSelectedFaction()").unwrap(), 11);
+        assert!(s.errors().is_empty(), "{:#?}", s.errors());
+    }
+
+    #[test]
+    fn the_war_toggle_follows_set_at_war() {
+        let mut s = UiScript::new().expect("VM");
+        let mut st = state();
+        st.entries[8].peace_forced = true; // Ironforge
+        s.set_reputation(st.clone());
+        let at_war = |s: &UiScript, i: usize| {
+            !s.eval::<Value>(&format!(
+                "local _,_,_,_,_,_,w = GetFactionInfo({i}) return w"
+            ))
+            .unwrap()
+            .is_nil()
+        };
+
+        s.run("FactionToggleAtWar(4)").unwrap(); // Stormwind
+        assert!(at_war(&s, 4), "written locally, unacked");
+        s.run("FactionToggleAtWar(3)").unwrap(); // Ironforge: sent, but peace holds
+        assert!(!at_war(&s, 3));
         assert_eq!(
             s.take_reputation_sends(),
             [
@@ -821,47 +1161,70 @@ mod tests {
                     rep_list_id: 19,
                     at_war: true
                 },
-                ReputationSend::Inactive {
-                    rep_list_id: 19,
-                    inactive: true
+                ReputationSend::AtWar {
+                    rep_list_id: 20,
+                    at_war: true
                 },
             ]
         );
-        assert!(s.take_reputation_sends().is_empty(), "the drain empties");
 
-        // A peace-forced row: no flip, no send.
-        let mut forced = state();
-        forced.entries[0].can_toggle_at_war = false;
-        s.set_reputation(forced);
-        s.run("FactionToggleAtWar(3)").unwrap();
-        assert!(s
-            .eval::<Value>("local _,_,_,_,_,_,w = GetFactionInfo(3) return w")
-            .unwrap()
-            .is_nil());
+        // Peace in combat is refused with the reference's error.
+        s.set_unit(
+            "player",
+            Some(UnitState {
+                exists: true,
+                in_combat: true,
+                ..UnitState::default()
+            }),
+        );
+        s.run("FactionToggleAtWar(4)").unwrap();
+        assert!(at_war(&s, 4));
+        assert_eq!(s.take_ui_errors(), ["ERR_NOT_IN_COMBAT"]);
+        s.set_unit("player", None);
+
+        // So is peace below -3000.
+        st.entries[0].at_war = true;
+        st.entries[0].standing = -5000;
+        s.set_reputation(st);
+        s.run("FactionToggleAtWar(4)").unwrap();
+        assert!(at_war(&s, 4));
+
+        // A header past the first slot refuses; the first does not.
+        s.run("FactionToggleAtWar(2)").unwrap(); // Alliance
         assert!(s.take_reputation_sends().is_empty());
+        s.run("FactionToggleAtWar(1)").unwrap(); // Classic
+        assert_eq!(
+            s.take_reputation_sends(),
+            [ReputationSend::AtWar {
+                rep_list_id: 96,
+                at_war: true
+            }]
+        );
         assert!(s.errors().is_empty(), "{:#?}", s.errors());
     }
 
     #[test]
-    fn watching_queues_a_send_but_does_not_move_the_bar_itself() {
+    fn watching_sends_only_a_change_and_never_moves_the_bar_itself() {
         let mut s = seated();
-        assert!(
-            s.eval::<Value>("return GetWatchedFactionInfo()")
-                .unwrap()
-                .is_nil(),
-            "nothing watched → a nil name, which stock `if ( name )` gates on"
-        );
-
-        s.run("SetWatchedFactionIndex(3)").unwrap(); // Stormwind
-        assert!(
-            s.eval::<Value>("return GetWatchedFactionInfo()")
-                .unwrap()
-                .is_nil(),
-            "still nothing: the server owns this field, so the click alone cannot move the bar"
-        );
+        assert!(s
+            .eval::<Value>("return GetWatchedFactionInfo()")
+            .unwrap()
+            .is_nil());
+        s.run("SetWatchedFactionIndex(4)").unwrap(); // Stormwind
         assert_eq!(s.take_reputation_sends(), [ReputationSend::Watch(Some(19))]);
+        assert!(
+            s.eval::<Value>("return GetWatchedFactionInfo()")
+                .unwrap()
+                .is_nil(),
+            "the server owns the field"
+        );
+        s.run("SetWatchedFactionIndex(0) SetWatchedFactionIndex(11)")
+            .unwrap();
+        assert!(
+            s.take_reputation_sends().is_empty(),
+            "none, and the synthetic header, are already what is watched"
+        );
 
-        // The descriptor update arrives as the next push, and now the bar reads.
         let mut watched = state();
         watched.watched = Some(19);
         s.set_reputation(watched);
@@ -871,17 +1234,21 @@ mod tests {
             ("Stormwind".into(), 5, 3000, 9000, 4000)
         );
         assert_eq!(
-            s.eval::<Value>("local _,_,_,_,_,_,_,_,_,_,w = GetFactionInfo(3) return w")
+            s.eval::<Value>("local _,_,_,_,_,_,_,_,_,_,_,w = GetFactionInfo(4) return w")
                 .unwrap(),
-            Value::Integer(1),
-            "and the row reports itself watched"
+            Value::Integer(1)
         );
-
-        // Watching slot 0, then clearing: the two must stay distinct.
-        s.run("SetWatchedFactionIndex(8)").unwrap(); // Bloodsail Buccaneers, rep slot 0
+        s.run("SetWatchedFactionIndex(4)").unwrap();
+        assert!(s.take_reputation_sends().is_empty(), "already watched");
+        s.run("SetWatchedFactionIndex(9) SetWatchedFactionIndex(0)")
+            .unwrap(); // Alliance Vanguard, then none
+        assert_eq!(
+            s.take_reputation_sends(),
+            [ReputationSend::Watch(Some(88)), ReputationSend::Watch(None)]
+        );
+        // Slot 0 is a faction, not "none".
+        s.run("SetWatchedFactionIndex(13)").unwrap(); // Bloodsail Buccaneers
         assert_eq!(s.take_reputation_sends(), [ReputationSend::Watch(Some(0))]);
-        s.run("SetWatchedFactionIndex(0)").unwrap();
-        assert_eq!(s.take_reputation_sends(), [ReputationSend::Watch(None)]);
         assert!(s.errors().is_empty(), "{:#?}", s.errors());
     }
 }

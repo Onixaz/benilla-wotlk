@@ -129,6 +129,7 @@ mod follow;
 pub(crate) mod font;
 mod font_block;
 mod frame_enum;
+mod get_text;
 mod glue;
 mod glue_addons;
 mod glue_core;
@@ -876,6 +877,7 @@ fn install_framescript(vm: VmKind) -> mlua::Result<Lua> {
     // widget method tables.
     object::install(&lua)?;
     frame_enum::install(&lua)?;
+    get_text::install(&lua)?;
     // After `object`, whose `publish_global` it reuses, and before any FrameXML loads:
     // `Loader::do_font` publishes into the tables this builds.
     font::install(&lua)?;

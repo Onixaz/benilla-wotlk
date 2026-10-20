@@ -179,12 +179,12 @@ fn set_proficiency_parses_and_decodes() {
     ));
 }
 
-/// u32 count + count x (u32 reputationListId, i32 standing), per vmangos `SetFactionStanding`.
+/// f32 bonus, u8 show effect, u32 count, then (u32 repListId, i32 standing) rows (`0x5d20a0`).
 #[test]
 fn set_faction_standing_parses_and_decodes() {
     assert_eq!(messages::opcode::SMSG_SET_FACTION_STANDING, 292);
     // Two slots: list 46 -> 3000, list 89 -> -6000 (standing is signed).
-    let body = hx("020000002e000000b80b00005900000090e8ffff");
+    let body = hx("0000000001020000002e000000b80b00005900000090e8ffff");
     let p = messages::parse_server(messages::opcode::SMSG_SET_FACTION_STANDING, &body).unwrap();
     match p {
         ServerPacket::SetFactionStanding { ref standings } => {
