@@ -74,6 +74,8 @@ pub(crate) struct RangeUnits<'w, 's> {
     /// `CanAssist`'s reaction inputs; a harness without them assists only the caster.
     factions: Option<Res<'w, Factions>>,
     reputations: Option<Res<'w, Reputations>>,
+    /// The creature templates `CanAssist`'s last leg reads.
+    names: Option<Res<'w, crate::names::NameCache>>,
 }
 
 impl RangeUnits<'_, '_> {
@@ -112,10 +114,7 @@ impl RangeUnits<'_, '_> {
             self.factions.as_deref(),
             reputations,
             self_store,
-            |owner| {
-                let e = *self.index.as_ref()?.0.get(&owner)?;
-                self.units.get(e).ok().map(|p| p.0.clone())
-            },
+            self.names.as_deref(),
         )
     }
 

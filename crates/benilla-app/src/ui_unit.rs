@@ -1325,10 +1325,6 @@ fn feed_units(
         }
         feed.warned_sideless = sideless;
     }
-    let owner_of = |guid: u64| {
-        let e = *index.as_ref()?.0.get(&guid)?;
-        stores.all.get(e).ok().cloned()
-    };
     // What the three snapshots below (target, target-of-target, NPC) read besides a descriptor.
     let held = held::HeldUnits {
         names: &names,
@@ -1339,7 +1335,6 @@ fn feed_units(
         self_store: self_pair.map(|(s, _)| s),
         classes: chr,
         types,
-        owner_of: &owner_of,
     };
     let target = selection.target.zip(selection.guid).and_then(|(e, guid)| {
         let store = stores.all.get(e).ok()?;

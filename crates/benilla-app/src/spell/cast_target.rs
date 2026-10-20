@@ -119,7 +119,7 @@ pub(crate) struct CastCandidates {
 #[derive(Clone, Copy)]
 pub(crate) struct TargetRelations<'a> {
     pub(crate) target_store: Option<&'a ObjectStore>,
-    /// The target's charmer, creator or summoner store, for `CanAssist`'s `IsPvP` owner chase.
+    /// The target's charmer, creator or summoner store, for the group predicates' controller.
     pub(crate) target_owner_store: Option<&'a ObjectStore>,
     pub(crate) self_store: Option<&'a ObjectStore>,
     pub(crate) factions: Option<&'a Factions>,
@@ -130,7 +130,7 @@ pub(crate) struct TargetRelations<'a> {
     pub(crate) group: GroupInputs<'a>,
 }
 
-/// A unit's owner as `CanAssist`'s `IsPvP` chase (`0x5ee5a0`) and `0x606170` read it, its charmer
+/// A unit's owner as the controller resolve `0x606170` reads it, its charmer
 /// else its creator: that object's descriptor, if it has streamed (`0x468460`).
 pub(super) fn owner_store<'a>(
     store: Option<&ObjectStore>,
@@ -142,7 +142,7 @@ pub(super) fn owner_store<'a>(
 }
 
 impl TargetRelations<'_> {
-    /// `CanAssist 0x6066f0` toward the candidate, which the caster always is for himself. The
+    /// `CanAssist 0x7293d0` toward the candidate, which the caster always is for himself. The
     /// binder's assist arm and the world pick's relation leg both ask it.
     pub(super) fn assistable(&self, is_self: bool) -> bool {
         is_self
@@ -151,7 +151,7 @@ impl TargetRelations<'_> {
                 self.factions,
                 self.reputations,
                 self.self_store,
-                |_| self.target_owner_store.cloned(),
+                self.types.names,
             )
     }
 

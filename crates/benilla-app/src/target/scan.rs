@@ -244,14 +244,14 @@ impl TargetScan<'_, '_> {
                     self_store,
                 )
             }
-            // Mode 2 (`0x493eca`): `CanAssist 0x6066f0`, then raw health (no reads-dead triple).
+            // Mode 2 (`0x493eca`): `CanAssist 0x7293d0`, then raw health (no reads-dead triple).
             ScanSide::Friend => {
                 can_assist(
                     store,
                     self.factions.as_deref(),
                     &self.reputations,
                     self_store,
-                    |owner| self.store_of(owner).cloned(),
+                    Some(&self.names),
                 ) && !store.is_some_and(|s| s.0.unit_is_dead())
             }
             // Modes 3 and 4 open on `cmp esi,ecx`, the candidate is not us, which our own body's

@@ -231,7 +231,7 @@ fn buffs_visible_on(
     self_store: Option<&ObjectStore>,
     factions: Option<&Factions>,
     reputations: &Reputations,
-    owner_store: impl FnOnce(u64) -> Option<ObjectStore>,
+    names: Option<&crate::names::NameCache>,
 ) -> bool {
     if store.0.unit_flags() & UNIT_FLAG_AURAS_VISIBLE != 0 {
         return true;
@@ -240,7 +240,7 @@ fn buffs_visible_on(
     if self_store.is_some_and(|s| s.0.unit_charmed_by().is_some()) {
         return false;
     }
-    can_assist(Some(store), factions, reputations, self_store, owner_store)
+    can_assist(Some(store), factions, reputations, self_store, names)
 }
 
 /// `UNIT_FIELD_FLAGS` bit 27, `0x08000000` (`0x5195b6`).
@@ -333,6 +333,7 @@ fn feed_auras(
     // The `UnitBuff` gate's inputs, the same reaction the selection ring and nameplates use.
     factions: Option<Res<Factions>>,
     reputations: Res<Reputations>,
+    names: Option<Res<crate::names::NameCache>>,
     time: Res<Time<Real>>,
     mut mem: ResMut<AuraFeedMemory>,
 ) {
@@ -414,7 +415,7 @@ fn feed_auras(
                 Some(store),
                 factions.as_deref(),
                 &reputations,
-                |owner| held(owner).cloned(),
+                names.as_deref(),
             )
     };
     let target_guid = units.selection.guid.unwrap_or(0);
@@ -664,13 +665,13 @@ mod tests {
         // No factions catalog: the reaction is neutral (3), below the `>= 4` bar.
         let hostile = ridge_stalker_slots(0);
         assert!(
-            !buffs_visible_on(&hostile, None, None, &reputations, |_| None),
+            !buffs_visible_on(&hostile, None, None, &reputations, None),
             "neutral reaction, not player-controlled, no PvP flag → no buffs"
         );
 
         let detected = ridge_stalker_slots(UNIT_FLAG_AURAS_VISIBLE);
         assert!(
-            buffs_visible_on(&detected, None, None, &reputations, |_| None),
+            buffs_visible_on(&detected, None, None, &reputations, None),
             "UNIT_FLAG_AURAS_VISIBLE alone opens it, whatever the reaction says"
         );
     }
@@ -683,7 +684,7 @@ mod tests {
         // AURAS_VISIBLE is tested before `CanAssist`, so it wins over NOT_SELECTABLE.
         let both = ridge_stalker_slots(UNIT_FLAG_AURAS_VISIBLE | (1 << 25));
         assert!(
-            buffs_visible_on(&both, None, None, &reputations, |_| None),
+            buffs_visible_on(&both, None, None, &reputations, None),
             "AURAS_VISIBLE is tested FIRST and short-circuits CanAssist entirely"
         );
 
@@ -694,13 +695,7 @@ mod tests {
             (F_CHARMEDBY + 1, 0),
         ]));
         assert!(
-            !buffs_visible_on(
-                &friendly_pc,
-                Some(&charmed_self),
-                None,
-                &reputations,
-                |_| None
-            ),
+            !buffs_visible_on(&friendly_pc, Some(&charmed_self), None, &reputations, None),
             "activePlayer.CHARMEDBY != 0 → no buffs on anyone"
         );
     }

@@ -3,7 +3,7 @@
 //!
 //! - `CanAttack 0x606980` forwards to [`super::ring::can_attack_from_player`],
 //! - `CanInteract 0x6067f0` forwards to [`super::ring::can_interact_from_player`],
-//! - `CanAssist 0x6066f0` is derived here, on [`ring_reaction`].
+//! - `CanAssist 0x7293d0` is derived here, in either direction ([`Assist`]).
 //!
 //! The first two live in [`super::ring`] beside the reaction directions they turn on:
 //! `0x6061e0(this = player)` answers a reputation faction with the at-war bit,
@@ -122,49 +122,124 @@ pub(crate) fn corpse_friendly(
     reaction.unwrap_or(Reaction::Neutral) >= Reaction::Friendly
 }
 
-/// `UNIT_FLAG_PVP`, bit 12 (vmangos `UnitDefines.h:557`), what `IsPvP 0x605ff0` tests on the
-/// unit's owner.
-const UNIT_FLAG_PVP: u32 = 0x1000;
 /// `UNIT_FIELD_FLAGS` bit 3, player-controlled (vmangos `UnitDefines.h:548`), the bit
 /// [`ring_reaction`]'s duel leg selects on.
 const UNIT_FLAG_PLAYER_CONTROLLED: u32 = 0x8;
+/// The cross-flag immunity bits `CanAssist` reads on its target (`0x7293d0`), as `CanAttack` does.
+const IMMUNE_TO_PLAYER_CONTROLLED: u32 = 0x100;
+const IMMUNE_TO_UNCONTROLLED: u32 = 0x200;
+/// Creature template type flags: `CanAidPlayers` (`0x715f90`) and `IsTreatAsRaidUnit`
+/// (`0x715df0`).
+const TYPE_FLAG_AIDS_PLAYERS: u32 = 1 << 12;
+const TYPE_FLAG_TREAT_AS_RAID_UNIT: u32 = 1 << 26;
+/// `UNIT_FIELD_BYTES_2` byte 1's free-for-all bit, beside [`BYTE2_PVP`] and [`BYTE2_SANCTUARY`].
+const BYTE2_FFA_PVP: u8 = 0x4;
 
-/// `CanAssist 0x6066f0` (Lua `UnitCanAssist` `0x516bb0`, registered at `.data 0x8504c8`), the
-/// unit-level gate of `UnitBuff` ([`crate::ui_aura::buffs_visible_on`]): `UNIT_FLAG_NOT_SELECTABLE`
-/// clear, a reaction of at least 4, and for a unit that is not player-controlled, `IsPvP 0x605ff0`
-/// on its owner. The 4 is the internal scale [`ring_reaction`] returns (`UnitReaction 0x5167e0`
-/// adds 1 for Lua at `0x51683e`), so neutral fails.
-///
-/// The player-controlled arm (`0x60673e`..`0x60679f`) reads an `[obj+0xe68]` record whose fields
-/// are unnamed and is not built: a player-controlled unit passes, which never hides a buff.
+/// The side the local player takes in a `CanAssist` question.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Assist {
+    /// May the player assist the unit: every spell, `UnitCanAssist` and targeting caller.
+    PlayerToUnit,
+    /// May the unit assist the player: the area spirit healer walk (`0x523f80`).
+    UnitToPlayer,
+}
+
+/// `CanAssist 0x7293d0` from the player, toward `store` ([`Assist::PlayerToUnit`]). `names`
+/// resolves the creature template type flags; a unit not in the cache reads none.
 pub(crate) fn can_assist(
     store: Option<&ObjectStore>,
     factions: Option<&Factions>,
     reputations: &Reputations,
     self_store: Option<&ObjectStore>,
-    owner_store: impl FnOnce(u64) -> Option<ObjectStore>,
+    names: Option<&crate::names::NameCache>,
 ) -> bool {
-    let Some(store) = store else {
+    can_assist_dir(
+        Assist::PlayerToUnit,
+        store,
+        factions,
+        reputations,
+        self_store,
+        names,
+    )
+}
+
+/// `CanAssist 0x7293d0` with `ignoreFlags` 0, between the player and `store` in `dir`:
+/// 1. the target's `UNIT_FLAG_NOT_SELECTABLE` refuses, then the immunity bit facing the actor;
+/// 2. the actor's reaction toward the target below 4 refuses, unless the actor is a raid-unit
+///    creature;
+/// 3. a player-controlled target refuses a duel opponent and an FFA target when the actor is not
+///    FFA, then passes unless the actor stands in a sanctuary toward a flagged target outside one;
+/// 4. an uncontrolled actor passes;
+/// 5. else the target needs the PvP bit or an aiding or raid-unit creature template.
+///
+/// Not applied: the controller resolve, which reads a pet's duel state off its owner.
+pub(crate) fn can_assist_dir(
+    dir: Assist,
+    store: Option<&ObjectStore>,
+    factions: Option<&Factions>,
+    reputations: &Reputations,
+    self_store: Option<&ObjectStore>,
+    names: Option<&crate::names::NameCache>,
+) -> bool {
+    let (Some(unit), Some(me)) = (store, self_store) else {
         return false;
     };
-    let flags = store.0.unit_flags();
-    if flags & UNIT_FLAG_NOT_SELECTABLE != 0 {
+    let unit_type_flags = unit
+        .0
+        .object_entry()
+        .filter(|_| !is_player_object(Some(unit)))
+        .and_then(|e| names?.creature_record(e))
+        .map_or(0, |r| r.type_flags);
+    let (actor, target, actor_type_flags, target_type_flags, reaction) = match dir {
+        Assist::PlayerToUnit => (
+            me,
+            unit,
+            0,
+            unit_type_flags,
+            super::ring::reaction_from_player(factions, reputations, Some(unit), Some(me)),
+        ),
+        Assist::UnitToPlayer => (
+            unit,
+            me,
+            unit_type_flags,
+            0,
+            ring_reaction(factions, reputations, Some(unit), Some(me)),
+        ),
+    };
+    let (aflags, tflags) = (actor.0.unit_flags(), target.0.unit_flags());
+    if tflags & UNIT_FLAG_NOT_SELECTABLE != 0 {
         return false;
     }
-    if ring_reaction(factions, reputations, Some(store), self_store) < 4 {
+    let actor_pc = aflags & UNIT_FLAG_PLAYER_CONTROLLED != 0;
+    if actor_pc && tflags & IMMUNE_TO_PLAYER_CONTROLLED != 0
+        || !actor_pc && tflags & IMMUNE_TO_UNCONTROLLED != 0
+    {
         return false;
     }
-    if flags & UNIT_FLAG_PLAYER_CONTROLLED != 0 {
-        // The player-controlled arm, not built: passes.
+    if reaction < 4 && actor_type_flags & TYPE_FLAG_TREAT_AS_RAID_UNIT == 0 {
+        return false;
+    }
+    let (abyte, tbyte) = (actor.0.unit_byte2_flags(), target.0.unit_byte2_flags());
+    if tflags & UNIT_FLAG_PLAYER_CONTROLLED != 0 {
+        let team = target.0.player_duel_team();
+        if team != 0
+            && (actor.0.player_duel_arbiter() != target.0.player_duel_arbiter()
+                || actor.0.player_duel_team() != team)
+        {
+            return false;
+        }
+        if tbyte & BYTE2_FFA_PVP != 0 && abyte & BYTE2_FFA_PVP == 0 {
+            return false;
+        }
+        return abyte & BYTE2_SANCTUARY == 0
+            || tbyte & BYTE2_SANCTUARY != 0
+            || tbyte & BYTE2_PVP == 0;
+    }
+    if !actor_pc {
         return true;
     }
-    // `IsPvP 0x605ff0`: the owner's flag (charmedBy, else createdBy, `0x5ee5a0`), else the unit's.
-    let owned = store
-        .0
-        .unit_owner(OwnerFallback::CreatedBy)
-        .and_then(owner_store);
-    let pvp_flags = owned.as_ref().map_or(flags, |o| o.0.unit_flags());
-    pvp_flags & UNIT_FLAG_PVP != 0
+    tbyte & BYTE2_PVP != 0
+        || target_type_flags & (TYPE_FLAG_AIDS_PLAYERS | TYPE_FLAG_TREAT_AS_RAID_UNIT) != 0
 }
 
 /// 12340's reaction palette at `0xbd0c94`, ARGB, indexed by `0x7251c0`'s 0-based answer: hated
@@ -425,6 +500,162 @@ mod tests {
             "PLAYER_FLAGS 0x80000 refuses the actor"
         );
         assert!(!attack(&unit(2, BYTE2_PVP, 0x10), &me), "a ghost");
+    }
+
+    /// `CanAssist 0x7293d0` both ways round. A spirit guide may assist the ghost
+    /// (`0x523f80` asks it so) though the player may not assist the guide, which carries neither
+    /// the PvP bit nor an aiding template. Between players the FFA, sanctuary and duel legs decide.
+    #[test]
+    fn can_assist_follows_the_actor_and_its_target() {
+        use benilla_formats::{FactionCatalog, FactionTemplate};
+        use std::collections::HashMap;
+
+        let tpl = |faction, group_mask, friend_group_mask, enemy_group_mask| FactionTemplate {
+            faction,
+            group_mask,
+            friend_group_mask,
+            enemy_group_mask,
+            enemies: [0; 4],
+            friends: [0; 4],
+        };
+        let factions = Factions::from_catalog(FactionCatalog::from_rows(
+            HashMap::from([
+                (1, tpl(1, 3, 2, 12)),
+                (2, tpl(2, 5, 4, 10)),
+                (11, tpl(11, 2, 2, 0)),
+                (14, tpl(14, 8, 0, 1)),
+            ]),
+            HashMap::new(),
+        ));
+        let reps = Reputations::default();
+        const GUIDE: u32 = 13116;
+        const AIDER: u32 = 13117;
+        let mut names = crate::names::NameCache::default();
+        names.insert_creature(GUIDE, Some(crate::names::CreatureRecord::default()));
+        names.insert_creature(
+            AIDER,
+            Some(crate::names::CreatureRecord {
+                type_flags: TYPE_FLAG_AIDS_PLAYERS,
+                ..Default::default()
+            }),
+        );
+        // `OBJECT_FIELD_TYPE` 2, `OBJECT_FIELD_ENTRY` 3, the template 35, `UNIT_FIELD_FLAGS` 46,
+        // `UNIT_FIELD_BYTES_2` 164, `PLAYER_DUEL_ARBITER` 188, `PLAYER_DUEL_TEAM` 196.
+        let npc = |entry: u32, template: u32, flags: u32, byte2: u8| {
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (2, 0x9),
+                (3, entry),
+                (35, template),
+                (46, flags),
+                (164, u32::from(byte2) << 8),
+            ]))
+        };
+        let player = |template: u32, byte2: u8, duel: (u32, u32)| {
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (2, 0x19),
+                (35, template),
+                (46, UNIT_FLAG_PLAYER_CONTROLLED),
+                (164, u32::from(byte2) << 8),
+                (188, duel.0),
+                (196, duel.1),
+            ]))
+        };
+        let me = player(1, 0, (0, 0));
+        let ask = |dir, unit: &ObjectStore, me: &ObjectStore| {
+            can_assist_dir(
+                dir,
+                Some(unit),
+                Some(&factions),
+                &reps,
+                Some(me),
+                Some(&names),
+            )
+        };
+
+        let guide = npc(GUIDE, 11, 0, 0);
+        assert!(
+            ask(Assist::UnitToPlayer, &guide, &me),
+            "the guide may assist the ghost: an uncontrolled actor passes"
+        );
+        assert!(
+            !ask(Assist::PlayerToUnit, &guide, &me),
+            "the player may not assist an unflagged NPC with no aiding template"
+        );
+        assert!(
+            ask(Assist::PlayerToUnit, &npc(AIDER, 11, 0, 0), &me),
+            "type flag 0x1000, CanAidPlayers"
+        );
+        assert!(
+            ask(Assist::PlayerToUnit, &npc(GUIDE, 11, 0, BYTE2_PVP), &me),
+            "or the NPC's PvP bit"
+        );
+        assert!(
+            !ask(Assist::UnitToPlayer, &npc(GUIDE, 14, 0, 0), &me),
+            "a hostile NPC assists nobody"
+        );
+        assert!(
+            !ask(
+                Assist::PlayerToUnit,
+                &npc(AIDER, 11, UNIT_FLAG_NOT_SELECTABLE, 0),
+                &me
+            ),
+            "a target that is not selectable refuses"
+        );
+        assert!(
+            ask(
+                Assist::UnitToPlayer,
+                &npc(GUIDE, 11, UNIT_FLAG_NOT_SELECTABLE, 0),
+                &me
+            ),
+            "the flag is read on the target only: a guide that is not selectable still assists"
+        );
+
+        let ally = |byte2, duel| player(1, byte2, duel);
+        assert!(ask(Assist::PlayerToUnit, &ally(0, (0, 0)), &me), "an ally");
+        assert!(
+            !ask(Assist::PlayerToUnit, &ally(BYTE2_FFA_PVP, (0, 0)), &me),
+            "an FFA ally while we are not"
+        );
+        assert!(
+            !ask(
+                Assist::PlayerToUnit,
+                &ally(BYTE2_FFA_PVP, (0, 0)),
+                &player(1, BYTE2_FFA_PVP, (0, 0))
+            ),
+            "both FFA: hostile to each other (`0x7253af`), so the reaction leg refuses"
+        );
+        assert!(
+            !ask(
+                Assist::PlayerToUnit,
+                &ally(BYTE2_PVP, (0, 0)),
+                &player(1, BYTE2_SANCTUARY, (0, 0))
+            ),
+            "from a sanctuary toward a flagged ally outside one"
+        );
+        assert!(
+            ask(
+                Assist::PlayerToUnit,
+                &ally(BYTE2_PVP | BYTE2_SANCTUARY, (0, 0)),
+                &player(1, BYTE2_SANCTUARY, (0, 0))
+            ),
+            "both in the sanctuary"
+        );
+        assert!(
+            !ask(Assist::PlayerToUnit, &ally(0, (0x77, 1)), &me),
+            "an ally duelling someone else"
+        );
+        assert!(
+            !ask(
+                Assist::PlayerToUnit,
+                &ally(0, (0x77, 2)),
+                &player(1, 0, (0x77, 1))
+            ),
+            "our duel opponent"
+        );
+        assert!(
+            !ask(Assist::PlayerToUnit, &player(2, 0, (0, 0)), &me),
+            "an enemy"
+        );
     }
 
     /// `0x6067d0`: the caster's template toward the corpse's race's, friendly or better; every gap

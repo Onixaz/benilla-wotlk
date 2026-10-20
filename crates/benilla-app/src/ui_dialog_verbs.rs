@@ -95,10 +95,10 @@ const NPC_FLAG_SPIRITGUIDE: u32 = crate::target::cursor_mode::npc_flags::SPIRITG
 /// fires `AREA_SPIRIT_HEALER_OUT_OF_RANGE` for this spell id alone (`0x6e70b6`).
 pub(crate) const AREA_SPIRIT_HEALER_AURA: u32 = 2584;
 
-/// The acquire radius, `[0x8044d0]` = 20.0, compared squared in the enumerate callback `0x4924c0`.
+/// The acquire radius, squared `[0x9e898c]` = 400 in the enumerate callback `0x523f80`.
 const SPIRIT_GUIDE_ACQUIRE_YD: f32 = 20.0;
-/// The retain radius, the acquire radius times `[0x804580]` = 1.1 (`0x492406`): a healer adopted
-/// inside 20 yd is kept until 22.
+/// The retain radius, squared `[0xa02d1c]` = 484 in `0x524010`: a healer adopted inside 20 yd is
+/// kept until 22.
 const SPIRIT_GUIDE_RETAIN_YD: f32 = SPIRIT_GUIDE_ACQUIRE_YD * 1.1;
 
 /// What [`AreaSpiritHealer::set_healer`] owes the frame; the reference does both in `0x4921c0`.
@@ -653,10 +653,11 @@ fn drain_queue_verbs(
     }
 }
 
-/// The area-spirit-healer poll `0x4923b0`, run every frame from `CGWorldFrame`'s `OnUpdate`
-/// (`0x4818ca`): only a ghost (`[[player+0xe68]+8]` bit 4) holds a healer; a cached one is kept
-/// within 22 yd, else the last unit in the walk that is a `SPIRITGUIDE`, assistable and within
-/// 20 yd is adopted. Last, not nearest: the enumerate callback `0x4924c0` never stops the walk.
+/// The area-spirit-healer poll `UpdateAreaSpiritHealerDistance 0x524010`, run every frame from
+/// `CGWorldFrame`'s update: only a ghost (`PLAYER_FLAGS` `0x10`) holds a healer; a cached one is
+/// kept within 22 yd, else the last unit in the walk that is a `SPIRITGUIDE`, may assist us
+/// (`0x523fc5`, guide → player) and is within 20 yd is adopted. Last, not nearest: the enumerate
+/// callback `0x523f80` never stops the walk.
 fn poll_area_spirit_healer(
     mut spirit: ResMut<AreaSpiritHealer>,
     me: Query<(&ObjectStore, &Transform), With<SelfPlayer>>,
@@ -671,8 +672,7 @@ fn poll_area_spirit_healer(
     >,
     factions: Option<Res<crate::target::Factions>>,
     reputations: Res<crate::net::Reputations>,
-    index: Option<Res<crate::net::GuidIndex>>,
-    stores: Query<&ObjectStore>,
+    names: Option<Res<crate::names::NameCache>>,
     commands: Res<NetCommands>,
     mut script: Option<NonSendMut<UiScript>>,
 ) {
@@ -717,11 +717,7 @@ fn poll_area_spirit_healer(
         return;
     }
 
-    // Acquire: `can_assist` is `0x6066f0`; its owner lookup wants a store by guid.
-    let store_of = |guid: u64| -> Option<ObjectStore> {
-        let entity = *index.as_ref()?.0.get(&guid)?;
-        stores.get(entity).ok().cloned()
-    };
+    // Acquire: `0x523f80` asks the guide whether it may assist us (`0x7293d0`).
     let mut adopted = None;
     for (guid, kind, store, tf) in units.iter() {
         if kind.kind != benilla_protocol::EntityKind::Unit {
@@ -734,12 +730,13 @@ fn poll_area_spirit_healer(
         {
             continue;
         }
-        if !crate::target::can_assist(
+        if !crate::target::can_assist_dir(
+            crate::target::Assist::UnitToPlayer,
             Some(store),
             factions.as_deref(),
             &reputations,
             Some(self_store),
-            store_of,
+            names.as_deref(),
         ) {
             continue;
         }
