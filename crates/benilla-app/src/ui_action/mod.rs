@@ -204,21 +204,91 @@ pub(crate) fn real_spells() -> Option<Spells> {
     })
 }
 
-/// The reference's learned-ability latches: at learn time `0x4b25e0` stores a spell's id by its
-/// `Effect[0]`, and the unlearn path `0x4b2c50` clears it. The skin cursor requires the latch
-/// (`0x482589`), so a player who never learned Skinning gets no skin cursor.
+/// The reference's learned-ability latches: at learn time `CGSpellBook_RegisterLearnedSpell
+/// 0x542030` stores a spell's id by its `Effect[0]` (switch `0x54209e`), and `DelKnownSpell`
+/// clears it (`0x53fb37`..`0x53fb77`). The skin cursor and click read the slots through
+/// `GetSkinningSpell 0x53bce0` ([`Self::skinning_spell`]), so a corpse whose slot is empty gets
+/// neither.
 #[derive(Resource, Default)]
 pub(crate) struct LearnedAbilities {
-    /// `[0xb700e4]`: the known `SPELL_EFFECT_SKINNING` spell, which the skin click also casts.
-    pub(crate) skinning: Option<u32>,
-    /// `[0xb700e8]`: the known `SPELL_EFFECT_SKIN_PLAYER_CORPSE` spell; no cursor reads it yet.
+    /// `[0xbe5d6c + 4 × EffectMiscValue[0]]` (`0x5420c7`): the known `SPELL_EFFECT_SKINNING` spell
+    /// of each [`skinning_type`], leather (the Skinning ranks), herb (32605), rock (32606) and
+    /// bolts (49383).
+    pub(crate) skinning: [Option<u32>; 4],
+    /// `[0xbe5d7c]` (`0x5420d6`): the known `SPELL_EFFECT_SKIN_PLAYER_CORPSE` spell, Remove
+    /// Insignia, the slot a player or corpse reads.
     pub(crate) skin_player_corpse: Option<u32>,
     /// `[0xcecad8]`: the known `SPELL_EFFECT_FEED_PET` spell, latched by `0x6ea1d0` (from
     /// `0x5e9e49`); gate 3 of [`drop_item::drop_item_on_unit`] and the spell it casts.
     pub(crate) feed_pet: Option<u32>,
 }
 
-/// The "Remove Insignia" effect, the second one `0x4b25e0` latches.
+/// What `GetSkinningSpell 0x53bce0` tells apart by the object's type mask.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum SkinSubject {
+    /// Mask `0x90`, a player or a corpse: the Remove Insignia slot.
+    PlayerOrCorpse,
+    /// Mask `0x08`, a creature, with its cached template's type flags.
+    Creature { type_flags: u32 },
+}
+
+impl SkinSubject {
+    /// The subject `store` is; a creature without a cached template reads no type flags.
+    pub(crate) fn of(
+        store: &crate::net::ObjectStore,
+        names: Option<&crate::names::NameCache>,
+    ) -> Self {
+        use benilla_protocol::messages::ObjectType;
+        match store.0.object_type() {
+            Some(ObjectType::Player | ObjectType::Corpse) => Self::PlayerOrCorpse,
+            _ => Self::Creature {
+                type_flags: store
+                    .0
+                    .object_entry()
+                    .and_then(|e| names?.creature_record(e))
+                    .map_or(0, |r| r.type_flags),
+            },
+        }
+    }
+}
+
+/// `CGUnit_C::GetSkinningType 0x715e50`: the creature template's type flags `0x100` herb (1),
+/// `0x200` rock (2), `0x8000` bolts (3), in that order, otherwise leather (0).
+pub(crate) fn skinning_type(type_flags: u32) -> usize {
+    if type_flags & 0x100 != 0 {
+        1
+    } else if type_flags & 0x200 != 0 {
+        2
+    } else if type_flags & 0x8000 != 0 {
+        3
+    } else {
+        0
+    }
+}
+
+/// The GlobalString of the tooltip's skinnable line by [`skinning_type`]
+/// (`CGTooltip::AddSkinnableText 0x620ee0`).
+pub(crate) fn skinnable_text_key(type_flags: u32) -> &'static str {
+    [
+        "UNIT_SKINNABLE_LEATHER",
+        "UNIT_SKINNABLE_HERB",
+        "UNIT_SKINNABLE_ROCK",
+        "UNIT_SKINNABLE_BOLTS",
+    ][skinning_type(type_flags)]
+}
+
+impl LearnedAbilities {
+    /// `GetSkinningSpell 0x53bce0`: the spell the skin cursor, click and tooltip read for
+    /// `subject`, `None` when its slot is empty.
+    pub(crate) fn skinning_spell(&self, subject: SkinSubject) -> Option<u32> {
+        match subject {
+            SkinSubject::PlayerOrCorpse => self.skin_player_corpse,
+            SkinSubject::Creature { type_flags } => self.skinning[skinning_type(type_flags)],
+        }
+    }
+}
+
+/// The "Remove Insignia" effect, latched into `[0xbe5d7c]` (`0x5420d6`).
 const SPELL_EFFECT_SKIN_PLAYER_CORPSE: u32 = 0x74;
 
 /// The effect latched into `[0xcecad8]` at learn time (`0x5e9e42`); only Feed Pet 6991 has it.
@@ -236,18 +306,17 @@ fn track_learned_abilities(
     }
     // The last match in id order: each learned rank overwrites the reference's latch, and a rank
     // chain ascends by id (Skinning 8613, 8617, 8618, 10768).
-    let last_with = |effect: u32| {
+    let last_with = |effect: u32, misc: Option<i32>| {
         actions.spells.iter().copied().rfind(|&id| {
-            spells
-                .catalog
-                .get(id)
-                .is_some_and(|d| d.effects[0] == effect)
+            spells.catalog.get(id).is_some_and(|d| {
+                d.effects[0] == effect && misc.is_none_or(|m| d.effect_misc_value[0] == m)
+            })
         })
     };
     let (skinning, skin_player_corpse, feed_pet) = (
-        last_with(benilla_formats::SPELL_EFFECT_SKINNING),
-        last_with(SPELL_EFFECT_SKIN_PLAYER_CORPSE),
-        last_with(SPELL_EFFECT_FEED_PET),
+        [0, 1, 2, 3].map(|kind| last_with(benilla_formats::SPELL_EFFECT_SKINNING, Some(kind))),
+        last_with(SPELL_EFFECT_SKIN_PLAYER_CORPSE, None),
+        last_with(SPELL_EFFECT_FEED_PET, None),
     );
     if (skinning, skin_player_corpse, feed_pet)
         != (
@@ -393,5 +462,41 @@ fn load_spells(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
             });
         }
         Err(e) => warn!("ui_action: Spell.dbc failed to load — bar icons disabled: {e:#}"),
+    }
+}
+
+#[cfg(test)]
+mod learned_tests {
+    use super::*;
+
+    /// The install's SKINNING spells file by `EffectMiscValue[0]` (`0x5420c7`): Skinning ranks
+    /// leather, 32605 herb, 32606 rock, 49383 bolts; Remove Insignia 22027 its own slot.
+    #[test]
+    fn learned_skinning_spells_file_by_their_misc_value() {
+        let Some(spells) = real_spells() else { return };
+        let mut app = App::new();
+        app.insert_resource(spells);
+        app.insert_resource(PlayerActions {
+            spells: [8613, 8617, 22027, 32605, 32606, 49383].into(),
+            ..Default::default()
+        });
+        app.init_resource::<LearnedAbilities>();
+        app.add_systems(Update, track_learned_abilities);
+        app.update();
+        let learned = app.world().resource::<LearnedAbilities>();
+        assert_eq!(
+            learned.skinning,
+            [Some(8617), Some(32605), Some(32606), Some(49383)]
+        );
+        assert_eq!(learned.skin_player_corpse, Some(22027));
+        // A miner without Skinning has an empty leather slot.
+        let miner = LearnedAbilities {
+            skinning: [None, None, learned.skinning[2], None],
+            ..Default::default()
+        };
+        assert_eq!(
+            miner.skinning_spell(SkinSubject::Creature { type_flags: 0 }),
+            None
+        );
     }
 }

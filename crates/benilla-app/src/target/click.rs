@@ -213,8 +213,7 @@ pub(crate) struct Dispatch<'w, 's> {
     gestures: ResMut<'w, crate::creature_anim::GestureQueue>,
     go_inputs: GoLockInputs<'w, 's>,
     player_actions: Res<'w, crate::ui_action::PlayerActions>,
-    // The skin leg's spells (`[0xb700e4]`, `[0xb700e8]`), already gated by the classifier.
-    learned: Res<'w, crate::ui_action::LearnedAbilities>,
+    skin: SkinInputs<'w>,
     // The GameObject leg also reads the object's anim state (the Action gate).
     stores: Query<
         'w,
@@ -229,6 +228,30 @@ pub(crate) struct Dispatch<'w, 's> {
     feedback: Feedback<'w>,
     auto: crate::player::AutoMove<'w, 's>,
     player: Res<'w, crate::player::Player>,
+}
+
+/// What the skin legs read: `GetSkinningSpell 0x53bce0`'s learned slots, and `CanAssist`'s
+/// inputs for the friendly-player refusal.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct SkinInputs<'w> {
+    learned: Res<'w, crate::ui_action::LearnedAbilities>,
+    factions: Option<Res<'w, super::ring::Factions>>,
+    reputations: Res<'w, crate::net::Reputations>,
+    names: Option<Res<'w, crate::names::NameCache>>,
+}
+
+impl SkinInputs<'_> {
+    /// [`cursor_mode::unit_skin_spell`] for a dead unit.
+    fn unit_spell(&self, store: &ObjectStore, self_store: Option<&ObjectStore>) -> Option<u32> {
+        cursor_mode::unit_skin_spell(
+            &self.learned,
+            store,
+            self_store,
+            self.factions.as_deref(),
+            &self.reputations,
+            self.names.as_deref(),
+        )
+    }
 }
 
 /// The Loot walk's stop radius: the arm (`0x611130`) takes the square root (`0x6111ab`) of what
@@ -838,9 +861,9 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
                 dispatch.loot_corpse(entity, guid, walk);
             }
         } else if insignia {
-            // Leg 2. `skin_player_corpse` mirrors `[0xb700e8]`, `None` for every 1.12.1 player,
-            // so this is inert as in the reference; the unfriendly test is not built.
-            if let Some(spell_id) = dispatch.learned.skin_player_corpse {
+            // Leg 2 (`0x7060e4`): a corpse reads the Remove Insignia slot `[0xbe5d7c]`. Not
+            // built: its `CanAssist(corpse)` refusal (`0x7060f3`).
+            if let Some(spell_id) = dispatch.skin.learned.skin_player_corpse {
                 dispatch.skin(
                     entity,
                     guid,
@@ -865,12 +888,13 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
     // Pickup(8) a live vendor shares. A rider skips the loot leg for the skin leg (`0x60bf98`),
     // silently. Step 0 of [`DeadUnitLeg`] is hoisted for the trace.
     let dead_fork = target.is_some_and(|s| s.0.unit_is_dead() && !s.0.unit_dynflag_dead());
+    let skin_spell = target.and_then(|s| dispatch.skin.unit_spell(s, dispatch.self_store()));
     let leg = dead_unit_leg(
         self_mounted,
         dead_fork,
         target.is_some_and(|s| s.0.unit_lootable()),
         target.is_some_and(|s| s.0.unit_flags() & cursor_mode::UNIT_FLAG_SKINNABLE != 0),
-        dispatch.learned.skinning.is_some(),
+        skin_spell.is_some(),
     );
     if benilla_assets::trace::enabled_for("use") {
         benilla_assets::trace::line(
@@ -969,9 +993,9 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
             }
         }
         UnitBranch::Dead(DeadUnitLeg::Skin) => {
-            // The skin leg (`0x60c01f`): the known Skinning spell (`[0xb700e4]`) at a corpse the
-            // loot leg declined, lootable ones included while mounted.
-            if let Some(spell_id) = dispatch.learned.skinning {
+            // The skin leg (`0x7313a3`): the corpse's own learned slot at a corpse the loot leg
+            // declined, lootable ones included while mounted.
+            if let Some(spell_id) = skin_spell {
                 dispatch.skin(
                     entity,
                     guid,
@@ -1096,12 +1120,17 @@ pub(super) fn act_on_arrival(
                 walk,
             );
         }
-        // The spell by the target: a corpse or a player's body takes `[0xb700e8]` (`0x5f0608`).
+        // The spell by the target, re-read at arrival (`HandleSkinning 0x6d6f40` → `0x53bce0`): a
+        // corpse or a player's body takes `[0xbe5d7c]`, a creature its kind's slot.
         ApproachVerb::Skin => {
             let spell = if matches!(kind, Some(EntityKind::Corpse | EntityKind::Player)) {
-                dispatch.learned.skin_player_corpse
+                dispatch.skin.learned.skin_player_corpse
             } else {
-                dispatch.learned.skinning
+                dispatch.stores.get(entity).ok().and_then(|(s, _)| {
+                    let names = dispatch.skin.names.as_deref();
+                    let subject = crate::ui_action::SkinSubject::of(s, names);
+                    dispatch.skin.learned.skinning_spell(subject)
+                })
             };
             if let Some(spell_id) = spell {
                 let subject = if kind == Some(EntityKind::Corpse) {
@@ -1284,7 +1313,8 @@ fn route_lock_refusal(
 /// 0. a corpse: `HEALTH <= 0` and the feign-death bit `UNIT_DYNFLAG_DEAD` clear, else alive;
 /// 1. the player mounted (`0x60bf98`): straight to the skin leg, silently;
 /// 2. lootable (`0x6003a0`): [`DeadUnitLeg::Loot`];
-/// 3. skinnable (`UNIT_FIELD_FLAGS` bit 26) with Skinning known (`[0xb700e4]`): the skin leg;
+/// 3. skinnable (`UNIT_FIELD_FLAGS` bit 26) with a spell for it ([`cursor_mode::unit_skin_spell`]):
+///    the skin leg;
 /// 4. otherwise nothing (`0x60c25f`).
 ///
 /// Step 1 never reads the target: a lootable and skinnable corpse skins mounted, loots on foot.

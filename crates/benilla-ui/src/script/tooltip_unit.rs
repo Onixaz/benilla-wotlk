@@ -141,8 +141,9 @@ fn render_unit(lua: &Lua, this: &Table, token: &str) -> mlua::Result<bool> {
     if u.pvp {
         append_line(lua, this, ("PvP".into(), WHITE), None, false)?;
     }
-    if u.skinnable {
-        append_line(lua, this, ("Skinnable".into(), RED), None, false)?;
+    // `AddSkinnableText 0x620ee0`; not applied: the skill colour when the spell's points are set.
+    if let Some(text) = u.skinnable.and_then(|key| crate::strings::global(lua, key)) {
+        append_line(lua, this, (text, RED), None, false)?;
     }
     // "Civilian" (`0x612550`): PvP-flagged, a civilian, hostile, and grey to kill (`0x5f0700`).
     if is_civilian_kill(&u, player_level) {

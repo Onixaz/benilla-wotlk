@@ -212,6 +212,52 @@ pub(crate) mod npc_flags {
 pub(super) const UNIT_FLAG_SKINNABLE: u32 = 0x0400_0000;
 const UNIT_FLAG_PACIFIED: u32 = 0x0002_0000;
 
+/// The spell the skin leg casts at a dead skinnable unit, shared by the cursor (`0x4f7e18`) and
+/// the click (`0x7313a3`): `GetSkinningSpell 0x53bce0`'s slot for it, refused for a player that
+/// `CanAssist` passes (`0x7313c5`, `0x4f7e3a`), so a friendly body takes no skin leg.
+pub(super) fn unit_skin_spell(
+    learned: &crate::ui_action::LearnedAbilities,
+    store: &ObjectStore,
+    self_store: Option<&ObjectStore>,
+    factions: Option<&Factions>,
+    reputations: &Reputations,
+    names: Option<&crate::names::NameCache>,
+) -> Option<u32> {
+    skin_leg_spell(
+        learned,
+        crate::ui_action::SkinSubject::of(store, names),
+        || super::can_assist(Some(store), factions, reputations, self_store, names),
+    )
+}
+
+/// [`unit_skin_spell`] past the object reads: `can_assist` is asked of a player only.
+fn skin_leg_spell(
+    learned: &crate::ui_action::LearnedAbilities,
+    subject: crate::ui_action::SkinSubject,
+    can_assist: impl FnOnce() -> bool,
+) -> Option<u32> {
+    let spell = learned.skinning_spell(subject)?;
+    (subject != crate::ui_action::SkinSubject::PlayerOrCorpse || !can_assist()).then_some(spell)
+}
+
+/// The skin leg's cursor by `GetSkinningType 0x715e50` (`0x4f7ece`): Skin(12) for leather,
+/// GatherHerbs(13) for herb, Mine(11) for rock and bolts.
+fn skin_cursor(store: &ObjectStore, names: Option<&crate::names::NameCache>) -> CursorKind {
+    use crate::ui_action::SkinSubject;
+    match SkinSubject::of(store, names) {
+        SkinSubject::PlayerOrCorpse => CursorKind::Skin,
+        SkinSubject::Creature { type_flags } => skin_cursor_kind(type_flags),
+    }
+}
+
+fn skin_cursor_kind(type_flags: u32) -> CursorKind {
+    match crate::ui_action::skinning_type(type_flags) {
+        1 => CursorKind::GatherHerbs,
+        2 | 3 => CursorKind::Mine,
+        _ => CursorKind::Skin,
+    }
+}
+
 /// The hovered unit is one the unit dispatcher `0x60bea0` forks to its attack arm for (`0x60c192`):
 /// alive or feigning, refused by `CanInteract` and passed by `CanAttack`. The sword also needs the
 /// player's own legs ([`player_attack_legs`]), which the arm tests again inside.
@@ -791,10 +837,21 @@ pub(super) fn classify(
                     !(can_auto_interact || in_melee),
                 ));
             }
-            // Skin also needs the learn latch `[0xb700e4 + 4×isPlayerTarget]` (`0x482589`): a
-            // player who has learned no Skinning spell sees Point.
-            if store.0.unit_flags() & UNIT_FLAG_SKINNABLE != 0 && learned.skinning.is_some() {
-                return Some((CursorKind::Skin, !in_melee));
+            // Skin also needs the corpse's learned slot ([`unit_skin_spell`]): a miner over a
+            // beast, or anyone over a friendly player's body, sees Point. Not applied: a player's
+            // SkinHorde/SkinAlliance (shown as Skin) and the gray at the spell's range.
+            if store.0.unit_flags() & UNIT_FLAG_SKINNABLE != 0
+                && unit_skin_spell(
+                    learned,
+                    store,
+                    Some(self_store),
+                    factions.as_deref(),
+                    reputations,
+                    names.as_deref(),
+                )
+                .is_some()
+            {
+                return Some((skin_cursor(store, names.as_deref()), !in_melee));
             }
             return None; // a plain corpse: Point
         }
@@ -864,6 +921,62 @@ pub(super) fn classify(
 mod tests {
     use super::*;
     use benilla_protocol::messages::dialog_status;
+
+    /// `GetSkinningSpell 0x53bce0` and the click's player refusal (`0x7313c5`), for a character
+    /// with Skinning 8613 and Mining 32606 learned as the learn switch files them (`0x5420c7`).
+    #[test]
+    fn the_skin_leg_reads_the_corpses_own_slot() {
+        use crate::ui_action::{LearnedAbilities, SkinSubject};
+        const SKINNING: u32 = 8613;
+        const MINING: u32 = 32606;
+        const REMOVE_INSIGNIA: u32 = 22027;
+        let beast = SkinSubject::Creature { type_flags: 0 };
+        let rock = SkinSubject::Creature { type_flags: 0x200 };
+        let herb = SkinSubject::Creature { type_flags: 0x100 };
+        let player = SkinSubject::PlayerOrCorpse;
+        let miner = LearnedAbilities {
+            skinning: [None, None, Some(MINING), None],
+            ..Default::default()
+        };
+        let never = || -> bool { panic!("CanAssist is asked of a player only") };
+        assert_eq!(
+            skin_leg_spell(&miner, beast, never),
+            None,
+            "a miner over a beast"
+        );
+        assert_eq!(skin_leg_spell(&miner, rock, never), Some(MINING));
+        assert_eq!(skin_leg_spell(&miner, herb, never), None);
+        let both = LearnedAbilities {
+            skinning: [Some(SKINNING), None, Some(MINING), None],
+            ..Default::default()
+        };
+        assert_eq!(skin_leg_spell(&both, beast, never), Some(SKINNING));
+        assert_eq!(skin_leg_spell(&both, rock, never), Some(MINING));
+        // A player's body reads the Remove Insignia slot, never a Skinning one, and only while
+        // `CanAssist` refuses it.
+        assert_eq!(skin_leg_spell(&both, player, || false), None);
+        let insignia = LearnedAbilities {
+            skin_player_corpse: Some(REMOVE_INSIGNIA),
+            ..both
+        };
+        assert_eq!(skin_leg_spell(&insignia, player, || true), None, "a friend");
+        assert_eq!(
+            skin_leg_spell(&insignia, player, || false),
+            Some(REMOVE_INSIGNIA),
+            "an enemy"
+        );
+    }
+
+    /// The skin cursor by `GetSkinningType 0x715e50` (`0x4f7ece`).
+    #[test]
+    fn the_skin_cursor_follows_the_creature_kind() {
+        assert_eq!(skin_cursor_kind(0), CursorKind::Skin);
+        assert_eq!(skin_cursor_kind(0x100), CursorKind::GatherHerbs);
+        assert_eq!(skin_cursor_kind(0x200), CursorKind::Mine);
+        assert_eq!(skin_cursor_kind(0x8000), CursorKind::Mine);
+        // Herb is tested first.
+        assert_eq!(skin_cursor_kind(0x300), CursorKind::GatherHerbs);
+    }
 
     /// `CanLootNow 0x5ec110` skips its range under `CanAutoInteract` (`0x5ec11b`), so the click
     /// that walks there finds a lit pouch.

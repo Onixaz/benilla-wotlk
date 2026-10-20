@@ -17,6 +17,8 @@ fn seed_level_strings(s: &mut UiScript) {
         PLAYER = "[PLAYER]"
         ELITE  = "[ELITE]"
         BOSS   = "[BOSS]"
+        UNIT_SKINNABLE_LEATHER = "[SKINNABLE_LEATHER]"
+        UNIT_SKINNABLE_ROCK    = "[SKINNABLE_ROCK]"
     "#,
     )
     .unwrap();
@@ -33,7 +35,7 @@ fn wolf() -> UnitState {
         reaction: 2, // hostile
         creature_type_name: Some("Beast".into()),
         rank: 2, // rare-elite prints ELITE (the byte table)
-        skinnable: true,
+        skinnable: Some("UNIT_SKINNABLE_LEATHER"),
         ..Default::default()
     }
 }
@@ -60,11 +62,52 @@ fn creature_line_law() {
         assert(TTTextLeft1:GetText() == "Timber Wolf")
         assert(TTTextLeft2:GetText() == "Alpha")
         assert(TTTextLeft3:GetText() == "[LEVEL_CLASS_TYPE 10 Beast [ELITE]]", "got " .. TTTextLeft3:GetText())
-        assert(TTTextLeft4:GetText() == "Skinnable")
+        assert(TTTextLeft4:GetText() == "[SKINNABLE_LEATHER]")
         -- A RECOGNISED token naming nothing answers nil...
         assert(tt:SetUnit("party4") == nil, "a recognised but absent unit answers nil")
         -- ...and so does an unrecognised one: the token resolver raises for none.
         assert(tt:SetUnit("nosuch") == nil, "an unrecognised token answers nil")
+    "#,
+    )
+    .unwrap();
+    assert!(s.take_errors().is_empty());
+}
+
+/// The skinnable line is the GlobalString the app names (`AddSkinnableText 0x620ee0`), and a unit
+/// without one, a player's body among them, has no line.
+#[test]
+fn the_skinnable_line_reads_its_kind_and_a_player_has_none() {
+    let mut s = script();
+    seed_level_strings(&mut s);
+    s.set_screen_size(800.0, 600.0);
+    let mut elemental = wolf();
+    elemental.skinnable = Some("UNIT_SKINNABLE_ROCK");
+    s.set_unit("target", Some(elemental));
+    s.set_player_req_state(PlayerReqState {
+        level: 12,
+        ..Default::default()
+    });
+    s.run(
+        r#"
+        local a = CreateFrame("Button", "UF1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        TT = CreateFrame("GameTooltip", "TT")
+        TT:SetOwner(a, "ANCHOR_RIGHT")
+        assert(TT:SetUnit("target") == 1)
+        assert(TTTextLeft3:GetText() == "[SKINNABLE_ROCK]", "got " .. tostring(TTTextLeft3:GetText()))
+    "#,
+    )
+    .unwrap();
+    s.set_unit(
+        "target",
+        Some(UnitState {
+            skinnable: None,
+            ..wolf()
+        }),
+    );
+    s.run(
+        r#"
+        assert(TT:SetUnit("target") == 1)
+        assert(TT:NumLines() == 2, "no skinnable line, got " .. TT:NumLines())
     "#,
     )
     .unwrap();
@@ -82,7 +125,7 @@ fn unqueried_wolf() -> UnitState {
         max_health: 50,
         level: 10,
         reaction: 2, // hostile
-        skinnable: true,
+        skinnable: Some("UNIT_SKINNABLE_LEATHER"),
         guid: 0xF130_0000_0000_0001,
         ..Default::default()
     }
@@ -114,7 +157,7 @@ fn a_pending_name_titles_unknownobject_and_the_answer_replaces_it() {
         -- bare TOOLTIP_UNIT_LEVEL template because both the CLASS and TYPE slots are the record's.
         assert(TTTextLeft2:GetText() == "[LEVEL 10]", "got " .. TTTextLeft2:GetText())
         -- The descriptor's own lines are NOT the record's and show anyway.
-        assert(TTTextLeft3:GetText() == "Skinnable")
+        assert(TTTextLeft3:GetText() == "[SKINNABLE_LEATHER]")
     "#,
     )
     .unwrap();
@@ -132,7 +175,7 @@ fn a_pending_name_titles_unknownobject_and_the_answer_replaces_it() {
         assert(TTTextLeft1:GetText() == "Timber Wolf", "the answer replaced UNKNOWNOBJECT")
         assert(TTTextLeft2:GetText() == "Alpha")
         assert(TTTextLeft3:GetText() == "[LEVEL_CLASS_TYPE 10 Beast [ELITE]]", "got " .. TTTextLeft3:GetText())
-        assert(TTTextLeft4:GetText() == "Skinnable")
+        assert(TTTextLeft4:GetText() == "[SKINNABLE_LEATHER]")
     "#,
     )
     .unwrap();

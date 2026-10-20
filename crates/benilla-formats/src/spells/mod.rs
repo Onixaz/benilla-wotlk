@@ -298,8 +298,8 @@ const ATTR_EX_FINISHING_MOVE: u32 = 0x0050_0000;
 pub const SPELL_EFFECT_TRADE_SKILL: u32 = 47;
 /// `SPELL_EFFECT_CREATE_ITEM`: a recipe's product, its `EffectItemType`.
 pub const SPELL_EFFECT_CREATE_ITEM: u32 = 24;
-/// `SPELL_EFFECT_SKINNING`: learning a spell with it as `Effect[0]` latches it at `0xb700e4`
-/// (`0x4b2623`), and the Skin cursor requires that latch.
+/// `SPELL_EFFECT_SKINNING`: learning a spell with it as `Effect[0]` latches it in the skinning
+/// slot its `EffectMiscValue[0]` names (`0x5420c7`), which the Skin cursor requires.
 pub const SPELL_EFFECT_SKINNING: u32 = 95;
 /// `SPELL_EFFECT_LANGUAGE`: its `EffectMiscValue` is the `Languages.dbc` id.
 pub const SPELL_EFFECT_LANGUAGE: u32 = 39;

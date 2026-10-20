@@ -181,8 +181,9 @@ pub struct UnitState {
     pub racial_leader: bool,
     /// `UNIT_FIELD_FLAGS`' PvP bit: `UnitIsPVP` and the tooltip's PvP line.
     pub pvp: bool,
-    /// `UNIT_FIELD_FLAGS`' skinnable bit, the tooltip's red Skinnable line.
-    pub skinnable: bool,
+    /// The GlobalString of the tooltip's red skinnable line (`UNIT_SKINNABLE_LEATHER`, `_HERB`,
+    /// `_ROCK`, `_BOLTS`), set for a non-player with `UNIT_FIELD_FLAGS`' skinnable bit.
+    pub skinnable: Option<&'static str>,
     /// The faction name ("Stormwind"), the tooltip line after the level line, from `Faction.dbc`
     /// through the faction template with its hiding gates applied; `None` shows no line.
     pub faction_name: Option<String>,

@@ -925,7 +925,11 @@ pub(crate) fn snapshot(
         },
         // `UNIT_FIELD_FLAGS` PvP `0x1000` and Skinnable `0x04000000` (vmangos `UnitDefines.h`).
         pvp: store.0.unit_flags() & 0x1000 != 0,
-        skinnable: store.0.unit_flags() & 0x0400_0000 != 0,
+        // `CGTooltip::SetUnit` adds the line for a non-player only (`0x621dd8`); the creature
+        // record's kind is [`enrich_unit`]'s.
+        skinnable: (store.0.unit_flags() & 0x0400_0000 != 0
+            && !matches!(store.0.object_type(), Some(ObjectType::Player)))
+        .then_some(crate::ui_action::skinnable_text_key(0)),
         // `UnitPlayerControlled`: bit `0x8`, set by pets and charmed creatures as well as players.
         player_controlled: store.0.unit_flags() & 0x8 != 0,
         flags: store.0.unit_flags(),
@@ -979,6 +983,9 @@ pub(crate) fn enrich_unit(
         state.rank = crate::names::gated_rank(Some(rec), Some(store));
         state.civilian = rec.civilian;
         state.racial_leader = rec.racial_leader;
+        if state.skinnable.is_some() {
+            state.skinnable = Some(crate::ui_action::skinnable_text_key(rec.type_flags));
+        }
     }
     // The faction-name line, every gate of the tooltip builder: the record's `HIDE_FACTION_TOOLTIP`
     // (`0x10`), a reputation slot, and the race/class slot walk with its hidden flag (`0x4`). Its
