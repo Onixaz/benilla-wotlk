@@ -57,6 +57,11 @@ impl crate::query_cache::AskOnce for QuestLog {
 }
 
 impl QuestLog {
+    /// Every logged quest whose template is cached, folded ones included.
+    pub(crate) fn quest_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.row_slots.iter().map(|&(id, _)| id)
+    }
+
     /// The template, asked once: a miss sends `CMSG_QUEST_QUERY` (once while in flight); an id
     /// the server does not know stays `None` without a re-ask.
     pub(crate) fn template(&self, quest_id: u32, commands: &NetCommands) -> Option<&QuestTemplate> {
@@ -333,6 +338,55 @@ fn build_objectives(
     objectives
 }
 
+/// `ComputeBlobQuestObjectives` (`0x5e2950`), the objectives a quest's POI regions may serve: bit
+/// `i` an unfinished kill or GameObject row, `4 + i` a required item short, `10 + i` a drop item
+/// not carried (the starting item excepted), `0x10000` an unmet event; all ones once complete,
+/// 0 when failed.
+fn poi_objectives(
+    template: &QuestTemplate,
+    log_slot: &QuestLogSlot,
+    store: &ObjectFields,
+    objects: &crate::net::Objects,
+) -> u32 {
+    if log_slot.state & quest_slot_state::FAIL != 0 {
+        return 0;
+    }
+    if log_slot.state & quest_slot_state::COMPLETE != 0 {
+        return u32::MAX;
+    }
+    let carried = |id: u32| count_of(store, objects, id, InventoryScope::QUEST_ITEMS);
+    let mut mask = 0;
+    for (i, o) in template.objectives.iter().enumerate() {
+        if o.creature_or_go != 0 && u32::from(log_slot.counters[i]) < o.required_count {
+            mask |= 1 << i;
+        }
+        if o.item_drop != 0 && o.item_drop != template.src_item_id && carried(o.item_drop) == 0 {
+            mask |= 1 << (i + 10);
+        }
+    }
+    for (i, &(id, req)) in template.required_items.iter().enumerate() {
+        if id != 0 && carried(id) < req {
+            mask |= 1 << (i + 4);
+        }
+    }
+    // Exploration or event quests (`flags & 6`) not yet complete.
+    if template.flags & 6 != 0 {
+        mask |= 0x10000;
+    }
+    mask
+}
+
+/// `GetQuestLogCompletionText` (`0x5e06d0`): the end text, or the objectives text when the end
+/// text is empty or the template's flag `0x40000` is set.
+fn completion_text(template: &QuestTemplate, macros: &crate::npc_text::MacroContext) -> String {
+    let raw = if template.flags & 0x40000 != 0 || template.completed_text.is_empty() {
+        &template.objectives_text
+    } else {
+        &template.completed_text
+    };
+    crate::npc_text::substitute(raw, macros)
+}
+
 /// A quest's detail pane from its template: description, money, rewards and choices.
 fn build_detail(
     template: &QuestTemplate,
@@ -596,6 +650,8 @@ pub(crate) fn feed_quest_log(
             is_daily: false,
             objectives: Vec::new(),
             detail: None,
+            completion_text: String::new(),
+            poi_objectives: 0,
         });
         header_keys.push(Some(name.clone()));
         for &ri in row_idxs {
@@ -652,6 +708,15 @@ pub(crate) fn feed_quest_log(
                     // The in-flight filter above kept only cached rows.
                     None => unreachable!("the in-flight gate leaves only cached rows"),
                 };
+            let (completion_text, poi_objectives) = quest_log
+                .template(r.quest_id, &commands)
+                .map(|t| {
+                    (
+                        completion_text(t, &macros),
+                        poi_objectives(t, &r.log_slot, &store.0, &objects),
+                    )
+                })
+                .unwrap_or_default();
             let complete = if r.log_slot.state & quest_slot_state::COMPLETE != 0 {
                 1
             } else if r.log_slot.state & quest_slot_state::FAIL != 0 {
@@ -674,6 +739,8 @@ pub(crate) fn feed_quest_log(
                 timer: r.log_slot.timer,
                 objectives,
                 detail,
+                completion_text,
+                poi_objectives,
             });
             header_keys.push(None);
         }
@@ -993,6 +1060,8 @@ mod tests {
             suggested_group: 0,
             is_daily: false,
             objectives: Vec::new(),
+            completion_text: String::new(),
+            poi_objectives: 0,
         }
     }
 
@@ -1011,6 +1080,8 @@ mod tests {
             suggested_group: 0,
             is_daily: false,
             objectives: Vec::new(),
+            completion_text: String::new(),
+            poi_objectives: 0,
         }
     }
 

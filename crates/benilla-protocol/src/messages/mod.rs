@@ -235,15 +235,15 @@ pub use progression::{
 };
 pub use pvp::{inspect_honor_stats, InspectArenaTeam, InspectHonorStats, PvpCredit};
 pub use quest::{
-    dialog_status, push_quest_to_party, quest_confirm_accept, quest_flags, quest_push_result,
-    quest_query, questgiver_accept_quest, questgiver_choose_reward, questgiver_complete_quest,
-    questgiver_hello, questgiver_query_quest, questgiver_request_reward, questgiver_status_query,
-    questlog_remove_quest, questlog_swap_quest, QuestComplete, QuestConfirmAccept, QuestDetails,
-    QuestExtraRewards, QuestGiverList, QuestListEntry, QuestObjective, QuestOfferReward,
-    QuestPushResult, QuestReputationRewards, QuestRequestItems, QuestRequiredItem, QuestRewardItem,
-    QuestShareMsg, QuestTemplate, QUEST_EMOTE_COUNT, QUEST_OBJECTIVES_COUNT,
-    QUEST_REPUTATIONS_COUNT, QUEST_REQUIRED_ITEMS_COUNT, QUEST_REWARDS_COUNT,
-    QUEST_REWARD_CHOICES_COUNT,
+    dialog_status, push_quest_to_party, quest_confirm_accept, quest_flags, quest_poi_query,
+    quest_push_result, quest_query, questgiver_accept_quest, questgiver_choose_reward,
+    questgiver_complete_quest, questgiver_hello, questgiver_query_quest, questgiver_request_reward,
+    questgiver_status_query, questlog_remove_quest, questlog_swap_quest, QuestComplete,
+    QuestConfirmAccept, QuestDetails, QuestExtraRewards, QuestGiverList, QuestListEntry,
+    QuestObjective, QuestOfferReward, QuestPoi, QuestPoiBlob, QuestPushResult,
+    QuestReputationRewards, QuestRequestItems, QuestRequiredItem, QuestRewardItem, QuestShareMsg,
+    QuestTemplate, QUEST_EMOTE_COUNT, QUEST_OBJECTIVES_COUNT, QUEST_REPUTATIONS_COUNT,
+    QUEST_REQUIRED_ITEMS_COUNT, QUEST_REWARDS_COUNT, QUEST_REWARD_CHOICES_COUNT,
 };
 pub use reputation::{
     set_faction_at_war, set_faction_inactive, set_watched_faction, FACTION_LIST_LEN,

@@ -546,6 +546,19 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         )?,
     )?;
 
+    // GameTooltip:SetQuestLogSpecialItem(index) (`0x630990`): the quest's special item instance.
+    m.set(
+        "SetQuestLogSpecialItem",
+        lua.create_function(|lua, (this, index): (Table, Value)| {
+            let index = super::binding_abi::number_arg(
+                lua,
+                index,
+                "Usage: GameTooltip:SetQuestLogSpecialItem(index)",
+            )?;
+            super::quest_watch::set_tooltip_item(lua, &this, index)
+        })?,
+    )?;
+
     // GameTooltip:SetBagItem(bag, slot) -> hasCooldown, repairCost (`0x62f420`): the real-instance
     // hover, an item object to the money block. repairCost shows in repair mode.
     m.set(

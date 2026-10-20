@@ -17,6 +17,8 @@ pub const SMSG_PET_NAME_QUERY_RESPONSE: u16 = 0x0053; // 83
 pub const SMSG_GAMEOBJECT_QUERY_RESPONSE: u16 = 0x005F; // 95
 /// Answers `CMSG_QUEST_QUERY` with the quest's template.
 pub const SMSG_QUEST_QUERY_RESPONSE: u16 = 0x005D; // 93
+/// Answers `CMSG_QUEST_POI_QUERY` with each quest's POI regions.
+pub const SMSG_QUEST_POI_QUERY_RESPONSE: u16 = 0x01E4; // 484
 
 // Page text: the ask-once `PageText.wdb` cache behind readable items and book GameObjects; an id
 // names one page, chained by `nextPageId`. Mail letters use `CMSG_ITEM_TEXT_QUERY` instead.
@@ -320,6 +322,8 @@ pub const CMSG_PET_RENAME: u16 = 0x0177; // 375
 pub const CMSG_GAMEOBJECT_QUERY: u16 = 0x005E; // 94
 /// Ask for a quest's template; answered by [`SMSG_QUEST_QUERY_RESPONSE`].
 pub const CMSG_QUEST_QUERY: u16 = 0x005C; // 92
+/// Ask for quests' POI regions; answered by [`SMSG_QUEST_POI_QUERY_RESPONSE`].
+pub const CMSG_QUEST_POI_QUERY: u16 = 0x01E3; // 483
 pub const CMSG_ITEM_QUERY_SINGLE: u16 = 0x0056; // 86
 pub const CMSG_USE_ITEM: u16 = 0x00AB; // 171
 /// Open an openable item (a clam, a lockbox, a gift) by bag position; the loot that answers names

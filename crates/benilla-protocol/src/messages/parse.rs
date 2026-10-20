@@ -1087,6 +1087,9 @@ fn parse_server_body(
         opcode::SMSG_QUEST_QUERY_RESPONSE => {
             ServerPacket::QuestQueryResponse(Box::new(quest::read_quest_query_response(&mut r)?))
         }
+        opcode::SMSG_QUEST_POI_QUERY_RESPONSE => {
+            ServerPacket::QuestPoiQueryResponse(quest::read_quest_poi_query_response(&mut r)?)
+        }
         opcode::SMSG_QUESTLOG_FULL => ServerPacket::QuestLogFull,
         opcode::MSG_QUEST_PUSH_RESULT => {
             ServerPacket::QuestPushResult(quest::read_quest_push_result(&mut r)?)

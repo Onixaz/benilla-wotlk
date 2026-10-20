@@ -3,6 +3,7 @@
 
 mod giver;
 mod log;
+mod poi;
 mod share;
 
 pub use giver::{
@@ -17,6 +18,7 @@ pub use log::{
     QuestTemplate, QUEST_OBJECTIVES_COUNT, QUEST_REQUIRED_ITEMS_COUNT, QUEST_REWARDS_COUNT,
     QUEST_REWARD_CHOICES_COUNT,
 };
+pub use poi::{quest_poi_query, QuestPoi, QuestPoiBlob};
 pub use share::{
     push_quest_to_party, quest_confirm_accept, quest_push_result, QuestConfirmAccept,
     QuestPushResult, QuestShareMsg,
@@ -31,4 +33,5 @@ pub(super) use log::{
     read_quest_query_response, read_quest_update_add_item, read_quest_update_add_kill,
     read_quest_update_complete, read_quest_update_failed, read_quest_update_failedtimer,
 };
+pub(super) use poi::read_quest_poi_query_response;
 pub(super) use share::{read_quest_confirm_accept, read_quest_push_result};

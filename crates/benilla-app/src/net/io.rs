@@ -1692,6 +1692,7 @@ pub(super) fn writer_loop(
                         w.questgiver_choose_reward(npc, quest, choice)
                     }
                     ClientCommand::QuestQuery { quest } => w.quest_query(quest),
+                    ClientCommand::QuestPoiQuery { quests } => w.quest_poi_query(&quests),
                     ClientCommand::QuestgiverStatusQuery { npc } => w.questgiver_status_query(npc),
                     ClientCommand::QuestgiverHello { npc } => w.questgiver_hello(npc),
                     ClientCommand::QuestlogRemove { slot } => w.questlog_remove_quest(slot),

@@ -1617,6 +1617,10 @@ pub(crate) enum ClientCommand {
     QuestQuery {
         quest: u32,
     },
+    /// `CMSG_QUEST_POI_QUERY`: the quests the log holds no POI for.
+    QuestPoiQuery {
+        quests: Vec<u32>,
+    },
     /// `CMSG_QUESTGIVER_STATUS_QUERY`: the overhead `!`/`?` marker.
     QuestgiverStatusQuery {
         npc: u64,

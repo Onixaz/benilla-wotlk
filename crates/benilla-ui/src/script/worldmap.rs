@@ -1030,6 +1030,63 @@ impl WorldMapState {
     pub(crate) fn world_state(&self, id: u32) -> i32 {
         self.world_states.get(&id).copied().unwrap_or(0)
     }
+
+    /// `QuestMapUpdateAllQuests`' gate (`0x5e63d0`): a zone, the direct sheet or a dungeon floor
+    /// is displayed, never a continent or the Azeroth sheet.
+    pub(crate) fn quest_poi_gate(&self) -> bool {
+        let s = self.selection;
+        (self.row(self.current_id()).is_some() && (s.zone != -1 || s.continent == -2))
+            || self.dungeon(self.current_dungeon()).is_some()
+    }
+
+    /// Whether a quest POI region shows on the displayed map, `UpdateAllQuestPOI`'s inner test
+    /// (`0x5e5a50`): on a dungeon floor `IsPOIVisibleOnDungeonMap` (`0x5e0180`), else the region's
+    /// own-area bind (`0x5e5ba1`) and `IsPOIOnCurrentMap` (`0x5e0110`). `None` when no area or
+    /// floor is displayed, which counts nothing.
+    pub(crate) fn quest_poi_shown(&self, poi: &QuestPoiPlace) -> Option<bool> {
+        let at = WorldMapPoint {
+            map: poi.map,
+            x: poi.x,
+            y: poi.y,
+        };
+        let on = |(uv, outland): ((f32, f32), bool)| !outland && (uv.0 * uv.1).abs() >= 0.001;
+        if let Some(d) = self.dungeon(self.current_dungeon()) {
+            return Some(d.map_id == poi.map && d.floor_index == poi.floor && on(self.project(at)));
+        }
+        let id = self.current_id();
+        let row = self.row(id)?;
+        if poi.flags & 0x4 != 0 && i64::from(poi.area) != i64::from(id) {
+            return Some(false);
+        }
+        Some(row.map_id == poi.map && on(self.project(at)))
+    }
+
+    /// `GetQuestPOIDistance`'s per-region term (`0x5e3b90`): the floor delta to the displayed
+    /// floor and the squared distance from the player, for a region whose own area is on the
+    /// player's map.
+    pub(crate) fn quest_poi_distance(&self, poi: &QuestPoiPlace) -> Option<(i32, f32)> {
+        let player = self.feed.player?;
+        let area = self.row(i32::try_from(poi.area).ok()?)?;
+        if area.map_id != player.pos.map {
+            return None;
+        }
+        let floor = self
+            .dungeon(self.current_dungeon())
+            .map_or(0, |d| d.floor_index);
+        let (dx, dy) = (player.pos.x - poi.x, player.pos.y - poi.y);
+        Some(((floor - poi.floor).abs(), dx * dx + dy * dy))
+    }
+}
+
+/// Where a quest POI region sits: its map, area row, floor, flags and outline centre.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct QuestPoiPlace {
+    pub(crate) map: u32,
+    pub(crate) area: u32,
+    pub(crate) floor: i32,
+    pub(crate) flags: u32,
+    pub(crate) x: f32,
+    pub(crate) y: f32,
 }
 
 fn with_map<R>(lua: &Lua, f: impl FnOnce(&WorldMapState) -> R) -> R {

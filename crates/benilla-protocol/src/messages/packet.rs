@@ -778,6 +778,8 @@ pub enum ServerPacket {
     },
     /// `SMSG_QUEST_QUERY_RESPONSE`: the full quest template (400+ bytes, hence boxed).
     QuestQueryResponse(Box<QuestTemplate>),
+    /// `SMSG_QUEST_POI_QUERY_RESPONSE`: the asked quests' POI regions.
+    QuestPoiQueryResponse(Vec<super::QuestPoi>),
     /// `SMSG_QUESTLOG_FULL`: no free log slot for a new quest; empty body (`Quest.cpp:87`).
     QuestLogFull,
     /// `MSG_QUEST_PUSH_RESULT`: a member's verdict on a quest we shared, sent to the sharer; per
@@ -1565,6 +1567,7 @@ impl ServerPacket {
             ServerPacket::QuestGiverInvalid { .. } => "SMSG_QUESTGIVER_QUEST_INVALID".into(),
             ServerPacket::QuestGiverFailed { .. } => "SMSG_QUESTGIVER_QUEST_FAILED".into(),
             ServerPacket::QuestQueryResponse(_) => "SMSG_QUEST_QUERY_RESPONSE".into(),
+            ServerPacket::QuestPoiQueryResponse(_) => "SMSG_QUEST_POI_QUERY_RESPONSE".into(),
             ServerPacket::QuestLogFull => "SMSG_QUESTLOG_FULL".into(),
             ServerPacket::QuestPushResult(_) => "MSG_QUEST_PUSH_RESULT".into(),
             ServerPacket::QuestConfirmAccept(_) => "SMSG_QUEST_CONFIRM_ACCEPT".into(),

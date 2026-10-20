@@ -819,6 +819,8 @@ pub enum SessionEvent {
     QuestComplete(QuestComplete),
     /// The full quest template (`SMSG_QUEST_QUERY_RESPONSE`), asked once and cached by id.
     QuestTemplate(Box<QuestTemplate>),
+    /// The asked quests' POI regions (`SMSG_QUEST_POI_QUERY_RESPONSE`).
+    QuestPoi(Vec<crate::messages::QuestPoi>),
     /// A kill objective ticked (`SMSG_QUESTUPDATE_ADD_KILL`), the announce line only; a GO
     /// `entry` is `(-id)|0x80000000`, and the durable count is in the `PLAYER_QUEST_LOG` slot.
     QuestObjectiveKill {

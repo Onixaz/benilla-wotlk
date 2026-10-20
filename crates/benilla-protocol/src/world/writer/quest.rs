@@ -70,6 +70,14 @@ impl WorldWriter {
         self.send(opcode::CMSG_QUEST_QUERY, &messages::quest_query(quest_id))
     }
 
+    /// `CMSG_QUEST_POI_QUERY`: the POI regions of quests the log holds none for.
+    pub fn quest_poi_query(&mut self, quests: &[u32]) -> Result<()> {
+        self.send(
+            opcode::CMSG_QUEST_POI_QUERY,
+            &messages::quest_poi_query(quests),
+        )
+    }
+
     /// `CMSG_QUESTGIVER_STATUS_QUERY`: the NPC's overhead `!` or `?` marker.
     pub fn questgiver_status_query(&mut self, npc: u64) -> Result<()> {
         self.send(

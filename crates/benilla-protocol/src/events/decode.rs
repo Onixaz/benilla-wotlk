@@ -363,6 +363,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::QuestGiverOfferReward(o) => vec![SessionEvent::QuestOffer(o)],
         ServerPacket::QuestGiverComplete(c) => vec![SessionEvent::QuestComplete(c)],
         ServerPacket::QuestQueryResponse(t) => vec![SessionEvent::QuestTemplate(t)],
+        ServerPacket::QuestPoiQueryResponse(p) => vec![SessionEvent::QuestPoi(p)],
         ServerPacket::QuestUpdateAddKill {
             quest_id,
             entry,

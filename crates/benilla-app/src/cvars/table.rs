@@ -157,6 +157,17 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // `0x51e027`, "" with flags 0x120: the tracked achievements, which `LoadTrackedState` reads
     // and the tracking verbs write (`0x5b3840`, `0x5b1fa0`); per character like the dropdowns.
     same("trackedAchievements", "").per_character(),
+    // `0x51e001`, "" with flags 0x120: the untimed quest watches, which `LoadTrackedQuests`
+    // (`0x5e65b0`) reads once the first quest log is built and `SaveTrackedQuests` (`0x5e0240`)
+    // writes; per character like the achievements.
+    same("trackedQuests", "").per_character(),
+    // `0x51e0d0` "0" and `0x51e0f3` "7", flags 0x20: the objective tracker's sort and its filter
+    // bits (achievements 1, completed quests 2, remote zones 4), read on `VARIABLES_LOADED`
+    // (`WatchFrame.lua:279-280`).
+    same("trackerSorting", "0").per_character(),
+    same("trackerFilter", "7").per_character(),
+    // `0x51f3ce`, "1" with flags 0x20: the quest POI switch `UpdateAllQuestPOI` (`0x5e5a50`) reads.
+    same("questPOI", "1").per_character(),
     // `0x51f25c`, `0x51f282`, `0x51f2aa`, flags 0x120: the dungeon finder's roles ("0", a bit
     // mask) and its selected dungeons and collapsed headers ("", bit arrays), per character.
     same("lfgSelectedRoles", "0").per_character(),

@@ -54,6 +54,13 @@ pub struct QuestLogEntryView {
     /// look the quest up in the same call (`0x4e1130` to `0xc0e1b0`, `0x562a40`), so a
     /// select-then-read answers about the row just selected.
     pub detail: Option<QuestLogDetail>,
+    /// `GetQuestLogCompletionText` (`0x5e06d0`): the template's end text, or its objectives text
+    /// when the end text is empty or flag `0x40000` is set, through the quest text parser.
+    pub completion_text: String,
+    /// `ComputeBlobQuestObjectives` (`0x5e2950`): bit `i` an open kill or GameObject objective,
+    /// `4 + i` an item short, `10 + i` a drop not carried, `0x10000` an unmet event; all ones once
+    /// complete, 0 when failed.
+    pub poi_objectives: u32,
 }
 
 /// One objective line (`GetQuestLogLeaderBoard`), `text` formatted by the app, as
@@ -114,24 +121,12 @@ pub struct QuestLogState {
 }
 
 impl super::UiScript {
-    /// Push the quest-log snapshot, dropping the watch of a quest that left the log: the
-    /// reference's prune (`0x4de7a7` to `0x4de80f`) keeps a watch while any quest row, visible or
-    /// folded, carries its id, and a collapse (`0x4ded30`) never prunes.
+    /// Push the quest-log snapshot. A watch holds while any quest row, visible or folded, carries
+    /// its id (`CGQuestLog::Update` `0x5e6940`), so a collapse never prunes.
     pub fn set_quest_log(&mut self, state: QuestLogState) {
         let mut model = self.model_mut();
-        model.quest_log_watched.retain(|id| {
-            state
-                .entries
-                .iter()
-                .any(|e| !e.is_header && e.quest_id == *id)
-                || state.hidden_quest_ids.contains(id)
-        });
         model.quest_log = state;
-    }
-
-    /// The watched quest ids, in watch order.
-    pub fn quest_log_watched(&self) -> Vec<u32> {
-        self.model_ref().quest_log_watched.clone()
+        super::quest_watch::on_quest_log(&mut model);
     }
 
     /// The 1-based selection, 0 for none; the app reads it to re-point it across a rebuild.
@@ -741,7 +736,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "IsUnitOnQuest",
         lua.create_function(|_, (_q, _unit): (Value, Value)| Ok(flag(false)))?,
     )?;
-    // ── The party share and the quest watch ──────────────────────────────────────────────────────
+    // ── The party share ──────────────────────────────────────────────────────
     /// The selected row, which the share verbs read.
     fn selected_quest(model: &Model) -> Option<&QuestLogEntryView> {
         (model.quest_log_selection as usize)
@@ -749,12 +744,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             .and_then(|n| model.quest_log.entries.get(n))
     }
 
-    fn watch_id_at(model: &Model, index: u32) -> Option<u32> {
-        (index as usize)
-            .checked_sub(1)
-            .and_then(|n| model.quest_log.entries.get(n))
-            .map(|e| e.quest_id)
-    }
     // The share button enables on `GetQuestLogPushable() and GetNumPartyMembers() > 0`
     // (`QuestLogFrame.lua:301`) and clicks `QuestLogPushQuest()` (`QuestLogFrame.xml:512`), both
     // about the selection. `GetQuestLogPushable` answers 1 or nil, never false (`0x4e12b0`).
@@ -786,75 +775,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 model.quest_log_pushes.push(id);
             }
             Ok(())
-        })?,
-    )?;
-    // The watch tracker's set (`QuestLogFrame.lua:469`, `:613`), keyed by quest id. At most
-    // `MAX_WATCHABLE_QUESTS`, 5 (`QuestLogFrame.lua:8`), which the stock Lua checks before adding
-    // (`:494`); an add past it is a no-op.
-    g.set(
-        "GetNumQuestWatches",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.quest_log_watched.len() as i64)
-        })?,
-    )?;
-    g.set(
-        "IsQuestWatched",
-        lua.create_function(|lua, i: u32| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(flag(
-                watch_id_at(&model, i).is_some_and(|id| model.quest_log_watched.contains(&id)),
-            ))
-        })?,
-    )?;
-    g.set(
-        "AddQuestWatch",
-        lua.create_function(|lua, i: u32| {
-            let mut model = crate::script::model_mut_of(lua);
-            if let Some(id) = watch_id_at(&model, i) {
-                if !model.quest_log_watched.contains(&id) && model.quest_log_watched.len() < 5 {
-                    model.quest_log_watched.push(id);
-                }
-            }
-            Ok(())
-        })?,
-    )?;
-    g.set(
-        "RemoveQuestWatch",
-        lua.create_function(|lua, i: u32| {
-            let mut model = crate::script::model_mut_of(lua);
-            if let Some(id) = watch_id_at(&model, i) {
-                model.quest_log_watched.retain(|w| *w != id);
-            }
-            Ok(())
-        })?,
-    )?;
-    // The watched quest's current 1-based row, nil when it is not a visible row.
-    g.set(
-        "GetQuestIndexForWatch",
-        lua.create_function(|lua, w: usize| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let index = w
-                .checked_sub(1)
-                .and_then(|n| model.quest_log_watched.get(n))
-                .and_then(|id| {
-                    model
-                        .quest_log
-                        .entries
-                        .iter()
-                        .position(|e| e.quest_id == *id)
-                })
-                .map(|p| p as i64 + 1);
-            Ok(match index {
-                Some(i) => Value::Integer(i),
-                None => Value::Nil,
-            })
         })?,
     )?;
 
@@ -1389,29 +1309,6 @@ mod tests {
         assert!(s
             .eval::<bool>("return GetQuestLogTimeLeft() == nil")
             .unwrap());
-    }
-
-    #[test]
-    fn watch_cap_is_five_and_dupes_are_ignored() {
-        let mut s = UiScript::new().unwrap();
-        let mut state = QuestLogState::default();
-        for q in 1..=6u32 {
-            state.entries.push(QuestLogEntryView {
-                quest_id: q,
-                title: format!("Quest {q}"),
-                level: 1,
-                ..Default::default()
-            });
-        }
-        s.set_quest_log(state);
-        for i in 1..=6 {
-            s.run(&format!("AddQuestWatch({i})")).unwrap();
-        }
-        // `MAX_WATCHABLE_QUESTS` is 5 (`QuestLogFrame.lua:8`).
-        assert_eq!(s.eval::<i64>("return GetNumQuestWatches()").unwrap(), 5);
-        s.run("AddQuestWatch(1)").unwrap();
-        assert_eq!(s.eval::<i64>("return GetNumQuestWatches()").unwrap(), 5);
-        assert_eq!(s.quest_log_watched(), vec![1, 2, 3, 4, 5]);
     }
 
     #[test]

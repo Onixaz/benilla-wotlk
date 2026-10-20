@@ -171,6 +171,7 @@ mod ui_petition;
 mod ui_quest;
 mod ui_quest_log;
 mod ui_quest_share;
+mod ui_quest_watch;
 mod ui_reputation;
 mod ui_saved;
 mod ui_script;

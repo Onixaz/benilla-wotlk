@@ -65,6 +65,7 @@ pub(crate) fn apply_script_calls(
                     appliers.p7().attack_target();
                 }
             }
+            ScriptCall::UseItem { bag, slot } => appliers.p5().use_item(script, bag, slot),
             ScriptCall::UseContainerItem { bag, slot } => {
                 appliers.p5().use_container_item(script, bag, slot);
             }

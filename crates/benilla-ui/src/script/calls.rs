@@ -52,6 +52,9 @@ pub enum ScriptCall {
     UseAction(ActionUse),
     /// `UseContainerItem(bag, slot)` outside repair mode.
     UseContainerItem { bag: i64, slot: u32 },
+    /// `UseQuestLogSpecialItem(index)`: the bag item's own use (`CGItem_C::UseItem` `0x708c20`), past
+    /// the right-click's merchant, bank and equip arms.
+    UseItem { bag: i64, slot: u32 },
     /// `UseInventoryItem(id)` outside repair mode.
     UseInventoryItem(u32),
     /// `CastPetAction(slot)`, a 1-based pet bar slot.

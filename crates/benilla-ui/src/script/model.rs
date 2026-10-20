@@ -855,8 +855,8 @@ pub(crate) struct Model {
     pub(crate) item_render: Option<super::tooltip_item::ItemRender>,
     /// `CollapseQuestHeader`/`ExpandQuestHeader` as `(1-based entry, collapse)`, entry 0 for all.
     pub(crate) quest_log_collapses: Vec<(u32, bool)>,
-    /// Watched quest ids in watch order, pruned when a quest leaves the log.
-    pub(crate) quest_log_watched: Vec<u32>,
+    /// The quest watches, the POI store and the special items the objective tracker reads.
+    pub(crate) quest_watch: super::quest_watch::QuestWatchState,
     /// The server's clock in Unix seconds, `None` before `SMSG_QUERY_TIME_RESPONSE`. A quest
     /// deadline is a stamp in it, and `GetQuestTimers` subtracts per call, as the reference does.
     /// A `Cell`: pushed every frame, read by the quest timer verbs alone (`ModelCell`).
@@ -1495,7 +1495,7 @@ impl Model {
             item_tooltip_waits: HashMap::new(),
             item_render: None,
             quest_log_collapses: Vec::new(),
-            quest_log_watched: Vec::new(),
+            quest_watch: Default::default(),
             server_unix_time: std::cell::Cell::new(None),
             worldmap: super::worldmap::WorldMapState::default(),
             nameplates: super::nameplate::NamePlates::default(),

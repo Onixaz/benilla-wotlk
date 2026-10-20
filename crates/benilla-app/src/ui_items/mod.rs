@@ -285,6 +285,28 @@ pub(crate) fn find_carried(
     })
 }
 
+/// [`find_carried`] with the item's Lua `(bag, slot)`, the backpack as bag 0; equipped bags
+/// themselves are skipped.
+pub(crate) fn find_carried_at(
+    store: &ObjectFields,
+    objects: &Objects,
+    mut pick: impl FnMut(u64) -> bool,
+) -> Option<(i64, u32, u64)> {
+    walk_inventory(
+        store,
+        objects,
+        InventoryScope::CARRIED,
+        |bag, slot, guid| {
+            let at = if bag == BAG_PLAYER_INVENTORY {
+                (slot >= SLOT_PACK_FIRST).then(|| (0, u32::from(slot - SLOT_PACK_FIRST) + 1))?
+            } else {
+                (i64::from(bag - SLOT_BAG_FIRST) + 1, u32::from(slot) + 1)
+            };
+            pick(guid).then_some((at.0, at.1, guid))
+        },
+    )
+}
+
 fn walk_inventory<T>(
     store: &ObjectFields,
     objects: &Objects,

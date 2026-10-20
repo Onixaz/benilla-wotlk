@@ -225,6 +225,16 @@ impl ScriptItemUse<'_, '_> {
     /// `UseContainerItem(bag, slot)` outside repair mode: a sale with a merchant open, a bank
     /// move with the bank open, else the reference's equip-vs-use fork and use dispatcher.
     pub(crate) fn use_container_item(&mut self, script: &mut UiScript, bag: i64, slot: u32) {
+        self.use_at(script, bag, slot, false);
+    }
+
+    /// `CGItem_C::UseItem` (`0x708c20`) on a bag item, `UseQuestLogSpecialItem`'s path: the use
+    /// dispatcher alone, with no sale, bank move or equip.
+    pub(crate) fn use_item(&mut self, script: &mut UiScript, bag: i64, slot: u32) {
+        self.use_at(script, bag, slot, true);
+    }
+
+    fn use_at(&mut self, script: &mut UiScript, bag: i64, slot: u32, direct: bool) {
         let Self {
             self_q,
             merchant,
@@ -244,7 +254,7 @@ impl ScriptItemUse<'_, '_> {
         } = self;
         let slot0 = u8::try_from(slot.saturating_sub(1)).ok();
         // With a merchant open, the click sells the whole stack (`CMSG_SELL_ITEM`, count 0).
-        if let (true, Some(vendor)) = (merchant.is_open(), merchant.vendor) {
+        if let (false, true, Some(vendor)) = (direct, merchant.is_open(), merchant.vendor) {
             let item_guid = self_q
                 .iter()
                 .next()
@@ -270,7 +280,7 @@ impl ScriptItemUse<'_, '_> {
         // any other deposits (`CMSG_AUTOBANK_ITEM`): the reference's bank flag, set for bags -1
         // and 5..10 (`0x4f9820`), picks the opcode (`0x4fa2f2`). Doll clicks come through
         // `use_inventory_item`, so worn gear keeps its plain use.
-        if bank.is_open() {
+        if !direct && bank.is_open() {
             let withdrawing = bag == super::BANK_CONTAINER || (5..=10).contains(&bag);
             if withdrawing {
                 debug!("ui_items: withdraw (lua bag {bag} → wire {bag_index}/{wire_slot})");
@@ -317,7 +327,8 @@ impl ScriptItemUse<'_, '_> {
         // The reference's equip-vs-use fork (`0x4fa3b9`): an equippable item auto-equips unless
         // its `StartQuest` (`[rec+0x1a8]`) is set (`0x4fa3bd`). Everything below is the use
         // dispatcher `0x5d8d00`, in its own order.
-        if let Some(c) = clicked.filter(|c| c.start_quest == 0 && c.inventory_type != 0) {
+        if let Some(c) = clicked.filter(|c| !direct && c.start_quest == 0 && c.inventory_type != 0)
+        {
             // This path never moves the cursor, so it plays the equip sound itself; a deferred
             // equip plays none, as the reference's sound rides the arm that sends.
             if send_auto_equip(

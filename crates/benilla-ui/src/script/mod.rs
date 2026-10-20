@@ -205,6 +205,7 @@ mod pointer;
 mod pvp;
 mod quest;
 mod quest_log;
+mod quest_watch;
 pub(crate) mod region;
 mod region_map;
 mod reputation;
@@ -370,6 +371,7 @@ pub use quest::{
     QuestState,
 };
 pub use quest_log::{QuestLogDetail, QuestLogEntryView, QuestLogObjectiveView, QuestLogState};
+pub use quest_watch::{QuestPoiRegion, QuestPoiView, QuestSpecialItemView};
 pub(crate) use region::{apply_font_parts, implicit_creation_anchor_lua};
 pub use reputation::{FactionEntry, ReputationSend, ReputationState};
 pub use session::SessionRequest;
@@ -1010,6 +1012,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     loot_roll::install(lua)?;
     quest::install(lua)?;
     quest_log::install(lua)?;
+    quest_watch::install(lua)?;
     minimap::install(lua)?;
     cooldown_widget::install(lua)?;
     quest_poi_frame::install(lua)?;

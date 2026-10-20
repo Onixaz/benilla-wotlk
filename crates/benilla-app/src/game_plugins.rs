@@ -75,6 +75,7 @@ use crate::ui_petition::UiPetitionPlugin;
 use crate::ui_quest::UiQuestPlugin;
 use crate::ui_quest_log::UiQuestLogPlugin;
 use crate::ui_quest_share::QuestSharePlugin;
+use crate::ui_quest_watch::UiQuestWatchPlugin;
 use crate::ui_saved::UiSavedPlugin;
 use crate::ui_script::UiScriptPlugin;
 use crate::ui_shapeshift::UiShapeshiftPlugin;
@@ -258,6 +259,7 @@ impl PluginGroup for GamePlugins {
             .add(UiLootRollPlugin)
             .add(UiQuestPlugin)
             .add(UiQuestLogPlugin)
+            .add(UiQuestWatchPlugin)
             .add(QuestSharePlugin)
             .add(UiChatPlugin)
             .add(UiLayoutPlugin)

@@ -107,11 +107,15 @@ fn feed_quest_lines(
     }
     lines.0 = expanded;
     let mut shown = Vec::new();
+    let mut accepted = Vec::new();
     lines.0.retain(
         |&line| match resolve(line, &quest_log, &items, &commands, &get) {
             Resolved::Show(msg) => {
                 if let Some(text) = ui_error_text(&msg, &get) {
                     shown.push(Shown::keyed(msg.key, text));
+                }
+                if let QuestLine::Accepted(id) = line {
+                    accepted.push(id);
                 }
                 false
             }
@@ -120,6 +124,15 @@ fn feed_quest_lines(
         },
     );
     show_messages(&mut script, &mut sink, "ui_quest", shown);
+    // `QUEST_ACCEPTED` with the quest's log row follows the accept line, both raised once the
+    // template is cached (`QuestAcceptCallback` `0x6df2b0`, `OnUpdateQuest` `0x6df370`).
+    for id in accepted {
+        let index = script.quest_log_index(id) as i64;
+        script.fire_event(
+            "QUEST_ACCEPTED",
+            vec![benilla_ui::script::ScriptValue::Int(index)],
+        );
+    }
 }
 
 fn resolve(

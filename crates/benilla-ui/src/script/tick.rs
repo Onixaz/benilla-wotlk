@@ -97,6 +97,7 @@ impl super::UiScript {
         for (event, args) in pending {
             self.fire_event(&event, args);
         }
+        self.expire_quest_watches();
         // Each entry: the frame's id, whether it has an `OnUpdate`, and the box if an EditBox.
         // The roster compaction below is bookkeeping: the count stands.
         let quiet = self.visual_epoch();

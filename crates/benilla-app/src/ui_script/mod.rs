@@ -1074,6 +1074,8 @@ mod tradeskill_ui_tests;
 
 #[cfg(test)]
 mod quest_ui_tests;
+#[cfg(test)]
+mod watch_frame_tests;
 
 #[cfg(test)]
 mod zone_text_tests;
