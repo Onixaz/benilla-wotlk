@@ -95,3 +95,22 @@ fn a_hit_on_the_world_frame_is_told_apart_from_a_ui_hit() {
     );
     assert!(s.is_world_frame(s.hit_test(600.0, 600.0).unwrap()));
 }
+
+/// `IgnoreDepth` takes a boolean alone (`0x4a1d80`), as `WorldFrame.lua:28` passes, and
+/// `IsIgnoringDepth` answers 1 or nil (`0x4a1e00`).
+#[test]
+fn ignore_depth_takes_a_boolean_and_reads_back_as_a_flag() {
+    let s = vm();
+    assert!(s
+        .eval::<Option<i64>>("return WorldFrame:IsIgnoringDepth()")
+        .unwrap()
+        .is_none());
+    s.run("WorldFrame:IgnoreDepth(true)").unwrap();
+    assert_eq!(
+        s.eval::<Option<i64>>("return WorldFrame:IsIgnoringDepth()")
+            .unwrap(),
+        Some(1)
+    );
+    let err = s.run("WorldFrame:IgnoreDepth(1)").unwrap_err().to_string();
+    assert!(err.contains("WorldFrame:IgnoreDepth(ignore)"), "{err}");
+}

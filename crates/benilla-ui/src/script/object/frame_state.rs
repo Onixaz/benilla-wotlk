@@ -742,6 +742,38 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             ))
         })?,
     )?;
+    // IgnoreDepth(ignore) (`0x4a1d80`): a boolean alone, else the named Usage.
+    m.set(
+        "IgnoreDepth",
+        lua.create_function(|lua, (this, ignore): (Table, Value)| {
+            let Value::Boolean(ignore) = ignore else {
+                let who: Option<String> =
+                    this.get::<mlua::Function>("GetName")?.call(this.clone())?;
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:IgnoreDepth(ignore)",
+                    who.as_deref().unwrap_or(super::anchor_args::UNNAMED)
+                )));
+            };
+            let h = frame_handle_of(lua, &this)?;
+            if let Some(f) = crate::script::model_mut_of(lua).arena.frame_mut(h) {
+                f.ignore_depth = ignore;
+            }
+            Ok(())
+        })?,
+    )?;
+    // IsIgnoringDepth (`0x4a1e00`): 1 or nil.
+    m.set(
+        "IsIgnoringDepth",
+        lua.create_function(|lua, this: Table| {
+            let h = frame_handle_of(lua, &this)?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
+            Ok(crate::script::binding_abi::flag(
+                model.arena.frame(h).is_some_and(|f| f.ignore_depth),
+            ))
+        })?,
+    )?;
     // SetClampRectInsets(left, right, top, bottom) (`0x4a0310`): four numbers, else the named
     // Usage (`0x9ecf00`); the clamp lets the frame that far past each screen edge (`0x48944e`).
     m.set(

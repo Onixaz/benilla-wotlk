@@ -177,6 +177,8 @@ pub struct Frame {
     /// Every GameTooltip is born with it here; the stock tooltips get it from their template,
     /// `GameTooltipTemplate.xml:3`.
     pub clamped_to_screen: bool,
+    /// `IgnoreDepth` (`0x4a1d80`, `+0xcc`), the opt-out from the UI's stereo depth.
+    pub ignore_depth: bool,
     /// `SetClampRectInsets` (`0x48eb00`), `[left, right, top, bottom]` in frame units: the clamp
     /// (`0x48944e`) lets the frame that far past each screen edge, scaled by the frame's scale.
     pub clamp_rect_insets: [f32; 4],
@@ -459,6 +461,7 @@ impl WidgetArena {
             // key walk from birth and answers there before a keyboard frame below it.
             keyboard_enabled: kind == FrameKind::EditBox,
             clamped_to_screen: matches!(kind, FrameKind::GameTooltip),
+            ignore_depth: false,
             clamp_rect_insets: [0.0; 4],
             hit_rect_insets: [0.0; 4],
             movable: false,
