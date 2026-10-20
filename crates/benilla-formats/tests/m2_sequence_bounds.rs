@@ -18,9 +18,9 @@ fn stand_sequence_bounds_sphere_is_body_scale() {
         ("Character\\Human\\Male\\HumanMale.mdx", 1.118),
     ] {
         // The chain stores `.m2`; the DBC-style `.mdx` spelling normalizes (as the loaders do).
-        let bytes = chain
-            .read(&path.to_ascii_lowercase().replace(".mdx", ".m2"))
-            .expect("read m2");
+        let bytes =
+            benilla_formats::read_m2(&chain, &path.to_ascii_lowercase().replace(".mdx", ".m2"))
+                .expect("read m2");
         let anims = parse_m2_animations(&bytes);
         let stand = anims
             .iter()

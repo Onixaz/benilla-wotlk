@@ -510,9 +510,9 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_firearms_muzzle_blast_is_authored_only_on_bowrelease() {
         let data = benilla_formats::wow_data_or_skip!();
-        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let chain = benilla_formats::open_chain(&data).expect("open chain");
         let path = "Item\\ObjectComponents\\Weapon\\Firearm_2H_Rifle_A_01.m2";
-        let bytes = chain.read_file(path).expect("the rifle model");
+        let bytes = benilla_formats::read_m2(&chain, path).expect("the rifle model");
 
         let seqs = benilla_formats::parse_m2_animations(&bytes);
         let ids: Vec<u16> = seqs.iter().map(|s| s.anim_id).collect();
@@ -560,9 +560,8 @@ mod tests {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
         let ids = |path: &str, chain: &mut benilla_formats::Chain| -> Vec<u16> {
-            let bytes = chain
-                .read_file(path)
-                .unwrap_or_else(|e| panic!("{path}: {e}"));
+            let bytes =
+                benilla_formats::read_m2(chain, path).unwrap_or_else(|e| panic!("{path}: {e}"));
             let mut v: Vec<u16> = benilla_formats::parse_m2_animations(&bytes)
                 .iter()
                 .map(|s| s.anim_id)

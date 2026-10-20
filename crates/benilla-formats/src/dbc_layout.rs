@@ -161,6 +161,8 @@ pub struct CreatureDisplayInfo {
     pub size_class: usize,
     pub blood_level: usize,
     pub npc_sound: usize,
+    /// `ParticleColorID` (+0x34), the display's particle colour override.
+    pub particle_color: usize,
 }
 
 /// `CreatureDisplayInfoExtra.dbc`; the appearance bytes are columns 1 to 7.
@@ -187,6 +189,8 @@ pub struct ItemDisplayInfo {
     /// `Texture[8]`, the body-region textures.
     pub textures: usize,
     pub item_visual: usize,
+    /// `ParticleColorID` (+0x60), the model's particle colour override.
+    pub particle_color: usize,
 }
 
 /// Build 12340, each checked against the shipped files.
@@ -234,6 +238,7 @@ pub const LAYOUTS: DbcLayouts = DbcLayouts {
         size_class: 10,
         blood_level: 11,
         npc_sound: 12,
+        particle_color: 13,
     },
     // A cape slot, then `Flags`, before the bake name.
     creature_display_info_extra: CreatureDisplayInfoExtra {
@@ -252,6 +257,7 @@ pub const LAYOUTS: DbcLayouts = DbcLayouts {
         helmet_geoset_vis: 13,
         textures: 15,
         item_visual: 23,
+        particle_color: 24,
     },
     // `Flags` and `PVP` at 3 and 4 put the seventeen-column `MapName_lang` at 5; `AreaTableID`
     // at 22 and the two descriptions take it to `LoadingScreenID` at 57.

@@ -4,6 +4,7 @@
 //! effect hosts seat on demand-spawned anchors ([`BoothRig::anchor`]).
 
 use benilla_formats::BillboardKind;
+use benilla_world::model_render::SortOrigin;
 use bevy::animation::RepeatAnimation;
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
@@ -27,6 +28,8 @@ pub(super) struct BoothPart {
     /// True only for the glue scenes, which animate texture transforms per frame (`0x715f25` to
     /// `0x7163bc` over `md+0x74`); portraits and panes are stills.
     pub(super) mat_anim: bool,
+    /// The batch's transparent sort key, ranked inside its booth model.
+    pub(super) sort: Option<benilla_formats::BatchSort>,
 }
 
 /// Marks a booth child for the draw gate when its material is on the UV and tint lane; an
@@ -34,6 +37,22 @@ pub(super) struct BoothPart {
 fn mark_mat_anim(child: &mut bevy::ecs::system::EntityCommands<'_>, p: &BoothPart) {
     if p.mat_anim {
         child.insert(benilla_world::doodad_anim::AnimMatPart);
+    }
+}
+
+/// A booth batch's transparent key, its booth model the group.
+fn insert_sort(
+    child: &mut bevy::ecs::system::EntityCommands<'_>,
+    sort: Option<benilla_formats::BatchSort>,
+    root: Entity,
+    origin: SortOrigin,
+) {
+    if let Some(key) = sort {
+        child.insert(benilla_world::model_render::M2BatchSort {
+            key,
+            group: root.to_bits(),
+            origin,
+        });
     }
 }
 
@@ -134,6 +153,8 @@ pub(super) struct BoothBillboardSpec {
     pub(super) alpha_anim: Option<std::sync::Arc<benilla_formats::AlphaAnim>>,
     /// As [`BoothPart::mat_anim`]: the material is on the UV and tint lane.
     pub(super) mat_anim: bool,
+    /// As [`BoothPart::sort`].
+    pub(super) sort: Option<benilla_formats::BatchSort>,
 }
 
 /// A spawned booth billboard card, faced to its own booth's camera every frame by
@@ -432,6 +453,7 @@ pub(super) fn spawn_booth_model(
                 ChildOf(root),
             ));
             mark_mat_anim(&mut child, p);
+            insert_sort(&mut child, p.sort, root, SortOrigin::Part);
             // The batch's material alpha times the instance alpha, the reference's
             // `model+0x180 × the batch factor` (`0x707680`).
             if let Some(anim) = &p.alpha_anim {
@@ -527,6 +549,7 @@ pub(super) fn spawn_booth_model(
             ChildOf(root),
         ));
         mark_mat_anim(&mut child, p);
+        insert_sort(&mut child, p.sort, root, SortOrigin::Part);
         // The material alpha drives the tag's alpha field itself (nothing else writes a booth
         // part's alpha) beside the rig slot. `alpha_bits` floors a true zero just above 0, so the
         // shader's all-zero "untagged, opaque" sentinel cannot fire on an invisible batch.
@@ -603,6 +626,7 @@ pub(super) fn spawn_booth_model(
             ChildOf(anchor),
             BoothBillboard { kind: bb.kind },
         ));
+        insert_sort(&mut card, bb.sort, root, SortOrigin::Entity(root));
         if bb.mat_anim {
             card.insert(benilla_world::doodad_anim::AnimMatPart);
         }
@@ -1155,6 +1179,7 @@ mod tests {
         // One skinned batch and one static one, through the same call.
         let parts = vec![
             BoothPart {
+                sort: None,
                 skinned: Some(Handle::default()),
                 static_mesh: Handle::default(),
                 material: Handle::default(),
@@ -1163,6 +1188,7 @@ mod tests {
                 mat_anim: false,
             },
             BoothPart {
+                sort: None,
                 skinned: None,
                 static_mesh: Handle::default(),
                 material: Handle::default(),

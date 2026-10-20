@@ -240,6 +240,12 @@ pub(crate) fn attach_effect_visuals(
                 // The picker's triangles; the render meshes are `RENDER_WORLD`-only.
                 benilla_world::interact::PickMesh(part.geometry.clone()),
             ));
+            // The model's batches rank inside one transparent group.
+            if let Some(sort) =
+                benilla_world::model_render::M2BatchSort::of(&part.geometry, root.to_bits())
+            {
+                child.insert(sort);
+            }
             if let (true, Some(_)) = (rigged, &part.skinned_mesh) {
                 child.insert((
                     benilla_world::rig_palette::RigPart(root),
@@ -286,6 +292,14 @@ pub(crate) fn attach_effect_visuals(
             benilla_world::interact::PickMesh(part.geometry.clone()),
             card,
         ));
+        // The model's batches rank inside one transparent group.
+        if let Some(sort) = benilla_world::model_render::M2BatchSort::card(
+            &part.geometry,
+            root.to_bits(),
+            benilla_world::model_render::SortOrigin::Entity(root),
+        ) {
+            spawned.insert(sort);
+        }
         // The card's build-time bound: `calculate_bounds` cannot read the `RENDER_WORLD`-only mesh.
         if let Some(aabb) = part.aabb {
             spawned.insert(aabb);

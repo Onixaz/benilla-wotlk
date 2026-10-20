@@ -211,6 +211,7 @@ pub(super) fn sync_dressup_booth(
             .parts
             .iter()
             .map(|p| BoothPart {
+                sort: None,
                 skinned: p.skinned_mesh.clone(),
                 static_mesh: p.static_mesh.clone(),
                 material: relight(&p.material),
@@ -235,6 +236,7 @@ pub(super) fn sync_dressup_booth(
             .billboards
             .iter()
             .map(|b| BoothBillboardSpec {
+                sort: None,
                 mesh: b.mesh.clone(),
                 material: relight(&b.material),
                 bone: b.bone,

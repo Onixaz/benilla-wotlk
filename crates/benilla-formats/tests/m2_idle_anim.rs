@@ -18,11 +18,11 @@ const CREATURES: &[&str] = &[
 #[test]
 fn creature_animation_keyframes_stay_within_their_sequence() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
 
     let mut checked = 0;
     for path in CREATURES {
-        let Ok(bytes) = chain.read_file(path) else {
+        let Ok(bytes) = benilla_formats::read_m2(&chain, path) else {
             continue; // not in this install
         };
         let anims = parse_m2_animations(&bytes);

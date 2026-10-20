@@ -41,8 +41,7 @@ pub fn m2coll(chain: &mut Chain, internal_path: &str) -> Result<()> {
 /// precedes `$AH0-3`/`$CAH` (the impact) picks which exclusive reaction the swing record feeds.
 pub fn m2events(chain: &mut Chain, internal_path: &str) -> Result<()> {
     let name = normalize(internal_path);
-    let data = chain
-        .read_file(&name)
+    let data = benilla_formats::read_m2(chain, &name)
         .with_context(|| format!("reading '{name}' from chain"))?;
     let seqs = benilla_formats::parse_m2_animations(&data);
     for (i, s) in seqs.iter().enumerate() {
@@ -74,8 +73,7 @@ pub fn m2events(chain: &mut Chain, internal_path: &str) -> Result<()> {
 /// Dump an M2's animation sequences in file order.
 pub fn m2seq(chain: &mut Chain, internal_path: &str) -> Result<()> {
     let name = normalize(internal_path);
-    let data = chain
-        .read_file(&name)
+    let data = benilla_formats::read_m2(chain, &name)
         .with_context(|| format!("reading '{name}' from chain"))?;
     let seqs = benilla_formats::parse_m2_animations(&data);
     // `band` is the window on the keyframe timeline every non-global-sequence track keys in. `idx`
@@ -120,10 +118,9 @@ pub fn m2seq(chain: &mut Chain, internal_path: &str) -> Result<()> {
 /// Dump an M2's attachment points (id + bone).
 pub fn m2attach(chain: &mut Chain, internal_path: &str) -> Result<()> {
     let name = normalize(internal_path);
-    let data = chain
-        .read_file(&name)
+    let data = benilla_formats::read_m2(chain, &name)
         .with_context(|| format!("reading '{name}' from chain"))?;
-    let attachments = benilla_formats::parse_m2_attachments(&data)?;
+    let attachments = benilla_formats::parse_m2_attachments(&data);
     // Raw WoW model space (X forward, Y left, Z up); item glows hang on ids 0..4 along a weapon.
     println!("id  bone  position (WoW model space)");
     for a in &attachments {
@@ -154,7 +151,7 @@ fn print_txfm_track<V: std::fmt::Debug + Copy + PartialEq>(name: &str, t: &benil
     );
 }
 
-fn print_m2anim_summary(s: &M2AnimSummary, bytes: &[u8]) {
+fn print_m2anim_summary(s: &M2AnimSummary, bytes: &benilla_m2::M2Model) {
     println!("sequences: {}", s.sequence_count);
     println!(
         "  seq0 bone motion: {}  ({} bone(s) with a >1-key track)",
@@ -419,16 +416,13 @@ fn print_m2anim_summary(s: &M2AnimSummary, bytes: &[u8]) {
 /// Dump an M2's animation-channel summary plus texture-transform detail.
 pub fn m2anim(chain: &mut Chain, internal_path: &str) -> Result<()> {
     let name = normalize(internal_path);
-    let data = chain
-        .read_file(&name)
+    let data = benilla_formats::read_m2(chain, &name)
         .with_context(|| format!("reading '{name}' from chain"))?;
     let summary = benilla_formats::parse_m2_animation_summary(&data)
         .with_context(|| format!("parsing M2 animation summary '{name}'"))?;
     print_m2anim_summary(&summary, &data);
 
-    let fmt = benilla_m2::parse_m2(&mut std::io::Cursor::new(&data[..]))
-        .with_context(|| format!("parsing M2 '{name}'"))?;
-    let m = fmt.model();
+    let m = &data;
     if !m.texture_transforms.is_empty() {
         println!("=== texture transforms ===");
         println!("lookup (header 0xac): {:?}", m.texture_transform_lookup);
@@ -438,7 +432,8 @@ pub fn m2anim(chain: &mut Chain, internal_path: &str) -> Result<()> {
             print_txfm_track("rotation   ", &t.rotation);
             print_txfm_track("scaling    ", &t.scaling);
         }
-        if let Ok(skin) = m.parse_embedded_skin(&data, 0) {
+        {
+            let skin = &m.skin;
             for (bi, batch) in skin.batches().iter().enumerate() {
                 println!(
                     "  batch {bi}: txfm combo {} (texture combo {}, material {})",
@@ -503,12 +498,9 @@ pub fn m2anim(chain: &mut Chain, internal_path: &str) -> Result<()> {
 /// Dump an M2's bone table: KeyBoneID, flags, parent, pivot, and which sequences key each bone.
 pub fn m2bones(chain: &mut Chain, internal_path: &str) -> Result<()> {
     let name = normalize(internal_path);
-    let data = chain
-        .read_file(&name)
+    let data = benilla_formats::read_m2(chain, &name)
         .with_context(|| format!("reading '{name}' from chain"))?;
-    let fmt = benilla_m2::parse_m2(&mut std::io::Cursor::new(&data[..]))
-        .with_context(|| format!("parsing M2 '{name}'"))?;
-    let m = fmt.model();
+    let m = &data;
     let seqs = benilla_formats::parse_m2_animations(&data);
     // `ign` spells out `flags & 0x7`: which of its parent's translation, scale and rotation the
     // bone refuses, taking the model root's instead.
@@ -738,14 +730,13 @@ fn skin_census(s: &benilla_formats::RenderSubmesh) -> Option<String> {
 
 pub fn m2batch(chain: &mut Chain, internal_path: &str) -> Result<()> {
     let name = normalize(internal_path);
-    let data = chain
-        .read_file(&name)
+    let data = benilla_formats::read_m2(chain, &name)
         .with_context(|| format!("reading '{name}' from chain"))?;
     let dir = name.rsplit_once('\\').map(|(d, _)| d).unwrap_or("");
     let subs = benilla_formats::parse_m2_render_submeshes(&data, dir, &[])
         .with_context(|| format!("parsing M2 render submeshes '{name}'"))?;
-    if let Ok(format) = benilla_m2::parse_m2(&mut std::io::Cursor::new(data.as_slice())) {
-        let m = format.model();
+    {
+        let m = &data;
         let track = |t: &benilla_m2::M2ScalarTrack| match (t.keys.len(), t.constant()) {
             (0, _) => "keyless".to_string(),
             (_, Some(v)) => format!("const {v:.3}"),
@@ -777,7 +768,8 @@ pub fn m2batch(chain: &mut Chain, internal_path: &str) -> Result<()> {
             join(m.transparency_tracks.iter().map(track).collect()),
             m.transparency_lookup,
         );
-        if let Ok(skin) = m.parse_embedded_skin(&data, 0) {
+        {
+            let skin = &m.skin;
             // `mat` indexes the materials above, `color` the colour-alpha tracks (`ffff` for none)
             // and `weight` `transLookup`. The reference skips a batch whose
             // `A = instanceAlpha × colors[color].alpha × transparency[transLookup[weight]].weight`
@@ -943,40 +935,17 @@ fn band_span(
 /// band. The reference skips a batch whose factor is 0 or less in that animation.
 pub fn m2alpha(chain: &mut Chain, internal_path: &str) -> Result<()> {
     let name = normalize(internal_path);
-    let data = chain
-        .read_file(&name)
+    let data = benilla_formats::read_m2(chain, &name)
         .with_context(|| format!("reading '{name}' from chain"))?;
-    let format = benilla_m2::parse_m2(&mut std::io::Cursor::new(data.as_slice()))
-        .map_err(|e| anyhow::anyhow!("parsing M2 '{name}': {e}"))?;
-    let m = format.model();
-    let Ok(skin) = m.parse_embedded_skin(&data, 0) else {
-        println!("no embedded skin — no batches to combine");
-        return Ok(());
-    };
-    // Sequences in file order off the header array (count at 0x1c, offset at 0x20, stride 0x44:
-    // u16 anim id at +0, u32 band start and end at +4 and +8), not `parse_m2_animations`, which
-    // drops zero-duration sequences: `ranges` is indexed by file slot.
-    let seqs: Vec<(u16, (u32, u32))> = {
-        let n = u32::from_le_bytes(data[0x1c..0x20].try_into().unwrap_or_default()) as usize;
-        let o = u32::from_le_bytes(data[0x20..0x24].try_into().unwrap_or_default()) as usize;
-        (0..n)
-            .map_while(|i| {
-                let e = o + i * 0x44;
-                (e + 0x44 <= data.len())
-                    .then(|| {
-                        (
-                            u16::from_le_bytes(data[e..e + 2].try_into().ok()?),
-                            (
-                                u32::from_le_bytes(data[e + 4..e + 8].try_into().ok()?),
-                                u32::from_le_bytes(data[e + 8..e + 12].try_into().ok()?),
-                            ),
-                        )
-                            .into()
-                    })
-                    .flatten()
-            })
-            .collect()
-    };
+    let m = &data;
+    let skin = &m.skin;
+    // Sequences in file order, not `parse_m2_animations`, which drops zero-duration sequences:
+    // `ranges` is indexed by file slot.
+    let seqs: Vec<(u16, (u32, u32))> = m
+        .sequences
+        .iter()
+        .map(|s| (s.id, (s.start, s.end)))
+        .collect();
 
     let keys = |t: &benilla_m2::M2ScalarTrack| {
         if t.keys.is_empty() {
@@ -1167,8 +1136,7 @@ fn keys_str(keys: &[(f32, f32)]) -> String {
 /// Dump one M2's particle emitters in full.
 pub fn m2part(chain: &mut Chain, internal_path: &str) -> Result<()> {
     let name = normalize(internal_path);
-    let data = chain
-        .read_file(&name)
+    let data = benilla_formats::read_m2(chain, &name)
         .with_context(|| format!("reading '{name}' from chain"))?;
     let emitters = benilla_formats::parse_m2_particle_emitters(&data)
         .map_err(|e| anyhow::anyhow!("parsing particle emitters of '{name}': {e}"))?;
@@ -1415,11 +1383,10 @@ pub fn m2part(chain: &mut Chain, internal_path: &str) -> Result<()> {
 /// Key counts tell a still rig from an authored path (the `Cameras\*.m2` fly-bys).
 pub fn m2cam(chain: &mut Chain, internal_path: &str) -> Result<()> {
     let name = normalize(internal_path);
-    let data = chain
-        .read_file(&name)
+    let data = benilla_formats::read_m2(chain, &name)
         .with_context(|| format!("reading '{name}' from chain"))?;
     let cams = benilla_formats::parse_m2_pane_cameras(&data);
-    let lookup = benilla_m2::parse_camera_lookup(&data);
+    let lookup = &data.camera_lookup;
     println!("{name}: {} camera(s), cameraLookup {lookup:?}", cams.len());
     if cams.is_empty() {
         return Ok(());

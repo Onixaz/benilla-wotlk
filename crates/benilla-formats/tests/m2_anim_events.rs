@@ -14,7 +14,7 @@ fn creature_anim_events_parse_within_sequences() {
         "Creature\\Kobold\\Kobold.m2",
         "Creature\\Murloc\\Murloc.m2",
     ] {
-        let bytes = chain.read(model).expect("model bytes");
+        let bytes = benilla_formats::read_m2(&chain, model).expect("model bytes");
         let anims = parse_m2_animations(&bytes);
         assert!(!anims.is_empty(), "{model}: sequences parse");
 
@@ -54,9 +54,9 @@ fn a_fired_key_carries_its_own_records_bone_and_point() {
     let data = benilla_formats::wow_data_or_skip!();
     let chain = open_chain(&data).expect("open chain");
     let model = "Character\\Human\\Male\\HumanMale.m2";
-    let bytes = chain.read(model).expect("model bytes");
+    let bytes = benilla_formats::read_m2(&chain, model).expect("model bytes");
 
-    let markers = benilla_formats::parse_m2_event_markers(&bytes).expect("event markers");
+    let markers = benilla_formats::parse_m2_event_markers(&bytes);
     let csd_records: Vec<_> = markers.iter().filter(|m| &m.ident == b"$CSD").collect();
     assert_eq!(
         csd_records.len(),

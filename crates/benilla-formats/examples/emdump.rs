@@ -5,8 +5,8 @@
 fn main() -> anyhow::Result<()> {
     let virt = std::env::args().nth(1).unwrap();
     let data = benilla_formats::wow_data().expect("no WoW install found (set $WOW_DATA)");
-    let mut chain = benilla_formats::open_chain(&data)?;
-    let bytes = chain.read_file(&virt)?;
+    let chain = benilla_formats::open_chain(&data)?;
+    let bytes = benilla_formats::read_m2(&chain, &virt)?;
     let dir = virt.rsplit_once('\\').map_or("", |(d, _)| d);
     let subs = benilla_formats::parse_m2_render_submeshes(&bytes, dir, &[]).unwrap_or_default();
     // The renderer's own bound and rung, not a re-derivation of them.

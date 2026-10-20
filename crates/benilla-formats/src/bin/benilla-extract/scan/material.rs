@@ -49,7 +49,7 @@ pub fn alphascan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let mut by_dir: BTreeMap<String, u32> = BTreeMap::new();
     let mut rows: Vec<(String, usize, usize, usize)> = Vec::new();
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
@@ -121,7 +121,7 @@ pub fn uvwrapscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let (mut scanned, mut batches, mut hits, mut models) = (0u32, 0u32, 0u32, 0u32);
     let mut cutout_hits = 0u32;
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
@@ -202,7 +202,7 @@ pub fn texmodescan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let mut modes: std::collections::BTreeMap<String, u8> = std::collections::BTreeMap::new();
     let mut scanned = 0u32;
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
@@ -255,16 +255,17 @@ pub fn envmapscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     // reference's unguarded read does; those hits, and models with no table at all, count apart.
     let (mut from_oob, mut empty_table) = (0u32, 0u32);
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
-        if let Ok(fmt) = benilla_m2::parse_m2(&mut std::io::Cursor::new(&bytes[..])) {
-            let model = fmt.model();
+        {
+            let model = &bytes;
             if model.texture_unit_lookup.is_empty() {
                 empty_table += 1;
             }
-            if let Ok(skin) = model.parse_embedded_skin(&bytes, 0) {
+            {
+                let skin = &model.skin;
                 for b in skin.batches() {
                     let idx = b.texture_coord_combo_index as usize;
                     if model.texture_unit_lookup.get(idx).is_none() {
@@ -617,7 +618,7 @@ pub fn uvslotscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let mut hits: Vec<Hit> = Vec::new();
 
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         let dir = name.rsplit_once('\\').map(|(d, _)| d).unwrap_or("");
@@ -1109,19 +1110,8 @@ fn uv_keyed(sub: &benilla_formats::RenderSubmesh) -> bool {
 
 /// Whether the material table (read as `blendscan` does) authors blend 3 `NoAlphaAdd`: the bake
 /// folds modes 3 and 4 into `additive`, so such a model's additive batches are judged on RGB too.
-fn authors_no_alpha_add(bytes: &[u8]) -> bool {
-    let at = |o: usize| -> Option<u32> {
-        Some(u32::from_le_bytes(bytes.get(o..o + 4)?.try_into().ok()?))
-    };
-    match (at(0x84), at(0x88)) {
-        (Some(n), Some(ofs)) => (0..n as usize).any(|i| {
-            let o = ofs as usize + i * 4;
-            bytes
-                .get(o + 2..o + 4)
-                .is_some_and(|b| u16::from_le_bytes([b[0], b[1]]) == 3)
-        }),
-        _ => false,
-    }
+fn authors_no_alpha_add(model: &benilla_m2::M2Model) -> bool {
+    model.materials.iter().any(|m| m.blend_mode.bits() == 3)
 }
 
 /// One keyed batch's texture-transform read, shared by [`fxuvscan`] and [`entityuvscan`]. The
@@ -1341,7 +1331,7 @@ pub fn fxuvscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
             continue;
         }
         listed += 1;
-        let Ok(bytes) = chain.read_file(key) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, key) else {
             missing += 1;
             unread.push(format!("{} (not in the chain)", reach.path));
             continue;
@@ -2023,7 +2013,7 @@ pub fn entityuvscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
         }
         let path = corpus.models[&key].path.clone();
         listed += 1;
-        let Ok(bytes) = chain.read_file(&key) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &key) else {
             missing += 1;
             unread.push(format!("{path} (not in the chain)"));
             continue;

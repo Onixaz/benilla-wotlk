@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
-use benilla_m2::{M2Camera, M2SplineKey, M2Track};
+use benilla_m2::{M2Camera, M2Model, M2SplineKey, M2Track};
 
 use crate::dbc::{f32_at, parse, str_at, u32_at};
 use crate::Chain;
@@ -213,23 +213,26 @@ impl CinematicPath {
     /// Build a shot from its camera row: the `.m2`'s camera record, planted at the row's origin.
     pub fn load(chain: &mut Chain, row: &CinematicCameraRow) -> Result<Self> {
         let path = camera_model_path(&row.model);
-        let bytes = chain
-            .read_file(&path)
+        let model = crate::read_m2(chain, &path)
             .with_context(|| format!("reading cinematic camera model {path}"))?;
-        Self::from_m2_bytes(&bytes, row).with_context(|| format!("parsing {path}"))
+        Self::from_model(&model, row).with_context(|| format!("parsing {path}"))
     }
 
-    /// The same, from bytes already in hand (the test/tooling seam).
-    pub fn from_m2_bytes(bytes: &[u8], row: &CinematicCameraRow) -> Result<Self> {
+    /// The same, from a model already in hand (the test/tooling seam).
+    pub fn from_model(model: &M2Model, row: &CinematicCameraRow) -> Result<Self> {
         // The camera array alone: a `Cameras\*.m2` has no geometry, and the shot is this record.
-        let camera = benilla_m2::parse_cameras(bytes)
-            .into_iter()
-            .next()
+        let camera = model
+            .cameras
+            .first()
+            .cloned()
             .ok_or_else(|| anyhow::anyhow!("model carries no camera record"))?;
-        // The reference plays the shot as an ordinary M2 animation on sequence 0: it runs for
-        // `end − start`, its keys stamped on the global timeline inside `[start, end]`. A file
-        // with no sequence falls back to its last key.
-        let (band_start, band_end) = sequence_band(bytes)
+        // The reference plays the shot as an ordinary M2 animation on sequence 0: it runs for its
+        // length, its keys on the model's timeline inside its band. A file with no sequence falls
+        // back to its last key.
+        let (band_start, band_end) = model
+            .sequences
+            .first()
+            .map(|s| (s.start, s.end))
             .or_else(|| {
                 [
                     camera.positions.keys.last().map(|k| k.0),
@@ -291,21 +294,6 @@ impl CinematicPath {
 fn sample_against(track: &M2Track<M2SplineKey<[f32; 3]>>, base: [f32; 3], ms: u32) -> [f32; 3] {
     let d = track.sample_ms(ms).unwrap_or([0.0; 3]);
     std::array::from_fn(|i| base[i] + d[i])
-}
-
-/// The model's first sequence band, `(start, end)` in global-timeline ms: count at header `0x1c`,
-/// offset at `0x20`, entries `0x44` apart, band at `+0x04`/`+0x08`. `start` is not always 0
-/// (`FlybyNightElf` bands at `[333, 102333]`).
-fn sequence_band(b: &[u8]) -> Option<(u32, u32)> {
-    let le_u32 = |o: usize| -> Option<u32> {
-        b.get(o..o + 4)
-            .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
-    };
-    let (n, o) = (le_u32(0x1c)?, le_u32(0x20)? as usize);
-    if n == 0 {
-        return None;
-    }
-    Some((le_u32(o + 0x04)?, le_u32(o + 0x08)?))
 }
 
 #[cfg(test)]

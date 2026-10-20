@@ -360,9 +360,31 @@ pub struct RenderSubmesh {
     /// The second UV set (`T2`), per vertex like [`Self::uvs`]; empty unless [`Self::combiner`]
     /// reads it.
     pub uvs2: Vec<[f32; 2]>,
-    /// The M2 batch's priority plane (texUnit `+0x01`), the transparent sort's key after the
-    /// model's depth (`CM2Scene::SortTransparent 0x81ef30`); 0 on WMO.
+    /// The M2 batch's transparent sort key ([`BatchSort`]); `None` on WMO.
+    pub sort: Option<BatchSort>,
+}
+
+/// An M2 batch's place in the transparent order. `CM2Scene::Animate` (`0x821a20`) fills each
+/// element's depths and `CM2Scene::SortTransparent` (`0x81ef30`) orders by them: sort depth
+/// farther first, then the priority plane, then the element depth farther first, then the
+/// material layer and the batch index.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BatchSort {
+    /// Global flag `0x10`: every batch's sort depth is the model's, so the plane decides within
+    /// it. Without it a batch sorts by its own section depth.
+    pub model_depth: bool,
+    /// The priority plane (texUnit `+0x01`), lower first.
     pub priority_plane: i8,
+    /// The section's sort centre (`+0x20`), model space, carried by its centre bone.
+    pub center: [f32; 3],
+    /// The section's sort radius (`+0x2c`), the push along the view ray.
+    pub radius: f32,
+    /// Batch flags `& 3`: 1 pushes the centre toward the eye, 2 away, 0 not at all.
+    pub push: u8,
+    /// The material layer (texUnit `+0x0c`), lower first.
+    pub material_layer: u16,
+    /// The skin batch index, the last key.
+    pub index: u16,
 }
 
 /// A 3.3.5a M2 batch's pixel shader, `CM2Shared::GetEffect` (`0x836600`, `0x836c90`): each texture
@@ -408,6 +430,20 @@ pub struct Combiner {
     /// Stage 1 reads the generated sphere map (`Diffuse_T1_Env`), else the second UV set
     /// (`Diffuse_T1_T2`).
     pub stage1_env: bool,
+    /// Stage 1's texture transform, `None` where it holds still or reads the sphere map.
+    pub uv1: Option<StageUv>,
+}
+
+/// A combiner's stage-1 texture transform, `textureTransformCombos[combo + 1]` as
+/// `CM2SceneRender::SetupTextures` (`0x81f450`) reads it per stage, baked in stage 0's channels:
+/// the translation as one loop or per sequence slot, the rotation and scaling per slot. A stage
+/// on the sphere map takes `SetTexMtx_SphereMap` instead, which the vertex program replaces.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StageUv {
+    pub anim: Option<std::sync::Arc<UvAnim>>,
+    pub seq: Option<std::sync::Arc<SeqLoops<[f32; 2]>>>,
+    pub rot_seq: Option<std::sync::Arc<SeqLoops<[f32; 4]>>>,
+    pub scale_seq: Option<std::sync::Arc<SeqLoops<[f32; 2]>>>,
 }
 
 impl CombinerShader {
@@ -510,7 +546,7 @@ impl Default for RenderSubmesh {
             section: None,
             combiner: None,
             uvs2: Vec::new(),
-            priority_plane: 0,
+            sort: None,
         }
     }
 }

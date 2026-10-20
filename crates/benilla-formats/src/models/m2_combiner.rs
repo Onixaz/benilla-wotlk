@@ -306,16 +306,15 @@ mod tests {
     fn the_northrend_login_scene_masks_its_clouds_and_folds_the_wyrm_layers() {
         let data = crate::wow_data_or_skip!();
         let chain = crate::open_chain(&data).expect("open chain");
-        let (bytes, _) = crate::read_m2(
+        let bytes = crate::read_m2(
             &chain,
             r"Interface\Glues\Models\UI_MainMenu_Northrend\UI_MainMenu_Northrend.m2",
         )
         .expect("the login scene");
-        let format = benilla_m2::parse_m2(&mut std::io::Cursor::new(bytes.as_slice())).unwrap();
-        let model = format.model();
+        let model = &bytes;
         assert_ne!(model.global_flags & 8, 0, "the scene uses combiner combos");
         assert!(!model.texture_combiner_combos.is_empty());
-        let skin = model.parse_embedded_skin(&bytes, 0).unwrap();
+        let skin = &model.skin;
         let fx = batch_effects(model, skin.batches());
 
         let masked = fx

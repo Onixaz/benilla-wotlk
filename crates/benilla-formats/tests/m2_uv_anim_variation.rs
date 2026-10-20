@@ -12,10 +12,8 @@ const BUBBLE: &str =
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_lava_bubble_keys_its_whole_uv_flipbook_in_variation_one() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
-    let bytes = chain
-        .read_file(BUBBLE)
-        .expect("the bubble M2 is in the chain");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
+    let bytes = benilla_formats::read_m2(&chain, BUBBLE).expect("the bubble M2 is in the chain");
 
     let anims = parse_m2_animations(&bytes);
     assert_eq!(anims.len(), 2, "two sequences");

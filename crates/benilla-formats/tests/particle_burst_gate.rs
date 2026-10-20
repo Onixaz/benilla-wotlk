@@ -9,10 +9,8 @@ const STRIKE_IMPACT: &str = "Spells\\Strike_Impact_Chest.m2";
 #[test]
 fn the_flare_emitter_never_fires_and_the_plume_fires_once() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
-    let bytes = chain
-        .read_file(STRIKE_IMPACT)
-        .expect("read the impact model");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
+    let bytes = benilla_formats::read_m2(&chain, STRIKE_IMPACT).expect("read the impact model");
 
     let emitters = parse_m2_particle_emitters(&bytes).expect("parse emitters");
     assert_eq!(emitters.len(), 2, "two emitters on the impact flash");

@@ -16,10 +16,8 @@ const STAND: u16 = 0;
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_idle_player_keys_bth_and_attaches_it_at_the_mouth() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
-    let bytes = chain
-        .read_file(HUMAN_MALE)
-        .expect("HumanMale is in the chain");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
+    let bytes = benilla_formats::read_m2(&chain, HUMAN_MALE).expect("HumanMale is in the chain");
 
     let anims = parse_m2_animations(&bytes);
     let stand = anims
@@ -51,7 +49,7 @@ fn the_idle_player_keys_bth_and_attaches_it_at_the_mouth() {
     );
 
     // The tag is an attachment id, never an index, resolved through the AttachLookup (`0x710310`).
-    let attachments = parse_m2_attachments(&bytes).expect("parse attachments");
+    let attachments = parse_m2_attachments(&bytes);
     let breath = attachments
         .iter()
         .find(|a| a.id == BREATH_ATTACH)
@@ -78,9 +76,8 @@ fn the_idle_player_keys_bth_and_attaches_it_at_the_mouth() {
         "the breath rides a real bone, not the model root"
     );
 
-    let breath_bytes = chain
-        .read_file(COLD_BREATH)
-        .expect("ColdBreath.m2 is in the chain");
+    let breath_bytes =
+        benilla_formats::read_m2(&chain, COLD_BREATH).expect("ColdBreath.m2 is in the chain");
     let clips = parse_m2_animations(&breath_bytes);
     assert_eq!(clips.len(), 1, "ColdBreath authors one sequence");
     assert!(

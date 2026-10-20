@@ -6,8 +6,6 @@
 //! Output is Blizzard data: never commit it.
 //! `cargo run -p benilla-formats --example m2_shared_section -- [path-substring]`
 
-use std::io::Cursor;
-
 /// What every consolidator excludes on: a `true` batch stays on the entity path whatever its
 /// siblings do.
 fn refusable(model: &benilla_m2::M2Model, batch: &benilla_m2::SkinBatch) -> bool {
@@ -23,7 +21,7 @@ fn refusable(model: &benilla_m2::M2Model, batch: &benilla_m2::SkinBatch) -> bool
 fn main() -> anyhow::Result<()> {
     let pat = std::env::args().nth(1).unwrap_or_default().to_lowercase();
     let data = benilla_formats::wow_data().expect("no WoW install found (set $WOW_DATA)");
-    let mut chain = benilla_formats::open_chain(&data)?;
+    let chain = benilla_formats::open_chain(&data)?;
     let names: Vec<String> = chain
         .list()?
         .into_iter()
@@ -36,16 +34,11 @@ fn main() -> anyhow::Result<()> {
     let (mut models, mut with_shared, mut with_split) = (0usize, 0usize, 0usize);
     let (mut batches_total, mut batches_shared, mut batches_split) = (0usize, 0usize, 0usize);
     for name in &names {
-        let Ok(bytes) = chain.read_file(name) else {
+        let Ok(bytes) = benilla_formats::read_m2(&chain, name) else {
             continue;
         };
-        let Ok(m2) = benilla_m2::parse_m2(&mut Cursor::new(bytes.as_slice())) else {
-            continue;
-        };
-        let model = m2.model();
-        let Ok(skin) = model.parse_embedded_skin(&bytes, 0) else {
-            continue;
-        };
+        let model = &bytes;
+        let skin = &model.skin;
         models += 1;
         batches_total += skin.batches().len();
         // section index → (batch count, refusable count)

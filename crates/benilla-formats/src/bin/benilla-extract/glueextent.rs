@@ -20,8 +20,7 @@ pub fn glueextent(chain: &mut Chain, batches: bool) -> Result<()> {
     );
     for token in SCENES {
         let name = format!("Interface\\Glues\\Models\\UI_{token}\\UI_{token}.m2");
-        let bytes = chain
-            .read_file(&name)
+        let bytes = benilla_formats::read_m2(chain, &name)
             .with_context(|| format!("reading '{name}' from chain"))?;
         let subs = parse_m2_render_submeshes(&bytes, "", &[])
             .with_context(|| format!("parsing M2 render submeshes '{name}'"))?;

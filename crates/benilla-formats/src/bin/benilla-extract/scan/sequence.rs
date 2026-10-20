@@ -70,15 +70,10 @@ fn go_remap(m: &benilla_m2::M2Model, id: u16) -> (u16, bool) {
     }
 }
 
-/// op4's id resolve (`0x7121a0` via `0x711bf0`): `playableAnimationLookup` when the id is in
-/// range, then `animationLookup` to a file slot. With no slot the reference arms nothing.
+/// op4's id resolve: `animationLookup` to a file slot. With no slot the reference arms nothing.
 fn go_resolve_slot(m: &benilla_m2::M2Model, id: u16) -> Option<(u16, u16)> {
-    let played = m
-        .playable_animation_lookup
-        .get(id as usize)
-        .map_or(id, |p| p.resolved_id);
-    let slot = *m.animation_lookup.get(played as usize)?;
-    (slot != 0xffff).then_some((played, slot))
+    let slot = *m.animation_lookup.get(id as usize)?;
+    (slot != 0xffff).then_some((id, slot))
 }
 
 /// The loader seed (`0x71019b`): id 0 when the model owns what id 0 resolves to, else the
@@ -87,11 +82,7 @@ fn go_loader_seed(
     m: &benilla_m2::M2Model,
     seqs: &[benilla_formats::ModelAnimation],
 ) -> Option<(u16, u16)> {
-    let resolved = m
-        .playable_animation_lookup
-        .first()
-        .map_or(0, |p| p.resolved_id);
-    if m.owns_animation(resolved) {
+    if m.owns_animation(0) {
         go_resolve_slot(m, 0)
     } else {
         go_resolve_slot(m, seqs.first()?.anim_id)
@@ -125,13 +116,10 @@ pub fn goanimscan(chain: &mut Chain) -> Result<()> {
     let mut chained = 0u32;
     let mut chained_paths: Vec<String> = Vec::new();
     for (path, displays) in &models {
-        let Ok(bytes) = chain.read_file(path) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, path) else {
             continue;
         };
-        let Ok(fmt) = benilla_m2::parse_m2(&mut std::io::Cursor::new(&bytes)) else {
-            continue;
-        };
-        let m = fmt.model();
+        let m = &bytes;
         parsed += 1;
         let seqs = benilla_formats::parse_m2_animations(&bytes);
         if seqs.is_empty() {
@@ -271,7 +259,7 @@ pub fn fxlifescan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let mut by_dir: BTreeMap<String, u32> = BTreeMap::new();
     let mut rows: Vec<(String, String, String, f32, f32, f32)> = Vec::new();
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
@@ -362,7 +350,7 @@ pub fn idleslotscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let (mut scanned, mut unarmed, mut window) = (0u32, 0u32, 0u32);
     let (mut fx_models, mut alpha_models) = (0u32, 0u32);
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         let anims = benilla_formats::parse_m2_animations(&bytes);
@@ -370,10 +358,7 @@ pub fn idleslotscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
             continue;
         }
         scanned += 1;
-        let idle_id = benilla_formats::parse_m2_playable_animation_lookup(&bytes)
-            .unwrap_or_default()
-            .first()
-            .map_or(0, |p| p.resolved_id);
+        let idle_id = 0;
         // The content gate (`benilla_assets`' `idle_pose_differs`) arms no rig for a rest pose.
         if anims
             .iter()
@@ -452,7 +437,7 @@ pub fn seqclockscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
         (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
     let mut frozen_emitters = 0usize;
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
@@ -534,7 +519,7 @@ pub fn soundeventscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let mut per_tag: BTreeMap<String, (u32, u32)> = BTreeMap::new(); // tag -> (markers, rest-gated)
     let mut per_kit: BTreeMap<u32, u32> = BTreeMap::new();
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         let anims = benilla_formats::parse_m2_animations(&bytes);
@@ -545,12 +530,8 @@ pub fn soundeventscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
         // The spawn tier `benilla_world::doodad_anim::classify` gives this model: `Static` when
         // boneless, else `FirstSeq` when the idle is not a rest pose, else `GlobalSeqOnly` with
         // global-sequence channels, else `Static`.
-        let bones = benilla_m2::parse_m2(&mut std::io::Cursor::new(&bytes))
-            .map_or(0, |f| f.model().bones.len());
-        let idle_id = benilla_formats::parse_m2_playable_animation_lookup(&bytes)
-            .unwrap_or_default()
-            .first()
-            .map_or(0, |p| p.resolved_id);
+        let bones = bytes.bones.len();
+        let idle_id = 0;
         let gseq = !benilla_formats::parse_m2_global_sequence_bones(&bytes).is_empty();
         let tier = if bones == 0 {
             "Static"
@@ -722,15 +703,11 @@ pub fn goslotscan(chain: &mut Chain) -> Result<()> {
             wmo_or_missing += displays.len() as u32;
             continue;
         }
-        let Ok(bytes) = chain.read_file(path) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, path) else {
             wmo_or_missing += displays.len() as u32;
             continue;
         };
-        let Ok(fmt) = benilla_m2::parse_m2(&mut std::io::Cursor::new(&bytes)) else {
-            wmo_or_missing += displays.len() as u32;
-            continue;
-        };
-        let m = fmt.model();
+        let m = &bytes;
         let seqs = benilla_formats::parse_m2_animations(&bytes);
         models_seen += 1;
         let armable = go_armable_slots(m, &seqs);

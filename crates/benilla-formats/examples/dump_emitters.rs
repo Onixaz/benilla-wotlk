@@ -8,8 +8,8 @@ fn main() -> anyhow::Result<()> {
         .nth(1)
         .ok_or_else(|| anyhow::anyhow!("usage: dump_emitters <m2 path>"))?;
     let data = benilla_formats::wow_data().expect("no WoW install found (set $WOW_DATA)");
-    let mut chain = benilla_formats::open_chain(&data)?;
-    let bytes = chain.read_file(&virt)?;
+    let chain = benilla_formats::open_chain(&data)?;
+    let bytes = benilla_formats::read_m2(&chain, &virt)?;
     for (i, e) in benilla_formats::parse_m2_particle_emitters(&bytes)?
         .iter()
         .enumerate()

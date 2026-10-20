@@ -35,6 +35,9 @@ pub struct CreatureModel {
     pub blood_model: i32,
     /// `CreatureModelData.collisionHeight`, in raw model units.
     pub collision_height: f32,
+    /// The display's particle colour override (`ParticleColorID`, `0x4f20c0` → `0x4ea9e0`);
+    /// `None` for id 0.
+    pub particle_colors: Option<crate::ParticleColors>,
 }
 
 /// A character-model NPC's appearance, from `CreatureDisplayInfoExtra.dbc`. `skin` and `face` are
@@ -70,6 +73,8 @@ struct DisplayRow {
     /// `CreatureModelAlpha` (field 5, +0x14), 0..=255: the `baseAlpha` of the reference's unit
     /// alpha product (`0x60d2d0`, × 1/255), which is a flat 1.0 for players.
     model_alpha: u32,
+    /// `ParticleColorID` (field 13), a `ParticleColor.dbc` key; 0 = none.
+    particle_color: u32,
 }
 
 /// One CreatureModelData row (the parts we use).
@@ -112,6 +117,7 @@ pub struct CreatureCatalog {
     display: HashMap<u32, DisplayRow>,
     models: HashMap<u32, ModelRow>,
     extra: HashMap<u32, NpcAppearance>,
+    particle_colors: crate::ParticleColorTable,
 }
 
 impl CreatureCatalog {
@@ -246,6 +252,7 @@ impl CreatureCatalog {
             blood_display: row.blood_level as i32,
             blood_model: model.blood,
             collision_height: model.collision_height,
+            particle_colors: self.particle_colors.resolve(row.particle_color),
         })
     }
 
@@ -327,6 +334,7 @@ pub(crate) fn creature_display_info_schema(l: &dbc_layout::CreatureDisplayInfo) 
             _ if i == l.blood_level => "BloodLevel".into(),
             // Some maps label this BloodID, but its 5875 values (33..188) are NPC sound ids.
             _ if i == l.npc_sound => "NPCSoundID".into(),
+            _ if i == l.particle_color => "ParticleColorID".into(),
             _ => format!("c{i}"),
         };
         s.add_field(SchemaField::new(name, FieldType::UInt32));
@@ -424,6 +432,7 @@ pub fn load_creature_catalog(chain: &mut Chain) -> Result<CreatureCatalog> {
                         blood_level: u32_at(r, l.blood_level).unwrap_or(0),
                         size_class: u32_at(r, l.size_class).map_or(-1, |v| v as i32),
                         model_alpha: u32_at(r, 5).unwrap_or(255),
+                        particle_color: u32_at(r, l.particle_color).unwrap_or(0),
                     },
                 );
             }
@@ -434,10 +443,14 @@ pub fn load_creature_catalog(chain: &mut Chain) -> Result<CreatureCatalog> {
     // Best-effort: without it only humanoid NPCs lose their skins; the caller logs `extra_len()`.
     let extra = load_creature_display_info_extra(chain).unwrap_or_default();
 
+    // Best-effort too: without it every override resolves as a missing row.
+    let particle_colors = crate::load_particle_colors(chain).unwrap_or_default();
+
     Ok(CreatureCatalog {
         display,
         models,
         extra,
+        particle_colors,
     })
 }
 
@@ -908,12 +921,9 @@ mod tests {
             );
             assert_eq!(h, m.collision_height, "{label}: accessor vs CreatureModel");
 
-            let bytes = chain
-                .read_file(&crate::models::model_path(&m.model_path))
+            let bytes = crate::read_m2(&chain, &crate::models::model_path(&m.model_path))
                 .unwrap_or_else(|e| panic!("{label}: read {}: {e:#}", m.model_path));
-            let fmt = benilla_m2::parse_m2(&mut std::io::Cursor::new(&bytes[..]))
-                .unwrap_or_else(|e| panic!("{label}: parse M2: {e:#}"));
-            let hdr = &fmt.model().header;
+            let hdr = &bytes.header;
             let box_z = (hdr.collision_box_max[2] - hdr.collision_box_min[2]).abs();
             assert!(
                 (box_z - h).abs() < 5e-4,

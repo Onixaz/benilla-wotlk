@@ -1,17 +1,17 @@
-//! An M2 through [`read_m2`](benilla_formats::read_m2) and the 1.12.1 readers: what a version-264
-//! model keeps after its relayout, and what it drops. Output is Blizzard data: never commit it.
-//! `cargo run -p benilla-formats --example relayout_m2 -- <m2 path>`
+//! An M2 through [`read_m2`](benilla_formats::read_m2) and its readers: what a model keeps, and
+//! what its timeline drops. Output is Blizzard data: never commit it.
+//! `cargo run -p benilla-formats --example read_m2 -- <m2 path>`
 
 fn main() -> anyhow::Result<()> {
     let path = std::env::args()
         .nth(1)
-        .ok_or_else(|| anyhow::anyhow!("usage: relayout_m2 <m2 path>"))?;
+        .ok_or_else(|| anyhow::anyhow!("usage: read_m2 <m2 path>"))?;
     let data = benilla_formats::wow_data().expect("no WoW install found (set $WOW_DATA)");
     let chain = benilla_formats::open_chain(&data)?;
     let version = benilla_formats::md20_version(&chain.read(&path)?);
-    let (bytes, dropped) = benilla_formats::read_m2(&chain, &path)?;
-    println!("{path}: MD20 {version:?}, {} bytes as read", bytes.len());
-    for d in &dropped {
+    let bytes = benilla_formats::read_m2(&chain, &path)?;
+    println!("{path}: MD20 {version:?}, {} bytes", bytes.bytes().len());
+    for d in &bytes.dropped {
         println!("  dropped: {d}");
     }
 
@@ -26,7 +26,7 @@ fn main() -> anyhow::Result<()> {
             s.positions.len()
         );
     }
-    let skeleton = benilla_formats::parse_m2_skeleton(&bytes)?;
+    let skeleton = benilla_formats::parse_m2_skeleton(&bytes);
     println!("  {} bones", skeleton.bones.len());
     for a in benilla_formats::parse_m2_animations(&bytes) {
         println!(
@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
         ),
         None => println!("  no camera 0"),
     }
-    let bounds = benilla_formats::parse_m2_bounds(&bytes)?;
+    let bounds = benilla_formats::parse_m2_bounds(&bytes);
     println!(
         "  bounds {:?}..{:?} r {}",
         bounds.bbox_min, bounds.bbox_max, bounds.sphere_radius

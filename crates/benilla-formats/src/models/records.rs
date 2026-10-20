@@ -1,9 +1,10 @@
-//! Authored records off the raw model bytes, in raw WoW model space: M2 lights (which `benilla-m2`
-//! does not read), the WMO root's MOLT lights, and the M2 camera table.
+//! Authored records in raw WoW model space: M2 lights, the WMO root's MOLT lights, and the M2
+//! camera table.
 
 use benilla_bytes::ByteExt;
+use benilla_m2::{M2LightDef, M2Model, M2Track};
 
-/// An M2 light (the MD20 lights array, loaded by `0x70ebd0`), `position` relative to `bone` (`-1`
+/// An M2 light (the MD20 lights array), `position` relative to `bone` (`-1`
 /// for the origin). The reference commits a point light on a placed prop as a hardware `GL_LIGHT`
 /// with the fixed attenuation `1 / (0.7·d + 0.03·d²)`, diffuse only; the glue scenes light their
 /// ambient through an ambient-only light, so both pairs are read. Colour and intensity are each
@@ -61,34 +62,9 @@ impl WmoLight {
     }
 }
 
-/// The first value of a 28-byte M2Track (values `count@0x14`, `ofs@0x18`).
-fn track_first_f32(bytes: &[u8], track: usize) -> Option<f32> {
-    let nval = bytes.u32_at(track + 0x14)? as usize;
-    let ofs = bytes.u32_at(track + 0x18)? as usize;
-    if nval == 0 {
-        return None;
-    }
-    bytes.f32_at(ofs)
-}
-fn track_first_u8(bytes: &[u8], track: usize) -> Option<u8> {
-    let nval = bytes.u32_at(track + 0x14)? as usize;
-    let ofs = bytes.u32_at(track + 0x18)? as usize;
-    if nval == 0 {
-        return None;
-    }
-    bytes.get(ofs).copied()
-}
-fn track_first_vec3(bytes: &[u8], track: usize) -> Option<[f32; 3]> {
-    let nval = bytes.u32_at(track + 0x14)? as usize;
-    let ofs = bytes.u32_at(track + 0x18)? as usize;
-    if nval == 0 {
-        return None;
-    }
-    Some([
-        bytes.f32_at(ofs)?,
-        bytes.f32_at(ofs + 4)?,
-        bytes.f32_at(ofs + 8)?,
-    ])
+/// A track's first value.
+fn first<V: Copy>(track: &M2Track<V>) -> Option<V> {
+    track.keys.first().map(|&(_, v)| v)
 }
 
 /// Hamilton product `a·b` of two `[x, y, z, w]` quaternions (the vanilla M2 key layout).
@@ -111,44 +87,23 @@ fn quat_rotate_z(q: [f32; 4]) -> [f32; 3] {
     ]
 }
 
-fn track_first_quat(bytes: &[u8], track: usize) -> Option<[f32; 4]> {
-    let nval = bytes.u32_at(track + 0x14)? as usize;
-    let ofs = bytes.u32_at(track + 0x18)? as usize;
-    if nval == 0 {
-        return None;
-    }
-    Some([
-        bytes.f32_at(ofs)?,
-        bytes.f32_at(ofs + 4)?,
-        bytes.f32_at(ofs + 8)?,
-        bytes.f32_at(ofs + 12)?,
-    ])
-}
-
 /// A bone's model-space +Z at the track origin, its first rotation keys composed up the parent
-/// chain. Bone table `count@0x34`/`ofs@0x38`, stride `0x6c`: flags `u32@4` (`0x04` keeps the
-/// root's orientation), parent `i16@8`, rotation `@0x28`. Rotation animation is not applied.
-fn bone_z_axis(bytes: &[u8], bone: i16) -> [f32; 3] {
-    let (Some(count), Some(ofs)) = (bytes.u32_at(0x34), bytes.u32_at(0x38)) else {
-        return [0.0, 0.0, 1.0];
-    };
-    let (count, ofs) = (count as usize, ofs as usize);
+/// chain. Bone flag `0x04` keeps the root's orientation. Rotation animation is not applied.
+fn bone_z_axis(model: &M2Model, bone: i16) -> [f32; 3] {
     // Local rotations leaf to root, bounded by the bone count.
     let mut chain: Vec<[f32; 4]> = Vec::new();
     let mut idx = bone;
-    for _ in 0..=count {
-        if idx < 0 || idx as usize >= count {
+    for _ in 0..=model.bones.len() {
+        let Some(b) = usize::try_from(idx).ok().and_then(|i| model.bones.get(i)) else {
             break;
-        }
-        let rec = ofs + idx as usize * 0x6c;
-        if let Some(q) = track_first_quat(bytes, rec + 0x28) {
+        };
+        if let Some(q) = first(&b.rotation) {
             chain.push(q);
         }
-        let flags = bytes.u32_at(rec + 4).unwrap_or(0);
-        if flags & 0x4 != 0 {
+        if b.flags.bits() & 0x4 != 0 {
             break; // the bone keeps the model root's orientation
         }
-        idx = bytes.u16_at(rec + 8).map(|p| p as i16).unwrap_or(-1);
+        idx = b.parent;
     }
     let mut q = [0.0, 0.0, 0.0, 1.0];
     for local in chain.iter().rev() {
@@ -157,49 +112,27 @@ fn bone_z_axis(bytes: &[u8], bone: i16) -> [f32; 3] {
     quat_rotate_z(q)
 }
 
-/// One M2 light record at a bounds-checked `rec`, as the reference reads it (`0x718960`,
-/// `0x714260`): `type@0`, `bone@2`, `position@4`, then seven `0x1c` M2Tracks: ambient colour and
-/// intensity `@0x10`/`@0x2c`, diffuse `@0x48`/`@0x64`, attenuation `@0x80`/`@0x9c`, visibility
-/// `@0xb8`.
-fn read_m2_light(bytes: &[u8], rec: usize) -> Option<M2Light> {
-    let bone = bytes.u16_at(rec + 0x02)? as i16;
-    Some(M2Light {
-        light_type: bytes.u16_at(rec)?,
-        bone,
-        bone_z: bone_z_axis(bytes, bone),
-        position: [
-            bytes.f32_at(rec + 0x04)?,
-            bytes.f32_at(rec + 0x08)?,
-            bytes.f32_at(rec + 0x0c)?,
-        ],
-        ambient_color: track_first_vec3(bytes, rec + 0x10).unwrap_or([1.0; 3]),
-        ambient_intensity: track_first_f32(bytes, rec + 0x2c).unwrap_or(0.0),
-        diffuse_color: track_first_vec3(bytes, rec + 0x48).unwrap_or([1.0; 3]),
-        diffuse_intensity: track_first_f32(bytes, rec + 0x64).unwrap_or(1.0),
-        attenuation_start: track_first_f32(bytes, rec + 0x80).unwrap_or(0.0),
-        attenuation_end: track_first_f32(bytes, rec + 0x9c).unwrap_or(0.0),
-        visibility_off: track_first_u8(bytes, rec + 0xb8) == Some(0),
-    })
+/// One M2 light as the scene commits it: colours and intensities their tracks' first values, the
+/// attenuation range, and the visibility gate.
+fn m2_light(model: &M2Model, l: &M2LightDef) -> M2Light {
+    M2Light {
+        light_type: l.light_type,
+        bone: l.bone,
+        bone_z: bone_z_axis(model, l.bone),
+        position: l.position,
+        ambient_color: first(&l.ambient_color).unwrap_or([1.0; 3]),
+        ambient_intensity: first(&l.ambient_intensity).unwrap_or(0.0),
+        diffuse_color: first(&l.diffuse_color).unwrap_or([1.0; 3]),
+        diffuse_intensity: first(&l.diffuse_intensity).unwrap_or(1.0),
+        attenuation_start: first(&l.attenuation_start).unwrap_or(0.0),
+        attenuation_end: first(&l.attenuation_end).unwrap_or(0.0),
+        visibility_off: first(&l.visibility) == Some(0.0),
+    }
 }
 
-/// The M2 lights array (MD20 `count@0x11c`, `ofs@0x120`, stride `0xd4`).
-pub fn parse_m2_lights(bytes: &[u8]) -> Vec<M2Light> {
-    let (Some(count), Some(ofs)) = (bytes.u32_at(0x11c), bytes.u32_at(0x120)) else {
-        return Vec::new();
-    };
-    let (count, ofs) = (count as usize, ofs as usize);
-    let mut out = Vec::with_capacity(count.min(256));
-    for i in 0..count {
-        let rec = match ofs.checked_add(i * 0xd4) {
-            Some(r) if r + 0xd4 <= bytes.len() => r,
-            _ => break,
-        };
-        match read_m2_light(bytes, rec) {
-            Some(light) => out.push(light),
-            None => break, // unreachable after the guard above
-        }
-    }
-    out
+/// The M2 lights, in file order.
+pub fn parse_m2_lights(model: &M2Model) -> Vec<M2Light> {
+    model.lights.iter().map(|l| m2_light(model, l)).collect()
 }
 
 /// The model's portrait camera, which the 1.12 client renders every unit-frame portrait through:
@@ -218,19 +151,18 @@ pub struct M2PortraitCamera {
     pub roll: f32,
 }
 
-/// The portrait camera, `cameraLookup[0]` (`count@0x12c`/`ofs@0x130`) into the camera table
-/// (`count@0x124`/`ofs@0x128`, stride `0x7c`) as the reference selects it; `None` without one,
-/// the `0xffff` sentinel included.
-pub fn parse_m2_portrait_camera(bytes: &[u8]) -> Option<M2PortraitCamera> {
-    let idx = *benilla_m2::parse_camera_lookup(bytes).first()? as usize;
-    parse_m2_camera(bytes, idx)
+/// The portrait camera, `cameraLookup[0]` into the camera table as the reference selects it;
+/// `None` without one, the `0xffff` sentinel included.
+pub fn parse_m2_portrait_camera(model: &M2Model) -> Option<M2PortraitCamera> {
+    let idx = *model.camera_lookup.first()? as usize;
+    parse_m2_camera(model, idx)
 }
 
 /// One camera record by table index, the glue screens' `Model:SetCamera(idx)` path: their one
 /// camera has the `0xffff` sentinel in its lookup slot, so the client indexes the table directly.
 /// Key 0 of each track; a moving camera is sampled through [`M2PaneCamera::at`].
-pub fn parse_m2_camera(bytes: &[u8], index: usize) -> Option<M2PortraitCamera> {
-    let cam = benilla_m2::parse_cameras(bytes).into_iter().nth(index)?;
+pub fn parse_m2_camera(model: &M2Model, index: usize) -> Option<M2PortraitCamera> {
+    let cam = model.cameras.get(index)?;
     let base_plus_key = |base: [f32; 3], track: &benilla_m2::M2Vec3SplineTrack| {
         let k = track.keys.first().map_or([0.0; 3], |(_, k)| k.value);
         [base[0] + k[0], base[1] + k[1], base[2] + k[2]]
@@ -304,46 +236,39 @@ mod tests {
     use super::*;
 
     /// A 2-bone chain: the root turned 90° about +X, the child 90° about its own +Z.
-    fn two_bone_chain() -> Vec<u8> {
-        let mut b = vec![0u8; 0x400];
-        let put_u32 =
-            |b: &mut Vec<u8>, at: usize, v: u32| b[at..at + 4].copy_from_slice(&v.to_le_bytes());
-        let put_quat = |b: &mut Vec<u8>, at: usize, q: [f32; 4]| {
-            for (i, c) in q.iter().enumerate() {
-                b[at + 4 * i..at + 4 * i + 4].copy_from_slice(&c.to_le_bytes());
-            }
-        };
-        let bones = 0x100;
-        put_u32(&mut b, 0x34, 2);
-        put_u32(&mut b, 0x38, bones as u32);
+    fn two_bone_chain(rotations: bool) -> benilla_m2::M2Model {
+        use benilla_m2::fixture::{self, header as h, packed_quat, sequence, Model};
+        let mut m = Model::new();
+        m.array(h::SEQUENCES, 1, &sequence(0, 100, 0x20));
         let s = std::f32::consts::FRAC_1_SQRT_2;
-        // Bone 0 (root): parent −1, rotation 90° about +X.
-        put_u32(&mut b, bones + 8, 0xffff); // parent i16 −1 (submesh u16 slot unused)
-        put_u32(&mut b, bones + 0x28 + 0x14, 1);
-        put_u32(&mut b, bones + 0x28 + 0x18, 0x300);
-        put_quat(&mut b, 0x300, [s, 0.0, 0.0, s]);
-        // Bone 1: parent 0, local rotation 90° about +Z.
-        let r1 = bones + 0x6c;
-        put_u32(&mut b, r1 + 8, 0); // parent 0
-        put_u32(&mut b, r1 + 0x28 + 0x14, 1);
-        put_u32(&mut b, r1 + 0x28 + 0x18, 0x340);
-        put_quat(&mut b, 0x340, [0.0, 0.0, s, s]);
-        b
+        let rot = |m: &mut Model, q: [f32; 4]| match rotations {
+            true => m.track(1, 0xffff, &[&[(0, packed_quat(q))]]),
+            false => m.no_track(),
+        };
+        // Bone 0 (root): rotation 90° about +X. Bone 1: parent 0, local rotation 90° about +Z.
+        let r0 = rot(&mut m, [s, 0.0, 0.0, s]);
+        let r1 = rot(&mut m, [0.0, 0.0, s, s]);
+        let (t, sc) = (m.no_track(), m.no_track());
+        let b0 = fixture::bone(-1, 0, [0.0; 3], [&t, &r0, &sc]);
+        let b1 = fixture::bone(0, 0, [0.0; 3], [&t, &r1, &sc]);
+        m.array(h::BONES, 2, &[b0, b1].concat());
+        m.parse(&fixture::empty_skin()).unwrap()
     }
 
     /// Root alone: 90° about +X sends +Z to −Y. The child's turn about +Z leaves its own +Z, so
     /// the chain gives the root's axis.
     #[test]
     fn bone_z_axis_composes_parent_then_local() {
-        let b = two_bone_chain();
-        let root = bone_z_axis(&b, 0);
-        assert!((root[0]).abs() < 1e-6 && (root[1] + 1.0).abs() < 1e-6 && root[2].abs() < 1e-6);
-        let child = bone_z_axis(&b, 1);
+        // Packed rotations carry 1/32767 steps, hence the tolerance.
+        let m = two_bone_chain(true);
+        let root = bone_z_axis(&m, 0);
+        assert!((root[0]).abs() < 1e-4 && (root[1] + 1.0).abs() < 1e-4 && root[2].abs() < 1e-4);
+        let child = bone_z_axis(&m, 1);
         for (c, r) in child.iter().zip(root) {
-            assert!((c - r).abs() < 1e-6, "child {child:?} vs root {root:?}");
+            assert!((c - r).abs() < 1e-4, "child {child:?} vs root {root:?}");
         }
         // No rotation keys anywhere: identity +Z.
-        assert_eq!(bone_z_axis(&vec![0u8; 0x400], 0), [0.0, 0.0, 1.0]);
+        assert_eq!(bone_z_axis(&two_bone_chain(false), 0), [0.0, 0.0, 1.0]);
     }
 }
 
@@ -397,10 +322,11 @@ impl M2PaneCamera {
 }
 
 /// The whole camera table in file order, the index space of `Model:SetCamera(n)`; empty for most
-/// models. The `0x7c` record layout lives in [`benilla_m2::parse_cameras`].
-pub fn parse_m2_pane_cameras(bytes: &[u8]) -> Vec<M2PaneCamera> {
-    benilla_m2::parse_cameras(bytes)
-        .into_iter()
+/// models.
+pub fn parse_m2_pane_cameras(model: &M2Model) -> Vec<M2PaneCamera> {
+    model
+        .cameras
+        .iter()
         .map(|cam| {
             let key0 = |t: &benilla_m2::M2Vec3SplineTrack| {
                 t.keys.first().map_or([0.0; 3], |(_, k)| k.value)
@@ -433,11 +359,11 @@ pub fn parse_m2_pane_cameras(bytes: &[u8]) -> Vec<M2PaneCamera> {
             let tracks =
                 (v3_moves(&cam.positions) || v3_moves(&cam.target) || roll_moves).then(|| {
                     Box::new(M2CameraTracks {
-                        positions: cam.positions,
+                        positions: cam.positions.clone(),
                         position_base: cam.position_base,
-                        target: cam.target,
+                        target: cam.target.clone(),
                         target_base: cam.target_base,
-                        roll: cam.roll,
+                        roll: cam.roll.clone(),
                     })
                 });
             M2PaneCamera {

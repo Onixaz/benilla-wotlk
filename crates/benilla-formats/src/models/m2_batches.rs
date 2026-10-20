@@ -1,12 +1,10 @@
 //! M2 render-batch assembly: one [`RenderSubmesh`] per skin batch, split across billboard bones so
 //! each card turns about its own pivot.
 
-use std::io::Cursor;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use benilla_bytes::ByteExt;
-use benilla_m2::parse_m2;
-use benilla_m2::M2TextureType;
+use benilla_m2::{M2Model, M2TextureType};
 
 use crate::Chain;
 
@@ -15,10 +13,10 @@ use super::key_anim::SeqSlot;
 use super::m2_combiner;
 use super::mat_anim;
 use super::tex_anim;
-use super::{le_u16, le_u32, read_model, remap_submesh};
+use super::{read_model, remap_submesh};
 use super::{
-    AlphaAnim, Billboard, BillboardKind, BoneScaleAnim, CharSkinSlot, Combiner, CombinerOp,
-    CombinerShader, FogPolicy, ModelBlend, RenderSubmesh,
+    AlphaAnim, BatchSort, Billboard, BillboardKind, BoneScaleAnim, CharSkinSlot, Combiner,
+    CombinerOp, CombinerShader, FogPolicy, ModelBlend, RenderSubmesh, StageUv,
 };
 
 fn parent_dir(path: &str) -> &str {
@@ -87,98 +85,50 @@ fn normalize_weights(w: [u8; 4]) -> [f32; 4] {
     ]
 }
 
-/// Bone `bone_idx`'s scale track (`+0x44`) as a global-sequence [`BoneScaleAnim`], at the offsets
-/// `0x714260` reads; `None` for a sequence track or fewer than two keys.
-fn parse_bone_scale_anim(bytes: &[u8], bone_idx: usize) -> Option<BoneScaleAnim> {
-    let bone_count = bytes.u32_at(0x34)? as usize;
-    let bones_ofs = bytes.u32_at(0x38)? as usize;
-    if bone_idx >= bone_count {
-        return None;
+/// Bone `bone_idx`'s scale track as a global-sequence [`BoneScaleAnim`]; `None` for a sequence
+/// track or fewer than two keys.
+fn parse_bone_scale_anim(model: &M2Model, bone_idx: usize) -> Option<BoneScaleAnim> {
+    let track = &model.bones.get(bone_idx)?.scale;
+    if track.gseq == 0xffff || track.keys.len() <= 1 {
+        return None; // a sequence track, or static: nothing to animate
     }
-    let track = bones_ofs.checked_add(bone_idx * 0x6c)?.checked_add(0x44)?;
-    let interp = bytes.u16_at(track)? != 0;
-    let gseq = bytes.u16_at(track + 0x02)?;
-    if gseq == 0xffff {
-        return None; // a sequence track, not a global-sequence loop
-    }
-    let nkeys = bytes.u32_at(track + 0x0c)? as usize;
-    let ts_ofs = bytes.u32_at(track + 0x10)? as usize;
-    let nval = bytes.u32_at(track + 0x14)? as usize;
-    let val_ofs = bytes.u32_at(track + 0x18)? as usize;
-    if nkeys <= 1 || nval < nkeys {
-        return None; // static: nothing to animate
-    }
-    let gseq_count = bytes.u32_at(0x14)? as usize;
-    let gseq_o = bytes.u32_at(0x18)? as usize;
-    if gseq as usize >= gseq_count {
-        return None;
-    }
-    let duration_ms = bytes.u32_at(gseq_o.checked_add(gseq as usize * 4)?)?;
-    if duration_ms == 0 {
-        return None;
-    }
-    let keys = (0..nkeys)
-        .map(|k| {
-            let t = bytes.u32_at(ts_ofs.checked_add(k * 4)?)?;
-            let v = val_ofs.checked_add(k * 12)?;
-            Some((
-                t,
-                [bytes.f32_at(v)?, bytes.f32_at(v + 4)?, bytes.f32_at(v + 8)?],
-            ))
-        })
-        .collect::<Option<Vec<_>>>()?;
+    let duration_ms = *model
+        .global_sequences
+        .get(usize::from(track.gseq))
+        .filter(|&&d| d > 0)?;
     Some(BoneScaleAnim {
         duration_ms,
-        interp,
-        keys,
+        interp: track.interp != 0,
+        keys: track.keys.clone(),
     })
 }
 
-/// Bone `bone_idx`'s translation track (`+0x0c`) cut to one sequence's `band` as a loop (the
-/// questgiver bob: anim 0 on load, 190 raised, `0x6076c0`); `None` under two keys in the band.
+/// Bone `bone_idx`'s translation track cut to one sequence's `band` as a loop (the questgiver bob:
+/// anim 0 on load, 190 raised); `None` under two keys in the band.
 fn parse_bone_seq_translation(
-    bytes: &[u8],
+    model: &M2Model,
     bone_idx: usize,
     band: (u32, u32),
 ) -> Option<BoneScaleAnim> {
     let (start, end) = band;
     let duration_ms = end.checked_sub(start).filter(|d| *d > 0)?;
-    let bone_count = bytes.u32_at(0x34)? as usize;
-    let bones_ofs = bytes.u32_at(0x38)? as usize;
-    if bone_idx >= bone_count {
-        return None;
-    }
-    let track = bones_ofs.checked_add(bone_idx * 0x6c)?.checked_add(0x0c)?;
-    let interp = bytes.u16_at(track)? != 0;
-    if bytes.u16_at(track + 0x02)? != 0xffff {
+    let track = &model.bones.get(bone_idx)?.translation;
+    if track.gseq != 0xffff {
         return None; // a global-sequence loop
     }
-    let nkeys = bytes.u32_at(track + 0x0c)? as usize;
-    let ts_ofs = bytes.u32_at(track + 0x10)? as usize;
-    let nval = bytes.u32_at(track + 0x14)? as usize;
-    let val_ofs = bytes.u32_at(track + 0x18)? as usize;
-    if nval < nkeys {
-        return None;
-    }
-    // Every sequence's keys share one absolute timeline: keep this band's, rebased to its start.
-    let mut keys = Vec::new();
-    for k in 0..nkeys {
-        let t = bytes.u32_at(ts_ofs.checked_add(k * 4)?)?;
-        if t < start || t > end {
-            continue;
-        }
-        let v = val_ofs.checked_add(k * 12)?;
-        keys.push((
-            t - start,
-            [bytes.f32_at(v)?, bytes.f32_at(v + 4)?, bytes.f32_at(v + 8)?],
-        ));
-    }
+    // Every sequence's keys share one timeline: keep this band's, rebased to its start.
+    let keys: Vec<(u32, [f32; 3])> = track
+        .keys
+        .iter()
+        .filter(|&&(t, _)| t >= start && t <= end)
+        .map(|&(t, v)| (t - start, v))
+        .collect();
     if keys.len() <= 1 {
         return None; // static in this band
     }
     Some(BoneScaleAnim {
         duration_ms,
-        interp,
+        interp: track.interp != 0,
         keys,
     })
 }
@@ -194,8 +144,8 @@ pub fn load_m2_mesh_skinned(
     raw_path: &str,
     skins: &[Option<String>],
 ) -> Result<Vec<RenderSubmesh>> {
-    let (path, bytes) = read_model(chain, raw_path)?;
-    parse_m2_render_submeshes(&bytes, parent_dir(&path), skins)
+    let (path, model) = read_model(chain, raw_path)?;
+    parse_m2_render_submeshes(&model, parent_dir(&path), skins)
         .with_context(|| format!("parsing M2 {path}"))
 }
 
@@ -204,19 +154,13 @@ pub fn load_m2_bone_spins(
     chain: &mut Chain,
     raw_path: &str,
 ) -> Result<std::collections::HashMap<u16, crate::BoneSpin>> {
-    let (_, bytes) = read_model(chain, raw_path)?;
-    Ok(crate::m2_bone_spins(&bytes))
+    let (_, model) = read_model(chain, raw_path)?;
+    Ok(crate::m2_bone_spins(&model))
 }
 
 /// The billboard bones the card split declines as not rigidly separable.
-pub fn non_separable_billboard_bones(bytes: &[u8]) -> Vec<u16> {
-    let Ok(format) = parse_m2(&mut Cursor::new(bytes)) else {
-        return Vec::new();
-    };
-    let model = format.model();
-    let Ok(skin) = model.parse_embedded_skin(bytes, 0) else {
-        return Vec::new();
-    };
+pub fn non_separable_billboard_bones(model: &M2Model) -> Vec<u16> {
+    let skin = &model.skin;
     let separable = separable_billboard_bones(model, skin.triangles(), skin.indices());
     model
         .bones
@@ -282,18 +226,13 @@ fn separable_billboard_bones(
     separable
 }
 
-/// An in-memory M2 as render submeshes; `dir` resolves texture paths, `skins` fill `Monster1/2/3`.
+/// A parsed M2 as render submeshes; `dir` resolves texture paths, `skins` fill `Monster1/2/3`.
 pub fn parse_m2_render_submeshes(
-    bytes: &[u8],
+    model: &M2Model,
     dir: &str,
     skins: &[Option<String>],
 ) -> Result<Vec<RenderSubmesh>> {
-    let format =
-        parse_m2(&mut Cursor::new(bytes)).map_err(|e| anyhow::anyhow!("parsing M2: {e}"))?;
-    let model = format.model();
-    let skin = model
-        .parse_embedded_skin(bytes, 0)
-        .map_err(|e| anyhow::anyhow!("embedded skin: {e}"))?;
+    let skin = &model.skin;
 
     let vertex = |g: u32| {
         let v = &model.vertices[g as usize];
@@ -325,21 +264,11 @@ pub fn parse_m2_render_submeshes(
 
     // Every sequence's (anim id, absolute band, loops). The loop flag is the baked loop's clock
     // (`KeyAnim::wrap`): a one-shot such as Death must not wrap back to its opening alpha.
-    let seq_bands: Vec<(u16, (u32, u32), bool)> = {
-        let (n, o) = (le_u32(bytes, 0x1c) as usize, le_u32(bytes, 0x20) as usize);
-        (0..n)
-            .map_while(|i| {
-                let e = o + i * 0x44;
-                (e + 0x44 <= bytes.len()).then(|| {
-                    (
-                        le_u16(bytes, e),
-                        (le_u32(bytes, e + 0x04), le_u32(bytes, e + 0x08)),
-                        le_u32(bytes, e + 0x10) & 1 == 0,
-                    )
-                })
-            })
-            .collect()
-    };
+    let seq_bands: Vec<(u16, (u32, u32), bool)> = model
+        .sequences
+        .iter()
+        .map(|s| (s.id, (s.start, s.end), s.flags & 1 == 0))
+        .collect();
     // File slot, band and clock; the slot indexes key ranges, so this keeps file order.
     let seq_slots: Vec<SeqSlot> = seq_bands
         .iter()
@@ -356,7 +285,7 @@ pub fn parse_m2_render_submeshes(
     let sections = skin.submeshes();
     let effects = m2_combiner::batch_effects(model, skin.batches());
     let mut out = Vec::new();
-    for (batch, effect) in skin.batches().iter().zip(&effects) {
+    for ((batch, effect), batch_index) in skin.batches().iter().zip(&effects).zip(0u16..) {
         // A layer folded into its base's specialized shader is never drawn (`0x821e97`).
         if effect.parked {
             continue;
@@ -394,12 +323,31 @@ pub fn parse_m2_render_submeshes(
             let record = effect
                 .texture2
                 .and_then(|t| model.textures.get(usize::from(t)));
+            // Stage 1's transform, `textureTransformCombos[combo + 1]` (`0x81f450`).
+            let uv1 = (effect.shader.two_stages() && !effect.stage1_env)
+                .then(|| batch.texture_transform_combo_index.checked_add(1))
+                .flatten()
+                .map(|combo| StageUv {
+                    anim: tex_anim::bake_uv_anim(model, combo, seq0_slot).map(Arc::new),
+                    seq: tex_anim::bake_uv_seqs(model, combo, &seq_slots)
+                        .filter(|set| set.uniform().is_none())
+                        .map(Arc::new),
+                    rot_seq: tex_anim::bake_uv_rot_seqs(model, combo, &seq_slots).map(Arc::new),
+                    scale_seq: tex_anim::bake_uv_scale_seqs(model, combo, &seq_slots).map(Arc::new),
+                })
+                .filter(|uv| {
+                    uv.anim.is_some()
+                        || uv.seq.is_some()
+                        || uv.rot_seq.is_some()
+                        || uv.scale_seq.is_some()
+                });
             Combiner {
                 shader: effect.shader,
                 texture2: record.and_then(|t| resolve_texture(t, dir, skins).0),
                 wrap2: record.map_or((true, true), |t| (t.wrap_x, t.wrap_y)),
                 stage0_t2: effect.stage0_t2,
                 stage1_env: effect.stage1_env,
+                uv1,
             }
         });
         let reads_t2 = combiner
@@ -513,12 +461,12 @@ pub fn parse_m2_render_submeshes(
                 bone: bone_idx as u16,
                 kind: BillboardKind::from_bone_flags(bone.flags.bits())?,
                 // The glow-card pulse: the bone's global-sequence scale track.
-                scale_anim: parse_bone_scale_anim(bytes, bone_idx),
+                scale_anim: parse_bone_scale_anim(model, bone_idx),
                 // Per-sequence translation loops (the questgiver bob: anim 0 low, 190 raised).
                 seq_translations: seq_bands
                     .iter()
                     .filter_map(|&(id, band, _)| {
-                        Some((id, parse_bone_seq_translation(bytes, bone_idx, band)?))
+                        Some((id, parse_bone_seq_translation(model, bone_idx, band)?))
                     })
                     .collect(),
             })
@@ -617,7 +565,19 @@ pub fn parse_m2_render_submeshes(
             sub.rgb_anim = rgb_anim.clone();
             sub.rgb_seq = rgb_seq.clone();
             sub.combiner = combiner.clone();
-            sub.priority_plane = batch.flags.to_le_bytes()[1] as i8;
+            sub.sort = Some(BatchSort {
+                model_depth: model.global_flags & 0x10 != 0,
+                priority_plane: batch.priority_plane(),
+                center: section.sort_center,
+                radius: section.sort_radius,
+                push: match batch.flags & 3 {
+                    0 => 0,
+                    f if f & 1 != 0 => 1,
+                    _ => 2,
+                },
+                material_layer: batch.material_layer,
+                index: batch_index,
+            });
             if reads_t2 {
                 sub.uvs2 = globals
                     .iter()
@@ -715,11 +675,9 @@ pub fn owner_last_rung_bucket(rung: f32) -> f32 {
 /// The textures sequence `anim_id` shows, in batch order: a model can hold alternative arts whose
 /// M2Color alpha steps to 1 only in their own band (`Rotating-MinimapArrow`). Each track holds its
 /// last key at or before the band, searched in the sequence's key window as the reference does.
-pub fn m2_sequence_visible_textures(bytes: &[u8], anim_id: u16) -> Option<Vec<String>> {
-    let format = parse_m2(&mut Cursor::new(bytes)).ok()?;
-    let model = format.model();
-    let skin = model.parse_embedded_skin(bytes, 0).ok()?;
-    let seq = parse_m2_animations(bytes)
+pub fn m2_sequence_visible_textures(model: &M2Model, anim_id: u16) -> Option<Vec<String>> {
+    let skin = &model.skin;
+    let seq = parse_m2_animations(model)
         .into_iter()
         .find(|a| a.anim_id == anim_id)?;
 
@@ -893,7 +851,7 @@ mod tests {
             subs[0].welded_billboard,
             "the welded batch announces itself to the render lanes"
         );
-        let bytes = chain.read_file(path).expect("read the m2");
+        let bytes = crate::read_m2(&chain, path).expect("read the m2");
         assert_eq!(non_separable_billboard_bones(&bytes), vec![1, 2]);
     }
 
@@ -915,7 +873,7 @@ mod tests {
             subs.iter().all(|s| !s.welded_billboard),
             "…so no batch of it asks a lane to skin anything"
         );
-        let bytes = chain.read_file(path).expect("read the m2");
+        let bytes = crate::read_m2(&chain, path).expect("read the m2");
         assert!(
             non_separable_billboard_bones(&bytes).is_empty(),
             "nothing on this model is welded"

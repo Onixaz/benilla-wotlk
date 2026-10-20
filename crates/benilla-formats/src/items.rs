@@ -49,6 +49,9 @@ pub struct ItemDisplay {
     /// The `ItemVisuals.dbc` id of the display's intrinsic weapon glow (`0x47a200`). Signed, as the
     /// reference's `jle` gate reads it (`0x4798c0`): 0 and `-1` both mean none.
     pub item_visual: i32,
+    /// The model's particle colour override (`ParticleColorID`), which `AddLink` (`0x4eaa70`)
+    /// applies to every item model it attaches; `None` for id 0.
+    pub particle_colors: Option<crate::ParticleColors>,
 }
 
 impl ItemDisplay {
@@ -150,7 +153,11 @@ pub(crate) fn item_display_info_schema(l: &dbc_layout::ItemDisplayInfo) -> Schem
 }
 
 /// The catalog from a record set parsed with `l`'s schema, testable without a chain.
-fn catalog_from_records(rs: RecordSet, l: &dbc_layout::ItemDisplayInfo) -> ItemDisplayCatalog {
+fn catalog_from_records(
+    rs: RecordSet,
+    l: &dbc_layout::ItemDisplayInfo,
+    colors: &crate::ParticleColorTable,
+) -> ItemDisplayCatalog {
     let mut displays = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
@@ -167,6 +174,7 @@ fn catalog_from_records(rs: RecordSet, l: &dbc_layout::ItemDisplayInfo) -> ItemD
         let spell_visual = u32_at(r, l.spell_visual).unwrap_or(0);
         let flags = u32_at(r, l.flags).unwrap_or(0);
         let item_visual = u32_at(r, l.item_visual).unwrap_or(0) as i32;
+        let particle_colors = colors.resolve(u32_at(r, l.particle_color).unwrap_or(0));
         displays.insert(
             id,
             ItemDisplay {
@@ -180,6 +188,7 @@ fn catalog_from_records(rs: RecordSet, l: &dbc_layout::ItemDisplayInfo) -> ItemD
                 spell_visual,
                 flags,
                 item_visual,
+                particle_colors,
             },
         );
     }
@@ -193,7 +202,9 @@ pub fn load_item_display_catalog(chain: &mut Chain) -> Result<ItemDisplayCatalog
         .with_context(|| format!("reading {ITEM_DISPLAY_INFO}"))?;
     let l = &crate::dbc_layout::LAYOUTS.item_display_info;
     let rs = parse(&bytes, item_display_info_schema(l), "ItemDisplayInfo")?;
-    Ok(catalog_from_records(rs, l))
+    // Best-effort: without it every override resolves as a missing row.
+    let colors = crate::load_particle_colors(chain).unwrap_or_default();
+    Ok(catalog_from_records(rs, l, &colors))
 }
 
 #[cfg(test)]
@@ -286,11 +297,16 @@ mod tests {
         cols[14] = 3; // HelmVisFemale
         cols[22] = foot; // FootTexture
         cols[23] = 9; // ItemVisualID
-        cols[24] = 5; // ParticleColorID, unread
+        cols[24] = 5; // ParticleColorID, a row the empty table lacks
         let rec: Vec<u8> = cols.iter().flat_map(|c| c.to_le_bytes()).collect();
         let bytes = build_wdbc(1, FIELD_COUNT, RECORD_SIZE, &rec, &strings.0);
         let rs = parse(&bytes, item_display_info_schema(l), "test").expect("synthetic DBC parses");
-        let d = catalog_from_records(rs, l).get(222).cloned().expect("row");
+        let colors = crate::ParticleColorTable::default();
+        let d = catalog_from_records(rs, l, &colors)
+            .get(222)
+            .cloned()
+            .expect("row");
+        assert_eq!(d.particle_colors, Some(crate::ParticleColors::MISSING));
         assert_eq!(d.icon.as_deref(), Some("Interface\\Icons\\INV_Boots_01"));
         assert_eq!(d.geoset_groups, [2, 0, 0]);
         assert_eq!((d.flags, d.spell_visual, d.group_sounds), (0x10, 41, 7));
@@ -308,7 +324,7 @@ mod tests {
         let bytes = build_wdbc(1, FIELD_COUNT, RECORD_SIZE, &rec, &StringBlock::new().0);
         let rs = parse(&bytes, item_display_info_schema(layout()), "test")
             .expect("synthetic DBC parses");
-        let catalog = catalog_from_records(rs, layout());
+        let catalog = catalog_from_records(rs, layout(), &crate::ParticleColorTable::default());
         assert_eq!(catalog.len(), 1);
         assert!(catalog.get(999).is_none());
     }

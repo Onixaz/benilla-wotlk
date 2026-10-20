@@ -10,8 +10,8 @@ const BIRD: &str = "World\\critter\\birds\\Bird01.m2";
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_birds_authored_box_covers_a_flight_path_its_bind_pose_never_hints_at() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
-    let bytes = chain.read_file(BIRD).expect("Bird01.m2 in the chain");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
+    let bytes = benilla_formats::read_m2(&chain, BIRD).expect("Bird01.m2 in the chain");
 
     let anims = parse_m2_animations(&bytes);
     let root = anims
@@ -34,7 +34,7 @@ fn the_birds_authored_box_covers_a_flight_path_its_bind_pose_never_hints_at() {
 
     // The reference culls on the authored sphere, `rec+0x68` = `bounding_sphere_radius × scale`
     // (`0x682ef0` -> `0x686b80`), about 35 yd around this bird.
-    let b = parse_m2_bounds(&bytes).expect("Bird01 bounds");
+    let b = parse_m2_bounds(&bytes);
     let box_x = b.bbox_max[0] - b.bbox_min[0];
     assert!(
         box_x > 60.0,
@@ -47,9 +47,8 @@ fn the_birds_authored_box_covers_a_flight_path_its_bind_pose_never_hints_at() {
     );
 
     // The vertex extent, the box Bevy's `calculate_bounds` derives, is one small bird.
-    let model = benilla_m2::parse_m2(&mut std::io::Cursor::new(&bytes[..])).expect("parse Bird01");
     let (mut vlo, mut vhi) = ([f32::MAX; 3], [f32::MIN; 3]);
-    for v in &model.model().vertices {
+    for v in &bytes.vertices {
         for (a, c) in [v.position.x, v.position.y, v.position.z]
             .into_iter()
             .enumerate()

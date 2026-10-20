@@ -202,6 +202,9 @@ pub struct UvAnimEntry {
     pub seed: [f32; 2],
     /// The rotation and scaling half ([`UvAffine`]), `None` when the transform only translates.
     affine: Option<UvAffine>,
+    /// The combiner's stage-1 transform ([`UvLoops::stage1`]) on this entry's clocks, its rows'
+    /// slots in `stage1.zw` and its seed the built `stage1.xy`.
+    stage1: Option<Box<UvAnimEntry>>,
 }
 
 /// A texture transform's rotation and scaling, which the translation row cannot carry: a second
@@ -390,8 +393,59 @@ pub(crate) fn register_uv(
             slot,
             seed,
             affine: None,
+            stage1: None,
         },
     );
+}
+
+/// Attach the combiner's stage-1 transform to the entry [`register_uv`] just made: its own rows
+/// on `lane`, which the caller builds from the stage-1 loops as it built stage 0's, their slots in
+/// `stage1.z` (scroll) and `stage1.w` (affine), measured from the built `stage1.xy`.
+fn attach_stage1(
+    reg: &mut UvAnimMaterials,
+    table: &mut crate::mat_anim_table::MatAnimTable,
+    materials: &mut bevy::asset::Assets<benilla_assets::materials::WowModelMaterial>,
+    id: bevy::asset::AssetId<benilla_assets::materials::WowModelMaterial>,
+    lane: UvLoop,
+    loops: &UvLoops,
+) {
+    // Once per material: a shared material is registered by every placement that draws it.
+    let Some(entry) = reg.0.get_mut(&id).filter(|e| e.stage1.is_none()) else {
+        return;
+    };
+    let Some(slot) = table.alloc() else {
+        bevy::log::warn_once!(
+            "mat-anim table full — a stage-1 texture transform stays at its seed"
+        );
+        return;
+    };
+    let turns = loops.rot.is_some() || loops.scale.is_some();
+    let affine_slot = turns.then(|| table.alloc()).flatten();
+    let seed = crate::model_render::lazy::with_material_mut(materials, id, |mat| {
+        mat.extension.stage1.z = f32::from(slot);
+        if let Some(a) = affine_slot {
+            mat.extension.stage1.w = f32::from(a);
+        }
+        [mat.extension.stage1.x, mat.extension.stage1.y]
+    });
+    let Some(seed) = seed else {
+        table.free(slot);
+        if let Some(a) = affine_slot {
+            table.free(a);
+        }
+        return;
+    };
+    entry.stage1 = Some(Box::new(UvAnimEntry {
+        anim: lane,
+        slot,
+        seed,
+        affine: affine_slot.map(|slot| UvAffine {
+            rot: loops.rot.clone(),
+            scale: loops.scale.clone(),
+            slot,
+        }),
+        stage1: None,
+    }));
 }
 
 /// Attach the rotation and scaling half, if any, to the entry [`register_uv`] just made: a second
@@ -424,6 +478,31 @@ fn attach_affine(
     }
 }
 
+/// Put a world doodad batch's combiner stage 1 on the UV lane beside its stage 0: a per-sequence
+/// set when there is a `host`, else the shared loop. A material its stage 0 left unregistered
+/// gets a stage-0 row on `stage0`, whose seed it holds.
+pub(crate) fn register_stage1(
+    reg: &mut UvAnimMaterials,
+    table: &mut crate::mat_anim_table::MatAnimTable,
+    materials: &mut bevy::asset::Assets<benilla_assets::materials::WowModelMaterial>,
+    id: bevy::asset::AssetId<benilla_assets::materials::WowModelMaterial>,
+    stage1: &UvLoops,
+    host: Option<Entity>,
+    stage0: Option<std::sync::Arc<benilla_formats::UvAnim>>,
+) {
+    if !stage1.stage0_animates() {
+        return;
+    }
+    if !reg.0.contains_key(&id) {
+        register_uv(reg, table, materials, id, UvLoop::Shared(stage0));
+    }
+    let lane = match (stage1.seqs.clone(), host) {
+        (Some(seqs), Some(host)) => UvLoop::PerSeq { seqs, host },
+        _ => UvLoop::Shared(stage1.single.clone()),
+    };
+    attach_stage1(reg, table, materials, id, lane, stage1);
+}
+
 /// Put one spell-effect material clone on the per-instance UV lane, whole: the [`UvLoop`] effect
 /// variant, [`register_uv`] and both table rows. `host` is the effect root whose player names the
 /// clip, `attached_at` its `Time::elapsed_secs` origin, and the clone's `sun_scale.zw` the seed.
@@ -441,6 +520,7 @@ pub fn register_fx_uv(
         single,
         rot,
         scale,
+        stage1,
     } = loops;
     let turns = rot.is_some() || scale.is_some();
     register_uv(
@@ -456,17 +536,26 @@ pub fn register_fx_uv(
         },
     );
     attach_affine(reg, table, materials, id, rot, scale);
+    if let Some(s1) = stage1.filter(|s| s.any()) {
+        let lane = UvLoop::Instance {
+            seqs: s1.seqs.clone(),
+            single: s1.single.clone(),
+            host,
+            attached_at,
+        };
+        attach_stage1(reg, table, materials, id, lane, &s1);
+    }
     let Some(entry) = reg.0.get(&id) else {
         return;
     };
     let _ = turns;
-    // Both rows written now: an instance attached after this frame's tick would otherwise draw
+    // Every row written now: an instance attached after this frame's tick would otherwise draw
     // its first frame on zero rows, the identity.
-    let (slot, row) = (entry.slot, entry.delta(attached_at, 0.0, None));
-    let affine = entry.affine(attached_at, 0.0, None);
-    table.set(slot, row);
-    if let Some((slot, row)) = affine {
-        table.set(slot, row);
+    for e in std::iter::once(entry).chain(entry.stage1.as_deref()) {
+        table.set(e.slot, e.delta(attached_at, 0.0, None));
+        if let Some((slot, row)) = e.affine(attached_at, 0.0, None) {
+            table.set(slot, row);
+        }
     }
 }
 
@@ -484,11 +573,13 @@ pub fn register_entity_uv(
     if !loops.animates() {
         return;
     }
-    let lane = match (loops.seqs.clone(), host) {
+    // A stage 0 that holds still keeps its loop, so its row is its seed, while stage 1 moves.
+    let still = !loops.stage0_animates();
+    let lane = |l: &UvLoops| match (l.seqs.clone(), host) {
         (Some(seqs), Some(host)) => UvLoop::PerSeq { seqs, host },
-        _ => UvLoop::Shared(loops.single.clone().filter(|l| l.period > 0.0)),
+        _ => UvLoop::Shared(l.single.clone().filter(|a| still || a.period > 0.0)),
     };
-    register_uv(reg, table, materials, id, lane);
+    register_uv(reg, table, materials, id, lane(loops));
     attach_affine(
         reg,
         table,
@@ -497,6 +588,13 @@ pub fn register_entity_uv(
         loops.rot.clone(),
         loops.scale.clone(),
     );
+    if let Some(s1) = loops.stage1.as_deref().filter(|s| s.any()) {
+        let lane = match (s1.seqs.clone(), host) {
+            (Some(seqs), Some(host)) => UvLoop::PerSeq { seqs, host },
+            _ => UvLoop::Shared(s1.single.clone()),
+        };
+        attach_stage1(reg, table, materials, id, lane, s1);
+    }
 }
 
 /// The four baked channels of one batch's texture transform: the translation as a per-slot set or
@@ -507,9 +605,23 @@ pub struct UvLoops {
     pub single: Option<std::sync::Arc<benilla_formats::UvAnim>>,
     pub rot: Option<std::sync::Arc<benilla_formats::SeqLoops<[f32; 4]>>>,
     pub scale: Option<std::sync::Arc<benilla_formats::SeqLoops<[f32; 2]>>>,
+    /// A combiner's stage-1 transform, in the same channels ([`benilla_formats::StageUv`]).
+    pub stage1: Option<Box<UvLoops>>,
 }
 
 impl UvLoops {
+    /// The stage-1 channels of `geometry`'s combiner, `None` where stage 1 holds still.
+    pub fn stage1_of(geometry: &benilla_formats::RenderSubmesh) -> Option<Box<Self>> {
+        let uv = geometry.combiner.as_ref()?.uv1.as_ref()?;
+        Some(Box::new(Self {
+            seqs: uv.seq.clone(),
+            single: uv.anim.clone(),
+            rot: uv.rot_seq.clone(),
+            scale: uv.scale_seq.clone(),
+            stage1: None,
+        }))
+    }
+
     /// The one place the four channels are read off a submesh, so the registration and the spawn
     /// marker cannot disagree about which batches animate.
     pub fn of(sub: &benilla_assets::ModelSubmesh) -> Self {
@@ -518,18 +630,28 @@ impl UvLoops {
             single: sub.uv_anim.clone(),
             rot: sub.uv_rot_seq.clone(),
             scale: sub.uv_scale_seq.clone(),
+            stage1: Self::stage1_of(&sub.geometry),
         }
     }
 
     /// Whether any channel is present, the effect attach's test before cloning a material: a
     /// scale-only transform or a dead slot 0 leaves `single` empty.
     pub fn any(&self) -> bool {
-        self.seqs.is_some() || self.single.is_some() || self.rot.is_some() || self.scale.is_some()
+        self.seqs.is_some()
+            || self.single.is_some()
+            || self.rot.is_some()
+            || self.scale.is_some()
+            || self.stage1.as_ref().is_some_and(|s| s.any())
     }
 
     /// Whether the batch moves: [`Self::any`] minus a period-0 translation, which is its seed. The
     /// one predicate the entity lane's registration and its [`AnimMatPart`] marker share.
     pub fn animates(&self) -> bool {
+        self.stage0_animates() || self.stage1.as_ref().is_some_and(|s| s.stage0_animates())
+    }
+
+    /// Whether stage 0's own channels move.
+    fn stage0_animates(&self) -> bool {
         self.seqs.is_some()
             || self.rot.is_some()
             || self.scale.is_some()
@@ -605,9 +727,11 @@ pub(super) fn tick_anim_materials(
         // Alive means either half holds it: a material parked by `model_render::lazy` is not in
         // the store, and registration happens once, at spawn.
         if !crate::model_render::lazy::holds(&materials, *id) {
-            table.free(entry.slot);
-            if let Some(a) = &entry.affine {
-                table.free(a.slot);
+            for e in std::iter::once(&*entry).chain(entry.stage1.as_deref()) {
+                table.free(e.slot);
+                if let Some(a) = &e.affine {
+                    table.free(a.slot);
+                }
             }
             return false;
         }
@@ -616,9 +740,11 @@ pub(super) fn tick_anim_materials(
         let fx = entry.instance_lane();
         if (fx || drawn.contains(id)) && (!frozen || fx) {
             let playing = host_seq(&hosts, entry.host());
-            table.set(entry.slot, entry.delta(now, gseq_now, playing));
-            if let Some((slot, row)) = entry.affine(now, gseq_now, playing) {
-                table.set(slot, row);
+            for e in std::iter::once(&*entry).chain(entry.stage1.as_deref()) {
+                table.set(e.slot, e.delta(now, gseq_now, playing));
+                if let Some((slot, row)) = e.affine(now, gseq_now, playing) {
+                    table.set(slot, row);
+                }
             }
         }
         true
@@ -909,6 +1035,7 @@ mod delta_tests {
             slot: 9,
             seed: [0.0, 0.0],
             affine: None,
+            stage1: None,
         }
     }
 
@@ -968,6 +1095,7 @@ mod delta_tests {
                 scale: None,
                 slot: 5,
             }),
+            stage1: None,
         };
         // No translation channel: its row stays at zero.
         assert_eq!(e.delta(1.0, 1.0, None), [0.0, 0.0, 0.0, 0.0]);
@@ -1072,6 +1200,7 @@ mod delta_tests {
             slot: 3,
             seed,
             affine: None,
+            stage1: None,
         };
         for t in [0.0_f32, 0.35, 1.0, 1.7] {
             let d = entry.delta(t, f64::from(t), None);
@@ -1119,6 +1248,7 @@ mod delta_tests {
             slot: 5,
             seed: [0.0, 0.0],
             affine: None,
+            stage1: None,
         };
         // On slot 1, past its step key: the whole V flip shows.
         let d = entry.delta(0.0, 0.0, Some((1, 3.0)));

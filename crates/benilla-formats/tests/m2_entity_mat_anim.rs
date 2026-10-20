@@ -10,9 +10,8 @@ use benilla_formats::{open_chain, parse_m2_render_submeshes};
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_creature_scrolls_on_a_global_sequence() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
-    let bytes = chain
-        .read_file("Creature\\AirElemental\\AirElemental.m2")
+    let chain = open_chain(&data).expect("open vanilla patch chain");
+    let bytes = benilla_formats::read_m2(&chain, "Creature\\AirElemental\\AirElemental.m2")
         .expect("AirElemental is in the chain");
     let subs = parse_m2_render_submeshes(&bytes, "Creature\\AirElemental", &[]).expect("parse");
 
@@ -49,12 +48,12 @@ fn a_creature_scrolls_on_a_global_sequence() {
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_gameobject_batch_rotates_with_no_translation_at_all() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
     for (path, batches) in [
         ("World\\Goober\\G_ScryingBowl.m2", 1usize),
         ("World\\Goober\\G_ScourgeRuneCircleCrystal.m2", 1),
     ] {
-        let bytes = chain.read_file(path).expect("in the chain");
+        let bytes = benilla_formats::read_m2(&chain, path).expect("in the chain");
         let dir = path.rsplit_once('\\').expect("a directory").0;
         let subs = parse_m2_render_submeshes(&bytes, dir, &[]).expect("parse");
         let turning: Vec<_> = subs.iter().filter(|s| s.uv_rot_seq.is_some()).collect();
@@ -78,9 +77,9 @@ fn a_gameobject_batch_rotates_with_no_translation_at_all() {
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_gameobjects_slots_bake_different_loops() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
     let path = "World\\Lordaeron\\Plagueland\\PassiveDoodads\\BloodOfHeroes\\BloodOfHeroes.m2";
-    let bytes = chain.read_file(path).expect("in the chain");
+    let bytes = benilla_formats::read_m2(&chain, path).expect("in the chain");
     let dir = path.rsplit_once('\\').expect("a directory").0;
     let subs = parse_m2_render_submeshes(&bytes, dir, &[]).expect("parse");
 
@@ -119,10 +118,12 @@ fn a_gameobjects_slots_bake_different_loops() {
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bubbling_take_is_half_the_pools_duty_cycle() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
-    let bytes = chain
-        .read_file("World\\Lordaeron\\Plagueland\\PassiveDoodads\\BloodOfHeroes\\BloodOfHeroes.m2")
-        .expect("in the chain");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
+    let bytes = benilla_formats::read_m2(
+        &chain,
+        "World\\Lordaeron\\Plagueland\\PassiveDoodads\\BloodOfHeroes\\BloodOfHeroes.m2",
+    )
+    .expect("in the chain");
     let seqs = benilla_formats::parse_m2_animations(&bytes);
 
     assert_eq!(
@@ -163,10 +164,9 @@ fn the_bubbling_take_is_half_the_pools_duty_cycle() {
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_gameobjects_tint_is_keyed_in_a_later_slot_alone() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
-    let bytes = chain
-        .read_file("World\\Goober\\G_FreezingTrap.m2")
-        .expect("in the chain");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
+    let bytes =
+        benilla_formats::read_m2(&chain, "World\\Goober\\G_FreezingTrap.m2").expect("in the chain");
     let subs = parse_m2_render_submeshes(&bytes, "World\\Goober", &[]).expect("parse");
 
     let tinted: Vec<_> = subs.iter().filter(|s| s.rgb_seq.is_some()).collect();

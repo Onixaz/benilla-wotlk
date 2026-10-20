@@ -35,17 +35,13 @@ pub use types::*;
 pub use wmo::*;
 
 pub use benilla_m2::{
-    anim_paths, md20_version, relayout_264, skin_path, AnimFiles, Relayout, VERSION_264,
+    anim_paths, md20_version, parse_m2, skin_path, AnimFiles, M2Model, VERSION_264,
 };
 
-/// The M2 at `path` in the 1.12.1 layout every reader here takes: a version-264 model is written
-/// in it with its skin profile 0 and its `.anim` files ([`relayout_264`]), whose
-/// [`Relayout::dropped`] comes back beside.
-pub fn read_m2(chain: &Chain, path: &str) -> Result<(Vec<u8>, Vec<String>)> {
+/// The model at `path` with its skin profile 0 and its sequences' `.anim` files; a sequence whose
+/// `.anim` does not read keeps no keys, which [`M2Model::dropped`] names.
+pub fn read_m2(chain: &Chain, path: &str) -> Result<M2Model> {
     let bytes = chain.read(path)?;
-    if md20_version(&bytes) != Some(VERSION_264) {
-        return Ok((bytes, Vec::new()));
-    }
     let skin = chain.read(&skin_path(path))?;
     let to_err = |e| anyhow::anyhow!("{path}: {e}");
     let anims: AnimFiles = anim_paths(&bytes, path)
@@ -53,17 +49,14 @@ pub fn read_m2(chain: &Chain, path: &str) -> Result<(Vec<u8>, Vec<String>)> {
         .into_iter()
         .filter_map(|(seq, file)| Some((seq, chain.read(&file).ok()?)))
         .collect();
-    let out = relayout_264(&bytes, &skin, &anims).map_err(to_err)?;
-    Ok((out.bytes, out.dropped))
+    benilla_m2::parse_m2(bytes, &skin, anims).map_err(to_err)
 }
 
-/// The 3.3.5a model at `raw_path` (`.mdx`/`.mdl` read as `.m2`) with its chain path, read
-/// through [`read_m2`] so `parse_m2` can take it: the version-264 file with its skin profile 0
-/// and `.anim` files. A sequence whose `.anim` does not read is left without keys.
-fn read_model(chain: &Chain, raw_path: &str) -> Result<(String, Vec<u8>)> {
+/// The model at `raw_path` (`.mdx`/`.mdl` read as `.m2`) through [`read_m2`], with its chain path.
+fn read_model(chain: &Chain, raw_path: &str) -> Result<(String, M2Model)> {
     let path = model_path(raw_path);
-    let (bytes, _dropped) = read_m2(chain, &path).with_context(|| format!("reading M2 {path}"))?;
-    Ok((path, bytes))
+    let model = read_m2(chain, &path).with_context(|| format!("reading M2 {path}"))?;
+    Ok((path, model))
 }
 
 /// Build a compact submesh from global vertex indices. Also returns each local vertex's global
@@ -136,7 +129,7 @@ fn remap_submesh(
             section: None,
             combiner: None,
             uvs2: Vec::new(),
-            priority_plane: 0,
+            sort: None,
         },
         globals,
     )
@@ -152,18 +145,6 @@ pub(crate) fn model_path(raw: &str) -> String {
         Some(stem) => format!("{stem}.m2"),
         None => lower,
     }
-}
-
-/// Panicking little-endian reads at a byte offset, for the raw walks not on
-/// `benilla_bytes::ByteExt`.
-pub(crate) fn le_u16(b: &[u8], o: usize) -> u16 {
-    u16::from_le_bytes([b[o], b[o + 1]])
-}
-pub(crate) fn le_u32(b: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]])
-}
-pub(crate) fn le_f32(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]])
 }
 
 /// Load a GameObject display model by path: a `.wmo` through [`load_wmo`], anything else as an M2.

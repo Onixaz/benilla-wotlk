@@ -30,4 +30,5 @@ benilla-wdt = { path = "../benilla-wdt" }
 benilla-wmo = { path = "../benilla-wmo" }
 
 [dev-dependencies]
+benilla-m2 = { path = "../benilla-m2", features = ["fixture"] }
 glam = "0.31"

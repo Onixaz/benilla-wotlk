@@ -25,7 +25,7 @@ pub use mat_anim::{
     playing_seq, register_entity_uv, register_fx_uv, register_tint, sample_mat_anim, AnimMatPart,
     MatAnim, TintAnimMaterials, TintLoop, UvAnimMaterials, UvLoops,
 };
-pub(crate) use mat_anim::{register_uv, UvLoop};
+pub(crate) use mat_anim::{register_stage1, register_uv, UvLoop};
 
 /// What a placed doodad model animates, decided per model at spawn.
 pub enum DoodadAnimTier<'a> {

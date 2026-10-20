@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 
 use anyhow::{Context, Result};
-use benilla_m2::parse_m2;
+use benilla_m2::M2Model;
 use benilla_wmo::{parse_wmo, ParsedWmo};
 
 use crate::Chain;
@@ -32,15 +32,13 @@ impl CollisionMesh {
 /// `bounding_triangles` (`u16` indices): a coarse solid far smaller than the render mesh, so the
 /// trunk blocks and the canopy does not. A doodad with no hull does not collide.
 pub fn load_m2_collision_hull(chain: &mut Chain, raw_path: &str) -> Result<CollisionMesh> {
-    let (path, bytes) = read_model(chain, raw_path)?;
-    parse_m2_collision_hull(&bytes).with_context(|| format!("parsing M2 {path}"))
+    let (_, model) = read_model(chain, raw_path)?;
+    Ok(parse_m2_collision_hull(&model))
 }
 
-/// [`load_m2_collision_hull`] from file bytes already in hand; empty when there is no hull.
-pub fn parse_m2_collision_hull(bytes: &[u8]) -> Result<CollisionMesh> {
-    let format =
-        parse_m2(&mut Cursor::new(bytes)).map_err(|e| anyhow::anyhow!("parsing M2 hull: {e}"))?;
-    let rd = &format.model().raw_data;
+/// [`load_m2_collision_hull`] from a model already in hand; empty when there is no hull.
+pub fn parse_m2_collision_hull(model: &M2Model) -> CollisionMesh {
+    let rd = &model.raw_data;
     let positions: Vec<[f32; 3]> = rd
         .bounding_vertices
         .as_chunks::<12>()
@@ -62,11 +60,11 @@ pub fn parse_m2_collision_hull(bytes: &[u8]) -> Result<CollisionMesh> {
         .iter()
         .map(|c| u32::from(u16::from_le_bytes([c[0], c[1]])))
         .collect();
-    // Every 1.12 hull has whole triangles and in-range indices; anything else counts as no hull.
+    // A hull with a partial triangle or an index past its vertices counts as no hull.
     if indices.is_empty() || !indices.len().is_multiple_of(3) || indices.iter().any(|&i| i >= n) {
-        return Ok(CollisionMesh::default());
+        return CollisionMesh::default();
     }
-    Ok(CollisionMesh { positions, indices })
+    CollisionMesh { positions, indices }
 }
 
 /// MOPY `DETAIL`, the face bit the walking gather skips. The reference builds a reject mask from a

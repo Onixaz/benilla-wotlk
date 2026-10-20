@@ -449,10 +449,10 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn each_rim_arrow_sequence_lights_exactly_its_own_layer() {
         let data = benilla_formats::wow_data_or_skip!();
-        let mut chain = benilla_formats::Chain::open(&data).expect("the patch chain");
-        let bytes = chain
-            .read_file("Interface\\Minimap\\Rotating-MinimapArrow.m2")
-            .expect("the one rim-arrow model");
+        let chain = benilla_formats::Chain::open(&data).expect("the patch chain");
+        let bytes =
+            benilla_formats::read_m2(&chain, "Interface\\Minimap\\Rotating-MinimapArrow.m2")
+                .expect("the one rim-arrow model");
 
         for kind in RimArrow::ALL {
             let shown = benilla_formats::m2_sequence_visible_textures(&bytes, kind.anim_id())

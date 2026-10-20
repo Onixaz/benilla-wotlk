@@ -1,11 +1,8 @@
-//! M2Track readers and the cubic track sampler.
+//! The M2 track type and the cubic track sampler.
 
-use benilla_bytes::ByteExt;
-
-/// One `M2Track` (v256, `0x1c` bytes): `interp`@0, `gseq`@2, then ranges, timestamps (u32 ms) and
-/// values as `(count, offset)` pairs @`0x04`, `0x0c`, `0x14`. Keys are absolute timeline ms: a
-/// sequence track keys inside each sequence's band, a `gseq` track loops on its global sequence
-/// (`0x713d50`). The key count is `min(timestamps, values)`, as vanilla art pads one array.
+/// One M2 track on the model's one timeline ([`crate::Tracks264`]): `interp`, `gseq`, a key window
+/// per sequence and the keys. A sequence track keys inside each sequence's band, a `gseq` track
+/// loops on its global sequence.
 #[derive(Clone, Debug)]
 pub struct M2Track<V> {
     /// `0` step (the previous key), nonzero linear: the scalar sampler's two-way test (`0x71af20`).
@@ -45,79 +42,6 @@ impl<V: Copy + PartialEq> M2Track<V> {
         let (_, first) = *self.keys.first()?;
         self.keys.iter().all(|&(_, v)| v == first).then_some(first)
     }
-}
-
-/// Read one `M2Track<V>` with a per-value reader. An out-of-range track reads as no keys, a
-/// tolerance real art needs.
-fn track_read<V>(
-    b: &[u8],
-    track_ofs: usize,
-    val_size: usize,
-    read_val: impl Fn(&[u8], usize) -> Option<V>,
-) -> M2Track<V> {
-    let (Some(interp), Some(gseq)) = (b.u16_at(track_ofs), b.u16_at(track_ofs + 2)) else {
-        return M2Track::default();
-    };
-    let Some(((tn, to), (vn, vo))) = b
-        .u32_at(track_ofs + 0x0c)
-        .zip(b.u32_at(track_ofs + 0x10))
-        .zip(b.u32_at(track_ofs + 0x14).zip(b.u32_at(track_ofs + 0x18)))
-    else {
-        return M2Track::default();
-    };
-    let n = tn.min(vn) as usize;
-    let (to, vo) = (to as usize, vo as usize);
-    let keys = (0..n)
-        .map_while(|i| b.u32_at(to + i * 4).zip(read_val(b, vo + i * val_size)))
-        .collect();
-    // The `(lo, hi)` windows, 8 bytes each; an unreadable array is empty, the reference's
-    // no-ranges case.
-    let ranges = match b.u32_at(track_ofs + 0x04).zip(b.u32_at(track_ofs + 0x08)) {
-        Some((rn, ro)) => (0..rn as usize)
-            .map_while(|i| {
-                let e = ro as usize + i * 8;
-                b.u32_at(e).zip(b.u32_at(e + 4))
-            })
-            .collect(),
-        None => Vec::new(),
-    };
-    M2Track {
-        interp,
-        gseq,
-        ranges,
-        keys,
-    }
-}
-
-fn rd_vec3(b: &[u8], o: usize) -> Option<[f32; 3]> {
-    Some([b.f32_at(o)?, b.f32_at(o + 4)?, b.f32_at(o + 8)?])
-}
-
-/// Read a `fix16` scalar track, `int16 / 32767`. The key is signed (`movsx`, then `fmul` by the
-/// `1/0x7fff` at `0x811610`, `0x715b2f`–`0x715b46`; from the colour alpha `0x715b21` and the weight
-/// `0x715ce2`): art authors `0x8001` (−1.0) to hide a batch, which the cull (`A ≤ 0`,
-/// `0x707b3a`–`0x707b5c`) drops. Values outside `[0, 1]` are authored, not noise.
-pub(crate) fn track_fix16(b: &[u8], track_ofs: usize) -> M2ScalarTrack {
-    track_read(b, track_ofs, 2, |b, o| {
-        b.u16_at(o).map(|v| f32::from(v as i16) / 32767.0)
-    })
-}
-
-/// Read a `C3Vector` (3×f32) track.
-pub(crate) fn track_vec3_timed(b: &[u8], track_ofs: usize) -> M2Vec3Track {
-    track_read(b, track_ofs, 12, rd_vec3)
-}
-
-/// Read a quaternion track: 4×f32, as vanilla does not compress quaternion keys.
-pub(crate) fn track_quat(b: &[u8], track_ofs: usize) -> M2QuatTrack {
-    track_read(b, track_ofs, 16, |b, o| {
-        Some([
-            b.f32_at(o)?,
-            b.f32_at(o + 4)?,
-            b.f32_at(o + 8)?,
-            b.f32_at(o + 12)?,
-        ])
-    })
 }
 
 /// One key of a cubic track: the value, then the in and out tangents, each `sizeof(T)` apart. The
@@ -216,29 +140,4 @@ impl<V: CubicValue> M2Track<M2SplineKey<V>> {
             ),
         })
     }
-}
-
-fn rd_spline<V>(
-    b: &[u8],
-    o: usize,
-    step: usize,
-    rd: impl Fn(&[u8], usize) -> Option<V>,
-) -> Option<M2SplineKey<V>> {
-    Some(M2SplineKey {
-        value: rd(b, o)?,
-        in_tan: rd(b, o + step)?,
-        out_tan: rd(b, o + 2 * step)?,
-    })
-}
-
-/// Read a cubic `C3Vector` track (key stride `0x24`).
-pub(crate) fn track_spline_vec3(b: &[u8], track_ofs: usize) -> M2Vec3SplineTrack {
-    track_read(b, track_ofs, 0x24, |b, o| rd_spline(b, o, 12, rd_vec3))
-}
-
-/// Read a cubic scalar track (key stride `0xc`).
-pub(crate) fn track_spline_f32(b: &[u8], track_ofs: usize) -> M2ScalarSplineTrack {
-    track_read(b, track_ofs, 0xc, |b, o| {
-        rd_spline(b, o, 4, |b, o| b.f32_at(o))
-    })
 }

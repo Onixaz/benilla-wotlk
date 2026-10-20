@@ -786,7 +786,7 @@ fn warm_quad(colors: bool, skinned: bool, uv2: bool) -> RenderSubmesh {
         rgb_seq: None,
         wmo_batch: None,
         section: None,
-        priority_plane: 0,
+        sort: None,
         // The layout is the axis: a combiner's second UV set.
         combiner: None,
         uvs2: if uv2 {

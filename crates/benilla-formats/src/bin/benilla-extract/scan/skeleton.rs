@@ -15,13 +15,10 @@ pub fn attachscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let (mut scanned, mut with_points, mut divergent) = (0u32, 0u32, 0u32);
     let mut by_family: BTreeMap<String, u32> = BTreeMap::new();
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
-        let Ok(format) = benilla_m2::parse_m2(&mut std::io::Cursor::new(&bytes)) else {
-            continue;
-        };
-        let model = format.model();
+        let model = &bytes;
         scanned += 1;
         if model.attachments.is_empty() && model.attach_lookup.is_empty() {
             continue;
@@ -73,8 +70,7 @@ pub fn attachscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// One bone `M2Track` read raw, so the check never goes through the parser it tests: v256 stride
-/// `0x1c`, interp@0, gseq@2, then `M2Array`s ranges@0x04, timestamps@0x0c, values@0x14.
+/// One bone track as the timeline holds it: its values widened to four components.
 struct RawBoneTrack {
     interp: u16,
     gseq: u16,
@@ -85,52 +81,31 @@ struct RawBoneTrack {
 }
 
 impl RawBoneTrack {
-    fn read(b: &[u8], o: usize, comps: usize) -> Option<Self> {
-        let u32_at = |p: usize| -> Option<u32> {
-            b.get(p..p + 4)
-                .map(|s| u32::from_le_bytes(s.try_into().unwrap()))
+    /// Bone `bone`'s channel `off` (`0x0c` translation, `0x28` rotation, `0x44` scale).
+    fn of(model: &benilla_m2::M2Model, bone: usize, off: usize, comps: usize) -> Option<Self> {
+        let b = model.bones.get(bone)?;
+        let widen3 = |t: &benilla_m2::M2Vec3Track| benilla_m2::M2QuatTrack {
+            interp: t.interp,
+            gseq: t.gseq,
+            ranges: t.ranges.clone(),
+            keys: t
+                .keys
+                .iter()
+                .map(|&(ms, v)| (ms, [v[0], v[1], v[2], 0.0]))
+                .collect(),
         };
-        let u16_at = |p: usize| -> Option<u16> {
-            b.get(p..p + 2)
-                .map(|s| u16::from_le_bytes(s.try_into().unwrap()))
+        let t = match off {
+            0x0c => widen3(&b.translation),
+            0x44 => widen3(&b.scale),
+            _ => b.rotation.clone(),
         };
-        let f32_at = |p: usize| -> Option<f32> {
-            b.get(p..p + 4)
-                .map(|s| f32::from_le_bytes(s.try_into().unwrap()))
-        };
-        let (interp, gseq) = (u16_at(o)?, u16_at(o + 2)?);
-        let (rn, ro) = (u32_at(o + 0x04)? as usize, u32_at(o + 0x08)? as usize);
-        let (tn, to) = (u32_at(o + 0x0c)? as usize, u32_at(o + 0x10)? as usize);
-        let (vn, vo) = (u32_at(o + 0x14)? as usize, u32_at(o + 0x18)? as usize);
-        let ranges = (0..rn)
-            .map_while(|i| Some((u32_at(ro + i * 8)?, u32_at(ro + i * 8 + 4)?)))
-            .collect();
-        let stride = comps * 4;
-        let n = tn.min(vn);
-        let mut ts = Vec::with_capacity(n);
-        let mut vals = Vec::with_capacity(n);
-        for i in 0..n {
-            let Some(t) = u32_at(to + i * 4) else { break };
-            let mut v = [0.0f32; 4];
-            let mut ok = true;
-            for (c, slot) in v.iter_mut().take(comps).enumerate() {
-                match f32_at(vo + i * stride + c * 4) {
-                    Some(f) => *slot = f,
-                    None => ok = false,
-                }
-            }
-            if !ok {
-                break;
-            }
-            ts.push(t);
-            vals.push(v);
-        }
+        let (interp, gseq, ranges, keys) = (t.interp, t.gseq, t.ranges, t.keys);
         Some(Self {
             interp,
             gseq,
             ranges,
-            ts,
-            vals,
+            ts: keys.iter().map(|k| k.0).collect(),
+            vals: keys.iter().map(|k| k.1).collect(),
             comps,
         })
     }
@@ -257,45 +232,20 @@ pub fn bonescan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let mut step_models: BTreeMap<String, u64> = BTreeMap::new();
     let mut worst_step: Vec<(f32, String, usize, &'static str, usize, usize)> = Vec::new();
     for name in names {
-        let Ok(b) = chain.read_file(&name) else {
+        let Ok(b) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
-        if b.len() < 0x40 || &b[0..4] != b"MD20" {
-            continue;
-        }
         scanned += 1;
-        let u32_at = |o: usize| -> usize {
-            b.get(o..o + 4)
-                .map(|s| u32::from_le_bytes(s.try_into().unwrap()) as usize)
-                .unwrap_or(0)
-        };
-        // Sequences in file order (count@0x1c, ofs@0x20, stride 0x44), the order `ranges` indexes.
-        let (sn, so) = (u32_at(0x1c), u32_at(0x20));
-        let seqs: Vec<(u32, u32)> = (0..sn)
-            .map_while(|i| {
-                let e = so + i * 0x44;
-                (e + 0x44 <= b.len()).then(|| (u32_at(e + 4) as u32, u32_at(e + 8) as u32))
-            })
-            .collect();
-        // globalSequences @0x14/0x18: a duration per entry, 0 for no period.
-        let (gn, go) = (u32_at(0x14), u32_at(0x18));
-        let gseq_period = |g: u16| -> u32 {
-            let i = g as usize;
-            if i >= gn {
-                0
-            } else {
-                u32_at(go + i * 4) as u32
-            }
-        };
-        let (bn, bo) = (u32_at(0x34), u32_at(0x38));
+        // Sequences in file order, the order `ranges` indexes.
+        let seqs: Vec<(u32, u32)> = b.sequences.iter().map(|s| (s.start, s.end)).collect();
+        // A duration per global sequence, 0 for no period.
+        let gseq_period =
+            |g: u16| -> u32 { b.global_sequences.get(usize::from(g)).copied().unwrap_or(0) };
+        let bn = b.bones.len();
         let (mut m_step, mut m_empty, mut m_edge) = (0u64, 0u64, 0u64);
         for bi in 0..bn {
-            let brec = bo + bi * 0x6c;
-            if brec + 0x6c > b.len() {
-                break;
-            }
             for (off, comps, ch) in [(0x0c, 3, "trans"), (0x28, 4, "rot"), (0x44, 3, "scale")] {
-                let Some(tr) = RawBoneTrack::read(&b, brec + off, comps) else {
+                let Some(tr) = RawBoneTrack::of(&b, bi, off, comps) else {
                     continue;
                 };
                 if tr.ts.is_empty() {
@@ -416,8 +366,7 @@ pub fn bonescan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
                     (0x28, 4, bk.rotation.len()),
                     (0x44, 3, bk.scale.len()),
                 ] {
-                    let brec = bo + bk.bone as usize * 0x6c;
-                    let Some(tr) = RawBoneTrack::read(&b, brec + off, comps) else {
+                    let Some(tr) = RawBoneTrack::of(&b, usize::from(bk.bone), off, comps) else {
                         continue;
                     };
                     if tr.gseq != 0xffff {
@@ -556,13 +505,10 @@ pub fn eventmarkerscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let (mut dup_models, mut dup_split) = (0u32, 0u32);
     let mut dup_examples: Vec<String> = Vec::new();
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
-        let Ok(format) = benilla_m2::parse_m2(&mut std::io::Cursor::new(&bytes)) else {
-            continue;
-        };
-        let model = format.model();
+        let model = &bytes;
         scanned += 1;
         if model.event_markers.is_empty() {
             continue;

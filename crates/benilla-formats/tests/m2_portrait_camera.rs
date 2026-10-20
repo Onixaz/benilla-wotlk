@@ -13,7 +13,7 @@ fn character_and_creature_portrait_cameras_parse_sane() {
         "Creature\\Wolf\\Wolf.m2",
         "Creature\\Rabbit\\Rabbit.m2",
     ] {
-        let bytes = reader.read(path).expect("read model");
+        let bytes = benilla_formats::read_m2(&reader, path).expect("read model");
         let cam = parse_m2_portrait_camera(&bytes)
             .unwrap_or_else(|| panic!("{path}: no portrait camera"));
         eprintln!("{path}: {cam:?}");
@@ -37,8 +37,7 @@ fn character_and_creature_portrait_cameras_parse_sane() {
     }
     // HumanMale's authored rig: fov π/4, the eye at head height, in front and to the model's
     // right (so the portrait faces viewer-left), the target on the head's centre.
-    let bytes = reader
-        .read("Character\\Human\\Male\\HumanMale.m2")
+    let bytes = benilla_formats::read_m2(&reader, "Character\\Human\\Male\\HumanMale.m2")
         .expect("read HumanMale.m2");
     let cam = parse_m2_portrait_camera(&bytes).expect("HumanMale portrait camera");
     let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
@@ -56,11 +55,6 @@ fn character_and_creature_portrait_cameras_parse_sane() {
         assert!(close(*got, want), "eye/target drifted: {got} vs {want}");
     }
     assert!(close(cam.roll, 0.0), "roll {}", cam.roll);
-}
-
-#[test]
-fn too_short_yields_no_camera() {
-    assert!(parse_m2_portrait_camera(&[0u8; 16]).is_none());
 }
 
 /// A `<PlayerModel>` pane renders through raw `cameras[1]`: the chooser `0x505890`, from
@@ -91,7 +85,7 @@ fn pane_cameras_match_the_authored_records() {
             0.76101,
         ),
     ] {
-        let bytes = reader.read(path).expect("read model");
+        let bytes = benilla_formats::read_m2(&reader, path).expect("read model");
         let cam = benilla_formats::parse_m2_camera(&bytes, 1)
             .unwrap_or_else(|| panic!("{path}: no cameras[1]"));
         eprintln!("{path}: {cam:?}");
@@ -119,7 +113,7 @@ fn pane_cameras_match_the_authored_records() {
 
     // The standoff is authored per model, never normalized: a gnome's ~2.2 yd, a boar's ~4.9.
     let x = |path: &str| {
-        let bytes = reader.read(path).expect("read model");
+        let bytes = benilla_formats::read_m2(&reader, path).expect("read model");
         benilla_formats::parse_m2_camera(&bytes, 1)
             .unwrap_or_else(|| panic!("{path}: no cameras[1]"))
             .position[0]

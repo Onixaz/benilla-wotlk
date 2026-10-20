@@ -1,17 +1,13 @@
 //! M2 skeleton and animation parsing: the rest skeleton and each sequence's per-bone keyframes.
 
 use std::collections::HashMap;
-use std::io::Cursor;
 
-use anyhow::Result;
-use benilla_bytes::capped;
-use benilla_m2::parse_m2;
+use benilla_m2::{M2Model, M2Track};
 
-use super::{le_f32, le_u16, le_u32};
 use crate::BoneSpin;
 
-/// A rest-skeleton bone, raw WoW model space. Vanilla M2 has no inverse bind matrices: the rest
-/// pose is identity and the pivot is the bind position (`0x714260`).
+/// A rest-skeleton bone, raw WoW model space. An M2 has no inverse bind matrices: the rest pose
+/// is identity and the pivot is the bind position.
 #[derive(Debug, Clone, Copy)]
 pub struct SkeletonBone {
     pub parent: i16,
@@ -49,12 +45,9 @@ impl Skeleton {
     }
 }
 
-/// Parse the bone hierarchy (stride `0x6c`: parent `+0x08`, pivot `+0x60`, as `0x714260` reads).
-pub fn parse_m2_skeleton(bytes: &[u8]) -> Result<Skeleton> {
-    let format =
-        parse_m2(&mut Cursor::new(bytes)).map_err(|e| anyhow::anyhow!("parsing M2: {e}"))?;
-    let bones = format
-        .model()
+/// The bone hierarchy: parents and pivots.
+pub fn parse_m2_skeleton(model: &M2Model) -> Skeleton {
+    let bones = model
         .bones
         .iter()
         .map(|b| SkeletonBone {
@@ -65,7 +58,7 @@ pub fn parse_m2_skeleton(bytes: &[u8]) -> Result<Skeleton> {
             parent_arm: crate::ParentArm::from_bone_flags(b.flags.bits()),
         })
         .collect();
-    Ok(Skeleton { bones })
+    Skeleton { bones }
 }
 
 /// One attachment point (`0` shield, `1`/`2` right/left hand), position in raw WoW model space.
@@ -76,13 +69,10 @@ pub struct M2Attachment {
     pub position: [f32; 3],
 }
 
-/// One attachment point per id the AttachLookup resolves (`0x710310`), in id order: of several
-/// records under one id, only the one the lookup names is reachable.
-pub fn parse_m2_attachments(bytes: &[u8]) -> Result<Vec<M2Attachment>> {
-    let format =
-        parse_m2(&mut Cursor::new(bytes)).map_err(|e| anyhow::anyhow!("parsing M2: {e}"))?;
-    let model = format.model();
-    Ok((0..model.attach_lookup.len())
+/// One attachment point per id the AttachLookup resolves, in id order: of several records under
+/// one id, only the one the lookup names is reachable.
+pub fn parse_m2_attachments(model: &M2Model) -> Vec<M2Attachment> {
+    (0..model.attach_lookup.len())
         .filter_map(|id| {
             let a = model.attachment(id as u16)?;
             Some(M2Attachment {
@@ -92,11 +82,11 @@ pub fn parse_m2_attachments(bytes: &[u8]) -> Result<Vec<M2Attachment>> {
                 position: a.position,
             })
         })
-        .collect())
+        .collect()
 }
 
-/// An event record's position half, looked up by 4CC, first match (`0x7130e0`/`0x7131b0`): the
-/// cast-release points `$CSL`/`$CSR`/`$CST` (`0x60c9b0`) and the ranged release `$BWR`.
+/// An event record's position half, looked up by 4CC, first match: the cast-release points
+/// `$CSL`/`$CSR`/`$CST` and the ranged release `$BWR`.
 #[derive(Debug, Clone, Copy)]
 pub struct EventMarker {
     /// The identifier 4CC, stored forward (`*b"$CSL"`).
@@ -106,11 +96,8 @@ pub struct EventMarker {
 }
 
 /// The event table's positional markers, in file order since lookups take the first match.
-pub fn parse_m2_event_markers(bytes: &[u8]) -> Result<Vec<EventMarker>> {
-    let format =
-        parse_m2(&mut Cursor::new(bytes)).map_err(|e| anyhow::anyhow!("parsing M2: {e}"))?;
-    Ok(format
-        .model()
+pub fn parse_m2_event_markers(model: &M2Model) -> Vec<EventMarker> {
+    model
         .event_markers
         .iter()
         .map(|m| EventMarker {
@@ -118,115 +105,73 @@ pub fn parse_m2_event_markers(bytes: &[u8]) -> Result<Vec<EventMarker>> {
             bone: m.bone,
             position: m.position,
         })
-        .collect())
+        .collect()
 }
 
-/// A bow's `$WTT`/`$WTB` event records, `(bone, position)`, which the string drawer `0x611ff0`
-/// spans top to bottom, each posed by its limb-tip bone (`0x7131b0`).
+/// A bow's `$WTT`/`$WTB` event records, `(bone, position)`, which the string drawer spans top to
+/// bottom, each posed by its limb-tip bone.
 #[derive(Clone, Copy)]
 pub struct StringAnchors {
     pub top: (u16, [f32; 3]),
     pub bottom: (u16, [f32; 3]),
 }
 
-/// The `$WTT`/`$WTB` anchors from the raw event table (stride 44); `None` unless both exist.
-pub fn parse_m2_string_anchors(b: &[u8]) -> Option<StringAnchors> {
-    let (ev_count, ev_ofs) = (le_u32(b, 0x114) as usize, le_u32(b, 0x118) as usize);
-    let (mut top, mut bottom) = (None, None);
-    for e in 0..ev_count {
-        let erec = ev_ofs + e * 44;
-        if erec + 44 > b.len() {
-            break;
-        }
-        let ident = b.get(erec..erec + 4)?;
-        let anchor = (
-            le_u32(b, erec + 8) as u16,
-            [
-                le_f32(b, erec + 12),
-                le_f32(b, erec + 16),
-                le_f32(b, erec + 20),
-            ],
-        );
-        match ident {
-            b"$WTT" => top = Some(anchor),
-            b"$WTB" => bottom = Some(anchor),
-            _ => {}
-        }
-    }
+/// The first event record named `ident`, `(bone, position)`.
+fn first_event(model: &M2Model, ident: &[u8; 4]) -> Option<(u16, [f32; 3])> {
+    model
+        .events
+        .iter()
+        .find(|e| &e.ident == ident)
+        .map(|e| (e.bone, e.position))
+}
+
+/// The `$WTT`/`$WTB` anchors, the last record of each; `None` unless both exist.
+pub fn parse_m2_string_anchors(model: &M2Model) -> Option<StringAnchors> {
+    let last = |ident: &[u8; 4]| {
+        model
+            .events
+            .iter()
+            .rfind(|e| &e.ident == ident)
+            .map(|e| (e.bone, e.position))
+    };
     Some(StringAnchors {
-        top: top?,
-        bottom: bottom?,
+        top: last(b"$WTT")?,
+        bottom: last(b"$WTB")?,
     })
 }
 
-/// The first `$CCH` marker, `(bone, position)`: the fishing line's near end, found and posed by
-/// `0x7131b0`. The line reads only the pole's, though the bobber authors one; among weapons only
-/// the fishing pole does, so a held item keys on its presence.
-pub fn parse_m2_cch_marker(b: &[u8]) -> Option<(u16, [f32; 3])> {
-    let (ev_count, ev_ofs) = (le_u32(b, 0x114) as usize, le_u32(b, 0x118) as usize);
-    for e in 0..ev_count {
-        let erec = ev_ofs + e * 44;
-        if erec + 44 > b.len() {
-            break;
-        }
-        if b.get(erec..erec + 4)? == b"$CCH" {
-            return Some((
-                le_u32(b, erec + 8) as u16,
-                [
-                    le_f32(b, erec + 12),
-                    le_f32(b, erec + 16),
-                    le_f32(b, erec + 20),
-                ],
-            ));
-        }
-    }
-    None
+/// The first `$CCH` marker, `(bone, position)`: the fishing line's near end. The line reads only
+/// the pole's, though the bobber authors one; among weapons only the fishing pole does, so a held
+/// item keys on its presence.
+pub fn parse_m2_cch_marker(model: &M2Model) -> Option<(u16, [f32; 3])> {
+    first_event(model, b"$CCH")
 }
 
-/// One row of the M2's PlayableAnimationLookup, the resolution of a clip the model lacks.
+/// A substitute for a requested animation id and its direction code, the row of a 1.12.1 model's
+/// PlayableAnimationLookup. A 3.3.5a model carries no such table, so a model's rows are empty.
 #[derive(Debug, Clone, Copy)]
 pub struct PlayableAnim {
-    /// The `AnimationData.dbc` id this model actually plays for the row's requested id.
+    /// The `AnimationData.dbc` id this model plays for the row's requested id.
     pub resolved_id: u16,
     /// Direction/variant playback code; carried, not applied.
     pub dir_flags: u16,
 }
 
-/// The [`PlayableAnim`] table (`0x711bf0`, header `+0x2c`/`+0x30`); none means identity.
-pub fn parse_m2_playable_animation_lookup(bytes: &[u8]) -> Result<Vec<PlayableAnim>> {
-    let format =
-        parse_m2(&mut Cursor::new(bytes)).map_err(|e| anyhow::anyhow!("parsing M2: {e}"))?;
-    Ok(format
-        .model()
-        .playable_animation_lookup
-        .iter()
-        .map(|p| PlayableAnim {
-            resolved_id: p.resolved_id,
-            dir_flags: p.dir_flags,
-        })
-        .collect())
+/// The AnimationLookup (header `0x24`): `AnimationData.dbc` id to first sequence slot, `0xffff`
+/// for none, as the ownership test reads it (`M2Model::owns_animation`).
+pub fn parse_m2_animation_lookup(model: &M2Model) -> Vec<u16> {
+    model.animation_lookup.clone()
 }
 
-/// The AnimationLookup (header `+0x24`/`+0x28`): `AnimationData.dbc` id to first sequence slot,
-/// `0xffff` for none, as the ownership test `0x711960` reads it (`M2Model::owns_animation`).
-pub fn parse_m2_animation_lookup(bytes: &[u8]) -> Result<Vec<u16>> {
-    let format =
-        parse_m2(&mut Cursor::new(bytes)).map_err(|e| anyhow::anyhow!("parsing M2: {e}"))?;
-    Ok(format.model().animation_lookup.clone())
-}
-
-/// The bones that spin rigidly ([`BoneSpin`]) in anim 0, which the load arms play (`0x70ebd0`,
-/// doodads `0x695100`). How a WMO skybox is armed is untraced; both shipped ones have one clip.
-pub fn m2_bone_spins(bytes: &[u8]) -> HashMap<u16, BoneSpin> {
+/// The bones that spin rigidly ([`BoneSpin`]) in anim 0, which the load arms play. How a WMO
+/// skybox is armed is untraced; both shipped ones have one clip.
+pub fn m2_bone_spins(model: &M2Model) -> HashMap<u16, BoneSpin> {
     let mut out = HashMap::new();
-    let Ok(skeleton) = parse_m2_skeleton(bytes) else {
-        return out;
-    };
-    let anims = parse_m2_animations(bytes);
+    let skeleton = parse_m2_skeleton(model);
+    let anims = parse_m2_animations(model);
     let Some(seq) = anims.iter().find(|a| a.anim_id == 0) else {
         return out;
     };
-    let (bone_count, bone_ofs) = (le_u32(bytes, 0x34) as usize, le_u32(bytes, 0x38) as usize);
     for keys in &seq.bones {
         let idx = keys.bone as usize;
         // Rotation only and at least two keys: one key is a pose, not a spin.
@@ -237,17 +182,12 @@ pub fn m2_bone_spins(bytes: &[u8]) -> HashMap<u16, BoneSpin> {
         let Some(bone) = skeleton.bones.get(idx).filter(|b| b.parent < 0) else {
             continue;
         };
-        // The rotation track's `interp_type`, bounds-checked here: `le_u16` panics past the end.
-        let interp = idx < bone_count
-            && bone_ofs
-                .checked_add(idx * 0x6c + 0x28)
-                .is_some_and(|t| t + 2 <= bytes.len() && le_u16(bytes, t) != 0);
         out.insert(
             keys.bone,
             BoneSpin {
                 pivot: bone.pivot,
                 duration: seq.duration,
-                interp,
+                interp: model.bones.get(idx).is_some_and(|b| b.rotation.interp != 0),
                 keys: keys.rotation.clone(),
             },
         );
@@ -266,7 +206,7 @@ pub struct BoneKeys {
 }
 
 /// A bone channel on a global sequence, sampled at the scene clock less the instance's attach
-/// time, mod `period_ms` (`0x714352`). Keys are absolute ms, ascending.
+/// time, mod `period_ms`. Keys are absolute ms, ascending.
 #[derive(Debug, Clone)]
 pub struct GlobalSeqChannel<T> {
     pub period_ms: u32,
@@ -291,46 +231,45 @@ pub struct AnimEvent {
     pub ident: [u8; 4],
     /// The payload: a SoundEntries id for `$SND`/`$DSL`/`$DSO`, else 0.
     pub data: u32,
-    /// The record's bone (`+8`), carried on the key because a 4CC repeats: every player model
-    /// authors `$CSD` six times, so a lookup by 4CC finds the wrong point.
+    /// The record's bone, carried on the key because a 4CC repeats: every player model authors
+    /// `$CSD` six times, so a lookup by 4CC finds the wrong point.
     pub bone: u16,
-    /// The record's point (`+12`); the event kernel (`0x719370`) snapshots
-    /// `placement · boneMatrix[bone] · position` into the callback record.
+    /// The record's point; the event kernel snapshots `placement · boneMatrix[bone] · position`
+    /// into the callback record.
     pub position: [f32; 3],
 }
 
-/// One sequence's per-bone keyframes. Stand is `anim_id` 0 (`0x70ebd0`) but not always record 0,
-/// so consumers select by `anim_id`.
+/// One sequence's per-bone keyframes. Stand is `anim_id` 0 but not always record 0, so consumers
+/// select by `anim_id`.
 #[derive(Debug, Clone)]
 pub struct ModelAnimation {
     /// `AnimationData.dbc` id, the selection key (0 Stand, 4 Walk, 5 Run, 13 WalkBackwards, …).
     pub anim_id: u16,
     /// The file slot, which indexes every track's key ranges; zero-length sequences are dropped.
     pub seq_index: usize,
-    /// The absolute band (`M2Sequence` `+0x04`/`+0x08`, ms) sequence tracks are cut to.
+    /// The sequence's band on the model's timeline, ms, which its tracks are cut to.
     pub start_ms: u32,
     pub end_ms: u32,
     pub duration: f32,
     pub looping: bool,
-    /// `moveSpeed` (`+0x0c`, yd/s): a locomotion clip plays at `unitSpeed / (moveSpeed · scale)`
-    /// (`0x5fe2f0`); `0.0` plays at 1×.
+    /// `moveSpeed` (yd/s): a locomotion clip plays at `unitSpeed / (moveSpeed · scale)`; `0.0`
+    /// plays at 1×.
     pub move_speed: f32,
-    /// `blendTime` (`+0x20`, seconds): the cross-fade in from the live pose (`0x7121a0`).
+    /// `blendTime` (seconds): the cross-fade in from the live pose.
     pub blend_time: f32,
-    /// The box centre (`+0x24`/`+0x30`): the pick broad phase tests this sphere for the current
-    /// animation, placed and scaled, no pad (`0x7089c0`).
+    /// The box centre: the pick broad phase tests this sphere for the current animation, placed
+    /// and scaled, no pad.
     pub bounds_center: [f32; 3],
-    /// The sphere radius (`+0x3c`); `0.0` falls back to the header sphere.
+    /// The sphere radius; `0.0` falls back to the header sphere.
     pub bounds_radius: f32,
-    /// The box's min corner (`+0x24`). The blob shadow sizes from the Stand sequence's box, clamped
-    /// to ±5 per axis (`0x711a20`, `0x6992c0`/`0x699250`).
+    /// The box's min corner. The blob shadow sizes from the Stand sequence's box, clamped to ±5
+    /// per axis.
     pub bounds_min: [f32; 3],
     pub bounds_max: [f32; 3],
-    /// `frequency` (`+0x14`): this variation's weight in the per-play roll (`0x7121a0`).
+    /// `frequency`: this variation's weight in the per-play roll.
     pub frequency: u16,
-    /// The replay range (`+0x18`/`+0x1c`): each arm rolls a play count
-    /// `R = max(1, min + ⌊rand·(max−min)/32768⌋)` (`0x712692..0x7126cd`) into the play window
-    /// (`0x7126d8`); a looping sequence ignores it (`0x7145f1`).
+    /// The replay range: each arm rolls a play count `R = max(1, min + ⌊rand·(max−min)/32768⌋)`
+    /// into the play window; a looping sequence ignores it.
     pub min_replay: u32,
     pub max_replay: u32,
     pub bones: Vec<BoneKeys>,
@@ -360,167 +299,84 @@ impl ModelAnimation {
     }
 }
 
-/// One bone-channel `M2Track` (`0x1c` bytes: interp `+0`, gseq `+2`, ranges `+0x04`, timestamps
-/// `+0x0c`, values `+0x14`), read once per model and sliced per sequence.
-struct ChannelTrack<T> {
-    /// `interp_type == 0`: hold each key, no interpolation (`0x713ea0`/`0x71af20`).
-    step: bool,
-    /// Global-sequence id, `0xffff` for a sequence-timeline track.
-    gseq: u16,
-    /// Key-index windows `(lo, hi)` by file slot, which the key search selects first (`0x713d50`);
-    /// empty means the whole list (`[track+4] == 0`).
-    ranges: Vec<(u32, u32)>,
-    /// `(absolute ms, value)`: every sequence's keys on one timeline.
-    keys: Vec<(u32, T)>,
-}
-
-type BoneChannels = (
-    ChannelTrack<[f32; 3]>,
-    ChannelTrack<[f32; 4]>,
-    ChannelTrack<[f32; 3]>,
-);
-
-/// Read one `M2Track` whole; out-of-range reads truncate the keys, which vanilla art relies on.
-fn read_channel_track<T>(
-    b: &[u8],
-    track: usize,
-    stride: usize,
-    read_value: impl Fn(&[u8], usize) -> T,
-) -> ChannelTrack<T> {
-    if track + 0x1c > b.len() {
-        return ChannelTrack {
-            step: false,
-            gseq: 0xffff,
-            ranges: Vec::new(),
-            keys: Vec::new(),
+/// A bone channel's keys for file slot `slot` over the band `[start, end]` (absolute ms), in
+/// seconds from its start. In-band keys go by timestamp; `ranges[slot]` is a bracket (its `hi` can
+/// sit in a later band) that decides the edges, where the reference keeps sampling: an empty band
+/// takes `keys[lo]` when `lo >= hi`, else the bracket's lerp, and past the last key the lerp runs
+/// toward `k0 + 1`, bounded by the key count, not the window. An edge key is added only where it
+/// differs from the held one. On a global sequence a lone key is a constant in every clip; a
+/// multi-key one belongs to [`parse_m2_global_sequence_bones`].
+fn band<T: super::key_anim::Lerp + PartialEq + Copy>(
+    track: &M2Track<T>,
+    slot: usize,
+    start: u32,
+    end: u32,
+) -> Vec<(f32, T)> {
+    let keys = &track.keys;
+    if keys.is_empty() {
+        return Vec::new();
+    }
+    if track.gseq != 0xffff {
+        return match keys.len() {
+            1 => vec![(0.0, keys[0].1)],
+            _ => Vec::new(),
         };
     }
-    let (rn, ro) = (
-        le_u32(b, track + 0x04) as usize,
-        le_u32(b, track + 0x08) as usize,
-    );
-    let (tn, to) = (
-        le_u32(b, track + 0x0c) as usize,
-        le_u32(b, track + 0x10) as usize,
-    );
-    let vo = le_u32(b, track + 0x18) as usize;
-    let ranges = (0..rn)
-        .map_while(|i| {
-            let e = ro + i * 8;
-            (e + 8 <= b.len()).then(|| (le_u32(b, e), le_u32(b, e + 4)))
-        })
+    let step = track.interp == 0;
+    let last = keys.len() - 1;
+    let (lo, hi) = track
+        .ranges
+        .get(slot)
+        .map_or((0, last), |&(lo, hi)| (lo as usize, hi as usize));
+    let at = |t| super::key_anim::sample_window(keys, step, lo, hi, t);
+    let rebase = |ts: u32| (ts.saturating_sub(start)) as f32 / 1000.0;
+    let in_band: Vec<(u32, T)> = keys
+        .iter()
+        .copied()
+        .filter(|&(ts, _)| ts >= start && ts <= end)
         .collect();
-    let keys = (0..tn)
-        .map_while(|k| {
-            let (t_off, v_off) = (to + k * 4, vo + k * stride);
-            (t_off + 4 <= b.len() && v_off + stride <= b.len())
-                .then(|| (le_u32(b, t_off), read_value(b, v_off)))
-        })
-        .collect();
-    ChannelTrack {
-        step: le_u16(b, track) == 0,
-        gseq: le_u16(b, track + 0x02),
-        ranges,
-        keys,
-    }
-}
-
-impl<T: super::key_anim::Lerp + PartialEq> ChannelTrack<T> {
-    /// The keys for file slot `slot` over the band `[start, end]` (absolute ms), in seconds from
-    /// its start. In-band keys go by timestamp; `ranges[slot]` is a bracket (its `hi` can sit in a
-    /// later band) that decides the edges, where the reference keeps sampling (`0x713d50`): an
-    /// empty band takes `keys[lo]` when `lo >= hi`, else the bracket's lerp, and past the last key
-    /// the lerp runs toward `k0 + 1`, bounded by the key count, not the window. An edge key is
-    /// added only where it differs from the held one. On a global sequence a lone key is a
-    /// constant in every clip; a multi-key one belongs to [`parse_m2_global_sequence_bones`].
-    fn band(&self, slot: usize, start: u32, end: u32) -> Vec<(f32, T)> {
-        if self.keys.is_empty() {
-            return Vec::new();
-        }
-        if self.gseq != 0xffff {
-            return match self.keys.len() {
-                1 => vec![(0.0, self.keys[0].1)],
-                _ => Vec::new(),
-            };
-        }
-        let last = self.keys.len() - 1;
-        let (lo, hi) = self
-            .ranges
-            .get(slot)
-            .map_or((0, last), |&(lo, hi)| (lo as usize, hi as usize));
-        let at = |t| super::key_anim::sample_window(&self.keys, self.step, lo, hi, t);
-        let rebase = |ts: u32| (ts.saturating_sub(start)) as f32 / 1000.0;
-        let in_band: Vec<(u32, T)> = self
-            .keys
-            .iter()
-            .copied()
-            .filter(|&(ts, _)| ts >= start && ts <= end)
-            .collect();
-        let Some(&(first_ms, first_v)) = in_band.first() else {
-            // An empty band holds the window's value; two keys only when the bracket lerp moves.
-            let head = match at(start) {
-                Some(v) => v,
-                None => return Vec::new(),
-            };
-            return match at(end) {
-                Some(tail) if tail != head => vec![(0.0, head), (rebase(end), tail)],
-                _ => vec![(0.0, head)],
-            };
+    let Some(&(first_ms, first_v)) = in_band.first() else {
+        // An empty band holds the window's value; two keys only when the bracket lerp moves.
+        let head = match at(start) {
+            Some(v) => v,
+            None => return Vec::new(),
         };
-        let (last_ms, last_v) = in_band[in_band.len() - 1];
-        let mut out = Vec::with_capacity(in_band.len() + 2);
-        if first_ms > start && at(start).is_some_and(|h| h != first_v) {
-            out.push((0.0, at(start).unwrap()));
-        }
-        out.extend(in_band.iter().map(|&(ts, v)| (rebase(ts), v)));
-        if last_ms < end && at(end).is_some_and(|t| t != last_v) {
-            out.push((rebase(end), at(end).unwrap()));
-        }
-        out
+        return match at(end) {
+            Some(tail) if tail != head => vec![(0.0, head), (rebase(end), tail)],
+            _ => vec![(0.0, head)],
+        };
+    };
+    let (last_ms, last_v) = in_band[in_band.len() - 1];
+    let mut out = Vec::with_capacity(in_band.len() + 2);
+    if first_ms > start && at(start).is_some_and(|h| h != first_v) {
+        out.push((0.0, at(start).unwrap()));
     }
+    out.extend(in_band.iter().map(|&(ts, v)| (rebase(ts), v)));
+    if last_ms < end && at(end).is_some_and(|t| t != last_v) {
+        out.push((rebase(end), at(end).unwrap()));
+    }
+    out
 }
 
 /// Each bone's rotation, `[x, y, z, w]`, as the reference samples it at the HandsClosed frame
 /// (`AnimationData` 15), through the key window: the grip overlay that keeps the weapon hand closed
-/// while the body animates (`CloseHand` `0x479660`). HandsClosed keys no finger bone; its window
-/// brackets it.
-pub fn hand_grip_finger_poses(bytes: &[u8], bones: &[u16]) -> Vec<(u16, [f32; 4])> {
-    let b = bytes;
-    if b.len() < 0x40 || &b[0..4] != b"MD20" {
-        return Vec::new();
-    }
-    let (seq_count, seq_ofs) = (le_u32(b, 0x1c) as usize, le_u32(b, 0x20) as usize);
-    let (bone_count, bone_ofs) = (le_u32(b, 0x34) as usize, le_u32(b, 0x38) as usize);
+/// while the body animates. HandsClosed keys no finger bone; its window brackets it.
+pub fn hand_grip_finger_poses(model: &M2Model, bones: &[u16]) -> Vec<(u16, [f32; 4])> {
     // HandsClosed's file slot, which indexes the key windows, and its start ms.
-    let mut hands_closed = None;
-    for s in 0..seq_count {
-        let rec = seq_ofs + s * 0x44;
-        if rec + 0x44 > b.len() {
-            break;
-        }
-        if le_u16(b, rec) == 15 {
-            hands_closed = Some((s, le_u32(b, rec + 0x04)));
-            break;
-        }
-    }
-    let Some((slot, frame)) = hands_closed else {
+    let Some((slot, frame)) = model
+        .sequences
+        .iter()
+        .enumerate()
+        .find(|(_, s)| s.id == 15)
+        .map(|(i, s)| (i, s.start))
+    else {
         return Vec::new();
-    };
-    let quat = |b: &[u8], o: usize| {
-        [
-            le_f32(b, o),
-            le_f32(b, o + 4),
-            le_f32(b, o + 8),
-            le_f32(b, o + 12),
-        ]
     };
     let mut out = Vec::new();
     for &bone in bones {
-        let bi = bone as usize;
-        if bi >= bone_count || bone_ofs + bi * 0x6c + 0x6c > b.len() {
+        let Some(tr) = model.bones.get(usize::from(bone)).map(|b| &b.rotation) else {
             continue;
-        }
-        let tr = read_channel_track(b, bone_ofs + bi * 0x6c + 0x28, 16, quat);
+        };
         if tr.gseq != 0xffff || tr.keys.is_empty() {
             continue; // a global-sequence track runs on its own clock
         }
@@ -529,7 +385,8 @@ pub fn hand_grip_finger_poses(bytes: &[u8], bones: &[u16]) -> Vec<(u16, [f32; 4]
             .ranges
             .get(slot)
             .map_or((0, last), |&(lo, hi)| (lo as usize, hi as usize));
-        let Some(v) = super::key_anim::sample_window(&tr.keys, tr.step, lo, hi, frame) else {
+        let Some(v) = super::key_anim::sample_window(&tr.keys, tr.interp == 0, lo, hi, frame)
+        else {
             continue;
         };
         out.push((bone, v));
@@ -537,116 +394,20 @@ pub fn hand_grip_finger_poses(bytes: &[u8], bones: &[u16]) -> Vec<(u16, [f32; 4]
     out
 }
 
-/// Parse every sequence at the animate kernel's offsets (`0x714260`): sequences at MD20
-/// `0x1c`/`0x20` (stride `0x44`), bones at `0x34`/`0x38` (stride `0x6c`). Zero-length sequences
-/// are skipped.
-pub fn parse_m2_animations(b: &[u8]) -> Vec<ModelAnimation> {
-    if b.len() < 0x40 || &b[0..4] != b"MD20" {
-        return Vec::new();
-    }
-    let (seq_count, seq_ofs) = (le_u32(b, 0x1c) as usize, le_u32(b, 0x20) as usize);
-    let (bone_count, bone_ofs) = (le_u32(b, 0x34) as usize, le_u32(b, 0x38) as usize);
-    let vec3 = |b: &[u8], o: usize| [le_f32(b, o), le_f32(b, o + 4), le_f32(b, o + 8)];
-    let quat = |b: &[u8], o: usize| {
-        [
-            le_f32(b, o),
-            le_f32(b, o + 4),
-            le_f32(b, o + 8),
-            le_f32(b, o + 12),
-        ]
-    };
-    // The event table (MD20 `0x114`/`0x118`, stride 44; the `M2TrackBase` at `+24` puts the
-    // absolute-ms timestamps at `+36`), read once and cut per sequence like the bone keys.
-    let (ev_count, ev_ofs) = (le_u32(b, 0x114) as usize, le_u32(b, 0x118) as usize);
-    /// One `M2Event` record as the file holds it.
-    struct EventRecord {
-        ident: [u8; 4],
-        data: u32,
-        bone: u16,
-        position: [f32; 3],
-        times: Vec<u32>,
-    }
-    // Raw header counts: reservations cap at the bytes present, as a failed allocation aborts.
-    let mut model_events: Vec<EventRecord> =
-        Vec::with_capacity(capped(ev_count, 44, b.len().saturating_sub(ev_ofs)));
-    for e in 0..ev_count {
-        let erec = ev_ofs + e * 44;
-        if erec + 44 > b.len() {
-            break;
-        }
-        let ident: [u8; 4] = match b.get(erec..erec + 4).and_then(|s| s.try_into().ok()) {
-            Some(i) => i,
-            None => break,
-        };
-        let data = le_u32(b, erec + 4);
-        let bone = le_u32(b, erec + 8) as u16;
-        let position = vec3(b, erec + 12);
-        let (nts, ots) = (le_u32(b, erec + 36) as usize, le_u32(b, erec + 40) as usize);
-        let mut times = Vec::with_capacity(capped(nts, 4, b.len().saturating_sub(ots)));
-        for t in 0..nts {
-            let o = ots + t * 4;
-            if o + 4 > b.len() {
-                break;
-            }
-            times.push(le_u32(b, o));
-        }
-        model_events.push(EventRecord {
-            ident,
-            data,
-            bone,
-            position,
-            times,
-        });
-    }
-
-    let bone_tracks: Vec<BoneChannels> = (0..bone_count)
-        .map_while(|i| {
-            let brec = bone_ofs + i * 0x6c;
-            (brec + 0x60 <= b.len()).then(|| {
-                (
-                    read_channel_track(b, brec + 0x0c, 12, vec3),
-                    read_channel_track(b, brec + 0x28, 16, quat),
-                    read_channel_track(b, brec + 0x44, 12, vec3),
-                )
-            })
-        })
-        .collect();
-
+/// Every sequence's per-bone keyframes and events; zero-length sequences are skipped.
+pub fn parse_m2_animations(model: &M2Model) -> Vec<ModelAnimation> {
     let mut out = Vec::new();
-    for s in 0..seq_count {
-        let rec = seq_ofs + s * 0x44;
-        if rec + 0x44 > b.len() {
-            break;
-        }
-        let anim_id = le_u16(b, rec);
-        let seq_index = s;
-        let (start, end, flags) = (
-            le_u32(b, rec + 0x04),
-            le_u32(b, rec + 0x08),
-            le_u32(b, rec + 0x10),
-        );
-        let move_speed = le_f32(b, rec + 0x0c);
-        let blend_time = le_u32(b, rec + 0x20) as f32 / 1000.0;
-        let (bmin, bmax) = (vec3(b, rec + 0x24), vec3(b, rec + 0x30));
-        let bounds_center = [
-            (bmin[0] + bmax[0]) * 0.5,
-            (bmin[1] + bmax[1]) * 0.5,
-            (bmin[2] + bmax[2]) * 0.5,
-        ];
-        let bounds_radius = le_f32(b, rec + 0x3c);
-        let frequency = le_u16(b, rec + 0x14);
-        let (min_replay, max_replay) = (le_u32(b, rec + 0x18), le_u32(b, rec + 0x1c));
+    for (seq_index, s) in model.sequences.iter().enumerate() {
+        let (start, end) = (s.start, s.end);
         let duration = end.saturating_sub(start) as f32 / 1000.0;
         if duration <= 0.0 {
             continue;
         }
-        let looping = flags & 1 == 0; // bit 0 clear loops, set clamps
         let mut bones = Vec::new();
-        for (i, tracks) in bone_tracks.iter().enumerate() {
-            let (tr, rot, sc) = tracks;
-            let translation = tr.band(seq_index, start, end);
-            let rotation = rot.band(seq_index, start, end);
-            let scale = sc.band(seq_index, start, end);
+        for (i, b) in model.bones.iter().enumerate() {
+            let translation = band(&b.translation, seq_index, start, end);
+            let rotation = band(&b.rotation, seq_index, start, end);
+            let scale = band(&b.scale, seq_index, start, end);
             if !(translation.is_empty() && rotation.is_empty() && scale.is_empty()) {
                 bones.push(BoneKeys {
                     bone: i as u16,
@@ -657,7 +418,7 @@ pub fn parse_m2_animations(b: &[u8]) -> Vec<ModelAnimation> {
             }
         }
         let mut events = Vec::new();
-        for r in &model_events {
+        for r in &model.events {
             for &ts in &r.times {
                 if ts >= start && ts <= end {
                     events.push(AnimEvent {
@@ -671,23 +432,23 @@ pub fn parse_m2_animations(b: &[u8]) -> Vec<ModelAnimation> {
             }
         }
         events.sort_by(|a, b| a.time.total_cmp(&b.time));
-
+        let (bmin, bmax) = (s.bounds_min, s.bounds_max);
         out.push(ModelAnimation {
-            anim_id,
+            anim_id: s.id,
             seq_index,
             start_ms: start,
             end_ms: end,
             duration,
-            looping,
-            move_speed,
-            blend_time,
-            bounds_center,
-            bounds_radius,
+            looping: s.flags & 1 == 0, // bit 0 clear loops, set clamps
+            move_speed: s.move_speed,
+            blend_time: s.blend_time as f32 / 1000.0,
+            bounds_center: std::array::from_fn(|k| (bmin[k] + bmax[k]) * 0.5),
+            bounds_radius: s.bounds_radius,
             bounds_min: bmin,
             bounds_max: bmax,
-            frequency,
-            min_replay,
-            max_replay,
+            frequency: s.frequency,
+            min_replay: s.min_replay,
+            max_replay: s.max_replay,
             bones,
             events,
         });
@@ -696,116 +457,90 @@ pub fn parse_m2_animations(b: &[u8]) -> Vec<ModelAnimation> {
 }
 
 /// One bone track as a global-sequence channel: `None` without a global sequence, a non-zero
-/// period and two keys (a lone key is a constant [`ChannelTrack::band`] folds into every clip).
-fn read_global_channel<T>(
-    b: &[u8],
-    track: usize,
-    stride: usize,
-    period_of: &impl Fn(u16) -> Option<u32>,
-    read_value: impl Fn(&[u8], usize) -> T,
+/// period and two keys (a lone key is a constant [`band`] folds into every clip).
+fn global_channel<T: Copy>(
+    track: &M2Track<T>,
+    global_sequences: &[u32],
 ) -> Option<GlobalSeqChannel<T>> {
-    if track + 0x1c > b.len() {
+    if track.gseq == 0xffff || track.keys.len() <= 1 {
         return None;
     }
-    let gseq = le_u16(b, track + 0x02);
-    if gseq == 0xffff {
-        return None;
-    }
-    let period_ms = period_of(gseq)?;
-    let n = le_u32(b, track + 0x0c) as usize;
-    let ts_o = le_u32(b, track + 0x10) as usize;
-    let val_o = le_u32(b, track + 0x18) as usize;
-    if n <= 1 {
-        return None; // a constant, not a loop
-    }
-    // `n` is a raw count; the timestamp array bounds how many keys the file holds.
-    let mut keys = Vec::with_capacity(capped(n, 4, b.len().saturating_sub(ts_o)));
-    for k in 0..n {
-        let (t_off, v_off) = (ts_o + k * 4, val_o + k * stride);
-        if t_off + 4 > b.len() || v_off + stride > b.len() {
-            break;
-        }
-        keys.push((le_u32(b, t_off), read_value(b, v_off)));
-    }
-    (keys.len() > 1).then_some(GlobalSeqChannel { period_ms, keys })
+    let period_ms = *global_sequences
+        .get(usize::from(track.gseq))
+        .filter(|&&d| d > 0)?;
+    Some(GlobalSeqChannel {
+        period_ms,
+        keys: track.keys.clone(),
+    })
 }
 
 /// Every bone's global-sequence channels, the free-clock loops [`parse_m2_animations`] leaves out
-/// (the eye blink's eyelid scale); global sequences at MD20 `0x14`/`0x18`.
-pub fn parse_m2_global_sequence_bones(b: &[u8]) -> Vec<GlobalSeqBone> {
-    if b.len() < 0x40 || &b[0..4] != b"MD20" {
-        return Vec::new();
-    }
-    let (gseq_count, gseq_ofs) = (le_u32(b, 0x14) as usize, le_u32(b, 0x18) as usize);
-    let period_of = |gseq: u16| -> Option<u32> {
-        let i = gseq as usize;
-        if i >= gseq_count {
-            return None;
-        }
-        let o = gseq_ofs.checked_add(i * 4)?;
-        if o + 4 > b.len() {
-            return None;
-        }
-        let d = le_u32(b, o);
-        (d > 0).then_some(d)
-    };
-    let vec3 = |b: &[u8], o: usize| [le_f32(b, o), le_f32(b, o + 4), le_f32(b, o + 8)];
-    let quat = |b: &[u8], o: usize| {
-        [
-            le_f32(b, o),
-            le_f32(b, o + 4),
-            le_f32(b, o + 8),
-            le_f32(b, o + 12),
-        ]
-    };
-    let (bone_count, bone_ofs) = (le_u32(b, 0x34) as usize, le_u32(b, 0x38) as usize);
-    let mut out = Vec::new();
-    for i in 0..bone_count {
-        let brec = bone_ofs + i * 0x6c;
-        if brec + 0x60 > b.len() {
-            break;
-        }
-        let translation = read_global_channel(b, brec + 0x0c, 12, &period_of, vec3);
-        let rotation = read_global_channel(b, brec + 0x28, 16, &period_of, quat);
-        let scale = read_global_channel(b, brec + 0x44, 12, &period_of, vec3);
-        if translation.is_some() || rotation.is_some() || scale.is_some() {
-            out.push(GlobalSeqBone {
-                bone: i as u16,
-                translation,
-                rotation,
-                scale,
-            });
-        }
-    }
-    out
+/// (the eye blink's eyelid scale).
+pub fn parse_m2_global_sequence_bones(model: &M2Model) -> Vec<GlobalSeqBone> {
+    let g = &model.global_sequences;
+    model
+        .bones
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| {
+            let translation = global_channel(&b.translation, g);
+            let rotation = global_channel(&b.rotation, g);
+            let scale = global_channel(&b.scale, g);
+            (translation.is_some() || rotation.is_some() || scale.is_some()).then_some(
+                GlobalSeqBone {
+                    bone: i as u16,
+                    translation,
+                    rotation,
+                    scale,
+                },
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn hostile_event_and_key_counts_reserve_only_what_the_file_holds() {
-        let mut b = vec![0u8; 0x11c];
-        b[0..4].copy_from_slice(b"MD20");
-        // u32::MAX events, of which exactly one is present …
-        b[0x114..0x118].copy_from_slice(&u32::MAX.to_le_bytes());
-        b[0x118..0x11c].copy_from_slice(&0x11cu32.to_le_bytes());
-        // … itself claiming u32::MAX timestamps at offset 0.
-        let mut ev = [0u8; 44];
-        ev[36..40].copy_from_slice(&u32::MAX.to_le_bytes());
-        b.extend_from_slice(&ev);
-        assert!(
-            parse_m2_animations(&b).is_empty(),
-            "no sequences ⇒ no clips, and no abort"
-        );
+    use benilla_m2::fixture::{self, floats, header as h, sequence, Model};
 
-        // A global-sequence track claiming u32::MAX keys walks the 7 that fit its own 28 bytes.
-        let mut track = [0u8; 0x1c];
-        track[0x0c..0x10].copy_from_slice(&u32::MAX.to_le_bytes());
-        let ch = read_global_channel(&track, 0, 4, &|_: u16| Some(1000u32), le_u32)
-            .expect("more than one key on a live global sequence is a channel");
-        assert_eq!(ch.keys.len(), 7);
+    /// One bone keyed in sequence 0 only, and an event in each band, through the typed model.
+    #[test]
+    fn clips_cut_bone_keys_and_events_to_their_bands() {
+        let mut m = Model::new();
+        m.array(
+            h::SEQUENCES,
+            2,
+            &[sequence(0, 1000, 0x20), sequence(4, 500, 0x20)].concat(),
+        );
+        let t = m.track(
+            1,
+            0xffff,
+            &[
+                &[(0, floats(&[0.0; 3])), (1000, floats(&[1.0, 0.0, 0.0]))],
+                &[],
+            ],
+        );
+        let (r, s) = (m.no_track(), m.no_track());
+        let bone = fixture::bone(-1, 0, [0.0; 3], [&t, &r, &s]);
+        m.array(h::BONES, 1, &bone);
+        let mut ev = b"$SND".to_vec();
+        ev.extend_from_slice(&42u32.to_le_bytes());
+        ev.extend_from_slice(&[0; 4]);
+        ev.extend(floats(&[0.0; 3]));
+        ev.extend(m.track_base(0xffff, &[&[250], &[100]]));
+        m.array(h::EVENTS, 1, &ev);
+        let model = m.parse(&fixture::empty_skin()).unwrap();
+        let clips = parse_m2_animations(&model);
+        assert_eq!(clips.len(), 2);
+        assert_eq!((clips[1].start_ms, clips[1].end_ms), (1001, 1501));
+        let walk = &clips[1];
+        // Sequence 1 has no keys: its band takes the channel default, one clamp key.
+        assert_eq!(walk.bones[0].translation, vec![(0.0, [0.0; 3])]);
+        assert_eq!(clips[0].bones[0].translation.len(), 2);
+        assert_eq!(walk.events.len(), 1);
+        assert!((walk.events[0].time - 0.1).abs() < 1e-6);
+        assert_eq!(walk.events[0].data, 42);
     }
 
     /// `HumanMale.m2`'s one global-sequence bone, the eyelid (75), scales 0 (open) to 1 (shut).
@@ -813,9 +548,8 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn human_male_eyelid_blink_global_sequence() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("Character\\Human\\Male\\HumanMale.m2")
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(&chain, "Character\\Human\\Male\\HumanMale.m2")
             .expect("read HumanMale.m2");
         let gs = parse_m2_global_sequence_bones(&bytes);
 
@@ -858,7 +592,7 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_glue_stage_bones_carry_the_scenes_authored_rotation_and_scale() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
+        let chain = crate::open_chain(&data).expect("open chain");
         // (scene token, stage yaw °, character-stage scale, pet-stage scale)
         let scenes = [
             ("Human", -16.5_f32, 0.97_f32, 0.97_f32),
@@ -869,14 +603,12 @@ mod tests {
             ("Tauren", 0.0, 1.04, 0.7324),
         ];
         for (token, want_deg, want_scale, want_pet_scale) in scenes {
-            let bytes = chain
-                .read_file(&format!(
-                    "Interface\\Glues\\Models\\UI_{token}\\UI_{token}.m2"
-                ))
-                .unwrap_or_else(|e| panic!("read UI_{token}.m2: {e}"));
-            let parsed = benilla_m2::parse_m2(&mut std::io::Cursor::new(&bytes[..]))
-                .unwrap_or_else(|e| panic!("parse UI_{token}.m2: {e:?}"));
-            let model = parsed.model();
+            let bytes = crate::read_m2(
+                &chain,
+                &format!("Interface\\Glues\\Models\\UI_{token}\\UI_{token}.m2"),
+            )
+            .unwrap_or_else(|e| panic!("read UI_{token}.m2: {e}"));
+            let model = &bytes;
             let bone_of = |id: u16| {
                 model
                     .attachments
@@ -953,9 +685,8 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn empty_band_poses_the_bone_and_never_drops_it() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("Character\\Human\\Male\\HumanMale.m2")
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(&chain, "Character\\Human\\Male\\HumanMale.m2")
             .expect("read HumanMale.m2");
         let seqs = parse_m2_animations(&bytes);
 
@@ -1016,10 +747,8 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn empty_band_takes_the_window_key_not_a_later_one() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("Creature\\Zombie\\Zombie.m2")
-            .expect("read Zombie.m2");
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(&chain, "Creature\\Zombie\\Zombie.m2").expect("read Zombie.m2");
         let seqs = parse_m2_animations(&bytes);
         for anim in [4, 5] {
             let s = seqs
@@ -1050,9 +779,8 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn hand_grip_reads_the_curled_pose_through_the_window() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("Character\\Human\\Male\\HumanMale.m2")
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(&chain, "Character\\Human\\Male\\HumanMale.m2")
             .expect("read HumanMale.m2");
         let poses = hand_grip_finger_poses(&bytes, &[102]);
         let (bone, q) = *poses.first().expect("bone 102 carries a grip pose");
@@ -1071,13 +799,13 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn no_clip_carries_a_key_from_another_sequences_band() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
+        let chain = crate::open_chain(&data).expect("open chain");
         for model in [
             "Creature\\Bear\\Bear.m2",
             "Creature\\Chicken\\Chicken.m2",
             "Character\\Human\\Male\\HumanMale.m2",
         ] {
-            let bytes = chain.read_file(model).expect("read model");
+            let bytes = crate::read_m2(&chain, model).expect("read model");
             for s in parse_m2_animations(&bytes) {
                 for b in &s.bones {
                     let times = b
@@ -1107,11 +835,13 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_pvp_shoulder_emitters_ride_a_billboard_bone() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("Item\\ObjectComponents\\Shoulder\\LShoulder_Mail_PVPAlliance_C_01.m2")
-            .expect("read the R14 mail shoulder");
-        let skel = parse_m2_skeleton(&bytes).expect("skeleton");
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(
+            &chain,
+            "Item\\ObjectComponents\\Shoulder\\LShoulder_Mail_PVPAlliance_C_01.m2",
+        )
+        .expect("read the R14 mail shoulder");
+        let skel = parse_m2_skeleton(&bytes);
         assert_eq!(skel.bones.len(), 4);
         assert_eq!(
             skel.bones.iter().filter(|b| b.billboard.is_some()).count(),
@@ -1154,10 +884,12 @@ mod tests {
                 d.sqrt()
             );
         }
-        let torch = chain
-            .read_file("Item\\ObjectComponents\\Weapon\\Club_1H_Torch_A_01.m2")
-            .expect("read the torch");
-        let tskel = parse_m2_skeleton(&torch).expect("skeleton");
+        let torch = crate::read_m2(
+            &chain,
+            "Item\\ObjectComponents\\Weapon\\Club_1H_Torch_A_01.m2",
+        )
+        .expect("read the torch");
+        let tskel = parse_m2_skeleton(&torch);
         let tem = crate::parse_m2_particle_emitters(&torch).expect("emitters");
         assert_eq!(tem.len(), 1);
         assert_eq!(tem[0].bone, 10);
@@ -1177,11 +909,10 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_real_item_glow_model_is_pure_billboard_geometry_with_no_emitters() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("Spells\\Enchantments\\Sparkle_A.m2")
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(&chain, "Spells\\Enchantments\\Sparkle_A.m2")
             .expect("read the Sparkle_A item glow");
-        let skel = parse_m2_skeleton(&bytes).expect("skeleton");
+        let skel = parse_m2_skeleton(&bytes);
         assert_eq!(skel.bones.len(), 1, "one bone — the quad's own");
         assert_eq!(
             skel.bones[0].billboard,
@@ -1211,10 +942,12 @@ mod doodad_sound_tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_lamps_hum_is_one_rest_posed_looping_dsl_key() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("World\\Generic\\NightElf\\Passive Doodads\\Lamps\\KalidarStreetLamp01.m2")
-            .expect("the lamp is in the chain");
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(
+            &chain,
+            "World\\Generic\\NightElf\\Passive Doodads\\Lamps\\KalidarStreetLamp01.m2",
+        )
+        .expect("the lamp is in the chain");
         let seqs = super::parse_m2_animations(&bytes);
         assert_eq!(seqs.len(), 1, "one authored sequence");
 
@@ -1240,10 +973,12 @@ mod doodad_sound_tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_dsl_pair_on_one_cycle_alternates_through_one_slot() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("World\\Generic\\Human\\Passive Doodads\\Bellows\\bellows.m2")
-            .expect("the bellows is in the chain");
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(
+            &chain,
+            "World\\Generic\\Human\\Passive Doodads\\Bellows\\bellows.m2",
+        )
+        .expect("the bellows is in the chain");
         let seqs = super::parse_m2_animations(&bytes);
         let carrier = seqs
             .iter()

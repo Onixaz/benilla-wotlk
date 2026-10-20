@@ -111,6 +111,8 @@ pub fn spawn_model_entities(
     let kind = object.kind;
     let is_wmo = kind == ModelKind::Wmo;
     let mut out = Vec::with_capacity(submeshes.len());
+    // The placement's batches rank inside one transparent group.
+    let sort_group = crate::model_render::M2BatchSort::group();
     // The anim host serves any joint consumer: a skinned part, an emitter or a ribbon. A model of
     // billboard cards alone gets none, as the billboard system owns their transforms.
     let mut host = m2
@@ -163,7 +165,10 @@ pub fn spawn_model_entities(
         // A batch whose UV or tint loop differs by sequence gets a material keyed by this
         // placement's host, since placements re-roll their variations independently. Without a
         // host it shares and stays at the built seed.
-        let per_seq = sub.uv_seq.is_some() || sub.rgb_seq.is_some();
+        let stage1 = crate::doodad_anim::UvLoops::stage1_of(&sub.geometry);
+        let per_seq = sub.uv_seq.is_some()
+            || sub.rgb_seq.is_some()
+            || stage1.as_ref().is_some_and(|s| s.seqs.is_some());
         let seq_owner = per_seq.then_some(rig_root).flatten();
         let cutout = model_material(
             mat_cache,
@@ -443,6 +448,20 @@ pub fn spawn_model_entities(
                 );
             }
         }
+        // The combiner's stage-1 transform, on the same clocks.
+        if let Some(s1) = &stage1 {
+            for id in [cutout.id(), blend.id()] {
+                crate::doodad_anim::register_stage1(
+                    uv_reg,
+                    anim_table,
+                    materials,
+                    id,
+                    s1,
+                    seq_owner,
+                    sub.uv_anim.clone(),
+                );
+            }
+        }
         // Likewise for the animated M2Color RGB tint.
         if let (Some(seqs), Some(host)) = (sub.rgb_seq.as_ref(), seq_owner) {
             for id in [cutout.id(), blend.id()] {
@@ -502,6 +521,13 @@ pub fn spawn_model_entities(
                 mesh_tag,
                 card,
             ));
+            if let Some(sort) = crate::model_render::M2BatchSort::card(
+                &sub.geometry,
+                sort_group,
+                crate::model_render::SortOrigin::Fixed(transform.translation),
+            ) {
+                card_entity.insert(sort);
+            }
             // The build-time Aabb, inserted here: `calculate_bounds` can race extraction of a
             // `RENDER_WORLD` form, and the exterior cull fails open without a bound.
             if let Some(aabb) = stat_aabb {
@@ -526,6 +552,9 @@ pub fn spawn_model_entities(
                 crate::interact::PickMesh(sub.geometry.clone()),
                 mesh_tag,
             ));
+            if let Some(sort) = crate::model_render::M2BatchSort::of(&sub.geometry, sort_group) {
+                part_entity.insert(sort);
+            }
             // An animated placement's joints move the vertices away from the bind-pose bound, so
             // it widens to the authored all-animation box; a card, which follows its joint, needs
             // none. `NoAutoAabb` keeps the bound: `calculate_bounds` recomputes it on
@@ -573,6 +602,7 @@ pub fn spawn_model_entities(
         if sub.uv_anim.as_ref().is_some_and(|a| a.period > 0.0)
             || sub.rgb_anim.as_ref().is_some_and(|a| a.period > 0.0)
             || seq_owner.is_some()
+            || stage1.as_ref().is_some_and(|s| s.animates())
         {
             commands
                 .entity(entity)

@@ -7,8 +7,8 @@ fn main() -> anyhow::Result<()> {
         .nth(1)
         .ok_or_else(|| anyhow::anyhow!("usage: gseqdump <m2 path>"))?;
     let data = benilla_formats::wow_data().expect("no WoW install found (set $WOW_DATA)");
-    let mut chain = benilla_formats::open_chain(&data)?;
-    let bytes = chain.read_file(&virt)?;
+    let chain = benilla_formats::open_chain(&data)?;
+    let bytes = benilla_formats::read_m2(&chain, &virt)?;
     for g in benilla_formats::parse_m2_global_sequence_bones(&bytes) {
         println!("bone {}", g.bone);
         if let Some(t) = &g.translation {

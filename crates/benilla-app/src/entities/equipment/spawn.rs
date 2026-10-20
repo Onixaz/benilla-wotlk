@@ -438,6 +438,12 @@ fn spawn_slot(
                     attach: Some(hs.attach),
                 },
             ));
+            // The model's batches rank inside one transparent group.
+            if let Some(sort) =
+                benilla_world::model_render::M2BatchSort::of(&part.geometry, root.to_bits())
+            {
+                child.insert(sort);
+            }
             if skinned.is_some() {
                 // The palette replaces the part's world matrix, so its `Aabb` is not where it
                 // draws; and the reference elects a scene object once, at the body root.
@@ -513,6 +519,14 @@ fn spawn_slot(
             benilla_world::interact::PickMesh(part.geometry.clone()),
             BillboardCard::following(&info, root),
         ));
+        // The model's batches rank inside one transparent group.
+        if let Some(sort) = benilla_world::model_render::M2BatchSort::card(
+            &part.geometry,
+            root.to_bits(),
+            benilla_world::model_render::SortOrigin::Entity(root),
+        ) {
+            card.insert(sort);
+        }
         if let Some(aabb) = part.aabb {
             card.insert(aabb);
         }

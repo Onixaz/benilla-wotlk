@@ -50,6 +50,9 @@ struct ModelParams {
     // An M2 batch's pixel combiner (`wow_combine`): x = its shader code + 1, 0 for the one-stage
     // modulate; y = bit 0 stage 1 on the sphere map, bit 1 stage 0 on the second UV set.
     combiner: vec4<f32>,
+    // The combiner's stage-1 texture transform: xy = its offset at t = 0, z/w = its UV-scroll and
+    // affine rows of `wow_light.matanim`, 0 = identity.
+    stage1: vec4<f32>,
 };
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> m: ModelParams;
 // The combiner's stage-1 texture (white where none).
@@ -451,22 +454,25 @@ fn vertex(vertex: WowVertex) -> WowVsOut {
     return out;
 }
 
-// What a combiner leaves of the reference's `rgb = mul·P + add`, `a = alpha·P.a`, P the primary
-// colour (light × M2Color) with its alpha 1 here: the batch alpha rides the fade instead.
+// What a combiner leaves of the reference's `rgb = mul·P + add` and its alpha, P the primary
+// colour (light × M2Color, the batch alpha in P.a). Where the alpha is a product of P.a the batch
+// alpha multiplies it afterwards with the fade; where P.a is added (`has_pa`) it is already in.
 struct Combined {
     mul: vec3<f32>,
     add: vec3<f32>,
     a: f32,
+    has_pa: bool,
 }
 
 // The pixel shaders `Combiners_*.bls` by `CombinerShader::code`: one stage `op`, two stages
 // `8 + 8·op0 + op1`, the layered shaders 64-66. Ops: 0 Opaque, 1 Mod, 3 Add, 4 Mod2x, 6 Mod2xNA,
 // 7 AddNA.
-fn wow_combine(code: u32, t0: vec4<f32>, t1: vec4<f32>) -> Combined {
+fn wow_combine(code: u32, t0: vec4<f32>, t1: vec4<f32>, pa: f32) -> Combined {
     var c: Combined;
     c.mul = t0.rgb;
     c.add = vec3<f32>(0.0);
     c.a = t0.a;
+    c.has_pa = false;
     switch code {
         case 0u: { c.a = 1.0; }
         case 3u: { c.mul = vec3<f32>(1.0); c.add = t0.rgb; c.a = 1.0; }
@@ -474,19 +480,21 @@ fn wow_combine(code: u32, t0: vec4<f32>, t1: vec4<f32>) -> Combined {
         // Opaque_Opaque, _Mod, _Add, _Mod2x, _Mod2xNA, _AddNA.
         case 8u: { c.mul = t0.rgb * t1.rgb; c.a = 1.0; }
         case 9u: { c.mul = t0.rgb * t1.rgb; c.a = t1.a; }
-        case 11u: { c.add = t1.rgb; c.a = 1.0; }
+        // Opaque_Add: alpha `P.a + t1.a`.
+        case 11u: { c.add = t1.rgb; c.a = pa + t1.a; c.has_pa = true; }
         case 12u: { c.mul = 2.0 * t0.rgb * t1.rgb; c.a = 2.0 * t1.a; }
         case 14u: { c.mul = 2.0 * t0.rgb * t1.rgb; c.a = 1.0; }
         case 15u: { c.add = t1.rgb; c.a = 1.0; }
         // Mod_Opaque, _Mod, _Add, _Mod2x, _Mod2xNA, _AddNA.
         case 16u: { c.mul = t0.rgb * t1.rgb; }
         case 17u: { c.mul = t0.rgb * t1.rgb; c.a = t0.a * t1.a; }
-        case 19u: { c.add = t1.rgb; c.a = t0.a + t1.a; }
+        // Mod_Add: alpha `t0.a·P.a + t1.a`.
+        case 19u: { c.add = t1.rgb; c.a = t0.a * pa + t1.a; c.has_pa = true; }
         case 20u: { c.mul = 2.0 * t0.rgb * t1.rgb; c.a = 2.0 * t0.a * t1.a; }
         case 22u: { c.mul = 2.0 * t0.rgb * t1.rgb; }
         case 23u: { c.add = t1.rgb; }
         // Add_Mod: `t1·P + t0·t1`, alpha `t1.a·(P.a + t0.a)`.
-        case 33u: { c.mul = t1.rgb; c.add = t0.rgb * t1.rgb; c.a = t1.a * (1.0 + t0.a); }
+        case 33u: { c.mul = t1.rgb; c.add = t0.rgb * t1.rgb; c.a = t1.a * (pa + t0.a); c.has_pa = true; }
         // Mod2x_Mod2x.
         case 44u: { c.mul = 4.0 * t0.rgb * t1.rgb; c.a = 4.0 * t0.a * t1.a; }
         // Opaque_Mod2xNA_Alpha: the env doubled over the texel, back to the bare texel by its alpha.
@@ -584,9 +592,25 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
 #endif
     }
 #endif
+    // The MeshTag (mesh_tag.rs): bit 31 = highlight, bit 30 = interior fog; payload bits 0-5 = the
+    // fade alpha (a zero payload is untagged, opaque), 19-29 = the rig slot, 6-13 = the ground
+    // shade (0 lit, 255 MCSH-shadowed) or, on an interior-prop material, 6-18 = the SH-probe slot.
+    let interior_prop = m.model_flags.z > 0.5 && m.model_flags.x < 0.5;
+    let raw_tag = mesh_functions::get_tag(in.instance_index);
+    let highlighted = (raw_tag & 0x80000000u) != 0u;
+    let interior_fogged = (raw_tag & 0x40000000u) != 0u;
+    let fade_tag = raw_tag & 0x3fffffffu;
+    let alpha6 = f32(fade_tag & 0x3fu) / 63.0;
+    var obj_fade = select(alpha6, 1.0, fade_tag == 0u);
+#ifdef WOW_MERGED_FADE
+    // A merged blob's per-vertex fade composes where the tag fade does, so it feathers the same.
+    obj_fade = obj_fade * in.merged_fade;
+#endif
     // The pixel combiner of a 3.3.5a M2 batch (`wow_combine`): the texels recombined over the
-    // primary colour, which Bevy's fold leaves as the vertex colour (the material colour is white).
+    // primary colour, which Bevy's fold leaves as the vertex colour (the material colour is white),
+    // its alpha the batch alpha `obj_fade`.
     var combine_add = vec3<f32>(0.0);
+    var alpha_has_fade = false;
     let combined = m.combiner.x > 0.5;
 #ifdef VERTEX_UVS_A
     if (combined) {
@@ -596,15 +620,25 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
             vo.uv,
             view.mip_bias,
         );
-        // Not built: a stage-1 texture transform; the shipped login scene's stage 1 holds still.
-        let t1 = textureSampleBias(wow_texture2, wow_sampler2, in.uv2, view.mip_bias);
+        // Stage 1's own texture transform (`SetupTextures 0x81f450`), the stage-0 law on the
+        // second coordinate; a sphere-map stage takes none.
+        var uv1 = in.uv2;
+        if ((u32(m.combiner.y) & 1u) == 0u) {
+            let uv_t = in.uv2 + m.stage1.xy + wow_light.matanim[u32(m.stage1.z)].xy;
+            let affine = wow_light.matanim[u32(m.stage1.w)];
+            let d = (uv_t - vec2<f32>(0.5, 0.5)) * vec2<f32>(1.0 + affine.z, 1.0 + affine.w);
+            let c = 1.0 + affine.x;
+            uv1 = vec2<f32>(0.5 + d.x * c - d.y * affine.y, 0.5 + d.x * affine.y + d.y * c);
+        }
+        let t1 = textureSampleBias(wow_texture2, wow_sampler2, uv1, view.mip_bias);
         var p0 = vec3<f32>(1.0);
 #ifdef VERTEX_COLORS
         p0 = vo.color.rgb;
 #endif
-        let c = wow_combine(u32(m.combiner.x) - 1u, t0, t1);
+        let c = wow_combine(u32(m.combiner.x) - 1u, t0, t1, obj_fade);
         base_color = vec4<f32>(p0 * c.mul, c.a);
         combine_add = c.add;
+        alpha_has_fade = c.has_pa;
     }
 #endif
     // The detail-doodad LOD bias (`0x6813f4`): on the atlases whose alpha pyramid is binary below
@@ -637,20 +671,6 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
         base_color.a = base_color.a * ramp;
     }
 
-    // The MeshTag (mesh_tag.rs): bit 31 = highlight, bit 30 = interior fog; payload bits 0-5 = the
-    // fade alpha (a zero payload is untagged, opaque), 19-29 = the rig slot, 6-13 = the ground
-    // shade (0 lit, 255 MCSH-shadowed) or, on an interior-prop material, 6-18 = the SH-probe slot.
-    let interior_prop = m.model_flags.z > 0.5 && m.model_flags.x < 0.5;
-    let raw_tag = mesh_functions::get_tag(in.instance_index);
-    let highlighted = (raw_tag & 0x80000000u) != 0u;
-    let interior_fogged = (raw_tag & 0x40000000u) != 0u;
-    let fade_tag = raw_tag & 0x3fffffffu;
-    let alpha6 = f32(fade_tag & 0x3fu) / 63.0;
-    var obj_fade = select(alpha6, 1.0, fade_tag == 0u);
-#ifdef WOW_MERGED_FADE
-    // A merged blob's per-vertex fade composes where the tag fade does, so it feathers the same.
-    obj_fade = obj_fade * in.merged_fade;
-#endif
     // The body tint (an aura colouring the whole model), by rig slot, 0 = identity: the material
     // ambient+diffuse colour (gx SetState(1), GL_COLOR_MATERIAL), so it multiplies the light sum
     // inside the clamp, never the emission.
@@ -673,7 +693,7 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     // The depth-prime twin (`M2UseZFill`) masks colour writes, so only the discards above shape its
     // depth. No early return: naga's MSL backend miscompiles the dead tail ("redefinition of
     // '_tmp'").
-    let faded_alpha = base_color.a * obj_fade;
+    let faded_alpha = select(base_color.a * obj_fade, base_color.a, alpha_has_fade);
     let base = alpha_discard(pbr_input.material, base_color);
 
     // --- Lighting --------------------------------------------------------------------------------

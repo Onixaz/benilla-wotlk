@@ -1,4 +1,4 @@
-//! A 1.12.1 WMO (World Map Object) reader, scoped to what the renderer consumes. A root file holds
+//! A 3.3.5a WMO (World Map Object) reader, scoped to what the renderer consumes. A root file holds
 //! `MOHD`, `MOTX` and `MOMT` among its tables; each group file holds a `MOGP` super-chunk wrapping
 //! the geometry sub-chunks. A chunk is a 4-char magic stored reversed, a `u32` size, the payload.
 

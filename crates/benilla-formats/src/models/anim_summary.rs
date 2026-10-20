@@ -1,31 +1,21 @@
 //! An M2's animation-channel summary, telling a doodad that can render as a static mesh from one
 //! that animates, and by which channel (`benilla-extract m2anim`, `doodadscan`).
 
-use std::io::Cursor;
-
 use anyhow::{Context, Result};
-use benilla_m2::parse_m2;
+use benilla_m2::M2Model;
 
 use crate::Chain;
 
-use super::{le_u32, model_path, parse_m2_animations, parse_m2_global_sequence_bones};
+use super::{parse_m2_animations, parse_m2_global_sequence_bones, read_model};
 
-/// The texture-transform (UV animation) array count, MD20 `0x74` (count) / `0x78` (offset), as
-/// the header walk `0x71cdf0` reads it: whether the model authors any UV animation.
-pub fn m2_texture_transform_count(b: &[u8]) -> usize {
-    if b.len() < 0x78 || &b[0..4] != b"MD20" {
-        return 0;
-    }
-    le_u32(b, 0x74) as usize
+/// The texture-transform (UV animation) count: whether the model authors any UV animation.
+pub fn m2_texture_transform_count(model: &M2Model) -> usize {
+    model.texture_transforms.len()
 }
 
-/// The ribbon emitter array count, MD20 `0x134` (count) / `0x138` (offset), file stride `0xdc`
-/// (the header walk `0x71cdf0`, the loader's copy loop `0x70ebd0`); the records are not parsed.
-pub fn m2_ribbon_emitter_count(b: &[u8]) -> usize {
-    if b.len() < 0x138 || &b[0..4] != b"MD20" {
-        return 0;
-    }
-    le_u32(b, 0x134) as usize
+/// The ribbon emitter count; the records are not parsed here.
+pub fn m2_ribbon_emitter_count(model: &M2Model) -> usize {
+    model.ribbon_emitters().0
 }
 
 /// A particle emitter's host bone, and whether that bone's chain (itself or any ancestor, since
@@ -87,13 +77,9 @@ impl M2AnimSummary {
     }
 }
 
-/// Parse an M2's animation-channel summary (see [`M2AnimSummary`]) from raw bytes.
-pub fn parse_m2_animation_summary(bytes: &[u8]) -> Result<M2AnimSummary> {
-    let format =
-        parse_m2(&mut Cursor::new(bytes)).map_err(|e| anyhow::anyhow!("parsing M2: {e}"))?;
-    let model = format.model();
-
-    let seqs = parse_m2_animations(bytes);
+/// A parsed M2's animation-channel summary (see [`M2AnimSummary`]).
+pub fn parse_m2_animation_summary(model: &M2Model) -> Result<M2AnimSummary> {
+    let seqs = parse_m2_animations(model);
     let sequence_count = seqs.len();
     let seq0_variation_count = seqs
         .first()
@@ -110,7 +96,7 @@ pub fn parse_m2_animation_summary(bytes: &[u8]) -> Result<M2AnimSummary> {
         .unwrap_or(0);
 
     let mut global_seq_channels = Vec::new();
-    for b in parse_m2_global_sequence_bones(bytes) {
+    for b in parse_m2_global_sequence_bones(model) {
         if let Some(t) = &b.translation {
             global_seq_channels.push((b.bone, "T", t.period_ms));
         }
@@ -136,7 +122,7 @@ pub fn parse_m2_animation_summary(bytes: &[u8]) -> Result<M2AnimSummary> {
         .unwrap_or_default();
     let gseq_bones: std::collections::HashSet<u16> =
         global_seq_channels.iter().map(|&(b, _, _)| b).collect();
-    let skeleton = crate::parse_m2_skeleton(bytes)?;
+    let skeleton = crate::parse_m2_skeleton(model);
     let chain_flags = |bone: u16| -> (bool, bool) {
         let (mut seq0, mut gseq) = (false, false);
         let mut b = bone;
@@ -154,7 +140,7 @@ pub fn parse_m2_animation_summary(bytes: &[u8]) -> Result<M2AnimSummary> {
         }
         (seq0, gseq)
     };
-    let emitter_bones: Vec<EmitterBoneLink> = crate::parse_m2_particle_emitters(bytes)?
+    let emitter_bones: Vec<EmitterBoneLink> = crate::parse_m2_particle_emitters(model)?
         .iter()
         .map(|e| {
             let (chain_seq0, chain_gseq) = chain_flags(e.bone);
@@ -194,20 +180,17 @@ pub fn parse_m2_animation_summary(bytes: &[u8]) -> Result<M2AnimSummary> {
                 .filter(|t| t.keys.len() > 1)
                 .count(),
         ),
-        texture_transform_count: m2_texture_transform_count(bytes),
+        texture_transform_count: m2_texture_transform_count(model),
         particle_emitter_count: emitter_bones.len(),
         emitter_bones,
-        ribbon_emitter_count: m2_ribbon_emitter_count(bytes),
+        ribbon_emitter_count: m2_ribbon_emitter_count(model),
     })
 }
 
 /// Read an M2's animation-channel summary from the chain, by model or doodad (`.mdx`/`.mdl`) path.
 pub fn load_m2_animation_summary(chain: &mut Chain, raw_path: &str) -> Result<M2AnimSummary> {
-    let path = model_path(raw_path);
-    let bytes = chain
-        .read_file(&path)
-        .with_context(|| format!("reading M2 {path}"))?;
-    parse_m2_animation_summary(&bytes)
+    let (path, model) = read_model(chain, raw_path)?;
+    parse_m2_animation_summary(&model)
         .with_context(|| format!("parsing M2 animation summary {path}"))
 }
 
@@ -215,40 +198,23 @@ pub fn load_m2_animation_summary(chain: &mut Chain, raw_path: &str) -> Result<M2
 mod tests {
     use super::*;
 
-    /// A minimal MD20 header through the ribbon array, with the two counts set.
-    fn header_with_counts(tex_transform_count: u32, ribbon_count: u32) -> Vec<u8> {
-        let mut b = vec![0u8; 0x138];
-        b[0..4].copy_from_slice(b"MD20");
-        b[4..8].copy_from_slice(&256u32.to_le_bytes());
-        b[0x74..0x78].copy_from_slice(&tex_transform_count.to_le_bytes());
-        b[0x134..0x138].copy_from_slice(&ribbon_count.to_le_bytes());
-        b
-    }
+    use benilla_m2::fixture::{self, header as h, Model};
 
     #[test]
-    fn texture_transform_and_ribbon_counts_read_the_verified_header_offsets() {
-        let b = header_with_counts(3, 7);
-        assert_eq!(m2_texture_transform_count(&b), 3);
-        assert_eq!(m2_ribbon_emitter_count(&b), 7);
-    }
-
-    #[test]
-    fn texture_transform_and_ribbon_counts_are_zero_on_a_too_short_or_non_md20_buffer() {
-        assert_eq!(m2_texture_transform_count(&[]), 0);
-        assert_eq!(m2_ribbon_emitter_count(&[]), 0);
-        let short = header_with_counts(3, 7);
-        assert_eq!(m2_texture_transform_count(&short[..0x50]), 0);
-        assert_eq!(m2_ribbon_emitter_count(&short[..0x50]), 0);
-        let mut not_md20 = header_with_counts(3, 7);
-        not_md20[0..4].copy_from_slice(b"XXXX");
-        assert_eq!(m2_texture_transform_count(&not_md20), 0);
-        assert_eq!(m2_ribbon_emitter_count(&not_md20), 0);
+    fn texture_transform_and_ribbon_counts_read_their_arrays() {
+        let mut m = Model::new();
+        let tracks: Vec<u8> = (0..3).flat_map(|_| m.no_track()).collect();
+        m.array(h::TEXTURE_TRANSFORMS, 1, &tracks);
+        m.put_arr(h::RIBBON_EMITTERS, 7, 0);
+        let model = m.parse(&fixture::empty_skin()).unwrap();
+        assert_eq!(m2_texture_transform_count(&model), 1);
+        assert_eq!(m2_ribbon_emitter_count(&model), 7);
     }
 
     #[test]
     fn empty_model_summary_is_fully_static() {
-        let b = header_with_counts(0, 0);
-        let summary = parse_m2_animation_summary(&b).expect("an all-zero-array header parses");
+        let model = Model::new().parse(&fixture::empty_skin()).unwrap();
+        let summary = parse_m2_animation_summary(&model).expect("an empty model summarises");
         assert_eq!(summary.sequence_count, 0);
         assert!(!summary.seq0_has_bone_motion);
         assert_eq!(summary.seq0_animated_bone_count, 0);

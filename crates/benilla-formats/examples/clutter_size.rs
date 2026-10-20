@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
     let mut depths: Vec<f32> = Vec::new();
     let mut shown = 0;
     for path in &models {
-        let Ok(bytes) = chain.read_file(path) else {
+        let Ok(bytes) = benilla_formats::read_m2(&chain, path) else {
             continue;
         };
         let Ok(subs) = benilla_formats::parse_m2_render_submeshes(&bytes, "", &[]) else {

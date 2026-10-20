@@ -204,9 +204,8 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_cooldown_indicators_rotation_bakes_per_sequence() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file(r"Interface\Cooldown\UI-Cooldown-Indicator.m2")
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(&chain, r"Interface\Cooldown\UI-Cooldown-Indicator.m2")
             .expect("read the cooldown indicator");
         let subs = super::super::parse_m2_render_submeshes(&bytes, "", &[]).expect("parse");
         let rot = subs[0]
@@ -291,12 +290,12 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn elwynn_waterfall_bakes_two_v_scroll_loops() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file(
-                "World\\Azeroth\\Elwynn\\PassiveDoodads\\Waterfall\\ElwynnTallWaterfall01.m2",
-            )
-            .expect("read ElwynnTallWaterfall01.m2");
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(
+            &chain,
+            "World\\Azeroth\\Elwynn\\PassiveDoodads\\Waterfall\\ElwynnTallWaterfall01.m2",
+        )
+        .expect("read ElwynnTallWaterfall01.m2");
         let subs = super::super::parse_m2_render_submeshes(&bytes, "", &[]).expect("parse");
         let anims: Vec<&UvAnim> = subs.iter().filter_map(|s| s.uv_anim.as_ref()).collect();
         assert_eq!(anims.len(), 2, "both waterfall batches carry UV loops");

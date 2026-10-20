@@ -113,7 +113,7 @@ pub fn thudcensus(chain: &mut Chain) -> Result<()> {
         let Some(models) = by_key.get(&key) else {
             continue; // not a creature model: `CGUnit_C::HandleAnimEvent` never sees its events
         };
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         let mut rows = Vec::new();

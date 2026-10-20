@@ -105,6 +105,7 @@ impl EntityPart {
             single: self.uv_anim.clone(),
             rot: self.uv_rot_seq.clone(),
             scale: self.uv_scale_seq.clone(),
+            stage1: benilla_world::doodad_anim::UvLoops::stage1_of(&self.geometry),
         }
     }
 }
@@ -113,6 +114,9 @@ impl EntityPart {
 /// `None` while the asset loads, and empty for a model with no geometry.
 pub(crate) struct DisplayModel {
     pub(crate) handle: ModelHandle,
+    /// The display's particle colour override (`ParticleColorID`), applied to its emitters as the
+    /// model loads.
+    pub(crate) particle_colors: Option<benilla_formats::ParticleColors>,
     /// The model's directory, where its skin textures live.
     pub(super) dir: String,
     /// The creature's `Monster1/2/3` skin variation names.
@@ -210,6 +214,7 @@ pub(super) fn new_creature_display(
             dir: model_dir(&m.model_path).to_string(),
             skins: m.textures,
             npc_appearance: m.npc_appearance,
+            particle_colors: m.particle_colors,
             is_character_body: m
                 .model_path
                 .get(..10)
@@ -244,6 +249,7 @@ pub(super) fn new_gameobject_display(
 pub(crate) fn empty_shell() -> DisplayModel {
     DisplayModel {
         handle: ModelHandle::None,
+        particle_colors: None,
         dir: String::new(),
         skins: Default::default(),
         npc_appearance: None,
@@ -331,7 +337,17 @@ pub(super) fn build_parts(
             if !forms.require_rigged(h, 0) {
                 return; // forms still building
             }
-            emitters = model.emitters.clone();
+            // The display's particle colours replace its emitters' colour keys (`0x4ea9e0`).
+            emitters = model
+                .emitters
+                .iter()
+                .map(
+                    |e| match dm.particle_colors.and_then(|c| e.def.recolored(&c)) {
+                        Some(def) => benilla_assets::ModelEmitter { def, ..e.clone() },
+                        None => e.clone(),
+                    },
+                )
+                .collect();
             ribbons = model.ribbons.clone();
             lights = model.lights.clone();
             terrain_tilt = (model.global_flags & 3) as u8;

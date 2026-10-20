@@ -1,6 +1,6 @@
 //! 3.3.5a M2 ribbon emitters (weapon trails, wisp streamers, missile trails), read from the
 //! version-264 record (header +0x120/+0x124, stride 0xb0; loader `0x833702`), its tracks onto the
-//! relayout's sequence bands ([`benilla_m2::Tracks264`]):
+//! model's sequence bands ([`benilla_m2::Tracks264`]):
 //!
 //! ```text
 //! +0x04 boneIndex(u16)  +0x08 position(C3Vector, bone-local)
@@ -23,7 +23,7 @@
 //! this uses the model's (the same wherever the bone plays the model's sequence).
 
 use anyhow::Result;
-use benilla_m2::{md20_version, AnimFiles, M2Track, Tracks264, VERSION_264};
+use benilla_m2::{M2Model, M2Track};
 
 use crate::particles::{texture_paths_264, HDR_RIBBONS};
 use crate::value_track::{rebase_keys_to_band, TrackValue, ValueTrack};
@@ -159,21 +159,9 @@ fn visibility_by_anim(
     any_off.then_some(RibbonVisibility { by_anim })
 }
 
-/// A version-264 M2's ribbon emitters; empty when it has none or is not version 264. A sequence
-/// keyed in a `.anim` file has no keys here ([`parse_m2_ribbon_emitters_with_anims`] reads them).
-pub fn parse_m2_ribbon_emitters(bytes: &[u8]) -> Result<Vec<RibbonEmitterDef>> {
-    parse_m2_ribbon_emitters_with_anims(bytes, &AnimFiles::new())
-}
-
-/// [`parse_m2_ribbon_emitters`], the tracks of a sequence keyed in a `.anim` read from `anims`
-/// ([`benilla_m2::anim_paths`]).
-pub fn parse_m2_ribbon_emitters_with_anims(
-    bytes: &[u8],
-    anims: &AnimFiles,
-) -> Result<Vec<RibbonEmitterDef>> {
-    if md20_version(bytes) != Some(VERSION_264) || bytes.len() < HDR_RIBBONS + 8 {
-        return Ok(Vec::new());
-    }
+/// A model's ribbon emitters; empty when it has none.
+pub fn parse_m2_ribbon_emitters(model: &M2Model) -> Result<Vec<RibbonEmitterDef>> {
+    let bytes = model.bytes();
     let count = le_u32(bytes, HDR_RIBBONS) as usize;
     let base = le_u32(bytes, HDR_RIBBONS + 4) as usize;
     // `count` sizes the reservation, so a hostile one is refused; 256 is far past any shipped
@@ -182,7 +170,7 @@ pub fn parse_m2_ribbon_emitters_with_anims(
         return Ok(Vec::new());
     }
     let textures = texture_paths_264(bytes);
-    let mut tracks = Tracks264::new(bytes, anims)?;
+    let mut tracks = model.tracks();
     let rf_count = le_u32(bytes, HDR_RENDER_FLAGS) as usize;
     let rf_base = le_u32(bytes, HDR_RENDER_FLAGS + 4) as usize;
     let sequences: Vec<(u16, (u32, u32))> = {
@@ -272,16 +260,16 @@ mod tests {
 
     #[test]
     fn a_hostile_ribbon_count_yields_nothing_not_an_abort() {
-        let (count, ptr) = (HDR_RIBBONS, HDR_RIBBONS + 4);
-        let mut b = vec![0u8; ptr + 4];
-        b[0..4].copy_from_slice(b"MD20");
-        b[4..8].copy_from_slice(&264u32.to_le_bytes());
-        b[count..count + 4].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(parse_m2_ribbon_emitters(&b).unwrap().is_empty());
+        use benilla_m2::fixture::{self, Model};
+        let mut m = Model::new();
+        m.put_arr(HDR_RIBBONS, u32::MAX as usize, 0);
+        let model = m.parse(&fixture::empty_skin()).unwrap();
+        assert!(parse_m2_ribbon_emitters(&model).unwrap().is_empty());
         // A plausible count whose table the file cannot hold is refused too.
-        b[count..count + 4].copy_from_slice(&3u32.to_le_bytes());
-        b[ptr..ptr + 4].copy_from_slice(&((ptr + 4) as u32).to_le_bytes());
-        assert!(parse_m2_ribbon_emitters(&b).unwrap().is_empty());
+        let end = m.b.len() as u32;
+        m.put_arr(HDR_RIBBONS, 3, end);
+        let model = m.parse(&fixture::empty_skin()).unwrap();
+        assert!(parse_m2_ribbon_emitters(&model).unwrap().is_empty());
     }
 
     #[test]
@@ -311,9 +299,8 @@ mod tests {
     #[test]
     fn real_holy_smite_slash_ribbons_are_keyed_flares() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("Spells\\HolySmite_Low_Chest.m2")
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(&chain, "Spells\\HolySmite_Low_Chest.m2")
             .expect("read HolySmite_Low_Chest.m2");
         let defs = parse_m2_ribbon_emitters(&bytes).expect("parse ribbons");
         assert_eq!(defs.len(), 2);
@@ -339,10 +326,12 @@ mod tests {
     #[test]
     fn real_thrown_dagger_trail_is_lit_only_in_flight() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("Item\\ObjectComponents\\Weapon\\Thrown_1H_Dagger_A_01.m2")
-            .expect("read Thrown_1H_Dagger_A_01.m2");
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(
+            &chain,
+            "Item\\ObjectComponents\\Weapon\\Thrown_1H_Dagger_A_01.m2",
+        )
+        .expect("read Thrown_1H_Dagger_A_01.m2");
         let defs = parse_m2_ribbon_emitters(&bytes).expect("parse ribbons");
         assert_eq!(defs.len(), 1, "the dagger authors one trail ribbon");
         let vis = defs[0]
@@ -360,10 +349,9 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_frost_trap_upper_streamers_light_only_inside_the_trigger() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("World\\Goober\\G_FrostTrap.m2")
-            .expect("read G_FrostTrap.m2");
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes =
+            crate::read_m2(&chain, "World\\Goober\\G_FrostTrap.m2").expect("read G_FrostTrap.m2");
         let defs = parse_m2_ribbon_emitters(&bytes).expect("parse ribbons");
         assert_eq!(defs.len(), 16, "the frost trap authors sixteen trails");
 

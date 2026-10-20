@@ -1506,6 +1506,7 @@ fn sync_portraits(
             let booth_parts: Vec<BoothPart> = parts
                 .iter()
                 .map(|p| BoothPart {
+                    sort: None,
                     skinned: p.skinned_mesh.clone(),
                     static_mesh: p.static_mesh.clone(),
                     material: booth_light.studio.variant(&p.material, &mut wow_mats),
@@ -1528,6 +1529,7 @@ fn sync_portraits(
             let booth_billboards: Vec<BoothBillboardSpec> = billboards
                 .iter()
                 .map(|b| BoothBillboardSpec {
+                    sort: None,
                     mesh: b.mesh.clone(),
                     material: booth_light.studio.variant(&b.material, &mut wow_mats),
                     bone: b.bone,
@@ -1967,6 +1969,7 @@ fn sync_body_booth(
         let booth_parts: Vec<BoothPart> = parts
             .iter()
             .map(|p| BoothPart {
+                sort: None,
                 skinned: p.skinned_mesh.clone(),
                 static_mesh: p.static_mesh.clone(),
                 material: booth_light.pane.variant(&p.material, wow_mats),
@@ -1988,6 +1991,7 @@ fn sync_body_booth(
         let booth_billboards: Vec<BoothBillboardSpec> = billboards
             .iter()
             .map(|b| BoothBillboardSpec {
+                sort: None,
                 mesh: b.mesh.clone(),
                 material: booth_light.pane.variant(&b.material, wow_mats),
                 bone: b.bone,

@@ -7,9 +7,9 @@ use std::sync::Arc;
 use benilla_formats::{
     hand_grip_finger_poses, parse_m2_animations, parse_m2_attachments, parse_m2_bounds,
     parse_m2_collision_hull, parse_m2_global_sequence_bones, parse_m2_lights,
-    parse_m2_particle_emitters_with_anims, parse_m2_playable_animation_lookup,
-    parse_m2_portrait_camera, parse_m2_render_submeshes, parse_m2_ribbon_emitters_with_anims,
-    parse_m2_skeleton, CollisionMesh, M2Bounds, M2Light, ParticleEmitterDef,
+    parse_m2_particle_emitters, parse_m2_portrait_camera, parse_m2_render_submeshes,
+    parse_m2_ribbon_emitters, parse_m2_skeleton, CollisionMesh, M2Bounds, M2Light,
+    ParticleEmitterDef,
 };
 use bevy::animation::graph::AnimationGraph;
 use bevy::asset::io::Reader;
@@ -239,36 +239,30 @@ impl AssetLoader for M2ModelLoader {
         reader.read_to_end(&mut bytes).await?;
         let to_io = |e: anyhow::Error| std::io::Error::other(format!("{e:#}"));
 
-        // A 3.3.5a model is read in the 1.12.1 layout, with its skin profile and its sequences'
-        // `.anim` files beside it; its particle and ribbon emitters are read from the version-264
-        // records the relayout skips.
-        let mut raw = Vec::new();
+        // A 3.3.5a model is read with its skin profile and its sequences' `.anim` files beside it.
+        let path = ctx.path().path().to_string_lossy().to_ascii_lowercase();
+        let skin = ctx
+            .read_asset_bytes(format!("mpq://{}", benilla_formats::skin_path(&path)))
+            .await
+            .map_err(|e| std::io::Error::other(format!("{path}: skin profile 0: {e}")))?;
+        let files = benilla_formats::anim_paths(&bytes, &path)
+            .map_err(|e| std::io::Error::other(format!("{path}: {e}")))?;
+        // A file that does not read leaves its sequences without keys, named in `dropped`.
         let mut anims = benilla_formats::AnimFiles::new();
-        if benilla_formats::md20_version(&bytes) == Some(benilla_formats::VERSION_264) {
-            let path = ctx.path().path().to_string_lossy().to_ascii_lowercase();
-            let skin = ctx
-                .read_asset_bytes(format!("mpq://{}", benilla_formats::skin_path(&path)))
-                .await
-                .map_err(|e| std::io::Error::other(format!("{path}: skin profile 0: {e}")))?;
-            let files = benilla_formats::anim_paths(&bytes, &path)
-                .map_err(|e| std::io::Error::other(format!("{path}: {e}")))?;
-            // A file that does not read leaves its sequences without keys, named in `dropped`.
-            for (seq, file) in files {
-                if let Ok(a) = ctx.read_asset_bytes(format!("mpq://{file}")).await {
-                    anims.insert(seq, a);
-                }
+        for (seq, file) in files {
+            if let Ok(a) = ctx.read_asset_bytes(format!("mpq://{file}")).await {
+                anims.insert(seq, a);
             }
-            let out = benilla_formats::relayout_264(&bytes, &skin, &anims)
-                .map_err(|e| std::io::Error::other(format!("{path}: {e}")))?;
-            for dropped in &out.dropped {
-                warn!("{path}: not loaded: {dropped}");
-            }
-            raw = std::mem::replace(&mut bytes, out.bytes);
+        }
+        let m2 = benilla_formats::parse_m2(bytes, &skin, anims)
+            .map_err(|e| std::io::Error::other(format!("{path}: {e}")))?;
+        for dropped in &m2.dropped {
+            warn!("{path}: not loaded: {dropped}");
         }
 
         // Skins fill at the spawn site, so no skin directory or list is passed.
-        let subs = parse_m2_render_submeshes(&bytes, "", &[]).map_err(to_io)?;
-        let bounds = parse_m2_bounds(&bytes).ok();
+        let subs = parse_m2_render_submeshes(&m2, "", &[]).map_err(to_io)?;
+        let bounds = Some(parse_m2_bounds(&m2));
         // One owner bound for every effect: the reference draws them all after the batches.
         let owner_reach = benilla_formats::m2_owner_reach(&subs);
         // The water-plane sphere: the header box's midpoint and the header sphere's radius.
@@ -283,9 +277,7 @@ impl AssetLoader for M2ModelLoader {
             )
         });
         // An empty hull is no hull: the model does not collide.
-        let collision = parse_m2_collision_hull(&bytes)
-            .ok()
-            .filter(|c| !c.is_empty());
+        let collision = Some(parse_m2_collision_hull(&m2)).filter(|c| !c.is_empty());
 
         let mut submeshes = Vec::with_capacity(subs.len());
         for sub in subs {
@@ -331,11 +323,11 @@ impl AssetLoader for M2ModelLoader {
             });
         }
         // The spawn site keeps the casting point lights (`M2Light::casts`).
-        let light_defs = parse_m2_lights(&bytes);
+        let light_defs = parse_m2_lights(&m2);
 
-        let skeleton_raw = parse_m2_skeleton(&bytes).unwrap_or_default();
+        let skeleton_raw = parse_m2_skeleton(&m2);
 
-        let mut emitters: Vec<ModelEmitter> = parse_m2_particle_emitters_with_anims(&raw, &anims)
+        let mut emitters: Vec<ModelEmitter> = parse_m2_particle_emitters(&m2)
             .unwrap_or_default()
             .into_iter()
             .map(|def| {
@@ -379,7 +371,7 @@ impl AssetLoader for M2ModelLoader {
             })
             .collect();
 
-        let ribbons: Vec<ModelRibbon> = parse_m2_ribbon_emitters_with_anims(&raw, &anims)
+        let ribbons: Vec<ModelRibbon> = parse_m2_ribbon_emitters(&m2)
             .unwrap_or_default()
             .into_iter()
             .map(|def| {
@@ -420,17 +412,15 @@ impl AssetLoader for M2ModelLoader {
         );
 
         // Attachments, markers and clip events all take the pivots the joints were built from.
-        let attachments = build_attachments(
-            &parse_m2_attachments(&bytes).unwrap_or_default(),
-            &skeleton_pivots(&skeleton_raw),
-        );
+        let attachments =
+            build_attachments(&parse_m2_attachments(&m2), &skeleton_pivots(&skeleton_raw));
         let markers = crate::model::build_markers(
-            &benilla_formats::parse_m2_event_markers(&bytes).unwrap_or_default(),
+            &benilla_formats::parse_m2_event_markers(&m2),
             &skeleton_pivots(&skeleton_raw),
         );
         let pivots = skeleton_pivots(&skeleton_raw);
 
-        let sequences = parse_m2_animations(&bytes);
+        let sequences = parse_m2_animations(&m2);
         let first_seq_span = sequences.first().map(|a| a.duration).filter(|d| *d > 0.0);
         let sequence_infos: Vec<M2SequenceInfo> = sequences
             .iter()
@@ -498,16 +488,12 @@ impl AssetLoader for M2ModelLoader {
                     pose.bone_masks[i] |= 1 << 4;
                 }
             }
-            // Read before the clip walk: the loader-idle seed resolves through it.
-            let playable_animation_lookup =
-                parse_m2_playable_animation_lookup(&bytes).unwrap_or_default();
-            let animation_lookup =
-                benilla_formats::parse_m2_animation_lookup(&bytes).unwrap_or_default();
+            // A 3.3.5a model has no playable lookup, so the loader-idle seed is id 0, not file
+            // slot 0.
+            let playable_animation_lookup = Vec::new();
+            let animation_lookup = benilla_formats::parse_m2_animation_lookup(&m2);
             let mut clips = Vec::new();
-            // The loader-idle seed (`0x71019b`): id 0 via the playable lookup, not file slot 0.
-            let idle_id = playable_animation_lookup
-                .first()
-                .map_or(0, |p: &benilla_formats::PlayableAnim| p.resolved_id);
+            let idle_id = 0;
             let mut first_seq = None;
             for (i, anim) in sequences.iter().enumerate() {
                 // Every sequence becomes a clip, since the clip is the sequence clock;
@@ -594,7 +580,7 @@ impl AssetLoader for M2ModelLoader {
                 })
                 .map(|i| i as u16)
                 .collect();
-            let grip_poses = hand_grip_finger_poses(&bytes, &finger_bones);
+            let grip_poses = hand_grip_finger_poses(&m2, &finger_bones);
             if !grip_poses.is_empty() {
                 let (grip_clip, grip_pose) = build_grip_clip(&grip_poses);
                 let grip_idx = pose.clips.len() as u32;
@@ -612,8 +598,7 @@ impl AssetLoader for M2ModelLoader {
                 }
             }
             // Global-sequence channels alone earn `ModelAnimations` (the `GlobalSeqOnly` tier).
-            let global_bones =
-                build_global_bones(&parse_m2_global_sequence_bones(&bytes), &skeleton);
+            let global_bones = build_global_bones(&parse_m2_global_sequence_bones(&m2), &skeleton);
             // A model animates if a bone poses, a global sequence runs, or something samples the
             // sequence clock: emitters, ribbons, or a material's alpha, colour or UV loop.
             let samples_sequence = !emitters.is_empty()
@@ -654,10 +639,10 @@ impl AssetLoader for M2ModelLoader {
             near: c.near_clip,
             far: c.far_clip,
         };
-        let portrait_camera = parse_m2_portrait_camera(&bytes).map(to_bevy);
-        let camera0 = benilla_formats::parse_m2_camera(&bytes, 0).map(to_bevy);
-        let pane_camera = benilla_formats::parse_m2_camera(&bytes, 1).map(to_bevy);
-        let cameras: Vec<PaneCamera> = benilla_formats::parse_m2_pane_cameras(&bytes)
+        let portrait_camera = parse_m2_portrait_camera(&m2).map(to_bevy);
+        let camera0 = benilla_formats::parse_m2_camera(&m2, 0).map(to_bevy);
+        let pane_camera = benilla_formats::parse_m2_camera(&m2, 1).map(to_bevy);
+        let cameras: Vec<PaneCamera> = benilla_formats::parse_m2_pane_cameras(&m2)
             .into_iter()
             .map(|c| PaneCamera {
                 camera_type: c.camera_type,
@@ -666,19 +651,16 @@ impl AssetLoader for M2ModelLoader {
             })
             .collect();
 
-        let string_anchors = benilla_formats::parse_m2_string_anchors(&bytes).map(|a| {
+        let string_anchors = benilla_formats::parse_m2_string_anchors(&m2).map(|a| {
             [
                 (a.top.0, wow_to_bevy(a.top.1)),
                 (a.bottom.0, wow_to_bevy(a.bottom.1)),
             ]
         });
 
-        let cch_marker = benilla_formats::parse_m2_cch_marker(&bytes).map(|(_, p)| wow_to_bevy(p));
+        let cch_marker = benilla_formats::parse_m2_cch_marker(&m2).map(|(_, p)| wow_to_bevy(p));
 
-        // `GlobalModelFlags` sits at MD20 `+0x10`, outside every sectioned parser.
-        let global_flags = bytes
-            .get(0x10..0x14)
-            .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+        let global_flags = m2.global_flags;
 
         Ok(M2Model {
             submeshes,

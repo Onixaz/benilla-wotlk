@@ -16,7 +16,7 @@ pub fn ribbonscan(chain: &mut Chain) -> Result<()> {
     let (mut scanned, mut hits, mut gated, mut mid_seq) = (0u32, 0u32, 0u32, 0u32);
     let mut blends: BTreeMap<String, u32> = BTreeMap::new();
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
@@ -80,7 +80,7 @@ pub fn partscan(chain: &mut Chain, mask: u32, prefix: Option<&str>) -> Result<()
     let names = super::m2_names(chain, prefix)?;
     let (mut scanned, mut hits, mut emitters) = (0u32, 0u32, 0u32);
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
@@ -120,9 +120,8 @@ struct RecordExtras {
     rate_keys: u32,
 }
 
-fn record_extras(bytes: &[u8]) -> Vec<RecordExtras> {
-    const STRIDE: usize = 0x1f8;
-    let u16_at = |o: usize| u16::from_le_bytes([bytes[o], bytes[o + 1]]);
+fn record_extras(model: &benilla_m2::M2Model) -> Vec<RecordExtras> {
+    let bytes = model.bytes();
     let u32_at = |o: usize| u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
     let str_at = |count: usize, ofs: usize| -> Option<String> {
         if count == 0 || ofs == 0 || ofs + count > bytes.len() {
@@ -133,26 +132,27 @@ fn record_extras(bytes: &[u8]) -> Vec<RecordExtras> {
             .to_string();
         (!s.is_empty()).then_some(s)
     };
-    if bytes.len() < 0x144 || &bytes[..4] != b"MD20" {
+    let (count, base) = model.particle_emitters();
+    if count == 0 || count > 256 || base + count * PARTICLE_STRIDE > bytes.len() {
         return Vec::new();
     }
-    let count = u32_at(0x13c) as usize;
-    let base = u32_at(0x140) as usize;
-    if count == 0 || count > 256 || base + count * STRIDE > bytes.len() {
-        return Vec::new();
-    }
+    let mut tracks = model.tracks();
     (0..count)
         .map(|i| {
-            let e = base + i * STRIDE;
+            let e = base + i * PARTICLE_STRIDE;
+            let rate = tracks.float(e + 0xb0, 0.0).unwrap_or_default();
             RecordExtras {
                 geometry_model: str_at(u32_at(e + 0x18) as usize, u32_at(e + 0x1c) as usize),
                 recursion_model: str_at(u32_at(e + 0x20) as usize, u32_at(e + 0x24) as usize),
-                rate_interp: u16_at(e + 0xdc),
-                rate_keys: u32_at(e + 0xdc + 0x14),
+                rate_interp: rate.interp,
+                rate_keys: rate.keys.len() as u32,
             }
         })
         .collect()
 }
+
+/// A version-264 particle emitter record's size.
+const PARTICLE_STRIDE: usize = 0x1dc;
 
 /// model key → the spells whose visual chain plays that model (any kit stage, or the missile).
 fn spell_attribution(chain: &mut Chain) -> HashMap<String, Vec<(u32, String)>> {
@@ -224,7 +224,7 @@ pub fn partcensus(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
         std::collections::BTreeMap::new();
     let (mut scanned, mut with_emitters, mut total_emitters) = (0u32, 0u32, 0u32);
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
@@ -295,9 +295,8 @@ pub fn partcensus(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
             }
             // The raw blend byte disambiguates what the parsed enum folds: 5 = Mod, 6 = Mod2x.
             {
-                const STRIDE: usize = 0x1f8;
-                let base = u32::from_le_bytes(bytes[0x140..0x144].try_into().unwrap()) as usize;
-                match bytes[base + i * STRIDE + 0x28] {
+                let base = bytes.particle_emitters().1;
+                match bytes.bytes()[base + i * PARTICLE_STRIDE + 0x28] {
                     5 => hit("blend:MOD(5)"),
                     6 => hit("blend:MOD2X(6)"),
                     _ => {}
@@ -448,7 +447,7 @@ pub fn partslotscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let (mut scanned, mut with_emitters, mut emitters, mut dead0) = (0u32, 0u32, 0u32, 0u32);
     let mut models = 0u32;
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
@@ -545,7 +544,7 @@ pub fn shardcensus(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let mut parse_failures: Vec<(String, String)> = Vec::new();
     let (mut scanned, mut owners) = (0u32, 0u32);
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
@@ -572,7 +571,7 @@ pub fn shardcensus(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
         *rungs.entry(rung as u32).or_default() += 1;
         for geo in geos {
             if !geo_cache.contains_key(&geo) {
-                let parsed = match chain.read_file(&geo) {
+                let parsed = match benilla_formats::read_m2(chain, &geo) {
                     Ok(gb) => {
                         let gdir = geo.rsplit_once('\\').map_or("", |(d, _)| d);
                         match benilla_formats::parse_m2_render_submeshes(&gb, gdir, &[]) {
@@ -661,7 +660,7 @@ pub fn fxordercensus(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let (mut scanned, mut with_fx, mut at_risk) = (0u32, 0u32, 0u32);
     let mut rungs: BTreeMap<u32, u32> = BTreeMap::new();
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;

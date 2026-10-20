@@ -109,10 +109,9 @@ fn the_trigger_creature_still_carries_the_attachments_its_visible_self_rides() {
 
     // The Naxxramas weapon mobs (display 15294) are this body, seen only through its attachments:
     // the weapon on HandRight, the name plate on PlayerName.
-    let bytes = chain
-        .read_file("Creature\\InvisibleStalker\\InvisibleStalker.m2")
+    let bytes = benilla_formats::read_m2(&chain, "Creature\\InvisibleStalker\\InvisibleStalker.m2")
         .expect("read InvisibleStalker.m2");
-    let attach = benilla_formats::parse_m2_attachments(&bytes).expect("parse attachments");
+    let attach = benilla_formats::parse_m2_attachments(&bytes);
     let at = |id: u16| attach.iter().find(|a| a.id == id).copied();
 
     let hand = at(1).expect("HandRight (1) — the drawn mainhand, where the axe hangs");

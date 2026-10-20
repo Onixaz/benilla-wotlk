@@ -1,6 +1,6 @@
 //! Which bones carry keys in one sequence, with their first keys; bone indices narrow the list.
 //! `cargo run -p benilla-formats --example dump_bone_keys <file.m2> <anim_id> [bone ...]`, the
-//! file extracted first with `mpqx`.
+//! file extracted first with `mpqx`, its `00.skin` beside it.
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -9,7 +9,14 @@ fn main() {
         .expect("usage: dump_bone_keys <file.m2> <anim_id> [bone ...]");
     let anim_id: u16 = args.next().expect("anim id").parse().expect("anim id u16");
     let bones: Vec<u16> = args.map(|a| a.parse().expect("bone index u16")).collect();
-    let bytes = std::fs::read(&path).expect("read m2");
+    let skin =
+        std::fs::read(benilla_formats::skin_path(&path)).expect("read its 00.skin beside it");
+    let bytes = benilla_m2::parse_m2(
+        std::fs::read(&path).expect("read m2"),
+        &skin,
+        Default::default(),
+    )
+    .expect("parse m2");
     if let Some(a) = benilla_formats::parse_m2_string_anchors(&bytes) {
         println!(
             "string anchors: top bone {} ({:+.3},{:+.3},{:+.3}) bottom bone {} ({:+.3},{:+.3},{:+.3})",

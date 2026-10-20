@@ -134,9 +134,8 @@ fn the_caverns_of_time_sky_spins_exactly_its_three_belt_bones() {
 #[test]
 fn the_stratholme_sky_spins_nothing() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = Chain::open(&data).expect("open vanilla patch chain");
-    let bytes = chain
-        .read_file("Environments\\Stars\\StratholmeSkybox.m2")
+    let chain = Chain::open(&data).expect("open vanilla patch chain");
+    let bytes = benilla_formats::read_m2(&chain, "Environments\\Stars\\StratholmeSkybox.m2")
         .expect("read StratholmeSkybox.m2");
     assert!(
         m2_bone_spins(&bytes).is_empty(),

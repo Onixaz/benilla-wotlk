@@ -18,8 +18,8 @@ const CLOSED: u16 = 147;
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_rookery_egg_keys_its_hatch_in_despawn_not_in_the_state_family() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
-    let bytes = chain.read_file(EGG).expect("the egg M2 is in the chain");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
+    let bytes = benilla_formats::read_m2(&chain, EGG).expect("the egg M2 is in the chain");
     let anims = parse_m2_animations(&bytes);
     let seq = |id: u16| {
         anims
@@ -29,7 +29,7 @@ fn the_rookery_egg_keys_its_hatch_in_despawn_not_in_the_state_family() {
     };
 
     // The one-shot channel plays only an id the model owns, with no remap (`0x5f423d`, `0x711960`).
-    let lookup = parse_m2_animation_lookup(&bytes).expect("animation lookup");
+    let lookup = parse_m2_animation_lookup(&bytes);
     assert!(
         lookup.get(DESPAWN as usize).is_some_and(|&s| s != 0xffff),
         "the egg owns 157 Despawn"

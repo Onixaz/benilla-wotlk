@@ -3,7 +3,7 @@ name = "benilla-adt"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "ADT terrain-tile reader for WoW 1.12.1 (build 5875)"
+description = "ADT terrain-tile reader for WoW 3.3.5a (build 12340)"
 
 [lints]
 workspace = true

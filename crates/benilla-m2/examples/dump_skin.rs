@@ -1,14 +1,12 @@
 //! Dump an M2's textures, materials and skin-0 sections and batches:
 //! `cargo run -p benilla-m2 --example dump_skin <file.m2>`, extracted first with `mpqx`
-//! (benilla-formats).
-
-use std::io::Cursor;
+//! (benilla-formats), with its `00.skin` beside it.
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: dump_skin <file.m2>");
     let data = std::fs::read(&path).expect("read m2");
-    let m2 = benilla_m2::parse_m2(&mut Cursor::new(data.as_slice())).expect("parse m2");
-    let model = m2.model();
+    let skin = std::fs::read(benilla_m2::skin_path(&path)).expect("read its 00.skin beside it");
+    let model = benilla_m2::parse_m2(data, &skin, Default::default()).expect("parse m2");
     println!("textures: {}", model.textures.len());
     for (i, t) in model.textures.iter().enumerate() {
         use benilla_m2::M2TextureType as T;
@@ -42,7 +40,7 @@ fn main() {
         "texture_lookup_table: {:?}",
         model.raw_data.texture_lookup_table
     );
-    let skin = model.parse_embedded_skin(&data, 0).expect("skin 0");
+    let skin = &model.skin;
     println!(
         "skin 0: {} sections, {} batches",
         skin.submeshes().len(),

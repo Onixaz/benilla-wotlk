@@ -10,8 +10,8 @@ fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("usage: batch_alpha <m2 path> [sequence slot]"))?;
     let slot: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(0);
     let data = benilla_formats::wow_data().expect("no WoW install found (set $WOW_DATA)");
-    let mut chain = benilla_formats::open_chain(&data)?;
-    let bytes = chain.read_file(&virt)?;
+    let chain = benilla_formats::open_chain(&data)?;
+    let bytes = benilla_formats::read_m2(&chain, &virt)?;
     let subs = benilla_formats::parse_m2_render_submeshes(&bytes, "", &[])?;
     println!("sequence slot {slot} — {} batches", subs.len());
     for (i, s) in subs.iter().enumerate() {

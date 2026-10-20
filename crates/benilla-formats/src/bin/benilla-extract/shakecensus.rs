@@ -204,7 +204,7 @@ pub fn shakecensus(chain: &mut Chain) -> Result<()> {
     let mut shk_groups: BTreeMap<u32, u32> = BTreeMap::new();
     let mut shk_live_groups: BTreeMap<u32, u32> = BTreeMap::new();
     for name in crate::scan::m2_names(chain, None)? {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         let mut rows = Vec::new();

@@ -11,9 +11,8 @@ const HIP_QUAT: [f32; 4] = [0.382, 0.063, -0.922, 0.0];
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn stow_attach_bones_carry_their_constant_rotation_in_every_sequence() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
-    let bytes = chain
-        .read_file("Character\\Human\\Male\\HumanMale.m2")
+    let chain = open_chain(&data).expect("open vanilla patch chain");
+    let bytes = benilla_formats::read_m2(&chain, "Character\\Human\\Male\\HumanMale.m2")
         .expect("HumanMale.m2 in the chain");
     let anims = parse_m2_animations(&bytes);
     assert!(!anims.is_empty(), "HumanMale should have sequences");

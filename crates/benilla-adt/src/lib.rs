@@ -264,7 +264,7 @@ pub struct WmoPlacement {
     pub name_set: u16,
 }
 
-/// A parsed vanilla (monolithic) root ADT.
+/// A parsed monolithic root ADT.
 #[derive(Debug, Clone)]
 pub struct RootAdt {
     pub textures: Vec<String>,

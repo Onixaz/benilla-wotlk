@@ -15,13 +15,12 @@ fn main() -> anyhow::Result<()> {
         .or_else(benilla_formats::wow_data)
         .expect("no WoW install found (set $WOW_DATA or pass the dir)");
     let path = args.next().expect("usage: seamswing [data] <path.m2>");
-    let mut chain = open_chain(&data)?;
-    let bytes = chain.read_file(&path)?;
+    let chain = open_chain(&data)?;
+    let bytes = benilla_formats::read_m2(&chain, &path)?;
     let denied = benilla_formats::non_separable_billboard_bones(&bytes);
     println!("welded billboard bones: {denied:?}");
 
-    let model = benilla_m2::parse_m2(&mut std::io::Cursor::new(&bytes))?;
-    let model = model.model();
+    let model = &bytes;
     for &b in &denied {
         let bone = &model.bones[b as usize];
         let piv = [bone.pivot.x, bone.pivot.y, bone.pivot.z];

@@ -85,7 +85,6 @@ const NOT_READ: &[(&str, &str)] = &[
         "PaperDollItemFrame",
         "#239 equipment slot names: GetInventorySlotInfo",
     ),
-    ("ParticleColor", "#119 particle colour overrides"),
     (
         "PowerDisplay",
         "#240 alternate power display: UnitPowerType",

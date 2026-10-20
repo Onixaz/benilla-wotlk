@@ -566,6 +566,7 @@ impl WorldAssets {
                 anim_slots: Vec4::ZERO,
                 wmo_unified: Vec4::ZERO, // clutter is never a WMO batch
                 combiner: Vec4::ZERO,    // …nor a combiner batch
+                stage1: Vec4::ZERO,
                 texture2: None,
                 light_buf: self.shared_light.clone(),
             },

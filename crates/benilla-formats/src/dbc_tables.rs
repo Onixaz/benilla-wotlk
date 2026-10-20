@@ -137,6 +137,7 @@ tables! {
         "NameGen" => characters::name_gen_schema(),
         "Package" => packages::schema(),
         "PageTextMaterial" => page_text_material::schema(),
+        "ParticleColor" => particles::particle_color_schema(),
         "PetPersonality" => pet_stats::personality_schema(),
         "PvpDifficulty" => battlemaster_list::pvp_difficulty_schema(),
         "QuestFactionReward" => quest_rewards::quest_faction_reward_schema(),

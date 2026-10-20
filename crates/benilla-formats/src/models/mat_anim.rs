@@ -156,10 +156,12 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn mage_portal_bakes_a_time_varying_weight_loop() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("World\\generic\\activedoodads\\mageportals\\StormwindMagePortal01.m2")
-            .expect("read StormwindMagePortal01.m2");
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(
+            &chain,
+            "World\\generic\\activedoodads\\mageportals\\StormwindMagePortal01.m2",
+        )
+        .expect("read StormwindMagePortal01.m2");
         let subs = super::super::parse_m2_render_submeshes(&bytes, "", &[]).expect("parse");
         let animated: Vec<&ScalarAnim> = subs
             .iter()
@@ -191,10 +193,12 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn troll_gate_never_draws_its_burnt_twin_at_the_same_time() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("World\\Kalimdor\\Tanaris\\ActiveDoodads\\TrollGate\\TanarisTrollGate.m2")
-            .expect("read TanarisTrollGate.m2");
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(
+            &chain,
+            "World\\Kalimdor\\Tanaris\\ActiveDoodads\\TrollGate\\TanarisTrollGate.m2",
+        )
+        .expect("read TanarisTrollGate.m2");
         let subs = super::super::parse_m2_render_submeshes(&bytes, "", &[]).expect("parse");
         // File slots: 0 Closed, 1 Open, 2 Opened, 3 Destroy, 4 Close.
         let (closed, destroy) = (Some(0), Some(3));
@@ -261,9 +265,8 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn battle_shout_base_bakes_alpha_and_rgb_loops() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("Spells\\BattleShout_Cast_Base.m2")
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(&chain, "Spells\\BattleShout_Cast_Base.m2")
             .expect("read BattleShout_Cast_Base.m2");
         let subs = super::super::parse_m2_render_submeshes(&bytes, "", &[]).expect("parse");
         assert_eq!(subs.len(), 6, "six crescent batches");
@@ -308,9 +311,8 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn voidwalker_hides_its_death_only_armour_in_every_other_sequence() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("Creature\\VoidWalker\\VoidWalker.m2")
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(&chain, "Creature\\VoidWalker\\VoidWalker.m2")
             .expect("read VoidWalker.m2");
         let subs = super::super::parse_m2_render_submeshes(&bytes, "", &[]).expect("parse");
         // File slots (`benilla-extract m2seq`): 0 Stand (3333..6000 ms), 1 Walk, 2 Run, 5/6 the
@@ -372,10 +374,9 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn banshee_hides_its_death_only_batches() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("Creature\\Banshee\\Banshee.m2")
-            .expect("read Banshee.m2");
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes =
+            crate::read_m2(&chain, "Creature\\Banshee\\Banshee.m2").expect("read Banshee.m2");
         let subs = super::super::parse_m2_render_submeshes(&bytes, "", &[]).expect("parse");
         assert_eq!(subs.len(), 26, "the banshee's render batch list");
         // File slots (`m2seq`): 0 Stand (10000..13333 ms), 3 Walk, 4 Run, 12 Death.
@@ -636,9 +637,8 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn air_elemental_death_leaves_no_opaque_body() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("Creature\\AirElemental\\AirElemental.m2")
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(&chain, "Creature\\AirElemental\\AirElemental.m2")
             .expect("read AirElemental.m2");
         let subs = super::super::parse_m2_render_submeshes(&bytes, "", &[]).expect("parse");
         // Slot 10 is anim id 1 (Death), one-shot, band 43333..46333: a period of exactly 3.0 s.

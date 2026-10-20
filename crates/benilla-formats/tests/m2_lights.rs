@@ -7,9 +7,11 @@ use benilla_formats::{parse_m2_lights, Chain};
 fn elwynn_campfire_has_one_warm_point_light() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");
-    let bytes = reader
-        .read("World\\Azeroth\\Elwynn\\PassiveDoodads\\Campfire\\ElwynnCampfire.m2")
-        .expect("read ElwynnCampfire.m2");
+    let bytes = benilla_formats::read_m2(
+        &reader,
+        "World\\Azeroth\\Elwynn\\PassiveDoodads\\Campfire\\ElwynnCampfire.m2",
+    )
+    .expect("read ElwynnCampfire.m2");
 
     let lights = parse_m2_lights(&bytes);
     assert_eq!(lights.len(), 1, "campfire has exactly one M2 light");
@@ -34,9 +36,11 @@ fn elwynn_campfire_has_one_warm_point_light() {
 fn held_torch_casts_one_warm_point_light_up_the_shaft() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");
-    let bytes = reader
-        .read("Item\\ObjectComponents\\Weapon\\Club_1H_Torch_A_01.m2")
-        .expect("read Club_1H_Torch_A_01.m2");
+    let bytes = benilla_formats::read_m2(
+        &reader,
+        "Item\\ObjectComponents\\Weapon\\Club_1H_Torch_A_01.m2",
+    )
+    .expect("read Club_1H_Torch_A_01.m2");
 
     let lights = parse_m2_lights(&bytes);
     assert_eq!(lights.len(), 1, "the torch has exactly one M2 light");
@@ -62,8 +66,7 @@ fn held_torch_casts_one_warm_point_light_up_the_shaft() {
 fn a_static_zero_visibility_key_reads_as_dark() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");
-    let bytes = reader
-        .read("Spells\\FlameStrike_ImpactDD_Med_Base.m2")
+    let bytes = benilla_formats::read_m2(&reader, "Spells\\FlameStrike_ImpactDD_Med_Base.m2")
         .expect("read FlameStrike_ImpactDD_Med_Base.m2");
 
     let dark: Vec<_> = parse_m2_lights(&bytes)
@@ -78,9 +81,4 @@ fn a_static_zero_visibility_key_reads_as_dark() {
         dark.iter().all(|l| l.visibility_off && !l.casts()),
         "every one is held dark by its visibility track"
     );
-}
-
-#[test]
-fn too_short_yields_no_lights() {
-    assert!(parse_m2_lights(&[0u8; 16]).is_empty());
 }

@@ -104,6 +104,7 @@ fn bake_test(
                 .iter()
                 .enumerate()
                 .map(|(pi, s)| BoothPart {
+                    sort: None,
                     skinned: skin_forms.get(pi).cloned(),
                     static_mesh: stat_forms
                         .get(pi)

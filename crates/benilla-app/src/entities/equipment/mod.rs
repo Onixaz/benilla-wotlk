@@ -276,6 +276,7 @@ pub(in crate::entities) fn ensure_item_model(
                 handle: ModelHandle::M2(asset_server.load(m2_url(&format!("{dir}\\{model}")))),
                 // The runtime object skin, bound to the model's type-2 batches.
                 object_texture: d.model_texture[col].clone(),
+                particle_colors: d.particle_colors,
                 dir,
                 ..super::empty_shell()
             }

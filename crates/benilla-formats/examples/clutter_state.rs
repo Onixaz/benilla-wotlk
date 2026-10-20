@@ -29,7 +29,7 @@ fn main() -> anyhow::Result<()> {
     let mut two_sided = (0usize, 0usize);
     let mut densities: Vec<f32> = Vec::new();
     for path in &models {
-        let Ok(bytes) = chain.read_file(path) else {
+        let Ok(bytes) = benilla_formats::read_m2(&chain, path) else {
             println!("  MISSING {path}");
             continue;
         };

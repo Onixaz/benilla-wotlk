@@ -7,7 +7,7 @@ use benilla_formats::{open_chain, parse_m2_animations};
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn stand_box_extents_match_reference() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open chain");
+    let chain = open_chain(&data).expect("open chain");
 
     // (model, Stand box dx, dy), measured off the real sequence records.
     let cases = [
@@ -15,7 +15,7 @@ fn stand_box_extents_match_reference() {
         ("Character\\Human\\Male\\HumanMale.m2", 0.913, 1.080),
     ];
     for (path, dx, dy) in cases {
-        let bytes = chain.read_file(path).expect(path);
+        let bytes = benilla_formats::read_m2(&chain, path).expect(path);
         let anims = parse_m2_animations(&bytes);
         // Stand's first variation: the box the shadow always projects.
         let stand = anims

@@ -7,10 +7,9 @@ use benilla_formats::{open_chain, parse_m2_render_submeshes};
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn battle_shout_crescents_detect_as_ground_quads() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open chain");
+    let chain = open_chain(&data).expect("open chain");
 
-    let bytes = chain
-        .read_file("Spells\\BattleShout_Cast_Base.m2")
+    let bytes = benilla_formats::read_m2(&chain, "Spells\\BattleShout_Cast_Base.m2")
         .expect("Battle Shout cast-base model");
     let subs = parse_m2_render_submeshes(&bytes, "", &[]).expect("submeshes");
     assert_eq!(subs.len(), 6, "six crescent batches");
@@ -38,10 +37,9 @@ fn battle_shout_crescents_detect_as_ground_quads() {
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hovering_discs_detect_as_ground_quads() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open chain");
+    let chain = open_chain(&data).expect("open chain");
 
-    let bytes = chain
-        .read_file("spells\\consecration_impact_base.m2")
+    let bytes = benilla_formats::read_m2(&chain, "spells\\consecration_impact_base.m2")
         .expect("Consecration impact-base model");
     let subs = parse_m2_render_submeshes(&bytes, "", &[]).expect("submeshes");
     assert_eq!(subs.len(), 2, "glow + burn disc");
@@ -61,8 +59,7 @@ fn hovering_discs_detect_as_ground_quads() {
     assert!((hovers[0] - 0.097).abs() < 1e-3, "burn disc hover");
     assert!((hovers[1] - 0.207).abs() < 1e-3, "center glow hover");
 
-    let bytes = chain
-        .read_file("Spells\\Flamestrike_Impact_Base.m2")
+    let bytes = benilla_formats::read_m2(&chain, "Spells\\Flamestrike_Impact_Base.m2")
         .expect("Flamestrike impact-base model");
     let subs = parse_m2_render_submeshes(&bytes, "", &[]).expect("submeshes");
     let quads = subs.iter().filter(|s| s.ground_quad().is_some()).count();
@@ -76,9 +73,8 @@ fn hovering_discs_detect_as_ground_quads() {
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn character_model_detects_no_ground_quads() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open chain");
-    let bytes = chain
-        .read_file("Character\\Human\\Male\\HumanMale.m2")
+    let chain = open_chain(&data).expect("open chain");
+    let bytes = benilla_formats::read_m2(&chain, "Character\\Human\\Male\\HumanMale.m2")
         .expect("human male model");
     let subs = parse_m2_render_submeshes(&bytes, "", &[]).expect("submeshes");
     assert!(
@@ -94,10 +90,9 @@ fn character_model_detects_no_ground_quads() {
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ground_quads_carry_their_static_m2color_tint() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open chain");
+    let chain = open_chain(&data).expect("open chain");
 
-    let bytes = chain
-        .read_file("SPELLS\\Flare_State_Base.m2")
+    let bytes = benilla_formats::read_m2(&chain, "SPELLS\\Flare_State_Base.m2")
         .expect("Flare state-base model");
     let subs = parse_m2_render_submeshes(&bytes, "", &[]).expect("submeshes");
     let quads: Vec<_> = subs.iter().filter_map(|s| s.ground_quad()).collect();
@@ -110,8 +105,7 @@ fn ground_quads_carry_their_static_m2color_tint() {
         assert!((span - 13.89).abs() < 0.02, "wash span {span}");
     }
 
-    let bytes = chain
-        .read_file("Spells\\BattleShout_Cast_Base.m2")
+    let bytes = benilla_formats::read_m2(&chain, "Spells\\BattleShout_Cast_Base.m2")
         .expect("Battle Shout cast-base model");
     let subs = parse_m2_render_submeshes(&bytes, "", &[]).expect("submeshes");
     for sub in &subs {

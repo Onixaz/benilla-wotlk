@@ -6,10 +6,12 @@ use benilla_formats::{open_chain, parse_m2_ribbon_emitters};
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ribbon_records_match_real_bytes() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
 
-    let wisp =
-        parse_m2_ribbon_emitters(&chain.read_file("Creature\\WISP\\WispRed.m2").unwrap()).unwrap();
+    let wisp = parse_m2_ribbon_emitters(
+        &benilla_formats::read_m2(&chain, "Creature\\WISP\\WispRed.m2").unwrap(),
+    )
+    .unwrap();
     assert_eq!(wisp.len(), 3, "WispRed authors three ribbons");
     for (i, r) in wisp.iter().enumerate() {
         assert!(
@@ -44,17 +46,18 @@ fn ribbon_records_match_real_bytes() {
 
     // A weapon whose enchant trail rides the item root.
     let blade = parse_m2_ribbon_emitters(
-        &chain
-            .read_file("ITEM\\ObjectComponents\\WEAPON\\Sword_1H_Thunderblade_A_01.m2")
-            .unwrap(),
+        &benilla_formats::read_m2(
+            &chain,
+            "ITEM\\ObjectComponents\\WEAPON\\Sword_1H_Thunderblade_A_01.m2",
+        )
+        .unwrap(),
     )
     .unwrap();
     assert_eq!(blade.len(), 3, "Thunderblade authors three ribbons");
     assert!(blade.iter().all(|r| r.texture.is_some()));
 
     let torch = parse_m2_ribbon_emitters(
-        &chain
-            .read_file("World\\Generic\\PassiveDoodads\\Lights\\Torch.m2")
+        &benilla_formats::read_m2(&chain, "World\\Generic\\PassiveDoodads\\Lights\\Torch.m2")
             .unwrap(),
     )
     .unwrap();

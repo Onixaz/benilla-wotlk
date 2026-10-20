@@ -317,6 +317,12 @@ pub(super) fn spawn_part(
             card: None,
         },
     ));
+    // The model's batches rank inside one transparent group.
+    if let Some(sort) =
+        benilla_world::model_render::M2BatchSort::of(&part.geometry, dress.unit.to_bits())
+    {
+        child.insert(sort);
+    }
     if let Some(group) = group {
         child.insert(group);
     }
@@ -431,6 +437,14 @@ fn spawn_billboard_part(
         benilla_world::interact::PickMesh(part.geometry.clone()),
         card_follow,
     ));
+    // The model's batches rank inside one transparent group.
+    if let Some(sort) = benilla_world::model_render::M2BatchSort::card(
+        &part.geometry,
+        dress.unit.to_bits(),
+        benilla_world::model_render::SortOrigin::Entity(dress.unit),
+    ) {
+        card.insert(sort);
+    }
     insert_pick_marker(&mut card, dress.kind);
     // The unit's instance slot, though the card is never skinned: a tinted unit tints its cards.
     card.insert(MeshTag(benilla_world::mesh_tag::spawn_tag(

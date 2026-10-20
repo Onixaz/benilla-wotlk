@@ -33,6 +33,7 @@ pub mod testing {
     /// A minimal emitter def for kernel tests; only the fields the emit kernel reads matter.
     pub fn particle_def(shape: ParticleShape) -> ParticleEmitterDef {
         ParticleEmitterDef {
+            color_index: 0,
             // Head quads (file flag 0x20000).
             flags: 0x20000,
             position: [1.0, 2.0, 3.0],

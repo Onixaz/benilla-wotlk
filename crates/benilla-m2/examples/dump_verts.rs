@@ -1,15 +1,13 @@
 //! Dump an M2's bones and vertices (position, UV, bone binding):
 //! `cargo run -p benilla-m2 --example dump_verts <file.m2>`.
 
-use std::io::Cursor;
-
 fn main() {
     let path = std::env::args()
         .nth(1)
         .expect("usage: dump_verts <file.m2>");
     let data = std::fs::read(&path).expect("read m2");
-    let m2 = benilla_m2::parse_m2(&mut Cursor::new(data.as_slice())).expect("parse m2");
-    let model = m2.model();
+    let skin = std::fs::read(benilla_m2::skin_path(&path)).expect("read its 00.skin beside it");
+    let model = benilla_m2::parse_m2(data, &skin, Default::default()).expect("parse m2");
     println!("bones: {}", model.bones.len());
     for (i, b) in model.bones.iter().enumerate() {
         println!(

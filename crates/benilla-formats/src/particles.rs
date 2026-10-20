@@ -1,11 +1,10 @@
-//! 3.3.5a (MD20 v264) M2 particle emitters, read from the version-264 record because the 1.12.1
-//! relayout has no place for it: fixed 0x1dc-byte records (array at MD20+0x128/+0x12c) at the
-//! reference loader's offsets (`0x833b40`). The emission tracks are read onto the relayout's
+//! 3.3.5a (MD20 v264) M2 particle emitters: fixed 0x1dc-byte records (array at MD20+0x128/+0x12c)
+//! at the reference loader's offsets (`0x833b40`). The emission tracks are read onto the model's
 //! sequence bands ([`benilla_m2::Tracks264`]); rate and enabled bake one loop per sequence into
 //! [`EmitTiming`], the other nine into [`EmitParams`].
 
 use anyhow::Result;
-use benilla_m2::{md20_version, AnimFiles, M2ScalarTrack, Tracks264, VERSION_264};
+use benilla_m2::{M2Model, M2ScalarTrack};
 
 use crate::emit_timing::{EmitParams, EmitTiming};
 use crate::models::SeqSlot;
@@ -253,6 +252,9 @@ impl SplineData {
 /// One 3.3.5a M2 particle emitter, positions and vectors model-local (WoW axes, Z up).
 #[derive(Debug, Clone)]
 pub struct ParticleEmitterDef {
+    /// `particleColorIndex` (+0x2a): 11, 12 or 13 takes that set of a display's
+    /// [`ParticleColors`] ([`Self::recolored`]).
+    pub color_index: u16,
     pub flags: u32,
     pub position: [f32; 3],
     pub bone: u16,
@@ -324,6 +326,24 @@ pub struct ParticleEmitterDef {
 }
 
 impl ParticleEmitterDef {
+    /// This emitter under a display's particle colour override: its colour track's first three
+    /// values become set `color_index − 11`'s start, mid and end, the colours `0x9795d0` lerps at
+    /// the track's located keys. `None` where nothing changes: another index, or a one-value track,
+    /// which `0x9795d0` returns as authored.
+    pub fn recolored(&self, colors: &ParticleColors) -> Option<Self> {
+        let set = colors
+            .0
+            .get(usize::from(self.color_index.checked_sub(11)?))?;
+        if self.over_life.color.values.len() < 2 {
+            return None;
+        }
+        let mut def = self.clone();
+        for (v, c) in def.over_life.color.values.iter_mut().zip(set) {
+            *v = *c;
+        }
+        Some(def)
+    }
+
     /// File flag 0x10 (runtime 0x200): particles live emitter-local and the draw re-applies the
     /// live emitter matrix, so the cloud rides the emitter; clear, the spawn bakes them into world
     /// space, so a moving host lays a trail.
@@ -472,6 +492,71 @@ fn shape_of(v: u8) -> ParticleShape {
     }
 }
 
+/// A display's particle colour override, one `ParticleColor.dbc` row: three sets of start, mid and
+/// end colours, raw `0..=255` RGB. `ReplaceParticleColor` (`0x4ea9e0`) hands set `i` to the
+/// emitters whose `particleColorIndex` is `11 + i` (`0x825410`), and their colour track then lerps
+/// these at its located keys instead of its own values (`0x97a990`, `0x9795d0`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParticleColors(pub [[[f32; 3]; 3]; 3]);
+
+impl ParticleColors {
+    /// What an id with no row passes: every colour opaque green (`0x4eaa14`).
+    pub const MISSING: Self = Self([[[0.0, 255.0, 0.0]; 3]; 3]);
+}
+
+/// `ParticleColor.dbc` by id.
+#[derive(Debug, Clone, Default)]
+pub struct ParticleColorTable(std::collections::HashMap<u32, ParticleColors>);
+
+impl ParticleColorTable {
+    /// The override a display's `ParticleColorID` names: `None` for 0, [`ParticleColors::MISSING`]
+    /// for an id with no row.
+    pub fn resolve(&self, id: u32) -> Option<ParticleColors> {
+        (id != 0).then(|| self.0.get(&id).copied().unwrap_or(ParticleColors::MISSING))
+    }
+}
+
+/// `ParticleColor.dbc`: ten `u32` columns, 40-byte rows.
+pub(crate) fn particle_color_schema() -> benilla_dbc::Schema {
+    let mut schema = benilla_dbc::Schema::new("ParticleColor");
+    for i in 0..10 {
+        schema.add_field(benilla_dbc::SchemaField::new(
+            format!("c{i}"),
+            benilla_dbc::FieldType::UInt32,
+        ));
+    }
+    schema
+}
+
+/// Load `ParticleColor.dbc`: id, then `Start[3]`, `Mid[3]` and `End[3]`, each a packed BGRA
+/// `CImVector`.
+pub fn load_particle_colors(chain: &mut crate::Chain) -> Result<ParticleColorTable> {
+    const PATH: &str = "DBFilesClient\\ParticleColor.dbc";
+    let bytes = chain.read_file(PATH)?;
+    let rs = crate::dbc::parse(&bytes, particle_color_schema(), "ParticleColor")?;
+    let rgb = |v: u32| {
+        [
+            ((v >> 16) & 0xff) as f32,
+            ((v >> 8) & 0xff) as f32,
+            (v & 0xff) as f32,
+        ]
+    };
+    let mut out = std::collections::HashMap::with_capacity(rs.records().len());
+    for r in rs.records() {
+        let Some(id) = crate::dbc::u32_at(r, 0) else {
+            continue;
+        };
+        let at = |c: usize| rgb(crate::dbc::u32_at(r, c).unwrap_or(0));
+        out.insert(
+            id,
+            ParticleColors(std::array::from_fn(|set| {
+                [at(1 + set), at(4 + set), at(7 + set)]
+            })),
+        );
+    }
+    Ok(ParticleColorTable(out))
+}
+
 /// The version-264 model's texture paths, by index (header +0x50, records of 16 bytes with the
 /// filename `M2Array<char>` at +0x08).
 pub(crate) fn texture_paths_264(b: &[u8]) -> Vec<Option<String>> {
@@ -525,29 +610,17 @@ fn life_track<V>(
     }
 }
 
-/// The version-264 model's particle emitters, textures resolved through its textures table;
-/// empty for a model with none or a file that is not version 264. A sequence keyed in a `.anim`
-/// file has no keys here ([`parse_m2_particle_emitters_with_anims`] reads them).
-pub fn parse_m2_particle_emitters(bytes: &[u8]) -> Result<Vec<ParticleEmitterDef>> {
-    parse_m2_particle_emitters_with_anims(bytes, &AnimFiles::new())
-}
-
-/// [`parse_m2_particle_emitters`], the tracks of a sequence keyed in a `.anim` read from `anims`
-/// ([`benilla_m2::anim_paths`]).
-pub fn parse_m2_particle_emitters_with_anims(
-    bytes: &[u8],
-    anims: &AnimFiles,
-) -> Result<Vec<ParticleEmitterDef>> {
-    if md20_version(bytes) != Some(VERSION_264) || bytes.len() < HDR_PARTICLES + 8 {
-        return Ok(Vec::new());
-    }
+/// A model's particle emitters, textures resolved through its textures table; empty for a model
+/// with none.
+pub fn parse_m2_particle_emitters(model: &M2Model) -> Result<Vec<ParticleEmitterDef>> {
+    let bytes = model.bytes();
     let count = le_u32(bytes, HDR_PARTICLES) as usize;
     let base = le_u32(bytes, HDR_PARTICLES + 4) as usize;
     if count == 0 || count > 256 || base + count * STRIDE > bytes.len() {
         return Ok(Vec::new());
     }
     let textures = texture_paths_264(bytes);
-    let mut tracks = Tracks264::new(bytes, anims)?;
+    let mut tracks = model.tracks();
 
     // Each sequence's band and loop flag (flags bit 0 clear loops); a model with none gets one
     // whole-timeline slot so its tracks still bake.
@@ -621,7 +694,7 @@ pub fn parse_m2_particle_emitters_with_anims(
             head_cell: life_track(bytes, e + 0x13c, 2, le_u16),
             tail_cell: life_track(bytes, e + 0x14c, 2, le_u16),
         };
-        // The emission tracks, onto the relayout's bands; a sequence without keys takes the
+        // The emission tracks, onto the model's bands; a sequence without keys takes the
         // channel default, as an unkeyed channel does.
         let mut f = |at: usize, default: f32| -> M2ScalarTrack {
             tracks.float(e + at, default).unwrap_or_default()
@@ -648,6 +721,7 @@ pub fn parse_m2_particle_emitters_with_anims(
             })
             .unwrap_or_default();
         out.push(ParticleEmitterDef {
+            color_index: le_u16(bytes, e + 0x2a),
             flags,
             position: le_vec3(bytes, e + 0x08),
             bone: le_u16(bytes, e + 0x14),
@@ -794,26 +868,30 @@ mod tests {
     }
 
     #[test]
-    fn a_hostile_emitter_count_or_a_1_12_file_yields_nothing() {
-        let mut b = vec![0u8; 0x200];
-        b[0..4].copy_from_slice(b"MD20");
-        b[4..8].copy_from_slice(&264u32.to_le_bytes());
-        b[HDR_PARTICLES..HDR_PARTICLES + 4].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(parse_m2_particle_emitters(&b).unwrap().is_empty());
-        b[4..8].copy_from_slice(&256u32.to_le_bytes());
-        b[HDR_PARTICLES..HDR_PARTICLES + 4].copy_from_slice(&1u32.to_le_bytes());
-        assert!(parse_m2_particle_emitters(&b).unwrap().is_empty());
+    fn a_hostile_emitter_count_yields_nothing() {
+        use benilla_m2::fixture::{self, Model};
+        let mut m = Model::new();
+        m.put_arr(HDR_PARTICLES, u32::MAX as usize, 0);
+        let model = m.parse(&fixture::empty_skin()).unwrap();
+        assert!(parse_m2_particle_emitters(&model).unwrap().is_empty());
+        // A plausible count whose table the file cannot hold is refused too.
+        let end = m.b.len() as u32;
+        m.put_arr(HDR_PARTICLES, 1, end);
+        let model = m.parse(&fixture::empty_skin()).unwrap();
+        assert!(parse_m2_particle_emitters(&model).unwrap().is_empty());
     }
 
-    /// The WotLK login scene's Northrend emitters, which the relayout once dropped: forty of them,
+    /// The WotLK login scene's Northrend emitters: forty of them,
     /// their over-life channels split at the issue's measured midpoints.
     #[test]
     fn the_northrend_glue_scene_authors_forty_emitters() {
         let data = crate::wow_data_or_skip!();
         let chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read("Interface\\Glues\\Models\\UI_MainMenu_Northrend\\UI_MainMenu_Northrend.m2")
-            .expect("read the Northrend glue scene");
+        let bytes = crate::read_m2(
+            &chain,
+            "Interface\\Glues\\Models\\UI_MainMenu_Northrend\\UI_MainMenu_Northrend.m2",
+        )
+        .expect("read the Northrend glue scene");
         let defs = parse_m2_particle_emitters(&bytes).expect("parse emitters");
         assert_eq!(defs.len(), 40);
         assert!(
@@ -840,12 +918,12 @@ mod tests {
     #[test]
     fn the_waterfall_emitter_is_lit() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file(
-                "World\\Azeroth\\Elwynn\\PassiveDoodads\\Waterfall\\ElwynnTallWaterfall01.m2",
-            )
-            .expect("read ElwynnTallWaterfall01.m2");
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(
+            &chain,
+            "World\\Azeroth\\Elwynn\\PassiveDoodads\\Waterfall\\ElwynnTallWaterfall01.m2",
+        )
+        .expect("read ElwynnTallWaterfall01.m2");
         let defs = parse_m2_particle_emitters(&bytes).expect("parse emitters");
         assert_eq!(defs.len(), 1);
         assert_eq!(
@@ -861,9 +939,8 @@ mod tests {
     #[test]
     fn real_blood_spurt_emitters_are_keyed_bursts() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("Particles\\BloodSpurts\\BloodSpurt.m2")
+        let chain = crate::open_chain(&data).expect("open chain");
+        let bytes = crate::read_m2(&chain, "Particles\\BloodSpurts\\BloodSpurt.m2")
             .expect("read BloodSpurt.m2");
         let defs = parse_m2_particle_emitters(&bytes).expect("parse emitters");
         assert_eq!(defs.len(), 4);
@@ -893,10 +970,9 @@ mod tests {
     #[test]
     fn real_feint_impact_authors_burst_emitters() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
+        let chain = crate::open_chain(&data).expect("open chain");
         let impact = parse_m2_particle_emitters(
-            &chain
-                .read_file("Spells\\Feint_Impact_Chest.m2")
+            &crate::read_m2(&chain, "Spells\\Feint_Impact_Chest.m2")
                 .expect("read Feint_Impact_Chest.m2"),
         )
         .expect("parse emitters");
@@ -910,8 +986,7 @@ mod tests {
         assert_eq!(impact[0].timing.rate(None, 0.067, 0.0), 30.0);
         assert_eq!(impact[0].timing.rate(None, 1.500, 0.0), 30.0);
         let cast = parse_m2_particle_emitters(
-            &chain
-                .read_file("Spells\\Eviscerate_Cast_Hands.m2")
+            &crate::read_m2(&chain, "Spells\\Eviscerate_Cast_Hands.m2")
                 .expect("read Eviscerate_Cast_Hands.m2"),
         )
         .expect("parse emitters");
@@ -925,10 +1000,9 @@ mod tests {
     #[test]
     fn real_flamestrike_authors_spline_chains() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
+        let chain = crate::open_chain(&data).expect("open chain");
         let defs = parse_m2_particle_emitters(
-            &chain
-                .read_file("Spells\\FlameStrike_Area.m2")
+            &crate::read_m2(&chain, "Spells\\FlameStrike_Area.m2")
                 .expect("read FlameStrike_Area.m2"),
         )
         .expect("parse emitters");
@@ -961,11 +1035,9 @@ mod tests {
     #[ignore = "3.3.5a's MoltenBlast_Impact_Chest keys its plume differently; re-measure (#51)"]
     fn real_fireball_effects_rebase_to_clip_time() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
+        let chain = crate::open_chain(&data).expect("open chain");
         let cast = parse_m2_particle_emitters(
-            &chain
-                .read_file("Spells\\Fire_Cast_Hand.m2")
-                .expect("read Fire_Cast_Hand.m2"),
+            &crate::read_m2(&chain, "Spells\\Fire_Cast_Hand.m2").expect("read Fire_Cast_Hand.m2"),
         )
         .expect("parse emitters");
         assert_eq!(cast.len(), 3);
@@ -980,8 +1052,7 @@ mod tests {
             );
         }
         let impact = parse_m2_particle_emitters(
-            &chain
-                .read_file("Spells\\MoltenBlast_Impact_Chest.m2")
+            &crate::read_m2(&chain, "Spells\\MoltenBlast_Impact_Chest.m2")
                 .expect("read MoltenBlast_Impact_Chest.m2"),
         )
         .expect("parse emitters");

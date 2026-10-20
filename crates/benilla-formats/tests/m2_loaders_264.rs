@@ -1,5 +1,5 @@
-//! Every chain loader reads a 3.3.5a (version 264) M2 through `read_m2`'s relayout: Elwynn's
-//! ground-clutter tufts, the night star dome and a doodad's bounds and hull all decode.
+//! Every chain loader reads a 3.3.5a (version 264) M2 through `read_m2`: Elwynn's ground-clutter
+//! tufts, the night star dome and a doodad's bounds and hull all decode.
 
 use benilla_formats::{
     load_m2_bone_spins, load_m2_bounds, load_m2_collision_hull, load_m2_mesh, md20_version,

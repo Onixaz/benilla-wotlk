@@ -13,9 +13,11 @@ use benilla_assets::materials::{WowModelExt, WowModelMaterial, VANILLA_ALPHA_KEY
 mod batch;
 pub mod lazy;
 pub mod park;
+mod sort;
 mod visibility;
 
 pub use batch::{BatchVariants, EntityUvLane, M2BatchMaterials, ModelMaterials, SkyboxBatch};
+pub use sort::{M2BatchSort, SortOrigin};
 
 /// Yards of transparent sort bias per authored batch step: a model's coplanar batches tie on one
 /// mesh centre, and the reference keeps their authored order inside the instance's sort key
@@ -82,9 +84,13 @@ pub struct MatKey {
     /// The placement owning this material when its animated loop follows the instance's sequence
     /// (the BRM lava bubbles' flipbook); `None` for the shared material.
     instance: Option<Entity>,
-    /// The combiner's shader code and stage flags ([`Stage2::lanes`]) and its stage-1 texture.
-    stage2: Option<(u32, u32, Option<AssetId<Image>>)>,
+    /// The combiner's shader code and stage flags ([`Stage2::lanes`]), its stage-1 texture, and
+    /// its stage-1 transform's address.
+    stage2: Option<Stage2Key>,
 }
+
+/// [`MatKey::stage2`]: the shader code, stage flags, stage-1 texture and stage-1 transform address.
+type Stage2Key = (u32, u32, Option<AssetId<Image>>, Option<usize>);
 
 /// A batch's pixel combiner ([`benilla_formats::Combiner`]) and its loaded stage-1 texture.
 #[derive(Clone, Copy)]
@@ -207,9 +213,17 @@ pub fn model_material(
         zfill: false,
         sky_depth,
         instance,
-        stage2: stage2
-            .zip(lanes)
-            .map(|(s, (code, flags))| (code, flags, s.texture.map(Handle::id))),
+        stage2: stage2.zip(lanes).map(|(s, (code, flags))| {
+            (
+                code,
+                flags,
+                s.texture.map(Handle::id),
+                s.combiner
+                    .uv1
+                    .as_ref()
+                    .map(|u| u as *const benilla_formats::StageUv as usize),
+            )
+        }),
     };
     if let Some(h) = cache.fetch(&key) {
         return h;
@@ -368,6 +382,20 @@ pub fn model_material(
                 combiner: lanes.map_or(Vec4::ZERO, |(code, flags)| {
                     Vec4::new(code as f32, flags as f32, 0.0, 0.0)
                 }),
+                // xy stage 1's offset at t = 0, the seed its table row is added to.
+                stage1: {
+                    let uv1 =
+                        stage2
+                            .and_then(|s| s.combiner.uv1.as_ref())
+                            .map_or([0.0, 0.0], |u| {
+                                u.seq
+                                    .as_ref()
+                                    .and_then(|s| s.seq(None))
+                                    .or(u.anim.as_deref())
+                                    .map_or([0.0, 0.0], |a| a.sample(0.0))
+                            });
+                    Vec4::new(uv1[0], uv1[1], 0.0, 0.0)
+                },
                 texture2: stage2.and_then(|s| s.texture.cloned()),
                 light_buf: light.clone(),
             },
@@ -493,6 +521,7 @@ pub fn zfill_material(
                 wmo_unified: Vec4::ZERO,
                 // Depth only: the cutout reads stage 0's alpha.
                 combiner: Vec4::ZERO,
+                stage1: Vec4::ZERO,
                 texture2: None,
                 light_buf: light.clone(),
             },
@@ -926,6 +955,7 @@ pub fn replace_fog_policy(z: f32, policy: benilla_formats::FogPolicy) -> f32 {
 
 /// The model-render lane's registrations.
 pub fn plugin(app: &mut App) {
+    sort::plugin(app);
     // Before `ModelVisSet`, so the authority's pick sees this frame's side, and after the fade
     // resolve. The self feather is unordered: it composes the same marker and can lag one frame
     // as the eye crosses the surface.

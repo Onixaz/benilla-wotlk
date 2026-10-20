@@ -1,11 +1,8 @@
 //! An M2's authored bounds ([`M2Bounds`]): the header sphere and box, and the Stand-sequence box
 //! reads that size the selection ring, the chat bubble and the camera pivot.
 
-use std::io::Cursor;
-
-use anyhow::{Context, Result};
-use benilla_bytes::ByteExt;
-use benilla_m2::parse_m2;
+use anyhow::Result;
+use benilla_m2::{M2Model, M2Sequence};
 
 use crate::Chain;
 
@@ -50,8 +47,8 @@ pub struct M2Bounds {
 
 /// Read an M2's bounds from the chain, by model or doodad (`.mdx`/`.mdl`) path.
 pub fn load_m2_bounds(chain: &mut Chain, raw_path: &str) -> Result<M2Bounds> {
-    let (path, bytes) = read_model(chain, raw_path)?;
-    parse_m2_bounds(&bytes).with_context(|| format!("parsing M2 bounds {path}"))
+    let (_, model) = read_model(chain, raw_path)?;
+    Ok(parse_m2_bounds(&model))
 }
 
 /// The ring footprint the reference stores for a box with zero X and Y extents: the writer
@@ -60,78 +57,44 @@ pub fn load_m2_bounds(chain: &mut Chain, raw_path: &str) -> Result<M2Bounds> {
 /// this is its ring; the ring also takes it for a unit with no model.
 pub const DEGENERATE_RING_FOOTPRINT: f32 = 1.2;
 
-/// Resolve an animation id to its `M2Sequence` index through the lookup (MD20 `0x24`/`0x28`, a
-/// `u16` per id; sequences at `0x1c`/`0x20`). An id is not a record number: a chicken's record 0
-/// is a flap and its Stand is index 2. `None` for an absent id (`0xffff`) or one out of range:
-/// the reference's `0x711960` presence test folded into its `0x711a20` box query.
-fn seq_index(bytes: &[u8], anim_id: usize) -> Option<usize> {
-    let anim_count = bytes.u32_at(0x1c)? as usize;
-    let lookup_count = bytes.u32_at(0x24)? as usize;
-    let lookup_ofs = bytes.u32_at(0x28)? as usize;
-    if anim_count == 0 || anim_id >= lookup_count {
-        return None;
-    }
-    match bytes.u16_at(lookup_ofs.checked_add(anim_id * 2)?) {
-        Some(i) if (i as usize) != 0xffff && (i as usize) < anim_count => Some(i as usize),
-        _ => None,
-    }
+/// The sequence animation id `anim_id` resolves to through the lookup. An id is not a record
+/// number: a chicken's record 0 is a flap and its Stand is index 2. `None` for an absent id
+/// (`0xffff`) or one out of range, the presence test folded into the box query.
+fn sequence(model: &M2Model, anim_id: u16) -> Option<&M2Sequence> {
+    model.sequences.get(model.sequence_slot(anim_id)?)
 }
 
-/// A sequence record's offset: stride `0x44` from MD20 `0x20`, its `CAaBox` min at `+0x24` and
-/// max at `+0x30`.
-fn seq_record(bytes: &[u8], idx: usize) -> Option<usize> {
-    let anim_ofs = bytes.u32_at(0x20)? as usize;
-    anim_ofs.checked_add(idx * 0x44)
-}
-
-/// The Stand record: animation id 0 through [`seq_index`], else record 0; `None` only when the
+/// The Stand sequence: animation id 0 through the lookup, else record 0; `None` only when the
 /// model has no sequences.
-fn stand_record(bytes: &[u8]) -> Option<usize> {
-    if bytes.u32_at(0x1c)? as usize == 0 {
-        return None;
-    }
-    seq_record(bytes, seq_index(bytes, 0).unwrap_or(0))
+fn stand(model: &M2Model) -> Option<&M2Sequence> {
+    sequence(model, 0).or(model.sequences.first())
 }
 
-/// One sequence box's `max.z`, `rec+0x38`: the `out+0x20` that `0x711a20` returns.
-fn seq_max_z(bytes: &[u8], anim_id: usize) -> Option<f32> {
-    let rec = seq_record(bytes, seq_index(bytes, anim_id)?)?;
-    bytes.f32_at(rec + 0x38)
-}
-
-/// The Stand box's `(dx, dy, dz)`, the input the reference's living-unit ring is sized from
-/// (`0x60aee0`); `None` without sequences. Z rides along because the chat bubble anchors on the
-/// same box, so the ring and the bubble never read different animations.
-fn stand_box(bytes: &[u8]) -> Option<(f32, f32, f32)> {
-    let rec = stand_record(bytes)?;
+/// The Stand box's `(dx, dy, dz)`, the input the reference's living-unit ring is sized from;
+/// `None` without sequences. Z rides along because the chat bubble anchors on the same box, so the
+/// ring and the bubble never read different animations.
+fn stand_box(model: &M2Model) -> Option<(f32, f32, f32)> {
+    let s = stand(model)?;
     // The ring squares dx and dy, so an unsorted box is harmless.
-    let dx = bytes.f32_at(rec + 0x30)? - bytes.f32_at(rec + 0x24)?;
-    let dy = bytes.f32_at(rec + 0x34)? - bytes.f32_at(rec + 0x28)?;
-    let dz = bytes.f32_at(rec + 0x38)? - bytes.f32_at(rec + 0x2c)?;
-    Some((dx, dy, dz))
+    let d = |k: usize| s.bounds_max[k] - s.bounds_min[k];
+    Some((d(0), d(1), d(2)))
 }
 
 /// `AnimationData` id 42, Swim: the second box `0x50ca90` queries (`0x50ccde call 0x711a20`).
-const SWIM_ANIM_ID: usize = 42;
+const SWIM_ANIM_ID: u16 = 42;
 
 /// The camera's swim pivot drop ([`M2Bounds::swim_pivot_drop`]). The reference requires ids 0 and
 /// `0x2a` both present (`0x711960` at `0x50cc43`/`0x50cc4f`); here Stand resolves through
-/// [`stand_record`], the box the ring and the chat bubble read.
-fn swim_pivot_drop(bytes: &[u8]) -> f32 {
-    let Some(stand_z) = stand_record(bytes).and_then(|rec| bytes.f32_at(rec + 0x38)) else {
+/// [`stand`], the box the ring and the chat bubble read.
+fn swim_pivot_drop(model: &M2Model) -> f32 {
+    let (Some(stand), Some(swim)) = (stand(model), sequence(model, SWIM_ANIM_ID)) else {
         return 0.0;
     };
-    let Some(swim_z) = seq_max_z(bytes, SWIM_ANIM_ID) else {
-        return 0.0;
-    };
-    (stand_z - swim_z).max(0.0)
+    (stand.bounds_max[2] - swim.bounds_max[2]).max(0.0)
 }
 
-/// Read an in-memory M2's bounds, for the Bevy `AssetLoader`.
-pub fn parse_m2_bounds(bytes: &[u8]) -> Result<M2Bounds> {
-    let format =
-        parse_m2(&mut Cursor::new(bytes)).map_err(|e| anyhow::anyhow!("parsing M2: {e}"))?;
-    let model = format.model();
+/// A parsed M2's bounds, for the Bevy `AssetLoader`.
+pub fn parse_m2_bounds(model: &M2Model) -> M2Bounds {
     let h = &model.header;
     let vert_max_from_origin = model
         .vertices
@@ -142,7 +105,7 @@ pub fn parse_m2_bounds(bytes: &[u8]) -> Result<M2Bounds> {
         })
         .fold(0.0_f32, f32::max);
     // The Stand box, or the header box for a model with no sequences (the reference's static path).
-    let (rx, ry, rz) = stand_box(bytes).unwrap_or((
+    let (rx, ry, rz) = stand_box(model).unwrap_or((
         h.bounding_box_max[0] - h.bounding_box_min[0],
         h.bounding_box_max[1] - h.bounding_box_min[1],
         h.bounding_box_max[2] - h.bounding_box_min[2],
@@ -152,7 +115,7 @@ pub fn parse_m2_bounds(bytes: &[u8]) -> Result<M2Bounds> {
     } else {
         (0.5 * (rx * rx + ry * ry).sqrt()).sqrt()
     };
-    Ok(M2Bounds {
+    M2Bounds {
         sphere_radius: h.bounding_sphere_radius,
         bbox_min: h.bounding_box_min,
         bbox_max: h.bounding_box_max,
@@ -160,6 +123,6 @@ pub fn parse_m2_bounds(bytes: &[u8]) -> Result<M2Bounds> {
         ring_footprint,
         pivot_z: model.pivot_attach_z,
         stand_box_z: rz.max(0.0),
-        swim_pivot_drop: swim_pivot_drop(bytes),
-    })
+        swim_pivot_drop: swim_pivot_drop(model),
+    }
 }

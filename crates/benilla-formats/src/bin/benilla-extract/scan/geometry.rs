@@ -19,7 +19,7 @@ pub fn bbfacescan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     // so they are counted from the render lanes' flag, a cross-check of `bbscan`'s SEAM column.
     let (mut welded, mut weld_models) = (0u32, 0u32);
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
@@ -136,14 +136,11 @@ pub fn bbscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let (mut seam_models, mut seam_bones) = (0u32, 0u32);
     let (mut nonunif_models, mut nonunif_bones, mut nonunif_direct) = (0u32, 0u32, 0u32);
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
-        let Ok(fmt) = benilla_m2::parse_m2(&mut std::io::Cursor::new(bytes.as_slice())) else {
-            continue;
-        };
-        let m = fmt.model();
+        let m = &bytes;
         let kinds: Vec<Option<benilla_formats::BillboardKind>> = m
             .bones
             .iter()
@@ -330,7 +327,7 @@ pub fn geosetscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     // Top-level directory → multi-geoset model count.
     let mut by_dir: BTreeMap<String, u32> = BTreeMap::new();
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
@@ -412,7 +409,7 @@ pub fn groundscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     // Ground quads with a constant M2Color tint (`GroundQuad::tint`), which a decal must carry.
     let (mut tinted_total, mut tinted_models) = (0u32, 0u32);
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;
@@ -524,16 +521,11 @@ pub fn animboundscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let mut rows: Vec<(f32, f32, bool, f32, String)> = Vec::new();
     let mut scanned = 0u32;
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
-        let Ok(bounds) = benilla_formats::parse_m2_bounds(&bytes) else {
-            continue;
-        };
-        let Ok(fmt) = benilla_m2::parse_m2(&mut std::io::Cursor::new(bytes.as_slice())) else {
-            continue;
-        };
-        let verts = &fmt.model().vertices;
+        let bounds = benilla_formats::parse_m2_bounds(&bytes);
+        let verts = &bytes.vertices;
         if verts.is_empty() {
             continue;
         }
@@ -614,7 +606,7 @@ pub fn normalscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let mut rows: Vec<(usize, usize, usize, usize, String)> = Vec::new();
     let mut scanned = 0u32;
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;

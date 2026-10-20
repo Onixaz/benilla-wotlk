@@ -176,7 +176,7 @@ pub fn m2lightscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let mut hit_models: Vec<(String, Vec<M2Light>)> = Vec::new();
 
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;
         };
         scanned += 1;

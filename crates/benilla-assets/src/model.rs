@@ -879,10 +879,10 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_welded_billboard_bone_still_reaches_the_palette_with_its_arm() {
         let data = benilla_formats::wow_data_or_skip!();
-        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let chain = benilla_formats::open_chain(&data).expect("open chain");
         let path = "Item\\ObjectComponents\\Shoulder\\LShoulder_Plate_PVPAlliance_A_01.m2";
-        let bytes = chain.read_file(path).expect("read the pauldron");
-        let raw = benilla_formats::parse_m2_skeleton(&bytes).expect("parse its skeleton");
+        let bytes = benilla_formats::read_m2(&chain, path).expect("read the pauldron");
+        let raw = benilla_formats::parse_m2_skeleton(&bytes);
         // Two authored arms, so the test cannot pass on a build that stopped parsing bone flags.
         assert_eq!(
             raw.bones.iter().filter(|b| b.billboard.is_some()).count(),
@@ -913,13 +913,11 @@ mod tests {
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_riding_horse_seat_bone_carries_the_root_basis_arm() {
         let data = benilla_formats::wow_data_or_skip!();
-        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
-        let bytes = chain
-            .read_file("Creature\\RidingHorse\\RidingHorse.m2")
+        let chain = benilla_formats::open_chain(&data).expect("open chain");
+        let bytes = benilla_formats::read_m2(&chain, "Creature\\RidingHorse\\RidingHorse.m2")
             .expect("read the horse");
-        let raw = benilla_formats::parse_m2_skeleton(&bytes).expect("parse its skeleton");
+        let raw = benilla_formats::parse_m2_skeleton(&bytes);
         let seat = benilla_formats::parse_m2_attachments(&bytes)
-            .expect("parse attachments")
             .into_iter()
             .find(|a| a.id == 0)
             .expect("the horse authors a rider seat");

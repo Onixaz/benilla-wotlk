@@ -8,12 +8,10 @@ use benilla_formats::{open_chain, parse_m2_particle_emitters, ParticleBlend};
 #[test]
 fn twinkle_fields_gate_not_scale() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
 
     let kobold = parse_m2_particle_emitters(
-        &chain
-            .read_file("Creature\\Kobold\\Kobold.m2")
-            .expect("read Kobold.m2"),
+        &benilla_formats::read_m2(&chain, "Creature\\Kobold\\Kobold.m2").expect("read Kobold.m2"),
     )
     .expect("parse kobold emitters");
     assert_eq!(kobold.len(), 1, "kobold has one candle emitter");
@@ -30,9 +28,11 @@ fn twinkle_fields_gate_not_scale() {
     );
 
     let campfire = parse_m2_particle_emitters(
-        &chain
-            .read_file("World\\Azeroth\\Elwynn\\PassiveDoodads\\Campfire\\ElwynnCampfire.m2")
-            .expect("read ElwynnCampfire.m2"),
+        &benilla_formats::read_m2(
+            &chain,
+            "World\\Azeroth\\Elwynn\\PassiveDoodads\\Campfire\\ElwynnCampfire.m2",
+        )
+        .expect("read ElwynnCampfire.m2"),
     )
     .expect("parse campfire emitters");
     let glow = &campfire[0];
@@ -47,17 +47,20 @@ fn twinkle_fields_gate_not_scale() {
 #[test]
 fn flag_remap_reads_the_file_bits() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
 
-    let kobold =
-        parse_m2_particle_emitters(&chain.read_file("Creature\\Kobold\\Kobold.m2").unwrap())
-            .unwrap();
+    let kobold = parse_m2_particle_emitters(
+        &benilla_formats::read_m2(&chain, "Creature\\Kobold\\Kobold.m2").unwrap(),
+    )
+    .unwrap();
     assert!(!kobold[0].model_space() && !kobold[0].scale_size_by_instance());
 
     let chandelier = parse_m2_particle_emitters(
-        &chain
-            .read_file("World\\Dungeon\\GoldshireInn\\InnChandelier\\InnChandelier.m2")
-            .unwrap(),
+        &benilla_formats::read_m2(
+            &chain,
+            "World\\Dungeon\\GoldshireInn\\InnChandelier\\InnChandelier.m2",
+        )
+        .unwrap(),
     )
     .unwrap();
     assert!(
@@ -66,9 +69,11 @@ fn flag_remap_reads_the_file_bits() {
     );
 
     let campfire = parse_m2_particle_emitters(
-        &chain
-            .read_file("World\\Azeroth\\Elwynn\\PassiveDoodads\\Campfire\\ElwynnCampfire.m2")
-            .unwrap(),
+        &benilla_formats::read_m2(
+            &chain,
+            "World\\Azeroth\\Elwynn\\PassiveDoodads\\Campfire\\ElwynnCampfire.m2",
+        )
+        .unwrap(),
     )
     .unwrap();
     assert!(
@@ -84,10 +89,9 @@ fn flag_remap_reads_the_file_bits() {
 #[test]
 fn barrel_explode_emitters_are_off_at_rest_and_fire_in_their_clips() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
     let emitters = parse_m2_particle_emitters(
-        &chain
-            .read_file("World\\Goober\\G_BarrelExplode.m2")
+        &benilla_formats::read_m2(&chain, "World\\Goober\\G_BarrelExplode.m2")
             .expect("read G_BarrelExplode.m2"),
     )
     .expect("parse emitters");
@@ -126,9 +130,8 @@ fn barrel_explode_emitters_are_off_at_rest_and_fire_in_their_clips() {
 #[test]
 fn earth_elemental_debris_is_alphakey_not_opaque() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
-    let bytes = chain
-        .read_file("Creature\\ElementalEarth\\ElementalEarth.m2")
+    let chain = open_chain(&data).expect("open vanilla patch chain");
+    let bytes = benilla_formats::read_m2(&chain, "Creature\\ElementalEarth\\ElementalEarth.m2")
         .expect("read ElementalEarth.m2");
 
     let emitters = parse_m2_particle_emitters(&bytes).expect("parse emitters");

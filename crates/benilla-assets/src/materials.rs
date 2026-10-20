@@ -124,6 +124,10 @@ pub struct WowModelExt {
     /// second UV set.
     #[uniform(100)]
     pub combiner: Vec4,
+    /// The combiner's stage-1 texture transform: `xy` = its offset at `t = 0`, `zw` = its
+    /// `matanim` rows, UV scroll and affine, `0` = identity.
+    #[uniform(100)]
+    pub stage1: Vec4,
     /// The combiner's stage-1 texture; the fallback white where none.
     #[texture(101)]
     #[sampler(102)]

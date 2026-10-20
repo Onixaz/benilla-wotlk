@@ -9,8 +9,8 @@ fn main() -> anyhow::Result<()> {
         .nth(1)
         .ok_or_else(|| anyhow::anyhow!("usage: batch_lit <m2 path>"))?;
     let data = benilla_formats::wow_data().expect("no WoW install found (set $WOW_DATA)");
-    let mut chain = benilla_formats::open_chain(&data)?;
-    let bytes = chain.read_file(&virt)?;
+    let chain = benilla_formats::open_chain(&data)?;
+    let bytes = benilla_formats::read_m2(&chain, &virt)?;
     let subs = benilla_formats::parse_m2_render_submeshes(&bytes, "", &[])?;
     println!("{virt} — {} batches", subs.len());
     let mut unlit = 0;

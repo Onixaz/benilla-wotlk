@@ -4,14 +4,12 @@
 //! renderer. Output is Blizzard data: never commit it.
 //! `cargo run -p benilla-formats --example dump_model_anim -- <m2 path | substring>`
 
-use std::io::Cursor;
-
 fn main() -> anyhow::Result<()> {
     let arg = std::env::args()
         .nth(1)
         .ok_or_else(|| anyhow::anyhow!("usage: dump_model_anim <m2 path | substring>"))?;
     let data = benilla_formats::wow_data().expect("no WoW install found (set $WOW_DATA)");
-    let mut chain = benilla_formats::open_chain(&data)?;
+    let chain = benilla_formats::open_chain(&data)?;
 
     // An exact path dumps in full; a substring sweep skips fully static models.
     let exact = chain.contains(&arg);
@@ -31,7 +29,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     for name in names {
-        let Ok(bytes) = chain.read_file(&name) else {
+        let Ok(bytes) = benilla_formats::read_m2(&chain, &name) else {
             continue;
         };
         let Ok(sum) = benilla_formats::parse_m2_animation_summary(&bytes) else {
@@ -60,8 +58,7 @@ fn main() -> anyhow::Result<()> {
         if sum.texture_transform_count == 0 {
             continue;
         }
-        let Ok(fmt) = parse_m2(&bytes) else { continue };
-        let m = fmt.model();
+        let m = &bytes;
         println!(
             "    global_sequences {:?}  texAnimLookup {:?}",
             m.global_sequences, m.texture_transform_lookup
@@ -83,8 +80,4 @@ fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
-}
-
-fn parse_m2(bytes: &[u8]) -> anyhow::Result<benilla_m2::M2Format> {
-    benilla_m2::parse_m2(&mut Cursor::new(bytes)).map_err(|e| anyhow::anyhow!("parsing M2: {e}"))
 }

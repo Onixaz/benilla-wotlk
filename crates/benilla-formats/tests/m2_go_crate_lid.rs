@@ -19,10 +19,8 @@ const LID_BONE: u16 = 8;
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_crate_lid_transition_is_bounded_by_the_window_not_the_loop_bit() {
     let data = benilla_formats::wow_data_or_skip!();
-    let mut chain = open_chain(&data).expect("open vanilla patch chain");
-    let bytes = chain
-        .read_file(CRATE)
-        .expect("the crate M2 is in the chain");
+    let chain = open_chain(&data).expect("open vanilla patch chain");
+    let bytes = benilla_formats::read_m2(&chain, CRATE).expect("the crate M2 is in the chain");
     let anims = parse_m2_animations(&bytes);
     let seq = |id: u16| {
         anims
@@ -32,7 +30,7 @@ fn the_crate_lid_transition_is_bounded_by_the_window_not_the_loop_bit() {
     };
 
     // The whole family is authored, so the remap leg (`0x5f3972`) never runs.
-    let lookup = parse_m2_animation_lookup(&bytes).expect("animation lookup");
+    let lookup = parse_m2_animation_lookup(&bytes);
     for id in [CLOSE, CLOSED, OPEN, OPENED] {
         assert!(
             lookup.get(id as usize).is_some_and(|&s| s != 0xffff),
