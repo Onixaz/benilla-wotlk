@@ -4,48 +4,32 @@
 use super::*;
 use crate::script::{UiScript, UnitState};
 
-/// Every number distinct, so a swapped return cannot pass: the tens digit is the block (session
-/// 1x to lifetime 5x), the units digit the position in it.
+/// Every number distinct, so a swapped return cannot pass: the tens digit is the block (today
+/// 1x, yesterday 2x, lifetime 5x), the units digit the position in it.
 fn honor_state() -> HonorState {
     HonorState {
-        session_hk: 11,
-        session_dk: 12,
+        today_hk: 11,
+        today_honor: 12,
         yesterday_hk: 21,
-        yesterday_dk: 22,
         yesterday_honor: 23,
-        this_week_hk: 31,
-        this_week_honor: 32,
-        last_week_hk: 41,
-        last_week_dk: 42,
-        last_week_honor: 43,
-        last_week_standing: 44,
         lifetime_hk: 51,
-        lifetime_dk: 52,
         highest_rank: 11,
         rank: 9,
-        // 51/255 is exactly 0.2, which the engine's multiply does not produce.
-        rank_bar: 51,
+        honor_currency: 4_321,
+        arena_currency: 765,
     }
 }
 
-/// The inspect reply's twelve, distinct in return order, so the ninth (the standing) cannot hide
-/// behind the eighth.
+/// The inspect reply's six, distinct in return order.
 fn inspect_state() -> InspectHonorData {
     InspectHonorData {
         guid: 0xDEAD_BEEF,
-        session_hk: 61,
-        session_dk: 62,
+        today_hk: 61,
+        today_honor: 62,
         yesterday_hk: 63,
         yesterday_honor: 64,
-        this_week_hk: 65,
-        this_week_honor: 66,
-        last_week_hk: 67,
-        last_week_honor: 68,
-        last_week_standing: 69,
-        lifetime_hk: 70,
-        lifetime_dk: 71,
+        lifetime_hk: 65,
         highest_rank: 12,
-        rank_bar: 255,
     }
 }
 
@@ -104,54 +88,43 @@ fn seat_name_globals(s: &UiScript) {
     }
 }
 
-/// `HonorFrame.lua`'s own destructuring, line for line; the arities differ per period.
+/// `PVPFrame.lua`'s own destructuring, line for line: two values per period.
 #[test]
 fn the_reference_destructuring_lands_every_value_in_the_right_slot() {
     let s = seated();
-
     assert_eq!(
-        s.eval::<(i64, i64)>("local hk, dk = GetPVPSessionStats() return hk, dk")
+        s.eval::<(i64, i64)>("local hk, cp = GetPVPSessionStats() return hk, cp")
             .unwrap(),
         (11, 12)
     );
     assert_eq!(
-        s.eval::<(i64, i64, i64)>(
-            "local hk, dk, contribution = GetPVPYesterdayStats() return hk, dk, contribution"
-        )
-        .unwrap(),
-        (21, 22, 23)
-    );
-    assert_eq!(
         s.eval::<(i64, i64)>(
-            "local hk, contribution = GetPVPThisWeekStats() return hk, contribution"
+            "local hk, contribution = GetPVPYesterdayStats() return hk, contribution"
         )
         .unwrap(),
-        (31, 32)
+        (21, 23)
     );
     assert_eq!(
-        s.eval::<(i64, i64, i64, i64)>(
-            "local hk, dk, contribution, rank = GetPVPLastWeekStats() \
-             return hk, dk, contribution, rank"
-        )
-        .unwrap(),
-        (41, 42, 43, 44),
-        "the fourth return is last week's STANDING"
+        s.eval::<(i64, i64)>("local hk, highest = GetPVPLifetimeStats() return hk, highest")
+            .unwrap(),
+        (51, 11)
     );
     assert_eq!(
-        s.eval::<(i64, i64, i64)>(
-            "local hk, dk, highestRank = GetPVPLifetimeStats() return hk, dk, highestRank"
-        )
-        .unwrap(),
-        (51, 52, 11)
+        s.eval::<(i64, i64)>("return GetHonorCurrency()").unwrap(),
+        (4_321, 75_000)
+    );
+    assert_eq!(
+        s.eval::<(i64, i64)>("return GetArenaCurrency()").unwrap(),
+        (765, 10_000)
     );
 }
 
-/// `0x51a843 cmp al,5; jb`: 4 vanishes, 5 survives.
+/// `0x611bd3 cmp al,5; jb`: 4 vanishes, 5 survives.
 #[test]
 fn a_lifetime_rank_below_five_is_reported_as_zero() {
     let mut s = seated();
-    let third = |s: &UiScript| {
-        s.eval::<i64>("local _, _, highest = GetPVPLifetimeStats() return highest")
+    let second = |s: &UiScript| {
+        s.eval::<i64>("local _, highest = GetPVPLifetimeStats() return highest")
             .unwrap()
     };
     for (highest, reported) in [(0u8, 0i64), (1, 0), (4, 0), (5, 5), (6, 6), (18, 18)] {
@@ -159,20 +132,8 @@ fn a_lifetime_rank_below_five_is_reported_as_zero() {
             highest_rank: highest,
             ..honor_state()
         }));
-        assert_eq!(third(&s), reported, "highest lifetime rank {highest}");
+        assert_eq!(second(&s), reported, "highest lifetime rank {highest}");
     }
-
-    // A number, not nil: the pane passes it to `GetPVPRankInfo`, which raises on a non-number.
-    s.set_honor(Some(HonorState {
-        highest_rank: 3,
-        ..honor_state()
-    }));
-    assert_eq!(s.arity("GetPVPLifetimeStats()").unwrap(), 3);
-    assert!(s
-        .eval::<bool>(
-            "local _, _, highest = GetPVPLifetimeStats() return type(highest) == 'number'"
-        )
-        .unwrap());
 }
 
 /// A getter returning one value too many passes the destructuring test; the count catches it.
@@ -181,72 +142,62 @@ fn every_getter_returns_exactly_the_reference_arity() {
     let s = seated();
     for (call, width) in [
         ("GetPVPSessionStats()", 2),
-        ("GetPVPYesterdayStats()", 3),
-        ("GetPVPThisWeekStats()", 2),
-        ("GetPVPLastWeekStats()", 4),
-        ("GetPVPLifetimeStats()", 3),
+        ("GetPVPYesterdayStats()", 2),
+        ("GetPVPLifetimeStats()", 2),
         ("GetPVPRankProgress()", 1),
+        ("GetHonorCurrency()", 2),
+        ("GetArenaCurrency()", 2),
         ("GetPVPRankInfo(9)", 2),
         ("GetPVPRankInfo(0)", 2),
         ("UnitPVPRank('player')", 1),
+        ("SetPVP(1)", 0),
     ] {
         assert_eq!(s.arity(call).unwrap(), width, "{call} arity");
     }
 }
 
-/// The reference feeds these straight into `format()`, where a nil would raise.
+/// The reference feeds these straight into `SetText`, where a nil would show nothing.
 #[test]
 fn the_self_getters_answer_zeroed_before_the_first_push() {
     let s = UiScript::new().expect("VM");
     assert_eq!(
-        s.eval::<(i64, i64, i64, i64)>("return GetPVPLastWeekStats()")
-            .unwrap(),
-        (0, 0, 0, 0)
+        s.eval::<(i64, i64)>("return GetPVPSessionStats()").unwrap(),
+        (0, 0)
     );
     assert_eq!(s.eval::<f64>("return GetPVPRankProgress()").unwrap(), 0.0);
 }
 
-/// Written to fail against `byte / 255.0`: the constant is checked at its bits, and 51 and 255
-/// must not land on 0.2 and 1.0.
+/// `SetPVP` sends the state it is given, nil as 0; `TogglePVP` stays the empty toggle.
 #[test]
-fn the_rank_bar_multiplies_by_the_f32_reciprocal_and_never_clamps() {
-    // The four bytes at `0x8026c8`.
-    assert_eq!(f64::from(f32::from_bits(0x3B80_8081)), RANK_BAR_SCALE);
-    assert_ne!(RANK_BAR_SCALE, 1.0 / 255.0, "the f32 is NOT 1/255");
+fn set_pvp_queues_a_state_byte_apart_from_the_toggle() {
+    let mut s = UiScript::new().expect("VM");
+    s.run("SetPVP(1) SetPVP(nil) SetPVP() SetPVP('1') SetPVP(true) TogglePVP()")
+        .unwrap();
+    assert_eq!(s.take_pvp_sets(), vec![1, 0, 0, 1, 0]);
+    assert_eq!(s.take_pvp_toggles(), 1);
+}
 
+/// `IsPVPTimerRunning` reads the timer flag alone; `GetPVPTimer` is the pushed timer plus a second.
+#[test]
+fn the_pvp_timer_pair_reads_the_flag_and_the_pushed_timer() {
     let mut s = seated();
-    let bar = |s: &UiScript| s.eval::<f64>("return GetPVPRankProgress()").unwrap();
-
-    assert_eq!(bar(&s), 51.0 * RANK_BAR_SCALE);
-    assert_ne!(bar(&s), 0.2, "a divisor would land exactly on 0.2");
-    assert_ne!(bar(&s), 51.0 / 255.0);
-
-    for byte in [0u8, 1, 51, 128, 254, 255] {
-        s.set_honor(Some(HonorState {
-            rank_bar: byte,
-            ..honor_state()
-        }));
-        assert_eq!(bar(&s), f64::from(byte) * RANK_BAR_SCALE, "byte {byte}");
-    }
-
-    s.set_honor(Some(HonorState {
-        rank_bar: 0,
-        ..honor_state()
-    }));
-    assert_eq!(bar(&s), 0.0);
-    s.set_honor(Some(HonorState {
-        rank_bar: 255,
-        ..honor_state()
-    }));
-    assert!(bar(&s) > 1.0, "255 * K = 1.0000000091389835, unclamped");
-    assert_ne!(bar(&s), 1.0);
-
-    // The inspect twin runs the identical kernel over the reply's byte (`0x51ab04`).
-    s.set_inspect_honor(Some(inspect_state())); // rank_bar 255
-    assert_eq!(
-        s.eval::<f64>("return GetInspectPVPRankProgress()").unwrap(),
-        255.0 * RANK_BAR_SCALE
+    assert_eq!(s.arity("IsPVPTimerRunning()").unwrap(), 1);
+    assert!(s
+        .eval::<Option<i64>>("return IsPVPTimerRunning()")
+        .unwrap()
+        .is_none());
+    s.set_unit(
+        "player",
+        Some(UnitState {
+            player_flags: PLAYER_FLAGS_PVP_TIMER,
+            ..player()
+        }),
     );
+    assert_eq!(s.eval::<i64>("return IsPVPTimerRunning()").unwrap(), 1);
+    s.set_pvp_toggle_timer(299_000);
+    assert_eq!(s.eval::<i64>("return GetPVPTimer()").unwrap(), 300_000);
+    s.set_pvp_toggle_timer(-1);
+    assert_eq!(s.eval::<i64>("return GetPVPTimer()").unwrap(), 999);
 }
 
 /// Runs the panes' own `NONE` fallback, not just the nil.
@@ -933,64 +884,62 @@ fn has_inspect_honor_data_latches_on_the_push_and_clears_with_it() {
     assert!(!s.eval::<bool>(held()).unwrap());
 }
 
-/// The reference's own twelve-wide destructure, and the standing sitting ninth.
+/// The reference's own six-wide destructure.
 #[test]
-fn get_inspect_honor_data_returns_the_twelve_in_the_reference_order() {
+fn get_inspect_honor_data_returns_the_six_in_the_reference_order() {
     let mut s = seated();
     s.set_inspect_honor(Some(inspect_state()));
-
-    assert_eq!(s.arity("GetInspectHonorData()").unwrap(), 12);
-    let got = s
-        .eval::<Vec<i64>>(
-            "local sessionHK, sessionDK, yesterdayHK, yesterdayHonor, thisweekHK, \
-             thisweekHonor, lastweekHK, lastweekHonor, lastweekStanding, lifetimeHK, \
-             lifetimeDK, lifetimeRank = GetInspectHonorData() \
-             return {sessionHK, sessionDK, yesterdayHK, yesterdayHonor, thisweekHK, \
-             thisweekHonor, lastweekHK, lastweekHonor, lastweekStanding, lifetimeHK, \
-             lifetimeDK, lifetimeRank}",
-        )
-        .unwrap();
-    assert_eq!(got, [61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 12]);
-
+    assert_eq!(s.arity("GetInspectHonorData()").unwrap(), 6);
     assert_eq!(
-        s.eval::<f64>("return GetInspectPVPRankProgress()").unwrap(),
-        255.0 * RANK_BAR_SCALE,
-        "the reply's own rankBar byte, not the player's"
+        s.eval::<Vec<i64>>("return {GetInspectHonorData()}")
+            .unwrap(),
+        [61, 62, 63, 64, 65, 12]
     );
 }
 
-/// `0x4c9620` is ungated and reads zero-initialised slots; a short return would paint blank rows
-/// where the reference paints zeros.
+/// `0x5e77c0` is ungated and reads zero-initialised slots.
 #[test]
-fn get_inspect_honor_data_answers_twelve_zeros_when_no_reply_is_held() {
-    let mut s = seated();
-    assert_eq!(
-        s.arity("GetInspectHonorData()").unwrap(),
-        12,
-        "ungated: twelve on every path"
-    );
+fn get_inspect_honor_data_answers_six_zeros_when_no_reply_is_held() {
+    let s = seated();
     assert_eq!(
         s.eval::<Vec<i64>>("return {GetInspectHonorData()}")
             .unwrap(),
-        vec![0; 12]
+        vec![0; 6]
     );
-    assert!(s
-        .eval::<bool>("return (GetInspectHonorData()) == 0")
-        .unwrap());
-    assert_eq!(
-        s.eval::<f64>("return GetInspectPVPRankProgress()").unwrap(),
-        0.0
-    );
+}
 
-    // Zeros again after a clear; the reference would still hold the previous target's numbers
-    // (`0x4c6f70` zeroes only the flags).
-    s.set_inspect_honor(Some(inspect_state()));
-    s.set_inspect_honor(None);
+/// Eighteen values for a cached team, nothing for an empty slot.
+#[test]
+fn get_inspect_arena_team_data_answers_eighteen_or_nothing() {
+    let mut s = seated();
+    assert_eq!(s.arity("GetInspectArenaTeamData(1)").unwrap(), 0);
+    s.set_inspect_arena_teams([
+        Some(InspectArenaTeamView {
+            name: "Probes".into(),
+            team_size: 2,
+            rating: 1600,
+            games: 20,
+            wins: 12,
+            played: 18,
+            personal_rating: 1580,
+            background: [1.0, 0.5, 0.0],
+            emblem: 7,
+            emblem_color: [0.0, 0.0, 1.0],
+            border: 3,
+            border_color: [0.2, 0.2, 0.2],
+        }),
+        None,
+        None,
+    ]);
+    assert_eq!(s.arity("GetInspectArenaTeamData(1)").unwrap(), 18);
     assert_eq!(
-        s.eval::<Vec<i64>>("return {GetInspectHonorData()}")
-            .unwrap(),
-        vec![0; 12]
+        s.eval::<String>(
+            "local n, size, rating, a, b, c, personal = GetInspectArenaTeamData(1)              return n .. size .. rating .. personal"
+        )
+        .unwrap(),
+        "Probes216001580"
     );
+    assert_eq!(s.arity("GetInspectArenaTeamData(2)").unwrap(), 0);
 }
 
 /// `0x4c80a0` refuses a query while one is in flight and once data is held; `TogglePVP` has no

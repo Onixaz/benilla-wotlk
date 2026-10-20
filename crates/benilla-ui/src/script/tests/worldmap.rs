@@ -754,4 +754,14 @@ fn the_debug_map_verbs_answer_nothing() {
         0,
         "a past start reads 0, never negative"
     );
+    assert!(s
+        .eval::<Option<i64>>("return CanQueueForWintergrasp()")
+        .unwrap()
+        .is_none());
+    s.set_world_map_world_states(HashMap::from([(4375, 1)]));
+    assert_eq!(
+        s.eval::<i64>("return CanQueueForWintergrasp()").unwrap(),
+        1,
+        "world state 4375 opens the queue"
+    );
 }

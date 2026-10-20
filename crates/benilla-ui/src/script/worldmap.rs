@@ -1025,6 +1025,13 @@ fn set_map_now(lua: &Lua, c: i32, z: i32, d: i32) {
     super::tick::fire_event_into(lua, "WORLD_MAP_UPDATE", Vec::new());
 }
 
+impl WorldMapState {
+    /// A world state's value as last pushed, 0 for one never seen (`GetWorldState`).
+    pub(crate) fn world_state(&self, id: u32) -> i32 {
+        self.world_states.get(&id).copied().unwrap_or(0)
+    }
+}
+
 fn with_map<R>(lua: &Lua, f: impl FnOnce(&WorldMapState) -> R) -> R {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
@@ -1654,6 +1661,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(MultiValue::from_vec(vec![Value::Number(f64::from(
                 end.wrapping_sub(now).max(0),
             ))]))
+        })?,
+    )?;
+
+    // CanQueueForWintergrasp() (`0x543600`): world state 4375 set, 1 or nil.
+    g.set(
+        "CanQueueForWintergrasp",
+        lua.create_function(|lua, ()| {
+            Ok(super::binding_abi::flag(with_map(lua, |wm| {
+                wm.world_state(4375) != 0
+            })))
         })?,
     )?;
 

@@ -1,86 +1,87 @@
-//! `TogglePVP` and the thirteen honor bindings: the character and inspect windows' Honor tabs and
-//! the rank any unit frame can read off another player.
+//! `TogglePVP`, `SetPVP` and the honor bindings: the PvP window's honor pane, the inspect PvP
+//! tab, and the rank any unit frame can read off another player.
 //!
 //! The local player's counters are private descriptor fields the app pushes as a [`HonorState`];
 //! another player's arrive as a `MSG_INSPECT_HONOR_STATS` reply ([`InspectHonorData`]), whose
 //! presence is `HasInspectHonorData`. With nothing held every getter answers zeros at full width,
 //! as the reference reads zero-initialised slots ungated. A foreign player's current rank is
-//! public (`PLAYER_BYTES_3` byte 3) and rides [`UnitState::pvp_rank`](super::UnitState::pvp_rank).
+//! public and rides [`UnitState::pvp_rank`](super::UnitState::pvp_rank).
 //!
 //! The internal rank (0 none, 1..=4 dishonorable, 5..=18 Scout or Private to High Warlord or
-//! Grand Marshal, 19 the racial "Leader") is what the wire carries and what keys the
-//! `PVP_RANK_<rank>_<team>` GlobalStrings; the visual rank indexes the badge texture, and every
-//! conversion goes through [`visual_rank`].
+//! Grand Marshal, 19 the racial "Leader") keys the `PVP_RANK_<rank>_<team>` GlobalStrings; the
+//! visual rank indexes the badge texture, and every conversion goes through [`visual_rank`].
 //!
 //! Rank titles are read off the VM's globals, which the install's `GlobalStrings.lua` fills: the
-//! key is `"PVP_RANK_%d_%d"` (`0x8445b4`) with team 0 Horde and 1 Alliance. There is no
-//! `PVP_RANK_0_*`, and both panes fall back to `NONE` on its nil.
+//! key is `"PVP_RANK_%d_%d"` with team 0 Horde and 1 Alliance. There is no `PVP_RANK_0_*`, and the
+//! panes fall back to `NONE` on its nil.
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{number_arg, string_arg};
 use super::unit::is_civilian_kill;
 
-/// The local player's honor snapshot, decoded by the app from the private honor descriptor
-/// fields. Kill counts are halves of `TWO_SHORT` fields, low honorable and high dishonorable.
+/// The local player's honor snapshot, decoded by the app from the private 3.3.5a honor fields.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HonorState {
-    /// `PLAYER_FIELD_SESSION_KILLS` low half.
-    pub session_hk: u16,
-    /// `PLAYER_FIELD_SESSION_KILLS` high half.
-    pub session_dk: u16,
-    /// `PLAYER_FIELD_YESTERDAY_KILLS` halves.
+    /// `PLAYER_FIELD_KILLS` low half: today's honorable kills (`GetPVPSessionStats`, `0x611a20`).
+    pub today_hk: u16,
+    /// `PLAYER_FIELD_TODAY_CONTRIBUTION`: today's honor.
+    pub today_honor: u32,
+    /// `PLAYER_FIELD_KILLS` high half: yesterday's honorable kills (`0x611ad0`).
     pub yesterday_hk: u16,
-    pub yesterday_dk: u16,
     /// `PLAYER_FIELD_YESTERDAY_CONTRIBUTION`.
     pub yesterday_honor: u32,
-    /// `PLAYER_FIELD_THIS_WEEK_KILLS` low half; `GetPVPThisWeekStats` has no dishonorable count.
-    pub this_week_hk: u16,
-    /// `PLAYER_FIELD_THIS_WEEK_CONTRIBUTION`.
-    pub this_week_honor: u32,
-    /// `PLAYER_FIELD_LAST_WEEK_KILLS` halves.
-    pub last_week_hk: u16,
-    pub last_week_dk: u16,
-    /// `PLAYER_FIELD_LAST_WEEK_CONTRIBUTION`.
-    pub last_week_honor: u32,
-    /// `PLAYER_FIELD_LAST_WEEK_RANK`: last week's ladder standing, not a rank.
-    pub last_week_standing: u32,
-    /// `PLAYER_FIELD_LIFETIME_HONORBALE_KILLS` / `…_DISHONORBALE_KILLS` (the server's spellings).
+    /// `PLAYER_FIELD_LIFETIME_HONORABLE_KILLS` (`0x611b80`).
     pub lifetime_hk: u32,
-    pub lifetime_dk: u32,
     /// `PLAYER_FIELD_BYTES` byte 3: the highest lifetime rank, internal scale. Carried raw: only
-    /// `GetPVPLifetimeStats` hides a value below 5 (`0x51a843`).
+    /// `GetPVPLifetimeStats` hides a value below 5.
     pub highest_rank: u8,
-    /// `PLAYER_BYTES_3` byte 3: the current rank, internal scale, 0 for none; the same public
-    /// byte as [`UnitState::pvp_rank`](super::UnitState).
+    /// The current rank, internal scale, 0 for none; the same public byte as
+    /// [`UnitState::pvp_rank`](super::UnitState).
     pub rank: u8,
-    /// `PLAYER_FIELD_BYTES2` byte 0: progress through the current rank, the raw byte.
-    pub rank_bar: u8,
+    /// `PLAYER_FIELD_HONOR_CURRENCY` and `_ARENA_CURRENCY`, the point balances.
+    pub honor_currency: u32,
+    pub arena_currency: u32,
 }
 
-/// One `MSG_INSPECT_HONOR_STATS` reply as the app decoded it. It has no dishonorable counts past
-/// the session pair (the server writes zeros there), so `GetInspectHonorData` returns twelve.
+/// The honor-point cap `GetHonorCurrency` answers second (`0x60fc40`).
+const HONOR_CURRENCY_MAX: f64 = 75_000.0;
+/// The arena-point cap `GetArenaCurrency` answers second (`0x60fcc0`).
+const ARENA_CURRENCY_MAX: f64 = 10_000.0;
+
+/// One `MSG_INSPECT_HONOR_STATS` reply as the app decoded it (`0x5e7a50`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InspectHonorData {
     /// The player the reply was for, the app's key; never returned to Lua.
     pub guid: u64,
-    pub session_hk: u16,
-    pub session_dk: u16,
+    pub today_hk: u16,
+    pub today_honor: u32,
     pub yesterday_hk: u16,
     pub yesterday_honor: u32,
-    pub this_week_hk: u16,
-    pub this_week_honor: u32,
-    pub last_week_hk: u16,
-    pub last_week_honor: u32,
-    /// The reply's `lastWeekRank`, the ladder standing: `GetInspectHonorData`'s ninth return.
-    pub last_week_standing: u32,
     pub lifetime_hk: u32,
-    pub lifetime_dk: u32,
-    /// The reply's `highestRank`, internal scale: `GetInspectHonorData`'s twelfth return
-    /// (`lifetimeRank`), unfiltered, as `0x4c9620` pushes it with no below-5 gate.
+    /// The reply's highest lifetime rank, `GetInspectHonorData`'s sixth return, unfiltered.
     pub highest_rank: u8,
-    /// The reply's trailing `rankBar`, read only by `GetInspectPVPRankProgress`.
-    pub rank_bar: u8,
+}
+
+/// One of the inspected player's arena teams, `GetInspectArenaTeamData`'s eighteen (`0x5e8030`):
+/// the reply's six words and the team cache's name, size and banner.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InspectArenaTeamView {
+    pub name: String,
+    pub team_size: u32,
+    pub rating: u32,
+    /// The reply's third to sixth words, pushed in their order.
+    pub games: u32,
+    pub wins: u32,
+    pub played: u32,
+    pub personal_rating: u32,
+    /// The banner: background colour, emblem style and colour, border style and colour, each
+    /// colour three 0..1 channels.
+    pub background: [f64; 3],
+    pub emblem: u32,
+    pub emblem_color: [f64; 3],
+    pub border: u32,
+    pub border_color: [f64; 3],
 }
 
 impl super::UiScript {
@@ -88,6 +89,22 @@ impl super::UiScript {
     /// two toggles in a frame are two sends.
     pub fn take_pvp_toggles(&mut self) -> u32 {
         drain_field!(self, pvp_toggles)
+    }
+
+    /// Push `GetPVPToggleTimer` (`0x6de7a0`): 300000 without the PvP timer flag, else the ms left
+    /// on the flag watch's five-minute stamp, or -1 once it passed.
+    pub fn set_pvp_toggle_timer(&mut self, ms: i32) {
+        set_field!(self, pvp_toggle_timer, ms);
+    }
+
+    /// Drain the queued `SetPVP` calls, the one-byte `CMSG_TOGGLE_PVP` each sends.
+    pub fn take_pvp_sets(&mut self) -> Vec<u8> {
+        drain_field!(self, pvp_sets)
+    }
+
+    /// Push the inspected player's arena teams by slot; the app fires `INSPECT_HONOR_UPDATE`.
+    pub fn set_inspect_arena_teams(&mut self, teams: [Option<InspectArenaTeamView>; 3]) {
+        set_field!(self, inspect_arena_teams, teams);
     }
 
     /// Queue a toggle for `/pvp`, which benilla parses in Rust; the reference's `/pvp` is Lua over
@@ -112,9 +129,9 @@ impl super::UiScript {
         model.inspect_honor_pending = false;
     }
 
-    /// Drain the queued `RequestInspectHonorData` calls, each a `MSG_INSPECT_HONOR_STATS` send for
-    /// the app's inspect target. At most 1: the `pending` latch (`0x4c80b6`) refuses another until
-    /// [`Self::set_inspect_honor`] resolves the first.
+    /// Drain the queued `RequestInspectHonorData` calls, each a `MSG_INSPECT_HONOR_STATS` and a
+    /// `MSG_INSPECT_ARENA_TEAMS` send for the app's inspect target (`0x5e9140`). At most 1: the
+    /// `pending` latch refuses another until [`Self::set_inspect_honor`] resolves the first.
     pub fn take_inspect_honor_requests(&mut self) -> u32 {
         drain_field!(self, inspect_honor_requests)
     }
@@ -152,21 +169,15 @@ fn visual_rank(rank: i64) -> i64 {
     }
 }
 
-/// The f32 at `0x8026c8` (bytes `81 80 80 3b`) that both rank-progress getters multiply the bar
-/// byte by: the f32 nearest 1/255, `0.003921568859368563`, and not 1/255.
-const RANK_BAR_SCALE: f64 = f32::from_bits(0x3B80_8081) as f64;
-
-/// The rank bar's byte as the fraction the reference feeds a 0..1 `StatusBar`: `fild` then `fmul`
-/// by [`RANK_BAR_SCALE`] (`0x51aace`), with no clamp. It differs from `bar / 255.0` for every byte
-/// but 0, and a full bar gives `1.0000000091389835`, over the bar's maximum.
-fn rank_progress(bar: u8) -> f64 {
-    f64::from(bar) * RANK_BAR_SCALE
-}
-
 fn honor(lua: &Lua) -> Option<HonorState> {
     lua.app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data")
         .honor
+}
+
+fn read(lua: &Lua) -> mlua::AppDataRef<'_, crate::script::ModelCell> {
+    lua.app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data")
 }
 
 fn inspect_honor(lua: &Lua) -> Option<InspectHonorData> {
@@ -358,18 +369,13 @@ pub(super) fn pvp_name(lua: &Lua, u: &super::UnitState, name: &str, player_level
 }
 
 /// Register the PvP + honor globals.
+/// `PLAYER_FLAGS_PVP_TIMER`: the server's five-minute flag after PvP is turned off.
+pub const PLAYER_FLAGS_PVP_TIMER: u32 = 0x0004_0000;
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // `GetNumArenaOpponents()` (`0x54a2c0`): the arena opponents' count, 0 outside an arena;
-    // `UIParent_ManageFramePositions` reads it on every panel move.
-    g.set(
-        "GetNumArenaOpponents",
-        lua.create_function(|_, _: mlua::MultiValue| Ok(0.0))?,
-    )?;
-
-    // TogglePVP(): no argument in 1.12, as the opcode's one-byte state form has no binding.
-    // Registered at `0x48d700`; the shipped UI calls it only from `SlashCmdList["PVP"]`.
+    // TogglePVP() (`0x516840`): the empty `CMSG_TOGGLE_PVP`; `SlashCmdList["PVP"]` calls it.
     g.set(
         "TogglePVP",
         lua.create_function(|lua, ()| {
@@ -379,59 +385,61 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // ── The self getters ─────────────────────────────────────────────────────────────────────
-    // Full arity on every path: the panes destructure straight into `format()` arguments, so
-    // before the first push they read as a zeroed snapshot, as a new character's would.
+    // GetPVPTimer() (`0x51bd00`): the toggle timer plus 1000 ms.
+    g.set(
+        "GetPVPTimer",
+        lua.create_function(|lua, ()| {
+            let model = read(lua);
+            Ok(f64::from(model.pvp_toggle_timer.wrapping_add(1000)))
+        })?,
+    )?;
 
-    // GetPVPSessionStats() → hk, dk.
+    // IsPVPTimerRunning() (`0x51bd60`): `PLAYER_FLAGS_PVP_TIMER` (`0x40000`), 1 or nil.
+    g.set(
+        "IsPVPTimerRunning",
+        lua.create_function(|lua, ()| {
+            let model = read(lua);
+            let flags = model.unit("player").map_or(0, |u| u.player_flags);
+            Ok(super::binding_abi::flag(
+                flags & PLAYER_FLAGS_PVP_TIMER != 0,
+            ))
+        })?,
+    )?;
+
+    // SetPVP(state) (`0x5168b0`): the one-byte form, the number truncated to a byte and 0 for
+    // anything else; the unit menu's Enable/Disable PvP pass 1 and nil.
+    g.set(
+        "SetPVP",
+        lua.create_function(|lua, state: Option<Value>| {
+            let byte = match state.and_then(|v| lua.coerce_number(v).ok().flatten()) {
+                Some(n) => super::binding_abi::ftol(n) as u8,
+                None => 0,
+            };
+            crate::script::model_mut_of(lua).pvp_sets.push(byte);
+            Ok(())
+        })?,
+    )?;
+
+    // ── The self getters ─────────────────────────────────────────────────────────────────────
+    // Two values each and zeros with no player (`0x611a20`, `0x611ad0`, `0x611b80`).
+
     g.set(
         "GetPVPSessionStats",
         lua.create_function(|lua, ()| {
             let h = honor(lua).unwrap_or_default();
-            Ok((i64::from(h.session_hk), i64::from(h.session_dk)))
+            Ok((i64::from(h.today_hk), i64::from(h.today_honor)))
         })?,
     )?;
 
-    // GetPVPYesterdayStats() → hk, dk, contribution.
     g.set(
         "GetPVPYesterdayStats",
         lua.create_function(|lua, ()| {
             let h = honor(lua).unwrap_or_default();
-            Ok((
-                i64::from(h.yesterday_hk),
-                i64::from(h.yesterday_dk),
-                i64::from(h.yesterday_honor),
-            ))
+            Ok((i64::from(h.yesterday_hk), i64::from(h.yesterday_honor)))
         })?,
     )?;
 
-    // GetPVPThisWeekStats() → hk, contribution: two, with no this-week dishonorable count.
-    g.set(
-        "GetPVPThisWeekStats",
-        lua.create_function(|lua, ()| {
-            let h = honor(lua).unwrap_or_default();
-            Ok((i64::from(h.this_week_hk), i64::from(h.this_week_honor)))
-        })?,
-    )?;
-
-    // GetPVPLastWeekStats() → hk, dk, contribution, standing: the ladder standing, which the pane
-    // prints through `PVP_RANK_LAST_WEEK`, not a rank.
-    g.set(
-        "GetPVPLastWeekStats",
-        lua.create_function(|lua, ()| {
-            let h = honor(lua).unwrap_or_default();
-            Ok((
-                i64::from(h.last_week_hk),
-                i64::from(h.last_week_dk),
-                i64::from(h.last_week_honor),
-                i64::from(h.last_week_standing),
-            ))
-        })?,
-    )?;
-
-    // GetPVPLifetimeStats() → hk, dk, highestRank, the highest lifetime rank (internal). One
-    // below 5 answers 0 (`0x51a843 cmp al,5; jb`, unsigned), so the pane shows NONE for a
-    // dishonorable best; 0, not nil, so its `GetPVPRankInfo(highestRank)` still gets a number.
+    // GetPVPLifetimeStats() → hk, highestRank; a rank below 5 answers 0 (`0x611bd3`).
     g.set(
         "GetPVPLifetimeStats",
         lua.create_function(|lua, ()| {
@@ -441,18 +449,27 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             } else {
                 0
             };
-            Ok((
-                i64::from(h.lifetime_hk),
-                i64::from(h.lifetime_dk),
-                i64::from(highest),
-            ))
+            Ok((i64::from(h.lifetime_hk), i64::from(highest)))
         })?,
     )?;
 
-    // GetPVPRankProgress() → the bar fraction (`rank_progress`), 0.0 before the first push.
+    // GetPVPRankProgress() (`0x608560`): a constant 0 in 3.3.5a.
+    g.set("GetPVPRankProgress", lua.create_function(|_, ()| Ok(0.0))?)?;
+
+    // GetHonorCurrency() and GetArenaCurrency() → the balance and the cap, 0 with no player.
     g.set(
-        "GetPVPRankProgress",
-        lua.create_function(|lua, ()| Ok(rank_progress(honor(lua).unwrap_or_default().rank_bar)))?,
+        "GetHonorCurrency",
+        lua.create_function(|lua, ()| {
+            let h = honor(lua).unwrap_or_default();
+            Ok((f64::from(h.honor_currency), HONOR_CURRENCY_MAX))
+        })?,
+    )?;
+    g.set(
+        "GetArenaCurrency",
+        lua.create_function(|lua, ()| {
+            let h = honor(lua).unwrap_or_default();
+            Ok((f64::from(h.arena_currency), ARENA_CURRENCY_MAX))
+        })?,
     )?;
 
     // GetPVPRankInfo(rank [, unit]) → rankName, rankNumber: the title and the visual rank for an
@@ -581,43 +598,60 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetInspectHonorData() → the reference's twelve, in its order:
-    //   sessionHK, sessionDK, yesterdayHK, yesterdayHonor, thisweekHK, thisweekHonor,
-    //   lastweekHK, lastweekHonor, lastweekStanding, lifetimeHK, lifetimeDK, lifetimeRank
-    // Twelve on every path: `0x4c9620` never checks for data and reads zero-initialised slots.
-    // Clearing drops the data here, while the reference's re-key zeroes only the flags and can
-    // still answer the previous target's numbers; matching that needs a latch apart from the data.
+    // GetInspectHonorData() (`0x5e77c0`) → todayHK, todayHonor, yesterdayHK, yesterdayHonor,
+    // lifetimeHK, lifetimeHighestRank; six on every path, zeros with nothing held.
     g.set(
         "GetInspectHonorData",
         lua.create_function(|lua, ()| {
             let d = inspect_honor(lua).unwrap_or_default();
-            let out = vec![
-                Value::Integer(i64::from(d.session_hk)),
-                Value::Integer(i64::from(d.session_dk)),
-                Value::Integer(i64::from(d.yesterday_hk)),
-                Value::Integer(i64::from(d.yesterday_honor)),
-                Value::Integer(i64::from(d.this_week_hk)),
-                Value::Integer(i64::from(d.this_week_honor)),
-                Value::Integer(i64::from(d.last_week_hk)),
-                Value::Integer(i64::from(d.last_week_honor)),
-                Value::Integer(i64::from(d.last_week_standing)),
-                Value::Integer(i64::from(d.lifetime_hk)),
-                Value::Integer(i64::from(d.lifetime_dk)),
-                Value::Integer(i64::from(d.highest_rank)),
-            ];
-            debug_assert_eq!(out.len(), 12, "the tuple is twelve wide on every path");
-            Ok(MultiValue::from_vec(out))
+            Ok(MultiValue::from_vec(vec![
+                Value::Number(f64::from(d.today_hk)),
+                Value::Number(f64::from(d.today_honor)),
+                Value::Number(f64::from(d.yesterday_hk)),
+                Value::Number(f64::from(d.yesterday_honor)),
+                Value::Number(f64::from(d.lifetime_hk)),
+                Value::Number(f64::from(d.highest_rank)),
+            ]))
         })?,
     )?;
 
-    // GetInspectPVPRankProgress() → the reply's `rankBar` through `rank_progress`: `0x51ab00`'s
-    // kernel at `0x51ab04` is byte-identical to `0x51aace`, so it too reads 0.0 when empty.
+    // GetInspectArenaTeamData(index) (`0x5e8030`): eighteen values, nothing for an empty slot or
+    // a team the cache has not answered.
     g.set(
-        "GetInspectPVPRankProgress",
-        lua.create_function(|lua, ()| {
-            Ok(rank_progress(
-                inspect_honor(lua).unwrap_or_default().rank_bar,
-            ))
+        "GetInspectArenaTeamData",
+        lua.create_function(|lua, index: Value| {
+            let index = super::binding_abi::number_arg(
+                lua,
+                index,
+                "Usage: GetInspectArenaTeamData(index)",
+            )?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let team = usize::try_from(index)
+                .ok()
+                .and_then(|i| i.checked_sub(1))
+                .and_then(|i| model.inspect_arena_teams.get(i))
+                .and_then(Option::as_ref);
+            let Some(t) = team else {
+                return Ok(MultiValue::new());
+            };
+            let n = |v: u32| Value::Number(f64::from(v as i32));
+            let mut out = vec![
+                Value::String(lua.create_string(&t.name)?),
+                n(t.team_size),
+                n(t.rating),
+                n(t.games),
+                n(t.wins),
+                n(t.played),
+                n(t.personal_rating),
+            ];
+            out.extend(t.background.iter().map(|&c| Value::Number(c)));
+            out.push(n(t.emblem));
+            out.extend(t.emblem_color.iter().map(|&c| Value::Number(c)));
+            out.push(n(t.border));
+            out.extend(t.border_color.iter().map(|&c| Value::Number(c)));
+            Ok(MultiValue::from_vec(out))
         })?,
     )?;
 

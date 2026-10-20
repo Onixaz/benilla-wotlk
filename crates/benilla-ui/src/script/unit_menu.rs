@@ -307,11 +307,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(name, lua.create_function(|_, ()| Ok(Value::Nil))?)?;
     }
 
-    // IsArenaTeamCaptain(index) (`0x60dc70`): benilla reads no arena team.
-    g.set(
-        "IsArenaTeamCaptain",
-        lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
-    )?;
     // CanGrantLevel(unit) (`0x51d230`): 1 when the player check answers 0, else nil.
     g.set(
         "CanGrantLevel",
