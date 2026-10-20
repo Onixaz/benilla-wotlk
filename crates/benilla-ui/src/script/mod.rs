@@ -192,6 +192,7 @@ mod macro_options;
 mod model;
 mod modelframe;
 mod modified_click;
+mod movieframe;
 mod net_stats;
 pub(crate) mod object;
 mod unit_cast;
@@ -904,6 +905,7 @@ fn install_framescript(vm: VmKind) -> mlua::Result<Lua> {
     colorselect::install(&lua)?;
     modelframe::install(&lua)?;
     modelframe::install_ffx(&lua)?;
+    movieframe::install(&lua)?;
 
     // Table `0xb2d928`: `PlaySound`, `PlayMusic`, `PlaySoundFile`, `StopMusic` and the sound
     // driver verbs.

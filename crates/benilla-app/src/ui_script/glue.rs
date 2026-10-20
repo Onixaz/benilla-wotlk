@@ -20,7 +20,7 @@
 //! The screen comes after the build: at startup the reference fires `SET_GLUE_SCREEN` with
 //! `"movie"` while the `movie` CVar is 1 (clearing it), else `"login"` (`0x402b3b`–`0x402b65`);
 //! back from the world `0x402090` fires it with `"charselect"` or `"login"`. benilla plays no movie
-//! yet (#968), so its boot screen is `"login"`.
+//! yet (#130), so its boot screen is `"login"`.
 //!
 //! The screens' `ModelFFX` panes drive the glue booth ([`super::glue_scene`]): its scene rig, the
 //! scene M2's own point lights and the `FfxGlow::GLUE_SCENE` pass, never the `ui_models` tile
@@ -127,8 +127,8 @@ mod tests {
     const INSTALL_WARNINGS: &[&str] = &["Frame TOSText: Unknown element type: H4"];
 
     /// The movie frame's three handlers, which benilla's `MovieFrame` does not take: it plays no
-    /// movie. Each is a loader warning, `<frame>: SetScript("<handler>") unsupported`; the list only
-    /// shrinks.
+    /// movie (#130), so nothing would fire them, where the reference takes all three. Each is a
+    /// loader warning, `<frame>: SetScript("<handler>") unsupported`; the list only shrinks.
     const UNBUILT_HANDLERS: &[(&str, &str)] = &[
         ("MovieFrame", "OnMovieFinished"),
         ("MovieFrame", "OnMovieHideSubtitle"),
@@ -302,6 +302,47 @@ mod tests {
             (true, false),
             "SET_GLUE_SCREEN \"login\" shows the login screen alone"
         );
+    }
+
+    /// Each Cinematics button shows `MovieFrame`, whose stock walk tries every movie of its
+    /// version; `StartMovie` answers nil, so the walk ends by hiding the frame and its `OnHide`
+    /// puts the login screen back, with nothing raised (#301).
+    #[test]
+    fn the_cinematics_buttons_come_back_to_the_login_screen() {
+        let _ = benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new_glue().unwrap();
+        s.set_screen_size(1024.0, 768.0);
+        s.seed_cvars(crate::cvars::Cvars::default().vm_seed());
+        let _ = load_glue(&mut s);
+        set_glue_screen(&mut s, GlueScreen::Login);
+        s.tick(0.1);
+        let _ = s.take_errors();
+        s.run(
+            "Tried = 0; local start = MovieFrame.StartMovie; \
+             MovieFrame.StartMovie = function(self, ...) Tried = Tried + 1; return start(self, ...) end",
+        )
+        .unwrap();
+        // Two files per movie with a video, high resolution then the first: version 1 has two
+        // movies, versions 2 and 3 one each past an empty first slot.
+        for (button, tries) in [(1, 4), (2, 2), (3, 2)] {
+            s.run(&format!(
+                "Tried = 0; CinematicsFrame:Show(); CinematicsButton{button}:Click()"
+            ))
+            .unwrap();
+            s.tick(0.1);
+            s.resolve();
+            let errors = s.take_errors();
+            assert!(errors.is_empty(), "button {button}: {errors:?}");
+            assert_eq!(
+                s.eval::<(i64, i64, bool, bool, bool)>(
+                    "return MovieFrame.version, Tried, AccountLogin:IsShown() == 1, \
+                     MovieFrame:IsShown() == 1, CinematicsFrame:IsShown() == 1"
+                )
+                .unwrap(),
+                (button, tries, true, false, false),
+                "button {button}: version, StartMovie calls, login, movie, cinematics shown"
+            );
+        }
     }
 
     /// `GlueParent` fills the screen root, 768 tall and `768·a` wide (`0x41ad10`, from `0x46ab40`),

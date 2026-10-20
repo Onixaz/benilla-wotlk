@@ -575,6 +575,8 @@ fn kind_method_registries(kind: Option<FrameKind>) -> &'static [&'static str] {
             super::modelframe::REG_MODEL_METHODS,
         ],
         Some(FrameKind::Minimap) => &[super::minimap::REG_MINIMAP_METHODS],
+        // Its three (`0xb2cd30`) over the frame table.
+        Some(FrameKind::MovieFrame) => &[super::movieframe::REG_MOVIEFRAME_METHODS],
         Some(FrameKind::GameTooltip) => &[super::tooltip::REG_TOOLTIP_METHODS],
         // Its five (`0xad13a4`, `0x5ebe10`) over the frame table.
         Some(FrameKind::Cooldown) => &[super::cooldown_widget::REG_COOLDOWN_METHODS],
