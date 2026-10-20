@@ -134,6 +134,39 @@ pub fn packed_to_vector3d(p: i32) -> Vector3d {
     }
 }
 
+/// A broken-down date/time as WoW's "packed time" u32 carries it (Calendar, achievements, mail —
+/// AzerothCore `ByteBuffer::AppendPackedTime`, `ByteBuffer.cpp:137-141`): `minute` bits 0-5,
+/// `hour` bits 6-10, `weekday` (0 = Sunday) bits 11-13, `day-1` bits 14-19, `month-1` bits 20-23,
+/// `year-2000` bits 24-31. `day` and `month` are decoded back to the usual 1-based values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PackedTime {
+    pub year: u32,
+    /// 1–12.
+    pub month: u32,
+    /// 1–31.
+    pub day: u32,
+    pub hour: u32,
+    pub minute: u32,
+    /// 0 = Sunday.
+    pub weekday: u32,
+}
+
+/// Unpack a [`PackedTime`] from its wire `u32` (see [`PackedTime`] for the bit layout).
+pub fn unpack_time(v: u32) -> PackedTime {
+    PackedTime {
+        year: ((v >> 24) & 0xFF) + 2000,
+        month: ((v >> 20) & 0xF) + 1,
+        day: ((v >> 14) & 0x3F) + 1,
+        weekday: (v >> 11) & 0x7,
+        hour: (v >> 6) & 0x1F,
+        minute: v & 0x3F,
+    }
+}
+
+pub fn read_packed_time(r: &mut impl Read) -> io::Result<PackedTime> {
+    Ok(unpack_time(read_u32_le(r)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +347,15 @@ mod tests {
         }
         out.sort();
         out
+    }
+
+    #[test]
+    fn packed_time_unpacks_the_server_layout() {
+        // 2026-09-29, Tuesday, 14:37: AppendPackedTime's (year-100)<<24 | mon<<20 | (mday-1)<<14
+        // | wday<<11 | hour<<6 | min.
+        let v = (26u32 << 24) | (8 << 20) | (28 << 14) | (2 << 11) | (14 << 6) | 37;
+        let t = unpack_time(v);
+        assert_eq!((t.year, t.month, t.day), (2026, 9, 29));
+        assert_eq!((t.weekday, t.hour, t.minute), (2, 14, 37));
     }
 }

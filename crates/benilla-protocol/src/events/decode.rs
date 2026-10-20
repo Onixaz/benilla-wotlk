@@ -136,6 +136,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             vec![SessionEvent::ItemTemplate { entry, info, body }]
         }
         ServerPacket::MessageChat(m) => vec![SessionEvent::Chat(m)],
+        ServerPacket::CalendarSendCalendar(cal) => vec![SessionEvent::CalendarSendCalendar(cal)],
         ServerPacket::ChannelNotify(n) => vec![SessionEvent::ChannelNotify {
             notice: n.notice,
             channel: n.channel,

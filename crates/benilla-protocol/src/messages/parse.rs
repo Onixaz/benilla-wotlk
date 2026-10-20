@@ -9,7 +9,7 @@ use crate::wire::{
 
 use super::{
     achievement, action_bar, area_trigger, arena_team, attack, auction, aura, bank, battlefield,
-    binder, broadcast, channel, chat, combat_log, death, duel, equipment_set, gameobject,
+    binder, broadcast, calendar, channel, chat, combat_log, death, duel, equipment_set, gameobject,
     gm_ticket, gossip, group, guild, instance, items, lfg, loot, mail, meeting_stone, mirror_timer,
     monster_move, movement, opcode, page_text, pet, petition, pose, progression, pvp, quest,
     social, spellbook, spells, stable, summon, tabard, talents, taxi, totem, trade, trainer,
@@ -717,6 +717,9 @@ fn parse_server_body(
         // A GM-tagged speaker's line.
         opcode::SMSG_GM_MESSAGECHAT => {
             ServerPacket::MessageChat(chat::read_message_chat_wotlk(&mut r, true)?)
+        }
+        opcode::SMSG_CALENDAR_SEND_CALENDAR => {
+            ServerPacket::CalendarSendCalendar(calendar::read_send_calendar(&mut r)?)
         }
         opcode::SMSG_CHANNEL_NOTIFY => {
             ServerPacket::ChannelNotify(channel::read_channel_notify_wotlk(&mut r)?)

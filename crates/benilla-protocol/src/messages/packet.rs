@@ -4,7 +4,7 @@ use crate::wire::Vector3d;
 
 use super::{
     ActionButton, AttackSwingError, AttackerState, AuctionBidderNotification, AuctionCommandTail,
-    AuctionListPage, AuctionOwnerNotification, AuctionPendingSale, CastOutcome, ChannelNotify,
+    AuctionListPage, AuctionOwnerNotification, AuctionPendingSale, CalendarSendCalendar, CastOutcome, ChannelNotify,
     Character, ChatMessage, CorpseLocation, DamageShield, DifficultySet, DispelFailed,
     EnchantmentLog, EnvironmentalDamageLog, ExplorationXp, FriendEntry, FriendStatusUpdate,
     GameObjectQueryInfo, GmResponse, GmTicket, GossipMenu, GossipPoi, GroupDifficulties,
@@ -459,6 +459,8 @@ pub enum ServerPacket {
     },
     /// `SMSG_MESSAGECHAT`: one chat line; GM dot-commands answer as system lines (type `0x0A`).
     MessageChat(ChatMessage),
+    /// `SMSG_CALENDAR_SEND_CALENDAR`: the calendar's whole state.
+    CalendarSendCalendar(CalendarSendCalendar),
     /// `SMSG_CHANNEL_NOTIFY`: a channel join, leave, error or moderation notice.
     ChannelNotify(ChannelNotify),
     /// `SMSG_CHANNEL_LIST`: a channel's roster, `(guid, memberFlags)` per member.
@@ -1465,6 +1467,7 @@ impl ServerPacket {
             ServerPacket::ItemQueryResponse { .. } => "SMSG_ITEM_QUERY_SINGLE_RESPONSE".into(),
             ServerPacket::InventoryChangeFailure { .. } => "SMSG_INVENTORY_CHANGE_FAILURE".into(),
             ServerPacket::MessageChat(_) => "SMSG_MESSAGECHAT".into(),
+            ServerPacket::CalendarSendCalendar(_) => "SMSG_CALENDAR_SEND_CALENDAR".into(),
             ServerPacket::ChannelNotify(_) => "SMSG_CHANNEL_NOTIFY".into(),
             ServerPacket::ChannelList { .. } => "SMSG_CHANNEL_LIST".into(),
             ServerPacket::ChatPlayerNotFound { .. } => "SMSG_CHAT_PLAYER_NOT_FOUND".into(),

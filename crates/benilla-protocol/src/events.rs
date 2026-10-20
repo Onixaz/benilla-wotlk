@@ -2,7 +2,7 @@
 
 use crate::messages::{
     ActionButton, AttackSwingError, AttackerState, AuctionBidderNotification, AuctionCommandTail,
-    AuctionListPage, AuctionOwnerNotification, AuctionPendingSale, ChannelNoticeTail, Character,
+    AuctionListPage, AuctionOwnerNotification, AuctionPendingSale, CalendarSendCalendar, ChannelNoticeTail, Character,
     CreateSpline, DamageShield, DifficultySet, DispelFailed, EnchantmentLog,
     EnvironmentalDamageLog, ExplorationXp, FriendEntry, FriendStatusUpdate, GmResponse, GmTicket,
     GossipMenu, GroupDifficulties, GroupLootInfo, GroupMemberEntry, GuildCommandResult,
@@ -602,6 +602,8 @@ pub enum SessionEvent {
     },
     /// One chat line (`SMSG_MESSAGECHAT`); system lines (type `0x0A`) carry GM command feedback.
     Chat(crate::messages::ChatMessage),
+    /// The calendar's whole state (`SMSG_CALENDAR_SEND_CALENDAR`).
+    CalendarSendCalendar(CalendarSendCalendar),
     /// A channel notice (`SMSG_CHANNEL_NOTIFY`); `notice` selects the `tail` payload.
     ChannelNotify {
         notice: u8,

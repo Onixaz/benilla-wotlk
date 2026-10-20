@@ -1173,3 +1173,9 @@ pub const SMSG_LFG_DISABLED: u16 = 0x0398; // 920
 pub const SMSG_OPEN_LFG_DUNGEON_FINDER: u16 = 0x0515; // 1301
 /// The map's difficulty on entry: `u32` difficulty, `u32` dynamic difficulty (`0x526530`).
 pub const SMSG_INSTANCE_DIFFICULTY: u16 = 0x033B; // 827
+
+/// Requests the calendar's whole state; empty body (AzerothCore `HandleCalendarGetCalendar`,
+/// `Handlers/CalendarHandler.cpp`). Answered by [`SMSG_CALENDAR_SEND_CALENDAR`].
+pub const CMSG_CALENDAR_GET_CALENDAR: u16 = 0x0429; // 1065
+/// The [`CMSG_CALENDAR_GET_CALENDAR`] answer; layout in [`super::calendar::read_send_calendar`].
+pub const SMSG_CALENDAR_SEND_CALENDAR: u16 = 0x0436; // 1078
