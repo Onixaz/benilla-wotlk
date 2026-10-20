@@ -38,7 +38,7 @@ impl Loader<'_> {
                         "CreateFontString"
                     };
                     let region_wrapper: Table =
-                        match wrapper.call_method(method, (rname, Some(level.clone()))) {
+                        match wrapper.call_method(method, (rname.clone(), Some(level.clone()))) {
                             Ok(w) => w,
                             Err(e) => {
                                 self.report.errors.push(format!("{dbg}: {method}: {e}"));
@@ -46,6 +46,8 @@ impl Loader<'_> {
                             }
                         };
                     self.bind_parent_key(region, wrapper, &region_wrapper);
+                    let anim_base = rname.clone().unwrap_or_else(|| parent_name.to_string());
+                    self.apply_animations(region, &region_wrapper, &anim_base, dbg);
                     if region.attr_bool("hidden") {
                         if let Err(e) = region_wrapper.call_method::<()>("Hide", ()) {
                             self.report.errors.push(format!("{dbg}: region Hide: {e}"));

@@ -294,6 +294,15 @@ impl UiScript {
                     if bar_fill.is_none() && !thumb_fill && !color_thumb {
                         rect = model.region_resolved.get(&rh).copied();
                     }
+                    // An animation's translation moves the drawn quad only, not the layout rect.
+                    if let (Some(r), Some(&(dx, dy))) =
+                        (rect.as_mut(), model.anims.offsets.get(&rh))
+                    {
+                        r.left += dx;
+                        r.right += dx;
+                        r.bottom += dy;
+                        r.top += dy;
+                    }
                     let is_text = matches!(
                         region.map(|r| r.kind),
                         Some(crate::widget::RegionKind::FontString)

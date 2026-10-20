@@ -397,6 +397,8 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
     text::install(lua, &m)?;
     layout::install(lua, &m)?;
 
+    super::anim::lua::install_region_verbs(lua, &m, Side::Region)?;
+
     // ── The title region's table ─────────────────────────────────────────────────────────────
     //
     // Exactly the Region map, copied from the full table so both share one implementation; the

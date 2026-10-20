@@ -200,6 +200,8 @@ impl super::UiScript {
         if tracing {
             self.lua.remove_hook();
         }
+        // Each shown frame's animation groups, after its `OnUpdate` in the layer update (`0x490770`).
+        super::anim::run::tick(&self.lua, elapsed);
         let mut leg_at = tracing.then(|| self.visual_epoch());
         let mut leg = |me: &Self, name: &'static str| {
             if let Some(at) = leg_at.as_mut() {

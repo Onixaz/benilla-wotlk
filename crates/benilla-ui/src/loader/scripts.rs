@@ -91,7 +91,12 @@ impl Loader<'_> {
     /// is the handler and the body is unused. A nil logs `"Frame %s: Unknown function %s in
     /// element %s"` (`0x9eb7f0`) and clears the handler. Deviation: a non-function value, which
     /// the reference keeps until a call fails, is logged the same way and cleared.
-    fn named_handler(&mut self, global: &str, name: &str, owner: &str) -> Option<Function> {
+    pub(super) fn named_handler(
+        &mut self,
+        global: &str,
+        name: &str,
+        owner: &str,
+    ) -> Option<Function> {
         match self.lua().globals().raw_get::<mlua::Value>(global) {
             Ok(mlua::Value::Function(f)) => Some(f),
             _ => {

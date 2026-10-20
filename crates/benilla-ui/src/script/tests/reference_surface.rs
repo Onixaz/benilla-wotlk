@@ -1052,7 +1052,7 @@ fn get_inventory_slot_info_folds_case_and_flags_only_the_ranged_slot() {
 #[test]
 fn every_region_map_method_is_callable_on_a_texture_and_a_fontstring() {
     /// All of them, `GetObjectType`/`IsObjectType` (`0x7a11d0`/`0x7a1290`) among them.
-    const REGION_MAP: [&str; 21] = crate::script::REGION_MAP_METHODS;
+    const REGION_MAP: [&str; 24] = crate::script::REGION_MAP_METHODS;
     let mut s = crate::script::UiScript::new().unwrap();
     s.set_screen_size(800.0, 600.0);
     s.run(

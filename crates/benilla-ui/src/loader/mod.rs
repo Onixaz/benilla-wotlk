@@ -16,6 +16,7 @@ use crate::framexml::{self, Element, ParsedDocument, ScriptRef, TopLevel};
 use crate::script::{FontObject, JustifyH, JustifyV, Outline, UiScript};
 use crate::status;
 
+mod anims;
 mod backdrop;
 mod geometry;
 mod regions;
@@ -662,6 +663,9 @@ impl Loader<'_> {
         if let Some(h) = loading {
             self.model().xml_loading.insert(h);
         }
+        // 1b · <Animations>, which the region base loads first (`CScriptRegion::LoadXML`
+        //      `0x488670`); each group's `OnLoad` runs here.
+        self.apply_animations(el, wrapper, self_name, dbg_name);
         // 2 · LoadXML attributes (`0x769820`).
         self.apply_attrs(el, wrapper, dbg_name);
         // 2b · <Attributes>, stored before any script can read them.

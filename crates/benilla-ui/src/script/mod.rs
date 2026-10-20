@@ -119,6 +119,7 @@ pub(crate) use editbox::{adopt_text_region, editbox_text_region_wrapper};
 pub(crate) mod addon;
 mod addon_enable;
 pub mod addon_gate;
+pub(crate) mod anim;
 mod client;
 mod clock;
 mod cvars;
@@ -512,7 +513,7 @@ pub(crate) const FONTSTRING_ONLY_METHODS: [&str; 23] = [
 
 /// The Region method map: the names every region leaf reaches on a miss, 3.3.5a's `SetSize` and
 /// `GetSize` (`0x49d7a0`, `0x49d6f0`, registrar `0xac1480`) among them.
-pub(crate) const REGION_MAP_METHODS: [&str; 21] = [
+pub(crate) const REGION_MAP_METHODS: [&str; 24] = [
     "GetObjectType",
     "IsObjectType",
     "GetName",
@@ -534,6 +535,9 @@ pub(crate) const REGION_MAP_METHODS: [&str; 21] = [
     "SetPoint",
     "SetAllPoints",
     "ClearAllPoints",
+    "CreateAnimationGroup",
+    "GetAnimationGroups",
+    "StopAnimating",
 ];
 const REG_WRAPPERS: &str = "__benilla_wrappers";
 const REG_SCRIPTS: &str = "__benilla_scripts";

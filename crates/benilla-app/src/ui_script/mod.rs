@@ -1054,6 +1054,8 @@ mod target_aura_tests;
 #[cfg(test)]
 mod achievement_ui_tests;
 #[cfg(test)]
+mod alert_frame_tests;
+#[cfg(test)]
 mod auction_ui_tests;
 #[cfg(test)]
 mod aura_verb_tests;

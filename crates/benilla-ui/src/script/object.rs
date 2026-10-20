@@ -195,7 +195,7 @@ pub(crate) fn frame_parent_token_base(model: &Model, h: FrameHandle) -> String {
 // String → enum parsing
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-pub(super) fn point_from_str(s: &str) -> Option<Point> {
+pub(crate) fn point_from_str(s: &str) -> Option<Point> {
     Some(match s.to_ascii_uppercase().as_str() {
         "TOPLEFT" => Point::TopLeft,
         "TOP" => Point::Top,
@@ -211,7 +211,7 @@ pub(super) fn point_from_str(s: &str) -> Option<Point> {
 }
 
 /// The inverse of [`point_from_str`]: the names of the client's point table `0x811a38`.
-pub(super) fn point_name(p: Point) -> &'static str {
+pub(crate) fn point_name(p: Point) -> &'static str {
     match p {
         Point::TopLeft => "TOPLEFT",
         Point::Top => "TOP",
@@ -388,6 +388,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // Opened before any method table is built; `region_map::install` below closes it.
     super::region_map::open_arms(lua);
+    super::anim::lua::install(lua)?;
     install_frame_methods(lua)?;
     super::region::install(lua)?;
     super::statusbar::install(lua)?;
@@ -740,6 +741,7 @@ fn install_frame_methods(lua: &Lua) -> mlua::Result<()> {
     events_regions::install(lua, &m)?;
     attributes::install(lua, &m)?;
     mouse_over::install(lua, &m)?;
+    super::anim::lua::install_region_verbs(lua, &m, super::region_map::Side::Frame)?;
     movable::install(lua, &m)?;
     toplevel::install(lua, &m)?;
     lua.set_named_registry_value(REG_FRAME_METHODS, m)?;
