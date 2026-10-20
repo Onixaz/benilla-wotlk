@@ -1,9 +1,10 @@
-//! The mail wire: the send verbs, the inbox page with its three sender shapes, the send result's
-//! tails, the letter-body fetch, and the arrival notices.
+//! The mail wire, in 12340's shapes: the send verbs, the inbox page with its inline bodies and
+//! attachment slots, the result tails, the copied-letter text, the arrival notices and the
+//! server-opened mailbox.
 
 use benilla_protocol::events::{decode, SessionEvent};
 use benilla_protocol::messages::{
-    self, mail_action, mail_error, mail_message_type, MailAttachment,
+    self, mail_action, mail_delete_reason, mail_error, mail_message_type, opcode, MailEnchant,
 };
 use benilla_protocol::ServerPacket;
 
@@ -16,322 +17,316 @@ fn hx(s: &str) -> Vec<u8> {
 
 const MAILBOX: u64 = 0x00F1_1000_0000_0042;
 
+/// Parses a whole body, asserting the decoder read every byte.
+fn parse_all(op: u16, body: &[u8]) -> ServerPacket {
+    let (packet, tail) = messages::parse_server_with_tail(op, body).expect("parses");
+    assert_eq!(tail, 0, "{} left {tail} byte(s) unread", packet.name());
+    packet
+}
+
 #[test]
 fn mail_send_bodies_golden() {
-    // CMSG_GET_MAIL_LIST: one full mailbox guid.
     assert_eq!(
         messages::get_mail_list(MAILBOX),
         hx("420000000010f100"),
         "CMSG_GET_MAIL_LIST body"
     );
 
+    // CMSG_SEND_MAIL (`0x570910`): the attachments as `(u8 slot, u64 guid)` pairs after a count.
     assert_eq!(
         messages::send_mail(
             MAILBOX,
             "Bob",
-            "Hello",
-            "Here is your item.",
+            "Hi",
+            "Two items.",
             41,
             0,
-            0x0001_0000_0000_0099,
+            &[(0, 0x4000_0000_0000_0099), (3, 0x4000_0000_0000_009a)],
             12_345,
-            500,
+            0,
         ),
         hx(concat!(
-            "420000000010f100",                       // mailbox
-            "426f6200",                               // "Bob\0"
-            "48656c6c6f00",                           // "Hello\0"
-            "4865726520697320796f7572206974656d2e00", // "Here is your item.\0"
-            "29000000",                               // stationery 41
-            "00000000",                               // package 0
-            "9900000000000100",                       // item guid
-            "39300000",                               // money 12345
-            "f4010000",                               // cod 500
-            "0000000000000000",                       // the 9-byte zero tail: u64 0
-            "00",                                     // + u8 0
+            "420000000010f100",       // mailbox
+            "426f6200",               // "Bob\0"
+            "486900",                 // "Hi\0"
+            "54776f206974656d732e00", // "Two items.\0"
+            "29000000",               // stationery 41
+            "00000000",               // package 0
+            "02",                     // two attachments
+            "00",
+            "9900000000000040", // slot 0, guid
+            "03",
+            "9a00000000000040", // slot 3, guid
+            "39300000",         // money 12345
+            "00000000",         // cod 0
+            "0000000000000000", // zero u64
+            "00",               // zero u8
         )),
         "CMSG_SEND_MAIL body"
     );
-
-    // The five `u64 mailbox, u32 mailId` CMSGs share one shape.
-    let golden = hx("420000000010f1004d000000"); // mailbox + mailId 77
-    assert_eq!(messages::mail_take_money(MAILBOX, 77), golden);
-    assert_eq!(messages::mail_take_item(MAILBOX, 77), golden);
-    assert_eq!(messages::mail_mark_as_read(MAILBOX, 77), golden);
-    assert_eq!(messages::mail_return_to_sender(MAILBOX, 77), golden);
-    assert_eq!(messages::mail_delete(MAILBOX, 77), golden);
-
-    // CMSG_MAIL_CREATE_TEXT_ITEM: the shared shape, then `u32` mailTemplateId 0 (vmangos
-    // `MailCreateTextItem::ReadFromWorldPacket`).
     assert_eq!(
-        messages::mail_create_text_item(MAILBOX, 77),
-        hx("420000000010f1004d00000000000000"),
-        "CMSG_MAIL_CREATE_TEXT_ITEM body"
+        messages::send_mail(MAILBOX, "Bob", "Hi", "", 41, 0, &[], 0, 0)[8 + 4 + 3 + 1 + 8],
+        0,
+        "no attachments: a zero count and no pairs"
     );
 
-    // CMSG_ITEM_TEXT_QUERY: u32 textId, u32 mailId, u32 unk(0).
+    let id = hx("420000000010f1004d000000"); // mailbox + mailId 77
+    assert_eq!(messages::mail_take_money(MAILBOX, 77), id);
+    assert_eq!(messages::mail_mark_as_read(MAILBOX, 77), id);
+    assert_eq!(messages::mail_create_text_item(MAILBOX, 77), id);
+    // CMSG_MAIL_TAKE_ITEM (`0x5711c0`): the attachment's item guid low part trails.
     assert_eq!(
-        messages::item_text_query(1234, 77),
-        hx("d20400004d00000000000000"),
-        "CMSG_ITEM_TEXT_QUERY body"
+        messages::mail_take_item(MAILBOX, 77, 0x1234),
+        hx("420000000010f1004d00000034120000")
+    );
+    // CMSG_MAIL_RETURN_TO_SENDER (`0x56f000`): the sender's guid trails.
+    assert_eq!(
+        messages::mail_return_to_sender(MAILBOX, 77, 0xAA),
+        hx("420000000010f1004d000000aa00000000000000")
+    );
+    // CMSG_MAIL_DELETE (`0x56f140`): the reason trails, 0 for a player's own delete.
+    assert_eq!(
+        messages::mail_delete(MAILBOX, 77, mail_delete_reason::PLAYER),
+        hx("420000000010f1004d00000000000000")
+    );
+    assert_eq!(
+        messages::mail_delete(MAILBOX, 77, mail_delete_reason::ITEM_TAKEN),
+        hx("420000000010f1004d00000003000000")
+    );
+    // CMSG_ITEM_TEXT_QUERY: the letter item's guid alone (`0x669110`, no requester).
+    assert_eq!(
+        messages::item_text_query(0x4000_0000_0000_0055),
+        hx("5500000000000040")
     );
 }
 
-/// Append the item block every `SMSG_MAIL_LIST_RESULT` row carries, zeroed without an attachment:
-/// four `u32`, a `u8` stack count, then three `u32`.
-fn push_item_block(
-    body: &mut Vec<u8>,
-    entry: u32,
-    perm_enchant: u32,
-    random_prop_id: u32,
-    suffix_factor: u32,
-    count: u8,
-    charges: u32,
-    durability_max: u32,
-    durability: u32,
-) {
+/// One attachment as the server writes it: slot, guid low, entry, 7 enchant triples, random
+/// property, suffix, count, charges, max durability, durability and a zero byte.
+fn push_attachment(body: &mut Vec<u8>, slot: u8, guid_low: u32, entry: u32, count: u32) {
+    body.push(slot);
+    body.extend_from_slice(&guid_low.to_le_bytes());
     body.extend_from_slice(&entry.to_le_bytes());
-    body.extend_from_slice(&perm_enchant.to_le_bytes());
-    body.extend_from_slice(&random_prop_id.to_le_bytes());
-    body.extend_from_slice(&suffix_factor.to_le_bytes());
-    body.push(count);
-    body.extend_from_slice(&charges.to_le_bytes());
-    body.extend_from_slice(&durability_max.to_le_bytes());
-    body.extend_from_slice(&durability.to_le_bytes());
+    for i in 0..7u32 {
+        // Only the permanent slot carries an enchant here.
+        let id = if i == 0 { 1897u32 } else { 0 };
+        for v in [id, 0, 0] {
+            body.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    body.extend_from_slice(&(-7i32).to_le_bytes()); // random property
+    body.extend_from_slice(&11u32.to_le_bytes()); // suffix factor
+    body.extend_from_slice(&count.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes()); // spell charges
+    body.extend_from_slice(&40u32.to_le_bytes()); // max durability
+    body.extend_from_slice(&35u32.to_le_bytes()); // durability
+    body.push(0);
+}
+
+/// One row: the skipped size, id and type, the sender field, the fixed fields, two strings and
+/// the attachments.
+#[allow(clippy::too_many_arguments)]
+fn push_row(
+    body: &mut Vec<u8>,
+    id: u32,
+    kind: u8,
+    sender: &[u8],
+    money: u32,
+    flags: u32,
+    subject: &str,
+    text: &str,
+    attachments: &[(u8, u32, u32, u32)],
+) {
+    body.extend_from_slice(&0u16.to_le_bytes());
+    body.extend_from_slice(&id.to_le_bytes());
+    body.push(kind);
+    body.extend_from_slice(sender);
+    body.extend_from_slice(&0u32.to_le_bytes()); // cod
+    body.extend_from_slice(&0u32.to_le_bytes()); // package
+    body.extend_from_slice(&41u32.to_le_bytes()); // stationery
+    body.extend_from_slice(&money.to_le_bytes());
+    body.extend_from_slice(&flags.to_le_bytes());
+    body.extend_from_slice(&29.5f32.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes()); // template
+    body.extend_from_slice(subject.as_bytes());
+    body.push(0);
+    body.extend_from_slice(text.as_bytes());
+    body.push(0);
+    body.push(attachments.len() as u8);
+    for &(slot, guid, entry, count) in attachments {
+        push_attachment(body, slot, guid, entry, count);
+    }
 }
 
 #[test]
 fn mail_list_result_wire() {
-    // SMSG_MAIL_LIST_RESULT: `u8` count, then rows whose sender field depends on the message type
-    // and whose item block is always present.
-    let mut body = vec![3u8]; // count
+    // `u32` total, `u8` shown, then the rows (`0x571c50`).
+    let mut body = 7u32.to_le_bytes().to_vec();
+    body.push(4);
+    push_row(
+        &mut body,
+        1,
+        mail_message_type::NORMAL,
+        &0x0000_0000_0000_00AAu64.to_le_bytes(),
+        500,
+        0x10,
+        "Old Friend",
+        "Hello there.",
+        &[(0, 0x31, 2589, 5), (5, 0x32, 6948, 1)],
+    );
+    // An auction notice: the sender is the `AuctionHouse.dbc` row.
+    push_row(
+        &mut body,
+        2,
+        mail_message_type::AUCTION,
+        &7u32.to_le_bytes(),
+        0,
+        0x4,
+        "2589:0:2:1001:5",
+        "              6C:100:100:5:5:0:0",
+        &[],
+    );
+    push_row(
+        &mut body,
+        3,
+        mail_message_type::CALENDAR,
+        &99u32.to_le_bytes(),
+        0,
+        0,
+        "6C:Raid",
+        "1234",
+        &[],
+    );
+    // A type past 5 has no sender field at all.
+    push_row(&mut body, 4, 9, &[], 0, 0, "Odd", "", &[]);
 
-    // MAIL_NORMAL: the sender is a player guid.
-    body.extend_from_slice(&1u32.to_le_bytes()); // messageId
-    body.push(mail_message_type::NORMAL);
-    body.extend_from_slice(&0x0000_0001_0000_00AAu64.to_le_bytes()); // sender guid
-    body.extend_from_slice(b"Old Friend\0");
-    body.extend_from_slice(&555u32.to_le_bytes()); // itemTextId
-    body.extend_from_slice(&0u32.to_le_bytes()); // package (dropped)
-    body.extend_from_slice(&1u32.to_le_bytes()); // stationery
-    push_item_block(&mut body, 6948, 0, 0, 0, 3, 0, 100, 80);
-    body.extend_from_slice(&10_000u32.to_le_bytes()); // money
-    body.extend_from_slice(&2_500u32.to_le_bytes()); // COD
-    body.extend_from_slice(&0x9u32.to_le_bytes()); // checked: READ|COD_PAYMENT
-    body.extend_from_slice(&2.5f32.to_le_bytes()); // expire_days
-    body.extend_from_slice(&0u32.to_le_bytes()); // mailTemplateId
+    let packet = parse_all(opcode::SMSG_MAIL_LIST_RESULT, &body);
+    let ServerPacket::MailList(list) = &packet else {
+        panic!("mail list, got {}", packet.name());
+    };
+    assert_eq!(
+        list.total, 7,
+        "the server's whole count, past the shown rows"
+    );
+    assert_eq!(list.mails.len(), 4);
 
-    // MAIL_AUCTION: the sender is a `u32` id; no item, so an all-zero item block.
-    body.extend_from_slice(&2u32.to_le_bytes());
-    body.push(mail_message_type::AUCTION);
-    body.extend_from_slice(&42u32.to_le_bytes()); // sender id (auction id)
-    body.extend_from_slice(b"Auction won\0");
-    body.extend_from_slice(&0u32.to_le_bytes()); // itemTextId
-    body.extend_from_slice(&0u32.to_le_bytes()); // package
-    body.extend_from_slice(&0u32.to_le_bytes()); // stationery
-    push_item_block(&mut body, 0, 0, 0, 0, 0, 0, 0, 0);
-    body.extend_from_slice(&500u32.to_le_bytes()); // money
-    body.extend_from_slice(&0u32.to_le_bytes()); // COD
-    body.extend_from_slice(&0x1u32.to_le_bytes()); // checked: READ
-    body.extend_from_slice(&1.0f32.to_le_bytes()); // expire_days
-    body.extend_from_slice(&0u32.to_le_bytes());
-
-    // MAIL_ITEM: no sender bytes at all.
-    body.extend_from_slice(&3u32.to_le_bytes());
-    body.push(mail_message_type::ITEM);
-    body.extend_from_slice(b"Welcome\0");
-    body.extend_from_slice(&0u32.to_le_bytes()); // itemTextId
-    body.extend_from_slice(&0u32.to_le_bytes()); // package
-    body.extend_from_slice(&41u32.to_le_bytes()); // stationery
-    push_item_block(&mut body, 0, 0, 0, 0, 0, 0, 0, 0);
-    body.extend_from_slice(&0u32.to_le_bytes()); // money
-    body.extend_from_slice(&0u32.to_le_bytes()); // COD
-    body.extend_from_slice(&0u32.to_le_bytes()); // checked
-    body.extend_from_slice(&30.0f32.to_le_bytes()); // expire_days
-    body.extend_from_slice(&8383u32.to_le_bytes()); // mailTemplateId
-
-    let packet = messages::parse_server(messages::opcode::SMSG_MAIL_LIST_RESULT, &body).unwrap();
-    match &packet {
-        ServerPacket::MailList { mails } => {
-            assert_eq!(mails.len(), 3);
-
-            let m = &mails[0];
-            assert_eq!(m.message_id, 1);
-            assert_eq!(m.message_type, mail_message_type::NORMAL);
-            assert_eq!(m.sender_guid, Some(0x0000_0001_0000_00AA));
-            assert_eq!(m.sender_id, None);
-            assert_eq!(m.subject, "Old Friend");
-            assert_eq!(m.item_text_id, 555);
-            assert_eq!(m.stationery, 1);
-            assert_eq!(
-                m.item,
-                Some(MailAttachment {
-                    entry: 6948,
-                    perm_enchant: 0,
-                    random_prop_id: 0,
-                    suffix_factor: 0,
-                    count: 3,
-                    charges: 0,
-                    durability_max: 100,
-                    durability: 80,
-                })
-            );
-            assert_eq!(m.money, 10_000);
-            assert_eq!(m.cod, 2_500);
-            assert_eq!(m.checked, 0x9);
-            assert_eq!(m.expire_days, 2.5);
-            assert_eq!(m.mail_template_id, 0);
-
-            let m = &mails[1];
-            assert_eq!(m.message_id, 2);
-            assert_eq!(m.message_type, mail_message_type::AUCTION);
-            assert_eq!(m.sender_guid, None);
-            assert_eq!(m.sender_id, Some(42));
-            assert_eq!(m.subject, "Auction won");
-            assert_eq!(m.item, None, "all-zero item block folds to None");
-            assert_eq!(m.money, 500);
-            assert_eq!(m.checked, 0x1);
-            assert_eq!(m.expire_days, 1.0);
-
-            let m = &mails[2];
-            assert_eq!(m.message_id, 3);
-            assert_eq!(m.message_type, mail_message_type::ITEM);
-            assert_eq!(m.sender_guid, None);
-            assert_eq!(m.sender_id, None, "MAIL_ITEM reads no sender bytes at all");
-            assert_eq!(m.subject, "Welcome");
-            assert_eq!(m.item, None);
-            assert_eq!(m.mail_template_id, 8383);
+    let m = &list.mails[0];
+    assert_eq!(
+        (m.message_id, m.message_type),
+        (1, mail_message_type::NORMAL)
+    );
+    assert_eq!((m.sender_guid, m.sender_entry), (0xAA, 0));
+    assert_eq!((m.money, m.flags, m.stationery), (500, 0x10, 41));
+    assert_eq!(m.expire_days, 29.5);
+    assert_eq!(
+        (m.subject.as_str(), m.body.as_str()),
+        ("Old Friend", "Hello there.")
+    );
+    assert_eq!(m.attachments.len(), 2);
+    let a = &m.attachments[1];
+    assert_eq!(
+        (a.slot, a.item_guid_low, a.entry, a.count),
+        (5, 0x32, 6948, 1)
+    );
+    assert_eq!(
+        a.enchants[0],
+        MailEnchant {
+            id: 1897,
+            duration: 0,
+            charges: 0
         }
-        other => panic!("mail list, got {}", other.name()),
-    }
+    );
+    assert_eq!((a.random_property_id, a.suffix_factor), (-7, 11));
+    assert_eq!((a.max_durability, a.durability), (40, 35));
+
+    let m = &list.mails[1];
+    assert_eq!((m.sender_guid, m.sender_entry), (0, 7));
+    assert!(m.attachments.is_empty());
+    let m = &list.mails[2];
+    assert_eq!(
+        (m.message_type, m.sender_entry),
+        (mail_message_type::CALENDAR, 99)
+    );
+    let m = &list.mails[3];
+    assert_eq!((m.message_id, m.sender_guid, m.sender_entry), (4, 0, 0));
+    assert_eq!(m.subject, "Odd");
 
     match decode(packet).pop().unwrap() {
-        SessionEvent::MailList { mails } => assert_eq!(mails.len(), 3),
+        SessionEvent::MailList(list) => assert_eq!(list.mails.len(), 4),
         other => panic!("mail list event, got {other:?}"),
     }
 }
 
 #[test]
 fn send_mail_result_wire() {
-    // Action SEND, error OK: no tail.
-    let mut plain = 1u32.to_le_bytes().to_vec();
-    plain.extend_from_slice(&mail_action::SEND.to_le_bytes());
-    plain.extend_from_slice(&mail_error::OK.to_le_bytes());
-    match messages::parse_server(messages::opcode::SMSG_SEND_MAIL_RESULT, &plain).unwrap() {
-        ServerPacket::SendMailResult {
-            mail_id,
-            action,
-            error,
-            equip_error,
-            item,
-        } => {
-            assert_eq!(
-                (mail_id, action, error),
-                (1, mail_action::SEND, mail_error::OK)
-            );
-            assert_eq!(equip_error, None);
-            assert_eq!(item, None);
+    let result = |mail_id: u32, action: u32, error: u32, tail: &[u32]| {
+        let mut b = Vec::new();
+        for v in [mail_id, action, error].iter().chain(tail) {
+            b.extend_from_slice(&v.to_le_bytes());
         }
-        other => panic!("send mail result (plain), got {}", other.name()),
+        match parse_all(opcode::SMSG_SEND_MAIL_RESULT, &b) {
+            ServerPacket::SendMailResult(r) => r,
+            other => panic!("send mail result, got {}", other.name()),
+        }
+    };
+
+    let r = result(1, mail_action::SEND, mail_error::OK, &[]);
+    assert_eq!((r.mail_id, r.equip_error, r.item), (1, None, None));
+    let r = result(2, mail_action::ITEM_TAKEN, mail_error::EQUIP_ERROR, &[50]);
+    assert_eq!((r.equip_error, r.item), (Some(50), None));
+    // ITEM_TAKEN on OK and on ITEM_HAS_EXPIRED name the item by its guid low part and count.
+    let r = result(3, mail_action::ITEM_TAKEN, mail_error::OK, &[0x31, 5]);
+    assert_eq!(r.item, Some((0x31, 5)));
+    let r = result(
+        3,
+        mail_action::ITEM_TAKEN,
+        mail_error::ITEM_HAS_EXPIRED,
+        &[0x31, 5],
+    );
+    assert_eq!(r.item, Some((0x31, 5)));
+    // A refused take carries no tail.
+    let r = result(3, mail_action::ITEM_TAKEN, mail_error::INTERNAL_ERROR, &[]);
+    assert_eq!(r.item, None);
+
+    let mut b = Vec::new();
+    for v in [4u32, mail_action::DELETED, mail_error::OK] {
+        b.extend_from_slice(&v.to_le_bytes());
     }
-    let packet = messages::parse_server(messages::opcode::SMSG_SEND_MAIL_RESULT, &plain).unwrap();
-    match decode(packet).pop().unwrap() {
-        SessionEvent::SendMailResult {
-            mail_id,
-            action,
-            error,
-            equip_error,
-            item,
-        } => {
-            assert_eq!(
-                (mail_id, action, error),
-                (1, mail_action::SEND, mail_error::OK)
-            );
-            assert_eq!((equip_error, item), (None, None));
+    match decode(parse_all(opcode::SMSG_SEND_MAIL_RESULT, &b))
+        .pop()
+        .unwrap()
+    {
+        SessionEvent::SendMailResult(r) => {
+            assert_eq!((r.mail_id, r.action), (4, mail_action::DELETED))
         }
         other => panic!("send mail result event, got {other:?}"),
-    }
-
-    // Equip-error shape: error == MAIL_ERR_EQUIP_ERROR carries one trailing u32.
-    let mut equip = 2u32.to_le_bytes().to_vec();
-    equip.extend_from_slice(&mail_action::ITEM_TAKEN.to_le_bytes());
-    equip.extend_from_slice(&mail_error::EQUIP_ERROR.to_le_bytes());
-    equip.extend_from_slice(&1234u32.to_le_bytes()); // the equip-error code
-    match messages::parse_server(messages::opcode::SMSG_SEND_MAIL_RESULT, &equip).unwrap() {
-        ServerPacket::SendMailResult {
-            mail_id,
-            error,
-            equip_error,
-            item,
-            ..
-        } => {
-            assert_eq!((mail_id, error), (2, mail_error::EQUIP_ERROR));
-            assert_eq!(equip_error, Some(1234));
-            assert_eq!(item, None);
-        }
-        other => panic!("send mail result (equip error), got {}", other.name()),
-    }
-
-    // Item-taken shape: action == MAIL_ITEM_TAKEN and error == OK carries entry + count.
-    let mut taken = 3u32.to_le_bytes().to_vec();
-    taken.extend_from_slice(&mail_action::ITEM_TAKEN.to_le_bytes());
-    taken.extend_from_slice(&mail_error::OK.to_le_bytes());
-    taken.extend_from_slice(&6948u32.to_le_bytes()); // item entry
-    taken.extend_from_slice(&3u32.to_le_bytes()); // item count
-    match messages::parse_server(messages::opcode::SMSG_SEND_MAIL_RESULT, &taken).unwrap() {
-        ServerPacket::SendMailResult {
-            mail_id,
-            action,
-            error,
-            equip_error,
-            item,
-        } => {
-            assert_eq!(
-                (mail_id, action, error),
-                (3, mail_action::ITEM_TAKEN, mail_error::OK)
-            );
-            assert_eq!(equip_error, None);
-            assert_eq!(item, Some((6948, 3)));
-        }
-        other => panic!("send mail result (item taken), got {}", other.name()),
     }
 }
 
 #[test]
 fn item_text_query_response_wire() {
-    // SMSG_ITEM_TEXT_QUERY_RESPONSE: u32 textId, cstr text.
-    let mut body = 1234u32.to_le_bytes().to_vec();
+    // `u8` 0, the letter item's guid and its text (`0x635a40`).
+    let mut body = vec![0u8];
+    body.extend_from_slice(&0x4000_0000_0000_0055u64.to_le_bytes());
     body.extend_from_slice(b"This is the letter body.\0");
-    match messages::parse_server(messages::opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE, &body).unwrap() {
-        ServerPacket::ItemTextQueryResponse { text_id, text } => {
-            assert_eq!(text_id, 1234);
+    match decode(parse_all(opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE, &body))
+        .pop()
+        .unwrap()
+    {
+        SessionEvent::ItemText { item_guid, text } => {
+            assert_eq!(item_guid, 0x4000_0000_0000_0055);
             assert_eq!(text, "This is the letter body.");
         }
-        other => panic!("item text query response, got {}", other.name()),
+        other => panic!("item text event, got {other:?}"),
     }
-    let packet =
-        messages::parse_server(messages::opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE, &body).unwrap();
-    match decode(packet).pop().unwrap() {
-        SessionEvent::MailItemText { text_id, text } => {
-            assert_eq!(text_id, 1234);
-            assert_eq!(text, "This is the letter body.");
-        }
-        other => panic!("mail item text event, got {other:?}"),
-    }
+    // A nonzero result carries nothing and yields no event.
+    assert!(decode(parse_all(opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE, &[1])).is_empty());
 }
 
 #[test]
 fn received_mail_wire() {
-    // SMSG_RECEIVED_MAIL: one `f32` delay, which the reference reads as a float; vmangos writes
-    // `uint32(0)`, the same bits as 0.0.
-    let vmangos_body = 0u32.to_le_bytes();
-    match messages::parse_server(messages::opcode::SMSG_RECEIVED_MAIL, &vmangos_body).unwrap() {
-        ServerPacket::ReceivedMail { seconds } => assert_eq!(seconds, 0.0),
-        other => panic!("received mail, got {}", other.name()),
-    }
-    for seconds in [0.0f32, 120.0f32] {
-        let body = seconds.to_le_bytes();
-        let packet = messages::parse_server(messages::opcode::SMSG_RECEIVED_MAIL, &body).unwrap();
+    // `f32` delay (`0x571a10`); AzerothCore writes `uint32(0)`, the bits of 0.0.
+    for seconds in [0.0f32, 3600.0] {
+        let packet = parse_all(opcode::SMSG_RECEIVED_MAIL, &seconds.to_le_bytes());
         match decode(packet).pop().unwrap() {
             SessionEvent::ReceivedMail { seconds: got } => assert_eq!(got, seconds),
             other => panic!("received mail event, got {other:?}"),
@@ -341,12 +336,62 @@ fn received_mail_wire() {
 
 #[test]
 fn query_next_mail_time_wire() {
-    // MSG_QUERY_NEXT_MAIL_TIME's reply: one `f32`, 0.0 for unread mail waiting, -86400.0 for none.
-    for seconds in [0.0f32, -86400.0f32] {
-        let body = seconds.to_le_bytes();
-        match messages::parse_server(messages::opcode::MSG_QUERY_NEXT_MAIL_TIME, &body).unwrap() {
-            ServerPacket::NextMailTime { seconds: got } => assert_eq!(got, seconds),
-            other => panic!("query next mail time, got {}", other.name()),
+    // None waiting: the time and a zero count.
+    let mut none = (-86400.0f32).to_le_bytes().to_vec();
+    none.extend_from_slice(&0u32.to_le_bytes());
+    match parse_all(opcode::MSG_QUERY_NEXT_MAIL_TIME, &none) {
+        ServerPacket::NextMailTime { seconds, senders } => {
+            assert_eq!(seconds, -86400.0);
+            assert!(senders.is_empty());
         }
+        other => panic!("next mail time, got {}", other.name()),
+    }
+
+    // Waiting: a player sender and an auction house, each `u64, u32, u32, u32, f32`.
+    let mut two = 0.0f32.to_le_bytes().to_vec();
+    two.extend_from_slice(&2u32.to_le_bytes());
+    for (guid, entry, kind, stationery, delay) in
+        [(0xAAu64, 0u32, 0u32, 41u32, 0.0f32), (0, 7, 2, 62, -5.0)]
+    {
+        two.extend_from_slice(&guid.to_le_bytes());
+        two.extend_from_slice(&entry.to_le_bytes());
+        two.extend_from_slice(&kind.to_le_bytes());
+        two.extend_from_slice(&stationery.to_le_bytes());
+        two.extend_from_slice(&delay.to_le_bytes());
+    }
+    match decode(parse_all(opcode::MSG_QUERY_NEXT_MAIL_TIME, &two))
+        .pop()
+        .unwrap()
+    {
+        SessionEvent::NextMailTime { seconds, senders } => {
+            assert_eq!(seconds, 0.0);
+            assert_eq!(senders.len(), 2);
+            assert_eq!((senders[0].guid, senders[0].stationery), (0xAA, 41));
+            assert_eq!((senders[1].entry, senders[1].message_type), (7, 2));
+            assert_eq!(senders[1].delay, -5.0);
+        }
+        other => panic!("next mail time event, got {other:?}"),
+    }
+
+    // Past three the client reads no further (`0x56db26`), so the rest stays unread.
+    let mut four = 0.0f32.to_le_bytes().to_vec();
+    four.extend_from_slice(&4u32.to_le_bytes());
+    four.extend(std::iter::repeat_n(0u8, 24 * 4));
+    let (packet, tail) =
+        messages::parse_server_with_tail(opcode::MSG_QUERY_NEXT_MAIL_TIME, &four).unwrap();
+    match packet {
+        ServerPacket::NextMailTime { senders, .. } => assert_eq!(senders.len(), 3),
+        other => panic!("next mail time, got {}", other.name()),
+    }
+    assert_eq!(tail, 24);
+}
+
+#[test]
+fn show_mailbox_wire() {
+    // `SMSG_SHOW_MAILBOX` (0x297, `0x56dbc0`): the mailbox guid.
+    let packet = parse_all(opcode::SMSG_SHOW_MAILBOX, &MAILBOX.to_le_bytes());
+    match decode(packet).pop().unwrap() {
+        SessionEvent::ShowMailbox { mailbox } => assert_eq!(mailbox, MAILBOX),
+        other => panic!("show mailbox event, got {other:?}"),
     }
 }

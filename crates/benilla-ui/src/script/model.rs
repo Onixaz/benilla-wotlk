@@ -741,30 +741,37 @@ pub(crate) struct Model {
     pub(crate) item_text: Option<item_text::ItemTextState>,
     pub(crate) item_text_close: bool,
     pub(crate) item_text_page_turns: Vec<i32>,
-    /// The open inbox and mail calls, rows 1-based: `mail_opens` are rows `GetInboxText` read.
-    pub(crate) mail: Option<mail::MailState>,
-    pub(crate) mail_check_inbox: bool,
-    pub(crate) mail_opens: Vec<u32>,
-    pub(crate) mail_take_items: Vec<u32>,
-    pub(crate) mail_take_money: Vec<u32>,
-    pub(crate) mail_deletes: Vec<u32>,
-    pub(crate) mail_returns: Vec<u32>,
-    pub(crate) mail_take_texts: Vec<u32>,
-    pub(crate) mail_close: bool,
-    pub(crate) mail_send: Option<(String, String, String)>,
+    /// The inbox, rows 1-based, kept past the window's close as `CGMailInfo::m_inbox` is.
+    pub(crate) mail: mail::MailState,
+    /// A mailbox is open (`CGMailInfo::m_object`).
+    pub(crate) mail_mailbox: bool,
+    /// The mail verbs' packets, in call order.
+    pub(crate) mail_commands: Vec<mail::MailCommand>,
+    /// A mail command awaits its result (`m_commandPending`); most verbs wait it out.
+    pub(crate) mail_command_pending: bool,
+    /// A send awaits its result (`m_sendPending`).
+    pub(crate) mail_send_pending: bool,
+    /// `CheckInbox`'s next allowed list query, on the `GetTime` clock (`m_nextUpdateTime`).
+    pub(crate) mail_next_update: Option<f64>,
     pub(crate) mail_send_money: u32,
     pub(crate) mail_send_cod: u32,
-    /// The Send tab's attached item, resolved to its guid when the send fires.
-    pub(crate) mail_send_item: Option<cursor::CursorItem>,
+    /// The Send tab's attachments by send slot, each resolved to its guid when the send fires.
+    pub(crate) mail_send_items: [Option<cursor::CursorItem>; 16],
+    /// `SetSendMailShowing`: the Send tab is up, so a bag click attaches (`m_sendMailShowing`).
+    pub(crate) mail_send_showing: bool,
+    /// The refund-lock prompt is up (`m_lockSendItems`).
+    pub(crate) mail_lock_send_items: bool,
+    /// `GetLatestThreeSenders`' answer, one entry per delivered sender.
+    pub(crate) mail_latest_senders: Vec<Option<String>>,
     /// The usable stationery, in the picker's order.
     pub(crate) mail_stationeries: Vec<mail::StationeryView>,
     /// `SelectStationery`'s `Stationery.dbc` id; 0 is none, which silences `SendMail`.
     pub(crate) mail_stationery: u32,
     /// `Package.dbc`'s rows in file order, `GetPackageInfo`'s list.
     pub(crate) mail_packages: Vec<mail::PackageView>,
-    /// `SelectPackage`'s `Package.dbc` id (`[0xb6efb8]`); 0 is none.
+    /// `SelectPackage`'s `Package.dbc` id (`m_selectedPackage`); 0 is none.
     pub(crate) mail_package: u32,
-    /// `HasNewMail()` (`0x4afea0`), from `MSG_QUERY_NEXT_MAIL_TIME` and `SMSG_RECEIVED_MAIL`.
+    /// `HasNewMail()` (`0x56f350`), from `MSG_QUERY_NEXT_MAIL_TIME` and `SMSG_RECEIVED_MAIL`.
     pub(crate) has_new_mail: bool,
 
     /// The open auction house and the auction calls. `auction_selected` is each list's selected
@@ -1426,19 +1433,18 @@ impl Model {
             item_text: None,
             item_text_close: false,
             item_text_page_turns: Vec::new(),
-            mail: None,
-            mail_check_inbox: false,
-            mail_opens: Vec::new(),
-            mail_take_items: Vec::new(),
-            mail_take_money: Vec::new(),
-            mail_deletes: Vec::new(),
-            mail_returns: Vec::new(),
-            mail_take_texts: Vec::new(),
-            mail_close: false,
-            mail_send: None,
+            mail: mail::MailState::default(),
+            mail_mailbox: false,
+            mail_commands: Vec::new(),
+            mail_command_pending: false,
+            mail_send_pending: false,
+            mail_next_update: None,
             mail_send_money: 0,
             mail_send_cod: 0,
-            mail_send_item: None,
+            mail_send_items: Default::default(),
+            mail_send_showing: false,
+            mail_lock_send_items: false,
+            mail_latest_senders: Vec::new(),
             mail_stationeries: Vec::new(),
             mail_stationery: 0,
             mail_packages: Vec::new(),

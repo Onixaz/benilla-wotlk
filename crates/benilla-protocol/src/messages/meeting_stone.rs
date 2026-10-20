@@ -33,8 +33,6 @@ pub fn meeting_stone_leave() -> Vec<u8> {
 /// Display-only replies (reference handler `0x4ca3c0`): none changes the queue or fires an event.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MeetingStoneNotice {
-    /// `0x297`, empty.
-    Success,
     /// `0x298`, empty.
     InProgress,
     /// `0x299`, `u64 guid`; the line waits for the name cache.

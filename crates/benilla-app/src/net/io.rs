@@ -1709,36 +1709,38 @@ pub(super) fn writer_loop(
                         body,
                         stationery,
                         package,
-                        item_guid,
+                        items,
                         money,
                         cod,
                     } => w.send_mail(
-                        mailbox, &receiver, &subject, &body,
-                        // vmangos stores `MAIL_STATIONERY_DEFAULT` (41) regardless of the chosen
-                        // stationery, and reads the package id (`Packets/Mail.cpp:10`) unused.
-                        stationery, package, item_guid, money, cod,
+                        mailbox, &receiver, &subject, &body, stationery, package, &items, money,
+                        cod,
                     ),
                     ClientCommand::MailTakeMoney { mailbox, mail_id } => {
                         w.mail_take_money(mailbox, mail_id)
                     }
-                    ClientCommand::MailTakeItem { mailbox, mail_id } => {
-                        w.mail_take_item(mailbox, mail_id)
-                    }
+                    ClientCommand::MailTakeItem {
+                        mailbox,
+                        mail_id,
+                        item_guid_low,
+                    } => w.mail_take_item(mailbox, mail_id, item_guid_low),
                     ClientCommand::MailMarkAsRead { mailbox, mail_id } => {
                         w.mail_mark_as_read(mailbox, mail_id)
                     }
-                    ClientCommand::MailReturnToSender { mailbox, mail_id } => {
-                        w.mail_return_to_sender(mailbox, mail_id)
-                    }
-                    ClientCommand::MailDelete { mailbox, mail_id } => {
-                        w.mail_delete(mailbox, mail_id)
-                    }
+                    ClientCommand::MailReturnToSender {
+                        mailbox,
+                        mail_id,
+                        sender,
+                    } => w.mail_return_to_sender(mailbox, mail_id, sender),
+                    ClientCommand::MailDelete {
+                        mailbox,
+                        mail_id,
+                        reason,
+                    } => w.mail_delete(mailbox, mail_id, reason),
                     ClientCommand::MailCreateTextItem { mailbox, mail_id } => {
                         w.mail_create_text_item(mailbox, mail_id)
                     }
-                    ClientCommand::ItemTextQuery { text_id, mail_id } => {
-                        w.item_text_query(text_id, mail_id)
-                    }
+                    ClientCommand::ItemTextQuery { item_guid } => w.item_text_query(item_guid),
                     ClientCommand::QueryNextMailTime => w.query_next_mail_time(),
                     // The auction house: the auctioneer guid rides on every verb.
                     ClientCommand::AuctionHello { auctioneer } => w.auction_hello(auctioneer),

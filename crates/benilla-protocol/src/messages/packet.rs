@@ -10,8 +10,8 @@ use super::{
     GameObjectQueryInfo, GmResponse, GmTicket, GossipMenu, GossipPoi, GroupDifficulties,
     GroupLootInfo, GroupMemberEntry, GuildCommandResult, GuildEventNotice, GuildInfo,
     GuildQueryResponse, GuildRoster, InitWorldStates, InspectHonorStats, ItemInfo, ItemPushResult,
-    JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon, LootStartRoll,
-    MailListEntry, MirrorTimerStart, MoveMode, Object, PartyKillLog, PartyMemberStatsInfo,
+    JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon, LootStartRoll, MailList,
+    MailResult, MailSender, MirrorTimerStart, MoveMode, Object, PartyKillLog, PartyMemberStatsInfo,
     PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse, PetitionRename, PetitionShowList,
     PetitionShowSignatures, PetitionSignResults, PvpCredit, QuestComplete, QuestConfirmAccept,
     QuestDetails, QuestGiverList, QuestOfferReward, QuestPushResult, QuestRequestItems,
@@ -1263,31 +1263,27 @@ pub enum ServerPacket {
     /// `SMSG_NEW_TAXI_PATH` (empty): rides a first-visit learn beside [`Self::TaxiNodeStatus`].
     NewTaxiPath,
     /// `SMSG_MAIL_LIST_RESULT`: the inbox, answering `CMSG_GET_MAIL_LIST`.
-    MailList {
-        mails: Vec<MailListEntry>,
-    },
-    /// `SMSG_SEND_MAIL_RESULT`: a [`super::mail::mail_action`] and [`super::mail::mail_error`];
-    /// `equip_error` and `item` are mutually exclusive tails.
-    SendMailResult {
-        mail_id: u32,
-        action: u32,
-        error: u32,
-        equip_error: Option<u32>,
-        item: Option<(u32, u32)>,
-    },
-    /// `SMSG_ITEM_TEXT_QUERY_RESPONSE`: a letter's body, fetched once for a nonzero `item_text_id`.
+    MailList(MailList),
+    /// `SMSG_SEND_MAIL_RESULT`: a [`super::mail::mail_action`] and [`super::mail::mail_error`].
+    SendMailResult(MailResult),
+    /// `SMSG_ITEM_TEXT_QUERY_RESPONSE`: a copied letter's `(item guid, text)`, or `None` when the
+    /// server has no text for it.
     ItemTextQueryResponse {
-        text_id: u32,
-        text: String,
+        text: Option<(u64, String)>,
     },
-    /// `SMSG_RECEIVED_MAIL`: a mail arrived; `seconds` until it waits, always `0.0` from vmangos,
-    /// though the client runs it through its countdown.
+    /// `SMSG_RECEIVED_MAIL`: a mail arrived; `seconds` until it is delivered.
     ReceivedMail {
         seconds: f32,
     },
-    /// `MSG_QUERY_NEXT_MAIL_TIME` reply: `0.0` means unread mail waits, `-86400.0` none.
+    /// `MSG_QUERY_NEXT_MAIL_TIME` reply: `0.0` means unread mail waits, `-86400.0` none, with up to
+    /// three of the senders.
     NextMailTime {
         seconds: f32,
+        senders: Vec<MailSender>,
+    },
+    /// `SMSG_SHOW_MAILBOX`: the server opens the mail window on `mailbox`.
+    ShowMailbox {
+        mailbox: u64,
     },
     /// `MSG_AUCTION_HELLO` reply: the auctioneer, its `AuctionHouse.dbc` row and whether the
     /// house is open; a closed one fires `AUCTION_HOUSE_DISABLED` instead (`0x59ff40`).
@@ -1430,9 +1426,6 @@ impl ServerPacket {
                 "SMSG_BATTLEGROUND_PLAYER_LEFT".into()
             }
             ServerPacket::MeetingStoneSetQueue { .. } => "SMSG_MEETINGSTONE_SETQUEUE".into(),
-            ServerPacket::MeetingStoneNotice(crate::messages::MeetingStoneNotice::Success) => {
-                "SMSG_MEETINGSTONE_SUCCESS".into()
-            }
             ServerPacket::MeetingStoneNotice(crate::messages::MeetingStoneNotice::InProgress) => {
                 "SMSG_MEETINGSTONE_IN_PROGRESS".into()
             }
@@ -1719,6 +1712,7 @@ impl ServerPacket {
             ServerPacket::ItemTextQueryResponse { .. } => "SMSG_ITEM_TEXT_QUERY_RESPONSE".into(),
             ServerPacket::ReceivedMail { .. } => "SMSG_RECEIVED_MAIL".into(),
             ServerPacket::NextMailTime { .. } => "MSG_QUERY_NEXT_MAIL_TIME".into(),
+            ServerPacket::ShowMailbox { .. } => "SMSG_SHOW_MAILBOX".into(),
             ServerPacket::AuctionHello { .. } => "MSG_AUCTION_HELLO".into(),
             ServerPacket::AuctionCommandResult { .. } => "SMSG_AUCTION_COMMAND_RESULT".into(),
             ServerPacket::AuctionListResult(_) => "SMSG_AUCTION_LIST_RESULT".into(),

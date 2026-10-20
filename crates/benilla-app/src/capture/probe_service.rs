@@ -458,6 +458,7 @@ fn service_probe(
                         ServiceAction::AcquireSpiritGuide => {
                             "adopts the area spirit healer; the packet leaves from the cache"
                         }
+                        ServiceAction::OpenMailbox => "opens the mail window locally, no packet",
                         ServiceAction::Silent(w) => w,
                         ServiceAction::Send(_) | ServiceAction::SellFromCursor(_) => {
                             unreachable!()

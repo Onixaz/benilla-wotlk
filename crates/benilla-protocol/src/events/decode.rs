@@ -1087,27 +1087,17 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             vec![SessionEvent::ActivateTaxiReply { code }]
         }
         ServerPacket::NewTaxiPath => vec![SessionEvent::NewTaxiPath],
-        ServerPacket::MailList { mails } => vec![SessionEvent::MailList { mails }],
-        ServerPacket::SendMailResult {
-            mail_id,
-            action,
-            error,
-            equip_error,
-            item,
-        } => vec![SessionEvent::SendMailResult {
-            mail_id,
-            action,
-            error,
-            equip_error,
-            item,
-        }],
-        ServerPacket::ItemTextQueryResponse { text_id, text } => {
-            vec![SessionEvent::MailItemText { text_id, text }]
-        }
+        ServerPacket::MailList(list) => vec![SessionEvent::MailList(list)],
+        ServerPacket::SendMailResult(result) => vec![SessionEvent::SendMailResult(result)],
+        ServerPacket::ItemTextQueryResponse { text } => text
+            .map(|(item_guid, text)| SessionEvent::ItemText { item_guid, text })
+            .into_iter()
+            .collect(),
         ServerPacket::ReceivedMail { seconds } => vec![SessionEvent::ReceivedMail { seconds }],
-        ServerPacket::NextMailTime { seconds } => {
-            vec![SessionEvent::NextMailTime { seconds }]
+        ServerPacket::NextMailTime { seconds, senders } => {
+            vec![SessionEvent::NextMailTime { seconds, senders }]
         }
+        ServerPacket::ShowMailbox { mailbox } => vec![SessionEvent::ShowMailbox { mailbox }],
         ServerPacket::AuctionHello {
             auctioneer,
             house_id,

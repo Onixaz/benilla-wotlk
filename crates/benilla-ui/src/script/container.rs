@@ -42,8 +42,8 @@ pub struct ContainerSlot {
     pub durability: Option<(u32, u32)>,
     /// The use cooldown, `(start_ms on the GetTime clock, duration_ms, enabled)`; `None` if cold.
     pub cooldown: Option<(i64, u32, bool)>,
-    /// The instance carries `ITEM_FIELD_ITEM_TEXT_ID` (a mail copy): `GetContainerItemInfo`'s
-    /// `readable`, which shows the Inspect cursor (`ContainerFrame.lua:638`).
+    /// The instance carries its own text (`ITEM_FIELD_FLAGS & 0x200`, a mail copy):
+    /// `GetContainerItemInfo`'s `readable`, which shows the Inspect cursor (`ContainerFrame.lua:638`).
     pub readable: bool,
     /// The `ITEM_FIELD_CREATOR` name for the "Written by" or "<Made by>" line, once resolved.
     pub creator: Option<String>,
@@ -695,8 +695,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         &model.pending_wrap,
                         Some(w) if w.bag == bag && w.slot == slot
                     ) ||
-                // The auction sell slot and a multi-sell's items read locked (`LockItem`).
-                    super::auction::holds_slot(&model, bag, slot);
+                // The auction sell slot, a multi-sell's items and the mail attachments read
+                // locked (`LockItem`).
+                    super::auction::holds_slot(&model, bag, slot)
+                    || super::mail::holds_slot(&model, bag, slot);
                 (
                     model
                         .containers
@@ -744,8 +746,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 if occupied {
                     model.container_repairs.push((bag, slot));
                 }
-            } else if !super::auction::use_container_item(&mut model, bag, slot) {
-                // Past repair, the Auctions tab takes the item for the sell slot (`0x5d88e0`).
+            } else if !super::mail::use_container_item(&mut model, bag, slot)
+                && !super::auction::use_container_item(&mut model, bag, slot)
+            {
+                // Past repair, the Send tab attaches the item (`0x5d88cf`), then the Auctions tab
+                // takes it for the sell slot (`0x5d88e0`).
                 model
                     .script_calls
                     .push(super::ScriptCall::UseContainerItem { bag, slot });

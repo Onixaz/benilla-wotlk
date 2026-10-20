@@ -125,7 +125,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "GetRunningMacro",
     "GetRunningMacroButton",
     "GetScriptCPUUsage",
-    "GetSendMailItemLink",
     "GetSpellCount",
     "GetTaxiBenchmarkMode",
     "GetTrainerServiceStepIncrease",

@@ -1,27 +1,36 @@
-//! The mailbox's packet handlers: they fill [`MailOpen`] and [`MailPending`] and send the wire
-//! re-syncs; the events fire from [`super::feed_mail`].
+//! The mailbox's packet handlers: they fill [`MailOpen`] and [`MailPending`] and queue the
+//! window's effects, which [`super::feed_mail`] applies.
 
-use benilla_protocol::messages::{mail_action, mail_error, mail_message_type, MailListEntry};
+use benilla_protocol::messages::{
+    mail_action, mail_delete_reason, mail_error, mail_flags, mail_message_type, MailList,
+    MailResult,
+};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
-use super::{mail_refusal, MailOpen, MailPending, MailSendAck};
+use super::{mail_refusal, MailEffect, MailOpen, MailPending, MailRow, MAIL_SENT_KEY};
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp};
-use crate::ui_items::{EquipError, EquipErrors};
+use crate::ui_social::SocialState;
 
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::MailList, on_mail_list)
         .net_handler(K::SendMailResult, on_send_mail_result)
-        .net_handler(K::MailItemText, on_mail_item_text)
         .net_handler(K::ReceivedMail, on_received_mail)
         .net_handler(K::NextMailTime, on_next_mail_time)
+        .net_handler(K::ShowMailbox, on_show_mailbox)
         .net_handler(K::Disconnected, on_session_end);
 }
 
-fn on_mail_list(In(ev): In<SessionEvent>, mut mail: ResMut<MailOpen>, commands: Res<NetCommands>) {
-    if let SessionEvent::MailList { mails } = ev {
-        mail_list(mails, &mut mail, &commands);
+fn on_mail_list(
+    In(ev): In<SessionEvent>,
+    mut mail: ResMut<MailOpen>,
+    mut pending: ResMut<MailPending>,
+    social: Res<SocialState>,
+    commands: Res<NetCommands>,
+) {
+    if let SessionEvent::MailList(list) = ev {
+        mail_list(list, &mut mail, &mut pending, &social, &commands);
     }
 }
 
@@ -29,32 +38,15 @@ fn on_send_mail_result(
     In(ev): In<SessionEvent>,
     mut mail: ResMut<MailOpen>,
     commands: Res<NetCommands>,
-    mut equip_errors: ResMut<EquipErrors>,
+    self_q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
 ) {
-    if let SessionEvent::SendMailResult {
-        mail_id,
-        action,
-        error,
-        equip_error,
-        item,
-    } = ev
-    {
-        send_mail_result(
-            mail_id,
-            action,
-            error,
-            equip_error,
-            item,
-            &mut mail,
-            &commands,
-            &mut equip_errors,
-        );
-    }
-}
-
-fn on_mail_item_text(In(ev): In<SessionEvent>, mut mail: ResMut<MailOpen>) {
-    if let SessionEvent::MailItemText { text_id, text } = ev {
-        mail_item_text(text_id, text, &mut mail);
+    if let SessionEvent::SendMailResult(result) = ev {
+        let purse = self_q
+            .iter()
+            .next()
+            .and_then(|s| s.0.player_money())
+            .map_or(0, u64::from);
+        send_mail_result(result, &mut mail, &commands, purse);
     }
 }
 
@@ -65,18 +57,38 @@ fn on_received_mail(
     commands: Res<NetCommands>,
 ) {
     if let SessionEvent::ReceivedMail { seconds } = ev {
-        received_mail(seconds, &mut pending, &mail, &commands);
+        super::received_mail(
+            seconds,
+            "SMSG_RECEIVED_MAIL",
+            &mut pending,
+            &mail,
+            &commands,
+        );
     }
 }
 
 fn on_next_mail_time(In(ev): In<SessionEvent>, mut pending: ResMut<MailPending>) {
-    if let SessionEvent::NextMailTime { seconds } = ev {
-        next_mail_time(seconds, &mut pending);
+    if let SessionEvent::NextMailTime { seconds, senders } = ev {
+        debug!(
+            "ui_mail: next mail time {seconds}, {} sender(s) {:?}",
+            senders.len(),
+            senders
+                .iter()
+                .map(|s| (s.guid, s.entry, s.message_type, s.delay))
+                .collect::<Vec<_>>()
+        );
+        pending.apply_query_reply(seconds, &senders);
     }
 }
 
-/// The open mailbox and the arrival countdown end with the session; the next world enter
-/// re-queries.
+/// `SMSG_SHOW_MAILBOX` (`0x56dbc0`): the server opens the window, as `TalkToMailbox` does.
+fn on_show_mailbox(In(ev): In<SessionEvent>, mut mail: ResMut<MailOpen>) {
+    if let SessionEvent::ShowMailbox { mailbox } = ev {
+        mail.click(mailbox);
+    }
+}
+
+/// The window and the arrival state end with the session; the next world enter re-queries.
 fn on_session_end(
     In(_): In<SessionEvent>,
     mut mail: ResMut<MailOpen>,
@@ -86,170 +98,482 @@ fn on_session_end(
     *pending = MailPending::default();
 }
 
-/// `SMSG_MAIL_LIST_RESULT` replaces the rows; an expired row (`expire_days <= 0`) is deleted with
-/// `CMSG_MAIL_DELETE` and dropped, as the handler `0x4ad1b0` does. It never touches
-/// [`MailPending`]: nothing on the inbox path writes the countdown `0x845eac`.
-fn mail_list(mails: Vec<MailListEntry>, mail: &mut MailOpen, commands: &NetCommands) {
-    let mailbox = mail.mailbox;
-    mail.mails = mails
-        .into_iter()
-        .filter(|e| {
-            if e.expire_days <= 0.0 {
-                if let Some(mailbox) = mailbox {
-                    let _ = commands.0.send(ClientCommand::MailDelete {
-                        mailbox,
-                        mail_id: e.message_id,
-                    });
+/// `SMSG_MAIL_LIST_RESULT` (`0x571c50`): the rows replace the old. A player mail from an ignored
+/// sender that is not returnable-exempt goes back unread, returned if it holds anything, else
+/// deleted, and leaves the counts (`0x571f4c`-`0x5720a3`). An empty inbox while the icon is lit
+/// re-queries the next-mail time.
+fn mail_list(
+    list: MailList,
+    mail: &mut MailOpen,
+    pending: &mut MailPending,
+    social: &SocialState,
+    commands: &NetCommands,
+) {
+    let mailbox = mail.mailbox.unwrap_or(0);
+    let mut total = list.total;
+    let mut rows = Vec::with_capacity(list.mails.len());
+    for entry in list.mails {
+        let mut row = MailRow::new(entry);
+        let e = &row.entry;
+        if e.message_type == mail_message_type::NORMAL
+            && social.is_ignored(e.sender_guid)
+            && e.flags & 0x20A == 0
+        {
+            let cmd = if row.num_attachments() != 0 || e.money != 0 {
+                ClientCommand::MailReturnToSender {
+                    mailbox,
+                    mail_id: e.message_id,
+                    sender: e.sender_guid,
                 }
-                false
             } else {
-                true
-            }
-        })
-        .collect();
-}
-
-/// `MAIL_CHECK_MASK_COD_PAYMENT` (`byte[rec+0x148] & 8`): the money a COD taker paid; taking it
-/// empties the mail (`0x4ad6b0`).
-const CHECKED_COD_PAYMENT: u32 = 8;
-
-/// Whether a take leaves the mail empty, which the client then deletes itself: `CMSG_MAIL_DELETE`,
-/// then `CLOSE_INBOX_ITEM(index)`, then `MAIL_INBOX_UPDATE`. The money leg (`0x4ad6b0`) purges a
-/// COD payment or an auction notice with no item. The item leg (`0x4ad7b0`) purges once the money
-/// is gone and the mail is an auction notice or has neither a text id (`[rec+0x114]`) nor a mail
-/// template id (`[rec+0x25c]`); this reads the text id alone, so it also purges a template mail
-/// the reference keeps.
-fn take_empties(entry: &MailListEntry, action: u32) -> bool {
-    let auction = entry.message_type == mail_message_type::AUCTION;
-    match action {
-        mail_action::MONEY_TAKEN => {
-            entry.checked & CHECKED_COD_PAYMENT != 0 || (auction && entry.item.is_none())
+                ClientCommand::MailDelete {
+                    mailbox,
+                    mail_id: e.message_id,
+                    reason: mail_delete_reason::IGNORED,
+                }
+            };
+            let _ = commands.0.send(cmd);
+            total = total.saturating_sub(1);
+            continue;
         }
-        mail_action::ITEM_TAKEN => entry.money == 0 && (auction || entry.item_text_id == 0),
-        _ => false,
+        if row.entry.stationery == 0 {
+            row.entry.stationery = mail.default_stationery;
+        }
+        rows.push(row);
     }
+    mail.rows = rows;
+    mail.total = total;
+    mail.effects.push(MailEffect::Done { send: false });
+    if mail.rows.is_empty() && pending.has_new_mail() {
+        super::query_next_mail_time(pending, commands);
+    }
+    mail.effects.push(MailEffect::InboxUpdate);
 }
 
-/// `SMSG_SEND_MAIL_RESULT`: a `SEND` result is queued for the feed; a successful take updates the
-/// row and purges it when empty, and every successful take, return or delete re-lists the inbox.
-fn send_mail_result(
-    mail_id: u32,
-    action: u32,
-    error: u32,
-    equip_error: Option<u32>,
-    _item: Option<(u32, u32)>,
+/// `SMSG_SEND_MAIL_RESULT` (`0x5717b0`).
+fn send_mail_result(result: MailResult, mail: &mut MailOpen, commands: &NetCommands, purse: u64) {
+    let MailResult {
+        mail_id,
+        action,
+        error,
+        equip_error,
+        item,
+    } = result;
+    debug!("ui_mail: result mail {mail_id} action {action} error {error} {equip_error:?} {item:?}");
+    let item_guid = item.map_or(0, |(guid, _)| guid);
+    if action == mail_action::ITEM_TAKEN && error != mail_error::OK {
+        mail.auto_looting = None;
+    }
+    match error {
+        mail_error::OK => match action {
+            mail_action::SEND => {
+                mail.effects.push(MailEffect::Message(MAIL_SENT_KEY));
+                mail.effects.push(MailEffect::Sent);
+            }
+            mail_action::MONEY_TAKEN => remove_money(mail, commands, mail_id),
+            mail_action::ITEM_TAKEN => remove_item(mail, commands, mail_id, item_guid),
+            mail_action::RETURNED | mail_action::DELETED => remove_mail(mail, mail_id),
+            mail_action::MADE_PERMANENT => {
+                if let Some(i) = mail.index_of(mail_id) {
+                    mail.rows[i].entry.flags |= mail_flags::COPIED;
+                    mail.effects.push(MailEffect::InboxUpdate);
+                }
+            }
+            _ => {}
+        },
+        mail_error::EQUIP_ERROR => mail
+            .effects
+            .push(MailEffect::EquipError(equip_error.unwrap_or(0))),
+        mail_error::ITEM_HAS_EXPIRED => {
+            mail.effects
+                .push(MailEffect::Message("ERR_MAIL_ATTACHMENT_EXPIRED"));
+            remove_item(mail, commands, mail_id, item_guid);
+        }
+        other => mail
+            .effects
+            .extend(mail_refusal(other).map(MailEffect::Message)),
+    }
+    if action == mail_action::SEND {
+        mail.effects.push(MailEffect::Done { send: true });
+    }
+    // An auto-loot takes its next attachment on each OK take (`0x57195f`).
+    let continued = error == mail_error::OK
+        && action == mail_action::ITEM_TAKEN
+        && mail
+            .auto_looting
+            .take()
+            .is_some_and(|id| next_auto_loot(mail, commands, id, purse));
+    if !continued {
+        mail.effects.push(MailEffect::Done { send: false });
+    }
+    mail.effects.push(MailEffect::Result {
+        ok: error == mail_error::OK,
+    });
+}
+
+/// `ProcessAutoLootAttachments` (`0x570270`): the next attachment's take, refused locally when the
+/// purse cannot pay the COD; true when a take went out.
+fn next_auto_loot(
     mail: &mut MailOpen,
     commands: &NetCommands,
-    equip_errors: &mut EquipErrors,
-) {
-    // ITEM_TAKEN's `(entry, count)` tail is unused; vmangos sends no `SMSG_ITEM_PUSH_RESULT` for a
-    // mail take (`MailHandler.cpp:675`).
-    if action == mail_action::SEND {
-        if error == mail_error::EQUIP_ERROR {
-            equip_errors.0.push(EquipError {
-                reason: equip_error.unwrap_or(0) as u8,
-                required_level: None,
-                // The result carries no bag slot: 255 is the wire's "own array" sentinel, so
-                // reason 16 names no container.
-                bag_slot: 255,
-            });
-        }
-        mail.send_acks.push(MailSendAck {
-            ok: error == mail_error::OK,
-            refusal: (error != mail_error::OK && error != mail_error::EQUIP_ERROR)
-                .then(|| mail_refusal(error))
-                .flatten(),
-        });
+    message_id: u32,
+    purse: u64,
+) -> bool {
+    let Some(mailbox) = mail.mailbox else {
+        return false;
+    };
+    let Some(i) = mail.index_of(message_id) else {
+        return false;
+    };
+    let row = &mail.rows[i];
+    if purse < u64::from(row.entry.cod) {
+        mail.effects
+            .push(MailEffect::Message("ERR_NOT_ENOUGH_MONEY"));
+        return false;
+    }
+    let mut filled = row.slots.iter().flatten().filter(|a| a.entry != 0);
+    let Some(first) = filled.next() else {
+        return false;
+    };
+    let item_guid_low = first.item_guid_low;
+    let more = filled.next().is_some();
+    let _ = commands.0.send(ClientCommand::MailTakeItem {
+        mailbox,
+        mail_id: message_id,
+        item_guid_low,
+    });
+    if more {
+        mail.auto_looting = Some(message_id);
+    }
+    true
+}
+
+/// The purge after a take: a mail left empty is deleted with the take's reason, then
+/// `CLOSE_INBOX_ITEM` names its row (`0x56f890`, `0x56fa2f`).
+fn purge_if_empty(mail: &mut MailOpen, commands: &NetCommands, i: usize, reason: u32) {
+    if !mail.rows[i].empty_after_take() {
         return;
     }
-    // A take/return/delete result.
-    match error {
-        mail_error::OK => {
-            // The take clears the local row first (`[rec+0x140]` money, `[rec+0x120]` item), then
-            // an emptied mail is purged: `CMSG_MAIL_DELETE`, then the feed's `CLOSE_INBOX_ITEM`.
-            if let Some(pos) = mail.mails.iter().position(|e| e.message_id == mail_id) {
-                match action {
-                    mail_action::MONEY_TAKEN => mail.mails[pos].money = 0,
-                    mail_action::ITEM_TAKEN => mail.mails[pos].item = None,
-                    _ => {}
-                }
-                if take_empties(&mail.mails[pos], action) {
-                    if let Some(mailbox) = mail.mailbox {
-                        let _ = commands
-                            .0
-                            .send(ClientCommand::MailDelete { mailbox, mail_id });
-                    }
-                    mail.close_inbox.push(pos as u32 + 1);
-                    mail.mails.remove(pos);
-                }
-            }
-            // Re-sync the inbox: the taken money/item or removed row is gone server-side.
-            if let Some(mailbox) = mail.mailbox {
-                let _ = commands.0.send(ClientCommand::GetMailList { mailbox });
-            }
-        }
-        mail_error::EQUIP_ERROR => equip_errors.0.push(EquipError {
-            reason: equip_error.unwrap_or(0) as u8,
-            required_level: None,
-            bag_slot: 255,
-        }),
-        other => mail.errors.extend(mail_refusal(other)),
-    }
-}
-
-/// `SMSG_ITEM_TEXT_QUERY_RESPONSE`: the body lands in the cache and the feed repaints.
-fn mail_item_text(text_id: u32, text: String, mail: &mut MailOpen) {
-    mail.bodies.insert(text_id, Some(text));
-}
-
-/// `SMSG_RECEIVED_MAIL` (`0x4ad620`): with a mailbox open it arms the deferred refresh instead of
-/// moving the icon.
-///
-/// Deviation: an open mailbox also re-lists at once, past `CheckInbox`'s 60 s throttle, because a
-/// mail announced while the player stands there should show; the reference waits for the close.
-fn received_mail(seconds: f32, pending: &mut MailPending, mail: &MailOpen, commands: &NetCommands) {
-    pending.apply_received_mail(seconds, mail.mailbox.is_some());
     if let Some(mailbox) = mail.mailbox {
-        let _ = commands.0.send(ClientCommand::GetMailList { mailbox });
+        let _ = commands.0.send(ClientCommand::MailDelete {
+            mailbox,
+            mail_id: mail.rows[i].entry.message_id,
+            reason,
+        });
     }
+    mail.rows[i].delete_pending = true;
+    mail.effects.push(MailEffect::CloseInboxItem(i as u32 + 1));
 }
 
-/// The `MSG_QUERY_NEXT_MAIL_TIME` reply: stored as sent, and `UPDATE_PENDING_MAIL` always fires
-/// (`0x4ad5f0`, `0x4ad605`).
-fn next_mail_time(seconds: f32, pending: &mut MailPending) {
-    pending.apply_query_reply(seconds);
+/// `RemoveMoney` (`0x56f770`).
+fn remove_money(mail: &mut MailOpen, commands: &NetCommands, mail_id: u32) {
+    let Some(i) = mail.index_of(mail_id) else {
+        return;
+    };
+    mail.rows[i].entry.money = 0;
+    purge_if_empty(mail, commands, i, mail_delete_reason::MONEY_TAKEN);
+    mail.effects.push(MailEffect::InboxUpdate);
+}
+
+/// `RemoveItem` (`0x56f8d0`): the attachment by its guid low part, and the COD with it.
+fn remove_item(mail: &mut MailOpen, commands: &NetCommands, mail_id: u32, item_guid: u32) {
+    let Some(i) = mail.index_of(mail_id) else {
+        return;
+    };
+    let Some(slot) = mail.rows[i].slots.iter_mut().find(|s| {
+        s.as_ref()
+            .is_some_and(|a| a.entry != 0 && a.item_guid_low == item_guid)
+    }) else {
+        return;
+    };
+    *slot = None;
+    mail.rows[i].entry.cod = 0;
+    purge_if_empty(mail, commands, i, mail_delete_reason::ITEM_TAKEN);
+    mail.effects.push(MailEffect::InboxUpdate);
+}
+
+/// `RemoveMail` (`0x56dc70`): a returned or deleted mail leaves the rows and the total.
+fn remove_mail(mail: &mut MailOpen, mail_id: u32) {
+    let Some(i) = mail.index_of(mail_id) else {
+        return;
+    };
+    mail.rows.remove(i);
+    mail.total = mail.total.saturating_sub(1);
+    mail.effects.push(MailEffect::InboxUpdate);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use benilla_protocol::messages::{MailAttachment, MailEnchant, MailListEntry};
+
+    fn commands() -> (NetCommands, crossbeam_channel::Receiver<ClientCommand>) {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        (NetCommands(tx), rx)
+    }
+
+    fn attachment(slot: u8, guid: u32) -> MailAttachment {
+        MailAttachment {
+            slot,
+            item_guid_low: guid,
+            entry: 2589,
+            enchants: [MailEnchant::default(); 7],
+            random_property_id: 0,
+            suffix_factor: 0,
+            count: 5,
+            spell_charges: 0,
+            max_durability: 0,
+            durability: 0,
+        }
+    }
+
+    fn entry(id: u32, kind: u8, money: u32, body: &str, slots: &[(u8, u32)]) -> MailListEntry {
+        MailListEntry {
+            message_id: id,
+            message_type: kind,
+            sender_guid: if kind == 0 { 0xAA } else { 0 },
+            sender_entry: if kind == 0 { 0 } else { 7 },
+            cod: 0,
+            package: 0,
+            stationery: 41,
+            money,
+            flags: 0,
+            expire_days: 29.0,
+            mail_template_id: 0,
+            subject: "s".into(),
+            body: body.into(),
+            attachments: slots.iter().map(|&(s, g)| attachment(s, g)).collect(),
+        }
+    }
+
+    fn open_with(rows: Vec<MailListEntry>) -> MailOpen {
+        let mut mail = MailOpen::default();
+        mail.click(0x42);
+        mail.rows = rows.into_iter().map(MailRow::new).collect();
+        mail.total = mail.rows.len() as u32;
+        mail
+    }
+
+    fn result(mail_id: u32, action: u32, error: u32, item: Option<(u32, u32)>) -> MailResult {
+        MailResult {
+            mail_id,
+            action,
+            error,
+            equip_error: None,
+            item,
+        }
+    }
 
     #[test]
-    fn the_table_routes_the_arrival_and_the_session_end_to_the_mailbox() {
-        let (tx, _rx) = crossbeam_channel::unbounded();
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins)
-            .init_resource::<MailOpen>()
-            .init_resource::<MailPending>()
-            .init_resource::<EquipErrors>()
-            .insert_resource(NetCommands(tx));
-        register(&mut app);
+    fn attachments_file_by_slot_and_a_taken_slot_moves_to_the_first_free() {
+        let row = MailRow::new(entry(1, 0, 0, "", &[(3, 1), (3, 2), (20, 3)]));
+        let guids: Vec<Option<u32>> = row
+            .slots
+            .iter()
+            .take(4)
+            .map(|s| s.as_ref().map(|a| a.item_guid_low))
+            .collect();
+        // Slot 3 again moves to the first free (0); slot 20 wants 0, now taken, so takes 1.
+        assert_eq!(guids, vec![Some(2), Some(3), None, Some(1)]);
+        assert_eq!(row.num_attachments(), 3);
+    }
 
-        app.world_mut().resource_mut::<MailOpen>().click(0x20);
-        crate::net::handlers::dispatch(
-            app.world_mut(),
-            vec![SessionEvent::NextMailTime { seconds: 0.0 }],
-        );
-        assert!(app.world().resource::<MailPending>().has_new_mail());
+    #[test]
+    fn an_ignored_senders_mail_goes_back_unread() {
+        let (cmds, rx) = commands();
+        let mut social = SocialState::default();
+        social.set_ignores_for_test(vec![0xAA]);
+        let mut mail = MailOpen::default();
+        mail.click(0x42);
+        let mut pending = MailPending::default();
+        let list = MailList {
+            total: 3,
+            mails: vec![
+                entry(1, 0, 100, "", &[]),
+                entry(2, 0, 0, "hi", &[]),
+                entry(3, 2, 0, "", &[]),
+            ],
+        };
+        mail_list(list, &mut mail, &mut pending, &social, &cmds);
+        assert_eq!(mail.rows.len(), 1, "only the auction notice stays");
+        assert_eq!(mail.total, 1);
+        let sent: Vec<ClientCommand> = rx.try_iter().collect();
+        assert!(matches!(
+            sent.as_slice(),
+            [
+                ClientCommand::MailReturnToSender {
+                    mail_id: 1,
+                    sender: 0xAA,
+                    ..
+                },
+                ClientCommand::MailDelete {
+                    mail_id: 2,
+                    reason: mail_delete_reason::IGNORED,
+                    ..
+                },
+            ]
+        ));
+    }
 
-        crate::net::handlers::dispatch(
-            app.world_mut(),
-            vec![SessionEvent::Disconnected {
-                reason: "socket".into(),
-                end: benilla_protocol::SessionEnd::Lost,
-            }],
+    #[test]
+    fn an_empty_list_while_lit_requeries_the_next_mail_time() {
+        let (cmds, rx) = commands();
+        let mut mail = MailOpen::default();
+        let mut pending = MailPending::default();
+        pending.apply_query_reply(0.0, &[]);
+        mail_list(
+            MailList::default(),
+            &mut mail,
+            &mut pending,
+            &SocialState::default(),
+            &cmds,
         );
-        assert!(!app.world().resource::<MailPending>().has_new_mail());
-        assert_eq!(app.world().resource::<MailOpen>().mailbox, None);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientCommand::QueryNextMailTime)
+        ));
+        assert!(!pending.has_new_mail(), "the query stamps no mail");
+    }
+
+    #[test]
+    fn a_money_take_purges_an_emptied_letterless_mail() {
+        let (cmds, rx) = commands();
+        let mut mail = open_with(vec![entry(1, 0, 500, "", &[]), entry(2, 0, 500, "hi", &[])]);
+        send_mail_result(
+            result(1, mail_action::MONEY_TAKEN, 0, None),
+            &mut mail,
+            &cmds,
+            0,
+        );
+        send_mail_result(
+            result(2, mail_action::MONEY_TAKEN, 0, None),
+            &mut mail,
+            &cmds,
+            0,
+        );
+        let sent: Vec<ClientCommand> = rx.try_iter().collect();
+        assert!(
+            matches!(
+                sent.as_slice(),
+                [ClientCommand::MailDelete {
+                    mail_id: 1,
+                    reason: mail_delete_reason::MONEY_TAKEN,
+                    ..
+                }]
+            ),
+            "a letter keeps its row: {sent:?}"
+        );
+        assert!(mail.rows[0].delete_pending);
+        assert!(mail
+            .effects
+            .iter()
+            .any(|e| matches!(e, MailEffect::CloseInboxItem(1))));
+        assert_eq!(mail.rows[1].entry.money, 0);
+    }
+
+    #[test]
+    fn an_item_take_clears_its_slot_and_the_cod() {
+        let (cmds, rx) = commands();
+        let mut e = entry(1, 0, 0, "hi", &[(0, 0x31), (1, 0x32)]);
+        e.cod = 900;
+        let mut mail = open_with(vec![e]);
+        send_mail_result(
+            result(1, mail_action::ITEM_TAKEN, 0, Some((0x31, 5))),
+            &mut mail,
+            &cmds,
+            0,
+        );
+        assert!(mail.rows[0].slots[0].is_none());
+        assert!(mail.rows[0].slots[1].is_some());
+        assert_eq!(mail.rows[0].entry.cod, 0);
+        assert!(rx.try_recv().is_err(), "a letter with an item left is kept");
+    }
+
+    #[test]
+    fn auto_loot_takes_the_next_attachment_on_each_ok_take() {
+        let (cmds, rx) = commands();
+        let mut mail = open_with(vec![entry(1, 2, 0, "", &[(0, 0x31), (4, 0x32), (9, 0x33)])]);
+        mail.auto_looting = Some(1);
+        send_mail_result(
+            result(1, mail_action::ITEM_TAKEN, 0, Some((0x31, 5))),
+            &mut mail,
+            &cmds,
+            0,
+        );
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientCommand::MailTakeItem {
+                item_guid_low: 0x32,
+                ..
+            })
+        ));
+        assert_eq!(mail.auto_looting, Some(1), "one more after this one");
+        assert!(
+            !mail
+                .effects
+                .iter()
+                .any(|e| matches!(e, MailEffect::Done { send: false })),
+            "the command stays in flight"
+        );
+        // A refused take ends it.
+        mail.effects.clear();
+        send_mail_result(
+            result(1, mail_action::ITEM_TAKEN, mail_error::INTERNAL_ERROR, None),
+            &mut mail,
+            &cmds,
+            0,
+        );
+        assert_eq!(mail.auto_looting, None);
+        assert!(mail
+            .effects
+            .iter()
+            .any(|e| matches!(e, MailEffect::Result { ok: false })));
+    }
+
+    #[test]
+    fn a_sent_mail_resets_the_form_and_succeeds() {
+        let (cmds, _rx) = commands();
+        let mut mail = open_with(vec![]);
+        send_mail_result(result(0, mail_action::SEND, 0, None), &mut mail, &cmds, 0);
+        let kinds: Vec<&str> = mail
+            .effects
+            .iter()
+            .map(|e| match e {
+                MailEffect::Message(k) => *k,
+                MailEffect::Sent => "sent",
+                MailEffect::Done { send: true } => "done-send",
+                MailEffect::Done { send: false } => "done",
+                MailEffect::Result { ok: true } => "MAIL_SUCCESS",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            ["ERR_MAIL_SENT", "sent", "done-send", "done", "MAIL_SUCCESS"]
+        );
+    }
+
+    #[test]
+    fn a_delete_or_return_leaves_the_rows_and_the_total() {
+        let (cmds, _rx) = commands();
+        let mut mail = open_with(vec![entry(1, 0, 0, "", &[]), entry(2, 0, 0, "", &[])]);
+        send_mail_result(
+            result(1, mail_action::DELETED, 0, None),
+            &mut mail,
+            &cmds,
+            0,
+        );
+        assert_eq!(mail.rows.len(), 1);
+        assert_eq!(mail.total, 1);
+        send_mail_result(
+            result(2, mail_action::MADE_PERMANENT, 0, None),
+            &mut mail,
+            &cmds,
+            0,
+        );
+        assert_eq!(
+            mail.rows[0].entry.flags & mail_flags::COPIED,
+            mail_flags::COPIED
+        );
     }
 }

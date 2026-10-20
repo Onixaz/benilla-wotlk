@@ -1014,30 +1014,44 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GameTooltip:SetInboxItem(index): the mail item hover (`MailFrame.lua:218`,
-    // `MailFrame.lua:470`). A row with no item does nothing; stock calls it only when there is one.
+    // GameTooltip:SetInboxItem(messageIndex, attachmentIndex) (`0x62f9e0`): a nonzero attachment
+    // index names its slot, else the first filled one; 1 when an item renders, else nil.
     m.set(
         "SetInboxItem",
-        lua.create_function(|lua, (this, index): (Table, usize)| {
+        lua.create_function(|lua, (this, index, attach): (Table, Value, Value)| {
             let h = frame_handle_of(lua, &this)?;
-            let (item_id, roll, name, stack) = {
-                let model = crate::script::model_mut_of(lua);
-                let Some(mail) = &model.mail else {
-                    return Ok(());
-                };
-                match mail.inbox.get(index.saturating_sub(1)) {
-                    Some(r) => (
-                        r.item_id,
-                        r.item_random_property_id,
-                        r.item_name.clone(),
-                        r.item_count,
-                    ),
-                    None => (0, 0, None, 0),
+            let index = lua.coerce_number(index)?.ok_or_else(|| {
+                mlua::Error::RuntimeError(
+                    "Usage: GameTooltip:SetInboxItem(messageIndex, attachmentIndex)".into(),
+                )
+            })?;
+            let slot = match lua
+                .coerce_number(attach)?
+                .map(crate::script::binding_abi::ftol)
+            {
+                Some(n) if n != 0 => {
+                    let s = (n - 1) as u32;
+                    if s as usize >= crate::script::MAIL_ATTACHMENT_SLOTS {
+                        return Ok(Value::Nil);
+                    }
+                    Some(s)
                 }
+                _ => None,
             };
-            if item_id == 0 {
-                return Ok(());
-            }
+            let index = usize::try_from(crate::script::binding_abi::ftol(index)).unwrap_or(0);
+            let attachment = {
+                let model = crate::script::model_mut_of(lua);
+                crate::script::mail::inbox_attachment(&model, index, slot)
+            };
+            let Some(a) = attachment.filter(|a| a.item_id != 0) else {
+                return Ok(Value::Nil);
+            };
+            let (item_id, roll, name, stack) = (
+                a.item_id,
+                a.random_property_id.max(0) as u32,
+                a.name,
+                a.count,
+            );
             {
                 let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
@@ -1059,7 +1073,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 None => retrieving(lua, &this)?,
             }
             show_or_hide_empty(lua, h);
-            Ok(())
+            Ok(Value::Integer(1))
         })?,
     )?;
 
@@ -1147,21 +1161,25 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GameTooltip:SetSendMailItem(): the attached item's hover (`MailFrame.xml:952`); an empty
-    // slot does nothing.
+    // GameTooltip:SetSendMailItem(index) (`0x62f8b0`): send slot `index`, slot 1 when not a
+    // number; 1 when an item renders, else nil.
     m.set(
         "SetSendMailItem",
-        lua.create_function(|lua, this: Table| {
+        lua.create_function(|lua, (this, index): (Table, Value)| {
             let h = frame_handle_of(lua, &this)?;
+            let slot = match lua.coerce_number(index)? {
+                Some(n) => crate::script::binding_abi::ftol(n - 1.0) as u32 as usize,
+                None => 0,
+            };
             let (item_id, stack) = {
                 let model = crate::script::model_mut_of(lua);
-                model
-                    .mail_send_item
-                    .as_ref()
-                    .map_or((0, 1), |it| (it.item_id, it.count.unwrap_or(1)))
+                match crate::script::mail::send_item(&model, slot) {
+                    Some(it) => (it.item_id, crate::script::cursor::held_count(&model, it)),
+                    None => (0, 1),
+                }
             };
             if item_id == 0 {
-                return Ok(());
+                return Ok(Value::Nil);
             }
             {
                 let mut model = crate::script::model_mut_of(lua);
@@ -1182,7 +1200,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 None => retrieving(lua, &this)?,
             }
             show_or_hide_empty(lua, h);
-            Ok(())
+            Ok(Value::Integer(1))
         })?,
     )?;
 

@@ -634,9 +634,6 @@ fn parse_server_body(
                 status: q.status,
             }
         }
-        opcode::SMSG_MEETINGSTONE_SUCCESS => {
-            ServerPacket::MeetingStoneNotice(crate::messages::MeetingStoneNotice::Success)
-        }
         opcode::SMSG_MEETINGSTONE_IN_PROGRESS => {
             ServerPacket::MeetingStoneNotice(crate::messages::MeetingStoneNotice::InProgress)
         }
@@ -1747,28 +1744,24 @@ fn parse_server_body(
             code: taxi::read_activate_taxi_reply(&mut r)?,
         },
         opcode::SMSG_NEW_TAXI_PATH => ServerPacket::NewTaxiPath,
-        opcode::SMSG_MAIL_LIST_RESULT => ServerPacket::MailList {
-            mails: mail::read_mail_list_result(&mut r)?,
-        },
+        opcode::SMSG_MAIL_LIST_RESULT => {
+            ServerPacket::MailList(mail::read_mail_list_result(&mut r)?)
+        }
         opcode::SMSG_SEND_MAIL_RESULT => {
-            let (mail_id, action, error, equip_error, item) = mail::read_send_mail_result(&mut r)?;
-            ServerPacket::SendMailResult {
-                mail_id,
-                action,
-                error,
-                equip_error,
-                item,
-            }
+            ServerPacket::SendMailResult(mail::read_send_mail_result(&mut r)?)
         }
-        opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE => {
-            let (text_id, text) = mail::read_item_text_query_response(&mut r)?;
-            ServerPacket::ItemTextQueryResponse { text_id, text }
-        }
+        opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE => ServerPacket::ItemTextQueryResponse {
+            text: mail::read_item_text_query_response(&mut r)?,
+        },
         opcode::SMSG_RECEIVED_MAIL => ServerPacket::ReceivedMail {
             seconds: mail::read_received_mail(&mut r)?,
         },
-        opcode::MSG_QUERY_NEXT_MAIL_TIME => ServerPacket::NextMailTime {
-            seconds: mail::read_query_next_mail_time(&mut r)?,
+        opcode::MSG_QUERY_NEXT_MAIL_TIME => {
+            let (seconds, senders) = mail::read_query_next_mail_time(&mut r)?;
+            ServerPacket::NextMailTime { seconds, senders }
+        }
+        opcode::SMSG_SHOW_MAILBOX => ServerPacket::ShowMailbox {
+            mailbox: mail::read_show_mailbox(&mut r)?,
         },
         opcode::MSG_AUCTION_HELLO => {
             let (auctioneer, house_id, enabled) = auction::read_auction_hello(&mut r)?;

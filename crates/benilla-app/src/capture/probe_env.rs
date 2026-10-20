@@ -230,8 +230,13 @@ pub(crate) const PROBE_VARS: &[ProbeVar] = &[
     },
     ProbeVar {
         name: "WOW_PROBE_MAIL",
-        purpose: "1 — GM-mail the probe's own character, open the Goldshire mailbox and drive inbox/take/send/delete through the VM",
+        purpose: "1 — GM-mail the probe's own character and drive the inbox at the Goldshire mailbox; send:<name> mails another character from the Send tab; receive[:<name>] waits for an arrival and reads it",
         wall_clock: true,
+    },
+    ProbeVar {
+        name: "WOW_PROBE_MAIL_WAIT",
+        purpose: "seconds — with WOW_PROBE_MAIL=receive, how long to wait for an arrival (default 240)",
+        wall_clock: false,
     },
     ProbeVar {
         name: "WOW_PROBE_AUCTION",

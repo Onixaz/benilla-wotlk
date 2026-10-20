@@ -1071,6 +1071,8 @@ mod lfd_ui_tests;
 #[cfg(test)]
 mod loot_ui_tests;
 #[cfg(test)]
+mod mail_frame_tests;
+#[cfg(test)]
 mod paperdoll_stats_tests;
 #[cfg(test)]
 mod talent_ui_tests;

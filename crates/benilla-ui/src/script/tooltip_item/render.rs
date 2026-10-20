@@ -25,7 +25,7 @@ pub(super) struct ItemInstance {
     /// The resolved `ITEM_FIELD_CREATOR` name (the reference's `0x55f080`); `None` while it is
     /// unresolved, which prints no line either (`0x52e209`).
     pub creator: Option<String>,
-    /// `ITEM_FIELD_ITEM_TEXT_ID` ≠ 0, a letter's copy: the creator line reads WRITTEN_BY
+    /// `ITEM_FIELD_FLAGS & 0x200`, a letter's copy: the creator line reads WRITTEN_BY
     /// (`0x52e223`) and READABLE shows (`0x52e348`).
     pub has_text: bool,
     /// `ITEM_FIELD_FLAGS`: UNLOCKED `0x4` (read at `0x52e30c`), WRAPPED `0x8` (`0x52e31d`).

@@ -346,12 +346,6 @@ fn feed_meeting_stone(
 
     for notice in std::mem::take(&mut stone.notices) {
         match notice {
-            MeetingStoneNotice::Success => {
-                lines.extend(crate::ui_action::keyed_line(
-                    &script,
-                    "ERR_MEETING_STONE_SUCCESS",
-                ));
-            }
             MeetingStoneNotice::InProgress => {
                 lines.extend(crate::ui_action::keyed_line(
                     &script,

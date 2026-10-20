@@ -128,11 +128,6 @@ impl<K: Copy + Eq + Hash, V> QueryCache<K, V> {
     pub(crate) fn len(&self) -> usize {
         self.answered.len()
     }
-
-    #[cfg(test)]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.answered.is_empty()
-    }
 }
 
 /// A resource that owns one or more [`QueryCache`]s: what to forget on world entry.

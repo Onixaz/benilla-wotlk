@@ -1,10 +1,9 @@
 //! The item-text reader (`ItemTextFrame.xml`) a bag letter, a book or a readable world object
 //! opens in, locally with no packet as in the reference: every route ends at
 //! `0x4e32e0(guid, flag)`, which looks the guid up as any object and asks it for its text
-//! (`vtbl+0x74`), a mail-made letter's `ITEM_FIELD_ITEM_TEXT_ID` or else a page chain from an
-//! item template's `PageText` or a `GAMEOBJECT_TYPE_TEXT` object's `data[0]`. vmangos has no use
-//! arm for a type-9 object and refuses `CMSG_READ_ITEM` without a template `PageText`, which the
-//! Plain Letter lacks (`ItemHandler.cpp:421`).
+//! (`vtbl+0x74`), a page chain from an item template's `PageText` or a `GAMEOBJECT_TYPE_TEXT`
+//! object's `data[0]`, or else a copied mail letter's own text (`ITEM_FIELD_FLAGS & 0x200`), asked
+//! by the item's guid (`CGItemText::SetItem`, `0x58a1a0`).
 //!
 //! The events follow `ItemTextFrame.lua:10-96`; `ITEM_TEXT_TRANSLATION`, the foreign-language
 //! bar, never fires, as neither source carries the language column.
@@ -18,7 +17,6 @@ use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, Objects};
 use crate::query_cache::QueryCache;
-use crate::ui_mail::MailOpen;
 use crate::ui_script::{UiFeed, UiInput};
 
 /// One page of a book as the wire gave it (`SMSG_PAGE_TEXT_QUERY_RESPONSE`).
@@ -57,10 +55,35 @@ impl PageTexts {
     }
 }
 
+/// The ask-once item-text cache (`itemtextcache.wdb`), a copied letter's text by item guid.
+#[derive(Resource, Default)]
+pub(crate) struct LetterTexts {
+    texts: QueryCache<u64, String>,
+}
+
+impl crate::query_cache::AskOnce for LetterTexts {
+    fn clear_pending(&mut self) {
+        self.texts.clear_pending();
+    }
+}
+
+impl LetterTexts {
+    pub(crate) fn insert(&mut self, item_guid: u64, text: String) {
+        self.texts.insert(item_guid, Some(text));
+    }
+
+    fn get_or_ask(&self, item_guid: u64, commands: &NetCommands) -> Option<&String> {
+        self.texts.get_or_ask(item_guid, || {
+            debug!("item text: asking letter {item_guid:#x}");
+            let _ = commands.0.send(ClientCommand::ItemTextQuery { item_guid });
+        })
+    }
+}
+
 /// Which of the reference's two text sources a session shows; the object decides, not the click.
 pub(crate) enum ReadSource {
-    /// A mail-made letter's `ITEM_FIELD_ITEM_TEXT_ID`: one body and a creator line.
-    Letter { text_id: u32 },
+    /// A copied mail letter's own text: one body and a creator line.
+    Letter,
     /// A page chain. `visited` runs from the first page to the one shown, as pages link only
     /// forwards (the reference's array at `0xbc3fd0`); it is empty until the object's template
     /// answers, since the reference asks for the page id at paint time (`0x5f59d0`).
@@ -91,8 +114,8 @@ pub(crate) struct ItemTextOpen {
 
 impl ItemTextOpen {
     /// Open a bag letter; re-opening restarts from `ITEM_TEXT_BEGIN`.
-    pub(crate) fn open_letter(&mut self, item_guid: u64, text_id: u32) {
-        self.open(item_guid, ReadSource::Letter { text_id });
+    pub(crate) fn open_letter(&mut self, item_guid: u64) {
+        self.open(item_guid, ReadSource::Letter);
     }
 
     /// Open a page chain; the feed asks the object's template for the first page.
@@ -132,16 +155,28 @@ impl ItemTextOpen {
     }
 }
 
-/// The page-text reply's handler.
+/// The page-text and item-text replies' handlers.
 mod net {
     use benilla_protocol::{SessionEvent, SessionEventKind};
     use bevy::prelude::*;
 
-    use super::PageTexts;
+    use super::{LetterTexts, PageTexts};
     use crate::net::NetHandlerApp;
 
     pub(super) fn register(app: &mut App) {
-        app.net_handler(SessionEventKind::PageText, on_page_text);
+        app.net_handler(SessionEventKind::PageText, on_page_text)
+            .net_handler(SessionEventKind::ItemText, on_item_text);
+    }
+
+    /// `SMSG_ITEM_TEXT_QUERY_RESPONSE` (`0x635a40`): the letter's text lands in the cache.
+    fn on_item_text(In(ev): In<SessionEvent>, mut texts: ResMut<LetterTexts>) {
+        if let SessionEvent::ItemText { item_guid, text } = ev {
+            debug!(
+                "item text: letter {item_guid:#x} answered, {} byte(s)",
+                text.len()
+            );
+            texts.insert(item_guid, text);
+        }
     }
 
     /// One page per packet; the reader repaints off the cache on the next feed.
@@ -163,8 +198,10 @@ impl Plugin for UiItemTextPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
         crate::query_cache::register::<PageTexts>(app);
+        crate::query_cache::register::<LetterTexts>(app);
         app.init_resource::<ItemTextOpen>()
             .init_resource::<PageTexts>()
+            .init_resource::<LetterTexts>()
             .add_systems(
                 Update,
                 (
@@ -245,7 +282,7 @@ fn readable(
 fn feed_item_text(
     script: Option<NonSendMut<UiScript>>,
     mut open: ResMut<ItemTextOpen>,
-    mail: Res<MailOpen>,
+    letters: Res<LetterTexts>,
     pages: Res<PageTexts>,
     objects: Objects,
     items: Res<Items>,
@@ -306,7 +343,7 @@ fn feed_item_text(
     }
 
     let (creator, text, page, has_next) = match &mut sess.source {
-        ReadSource::Letter { text_id } => {
+        ReadSource::Letter => {
             let creator_guid = objects
                 .object(sess.object_guid)
                 .and_then(|o| o.item_creator());
@@ -317,16 +354,7 @@ fn feed_item_text(
                     None => return, // name query in flight
                 },
             };
-            // The body, from the client's one item-text cache, which mail shares.
-            let body = mail
-                .bodies
-                .get_or_ask(*text_id, || {
-                    let _ = commands.0.send(ClientCommand::ItemTextQuery {
-                        text_id: *text_id,
-                        mail_id: 0,
-                    });
-                })
-                .cloned();
+            let body = letters.get_or_ask(sess.object_guid, &commands).cloned();
             let Some(text) = body else {
                 return; // body query in flight
             };

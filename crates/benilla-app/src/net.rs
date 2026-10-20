@@ -1652,17 +1652,17 @@ pub(crate) enum ClientCommand {
     GetMailList {
         mailbox: u64,
     },
-    /// `CMSG_SEND_MAIL`; `item_guid` 0 is no attachment.
+    /// `CMSG_SEND_MAIL`; `items` are `(send slot, item guid)`, empty for none.
     SendMail {
         mailbox: u64,
         receiver: String,
         subject: String,
         body: String,
-        /// The `Stationery.dbc` id, the sixth field.
+        /// The `Stationery.dbc` id.
         stationery: u32,
-        /// The `Package.dbc` id, the seventh field, 0 without an item.
+        /// The `Package.dbc` id, 0 without an item.
         package: u32,
-        item_guid: u64,
+        items: Vec<(u8, u64)>,
         money: u32,
         cod: u32,
     },
@@ -1671,37 +1671,39 @@ pub(crate) enum ClientCommand {
         mailbox: u64,
         mail_id: u32,
     },
-    /// `CMSG_MAIL_TAKE_ITEM`.
+    /// `CMSG_MAIL_TAKE_ITEM`: one attachment, by its item guid's low part.
     MailTakeItem {
         mailbox: u64,
         mail_id: u32,
+        item_guid_low: u32,
     },
     /// `CMSG_MAIL_MARK_AS_READ`, when a letter opens. No response.
     MailMarkAsRead {
         mailbox: u64,
         mail_id: u32,
     },
-    /// `CMSG_MAIL_RETURN_TO_SENDER`.
+    /// `CMSG_MAIL_RETURN_TO_SENDER`, naming the sender.
     MailReturnToSender {
         mailbox: u64,
         mail_id: u32,
+        sender: u64,
     },
-    /// `CMSG_MAIL_DELETE`.
+    /// `CMSG_MAIL_DELETE`, with a `mail_delete_reason`.
     MailDelete {
         mailbox: u64,
         mail_id: u32,
+        reason: u32,
     },
     /// `CMSG_MAIL_CREATE_TEXT_ITEM`; answered by `SMSG_SEND_MAIL_RESULT` with `MADE_PERMANENT`.
     MailCreateTextItem {
         mailbox: u64,
         mail_id: u32,
     },
-    /// `CMSG_ITEM_TEXT_QUERY`, once per mail with a nonzero `item_text_id`.
+    /// `CMSG_ITEM_TEXT_QUERY`: a copied letter's text, once per letter item.
     ItemTextQuery {
-        text_id: u32,
-        mail_id: u32,
+        item_guid: u64,
     },
-    /// `MSG_QUERY_NEXT_MAIL_TIME`, on entering the world, to seed `HasNewMail()`.
+    /// `MSG_QUERY_NEXT_MAIL_TIME`: seeds `HasNewMail()` and the recent senders.
     QueryNextMailTime,
     // ── The auction house ──
     // Every verb carries the auctioneer guid.

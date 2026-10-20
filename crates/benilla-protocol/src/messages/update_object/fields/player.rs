@@ -27,10 +27,10 @@ impl ObjectFields {
     pub fn item_creator(&self) -> Option<u64> {
         self.get_guid(10).filter(|&g| g != 0)
     }
-    /// `ITEM_FIELD_ITEM_TEXT_ID` (field 45, owner only): a mailed letter copy's text; nonzero
-    /// makes a right-click read it (`CMSG_ITEM_TEXT_QUERY`) instead of using the item.
-    pub fn item_text_id(&self) -> Option<u32> {
-        self.get_u32(45)
+    /// `ITEM_FIELD_FLAGS & 0x200`: the item carries its own text, a copied mail letter's, which a
+    /// right-click reads by `CMSG_ITEM_TEXT_QUERY` on the item's guid (`0x58a2bc`).
+    pub fn item_has_text(&self) -> bool {
+        self.item_flags().is_some_and(|f| f & 0x200 != 0)
     }
     /// `ITEM_FIELD_ENCHANTMENT + 3*slot` (field `22 + 3*slot`): the enchant id in one of 7 slots
     /// (0 permanent, 1 temporary, 2-6 random properties), each an id, duration and charges

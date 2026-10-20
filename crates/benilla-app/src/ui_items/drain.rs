@@ -305,13 +305,13 @@ impl ScriptItemUse<'_, '_> {
             .and_then(|guid| {
                 let obj = ladder.objects.object(guid)?;
                 let inst_flags = obj.item_flags().unwrap_or(0);
-                let item_text_id = obj.item_text_id().unwrap_or(0);
+                let has_text = obj.item_has_text();
                 let entry = obj.object_entry()?;
                 let t = ladder.items.template(entry, guid, &ladder.commands)?;
                 Some(Clicked {
                     guid,
                     entry,
-                    item_text_id,
+                    has_text,
                     inventory_type: t.inventory_type,
                     display_info_id: t.display_info_id,
                     start_quest: t.start_quest,
@@ -412,17 +412,17 @@ impl ScriptItemUse<'_, '_> {
             }
             return;
         }
-        // A letter from mail (`ITEM_FIELD_ITEM_TEXT_ID`) opens the reader with no packet; vmangos's
-        // `CMSG_READ_ITEM` wants a template `PageText`, so the text comes by item-text query.
-        if let Some(c) = clicked.filter(|c| c.item_text_id != 0) {
+        // A letter copied from mail (`ITEM_FIELD_FLAGS & 0x200`) opens the reader with no packet,
+        // its text asked by item guid (`0x58a1a0`).
+        if let Some(c) = clicked.filter(|c| c.has_text) {
             if item_text.toggle_closed(c.guid) {
                 debug!("ui_items: re-click closes the letter {:#x}", c.guid);
             } else {
                 debug!(
-                    "ui_items: read letter {:#x} (text {}, lua bag {bag} slot {slot})",
-                    c.guid, c.item_text_id
+                    "ui_items: read letter {:#x} (lua bag {bag} slot {slot})",
+                    c.guid
                 );
-                item_text.open_letter(c.guid, c.item_text_id);
+                item_text.open_letter(c.guid);
             }
             return;
         }
@@ -554,8 +554,8 @@ pub(super) fn drain_container_repairs(
 struct Clicked {
     guid: u64,
     entry: u32,
-    /// Instance `ITEM_FIELD_ITEM_TEXT_ID`, nonzero on a letter made from mail.
-    item_text_id: u32,
+    /// Instance `ITEM_FIELD_FLAGS & 0x200`, set on a letter copied from mail.
+    has_text: bool,
     inventory_type: u32,
     display_info_id: u32,
     start_quest: u32,

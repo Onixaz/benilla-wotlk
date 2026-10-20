@@ -8,14 +8,14 @@ use crate::messages::{
     GossipMenu, GroupDifficulties, GroupLootInfo, GroupMemberEntry, GuildCommandResult,
     GuildEventNotice, GuildInfo, GuildQueryResponse, GuildRoster, InspectHonorStats, ItemInfo,
     ItemPushResult, JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon,
-    LootStartRoll, MailListEntry, MirrorTimerStart, MonsterMoveFacing, MoverState, ObjectFields,
-    PartyKillLog, PartyMemberStatsInfo, PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse,
-    PetitionRename, PetitionShowList, PetitionShowSignatures, PetitionSignResults, PvpCredit,
-    QuestComplete, QuestConfirmAccept, QuestDetails, QuestGiverList, QuestOfferReward,
-    QuestRequestItems, QuestShareMsg, QuestTemplate, SpellDamageLog, SpellEnergizeLog,
-    SpellHealLog, SpellInstaKillLog, SpellLogExecute, SpellLogMiss, SpellOutcomeLog,
-    SpellRemoveLog, StabledPet, TaxiMask, TradeStatus, TradeStatusExtended, TrainerSpell,
-    TransportPose, VendorItem, WhoResults, XpGain,
+    LootStartRoll, MailList, MailResult, MailSender, MirrorTimerStart, MonsterMoveFacing,
+    MoverState, ObjectFields, PartyKillLog, PartyMemberStatsInfo, PeriodicAuraLog, PetMode,
+    PetSpells, PetitionQueryResponse, PetitionRename, PetitionShowList, PetitionShowSignatures,
+    PetitionSignResults, PvpCredit, QuestComplete, QuestConfirmAccept, QuestDetails,
+    QuestGiverList, QuestOfferReward, QuestRequestItems, QuestShareMsg, QuestTemplate,
+    SpellDamageLog, SpellEnergizeLog, SpellHealLog, SpellInstaKillLog, SpellLogExecute,
+    SpellLogMiss, SpellOutcomeLog, SpellRemoveLog, StabledPet, TaxiMask, TradeStatus,
+    TradeStatusExtended, TrainerSpell, TransportPose, VendorItem, WhoResults, XpGain,
 };
 
 /// Coarse entity classification, free of wire types, carried on [`SessionEvent::ObjectCreate`].
@@ -1194,15 +1194,9 @@ pub enum SessionEvent {
     /// `SMSG_NEW_TAXI_PATH`, empty, sent with [`Self::TaxiNodeStatus`] on a first visit.
     NewTaxiPath,
     /// The inbox (`SMSG_MAIL_LIST_RESULT`), answering `CMSG_GET_MAIL_LIST`.
-    MailList { mails: Vec<MailListEntry> },
-    /// A mail action's verdict (`SMSG_SEND_MAIL_RESULT`); `equip_error`/`item` are exclusive tails.
-    SendMailResult {
-        mail_id: u32,
-        action: u32,
-        error: u32,
-        equip_error: Option<u32>,
-        item: Option<(u32, u32)>,
-    },
+    MailList(MailList),
+    /// A mail action's verdict (`SMSG_SEND_MAIL_RESULT`).
+    SendMailResult(MailResult),
     /// One book page (`SMSG_PAGE_TEXT_QUERY_RESPONSE`), for items and `GAMEOBJECT_TYPE_TEXT`;
     /// `next_page_id == 0` ends it, and vmangos pushes the whole chain on the first query.
     PageText {
@@ -1210,12 +1204,18 @@ pub enum SessionEvent {
         text: String,
         next_page_id: u32,
     },
-    /// A letter's body (`SMSG_ITEM_TEXT_QUERY_RESPONSE`), for a mail's non-zero `item_text_id`.
-    MailItemText { text_id: u32, text: String },
-    /// A mail arrived (`SMSG_RECEIVED_MAIL`); `seconds` of delay, always `0.0` from vmangos.
+    /// A copied letter's text (`SMSG_ITEM_TEXT_QUERY_RESPONSE`), keyed by the letter item's guid.
+    ItemText { item_guid: u64, text: String },
+    /// A mail arrived (`SMSG_RECEIVED_MAIL`); `seconds` until it is delivered.
     ReceivedMail { seconds: f32 },
-    /// `MSG_QUERY_NEXT_MAIL_TIME`'s reply: `0.0` unread mail, `-86400.0` none; for `HasNewMail()`.
-    NextMailTime { seconds: f32 },
+    /// `MSG_QUERY_NEXT_MAIL_TIME`'s reply: `0.0` unread mail, `-86400.0` none, and up to three of
+    /// the senders; for `HasNewMail()` and `GetLatestThreeSenders()`.
+    NextMailTime {
+        seconds: f32,
+        senders: Vec<MailSender>,
+    },
+    /// The server opened the mail window (`SMSG_SHOW_MAILBOX`), as an NPC mailbox's gossip does.
+    ShowMailbox { mailbox: u64 },
     /// `MSG_AUCTION_HELLO`'s reply: an open house opens the auction window, a closed one fires
     /// `AUCTION_HOUSE_DISABLED`; `house_id` is the `AuctionHouse.dbc` row.
     AuctionHello {

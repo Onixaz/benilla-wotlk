@@ -414,8 +414,8 @@ impl Dispatch<'_, '_> {
             );
             return;
         }
-        // MAILBOX (type 19) opens locally: its use handler `0x5f6820` sends no
-        // `CMSG_GAMEOBJ_USE`, and `MAIL_SHOW` → `CheckInbox` asks for the list.
+        // MAILBOX (type 19) opens locally: its use (`0x70c9d0`) is `TalkToMailbox`, which sends
+        // no `CMSG_GAMEOBJ_USE`, and `MAIL_SHOW` → `CheckInbox` asks for the list.
         if go_type == cursor_mode::GO_TYPE_MAILBOX {
             if in_reach {
                 debug!("right-click mailbox: open mail window {guid:#x}");
@@ -712,6 +712,10 @@ impl Dispatch<'_, '_> {
                         .0
                         .send(ClientCommand::AreaSpiritHealerQuery { healer });
                 }
+            }
+            ServiceAction::OpenMailbox => {
+                debug!("right-click interact: {guid:#x} (mailbox NPC — mail window, no packet)");
+                self.feedback.mail.click(guid);
             }
             ServiceAction::Silent(why) => {
                 debug!("right-click interact: {guid:#x} ({arm:?}) — silent: {why}");
@@ -1478,6 +1482,8 @@ pub(crate) enum ServiceAction {
     AskSpiritHealer,
     /// Adopt this guide as the area's spirit healer; `0x5df950` → `0x4921c0` sends the query.
     AcquireSpiritGuide,
+    /// `TalkToMailbox` (`0x56da60`): the mail window opens locally on this NPC.
+    OpenMailbox,
     /// Nothing goes out; the payload says why, for the debug line.
     Silent(&'static str),
 }
@@ -1535,7 +1541,7 @@ pub(crate) fn service_action(
             ServiceAction::Silent("guild banker, and the guild bank is not built")
         }
         ServiceArm::SpellClick => ServiceAction::Silent("spell click, which is not built"),
-        ServiceArm::Mailbox => ServiceAction::Silent("mailbox NPC, which is not built"),
+        ServiceArm::Mailbox => ServiceAction::OpenMailbox,
     }
 }
 
@@ -1884,6 +1890,7 @@ mod tests {
             ServiceAction::AskBinder => "ask-binder".to_string(),
             ServiceAction::AskSpiritHealer => "ask-spirit-healer".to_string(),
             ServiceAction::AcquireSpiritGuide => "acquire-spirit-guide".to_string(),
+            ServiceAction::OpenMailbox => "open-mailbox".to_string(),
             ServiceAction::Silent(_) => "silent".to_string(),
         };
         assert!(matches!(
@@ -1924,12 +1931,10 @@ mod tests {
         assert_eq!(sent(ServiceArm::SpiritHealer, false), "silent");
         assert_eq!(sent(ServiceArm::SpiritGuide, false), "silent");
         assert_eq!(sent(ServiceArm::SpiritHealer, true), "ask-spirit-healer");
+        // A mailbox NPC opens the mail window locally (`0x6de11f`).
+        assert_eq!(sent(ServiceArm::Mailbox, false), "open-mailbox");
         // Taken, but nothing benilla builds answers them yet.
-        for arm in [
-            ServiceArm::GuildBanker,
-            ServiceArm::SpellClick,
-            ServiceArm::Mailbox,
-        ] {
+        for arm in [ServiceArm::GuildBanker, ServiceArm::SpellClick] {
             assert_eq!(sent(arm, false), "silent", "{arm:?}");
         }
         assert!(matches!(
@@ -1986,6 +1991,7 @@ mod tests {
                     ServiceAction::AskBinder => "ask-binder".into(),
                     ServiceAction::AskSpiritHealer => "ask-xp-loss".into(),
                     ServiceAction::AcquireSpiritGuide => "acquire-spirit-guide".into(),
+                    ServiceAction::OpenMailbox => "open-mailbox".into(),
                     ServiceAction::Silent(w) => format!("silent {w}"),
                 };
                 let empty = describe(service_action(arm, VENDOR, ghost, None));

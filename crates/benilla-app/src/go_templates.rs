@@ -100,6 +100,19 @@ impl GameObjectTemplates {
         });
     }
 
+    /// A template's name by entry, asked once with no spawn guid; a mail from a GameObject names
+    /// its sender this way (`0x56d960`).
+    pub(crate) fn name_by_entry(&self, entry: u32, commands: &NetCommands) -> Option<&str> {
+        self.templates
+            .get_or_ask(entry, || {
+                debug!("go: asking template (entry {entry}, no guid)");
+                let _ = commands
+                    .0
+                    .send(ClientCommand::GameObjectQuery { entry, guid: 0 });
+            })
+            .map(|t| t.name.as_str())
+    }
+
     /// Records a `SMSG_GAMEOBJECT_QUERY_RESPONSE`; a miss arrives zeroed, so no lock.
     pub(crate) fn insert(&mut self, entry: u32, type_id: u32, name: String, data: &[i32; 24]) {
         let lock_id = go_lock_slot(type_id)

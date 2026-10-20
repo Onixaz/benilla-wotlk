@@ -15,8 +15,8 @@ impl WorldWriter {
         )
     }
 
-    /// `CMSG_SEND_MAIL`: `item_guid` 0 attaches nothing. The server discards `stationery` and
-    /// `package`, storing player mail as `MAIL_STATIONERY_DEFAULT`.
+    /// `CMSG_SEND_MAIL`: `items` are the `(attachment slot, item guid)` pairs, empty for none.
+    #[allow(clippy::too_many_arguments)]
     pub fn send_mail(
         &mut self,
         mailbox: u64,
@@ -25,14 +25,14 @@ impl WorldWriter {
         body: &str,
         stationery: u32,
         package: u32,
-        item_guid: u64,
+        items: &[(u8, u64)],
         money: u32,
         cod: u32,
     ) -> Result<()> {
         self.send(
             opcode::CMSG_SEND_MAIL,
             &messages::send_mail(
-                mailbox, receiver, subject, body, stationery, package, item_guid, money, cod,
+                mailbox, receiver, subject, body, stationery, package, items, money, cod,
             ),
         )
     }
@@ -45,16 +45,16 @@ impl WorldWriter {
         )
     }
 
-    /// `CMSG_MAIL_TAKE_ITEM`: acked with [`messages::mail_action::ITEM_TAKEN`].
-    pub fn mail_take_item(&mut self, mailbox: u64, mail_id: u32) -> Result<()> {
+    /// `CMSG_MAIL_TAKE_ITEM`: one attachment by its item guid's low part; acked with
+    /// [`messages::mail_action::ITEM_TAKEN`].
+    pub fn mail_take_item(&mut self, mailbox: u64, mail_id: u32, item_guid_low: u32) -> Result<()> {
         self.send(
             opcode::CMSG_MAIL_TAKE_ITEM,
-            &messages::mail_take_item(mailbox, mail_id),
+            &messages::mail_take_item(mailbox, mail_id, item_guid_low),
         )
     }
 
-    /// `CMSG_MAIL_MARK_AS_READ`: sent when a letter opens. There is no reply, so the caller sets
-    /// the read bit itself.
+    /// `CMSG_MAIL_MARK_AS_READ`: sent when a letter opens. There is no reply.
     pub fn mail_mark_as_read(&mut self, mailbox: u64, mail_id: u32) -> Result<()> {
         self.send(
             opcode::CMSG_MAIL_MARK_AS_READ,
@@ -63,18 +63,19 @@ impl WorldWriter {
     }
 
     /// `CMSG_MAIL_RETURN_TO_SENDER`: acked with [`messages::mail_action::RETURNED`].
-    pub fn mail_return_to_sender(&mut self, mailbox: u64, mail_id: u32) -> Result<()> {
+    pub fn mail_return_to_sender(&mut self, mailbox: u64, mail_id: u32, sender: u64) -> Result<()> {
         self.send(
             opcode::CMSG_MAIL_RETURN_TO_SENDER,
-            &messages::mail_return_to_sender(mailbox, mail_id),
+            &messages::mail_return_to_sender(mailbox, mail_id, sender),
         )
     }
 
-    /// `CMSG_MAIL_DELETE`: acked with [`messages::mail_action::DELETED`].
-    pub fn mail_delete(&mut self, mailbox: u64, mail_id: u32) -> Result<()> {
+    /// `CMSG_MAIL_DELETE`: a [`messages::mail_delete_reason`] trails; acked with
+    /// [`messages::mail_action::DELETED`].
+    pub fn mail_delete(&mut self, mailbox: u64, mail_id: u32, reason: u32) -> Result<()> {
         self.send(
             opcode::CMSG_MAIL_DELETE,
-            &messages::mail_delete(mailbox, mail_id),
+            &messages::mail_delete(mailbox, mail_id, reason),
         )
     }
 
@@ -87,16 +88,15 @@ impl WorldWriter {
         )
     }
 
-    /// `CMSG_ITEM_TEXT_QUERY`: a letter's body, asked once per mail with a nonzero `item_text_id`.
-    pub fn item_text_query(&mut self, text_id: u32, mail_id: u32) -> Result<()> {
+    /// `CMSG_ITEM_TEXT_QUERY`: a copied letter's text, by the letter item's guid.
+    pub fn item_text_query(&mut self, item_guid: u64) -> Result<()> {
         self.send(
             opcode::CMSG_ITEM_TEXT_QUERY,
-            &messages::item_text_query(text_id, mail_id),
+            &messages::item_text_query(item_guid),
         )
     }
 
-    /// `MSG_QUERY_NEXT_MAIL_TIME`, empty: the reply is one `f32`, `0.0` when unread mail waits and
-    /// `-86400.0` when none. Sent at login to seed `HasNewMail()`.
+    /// `MSG_QUERY_NEXT_MAIL_TIME`, empty: the reply is the next-mail time and up to three senders.
     pub fn query_next_mail_time(&mut self) -> Result<()> {
         self.send(opcode::MSG_QUERY_NEXT_MAIL_TIME, &[])
     }

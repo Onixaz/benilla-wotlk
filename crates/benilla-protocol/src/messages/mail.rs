@@ -1,25 +1,43 @@
-//! Mail wire messages. There is no `SMSG_SHOW_MAILBOX`: the client opens the window itself. Each
-//! mailbox CMSG leads with the mailbox guid, range-checked (5 yd) by vmangos `CheckMailBox`.
+//! Mail wire messages, as 12340's `CGMailInfo` reads and writes them. A mailbox opens locally on a
+//! GameObject or NPC use, or from `SMSG_SHOW_MAILBOX`; each mailbox CMSG leads with its guid.
 
 use std::io;
 
-use crate::wire::{capacity_hint, read_cstring, read_f32_le, read_u32_le, read_u64_le, read_u8};
+use crate::wire::{
+    capacity_hint, read_cstring, read_f32_le, read_i32_le, read_u16_le, read_u32_le, read_u64_le,
+    read_u8,
+};
 
 /// [`MailListEntry::message_type`]: each value fixes the form of the row's sender field.
 pub mod mail_message_type {
     /// A player: the sender field is an 8-byte guid.
     pub const NORMAL: u8 = 0;
-    /// An auction-house notice: the sender field is a u32 auction id.
+    /// An auction-house notice: the sender field is the `AuctionHouse.dbc` row.
     pub const AUCTION: u8 = 2;
-    /// A creature: the sender field is a u32 creature entry.
+    /// A creature: the sender field is a creature entry.
     pub const CREATURE: u8 = 3;
-    /// A GameObject: the sender field is a u32 GameObject entry.
+    /// A GameObject: the sender field is a GameObject entry.
     pub const GAMEOBJECT: u8 = 4;
-    /// A pre-made item mail (a GM or starter mail): no sender field at all.
-    pub const ITEM: u8 = 5;
+    /// A calendar notice: the sender field is a u32; the subject leads with the creator's guid.
+    pub const CALENDAR: u8 = 5;
 }
 
-/// `SMSG_SEND_MAIL_RESULT`'s `action` (vmangos `Mail.h` `MailResponseType`).
+/// [`MailListEntry::flags`] bits, the server's `checked` mask.
+pub mod mail_flags {
+    pub const READ: u32 = 0x1;
+    pub const RETURNED: u32 = 0x2;
+    /// The letter was copied to an item (`textCreated`).
+    pub const COPIED: u32 = 0x4;
+    pub const COD_PAYMENT: u32 = 0x8;
+    pub const HAS_BODY: u32 = 0x10;
+    /// A calendar notice for a removed invite rather than a removed event (`0x56f520`).
+    pub const CALENDAR_INVITE_REMOVED: u32 = 0x100;
+    /// Shown as returned and never returnable, like RETURNED and COD_PAYMENT (`0x56f280`'s
+    /// `0x20A` mask).
+    pub const UNRETURNABLE: u32 = 0x200;
+}
+
+/// `SMSG_SEND_MAIL_RESULT`'s `action`.
 pub mod mail_action {
     pub const SEND: u32 = 0;
     pub const MONEY_TAKEN: u32 = 1;
@@ -50,49 +68,114 @@ pub mod mail_error {
     pub const ITEM_HAS_EXPIRED: u32 = 21;
 }
 
-/// A mail's one attachment (`MAX_MAIL_ITEMS` is 1 in 1.12): a fixed-width block present on every
-/// `SMSG_MAIL_LIST_RESULT` row, all zero when there is no item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MailAttachment {
-    pub entry: u32,
-    pub perm_enchant: u32,
-    pub random_prop_id: u32,
-    pub suffix_factor: u32,
-    pub count: u8,
+/// `CMSG_MAIL_DELETE`'s trailing reason: a player's delete, or one of the client's own purges.
+pub mod mail_delete_reason {
+    /// `DeleteInboxItem` (`0x56f23a`).
+    pub const PLAYER: u32 = 0;
+    /// An ignored sender's empty mail, dropped as the list lands (`0x571ff9`).
+    pub const IGNORED: u32 = 1;
+    /// Emptied by a money take (`0x56f770`).
+    pub const MONEY_TAKEN: u32 = 2;
+    /// Emptied by an item take (`0x56f8d0`).
+    pub const ITEM_TAKEN: u32 = 3;
+}
+
+/// The most attachments one inbox row holds (`MailboxMessageInfo`'s 16 slots).
+pub const MAIL_ATTACHMENTS_MAX: usize = 16;
+/// The most `MSG_QUERY_NEXT_MAIL_TIME` sender records the client keeps (`0x56db26`).
+pub const MAIL_RECENT_SENDERS: usize = 3;
+
+/// One enchant slot of an attachment: id, duration and charges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MailEnchant {
+    pub id: u32,
+    pub duration: u32,
     pub charges: u32,
-    pub durability_max: u32,
+}
+
+/// One attachment of a list row (`0x571e29`-`0x571f29`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MailAttachment {
+    /// The attachment slot the server names, `0..16`.
+    pub slot: u8,
+    /// The item's guid low part, the key `CMSG_MAIL_TAKE_ITEM` names it by.
+    pub item_guid_low: u32,
+    pub entry: u32,
+    /// The item's seven enchant slots, permanent first.
+    pub enchants: [MailEnchant; 7],
+    pub random_property_id: i32,
+    pub suffix_factor: u32,
+    pub count: u32,
+    pub spell_charges: i32,
+    pub max_durability: u32,
     pub durability: u32,
 }
 
-/// One `SMSG_MAIL_LIST_RESULT` row (vmangos `HandleGetMailList`, `Handlers/MailHandler.cpp`).
-/// `sender_guid` and `sender_id` are one wire field, whose form `message_type` picks.
+/// One `SMSG_MAIL_LIST_RESULT` row (`0x571c50`). `sender_guid` and `sender_entry` are one wire
+/// field whose form `message_type` picks; the other reads 0.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MailListEntry {
     pub message_id: u32,
     pub message_type: u8,
-    pub sender_guid: Option<u64>,
-    pub sender_id: Option<u32>,
-    pub subject: String,
-    /// `0` = no letter body to fetch; nonzero = a [`super::item_text_query`] key.
-    pub item_text_id: u32,
-    pub stationery: u32,
-    pub item: Option<MailAttachment>,
-    pub money: u32,
+    pub sender_guid: u64,
+    pub sender_entry: u32,
     pub cod: u32,
-    /// vmangos `Mail.h` flags: READ 0x1, RETURNED 0x2, COPIED 0x4, COD_PAYMENT 0x8, HAS_BODY 0x10.
-    pub checked: u32,
+    /// The `Package.dbc` row, 0 for none.
+    pub package: u32,
+    pub stationery: u32,
+    pub money: u32,
+    /// [`mail_flags`].
+    pub flags: u32,
     pub expire_days: f32,
     pub mail_template_id: u32,
+    pub subject: String,
+    /// The letter, inline; empty when there is none.
+    pub body: String,
+    pub attachments: Vec<MailAttachment>,
 }
 
-/// `CMSG_GET_MAIL_LIST` (vmangos `Server/Packets/Mail.cpp`): the mailbox guid.
+/// The whole `SMSG_MAIL_LIST_RESULT`: the shown rows and how many the server holds in all.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct MailList {
+    pub total: u32,
+    pub mails: Vec<MailListEntry>,
+}
+
+/// One `MSG_QUERY_NEXT_MAIL_TIME` sender record (`0x56db2c`-`0x56db5b`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MailSender {
+    /// A player sender's guid, else 0.
+    pub guid: u64,
+    /// A non-player sender's entry, else 0.
+    pub entry: u32,
+    pub message_type: u32,
+    pub stationery: u32,
+    /// Seconds until the mail is delivered; `<= 0` is delivered.
+    pub delay: f32,
+}
+
+/// `SMSG_SEND_MAIL_RESULT`'s fields (`0x5717b0`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MailResult {
+    pub mail_id: u32,
+    pub action: u32,
+    pub error: u32,
+    /// The inventory error, on [`mail_error::EQUIP_ERROR`].
+    pub equip_error: Option<u32>,
+    /// `(item guid low, count)`, on an [`mail_action::ITEM_TAKEN`] that is `OK` or
+    /// `ITEM_HAS_EXPIRED`.
+    pub item: Option<(u32, u32)>,
+}
+
+/// `CMSG_GET_MAIL_LIST` (`0x56e440`): the mailbox guid.
 pub fn get_mail_list(mailbox: u64) -> Vec<u8> {
     mailbox.to_le_bytes().to_vec()
 }
 
-/// `CMSG_SEND_MAIL` (vmangos `Server/Packets/Mail.cpp`): mailbox guid, receiver, subject and body
-/// cstrings, `u32` stationery and package, item guid, `u32` money and COD, then 9 zero bytes
-/// vmangos skips. It ignores stationery and package, storing `MAIL_STATIONERY_DEFAULT` (41).
+/// `CMSG_SEND_MAIL` (`0x570910`): mailbox guid, receiver, subject and body cstrings, `u32`
+/// stationery and package, `u8` attachment count, `(u8 slot, u64 item guid)` per attachment,
+/// `u32` money and COD, then a zero `u64` and a zero `u8`.
+#[allow(clippy::too_many_arguments)]
 pub fn send_mail(
     mailbox: u64,
     receiver: &str,
@@ -100,23 +183,25 @@ pub fn send_mail(
     body: &str,
     stationery: u32,
     package: u32,
-    item_guid: u64,
+    items: &[(u8, u64)],
     money: u32,
     cod: u32,
 ) -> Vec<u8> {
     let mut out = Vec::with_capacity(
-        8 + receiver.len() + 1 + subject.len() + 1 + body.len() + 1 + 4 + 4 + 8 + 4 + 4 + 9,
+        8 + receiver.len() + subject.len() + body.len() + 3 + 9 + items.len() * 9 + 8 + 9,
     );
     out.extend_from_slice(&mailbox.to_le_bytes());
-    out.extend_from_slice(receiver.as_bytes());
-    out.push(0);
-    out.extend_from_slice(subject.as_bytes());
-    out.push(0);
-    out.extend_from_slice(body.as_bytes());
-    out.push(0);
+    for s in [receiver, subject, body] {
+        out.extend_from_slice(s.as_bytes());
+        out.push(0);
+    }
     out.extend_from_slice(&stationery.to_le_bytes());
     out.extend_from_slice(&package.to_le_bytes());
-    out.extend_from_slice(&item_guid.to_le_bytes());
+    out.push(items.len() as u8);
+    for &(slot, guid) in items {
+        out.push(slot);
+        out.extend_from_slice(&guid.to_le_bytes());
+    }
     out.extend_from_slice(&money.to_le_bytes());
     out.extend_from_slice(&cod.to_le_bytes());
     out.extend_from_slice(&0u64.to_le_bytes());
@@ -125,153 +210,195 @@ pub fn send_mail(
 }
 
 fn mailbox_and_mail_id(mailbox: u64, mail_id: u32) -> Vec<u8> {
-    let mut body = Vec::with_capacity(12);
+    let mut body = Vec::with_capacity(20);
     body.extend_from_slice(&mailbox.to_le_bytes());
     body.extend_from_slice(&mail_id.to_le_bytes());
     body
 }
 
-/// `CMSG_MAIL_TAKE_MONEY`: answered by a [`mail_action::MONEY_TAKEN`] result.
+/// `CMSG_MAIL_TAKE_MONEY` (`0x56edf0`): answered by a [`mail_action::MONEY_TAKEN`] result.
 pub fn mail_take_money(mailbox: u64, mail_id: u32) -> Vec<u8> {
     mailbox_and_mail_id(mailbox, mail_id)
 }
 
-/// `CMSG_MAIL_TAKE_ITEM`: answered by an [`mail_action::ITEM_TAKEN`] result naming the item.
-pub fn mail_take_item(mailbox: u64, mail_id: u32) -> Vec<u8> {
-    mailbox_and_mail_id(mailbox, mail_id)
+/// `CMSG_MAIL_TAKE_ITEM` (`0x5711c0`): the attachment by its item guid's low part; answered by an
+/// [`mail_action::ITEM_TAKEN`] result naming it.
+pub fn mail_take_item(mailbox: u64, mail_id: u32, item_guid_low: u32) -> Vec<u8> {
+    let mut body = mailbox_and_mail_id(mailbox, mail_id);
+    body.extend_from_slice(&item_guid_low.to_le_bytes());
+    body
 }
 
-/// `CMSG_MAIL_MARK_AS_READ`: there is no reply; the caller sets the `checked` READ bit itself.
+/// `CMSG_MAIL_MARK_AS_READ` (`0x56fe30`): there is no reply.
 pub fn mail_mark_as_read(mailbox: u64, mail_id: u32) -> Vec<u8> {
     mailbox_and_mail_id(mailbox, mail_id)
 }
 
-/// `CMSG_MAIL_RETURN_TO_SENDER`: answered by a [`mail_action::RETURNED`] result.
-pub fn mail_return_to_sender(mailbox: u64, mail_id: u32) -> Vec<u8> {
-    mailbox_and_mail_id(mailbox, mail_id)
-}
-
-/// `CMSG_MAIL_DELETE`: answered by a [`mail_action::DELETED`] result.
-pub fn mail_delete(mailbox: u64, mail_id: u32) -> Vec<u8> {
-    mailbox_and_mail_id(mailbox, mail_id)
-}
-
-/// `CMSG_MAIL_CREATE_TEXT_ITEM`: mailbox, mail id and a `u32` template id, 0 for player mail.
-/// Answered by a [`mail_action::MADE_PERMANENT`] result; on OK the mail's COPIED bit is set.
-pub fn mail_create_text_item(mailbox: u64, mail_id: u32) -> Vec<u8> {
+/// `CMSG_MAIL_RETURN_TO_SENDER` (`0x56f000`): the sender's guid trails; answered by a
+/// [`mail_action::RETURNED`] result.
+pub fn mail_return_to_sender(mailbox: u64, mail_id: u32, sender: u64) -> Vec<u8> {
     let mut body = mailbox_and_mail_id(mailbox, mail_id);
-    body.extend_from_slice(&0u32.to_le_bytes()); // mailTemplateId
+    body.extend_from_slice(&sender.to_le_bytes());
     body
 }
 
-/// `CMSG_ITEM_TEXT_QUERY` (vmangos `Server/Packets/Mail.cpp`): `u32 textId, u32 mailId, u32 unk`.
-/// The 1.12 client writes all three; vmangos only uses `textId`.
-pub fn item_text_query(text_id: u32, mail_id: u32) -> Vec<u8> {
-    let mut body = Vec::with_capacity(12);
-    body.extend_from_slice(&text_id.to_le_bytes());
-    body.extend_from_slice(&mail_id.to_le_bytes());
-    body.extend_from_slice(&0u32.to_le_bytes()); // the unk vmangos never reads back
+/// `CMSG_MAIL_DELETE` (`0x56f140`): a [`mail_delete_reason`] trails; answered by a
+/// [`mail_action::DELETED`] result.
+pub fn mail_delete(mailbox: u64, mail_id: u32, reason: u32) -> Vec<u8> {
+    let mut body = mailbox_and_mail_id(mailbox, mail_id);
+    body.extend_from_slice(&reason.to_le_bytes());
     body
 }
 
-/// `SMSG_MAIL_LIST_RESULT` (vmangos `HandleGetMailList`): `u8 count`, then [`MailListEntry`] rows.
-pub(super) fn read_mail_list_result(r: &mut &[u8]) -> io::Result<Vec<MailListEntry>> {
+/// `CMSG_MAIL_CREATE_TEXT_ITEM` (`0x56eef0`): answered by a [`mail_action::MADE_PERMANENT`]
+/// result, on which the client sets the mail's COPIED bit.
+pub fn mail_create_text_item(mailbox: u64, mail_id: u32) -> Vec<u8> {
+    mailbox_and_mail_id(mailbox, mail_id)
+}
+
+/// `CMSG_ITEM_TEXT_QUERY`: the item guid alone, as the item-text cache sends no requester
+/// (`0x669110`).
+pub fn item_text_query(item_guid: u64) -> Vec<u8> {
+    item_guid.to_le_bytes().to_vec()
+}
+
+fn read_attachment(r: &mut &[u8]) -> io::Result<MailAttachment> {
+    let slot = read_u8(r)?;
+    let item_guid_low = read_u32_le(r)?;
+    let entry = read_u32_le(r)?;
+    let mut enchants = [MailEnchant::default(); 7];
+    for e in &mut enchants {
+        *e = MailEnchant {
+            id: read_u32_le(r)?,
+            duration: read_u32_le(r)?,
+            charges: read_u32_le(r)?,
+        };
+    }
+    let attachment = MailAttachment {
+        slot,
+        item_guid_low,
+        entry,
+        enchants,
+        random_property_id: read_i32_le(r)?,
+        suffix_factor: read_u32_le(r)?,
+        count: read_u32_le(r)?,
+        spell_charges: read_i32_le(r)?,
+        max_durability: read_u32_le(r)?,
+        durability: read_u32_le(r)?,
+    };
+    let _unk = read_u8(r)?; // stored at `+0x78`, never read
+    Ok(attachment)
+}
+
+/// `SMSG_MAIL_LIST_RESULT` (`0x571c50`): `u32` total, `u8` shown, then the rows. Each row leads
+/// with a `u16` size the client skips; a type past 5 has no sender field.
+pub(super) fn read_mail_list_result(r: &mut &[u8]) -> io::Result<MailList> {
+    let total = read_u32_le(r)?;
     let count = read_u8(r)?;
-    // vmangos stops the list at 254 (`MailHandler.cpp:765`, `mailsCount >= 254`).
-    let mut mails = Vec::with_capacity(capacity_hint(count, 254));
+    // The client grows its inbox to whatever count comes; a u8 bounds it.
+    let mut mails = Vec::with_capacity(capacity_hint(count, usize::from(u8::MAX)));
     for _ in 0..count {
+        let _size = read_u16_le(r)?;
         let message_id = read_u32_le(r)?;
         let message_type = read_u8(r)?;
-        let (sender_guid, sender_id) = match message_type {
-            mail_message_type::NORMAL => (Some(read_u64_le(r)?), None),
-            mail_message_type::AUCTION
-            | mail_message_type::CREATURE
-            | mail_message_type::GAMEOBJECT => (None, Some(read_u32_le(r)?)),
-            // MAIL_ITEM (5) and anything else unrecognized: no sender bytes at all.
-            _ => (None, None),
+        let (sender_guid, sender_entry) = match message_type {
+            mail_message_type::NORMAL => (read_u64_le(r)?, 0),
+            1..=5 => (0, read_u32_le(r)?),
+            _ => (0, 0),
         };
-        let subject = read_cstring(r)?;
-        let item_text_id = read_u32_le(r)?;
-        let _package = read_u32_le(r)?; // always 0 (vmangos hardcodes it)
-        let stationery = read_u32_le(r)?;
-        let entry = read_u32_le(r)?;
-        let perm_enchant = read_u32_le(r)?;
-        let random_prop_id = read_u32_le(r)?;
-        let suffix_factor = read_u32_le(r)?;
-        let count_stack = read_u8(r)?;
-        let charges = read_u32_le(r)?;
-        let durability_max = read_u32_le(r)?;
-        let durability = read_u32_le(r)?;
-        let item = (entry != 0).then_some(MailAttachment {
-            entry,
-            perm_enchant,
-            random_prop_id,
-            suffix_factor,
-            count: count_stack,
-            charges,
-            durability_max,
-            durability,
-        });
-        let money = read_u32_le(r)?;
         let cod = read_u32_le(r)?;
-        let checked = read_u32_le(r)?;
+        let package = read_u32_le(r)?;
+        let stationery = read_u32_le(r)?;
+        let money = read_u32_le(r)?;
+        let flags = read_u32_le(r)?;
         let expire_days = read_f32_le(r)?;
         let mail_template_id = read_u32_le(r)?;
+        let subject = read_cstring(r)?;
+        let body = read_cstring(r)?;
+        let n = read_u8(r)?;
+        let mut attachments = Vec::with_capacity(capacity_hint(n, MAIL_ATTACHMENTS_MAX));
+        for _ in 0..n {
+            attachments.push(read_attachment(r)?);
+        }
         mails.push(MailListEntry {
             message_id,
             message_type,
             sender_guid,
-            sender_id,
-            subject,
-            item_text_id,
-            stationery,
-            item,
-            money,
+            sender_entry,
             cod,
-            checked,
+            package,
+            stationery,
+            money,
+            flags,
             expire_days,
             mail_template_id,
+            subject,
+            body,
+            attachments,
         });
     }
-    Ok(mails)
+    Ok(MailList { total, mails })
 }
 
-/// `SMSG_SEND_MAIL_RESULT` (12340 `0x5717b0`): `u32 mailId, action, error`, then `u32 equipError`
-/// on `EQUIP_ERROR`, or `u32 itemEntry, itemCount` on an `ITEM_TAKEN` that is `OK` or
+/// `SMSG_SEND_MAIL_RESULT` (`0x5717b0`): `u32 mailId, action, error`, then `u32 equipError` on
+/// `EQUIP_ERROR`, or `u32 itemGuidLow, itemCount` on an `ITEM_TAKEN` that is `OK` or
 /// `ITEM_HAS_EXPIRED`.
-#[allow(clippy::type_complexity)]
-pub(super) fn read_send_mail_result(
-    r: &mut &[u8],
-) -> io::Result<(u32, u32, u32, Option<u32>, Option<(u32, u32)>)> {
+pub(super) fn read_send_mail_result(r: &mut &[u8]) -> io::Result<MailResult> {
     let mail_id = read_u32_le(r)?;
     let action = read_u32_le(r)?;
     let error = read_u32_le(r)?;
     let mut equip_error = None;
     let mut item = None;
-    if error == mail_error::EQUIP_ERROR && !r.is_empty() {
+    if error == mail_error::EQUIP_ERROR {
         equip_error = Some(read_u32_le(r)?);
     } else if action == mail_action::ITEM_TAKEN
         && matches!(error, mail_error::OK | mail_error::ITEM_HAS_EXPIRED)
-        && !r.is_empty()
     {
         item = Some((read_u32_le(r)?, read_u32_le(r)?));
     }
-    Ok((mail_id, action, error, equip_error, item))
+    Ok(MailResult {
+        mail_id,
+        action,
+        error,
+        equip_error,
+        item,
+    })
 }
 
-/// `SMSG_ITEM_TEXT_QUERY_RESPONSE` (vmangos `Server/Packets/Mail.cpp`): `u32 textId, cstr text`.
-pub(super) fn read_item_text_query_response(r: &mut &[u8]) -> io::Result<(u32, String)> {
-    Ok((read_u32_le(r)?, read_cstring(r)?))
+/// `SMSG_ITEM_TEXT_QUERY_RESPONSE` (`0x635a40`): `u8` result, then on 0 the item guid and its
+/// text; any other result carries nothing.
+pub(super) fn read_item_text_query_response(r: &mut &[u8]) -> io::Result<Option<(u64, String)>> {
+    if read_u8(r)? != 0 {
+        return Ok(None);
+    }
+    Ok(Some((read_u64_le(r)?, read_cstring(r)?)))
 }
 
-/// `SMSG_RECEIVED_MAIL`: an `f32` delay in seconds until the mail shows as waiting; the 1.12
-/// client reads a float (`0x4ad620`). vmangos writes `uint32(0)` (`SendNewMail`), bitwise `0.0`.
+/// `SMSG_RECEIVED_MAIL` (`0x571a10`): an `f32` delay in seconds until the mail is delivered.
 pub(super) fn read_received_mail(r: &mut &[u8]) -> io::Result<f32> {
     read_f32_le(r)
 }
 
-/// The `MSG_QUERY_NEXT_MAIL_TIME` reply (the request is an empty body on the same opcode): an
-/// `f32`, `0.0` for unread mail waiting and `-86400.0` for none.
-pub(super) fn read_query_next_mail_time(r: &mut &[u8]) -> io::Result<f32> {
-    read_f32_le(r)
+/// The `MSG_QUERY_NEXT_MAIL_TIME` reply (`0x56daf0`; the request is an empty body on the same
+/// opcode): `f32` next-mail time (`0.0` unread mail waiting, `-86400.0` none), `u32` count, then
+/// sender records, of which the client reads the first three.
+pub(super) fn read_query_next_mail_time(r: &mut &[u8]) -> io::Result<(f32, Vec<MailSender>)> {
+    let seconds = read_f32_le(r)?;
+    let count = read_u32_le(r)?;
+    let mut senders = Vec::with_capacity(MAIL_RECENT_SENDERS);
+    for _ in 0..(count as usize).min(MAIL_RECENT_SENDERS) {
+        senders.push(MailSender {
+            guid: read_u64_le(r)?,
+            entry: read_u32_le(r)?,
+            message_type: read_u32_le(r)?,
+            stationery: read_u32_le(r)?,
+            delay: read_f32_le(r)?,
+        });
+    }
+    Ok((seconds, senders))
+}
+
+/// `SMSG_SHOW_MAILBOX` (`0x56dbc0`): the mailbox guid the server opens the window on.
+pub(super) fn read_show_mailbox(r: &mut &[u8]) -> io::Result<u64> {
+    read_u64_le(r)
 }

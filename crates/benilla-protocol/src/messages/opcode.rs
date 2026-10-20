@@ -21,7 +21,7 @@ pub const SMSG_QUEST_QUERY_RESPONSE: u16 = 0x005D; // 93
 pub const SMSG_QUEST_POI_QUERY_RESPONSE: u16 = 0x01E4; // 484
 
 // Page text: the ask-once `PageText.wdb` cache behind readable items and book GameObjects; an id
-// names one page, chained by `nextPageId`. Mail letters use `CMSG_ITEM_TEXT_QUERY` instead.
+// names one page, chained by `nextPageId`. Copied mail letters use `CMSG_ITEM_TEXT_QUERY` instead.
 pub const CMSG_PAGE_TEXT_QUERY: u16 = 0x005A; // 90
 pub const SMSG_PAGE_TEXT_QUERY_RESPONSE: u16 = 0x005B; // 91
 
@@ -815,8 +815,8 @@ pub const CMSG_MEETINGSTONE_LEAVE: u16 = 0x0293; // 659
 /// The meeting-stone queue state: `u32 areaId`, `u8 status`; always stored, a message per
 /// status, then `MEETINGSTONE_CHANGED`.
 pub const SMSG_MEETINGSTONE_SETQUEUE: u16 = 0x0295; // 661
-/// Display only: empty; `ERR_MEETING_STONE_SUCCESS`.
-pub const SMSG_MEETINGSTONE_SUCCESS: u16 = 0x0297; // 663
+/// `u64` mailbox guid: the server opens the mail window on it (`0x56dbc0`).
+pub const SMSG_SHOW_MAILBOX: u16 = 0x0297; // 663
 /// Display only: empty; `ERR_MEETING_STONE_IN_PROGRESS`.
 pub const SMSG_MEETINGSTONE_IN_PROGRESS: u16 = 0x0298; // 664
 /// Display only: `u64 guid`; `ERR_MEETING_STONE_MEMBER_ADDED_S` once the name resolves.
@@ -1055,12 +1055,13 @@ pub const SMSG_START_MIRROR_TIMER: u16 = 0x01D9; // 473
 pub const SMSG_PAUSE_MIRROR_TIMER: u16 = 0x01DA; // 474
 pub const SMSG_STOP_MIRROR_TIMER: u16 = 0x01DB; // 475
 
-// Mail opens client-side; every CMSG leads with the mailbox guid, checked at 5 yd (`CheckMailBox`).
+// Mail (`CGMailInfo`): a mailbox opens client-side or by `SMSG_SHOW_MAILBOX`; every CMSG leads
+// with the mailbox guid.
 pub const CMSG_SEND_MAIL: u16 = 0x0238; // 568
 pub const SMSG_SEND_MAIL_RESULT: u16 = 0x0239; // 569
 pub const CMSG_GET_MAIL_LIST: u16 = 0x023A; // 570
 pub const SMSG_MAIL_LIST_RESULT: u16 = 0x023B; // 571
-/// A letter's text, fetched ask-once by `itemTextId`; the mail list never carries it.
+/// A copied letter's text, ask-once by the letter item's guid; the mail list carries bodies inline.
 pub const CMSG_ITEM_TEXT_QUERY: u16 = 0x0243; // 579
 pub const SMSG_ITEM_TEXT_QUERY_RESPONSE: u16 = 0x0244; // 580
 pub const CMSG_MAIL_TAKE_MONEY: u16 = 0x0245; // 581
@@ -1070,9 +1071,10 @@ pub const CMSG_MAIL_MARK_AS_READ: u16 = 0x0247; // 583
 pub const CMSG_MAIL_RETURN_TO_SENDER: u16 = 0x0248; // 584
 pub const CMSG_MAIL_DELETE: u16 = 0x0249; // 585
 pub const CMSG_MAIL_CREATE_TEXT_ITEM: u16 = 0x024A; // 586
-/// Both ways: an empty request; the reply is one `f32`, `0.0` for unread mail, `-86400.0` none.
+/// Both ways: an empty request; the reply is an `f32` (`0.0` unread mail, `-86400.0` none), a `u32`
+/// count and that many sender records.
 pub const MSG_QUERY_NEXT_MAIL_TIME: u16 = 0x0284; // 644
-/// A mail arrived (text-only at once, else when its delivery timer ends): one `u32`, always 0.
+/// A mail arrived: an `f32` delay until it is delivered.
 pub const SMSG_RECEIVED_MAIL: u16 = 0x0285; // 645
 
 // The auction house (`CGAuctionHouse`): every CMSG leads with the auctioneer guid.

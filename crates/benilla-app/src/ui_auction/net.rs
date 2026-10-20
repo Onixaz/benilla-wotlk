@@ -12,6 +12,7 @@ use bevy::prelude::*;
 
 use super::{AuctionEntry, AuctionMessage, AuctionOpen, Patch};
 use crate::net::NetHandlerApp;
+use crate::ui_mail::MailArrival;
 
 /// One handler per `SMSG_AUCTION_*` kind, plus the session-end listener.
 pub(super) fn register(app: &mut App) {
@@ -49,7 +50,11 @@ fn on_hello(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>) {
     }
 }
 
-fn on_command_result(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>) {
+fn on_command_result(
+    In(ev): In<SessionEvent>,
+    mut auction: ResMut<AuctionOpen>,
+    mut mail: MailArrival,
+) {
     if let SessionEvent::AuctionCommandResult {
         auction_id,
         action,
@@ -58,6 +63,10 @@ fn on_command_result(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>)
     } = ev
     {
         auction_command_result(auction_id, action, error, &tail, &mut auction);
+        // A cancel's item comes back by mail at once (`0x59ffb0`'s removed arm).
+        if error == auction_error::OK && action == auction_action::REMOVED {
+            mail.arrive(0.0, "SMSG_AUCTION_COMMAND_RESULT cancel");
+        }
     }
 }
 
@@ -93,15 +102,33 @@ fn on_pending_sales(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>, 
     }
 }
 
-fn on_bidder_notification(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>) {
+fn on_bidder_notification(
+    In(ev): In<SessionEvent>,
+    mut auction: ResMut<AuctionOpen>,
+    mut mail: MailArrival,
+) {
     if let SessionEvent::AuctionBidderNotification(n) = ev {
         auction_bidder_notification(&n, &mut auction);
+        // Won or outbid, the item or the refund is mailed at once (`0x5a0480`).
+        mail.arrive(0.0, "SMSG_AUCTION_BIDDER_NOTIFICATION");
     }
 }
 
-fn on_owner_notification(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>) {
+fn on_owner_notification(
+    In(ev): In<SessionEvent>,
+    mut auction: ResMut<AuctionOpen>,
+    mut mail: MailArrival,
+) {
     if let SessionEvent::AuctionOwnerNotification(n) = ev {
         auction_owner_notification(&n, &mut auction);
+        // A close mails the sale's money after its delay, or an expiry's item at once; a bid
+        // mails nothing (`0x5a0790`).
+        if n.bidder_guid == 0 {
+            mail.arrive(
+                if n.bid != 0 { n.mail_delay } else { 0.0 },
+                "SMSG_AUCTION_OWNER_NOTIFICATION",
+            );
+        }
     }
 }
 
@@ -461,6 +488,84 @@ mod tests {
             }],
         );
         assert_eq!(app.world().resource::<AuctionOpen>().auctioneer, None);
+    }
+
+    /// The notices that mail something call `ReceivedMail` themselves (#449): a closed sale with
+    /// its delay, a won or outbid notice and a cancel at once; a bid on our auction mails nothing.
+    #[test]
+    fn auction_notices_that_mail_light_the_mail_icon() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<AuctionOpen>()
+            .init_resource::<crate::ui_mail::MailOpen>()
+            .init_resource::<crate::ui_mail::MailPending>()
+            .insert_resource(crate::net::NetCommands(tx));
+        register(&mut app);
+        let has_new_mail = |app: &App| {
+            app.world()
+                .resource::<crate::ui_mail::MailPending>()
+                .has_new_mail()
+        };
+        let owner = |bidder_guid: u64, bid: u32, mail_delay: f32| {
+            SessionEvent::AuctionOwnerNotification(AuctionOwnerNotification {
+                auction_id: 7,
+                bid,
+                out_bid: 0,
+                bidder_guid,
+                item_entry: 2589,
+                random_property_id: 0,
+                mail_delay,
+            })
+        };
+
+        crate::net::handlers::dispatch(app.world_mut(), vec![owner(0x99, 500, 0.0)]);
+        assert!(!has_new_mail(&app), "a bid mails nothing");
+        assert!(rx.try_recv().is_err());
+
+        crate::net::handlers::dispatch(app.world_mut(), vec![owner(0, 500, 0.0)]);
+        assert!(has_new_mail(&app), "a sale with no delay lights at once");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(crate::net::ClientCommand::QueryNextMailTime)
+        ));
+
+        // A sale whose money waits: the icon lights when the delay runs out, not before.
+        *app.world_mut()
+            .resource_mut::<crate::ui_mail::MailPending>() = Default::default();
+        crate::net::handlers::dispatch(app.world_mut(), vec![owner(0, 500, 3600.0)]);
+        assert!(!has_new_mail(&app));
+
+        *app.world_mut()
+            .resource_mut::<crate::ui_mail::MailPending>() = Default::default();
+        crate::net::handlers::dispatch(
+            app.world_mut(),
+            vec![SessionEvent::AuctionBidderNotification(
+                AuctionBidderNotification {
+                    house_id: 1,
+                    auction_id: 8,
+                    bidder_guid: 0x99,
+                    bid_or_zero: 0,
+                    out_bid: 0,
+                    item_entry: 2589,
+                    random_property_id: 0,
+                },
+            )],
+        );
+        assert!(has_new_mail(&app), "a won auction lights at once");
+
+        *app.world_mut()
+            .resource_mut::<crate::ui_mail::MailPending>() = Default::default();
+        crate::net::handlers::dispatch(
+            app.world_mut(),
+            vec![SessionEvent::AuctionCommandResult {
+                auction_id: 9,
+                action: auction_action::REMOVED,
+                error: auction_error::OK,
+                tail: AuctionCommandTail::Empty,
+            }],
+        );
+        assert!(has_new_mail(&app), "a cancel's item comes back at once");
     }
 
     #[test]
