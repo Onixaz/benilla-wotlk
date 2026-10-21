@@ -238,16 +238,19 @@ impl UiScript {
         // A plain reborrow, so the arena reads and the sweep-token writes borrow disjoint fields.
         let model: &mut Model = &mut cell;
         let mut out = Vec::new();
+        // The message kinds register in the arena's ticked list at creation, so the walk visits
+        // those few frames, not every resolved one.
         let frames: Vec<(FrameHandle, Rect)> = model
-            .resolved
+            .arena
+            .ticked_kinds()
             .iter()
-            .filter(|(&fh, _)| {
+            .filter(|&&fh| {
                 model
                     .arena
                     .frame(fh)
                     .is_some_and(|f| f.kind_state.message_lines().is_some() && f.effective_visible)
             })
-            .map(|(&fh, &fr)| (fh, fr))
+            .filter_map(|&fh| model.resolved.get(&fh).map(|&fr| (fh, fr)))
             .collect();
         for (fh, fr) in frames {
             let wrap_width = fr.right - fr.left;
