@@ -574,11 +574,10 @@ fn an_emptied_pooled_line_drops_its_stale_box_and_the_plate_still_contains_the_c
     assert!(s.take_errors().is_empty());
 }
 
-/// An omitted `anchorType` is mode 0, ANCHOR_LEFT: `0x53120d` zeroes the local, the `lua_isstring`
-/// gate at `0x531214` skips the compare chain, and nothing in `[0x531221, 0x53133a)` raises. The
-/// core's pre-store of mode 7 (`0x530012`) survives only a NULL owner (`0x530031`). `0x52fe90`
-/// returns for mode 8 (`0x52fead`) before its clear (`0x52fec2 call 0x767ed0`), and `SetOwner`
-/// always passes the arg that gates mode 7's skip as 1, so only ANCHOR_PRESERVE keeps the points.
+/// An omitted `anchorType` is mode 0, ANCHOR_LEFT: `0x61ec64` zeroes the local and the
+/// `lua_isstring` gate (`0x61ec70`) skips the compare chain. `ResetPosition` (`0x61b040`) returns
+/// for mode 10 (`0x61b05c`) before its clear (`0x61b070`), and the core always passes the arg
+/// that gates mode 9's skip as 1 (`0x61ea9c`), so only ANCHOR_PRESERVE keeps the points.
 #[test]
 fn set_owner_defaults_to_anchor_left_and_only_preserve_keeps_the_placement() {
     let mut s = script();
@@ -597,23 +596,23 @@ fn set_owner_defaults_to_anchor_left_and_only_preserve_keeps_the_placement() {
     s.resolve();
     assert_eq!(s.eval::<f32>("return Plate:GetLeft()").unwrap(), 100.0);
 
-    // ANCHOR_PRESERVE (mode 8) is the one mode that leaves the plate alone.
+    // ANCHOR_PRESERVE (mode 10) is the one mode that leaves the plate alone.
     s.run(r#"Plate:SetOwner(Owner, "ANCHOR_PRESERVE")"#)
         .unwrap();
     s.resolve();
     assert_eq!(
         s.eval::<f32>("return Plate:GetLeft()").unwrap(),
         100.0,
-        "mode 8 returns before the ClearAllPoints"
+        "mode 10 returns before the ClearAllPoints"
     );
     assert_eq!(s.eval::<i64>("return Plate:GetNumPoints()").unwrap(), 1);
 
-    // ANCHOR_NONE (mode 7) clears, which `GameTooltip.lua:73`'s default anchor relies on.
+    // ANCHOR_NONE (mode 9) clears, which `GameTooltip.lua:73`'s default anchor relies on.
     s.run(r#"Plate:SetOwner(Owner, "ANCHOR_NONE")"#).unwrap();
     assert_eq!(
         s.eval::<i64>("return Plate:GetNumPoints()").unwrap(),
         0,
-        "mode 7 reaches the clear: arg1 is always 1 from SetOwner's core"
+        "mode 9 reaches the clear: arg1 is always 1 from SetOwner's core"
     );
 
     // No anchor string: mode 0 places the plate's BOTTOMRIGHT at the owner's TOPLEFT.
@@ -641,7 +640,7 @@ fn set_owner_defaults_to_anchor_left_and_only_preserve_keeps_the_placement() {
     );
 }
 
-/// The `SetOwner` core `0x52ffe0` first sets alpha 255 (`0x52fff4`), whatever dimmed the plate.
+/// The `SetOwner` core `0x61ea00` sets alpha 255 (`0x61ea12`), whatever dimmed the plate.
 #[test]
 fn set_owner_stamps_full_alpha_even_with_no_fade_running() {
     let s = script();
@@ -662,9 +661,9 @@ fn set_owner_stamps_full_alpha_even_with_no_fade_running() {
     .unwrap();
 }
 
-/// `Show` (`0x530a80`, the `vtbl+0x88` override) shows only with an owner (`+0x314`) and a line
-/// (`+0x31c`); otherwise it calls `0x530a60` (`vtbl+0x84`), the `SetOwner` core with a NULL owner,
-/// which hides and un-owns. `QuestieTracker.lua`'s OnEnter can call `Show` with no line.
+/// `Show` (`ShowThis`, `0x61cff0`) shows only with an owner (`+0x29c`) and a line (`+0x2a4`);
+/// otherwise it hides (`0x61d028`), and the tooltip's hide (`0x61eb20`) is the `SetOwner` core
+/// with a NULL owner, which un-owns. `QuestieTracker.lua`'s OnEnter can call `Show` with no line.
 #[test]
 fn show_with_no_lines_self_hides_and_un_owns() {
     let mut s = script();
@@ -690,8 +689,8 @@ fn show_with_no_lines_self_hides_and_un_owns() {
         Tip:SetOwner(Owner, "ANCHOR_RIGHT")
         assert(Tip:NumLines() == 0, "SetOwner cleared the last hover's lines")
         Tip:Show()
-        assert(not Tip:IsShown(), "zero lines takes the self-hide leg of 0x530a80")
-        assert(not Tip:IsOwned(Owner), "and 0x530a60 un-owns: it is the SetOwner core with NULL")
+        assert(not Tip:IsShown(), "zero lines takes the self-hide leg of 0x61cff0")
+        assert(not Tip:IsOwned(Owner), "and 0x61eb20 un-owns: it is the SetOwner core with NULL")
         "#,
     )
     .unwrap();
@@ -707,8 +706,8 @@ fn show_with_no_lines_self_hides_and_un_owns() {
     .unwrap();
 }
 
-/// `lua_isstring 0x6f3510` passes only a string or a number; any other tag jumps the compare chain
-/// (`0x53121b je 0x53133a`) to mode 0 and raises nothing. `QuestieNotes.lua` passes a frame here
+/// `lua_isstring` (`0x61ec66`) passes only a string or a number; any other tag jumps the compare
+/// chain (`0x61ec70 je 0x61edbc`) to mode 0 and raises nothing. `QuestieNotes.lua` passes a frame here
 /// (`SetOwner(this, this)`).
 #[test]
 fn a_non_string_anchor_is_silently_mode_zero_and_never_raises() {
@@ -751,8 +750,9 @@ fn a_non_string_anchor_is_silently_mode_zero_and_never_raises() {
     );
 }
 
-/// `ANCHOR_CURSOR`, mode 6, clears at `SetOwner` like mode 7; the per-frame update `0x530b20` then
-/// pins the plate's BOTTOM to the screen's BOTTOMLEFT at the cursor, over its effective scale.
+/// `ANCHOR_CURSOR`, mode 8, clears at `SetOwner` like mode 9; the per-frame `OnLayerUpdate`
+/// (`0x61b2e0`) then pins the plate's BOTTOM to the screen's BOTTOMLEFT at the cursor, over its
+/// effective scale.
 #[test]
 fn anchor_cursor_follows_the_cursor_every_frame() {
     let mut s = script();
@@ -806,8 +806,8 @@ fn anchor_cursor_follows_the_cursor_every_frame() {
     );
 }
 
-/// `GetAnchorType` (`0x5313e0`, table `0x854198`) answers one string, `[+0x318]` through the name
-/// table `0x531530`; `_Nameplates.lua:479` compares it with what it passed to `SetOwner`.
+/// `GetAnchorType` (`0x61d650`) answers one string, `[+0x2a0]` through the jump table
+/// `0x61d79c`; `_Nameplates.lua:479` compares it with what it passed to `SetOwner`.
 #[test]
 fn tooltip_anchor_type_round_trips_every_reachable_mode() {
     let s = script();
@@ -834,15 +834,19 @@ fn tooltip_anchor_type_round_trips_every_reachable_mode() {
         "a plate nothing has owned is anchored to nothing"
     );
 
-    // All nine modes round-trip, ANCHOR_PRESERVE included: the reference stores it like any other.
+    // All twelve modes round-trip, ANCHOR_PRESERVE included: the reference stores it like any
+    // other.
     for mode in [
         "ANCHOR_RIGHT",
         "ANCHOR_LEFT",
         "ANCHOR_TOPRIGHT",
         "ANCHOR_TOPLEFT",
+        "ANCHOR_TOP",
         "ANCHOR_BOTTOMRIGHT",
         "ANCHOR_BOTTOMLEFT",
+        "ANCHOR_BOTTOM",
         "ANCHOR_CURSOR",
+        "ANCHOR_CURSOR_RIGHT",
         "ANCHOR_NONE",
         "ANCHOR_PRESERVE",
     ] {
@@ -865,7 +869,7 @@ fn tooltip_anchor_type_round_trips_every_reachable_mode() {
         "ANCHOR_LEFT"
     );
 
-    // An unrecognised anchor is mode 0, with no raise (`0x53120d`). Deviation: we also log a
+    // An unrecognised anchor is mode 0, with no raise (`0x61ec64`). Deviation: we also log a
     // warning so the unknown token shows up in diagnostics; no addon can see it.
     s.run(r#"AnchorTip:SetOwner(AnchorOwner, "ANCHOR_SIDEWAYS")"#)
         .unwrap();
@@ -897,4 +901,258 @@ fn get_owner_answers_the_owner_frame_or_nil() {
     "#,
     )
     .unwrap();
+}
+
+/// A Lua `SetOwner` runs the tooltip's hide first (`0x61eb76` → `0x61eb20`): its clear fires
+/// OnTooltipCleared with the old owner still set, then OnHide fires for a shown plate only. The
+/// core's own clear then fires OnTooltipCleared before the new owner is stored (`0x61ea06` before
+/// `0x61ea7e`).
+#[test]
+fn set_owner_hides_then_clears_before_the_owner_is_stored() {
+    let s = script();
+    s.run(
+        r#"
+        log = {}
+        local a = CreateFrame("Button", "SeqA")
+        local b = CreateFrame("Button", "SeqB")
+        Tip = CreateFrame("GameTooltip", "SeqTip")
+        Tip:SetOwner(a, "ANCHOR_RIGHT")
+        Tip:AddLine("first")
+        Tip:Show()
+        Tip:SetScript("OnTooltipCleared", function(self)
+            local o = self:GetOwner()
+            log[#log + 1] = "cleared:" .. (o and o:GetName() or "nil") .. ":"
+                .. (self:IsShown() and "shown" or "hidden")
+        end)
+        Tip:SetScript("OnHide", function() log[#log + 1] = "hide" end)
+        Tip:SetOwner(b, "ANCHOR_LEFT")
+        first = table.concat(log, " ")
+        log = {}
+        Tip:SetOwner(a, "ANCHOR_LEFT")
+        second = table.concat(log, " ")
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        s.eval::<String>("return first").unwrap(),
+        "cleared:SeqA:shown hide cleared:nil:hidden"
+    );
+    assert_eq!(
+        s.eval::<String>("return second").unwrap(),
+        "cleared:SeqB:hidden cleared:nil:hidden",
+        "an already hidden plate fires no OnHide"
+    );
+    assert!(s.eval::<bool>("return Tip:IsOwned(SeqA)").unwrap());
+}
+
+/// The binding hides before it checks the owner, then raises the reference's errors in order,
+/// each naming the tooltip (`0x61ee6e`, `0x61ebc9`, `0x61ec1c`, `0x61ec4a`), `<unnamed>` without a
+/// name (`0x9ea280`).
+#[test]
+fn set_owner_raises_the_reference_errors_after_hiding() {
+    let s = script();
+    s.run(
+        r#"
+        Owner = CreateFrame("Frame", "ErrOwner")
+        Tip = CreateFrame("GameTooltip", "ErrTip")
+        Tex = Tip:CreateTexture()
+        function shown()
+            Tip:SetOwner(Owner, "ANCHOR_RIGHT") Tip:AddLine("x") Tip:Show()
+        end
+        "#,
+    )
+    .unwrap();
+    for (call, msg) in [
+        ("Tip:SetOwner()", "Usage: ErrTip:SetOwner(frame)"),
+        ("Tip:SetOwner('ErrOwner')", "Usage: ErrTip:SetOwner(frame)"),
+        (
+            "Tip:SetOwner({})",
+            "ErrTip:SetOwner(): Couldn't find 'this' in frame object",
+        ),
+        (
+            "Tip:SetOwner(Tex)",
+            "ErrTip:SetOwner(): Wrong object type, expected frame",
+        ),
+        (
+            "Tip:SetOwner(Tip)",
+            "ErrTip:SetOwner(): Can't set owner to self",
+        ),
+    ] {
+        s.run("shown()").unwrap();
+        let err = s.run(call).expect_err(call).to_string();
+        assert!(err.contains(msg), "{call}: {err}");
+        let (shown, owned, lines, mode): (bool, bool, i64, String) = s
+            .eval(
+                "return Tip:IsShown() and true or false, Tip:IsOwned(Owner) and true or false, \
+                 Tip:NumLines(), Tip:GetAnchorType()",
+            )
+            .unwrap();
+        assert_eq!(
+            (shown, owned, lines, mode.as_str()),
+            (false, false, 0, "ANCHOR_NONE"),
+            "{call} hid and un-owned before raising"
+        );
+    }
+    let err = s
+        .run("CreateFrame('GameTooltip'):SetOwner(nil)")
+        .expect_err("unnamed")
+        .to_string();
+    assert!(err.contains("Usage: <unnamed>:SetOwner(frame)"), "{err}");
+}
+
+/// The offsets pass `lua_isnumber` (`0x61edc7`, `0x61ee00`): a numeric string counts, and any
+/// other value is 0 with no error.
+#[test]
+fn set_owner_offsets_take_numeric_strings_and_default_to_zero() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        Owner = CreateFrame("Frame", "OffOwner")
+        Owner:SetPoint("BOTTOMLEFT", nil, "BOTTOMLEFT", 300, 300)
+        Owner:SetWidth(40) Owner:SetHeight(40)
+        Plate = CreateFrame("GameTooltip", "OffPlate")
+        Plate:SetWidth(50) Plate:SetHeight(20)
+        Plate:SetOwner(Owner, "ANCHOR_RIGHT", "5", true)
+        "#,
+    )
+    .unwrap();
+    s.resolve();
+    let (left, bottom): (f32, f32) = s.eval("return Plate:GetLeft(), Plate:GetBottom()").unwrap();
+    assert_eq!((left, bottom), (345.0, 340.0));
+}
+
+/// 12340's own modes: ANCHOR_TOP (6) sets the plate's BOTTOM on the owner's TOP, ANCHOR_BOTTOM (3)
+/// its TOP on the owner's BOTTOM (`0x61b1ed`, `0x61b101`), each at the offsets.
+#[test]
+fn anchor_top_and_bottom_centre_on_the_owner() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        Owner = CreateFrame("Frame", "TbOwner")
+        Owner:SetPoint("BOTTOMLEFT", nil, "BOTTOMLEFT", 300, 300)
+        Owner:SetWidth(40) Owner:SetHeight(40)
+        Plate = CreateFrame("GameTooltip", "TbPlate")
+        Plate:SetWidth(50) Plate:SetHeight(20)
+        Plate:SetOwner(Owner, "ANCHOR_TOP", 2, 3)
+        "#,
+    )
+    .unwrap();
+    s.resolve();
+    let (left, bottom): (f32, f32) = s.eval("return Plate:GetLeft(), Plate:GetBottom()").unwrap();
+    assert_eq!((left, bottom), (297.0, 343.0));
+    s.run(r#"Plate:SetOwner(Owner, "ANCHOR_BOTTOM")"#).unwrap();
+    s.resolve();
+    let (left, top): (f32, f32) = s.eval("return Plate:GetLeft(), Plate:GetTop()").unwrap();
+    assert_eq!((left, top), (295.0, 300.0));
+}
+
+/// `ANCHOR_CURSOR_RIGHT` (11) pins the plate's BOTTOMLEFT on the cursor plus the offsets every
+/// frame (`0x61b363`); `ANCHOR_CURSOR` (8) ignores the offsets (`0x61b2fd`).
+#[test]
+fn anchor_cursor_right_follows_the_cursor_at_the_offsets() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        Tip = CreateFrame("GameTooltip", "CrTip")
+        Host = CreateFrame("Frame", "CrHost")
+        Tip:SetOwner(Host, "ANCHOR_CURSOR_RIGHT", 10, -4)
+        Tip:AddLine("Copper Ore")
+        Tip:SetWidth(120) Tip:SetHeight(40)
+        Tip:Show()
+        "#,
+    )
+    .unwrap();
+    s.mouse_move(300.0, 200.0);
+    s.resolve();
+    let (left, bottom): (f32, f32) = s.eval("return Tip:GetLeft(), Tip:GetBottom()").unwrap();
+    assert_eq!((left, bottom), (310.0, 196.0));
+    s.mouse_move(120.0, 480.0);
+    s.resolve();
+    let (left, bottom): (f32, f32) = s.eval("return Tip:GetLeft(), Tip:GetBottom()").unwrap();
+    assert_eq!((left, bottom), (130.0, 476.0));
+
+    s.run(
+        r#"
+        Tip:SetOwner(Host, "ANCHOR_CURSOR", 10, -4)
+        Tip:AddLine("Copper Ore")
+        Tip:Show()
+        "#,
+    )
+    .unwrap();
+    s.mouse_move(300.0, 200.0);
+    s.resolve();
+    let (left, right, bottom): (f32, f32, f32) = s
+        .eval("return Tip:GetLeft(), Tip:GetRight(), Tip:GetBottom()")
+        .unwrap();
+    assert_eq!(bottom, 200.0, "ANCHOR_CURSOR takes no offset");
+    assert!(((left + right) / 2.0 - 300.0).abs() < 0.001);
+}
+
+/// Every hide stores mode 9 (`0x61ea8a`), so `GetAnchorType` answers "ANCHOR_NONE" after one.
+#[test]
+fn a_hide_resets_the_anchor_type_to_none() {
+    let s = script();
+    s.run(
+        r#"
+        local o = CreateFrame("Frame")
+        Tip = CreateFrame("GameTooltip", "HnTip")
+        Tip:SetOwner(o, "ANCHOR_TOP")
+        Tip:Hide()
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        s.eval::<String>("return Tip:GetAnchorType()").unwrap(),
+        "ANCHOR_NONE"
+    );
+}
+
+/// `SetAnchorType(anchorType [, x, y])` (`0x61d3d0`) re-places an owned plate with no clear and no
+/// event; un-owned, the mode does not store (`0x61d62a`). A first argument that is not a string or
+/// number raises the usage error (`0xa24d3c`).
+#[test]
+fn set_anchor_type_re_places_an_owned_plate_only() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        cleared = 0
+        Owner = CreateFrame("Frame", "SatOwner")
+        Owner:SetPoint("BOTTOMLEFT", nil, "BOTTOMLEFT", 300, 300)
+        Owner:SetWidth(40) Owner:SetHeight(40)
+        Tip = CreateFrame("GameTooltip", "SatTip")
+        Tip:SetWidth(50) Tip:SetHeight(20)
+        Tip:SetScript("OnTooltipCleared", function() cleared = cleared + 1 end)
+        Tip:SetAnchorType("ANCHOR_TOP", 4, 5)
+        assert(Tip:GetAnchorType() == "ANCHOR_NONE", "un-owned: the mode does not store")
+        Tip:SetOwner(Owner, "ANCHOR_RIGHT")
+        Tip:AddLine("kept")
+        Tip:Show()
+        cleared = 0
+        Tip:SetAnchorType("anchor_top", "2", 3)
+        "#,
+    )
+    .unwrap();
+    s.resolve();
+    let (mode, lines, cleared, shown, left, bottom): (String, i64, i64, bool, f32, f32) = s
+        .eval(
+            "return Tip:GetAnchorType(), Tip:NumLines(), cleared, Tip:IsShown() and true or false, \
+             Tip:GetLeft(), Tip:GetBottom()",
+        )
+        .unwrap();
+    assert_eq!(
+        (mode.as_str(), lines, cleared, shown, left, bottom),
+        ("ANCHOR_TOP", 1, 0, true, 297.0, 343.0)
+    );
+    let err = s
+        .run("Tip:SetAnchorType()")
+        .expect_err("no anchor")
+        .to_string();
+    assert!(
+        err.contains("Usage: SatTip:SetAnchorType( anchorType [,Xoffset] [,Yoffset] )"),
+        "{err}"
+    );
 }

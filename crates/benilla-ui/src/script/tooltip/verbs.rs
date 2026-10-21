@@ -4,131 +4,95 @@ use mlua::{Lua, Table, Value, Variadic};
 
 use crate::layout::{Anchor, Point};
 use crate::script::binding_abi::optional_string;
-use crate::script::object::frame_handle_of;
+use crate::script::object::{decode_id, frame_handle_of};
 use crate::script::region::region_handle_of;
 use crate::widget::{KindState, TooltipAnchor, TOOLTIP_LINE_GAP, TOOLTIP_PAD};
 
 use super::{
-    append_line, bool_arg, clear_content, fire_cleared, full_alpha, hide_tooltip, now,
-    parse_line_color, parse_line_tail, set_shown, text_of, tip_mut, with_tip, write_cell,
-    REG_TOOLTIP_METHODS,
+    append_line, bool_arg, clear_content, display_name, fire_cleared, full_alpha, hide_tooltip,
+    now, parse_line_color, parse_line_tail, reset_position, set_owner_core, set_shown, text_of,
+    tip_mut, with_tip, write_cell, REG_TOOLTIP_METHODS,
 };
 
 pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
 
-    // SetOwner(owner, anchorType [, x, y]): the binding `0x61eb40` first hides the tooltip
-    // (`0x61eb76`, before any argument check) with the tooltip's full hide (`0x61eb20`), so a
-    // hover whose content call then finds nothing leaves no empty plate. It then calls the core `0x61ea00`, which clears
-    // the content (`0x61ea06`, OnTooltipCleared), sets full alpha (`0x61ea12`), stores the owner
-    // (`0x61ea7e`), mode and offsets, then applies the anchor (`0x61eaa0`).
-    //
-    // A missing, non-string or unknown anchorType is mode 0, ANCHOR_LEFT, with no error: the
-    // binding's local starts at 0 (`0x61ec64`). The core's pre-store of 9 (`0x61ea8a`) survives
-    // only a NULL owner, the un-own path (`0x61eb20`) of every hide.
-    //
-    // The anchor apply returns first for ANCHOR_PRESERVE (8, `0x52fead`), then clears all points
-    // (`0x767ed0` at `0x52fec2`) for modes 0..7; modes 0..5 then set a point (`0x52ffbc`).
+    // SetOwner(owner [, anchorType [, x, y]]) (`0x61eb40`): the full hide first (`0x61eb76`, before
+    // any argument check), so a hover whose content call then finds nothing leaves no plate. The
+    // owner checks raise in the binding's order, each naming the tooltip (`0x61ee6e`, `0x61ebc9`,
+    // `0x61ec1c`, `0x61ec4a`); an anchorType that is not a string or number, or names no mode, is
+    // mode 0 (`0x61ec64`); an offset that is not a number is 0 (`0x61edc7`). Then the core.
     m.set(
         "SetOwner",
         lua.create_function(
-            |lua, (this, owner, anchor, x, y): (Table, Value, Value, Option<f32>, Option<f32>)| {
+            |lua, (this, owner, anchor, x, y): (Table, Value, Value, Value, Value)| {
                 let h = frame_handle_of(lua, &this)?;
                 hide_tooltip(lua, h);
+                let who = || display_name(lua, h);
                 let Value::Table(owner) = owner else {
-                    return Err(mlua::Error::runtime("Usage: SetOwner(frame)"));
+                    return Err(mlua::Error::runtime(format!(
+                        "Usage: {}:SetOwner(frame)",
+                        who()
+                    )));
                 };
-                let owner_h = frame_handle_of(lua, &owner)?;
-                // The gate is `lua_isstring` (`0x6f3510`): a string or number is read, and any
-                // other type counts as absent rather than raising.
-                let anchor = optional_string(lua, &anchor);
-                {
-                    let mut model = crate::script::model_mut_of(lua);
-                    clear_content(&mut model, h);
-                    full_alpha(&mut model, h);
-                    tip_mut(&mut model, h)?.owner = Some(owner_h);
-                    let owner_id = model.frame_id(owner_h);
-                    // Resolved once: the placement and `GetAnchorType` both read this value. The
-                    // warning on an unknown name is ours; the reference is silent, and Lua sees no
-                    // difference.
-                    let anchor = match anchor
-                        .as_deref()
-                        .map(str::to_ascii_uppercase)
-                        .as_deref()
-                        .unwrap_or("")
-                    {
-                        "ANCHOR_LEFT" => TooltipAnchor::Left,
-                        "ANCHOR_RIGHT" => TooltipAnchor::Right,
-                        "ANCHOR_BOTTOMLEFT" => TooltipAnchor::BottomLeft,
-                        "ANCHOR_BOTTOMRIGHT" => TooltipAnchor::BottomRight,
-                        "ANCHOR_TOPLEFT" => TooltipAnchor::TopLeft,
-                        "ANCHOR_TOPRIGHT" => TooltipAnchor::TopRight,
-                        "ANCHOR_CURSOR" => TooltipAnchor::Cursor,
-                        "ANCHOR_NONE" => TooltipAnchor::None,
-                        "ANCHOR_PRESERVE" => TooltipAnchor::Preserve,
-                        "" => TooltipAnchor::Left,
-                        other => {
-                            model.record_warning(format!(
-                                "SetOwner: unknown anchor '{other}' (mode 0, ANCHOR_LEFT)"
-                            ));
-                            TooltipAnchor::Left
-                        }
-                    };
-                    tip_mut(&mut model, h)?.anchor = anchor;
-                    let pts = match anchor {
-                        TooltipAnchor::Right => Some((Point::BottomLeft, Point::TopRight)),
-                        TooltipAnchor::Left => Some((Point::BottomRight, Point::TopLeft)),
-                        TooltipAnchor::TopRight => Some((Point::BottomRight, Point::TopRight)),
-                        TooltipAnchor::TopLeft => Some((Point::BottomLeft, Point::TopLeft)),
-                        TooltipAnchor::BottomRight => Some((Point::TopLeft, Point::BottomRight)),
-                        TooltipAnchor::BottomLeft => Some((Point::TopRight, Point::BottomLeft)),
-                        TooltipAnchor::Cursor | TooltipAnchor::None | TooltipAnchor::Preserve => {
-                            None
-                        }
-                    };
-                    // Modes 6 and 7 clear all points and stop. The clear lets
-                    // `GameTooltip_SetDefaultAnchor` (GameTooltip.lua:76-77) set one point with no
-                    // stale owner anchor; mode 6 is then placed per frame by `cursor_anchor`. The
-                    // drop is a named retarget to no targets, not a conservative touch.
-                    if matches!(anchor, TooltipAnchor::Cursor | TooltipAnchor::None) {
-                        let dropped = match model.layout_inputs.get_mut(&h) {
-                            Some(input) if !input.anchors.is_empty() => {
-                                Some(input.anchors.drain(..).map(|a| a.relative_to).collect())
-                            }
-                            _ => None,
-                        };
-                        if let Some(old_targets) = dropped {
-                            let old_targets: Vec<u32> = old_targets;
-                            model.touch_layout_retarget_frame(h, &old_targets, &[]);
-                        }
-                    }
-                    if let Some((own, rel)) = pts {
-                        let new =
-                            Anchor::new(own, owner_id, rel, x.unwrap_or(0.0), y.unwrap_or(0.0));
-                        let input = model.layout_inputs.entry(h).or_default();
-                        // No-op when unchanged, so the bag hover's per-frame SetOwner does not
-                        // dirty the layout.
-                        let same = input.anchors.len() == 1
-                            && crate::script::object::anchor_bits_eq(&input.anchors[0], &new);
-                        if !same {
-                            // A named retarget: the cached layout graph re-points this edge
-                            // instead of being rebuilt.
-                            let old_targets: Vec<u32> =
-                                input.anchors.iter().map(|a| a.relative_to).collect();
-                            input.anchors = vec![new];
-                            model.touch_layout_retarget_frame(h, &old_targets, &[owner_id]);
-                        }
-                    }
+                let Ok(owner_id) = decode_id(&owner) else {
+                    return Err(mlua::Error::runtime(format!(
+                        "{}:SetOwner(): Couldn't find 'this' in frame object",
+                        who()
+                    )));
+                };
+                let owner_h = {
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
+                    model.id_to_frame.get(&owner_id).copied()
+                };
+                let Some(owner_h) = owner_h else {
+                    return Err(mlua::Error::runtime(format!(
+                        "{}:SetOwner(): Wrong object type, expected frame",
+                        who()
+                    )));
+                };
+                if owner_h == h {
+                    return Err(mlua::Error::runtime(format!(
+                        "{}:SetOwner(): Can't set owner to self",
+                        who()
+                    )));
                 }
-                fire_cleared(lua, h);
+                let mode = parse_anchor(lua, "SetOwner", &anchor);
+                let offset = (number_or_zero(lua, &x), number_or_zero(lua, &y));
+                set_owner_core(lua, h, Some(owner_h), mode, offset);
                 Ok(())
             },
         )?,
     )?;
-    // GetAnchorType(): the last SetOwner's mode by name (`0x5313e0`, name table `0x531530`), never
-    // nil; a never-owned tooltip answers "ANCHOR_NONE". The reference also answers it after any
-    // hide, whose un-own leaves mode 7; this keeps the last mode. Addons compare it with what they
-    // passed to SetOwner, so the name must round-trip.
+    // SetAnchorType(anchorType [, x, y]) (`0x61d3d0`): SetOwner's mode parse and offsets with no
+    // clear, alpha or event. The offsets always store; the mode only with an owner (`0x61d617`),
+    // and the placement re-runs (`0x61d634`), doing nothing un-owned.
+    m.set(
+        "SetAnchorType",
+        lua.create_function(|lua, (this, anchor, x, y): (Table, Value, Value, Value)| {
+            let h = frame_handle_of(lua, &this)?;
+            if optional_string(lua, &anchor).is_none() {
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:SetAnchorType( anchorType [,Xoffset] [,Yoffset] )",
+                    display_name(lua, h)
+                )));
+            }
+            let mode = parse_anchor(lua, "SetAnchorType", &anchor);
+            let offset = (number_or_zero(lua, &x), number_or_zero(lua, &y));
+            let mut model = crate::script::model_mut_of(lua);
+            let t = tip_mut(&mut model, h)?;
+            t.offset = offset;
+            if t.owner.is_some() {
+                t.anchor = mode;
+            }
+            reset_position(&mut model, h);
+            Ok(())
+        })?,
+    )?;
+    // GetAnchorType(): the mode by name (`0x61d650`, table `0x61d79c`), never nil. Any hide stores
+    // mode 9, so a hidden or never-owned tooltip answers "ANCHOR_NONE".
     m.set(
         "GetAnchorType",
         lua.create_function(|lua, this: Table| {
@@ -390,10 +354,9 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             })
         })?,
     )?;
-    // Show and Hide shadow the shared pair. Show (`0x530a80`, the override the generic Show at
-    // `0x7a3350` calls) shows only a plate with an owner and at least one line, checked at Show
-    // time only; otherwise it takes the full hide (`0x530a60`): un-owned, cleared,
-    // OnTooltipCleared fired. Hide is the full hide.
+    // Show and Hide shadow the shared pair. Show (`ShowThis`, `0x61cff0`) shows only a plate with
+    // an owner and at least one line, at full alpha with the fade disarmed (`0x61d005`), checked
+    // at Show time only; otherwise it takes the full hide (`0x61d028`). Hide is the full hide.
     m.set(
         "Show",
         lua.create_function(|lua, this: Table| {
@@ -430,4 +393,29 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
 
     lua.set_named_registry_value(REG_TOOLTIP_METHODS, m)?;
     Ok(())
+}
+
+/// The twelve-name compare chain SetOwner and SetAnchorType share (`SStrCmpI`, `0x61ec8f`): any
+/// case, and a value that is not a string or number, or matches no name, is mode 0. The warning
+/// on an unknown name is ours; Lua sees no difference.
+fn parse_anchor(lua: &Lua, verb: &str, anchor: &Value) -> TooltipAnchor {
+    let Some(name) = optional_string(lua, anchor) else {
+        return TooltipAnchor::Left;
+    };
+    TooltipAnchor::from_name(&name).unwrap_or_else(|| {
+        crate::script::model_mut_of(lua).record_warning(format!(
+            "{verb}: unknown anchor '{name}' (mode 0, ANCHOR_LEFT)"
+        ));
+        TooltipAnchor::Left
+    })
+}
+
+/// An offset read as `lua_isnumber` gates it: a number or numeric string, anything else 0.
+fn number_or_zero(lua: &Lua, v: &Value) -> f32 {
+    match v {
+        Value::Number(_) | Value::Integer(_) | Value::String(_) => {
+            lua.coerce_number(v.clone()).ok().flatten().unwrap_or(0.0) as f32
+        }
+        _ => 0.0,
+    }
 }

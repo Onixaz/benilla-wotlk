@@ -524,18 +524,108 @@ pub(super) fn append_line(
 mod verbs;
 pub(super) use verbs::install;
 
-/// The full hide shared by `Hide`, a `Show` with no owner or no lines, and the end of a fade.
+/// The full hide, `HideThis` (`0x61eb20`): the `SetOwner` core with no owner, then the frame hide,
+/// whose OnHide fires only for a shown tooltip (`0x491833`). `Hide`, `SetOwner`'s first step, a
+/// `Show` with no owner or no lines (`0x61d028`) and the end of a fade all take it.
 pub(super) fn hide_tooltip(lua: &Lua, h: FrameHandle) {
+    set_owner_core(lua, h, None, TooltipAnchor::Left, (0.0, 0.0));
+    set_shown(lua, h, false);
+}
+
+/// `SetOwner`'s skip gate (`0x61ea47`): an offset this close to the stored one is unchanged.
+const OFFSET_EPSILON: f32 = 2.0 * f32::EPSILON;
+
+/// The `SetOwner` core (`0x61ea00`): the clear and its OnTooltipCleared (`0x61ea06`), full alpha
+/// with the fade disarmed (`0x61ea12`), then, unless owner, mode and offsets all match the stored
+/// ones (`0x61ea20`), the store (no owner stores mode 9, `0x61ea8a`) and the placement.
+pub(super) fn set_owner_core(
+    lua: &Lua,
+    h: FrameHandle,
+    owner: Option<FrameHandle>,
+    mode: TooltipAnchor,
+    offset: (f32, f32),
+) {
     {
         let mut model = crate::script::model_mut_of(lua);
-        full_alpha(&mut model, h);
-        if let Ok(t) = tip_mut(&mut model, h) {
-            t.owner = None;
-        }
         clear_content(&mut model, h);
     }
-    set_shown(lua, h, false);
     fire_cleared(lua, h);
+    let mut model = crate::script::model_mut_of(lua);
+    full_alpha(&mut model, h);
+    let Ok(t) = tip_mut(&mut model, h) else {
+        return;
+    };
+    if t.owner == owner
+        && t.anchor == mode
+        && (offset.0 - t.offset.0).abs() < OFFSET_EPSILON
+        && (offset.1 - t.offset.1).abs() < OFFSET_EPSILON
+    {
+        return;
+    }
+    t.offset = offset;
+    t.owner = owner;
+    t.anchor = if owner.is_some() {
+        mode
+    } else {
+        TooltipAnchor::None
+    };
+    reset_position(&mut model, h);
+}
+
+/// `ResetPosition` (`0x61b040`, always called with 1): nothing without an owner or in PRESERVE;
+/// otherwise the points clear (`0x61b070`), and modes 0..7 set one on the owner at the offsets.
+/// The clear lets `GameTooltip_SetDefaultAnchor` (GameTooltip.lua:76-77) set one point with no
+/// stale owner anchor. An unchanged point is left alone, so the bag hover's per-frame `SetOwner`
+/// does not dirty the layout; a change is a named retarget.
+pub(super) fn reset_position(model: &mut Model, h: FrameHandle) {
+    let (owner, mode, (x, y)) = match model.arena.frame(h).map(|f| &f.kind_state) {
+        Some(KindState::Tooltip(t)) => (t.owner, t.anchor, t.offset),
+        _ => return,
+    };
+    let Some(owner) = owner else {
+        return;
+    };
+    if mode == TooltipAnchor::Preserve {
+        return;
+    }
+    let Some((own, rel)) = mode.owner_points() else {
+        let dropped = match model.layout_inputs.get_mut(&h) {
+            Some(input) if !input.anchors.is_empty() => Some(
+                input
+                    .anchors
+                    .drain(..)
+                    .map(|a| a.relative_to)
+                    .collect::<Vec<u32>>(),
+            ),
+            _ => None,
+        };
+        if let Some(old_targets) = dropped {
+            model.touch_layout_retarget_frame(h, &old_targets, &[]);
+        }
+        return;
+    };
+    let owner_id = model.frame_id(owner);
+    let new = Anchor::new(own, owner_id, rel, x, y);
+    let input = model.layout_inputs.entry(h).or_default();
+    let same =
+        input.anchors.len() == 1 && crate::script::object::anchor_bits_eq(&input.anchors[0], &new);
+    if !same {
+        let old_targets: Vec<u32> = input.anchors.iter().map(|a| a.relative_to).collect();
+        input.anchors = vec![new];
+        model.touch_layout_retarget_frame(h, &old_targets, &[owner_id]);
+    }
+}
+
+/// The name a binding's error gives the tooltip: `GetName`, or `<unnamed>` (`0x9ea280`).
+pub(super) fn display_name(lua: &Lua, h: FrameHandle) -> String {
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    model
+        .arena
+        .frame(h)
+        .and_then(|f| f.name.clone())
+        .unwrap_or_else(|| "<unnamed>".to_string())
 }
 
 /// A line cell's measured extent; `None` for a hidden or unmeasured cell, which adds no size and
@@ -559,23 +649,34 @@ fn cell(model: &Model, rh: crate::widget::RegionHandle) -> Cell {
     d.measured.map(|m| (m.w, m.h))
 }
 
-/// `ANCHOR_CURSOR` (mode 6), re-anchored every frame by the update override `0x530b20`: one
-/// `SetPoint` (`0x767c70`) pins the plate's BOTTOM to the screen root's BOTTOMLEFT (`0xcf0bd8`)
-/// at the cursor position divided by the tooltip's own effective scale, so it sits centred above
-/// the cursor. There is no `ClearAllPoints`, and `SetPoint`'s no-op gate keeps a still cursor
-/// free. The `SetOwner` offsets play no part (only `0x52fe90` reads them). Only a shown tooltip is
-/// in the update pump (`0x76ad9d`), and the placement lands the same frame, before the layout
-/// drain (`0x768ed0`).
+/// The cursor modes, re-anchored every frame by `OnLayerUpdate` (`0x61b2e0`): one `SetPoint` on
+/// the root's BOTTOMLEFT (`[0xb499a8]`) at the cursor over the tooltip's own scale. CURSOR (8,
+/// `0x61b2fd`) pins the plate's BOTTOM there, centred above the cursor, offsets unused;
+/// CURSOR_RIGHT (11, `0x61b363`) pins its BOTTOMLEFT there plus the offsets. There is no clear,
+/// and `SetPoint`'s no-op gate keeps a still cursor free.
 fn cursor_anchor(model: &mut Model, h: FrameHandle) {
+    let (mode, (ox, oy)) = match model.arena.frame(h).map(|f| &f.kind_state) {
+        Some(KindState::Tooltip(t)) => (t.anchor, t.offset),
+        _ => return,
+    };
     let scale = crate::script::object::eff_scale(model, h);
     let (cx, cy) = model.cursor_pos;
-    let new = Anchor::new(
-        Point::Bottom,
-        super::SCREEN,
-        Point::BottomLeft,
-        cx / scale,
-        cy / scale,
-    );
+    let new = match mode {
+        TooltipAnchor::CursorRight => Anchor::new(
+            Point::BottomLeft,
+            super::SCREEN,
+            Point::BottomLeft,
+            cx / scale + ox,
+            cy / scale + oy,
+        ),
+        _ => Anchor::new(
+            Point::Bottom,
+            super::SCREEN,
+            Point::BottomLeft,
+            cx / scale,
+            cy / scale,
+        ),
+    };
     let input = model.layout_inputs.entry(h).or_default();
     // `0x767c70`'s change detect: the one slot is replaced only on a real change.
     let same =
@@ -600,9 +701,12 @@ pub(super) fn layout_tooltips(model: &mut Model) {
         if !model.frame_to_id.contains_key(&h) {
             continue;
         }
-        // Mode 6 runs before the line gate: the reference re-anchors any shown plate, lines or not.
+        // The cursor modes run before the line gate: the reference re-anchors any shown plate,
+        // lines or not.
         let cursor_mode = match model.arena.frame(h).map(|f| (&f.kind_state, f.shown)) {
-            Some((KindState::Tooltip(t), shown)) => shown && t.anchor == TooltipAnchor::Cursor,
+            Some((KindState::Tooltip(t), shown)) => {
+                shown && matches!(t.anchor, TooltipAnchor::Cursor | TooltipAnchor::CursorRight)
+            }
             _ => false,
         };
         if cursor_mode {

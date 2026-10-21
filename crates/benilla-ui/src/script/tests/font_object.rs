@@ -165,7 +165,8 @@ fn an_inheriting_font_still_flattens_to_the_same_values() {
 // ── SetFontObject and GetFontObject ──
 
 /// The tooltip build at `Gratuity-2.0.lua:47-59`: it needs a no-argument `CreateFontString`,
-/// `SetFontObject` taking the object, and `AddFontStrings`.
+/// `SetFontObject` taking the object, and `AddFontStrings`. Its self-owning `SetOwner` raises on
+/// 3.3.5a (`0x61ec4a`), so this owns the tooltip to a frame.
 #[test]
 fn gratuity_builds_its_thirty_line_scan_tooltip() {
     let s = script();
@@ -183,7 +184,7 @@ fn gratuity_builds_its_thirty_line_scan_tooltip() {
         vars = { Llines = {}, Rlines = {} }
         local tt = CreateFrame("GameTooltip")
         vars.tooltip = tt
-        tt:SetOwner(tt, "ANCHOR_NONE")
+        tt:SetOwner(CreateFrame("Frame"), "ANCHOR_NONE")
         for i = 1, 30 do
             vars.Llines[i], vars.Rlines[i] = tt:CreateFontString(), tt:CreateFontString()
             vars.Llines[i]:SetFontObject(GameFontNormal)

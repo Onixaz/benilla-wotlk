@@ -150,45 +150,91 @@ impl KindState {
     }
 }
 
-/// A tooltip's anchor mode (`+0x318`), set by `SetOwner` (`0x5310d0`), which reads a missing or
-/// unknown mode as [`TooltipAnchor::Left`] (`0x53120d`). The ids follow `GetAnchorType`'s table
-/// (`0x5313e0`, `0x531530`), not the setter's compare order. Placement (`0x52fe90`): modes 0..5
-/// clear the anchors and point, 6 and 7 only clear, 8 does neither.
+/// A tooltip's anchor mode (`+0x2a0`), in 12340's numbering: `SetOwner` (`0x61eb40`) and
+/// `SetAnchorType` (`0x61d3d0`) parse the twelve names (`0xa24d30`..`0xa24c7c`), and
+/// `GetAnchorType` (`0x61d650`) reads them back. Placement (`0x61b040`): no owner or PRESERVE
+/// changes nothing; any other mode clears the points, and modes 0..7 then set one on the owner.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TooltipAnchor {
-    /// `ANCHOR_LEFT`: the plate's right edge on the owner's left.
+    /// `ANCHOR_LEFT` (0): the plate's BOTTOMRIGHT on the owner's TOPLEFT.
     Left,
-    /// `ANCHOR_RIGHT`: the plate's left edge on the owner's right.
+    /// `ANCHOR_RIGHT` (1): the plate's BOTTOMLEFT on the owner's TOPRIGHT.
     Right,
     BottomLeft,
+    Bottom,
     BottomRight,
     TopLeft,
+    Top,
     TopRight,
-    /// `ANCHOR_CURSOR`: re-anchored to the live cursor every frame by the update `0x530b20`.
+    /// `ANCHOR_CURSOR` (8): BOTTOM on the cursor every frame (`0x61b2fd`), offsets unused.
     Cursor,
-    /// `ANCHOR_NONE`: cleared, and the caller points the plate. The default here: the ctor
-    /// `0x529240` never writes `+0x318`, leaving the reference's start value to its allocator,
-    /// and the getter answers this for any out-of-range id (`0x53146f`).
+    /// `ANCHOR_NONE` (9): cleared, and the caller points the plate. Every hide stores it
+    /// (`0x61ea8a`); the ctor `0x61dee0` never writes `+0x2a0`, and the getter answers it for any
+    /// id past 11 (`0x61d783`).
     #[default]
     None,
-    /// `ANCHOR_PRESERVE`: the previous placement and its anchors are kept (`0x52fe90` returns at
-    /// `0x52fead`, before the clear); `GetAnchorType` still answers `"ANCHOR_PRESERVE"`.
+    /// `ANCHOR_PRESERVE` (10): the previous placement and its points are kept (`0x61b05c`).
     Preserve,
+    /// `ANCHOR_CURSOR_RIGHT` (11): BOTTOMLEFT on the cursor plus the offsets every frame
+    /// (`0x61b363`).
+    CursorRight,
 }
 
 impl TooltipAnchor {
-    /// The name `GetAnchorType()` answers (table `0x531530`).
+    /// The name `GetAnchorType()` answers (`0x61d79c`).
     pub const fn name(self) -> &'static str {
         match self {
             TooltipAnchor::Left => "ANCHOR_LEFT",
             TooltipAnchor::Right => "ANCHOR_RIGHT",
             TooltipAnchor::BottomLeft => "ANCHOR_BOTTOMLEFT",
+            TooltipAnchor::Bottom => "ANCHOR_BOTTOM",
             TooltipAnchor::BottomRight => "ANCHOR_BOTTOMRIGHT",
             TooltipAnchor::TopLeft => "ANCHOR_TOPLEFT",
+            TooltipAnchor::Top => "ANCHOR_TOP",
             TooltipAnchor::TopRight => "ANCHOR_TOPRIGHT",
             TooltipAnchor::Cursor => "ANCHOR_CURSOR",
             TooltipAnchor::None => "ANCHOR_NONE",
             TooltipAnchor::Preserve => "ANCHOR_PRESERVE",
+            TooltipAnchor::CursorRight => "ANCHOR_CURSOR_RIGHT",
+        }
+    }
+
+    /// The mode a name selects, in any case (`SStrCmpI`).
+    pub fn from_name(name: &str) -> Option<Self> {
+        [
+            TooltipAnchor::Left,
+            TooltipAnchor::Right,
+            TooltipAnchor::BottomLeft,
+            TooltipAnchor::Bottom,
+            TooltipAnchor::BottomRight,
+            TooltipAnchor::TopLeft,
+            TooltipAnchor::Top,
+            TooltipAnchor::TopRight,
+            TooltipAnchor::Cursor,
+            TooltipAnchor::None,
+            TooltipAnchor::Preserve,
+            TooltipAnchor::CursorRight,
+        ]
+        .into_iter()
+        .find(|m| m.name().eq_ignore_ascii_case(name))
+    }
+
+    /// Modes 0..7's one point, the plate's and then the owner's (`0x61b264`).
+    pub const fn owner_points(self) -> Option<(crate::layout::Point, crate::layout::Point)> {
+        use crate::layout::Point;
+        match self {
+            TooltipAnchor::Left => Some((Point::BottomRight, Point::TopLeft)),
+            TooltipAnchor::Right => Some((Point::BottomLeft, Point::TopRight)),
+            TooltipAnchor::BottomLeft => Some((Point::TopRight, Point::BottomLeft)),
+            TooltipAnchor::Bottom => Some((Point::Top, Point::Bottom)),
+            TooltipAnchor::BottomRight => Some((Point::TopLeft, Point::BottomRight)),
+            TooltipAnchor::TopLeft => Some((Point::BottomLeft, Point::TopLeft)),
+            TooltipAnchor::Top => Some((Point::Bottom, Point::Top)),
+            TooltipAnchor::TopRight => Some((Point::BottomRight, Point::TopRight)),
+            TooltipAnchor::Cursor
+            | TooltipAnchor::None
+            | TooltipAnchor::Preserve
+            | TooltipAnchor::CursorRight => None,
         }
     }
 }
@@ -205,8 +251,10 @@ pub struct TooltipState {
     pub right_lines: Vec<RegionHandle>,
     /// `SetOwner`'s frame, dropped on hide.
     pub owner: Option<FrameHandle>,
-    /// The last `SetOwner`'s mode, read back by `GetAnchorType()`.
+    /// The mode, read back by `GetAnchorType()`.
     pub anchor: TooltipAnchor,
+    /// `SetOwner`/`SetAnchorType`'s offsets (`+0x3e0`, `+0x3e4`), zeroed by every hide.
+    pub offset: (f32, f32),
     /// `SetMinimumWidth`: a floor on the auto-sized width, cleared with the content.
     pub min_width: f32,
     /// `SetMinimumWidth`'s `force` (`+0x3dc`), read back by `GetMinimumWidth`.
