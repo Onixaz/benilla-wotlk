@@ -10,10 +10,8 @@
 //! No selection decal: `0x5d6fe0` draws one only for the locked target, and `SetSelection`
 //! (`0x493540`) refuses a corpse, whose selectability slot `0x469fe0` returns 0.
 //!
-//! The reference takes the drowned verdict inside the create, from the scene node's cached liquid
-//! probe, and an unprobed node (`[node+0x90] & 0x20`) falls to `Dead`; whether it is probed that
-//! early is untraced. This asks the world at attach time, so it can show `Drowned` where the
-//! reference shows `Dead`, never the reverse.
+//! The reference takes the drowned verdict inside the create (`CGCorpse_C::PostInit`, `0x705b20`)
+//! from the object's liquid query (`0x77f1e0`); this asks the world at attach time.
 
 use std::collections::HashMap;
 
@@ -25,12 +23,12 @@ use super::display::{empty_shell, DisplayModel, ModelHandle};
 use crate::creature_anim::AnimData;
 use crate::net::{NetEntity, ObjectStore};
 
-/// `AnimationData.dbc` 6 `Dead`, the settled corpse pose (`0x5d63fe push 0x6`).
+/// `AnimationData.dbc` 6 `Dead`, the settled corpse pose (`0x705d2e push 0x6`).
 const DEAD: u16 = 6;
-/// `AnimationData.dbc` 132 `Drowned`, the submerged corpse pose (`0x5d63f7 push 0x84`).
+/// `AnimationData.dbc` 132 `Drowned`, the submerged corpse pose (`0x705d12 push 0x84`).
 const DROWNED: u16 = 132;
-/// `[0x80abfc]`, in yards: how far under a liquid surface a corpse lies drowned rather than dead;
-/// the wading test (`0x60a740`) uses the same constant.
+/// `[0x9fc830]`, in yards: how far under a liquid surface a corpse lies drowned rather than dead
+/// (`0x705cf0`).
 const DROWNED_DEPTH: f32 = 0.666_666_7;
 
 /// The bone-pile models by `(race, sex)`, apart from [`super::Creatures`] because a skeleton has no
@@ -102,16 +100,15 @@ pub(in crate::entities) fn ensure_bones_display(
     bones.0.insert(key, dm);
 }
 
-/// The corpse's pose is armed, once: `0x5d6260` caches the verdict at `[corpse+0x2ac]` and nothing
-/// recomputes it.
+/// The corpse's pose is armed, once: `0x705b20` caches the verdict in the corpse's flags and
+/// nothing recomputes it.
 #[derive(Component)]
 pub(super) struct CorpsePosed;
 
-/// Arm each newly attached corpse's pose on bone 0 through `0x7121a0` (`0x5d63de`, `0x5d6402`):
-/// `Dead`, or `Drowned` past [`DROWNED_DEPTH`] under a liquid (`0x5d6540`), held at the clip's end.
-/// The corpse is created already lying down, and the reference re-arms only from the cached
-/// verdict when the model loads (`0x5d6850`). No `AnimDriver`: that would enrol a corpse in the
-/// unit gait selector.
+/// Arm each newly attached corpse's pose through `SetBoneSequence` (`0x832ab0`): `Dead`, or
+/// `Drowned` past [`DROWNED_DEPTH`] under a liquid, held at the clip's end. The corpse is created
+/// already lying down, and the reference re-arms only from the cached verdict when the model loads
+/// (`0x705850`). No `AnimDriver`: that would enrol a corpse in the unit gait selector.
 #[allow(clippy::type_complexity)] // one query's tuple + its Without filter
 pub(super) fn pose_corpses(
     mut commands: Commands,
@@ -134,20 +131,19 @@ pub(super) fn pose_corpses(
             continue;
         }
         let wow = benilla_assets::coords::bevy_to_wow(tf.translation());
-        // `0x5d6540` takes any liquid (the generic probe `0x670630`, so lava and slime too), and
-        // strictly: equality and NaN read as dry. It subtracts `CORPSE_FIELD_POS_Z` (`0x5d7690`),
-        // the same number as the entity pose: vmangos writes both from one position
-        // (`Corpse.cpp:86-103`) and never moves a corpse.
+        // Whatever liquid `0x77f1e0` finds, no type filtered, and strictly: equality and NaN read
+        // as dry (`0x705cea`-`0x705cfb`, surface height less the corpse's own z).
         let submerged = world
             .liquid_at(benilla_world::world_point::Subject::Unit(entity), wow)
             .is_some_and(|hit| hit.surface_z - wow[2] > DROWNED_DEPTH);
         let want = if submerged { DROWNED } else { DEAD };
-        // The model's fallback table (`0x711c10`, `0x712470`): a character body authors neither,
-        // and walks `Dead` to `Death` (1) and `Drowned` to `Drown` (131).
+        // The `AnimationData.dbc` fallback (`0x826350`): a character body authors `Drowned` but not
+        // `Dead`, which walks to `Death` (1).
         let catalog = anim_data.as_deref().map(|a| &a.0);
         let resolved = catalog.map_or(want, |cat| anims.resolve(want, cat).id);
         let Some(clip) = anims.find(resolved) else {
             // No clip (a static bone pile): posed anyway, so it is not retried every frame.
+            debug!("corpse pose: {entity} has no clip for {want} -> {resolved}, left at rest");
             commands.entity(entity).insert(CorpsePosed);
             continue;
         };

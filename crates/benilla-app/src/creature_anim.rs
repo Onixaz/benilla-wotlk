@@ -869,12 +869,12 @@ impl Plugin for CreatureAnimPlugin {
     }
 }
 
-/// The id this model plays for `id` (`0x711bf0`); identity until `AnimationData.dbc` loads.
+/// The id this model plays for `id` (`0x826350`); identity until `AnimationData.dbc` loads.
 fn resolved_id(anims: &ModelAnimations, id: u16, catalog: Option<&AnimDataCatalog>) -> u16 {
     catalog.map_or(id, |cat| anims.resolve(id, cat).id)
 }
 
-/// The clip for a requested id, through the model's baked fallback.
+/// The clip for a requested id, through the `AnimationData.dbc` fallback.
 fn find_resolved<'a>(
     anims: &'a ModelAnimations,
     id: u16,

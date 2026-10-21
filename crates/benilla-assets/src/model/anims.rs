@@ -77,7 +77,7 @@ pub struct ModelAnimations {
     /// (`0x479660`/`0x60b590`); an empty hand or a forearm shield stays open.
     pub hand_close: [Option<AnimationNodeIndex>; 2],
     /// The header's PlayableAnimationLookup (`+0x2c/+0x30`): row `i` substitutes for requested id
-    /// `i`. Empty without a table, and [`Self::resolve`] then returns the id itself.
+    /// `i`. Empty on a 3.3.5a model, which [`Self::resolve`] walks through the fallback column.
     pub playable_animation_lookup: Vec<PlayableAnim>,
     /// The header's AnimationLookup (`+0x24/+0x28`): each id's first slot, `0xffff` for none.
     pub animation_lookup: Vec<u16>,
@@ -91,7 +91,7 @@ pub struct ModelAnimations {
     pub pose: std::sync::Arc<super::PoseSource>,
 }
 
-/// A requested animation id resolved to what this model plays (`0x711bf0`).
+/// A requested animation id resolved to what this model plays (`0x826350`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResolvedAnim {
     /// The id to look up with [`ModelAnimations::find`].
@@ -163,10 +163,9 @@ impl ModelAnimations {
         head
     }
 
-    /// Resolve a requested id as the reference does before every sequence lookup (`0x711bf0`):
-    /// - PATH 1, inside the playable lookup: the model's own baked substitute.
-    /// - PATH 2, past it (ids 203-207 on retail data): the `AnimationData.dbc` fallback walk.
-    /// - No table: the id itself.
+    /// Resolve a requested id before a sequence lookup: inside a baked playable lookup, the
+    /// model's own substitute; otherwise, and always on a 3.3.5a model, which carries no such
+    /// table, the `AnimationData.dbc` fallback walk of `SequenceFallbackById` (`0x826350`).
     pub fn resolve(&self, requested: u16, catalog: &AnimDataCatalog) -> ResolvedAnim {
         if let Some(row) = self.playable_animation_lookup.get(requested as usize) {
             return ResolvedAnim {
@@ -174,39 +173,39 @@ impl ModelAnimations {
                 dir_flags: row.dir_flags,
             };
         }
-        if self.playable_animation_lookup.is_empty() {
-            return ResolvedAnim {
-                id: requested,
-                dir_flags: 0,
-            };
-        }
-        self.resolve_path2(requested, catalog)
+        self.resolve_fallback(requested, catalog)
     }
 
-    /// PATH 2 (`0x711c1f`): follow `catalog.fallback` until the model has a clip for the id, with
-    /// the reference's 208-row cycle guard. Exhaustion gives Stand (0), where the reference takes
-    /// Stand only if the model authors it, else 147 if authored, else the first sequence's id
-    /// (`0x711c22`-`0x711c4e`); every id benilla requests resolves in PATH 1.
-    fn resolve_path2(&self, requested: u16, catalog: &AnimDataCatalog) -> ResolvedAnim {
-        const STAND: ResolvedAnim = ResolvedAnim {
-            id: 0,
-            dir_flags: 0,
+    /// `0x826350`: follow the `Fallback` column until the model has a clip for the id, guarded
+    /// against cycles over the table's 506 ids (`0x1fa`). A missing row, a self-fallback, a
+    /// revisit or an id past the table exhausts to Stand if authored, else Closed (147), else the
+    /// first sequence's id. The row flags' direction mode is not derived: nothing applies it.
+    fn resolve_fallback(&self, requested: u16, catalog: &AnimDataCatalog) -> ResolvedAnim {
+        const ANIM_COUNT: usize = 506;
+        const CLOSED: u16 = 147;
+        let exhausted = || {
+            let id = [0, CLOSED]
+                .into_iter()
+                .find(|&id| self.find(id).is_some())
+                .or_else(|| self.clips.first().map(|c| c.anim_id))
+                .unwrap_or(0);
+            ResolvedAnim { id, dir_flags: 0 }
         };
-        let mut visited = [false; 208];
+        let mut visited = [false; ANIM_COUNT];
         let mut id = requested;
-        loop {
-            if self.find(id).is_some() {
-                return ResolvedAnim { id, dir_flags: 0 };
-            }
-            match visited.get_mut(id as usize) {
-                Some(seen) if !*seen => *seen = true,
-                _ => return STAND, // revisited (cycle) or id ≥ 208 (NULL/max-id guard)
-            }
+        while self.find(id).is_none() {
+            let Some(seen) = visited.get_mut(id as usize).filter(|seen| !**seen) else {
+                return exhausted();
+            };
             match catalog.fallback(id) {
-                Some(next) => id = next,
-                None => return STAND, // unknown row / self-fallback / already-Stand → exhaustion
+                Some(next) if next != id => {
+                    *seen = true;
+                    id = next;
+                }
+                _ => return exhausted(),
             }
         }
+        ResolvedAnim { id, dir_flags: 0 }
     }
 }
 
@@ -354,7 +353,7 @@ mod tests {
         );
     }
 
-    /// `AnimDataCatalog::fallback` gives `None` for an unknown row, a self-fallback or Stand.
+    /// An id with no `AnimationData.dbc` row exhausts at once.
     #[test]
     fn path2_self_or_null_fallback_exhausts_to_stand() {
         let anims = test_anims(&[], vec![playable(0, 0); 3]);
@@ -368,31 +367,51 @@ mod tests {
         );
     }
 
-    /// An id past the 208 rows cannot be marked visited, so it exhausts at once.
+    /// An id past the 506 rows cannot be marked visited, so it exhausts at once, even with a row.
     #[test]
     fn path2_out_of_dbc_range_id_exhausts_to_stand() {
-        let anims = test_anims(&[], vec![playable(0, 0); 3]);
-        let resolved = anims.resolve(250, &empty_catalog());
-        assert_eq!(
-            resolved,
-            ResolvedAnim {
-                id: 0,
-                dir_flags: 0
-            }
-        );
+        let cat = AnimDataCatalog::from_rows([(
+            600,
+            benilla_formats::AnimEntry {
+                weapon_flags: 0,
+                fallback: 3,
+            },
+        )]);
+        let anims = test_anims(&[0, 3], vec![playable(0, 0); 3]);
+        assert_eq!(anims.resolve(600, &cat).id, 0);
     }
 
+    /// A 3.3.5a model has no playable lookup and walks the fallback: a character body authors
+    /// Death (1) but not Dead (6), and a corpse arms Dead.
     #[test]
-    fn no_table_degrades_to_identity() {
-        let anims = test_anims(&[0], Vec::new());
-        let resolved = anims.resolve(42, &empty_catalog());
+    fn no_table_walks_the_dbc_fallback() {
+        let cat = AnimDataCatalog::from_rows([(
+            6,
+            benilla_formats::AnimEntry {
+                weapon_flags: 0,
+                fallback: 1,
+            },
+        )]);
+        let anims = test_anims(&[0, 1], Vec::new());
         assert_eq!(
-            resolved,
+            anims.resolve(6, &cat),
             ResolvedAnim {
-                id: 42,
+                id: 1,
                 dir_flags: 0
             }
         );
+        assert_eq!(anims.resolve(1, &cat).id, 1, "an authored id is itself");
+    }
+
+    /// Exhaustion takes Stand if authored, else Closed (147), else the first sequence
+    /// (`0x826350`'s default).
+    #[test]
+    fn exhaustion_takes_stand_then_closed_then_the_first_sequence() {
+        let cat = empty_catalog();
+        let pick = |clips: &[u16]| test_anims(clips, Vec::new()).resolve(42, &cat).id;
+        assert_eq!(pick(&[158, 147, 0]), 0);
+        assert_eq!(pick(&[158, 147]), 147);
+        assert_eq!(pick(&[158, 159]), 158);
     }
 
     // ── preferred_clip: the model-load bootstrap (`0x710153`–`0x71019b`) ─────────────────────

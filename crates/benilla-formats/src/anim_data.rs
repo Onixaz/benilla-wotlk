@@ -2,8 +2,8 @@
 //! `BodyFlags`, `Flags`, `Fallback`, `BehaviorID` and `BehaviorTier` in 12340. The sheath reconcile
 //! (`0x5fdf80` in 5875, on every `PlayAnimation`) reads `WeaponFlags` at row `+0x8` for the
 //! requested id, not a model's substitute: `4` and `0x10` stow, `0x20` draws melee, and 12340 sets
-//! no other bit. `Fallback` is walked only for ids past a model's baked `PlayableAnimationLookup`,
-//! which was computed from it.
+//! no other bit. `Fallback` is walked for an id a model does not author (`0x826350`); a 3.3.5a
+//! model bakes no `PlayableAnimationLookup` from it.
 
 use std::collections::HashMap;
 
@@ -45,13 +45,9 @@ impl AnimDataCatalog {
         self.rows.get(&id).map_or(0, |r| r.weapon_flags)
     }
 
-    /// The fallback for a model lacking clip `id`; `None` for Stand (`0`), which the caller
-    /// resolves itself.
+    /// The `Fallback` column as stored, Stand and a self-fallback included; `None` for no row.
     pub fn fallback(&self, id: u16) -> Option<u16> {
-        self.rows
-            .get(&id)
-            .map(|r| r.fallback)
-            .filter(|&f| f != 0 && f != id)
+        self.rows.get(&id).map(|r| r.fallback)
     }
 
     /// The row's Name (`"Run"`); a [`Self::from_rows`] catalog has none.
@@ -156,6 +152,9 @@ mod tests {
         assert_eq!(cat.fallback(143), Some(5), "Sprint → Run");
         assert_eq!(cat.fallback(187), Some(5), "JumpLandRun → Run");
         assert_eq!(cat.fallback(100), Some(99), "Sleep → SleepDown");
-        assert_eq!(cat.fallback(4), None, "Walk falls back to Stand (0 → None)");
+        assert_eq!(cat.fallback(4), Some(0), "Walk → Stand");
+        assert_eq!(cat.fallback(6), Some(1), "Dead → Death, the corpse pose");
+        assert_eq!(cat.fallback(132), Some(131), "Drowned → Drown");
+        assert_eq!(cat.fallback(9999), None, "no row");
     }
 }
