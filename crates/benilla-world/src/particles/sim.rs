@@ -470,6 +470,9 @@ pub(super) fn simulate_particles(
     let (farclip, exterior_gate, camera_instance) = gates.scene(Some((&*cam_tf, &*projection)));
     let dump_frame = dumps.depth_frame(time.elapsed_secs());
     let emit_dump = dumps.emit.due(time.elapsed_secs());
+    // The walk records each drawn pool; the expansion and the commits follow it.
+    let mut jobs: Vec<ExpandJob> = Vec::new();
+    let mut commits: Vec<CommitJob> = Vec::new();
 
     for (
         entity,
@@ -1009,34 +1012,6 @@ pub(super) fn simulate_particles(
             } else {
                 0.0
             };
-        let start = quads.begin();
-        if want_quads && !particles.is_empty() {
-            expand_quads(def, particles, &frame, placement, &cam, &mut quads.verts);
-        }
-        // `$WOW_PARTICLE_DEPTHDUMP` over the quads just written; booths draw to their own target.
-        if let Some(fidx) = dump_frame {
-            if !is_booth
-                && def.geometry_model.is_none()
-                && !particles.is_empty()
-                && super::depthdump::bone_selected(u32::from(def.bone))
-            {
-                super::depthdump::dump_emitter(
-                    fidx,
-                    def,
-                    particles,
-                    &frame,
-                    placement,
-                    // The world point: `emitter_world` is in the stored frame.
-                    ride.to_world(emitter_world),
-                    &cam,
-                    &cam_tf,
-                    camera,
-                    &projection,
-                    images.contains(&*texture),
-                    &quads.verts[start as usize..],
-                );
-            }
-        }
         // `$WOW_EMIT_DUMP`, here so `live` counts this frame's births.
         if emit_dump {
             dumps.emit.dump(
@@ -1053,17 +1028,51 @@ pub(super) fn simulate_particles(
                 },
             );
         }
+        // `$WOW_PARTICLE_DEPTHDUMP` over this pool's quads; booths draw to their own target.
+        let dump_at = dump_frame
+            .filter(|_| {
+                !is_booth
+                    && def.geometry_model.is_none()
+                    && !particles.is_empty()
+                    && super::depthdump::bone_selected(u32::from(def.bone))
+            })
+            // The world point: `emitter_world` is in the stored frame.
+            .map(|fidx| (fidx, ride.to_world(emitter_world)));
         // The model's committed light, shared by its child draws: one light node per model.
         let committed = owner_mul.committed_light(lit_by);
-        let lighting = fold_committed_light(&mut quads.verts[start as usize..], def.lit, committed);
-        quads.commit_quads(
-            start,
-            EffectDrawSpec {
+        let spec = EffectDrawSpec {
+            cam: draw_cam,
+            texture: texture.id(),
+            blend: def.blend.into(),
+            fog: EffectFog::for_blend(def.flags, def.blend),
+            // Set from the expansion's light fold.
+            lighting: EffectLighting::None,
+            anchor,
+            bias,
+            raster_bias: 0,
+            raster_slope: 0.0,
+            cam_relative: false,
+            no_depth_test: false,
+            main_entity: entity,
+            light: light_override.map(|l| l.0.clone()),
+            // A UI model tile's pane cell (`set_clip`); `None` in the world.
+            clip: *clip,
+        };
+        // Child pools: their own texture, blend and fog, the parent's anchor and rung.
+        let mut kids = Vec::new();
+        let mut kid_specs = Vec::new();
+        for (i, child) in children.iter().enumerate() {
+            if child.particles.is_empty() || !images.contains(&child.texture) {
+                continue;
+            }
+            kids.push(i);
+            kid_specs.push(EffectDrawSpec {
                 cam: draw_cam,
-                texture: texture.id(),
-                blend: def.blend.into(),
-                fog: EffectFog::for_blend(def.flags, def.blend),
-                lighting,
+                texture: child.texture.id(),
+                blend: child.def.blend.into(),
+                fog: EffectFog::for_blend(child.def.flags, child.def.blend),
+                // Its own record's lighting verdict, under the parent's light node.
+                lighting: EffectLighting::None,
                 anchor,
                 bias,
                 raster_bias: 0,
@@ -1072,52 +1081,169 @@ pub(super) fn simulate_particles(
                 no_depth_test: false,
                 main_entity: entity,
                 light: light_override.map(|l| l.0.clone()),
-                // A UI model tile's pane cell (`set_clip`); `None` in the world.
+                // The parent's cell and clip.
                 clip: *clip,
-            },
-        );
-        // Child pools: their own texture, blend and fog, the parent's anchor and rung.
-        for child in children.iter() {
-            if child.particles.is_empty() || !images.contains(&child.texture) {
-                continue;
-            }
-            let cstart = quads.begin();
+            });
+        }
+        jobs.push(ExpandJob {
+            entity,
+            frame,
+            placement: *placement,
+            cam,
+            quads: want_quads && !particles.is_empty(),
+            committed,
+            kids,
+        });
+        commits.push(CommitJob {
+            spec,
+            kid_specs,
+            dump_at,
+            textured: images.contains(&*texture),
+        });
+    }
+
+    // Expand every walked pool on the compute pool, the walk's per-particle half: a job reads
+    // only its own emitter, so the chunks are independent.
+    let ro = emitters.as_readonly();
+    let expand_one = |job: &ExpandJob, out: &mut Vec<EffectVertex>, segs: &mut Vec<Seg>| {
+        let Ok((_, em, ..)) = ro.get(job.entity) else {
+            segs.extend(std::iter::repeat_n(
+                (0, EffectLighting::None),
+                1 + job.kids.len(),
+            ));
+            return;
+        };
+        let s = out.len();
+        if job.quads {
+            expand_quads(
+                &em.def,
+                &em.particles,
+                &job.frame,
+                &job.placement,
+                &job.cam,
+                out,
+            );
+        }
+        let lighting = fold_committed_light(&mut out[s..], em.def.lit, job.committed);
+        segs.push(((out.len() - s) as u32, lighting));
+        for &i in &job.kids {
+            let child = &em.children[i];
+            let s = out.len();
             expand_quads(
                 &child.def,
                 &child.particles,
-                &frame,
-                placement,
-                &cam,
-                &mut quads.verts,
+                &job.frame,
+                &job.placement,
+                &job.cam,
+                out,
             );
-            let child_lighting = fold_committed_light(
-                &mut quads.verts[cstart as usize..],
-                child.def.lit,
-                committed,
-            );
-            quads.commit_quads(
-                cstart,
-                EffectDrawSpec {
-                    cam: draw_cam,
-                    texture: child.texture.id(),
-                    blend: child.def.blend.into(),
-                    fog: EffectFog::for_blend(child.def.flags, child.def.blend),
-                    // Its own record's lighting verdict, under the parent's light node.
-                    lighting: child_lighting,
-                    anchor,
-                    bias,
-                    raster_bias: 0,
-                    raster_slope: 0.0,
-                    cam_relative: false,
-                    no_depth_test: false,
-                    main_entity: entity,
-                    light: light_override.map(|l| l.0.clone()),
-                    // The parent's cell and clip.
-                    clip: *clip,
-                },
-            );
+            let lighting = fold_committed_light(&mut out[s..], child.def.lit, job.committed);
+            segs.push(((out.len() - s) as u32, lighting));
+        }
+    };
+    let expanded: Vec<(Vec<EffectVertex>, Vec<Seg>)> = if jobs.len() <= EXPAND_CHUNK_MIN {
+        let (mut out, mut segs) = (Vec::new(), Vec::new());
+        for job in &jobs {
+            expand_one(job, &mut out, &mut segs);
+        }
+        vec![(out, segs)]
+    } else {
+        let pool = bevy::tasks::ComputeTaskPool::get();
+        let chunk = jobs
+            .len()
+            .div_ceil(pool.thread_num().max(1) * 4)
+            .max(EXPAND_CHUNK_MIN);
+        let expand_one = &expand_one;
+        pool.scope(|scope| {
+            for part in jobs.chunks(chunk) {
+                scope.spawn(async move {
+                    let (mut out, mut segs) = (Vec::new(), Vec::new());
+                    for job in part {
+                        expand_one(job, &mut out, &mut segs);
+                    }
+                    (out, segs)
+                });
+            }
+        })
+    };
+
+    // Commit in walk order, so the stream and its draws are the serial walk's.
+    let mut pieces = expanded.iter().flat_map(|(out, segs)| {
+        let mut off = 0usize;
+        segs.iter().map(move |&(n, lighting)| {
+            let piece = &out[off..off + n as usize];
+            off += n as usize;
+            (piece, lighting)
+        })
+    });
+    for (job, commit) in jobs.iter().zip(commits) {
+        let Some((verts, lighting)) = pieces.next() else {
+            break;
+        };
+        let start = quads.begin();
+        quads.verts.extend_from_slice(verts);
+        if let Some((fidx, world)) = commit.dump_at {
+            if let Ok((_, em, ..)) = ro.get(job.entity) {
+                super::depthdump::dump_emitter(
+                    fidx,
+                    &em.def,
+                    &em.particles,
+                    &job.frame,
+                    &job.placement,
+                    world,
+                    &job.cam,
+                    &cam_tf,
+                    camera,
+                    &projection,
+                    commit.textured,
+                    &quads.verts[start as usize..],
+                );
+            }
+        }
+        quads.commit_quads(
+            start,
+            EffectDrawSpec {
+                lighting,
+                ..commit.spec
+            },
+        );
+        for spec in commit.kid_specs {
+            let Some((verts, lighting)) = pieces.next() else {
+                break;
+            };
+            let start = quads.begin();
+            quads.verts.extend_from_slice(verts);
+            quads.commit_quads(start, EffectDrawSpec { lighting, ..spec });
         }
     }
+}
+
+/// Below this many walked pools the expansion runs inline; it is also the smallest chunk.
+const EXPAND_CHUNK_MIN: usize = 8;
+
+/// One expanded draw's vertex count and its light fold.
+type Seg = (u32, EffectLighting);
+
+/// What the expansion pass needs of one walked emitter: its frame, placement and camera basis.
+struct ExpandJob {
+    entity: Entity,
+    frame: DrawFrame,
+    placement: Transform,
+    cam: CamBasis,
+    /// The parent pool draws quads: textured, not a geometry emitter, not empty.
+    quads: bool,
+    committed: Option<[f32; 3]>,
+    /// The child pools that draw, by index.
+    kids: Vec<usize>,
+}
+
+/// The draws one walked emitter commits after the expansion, parent first.
+struct CommitJob {
+    spec: EffectDrawSpec,
+    kid_specs: Vec<EffectDrawSpec>,
+    /// The depth dump's frame and the emitter's world point, when this pool is dumped.
+    dump_at: Option<(u32, Vec3)>,
+    textured: bool,
 }
 
 /// The two per-model multipliers a cloud takes from its owner: render alpha and committed light.
