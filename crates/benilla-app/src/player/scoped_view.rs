@@ -68,10 +68,15 @@ pub(super) fn apply_scoped_view(
         return;
     };
     let want = CAM_FOVY * scoped.zoom.unwrap_or(1.0);
+    // `&mut` marks the projection changed even when the value is equal, so compare first.
+    let Projection::Perspective(PerspectiveProjection { fov, .. }) = projection.as_ref() else {
+        return;
+    };
+    if (*fov - want).abs() <= f32::EPSILON {
+        return;
+    }
     if let Projection::Perspective(PerspectiveProjection { fov, .. }) = &mut *projection {
-        if (*fov - want).abs() > f32::EPSILON {
-            *fov = want;
-        }
+        *fov = want;
     }
 }
 

@@ -138,6 +138,14 @@ impl BillboardCard {
         self.scale = placement.scale;
         self.placement_rot = placement.rotation;
     }
+
+    /// Whether [`Self::re_place`] would leave the card as it is; read through a `Mut` first, so an
+    /// unmoved owner does not mark the card changed.
+    pub fn is_placed_at(&self, placement: Transform, local_pivot: Vec3) -> bool {
+        self.world_pivot == placement.transform_point(local_pivot)
+            && self.scale == placement.scale
+            && self.placement_rot == placement.rotation
+    }
 }
 
 /// A bone's rewritten parent matrix, the `flags & 0x7` arm (`0x71496d`-`0x714d0c`), taken before
@@ -441,7 +449,10 @@ pub(crate) fn face_billboards(
                         continue;
                     }
                     let pivot = card.local_pivot;
-                    card.re_place(gt.compute_transform(), pivot);
+                    let placement = gt.compute_transform();
+                    if !card.is_placed_at(placement, pivot) {
+                        card.re_place(placement, pivot);
+                    }
                     // The `card` trace (`WOW_MOVE_TRACE`, ~2 Hz): each following card's place,
                     // scale and alpha, the three causes of an invisible card. `enabled_for`, so
                     // `WOW_MOVE_TRACE_TAGS` drops this busiest tag cheaply.

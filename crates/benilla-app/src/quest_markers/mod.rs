@@ -506,7 +506,9 @@ fn re_seat_cards(
         let placement = seat_global.compute_transform();
         for &child in children {
             if let Ok((mut card, pivot)) = cards.get_mut(child) {
-                card.re_place(placement, pivot.0);
+                if !card.is_placed_at(placement, pivot.0) {
+                    card.re_place(placement, pivot.0);
+                }
             }
         }
     }
