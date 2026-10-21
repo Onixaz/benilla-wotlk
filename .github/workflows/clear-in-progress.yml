@@ -1,0 +1,21 @@
+# An issue that closes, by a merged pull request or by hand, drops its "in progress" label.
+name: Clear in-progress label
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  issues: write
+
+jobs:
+  clear:
+    if: contains(github.event.issue.labels.*.name, 'in progress')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: gh issue edit "$NUMBER" -R "$REPO" --remove-label "in progress"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
