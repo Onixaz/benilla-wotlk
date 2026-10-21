@@ -146,9 +146,9 @@ out of scope is closed with the reason.
     `series` and `hotspot`.
 - **The loop.** There are two builds. `cargo dev` builds and runs `dev`, the dev build, and a
   probe, every test and both scripts below build the same, so nothing compiles twice. Its debug
-  assertions make it no place to read frame time. `--release` is the played, shipped and
-  measured profile, fat LTO over one codegen unit, so it is built to play (`cargo play`), for a
-  frame-time number or for a release (`cargo ship`), not per round. `scripts/check.sh` verifies a round on the whole workspace,
+  assertions make it no place to read frame time. `--release` is the shipped and
+  measured profile, fat LTO over one codegen unit, so it is built for a frame-time number or for a
+  release (`cargo ship`), not per round; `cargo play` builds `play`, the same with thin LTO. `scripts/check.sh` verifies a round on the whole workspace,
   with the data and without it; `scripts/gates.sh` is its chain without the data, the one your
   pull request needs green. Both open a window for the engine boot, so they need a display. `WOW_STOCK_UI=1` boots a dev build on the stock interface alone,
   without benilla's layer. Work on a branch.

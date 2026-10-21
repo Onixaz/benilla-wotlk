@@ -74,9 +74,9 @@ crate of its own or a fork, and benilla opens a piece of itself to such a crate 
 
 - **Two builds.** `dev` (`cargo dev`) is optimized, incremental, with debug assertions and
   overflow checks on benilla's own crates. Every scripted run, probe, test and gate builds it, so
-  they share one set of artifacts. `release` is built, never tested: `cargo play` (without `dev`)
-  to play on it, `cargo ship` to ship, `cargo build --release -p benilla` to measure frame time,
-  which the dev build never does.
+  they share one set of artifacts. `release` is built, never tested: `cargo ship` to ship,
+  `cargo build --release -p benilla` to measure frame time, which the dev build never does. `cargo
+  play` (without `dev`) runs `play`, `release` with thin LTO, to play on.
 - **The check**: `scripts/check.sh`, per round and before our own pull requests, on the whole
   workspace: `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, the
   doc-link and render-pass lints, then `cargo test`, the player build without the `dev` feature
