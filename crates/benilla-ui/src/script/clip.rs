@@ -1,18 +1,20 @@
 //! The ScrollFrame clip, shared by `extract` and the pointer hit-test so drawing and hitting agree.
 
-use std::collections::HashMap;
-
 use crate::layout::Rect;
-use crate::widget::{FrameKind, KindState};
+use crate::widget::{FrameKind, HandleMap, KindState};
 
 use super::model::Model;
 use super::FrameHandle;
 
 /// Scroll child → its ScrollFrame's resolved rect, for every live ScrollFrame with a rect and a
 /// live child. Rebuilt per call and never cached, so no scroll change needs invalidating.
-pub(super) fn scroll_clip_sources(model: &Model) -> HashMap<FrameHandle, Rect> {
-    let mut sources = HashMap::new();
-    for (h, frame) in model.arena.iter_frames() {
+pub(super) fn scroll_clip_sources(model: &Model) -> HandleMap<FrameHandle, Rect> {
+    let mut sources = HandleMap::default();
+    // The ScrollFrames register in the arena's scroll list at creation: no walk of every frame.
+    for &h in model.arena.scroll_kinds() {
+        let Some(frame) = model.arena.frame(h) else {
+            continue;
+        };
         if frame.kind != FrameKind::ScrollFrame {
             continue;
         }
@@ -34,7 +36,7 @@ pub(super) fn scroll_clip_sources(model: &Model) -> HashMap<FrameHandle, Rect> {
 /// child is `h` or an ancestor of it, so nested ScrollFrames intersect; `None` is unclipped.
 pub(super) fn effective_clip(
     model: &Model,
-    sources: &HashMap<FrameHandle, Rect>,
+    sources: &HandleMap<FrameHandle, Rect>,
     mut h: FrameHandle,
 ) -> Option<Rect> {
     let mut clip: Option<Rect> = None;

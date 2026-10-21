@@ -477,8 +477,8 @@ impl PreambleProf {
 /// `CSimpleFrame`'s ctor leaves; one that loses its rect had no `ApplyRect` and fires nothing.
 fn queue_size_changes(
     watched: &[(FrameHandle, Option<Rect>)],
-    resolved: &HashMap<FrameHandle, Rect>,
-    frame_to_id: &HashMap<FrameHandle, u32>,
+    resolved: &crate::widget::HandleMap<FrameHandle, Rect>,
+    frame_to_id: &crate::widget::HandleMap<FrameHandle, u32>,
     out: &mut Vec<(u32, f32, f32)>,
 ) {
     for &(h, before) in watched {

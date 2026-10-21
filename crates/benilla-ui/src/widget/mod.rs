@@ -116,7 +116,9 @@ impl<T> Arena<T> {
 
 // ── Widget kinds ─────────────────────────────────────────────────────────────────────────────
 
+mod handle_hash;
 mod kinds;
+pub use handle_hash::{HandleHasher, HandleMap, HandleSet};
 pub use kinds::{
     click_mask_of, model_key, mouse_button_bit, slider_fraction, slider_grab, slider_set_value,
     ArmedSequence, ButtonFont, ButtonState, ButtonVisualState, ColorSelectState, CooldownFlash,

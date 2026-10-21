@@ -110,9 +110,9 @@ pub(crate) struct Model {
         std::cell::RefCell<std::collections::HashMap<String, crate::framexml::Element>>,
     pub(crate) arena: WidgetArena,
     /// Per-frame anchors, size and scale; every live frame has one from creation on.
-    pub(crate) layout_inputs: HashMap<FrameHandle, LayoutInput>,
+    pub(crate) layout_inputs: crate::widget::HandleMap<FrameHandle, LayoutInput>,
     /// Each resolvable frame's rect from the last resolve.
-    pub(crate) resolved: HashMap<FrameHandle, Rect>,
+    pub(crate) resolved: crate::widget::HandleMap<FrameHandle, Rect>,
     /// The anchor solver, kept across resolves so a steady round allocates nothing; scratch only.
     pub(crate) solver: LayoutSolver,
     /// Tier 2 of the resolve gate, the last converged inputs' fingerprint; `None` forces a resolve.
@@ -153,25 +153,25 @@ pub(crate) struct Model {
     /// Fixpoint rounds run across all solves.
     pub(crate) layout_rounds: u64,
     /// Per frame, rasterized links `(y-up rect, link, full |H…|h markup)` for `OnHyperlinkClick`.
-    pub(crate) link_spans: HashMap<FrameHandle, Vec<(Rect, String, String)>>,
+    pub(crate) link_spans: crate::widget::HandleMap<FrameHandle, Vec<(Rect, String, String)>>,
     /// Region visuals (texture, colour, text) and layout (anchors, size, justify).
-    pub(crate) region_data: HashMap<RegionHandle, RegionData>,
+    pub(crate) region_data: crate::widget::HandleMap<RegionHandle, RegionData>,
     /// Each frame's backdrop plate (`<Backdrop>` or `SetBackdrop`, the client's `frame+0x1ac`).
-    pub(crate) backdrops: HashMap<FrameHandle, backdrop::Backdrop>,
+    pub(crate) backdrops: crate::widget::HandleMap<FrameHandle, backdrop::Backdrop>,
     /// `CSimpleHTML`'s state: element fonts `+0x350`, link format `+0x360`, content nodes `+0x340`.
     pub(crate) simple_html: simplehtml::SimpleHtmlStates,
     /// Named `<Font>` objects by lowercased name, as 1.12 matches them with `SStrCmpI` (`0x783870`,
     /// `0x7838c7`); read them only through `font_object`, where the fold lives.
     pub(crate) font_objects_by_lower: HashMap<String, FontObject>,
     /// Anchored regions' owner-relative rects from the last resolve; anchor-less ones are absent.
-    pub(crate) region_resolved: HashMap<RegionHandle, Rect>,
+    pub(crate) region_resolved: crate::widget::HandleMap<RegionHandle, Rect>,
 
     /// The next object id to mint; ids start at 1, since 0 is `SCREEN`.
     pub(crate) next_id: u32,
     pub(crate) id_to_frame: IdMap<FrameHandle>,
-    pub(crate) frame_to_id: HashMap<FrameHandle, u32>,
+    pub(crate) frame_to_id: crate::widget::HandleMap<FrameHandle, u32>,
     pub(crate) id_to_region: IdMap<RegionHandle>,
-    pub(crate) region_to_id: HashMap<RegionHandle, u32>,
+    pub(crate) region_to_id: crate::widget::HandleMap<RegionHandle, u32>,
     /// Region name to id, first wins: `SetPoint` anchors to a sibling region by name, after frames.
     pub(crate) region_names: HashMap<String, u32>,
 
@@ -1142,7 +1142,7 @@ impl Model {
             load_log: Default::default(),
             framexml_fonts: Default::default(),
             arena: WidgetArena::new(),
-            layout_inputs: HashMap::new(),
+            layout_inputs: Default::default(),
             solver: LayoutSolver::new(),
             layout_fingerprint: None,
             layout_epoch: 0,
@@ -1158,18 +1158,18 @@ impl Model {
             layout_solves: 0,
             layout_gate_walks: 0,
             layout_rounds: 0,
-            resolved: HashMap::new(),
-            link_spans: HashMap::new(),
-            region_data: HashMap::new(),
-            backdrops: HashMap::new(),
+            resolved: Default::default(),
+            link_spans: Default::default(),
+            region_data: Default::default(),
+            backdrops: Default::default(),
             simple_html: simplehtml::SimpleHtmlStates::new(),
             font_objects_by_lower: HashMap::new(),
-            region_resolved: HashMap::new(),
+            region_resolved: Default::default(),
             next_id: 1,
             id_to_frame: IdMap::default(),
-            frame_to_id: HashMap::new(),
+            frame_to_id: Default::default(),
             id_to_region: IdMap::default(),
-            region_to_id: HashMap::new(),
+            region_to_id: Default::default(),
             region_names: HashMap::new(),
             scripts: HashMap::new(),
             on_update_frames: Vec::new(),
