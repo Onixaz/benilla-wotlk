@@ -163,6 +163,8 @@ pub struct WhoEntry {
     pub level: u32,
     pub class: u32,
     pub race: u32,
+    /// 0 male, 1 female; the client names race and class through it.
+    pub gender: u8,
     /// `AreaTable.dbc` zone id; the client resolves the name.
     pub zone: u32,
 }
@@ -170,16 +172,16 @@ pub struct WhoEntry {
 /// `SMSG_WHO`: the results and the two counts of the "N players total (M displayed)" line.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WhoResults {
-    /// Entries that follow (`clientCount`); vmangos stops at 49.
+    /// Entries that follow; the client keeps the first 50 (`0x6b8751`) but reads them all.
     pub displayed: u32,
-    /// The full match count when over 49, else equal to [`Self::displayed`].
+    /// The server's full match count, which can exceed [`Self::displayed`].
     pub total: u32,
-    /// In server order.
+    /// In server order, every one on the wire.
     pub entries: Vec<WhoEntry>,
 }
 
-/// Read `SMSG_WHO` (vmangos `WhoListClientQueryTask`, client `0x5adde0`): two `u32` counts, then
-/// `{name, guild, level, class, race, zone}` per entry. 1.12 has no trailing party-status `u32`.
+/// Read `SMSG_WHO` (12340 `0x6b8720`): two `u32` counts, then `{name, guild, level, class, race,
+/// gender u8, zone}` per entry, the gender read between race and zone (`0x6b8801`).
 pub fn read_who(r: &mut impl Read) -> io::Result<WhoResults> {
     let displayed = read_u32_le(r)?;
     let total = read_u32_le(r)?;
@@ -191,6 +193,7 @@ pub fn read_who(r: &mut impl Read) -> io::Result<WhoResults> {
             level: read_u32_le(r)?,
             class: read_u32_le(r)?,
             race: read_u32_le(r)?,
+            gender: read_u8(r)?,
             zone: read_u32_le(r)?,
         });
     }
@@ -201,13 +204,13 @@ pub fn read_who(r: &mut impl Read) -> io::Result<WhoResults> {
     })
 }
 
-/// A `/who` query parsed from the typed filter, e.g. `z-"Elwynn Forest" 1-10`, which the 1.12
-/// engine (not FrameXML) parses for `SendWho`. [`Default`] is a bare `/who`.
+/// A `/who` query parsed from the typed filter, e.g. `z-"Elwynn Forest" 1-10`, which the engine
+/// (not FrameXML) parses for `SendWho` (12340 `0x6b5630`). [`Default`] is a bare `/who`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WhoRequest {
     /// Inclusive minimum level.
     pub level_min: u32,
-    /// Inclusive maximum level; the 1.12 client sends 100 when unset, not 255.
+    /// Inclusive maximum level; the client sends 100 when unset, not 255.
     pub level_max: u32,
     /// `n-`: a name substring, empty for any.
     pub player_name: String,
@@ -238,13 +241,13 @@ impl Default for WhoRequest {
     }
 }
 
-/// Over 10 zones or 4 search terms, `HandleWhoOpcode` silently drops the whole query.
+/// The client's own caps (`SendWho` `0x6b5630`); over them, the server drops the whole query.
 pub const WHO_MAX_ZONES: usize = 10;
 /// See [`WHO_MAX_ZONES`].
 pub const WHO_MAX_SEARCH_TERMS: usize = 4;
 
-/// Body of `CMSG_WHO` (vmangos `Misc.cpp`, `Who::ReadFromWorldPacket`). Both arrays are trimmed to
-/// the server's caps, so an over-long query narrows instead of matching nobody.
+/// Body of `CMSG_WHO`, in `SendWho`'s put order (`0x6b5630`). Both arrays are trimmed to the
+/// caps, so an over-long query narrows instead of matching nobody.
 pub fn who(request: &WhoRequest) -> Vec<u8> {
     let zones = &request.zones[..request.zones.len().min(WHO_MAX_ZONES)];
     let terms = &request.search_terms[..request.search_terms.len().min(WHO_MAX_SEARCH_TERMS)];
@@ -414,6 +417,7 @@ mod tests {
         body.extend_from_slice(&40u32.to_le_bytes()); // level
         body.extend_from_slice(&4u32.to_le_bytes()); // class
         body.extend_from_slice(&1u32.to_le_bytes()); // race
+        body.push(1); // gender
         body.extend_from_slice(&40u32.to_le_bytes()); // zone
 
         assert_eq!(
@@ -427,6 +431,7 @@ mod tests {
                     level: 40,
                     class: 4,
                     race: 1,
+                    gender: 1,
                     zone: 40,
                 }],
             }
@@ -443,10 +448,59 @@ mod tests {
         body.extend_from_slice(&5u32.to_le_bytes());
         body.extend_from_slice(&1u32.to_le_bytes());
         body.extend_from_slice(&3u32.to_le_bytes());
+        body.push(0);
         body.extend_from_slice(&1u32.to_le_bytes());
         let who = read_who(&mut &body[..]).unwrap();
         assert_eq!(who.entries[0].guild, "");
         assert_eq!(who.entries[0].level, 5);
+    }
+
+    /// Two rows back to back: a missed gender byte shifts the second row's name by one.
+    #[test]
+    fn who_reads_each_rows_gender_so_the_next_row_stays_aligned() {
+        let mut body = Vec::new();
+        body.extend_from_slice(&2u32.to_le_bytes());
+        body.extend_from_slice(&57u32.to_le_bytes());
+        for (name, guild, level, class, race, gender, zone) in [
+            ("Belinda", "", 80u32, 6u32, 10u32, 1u8, 4395u32),
+            ("Thrall", "Horde", 80, 7, 2, 0, 1637),
+        ] {
+            body.extend_from_slice(name.as_bytes());
+            body.push(0);
+            body.extend_from_slice(guild.as_bytes());
+            body.push(0);
+            for v in [level, class, race] {
+                body.extend_from_slice(&v.to_le_bytes());
+            }
+            body.push(gender);
+            body.extend_from_slice(&zone.to_le_bytes());
+        }
+        let mut r = &body[..];
+        let who = read_who(&mut r).unwrap();
+        assert!(r.is_empty(), "every byte read");
+        assert_eq!(
+            who.entries,
+            [
+                WhoEntry {
+                    name: "Belinda".into(),
+                    guild: String::new(),
+                    level: 80,
+                    class: 6,
+                    race: 10,
+                    gender: 1,
+                    zone: 4395,
+                },
+                WhoEntry {
+                    name: "Thrall".into(),
+                    guild: "Horde".into(),
+                    level: 80,
+                    class: 7,
+                    race: 2,
+                    gender: 0,
+                    zone: 1637,
+                },
+            ]
+        );
     }
 
     #[test]

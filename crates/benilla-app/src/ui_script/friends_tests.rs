@@ -11,6 +11,21 @@ fn setup() -> UiScript {
     s
 }
 
+/// The production 3.3.5a interface load, with the environment lock the load needs held for the
+/// test.
+fn who_setup() -> (std::sync::MutexGuard<'static, ()>, UiScript) {
+    let lock = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, failures) = super::layer_tests::production_load_with("who", false, "", |_| {});
+    let ours: Vec<_> = failures.iter().filter(|f| f.contains("Friends")).collect();
+    assert!(ours.is_empty(), "load failures: {ours:#?}");
+    s.resolve();
+    s.take_errors();
+    let _ = s.take_social_requests();
+    (lock, s)
+}
+
 fn who(name: &str, level: u32, class: &str, zone: &str) -> WhoInfo {
     WhoInfo {
         name: name.to_string(),
@@ -19,6 +34,7 @@ fn who(name: &str, level: u32, class: &str, zone: &str) -> WhoInfo {
         race: "Human".to_string(),
         class: class.to_string(),
         zone: zone.to_string(),
+        ..Default::default()
     }
 }
 
@@ -328,10 +344,9 @@ fn the_ignore_list_is_the_other_half_of_tab_one() {
 
 /// The wire sends class before race, and `GetWhoInfo` returns race before class.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn who_rows_fill_their_columns() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
+    let (_lock, mut s) = who_setup();
     s.run("ShowWhoPanel()").unwrap();
     push(
         &mut s,
@@ -343,6 +358,8 @@ fn who_rows_fill_their_columns() {
                 race: "Human".to_string(),
                 class: "Rogue".to_string(),
                 zone: "Westfall".to_string(),
+                class_file: Some("ROGUE".to_string()),
+                ..Default::default()
             }],
             who_total: 1,
             ..Default::default()
@@ -351,6 +368,15 @@ fn who_rows_fill_their_columns() {
     );
 
     assert!(s.eval::<bool>("return WhoFrame:IsVisible()").unwrap());
+    // `GetWhoInfo`'s seventh value colours the class (`WhoList_Update`).
+    assert!(
+        s.eval::<bool>(
+            "local r, g, b = WhoFrameButton1Class:GetTextColor() local c = RAID_CLASS_COLORS.ROGUE \
+             return math.abs(r - c.r) < 0.01 and math.abs(g - c.g) < 0.01 and math.abs(b - c.b) < 0.01"
+        )
+        .unwrap(),
+        "the class column takes its class colour"
+    );
     assert_eq!(
         s.eval::<String>("return WhoFrameButton1Name:GetText()")
             .unwrap(),
@@ -381,10 +407,9 @@ fn who_rows_fill_their_columns() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_who_dropdown_switches_the_variable_column() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
+    let (_lock, mut s) = who_setup();
     s.run("ShowWhoPanel()").unwrap();
     push(
         &mut s,
@@ -396,6 +421,7 @@ fn the_who_dropdown_switches_the_variable_column() {
                 race: "Human".to_string(),
                 class: "Rogue".to_string(),
                 zone: "Westfall".to_string(),
+                ..Default::default()
             }],
             who_total: 1,
             ..Default::default()
@@ -419,13 +445,12 @@ fn the_who_dropdown_switches_the_variable_column() {
     );
 }
 
-/// The reference's seven-slot sort chain (`SortWho`, `0x5ad890`): a repeated header reverses and
+/// The reference's seven-slot sort chain (`SortWho`, `0x6b4eb0`): a repeated header reverses and
 /// an earlier key breaks ties. Rows are read with no tick: `WHO_LIST_UPDATE` fires inside the call.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_who_headers_sort_and_a_repeated_click_reverses() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
+    let (_lock, mut s) = who_setup();
     s.run("ShowWhoPanel()").unwrap();
     push(
         &mut s,
@@ -467,10 +492,9 @@ fn the_who_headers_sort_and_a_repeated_click_reverses() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_who_buttons_need_a_selected_row() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
+    let (_lock, mut s) = who_setup();
     s.run("ShowWhoPanel()").unwrap();
     let rows = vec![
         WhoInfo {
@@ -529,10 +553,9 @@ fn the_who_buttons_need_a_selected_row() {
 
 /// The who frame's show and hide route answers with `SetWhoToUI` (`FriendsFrame.xml:1711-1716`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn showing_the_who_frame_claims_the_next_answer() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
+    let (_lock, mut s) = who_setup();
     s.run("ShowWhoPanel()").unwrap();
     assert!(
         s.take_social_requests()
@@ -548,15 +571,15 @@ fn showing_the_who_frame_claims_the_next_answer() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_who_edit_box_sends_its_filter() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
+    let (_lock, mut s) = who_setup();
     s.run("ShowWhoPanel()").unwrap();
     let _ = s.take_social_requests();
     s.run("WhoFrameEditBox:SetText(\"z-\\\"Elwynn Forest\\\" 1-10\")")
         .unwrap();
-    s.run("WhoFrameEditBox_OnEnterPressed()").unwrap();
+    s.run("WhoFrameEditBox_OnEnterPressed(WhoFrameEditBox)")
+        .unwrap();
     assert_eq!(
         s.take_social_requests(),
         vec![SocialRequest::Who("z-\"Elwynn Forest\" 1-10".to_string())]
@@ -620,10 +643,9 @@ fn the_name_dialog_reopens_empty() {
 
 /// A who hit has no unit token, so the shared `FRIEND` menu is addressed by name.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn right_clicking_a_who_row_opens_the_friend_menu() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
+    let (_lock, mut s) = who_setup();
     s.run("ShowWhoPanel()").unwrap();
     push(
         &mut s,
@@ -669,8 +691,10 @@ fn right_clicking_a_who_row_opens_the_friend_menu() {
     // The stock `WHISPER` row is `ChatFrame_SendTell(name)`, applied at the box's next `OnUpdate`.
     s.tick(0.05);
     assert_eq!(
-        s.eval::<(String, String)>("return ChatFrameEditBox.chatType, ChatFrameEditBox.tellTarget")
-            .unwrap(),
+        s.eval::<(String, String)>(
+            "local eb = DEFAULT_CHAT_FRAME.editBox return eb:GetAttribute('chatType'), eb:GetAttribute('tellTarget')"
+        )
+        .unwrap(),
         ("WHISPER".to_string(), "Tigole".to_string())
     );
 }
@@ -735,10 +759,9 @@ fn selecting_a_row_reads_back_in_the_same_tick() {
 /// 15px short of the bar's `(n - 17) * 16`; the reference stores the scroll value unclamped
 /// (`0x786db0`), so the bar's end reaches the last row.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_who_list_reaches_its_last_row_at_the_bars_end() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = setup();
+    let (_lock, mut s) = who_setup();
     s.run("ShowWhoPanel()").unwrap();
     let who: Vec<WhoInfo> = (1..=49)
         .map(|i| WhoInfo {
@@ -748,6 +771,7 @@ fn the_who_list_reaches_its_last_row_at_the_bars_end() {
             race: "Human".to_string(),
             class: "Warrior".to_string(),
             zone: "Elwynn Forest".to_string(),
+            ..Default::default()
         })
         .collect();
     push(

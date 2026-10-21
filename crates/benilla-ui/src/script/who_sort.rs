@@ -1,17 +1,19 @@
-//! The `/who` sort (`SortWho` `0x5ad890`, comparator `0x5ada00`): a chain of seven `{key, dir}`
-//! slots (`0xc2817c`/`0xc28180`), seeded zone, level, class, group, name, race, guild, all
-//! ascending (`0x5add04`). A click promotes its key to the front and the comparator walks the chain
-//! as tie-breakers, so earlier clicks still order ties. The direction flips only when the key was
-//! already in front (`0x5ad99e`–`0x5ad9a7`); promoted from behind, it keeps its old direction.
-//! Sorting is local, never a server request, and the chain lives for the process (`0x5adc50`, run
-//! from `0x401666`), so it survives a logout.
+//! The `/who` sort (`SortWho` `0x6b4eb0`, comparator `0x6b4c80`): a chain of seven `{key, dir}`
+//! slots (`0xc79f9c`/`0xc79fa0`), seeded zone, level, class, group, name, race, guild, all
+//! ascending (`0x6b8a64`-`0x6b8a8e`). A click promotes its key to the front and the comparator
+//! walks the chain as tie-breakers, so earlier clicks still order ties. The direction flips only
+//! when the key was already in front (`0x6b4fb3`-`0x6b4fc5`); promoted from behind, it keeps its old
+//! direction. Sorting is local, never a server request, and `FriendList::Initialize` reseeds the
+//! chain at every world entry (`0x405653`).
 
 use std::cmp::Ordering;
+use std::iter::Peekable;
+use std::str::Chars;
 
 use super::social::WhoInfo;
 
 /// The seven keys `SortWho` maps its argument to, declared in the reference's numbering
-/// (`0x5ad8bb`–`0x5ad979`), which is also the chain's seeded order.
+/// (`0x6b4edf`-`0x6b4f96`), which is also the chain's seeded order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum WhoSortKey {
     /// `0`, `"zone"`, the frame's resting column.
@@ -20,10 +22,10 @@ pub enum WhoSortKey {
     Level,
     /// `2`, `"class"`.
     Class,
-    /// `3`, `"group"`: its arm (`0x5adbb2`) orders nothing, but promoting it still displaces the
-    /// front key. The stock header for it is commented out (`FriendsFrame.xml:1413-1429`).
+    /// `3`, `"group"`: its jump-table slot is the loop's continue (`0x6b4e57`), but promoting it
+    /// still displaces the front key. The stock Who frame has no header for it.
     Group,
-    /// `4`, `"name"`, and the answer for any other string (preloaded at `0x5ad8bb`).
+    /// `4`, `"name"`, and the answer for any other string (preloaded at `0x6b4edf`).
     #[default]
     Name,
     /// `5`, `"race"`.
@@ -44,8 +46,8 @@ impl WhoSortKey {
         Self::Guild,
     ];
 
-    /// `SortWho`'s argument to its key: seven ASCII case-insensitive compares (`0x64a4c0`,
-    /// `0x5ad8c0`–`0x5ad979`), [`Self::Name`] when none match.
+    /// `SortWho`'s argument to its key: seven ASCII case-insensitive compares (`SStrCmpI`
+    /// `0x76e780`), [`Self::Name`] when none match.
     pub fn from_sort_type(sort_type: &str) -> Self {
         match () {
             _ if sort_type.eq_ignore_ascii_case("name") => Self::Name,
@@ -59,19 +61,20 @@ impl WhoSortKey {
         }
     }
 
-    /// This key's ascending order of two rows: the comparator's jump-table arms (`0x5adbd8`).
+    /// This key's ascending order of two rows, the jump-table arms at `0x6b4e8c`.
     fn order(self, a: &WhoInfo, b: &WhoInfo) -> Ordering {
+        let records = |x: &Option<String>, y: &Option<String>| match (x, y) {
+            // A missing record on either side passes to the next key (`0x6b4d5e`).
+            (Some(x), Some(y)) => sort_utf8i(x, y),
+            _ => Ordering::Equal,
+        };
         match self {
-            // `a+0`/`a+0x30`, wire strings; an empty guild is a real value and sorts first.
-            Self::Name => ascii_ci_cmp(&a.name, &b.name),
-            Self::Guild => ascii_ci_cmp(&a.guild, &b.guild),
-            // `a+0x90`, an i32, lower level first.
+            Self::Name => cmp_utf8i(&a.name, &b.name),
+            Self::Guild => sort_utf8i(&a.guild, &b.guild),
             Self::Level => a.level.cmp(&b.level),
-            // The localized `ChrClasses`/`ChrRaces`/`AreaTable` name the app resolved into the row.
-            Self::Class => dbc_name_cmp(&a.class, &b.class),
-            Self::Race => dbc_name_cmp(&a.race, &b.race),
-            Self::Zone => dbc_name_cmp(&a.zone, &b.zone),
-            // `0x5adbb2` is the chain loop's continue label.
+            Self::Class => records(&a.records.class, &b.records.class),
+            Self::Race => records(&a.records.race, &b.records.race),
+            Self::Zone => records(&a.records.zone, &b.records.zone),
             Self::Group => Ordering::Equal,
         }
     }
@@ -85,7 +88,7 @@ pub struct WhoSortChain {
 }
 
 impl Default for WhoSortChain {
-    /// The initialiser `0x5add04`–`0x5add16`: `key[i] = i`, `dir[i] = 0`.
+    /// The seed `0x6b8a64`-`0x6b8a8e`: `key[i] = i`, `dir[i] = 0`.
     fn default() -> Self {
         Self {
             slots: WhoSortKey::ALL.map(|key| (key, false)),
@@ -94,12 +97,12 @@ impl Default for WhoSortChain {
 }
 
 impl WhoSortChain {
-    /// `SortWho`'s promote (`0x5ad980`–`0x5ad9c9`): move the key to the front, flipping its
+    /// `SortWho`'s promote (`0x6b4f9b`-`0x6b4fef`): move the key to the front, flipping its
     /// direction only if it was already there; the keys it passes shift down one slot.
     pub fn promote(&mut self, sort_type: &str) {
         let key = WhoSortKey::from_sort_type(sort_type);
         let Some(at) = self.slots.iter().position(|(k, _)| *k == key) else {
-            // Unreachable; the reference's not-found edge skips the promote and sorts (`0x5ad991`).
+            // Unreachable; the reference's not-found edge skips the promote and sorts (`0x6b4fb1`).
             return;
         };
         let dir = if at == 0 {
@@ -111,8 +114,8 @@ impl WhoSortChain {
         self.slots[0] = (key, dir);
     }
 
-    /// The comparator (`0x5ada00`): the first key that does not tie, negated when its slot is
-    /// reversed, else `Equal`.
+    /// The comparator (`0x6b4c80`): the first key that does not tie, negated when its slot is
+    /// reversed (`0x6b4e6a`), else `Equal`.
     pub fn compare(&self, a: &WhoInfo, b: &WhoInfo) -> Ordering {
         for (key, reversed) in self.slots {
             let order = key.order(a, b);
@@ -123,11 +126,18 @@ impl WhoSortChain {
         Ordering::Equal
     }
 
-    /// Order `rows` by the chain, as the reference's `qsort` does on a click (`0x5ad9cf`) and on
-    /// each `SMSG_WHO` answer (`0x5ae0e2`). This sort is stable where `qsort` is not, which no two
-    /// rows can show: names are unique and the name key never leaves the chain.
+    /// Order `rows` by the chain, as the reference's `qsort` does on a click (`0x6b500b`) and on
+    /// each `SMSG_WHO` answer (`0x6b88fe`). An insertion sort over the 50 rows at most: like
+    /// `qsort` it cannot fail on the comparator's ties between a missing record and a present one,
+    /// which are not a total order.
     pub fn sort(&self, rows: &mut [WhoInfo]) {
-        rows.sort_by(|a, b| self.compare(a, b));
+        for i in 1..rows.len() {
+            let mut j = i;
+            while j > 0 && self.compare(&rows[j - 1], &rows[j]) == Ordering::Greater {
+                rows.swap(j - 1, j);
+                j -= 1;
+            }
+        }
     }
 
     #[cfg(test)]
@@ -136,48 +146,127 @@ impl WhoSortChain {
     }
 }
 
-/// The reference's string compare (`0x64a4c0`, `0x414310`): it folds `A`–`Z` only
-/// (`0x41434a`–`0x41435c`), so accented names order as they do there, not by a Unicode fold.
-fn ascii_ci_cmp(a: &str, b: &str) -> Ordering {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    for (x, y) in a.iter().zip(b) {
-        match x.to_ascii_lowercase().cmp(&y.to_ascii_lowercase()) {
-            Ordering::Equal => {}
-            other => return other,
-        }
+/// A code point as Storm reads it: past the Basic Multilingual Plane, U+FFFD.
+fn code(c: char) -> u32 {
+    match u32::from(c) {
+        c @ 0..=0xFFFF => c,
+        _ => 0xFFFD,
     }
-    // The reference compares NUL-terminated strings, so the shorter one wins its own prefix.
-    a.len().cmp(&b.len())
 }
 
-/// The class, race and zone arms (`0x5ada7b`, `0x5adadf`, `0x5adb40`): an id with no DBC row, an
-/// empty name here, sorts after every resolved name, not first as `""`. Two misses tie and pass
-/// to the next key (`0x5adbb2`), as there. The empty name is the miss marker: the reference's
-/// `GetWhoInfo` (`0x5ad6e0`) shows `UNKNOWN` for it, benilla's an empty cell, and a row that
-/// carried `UNKNOWN` would sort on that word.
-fn dbc_name_cmp(a: &str, b: &str) -> Ordering {
-    match (a.is_empty(), b.is_empty()) {
-        (true, true) => Ordering::Equal,
-        // Deviation: the reference ties a miss against a hit (`0x5adab6`); no total order can, and
-        // `sort_by` may panic on one that is not, so the miss goes last.
-        (true, false) => Ordering::Greater,
-        (false, true) => Ordering::Less,
-        (false, false) => ascii_ci_cmp(a, b),
+/// `SStrCmpUTF8I`'s fold (`0x76e8d0`): ASCII and Latin-1 lower case up, `œ` to `Œ`, and the
+/// Cyrillic letters folded so `Ё` and `ё` compare as `Е`.
+fn cmp_upper(c: u32) -> u32 {
+    match c {
+        0x61..=0x7A | 0xE0..=0xFE => c - 32,
+        0x153 => 0x152,
+        0x401 | 0x451 => 0x415,
+        0x410..=0x415 => c - 1,
+        0x430..=0x44F => c - u32::from(c <= 0x435) - 32,
+        _ => c,
+    }
+}
+
+/// `SStrCmpUTF8I` (`0x76ea40`), the name arm: folded code points in order, a shorter string first.
+fn cmp_utf8i(a: &str, b: &str) -> Ordering {
+    let fold = |s: &str| s.chars().map(|c| cmp_upper(code(c))).collect::<Vec<_>>();
+    fold(a).cmp(&fold(b))
+}
+
+/// `SStrSortUTF8I`'s fold (`0x76e7a0`): ASCII, Latin-1 and Cyrillic lower case up, `œ` to `Œ`.
+fn sort_upper(c: u32) -> u32 {
+    match c {
+        0x61..=0x7A | 0xE0..=0xFE | 0x430..=0x44F => c - 32,
+        0x153 => 0x152,
+        0x451 => 0x401,
+        _ => c,
+    }
+}
+
+/// `GetSortChar` (`0x76eab0`): accented Latin capitals to their base letter, `Ё` to `Е`.
+fn sort_char(upper: u32) -> u32 {
+    match upper {
+        0xC0..=0xC6 => 'A' as u32,
+        0xC7 => 'C' as u32,
+        0xC8..=0xCB => 'E' as u32,
+        0xCC..=0xCF => 'I' as u32,
+        0xD1 => 'N' as u32,
+        0xD2..=0xD6 | 0x152 => 'O' as u32,
+        0xD9..=0xDC => 'U' as u32,
+        0xDF => 'S' as u32,
+        0x401 => 0x415,
+        _ => upper,
+    }
+}
+
+/// `CompareSortChars` (`0x76eb80`): two letters match on their base letter, and a ligature
+/// (`Æ`, `ß`, `Œ`) also takes the other string's next `E`, `S` or `E`.
+fn sort_chars_match(
+    upper1: u32,
+    upper2: u32,
+    s1: &mut Peekable<Chars<'_>>,
+    s2: &mut Peekable<Chars<'_>>,
+) -> bool {
+    if sort_char(upper1) != sort_char(upper2) {
+        return false;
+    }
+    if upper1 == upper2 {
+        return true;
+    }
+    let takes = |other: &mut Peekable<Chars<'_>>, second: char| {
+        let next = other.peek().map_or(0, |&c| sort_char(sort_upper(code(c))));
+        next == second as u32 && other.next().is_some()
+    };
+    match (upper1, upper2) {
+        (0xC6, _) => takes(s2, 'E'),
+        (_, 0xC6) => takes(s1, 'E'),
+        (0xDF, _) => takes(s2, 'S'),
+        (_, 0xDF) => takes(s1, 'S'),
+        (0x152, _) => takes(s2, 'E'),
+        (_, 0x152) => takes(s1, 'E'),
+        _ => true,
+    }
+}
+
+/// `SStrSortUTF8I` (`0x76ec80`), the guild, class, race and zone arms: by base letter, and two
+/// strings equal so far by the first differing raw code point.
+fn sort_utf8i(a: &str, b: &str) -> Ordering {
+    let (mut s1, mut s2) = (a.chars().peekable(), b.chars().peekable());
+    let mut tie = Ordering::Equal;
+    loop {
+        let (c1, c2) = match (s1.next(), s2.next()) {
+            (None, None) => return tie,
+            (x, y) => (x.map_or(0, code), y.map_or(0, code)),
+        };
+        let (upper1, upper2) = (sort_upper(c1), sort_upper(c2));
+        if !sort_chars_match(upper1, upper2, &mut s1, &mut s2) {
+            return sort_char(upper1).cmp(&sort_char(upper2));
+        }
+        if tie == Ordering::Equal {
+            tie = c1.cmp(&c2);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::social::WhoRecords;
     use super::*;
 
     fn row(name: &str, level: u32, class: &str, zone: &str) -> WhoInfo {
+        let record = |s: &str| (!s.is_empty()).then(|| s.to_string());
         WhoInfo {
             name: name.to_string(),
-            guild: String::new(),
             level,
             race: "Human".to_string(),
             class: class.to_string(),
             zone: zone.to_string(),
+            records: WhoRecords {
+                race: Some("Human".to_string()),
+                class: record(class),
+                zone: record(zone),
+            },
+            ..Default::default()
         }
     }
 
@@ -300,108 +389,86 @@ mod tests {
         assert_eq!(names(&rows), ["High", "Low"]);
     }
 
+    /// The class arm reads the record's `Name_lang`, so a row sorts on the same word whatever
+    /// gendered name it shows.
     #[test]
-    fn the_string_arms_fold_ascii_case() {
-        assert_eq!(ascii_ci_cmp("Apple", "apple"), Ordering::Equal);
-        assert_eq!(ascii_ci_cmp("apple", "Zed"), Ordering::Less);
-        assert_eq!(ascii_ci_cmp("Zed", "apple"), Ordering::Greater);
-        assert_eq!(ascii_ci_cmp("Ann", "Anne"), Ordering::Less, "prefix first");
+    fn the_record_arms_order_by_the_record_name_not_the_shown_one() {
+        let mut chain = WhoSortChain::default();
+        chain.promote("class");
+        let mut a = row("Aaa", 1, "Warrior", "Z");
+        a.class = "Zzz".into();
+        let b = row("Bbb", 1, "Mage", "Z");
+        let mut rows = vec![a, b];
+        chain.sort(&mut rows);
+        assert_eq!(names(&rows), ["Bbb", "Aaa"], "Mage before Warrior");
     }
 
+    /// The name arm is `SStrCmpUTF8I`: case folded over ASCII and Latin-1, then by code point.
     #[test]
-    fn an_unresolved_dbc_name_sorts_after_the_resolved_ones() {
-        // Zone is the seeded front key, so the promote flips it: the default chain already ascends.
+    fn the_name_arm_folds_latin_1_case() {
+        assert_eq!(cmp_utf8i("Apple", "apple"), Ordering::Equal);
+        assert_eq!(cmp_utf8i("Zoë", "ZOË"), Ordering::Equal);
+        assert_eq!(cmp_utf8i("apple", "Zed"), Ordering::Less);
+        assert_eq!(cmp_utf8i("Ann", "Anne"), Ordering::Less, "prefix first");
+        // No base-letter fold here: É (0xC9) is past every ASCII letter.
+        assert_eq!(cmp_utf8i("Éa", "Zb"), Ordering::Greater);
+    }
+
+    /// The record and guild arms are `SStrSortUTF8I`: by base letter, ligatures spelled out, the
+    /// raw code point only breaking a tie.
+    #[test]
+    fn the_sort_arm_orders_accents_by_their_base_letter() {
+        assert_eq!(sort_utf8i("Éa", "Zb"), Ordering::Less, "É sorts as E");
+        assert_eq!(
+            sort_utf8i("Éa", "Eb"),
+            Ordering::Less,
+            "the base letters decide first"
+        );
+        assert_eq!(
+            sort_utf8i("e", "é"),
+            Ordering::Less,
+            "a tie goes to the raw code point"
+        );
+        assert_eq!(sort_utf8i("Æther", "Aether"), Ordering::Greater);
+        assert_eq!(sort_utf8i("Æthar", "Aether"), Ordering::Less, "Æ spells AE");
+        assert_eq!(sort_utf8i("Straße", "Strasse"), Ordering::Greater);
+        assert_eq!(
+            sort_utf8i("Legacy", "legacy"),
+            Ordering::Less,
+            "L before l at a tie"
+        );
+        assert_eq!(sort_utf8i("", "Legacy"), Ordering::Less, "no guild first");
+    }
+
+    /// A row whose zone has no record ties with any row on zone, so the next key decides.
+    #[test]
+    fn a_missing_record_passes_to_the_next_key() {
         let chain = WhoSortChain::default();
         let known = row("Bbb", 10, "Mage", "Westfall");
         let unknown = row("Aaa", 10, "Mage", "");
-        assert_eq!(chain.compare(&known, &unknown), Ordering::Less);
-        assert_eq!(chain.compare(&unknown, &known), Ordering::Greater);
-        let other_unknown = row("Ccc", 10, "Mage", "");
-        assert_eq!(
-            chain.compare(&unknown, &other_unknown),
-            Ordering::Less,
-            "two misses tie on zone, so the name decides"
-        );
-
-        // A guild is not a DBC lookup: an empty guild is a real value and sorts first.
-        assert_eq!(ascii_ci_cmp("", "Legacy"), Ordering::Less);
+        assert_eq!(chain.compare(&unknown, &known), Ordering::Less, "by name");
+        assert_eq!(chain.compare(&known, &unknown), Ordering::Greater);
     }
 
-    type Setter = fn(&mut WhoInfo, &str);
-
-    /// Each DBC-backed key as a single-key comparator, with the setter for its field.
-    fn dbc_keys() -> [(&'static str, Setter); 3] {
-        [
-            ("class", |r, v| r.class = v.to_string()),
-            ("race", |r, v| r.race = v.to_string()),
-            ("zone", |r, v| r.zone = v.to_string()),
-        ]
-    }
-
-    fn mixed_rows(set: Setter, n: usize) -> Vec<WhoInfo> {
-        let values = [
-            "",
-            "Mage",
-            "Warrior",
-            "",
-            "Elwynn Forest",
-            "Durotar",
-            "Mage",
-        ];
-        (0..n)
+    #[test]
+    fn sorting_a_list_with_missing_records_keeps_every_row() {
+        let zones = ["", "Westfall", "Durotar", "", "Elwynn Forest", "Ashenvale"];
+        let mut rows: Vec<WhoInfo> = (0..50)
             .map(|i| {
-                let mut r = row(&format!("N{i:03}"), 1 + (i % 7) as u32, "Mage", "Z");
-                set(&mut r, values[(i * 5 + i / 7) % values.len()]);
-                r
+                row(
+                    &format!("N{i:02}"),
+                    1 + (i % 7) as u32,
+                    "Mage",
+                    zones[i % 6],
+                )
             })
-            .collect()
-    }
-
-    #[test]
-    fn the_dbc_arms_are_a_total_order() {
-        for (key, set) in dbc_keys() {
-            let key = WhoSortKey::from_sort_type(key);
-            let rows = mixed_rows(set, 21);
-            let le = |a: &WhoInfo, b: &WhoInfo| key.order(a, b) != Ordering::Greater;
-            for a in &rows {
-                for b in &rows {
-                    assert_eq!(key.order(a, b), key.order(b, a).reverse(), "{key:?}");
-                    for c in &rows {
-                        if le(a, b) && le(b, c) {
-                            assert!(le(a, c), "{key:?} not transitive");
-                        }
-                        if key.order(a, b) == Ordering::Equal && key.order(b, c) == Ordering::Equal
-                        {
-                            assert_eq!(key.order(a, c), Ordering::Equal, "{key:?} tie");
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn sorting_a_mixed_list_puts_misses_last_without_panicking() {
-        for (key, set) in dbc_keys() {
-            let mut chain = WhoSortChain::default();
-            chain.promote("level"); // so the key below is promoted from behind, ascending
-            chain.promote(key);
-            let mut rows = mixed_rows(set, 64);
-            chain.sort(&mut rows);
-            let field = |r: &WhoInfo| match key {
-                "class" => r.class.clone(),
-                "race" => r.race.clone(),
-                _ => r.zone.clone(),
-            };
-            let first_miss = rows.iter().position(|r| field(r).is_empty()).unwrap();
-            assert!(
-                rows[first_miss..].iter().all(|r| field(r).is_empty()),
-                "{key}"
-            );
-            assert!(rows[..first_miss]
-                .windows(2)
-                .all(|w| { ascii_ci_cmp(&field(&w[0]), &field(&w[1])) != Ordering::Greater }));
-        }
+            .collect();
+        WhoSortChain::default().sort(&mut rows);
+        let mut seen = names(&rows);
+        seen.sort_unstable();
+        assert_eq!(seen.len(), 50);
+        seen.dedup();
+        assert_eq!(seen.len(), 50, "a permutation of the input");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 //! The `/who` filter parser: the typed string into `CMSG_WHO`'s fields, which the reference's
-//! `SendWho` builds in the engine (`0x5aebb0`). `z-` names a zone the wire wants as an
+//! `SendWho` builds in the engine (`0x6b5630`). `z-` names a zone the wire wants as an
 //! `AreaTable.dbc` id, so the parse needs [`crate::area::AreaTableRes`].
 //!
 //! `n-` name, `g-` guild, `z-` zone, `c-` class and `r-` race (the `WHO_TAG_*` strings, without
@@ -13,10 +13,10 @@ use benilla_protocol::messages::WhoRequest;
 
 use crate::ui_unit::{class_names, race_names};
 
-/// The 1.12 class ids a `c-` word can name; 6 and 10 do not exist in 1.12.
-const CLASS_IDS: [u8; 9] = [1, 2, 3, 4, 5, 7, 8, 9, 11];
-/// The 1.12 playable race ids (`race_names`' domain).
-const RACE_IDS: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+/// The 3.3.5a class ids a `c-` word can name (`class_names`' domain); 10 has no class.
+const CLASS_IDS: [u8; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 11];
+/// The 3.3.5a playable race ids (`race_names`' domain).
+const RACE_IDS: [u8; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 10, 11];
 
 /// Parse a `/who` filter into the wire request. A `z-` name that `areas` cannot resolve becomes a
 /// search term, which the server still matches against zone names.
@@ -98,7 +98,7 @@ fn split_tag(token: &str) -> (Option<char>, &str) {
 }
 
 /// `1-10` is `(1, 10)` and `40` is `(40, 40)`, clamped to 1..=100 with the high bound raised to
-/// the low. The reference (`0x5aef7d`) sends the numbers as typed, unclamped, and also reads `N-`
+/// the low. The reference (`0x6b59b6`-`0x6b5a1e`) sends the numbers as typed, unclamped, and also reads `N-`
 /// as N..100 and `-M` as 0..M.
 fn level_range(value: &str) -> Option<(u32, u32)> {
     let clamp = |n: u32| n.clamp(1, 100);
@@ -173,6 +173,15 @@ mod tests {
         // Two of a kind union rather than overwrite.
         let both = parse("c-mage c-warlock", None);
         assert_eq!(both.class_mask, (1 << 8) | (1 << 9));
+    }
+
+    /// The classes and races 3.3.5a added answer too.
+    #[test]
+    fn the_3_3_5a_class_and_races_become_mask_bits() {
+        let q = parse("c-\"death knight\" r-draenei r-bloodelf", None);
+        assert_eq!(q.class_mask, 1 << 6);
+        assert_eq!(q.race_mask, (1 << 11) | (1 << 10));
+        assert!(q.search_terms.is_empty());
     }
 
     #[test]

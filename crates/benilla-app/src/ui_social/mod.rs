@@ -32,10 +32,12 @@ pub(crate) struct SocialState {
     /// The friend guids in the order the feed last showed them, for Lua's row indices.
     display_order: Vec<u64>,
     ignore_display_order: Vec<u64>,
-    /// The last `/who` answer; `who_total` is the server's full match count.
+    /// The last `/who` answer's first 50 rows (`0x6b875c`); `who_total` is the server's full match
+    /// count and `who_sent` the rows the wire carried, which picks chat or the frame.
     who: Vec<benilla_protocol::messages::WhoEntry>,
     who_total: u32,
-    /// The `/who` sort chain (`SortWho`'s seven `{key, dir}` slots at `0xc2817c`), pushed with the
+    who_sent: u32,
+    /// The `/who` sort chain (`SortWho`'s seven `{key, dir}` slots at `0xc79f9c`), pushed with the
     /// rows so the binding can re-sort synchronously.
     who_sort: benilla_ui::script::WhoSortChain,
     /// `SetWhoToUI`, which the Who frame sets on show and clears on hide.
@@ -52,13 +54,10 @@ pub(crate) struct SocialState {
 
 impl SocialState {
     /// Drop the session's state: the server re-sends both lists at login, and a stale ignore list
-    /// would silence the wrong guids. The `/who` sort chain survives, since the reference
-    /// initialises it once per process (`0x5adc50`, from `0x401666`), never at login.
+    /// would silence the wrong guids. The `/who` rows and sort chain go too, as the reference
+    /// reseeds both at each world entry (`FriendList::Initialize` `0x6b8990`, from `0x405653`).
     pub(crate) fn clear_session(&mut self) {
-        *self = Self {
-            who_sort: std::mem::take(&mut self.who_sort),
-            ..Self::default()
-        };
+        *self = Self::default();
     }
 
     /// Is `guid` on the ignore list? The reference's `IsIgnored` (`0x5ae5a0`): an ignored player's
@@ -158,13 +157,18 @@ impl SocialState {
         self.friends.iter_mut().find(|f| f.guid == guid)
     }
 
-    /// `SMSG_WHO`: the answer to the last query.
-    fn apply_who(&mut self, results: benilla_protocol::messages::WhoResults) {
+    /// `SMSG_WHO`: the answer to the last query, every row read and the first 50 kept.
+    fn apply_who(&mut self, mut results: benilla_protocol::messages::WhoResults) {
+        results.entries.truncate(WHO_MAX_RESULTS);
         self.who = results.entries;
         self.who_total = results.total;
+        self.who_sent = results.displayed;
         self.who_dirty = true;
     }
 }
+
+/// The rows the reference keeps of an answer (`cmp ecx,0x32` at `0x6b8751`).
+const WHO_MAX_RESULTS: usize = 50;
 
 /// The `GlobalStrings.lua` key a friend or ignore result prints, resolved at the feed. The
 /// reference composes these lines engine-side; FrameXML never names the keys.
@@ -428,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn a_logout_keeps_the_sort_chain_and_drops_everything_else() {
+    fn a_logout_drops_the_lists_the_answer_and_the_sort_chain() {
         let mut social = SocialState::default();
         social.apply_friend_list(vec![FriendEntry {
             guid: 7,
@@ -438,19 +442,38 @@ mod tests {
         social.who_to_ui = true;
         social.who_sort.promote("level");
         social.who_sort.promote("level"); // descending
-        let chain = social.who_sort.clone();
+        assert_ne!(social.who_sort, benilla_ui::script::WhoSortChain::default());
 
         social.clear_session();
         assert!(social.friends.is_empty());
         assert!(social.ignores.is_empty());
         assert!(social.who.is_empty());
         assert!(!social.who_to_ui, "the frame is closed after a logout");
-        assert_eq!(social.who_sort, chain, "the sort chain is process state");
-        assert_ne!(
+        assert_eq!(
             social.who_sort,
             benilla_ui::script::WhoSortChain::default(),
-            "and the assertion above only means something if it is not the seeded chain"
+            "reseeded at the next world entry"
         );
+    }
+
+    /// 57 rows on the wire: all are read, 50 kept, and the wire count still routes the answer.
+    #[test]
+    fn an_answer_keeps_its_first_fifty_rows() {
+        let mut social = SocialState::default();
+        let entries: Vec<_> = (0..57)
+            .map(|i| benilla_protocol::messages::WhoEntry {
+                name: format!("N{i:02}"),
+                ..Default::default()
+            })
+            .collect();
+        social.apply_who(benilla_protocol::messages::WhoResults {
+            displayed: 57,
+            total: 120,
+            entries,
+        });
+        assert_eq!(social.who.len(), 50);
+        assert_eq!(social.who[49].name, "N49");
+        assert_eq!((social.who_sent, social.who_total), (57, 120));
     }
 
     #[test]

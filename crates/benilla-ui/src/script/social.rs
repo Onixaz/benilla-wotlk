@@ -6,7 +6,7 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::binding_abi::string_arg;
+use super::binding_abi::{bool_or_default, number_arg, string_arg};
 use super::who_sort::WhoSortChain;
 
 /// One friend row in `GetFriendInfo`'s order; offline, the level is 0 and class and area empty.
@@ -23,16 +23,32 @@ pub struct FriendInfo {
     pub status: String,
 }
 
-/// One `/who` row in `GetWhoInfo`'s order, names localized; race comes before class, where the
-/// wire has class first.
+/// One `/who` row in `GetWhoInfo`'s order (`0x6b4a80`), names resolved; race comes before class,
+/// where the wire has class first.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WhoInfo {
     pub name: String,
     pub guild: String,
     pub level: u32,
+    /// The race name in the row's gender (`0x715970`), `UNKNOWN`'s text with no `ChrRaces` row.
     pub race: String,
+    /// The class name in the row's gender (`0x7159e0`), `UNKNOWN`'s text with no `ChrClasses` row.
     pub class: String,
+    /// The `AreaTable` name, `UNKNOWN`'s text with no row.
     pub zone: String,
+    /// `ChrClasses` `Filename` (`"WARRIOR"`), the seventh return; `None` with no row.
+    pub class_file: Option<String>,
+    /// The record names the sort orders by.
+    pub records: WhoRecords,
+}
+
+/// The `Name_lang` of the record each id names, `None` with no row: the comparator's class, race
+/// and zone arms order by these (`0x6b4d17`, `0x6b4d7e`, `0x6b4de2`), not by the gendered names.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WhoRecords {
+    pub race: Option<String>,
+    pub class: Option<String>,
+    pub zone: Option<String>,
 }
 
 /// The social snapshot the app pushes whole; the default is a fresh login's.
@@ -45,7 +61,7 @@ pub struct SocialState {
     pub ignores: Vec<String>,
     /// The selected ignore, on the same scale.
     pub selected_ignore: u32,
-    /// The last `/who` answer's rows, at most 49.
+    /// The last `/who` answer's rows, at most 50.
     pub who: Vec<WhoInfo>,
     /// The total match count, `GetNumWhoResults`'s second return; it can exceed `who.len()`.
     pub who_total: u32,
@@ -423,7 +439,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     }
 
     // ── /who ──
-    // GetNumWhoResults() → displayed, total, the server's full match count.
+    // GetNumWhoResults() (`0x6b33d0`) → the kept rows, then the server's full match count.
     g.set(
         "GetNumWhoResults",
         lua.create_function(|lua, ()| {
@@ -439,54 +455,55 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     g.set(
         "GetWhoInfo",
-        lua.create_function(|lua, index: i64| {
+        lua.create_function(|lua, index: Value| {
+            let index = number_arg(lua, index, "Usage: GetWhoInfo(index)")?;
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let row = usize::try_from(index - 1)
+            let row = usize::try_from(i64::from(index) - 1)
                 .ok()
                 .and_then(|i| model.social.who.get(i));
+            // Past the list, seven values with a level of 0 (`0x6b4c40`).
             let Some(row) = row else {
-                return Ok((
-                    Value::Nil,
-                    Value::Nil,
-                    Value::Nil,
-                    Value::Nil,
-                    Value::Nil,
-                    Value::Nil,
-                ));
+                let mut values = vec![Value::Nil; 7];
+                values[2] = Value::Integer(0);
+                return Ok(MultiValue::from_vec(values));
             };
-            Ok((
-                Value::String(lua.create_string(&row.name)?),
-                Value::String(lua.create_string(&row.guild)?),
+            let text = |s: &str| lua.create_string(s).map(Value::String);
+            Ok(MultiValue::from_vec(vec![
+                text(&row.name)?,
+                text(&row.guild)?,
                 Value::Integer(i64::from(row.level)),
-                Value::String(lua.create_string(&row.race)?),
-                Value::String(lua.create_string(&row.class)?),
-                Value::String(lua.create_string(&row.zone)?),
-            ))
+                text(&row.race)?,
+                text(&row.class)?,
+                text(&row.zone)?,
+                match &row.class_file {
+                    Some(file) => text(file)?,
+                    None => Value::Nil,
+                },
+            ]))
         })?,
     )?;
 
     g.set(
         "SendWho",
-        lua.create_function(|lua, filter: Option<String>| {
+        lua.create_function(|lua, filter: Value| {
+            // `lua_isstring` or the usage error (`0x6b6b5a`).
+            let filter = string_arg(lua, filter, "Usage: SendWho(\"filter\")")?;
             let mut model = crate::script::model_mut_of(lua);
-            model
-                .social_requests
-                .push(SocialRequest::Who(filter.unwrap_or_default()));
+            model.social_requests.push(SocialRequest::Who(filter));
             Ok(())
         })?,
     )?;
 
-    // SortWho(sortType) (`0x5ad890`): promotes the key in the seven-slot chain, reversing it if
+    // SortWho(sortType) (`0x6b4eb0`): promotes the key in the seven-slot chain, reversing it if
     // it is already in front, sorts the list, and fires `WHO_LIST_UPDATE` synchronously
-    // (`0x5ad9ed`, `SignalEvent` `0x703e50`), so the list redraws before the click's sound. The
-    // app gets the same click for its own chain. Returns nothing; an argument neither string nor
-    // number raises with the client's own typo (`0x85db88`, `0x5ad898`'s `0x6f3510` guard).
+    // (`0x6b5017`), so the list redraws before the click's sound. The app gets the same click for
+    // its own chain. Returns nothing; an argument neither string nor number raises (`0x6b4eba`).
     g.set(
         "SortWho",
         lua.create_function(|lua, sort_type: Value| {
-            let sort_type = string_arg(lua, sort_type, "Usgae: SortWho(\"type\")")?;
+            let sort_type = string_arg(lua, sort_type, "Usage: SortWho(\"type\")")?;
             {
                 let mut model = crate::script::model_mut_of(lua);
                 let model: &mut crate::script::Model = &mut model;
@@ -501,16 +518,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetWhoToUI(flag): the Who frame passes 1 on show and 0 on hide; nil, false and 0 are off.
+    // SetWhoToUI(flag) (`0x6b3430`): the Who frame passes 1 on show and 0 on hide; the flag is
+    // `GetBoolOrDefault` with default 0 (`0x815500`).
     g.set(
         "SetWhoToUI",
         lua.create_function(|lua, flag: Value| {
-            let on = match flag {
-                Value::Nil | Value::Boolean(false) => false,
-                Value::Integer(0) => false,
-                Value::Number(n) => n != 0.0,
-                _ => true,
-            };
+            let on = bool_or_default(Some(&flag), false);
             let mut model = crate::script::model_mut_of(lua);
             model.social_requests.push(SocialRequest::SetWhoToUi(on));
             Ok(())
@@ -542,11 +555,12 @@ mod tests {
     fn who(name: &str, level: u32, zone: &str) -> WhoInfo {
         WhoInfo {
             name: name.to_string(),
-            guild: String::new(),
             level,
             race: "Human".to_string(),
             class: "Warrior".to_string(),
             zone: zone.to_string(),
+            class_file: Some("WARRIOR".to_string()),
+            ..Default::default()
         }
     }
 
@@ -640,7 +654,7 @@ mod tests {
             vec![SocialRequest::SortWho("name".into())],
             "and the app hears the same click, so its copy of the chain follows"
         );
-        // Returns nothing (`0x5ad9f8`, `xor eax,eax; ret`).
+        // Returns nothing (`0x6b5020`, `xor eax,eax`).
         assert_eq!(s.arity(r#"SortWho("name")"#).unwrap(), 0);
         assert!(s.errors().is_empty(), "{:?}", s.errors());
     }
@@ -676,8 +690,8 @@ mod tests {
         );
     }
 
-    /// A number is stringified and falls to the name key; anything else raises with the client's
-    /// misspelt usage string (`0x85db88`).
+    /// A number is stringified and falls to the name key; anything else raises with the usage
+    /// string (`0xa31114`), which 12340 spells right.
     #[test]
     fn sort_who_takes_the_reference_argument_abi() {
         let mut s = seated();
@@ -690,14 +704,81 @@ mod tests {
         let _ = s.take_social_requests();
 
         let err = s.run("SortWho({})").unwrap_err().to_string();
-        assert!(
-            err.contains(r#"Usgae: SortWho("type")"#),
-            "the reference's own typo, verbatim: {err}"
-        );
+        assert!(err.contains(r#"Usage: SortWho("type")"#), "{err}");
         assert_eq!(
             s.eval::<i64>("return fired").unwrap(),
             1,
             "a raised call sorts nothing and fires nothing"
+        );
+    }
+
+    /// Seven values a row, the class file name last; past the list, nil but a level of 0.
+    #[test]
+    fn get_who_info_answers_seven_values() {
+        let s = seated();
+        assert_eq!(s.arity("GetWhoInfo(1)").unwrap(), 7);
+        assert_eq!(
+            s.eval::<(String, String, i64, String, String, String, String)>("return GetWhoInfo(1)")
+                .unwrap(),
+            (
+                "Galas".into(),
+                String::new(),
+                60,
+                "Human".into(),
+                "Warrior".into(),
+                "Elwynn Forest".into(),
+                "WARRIOR".into()
+            )
+        );
+        for index in ["0", "3", "-1"] {
+            assert!(
+                s.eval::<bool>(&format!(
+                    "local n, g, l, r, c, z, f = GetWhoInfo({index}) \
+                     return select('#', GetWhoInfo({index})) == 7 and n == nil and g == nil \
+                     and l == 0 and r == nil and c == nil and z == nil and f == nil"
+                ))
+                .unwrap(),
+                "{index}"
+            );
+        }
+        assert_eq!(
+            s.eval::<String>("return (GetWhoInfo('2.5'))").unwrap(),
+            "Erdrin",
+            "a numeric string truncates"
+        );
+        let err = s.run("GetWhoInfo({})").unwrap_err().to_string();
+        assert!(err.contains("Usage: GetWhoInfo(index)"), "{err}");
+    }
+
+    #[test]
+    fn send_who_takes_a_string_or_number_and_raises_on_anything_else() {
+        let mut s = UiScript::new().unwrap();
+        s.run("SendWho('n-Galas') SendWho(80)").unwrap();
+        assert_eq!(
+            s.take_social_requests(),
+            vec![
+                SocialRequest::Who("n-Galas".into()),
+                SocialRequest::Who("80".into())
+            ]
+        );
+        let err = s.run("SendWho()").unwrap_err().to_string();
+        assert!(err.contains(r#"Usage: SendWho("filter")"#), "{err}");
+        assert!(s.take_social_requests().is_empty());
+    }
+
+    #[test]
+    fn set_who_to_ui_reads_its_flag_as_get_bool_or_default() {
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            "SetWhoToUI(1) SetWhoToUI(0) SetWhoToUI(0.5) SetWhoToUI('0') SetWhoToUI(true) \
+             SetWhoToUI()",
+        )
+        .unwrap();
+        assert_eq!(
+            s.take_social_requests(),
+            [true, false, false, false, true, false]
+                .map(SocialRequest::SetWhoToUi)
+                .to_vec()
         );
     }
 

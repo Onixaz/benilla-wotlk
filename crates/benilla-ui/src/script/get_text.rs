@@ -41,6 +41,16 @@ fn get_text(lua: &Lua, token: &str, ordinal: i64, gender: i64) -> mlua::Result<m
     .map_or_else(|| lua.create_string(""), Ok)
 }
 
+impl super::UiScript {
+    /// `FrameScript_GetText(token, -1, 0)`, the lookup the engine makes for a line it prints
+    /// itself: `token_P1` first, then the bare token, else "".
+    pub fn engine_text(&self, token: &str) -> String {
+        get_text(&self.lua, token, -1, 0)
+            .map(|s| s.to_string_lossy())
+            .unwrap_or_default()
+    }
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetText",
