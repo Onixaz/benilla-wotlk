@@ -426,11 +426,38 @@ fn transfer_pending_both_shapes_and_abort_parse_and_decode() {
             transport_entry: Some(176310)
         }]
     ));
-    let abort = messages::parse_server(messages::opcode::SMSG_TRANSFER_ABORTED, &[2]).unwrap();
-    assert!(matches!(abort, ServerPacket::TransferAborted { reason: 2 }));
+    // Map 33, reason 2 (instance full): no third byte.
+    let abort =
+        messages::parse_server(messages::opcode::SMSG_TRANSFER_ABORTED, &[33, 0, 0, 0, 2]).unwrap();
+    assert!(matches!(
+        abort,
+        ServerPacket::TransferAborted {
+            map: 33,
+            reason: 2,
+            arg: None
+        }
+    ));
     assert!(matches!(
         decode(abort).as_slice(),
-        [SessionEvent::TransferAborted { reason: 2 }]
+        [SessionEvent::TransferAborted {
+            map: 33,
+            reason: 2,
+            arg: None
+        }]
+    ));
+    // Reason 8 (difficulty) carries the difficulty.
+    let heroic = messages::parse_server(
+        messages::opcode::SMSG_TRANSFER_ABORTED,
+        &[0x44, 2, 0, 0, 8, 1],
+    )
+    .unwrap();
+    assert!(matches!(
+        heroic,
+        ServerPacket::TransferAborted {
+            map: 580,
+            reason: 8,
+            arg: Some(1)
+        }
     ));
 }
 

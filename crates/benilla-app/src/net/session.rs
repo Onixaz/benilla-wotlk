@@ -291,7 +291,9 @@ fn on_transfer(In(ev): In<SessionEvent>, mut e: Edges) {
             map_id,
             transport_entry,
         } => transfer_pending(map_id, transport_entry, &mut e.transfer),
-        SessionEvent::TransferAborted { reason } => transfer_aborted(reason, &mut e.transfer),
+        SessionEvent::TransferAborted { map, reason, .. } => {
+            transfer_aborted(map, reason, &mut e.transfer)
+        }
         _ => {}
     }
 }
@@ -596,9 +598,9 @@ fn transfer_pending(map_id: u32, transport_entry: Option<u32>, pending: &mut Pen
     });
 }
 
-/// `SMSG_TRANSFER_ABORTED`: clears the latch.
-fn transfer_aborted(reason: u8, pending: &mut PendingTransfer) {
-    warn!("net: transfer aborted (reason {reason})");
+/// `SMSG_TRANSFER_ABORTED`: clears the latch; [`crate::ui_transfer`] shows the refusal.
+fn transfer_aborted(map: u32, reason: u8, pending: &mut PendingTransfer) {
+    warn!("net: transfer to map {map} aborted (reason {reason})");
     pending.0 = None;
 }
 

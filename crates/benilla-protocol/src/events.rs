@@ -334,8 +334,13 @@ pub enum SessionEvent {
         map_id: u32,
         transport_entry: Option<u32>,
     },
-    /// `SMSG_TRANSFER_ABORTED`: the announced transfer is off (map full, no instance).
-    TransferAborted { reason: u8 },
+    /// `SMSG_TRANSFER_ABORTED`: the transfer to `map` is off (map full, no instance), with the
+    /// third byte reasons 7 to 9 carry.
+    TransferAborted {
+        map: u32,
+        reason: u8,
+        arg: Option<u8>,
+    },
     /// The server in-game clock (`SMSG_LOGIN_SETTIMESPEED`): drives time-of-day lighting.
     TimeSpeed {
         hours: u8,

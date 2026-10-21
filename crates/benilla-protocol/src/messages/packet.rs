@@ -171,9 +171,12 @@ pub enum ServerPacket {
         map: u32,
         transport: Option<(u32, u32)>,
     },
-    /// `SMSG_TRANSFER_ABORTED`: the announced transfer will not happen (map full, no instance).
+    /// `SMSG_TRANSFER_ABORTED`: the transfer to `map` will not happen (map full, no instance).
     TransferAborted {
+        map: u32,
         reason: u8,
+        /// The byte reasons 7, 8 and 9 add: the expansion, the difficulty, the message number.
+        arg: Option<u8>,
     },
     LoginVerifyWorld {
         map: u32,

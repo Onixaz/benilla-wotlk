@@ -421,9 +421,18 @@ fn parse_server_body(
             };
             ServerPacket::TransferPending { map, transport }
         }
-        opcode::SMSG_TRANSFER_ABORTED => ServerPacket::TransferAborted {
-            reason: read_u8(&mut r)?,
-        },
+        // `u32 map`, `u8 reason`, and a third byte for reasons 7, 8 and 9 (`0x403923`,
+        // `0x40392e`; `0x4039c7`, `0x403a1e`, `0x403a75`).
+        opcode::SMSG_TRANSFER_ABORTED => {
+            let map = read_u32_le(&mut r)?;
+            let reason = read_u8(&mut r)?;
+            let arg = if matches!(reason, 7..=9) {
+                Some(read_u8(&mut r)?)
+            } else {
+                None
+            };
+            ServerPacket::TransferAborted { map, reason, arg }
+        }
         opcode::SMSG_LOGIN_SETTIMESPEED => {
             // Packed DateTime, LSB up: minute:6, hour:5, weekday:3, day:6, month:4, year:5. The
             // day serial assumes 31-day months and 372-day years, monotonic but not calendar-true.

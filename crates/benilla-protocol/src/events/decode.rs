@@ -810,8 +810,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             map_id: map,
             transport_entry: transport.map(|(entry, _old_map)| entry),
         }],
-        ServerPacket::TransferAborted { reason } => {
-            vec![SessionEvent::TransferAborted { reason }]
+        ServerPacket::TransferAborted { map, reason, arg } => {
+            vec![SessionEvent::TransferAborted { map, reason, arg }]
         }
         ServerPacket::TimeSpeed {
             hours,

@@ -17,6 +17,8 @@ pub struct MapDifficulty {
     pub map_id: i32,
     /// 0-based, as `SMSG_INSTANCE_DIFFICULTY` carries it.
     pub difficulty: i32,
+    /// `Message_lang` enUS: the refusal a transfer at this difficulty shows (`0x403a39`).
+    pub message: String,
     /// The raid lock length in seconds, 0 for a dungeon.
     pub raid_duration: i32,
     pub max_players: i32,
@@ -67,6 +69,7 @@ pub fn load_map_difficulties(chain: &mut Chain) -> Result<Vec<MapDifficulty>> {
             id: int(r, 0),
             map_id: int(r, 1),
             difficulty: int(r, 2),
+            message: str_at(&rs, r, 3).unwrap_or_default(),
             raid_duration: int(r, 20),
             max_players: int(r, 21),
             difficulty_string: str_at(&rs, r, 22).unwrap_or_default(),
