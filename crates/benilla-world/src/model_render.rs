@@ -842,6 +842,19 @@ fn classify_part(
         return;
     }
     let cur = mat.0.id();
+    // The dry fast path for the reactive walk: a near-side part that does not straddle, over no
+    // loaded surface and under a dry eye, stays near whatever its material, so none of the
+    // verdict below can move.
+    if used.is_none()
+        && !interleave.eye_submerged()
+        && !marked
+        && !straddling
+        && !tag.is_some_and(|t| clips.straddles(crate::mesh_tag::rig_of(t.0)))
+        && !twins.to_near.contains_key(&cur)
+        && interleave.dry_at(gt.translation())
+    {
+        return;
+    }
     let (near, swapped) = match twins.to_near.get(&cur) {
         Some(n) => (n.clone(), true),
         None => (mat.0.clone(), false),

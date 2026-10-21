@@ -271,6 +271,12 @@ impl WaterInterleave<'_, '_> {
     pub(crate) fn surfaces_changed(&self) -> bool {
         self.index.is_changed()
     }
+
+    /// No loaded surface lies over this point's XY: every plane test here answers above.
+    pub(crate) fn dry_at(&self, point_world: Vec3) -> bool {
+        let wow = benilla_assets::coords::bevy_to_wow(point_world);
+        self.index.over(wow[0], wow[1]).is_empty()
+    }
 }
 
 /// Is this draw on the eye's far side of its local water plane? The reference draws that side's
