@@ -133,10 +133,10 @@ out of scope is closed with the reason.
   - `WOW_UNATTENDED=1` reconnects instead of waiting at a dialog, and exits non-zero on a login
     it cannot pass. `WOW_NOSOUND=1` runs silent. A capture (`WOW_CAPTURE`) is both, and a rig
     (`WOW_RIG`) is unattended. `WOW_ALLOW_ACCOUNT=1` overrides the account guard.
-  - On vmangos, `WOW_RIG="tauren druid 60 gear:heal-preraid-bis spec:heal-preraid-bis
-    at:ThunderBluff"` finds or creates that character on the account and applies the server's
-    premade sets (`WOW_RIG="gear:?"` lists them). `WOW_PROBE_CHAT="<command>"` sends one GM
-    command and logs the reply as `net: server says`. An account named `probe` and digits is
+  - `WOW_RIG="tauren druid 60 at:ThunderBluff"` finds or creates that character on the account,
+    levels it and places it; its spec is the header of `crates/benilla-app/src/capture/probe_rig.rs`.
+    `WOW_PROBE_CHAT="<command>"` sends one GM command and logs the reply as `net: server says`.
+    An account named `probe` and digits is
     shielded: every world entry sends `.cheat god on`, `.die` clears it for a death test, and
     `WOW_GOD=off` leaves it off.
   - A trace is `WOW_MOVE_TRACE=<file>`, filtered with `WOW_MOVE_TRACE_TAGS` (`"move,snd,in"`) and
