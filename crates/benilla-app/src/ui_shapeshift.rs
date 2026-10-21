@@ -154,7 +154,12 @@ fn feed_shapeshift_bar(
     items: Res<Items>,
     commands: Res<NetCommands>,
     clock: Res<crate::ui_script::UiClock>,
-    spell_mods: Res<crate::spell::SpellModifiers>,
+    // One tuple for Bevy's 16-param ceiling: the spell mods and the rune table and costs.
+    (spell_mods, runes, rune_costs): (
+        Res<crate::spell::SpellModifiers>,
+        Option<Res<crate::ui_rune::Runes>>,
+        Option<Res<crate::ui_rune::RuneCosts>>,
+    ),
     mut memory: Local<crate::ui_script::VmMemo<StanceMemory>>,
 ) {
     let Some(mut script) = script else {
@@ -204,6 +209,13 @@ fn feed_shapeshift_bar(
     let carried = store
         .map(|s| crate::ui_items::carried_counts(&s.0, &objects))
         .unwrap_or_default();
+    let rune_check = runes
+        .as_deref()
+        .zip(rune_costs.as_deref())
+        .map(|(runes, costs)| usable::RuneCheck {
+            state: &runes.state,
+            costs: &costs.0,
+        });
     let fresh: Vec<ShapeshiftFormView> = rows
         .into_iter()
         .map(|(id, d)| {
@@ -220,6 +232,7 @@ fn feed_shapeshift_bar(
                         cooldowns: &cooldowns,
                         carried: &carried,
                         spell_mods: &spell_mods,
+                        runes: rune_check,
                     };
                     usable::spell_usable(id, d, &spells, &ctx, &objects, &items, &commands).0
                 });

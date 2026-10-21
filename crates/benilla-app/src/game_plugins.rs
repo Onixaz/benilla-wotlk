@@ -225,6 +225,8 @@ impl PluginGroup for GamePlugins {
             .add(crate::ui_companion::UiCompanionPlugin)
             // The totem slots; after UiActionPlugin, whose `Spells` names each totem's icon.
             .add(UiTotemPlugin)
+            // The rune table; after UiActionPlugin, whose `Spells` names each rune spell's power.
+            .add(crate::ui_rune::UiRunePlugin)
             // After UiActionPlugin, whose `Spells` and cooldown clock it shares.
             .add(UiPetPlugin)
             .add(ChrClassesPlugin)

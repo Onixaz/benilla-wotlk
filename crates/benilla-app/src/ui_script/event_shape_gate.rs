@@ -284,19 +284,22 @@ fn every_unit_field_bridge_event_has_a_producer() {
         .into_iter()
         .map(|(n, _, _)| n)
         .chain(
-            // The ten power events are built with `format!("UNIT_{}", power_token(…))`, so there
-            // is no literal to scan; `reference_ui`'s `CONSTRUCTED` list declares the same family.
+            // The twelve power events are built with `format!("UNIT_{}", power_token(…))`, so
+            // there is no literal to scan; `reference_ui`'s `CONSTRUCTED` list declares the same
+            // family.
             [
                 "MANA",
                 "RAGE",
                 "FOCUS",
                 "ENERGY",
                 "HAPPINESS",
+                "RUNIC_POWER",
                 "MAXMANA",
                 "MAXRAGE",
                 "MAXFOCUS",
                 "MAXENERGY",
                 "MAXHAPPINESS",
+                "MAXRUNIC_POWER",
             ]
             .iter()
             .map(|p| format!("UNIT_{p}")),

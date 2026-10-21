@@ -182,6 +182,7 @@ tables! {
         "TeamContributionPoints" => quest_rewards::honor_schema(),
         "TerrainType" => footsteps::terrain_type_schema(),
         "TerrainTypeSounds" => death_thud::terrain_type_sounds_schema(),
+        "SpellRuneCost" => spell_rune_cost::spell_rune_cost_schema(),
         "TotemCategory" => totem_category::totem_category_schema(),
         "TransportAnimation" => elevators::transport_animation_schema(),
         "UnitBlood" => unit_blood::unit_blood_schema(),

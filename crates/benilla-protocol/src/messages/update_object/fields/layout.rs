@@ -59,14 +59,16 @@ pub enum Field {
     UnitHealth,
     /// Mana, rage, focus, energy and happiness.
     UnitPower,
+    /// 3.3.5a's sixth and seventh power: runes and runic power.
+    UnitRunePower,
     UnitMaxHealth,
     UnitMaxPower,
+    UnitMaxRunePower,
     UnitLevel,
     UnitFactionTemplate,
     UnitBytes0,
     /// A creature's weapon display ids.
     UnitVirtualItemDisplay,
-    UnitVirtualItemInfo,
     UnitFlags,
     UnitAura,
     UnitAuraFlags,
@@ -184,6 +186,8 @@ pub enum Field {
     /// 3.3.5a's honor and arena-point balances.
     PlayerHonorCurrency,
     PlayerArenaCurrency,
+    /// 3.3.5a's rune regeneration per rune type, runes per second as floats.
+    PlayerRuneRegen,
     /// The 25 combat ratings.
     PlayerCombatRating,
     PlayerExploredZones,
@@ -328,7 +332,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         item: 48,
         container: 122,
         unit: 188,
-        player: 1499,
+        player: 1503,
         gameobject: 26,
         dynamicobject: 16,
         corpse: 38,
@@ -373,7 +377,9 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         one(F::UnitFactionTemplate, Unit, 35),
         one(F::UnitBytes0, Unit, 36),
         run(F::UnitVirtualItemDisplay, Unit, 37, 3),
-        run(F::UnitVirtualItemInfo, Unit, 40, 6),
+        // 3.3.5a's runes and runic power, in 1.12.1's `UNIT_VIRTUAL_ITEM_INFO`, which it lacks.
+        run(F::UnitRunePower, Unit, 40, 2),
+        run(F::UnitMaxRunePower, Unit, 42, 2),
         one(F::UnitFlags, Unit, 46),
         run(F::UnitAura, Unit, 47, 48),
         run(F::UnitAuraFlags, Unit, 95, 6),
@@ -452,6 +458,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         run(F::PlayerArenaTeamInfo, Player, 1476, 21),
         one(F::PlayerHonorCurrency, Player, 1497),
         one(F::PlayerArenaCurrency, Player, 1498),
+        run(F::PlayerRuneRegen, Player, 1499, 4),
         // 19 slots of 12: creator guid, entry, 7 enchants, properties, pad.
         strided(F::PlayerVisibleItemEntry, Player, 260, 19, 12),
         strided(F::PlayerVisibleItemEnchants, Player, 261, 19, 12),
@@ -580,10 +587,13 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         one(F::UnitChannelSpell, Unit, 22),
         one(F::UnitBytes0, Unit, 23),
         one(F::UnitHealth, Unit, 24),
-        // Seven powers; runes and runic power (5, 6) are past the shared five.
+        // Seven powers, each read at `POWER1 + type` (`0x71c2e0`) and `MAXPOWER1 + type`
+        // (`0x60ef40`); runes and runic power (5, 6) keep their own shared place.
         run(F::UnitPower, Unit, 25, 5),
+        run(F::UnitRunePower, Unit, 30, 2),
         one(F::UnitMaxHealth, Unit, 32),
         run(F::UnitMaxPower, Unit, 33, 5),
+        run(F::UnitMaxRunePower, Unit, 38, 2),
         one(F::UnitLevel, Unit, 54),
         one(F::UnitFactionTemplate, Unit, 55),
         one(F::UnitFlags, Unit, 59),
@@ -711,6 +721,8 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         // `+0x1144`/`+0x1148` (`GetHonorCurrency` `0x60fc40`, `GetArenaCurrency` `0x60fcc0`).
         one(F::PlayerHonorCurrency, Player, 1277),
         one(F::PlayerArenaCurrency, Player, 1278),
+        // `UNIT_END + 0x485`, read at `+0x1214 + 4 * type` (`GetRuneCooldown` `0x613092`).
+        run(F::PlayerRuneRegen, Player, 1305, 4),
         run(F::GameObjectCreatedBy, GameObject, 6, 2),
         one(F::GameObjectDisplayId, GameObject, 8),
         one(F::GameObjectFlags, GameObject, 9),

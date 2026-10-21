@@ -194,6 +194,42 @@ mod tests {
         );
     }
 
+    /// A death knight's runes and runic power ride `POWER6`/`POWER7` (30, 31) and
+    /// `MAXPOWER6`/`MAXPOWER7` (38, 39); the rune regen floats `UNIT_END + 0x485` (1305).
+    #[test]
+    fn a_death_knight_s_seven_powers_and_rune_regen_all_land() {
+        let f = ObjectFields::from_wotlk(
+            wire(&[
+                (25, 100),
+                (30, 8),
+                (31, 450),
+                (33, 200),
+                (38, 8),
+                (39, 1000),
+                (1305, 0.1f32.to_bits()),
+                (1308, 0.2f32.to_bits()),
+            ]),
+            ObjectType::Player,
+        );
+        assert_eq!(f.unit_power(0), Some(100));
+        assert_eq!(f.unit_max_power(0), Some(200));
+        assert_eq!((f.unit_power(5), f.unit_max_power(5)), (Some(8), Some(8)));
+        assert_eq!(
+            (f.unit_power(6), f.unit_max_power(6)),
+            (Some(450), Some(1000))
+        );
+        assert_eq!(
+            (f.unit_shown_power(6), f.unit_shown_max_power(6)),
+            (Some(45), Some(100)),
+            "runic power divides by 10"
+        );
+        assert_eq!(f.unit_power(7), None);
+        assert_eq!(f.player_rune_regen(0), 0.1);
+        assert_eq!(f.player_rune_regen(3), 0.2);
+        assert_eq!(f.player_rune_regen(1), 0.0);
+        assert_eq!(f.player_rune_regen(4), 0.0);
+    }
+
     #[test]
     fn a_player_s_appearance_and_gear_read_as_on_1_12_1() {
         let f = ObjectFields::from_wotlk(
@@ -408,6 +444,9 @@ mod tests {
             (Field::UnitPower, FIELD_UNIT_POWER1),
             (Field::UnitMaxHealth, FIELD_UNIT_MAXHEALTH),
             (Field::UnitMaxPower, FIELD_UNIT_MAXPOWER1),
+            (Field::UnitRunePower, FIELD_UNIT_POWER6),
+            (Field::UnitMaxRunePower, FIELD_UNIT_MAXPOWER6),
+            (Field::PlayerRuneRegen, FIELD_PLAYER_RUNE_REGEN_1),
             (Field::UnitLevel, FIELD_UNIT_LEVEL),
             (Field::UnitFactionTemplate, FIELD_UNIT_FACTIONTEMPLATE),
             (Field::UnitBytes0, FIELD_UNIT_BYTES_0),
@@ -415,7 +454,6 @@ mod tests {
                 Field::UnitVirtualItemDisplay,
                 FIELD_UNIT_VIRTUAL_ITEM_SLOT_DISPLAY,
             ),
-            (Field::UnitVirtualItemInfo, FIELD_UNIT_VIRTUAL_ITEM_INFO),
             (Field::UnitFlags, FIELD_UNIT_FLAGS),
             (Field::UnitAura, FIELD_UNIT_AURA),
             (Field::UnitAuraFlags, FIELD_UNIT_AURAFLAGS),

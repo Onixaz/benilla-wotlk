@@ -377,6 +377,7 @@ pub use quest_log::{QuestLogDetail, QuestLogEntryView, QuestLogObjectiveView, Qu
 pub use quest_watch::{QuestPoiRegion, QuestPoiView, QuestSpecialItemView};
 pub(crate) use region::{apply_font_parts, implicit_creation_anchor_lua};
 pub use reputation::{FactionEntry, ReputationSend, ReputationState};
+pub use rune::{RuneEvent, RuneState, MAX_RUNES, RUNE_KINDS};
 pub use session::SessionRequest;
 pub use shapeshift::ShapeshiftFormView;
 pub(crate) use simplehtml::{

@@ -1186,19 +1186,15 @@ pub(crate) fn fire_transitions(
     if edges.moved(cur.guid, benilla_protocol::field::FIELD_UNIT_DYNAMIC_FLAGS) {
         script.fire_event("UNIT_DYNAMIC_FLAGS", vec![tok()]);
     }
-    // 1.12 names the power events per resource (`UNIT_MANA`, `UNIT_MAXRAGE`, …;
-    // `UnitFrame.lua:190-199`), and `power_token` yields the suffix.
-    if changed(|u| u64::from(u.power)) {
-        script.fire_event(
-            &format!("UNIT_{}", power_token(cur.power_type)),
-            vec![tok()],
-        );
-    }
-    if changed(|u| u64::from(u.max_power)) {
-        script.fire_event(
-            &format!("UNIT_MAX{}", power_token(cur.power_type)),
-            vec![tok()],
-        );
+    // The power events are named per resource (`UNIT_MANA`, `UNIT_MAXRAGE`, `UNIT_RUNIC_POWER`,
+    // …), and `power_token` yields the suffix; runes have none.
+    if let Some(suffix) = power_token(cur.power_type) {
+        if changed(|u| u64::from(u.power)) {
+            script.fire_event(&format!("UNIT_{suffix}"), vec![tok()]);
+        }
+        if changed(|u| u64::from(u.max_power)) {
+            script.fire_event(&format!("UNIT_MAX{suffix}"), vec![tok()]);
+        }
     }
     if prev.is_none_or(|p| p.name != cur.name) {
         script.fire_event("UNIT_NAME_UPDATE", vec![tok()]);

@@ -118,11 +118,13 @@ pub struct SpellDisplay {
     pub start_recovery_category: u32,
     /// `StartRecoveryTime` (column 206): the global cooldown in ms, usually 1500; 0 for none.
     pub start_recovery_ms: u32,
-    /// `powerType` (column 41): 0 mana, 1 rage, 3 energy; health is -2, stored as `0xFFFFFFFE`
-    /// (Life Tap, Health Funnel), and the reference reads negative, or 5 and up, as health.
+    /// `powerType` (column 41): 0 mana, 1 rage, 3 energy, 5 runes, 6 runic power; health is -2,
+    /// stored as `0xFFFFFFFE` (Life Tap, Health Funnel).
     pub power_type: u32,
     /// `manaCost` (column 42): the flat cost in `power_type`'s unit.
     pub mana_cost: u32,
+    /// `RuneCostID` (column 226): the `SpellRuneCost.dbc` row a rune spell (power type 5) spends.
+    pub rune_cost_id: u32,
     /// `ManaCostPercentage` (column 204): percent of base mana added to the flat cost.
     pub mana_cost_pct: u32,
     /// `manaCostPerlevel` (column 43): the per-level cost term of `GetPowerCost` (`0x6e31b0`).
@@ -288,6 +290,7 @@ impl Default for SpellDisplay {
             start_recovery_ms: 0,
             power_type: 0,
             mana_cost: 0,
+            rune_cost_id: 0,
             mana_cost_pct: 0,
             mana_cost_per_level: 0,
             mana_per_second: 0,

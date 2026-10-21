@@ -830,8 +830,9 @@ fn feign_death_reads_dead_without_touching_the_raw_health_field() {
     assert_eq!(alive.unit_shown_power(MANA), Some(300));
     assert_eq!(feigning.unit_shown_power(MANA), Some(0));
     assert_eq!(feigning.unit_max_power(MANA), Some(900));
-    // Out-of-range power slots stay None under the flag, as the ungated reader has them.
-    assert_eq!(feigning.unit_shown_power(5), None);
+    // The gate covers all seven types (`0x60ee13`); past them, None, as the ungated reader has it.
+    assert_eq!(feigning.unit_shown_power(6), Some(0));
+    assert_eq!(feigning.unit_shown_power(7), None);
     // An empty store has no flag and no health.
     assert!(!ObjectFields::default().unit_reads_dead());
     assert_eq!(ObjectFields::default().unit_shown_health(), None);

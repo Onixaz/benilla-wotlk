@@ -156,7 +156,7 @@ impl ObjectFields {
     /// byte with -2, so it never matches and is left out.
     pub fn unit_shown_power(&self, ty: u8) -> Option<u32> {
         if self.unit_dynamic_flags() & UNIT_DYNFLAG_DEAD != 0 {
-            return (ty < 5).then_some(0);
+            return (ty < 7).then_some(0);
         }
         Some(self.unit_power(ty)? / power_display_scale(u32::from(ty)))
     }
@@ -260,13 +260,21 @@ impl ObjectFields {
     pub fn unit_shapeshift_form(&self) -> u8 {
         (self.get_u32(FIELD_UNIT_BYTES_2).unwrap_or(0) >> 24) as u8
     }
-    /// `UNIT_FIELD_POWER1..5`: current power of type `ty`, on the wire's raw scale.
+    /// `UNIT_FIELD_POWER1..7`: current power of type `ty`, on the wire's raw scale (`0x71c2e0`).
     pub fn unit_power(&self, ty: u8) -> Option<u32> {
-        (ty < 5).then(|| self.get_u32(FIELD_UNIT_POWER1 + u16::from(ty)))?
+        match ty {
+            0..5 => self.get_u32(FIELD_UNIT_POWER1 + u16::from(ty)),
+            5..7 => self.get_u32(FIELD_UNIT_POWER6 + u16::from(ty - 5)),
+            _ => None,
+        }
     }
-    /// `UNIT_FIELD_MAXPOWER1..5`: maximum power of type `ty`, raw.
+    /// `UNIT_FIELD_MAXPOWER1..7`: maximum power of type `ty`, raw (`0x60ef40`).
     pub fn unit_max_power(&self, ty: u8) -> Option<u32> {
-        (ty < 5).then(|| self.get_u32(FIELD_UNIT_MAXPOWER1 + u16::from(ty)))?
+        match ty {
+            0..5 => self.get_u32(FIELD_UNIT_MAXPOWER1 + u16::from(ty)),
+            5..7 => self.get_u32(FIELD_UNIT_MAXPOWER6 + u16::from(ty - 5)),
+            _ => None,
+        }
     }
     /// `UNIT_FIELD_BASE_MANA` (field 162, owner only): what `ManaCostPercentage` costs scale from.
     pub fn unit_base_mana(&self) -> Option<u32> {
@@ -334,25 +342,6 @@ impl ObjectFields {
     /// main hand, 1 off hand or 2 ranged, with no item behind it.
     pub fn unit_virtual_item_display(&self, slot: u8) -> Option<u32> {
         (slot < 3).then(|| self.get_u32(FIELD_UNIT_VIRTUAL_ITEM_SLOT_DISPLAY + u16::from(slot)))?
-    }
-    /// `UNIT_VIRTUAL_ITEM_INFO + 2*slot`: bytes `(class, subclass, material, inventory_type)`.
-    pub fn unit_virtual_item_info(&self, slot: u8) -> Option<(u8, u8, u8, u8)> {
-        let v =
-            (slot < 3).then(|| self.get_u32(FIELD_UNIT_VIRTUAL_ITEM_INFO + 2 * u16::from(slot)))?;
-        v.map(|v| {
-            (
-                (v & 0xff) as u8,
-                ((v >> 8) & 0xff) as u8,
-                ((v >> 16) & 0xff) as u8,
-                ((v >> 24) & 0xff) as u8,
-            )
-        })
-    }
-    /// `UNIT_VIRTUAL_ITEM_INFO + 2*slot + 1` byte 0: the virtual item's sheath type.
-    pub fn unit_virtual_item_sheath(&self, slot: u8) -> Option<u8> {
-        let v = (slot < 3)
-            .then(|| self.get_u32(FIELD_UNIT_VIRTUAL_ITEM_INFO + 2 * u16::from(slot) + 1))?;
-        v.map(|v| (v & 0xff) as u8)
     }
     /// `UNIT_FIELD_BYTES_2` byte 0: sheath state, 0 stowed, 1 melee drawn, 2 ranged drawn; for a
     /// player, whatever they last sent in `CMSG_SETSHEATHED`.

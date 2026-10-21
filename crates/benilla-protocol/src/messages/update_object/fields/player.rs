@@ -310,6 +310,14 @@ impl ObjectFields {
     pub fn player_arena_currency(&self) -> Option<u32> {
         self.get_u32(FIELD_PLAYER_FIELD_ARENA_CURRENCY)
     }
+    /// 3.3.5a `PLAYER_RUNE_REGEN_1 + kind` (private): runes of `kind` (0 blood, 1 unholy, 2 frost,
+    /// 3 death) regained per second; 0 when absent.
+    pub fn player_rune_regen(&self, kind: u8) -> f32 {
+        (kind < 4)
+            .then(|| self.get_f32(FIELD_PLAYER_RUNE_REGEN_1 + u16::from(kind)))
+            .flatten()
+            .unwrap_or(0.0)
+    }
     /// `PLAYER_FIELD_COMBAT_RATING_1 + i`: combat rating `i`, 0-based.
     pub fn player_combat_rating(&self, i: u8) -> Option<i32> {
         (i < PLAYER_COMBAT_RATINGS)

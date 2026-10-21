@@ -60,7 +60,9 @@ mod summon_properties;
 pub use summon_properties::{
     load_summon_properties, SummonPropertiesCatalog, SUMMON_CONTROL_POSSESSED,
 };
+mod spell_rune_cost;
 mod totem_category;
+pub use spell_rune_cost::{load_spell_rune_costs, SpellRuneCost, SpellRuneCostCatalog};
 pub use totem_category::{load_totem_categories, TotemCategory, TotemCategoryCatalog};
 mod cfg_categories;
 pub use cfg_categories::{load_realm_categories, RealmCategory};

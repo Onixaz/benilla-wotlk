@@ -804,6 +804,9 @@ mod combat_log_tests;
 mod combo_frame_tests;
 
 #[cfg(test)]
+mod rune_frame_tests;
+
+#[cfg(test)]
 mod unit_frame_tests;
 
 #[cfg(test)]

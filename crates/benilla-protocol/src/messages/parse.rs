@@ -11,7 +11,7 @@ use super::{
     achievement, action_bar, area_trigger, arena_team, attack, auction, aura, bank, battlefield,
     binder, broadcast, channel, chat, combat_log, death, duel, equipment_set, gameobject,
     gm_ticket, gossip, group, guild, instance, items, lfg, loot, mail, meeting_stone, mirror_timer,
-    monster_move, movement, opcode, page_text, pet, petition, pose, progression, pvp, quest,
+    monster_move, movement, opcode, page_text, pet, petition, pose, progression, pvp, quest, rune,
     social, spellbook, spells, stable, summon, tabard, talents, taxi, totem, trade, trainer,
     tutorial, update_object, vendor, world_state, AttackSwingError, Character, CreatureQueryInfo,
     DifficultySet, JumpInfo, LfgPacket, MoveMode, ServerPacket, SpeedKind, SplineMode,
@@ -518,6 +518,11 @@ fn parse_server_body(
         opcode::SMSG_TOTEM_CREATED => {
             ServerPacket::TotemCreated(totem::read_totem_created(&mut r)?)
         }
+        opcode::SMSG_CONVERT_RUNE => ServerPacket::ConvertRune(rune::read_convert_rune(&mut r)?),
+        opcode::SMSG_RESYNC_RUNES => ServerPacket::ResyncRunes(rune::read_resync_runes(&mut r)?),
+        opcode::SMSG_ADD_RUNE_POWER => ServerPacket::AddRunePower {
+            mask: rune::read_add_rune_power(&mut r)?,
+        },
         opcode::SMSG_ACHIEVEMENT_EARNED => {
             ServerPacket::AchievementEarned(achievement::read_achievement_earned(&mut r)?)
         }

@@ -121,7 +121,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "GetPowerRegen",
     "GetQuestsCompleted",
     "GetReadyCheckTimeLeft",
-    "GetRuneCount",
     "GetRunningMacro",
     "GetRunningMacroButton",
     "GetScriptCPUUsage",

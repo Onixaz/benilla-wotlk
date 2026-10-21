@@ -388,6 +388,19 @@ pub enum SessionEvent {
     AllAchievementData(crate::messages::AllAchievementData),
     /// A totem took one of our four slots (`SMSG_TOTEM_CREATED`).
     TotemCreated(crate::messages::TotemCreated),
+    /// One of our runes changed kind (`SMSG_CONVERT_RUNE`).
+    ConvertRune(crate::messages::ConvertRune),
+    /// Every rune's kind and recharge progress (`SMSG_RESYNC_RUNES`).
+    ResyncRunes(crate::messages::ResyncRunes),
+    /// A mask of our runes made ready (`SMSG_ADD_RUNE_POWER`).
+    AddRunePower { mask: u32 },
+    /// The rune block of a `SMSG_SPELL_START` or `SMSG_SPELL_GO`, delivered after its cast event.
+    CastRunes {
+        caster: u64,
+        spell_id: u32,
+        cast_flags: u32,
+        runes: crate::messages::CastRunes,
+    },
     /// The saved equipment sets, whole (`SMSG_EQUIPMENT_SET_LIST`).
     EquipmentSetList(Vec<crate::messages::EquipmentSet>),
     /// A unit earned an achievement (`SMSG_ACHIEVEMENT_EARNED`).

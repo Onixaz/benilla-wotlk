@@ -61,6 +61,8 @@ impl PetSlotWalk<'_, '_> {
             cooldowns,
             spell_mods: &crate::spell::SpellModifiers::default(),
             carried: &std::collections::HashMap::new(),
+            // The pet is not the active player: no rune spell is usable on it (`0x80182d`).
+            runes: None,
         };
         crate::spell::usable::spell_usable(
             spell_id,

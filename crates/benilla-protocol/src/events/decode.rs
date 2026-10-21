@@ -218,18 +218,34 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::AiReaction { unit, reaction } => {
             vec![SessionEvent::AiReaction { unit, reaction }]
         }
-        ServerPacket::SpellStart(s) => vec![SessionEvent::SpellStart {
-            caster: spell_caster(s.item_or_caster, s.caster),
-            cast_count: s.cast_count,
-            spell_id: s.spell_id,
-            cast_flags: s.cast_flags,
-            cast_time_ms: s.cast_time_ms,
-            target: s.targets.unit_target,
-            ammo_display_id: s.ammo_display_id,
-        }],
+        ServerPacket::SpellStart(s) => {
+            let caster = spell_caster(s.item_or_caster, s.caster);
+            let mut events = vec![SessionEvent::SpellStart {
+                caster,
+                cast_count: s.cast_count,
+                spell_id: s.spell_id,
+                cast_flags: s.cast_flags,
+                cast_time_ms: s.cast_time_ms,
+                target: s.targets.unit_target,
+                ammo_display_id: s.ammo_display_id,
+            }];
+            events.extend(s.runes.map(|runes| SessionEvent::CastRunes {
+                caster,
+                spell_id: s.spell_id,
+                cast_flags: s.cast_flags,
+                runes,
+            }));
+            events
+        }
         ServerPacket::SpellGo(s) => {
             let caster = spell_caster(s.item_or_caster, s.caster);
-            vec![SessionEvent::SpellGo {
+            let runes = s.runes.map(|runes| SessionEvent::CastRunes {
+                caster,
+                spell_id: s.spell_id,
+                cast_flags: s.cast_flags,
+                runes,
+            });
+            let mut events = vec![SessionEvent::SpellGo {
                 caster,
                 cast_count: s.cast_count,
                 spell_id: s.spell_id,
@@ -243,7 +259,9 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 ammo_display_id: s.ammo_display_id,
                 // Against the resolved caster: a GameObject's own guid in slot 1 is not an item.
                 item_caster: (s.item_or_caster != caster).then_some(s.item_or_caster),
-            }]
+            }];
+            events.extend(runes);
+            events
         }
         ServerPacket::SpellChainTargets(c) => vec![SessionEvent::SpellChainTargets {
             caster: c.caster,
@@ -848,6 +866,9 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::TalentsInfo(info) => vec![SessionEvent::TalentsInfo(info)],
         ServerPacket::AllAchievementData(d) => vec![SessionEvent::AllAchievementData(d)],
         ServerPacket::TotemCreated(t) => vec![SessionEvent::TotemCreated(t)],
+        ServerPacket::ConvertRune(c) => vec![SessionEvent::ConvertRune(c)],
+        ServerPacket::ResyncRunes(r) => vec![SessionEvent::ResyncRunes(r)],
+        ServerPacket::AddRunePower { mask } => vec![SessionEvent::AddRunePower { mask }],
         ServerPacket::EquipmentSetList(sets) => vec![SessionEvent::EquipmentSetList(sets)],
         ServerPacket::AchievementEarned(e) => vec![SessionEvent::AchievementEarned(e)],
         ServerPacket::CriteriaUpdate(c) => vec![SessionEvent::CriteriaUpdate(c)],

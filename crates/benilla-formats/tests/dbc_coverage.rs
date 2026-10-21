@@ -103,7 +103,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("SpellItemEnchantmentCondition", "#202 meta gem conditions"),
     ("SpellMissile", "#110 spell missiles"),
     ("SpellMissileMotion", "#110 spell missile motion"),
-    ("SpellRuneCost", "#240 death knight rune costs"),
     ("SpellVisualKitAreaModel", "#110 area spell visual kits"),
     (
         "SpellVisualKitModelAttach",

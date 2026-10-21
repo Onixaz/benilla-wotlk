@@ -1934,17 +1934,19 @@ mod tests {
         // Names built at runtime, which a literal scan cannot see; each entry is a promise that
         // something fires it.
         const CONSTRUCTED: &[&str] = &[
-            // `ui_unit.rs` builds `UNIT_{}` and `UNIT_MAX{}` over `power_token`'s five resources.
+            // `ui_unit.rs` builds `UNIT_{}` and `UNIT_MAX{}` over `power_token`'s six resources.
             "UNIT_MANA",
             "UNIT_RAGE",
             "UNIT_FOCUS",
             "UNIT_ENERGY",
             "UNIT_HAPPINESS",
+            "UNIT_RUNIC_POWER",
             "UNIT_MAXMANA",
             "UNIT_MAXRAGE",
             "UNIT_MAXFOCUS",
             "UNIT_MAXENERGY",
             "UNIT_MAXHAPPINESS",
+            "UNIT_MAXRUNIC_POWER",
         ];
 
         // Registered by a chain file we load and fired by nothing here; each says why.

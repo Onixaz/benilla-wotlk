@@ -47,6 +47,7 @@ mod pvp;
 mod quest;
 mod reputation;
 mod roster;
+mod rune;
 mod skills;
 mod social;
 mod spellbook;
@@ -256,6 +257,7 @@ pub use roster::{
     CHAR_CREATE_SERVER_LIMIT, CHAR_CREATE_SUCCESS, CHAR_DELETE_SUCCESS, CLASS_WARRIOR, GENDER_MALE,
     RACE_HUMAN,
 };
+pub use rune::{ConvertRune, ResyncRunes};
 pub use skills::unlearn_skill;
 pub use social::{
     add_friend, add_ignore, del_friend, del_ignore, friend_list, friend_result, friend_status,
@@ -267,7 +269,7 @@ pub use spellbook::SpellCooldown;
 pub use spells::{
     cancel_aura, cast_spell, cast_spell_at_dest, cast_spell_at_source, cast_spell_corpse,
     cast_spell_gameobject, cast_spell_item, dismiss_critter, wotlk_cast_fail_shared, CastCounter,
-    CastOutcome, CorpseTarget, SpellCastTargets, SpellChainTargets, SpellGo, SpellStart,
+    CastOutcome, CastRunes, CorpseTarget, SpellCastTargets, SpellChainTargets, SpellGo, SpellStart,
     WOTLK_CAST_FAIL_KEYS,
 };
 pub use stable::{

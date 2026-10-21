@@ -88,6 +88,11 @@ pub(super) fn feed_action_state(
         Res<crate::spell::SpellModifiers>,
         // The caster's and the target's reach and motion, which the range compare reads.
         crate::spell::RangeUnits,
+        // The rune table and costs a rune spell's power leg reads.
+        (
+            Option<Res<crate::ui_rune::Runes>>,
+            Option<Res<crate::ui_rune::RuneCosts>>,
+        ),
     ),
     self_q: Query<(&ObjectStore, &Transform, Has<Engaged>, Option<&Casting>), With<SelfPlayer>>,
     selection: Res<Selection>,
@@ -120,7 +125,17 @@ pub(super) fn feed_action_state(
         memory.last_cd_trace = Some(now);
     }
 
-    let (pending, queued_melee, channel, targeting, bound, spell_mods, range_units) = &cast_state;
+    let (pending, queued_melee, channel, targeting, bound, spell_mods, range_units, rune_inputs) =
+        &cast_state;
+    let rune_check =
+        rune_inputs
+            .0
+            .as_deref()
+            .zip(rune_inputs.1.as_deref())
+            .map(|(runes, costs)| usable::RuneCheck {
+                state: &runes.state,
+                costs: &costs.0,
+            });
     let me = self_q.iter().next();
     // The bags, walked once per frame for every reagent, totem and item count below.
     let carried = me
@@ -203,6 +218,7 @@ pub(super) fn feed_action_state(
                         cooldowns: &cooldowns,
                         carried: &carried,
                         spell_mods,
+                        runes: rune_check,
                     };
                     let (u, oom) = usable::spell_usable(
                         button.action,
@@ -283,6 +299,7 @@ pub(super) fn feed_action_state(
                         cooldowns: &cooldowns,
                         carried: &carried,
                         spell_mods,
+                        runes: rune_check,
                     };
                     let (u, oom) = usable::item_usable(
                         button.action,

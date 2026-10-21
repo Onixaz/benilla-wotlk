@@ -80,19 +80,18 @@ pub struct UnitState {
     /// Level (`UnitLevel`).
     pub level: u32,
     /// The active power type (`UnitPowerType`), `UNIT_FIELD_BYTES_0` byte 3: 0 mana, 1 rage,
-    /// 2 focus, 3 energy, 4 happiness.
+    /// 2 focus, 3 energy, 4 happiness, 5 runes, 6 runic power.
     pub power_type: u8,
     /// Current power of the active type, shown scale (`UnitPower` with no type).
     pub power: u32,
     /// Maximum power of the active type, shown scale (`UnitPowerMax` with no type).
     pub max_power: u32,
-    /// Current power of each type 0..=4 (mana, rage, focus, energy, happiness), shown scale, which
-    /// `UnitPower(unit, type)` reads for the local player. Runes and runic power (5, 6) have no
-    /// shared descriptor place and read 0.
-    pub shown_powers: [u32; 5],
-    /// Maximum power of each type 0..=4, shown scale, which `UnitPowerMax(unit, type)` reads for
+    /// Current power of each type 0..=6 (mana, rage, focus, energy, happiness, runes, runic
+    /// power), shown scale, which `UnitPower(unit, type)` reads for the local player.
+    pub shown_powers: [u32; 7],
+    /// Maximum power of each type 0..=6, shown scale, which `UnitPowerMax(unit, type)` reads for
     /// any held unit.
-    pub shown_max_powers: [u32; 5],
+    pub shown_max_powers: [u32; 7],
     /// `UnitIsDead`; a released ghost is not dead by it, as its health is 1.
     pub dead: bool,
     /// `UnitIsCharmed` (`0x516cf0`): `UNIT_FIELD_CHARMEDBY` (fields 10-11) is non-zero.
@@ -296,15 +295,18 @@ pub fn classification_word(rank: u32) -> &'static str {
     }
 }
 
-/// The resource name for a power type, the suffix of 1.12's per-resource events (`UNIT_RAGE`,
-/// `UNIT_MAXRAGE`); an unknown index reads as mana, the descriptor default.
-pub fn power_token(ty: u8) -> &'static str {
+/// The resource name for a power type, the suffix of its per-resource events (`UNIT_RAGE`,
+/// `UNIT_MAXRAGE`: ids 19 and 27 plus the type); runes (5) have none, as ids 24 and 32 are
+/// unnamed, and an unknown index reads as mana, the descriptor default.
+pub fn power_token(ty: u8) -> Option<&'static str> {
     match ty {
-        1 => "RAGE",
-        2 => "FOCUS",
-        3 => "ENERGY",
-        4 => "HAPPINESS",
-        _ => "MANA",
+        1 => Some("RAGE"),
+        2 => Some("FOCUS"),
+        3 => Some("ENERGY"),
+        4 => Some("HAPPINESS"),
+        5 => None,
+        6 => Some("RUNIC_POWER"),
+        _ => Some("MANA"),
     }
 }
 

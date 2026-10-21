@@ -715,6 +715,12 @@ pub const SMSG_TALENTS_INFO: u16 = 0x04C0;
 pub const SMSG_EQUIPMENT_SET_LIST: u16 = 0x04BC;
 /// 3.3.5a only: a totem took a slot (`0x526530` arm `0x413`).
 pub const SMSG_TOTEM_CREATED: u16 = 0x0413;
+/// 3.3.5a only: one rune changed kind, `u8 rune`, `u8 kind` (`0x6e2e90` arm `0x486`).
+pub const SMSG_CONVERT_RUNE: u16 = 0x0486;
+/// 3.3.5a only: every rune's kind and recharge progress (`0x6e2e90` arm `0x487`).
+pub const SMSG_RESYNC_RUNES: u16 = 0x0487;
+/// 3.3.5a only: a mask of runes made ready (`0x6e2e90` arm `0x488`).
+pub const SMSG_ADD_RUNE_POWER: u16 = 0x0488;
 /// 3.3.5a only: dismiss the totem in a slot, `u8 slot` (`DestroyTotem` `0x5197d0`).
 pub const CMSG_TOTEM_DESTROYED: u16 = 0x0414;
 /// 3.3.5a only: the preview mode's learn, `u32 count` × (`u32 talentId`, `u32 rank`) (`0x5c6a10`).

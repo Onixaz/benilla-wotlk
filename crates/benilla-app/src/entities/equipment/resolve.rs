@@ -289,13 +289,9 @@ pub(in crate::entities) fn resolve_equipment(
             // (display id, inventory type, item sheath type, class, subclass, material) per slot.
             resolved[slot] = match net_entity.kind {
                 EntityKind::Unit => {
+                    // 3.3.5a's descriptor carries no `UNIT_VIRTUAL_ITEM_INFO` words.
                     let display = s.unit_virtual_item_display(slot as u8).filter(|d| *d != 0);
-                    display.map(|d| {
-                        let (class, subclass, material, inv) =
-                            s.unit_virtual_item_info(slot as u8).unwrap_or((0, 0, 0, 0));
-                        let sheath = s.unit_virtual_item_sheath(slot as u8).unwrap_or(0);
-                        (d, inv as u32, sheath, class, subclass, material)
-                    })
+                    display.map(|d| (d, 0, 0, 0, 0, 0))
                 }
                 EntityKind::Player => s
                     .player_visible_item_entry(PLAYER_HELD_SLOTS[slot])

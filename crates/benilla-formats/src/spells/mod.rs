@@ -108,6 +108,8 @@ const COL_REQUIRES_SPELL_FOCUS: usize = 18;
 const COL_DISPEL: usize = 2;
 /// `SchoolMask`: 3.3.5a carries the school as a mask, Fireball 4, not 1.12.1's enum.
 const COL_SCHOOL_MASK: usize = 225;
+/// `RuneCostID`, the `SpellRuneCost.dbc` row (`0x5ee686`).
+const COL_RUNE_COST_ID: usize = 226;
 const COL_MECHANIC: usize = 3;
 const COL_EFFECT_MECHANIC_1: usize = 83;
 const COL_ATTRIBUTES: usize = 4;
@@ -650,6 +652,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 start_recovery_ms: u32_at(r, COL_START_RECOVERY_TIME).unwrap_or(0),
                 power_type: u32_at(r, COL_POWER_TYPE).unwrap_or(0),
                 mana_cost: u32_at(r, COL_MANA_COST).unwrap_or(0),
+                rune_cost_id: u32_at(r, COL_RUNE_COST_ID).unwrap_or(0),
                 mana_cost_pct: u32_at(r, COL_MANA_COST_PCT).unwrap_or(0),
                 mana_cost_per_level: u32_at(r, COL_MANA_COST_PER_LEVEL).unwrap_or(0),
                 mana_per_second: u32_at(r, COL_MANA_PER_SECOND).unwrap_or(0),

@@ -250,6 +250,14 @@ pub enum ServerPacket {
     AllAchievementData(super::AllAchievementData),
     /// `SMSG_TOTEM_CREATED`: a totem took one of the player's four slots.
     TotemCreated(super::TotemCreated),
+    /// `SMSG_CONVERT_RUNE`: one rune changed kind.
+    ConvertRune(super::ConvertRune),
+    /// `SMSG_RESYNC_RUNES`: every rune's kind and recharge progress.
+    ResyncRunes(super::ResyncRunes),
+    /// `SMSG_ADD_RUNE_POWER`: a mask of runes made ready.
+    AddRunePower {
+        mask: u32,
+    },
     /// `SMSG_EQUIPMENT_SET_LIST`: the saved equipment sets, whole.
     EquipmentSetList(Vec<super::EquipmentSet>),
     /// `SMSG_ACHIEVEMENT_EARNED`: a unit earned an achievement.
@@ -1395,6 +1403,9 @@ impl ServerPacket {
             ServerPacket::TalentsInfo(_) => "SMSG_TALENTS_INFO".into(),
             ServerPacket::AllAchievementData(_) => "SMSG_ALL_ACHIEVEMENT_DATA".into(),
             ServerPacket::TotemCreated(_) => "SMSG_TOTEM_CREATED".into(),
+            ServerPacket::ConvertRune(_) => "SMSG_CONVERT_RUNE".into(),
+            ServerPacket::ResyncRunes(_) => "SMSG_RESYNC_RUNES".into(),
+            ServerPacket::AddRunePower { .. } => "SMSG_ADD_RUNE_POWER".into(),
             ServerPacket::EquipmentSetList(_) => "SMSG_EQUIPMENT_SET_LIST".into(),
             ServerPacket::AchievementEarned(_) => "SMSG_ACHIEVEMENT_EARNED".into(),
             ServerPacket::CriteriaUpdate(_) => "SMSG_CRITERIA_UPDATE".into(),

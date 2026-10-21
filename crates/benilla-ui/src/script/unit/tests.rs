@@ -2172,8 +2172,8 @@ fn player_with_pools() -> UnitState {
     UnitState {
         guid: 0x10,
         has_object: true,
-        shown_powers: [120, 35, 0, 0, 0],
-        shown_max_powers: [300, 100, 0, 0, 0],
+        shown_powers: [120, 35, 0, 0, 0, 0, 45],
+        shown_max_powers: [300, 100, 0, 0, 0, 0, 100],
         ..player()
     }
 }
@@ -2228,9 +2228,10 @@ fn unit_power_reads_a_type_as_12340_gates_it() {
     assert_eq!(n(&mut s, r#"UnitPower("player", -1)"#), 0);
     assert_eq!(
         n(&mut s, r#"UnitPower("player", 6)"#),
-        0,
-        "runic power has no shared field"
+        45,
+        "runic power, the seventh slot"
     );
+    assert_eq!(n(&mut s, r#"UnitPowerMax("player", 6)"#), 100);
 
     // Another unit: its display type, and the maximum of any type, but no other current power.
     assert_eq!(n(&mut s, r#"UnitPower("target")"#), 35);

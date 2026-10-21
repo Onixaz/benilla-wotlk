@@ -51,7 +51,8 @@ const FIELD_UNIT_CREATEDBY: u16 = 14;
 /// unit's channel renders from it; `MSG_CHANNEL_START`/`UPDATE` reach only the caster.
 const FIELD_UNIT_CHANNEL_OBJECT: u16 = 20;
 pub const FIELD_UNIT_HEALTH: u16 = 22;
-/// Five power slots: mana, rage, focus, energy, happiness; `MAXPOWER1..5` follow `MAXHEALTH`.
+/// Power slots 1-5: mana, rage, focus, energy, happiness; `MAXPOWER1..5` follow `MAXHEALTH`, and
+/// slots 6-7 sit at [`FIELD_UNIT_POWER6`].
 const FIELD_UNIT_POWER1: u16 = 23;
 pub const FIELD_UNIT_MAXHEALTH: u16 = 28;
 const FIELD_UNIT_MAXPOWER1: u16 = 29;
@@ -109,9 +110,9 @@ const FIELD_UNIT_NPC_EMOTESTATE: u16 = 148;
 /// A creature's weapon display ids (main hand, off hand, ranged), with no item behind them
 /// (`Creature.cpp:4158-4181`).
 const FIELD_UNIT_VIRTUAL_ITEM_SLOT_DISPLAY: u16 = 37;
-/// Two dwords per weapon slot: class, subclass, material and inventory type bytes, then the
-/// sheath byte (`CreatureDefines.h:621-628`).
-const FIELD_UNIT_VIRTUAL_ITEM_INFO: u16 = 40;
+/// 3.3.5a's `POWER6`/`POWER7` (runes, runic power), then `MAXPOWER6`/`MAXPOWER7`.
+const FIELD_UNIT_POWER6: u16 = 40;
+const FIELD_UNIT_MAXPOWER6: u16 = 42;
 /// Byte 0 is the sheath state (`UnitDefines.h:93`); a player's comes only from `CMSG_SETSHEATHED`.
 /// Byte 1 the `UNIT_BYTE2_FLAG`s, byte 3 the shapeshift form. Not `FIELD_PLAYER_BYTES_2`.
 const FIELD_UNIT_BYTES_2: u16 = 164;
@@ -204,6 +205,8 @@ const FIELD_PLAYER_FIELD_TODAY_CONTRIBUTION: u16 = 1475;
 const FIELD_PLAYER_FIELD_ARENA_TEAM_INFO_1_1: u16 = 1476; // 3 x 7
 const FIELD_PLAYER_FIELD_HONOR_CURRENCY: u16 = 1497;
 const FIELD_PLAYER_FIELD_ARENA_CURRENCY: u16 = 1498;
+/// 3.3.5a's `PLAYER_RUNE_REGEN_1..4`, one float per rune type.
+const FIELD_PLAYER_RUNE_REGEN_1: u16 = 1499;
 /// The words per arena-team slot in `PLAYER_FIELD_ARENA_TEAM_INFO_1_1`.
 pub const ARENA_TEAM_INFO_STRIDE: u16 = 7;
 /// The combat ratings, 25 in 3.3.5a (`GetCombatRating` refuses an index past `0x19`).
@@ -396,7 +399,7 @@ fn descriptor_len(object_type: ObjectType) -> u16 {
         ObjectType::Container => 122, // CONTAINER_END = ITEM_END + 0x4A
         ObjectType::Unit => 188,      // UNIT_END = OBJECT_END + 0xB6
         // 1.12.1's PLAYER_END (UNIT_END + 0x446), plus the 3.3.5a fields kept past it.
-        ObjectType::Player => 1499,
+        ObjectType::Player => 1503,
         ObjectType::GameObject => 26, // GAMEOBJECT_END = OBJECT_END + 0x14
         ObjectType::DynamicObject => 16, // DYNAMICOBJECT_END = OBJECT_END + 0xA
         ObjectType::Corpse => 38,     // CORPSE_END = OBJECT_END + 0x20

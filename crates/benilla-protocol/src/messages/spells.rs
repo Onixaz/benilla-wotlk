@@ -346,18 +346,31 @@ fn read_ammo(r: &mut impl Read) -> io::Result<u32> {
     Ok(display_id)
 }
 
-/// The rune block (`0x80677e`, `0x80e353`): the rune masks before and after, then one byte for
-/// each of the six runes the cast spent.
-fn skip_runes(r: &mut impl Read) -> io::Result<()> {
-    let before = read_u8(r)?;
-    let after = read_u8(r)?;
-    for i in 0..6 {
+/// A cast's rune block: the caster's ready-rune masks before and after the cast, and for each of
+/// the six runes it spent, the share of the recharge already passed out of 255.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CastRunes {
+    pub before: u8,
+    pub after: u8,
+    /// By rune index; a rune the cast did not spend reads 0.
+    pub progress: [u8; 6],
+}
+
+/// The rune block (`0x80677e`, `0x80e353`): the two masks, then one byte for each rune of the six
+/// set in `before` and clear in `after`.
+fn read_runes(r: &mut impl Read) -> io::Result<CastRunes> {
+    let mut runes = CastRunes {
+        before: read_u8(r)?,
+        after: read_u8(r)?,
+        ..Default::default()
+    };
+    for (i, progress) in runes.progress.iter_mut().enumerate() {
         let bit = 1u8 << i;
-        if before & bit != 0 && after & bit == 0 {
-            let _ = read_u8(r)?;
+        if runes.before & bit != 0 && runes.after & bit == 0 {
+            *progress = read_u8(r)?;
         }
     }
-    Ok(())
+    Ok(runes)
 }
 
 /// `SMSG_SPELL_START` (handlers `0x80fee0`, `0x806700`): a non-triggered cast began, instants
@@ -374,6 +387,8 @@ pub struct SpellStart {
     pub cast_time_ms: u32,
     pub targets: SpellCastTargets,
     pub ammo_display_id: Option<u32>,
+    /// The `CAST_FLAG_RUNE_LIST` block.
+    pub runes: Option<CastRunes>,
 }
 
 /// Read `SMSG_SPELL_START`: the shared head (`0x80fef4`-`0x80ff22`), `u32 castTime`, the targets,
@@ -389,9 +404,11 @@ pub(super) fn read_spell_start(r: &mut impl Read) -> io::Result<SpellStart> {
     if cast_flags & CAST_FLAG_POWER_LEFT_SELF != 0 {
         let _power = read_u32_le(r)?;
     }
-    if cast_flags & CAST_FLAG_RUNE_LIST != 0 {
-        skip_runes(r)?;
-    }
+    let runes = if cast_flags & CAST_FLAG_RUNE_LIST != 0 {
+        Some(read_runes(r)?)
+    } else {
+        None
+    };
     let ammo_display_id = if cast_flags & CAST_FLAG_AMMO != 0 {
         Some(read_ammo(r)?)
     } else {
@@ -410,6 +427,7 @@ pub(super) fn read_spell_start(r: &mut impl Read) -> io::Result<SpellStart> {
         cast_time_ms,
         targets,
         ammo_display_id,
+        runes,
     })
 }
 
@@ -433,6 +451,8 @@ pub struct SpellGo {
     pub reflects: Vec<(u64, u8)>,
     pub targets: SpellCastTargets,
     pub ammo_display_id: Option<u32>,
+    /// The `CAST_FLAG_RUNE_LIST` block.
+    pub runes: Option<CastRunes>,
 }
 
 /// Read `SMSG_SPELL_GO`: the shared head, `u32` timestamp, the hit and miss lists, the targets,
@@ -468,9 +488,11 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
     if cast_flags & CAST_FLAG_POWER_LEFT_SELF != 0 {
         let _power = read_u32_le(r)?;
     }
-    if cast_flags & CAST_FLAG_RUNE_LIST != 0 {
-        skip_runes(r)?;
-    }
+    let runes = if cast_flags & CAST_FLAG_RUNE_LIST != 0 {
+        Some(read_runes(r)?)
+    } else {
+        None
+    };
     if cast_flags & CAST_FLAG_ADJUST_MISSILE != 0 {
         let _elevation = read_u32_le(r)?;
         let _delay_ms = read_u32_le(r)?;
@@ -505,6 +527,7 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
         reflects,
         targets,
         ammo_display_id,
+        runes,
     })
 }
 
@@ -833,6 +856,35 @@ mod tests {
         assert!(r.is_empty(), "{} bytes left", r.len());
         assert_eq!(go.misses, vec![(0x10, SPELL_MISS_REFLECT), (0x11, 3)]);
         assert_eq!(go.reflects, vec![(0x10, 7)]);
+    }
+
+    /// Icy Touch (45477) spending frost rune 4: only runes ready before and spent after carry a
+    /// progress byte (`0x806799`-`0x8067aa`), and the ammo after the block still lines up.
+    #[test]
+    fn spell_start_keeps_the_rune_block() {
+        let mut body = vec![0x01, 0x05, 0x01, 0x05, 2];
+        body.extend(45477u32.to_le_bytes());
+        body.extend(
+            (CAST_FLAG_POWER_LEFT_SELF | CAST_FLAG_RUNE_LIST | CAST_FLAG_AMMO).to_le_bytes(),
+        );
+        body.extend(0u32.to_le_bytes());
+        body.extend(0u32.to_le_bytes()); // targets: none
+        body.extend(0u32.to_le_bytes()); // power left
+        body.extend([0x3b, 0x2b, 17]); // rune 3 already spent, rune 4 spent now
+        body.extend(5996u32.to_le_bytes());
+        body.extend(24u32.to_le_bytes());
+        let mut r = &body[..];
+        let start = read_spell_start(&mut r).unwrap();
+        assert!(r.is_empty(), "{} bytes left", r.len());
+        assert_eq!(
+            start.runes,
+            Some(CastRunes {
+                before: 0x3b,
+                after: 0x2b,
+                progress: [0, 0, 0, 0, 17, 0],
+            })
+        );
+        assert_eq!(start.ammo_display_id, Some(5996));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Draw and stow sounds, as 12340's `SI2::PlaySheatheSound` (`0x4d07b0`) picks them: the moved
 //! item's `Material.dbc` row names the kit, `SheatheSoundID` to stow and `UnsheatheSoundID` to draw,
-//! played 2 yd above the unit. The material rides the wire (`SMSG_ITEM_QUERY_SINGLE_RESPONSE` for
-//! players, `UNIT_VIRTUAL_ITEM_INFO` for creatures) into `Wielded`.
+//! played 2 yd above the unit. The material rides `SMSG_ITEM_QUERY_SINGLE_RESPONSE` into
+//! `Wielded` for players; a creature's reads 0.
 //!
 //! The trigger is [`SheathSwapMessage`], fired once per arm as that arm's sheath one-shot crosses
 //! its swap point. Snap transitions (attack auto-draw, reactive stows, remote units) are silent,

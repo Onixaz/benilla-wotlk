@@ -46,6 +46,63 @@ pub(crate) struct UsableCtx<'a> {
     pub(crate) spell_mods: &'a SpellModifiers,
     /// Every carried entry's count for the frame ([`crate::ui_items::carried_counts`]).
     pub(crate) carried: &'a std::collections::HashMap<u32, u32>,
+    /// The rune table and costs leg 12 reads for a rune spell; `None` when the caster is not the
+    /// active player, which `Spell_C_HaveSpellPower` refuses (`0x80182d`).
+    pub(crate) runes: Option<RuneCheck<'a>>,
+}
+
+/// The player's runes and `SpellRuneCost.dbc`, for [`RuneCheck::has_runes`].
+#[derive(Clone, Copy)]
+pub(crate) struct RuneCheck<'a> {
+    pub(crate) state: &'a benilla_ui::script::RuneState,
+    pub(crate) costs: &'a benilla_formats::SpellRuneCostCatalog,
+}
+
+/// `POWER_RUNE`, the power type `Spell_C_HaveSpellPower` sends to the rune check (`0x8017fe`).
+pub(crate) const POWER_RUNE: u32 = 5;
+
+/// The rune kinds `SpellRuneCost.dbc` charges, then death, which stands in for any (`0x5ee786`).
+const RUNE_BLOOD: u8 = 0;
+const RUNE_UNHOLY: u8 = 1;
+const RUNE_FROST: u8 = 2;
+const RUNE_DEATH: u8 = 3;
+
+impl RuneCheck<'_> {
+    /// `CGRuneInfo::HasRunesForSpell` (`0x5ee5b0`): free when the cost percentage modifies to 0;
+    /// else each kind's ready runes against its cost, scaled only by a percentage above 100, with
+    /// ready death runes covering the whole shortfall. No row, or a non-rune spell, is free. The
+    /// per-school unit cost modifiers before the spell mod (`0x5ee61b`-`0x5ee641`) are not built.
+    pub(crate) fn has_runes(&self, d: &SpellDisplay, mods: &SpellModifiers) -> bool {
+        let pct = mods.apply(d, OP_COST, 100);
+        if pct == 0 || d.power_type != POWER_RUNE {
+            return true;
+        }
+        let Some(cost) = self.costs.get(d.rune_cost_id) else {
+            return true;
+        };
+        let mut missing = 0i64;
+        let mut short = false;
+        for (kind, need) in [
+            (RUNE_BLOOD, cost.blood),
+            (RUNE_UNHOLY, cost.unholy),
+            (RUNE_FROST, cost.frost),
+        ] {
+            if need == 0 {
+                continue;
+            }
+            let need = if pct > 100 {
+                i64::from(pct) * i64::from(need) / 100
+            } else {
+                i64::from(need)
+            };
+            let have = i64::from(self.state.ready_of_kind(kind));
+            if have < need {
+                missing += need - have;
+                short = true;
+            }
+        }
+        !short || i64::from(self.state.ready_of_kind(RUNE_DEATH)) >= missing
+    }
 }
 
 /// The search covers equipment indices `0..=22` (`0x5f0c50`'s `cmp ebx,0x17; jl`): the 19 worn
@@ -438,8 +495,14 @@ pub(crate) fn spell_usable(
     if d.cooldown_on_event() && ctx.cooldowns.has_on_hold_record(spell_id, 0, d.category) {
         return (false, false);
     }
-    // Leg 12 (`0x6e3fba`..`0x6e3feb`): power, the only notEnoughMana writer.
-    if !can_afford(d, ctx.store, ctx.spell_mods) {
+    // Leg 12 (`0x6e3fba`..`0x6e3feb`): power, the only notEnoughMana writer. A rune spell asks
+    // the rune table instead of a pool (`Spell_C_HaveSpellPower` `0x801826`).
+    let affordable = if d.power_type == POWER_RUNE {
+        ctx.runes.is_some_and(|r| r.has_runes(d, ctx.spell_mods))
+    } else {
+        can_afford(d, ctx.store, ctx.spell_mods)
+    };
+    if !affordable {
         return (false, true);
     }
     (true, false)
@@ -740,6 +803,7 @@ mod tests {
             cooldowns,
             carried,
             spell_mods,
+            runes: None,
         }
     }
 
@@ -763,6 +827,65 @@ mod tests {
             &items,
             &commands,
         )
+    }
+
+    /// `HasRunesForSpell` (`0x5ee5b0`): each kind's ready runes against the row, the shortfall
+    /// covered by ready death runes, and a cost cut to nothing is free.
+    #[test]
+    fn a_rune_spell_needs_its_runes_or_death_runes() {
+        use benilla_formats::{SpellRuneCost, SpellRuneCostCatalog};
+        use benilla_ui::script::RuneState;
+
+        let costs = SpellRuneCostCatalog::from_rows([SpellRuneCost {
+            id: 7,
+            unholy: 1,
+            frost: 1,
+            ..Default::default()
+        }]);
+        let strike = SpellDisplay {
+            power_type: POWER_RUNE,
+            rune_cost_id: 7,
+            ..Default::default()
+        };
+        let mods = SpellModifiers::default();
+        let check = |ready: u32, kinds: [u8; 8]| {
+            let state = RuneState {
+                ready,
+                kinds,
+                ..Default::default()
+            };
+            RuneCheck {
+                state: &state,
+                costs: &costs,
+            }
+            .has_runes(&strike, &mods)
+        };
+        let base = [0, 0, 1, 1, 2, 2, 0, 0];
+        assert!(check(0x3f, base), "all ready");
+        assert!(check(0x14, base), "one unholy and one frost");
+        assert!(!check(0x0c, base), "no frost");
+        // Blood rune 0 turned death covers the missing frost.
+        assert!(check(0x0d, [3, 0, 1, 1, 2, 2, 0, 0]));
+        assert!(
+            !check(0x01, [3, 0, 1, 1, 2, 2, 0, 0]),
+            "one death rune short of two"
+        );
+        // A rune spell with no row, or a non-rune spell, is free.
+        let free = SpellDisplay {
+            power_type: POWER_RUNE,
+            rune_cost_id: 99,
+            ..Default::default()
+        };
+        let state = RuneState {
+            ready: 0,
+            ..Default::default()
+        };
+        let none = RuneCheck {
+            state: &state,
+            costs: &costs,
+        };
+        assert!(none.has_runes(&free, &mods));
+        assert!(!none.has_runes(&strike, &mods));
     }
 
     /// Bloodrage (2687) takes 20% of base health, even when gear raises max health.
@@ -1001,6 +1124,7 @@ mod tests {
                 cooldowns: &cooldowns,
                 carried: &carried,
                 spell_mods: &SpellModifiers::default(),
+                runes: None,
             };
             assert_eq!(
                 spell_usable(5308, &execute, &spells, &ctx, &objects, &items, &commands),
