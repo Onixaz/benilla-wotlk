@@ -17,9 +17,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use benilla_formats::{BatchSort, RenderSubmesh};
 use bevy::core_pipeline::core_3d::Transparent3d;
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_phase::{sort_phase_system, ViewSortedRenderPhases};
-use bevy::render::sync_world::RenderEntity;
+use bevy::render::sync_world::MainEntity;
 use bevy::render::view::ExtractedView;
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 
@@ -72,7 +73,7 @@ impl M2BatchSort {
 }
 
 /// [`M2BatchSort`] in the render world, its points in world space.
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 struct ExtractedM2Sort {
     key: BatchSort,
     group: u64,
@@ -82,20 +83,17 @@ struct ExtractedM2Sort {
     radius: f32,
 }
 
+/// The visible M2 batches' keys by main-world entity: a mesh has no render-world entity of its
+/// own, so a `Transparent3d` item names its batch by [`MainEntity`].
+#[derive(Resource, Default)]
+struct M2Sorts(HashMap<MainEntity, ExtractedM2Sort>);
+
 fn extract_m2_sort(
-    mut commands: Commands,
-    mut previous: Local<usize>,
-    parts: Extract<
-        Query<(
-            RenderEntity,
-            &ViewVisibility,
-            &M2BatchSort,
-            &GlobalTransform,
-        )>,
-    >,
+    mut sorts: ResMut<M2Sorts>,
+    parts: Extract<Query<(Entity, &ViewVisibility, &M2BatchSort, &GlobalTransform)>>,
     anchors: Extract<Query<&GlobalTransform>>,
 ) {
-    let mut values = Vec::with_capacity(*previous);
+    sorts.0.clear();
     for (entity, visibility, sort, transform) in &parts {
         if !visibility.get() {
             continue;
@@ -115,8 +113,8 @@ fn extract_m2_sort(
             ),
         };
         let scale = transform.affine().matrix3.x_axis.length();
-        values.push((
-            entity,
+        sorts.0.insert(
+            MainEntity::from(entity),
             ExtractedM2Sort {
                 key: sort.key,
                 group: sort.group,
@@ -124,10 +122,8 @@ fn extract_m2_sort(
                 center,
                 radius: sort.key.radius * scale,
             },
-        ));
+        );
     }
-    *previous = values.len();
-    commands.try_insert_batch(values);
 }
 
 /// One M2 item's place: its index in the phase, its model, and its keys.
@@ -145,9 +141,12 @@ struct Ranked {
 fn order_m2_transparent(
     views: Query<&ExtractedView>,
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
-    sorts: Query<&ExtractedM2Sort>,
+    sorts: Res<M2Sorts>,
     mut ranked: Local<Vec<Ranked>>,
 ) {
+    if sorts.0.is_empty() {
+        return;
+    }
     for view in &views {
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else {
             continue;
@@ -156,7 +155,7 @@ fn order_m2_transparent(
         let eye = view.world_from_view.translation();
         ranked.clear();
         for (i, item) in phase.items.iter().enumerate() {
-            let Ok(s) = sorts.get(item.entity.0) else {
+            let Some(s) = sorts.0.get(&item.entity.1) else {
                 continue;
             };
             let (sort_depth, depth) = if s.key.model_depth {
@@ -218,6 +217,7 @@ fn assign(ranked: &mut [Ranked], mut set: impl FnMut(usize, f32)) {
 pub(super) fn plugin(app: &mut App) {
     if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
         render_app
+            .init_resource::<M2Sorts>()
             .add_systems(ExtractSchedule, extract_m2_sort)
             .add_systems(
                 Render,
@@ -231,6 +231,61 @@ pub(super) fn plugin(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A mesh has no render-world entity, so the keys must reach the pass by [`MainEntity`], the
+    /// name a `Transparent3d` item carries; keyed by render entity, nothing ever matched.
+    #[test]
+    fn extraction_keys_a_visible_batch_by_its_main_entity() {
+        use bevy::ecs::system::RunSystemOnce;
+        use bevy::render::MainWorld;
+        let key = BatchSort {
+            model_depth: true,
+            priority_plane: 6,
+            center: [0.0; 3],
+            radius: 1.0,
+            push: 0,
+            material_layer: 0,
+            index: 3,
+        };
+        let mut main = MainWorld::default();
+        let shown = main
+            .spawn((
+                M2BatchSort {
+                    key,
+                    group: 7,
+                    origin: SortOrigin::Part,
+                },
+                ViewVisibility::default(),
+                GlobalTransform::from_translation(Vec3::new(1.0, 2.0, 3.0)),
+            ))
+            .id();
+        {
+            use bevy::camera::visibility::SetViewVisibility;
+            let mut vis = main.get_mut::<ViewVisibility>(shown).expect("spawned");
+            vis.set_visible();
+        }
+        main.spawn((
+            M2BatchSort {
+                key,
+                group: 7,
+                origin: SortOrigin::Part,
+            },
+            ViewVisibility::default(),
+            GlobalTransform::IDENTITY,
+        ));
+        let mut render = World::new();
+        render.init_resource::<M2Sorts>();
+        render.insert_resource(main);
+        render
+            .run_system_once(extract_m2_sort)
+            .expect("extract runs");
+        let sorts = &render.resource::<M2Sorts>().0;
+        assert_eq!(sorts.len(), 1, "only the visible batch");
+        let s = sorts
+            .get(&MainEntity::from(shown))
+            .expect("keyed by its main entity");
+        assert_eq!((s.group, s.origin), (7, Vec3::new(1.0, 2.0, 3.0)));
+    }
 
     fn item(item: usize, group: u64, sort_depth: f32, plane: i8, depth: f32, index: u16) -> Ranked {
         Ranked {
