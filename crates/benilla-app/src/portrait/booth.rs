@@ -555,8 +555,10 @@ pub(super) fn spawn_booth_model(
         // shader's all-zero "untagged, opaque" sentinel cannot fire on an invisible batch.
         let tag_slot = if use_rig { rig_slot } else { 0 };
         if let Some(anim) = &p.alpha_anim {
+            // On the root's sequence and seek time, so the batch fades in phase with the pose.
             let mat_anim =
-                benilla_world::doodad_anim::MatAnim::driving_tag(anim.clone(), 0.0, None);
+                benilla_world::doodad_anim::MatAnim::driving_tag(anim.clone(), 0.0, None)
+                    .following_host(Some(root));
             child.insert((
                 bevy::mesh::MeshTag(benilla_world::mesh_tag::spawn_tag(
                     tag_slot,
@@ -632,7 +634,8 @@ pub(super) fn spawn_booth_model(
         }
         if let Some(anim) = &bb.alpha_anim {
             let mat_anim =
-                benilla_world::doodad_anim::MatAnim::driving_tag(anim.clone(), 0.0, None);
+                benilla_world::doodad_anim::MatAnim::driving_tag(anim.clone(), 0.0, None)
+                    .following_host(Some(root));
             card.insert((
                 bevy::mesh::MeshTag(benilla_world::mesh_tag::spawn_tag(
                     rig_slot,
@@ -1259,6 +1262,144 @@ mod tests {
                 .entity(*e)
                 .contains::<bevy::camera::visibility::NoFrustumCulling>()),
             "…and the static twin keeps the ordinary test — its own box IS where it draws"
+        );
+    }
+
+    /// A scene spawned late (a return to the login screen) fades its batches on its own Stand clock,
+    /// or the login wyrm's body hides mid-perch and leaves its glow.
+    #[test]
+    fn a_booth_batch_fades_on_its_bakes_clock_not_the_apps() {
+        let mut app = App::new();
+        app.init_resource::<benilla_world::rig_palette::RigPalettes>();
+        app.init_resource::<Time>();
+        app.add_systems(
+            Update,
+            (
+                benilla_world::doodad_anim::sample_mat_anim,
+                push_booth_mat_alpha,
+            )
+                .chain(),
+        );
+        let skeleton = benilla_assets::ModelSkeleton {
+            joints: vec![benilla_assets::ModelJoint {
+                parent: -1,
+                local_translation: Vec3::ZERO,
+                billboard: None,
+                parent_arm: None,
+            }],
+            spine_bone: None,
+            head_bone: None,
+        };
+        let stand = bevy::animation::graph::AnimationNodeIndex::new(1);
+        let anims = benilla_assets::ModelAnimations {
+            graph: Handle::default(),
+            clips: vec![benilla_assets::AnimClip {
+                anim_id: 0,
+                seq_index: 0,
+                node: stand,
+                looping: true,
+                duration: 4.0,
+                move_speed: 0.0,
+                blend_time: 0.15,
+                bounds_center: Vec3::ZERO,
+                bounds_radius: 0.0,
+                bounds_min: Vec3::ZERO,
+                bounds_max: Vec3::ZERO,
+                events: Vec::new().into(),
+                arm_nodes: None,
+                upper_node: None,
+                frequency: 0,
+                replay: (0, 0),
+                poses_bones: true,
+            }],
+            hand_close: [None, None],
+            playable_animation_lookup: Vec::new(),
+            animation_lookup: Vec::new(),
+            global_bones: Vec::new(),
+            first_seq: None,
+            pose: Default::default(),
+        };
+        // Hidden for the first 2 s of the 4 s sequence, shown after.
+        let alpha = std::sync::Arc::new(
+            benilla_formats::AlphaAnim::new(vec![benilla_formats::AlphaSeq {
+                color: None,
+                weight: Some(benilla_formats::ScalarAnim {
+                    period: 4.0,
+                    step: true,
+                    wrap: true,
+                    gseq: false,
+                    keys: vec![(0.0, 0.0), (2.0, 1.0)],
+                }),
+            }])
+            .expect("a keyed fade is worth carrying"),
+        );
+        let parts = vec![BoothPart {
+            sort: None,
+            skinned: Some(Handle::default()),
+            static_mesh: Handle::default(),
+            material: Handle::default(),
+            alpha_anim: Some(alpha),
+            twins: BoothTwins::default(),
+            mat_anim: false,
+        }];
+        let root = app.world_mut().spawn(Transform::IDENTITY).id();
+        let mut palettes = app
+            .world_mut()
+            .remove_resource::<benilla_world::rig_palette::RigPalettes>()
+            .expect("just inserted");
+        let mut queue = bevy::ecs::world::CommandQueue::default();
+        {
+            let mut commands = Commands::new(&mut queue, app.world());
+            spawn_booth_model(
+                &mut commands,
+                &mut palettes,
+                root,
+                RenderLayers::layer(9),
+                &parts,
+                &[],
+                Some((&skeleton, &Handle::default(), Some(&anims))),
+                None,
+                BoothMotion::Loop,
+                [false, false],
+                &[],
+                BoothInstance::default(),
+            )
+            .finish(&mut commands);
+        }
+        queue.apply(app.world_mut());
+        app.world_mut().insert_resource(palettes);
+        // The app has run 0.5 s; the scene's Stand stands at 3 s.
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(500));
+        app.world_mut()
+            .entity_mut(root)
+            .get_mut::<AnimationPlayer>()
+            .expect("the bake armed Stand")
+            .animation_mut(stand)
+            .expect("Stand is playing")
+            .seek_to(3.0);
+        let part = app
+            .world()
+            .entity(root)
+            .get::<Children>()
+            .unwrap()
+            .iter()
+            .find(|e| app.world().entity(*e).contains::<BoothMatAlpha>())
+            .expect("the faded batch");
+        // `Mesh3d` brings `Visibility` in the app; this bare one seats it as the spawn's t = 0 left it.
+        app.world_mut().entity_mut(part).insert(Visibility::Hidden);
+        app.update();
+
+        let part = app.world().entity(part);
+        assert_eq!(
+            *part.get::<Visibility>().unwrap(),
+            Visibility::Inherited,
+            "Stand's 3 s is past the fade-in"
+        );
+        assert_eq!(
+            benilla_world::mesh_tag::alpha_of(part.get::<bevy::mesh::MeshTag>().unwrap().0),
+            1.0
         );
     }
 
