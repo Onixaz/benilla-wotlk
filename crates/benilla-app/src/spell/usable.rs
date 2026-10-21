@@ -73,15 +73,21 @@ impl RuneCheck<'_> {
     /// ready death runes covering the whole shortfall. No row, or a non-rune spell, is free. The
     /// per-school unit cost modifiers before the spell mod (`0x5ee61b`-`0x5ee641`) are not built.
     pub(crate) fn has_runes(&self, d: &SpellDisplay, mods: &SpellModifiers) -> bool {
+        self.shortfall(d, mods).0
+    }
+
+    /// [`Self::has_runes`] with its out-parameter: each kind's shortfall (blood, unholy, frost),
+    /// then the death runes still missing once ready death runes are counted.
+    fn shortfall(&self, d: &SpellDisplay, mods: &SpellModifiers) -> (bool, [i64; 4]) {
+        let mut needed = [0i64; 4];
         let pct = mods.apply(d, OP_COST, 100);
         if pct == 0 || d.power_type != POWER_RUNE {
-            return true;
+            return (true, needed);
         }
         let Some(cost) = self.costs.get(d.rune_cost_id) else {
-            return true;
+            return (true, needed);
         };
         let mut missing = 0i64;
-        let mut short = false;
         for (kind, need) in [
             (RUNE_BLOOD, cost.blood),
             (RUNE_UNHOLY, cost.unholy),
@@ -98,10 +104,73 @@ impl RuneCheck<'_> {
             let have = i64::from(self.state.ready_of_kind(kind));
             if have < need {
                 missing += need - have;
-                short = true;
+                needed[usize::from(kind)] = need - have;
             }
         }
-        !short || i64::from(self.state.ready_of_kind(RUNE_DEATH)) >= missing
+        let death = i64::from(self.state.ready_of_kind(RUNE_DEATH));
+        if missing == 0 || death >= missing {
+            return (true, needed);
+        }
+        needed[usize::from(RUNE_DEATH)] = missing - death;
+        (false, needed)
+    }
+
+    /// `CGRuneInfo::ComputeRuneSpellCooldown` (`0x5ee7e0`): when a rune spell lacks runes, the
+    /// ready time on the `GetTime` millisecond clock of the last kind it waits for. Each short
+    /// kind waits for its first rune back, or its last when two are short; a recharging death
+    /// rune that comes back sooner stands in for the latest rune (`0x5ee8c0`-`0x5ee958`).
+    pub(crate) fn rune_ready_ms(&self, d: &SpellDisplay, mods: &SpellModifiers) -> Option<u32> {
+        self.costs.get(d.rune_cost_id)?;
+        let (has, needed) = self.shortfall(d, mods);
+        if has {
+            return None;
+        }
+        let st = self.state;
+        let not_ready = |i: usize| st.ready & (1 << i) == 0;
+        // `GetRuneRechargeTime` (`0x5ee1f0`): 0 for a ready rune.
+        let recharge = |i: usize| if not_ready(i) { st.recharge_ms[i] } else { 0 };
+        let later = |t: u32, than: u32| than == 0 || t.wrapping_sub(than) as i32 >= 0;
+        let mut times = [0u32; benilla_ui::script::MAX_RUNES];
+        let (mut latest, mut latest_at) = (0u32, 0usize);
+        for (i, time) in times.iter_mut().enumerate() {
+            let kind = usize::from(st.kinds[i]);
+            if kind != usize::from(RUNE_DEATH) && needed.get(kind).is_some_and(|&n| n != 0) {
+                *time = recharge(i);
+                if later(*time, latest) {
+                    (latest, latest_at) = (*time, i);
+                }
+            }
+        }
+        for i in 0..times.len() {
+            if st.kinds[i] != RUNE_DEATH || !not_ready(i) || st.recharge_ms[i] == 0 {
+                continue;
+            }
+            let t = recharge(i);
+            if latest == 0 {
+                (latest, latest_at) = (t, i);
+                times[i] = t;
+            } else if t < latest {
+                times[latest_at] = t;
+                (latest, latest_at) = (0, 0);
+                for (j, &time) in times.iter().enumerate() {
+                    if st.kinds[j] != RUNE_DEATH && later(time, latest) {
+                        (latest, latest_at) = (time, j);
+                    }
+                }
+            }
+        }
+        // One short: the pair's sooner nonzero time; two short: the later (`0x5ee966`-`0x5ee9ff`).
+        let pair = |a: u32, b: u32, need: i64| match need {
+            1 if a == 0 => b,
+            1 if b == 0 || a < b => a,
+            1 => b,
+            2 => a.max(b),
+            _ => 0,
+        };
+        let blood = pair(times[0], times[1], needed[0]);
+        let unholy = pair(times[2], times[3], needed[1]);
+        let frost = pair(times[4], times[5], needed[2]);
+        Some(blood.max(unholy).max(frost))
     }
 }
 

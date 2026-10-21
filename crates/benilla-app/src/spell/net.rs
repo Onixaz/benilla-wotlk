@@ -1221,6 +1221,14 @@ fn spell_go(
             );
         }
     }
+    // After the inserts and their flush, the go collects both lists every 120 s
+    // (`0x80fe50`-`0x80fe81`).
+    if (self_guid.0 == Some(caster) || pet_go_cooldown(caster, self_guid, index, stores))
+        && cooldowns.collect_due(now)
+    {
+        cooldowns.collect(now);
+        pet_bar.cooldowns.collect(now);
+    }
     // Keyed by spell id, like the reap `0x614150(spellId, 0)`: a proc's GO must not clear another
     // spell's precast state.
     if let Some(&e) = index.0.get(&caster) {

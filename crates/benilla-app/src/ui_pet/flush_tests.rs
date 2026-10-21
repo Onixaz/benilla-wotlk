@@ -79,13 +79,9 @@ impl Rig {
         self.app.world().resource::<PetBar>().cooldowns.generation
     }
 
-    /// How many records the pet's list holds, elapsed ones included.
+    /// How many records the pet's list holds that have not run out.
     fn record_count(&self) -> usize {
-        self.app
-            .world()
-            .resource::<PetBar>()
-            .cooldowns
-            .record_count()
+        self.app.world().resource::<PetBar>().cooldowns.live_count()
     }
 
     /// Whether the pet's list still holds a record that has run out.
@@ -457,9 +453,9 @@ fn let_the_gcds_run_out() {
     std::thread::sleep(Duration::from_millis(120));
 }
 
-/// Every pet GCD and every recovery the GO leg inserts is a record, and the insert is where the
-/// list is bounded: after forty presses whose GCDs have all run out, the next press leaves the
-/// list with its live records and its own, a running recovery and a parked record among them.
+/// Every pet GCD and every recovery the GO leg inserts is a record, and an insert marks the ones
+/// that ran out: after forty presses whose GCDs have all run out, the next press leaves the list
+/// its live records and its own, a running recovery and a parked record among them.
 #[test]
 fn an_insert_leaves_the_pets_list_its_live_records_alone() {
     let mut rig = rig(
@@ -489,7 +485,7 @@ fn an_insert_leaves_the_pets_list_its_live_records_alone() {
 
     rig.press(1);
 
-    assert!(!rig.elapsed_pending(), "the insert dropped them");
+    assert!(!rig.elapsed_pending(), "the insert marked them spent");
     assert_eq!(
         rig.record_count(),
         3,

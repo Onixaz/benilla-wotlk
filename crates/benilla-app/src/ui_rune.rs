@@ -29,6 +29,8 @@ const POWER_RUNIC_POWER: u8 = 6;
 pub(crate) struct Runes {
     pub(crate) state: RuneState,
     pending: Vec<SessionEvent>,
+    /// Moves whenever a packet or the regen tick changed the table, for gated feeds.
+    pub(crate) epoch: u64,
 }
 
 /// `SpellRuneCost.dbc`; empty without client data.
@@ -51,8 +53,11 @@ impl Plugin for UiRunePlugin {
                 feed_runes
                     .in_set(UnitFeed)
                     .after(benilla_world::schedule::WorldStage::Net)
-                    // Before `PLAYER_ENTERING_WORLD`, whose stock handler reads every rune's kind.
-                    .before(crate::ui_unit::EnterWorldFeed),
+                    // Before `PLAYER_ENTERING_WORLD`, whose stock handler reads every rune's kind,
+                    // and the cooldown readers, whose rune leg reads the table.
+                    .before(crate::ui_unit::EnterWorldFeed)
+                    .before(crate::ui_spellbook::BookFeed)
+                    .before(crate::ui_action::CooldownEvents),
             );
     }
 }
@@ -102,7 +107,7 @@ fn feed_runes(
     let me = self_q.iter().next();
     // The milliseconds of this frame's `GetTime`, the clock the reference stamps runes on.
     let now_ms = (clock.ui_now * 1000.0) as u32;
-    let Runes { state, pending } = &mut *runes;
+    let Runes { state, pending, .. } = &mut *runes;
     if let Some(me) = me {
         state.regen = std::array::from_fn(|kind| me.0.player_rune_regen(kind as u8));
     }
@@ -145,6 +150,9 @@ fn feed_runes(
         events.extend(state.tick(now_ms));
     }
 
+    if !events.is_empty() {
+        runes.epoch = runes.epoch.wrapping_add(1);
+    }
     let Some(mut script) = script else {
         return;
     };

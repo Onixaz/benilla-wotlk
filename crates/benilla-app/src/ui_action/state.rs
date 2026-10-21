@@ -127,6 +127,16 @@ pub(super) fn feed_action_state(
 
     let (pending, queued_melee, channel, targeting, bound, spell_mods, range_units, rune_inputs) =
         &cast_state;
+    let rune_leg = |check| crate::spell::cooldowns::RuneLeg {
+        runes: check,
+        catalog: &spells
+            .as_deref()
+            .expect("a spell slot reads the catalog")
+            .catalog,
+        mods: spell_mods,
+    };
+    // The rune leg compares ends on the `GetTime` millisecond clock the runes are stamped on.
+    let now_ms = (ui_now * 1000.0).floor() as i64;
     let rune_check =
         rune_inputs
             .0
@@ -259,6 +269,15 @@ pub(super) fn feed_action_state(
                 };
                 let info = cooldowns.info(button.action, 0, Some(d), now);
                 st.cooldown = info.ui_triple(anchor, ui_now);
+                if let Some(check) = rune_check {
+                    st.cooldown = cooldowns.with_rune_leg(
+                        button.action,
+                        d,
+                        st.cooldown,
+                        &rune_leg(check),
+                        now_ms,
+                    );
+                }
                 if st.cooldown.is_some() && trace_cd {
                     // The store's clock against the widget's; the sink stamps wall time.
                     benilla_assets::trace::line(

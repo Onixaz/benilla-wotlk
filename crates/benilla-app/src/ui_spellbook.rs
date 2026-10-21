@@ -101,6 +101,7 @@ struct FeedMemory {
     /// cooldown prune), and for the self store's presence: a despawn flips the weapon icons unseen.
     items_templates: gate::Watch,
     cooldown_epoch: gate::Watch,
+    rune_epoch: gate::Watch,
     self_present: gate::Watch,
 }
 
@@ -118,6 +119,12 @@ fn feed_spellbook(
     mut memory: Local<crate::ui_script::VmMemo<FeedMemory>>,
     mut learned: ResMut<LearnedInTab>,
     summons: Res<crate::spell::SummonSlots>,
+    // The rune table and costs, and the cost modifiers, that a rune spell's cooldown reads.
+    (runes, rune_costs, spell_mods): (
+        Option<Res<crate::ui_rune::Runes>>,
+        Option<Res<crate::ui_rune::RuneCosts>>,
+        Res<crate::spell::SpellModifiers>,
+    ),
 ) {
     let Some(mut script) = script else {
         return;
@@ -128,6 +135,9 @@ fn feed_spellbook(
     let objects_moved = inv.changes.moved();
     let templates_moved = memory.items_templates.moved(items.template_epoch());
     let cooldowns_moved = memory.cooldown_epoch.moved(cooldowns.feed_epoch());
+    let runes_moved = memory
+        .rune_epoch
+        .moved(runes.as_deref().map_or(0, |r| r.epoch));
     let presence_moved = memory
         .self_present
         .moved(u64::from(!inv.self_store.is_empty()));
@@ -147,6 +157,7 @@ fn feed_spellbook(
             ("objects", objects_moved),
             ("templates", templates_moved),
             ("cooldowns", cooldowns_moved),
+            ("runes", runes_moved),
             ("sweep", sweep),
             ("presence", presence_moved),
             ("self", self_changed),
@@ -164,6 +175,7 @@ fn feed_spellbook(
             || objects_moved
             || templates_moved
             || cooldowns_moved
+            || runes_moved
             || sweep
             || presence_moved
             || self_changed
@@ -226,10 +238,28 @@ fn feed_spellbook(
     // Each slot's cooldown (`GetCooldownInfo` `0x6e13e0`: id, category and GCD alike) on the
     // `GetTime` clock, frame-stable per arm, so a running cooldown never churns the diff.
     let (anchor, ui_now) = (clock.anchor, clock.ui_now);
+    let rune_check = runes
+        .as_deref()
+        .zip(rune_costs.as_deref())
+        .map(|(runes, costs)| crate::spell::usable::RuneCheck {
+            state: &runes.state,
+            costs: &costs.0,
+        });
+    let now_ms = (ui_now * 1000.0).floor() as i64;
     for slot in &mut fresh.slots {
+        let d = spells.catalog.get(slot.spell_id);
         slot.cooldown = cooldowns
-            .info(slot.spell_id, 0, spells.catalog.get(slot.spell_id), anchor)
+            .info(slot.spell_id, 0, d, anchor)
             .ui_triple(anchor, ui_now);
+        // `GetSpellCooldown` (`0x540e80`) reads the history's rune leg too.
+        if let (Some(check), Some(d)) = (rune_check, d) {
+            let leg = crate::spell::cooldowns::RuneLeg {
+                runes: check,
+                catalog: &spells.catalog,
+                mods: &spell_mods,
+            };
+            slot.cooldown = cooldowns.with_rune_leg(slot.spell_id, d, slot.cooldown, &leg, now_ms);
+        }
     }
     if fresh != memory.pushed {
         gate.audit("feed_spellbook", "the spellbook snapshot");

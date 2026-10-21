@@ -237,9 +237,18 @@ fn feed_shapeshift_bar(
                     usable::spell_usable(id, d, &spells, &ctx, &objects, &items, &commands).0
                 });
             let texture = form_texture(d, active);
-            let cooldown = cooldowns
+            let mut cooldown = cooldowns
                 .info(id, 0, Some(d), now)
                 .ui_triple(anchor, ui_now);
+            if let Some(check) = rune_check {
+                let leg = crate::spell::cooldowns::RuneLeg {
+                    runes: check,
+                    catalog: &spells.catalog,
+                    mods: &spell_mods,
+                };
+                let now_ms = (ui_now * 1000.0).floor() as i64;
+                cooldown = cooldowns.with_rune_leg(id, d, cooldown, &leg, now_ms);
+            }
             ShapeshiftFormView {
                 spell_id: id,
                 texture,
