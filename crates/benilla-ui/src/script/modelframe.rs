@@ -612,9 +612,9 @@ impl crate::script::UiScript {
     pub fn model_pane(&self, name: &str) -> Option<ModelState> {
         self.model_ref()
             .arena
-            .iter_frames()
-            .find_map(|(_, f)| match (&f.name, &f.kind_state) {
-                (Some(n), KindState::Model(m)) if n == name => Some(m.clone()),
+            .frames_named(name)
+            .find_map(|(_, f)| match &f.kind_state {
+                KindState::Model(m) => Some(m.clone()),
                 _ => None,
             })
     }

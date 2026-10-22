@@ -1343,8 +1343,8 @@ impl UiScript {
     pub fn frame_visible(&self, name: &str) -> bool {
         self.model_ref()
             .arena
-            .iter_frames()
-            .any(|(_, f)| f.name.as_deref() == Some(name) && f.effective_visible)
+            .frames_named(name)
+            .any(|(_, f)| f.effective_visible)
     }
 
     /// The named frame's effective alpha while it is effectively visible: the app's minimap ping
@@ -1352,8 +1352,8 @@ impl UiScript {
     pub fn frame_effective_alpha(&self, name: &str) -> Option<f32> {
         self.model_ref()
             .arena
-            .iter_frames()
-            .find(|(_, f)| f.name.as_deref() == Some(name) && f.effective_visible)
+            .frames_named(name)
+            .find(|(_, f)| f.effective_visible)
             .map(|(_, f)| f.effective_alpha)
     }
 
