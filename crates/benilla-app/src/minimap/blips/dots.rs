@@ -244,7 +244,10 @@ pub(in crate::minimap) fn emit_tracking_dots(
         let (dyn_flags, creeping) = store
             .map(|s| (s.0.unit_dynamic_flags(), s.0.unit_is_stealthed()))
             .unwrap_or((0, false));
-        let creature_type = store.map(|s| types.of(s));
+        // Only the creature mask reads the type, so with none tracked it is never resolved.
+        let creature_type = store
+            .filter(|_| tracking.creatures != 0)
+            .map(|s| types.of(s));
         if tracked_creature(tracking, creature_type, dyn_flags, creeping) {
             dot(guid.0, tf, TRACKED_UNIT_CELL, DotName::Guid);
         }
