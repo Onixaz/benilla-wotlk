@@ -16,6 +16,9 @@ use bevy::render::extract_resource::ExtractResource;
 /// a city WMO streams in thousands of lit interior props at once.
 pub const MAX_PROP_PROBES: usize = 8192;
 
+/// One probe's seven SH rows as the shader reads them.
+type Row = [[f32; 4]; 7];
+
 /// A probe's rows, bit for bit: identical props fold to identical bits and share a slot.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct ProbeKey([[u32; 4]; 7]);
@@ -27,11 +30,12 @@ impl ProbeKey {
 }
 
 /// The main-world slot table: a slab whose freed slots recycle first, with identical probes sharing
-/// a refcounted slot (without it a login scene's prop WMOs overflow the table). The rows sit behind
-/// an `Arc`: the render extract is a pointer bump, and `make_mut` copies when a change races it.
+/// a refcounted slot (without it a login scene's prop WMOs overflow the table). Each frame publishes
+/// only the rows written since the last publish, so a moving unit's probe costs one row, not a
+/// copy of the table.
 #[derive(Resource)]
 pub struct PropProbes {
-    rows: Arc<Vec<[[f32; 4]; 7]>>,
+    rows: Vec<Row>,
     free: Vec<u16>,
     high: usize,
     /// Probe bits to live slot, for as long as the slot's refcount lasts.
@@ -42,21 +46,21 @@ pub struct PropProbes {
     generation: u64,
     /// Peak distinct occupancy, logged by the spawner on overflow.
     peak: usize,
-    /// Slots written since the last publish, `[lo, hi)`: the upload writes only this span.
-    dirty: Option<(usize, usize)>,
+    /// Slots written since the last publish, possibly repeated.
+    dirty: Vec<u16>,
 }
 
 impl Default for PropProbes {
     fn default() -> Self {
         Self {
-            rows: Arc::new(vec![[[0.0; 4]; 7]; MAX_PROP_PROBES]),
+            rows: vec![[[0.0; 4]; 7]; MAX_PROP_PROBES],
             free: Vec::new(),
             high: 0,
             by_key: HashMap::new(),
             slots: vec![None; MAX_PROP_PROBES],
             generation: 0,
             peak: 0,
-            dirty: None,
+            dirty: Vec::new(),
         }
     }
 }
@@ -73,7 +77,7 @@ impl PropProbes {
             }
         }
         let slot = self.take_free_slot()?;
-        Arc::make_mut(&mut self.rows)[slot as usize] = coeffs.map(|v| v.to_array());
+        self.rows[slot as usize] = coeffs.map(|v| v.to_array());
         self.by_key.insert(key.clone(), slot);
         self.slots[slot as usize] = Some((1, Some(key)));
         self.touch(slot);
@@ -85,7 +89,7 @@ impl PropProbes {
     /// ramp independently; the holder rewrites it with [`Self::update_owned`].
     pub(crate) fn alloc_owned(&mut self, coeffs: [Vec4; 7]) -> Option<u16> {
         let slot = self.take_free_slot()?;
-        Arc::make_mut(&mut self.rows)[slot as usize] = coeffs.map(|v| v.to_array());
+        self.rows[slot as usize] = coeffs.map(|v| v.to_array());
         self.slots[slot as usize] = Some((1, None));
         self.touch(slot);
         self.peak = self.peak.max(self.high - self.free.len());
@@ -99,16 +103,12 @@ impl PropProbes {
             warn_once!("update_owned({slot}) on a non-owned slot — the holder's slot is stale");
             return;
         }
-        Arc::make_mut(&mut self.rows)[slot as usize] = coeffs.map(|v| v.to_array());
+        self.rows[slot as usize] = coeffs.map(|v| v.to_array());
         self.touch(slot);
     }
 
     fn touch(&mut self, slot: u16) {
-        let s = slot as usize;
-        self.dirty = Some(match self.dirty {
-            Some((lo, hi)) => (lo.min(s), hi.max(s + 1)),
-            None => (s, s + 1),
-        });
+        self.dirty.push(slot);
         self.generation += 1;
     }
 
@@ -148,51 +148,38 @@ impl PropProbes {
             self.by_key.remove(&key);
         }
         // Zeroed, so a stale `MeshTag` in a frame of despawn skew reads black.
-        Arc::make_mut(&mut self.rows)[slot as usize] = [[0.0; 4]; 7];
+        self.rows[slot as usize] = [[0.0; 4]; 7];
         self.touch(slot);
         self.free.push(slot);
     }
 }
 
-/// The render-world mirror of the probe table, an `Arc` bump per frame.
-#[derive(Resource, Clone, ExtractResource)]
+/// One publish of the probe table to the render world: the rows written since the last one, in
+/// slot order, numbered so the render side applies each publish once.
+#[derive(Resource, Clone, Default, ExtractResource)]
 pub(crate) struct PropProbeExtract {
-    rows: Arc<Vec<[[f32; 4]; 7]>>,
-    high: usize,
-    generation: u64,
-    /// The rows this generation changed, `[lo, hi)`; `None` means everything up to `high`.
-    dirty: Option<(usize, usize)>,
+    changes: Arc<Vec<(u16, Row)>>,
+    seq: u64,
 }
 
-impl Default for PropProbeExtract {
-    fn default() -> Self {
-        Self {
-            rows: Arc::new(Vec::new()),
-            high: 0,
-            // Not `PropProbes`' initial 0, so the first publish sends even an empty table.
-            generation: u64::MAX,
-            dirty: None,
-        }
-    }
-}
-
-/// Main world, after the spawners: publishes the table for extraction when it changed.
+/// Main world, after the spawners: publishes the rows written this frame, if any.
 pub(super) fn publish_prop_probes(
     mut probes: ResMut<PropProbes>,
     mut out: ResMut<PropProbeExtract>,
 ) {
-    if out.generation != probes.generation {
-        // After a skipped generation the whole allocated span goes, not just the last change.
-        let consecutive = out.generation.wrapping_add(1) == probes.generation
-            || out
-                .dirty
-                .is_some_and(|_| out.generation != u64::MAX && probes.generation > out.generation);
-        let dirty = probes.dirty.take();
-        out.dirty = if consecutive { dirty } else { None };
-        out.rows = Arc::clone(&probes.rows);
-        out.high = probes.high;
-        out.generation = probes.generation;
+    if probes.dirty.is_empty() {
+        return;
     }
+    let probes = &mut *probes;
+    probes.dirty.sort_unstable();
+    probes.dirty.dedup();
+    let changes = probes
+        .dirty
+        .drain(..)
+        .map(|slot| (slot, probes.rows[slot as usize]))
+        .collect();
+    out.changes = Arc::new(changes);
+    out.seq = out.seq.wrapping_add(1);
 }
 
 /// Byte offset of the probe region in the shared light buffer, right after the per-frame blob.
@@ -200,36 +187,81 @@ pub fn prop_probe_region_offset() -> u64 {
     super::global_light::per_frame_blob_bytes()
 }
 
-/// Render world, in `PrepareResources`: writes the probe region when the table changed; the
-/// per-frame upload writes only the prefix, so the region persists between changes.
+/// The render world's copy of the table: every publish applied, and the slots not yet on the GPU.
+#[derive(Default)]
+pub(super) struct ProbeMirror {
+    rows: Vec<Row>,
+    /// One past the highest slot ever written.
+    high: usize,
+    seq: u64,
+    /// Written since the last upload, possibly repeated.
+    pending: Vec<u16>,
+    /// The region has had one whole upload; until then the next upload sends all of `rows`.
+    uploaded: bool,
+}
+
+impl ProbeMirror {
+    /// Applies a publish once; a repeat of the last one is ignored.
+    fn apply(&mut self, data: &PropProbeExtract) {
+        if data.seq == self.seq {
+            return;
+        }
+        self.seq = data.seq;
+        if self.rows.is_empty() {
+            self.rows = vec![[[0.0; 4]; 7]; MAX_PROP_PROBES];
+        }
+        for &(slot, row) in data.changes.iter() {
+            self.rows[slot as usize] = row;
+            self.high = self.high.max(slot as usize + 1);
+            self.pending.push(slot);
+        }
+    }
+
+    /// The `[lo, hi)` slot runs the next upload writes: everything written so far on the first,
+    /// then each run of adjacent pending slots.
+    fn take_runs(&mut self) -> Vec<(usize, usize)> {
+        if !self.uploaded {
+            self.uploaded = true;
+            self.pending.clear();
+            return if self.high > 0 {
+                vec![(0, self.high)]
+            } else {
+                Vec::new()
+            };
+        }
+        self.pending.sort_unstable();
+        self.pending.dedup();
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        for slot in self.pending.drain(..).map(usize::from) {
+            match runs.last_mut() {
+                Some((_, hi)) if *hi == slot => *hi += 1,
+                _ => runs.push((slot, slot + 1)),
+            }
+        }
+        runs
+    }
+}
+
+/// Render world, in `PrepareResources`: folds this frame's publish into the mirror and writes the
+/// changed rows; the per-frame upload writes only the prefix, so the region persists.
 pub(super) fn upload_prop_probes(
     queue: Res<bevy::render::renderer::RenderQueue>,
     buffer: Option<Res<super::SharedLightBuffer>>,
     data: Option<Res<PropProbeExtract>>,
-    mut last: Local<Option<u64>>,
+    mut mirror: Local<ProbeMirror>,
 ) {
-    let (Some(buffer), Some(data)) = (buffer, data) else {
-        return;
-    };
-    if *last == Some(data.generation) {
-        return;
+    if let Some(data) = data {
+        mirror.apply(&data);
     }
-    // Only the changed span when this follows the last upload; the whole allocated span on the
-    // first upload and after an unseen generation, so the GPU never keeps a rewritten row.
-    let high = data.high.min(data.rows.len());
-    let (lo, hi) = match (data.dirty, *last) {
-        (Some((lo, hi)), Some(seen)) if seen.wrapping_add(1) == data.generation => {
-            (lo.min(high), hi.min(high))
-        }
-        _ => (0, high),
+    // Without a buffer yet the rows wait in the mirror; the first upload sends them all.
+    let Some(buffer) = buffer else {
+        return;
     };
-    *last = Some(data.generation);
-    let rows = &data.rows[lo..hi];
-    if !rows.is_empty() {
+    for (lo, hi) in mirror.take_runs() {
         queue.write_buffer(
             &buffer.0,
-            prop_probe_region_offset() + (lo * std::mem::size_of::<[[f32; 4]; 7]>()) as u64,
-            bytemuck::cast_slice(rows),
+            prop_probe_region_offset() + (lo * std::mem::size_of::<Row>()) as u64,
+            bytemuck::cast_slice(&mirror.rows[lo..hi]),
         );
     }
 }
@@ -326,13 +358,58 @@ mod tests {
         assert!(t.alloc([Vec4::splat(1.0); 7]).is_some());
     }
 
+    /// A publish carries each written row once, in slot order, and the render mirror ends equal
+    /// to the main table: whole on its first upload, then only the runs written since.
     #[test]
-    fn extracted_rows_are_copy_on_write() {
-        let mut t = PropProbes::default();
-        let a = t.alloc([Vec4::splat(0.5); 7]).unwrap();
-        let extracted = Arc::clone(&t.rows);
-        t.release(a);
-        assert_eq!(extracted[a as usize], [[0.5; 4]; 7]); // the render copy is untouched
-        assert_eq!(t.rows[a as usize], [[0.0; 4]; 7]);
+    fn publishes_carry_only_written_rows_and_the_mirror_follows() {
+        let mut w = World::new();
+        w.insert_resource(PropProbes::default());
+        w.insert_resource(PropProbeExtract::default());
+        let publish = |w: &mut World| {
+            w.run_system_cached(publish_prop_probes).unwrap();
+            w.resource::<PropProbeExtract>().clone()
+        };
+        let mut mirror = ProbeMirror::default();
+        let (a, b, c) = {
+            let mut t = w.resource_mut::<PropProbes>();
+            let a = t.alloc_owned([Vec4::splat(0.1); 7]).unwrap();
+            let b = t.alloc_owned([Vec4::splat(0.2); 7]).unwrap();
+            let c = t.alloc_owned([Vec4::splat(0.3); 7]).unwrap();
+            t.update_owned(a, [Vec4::splat(0.4); 7]);
+            (a, b, c)
+        };
+        let first = publish(&mut w);
+        let slots: Vec<u16> = first.changes.iter().map(|(s, _)| *s).collect();
+        assert_eq!(slots, vec![a, b, c], "each written slot once, in order");
+        mirror.apply(&first);
+        assert_eq!(
+            mirror.take_runs(),
+            vec![(0, 3)],
+            "the first upload sends everything"
+        );
+
+        // A frame with no write publishes nothing; a repeat extract is ignored.
+        let idle = publish(&mut w);
+        assert_eq!(idle.seq, first.seq);
+        mirror.apply(&idle);
+        assert!(mirror.take_runs().is_empty());
+
+        w.resource_mut::<PropProbes>()
+            .update_owned(c, [Vec4::splat(0.9); 7]);
+        w.resource_mut::<PropProbes>().release(a);
+        let next = publish(&mut w);
+        assert_eq!(next.changes.len(), 2, "only the two written rows travel");
+        mirror.apply(&next);
+        assert_eq!(
+            mirror.take_runs(),
+            vec![(0, 1), (2, 3)],
+            "adjacent slots merge into runs"
+        );
+        let t = w.resource::<PropProbes>();
+        assert_eq!(
+            &mirror.rows[..3],
+            &t.rows[..3],
+            "the mirror matches the table"
+        );
     }
 }
