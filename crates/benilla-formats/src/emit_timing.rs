@@ -194,6 +194,9 @@ impl Default for ParamsNow {
 pub struct EmitParams {
     /// Per channel in [`ParamsNow`] field order, per slot; `None` holds the channel default.
     channels: [Vec<Option<ScalarAnim>>; 9],
+    /// Every channel's value when none varies with time or slot, so [`Self::sample`] reads it
+    /// without walking the tracks.
+    fixed: Option<ParamsNow>,
 }
 
 impl EmitParams {
@@ -206,11 +209,64 @@ impl EmitParams {
                     .map(|&s| bake_track(t, gseq, Some(s), |v| v, |_| false, |_| false))
                     .collect()
             }),
+            fixed: None,
         }
+        .folded()
+    }
+
+    /// Folds the channels into [`Self::fixed`] when every one holds a single value: absent, or a
+    /// one-key or zero-period loop, the same on every slot.
+    fn folded(mut self) -> Self {
+        let d = ParamsNow::default();
+        let defaults = [
+            d.emission_speed,
+            d.speed_variation,
+            d.vertical_range,
+            d.horizontal_range,
+            d.gravity,
+            d.lifespan,
+            d.area_length,
+            d.area_width,
+            d.z_source,
+        ];
+        let mut vals = defaults;
+        for ((ch, default), out) in self.channels.iter().zip(defaults).zip(&mut vals) {
+            let mut seen: Option<f32> = None;
+            for slot in ch {
+                let v = match slot {
+                    None => default,
+                    Some(a) => match a.keys.first() {
+                        None => default,
+                        Some(&(_, v)) if a.period <= 0.0 || a.keys.len() == 1 => v,
+                        Some(_) => return self,
+                    },
+                };
+                match seen {
+                    Some(prev) if prev.to_bits() != v.to_bits() => return self,
+                    _ => seen = Some(v),
+                }
+            }
+            *out = seen.unwrap_or(default);
+        }
+        self.fixed = Some(ParamsNow {
+            emission_speed: vals[0],
+            speed_variation: vals[1],
+            vertical_range: vals[2],
+            horizontal_range: vals[3],
+            gravity: vals[4],
+            lifespan: vals[5],
+            area_length: vals[6],
+            area_width: vals[7],
+            z_source: vals[8],
+        });
+        self
     }
 
     /// Every channel `elapsed` seconds into slot `seq`, resolved as [`EmitTiming`] resolves it.
     pub fn sample(&self, seq: Option<usize>, elapsed: f32, shared_now: f64) -> ParamsNow {
+        if let Some(fixed) = self.fixed {
+            return fixed;
+        }
         let d = ParamsNow::default();
         let at = |i: usize, default: f32| -> f32 {
             let ch = &self.channels[i];
@@ -272,7 +328,9 @@ impl EmitParams {
                 ch(now.area_width),
                 ch(now.z_source),
             ],
+            fixed: None,
         }
+        .folded()
     }
 
     /// `(name, per-slot keys)` per channel.
@@ -506,6 +564,41 @@ mod tests {
             t.constant_rate(),
             None,
             "and it is not a constant-rate emitter"
+        );
+    }
+
+    /// A constant parameter set folds to the value the track walk gives at any time and slot; a
+    /// keyed channel or one that differs per slot keeps the walk.
+    #[test]
+    fn constant_params_fold_and_animated_ones_do_not() {
+        let now = ParamsNow {
+            gravity: 3.5,
+            lifespan: 2.0,
+            ..ParamsNow::default()
+        };
+        let fixed = EmitParams::constant(now);
+        assert_eq!(fixed.fixed, Some(now));
+        assert_eq!(fixed.sample(Some(3), 7.25, 99.0), now);
+
+        let empty = track(1, &[], &[]);
+        let grow = track(1, &[(0, 1.0), (1000, 5.0)], &[(0, 1000)]);
+        let mut tracks = [&empty; 9];
+        tracks[4] = &grow;
+        let s = slots(&[((0, 1000), true)]);
+        let keyed = EmitParams::bake(tracks, &s, &[]);
+        assert_eq!(keyed.fixed, None, "a keyed gravity stays live");
+        assert!(
+            keyed.sample(Some(0), 0.75, 0.0).gravity > keyed.sample(Some(0), 0.25, 0.0).gravity
+        );
+
+        let a = track(0, &[(0, 1.0), (2000, 2.0)], &[(0, 0), (2000, 2000)]);
+        let mut tracks = [&empty; 9];
+        tracks[4] = &a;
+        let two = slots(&[((0, 1000), true), ((2000, 3000), true)]);
+        let per_slot = EmitParams::bake(tracks, &two, &[]);
+        assert_eq!(
+            per_slot.fixed, None,
+            "slots holding different values stay live"
         );
     }
 }
