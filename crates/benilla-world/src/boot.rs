@@ -51,11 +51,15 @@ pub fn tuned_default_plugins(primary_window: Window) -> PluginGroupBuilder {
                         thread_qos::promote_current_thread(thread_qos::QosClass::UserInteractive)
                     })),
                     // `WOW_THREADS=1` serialises the frame's systems, a diagnostic: a defect that
-                    // survives it is not a race between two systems.
+                    // survives it is not a race between two systems. `WOW_COMPUTE_THREADS=<n>`
+                    // pins the pool's size, a measurement lever for the per-spawn wake cost.
                     max_threads: match std::env::var("WOW_THREADS").ok().as_deref() {
                         Some("1") => 1,
-                        _ => TaskPoolOptions::default().compute.max_threads,
+                        _ => compute_threads()
+                            .unwrap_or(TaskPoolOptions::default().compute.max_threads),
                     },
+                    min_threads: compute_threads()
+                        .unwrap_or(TaskPoolOptions::default().compute.min_threads),
                     ..TaskPoolOptions::default().compute
                 },
                 ..default()
@@ -73,4 +77,12 @@ pub fn tuned_default_plugins(primary_window: Window) -> PluginGroupBuilder {
         .disable::<bevy::anti_alias::AntiAliasPlugin>()
         // No gamepad input; 1.12's bindings are keyboard/mouse.
         .disable::<bevy::gilrs::GilrsPlugin>()
+}
+
+/// `WOW_COMPUTE_THREADS=<n>`: the compute pool's thread count, unset for Bevy's share.
+fn compute_threads() -> Option<usize> {
+    std::env::var("WOW_COMPUTE_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n >= 1)
 }
