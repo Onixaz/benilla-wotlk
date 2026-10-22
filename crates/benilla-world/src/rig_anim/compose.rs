@@ -21,14 +21,30 @@ pub struct PosePost;
 
 /// Fold each pose-dirty rig into model space and re-seat its anchors, leaving `pose_dirty` for
 /// the world pass. A parked rig is skipped; its wake unparks it before this runs.
+/// One anchor's new seat from the parallel pass, and for a leaf anchor its world frame.
+type Seat = (Entity, Transform, Option<GlobalTransform>);
+
+#[allow(clippy::type_complexity)] // the anchor tuple, commented inline
 fn compose_rig_models(
     mut rigs: Query<&mut RigPose, Without<AnimParked>>,
-    mut anchors: Query<&mut Transform>,
-    mut seats: Local<bevy::utils::Parallel<Vec<(Entity, Transform)>>>,
+    // A leaf anchor (no children) and its parent's frame, for the direct global write below.
+    mut anchors: Query<
+        (
+            &mut Transform,
+            &mut GlobalTransform,
+            Option<&ChildOf>,
+            Has<Children>,
+        ),
+        With<super::RigAnchor>,
+    >,
+    parents: Query<&GlobalTransform, Without<super::RigAnchor>>,
+    mut other_anchors: Query<&mut Transform, Without<super::RigAnchor>>,
+    mut seats: Local<bevy::utils::Parallel<Vec<Seat>>>,
 ) {
     // A rig's chain reads and writes only itself, so the drawn set (~950 swaying doodads at
-    // Northshire Abbey) composes in parallel, each anchor's seat decomposed beside it; the
-    // anchors, other entities, take their seats after.
+    // Northshire Abbey) composes in parallel, each anchor's seat decomposed and compared beside
+    // it; the anchors, other entities, take their seats after.
+    let anchors_ro = anchors.as_readonly();
     rigs.par_iter_mut().for_each(|mut rig| {
         if !rig.pose_dirty {
             return;
@@ -40,24 +56,45 @@ fn compose_rig_models(
                 continue;
             };
             let (scale, rotation, translation) = m.to_scale_rotation_translation();
-            out.push((
-                anchor,
-                Transform {
-                    translation,
-                    rotation,
-                    scale,
-                },
-            ));
+            let seat = Transform {
+                translation,
+                rotation,
+                scale,
+            };
+            // A leaf anchor takes its global here, `parent × seat` as propagation would compute
+            // it, so the transform tree is not walked for it; one with children propagates.
+            let world = match anchors_ro.get(anchor) {
+                // Only a moved seat is written: an equal one would still register as changed,
+                // and every change-driven pass downstream would re-walk the anchor.
+                Ok((t, ..)) if *t == seat => continue,
+                Ok((_, _, Some(child_of), false)) => parents
+                    .get(child_of.parent())
+                    .ok()
+                    .map(|pg| pg.mul_transform(seat)),
+                _ => None,
+            };
+            out.push((anchor, seat, world));
         }
     });
-    for (anchor, seat) in seats.drain() {
-        let Ok(mut t) = anchors.get_mut(anchor) else {
+    for (anchor, seat, world) in seats.drain() {
+        let Ok((mut t, mut g, ..)) = anchors.get_mut(anchor) else {
+            if let Ok(mut t) = other_anchors.get_mut(anchor) {
+                if *t != seat {
+                    *t = seat;
+                }
+            }
             continue;
         };
-        // Only a moved seat is written: an equal one would still register as changed, and
-        // every change-driven pass downstream would re-walk the anchor and its subtree.
-        if *t != seat {
-            *t = seat;
+        match world {
+            // The local without a change mark: a parent that moves this frame is propagated,
+            // and its subtree with it, from this local.
+            Some(world) => {
+                *t.bypass_change_detection() = seat;
+                if *g != world {
+                    *g = world;
+                }
+            }
+            None => *t = seat,
         }
     }
 }
