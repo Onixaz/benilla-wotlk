@@ -36,8 +36,14 @@ const BG_ENV_PREFIXES: &[&str] = &[
 ];
 
 /// Whether this is an instrumented background run: `WOW_BG=0` forces no (to watch a probe live),
-/// any other `WOW_BG` forces yes, and otherwise any [`BG_ENV_PREFIXES`] env counts.
+/// any other `WOW_BG` forces yes, and otherwise any [`BG_ENV_PREFIXES`] env counts. Read once:
+/// the probe window asks every frame, and the environment does not change under a run.
 pub fn background_run() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(scan_background_run)
+}
+
+fn scan_background_run() -> bool {
     match std::env::var("WOW_BG").as_deref() {
         Ok("0") => return false,
         Ok(_) => return true,
@@ -70,8 +76,14 @@ const NO_PIXEL_ENV_PREFIXES: &[&str] = &[
 
 /// Whether this run reads no pixels, so its window may be small and parked. The app pins a probe
 /// window `AlwaysOnTop` (an occluded macOS window throttles to about 1 fps), overriding this
-/// module's ordering. `WOW_BG=1` with no run-driving env is not a no-pixel run.
+/// module's ordering. `WOW_BG=1` with no run-driving env is not a no-pixel run. Read once, as
+/// [`background_run`].
 pub fn no_pixel_run() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(scan_no_pixel_run)
+}
+
+fn scan_no_pixel_run() -> bool {
     if !background_run() {
         return false;
     }
