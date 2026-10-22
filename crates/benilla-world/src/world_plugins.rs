@@ -171,12 +171,15 @@ impl Plugin for WorldFoundation {
         // No pre-step transform propagation: movers write `Position`/`Rotation` directly, so a
         // second whole-world sweep buys nothing; an opening door's hull reaches physics a frame
         // late. `WOW_PHYS_PREPROP=1` restores avian's default.
-        if std::env::var_os("WOW_PHYS_PREPROP").is_none() {
-            app.insert_resource(avian3d::physics_transform::PhysicsTransformConfig {
-                propagate_before_physics: false,
-                ..Default::default()
-            });
-        }
+        //
+        // avian's transform-to-position sync walks every collider each step; ours walks the moved
+        // ones (`collision::sync_moved_positions`).
+        app.insert_resource(avian3d::physics_transform::PhysicsTransformConfig {
+            propagate_before_physics: std::env::var_os("WOW_PHYS_PREPROP").is_some(),
+            transform_to_position: false,
+            ..Default::default()
+        });
+        crate::collision::add_moved_position_sync(app, FixedPostUpdate);
         // `WOW_PHYS_HZ=<hz>`: the fixed loop's rate, a measurement lever and never a setting (at
         // 8 Hz streamed colliders reach the spatial trees up to 125 ms late).
         if let Some(hz) = std::env::var("WOW_PHYS_HZ")

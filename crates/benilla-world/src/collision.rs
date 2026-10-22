@@ -300,6 +300,155 @@ impl WorldCollision<'_, '_> {
     }
 }
 
+/// avian's `transform_to_position`, over only the bodies whose pose can have left their
+/// `Position`/`Rotation`: a moved `GlobalTransform`, or a `Position`/`Rotation` just inserted.
+/// avian's own walks every collider each step and decomposes every matrix; with no change since
+/// the last sync, the two already agree.
+#[allow(clippy::type_complexity)]
+pub(crate) fn sync_moved_positions(
+    mut query: bevy::ecs::system::Query<
+        (
+            &bevy::transform::components::GlobalTransform,
+            &mut Position,
+            &mut Rotation,
+        ),
+        bevy::ecs::query::Or<(
+            bevy::ecs::query::Changed<bevy::transform::components::GlobalTransform>,
+            bevy::ecs::query::Added<Position>,
+            bevy::ecs::query::Added<Rotation>,
+        )>,
+    >,
+    length_unit: bevy::ecs::system::Res<PhysicsLengthUnit>,
+    last_physics_tick: bevy::ecs::system::Res<avian3d::schedule::LastPhysicsTick>,
+    system_tick: bevy::ecs::system::SystemChangeTick,
+) {
+    use bevy::ecs::change_detection::DetectChanges;
+    // avian's tolerances and first-tick floor, so both syncs take the same writes.
+    let this_run = if last_physics_tick.0.get() == 0 {
+        bevy::ecs::change_detection::Tick::new(1)
+    } else {
+        system_tick.this_run()
+    };
+    let distance_tolerance = length_unit.0 * 1e-5;
+    let rotation_tolerance = 0.1f32.to_radians();
+    let after_step = |changed: bool, at: bevy::ecs::change_detection::Tick| {
+        changed && at.is_newer_than(last_physics_tick.0, this_run)
+    };
+    for (global, mut position, mut rotation) in &mut query {
+        let pose = global.compute_transform();
+        let position_written =
+            !position.is_added() && after_step(position.is_changed(), position.last_changed());
+        if !position_written && !position.0.abs_diff_eq(pose.translation, distance_tolerance) {
+            position.0 = pose.translation;
+        }
+        let target = Rotation::from(pose.rotation);
+        let rotation_written =
+            !rotation.is_added() && after_step(rotation.is_changed(), rotation.last_changed());
+        if !rotation_written && rotation.angle_between(target).abs() > rotation_tolerance {
+            *rotation = target;
+        }
+    }
+}
+
+/// Puts [`sync_moved_positions`] in avian's transform-to-position slot of `schedule`; avian's own
+/// must be off (`PhysicsTransformConfig::transform_to_position`).
+pub(crate) fn add_moved_position_sync(
+    app: &mut bevy::app::App,
+    schedule: impl bevy::ecs::schedule::ScheduleLabel,
+) {
+    use bevy::ecs::schedule::IntoScheduleConfigs;
+    app.add_systems(
+        schedule,
+        sync_moved_positions
+            .in_set(avian3d::physics_transform::PhysicsTransformSystems::TransformToPosition),
+    );
+}
+
+/// The filtered sync places a spawned collider, follows a moved one, and seats a collider attached
+/// later to an entity that never moves, as avian's unfiltered one does.
+#[cfg(test)]
+mod moved_position_sync {
+    use super::*;
+    use bevy::prelude::*;
+
+    fn world() -> App {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::transform::TransformPlugin,
+            bevy::asset::AssetPlugin::default(),
+            bevy::scene::ScenePlugin,
+            PhysicsPlugins::new(bevy::app::PostUpdate),
+        ));
+        app.insert_resource(avian3d::physics_transform::PhysicsTransformConfig {
+            transform_to_position: false,
+            ..Default::default()
+        });
+        add_moved_position_sync(&mut app, bevy::app::PostUpdate);
+        app.init_asset::<Mesh>();
+        app.finish();
+        app.cleanup();
+        app
+    }
+
+    fn settle(app: &mut App) {
+        for _ in 0..3 {
+            app.update();
+        }
+    }
+
+    fn pose(app: &App, e: Entity) -> (Vec3, Quat) {
+        let w = app.world();
+        (
+            w.get::<Position>(e).unwrap().0,
+            w.get::<Rotation>(e).unwrap().0,
+        )
+    }
+
+    #[test]
+    fn the_filtered_sync_follows_spawn_move_and_late_attach() {
+        let mut app = world();
+        let turn = Quat::from_rotation_y(0.8);
+        let spawned = app
+            .world_mut()
+            .spawn((
+                RigidBody::Static,
+                Collider::sphere(0.5),
+                Transform::from_xyz(3.0, 0.0, 0.0).with_rotation(turn),
+            ))
+            .id();
+        let late = app
+            .world_mut()
+            .spawn(Transform::from_xyz(7.0, 1.0, -2.0))
+            .id();
+        settle(&mut app);
+        let (p, r) = pose(&app, spawned);
+        assert!(
+            p.abs_diff_eq(Vec3::new(3.0, 0.0, 0.0), 1e-5),
+            "spawned: {p}"
+        );
+        assert!(r.abs_diff_eq(turn, 1e-5), "spawned rotation: {r} vs {turn}");
+
+        app.world_mut()
+            .get_mut::<Transform>(spawned)
+            .unwrap()
+            .translation = Vec3::new(5.0, 2.0, 0.0);
+        settle(&mut app);
+        let (p, _) = pose(&app, spawned);
+        assert!(p.abs_diff_eq(Vec3::new(5.0, 2.0, 0.0), 1e-5), "moved: {p}");
+
+        app.world_mut()
+            .entity_mut(late)
+            .insert((RigidBody::Static, Collider::sphere(0.5)));
+        settle(&mut app);
+        let (p, _) = pose(&app, late);
+        assert!(
+            p.abs_diff_eq(Vec3::new(7.0, 1.0, -2.0), 1e-5),
+            "late attach: {p}"
+        );
+    }
+}
+
 /// `cameraWaterCollision` is a trace mask (`0x50e5ec`): the waterline stops the camera boom only
 /// with it set, and never the walking body.
 #[cfg(test)]
