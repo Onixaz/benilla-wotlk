@@ -24,36 +24,40 @@ pub struct PosePost;
 fn compose_rig_models(
     mut rigs: Query<&mut RigPose, Without<AnimParked>>,
     mut anchors: Query<&mut Transform>,
+    mut seats: Local<bevy::utils::Parallel<Vec<(Entity, Transform)>>>,
 ) {
     // A rig's chain reads and writes only itself, so the drawn set (~950 swaying doodads at
-    // Northshire Abbey) composes in parallel; the anchors, other entities, re-seat after.
+    // Northshire Abbey) composes in parallel, each anchor's seat decomposed beside it; the
+    // anchors, other entities, take their seats after.
     rigs.par_iter_mut().for_each(|mut rig| {
-        if rig.pose_dirty {
-            rig.compose();
-        }
-    });
-    for rig in &rigs {
         if !rig.pose_dirty {
-            continue;
+            return;
         }
+        rig.compose();
+        let mut out = seats.borrow_local_mut();
         for &(bone, anchor) in &rig.anchors {
             let Some(m) = rig.model.get(bone as usize) else {
                 continue;
             };
-            let Ok(mut t) = anchors.get_mut(anchor) else {
-                continue;
-            };
             let (scale, rotation, translation) = m.to_scale_rotation_translation();
-            let seat = Transform {
-                translation,
-                rotation,
-                scale,
-            };
-            // Only a moved seat is written: an equal one would still register as changed, and
-            // every change-driven pass downstream would re-walk the anchor and its subtree.
-            if *t != seat {
-                *t = seat;
-            }
+            out.push((
+                anchor,
+                Transform {
+                    translation,
+                    rotation,
+                    scale,
+                },
+            ));
+        }
+    });
+    for (anchor, seat) in seats.drain() {
+        let Ok(mut t) = anchors.get_mut(anchor) else {
+            continue;
+        };
+        // Only a moved seat is written: an equal one would still register as changed, and
+        // every change-driven pass downstream would re-walk the anchor and its subtree.
+        if *t != seat {
+            *t = seat;
         }
     }
 }
