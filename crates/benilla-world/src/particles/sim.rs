@@ -986,9 +986,13 @@ pub(super) fn simulate_particles(
             } else {
                 placement.translation
             };
-            entity_tf.translation = anchor;
             // Written directly for same-frame readers: we run after propagation, at the world root.
-            *entity_global = GlobalTransform::from(*entity_tf);
+            // The local takes no change mark, so next frame's propagation does not re-walk a leaf
+            // whose global this write already holds.
+            if entity_tf.translation != anchor {
+                entity_tf.bypass_change_detection().translation = anchor;
+            }
+            entity_global.set_if_neq(GlobalTransform::from(*entity_tf));
             let frame = DrawFrame {
                 anchored,
                 alpha: *alpha,

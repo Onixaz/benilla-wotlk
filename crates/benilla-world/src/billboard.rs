@@ -516,9 +516,10 @@ pub(crate) fn face_billboards(
             rotation,
             scale: card.scale * pulse,
         };
-        // Only a real change is written, so change-detection consumers go quiet on a still frame.
+        // The local takes no change mark: the direct global write below is the pose, and a marked
+        // local would only send next frame's propagation to re-copy it.
         if *tf != placed {
-            *tf = placed;
+            *tf.bypass_change_detection() = placed;
         }
         // Propagation already ran this frame: the direct global write is what renders.
         let placed_global = GlobalTransform::from(placed);
