@@ -16,8 +16,19 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetAlpha",
         lua.create_function(|lua, (this, alpha): (Table, f32)| {
             let rh = region_handle_of(lua, &this)?;
+            let alpha = Some(alpha.clamp(0.0, 1.0));
             let mut model = crate::script::model_mut_of(lua);
-            model.region_data.entry(rh).or_default().alpha = Some(alpha.clamp(0.0, 1.0));
+            if model.region_data.get(&rh).is_some_and(|d| d.alpha == alpha) {
+                return Ok(());
+            }
+            // Paint only: the extract re-reads this region alone.
+            let target = crate::order::ZTarget::Region(rh);
+            model
+                .paint_mut(&[target])
+                .region_data
+                .entry(rh)
+                .or_default()
+                .alpha = alpha;
             Ok(())
         })?,
     )?;
@@ -46,9 +57,20 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 let alpha = lua.coerce_number(a).ok().flatten().map(|n| n as f32);
                 let rh = region_handle_of(lua, &this)?;
                 let mut model = crate::script::model_mut_of(lua);
-                let d = model.region_data.entry(rh).or_default();
-                let current = d.vertex_color.map_or(1.0, |c| c[3]);
-                d.vertex_color = Some([r, g, b, alpha.unwrap_or(current)]);
+                let held = model.region_data.get(&rh);
+                let current = held.and_then(|d| d.vertex_color).map_or(1.0, |c| c[3]);
+                let color = Some([r, g, b, alpha.unwrap_or(current)]);
+                if held.is_some_and(|d| d.vertex_color == color && d.font_explicit.color) {
+                    return Ok(());
+                }
+                // Paint only: the extract re-reads this region alone.
+                let target = crate::order::ZTarget::Region(rh);
+                let d = model
+                    .paint_mut(&[target])
+                    .region_data
+                    .entry(rh)
+                    .or_default();
+                d.vertex_color = color;
                 // The slot `SetTextColor` writes on a FontString, so it overrides the font object.
                 d.font_explicit.color = true;
                 Ok(())

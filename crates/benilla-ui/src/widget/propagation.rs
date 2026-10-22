@@ -194,6 +194,24 @@ impl WidgetArena {
 
     /// `SetAlpha` (`0x76a690`): write the raw value to `h` and every descendant frame (`+0xc8`),
     /// with no draw-time product, so a child's own later `SetAlpha` holds until an ancestor's next.
+    /// Every draw target `set_alpha` on `h` reaches: `h`, its descendants, and their regions.
+    pub fn subtree_targets(&self, h: FrameHandle) -> Vec<crate::order::ZTarget> {
+        let mut out = Vec::new();
+        let mut stack = vec![h];
+        while let Some(f) = stack.pop() {
+            let Some(frame) = self.frame(f) else { continue };
+            out.push(crate::order::ZTarget::Frame(f));
+            out.extend(
+                frame
+                    .regions
+                    .iter()
+                    .map(|&r| crate::order::ZTarget::Region(r)),
+            );
+            stack.extend(frame.children.iter().copied());
+        }
+        out
+    }
+
     pub fn set_alpha(&mut self, h: FrameHandle, alpha: f32) {
         let Some(f) = self.frame_mut(h) else { return };
         f.alpha = alpha;

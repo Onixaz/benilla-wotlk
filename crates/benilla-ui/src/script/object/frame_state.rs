@@ -463,9 +463,11 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, alpha): (Table, f32)| {
             let h = frame_handle_of(lua, &this)?;
             // The reference clamps to 0..1; stock fade code passing a 0..255 alpha relies on it.
-            crate::script::model_mut_of(lua)
-                .arena
-                .set_alpha(h, alpha.clamp(0.0, 1.0));
+            let alpha = alpha.clamp(0.0, 1.0);
+            let mut model = crate::script::model_mut_of(lua);
+            // Paint only: the alpha carries down the subtree, whose targets the extract re-reads.
+            let targets = model.arena.subtree_targets(h);
+            model.paint_mut(&targets).arena.set_alpha(h, alpha);
             Ok(())
         })?,
     )?;

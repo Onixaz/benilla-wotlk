@@ -1813,11 +1813,60 @@ fn derive_trace_armed() -> bool {
 pub(crate) struct ModelCell {
     inner: Model,
     epoch: u64,
+    /// Paint-only writes, which leave `epoch` standing: the targets they touched.
+    pub(crate) paint: std::cell::RefCell<PaintMarks>,
+    /// The last full extract's per-target entry ranges ([`ExtractIndex`]).
+    pub(crate) extract_index: std::cell::RefCell<Option<ExtractIndex>>,
+}
+
+/// The most marks one patch walk takes; past it the extract walks in full.
+const MAX_PAINT_MARKS: usize = 512;
+
+/// The targets paint-only writes touched since the last extract, and their running count.
+#[derive(Default)]
+pub(crate) struct PaintMarks {
+    /// Every paint-only write, monotone: the app's gate compares it frame to frame.
+    pub(crate) count: u64,
+    targets: Vec<crate::order::ZTarget>,
+    overflow: bool,
+}
+
+impl PaintMarks {
+    /// Forget the marks a full walk has read; the count stands.
+    pub(crate) fn clear_marks(&mut self) {
+        self.targets.clear();
+        self.overflow = false;
+    }
+
+    /// The marks for a patch walk, cleared; `None` when they overflowed.
+    pub(crate) fn take_marks(&mut self) -> Option<Vec<crate::order::ZTarget>> {
+        let overflow = std::mem::take(&mut self.overflow);
+        let targets = std::mem::take(&mut self.targets);
+        (!overflow).then_some(targets)
+    }
+}
+
+/// Where each draw target's entries sit in the last full extract, under the mutation count it was
+/// walked at, so a paint-only frame re-extracts a few targets into that list.
+pub(crate) struct ExtractIndex {
+    pub(crate) generation: u64,
+    pub(crate) epoch: u64,
+    /// Target → (first entry, entry count, its draw key).
+    pub(crate) entries:
+        crate::widget::HandleMap<crate::order::ZTarget, (u32, u32, crate::order::ZKey)>,
+    pub(crate) len: usize,
+    /// No target appeared twice, so each has one range.
+    pub(crate) unique: bool,
 }
 
 impl ModelCell {
     pub(crate) fn new(inner: Model) -> ModelCell {
-        ModelCell { inner, epoch: 1 }
+        ModelCell {
+            inner,
+            epoch: 1,
+            paint: Default::default(),
+            extract_index: Default::default(),
+        }
     }
 
     /// The count as of now; equal counts mean no mutable borrow in between.
@@ -1829,6 +1878,23 @@ impl ModelCell {
     /// nothing the extract reads.
     pub(crate) fn set_epoch(&mut self, epoch: u64) {
         self.epoch = epoch;
+    }
+
+    /// The model for a write that changes only how `targets` paint (an alpha, a tint): it leaves
+    /// the mutation count standing and marks them, so the extract re-reads those targets alone.
+    /// A write that moves anything else (layout, visibility, order, text) takes the plain borrow.
+    pub(crate) fn paint_mut(&mut self, targets: &[crate::order::ZTarget]) -> &mut Model {
+        let marks = self.paint.get_mut();
+        marks.count = marks.count.wrapping_add(1);
+        if !marks.overflow {
+            if marks.targets.len() + targets.len() > MAX_PAINT_MARKS {
+                marks.overflow = true;
+                marks.targets.clear();
+            } else {
+                marks.targets.extend_from_slice(targets);
+            }
+        }
+        &mut self.inner
     }
 }
 
