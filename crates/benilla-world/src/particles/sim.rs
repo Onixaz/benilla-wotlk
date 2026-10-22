@@ -383,8 +383,8 @@ fn scene_frozen(booth: Option<(bool, bool)>, owner_frozen: bool, draining: bool)
 /// Per frame: emit, integrate and expand each emitter's pool into the shared stream.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 pub(super) fn simulate_particles(
-    time: Res<Time>,
-    tuning: Res<ParticleTuning>,
+    // Paired to stay inside Bevy's 16-parameter limit.
+    (time, tuning): (Res<Time>, Res<ParticleTuning>),
     // The draw-set gate's scene inputs: the far-clip wall, the exterior-window test (the camera's
     // own room exempt) and the portal PVS of the rooms inside a building.
     gates: SceneGates,
@@ -449,6 +449,7 @@ pub(super) fn simulate_particles(
     // A hosted emitter's sequence: its host's live `AnimationPlayer` slot and clip time.
     hosts: Query<(&AnimationPlayer, &benilla_assets::ModelAnimations)>,
     mut dumps: super::dumps::Dumps,
+    mut scratch: Local<WalkScratch>,
 ) {
     let Ok((world_cam, cam_tf, frustum, camera, projection, cam_local)) = cam.single() else {
         return;
@@ -476,608 +477,597 @@ pub(super) fn simulate_particles(
     let (farclip, exterior_gate, camera_instance) = gates.scene(Some((&*cam_tf, &*projection)));
     let dump_frame = dumps.depth_frame(time.elapsed_secs());
     let emit_dump = dumps.emit.due(time.elapsed_secs());
-    // The walk records each drawn pool; the expansion and the commits follow it.
-    let mut jobs: Vec<ExpandJob> = Vec::new();
-    let mut commits: Vec<CommitJob> = Vec::new();
 
-    for (
-        entity,
-        mut emitter,
-        mut entity_tf,
-        mut entity_global,
-        fade,
-        layers,
-        light_override,
-        lit_by,
-    ) in &mut emitters
-    {
-        // The camera the quads face, the LOD measures from and the draw targets: a booth-layered
-        // emitter's booth camera, else the world camera.
-        let booth = layers
-            .filter(|l| !l.intersects(&RenderLayers::default()))
-            .and_then(|l| booth_cams.iter().find(|(_, _, cl, ..)| cl.intersects(l)));
-        let is_booth = booth.is_some();
-        // A frozen scene holds pool and age, pushes no quads, and hides model instances once.
-        if scene_frozen(
-            booth.map(|(_, _, _, c, throttled)| (c.is_active, throttled)),
-            emitter.frozen,
-            emitter.draining,
-        ) {
-            if !emitter.gated {
-                emitter.gated = true;
-                for slot in &emitter.model_instances {
-                    for (e, _) in &slot.meshes {
-                        if let Ok((_, _, mut cv)) = child_draws.get_mut(*e) {
-                            *cv = Visibility::Hidden;
-                        }
-                    }
-                }
-            }
-            continue;
-        }
-        if is_booth {
-            emitter.gated = false;
-        }
-        let (draw_cam, e_cam_pos, e_right, e_up) = match booth {
-            Some((cam_entity, tf, ..)) => {
-                let (_, rot, _) = tf.to_scale_rotation_translation();
-                (cam_entity, tf.translation(), rot * Vec3::X, rot * Vec3::Y)
-            }
-            None => (world_cam, cam_pos, cam_right, cam_up),
-        };
-        // The draw-set gate: the reference ticks an emitter only while its owner doodad is in the
-        // frame's worklist, by frustum sphere and distance-fade cutoff (`0x683f80`; the sphere is
-        // `[rec+0x68]`). Outside it pool and age freeze (`[obj+0x88]` accumulates nothing) and
-        // resume with one frame's dt. The far-clip term is needed: our projection's far plane is
-        // past `farclip`, and owners over `NEVER_FADE_RADIUS` never fade.
-        if let Some(f) = fade.as_ref() {
-            if emitter.gated && gate_inputs_still && !f.is_changed() {
-                continue;
-            }
-            let in_set = f.in_draw_set(
-                cam_pos,
-                cam_fwd,
-                farclip,
-                // Lateral planes only: the depth bound is the farclip term.
-                frustum.intersects_sphere(
-                    &CullSphere {
-                        center: f.center.into(),
-                        radius: f.radius,
-                    },
-                    false,
-                ),
-                // From inside a WMO, a doodad outside is not in the worklist.
-                f.exterior_admitted(&exterior_gate, camera_instance),
-                // The window admits a whole building, not the sealed room the prop stands in.
-                gates.room_admits(f),
-            );
-            if !in_set {
-                // Frozen: nothing pushed is nothing drawn; model instances hide once.
+    // The walk runs on the compute pool: an emitter's step reads the shared world and writes
+    // only its own row. Hiding a frozen pool's model instances, despawns and the drawn pools are
+    // collected per thread and applied after, the pools in entity order so the stream is stable.
+    let scratch = &mut *scratch;
+    let dumps_cell = std::sync::Mutex::new(&mut dumps);
+    emitters.par_iter_mut().for_each(
+        |(
+            entity,
+            mut emitter,
+            mut entity_tf,
+            mut entity_global,
+            fade,
+            layers,
+            light_override,
+            lit_by,
+        )| {
+            // The camera the quads face, the LOD measures from and the draw targets: a booth-layered
+            // emitter's booth camera, else the world camera.
+            let booth = layers
+                .filter(|l| !l.intersects(&RenderLayers::default()))
+                .and_then(|l| booth_cams.iter().find(|(_, _, cl, ..)| cl.intersects(l)));
+            let is_booth = booth.is_some();
+            // A frozen scene holds pool and age, pushes no quads, and hides model instances once.
+            if scene_frozen(
+                booth.map(|(_, _, _, c, throttled)| (c.is_active, throttled)),
+                emitter.frozen,
+                emitter.draining,
+            ) {
                 if !emitter.gated {
                     emitter.gated = true;
                     for slot in &emitter.model_instances {
                         for (e, _) in &slot.meshes {
-                            if let Ok((_, _, mut cv)) = child_draws.get_mut(*e) {
-                                *cv = Visibility::Hidden;
-                            }
+                            scratch.hides.borrow_local_mut().push(*e);
                         }
                     }
                 }
-                continue;
+                return;
             }
-            emitter.gated = false;
-        } else if !is_booth && !emitter.draining {
-            // Entity-owned emitters carry no `EmitterFade`, and vmangos streams transports
-            // map-wide, so the far-clip wall applies to them too: the reference ticks particles
-            // only in the animate step of a model the frame draws. Exempt: booth emitters (their
-            // own camera), draining ones (a frozen pool never empties), a vanished owner (it
-            // drains). The subject is the owner's live position.
-            let subject = match emitter.owner {
-                Some(o) => owners.at(o),
-                None => Some(emitter.anchor_pos),
+            if is_booth {
+                emitter.gated = false;
+            }
+            let (draw_cam, e_cam_pos, e_right, e_up) = match booth {
+                Some((cam_entity, tf, ..)) => {
+                    let (_, rot, _) = tf.to_scale_rotation_translation();
+                    (cam_entity, tf.translation(), rot * Vec3::X, rot * Vec3::Y)
+                }
+                None => (world_cam, cam_pos, cam_right, cam_up),
             };
-            // And the owner's own draw verdict: an emitter is a world root, so a hide on its
-            // model's hierarchy never reaches it.
-            let owner_hidden = emitter.owner.is_some_and(|o| owners.hidden(o));
-            if let Some(at) = subject {
-                if owner_hidden || !crate::view::within_farclip(farclip, cam_pos, cam_fwd, at, 0.0)
-                {
+            // The draw-set gate: the reference ticks an emitter only while its owner doodad is in the
+            // frame's worklist, by frustum sphere and distance-fade cutoff (`0x683f80`; the sphere is
+            // `[rec+0x68]`). Outside it pool and age freeze (`[obj+0x88]` accumulates nothing) and
+            // resume with one frame's dt. The far-clip term is needed: our projection's far plane is
+            // past `farclip`, and owners over `NEVER_FADE_RADIUS` never fade.
+            if let Some(f) = fade.as_ref() {
+                if emitter.gated && gate_inputs_still && !f.is_changed() {
+                    return;
+                }
+                let in_set = f.in_draw_set(
+                    cam_pos,
+                    cam_fwd,
+                    farclip,
+                    // Lateral planes only: the depth bound is the farclip term.
+                    frustum.intersects_sphere(
+                        &CullSphere {
+                            center: f.center.into(),
+                            radius: f.radius,
+                        },
+                        false,
+                    ),
+                    // From inside a WMO, a doodad outside is not in the worklist.
+                    f.exterior_admitted(&exterior_gate, camera_instance),
+                    // The window admits a whole building, not the sealed room the prop stands in.
+                    gates.room_admits(f),
+                );
+                if !in_set {
+                    // Frozen: nothing pushed is nothing drawn; model instances hide once.
                     if !emitter.gated {
                         emitter.gated = true;
                         for slot in &emitter.model_instances {
                             for (e, _) in &slot.meshes {
-                                if let Ok((_, _, mut cv)) = child_draws.get_mut(*e) {
-                                    *cv = Visibility::Hidden;
-                                }
+                                scratch.hides.borrow_local_mut().push(*e);
                             }
                         }
                     }
-                    continue;
+                    return;
                 }
                 emitter.gated = false;
-            }
-        }
-        let ParticleEmitter {
-            def,
-            ride,
-            placement,
-            owner,
-            on_owner_loss,
-            draining,
-            alpha_src,
-            alpha,
-            anchor,
-            anchor_pos,
-            particles,
-            accumulator,
-            emitter_prev,
-            inherit_accum,
-            inherit_vel,
-            gate_prev,
-            age,
-            host,
-            seq,
-            rng,
-            owner_reach,
-            size_scale,
-            water_bound,
-            texture,
-            recursion: _,
-            light_node: _,
-            children,
-            geometry: _,
-            model_instances,
-            gated: _,
-            frozen: _,
-            clip,
-        } = &mut *emitter;
-        // The water test's model frame, before `anchor` is shadowed: the instance root. A joint
-        // owner only seeds the room walk, as a joint's transform is not the instance matrix.
-        let water_model = (*anchor).or(*owner);
-        let water_gt = (*anchor).and_then(|e| owners.transforms.get(e).ok().copied());
-        let water_bound = *water_bound;
-        *age += dt;
-        let (clock_seq, elapsed_s) = match *host {
-            Some(h) => match hosts
-                .get(h)
-                .ok()
-                .and_then(|(p, a)| crate::doodad_anim::playing_seq(p, a))
-            {
-                Some((s, t)) => {
-                    *seq = Some(s);
-                    (Some(s), t)
-                }
-                None => (*seq, 0.0),
-            },
-            None => (*seq, *age),
-        };
-        // The global-sequence cursor: the spawn age is `sceneNow − attach`.
-        let gseq_now = f64::from(*age);
-        // `anchored` is world mode (file flag `0x10` clear); see [`Particle`].
-        let anchored = !def.model_space();
-
-        // 0. Track a streamed owner's transform; once it is gone, free or drain per
-        //    `on_owner_loss`.
-        if let Some(o) = *owner {
-            match owners.transforms.get(o) {
-                Ok(gt) => *placement = gt.compute_transform(),
-                Err(_) => {
-                    *owner = None;
-                    match *on_owner_loss {
-                        // The reference frees a model's emitters in its destructor: nothing drains.
-                        OwnerLoss::Free => {
-                            for slot in model_instances.iter() {
+            } else if !is_booth && !emitter.draining {
+                // Entity-owned emitters carry no `EmitterFade`, and vmangos streams transports
+                // map-wide, so the far-clip wall applies to them too: the reference ticks particles
+                // only in the animate step of a model the frame draws. Exempt: booth emitters (their
+                // own camera), draining ones (a frozen pool never empties), a vanished owner (it
+                // drains). The subject is the owner's live position.
+                let subject = match emitter.owner {
+                    Some(o) => owners.at(o),
+                    None => Some(emitter.anchor_pos),
+                };
+                // And the owner's own draw verdict: an emitter is a world root, so a hide on its
+                // model's hierarchy never reaches it.
+                let owner_hidden = emitter.owner.is_some_and(|o| owners.hidden(o));
+                if let Some(at) = subject {
+                    if owner_hidden
+                        || !crate::view::within_farclip(farclip, cam_pos, cam_fwd, at, 0.0)
+                    {
+                        if !emitter.gated {
+                            emitter.gated = true;
+                            for slot in &emitter.model_instances {
                                 for (e, _) in &slot.meshes {
-                                    commands.entity(*e).despawn();
+                                    scratch.hides.borrow_local_mut().push(*e);
                                 }
                             }
-                            commands.entity(entity).despawn();
-                            continue;
                         }
-                        OwnerLoss::Drain => {
-                            *draining = true;
-                            // The pool lives out its lifespans in place, like a missile's impact.
-                            if !particles.is_empty() {
-                                debug!(
-                                    "fx orphan: emitter {entity} ({}) lost its owner with {} \
+                        return;
+                    }
+                    emitter.gated = false;
+                }
+            }
+            let ParticleEmitter {
+                def,
+                ride,
+                placement,
+                owner,
+                on_owner_loss,
+                draining,
+                alpha_src,
+                alpha,
+                anchor,
+                anchor_pos,
+                particles,
+                accumulator,
+                emitter_prev,
+                inherit_accum,
+                inherit_vel,
+                gate_prev,
+                age,
+                host,
+                seq,
+                rng,
+                owner_reach,
+                size_scale,
+                water_bound,
+                texture,
+                recursion: _,
+                light_node: _,
+                children,
+                geometry: _,
+                model_instances,
+                gated: _,
+                frozen: _,
+                clip,
+            } = &mut *emitter;
+            // The water test's model frame, before `anchor` is shadowed: the instance root. A joint
+            // owner only seeds the room walk, as a joint's transform is not the instance matrix.
+            let water_model = (*anchor).or(*owner);
+            let water_gt = (*anchor).and_then(|e| owners.transforms.get(e).ok().copied());
+            let water_bound = *water_bound;
+            *age += dt;
+            let (clock_seq, elapsed_s) = match *host {
+                Some(h) => match hosts
+                    .get(h)
+                    .ok()
+                    .and_then(|(p, a)| crate::doodad_anim::playing_seq(p, a))
+                {
+                    Some((s, t)) => {
+                        *seq = Some(s);
+                        (Some(s), t)
+                    }
+                    None => (*seq, 0.0),
+                },
+                None => (*seq, *age),
+            };
+            // The global-sequence cursor: the spawn age is `sceneNow − attach`.
+            let gseq_now = f64::from(*age);
+            // `anchored` is world mode (file flag `0x10` clear); see [`Particle`].
+            let anchored = !def.model_space();
+
+            // 0. Track a streamed owner's transform; once it is gone, free or drain per
+            //    `on_owner_loss`.
+            if let Some(o) = *owner {
+                match owners.transforms.get(o) {
+                    Ok(gt) => *placement = gt.compute_transform(),
+                    Err(_) => {
+                        *owner = None;
+                        match *on_owner_loss {
+                            // The reference frees a model's emitters in its destructor: nothing drains.
+                            OwnerLoss::Free => {
+                                for slot in model_instances.iter() {
+                                    for (e, _) in &slot.meshes {
+                                        scratch.despawns.borrow_local_mut().push(*e);
+                                    }
+                                }
+                                scratch.despawns.borrow_local_mut().push(entity);
+                                return;
+                            }
+                            OwnerLoss::Drain => {
+                                *draining = true;
+                                // The pool lives out its lifespans in place, like a missile's impact.
+                                if !particles.is_empty() {
+                                    debug!(
+                                        "fx orphan: emitter {entity} ({}) lost its owner with {} \
                                      live particles frozen at {:?}",
-                                    texture
-                                        .path()
-                                        .map_or_else(|| "<no path>".into(), |p| p.to_string()),
-                                    particles.len(),
-                                    *anchor_pos
-                                );
+                                        texture
+                                            .path()
+                                            .map_or_else(|| "<no path>".into(), |p| p.to_string()),
+                                        particles.len(),
+                                        *anchor_pos
+                                    );
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-        if *draining && particles.is_empty() && children.iter().all(|c| c.particles.is_empty()) {
-            for slot in model_instances.iter() {
-                for (e, _) in &slot.meshes {
-                    commands.entity(*e).despawn();
-                }
-            }
-            commands.entity(entity).despawn();
-            continue;
-        }
-        // Dormant: nothing live, nothing draining, not emitting at this clock. Judged after the
-        // owner-loss and drain blocks and the clock, which must run every frame.
-        if particles.is_empty()
-            && !*draining
-            && children.iter().all(|c| c.particles.is_empty())
-            && !def.timing.emitting(clock_seq, elapsed_s, gseq_now)
-        {
-            continue;
-        }
-        // The model's render alpha (`emitter+0x1a8 = Model+0x19c`, `0x718960` at `0x719073`): an
-        // entity cloud's composed model alpha, or a placed doodad's distance fade.
-        *alpha = alpha_src.map_or(1.0, |e| owner_mul.alpha(e))
-            * fade.as_ref().map_or(1.0, |f| f.distance_alpha(cam_pos));
-        // The model's live translation, or the last known while the pool drains.
-        match *anchor {
-            Some(a) => {
-                if let Ok(gt) = owners.transforms.get(a) {
-                    *anchor_pos = gt.translation();
-                }
-            }
-            None if owner.is_none() => *anchor_pos = placement.translation,
-            None => {} // joint-owned, unanchored (placed doodads): the spawn placement stands
-        }
-        // `$WOW_EMIT_DUMP`'s model, taken before `anchor` is shadowed below.
-        let dump_owner = (*host).or(*anchor);
-
-        // 0a. The ride frame (`[CM2Model+0x17c]`): the transport the model stands on, inherited
-        //     down the `ParentModel` chain; one that streamed out reads as none.
-        let deck = anchor
-            .or(*owner)
-            .and_then(|model| owners.rides.source(model))
-            .and_then(|t| {
-                owners
-                    .transforms
-                    .get(t)
-                    .ok()
-                    .map(|gt| (t, crate::ride_frame::ride_matrix(gt)))
-            })
-            // Model mode ignores the ride frame (`0x7b518e`, `0x7b3ef9`): it rides its host.
-            .filter(|_| anchored);
-        // Boarding and leaving re-express every live particle (`0x7187f0` → `0x7b5e60`); a
-        // moving deck folds nothing, the draw's live `A` carries it.
-        if let Some(fold) = ride.retarget(deck) {
-            let rot = Quat::from_mat3a(&fold.matrix3);
-            for p in particles
-                .iter_mut()
-                .chain(children.iter_mut().flat_map(|c| &mut c.particles))
+            if *draining && particles.is_empty() && children.iter().all(|c| c.particles.is_empty())
             {
-                p.pos = fold.transform_point3(p.pos);
-                p.vel = rot * p.vel;
-            }
-            // The emitter-motion state crosses too, or the frame change reads as motion; whether
-            // the reference's `0x7b5e60` re-expresses `rt+0x248` is untraced.
-            *emitter_prev = emitter_prev.map(|prev| fold.transform_point3(prev));
-            *inherit_vel = rot * *inherit_vel;
-        }
-        // Births bake through `rt+0x1fc = srcMx · A⁻¹` (`0x7b51b0`), so the stored-frame terms
-        // below are deck-relative; `placement` stays world for the LOD, water side and model draw.
-        let emit_place = match ride.matrix() {
-            Some(a) => {
-                let inv = a.inverse();
-                Transform {
-                    translation: inv.transform_point3(placement.translation),
-                    rotation: Quat::from_mat3a(&inv.matrix3) * placement.rotation,
-                    scale: placement.scale,
-                }
-            }
-            None => *placement,
-        };
-
-        // 0b. The emitter-motion terms feed off the origin's one-frame Δ in the stored frame
-        //     (`rt+0x22c`, the translation row of `rt+0x1fc`), refreshed every frame (`rt+0x248`,
-        //     `0x7b5265`). Deviation: in model mode the reference adds the raw world vector to
-        //     local coordinates; we fold it into the local frame, because our world axes are
-        //     Bevy's, not WoW's.
-        let emitter_world = emit_place.transform_point(wow_to_bevy(def.position));
-        let emitter_delta = emitter_prev.map_or(Vec3::ZERO, |prev| emitter_world - prev);
-        *emitter_prev = Some(emitter_world);
-        // R(+Z, 90°) is applied at emission, so stored vectors are post-R and these folds R-free;
-        // the reference folds it in its draw matrix, an equivalent composition.
-        // World to the stored frame: the identity in world mode.
-        let to_stored = |world: Vec3, placement: &Transform| {
-            if anchored {
-                world
-            } else {
-                Vec3::from(bevy_to_wow(
-                    (placement.rotation.inverse() * world) / placement.scale.max(Vec3::splat(1e-6)),
-                ))
-            }
-        };
-        let fraction = follow_fraction(def, emitter_delta.length() / dt);
-        let follow = if fraction == 0.0 || emitter_delta == Vec3::ZERO {
-            Vec3::ZERO
-        } else {
-            to_stored(fraction * emitter_delta, &emit_place)
-        };
-        // Velocity inherit (file 0x40): the 30 Hz trigger, zeroed with nothing live (rt+0x64).
-        if def.inherits_emitter_motion() {
-            inherit_trigger(
-                inherit_accum,
-                inherit_vel,
-                dt,
-                emitter_delta,
-                !particles.is_empty(),
-                def.inherit_scale,
-            );
-        }
-
-        // Every track samples per frame on the current sequence's clock (`0x714260`): a hosted
-        // emitter's host's playing sequence and clip time, else its slot on the spawn-age clock.
-        // Births read the frame's values (Frost Nova's radius grows with its ring).
-        let now = def.params.sample(clock_seq, elapsed_s, gseq_now);
-
-        // 1. Integrate the live pool ([`integrate_particle`]): up is WoW +Z in model mode and Bevy
-        //    +Y in world mode; gravity is read live each frame, as the reference does.
-        let g = now.gravity;
-        let drag = def.drag;
-        // Kill-outbound: the emitter's live origin in the stored frame, composed like a birth.
-        let kill_origin = def.kill_outbound().then(|| {
-            if anchored {
-                emitter_world
-            } else {
-                Vec3::from(def.position)
-            }
-        });
-        let env = StepEnv {
-            dt,
-            gravity: g,
-            drag,
-            anchored,
-            kill_origin,
-            follow,
-            lifespan: now.lifespan,
-            lifespan_vary: def.lifespan_vary,
-        };
-        particles.retain_mut(|p| integrate_particle(p, &env));
-
-        // 2. Emit: [`accumulate_emission`] owes births from a continuous pour or a burst's rising
-        //    edge (`0x718ec8`), at the rate track step-sampled on the clip clock; the enabled track
-        //    (file +0x1dc) gates new births only. The reference's one particle distance mechanism
-        //    is this emission LOD (`0x7b5550`): × clamp(1 − (camDist − 50)·0.02, 0.25, 1), then
-        //    × `particleDensity`.
-        let emitting = !*draining && def.timing.emitting(clock_seq, elapsed_s, gseq_now);
-        let rate = vary_rate(def, def.timing.rate(clock_seq, elapsed_s, gseq_now), rng);
-        let dist_lod =
-            (1.0 - (placement.translation.distance(e_cam_pos) - 50.0) * 0.02).clamp(0.25, 1.0);
-        let burst = accumulate_emission(
-            def.burst(),
-            rate,
-            emitting,
-            density * dist_lod,
-            dt,
-            accumulator,
-            gate_prev,
-        );
-        if burst > 0.0 && benilla_assets::trace::enabled() {
-            benilla_assets::trace::line("fx", &format!("burst n={burst} t={elapsed_s:.2}s"));
-        }
-        while *accumulator >= 1.0 && particles.len() < MAX_PARTICLES {
-            *accumulator -= 1.0;
-            let rolls = BirthRolls::roll(def, rng);
-            let (base, dir) = emit_local(def, &now, rng);
-            let speed =
-                now.emission_speed * (1.0 + now.speed_variation * (rand01(rng) * 2.0 - 1.0));
-            // World mode (`0x10` clear) bakes a birth into world through the live emitter matrix
-            // (`0x7b8b0f` → `0x7bca80`, `0x7b8acf` → `0x7bcb40`); model mode stores it local and
-            // the draw re-applies the matrix (`0x7b8aa5`, `0x7b3efb`).
-            let (mut pos, vel) = if anchored {
-                (
-                    emit_place.transform_point(wow_to_bevy(base.to_array())),
-                    emit_place.rotation
-                        * (emit_place.scale * wow_to_bevy((dir * speed).to_array())),
-                )
-            } else {
-                (base, dir * speed)
-            };
-            // Ground snap (file 0x2000): at birth, in world mode, a 20 yd probe down against the
-            // walking collision (the reference's flags `0x100111`) sets a hit particle on the
-            // surface, lifted by its birth size.
-            if anchored && def.ground_snap() {
-                // Probed at the world point and stored back; a yaw-only `A` keeps world down.
-                let world = ride.to_world(pos);
-                if let Some(hit) = spatial.cast_ray(world, Dir3::NEG_Y, 20.0, true, &snap_filter) {
-                    let lift = def.over_life.sample(0.0).size[1] * rolls.size_mul[1];
-                    pos = ride.to_stored(world.with_y(world.y - hit.distance + lift));
-                }
-            }
-            // Inherit (the kernels' closing block): `vel += (1 + S11·speedVariation) · inherit`.
-            let vel = if def.inherits_emitter_motion() && *inherit_vel != Vec3::ZERO {
-                vel + (1.0 + now.speed_variation * rand_s11(rng))
-                    * to_stored(*inherit_vel, &emit_place)
-            } else {
-                vel
-            };
-            // Model particles (`0x7b2420`): orientation from the birth basis; the tumble's X is
-            // `min + u·range`, but Y and Z are a [1, 2) mantissa times the range, their min
-            // unused, as the reference rolls them.
-            let (quat, angvel) = if def.geometry_model.is_some() {
-                let amin = def.angular_velocity_min;
-                let amax = def.angular_velocity_max;
-                let mut w = [
-                    amin[0] + rand01(rng) * (amax[0] - amin[0]),
-                    (1.0 + rand01(rng)) * (amax[1] - amin[1]),
-                    (1.0 + rand01(rng)) * (amax[2] - amin[2]),
-                ];
-                if def.random_spin_sign() {
-                    for a in &mut w {
-                        if next_u32(rng) & 1 == 0 {
-                            *a = -*a;
-                        }
+                for slot in model_instances.iter() {
+                    for (e, _) in &slot.meshes {
+                        scratch.despawns.borrow_local_mut().push(*e);
                     }
                 }
-                // R(+Z, 90°) is a +90° turn about Bevy +Y, appended to the frame rotation.
-                let r90 = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
-                let quat = if anchored {
-                    emit_place.rotation * r90
-                } else {
-                    r90
-                };
-                (quat, wow_to_bevy(w))
-            } else {
-                (Quat::IDENTITY, Vec3::ZERO)
-            };
-            let phase = next_u32(rng);
-            let age = birth_age(def.burst(), dt, rng);
-            particles.push(rolls.particle(def, now.lifespan, pos, vel, age, phase, quat, angvel));
-        }
+                scratch.despawns.borrow_local_mut().push(entity);
+                return;
+            }
+            // Dormant: nothing live, nothing draining, not emitting at this clock. Judged after the
+            // owner-loss and drain blocks and the clock, which must run every frame.
+            if particles.is_empty()
+                && !*draining
+                && children.iter().all(|c| c.particles.is_empty())
+                && !def.timing.emitting(clock_seq, elapsed_s, gseq_now)
+            {
+                return;
+            }
+            // The model's render alpha (`emitter+0x1a8 = Model+0x19c`, `0x718960` at `0x719073`): an
+            // entity cloud's composed model alpha, or a placed doodad's distance fade.
+            *alpha = alpha_src.map_or(1.0, |e| owner_mul.alpha(e))
+                * fade.as_ref().map_or(1.0, |f| f.distance_alpha(cam_pos));
+            // The model's live translation, or the last known while the pool drains.
+            match *anchor {
+                Some(a) => {
+                    if let Ok(gt) = owners.transforms.get(a) {
+                        *anchor_pos = gt.translation();
+                    }
+                }
+                None if owner.is_none() => *anchor_pos = placement.translation,
+                None => {} // joint-owned, unanchored (placed doodads): the spawn placement stands
+            }
+            // `$WOW_EMIT_DUMP`'s model, taken before `anchor` is shadowed below.
+            let dump_owner = (*host).or(*anchor);
 
-        // 2b. Children (`0x7b5550`) drive off the post-birth pool on their own tracks, slot 0 on
-        //     the parent's age; a draining parent stops driving them.
-        for child in children.iter_mut() {
-            // A child cloud is its own fresh instance: its gseq cursor is its own age.
-            let c_emitting = !*draining && child.def.timing.emitting(None, *age, f64::from(*age));
-            let c_rate = vary_rate(
-                &child.def,
-                child.def.timing.rate(None, *age, f64::from(*age)),
-                &mut child.rng,
-            );
-            let c_now = child.def.params.sample(None, *age, f64::from(*age));
-            drive_child(
-                child,
-                &c_now,
-                particles,
-                c_rate,
-                c_emitting,
+            // 0a. The ride frame (`[CM2Model+0x17c]`): the transport the model stands on, inherited
+            //     down the `ParentModel` chain; one that streamed out reads as none.
+            let deck = anchor
+                .or(*owner)
+                .and_then(|model| owners.rides.source(model))
+                .and_then(|t| {
+                    owners
+                        .transforms
+                        .get(t)
+                        .ok()
+                        .map(|gt| (t, crate::ride_frame::ride_matrix(gt)))
+                })
+                // Model mode ignores the ride frame (`0x7b518e`, `0x7b3ef9`): it rides its host.
+                .filter(|_| anchored);
+            // Boarding and leaving re-express every live particle (`0x7187f0` → `0x7b5e60`); a
+            // moving deck folds nothing, the draw's live `A` carries it.
+            if let Some(fold) = ride.retarget(deck) {
+                let rot = Quat::from_mat3a(&fold.matrix3);
+                for p in particles
+                    .iter_mut()
+                    .chain(children.iter_mut().flat_map(|c| &mut c.particles))
+                {
+                    p.pos = fold.transform_point3(p.pos);
+                    p.vel = rot * p.vel;
+                }
+                // The emitter-motion state crosses too, or the frame change reads as motion; whether
+                // the reference's `0x7b5e60` re-expresses `rt+0x248` is untraced.
+                *emitter_prev = emitter_prev.map(|prev| fold.transform_point3(prev));
+                *inherit_vel = rot * *inherit_vel;
+            }
+            // Births bake through `rt+0x1fc = srcMx · A⁻¹` (`0x7b51b0`), so the stored-frame terms
+            // below are deck-relative; `placement` stays world for the LOD, water side and model draw.
+            let emit_place = match ride.matrix() {
+                Some(a) => {
+                    let inv = a.inverse();
+                    Transform {
+                        translation: inv.transform_point3(placement.translation),
+                        rotation: Quat::from_mat3a(&inv.matrix3) * placement.rotation,
+                        scale: placement.scale,
+                    }
+                }
+                None => *placement,
+            };
+
+            // 0b. The emitter-motion terms feed off the origin's one-frame Δ in the stored frame
+            //     (`rt+0x22c`, the translation row of `rt+0x1fc`), refreshed every frame (`rt+0x248`,
+            //     `0x7b5265`). Deviation: in model mode the reference adds the raw world vector to
+            //     local coordinates; we fold it into the local frame, because our world axes are
+            //     Bevy's, not WoW's.
+            let emitter_world = emit_place.transform_point(wow_to_bevy(def.position));
+            let emitter_delta = emitter_prev.map_or(Vec3::ZERO, |prev| emitter_world - prev);
+            *emitter_prev = Some(emitter_world);
+            // R(+Z, 90°) is applied at emission, so stored vectors are post-R and these folds R-free;
+            // the reference folds it in its draw matrix, an equivalent composition.
+            // World to the stored frame: the identity in world mode.
+            let to_stored = |world: Vec3, placement: &Transform| {
+                if anchored {
+                    world
+                } else {
+                    Vec3::from(bevy_to_wow(
+                        (placement.rotation.inverse() * world)
+                            / placement.scale.max(Vec3::splat(1e-6)),
+                    ))
+                }
+            };
+            let fraction = follow_fraction(def, emitter_delta.length() / dt);
+            let follow = if fraction == 0.0 || emitter_delta == Vec3::ZERO {
+                Vec3::ZERO
+            } else {
+                to_stored(fraction * emitter_delta, &emit_place)
+            };
+            // Velocity inherit (file 0x40): the 30 Hz trigger, zeroed with nothing live (rt+0x64).
+            if def.inherits_emitter_motion() {
+                inherit_trigger(
+                    inherit_accum,
+                    inherit_vel,
+                    dt,
+                    emitter_delta,
+                    !particles.is_empty(),
+                    def.inherit_scale,
+                );
+            }
+
+            // Every track samples per frame on the current sequence's clock (`0x714260`): a hosted
+            // emitter's host's playing sequence and clip time, else its slot on the spawn-age clock.
+            // Births read the frame's values (Frost Nova's radius grows with its ring).
+            let now = def.params.sample(clock_seq, elapsed_s, gseq_now);
+
+            // 1. Integrate the live pool ([`integrate_particle`]): up is WoW +Z in model mode and Bevy
+            //    +Y in world mode; gravity is read live each frame, as the reference does.
+            let g = now.gravity;
+            let drag = def.drag;
+            // Kill-outbound: the emitter's live origin in the stored frame, composed like a birth.
+            let kill_origin = def.kill_outbound().then(|| {
+                if anchored {
+                    emitter_world
+                } else {
+                    Vec3::from(def.position)
+                }
+            });
+            let env = StepEnv {
+                dt,
+                gravity: g,
+                drag,
+                anchored,
+                kill_origin,
+                follow,
+                lifespan: now.lifespan,
+                lifespan_vary: def.lifespan_vary,
+            };
+            particles.retain_mut(|p| integrate_particle(p, &env));
+
+            // 2. Emit: [`accumulate_emission`] owes births from a continuous pour or a burst's rising
+            //    edge (`0x718ec8`), at the rate track step-sampled on the clip clock; the enabled track
+            //    (file +0x1dc) gates new births only. The reference's one particle distance mechanism
+            //    is this emission LOD (`0x7b5550`): × clamp(1 − (camDist − 50)·0.02, 0.25, 1), then
+            //    × `particleDensity`.
+            let emitting = !*draining && def.timing.emitting(clock_seq, elapsed_s, gseq_now);
+            let rate = vary_rate(def, def.timing.rate(clock_seq, elapsed_s, gseq_now), rng);
+            let dist_lod =
+                (1.0 - (placement.translation.distance(e_cam_pos) - 50.0) * 0.02).clamp(0.25, 1.0);
+            let burst = accumulate_emission(
+                def.burst(),
+                rate,
+                emitting,
                 density * dist_lod,
                 dt,
-                anchored,
-                &emit_place,
+                accumulator,
+                gate_prev,
             );
-            let c_env = StepEnv {
-                dt,
-                gravity: c_now.gravity,
-                drag: child.def.drag,
-                anchored,
-                kill_origin: None,
-                follow: Vec3::ZERO,
-                lifespan: c_now.lifespan,
-                lifespan_vary: child.def.lifespan_vary,
-            };
-            child
-                .particles
-                .retain_mut(|p| integrate_particle(p, &c_env));
-        }
-
-        // 3. Expand each pool once its texture is resident, never the fallback. The anchor is
-        //    the draw's sort point, also published on the entity for the instruments.
-        let anchor = if anchored {
-            *anchor_pos
-        } else {
-            placement.translation
-        };
-        entity_tf.translation = anchor;
-        // Written directly for same-frame readers: we run after propagation, at the world root.
-        *entity_global = GlobalTransform::from(*entity_tf);
-        let frame = DrawFrame {
-            anchored,
-            alpha: *alpha,
-            ride: *ride,
-            size_scale: *size_scale,
-        };
-        let cam = CamBasis {
-            right: e_right,
-            up: e_up,
-        };
-        // A geometry emitter draws instances ([`super::model`]), never quads.
-        let want_quads = def.geometry_model.is_none() && images.contains(&*texture);
-        // One rung for every effect of a model, plus the water interleave: a cloud on the eye's
-        // far side sorts under the water pass, classified once per model (`0x7084a0`).
-        let far = !is_booth
-            && model_far_side(
-                &interleave,
-                water_model,
-                water_gt.as_ref(),
-                water_bound,
-                placement.translation,
-            );
-        // Trace tag `fx`: which clouds sorted under the water pass this frame.
-        if far && !particles.is_empty() && benilla_assets::trace::enabled() {
-            benilla_assets::trace::line(
-                "fx",
-                &format!(
-                    "far-side cloud at=[{:.1},{:.1},{:.1}] n={}",
-                    placement.translation.x,
-                    placement.translation.y,
-                    placement.translation.z,
-                    particles.len()
-                ),
-            );
-        }
-        let bias = super::owner_last_bias(*owner_reach)
-            + if far {
-                crate::sky_order::FAR_SIDE_BIAS
-            } else {
-                0.0
-            };
-        // `$WOW_EMIT_DUMP`, here so `live` counts this frame's births.
-        if emit_dump {
-            dumps.emit.dump(
-                dump_owner,
-                &super::emitdump::Decision {
-                    def,
-                    seq: clock_seq,
-                    elapsed: elapsed_s,
-                    rate,
-                    emitting,
-                    live: particles.len(),
-                    now: &now,
-                    at: emitter_world,
-                },
-            );
-        }
-        // `$WOW_PARTICLE_DEPTHDUMP` over this pool's quads; booths draw to their own target.
-        let dump_at = dump_frame
-            .filter(|_| {
-                !is_booth
-                    && def.geometry_model.is_none()
-                    && !particles.is_empty()
-                    && super::depthdump::bone_selected(u32::from(def.bone))
-            })
-            // The world point: `emitter_world` is in the stored frame.
-            .map(|fidx| (fidx, ride.to_world(emitter_world)));
-        // The model's committed light, shared by its child draws: one light node per model.
-        let committed = owner_mul.committed_light(lit_by);
-        let spec = EffectDrawSpec {
-            cam: draw_cam,
-            texture: texture.id(),
-            blend: def.blend.into(),
-            fog: EffectFog::for_blend(def.flags, def.blend),
-            // Set from the expansion's light fold.
-            lighting: EffectLighting::None,
-            anchor,
-            bias,
-            raster_bias: 0,
-            raster_slope: 0.0,
-            cam_relative: false,
-            no_depth_test: false,
-            main_entity: entity,
-            light: light_override.map(|l| l.0.clone()),
-            // A UI model tile's pane cell (`set_clip`); `None` in the world.
-            clip: *clip,
-        };
-        // Child pools: their own texture, blend and fog, the parent's anchor and rung.
-        let mut kids = Vec::new();
-        let mut kid_specs = Vec::new();
-        for (i, child) in children.iter().enumerate() {
-            if child.particles.is_empty() || !images.contains(&child.texture) {
-                continue;
+            if burst > 0.0 && benilla_assets::trace::enabled() {
+                benilla_assets::trace::line("fx", &format!("burst n={burst} t={elapsed_s:.2}s"));
             }
-            kids.push(i);
-            kid_specs.push(EffectDrawSpec {
+            while *accumulator >= 1.0 && particles.len() < MAX_PARTICLES {
+                *accumulator -= 1.0;
+                let rolls = BirthRolls::roll(def, rng);
+                let (base, dir) = emit_local(def, &now, rng);
+                let speed =
+                    now.emission_speed * (1.0 + now.speed_variation * (rand01(rng) * 2.0 - 1.0));
+                // World mode (`0x10` clear) bakes a birth into world through the live emitter matrix
+                // (`0x7b8b0f` → `0x7bca80`, `0x7b8acf` → `0x7bcb40`); model mode stores it local and
+                // the draw re-applies the matrix (`0x7b8aa5`, `0x7b3efb`).
+                let (mut pos, vel) = if anchored {
+                    (
+                        emit_place.transform_point(wow_to_bevy(base.to_array())),
+                        emit_place.rotation
+                            * (emit_place.scale * wow_to_bevy((dir * speed).to_array())),
+                    )
+                } else {
+                    (base, dir * speed)
+                };
+                // Ground snap (file 0x2000): at birth, in world mode, a 20 yd probe down against the
+                // walking collision (the reference's flags `0x100111`) sets a hit particle on the
+                // surface, lifted by its birth size.
+                if anchored && def.ground_snap() {
+                    // Probed at the world point and stored back; a yaw-only `A` keeps world down.
+                    let world = ride.to_world(pos);
+                    if let Some(hit) =
+                        spatial.cast_ray(world, Dir3::NEG_Y, 20.0, true, &snap_filter)
+                    {
+                        let lift = def.over_life.sample(0.0).size[1] * rolls.size_mul[1];
+                        pos = ride.to_stored(world.with_y(world.y - hit.distance + lift));
+                    }
+                }
+                // Inherit (the kernels' closing block): `vel += (1 + S11·speedVariation) · inherit`.
+                let vel = if def.inherits_emitter_motion() && *inherit_vel != Vec3::ZERO {
+                    vel + (1.0 + now.speed_variation * rand_s11(rng))
+                        * to_stored(*inherit_vel, &emit_place)
+                } else {
+                    vel
+                };
+                // Model particles (`0x7b2420`): orientation from the birth basis; the tumble's X is
+                // `min + u·range`, but Y and Z are a [1, 2) mantissa times the range, their min
+                // unused, as the reference rolls them.
+                let (quat, angvel) = if def.geometry_model.is_some() {
+                    let amin = def.angular_velocity_min;
+                    let amax = def.angular_velocity_max;
+                    let mut w = [
+                        amin[0] + rand01(rng) * (amax[0] - amin[0]),
+                        (1.0 + rand01(rng)) * (amax[1] - amin[1]),
+                        (1.0 + rand01(rng)) * (amax[2] - amin[2]),
+                    ];
+                    if def.random_spin_sign() {
+                        for a in &mut w {
+                            if next_u32(rng) & 1 == 0 {
+                                *a = -*a;
+                            }
+                        }
+                    }
+                    // R(+Z, 90°) is a +90° turn about Bevy +Y, appended to the frame rotation.
+                    let r90 = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+                    let quat = if anchored {
+                        emit_place.rotation * r90
+                    } else {
+                        r90
+                    };
+                    (quat, wow_to_bevy(w))
+                } else {
+                    (Quat::IDENTITY, Vec3::ZERO)
+                };
+                let phase = next_u32(rng);
+                let age = birth_age(def.burst(), dt, rng);
+                particles.push(rolls.particle(
+                    def,
+                    now.lifespan,
+                    pos,
+                    vel,
+                    age,
+                    phase,
+                    quat,
+                    angvel,
+                ));
+            }
+
+            // 2b. Children (`0x7b5550`) drive off the post-birth pool on their own tracks, slot 0 on
+            //     the parent's age; a draining parent stops driving them.
+            for child in children.iter_mut() {
+                // A child cloud is its own fresh instance: its gseq cursor is its own age.
+                let c_emitting =
+                    !*draining && child.def.timing.emitting(None, *age, f64::from(*age));
+                let c_rate = vary_rate(
+                    &child.def,
+                    child.def.timing.rate(None, *age, f64::from(*age)),
+                    &mut child.rng,
+                );
+                let c_now = child.def.params.sample(None, *age, f64::from(*age));
+                drive_child(
+                    child,
+                    &c_now,
+                    particles,
+                    c_rate,
+                    c_emitting,
+                    density * dist_lod,
+                    dt,
+                    anchored,
+                    &emit_place,
+                );
+                let c_env = StepEnv {
+                    dt,
+                    gravity: c_now.gravity,
+                    drag: child.def.drag,
+                    anchored,
+                    kill_origin: None,
+                    follow: Vec3::ZERO,
+                    lifespan: c_now.lifespan,
+                    lifespan_vary: child.def.lifespan_vary,
+                };
+                child
+                    .particles
+                    .retain_mut(|p| integrate_particle(p, &c_env));
+            }
+
+            // 3. Expand each pool once its texture is resident, never the fallback. The anchor is
+            //    the draw's sort point, also published on the entity for the instruments.
+            let anchor = if anchored {
+                *anchor_pos
+            } else {
+                placement.translation
+            };
+            entity_tf.translation = anchor;
+            // Written directly for same-frame readers: we run after propagation, at the world root.
+            *entity_global = GlobalTransform::from(*entity_tf);
+            let frame = DrawFrame {
+                anchored,
+                alpha: *alpha,
+                ride: *ride,
+                size_scale: *size_scale,
+            };
+            let cam = CamBasis {
+                right: e_right,
+                up: e_up,
+            };
+            // A geometry emitter draws instances ([`super::model`]), never quads.
+            let want_quads = def.geometry_model.is_none() && images.contains(&*texture);
+            // One rung for every effect of a model, plus the water interleave: a cloud on the eye's
+            // far side sorts under the water pass, classified once per model (`0x7084a0`).
+            let far = !is_booth
+                && model_far_side(
+                    &interleave,
+                    water_model,
+                    water_gt.as_ref(),
+                    water_bound,
+                    placement.translation,
+                );
+            // Trace tag `fx`: which clouds sorted under the water pass this frame.
+            if far && !particles.is_empty() && benilla_assets::trace::enabled() {
+                benilla_assets::trace::line(
+                    "fx",
+                    &format!(
+                        "far-side cloud at=[{:.1},{:.1},{:.1}] n={}",
+                        placement.translation.x,
+                        placement.translation.y,
+                        placement.translation.z,
+                        particles.len()
+                    ),
+                );
+            }
+            let bias = super::owner_last_bias(*owner_reach)
+                + if far {
+                    crate::sky_order::FAR_SIDE_BIAS
+                } else {
+                    0.0
+                };
+            // `$WOW_EMIT_DUMP`, here so `live` counts this frame's births.
+            if emit_dump {
+                dumps_cell
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .emit
+                    .dump(
+                        dump_owner,
+                        &super::emitdump::Decision {
+                            def,
+                            seq: clock_seq,
+                            elapsed: elapsed_s,
+                            rate,
+                            emitting,
+                            live: particles.len(),
+                            now: &now,
+                            at: emitter_world,
+                        },
+                    );
+            }
+            // `$WOW_PARTICLE_DEPTHDUMP` over this pool's quads; booths draw to their own target.
+            let dump_at = dump_frame
+                .filter(|_| {
+                    !is_booth
+                        && def.geometry_model.is_none()
+                        && !particles.is_empty()
+                        && super::depthdump::bone_selected(u32::from(def.bone))
+                })
+                // The world point: `emitter_world` is in the stored frame.
+                .map(|fidx| (fidx, ride.to_world(emitter_world)));
+            // The model's committed light, shared by its child draws: one light node per model.
+            let committed = owner_mul.committed_light(lit_by);
+            let spec = EffectDrawSpec {
                 cam: draw_cam,
-                texture: child.texture.id(),
-                blend: child.def.blend.into(),
-                fog: EffectFog::for_blend(child.def.flags, child.def.blend),
-                // Its own record's lighting verdict, under the parent's light node.
+                texture: texture.id(),
+                blend: def.blend.into(),
+                fog: EffectFog::for_blend(def.flags, def.blend),
+                // Set from the expansion's light fold.
                 lighting: EffectLighting::None,
                 anchor,
                 bias,
@@ -1087,26 +1077,67 @@ pub(super) fn simulate_particles(
                 no_depth_test: false,
                 main_entity: entity,
                 light: light_override.map(|l| l.0.clone()),
-                // The parent's cell and clip.
+                // A UI model tile's pane cell (`set_clip`); `None` in the world.
                 clip: *clip,
-            });
+            };
+            // Child pools: their own texture, blend and fog, the parent's anchor and rung.
+            let mut kids = Vec::new();
+            let mut kid_specs = Vec::new();
+            for (i, child) in children.iter().enumerate() {
+                if child.particles.is_empty() || !images.contains(&child.texture) {
+                    continue;
+                }
+                kids.push(i);
+                kid_specs.push(EffectDrawSpec {
+                    cam: draw_cam,
+                    texture: child.texture.id(),
+                    blend: child.def.blend.into(),
+                    fog: EffectFog::for_blend(child.def.flags, child.def.blend),
+                    // Its own record's lighting verdict, under the parent's light node.
+                    lighting: EffectLighting::None,
+                    anchor,
+                    bias,
+                    raster_bias: 0,
+                    raster_slope: 0.0,
+                    cam_relative: false,
+                    no_depth_test: false,
+                    main_entity: entity,
+                    light: light_override.map(|l| l.0.clone()),
+                    // The parent's cell and clip.
+                    clip: *clip,
+                });
+            }
+            scratch.walked.borrow_local_mut().push((
+                ExpandJob {
+                    entity,
+                    frame,
+                    placement: *placement,
+                    cam,
+                    quads: want_quads && !particles.is_empty(),
+                    committed,
+                    kids,
+                },
+                CommitJob {
+                    spec,
+                    kid_specs,
+                    dump_at,
+                    textured: images.contains(&*texture),
+                },
+            ));
+        },
+    );
+    drop(dumps_cell);
+    for e in scratch.hides.drain() {
+        if let Ok((_, _, mut cv)) = child_draws.get_mut(e) {
+            *cv = Visibility::Hidden;
         }
-        jobs.push(ExpandJob {
-            entity,
-            frame,
-            placement: *placement,
-            cam,
-            quads: want_quads && !particles.is_empty(),
-            committed,
-            kids,
-        });
-        commits.push(CommitJob {
-            spec,
-            kid_specs,
-            dump_at,
-            textured: images.contains(&*texture),
-        });
     }
+    for e in scratch.despawns.drain() {
+        commands.entity(e).despawn();
+    }
+    let mut walked: Vec<(ExpandJob, CommitJob)> = scratch.walked.drain().collect();
+    walked.sort_unstable_by_key(|(job, _)| job.entity);
+    let (jobs, commits): (Vec<ExpandJob>, Vec<CommitJob>) = walked.into_iter().unzip();
 
     // Expand every walked pool on the compute pool, the walk's per-particle half: a job reads
     // only its own emitter, so the chunks are independent.
@@ -1222,6 +1253,17 @@ pub(super) fn simulate_particles(
             quads.commit_quads(start, EffectDrawSpec { lighting, ..spec });
         }
     }
+}
+
+/// The parallel walk's per-thread outputs, kept across frames for their allocations.
+#[derive(Default)]
+pub(super) struct WalkScratch {
+    /// Model instances of a pool that froze this frame, hidden after the walk.
+    hides: bevy::utils::Parallel<Vec<Entity>>,
+    /// Emitters, and their instances, freed or drained empty this frame.
+    despawns: bevy::utils::Parallel<Vec<Entity>>,
+    /// The drawn pools, with their draws.
+    walked: bevy::utils::Parallel<Vec<(ExpandJob, CommitJob)>>,
 }
 
 /// Below this many walked pools the expansion runs inline; it is also the smallest chunk.
