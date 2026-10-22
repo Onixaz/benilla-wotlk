@@ -43,7 +43,9 @@ use bevy::shader::Shader;
 
 use crate::lighting::SharedLightBuffer;
 
-use super::buffer::{EffectBlend, EffectFog, EffectQuads, EffectTopology, EffectVertex};
+use super::buffer::{
+    EffectBlend, EffectFog, EffectQuads, EffectTopology, EffectVertex, GpuParticle, GpuPool,
+};
 
 /// One extracted draw: the render-world copy of a [`super::buffer::EffectDraw`].
 struct ExtractedDraw {
@@ -69,6 +71,8 @@ struct ExtractedDraw {
 /// One GPU draw after the merge walk: an index range and the bind-group identity its items share.
 struct MergedDraw {
     index_range: Range<u32>,
+    /// A GPU-expanded particle run: no vertex buffer, the particle storage group bound.
+    particles: bool,
     texture: AssetId<Image>,
     light: Option<Buffer>,
     /// This draw's fog and clip row in [`EffectMeta::params`].
@@ -79,6 +83,11 @@ struct MergedDraw {
 #[derive(Resource)]
 pub struct EffectMeta {
     vertices: RawBufferVec<EffectVertex>,
+    /// The GPU expansion's pools and particles, and the twinkle table, as storage.
+    pools: RawBufferVec<GpuPool>,
+    particles: RawBufferVec<GpuParticle>,
+    twinkle: RawBufferVec<[f32; 4]>,
+    particle_bind_group: Option<BindGroup>,
     indices: RawBufferVec<u32>,
     draws: Vec<ExtractedDraw>,
     merged: Vec<MergedDraw>,
@@ -101,6 +110,10 @@ impl Default for EffectMeta {
     fn default() -> Self {
         Self {
             vertices: RawBufferVec::new(BufferUsages::VERTEX),
+            pools: RawBufferVec::new(BufferUsages::STORAGE),
+            particles: RawBufferVec::new(BufferUsages::STORAGE),
+            twinkle: RawBufferVec::new(BufferUsages::STORAGE),
+            particle_bind_group: None,
             indices: RawBufferVec::new(BufferUsages::INDEX),
             draws: Vec::new(),
             merged: Vec::new(),
@@ -182,6 +195,8 @@ pub struct EffectBindGroups {
 pub struct EffectPipeline {
     view_layout: BindGroupLayoutDescriptor,
     image_layout: BindGroupLayoutDescriptor,
+    /// Group 2 of the GPU-expanded particle pipeline: pools, particles, twinkle table.
+    particle_layout: BindGroupLayoutDescriptor,
     shader: Handle<Shader>,
 }
 
@@ -207,9 +222,21 @@ pub fn init_effect_pipeline(mut commands: Commands, asset_server: Res<AssetServe
             ),
         ),
     );
+    let particle_layout = BindGroupLayoutDescriptor::new(
+        "effect_particle_layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::VERTEX,
+            (
+                storage_buffer_read_only_sized(false, None),
+                storage_buffer_read_only_sized(false, None),
+                storage_buffer_read_only_sized(false, None),
+            ),
+        ),
+    );
     commands.insert_resource(EffectPipeline {
         view_layout,
         image_layout,
+        particle_layout,
         shader: asset_server.load("embedded://benilla_world/shaders/wow_effect.wgsl"),
     });
 }
@@ -228,6 +255,8 @@ pub struct EffectPipelineKey {
     lit: bool,
     /// Depth compare `Always`; see [`super::buffer::EffectDrawSpec::no_depth_test`].
     no_depth_test: bool,
+    /// GPU-expanded particles (`EFFECT_PARTICLES`): corners from the storage group, no vertices.
+    particles: bool,
 }
 
 impl SpecializedRenderPipeline for EffectPipeline {
@@ -285,6 +314,9 @@ impl SpecializedRenderPipeline for EffectPipeline {
             ),
         };
         let mut shader_defs = vec![blend_def.into()];
+        if key.particles {
+            shader_defs.push("EFFECT_PARTICLES".into());
+        }
         // Coplanar draws: absolute verts through the world meshes' own `clip_from_world`, so the
         // bias settles against the same rounding; `prepare_effects` skips their rebase to match.
         if key.raster_bias != 0 {
@@ -306,11 +338,23 @@ impl SpecializedRenderPipeline for EffectPipeline {
             };
         RenderPipelineDescriptor {
             label: Some("wow_effect_pipeline".into()),
-            layout: vec![self.view_layout.clone(), self.image_layout.clone()],
+            layout: if key.particles {
+                vec![
+                    self.view_layout.clone(),
+                    self.image_layout.clone(),
+                    self.particle_layout.clone(),
+                ]
+            } else {
+                vec![self.view_layout.clone(), self.image_layout.clone()]
+            },
             vertex: VertexState {
                 shader: self.shader.clone(),
                 shader_defs: shader_defs.clone(),
-                buffers: vec![vertex_layout],
+                buffers: if key.particles {
+                    Vec::new()
+                } else {
+                    vec![vertex_layout]
+                },
                 ..default()
             },
             fragment: Some(FragmentState {
@@ -371,6 +415,10 @@ fn extract_effects(
     }
     meta.vertices.clear();
     meta.vertices.extend(quads.verts.iter().copied());
+    meta.pools.clear();
+    meta.pools.extend(quads.pools.iter().copied());
+    meta.particles.clear();
+    meta.particles.extend(quads.particles.iter().copied());
     meta.draws.clear();
     meta.draws.extend(quads.draws.iter().map(|d| ExtractedDraw {
         cam: d.cam,
@@ -442,6 +490,7 @@ fn queue_effects(
                     raster_slope_bits: draw.raster_slope.to_bits(),
                     lit: draw.lit,
                     no_depth_test: draw.no_depth_test,
+                    particles: draw.topology == EffectTopology::Particles,
                 },
             );
             phase.add(Transparent3d {
@@ -498,8 +547,9 @@ fn prepare_effects(
         if draw.raster_bias != 0 {
             continue;
         }
-        // So does a draw its producer already wrote camera-relative.
-        if draw.cam_relative {
+        // So does a draw its producer already wrote camera-relative, and a GPU-expanded one,
+        // whose shader subtracts the same `ViewUniform.world_position`.
+        if draw.cam_relative || draw.topology == EffectTopology::Particles {
             continue;
         }
         let Some(cam) = cams.get(&MainEntity::from(draw.cam)) else {
@@ -514,6 +564,21 @@ fn prepare_effects(
         }
     }
     meta.vertices.write_buffer(&device, &queue);
+    // Storage bindings take no empty buffer: an idle frame binds one zeroed row.
+    if meta.pools.is_empty() {
+        meta.pools.push(GpuPool::default());
+    }
+    if meta.particles.is_empty() {
+        meta.particles.push(GpuParticle::default());
+    }
+    if meta.twinkle.is_empty() {
+        for chunk in super::quads::twinkle_table().as_chunks::<4>().0 {
+            meta.twinkle.push(*chunk);
+        }
+        meta.twinkle.write_buffer(&device, &queue);
+    }
+    meta.pools.write_buffer(&device, &queue);
+    meta.particles.write_buffer(&device, &queue);
 
     // The merge walk, over each live view's sorted items, never the raw phase map (an unswept
     // entry carries a dead frame's indices): a run of items sharing a [`RunKey`] becomes one
@@ -573,7 +638,8 @@ fn prepare_effects(
                         b += 4;
                     }
                 }
-                EffectTopology::Tris => {
+                // A particle's 12 vertex ids, its head then its tail quad: the shader's corners.
+                EffectTopology::Tris | EffectTopology::Particles => {
                     for k in draw.range.clone() {
                         meta.indices.push(k);
                     }
@@ -616,6 +682,7 @@ fn prepare_effects(
                     close(&mut phase.items, &mut open, meta.merged.len());
                     meta.merged.push(MergedDraw {
                         index_range: index_start..index_end,
+                        particles: draw.topology == EffectTopology::Particles,
                         texture: draw.texture,
                         light: draw.light.clone(),
                         params_offset,
@@ -664,6 +731,22 @@ fn prepare_effect_bind_groups(
         &pipeline_cache.get_bind_group_layout(&pipeline.view_layout),
         &BindGroupEntries::single(view_binding),
     ));
+    if let (Some(pools), Some(particles), Some(twinkle)) = (
+        meta.pools.buffer(),
+        meta.particles.buffer(),
+        meta.twinkle.buffer(),
+    ) {
+        let group = device.create_bind_group(
+            "effect_particle_bind_group",
+            &pipeline_cache.get_bind_group_layout(&pipeline.particle_layout),
+            &BindGroupEntries::sequential((
+                pools.as_entire_binding(),
+                particles.as_entire_binding(),
+                twinkle.as_entire_binding(),
+            )),
+        );
+        meta.particle_bind_group = Some(group);
+    }
     let Some(light) = light else { return };
     let Some(params_binding) = meta.params.binding() else {
         return;
@@ -752,12 +835,22 @@ impl<P: PhaseItem> RenderCommand<P> for DrawEffectBatch {
         let Some(image_bind_group) = bind_groups.into_inner().images.get(&key) else {
             return RenderCommandResult::Skip;
         };
-        let (Some(vertices), Some(indices)) = (meta.vertices.buffer(), meta.indices.buffer())
-        else {
+        let Some(indices) = meta.indices.buffer() else {
             return RenderCommandResult::Failure("effect lane buffers not available");
         };
         pass.set_bind_group(1, image_bind_group, &[draw.params_offset]);
-        pass.set_vertex_buffer(0, vertices.slice(..));
+        if draw.particles {
+            // GPU-expanded: corners from the storage group, no vertex stream (it may be empty).
+            let Some(group) = meta.particle_bind_group.as_ref() else {
+                return RenderCommandResult::Skip;
+            };
+            pass.set_bind_group(2, group, &[]);
+        } else {
+            let Some(vertices) = meta.vertices.buffer() else {
+                return RenderCommandResult::Failure("effect lane buffers not available");
+            };
+            pass.set_vertex_buffer(0, vertices.slice(..));
+        }
         pass.set_index_buffer(indices.slice(..), IndexFormat::Uint32);
         // `$WOW_EFFECT_TRACE`: what `draw_indexed` actually ran.
         if effect_trace() {

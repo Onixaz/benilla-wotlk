@@ -3,9 +3,13 @@
 
 use benilla_assets::coords::wow_to_bevy;
 use benilla_formats::ParticleEmitterDef;
+use bevy::math::Affine3A;
 use bevy::prelude::*;
 
-use super::buffer::EffectVertex;
+use super::buffer::{
+    EffectVertex, GpuParticle, GpuPool, GPU_DRAWS_HEAD, GPU_DRAWS_TAIL, GPU_RANDOM_SPIN_SIGN,
+    GPU_ROTATES, GPU_TAIL_CLAMPS, GPU_TRACK_KEYS,
+};
 use super::{rand01, Particle};
 
 /// The 128-entry twinkle noise table, uniform in [0, 1) like the reference's `0xcf58f0` (filled at
@@ -244,6 +248,148 @@ pub(super) fn expand_quads(
     }
 }
 
+/// The twinkle table the GPU expansion samples, the same values [`twinkle_noise`] reads.
+pub(crate) fn twinkle_table() -> &'static [f32; 128] {
+    &TWINKLE_LUT
+}
+
+/// One particle for the GPU expansion; its pool row is set at commit.
+pub(super) fn gpu_particle(p: &Particle) -> GpuParticle {
+    GpuParticle {
+        pos: p.pos.to_array(),
+        age: p.age,
+        vel: p.vel.to_array(),
+        life: p.life,
+        size_mul: p.size_mul,
+        base_spin: p.base_spin,
+        spin: p.spin,
+        phase: p.phase,
+        cell: u32::from(p.cell),
+        pool: 0,
+        _pad: 0,
+    }
+}
+
+/// A track's keys for the GPU: `(count, times, values)`, `None` when it needs the CPU sampler
+/// (more than [`GPU_TRACK_KEYS`] keys, or times and values of different lengths past one key).
+fn gpu_track<V: Copy + Default, const N: usize>(
+    track: &benilla_formats::LifeTrack<V>,
+) -> Option<(u32, [f32; N], [V; N])> {
+    let n = track.values.len();
+    if n > N || (n > 1 && track.times.len() != n) {
+        return None;
+    }
+    let mut times = [0.0; N];
+    let mut values = [V::default(); N];
+    for i in 0..n {
+        times[i] = track.times.get(i).copied().unwrap_or(0.0);
+        values[i] = track.values[i];
+    }
+    Some((n as u32, times, values))
+}
+
+/// The pool's [`GpuPool`]: what [`expand_quads`] reads of the def, the draw frame, the placement
+/// and the camera, plus the committed light the CPU path folds after expanding. `None` when a
+/// track is past the GPU sampler or the atlas is not a power-of-two grid.
+pub(super) fn pool_record(
+    def: &ParticleEmitterDef,
+    frame: &DrawFrame,
+    placement: &Transform,
+    cam: &CamBasis,
+    committed: Option<[f32; 3]>,
+) -> Option<GpuPool> {
+    let ol = &def.over_life;
+    let (cn, ct, cv) = gpu_track::<[f32; 3], GPU_TRACK_KEYS>(&ol.color)?;
+    let (an, at, av) = gpu_track::<f32, GPU_TRACK_KEYS>(&ol.alpha)?;
+    let (sn, st, sv) = gpu_track::<[f32; 2], GPU_TRACK_KEYS>(&ol.scale)?;
+    let (hn, ht, hv) = gpu_track::<u16, GPU_TRACK_KEYS>(&ol.head_cell)?;
+    let (tn, tt, tv) = gpu_track::<u16, GPU_TRACK_KEYS>(&ol.tail_cell)?;
+    if !def.tile_cols.is_power_of_two() {
+        return None;
+    }
+    // An unkeyed cell channel draws the particle's own cell (head) or cell 0 (tail): times empty.
+    let hn = if ol.head_cell.times.is_empty() { 0 } else { hn };
+    let tn = if ol.tail_cell.times.is_empty() { 0 } else { tn };
+    // World mode draws through the ride frame, model mode through the live placement on the
+    // WoW-to-Bevy axes (`particle_center`); a tail's velocity takes the same linear part.
+    let mat = if frame.anchored {
+        frame.ride.matrix().unwrap_or(Affine3A::IDENTITY)
+    } else {
+        let axes = Affine3A::from_mat3(Mat3::from_cols(
+            wow_to_bevy([1.0, 0.0, 0.0]),
+            wow_to_bevy([0.0, 1.0, 0.0]),
+            wow_to_bevy([0.0, 0.0, 1.0]),
+        ));
+        Affine3A::from_scale_rotation_translation(
+            placement.scale,
+            placement.rotation,
+            placement.translation,
+        ) * axes
+    };
+    // Row i: output coordinate i's linear terms and translation, `dot(row.xyz, p) + row.w`.
+    let m = Mat4::from(mat);
+    let rows = [
+        m.row(0).to_array(),
+        m.row(1).to_array(),
+        m.row(2).to_array(),
+    ];
+    let scale = if def.scale_size_by_instance() {
+        placement.scale.x.max(1e-4)
+    } else {
+        frame.size_scale
+    };
+    let (base_r, base_u) = if def.xy_quad() {
+        let s = placement.scale.x.max(1e-4);
+        (
+            placement.rotation * (wow_to_bevy([0.0, 1.0, 0.0]) * s),
+            placement.rotation * (wow_to_bevy([-1.0, 0.0, 0.0]) * s),
+        )
+    } else {
+        (cam.right, cam.up)
+    };
+    let v4 = |v: Vec3| [v.x, v.y, v.z, 0.0];
+    let flag = |on: bool, bit: u32| if on { bit } else { 0 };
+    let flags = flag(def.draws_head(), GPU_DRAWS_HEAD)
+        | flag(def.draws_tail(), GPU_DRAWS_TAIL)
+        | flag(def.rotates(), GPU_ROTATES)
+        | flag(def.random_spin_sign(), GPU_RANDOM_SPIN_SIGN)
+        | flag(def.tail_clamps_to_age(), GPU_TAIL_CLAMPS);
+    let light = match (def.lit, committed) {
+        (true, Some(c)) => [c[0], c[1], c[2], 1.0],
+        _ => [0.0; 4],
+    };
+    Some(GpuPool {
+        mat: rows,
+        base_r: v4(base_r),
+        base_u: v4(base_u),
+        cam_r: v4(cam.right),
+        cam_u: v4(cam.up),
+        color_t: ct,
+        color_v: cv.map(|c| [c[0], c[1], c[2], 0.0]),
+        alpha_t: at,
+        alpha_v: av,
+        scale_t: st,
+        scale_v: [
+            [sv[0][0], sv[0][1], sv[1][0], sv[1][1]],
+            [sv[2][0], sv[2][1], sv[3][0], sv[3][1]],
+        ],
+        head_t: ht,
+        head_v: hv.map(f32::from),
+        tail_t: tt,
+        tail_v: tv.map(f32::from),
+        counts: [cn, an, sn, hn],
+        counts2: [
+            tn,
+            flags,
+            u32::from(def.tile_cols),
+            u32::from(def.tile_rows),
+        ],
+        params: [frame.alpha, scale, def.twinkle_speed, def.twinkle_percent],
+        params2: [def.twinkle_min, def.twinkle_max, def.tail_time, 0.0],
+        light,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{expand_quads, spin_angle, CamBasis, DrawFrame, Particle};
@@ -399,5 +545,79 @@ mod tests {
         );
         assert!((half[3] - 0.25).abs() < 1e-6, "alpha halves: {half:?}");
         assert_eq!(shoot(0.0)[3], 0.0, "an invisible model draws nothing");
+    }
+
+    /// The GPU record's rows place a particle and turn its velocity as the CPU writer does, in
+    /// model mode through the placement and in world mode through the ride frame.
+    #[test]
+    fn the_gpu_record_maps_points_and_velocities_as_the_cpu_writer() {
+        use super::{particle_center, pool_record};
+        use bevy::math::Affine3A;
+        let def = crate::particles::tests::plain_def();
+        let placement = Transform {
+            translation: Vec3::new(10.0, -4.0, 2.5),
+            rotation: Quat::from_rotation_y(0.7) * Quat::from_rotation_x(-0.3),
+            scale: Vec3::splat(2.0),
+        };
+        let mut p = particle();
+        p.pos = Vec3::new(0.3, -1.2, 4.0);
+        p.vel = Vec3::new(-2.0, 0.5, 1.5);
+        let mut ride = crate::ride_frame::StoredFrame::default();
+        ride.retarget(Some((
+            bevy::prelude::Entity::PLACEHOLDER,
+            Affine3A::from_rotation_translation(
+                Quat::from_rotation_y(1.1),
+                Vec3::new(5.0, 1.0, -3.0),
+            ),
+        )));
+        for anchored in [false, true] {
+            let frame = DrawFrame {
+                anchored,
+                ride,
+                alpha: 1.0,
+                size_scale: 1.0,
+            };
+            let pool = pool_record(&def, &frame, &placement, &cam(), None).expect("plain pool");
+            let apply = |v: Vec3, w: f32| {
+                Vec3::from_array(std::array::from_fn(|i| {
+                    let r = pool.mat[i];
+                    r[0] * v.x + r[1] * v.y + r[2] * v.z + r[3] * w
+                }))
+            };
+            let center = particle_center(&frame, &placement, &p);
+            assert!(
+                apply(p.pos, 1.0).abs_diff_eq(center, 1e-4),
+                "point, anchored {anchored}"
+            );
+            let vel = if anchored {
+                ride.dir_to_world(p.vel)
+            } else {
+                placement.rotation * (placement.scale * super::wow_to_bevy(p.vel.to_array()))
+            };
+            assert!(
+                apply(p.vel, 0.0).abs_diff_eq(vel, 1e-4),
+                "velocity, anchored {anchored}"
+            );
+        }
+    }
+
+    /// A track past the GPU's keys or an atlas off the power-of-two grid stays on the CPU writer.
+    #[test]
+    fn a_pool_past_the_gpu_sampler_takes_the_cpu_writer() {
+        use super::pool_record;
+        let def = crate::particles::tests::plain_def();
+        let pool = |def: &benilla_formats::ParticleEmitterDef| {
+            pool_record(def, &frame(1.0), &Transform::IDENTITY, &cam(), None)
+        };
+        assert!(pool(&def).is_some());
+        let mut long = def.clone();
+        long.over_life.alpha = LifeTrack {
+            times: vec![0.0, 0.2, 0.4, 0.6, 1.0],
+            values: vec![1.0; 5],
+        };
+        assert!(pool(&long).is_none(), "five alpha keys");
+        let mut grid = def.clone();
+        grid.tile_cols = 3;
+        assert!(pool(&grid).is_none(), "three columns");
     }
 }

@@ -1108,14 +1108,41 @@ pub(super) fn simulate_particles(
                 });
             }
             scratch.walked.borrow_local_mut().push((
-                ExpandJob {
-                    entity,
-                    frame,
-                    placement: *placement,
-                    cam,
-                    quads: want_quads && !particles.is_empty(),
-                    committed,
-                    kids,
+                {
+                    let quads = want_quads && !particles.is_empty();
+                    // The GPU expansion takes every pool it can, unless the depth dump reads this
+                    // pool's quads or `$WOW_FX_CPU` pins the CPU writer.
+                    let gpu_ok = dump_at.is_none() && !fx_cpu();
+                    let gpu = (quads && gpu_ok)
+                        .then(|| super::quads::pool_record(def, &frame, placement, &cam, committed))
+                        .flatten();
+                    let kid_gpu = kids
+                        .iter()
+                        .map(|&i| {
+                            gpu_ok
+                                .then(|| {
+                                    super::quads::pool_record(
+                                        &children[i].def,
+                                        &frame,
+                                        placement,
+                                        &cam,
+                                        committed,
+                                    )
+                                })
+                                .flatten()
+                        })
+                        .collect();
+                    ExpandJob {
+                        entity,
+                        frame,
+                        placement: *placement,
+                        cam,
+                        quads,
+                        committed,
+                        kids,
+                        gpu,
+                        kid_gpu,
+                    }
                 },
                 CommitJob {
                     spec,
@@ -1151,7 +1178,7 @@ pub(super) fn simulate_particles(
             return;
         };
         let s = out.len();
-        if job.quads {
+        if job.quads && job.gpu.is_none() {
             expand_quads(
                 &em.def,
                 &em.particles,
@@ -1163,17 +1190,19 @@ pub(super) fn simulate_particles(
         }
         let lighting = fold_committed_light(&mut out[s..], em.def.lit, job.committed);
         segs.push(((out.len() - s) as u32, lighting));
-        for &i in &job.kids {
+        for (&i, gpu) in job.kids.iter().zip(&job.kid_gpu) {
             let child = &em.children[i];
             let s = out.len();
-            expand_quads(
-                &child.def,
-                &child.particles,
-                &job.frame,
-                &job.placement,
-                &job.cam,
-                out,
-            );
+            if gpu.is_none() {
+                expand_quads(
+                    &child.def,
+                    &child.particles,
+                    &job.frame,
+                    &job.placement,
+                    &job.cam,
+                    out,
+                );
+            }
             let lighting = fold_committed_light(&mut out[s..], child.def.lit, job.committed);
             segs.push(((out.len() - s) as u32, lighting));
         }
@@ -1237,20 +1266,41 @@ pub(super) fn simulate_particles(
                 );
             }
         }
-        quads.commit_quads(
-            start,
-            EffectDrawSpec {
-                lighting,
-                ..commit.spec
-            },
-        );
-        for spec in commit.kid_specs {
+        let em = ro.get(job.entity).ok().map(|(_, em, ..)| em);
+        let spec = EffectDrawSpec {
+            lighting,
+            ..commit.spec
+        };
+        match (job.gpu, em) {
+            (Some(pool), Some(em)) => quads.commit_particles(
+                pool,
+                em.particles.iter().map(super::quads::gpu_particle),
+                spec,
+            ),
+            _ => quads.commit_quads(start, spec),
+        }
+        for ((spec, &i), gpu) in commit
+            .kid_specs
+            .into_iter()
+            .zip(&job.kids)
+            .zip(&job.kid_gpu)
+        {
             let Some((verts, lighting)) = pieces.next() else {
                 break;
             };
-            let start = quads.begin();
-            quads.verts.extend_from_slice(verts);
-            quads.commit_quads(start, EffectDrawSpec { lighting, ..spec });
+            let spec = EffectDrawSpec { lighting, ..spec };
+            match (gpu, em.and_then(|em| em.children.get(i))) {
+                (Some(pool), Some(child)) => quads.commit_particles(
+                    *pool,
+                    child.particles.iter().map(super::quads::gpu_particle),
+                    spec,
+                ),
+                _ => {
+                    let start = quads.begin();
+                    quads.verts.extend_from_slice(verts);
+                    quads.commit_quads(start, spec);
+                }
+            }
         }
     }
 }
@@ -1283,6 +1333,15 @@ struct ExpandJob {
     committed: Option<[f32; 3]>,
     /// The child pools that draw, by index.
     kids: Vec<usize>,
+    /// The parent pool's GPU expansion record, `None` for the CPU writer; per child likewise.
+    gpu: Option<super::buffer::GpuPool>,
+    kid_gpu: Vec<Option<super::buffer::GpuPool>>,
+}
+
+/// `$WOW_FX_CPU=1`: every pool takes the CPU writer, the GPU expansion's A/B and reference.
+fn fx_cpu() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("WOW_FX_CPU").is_some())
 }
 
 /// The draws one walked emitter commits after the expansion, parent first.

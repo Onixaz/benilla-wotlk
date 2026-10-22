@@ -65,6 +65,273 @@ struct VertexOutput {
     @location(2) view_z: f32,
 };
 
+#ifdef EFFECT_PARTICLES
+// GPU-expanded particles: `particles/quads.rs::expand_quads` per vertex. A particle owns 12
+// vertex ids, its head quad then its tail quad, each the CPU writer's `[0, 1, 2, 0, 2, 3]` over
+// its four corners; a quad the CPU would not push collapses to one clipped point.
+struct GpuPool {
+    mat: array<vec4<f32>, 3>,
+    base_r: vec4<f32>,
+    base_u: vec4<f32>,
+    cam_r: vec4<f32>,
+    cam_u: vec4<f32>,
+    color_t: vec4<f32>,
+    color_v: array<vec4<f32>, 4>,
+    alpha_t: vec4<f32>,
+    alpha_v: vec4<f32>,
+    scale_t: vec4<f32>,
+    scale_v: array<vec4<f32>, 2>,
+    head_t: vec4<f32>,
+    head_v: vec4<f32>,
+    tail_t: vec4<f32>,
+    tail_v: vec4<f32>,
+    counts: vec4<u32>,
+    counts2: vec4<u32>,
+    params: vec4<f32>,
+    params2: vec4<f32>,
+    light: vec4<f32>,
+};
+
+struct GpuParticle {
+    pos: vec3<f32>,
+    age: f32,
+    vel: vec3<f32>,
+    life: f32,
+    size_mul: vec2<f32>,
+    base_spin: f32,
+    spin: f32,
+    phase: u32,
+    cell: u32,
+    pool: u32,
+    pad: u32,
+};
+
+@group(2) @binding(0) var<storage, read> pools: array<GpuPool>;
+@group(2) @binding(1) var<storage, read> particles: array<GpuParticle>;
+@group(2) @binding(2) var<storage, read> twinkle: array<vec4<f32>, 32>;
+
+const DRAWS_HEAD: u32 = 1u;
+const DRAWS_TAIL: u32 = 2u;
+const ROTATES: u32 = 4u;
+const RANDOM_SPIN_SIGN: u32 = 8u;
+const TAIL_CLAMPS: u32 = 16u;
+
+// `LifeTrack::locate` (`0x9793b0`): two keys span the life whatever their times say, three split
+// at the middle key, four take the binary search over the inner times. (lo, hi, fraction).
+fn locate(t: vec4<f32>, n: u32, u: f32) -> vec3<f32> {
+    if (n <= 2u) {
+        return vec3<f32>(0.0, 1.0, u);
+    }
+    if (n == 3u) {
+        let mid = t.y;
+        if (u < mid) {
+            return vec3<f32>(0.0, 1.0, u / mid);
+        }
+        return vec3<f32>(1.0, 2.0, (u - mid) / (1.0 - mid));
+    }
+    var k = 0u;
+    if (t.y <= u) { k = 1u; }
+    if (t.z <= u) { k = 2u; }
+    var tt = t;
+    return vec3<f32>(f32(k), f32(k + 1u), (u - tt[k]) / (tt[k + 1u] - tt[k]));
+}
+
+fn track1(t: vec4<f32>, v: vec4<f32>, n: u32, u: f32, def: f32) -> f32 {
+    if (n == 0u) { return def; }
+    if (n == 1u) { return v.x; }
+    let l = locate(t, n, u);
+    var vv = v;
+    let a = vv[u32(l.x)];
+    let b = vv[u32(l.y)];
+    return a + (b - a) * l.z;
+}
+
+fn color_key(pool: GpuPool, i: u32) -> vec3<f32> {
+    return pool.color_v[i].xyz;
+}
+
+fn scale_key(pool: GpuPool, i: u32) -> vec2<f32> {
+    let row = pool.scale_v[i / 2u];
+    if ((i & 1u) == 0u) { return row.xy; }
+    return row.zw;
+}
+
+// The colour bytes' `fistp` round (`0x979702`): ties to even, then the byte's wrap.
+fn byte(v: f32) -> f32 {
+    return f32(bitcast<u32>(i32(round(v))) & 255u) / 255.0;
+}
+
+// `cell_lerp`: `fistp` of the lerp, the u16 wrap.
+fn cell_of(t: vec4<f32>, v: vec4<f32>, n: u32, u: f32) -> u32 {
+    if (n == 1u) { return bitcast<u32>(i32(round(v.x))) & 65535u; }
+    let l = locate(t, n, u);
+    var vv = v;
+    let a = vv[u32(l.x)];
+    let b = vv[u32(l.y)];
+    return bitcast<u32>(i32(round(a + (b - a) * l.z))) & 65535u;
+}
+
+fn dead() -> VertexOutput {
+    var out: VertexOutput;
+    // Every corner of a dropped quad lands on this one clipped point: zero area, nothing drawn.
+    out.clip_position = vec4<f32>(0.0, 0.0, -1.0, 1.0);
+    out.uv = vec2<f32>(0.0);
+    out.color = vec4<f32>(0.0);
+    out.view_z = 0.0;
+    return out;
+}
+
+@vertex
+fn vertex(@builtin(vertex_index) vi: u32) -> VertexOutput {
+    let p = particles[vi / 12u];
+    let pool = pools[p.pool];
+    let local = vi % 12u;
+    let is_tail = local >= 6u;
+    let k = local % 6u;
+    var corner = k;
+    if (k == 3u) { corner = 0u; } else if (k == 4u) { corner = 2u; } else if (k == 5u) { corner = 3u; }
+    let flags = pool.counts2.y;
+    if ((!is_tail && (flags & DRAWS_HEAD) == 0u) || (is_tail && (flags & DRAWS_TAIL) == 0u)) {
+        return dead();
+    }
+    // The twinklePercent gate (`0x7b2adc`) on the table's `(floor(clamp(speed·age)) + phase)`.
+    let idx = (u32(clamp(pool.params.z * p.age, 0.0, 255.0)) + p.phase) & 127u;
+    var row = twinkle[idx >> 2u];
+    let noise = row[idx & 3u];
+    if (pool.params.w < 1.0 && noise > pool.params.w) {
+        return dead();
+    }
+    let u = clamp(p.age / p.life, 0.0, 1.0);
+    var rgb = vec3<f32>(255.0);
+    let cn = pool.counts.x;
+    if (cn == 1u) {
+        rgb = color_key(pool, 0u);
+    } else if (cn > 1u) {
+        let l = locate(pool.color_t, cn, u);
+        let a = color_key(pool, u32(l.x));
+        let b = color_key(pool, u32(l.y));
+        rgb = a + (b - a) * l.z;
+    }
+    let alpha = track1(pool.alpha_t, pool.alpha_v, pool.counts.y, u, 1.0);
+    var color = vec4<f32>(byte(rgb.x), byte(rgb.y), byte(rgb.z), alpha);
+    color.w = color.w * pool.params.x;
+    var size = vec2<f32>(1.0);
+    let sn = pool.counts.z;
+    if (sn == 1u) {
+        size = scale_key(pool, 0u);
+    } else if (sn > 1u) {
+        let l = locate(pool.scale_t, sn, u);
+        let a = scale_key(pool, u32(l.x));
+        let b = scale_key(pool, u32(l.y));
+        size = vec2<f32>(a.x + (b.x - a.x) * l.z, a.y + (b.y - a.y) * l.z);
+    }
+    let center = vec3<f32>(
+        dot(pool.mat[0].xyz, p.pos) + pool.mat[0].w,
+        dot(pool.mat[1].xyz, p.pos) + pool.mat[1].w,
+        dot(pool.mat[2].xyz, p.pos) + pool.mat[2].w,
+    );
+    let tmin = pool.params2.x;
+    let tmax = pool.params2.y;
+    var twk = noise * (tmax - tmin) + tmin;
+    if (abs(tmax - tmin) < 1e-6) { twk = 1.0; }
+    let kk = twk * pool.params.y;
+    let half = vec2<f32>(size.x * p.size_mul.x * kk, size.y * p.size_mul.y * kk);
+    let cols = pool.counts2.z;
+    let rows = pool.counts2.w;
+    let inv_cols = 1.0 / f32(cols);
+    let inv_rows = 1.0 / f32(rows);
+    var cell = 0u;
+    var world = center;
+    var uv = vec2<f32>(0.0);
+    if (!is_tail) {
+        cell = p.cell;
+        if (pool.counts.w > 0u) {
+            cell = cell_of(pool.head_t, pool.head_v, pool.counts.w, u);
+        }
+        let cx = f32(cell & (cols - 1u));
+        let cy = f32(cell >> countTrailingZeros(cols));
+        let u0 = cx * inv_cols;
+        let u1 = (cx + 1.0) * inv_cols;
+        let v0 = cy * inv_rows;
+        let v1 = (cy + 1.0) * inv_rows;
+        let base_r = pool.base_r.xyz;
+        let base_u = pool.base_u.xyz;
+        var r = base_r * half.x;
+        var up = base_u * half.y;
+        if ((flags & ROTATES) != 0u) {
+            var angle = p.spin * p.age + p.base_spin;
+            if ((flags & RANDOM_SPIN_SIGN) != 0u && (p.phase & 32u) != 0u) {
+                angle = -angle;
+            }
+            let sa = sin(angle);
+            let ca = cos(angle);
+            r = (base_r * ca + base_u * sa) * half.x;
+            up = (base_u * ca - base_r * sa) * half.y;
+        }
+        if (corner == 0u) { world = center - r - up; uv = vec2<f32>(u0, v1); }
+        else if (corner == 1u) { world = center + r - up; uv = vec2<f32>(u1, v1); }
+        else if (corner == 2u) { world = center + r + up; uv = vec2<f32>(u1, v0); }
+        else { world = center - r + up; uv = vec2<f32>(u0, v0); }
+    } else {
+        if (pool.counts2.x > 0u) {
+            cell = cell_of(pool.tail_t, pool.tail_v, pool.counts2.x, u);
+        }
+        let cx = f32(cell & (cols - 1u));
+        let cy = f32(cell >> countTrailingZeros(cols));
+        let u0 = cx * inv_cols;
+        let u1 = (cx + 1.0) * inv_cols;
+        let v0 = cy * inv_rows;
+        let v1 = (cy + 1.0) * inv_rows;
+        let half_t = half.x;
+        let vel_world = vec3<f32>(
+            dot(pool.mat[0].xyz, p.vel),
+            dot(pool.mat[1].xyz, p.vel),
+            dot(pool.mat[2].xyz, p.vel),
+        );
+        var t_eff = pool.params2.z;
+        if ((flags & TAIL_CLAMPS) != 0u) { t_eff = min(t_eff, p.age); }
+        let tail = -vel_world * t_eff;
+        let cam_r = pool.cam_r.xyz;
+        let cam_u = pool.cam_u.xyz;
+        let tr = dot(tail, cam_r);
+        let tu = dot(tail, cam_u);
+        let l2 = tr * tr + tu * tu;
+        if (l2 < 7.7e-4) {
+            // Degenerate: the plain-billboard fallback (`0x7b33fa`).
+            let r = cam_r * half_t;
+            let up = cam_u * half_t;
+            if (corner == 0u) { world = center - r - up; uv = vec2<f32>(u0, v1); }
+            else if (corner == 1u) { world = center + r - up; uv = vec2<f32>(u1, v1); }
+            else if (corner == 2u) { world = center + r + up; uv = vec2<f32>(u1, v0); }
+            else { world = center - r + up; uv = vec2<f32>(u0, v0); }
+        } else {
+            let inv_l = half_t / sqrt(l2);
+            let perp = (cam_u * tr - cam_r * tu) * inv_l;
+            if (corner == 0u) { world = center - perp; uv = vec2<f32>(u0, v1); }
+            else if (corner == 1u) { world = center + perp; uv = vec2<f32>(u0, v0); }
+            else if (corner == 2u) { world = center + tail + perp; uv = vec2<f32>(u1, v0); }
+            else { world = center + tail - perp; uv = vec2<f32>(u1, v1); }
+        }
+    }
+    // The committed light, folded per channel and clamped, as `fold_committed_light`.
+    if (pool.light.w > 0.5) {
+        color = vec4<f32>(clamp(color.xyz * pool.light.xyz, vec3<f32>(0.0), vec3<f32>(1.0)), color.w);
+    }
+    var out: VertexOutput;
+    // The CPU writer's rebase, here: the absolute corner less the same `world_position`.
+    let rel = world - view.world_position;
+    let view_pos = mat3x3<f32>(
+        view.view_from_world[0].xyz,
+        view.view_from_world[1].xyz,
+        view.view_from_world[2].xyz,
+    ) * rel;
+    out.clip_position = view.clip_from_view * vec4<f32>(view_pos, 1.0);
+    out.view_z = -view_pos.z;
+    out.uv = uv;
+    out.color = color;
+    return out;
+}
+#else
 @vertex
 fn vertex(v: Vertex) -> VertexOutput {
     var out: VertexOutput;
@@ -90,6 +357,7 @@ fn vertex(v: Vertex) -> VertexOutput {
     out.color = v.color;
     return out;
 }
+#endif
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {

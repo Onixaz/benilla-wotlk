@@ -78,7 +78,74 @@ pub enum EffectTopology {
     Quads,
     /// A plain triangle list: identity indices (the decal projector's fans, rain's streaks).
     Tris,
+    /// Particles expanded on the GPU: the range counts vertex ids, 12 per [`GpuParticle`] (its
+    /// head quad, then its tail quad), which the shader turns into corners.
+    Particles,
 }
+
+/// One live particle as the GPU expansion reads it: what `expand_quads` reads of a
+/// [`super::Particle`], stored frame, with its pool's row in [`EffectQuads::pools`].
+#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub struct GpuParticle {
+    pub pos: [f32; 3],
+    pub age: f32,
+    pub vel: [f32; 3],
+    pub life: f32,
+    pub size_mul: [f32; 2],
+    pub base_spin: f32,
+    pub spin: f32,
+    pub phase: u32,
+    pub cell: u32,
+    pub pool: u32,
+    pub _pad: u32,
+}
+
+/// One pool's expansion constants: its over-life tracks (at most [`GPU_TRACK_KEYS`] keys each),
+/// the stored-frame-to-world matrix, the quad bases and the frame terms `expand_quads` reads.
+#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub struct GpuPool {
+    /// Rows of the affine `stored → world` map: the ride frame in world mode, the placement times
+    /// the WoW-to-Bevy axes in model mode; its linear part carries a tail's velocity.
+    pub mat: [[f32; 4]; 3],
+    /// The head quad's bases (the XY plane's, or the camera's) and the camera's own.
+    pub base_r: [f32; 4],
+    pub base_u: [f32; 4],
+    pub cam_r: [f32; 4],
+    pub cam_u: [f32; 4],
+    pub color_t: [f32; 4],
+    /// RGB, authored 0..255.
+    pub color_v: [[f32; 4]; 4],
+    pub alpha_t: [f32; 4],
+    pub alpha_v: [f32; 4],
+    pub scale_t: [f32; 4],
+    /// Keys 0 and 1 in the first row (`xy`, `zw`), 2 and 3 in the second.
+    pub scale_v: [[f32; 4]; 2],
+    pub head_t: [f32; 4],
+    pub head_v: [f32; 4],
+    pub tail_t: [f32; 4],
+    pub tail_v: [f32; 4],
+    /// Key counts: colour, alpha, scale, head cell (0 is unkeyed; for the head, the particle's
+    /// own cell).
+    pub counts: [u32; 4],
+    /// Tail-cell key count, flags ([`GPU_DRAWS_HEAD`] …), atlas columns and rows.
+    pub counts2: [u32; 4],
+    /// Model alpha, size factor, twinkle speed, twinkle percent.
+    pub params: [f32; 4],
+    /// Twinkle min and max, tail time.
+    pub params2: [f32; 4],
+    /// The committed light's RGB, folded when `w` is 1.
+    pub light: [f32; 4],
+}
+
+/// The most keys a track may have for the GPU expansion; a longer one expands on the CPU.
+pub const GPU_TRACK_KEYS: usize = 4;
+pub const GPU_DRAWS_HEAD: u32 = 1;
+pub const GPU_DRAWS_TAIL: u32 = 2;
+pub const GPU_ROTATES: u32 = 4;
+pub const GPU_RANDOM_SPIN_SIGN: u32 = 8;
+pub const GPU_TAIL_CLAMPS: u32 = 16;
 
 /// One draw's fog colour policy, one canonical row of the shader's params uniform.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -186,6 +253,9 @@ pub struct EffectDraw {
 pub struct EffectQuads {
     pub verts: Vec<EffectVertex>,
     pub draws: Vec<EffectDraw>,
+    /// The GPU-expanded pools and their particles ([`EffectTopology::Particles`]).
+    pub pools: Vec<GpuPool>,
+    pub particles: Vec<GpuParticle>,
     /// Has [`begin_effect_frame`] run this frame? A commit before it would be erased, so
     /// [`Self::commit`] asserts it in debug builds: every writer needs
     /// `.after(begin_effect_frame)`. [`clear_effect_frame_flag`] resets it in `Last`.
@@ -197,6 +267,8 @@ impl Default for EffectQuads {
         Self {
             verts: Vec::new(),
             draws: Vec::new(),
+            pools: Vec::new(),
+            particles: Vec::new(),
             // True, so a fixture with no clear can commit; the app's `Last` reset arms the check.
             cleared_this_frame: true,
         }
@@ -255,6 +327,25 @@ impl EffectQuads {
         self.commit(start, EffectTopology::Tris, spec);
     }
 
+    /// Push one pool and its particles for the GPU expansion and close their draw; an empty pool
+    /// commits nothing.
+    pub fn commit_particles(
+        &mut self,
+        pool: GpuPool,
+        particles: impl Iterator<Item = GpuParticle>,
+        spec: EffectDrawSpec,
+    ) {
+        let index = self.pools.len() as u32;
+        let first = self.particles.len();
+        self.particles
+            .extend(particles.map(|p| GpuParticle { pool: index, ..p }));
+        let (start, end) = (first as u32 * 12, self.particles.len() as u32 * 12);
+        if end > start {
+            self.pools.push(pool);
+            self.push_draw(start..end, EffectTopology::Particles, spec);
+        }
+    }
+
     fn commit(&mut self, start: u32, topology: EffectTopology, spec: EffectDrawSpec) {
         debug_assert!(
             self.cleared_this_frame,
@@ -264,25 +355,29 @@ impl EffectQuads {
         );
         let end = self.verts.len() as u32;
         if end > start {
-            self.draws.push(EffectDraw {
-                cam: spec.cam,
-                texture: spec.texture,
-                blend: spec.blend,
-                topology,
-                fog: spec.fog,
-                lit: spec.lighting == EffectLighting::Scene,
-                anchor: spec.anchor,
-                bias: spec.bias,
-                raster_bias: spec.raster_bias,
-                raster_slope: spec.raster_slope,
-                cam_relative: spec.cam_relative,
-                no_depth_test: spec.no_depth_test,
-                range: start..end,
-                main_entity: spec.main_entity,
-                light: spec.light,
-                clip: spec.clip,
-            });
+            self.push_draw(start..end, topology, spec);
         }
+    }
+
+    fn push_draw(&mut self, range: Range<u32>, topology: EffectTopology, spec: EffectDrawSpec) {
+        self.draws.push(EffectDraw {
+            cam: spec.cam,
+            texture: spec.texture,
+            blend: spec.blend,
+            topology,
+            fog: spec.fog,
+            lit: spec.lighting == EffectLighting::Scene,
+            anchor: spec.anchor,
+            bias: spec.bias,
+            raster_bias: spec.raster_bias,
+            raster_slope: spec.raster_slope,
+            cam_relative: spec.cam_relative,
+            no_depth_test: spec.no_depth_test,
+            range,
+            main_entity: spec.main_entity,
+            light: spec.light,
+            clip: spec.clip,
+        });
     }
 }
 
@@ -290,6 +385,8 @@ impl EffectQuads {
 pub fn begin_effect_frame(mut quads: ResMut<EffectQuads>) {
     quads.verts.clear();
     quads.draws.clear();
+    quads.pools.clear();
+    quads.particles.clear();
     quads.cleared_this_frame = true;
 }
 
