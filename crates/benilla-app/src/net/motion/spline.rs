@@ -889,6 +889,8 @@ type SwimMarkQuery = (
 /// The stamp [`mark_swimming_creatures`] leaves once a unit's room claim settles; 1.12 water is
 /// static, so it holds until the unit moves or the `ColliderEpoch` bumps.
 #[derive(Component)]
+// Sparse: stamped and cleared as units move, so it splits no table.
+#[component(storage = "SparseSet")]
 pub(in crate::net) struct SwimEvaluated;
 
 /// The exit band (yd) below the swim boundary: the player boundary's 1/36-yd hysteresis

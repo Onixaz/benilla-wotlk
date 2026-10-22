@@ -575,6 +575,8 @@ impl RigPalettes {
 /// the app's `entities` heal rebuilds it (the `0x60abe0` display-swap teardown, `Reattached` so it
 /// does not re-fade) once there is headroom.
 #[derive(Component)]
+// Sparse: a heal removes it, and a table column would split the unit's table.
+#[component(storage = "SparseSet")]
 pub struct RigStarved;
 
 /// A registered rig, on the entity that owns its pose: its palette slot, joint entities and inverse

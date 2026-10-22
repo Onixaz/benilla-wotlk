@@ -20,6 +20,8 @@ const PARK_AFTER_FRAMES: u16 = 30;
 
 /// The mesh a parked part put down, restored verbatim on unpark.
 #[derive(Component)]
+// Sparse: parking toggles it, so it splits no table.
+#[component(storage = "SparseSet")]
 pub struct ParkedMesh(pub Handle<Mesh>);
 
 /// Consecutive frames this part has been hidden (its own or an ancestor's verdict).

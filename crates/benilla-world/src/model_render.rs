@@ -1069,6 +1069,8 @@ pub struct ModelPart {
 /// Why the streamer left this submesh on the entity path, one static label per batch for the
 /// census (`VIS_CENSUS … why …`); absent on units, GameObjects and everything the app spawns.
 #[derive(Component, Clone, Copy)]
+// Sparse: only the census reads it, and a column would split the parts' tables by spawn path.
+#[component(storage = "SparseSet")]
 pub struct EntityPathWhy(pub &'static str);
 
 /// The model-`Visibility` authority's set; the first-person self hide runs after it and wins.
