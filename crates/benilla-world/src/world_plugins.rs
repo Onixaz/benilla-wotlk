@@ -215,4 +215,15 @@ impl Plugin for WorldFoundation {
             app.register_required_components::<bevy::camera::Camera, bevy::render::view::NoIndirectDrawing>();
         }
     }
+
+    fn finish(&self, app: &mut App) {
+        // Bevy's prepass copies every mesh's `GlobalTransform` into `PreviousGlobalTransform` each
+        // frame for motion vectors; no view here asks for them (no `MotionVectorPrepass`, no TAA),
+        // and a mesh without the component extracts its current transform as its previous one.
+        let _ = app.remove_systems_in_set(
+            PreUpdate,
+            bevy::pbr::update_mesh_previous_global_transforms,
+            bevy::ecs::schedule::ScheduleCleanupPolicy::RemoveSetAndSystems,
+        );
+    }
 }
