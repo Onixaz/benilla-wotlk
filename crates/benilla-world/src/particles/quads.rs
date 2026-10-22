@@ -288,16 +288,10 @@ fn gpu_track<V: Copy + Default, const N: usize>(
     Some((n as u32, times, values))
 }
 
-/// The pool's [`GpuPool`]: what [`expand_quads`] reads of the def, the draw frame, the placement
-/// and the camera, plus the committed light the CPU path folds after expanding. `None` when a
-/// track is past the GPU sampler or the atlas is not a power-of-two grid.
-pub(super) fn pool_record(
-    def: &ParticleEmitterDef,
-    frame: &DrawFrame,
-    placement: &Transform,
-    cam: &CamBasis,
-    committed: Option<[f32; 3]>,
-) -> Option<GpuPool> {
+/// The def's half of a pool's [`GpuPool`], built once per emitter: the over-life tracks, flags,
+/// atlas grid and twinkle terms. `None` when a track is past the GPU sampler or the atlas is not a
+/// power-of-two grid, and the pool takes the CPU writer.
+pub(super) fn pool_template(def: &ParticleEmitterDef) -> Option<GpuPool> {
     let ol = &def.over_life;
     let (cn, ct, cv) = gpu_track::<[f32; 3], GPU_TRACK_KEYS>(&ol.color)?;
     let (an, at, av) = gpu_track::<f32, GPU_TRACK_KEYS>(&ol.alpha)?;
@@ -310,6 +304,50 @@ pub(super) fn pool_record(
     // An unkeyed cell channel draws the particle's own cell (head) or cell 0 (tail): times empty.
     let hn = if ol.head_cell.times.is_empty() { 0 } else { hn };
     let tn = if ol.tail_cell.times.is_empty() { 0 } else { tn };
+    let flag = |on: bool, bit: u32| if on { bit } else { 0 };
+    let flags = flag(def.draws_head(), GPU_DRAWS_HEAD)
+        | flag(def.draws_tail(), GPU_DRAWS_TAIL)
+        | flag(def.rotates(), GPU_ROTATES)
+        | flag(def.random_spin_sign(), GPU_RANDOM_SPIN_SIGN)
+        | flag(def.tail_clamps_to_age(), GPU_TAIL_CLAMPS);
+    Some(GpuPool {
+        color_t: ct,
+        color_v: cv.map(|c| [c[0], c[1], c[2], 0.0]),
+        alpha_t: at,
+        alpha_v: av,
+        scale_t: st,
+        scale_v: [
+            [sv[0][0], sv[0][1], sv[1][0], sv[1][1]],
+            [sv[2][0], sv[2][1], sv[3][0], sv[3][1]],
+        ],
+        head_t: ht,
+        head_v: hv.map(f32::from),
+        tail_t: tt,
+        tail_v: tv.map(f32::from),
+        counts: [cn, an, sn, hn],
+        counts2: [
+            tn,
+            flags,
+            u32::from(def.tile_cols),
+            u32::from(def.tile_rows),
+        ],
+        params: [0.0, 0.0, def.twinkle_speed, def.twinkle_percent],
+        params2: [def.twinkle_min, def.twinkle_max, def.tail_time, 0.0],
+        ..GpuPool::default()
+    })
+}
+
+/// This frame's [`GpuPool`] from its [`pool_template`]: what [`expand_quads`] reads of the draw
+/// frame, the placement and the camera, plus the committed light the CPU path folds after
+/// expanding.
+pub(super) fn pool_record(
+    template: &GpuPool,
+    def: &ParticleEmitterDef,
+    frame: &DrawFrame,
+    placement: &Transform,
+    cam: &CamBasis,
+    committed: Option<[f32; 3]>,
+) -> GpuPool {
     // World mode draws through the ride frame, model mode through the live placement on the
     // WoW-to-Bevy axes (`particle_center`); a tail's velocity takes the same linear part.
     let mat = if frame.anchored {
@@ -348,46 +386,20 @@ pub(super) fn pool_record(
         (cam.right, cam.up)
     };
     let v4 = |v: Vec3| [v.x, v.y, v.z, 0.0];
-    let flag = |on: bool, bit: u32| if on { bit } else { 0 };
-    let flags = flag(def.draws_head(), GPU_DRAWS_HEAD)
-        | flag(def.draws_tail(), GPU_DRAWS_TAIL)
-        | flag(def.rotates(), GPU_ROTATES)
-        | flag(def.random_spin_sign(), GPU_RANDOM_SPIN_SIGN)
-        | flag(def.tail_clamps_to_age(), GPU_TAIL_CLAMPS);
     let light = match (def.lit, committed) {
         (true, Some(c)) => [c[0], c[1], c[2], 1.0],
         _ => [0.0; 4],
     };
-    Some(GpuPool {
-        mat: rows,
-        base_r: v4(base_r),
-        base_u: v4(base_u),
-        cam_r: v4(cam.right),
-        cam_u: v4(cam.up),
-        color_t: ct,
-        color_v: cv.map(|c| [c[0], c[1], c[2], 0.0]),
-        alpha_t: at,
-        alpha_v: av,
-        scale_t: st,
-        scale_v: [
-            [sv[0][0], sv[0][1], sv[1][0], sv[1][1]],
-            [sv[2][0], sv[2][1], sv[3][0], sv[3][1]],
-        ],
-        head_t: ht,
-        head_v: hv.map(f32::from),
-        tail_t: tt,
-        tail_v: tv.map(f32::from),
-        counts: [cn, an, sn, hn],
-        counts2: [
-            tn,
-            flags,
-            u32::from(def.tile_cols),
-            u32::from(def.tile_rows),
-        ],
-        params: [frame.alpha, scale, def.twinkle_speed, def.twinkle_percent],
-        params2: [def.twinkle_min, def.twinkle_max, def.tail_time, 0.0],
-        light,
-    })
+    let mut pool = *template;
+    pool.mat = rows;
+    pool.base_r = v4(base_r);
+    pool.base_u = v4(base_u);
+    pool.cam_r = v4(cam.right);
+    pool.cam_u = v4(cam.up);
+    pool.params[0] = frame.alpha;
+    pool.params[1] = scale;
+    pool.light = light;
+    pool
 }
 
 #[cfg(test)]
@@ -577,7 +589,8 @@ mod tests {
                 alpha: 1.0,
                 size_scale: 1.0,
             };
-            let pool = pool_record(&def, &frame, &placement, &cam(), None).expect("plain pool");
+            let template = super::pool_template(&def).expect("plain pool");
+            let pool = pool_record(&template, &def, &frame, &placement, &cam(), None);
             let apply = |v: Vec3, w: f32| {
                 Vec3::from_array(std::array::from_fn(|i| {
                     let r = pool.mat[i];
@@ -604,11 +617,9 @@ mod tests {
     /// A track past the GPU's keys or an atlas off the power-of-two grid stays on the CPU writer.
     #[test]
     fn a_pool_past_the_gpu_sampler_takes_the_cpu_writer() {
-        use super::pool_record;
+        use super::pool_template;
         let def = crate::particles::tests::plain_def();
-        let pool = |def: &benilla_formats::ParticleEmitterDef| {
-            pool_record(def, &frame(1.0), &Transform::IDENTITY, &cam(), None)
-        };
+        let pool = |def: &benilla_formats::ParticleEmitterDef| pool_template(def);
         assert!(pool(&def).is_some());
         let mut long = def.clone();
         long.over_life.alpha = LifeTrack {

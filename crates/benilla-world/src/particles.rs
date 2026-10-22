@@ -256,6 +256,9 @@ pub struct ParticleEmitter {
     size_scale: f32,
     /// The render-target rectangle, in pixels, this cloud is confined to ([`Self::set_clip`]).
     pub(crate) clip: Option<Vec4>,
+    /// The def's half of the GPU pool record, built on the first drawn frame; the inner `None`
+    /// marks a pool the CPU writer takes.
+    gpu_template: Option<Option<Box<buffer::GpuPool>>>,
 }
 
 /// A child emitter: the recursion model's def, texture and pool, drawn at the parent's anchor.
@@ -266,6 +269,8 @@ struct ChildEmitter {
     accumulator: f32,
     gate_prev: bool,
     rng: u32,
+    /// As [`ParticleEmitter`]'s.
+    gpu_template: Option<Option<Box<buffer::GpuPool>>>,
 }
 
 /// Marks a geometry-particle instance ([`model`]), keeping the sim's reads and writes disjoint.
@@ -282,6 +287,7 @@ impl ChildEmitter {
             accumulator: 0.0,
             gate_prev: false,
             rng: 7,
+            gpu_template: None,
         }
     }
 }
@@ -627,6 +633,7 @@ pub fn spawn_emitter(
             model_instances: Vec::new(),
             size_scale: 1.0,
             clip: None,
+            gpu_template: None,
         },
     ));
     if emitter.recursion.is_some() {
@@ -690,6 +697,7 @@ pub(crate) fn wire_child_emitters(
                         rng_seed = rng_seed.wrapping_mul(0x9E37_79B9) | 1;
                         rng_seed
                     },
+                    gpu_template: None,
                 })
             })
             .collect();

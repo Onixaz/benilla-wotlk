@@ -628,6 +628,7 @@ pub(super) fn simulate_particles(
                 gated: _,
                 frozen: _,
                 clip,
+                gpu_template,
             } = &mut *emitter;
             // The water test's model frame, before `anchor` is shadowed: the instance root. A joint
             // owner only seeds the room walk, as a joint's transform is not the instance matrix.
@@ -1117,22 +1118,29 @@ pub(super) fn simulate_particles(
                     // The GPU expansion takes every pool it can, unless the depth dump reads this
                     // pool's quads or `$WOW_FX_CPU` pins the CPU writer.
                     let gpu_ok = dump_at.is_none() && !fx_cpu();
+                    let record =
+                        |template: &mut Option<Option<Box<super::buffer::GpuPool>>>,
+                         def: &benilla_formats::ParticleEmitterDef| {
+                            template
+                                .get_or_insert_with(|| {
+                                    super::quads::pool_template(def).map(Box::new)
+                                })
+                                .as_deref()
+                                .map(|t| {
+                                    super::quads::pool_record(
+                                        t, def, &frame, placement, &cam, committed,
+                                    )
+                                })
+                        };
                     let gpu = (quads && gpu_ok)
-                        .then(|| super::quads::pool_record(def, &frame, placement, &cam, committed))
+                        .then(|| record(gpu_template, def))
                         .flatten();
                     let kid_gpu = kids
                         .iter()
                         .map(|&i| {
+                            let child = &mut children[i];
                             gpu_ok
-                                .then(|| {
-                                    super::quads::pool_record(
-                                        &children[i].def,
-                                        &frame,
-                                        placement,
-                                        &cam,
-                                        committed,
-                                    )
-                                })
+                                .then(|| record(&mut child.gpu_template, &child.def))
                                 .flatten()
                         })
                         .collect();
