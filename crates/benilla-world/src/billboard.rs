@@ -425,6 +425,8 @@ pub(crate) fn face_billboards(
             &mut GlobalTransform,
             // Read for the trace probe below (the tag's low bits are the card's render alpha).
             Option<&bevy::mesh::MeshTag>,
+            // This frame's draw verdict: the model `Visibility` authority runs in `Update`.
+            Ref<Visibility>,
         ),
         Without<WorldCamera>,
     >,
@@ -436,7 +438,7 @@ pub(crate) fn face_billboards(
     let cam_moved = cam_tf.is_changed() || cam_local.as_ref().is_some_and(|l| l.is_changed());
     let (fwd, right, up) = (*cam_tf.forward(), *cam_tf.right(), *cam_tf.up());
     let elapsed_ms = time.elapsed().as_millis() as u32;
-    for (entity, mut card, mut tf, mut global, tag) in &mut cards {
+    for (entity, mut card, mut tf, mut global, tag, vis) in &mut cards {
         // A track-less card is a pure function of the camera and its owner, so it is skipped
         // when neither moved, unless it has never been placed (no attach stamp yet).
         let tracked = card.scale_anim.is_some()
@@ -445,7 +447,13 @@ pub(crate) fn face_billboards(
         if let Some(owner) = card.follow {
             match owners.get(owner) {
                 Ok(gt) => {
-                    if !tracked && !cam_moved && !gt.is_changed() {
+                    // Hidden, as below, the seat moving or not: a doodad card's own verdict reads
+                    // its place, which lags only its bone's sway while hidden, and a unit or
+                    // GameObject card's verdict never reads it.
+                    let hidden = *vis == Visibility::Hidden && card.gseq_attach_ms.is_some();
+                    if (hidden && !vis.is_changed())
+                        || (!tracked && !cam_moved && !gt.is_changed() && !vis.is_changed())
+                    {
                         continue;
                     }
                     let pivot = card.local_pivot;
@@ -473,8 +481,14 @@ pub(crate) fn face_billboards(
                     continue;
                 }
             }
-        } else if !tracked && !cam_moved {
-            continue;
+        } else {
+            // A hidden fixed card is not drawn, and the reference animates only the frame's
+            // worklist: its pose waits, and is placed on the frame its `Visibility` flips. Its
+            // first pass still runs, which stamps the attach anchor below.
+            let hidden = *vis == Visibility::Hidden && card.gseq_attach_ms.is_some();
+            if hidden || (!tracked && !cam_moved && !vis.is_changed()) {
+                continue;
+            }
         }
         // The gseq attach anchor, stamped on the first placement pass (`CM2Model+0x68`). Written
         // once: a `get_or_insert` through the `Mut` would mark the card changed every frame.
