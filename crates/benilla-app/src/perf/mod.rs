@@ -109,6 +109,9 @@ impl Plugin for PerfPlugin {
         }
         // Before propagation, so the counts are what `mark_dirty_trees` and the visibility
         // propagation see this frame.
+        if std::env::var_os("WOW_TABLE_CENSUS").is_some() {
+            app.add_systems(bevy::app::Last, census::table_census);
+        }
         if std::env::var_os("WOW_XFORM_CENSUS").is_some() {
             app.add_systems(
                 bevy::app::PostUpdate,

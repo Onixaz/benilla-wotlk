@@ -713,3 +713,113 @@ pub(super) mod res_census {
         eprint!("{out}");
     }
 }
+
+/// `WOW_TABLE_CENSUS=<secs>`: once, the world's storage fragmentation: archetypes and tables, how
+/// many hold rows, and the components that sit in the most non-empty tables. Every query pays a
+/// setup per non-empty table it matches, so a toggled marker that splits tables taxes them all.
+pub(super) fn table_census(world: &mut World, mut done: Local<bool>) {
+    if *done {
+        return;
+    }
+    let at = std::env::var("WOW_TABLE_CENSUS")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(60.0);
+    if world.resource::<Time>().elapsed_secs() < at {
+        return;
+    }
+    *done = true;
+    let (mut archetypes, mut live_archetypes) = (0usize, 0usize);
+    let mut tables: std::collections::HashMap<
+        usize,
+        (usize, Vec<bevy::ecs::component::ComponentId>),
+    > = std::collections::HashMap::new();
+    for a in world.archetypes().iter() {
+        archetypes += 1;
+        if a.is_empty() {
+            continue;
+        }
+        live_archetypes += 1;
+        tables
+            .entry(a.table_id().as_usize())
+            .or_insert_with(|| (0, a.table_components().collect()))
+            .0 += a.len() as usize;
+    }
+    let total_tables = world.storages().tables.len();
+    let mut per_component: std::collections::HashMap<
+        bevy::ecs::component::ComponentId,
+        (usize, usize),
+    > = std::collections::HashMap::new();
+    let mut small = 0usize;
+    for (rows, comps) in tables.values() {
+        if *rows < 8 {
+            small += 1;
+        }
+        for c in comps {
+            let e = per_component.entry(*c).or_default();
+            e.0 += 1;
+            e.1 += rows;
+        }
+    }
+    eprintln!(
+        "[table-census] archetypes {archetypes} ({live_archetypes} non-empty), tables {total_tables} ({} non-empty, {small} under 8 rows)",
+        tables.len()
+    );
+    // Per family (the tables holding an anchor component), the components only some carry: the
+    // splitters, which sparse-set storage would stop fragmenting the family.
+    let name_of = |w: &World, id: bevy::ecs::component::ComponentId| {
+        w.components()
+            .get_name(id)
+            .map(|n| n.to_string())
+            .unwrap_or_default()
+    };
+    for anchor in [
+        "NetEntity",
+        "ModelPart",
+        "ParticleEmitter",
+        "RigAnchor",
+        "BillboardCard",
+    ] {
+        let family: Vec<&(usize, Vec<bevy::ecs::component::ComponentId>)> = tables
+            .values()
+            .filter(|(_, comps)| comps.iter().any(|c| name_of(world, *c).ends_with(anchor)))
+            .collect();
+        if family.is_empty() {
+            continue;
+        }
+        let mut counts: std::collections::HashMap<bevy::ecs::component::ComponentId, usize> =
+            std::collections::HashMap::new();
+        for (_, comps) in &family {
+            for c in comps {
+                *counts.entry(*c).or_default() += 1;
+            }
+        }
+        let mut varying: Vec<_> = counts
+            .into_iter()
+            .filter(|(_, n)| *n < family.len())
+            .collect();
+        varying.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        let rows: usize = family.iter().map(|(r, _)| r).sum();
+        eprintln!(
+            "[table-census] family {anchor}: {} tables, {rows} rows; varying:",
+            family.len()
+        );
+        for (id, n) in varying.into_iter().take(25) {
+            eprintln!(
+                "[table-census]     {n:>4}/{}  {}",
+                family.len(),
+                name_of(world, id)
+            );
+        }
+    }
+    let mut ranked: Vec<_> = per_component.into_iter().collect();
+    ranked.sort_by_key(|(_, (t, _))| std::cmp::Reverse(*t));
+    for (id, (t, rows)) in ranked.into_iter().take(60) {
+        let name = world
+            .components()
+            .get_name(id)
+            .map(|n| n.to_string())
+            .unwrap_or_default();
+        eprintln!("[table-census] {t:>5} tables {rows:>7} rows  {name}");
+    }
+}
