@@ -276,6 +276,7 @@ impl Default for EffectQuads {
 }
 
 /// Everything about one draw but its vertex range, as `commit_quads` and `commit_tris` take it.
+#[derive(Clone)]
 pub struct EffectDrawSpec {
     pub cam: Entity,
     pub texture: AssetId<Image>,
@@ -332,13 +333,13 @@ impl EffectQuads {
     pub fn commit_particles(
         &mut self,
         pool: GpuPool,
-        particles: impl Iterator<Item = GpuParticle>,
+        particles: &[GpuParticle],
         spec: EffectDrawSpec,
     ) {
         let index = self.pools.len() as u32;
         let first = self.particles.len();
         self.particles
-            .extend(particles.map(|p| GpuParticle { pool: index, ..p }));
+            .extend(particles.iter().map(|p| GpuParticle { pool: index, ..*p }));
         let (start, end) = (first as u32 * 12, self.particles.len() as u32 * 12);
         if end > start {
             self.pools.push(pool);

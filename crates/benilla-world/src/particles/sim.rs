@@ -1166,22 +1166,28 @@ pub(super) fn simulate_particles(
     for e in scratch.despawns.drain() {
         commands.entity(e).despawn();
     }
-    let mut walked: Vec<(ExpandJob, CommitJob)> = scratch.walked.drain().collect();
+    // The drawn pools in entity order, by reference: the jobs stay in the per-thread buffers,
+    // which keep their allocations for the next frame.
+    let mut walked: Vec<&(ExpandJob, CommitJob)> = scratch
+        .walked
+        .iter_mut()
+        .flat_map(|jobs| jobs.iter())
+        .collect();
     walked.sort_unstable_by_key(|(job, _)| job.entity);
-    let (jobs, commits): (Vec<ExpandJob>, Vec<CommitJob>) = walked.into_iter().unzip();
 
     // Expand every walked pool on the compute pool, the walk's per-particle half: a job reads
-    // only its own emitter, so the chunks are independent.
+    // only its own emitter, so the chunks are independent. A GPU pool's particles are packed
+    // here too, so the commit below only appends.
     let ro = emitters.as_readonly();
-    let expand_one = |job: &ExpandJob, out: &mut Vec<EffectVertex>, segs: &mut Vec<Seg>| {
+    let expand_one = |job: &ExpandJob, out: &mut Expanded| {
         let Ok((_, em, ..)) = ro.get(job.entity) else {
-            segs.extend(std::iter::repeat_n(
-                (0, EffectLighting::None),
+            out.segs.extend(std::iter::repeat_n(
+                (0, 0, EffectLighting::None),
                 1 + job.kids.len(),
             ));
             return;
         };
-        let s = out.len();
+        let (s, g) = (out.verts.len(), out.gpu.len());
         if job.quads && job.gpu.is_none() {
             expand_quads(
                 &em.def,
@@ -1189,14 +1195,22 @@ pub(super) fn simulate_particles(
                 &job.frame,
                 &job.placement,
                 &job.cam,
-                out,
+                &mut out.verts,
             );
         }
-        let lighting = fold_committed_light(&mut out[s..], em.def.lit, job.committed);
-        segs.push(((out.len() - s) as u32, lighting));
+        if job.gpu.is_some() {
+            out.gpu
+                .extend(em.particles.iter().map(super::quads::gpu_particle));
+        }
+        let lighting = fold_committed_light(&mut out.verts[s..], em.def.lit, job.committed);
+        out.segs.push((
+            (out.verts.len() - s) as u32,
+            (out.gpu.len() - g) as u32,
+            lighting,
+        ));
         for (&i, gpu) in job.kids.iter().zip(&job.kid_gpu) {
             let child = &em.children[i];
-            let s = out.len();
+            let (s, g) = (out.verts.len(), out.gpu.len());
             if gpu.is_none() {
                 expand_quads(
                     &child.def,
@@ -1204,50 +1218,62 @@ pub(super) fn simulate_particles(
                     &job.frame,
                     &job.placement,
                     &job.cam,
-                    out,
+                    &mut out.verts,
                 );
+            } else {
+                out.gpu
+                    .extend(child.particles.iter().map(super::quads::gpu_particle));
             }
-            let lighting = fold_committed_light(&mut out[s..], child.def.lit, job.committed);
-            segs.push(((out.len() - s) as u32, lighting));
+            let lighting = fold_committed_light(&mut out.verts[s..], child.def.lit, job.committed);
+            out.segs.push((
+                (out.verts.len() - s) as u32,
+                (out.gpu.len() - g) as u32,
+                lighting,
+            ));
         }
     };
-    let expanded: Vec<(Vec<EffectVertex>, Vec<Seg>)> = if jobs.len() <= EXPAND_CHUNK_MIN {
-        let (mut out, mut segs) = (Vec::new(), Vec::new());
-        for job in &jobs {
-            expand_one(job, &mut out, &mut segs);
+    let expanded: Vec<Expanded> = if walked.len() <= EXPAND_CHUNK_MIN {
+        let mut out = Expanded::default();
+        for (job, _) in walked.iter().copied() {
+            expand_one(job, &mut out);
         }
-        vec![(out, segs)]
+        vec![out]
     } else {
         let pool = bevy::tasks::ComputeTaskPool::get();
-        let chunk = jobs
+        let chunk = walked
             .len()
             .div_ceil(pool.thread_num().max(1) * 4)
             .max(EXPAND_CHUNK_MIN);
         let expand_one = &expand_one;
         pool.scope(|scope| {
-            for part in jobs.chunks(chunk) {
+            for part in walked.chunks(chunk) {
                 scope.spawn(async move {
-                    let (mut out, mut segs) = (Vec::new(), Vec::new());
-                    for job in part {
-                        expand_one(job, &mut out, &mut segs);
+                    let mut out = Expanded::default();
+                    for (job, _) in part.iter().copied() {
+                        expand_one(job, &mut out);
                     }
-                    (out, segs)
+                    out
                 });
             }
         })
     };
 
     // Commit in walk order, so the stream and its draws are the serial walk's.
-    let mut pieces = expanded.iter().flat_map(|(out, segs)| {
-        let mut off = 0usize;
-        segs.iter().map(move |&(n, lighting)| {
-            let piece = &out[off..off + n as usize];
-            off += n as usize;
-            (piece, lighting)
+    let mut pieces = expanded.iter().flat_map(|out| {
+        let (mut v, mut g) = (0usize, 0usize);
+        out.segs.iter().map(move |&(nv, ng, lighting)| {
+            let piece = (
+                &out.verts[v..v + nv as usize],
+                &out.gpu[g..g + ng as usize],
+                lighting,
+            );
+            v += nv as usize;
+            g += ng as usize;
+            piece
         })
     });
-    for (job, commit) in jobs.iter().zip(commits) {
-        let Some((verts, lighting)) = pieces.next() else {
+    for (job, commit) in walked.iter().copied() {
+        let Some((verts, gpu_particles, lighting)) = pieces.next() else {
             break;
         };
         let start = quads.begin();
@@ -1270,42 +1296,35 @@ pub(super) fn simulate_particles(
                 );
             }
         }
-        let em = ro.get(job.entity).ok().map(|(_, em, ..)| em);
         let spec = EffectDrawSpec {
             lighting,
-            ..commit.spec
+            ..commit.spec.clone()
         };
-        match (job.gpu, em) {
-            (Some(pool), Some(em)) => quads.commit_particles(
-                pool,
-                em.particles.iter().map(super::quads::gpu_particle),
-                spec,
-            ),
-            _ => quads.commit_quads(start, spec),
+        match job.gpu {
+            Some(pool) => quads.commit_particles(pool, gpu_particles, spec),
+            None => quads.commit_quads(start, spec),
         }
-        for ((spec, &i), gpu) in commit
-            .kid_specs
-            .into_iter()
-            .zip(&job.kids)
-            .zip(&job.kid_gpu)
-        {
-            let Some((verts, lighting)) = pieces.next() else {
+        for (spec, gpu) in commit.kid_specs.iter().zip(&job.kid_gpu) {
+            let Some((verts, gpu_particles, lighting)) = pieces.next() else {
                 break;
             };
-            let spec = EffectDrawSpec { lighting, ..spec };
-            match (gpu, em.and_then(|em| em.children.get(i))) {
-                (Some(pool), Some(child)) => quads.commit_particles(
-                    *pool,
-                    child.particles.iter().map(super::quads::gpu_particle),
-                    spec,
-                ),
-                _ => {
+            let spec = EffectDrawSpec {
+                lighting,
+                ..spec.clone()
+            };
+            match gpu {
+                Some(pool) => quads.commit_particles(*pool, gpu_particles, spec),
+                None => {
                     let start = quads.begin();
                     quads.verts.extend_from_slice(verts);
                     quads.commit_quads(start, spec);
                 }
             }
         }
+    }
+    drop(walked);
+    for jobs in scratch.walked.iter_mut() {
+        jobs.clear();
     }
 }
 
@@ -1323,8 +1342,17 @@ pub(super) struct WalkScratch {
 /// Below this many walked pools the expansion runs inline; it is also the smallest chunk.
 const EXPAND_CHUNK_MIN: usize = 8;
 
-/// One expanded draw's vertex count and its light fold.
-type Seg = (u32, EffectLighting);
+/// One expanded draw's CPU vertex count, its GPU particle count and its light fold.
+type Seg = (u32, u32, EffectLighting);
+
+/// One expansion chunk's output: the CPU writer's vertices, the GPU pools' packed particles and
+/// a [`Seg`] per draw, in job order.
+#[derive(Default)]
+struct Expanded {
+    verts: Vec<EffectVertex>,
+    gpu: Vec<super::buffer::GpuParticle>,
+    segs: Vec<Seg>,
+}
 
 /// What the expansion pass needs of one walked emitter: its frame, placement and camera basis.
 struct ExpandJob {
