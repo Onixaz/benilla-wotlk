@@ -291,7 +291,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 /// current layout; a settled tree costs one epoch compare. Deviation: `OnSizeChanged` fires at the
 /// next `UiScript::resolve`, a tick after the reference's (`ApplyRect 0x76b580`), because running
 /// Lua handlers inside a binding risks a borrow panic or unbounded recursion.
-fn settle(lua: &Lua) {
+pub(super) fn settle(lua: &Lua) {
     let mut model = crate::script::model_mut_of(lua);
     // A settle that solved nothing moved no rect: the mutation count stands (`ModelCell`).
     let quiet = model.epoch();

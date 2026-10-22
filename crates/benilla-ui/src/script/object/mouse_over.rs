@@ -19,16 +19,39 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     Value::Number(n) => *n,
                     _ => 0.0,
                 };
-                let edge = |name: &str| this.call_method::<Option<f64>>(name, ());
-                let (Some(l), Some(r), Some(t), Some(b)) = (
-                    edge("GetLeft")?,
-                    edge("GetRight")?,
-                    edge("GetTop")?,
-                    edge("GetBottom")?,
-                ) else {
-                    return Ok(false);
+                // A frame reads its rect and scale here, as `GetLeft`..`GetBottom` and
+                // `GetEffectiveScale` answer them, without five method round trips; any other
+                // object asks its own methods.
+                let (l, r, t, b, scale) = match super::frame_handle_of(lua, &this) {
+                    Ok(h) => {
+                        super::layout_methods::settle(lua);
+                        let model = crate::script::model_mut_of(lua);
+                        let s = super::layout_methods::eff_scale(&model, h);
+                        let inv = 1.0 / s;
+                        let Some(rect) = model.resolved.get(&h) else {
+                            return Ok(false);
+                        };
+                        (
+                            f64::from(inv * rect.left),
+                            f64::from(inv * rect.right),
+                            f64::from(inv * rect.top),
+                            f64::from(inv * rect.bottom),
+                            f64::from(s),
+                        )
+                    }
+                    Err(_) => {
+                        let edge = |name: &str| this.call_method::<Option<f64>>(name, ());
+                        let (Some(l), Some(r), Some(t), Some(b)) = (
+                            edge("GetLeft")?,
+                            edge("GetRight")?,
+                            edge("GetTop")?,
+                            edge("GetBottom")?,
+                        ) else {
+                            return Ok(false);
+                        };
+                        (l, r, t, b, this.call_method("GetEffectiveScale", ())?)
+                    }
                 };
-                let scale: f64 = this.call_method("GetEffectiveScale", ())?;
                 let (cx, cy) = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model")
