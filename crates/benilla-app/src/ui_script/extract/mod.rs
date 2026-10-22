@@ -931,9 +931,28 @@ pub(super) fn paint_script(
         if counts_stable {
             for (&j, r) in changed.iter().zip(&scratch_ranges) {
                 let (a, b) = span_bounds(&prev.spans, j);
-                if quads.quads[a..b] != scratch[r.clone()] {
-                    quads.quads[a..b].clone_from_slice(&scratch[r.clone()]);
-                    dirtied = true;
+                let fresh = &scratch[r.clone()];
+                if quads.quads[a..b] != *fresh {
+                    // A span that moved nothing but tints patches the pooled runs; any other
+                    // change rebuilds, which also drops the patches queued before it.
+                    let colour_only = !quads.dirty
+                        && quads.quads[a..b]
+                            .iter()
+                            .zip(fresh)
+                            .all(|(old, new)| old.eq_but_colour(new));
+                    if colour_only {
+                        let patch: Vec<(usize, [f32; 4])> = quads.quads[a..b]
+                            .iter()
+                            .zip(fresh)
+                            .enumerate()
+                            .filter(|(_, (old, new))| old.color != new.color)
+                            .map(|(k, (_, new))| (a + k, new.color))
+                            .collect();
+                        quads.colour_patch.extend(patch);
+                    } else {
+                        dirtied = true;
+                    }
+                    quads.quads[a..b].clone_from_slice(fresh);
                 }
             }
         } else {
@@ -974,6 +993,7 @@ pub(super) fn paint_script(
             dirtied = true;
         }
         if dirtied {
+            quads.colour_patch.clear();
             quads.dirty = true;
         }
         prev.extracted = extracted;
@@ -1118,8 +1138,29 @@ pub(super) fn paint_script(
                 ),
             }
         }
+        // A frame that moved nothing but tints patches the pooled runs; anything else rebuilds.
+        let colour_only = !quads.dirty
+            && quads.quads.len() == out.len()
+            && quads
+                .quads
+                .iter()
+                .zip(&out)
+                .all(|(a, b)| a.eq_but_colour(b));
+        if colour_only {
+            let patch: Vec<(usize, [f32; 4])> = quads
+                .quads
+                .iter()
+                .zip(&out)
+                .enumerate()
+                .filter(|(_, (a, b))| a.color != b.color)
+                .map(|(i, (_, b))| (i, b.color))
+                .collect();
+            quads.colour_patch.extend(patch);
+        } else {
+            quads.colour_patch.clear();
+            quads.dirty = true;
+        }
         quads.quads = out;
-        quads.dirty = true;
     }
     if cost_on {
         let us_diff = lap();
@@ -2137,7 +2178,11 @@ mod extract_gate_tests {
             .unwrap();
         app.update();
         let quads = app.world().resource::<UiQuads>();
-        assert!(quads.dirty, "a paint write must reopen the extract gate");
+        // A tint alone reaches the mesh as a colour patch, not a rebuild.
+        assert!(
+            !quads.dirty && !quads.colour_patch.is_empty(),
+            "a paint write must reopen the extract gate, here as a colour patch"
+        );
         assert!(
             quads
                 .quads
@@ -2373,8 +2418,8 @@ mod extract_gate_tests {
             "the color write is one splice-simple entry"
         );
         assert!(
-            app.world().resource::<UiQuads>().dirty,
-            "the spliced write re-marks the quads dirty"
+            !app.world().resource::<UiQuads>().colour_patch.is_empty(),
+            "the spliced tint reaches the mesh as a colour patch"
         );
         let mut reference = app_from_script(
             r#"
