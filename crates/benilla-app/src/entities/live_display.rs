@@ -77,9 +77,9 @@ pub(super) fn refresh_live_display(
             Entity,
             &Guid,
             &mut NetEntity,
-            &ObjectStore,
-            &AppliedDisplay,
-            Option<&CollisionHeight>,
+            Ref<ObjectStore>,
+            Ref<AppliedDisplay>,
+            Option<Ref<CollisionHeight>>,
             &Transform,
         ),
         // A torn-down unit is freed, not rebuilt (`0x464920`).
@@ -90,7 +90,20 @@ pub(super) fn refresh_live_display(
     >,
     mut swapped: MessageWriter<DisplaySwapped>,
 ) {
+    // The prism reads only the static catalog of `Creatures`, whose model cache changes often.
+    let catalog_new = creatures.as_ref().is_some_and(|c| c.is_added());
     for (entity, guid, mut net, store, applied, height, tf) in &mut entities {
+        // Every answer below is a function of these rows and the catalog: with none changed since
+        // the last pass, each diff would find what it found then.
+        if !catalog_new
+            && !store.is_changed()
+            && !applied.is_changed()
+            && !net.is_changed()
+            && !height.as_ref().is_some_and(|h| h.is_changed())
+        {
+            continue;
+        }
+        let (store, applied, height) = (&*store, &*applied, height.as_deref());
         // ── The display-id swap ──────────────────────────────────────────────────────────────
         let live = live_display_id(net.kind, store);
         if let Some(live) = live {
@@ -153,7 +166,7 @@ pub(super) fn refresh_live_display(
 
         // ── The collision prism ──────────────────────────────────────────────────────────────
         // From the native display (`[unit+0x110]+0x1f8`) and `SCALE_X`, not the rendered swap
-        // above; recomputed and diffed each frame, as no change gate covers both. It snaps to the
+        // above; recomputed and diffed on any input's change, the gate at the top. It snaps to the
         // target scale: easing it would drag the depth lines through two seconds of depths.
         let prism = super::collision_height::prism_display_id(Some(store), net.display_id);
         let h = collision_height_for(creatures.as_deref(), prism, net.scale);
