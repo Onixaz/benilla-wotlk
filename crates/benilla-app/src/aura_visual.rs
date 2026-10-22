@@ -517,6 +517,9 @@ pub(crate) fn apply_aura_alpha(
     mut reauthor: ResMut<benilla_world::interior::InteriorReauthor>,
 ) {
     let now = time.elapsed_secs();
+    // Each authoring unit's anchors and its alpha, for one card pass after the walks; a later
+    // unit's walk overwrites an anchor two units share, as successive card passes did.
+    let mut card_alpha = bevy::ecs::entity::EntityHashMap::<f32>::default();
     for (root, mut n, declared) in &mut roots {
         let alpha = n.tick(now);
         // Declared to the engine's composed model alpha (`model_fade::ModelFade`) before the
@@ -542,18 +545,20 @@ pub(crate) fn apply_aura_alpha(
             &mut reauthor,
             &mut walked,
         );
-        author_cards(alpha, &walked, &mut cards);
+        card_alpha.extend(walked.into_iter().map(|anchor| (anchor, alpha)));
         // A frame written at opaque was the release; the latch drops after it.
         n.authoring = translucent;
+    }
+    if !card_alpha.is_empty() {
+        author_cards(&card_alpha, &mut cards);
     }
 }
 
 /// Fold the unit's aura alpha into its billboard cards, world-root entities that follow an anchor
 /// in the model and so escape the descendant walk (a stealthed night elf's eye glow would stay
-/// lit). A card is the unit's when its follow anchor is in `walked`.
+/// lit). A card is a unit's when its follow anchor is in that unit's walk.
 fn author_cards(
-    alpha: f32,
-    walked: &bevy::ecs::entity::EntityHashSet,
+    card_alpha: &bevy::ecs::entity::EntityHashMap<f32>,
     cards: &mut Query<(
         &benilla_world::billboard::BillboardCard,
         &mut MeshTag,
@@ -561,9 +566,9 @@ fn author_cards(
     )>,
 ) {
     for (card, mut tag, anim) in cards.iter_mut() {
-        if !card.follows().is_some_and(|a| walked.contains(&a)) {
+        let Some(&alpha) = card.follows().and_then(|a| card_alpha.get(&a)) else {
             continue;
-        }
+        };
         // From the animation's own factor, not the tag, so the card's alpha animation survives and
         // the release lands on the card's own value.
         let authored = anim.map_or(1.0, |a| a.current);
