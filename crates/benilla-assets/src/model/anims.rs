@@ -181,6 +181,13 @@ impl ModelAnimations {
     /// revisit or an id past the table exhausts to Stand if authored, else Closed (147), else the
     /// first sequence's id. The row flags' direction mode is not derived: nothing applies it.
     fn resolve_fallback(&self, requested: u16, catalog: &AnimDataCatalog) -> ResolvedAnim {
+        // The model authoring the id itself, the common case, needs no walk and no visited set.
+        if self.find(requested).is_some() {
+            return ResolvedAnim {
+                id: requested,
+                dir_flags: 0,
+            };
+        }
         const ANIM_COUNT: usize = 506;
         const CLOSED: u16 = 147;
         let exhausted = || {
