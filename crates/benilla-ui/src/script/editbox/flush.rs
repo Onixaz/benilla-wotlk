@@ -134,6 +134,9 @@ fn blink(lua: &Lua, h: FrameHandle, dt: f32) {
     if !focused {
         return;
     }
+    // The blink is no extract input (the host draws the caret from the text-UI seam), so the
+    // mutation count stands.
+    let quiet = crate::script::model_mut_of(lua).epoch();
     with_eb(lua, h, |eb| {
         if eb.blink_period != 0.0 {
             eb.blink_accum += dt;
@@ -143,4 +146,5 @@ fn blink(lua: &Lua, h: FrameHandle, dt: f32) {
             }
         }
     });
+    crate::script::model_mut_of(lua).set_epoch(quiet);
 }

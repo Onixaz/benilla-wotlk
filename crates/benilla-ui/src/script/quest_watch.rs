@@ -387,6 +387,10 @@ impl super::UiScript {
 
     /// Drain the quests to ask the server for (`CMSG_QUEST_POI_QUERY`, `0x5e6cd1`).
     pub fn take_quest_poi_queries(&mut self) -> Vec<u32> {
+        // Read first: a mutable borrow moves the mutation count, and this drains every frame.
+        if self.model_ref().quest_watch.poi_wants.is_empty() {
+            return Vec::new();
+        }
         std::mem::take(&mut self.model_mut().quest_watch.poi_wants)
     }
 

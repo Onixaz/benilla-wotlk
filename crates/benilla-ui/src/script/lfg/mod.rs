@@ -310,6 +310,9 @@ impl super::UiScript {
 
     /// Push the group facts; a moved LFG slot fires `LFG_UPDATE` (`SetLfgSlot 0x52c0a0`).
     pub fn set_lfg_party(&mut self, party: LfgPartyView) {
+        if self.model_ref().lfg.party == party {
+            return;
+        }
         let moved = {
             let mut model = self.model_mut();
             let moved = model.lfg.party.lfg_slot != party.lfg_slot;

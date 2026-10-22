@@ -685,6 +685,16 @@ pub(crate) fn stop_animating(lua: &Lua, owner: Owner) {
 /// to its saved byte (`PreOnAnimUpdate` `0x48eba0`), then its groups ticked. Translations rebuild
 /// from zero each pass.
 pub(crate) fn tick(lua: &Lua, elapsed: f32) {
+    // Nothing playing and no offset to clear: the pass would write nothing, so it takes no
+    // mutable borrow, which would move the mutation count.
+    {
+        let m = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
+        if m.anims.offsets.is_empty() && m.anims.active_owners().is_empty() {
+            return;
+        }
+    }
     let owners = with(lua, |m| {
         m.anims.offsets.clear();
         let mut owners: Vec<((u32, u32), Owner)> = m
