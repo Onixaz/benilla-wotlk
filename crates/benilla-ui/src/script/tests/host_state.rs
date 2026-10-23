@@ -256,3 +256,30 @@ fn the_engine_reads_the_handler_slot_not_the_geterrorhandler_global() {
         (1, 0)
     );
 }
+
+/// The host's per-frame passes leave the model's mutation count standing when they change nothing
+/// drawn, so an idle frame skips the extract walk: a focused box's caret blink, the animation tick
+/// with nothing playing, an equal party and an empty quest-POI queue.
+#[test]
+fn an_idle_frame_leaves_the_mutation_count_standing() {
+    let mut s = script();
+    s.run(r#"Box = CreateFrame("EditBox", "Box", UIParent) Box:SetFocus()"#)
+        .unwrap();
+    s.tick(0.0);
+    let settled = s.visual_epoch();
+    for _ in 0..3 {
+        s.tick(0.6);
+    }
+    assert_eq!(
+        s.visual_epoch(),
+        settled,
+        "the caret blink and an idle animation tick"
+    );
+    s.set_lfg_party(crate::script::LfgPartyView::default());
+    assert!(s.take_quest_poi_queries().is_empty());
+    assert_eq!(
+        s.visual_epoch(),
+        settled,
+        "an equal party and an empty quest-POI queue"
+    );
+}
