@@ -204,6 +204,7 @@ pub(super) fn spawn_loaded_placements(
                         FormSlices {
                             stat: forms.static_meshes(key).unwrap_or(&[]),
                             skin: forms.skinned_meshes(key),
+                            billboard: forms.palette_billboards(key),
                         },
                         p.transform,
                         &object,
@@ -355,6 +356,7 @@ pub(super) fn spawn_loaded_placements(
                         FormSlices {
                             stat: forms.static_meshes(key).unwrap_or(&[]),
                             skin: None,
+                            billboard: None,
                         },
                         p.transform,
                         &object,
@@ -634,6 +636,7 @@ pub(super) fn spawn_loaded_placements(
                 FormSlices {
                     stat: forms.static_meshes(key).unwrap_or(&[]),
                     skin: forms.skinned_meshes(key),
+                    billboard: forms.palette_billboards(key),
                 },
                 d.transform,
                 &object,

@@ -96,17 +96,40 @@ pub struct ModelSubmesh {
     pub ground_quad: Option<benilla_formats::GroundQuad>,
 }
 
+/// Where a billboard batch's vertices are baked.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BillboardBake {
+    /// Centred on the bone pivot, for a card the billboard system turns in place.
+    Card,
+    /// In model space, for a part the rig palette turns through the billboard bone's row.
+    Model,
+    /// Every vertex on the pivot: the palette part's unrigged twin, which draws nothing.
+    Collapsed,
+}
+
 /// Bake a [`RenderSubmesh`] to a Bevy-space [`Mesh`]: authored normals, else flat ones.
 fn build_submesh_mesh(sub: &RenderSubmesh, usages: RenderAssetUsages) -> Mesh {
-    // A billboard batch is centred on its bone pivot, so the spawn site turns it in place.
-    let center = sub
-        .billboard
-        .as_ref()
-        .map_or(Vec3::ZERO, |b| wow_to_bevy(b.pivot));
+    build_submesh_mesh_as(sub, usages, BillboardBake::Card)
+}
+
+fn build_submesh_mesh_as(
+    sub: &RenderSubmesh,
+    usages: RenderAssetUsages,
+    bake: BillboardBake,
+) -> Mesh {
+    let pivot = sub.billboard.as_ref().map(|b| wow_to_bevy(b.pivot));
     let positions: Vec<[f32; 3]> = sub
         .positions
         .iter()
-        .map(|p| (wow_to_bevy(*p) - center).to_array())
+        .map(|p| {
+            let v = wow_to_bevy(*p);
+            match (bake, pivot) {
+                (BillboardBake::Card, Some(c)) => v - c,
+                (BillboardBake::Collapsed, Some(c)) => c,
+                _ => v,
+            }
+            .to_array()
+        })
         .collect();
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, usages);
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
@@ -183,7 +206,25 @@ pub fn submesh_to_static_mesh(sub: &RenderSubmesh) -> Mesh {
 /// The skinned mesh: the static one plus the joint attributes. It keeps its main-world copy,
 /// which the mouseover picker (`target::hover`) skins on the CPU.
 pub fn submesh_to_skinned_mesh(sub: &RenderSubmesh) -> Mesh {
-    let mut mesh = build_submesh_mesh(sub, RenderAssetUsages::default());
+    skinned_mesh_as(sub, BillboardBake::Card)
+}
+
+/// A billboard batch drawn through the rig palette, as the reference skins it: the skinned form
+/// in model space, which the billboard bone's camera-faced row turns about its pivot, and its
+/// unrigged twin, collapsed onto the pivot so an unrigged frame draws nothing.
+pub fn submesh_to_palette_billboard(sub: &RenderSubmesh) -> (Mesh, Mesh) {
+    (
+        skinned_mesh_as(sub, BillboardBake::Model),
+        build_submesh_mesh_as(
+            sub,
+            RenderAssetUsages::RENDER_WORLD,
+            BillboardBake::Collapsed,
+        ),
+    )
+}
+
+fn skinned_mesh_as(sub: &RenderSubmesh, bake: BillboardBake) -> Mesh {
+    let mut mesh = build_submesh_mesh_as(sub, RenderAssetUsages::default(), bake);
     if sub.joints.len() == sub.positions.len() && !sub.joints.is_empty() {
         mesh.insert_attribute(
             ATTRIBUTE_WOW_JOINT_INDEX,

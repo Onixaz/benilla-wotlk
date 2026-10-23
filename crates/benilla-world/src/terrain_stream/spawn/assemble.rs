@@ -113,11 +113,14 @@ pub fn spawn_model_entities(
     let mut out = Vec::with_capacity(submeshes.len());
     // The placement's batches rank inside one transparent group.
     let sort_group = crate::model_render::M2BatchSort::group();
-    // The anim host serves any joint consumer: a skinned part, an emitter or a ribbon. A model of
-    // billboard cards alone gets none, as the billboard system owns their transforms.
+    // The anim host serves any joint consumer: a skinned part, an emitter or a ribbon, and a
+    // billboard batch drawn through the palette. Under `$WOW_BILLBOARD_CARDS` a model of cards
+    // alone gets none, as the billboard system then owns their transforms.
     let mut host = m2
         .filter(|(m, _)| {
-            submeshes.iter().any(|s| s.billboard.is_none())
+            submeshes
+                .iter()
+                .any(|s| s.billboard.is_none() || !billboard_cards())
                 || !m.emitters.is_empty()
                 || !m.ribbons.is_empty()
         })
@@ -495,9 +498,47 @@ pub fn spawn_model_entities(
             Some(slot) => MeshTag(crate::mesh_tag::probe_bits(slot)),
             None => MeshTag(alpha_bits(1.0)),
         };
+        // A billboard batch on a rigged placement is a skinned part whose billboard bone the rig's
+        // world pass faces to the camera, as the reference skins it (`0x714260`); its unrigged
+        // twin draws nothing, so a placement not yet woken shows no unfaced quad.
+        let palette_billboard = rig_root
+            .filter(|_| sub.billboard.is_some() && !billboard_cards())
+            .and_then(|root| {
+                let pb = forms.billboard?.get(batch_idx)?.clone()?;
+                Some((root, pb))
+            });
         // A billboard card's transform is the billboard system's; it still fades with its doodad,
         // from its pivot, where the mesh is centred (`ZERO`).
-        let (entity, fade_center) = if let Some(info) = &sub.billboard {
+        let is_palette_billboard = palette_billboard.is_some();
+        let (entity, fade_center) = if let Some((root, pb)) = palette_billboard {
+            let mut part_entity = commands.spawn((
+                Mesh3d(pb.collapsed.clone()),
+                MeshMaterial3d(cutout.clone()),
+                transform,
+                ModelPart {
+                    kind,
+                    blend: sub.blend,
+                },
+                crate::model_render::EntityPathWhy(why),
+                crate::interact::PickMesh(sub.geometry.clone()),
+                mesh_tag,
+                crate::doodad_anim::SkinnedTwin {
+                    skinned: pb.skinned.clone(),
+                    stat: pb.collapsed.clone(),
+                },
+                crate::rig_palette::RigPart(root),
+            ));
+            if let Some(sort) = crate::model_render::M2BatchSort::of(&sub.geometry, sort_group) {
+                part_entity.insert(sort);
+            }
+            if let Some(aabb) = cull_bound(Some(&pb.aabb), anim_bound) {
+                part_entity.insert((aabb, NoAutoAabb));
+            }
+            let entity = part_entity.id();
+            lazy_parts.push(entity);
+            skinned_meshes.push(entity);
+            (entity, local_center)
+        } else if let Some(info) = &sub.billboard {
             // An animated doodad's card follows its billboard bone's anchor; a static one keeps
             // the baked pivot.
             let card = match host.as_mut().and_then(|h| h.anchor(commands, info.bone)) {
@@ -627,7 +668,7 @@ pub fn spawn_model_entities(
             });
         }
         // A following card despawns with its owner and must stay a world root: keep it out.
-        if sub.billboard.is_none() || card_owner.is_none() {
+        if is_palette_billboard || sub.billboard.is_none() || card_owner.is_none() {
             out.push(entity);
         }
     }
@@ -678,6 +719,13 @@ pub fn spawn_model_entities(
         by_batch,
         host: placement_host,
     }
+}
+
+/// `$WOW_BILLBOARD_CARDS=1`: every billboard batch stays a card, the palette lane's A/B and its
+/// fallback.
+fn billboard_cards() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("WOW_BILLBOARD_CARDS").is_some())
 }
 
 /// A placed submesh's cull bound: the bind-pose bound, unioned with the authored all-animation box
