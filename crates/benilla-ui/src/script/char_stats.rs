@@ -13,7 +13,7 @@
 //! vmangos narrows the four buff-split arrays with `uint32(float)` (`Object.cpp:759-763`), so a
 //! negative delta arrives as 0 from an arm64 server and intact from x86.
 
-use mlua::{Lua, Value};
+use mlua::{IntoLuaMulti, Lua, Value};
 
 use super::binding_abi::flag;
 use super::{binding_abi, Model};
@@ -933,6 +933,25 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             match player_inv_slot(lua, &token, slot) {
                 Some(v) if slot_is_broken(&v) => Ok(Value::Integer(1)),
                 _ => Ok(Value::Nil),
+            }
+        })?,
+    )?;
+
+    // GetInventoryItemDurability(slot) (`0x5ea170`) → (current, max) of the player's item, nothing
+    // for the ammo slot, a slot the reader refuses, an empty slot or a zero max; a non-number raises.
+    g.set(
+        "GetInventoryItemDurability",
+        lua.create_function(|lua, slot: Value| {
+            let slot0 =
+                binding_abi::number_arg(lua, slot, "Usage: GetInventoryItemDurability(slot)")?
+                    .wrapping_sub(1);
+            if slot0 == -1 || !inventory_slot_reader_accepts(slot0) {
+                return Ok(mlua::MultiValue::new());
+            }
+            let player = Some("player".to_string());
+            match player_inv_slot(lua, &player, i64::from(slot0) + 1).and_then(|v| v.durability) {
+                Some((cur, max)) if max > 0 => (i64::from(cur), i64::from(max)).into_lua_multi(lua),
+                _ => Ok(mlua::MultiValue::new()),
             }
         })?,
     )?;
@@ -1859,5 +1878,59 @@ mod tests {
         // A declared frame that is not a model pane has no pane.
         s.run(r#"CreateFrame("Frame", "NotAPane")"#).unwrap();
         assert!(s.model_pane("NotAPane").is_none());
+    }
+
+    /// `GetInventoryItemDurability` (`0x5ea170`): two returns for a worn item with a max, zero
+    /// returns for everything else, and the usage raise for a non-number.
+    #[test]
+    fn get_inventory_item_durability_returns_current_and_max_or_nothing() {
+        let mut s = UiScript::new().unwrap();
+        let mut inv: crate::script::InventorySlots = Default::default();
+        inv[5] = Some(InvSlotView {
+            item_id: 11726,
+            durability: Some((37, 120)),
+            ..Default::default()
+        });
+        inv[6] = Some(InvSlotView {
+            item_id: 6125,
+            durability: None,
+            ..Default::default()
+        });
+        s.set_inventory_slots(inv);
+        let count = "local n = function(...) return select('#', ...) end";
+        assert_eq!(
+            s.eval::<(i64, i64)>("return GetInventoryItemDurability(5)")
+                .unwrap(),
+            (37, 120)
+        );
+        assert_eq!(
+            s.eval::<(i64, i64)>("return GetInventoryItemDurability('5')")
+                .unwrap(),
+            (37, 120),
+            "a numeric string is a number"
+        );
+        for (slot, why) in [
+            ("6", "no max durability"),
+            ("1", "an empty slot"),
+            ("0", "the ammo slot"),
+            ("24", "a slot the reader refuses"),
+        ] {
+            assert_eq!(
+                s.eval::<i64>(&format!(
+                    "{count} return n(GetInventoryItemDurability({slot}))"
+                ))
+                .unwrap(),
+                0,
+                "{why}"
+            );
+        }
+        let err = s
+            .run("GetInventoryItemDurability('HeadSlot')")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("Usage: GetInventoryItemDurability(slot)"),
+            "{err}"
+        );
     }
 }
