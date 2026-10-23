@@ -86,7 +86,7 @@ lto = "fat"
 codegen-units = 1
 
 # `cargo play` builds `play`: `release` with thin LTO over sixteen units, a shorter link for
-# playing. Shipping and frame time stay on `release`.
+# playing, and the local PGO profile when there is one. Shipping and frame time stay on `release`.
 [profile.play]
 inherits = "release"
 lto = "thin"

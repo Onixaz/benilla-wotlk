@@ -55,6 +55,11 @@
 //! [profile.release]
 //! lto = "fat"
 //! codegen-units = 1
+//!
+//! [profile.play]
+//! inherits = "release"
+//! lto = "thin"
+//! codegen-units = 16
 //! ```
 //!
 //! ```text

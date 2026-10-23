@@ -1,0 +1,10 @@
+[package]
+name = "benilla-xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The repo's cargo-run tasks: `cargo play`"
+publish = false
+
+[lints]
+workspace = true

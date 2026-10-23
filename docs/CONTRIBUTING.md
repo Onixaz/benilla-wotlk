@@ -128,7 +128,7 @@ out of scope is closed with the reason.
   switches.
   - The build a probe runs is the dev build: `cargo build -p benilla`, then
     `target/debug/benilla.exe` with the switches in its environment. It relinks in a minute where
-    `--release` (fat LTO, one codegen unit) takes many. `--release` is for a frame-time
+    `release` (fat LTO, one codegen unit) takes many. `release` is for a frame-time
     measurement or a release, or when asked for.
   - `WOW_UNATTENDED=1` reconnects instead of waiting at a dialog, and exits non-zero on a login
     it cannot pass. `WOW_NOSOUND=1` runs silent. A capture (`WOW_CAPTURE`) is both, and a rig
@@ -146,9 +146,15 @@ out of scope is closed with the reason.
     `series` and `hotspot`.
 - **The loop.** There are two builds. `cargo dev` builds and runs `dev`, the dev build, and a
   probe, every test and both scripts below build the same, so nothing compiles twice. Its debug
-  assertions make it no place to read frame time. `--release` is the shipped and
-  measured profile, fat LTO over one codegen unit, so it is built for a frame-time number or for a
-  release (`cargo ship`), not per round; `cargo play` builds `play`, the same with thin LTO. `scripts/check.sh` verifies a round on the whole workspace,
+  assertions make it no place to read frame time. `release` is the shipped and measured profile,
+  fat LTO over one codegen unit, so `cargo ship` builds it for a frame-time number or for a
+  release, not per round; `cargo play` builds `play`, the same with thin LTO.
+  `cargo play` adds profile-guided optimization when `scripts/pgo-train.sh` has recorded a profile,
+  a few minutes of play on the instrumented player build (`rustup component add llvm-tools`
+  first); the profile is not in the repository, and is recorded again after a toolchain bump.
+  `BENILLA_PGO_LTO=fat` on both builds `release` instead, with a profile of its own: 3–7% less
+  frame time for a build three times as long.
+  `scripts/check.sh` verifies a round on the whole workspace,
   with the data and without it; `scripts/gates.sh` is its chain without the data, the one your
   pull request needs green. Both open a window for the engine boot, so they need a display. `WOW_STOCK_UI=1` boots a dev build on the stock interface alone,
   without benilla's layer. Work on a branch.

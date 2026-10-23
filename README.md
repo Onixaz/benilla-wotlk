@@ -75,8 +75,8 @@ cd benilla-wotlk
 WOW_DATA=/path/to/WoW/Data cargo play
 ```
 
-`cargo ship` builds the same binary without starting it, into `target/release/`. The binary is
-self-contained and can be copied anywhere. Instead of setting `WOW_DATA`, you can put a `WoW` link
+`cargo ship` builds the release binary, with fat link-time optimization and without a profile,
+into `target/release/` without starting it. The binary is self-contained and can be copied anywhere. Instead of setting `WOW_DATA`, you can put a `WoW` link
 beside the binary that points to the installation directory:
 
 ```powershell
@@ -85,6 +85,35 @@ New-Item -ItemType Junction -Path target\release\WoW -Target "C:\Games\World of 
 
 ```sh
 ln -s /path/to/WoW target/release/WoW
+```
+
+### Faster with a profile
+
+`cargo play` reads a profile of how the game runs on your machine when you have recorded one, and
+builds with profile-guided optimization (PGO): about 20% more frames per second. The repository
+does not ship a profile; record one once:
+
+```sh
+rustup component add llvm-tools
+scripts/pgo-train.sh
+cargo play
+```
+
+`scripts/pgo-train.sh` builds an instrumented copy of `cargo play`'s client and starts it: log in,
+play a few minutes through busy places such as a city or a fight, then quit the game normally. It
+writes the profile to `benilla-config/pgo/`, replacing the last one, and the next `cargo play`
+rebuilds with it, about 25 minutes of building for the two. `cargo play` says whether it built
+with a profile. Record a new one after a Rust toolchain update. See
+[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md).
+
+For the last few percent, set `BENILLA_PGO_LTO=fat` for both commands. They then use fat link-time
+optimization (LTO), with a profile of its own, which measures 3–7% less frame time than the
+default thin LTO at Acherus. Each build takes about three times as long, about an hour of building
+for the first run. In PowerShell, set `$env:BENILLA_PGO_LTO = "fat"` first.
+
+```sh
+BENILLA_PGO_LTO=fat scripts/pgo-train.sh
+BENILLA_PGO_LTO=fat cargo play
 ```
 
 ### Development build
@@ -104,8 +133,9 @@ not the one to play on. It also finds a `WoW` link at the repository root. See
 | `WOW_CHAR` | Optional character name for automatic selection. |
 
 Player settings, screenshots, logs, and addons live under `benilla-config/` beside the binary
-(`target/release/benilla-config/`), or at the repository root for `cargo dev`. Place addons in
-`benilla-config/AddOns/`.
+(`target/play/benilla-config/` for `cargo play` and the training run,
+`target/release/benilla-config/` for `cargo ship`), or at the repository root for `cargo dev`.
+Place addons in `benilla-config/AddOns/`.
 
 ## Documentation
 
