@@ -132,7 +132,10 @@ pub fn sample_mat_anim(
     time: Res<Time>,
     hosts: Query<(&AnimationPlayer, &ModelAnimations)>,
     mut q: Query<&mut MatAnim>,
+    // One host's playing slot this frame, shared by its many animated batches.
+    mut played_by_host: Local<bevy::ecs::entity::EntityHashMap<Option<(usize, f32)>>>,
 ) {
+    played_by_host.clear();
     let now = time.elapsed_secs();
     // The scene clock in f64: a long-uptime f32 drifts whole milliseconds.
     let shared = time.elapsed_secs_f64();
@@ -141,10 +144,11 @@ pub fn sample_mat_anim(
             continue;
         }
         // A host with no player yet keeps its last slot at t = 0, a bind-posed model's pose.
-        let played = m
-            .host
-            .and_then(|h| hosts.get(h).ok())
-            .and_then(|(p, a)| playing_seq(p, a));
+        let played = m.host.and_then(|h| {
+            *played_by_host
+                .entry(h)
+                .or_insert_with(|| hosts.get(h).ok().and_then(|(p, a)| playing_seq(p, a)))
+        });
         let (seq, elapsed) = match played {
             Some((seq, t)) => {
                 m.seq = Some(seq);
