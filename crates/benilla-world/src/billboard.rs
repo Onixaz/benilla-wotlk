@@ -742,6 +742,55 @@ mod tests {
         );
     }
 
+    /// A card re-faced to a turning camera writes its global directly and its local without a
+    /// change mark: a marked local would send next frame's propagation to re-copy the same pose.
+    #[test]
+    fn a_refaced_card_leaves_its_local_unmarked() {
+        #[derive(Resource, Default)]
+        struct Marks {
+            local: u32,
+            global: u32,
+        }
+        fn probe(
+            cards: Query<(Ref<Transform>, Ref<GlobalTransform>), With<BillboardCard>>,
+            mut marks: ResMut<Marks>,
+        ) {
+            for (local, global) in &cards {
+                marks.local += u32::from(local.is_changed());
+                marks.global += u32::from(global.is_changed());
+            }
+        }
+        let mut app = App::new();
+        app.init_resource::<Time>();
+        app.init_resource::<Marks>();
+        app.add_systems(Update, (face_billboards, probe).chain());
+        let cam = app
+            .world_mut()
+            .spawn((crate::view::WorldCamera, GlobalTransform::IDENTITY))
+            .id();
+        let root = app
+            .world_mut()
+            .spawn(GlobalTransform::from_translation(Vec3::new(3.0, 1.5, 0.0)))
+            .id();
+        app.world_mut().spawn((
+            BillboardCard::frame_following(BillboardKind::Spherical, Vec3::ZERO, root),
+            Transform::IDENTITY,
+        ));
+        // The spawn frames mark both; count from the first turn on.
+        app.update();
+        app.update();
+        *app.world_mut().resource_mut::<Marks>() = Marks::default();
+        for turn in 1..=3u8 {
+            *app.world_mut().get_mut::<GlobalTransform>(cam).unwrap() = GlobalTransform::from(
+                Transform::from_rotation(Quat::from_rotation_y(0.3 * f32::from(turn))),
+            );
+            app.update();
+        }
+        let marks = app.world().resource::<Marks>();
+        assert_eq!(marks.global, 3, "each turn re-faces the card");
+        assert_eq!(marks.local, 0, "the local is written without a change mark");
+    }
+
     #[test]
     fn a_card_born_on_a_still_frame_is_placed() {
         use benilla_assets::coords::wow_to_bevy;
