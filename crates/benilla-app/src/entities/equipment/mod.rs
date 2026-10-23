@@ -299,3 +299,50 @@ pub(in crate::entities) fn ensure_item_model(
     };
     held.models.insert((display, kind), dm);
 }
+
+#[cfg(test)]
+mod item_display_tests {
+    use bevy::prelude::*;
+
+    use super::super::display::empty_display;
+    use super::{ensure_item_model_mut, ItemDisplays, ItemModelKind};
+
+    /// What each frame's resolver saw of the resource's change flag.
+    #[derive(Resource, Default)]
+    struct Seen(Vec<bool>);
+
+    fn resolve_present(
+        mut held: ResMut<ItemDisplays>,
+        assets: Res<AssetServer>,
+        mut seen: ResMut<Seen>,
+    ) {
+        ensure_item_model_mut(&mut held, 900, ItemModelKind::Weapon, &assets);
+        seen.0.push(held.is_changed());
+    }
+
+    /// A resolver asking for a model already present reads it, so `ItemDisplays` reads as changed
+    /// only when a model is added: the settled-wearer skip in `attach_held_items` keys on it.
+    #[test]
+    fn a_present_item_model_leaves_item_displays_unchanged() {
+        let mut displays = ItemDisplays::icons_for_tests(
+            benilla_formats::ItemDisplayCatalog::from_displays(std::collections::HashMap::new()),
+        );
+        displays
+            .models
+            .insert((900, ItemModelKind::Weapon), empty_display());
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()));
+        app.insert_resource(displays);
+        app.init_resource::<Seen>();
+        app.add_systems(Update, resolve_present);
+        for _ in 0..3 {
+            app.update();
+        }
+        let seen = &app.world().resource::<Seen>().0;
+        assert_eq!(seen.len(), 3);
+        assert!(
+            !seen[1] && !seen[2],
+            "a present model marks nothing after the insert frame: {seen:?}"
+        );
+    }
+}
