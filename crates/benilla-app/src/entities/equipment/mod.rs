@@ -225,6 +225,20 @@ pub(crate) const ATTACH_SLOT_NAMES: [&str; ATTACH_SLOTS] = [
 /// (`0x47a200`) and the ranged and ammo builder pass the display's visual.
 const NO_GLOW: i32 = 0;
 
+/// [`ensure_item_model`] through the resource's change-detected handle: a model already present is
+/// found by a plain read, so `ItemDisplays` reads as changed only when a model is added.
+pub(in crate::entities) fn ensure_item_model_mut(
+    held: &mut ResMut<ItemDisplays>,
+    display: u32,
+    kind: ItemModelKind,
+    asset_server: &AssetServer,
+) {
+    if held.models.contains_key(&(display, kind)) {
+        return;
+    }
+    ensure_item_model(held, display, kind, asset_server);
+}
+
 /// Ensure `display` has a [`DisplayModel`] for `kind`; its texture is the BLP the display row
 /// names, never derived from the model name.
 pub(in crate::entities) fn ensure_item_model(

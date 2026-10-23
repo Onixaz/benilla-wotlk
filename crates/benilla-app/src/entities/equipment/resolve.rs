@@ -12,7 +12,7 @@ use crate::net::{NetCommands, NetEntity, ObjectStore};
 use super::super::item_glow::{self, ItemGlows};
 use super::super::Creatures;
 use super::{
-    attach_id, ensure_item_model, DisarmFreeze, Equipment, HeldItems, HeldSlot, ItemDisplays,
+    attach_id, ensure_item_model_mut, DisarmFreeze, Equipment, HeldItems, HeldSlot, ItemDisplays,
     ItemModelKind, ATTACH_SLOTS, COMPOSITE_SLOTS, HELD_SLOTS, NO_GLOW, PLAYER_HELD_SLOTS,
 };
 
@@ -379,7 +379,7 @@ pub(in crate::entities) fn resolve_equipment(
             let Some(attach) = attach else {
                 continue;
             };
-            ensure_item_model(&mut held, display, kind, &asset_server);
+            ensure_item_model_mut(&mut held, display, kind, &asset_server);
             let enchants = (net_entity.kind == EntityKind::Player).then(|| {
                 // All seven `CGItem` slots (`0x62ec70`); 1.12 sends two, PERM and TEMP.
                 (0..7u8).filter_map(|j| s.player_visible_item_enchant(PLAYER_HELD_SLOTS[slot], j))
@@ -420,7 +420,7 @@ pub(in crate::entities) fn resolve_equipment(
             nocked,
             ammo_attach(ranged_inv_type, nock_latched),
         ) {
-            ensure_item_model(
+            ensure_item_model_mut(
                 &mut held,
                 ammo.display_id,
                 ItemModelKind::Ammo,
@@ -468,7 +468,7 @@ pub(in crate::entities) fn resolve_equipment(
                 }
             }
             if let Some(display) = quiver_display {
-                ensure_item_model(&mut held, display, ItemModelKind::Quiver, &asset_server);
+                ensure_item_model_mut(&mut held, display, ItemModelKind::Quiver, &asset_server);
                 slots[7] = Some(HeldSlot {
                     display,
                     kind: ItemModelKind::Quiver,
@@ -505,7 +505,7 @@ pub(in crate::entities) fn resolve_equipment(
         if let Some((helm, shoulder, race, sex)) = head_shoulder {
             if helm != 0 {
                 let kind = ItemModelKind::Helm { race, sex };
-                ensure_item_model(&mut held, helm, kind, &asset_server);
+                ensure_item_model_mut(&mut held, helm, kind, &asset_server);
                 slots[3] = Some(HeldSlot {
                     display: helm,
                     kind,
@@ -518,7 +518,7 @@ pub(in crate::entities) fn resolve_equipment(
                     (ItemModelKind::ShoulderLeft, attach_id::SHOULDER_LEFT, 4),
                     (ItemModelKind::ShoulderRight, attach_id::SHOULDER_RIGHT, 5),
                 ] {
-                    ensure_item_model(&mut held, shoulder, kind, &asset_server);
+                    ensure_item_model_mut(&mut held, shoulder, kind, &asset_server);
                     slots[idx] = Some(HeldSlot {
                         display: shoulder,
                         kind,
@@ -623,7 +623,7 @@ pub(in crate::entities) fn resolve_corpse_equipment(
             let (race, sex) = (look.race, look.sex.min(1));
             if eq.helm != 0 {
                 let kind = ItemModelKind::Helm { race, sex };
-                ensure_item_model(&mut held, eq.helm, kind, &asset_server);
+                ensure_item_model_mut(&mut held, eq.helm, kind, &asset_server);
                 slots[3] = Some(HeldSlot {
                     display: eq.helm,
                     kind,
@@ -637,7 +637,7 @@ pub(in crate::entities) fn resolve_corpse_equipment(
                     (ItemModelKind::ShoulderLeft, attach_id::SHOULDER_LEFT, 4),
                     (ItemModelKind::ShoulderRight, attach_id::SHOULDER_RIGHT, 5),
                 ] {
-                    ensure_item_model(&mut held, shoulder, kind, &asset_server);
+                    ensure_item_model_mut(&mut held, shoulder, kind, &asset_server);
                     slots[idx] = Some(HeldSlot {
                         display: shoulder,
                         kind,
