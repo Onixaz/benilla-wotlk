@@ -630,6 +630,9 @@ pub(crate) struct AnimDriver {
     /// short kick, its mechanism open: the reference's blend source keeps running, so it stays
     /// scoped to the airborne cut.
     frozen: Option<bevy::animation::graph::AnimationNodeIndex>,
+    /// The main node's clip index, so the per-frame rate sync skips the clip search; checked
+    /// against the clip's own node before use, as each node belongs to one clip.
+    rate_clip: Option<(bevy::animation::graph::AnimationNodeIndex, usize)>,
 }
 
 impl AnimDriver {
@@ -708,6 +711,7 @@ impl Default for AnimDriver {
             mount_display: 0,
             last_special: None,
             frozen: None,
+            rate_clip: None,
         }
     }
 }

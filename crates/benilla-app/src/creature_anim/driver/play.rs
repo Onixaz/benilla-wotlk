@@ -223,10 +223,19 @@ pub(super) fn sync_base_rate(
     };
     if drv.frozen != Some(node) {
         drv.frozen = None;
-        if let Some(rate) = anims
-            .clips
-            .iter()
-            .find(|c| c.node == node)
+        let index = match drv
+            .rate_clip
+            .filter(|&(n, i)| n == node && anims.clips.get(i).is_some_and(|c| c.node == node))
+        {
+            Some((_, i)) => Some(i),
+            None => {
+                let i = anims.clips.iter().position(|c| c.node == node);
+                drv.rate_clip = i.map(|i| (node, i));
+                i
+            }
+        };
+        if let Some(rate) = index
+            .map(|i| &anims.clips[i])
             .and_then(|c| select::scaled_rate(c, speed, model_scale))
         {
             if let Some(active) = player.animation_mut(node) {
