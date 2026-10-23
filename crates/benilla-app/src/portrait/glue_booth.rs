@@ -504,10 +504,47 @@ fn custom_rig(set: &[benilla_ui::widget::ModelLight], scene: SceneRig) -> SceneR
 /// stands for all three; the stock `SetLighting` adds the same lights to all three sets.
 fn stage_rig(model: &[benilla_assets::ModelLight], lights: &PaneLights, ghost: bool) -> SceneRig {
     let set = &lights[1][usize::from(ghost)];
-    match (ghost, set.is_empty()) {
+    sun_fold(match (ghost, set.is_empty()) {
         (true, true) => ghost_rig(),
         (_, true) => scene_rig(model),
         (_, false) => custom_rig(set, scene_rig(model)),
+    })
+}
+
+/// Fold a rig's directionals into the one sun a model's shader receives: `CM2Lighting::AddDiffuse`
+/// (`0x834dc0`) sums each light's travel direction per colour channel and weighted by luminance,
+/// `SetupSunlight` (`0x835280`) takes the sun along the luminance sum (straight down with none),
+/// its diffuse `1.25·proj − 0.25·sum` and adds `0.25·(sum − proj)` to the ambient, and
+/// `CShaderEffect::SetLocalLighting` (`0x873ca0`) caps the diffuse at 1 for the vertex constants
+/// `c10`-`c12`. One light folds to itself; opposed lights cancel.
+fn sun_fold(rig: SceneRig) -> SceneRig {
+    let lum = |c: [f32; 3]| 0.212671 * c[0] + 0.71516 * c[1] + 0.072169 * c[2];
+    let (mut per_channel, mut weighted, mut sum) = ([Vec3::ZERO; 3], Vec3::ZERO, [0.0f32; 3]);
+    for &(to_light, color) in &rig.lobes {
+        let travel = -to_light.normalize_or_zero();
+        for c in 0..3 {
+            per_channel[c] += travel * color[c];
+            sum[c] += color[c];
+        }
+        weighted += travel * lum(color);
+    }
+    // `SetupSunlight`'s threshold on the squared length, then its default.
+    let travel = if weighted.length_squared() <= 0.00001 {
+        benilla_assets::coords::wow_to_bevy([0.0, 0.0, -1.0])
+    } else {
+        weighted.normalize()
+    };
+    let mut ambient = rig.ambient;
+    let mut diffuse = [0.0f32; 3];
+    for c in 0..3 {
+        let proj = travel.dot(per_channel[c]);
+        diffuse[c] = (1.25 * proj - 0.25 * sum[c]).min(1.0);
+        ambient[c] += 0.25 * (sum[c] - proj);
+    }
+    SceneRig {
+        ambient,
+        lobes: vec![(-travel, diffuse)],
+        points: rig.points,
     }
 }
 
@@ -2138,7 +2175,7 @@ mod tests {
             pane_light([0.0, 0.0, -1.0], 0.15, [0.0; 3]),
             pane_light([0.6, -0.8, 0.0], 0.0, [1.1, 0.68, 0.3]),
         ];
-        let rig = stage_rig(&model, &lights, false);
+        let rig = custom_rig(&lights[1][0], scene_rig(&model));
         assert_eq!(rig.ambient, [0.15; 3], "the scene's 0.27 ambient is gone");
         assert_eq!(
             rig.lobes,
@@ -2154,7 +2191,8 @@ mod tests {
             ]
         );
         assert_eq!(rig.points, scene_rig(&model).points, "the lamp stays");
-        // With no set the scene lights itself.
+        assert_eq!(stage_rig(&model, &lights, false).points, rig.points);
+        // With no set the scene lights itself; one directional folds to itself.
         let own = stage_rig(&model, &PaneLights::default(), false);
         assert_eq!(own.ambient, [0.27; 3]);
         assert_eq!(own.lobes.len(), 1);
@@ -2183,8 +2221,59 @@ mod tests {
         off[1][0] = vec![benilla_ui::widget::ModelLight::default()];
         let dark = stage_rig(&model, &off, false);
         assert_eq!(dark.ambient, [0.0; 3]);
-        assert!(dark.lobes.is_empty());
+        assert!(
+            dark.lobes.iter().all(|(_, c)| *c == [0.0; 3]),
+            "{:?}",
+            dark.lobes
+        );
         assert_eq!(dark.points.len(), 1);
+    }
+
+    /// `SetupSunlight` (`0x835280`): one light is its own sun; two opposed lights of one colour
+    /// cancel into ambient; a key and a weaker fill split `1.25·proj − 0.25·sum`, the remainder a
+    /// quarter to the ambient, the diffuse capped at 1.
+    #[test]
+    fn the_sun_fold_is_setup_sunlight() {
+        let close = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5);
+        let one = sun_fold(SceneRig {
+            ambient: [0.1; 3],
+            lobes: vec![(Vec3::Y, [0.6, 0.5, 0.4])],
+            points: Vec::new(),
+        });
+        assert_eq!(one.lobes.len(), 1);
+        assert!(one.lobes[0].0.abs_diff_eq(Vec3::Y, 1e-6));
+        assert!(close(one.lobes[0].1, [0.6, 0.5, 0.4]), "{:?}", one.lobes);
+        assert!(close(one.ambient, [0.1; 3]), "{:?}", one.ambient);
+
+        let opposed = sun_fold(SceneRig {
+            ambient: [0.0; 3],
+            lobes: vec![(Vec3::X, [0.8; 3]), (Vec3::NEG_X, [0.8; 3])],
+            points: Vec::new(),
+        });
+        // No luminance direction: the sun defaults straight down with diffuse −0.25·1.6.
+        assert!(
+            opposed.lobes[0].0.abs_diff_eq(Vec3::Y, 1e-6),
+            "{:?}",
+            opposed.lobes
+        );
+        assert!(close(opposed.lobes[0].1, [-0.4; 3]));
+        assert!(close(opposed.ambient, [0.4; 3]));
+
+        let split = sun_fold(SceneRig {
+            ambient: [0.0; 3],
+            lobes: vec![(Vec3::X, [1.0; 3]), (Vec3::NEG_X, [0.5; 3])],
+            points: Vec::new(),
+        });
+        // proj = 1 − 0.5 = 0.5, sum 1.5: diffuse 0.625 − 0.375, ambient 0.25·(1.5 − 0.5).
+        assert!(split.lobes[0].0.abs_diff_eq(Vec3::X, 1e-6));
+        assert!(close(split.lobes[0].1, [0.25; 3]), "{:?}", split.lobes);
+        assert!(close(split.ambient, [0.25; 3]));
+        let capped = sun_fold(SceneRig {
+            ambient: [0.0; 3],
+            lobes: vec![(Vec3::X, [2.0; 3])],
+            points: Vec::new(),
+        });
+        assert!(close(capped.lobes[0].1, [1.0; 3]), "capped at 1");
     }
 
     /// The rig fold (`0x834f60`): directionals sum ambient and become lobes along bone +Z (never
