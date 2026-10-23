@@ -140,6 +140,10 @@ pub(in crate::entities) fn attach_held_items(
             body_center: body_center.map(|c| c.0),
             scale: unit_tf.map_or(1.0, |t| t.scale.max_element()),
         };
+        // Settled: every slot is applied, and readiness only moves when a model builds.
+        if !held.is_changed() && attached.as_ref().is_some_and(|a| a.applied == *items) {
+            continue;
+        }
         // A slot whose model has not built stays unapplied, and attaches once it has.
         let mut next = items.clone();
         for slot in next.slots.iter_mut() {
