@@ -1328,8 +1328,7 @@ fn equip_slot(item_id: u32, name: &str) -> benilla_ui::script::InvSlotView {
         count: 1,
         quality: 2,
         name: Some(name.to_string()),
-        // Full durability: the setter fires `UPDATE_INVENTORY_ALERTS`, and a worn item would light
-        // DurabilityFrame.
+        // Full durability: a worn item would light DurabilityFrame.
         durability: Some((100, 100)),
         link: Some(format!("|cff1eff00|Hitem:{item_id}:0:0:0|h[{name}]|h|r")),
         ..Default::default()

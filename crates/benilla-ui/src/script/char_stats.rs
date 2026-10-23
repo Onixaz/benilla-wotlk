@@ -244,8 +244,8 @@ pub struct InvSlotView {
     pub name: Option<String>,
     /// Live durability `(current, max)`, the tooltip's "Durability X / Y" line.
     pub durability: Option<(u32, u32)>,
-    /// `ITEM_FIELD_FLAGS`; the alert recompute `0x4c7ee0` reads two bits: `0x10` force-red
-    /// (status 4) and `0x08` wrapped (no durability alert).
+    /// `ITEM_FIELD_FLAGS`; the alert recompute `0x5e8fe0` reads two bits: `0x10` force-red
+    /// (status 2) and `0x08` wrapped (no durability alert).
     pub flags: u32,
     /// Bound at runtime (`0x5da2c0`): `ITEM_FIELD_FLAGS & 1`, or an enchant whose
     /// `SpellItemEnchantment` row binds. The tooltip's bind line then says Soulbound.
@@ -317,44 +317,48 @@ const SLOT_INFO: [(&str, i64, &str); 36] = [
     ("Bag12", 75, "Bag"),
 ];
 
-/// The client's 12 durability-alert regions (`0x806eb8`) as live slot ids: stock's 11
+/// The client's 12 durability-alert regions (`0xa1ce4c`) as live slot ids: stock's 11
 /// `INVENTORY_ALERT_STATUS_SLOTS` (`DurabilityFrame.lua:2-12`), then low ammo, which the client
 /// table holds as slot -1 and we as the ammo view, slot 0.
 const ALERT_SLOTS: [usize; 12] = [1, 3, 5, 6, 7, 8, 9, 10, 16, 17, 18, 0];
 
-/// Broken for the doll's red tint, from `0x4c7ee0`'s bits: never when wrapped (`0x08`), else when
-/// force-red (`0x10`) or at durability 0 of a nonzero max.
+/// `GetInventoryAlertStatus` 1, yellow at `INVENTORY_ALERT_COLORS[1]` (`DurabilityFrame.lua:15`).
+const ALERT_DAMAGED: u8 = 1;
+/// `GetInventoryAlertStatus` 2, red at `INVENTORY_ALERT_COLORS[2]` (`DurabilityFrame.lua:16`).
+const ALERT_BROKEN: u8 = 2;
+/// The tutorials the alert recompute raises (`0x5e909c`, `0x5e90b7`), 0-based.
+const TUTORIAL_BROKEN: u32 = 0x24;
+const TUTORIAL_DAMAGED: u32 = 0x23;
+
+/// `GetInventoryItemBroken` (`0x5e9d80`): durability 0 of a nonzero max, never when wrapped
+/// (`0x08`); the force-red bit is the alert's alone.
 fn slot_is_broken(v: &InvSlotView) -> bool {
-    if v.item_id == 0 || v.flags & 0x08 != 0 {
-        return false;
-    }
-    v.flags & 0x10 != 0 || matches!(v.durability, Some((0, max)) if max > 0)
+    v.item_id != 0 && v.flags & 0x08 == 0 && matches!(v.durability, Some((0, max)) if max > 0)
 }
 
-/// One region's `GetInventoryAlertStatus` (`0x4c7ee0`): 4 when force-red or broken, 3 with 1..=5
-/// durability points left (an absolute count, not a percentage), else 0. Statuses 1 and 2, the
-/// temporary-enchant alerts, are not fed; stock gives them no color (`DurabilityFrame.lua:18-19`).
-fn alert_status(slot: &Option<InvSlotView>) -> u8 {
+/// One region's status and tutorial (`0x5e8fe0`): 2 when force-red (no tutorial) or broken, 1
+/// with 1..=5 durability points left (an absolute count, not a percentage), else 0.
+fn alert_status(slot: &Option<InvSlotView>) -> (u8, Option<u32>) {
     let Some(v) = slot.as_ref().filter(|v| v.item_id != 0) else {
-        return 0;
+        return (0, None);
     };
     if v.flags & 0x10 != 0 {
-        return 4;
+        return (ALERT_BROKEN, None);
     }
     if v.flags & 0x08 != 0 {
-        return 0;
+        return (0, None);
     }
     match v.durability {
-        Some((0, max)) if max > 0 => 4,
-        Some((1..=5, max)) if max > 0 => 3,
-        _ => 0,
+        Some((0, max)) if max > 0 => (ALERT_BROKEN, Some(TUTORIAL_BROKEN)),
+        Some((1..=5, max)) if max > 0 => (ALERT_DAMAGED, Some(TUTORIAL_DAMAGED)),
+        _ => (0, None),
     }
 }
 
-/// The low-ammo region (`0x4c7ee0`'s slot -1 arm): 3 when the carried ammo is 20 or fewer, else 0.
+/// The low-ammo region (`0x5e8fe0`'s slot -1 arm): 1 when the carried ammo is 20 or fewer, else 0.
 fn ammo_alert_status(slot: &Option<InvSlotView>) -> u8 {
     match slot.as_ref().filter(|v| v.item_id != 0) {
-        Some(v) if v.count <= 20 => 3,
+        Some(v) if v.count <= 20 => ALERT_DAMAGED,
         _ => 0,
     }
 }
@@ -370,16 +374,16 @@ impl super::UiScript {
         set_field!(self, pet_combat_stats, stats);
     }
 
-    /// Push the doll snapshot, recompute the 12 alert statuses and fire `UPDATE_INVENTORY_ALERTS`.
+    /// Push the doll snapshot and run the alert recompute with its events.
     pub fn set_inventory_slots(&mut self, slots: InventorySlots) {
-        {
+        let changed = {
             let mut model = self.model_mut();
             model.inventory_slots = slots;
-            recompute_inventory_alerts(&mut model);
+            recompute_inventory_alerts(&mut model)
+        };
+        for event in alert_events(changed) {
+            self.fire_event(event, vec![]);
         }
-        // Every recompute fires it, never diffed against the last (`0x4c7ee0`); the app pushes
-        // only on a real change.
-        self.fire_event("UPDATE_INVENTORY_ALERTS", vec![]);
     }
 
     /// Push the six bank-bag slots. The caller fires `PLAYERBANKSLOTS_CHANGED` for a changed item:
@@ -403,17 +407,31 @@ impl super::UiScript {
     }
 }
 
-/// The 12 alert statuses off the doll snapshot (`0x4c7ee0`'s recompute), without the event.
-pub(super) fn recompute_inventory_alerts(model: &mut Model) {
-    let slots = &model.inventory_slots;
-    let alerts: [u8; 12] = std::array::from_fn(|i| {
-        if i == 11 {
-            ammo_alert_status(&slots[ALERT_SLOTS[i]])
+/// The 12 alert statuses off the doll snapshot (`0x5e90d0`), queuing each region's tutorial;
+/// whether any status changed.
+pub(super) fn recompute_inventory_alerts(model: &mut Model) -> bool {
+    let mut alerts = [0u8; 12];
+    for (i, &slot) in ALERT_SLOTS.iter().enumerate() {
+        alerts[i] = if i == 11 {
+            ammo_alert_status(&model.inventory_slots[slot])
         } else {
-            alert_status(&slots[ALERT_SLOTS[i]])
-        }
-    });
+            let (status, tutorial) = alert_status(&model.inventory_slots[slot]);
+            model.tutorial_triggers.extend(tutorial);
+            status
+        };
+    }
+    let changed = alerts != model.inventory_alerts;
     model.inventory_alerts = alerts;
+    changed
+}
+
+/// The recompute's events (`0x5e90d0`): `UPDATE_INVENTORY_ALERTS` only on a changed status, then
+/// `UPDATE_INVENTORY_DURABILITY` every time.
+pub(super) fn alert_events(changed: bool) -> impl Iterator<Item = &'static str> {
+    changed
+        .then_some("UPDATE_INVENTORY_ALERTS")
+        .into_iter()
+        .chain(["UPDATE_INVENTORY_DURABILITY"])
 }
 
 fn with_unit_stats<T>(

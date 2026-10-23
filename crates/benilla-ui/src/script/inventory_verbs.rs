@@ -5,7 +5,7 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::number_arg;
-use super::char_stats::{inventory_slot_reader_accepts, recompute_inventory_alerts};
+use super::char_stats::{alert_events, inventory_slot_reader_accepts, recompute_inventory_alerts};
 use super::container::UiCursorMode;
 use super::region::{clear_texture, this_texture};
 
@@ -99,17 +99,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UpdateInventoryAlertStatus() (`0x4c9560`): the alert recompute (`0x4c7ee0`), which fires
-    // UPDATE_INVENTORY_ALERTS unconditionally; zero returns. Stock calls it when the durability
-    // figure's enchant timer runs out (`DurabilityFrame.lua:81`).
+    // UpdateInventoryAlertStatus() (`0x5eac00`): the alert recompute (`0x5e90d0`) and its events;
+    // zero returns.
     g.set(
         "UpdateInventoryAlertStatus",
         lua.create_function(|lua, ()| {
             let mut model = crate::script::model_mut_of(lua);
-            recompute_inventory_alerts(&mut model);
-            model
-                .pending_events
-                .push(("UPDATE_INVENTORY_ALERTS".to_string(), Vec::new()));
+            let changed = recompute_inventory_alerts(&mut model);
+            for event in alert_events(changed) {
+                model.pending_events.push((event.to_string(), Vec::new()));
+            }
             Ok(MultiValue::new())
         })?,
     )?;
@@ -333,13 +332,14 @@ mod tests {
     }
 
     #[test]
-    fn update_inventory_alert_status_fires_the_recompute_event() {
+    fn update_inventory_alert_status_fires_alerts_on_a_change_and_durability_always() {
         let mut s = UiScript::new().unwrap();
         s.run(
-            r#"ALERTS = 0
+            r#"SEEN = {}
                local f = CreateFrame("Frame")
                f:RegisterEvent("UPDATE_INVENTORY_ALERTS")
-               f:SetScript("OnEvent", function() ALERTS = ALERTS + 1 end)"#,
+               f:RegisterEvent("UPDATE_INVENTORY_DURABILITY")
+               f:SetScript("OnEvent", function() SEEN[event] = (SEEN[event] or 0) + 1 end)"#,
         )
         .unwrap();
         assert_eq!(
@@ -349,8 +349,27 @@ mod tests {
             .unwrap(),
             0
         );
+        s.tick(0.0);
+        let counts = |s: &UiScript| {
+            s.eval::<(i64, i64)>(
+                "return SEEN.UPDATE_INVENTORY_ALERTS or 0, SEEN.UPDATE_INVENTORY_DURABILITY or 0",
+            )
+            .unwrap()
+        };
+        // Nothing equipped: every status stays 0, so only the durability event.
+        assert_eq!(counts(&s), (0, 1));
+
+        // The model behind the verb, a broken helm seated without the setter's own recompute.
+        s.model_mut().inventory_slots[1] = Some(InvSlotView {
+            item_id: 7,
+            durability: Some((0, 40)),
+            ..Default::default()
+        });
         s.run("UpdateInventoryAlertStatus()").unwrap();
         s.tick(0.0);
-        assert_eq!(s.eval::<i64>("return ALERTS").unwrap(), 2);
+        assert_eq!(counts(&s), (1, 2));
+        s.run("UpdateInventoryAlertStatus()").unwrap();
+        s.tick(0.0);
+        assert_eq!(counts(&s), (1, 3));
     }
 }

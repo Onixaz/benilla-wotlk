@@ -1,36 +1,23 @@
-//! The durability figure: stock `DurabilityFrame.lua` over the engine's `GetInventoryAlertStatus`.
+//! The durability figure: stock `DurabilityFrame.lua` over the engine's `GetInventoryAlertStatus`,
+//! in the whole production interface (the layer's re-seat in `FrameXMLFixes.xml` included).
 
-use super::test_ui::load_ui as load_xml;
-use benilla_ui::script::{
-    InvSlotView, InventorySlots, ItemTemplateView, QuadContent, ScriptValue, UiScript,
-};
+use benilla_ui::script::{InvSlotView, InventorySlots, ItemTemplateView, UiScript};
 
 fn harness() -> UiScript {
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for f in [
-        "Interface\\FrameXML\\GlobalStrings.lua",
-        "Interface\\FrameXML\\Fonts.xml",
-        "Interface\\FrameXML\\BasicControls.xml",
-        "Interface\\FrameXML\\LocaleProperties.lua",
-        r"Interface\FrameXML\UIParent.xml",
-        r"Interface\FrameXML\MoneyFrame.lua",
-        r"Interface\FrameXML\MoneyFrame.xml",
-        "Interface\\FrameXML\\GameTooltip.xml",
-        "Interface\\FrameXML\\UIDropDownMenu.xml",
-        r"Interface\FrameXML\UIPanelTemplates.lua",
-        r"Interface\FrameXML\UIPanelTemplates.xml",
-        "Interface\\FrameXML\\StaticPopup.xml",
-        "Interface\\FrameXML\\BattlefieldFrame.xml",
-        "Interface\\FrameXML\\Minimap.xml",
-        "Interface\\FrameXML\\DurabilityFrame.xml",
-    ] {
-        load_xml(&s, f);
-    }
-    // Deviation: the seat refreshes on every alert recompute, because the stock one goes stale
-    // when a side glyph appears while shown and hangs the shield off the screen edge. The layer
-    // installs this after every stock file.
-    load_xml(&s, "FrameXMLFixes.xml");
+    super::test_ui::load_stock_ui(&mut s);
+    s.run(
+        r#"ALERT_EVENTS = {}
+           local f = CreateFrame("Frame")
+           f:RegisterEvent("UPDATE_INVENTORY_ALERTS")
+           f:RegisterEvent("UPDATE_INVENTORY_DURABILITY")
+           f:SetScript("OnEvent", function(_, e) ALERT_EVENTS[e] = (ALERT_EVENTS[e] or 0) + 1 end)"#,
+    )
+    .unwrap();
+    // The frame is authored shown; its `PLAYER_ENTERING_WORLD` arm runs `SetAlerts`, which hides it.
+    s.run("DurabilityFrame:GetScript('OnEvent')(DurabilityFrame, 'PLAYER_ENTERING_WORLD')")
+        .unwrap();
     s
 }
 
@@ -44,87 +31,89 @@ fn slot(item_id: u32, durability: Option<(u32, u32)>) -> Option<InvSlotView> {
     })
 }
 
-/// The painted colour of the shown quad that samples this `<TexCoords>` cell. The weapon and
-/// off-weapon glyphs share a cell but never show together.
-fn cell_color(s: &mut UiScript, cell: [f32; 4]) -> Option<[f32; 4]> {
-    s.resolve();
-    s.extract().iter().find_map(|q| match &q.content {
-        QuadContent::Texture {
-            tex_coords: Some(tc),
-            color,
-            ..
-        } if tc
-            .edges()
-            .iter()
-            .zip(cell)
-            .all(|(a, b)| (a - b).abs() < 1e-4) =>
-        {
-            Some(color.unwrap_or([1.0, 1.0, 1.0, 1.0]))
-        }
-        _ => None,
-    })
+fn shown(s: &UiScript, frame: &str) -> bool {
+    s.eval::<bool>(&format!("return {frame}:IsShown() and true or false"))
+        .unwrap()
 }
 
-const HEAD_CELL: [f32; 4] = [0.0, 0.140625, 0.0, 0.171875];
-const LEGS_CELL: [f32; 4] = [0.46875, 0.6875, 0.171875, 0.3203125];
-const WEAPON_CELL: [f32; 4] = [0.0, 0.140625, 0.3203125, 0.6640625];
-const SHIELD_CELL: [f32; 4] = [0.1875, 0.375, 0.3203125, 0.5546875];
+fn vertex_color(s: &UiScript, texture: &str) -> [f32; 4] {
+    let (r, g, b, a): (f32, f32, f32, f32) = s
+        .eval(&format!("return {texture}:GetVertexColor()"))
+        .unwrap();
+    [r, g, b, a]
+}
 
-const RED: [f32; 4] = [0.93, 0.07, 0.07, 1.0];
-const YELLOW: [f32; 4] = [1.0, 0.82, 0.18, 1.0];
+/// Stock's tint for an alert status (`DurabilityFrame.lua:14-16`), opaque as `SetAlerts` paints it.
+fn alert_color(s: &UiScript, status: u8) -> [f32; 4] {
+    let (r, g, b): (f32, f32, f32) = s
+        .eval(&format!(
+            "local c = INVENTORY_ALERT_COLORS[{status}] return c.r, c.g, c.b"
+        ))
+        .unwrap();
+    [r, g, b, 1.0]
+}
 
-/// `DurabilityFrame_SetAlerts`: one body alert shows every body piece, the rest faded white.
+fn near(a: [f32; 4], b: [f32; 4]) -> bool {
+    a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-3)
+}
+
+fn alert_events(s: &UiScript) -> (i64, i64) {
+    s.eval(
+        "return ALERT_EVENTS.UPDATE_INVENTORY_ALERTS or 0, \
+                ALERT_EVENTS.UPDATE_INVENTORY_DURABILITY or 0",
+    )
+    .unwrap()
+}
+
+/// `DurabilityFrame_SetAlerts`: one body alert shows every body piece, the rest faded white; the
+/// statuses are 12340's 1 and 2 (`0x5e8fe0`), the indices of stock's color table.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn armor_guy_shows_red_broken_yellow_damaged_and_hides_clean() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
-    // The frame is authored shown; `PLAYER_ENTERING_WORLD` runs `SetAlerts`, which hides it.
-    s.fire_event("PLAYER_ENTERING_WORLD", vec![ScriptValue::Str("".into())]);
-    assert!(
-        !s.eval::<bool>("return DurabilityFrame:IsShown()").unwrap(),
-        "clean gear → no armor guy"
-    );
+    assert!(!shown(&s, "DurabilityFrame"), "clean gear → no armor guy");
 
     let mut inv: InventorySlots = Default::default();
     inv[16] = slot(25, Some((0, 20)));
     s.set_inventory_slots(inv);
     assert!(s.errors().is_empty(), "alert errors: {:?}", s.errors());
-    assert!(
-        s.eval::<bool>("return DurabilityFrame:IsShown() and DurabilityWeapon:IsShown()")
-            .unwrap(),
-        "a broken weapon shows the frame + its glyph"
+    assert_eq!(
+        s.eval::<i64>("return GetInventoryAlertStatus(9)").unwrap(),
+        2
     );
     assert!(
-        !s.eval::<bool>("return DurabilityHead:IsShown()").unwrap(),
+        shown(&s, "DurabilityFrame") && shown(&s, "DurabilityWeapon"),
+        "a broken weapon shows the frame and its glyph"
+    );
+    assert!(
+        !shown(&s, "DurabilityHead"),
         "no body alert → the body stays hidden"
     );
-    assert_eq!(cell_color(&mut s, WEAPON_CELL), Some(RED), "broken → red");
+    assert!(near(
+        vertex_color(&s, "DurabilityWeapon"),
+        alert_color(&s, 2)
+    ));
 
-    // Legs at 3 points: damaged is an absolute 1..=5 points left (`0x4c8012`).
+    // Legs at 3 points: damaged is an absolute 1..=5 points left (`0x5e90b2`).
     let mut inv: InventorySlots = Default::default();
     inv[7] = slot(39, Some((3, 25)));
     s.set_inventory_slots(inv);
+    assert_eq!(
+        s.eval::<i64>("return GetInventoryAlertStatus(5)").unwrap(),
+        1
+    );
     assert!(
-        s.eval::<bool>(
-            "return DurabilityFrame:IsShown() and DurabilityLegs:IsShown() and DurabilityHead:IsShown()"
-        )
-        .unwrap(),
+        shown(&s, "DurabilityFrame") && shown(&s, "DurabilityLegs") && shown(&s, "DurabilityHead"),
         "one body alert shows the whole body"
     );
     assert!(
-        !s.eval::<bool>("return DurabilityWeapon:IsShown()").unwrap(),
+        !shown(&s, "DurabilityWeapon"),
         "the repaired weapon glyph hides"
     );
-    assert_eq!(
-        cell_color(&mut s, LEGS_CELL),
-        Some(YELLOW),
-        "damaged → yellow"
-    );
-    assert_eq!(
-        cell_color(&mut s, HEAD_CELL),
-        Some([1.0, 1.0, 1.0, 0.5]),
-        "un-alerted body piece rides faded white"
+    assert!(near(vertex_color(&s, "DurabilityLegs"), alert_color(&s, 1)));
+    assert!(
+        near(vertex_color(&s, "DurabilityHead"), [1.0, 1.0, 1.0, 0.5]),
+        "an un-alerted body piece rides faded white"
     );
 
     // Absolute, not a ratio: 5 of 100 is damaged, 6 of 20 is not.
@@ -132,27 +121,25 @@ fn armor_guy_shows_red_broken_yellow_damaged_and_hides_clean() {
     inv[7] = slot(39, Some((5, 100)));
     s.set_inventory_slots(inv);
     assert!(
-        s.eval::<bool>("return DurabilityFrame:IsShown()").unwrap(),
-        "5 points left is damaged at ANY max (absolute law)"
+        shown(&s, "DurabilityFrame"),
+        "5 points left is damaged at any max"
     );
     let mut inv: InventorySlots = Default::default();
     inv[7] = slot(39, Some((6, 20)));
     s.set_inventory_slots(inv);
     assert!(
-        !s.eval::<bool>("return DurabilityFrame:IsShown()").unwrap(),
-        "6 points left is never damaged (absolute law, no percentage)"
+        !shown(&s, "DurabilityFrame"),
+        "6 points left is never damaged"
     );
     assert!(s.errors().is_empty(), "errors: {:?}", s.errors());
 }
 
-/// Item flag `0x10` forces red and `0x08` (wrapped) silences the region (`0x4c7faa`, `0x4c7fc8`);
-/// region 12 is low ammo (20 or fewer carried reads 3), which the 1.12 FrameXML never reads.
+/// Item flag `0x10` forces red and `0x08` (wrapped) silences the region (`0x5e9063`, `0x5e9077`);
+/// region 12 is low ammo (20 or fewer carried reads 1), which stock's 11 slots never read.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn flag_bits_and_the_low_ammo_region() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
-    s.fire_event("PLAYER_ENTERING_WORLD", vec![ScriptValue::Str("".into())]);
 
     let mut inv: InventorySlots = Default::default();
     let mut v = slot(25, Some((20, 20))).unwrap();
@@ -161,20 +148,25 @@ fn flag_bits_and_the_low_ammo_region() {
     s.set_inventory_slots(inv);
     assert_eq!(
         s.eval::<i64>("return GetInventoryAlertStatus(9)").unwrap(),
-        4,
+        2,
         "force-red bit → broken at full durability"
     );
-    assert_eq!(cell_color(&mut s, WEAPON_CELL), Some(RED));
+    assert!(near(
+        vertex_color(&s, "DurabilityWeapon"),
+        alert_color(&s, 2)
+    ));
+    assert!(
+        s.eval::<bool>("return GetInventoryItemBroken('player', 16) == nil")
+            .unwrap(),
+        "the force-red bit is the alert's alone (`0x5e9d80`)"
+    );
 
     let mut inv: InventorySlots = Default::default();
     let mut v = slot(25, Some((0, 20))).unwrap();
     v.flags = 0x08;
     inv[16] = Some(v);
     s.set_inventory_slots(inv);
-    assert!(
-        !s.eval::<bool>("return DurabilityFrame:IsShown()").unwrap(),
-        "a wrapped item never alerts"
-    );
+    assert!(!shown(&s, "DurabilityFrame"), "a wrapped item never alerts");
 
     let mut inv: InventorySlots = Default::default();
     inv[0] = slot(2512, None).map(|mut v| {
@@ -184,19 +176,59 @@ fn flag_bits_and_the_low_ammo_region() {
     s.set_inventory_slots(inv);
     assert_eq!(
         s.eval::<i64>("return GetInventoryAlertStatus(12)").unwrap(),
-        3,
-        "low carried ammo reads 3 on the 12th region"
+        1,
+        "low carried ammo reads 1 on the 12th region"
     );
     assert!(
-        !s.eval::<bool>("return DurabilityFrame:IsShown()").unwrap(),
-        "the 1.12 armor guy never shows for ammo"
+        !shown(&s, "DurabilityFrame"),
+        "the armor guy never shows for ammo"
+    );
+    assert!(s.errors().is_empty(), "errors: {:?}", s.errors());
+}
+
+/// `UPDATE_INVENTORY_ALERTS` only on a changed status, `UPDATE_INVENTORY_DURABILITY` on every
+/// recompute (`0x5e90d0`); the broken and damaged arms raise tutorials `0x24` and `0x23`
+/// (`0x5e909c`, `0x5e90b7`), the force-red arm none.
+#[test]
+fn the_recompute_diffs_its_alert_event_and_raises_the_tutorials() {
+    let _data = benilla_formats::wow_data_or_skip!();
+    let mut s = harness();
+    let _ = s.take_tutorial_triggers();
+
+    let mut inv: InventorySlots = Default::default();
+    inv[16] = slot(25, Some((0, 20)));
+    s.set_inventory_slots(inv.clone());
+    assert_eq!(alert_events(&s), (1, 1));
+    assert_eq!(s.take_tutorial_triggers(), vec![0x24]);
+    s.set_inventory_slots(inv);
+    assert_eq!(
+        alert_events(&s),
+        (1, 2),
+        "same statuses → durability event only"
+    );
+    // Every recompute raises it again; the tutorial's own seen flag keeps it to one popup.
+    assert_eq!(s.take_tutorial_triggers(), vec![0x24]);
+
+    let mut inv: InventorySlots = Default::default();
+    inv[7] = slot(39, Some((3, 25)));
+    s.set_inventory_slots(inv);
+    assert_eq!(alert_events(&s), (2, 3));
+    assert_eq!(s.take_tutorial_triggers(), vec![0x23]);
+
+    let mut inv: InventorySlots = Default::default();
+    let mut v = slot(25, Some((20, 20))).unwrap();
+    v.flags = 0x10;
+    inv[16] = Some(v);
+    s.set_inventory_slots(inv);
+    assert!(
+        s.take_tutorial_triggers().is_empty(),
+        "force-red raises none"
     );
     assert!(s.errors().is_empty(), "errors: {:?}", s.errors());
 }
 
 /// `SetAlerts`' Shield arm swaps to the off-weapon glyph when `OffhandHasWeapon()` (item class 2).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn off_hand_glyph_follows_what_the_hand_holds() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -221,39 +253,38 @@ fn off_hand_glyph_follows_what_the_hand_holds() {
     inv[17] = slot(2362, Some((0, 20)));
     s.set_inventory_slots(inv);
     assert!(
-        s.eval::<bool>("return DurabilityShield:IsShown() and not DurabilityOffWeapon:IsShown()")
-            .unwrap(),
+        shown(&s, "DurabilityShield") && !shown(&s, "DurabilityOffWeapon"),
         "a shield lights the shield glyph"
     );
-    assert_eq!(cell_color(&mut s, SHIELD_CELL), Some(RED));
+    assert!(near(
+        vertex_color(&s, "DurabilityShield"),
+        alert_color(&s, 2)
+    ));
 
+    // A changed status, so the event runs `SetAlerts`: the same status re-fires nothing.
     let mut inv: InventorySlots = Default::default();
-    inv[17] = slot(2488, Some((0, 16)));
+    inv[17] = slot(2488, Some((3, 16)));
     s.set_inventory_slots(inv);
     assert!(
-        s.eval::<bool>("return DurabilityOffWeapon:IsShown() and not DurabilityShield:IsShown()")
-            .unwrap(),
+        shown(&s, "DurabilityOffWeapon") && !shown(&s, "DurabilityShield"),
         "an off-hand weapon swaps to the off-weapon glyph"
     );
-    assert_eq!(
-        cell_color(&mut s, WEAPON_CELL),
-        Some(RED),
-        "the weapon cell paints the off-weapon red"
-    );
+    assert!(near(
+        vertex_color(&s, "DurabilityOffWeapon"),
+        alert_color(&s, 1)
+    ));
     assert!(s.errors().is_empty(), "errors: {:?}", s.errors());
 }
 
 /// The manage pass seats `TOPRIGHT` at the cluster's `BOTTOMRIGHT` less `CONTAINER_OFFSET_X`, and
-/// 20 more while the shield, off-weapon or ranged glyph shows (`UIParent.lua:1759`).
+/// 20 more while the shield, off-weapon or ranged glyph shows (`UIParent.lua:1913-1916`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn manage_pass_seats_the_frame_inside_the_cluster_edge() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
-    s.fire_event("PLAYER_ENTERING_WORLD", vec![ScriptValue::Str("".into())]);
+    let offset: f32 = s.eval("return CONTAINER_OFFSET_X").unwrap();
 
-    // Broken ranged; `OnShow` runs the pass. The main-hand glyph hangs off the body's left, so
-    // the offset leaves it out.
+    // Broken ranged; `OnShow` runs the pass.
     let mut inv: InventorySlots = Default::default();
     inv[18] = slot(2504, Some((0, 20)));
     s.set_inventory_slots(inv);
@@ -262,7 +293,8 @@ fn manage_pass_seats_the_frame_inside_the_cluster_edge() {
         .eval("return MinimapCluster:GetRight() - DurabilityFrame:GetRight()")
         .unwrap();
     assert_eq!(
-        delta, 20.0,
+        delta,
+        offset + 20.0,
         "a right-side glyph seats the frame 20 further left"
     );
 
@@ -275,16 +307,15 @@ fn manage_pass_seats_the_frame_inside_the_cluster_edge() {
         .eval("return MinimapCluster:GetRight() - DurabilityFrame:GetRight()")
         .unwrap();
     assert_eq!(
-        delta, 0.0,
-        "body-only alerts seat flush with the cluster edge"
+        delta, offset,
+        "body-only alerts seat at the container offset"
     );
     assert!(s.errors().is_empty(), "errors: {:?}", s.errors());
 }
 
 /// Gear streams in slot by slot at login, so a side glyph can appear while the frame is shown;
-/// the re-seat deviation still pulls it 20 in so the shield's ~17-unit overhang clears the edge.
+/// the re-seat deviation still pulls it 20 in so the shield's overhang clears the edge.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_late_side_glyph_refreshes_the_seat_while_the_frame_stays_shown() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -304,21 +335,23 @@ fn a_late_side_glyph_refreshes_the_seat_while_the_frame_stays_shown() {
             ..Default::default()
         },
     );
-    s.fire_event("PLAYER_ENTERING_WORLD", vec![ScriptValue::Str("".into())]);
+    let offset: f32 = s.eval("return CONTAINER_OFFSET_X").unwrap();
 
     let mut inv: InventorySlots = Default::default();
     inv[16] = slot(25, Some((0, 20)));
     s.set_inventory_slots(inv);
     s.resolve();
     assert!(
-        s.eval::<bool>("return DurabilityFrame:IsShown() and not DurabilityShield:IsShown()")
-            .unwrap(),
+        shown(&s, "DurabilityFrame") && !shown(&s, "DurabilityShield"),
         "weapon-only: frame shown, no shield glyph yet"
     );
     let delta: f32 = s
         .eval("return MinimapCluster:GetRight() - DurabilityFrame:GetRight()")
         .unwrap();
-    assert_eq!(delta, 0.0, "the left-side weapon glyph needs no extra room");
+    assert_eq!(
+        delta, offset,
+        "the left-side weapon glyph needs no extra room"
+    );
 
     // The frame is already shown, so no show transition fires.
     let mut inv: InventorySlots = Default::default();
@@ -327,14 +360,15 @@ fn a_late_side_glyph_refreshes_the_seat_while_the_frame_stays_shown() {
     s.set_inventory_slots(inv);
     s.resolve();
     assert!(
-        s.eval::<bool>("return DurabilityShield:IsShown()").unwrap(),
+        shown(&s, "DurabilityShield"),
         "the off-hand's arrival shows the shield glyph"
     );
     let delta: f32 = s
         .eval("return MinimapCluster:GetRight() - DurabilityFrame:GetRight()")
         .unwrap();
     assert_eq!(
-        delta, 20.0,
+        delta,
+        offset + 20.0,
         "a side glyph arriving while shown must still pull the frame 20 in"
     );
     let overhang: f32 = s
@@ -347,39 +381,12 @@ fn a_late_side_glyph_refreshes_the_seat_while_the_frame_stays_shown() {
     assert!(s.errors().is_empty(), "errors: {:?}", s.errors());
 }
 
-/// `QuestWatchFrame` is last in the right-side walk, seated at the running `anchorY` after the
-/// durability frame's height (`UIParent.lua:1770`).
+/// `WatchFrame` follows in the right-side walk, seated 10 under the shown durability frame
+/// (`UIParent.lua:1917-1918`, `:1937`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_quest_tracker_stacks_below_the_durability_guy() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in [
-        "Interface\\FrameXML\\GlobalStrings.lua",
-        "Interface\\FrameXML\\Fonts.xml",
-        "Interface\\FrameXML\\BasicControls.xml",
-        "Interface\\FrameXML\\LocaleProperties.lua",
-        r"Interface\FrameXML\UIParent.xml",
-        r"Interface\FrameXML\MoneyFrame.lua",
-        r"Interface\FrameXML\MoneyFrame.xml",
-        "Interface\\FrameXML\\GameTooltip.xml",
-        "Interface\\FrameXML\\UIDropDownMenu.xml",
-        r"Interface\FrameXML\UIPanelTemplates.lua",
-        r"Interface\FrameXML\UIPanelTemplates.xml",
-        "Interface\\FrameXML\\StaticPopup.xml",
-        "Interface\\FrameXML\\BattlefieldFrame.xml",
-        "Interface\\FrameXML\\Minimap.xml",
-        r"Interface\FrameXML\MainMenuBarMicroButtons.xml",
-        "Interface\\FrameXML\\ItemButtonTemplate.xml",
-        "Interface\\FrameXML\\QuestFrame.xml",
-        "Interface\\FrameXML\\QuestLogFrame.xml",
-        "Interface\\FrameXML\\DurabilityFrame.xml",
-        "ScrollTemplates.xml",
-    ] {
-        load_xml(&s, f);
-    }
-    load_xml(&s, "FrameXMLFixes.xml");
+    let mut s = harness();
 
     let mut inv: InventorySlots = Default::default();
     inv[18] = slot(2504, Some((0, 20)));
@@ -387,10 +394,10 @@ fn the_quest_tracker_stacks_below_the_durability_guy() {
     s.resolve();
 
     let dur_bottom: f32 = s.eval("return DurabilityFrame:GetBottom()").unwrap();
-    let watch_top: f32 = s.eval("return QuestWatchFrame:GetTop()").unwrap();
+    let watch_top: f32 = s.eval("return WatchFrame:GetTop()").unwrap();
     assert!(
-        (watch_top - dur_bottom).abs() <= 0.5,
-        "tracker top {watch_top} must sit flush under the durability bottom {dur_bottom}"
+        (dur_bottom - 10.0 - watch_top).abs() <= 0.5,
+        "tracker top {watch_top} must sit 10 under the durability bottom {dur_bottom}"
     );
     assert!(s.errors().is_empty(), "errors: {:?}", s.errors());
 }
