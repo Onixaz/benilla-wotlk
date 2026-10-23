@@ -1165,7 +1165,6 @@ pub(super) fn simulate_particles(
             ));
         },
     );
-    drop(dumps_cell);
     for e in scratch.hides.drain() {
         if let Ok((_, _, mut cv)) = child_draws.get_mut(e) {
             *cv = Visibility::Hidden;
