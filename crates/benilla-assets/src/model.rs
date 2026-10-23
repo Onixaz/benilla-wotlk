@@ -792,6 +792,49 @@ fn merged_static_mesh_impl(
 mod tests {
     use super::*;
 
+    /// A palette billboard keeps its quad in model space, for the billboard bone's camera-faced
+    /// palette row to turn about the pivot, and its unrigged twin puts every vertex on the pivot,
+    /// so a placement whose rig has not woken draws nothing rather than an unfaced quad.
+    #[test]
+    fn a_palette_billboard_bakes_in_model_space_and_its_twin_on_the_pivot() {
+        let pivot = [1.0, 2.0, 3.0];
+        let quad = [
+            [0.5, 2.0, 2.5],
+            [1.5, 2.0, 2.5],
+            [1.5, 2.0, 3.5],
+            [0.5, 2.0, 3.5],
+        ];
+        let sub = RenderSubmesh {
+            positions: quad.to_vec(),
+            indices: vec![0, 1, 2, 0, 2, 3],
+            billboard: Some(benilla_formats::Billboard {
+                pivot,
+                bone: 0,
+                kind: benilla_formats::BillboardKind::Spherical,
+                scale_anim: None,
+                seq_translations: Vec::new(),
+            }),
+            ..RenderSubmesh::default()
+        };
+        let positions = |mesh: &Mesh| match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+            Some(bevy::mesh::VertexAttributeValues::Float32x3(v)) => v.clone(),
+            other => panic!("positions: {other:?}"),
+        };
+        let (skinned, collapsed) = submesh_to_palette_billboard(&sub);
+        let model: Vec<[f32; 3]> = quad.iter().map(|p| wow_to_bevy(*p).to_array()).collect();
+        assert_eq!(
+            positions(&skinned),
+            model,
+            "the skinned form, in model space"
+        );
+        assert!(
+            positions(&collapsed)
+                .iter()
+                .all(|p| *p == wow_to_bevy(pivot).to_array()),
+            "the twin, every vertex on the pivot"
+        );
+    }
+
     /// One sequence record with the given bones, the rest neutral.
     fn sequence(duration: f32, bones: Vec<benilla_formats::BoneKeys>) -> ModelAnimation {
         ModelAnimation {
