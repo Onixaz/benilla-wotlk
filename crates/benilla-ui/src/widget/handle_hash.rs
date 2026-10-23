@@ -30,11 +30,11 @@ impl HandleHasher {
 impl Hasher for HandleHasher {
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
-        let mut chunks = bytes.chunks_exact(8);
-        for c in &mut chunks {
-            self.add(u64::from_le_bytes(c.try_into().unwrap_or([0; 8])));
+        let (words, rest) = bytes.as_chunks::<8>();
+        for w in words {
+            self.add(u64::from_le_bytes(*w));
         }
-        for &b in chunks.remainder() {
+        for &b in rest {
             self.add(u64::from(b));
         }
     }
