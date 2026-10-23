@@ -104,6 +104,10 @@ pub struct GlueScenePane {
     /// The pane is the create screen's frame (`m_charCustomizeFrame`), whose scene the character
     /// being built stands in.
     pub create: bool,
+    /// The pane's custom light sets ([`crate::widget::ModelState::ffx_lights`]): the background's,
+    /// the character's and the pet's, each live then ghost. A set with any light replaces the
+    /// scene's directional lights for its model (`GenericLightingCallback` `0x4e3a20`).
+    pub lights: [[Vec<crate::widget::ModelLight>; 2]; 3],
 }
 
 /// A record of the array: the character and whether `+0x110`, the built composite, is set.
@@ -254,6 +258,7 @@ impl super::UiScript {
                         fog: m.armed_fog(),
                         select: select == Some(h),
                         create: create == Some(h),
+                        lights: m.ffx_lights.clone(),
                     },
                 ))
             })
@@ -943,6 +948,50 @@ mod tests {
         let pane = s.glue_scene().unwrap();
         assert_eq!(pane.path, "UI_Dwarf.mdx");
         assert_eq!(pane.fog.map(|f| f.far), Some(222.0));
+    }
+
+    /// `GlueParent.lua`'s `SetLighting` resets the pane's light sets and adds each race light to
+    /// the character's, the background's and the pet's live array; the pane carries them to the
+    /// scene drive. A disabled light still lands in its array (`0x960a10` accepts it).
+    #[test]
+    fn the_scene_carries_the_panes_custom_lights() {
+        let s = UiScript::new_glue().unwrap();
+        s.run(
+            "local f = CreateFrame('ModelFFX', 'Scene') f:SetModel('UI_Orc.mdx')              f:AddLight(0, 1, 0, 0, 0, -1, 1.0, 0.15, 0.15, 0.15, 1.0, 0, 0, 0)              f:ResetLights()              for _, add in ipairs({ f.AddCharacterLight, f.AddLight, f.AddPetLight }) do                add(f, 0, 1, 0, 0, 0, -2, 1.0, 0.15, 0.15, 0.15, 1.0, 0, 0, 0)                add(f, 0, 1, 0, 0.53, -0.84, 0.08, 1.0, 0, 0, 0, 2.0, 0.55, 0.338625, 0.148825)              end              f:AddCharacterLight(1, 0)",
+        )
+        .unwrap();
+        let pane = s.glue_scene().expect("the shown ModelFFX");
+        for set in &pane.lights {
+            assert_eq!(set[0].len(), 2, "two live lights in each set");
+        }
+        let [ambient, warm] = [pane.lights[1][0][0], pane.lights[1][0][1]];
+        assert_eq!(
+            ambient.vector,
+            [0.0, 0.0, -1.0],
+            "a direction is normalised"
+        );
+        assert_eq!(ambient.ambient.map(|c| (c * 255.0).round()), [38.0; 3]);
+        assert_eq!(ambient.diffuse, [0.0; 3]);
+        assert!(!warm.omni);
+        assert!(
+            (warm.diffuse[0] - 2.0 * 140.0 / 255.0).abs() < 1e-6,
+            "{:?}",
+            warm.diffuse
+        );
+        assert_eq!(
+            pane.lights[1][1].len(),
+            1,
+            "the ghost array took the disabled light"
+        );
+        assert!(!pane.lights[1][1][0].enabled);
+        assert!(pane.lights[0][1].is_empty() && pane.lights[2][1].is_empty());
+
+        s.run("Scene:ResetLights()").unwrap();
+        let pane = s.glue_scene().unwrap();
+        assert!(
+            pane.lights.iter().flatten().all(Vec::is_empty),
+            "all six cleared"
+        );
     }
 
     /// The scene is the shown `ModelFFX`'s, the topmost when two are shown; a hidden one, a plain

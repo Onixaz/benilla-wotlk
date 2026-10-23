@@ -732,7 +732,9 @@ pub(super) const REG_MODELFFX_METHODS: &str = "__benilla_modelffx_methods";
 /// `ModelFFX`'s four light methods (`CSimpleModelFFX`, `0x4e6c40`-`0x4e6d60`): `ResetLights`
 /// clears the three sets; `AddLight`, `AddCharacterLight` and `AddPetLight` take an optional
 /// array index (nonzero picks the second) and `SetLight`'s arguments, and append the light to the
-/// background's, the character's or the pet's set while it holds fewer than four.
+/// background's, the character's or the pet's set while it holds fewer than four. A disabled light
+/// is appended too (`SetLightHelper` `0x960a10` returns success for it), so it still marks the set
+/// custom while adding no light.
 pub(super) fn install_ffx(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
     m.set(
@@ -759,14 +761,19 @@ pub(super) fn install_ffx(lua: &Lua) -> mlua::Result<()> {
                     None => false,
                 };
                 let a: Vec<Value> = it.collect();
-                match parse_set_light(&a) {
-                    SetLight::Set(l) => with_model(lua, &this, |m| {
+                let light = match parse_set_light(&a) {
+                    SetLight::Set(l) => Some(l),
+                    SetLight::NoOp => Some(ModelLight::default()),
+                    SetLight::Raise => None,
+                };
+                match light {
+                    Some(l) => with_model(lua, &this, |m| {
                         let lights = &mut m.ffx_lights[set][usize::from(index)];
                         if lights.len() < 4 {
                             lights.push(l);
                         }
                     }),
-                    _ => Err(usage(lua, &this, &format!("{name}(index, enabled[,omni,dirX,dirY,dirZ,ambIntensity[,ambR,ambG,ambB],dirIntensity[,dirR,dirG,dirB]])"))),
+                    None => Err(usage(lua, &this, &format!("{name}(index, enabled[,omni,dirX,dirY,dirZ,ambIntensity[,ambR,ambG,ambB],dirIntensity[,dirR,dirG,dirB]])"))),
                 }
             })?,
         )?;

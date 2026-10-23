@@ -54,8 +54,9 @@ mod dressup;
 pub(crate) use dressup::{DressUpBake, DressUpLook, DressUpPreview};
 mod glue_booth;
 pub(crate) use glue_booth::{
-    CreateLook, GhostKit, GlueLook, GluePetBake, GluePreview, GluePreviewBake, GlueScene, PetLook,
-    PreviewBillboard, PreviewEffects, PreviewPart, PreviewRider, SceneFog, SelectLook, GLUE_SLOT,
+    CreateLook, GhostKit, GlueLook, GluePetBake, GluePreview, GluePreviewBake, GlueScene,
+    PaneLights, PetLook, PreviewBillboard, PreviewEffects, PreviewPart, PreviewRider, SceneFog,
+    SelectLook, GLUE_SLOT,
 };
 mod light;
 pub(crate) use light::{material_variant, VariantLane};

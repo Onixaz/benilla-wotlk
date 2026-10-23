@@ -256,7 +256,13 @@ pub(crate) struct GluePreview {
     /// Bumped as a glue screen's scene shows: the `ModelFFX`'s OnShow pins the glow back to
     /// 0.30 (`0x46fa60`), which nothing else does ([`sync_glue_ffx`]).
     pub(crate) shown: u64,
+    /// The pane's custom light sets ([`benilla_ui::script::GlueScenePane::lights`]).
+    pub(crate) lights: PaneLights,
 }
+
+/// A `ModelFFX`'s custom light sets: the background's, the character's and the pet's, each live
+/// then ghost.
+pub(crate) type PaneLights = [[Vec<benilla_ui::widget::ModelLight>; 2]; 3];
 
 impl Default for GluePreview {
     fn default() -> Self {
@@ -268,6 +274,7 @@ impl Default for GluePreview {
             pane: None,
             stage: 0,
             shown: 0,
+            lights: Default::default(),
         }
     }
 }
@@ -326,6 +333,9 @@ pub(crate) struct CreateScene {
     /// Whether the buffer holds the ghost rig ([`ghost_rig`]); a flip rewrites the buffer in
     /// place, like the reference's per-frame fill callback, so the stage's emitters keep running.
     ghost: bool,
+    /// The pane lights the buffer was written from; a change rewrites it in place, as the ghost
+    /// flip does.
+    lights: PaneLights,
     /// The scene's light buffer: its authored rig ([`SceneRig`]) plus [`GluePreview::fog`].
     light: Option<bevy::render::render_resource::Buffer>,
     /// Booth twins of the character's materials against the scene buffer (`BoothLight::variants`).
@@ -358,6 +368,7 @@ impl CreateScene {
             fog: None,
             stage: 0,
             ghost: false,
+            lights: Default::default(),
             light: None,
             variants: default(),
             rev: 0,
@@ -388,12 +399,14 @@ fn may_swap(standing: bool, art_ready: bool, body_ready: bool, waited: f32) -> b
     !standing || (art_ready && body_ready) || waited >= GLUE_SWAP_HOLD_SECS
 }
 
-/// A glue scene's authored M2 light rig, folded as the reference's gather (`0x718960`):
-/// directional ambients sum, each directional's diffuse × intensity becomes an SH lobe
-/// ([`benilla_world::lighting::prop_probe_coeffs`]), and point lights go to the point table with
-/// the fixed falloff `1/(0.7·d + 0.03·d²)`; the reference ignores the authored attenuation radii.
+/// A glue scene's light rig, folded as a scene model's gather (`CM2Scene::SelectLights` `0x81e400`,
+/// `CM2Lighting::AddLight` `0x834f60`): directional ambients sum, each directional's diffuse ×
+/// intensity becomes an SH lobe ([`benilla_world::lighting::prop_probe_coeffs`]), and point lights
+/// go to the point table with the `CM2Light` ctor's fixed falloff `1/(0.7·d + 0.03·d²)`
+/// (`0x834a40`); the authored attenuation radii are not read.
+#[derive(Debug)]
 struct SceneRig {
-    /// The summed directional ambient (every UI_* point light authors ambient ×0).
+    /// The summed directional ambient; a point light adds none (`0x834f60`).
     ambient: [f32; 3],
     /// The directional lobes, toward-light and committed; folded into probe slot 0.
     lobes: Vec<(Vec3, [f32; 3])>,
@@ -401,25 +414,27 @@ struct SceneRig {
     points: Vec<(Vec3, [f32; 3])>,
 }
 
-/// Range packed with a scene point light: the reference gather has no range gate (≤3 nearest).
+/// Range packed with a scene point light: the reference gather has no range gate; the device
+/// takes the 3 nearest (`CM2Lighting::SetupGxLights` `0x8353d0`).
 const SCENE_POINT_RANGE: f32 = 1.0e6;
 
 /// Fold the scene model's lights into a [`SceneRig`]. A directional's to-light direction is its
-/// bone's local +Z, row 2 of the light bone's pose matrix (`0x718a76`), never the def position.
+/// bone's local +Z: `CM2Model::AnimateST` (`0x828a00`) sets the light's direction to the bone
+/// matrix's −Z, never the def position.
 fn scene_rig(lights: &[benilla_assets::ModelLight]) -> SceneRig {
     let mut ambient = [0.0f32; 3];
     let mut lobes: Vec<(Vec3, [f32; 3])> = Vec::new();
     let mut points = Vec::new();
     for l in lights.iter().map(|l| &l.def) {
-        for (a, c) in ambient.iter_mut().zip(l.ambient_color) {
-            *a += c * l.ambient_intensity;
-        }
         let color = l.diffuse_color.map(|c| c * l.diffuse_intensity);
         if l.is_point() {
-            // `LightBlob::point` commits the colour raw, as the world table does: the reference's
-            // `0x71ca80` encode is undone by the `0x593040` decode.
+            // `LightBlob::point` commits the colour raw, as `SetupGxLights` (`0x8353d0`) hands the
+            // device the light's colour.
             points.push((benilla_assets::coords::wow_to_bevy(l.position), color));
         } else {
+            for (a, c) in ambient.iter_mut().zip(l.ambient_color) {
+                *a += c * l.ambient_intensity;
+            }
             // Toward-light unit vector, as the probe fold expects (it re-normalizes).
             lobes.push((benilla_assets::coords::wow_to_bevy(l.bone_z), color));
         }
@@ -431,16 +446,16 @@ fn scene_rig(lights: &[benilla_assets::ModelLight]) -> SceneRig {
     }
 }
 
-/// The ghost select screen's rig: the reference's fill callback `0x472150`, on the scene, the
-/// character and the pet, runs only for a record with `CHARSELECT+0xfc & 0x2000`. It wipes the
-/// gather (`0x71bc30`: no authored ambient, no point lights) and injects one directional.
+/// The ghost select screen's rig: `GenericLightingCallback` (`0x4e3a20`), on the scene, the
+/// character and the pet, takes this fork for a selected record with flag `0x2000` off the create
+/// screen, when the pane gave the set no ghost lights. It wipes the gather
+/// (`CM2Lighting::Initialize` `0x834900`: no authored ambient, no point lights) and adds one
+/// directional travelling `(0,0,-1)` (`0x834ae0`), so the light is overhead.
 ///
-/// `0x472280` writes `(0,0,-1)` as a from-light vector and `0x71bce0` negates it, so the light is
-/// overhead; an authored light is negated twice (`0x718960` stores `-Bz`), this one once.
-///
-/// The colours are `LightParams` row 3, the death preset (`0x4721e2`), through `0x6d6ad0` to
-/// `LightIntBand` 37 (diffuse) and 38 (ambient) at time 0. Both bands are single-key in 1.12.1, and
-/// the glue screens have no `LightParams` state to read, so they are literals.
+/// The colours are `LightParams` row 3, the death preset, through `DayNight::LoadLightIntBand`
+/// (`0x7ebf30`) to `LightIntBand` 37 (diffuse) and 38 (ambient) at time 0. Both bands are
+/// single-key in 3.3.5a, and the glue screens have no `LightParams` state to read, so they are
+/// literals.
 fn ghost_rig() -> SceneRig {
     SceneRig {
         // `LightIntBand` 38 = 0x001A3855 → (26, 56, 85).
@@ -452,6 +467,47 @@ fn ghost_rig() -> SceneRig {
         )],
         // Wiped: the stage's own lamps do not survive.
         points: Vec::new(),
+    }
+}
+
+/// A pane's custom set over the scene model's lights, as `GenericLightingCallback` (`0x4e3a20`)
+/// lights a set with any: `CM2Lighting::Reset` (`0x4e2730`) clears the directional sums and the
+/// sun but keeps the gathered point lights, and each set light is then added (`0x834f60`). A
+/// directional's vector is its travel direction ([`benilla_ui::widget::ModelLight::vector`]), so
+/// the to-light is its negation; a disabled light adds nothing.
+fn custom_rig(set: &[benilla_ui::widget::ModelLight], scene: SceneRig) -> SceneRig {
+    let mut rig = SceneRig {
+        ambient: [0.0; 3],
+        lobes: Vec::new(),
+        points: scene.points,
+    };
+    for l in set.iter().filter(|l| l.enabled) {
+        if l.omni {
+            rig.points
+                .push((benilla_assets::coords::wow_to_bevy(l.vector), l.diffuse));
+        } else {
+            for (a, c) in rig.ambient.iter_mut().zip(l.ambient) {
+                *a += c;
+            }
+            let to_light = l.vector.map(|v| -v);
+            rig.lobes
+                .push((benilla_assets::coords::wow_to_bevy(to_light), l.diffuse));
+        }
+    }
+    rig
+}
+
+/// The rig the glue scene's buffer holds: the scene model's lights, or under a pane's custom set
+/// [`custom_rig`], or on a ghost's select screen the ghost array's set or [`ghost_rig`].
+///
+/// Deviation: one buffer lights the scene, the character and the pet, so the character's set
+/// stands for all three; the stock `SetLighting` adds the same lights to all three sets.
+fn stage_rig(model: &[benilla_assets::ModelLight], lights: &PaneLights, ghost: bool) -> SceneRig {
+    let set = &lights[1][usize::from(ghost)];
+    match (ghost, set.is_empty()) {
+        (true, true) => ghost_rig(),
+        (_, true) => scene_rig(model),
+        (_, false) => custom_rig(set, scene_rig(model)),
     }
 }
 
@@ -792,7 +848,7 @@ pub(super) fn sync_glue_scene(
 
     let token = which.token();
     let fog = preview.fog;
-    // The ghost light fork (`0x472150`, [`ghost_rig`]), shared by the scene, character and pet.
+    // The ghost light fork (`0x4e3a20`, [`ghost_rig`]), shared by the scene, character and pet.
     let ghost = matches!(
         preview.look,
         Some(GlueLook::Select(l)) if l.flags & benilla_protocol::CHARACTER_FLAG_GHOST != 0
@@ -846,25 +902,24 @@ pub(super) fn sync_glue_scene(
         // cached, so it respawns now).
         scene.spawned = false;
         commands.entity(scene.root).despawn_related::<Children>();
-    } else if scene.spawned && scene.ghost != ghost {
-        // The selection crossed the ghost bit: re-light in place, as the reference's fill
-        // callback does (`0x472150`); a respawn would restart the stage's emitters.
+    } else if scene.spawned && (scene.ghost != ghost || scene.lights != preview.lights) {
+        // The selection crossed the ghost bit, or the pane's lights changed: re-light in place, as
+        // the reference's per-frame fill callback does (`0x4e3a20`); a respawn would restart the
+        // stage's emitters.
         if let (Some(model), Some(light)) = (
             scene.handle.as_ref().and_then(|h| m2s.get(h)),
             scene.light.clone(),
         ) {
-            let rig = if ghost {
-                ghost_rig()
-            } else {
-                scene_rig(&model.lights)
-            };
+            let rig = stage_rig(&model.lights, &preview.lights, ghost);
             scene_light_blob(&rig, fog).write(&queue, &light);
             scene.ghost = ghost;
+            scene.lights = preview.lights.clone();
             // The character and the pet re-bake onto the rewritten buffer.
             scene.rev += 1;
             info!(
-                "glue scene: {} light — {} directional, {} point light(s)",
-                if ghost { "GHOST" } else { "authored" },
+                "glue scene: re-lit{} — ambient {:?}, {} directional, {} point light(s)",
+                if ghost { " (ghost)" } else { "" },
+                rig.ambient,
                 rig.lobes.len(),
                 rig.points.len(),
             );
@@ -885,11 +940,7 @@ pub(super) fn sync_glue_scene(
             .iter()
             .find(|a| a.id == 0)
             .map_or((Quat::IDENTITY, 1.0), |a| stage_frame(model, a.bone));
-        let rig = if ghost {
-            ghost_rig()
-        } else {
-            scene_rig(&model.lights)
-        };
+        let rig = stage_rig(&model.lights, &preview.lights, ghost);
         let blob = scene_light_blob(&rig, fog);
         let light = scene
             .light
@@ -906,10 +957,12 @@ pub(super) fn sync_glue_scene(
         scene.fog = fog;
         scene.stage = preview.stage;
         scene.ghost = ghost;
+        scene.lights = preview.lights.clone();
         let dc = blob.probe_dc();
         info!(
-            "create scene: UI_{token} rig — ambient {:?}, {} point light(s), probe dc ({:.2},{:.2},{:.2})",
+            "create scene: UI_{token} rig — ambient {:?}, {} directional, {} point light(s), probe              dc ({:.2},{:.2},{:.2})",
             rig.ambient,
+            rig.lobes.len(),
             blob.point_count(),
             dc[0],
             dc[1],
@@ -2020,11 +2073,11 @@ mod tests {
         }
     }
 
-    /// The ghost sun lights from overhead: `CGLight+0x24` is from-light and `0x71bce0` negates it.
+    /// The ghost sun lights from overhead: the light travels `(0,0,-1)` (`0x834ae0`).
     #[test]
     fn the_ghost_sun_is_one_overhead_directional_over_a_wiped_gather() {
         let rig = ghost_rig();
-        // The gather is wiped (`0x71bc30`): no stage lamps survive.
+        // The gather is wiped (`0x834900`): no stage lamps survive.
         assert!(
             rig.points.is_empty(),
             "a ghost selection discards the scene-DB gather whole"
@@ -2043,8 +2096,100 @@ mod tests {
         assert_eq!(rig.ambient.map(byte), [26, 56, 85], "…and sub 1");
     }
 
-    /// The rig fold (`0x718960`): directionals sum ambient and become lobes along bone +Z (never
-    /// the def position); points land on the point table as colour × intensity.
+    /// A scene's own lights for the custom-light tests: an ambient-and-key directional and a lamp.
+    fn stage_lights() -> [ModelLight; 2] {
+        [
+            light(0, [0.0; 3], [0.0, 0.0, 1.0], [1.0; 3], 1.1, [1.0; 3], 0.27),
+            light(
+                1,
+                [2.0, 1.0, -1.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 0.45, 0.0],
+                0.5,
+                [1.0; 3],
+                0.0,
+            ),
+        ]
+    }
+
+    /// A pane light as `SetLightHelper` (`0x960a10`) leaves it: colours already × intensity.
+    fn pane_light(
+        vector: [f32; 3],
+        ambient: f32,
+        diffuse: [f32; 3],
+    ) -> benilla_ui::widget::ModelLight {
+        benilla_ui::widget::ModelLight {
+            enabled: true,
+            omni: false,
+            vector,
+            ambient: [ambient; 3],
+            diffuse,
+        }
+    }
+
+    /// A pane set replaces the scene's directional lights and keeps its lamps
+    /// (`CM2Lighting::Reset` `0x4e2730` clears only the directional sums): the race light's
+    /// travel direction becomes a lobe toward its negation.
+    #[test]
+    fn a_pane_set_replaces_the_scene_directionals_and_keeps_its_lamps() {
+        let model = stage_lights();
+        let mut lights = PaneLights::default();
+        lights[1][0] = vec![
+            pane_light([0.0, 0.0, -1.0], 0.15, [0.0; 3]),
+            pane_light([0.6, -0.8, 0.0], 0.0, [1.1, 0.68, 0.3]),
+        ];
+        let rig = stage_rig(&model, &lights, false);
+        assert_eq!(rig.ambient, [0.15; 3], "the scene's 0.27 ambient is gone");
+        assert_eq!(
+            rig.lobes,
+            vec![
+                (
+                    benilla_assets::coords::wow_to_bevy([0.0, 0.0, 1.0]),
+                    [0.0; 3]
+                ),
+                (
+                    benilla_assets::coords::wow_to_bevy([-0.6, 0.8, 0.0]),
+                    [1.1, 0.68, 0.3]
+                ),
+            ]
+        );
+        assert_eq!(rig.points, scene_rig(&model).points, "the lamp stays");
+        // With no set the scene lights itself.
+        let own = stage_rig(&model, &PaneLights::default(), false);
+        assert_eq!(own.ambient, [0.27; 3]);
+        assert_eq!(own.lobes.len(), 1);
+    }
+
+    /// The ghost fork reads the ghost array: its own set if the pane gave one, else the preset;
+    /// the live set never stands in. A set of only disabled lights still resets the directionals.
+    #[test]
+    fn the_ghost_fork_reads_the_ghost_array_and_a_disabled_set_still_resets() {
+        let model = stage_lights();
+        let mut lights = PaneLights::default();
+        lights[1][0] = vec![pane_light([0.0, 0.0, -1.0], 0.5, [0.0; 3])];
+        let preset = stage_rig(&model, &lights, true);
+        assert_eq!(
+            preset.ambient,
+            ghost_rig().ambient,
+            "no ghost set: the preset"
+        );
+        assert!(preset.points.is_empty());
+        lights[1][1] = vec![pane_light([0.0, 0.0, -1.0], 0.2, [0.0; 3])];
+        let own = stage_rig(&model, &lights, true);
+        assert_eq!(own.ambient, [0.2; 3], "the ghost array's set");
+        assert_eq!(own.points.len(), 1, "a custom ghost set keeps the lamp");
+
+        let mut off = PaneLights::default();
+        off[1][0] = vec![benilla_ui::widget::ModelLight::default()];
+        let dark = stage_rig(&model, &off, false);
+        assert_eq!(dark.ambient, [0.0; 3]);
+        assert!(dark.lobes.is_empty());
+        assert_eq!(dark.points.len(), 1);
+    }
+
+    /// The rig fold (`0x834f60`): directionals sum ambient and become lobes along bone +Z (never
+    /// the def position); points land on the point table as colour × intensity, their ambient
+    /// unread.
     #[test]
     fn rig_fold_classifies_directional_vs_point() {
         let lights = [
@@ -2068,7 +2213,7 @@ mod tests {
                 [0.4, 0.5, 0.6],
                 0.5,
             ),
-            // A stage-local point light (the NightElf/Scourge character light).
+            // A stage-local point light (the NightElf/Scourge character light), its ambient a decoy.
             light(
                 1,
                 [1.0, 2.0, 3.0],
@@ -2076,11 +2221,11 @@ mod tests {
                 [0.7, 0.8, 1.0],
                 2.5,
                 [1.0; 3],
-                0.0,
+                0.9,
             ),
         ];
         let rig = scene_rig(&lights);
-        // Ambient = Σ ambient_color × ambient_intensity, across every light.
+        // Ambient = Σ ambient_color × ambient_intensity, across the directionals.
         assert_eq!(rig.ambient, [0.2, 0.25, 0.3]);
         // Colour × intensity, deliberately over-gamut: `LightBlob::point` commits it raw.
         assert_eq!(rig.points.len(), 1);

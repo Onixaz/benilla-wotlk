@@ -17,7 +17,9 @@ use bevy::prelude::*;
 use benilla_ui::script::{GlueScenePane, UiScript, VmKind};
 
 use super::glue_mgr::GlueMgr;
-use crate::portrait::{CreateLook, GlueLook, GluePreview, GlueScene, SceneFog, SelectLook};
+use crate::portrait::{
+    CreateLook, GlueLook, GluePreview, GlueScene, PaneLights, SceneFog, SelectLook,
+};
 
 /// What the booth stands while the stock glue screens are up: `pane` is the shown `ModelFFX`'s
 /// scene, `standing` the character on its attachment 0, `facing` the select facing cell in
@@ -28,9 +30,9 @@ fn stock_preview(
     standing: Option<&benilla_protocol::Character>,
     facing: f32,
     building: Option<benilla_ui::script::GlueCreateLook>,
-) -> (Option<GlueScene>, Option<GlueLook>, f32, Option<SceneFog>) {
+) -> StockPreview {
     let Some(pane) = pane else {
-        return (None, None, 0.0, None);
+        return StockPreview::default();
     };
     let scene = GlueScene::from_model_path(&pane.path);
     if scene.is_none() {
@@ -71,7 +73,23 @@ fn stock_preview(
         near: f.near,
         far: f.far,
     });
-    (scene, look, yaw, fog)
+    StockPreview {
+        scene,
+        look,
+        yaw,
+        fog,
+        lights: pane.lights.clone(),
+    }
+}
+
+/// What [`stock_preview`] stands: the scene, the look on it, its yaw, the pane's fog and lights.
+#[derive(Default)]
+struct StockPreview {
+    scene: Option<GlueScene>,
+    look: Option<GlueLook>,
+    yaw: f32,
+    fog: Option<SceneFog>,
+    lights: PaneLights,
 }
 
 /// What the feeder remembers about the glue VM between frames: the pane shown last and the
@@ -94,7 +112,13 @@ pub(crate) fn feed_stock_glue_preview(
     let in_world = state.is_some_and(|s| *s.get() == crate::char_select::ClientState::InWorld);
     let script = script.filter(|s| s.vm_kind() == VmKind::Glue && !in_world);
     let pane = script.as_deref().and_then(|s| s.glue_scene());
-    let (scene, look, yaw, fog) = match script.as_deref() {
+    let StockPreview {
+        scene,
+        look,
+        yaw,
+        fog,
+        lights,
+    } = match script.as_deref() {
         Some(s) => {
             let standing = s.glue_standing_guid().and_then(|g| mgr.roster_character(g));
             stock_preview(
@@ -104,7 +128,7 @@ pub(crate) fn feed_stock_glue_preview(
                 s.glue_create_look(),
             )
         }
-        None => (None, None, 0.0, None),
+        None => StockPreview::default(),
     };
     // A new VM's panes are new frames: the memo starts over with it.
     let feed = feed.get_for(script.as_deref());
@@ -136,6 +160,9 @@ pub(crate) fn feed_stock_glue_preview(
     if preview.fog != fog {
         preview.fog = fog;
     }
+    if preview.lights != lights {
+        preview.lights = lights;
+    }
 }
 
 #[cfg(test)]
@@ -164,7 +191,13 @@ mod tests {
             far: 1200.0,
         };
         let c = crate::char_select::test_character(7, "Seven");
-        let (scene, look, yaw, got) = stock_preview(
+        let StockPreview {
+            scene,
+            look,
+            yaw,
+            fog: got,
+            ..
+        } = stock_preview(
             Some(&pane(
                 "Interface\\Glues\\Models\\UI_MainMenu\\UI_MainMenu.mdx",
                 false,
@@ -211,7 +244,7 @@ mod tests {
 
     #[test]
     fn no_shown_pane_and_an_unknown_file_stand_nothing() {
-        assert_eq!(stock_preview(None, None, 0.0, None).0, None);
+        assert_eq!(stock_preview(None, None, 0.0, None).scene, None);
         assert_eq!(
             stock_preview(
                 Some(&pane("Interface\\Glues\\Models\\Odd.mdx", true, None)),
@@ -219,7 +252,7 @@ mod tests {
                 0.0,
                 None
             )
-            .0,
+            .scene,
             None
         );
     }
