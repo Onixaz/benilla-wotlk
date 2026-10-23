@@ -234,8 +234,8 @@ mod tests {
 
     /// `TARGET_FLAG_UNIT_RAID` and `TARGET_FLAG_UNIT_PARTY`, the words implicit targets 57 and 35
     /// set.
-    const RAID_WORD: u16 = 0x4;
-    const PARTY_WORD: u16 = 0x8;
+    const RAID_WORD: u32 = 0x4;
+    const PARTY_WORD: u32 = 0x8;
 
     /// Us and our party of one, a raider in our raid and a stranger in neither.
     fn roster() -> GroupRoster {
@@ -493,7 +493,7 @@ mod tests {
         let member_pet = pet_of(MEMBER, 1, false);
         // A friendly creature that can be assisted but answers to nobody.
         let npc = npc(1, PVP);
-        let binds = |word: u16, is_self: bool, guid, store: &ObjectStore, owner| {
+        let binds = |word: u32, is_self: bool, guid, store: &ObjectStore, owner| {
             let rel = TargetRelations {
                 target_store: Some(store),
                 target_owner_store: owner,

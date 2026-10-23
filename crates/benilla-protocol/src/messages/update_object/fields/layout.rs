@@ -188,6 +188,12 @@ pub enum Field {
     PlayerArenaCurrency,
     /// 3.3.5a's rune regeneration per rune type, runes per second as floats.
     PlayerRuneRegen,
+    /// 3.3.5a's six glyph sockets: each a `GlyphSlot.dbc` id, 0 for a socket not there.
+    PlayerGlyphSlots,
+    /// 3.3.5a's six inscribed glyphs, `GlyphProperties.dbc` ids, 0 for an empty socket.
+    PlayerGlyphs,
+    /// 3.3.5a's unlocked-socket mask, bit `i` for socket `i`.
+    PlayerGlyphsEnabled,
     /// The 25 combat ratings.
     PlayerCombatRating,
     PlayerExploredZones,
@@ -332,7 +338,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         item: 48,
         container: 122,
         unit: 188,
-        player: 1503,
+        player: 1516,
         gameobject: 26,
         dynamicobject: 16,
         corpse: 38,
@@ -459,6 +465,9 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         one(F::PlayerHonorCurrency, Player, 1497),
         one(F::PlayerArenaCurrency, Player, 1498),
         run(F::PlayerRuneRegen, Player, 1499, 4),
+        run(F::PlayerGlyphSlots, Player, 1503, 6),
+        run(F::PlayerGlyphs, Player, 1509, 6),
+        one(F::PlayerGlyphsEnabled, Player, 1515),
         // 19 slots of 12: creator guid, entry, 7 enchants, properties, pad.
         strided(F::PlayerVisibleItemEntry, Player, 260, 19, 12),
         strided(F::PlayerVisibleItemEnchants, Player, 261, 19, 12),
@@ -723,6 +732,11 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         one(F::PlayerArenaCurrency, Player, 1278),
         // `UNIT_END + 0x485`, read at `+0x1214 + 4 * type` (`GetRuneCooldown` `0x613092`).
         run(F::PlayerRuneRegen, Player, 1305, 4),
+        // `UNIT_END + 0x48c`, `+0x492` and `+0x498`: the player block's `+0x1230`, `+0x1248` and
+        // `+0x1260` (`Spell_C_HandleGlyphClick` `0x80c3e0`).
+        run(F::PlayerGlyphSlots, Player, 1312, 6),
+        run(F::PlayerGlyphs, Player, 1318, 6),
+        one(F::PlayerGlyphsEnabled, Player, 1324),
         run(F::GameObjectCreatedBy, GameObject, 6, 2),
         one(F::GameObjectDisplayId, GameObject, 8),
         one(F::GameObjectFlags, GameObject, 9),

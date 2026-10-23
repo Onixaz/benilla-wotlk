@@ -97,6 +97,7 @@ fn fixture(points_spent: u32) -> TalentUiState {
         groups: vec![TalentGroupView {
             ranks: vec![group],
             unspent: 2,
+            ..Default::default()
         }],
         active_group: 0,
         points: (2, 0),

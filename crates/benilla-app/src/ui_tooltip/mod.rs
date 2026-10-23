@@ -298,7 +298,7 @@ fn drive_mouseover_tooltip(
                     slots,
                     &player_actions.spells,
                     go_inputs.spells.as_deref(),
-                    go_inputs.skill_lines.as_ref().map(|s| &s.catalog),
+                    go_inputs.skill_lines.as_ref().map(|s| &*s.catalog),
                     self_store,
                     &go_inputs.objects,
                     facts,

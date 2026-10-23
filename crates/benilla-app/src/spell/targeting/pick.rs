@@ -53,8 +53,7 @@ impl PickFlags {
     ///   (`0x6e6230`, with the corpse flag, `0x200040`), else alive (`0x100000`);
     /// - after it, the ally corpse bit `0x8000` (`0x6e6240`) adds the assist flag and the enemy
     ///   corpse bit `0x200` (`0x6e6250`) the attack flag (`0x20040`, `0x40040`).
-    pub(crate) fn of(word: u16) -> Self {
-        let word = u32::from(word);
+    pub(crate) fn of(word: u32) -> Self {
         let mut flags = 0;
         if word & 0x878e != 0 {
             flags |= UNITS;
@@ -208,14 +207,14 @@ mod tests {
     const PLAYER_TYPE: u32 = 0x19;
 
     // The words: `TARGET_FLAG_*`.
-    const UNIT: u16 = 0x0002;
-    const RAID: u16 = 0x0004;
-    const PARTY_WORD: u16 = 0x0008;
-    const ENEMY: u16 = 0x0080;
-    const ASSIST_WORD: u16 = 0x0100;
-    const CORPSE_ENEMY: u16 = 0x0200;
-    const DEAD_ONLY: u16 = 0x0400;
-    const CORPSE_ALLY: u16 = 0x8000;
+    const UNIT: u32 = 0x0002;
+    const RAID: u32 = 0x0004;
+    const PARTY_WORD: u32 = 0x0008;
+    const ENEMY: u32 = 0x0080;
+    const ASSIST_WORD: u32 = 0x0100;
+    const CORPSE_ENEMY: u32 = 0x0200;
+    const DEAD_ONLY: u32 = 0x0400;
+    const CORPSE_ALLY: u32 = 0x8000;
 
     fn unit(pairs: &[(u16, u32)]) -> ObjectStore {
         let mut pairs = pairs.to_vec();
@@ -243,12 +242,12 @@ mod tests {
         unit(&[(TEMPLATE, 2), (FLAGS, flags), (HEALTH, health)])
     }
 
-    fn admits(word: u16, candidate: &ObjectStore) -> bool {
+    fn admits(word: u32, candidate: &ObjectStore) -> bool {
         admits_as(word, false, candidate, || false)
     }
 
     fn admits_as(
-        word: u16,
+        word: u32,
         is_self: bool,
         candidate: &ObjectStore,
         in_party: impl FnOnce() -> bool,
@@ -377,7 +376,7 @@ mod tests {
     fn a_unit_immune_to_players_is_never_a_candidate() {
         // The word, and the subject it takes: (friend or foe, health).
         type Make = fn(u32, u32) -> ObjectStore;
-        let cases: [(u16, Make, u32); 5] = [
+        let cases: [(u32, Make, u32); 5] = [
             (UNIT, friend_with, 100),
             (ASSIST_WORD, friend_with, 100),
             (ENEMY, foe_with, 100),
@@ -484,7 +483,7 @@ mod tests {
     }
 
     /// The pick under `word` and the roster as it stands, published as a frame does.
-    fn asked(world: &mut World, word: u16, entity: Entity) -> bool {
+    fn asked(world: &mut World, word: u32, entity: Entity) -> bool {
         world.resource_mut::<SpellTargeting>().enter(
             fx::RESURRECTION,
             crate::spell::CastCommit::Spell,

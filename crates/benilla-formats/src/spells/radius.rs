@@ -18,7 +18,7 @@ pub struct SpellRadius {
 }
 
 /// `SpellRadius.dbc`, by row id.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SpellRadiusCatalog {
     rows: HashMap<u32, SpellRadius>,
 }

@@ -210,7 +210,7 @@ pub fn min_max_range_reads_units(
 }
 
 /// `SpellRange.dbc`, by row id ([`crate::spells::SpellDisplay::range_index`]).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SpellRangeCatalog {
     ranges: HashMap<u32, SpellRange>,
 }

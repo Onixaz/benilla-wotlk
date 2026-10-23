@@ -30,7 +30,8 @@ use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 /// `SkillLine.dbc` × `SkillLineAbility.dbc`; absent when the data failed to load.
 #[derive(Resource)]
 pub(crate) struct SkillLines {
-    pub(crate) catalog: SkillLineCatalog,
+    /// Shared with `GetSpellInfo`'s source.
+    pub(crate) catalog: std::sync::Arc<SkillLineCatalog>,
 }
 
 /// The General tab, key 0: pinned first, named from the `GENERAL` GlobalString (`0x846910`) with a
@@ -84,7 +85,9 @@ fn load_skill_lines(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
                 "ui_spellbook: {} skill line(s) in the tab catalog",
                 catalog.len()
             );
-            commands.insert_resource(SkillLines { catalog });
+            commands.insert_resource(SkillLines {
+                catalog: catalog.into(),
+            });
         }
         Err(e) => warn!(
             "ui_spellbook: SkillLine.dbc failed to load — every spell falls into one \
@@ -125,6 +128,7 @@ fn feed_spellbook(
         Option<Res<crate::ui_rune::RuneCosts>>,
         Res<crate::spell::SpellModifiers>,
     ),
+    weapon_icons: Option<ResMut<crate::ui_spell_info::WeaponActionIcons>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -213,11 +217,18 @@ fn feed_spellbook(
     // Auto Shot and wand Shoot show the ranged weapon; without one, their own icon.
     let ranged_icon = store
         .and_then(|s| ranged_weapon_icon(s, &inv.objects, &items, icons.as_deref(), &commands));
+    // `GetSpellInfo` substitutes the same two.
+    if let Some(mut published) = weapon_icons {
+        published.set_if_neq(crate::ui_spell_info::WeaponActionIcons {
+            attack: attack_icon.clone(),
+            ranged: ranged_icon.clone(),
+        });
+    }
     let (mut fresh, tab_lines) = build_book(
         &actions.spells,
         &spells.catalog,
         &summons.0,
-        skill_lines.as_deref().map(|s| &s.catalog),
+        skill_lines.as_deref().map(|s| &*s.catalog),
         race,
         class,
         attack_icon,
@@ -299,7 +310,7 @@ fn feed_spellbook(
         &tab_lines,
         spells,
         &summons.0,
-        skill_lines.as_deref().map(|s| &s.catalog),
+        skill_lines.as_deref().map(|s| &*s.catalog),
         race,
         class,
     );

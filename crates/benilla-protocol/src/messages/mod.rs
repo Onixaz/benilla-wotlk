@@ -268,9 +268,9 @@ pub use social::{
 pub use spellbook::SpellCooldown;
 pub use spells::{
     cancel_aura, cast_spell, cast_spell_at_dest, cast_spell_at_source, cast_spell_corpse,
-    cast_spell_gameobject, cast_spell_item, dismiss_critter, wotlk_cast_fail_shared, CastCounter,
-    CastOutcome, CastRunes, CorpseTarget, SpellCastTargets, SpellChainTargets, SpellGo, SpellStart,
-    WOTLK_CAST_FAIL_KEYS,
+    cast_spell_gameobject, cast_spell_glyph, cast_spell_item, dismiss_critter,
+    wotlk_cast_fail_shared, CastCounter, CastOutcome, CastRunes, CorpseTarget, SpellCastTargets,
+    SpellChainTargets, SpellGo, SpellStart, WOTLK_CAST_FAIL_KEYS,
 };
 pub use stable::{
     buy_stable_slot, list_stabled_pets, stable_pet, stable_result, stable_swap_pet, unstable_pet,
@@ -281,8 +281,8 @@ pub use tabard::{
     battlemaster_hello, save_guild_emblem, tabard_vendor_activate, GUILD_EMBLEM_RESULT_MESSAGES,
 };
 pub use talents::{
-    learn_preview_talents, learn_preview_talents_pet, pet_learn_talent, LearnedTalent,
-    TalentGroupInfo, TalentsInfo,
+    learn_preview_talents, learn_preview_talents_pet, pet_learn_talent, remove_glyph,
+    LearnedTalent, TalentGroupInfo, TalentsInfo,
 };
 pub use taxi::{
     activate_taxi, activate_taxi_express, taxi_node_status_query, taxi_query_available_nodes,
@@ -301,8 +301,9 @@ pub use update_object::{
     power_display_scale, quest_slot_state, CorpseLook, CreateSpline, MovementBlock, MoverState,
     Object, ObjectFields, ObjectType, OwnerFallback, PlayerSkillSlot, QuestLogSlot, UnitAuraSlot,
     AURA_FLAG_CANCELABLE, AURA_FLAG_EFF_INDEX_MASK, FIELD_PLAYER_SKILL_INFO_1_1,
-    PLAYER_COMBAT_RATINGS, PLAYER_EXPLORED_ZONES_SLOTS, PLAYER_QUEST_LOG_SLOTS, PLAYER_SKILL_SLOTS,
-    QUEST_LOG_SLOT_FIELDS, UNIT_AURA_POSITIVE_SLOTS, UNIT_AURA_SLOTS,
+    PLAYER_COMBAT_RATINGS, PLAYER_EXPLORED_ZONES_SLOTS, PLAYER_GLYPH_SOCKETS,
+    PLAYER_QUEST_LOG_SLOTS, PLAYER_SKILL_SLOTS, QUEST_LOG_SLOT_FIELDS, UNIT_AURA_POSITIVE_SLOTS,
+    UNIT_AURA_SLOTS,
 };
 pub use vendor::{
     buy_item, buy_item_in_slot, buy_result, buyback_item, list_inventory, repair_item, sell_item,

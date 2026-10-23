@@ -42,6 +42,8 @@ pub(crate) struct PlayerTalentGroups {
     pub(crate) active: usize,
     /// Per group, talent id → 0-based rank.
     pub(crate) ranks: Vec<HashMap<u32, u8>>,
+    /// Per group, the first six glyphs the packet names, the rest 0 (`0x5c9819`).
+    pub(crate) glyphs: Vec<[u32; 6]>,
     /// The events the packet owes the VM, fired after the snapshot they describe is pushed.
     pending_events: Vec<(&'static str, Vec<ScriptValue>)>,
 }
@@ -64,10 +66,15 @@ impl PlayerTalentGroups {
             unspent,
             active: 0,
             ranks: vec![HashMap::new()],
+            glyphs: vec![[0; 6]],
             pending_events: Vec::new(),
         }
     }
 }
+
+/// The talent pages' push, which the glyph watchers' events follow.
+#[derive(bevy::ecs::schedule::SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct TalentFeed;
 
 pub(crate) struct UiTalentPlugin;
 
@@ -82,7 +89,7 @@ impl Plugin for UiTalentPlugin {
                 (
                     // Feed before the input pass, so an open this frame sees a populated
                     // window; drain after it, so a click sends the same frame.
-                    feed_talents.in_set(UnitFeed),
+                    feed_talents.in_set(UnitFeed).in_set(TalentFeed),
                     drain_talent_learns.after(UiInput),
                 ),
             );
@@ -142,6 +149,16 @@ fn on_talents_info(
     held.ranks = groups
         .iter()
         .map(|g| g.talents.iter().map(|t| (t.talent_id, t.rank)).collect())
+        .collect();
+    held.glyphs = groups
+        .iter()
+        .map(|g| {
+            let mut six = [0u32; 6];
+            for (slot, &glyph) in six.iter_mut().zip(&g.glyphs) {
+                *slot = u32::from(glyph);
+            }
+            six
+        })
         .collect();
     held.pending_events
         .push(("PLAYER_TALENT_UPDATE", Vec::new()));
@@ -391,7 +408,11 @@ pub(crate) fn build_pages(
             } else {
                 (total - spent(&ranks)).max(0) as u32
             };
-            TalentGroupView { ranks, unspent }
+            TalentGroupView {
+                ranks,
+                unspent,
+                glyphs: held.glyphs.get(g).copied().unwrap_or_default(),
+            }
         })
         .collect();
     TalentUiState {
@@ -428,6 +449,7 @@ pub(crate) fn build_pet_pages(
         vec![TalentGroupView {
             ranks: ranks_in(&pages, &held.ranks),
             unspent: held.unspent,
+            glyphs: [0; 6],
         }]
     };
     TalentUiState {

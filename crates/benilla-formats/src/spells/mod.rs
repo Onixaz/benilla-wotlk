@@ -310,6 +310,9 @@ pub const SPELL_EFFECT_LANGUAGE: u32 = 39;
 pub const SPELL_EFFECT_ENCHANT_ITEM: u32 = 53;
 pub const SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY: u32 = 54;
 
+/// `SPELL_EFFECT_APPLY_GLYPH`: its `EffectMiscValue` is the `GlyphProperties.dbc` id (`0x80c4a0`).
+pub const SPELL_EFFECT_APPLY_GLYPH: u32 = 74;
+
 /// `SPELL_EFFECT_PROSPECTING`: handled by the client (`0x495f39`, `0x6e4cd4`, `0x6e3bdc`) but on
 /// no 5875 spell, so the cast-fail reasons only its legs raise, `0x83`, `0x84` and `0x90`, never
 /// show. The number is this build's own: `TryCast` pairs 99 with disenchant (`0x6e4ca2`) and 127
@@ -317,8 +320,13 @@ pub const SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY: u32 = 54;
 pub const SPELL_EFFECT_PROSPECTING: u32 = 127;
 
 /// `Spell.dbc` joined with `SpellIcon.dbc`, plus the learn-spell map: a trainer offers a learn
-/// wrapper, and [`Self::learned_spell`] follows it to the ability it teaches.
-pub struct SpellCatalog {
+/// wrapper, and [`Self::learned_spell`] follows it to the ability it teaches. The tables are
+/// shared, so a clone is a handle.
+#[derive(Clone)]
+pub struct SpellCatalog(std::sync::Arc<CatalogTables>);
+
+#[doc(hidden)]
+pub struct CatalogTables {
     spells: HashMap<u32, SpellDisplay>,
     learned_spell: HashMap<u32, u32>,
     /// The three effect slots of every spell with a [`LearnEffect::Spell`] or
@@ -332,6 +340,14 @@ pub struct SpellCatalog {
     description_variables: SpellDescriptionVariablesCatalog,
     /// `SpellIcon.dbc` texture paths by row id, for icons a binding names by row.
     icons: HashMap<u32, String>,
+}
+
+impl std::ops::Deref for SpellCatalog {
+    type Target = CatalogTables;
+
+    fn deref(&self) -> &CatalogTables {
+        &self.0
+    }
 }
 
 impl SpellCatalog {
@@ -355,7 +371,7 @@ impl SpellCatalog {
                 })
             })
             .collect();
-        Self {
+        Self(std::sync::Arc::new(CatalogTables {
             spells,
             learned_spell,
             learn_effects,
@@ -363,7 +379,7 @@ impl SpellCatalog {
             dispel_types: SpellDispelTypes::default(),
             description_variables: SpellDescriptionVariablesCatalog::default(),
             icons: HashMap::new(),
-        }
+        }))
     }
 
     /// A `SpellIcon.dbc` row's texture path, `None` for a row the file lacks.
@@ -371,9 +387,14 @@ impl SpellCatalog {
         self.icons.get(&id).map(String::as_str)
     }
 
+    /// The tables of a catalog no clone shares yet, for the test builders.
+    fn tables_mut(&mut self) -> &mut CatalogTables {
+        std::sync::Arc::get_mut(&mut self.0).expect("a catalog shared before its builder ran")
+    }
+
     /// The catalog with `icons` as its `SpellIcon.dbc` rows, for tests.
     pub fn with_icons(mut self, icons: HashMap<u32, String>) -> Self {
-        self.icons = icons;
+        Self::tables_mut(&mut self).icons = icons;
         self
     }
 
@@ -387,7 +408,7 @@ impl SpellCatalog {
         mut self,
         variables: SpellDescriptionVariablesCatalog,
     ) -> Self {
-        self.description_variables = variables;
+        Self::tables_mut(&mut self).description_variables = variables;
         self
     }
 
@@ -754,7 +775,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
             },
         );
     }
-    Ok(SpellCatalog {
+    Ok(SpellCatalog(std::sync::Arc::new(CatalogTables {
         spells,
         learned_spell,
         learn_effects,
@@ -762,7 +783,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
         dispel_types,
         description_variables,
         icons,
-    })
+    })))
 }
 
 #[cfg(test)]

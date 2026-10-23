@@ -133,7 +133,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 let layer = optional_string(lua, &layer);
                 let wrapper = create_region(lua, &this, RegionKind::Texture, name, layer)?;
                 if let Some(from) = strict_string_arg(&inherits).filter(|s| !s.is_empty()) {
-                    apply_region_inherits(lua, &wrapper, &from)?;
+                    apply_region_inherits(lua, &wrapper, "Texture", &from)?;
                 }
                 Ok(wrapper)
             },
@@ -210,7 +210,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 let layer = optional_string(lua, &layer);
                 let wrapper = create_region(lua, &this, RegionKind::FontString, name, layer)?;
                 if let Some(from) = strict_string_arg(&inherits).filter(|s| !s.is_empty()) {
-                    apply_region_inherits(lua, &wrapper, &from)?;
+                    apply_region_inherits(lua, &wrapper, "FontString", &from)?;
                 }
                 Ok(wrapper)
             },
@@ -296,9 +296,9 @@ fn get_script(lua: &Lua, this: &Table, name: &str) -> mlua::Result<Value> {
 }
 
 /// Apply the `inherits` argument: the font-object registry first (`0x773d39`), then the template
-/// registry (`0x773d47`); a name in neither raises (`0x87957c` / `0x879544`). A template that is
-/// not a font object only warns: the reference applies the template, which is not built here.
-fn apply_region_inherits(lua: &Lua, wrapper: &Table, from: &str) -> mlua::Result<()> {
+/// registry (`0x773d47`), whose node loads into the region; a name in neither raises
+/// (`0x87957c` / `0x879544`).
+fn apply_region_inherits(lua: &Lua, wrapper: &Table, tag: &str, from: &str) -> mlua::Result<()> {
     use mlua::ObjectLike;
     // Through `SetFontObject`, the binding the XML `inherits=` path uses.
     if wrapper.call_method::<()>("SetFontObject", from).is_ok() {
@@ -312,12 +312,11 @@ fn apply_region_inherits(lua: &Lua, wrapper: &Table, from: &str) -> mlua::Result
         templates.contains_key(from) || templates.keys().any(|k| k.eq_ignore_ascii_case(from))
     };
     if is_template {
+        let messages = crate::loader::apply_region_template(lua, wrapper, tag, from);
         let mut model = crate::script::model_mut_of(lua);
-        model.record_warning(format!(
-            "CreateTexture/CreateFontString: '{from}' is a registered TEMPLATE, not a font object; \
-             the region is created but the template's content is not applied (no corpus caller \
-             does this)"
-        ));
+        for m in messages {
+            model.record_warning(m);
+        }
         return Ok(());
     }
     Err(mlua::Error::runtime(format!(

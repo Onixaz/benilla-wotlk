@@ -90,6 +90,8 @@ tables! {
         "GameObjectDisplayInfo" => gameobjects::gameobject_display_info_schema(),
         "GameTables" => game_tables::game_tables_schema(),
         "GameTips" => game_tips::schema(&LAYOUTS.game_tips),
+        "GlyphProperties" => glyphs::glyph_properties_schema(),
+        "GlyphSlot" => glyphs::glyph_slot_schema(),
         "GMTicketCategory" => gm_ticket_category::gm_ticket_category_schema(),
         "GroundEffectDoodad" => ground_effects::doodad_schema(),
         "GroundEffectTexture" => ground_effects::ground_effect_texture_schema(),

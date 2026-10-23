@@ -129,8 +129,8 @@ impl super::UiScript {
 
     /// The spells whose player view a hover reads from the VM's own state rather than the
     /// player's book: the open quest's and each log entry's reward spell, the open tradeskill's spell
-    /// subjects, the player's and every other unit's auras, and the tracking spell. The app pushes
-    /// their views ahead of a hover.
+    /// subjects, the player's and every other unit's auras, the tracking spell and the talent
+    /// groups' glyph spells. The app pushes their views ahead of a hover.
     pub fn spell_tooltip_subjects(&self) -> Vec<u32> {
         let model = self.model_ref();
         let rewards = model
@@ -159,10 +159,12 @@ impl super::UiScript {
             .chain(model.unit_auras.values().flatten())
             .map(|a| a.spell_id);
         let tracking = model.tracking.iter().map(|t| t.spell_id);
+        let glyphs = super::glyph::glyph_spells(&model);
         rewards
             .chain(recipes)
             .chain(auras)
             .chain(tracking)
+            .chain(glyphs)
             .filter(|&id| id != 0)
             .collect()
     }

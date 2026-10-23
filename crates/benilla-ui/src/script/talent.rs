@@ -90,6 +90,9 @@ pub struct TalentGroupView {
     /// Unspent points: the packet's for the active group, the total less this group's spent
     /// for the others (`0x5c9ca0`).
     pub unspent: u32,
+    /// The group's six glyphs, `GlyphProperties.dbc` ids, 0 for none (group `+0x3c`, kept by
+    /// `0x5c9819`); the pet's are all 0.
+    pub glyphs: [u32; 6],
 }
 
 /// The pushed snapshot: one side's pages, talents and groups.
@@ -226,7 +229,7 @@ fn talent_at(model: &Model, side: Side, tab: i64, index: i64) -> Option<&TalentV
 }
 
 /// A `groupIndex` argument (1-based) or the player's active group, 0-based (`0x5c57d0`).
-fn group_arg(model: &Model, v: &Value) -> usize {
+pub(super) fn group_arg(model: &Model, v: &Value) -> usize {
     match number_of(v) {
         Some(n) => (n as i64 - 1).max(-1) as usize,
         None => model.talents.active_group,
@@ -1174,10 +1177,12 @@ mod tests {
                 TalentGroupView {
                     ranks: vec![vec![1, -1, -1]],
                     unspent: 3,
+                    ..Default::default()
                 },
                 TalentGroupView {
                     ranks: vec![vec![-1, -1, -1]],
                     unspent: 5,
+                    ..Default::default()
                 },
             ],
             active_group: 0,
@@ -1378,6 +1383,7 @@ mod tests {
             groups: vec![TalentGroupView {
                 ranks: vec![vec![1, -1, -1]],
                 unspent: 4,
+                ..Default::default()
             }],
             active_group: 0,
             points: (0, 0),

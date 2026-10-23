@@ -48,6 +48,9 @@ pub(crate) fn apply_script_calls(
             ScriptCall::AttackTarget => appliers.p7().attack_target(),
             ScriptCall::SpellTargetUnit(token) => appliers.p1().spell_target_unit(&token),
             ScriptCall::SpellStopTargeting => appliers.p1().stop_targeting(),
+            ScriptCall::PlaceGlyph { socket, verdict } => {
+                appliers.p1().place_glyph(socket, verdict);
+            }
             ScriptCall::SpellStopCasting => appliers.p2().stop_casting(),
             ScriptCall::CastSpell {
                 spell_id,

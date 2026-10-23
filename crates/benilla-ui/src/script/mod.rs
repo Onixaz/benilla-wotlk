@@ -199,6 +199,7 @@ pub(crate) mod object;
 mod unit_cast;
 pub use object::frame_kind_from_tag;
 mod achievement;
+mod glyph;
 mod multicast;
 mod party;
 mod pet;
@@ -222,6 +223,7 @@ mod slash;
 mod slider;
 mod social;
 mod sound;
+mod spell_info;
 mod spellbook;
 mod stable;
 mod statusbar;
@@ -338,6 +340,10 @@ pub use achievement::{
     AchievementDb, AchievementRow, AchievementUpdate, CriteriaWire, WowDate,
 };
 pub use companion::{CompanionIntent, CompanionState, CompanionType, CompanionView};
+pub use glyph::{
+    GlyphCatalogView, GlyphPlacement, GlyphSlotView, GlyphSockets, GlyphTargeting, GlyphView,
+    GLYPH_FAILED_INVALID, GLYPH_FAILED_LOCKED, GLYPH_FAILED_UNIQUE, NUM_GLYPH_SOCKETS,
+};
 pub use inspect::{InspectView, UnitReach};
 pub use item_stats::{item_usable, ItemSetView, ItemTemplateView, PlayerReqState};
 pub use item_text::ItemTextState;
@@ -387,6 +393,7 @@ pub(crate) use simplehtml::{
 pub use skills::{SkillEntry, SkillsState};
 pub use social::{FriendInfo, SocialRequest, SocialState, WhoInfo, WhoRecords};
 pub use sound::{MusicRequest, SoundRequest};
+pub use spell_info::{SpellInfo, SpellInfoSource};
 pub use spellbook::{
     resolve_spell_by_name, PetBookState, SpellBookState, SpellSlotView, SpellTabView,
 };
@@ -991,6 +998,8 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     worldmap_arrow::install(lua)?;
     shapeshift::install(lua)?;
     rune::install(lua)?;
+    glyph::install(lua)?;
+    spell_info::install(lua)?;
     totem::install(lua)?;
     multicast::install(lua)?;
     pet::install(lua)?;

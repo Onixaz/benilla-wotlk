@@ -313,7 +313,7 @@ pub(super) fn feed_item_sets(
         return; // no catalog without client data: the asks stay parked
     };
     let spell_res = spells.as_deref();
-    let skill_catalog = skill_lines.as_deref().map(|s| &s.catalog);
+    let skill_catalog = skill_lines.as_deref().map(|s| &*s.catalog);
     let skill = |id| crate::spell::spell_skill_value(me, skill_catalog, id);
     let cost = |d: &benilla_formats::SpellDisplay| {
         me.map_or(d.mana_cost, |s| {
@@ -490,7 +490,7 @@ pub(super) fn feed_item_stats(
         return;
     }
     let spell_res = spells.as_deref();
-    let skill_catalog = skill_lines.as_deref().map(|s| &s.catalog);
+    let skill_catalog = skill_lines.as_deref().map(|s| &*s.catalog);
     let skill = |id| crate::spell::spell_skill_value(me, skill_catalog, id);
     let cost = |d: &benilla_formats::SpellDisplay| {
         me.map_or(d.mana_cost, |s| {

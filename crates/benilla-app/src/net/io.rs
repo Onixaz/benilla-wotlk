@@ -1626,6 +1626,7 @@ pub(super) fn writer_loop(
                     ClientCommand::LearnTalent { talent_id, rank } => {
                         w.learn_talent(talent_id, rank)
                     }
+                    ClientCommand::RemoveGlyph { socket } => w.remove_glyph(socket),
                     ClientCommand::LearnPreviewTalents { talents } => {
                         w.learn_preview_talents(&talents)
                     }
@@ -1662,6 +1663,7 @@ pub(super) fn writer_loop(
                         spell_id,
                         item_guid,
                     } => w.cast_spell_item(spell_id, item_guid),
+                    ClientCommand::CastSpellGlyph { spell_id } => w.cast_spell_glyph(spell_id),
                     ClientCommand::LootMasterGive { guid, slot, target } => {
                         w.loot_master_give(guid, slot, target)
                     }

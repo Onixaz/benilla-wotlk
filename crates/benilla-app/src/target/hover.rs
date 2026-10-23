@@ -993,7 +993,7 @@ mod tests {
     fn a_corpse_joins_the_pick_as_the_word_admits_it() {
         use crate::spell::targeting::corpse_fixture as fx;
 
-        let hover = |corpse: ObjectStore, word: Option<u16>| {
+        let hover = |corpse: ObjectStore, word: Option<u32>| {
             let mut world = pick_world();
             world.insert_resource(fx::factions());
             world.init_resource::<crate::spell::SpellTargeting>();
@@ -1104,7 +1104,7 @@ mod tests {
 
     /// The pick over `word`, the way a frame runs it: the word published, its flags `0x20` and the
     /// unit legs both, then the pick.
-    fn pick_under(world: &mut World, word: Option<u16>) -> Hovered {
+    fn pick_under(world: &mut World, word: Option<u32>) -> Hovered {
         let mut targeting = world.resource_mut::<crate::spell::SpellTargeting>();
         match word {
             Some(word) => targeting.enter(fx::RESURRECTION, crate::spell::CastCommit::Spell, word),
@@ -1141,12 +1141,12 @@ mod tests {
     /// front unit is 5 yards nearer the camera than the rear one.
     #[test]
     fn a_unit_the_word_cannot_take_lets_the_pick_through_to_the_one_behind() {
-        const HEAL: u16 = 0x0100;
-        const ENEMY: u16 = 0x0080;
-        const RESURRECTION: u16 = 0x8000;
-        const SKINNING: u16 = 0x0402;
+        const HEAL: u32 = 0x0100;
+        const ENEMY: u32 = 0x0080;
+        const RESURRECTION: u32 = 0x8000;
+        const SKINNING: u32 = 0x0402;
         // (word, the front unit it refuses, the rear unit it takes, what stands behind it)
-        let cases: [(&str, u16, ObjectStore, ObjectStore); 6] = [
+        let cases: [(&str, u32, ObjectStore, ObjectStore); 6] = [
             ("a foe before a friend, under a heal", HEAL, foe(), friend()),
             (
                 "a corpse before a friend, under a heal",
@@ -1207,7 +1207,7 @@ mod tests {
     /// The control of the table above: the same front unit is the pick when the word takes it.
     #[test]
     fn a_unit_the_word_takes_keeps_the_pick_in_front_of_the_one_behind() {
-        let cases: [(&str, u16, ObjectStore); 4] = [
+        let cases: [(&str, u32, ObjectStore); 4] = [
             ("a friend under a heal", 0x0100, friend()),
             ("a foe under an enemy word", 0x0080, foe()),
             ("a corpse under Resurrection", 0x8000, unit_store(1, 0x8, 0)),
@@ -1258,8 +1258,8 @@ mod tests {
 
     /// The word's plain unit bit (`0x0002`), which `0x6e61a0` takes the player for (`0x850e`), and
     /// the enemy bit (`0x0080`), which it does not.
-    const SELF_WORD: u16 = 0x0002;
-    const ENEMY_WORD: u16 = 0x0080;
+    const SELF_WORD: u32 = 0x0002;
+    const ENEMY_WORD: u32 = 0x0080;
 
     /// `0x480610`, `48064f`-`480676`: a unit flagged `UNIT_FLAG_POSSESSED` whose charmer, else
     /// creator, is the active player is no candidate outside targeting, or while a word without

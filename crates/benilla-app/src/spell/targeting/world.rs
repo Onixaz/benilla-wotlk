@@ -129,7 +129,7 @@ mod tests {
     const OPENING: u32 = 3365;
     const CHEST: u64 = 0xF110_000C_1F00_A3B2;
     /// An opener's lock word: `Targets 0x4000` plus implicit arm 23's `0x800`.
-    const LOCK_WORD: u16 = 0x4800;
+    const LOCK_WORD: u32 = 0x4800;
 
     /// The ladder's resources, the press latch and the click message; the packet's shape is
     /// tested in `benilla-protocol`.
@@ -443,7 +443,7 @@ mod tests {
         use benilla_protocol::messages::{CorpseTarget, UseItemTarget};
         let commit = crate::spell::cast_send::CastCommit::Spell;
 
-        let clicked = |word: u16,
+        let clicked = |word: u32,
                        commit: crate::spell::cast_send::CastCommit,
                        corpse: crate::net::ObjectStore,
                        distance: f32| {

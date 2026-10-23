@@ -15,8 +15,8 @@ use super::binding_abi::{bool_or_default, flag};
 use super::cursor::{queue_cursor_update, CursorPayload, CursorSpell};
 use super::{CastAt, Model, ScriptCall};
 
-const BOOKTYPE_SPELL: &str = "spell";
-const BOOKTYPE_PET: &str = "pet";
+pub(super) const BOOKTYPE_SPELL: &str = "spell";
+pub(super) const BOOKTYPE_PET: &str = "pet";
 
 /// `HasPetSpells`' second return when no token is resolved: the reference's literal (`0x846a40`),
 /// pushed at `0x4b44a6` when the player object does not resolve. FrameXML concatenates it, so

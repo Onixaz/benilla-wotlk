@@ -485,12 +485,15 @@ pub enum UseItemTarget {
     /// A corpse bit and the corpse's packed guid: Goblin Jumper Cables' Defibrillate
     /// (`Targets 0x8000`) on a released player's corpse.
     Corpse(super::spells::CorpseTarget, u64),
+    /// `TARGET_FLAG_GLYPH_SLOT` and no payload; the 0-based socket rides in the glyph index
+    /// (`Spell_C_HandleGlyphClick` `0x80c57b`): a glyph inscribed from the bags.
+    Glyph(u32),
 }
 
 /// Body of `CMSG_USE_ITEM` (opcode 171) as the 12340 sender writes it (`0x80b28b`): bag index (a
 /// bag's player-array slot 19-22, or [`BAG_PLAYER_INVENTORY`]), slot within it, `castCount`, the
-/// cast's `spellId`, the item's full `u64` guid (`0x80b2d1`), a `u32` glyph index (`0x80b2d6`, 0:
-/// only the glyph frame sets it), then the tail `CMSG_CAST_SPELL` shares.
+/// cast's `spellId`, the item's full `u64` guid (`0x80b2d1`), a `u32` glyph index (`0x80b2d6`, 0
+/// but for a [`UseItemTarget::Glyph`]), then the tail `CMSG_CAST_SPELL` shares.
 pub fn use_item(
     cast_count: u8,
     bag_index: u8,
@@ -501,7 +504,8 @@ pub fn use_item(
 ) -> Vec<u8> {
     use super::spells::{
         put_cast_tail, put_target_guid, put_target_point, TARGET_FLAG_DEST_LOCATION,
-        TARGET_FLAG_GAMEOBJECT, TARGET_FLAG_ITEM, TARGET_FLAG_SOURCE_LOCATION, TARGET_FLAG_UNIT,
+        TARGET_FLAG_GAMEOBJECT, TARGET_FLAG_GLYPH_SLOT, TARGET_FLAG_ITEM,
+        TARGET_FLAG_SOURCE_LOCATION, TARGET_FLAG_UNIT,
     };
     let mut body = Vec::with_capacity(32);
     body.push(bag_index);
@@ -509,10 +513,18 @@ pub fn use_item(
     body.push(cast_count);
     body.extend_from_slice(&spell_id.to_le_bytes());
     body.extend_from_slice(&item_guid.to_le_bytes());
-    body.extend_from_slice(&0u32.to_le_bytes());
+    let glyph_index = match target {
+        UseItemTarget::Glyph(socket) => socket,
+        _ => 0,
+    };
+    body.extend_from_slice(&glyph_index.to_le_bytes());
     let (mask, guid) = match target {
         UseItemTarget::SelfImplicit => {
             put_cast_tail(&mut body, 0);
+            return body;
+        }
+        UseItemTarget::Glyph(_) => {
+            put_cast_tail(&mut body, TARGET_FLAG_GLYPH_SLOT);
             return body;
         }
         UseItemTarget::Unit(guid) => (TARGET_FLAG_UNIT, guid),
@@ -714,6 +726,20 @@ mod tests {
             item[19..],
             [0, 0x10, 0, 0, 0, 0x81, 0x99, 0x40],
             "castFlags, TARGET_FLAG_ITEM, packed guid"
+        );
+    }
+
+    /// A glyph inscribed into socket 3: the index after the guid, then `TARGET_FLAG_GLYPH_SLOT`
+    /// and nothing more (AzerothCore's `HandleUseItemOpcode` reads `glyphIndex` there).
+    #[test]
+    fn use_item_glyph_body_golden() {
+        let body = use_body(UseItemTarget::Glyph(3));
+        assert_eq!(body[..15], USE_HEAD[..15]);
+        assert_eq!(body[15..19], [3, 0, 0, 0], "glyph index");
+        assert_eq!(
+            body[19..],
+            [0, 0, 0, 2, 0],
+            "castFlags, TARGET_FLAG_GLYPH_SLOT"
         );
     }
 

@@ -518,7 +518,7 @@ mod tests {
     fn the_cursor_is_grey_wherever_the_word_has_no_handler() {
         use bevy::ecs::system::RunSystemOnce;
 
-        let verdict = |word: u16, point: Option<Vec3>, go: Option<f32>| {
+        let verdict = |word: u32, point: Option<Vec3>, go: Option<f32>| {
             let mut world = World::new();
             world.init_resource::<WorldCursor>();
             world.init_resource::<SpellTargeting>();
@@ -795,7 +795,7 @@ mod tests {
 
         const HEAL: u32 = 2050;
         const SHOT: u32 = 75;
-        let verdict_for = |spell: u32, word: u16, distance: f32| {
+        let verdict_for = |spell: u32, word: u32, distance: f32| {
             let mut world = World::new();
             world.init_resource::<WorldCursor>();
             world.init_resource::<SpellTargeting>();
@@ -993,7 +993,7 @@ mod tests {
         use super::super::corpse_fixture as fx;
         use bevy::ecs::system::RunSystemOnce;
 
-        let verdict = |word: u16, corpse: crate::net::ObjectStore, distance: f32| {
+        let verdict = |word: u32, corpse: crate::net::ObjectStore, distance: f32| {
             let mut world = World::new();
             world.init_resource::<WorldCursor>();
             world.init_resource::<SpellTargeting>();

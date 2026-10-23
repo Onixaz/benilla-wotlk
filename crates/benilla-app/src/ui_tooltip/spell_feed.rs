@@ -757,7 +757,7 @@ pub(super) fn feed_spell_tooltips(
             items: &mut items,
             commands: &commands,
             sub_classes: sub_classes.as_deref().map(|c| &c.0),
-            skill_lines: skill_lines.as_deref().map(|s| &s.catalog),
+            skill_lines: skill_lines.as_deref().map(|s| &*s.catalog),
             spell_mods,
             get: &get,
             known,

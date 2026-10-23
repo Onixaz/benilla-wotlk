@@ -71,7 +71,7 @@ fn feed_cost_per_invalidation() {
     app.insert_resource(spells)
         .insert_resource(NetCommands(tx))
         .insert_resource(crate::ui_spellbook::SkillLines {
-            catalog: skill_lines,
+            catalog: skill_lines.into(),
         })
         .init_resource::<Items>()
         .init_resource::<GuidIndex>()

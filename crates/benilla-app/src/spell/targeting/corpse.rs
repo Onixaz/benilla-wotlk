@@ -21,8 +21,8 @@ use crate::spell::cast_send::TargetedBind;
 use crate::target::Factions;
 
 /// `TARGET_FLAG_CORPSE_ALLY` and `TARGET_FLAG_CORPSE_ENEMY`, as the flag word carries them.
-const WORD_ALLY: u16 = 0x8000;
-const WORD_ENEMY: u16 = 0x0200;
+const WORD_ALLY: u32 = 0x8000;
+const WORD_ENEMY: u32 = 0x0200;
 
 /// What the corpse legs read of a corpse.
 #[derive(Clone, Copy, Debug, Default)]
@@ -48,7 +48,7 @@ impl CorpseFacts {
 
 /// [`pick_admits`] over a corpse's store, for [`crate::target`]'s hover.
 pub(crate) fn corpse_pick_admits(
-    word: u16,
+    word: u32,
     store: &ObjectStore,
     factions: Option<&Factions>,
     self_store: Option<&ObjectStore>,
@@ -60,7 +60,7 @@ pub(crate) fn corpse_pick_admits(
 /// that is not bones and that `0x6067d0` passes (`6e6291`–`6e62a7`); only a word without it tries
 /// the enemy bit, on a corpse that is not bones and that `0x6067d0` fails (`6e62ad`–`6e62c6`).
 /// Both bits are inside `0x8600`, so a corpse this admits was already a candidate (`0x6e6230`).
-fn pick_admits(word: u16, f: CorpseFacts) -> bool {
+fn pick_admits(word: u32, f: CorpseFacts) -> bool {
     if word & WORD_ALLY != 0 {
         !f.bones && f.friendly
     } else {
@@ -73,7 +73,7 @@ fn pick_admits(word: u16, f: CorpseFacts) -> bool {
 /// writes its bit to the wire mask (`6e5fc7`, `6e600c`), parks the corpse's guid and clears its bit
 /// from the word. `None` binds nothing, silently, and the cursor stays (`6e6026`). The read-only
 /// mirror `0x6e6460` (`6e6719`–`6e676d`) passes exactly the corpses this binds.
-fn bind_arm(word: u16, f: CorpseFacts) -> Option<CorpseTarget> {
+fn bind_arm(word: u32, f: CorpseFacts) -> Option<CorpseTarget> {
     if f.bones {
         None
     } else if word & WORD_ALLY != 0 && f.friendly {
@@ -89,7 +89,7 @@ fn bind_arm(word: u16, f: CorpseFacts) -> Option<CorpseTarget> {
 /// `None` outside targeting, where the pick flags carry `0x5c` and so `0x40`, and every corpse is a
 /// candidate (`0x480816`); while targeting, the standing word, through [`pick_admits`].
 #[derive(Resource, Default)]
-pub(crate) struct CorpsePick(pub(crate) Option<u16>);
+pub(crate) struct CorpsePick(pub(crate) Option<u32>);
 
 /// Publish [`CorpsePick`] before the input pass, beside [`super::PicksSelf`].
 pub(crate) fn publish_corpse_pick(
@@ -135,7 +135,7 @@ pub(super) fn bind_target_corpse(
     let Some(bit) = checks.corpse_facts(entity).and_then(|f| bind_arm(word, f)) else {
         return;
     };
-    if u32::from(word) & !bit.target_flag() != 0 {
+    if word & !bit.target_flag() != 0 {
         return;
     }
     let range = checks.corpse_range_refusal(spell_id, entity);

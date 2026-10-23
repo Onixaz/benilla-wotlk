@@ -146,7 +146,7 @@ pub(crate) const PROBE_VARS: &[ProbeVar] = &[
     },
     ProbeVar {
         name: "WOW_PROBE_DRAG",
-        purpose: "\"<From>><To>[;…]\" — drag one named frame onto another through the real pointer path, one gesture step per frame; `A>A` left-clicks A",
+        purpose: "\"<From>><To>[;…]\" — drag one named frame onto another through the real pointer path, one gesture step per frame; `A>A` left-clicks A, `!A>A` right-clicks it",
         // Starts at `_AT`, advances one step per `_STEP` seconds, on `ProbeClock`.
         wall_clock: true,
     },

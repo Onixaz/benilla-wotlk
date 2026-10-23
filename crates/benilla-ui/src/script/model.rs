@@ -568,6 +568,16 @@ pub(crate) struct Model {
     pub(crate) shapeshift_form_byte: u8,
     /// The rune table `GetRuneType` reads.
     pub(crate) runes: super::rune::RuneState,
+    /// `GlyphProperties.dbc` and `GlyphSlot.dbc`.
+    pub(crate) glyph_catalog: super::glyph::GlyphCatalogView,
+    /// The player's glyph fields.
+    pub(crate) glyph_sockets: super::glyph::GlyphSockets,
+    /// The targeting cast's glyph reading, `None` while nothing targets.
+    pub(crate) glyph_targeting: Option<super::glyph::GlyphTargeting>,
+    /// `RemoveGlyphFromSocket` sends, 0-based sockets, for the app to send.
+    pub(crate) glyph_removes: Vec<u32>,
+    /// What `GetSpellInfo` asks; absent before the app installs it.
+    pub(crate) spell_info: Option<std::rc::Rc<dyn super::spell_info::SpellInfoSource>>,
     /// The four totem slots and their tools.
     pub(crate) totems: super::totem::TotemSlots,
     /// `DestroyTotem` calls on live slots, 0-based, for the app to send.
@@ -1349,6 +1359,11 @@ impl Model {
             shapeshift_forms: Vec::new(),
             shapeshift_form_byte: 0,
             runes: Default::default(),
+            glyph_catalog: Default::default(),
+            glyph_sockets: Default::default(),
+            glyph_targeting: None,
+            glyph_removes: Vec::new(),
+            spell_info: None,
             totems: Default::default(),
             totem_destroys: Vec::new(),
             multicast: Default::default(),

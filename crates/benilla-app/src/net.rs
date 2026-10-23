@@ -1491,6 +1491,10 @@ pub(crate) enum ClientCommand {
         talent_id: u32,
         rank: u32,
     },
+    /// `CMSG_REMOVE_GLYPH`: empty a glyph socket, 0-based.
+    RemoveGlyph {
+        socket: u32,
+    },
     /// `CMSG_LEARN_PREVIEW_TALENTS`: the preview mode's Learn, each `(talentId, rank)` whose
     /// preview rank passes its learned one.
     LearnPreviewTalents {
@@ -1556,6 +1560,10 @@ pub(crate) enum ClientCommand {
     CastSpellItem {
         spell_id: u32,
         item_guid: u64,
+    },
+    /// A glyph-socket cast from the book (`TARGET_FLAG_GLYPH_SLOT`, no payload).
+    CastSpellGlyph {
+        spell_id: u32,
     },
     /// `CMSG_LOOT` on a unit; the server rejects a GameObject guid, which loots by `GameObjUse`.
     Loot {

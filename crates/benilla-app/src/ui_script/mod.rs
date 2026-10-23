@@ -1068,6 +1068,8 @@ mod aura_verb_tests;
 #[cfg(test)]
 mod bag_ui_tests;
 #[cfg(test)]
+mod glyph_ui_tests;
+#[cfg(test)]
 mod gossip_ui_tests;
 #[cfg(test)]
 mod lfd_ui_tests;

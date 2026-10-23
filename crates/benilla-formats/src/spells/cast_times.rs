@@ -46,7 +46,7 @@ impl SpellCastTime {
 }
 
 /// `SpellCastTimes.dbc`, by row id ([`crate::spells::SpellDisplay::casting_time_index`]).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SpellCastTimeCatalog {
     times: HashMap<u32, SpellCastTime>,
 }

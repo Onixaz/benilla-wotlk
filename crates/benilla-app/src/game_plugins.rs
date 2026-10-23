@@ -51,6 +51,7 @@ use crate::ui_dialog_verbs::UiDialogVerbsPlugin;
 use crate::ui_duel::UiDuelPlugin;
 use crate::ui_focus::UiFocusPlugin;
 use crate::ui_follow::UiFollowPlugin;
+use crate::ui_glyph::UiGlyphPlugin;
 use crate::ui_gm_ticket::UiGmTicketPlugin;
 use crate::ui_gossip::UiGossipPlugin;
 use crate::ui_guild::UiGuildPlugin;
@@ -80,6 +81,7 @@ use crate::ui_saved::UiSavedPlugin;
 use crate::ui_script::UiScriptPlugin;
 use crate::ui_shapeshift::UiShapeshiftPlugin;
 use crate::ui_social::UiSocialPlugin;
+use crate::ui_spell_info::UiSpellInfoPlugin;
 use crate::ui_spellbook::UiSpellbookPlugin;
 use crate::ui_stable::UiStablePlugin;
 use crate::ui_summon::UiSummonPlugin;
@@ -217,6 +219,8 @@ impl PluginGroup for GamePlugins {
             .add(crate::ui_macro::UiMacroPlugin)
             // After UiActionPlugin, whose `Spells` catalog it shares.
             .add(UiTalentPlugin)
+            .add(UiGlyphPlugin)
+            .add(UiSpellInfoPlugin)
             .add(UiAchievementPlugin)
             .add(UiTalentWipePlugin)
             // The form list by the reference's admission and order (`0x4b25b0`, `0x4b2bb0`); after
@@ -801,11 +805,17 @@ pub(crate) mod schedule_tests {
     /// - `death::feed_death` and `ui_battlefield::feed_battlefield` against
     ///   `camera_saved::load_camera_pose` over `Player`: they read the falling state, which the
     ///   saved pose only seeds once at world entry.
+    /// - `ui_spell_info::feed_spell_info`, `GetSpellInfo`'s caster snapshot, is a range compare's
+    ///   reader against the same `Player` and `RemoteMotion` writers, and against
+    ///   `ui_pet::drain::pet_stop_on_old_target_clear` over `PetBar`: it reads the pet's guid,
+    ///   which that system never writes.
+    /// - `ui_glyph::drain_glyph_removes`, an `.after(UiInput)` drain of the VM's own sends, against
+    ///   `terrain_stream::collider::finish_colliders`, as the other such drains pair.
     ///
     /// Raising the ceiling is a claim that a new undeclared order is acceptable: make it with the
     /// reason read off the dump, or declare the order (`.after`, a set, a `chain`). A resource
     /// that commutes by construction belongs in [`Classes`].
-    const UPDATE_ACTIONABLE_CEILING: usize = 4_008;
+    const UPDATE_ACTIONABLE_CEILING: usize = 4_012;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

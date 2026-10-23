@@ -174,3 +174,40 @@ fn xml_groups_bind_their_keys_and_play_from_their_onload() {
         "XmlAnimFrame"
     );
 }
+
+/// `CreateTexture(name, layer, template)` loads the virtual texture into the new region, its
+/// `<Animations>` included, as `Blizzard_GlyphUI`'s sparkles are made (`GlyphSparkleTexture`).
+#[test]
+fn a_texture_made_from_a_template_gets_its_animations() {
+    let s = UiScript::new().unwrap();
+    let doc = crate::framexml::parse(
+        r#"<Ui>
+        <Texture name="SparkleTemplate" alphaMode="ADD" hidden="true" virtual="true">
+            <Size x="13" y="13"/>
+            <Animations>
+                <AnimationGroup name="$parentAnimGroup" parentKey="animGroup">
+                    <Translation name="$parentTranslate" parentKey="translate"/>
+                </AnimationGroup>
+            </Animations>
+        </Texture>
+        <Frame name="SparkleHost" parent="UIParent"><Size x="100" y="100"/></Frame>
+        </Ui>"#,
+    )
+    .unwrap();
+    let report = crate::loader::load_in(&s, &doc, "test.xml", &|_| None);
+    assert!(report.errors.is_empty(), "{:#?}", report.errors);
+    s.run(
+        r#"
+        local t = SparkleHost:CreateTexture("SparkleHostSparkle1", "OVERLAY", "SparkleTemplate")
+        assert(t.animGroup == SparkleHostSparkle1AnimGroup, "the group binds its key")
+        assert(t.animGroup.translate:GetObjectType() == "Translation")
+        assert(not t:IsShown(), "hidden as the template says")
+        assert(t:GetWidth() == 13, "sized as the template says")
+        t.animGroup.translate:SetOffset(10, 20)
+        t.animGroup.translate:SetDuration(1)
+        t.animGroup.translate:Play()
+        assert(t.animGroup:IsPlaying())
+        "#,
+    )
+    .unwrap();
+}

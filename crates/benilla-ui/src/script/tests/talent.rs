@@ -55,6 +55,7 @@ fn one_tab_state() -> TalentUiState {
         groups: vec![TalentGroupView {
             ranks: vec![vec![2, -1], Vec::new()],
             unspent: 2,
+            ..Default::default()
         }],
         active_group: 0,
         points: (2, 1),

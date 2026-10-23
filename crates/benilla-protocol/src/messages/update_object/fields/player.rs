@@ -318,6 +318,26 @@ impl ObjectFields {
             .flatten()
             .unwrap_or(0.0)
     }
+    /// 3.3.5a `PLAYER_FIELD_GLYPH_SLOTS_1 + socket` (private): the socket's `GlyphSlot.dbc` id, 0
+    /// when absent.
+    pub fn player_glyph_slot(&self, socket: u8) -> u32 {
+        (socket < PLAYER_GLYPH_SOCKETS)
+            .then(|| self.get_u32(FIELD_PLAYER_GLYPH_SLOTS_1 + u16::from(socket)))
+            .flatten()
+            .unwrap_or(0)
+    }
+    /// 3.3.5a `PLAYER_FIELD_GLYPHS_1 + socket` (private): the inscribed `GlyphProperties.dbc` id, 0
+    /// when empty.
+    pub fn player_glyph(&self, socket: u8) -> u32 {
+        (socket < PLAYER_GLYPH_SOCKETS)
+            .then(|| self.get_u32(FIELD_PLAYER_GLYPHS_1 + u16::from(socket)))
+            .flatten()
+            .unwrap_or(0)
+    }
+    /// 3.3.5a `PLAYER_GLYPHS_ENABLED` (private): bit `i` set while socket `i` is unlocked.
+    pub fn player_glyphs_enabled(&self) -> u32 {
+        self.get_u32(FIELD_PLAYER_GLYPHS_ENABLED).unwrap_or(0)
+    }
     /// `PLAYER_FIELD_COMBAT_RATING_1 + i`: combat rating `i`, 0-based.
     pub fn player_combat_rating(&self, i: u8) -> Option<i32> {
         (i < PLAYER_COMBAT_RATINGS)

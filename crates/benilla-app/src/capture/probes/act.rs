@@ -661,8 +661,8 @@ impl Plugin for ProbeDragPlugin {
 
 /// [`ProbeDragPlugin`]'s state: `WOW_PROBE_DRAG="A>B[;C>D…]"` drags frame A onto B through the
 /// real pointer path from `WOW_PROBE_DRAG_AT` (default 14 s), one step per `WOW_PROBE_DRAG_STEP`
-/// (default 0.1 s), and `A>A` clicks A; `WOW_PROBE_DRAG_LUA` is a chunk whose returned string is
-/// logged after each.
+/// (default 0.1 s), and `A>A` clicks A, `!A>A` with the right button; `WOW_PROBE_DRAG_LUA` is a
+/// chunk whose returned string is logged after each.
 #[derive(Resource)]
 struct ProbeDrag {
     pairs: Vec<(String, String)>,
@@ -721,6 +721,10 @@ fn fire_probe_drag(
     synthetic.0 = true;
 
     let (from_name, to_name) = probe.pairs[probe.pair].clone();
+    let (button, from_name) = match from_name.strip_prefix('!') {
+        Some(name) => ("RightButton", name.to_string()),
+        None => ("LeftButton", from_name),
+    };
     match probe.phase {
         0 => {
             let (Some(from), Some(to)) = (
@@ -741,7 +745,7 @@ fn fire_probe_drag(
         }
         1 => {
             let (x, y) = probe.from;
-            script.mouse_button(x, y, "LeftButton", true);
+            script.mouse_button(x, y, button, true);
         }
         // `A>A` is a click: no motion between the press and the release.
         2..=5 if from_name == to_name => {}
@@ -763,7 +767,7 @@ fn fire_probe_drag(
         }
         6 => {
             let (x, y) = probe.to;
-            script.mouse_button(x, y, "LeftButton", false);
+            script.mouse_button(x, y, button, false);
         }
         // Self-check: hover the source where it now draws and ask the hit test who is there, to
         // catch a hit rect that has parted from the drawn one.

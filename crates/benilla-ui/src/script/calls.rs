@@ -29,6 +29,12 @@ pub enum ScriptCall {
     AttackTarget,
     /// `SpellTargetUnit(unit)` (`0x6e6d90`), made while the cursor was up.
     SpellTargetUnit(String),
+    /// `PlaceGlyphInSocket(index)` (`0x5b75a0`) with a targeting cast: the 0-based socket and
+    /// `Spell_C_HandleGlyphClick`'s verdict on it.
+    PlaceGlyph {
+        socket: u32,
+        verdict: super::GlyphPlacement,
+    },
     /// `SpellStopTargeting()` (`0x6e6e30`), made while the cursor was up.
     SpellStopTargeting,
     /// `SpellStopCasting()` (`0x6e6e80`), made with something to stop.

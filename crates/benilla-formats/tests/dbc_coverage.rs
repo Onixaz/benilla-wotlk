@@ -38,8 +38,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("FileData", "#245 the movie file table"),
     ("GameObjectArtKit", "#243 game object art kits"),
     ("GemProperties", "#202 gems and sockets"),
-    ("GlyphProperties", "#166 glyphs: GetGlyphSocketInfo"),
-    ("GlyphSlot", "#166 glyphs: GetGlyphSocketInfo"),
     ("GMSurveyAnswers", "#245 GM surveys"),
     ("GMSurveyCurrentSurvey", "#245 GM surveys"),
     ("GMSurveyQuestions", "#245 GM surveys"),

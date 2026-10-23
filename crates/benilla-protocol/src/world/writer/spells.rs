@@ -67,6 +67,15 @@ impl WorldWriter {
         )
     }
 
+    /// `CMSG_CAST_SPELL` with `TARGET_FLAG_GLYPH_SLOT`: a glyph spell cast from the book.
+    pub fn cast_spell_glyph(&mut self, spell_id: u32) -> Result<()> {
+        let count = self.cast_counter.take();
+        self.send(
+            opcode::CMSG_CAST_SPELL,
+            &messages::cast_spell_glyph(count, spell_id),
+        )
+    }
+
     /// `CMSG_CAST_SPELL` with `TARGET_FLAG_DEST_LOCATION`: a ground-targeted spell at a world
     /// point; the server checks range and line of sight (`Spell::CheckCast`).
     pub fn cast_spell_at_dest(&mut self, spell_id: u32, dest: [f32; 3]) -> Result<()> {

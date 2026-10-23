@@ -96,7 +96,9 @@ mod tests {
             dirty: true,
             ..Default::default()
         })
-        .insert_resource(SkillLines { catalog })
+        .insert_resource(SkillLines {
+            catalog: catalog.into(),
+        })
         .insert_resource(NetCommands(tx))
         .add_systems(Update, normalize_action_ranks);
         app.update();

@@ -803,7 +803,7 @@ pub(super) fn classify(
                     slots,
                     &player_actions.spells,
                     go_inputs.spells.as_deref(),
-                    go_inputs.skill_lines.as_ref().map(|s| &s.catalog),
+                    go_inputs.skill_lines.as_ref().map(|s| &*s.catalog),
                     Some(self_store),
                     &go_inputs.objects,
                     facts,

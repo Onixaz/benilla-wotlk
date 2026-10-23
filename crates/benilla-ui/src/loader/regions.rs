@@ -47,35 +47,46 @@ impl Loader<'_> {
                         };
                     self.bind_parent_key(region, wrapper, &region_wrapper);
                     let anim_base = rname.clone().unwrap_or_else(|| parent_name.to_string());
-                    self.apply_animations(region, &region_wrapper, &anim_base, dbg);
-                    if region.attr_bool("hidden") {
-                        if let Err(e) = region_wrapper.call_method::<()>("Hide", ()) {
-                            self.report.errors.push(format!("{dbg}: region Hide: {e}"));
-                        }
-                    }
-                    if let Some(a) = region
-                        .attr("alpha")
-                        .and_then(|v| v.trim().parse::<f32>().ok())
-                    {
-                        self.call_region(&region_wrapper, "SetAlpha", a, dbg);
-                    }
-                    self.apply_region_layout(region, &region_wrapper, parent_name, dbg);
-                    if is_fontstring {
-                        // Before the visual pass, so an explicit `<Color>` beats the font object's.
-                        self.apply_fontstring_font(region, &region_wrapper, dbg);
-                    }
-                    self.apply_region_visual(region, &region_wrapper, is_texture, dbg);
-                    // The implicit creation anchor, run after the region's LoadXML as the
-                    // reference does (`0x7701c0`, `0x771480`); an anchored region is left alone.
-                    if let Err(e) =
-                        crate::script::implicit_creation_anchor_lua(self.lua, &region_wrapper)
-                    {
-                        self.report
-                            .errors
-                            .push(format!("{dbg}: implicit anchor: {e}"));
-                    }
+                    self.load_region(region, &region_wrapper, &anim_base, parent_name, dbg);
                 }
             }
+        }
+    }
+
+    /// A region's own `LoadXML` (`0x7701c0` for a texture, `0x771480` for a font string) past its
+    /// creation: its animations, `hidden` and `alpha`, layout, font and visual, then the implicit
+    /// creation anchor, which leaves an anchored region alone.
+    pub(super) fn load_region(
+        &mut self,
+        region: &Element,
+        region_wrapper: &Table,
+        anim_base: &str,
+        parent_name: &str,
+        dbg: &str,
+    ) {
+        let is_texture = region.tag.eq_ignore_ascii_case("Texture");
+        self.apply_animations(region, region_wrapper, anim_base, dbg);
+        if region.attr_bool("hidden") {
+            if let Err(e) = region_wrapper.call_method::<()>("Hide", ()) {
+                self.report.errors.push(format!("{dbg}: region Hide: {e}"));
+            }
+        }
+        if let Some(a) = region
+            .attr("alpha")
+            .and_then(|v| v.trim().parse::<f32>().ok())
+        {
+            self.call_region(region_wrapper, "SetAlpha", a, dbg);
+        }
+        self.apply_region_layout(region, region_wrapper, parent_name, dbg);
+        if !is_texture {
+            // Before the visual pass, so an explicit `<Color>` beats the font object's.
+            self.apply_fontstring_font(region, region_wrapper, dbg);
+        }
+        self.apply_region_visual(region, region_wrapper, is_texture, dbg);
+        if let Err(e) = crate::script::implicit_creation_anchor_lua(self.lua, region_wrapper) {
+            self.report
+                .errors
+                .push(format!("{dbg}: implicit anchor: {e}"));
         }
     }
 

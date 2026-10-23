@@ -34,6 +34,11 @@ impl WorldWriter {
         )
     }
 
+    /// `CMSG_REMOVE_GLYPH`: empty a glyph socket, 0-based.
+    pub fn remove_glyph(&mut self, socket: u32) -> Result<()> {
+        self.send(opcode::CMSG_REMOVE_GLYPH, &messages::remove_glyph(socket))
+    }
+
     /// `CMSG_PET_LEARN_TALENT`: the pet's next rank of a talent; the server answers with the
     /// pet's `SMSG_TALENTS_INFO`.
     pub fn pet_learn_talent(&mut self, pet_guid: u64, talent_id: u32, rank: u32) -> Result<()> {

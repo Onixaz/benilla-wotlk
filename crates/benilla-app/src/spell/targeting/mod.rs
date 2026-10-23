@@ -90,7 +90,7 @@ impl BindChecks<'_, '_> {
     /// `BindTarget 0x6e5b40`'s unit branch: whether this unit binds the word under this spell,
     /// its gates and then its relation checks ([`super::cast_target::unit_binds`]). An unknown
     /// spell has no row to gate on.
-    fn unit_binds(&self, spell_id: u32, word: u16, entity: Entity) -> bool {
+    fn unit_binds(&self, spell_id: u32, word: u32, entity: Entity) -> bool {
         let target_store = self.stores.get(entity).ok();
         let owner_store =
             |store| super::cast_target::owner_store(store, self.index.as_deref(), &self.stores);
@@ -180,6 +180,7 @@ impl BindChecks<'_, '_> {
 /// - `GameObject`: `TargetingWantsGameObject 0x6e62d0`, `word & 0x4800`, the world object click.
 /// - `Unit`: `SpellCanTargetUnit 0x6e6460`, the unit arm of the world click.
 /// - `Corpse`: `0x6e6230`, `word & 0x8600`, the pick's corpse flag `0x40` ([`corpse`]).
+/// - `Glyph`: `SpellCanTargetGlyph 0x7fdd60`, `word & 0x20000`, the glyph frame's socket click.
 ///
 /// The masks overlap on `TARGET_FLAG_LOCKED`, so a lock spell answers both the item and the
 /// GameObject seam; the reference settles it only at the click, where `BindTarget 0x6e5b40` picks
@@ -191,20 +192,22 @@ pub(crate) enum TargetingWants {
     GameObject,
     Unit,
     Corpse,
+    Glyph,
 }
 
 /// The unit-shaped bits of the flag_word, the first gate `SpellCanTargetUnit` tests before it runs
 /// the candidate through the unit arm's relation and liveness checks.
-const UNIT_WORD_BITS: u16 = 0x0002 | 0x0004 | 0x0008 | 0x0080 | 0x0100 | 0x0200 | 0x0400 | 0x8000;
+const UNIT_WORD_BITS: u32 = 0x0002 | 0x0004 | 0x0008 | 0x0080 | 0x0100 | 0x0200 | 0x0400 | 0x8000;
 
 impl TargetingWants {
-    fn matches(self, word: u16) -> bool {
+    fn matches(self, word: u32) -> bool {
         let mask = match self {
             Self::Location => 0x0060,
             Self::Item => 0x4010,
             Self::GameObject => 0x4800,
             Self::Unit => UNIT_WORD_BITS,
             Self::Corpse => 0x8600,
+            Self::Glyph => super::cast_target::TF_GLYPH_SLOT,
         };
         word & mask != 0
     }
@@ -212,7 +215,7 @@ impl TargetingWants {
 
 /// The word bits `0x6e61a0` lets the world pick take the local player for: unit, raid, party,
 /// assist, the explicit gate and the ally corpse, never enemy (`0x80`) or enemy corpse (`0x200`).
-const SELF_PICK_BITS: u16 = 0x850e;
+const SELF_PICK_BITS: u32 = 0x850e;
 
 /// The targeting mode, `Some` while the flag_word is nonzero. Entered by the cast-send path
 /// ([`super::cast_target::CastWireTarget::Targeting`]), cleared by a commit or a cancel.
@@ -225,7 +228,7 @@ struct Targeting {
     /// `0x6e54f0` still sends `CMSG_USE_ITEM` for a grenade, a poison bottle or a key.
     commit: super::cast_send::CastCommit,
     /// The standing flag_word `0xcecac0`; more than one seam can answer yes to it.
-    word: u16,
+    word: u32,
 }
 
 impl SpellTargeting {
@@ -270,7 +273,7 @@ impl SpellTargeting {
     }
 
     /// The pending cast and its standing word, whatever seam it wants.
-    fn pending(&self) -> Option<(u32, super::cast_send::CastCommit, u16)> {
+    fn pending(&self) -> Option<(u32, super::cast_send::CastCommit, u32)> {
         self.0.as_ref().map(|t| (t.spell_id, t.commit, t.word))
     }
 
@@ -283,7 +286,7 @@ impl SpellTargeting {
             .map(|t| t.spell_id)
     }
 
-    pub(crate) fn enter(&mut self, spell_id: u32, commit: super::cast_send::CastCommit, word: u16) {
+    pub(crate) fn enter(&mut self, spell_id: u32, commit: super::cast_send::CastCommit, word: u32) {
         self.0 = Some(Targeting {
             spell_id,
             commit,
@@ -480,6 +483,36 @@ impl ScriptCursor<'_, '_> {
         debug!("ui_action: targeting cancelled (ESC chain)");
         self.ladder.ground.clear();
     }
+
+    /// `PlaceGlyphInSocket(index)` (`0x5b75a0` → `Spell_C_HandleGlyphClick 0x80c3e0`), judged by
+    /// the VM: a refusal raises its line and ends the cast (`Spell_C_SpellFailed 0x808200`); a
+    /// bind takes the socket and clears the word's glyph bit, and the emptied word commits
+    /// (`0x80c596`). A word without the bit only keeps the socket, which nothing sends.
+    pub(crate) fn place_glyph(&mut self, socket: u32, verdict: benilla_ui::script::GlyphPlacement) {
+        let Some((spell_id, commit, word)) = self.ladder.ground.pending() else {
+            return;
+        };
+        match verdict {
+            benilla_ui::script::GlyphPlacement::Fail(reason) => {
+                debug!("ui_action: glyph cast {spell_id} refused at socket {socket} ({reason:#x})");
+                let shared = benilla_protocol::messages::wotlk_cast_fail_shared(reason);
+                self.ladder.cast_errors.push_local(spell_id, shared);
+                self.ladder.ground.clear();
+            }
+            // No 12340 spell carries the glyph bit beside another, so it is the whole word.
+            benilla_ui::script::GlyphPlacement::Bind
+                if word & !super::cast_target::TF_GLYPH_SLOT == 0 && word != 0 =>
+            {
+                debug!("ui_action: glyph cast {spell_id} committed at socket {socket}");
+                self.ladder.commit_targeted(
+                    spell_id,
+                    commit,
+                    super::cast_send::TargetedBind::Glyph(socket),
+                );
+            }
+            benilla_ui::script::GlyphPlacement::Bind => {}
+        }
+    }
 }
 
 #[cfg(test)]
@@ -569,7 +602,7 @@ mod tests {
         (world, rx, ally)
     }
 
-    fn arm(world: &mut World, spell: u32, word: u16) {
+    fn arm(world: &mut World, spell: u32, word: u32) {
         world.resource_mut::<SpellTargeting>().enter(
             spell,
             super::super::cast_send::CastCommit::Spell,

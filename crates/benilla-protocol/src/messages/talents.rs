@@ -90,6 +90,12 @@ pub fn learn_preview_talents(talents: &[(u32, u32)]) -> Vec<u8> {
     body
 }
 
+/// Body of `CMSG_REMOVE_GLYPH` (`0x5b76ea`): the 0-based socket. The server empties it and
+/// answers with `SMSG_TALENTS_INFO` and the glyph field.
+pub fn remove_glyph(socket: u32) -> Vec<u8> {
+    socket.to_le_bytes().to_vec()
+}
+
 /// Body of `CMSG_PET_LEARN_TALENT` (`0x5c8291`): `u64 pet`, `u32 talentId`, `u32 rank`, the
 /// pet's next 0-based rank.
 pub fn pet_learn_talent(pet_guid: u64, talent_id: u32, rank: u32) -> Vec<u8> {

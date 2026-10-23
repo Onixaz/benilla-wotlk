@@ -33,7 +33,7 @@ pub(super) fn unit_alive(fields: &ObjectFields) -> bool {
 /// - the unit is alive and the word has `0x400` (`6e5ca2`).
 pub(super) fn bind_gates(
     def: &SpellDisplay,
-    word: u16,
+    word: u32,
     is_caster: bool,
     rel: &TargetRelations,
 ) -> bool {
@@ -73,10 +73,10 @@ mod tests {
     const FLAGS: u16 = 46;
     const DYNAMIC_FLAGS: u16 = 143;
 
-    const WORD_UNIT: u16 = 0x0002;
-    const WORD_ASSIST: u16 = 0x0100;
-    const WORD_DEAD_ONLY: u16 = 0x0402;
-    const WORD_CORPSE_ALLY: u16 = 0x8000;
+    const WORD_UNIT: u32 = 0x0002;
+    const WORD_ASSIST: u32 = 0x0100;
+    const WORD_DEAD_ONLY: u32 = 0x0402;
+    const WORD_CORPSE_ALLY: u32 = 0x8000;
 
     /// A store with the fields a case sets, health 100 unless it says otherwise.
     fn unit(extra: &[(u16, u32)]) -> ObjectStore {
@@ -87,13 +87,13 @@ mod tests {
         ObjectStore(ObjectFields::from_pairs(&pairs))
     }
 
-    fn passes(def: &SpellDisplay, word: u16, is_caster: bool, store: &ObjectStore) -> bool {
+    fn passes(def: &SpellDisplay, word: u32, is_caster: bool, store: &ObjectStore) -> bool {
         passes_with(def, word, is_caster, store, CreatureTypeSources::default())
     }
 
     fn passes_with(
         def: &SpellDisplay,
-        word: u16,
+        word: u32,
         is_caster: bool,
         store: &ObjectStore,
         types: CreatureTypeSources,

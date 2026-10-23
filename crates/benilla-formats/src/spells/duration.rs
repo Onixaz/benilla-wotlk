@@ -32,7 +32,7 @@ impl SpellDuration {
 }
 
 /// `SpellDuration.dbc`, by row id ([`crate::spells::SpellDisplay::duration_index`]).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SpellDurationCatalog {
     durations: HashMap<u32, SpellDuration>,
 }

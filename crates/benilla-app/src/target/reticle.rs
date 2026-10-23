@@ -193,7 +193,7 @@ mod tests {
     /// drawn" is a verdict, not an empty scene.
     #[test]
     fn only_a_location_word_draws_a_decal() {
-        let drawn_for = |word: u16| {
+        let drawn_for = |word: u32| {
             let mut world = World::new();
             world.init_resource::<ReticleState>();
             world.init_resource::<WorldCursor>();

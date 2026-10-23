@@ -118,7 +118,7 @@ pub(crate) enum GoOpener {
 }
 
 /// The spell DBC catalogs, absent without client data; the cast-visual router shares the catalog.
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub(crate) struct Spells {
     pub(crate) catalog: SpellCatalog,
     /// Form id to its `SpellShapeshiftForm.dbc` row: `BonusActionBar` pages the bar

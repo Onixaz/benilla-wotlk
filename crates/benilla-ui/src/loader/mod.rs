@@ -185,6 +185,38 @@ pub fn apply_template(lua: &mlua::Lua, wrapper: &Table, kind: &str, template: &s
     out
 }
 
+/// Apply a `<Texture>` or `<FontString>` template to a region `CreateTexture` or
+/// `CreateFontString` just made (`0x773a20`, `0x773c40`): the template node's `LoadXML` on the new
+/// region, `$parent` its owner's name. Returns the warnings, then the errors.
+pub fn apply_region_template(
+    lua: &mlua::Lua,
+    region: &Table,
+    tag: &str,
+    template: &str,
+) -> Vec<String> {
+    let no_files = |_: &str| -> Option<Vec<u8>> { None };
+    let mut loader = Loader {
+        lua,
+        files: &no_files,
+        path: String::new(),
+        status_root: "",
+        report: LoadReport::default(),
+        warned: HashSet::new(),
+        deferred_anchors: Vec::new(),
+    };
+    let (own_name, parent_name) = loader.frame_names(region);
+    let dbg = format!(
+        "Create{tag}(\"{}\", inherits=\"{template}\")",
+        own_name.as_deref().unwrap_or("<unnamed>")
+    );
+    let expanded = loader.expand(&framexml::inherits_node(tag, template.trim()));
+    let anim_base = own_name.unwrap_or_else(|| parent_name.clone());
+    loader.load_region(&expanded, region, &anim_base, &parent_name, &dbg);
+    let mut out = loader.report.warnings;
+    out.extend(loader.report.errors);
+    out
+}
+
 /// Join a FrameXML reference to its file's directory, lexically: `\` and `/` both separate, `..`
 /// walks up. A `..` above the root is kept, not clamped, so the provider can refuse the escape.
 pub fn join_ref(base: &str, path: &str) -> String {

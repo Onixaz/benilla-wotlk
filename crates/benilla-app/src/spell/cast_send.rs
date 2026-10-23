@@ -122,6 +122,8 @@ pub(crate) enum TargetedBind {
     Unit(u64),
     /// The world click's corpse guid and the corpse bit `BindTarget`'s corpse arm bound.
     Corpse(u64, benilla_protocol::messages::CorpseTarget),
+    /// The glyph frame's socket, 0-based: `Spell_C_HandleGlyphClick`'s glyph index (`0x80c57b`).
+    Glyph(u32),
 }
 
 impl CastLadder<'_, '_> {
@@ -156,6 +158,7 @@ impl CastLadder<'_, '_> {
                     target,
                     corpse_guid,
                 },
+                TargetedBind::Glyph(_) => ClientCommand::CastSpellGlyph { spell_id },
             },
             CastCommit::Item {
                 bag_index,
@@ -174,6 +177,7 @@ impl CastLadder<'_, '_> {
                     TargetedBind::Object(guid) => UseItemTarget::Object(guid),
                     TargetedBind::Unit(guid) => UseItemTarget::Unit(guid),
                     TargetedBind::Corpse(guid, target) => UseItemTarget::Corpse(target, guid),
+                    TargetedBind::Glyph(socket) => UseItemTarget::Glyph(socket),
                 },
             },
         };

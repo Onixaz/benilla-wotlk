@@ -272,6 +272,8 @@ const TARGET_FLAG_TRADE_ITEM: u32 = 0x1000;
 const TARGET_FLAG_STRING: u32 = 0x2000;
 const TARGET_FLAG_CORPSE_ALLY: u32 = 0x8000;
 const TARGET_FLAG_UNIT_MINIPET: u32 = 0x1_0000;
+/// A glyph socket, with no payload: `CMSG_USE_ITEM`'s glyph index names it (`0x80c583`).
+pub(super) const TARGET_FLAG_GLYPH_SLOT: u32 = 0x2_0000;
 /// Extra targets, read only by `SMSG_SPELL_GO`'s tail (`0x80e44f`).
 const TARGET_FLAG_EXTRA_TARGETS: u32 = 0x8_0000;
 /// The bits one packed guid answers, as the 12340 reader and writer test them (`0x9ab8c9`).
@@ -701,6 +703,12 @@ pub fn cast_spell_corpse(
 /// item's packed guid.
 pub fn cast_spell_item(cast_count: u8, spell_id: u32, item_guid: u64) -> Vec<u8> {
     cast_at_guid(cast_count, spell_id, TARGET_FLAG_ITEM, item_guid)
+}
+
+/// Body of `CMSG_CAST_SPELL` at a glyph socket: `TARGET_FLAG_GLYPH_SLOT` alone, as the spell opcode
+/// carries no glyph index (`0x80b2d6` writes it on the item opcode only).
+pub fn cast_spell_glyph(cast_count: u8, spell_id: u32) -> Vec<u8> {
+    cast_head(cast_count, spell_id, TARGET_FLAG_GLYPH_SLOT)
 }
 
 /// Body of `CMSG_CAST_SPELL` at a ground point, for a `Targets & 0x40` spell such as Blizzard.

@@ -11,8 +11,8 @@
 //!   fully cleared word commits, as a unit guid.
 //! - a word with item, lock, GameObject or location bits enters the targeting cursor carrying
 //!   the whole word: its location (`0x6e6320`, `& 0x60`), item (`0x6e6330`, `& 0x4010`),
-//!   GameObject (`0x6e62d0`, `& 0x4800`) and unit (`0x6e6460`) predicates can hold at once, and
-//!   the click picks the leg.
+//!   GameObject (`0x6e62d0`, `& 0x4800`), glyph socket (`0x7fdd60`, `& 0x20000`) and unit
+//!   (`0x6e6460`) predicates can hold at once, and the click picks the leg.
 //!
 //! The unit hand cursor receives a residual unit word without the enemy bit. A word carrying
 //! `0x80` instead raises the local no-target/invalid-target refusal; STRING bit 13 remains
@@ -33,19 +33,19 @@ use crate::unit_auras::UnitAuras;
 use benilla_protocol::messages::OwnerFallback;
 
 /// `TARGET_FLAG_*` bits of the client's targeting flag word (`0xcecac0`).
-const TF_UNIT: u16 = 0x0002;
-const TF_UNIT_RAID: u16 = 0x0004;
-const TF_UNIT_PARTY: u16 = 0x0008;
-const TF_UNIT_ENEMY: u16 = 0x0080;
-const TF_UNIT_ASSIST: u16 = 0x0100;
-const TF_CORPSE_ENEMY: u16 = 0x0200;
-pub(super) const TF_EXPLICIT_GATE: u16 = 0x0400;
-const TF_CORPSE_ALLY: u16 = 0x8000;
+const TF_UNIT: u32 = 0x0002;
+const TF_UNIT_RAID: u32 = 0x0004;
+const TF_UNIT_PARTY: u32 = 0x0008;
+const TF_UNIT_ENEMY: u32 = 0x0080;
+const TF_UNIT_ASSIST: u32 = 0x0100;
+const TF_CORPSE_ENEMY: u32 = 0x0200;
+pub(super) const TF_EXPLICIT_GATE: u32 = 0x0400;
+const TF_CORPSE_ALLY: u32 = 0x8000;
 /// The corpse words, `0x8600`: `BindTarget`'s dead-unit gate lets a dead unit through for any of
 /// them (`6e5c7a`).
-pub(super) const CORPSE_WORD_BITS: u16 = TF_CORPSE_ENEMY | TF_EXPLICIT_GATE | TF_CORPSE_ALLY;
+pub(super) const CORPSE_WORD_BITS: u32 = TF_CORPSE_ENEMY | TF_EXPLICIT_GATE | TF_CORPSE_ALLY;
 /// The unit-shaped bits a selected unit (alive or dead) can satisfy.
-const UNIT_BITS: u16 = TF_UNIT
+const UNIT_BITS: u32 = TF_UNIT
     | TF_UNIT_RAID
     | TF_UNIT_PARTY
     | TF_UNIT_ENEMY
@@ -63,22 +63,25 @@ pub(crate) const ERR_INVALID_TARGET: u8 = 0x0A;
 pub(crate) const ERR_MAINHAND_EMPTY: u8 = 0x2d;
 
 /// The dest-location bit, the ground-cast wire mask (`BindLocation 0x6e60f0`).
-const TF_DEST_LOCATION: u16 = 0x0040;
+const TF_DEST_LOCATION: u32 = 0x0040;
 /// The source-location bit, `BindLocation 0x6e60f0`'s other arm (`0x6e6105`).
-const TF_SOURCE_LOCATION: u16 = 0x0020;
+const TF_SOURCE_LOCATION: u32 = 0x0020;
 /// `TargetingWantsLocation 0x6e6320`'s mask: the terrain click serves both location bits.
-const LOCATION_BITS: u16 = TF_SOURCE_LOCATION | TF_DEST_LOCATION;
+const LOCATION_BITS: u32 = TF_SOURCE_LOCATION | TF_DEST_LOCATION;
 /// The item bit, asked by the bag and paper-doll click seams (`TargetingWantsItem 0x6e6330`).
-const TF_ITEM: u16 = 0x0010;
+const TF_ITEM: u32 = 0x0010;
 /// `TARGET_FLAG_LOCKED`: in both the item mask `0x4010` and the GameObject mask `0x4800`, so one
 /// lock spell ends on a bag item or a world object. It never reaches the wire: `BindTarget`
 /// writes ITEM (`0x6e5f2e`) or GAMEOBJECT (`0x6e5f69`) instead, which vmangos accepts for a
 /// lock spell (`Spell.cpp:6755`).
-const TF_LOCKED: u16 = 0x4000;
+const TF_LOCKED: u32 = 0x4000;
 /// `TARGET_FLAG_GAMEOBJECT`, the other bit of `TargetingWantsGameObject 0x6e62d0`'s `0x4800`.
-const TF_GAMEOBJECT: u16 = 0x0800;
+const TF_GAMEOBJECT: u32 = 0x0800;
+/// `TARGET_FLAG_GLYPH_SLOT`, the glyph frame's seam (`SpellCanTargetGlyph 0x7fdd60`): every
+/// `Targets` bit above `0xffff` on 12340 is this one, alone.
+pub(crate) const TF_GLYPH_SLOT: u32 = 0x2_0000;
 /// The bits `BindTarget`'s item arm admits and clears (`0x6e5f1e`, `0x6e5f36`).
-const ITEM_ARM_BITS: u16 = TF_ITEM | TF_LOCKED;
+const ITEM_ARM_BITS: u32 = TF_ITEM | TF_LOCKED;
 
 /// What the wire's target block should carry for this cast.
 #[derive(Debug, PartialEq, Eq)]
@@ -93,7 +96,7 @@ pub(crate) enum CastWireTarget {
     /// No send yet: enter the targeting cursor with this flag word (reference: word != 0 is
     /// `IsTargeting 0x6e48a0`). Each click seam tests the word with its own mask, so one word can
     /// serve several: Opening and Pick Lock take a bag item or a world GameObject.
-    Targeting(u16),
+    Targeting(u32),
     /// Do not send; show this client error.
     Refused(u8),
     /// A refusal the reference raises in its cast tail after `ArmCast` returns false (`0x6e5045`).
@@ -379,8 +382,8 @@ pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut auto: ResMut<AutoSe
 
 /// The flag word: `Targets`, then one arm keyed on `EffectImplicitTargetA[0]` (`0x6e525a`-
 /// `0x6e52ef`); every implicit target not matched below leaves the word as it is.
-pub(crate) fn cast_target_mask(def: &SpellDisplay) -> u16 {
-    let mut word = def.targets as u16;
+pub(crate) fn cast_target_mask(def: &SpellDisplay) -> u32 {
+    let mut word = def.targets;
     match def.implicit_target_a1 {
         1 => word &= !TF_EXPLICIT_GATE,
         5 => word &= !TF_CORPSE_ALLY,
@@ -408,7 +411,7 @@ pub(crate) fn cast_target_mask(def: &SpellDisplay) -> u16 {
 /// bit needs `0x606d20` and `CanAssist` (`6e5cf1`-`6e5d2f`): the same, with the raid roster
 /// counting as well as the party slots. The corpse check (`0x6067d0`) is assistable with health 0
 /// here.
-fn clear_satisfied_bits(word: u16, is_self: bool, rel: &TargetRelations) -> u16 {
+fn clear_satisfied_bits(word: u32, is_self: bool, rel: &TargetRelations) -> u32 {
     let mut word = word;
     let assist = rel.assistable(is_self);
     let dead = rel.target_store.is_some_and(|s| !unit_alive(&s.0));
@@ -442,7 +445,7 @@ fn clear_satisfied_bits(word: u16, is_self: bool, rel: &TargetRelations) -> u16 
 }
 
 /// Whether the unit arm's relation checks clear the whole standing word for this unit.
-fn unit_word_binds(word: u16, is_self: bool, rel: &TargetRelations) -> bool {
+fn unit_word_binds(word: u32, is_self: bool, rel: &TargetRelations) -> bool {
     word & UNIT_BITS != 0 && clear_satisfied_bits(word, is_self, rel) == 0
 }
 
@@ -452,7 +455,7 @@ fn unit_word_binds(word: u16, is_self: bool, rel: &TargetRelations) -> bool {
 /// spell has no row to gate on and leaves the relation checks alone.
 pub(super) fn unit_binds(
     def: Option<&SpellDisplay>,
-    word: u16,
+    word: u32,
     is_self: bool,
     rel: &TargetRelations,
 ) -> bool {
@@ -507,7 +510,7 @@ pub(crate) fn resolve_cast_target(
     // spell 28218) binds the unit first in the reference, so it refuses here instead.
     if word & !UNIT_BITS != 0 {
         if word & LOCATION_BITS != 0 && word & UNIT_BITS == 0
-            || word & (TF_ITEM | TF_LOCKED | TF_GAMEOBJECT) != 0
+            || word & (TF_ITEM | TF_LOCKED | TF_GAMEOBJECT | TF_GLYPH_SLOT) != 0
         {
             return CastWireTarget::Targeting(word);
         }

@@ -311,6 +311,7 @@ impl ScriptItemUse<'_, '_> {
                 Some(Clicked {
                     guid,
                     entry,
+                    class: t.class,
                     has_text,
                     inventory_type: t.inventory_type,
                     display_info_id: t.display_info_id,
@@ -347,6 +348,11 @@ impl ScriptItemUse<'_, '_> {
                 });
             }
             return;
+        }
+        // A Glyph-class template (16) fires `USE_GLYPH` ahead of the use (`0x5d8ad3`), which opens
+        // the glyph frame (`UIParent.lua:1053`); `UseItem`'s direct path has no such arm.
+        if !direct && clicked.is_some_and(|c| c.class == ITEM_CLASS_GLYPH) {
+            script.fire_event("USE_GLYPH", Vec::new());
         }
         // A wrapped gift unwraps with `CMSG_OPEN_ITEM` (`0x5d8d92`, emitter `0x5edd60`), first in
         // the dispatcher; vmangos swaps the entry back from `character_gifts`.
@@ -549,11 +555,16 @@ pub(super) fn drain_container_repairs(
     }
 }
 
+/// `ItemClass.dbc`'s Glyph class.
+const ITEM_CLASS_GLYPH: u32 = 16;
+
 /// One clicked bag slot, resolved once: the fields the reference's fork chain tests.
 #[derive(Clone, Copy)]
 struct Clicked {
     guid: u64,
     entry: u32,
+    /// The template's item class; 16 is Glyph.
+    class: u32,
     /// Instance `ITEM_FIELD_FLAGS & 0x200`, set on a letter copied from mail.
     has_text: bool,
     inventory_type: u32,

@@ -276,7 +276,7 @@ fn feed_known_languages(
     let names = known_languages(
         actions.spells.iter().copied(),
         &spells.catalog,
-        skill_lines.as_deref().map(|s| &s.catalog),
+        skill_lines.as_deref().map(|s| &*s.catalog),
         has_skill_line,
         &languages.0,
     );
