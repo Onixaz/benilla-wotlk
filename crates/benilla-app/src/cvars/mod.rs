@@ -403,7 +403,10 @@ impl Cvars {
         for (name, value) in &file {
             let key = name.to_ascii_lowercase();
             let Some(&i) = self.index.get(&key) else {
-                warn!("config: unknown cvar '{name}' — preserved, not applied");
+                // A retired row is dropped by `load_config`, not kept.
+                if !RETIRED_ROWS.iter().any(|r| r.eq_ignore_ascii_case(name)) {
+                    warn!("config: unknown cvar '{name}' — preserved, not applied");
+                }
                 continue;
             };
             if self.session_owned.contains(&key) {
