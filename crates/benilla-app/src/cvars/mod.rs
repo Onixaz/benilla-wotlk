@@ -220,6 +220,22 @@ impl Cvars {
         self.last_change = Some(Instant::now());
     }
 
+    /// Remove a `config.toml` entry no row claims, a setting retired from the table, and return
+    /// its value; the next save writes the file without it.
+    pub(crate) fn retire_file_entry(&mut self, name: &str) -> Option<String> {
+        if self.index.contains_key(&name.to_ascii_lowercase()) {
+            return None;
+        }
+        let key = self
+            .file
+            .keys()
+            .find(|k| k.eq_ignore_ascii_case(name))?
+            .clone();
+        let value = self.file.remove(&key);
+        self.touch();
+        value
+    }
+
     /// A write from either side of the VM boundary. A `from_vm` write is not echoed back, but a
     /// refusal is, because the mirror already stored the refused value.
     fn write(&mut self, name: &str, value: &str, from_vm: bool) -> SetOutcome {
@@ -2196,6 +2212,30 @@ mod tests {
         cvars.load_file(BTreeMap::from([("farclip".to_string(), "500".to_string())]));
         assert_eq!(cvars.get("farclip"), Some("777"));
         assert!(cvars.is_session_owned("FARCLIP"));
+    }
+
+    /// A retired 1.12 row's saved line leaves the file; a live row's and an unknown key's stay.
+    #[test]
+    fn a_retired_row_leaves_the_file_and_nothing_else_does() {
+        let mut cvars = Cvars::default();
+        cvars.load_file(BTreeMap::from([
+            ("worlddetail".to_string(), "2".to_string()),
+            ("farclip".to_string(), "500".to_string()),
+            ("FutureKnob".to_string(), "3".to_string()),
+        ]));
+        for name in RETIRED_ROWS {
+            assert!(cvars.default_of(name).is_none(), "{name} is still a row");
+        }
+        assert_eq!(cvars.retire_file_entry("WorldDetail").as_deref(), Some("2"));
+        assert_eq!(
+            cvars.retire_file_entry("farclip"),
+            None,
+            "a row is never retired"
+        );
+        let file = cvars.compose();
+        assert!(!file.keys().any(|k| k.eq_ignore_ascii_case("WorldDetail")));
+        assert_eq!(file.get("farclip").map(String::as_str), Some("500"));
+        assert_eq!(file.get("FutureKnob").map(String::as_str), Some("3"));
     }
 
     /// The camera reads `gxMultisample` once at spawn, so the file must be applied inside
