@@ -60,6 +60,8 @@ pub(crate) struct SelectLook {
     /// `CHARACTER_FLAG_*` bits; the builder honours hide-helm and hide-cloak.
     pub(crate) flags: u32,
     pub(crate) equipment: [benilla_protocol::CharEnumItem; 19],
+    /// The roster row's four bags, worn as a quiver when one has a model.
+    pub(crate) bags: [benilla_protocol::CharEnumItem; 4],
     /// The roster row's pet triple; the level and family set its size through `CreatureFamily`'s
     /// ramp, so a freshly tamed wolf stands smaller than a level-60 one.
     pub(crate) pet_display_id: u32,
@@ -89,6 +91,7 @@ impl From<&benilla_protocol::Character> for SelectLook {
             facial_hair: c.facial_hair,
             flags: c.flags,
             equipment: c.equipment,
+            bags: c.bags,
             pet_display_id: c.pet_display_id,
             pet_level: c.pet_level,
             pet_family: c.pet_family,
@@ -1997,6 +2000,7 @@ mod tests {
             flags: 0,
             customize_flags: 0,
             equipment: [benilla_protocol::CharEnumItem::default(); 19],
+            bags: [benilla_protocol::CharEnumItem::default(); 4],
             pet_display_id: 517,
             pet_level: 60,
             pet_family: 1,

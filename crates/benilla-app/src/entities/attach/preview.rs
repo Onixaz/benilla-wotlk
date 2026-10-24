@@ -3,7 +3,7 @@
 //! ([`build_dressup_preview`]), whose try-ons nobody in the world wears. Each reduces its look to
 //! a [`PreviewSpec`], and [`assemble`] builds it the world's way: the display cache, the geoset
 //! filter, the composited body, the cloak, and the helm, shoulders and held weapons as riders
-//! (the select build `0x472950` holds weapons in the hands, `0x47a0c0`).
+//! (the select build `0x4e3cd0` holds weapons in the hands, `AddHandItem` `0x4eacd0`).
 
 use benilla_formats::CharSkinSlot;
 use benilla_protocol::{
@@ -65,15 +65,16 @@ pub(crate) fn equip_slot(inv_type: u8) -> Option<usize> {
     })
 }
 
-/// A create look's equipment and quiver bag, dressed as `CCharacterCreation::Dress`
+/// A create look's equipment and quiver bags, dressed as `CCharacterCreation::Dress`
 /// (`0x4e0fd0`) walks its CharStartOutfit row.
 fn create_outfit(
     outfit: &[benilla_formats::StartOutfitItem],
     class: u8,
-) -> ([CharEnumItem; 19], u32) {
+) -> ([CharEnumItem; 19], [u32; 4]) {
     let hunter = class == CLASS_HUNTER;
     let mut equipment = [CharEnumItem::default(); 19];
-    let mut quiver = 0;
+    let mut bags = [0; 4];
+    let mut bag = 0;
     for item in outfit {
         match item.inv_type {
             // Every helm row is skipped (`0x4e125e`).
@@ -83,7 +84,10 @@ fn create_outfit(
             13 | 17 | 21 | 22 | 25 if hunter => continue,
             // A Hunter's bag rides the quiver point (`0x4e1343`).
             INVTYPE_BAG if hunter => {
-                quiver = item.display_id;
+                if let Some(slot) = bags.get_mut(bag) {
+                    *slot = item.display_id;
+                    bag += 1;
+                }
                 continue;
             }
             _ => {}
@@ -95,7 +99,33 @@ fn create_outfit(
             };
         }
     }
-    (equipment, quiver)
+    (equipment, bags)
+}
+
+/// A select look's held equipment, as the select build `0x4e3cd0` walks its roster record: a
+/// Hunter skips the melee pair (`0x4e3f39`) and holds its ranged weapon, everyone else skips the
+/// ranged slot (`0x4e3f34`).
+fn select_hold(equipment: &mut [CharEnumItem; 19], class: u8) -> RangedHold {
+    if class != CLASS_HUNTER {
+        return RangedHold::Skip;
+    }
+    equipment[ENUM_HELD[0]] = CharEnumItem::default();
+    equipment[ENUM_HELD[1]] = CharEnumItem::default();
+    RangedHold::LeftHand
+}
+
+/// Where a preview holds its ranged slot.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(in crate::entities) enum RangedHold {
+    /// Not at all: a non-Hunter's select and create builds.
+    Skip,
+    /// Ranged-drawn, [`placement`]'s ranged arm: a bow left, the rest right. The dressing room
+    /// (`0x504d90`, remap `0x504b7c` to `0x504b44`, literal sheath 0 `0x504adc`) and a Hunter's
+    /// create look (`0x4e128e`, a gun's main-hand flag) both land here.
+    Drawn,
+    /// In the left hand whatever the weapon: the select build passes `AddHandItem` a false
+    /// main-hand flag (`0x4e41f7`), which puts the ranged slot on `HandLeft`.
+    LeftHand,
 }
 
 /// One preview's input: the body display, its appearance, and the worn equipment in the
@@ -117,14 +147,14 @@ pub(in crate::entities) struct PreviewSpec {
     pub(in crate::entities) emblem: Option<benilla_formats::GuildEmblem>,
     /// `CHARACTER_FLAG_*` bits; only hide-helm and hide-cloak are read.
     pub(in crate::entities) flags: u32,
-    /// `false` for the select mannequin, whose equipment loop skips the ranged slot (`0x472950`,
-    /// `0x472bfe`); `true` for the dressing room (`0x504d90`), whose remap (`0x504b7c` to
+    /// The ranged slot's hold ([`RangedHold`]); `ranged_in_hand` documents the dressing room's:
+    /// its remap (`0x504b7c` to
     /// `0x504b44`) and literal sheath 0 (`0x504adc`) put a tried-on ranged weapon in a hand
     /// whatever its SheatheType, as [`placement`]'s ranged arm does: a bow left, the rest right.
-    pub(in crate::entities) ranged_in_hand: bool,
-    /// The bag a Hunter's create look wears on the quiver point, if its display has a model
-    /// (`0x4e132f`); 0 for none.
-    pub(in crate::entities) quiver: u32,
+    pub(in crate::entities) ranged_in_hand: RangedHold,
+    /// The bags, in slot order; the last whose display has a model rides the quiver point
+    /// (create `0x4e132f`, select `0x4e418b`). 0 for an empty slot.
+    pub(in crate::entities) bags: [u32; 4],
 }
 
 /// What [`assemble`] produced: a preview bake's content, in the booth's shape.
@@ -222,14 +252,23 @@ pub(in crate::entities) fn build_glue_preview(
 
     // A select look carries its roster record; a create look wears its (race, class, sex)
     // CharStartOutfit as `CCharacterCreation::Dress` (`0x4e0fd0`) does, with no hide flags.
-    let (equipment, flags, hunter_create, quiver): ([CharEnumItem; 19], u32, bool, u32) = match look
-    {
+    let (equipment, flags, ranged_in_hand, bags) = match look {
         GlueLook::Create(l) => {
             let outfit = char_create.0.start_outfit(l.race, l.class, l.sex);
-            let (equipment, quiver) = create_outfit(outfit, l.class);
-            (equipment, 0, l.class == CLASS_HUNTER, quiver)
+            let (equipment, bags) = create_outfit(outfit, l.class);
+            // A Hunter's create look holds its bow left and its gun right (`0x4e128e`).
+            let hold = if l.class == CLASS_HUNTER {
+                RangedHold::Drawn
+            } else {
+                RangedHold::Skip
+            };
+            (equipment, 0, hold, bags)
         }
-        GlueLook::Select(l) => (l.equipment, l.flags, false, 0),
+        GlueLook::Select(l) => {
+            let mut equipment = l.equipment;
+            let hold = select_hold(&mut equipment, l.class);
+            (equipment, l.flags, hold, l.bags.map(|b| b.display_id))
+        }
     };
 
     let spec = PreviewSpec {
@@ -247,10 +286,8 @@ pub(in crate::entities) fn build_glue_preview(
         // tabard wears its own art, as with the reference's empty guild cache.
         emblem: None,
         flags,
-        // The select build skips the ranged slot (`0x472bfe`); a Hunter's create look holds its
-        // bow left and its gun right (`0x4e128e`).
-        ranged_in_hand: hunter_create,
-        quiver,
+        ranged_in_hand,
+        bags,
     };
     let Some(a) = assemble(
         &spec,
@@ -383,8 +420,8 @@ pub(in crate::entities) fn build_dressup_preview(
         flags: 0,
         // The ranged slot here only holds a try-on: `SetUnit` clones the live model, which shows
         // a ranged weapon only while ranged-drawn, so `crate::ui_dressup` leaves a worn one out.
-        ranged_in_hand: true,
-        quiver: 0,
+        ranged_in_hand: RangedHold::Drawn,
+        bags: [0; 4],
     };
     let Some(a) = assemble(
         &spec,
@@ -578,14 +615,15 @@ fn assemble(spec: &PreviewSpec, ctx: &mut PreviewCtx<'_, '_>) -> Option<Assemble
         equipment[ENUM_HELM].display_id
     };
     let mut held = held_wants(&equipment, helm, race, sex, spec.ranged_in_hand);
-    let modelled = |d: &ItemDisplays| {
-        d.catalog
-            .get(spec.quiver)
-            .is_some_and(|r| r.model[0].is_some())
-    };
-    if spec.quiver != 0 && ctx.displays.as_deref().is_some_and(modelled) {
+    let quiver = ctx.displays.as_deref().and_then(|d| {
+        spec.bags
+            .into_iter()
+            .rev()
+            .find(|&bag| bag != 0 && d.catalog.get(bag).is_some_and(|r| r.model[0].is_some()))
+    });
+    if let Some(quiver) = quiver {
         held.push(HeldWant {
-            display: spec.quiver,
+            display: quiver,
             kind: ItemModelKind::Quiver,
             attach: attach_id::QUIVER,
             visual: 0, // the quiver install passes a literal 0
@@ -838,17 +876,16 @@ struct HeldWant {
     visual: i32,
 }
 
-/// A preview's helm, shoulder pair and held weapons. The select build forces SheatheType 0
-/// (`0x472c8c`), so weapons go to the hands (main hand right, off hand left, a shield to its
-/// point) and the ranged slot is skipped (`0x472bfe`): [`placement`]'s melee-drawn arm. A held
-/// off-hand frill takes the same hand law; `0x47a0c0` is traced for weapons and shields only.
-/// `ranged_in_hand` asks the ranged slot ranged-drawn instead, the dressing room's hand install.
+/// A preview's helm, shoulder pair and held weapons. The glue builds pass SheatheType 0
+/// (`0x4e4202`), so weapons go to the hands (main hand right, off hand left, a shield to its
+/// point): [`placement`]'s melee-drawn arm. A held off-hand frill takes the same hand law;
+/// `0x47a0c0` is traced for weapons and shields only. `ranged` places the ranged slot.
 fn held_wants(
     equipment: &[CharEnumItem; 19],
     helm: u32,
     race: u8,
     sex: u8,
-    ranged_in_hand: bool,
+    ranged: RangedHold,
 ) -> Vec<HeldWant> {
     let mut wants = Vec::new();
     if helm != 0 {
@@ -879,12 +916,13 @@ fn held_wants(
             continue;
         }
         // The melee pair yields melee-drawn (1), the ranged slot only ranged-drawn (2).
-        let unit_sheath = if held_slot == 2 && ranged_in_hand {
-            2
-        } else {
-            1
+        let attach = match (held_slot, ranged) {
+            (2, RangedHold::Skip) => None,
+            (2, RangedHold::LeftHand) => Some(attach_id::HAND_LEFT),
+            (2, RangedHold::Drawn) => placement(2, item.inventory_type as u32, 0, 2),
+            _ => placement(held_slot, item.inventory_type as u32, 0, 1),
         };
-        let Some(attach) = placement(held_slot, item.inventory_type as u32, 0, unit_sheath) else {
+        let Some(attach) = attach else {
             continue;
         };
         let kind = if item.inventory_type == 14 {
@@ -1239,7 +1277,7 @@ mod tests {
         }
     }
 
-    /// The mannequin skips the ranged slot (`0x472bfe`); the dressing room hands a bow (15) to the
+    /// The mannequin skips the ranged slot (`0x4e3f34`); the dressing room hands a bow (15) to the
     /// left and a gun, crossbow or wand (26) or a thrown weapon (25) to the right.
     #[test]
     fn the_dressing_room_hands_a_ranged_weapon_where_the_mannequin_drops_it() {
@@ -1258,10 +1296,10 @@ mod tests {
         ] {
             let e = ranged(inv);
             assert!(
-                held_wants(&e, 0, 1, 0, false).is_empty(),
+                held_wants(&e, 0, 1, 0, RangedHold::Skip).is_empty(),
                 "the select mannequin skips the ranged slot ({what})"
             );
-            let wants = held_wants(&e, 0, 1, 0, true);
+            let wants = held_wants(&e, 0, 1, 0, RangedHold::Drawn);
             assert_eq!(wants.len(), 1, "the dressing room holds the {what}");
             assert_eq!(wants[0].attach, hand, "{what} rides the right hand point");
             assert_eq!(wants[0].display, 8500);
@@ -1281,10 +1319,10 @@ mod tests {
     /// its bags dress nothing.
     #[test]
     fn the_create_dresser_skips_the_helm() {
-        let (e, quiver) = create_outfit(&outfit(&[(1, 900), (5, 901), (18, 902)]), 6);
+        let (e, bags) = create_outfit(&outfit(&[(1, 900), (5, 901), (18, 902)]), 6);
         assert_eq!(e[ENUM_HELM].display_id, 0, "no hood");
         assert_eq!(e[ENUM_BODYSLOTS[1]].display_id, 901, "the chest stays");
-        assert_eq!(quiver, 0, "only a Hunter wears its bag");
+        assert_eq!(bags, [0; 4], "only a Hunter wears its bag");
     }
 
     /// A Hunter's create look drops its melee rows, holds its bow left or its gun right, and wears
@@ -1293,21 +1331,53 @@ mod tests {
     fn the_create_dresser_hands_a_hunter_its_ranged_weapon() {
         for (ranged, hand) in [(15u8, attach_id::HAND_LEFT), (26, attach_id::HAND_RIGHT)] {
             let rows = outfit(&[(17, 700), (13, 701), (18, 702), (ranged, 703), (25, 704)]);
-            let (e, quiver) = create_outfit(&rows, CLASS_HUNTER);
-            assert_eq!(quiver, 702);
+            let (e, bags) = create_outfit(&rows, CLASS_HUNTER);
+            assert_eq!(bags, [702, 0, 0, 0]);
             assert_eq!(e[ENUM_HELD[0]].display_id, 0, "no melee in hand");
             assert_eq!(
                 e[ENUM_HELD[2]].display_id, 703,
                 "the thrown row dresses nothing"
             );
-            let wants = held_wants(&e, 0, 3, 0, true);
+            let wants = held_wants(&e, 0, 3, 0, RangedHold::Drawn);
             assert_eq!(wants.len(), 1);
             assert_eq!((wants[0].display, wants[0].attach), (703, hand));
         }
-        let (e, quiver) = create_outfit(&outfit(&[(17, 700), (25, 704), (18, 702)]), 1);
+        let (e, bags) = create_outfit(&outfit(&[(17, 700), (25, 704), (18, 702)]), 1);
         assert_eq!(e[ENUM_HELD[0]].display_id, 700, "a Warrior's two-hander");
         assert_eq!(e[ENUM_HELD[2]].display_id, 704);
-        assert_eq!(quiver, 0);
+        assert_eq!(bags, [0; 4]);
+    }
+
+    /// The select build hands a Hunter its ranged weapon in the left hand, a gun included
+    /// (`0x4e41f7`), and drops its melee pair (`0x4e3f39`); a Warrior keeps its sword and skips
+    /// the ranged slot (`0x4e3f34`).
+    #[test]
+    fn the_select_build_holds_a_hunters_ranged_weapon_left() {
+        let mut e = [CharEnumItem::default(); 19];
+        e[ENUM_HELD[0]] = CharEnumItem {
+            display_id: 700,
+            inventory_type: 17,
+        };
+        e[ENUM_HELD[2]] = CharEnumItem {
+            display_id: 703,
+            inventory_type: 26,
+        };
+        let mut hunter = e;
+        let hold = select_hold(&mut hunter, CLASS_HUNTER);
+        let wants = held_wants(&hunter, 0, 3, 0, hold);
+        assert_eq!(wants.len(), 1, "the melee pair is dropped");
+        assert_eq!(
+            (wants[0].display, wants[0].attach),
+            (703, attach_id::HAND_LEFT)
+        );
+        let mut warrior = e;
+        let hold = select_hold(&mut warrior, 1);
+        let wants = held_wants(&warrior, 0, 1, 0, hold);
+        assert_eq!(wants.len(), 1, "the ranged slot is skipped");
+        assert_eq!(
+            (wants[0].display, wants[0].attach),
+            (700, attach_id::HAND_RIGHT)
+        );
     }
 
     /// The flag touches only the ranged slot: a sword still goes to HandRight, a shield to its
@@ -1323,8 +1393,8 @@ mod tests {
             display_id: 5600,
             inventory_type: 14, // SHIELD
         };
-        for ranged_in_hand in [false, true] {
-            let wants = held_wants(&e, 0, 1, 0, ranged_in_hand);
+        for ranged in [RangedHold::Skip, RangedHold::Drawn, RangedHold::LeftHand] {
+            let wants = held_wants(&e, 0, 1, 0, ranged);
             let at = |display: u32| {
                 wants
                     .iter()

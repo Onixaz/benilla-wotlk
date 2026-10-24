@@ -80,6 +80,8 @@ pub struct Character {
     /// Equipment order: head, neck, shoulders, shirt, chest, waist, legs, feet, wrists, hands,
     /// finger x2, trinket x2, back, main hand, off hand, ranged, tabard.
     pub equipment: [CharEnumItem; 19],
+    /// The four bag slots, 19 to 22; the select build wears a modelled one as a quiver.
+    pub bags: [CharEnumItem; 4],
     /// The pet's `CreatureDisplayInfo.dbc` id, 0 for none. The server already zeroes it for all but
     /// a living hunter or warlock (`Player::BuildEnumData`), so the client needs no class check.
     pub pet_display_id: u32,
@@ -120,9 +122,10 @@ impl Character {
             slot.inventory_type = read_u8(r)?;
             let _enchant_visual = read_u32_le(r)?;
         }
-        for _bag in 0..4 {
-            let _display_id = read_u32_le(r)?;
-            let _inventory_type = read_u8(r)?;
+        let mut bags = [CharEnumItem::default(); 4];
+        for bag in &mut bags {
+            bag.display_id = read_u32_le(r)?;
+            bag.inventory_type = read_u8(r)?;
             let _enchant_visual = read_u32_le(r)?;
         }
         Ok(Self {
@@ -143,6 +146,7 @@ impl Character {
             flags,
             customize_flags,
             equipment,
+            bags,
             pet_display_id,
             pet_level,
             pet_family,
