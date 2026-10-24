@@ -290,7 +290,7 @@ pub use char_stats::{
 };
 pub use chat_misc::EmoteRequest;
 pub use chat_send::ChatSend;
-pub use chat_types::ChatTypeColor;
+pub use chat_types::{default_chat_color, ChatTypeColor};
 pub use chat_window::{
     frame_point_index, frame_point_name, message_group_index, ChatWindowLook,
     CHAT_CACHE_ADDED_VERSION, COMBAT_LOG_FIRST_GROUP, MESSAGE_GROUPS,

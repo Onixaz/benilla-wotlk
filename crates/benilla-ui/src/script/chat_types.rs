@@ -1,17 +1,18 @@
 //! The chat-type colour registry behind `GetChatTypeIndex`, `ChangeChatColor` and
-//! `ResetChatColors`: the reference's runtime table (`0xb4e518`), which the `COLORS` block of
+//! `ResetChatColors`: the reference's runtime table (`0xb746e8`), which the `COLORS` block of
 //! `chat-cache.txt` overwrites in place at load; the app owns that file.
 
 use mlua::{Lua, MultiValue, Value};
 
-/// The fixed segment: 94 entries, in the reference's order (index = position + 1).
-pub const FIXED_CHAT_TYPES: usize = 94;
-/// The extras seeded at boot: `CHANNEL1` to `CHANNEL10`, indices 95 to 104.
+/// The fixed segment: 62 entries, in the reference's order (index = position + 1).
+pub const FIXED_CHAT_TYPES: usize = 62;
+/// The extras seeded at boot (`0x50ef6a`): `CHANNEL1` to `CHANNEL10`, indices 63 to 72.
 pub const EXTRA_CHAT_TYPES: usize = 10;
 
-/// The reference's table at `0x804710`, verbatim; its order is the index `GetChatTypeIndex`
-/// answers.
+/// The reference's defaults (`0x9fa558`, 0x4c-byte rows), verbatim; their order is the index
+/// `GetChatTypeIndex` answers.
 const DEFAULTS: [(&str, [u8; 3]); FIXED_CHAT_TYPES] = [
+    ("SYSTEM", [255, 255, 0]),
     ("SAY", [255, 255, 255]),
     ("PARTY", [170, 170, 255]),
     ("RAID", [255, 127, 0]),
@@ -19,12 +20,14 @@ const DEFAULTS: [(&str, [u8; 3]); FIXED_CHAT_TYPES] = [
     ("OFFICER", [64, 192, 64]),
     ("YELL", [255, 64, 64]),
     ("WHISPER", [255, 128, 255]),
+    ("WHISPER_FOREIGN", [255, 128, 255]),
     ("WHISPER_INFORM", [255, 128, 255]),
     ("EMOTE", [255, 128, 64]),
     ("TEXT_EMOTE", [255, 128, 64]),
-    ("SYSTEM", [255, 255, 0]),
     ("MONSTER_SAY", [255, 255, 159]),
+    ("MONSTER_PARTY", [170, 170, 255]),
     ("MONSTER_YELL", [255, 64, 64]),
+    ("MONSTER_WHISPER", [255, 181, 235]),
     ("MONSTER_EMOTE", [255, 128, 64]),
     ("CHANNEL", [255, 192, 192]),
     ("CHANNEL_JOIN", [192, 128, 128]),
@@ -37,79 +40,44 @@ const DEFAULTS: [(&str, [u8; 3]); FIXED_CHAT_TYPES] = [
     ("IGNORED", [255, 0, 0]),
     ("SKILL", [85, 85, 255]),
     ("LOOT", [0, 170, 0]),
+    ("MONEY", [255, 255, 0]),
+    ("OPENING", [128, 128, 255]),
+    ("TRADESKILLS", [255, 255, 255]),
+    ("PET_INFO", [128, 128, 255]),
     ("COMBAT_MISC_INFO", [128, 128, 255]),
-    ("MONSTER_WHISPER", [179, 179, 179]),
-    ("COMBAT_SELF_HITS", [255, 255, 255]),
-    ("COMBAT_SELF_MISSES", [255, 255, 255]),
-    ("COMBAT_PET_HITS", [255, 255, 255]),
-    ("COMBAT_PET_MISSES", [255, 255, 255]),
-    ("COMBAT_PARTY_HITS", [255, 255, 255]),
-    ("COMBAT_PARTY_MISSES", [255, 255, 255]),
-    ("COMBAT_FRIENDLYPLAYER_HITS", [255, 255, 255]),
-    ("COMBAT_FRIENDLYPLAYER_MISSES", [255, 255, 255]),
-    ("COMBAT_HOSTILEPLAYER_HITS", [255, 255, 255]),
-    ("COMBAT_HOSTILEPLAYER_MISSES", [255, 255, 255]),
-    ("COMBAT_CREATURE_VS_SELF_HITS", [255, 47, 47]),
-    ("COMBAT_CREATURE_VS_SELF_MISSES", [255, 47, 47]),
-    ("COMBAT_CREATURE_VS_PARTY_HITS", [255, 255, 255]),
-    ("COMBAT_CREATURE_VS_PARTY_MISSES", [255, 255, 255]),
-    ("COMBAT_CREATURE_VS_CREATURE_HITS", [255, 255, 255]),
-    ("COMBAT_CREATURE_VS_CREATURE_MISSES", [255, 255, 255]),
-    ("COMBAT_FRIENDLY_DEATH", [255, 255, 255]),
-    ("COMBAT_HOSTILE_DEATH", [255, 255, 255]),
     ("COMBAT_XP_GAIN", [111, 111, 255]),
-    ("SPELL_SELF_DAMAGE", [255, 255, 0]),
-    ("SPELL_SELF_BUFF", [255, 255, 0]),
-    ("SPELL_PET_DAMAGE", [255, 255, 255]),
-    ("SPELL_PET_BUFF", [255, 255, 255]),
-    ("SPELL_PARTY_DAMAGE", [255, 255, 255]),
-    ("SPELL_PARTY_BUFF", [255, 255, 255]),
-    ("SPELL_FRIENDLYPLAYER_DAMAGE", [255, 255, 255]),
-    ("SPELL_FRIENDLYPLAYER_BUFF", [255, 255, 255]),
-    ("SPELL_HOSTILEPLAYER_DAMAGE", [255, 255, 255]),
-    ("SPELL_HOSTILEPLAYER_BUFF", [255, 255, 255]),
-    ("SPELL_CREATURE_VS_SELF_DAMAGE", [202, 76, 217]),
-    ("SPELL_CREATURE_VS_SELF_BUFF", [255, 255, 255]),
-    ("SPELL_CREATURE_VS_PARTY_DAMAGE", [255, 255, 255]),
-    ("SPELL_CREATURE_VS_PARTY_BUFF", [255, 255, 255]),
-    ("SPELL_CREATURE_VS_CREATURE_DAMAGE", [255, 255, 255]),
-    ("SPELL_CREATURE_VS_CREATURE_BUFF", [255, 255, 255]),
-    ("SPELL_TRADESKILLS", [255, 255, 255]),
-    ("SPELL_DAMAGESHIELDS_ON_SELF", [255, 255, 255]),
-    ("SPELL_DAMAGESHIELDS_ON_OTHERS", [255, 255, 255]),
-    ("SPELL_AURA_GONE_SELF", [255, 255, 255]),
-    ("SPELL_AURA_GONE_PARTY", [255, 255, 255]),
-    ("SPELL_AURA_GONE_OTHER", [255, 255, 255]),
-    ("SPELL_ITEM_ENCHANTMENTS", [255, 255, 255]),
-    ("SPELL_BREAK_AURA", [255, 255, 255]),
-    ("SPELL_PERIODIC_SELF_DAMAGE", [255, 255, 255]),
-    ("SPELL_PERIODIC_SELF_BUFFS", [255, 255, 255]),
-    ("SPELL_PERIODIC_PARTY_DAMAGE", [255, 255, 255]),
-    ("SPELL_PERIODIC_PARTY_BUFFS", [255, 255, 255]),
-    ("SPELL_PERIODIC_FRIENDLYPLAYER_DAMAGE", [255, 255, 255]),
-    ("SPELL_PERIODIC_FRIENDLYPLAYER_BUFFS", [255, 255, 255]),
-    ("SPELL_PERIODIC_HOSTILEPLAYER_DAMAGE", [255, 255, 255]),
-    ("SPELL_PERIODIC_HOSTILEPLAYER_BUFFS", [255, 255, 255]),
-    ("SPELL_PERIODIC_CREATURE_DAMAGE", [255, 255, 255]),
-    ("SPELL_PERIODIC_CREATURE_BUFFS", [255, 255, 255]),
-    ("SPELL_FAILED_LOCALPLAYER", [255, 255, 255]),
     ("COMBAT_HONOR_GAIN", [224, 202, 10]),
+    ("COMBAT_FACTION_CHANGE", [128, 128, 255]),
     ("BG_SYSTEM_NEUTRAL", [255, 120, 10]),
     ("BG_SYSTEM_ALLIANCE", [0, 174, 239]),
     ("BG_SYSTEM_HORDE", [255, 0, 0]),
-    ("COMBAT_FACTION_CHANGE", [128, 128, 255]),
-    ("MONEY", [255, 255, 0]),
-    ("RAID_LEADER", [255, 219, 183]),
-    ("RAID_WARNING", [255, 219, 183]),
-    ("FOREIGN_TELL", [255, 128, 255]),
-    ("RAID_BOSS_EMOTE", [255, 219, 183]),
+    ("RAID_LEADER", [255, 72, 9]),
+    ("RAID_WARNING", [255, 72, 0]),
+    ("RAID_BOSS_EMOTE", [255, 221, 0]),
+    ("RAID_BOSS_WHISPER", [255, 221, 0]),
     ("FILTERED", [255, 0, 0]),
     ("BATTLEGROUND", [255, 127, 0]),
     ("BATTLEGROUND_LEADER", [255, 219, 183]),
+    ("RESTRICTED", [255, 0, 0]),
+    ("BATTLENET", [255, 255, 255]),
+    ("ACHIEVEMENT", [255, 255, 0]),
+    ("GUILD_ACHIEVEMENT", [64, 255, 64]),
+    ("ARENA_POINTS", [255, 255, 255]),
+    ("PARTY_LEADER", [118, 200, 255]),
+    ("TARGETICONS", [255, 255, 0]),
+    ("BN_WHISPER", [0, 255, 246]),
+    ("BN_WHISPER_INFORM", [0, 255, 246]),
+    ("BN_CONVERSATION", [0, 177, 240]),
+    ("BN_CONVERSATION_NOTICE", [0, 177, 240]),
+    ("BN_CONVERSATION_LIST", [0, 177, 240]),
+    ("BN_INLINE_TOAST_ALERT", [130, 197, 255]),
+    ("BN_INLINE_TOAST_BROADCAST", [130, 197, 255]),
+    ("BN_INLINE_TOAST_BROADCAST_INFORM", [130, 197, 255]),
+    ("BN_INLINE_TOAST_CONVERSATION", [130, 197, 255]),
 ];
 
-/// The 1-based index of `CHANNEL`, the extras' colour source at seed and reset.
-const CHANNEL_INDEX: usize = 15;
+/// The 1-based index of `CHANNEL`, the extras' colour source at seed and reset (`0xb74c34`).
+const CHANNEL_INDEX: usize = 18;
 
 /// One registry entry: the type's name and its live colour bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,7 +86,16 @@ pub struct ChatTypeColor {
     pub rgb: [u8; 3],
 }
 
-/// The boot seed: the defaults, then the extras coloured from `CHANNEL` (`0x4982c0`).
+/// A fixed type's shipped colour, matched as `GetChatTypeIndex` matches; `None` for a name the
+/// reference does not carry.
+pub fn default_chat_color(name: &str) -> Option<[u8; 3]> {
+    DEFAULTS
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .map(|&(_, rgb)| rgb)
+}
+
+/// The boot seed: the defaults, then the extras coloured from `CHANNEL` (`0x50edd0`).
 pub(super) fn seed() -> Vec<ChatTypeColor> {
     let mut table: Vec<ChatTypeColor> = DEFAULTS
         .iter()
@@ -262,17 +239,21 @@ mod tests {
     #[test]
     fn the_index_is_one_based_case_folded_and_zero_on_a_miss() {
         let s = UiScript::new().unwrap();
-        assert_eq!(s.eval::<i64>("return GetChatTypeIndex('say')").unwrap(), 1);
         assert_eq!(
-            s.eval::<i64>("return GetChatTypeIndex('BATTLEGROUND_LEADER')")
+            s.eval::<i64>("return GetChatTypeIndex('system')").unwrap(),
+            1
+        );
+        assert_eq!(s.eval::<i64>("return GetChatTypeIndex('say')").unwrap(), 2);
+        assert_eq!(
+            s.eval::<i64>("return GetChatTypeIndex('BN_INLINE_TOAST_CONVERSATION')")
                 .unwrap(),
-            94
+            62
         );
         assert_eq!(
             s.eval::<i64>("return GetChatTypeIndex('channel3')")
                 .unwrap(),
-            97,
-            "extras are 95… — count_before_match + 0x5f"
+            65,
+            "extras are 63… — count_before_match + 0x3f"
         );
         assert_eq!(s.eval::<i64>("return GetChatTypeIndex('NOPE')").unwrap(), 0);
         assert_eq!(s.eval::<i64>("return GetChatTypeIndex()").unwrap(), 0);
@@ -287,7 +268,7 @@ mod tests {
              ChangeChatColor('say', 0.5, 1.0, 0.999)",
         )
         .unwrap();
-        let say = &s.chat_colors()[0];
+        let say = &s.chat_colors()[1];
         assert_eq!(say.name, "SAY");
         assert_eq!(say.rgb, [127, 255, 254], "truncate, never round");
         assert_eq!(
@@ -327,7 +308,7 @@ mod tests {
         ]);
         let table = s.chat_colors();
         assert_eq!(table.len(), FIXED_CHAT_TYPES + EXTRA_CHAT_TYPES);
-        assert_eq!(table[10].rgb, [1, 2, 3], "SYSTEM, matched case-folded");
+        assert_eq!(table[0].rgb, [1, 2, 3], "SYSTEM, matched case-folded");
         assert_eq!(
             table[FIXED_CHAT_TYPES].rgb,
             [255, 192, 192],
@@ -335,8 +316,8 @@ mod tests {
         );
         s.run("ResetChatColors()").unwrap();
         let table = s.chat_colors();
-        assert_eq!(table[10].rgb, [255, 255, 0]);
-        assert_eq!(table[14].rgb, [255, 192, 192]);
+        assert_eq!(table[0].rgb, [255, 255, 0]);
+        assert_eq!(table[CHANNEL_INDEX - 1].rgb, [255, 192, 192]);
         assert_eq!(table[FIXED_CHAT_TYPES + 9].name, "CHANNEL10");
         assert!(s.take_chat_color_changes());
     }
