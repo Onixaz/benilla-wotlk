@@ -826,7 +826,7 @@ pub(crate) mod schedule_tests {
     /// other such drains pair; and `ui_guild_bank::feed_guild_bank` against
     /// `ui_items::feed_item_stats`, `feed_spell_tooltips`, `feed_units`, `feed_dressup` and
     /// `evict_display_caches` over `Items`, the icon catalog and the VM: it only reads templates.
-    const UPDATE_ACTIONABLE_CEILING: usize = 4_037;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_962;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
