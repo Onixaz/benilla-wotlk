@@ -602,6 +602,7 @@ pub(super) fn attach_entity_visuals(
                     l.sex,
                     l.hair_style,
                     l.facial_hair,
+                    l.eye_glow(sections.as_deref()),
                     &equip_geosets,
                 ))
             });

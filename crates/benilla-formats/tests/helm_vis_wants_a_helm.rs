@@ -94,7 +94,14 @@ fn jubie_keeps_her_hair_ears_and_earrings() {
         helm_vis: head.worn_helm_vis(),
         ..EquipGeosets::default()
     };
-    let set = geosets.visible_geosets(npc.race, npc.sex, npc.hair_style, npc.facial_hair, &eg);
+    let set = geosets.visible_geosets(
+        npc.race,
+        npc.sex,
+        npc.hair_style,
+        npc.facial_hair,
+        false,
+        &eg,
+    );
     // CharHairGeosets (7,1,1) gives 3, CharacterFacialHairStyles (7,1,2) gives 203, ears keep 702.
     for want in [3u16, 203, 702] {
         assert!(set.contains(&want), "geoset {want} is on, got {set:?}");
@@ -112,6 +119,7 @@ fn jubie_keeps_her_hair_ears_and_earrings() {
         npc.sex,
         npc.hair_style,
         npc.facial_hair,
+        false,
         &EquipGeosets {
             helm_vis: Some(head.helmet_vis),
             ..EquipGeosets::default()

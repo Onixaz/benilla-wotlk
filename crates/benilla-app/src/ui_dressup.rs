@@ -256,6 +256,7 @@ fn player_look(
         display_id: net.display_id?,
         race: s.unit_race()?,
         sex: s.unit_gender()?,
+        class: s.unit_class().unwrap_or(0),
         skin: s.player_skin().unwrap_or(0),
         face: s.player_face().unwrap_or(0),
         hair_style: s.player_hair_style().unwrap_or(0),

@@ -35,6 +35,12 @@ const ENUM_CLOAK: usize = 14;
 /// Main hand, off hand, ranged: [`placement`]'s held slots 0, 1, 2.
 const ENUM_HELD: [usize; 3] = [15, 16, 17];
 
+/// The class `CCharacterCreation::Dress` branches on (`0x4e1267`).
+const CLASS_HUNTER: u8 = 3;
+/// The `InventoryType`s the create dresser skips or reroutes.
+const INVTYPE_HEAD: u8 = 1;
+const INVTYPE_BAG: u8 = 18;
+
 /// An item's `InventoryType` as its `EQUIPMENT_SLOT_*` index, so a CharStartOutfit item lands
 /// where a select record carries it (the compositor's render slots, `0x478cb0`); `None` for a
 /// type that never renders.
@@ -59,6 +65,39 @@ pub(crate) fn equip_slot(inv_type: u8) -> Option<usize> {
     })
 }
 
+/// A create look's equipment and quiver bag, dressed as `CCharacterCreation::Dress`
+/// (`0x4e0fd0`) walks its CharStartOutfit row.
+fn create_outfit(
+    outfit: &[benilla_formats::StartOutfitItem],
+    class: u8,
+) -> ([CharEnumItem; 19], u32) {
+    let hunter = class == CLASS_HUNTER;
+    let mut equipment = [CharEnumItem::default(); 19];
+    let mut quiver = 0;
+    for item in outfit {
+        match item.inv_type {
+            // Every helm row is skipped (`0x4e125e`).
+            INVTYPE_HEAD => continue,
+            // A Hunter's switch (`0x4e1267`) drops the melee rows; a thrown row takes its default
+            // arm, which dresses nothing.
+            13 | 17 | 21 | 22 | 25 if hunter => continue,
+            // A Hunter's bag rides the quiver point (`0x4e1343`).
+            INVTYPE_BAG if hunter => {
+                quiver = item.display_id;
+                continue;
+            }
+            _ => {}
+        }
+        if let Some(slot) = equip_slot(item.inv_type) {
+            equipment[slot] = CharEnumItem {
+                display_id: item.display_id,
+                inventory_type: item.inv_type,
+            };
+        }
+    }
+    (equipment, quiver)
+}
+
 /// One preview's input: the body display, its appearance, and the worn equipment in the
 /// `SMSG_CHAR_ENUM` slot shape.
 pub(in crate::entities) struct PreviewSpec {
@@ -66,6 +105,8 @@ pub(in crate::entities) struct PreviewSpec {
     pub(in crate::entities) display_id: u32,
     pub(in crate::entities) race: u8,
     pub(in crate::entities) sex: u8,
+    /// The class, which lights a Death Knight's eyes (`0x4ed909`).
+    pub(in crate::entities) class: u8,
     pub(in crate::entities) skin: u8,
     pub(in crate::entities) face: u8,
     pub(in crate::entities) hair_style: u8,
@@ -81,6 +122,9 @@ pub(in crate::entities) struct PreviewSpec {
     /// `0x504b44`) and literal sheath 0 (`0x504adc`) put a tried-on ranged weapon in a hand
     /// whatever its SheatheType, as [`placement`]'s ranged arm does: a bow left, the rest right.
     pub(in crate::entities) ranged_in_hand: bool,
+    /// The bag a Hunter's create look wears on the quiver point, if its display has a model
+    /// (`0x4e132f`); 0 for none.
+    pub(in crate::entities) quiver: u32,
 }
 
 /// What [`assemble`] produced: a preview bake's content, in the booth's shape.
@@ -157,33 +201,42 @@ pub(in crate::entities) fn build_glue_preview(
         return;
     };
 
-    let (skin, face, hair_style, hair_color, facial_hair) = match look {
-        GlueLook::Create(l) => (l.skin, l.face, l.hair_style, l.hair_color, l.facial_hair),
-        GlueLook::Select(l) => (l.skin, l.face, l.hair_style, l.hair_color, l.facial_hair),
+    let (class, skin, face, hair_style, hair_color, facial_hair) = match look {
+        GlueLook::Create(l) => (
+            l.class,
+            l.skin,
+            l.face,
+            l.hair_style,
+            l.hair_color,
+            l.facial_hair,
+        ),
+        GlueLook::Select(l) => (
+            l.class,
+            l.skin,
+            l.face,
+            l.hair_style,
+            l.hair_color,
+            l.facial_hair,
+        ),
     };
 
     // A select look carries its roster record; a create look wears its (race, class, sex)
-    // CharStartOutfit, which has no helm or cloak to hide, so its flags are 0.
-    let (equipment, flags): ([CharEnumItem; 19], u32) = match look {
+    // CharStartOutfit as `CCharacterCreation::Dress` (`0x4e0fd0`) does, with no hide flags.
+    let (equipment, flags, hunter_create, quiver): ([CharEnumItem; 19], u32, bool, u32) = match look
+    {
         GlueLook::Create(l) => {
-            let mut equipment = [CharEnumItem::default(); 19];
-            for item in char_create.0.start_outfit(l.race, l.class, l.sex) {
-                if let Some(slot) = equip_slot(item.inv_type) {
-                    equipment[slot] = CharEnumItem {
-                        display_id: item.display_id,
-                        inventory_type: item.inv_type,
-                    };
-                }
-            }
-            (equipment, 0)
+            let outfit = char_create.0.start_outfit(l.race, l.class, l.sex);
+            let (equipment, quiver) = create_outfit(outfit, l.class);
+            (equipment, 0, l.class == CLASS_HUNTER, quiver)
         }
-        GlueLook::Select(l) => (l.equipment, l.flags),
+        GlueLook::Select(l) => (l.equipment, l.flags, false, 0),
     };
 
     let spec = PreviewSpec {
         display_id,
         race,
         sex,
+        class,
         skin,
         face,
         hair_style,
@@ -194,8 +247,10 @@ pub(in crate::entities) fn build_glue_preview(
         // tabard wears its own art, as with the reference's empty guild cache.
         emblem: None,
         flags,
-        // The select build skips the ranged slot (`0x472bfe`).
-        ranged_in_hand: false,
+        // The select build skips the ranged slot (`0x472bfe`); a Hunter's create look holds its
+        // bow left and its gun right (`0x4e128e`).
+        ranged_in_hand: hunter_create,
+        quiver,
     };
     let Some(a) = assemble(
         &spec,
@@ -314,6 +369,7 @@ pub(in crate::entities) fn build_dressup_preview(
         display_id: look.display_id,
         race: look.race,
         sex: look.sex,
+        class: look.class,
         skin: look.skin,
         face: look.face,
         hair_style: look.hair_style,
@@ -328,6 +384,7 @@ pub(in crate::entities) fn build_dressup_preview(
         // The ranged slot here only holds a try-on: `SetUnit` clones the live model, which shows
         // a ranged weapon only while ranged-drawn, so `crate::ui_dressup` leaves a worn one out.
         ranged_in_hand: true,
+        quiver: 0,
     };
     let Some(a) = assemble(
         &spec,
@@ -501,11 +558,13 @@ fn assemble(spec: &PreviewSpec, ctx: &mut PreviewCtx<'_, '_>) -> Option<Assemble
     let char_look = CharLook {
         race,
         sex,
+        class: spec.class,
         skin: spec.skin,
+        face: spec.face,
         hair_style: spec.hair_style,
         hair_color: spec.hair_color,
         facial_hair: spec.facial_hair,
-        body: BodySkin::Composite { face: spec.face },
+        body: BodySkin::Composite,
     };
     let bodyslots = ENUM_BODYSLOTS.map(|slot| equipment[slot].display_id);
     let cloak = if flags & CHARACTER_FLAG_HIDE_CLOAK != 0 {
@@ -519,6 +578,19 @@ fn assemble(spec: &PreviewSpec, ctx: &mut PreviewCtx<'_, '_>) -> Option<Assemble
         equipment[ENUM_HELM].display_id
     };
     let mut held = held_wants(&equipment, helm, race, sex, spec.ranged_in_hand);
+    let modelled = |d: &ItemDisplays| {
+        d.catalog
+            .get(spec.quiver)
+            .is_some_and(|r| r.model[0].is_some())
+    };
+    if spec.quiver != 0 && ctx.displays.as_deref().is_some_and(modelled) {
+        held.push(HeldWant {
+            display: spec.quiver,
+            kind: ItemModelKind::Quiver,
+            attach: attach_id::QUIVER,
+            visual: 0, // the quiver install passes a literal 0
+        });
+    }
     // Grip `[right, left]`: a hand whose attach point holds something closes (`0x5059a0`); a
     // shield sits on the forearm point, so its hand stays open.
     let grip = [
@@ -565,8 +637,16 @@ fn assemble(spec: &PreviewSpec, ctx: &mut PreviewCtx<'_, '_>) -> Option<Assemble
 
     // The world path's geoset selection, the helm's hide-mask rows included (`0x4799a0`).
     let eg = equip_geosets(ctx.displays.as_deref(), &bodyslots, cloak, helm, false);
+    let eye_glow = char_look.eye_glow(ctx.sections);
     let visible = ctx.characters.map(|c| {
-        c.0.visible_geosets(race, sex, char_look.hair_style, char_look.facial_hair, &eg)
+        c.0.visible_geosets(
+            race,
+            sex,
+            char_look.hair_style,
+            char_look.facial_hair,
+            eye_glow,
+            &eg,
+        )
     });
     let body_tex = super::char_skin::forced_body_atlas(
         &char_look,
@@ -1186,6 +1266,48 @@ mod tests {
             assert_eq!(wants[0].attach, hand, "{what} rides the right hand point");
             assert_eq!(wants[0].display, 8500);
         }
+    }
+
+    fn outfit(rows: &[(u8, u32)]) -> Vec<benilla_formats::StartOutfitItem> {
+        rows.iter()
+            .map(|&(inv_type, display_id)| benilla_formats::StartOutfitItem {
+                display_id,
+                inv_type,
+            })
+            .collect()
+    }
+
+    /// The create dresser skips every helm row (`0x4e125e`), so a Death Knight stands bareheaded;
+    /// its bags dress nothing.
+    #[test]
+    fn the_create_dresser_skips_the_helm() {
+        let (e, quiver) = create_outfit(&outfit(&[(1, 900), (5, 901), (18, 902)]), 6);
+        assert_eq!(e[ENUM_HELM].display_id, 0, "no hood");
+        assert_eq!(e[ENUM_BODYSLOTS[1]].display_id, 901, "the chest stays");
+        assert_eq!(quiver, 0, "only a Hunter wears its bag");
+    }
+
+    /// A Hunter's create look drops its melee rows, holds its bow left or its gun right, and wears
+    /// its bag as the quiver (`0x4e1267`); a Warrior keeps its melee and thrown rows.
+    #[test]
+    fn the_create_dresser_hands_a_hunter_its_ranged_weapon() {
+        for (ranged, hand) in [(15u8, attach_id::HAND_LEFT), (26, attach_id::HAND_RIGHT)] {
+            let rows = outfit(&[(17, 700), (13, 701), (18, 702), (ranged, 703), (25, 704)]);
+            let (e, quiver) = create_outfit(&rows, CLASS_HUNTER);
+            assert_eq!(quiver, 702);
+            assert_eq!(e[ENUM_HELD[0]].display_id, 0, "no melee in hand");
+            assert_eq!(
+                e[ENUM_HELD[2]].display_id, 703,
+                "the thrown row dresses nothing"
+            );
+            let wants = held_wants(&e, 0, 3, 0, true);
+            assert_eq!(wants.len(), 1);
+            assert_eq!((wants[0].display, wants[0].attach), (703, hand));
+        }
+        let (e, quiver) = create_outfit(&outfit(&[(17, 700), (25, 704), (18, 702)]), 1);
+        assert_eq!(e[ENUM_HELD[0]].display_id, 700, "a Warrior's two-hander");
+        assert_eq!(e[ENUM_HELD[2]].display_id, 704);
+        assert_eq!(quiver, 0);
     }
 
     /// The flag touches only the ranged slot: a sword still goes to HandRight, a shield to its

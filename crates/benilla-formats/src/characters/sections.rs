@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::dbc_layout;
 use anyhow::{Context, Result};
@@ -16,6 +16,9 @@ const SECTION_FACE: u8 = 1;
 const SECTION_FACIAL_HAIR: u8 = 2;
 const SECTION_HAIR: u8 = 3;
 const SECTION_UNDERWEAR: u8 = 4;
+
+/// The face row flag that lights the eyes, geoset 1703 (`0x4ed93b`).
+const FACE_EYE_GLOW: u32 = 0x4;
 
 /// The hair variation the type-6 binder falls back to: a literal 1 at `0x478445` and `0x4786f2`.
 const HAIR_SUBSTITUTE_VARIATION: u8 = 1;
@@ -104,6 +107,8 @@ fn emblem_half(layer: usize) -> Option<&'static str> {
 /// CharSections: (race, sex, sectionType, variation, colorIndex) → the row's `TextureName`s.
 pub struct CharSections {
     sections: HashMap<(u8, u8, u8, u8, u8), [String; 3]>,
+    /// (race, sex, face, skinColor) of the face rows flagged [`FACE_EYE_GLOW`].
+    glowing_faces: HashSet<(u8, u8, u8, u8)>,
 }
 
 impl CharSections {
@@ -136,6 +141,12 @@ impl CharSections {
     ) -> Option<&str> {
         self.hair_texture(race, sex, hair_style, hair_color)
             .or_else(|| self.hair_texture(race, sex, HAIR_SUBSTITUTE_VARIATION, hair_color))
+    }
+
+    /// Whether a character's eyes glow, geoset 1703: a Death Knight (`0x4ed909`), or a face whose
+    /// row for this skin colour is flagged `0x4` (`0x4ed93b`).
+    pub fn eye_glow(&self, race: u8, sex: u8, class: u8, face: u8, skin: u8) -> bool {
+        class == 6 || self.glowing_faces.contains(&(race, sex, face, skin))
     }
 
     /// One `TextureName` column of a row; an empty name is `None`.
@@ -241,6 +252,7 @@ impl CharSections {
         let l = &crate::dbc_layout::LAYOUTS.char_sections;
         let rs = parse(&bytes, char_sections_schema(l), "CharSections")?;
         let mut sections = HashMap::with_capacity(rs.records().len());
+        let mut glowing_faces = HashSet::new();
         for r in rs.records() {
             if let (Some(race), Some(sex), Some(ty), Some(var), Some(color)) = (
                 u32_at(r, 1),
@@ -254,7 +266,11 @@ impl CharSections {
                 let key = (race as u8, sex as u8, ty as u8, var as u8, color as u8);
                 // An extra row can share its key with a standard one (1.12.1's Human male skin 0
                 // has `…Skin00_00` and `…_100`); the standard row wins in either order.
-                let extra = !l.offered(u32_at(r, l.flags).unwrap_or(0));
+                let flags = u32_at(r, l.flags).unwrap_or(0);
+                if ty as u8 == SECTION_FACE && flags & FACE_EYE_GLOW != 0 {
+                    glowing_faces.insert((key.0, key.1, key.3, key.4));
+                }
+                let extra = !l.offered(flags);
                 if extra {
                     sections.entry(key).or_insert(texs);
                 } else {
@@ -262,7 +278,10 @@ impl CharSections {
                 }
             }
         }
-        Ok(Self { sections })
+        Ok(Self {
+            sections,
+            glowing_faces,
+        })
     }
 }
 
@@ -636,7 +655,10 @@ mod tests {
                 String::new(),
             ],
         );
-        let cs = CharSections { sections };
+        let cs = CharSections {
+            sections,
+            glowing_faces: HashSet::new(),
+        };
         assert_eq!(
             cs.skin_texture(1, 0, 3),
             Some("Character\\Human\\Male\\HumanMaleSkin00_03.blp")
@@ -1300,6 +1322,25 @@ mod tests {
             "copied, not stretched"
         );
         assert_eq!(px(&classic, 0, 4, 2, 0), grey, "past the overlay's extent");
+    }
+
+    /// A Death Knight's eyes glow whatever its face, and a face row flagged `0x4` lights any
+    /// class's: the dwarf male's Death Knight face 10 glows, his face 0 at skin 0 does not.
+    #[test]
+    fn eye_glow_follows_the_class_and_the_face_row_flag() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let cs = CharSections::load(&mut chain).expect("load CharSections");
+        assert!(!cs.eye_glow(3, 0, 1, 0, 0), "a warrior's stock face");
+        assert!(
+            cs.eye_glow(3, 0, 6, 0, 0),
+            "a Death Knight's, whatever the face"
+        );
+        assert!(
+            cs.eye_glow(3, 0, 1, 10, 0),
+            "a flagged face, whatever the class"
+        );
+        assert!(!cs.eye_glow(3, 0, 1, 10, 99), "no row, no flag");
     }
 
     /// On the shipped files a Human male's head and pelvis tiles change, and the torso does not.

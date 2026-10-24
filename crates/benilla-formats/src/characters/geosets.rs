@@ -11,16 +11,18 @@ const CHAR_HAIR_GEOSETS: &str = "DBFilesClient\\CharHairGeosets.dbc";
 const CHAR_FACIAL_HAIR: &str = "DBFilesClient\\CharacterFacialHairStyles.dbc";
 const HELMET_GEOSET_VIS: &str = "DBFilesClient\\HelmetGeosetVisData.dbc";
 
-/// The 16 default region bases of `cc+0x144` (ctors `0x476810`/`0x476960`); group 7's is 702.
-/// Entries 0–3, hair and facial hair, are replaced by the customization; 4–15 are the equipment
-/// groups' bare defaults.
-const REGION_BASES: [u16; 16] = [
-    1, 101, 201, 301, 401, 501, 601, 702, 801, 901, 1001, 1101, 1201, 1301, 1401, 1501,
+/// The 19 default region bases of `cc+0x144` (ctor `0x4dfda0`); group 7's is 702. Entries 0–3,
+/// 16 and 17 are replaced by the customization; the rest are the equipment groups' bare defaults.
+const REGION_BASES: [u16; 19] = [
+    1, 101, 201, 301, 401, 501, 601, 702, 801, 901, 1001, 1101, 1201, 1301, 1401, 1501, 1601, 1701,
+    1801,
 ];
 
+/// The eye glow `0x4ed973` shows in place of group 17's pick.
+const EYE_GLOW: u16 = 1703;
+
 /// The highest geoset id the character compositor selects: groups 17 (eye glow) and 18 (belt)
-/// join the selection; WowUnreal's 3.3.5a builder defaults both to variant 1 and picks 18 from the
-/// belt. A model's higher ids keep the visibility they load with.
+/// join the selection. A model's higher ids keep the visibility they load with.
 const SELECTED_THROUGH: u16 = 1899;
 
 /// The geosets a character shows: the selector's picks, plus every ID above
@@ -42,12 +44,12 @@ impl VisibleGeosets {
 pub struct CharacterGeosets {
     /// (race, sex, hairStyle) → hair `GeosetID` (group 0).
     hair: HashMap<(u8, u8, u8), u32>,
-    /// (race, sex, facialHair) → three geoset variations in file order, for groups 1, 3, 2
-    /// (`0x478660`).
-    facial: HashMap<(u8, u8, u8), [u32; 3]>,
-    /// HelmetGeosetVisData row id → five race bitmasks (`0x4799a0`): bit `1 << race` forces a hair,
-    /// facial-hair or ear slot back to its group base under a helm.
-    helmet_vis: HashMap<u32, [u32; 5]>,
+    /// (race, sex, facialHair) → five geoset variations in file order, for groups 1, 3, 2, 16, 17
+    /// (`0x4ea5cf`..`0x4ea60c`).
+    facial: HashMap<(u8, u8, u8), [u32; 5]>,
+    /// HelmetGeosetVisData row id → seven race bitmasks (`0x4ef1d8`): bit `1 << race` forces a
+    /// hair, facial-hair, ear, group 16 or group 17 slot back to its base under a helm.
+    helmet_vis: HashMap<u32, [u32; 7]>,
 }
 
 /// What the equipment branches of `0x477520` read: each bodyslot 2–9's three `geosetGroup`s
@@ -68,42 +70,48 @@ pub struct EquipGeosets {
 
 impl CharacterGeosets {
     /// The geosets (`skinSectionId`s) this appearance draws, sorted and deduplicated: the naked
-    /// set, then the eight equipment branches B1–B8 of `0x477520`. Use
-    /// [`VisibleGeosets::contains`] to retain unmanaged IDs above [`SELECTED_THROUGH`].
+    /// set, then the eight equipment branches B1–B8 of `0x477520`. `eye_glow` is
+    /// [`CharSections::eye_glow`](crate::CharSections::eye_glow). Use [`VisibleGeosets::contains`]
+    /// to retain unmanaged IDs above [`SELECTED_THROUGH`].
     pub fn visible_geosets(
         &self,
         race: u8,
         sex: u8,
         hair_style: u8,
         facial_hair: u8,
+        eye_glow: bool,
         equip: &EquipGeosets,
     ) -> VisibleGeosets {
         // The naked set: the region bases and geoset 0, the body.
         let mut set = REGION_BASES.to_vec();
         set.push(0);
-        // Where the selection reaches groups 17 and 18 (3.3.5a), their variant-1 bases: no eye
-        // glow (1703 is the Death Knight's) and no belt geoset.
-        set.extend(
-            [1701, 1801]
-                .into_iter()
-                .filter(|&base| base <= SELECTED_THROUGH),
-        );
         // Hair: `0x478540` returns `max(1, geosetId)`, so a bald style shows geoset 1, the scalp.
         if let Some(&g) = self.hair.get(&(race, sex, hair_style)) {
             set[0] = g.max(1) as u16;
         }
-        // Facial hair: `0x478660` adds 100/300/200 to the row's fields; no row keeps the bases.
-        if let Some(&[a, b, c]) = self.facial.get(&(race, sex, facial_hair)) {
+        // Facial hair: `0x4ea590` adds 100/300/200/1600/1700 to the row's fields; no row keeps the
+        // bases. The night elf, undead and blood elf rows pick 1702, their eye glow.
+        if let Some(&[a, b, c, d, e]) = self.facial.get(&(race, sex, facial_hair)) {
             set[1] = (a + 100) as u16;
             set[3] = (b + 300) as u16;
             set[2] = (c + 200) as u16;
+            set[16] = d.wrapping_add(1600) as u16;
+            set[17] = e.wrapping_add(1700) as u16;
         }
-        // A helm's vis row (`0x4799a0`) forces slots back to their bases, the ears to 701, after
-        // the customization; its slots {0,1,2,3,7} are disjoint from every equipment branch.
+        // A helm's vis row (`0x4ef0d0`) forces slots back to their bases, the ears to 701, after
+        // the customization; its slots {0,1,2,3,7,16,17} are disjoint from every equipment branch.
         if let Some(rows) = equip.helm_vis {
             let row = rows[usize::from(sex == 1)];
             if let Some(masks) = self.helmet_vis.get(&row) {
-                const FORCED: [(usize, u16); 5] = [(0, 1), (1, 101), (2, 201), (3, 301), (7, 701)];
+                const FORCED: [(usize, u16); 7] = [
+                    (0, 1),
+                    (1, 101),
+                    (2, 201),
+                    (3, 301),
+                    (7, 701),
+                    (16, 1601),
+                    (17, 1701),
+                ];
                 let bit = 1u32 << (race & 0x1f);
                 for (mask, (slot, forced)) in masks.iter().zip(FORCED) {
                     if mask & bit != 0 {
@@ -111,6 +119,10 @@ impl CharacterGeosets {
                     }
                 }
             }
+        }
+        // The render prep shows 1703 in place of group 17's pick, over the helm (`0x4ed966`).
+        if eye_glow {
+            set[17] = EYE_GLOW;
         }
         // The equipment branches; `g(slot, sub)` is a non-zero geosetGroup, slots 0 shirt, 1 chest,
         // 2 belt, 3 pants, 4 boots, 5 wrist, 6 gloves, 7 tabard.
@@ -229,11 +241,12 @@ impl CharacterGeosets {
             )?;
             let mut m = HashMap::with_capacity(rs.records().len());
             for r in rs.records() {
-                // RaceID, SexID, VariationID (facialHair), then Geoset100/300/200 at `l.geosets`.
+                // RaceID, SexID, VariationID (facialHair), then Geoset100/300/200/1600/1700 at
+                // `l.geosets`.
                 if let (Some(race), Some(sex), Some(var)) =
                     (u32_at(r, 0), u32_at(r, 1), u32_at(r, 2))
                 {
-                    let g: [u32; 3] =
+                    let g: [u32; 5] =
                         std::array::from_fn(|i| u32_at(r, l.geosets + i).unwrap_or(0));
                     // The first row wins.
                     m.entry((race as u8, sex as u8, var as u8)).or_insert(g);
@@ -280,8 +293,7 @@ pub(crate) fn char_hair_geosets_schema() -> Schema {
     s
 }
 
-/// HelmetGeosetVisData.dbc: 6 fields, 0x18-byte records in 5875 (loader `0x546f00`); the five masks
-/// are race bitmasks (`0x4799a0`). 12340's two further masks are unread.
+/// HelmetGeosetVisData.dbc: `ID` and seven race bitmasks (`0x4ef1d8`).
 pub(crate) fn helmet_vis_schema(l: &dbc_layout::HelmetGeosetVisData) -> Schema {
     let mut s = Schema::new("HelmetGeosetVisData");
     for name in [
@@ -291,6 +303,8 @@ pub(crate) fn helmet_vis_schema(l: &dbc_layout::HelmetGeosetVisData) -> Schema {
         "HideFacial2",
         "HideFacial3",
         "HideEars",
+        "HideGroup16",
+        "HideGroup17",
     ] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));
     }
@@ -300,7 +314,7 @@ pub(crate) fn helmet_vis_schema(l: &dbc_layout::HelmetGeosetVisData) -> Schema {
     s
 }
 
-/// CharacterFacialHairStyles.dbc: no ID column; 9 fields in 5875, 8 in 12340.
+/// CharacterFacialHairStyles.dbc: no ID column; RaceID, SexID, VariationID and five geosets.
 pub(crate) fn char_facial_hair_schema(l: &dbc_layout::CharacterFacialHairStyles) -> Schema {
     let mut s = Schema::new("CharacterFacialHairStyles");
     for i in 0..l.fields {
@@ -311,6 +325,8 @@ pub(crate) fn char_facial_hair_schema(l: &dbc_layout::CharacterFacialHairStyles)
             _ if i == l.geosets => "Geoset100".into(),
             _ if i == l.geosets + 1 => "Geoset300".into(),
             _ if i == l.geosets + 2 => "Geoset200".into(),
+            _ if i == l.geosets + 3 => "Geoset1600".into(),
+            _ if i == l.geosets + 4 => "Geoset1700".into(),
             _ => format!("c{i}"),
         };
         s.add_field(SchemaField::new(name, FieldType::UInt32));
@@ -332,19 +348,19 @@ mod tests {
         let mut boots = EquipGeosets::default();
         boots.bodyslots[4] = Some([2, 0, 0]);
         for equip in [EquipGeosets::default(), boots] {
-            let visible = cg.visible_geosets(4, 1, 0, 0, &equip);
+            let visible = cg.visible_geosets(4, 1, 0, 0, false, &equip);
             assert!(
                 visible.contains(&0),
                 "stock eye glow stays on the body geoset"
             );
-            for id in [2, 302, 1600, 1699, 1700, 1703, 1899] {
+            for id in [2, 302, 1600, 1602, 1699, 1700, 1703, 1899] {
                 assert!(!visible.contains(&id), "unselected managed geoset {id}");
             }
             for id in [1900, 2001, u16::MAX] {
                 assert!(visible.contains(&id), "unmanaged geoset {id} stays visible");
             }
         }
-        let visible = cg.visible_geosets(4, 1, 0, 0, &boots);
+        let visible = cg.visible_geosets(4, 1, 0, 0, false, &boots);
         assert!(!visible.contains(&501), "boots still hide the bare ankle");
         assert!(
             visible.contains(&503),
@@ -376,7 +392,7 @@ mod tests {
             let mut robe = EquipGeosets::default();
             robe.bodyslots[1] = Some([0, 0, 1]);
             for equip in [EquipGeosets::default(), robe] {
-                let visible = cg.visible_geosets(4, sex, 0, 0, &equip);
+                let visible = cg.visible_geosets(4, sex, 0, 0, false, &equip);
                 assert_eq!(
                     eyes.iter()
                         .filter(|p| visible.contains(&p.geoset_id))
@@ -396,18 +412,18 @@ mod tests {
             facial: HashMap::new(),
             helmet_vis: HashMap::new(),
         };
-        let naked = cg.visible_geosets(1, 0, 0, 0, &EquipGeosets::default());
+        let naked = cg.visible_geosets(1, 0, 0, 0, false, &EquipGeosets::default());
         assert!(naked.contains(&401) && naked.contains(&1101) && naked.contains(&1501));
 
         let mut eq = EquipGeosets::default();
         eq.bodyslots[6] = Some([1, 0, 0]);
-        let set = cg.visible_geosets(1, 0, 0, 0, &eq);
+        let set = cg.visible_geosets(1, 0, 0, 0, false, &eq);
         assert!(set.contains(&402) && !set.contains(&401));
 
         // Boots take the bare foot, 501, off (`0x477639`).
         let mut eq = EquipGeosets::default();
         eq.bodyslots[4] = Some([2, 0, 0]);
-        let set = cg.visible_geosets(1, 0, 0, 0, &eq);
+        let set = cg.visible_geosets(1, 0, 0, 0, false, &eq);
         assert!(set.contains(&503) && !set.contains(&501));
 
         // A robe shows its skirt and hides the leg groups and the tabard flap.
@@ -416,7 +432,7 @@ mod tests {
         eq.bodyslots[3] = Some([2, 1, 0]);
         eq.bodyslots[4] = Some([2, 0, 0]);
         eq.bodyslots[7] = Some([1, 0, 0]);
-        let set = cg.visible_geosets(1, 0, 0, 0, &eq);
+        let set = cg.visible_geosets(1, 0, 0, 0, false, &eq);
         assert!(set.contains(&1302), "robe skirt on");
         assert!(
             !set.contains(&1101) && !set.contains(&1301),
@@ -430,7 +446,7 @@ mod tests {
             cloak: Some(4),
             ..Default::default()
         };
-        let set = cg.visible_geosets(1, 0, 0, 0, &eq);
+        let set = cg.visible_geosets(1, 0, 0, 0, false, &eq);
         assert!(set.contains(&1505) && !set.contains(&1501));
     }
 
@@ -448,18 +464,20 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            cg.visible_geosets(1, 0, 0, 0, &shirt(false)).contains(&802),
+            cg.visible_geosets(1, 0, 0, 0, false, &shirt(false))
+                .contains(&802),
             "bare forearm: the shirt's cuff shows"
         );
         assert!(
-            !cg.visible_geosets(1, 0, 0, 0, &shirt(true)).contains(&802),
+            !cg.visible_geosets(1, 0, 0, 0, false, &shirt(true))
+                .contains(&802),
             "something else paints the forearm: the cuff goes"
         );
         // A chest with no sleeve geoset (B2 would add one to group 8 too) leaves the cuff.
         let mut eq = shirt(false);
         eq.bodyslots[1] = Some([0, 0, 0]);
         assert!(
-            cg.visible_geosets(1, 0, 0, 0, &eq).contains(&802),
+            cg.visible_geosets(1, 0, 0, 0, false, &eq).contains(&802),
             "an equipped chest alone does not hide the shirt's cuff"
         );
     }
@@ -472,20 +490,20 @@ mod tests {
             facial: HashMap::new(),
             helmet_vis: HashMap::new(),
         };
-        let set = cg.visible_geosets(1, 0, 0, 0, &EquipGeosets::default());
+        let set = cg.visible_geosets(1, 0, 0, 0, false, &EquipGeosets::default());
         assert!(!set.contains(&1202), "no tabard, no designer: no flap");
         let preview = EquipGeosets {
             tabard_preview: true,
             ..Default::default()
         };
-        let set = cg.visible_geosets(1, 0, 0, 0, &preview);
+        let set = cg.visible_geosets(1, 0, 0, 0, false, &preview);
         assert!(set.contains(&1202), "the designer forces the flap on");
         assert!(set.contains(&1201), "and the group base with it");
         for slot in [1usize, 3] {
             let mut eq = preview;
             eq.bodyslots[slot] = Some([0, 0, 1]);
             assert!(
-                !cg.visible_geosets(1, 0, 0, 0, &eq).contains(&1202),
+                !cg.visible_geosets(1, 0, 0, 0, false, &eq).contains(&1202),
                 "a robe (slot {slot}) hides the previewed flap"
             );
         }
@@ -513,7 +531,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let set = cg.visible_geosets(1, 0, 0, 0, &base);
+        let set = cg.visible_geosets(1, 0, 0, 0, false, &base);
         assert!(
             set.contains(&1002) && set.contains(&1103),
             "ungated: both on"
@@ -521,7 +539,7 @@ mod tests {
 
         let mut eq = base;
         eq.bodyslots[7] = Some([1, 0, 0]);
-        let set = cg.visible_geosets(1, 0, 0, 0, &eq);
+        let set = cg.visible_geosets(1, 0, 0, 0, false, &eq);
         assert!(set.contains(&1202), "the tabard's own flap is on");
         assert!(
             !set.contains(&1002) && !set.contains(&1103),
@@ -530,7 +548,7 @@ mod tests {
 
         let mut eq = base;
         eq.bodyslots[1] = Some([0, 0, 1]);
-        let set = cg.visible_geosets(1, 0, 0, 0, &eq);
+        let set = cg.visible_geosets(1, 0, 0, 0, false, &eq);
         assert!(
             !set.contains(&1002) && !set.contains(&1103),
             "a chest robe skips B7 whole"
@@ -539,7 +557,7 @@ mod tests {
         // A legs robe: B4 hides the pant-leg group, then B7 enables its geosets anyway.
         let mut eq = base;
         eq.bodyslots[3] = Some([1, 0, 1]);
-        let set = cg.visible_geosets(1, 0, 0, 0, &eq);
+        let set = cg.visible_geosets(1, 0, 0, 0, false, &eq);
         assert!(set.contains(&1002), "leg robes do not gate B7");
         assert!(
             set.contains(&1103),
@@ -553,10 +571,10 @@ mod tests {
         let mut hair = HashMap::new();
         hair.insert((1, 0, 1), 5u32); // styled hair → geoset 5
         let mut facial = HashMap::new();
-        facial.insert((1, 0, 1), [2u32, 3, 4]); // styled facial → 102/303/204
+        facial.insert((1, 0, 1), [2u32, 3, 4, 0, 0]); // styled facial → 102/303/204
         let mut helmet_vis = HashMap::new();
-        helmet_vis.insert(368, [u32::MAX; 5]); // a shipped row id, hiding everything
-        helmet_vis.insert(245, [0u32; 5]); // a shipped row id, hiding nothing
+        helmet_vis.insert(368, [u32::MAX; 7]); // a shipped row id, hiding everything
+        helmet_vis.insert(245, [0u32; 7]); // a shipped row id, hiding nothing
         let cg = CharacterGeosets {
             hair,
             facial,
@@ -567,7 +585,7 @@ mod tests {
             ..Default::default()
         };
         // Male picks row 368.
-        let set = cg.visible_geosets(1, 0, 1, 1, &helm);
+        let set = cg.visible_geosets(1, 0, 1, 1, false, &helm);
         assert!(set.contains(&1) && !set.contains(&5), "hair → bare scalp");
         assert!(set.contains(&101) && !set.contains(&102));
         assert!(set.contains(&201) && !set.contains(&204));
@@ -581,14 +599,14 @@ mod tests {
             facial: HashMap::new(),
             helmet_vis: cg.helmet_vis.clone(),
         };
-        let set = cg2.visible_geosets(1, 1, 1, 1, &helm);
+        let set = cg2.visible_geosets(1, 1, 1, 1, false, &helm);
         assert!(
             set.contains(&5) && set.contains(&702),
             "row 245 hides nothing"
         );
         // A mask covering only race 2 leaves a race-1 wearer styled.
         let mut helmet_vis = HashMap::new();
-        helmet_vis.insert(300, [1u32 << 2; 5]);
+        helmet_vis.insert(300, [1u32 << 2; 7]);
         let cg3 = CharacterGeosets {
             hair: cg2.hair.clone(),
             facial: HashMap::new(),
@@ -598,7 +616,7 @@ mod tests {
             helm_vis: Some([300, 300]),
             ..Default::default()
         };
-        let set = cg3.visible_geosets(1, 1, 1, 1, &masked);
+        let set = cg3.visible_geosets(1, 1, 1, 1, false, &masked);
         assert!(set.contains(&5), "race bit miss → style kept");
     }
 
@@ -608,13 +626,13 @@ mod tests {
         let mut hair = HashMap::new();
         hair.insert((1, 0, 1), 2u32);
         let mut facial = HashMap::new();
-        facial.insert((1, 0, 1), [1u32, 2, 1]);
+        facial.insert((1, 0, 1), [1u32, 2, 1, 0, 0]);
         let cg = CharacterGeosets {
             hair,
             facial,
             helmet_vis: HashMap::new(),
         };
-        let set = cg.visible_geosets(1, 0, 1, 1, &EquipGeosets::default());
+        let set = cg.visible_geosets(1, 0, 1, 1, false, &EquipGeosets::default());
 
         assert!(set.contains(&0), "body geoset 0 always on");
         assert!(set.contains(&2), "hair: max(1, GeosetID 2)");
@@ -626,10 +644,10 @@ mod tests {
         assert!(!set.contains(&5), "unselected hair variant hidden");
     }
 
-    /// Groups 17 and 18 are selected: no eye glow (1703, the Death Knight's), and the belt's
-    /// geosetGroup picks group 18.
+    /// Groups 16 to 18 are selected: their bases bare, no eye glow, and the belt's geosetGroup
+    /// picks group 18.
     #[test]
-    fn groups_17_and_18_are_selected() {
+    fn groups_16_to_18_are_selected() {
         let cg = CharacterGeosets {
             hair: HashMap::new(),
             facial: HashMap::new(),
@@ -639,9 +657,10 @@ mod tests {
             bodyslots: [None, None, Some([1, 0, 0]), None, None, None, None, None],
             ..Default::default()
         };
-        let naked = cg.visible_geosets(1, 0, 0, 0, &EquipGeosets::default());
+        let naked = cg.visible_geosets(1, 0, 0, 0, false, &EquipGeosets::default());
+        assert!(naked.contains(&1601) && naked.contains(&1701) && naked.contains(&1801));
         assert!(!naked.contains(&1703) && !naked.contains(&1802));
-        let belted = cg.visible_geosets(1, 0, 0, 0, &belted);
+        let belted = cg.visible_geosets(1, 0, 0, 0, false, &belted);
         assert!(belted.contains(&1802) && !belted.contains(&1801));
     }
 
@@ -655,8 +674,90 @@ mod tests {
             facial: HashMap::new(),
             helmet_vis: HashMap::new(),
         };
-        let set = cg.visible_geosets(1, 0, 0, 0, &EquipGeosets::default());
+        let set = cg.visible_geosets(1, 0, 0, 0, false, &EquipGeosets::default());
         assert!(set.contains(&1), "max(1, 0) = scalp geoset 1");
+    }
+
+    /// The facial-hair row's last two columns pick groups 16 and 17 (`0x4ea5f9`, `0x4ea60c`), the
+    /// helm's last two masks force them back (`0x4ef228`, `0x4ef237`), and the eye glow replaces
+    /// group 17's pick over both (`0x4ed966`).
+    #[test]
+    fn facial_row_helm_and_eye_glow_drive_group_17() {
+        let mut facial = HashMap::new();
+        facial.insert((5, 0, 0), [2u32, 0, 0, 0, 2]); // the shipped undead male feature 0
+        let mut helmet_vis = HashMap::new();
+        helmet_vis.insert(1, [0, 0, 0, 0, 0, 0, 1u32 << 5]);
+        let cg = CharacterGeosets {
+            hair: HashMap::new(),
+            facial,
+            helmet_vis,
+        };
+        let bare = cg.visible_geosets(5, 0, 0, 0, false, &EquipGeosets::default());
+        assert!(
+            bare.contains(&1702) && !bare.contains(&1701),
+            "the row's 1702"
+        );
+        assert!(
+            bare.contains(&1600) && !bare.contains(&1601),
+            "the row's 1600"
+        );
+        let helm = EquipGeosets {
+            helm_vis: Some([1, 1]),
+            ..Default::default()
+        };
+        let helmed = cg.visible_geosets(5, 0, 0, 0, false, &helm);
+        assert!(
+            helmed.contains(&1701) && !helmed.contains(&1702),
+            "the helm forces 1701"
+        );
+        for equip in [EquipGeosets::default(), helm] {
+            let glow = cg.visible_geosets(5, 0, 0, 0, true, &equip);
+            assert!(glow.contains(&1703), "the glow over the row and the helm");
+            assert!(!glow.contains(&1701) && !glow.contains(&1702));
+        }
+    }
+
+    /// Every playable 3.3.5a model carries 1703, the glow the selection picks for a Death Knight,
+    /// and the undead male's default feature picks its 1702.
+    #[test]
+    fn the_3_3_5a_models_carry_the_selected_eye_glows() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let cg = CharacterGeosets::load(&mut chain).expect("load customization tables");
+        let ids = |chain: &mut Chain, path: &str| -> Vec<u16> {
+            let parts = crate::load_m2_mesh(chain, path).expect("character model");
+            parts.iter().map(|p| p.geoset_id).collect()
+        };
+        let scourge = ids(&mut chain, "Character\\Scourge\\Male\\ScourgeMale.m2");
+        let set = cg.visible_geosets(5, 0, 0, 0, false, &EquipGeosets::default());
+        assert!(scourge.contains(&1702) && set.contains(&1702));
+        let races = [
+            (1, "Human"),
+            (2, "Orc"),
+            (3, "Dwarf"),
+            (4, "NightElf"),
+            (5, "Scourge"),
+            (6, "Tauren"),
+            (7, "Gnome"),
+            (8, "Troll"),
+            (10, "BloodElf"),
+            (11, "Draenei"),
+        ];
+        let mut missing = Vec::new();
+        for (race, dir) in races {
+            for (sex, sex_dir) in [(0, "Male"), (1, "Female")] {
+                let path = format!("Character\\{dir}\\{sex_dir}\\{dir}{sex_dir}.m2");
+                if !ids(&mut chain, &path).contains(&1703) {
+                    missing.push(path);
+                }
+                let set = cg.visible_geosets(race, sex, 0, 0, true, &EquipGeosets::default());
+                assert!(set.contains(&1703) && !set.contains(&1701) && !set.contains(&1702));
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "models without geoset 1703: {missing:?}"
+        );
     }
 
     /// The shipped CharHairGeosets repeats only the goblin male's one style, and the first row,
@@ -691,7 +792,7 @@ mod tests {
         );
 
         let cg = CharacterGeosets::load(&mut chain).expect("load customization tables");
-        let set = cg.visible_geosets(9, 0, 0, 0, &EquipGeosets::default());
+        let set = cg.visible_geosets(9, 0, 0, 0, false, &EquipGeosets::default());
         assert!(
             set.contains(&1),
             "goblin male shows the bare scalp (geoset 1)"
@@ -701,7 +802,7 @@ mod tests {
             "goblin male does NOT show geoset 2 — the white topknot"
         );
         // Race 9 ships only sex-0 rows, so the goblin female keeps the region base, the same scalp.
-        let f = cg.visible_geosets(9, 1, 0, 0, &EquipGeosets::default());
+        let f = cg.visible_geosets(9, 1, 0, 0, false, &EquipGeosets::default());
         assert!(f.contains(&1) && !f.contains(&2), "goblin female unchanged");
     }
 }

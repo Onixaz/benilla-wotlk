@@ -16,9 +16,12 @@ use super::super::{DisplayModel, EntityPart, SkinComposites, SkinKey, SkinSectio
 pub(super) struct CharLook {
     pub(super) race: u8,
     pub(super) sex: u8,
+    /// The class, 0 where the reference's component gets none (a corpse, a baked NPC).
+    pub(super) class: u8,
     /// skinColor: keys the composite and the extra-skin BLP (tauren fur, M2 type 8), which a baked
     /// NPC atlas does not cover.
     pub(super) skin: u8,
+    pub(super) face: u8,
     pub(super) hair_style: u8,
     pub(super) hair_color: u8,
     pub(super) facial_hair: u8,
@@ -29,7 +32,7 @@ pub(super) struct CharLook {
 pub(super) enum BodySkin {
     /// Composited live from CharSections, cached per appearance: a player, or an NPC row with no
     /// bake name.
-    Composite { face: u8 },
+    Composite,
     /// A character-model NPC's shipped atlas under `Textures\BakedNpcTextures\`
     /// (CreatureDisplayInfoExtra field 18), loaded as is, never re-baked.
     Baked(String),
@@ -47,16 +50,27 @@ pub(super) fn resolve_char_look(
     // answer (`0x60c690`). A druid form is a plain creature model and has no look.
     let d = dm?;
     if let Some(npc) = d.npc_appearance.as_ref() {
+        // The unit's `UNIT_FIELD_BYTES_0` class (`0x71d06c`); a baked atlas gets none (`0x730363`).
+        let class = match npc.bake_name {
+            Some(_) => 0,
+            None => stores
+                .get(entity)
+                .ok()
+                .and_then(|s| s.0.unit_class())
+                .unwrap_or(0),
+        };
         return Some(CharLook {
             race: npc.race,
             sex: npc.sex,
+            class,
             skin: npc.skin,
+            face: npc.face,
             hair_style: npc.hair_style,
             hair_color: npc.hair_color,
             facial_hair: npc.facial_hair,
             body: match &npc.bake_name {
                 Some(name) => BodySkin::Baked(name.clone()),
-                None => BodySkin::Composite { face: npc.face },
+                None => BodySkin::Composite,
             },
         });
     }
@@ -64,14 +78,17 @@ pub(super) fn resolve_char_look(
     // owner's `PLAYER_BYTES` (`0x5d6260`); a bone pile has none, `0x5d6291`'s early skip.
     if net.kind == EntityKind::Corpse && d.is_character_body {
         let look = super::super::corpse::corpse_char_look(stores.get(entity).ok())?;
+        // The corpse's fields carry no class, and its component keeps 0 (`0x4dfda0`).
         return Some(CharLook {
             race: look.race,
             sex: look.sex,
+            class: 0,
             skin: look.skin,
+            face: look.face,
             hair_style: look.hair_style,
             hair_color: look.hair_color,
             facial_hair: look.facial_hair,
-            body: BodySkin::Composite { face: look.face },
+            body: BodySkin::Composite,
         });
     }
     if net.kind == EntityKind::Player && d.is_character_body {
@@ -82,16 +99,29 @@ pub(super) fn resolve_char_look(
         return Some(CharLook {
             race: s.unit_race()?,
             sex: s.unit_gender()?,
+            class: s.unit_class().unwrap_or(0),
             skin: s.player_skin().unwrap_or(0),
+            face: s.player_face().unwrap_or(0),
             hair_style: s.player_hair_style().unwrap_or(0),
             hair_color: s.player_hair_color().unwrap_or(0),
             facial_hair: s.player_facial_hair().unwrap_or(0),
-            body: BodySkin::Composite {
-                face: s.player_face().unwrap_or(0),
-            },
+            body: BodySkin::Composite,
         });
     }
     None
+}
+
+impl CharLook {
+    /// Whether the eyes glow, geoset 1703 ([`benilla_formats::CharSections::eye_glow`]); a Death
+    /// Knight's do without the tables.
+    pub(super) fn eye_glow(&self, sections: Option<&SkinSections>) -> bool {
+        match sections {
+            Some(s) => s
+                .tables
+                .eye_glow(self.race, self.sex, self.class, self.face, self.skin),
+            None => self.class == 6,
+        }
+    }
 }
 
 /// The `mpq://` URL of a baked NPC atlas under `Textures\BakedNpcTextures\`.
@@ -223,9 +253,10 @@ pub(super) fn skin_key(
     emblem: Option<benilla_formats::GuildEmblem>,
     tabard_preview: bool,
 ) -> Option<SkinKey> {
-    let BodySkin::Composite { face } = look.body else {
+    let BodySkin::Composite = look.body else {
         return None;
     };
+    let face = look.face;
     // `WOW_PROBE_SHARED_SKIN` prices a shared body material and is never a look: one key for every
     // body lets Bevy's batcher instance them.
     if shared_skin_probe() {

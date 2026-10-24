@@ -32,6 +32,7 @@ pub(crate) struct DressUpLook {
     pub(crate) display_id: u32,
     pub(crate) race: u8,
     pub(crate) sex: u8,
+    pub(crate) class: u8,
     pub(crate) skin: u8,
     pub(crate) face: u8,
     pub(crate) hair_style: u8,
