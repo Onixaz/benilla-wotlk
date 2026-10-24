@@ -373,11 +373,11 @@ mod tests {
         }
         let list = run(&mut app, "cvarlist");
         assert!(
-            list.contains(&"farclip = \"500\" (default \"350\")".to_string()),
+            list.contains(&"farclip = \"500\" (default \"777\")".to_string()),
             "{list:?}"
         );
         assert!(
-            list.contains(&"uiScale = \"1.2\" (default \"0.9\") [session]".to_string()),
+            list.contains(&"uiScale = \"1.2\" (default \"1.0\") [session]".to_string()),
             "{list:?}"
         );
         assert!(

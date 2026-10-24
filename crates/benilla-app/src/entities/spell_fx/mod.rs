@@ -523,6 +523,19 @@ fn spell_has_root_aura(spells: Option<&crate::ui_action::Spells>, spell_id: u32)
         .is_some_and(|d| d.effect_apply_aura.contains(&SPELL_AURA_MOD_ROOT))
 }
 
+/// Whether `spell_id`'s effects draw their projected batches whatever `projectedTextures` says
+/// (attribute ExE `0x40000000`, [`benilla_world::model_render::ForcedProjection`]).
+pub(super) fn spell_forces_projection(
+    spells: Option<&crate::ui_action::Spells>,
+    spell_id: u32,
+) -> bool {
+    spells
+        .and_then(|s| s.catalog.get(spell_id))
+        .is_some_and(|d| {
+            d.attributes_ex5 & benilla_world::model_render::SPELL_ATTR_EX5_FORCE_PROJECTION != 0
+        })
+}
+
 /// Despawn a plant whose owner is gone, and re-plant a `follow` one whose owner moved past
 /// [`REPLANT_EPS_SQ`] (`0x620580`, per frame).
 pub(super) fn tend_world_plants(
@@ -855,6 +868,11 @@ pub(super) fn attach_spell_fx(
                 commands.entity(parent).add_child(root);
                 (root, ground_anchor)
             };
+            if spell_forces_projection(spells.as_deref(), inst.spell_id) {
+                commands
+                    .entity(root)
+                    .insert(benilla_world::model_render::ForcedProjection);
+            }
             // Parts were checked ready above, so this always attaches.
             attach_effect_visuals(
                 &mut commands,

@@ -190,6 +190,9 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // (`windowResizeLock`, "0"), and the 3.3.5a sound switches the Sound panel binds, each at its
     // registered default. Their host wiring is the options work's (#150).
     same("showToolsUI", "-1"),
+    // `windowResizeLock` (`0x76a630`, "0", flags 1, callback `0x769890`): live, it refuses the
+    // window's border drag (`ResizeDragWindow 0x869970`). The knob is
+    // [`crate::video::VideoConfig::resize_lock`].
     same("windowResizeLock", "0"),
     same("Sound_EnableAllSound", "1"),
     same("Sound_EnableSFX", "1"),
@@ -206,7 +209,10 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("Sound_OutputQuality", "1"),
     same("Sound_OutputDriverIndex", "0"),
     same("Sound_NumChannels", "32"),
-    // The Effects panel's particle density and the Stereo panel's three rows.
+    // The Effects panel's particle density (`CWorldParam::Initialize 0x78e400`, "1.0", flags 1,
+    // callback `0x78d860`: refused outside [0.1, 1.0], else the emission scalar); the first-run
+    // pass `0x78dd40` writes "1.0" again on any pixel-shader target past 3. The knob is
+    // `benilla_world::particles::ParticleTuning`. Then the Stereo panel's three rows.
     same("particleDensity", "1.0"),
     same("gxStereoEnabled", "0"),
     same("gxStereoConvergence", "1"),
@@ -217,11 +223,40 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("Sound_SFXVolume", "1.0"),
     same("Sound_MusicVolume", "0.4"),
     same("Sound_AmbienceVolume", "0.6"),
+    // `environmentDetail` (`0x78e400`, "1.0", callback `0x78dc60`): clamped to [0.5, 1.5], it
+    // scales doodad fade levels 1-3 (`CWorldScene::ScaleFadeDist 0x78f570`). The knob is
+    // `benilla_world::model_fade::FadeScale`.
     same("environmentDetail", "1.0"),
-    same("groundEffectDensity", "16"),
+    // `groundEffectDensity` ("16", callback `0x78dab0`: refused outside [16, 256]), the ground
+    // clutter's cells per chunk, and `groundEffectDist` ("70.0", callback `0x78db10`: refused
+    // outside [0, 140]), its reach. The knob is `benilla_world::clutter::ClutterConfig`.
+    overridden(
+        "groundEffectDensity",
+        "24",
+        "16",
+        "the first-run defaults pass (`CWorldParam::SetDefaults 0x78e1a0`) writes \
+         `s_detailDoodadDensity[idx]` (`0xadbe5c`: 8, 12, 16, 24) of the matched \
+         `VideoHardware.dbc` row, and the fallback row a modern GPU reaches (693 on the reference \
+         install's `Logs/gx.log`) holds index 3",
+    ),
     same("groundEffectDist", "70.0"),
-    same("projectedTextures", "0"),
+    // `projectedTextures` ("0", callback `0x78dcf0`: bit 4 of `CWorld::enables2`), which gates
+    // the M2 projected batches (`World::ProjectTextureCallback 0x77f500`).
+    overridden(
+        "projectedTextures",
+        "1",
+        "0",
+        "`CWorldParam::SetDefaultProjectedTextures 0x78ddf0` writes \"1\" on any pixel-shader \
+         target past 2 when `videoOptionsVersion` is below 2, which a fresh install's is",
+    ),
+    // `textureFilteringMode` (`InitializeEngineCallback 0x4047e0`, "1", callback `0x4023c0`:
+    // refused outside [0, 5]), read once at engine start into the filter and the anisotropy
+    // (`0xab6128`, `0xab6140`). The first-run pass writes "1" from the hardware row's trilinear
+    // bit, which every fallback row past 168 sets. The knob is `benilla_assets::TexFilterSetting`.
     same("textureFilteringMode", "1"),
+    // `componentTextureLevel` (`CCharacterComponent::Initialize 0x401ff0`, "8"), read once: the
+    // composited body texture is `1 << level` px square, clamped to [7, 9]. The knob is
+    // `crate::entities::skin_composite::ComponentLevel`.
     same("componentTextureLevel", "8"),
     // The sound system's (`SI2::RegisterCVars`): the chat-duck volumes and the listener seat.
     same("ChatMusicVolume", "0.3"),
@@ -401,21 +436,24 @@ pub(crate) const REGISTERED: &[Registered] = &[
         "benilla's own — the reference sums at full scale and clips; every WoW SFX is mastered \
          to full scale, so overlapping kits need a limiter to keep from distorting",
     ),
-    overridden(
-        "uiScale",
-        "0.9",
-        "1.0",
-        "a fresh reference client never consults this CVar: `useUiScale` registers \"0\" \
-         (`0x48fce4`), and the OFF leg `0x492f70` computes clamp(768/height, 0.9, 1.0) instead — \
-         0.9 at 854 px tall and up, which is every window we ship against. It is 1.0 at 768 and \
-         below, where our flat 0.9 does diverge; `ui_script::DEFAULT_UI_SCALE` carries that. \
-         See `useUiScale` below, whose row this one used to say did not exist",
-    ),
-    // `useUiScale` (`0x8430c0`), the switch the `uiScale` override gates on:
-    // `ContainerFrame.lua:483` and `UIDropDownMenu.lua:525` branch on it and `OptionsFrame.lua:13`
-    // gives it a checkbox.
+    // `uiScale` ("1.0", callback `0x518b60`) and `useUiScale` ("0", callback `0x5237e0`), both
+    // registered at `0x5238a0`. With the switch on, the game UI's parent takes `uiScale`, floored
+    // at 0.64 and capped at `aspect × 0.75` under 4:3 (`CGGameUI::SetUIScale 0x513240`); off, it
+    // takes `clamp(768 / height, 0.9, 1.0)` with the same cap (`ScaleToScreenSize 0x51fb80`). The
+    // knob is [`crate::ui_script::UiScaleCvar`].
+    same("uiScale", "1.0"),
     same("useUiScale", "0"),
-    same("farclip", "350"),
+    // `farclip` (`CWorldParam::Initialize 0x78e400`, "350", callback `0x78d780`), validated per
+    // map by `World::ValidateFarClip 0x780770` ([`benilla_world::view::validate_farclip`]).
+    overridden(
+        "farclip",
+        "777",
+        "350",
+        "the first-run defaults pass (`CWorldParam::SetDefaults 0x78e1a0`) writes \
+         `s_farClip[2 × idx + cpu]` (`0xadbf00`) of the matched `VideoHardware.dbc` row, and the \
+         fallback row a modern GPU reaches (693 on the reference install's `Logs/gx.log`, index 4) \
+         on a multi-core CPU gives 777",
+    ),
     // `nearclip` (`0x68867a`: name `0x84ffb0`, default `0x84fb48` "0.1", flags 1, callback
     // `0x688d90`, record `[0xc7f348]`). The camera re-reads the record every frame: `0x511bc0`
     // (sole caller `0x483094`) stamps `[cam+0x38]` from it through the handle `[0xbe1078]` that
@@ -523,31 +561,6 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // `UnitNamePlayerPVPTitle` (`0x86c668`, "1", mask bit `0x20`): the a4 rank prefix on the main
     // name line (`0x609370`), `PVP_RANK_%d_%d` through `0x5efe60`.
     same("UnitNamePlayerPVPTitle", "1"),
-    // `WorldDetail` is no 1.12 CVar but the `GetWorldDetail`/`SetWorldDetail` verb name
-    // (`OptionsFrame.lua:27`); stops 0/1/2 are `frillDensity` 16/32/48. `SetWorldDetail 0x488dd0`
-    // also writes `SmallCull` {0.07, 0.04, 0.01}, and `GetWorldDetail` reads only `SmallCull`,
-    // whose registered 0.04 is stop 1: the reference's slider boots at Medium.
-    same("WorldDetail", "1"),
-    // `SmallCull` (`0x68854a`: name `0x8696f8`, default `0x869718` "0.04", flags 1, callback
-    // `0x688b10`, record `[0xc7f330]`). The callback refuses outside [0.001, 2.0] and stores into
-    // `[0x868620]`, which nothing reads: no mechanism here either. Its readers are Lua ones:
-    // `SetWorldDetail` writes it per stop, and `OptionsFrame_SetDefaults` reads its default
-    // (`OptionsFrame.lua:431`). `hwDetect` sets 0.04 on the fallback row a modern GPU reaches.
-    same(benilla_ui::script::CVAR_SMALL_CULL, "0.04"),
-    // `frillDensity` (`0x68862e`: name `0x8423d8`, default `0x864644` "16", flags 1, callback
-    // `0x688de0`, record `[0xc7f2f4]`): detail-doodad cells visited per chunk, clamped to [1, 256]
-    // and handed through `0x6725a0` to `[0xc7b494]`, the bound of the scatter loop at
-    // `0x6bfcfb`/`0x6bff1c`. One knob with `WorldDetail`, each keeping its own clamp. `hwDetect`
-    // (`0x639a60`) sets it from `VideoHardware.dbc` field `+0x18`, 24 on videoID 170. pfUI's
-    // `hdgraphic` reads `GetCVar("frillDensity") > 48` and writes up to 256.
-    deviates(
-        "frillDensity",
-        "32",
-        "16",
-        "the reference's registered 16 is stop 0 and its post-`hwDetect` 24 is on no \
-         stop at all, so every stop diverges; Medium (32) is the nearest one no sparser than a \
-         fresh install, and erring sparse is the worse failure for ground cover",
-    ),
     // ── Floating combat text ─────────────────────────────────────────────────────────────────────
     //
     // `CombatDamage` (`0x51e3ee`, `[0xbd0980]`) is the master: the word and number emitters
@@ -689,20 +702,23 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // [`crate::video::VideoConfig::vsync`], which the window's present mode follows at the
     // `RestartGx` commit. `$WOW_NOVSYNC=1` overrides it for the session.
     same("gxVSync", "1").latched(),
-    // `gxWindow` (`0x63a889`): "0" on enUS; zhCN registers "1", as it does `gxMaximize`
-    // (`0x63a8e0`), and koKR `AutoInteract` (`0x603390`). The knob is
-    // [`crate::video::VideoConfig::display`]. Deviation: "0" raises a borderless fullscreen window
-    // instead of mode-setting the display, because Wayland and macOS offer no mode-set and X11's
-    // leaves the desktop changed after a crash ([`crate::video`]).
+    // `gxWindow` (`RegisterGxCVars 0x76a630`, callback `0x769550`): "0" on enUS, "1" on zhCN, as
+    // `gxMaximize`. "0" mode-sets the display to `gxResolution` at `gxRefresh`; where the platform
+    // has no mode-set the window is borderless over the monitor instead ([`crate::video`]). The
+    // knob is [`crate::video::VideoConfig::display`].
     same("gxWindow", "0").latched(),
-    // `gxResolution`, a string row parsed by `video::on_cvar`. Here it is only the windowed size:
-    // fullscreen is the monitor's own and no mode list is offered.
+    // `gxResolution` (`0x76a630`, the hardware row's format size, callback `0x76a220`): the
+    // fullscreen mode and the window's size, parsed by `video::on_cvar`. "" is benilla's "not
+    // picked": fullscreen keeps the desktop's own mode and a window opens at
+    // [`crate::video::DEFAULT_WINDOWED`].
     deviates(
         "gxResolution",
-        "1600x900",
-        "640x480",
-        "narrowed to the WINDOWED size only — fullscreen is the monitor's own and we expose \
-         no mode list, and 640x480 is not a window anyone would ship a client at",
+        "",
+        "1024x768",
+        "a fresh reference install mode-sets the display to its hardware row's format \
+         (`s_formats[resIdx]` at `0xcabe98`, index 4 on the fallback rows), which on any current \
+         monitor is a blurry 4:3 mode switch; until the player picks a size, ours keeps the \
+         desktop's own mode",
     )
     .latched(),
     // benilla's own: a body pane's doll renders at half the frame rate while the pane is open; the
@@ -736,52 +752,26 @@ pub(crate) const REGISTERED: &[Registered] = &[
         "as `gxColorBits` — the depth half of the same descriptive pair",
     )
     .latched(),
-    // `trilinear` and `anisotropic`, over `benilla_assets::TexFilterSetting` (`tex_filter.rs`
-    // carries the derivation). A change applies at the next launch, since a sampler is baked into
-    // each texture at load; the reference's UI says "enabled upon restart".
-    // `$WOW_TRILINEAR`/`$WOW_ANISO` override for the session.
+    // The two Effects rows behind `Get/SetTerrainMip` and the stock slider's `BaseMip`
+    // (`CWorldParam::Initialize 0x78e400`), and `texLodBias` beside them.
     //
-    // `trilinear` registers "0", but `hwDetect` runs `DetectHardware 0x641260` and sets it from the
-    // matched `VideoHardware.dbc` row before the first frame; the fallback rows an unlisted GPU
-    // reaches are 168/169/170, and 169 and 170 give 1. The reference install's `gx.log` resolves to
-    // videoID 170.
-    overridden(
-        "trilinear",
-        "1",
-        "0",
-        "`hwDetect` sets it from `VideoHardware.dbc` field 9 before the first frame, and \
-         that field is 1 on both fallback rows an unlisted modern GPU can reach — measured on the \
-         reference's own `Logs/gx.log` (`videoID: 170`)",
-    ),
-    // Not one of `hwDetect`'s sixteen (`[0x639a60, 0x639b80)` never reads `0xc7f2e4`), so the
-    // registered "1", off, stands.
-    same("anisotropic", "1"),
-    // The four video CVars the stock window's verbs read and write (`benilla_ui` `video_pairs`);
-    // benilla has no mechanism behind any of them. `shadowLevel` (`0x6885bc`, "1", flags 1,
-    // callback `0x688c10`, record `[0xc7f350]`) is behind `Get/SetTerrainMip` as `1 − level`: the
-    // callback refuses above 1 and prints "Shadow mip level changed upon restart.", and the
-    // terrain's shadow-map mip (`0x66f877`) reads it at load. `hwDetect` leaves it at 1.
+    // `shadowLevel` ("1", callback `0x78d6f0`: refused above 1, "Shadow mip level changed upon
+    // restart."), behind `Get/SetTerrainMip` as `1 − level` (`0x54eb10`/`0x54eb40`): read once into
+    // `CWorld::shadowMipLevel` at world init, it allocates every terrain chunk's layer textures one
+    // mip down (`CMapChunk::RenderPrep 0x7d3fe0` sets flag `0x10`, which `0x7ba050` reads), where
+    // otherwise only chunks past 777 yd take it. The knob is `benilla_world::terrain_stream::TerrainMip`.
     same("shadowLevel", "1"),
-    // `doodadAnim` (`0x6884d8`, "1", flags 1, callback `0x688a10`, record `[0xc7f354]`), behind
-    // `Get/SetDoodadAnim`: the callback toggles bit `0x8000` of `[0xc7b2a4]` and calls `0x6953d0`,
-    // a bare `ret`, so no animation reads it. `hwDetect` sets 0 or 1 by CPU tier.
-    same("doodadAnim", "1"),
-    // `texLodBias` (`0x6885e2`, "0.0" at `0x84fad4`, flags 1, callback `0x688c90`, record
-    // `[0xc7f2f8]`), behind `Get/SetTexLodBias`: the callback refuses outside [-1.0, 1.0] and its
-    // sink `0x672640` is `ret 4`.
+    // `texLodBias` ("0.0", callback `0x78d730`: refused outside [-1.0, 1.0]), behind
+    // `Get/SetTexLodBias`; the stock UI binds no control to it.
     same("texLodBias", "0.0"),
-    // `baseMip` (`0x6887aa`, "0", flags 1, callback `0x689090`, record `[0xc7f2f0]`), behind
-    // `Get/SetBaseMip` as `1 − level`: the callback refuses outside [0, 1] ("BaseMip must be 0 or
-    // 1") and sets the device's first uploaded mip level (`0x589bf0`, read at `0x59f6ce`). benilla
-    // uploads every level; the write is kept and has no effect. `hwDetect` leaves it at 0.
+    // `baseMip` ("0", callback `0x78df00`: refused above 1): the device's first uploaded mip, so a
+    // 1 halves every texture, applied live (`TextureNotifyGxRestart` reloads them). The knob is
+    // `benilla_assets::BaseMip`.
     same("baseMip", "0"),
-    // `spellEffectLevel` (`0x688900`: name `0x869324`, default `0x843068` "2", flags 1, callback
-    // `0x689510`, record `[0xc7f2a4]`), the Spell Detail slider (`OptionsFrame.lua:32`). The
-    // callback's two effects here: the particle emission scalar ([`crate::video::on_cvar`]) and
-    // the dynamic-object shard rate, read at each emitter's spawn (`crate::entities`). Its third,
-    // skipping one M2-scene ground decal below level 2 (`0x672b3a`), has no counterpart: benilla
-    // does not draw that projection.
-    same("spellEffectLevel", "2"),
+    // `spellEffectLevel` (`0x78e400`, "9", flags 1, no callback): `SpellVisualsInitialize`
+    // (`0x7fc5a0`) caches the record and each blizzard shard emitter scales its rate by
+    // `level / 9 × 0.9 + 0.1` at spawn (`0x7fb5e9`). The stock UI binds no control to it.
+    same("spellEffectLevel", "9"),
     // Weather Intensity (`OptionsFrame.lua:33`), registered "2" (`0x67b806`, flags 0, callback
     // `0x67b870`, name `0x8685ac`). The reader is `benilla_world::weather::WeatherState`, which
     // scales the precipitation spawn rate by `0x67b870`'s table {0.1, 0.33, 0.66, 1.0}; rendering
@@ -797,21 +787,14 @@ pub(crate) const REGISTERED: &[Registered] = &[
          side-by-side is correct at, and the registered 2 would thin every rate to 0.66 against \
          the only client we compare with. The slider is how a player takes it back down",
     ),
-    // `gamma` (`0x402d70`: name `0x82e924` "Gamma", default `0x82e92c` "1.0", flags 0, callback
-    // `0x4034d0`). The reference uploads `pow(i/255, gamma)` (`0x591680`) through
-    // `SetDeviceGammaRamp`, except when windowed (`byte[dev+0x20b]`). Deviation: benilla, which
-    // has no exclusive mode, applies the same curve in the composite pass
-    // ([`crate::ui_gamma::DisplayGamma`]), because the skipped upload would make a slider that
-    // moves no pixel. Spelled "1.000000" because `SetGamma 0x4891f0` formats with `"%f"`, and
-    // Restore Defaults must compare equal to the default; [`sync_cvars`] seeds it the same way.
+    // `Gamma` ("1.0", callback `0x401a30`) and `DesktopGamma` ("0", callback `0x401a80`), both
+    // registered at `0x401dad`. The ramp `pow(i/255, gamma)` is uploaded only while
+    // `DesktopGamma` reads 0, and the device skips it while windowed
+    // (`CGxDeviceD3d::DeviceSetGamma`); `DesktopGamma` 1 puts the desktop's own ramp back. The
+    // knob is [`crate::ui_gamma::DisplayGamma`], the same curve in the composite pass. Spelled
+    // "1.000000" because `SetGamma 0x54ea90` formats with `"%f"`, and Restore Defaults must
+    // compare equal to the default; [`sync_cvars`] seeds it the same way.
     same("gamma", "1.000000"),
-    // `DesktopGamma` (`0x402d4d`: name `0x82e930`, default "0" `0x82e570`, flags 0, callback
-    // `0x403500`, record `[0x8826d4]`), the stock window's Use Desktop Gamma box, which it also
-    // sets whenever Windowed Mode is ticked (`OptionsFrame.lua:399-408`). On 1 the callback puts
-    // the desktop's own ramp back, and `gamma`'s callback (`0x4034d0`) uploads only while this
-    // reads 0. No effect here: [`crate::ui_gamma::DisplayGamma`] follows `gamma` alone, because
-    // the stock window ticks this box whenever Windowed Mode is (`:399-408`), so honouring it would
-    // drop the gamma of every windowed player who opens that window.
     same("DesktopGamma", "0"),
     // ── The stock Video Options window's other boxes (`OptionsFrame.lua:5-22`) ───────────────────
     //
@@ -826,35 +809,16 @@ pub(crate) const REGISTERED: &[Registered] = &[
     same("ffx", "1"),
     same("ffxGlow", "1"),
     same("ffxDeath", "1"),
-    // `pixelShaders` (`0x688712`: name `0x869560`, "0", flags 1, callback `0x688f40`, record
-    // `[0xc7f360]`) and `specular` (`0x6886a0`: name `0x8695d8`, "0", flags 1, callback `0x688e20`,
-    // record `[0xc7f2cc]`), Enable All Shaders and Terrain Highlights. Both callbacks act only on a
-    // device whose caps field `[0x58a230()+0x98]` is above -1, setting bits 28 and 27 of the render
-    // flags `[0xc7b2a4]`, which gate the shader negotiation `0x6941f0` for terrain, water and
-    // models; `pixelShaders` also gates the FFX pass (`0x6cd8b6`). No effect here: benilla always
-    // draws the shader leg (`liquid.wgsl` records it), and the stock Okay carries this box into
-    // `ffx`, which is wired.
-    overridden(
-        "pixelShaders",
-        "1",
-        "0",
-        "`hwDetect` (`0x639a60`) sets it from `VideoHardware.dbc` field 11 before the first frame, \
-         and that field is non-zero on fallback row 170, the one a modern GPU reaches \
-         (`Logs/gx.log`: `videoID: 170`)",
-    ),
+    // `specular` (`CWorldParam::Initialize 0x78e400`, "0", callback `0x78de60`: "Specular
+    // disabled on restart."), Terrain Highlights: `CWorld::enables` bit `0x8000000`, read into
+    // `CMap::enableSpecular` at each map load (`CMap::LoadWdt` → `0x7bd8a0`), hence the stock
+    // row's logout requirement. The knob is `benilla_world::terrain_stream::TerrainSpecular`.
     overridden(
         "specular",
         "1",
         "0",
-        "`hwDetect` sets it from the same field 11 as `pixelShaders`, so row 170 gives 1",
+        "the first-run defaults pass (`CWorldParam::SetDefaults 0x78e1a0`) writes the matched          `VideoHardware.dbc` row's specularity bit, which the fallback row a modern GPU reaches          (693 on the reference install's `Logs/gx.log`) sets",
     ),
-    // `M2UseShaders` (`0x4028e9`, name `0x82e67c`, "1") and `M2UsePixelShaders` (`0x40290c`, name
-    // `0x82e644`, "0"), flags 0, no callback: their registering function reads six of its eight
-    // `M2*` records at `0x40297f`-`0x4029dd` into the M2 renderer's feature word `[0xceefb0]`
-    // (`0x706dd0`), once at startup, hence the stock tooltip's logout requirement. No effect here:
-    // benilla's M2 draw has one skinning and lighting path, chosen by no switch.
-    same("M2UseShaders", "1"),
-    same("M2UsePixelShaders", "0"),
     // `lod` (`0x68848c`: name `0x8697d0`, "1", flags 1, callback `0x688920`, record `[0xc7f314]`),
     // World LOD: bit 2 of `[0xc7b2a4]`, which gates the doodad LOD distance test at `0x6afb11`. No
     // effect here: benilla has no doodad LOD swap, as `lodDist` above has no row.
@@ -878,24 +842,28 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // window a borderless popup (style `0x90000000`) at the screen's full size (`GetSystemMetrics`
     // 0 and 1). The knob is [`crate::video::VideoConfig::maximize`].
     same("gxMaximize", "0").latched(),
-    // `gxTripleBuffer` (`0x63a80d`: name `0x864f88`, "0", callback `0x63afe0` → `+0x18`), whose
-    // callback refuses any value but 0 or 1 ("TripleBuffer must be 0 or 1", `0x8650b8`), a range
-    // this registry has no way to refuse with. No effect here: wgpu's present modes offer no
-    // triple-buffer choice.
+    // `gxTripleBuffer` ("0", callback `0x769360`: refused above 1): a second back buffer, used
+    // only with vsync (`ISetPresentParms 0x68e250`). The knob is
+    // [`crate::video::VideoConfig::triple_buffer`], one more swapchain frame in flight.
     same("gxTripleBuffer", "0").latched(),
-    // `gxCursor` (`0x63a906`: name `0x864eb8`, "1", callback `0x63b220` → `+0x05` `[0xc4eb9d]`),
-    // Hardware Cursor. No effect here: benilla always draws the OS cursor (`crate::cursor`) and has
-    // no software cursor to fall back to.
+    // `gxCursor` ("1", callback `0x7695e0`): the hardware cursor, else the device draws the cursor
+    // texture over each presented frame (`CGxDevice::ICursorDraw 0x687a90`). The knob is
+    // [`crate::video::VideoConfig::hw_cursor`], which `crate::cursor` follows.
     same("gxCursor", "1").latched(),
-    // `gxFixLag` (`0x63a9c1`: name `0x864e40`, callback `0x63b310` → `+0x06` `[0xc4eb9e]`), Fix
-    // Input Lag: its default is `"%d"` of `VideoHardware.dbc` field 20 (`[[0xc4e6e4]+0x50]`) of the
-    // row `DetectHardware` matched, 1 on all three fallback rows (168, 169, 170) a modern GPU can
-    // reach. No effect here: benilla has no such switch in its frame pacing.
-    same("gxFixLag", "1").latched(),
-    // `gxRefresh` (`0x63a7e7`: name `0x864fa8`, "75", callback `0x63aed0` → `+0x28`), the refresh
-    // dropdown (`OptionsFrame.lua:242-245`, `:300`); the callback accepts only the eleven rates at
-    // `0x8645e0` (60 to 200). No effect here: fullscreen is borderless at the monitor's own rate,
-    // and `GetRefreshRates` answers the reference's no-rates sentinel, which disables the dropdown.
+    // `gxFixLag` (callback `0x7696a0`), Reduce Input Lag: after each present the device waits for
+    // the GPU to drain (`CGxDeviceD3d::ScenePresent 0x6a3450`). The knob is
+    // [`crate::video::VideoConfig::fix_lag`], a swapchain of one frame in flight.
+    deviates(
+        "gxFixLag",
+        "0",
+        "1",
+        "the reference formats its default from `VideoHardware.dbc` field 20 of the matched row, \
+         1 on every fallback row, but a frame latency of one ends the CPU/GPU overlap and costs \
+         frame time on every machine we measure; the box is how a player trades it for latency",
+    )
+    .latched(),
+    // `gxRefresh` ("75", callback `0x76a580`: refused unless a monitor mode offers it), the
+    // fullscreen mode's rate. The knob is [`crate::video::VideoConfig::refresh`].
     same("gxRefresh", "75").latched(),
     // benilla's own: the world renders at `window × this` while the UI stays native. The knob is
     // [`crate::world_backdrop::RenderScale`], clamped to `RENDER_SCALE_RANGE`; at "1" nothing is

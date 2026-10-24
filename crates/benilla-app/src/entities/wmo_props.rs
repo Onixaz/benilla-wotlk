@@ -212,7 +212,7 @@ pub(super) fn spawn_wmo_gameobject_props(
                     Some(ShadeResolve::Pending) => return true,
                 }
             };
-            let (radius, center) = m2_fade(&m.bounds, prop.local.scale.x);
+            let (radius, _, center) = m2_fade(&m.bounds, &prop.local);
             let anim_bound = m2_anim_bound(&m.bounds);
             // Fold an interior prop's light once, through the host's current pose (module docs).
             let interior_slot = prop.interior.as_ref().and_then(|lane| {

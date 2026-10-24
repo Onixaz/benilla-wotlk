@@ -454,6 +454,22 @@ fn launch_go(
     }
 }
 
+/// Mark a new missile whose spell forces its projected batches (`CGMissile_C`'s attribute test),
+/// before its parts attach.
+pub(super) fn mark_forced_missiles(
+    mut commands: Commands,
+    missiles: Query<(Entity, &Missile), Added<Missile>>,
+    spells: Option<Res<crate::ui_action::Spells>>,
+) {
+    for (entity, missile) in &missiles {
+        if super::spell_fx::spell_forces_projection(spells.as_deref(), missile.spell_id) {
+            commands
+                .entity(entity)
+                .insert(benilla_world::model_render::ForcedProjection);
+        }
+    }
+}
+
 /// Takes the router's [`MissileSpawn`]s and runs the pending queue (module docs): park, drain on
 /// the release keyframe or launch at once, and flush a queue whose keyframe never comes.
 pub(super) fn spawn_missiles(

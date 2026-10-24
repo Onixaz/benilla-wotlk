@@ -1057,7 +1057,7 @@ fn seat_a_session(script: &mut UiScript) {
         vertex_shaders: true,
         trilinear: true,
         triple_buffering: false,
-        max_anisotropy: *benilla_assets::ANISO_RANGE.end(),
+        max_anisotropy: benilla_assets::MAX_ANISOTROPY_CAP,
         hardware_cursor: true,
     });
     script.set_realm_name("Harness");

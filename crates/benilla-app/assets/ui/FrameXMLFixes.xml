@@ -29,5 +29,19 @@
                 UIParent_ManageFramePositions()
             end)
         end
+
+        -- Deviation: every Effects row applies on Okay here, so none asks for a restart or a
+        -- logout. The stock table marks Texture Filtering and Player Texture gameRestart and
+        -- Terrain Texture and Terrain Highlights logout (VideoOptionsPanels.lua:384-399), which
+        -- BlizzardOptionsPanel_OnEvent copies onto the controls at PLAYER_ENTERING_WORLD
+        -- (OptionsPanelTemplates.lua:326-329) for VideoOptionsFrame_OnHide's popups and the
+        -- tooltips' requirement line.
+        if EffectsPanelOptions then
+            for _, entry in pairs(EffectsPanelOptions) do
+                entry.gameRestart = nil
+                entry.logout = nil
+                entry.tooltipRequirement = nil
+            end
+        end
     ]]></Script>
 </Ui>

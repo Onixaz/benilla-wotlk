@@ -80,6 +80,7 @@ impl BodyPartsDesc<'_, '_> {
         rows.into_iter().map(|(_, l)| l).collect()
     }
 }
+pub(super) use char_skin::composite_plan;
 pub(super) use redress::redress_player_looks;
 
 /// Set up the skinned instance of a creature, player body or animated GameObject: the pose

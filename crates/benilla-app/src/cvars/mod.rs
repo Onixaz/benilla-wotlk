@@ -517,9 +517,14 @@ impl Plugin for CvarPlugin {
                     .in_set(CvarLoad),
             )
             // After the tick, so a `SetCVar` from this frame reaches the registry and its observers
-            // before the frame's drains; `video::drain_restart_gx` orders after this so the commit
-            // finds the stage.
-            .add_systems(Update, sync_cvars.after(crate::ui_script::UiInput))
+            // before the frame's drains; `video::drain_restart_gx` runs in `Last`, so the commit
+            // finds the stage. A texture-policy write is published the same frame.
+            .add_systems(
+                Update,
+                (sync_cvars, follow_filter_policy)
+                    .chain()
+                    .after(crate::ui_script::UiInput),
+            )
             // In `Last`, after every `Update` writer of the registry, so the save reads the frame's
             // settled state; before the exit flush, which finds it clean on a quiet exit frame.
             .add_systems(
@@ -540,29 +545,24 @@ fn session_values(world: &World) -> Vec<(&'static str, Option<String>)> {
     let flag = |b: bool| if b { "1" } else { "0" }.to_string();
     let mut out: Vec<(&'static str, Option<String>)> = Vec::new();
     if set("WOW_UI_SCALE") {
-        let v = world.get_resource::<crate::ui_script::UiScaleCvar>();
-        out.push(("uiScale", v.map(|s| s.0.to_string())));
+        let v = world.get_resource::<crate::ui_script::UiScaleSetting>();
+        out.push(("uiScale", v.and_then(|s| s.env).map(|e| e.to_string())));
     }
     if set("WOW_FARCLIP") {
         let v = world.get_resource::<benilla_world::view::ViewDistance>();
         out.push(("farclip", v.map(|s| s.farclip.to_string())));
     }
-    // The clutter lever takes both spellings of its knob; an off-grid multiplier seeds off-grid.
     if set("WOW_CLUTTER_DENSITY") {
         let v = world.get_resource::<benilla_world::clutter::ClutterConfig>();
-        out.push(("WorldDetail", v.map(|c| (c.density - 1.0).to_string())));
-        out.push(("frillDensity", v.map(|c| c.frill_density().to_string())));
+        out.push(("groundEffectDensity", v.map(|c| c.cells().to_string())));
     }
     if crate::video::novsync_env() {
         let v = world.get_resource::<crate::video::VideoConfig>();
         out.push(("gxVSync", v.map(|c| flag(c.vsync))));
     }
-    let tex = world.get_resource::<benilla_assets::TexFilterSetting>();
-    if set("WOW_TRILINEAR") {
-        out.push(("trilinear", tex.map(|t| flag(t.trilinear))));
-    }
-    if set("WOW_ANISO") {
-        out.push(("anisotropic", tex.map(|t| t.aniso.to_string())));
+    if set("WOW_TEXTURE_FILTERING") {
+        let v = world.get_resource::<benilla_assets::TexFilterSetting>();
+        out.push(("textureFilteringMode", v.map(|t| t.mode.to_string())));
     }
     // `$WOW_WIN`, a capture scenario or an instrumented run owns the window geometry.
     if crate::video::windowed_env() {
@@ -574,7 +574,10 @@ fn session_values(world: &World) -> Vec<(&'static str, Option<String>)> {
         out.push(("gxMaximize", v.map(|c| flag(c.maximize))));
         out.push((
             "gxResolution",
-            v.map(|c| format!("{}x{}", c.windowed.x, c.windowed.y)),
+            v.map(|c| {
+                c.resolution
+                    .map_or_else(String::new, |r| format!("{}x{}", r.x, r.y))
+            }),
         ));
     }
     // The multisampling and render-scale levers: an instrument run must not pin 4× into the file.
@@ -618,7 +621,16 @@ fn load_config(world: &mut World) {
                 // change.
                 warn!("{msg}");
             }
-            StoredConfig::Table(table) => cvars.load_file(table),
+            StoredConfig::Table(table) => {
+                cvars.load_file(table);
+                // The 1.12 rows 3.3.5a has no record of, retired from the table: their file entries
+                // go at the next save rather than riding along as unknown keys.
+                for name in RETIRED_ROWS {
+                    if cvars.retire_file_entry(name).is_some() {
+                        info!("config: {name} is not a 3.3.5a setting; dropped from the file");
+                    }
+                }
+            }
         }
         cvars.take_events()
     };
@@ -626,6 +638,21 @@ fn load_config(world: &mut World) {
         world.trigger(event);
     }
 }
+
+/// Rows earlier builds registered from 1.12.1 that the 3.3.5a client has no record of, each now
+/// served by its 3.3.5a row: the texture filter by `textureFilteringMode`, the ground clutter by
+/// `groundEffectDensity`, the rest by nothing the stock UI binds.
+const RETIRED_ROWS: [&str; 9] = [
+    "trilinear",
+    "anisotropic",
+    "WorldDetail",
+    "frillDensity",
+    "SmallCull",
+    "doodadAnim",
+    "pixelShaders",
+    "M2UseShaders",
+    "M2UsePixelShaders",
+];
 
 /// What the one read of `config.toml` found.
 enum StoredConfig {
@@ -739,19 +766,18 @@ pub(crate) fn sync_cvars(
                 })
                 .unwrap_or_default(),
         );
-        // `GetVideoCaps`, the seven values `OptionsFrame_Load` destructures. Shaders, trilinear,
+        // `GetVideoCaps` (`0x54ee60`), which the Resolution panel's `PLAYER_ENTERING_WORLD` arm
+        // reads for the hardware cursor (`VideoOptionsPanels.lua:119`). Shaders, trilinear,
         // anisotropy and the hardware cursor are always there (`crate::cursor` composites the
-        // reference's cursors into an OS cursor); `max_anisotropy` is reported raw because
-        // `OptionsFrame.lua:122` matches it against `ANISOTROPIC_VALUES`. Triple buffering is
-        // false: wgpu owns the surface's buffering, so the stock frame hides check button 13
-        // (`OptionsFrame.lua:163-165`).
+        // reference's cursors into an OS cursor, or draws them itself with `gxCursor` off); slot 5
+        // is the device's backend constant, 0 here as under OpenGL.
         script.set_video_caps(benilla_ui::script::VideoCaps {
             anisotropic: true,
             pixel_shaders: true,
             vertex_shaders: true,
             trilinear: true,
             triple_buffering: false,
-            max_anisotropy: *benilla_assets::ANISO_RANGE.end(),
+            max_anisotropy: benilla_assets::MAX_ANISOTROPY_CAP,
             hardware_cursor: true,
         });
     }
@@ -856,21 +882,22 @@ fn write_config(cvars: &mut Cvars) {
     }
 }
 
-/// Freeze the texture filter policy for the process and log the mode, so a player's log says which
-/// mode the run was in. Its own system after [`load_config`], so it publishes whatever the file
-/// held.
+/// A `textureFilteringMode` or `baseMip` write after boot: publish it, which re-samples the world.
+fn follow_filter_policy(filter: Res<benilla_assets::TexFilterSetting>) {
+    if filter.is_changed() && !filter.is_added() {
+        publish_filter_policy(filter);
+    }
+}
+
+/// Publish the texture policy the file held and log it, so a player's log says which mode the run
+/// was in. Its own system after [`load_config`], before any texture loads.
 fn publish_filter_policy(filter: Res<benilla_assets::TexFilterSetting>) {
     benilla_assets::publish_tex_filter(*filter);
-    let mode = filter.mode();
-    let name = match mode {
-        3 => "bilinear + nearest-mip select, aniso off",
-        4 => "trilinear, aniso off",
-        _ => "trilinear + aniso",
-    };
     info!(
-        "texture filter: mode {mode} ({name}) — trilinear={} anisotropic={}",
-        u8::from(filter.trilinear),
-        filter.aniso
+        "texture filter: textureFilteringMode {} (anisotropy {}), baseMip {}",
+        filter.mode,
+        filter.anisotropy_clamp(),
+        filter.base_mip
     );
 }
 
@@ -886,12 +913,12 @@ mod tests {
     use crate::sound::SoundConfig;
     use crate::target::ClickConfig;
     use crate::ui_loot::LootConfig;
-    use crate::ui_script::{UiScaleCvar, DEFAULT_UI_SCALE};
+    use crate::ui_script::{UiScaleCvar, UiScaleSetting};
     use crate::video::VideoConfig;
     use crate::world_backdrop::{RenderScale, RENDER_SCALE_RANGE};
     use benilla_ui::widget::MINIMAP_ZOOM_LEVELS;
     use benilla_world::clutter::ClutterConfig;
-    use benilla_world::view::{MsaaSetting, ViewDistance, FARCLIP_RANGE, MSAA_RANGE};
+    use benilla_world::view::{MsaaSetting, ViewDistance, MSAA_RANGE};
 
     /// Every row's [`Reference`] column holds, both ways: a `Same` row that drifted fails, and so
     /// does a `Deviates` or `Overridden` row back in agreement. Numbers parse-compare, so "1" and
@@ -956,10 +983,10 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "frillDensity",
                 "gxApi",
                 "gxColorBits",
                 "gxDepthBits",
+                "gxFixLag",
                 "gxResolution",
                 "realmList",
                 "weatherDensity",
@@ -1005,9 +1032,11 @@ mod tests {
         assert_eq!(d["SoundOutputLimiter"] != 0.0, sound.limiter);
         assert!(sound.limiter, "the output limiter ships on");
         assert!(!sound.reverb, "zone reverb ships off");
-        assert_eq!(d["uiScale"], DEFAULT_UI_SCALE);
+        // `UiScaleSetting::default()` reads `$WOW_UI_SCALE`; its rows are the env-less literals.
+        assert_eq!(d["uiScale"], 1.0);
+        assert_eq!(d["useUiScale"], 0.0);
         // `ViewDistance::default()` reads `$WOW_FARCLIP`, so this is the env-less literal.
-        assert_eq!(d["farclip"], 350.0);
+        assert_eq!(d["farclip"], benilla_world::view::FARCLIP_DEFAULT);
         assert_eq!(d["nearclip"], benilla_world::view::NEARCLIP_DEFAULT);
         assert_eq!(
             d["nearclip"],
@@ -1109,12 +1138,33 @@ mod tests {
             d["weatherDensity"],
             f32::from(benilla_world::weather::WeatherState::default().weather_density)
         );
-        // `ClutterConfig::default()` reads `$WOW_CLUTTER_DENSITY`; stop 1 is its env-less ×2.
-        assert_eq!(d["WorldDetail"], 1.0);
+        // `ClutterConfig::default()` reads `$WOW_CLUTTER_DENSITY`; its env-less density is ×1.5.
         assert_eq!(
-            d["frillDensity"],
-            (d["WorldDetail"] + 1.0) * benilla_formats::FRILL_DENSITY as f32
+            d["groundEffectDensity"],
+            1.5 * benilla_formats::FRILL_DENSITY as f32
         );
+        assert_eq!(
+            d["groundEffectDist"],
+            benilla_world::clutter::ClutterConfig::default().fade_far
+        );
+        assert_eq!(
+            d["spellEffectLevel"],
+            crate::video::SpellEffectLevel::default().0 as f32
+        );
+        assert_eq!(
+            d["componentTextureLevel"],
+            f32::from(crate::video::ComponentTextureLevel::default().0)
+        );
+        assert_eq!(
+            d["projectedTextures"] != 0.0,
+            benilla_world::view::ProjectedTextures::default().0
+        );
+        let terrain = benilla_world::terrain_stream::TerrainOptions::default();
+        assert_eq!(d["specular"] != 0.0, terrain.specular);
+        assert_eq!(d["shadowLevel"] != 0.0, terrain.low_mip);
+        // `TexFilterSetting::default()` reads `$WOW_TEXTURE_FILTERING`; the env-less mode is 1.
+        assert_eq!(d["textureFilteringMode"], 1.0);
+        assert_eq!(d["baseMip"], 0.0);
         let bubbles = BubbleConfig::default();
         assert_eq!(d["ChatBubbles"] != 0.0, bubbles.all);
         assert_eq!(d["ChatBubblesParty"] != 0.0, bubbles.party);
@@ -1203,11 +1253,18 @@ mod tests {
             "elsewhere.example.org",
             "a known key with a bad value is consumed, and the resource keeps its truth",
         );
-        // Clamps are the knob's own: volume to [0,1], farclip to FARCLIP_RANGE.
+        // Clamps are the knob's own: volume to [0,1], farclip to the map's validated range.
         apply(&mut app, "mastervolume", "7");
         assert_eq!(res::<SoundConfig>(&app).master, 1.0);
         apply(&mut app, "farclip", "50");
-        assert_eq!(res::<ViewDistance>(&app).farclip, *FARCLIP_RANGE.start());
+        assert_eq!(res::<ViewDistance>(&app).farclip, 550.0 / 3.0);
+        apply(&mut app, "farclip", "1277");
+        assert_eq!(
+            res::<ViewDistance>(&app).farclip,
+            2375.0 / 3.0,
+            "the old continents cap at 2375/3 yd"
+        );
+        assert_eq!(res::<ViewDistance>(&app).setting, 1277.0);
         // `nearclip` clamps to the callback's `[0.01, 0.33]` (`0x688d90`).
         apply(&mut app, "nearclip", "0.001");
         assert_eq!(
@@ -1226,21 +1283,17 @@ mod tests {
         // A sample count, clamped to the reference's [1, 16]; 1 is none.
         apply(&mut app, "gxMultisample", "4");
         assert_eq!(res::<MsaaSetting>(&app).samples, 4);
-        apply(&mut app, "anisotropic", "99");
-        assert_eq!(
-            res::<benilla_assets::TexFilterSetting>(&app).aniso,
-            *benilla_assets::ANISO_RANGE.end()
-        );
-        apply(&mut app, "anisotropic", "0");
-        assert_eq!(
-            res::<benilla_assets::TexFilterSetting>(&app).aniso,
-            *benilla_assets::ANISO_RANGE.start()
-        );
-        // The knob ships on, so only the flip to 0 proves the arm.
-        apply(&mut app, "trilinear", "0");
-        assert!(!res::<benilla_assets::TexFilterSetting>(&app).trilinear);
-        apply(&mut app, "trilinear", "1");
-        assert!(res::<benilla_assets::TexFilterSetting>(&app).trilinear);
+        // `textureFilteringMode`: 0 to 5, anything else refused and put back.
+        apply(&mut app, "textureFilteringMode", "5");
+        assert_eq!(res::<benilla_assets::TexFilterSetting>(&app).mode, 5);
+        apply(&mut app, "textureFilteringMode", "6");
+        assert_eq!(res::<benilla_assets::TexFilterSetting>(&app).mode, 5);
+        assert_eq!(res::<Cvars>(&app).get("textureFilteringMode"), Some("5"));
+        apply(&mut app, "baseMip", "1");
+        assert_eq!(res::<benilla_assets::TexFilterSetting>(&app).base_mip, 1);
+        apply(&mut app, "baseMip", "2");
+        assert_eq!(res::<benilla_assets::TexFilterSetting>(&app).base_mip, 1);
+        assert_eq!(res::<Cvars>(&app).get("baseMip"), Some("1"));
         // Clamped to the device's ceiling too: this GPU offers 4, and wgpu refuses a count it
         // lacks.
         apply(&mut app, "gxmultisample", "99");
@@ -1345,27 +1398,51 @@ mod tests {
         assert!(!res::<BubbleConfig>(&app).all);
         apply(&mut app, "chatbubblesparty", "0");
         assert!(!res::<BubbleConfig>(&app).party);
-        // WorldDetail: stop 0/1/2 is density ×1/×2/×3, clamped to the slider's range.
-        apply(&mut app, "WorldDetail", "0");
-        assert_eq!(res::<ClutterConfig>(&app).density, 1.0);
-        apply(&mut app, "worlddetail", "7");
-        assert_eq!(res::<ClutterConfig>(&app).density, 3.0);
-        // `frillDensity` is the same field in cells per chunk, with its own clamp `[1, 256]`
-        // (`0x688de0`); the stops round-trip through both spellings.
-        apply(&mut app, "frillDensity", "48");
-        assert_eq!(res::<ClutterConfig>(&app).density, 3.0);
-        apply(&mut app, "frilldensity", "16");
-        assert_eq!(res::<ClutterConfig>(&app).density, 1.0);
-        // Past the top stop is honoured; pfUI's `hdgraphic` writes up to 256.
-        apply(&mut app, "frillDensity", "256");
-        assert_eq!(res::<ClutterConfig>(&app).density, 16.0);
-        // `0` is not clutter-off: the callback pins it to 1.
-        apply(&mut app, "frillDensity", "9000");
-        assert_eq!(res::<ClutterConfig>(&app).density, 16.0);
-        apply(&mut app, "frillDensity", "0");
-        assert_eq!(res::<ClutterConfig>(&app).density, 1.0 / 16.0);
-        apply(&mut app, "WorldDetail", "1");
-        assert_eq!(res::<ClutterConfig>(&app).density, 2.0);
+        // Ground clutter: cells per chunk in [16, 256], reach in [0, 140]; outside, refused.
+        apply(&mut app, "groundEffectDensity", "64");
+        assert_eq!(res::<ClutterConfig>(&app).cells(), 64.0);
+        apply(&mut app, "groundEffectDensity", "8");
+        assert_eq!(res::<ClutterConfig>(&app).cells(), 64.0);
+        assert_eq!(res::<Cvars>(&app).get("groundEffectDensity"), Some("64"));
+        apply(&mut app, "groundEffectDist", "140");
+        assert_eq!(res::<ClutterConfig>(&app).fade_far, 140.0);
+        apply(&mut app, "groundEffectDist", "200");
+        assert_eq!(res::<ClutterConfig>(&app).fade_far, 140.0);
+        // `particleDensity` in [0.1, 1.0]; outside, refused.
+        apply(&mut app, "particleDensity", "0.4");
+        assert_eq!(
+            res::<benilla_world::particles::ParticleTuning>(&app).density(),
+            0.4
+        );
+        apply(&mut app, "particleDensity", "0.05");
+        assert_eq!(
+            res::<benilla_world::particles::ParticleTuning>(&app).density(),
+            0.4
+        );
+        // Terrain Texture and Terrain Highlights, live.
+        apply(&mut app, "shadowLevel", "0");
+        assert!(!res::<benilla_world::terrain_stream::TerrainOptions>(&app).low_mip);
+        apply(&mut app, "shadowLevel", "2");
+        assert!(
+            !res::<benilla_world::terrain_stream::TerrainOptions>(&app).low_mip,
+            "refused above 1"
+        );
+        apply(&mut app, "specular", "0");
+        assert!(!res::<benilla_world::terrain_stream::TerrainOptions>(&app).specular);
+        apply(&mut app, "projectedTextures", "0");
+        assert!(!res::<benilla_world::view::ProjectedTextures>(&app).0);
+        apply(&mut app, "componentTextureLevel", "9");
+        assert_eq!(res::<crate::video::ComponentTextureLevel>(&app).0, 9);
+        apply(&mut app, "componentTextureLevel", "4");
+        assert_eq!(res::<crate::video::ComponentTextureLevel>(&app).0, 7);
+        // `spellEffectLevel` has no callback: the record's integer, read by the shard emitter.
+        apply(&mut app, "spellEffectLevel", "3");
+        assert_eq!(res::<crate::video::SpellEffectLevel>(&app).0, 3);
+        // `environmentDetail` reaches the doodad fade scale, clamped to [0.5, 1.5].
+        apply(&mut app, "environmentDetail", "9");
+        assert_eq!(benilla_world::model_fade::fade_scale(), 1.5);
+        apply(&mut app, "environmentDetail", "1.0");
+        assert_eq!(benilla_world::model_fade::fade_scale(), 1.0);
         for (wrote, want) in [
             ("0", 0u8),
             ("1", 1),
@@ -1395,111 +1472,40 @@ mod tests {
         apply(&mut app, "gamma", "-4.000000");
         assert_eq!(
             res::<crate::ui_gamma::DisplayGamma>(&app).0,
+            1.0,
+            "the callback reads an exponent under 0.001 as 1.0 (`0x401a30`)"
+        );
+        apply(&mut app, "gamma", "0.1");
+        assert_eq!(
+            res::<crate::ui_gamma::DisplayGamma>(&app).0,
             *crate::ui_gamma::GAMMA_RANGE.start(),
-            "a negative exponent clamps at the consumer, where it cannot blank the screen"
+            "a tiny exponent clamps at the consumer, where it cannot blank the screen"
         );
         apply(&mut app, "gamma", "99");
         assert_eq!(
             res::<crate::ui_gamma::DisplayGamma>(&app).0,
             *crate::ui_gamma::GAMMA_RANGE.end()
         );
-        assert_eq!(res::<ClutterConfig>(&app).frill_density(), 32.0);
-        // Both spellings reach the field from a state neither holds; `$WOW_CLUTTER_DENSITY` takes
-        // both for the session. Two values, since writing the sibling's mirrored value is a no-op.
-        for (key, value) in [
-            (benilla_ui::script::CVAR_WORLD_DETAIL, "2"),
-            (benilla_ui::script::CVAR_FRILL_DENSITY, "16"),
-        ] {
-            app.world_mut().resource_mut::<ClutterConfig>().density = 0.5;
-            assert_eq!(apply(&mut app, key, value), SetOutcome::Changed);
-            assert_ne!(
-                res::<ClutterConfig>(&app).density,
-                0.5,
-                "{key}: reached no knob"
-            );
-        }
-        // `benilla-ui`'s `SetWorldDetail`/`GetWorldDetail` name these CVars by const and cannot see
-        // this table, so both must stay registered and the stops must stay `frillDensity`'s unit
-        // times n.
-        assert!(REGISTERED
-            .iter()
-            .any(|r| r.name == benilla_ui::script::CVAR_WORLD_DETAIL));
-        assert!(REGISTERED
-            .iter()
-            .any(|r| r.name == benilla_ui::script::CVAR_FRILL_DENSITY));
         // The same for `GetGamma`/`SetGamma`, which read and write `1 - gamma`.
         assert!(REGISTERED
             .iter()
             .any(|r| r.name == benilla_ui::script::CVAR_GAMMA));
-        // `RestoreVideoDefaults`' row list lives in `benilla-ui` too; an unregistered row would be
+        // The Restore verbs' row lists live in `benilla-ui` too; an unregistered row would be
         // skipped silently.
-        for key in benilla_ui::script::VIDEO_DEFAULT_CVARS {
-            assert!(
-                REGISTERED.iter().any(|r| r.name.eq_ignore_ascii_case(key)),
-                "{key}: RestoreVideoDefaults would restore it, and nothing registers it"
-            );
-        }
-        // The video pairs and `SetWorldDetail`'s `smallCull` write by name; a missing row would
-        // warn and store nothing.
-        for key in benilla_ui::script::VIDEO_PAIR_CVARS
+        for key in benilla_ui::script::VIDEO_RESOLUTION_DEFAULT_CVARS
             .iter()
-            .chain([&benilla_ui::script::CVAR_SMALL_CULL])
+            .chain(benilla_ui::script::VIDEO_EFFECTS_DEFAULT_CVARS)
         {
             assert!(
-                REGISTERED.iter().any(|r| r.name.eq_ignore_ascii_case(key)),
+                registered_rows().any(|r| r.name.eq_ignore_ascii_case(key)),
+                "{key}: a Restore verb would restore it, and nothing registers it"
+            );
+        }
+        // The video pairs write by name; a missing row would warn and store nothing.
+        for key in benilla_ui::script::VIDEO_PAIR_CVARS {
+            assert!(
+                registered_rows().any(|r| r.name.eq_ignore_ascii_case(key)),
                 "{key}: a video verb writes it, and nothing registers it"
-            );
-        }
-        for (n, frill) in benilla_ui::script::WORLD_DETAIL_STOPS.iter().enumerate() {
-            assert_eq!(
-                *frill,
-                benilla_formats::FRILL_DENSITY * (n as u32 + 1),
-                "stop {n}: the reference's own 0x804518 entry must be this knob's unit times the stop"
-            );
-            apply(&mut app, "WorldDetail", &n.to_string());
-            let by_stop = res::<ClutterConfig>(&app).density;
-            // Off the stop first (the mirror already wrote this spelling), then the stop's cells.
-            apply(&mut app, "frillDensity", "1");
-            app.world_mut().resource_mut::<ClutterConfig>().density = 0.5;
-            apply(&mut app, "frillDensity", &frill.to_string());
-            assert_eq!(
-                res::<ClutterConfig>(&app).density,
-                by_stop,
-                "stop {n}: the two spellings disagree"
-            );
-            assert_eq!(res::<ClutterConfig>(&app).frill_density(), *frill as f32);
-        }
-        apply(&mut app, "WorldDetail", "1");
-        assert_eq!(res::<ClutterConfig>(&app).density, 2.0);
-        // A stop set as a CVar keeps `SmallCull` in step, as `SetWorldDetail` writes it.
-        apply(&mut app, "WorldDetail", "0");
-        assert_eq!(
-            res::<Cvars>(&app).get(benilla_ui::script::CVAR_SMALL_CULL),
-            Some("0.070000")
-        );
-        apply(&mut app, "WorldDetail", "1");
-        assert_eq!(
-            res::<Cvars>(&app).get(benilla_ui::script::CVAR_SMALL_CULL),
-            Some("0.040000")
-        );
-        // Spell Detail: `SStrToInt`, clamp, then the shared emission scalar (`0x689510`).
-        for (level, scale) in [
-            ("0", 0.33),
-            ("1", 0.66),
-            ("2", 1.0),
-            ("-3", 0.33),
-            ("7", 1.0),
-        ] {
-            apply(&mut app, "spellEffectLevel", level);
-            assert_eq!(
-                res::<benilla_world::particles::ParticleTuning>(&app).density(),
-                scale,
-                "spellEffectLevel {level}"
-            );
-            assert_eq!(
-                res::<crate::video::SpellEffectLevel>(&app).0,
-                level.parse::<i32>().unwrap(),
-                "the record's integer, unclamped, for the shard emitter"
             );
         }
         apply(&mut app, "minimapZoom", "5");
@@ -1514,25 +1520,25 @@ mod tests {
         apply(&mut app, "minimapZoom", "-2");
         assert_eq!(res::<MinimapZoom>(&app).outdoor, 0);
         assert_eq!(apply(&mut app, "uiScale", "banana"), SetOutcome::Refused);
-        assert_eq!(res::<UiScaleCvar>(&app).0, 0.9);
+        assert_eq!(res::<UiScaleSetting>(&app).ui_scale, 1.0);
+        apply(&mut app, "uiScale", "0.75");
+        apply(&mut app, "useUiScale", "1");
+        let ui = res::<UiScaleSetting>(&app);
+        assert!(ui.use_ui_scale);
+        assert_eq!(ui.ui_scale, 0.75);
         assert_eq!(apply(&mut app, "bogus", "1"), SetOutcome::Unknown);
     }
 
-    /// `/console spellEffectLevel 0` prints the handler's own line (`0x689537`-`0x689554`, format
-    /// `0x869f94`) with the level it clamped to; a Lua write logs it instead.
+    /// A refused write echoes its callback's line to the console and leaves the row as it was.
     #[test]
-    fn the_spell_effect_level_handler_echoes_to_the_console() {
+    fn a_refused_write_echoes_the_callbacks_line() {
         let mut app = cvar_app();
         app.init_resource::<crate::console::ConsoleEcho>();
         assert_eq!(
-            crate::console::execute(app.world_mut(), "spellEffectLevel 0"),
-            ["Spell effect level set to 0."]
+            crate::console::execute(app.world_mut(), "particleDensity 5"),
+            ["Value must be between 0.1 and 1.0."]
         );
-        assert_eq!(
-            crate::console::execute(app.world_mut(), "spellEffectLevel 9"),
-            ["Spell effect level set to 2."]
-        );
-        assert_eq!(res::<Cvars>(&app).get("spellEffectLevel"), Some("9"));
+        assert_eq!(res::<Cvars>(&app).get("particleDensity"), Some("1.0"));
         assert_eq!(
             crate::console::execute(app.world_mut(), "farclip 400"),
             Vec::<String>::new(),
@@ -1553,7 +1559,7 @@ mod tests {
             .into(),
         );
         cvars.set("Sound_MusicVolume", "0.7"); // moved: written
-        cvars.set("farclip", "350"); // back to default: removed
+        cvars.set("farclip", "777"); // back to default: removed
         let out = cvars.compose();
         assert_eq!(
             out.get("Sound_MusicVolume").map(String::as_str),
@@ -1689,17 +1695,27 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(bevy::MinimalPlugins)
             .insert_resource(SoundConfig::default())
-            .insert_resource(UiScaleCvar(DEFAULT_UI_SCALE))
+            .insert_resource(UiScaleCvar(1.0))
+            .insert_resource(UiScaleSetting {
+                ui_scale: 1.0,
+                use_ui_scale: false,
+                env: None,
+            })
             .insert_resource(ViewDistance {
-                farclip: 350.0,
+                farclip: benilla_world::view::FARCLIP_DEFAULT,
+                setting: benilla_world::view::FARCLIP_DEFAULT,
                 nearclip: benilla_world::view::NEARCLIP_DEFAULT,
             })
             .insert_resource(MsaaSetting { samples: 1 })
-            // Literal: `TexFilterSetting::default()` reads `$WOW_TRILINEAR`/`$WOW_ANISO`.
+            // Literal: `TexFilterSetting::default()` reads `$WOW_TEXTURE_FILTERING`.
             .insert_resource(benilla_assets::TexFilterSetting {
-                trilinear: true,
-                aniso: 1,
+                mode: 1,
+                base_mip: 0,
             })
+            .init_resource::<benilla_world::terrain_stream::TerrainOptions>()
+            .init_resource::<benilla_world::view::ProjectedTextures>()
+            .init_resource::<crate::video::ComponentTextureLevel>()
+            .init_resource::<crate::ui_gamma::GammaRows>()
             // A real-shaped device menu: `GetCurrentMultisampleFormat` needs rows to find.
             .insert_resource(benilla_world::view::MsaaFormats {
                 formats: vec![(32, 32, 1), (32, 32, 2), (32, 32, 4)],
@@ -2006,8 +2022,9 @@ mod tests {
         assert_eq!(default_of("realmName"), "");
         assert_eq!(default_of("gxApi"), "");
         assert_eq!(
-            crate::video::parse_resolution(default_of("gxResolution")),
-            Some(crate::video::DEFAULT_WINDOWED)
+            default_of("gxResolution"),
+            "",
+            "unpicked: the desktop's mode fullscreen, `DEFAULT_WINDOWED` in a window"
         );
         // A default `realmlist::normalize` rejects would ship a client that cannot dial.
         assert_eq!(
@@ -2093,12 +2110,12 @@ mod tests {
     fn a_numeric_row_refuses_what_does_not_parse_and_corrects_the_mirror() {
         let mut cvars = Cvars::default();
         assert_eq!(cvars.set_from_vm("uiScale", "banana"), SetOutcome::Refused);
-        assert_eq!(cvars.get("uiScale"), Some("0.9"));
+        assert_eq!(cvars.get("uiScale"), Some("1.0"));
         assert!(!cvars.has_events());
         assert!(!cvars.dirty);
         assert_eq!(
             cvars.take_outbox(),
-            vec![("uiScale".to_string(), "0.9".to_string())],
+            vec![("uiScale".to_string(), "1.0".to_string())],
             "the VM stored 'banana' synchronously; the host writes the truth back"
         );
         assert_eq!(cvars.set("uiScale", "banana"), SetOutcome::Refused);
@@ -2177,7 +2194,7 @@ mod tests {
         // A lever with no resource still marks the row, so the file cannot apply over the env.
         cvars.own_for_session("farclip", None);
         cvars.load_file(BTreeMap::from([("farclip".to_string(), "500".to_string())]));
-        assert_eq!(cvars.get("farclip"), Some("350"));
+        assert_eq!(cvars.get("farclip"), Some("777"));
         assert!(cvars.is_session_owned("FARCLIP"));
     }
 
@@ -2243,24 +2260,6 @@ mod tests {
                 "GameTooltip's binding-line gate, stock and pfUI",
             ),
             ("gxApi", "pfUI's system tooltip names the backend"),
-            (
-                "useUiScale",
-                "UIOptionsFrame.lua and OptionsFrame.lua branch on it to gate the uiScale slider",
-            ),
-            (
-                "DesktopGamma",
-                "OptionsFrame.lua's Use Desktop Gamma box, recorded at open and put back on close",
-            ),
-            (
-                "pixelShaders",
-                "OptionsFrame.lua's Enable All Shaders box, which its Okay copies into `ffx`",
-            ),
-            ("specular", "OptionsFrame.lua's Terrain Highlights box"),
-            (
-                "M2UseShaders",
-                "OptionsFrame.lua's Vertex Animation Shaders box",
-            ),
-            ("M2UsePixelShaders", "OptionsFrame.lua's Phong Shading box"),
             ("lod", "OptionsFrame.lua's World LOD box"),
             (
                 "movieSubtitle",
@@ -2270,10 +2269,6 @@ mod tests {
                 "useWeatherShaders",
                 "OptionsFrame.lua's Weather Shaders box",
             ),
-            ("gxTripleBuffer", "OptionsFrame.lua's Triple Buffering box"),
-            ("gxCursor", "OptionsFrame.lua's Hardware Cursor box"),
-            ("gxFixLag", "OptionsFrame.lua's Fix Input Lag box"),
-            ("gxRefresh", "OptionsFrame.lua's refresh-rate dropdown"),
             (
                 "ShowAllSpellRanks",
                 "SpellBookFrame.lua's SpellBook_GetTabInfo and Show All Spell Ranks box",
@@ -2332,8 +2327,8 @@ mod tests {
     }
 
     /// The rows the reference latches (`flags` 2 or 3 at the register site): the sound-init row and
-    /// the `gx*` block `RestartGx` commits. `trilinear`, `anisotropic` and `farclip` register with
-    /// `flags = 1` and apply live.
+    /// the `gx*` block `RestartGx` commits. The Effects rows register with `flags = 1` and apply
+    /// live.
     #[test]
     fn the_latched_rows_are_the_references_own() {
         let mut latched: Vec<&str> = REGISTERED

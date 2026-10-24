@@ -1,4 +1,8 @@
-//! Composited body skins, one 256² atlas per look. An arriving body's first composite runs off the
+//! Composited body skins, one atlas per look, `1 << componentTextureLevel` px square: the overlays
+//! blit at every authored level of the 512² base skin, and the levels above the side are dropped,
+//! as the reference composites each section at its `>> (9 - level)` size (`0x4f1a20`). A level
+//! change re-composites every cached look into its own image, so standing bodies keep their
+//! materials. An arriving body's first composite runs off the
 //! main thread: the reference's world composite is unforced, so its section loads poll and never
 //! block the frame (`0x44b430`), and it draws nothing of a unit whose first composite has not
 //! finished, its ShouldRender answering `0x477860(cc, 0)`'s result (`0x607e7c`). Only the forced
@@ -61,13 +65,28 @@ type Work = Box<dyn FnOnce() -> Option<BlpMipChain> + Send>;
 
 /// Composited body skins by look, so every body wearing a look shares one atlas, and the
 /// composites still running.
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub(super) struct SkinComposites {
     /// Finished atlases, swept by distance ([`benilla_world::art_scope`]); `None` for a look with
     /// no atlas, so it is never retried.
     pub(super) done: SpatialCache<SkinKey, Option<Handle<Image>>>,
     /// Composites on the async compute pool, one per look however many bodies wait on it.
     running: HashMap<SkinKey, Task<Option<BlpMipChain>>>,
+    /// The atlas side, `1 << componentTextureLevel`.
+    side: u32,
+    /// Looks re-compositing at a new side, into the image their bodies already show.
+    restyle: HashMap<SkinKey, Handle<Image>>,
+}
+
+impl Default for SkinComposites {
+    fn default() -> Self {
+        Self {
+            done: SpatialCache::default(),
+            running: HashMap::new(),
+            side: 1 << crate::video::ComponentTextureLevel::default().0,
+            restyle: HashMap::new(),
+        }
+    }
 }
 
 impl SkinComposites {
@@ -137,6 +156,41 @@ impl SkinComposites {
         self.install(key, atlas, images)
     }
 
+    /// Take a new atlas side: every finished look re-composites at it, off the main thread, into
+    /// the image it already has. `plan` names a look's work again.
+    pub(super) fn set_side(
+        &mut self,
+        side: u32,
+        sections: &SkinSections,
+        mut plan: impl FnMut(&SkinKey) -> Option<CompositePlan>,
+    ) -> usize {
+        if side == self.side {
+            return 0;
+        }
+        self.side = side;
+        let looks: Vec<(SkinKey, Handle<Image>)> = self
+            .done
+            .iter()
+            .filter_map(|(k, h)| h.clone().map(|h| (*k, h)))
+            .collect();
+        for (key, handle) in &looks {
+            let Some(work) = plan(key).map(|p| work(p, sections.chain.clone())) else {
+                continue;
+            };
+            self.restyle.insert(*key, handle.clone());
+            self.running.insert(
+                *key,
+                AsyncComputeTaskPool::get().spawn(async move { work() }),
+            );
+        }
+        looks.len()
+    }
+
+    /// Whether a re-composite at a new side is still running.
+    pub(super) fn restyling(&self) -> bool {
+        !self.restyle.is_empty()
+    }
+
     /// Move every finished composite into [`Self::done`]; how many landed.
     pub(super) fn land(&mut self, images: &mut Assets<Image>) -> usize {
         let mut finished = Vec::new();
@@ -164,12 +218,19 @@ impl SkinComposites {
     ) -> Option<Handle<Image>> {
         // Through the upload gate like every texture: a no-op on this RGBA8 composite, but it
         // keeps the format and the bytes in agreement.
-        let handle = atlas.map(|a| {
-            images.add(repeat_texture_authored(
-                benilla_assets::for_upload(a),
-                (true, true),
-            ))
+        let side = self.side;
+        let image = atlas.map(|mut a| {
+            a.trim_to(side);
+            repeat_texture_authored(benilla_assets::for_upload(a), (true, true))
         });
+        let handle = match (self.restyle.remove(&key), image) {
+            // A re-composite lands in the image its bodies already show.
+            (Some(handle), Some(image)) => {
+                images.insert(&handle, image).ok();
+                Some(handle)
+            }
+            (_, image) => image.map(|i| images.add(i)),
+        };
         self.done.insert(key, handle.clone());
         handle
     }
@@ -184,6 +245,7 @@ impl SkinComposites {
     pub(super) fn clear(&mut self) {
         self.done.clear();
         self.running.clear();
+        self.restyle.clear();
     }
 }
 
@@ -206,12 +268,47 @@ fn read_texture(chain: &Mutex<Chain>, path: &str) -> anyhow::Result<BlpMipChain>
     blp_bytes_to_mip_chain(&bytes).with_context(|| format!("decoding texture '{name}'"))
 }
 
-/// Land every finished composite before this frame's bodies ask for theirs.
+/// Land every finished composite before this frame's bodies ask for theirs. When the last
+/// re-composite at a new side lands, the model materials rebuild their bind groups, which hold the
+/// replaced images' old views.
 pub(super) fn land_skin_composites(
     mut composites: ResMut<SkinComposites>,
     mut images: ResMut<Assets<Image>>,
+    materials: Option<ResMut<Assets<benilla_assets::materials::WowModelMaterial>>>,
 ) {
+    let was_restyling = composites.restyling();
     composites.land(&mut images);
+    if was_restyling && !composites.restyling() {
+        if let Some(mut materials) = materials {
+            let n = materials.iter_mut().count();
+            info!("body skins re-composited; {n} model material(s) rebinding");
+        }
+    }
+}
+
+/// `componentTextureLevel` into the atlas side; on a change every cached look re-composites.
+pub(super) fn follow_component_level(
+    level: Res<crate::video::ComponentTextureLevel>,
+    sections: Option<Res<SkinSections>>,
+    displays: Option<Res<super::ItemDisplays>>,
+    mut composites: ResMut<SkinComposites>,
+) {
+    if !level.is_changed() {
+        return;
+    }
+    let Some(sections) = sections else {
+        return;
+    };
+    let side = 1u32 << level.0;
+    let n = composites.set_side(side, &sections, |key| {
+        super::attach::composite_plan(key, &sections, displays.as_deref())
+    });
+    if n > 0 {
+        info!(
+            "componentTextureLevel {}: {n} body skin(s) re-compositing at {side}²",
+            level.0
+        );
+    }
 }
 
 #[cfg(test)]

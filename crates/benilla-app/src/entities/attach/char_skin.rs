@@ -288,7 +288,7 @@ pub(super) fn skin_key(
 }
 
 /// What `key`'s composite reads, from the tables and the worn displays' rows.
-fn composite_plan(
+pub(in crate::entities) fn composite_plan(
     key: &SkinKey,
     sections: &SkinSections,
     displays: Option<&super::super::ItemDisplays>,

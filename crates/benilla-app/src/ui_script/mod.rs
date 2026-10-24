@@ -289,9 +289,9 @@ pub(crate) fn run_or_warn(script: &benilla_ui::script::UiScript, chunk: &str) {
     }
 }
 
-/// The reference's `uiScale` CVar: the VM's screen is `768/uiScale` units tall, so
-/// `uiScale = 768/screenH` is pixel-perfect. Tests pin the `Default` 1.0.
-#[derive(Resource)]
+/// The game UI parent's scale, resolved from [`UiScaleSetting`] ([`resolve_ui_scale`]): the VM's
+/// screen is `768/scale` units tall. Tests pin the `Default` 1.0.
+#[derive(Resource, PartialEq)]
 pub(crate) struct UiScaleCvar(pub(crate) f32);
 
 impl Default for UiScaleCvar {
@@ -312,18 +312,75 @@ impl UiScaleCvar {
     }
 }
 
-/// The shipped `uiScale`. Deviation: a flat 0.9, because 1.0 reads oversized. With `useUiScale`
-/// off, its default (`0x8430c0`), the reference sets `max(768/H, 0.9)` above 768 px tall and 1.0
-/// at or below (`0x492f70`, on a mode set and from `0x4908ad`), so the two agree from ~853 px up.
-pub(crate) const DEFAULT_UI_SCALE: f32 = 0.9;
+/// The two rows the UI parent's scale follows: `uiScale` (registered "1.0", callback `0x518b60`)
+/// and `useUiScale` ("0", callback `0x5237e0`). `$WOW_UI_SCALE` sets the scale for the session.
+#[derive(Resource, Clone, Copy, PartialEq, Debug)]
+pub(crate) struct UiScaleSetting {
+    pub(crate) ui_scale: f32,
+    pub(crate) use_ui_scale: bool,
+    /// `$WOW_UI_SCALE`, which outranks both rows.
+    pub(crate) env: Option<f32>,
+}
 
-/// `WOW_UI_SCALE=` if set, clamped to the dial's range, else [`DEFAULT_UI_SCALE`].
-fn default_ui_scale() -> f32 {
-    std::env::var("WOW_UI_SCALE")
-        .ok()
-        .and_then(|v| v.parse::<f32>().ok())
-        .map(|v| v.clamp(0.5, 1.5))
-        .unwrap_or(DEFAULT_UI_SCALE)
+impl Default for UiScaleSetting {
+    fn default() -> Self {
+        Self {
+            ui_scale: 1.0,
+            use_ui_scale: false,
+            env: std::env::var("WOW_UI_SCALE")
+                .ok()
+                .and_then(|v| v.parse::<f32>().ok())
+                .map(|v| v.clamp(0.5, 1.5)),
+        }
+    }
+}
+
+impl UiScaleSetting {
+    /// The UI parent's scale on a window `width` × `height` px. With `useUiScale` on it is
+    /// `uiScale`, floored at 0.64 (`CGGameUI::SetUIScale 0x513240`); off, `768 / height` above 768
+    /// px tall and 1.0 at or below, held to [0.9, 1.0] (`ScaleToScreenSize 0x51fb80`). Both cap it
+    /// at `aspect × 0.75` on a window narrower than 4:3, so the UI's 1024-unit width still fits.
+    pub(crate) fn resolve(&self, width: f32, height: f32) -> f32 {
+        if let Some(env) = self.env {
+            return env;
+        }
+        let aspect = if height > 0.0 {
+            width / height
+        } else {
+            4.0 / 3.0
+        };
+        let narrow = |scale: f32| {
+            if aspect * 3.0 < 4.0 && aspect * 0.75 <= scale {
+                aspect * 0.75
+            } else {
+                scale
+            }
+        };
+        if self.use_ui_scale {
+            narrow(self.ui_scale).max(0.64)
+        } else {
+            let scale = if height > 768.0 { 768.0 / height } else { 1.0 };
+            narrow(scale).max(0.9).max(0.64)
+        }
+    }
+}
+
+/// Re-derive [`UiScaleCvar`] when either row or the window's size moves, as the reference's two
+/// callbacks and its mode-set path (`ScaleToScreenSize` on a new screen size) do.
+pub(crate) fn resolve_ui_scale(
+    setting: Res<UiScaleSetting>,
+    windows: Query<Ref<Window>, With<bevy::window::PrimaryWindow>>,
+    mut scale: ResMut<UiScaleCvar>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    if !setting.is_changed() && !window.is_changed() {
+        return;
+    }
+    let res = &window.resolution;
+    let want = setting.resolve(res.physical_width() as f32, res.physical_height() as f32);
+    scale.set_if_neq(UiScaleCvar(want));
 }
 
 /// The seam scale `s`, window px per UI unit (`windowH/768 × uiScale`), used at every crossing of
@@ -339,10 +396,12 @@ pub(crate) fn seam_scale(window_h: f32, ui_scale: f32) -> f32 {
 /// The Lua UI host (a `NonSend` resource: an mlua VM is `!Send`) and its per-frame passes.
 pub(crate) struct UiScriptPlugin;
 
-/// `uiScale`'s change callback: the dial's own `[0.5, 1.5]` clamp.
-pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut scale: ResMut<UiScaleCvar>) {
+/// `uiScale`'s and `useUiScale`'s change callbacks, into the setting [`resolve_ui_scale`] reads.
+pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut setting: ResMut<UiScaleSetting>) {
     if ev.is("uiScale") {
-        scale.0 = ev.num().clamp(0.5, 1.5);
+        setting.ui_scale = ev.num();
+    } else if ev.is("useUiScale") {
+        setting.use_ui_scale = benilla_ui::script::sstr_to_int(&ev.new) != 0;
     }
 }
 
@@ -364,7 +423,12 @@ impl Plugin for UiScriptPlugin {
         app.console_command("reloadUI", "Reload the interface.", console_reload_ui);
         // The quit root runs in `Last`: the close button's `AppExit` is written in `PostUpdate`.
         crate::shutdown::on_app_exit(app, shutdown_on_exit.into_configs());
-        app.insert_resource(UiScaleCvar(default_ui_scale()))
+        app.init_resource::<UiScaleCvar>()
+            .init_resource::<UiScaleSetting>()
+            // Before anything reads the scale: at boot after the file's rows land, then each frame
+            // first, so a resize or a row write reaches this frame's seam.
+            .add_systems(Startup, resolve_ui_scale.after(crate::cvars::CvarLoad))
+            .add_systems(PreUpdate, resolve_ui_scale)
             .init_resource::<glue_mgr::GlueMgr>()
             .init_resource::<UiFrameCost>()
             .init_resource::<crate::bindings::WheelNotches>()
@@ -384,7 +448,12 @@ impl Plugin for UiScriptPlugin {
             .init_resource::<UiClock>()
             .init_resource::<AddOnIdentity>()
             // After `AssetSet::Open`: the VM's first load is the chain's `GlobalStrings.lua`.
-            .add_systems(Startup, setup_script.after(benilla_assets::AssetSet::Open))
+            .add_systems(
+                Startup,
+                setup_script
+                    .after(benilla_assets::AssetSet::Open)
+                    .after(resolve_ui_scale),
+            )
             // The in-game UI loads on world entry, as the reference's does, once the loading cover
             // has presented, so its ~0.5 s never stalls the cover's first frame.
             .add_systems(
@@ -1109,6 +1178,9 @@ mod shipped_xml_tests;
 
 #[cfg(test)]
 mod stock_options_tests;
+
+#[cfg(test)]
+mod video_panel_tests;
 
 #[cfg(test)]
 mod bottom_hud_tests;

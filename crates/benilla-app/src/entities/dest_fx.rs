@@ -33,10 +33,11 @@ fn shard_model_index(param0: f32) -> usize {
 }
 
 /// The shard emitter's rate factor from the `spellEffectLevel` record's integer, read once at the
-/// emitter's Initialize (`0x6eb95e`-`0x6eb989`), so a change reaches only emitters created after
-/// it: 0.33 at 0, 0.66 at 1, and 1.0 for any other value, unclamped, or with no record.
+/// emitter's init (`BlizzardObject::Init`, `0x7fb5e9`-`0x7fb5fe`), so a change reaches only
+/// emitters created after it: `level × [0xa1ea9c] (1/9) × [0xa02a34] (0.9) + [0x9e3004] (0.1)`,
+/// unclamped, and 1.0 with no record.
 fn shard_rate_scale(spell_effect_level: Option<i32>) -> f32 {
-    spell_effect_level.map_or(1.0, crate::video::spell_effect_scale)
+    spell_effect_level.map_or(1.0, |level| level as f32 * 0.111_111_11 * 0.9 + 0.1)
 }
 
 /// A dest-anchored effect model: visual A, a shard or a GO burst.
@@ -74,8 +75,8 @@ pub(super) struct ShardEmitter {
     path: String,
     /// `DYNAMICOBJECT_RADIUS`: the wire radius is the spread (`0x6ebad0`).
     radius: f32,
-    /// Shards per second: `CharParamOne` times the `spellEffectLevel` factor (`0x6eb95e`-
-    /// `0x6eb98f`), 1.0 at its default "2".
+    /// Shards per second: `CharParamOne` times the `spellEffectLevel` factor
+    /// ([`shard_rate_scale`]), 1.0 at its default "9".
     rate: f32,
     /// Fractional emissions carried between frames.
     accum: f32,
@@ -142,6 +143,12 @@ pub(super) fn arm_ground_effects(
                     Visibility::default(),
                 ))
                 .id();
+            // `CGDynamicObject_C::ModelLoaded` forces its model's projected batches by attribute.
+            if super::spell_fx::spell_forces_projection(Some(&*spells), spell_id) {
+                commands
+                    .entity(child)
+                    .insert(benilla_world::model_render::ForcedProjection);
+            }
             commands.entity(anchor).add_child(child);
         }
         // Visual B from the same kit, whose sound loops as the area sound: stopped at destroy,
@@ -301,12 +308,15 @@ mod tests {
 
     #[test]
     fn the_shard_rate_follows_the_spell_effect_level_record() {
-        assert_eq!(shard_rate_scale(Some(0)), 0.33);
-        assert_eq!(shard_rate_scale(Some(1)), 0.66);
-        assert_eq!(shard_rate_scale(Some(2)), 1.0);
-        // The record's integer, not the handler's clamped copy: out of range is the ×1.0 arm.
-        assert_eq!(shard_rate_scale(Some(-1)), 1.0);
-        assert_eq!(shard_rate_scale(Some(5)), 1.0);
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-6;
+        assert!(
+            near(shard_rate_scale(Some(9)), 1.0),
+            "the registered 9 is full rate"
+        );
+        assert!(near(shard_rate_scale(Some(0)), 0.1));
+        assert!(near(shard_rate_scale(Some(3)), 0.4));
+        // Unclamped, as the record's integer reaches the multiply.
+        assert!(near(shard_rate_scale(Some(18)), 1.9));
         assert_eq!(shard_rate_scale(None), 1.0);
     }
 

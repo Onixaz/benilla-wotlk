@@ -265,15 +265,29 @@ impl Plugin for CursorPlugin {
             .add_systems(Startup, other::setup.after(AssetSet::Open))
             .add_systems(
                 Update,
-                (drive_displayed_cursor, other::drive)
-                    .chain()
-                    // After the tick: a FrameXML `SetCursor` made this frame is read here.
-                    .after(crate::ui_script::UiInput),
+                (
+                    (
+                        drive_displayed_cursor,
+                        other::drive.run_if(resource_exists::<crate::video::VideoConfig>),
+                    )
+                        .chain()
+                        // After the tick: a FrameXML `SetCursor` made this frame is read here.
+                        .after(crate::ui_script::UiInput),
+                    // After the controller's look grab and the loading cover: the frame's last
+                    // word on where the pointer is and whether it shows.
+                    other::place_software_cursor
+                        .run_if(resource_exists::<crate::video::VideoConfig>)
+                        .after(other::drive)
+                        .after(benilla_world::schedule::WorldStage::Present),
+                ),
             );
     }
 }
 
 /// Non-macOS: winit's custom cursor, swapped on change; hide-on-look is in `player::control`.
+/// With `gxCursor` off the OS cursor is a transparent image and the cursor draws in the frame
+/// instead, at the pointer, as the reference's device draws its cursor texture over each frame it
+/// presents (`CGxDevice::ICursorDraw 0x687a90`), so it moves at the frame rate.
 #[cfg(not(target_os = "macos"))]
 mod other {
     use super::{cursor_path, payload_icon, CURSOR_STEMS};
@@ -290,11 +304,30 @@ mod other {
     #[derive(Resource, Default)]
     pub(super) struct PayloadCursorImages(HashMap<String, Handle<Image>>);
 
+    /// The in-frame cursor `gxCursor` off draws, and the transparent image the OS cursor shows
+    /// meanwhile.
+    #[derive(Component)]
+    pub(super) struct SoftwareCursor {
+        blank: Handle<Image>,
+    }
+
     pub(super) fn setup(
         mut commands: Commands,
         world_assets: Option<ResMut<WorldAssets>>,
         mut images: ResMut<Assets<Image>>,
     ) {
+        let blank = images.add(cursor_texture(1, 1, vec![0; 4]));
+        commands.spawn((
+            SoftwareCursor { blank },
+            ImageNode::default(),
+            Node {
+                position_type: PositionType::Absolute,
+                display: Display::None,
+                ..default()
+            },
+            // Above every other UI node, the loading cover included, as the device draws it last.
+            GlobalZIndex(i32::MAX),
+        ));
         let Some(mut world_assets) = world_assets else {
             return;
         };
@@ -314,6 +347,8 @@ mod other {
     /// then Point).
     pub(super) fn drive(
         mut commands: Commands,
+        video: Res<crate::video::VideoConfig>,
+        mut sprite: Query<(&SoftwareCursor, &mut ImageNode)>,
         cursor: Res<super::DisplayedCursor>,
         cursors: Option<Res<CursorImages>>,
         script: Option<NonSend<benilla_ui::script::UiScript>>,
@@ -330,11 +365,21 @@ mod other {
         let Some(window) = window else {
             return;
         };
+        // A hardware/software flip re-sends whatever is showing.
+        let mode = if video.hw_cursor { "hw" } else { "sw" };
+        let mut show = |commands: &mut Commands, handle: Handle<Image>| match sprite.single_mut() {
+            Ok((sw, mut node)) if !video.hw_cursor => {
+                set_custom_cursor(commands, *window, sw.blank.clone());
+                node.image = handle;
+            }
+            _ => set_custom_cursor(commands, *window, handle),
+        };
         let held_icon = script
             .as_ref()
             .and_then(|s| payload_icon(s, screen.covering()));
         if let Some(icon) = held_icon {
-            if last_set.as_deref() == Some(icon.as_str()) {
+            let key = format!("{mode}:{icon}");
+            if last_set.as_deref() == Some(key.as_str()) {
                 return; // already showing this icon
             }
             if !payload_cursors.0.contains_key(&icon) && !decode_failed.contains(&icon) {
@@ -353,8 +398,8 @@ mod other {
                 }
             }
             if let Some(handle) = payload_cursors.0.get(&icon) {
-                set_custom_cursor(&mut commands, *window, handle.clone());
-                *last_set = Some(icon);
+                show(&mut commands, handle.clone());
+                *last_set = Some(key);
                 return;
             }
             // Decode failed: fall through to the mode cursor.
@@ -364,7 +409,8 @@ mod other {
             return;
         };
         let stem = cursor.0.stem();
-        if last_set.as_deref() == Some(stem.as_str()) {
+        let key = format!("{mode}:{stem}");
+        if last_set.as_deref() == Some(key.as_str()) {
             return;
         }
         let handle = cursors
@@ -373,9 +419,48 @@ mod other {
             .or_else(|| cursors.0.get(stem.trim_start_matches("Unable")))
             .or_else(|| cursors.0.get("Point"));
         if let Some(handle) = handle {
-            set_custom_cursor(&mut commands, *window, handle.clone());
+            show(&mut commands, handle.clone());
         }
-        *last_set = Some(stem);
+        *last_set = Some(key);
+    }
+
+    /// Keep the in-frame cursor at the pointer, 32 physical px square with its tip at the top-left
+    /// as the OS cursor's hotspot `(0, 0)`, and shown only with `gxCursor` off, the pointer over
+    /// the window and the OS cursor not hidden by mouselook.
+    pub(super) fn place_software_cursor(
+        video: Res<crate::video::VideoConfig>,
+        window: Option<Single<(&Window, &bevy::window::CursorOptions), With<PrimaryWindow>>>,
+        mut sprite: Query<&mut Node, With<SoftwareCursor>>,
+    ) {
+        let Ok(mut node) = sprite.single_mut() else {
+            return;
+        };
+        let at = window.as_ref().and_then(|w| {
+            let (window, options) = **w;
+            (options.visible && !video.hw_cursor)
+                .then(|| window.cursor_position())
+                .flatten()
+                .map(|p| (p, window.resolution.scale_factor()))
+        });
+        let Some((p, scale)) = at else {
+            if node.display != Display::None {
+                node.display = Display::None;
+            }
+            return;
+        };
+        let side = Val::Px(32.0 / scale);
+        let (left, top) = (Val::Px(p.x), Val::Px(p.y));
+        if node.display != Display::Flex
+            || node.left != left
+            || node.top != top
+            || node.width != side
+        {
+            node.display = Display::Flex;
+            node.left = left;
+            node.top = top;
+            node.width = side;
+            node.height = side;
+        }
     }
 
     /// Insert a custom cursor with hotspot `(0, 0)`, the vanilla cursors' top-left tip.

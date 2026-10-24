@@ -48,22 +48,67 @@ impl Default for UiGammaLane {
     }
 }
 
-/// The `gamma` CVar (registered at `0x402d70`, name `0x82e924`, default `"1.0"` at `0x82e92c`,
-/// flags 0). The reference's callback `0x4034d0` hands `SetDeviceGammaRamp` the ramp
-/// `__ftol(pow(i / 255, gamma) · 65535)` (`0x591680`); there is no other whole-frame grade and
-/// no `Brightness` or `Contrast` CVar.
+/// The ramp exponent the display shows, from [`GammaRows`] and the window's mode. The reference's
+/// `Gamma` callback (`0x401a30`) hands the device `pow(i / 255, gamma)` only while `DesktopGamma`
+/// reads 0, and the device uploads it only when fullscreen (`CGxDeviceD3d::DeviceSetGamma`, its
+/// `IDevIsWindowed` test); `DesktopGamma` 1 puts the desktop's own ramp back (`0x401a80`). There
+/// is no other whole-frame grade and no `Brightness` or `Contrast` CVar.
 ///
-/// Deviation: the reference skips that upload when windowed (`byte[dev+0x20b]` is `gxWindow`), and
-/// every benilla mode is windowed, so the same curve applies in the compositor, where the slider
-/// can move pixels: [`UiGammaNode`] raises the gamma byte the RAMDAC would have read to `gamma`
-/// before its decode, the continuous form of the 256-entry ramp.
+/// The curve applies in the compositor rather than through the OS ramp: [`UiGammaNode`] raises the
+/// gamma byte the RAMDAC would have read to `gamma` before its decode, the continuous form of the
+/// 256-entry ramp, so a borderless fullscreen shows it as an exclusive one does.
 #[derive(Resource, Debug, Clone, Copy, PartialEq)]
 pub(crate) struct DisplayGamma(pub(crate) f32);
+
+/// The `Gamma` and `DesktopGamma` rows as written.
+#[derive(Resource, Debug, Clone, Copy, PartialEq)]
+pub(crate) struct GammaRows {
+    /// `Gamma`; the callback reads a value under 0.001 as 1.0.
+    pub(crate) gamma: f32,
+    /// `DesktopGamma`: the desktop's ramp, not the client's.
+    pub(crate) desktop: bool,
+}
+
+impl Default for GammaRows {
+    fn default() -> Self {
+        Self {
+            gamma: DEFAULT_GAMMA,
+            desktop: false,
+        }
+    }
+}
+
+impl GammaRows {
+    /// The exponent shown: the identity on the desktop's ramp or in a window, else `gamma`.
+    pub(crate) fn shown(&self, windowed: bool) -> f32 {
+        if self.desktop || windowed {
+            DEFAULT_GAMMA
+        } else {
+            self.gamma.clamp(*GAMMA_RANGE.start(), *GAMMA_RANGE.end())
+        }
+    }
+}
+
+/// Whether the window shows the desktop: windowed, maximized or not.
+fn windowed(video: Option<&crate::video::VideoConfig>) -> bool {
+    video.is_some_and(|v| v.display == crate::video::DisplayMode::Windowed)
+}
+
+/// Re-derive [`DisplayGamma`] when the window's mode moves.
+fn follow_display_mode(
+    video: Res<crate::video::VideoConfig>,
+    rows: Res<GammaRows>,
+    mut gamma: ResMut<DisplayGamma>,
+) {
+    if video.is_changed() {
+        gamma.set_if_neq(DisplayGamma(rows.shown(windowed(Some(&video)))));
+    }
+}
 
 /// The registered `"1.0"`: the identity ramp, at which the pass changes no byte.
 pub(crate) const DEFAULT_GAMMA: f32 = 1.0;
 
-/// Deviation: the reference never clamps (`SetGamma` `0x4891f0` writes `-4.000000` for 5), but its
+/// Deviation: the reference never clamps (`SetGamma` `0x54ea90` writes `-4.000000` for 5), but its
 /// ramp is a fullscreen OS call and ours is the image, where an extreme exponent blacks out the
 /// panel that would undo it. The range spans the stock slider's `[0.5, 1.5]` four times over; the
 /// CVar keeps the value written and only its consumers clamp.
@@ -267,18 +312,37 @@ fn use_gamma_ui_shaders(
 pub(crate) struct UiGammaPlugin;
 
 /// The `gamma` CVar's change callback, clamped to [`GAMMA_RANGE`].
-pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut gamma: ResMut<DisplayGamma>) {
+pub(crate) fn on_cvar(
+    ev: On<crate::cvars::CvarChanged>,
+    mut rows: ResMut<GammaRows>,
+    mut gamma: ResMut<DisplayGamma>,
+    video: Option<Res<crate::video::VideoConfig>>,
+) {
     if ev.is(benilla_ui::script::CVAR_GAMMA) {
-        gamma.0 = ev.num().clamp(*GAMMA_RANGE.start(), *GAMMA_RANGE.end());
+        let v = ev.num();
+        rows.gamma = if v < 0.001 { DEFAULT_GAMMA } else { v };
+    } else if ev.is("DesktopGamma") {
+        rows.desktop = benilla_ui::script::sstr_to_int(&ev.new) != 0;
+    } else {
+        return;
     }
+    gamma.set_if_neq(DisplayGamma(rows.shown(windowed(video.as_deref()))));
 }
 
 impl Plugin for UiGammaPlugin {
     fn build(&self, app: &mut App) {
         app.add_observer(on_cvar);
         app.init_resource::<DisplayGamma>()
+            .init_resource::<GammaRows>()
             .add_plugins(ExtractComponentPlugin::<UiGammaLane>::default())
-            .add_systems(Update, stamp_lane_gamma);
+            .add_systems(
+                Update,
+                (
+                    follow_display_mode.run_if(resource_exists::<crate::video::VideoConfig>),
+                    stamp_lane_gamma,
+                )
+                    .chain(),
+            );
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };

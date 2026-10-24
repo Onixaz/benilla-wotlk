@@ -30,7 +30,9 @@ use attach::{attach_entity_visuals, build_dressup_preview, build_glue_pet, build
 
 /// Composited body skins by look, built off the main thread.
 mod skin_composite;
-use skin_composite::{land_skin_composites, SkinComposites, SkinKey, SkinSections};
+use skin_composite::{
+    follow_component_level, land_skin_composites, SkinComposites, SkinKey, SkinSections,
+};
 
 /// The dynamic point lights an entity's own model carries, such as a held torch.
 mod carried_light;
@@ -68,7 +70,7 @@ pub(crate) use collision_height::CollisionHeight;
 
 /// Spell missiles: the projectile a cast with a `Spell.dbc` Speed above 0 flies at each target.
 mod missile;
-use missile::{attach_missile_models, move_missiles, spawn_missiles};
+use missile::{attach_missile_models, mark_forced_missiles, move_missiles, spawn_missiles};
 pub(crate) use missile::{MissileMiss, MissileSound, PendingMissiles};
 
 /// A WMO-display GameObject's doodad props (a ship's sails), parented under it to ride a transport.
@@ -633,7 +635,8 @@ impl Plugin for EntitiesPlugin {
         // Finished body composites land before the frame's bodies ask for their atlas.
         .add_systems(
             Update,
-            land_skin_composites
+            (follow_component_level, land_skin_composites)
+                .chain()
                 .after(evict_display_caches)
                 .before(EntityVisualsSet)
                 .after(WorldStage::Net),
@@ -655,7 +658,7 @@ impl Plugin for EntitiesPlugin {
                 // Spell effects and missiles create `SpellFx` entries too.
                 resolve_spell_fx,
                 move_missiles,
-                spawn_missiles,
+                (spawn_missiles, mark_forced_missiles).chain(),
                 // The dest-anchored lane's three independent producers also create entries.
                 (arm_ground_effects, spawn_ground_bursts, tick_shard_emitters),
                 update_display_models.in_set(DisplayBuildSet),

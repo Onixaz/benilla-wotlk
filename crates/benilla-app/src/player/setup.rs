@@ -94,8 +94,8 @@ pub(super) fn setup_player(
         Camera3d::default(),
         // The portrait booths are `Camera3d`s too: viewer queries filter on this marker.
         WorldCamera,
-        // `gxMultisample` is read once: the reference latches it, pending until the next launch,
-        // and a live swap would mismatch our post passes. `$WOW_MSAA` overrides it for a session.
+        // `gxMultisample` at spawn; `video::apply_multisample` re-applies each `RestartGx` commit.
+        // `$WOW_MSAA` overrides it for a session.
         msaa.level(),
         Projection::from(PerspectiveProjection {
             far: cam_far,
