@@ -235,7 +235,7 @@ mod tests {
             0
         );
 
-        for bad in ["24", "39", "70", "119", "-1", "'x'"] {
+        for bad in ["24", "39", "75", "119", "-1", "'x'"] {
             let err = s
                 .run(&format!("ShowInventorySellCursor({bad})"))
                 .unwrap_err()

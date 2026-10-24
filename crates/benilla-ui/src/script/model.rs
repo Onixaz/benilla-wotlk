@@ -701,7 +701,7 @@ pub(crate) struct Model {
     /// The stable window: snapshot, selection, drag and queued calls, reset together on close.
     pub(crate) stable: stable::StableModel,
 
-    /// The open bank's slot-purchase row and calls; its contents are bags -1 and 5..=10.
+    /// The open bank's slot-purchase row and calls; its contents are bags -1 and 5..=11.
     pub(crate) bank: Option<bank::BankState>,
     pub(crate) bank_purchase: bool,
     pub(crate) bank_close: bool,
@@ -930,7 +930,7 @@ pub(crate) struct Model {
     /// The pet's combat stats, which the reference's pet sheet reads as `UnitStat("pet", …)`.
     pub(crate) pet_combat_stats: Option<char_stats::UnitCombatStats>,
     pub(crate) inventory_slots: char_stats::InventorySlots,
-    /// The six bank-bag slots, ids 64..=69, fed from the player descriptor's guids.
+    /// The seven bank-bag slots, ids 68..=74, fed from the player descriptor's guids.
     pub(crate) bank_bag_slots: char_stats::BankBagSlots,
     /// `GetInventoryAlertStatus` in `0xa1ce4c` order; a change fires `UPDATE_INVENTORY_ALERTS`.
     pub(crate) inventory_alerts: [u8; 12],

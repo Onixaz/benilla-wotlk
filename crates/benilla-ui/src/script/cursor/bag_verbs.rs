@@ -8,13 +8,13 @@ use crate::script::Model;
 use super::{clear_cursor, queue_cursor_update, queue_lock_changed, CursorItem, CursorPayload};
 use super::{doll::pickup_inventory_item, EQUIPMENT_BAG};
 
-/// The ids `PutItemInBag` and `PickupBagFromSlot` take: what their argument reader (`0x4c8520`)
-/// accepts above each floor gate (`0x4c8f1f`, `0x4c8fbf`), so the equipped bags 20-23, the
-/// bank's slots 40-63, its bag slots 64-69 and the keyring 87-118 (`0x5e7cd0`).
+/// The ids `PutItemInBag` and `PickupBagFromSlot` take: what their argument reader (`0x5e7c00`)
+/// accepts above each floor gate (`0x5ea7a9`, `0x5ea866`: 0-based 19 and up), so the equipped
+/// bags 20-23, the bank's slots 40-67, its bag slots 68-74 and the keyring 87-118.
 fn accepts(live: u32) -> bool {
     (20..=23).contains(&live)
-        || (40..=63).contains(&live)
-        || (64..=69).contains(&live)
+        || (40..=67).contains(&live)
+        || BANK_BAG_INV_SLOTS.contains(&live)
         || (87..=118).contains(&live)
 }
 
@@ -24,7 +24,7 @@ fn accepts(live: u32) -> bool {
 fn autostore_container(live: u32) -> Option<i64> {
     match live {
         20..=23 => Some(i64::from(live) - 19),
-        64..=69 => Some(i64::from(live) - 59),
+        68..=74 => Some(i64::from(live) - 63),
         _ => None,
     }
 }
@@ -32,8 +32,8 @@ fn autostore_container(live: u32) -> Option<i64> {
 /// `Bag0Slot`, the first equipped bag slot: only a container names it in `equip_slots`.
 const BAG0_SLOT: u8 = 20;
 
-/// The six bank bag slots' ids (`BankButtonIDToInvSlotID(1..6, isBag)`).
-pub(super) const BANK_BAG_INV_SLOTS: std::ops::RangeInclusive<u32> = 64..=69;
+/// The seven bank bag slots' ids (`BankButtonIDToInvSlotID(5..=11, isBag)`).
+pub(super) const BANK_BAG_INV_SLOTS: std::ops::RangeInclusive<u32> = 68..=74;
 
 /// Whether the held item is a container, the reference's `TYPEMASK_CONTAINER` test (`0x4c7dc4`):
 /// only `INVTYPE_BAG` maps to the bag slots in `FindEquipSlot`, so no other item names Bag0Slot.
@@ -283,7 +283,7 @@ mod tests {
         }
     }
 
-    /// Bank bag slot 1 (live id 64) holds a bag; the equipped bag slots stay empty.
+    /// Bank bag slot 1 (live id 68) holds a bag; the equipped bag slots stay empty.
     fn one_bank_bag() -> BankBagSlots {
         let mut bags: BankBagSlots = Default::default();
         bags[0] = Some(bag_slot_view(4500));
@@ -294,7 +294,7 @@ mod tests {
     fn an_empty_cursor_answers_nil_and_sends_nothing() {
         let mut s = UiScript::new().unwrap();
         s.set_bank_bag_slots(one_bank_bag());
-        assert!(s.eval::<bool>("return PutItemInBag(64) == nil").unwrap());
+        assert!(s.eval::<bool>("return PutItemInBag(68) == nil").unwrap());
         assert!(s.eval::<bool>("return PutItemInBag(20) == nil").unwrap());
         assert!(s.eval::<bool>("return PutItemInBackpack() == nil").unwrap());
         assert!(s.take_container_moves().is_empty());
@@ -309,7 +309,7 @@ mod tests {
         s.set_bank_bag_slots(Default::default());
         s.run("PickupContainerItem(0, 1)").unwrap();
 
-        assert!(s.eval::<bool>("return PutItemInBag(64) == nil").unwrap());
+        assert!(s.eval::<bool>("return PutItemInBag(68) == nil").unwrap());
         assert!(s.cursor_item().is_none(), "placed, not kept");
         assert_eq!(
             s.take_container_moves(),
@@ -317,7 +317,7 @@ mod tests {
                 src_bag: 0,
                 src_slot: 1,
                 dst_bag: EQUIPMENT_BAG,
-                dst_slot: 64,
+                dst_slot: 68,
                 count: None,
             }]
         );
@@ -330,7 +330,7 @@ mod tests {
         s.set_container(0, Some(backpack()));
         s.run("PickupContainerItem(0, 2)").unwrap();
 
-        assert!(s.eval::<bool>("return PutItemInBag(64) == nil").unwrap());
+        assert!(s.eval::<bool>("return PutItemInBag(68) == nil").unwrap());
         assert!(s.cursor_item().is_some(), "refused, kept");
         assert!(s.take_container_moves().is_empty());
         assert!(s.take_bag_autostores().is_empty());
@@ -343,7 +343,7 @@ mod tests {
         s.set_bank_bag_slots(one_bank_bag());
         s.run("PickupContainerItem(0, 1)").unwrap();
 
-        assert_eq!(s.eval::<i64>("return PutItemInBag(64)").unwrap(), 1);
+        assert_eq!(s.eval::<i64>("return PutItemInBag(68)").unwrap(), 1);
         assert!(s.cursor_item().is_none());
         assert_eq!(
             s.take_container_moves(),
@@ -351,7 +351,7 @@ mod tests {
                 src_bag: 0,
                 src_slot: 1,
                 dst_bag: EQUIPMENT_BAG,
-                dst_slot: 64,
+                dst_slot: 68,
                 count: None,
             }]
         );
@@ -364,7 +364,7 @@ mod tests {
         s.set_bank_bag_slots(one_bank_bag());
         s.run("PickupContainerItem(0, 2)").unwrap();
 
-        assert_eq!(s.eval::<i64>("return PutItemInBag(64)").unwrap(), 1);
+        assert_eq!(s.eval::<i64>("return PutItemInBag(68)").unwrap(), 1);
         assert!(s.cursor_item().is_none());
         assert!(s.take_container_moves().is_empty(), "a store, not a swap");
         assert_eq!(
@@ -372,7 +372,7 @@ mod tests {
             vec![BagAutoStore {
                 src_bag: 0,
                 src_slot: 2,
-                // Container 5 is bank bag slot 1 (`ContainerIDToInventoryID(5) == 64`).
+                // Container 5 is bank bag slot 1 (`ContainerIDToInventoryID(5) == 68`).
                 dst_bag: 5,
                 count: None,
             }]
@@ -405,7 +405,7 @@ mod tests {
         s.set_bank_bag_slots(one_bank_bag());
         s.run("PickupContainerItem(0, 2)").unwrap();
         assert!(s
-            .eval::<bool>("return PutItemInBag(64) == 1 and type(PutItemInBackpack()) ~= 'boolean'")
+            .eval::<bool>("return PutItemInBag(68) == 1 and type(PutItemInBackpack()) ~= 'boolean'")
             .unwrap());
     }
 
@@ -430,16 +430,16 @@ mod tests {
         let mut s = UiScript::new().unwrap();
         s.set_bank_bag_slots(one_bank_bag());
         assert_eq!(
-            s.arity("PickupBagFromSlot(64)").unwrap(),
+            s.arity("PickupBagFromSlot(68)").unwrap(),
             0,
             "the delegate's eax is never tested — no return values at all"
         );
         let held = s.cursor_item().expect("picked up");
         assert_eq!(
             (held.bag, held.slot, held.item_id),
-            (EQUIPMENT_BAG, 64, 4500)
+            (EQUIPMENT_BAG, 68, 4500)
         );
-        assert!(s.eval::<bool>("return IsInventoryItemLocked(64)").unwrap());
+        assert!(s.eval::<bool>("return IsInventoryItemLocked(68)").unwrap());
     }
 
     #[test]
@@ -450,7 +450,7 @@ mod tests {
         s.run("PickupContainerItem(0, 1)").unwrap();
         assert!(s.cursor_item().is_some());
 
-        s.run("PickupBagFromSlot(65)").unwrap();
+        s.run("PickupBagFromSlot(69)").unwrap();
         assert!(s.cursor_item().is_none(), "dropped, and nothing picked up");
         assert!(s.take_container_moves().is_empty(), "no place path exists");
     }
@@ -487,7 +487,7 @@ mod tests {
             ..bag_slot_view(4500)
         });
         s.set_bank_bag_slots(bags);
-        s.run("PickupBagFromSlot(64)").unwrap();
+        s.run("PickupBagFromSlot(68)").unwrap();
         assert!(s.cursor_item().is_none(), "locked — refused");
     }
 }

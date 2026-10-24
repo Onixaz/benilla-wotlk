@@ -1,6 +1,6 @@
 //! The bank window's app side: the open banker, the purchase row, the bank events and the Lua
 //! intents. The vault itself is descriptor fields that [`crate::ui_items`] feeds as containers
-//! `-1` and `5..=10`, and moves items in and out of on a right-click.
+//! `-1` and `5..=11`, and moves items in and out of on a right-click.
 
 use benilla_protocol::messages::bank_slot_result;
 use bevy::prelude::*;

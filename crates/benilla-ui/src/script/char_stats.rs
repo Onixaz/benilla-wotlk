@@ -270,9 +270,9 @@ pub struct InvSlotView {
 pub const INVENTORY_SLOT_COUNT: usize = 24;
 pub type InventorySlots = [Option<InvSlotView>; INVENTORY_SLOT_COUNT];
 
-/// The six bank-bag slots in button order, live-API ids 64..=69; `None` is empty or unbought.
+/// The seven bank-bag slots in button order, live-API ids 68..=74; `None` is empty or unbought.
 /// They are player-descriptor slots, present whether or not the bank window is open.
-pub const BANK_BAG_SLOT_COUNT: usize = 6;
+pub const BANK_BAG_SLOT_COUNT: usize = 7;
 pub type BankBagSlots = [Option<InvSlotView>; BANK_BAG_SLOT_COUNT];
 
 /// `PaperDollItemFrame.dbc`'s 36 rows as `(SlotName, SlotID, art suffix)`. The texture column
@@ -302,7 +302,8 @@ const SLOT_INFO: [(&str, i64, &str); 36] = [
     ("Bag1Slot", 21, "Bag"),
     ("Bag2Slot", 22, "Bag"),
     ("Bag3Slot", 23, "Bag"),
-    // The bank-bag band is 64..69; all sixteen bag rows share one texture string.
+    // `Bag1`..`Bag12` keep 64..75, not the bank bags' 68..74; all sixteen bag rows share one
+    // texture string.
     ("Bag1", 64, "Bag"),
     ("Bag2", 65, "Bag"),
     ("Bag3", 66, "Bag"),
@@ -386,7 +387,7 @@ impl super::UiScript {
         }
     }
 
-    /// Push the six bank-bag slots. The caller fires `PLAYERBANKSLOTS_CHANGED` for a changed item:
+    /// Push the seven bank-bag slots. The caller fires `PLAYERBANKSLOTS_CHANGED` for a changed item:
     /// the stock bank buttons repaint only on it and `BANKFRAME_OPENED` (`BankFrame.lua:206-212`).
     pub fn set_bank_bag_slots(&mut self, slots: BankBagSlots) {
         set_field!(self, bank_bag_slots, slots);
@@ -477,9 +478,9 @@ fn player_inv_slot(lua: &Lua, token: &Option<String>, slot: i64) -> Option<InvSl
     model.inv_slot(token, idx)
 }
 
-/// The bank's live-API ids, `BankButtonIDToInvSlotID`'s two bands: 24 vault slots, 6 bag slots.
-const BANK_INV_SLOTS: std::ops::RangeInclusive<usize> = 40..=63;
-const BANK_BAG_INV_SLOTS: std::ops::RangeInclusive<usize> = 64..=69;
+/// The bank's live-API ids, `BankButtonIDToInvSlotID`'s two bands: 28 vault slots, 7 bag slots.
+const BANK_INV_SLOTS: std::ops::RangeInclusive<usize> = 40..=67;
+const BANK_BAG_INV_SLOTS: std::ops::RangeInclusive<usize> = 68..=74;
 
 /// The vault's container id; must match `ui_items::BANK_CONTAINER` in the app.
 const BANK_CONTAINER: i64 = -1;
@@ -551,14 +552,14 @@ impl Model {
     }
 }
 
-/// The inventory-slot reader's whitelist (`0x4c8520`) on its 0-based slot (`0x4c8546`); outside
+/// The inventory-slot reader's whitelist (`0x5e7c00`) on its 0-based slot (`0x5e7cb2`); outside
 /// it the binding raises "Invalid inventory slot in …". The backpack's item slots (23..=38) and
-/// buyback (69..=80) are container-API slots, not in it.
+/// buyback (74..=85) are container-API slots, not in it.
 pub(super) fn inventory_slot_reader_accepts(slot0: i32) -> bool {
     slot0 == -1                            // Lua 0      the ammo leg
         || (0x00..=0x16).contains(&slot0)  // Lua 1..=23   the doll + the four equipped bags
-        || (0x27..=0x3e).contains(&slot0)  // Lua 40..=63  the bank vault
-        || (0x3f..=0x44).contains(&slot0)  // Lua 64..=69  the bank bag slots
+        || (0x27..=0x42).contains(&slot0)  // Lua 40..=67  the bank vault
+        || (0x43..=0x49).contains(&slot0)  // Lua 68..=74  the bank bag slots
         || (0x56..=0x75).contains(&slot0) // Lua 87..=118 the keyring (`0x5e7cd0`)
 }
 
@@ -1648,9 +1649,9 @@ mod tests {
         );
         assert_eq!(count(22), 7, "an ordinary item is still its stack count");
         assert_eq!(
-            count(64),
+            count(68),
             0,
-            "0-based 63 is past 0x16: every container short-circuits, quiver or not"
+            "0-based 67 is past 0x16: every container short-circuits, quiver or not"
         );
 
         // Both arms raise. The backpack's item slots (Lua 24..=39) are outside the whitelist.

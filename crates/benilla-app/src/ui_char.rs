@@ -607,7 +607,7 @@ fn combat_stats(
 
 /// One slot's view from the item object and its ask-once template (no icon while in flight).
 /// Keyed by guid and live id: the doll (`PLAYER_FIELD_INV_SLOT_*`, live id = slot + 1) and the
-/// bank bags (`PLAYER_FIELD_BANK_BAG_SLOT_*`, 64..=69) read their guids from different arrays.
+/// bank bags (`PLAYER_FIELD_BANK_BAG_SLOT_*`, 68..=74) read their guids from different arrays.
 fn slot_view(
     objects: &Objects,
     items: &Items,
@@ -831,7 +831,7 @@ fn inventory_slots(
     inv
 }
 
-/// The six bank-bag slots' views (live ids 64..=69). They are inventory slots, streamed whether
+/// The seven bank-bag slots' views (live ids 68..=74). They are inventory slots, streamed whether
 /// or not a banker is open, and the stock bank reads them through `BankButtonIDToInvSlotID(i, 1)`
 /// (`BankFrame.lua:28-35, 199-204`), so they ride this feed rather than the bank window's state.
 fn bank_bag_slots(
@@ -868,8 +868,8 @@ fn bank_bag_slots(
     bags
 }
 
-/// `BankButtonIDToInvSlotID(1, isBag)`: the first of the six bank-bag slots' live ids.
-const BANK_BAG_LIVE_FIRST: u32 = 64;
+/// `BankButtonIDToInvSlotID(5, isBag)`: the first of the seven bank-bag slots' live ids.
+const BANK_BAG_LIVE_FIRST: u32 = 68;
 
 /// Fire the paper doll's repaint events for one unit's snapshot transition, `arg1 = token`: the
 /// eight unit-stat events both pages register (`PaperDollFrame.lua:14-28`,
@@ -1149,20 +1149,19 @@ pub(crate) fn feed_char(
         sub_classes.as_deref(),
     );
     // Both bands push under one `UNIT_INVENTORY_CHANGED`: one wire update, one event.
-    // `PLAYERBANKSLOTS_CHANGED`'s two producers, planned off the old memo: `false` is the
-    // descriptor watcher (`0x5ddd6e`: a bag arrived, left or was swapped), `true` the item-object
-    // path (`0x4c728d`: the same bag's own fields changed).
+    // `PLAYERBANKSLOTS_CHANGED(slot)`'s two producers, planned off the old memo: the descriptor
+    // watcher (`0x6dedd0`: a bag arrived, left or was swapped) and the item-object path
+    // (`0x5e84c0`: the same bag's own fields changed), both naming the bank slot, 29-35 for the
+    // bags (player slot less 38, `0x5e857f`).
     let bank_bag_guids: [u64; BANK_BAG_SLOT_COUNT] =
         std::array::from_fn(|i| store.0.player_bank_bag_slot(i as u8).unwrap_or(0));
-    let repainted: Vec<bool> = (0..BANK_BAG_SLOT_COUNT)
-        .filter_map(|i| {
-            if bank_bag_guids[i] != memo.last_bank_bag_guids[i] {
-                Some(false)
-            } else {
-                let was = memo.last_bank_bags.as_ref().and_then(|b| b[i].as_ref());
-                (!same_item(was, bank_bags[i].as_ref())).then_some(true)
-            }
+    let repainted: Vec<i64> = (0..BANK_BAG_SLOT_COUNT)
+        .filter(|&i| {
+            let was = memo.last_bank_bags.as_ref().and_then(|b| b[i].as_ref());
+            bank_bag_guids[i] != memo.last_bank_bag_guids[i]
+                || !same_item(was, bank_bags[i].as_ref())
         })
+        .map(|i| BANK_BAG_EVENT_FIRST + i as i64)
         .collect();
     memo.last_bank_bag_guids = bank_bag_guids;
     if memo.last_inv.as_ref() != Some(&inv) || memo.last_bank_bags.as_ref() != Some(&bank_bags) {
@@ -1173,10 +1172,7 @@ pub(crate) fn feed_char(
             "UNIT_INVENTORY_CHANGED",
             vec![ScriptValue::Str("player".to_string())],
         );
-        // The bank bag buttons repaint only on this and `BANKFRAME_OPENED`
-        // (`BankFrame.lua:206-208`). One event per changed slot: the descriptor watcher signals
-        // through `0x703e50` with no arguments, the item path through `SignalEvent2` with
-        // `"player"`.
+        // The bank bag buttons repaint only on this and `BANKFRAME_OPENED` (`BankFrame.lua`).
         memo.last_inv = Some(inv);
         memo.last_bank_bags = Some(bank_bags);
     }
@@ -1184,15 +1180,13 @@ pub(crate) fn feed_char(
     if !repainted.is_empty() {
         gate.audit("feed_char", "a bank bag slot transition");
     }
-    for same_bag in repainted {
-        let args = if same_bag {
-            vec![ScriptValue::Str("player".to_string())]
-        } else {
-            Vec::new()
-        };
-        script.fire_event("PLAYERBANKSLOTS_CHANGED", args);
+    for slot in repainted {
+        script.fire_event("PLAYERBANKSLOTS_CHANGED", vec![ScriptValue::Int(slot)]);
     }
 }
+
+/// `PLAYERBANKSLOTS_CHANGED`'s slot for the first bank bag: after the 28 vault slots.
+const BANK_BAG_EVENT_FIRST: i64 = 29;
 
 /// Whether two bank-bag views hold the same item; `locked` is `ITEM_LOCK_CHANGED`'s business.
 fn same_item(a: Option<&InvSlotView>, b: Option<&InvSlotView>) -> bool {
@@ -1286,7 +1280,7 @@ mod tests {
     }
 
     /// `PLAYER_FIELD_BANK_BAG_SLOT_1`, bank bag slot 0's guid pair.
-    const F_BANK_BAG_1: u16 = 612;
+    const F_BANK_BAG_1: u16 = 1572;
     /// `OBJECT_FIELD_ENTRY` on the item object.
     const F_OBJECT_ENTRY: u16 = 3;
     /// `ITEM_FIELD_STACK_COUNT`, one of the six item fields the reference's watcher covers.
@@ -1370,9 +1364,8 @@ mod tests {
         app.world_mut().run_system_once(feed_char).unwrap();
         let events = seen(&mut app);
         assert!(
-            events.contains(&"PLAYERBANKSLOTS_CHANGED nil".to_string()),
-            "the repaint event, and it carries NO argument — `0x703e50` pushes none, and the \
-             recorder stringifies the absent arg1 as nil. Got {events:?}"
+            events.contains(&"PLAYERBANKSLOTS_CHANGED 29".to_string()),
+            "the repaint event names bank slot 29, the first bag's (`0x5e857f`). Got {events:?}"
         );
         assert!(
             events.contains(&"UNIT_INVENTORY_CHANGED player".to_string()),
@@ -1380,12 +1373,12 @@ mod tests {
         );
     }
 
-    /// A bag's own field moving is the item-object path (`0x4c7180`), which pushes `"player"`.
+    /// A bag's own field moving is the item-object path (`0x5e84c0`), which names the slot too.
     #[test]
     fn a_bank_bags_own_field_moving_fires_the_item_object_producer() {
         let mut app = world_with_bank_bag(Some(BAG));
         app.world_mut().run_system_once(feed_char).unwrap();
-        assert!(seen(&mut app).contains(&"PLAYERBANKSLOTS_CHANGED nil".to_string()));
+        assert!(seen(&mut app).contains(&"PLAYERBANKSLOTS_CHANGED 29".to_string()));
 
         // The same bag guid, restacked: only the item object moved.
         restream(
@@ -1396,8 +1389,8 @@ mod tests {
         app.world_mut().run_system_once(feed_char).unwrap();
         let events = seen(&mut app);
         assert!(
-            events.contains(&"PLAYERBANKSLOTS_CHANGED player".to_string()),
-            "the item path pushes the token, got {events:?}"
+            events.contains(&"PLAYERBANKSLOTS_CHANGED 29".to_string()),
+            "the item path names the slot, got {events:?}"
         );
     }
 
@@ -1434,13 +1427,10 @@ mod tests {
         set_slots(&mut app, BAG2, BAG);
         app.world_mut().run_system_once(feed_char).unwrap();
         let events = seen(&mut app);
-        assert_eq!(
-            events
-                .iter()
-                .filter(|e| *e == "PLAYERBANKSLOTS_CHANGED nil")
-                .count(),
-            2,
-            "one argless event per slot whose guid moved, got {events:?}"
+        assert!(
+            events.contains(&"PLAYERBANKSLOTS_CHANGED 29".to_string())
+                && events.contains(&"PLAYERBANKSLOTS_CHANGED 30".to_string()),
+            "one event per slot whose guid moved, got {events:?}"
         );
     }
 
@@ -1488,7 +1478,7 @@ mod tests {
         assert!(
             app.world_mut()
                 .non_send_resource_mut::<UiScript>()
-                .eval::<bool>(r#"return IsInventoryItemLocked(64) and true or false"#)
+                .eval::<bool>(r#"return IsInventoryItemLocked(68) and true or false"#)
                 .unwrap(),
             "in flight, the slot reads locked"
         );
@@ -1503,7 +1493,7 @@ mod tests {
         assert!(
             !app.world_mut()
                 .non_send_resource_mut::<UiScript>()
-                .eval::<bool>(r#"return IsInventoryItemLocked(64) and true or false"#)
+                .eval::<bool>(r#"return IsInventoryItemLocked(68) and true or false"#)
                 .unwrap(),
             "the unlock has to reach the VM in the same frame it happened"
         );

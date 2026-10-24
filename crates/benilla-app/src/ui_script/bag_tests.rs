@@ -1383,11 +1383,10 @@ fn the_bar_bag_buttons_name_themselves_on_hover() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// A keyring container (id -2) fed as the app feeds it, `size` being what `keyring_size(level)`
-/// gives, with a key in slot 1 when `occupied`.
 /// The keyring's slots: `GetContainerNumSlots(KEYRING_CONTAINER)` is a flat 32 (`0x5d74a0`).
 const KEYRING_SLOTS: u32 = 32;
 
+/// A keyring container (id -2) of `size` slots, with a key in slot 1 when `occupied`.
 fn keyring(size: u32, occupied: bool) -> ContainerState {
     let mut slots = std::collections::HashMap::new();
     if occupied {

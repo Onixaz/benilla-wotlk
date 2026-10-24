@@ -12,7 +12,9 @@
 
 use bevy::prelude::*;
 
-use benilla_protocol::messages::{BAG_PLAYER_INVENTORY, SLOT_PACK_FIRST};
+use benilla_protocol::messages::{
+    BAG_PLAYER_INVENTORY, BANK_BAGS, BANK_SLOTS, SLOT_BANK_FIRST, SLOT_PACK_FIRST,
+};
 use benilla_protocol::EntityKind;
 use benilla_ui::script::UiScript;
 
@@ -31,16 +33,8 @@ const NPC_FLAG_BANKER: u32 = crate::target::cursor_mode::npc_flags::BANKER;
 const SCAN_RANGE: f32 = 12.0;
 /// The deposit/withdraw fixture: Linen Cloth.
 const ITEM_ENTRY: u32 = 2589;
-/// The first bank slot's wire index: `SLOT_PACK_FIRST` (23) plus the backpack's 16; bank slots
-/// are 39-62.
-const SLOT_BANK_FIRST: u8 = SLOT_PACK_FIRST + 16;
-/// `BankBagSlotPrices.dbc`'s ladder, indexed by slots already bought; used only if
-/// [`BankPrices`] failed to load.
-const PRICE_LADDER: [u32; 6] = [1_000, 10_000, 100_000, 250_000, 500_000, 1_000_000];
 /// Slack over the exact shortfall when the buy-slot step funds itself.
 const FUND_MARGIN_COPPER: u32 = 10_000;
-/// The purchasable-slot ceiling (`GetNumBankSlots()` reports full at 6).
-const MAX_BANK_BAGS: u8 = 6;
 /// How far (yd, WoW x) the refusal step hops, well past `GetNPCIfCanInteractWith`'s range.
 const REFUSAL_OFFSET_X: f32 = 150.0;
 
@@ -73,7 +67,7 @@ struct BankProbe {
     /// The buy-slot step's baseline purchased count, latched before the buy.
     baseline_purchased: u8,
     baseline_money: u32,
-    /// The next rung's price, resolved once (DBC if loaded, else [`PRICE_LADDER`]).
+    /// The next rung's price, resolved once from `BankBagSlotPrices.dbc`, 0 when it is absent.
     next_cost: u32,
     passes: u32,
     fails: u32,
@@ -150,7 +144,7 @@ fn find_pack_item(store: &ObjectStore) -> Option<(u8, u64)> {
 }
 
 fn find_bank_slot(store: &ObjectStore, guid: u64) -> Option<u8> {
-    (0..24u8).find(|&i| store.0.player_bank_slot(i) == Some(guid))
+    (0..BANK_SLOTS).find(|&i| store.0.player_bank_slot(i) == Some(guid))
 }
 
 fn bank_probe(
@@ -366,10 +360,10 @@ fn bank_probe(
                 let money = store.0.player_money().unwrap_or(0);
                 probe.baseline_purchased = purchased;
                 probe.baseline_money = money;
-                if purchased >= MAX_BANK_BAGS {
+                if purchased >= BANK_BAGS {
                     warn!(
                         "PROBE_BANK: SKIP (5 buy_slot) — vault already full ({purchased}/\
-                         {MAX_BANK_BAGS} bags purchased from an earlier run)"
+                         {BANK_BAGS} bags purchased from an earlier run)"
                     );
                     probe.phase = Phase::Refusal {
                         since: now,
@@ -382,7 +376,6 @@ fn bank_probe(
                 let cost = prices
                     .as_ref()
                     .and_then(|p| p.0.next_slot_price(purchased))
-                    .or_else(|| PRICE_LADDER.get(purchased as usize).copied())
                     .unwrap_or(0);
                 probe.next_cost = cost;
                 info!(

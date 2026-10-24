@@ -1,20 +1,20 @@
 //! The bank bindings: the app pushes the open bank's snapshot ([`UiScript::set_bank`]), and
 //! `PurchaseSlot` and `CloseBankFrame` queue intents it drains.
 //!
-//! The vault is container `-1` (24 slots) and containers 5..=10 (the six bags), the reference's
-//! own ids (`BankFrame.lua:1-4`), so the container verbs work on it unchanged. The bag items
-//! themselves are inventory slots 64..=69, read through `GetInventoryItem*` as the reference's bank
-//! reads them (`BankFrame.lua:28`); they stream whether or not a banker is open.
+//! The vault is container `-1` (28 slots) and containers 5..=11 (the seven bags), the reference's
+//! own ids (`BankFrame.xml`), so the container verbs work on it unchanged. The bag items
+//! themselves are inventory slots 68..=74, read through `GetInventoryItem*` as the reference's bank
+//! reads them (`BankFrame.lua:2`); they stream whether or not a banker is open.
 
 use mlua::{Lua, MultiValue, Value};
 
 /// The open bank's purchase row, pushed whole by the app.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BankState {
-    /// Purchased bag slots, 0..=6: `PLAYER_BYTES_2` byte 2.
+    /// Purchased bag slots, 0..=7: `PLAYER_BYTES_2` byte 2.
     pub num_purchased: u32,
-    /// The next slot's price in copper, `BankBagSlotPrices.dbc` row `num_purchased + 1`; the rows
-    /// past 6 hold 999999999, and 0 means the row is absent.
+    /// The next slot's price in copper, `BankBagSlotPrices.dbc` row `num_purchased + 1`
+    /// (`0x57bb30`); the rows past 7 hold a sentinel, and 0 means the row is absent.
     pub next_cost: u32,
 }
 
@@ -41,8 +41,7 @@ impl super::UiScript {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // GetNumBankSlots() → numSlots, full: `full` is 1 from six slots up, else nil (`0x4f85b0`:
-    // `cmp esi,6; jl`).
+    // GetNumBankSlots() → numSlots, full: `full` is 1 from seven slots up, else nil (`0x57bab0`).
     g.set(
         "GetNumBankSlots",
         lua.create_function(|lua, ()| {
@@ -52,7 +51,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .expect("model app_data");
                 model.bank.as_ref().map_or(0, |b| b.num_purchased)
             };
-            let full = if n >= 6 {
+            let full = if n >= 7 {
                 Value::Integer(1)
             } else {
                 Value::Nil
@@ -94,12 +93,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // BankButtonIDToInvSlotID(id, isBag) (`0x4f8530`): `id + 39` for an item button, `id + 59`
-    // for a bag button, whose id is the container id 5..=10 (`BankFrame.xml:372`), the same
-    // arithmetic as `ContainerIDToInventoryID`'s bank-bag arm (`0x4f94e0`). There is no range
-    // check. `isBag` is `lua_isnumber(L, 2)` (`0x4f8576`), not truthiness: `true` takes the item
-    // arm, `0` and `"1"` the bag arm; stock sets `this.isBag = 1` (`BankFrame.lua:24`). Argument 1
-    // truncates toward zero (`0x40a2b0`), and its usage string names only `buttonID`.
+    // BankButtonIDToInvSlotID(id, isBag) (`0x57b940`): `id + 39` for an item button, `id + 63`
+    // for a bag button, whose id is the container id 5..=11 (`BankFrame.xml`), the same answer as
+    // `ContainerIDToInventoryID`'s bank-bag arm. There is no range check. `isBag` is
+    // `lua_isnumber(L, 2)` (`0x57b982`), not truthiness: `true` takes the item arm, `0` and `"1"`
+    // the bag arm; stock sets `self.isBag = 1` (`BankFrame.lua:20`). Argument 1 truncates toward
+    // zero (`0x88b9c0`), and its usage string names only `buttonID`.
     g.set(
         "BankButtonIDToInvSlotID",
         lua.create_function(|lua, (id, is_bag): (Value, Option<Value>)| {
@@ -111,7 +110,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let is_bag = is_bag
                 .and_then(|v| lua.coerce_number(v).ok().flatten())
                 .is_some();
-            let step = if is_bag { 59 } else { 39 };
+            let step = if is_bag { 63 } else { 39 };
             Ok(i64::from(n.wrapping_add(step)))
         })?,
     )?;
@@ -141,13 +140,21 @@ mod tests {
             .unwrap());
         assert_eq!(s.eval::<i64>("return GetBankSlotCost(2)").unwrap(), 100_000);
 
-        // Six purchased: full = 1, and 999999999 is the DBC's sentinel row.
+        // Six purchased is not yet full.
         s.set_bank(Some(BankState {
             num_purchased: 6,
+            next_cost: 250_000,
+        }));
+        assert!(s
+            .eval::<bool>("local n, full = GetNumBankSlots()\nreturn n == 6 and full == nil")
+            .unwrap());
+        // Seven purchased: full = 1, and 999999999 is the DBC's sentinel row.
+        s.set_bank(Some(BankState {
+            num_purchased: 7,
             next_cost: 999_999_999,
         }));
         assert!(s
-            .eval::<bool>("local n, full = GetNumBankSlots()\nreturn n == 6 and full == 1")
+            .eval::<bool>("local n, full = GetNumBankSlots()\nreturn n == 7 and full == 1")
             .unwrap());
 
         s.set_bank(None);
@@ -156,13 +163,13 @@ mod tests {
             .unwrap());
     }
 
-    /// The bank bags are inventory slots 64..=69, as the reference's bank reads them
-    /// (`BankFrame.lua:28`).
+    /// The bank bags are inventory slots 68..=74, as the reference's bank reads them
+    /// (`BankFrame.lua:2`).
     #[test]
     fn bank_bag_slots_read_through_the_inventory_api() {
         let mut s = UiScript::new().unwrap();
         assert!(s
-            .eval::<bool>("return GetInventoryItemTexture(\"player\", 64) == nil")
+            .eval::<bool>("return GetInventoryItemTexture(\"player\", 68) == nil")
             .unwrap());
 
         let mut bags: crate::script::BankBagSlots = Default::default();
@@ -179,28 +186,28 @@ mod tests {
         assert_eq!(
             s.eval::<i64>("return BankButtonIDToInvSlotID(5, 1)")
                 .unwrap(),
-            64,
+            68,
             "BankFrameBag1's own id is 5 — the container id, not a bag number"
         );
         assert_eq!(
-            s.eval::<String>("return GetInventoryItemTexture(\"player\", 64)")
+            s.eval::<String>("return GetInventoryItemTexture(\"player\", 68)")
                 .unwrap(),
             "Interface\\Icons\\INV_Misc_Bag_08"
         );
         assert_eq!(
             s.eval::<i64>(
-                "local _, _, id = string.find(GetInventoryItemLink(\"player\", 64), \"item:(%d+)\") \
+                "local _, _, id = string.find(GetInventoryItemLink(\"player\", 68), \"item:(%d+)\") \
                  return tonumber(id)"
             )
             .unwrap(),
             4500
         );
-        // Slot 65 is empty and 70 is past the band; neither falls through to the doll.
+        // Slot 69 is empty; neither it nor the last bag slot, 74, falls through to the doll.
         assert!(s
-            .eval::<bool>("return GetInventoryItemTexture(\"player\", 65) == nil")
+            .eval::<bool>("return GetInventoryItemTexture(\"player\", 69) == nil")
             .unwrap());
         assert!(s
-            .eval::<bool>("return GetInventoryItemTexture(\"player\", 70) == nil")
+            .eval::<bool>("return GetInventoryItemTexture(\"player\", 74) == nil")
             .unwrap());
     }
 
@@ -240,7 +247,7 @@ mod tests {
             Some(super::super::ContainerState {
                 bag_family: 0,
                 name: Some("Bank".into()),
-                num_slots: 24,
+                num_slots: 28,
                 slots,
             }),
         );
@@ -278,8 +285,8 @@ mod tests {
             .unwrap());
     }
 
-    /// Item buttons 1..=24 map to 40..=63 and bag buttons, whose ids are the container ids 5..=10,
-    /// to 64..=69; the wire slot is one less.
+    /// Item buttons 1..=28 map to 40..=67 and bag buttons, whose ids are the container ids 5..=11,
+    /// to 68..=74; the wire slot is one less.
     #[test]
     fn bank_button_to_inv_slot() {
         let s = UiScript::new().unwrap();
@@ -288,24 +295,24 @@ mod tests {
             40
         );
         assert_eq!(
-            s.eval::<i64>("return BankButtonIDToInvSlotID(24)").unwrap(),
-            63
+            s.eval::<i64>("return BankButtonIDToInvSlotID(28)").unwrap(),
+            67
         );
         assert_eq!(
             s.eval::<i64>("return BankButtonIDToInvSlotID(5, 1)")
                 .unwrap(),
-            64,
+            68,
             "BankFrameBag1 carries id 5"
         );
         assert_eq!(
-            s.eval::<i64>("return BankButtonIDToInvSlotID(10, 1)")
+            s.eval::<i64>("return BankButtonIDToInvSlotID(11, 1)")
                 .unwrap(),
-            69,
-            "BankFrameBag6 carries id 10"
+            74,
+            "BankFrameBag7 carries id 11"
         );
         // The same map as `ContainerIDToInventoryID` for a bank bag; a drift would put the bag row
         // and the bag windows on different slots.
-        for id in 5..=10 {
+        for id in 5..=11 {
             assert_eq!(
                 s.eval::<i64>(&format!("return BankButtonIDToInvSlotID({id}, 1)"))
                     .unwrap(),
@@ -327,8 +334,8 @@ mod tests {
             ("BankButtonIDToInvSlotID(5, nil)", 44),
             ("BankButtonIDToInvSlotID(5, {})", 44),
             ("BankButtonIDToInvSlotID(5)", 44),
-            ("BankButtonIDToInvSlotID(5, 0)", 64),
-            ("BankButtonIDToInvSlotID(5, \"1\")", 64),
+            ("BankButtonIDToInvSlotID(5, 0)", 68),
+            ("BankButtonIDToInvSlotID(5, \"1\")", 68),
         ] {
             assert_eq!(
                 s.eval::<i64>(&format!("return {call}")).unwrap(),
@@ -337,7 +344,7 @@ mod tests {
             );
         }
 
-        // No range check: the only compares in `0x4f8530` test `lua_isnumber`'s result.
+        // No range check: the only compares in `0x57b940` test `lua_isnumber`'s result.
         assert_eq!(
             s.eval::<i64>("return BankButtonIDToInvSlotID(25)").unwrap(),
             64
@@ -348,7 +355,7 @@ mod tests {
             -61
         );
 
-        // Argument 1 truncates toward zero (`0x40a2b0`), and the usage string names only
+        // Argument 1 truncates toward zero (`0x88b9c0`), and the usage string names only
         // `buttonID`.
         assert_eq!(
             s.eval::<i64>("return BankButtonIDToInvSlotID(-2.9)")

@@ -278,10 +278,11 @@ impl ScriptItemUse<'_, '_> {
         };
         // With the bank open, a vault or bank-bag item withdraws (`CMSG_AUTOSTORE_BANK_ITEM`) and
         // any other deposits (`CMSG_AUTOBANK_ITEM`): the reference's bank flag, set for bags -1
-        // and 5..10 (`0x4f9820`), picks the opcode (`0x4fa2f2`). Doll clicks come through
-        // `use_inventory_item`, so worn gear keeps its plain use.
+        // and 5..11, picks the opcode. Doll clicks come through `use_inventory_item`, so worn gear
+        // keeps its plain use.
         if !direct && bank.is_open() {
-            let withdrawing = bag == super::BANK_CONTAINER || (5..=10).contains(&bag);
+            let withdrawing = bag == super::BANK_CONTAINER
+                || (super::BANK_BAG_ID_FIRST..=super::BANK_BAG_ID_LAST).contains(&bag);
             if withdrawing {
                 debug!("ui_items: withdraw (lua bag {bag} → wire {bag_index}/{wire_slot})");
                 let _ = ladder.commands.0.send(ClientCommand::AutoStoreBankItem {
@@ -634,9 +635,10 @@ pub(super) fn drain_container_moves(
 }
 
 /// The equip deferral's positions (`0x5e0c40`): slots 0..=22 (equipment and equipped bags) and
-/// 63..=68 (bank bags) of the player's own array; the backpack and keyring are not.
+/// 67..=73 (bank bags) of the player's own array; the backpack and keyring are not.
 fn is_equip_position(bag_index: u8, slot: u8) -> bool {
-    bag_index == BAG_PLAYER_INVENTORY && (slot <= 22 || (63..=68).contains(&slot))
+    let bank_bags = super::BANK_BAG_SLOT_FIRST..super::BANK_BAG_SLOT_FIRST + super::BANK_BAGS;
+    bag_index == BAG_PLAYER_INVENTORY && (slot <= 22 || bank_bags.contains(&slot))
 }
 
 /// One container move: the soulbind deferral, then the send and a lock on both ends. A whole stack

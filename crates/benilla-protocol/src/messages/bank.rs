@@ -1,5 +1,5 @@
 //! Bank messages: open the window, buy a bag slot, move items in and out. The vault itself
-//! streams in the player descriptor (bank slots 39-62, bank bags 63-68).
+//! streams in the player descriptor (bank slots 39-66, bank bags 67-73).
 
 use std::io;
 

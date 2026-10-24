@@ -395,7 +395,7 @@ fn repair_costs(
                 .insert((crate::ui_items::BANK_CONTAINER, u32::from(i) + 1), c);
         }
     }
-    // Bags 1-4 are inventory slots 19-22, bank bags 5-10 the bank bag slots.
+    // Bags 1-4 are inventory slots 19-22, bank bags 5-11 the bank bag slots.
     let bags = (1..=4u8)
         .map(|b| (i64::from(b), store.player_inv_slot(18 + b)))
         .chain((0..crate::ui_items::BANK_BAGS).map(|i| {
@@ -1370,8 +1370,8 @@ mod tests {
         const ITEM_DURABILITY: u16 = 46;
         let main_hand = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15;
         let backpack_1 = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 23;
-        // `PLAYER_FIELD_BANK_SLOT_1`, inventory slot 39.
-        let bank_1 = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 39;
+        // `PLAYER_FIELD_BANK_SLOT_1`, inventory slot 39, in the shared space past the player end.
+        let bank_1 = 1516;
 
         let (mut app, me) = repair_app(main_hand);
         app.add_systems(Update, feed_repair_costs);

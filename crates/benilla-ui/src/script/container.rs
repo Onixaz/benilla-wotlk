@@ -1,6 +1,6 @@
 //! The 1.12 bag verbs, all bare globals. The app pushes each bag's resolved snapshot and drains
 //! the intents the verbs queue; the engine holds no item knowledge. Bag ids are the 1.12 client's
-//! (0 the backpack, 1-4 the worn bags, -1 the bank's own slots, 5-10 the bank bags, -2 the
+//! (0 the backpack, 1-4 the worn bags, -1 the bank's own slots, 5-11 the bank bags, -2 the
 //! keyring); slots are 1-based.
 
 use mlua::{Lua, Table, Value};
@@ -127,7 +127,7 @@ pub struct ContainerMove {
 pub struct BagAutoStore {
     pub src_bag: i64,
     pub src_slot: u32,
-    /// The container id: 0 the backpack, 1-4 a worn bag, 5-10 a bank bag.
+    /// The container id: 0 the backpack, 1-4 a worn bag, 5-11 a bank bag.
     pub dst_bag: i64,
     pub count: Option<u32>,
 }
@@ -429,9 +429,9 @@ fn queue_move(
 /// Register the container verbs as bare globals, as `reference/3.3.5a-globals.tsv` lists them;
 /// `C_Container` is a later client's namespace, and an addon that finds it assumes that client.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
-    // ContainerIDToInventoryID(containerID) (`0x4f94e0`): `id - 1`, then +20 below 4 else +60, so
-    // the keyring -2 → 17, the backpack 0 → 19, bags 1-4 → 20-23 and bank bags 5-10 → 64-69, with
-    // no special case and no range check.
+    // ContainerIDToInventoryID(containerID) (`0x5d6f60`): `id - 1` must be 0..=10 unsigned
+    // (`0x5d6f9f`), else it raises, so the backpack 0, the bank -1 and the keyring -2 raise; then
+    // +20 below 4 and +64 from 4, bags 1-4 → 20-23 and bank bags 5-11 → 68-74.
     lua.globals().set(
         "ContainerIDToInventoryID",
         lua.create_function(|lua, id: Value| {
@@ -440,13 +440,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 id,
                 "Usage: ContainerIDToInventoryID(containerID)",
             )?;
-            // The reference's steps and signed compare (`0x4f9524 jl`), wrapping at the `i32` edge.
             let t = id.wrapping_sub(1);
-            Ok(i64::from(if t < 4 {
-                t.wrapping_add(20)
-            } else {
-                t.wrapping_add(60)
-            }))
+            if !(0..=10).contains(&t) {
+                return Err(mlua::Error::runtime(
+                    "ContainerIDToInventoryID(): invalid container ID",
+                ));
+            }
+            Ok(i64::from(if t < 4 { t + 20 } else { t + 64 }))
         })?,
     )?;
 
@@ -475,12 +475,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                // Worn bags sit in inventory slots 20-23; a bank bag in the bank verbs' own slot
-                // map (`BankButtonIDToInvSlotID`), which is still the 1.12 layout.
+                // Worn bags sit in inventory slots 20-23, bank bags in 68-74.
                 let slot = if index < 4 {
                     Some(index + 20)
                 } else {
-                    model.bank.is_some().then_some(index + 60)
+                    model.bank.is_some().then_some(index + 64)
                 };
                 slot.and_then(|s| usize::try_from(s).ok())
                     .and_then(|s| model.inv_slot("player", s))
@@ -1526,41 +1525,51 @@ mod tests {
             .unwrap());
     }
 
-    // ── `ContainerIDToInventoryID` (`0x4f94e0`) ─────────────────────────────────────
+    // ── `ContainerIDToInventoryID` (`0x5d6f60`) ─────────────────────────────────────
 
     #[test]
-    fn container_id_to_inventory_id_is_two_lines_with_no_clamp() {
+    fn container_id_to_inventory_id_maps_bags_1_to_11() {
         let s = UiScript::new().unwrap();
         let slot = |id: &str| {
             s.eval::<i64>(&format!("return ContainerIDToInventoryID({id})"))
                 .unwrap()
         };
-        // The `id <= 4` line: the keyring, -1, the backpack, the four worn bags.
-        assert_eq!(slot("-2"), 17, "keyring — an ordinary point, not a case");
-        assert_eq!(slot("-1"), 18);
-        assert_eq!(slot("0"), 19, "backpack — likewise");
         assert_eq!(
             (slot("1"), slot("2"), slot("3"), slot("4")),
             (20, 21, 22, 23)
         );
-        // The `id >= 5` line: the bank bags.
-        assert_eq!(slot("5"), 64, "the jump — +59, not +19");
-        assert_eq!((slot("6"), slot("10")), (65, 69));
-        // No range check, no clamp, and never nil: out of range is an ordinary number.
+        // The bank bags: +63 from 5.
+        assert_eq!(slot("5"), 68, "the jump — +63, not +19");
+        assert_eq!((slot("6"), slot("11")), (69, 74));
         assert_eq!(
-            slot("99"),
-            158,
-            "the value `SetInventoryItem` would receive"
-        );
-        assert_eq!(slot("-100"), -81, "negatives run off the line too");
-        assert_eq!(
-            s.arity("ContainerIDToInventoryID(99)").unwrap(),
+            s.arity("ContainerIDToInventoryID(11)").unwrap(),
             1,
             "one value on every non-raising path"
         );
-        // `0x40a2b0` truncates toward zero, a C cast, not `floor`.
+        // `0x88b9c0` truncates toward zero, a C cast, not `floor`.
         assert_eq!(slot("2.9"), 21, "2.9 -> 2");
-        assert_eq!(slot("-2.9"), 17, "-2.9 -> -2, NOT -3");
+        assert_eq!(slot("11.9"), 74, "11.9 -> 11");
+    }
+
+    /// `id - 1` outside 0..=10 raises (`0x5d6fd6`): the backpack, the bank and the keyring too.
+    #[test]
+    fn container_id_to_inventory_id_raises_outside_bags_1_to_11() {
+        let s = UiScript::new().unwrap();
+        for id in ["0", "-1", "-2", "12", "-0.5", "99"] {
+            let err = s
+                .eval::<mlua::Value>(&format!("return ContainerIDToInventoryID({id})"))
+                .unwrap_err();
+            assert!(
+                format!("{err}").contains("ContainerIDToInventoryID(): invalid container ID"),
+                "{id} must raise, got {err}"
+            );
+        }
+        // The argument truncates first: -0.5 is 0 above, and 1.5 is bag 1.
+        assert_eq!(
+            s.eval::<i64>("return ContainerIDToInventoryID(1.5)")
+                .unwrap(),
+            20
+        );
     }
 
     /// A missing or non-number argument raises: the type test's error `0x6f4940` does not return.

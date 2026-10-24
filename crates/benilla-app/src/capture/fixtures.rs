@@ -297,8 +297,8 @@ pub(super) fn seed_ui_fixture(
                     ..Default::default()
                 }),
             );
-            // Vault items (bank slots 0, 1, 2, 7 at fields 564+2i) and the bank bag in bag slot 0
-            // (field 612); the bag borrows the hearthstone display as a stand-in.
+            // Vault items (bank slots 0, 1, 2, 7 at fields 1516+2i) and the bank bag in bag slot 0
+            // (field 1572); the bag borrows the hearthstone display as a stand-in.
             const G_SHIELD: u64 = 0x2001;
             const G_JERKY: u64 = 0x2002;
             const G_SWORD: u64 = 0x2003;
@@ -338,17 +338,17 @@ pub(super) fn seed_ui_fixture(
                 true,
             );
             // The self player: 4 vault slots, the bank bag, two bought bag slots (`PLAYER_BYTES_2`
-            // byte 2: button 1 owned, 2 bought and empty, 3-6 unpurchased red) and a 12g 34s 56c
+            // byte 2: button 1 owned, 2 bought and empty, 3-7 unpurchased red) and a 12g 34s 56c
             // purse, under which the 10g third-slot cost (`BankBagSlotPrices.dbc`) is affordable.
             const PLAYER_GUID: u64 = 0x51;
             let fields = ObjectFields::from_pairs(&[
-                (194, 2 << 16),          // PLAYER_BYTES_2: bankBagSlots (byte 2) = 2
-                (564, G_SHIELD as u32),  // BANK_SLOT_1 (vault slot 0)
-                (566, G_JERKY as u32),   // vault slot 1
-                (568, G_SWORD as u32),   // vault slot 2
-                (578, G_STONE as u32),   // vault slot 7, after a gap
-                (612, G_BANKBAG as u32), // BANK_BAG_SLOT_1: bag button 1's icon
-                (1176, 123_456),         // PLAYER_FIELD_COINAGE
+                (194, 2 << 16),           // PLAYER_BYTES_2: bankBagSlots (byte 2) = 2
+                (1516, G_SHIELD as u32),  // BANK_SLOT_1 (vault slot 0)
+                (1518, G_JERKY as u32),   // vault slot 1
+                (1520, G_SWORD as u32),   // vault slot 2
+                (1530, G_STONE as u32),   // vault slot 7, after a gap
+                (1572, G_BANKBAG as u32), // BANK_BAG_SLOT_1: bag button 1's icon
+                (1176, 123_456),          // PLAYER_FIELD_COINAGE
             ]);
             names.insert_player(PLAYER_GUID, "Benilla".into(), None);
             commands.spawn((

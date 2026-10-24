@@ -99,7 +99,7 @@ pub struct ItemStatsHead {
 pub struct RepairCosts {
     /// Equipped items by live inventory id.
     pub equipped: std::collections::HashMap<u32, u32>,
-    /// Container items by `(bag, slot)`: bags 0-4, the bank vault -1 and bank bags 5-10.
+    /// Container items by `(bag, slot)`: bags 0-4, the bank vault -1 and bank bags 5-11.
     pub bags: std::collections::HashMap<(i64, u32), u32>,
 }
 

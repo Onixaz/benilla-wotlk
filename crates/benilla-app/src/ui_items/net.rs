@@ -62,7 +62,7 @@ pub(super) fn container_of(
         .find(|i| store.player_inv_slot(BAG_SLOT_FIRST + i) == Some(item))
         .map(|i| i64::from(i) + 1)
         .or_else(|| {
-            (0..6u8)
+            (0..super::BANK_BAGS)
                 .find(|j| store.player_bank_bag_slot(*j) == Some(item))
                 .map(|j| BANK_BAG_ID_FIRST + i64::from(j))
         })
@@ -191,8 +191,8 @@ mod open_container_tests {
     use super::*;
     use benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD;
 
-    /// `PLAYER_FIELD_BANK_BAG_SLOT_1`, field 612 (private to the fields module).
-    const BANK_BAG_SLOT_1: u16 = 612;
+    /// `PLAYER_FIELD_BANK_BAG_SLOT_1`, field 1572 (private to the fields module).
+    const BANK_BAG_SLOT_1: u16 = 1572;
 
     /// A self descriptor holding the given guids at the given first-dword indices.
     fn store(guids: &[(u16, u64)]) -> ObjectFields {

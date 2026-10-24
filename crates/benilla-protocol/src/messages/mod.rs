@@ -178,9 +178,10 @@ pub use instance::{
 pub use items::{
     auto_equip_item, auto_store_bag_item, decode_item_query_response, destroy_item, item_query,
     open_item, set_ammo, split_item, swap_inv_item, swap_item, use_item, wrap_item, ItemDamage,
-    ItemInfo, ItemSpellEntry, ItemUseSpell, UseItemTarget, BAG_PLAYER_INVENTORY,
-    ITEM_DYNFLAG_UNLOCKED, ITEM_DYNFLAG_WRAPPED, ITEM_FLAG_LOOTABLE, ITEM_FLAG_WRAPPER,
-    SLOT_BAG_FIRST, SLOT_PACK_FIRST,
+    ItemInfo, ItemSpellEntry, ItemUseSpell, UseItemTarget, BAG_PLAYER_INVENTORY, BANK_BAGS,
+    BANK_SLOTS, ITEM_DYNFLAG_UNLOCKED, ITEM_DYNFLAG_WRAPPED, ITEM_FLAG_LOOTABLE, ITEM_FLAG_WRAPPER,
+    KEYRING_SLOTS, SLOT_BAG_FIRST, SLOT_BANK_BAG_FIRST, SLOT_BANK_FIRST, SLOT_KEYRING_FIRST,
+    SLOT_PACK_FIRST,
 };
 pub use lfg::{
     lfg_comment, lfg_join, lfg_proposal_result, LfgBootProposal, LfgCompletionReward,

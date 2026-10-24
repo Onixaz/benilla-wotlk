@@ -107,19 +107,20 @@ fn buy_bank_slot_result_wire() {
 
 #[test]
 fn player_bank_bag_slot_field() {
-    // FIELD_PLAYER_BANK_BAG_SLOT_1 = 612 (564 + 24×2): bank bag 0's guid lives at fields 612/613.
-    let f = ObjectFields::from_pairs(&[(612, 0xEF), (613, 0)]);
+    // The shared space keeps the seven bank-bag guids past the 1.12.1 player end, from field 1572
+    // (after the 28 bank slots at 1516).
+    let f = ObjectFields::from_pairs(&[(1572, 0xEF), (1573, 0)]);
     assert_eq!(f.player_bank_bag_slot(0), Some(0xEF));
     assert_eq!(f.player_bank_bag_slot(1), None, "unsent slot reads None");
     assert_eq!(
-        f.player_bank_bag_slot(6),
+        f.player_bank_bag_slot(7),
         None,
-        "out of range (only 6 bag slots)"
+        "out of range (only 7 bag slots)"
     );
 
-    // Bag slot 5 (the 6th, last purchasable slot): fields 622/623.
-    let f5 = ObjectFields::from_pairs(&[(622, 0x1234), (623, 0)]);
-    assert_eq!(f5.player_bank_bag_slot(5), Some(0x1234));
+    // Bag slot 6 (the 7th, last purchasable slot): fields 1584/1585.
+    let f6 = ObjectFields::from_pairs(&[(1584, 0x1234), (1585, 0)]);
+    assert_eq!(f6.player_bank_bag_slot(6), Some(0x1234));
 }
 
 #[test]
@@ -134,6 +135,6 @@ fn player_bank_bag_slots_purchased_field() {
     let empty = ObjectFields::from_pairs(&[]);
     assert_eq!(empty.player_bank_bag_slots_purchased(), None);
 
-    let full = ObjectFields::from_pairs(&[(194, 6 << 16)]);
-    assert_eq!(full.player_bank_bag_slots_purchased(), Some(6));
+    let full = ObjectFields::from_pairs(&[(194, 7 << 16)]);
+    assert_eq!(full.player_bank_bag_slots_purchased(), Some(7));
 }

@@ -275,10 +275,10 @@ const FIELD_CONTAINER_SLOT_1: u16 = 50; // ITEM_END + 0x2; 36 slots × 2
 const FIELD_PLAYER_VISIBLE_ITEM_1_CREATOR: u16 = 258; // UNIT_END + 0x46; 12 fields per slot
 pub const FIELD_PLAYER_INV_SLOT_HEAD: u16 = 486; // 23 slots × 2 (equipment 0–18, bags 19–22)
 const FIELD_PLAYER_PACK_SLOT_1: u16 = 532; // 16 slots × 2 (the backpack)
-const FIELD_PLAYER_BANK_SLOT_1: u16 = 564; // 24 slots × 2
-const FIELD_PLAYER_BANK_BAG_SLOT_1: u16 = 612; // 564 + 24×2; 6 bag slots × 2 (item guids)
+const FIELD_PLAYER_BANK_SLOT_1: u16 = 1516; // 28 slots × 2, past the 1.12.1 player end
+const FIELD_PLAYER_BANK_BAG_SLOT_1: u16 = 1572; // 7 bag slots × 2 (item guids)
 const FIELD_PLAYER_VENDORBUYBACK_SLOT_1: u16 = 624; // 12 slots × 2 (item guids)
-const FIELD_PLAYER_KEYRING_SLOT_1: u16 = 648; // 32 slots × 2 (item guids), wire slots 81–112
+const FIELD_PLAYER_KEYRING_SLOT_1: u16 = 648; // 32 slots × 2 (item guids), player slots 86–117
 pub const FIELD_PLAYER_FARSIGHT: u16 = 712; // our view's anchor (Mind Vision, Sentry Totem), or 0
 const FIELD_PLAYER_BUYBACK_PRICE_1: u16 = 1226; // 12 × u32 copper, indexed slot−69
 const FIELD_PLAYER_BUYBACK_TIMESTAMP_1: u16 = 1238; // 12 × u32, the client's sort key only
@@ -407,7 +407,7 @@ fn descriptor_len(object_type: ObjectType) -> u16 {
         ObjectType::Container => 122, // CONTAINER_END = ITEM_END + 0x4A
         ObjectType::Unit => 188,      // UNIT_END = OBJECT_END + 0xB6
         // 1.12.1's PLAYER_END (UNIT_END + 0x446), plus the 3.3.5a fields kept past it.
-        ObjectType::Player => 1516,
+        ObjectType::Player => 1586,
         ObjectType::GameObject => 26, // GAMEOBJECT_END = OBJECT_END + 0x14
         ObjectType::DynamicObject => 16, // DYNAMICOBJECT_END = OBJECT_END + 0xA
         ObjectType::Corpse => 38,     // CORPSE_END = OBJECT_END + 0x20

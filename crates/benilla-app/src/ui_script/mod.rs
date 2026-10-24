@@ -1082,6 +1082,8 @@ mod mail_frame_tests;
 #[cfg(test)]
 mod paperdoll_stats_tests;
 #[cfg(test)]
+mod bank_ui_tests;
+#[cfg(test)]
 mod talent_ui_tests;
 #[cfg(test)]
 mod tradeskill_ui_tests;

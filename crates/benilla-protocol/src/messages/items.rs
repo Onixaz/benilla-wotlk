@@ -455,12 +455,25 @@ pub fn item_query(entry: u32, guid: u64) -> Vec<u8> {
 }
 
 /// The player's own bag index (`INVENTORY_SLOT_BAG_0`): `slot` then indexes the player's item
-/// array, equipment 0-18, bags 19-22, backpack 23-38 (vmangos `Player.h`).
+/// array: equipment 0-18, bags 19-22, backpack 23-38, bank 39-66, bank bags 67-73, buyback 74-85,
+/// keyring 86-117.
 pub const BAG_PLAYER_INVENTORY: u8 = 255;
 /// The backpack's first player-array slot (`INVENTORY_SLOT_ITEM_START`).
 pub const SLOT_PACK_FIRST: u8 = 23;
 /// The first equipped-bag player-array slot (`INVENTORY_SLOT_BAG_START`; bags occupy 19-22).
 pub const SLOT_BAG_FIRST: u8 = 19;
+/// The bank's first item slot; `GetContainerNumFreeSlots(-1)` walks 39-66 (`0x5d7590`).
+pub const SLOT_BANK_FIRST: u8 = 39;
+/// The bank's item slots, `GetContainerNumSlots(-1)` (`0x5d74a0`).
+pub const BANK_SLOTS: u8 = 28;
+/// The first bank-bag slot; `ContainerIDToInventoryID` maps containers 5-11 to 68-74 (`0x5d6f60`).
+pub const SLOT_BANK_BAG_FIRST: u8 = 67;
+/// The bank bags; `GetNumBankSlots` reports full from 7 (`0x57bab0`).
+pub const BANK_BAGS: u8 = 7;
+/// The keyring's first slot (AzerothCore `KEYRING_SLOT_START`).
+pub const SLOT_KEYRING_FIRST: u8 = 86;
+/// The keyring's slots, `GetContainerNumSlots(-2)` (`0x5d74a0`).
+pub const KEYRING_SLOTS: u8 = 32;
 
 /// The `SpellCastTargets` block of a `CMSG_USE_ITEM`, the same block a `CMSG_CAST_SPELL` carries:
 /// the reference's `SendCast` (`0x6e54f0`) only picks the opcode (`0x6e57d8`).

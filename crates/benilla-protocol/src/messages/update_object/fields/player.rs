@@ -110,21 +110,23 @@ impl ObjectFields {
     pub fn player_pack_slot(&self, i: u8) -> Option<u64> {
         (i < 16).then(|| self.get_guid(FIELD_PLAYER_PACK_SLOT_1 + 2 * u16::from(i)))?
     }
-    /// `PLAYER_FIELD_BANK_SLOT_1 + 2i`: our bank's 24 item guids.
+    /// `PLAYER_FIELD_BANK_SLOT_1 + 2i`: our bank's 28 item guids, player slots 39-66.
     pub fn player_bank_slot(&self, i: u8) -> Option<u64> {
-        (i < 24).then(|| self.get_guid(FIELD_PLAYER_BANK_SLOT_1 + 2 * u16::from(i)))?
+        (i < crate::messages::BANK_SLOTS)
+            .then(|| self.get_guid(FIELD_PLAYER_BANK_SLOT_1 + 2 * u16::from(i)))?
     }
     /// `PLAYER_FIELD_BANK_BAG_SLOT_1 + 2i`: bank bag `i`'s guid; its contents stream on the bag
-    /// item's own `CONTAINER_FIELD_SLOT_*`, addressed as bag 63-68.
+    /// item's own `CONTAINER_FIELD_SLOT_*`, addressed as bag 67-73.
     pub fn player_bank_bag_slot(&self, i: u8) -> Option<u64> {
-        (i < 6).then(|| self.get_guid(FIELD_PLAYER_BANK_BAG_SLOT_1 + 2 * u16::from(i)))?
+        (i < crate::messages::BANK_BAGS)
+            .then(|| self.get_guid(FIELD_PLAYER_BANK_BAG_SLOT_1 + 2 * u16::from(i)))?
     }
-    /// `PLAYER_FIELD_KEYRING_SLOT_1 + 2i`: 32 guids the client walks as slots 81-112, but only
-    /// 16 are addressable (vmangos `KEYRING_SLOT_END 97`) and level unlocks 4, 8, 12 or 16.
+    /// `PLAYER_FIELD_KEYRING_SLOT_1 + 2i`: the keyring's 32 guids, player slots 86-117.
     pub fn player_keyring_slot(&self, i: u8) -> Option<u64> {
-        (i < 32).then(|| self.get_guid(FIELD_PLAYER_KEYRING_SLOT_1 + 2 * u16::from(i)))?
+        (i < crate::messages::KEYRING_SLOTS)
+            .then(|| self.get_guid(FIELD_PLAYER_KEYRING_SLOT_1 + 2 * u16::from(i)))?
     }
-    /// `PLAYER_FIELD_VENDORBUYBACK_SLOT_1 + 2i`: buyback slot `i`, inventory slot `69 + i`.
+    /// `PLAYER_FIELD_VENDORBUYBACK_SLOT_1 + 2i`: buyback slot `i`, player slot `74 + i`.
     pub fn player_buyback_slot(&self, i: u8) -> Option<u64> {
         (i < 12).then(|| self.get_guid(FIELD_PLAYER_VENDORBUYBACK_SLOT_1 + 2 * u16::from(i)))?
     }
@@ -620,8 +622,8 @@ impl ObjectFields {
     pub fn player_facial_hair(&self) -> Option<u8> {
         self.player_bytes_2().map(|b| (b & 0xff) as u8)
     }
-    /// `PLAYER_BYTES_2` byte 2 (`Player.h:347`): bank bag slots bought, of 6; this delta is the
-    /// only reply to a successful `CMSG_BUY_BANK_SLOT` (`PLAYERBANKBAGSLOTS_CHANGED`).
+    /// `PLAYER_BYTES_2` byte 2 (`GetNumBankSlots`, `0x57bab0`): bank bag slots bought, of 7; this
+    /// delta is the only reply to a successful `CMSG_BUY_BANK_SLOT` (`PLAYERBANKBAGSLOTS_CHANGED`).
     pub fn player_bank_bag_slots_purchased(&self) -> Option<u8> {
         self.player_bytes_2().map(|b| ((b >> 16) & 0xff) as u8)
     }

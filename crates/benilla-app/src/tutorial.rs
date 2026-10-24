@@ -259,9 +259,10 @@ const UNIT_FLAG_PVP_ATTACKABLE: u32 = 0x1000;
 const HEARTHSTONE: u32 = 6948;
 const INVTYPE_RANGED: u32 = 15;
 const CLASS_HUNTER: u8 = 3;
-/// The keyring bag and its slot band (`edi == 0xff`, slot ∈ [0x51, 0x70]).
+/// The keyring bag and its slot band (`OnItemPushResult`: bag `0xff`, `slot - 0x56 <= 0x1f`,
+/// `0x523bf9`).
 const KEYRING_BAG: u8 = 0xff;
-const KEYRING_SLOTS: std::ops::RangeInclusive<u32> = 0x51..=0x70;
+const KEYRING_SLOTS: std::ops::RangeInclusive<u32> = 0x56..=0x75;
 
 /// Before the script tick: the sites' asks, the descriptor edges, the timers, the cue and the
 /// event, and the acknowledged bank's push to whichever VM is live.

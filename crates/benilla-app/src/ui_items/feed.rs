@@ -16,8 +16,8 @@ use crate::ui_script::gate;
 
 use super::equip_error::equip_error_key;
 use super::{
-    find_equip_slot, has_key, keyring_size, slot_guid_count, EquipErrors, BAGS, BAG_SLOT_FIRST,
-    BANK_BAGS, BANK_BAG_ID_FIRST, BANK_BAG_SLOT_FIRST, BANK_CONTAINER, BANK_SLOTS,
+    find_equip_slot, has_key, slot_guid_count, EquipErrors, BAGS, BAG_SLOT_FIRST, BANK_BAGS,
+    BANK_BAG_ID_FIRST, BANK_BAG_ID_LAST, BANK_BAG_SLOT_FIRST, BANK_CONTAINER, BANK_SLOTS,
     KEYRING_CONTAINER, KEYRING_SLOTS, PACK_SLOTS,
 };
 
@@ -34,7 +34,7 @@ pub(crate) struct FeedMemory {
     petition_records: gate::Watch,
     enchant_deadlines: gate::Watch,
     /// The last [`SlotGuids::bags`], diffed for `BAG_CLOSED`.
-    bag_guids: [u64; 10],
+    bag_guids: [u64; BAG_IDS],
     /// The last [`SlotGuids::vault`], diffed for `PLAYERBANKSLOTS_CHANGED`.
     vault_guids: [u64; BANK_SLOTS as usize],
 }
@@ -44,11 +44,14 @@ pub(crate) struct FeedMemory {
 /// says what it looks like, so two identical items swapped still register.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub(crate) struct SlotGuids {
-    /// The bag in containers 1..=10 (equipped, then bank bags), indexed `id - 1`.
-    pub bags: [u64; 10],
-    /// The 24 vault slots, indexed `slot - 1`.
+    /// The bag in containers 1..=11 (equipped, then bank bags), indexed `id - 1`.
+    pub bags: [u64; BAG_IDS],
+    /// The 28 vault slots, indexed `slot - 1`.
     pub vault: [u64; BANK_SLOTS as usize],
 }
+
+/// The containers a bag sits in: 1..=4 worn, 5..=11 in the bank.
+const BAG_IDS: usize = BANK_BAG_ID_LAST as usize;
 
 /// A spell's `$`-substituted description, for item trigger and set-bonus lines. An empty one
 /// yields `None` and the caller drops the whole line, prefix included: the item builder
@@ -809,7 +812,7 @@ fn resolve_slot(
 /// Reason 16's `%s`, the target bag's `BagFamily` name ("Only Arrows can be placed in that."), or
 /// `None` to keep the generic line. `bag_slot` is the bag's player-array slot, and the reference's
 /// `0x5ede00` names nothing for 255 (the player's own array) or for a slot at or past
-/// `[player+0x1d38]`, 113 for the local player, so equipped bags (19..22) and bank bags (63..68)
+/// `[player+0x1d38]`, 113 for the local player, so equipped bags (19..22) and bank bags (67..73)
 /// both resolve. It reads the bag family, not the subclass the errorId's name suggests.
 fn bag_family_name(
     player: Option<&ObjectStore>,
@@ -1115,7 +1118,7 @@ pub(crate) fn feed_containers(
             );
         }
 
-        // The bank, container -1 (the vault) and 5..=10 (its bags), fed whether or not the window
+        // The bank, container -1 (the vault) and 5..=11 (its bags), fed whether or not the window
         // is open: the descriptor streams at login.
         let mut slots = HashMap::new();
         for i in 0..BANK_SLOTS {
@@ -1201,12 +1204,10 @@ pub(crate) fn feed_containers(
             );
         }
 
-        // The keyring, container -2: player slots 81.., sized by the level ladder that stock
-        // `GetKeyRingSize` (`ContainerFrame.lua:773`) reads off `UnitLevel` and the server shares.
-        // Slots past the size, which the server refuses, are not fed.
-        let size = keyring_size(store.0.unit_level().unwrap_or(1));
+        // The keyring, container -2: player slots 86-117, a flat 32 (`GetContainerNumSlots(-2)`,
+        // `0x5d74a0`); stock `GetKeyRingSize` rounds the shown rows to the keys it holds.
         let mut slots = HashMap::new();
-        for i in 0..size.min(u32::from(KEYRING_SLOTS)) as u8 {
+        for i in 0..KEYRING_SLOTS {
             let guid = store.0.player_keyring_slot(i).unwrap_or(0);
             if let Some(mut slot) = resolve_slot(
                 guid,
@@ -1232,7 +1233,7 @@ pub(crate) fn feed_containers(
             ContainerState {
                 bag_family: 0,
                 name: Some("Keyring".into()),
-                num_slots: size,
+                num_slots: u32::from(KEYRING_SLOTS),
                 slots,
             },
         );
@@ -1325,19 +1326,21 @@ pub(crate) fn apply_container_source(
     pushed
 }
 
-/// The item guid in vault slot `i` (0-based; player slots 39..62), 0 when empty. The reference's
+/// The item guid in vault slot `i` (0-based; player slots 39..66), 0 when empty. The reference's
 /// band `0x5dd8a0` watches these fields with `0x5ddcf0`.
 fn vault_slot_guid(store: &ObjectStore, i: u8) -> u64 {
     store.0.player_bank_slot(i).unwrap_or(0)
 }
 
-/// The guid of the bag in container `id` (1..=10, equipped then bank bags), 0 when empty or for any
-/// other id. These are the ten slots whose watcher (`0x4f8cc0` installs `0x4f8ec0`) can close a
+/// The guid of the bag in container `id` (1..=11, equipped then bank bags), 0 when empty or for any
+/// other id. These are the eleven slots whose watcher (`0x4f8cc0` installs `0x4f8ec0`) can close a
 /// window; the backpack and keyring loops (`0x4f8db0`) never reach the event.
 fn bag_slot_guid(store: &ObjectStore, id: i64) -> u64 {
     match id {
         1..=4 => store.0.player_inv_slot(BAG_SLOT_FIRST + (id as u8 - 1)),
-        5..=10 => store.0.player_bank_bag_slot(id as u8 - 5),
+        BANK_BAG_ID_FIRST..=BANK_BAG_ID_LAST => {
+            store.0.player_bank_bag_slot((id - BANK_BAG_ID_FIRST) as u8)
+        }
         _ => None,
     }
     .unwrap_or(0)
@@ -1353,7 +1356,7 @@ fn diff_and_push(
     // `BAG_CLOSED` (one fire site, `0x4f92b5`) is the only thing that hides a bag window. It fires
     // when the bag's guid changes from nonzero (`0x4f923d`, `0x4f9247`), so a swapped bag closes
     // and then updates; diffed on the guid, as two identical bags swapped leave the states equal.
-    let closed: Vec<i64> = (1..=10)
+    let closed: Vec<i64> = (1..=BANK_BAG_ID_LAST)
         .filter(|&id| {
             let (was, now) = (
                 memory.bag_guids[id as usize - 1],
@@ -1372,12 +1375,13 @@ fn diff_and_push(
     for id in &closed {
         script.fire_event("BAG_CLOSED", vec![ScriptValue::Int(*id)]);
     }
-    // `PLAYERBANKSLOTS_CHANGED` has two producers in the reference: the slot's guid changing
-    // (`0x5ddcf0` fires `0x5ddd6e`) with no arguments, and the same item's fields changing
-    // (`0x4c7180` fires `0x4c728d`) with `arg1 = "player"`. So the slot's guid decides, not its
-    // view: two identical stacks swapped push equal views and still fire the argless one twice.
-    // Planned before `memory` is rewritten, fired after the push, outside the `changed` gate.
-    let vault: Vec<bool> = {
+    // `PLAYERBANKSLOTS_CHANGED(slot)` has two producers in the reference, the slot's guid changing
+    // (`InventoryUpdate` `0x6dedd0`) and the same item's fields changing (`UpdateItem` `0x5e84c0`),
+    // both passing the bank slot, 1-28 for the vault (`0x5e857f`: player slot less 38). So the
+    // slot's guid decides, not its view: two identical stacks swapped push equal views and still
+    // fire twice. Planned before `memory` is rewritten, fired after the push, outside the `changed`
+    // gate.
+    let vault: Vec<u32> = {
         let empty = HashMap::new();
         let now = fresh.get(&BANK_CONTAINER).map_or(&empty, |c| &c.slots);
         let was = memory
@@ -1385,13 +1389,9 @@ fn diff_and_push(
             .get(&BANK_CONTAINER)
             .map_or(&empty, |c| &c.slots);
         (1..=u32::from(BANK_SLOTS))
-            .filter_map(|slot| {
+            .filter(|&slot| {
                 let i = slot as usize - 1;
-                if guids.vault[i] != memory.vault_guids[i] {
-                    Some(false)
-                } else {
-                    (now.get(&slot) != was.get(&slot)).then_some(true)
-                }
+                guids.vault[i] != memory.vault_guids[i] || now.get(&slot) != was.get(&slot)
             })
             .collect()
     };
@@ -1452,15 +1452,13 @@ fn diff_and_push(
         }
         memory.pushed = fresh;
     }
-    // One event per changed vault slot, with no slot argument: every bank button repaints from
-    // its own slot (`feed_char` fires the same event for the bank-bag buttons).
-    for &same_item in &vault {
-        let args = if same_item {
-            vec![ScriptValue::Str("player".into())]
-        } else {
-            Vec::new()
-        };
-        script.fire_event("PLAYERBANKSLOTS_CHANGED", args);
+    // One event per changed vault slot, naming it (`feed_char` fires slots 29-35 for the
+    // bank-bag buttons).
+    for &slot in &vault {
+        script.fire_event(
+            "PLAYERBANKSLOTS_CHANGED",
+            vec![ScriptValue::Int(i64::from(slot))],
+        );
     }
     // A `BAG_CLOSED` or vault event alone still went into the VM.
     !changed.is_empty() || !closed.is_empty() || !vault.is_empty()
@@ -1475,7 +1473,7 @@ mod tests {
 
     /// No bags and an empty vault.
     const NO_BAGS: SlotGuids = SlotGuids {
-        bags: [0; 10],
+        bags: [0; super::BAG_IDS],
         vault: [0; BANK_SLOTS as usize],
     };
 
@@ -1517,10 +1515,10 @@ mod tests {
         assert!(s.eval::<Vec<String>>("return SEEN").unwrap().is_empty());
     }
 
-    /// A new guid fires the argless event, a restack fires it with `"player"`, and two identical
-    /// items swapped fire the argless one twice though the views are equal.
+    /// A new guid and a restack both name the vault slot, and two identical items swapped fire
+    /// for both slots though the views are equal.
     #[test]
-    fn playerbankslots_changed_names_its_producer_by_the_slot_guid() {
+    fn playerbankslots_changed_names_the_changed_vault_slot() {
         let mut s = UiScript::new().unwrap();
         s.run(
             "SEEN = {} \
@@ -1557,7 +1555,7 @@ mod tests {
         let mut guids = NO_BAGS;
         let mut memory = FeedMemory::default();
 
-        // An item arrives in vault slot 1: the descriptor path, no arguments.
+        // An item arrives in vault slot 1: the descriptor path.
         guids.vault[0] = 0xF00D;
         apply_container_source(
             &mut s,
@@ -1567,9 +1565,9 @@ mod tests {
             Vec::new(),
             Vec::new(),
         );
-        assert_eq!(seen(&mut s), vec!["PLAYERBANKSLOTS_CHANGED nil"]);
+        assert_eq!(seen(&mut s), vec!["PLAYERBANKSLOTS_CHANGED 1"]);
 
-        // The same item restacks: the item watcher's path, with the unit token.
+        // The same item restacks: the item watcher's path, the same slot.
         apply_container_source(
             &mut s,
             &mut memory,
@@ -1578,7 +1576,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
         );
-        assert_eq!(seen(&mut s), vec!["PLAYERBANKSLOTS_CHANGED player"]);
+        assert_eq!(seen(&mut s), vec!["PLAYERBANKSLOTS_CHANGED 1"]);
 
         apply_container_source(
             &mut s,
@@ -1628,7 +1626,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
         );
-        assert_eq!(seen(&mut s), vec!["PLAYERBANKSLOTS_CHANGED nil"]);
+        assert_eq!(seen(&mut s), vec!["PLAYERBANKSLOTS_CHANGED 2"]);
         guids.vault.swap(0, 1);
         let pushed = apply_container_source(
             &mut s,
@@ -1641,8 +1639,8 @@ mod tests {
         assert_eq!(
             seen(&mut s),
             vec![
-                "PLAYERBANKSLOTS_CHANGED nil".to_string(),
-                "PLAYERBANKSLOTS_CHANGED nil".to_string()
+                "PLAYERBANKSLOTS_CHANGED 1".to_string(),
+                "PLAYERBANKSLOTS_CHANGED 2".to_string()
             ],
             "the swap the pushed containers cannot see"
         );

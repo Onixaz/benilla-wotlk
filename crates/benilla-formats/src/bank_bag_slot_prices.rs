@@ -1,5 +1,5 @@
-//! `BankBagSlotPrices.dbc`: the copper price of each bank bag slot. Rows 7-12 hold an unreachable
-//! `999999999` sentinel, as `GetNumBankSlots()` reports full at 6. `CMSG_BUY_BANK_SLOT` carries no
+//! `BankBagSlotPrices.dbc`: the copper price of each bank bag slot. Rows past 7 hold an
+//! unreachable sentinel, as `GetNumBankSlots()` reports full at 7. `CMSG_BUY_BANK_SLOT` carries no
 //! index: the server buys the slot after the count in `PLAYER_BYTES_2` byte 2.
 
 use anyhow::{Context, Result};
@@ -59,7 +59,7 @@ fn table_from(bytes: &[u8]) -> Result<BankBagSlotPrices> {
 mod tests {
     use super::*;
 
-    /// A WDBC with the shipped rows: six prices, then six `999999999` sentinel rows.
+    /// A WDBC shaped as the shipped one: seven prices, then five `999999999` sentinel rows.
     fn synthesize() -> Vec<u8> {
         let rows: &[[u32; 2]] = &[
             [1, 1_000],
@@ -68,7 +68,7 @@ mod tests {
             [4, 250_000],
             [5, 500_000],
             [6, 1_000_000],
-            [7, 999_999_999],
+            [7, 2_000_000],
             [8, 999_999_999],
             [9, 999_999_999],
             [10, 999_999_999],
@@ -99,15 +99,16 @@ mod tests {
         assert_eq!(table.next_slot_price(2), Some(100_000));
         assert_eq!(table.next_slot_price(3), Some(250_000));
         assert_eq!(table.next_slot_price(4), Some(500_000));
-        assert_eq!(
-            table.next_slot_price(5),
-            Some(1_000_000),
-            "6th and final slot"
-        );
+        assert_eq!(table.next_slot_price(5), Some(1_000_000));
         assert_eq!(
             table.next_slot_price(6),
+            Some(2_000_000),
+            "7th and final slot"
+        );
+        assert_eq!(
+            table.next_slot_price(7),
             Some(999_999_999),
-            "row 7 exists but is the unreachable sentinel"
+            "row 8 exists but is the unreachable sentinel"
         );
         assert_eq!(table.next_slot_price(11), Some(999_999_999), "row 12");
     }

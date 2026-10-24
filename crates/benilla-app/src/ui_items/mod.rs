@@ -2,14 +2,18 @@
 //!
 //! [`feed`] builds each bag from the player's descriptor (the backpack's `PACK_SLOT` array, the
 //! equipped bags at `INV_SLOT` 19-22 with their own `CONTAINER_FIELD_SLOT` arrays, the keyring at
-//! 81.. with no container object, like the bank), the object index and the template cache, and
+//! 86.. with no container object, like the bank), the object index and the template cache, and
 //! fires `BAG_UPDATE(bagID)` per changed bag. [`drain`] sends the Lua intents over [`wire_pos`]:
 //! an equippable item that starts no quest goes out as `CMSG_AUTOEQUIP_ITEM`, anything else
 //! through [`send_item_use`]. A move or split locks both ends and a destroy its slot in
 //! [`PendingItemOps`], until the descriptor resolves them or the server answers a non-zero
 //! `SMSG_INVENTORY_CHANGE_FAILURE`.
 
-use benilla_protocol::messages::{BAG_PLAYER_INVENTORY, SLOT_BAG_FIRST, SLOT_PACK_FIRST};
+use benilla_protocol::messages::{
+    BAG_PLAYER_INVENTORY, SLOT_BAG_FIRST, SLOT_BANK_BAG_FIRST, SLOT_BANK_FIRST, SLOT_KEYRING_FIRST,
+    SLOT_PACK_FIRST,
+};
+pub(crate) use benilla_protocol::messages::{BANK_BAGS, BANK_SLOTS, KEYRING_SLOTS};
 use benilla_protocol::ObjectFields;
 use benilla_ui::script::EQUIPMENT_BAG;
 use bevy::prelude::*;
@@ -46,48 +50,33 @@ pub(super) const EQUIPMENT_SLOTS: u8 = 19;
 pub(super) const BAG_SLOT_FIRST: u8 = 19;
 /// Equipped bag count (live-API bag ids 1..=4).
 pub(super) const BAGS: u8 = 4;
-/// The bank's 24 generic slots, wire 39..62, streamed at login like the backpack.
-pub(super) const BANK_SLOTS: u8 = 24;
-/// The first bank generic slot in the player array (vmangos `BANK_SLOT_ITEM_START`).
-pub(super) const BANK_SLOT_FIRST: u8 = 39;
-/// The first bank-bag slot (vmangos `BANK_SLOT_BAG_START`); as with an equipped bag, a bank bag's
-/// slot number is its wire bag byte.
-pub(super) const BANK_BAG_SLOT_FIRST: u8 = 63;
-/// Bank bag count (live-API bag ids [`BANK_BAG_ID_FIRST`]..=10).
-pub(super) const BANK_BAGS: u8 = 6;
+/// The bank's first item slot in the player array; its 28 stream at login like the backpack.
+pub(super) const BANK_SLOT_FIRST: u8 = SLOT_BANK_FIRST;
+/// The first bank-bag slot; as with an equipped bag, a bank bag's slot number is its wire bag
+/// byte.
+pub(super) const BANK_BAG_SLOT_FIRST: u8 = SLOT_BANK_BAG_FIRST;
 /// `BANK_CONTAINER` (`BankFrame.lua:1`).
 pub(crate) const BANK_CONTAINER: i64 = -1;
-/// Bank bags are containers 5..=10 (`NUM_BAG_SLOTS + 1..`).
+/// Bank bags are containers 5..=11 (`NUM_BAG_SLOTS + 1..`, `BankFrame.xml` ids 5-11).
 pub(crate) const BANK_BAG_ID_FIRST: i64 = 5;
+/// The last bank-bag container.
+pub(crate) const BANK_BAG_ID_LAST: i64 = BANK_BAG_ID_FIRST + BANK_BAGS as i64 - 1;
 /// `KEYRING_CONTAINER` (`MainMenuBarBagButtons.lua:1`).
 pub(crate) const KEYRING_CONTAINER: i64 = -2;
-/// The first keyring slot in the player array (vmangos `KEYRING_SLOT_START`).
-pub(super) const KEYRING_SLOT_FIRST: u8 = 81;
-/// Addressable keyring positions, 81..96 (vmangos `KEYRING_SLOT_END` 97): the descriptor array is
-/// 32 wide, but the server uses 16. The usable count is [`keyring_size`].
-pub(super) const KEYRING_SLOTS: u8 = 16;
+/// The first keyring slot in the player array.
+pub(super) const KEYRING_SLOT_FIRST: u8 = SLOT_KEYRING_FIRST;
+/// The bank-bag buttons' live ids, `BankButtonIDToInvSlotID(5..=11, 1)`: 68..=74.
+const BANK_BAG_LIVE: std::ops::RangeInclusive<u32> =
+    BANK_BAG_SLOT_FIRST as u32 + 1..=(BANK_BAG_SLOT_FIRST + BANK_BAGS) as u32;
 /// `BAG_FAMILY_KEYS`: what the server routes into the keyring (`Player::_CanStoreItem`) and the
 /// reference's `HasKey` searches for.
 pub(super) const BAG_FAMILY_KEYS: u32 = 9;
 
-/// Keyring slots usable at `level`, the ladder `GetKeyRingSize` (`ContainerFrame.lua:773`) and the
-/// server's `Player::GetMaxKeyringSize` (`Player.h:985`) share: 4 below 40, 8 at 40, 12 at 50,
-/// 16 above 60. The feed sizes the keyring container with it.
-pub(crate) fn keyring_size(level: u32) -> u32 {
-    match level {
-        61.. => 16,
-        50..=60 => 12,
-        40..=49 => 8,
-        _ => 4,
-    }
-}
-
 /// Lua `(bag, 1-based slot)` to the wire `(bag_index, slot)`, the one mapping every drain shares.
 /// The backpack, the bank's generic slots, the keyring and the doll ([`EQUIPMENT_BAG`]: live id
-/// minus one, 1..=23 and the bank-bag buttons 64..=69) all land on [`BAG_PLAYER_INVENTORY`], so a
+/// minus one, 1..=23 and the bank-bag buttons 68..=74) all land on [`BAG_PLAYER_INVENTORY`], so a
 /// move between them is `CMSG_SWAP_INV_ITEM`; an equipped or bank bag is addressed by its own
-/// player-array slot, with a 0-based inner slot. The keyring spans the wire's 16 positions, not
-/// [`keyring_size`]: a click past the unlocked count is the server's to refuse.
+/// player-array slot, with a 0-based inner slot.
 pub(crate) fn wire_pos(bag: i64, slot1: u32) -> Option<(u8, u8)> {
     let slot0 = u8::try_from(slot1.checked_sub(1)?).ok()?;
     match bag {
@@ -96,13 +85,13 @@ pub(crate) fn wire_pos(bag: i64, slot1: u32) -> Option<(u8, u8)> {
         BANK_CONTAINER if slot0 < BANK_SLOTS => {
             Some((BAG_PLAYER_INVENTORY, BANK_SLOT_FIRST + slot0))
         }
-        5..=10 if slot0 < 36 => {
+        BANK_BAG_ID_FIRST..=BANK_BAG_ID_LAST if slot0 < 36 => {
             Some((BANK_BAG_SLOT_FIRST + (bag - BANK_BAG_ID_FIRST) as u8, slot0))
         }
         KEYRING_CONTAINER if slot0 < KEYRING_SLOTS => {
             Some((BAG_PLAYER_INVENTORY, KEYRING_SLOT_FIRST + slot0))
         }
-        EQUIPMENT_BAG if (1..=23).contains(&slot1) || (64..=69).contains(&slot1) => {
+        EQUIPMENT_BAG if (1..=23).contains(&slot1) || BANK_BAG_LIVE.contains(&slot1) => {
             Some((BAG_PLAYER_INVENTORY, slot0))
         }
         _ => None,
@@ -146,7 +135,7 @@ pub(crate) fn slot_guid(
         }
         BANK_CONTAINER => store.player_bank_slot(slot0).filter(|g| *g != 0),
         KEYRING_CONTAINER => store.player_keyring_slot(slot0).filter(|g| *g != 0),
-        5..=10 => {
+        BANK_BAG_ID_FIRST..=BANK_BAG_ID_LAST => {
             let bag_guid = store
                 .player_bank_bag_slot((bag - BANK_BAG_ID_FIRST) as u8)
                 .filter(|g| *g != 0)?;
@@ -155,7 +144,7 @@ pub(crate) fn slot_guid(
                 .container_slot(slot0)
                 .filter(|g| *g != 0)
         }
-        // The doll: the bank-bag buttons (wire 63..68) read their own array, since the INV
+        // The doll: the bank-bag buttons (wire 67..73) read their own array, since the INV
         // array's accessor caps at 23.
         EQUIPMENT_BAG
             if (BANK_BAG_SLOT_FIRST..BANK_BAG_SLOT_FIRST + BANK_BAGS).contains(&slot0) =>
@@ -208,7 +197,7 @@ pub(crate) fn item_icon(
 
 /// The walker's section mask (`0x622420`'s `ebx`) over the player's 113-guid slot array. A
 /// container in an enabled section is always recursed into: sections gate only at the player's
-/// root, and no caller sets the recursion bit `0x10`. Buyback (69-80) has no bit and is never
+/// root, and no caller sets the recursion bit `0x10`. Buyback (74-85) has no bit and is never
 /// walked.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct InventoryScope {
@@ -218,7 +207,7 @@ pub(crate) struct InventoryScope {
     bags: bool,
     /// `0x04`: the backpack, slots 23-38.
     backpack: bool,
-    /// `0x08`: bank items (39-62) and the six bank-bag slots (63-68) with their contents.
+    /// `0x08`: bank items (39-66) and the seven bank-bag slots (67-73) with their contents.
     bank: bool,
     /// `0x40`: the keyring band.
     keyring: bool,
@@ -272,7 +261,7 @@ impl InventoryScope {
 /// recursing into each container as it is passed, `scope` gating the sections. `visit` gets the
 /// wire `(bag_index, slot)` and the guid, and returns `Some` to stop. The order is the reference's
 /// and load-bearing: equipment 0-18, each bag slot 19-22 then its contents, backpack 23-38, bank
-/// 39-62, each bank bag 63-68 then its contents, keyring.
+/// 39-66, each bank bag 67-73 then its contents, keyring.
 /// The first carried item (the backpack and the bags' contents) `pick` accepts, by guid: the
 /// arena charter turn-in's scan (`0x6dd680`).
 pub(crate) fn find_carried(
@@ -384,7 +373,6 @@ fn walk_inventory<T>(
         }
     }
     if scope.keyring {
-        // The addressable 16; the reference walks all 32, but the rest are always empty.
         for i in 0..KEYRING_SLOTS {
             let guid = store.player_keyring_slot(i).unwrap_or(0);
             if guid != 0 {
@@ -1038,32 +1026,19 @@ impl Plugin for UiItemsPlugin {
 #[cfg(test)]
 mod tests {
     use super::{
-        find_equip_slot, item_use_route, keyring_size, wire_pos, ItemUse, ItemUseRoute,
-        KEYRING_CONTAINER,
+        find_equip_slot, item_use_route, wire_pos, ItemUse, ItemUseRoute, KEYRING_CONTAINER,
     };
     use benilla_ui::script::EQUIPMENT_BAG;
 
-    /// Both ends of every rung of `GetKeyRingSize` (`ContainerFrame.lua:773`).
-    #[test]
-    fn keyring_size_walks_the_reference_ladder() {
-        assert_eq!(keyring_size(1), 4);
-        assert_eq!(keyring_size(39), 4, "the rung ends at 39");
-        assert_eq!(keyring_size(40), 8, "40 opens the second rung");
-        assert_eq!(keyring_size(49), 8);
-        assert_eq!(keyring_size(50), 12);
-        assert_eq!(keyring_size(60), 12, "the level cap still sits on 12");
-        assert_eq!(keyring_size(61), 16, "> 60, unreachable in 1.12");
-    }
-
-    /// The wire's 16 positions (vmangos `KEYRING_SLOT_END` 97), not the level-gated count.
+    /// The keyring's 32 slots are player slots 86-117; 81-85 are buyback.
     #[test]
     fn wire_pos_maps_the_keyring_onto_the_player_grid() {
-        assert_eq!(wire_pos(KEYRING_CONTAINER, 1), Some((255, 81)));
-        assert_eq!(wire_pos(KEYRING_CONTAINER, 16), Some((255, 96)));
+        assert_eq!(wire_pos(KEYRING_CONTAINER, 1), Some((255, 86)));
+        assert_eq!(wire_pos(KEYRING_CONTAINER, 32), Some((255, 117)));
         assert_eq!(
-            wire_pos(KEYRING_CONTAINER, 17),
+            wire_pos(KEYRING_CONTAINER, 33),
             None,
-            "97 is past KEYRING_SLOT_END — not a position on this wire"
+            "118 is the first currency token slot"
         );
         assert_eq!(wire_pos(KEYRING_CONTAINER, 0), None);
     }
@@ -1331,20 +1306,28 @@ mod tests {
     #[test]
     fn wire_pos_maps_the_bank_spaces() {
         use super::BANK_CONTAINER;
-        // The 24 generic slots: live 1..24 → (255, 39..62).
+        // The 28 item slots: live 1..28 → (255, 39..66).
         assert_eq!(wire_pos(BANK_CONTAINER, 1), Some((255, 39)));
-        assert_eq!(wire_pos(BANK_CONTAINER, 24), Some((255, 62)));
-        assert_eq!(wire_pos(BANK_CONTAINER, 25), None, "past the vault");
+        assert_eq!(wire_pos(BANK_CONTAINER, 28), Some((255, 66)));
+        assert_eq!(wire_pos(BANK_CONTAINER, 29), None, "past the vault");
         assert_eq!(wire_pos(BANK_CONTAINER, 0), None);
-        // Bank bags: container 5 is the bag in player-array slot 63, container 10 in 68.
-        assert_eq!(wire_pos(5, 1), Some((63, 0)));
-        assert_eq!(wire_pos(10, 36), Some((68, 35)));
-        assert_eq!(wire_pos(11, 1), None, "past the bank bags");
-        // The bank-bag buttons in doll space: live 64..69 → wire 63..68; the gap 24..63 refuses.
-        assert_eq!(wire_pos(EQUIPMENT_BAG, 64), Some((255, 63)), "BankBag1");
-        assert_eq!(wire_pos(EQUIPMENT_BAG, 69), Some((255, 68)), "BankBag6");
-        assert_eq!(wire_pos(EQUIPMENT_BAG, 63), None, "the doll-space gap");
-        assert_eq!(wire_pos(EQUIPMENT_BAG, 70), None, "past the bank bags");
+        // Bank bags: container 5 is the bag in player-array slot 67, container 11 in 73.
+        assert_eq!(wire_pos(5, 1), Some((67, 0)));
+        assert_eq!(wire_pos(11, 36), Some((73, 35)));
+        assert_eq!(wire_pos(12, 1), None, "past the bank bags");
+        // The bank-bag buttons in doll space: live 68..74 → wire 67..73; the gap 24..67 refuses.
+        assert_eq!(
+            wire_pos(EQUIPMENT_BAG, 68),
+            Some((255, 67)),
+            "BankFrameBag1"
+        );
+        assert_eq!(
+            wire_pos(EQUIPMENT_BAG, 74),
+            Some((255, 73)),
+            "BankFrameBag7"
+        );
+        assert_eq!(wire_pos(EQUIPMENT_BAG, 67), None, "the doll-space gap");
+        assert_eq!(wire_pos(EQUIPMENT_BAG, 75), None, "past the bank bags");
     }
 }
 
@@ -1361,22 +1344,22 @@ mod find_item_tests {
     const SLOT_1: u16 = 50; // CONTAINER_FIELD_SLOT_1 (2 fields per guid)
     const INV_SLOT_HEAD: u16 = 486; // PLAYER_FIELD_INV_SLOT_HEAD (2 per guid, 23 slots)
     const PACK_SLOT_1: u16 = 532; // PLAYER_FIELD_PACK_SLOT_1 (2 per guid, 16 slots)
-    const KEYRING_SLOT_1: u16 = 648; // PLAYER_FIELD_KEYRING_SLOT_1 (2 per guid, player slots 81..)
+    const KEYRING_SLOT_1: u16 = 648; // PLAYER_FIELD_KEYRING_SLOT_1 (2 per guid, player slots 86..)
 
     const TRINKET: u32 = 12_930;
     const BAG: u32 = 4_500;
 
     /// A player with the given `(player slot, guid)` pairs in the equipment (0..22), backpack
-    /// (23..38) or keyring (81..) array.
+    /// (23..38) or keyring (86..) array.
     fn player(slots: &[(u16, u64)]) -> ObjectFields {
         let mut pairs = Vec::new();
         for &(idx, guid) in slots {
             let base = if idx < 23 {
                 INV_SLOT_HEAD + 2 * idx
-            } else if idx < 81 {
+            } else if idx < 86 {
                 PACK_SLOT_1 + 2 * (idx - 23)
             } else {
-                KEYRING_SLOT_1 + 2 * (idx - 81)
+                KEYRING_SLOT_1 + 2 * (idx - 86)
             };
             pairs.push((base, guid as u32));
             pairs.push((base + 1, (guid >> 32) as u32));
@@ -1493,15 +1476,15 @@ mod find_item_tests {
         const KEY: u32 = 7_146; // The Scarlet Key
         let mut objs = TestObjects::new();
         item(&mut objs, 0xE1, KEY, None);
-        let store = player(&[(81, 0xE1)]);
+        let store = player(&[(86, 0xE1)]);
         assert_eq!(
             find_item(&store, &objs.get(), KEY, ALL),
-            Some((255, 81, 0xE1))
+            Some((255, 86, 0xE1))
         );
 
         // A copy anywhere earlier still wins.
         item(&mut objs, 0xE2, KEY, None);
-        let store = player(&[(81, 0xE1), (23, 0xE2)]);
+        let store = player(&[(86, 0xE1), (23, 0xE2)]);
         assert_eq!(
             find_item(&store, &objs.get(), KEY, ALL),
             Some((255, 23, 0xE2)),
@@ -1540,7 +1523,7 @@ mod find_item_tests {
         ));
         // A key in keyring slot 1.
         assert!(has_key(
-            &player(&[(81, 0xF1)]),
+            &player(&[(86, 0xF1)]),
             &objs.get(),
             &items,
             &commands
@@ -1570,7 +1553,7 @@ mod find_item_tests {
 
     /// A player with items in the bank band (`PLAYER_FIELD_BANK_SLOT_1`).
     fn bank_player(slots: &std::collections::HashMap<u16, u64>) -> ObjectFields {
-        const BANK_SLOT_1: u16 = 564; // PLAYER_FIELD_BANK_SLOT_1 (2 per guid, player slots 39..62)
+        const BANK_SLOT_1: u16 = 1516; // PLAYER_FIELD_BANK_SLOT_1 (2 per guid, player slots 39..66)
         let mut pairs = Vec::new();
         for (&idx, &guid) in slots {
             let base = BANK_SLOT_1 + 2 * (idx - 39);
@@ -1595,9 +1578,9 @@ mod count_of_tests {
     const SLOT_1: u16 = 50; // CONTAINER_FIELD_SLOT_1 (2 fields per guid)
     const INV_SLOT_HEAD: u16 = 486; // player slots 0..22
     const PACK_SLOT_1: u16 = 532; // player slots 23..38
-    const BANK_SLOT_1: u16 = 564; // player slots 39..62
-    const BANK_BAG_SLOT_1: u16 = 612; // player slots 63..68
-    const KEYRING_SLOT_1: u16 = 648; // player slots 81..112
+    const BANK_SLOT_1: u16 = 1516; // player slots 39..66
+    const BANK_BAG_SLOT_1: u16 = 1572; // player slots 67..73
+    const KEYRING_SLOT_1: u16 = 648; // player slots 86..117
 
     const AMMO: u32 = 3_030; // the collect-quest item under test
 
@@ -1608,9 +1591,9 @@ mod count_of_tests {
             let base = match slot {
                 0..=22 => INV_SLOT_HEAD + 2 * slot,
                 23..=38 => PACK_SLOT_1 + 2 * (slot - 23),
-                39..=62 => BANK_SLOT_1 + 2 * (slot - 39),
-                63..=68 => BANK_BAG_SLOT_1 + 2 * (slot - 63),
-                81..=112 => KEYRING_SLOT_1 + 2 * (slot - 81),
+                39..=66 => BANK_SLOT_1 + 2 * (slot - 39),
+                67..=73 => BANK_BAG_SLOT_1 + 2 * (slot - 67),
+                86..=117 => KEYRING_SLOT_1 + 2 * (slot - 86),
                 _ => panic!("slot {slot} is buyback or out of range"),
             };
             pairs.push((base, guid as u32));
@@ -1659,7 +1642,7 @@ mod count_of_tests {
     /// Sections gate only at the player's root, so a bank bag's contents are walked.
     #[test]
     fn a_quest_objective_counts_the_contents_of_bank_bags() {
-        let store = player(&[(63, 0xBB)]); // a bag in bank-bag slot 1
+        let store = player(&[(67, 0xBB)]); // a bag in bank-bag slot 1
         let mut objs = TestObjects::new();
         bag(&mut objs, 0xBB, &[(0, 0xC1), (4, 0xC2)]);
         stack(&mut objs, 0xC1, AMMO, 2);
@@ -1677,7 +1660,7 @@ mod count_of_tests {
     /// Worn gear and the keyring: in `0x47` and the quest scope, not [`InventoryScope::CARRIED`].
     #[test]
     fn the_quest_scope_also_reaches_worn_gear_and_the_keyring() {
-        let store = player(&[(5, 0xE1), (81, 0xF1)]); // a worn copy and one in the keyring
+        let store = player(&[(5, 0xE1), (86, 0xF1)]); // a worn copy and one in the keyring
         let mut objs = TestObjects::new();
         stack(&mut objs, 0xE1, AMMO, 1);
         stack(&mut objs, 0xF1, AMMO, 1);
@@ -1709,11 +1692,11 @@ mod count_of_tests {
         );
     }
 
-    /// Buyback (slots 69-80) has no mask bit.
+    /// Buyback (slots 74-85) has no mask bit.
     #[test]
     fn buyback_is_never_counted() {
         // The walk has no buyback accessor; the bands on either side prove it still reaches them.
-        let store = player(&[(38, 0xA1), (68, 0xBB)]);
+        let store = player(&[(38, 0xA1), (73, 0xBB)]);
         let mut objs = TestObjects::new();
         stack(&mut objs, 0xA1, AMMO, 1);
         bag(&mut objs, 0xBB, &[(0, 0xC1)]);
