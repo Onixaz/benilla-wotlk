@@ -406,9 +406,9 @@ pub(super) fn xp_gain_line(
 /// own table is untraced; rested is the only bonus state vmangos sets (`Player.cpp:17990-17993`).
 const RESTED_STATE: &str = "Rested";
 
-/// The honor line (`0x625270`): `COMBATLOG_HONORAWARD` with no victim, `COMBATLOG_HONORGAIN` for
-/// `honor > 0`, else `COMBATLOG_DISHONORGAIN`. No `rank_title` leaves the rank slot empty, as in
-/// the reference; vmangos floors a rankless player at rank 5 (`HonorMgr.cpp:1086-1087`).
+/// The honor line (`CGChat::LogHonorGain`, `0x50b6d0`): `COMBATLOG_HONORAWARD` with no victim; a
+/// kill under 1 honor prints nothing (`0x50b71f`); else `COMBATLOG_HONORGAIN` with the rank title,
+/// or `COMBATLOG_HONORGAIN_NO_RANK` without one.
 pub(super) fn honor_gain_line(
     victim: Option<&str>,
     rank_title: Option<&str>,
@@ -416,17 +416,18 @@ pub(super) fn honor_gain_line(
     get: &dyn Fn(&str) -> Option<String>,
 ) -> Option<String> {
     use benilla_ui::strings::Arg;
-    match victim {
-        None => keyed(get, "COMBATLOG_HONORAWARD", &[Arg::D(i64::from(honor))]),
-        Some(name) if honor <= 0 => keyed(get, "COMBATLOG_DISHONORGAIN", &[Arg::S(name)]),
-        Some(name) => keyed(
+    match (victim, rank_title) {
+        (None, _) => keyed(get, "COMBATLOG_HONORAWARD", &[Arg::D(i64::from(honor))]),
+        (Some(_), _) if honor < 1 => None,
+        (Some(name), None) => keyed(
+            get,
+            "COMBATLOG_HONORGAIN_NO_RANK",
+            &[Arg::S(name), Arg::D(i64::from(honor))],
+        ),
+        (Some(name), Some(rank_title)) => keyed(
             get,
             "COMBATLOG_HONORGAIN",
-            &[
-                Arg::S(name),
-                Arg::S(rank_title.unwrap_or_default()),
-                Arg::D(i64::from(honor)),
-            ],
+            &[Arg::S(name), Arg::S(rank_title), Arg::D(i64::from(honor))],
         ),
     }
 }

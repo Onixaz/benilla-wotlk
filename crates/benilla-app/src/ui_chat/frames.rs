@@ -1,7 +1,7 @@
 //! The chat router: [`route`] fires each [`ChatEvent`] as its `CHAT_MSG_*` event, which the stock
-//! `ChatFrame_OnEvent` composes and prints, and tees the composed line to the log files.
-//! [`compose`] transcribes that composition for the log, every format resolved by key from the
-//! player's `GlobalStrings.lua` as `ChatFrame_OnEvent` resolves it.
+//! `ChatFrame_MessageEventHandler` composes and prints, and tees the composed line to the log
+//! files. [`compose`] transcribes that composition for the log, every format resolved by key from
+//! the player's `GlobalStrings.lua` as the handler resolves it.
 
 use bevy::prelude::*;
 
@@ -21,8 +21,8 @@ pub(crate) struct ChatWindows {
     pub line_id: u32,
 }
 
-/// Fire one event's `CHAT_MSG_*` at the VM, where the stock `ChatFrame_OnEvent` prints it, and
-/// tee its composed line to the log files, which the reference writes C-side, not from Lua.
+/// Fire one event's `CHAT_MSG_*` at the VM, where the stock handler prints it, and tee its
+/// composed line to the log files, which the reference writes C-side, not from Lua.
 pub(crate) fn route(
     script: &mut benilla_ui::script::UiScript,
     windows: &mut ChatWindows,
@@ -32,31 +32,36 @@ pub(crate) fn route(
         warn!("chat: unroutable event (no kind): {:?}", event.text);
         return;
     };
+    windows.line_id = windows.line_id.wrapping_add(1);
     let default_language = windows.default_language.clone();
     // The VM's own globals, so the log line matches the window's.
-    if let Some(line) = compose(event, kind, &default_language, &|key| {
+    if let Some(line) = compose(event, kind, &default_language, windows.line_id, &|key| {
         script.lua().globals().get::<String>(key).ok()
     }) {
         windows.logs.record(kind.is_combat_log(), &line);
     }
-    windows.line_id = windows.line_id.wrapping_add(1);
     let args = event.script_args_with_line(windows.line_id);
     script.fire_event(event_name(kind), args);
 }
 
-/// `ChatFrame_OnEvent`'s composition (`ChatFrame.lua:1369-1468`); `None` for a notice the 1.12 UI
-/// does not print (MODE_CHANGE).
+/// `ChatFrame_MessageEventHandler`'s composition (`ChatFrame.lua:2753-2937`) for the line that
+/// carries `line_id` as arg11; `None` where it prints nothing (MODE_CHANGE, a GM's whisper). Its
+/// frame-state reads stay out: the channel and whisper filters, `{icon}` tags, the timestamp and
+/// class-coloured names, which `GetColoredName` gives only under a `colorNameByClass` the
+/// reference ships off.
 pub(crate) fn compose(
     event: &ChatEvent,
     kind: ChatEventKind,
     default_language: &str,
+    line_id: u32,
     get: &dyn Fn(&str) -> Option<String>,
 ) -> Option<String> {
     use ChatEventKind as K;
+    let ty = chat_type(kind);
     Some(match kind {
-        // Verbatim (`ChatFrame.lua:1395-1402`), the XP and honor gains by their `COMBAT_` prefix.
+        // `AddMessage(arg1)` (`:2753-2761`): the plain kinds and every `COMBAT_`, `SPELL_` and
+        // `BG_SYSTEM_` line.
         K::System
-        | K::TextEmote
         | K::Skill
         | K::Loot
         | K::Money
@@ -65,100 +70,147 @@ pub(crate) fn compose(
         | K::PetInfo
         | K::CombatXpGain
         | K::CombatHonorGain
+        | K::CombatMiscInfo
+        | K::CombatFactionChange
         | K::BgSystemNeutral
         | K::BgSystemAlliance
         | K::BgSystemHorde => event.text.clone(),
-        // The other `COMBAT_` lines are verbatim too, by prefix.
-        k if k.is_combat_log() => event.text.clone(),
-        // `format(arg1, "|Hplayer:"..arg2.."|h["..arg2.."]|h")`, 3.3.5a's award line.
+        // `format(arg1, "|Hplayer:"..arg2.."|h".."["..coloredName.."]".."|h")` (`:2762-2765`).
         K::Achievement | K::GuildAchievement => fill(
             &event.text,
             &[Arg::S(&format!("|Hplayer:{0}|h[{0}]|h", event.sender))],
         ),
-        // `format(TEXT(CHAT_IGNORED), arg2)` (`:1404`): `CHAT_IGNORED`, not the same-worded
-        // `ERR_IGNORING_YOU_S`.
+        // `format(CHAT_IGNORED, arg2)` and `format(CHAT_FILTERED, arg2)` (`:2766-2769`).
         K::Ignored => fill(
             &get("CHAT_IGNORED").unwrap_or_default(),
             &[Arg::S(&event.sender)],
         ),
-        // `format(CHAT_CHANNEL_LIST_GET .. arg1, arg4)` (`:1409`): arg4 whole, arg1 unescaped.
+        K::Filtered => fill(
+            &get("CHAT_FILTERED").unwrap_or_default(),
+            &[Arg::S(&event.sender)],
+        ),
+        // `format(CHAT_CHANNEL_LIST_GET..arg1, tonumber(arg8), arg4)`, or arg1 bare without a
+        // channel (`:2772-2777`).
+        K::ChannelList if event.channel.is_empty() => event.text.clone(),
         K::ChannelList => fill(
             &format!(
                 "{}{}",
                 get("CHAT_CHANNEL_LIST_GET").unwrap_or_default(),
                 event.text
             ),
-            &[Arg::S(&event.channel)],
+            &[
+                Arg::D(i64::from(event.channel_number)),
+                Arg::S(&event.channel),
+            ],
         ),
         K::ChannelNotice | K::ChannelNoticeUser => {
             return compose_notice(event, kind, get);
         }
-        // Everything else is the player and monster line branch (`:1425-1467`).
+        // Everything else is the speech branch (`:2840-2928`).
         _ => {
-            // `pflag = TEXT(getglobal("CHAT_FLAG_"..arg6))` (`:1431`); an empty flag is "".
-            let pflag = if event.flag.is_empty() {
-                String::new()
-            } else {
-                get(&format!("CHAT_FLAG_{}", event.flag)).unwrap_or_default()
+            // `pflag` (`:2851-2868`): a GM or DEV line wears the Blizzard icon, and a GM's whisper
+            // goes to the GM chat addon instead of this window.
+            let pflag = match event.flag.as_str() {
+                "" => String::new(),
+                "GM" if kind == K::Whisper => return None,
+                "GM" | "DEV" => BLIZZARD_ICON.to_string(),
+                flag => get(&format!("CHAT_FLAG_{flag}")).unwrap_or_default(),
             };
-            let monster = matches!(
-                kind,
-                K::MonsterSay
-                    | K::MonsterYell
-                    | K::MonsterEmote
-                    | K::MonsterWhisper
-                    | K::RaidBossEmote
-            );
-            // The sender: a `[Name]` link (`:1451`), bare for monster lines, RAID_BOSS_EMOTE
-            // (`:1437-1438`) and EMOTE (`:1450`).
-            let named = if event.sender.is_empty() {
-                String::new()
-            } else if monster || kind == K::Emote {
-                format!("{pflag}{}", event.sender)
-            } else {
-                format!("{pflag}|Hplayer:{0}|h[{0}]|h", event.sender)
-            };
-            // The language header (`:1442-1448`) shows when arg3 is not `this.defaultLanguage`,
-            // the faction tongue (`0x5ec890`), understood or not. Its `~= "Universal"` test is
-            // left out: no 1.12 data names "Universal", and language 0 arrives as "".
-            let header = if !event.language.is_empty() && event.language != default_language {
-                format!("[{}] ", event.language)
-            } else {
-                String::new()
-            };
-            // `gsub(arg1, "%%", "%%%%")` (`:1440`) before one `format` over pattern, header and
-            // text, so a typed `%s` cannot take the name. Monster lines and RAID_BOSS_EMOTE skip
-            // it (`:1437-1438`): their own `%s` is the name's slot.
-            let text = if monster {
-                event.text.clone()
-            } else {
+            // `MONSTER` and `RAID_BOSS` lines take no link, and only the others escape a typed
+            // `%` (`:2873-2878`): a monster line's own `%s` is the name's slot.
+            let show_link = !ty.starts_with("MONSTER") && !ty.starts_with("RAID_BOSS");
+            let text = if show_link {
                 event.text.replace('%', "%%")
-            };
-            let body = fill(
-                &format!("{}{header}{text}", get_pattern(kind, get)),
-                &[Arg::S(&named)],
-            );
-            // The channel prefix (`:1462-1466`): arg4, numbered ("2. Trade - City"), zone cut.
-            if !event.channel.is_empty() {
-                format!("[{}] {body}", strip_zone(&event.channel))
             } else {
+                event.text.clone()
+            };
+            let group = chat_category(ty);
+            let target = match group {
+                "CHANNEL" => Some(event.channel_number.to_string()),
+                "WHISPER" => Some(event.sender.to_uppercase()),
+                _ => None,
+            };
+            let player_link = format!(
+                "|Hplayer:{}:{line_id}:{group}{}|h",
+                event.sender,
+                target.map(|t| format!(":{t}")).unwrap_or_default()
+            );
+            let get_pattern = get(&format!("CHAT_{ty}_GET")).unwrap_or_default();
+            let sender = event.sender.as_str();
+            let body = if !event.language.is_empty()
+                && event.language != "Universal"
+                && event.language != default_language
+            {
+                // The language header (`:2901-2907`).
+                let pattern = format!("{get_pattern}[{}] {text}", event.language);
+                if show_link && !sender.is_empty() {
+                    fill(
+                        &pattern,
+                        &[Arg::S(&format!("{pflag}{player_link}[{sender}]|h"))],
+                    )
+                } else {
+                    fill(&pattern, &[Arg::S(&format!("{pflag}{sender}"))])
+                }
+            } else if !show_link || sender.is_empty() {
+                fill(
+                    &format!("{get_pattern}{text}"),
+                    &[Arg::S(&format!("{pflag}{sender}")), Arg::S(sender)],
+                )
+            } else if kind == K::Emote {
+                fill(
+                    &format!("{get_pattern}{text}"),
+                    &[Arg::S(&format!("{pflag}{player_link}{sender}|h"))],
+                )
+            } else if kind == K::TextEmote {
+                // `gsub(arg1, arg2, …, 1)`: the sentence's first mention of the performer.
+                text.replacen(sender, &format!("{pflag}{player_link}{sender}|h"), 1)
+            } else {
+                fill(
+                    &format!("{get_pattern}{text}"),
+                    &[Arg::S(&format!("{pflag}{player_link}[{sender}]|h"))],
+                )
+            };
+            // The channel link (`:2922-2928`): arg4 numbered, its zone tail cut.
+            if event.channel.is_empty() {
                 body
+            } else {
+                format!(
+                    "|Hchannel:channel:{}|h[{}]|h {body}",
+                    event.channel_number,
+                    strip_zone(&event.channel)
+                )
             }
         }
     })
 }
 
-/// `getglobal("CHAT_"..type.."_GET")` (`ChatFrame.lua:1445-1453`), `type` being the event name
-/// after `CHAT_MSG_`; a missing string is `""`.
-fn get_pattern(kind: ChatEventKind, get: &dyn Fn(&str) -> Option<String>) -> String {
-    let ty = event_name(kind)
+/// The pflag of a GM or DEV line (`ChatFrame.lua:2859`, `:2862`).
+const BLIZZARD_ICON: &str = "|TInterface\\ChatFrame\\UI-ChatIcon-Blizz.blp:0:2:0:-3|t ";
+
+/// The `ChatTypeInfo` key, `strsub(event, 10)` (`ChatFrame.lua:2677`).
+fn chat_type(kind: ChatEventKind) -> &'static str {
+    event_name(kind)
         .strip_prefix("CHAT_MSG_")
-        .unwrap_or_default();
-    get(&format!("CHAT_{ty}_GET")).unwrap_or_default()
+        .unwrap_or_default()
+}
+
+/// `Chat_GetChatCategory` over `CHAT_CATEGORY_LIST` (`ChatFrame.lua:268-288`).
+fn chat_category(ty: &str) -> &str {
+    match ty {
+        "PARTY_LEADER" | "PARTY_GUIDE" | "MONSTER_PARTY" => "PARTY",
+        "RAID_LEADER" | "RAID_WARNING" => "RAID",
+        "GUILD_ACHIEVEMENT" => "GUILD",
+        "WHISPER_INFORM" | "AFK" | "DND" => "WHISPER",
+        "CHANNEL_JOIN" | "CHANNEL_LEAVE" | "CHANNEL_NOTICE" | "CHANNEL_USER" => "CHANNEL",
+        "BATTLEGROUND_LEADER" => "BATTLEGROUND",
+        "BN_WHISPER_INFORM" => "BN_WHISPER",
+        "BN_CONVERSATION_NOTICE" | "BN_CONVERSATION_LIST" => "BN_CONVERSATION",
+        _ => ty,
+    }
 }
 
 /// `gsub(arg4, "%s%-%s.*", "")`: "2. Trade - City" → "2. Trade". Only speech lines strip it
-/// (`ChatFrame.lua:1463`); the notice and list arms print arg4 whole, as in
+/// (`ChatFrame.lua:2923`); the notice and list arms print arg4 whole, as in
 /// "Joined Channel: [1. General - Elwynn Forest]".
 fn strip_zone(channel: &str) -> &str {
     match channel.find(" - ") {
@@ -168,23 +220,29 @@ fn strip_zone(channel: &str) -> &str {
 }
 
 /// A channel notice: the notice byte's token ([`notice_token`], the jump table at `0x49c60c`)
-/// names `CHAT_<TOKEN>_NOTICE` (`ChatFrame.lua:1416-1424`), filled with arg4, then for
-/// CHANNEL_NOTICE_USER arg2 and any arg5; a string such as `CHAT_INVITE_NOTICE` reorders them with
-/// `%2$s`. `None` for MODE_CHANGE and bytes past the table, which print nothing.
+/// names `CHAT_<TOKEN>_NOTICE_BN` or else `CHAT_<TOKEN>_NOTICE` (`ChatFrame.lua:2778-2802`),
+/// filled with arg8 and arg4, then for CHANNEL_NOTICE_USER arg2 and any arg5; INVITE takes arg4
+/// and arg2 alone. `None` for MODE_CHANGE and bytes past the table, which print nothing.
 pub(crate) fn compose_notice(
     event: &ChatEvent,
     kind: ChatEventKind,
     get: &dyn Fn(&str) -> Option<String>,
 ) -> Option<String> {
     let token = notice_token(event.notice_byte()?, event.slot_state)?;
-    let template = get(&format!("CHAT_{token}_NOTICE"))?;
-    let mut args = vec![Arg::S(event.channel.as_str())];
-    if kind == ChatEventKind::ChannelNoticeUser {
-        args.push(Arg::S(&event.sender));
-        if !event.target.is_empty() {
-            args.push(Arg::S(&event.target));
-        }
-    }
+    let template =
+        get(&format!("CHAT_{token}_NOTICE_BN")).or_else(|| get(&format!("CHAT_{token}_NOTICE")))?;
+    let number = Arg::D(i64::from(event.channel_number));
+    let channel = Arg::S(event.channel.as_str());
+    let sender = Arg::S(event.sender.as_str());
+    let args = if kind == ChatEventKind::ChannelNotice {
+        vec![number, channel]
+    } else if !event.target.is_empty() {
+        vec![number, channel, sender, Arg::S(event.target.as_str())]
+    } else if token == "INVITE" {
+        vec![channel, sender]
+    } else {
+        vec![number, channel, sender]
+    };
     let line = fill(&template, &args);
     (!line.is_empty()).then_some(line)
 }

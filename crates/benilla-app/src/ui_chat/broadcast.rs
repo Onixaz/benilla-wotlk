@@ -297,8 +297,8 @@ mod tests {
         );
     }
 
-    /// The bare colon is the reference's: `ChatFrame_OnEvent` fills `CHAT_CHANNEL_GET` (`"%s: "`)
-    /// with the empty sender (`ChatFrame.lua:1453`).
+    /// The bare colon is the reference's: the handler fills `CHAT_CHANNEL_GET` (`"%s: "`) with the
+    /// empty sender (`ChatFrame.lua:2909-2910`).
     #[test]
     fn a_defense_line_renders_with_the_references_bare_colon() {
         benilla_formats::wow_data_or_skip!();
@@ -307,11 +307,12 @@ mod tests {
             text: "|cffffff00Sentinel Hill is under attack!|r".into(),
             // arg4 as `stamp_channel` leaves it once the channel is joined: numbered.
             channel: "3. LocalDefense - Westfall".into(),
+            channel_number: 3,
             ..Default::default()
         };
         assert_eq!(
             crate::ui_chat::tests::compose(&event, ChatEventKind::Channel, "Common").unwrap(),
-            "[3. LocalDefense] : |cffffff00Sentinel Hill is under attack!|r"
+            "|Hchannel:channel:3|h[3. LocalDefense]|h : |cffffff00Sentinel Hill is under attack!|r"
         );
     }
 }
