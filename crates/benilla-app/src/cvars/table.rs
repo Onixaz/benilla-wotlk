@@ -759,14 +759,15 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // restart."), behind `Get/SetTerrainMip` as `1 − level` (`0x54eb10`/`0x54eb40`): read once into
     // `CWorld::shadowMipLevel` at world init, it allocates every terrain chunk's layer textures one
     // mip down (`CMapChunk::RenderPrep 0x7d3fe0` sets flag `0x10`, which `0x7ba050` reads), where
-    // otherwise only chunks past 777 yd take it. The knob is `benilla_world::terrain_stream::TerrainMip`.
+    // otherwise only chunks past 777 yd take it. Applied live here, the stock logout prompt dropped
+    // (`FrameXMLFixes.xml`); the knob is `benilla_world::terrain_stream::TerrainOptions::low_mip`.
     same("shadowLevel", "1"),
     // `texLodBias` ("0.0", callback `0x78d730`: refused outside [-1.0, 1.0]), behind
     // `Get/SetTexLodBias`; the stock UI binds no control to it.
     same("texLodBias", "0.0"),
     // `baseMip` ("0", callback `0x78df00`: refused above 1): the device's first uploaded mip, so a
     // 1 halves every texture, applied live (`TextureNotifyGxRestart` reloads them). The knob is
-    // `benilla_assets::BaseMip`.
+    // `benilla_assets::TexFilterSetting::base_mip`.
     same("baseMip", "0"),
     // `spellEffectLevel` (`0x78e400`, "9", flags 1, no callback): `SpellVisualsInitialize`
     // (`0x7fc5a0`) caches the record and each blizzard shard emitter scales its rate by
