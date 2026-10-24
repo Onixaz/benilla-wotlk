@@ -764,7 +764,7 @@ fn a_locked_or_hovered_button_wears_its_highlight_font_over_its_normal_color() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `Button:GetTextWidth`/`GetTextHeight` (`0x782290`/`0x782390`; Button has no `GetStringWidth`)
+/// `Button:GetTextWidth`/`GetTextHeight` (`0x9780d0`/`0x978150`; Button has no `GetStringWidth`)
 /// forward to the label FontString's extent.
 #[test]
 fn a_button_reports_its_labels_extent() {
@@ -805,8 +805,7 @@ fn a_button_reports_its_labels_extent() {
         14.0
     );
 
-    // A label-less Button answers 0; the reference reads the label pointer (`+0x338`), null here,
-    // and what it does then is untraced.
+    // A label-less Button answers 0 (`0x978112`).
     assert_eq!(
         s.eval::<f64>("return LabellessBtn:GetTextWidth()").unwrap(),
         0.0

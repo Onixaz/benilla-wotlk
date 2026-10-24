@@ -558,15 +558,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetTextWidth/GetTextHeight (`0x782290`/`0x782390`) forward to the label's extents (vtable
-    // `0x1c`/`0x20`). The width is the natural, unwrapped one: the laid-out width would feed a
-    // size-to-text caller (`MoneyFrame.lua:202`) its own output. 0 before measurement and with no
-    // label, where the reference dereferences `+0x338` and what it does on null is untraced.
-    for (name, region_getter) in [
-        ("GetTextWidth", "GetStringWidth"),
-        // 1.12 has no `GetStringHeight`; `0x782390` reads the label's height.
-        ("GetTextHeight", "GetHeight"),
-    ] {
+    // GetTextWidth/GetTextHeight (`0x9780d0`/`0x978150`) answer the label's `GetWidth`/`GetHeight`
+    // (`0x483f30` through vtable `0x9ea2a0`: the declared width, else the measured string's), 0
+    // with no label (`0x978112`).
+    for (name, region_getter) in [("GetTextWidth", "GetWidth"), ("GetTextHeight", "GetHeight")] {
         m.set(
             name,
             lua.create_function(move |lua, this: Table| {

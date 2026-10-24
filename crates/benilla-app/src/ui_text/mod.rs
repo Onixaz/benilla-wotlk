@@ -20,7 +20,7 @@ mod measurer;
 mod outline;
 mod pack;
 
-pub(crate) use engine::{UiFontAtlas, UiTextPlugin};
+pub(crate) use engine::{ensure_atlas, UiFontAtlas, UiTextPlugin};
 
 use benilla_ui::script::Outline;
 use benilla_ui::widget::RegionHandle;

@@ -338,9 +338,11 @@ pub(crate) fn run_pending_entry_load(world: &mut World) {
 /// window and `uiScale`: the load-edge half of [`super::extract::tick_script`]'s per-frame pair. A
 /// fresh VM answers 1024×768 until then, and a value computed once at load keeps it: stock
 /// `WorldMapFrame_OnLoad` sizes the full-screen `BlackoutWorld` from `GetScreenWidth()` and
-/// `GetScreenHeight()` and never again (`WorldMapFrame.lua:19-28`). With no atlas yet (it bakes on
-/// the first `Update`) the per-frame pass seats the measurer.
+/// `GetScreenHeight()` and never again (`WorldMapFrame.lua:19-28`). The font engine is built here
+/// when the glue VM loads at `Startup`, before the first `Update` would build it: the stock
+/// size-to-text `OnLoad`s read `GetTextWidth` (`CharacterCreate.xml:594`).
 fn seat_raster_seam_for_load(world: &mut World, script: &mut UiScript) {
+    crate::ui_text::ensure_atlas(world);
     let ui_scale = world
         .get_resource::<super::UiScaleCvar>()
         .map_or(1.0, |c| c.for_vm(script.vm_kind()));
@@ -1077,6 +1079,35 @@ mod tests {
         // The stock policy needs the stock files to have loaded: no install, no screen.
         let up = benilla_formats::wow_data().is_some();
         assert_eq!(policy.0.load(Ordering::SeqCst), up);
+    }
+
+    /// The glue load measures inside its `OnLoad`s, as `GetStringWidth` (`0x483e80`) does: the
+    /// stock size-to-text buttons come out their label's width plus 50 (`CharacterCreate.xml:594`,
+    /// `:677`), not 50.
+    #[test]
+    fn the_glue_load_sizes_its_buttons_to_their_text() {
+        let _ = benilla_formats::wow_data_or_skip!();
+        let Some(atlas) = crate::ui_text::UiFontAtlas::for_test(1.0) else {
+            return;
+        };
+        let mut world = World::new();
+        world.insert_resource(State::new(crate::char_select::ClientState::Login));
+        world.insert_resource(atlas);
+        world.spawn((Window::default(), bevy::window::PrimaryWindow));
+        setup_script(&mut world);
+        let script = world.non_send_resource::<UiScript>();
+        for button in ["CharCreateRandomizeButton", "CharacterCreateRandomName"] {
+            let (w, text_w) = script
+                .eval::<(f32, f32)>(&format!(
+                    "return {button}:GetWidth(), {button}:GetTextWidth()"
+                ))
+                .unwrap();
+            assert!(text_w > 30.0, "{button}'s label measured at load: {text_w}");
+            assert!(
+                (w - (text_w + 50.0)).abs() < 1e-3,
+                "{button} is its label plus 50: {w} against {text_w}"
+            );
+        }
     }
 
     /// Under the stock glue screens the world holds the glue VM where it holds a boot VM, at startup

@@ -33,7 +33,7 @@ use cosmic_text::{
 use benilla_assets::{LockRecover, WorldAssets};
 
 use faces::{hhea_ascent_ratio, register_font, CLIENT_FONTS};
-pub(crate) use gpu::UiTextPlugin;
+pub(crate) use gpu::{ensure_atlas, UiTextPlugin};
 
 use super::outline::outlined_cell;
 use super::pack::{Cell, Sheet};

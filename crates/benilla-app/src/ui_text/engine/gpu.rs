@@ -67,14 +67,43 @@ fn init(
     let (Some(world_assets), Ok(window)) = (world_assets, windows.single()) else {
         return;
     };
-    let Some(engine) = TextEngine::load(&world_assets, &images, window.scale_factor()) else {
-        return;
-    };
-    commands.insert_resource(UiFontAtlas {
+    if let Some(atlas) = build(&world_assets, &images, window.scale_factor()) {
+        commands.insert_resource(atlas);
+    }
+}
+
+fn build(world_assets: &WorldAssets, images: &Assets<Image>, dpi: f32) -> Option<UiFontAtlas> {
+    let engine = TextEngine::load(world_assets, images, dpi)?;
+    Some(UiFontAtlas {
         engine: Arc::new(Mutex::new(engine)),
         generation: 0,
         ellipsis: crate::ui_text::EllipsisMemo::default(),
-    });
+    })
+}
+
+/// Build the engine now if the patch chain and the window exist and it is not built yet, for a VM
+/// whose files load before the first `Update`: the reference's font system is up before any XML
+/// loads, and `GetStringWidth` (`0x483e80`) measures inside an `OnLoad`.
+pub(crate) fn ensure_atlas(world: &mut World) {
+    if world.contains_resource::<UiFontAtlas>() {
+        return;
+    }
+    let dpi = {
+        let mut q = world.query_filtered::<&Window, With<PrimaryWindow>>();
+        let Ok(window) = q.single(world) else {
+            return;
+        };
+        window.scale_factor()
+    };
+    let (Some(world_assets), Some(images)) = (
+        world.get_resource::<WorldAssets>(),
+        world.get_resource::<Assets<Image>>(),
+    ) else {
+        return;
+    };
+    if let Some(atlas) = build(world_assets, images, dpi) {
+        world.insert_resource(atlas);
+    }
 }
 
 /// The frame boundary: follow the window's DPI, carry out a pending reset, create the sheet's
