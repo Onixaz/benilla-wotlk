@@ -450,14 +450,9 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// This region's global name, or `None` when anonymous: a scan of the region-name registry, the
-/// one authority, linear in named regions.
+/// This region's global name, or `None` when anonymous.
 pub(super) fn region_name_of(model: &Model, id: u32) -> Option<String> {
-    model
-        .region_names
-        .iter()
-        .find(|&(_, &v)| v == id)
-        .map(|(k, _)| k.clone())
+    model.region_name_by_id.get(&id).cloned()
 }
 
 /// Publish a region's name into the registry a named `relativeTo` resolves through, first name
@@ -468,7 +463,7 @@ pub(crate) fn publish_region_name(lua: &Lua, name: &str, region: &Table) {
         return;
     };
     let mut model = crate::script::model_mut_of(lua);
-    model.region_names.entry(name.to_string()).or_insert(id);
+    model.name_region(name.to_string(), id);
 }
 
 /// The type `GetObjectType()` answers and `IsObjectType` matches; `"Region"` for a dead handle.
@@ -500,6 +495,9 @@ pub(crate) fn free_region(model: &mut Model, rh: RegionHandle) {
     let id = model.region_to_id.remove(&rh);
     if let Some(id) = id {
         model.id_to_region.remove(&id);
+        if let Some(name) = model.region_name_by_id.remove(&id) {
+            model.region_names.remove(&name);
+        }
         model.region_names.retain(|_, v| *v != id);
     }
     model.arena.destroy_region(rh);
@@ -607,10 +605,9 @@ pub(super) fn region_ladder_context(lua: &Lua, rh: RegionHandle) -> (String, Str
     let mut model = crate::script::model_mut_of(lua);
     let id = model.region_id(rh);
     let who = model
-        .region_names
-        .iter()
-        .find(|(_, &v)| v == id)
-        .map(|(n, _)| n.clone())
+        .region_name_by_id
+        .get(&id)
+        .cloned()
         .unwrap_or_else(|| UNNAMED.to_string());
     let owner = model.arena.region(rh).map(|r| r.owner);
     let base = super::object::parent_token_base(&model, owner);

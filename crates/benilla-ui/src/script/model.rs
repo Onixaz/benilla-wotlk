@@ -174,6 +174,9 @@ pub(crate) struct Model {
     pub(crate) region_to_id: crate::widget::HandleMap<RegionHandle, u32>,
     /// Region name to id, first wins: `SetPoint` anchors to a sibling region by name, after frames.
     pub(crate) region_names: HashMap<String, u32>,
+    /// The reverse of [`Self::region_names`]: each named region's first name, so naming a region
+    /// in an error string or `GetName` is one lookup, not a scan of every named region.
+    pub(crate) region_name_by_id: HashMap<u32, String>,
 
     /// Which handlers each frame has; the closures themselves live in Lua's `REG_SCRIPTS` table.
     pub(crate) scripts: HashMap<FrameHandle, HashSet<&'static str>>,
@@ -1181,6 +1184,7 @@ impl Model {
             id_to_region: IdMap::default(),
             region_to_id: Default::default(),
             region_names: HashMap::new(),
+            region_name_by_id: HashMap::new(),
             scripts: HashMap::new(),
             on_update_frames: Vec::new(),
             on_size_changed_frames: Vec::new(),
@@ -1598,6 +1602,17 @@ impl Model {
             reputation: reputation::ReputationState::default(),
             reputation_tree: reputation::FactionTree::default(),
             reputation_sends: Vec::new(),
+        }
+    }
+
+    /// Name region `id` in the registry a named `relativeTo` resolves through: the first name
+    /// wins, per name and per region.
+    pub(crate) fn name_region(&mut self, name: String, id: u32) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.region_names.entry(name) {
+            self.region_name_by_id
+                .entry(id)
+                .or_insert_with(|| e.key().clone());
+            e.insert(id);
         }
     }
 

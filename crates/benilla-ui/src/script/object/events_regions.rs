@@ -371,7 +371,7 @@ fn create_region(
         publish_global(lua, &name, &wrapper)?;
         // First name wins, as for frames; a sibling's `SetPoint` can then name this region.
         let mut model = crate::script::model_mut_of(lua);
-        model.region_names.entry(name).or_insert(id);
+        model.name_region(name, id);
     }
     Ok(wrapper)
 }

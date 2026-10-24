@@ -211,22 +211,20 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // SetSize(width, height) (`0x49d7a0`) and GetSize() (`0x49d6f0`), the region table's pair.
     set_shared(lua, m, Side::Frame, "SetSize", set_size)?;
     set_shared(lua, m, Side::Frame, "GetSize", get_size)?;
-    set_shared(lua, m, Side::Frame, "GetWidth", |lua, this: Table| {
-        let h = frame_handle_of(lua, &this)?;
-        settle(lua);
-        let model = lua
-            .app_data_ref::<crate::script::ModelCell>()
-            .expect("model");
-        Ok(size_read(&model, h, true))
-    })?;
-    set_shared(lua, m, Side::Frame, "GetHeight", |lua, this: Table| {
-        let h = frame_handle_of(lua, &this)?;
-        settle(lua);
-        let model = lua
-            .app_data_ref::<crate::script::ModelCell>()
-            .expect("model");
-        Ok(size_read(&model, h, false))
-    })?;
+    set_shared(
+        lua,
+        m,
+        Side::Frame,
+        "GetWidth",
+        |lua, (this, ignore_rect): (Table, Value)| size_get(lua, &this, &ignore_rect, true),
+    )?;
+    set_shared(
+        lua,
+        m,
+        Side::Frame,
+        "GetHeight",
+        |lua, (this, ignore_rect): (Table, Value)| size_get(lua, &this, &ignore_rect, false),
+    )?;
 
     // GetCenter(): the resolved rect's centre in the frame's own units (screen ÷ effective scale,
     // y-up), as the reference's coordinate getters report; nil before the first resolve.
@@ -318,6 +316,31 @@ pub(crate) fn eff_scale(model: &Model, h: FrameHandle) -> f32 {
 
 /// `GetWidth`/`GetHeight`: the resolved span in the frame's own units (screen ÷ effective scale),
 /// else the size it was given, where 0 means derived, as in the reference.
+/// `GetWidth`/`GetHeight` (`0x49d3b0`/`0x49d550`): the set size when it is nonzero, read with no
+/// resolve, even where anchors stretch the frame past it; only a zero size, unless `ignoreRect`
+/// (Lua truthiness, `0x815500`), resolves and answers from the rect.
+fn size_get(lua: &Lua, this: &Table, ignore_rect: &Value, width: bool) -> mlua::Result<f32> {
+    let h = frame_handle_of(lua, this)?;
+    let set = {
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
+        model
+            .layout_inputs
+            .get(&h)
+            .map_or(0.0, |i| if width { i.width } else { i.height })
+    };
+    let ignore = !matches!(ignore_rect, Value::Nil | Value::Boolean(false));
+    if set != 0.0 || ignore {
+        return Ok(set);
+    }
+    settle(lua);
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
+    Ok(size_read(&model, h, width))
+}
+
 fn size_read(model: &Model, h: FrameHandle, width: bool) -> f32 {
     if let Some(r) = model.resolved.get(&h) {
         let span = if width { r.width() } else { r.height() };

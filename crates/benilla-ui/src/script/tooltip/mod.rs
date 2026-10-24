@@ -224,12 +224,12 @@ fn ensure_lines(lua: &Lua, this: &Table, n: usize) -> mlua::Result<()> {
                 // Adopted pairs are already named and published by the loader.
                 if adopted_left.is_none() {
                     let ln = format!("{frame_name}TextLeft{i}");
-                    model.region_names.entry(ln.clone()).or_insert(left_id);
+                    model.name_region(ln.clone(), left_id);
                     publish.push((left_id, ln));
                 }
                 if adopted_right.is_none() {
                     let rn = format!("{frame_name}TextRight{i}");
-                    model.region_names.entry(rn.clone()).or_insert(right_id);
+                    model.name_region(rn.clone(), right_id);
                     publish.push((right_id, rn));
                 }
             }
