@@ -523,6 +523,9 @@ fn spell_has_root_aura(spells: Option<&crate::ui_action::Spells>, spell_id: u32)
         .is_some_and(|d| d.effect_apply_aura.contains(&SPELL_AURA_MOD_ROOT))
 }
 
+/// The spell attribute (`AttributesEx5`) that forces an effect's projected batches on.
+const SPELL_ATTR_EX5_FORCE_PROJECTION: u32 = 0x4000_0000;
+
 /// Whether `spell_id`'s effects draw their projected batches whatever `projectedTextures` says
 /// (attribute ExE `0x40000000`, [`benilla_world::model_render::ForcedProjection`]).
 pub(super) fn spell_forces_projection(
@@ -531,9 +534,7 @@ pub(super) fn spell_forces_projection(
 ) -> bool {
     spells
         .and_then(|s| s.catalog.get(spell_id))
-        .is_some_and(|d| {
-            d.attributes_ex5 & benilla_world::model_render::SPELL_ATTR_EX5_FORCE_PROJECTION != 0
-        })
+        .is_some_and(|d| d.attributes_ex5 & SPELL_ATTR_EX5_FORCE_PROJECTION != 0)
 }
 
 /// Despawn a plant whose owner is gone, and re-plant a `follow` one whose owner moved past

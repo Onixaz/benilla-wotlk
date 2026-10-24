@@ -1068,9 +1068,6 @@ pub enum ModelKind {
 #[component(storage = "SparseSet")]
 pub struct ForcedProjection;
 
-/// The spell attribute (`AttributesEx5`) that forces an effect's projected batches on.
-pub const SPELL_ATTR_EX5_FORCE_PROJECTION: u32 = 0x4000_0000;
-
 /// A spawned model submesh's subsystem and blend layer, which the panel toggles on.
 #[derive(Component, Clone, Copy)]
 pub struct ModelPart {
