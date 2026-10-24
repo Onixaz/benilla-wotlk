@@ -75,6 +75,7 @@ const ITEM_SETTERS: &[&str] = &[
     "SetAuctionSellItem",
     "SetBagItem",
     "SetBuybackItem",
+    "SetGuildBankItem",
     "SetHyperlink",
     "SetInboxItem",
     "SetInventoryItem",

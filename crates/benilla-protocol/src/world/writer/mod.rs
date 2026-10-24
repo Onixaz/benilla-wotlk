@@ -25,6 +25,7 @@ mod gm_ticket;
 mod gossip;
 mod group;
 mod guild;
+mod guild_bank;
 mod instance;
 mod items;
 mod lfg;

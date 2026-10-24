@@ -328,7 +328,8 @@ const GO_TYPE_GUARDPOST: i32 = 21;
 /// placeholder (vtable `0x80b188`) whose `+0x14` (`0x5f36f0`) and `+0xc` both answer false, so the
 /// object shows nothing. No 1.12 data sends such a type; the flag predicate alone would pass it.
 fn strategy_is_default(type_id: i32) -> bool {
-    type_id == GO_TYPE_GUARDPOST || !(0..=GO_TYPE_MAX).contains(&type_id)
+    type_id != GO_TYPE_GUILD_BANK
+        && (type_id == GO_TYPE_GUARDPOST || !(0..=GO_TYPE_MAX).contains(&type_id))
 }
 /// `GAMEOBJECT_TYPE_TEXT` (9), a readable book or plaque: the Inspect magnifier (`0x5f5890`).
 pub(crate) const GO_TYPE_TEXT: i32 = 9;
@@ -338,6 +339,9 @@ pub(crate) const GO_TYPE_TEXT: i32 = 9;
 const GO_TYPE_RITUAL: i32 = 18;
 pub(super) const GO_TYPE_MAILBOX: i32 = 19;
 const GO_TYPE_28: i32 = 28;
+/// `GAMEOBJECT_TYPE_GUILD_BANK` (34), a guild vault: 3.3.5a gives it a strategy of its own
+/// (`0x712ac0`), whose cursor is Buy, grayed out of reach (`CanChangeCursor 0x70b910`).
+pub(super) const GO_TYPE_GUILD_BANK: i32 = 34;
 /// Every other type's interact range: the NPC-service reach, standing in for the reference's
 /// per-type strategy constant (`[strat+0xc]`, compared squared by `usable 0x5f3130`; base 5.0,
 /// overridden by several types), which is not transcribed.
@@ -563,6 +567,7 @@ fn go_cursor_kind(type_id: i32, lock_cursor: Option<CursorKind>) -> CursorKind {
     match type_id {
         GO_TYPE_TEXT => CursorKind::Inspect,
         GO_TYPE_RITUAL | GO_TYPE_MAILBOX | GO_TYPE_28 => CursorKind::Mail,
+        GO_TYPE_GUILD_BANK => CursorKind::Buy,
         _ => lock_cursor.unwrap_or(CursorKind::Interact),
     }
 }
@@ -1644,6 +1649,8 @@ mod tests {
         assert_eq!(go_cursor_kind(18, None), CursorKind::Mail);
         assert_eq!(go_cursor_kind(28, Some(CursorKind::Mine)), CursorKind::Mail);
         assert_eq!(go_cursor_kind(9, None), CursorKind::Inspect); // TEXT
+        assert_eq!(go_cursor_kind(34, None), CursorKind::Buy); // GUILD_BANK
+        assert!(!strategy_is_default(GO_TYPE_GUILD_BANK));
         for t in [0, 1, 3, 10, 6, 24] {
             assert_eq!(go_cursor_kind(t, None), CursorKind::Interact);
         }

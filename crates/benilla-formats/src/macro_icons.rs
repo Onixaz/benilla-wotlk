@@ -20,6 +20,30 @@ const ICON_DIR: &str = "Interface\\Icons\\";
 /// `SStrCmpI` (`0x4f0128`, comparator `0x4f05e0`) and drops adjacent duplicates
 /// (`0x4f0140`-`0x4f01a4`): the order is alphabetical, and a stock 5875 install yields 517 icons.
 pub fn load_macro_icons(chain: &mut Chain) -> Result<Vec<String>> {
+    Ok(icon_stems(chain, &["Spell_", "Ability_"])?
+        .into_iter()
+        .map(|n| format!("{ICON_DIR}{n}"))
+        .collect())
+}
+
+/// The guild bank tab chooser's list (`GetNumMacroItemIcons` `0x5664e0`), which 12340's
+/// `MacroIcons_Build` (`0x565840`) fills beside the macro list: every `Interface\Icons\` file
+/// whose name begins `INV_`, seeded with `INV_Misc_QuestionMark`, which its comparator pins first,
+/// then sorted and deduplicated without case.
+pub fn load_macro_item_icons(chain: &mut Chain) -> Result<Vec<String>> {
+    const SEED: &str = "INV_Misc_QuestionMark";
+    let mut names = icon_stems(chain, &["INV_"])?;
+    names.retain(|n| !n.eq_ignore_ascii_case(SEED));
+    names.insert(0, SEED.to_string());
+    Ok(names
+        .into_iter()
+        .map(|n| format!("{ICON_DIR}{n}"))
+        .collect())
+}
+
+/// The stems of the `Interface\Icons\` files beginning with one of `prefixes`, sorted and
+/// deduplicated without case.
+fn icon_stems(chain: &mut Chain, prefixes: &[&str]) -> Result<Vec<String>> {
     let mut names: Vec<String> = Vec::new();
     for entry in chain.list()? {
         let path = entry.name.replace('/', "\\");
@@ -42,7 +66,7 @@ pub fn load_macro_icons(chain: &mut Chain) -> Result<Vec<String>> {
         if !ext.eq_ignore_ascii_case("blp") && !ext.eq_ignore_ascii_case("tga") {
             continue;
         }
-        let keeps = ["Spell_", "Ability_"].iter().any(|p| {
+        let keeps = prefixes.iter().any(|p| {
             stem.len() >= p.len() && stem.as_bytes()[..p.len()].eq_ignore_ascii_case(p.as_bytes())
         });
         if keeps {
@@ -52,8 +76,5 @@ pub fn load_macro_icons(chain: &mut Chain) -> Result<Vec<String>> {
     // Sort without case, then drop adjacent duplicates: the reference's two steps, in its order.
     names.sort_by_key(|n| n.to_ascii_lowercase());
     names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
-    Ok(names
-        .into_iter()
-        .map(|n| format!("{ICON_DIR}{n}"))
-        .collect())
+    Ok(names)
 }

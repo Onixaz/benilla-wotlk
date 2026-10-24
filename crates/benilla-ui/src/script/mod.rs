@@ -157,6 +157,7 @@ pub use glue_system::{GlueBilling, ScanDll};
 mod gm_ticket;
 mod gossip;
 mod guild;
+mod guild_bank;
 mod handler_prof;
 mod screenshot;
 mod tabard;
@@ -301,8 +302,9 @@ pub use container::{
 };
 pub use cursor::money::coin_icon;
 pub use cursor::{
-    CursorAction, CursorItem, CursorMacro, CursorMerchantItem, CursorMoney, CursorPayload,
-    CursorPetAction, CursorSpell, CursorStablePet, EnchantConfirm, WorldPick, EQUIPMENT_BAG,
+    CursorAction, CursorGuildBankItem, CursorItem, CursorMacro, CursorMerchantItem, CursorMoney,
+    CursorPayload, CursorPetAction, CursorSpell, CursorStablePet, EnchantConfirm, WorldPick,
+    EQUIPMENT_BAG,
 };
 pub use cvars::{small_cull_text, sstr_to_int};
 pub use cvars::{
@@ -319,6 +321,10 @@ pub use gossip::{GossipMenu, GossipOptionView, GossipQuestRow};
 pub use guild::{
     GuildMemberInfo, GuildRankEdit, GuildRankInfo, GuildRequest, GuildState, LastOnline, UnitGuild,
     MAX_RANKS, MIN_RANKS, RANK_RIGHT_BITS,
+};
+pub use guild_bank::{
+    GuildBankLogView, GuildBankRequest, GuildBankSlotView, GuildBankTabView, GuildBankView,
+    GUILD_BANK_MONEY_LOG, GUILD_BANK_TABS, GUILD_BANK_TAB_SLOTS,
 };
 pub use input_verbs::{BindingInput, FiredInput, HeldInput};
 pub use macro_options::OptionState;
@@ -1006,6 +1012,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     gossip::install(lua)?;
     merchant::install(lua)?;
     bank::install(lua)?;
+    guild_bank::install(lua)?;
     stable::install(lua)?;
     item_text::install(lua)?;
     mail::install(lua)?;

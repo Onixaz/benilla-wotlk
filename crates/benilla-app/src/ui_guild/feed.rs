@@ -96,19 +96,29 @@ pub(super) fn feed_guild(
             .rank_rights
             .iter()
             .enumerate()
-            .map(|(i, rights)| GuildRankInfo {
-                name: identity
-                    .map(|id| id.rank_name(i as u32).to_string())
-                    .unwrap_or_default(),
-                rights: *rights,
+            .map(|(i, rights)| {
+                let bank = guild.rank_bank.get(i).copied().unwrap_or_default();
+                GuildRankInfo {
+                    name: identity
+                        .map(|id| id.rank_name(i as u32).to_string())
+                        .unwrap_or_default(),
+                    rights: *rights,
+                    bank_money_per_day: bank.gold_per_day,
+                    bank_tabs: bank.tabs.to_vec(),
+                }
             })
             .collect(),
         selection,
         show_offline: guild.show_offline,
         bank_money: guild.bank_money,
         bank_withdraw_money: guild.bank_withdraw_money,
+        tabard: guild.in_guild().then(|| guild.own_tabard()).flatten(),
     });
 
+    if std::mem::take(&mut guild.permissions_ask) {
+        let _ = commands.0.send(ClientCommand::GuildPermissionsRequest);
+        guild.bank_withdraw_ask = true;
+    }
     if std::mem::take(&mut guild.bank_withdraw_ask) {
         let _ = commands
             .0

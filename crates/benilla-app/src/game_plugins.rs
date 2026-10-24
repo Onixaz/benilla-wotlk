@@ -55,6 +55,7 @@ use crate::ui_glyph::UiGlyphPlugin;
 use crate::ui_gm_ticket::UiGmTicketPlugin;
 use crate::ui_gossip::UiGossipPlugin;
 use crate::ui_guild::UiGuildPlugin;
+use crate::ui_guild_bank::UiGuildBankPlugin;
 use crate::ui_instance::UiInstancePlugin;
 use crate::ui_item_text::UiItemTextPlugin;
 use crate::ui_items::UiItemsPlugin;
@@ -251,6 +252,7 @@ impl PluginGroup for GamePlugins {
             .add(UiMerchantPlugin)
             .add(UiAuctionPlugin)
             .add(UiBankPlugin)
+            .add(UiGuildBankPlugin)
             .add(UiMailPlugin)
             .add(UiTradePlugin)
             .add(UiItemTextPlugin)
@@ -815,7 +817,16 @@ pub(crate) mod schedule_tests {
     /// Raising the ceiling is a claim that a new undeclared order is acceptable: make it with the
     /// reason read off the dump, or declare the order (`.after`, a set, a `chain`). A resource
     /// that commutes by construction belongs in [`Classes`].
-    const UPDATE_ACTIONABLE_CEILING: usize = 4_012;
+    ///
+    /// The guild bank (#203) adds 25, each a class this list already argues:
+    /// `close_npc_session_out_of_range::<GuildBankState>` against the motion and booth writers of
+    /// `Transform`, as the petition vendor's above; `ui_guild_bank::drain_guild_bank`, an
+    /// `.after(UiInput)` drain of the VM's own sends, against the click's dispatchers (which only
+    /// start a banker hello), the sound and nameplate readers and `finish_colliders`, as the
+    /// other such drains pair; and `ui_guild_bank::feed_guild_bank` against
+    /// `ui_items::feed_item_stats`, `feed_spell_tooltips`, `feed_units`, `feed_dressup` and
+    /// `evict_display_caches` over `Items`, the icon catalog and the VM: it only reads templates.
+    const UPDATE_ACTIONABLE_CEILING: usize = 4_037;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
@@ -1243,6 +1254,8 @@ pub(crate) mod schedule_tests {
          "VM verbs; the refresh flags act only under an open window and become wire re-asks"),
         ("ui_bank/mod.rs", "feed_bank", Because::PlayerRoundTrip,
          "`BankErrors` answers a `BuyBankSlot` click; the OPENED edge rides `VmMemo`s"),
+        ("ui_guild_bank/mod.rs", "feed_guild_bank", Because::PlayerRoundTrip,
+         "every owed event answers a click on a guild banker or a guild bank verb, and the view rides a `VmMemo`"),
         ("ui_battlefield.rs", "feed_battlefield", Because::SelfHealing,
          "`reset_on_world_enter` runs before it at each world-enter cascade, clears the session and re-sends `BattlefieldStatusRequest`"),
         ("ui_binder.rs", "feed_binder", Because::PlayerRoundTrip,

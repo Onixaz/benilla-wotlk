@@ -44,6 +44,23 @@ pub enum CursorPayload {
     StablePet(CursorStablePet),
     /// Mode 2, coins taken off a money frame.
     Money(CursorMoney),
+    /// Mode 11, an item taken from a guild bank slot (`SetCursorVirtualItem`, `0x520d30`).
+    GuildBankItem(CursorGuildBankItem),
+    /// Mode 12, coins taken off the guild bank (`PickupGuildBankMoney`, `0x5a4330`).
+    GuildBankMoney(CursorMoney),
+}
+
+/// A guild bank item held on the cursor, mode 11: its slot stays locked until a drop or a clear.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CursorGuildBankItem {
+    /// 0-based tab and slot.
+    pub tab: u8,
+    pub slot: u8,
+    pub item_id: u32,
+    pub texture: Option<String>,
+    pub link: Option<String>,
+    /// `Some(n)` for a split of `n` (`m_stackSplit`), `None` for the whole stack.
+    pub split: Option<u32>,
 }
 
 /// Copper held on the cursor, mode 2 (`[0xb4e2f0]`, set by `PickupPlayerMoney`, `0x48abc0`). The
@@ -237,8 +254,14 @@ pub(crate) fn clear_cursor(model: &mut Model) {
     // packet (`0x49525f`).
     let taken = model.cursor.take();
     queue_cursor_update(model);
-    if let Some(CursorPayload::Item(item)) = taken {
-        queue_lock_changed(model, item.bag, item.slot);
+    match taken {
+        Some(CursorPayload::Item(item)) => queue_lock_changed(model, item.bag, item.slot),
+        // Mode 11 unlocks its slot, mode 12 repaints the bank's money (`0x519280`).
+        Some(CursorPayload::GuildBankItem(held)) => super::guild_bank::unlock_held(model, &held),
+        Some(CursorPayload::GuildBankMoney(_)) => model
+            .pending_events
+            .push(("GUILDBANK_UPDATE_MONEY".to_string(), Vec::new())),
+        _ => {}
     }
 }
 
@@ -445,13 +468,14 @@ pub enum EnchantConfirm {
 ///   then the pet's (`0x53b4e0`), 0 when in neither;
 /// - 5, a vendor row: `"merchant", row`, 1-based;
 /// - 8, a macro: `"macro", index`;
+/// - 11, a guild bank item: `"item", itemId, link`;
+/// - 12, guild bank money: `"guildbankmoney", copper`;
 /// - 4 (a pet action), 10 (a stabled pet) and an empty cursor: nothing.
 ///
 /// A bar-slot pickup answers as the payload the reference would hold for it: an item by id, whose
 /// link needs the template (`0x5153a9`), else nothing; a macro; a spell. A companion spell
 /// answers `"companion", index, "CRITTER"|"MOUNT"` (`0x5152c0`), as `GetActionInfo` does. benilla
-/// keeps no guild bank or equipment sets, so modes 12 (`"guildbankmoney"`) and 13
-/// (`"equipmentset"`) never arise.
+/// keeps no equipment sets, so mode 13 (`"equipmentset"`) never arises.
 fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
     let str = |s: &str| lua.create_string(s).map(Value::String);
     let int = |n: u32| Value::Integer(i64::from(n));
@@ -480,6 +504,12 @@ fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
             item.link.as_deref().map_or(Ok(Value::Nil), str)?,
         ],
         Some(CursorPayload::Money(m)) => vec![str("money")?, int(m.copper)],
+        Some(CursorPayload::GuildBankMoney(m)) => vec![str("guildbankmoney")?, int(m.copper)],
+        Some(CursorPayload::GuildBankItem(g)) => vec![
+            str("item")?,
+            int(g.item_id),
+            g.link.as_deref().map_or(Ok(Value::Nil), str)?,
+        ],
         Some(CursorPayload::Spell(s)) => {
             let pet = (s.book_type == "pet").then_some((s.book_slot, "pet"));
             spell(s.spell_id, pet)?

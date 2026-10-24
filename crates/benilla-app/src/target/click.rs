@@ -170,6 +170,7 @@ pub(crate) struct Feedback<'w> {
     errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
     cast_errors: ResMut<'w, crate::ui_action::CastErrors>,
     mail: ResMut<'w, crate::ui_mail::MailOpen>,
+    guild_bank: ResMut<'w, crate::ui_guild_bank::GuildBankState>,
     item_text: ResMut<'w, crate::ui_item_text::ItemTextOpen>,
     // The opener queue: this system cannot also hold `CastLadder` (a second `Items` and
     // `CastErrors` borrow), so the lock verdict goes to `ui_action::drain::drain_go_openers`.
@@ -420,6 +421,17 @@ impl Dispatch<'_, '_> {
             if in_reach {
                 debug!("right-click mailbox: open mail window {guid:#x}");
                 self.feedback.mail.click(guid);
+            } else {
+                self.walk_to_object(entity, guid, go_type, walk);
+            }
+            return;
+        }
+        // GUILD_BANK (type 34): its use (`0x70ecb0`) is `TalkToGuildBanker` (`0x6d23c0`), which
+        // sends `CMSG_GUILD_BANKER_ACTIVATE`, never `CMSG_GAMEOBJ_USE`.
+        if go_type == cursor_mode::GO_TYPE_GUILD_BANK {
+            if in_reach {
+                debug!("right-click guild vault: {guid:#x}");
+                self.feedback.guild_bank.talk(guid, &self.seam.net);
             } else {
                 self.walk_to_object(entity, guid, go_type, walk);
             }
@@ -716,6 +728,10 @@ impl Dispatch<'_, '_> {
             ServiceAction::OpenMailbox => {
                 debug!("right-click interact: {guid:#x} (mailbox NPC — mail window, no packet)");
                 self.feedback.mail.click(guid);
+            }
+            ServiceAction::TalkToGuildBanker => {
+                debug!("right-click interact: {guid:#x} (guild banker)");
+                self.feedback.guild_bank.talk(guid, &self.seam.net);
             }
             ServiceAction::Silent(why) => {
                 debug!("right-click interact: {guid:#x} ({arm:?}) — silent: {why}");
@@ -1484,6 +1500,8 @@ pub(crate) enum ServiceAction {
     AcquireSpiritGuide,
     /// `TalkToMailbox` (`0x56da60`): the mail window opens locally on this NPC.
     OpenMailbox,
+    /// `TalkToGuildBanker` (`0x6d23c0`): `CMSG_GUILD_BANKER_ACTIVATE`, unless this banker is open.
+    TalkToGuildBanker,
     /// Nothing goes out; the payload says why, for the debug line.
     Silent(&'static str),
 }
@@ -1537,9 +1555,7 @@ pub(crate) fn service_action(
         ServiceArm::StableMaster => {
             ServiceAction::Send(ClientCommand::ListStabledPets { npc: guid })
         }
-        ServiceArm::GuildBanker => {
-            ServiceAction::Silent("guild banker, and the guild bank is not built")
-        }
+        ServiceArm::GuildBanker => ServiceAction::TalkToGuildBanker,
         ServiceArm::SpellClick => ServiceAction::Silent("spell click, which is not built"),
         ServiceArm::Mailbox => ServiceAction::OpenMailbox,
     }
@@ -1891,6 +1907,7 @@ mod tests {
             ServiceAction::AskSpiritHealer => "ask-spirit-healer".to_string(),
             ServiceAction::AcquireSpiritGuide => "acquire-spirit-guide".to_string(),
             ServiceAction::OpenMailbox => "open-mailbox".to_string(),
+            ServiceAction::TalkToGuildBanker => "talk-guild-banker".to_string(),
             ServiceAction::Silent(_) => "silent".to_string(),
         };
         assert!(matches!(
@@ -1933,10 +1950,10 @@ mod tests {
         assert_eq!(sent(ServiceArm::SpiritHealer, true), "ask-spirit-healer");
         // A mailbox NPC opens the mail window locally (`0x6de11f`).
         assert_eq!(sent(ServiceArm::Mailbox, false), "open-mailbox");
-        // Taken, but nothing benilla builds answers them yet.
-        for arm in [ServiceArm::GuildBanker, ServiceArm::SpellClick] {
-            assert_eq!(sent(arm, false), "silent", "{arm:?}");
-        }
+        // A guild banker activates the bank (`0x6ddbb0` calls `0x6d23c0`).
+        assert_eq!(sent(ServiceArm::GuildBanker, false), "talk-guild-banker");
+        // Taken, but nothing benilla builds answers it yet.
+        assert_eq!(sent(ServiceArm::SpellClick, false), "silent");
         assert!(matches!(
             service_action(ServiceArm::TabardDesigner, 0x42, false, None),
             ServiceAction::Send(ClientCommand::TabardVendorActivate { npc: 0x42 })
@@ -1992,6 +2009,7 @@ mod tests {
                     ServiceAction::AskSpiritHealer => "ask-xp-loss".into(),
                     ServiceAction::AcquireSpiritGuide => "acquire-spirit-guide".into(),
                     ServiceAction::OpenMailbox => "open-mailbox".into(),
+                    ServiceAction::TalkToGuildBanker => "talk-guild-banker".into(),
                     ServiceAction::Silent(w) => format!("silent {w}"),
                 };
                 let empty = describe(service_action(arm, VENDOR, ghost, None));
@@ -2189,6 +2207,7 @@ mod tests {
         world.init_resource::<crate::ui_loot::LootState>();
         world.init_resource::<crate::ui_loot::LootLatch>();
         world.init_resource::<crate::ui_mail::MailOpen>();
+        world.init_resource::<crate::ui_guild_bank::GuildBankState>();
         world.init_resource::<crate::ui_item_text::ItemTextOpen>();
         world.init_resource::<crate::ui_action::GoOpenerCasts>();
         world.init_resource::<Messages<crate::ui_dialog_verbs::MeetingStoneUse>>();

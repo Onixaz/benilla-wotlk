@@ -147,9 +147,19 @@ pub mod guild_event {
     pub const SIGNED_ON: u8 = 0x0C;
     /// `GE_SIGNED_OFF`, param: the guildmate's name; carries the trailing guid.
     pub const SIGNED_OFF: u8 = 0x0D;
+    /// `GE_BANK_BAGSLOTS_CHANGED`: the current tab is re-queried.
+    pub const BANK_BAGSLOTS_CHANGED: u8 = 0x0E;
+    /// `GE_BANK_TAB_PURCHASED`: one more tab.
+    pub const BANK_TAB_PURCHASED: u8 = 0x0F;
+    /// `GE_BANK_TAB_UPDATED`, params: tab, name, icon.
+    pub const BANK_TAB_UPDATED: u8 = 0x10;
     /// `GE_BANK_MONEY_SET`, param: the bank's copper as 16 hex digits; the reference stores it and
     /// asks `MSG_GUILD_BANK_MONEY_WITHDRAWN` (`0x6d9748`).
     pub const BANK_MONEY_SET: u8 = 0x11;
+    /// `GE_BANK_TAB_AND_MONEY_UPDATED`: the current tab and the withdrawal are re-queried.
+    pub const BANK_TAB_AND_MONEY_UPDATED: u8 = 0x12;
+    /// `GE_BANK_TEXT_CHANGED`, param: the tab; its text goes stale.
+    pub const BANK_TEXT_CHANGED: u8 = 0x13;
 }
 
 /// `GE_BANK_MONEY_SET`'s parameter, read as `"%016I64X"` (`0x6d9758`); `None` when it does not
@@ -341,6 +351,43 @@ pub const GUILD_BANK_TABS: usize = 6;
 
 /// Allocation cap for the wire member count; a `0x8000`-byte roster fits about 1.4k members.
 const ROSTER_CAPACITY_HINT_CAP: usize = 2048;
+
+/// `MSG_GUILD_PERMISSIONS`' answer: one rank's rights and bank rights, and the bank's tab count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GuildPermissions {
+    /// Our rank, 0 the guild master.
+    pub rank: u32,
+    pub rights: u32,
+    pub bank: GuildRankBank,
+    /// The guild bank's bought tabs.
+    pub num_tabs: u8,
+}
+
+/// Read `MSG_GUILD_PERMISSIONS` (`0x5cb9f0`): `u32` rank, `u32` rights, `u32` gold per day, `u8`
+/// tab count, then six `(u32 rights, u32 withdrawals)` pairs whatever the count.
+pub(super) fn read_guild_permissions(r: &mut impl Read) -> io::Result<GuildPermissions> {
+    let rank = read_u32_le(r)?;
+    let rights = read_u32_le(r)?;
+    let mut bank = GuildRankBank {
+        gold_per_day: read_u32_le(r)?,
+        ..Default::default()
+    };
+    let num_tabs = read_u8(r)?;
+    for tab in &mut bank.tabs {
+        *tab = (read_u32_le(r)?, read_u32_le(r)?);
+    }
+    Ok(GuildPermissions {
+        rank,
+        rights,
+        bank,
+        num_tabs,
+    })
+}
+
+/// Body of the `MSG_GUILD_PERMISSIONS` ask: empty (`QueryPermissions` `0x5caa40`).
+pub fn guild_permissions() -> Vec<u8> {
+    Vec::new()
+}
 
 /// Read `SMSG_GUILD_ROSTER` (`0x5cc5d0`): `u32` member count, MOTD, info text, `u32` rank count
 /// and that many rank records (`u32` rights, `u32` gold per day, six tab rights and slot pairs),

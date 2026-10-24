@@ -38,6 +38,10 @@ pub(crate) use run::BoundSpell;
 #[derive(Resource, Default)]
 struct MacroIconList(std::sync::Arc<std::sync::OnceLock<Vec<String>>>);
 
+/// The guild bank tab chooser's `INV_` list, built beside it (`MacroIcons_Build 0x565840`).
+#[derive(Resource, Default)]
+struct MacroItemIconList(std::sync::Arc<std::sync::OnceLock<Vec<String>>>);
+
 pub(crate) struct UiMacroPlugin;
 
 impl Plugin for UiMacroPlugin {
@@ -45,6 +49,7 @@ impl Plugin for UiMacroPlugin {
         app.init_resource::<MacroFiles>()
             .init_resource::<MacroBoundSpells>()
             .init_resource::<MacroIconList>()
+            .init_resource::<MacroItemIconList>()
             .add_systems(
                 Update,
                 (
@@ -77,6 +82,7 @@ fn load_icon_catalog(
     script: Option<NonSendMut<UiScript>>,
     assets: Option<Res<WorldAssets>>,
     list: Res<MacroIconList>,
+    item_list: Res<MacroItemIconList>,
     mut seeded: Local<crate::ui_script::VmMemo<bool>>,
 ) {
     let (Some(mut script), Some(assets)) = (script, assets) else {
@@ -87,11 +93,31 @@ fn load_icon_catalog(
     }
     let chain = assets.chain.clone();
     let built = std::sync::Arc::clone(&list.0);
+    let item_chain = chain.clone();
     script.set_macro_icon_source(Box::new(move || {
         built
             .get_or_init(|| list_icons(&mut chain.lock_recover()))
             .clone()
     }));
+    let item_built = std::sync::Arc::clone(&item_list.0);
+    script.set_macro_item_icon_source(Box::new(move || {
+        item_built
+            .get_or_init(|| list_item_icons(&mut item_chain.lock_recover()))
+            .clone()
+    }));
+}
+
+fn list_item_icons(chain: &mut benilla_formats::Chain) -> Vec<String> {
+    match benilla_formats::load_macro_item_icons(chain) {
+        Ok(icons) => {
+            info!("ui_macro: {} item icons in the tab chooser", icons.len());
+            icons
+        }
+        Err(e) => {
+            error!("ui_macro: no Interface\\Icons\\ listing — the tab chooser is empty: {e:#}");
+            Vec::new()
+        }
+    }
 }
 
 fn list_icons(chain: &mut benilla_formats::Chain) -> Vec<String> {

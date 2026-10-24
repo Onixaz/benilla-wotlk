@@ -10,11 +10,12 @@ use crate::wire::{
 use super::{
     achievement, action_bar, area_trigger, arena_team, attack, auction, aura, bank, battlefield,
     binder, broadcast, channel, chat, combat_log, death, duel, equipment_set, gameobject,
-    gm_ticket, gossip, group, guild, instance, items, lfg, loot, mail, meeting_stone, mirror_timer,
-    monster_move, movement, opcode, page_text, pet, petition, pose, progression, pvp, quest, rune,
-    social, spellbook, spells, stable, summon, tabard, talents, taxi, totem, trade, trainer,
-    tutorial, update_object, vendor, world_state, AttackSwingError, Character, CreatureQueryInfo,
-    DifficultySet, JumpInfo, LfgPacket, MoveMode, ServerPacket, SpeedKind, SplineMode,
+    gm_ticket, gossip, group, guild, guild_bank, instance, items, lfg, loot, mail, meeting_stone,
+    mirror_timer, monster_move, movement, opcode, page_text, pet, petition, pose, progression, pvp,
+    quest, rune, social, spellbook, spells, stable, summon, tabard, talents, taxi, totem, trade,
+    trainer, tutorial, update_object, vendor, world_state, AttackSwingError, Character,
+    CreatureQueryInfo, DifficultySet, JumpInfo, LfgPacket, MoveMode, ServerPacket, SpeedKind,
+    SplineMode,
 };
 
 /// Read a `SMSG_FORCE_*_SPEED_CHANGE` body: `[packed guid][u32 counter][f32 speed]`, with a `u8`
@@ -1666,6 +1667,9 @@ fn parse_server_body(
             ServerPacket::GuildQueryResponse(guild::read_guild_query_response(&mut r)?)
         }
         opcode::SMSG_GUILD_ROSTER => ServerPacket::GuildRoster(guild::read_guild_roster(&mut r)?),
+        opcode::MSG_GUILD_PERMISSIONS => {
+            ServerPacket::GuildPermissions(guild::read_guild_permissions(&mut r)?)
+        }
         opcode::SMSG_GUILD_EVENT => ServerPacket::GuildEvent(guild::read_guild_event(&mut r)?),
         opcode::SMSG_GUILD_COMMAND_RESULT => {
             ServerPacket::GuildCommandResult(guild::read_guild_command_result(&mut r)?)
@@ -1681,6 +1685,16 @@ fn parse_server_body(
         opcode::MSG_GUILD_BANK_MONEY_WITHDRAWN => ServerPacket::GuildBankWithdrawMoney {
             remaining: read_u32_le(&mut r)? as i32,
         },
+        opcode::SMSG_GUILD_BANK_LIST => {
+            ServerPacket::GuildBankList(guild_bank::read_guild_bank_list(&mut r)?)
+        }
+        opcode::MSG_GUILD_BANK_LOG_QUERY => {
+            ServerPacket::GuildBankLog(guild_bank::read_guild_bank_log(&mut r)?)
+        }
+        opcode::MSG_QUERY_GUILD_BANK_TEXT => {
+            let (tab, text) = guild_bank::read_guild_bank_text(&mut r)?;
+            ServerPacket::GuildBankText { tab, text }
+        }
         // Guild founding; the two `MSG_` opcodes read a different body from the one they write.
         opcode::SMSG_PETITION_SHOWLIST => {
             ServerPacket::PetitionShowList(petition::read_petition_show_list(&mut r)?)

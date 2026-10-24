@@ -27,9 +27,11 @@ fn payload_icon(script: &benilla_ui::script::UiScript, covered: bool) -> Option<
         // Mode 10: the stabled pet's family icon; a non-empty path gates the grab.
         CursorPayload::StablePet(p) => Some(p.texture),
         // Mode 2: the coin bitmap by magnitude, `GetCoinIcon`'s table.
-        CursorPayload::Money(m) => {
+        CursorPayload::Money(m) | CursorPayload::GuildBankMoney(m) => {
             Some(benilla_ui::script::coin_icon(i64::from(m.copper)).to_string())
         }
+        // Mode 11: the bank item's icon, from its display id as `CursorGrabVirtualItem` does.
+        CursorPayload::GuildBankItem(g) => g.texture,
         // Mode 5: the vendor row's icon, which the reference resolves from its `ItemDisplayInfo`
         // id (`0xb4d8ec`).
         CursorPayload::Merchant(m) => m.texture,

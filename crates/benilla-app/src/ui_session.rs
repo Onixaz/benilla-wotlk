@@ -532,6 +532,11 @@ mod tests {
         const EXCLUDED: &[(&str, &str)] = &[
             // Its icon is art, not a unit bake, and must not take a portrait window's token.
             ("MailOpen", "its window icon is art, not a unit bake"),
+            // The guild bank's window shows the guild's tabard (`GetGuildTabardFileNames`).
+            (
+                "GuildBankState",
+                "its window shows the guild tabard, not a unit bake",
+            ),
             // Reached from an open gossip menu, which stays open behind it and heads the chain;
             // unlike the registrar's, the server does not close it first.
             ("TalentWipeState", "rides the still-open gossip session"),

@@ -146,10 +146,12 @@ fn play_item_gesture_sounds(
     let mut play = |payload: &CursorPayload, gesture: CursorGesture| match payload {
         // Mode 5 takes the item arm: the vendor grab `0x4950f0` is handed the row's
         // `ItemDisplayInfo` id, so it plays the item's own pickup and put-down.
-        CursorPayload::Item(_) | CursorPayload::Merchant(_) => {
+        // Mode 11 too: `SetCursorVirtualItem` and its clear play the item's sounds (`0x520d30`).
+        CursorPayload::Item(_) | CursorPayload::Merchant(_) | CursorPayload::GuildBankItem(_) => {
             let item_id = match payload {
                 CursorPayload::Item(i) => i.item_id,
                 CursorPayload::Merchant(m) => m.item_id,
+                CursorPayload::GuildBankItem(g) => g.item_id,
                 _ => unreachable!("guarded by the arm's own pattern"),
             };
             let (Some(displays), Some(sounds)) = (&displays, &sounds) else {
@@ -187,10 +189,13 @@ fn play_item_gesture_sounds(
         // Mode 10: the stabled-pet grab `0x495010` calls the same generic path.
         | CursorPayload::StablePet(_)
         // Mode 2: money pickup and drop both play `LOOTWINDOWCOINSOUND`, never the generic drop
-        // kit (`0x494cfe`/`0x49523a`).
-        | CursorPayload::Money(_) => {
+        // kit (`0x494cfe`/`0x49523a`); mode 12, bank money, likewise (`0x5208f0`).
+        | CursorPayload::Money(_)
+        | CursorPayload::GuildBankMoney(_) => {
             let kit_id = match (&payload, gesture) {
-                (CursorPayload::Money(_), _) => LOOTWINDOWCOINSOUND,
+                (CursorPayload::Money(_) | CursorPayload::GuildBankMoney(_), _) => {
+                    LOOTWINDOWCOINSOUND
+                }
                 (_, CursorGesture::Gain) => INTERFACESOUND_CURSORGRABOBJECT,
                 (_, CursorGesture::Loss) => INTERFACESOUND_CURSORDROPOBJECT,
             };

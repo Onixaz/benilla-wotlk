@@ -160,6 +160,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             scroll(lua, &this, ScrollingMessageState::scroll_to_bottom)
         })?,
     )?;
+    // SetScrollOffset(offset) (`0x973470`): a non-number is ignored.
+    m.set(
+        "SetScrollOffset",
+        lua.create_function(|lua, (this, offset): (Table, Value)| {
+            let Some(offset) = lua.coerce_number(offset)? else {
+                return Ok(());
+            };
+            scroll(lua, &this, |smf, rows| {
+                smf.set_scroll_offset(offset as i64, rows)
+            })
+        })?,
+    )?;
     m.set(
         "PageUp",
         lua.create_function(|lua, this: Table| scroll(lua, &this, ScrollingMessageState::page_up))?,
@@ -392,6 +404,26 @@ mod tests {
 
     /// Every scroll call re-arms the displayed lines, even one that moves no cursor, as clicking
     /// the arrows on a chat already at the bottom does.
+    /// `SetScrollOffset` counts back from the newest line, clamped to the ring.
+    #[test]
+    fn set_scroll_offset_counts_back_from_the_newest_line() {
+        let mut s = ScrollingMessageState {
+            max_lines: 8,
+            ..Default::default()
+        };
+        s.set_scroll_offset(3, 4);
+        assert_eq!(s.scroll_offset, 0, "an empty frame ignores it");
+        for n in 0..5 {
+            s.add(format!("l{n}"), 1.0, 1.0, 1.0);
+        }
+        s.set_scroll_offset(2, 4);
+        assert_eq!(s.scroll_offset, 2);
+        s.set_scroll_offset(99, 4);
+        assert_eq!(s.scroll_offset, 4, "the oldest line at the bottom");
+        s.set_scroll_offset(-1, 4);
+        assert_eq!(s.scroll_offset, 0);
+    }
+
     #[test]
     fn any_scroll_brings_faded_lines_back() {
         let armed = |op: fn(&mut ScrollingMessageState, usize)| {

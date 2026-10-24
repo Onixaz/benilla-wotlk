@@ -1070,9 +1070,13 @@ mod aura_verb_tests;
 #[cfg(test)]
 mod bag_ui_tests;
 #[cfg(test)]
+mod bank_ui_tests;
+#[cfg(test)]
 mod glyph_ui_tests;
 #[cfg(test)]
 mod gossip_ui_tests;
+#[cfg(test)]
+mod guild_bank_ui_tests;
 #[cfg(test)]
 mod lfd_ui_tests;
 #[cfg(test)]
@@ -1081,8 +1085,6 @@ mod loot_ui_tests;
 mod mail_frame_tests;
 #[cfg(test)]
 mod paperdoll_stats_tests;
-#[cfg(test)]
-mod bank_ui_tests;
 #[cfg(test)]
 mod talent_ui_tests;
 #[cfg(test)]

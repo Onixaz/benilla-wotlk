@@ -52,6 +52,14 @@ impl WorldWriter {
         self.send(opcode::CMSG_GUILD_ROSTER, &messages::guild_roster())
     }
 
+    /// `MSG_GUILD_PERMISSIONS`, empty: answered in kind with our rank's rights.
+    pub fn guild_permissions(&mut self) -> Result<()> {
+        self.send(
+            opcode::MSG_GUILD_PERMISSIONS,
+            &messages::guild_permissions(),
+        )
+    }
+
     /// `CMSG_GUILD_PROMOTE`: the server moves the member to `rank - 1`, toward guild master.
     pub fn guild_promote(&mut self, name: &str) -> Result<()> {
         self.send(opcode::CMSG_GUILD_PROMOTE, &messages::guild_promote(name))

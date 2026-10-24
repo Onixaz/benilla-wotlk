@@ -87,6 +87,8 @@ pub(crate) fn place_action(model: &mut Model, id: u32) -> bool {
         CursorPayload::StablePet(_) => None,
         CursorPayload::Money(_) => None,
         CursorPayload::Merchant(_) => None,
+        // Modes 11 and 12, guild bank items and money, are refused too.
+        CursorPayload::GuildBankItem(_) | CursorPayload::GuildBankMoney(_) => None,
     };
     let Some((kind, action, texture)) = placeable else {
         model.cursor = Some(held);

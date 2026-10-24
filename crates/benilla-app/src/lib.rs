@@ -146,6 +146,7 @@ mod ui_glyph;
 mod ui_gm_ticket;
 mod ui_gossip;
 mod ui_guild;
+mod ui_guild_bank;
 mod ui_honor;
 mod ui_inspect;
 mod ui_instance;

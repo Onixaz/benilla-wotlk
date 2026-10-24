@@ -1167,6 +1167,8 @@ pub enum SessionEvent {
     GuildQueryResponse(GuildQueryResponse),
     /// The whole guild (`SMSG_GUILD_ROSTER`), a complete snapshot that replaces what is held.
     GuildRoster(GuildRoster),
+    /// Our rank's rights and bank rights (`MSG_GUILD_PERMISSIONS`).
+    GuildPermissions(crate::messages::GuildPermissions),
     /// A guild event (`SMSG_GUILD_EVENT`): a [`guild_event`](crate::messages::guild_event) id and
     /// its display-text arguments; a guid rides only on sign-on/off.
     GuildEvent(GuildEventNotice),
@@ -1182,6 +1184,12 @@ pub enum SessionEvent {
     /// The copper we may still withdraw from the guild bank today, -1 unlimited
     /// (`MSG_GUILD_BANK_MONEY_WITHDRAWN`).
     GuildBankWithdrawMoney { remaining: i32 },
+    /// One guild bank tab's slots (`SMSG_GUILD_BANK_LIST`).
+    GuildBankList(crate::messages::GuildBankList),
+    /// One guild bank tab's log (`MSG_GUILD_BANK_LOG_QUERY`).
+    GuildBankLog(crate::messages::GuildBankLog),
+    /// One guild bank tab's text (`MSG_QUERY_GUILD_BANK_TEXT`).
+    GuildBankText { tab: u8, text: String },
     /// A registrar's charter list (`SMSG_PETITION_SHOWLIST`), opening its window; one row in 1.12.
     PetitionShowList(PetitionShowList),
     /// A charter's signers (`SMSG_PETITION_SHOW_SIGNATURES`): our own ask or an offer to sign, told

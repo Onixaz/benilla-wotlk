@@ -210,6 +210,16 @@ impl ScrollingMessageState {
         self.reset_all_fade_times(viewport_rows);
     }
 
+    /// `SetScrollOffset(offset)` (`0x973470` → `0x96a970`): `offset` lines back from the newest,
+    /// clamped to the ring, then re-arm; an empty frame ignores it.
+    pub fn set_scroll_offset(&mut self, offset: i64, viewport_rows: usize) {
+        if self.lines.is_empty() {
+            return;
+        }
+        self.scroll_offset = usize::try_from(offset).unwrap_or(0).min(self.max_scroll());
+        self.reset_all_fade_times(viewport_rows);
+    }
+
     /// `ScrollToTop` (`0x788690`): to the oldest line, then re-arm, as its relayout always lands
     /// off the bottom.
     pub fn scroll_to_top(&mut self, viewport_rows: usize) {

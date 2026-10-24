@@ -1175,6 +1175,8 @@ pub enum ServerPacket {
     GuildQueryResponse(GuildQueryResponse),
     /// `SMSG_GUILD_ROSTER`: a complete snapshot, resent on any change: MOTD, info, ranks, members.
     GuildRoster(GuildRoster),
+    /// `MSG_GUILD_PERMISSIONS`: our rank's rights and the bank's tab count.
+    GuildPermissions(super::GuildPermissions),
     /// `SMSG_GUILD_EVENT`: an event id and its formatted string arguments.
     GuildEvent(GuildEventNotice),
     /// `SMSG_GUILD_COMMAND_RESULT`: read the code with its command tag; `0x08` means two things.
@@ -1191,6 +1193,15 @@ pub enum ServerPacket {
     },
     /// `SMSG_GUILD_INFO`: the founded, members and accounts summary, apart from the roster.
     GuildInfo(GuildInfo),
+    /// `SMSG_GUILD_BANK_LIST`: one tab's changed slots, the bank's money and, with tab 0, the tabs.
+    GuildBankList(super::guild_bank::GuildBankList),
+    /// `MSG_GUILD_BANK_LOG_QUERY`: one tab's log.
+    GuildBankLog(super::guild_bank::GuildBankLog),
+    /// `MSG_QUERY_GUILD_BANK_TEXT`: one tab's info text.
+    GuildBankText {
+        tab: u8,
+        text: String,
+    },
     /// `MSG_GUILD_BANK_MONEY_WITHDRAWN`: the copper we may still take from the guild bank today.
     GuildBankWithdrawMoney {
         remaining: i32,
@@ -1698,12 +1709,16 @@ impl ServerPacket {
             ServerPacket::WhoResults(..) => "SMSG_WHO".into(),
             ServerPacket::GuildQueryResponse(..) => "SMSG_GUILD_QUERY_RESPONSE".into(),
             ServerPacket::GuildRoster(..) => "SMSG_GUILD_ROSTER".into(),
+            ServerPacket::GuildPermissions(..) => "MSG_GUILD_PERMISSIONS".into(),
             ServerPacket::GuildEvent(..) => "SMSG_GUILD_EVENT".into(),
             ServerPacket::GuildCommandResult(..) => "SMSG_GUILD_COMMAND_RESULT".into(),
             ServerPacket::GuildInvite { .. } => "SMSG_GUILD_INVITE".into(),
             ServerPacket::GuildDecline { .. } => "SMSG_GUILD_DECLINE".into(),
             ServerPacket::GuildInfo(..) => "SMSG_GUILD_INFO".into(),
             ServerPacket::GuildBankWithdrawMoney { .. } => "MSG_GUILD_BANK_MONEY_WITHDRAWN".into(),
+            ServerPacket::GuildBankList(_) => "SMSG_GUILD_BANK_LIST".into(),
+            ServerPacket::GuildBankLog(_) => "MSG_GUILD_BANK_LOG_QUERY".into(),
+            ServerPacket::GuildBankText { .. } => "MSG_QUERY_GUILD_BANK_TEXT".into(),
             ServerPacket::PetitionShowList(..) => "SMSG_PETITION_SHOWLIST".into(),
             ServerPacket::PetitionShowSignatures(..) => "SMSG_PETITION_SHOW_SIGNATURES".into(),
             ServerPacket::PetitionSignResults(..) => "SMSG_PETITION_SIGN_RESULTS".into(),

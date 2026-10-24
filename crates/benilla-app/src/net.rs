@@ -2103,6 +2103,10 @@ pub(crate) enum ClientCommand {
     GuildInfoRequest,
     /// `MSG_GUILD_BANK_MONEY_WITHDRAWN`: today's remaining guild-bank withdrawal.
     GuildBankMoneyWithdrawnRequest,
+    /// Any other guild bank send.
+    GuildBank(benilla_protocol::messages::GuildBankSend),
+    /// `MSG_GUILD_PERMISSIONS`: our rank's rights and bank rights.
+    GuildPermissionsRequest,
     /// `CMSG_GUILD_ROSTER`.
     GuildRosterRequest,
     /// `CMSG_GUILD_PROMOTE`.

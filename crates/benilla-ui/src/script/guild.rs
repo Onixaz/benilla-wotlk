@@ -92,6 +92,10 @@ pub struct GuildRankInfo {
     pub name: String,
     /// Tested with [`RANK_RIGHT_BITS`].
     pub rights: u32,
+    /// The daily gold withdrawal in copper, which `CanWithdrawGuildBankMoney` needs nonzero.
+    pub bank_money_per_day: u32,
+    /// Per bank tab: its rights and its daily item withdrawals (`0x5a41c0`, `0x5a41f0`).
+    pub bank_tabs: Vec<(u32, u32)>,
 }
 
 /// One roster row resolved for display: `GetGuildRosterInfo`'s ten returns in order, then the
@@ -158,6 +162,9 @@ pub struct GuildState {
     pub bank_money: u64,
     /// `GetGuildBankWithdrawMoney`: today's remaining withdrawal in copper, -1 unlimited.
     pub bank_withdraw_money: i32,
+    /// The tabard as emblem style and colour, border style and colour, and background; `-1` is
+    /// undesigned. `None` until the guild query answers.
+    pub tabard: Option<[i32; 5]>,
 }
 
 /// The rank-control popup's staging buffer, kept out of [`GuildState`] so a push mid-edit does not
@@ -938,7 +945,7 @@ mod tests {
             ranks: (0..n)
                 .map(|i| GuildRankInfo {
                     name: format!("Rank{i}"),
-                    rights: 0,
+                    ..Default::default()
                 })
                 .collect(),
             ..Default::default()

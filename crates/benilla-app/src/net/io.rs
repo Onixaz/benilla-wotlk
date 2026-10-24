@@ -1890,6 +1890,8 @@ pub(super) fn writer_loop(
                     ClientCommand::GuildDecline => w.guild_decline(),
                     ClientCommand::GuildInfoRequest => w.guild_info(),
                     ClientCommand::GuildBankMoneyWithdrawnRequest => w.guild_bank_money_withdrawn(),
+                    ClientCommand::GuildBank(send) => w.guild_bank(&send),
+                    ClientCommand::GuildPermissionsRequest => w.guild_permissions(),
                     ClientCommand::GuildRosterRequest => w.guild_roster(),
                     ClientCommand::GuildPromote { name } => w.guild_promote(&name),
                     ClientCommand::GuildDemote { name } => w.guild_demote(&name),

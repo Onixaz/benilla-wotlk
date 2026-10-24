@@ -25,6 +25,7 @@ mod gm_ticket;
 mod gossip;
 mod group;
 mod guild;
+mod guild_bank;
 mod instance;
 mod items;
 mod lfg;
@@ -164,12 +165,19 @@ pub use guild::{
     guild_accept, guild_add_rank, guild_bank_money_param, guild_bank_money_withdrawn,
     guild_command, guild_command_error, guild_create, guild_decline, guild_default_rank,
     guild_del_rank, guild_demote, guild_disband, guild_event, guild_info, guild_info_text,
-    guild_invite, guild_leader, guild_leave, guild_motd, guild_presence, guild_promote,
-    guild_query, guild_rank, guild_rank_right, guild_remove, guild_roster, guild_set_officer_note,
-    guild_set_public_note, GuildCommandResult, GuildEventNotice, GuildInfo, GuildQueryResponse,
-    GuildRankBank, GuildRoster, GuildRosterMember, GUILD_BANK_TABS, GUILD_INFO_MAX_LENGTH,
-    GUILD_MOTD_MAX_LENGTH, GUILD_NAME_MAX_LENGTH, GUILD_NOTE_MAX_LENGTH, GUILD_RANKS_MAX_COUNT,
-    GUILD_RANKS_MIN_COUNT, GUILD_RANK_MAX_LENGTH, GUILD_RANK_RIGHT_ORDER,
+    guild_invite, guild_leader, guild_leave, guild_motd, guild_permissions, guild_presence,
+    guild_promote, guild_query, guild_rank, guild_rank_right, guild_remove, guild_roster,
+    guild_set_officer_note, guild_set_public_note, GuildCommandResult, GuildEventNotice, GuildInfo,
+    GuildPermissions, GuildQueryResponse, GuildRankBank, GuildRoster, GuildRosterMember,
+    GUILD_BANK_TABS, GUILD_INFO_MAX_LENGTH, GUILD_MOTD_MAX_LENGTH, GUILD_NAME_MAX_LENGTH,
+    GUILD_NOTE_MAX_LENGTH, GUILD_RANKS_MAX_COUNT, GUILD_RANKS_MIN_COUNT, GUILD_RANK_MAX_LENGTH,
+    GUILD_RANK_RIGHT_ORDER,
+};
+pub use guild_bank::{
+    guild_bank_activate, guild_bank_buy_tab, guild_bank_log, guild_bank_money,
+    guild_bank_query_tab, guild_bank_set_text, guild_bank_swap_items, guild_bank_tab_query,
+    guild_bank_update_tab, GuildBankList, GuildBankLog, GuildBankLogEntry, GuildBankSend,
+    GuildBankSlot, GuildBankSwap, GuildBankTab, GUILD_BANK_MONEY_LOG_TAB, GUILD_BANK_TAB_SLOTS,
 };
 pub use instance::{
     reset_instances, InstanceResetFailed, InstanceResetFailure, RaidGroupOnly, RaidInstanceMessage,

@@ -745,6 +745,57 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
+    // GameTooltip:SetGuildBankItem(tab, slot): the bank slot's hover (`0x6304a0`). A block
+    // source like a loot row: the slot's enchant, gems and suffix roll come with it, its count
+    // is the block's stack, and its flags' `0x4` the unlocked bit (`0x6304a0`). A non-number tab
+    // or slot raises; an empty slot shows nothing.
+    m.set(
+        "SetGuildBankItem",
+        lua.create_function(|lua, (this, tab, slot): (Table, Value, Value)| {
+            let h = frame_handle_of(lua, &this)?;
+            const BAD: &str = "Invalid tab or slot in SetGuildBankItem";
+            let (Some(tab), Some(slot)) = (lua.coerce_number(tab)?, lua.coerce_number(slot)?)
+            else {
+                return Err(mlua::Error::runtime(BAD));
+            };
+            let s = {
+                let model = crate::script::model_mut_of(lua);
+                let (tab, slot) = ((tab - 1.0) as i64, (slot - 1.0) as i64);
+                usize::try_from(tab)
+                    .ok()
+                    .zip(usize::try_from(slot).ok())
+                    .and_then(|(t, s)| model.guild_bank.slots.get(t)?.get(s)?.clone())
+            };
+            let Some(s) = s else {
+                return Ok(());
+            };
+            {
+                let mut model = crate::script::model_mut_of(lua);
+                clear_content(&mut model, h);
+            }
+            fire_cleared(lua, h);
+            let inst = render::ItemInstance {
+                name: s.name.clone(),
+                enchants: s.enchants.clone(),
+                flags: s.flags & 0x4,
+                ..Default::default()
+            };
+            let flags = BuilderFlags {
+                sell: Sell::Block {
+                    stack: s.count.max(1),
+                    max: None,
+                },
+                ..Default::default()
+            };
+            match view_of(lua, s.item_id) {
+                Some(v) => render_view(lua, &this, &v, flags, Some(&inst))?,
+                None => retrieving(lua, &this)?,
+            }
+            show_or_hide_empty(lua, h);
+            Ok(())
+        })?,
+    )?;
+
     // GameTooltip:SetLootRollItem(rollId): the roll window's hover (`0x5364a0`,
     // `LootFrame.xml:343`). Like `SetLootItem`: p6=1 with `+0x424` = `[roll+0x20]`, the roll's
     // randomPropertyId, every enchant slot zero and no item object, so the suffix-row copy

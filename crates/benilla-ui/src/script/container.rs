@@ -394,9 +394,15 @@ fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u32) {
             }
             cursor::queue_cursor_update(model);
         }
+        // Mode 11, a guild bank item, withdraws into this slot (`0x5d7ff0`).
+        Some(CursorPayload::GuildBankItem(held)) => {
+            super::guild_bank::drop_on_bag_slot(model, held, bag, slot);
+        }
         Some(
             other @ (CursorPayload::Spell(_)
             | CursorPayload::Action(_)
+            // Mode 12, bank money, stays held for the bag button's `WithdrawGuildBankMoney`.
+            | CursorPayload::GuildBankMoney(_)
             | CursorPayload::Macro(_)
             | CursorPayload::PetAction(_)
             // Mode 10, a stabled pet, stays held for the stable window.
@@ -747,9 +753,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 }
             } else if !super::mail::use_container_item(&mut model, bag, slot)
                 && !super::auction::use_container_item(&mut model, bag, slot)
+                && !super::guild_bank::use_container_item(&mut model, bag, slot)
             {
                 // Past repair, the Send tab attaches the item (`0x5d88cf`), then the Auctions tab
-                // takes it for the sell slot (`0x5d88e0`).
+                // takes it for the sell slot (`0x5d88e0`), then an open guild bank stores it.
                 model
                     .script_calls
                     .push(super::ScriptCall::UseContainerItem { bag, slot });

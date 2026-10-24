@@ -801,7 +801,7 @@ pub(super) fn quality_color(quality: u32) -> &'static str {
 /// One item hyperlink, as the client's `0x52adb0` builds every one it shows: `SStrPrintf` over
 /// `"%s|Hitem:%d:%d:%d:%d|h[%s]|h%s"` (`0x8549c8`), the colour escape, item id, enchant id,
 /// random-property id, suffix factor, name, then the `|r` reset (`0x844538`).
-pub(super) fn item_link_full(
+pub(crate) fn item_link_full(
     item_id: u32,
     enchant_id: u32,
     random_property_id: u32,
@@ -817,7 +817,7 @@ pub(super) fn item_link_full(
 
 /// [`item_link_full`] with zero enchant, random-property and suffix ids, for a caller with no roll
 /// in hand; a rolled item's link carries the roll and its suffixed name (`0x5d8b00`).
-pub(super) fn item_link(item_id: u32, name: &str, quality: u32) -> String {
+pub(crate) fn item_link(item_id: u32, name: &str, quality: u32) -> String {
     item_link_full(item_id, 0, 0, 0, name, quality)
 }
 

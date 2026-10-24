@@ -695,6 +695,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             vec![SessionEvent::GuildQueryResponse(response)]
         }
         ServerPacket::GuildRoster(roster) => vec![SessionEvent::GuildRoster(roster)],
+        ServerPacket::GuildPermissions(p) => vec![SessionEvent::GuildPermissions(p)],
         ServerPacket::GuildEvent(notice) => vec![SessionEvent::GuildEvent(notice)],
         ServerPacket::GuildCommandResult(result) => vec![SessionEvent::GuildCommandResult(result)],
         ServerPacket::GuildInvite { inviter, guild } => {
@@ -704,6 +705,11 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::GuildInfo(info) => vec![SessionEvent::GuildInfo(info)],
         ServerPacket::GuildBankWithdrawMoney { remaining } => {
             vec![SessionEvent::GuildBankWithdrawMoney { remaining }]
+        }
+        ServerPacket::GuildBankList(list) => vec![SessionEvent::GuildBankList(list)],
+        ServerPacket::GuildBankLog(log) => vec![SessionEvent::GuildBankLog(log)],
+        ServerPacket::GuildBankText { tab, text } => {
+            vec![SessionEvent::GuildBankText { tab, text }]
         }
         ServerPacket::PetitionShowList(list) => vec![SessionEvent::PetitionShowList(list)],
         ServerPacket::PetitionShowSignatures(sigs) => {

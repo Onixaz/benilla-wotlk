@@ -316,6 +316,14 @@ pub(crate) struct Model {
     pub(crate) guild_control: guild::GuildRankEdit,
     /// Guild calls (`GuildInviteByName`, `GuildSetMOTD`, `GuildControlSaveRank`, …) queued.
     pub(crate) guild_requests: Vec<guild::GuildRequest>,
+    /// The guild bank as the app pushes it.
+    pub(crate) guild_bank: super::guild_bank::GuildBankView,
+    /// The current bank tab, 0-based (`0xc1dc0d`).
+    pub(crate) guild_bank_tab: u8,
+    /// Locked bank slots as `(tab, slot, item id)`, the reference's per-slot lock (`0x5a4c90`).
+    pub(crate) guild_bank_locks: Vec<(u8, u8, u32)>,
+    /// Guild bank sends, queued for the app.
+    pub(crate) guild_bank_requests: Vec<super::guild_bank::GuildBankRequest>,
     /// The charter price and open petition, names resolved from caches as the reference does.
     pub(crate) petition: petition::PetitionState,
     /// Charter calls (`BuyGuildCharter`, `SignPetition`, `TurnInGuildCharter`, …) queued.
@@ -491,6 +499,10 @@ pub(crate) struct Model {
     pub(crate) macro_icons: Vec<String>,
     /// Builds [`Self::macro_icons`] on the first `GetNumMacroIcons`, then is spent.
     pub(crate) macro_icon_source: Option<MacroIconSource>,
+    /// The `INV_` icons, behind `GetMacroItemIconInfo` and the guild bank tab chooser.
+    pub(crate) macro_item_icons: Vec<String>,
+    /// Builds [`Self::macro_item_icons`] on first use, then is spent.
+    pub(crate) macro_item_icon_source: Option<MacroIconSource>,
     /// `ToggleSpellAutocast` ids for `CMSG_PET_SPELL_AUTOCAST` (`0x2F3`), which names a spell.
     pub(crate) pet_spell_autocasts: Vec<u32>,
     /// An auto-repeat or cast that `SpellStopCasting()` can stop, not a channel (`0x6e6e80`). Its
@@ -1243,6 +1255,10 @@ impl Model {
             guild: guild::GuildState::default(),
             guild_control: guild::GuildRankEdit::default(),
             guild_requests: Vec::new(),
+            guild_bank: Default::default(),
+            guild_bank_tab: 0,
+            guild_bank_locks: Vec::new(),
+            guild_bank_requests: Vec::new(),
             petition: petition::PetitionState::default(),
             petition_requests: Vec::new(),
             petition_vendor: Default::default(),
@@ -1324,6 +1340,8 @@ impl Model {
             macro_bindings: HashMap::new(),
             macro_icons: Vec::new(),
             macro_icon_source: None,
+            macro_item_icons: Vec::new(),
+            macro_item_icon_source: None,
             pet_spell_autocasts: Vec::new(),
             casting: false,
             spell_targeting: false,

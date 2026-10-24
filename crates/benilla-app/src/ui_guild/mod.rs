@@ -102,6 +102,8 @@ pub(crate) struct GuildState {
     info_text: String,
     /// One rights word per rank id; its length is the guild's real rank count.
     rank_rights: Vec<u32>,
+    /// Each rank's guild bank rights, by rank id, as long as [`Self::rank_rights`].
+    rank_bank: Vec<benilla_protocol::messages::GuildRankBank>,
     /// The members, in wire order.
     members: Vec<GuildRosterMember>,
     sort: SortStack,
@@ -129,6 +131,9 @@ pub(crate) struct GuildState {
     bank_withdraw_money: i32,
     /// `GE_BANK_MONEY_SET` owes the server `MSG_GUILD_BANK_MONEY_WITHDRAWN`'s ask.
     bank_withdraw_ask: bool,
+    /// A guild or rank change owes `QueryPermissions` (`0x5caa40`): `MSG_GUILD_PERMISSIONS`, then
+    /// the withdrawal ask.
+    permissions_ask: bool,
     /// `GUILDBANK_UPDATE_MONEY` is owed.
     bank_money_event: bool,
     /// `GUILDBANK_UPDATE_WITHDRAWMONEY` is owed.
@@ -165,6 +170,7 @@ impl GuildState {
             self.motd.clear();
             self.info_text.clear();
             self.rank_rights.clear();
+            self.rank_bank.clear();
             self.members.clear();
             self.selection = 0;
             self.bank_money = 0;
@@ -173,8 +179,33 @@ impl GuildState {
         if moved {
             self.note_roster_update(RosterUpdate::Applied);
         }
+        // The guild id's and the rank's watchers (`0x6e1bb0`, `0x6d1ae0`) ask our rights again;
+        // learning our guild at login stands for world entry's ask (`0x5cb900`).
+        if guild_id != 0 {
+            self.permissions_ask = true;
+        }
         self.dirty = true;
         true
+    }
+
+    /// `MSG_GUILD_PERMISSIONS`' answer (`0x5cb9f0`): one rank's rights, then a bare
+    /// `GUILD_ROSTER_UPDATE`.
+    fn apply_permissions(&mut self, p: &benilla_protocol::messages::GuildPermissions) {
+        let Ok(rank) = usize::try_from(p.rank) else {
+            return;
+        };
+        if rank >= GUILD_RANKS_MAX_COUNT {
+            return;
+        }
+        if self.rank_rights.len() <= rank {
+            self.rank_rights.resize(rank + 1, 0);
+        }
+        if self.rank_bank.len() <= rank {
+            self.rank_bank.resize(rank + 1, Default::default());
+        }
+        self.rank_rights[rank] = p.rights;
+        self.rank_bank[rank] = p.bank;
+        self.note_roster_update(RosterUpdate::Applied);
     }
 
     /// Owe the VM a `GUILD_ROSTER_UPDATE`. [`RosterUpdate::Stale`] wins over `Applied` in one
@@ -275,6 +306,8 @@ impl GuildState {
         // its ten-slot array on a hostile `rankCount >= 12`.
         self.rank_rights = roster.rank_rights;
         self.rank_rights.truncate(GUILD_RANKS_MAX_COUNT);
+        self.rank_bank = roster.rank_bank;
+        self.rank_bank.truncate(GUILD_RANKS_MAX_COUNT);
         self.members = roster.members;
         self.note_roster_update(RosterUpdate::Applied);
     }
@@ -410,6 +443,41 @@ impl GuildState {
         self.dirty = true;
     }
 
+    /// Our `PLAYER_GUILDID`, 0 when guildless.
+    pub(crate) fn guild_id(&self) -> u32 {
+        self.guild_id
+    }
+
+    /// `SMSG_GUILD_BANK_LIST`'s money, stored with no event (`0x5a7250`).
+    pub(crate) fn set_bank_money(&mut self, copper: u64) {
+        if self.bank_money != copper {
+            self.bank_money = copper;
+            self.dirty = true;
+        }
+    }
+
+    /// Our rank's rights for bank tab `tab`: its rights mask and its daily withdrawals, 0s before
+    /// a roster (`GetGuildBankTabPermissionsByRankID` `0x5a41c0`, `0x5a41f0`).
+    pub(crate) fn own_bank_tab(&self, tab: u8) -> (u32, u32) {
+        self.rank_bank
+            .get(self.rank_index as usize)
+            .and_then(|r| r.tabs.get(usize::from(tab)))
+            .copied()
+            .unwrap_or((0, 0))
+    }
+
+    /// Our own guild's tabard, `None` until its query answers.
+    pub(crate) fn own_tabard(&self) -> Option<[i32; 5]> {
+        let e = &self.identities.get(self.guild_id)?.emblem;
+        Some([
+            e.emblem_style,
+            e.emblem_color,
+            e.border_style,
+            e.border_color,
+            e.background_color,
+        ])
+    }
+
     /// Our rank's rights word, which every `Can*` predicate tests; `0` (none) before a roster.
     fn own_rights(&self) -> u32 {
         self.rank_rights
@@ -525,6 +593,7 @@ pub(crate) mod net {
         use SessionEventKind as K;
         app.net_handler(K::GuildQueryResponse, on_query_response)
             .net_handler(K::GuildRoster, on_roster)
+            .net_handler(K::GuildPermissions, on_permissions)
             .net_handler(K::GuildEvent, on_event)
             .net_handler(K::GuildCommandResult, on_command_result)
             .net_handler(K::GuildInvite, on_invite)
@@ -543,6 +612,12 @@ pub(crate) mod net {
     fn on_roster(In(ev): In<SessionEvent>, mut guild: ResMut<GuildState>) {
         if let SessionEvent::GuildRoster(r) = ev {
             roster(&mut guild, r);
+        }
+    }
+
+    fn on_permissions(In(ev): In<SessionEvent>, mut guild: ResMut<GuildState>) {
+        if let SessionEvent::GuildPermissions(p) = ev {
+            guild.apply_permissions(&p);
         }
     }
 
@@ -704,6 +779,10 @@ pub(crate) mod net {
 #[derive(bevy::ecs::schedule::SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct GuildFeed;
 
+/// The guild's `.after(UiInput)` drain, which the guild bank's drain reads after.
+#[derive(bevy::ecs::schedule::SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct GuildDrain;
+
 /// The guild windows' session: the wire mirror, the VM feed, and the outbound intents.
 pub(crate) struct UiGuildPlugin;
 
@@ -725,7 +804,7 @@ impl Plugin for UiGuildPlugin {
                 Update,
                 (
                     feed::feed_guild.in_set(UiFeed).in_set(GuildFeed),
-                    feed::drain_guild.after(UiInput),
+                    feed::drain_guild.after(UiInput).in_set(GuildDrain),
                 )
                     // Never against the boot VM: the feed's edge memo survives the entry load, so
                     // an edge spent on a VM with no frames, such as the login MOTD, is lost.

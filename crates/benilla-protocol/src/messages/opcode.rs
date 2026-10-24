@@ -968,6 +968,22 @@ pub const SMSG_GUILD_ROSTER: u16 = 0x008A; // 138
 /// Both ways: our empty ask, and the reply's `i32` of the day's remaining guild-bank withdrawal
 /// (`0x5a4ab0`), -1 unlimited.
 pub const MSG_GUILD_BANK_MONEY_WITHDRAWN: u16 = 0x03FE; // 1022
+/// Both ways: our empty ask, and our rank's rights and bank rights (`0x5cb9f0`).
+pub const MSG_GUILD_PERMISSIONS: u16 = 0x03FD; // 1021
+/// The guild bank (`super::guild_bank`): the banker hello, one tab's slots, the moves.
+pub const CMSG_GUILD_BANKER_ACTIVATE: u16 = 0x03E6; // 998
+pub const CMSG_GUILD_BANK_QUERY_TAB: u16 = 0x03E7; // 999
+pub const SMSG_GUILD_BANK_LIST: u16 = 0x03E8; // 1000
+pub const CMSG_GUILD_BANK_SWAP_ITEMS: u16 = 0x03E9; // 1001
+pub const CMSG_GUILD_BANK_BUY_TAB: u16 = 0x03EA; // 1002
+pub const CMSG_GUILD_BANK_UPDATE_TAB: u16 = 0x03EB; // 1003
+pub const CMSG_GUILD_BANK_DEPOSIT_MONEY: u16 = 0x03EC; // 1004
+pub const CMSG_GUILD_BANK_WITHDRAW_MONEY: u16 = 0x03ED; // 1005
+/// Both ways: our tab ask, and the tab's log (`0x5a4800`).
+pub const MSG_GUILD_BANK_LOG_QUERY: u16 = 0x03EE; // 1006
+/// Both ways: our tab ask, and the tab's text (`0x5a4ae0`).
+pub const MSG_QUERY_GUILD_BANK_TEXT: u16 = 0x040A; // 1034
+pub const CMSG_SET_GUILD_BANK_TEXT: u16 = 0x040B; // 1035
 pub const CMSG_GUILD_PROMOTE: u16 = 0x008B; // 139
 pub const CMSG_GUILD_DEMOTE: u16 = 0x008C; // 140
 pub const CMSG_GUILD_LEAVE: u16 = 0x008D; // 141

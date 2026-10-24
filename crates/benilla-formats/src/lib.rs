@@ -47,7 +47,7 @@ pub use cinematics::{
 pub use creatures::{
     load_creature_catalog, CreatureCatalog, CreatureModel, FootprintParams, NpcAppearance,
 };
-pub use macro_icons::load_macro_icons;
+pub use macro_icons::{load_macro_icons, load_macro_item_icons};
 mod macro_icons;
 pub use unit_blood::{load_blood_catalog, BloodCatalog};
 mod itemsets;

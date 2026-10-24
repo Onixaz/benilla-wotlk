@@ -55,7 +55,7 @@ impl NameError {
 /// `ValidateGuildName 0x7e1f60`: the space is the one extra, and more than 24 UTF-16 units is
 /// too long.
 pub fn check_guild_name(name: &str) -> Result<(), NameError> {
-    let checked = check(name, &[u16::from(b' ')])?;
+    let checked = check(name, &[u16::from(b' ')], false)?;
     if checked.len > 24 {
         return Err(NameError::TOO_LONG);
     }
@@ -65,13 +65,27 @@ pub fn check_guild_name(name: &str) -> Result<(), NameError> {
 /// `0x7e1f00` as `PetRename 0x5d5670` calls it: no extras, and more than 12 UTF-16 units is too
 /// long, 8 for a Hangul or Han name.
 pub fn check_pet_name(name: &str) -> Result<(), NameError> {
-    let checked = check(name, &[])?;
+    let checked = check(name, &[], false)?;
     let max = if matches!(checked.charset, Some(HANGUL | HAN)) {
         8
     } else {
         12
     };
     if checked.len > max {
+        return Err(NameError::TOO_LONG);
+    }
+    Ok(())
+}
+
+/// `ValidateGuildBankTabName 0x7e1fb0`: the space and the digits are extras, the checker runs
+/// relaxed, and more than 16 UTF-16 units is too long.
+pub fn check_guild_bank_tab_name(name: &str) -> Result<(), NameError> {
+    let extras: Vec<u16> = std::iter::once(b' ')
+        .chain(b'0'..=b'9')
+        .map(u16::from)
+        .collect();
+    let checked = check(name, &extras, true)?;
+    if checked.len > 16 {
         return Err(NameError::TOO_LONG);
     }
     Ok(())
@@ -133,10 +147,11 @@ fn fold(c: u16) -> u16 {
     }
 }
 
-/// `0x7e18c0` with its prefix rules on (`param_9` 0): one pass over the UTF-16 units. The first
-/// letter picks the charset the rest must share; any other unit is refused unless it is one of
-/// `extras`, and an apostrophe or space among them has its own placement rules.
-fn check(name: &str, extras: &[u16]) -> Result<Checked, NameError> {
+/// `0x7e18c0`: one pass over the UTF-16 units. The first letter picks the charset the rest must
+/// share; any other unit is refused unless it is one of `extras`. Unless `relaxed` (`param_9`),
+/// an apostrophe or space has its own placement rules, three repeats are refused and the name
+/// needs two units.
+fn check(name: &str, extras: &[u16], relaxed: bool) -> Result<Checked, NameError> {
     const SPACE: u16 = b' ' as u16;
     const APOSTROPHE: u16 = b'\'' as u16;
     const HARD_SIGN: u16 = 0x44a;
@@ -159,6 +174,9 @@ fn check(name: &str, extras: &[u16]) -> Result<Checked, NameError> {
             if !extras.contains(&c) {
                 return Err(NameError::INVALID_CHARACTER);
             }
+            if relaxed {
+                continue;
+            }
             if c == APOSTROPHE {
                 if n == 1 {
                     return Err(NameError::INVALID_APOSTROPHE);
@@ -178,7 +196,7 @@ fn check(name: &str, extras: &[u16]) -> Result<Checked, NameError> {
             }
             continue;
         }
-        if n > 2 {
+        if !relaxed && n > 2 {
             let (a, b, c) = (fold(units[i - 2]), fold(units[i - 1]), fold(c));
             if a == b && b == c {
                 return Err(NameError::THREE_CONSECUTIVE);
@@ -197,6 +215,9 @@ fn check(name: &str, extras: &[u16]) -> Result<Checked, NameError> {
         }
     }
     let len = units.len();
+    if relaxed {
+        return Ok(Checked { len, charset });
+    }
     match len {
         0 => return Err(NameError::NO_NAME),
         1 => return Err(NameError::TOO_SHORT),
@@ -287,6 +308,32 @@ mod tests {
         assert_eq!(check_pet_name("가나다라마바사아"), Ok(()));
         assert_eq!(
             check_pet_name("가나다라마바사아자"),
+            Err(NameError::TOO_LONG)
+        );
+    }
+
+    #[test]
+    fn a_bank_tab_name_runs_relaxed_with_digits_and_sixteen_units() {
+        assert_eq!(check_guild_bank_tab_name("Tab 2"), Ok(()));
+        assert_eq!(
+            check_guild_bank_tab_name(""),
+            Ok(()),
+            "relaxed: no length floor"
+        );
+        assert_eq!(check_guild_bank_tab_name("A"), Ok(()));
+        assert_eq!(
+            check_guild_bank_tab_name(" Mats  "),
+            Ok(()),
+            "no space placement"
+        );
+        assert_eq!(check_guild_bank_tab_name("Zzz"), Ok(()), "no repeat rule");
+        assert_eq!(
+            check_guild_bank_tab_name("Mat's"),
+            Err(NameError::INVALID_CHARACTER)
+        );
+        assert_eq!(check_guild_bank_tab_name("Abcdefghijklmnop"), Ok(()));
+        assert_eq!(
+            check_guild_bank_tab_name("Abcdefghijklmnopq"),
             Err(NameError::TOO_LONG)
         );
     }

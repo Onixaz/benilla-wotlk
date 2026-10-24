@@ -1150,9 +1150,10 @@ pub(super) fn paint_script(
             CursorPayload::PetAction(p) => p.texture,
             CursorPayload::StablePet(p) => Some(p.texture),
             CursorPayload::Merchant(m) => m.texture,
-            CursorPayload::Money(m) => {
+            CursorPayload::Money(m) | CursorPayload::GuildBankMoney(m) => {
                 Some(benilla_ui::script::coin_icon(i64::from(m.copper)).to_string())
             }
+            CursorPayload::GuildBankItem(g) => g.texture,
         });
         if let (Some(texture), Some(pos)) = (texture, window.cursor_position()) {
             if let Some(handle) = assets

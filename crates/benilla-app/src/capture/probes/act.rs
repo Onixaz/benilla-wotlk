@@ -273,12 +273,47 @@ impl Plugin for ProbeLuaPlugin {
 
 /// `ProbeInteract()` calls not yet run, each a right-click on the target.
 static PROBE_INTERACTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// `ProbeInteract(entry)`'s GameObject entry, 0 for none: a right-click on the nearest one.
+static PROBE_INTERACT_GO: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-/// Runs the queued `ProbeInteract()` presses on the selection.
+/// Runs the queued `ProbeInteract()` presses on the selection, or on the nearest GameObject of
+/// the entry `ProbeInteract(entry)` named.
 fn fire_probe_interacts(
     selection: Res<crate::target::Selection>,
     mut out: MessageWriter<crate::target::Interact>,
+    objects: Query<(
+        Entity,
+        &crate::net::NetEntity,
+        &crate::net::ObjectStore,
+        &Transform,
+    )>,
+    me: Query<&Transform, With<crate::net::SelfPlayer>>,
 ) {
+    let go = PROBE_INTERACT_GO.swap(0, std::sync::atomic::Ordering::Relaxed);
+    if go != 0 {
+        let Some(at) = me.iter().next().map(|t| t.translation) else {
+            return;
+        };
+        let nearest = objects
+            .iter()
+            .filter(|(_, n, s, _)| {
+                n.kind == benilla_protocol::EntityKind::GameObject && s.0.object_entry() == Some(go)
+            })
+            .min_by(|a, b| {
+                let (da, db) = (
+                    a.3.translation.distance_squared(at),
+                    b.3.translation.distance_squared(at),
+                );
+                da.total_cmp(&db)
+            });
+        match nearest {
+            Some((entity, ..)) => {
+                info!("probe-interact: right-click GameObject {go} ({entity:?})");
+                out.write(crate::target::Interact(entity));
+            }
+            None => info!("probe-interact: no GameObject {go} in view"),
+        }
+    }
     let n = PROBE_INTERACTS.swap(0, std::sync::atomic::Ordering::Relaxed);
     if n == 0 {
         return;
@@ -323,10 +358,16 @@ fn probe_lua_due(probe: &ProbeLua, now: f32) -> bool {
     }
 }
 
-/// Installs `ProbeLog(text)` and `ProbeInteract()` into the live VM, per VM, while a chunk is set.
+/// Installs `ProbeLog(text)` and `ProbeInteract([goEntry])` into the live VM, per VM, while a chunk
+/// is set.
 fn install_probe_log(script: &benilla_ui::script::UiScript) {
-    match script.lua().create_function(|_, ()| {
-        PROBE_INTERACTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    match script.lua().create_function(|_, go: Option<u32>| {
+        match go {
+            Some(entry) => PROBE_INTERACT_GO.store(entry, std::sync::atomic::Ordering::Relaxed),
+            None => {
+                PROBE_INTERACTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
         Ok(())
     }) {
         Ok(f) => {

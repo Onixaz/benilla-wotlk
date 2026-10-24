@@ -26,9 +26,10 @@ pub fn coin_icon(copper: i64) -> &'static str {
     }
 }
 
+/// `GetCursorMoney`'s `m_cursorMoney`, shared by modes 2 and 12 (`0x5208f0`).
 pub(crate) fn cursor_money(model: &Model) -> u32 {
     match &model.cursor {
-        Some(CursorPayload::Money(m)) => m.copper,
+        Some(CursorPayload::Money(m) | CursorPayload::GuildBankMoney(m)) => m.copper,
         _ => 0,
     }
 }
@@ -173,6 +174,30 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
+    // GetCoinText(amount [, separator]) (`0x510c60` → `GetCurrencyText` `0x7e7d80`): each
+    // denomination present through `GOLD_AMOUNT`, `SILVER_AMOUNT` or `COPPER_AMOUNT`, gold first,
+    // joined by the separator, `", "` when absent.
+    g.set(
+        "GetCoinText",
+        lua.create_function(|lua, (amount, separator): (Value, Option<mlua::String>)| {
+            let n = number_arg(lua, amount, "Usage: GetCoinText(amount [,separator])")? as u32;
+            let separator = separator.map_or_else(|| ", ".to_string(), |s| s.to_string_lossy());
+            let parts: Vec<String> = [
+                (n / 10_000, "GOLD_AMOUNT"),
+                (n / 100 % 100, "SILVER_AMOUNT"),
+                (n % 100, "COPPER_AMOUNT"),
+            ]
+            .into_iter()
+            .filter(|&(v, _)| v != 0)
+            .map(|(v, key)| {
+                crate::strings::global(lua, key)
+                    .unwrap_or_default()
+                    .replacen("%d", &v.to_string(), 1)
+            })
+            .collect();
+            Ok(parts.join(&separator))
+        })?,
+    )?;
     g.set(
         "GetCoinIcon",
         lua.create_function(|lua, amount: Value| {
@@ -186,6 +211,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::coin_icon;
+
+    #[test]
+    fn coin_text_names_each_denomination_present() {
+        let s = crate::script::UiScript::new().unwrap();
+        s.run(r#"GOLD_AMOUNT = "%d Gold" SILVER_AMOUNT = "%d Silver" COPPER_AMOUNT = "%d Copper""#)
+            .unwrap();
+        assert_eq!(
+            s.eval::<String>("return GetCoinText(1020304)").unwrap(),
+            "102 Gold, 3 Silver, 4 Copper"
+        );
+        assert_eq!(
+            s.eval::<String>("return GetCoinText(50000, ' ')").unwrap(),
+            "5 Gold"
+        );
+        assert_eq!(s.eval::<String>("return GetCoinText(0)").unwrap(), "");
+        assert!(s.eval::<String>("return GetCoinText('x')").is_err());
+    }
     use crate::script::cursor::CursorPayload;
     use crate::script::UiScript;
 

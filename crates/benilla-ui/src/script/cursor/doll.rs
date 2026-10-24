@@ -112,7 +112,10 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
             // Mode 2: coins stay held for a money frame's drop. On an occupied slot the reference
             // picks the item up over either, as it tests only for a held item (`0x4c769a`) or a
             // preview row (`0x4c76a5`) before the pickup (`0x4c7838`).
-            | CursorPayload::Money(_)),
+            | CursorPayload::Money(_)
+            // Modes 11 and 12, from the guild bank, stay held for its own buttons.
+            | CursorPayload::GuildBankItem(_)
+            | CursorPayload::GuildBankMoney(_)),
         ) => {
             model.cursor = Some(other);
             false
