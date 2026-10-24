@@ -716,6 +716,17 @@ pub(super) fn load_stock_ui(s: &mut UiScript) {
     assert!(failures.is_empty(), "stock load raised: {failures:#?}");
 }
 
+/// [`load_stock_ui`] on a 1600×900 screen, then the chat windows' login replay: the chat stack the
+/// app runs, for the chat tests.
+pub(crate) fn chat_ui() -> UiScript {
+    let mut s = UiScript::new().unwrap();
+    s.set_screen_size(1600.0, 900.0);
+    load_stock_ui(&mut s);
+    super::fire_chat_login(&mut s);
+    s.resolve();
+    s
+}
+
 /// The name of the `ContainerFrame` showing bag `id`, asked of `IsBagOpen`: the reference recycles
 /// twelve windows across every container (`ContainerFrame_GetOpenFrame`).
 pub(super) fn bag_window(s: &UiScript, id: i64) -> Option<String> {

@@ -16,10 +16,14 @@ fn with_strings<T>(f: impl FnOnce(&dyn Fn(&str) -> Option<String>) -> T) -> T {
     GLOBAL_STRINGS.with(|s| f(&|key: &str| s.lua().globals().get::<String>(key).ok()))
 }
 
-/// [`super::frames::compose`] against the shipped table, for this file and [`super::broadcast`].
+/// The line id [`compose`] composes for, arg11 in the player links it builds.
+pub(super) const LINE: u32 = 7;
+
+/// [`super::frames::compose`] for line [`LINE`] against the shipped table, for this file and
+/// [`super::broadcast`].
 pub(super) fn compose(event: &ChatEvent, kind: K, default_language: &str) -> Option<String> {
     GLOBAL_STRINGS.with(|s| {
-        super::frames::compose(event, kind, default_language, &|key| {
+        super::frames::compose(event, kind, default_language, LINE, &|key| {
             s.lua().globals().get::<String>(key).ok()
         })
     })
@@ -38,10 +42,10 @@ fn ev(kind: K, text: &str, sender: &str) -> ChatEvent {
 #[test]
 fn player_lines_link_the_name_except_emote() {
     let _data = benilla_formats::wow_data_or_skip!();
-    // The `|Hplayer` link of `ChatFrame.lua:1451`.
+    // The `|Hplayer` link of `ChatFrame.lua:2896`: name, line id, chat group.
     assert_eq!(
         compose(&ev(K::Say, "hi there", "Bob"), K::Say, "Common").unwrap(),
-        "|Hplayer:Bob|h[Bob]|h says: hi there"
+        "|Hplayer:Bob:7:SAY|h[Bob]|h says: hi there"
     );
     assert_eq!(
         compose(
@@ -50,46 +54,55 @@ fn player_lines_link_the_name_except_emote() {
             "Common"
         )
         .unwrap(),
-        "To |Hplayer:Bob|h[Bob]|h: hey"
+        "To |Hplayer:Bob:7:WHISPER:BOB|h[Bob]|h: hey",
+        "a whisper's link carries the upper-cased target (`:2731-2733`)"
     );
-    // EMOTE takes the bare name (`ChatFrame.lua:1450`).
+    // EMOTE links the name without brackets (`ChatFrame.lua:2912-2913`).
     assert_eq!(
         compose(&ev(K::Emote, "dances.", "Bob"), K::Emote, "Common").unwrap(),
-        "Bob dances."
+        "|Hplayer:Bob:7:EMOTE|hBob|h dances."
     );
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn group_prefixed_kinds_wear_their_brackets() {
     let _data = benilla_formats::wow_data_or_skip!();
     assert_eq!(
         compose(&ev(K::Party, "inc 3", "Ann"), K::Party, "Common").unwrap(),
-        "[Party] |Hplayer:Ann|h[Ann]|h: inc 3"
+        "|Hchannel:PARTY|h[Party]|h |Hplayer:Ann:7:PARTY|h[Ann]|h: inc 3"
     );
     assert_eq!(
         compose(&ev(K::Guild, "gz", "Ann"), K::Guild, "Common").unwrap(),
-        "[Guild] |Hplayer:Ann|h[Ann]|h: gz"
+        "|Hchannel:GUILD|h[Guild]|h |Hplayer:Ann:7:GUILD|h[Ann]|h: gz"
     );
     assert_eq!(
         compose(&ev(K::RaidWarning, "move", "Ann"), K::RaidWarning, "Common").unwrap(),
-        "[Raid Warning] |Hplayer:Ann|h[Ann]|h: move"
+        "[Raid Warning] |Hplayer:Ann:7:RAID|h[Ann]|h: move"
     );
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn flags_prefix_the_name_and_afk_uses_its_get() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut e = ev(K::Say, "brb", "Bob");
+    e.flag = "AFK".into();
+    assert_eq!(
+        compose(&e, K::Say, "Common").unwrap(),
+        "<Away>|Hplayer:Bob:7:SAY|h[Bob]|h says: brb"
+    );
+    // A GM wears the Blizzard icon, not `CHAT_FLAG_GM` (`ChatFrame.lua:2853-2859`).
     e.flag = "GM".into();
     assert_eq!(
         compose(&e, K::Say, "Common").unwrap(),
-        "<GM>|Hplayer:Bob|h[Bob]|h says: brb"
+        r"|TInterface\ChatFrame\UI-ChatIcon-Blizz.blp:0:2:0:-3|t |Hplayer:Bob:7:SAY|h[Bob]|h says: brb"
     );
+    // A GM's whisper goes to the GM chat window, not this one (`:2854-2856`).
+    let mut whisper = ev(K::Whisper, "hello", "Bob");
+    whisper.flag = "GM".into();
+    assert_eq!(compose(&whisper, K::Whisper, "Common"), None);
     assert_eq!(
         compose(&ev(K::Afk, "farming", "Bob"), K::Afk, "Common").unwrap(),
-        "|Hplayer:Bob|h[Bob]|h is Away From Keyboard: farming"
+        "|Hplayer:Bob:7:WHISPER:BOB|h[Bob]|h is Away: farming"
     );
 }
 
@@ -100,14 +113,16 @@ fn language_header_rides_non_default_tongues() {
     e.language = "Orcish".into();
     assert_eq!(
         compose(&e, K::Say, "Common").unwrap(),
-        "|Hplayer:Grunk|h[Grunk]|h says: [Orcish] throm-ka"
+        "|Hplayer:Grunk:7:SAY|h[Grunk]|h says: [Orcish] throm-ka"
     );
-    // The frame's default tongue renders no header.
-    e.language = "Common".into();
-    assert_eq!(
-        compose(&e, K::Say, "Common").unwrap(),
-        "|Hplayer:Grunk|h[Grunk]|h says: throm-ka"
-    );
+    // Neither the frame's default tongue nor Universal renders a header (`ChatFrame.lua:2901`).
+    for tongue in ["Common", "Universal"] {
+        e.language = tongue.into();
+        assert_eq!(
+            compose(&e, K::Say, "Common").unwrap(),
+            "|Hplayer:Grunk:7:SAY|h[Grunk]|h says: throm-ka"
+        );
+    }
 }
 
 #[test]
@@ -137,14 +152,15 @@ fn system_and_loot_lines_are_verbatim() {
     );
 }
 
-/// The performer rides in `sender` (arg2, for addons) without the composer bracketing it on.
+/// The performer rides in `sender` (arg2), and the handler links its first mention in the sentence
+/// (`gsub(arg1, arg2, …, 1)`, `ChatFrame.lua:2914-2915`), bracketing nothing on.
 #[test]
-fn text_emote_lines_are_verbatim_and_never_wear_the_senders_name() {
+fn text_emote_lines_link_the_performers_first_mention() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let e = ev(K::TextEmote, "Bob waves at you.", "Bob");
+    let e = ev(K::TextEmote, "Bob waves at Bob's pet.", "Bob");
     assert_eq!(
         compose(&e, K::TextEmote, "Common").unwrap(),
-        "Bob waves at you."
+        "|Hplayer:Bob:7:TEXT_EMOTE|hBob|h waves at Bob's pet."
     );
     // The control: a SAY does get the bracketed link.
     assert!(compose(&ev(K::Say, "hi", "Bob"), K::Say, "Common")
@@ -272,10 +288,9 @@ fn a_received_text_emote_composes_its_sentence_and_names_the_performer() {
     assert!(line(SIT, them("-")).is_none(), "/sit prints nothing");
 }
 
-/// `COMBATLOG_HONORAWARD`, `COMBATLOG_HONORGAIN` and `COMBATLOG_DISHONORGAIN`
-/// (`GlobalStrings.lua:785-787`).
+/// `COMBATLOG_HONORAWARD`, `COMBATLOG_HONORGAIN` and `COMBATLOG_HONORGAIN_NO_RANK`, the forks of
+/// `CGChat::LogHonorGain` (`0x50b6d0`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn honor_gain_lines_pick_the_reference_form() {
     let _data = benilla_formats::wow_data_or_skip!();
     assert_eq!(
@@ -285,24 +300,25 @@ fn honor_gain_lines_pick_the_reference_form() {
     assert_eq!(
         with_strings(|g| super::feed::honor_gain_line(Some("Grimtusk"), Some("Sergeant"), 137, g))
             .as_deref(),
-        Some("Grimtusk dies, honorable kill Rank: Sergeant (Estimated Honor Points: 137)")
+        Some("Grimtusk dies, honorable kill Rank: Sergeant (137 Honor Points)")
     );
-    // A dishonorable kill: vmangos sends a negative honor (`HonorMgr.cpp:807`).
-    assert_eq!(
-        with_strings(|g| super::feed::honor_gain_line(Some("Innkeeper Renee"), None, -37, g))
-            .as_deref(),
-        Some("Innkeeper Renee dies, dishonorable kill.")
-    );
-    // The fork is `honor <= 0` (`0x625270`): zero honor is dishonorable.
-    assert_eq!(
-        with_strings(|g| super::feed::honor_gain_line(Some("Grimtusk"), Some("Sergeant"), 0, g))
-            .as_deref(),
-        Some("Grimtusk dies, dishonorable kill.")
-    );
-    // No rank title: the clause stays, empty.
+    // A kill under 1 honor prints nothing: 12340 has no dishonorable line (`0x50b71f`).
+    for honor in [0, -37] {
+        assert_eq!(
+            with_strings(|g| super::feed::honor_gain_line(
+                Some("Grimtusk"),
+                Some("Sergeant"),
+                honor,
+                g
+            )),
+            None,
+            "{honor} honor"
+        );
+    }
+    // No rank title: the `_NO_RANK` form.
     assert_eq!(
         with_strings(|g| super::feed::honor_gain_line(Some("Grimtusk"), None, 5, g)).as_deref(),
-        Some("Grimtusk dies, honorable kill Rank:  (Estimated Honor Points: 5)")
+        Some("Grimtusk dies, honorable kill (5 Honor Points)")
     );
 }
 
@@ -370,17 +386,17 @@ fn monster_lines_use_the_bare_inline_name() {
 fn channel_line_prefixes_the_stripped_channel() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut e = ev(K::Channel, "wts boar livers", "Bob");
-    e.channel = "General - Elwynn Forest".into();
+    e.channel = "1. General - Elwynn Forest".into();
+    e.channel_number = 1;
     assert_eq!(
         compose(&e, K::Channel, "Common").unwrap(),
-        "[General] |Hplayer:Bob|h[Bob]|h: wts boar livers"
+        "|Hchannel:channel:1|h[1. General]|h |Hplayer:Bob:7:CHANNEL:1|h[Bob]|h: wts boar livers"
     );
 }
 
 /// The notice arms print arg4 whole, zone tail and all: the strip at `ChatFrame.lua:1463` is the
 /// speech arm's alone. The bridge builds each fixture, so each takes the arm its byte selects.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn channel_notices_compose_by_the_notice_law() {
     let _data = benilla_formats::wow_data_or_skip!();
     let notice = |byte: u8, channel: &str, a: Option<&str>, b: Option<&str>| {
@@ -396,51 +412,27 @@ fn channel_notices_compose_by_the_notice_law() {
     };
     assert_eq!(
         notice(0x02, "General - Elwynn Forest", None, None).unwrap(), // YOU_JOINED
-        "Joined Channel: [General - Elwynn Forest]"
+        "Joined Channel: |Hchannel:CHANNEL:0|h[General - Elwynn Forest]|h",
+        "the `_BN` twin wins (`ChatFrame.lua:2792-2795`), filled with arg8 then arg4"
     );
     assert_eq!(
         notice(0x12, "World", Some("Ann"), Some("Mod")).unwrap(), // PLAYER_KICKED
-        "[World] Player Ann kicked by Mod."
+        "|Hchannel:CHANNEL:0|h[World]|h Player Ann kicked by Mod."
     );
     // A member join is a CHANNEL_JOIN event, linked like a player line.
     let mut join = ev(K::ChannelJoin, "", "Ann");
     join.channel = "World".into();
     assert_eq!(
         compose(&join, K::ChannelJoin, "Common").unwrap(),
-        "[World] |Hplayer:Ann|h[Ann]|h joined channel."
+        "|Hchannel:channel:0|h[World]|h |Hplayer:Ann:7:CHANNEL:0|h[Ann]|h joined channel."
     );
 }
 
 // ── the Lua face: the CHAT_MSG_* fire ───────────────────────────────────────────────────────────
 
-/// A fresh VM with the chat stack the app loads, so `ChatFrame1` is the real window.
+/// A fresh VM with the interface the app loads, so `ChatFrame1` is the real window.
 pub(super) fn chat_vm() -> benilla_ui::script::UiScript {
-    let mut s = benilla_ui::script::UiScript::new().unwrap();
-    // The chat tabs call the dropdown kit (`CloseDropDownMenus` on a click), which reads
-    // `TOOLTIP_DEFAULT_COLOR`: both load ahead of ChatFrame.xml, as in `FrameXML.toc`.
-    for file in [
-        "Interface\\FrameXML\\GlobalStrings.lua",
-        "Interface\\FrameXML\\Fonts.xml",
-        "Interface\\FrameXML\\BasicControls.xml",
-        "Interface\\FrameXML\\LocaleProperties.lua",
-        r"Interface\FrameXML\UIParent.xml",
-        r"Interface\FrameXML\MoneyFrame.lua",
-        r"Interface\FrameXML\MoneyFrame.xml",
-        "Interface\\FrameXML\\GameTooltip.xml",
-        "Interface\\FrameXML\\UIMenu.xml",
-        "Interface\\FrameXML\\UIDropDownMenu.xml",
-        "Interface\\FrameXML\\UIPanelTemplates.lua",
-        "Interface\\FrameXML\\UIPanelTemplates.xml",
-        "Interface\\FrameXML\\StaticPopup.xml",
-        "Interface\\FrameXML\\ChatFrame.xml",
-        "Interface\\FrameXML\\FloatingChatFrame.xml",
-    ] {
-        crate::ui_script::load_ui_for_test(&s, file);
-    }
-    crate::ui_script::fire_chat_login(&mut s);
-    s.set_screen_size(1600.0, 900.0);
-    s.resolve();
-    s
+    crate::ui_script::test_ui::chat_ui()
 }
 
 /// An addon that records a `CHAT_MSG_*` fire: the count, the event and `arg1..arg10` joined with
@@ -448,7 +440,7 @@ pub(super) fn chat_vm() -> benilla_ui::script::UiScript {
 pub(super) const SPY: &str = r#"
     SpyN, SpyEvent, SpyLine = 0, "", ""
     Spy = CreateFrame("Frame", "BenillaChatSpy")
-    Spy:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+    Spy:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
         SpyN = SpyN + 1
         SpyEvent = event
         SpyLine = arg1.."|"..arg2.."|"..arg3.."|"..arg4.."|"..arg5.."|"..arg6..
@@ -463,7 +455,6 @@ pub(super) fn lines_in_window(s: &benilla_ui::script::UiScript) -> i64 {
 
 /// A routed line prints once, even after an addon registers `ChatFrame1` for its event again.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_addon_registering_our_own_chat_frame_does_not_double_print() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_vm();
@@ -496,7 +487,6 @@ fn an_addon_registering_our_own_chat_frame_does_not_double_print() {
 
 /// Listeners run in registration order, as the reference's do, and `ChatFrame1` registered first.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_addons_handler_sees_the_line_already_in_the_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_vm();
@@ -523,7 +513,6 @@ fn an_addons_handler_sees_the_line_already_in_the_window() {
 
 /// arg7 and arg10 are numbers, zero for a non-channel line.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_say_line_fires_chat_msg_say_in_the_references_arg_positions() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_vm();
@@ -548,7 +537,6 @@ fn a_say_line_fires_chat_msg_say_in_the_references_arg_positions() {
 /// A channel notice fires its token in arg1 and the numbered name in arg4; the handler repeats
 /// `ChatFrame_OnEvent`'s bare `arg7 > 0` and `arg10 > 0`, which raise on a `nil`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_channel_notice_fires_its_token_and_the_reference_reads_arg7_and_arg10_bare() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_vm();
@@ -557,7 +545,7 @@ fn a_channel_notice_fires_its_token_and_the_reference_reads_arg7_and_arg10_bare(
     s.run(
         r#"
         SpyZone, SpySuffix = nil, nil
-        BenillaChatSpy:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+        BenillaChatSpy:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
             SpyN = SpyN + 1
             SpyEvent = event
             SpyLine = arg1.."|"..arg2.."|"..arg3.."|"..arg4.."|"..arg5.."|"..arg6..
@@ -630,7 +618,6 @@ fn a_mode_change_notice_never_becomes_an_event() {
 /// arg4, arg7, arg8 and arg9 are one channel record in the reference, defaulted together
 /// (`0x49b12f`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_channel_we_are_not_in_fires_the_bare_name_and_zeroes() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_vm();
@@ -679,7 +666,6 @@ fn stamping_a_channel_splits_the_display_form_from_the_base_name() {
 
 /// The channel family's colour is `ChatTypeInfo["CHANNEL"..arg8]` (`ChatFrame.lua:1381`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_channel_notice_renders_in_the_channels_color_not_the_notice_row() {
     let _data = benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::QuadContent;
@@ -698,9 +684,9 @@ fn a_channel_notice_renders_in_the_channels_color_not_the_notice_row() {
     super::feed::deliver(&mut s, &mut windows, &mut channels, &mut e);
     s.resolve();
 
-    let line = "Joined Channel: [1. General - Elwynn Forest]";
-    let color = s
-        .extract()
+    let line = "Joined Channel: |Hchannel:CHANNEL:1|h[1. General - Elwynn Forest]|h";
+    let quads = s.extract();
+    let color = quads
         .iter()
         .find_map(|q| match &q.content {
             QuadContent::Text {
@@ -710,7 +696,16 @@ fn a_channel_notice_renders_in_the_channels_color_not_the_notice_row() {
             } if t == line => Some(*c),
             _ => None,
         })
-        .unwrap_or_else(|| panic!("the notice line {line:?} rendered"));
+        .unwrap_or_else(|| {
+            let drawn: Vec<&String> = quads
+                .iter()
+                .filter_map(|q| match &q.content {
+                    QuadContent::Text { text: Some(t), .. } => Some(t),
+                    _ => None,
+                })
+                .collect();
+            panic!("the notice line {line:?} rendered; drawn: {drawn:?}")
+        });
     let near = |a: f32, b: f32| (a - b).abs() < 0.01;
     assert!(
         near(color[0], 1.0) && near(color[1], 192.0 / 255.0) && near(color[2], 192.0 / 255.0),
@@ -722,7 +717,6 @@ fn a_channel_notice_renders_in_the_channels_color_not_the_notice_row() {
 /// (`ChatFrame.lua:1382-1384`) and no join re-adds it, so the leave of a renamed slot must match
 /// nothing. The window registers by `ChannelID`, as the chat cache does (`ChatFrame.lua:1379`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_zone_change_must_not_deregister_the_channel_it_renames() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_vm();
@@ -829,7 +823,6 @@ fn a_zone_change_must_not_deregister_the_channel_it_renames() {
 /// notice comes back as `SUSPENDED`, the stock `YOU_LEFT` arm never runs, and a re-join takes the
 /// same slot.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn leaving_a_capital_suspends_trade_rather_than_deregistering_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_vm();
@@ -874,7 +867,7 @@ fn leaving_a_capital_suspends_trade_rather_than_deregistering_it() {
         s.extract().iter().any(|q| matches!(
             &q.content,
             benilla_ui::script::QuadContent::Text { text: Some(t), .. }
-                if t == "Left Channel: [1. Trade - City]"
+                if t == "Left Channel: |Hchannel:CHANNEL:1|h[1. Trade - City]|h"
         )),
         "the suspended leave renders the same text as an ordinary one"
     );
@@ -916,7 +909,6 @@ fn leaving_a_capital_suspends_trade_rather_than_deregistering_it() {
 
 /// A renamed slot's join notice reads as `YOU_CHANGED`: the `0x02` arm splits on `rec+0x9c == 2`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_renamed_zone_channel_confirms_as_changed_not_joined() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_vm();
@@ -943,7 +935,7 @@ fn a_renamed_zone_channel_confirms_as_changed_not_joined() {
     super::feed::deliver(&mut s, &mut windows, &mut channels, &mut e);
     s.resolve();
 
-    let want = "Changed Channel: [1. General - Westfall]";
+    let want = "Changed Channel: |Hchannel:CHANNEL:1|h[1. General - Westfall]|h";
     assert!(
         s.extract().iter().any(|q| matches!(
             &q.content,
@@ -962,7 +954,6 @@ fn a_renamed_zone_channel_confirms_as_changed_not_joined() {
 /// The `YOU_LEFT` arm tears the record down after the fire (`0x49c5b0`, then `0x49bbd0` at
 /// `0x49c5c2`), so [`super::feed::deliver`] stamps the line before it frees the slot.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_leave_notice_keeps_its_number_because_the_record_dies_after_the_line() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_vm();
@@ -983,7 +974,7 @@ fn a_leave_notice_keeps_its_number_because_the_record_dies_after_the_line() {
     );
     assert_eq!(
         compose(&e, K::ChannelNotice, "Common").unwrap(),
-        "Left Channel: [2. General - Elwynn Forest]"
+        "Left Channel: |Hchannel:CHANNEL:2|h[2. General - Elwynn Forest]|h"
     );
     assert_eq!(
         channels.names(),
@@ -1041,7 +1032,6 @@ fn a_freed_slot_is_reused_and_the_others_keep_their_numbers() {
 
 /// The reference destroys its Lua state at logout, so the next character's window is empty.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_session_end_empties_the_window_and_the_boxs_memory() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_vm();
@@ -1142,8 +1132,14 @@ fn colors_match_the_shipped_table() {
     assert_eq!(default_color(K::Loot), [0, 170, 0]);
     assert_eq!(default_color(K::Money), [255, 255, 0]);
     assert_eq!(default_color(K::ChannelNotice), [192, 192, 192]);
-    assert_eq!(default_color(K::RaidWarning), [255, 219, 183]);
+    assert_eq!(default_color(K::RaidWarning), [255, 72, 0]);
+    assert_eq!(default_color(K::RaidLeader), [255, 72, 9]);
+    assert_eq!(default_color(K::MonsterWhisper), [255, 181, 235]);
     assert_eq!(default_color(K::BgSystemAlliance), [0, 174, 239]);
+    // Every kind has a row: the lookup panics on one the table does not carry.
+    for &kind in K::ALL {
+        let _ = default_color(kind);
+    }
 }
 
 // ── the submitted-line grammar: type switches and action commands ──────────────────────────
@@ -1361,7 +1357,6 @@ fn unknown_slash_command_is_dropped_not_said_aloud() {
 /// The command table built as boot builds it: `GlobalStrings.lua` and `ChatFrame.lua`'s token
 /// table run in a VM, joined to `EmotesText.dbc`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_alias_table_resolves_the_shipped_commands() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -1542,8 +1537,8 @@ fn real_alias_table_resolves_the_shipped_commands() {
             assert_eq!(got, payload, "and must carry the text unchanged");
         }
     }
-    // The shipped surface: 68 distinct aliases over 36 `SlashCmdList` indices and 225 emote
-    // commands over 169 `EmotesText` names (aliases repeat; EMOTE27 "UNUSED" has no row), then 7
+    // The shipped surface: 71 distinct aliases over 35 `SlashCmdList` indices and 230 emote
+    // commands over 170 `EmotesText` names (aliases repeat; EMOTE27 "UNUSED" has no row), then 7
     // instrument aliases, in dev builds only.
     let instruments = if crate::run_mode::dev_affordances() {
         7
@@ -1552,7 +1547,7 @@ fn real_alias_table_resolves_the_shipped_commands() {
     };
     assert_eq!(
         table.counts(),
-        (68, 225, instruments),
+        (71, 230, instruments),
         "(slash, emote, instrument) aliases"
     );
 }
@@ -1851,8 +1846,8 @@ fn an_addon_message_survives_its_own_send_and_receive() {
     );
 }
 
-/// The header shows unless arg3 is empty, "Universal" or `this.defaultLanguage`
-/// (`ChatFrame.lua:1442`), the faction's language (`GetDefaultLanguage`, `0x5ec890`).
+/// The header shows unless arg3 is empty, "Universal" or `self.defaultLanguage`
+/// (`ChatFrame.lua:2901`), the faction's language (`GetDefaultLanguage`).
 #[test]
 fn the_language_header_suppresses_only_the_frames_own_default_tongue() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -1868,28 +1863,28 @@ fn the_language_header_suppresses_only_the_frames_own_default_tongue() {
     // An Alliance body (default Common): Orcish is tagged, Common is not.
     assert_eq!(
         compose(&orcish, K::Say, "Common").unwrap(),
-        "|Hplayer:Grom|h[Grom]|h says: [Orcish] lok'tar"
+        "|Hplayer:Grom:7:SAY|h[Grom]|h says: [Orcish] lok'tar"
     );
     assert_eq!(
         compose(&common, K::Say, "Common").unwrap(),
-        "|Hplayer:Ann|h[Ann]|h says: hello"
+        "|Hplayer:Ann:7:SAY|h[Ann]|h says: hello"
     );
 
     // A Horde body (default Orcish): the mirror.
     assert_eq!(
         compose(&orcish, K::Say, "Orcish").unwrap(),
-        "|Hplayer:Grom|h[Grom]|h says: lok'tar"
+        "|Hplayer:Grom:7:SAY|h[Grom]|h says: lok'tar"
     );
     assert_eq!(
         compose(&common, K::Say, "Orcish").unwrap(),
-        "|Hplayer:Ann|h[Ann]|h says: [Common] hello"
+        "|Hplayer:Ann:7:SAY|h[Ann]|h says: [Common] hello"
     );
 
     // Language 0 arrives as an empty arg3 and is never tagged.
     let universal = ev(K::Say, "system", "Ann");
     assert_eq!(
         compose(&universal, K::Say, "Orcish").unwrap(),
-        "|Hplayer:Ann|h[Ann]|h says: system"
+        "|Hplayer:Ann:7:SAY|h[Ann]|h says: system"
     );
 
     // Comprehension does not matter: an understood foreign tongue is still tagged.
@@ -1899,7 +1894,7 @@ fn the_language_header_suppresses_only_the_frames_own_default_tongue() {
     };
     assert_eq!(
         compose(&dwarvish, K::Say, "Common").unwrap(),
-        "|Hplayer:Bran|h[Bran]|h says: [Dwarvish] here we go"
+        "|Hplayer:Bran:7:SAY|h[Bran]|h says: [Dwarvish] here we go"
     );
 }
 
@@ -1973,7 +1968,6 @@ fn a_speaker_that_cannot_animate_queues_no_talk_gesture() {
 // ── the combat log reaches addons ────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_combat_log_kind_reaches_an_addon() {
     let _data = benilla_formats::wow_data_or_skip!();
     for kind in K::ALL.iter().copied().filter(|k| k.is_combat_log()) {
@@ -2035,7 +2029,6 @@ fn a_combat_log_line_renders_verbatim() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn both_dock_tabs_exist_and_select_their_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = chat_vm();
@@ -2083,7 +2076,6 @@ fn the_dock_tab_labels_come_from_the_install() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_combat_log_window_has_the_docks_rect() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = chat_vm();
@@ -2103,15 +2095,15 @@ fn the_combat_log_window_has_the_docks_rect() {
             "ChatFrame2:{get}() must equal ChatFrame1's — a docked window shares the dock's rect"
         );
     }
-    // `FCF_DockUpdate` anchors a docked window by three points (`FloatingChatFrame.lua:1059-1063`),
-    // so 3 means the dock seeding ran.
+    // `FCFDock_AddChatFrame` anchors a docked window with `SetAllPoints(dock.primary)`
+    // (`FloatingChatFrame.lua:1996-1998`), so 2 means the dock seeding ran.
     assert_eq!(
         s.eval::<i64>("return ChatFrame2:GetNumPoints()").unwrap(),
-        3,
-        "FCF_DockUpdate's three points — any other count means the dock never seeded this window"
+        2,
+        "SetAllPoints' two points — any other count means the dock never seeded this window"
     );
     assert_eq!(
-        s.eval::<i64>("return table.getn(DOCKED_CHAT_FRAMES)")
+        s.eval::<i64>("return #GENERAL_CHAT_DOCK.DOCKED_CHAT_FRAMES")
             .unwrap(),
         2,
         "the dock is ChatFrame1 + ChatFrame2, seeded from GetChatWindowInfo's stored positions"
@@ -2130,25 +2122,24 @@ fn the_combat_log_window_has_the_docks_rect() {
     );
 }
 
-/// The stock fade and tint walk `CHAT_FRAME_TEXTURES` by frame name (`FloatingChatFrame.lua:14`),
-/// so each dock window carries all nine pieces.
+/// The stock fade and tint walk `CHAT_FRAME_TEXTURES` by frame name (`FloatingChatFrame.lua:30-49`),
+/// so each dock window carries all eighteen pieces.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn both_dock_windows_carry_the_same_chrome() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = chat_vm();
     // Read out of the VM, so the check follows the list.
-    let suffixes: Vec<String> = (1..=9)
+    let n: i64 = s.eval("return #CHAT_FRAME_TEXTURES").unwrap();
+    assert_eq!(
+        n, 18,
+        "the window's plate and border, then its button frame's"
+    );
+    let suffixes: Vec<String> = (1..=n)
         .map(|i| {
             s.eval::<String>(&format!("return CHAT_FRAME_TEXTURES[{i}]"))
                 .unwrap()
         })
         .collect();
-    assert_eq!(
-        suffixes.len(),
-        9,
-        "the background plus the eight resize grips' textures"
-    );
     for suffix in &suffixes {
         for id in [1, 2] {
             assert!(
@@ -2158,49 +2149,29 @@ fn both_dock_windows_carry_the_same_chrome() {
             );
         }
     }
-    // Each texture's owning grip Button exists too.
-    for grip in [
-        "TopLeft",
-        "TopRight",
-        "BottomLeft",
-        "BottomRight",
-        "Top",
-        "Bottom",
-        "Left",
-        "Right",
-    ] {
-        for id in [1, 2] {
-            assert!(
-                s.eval::<bool>(&format!("return ChatFrame{id}Resize{grip} ~= nil"))
-                    .unwrap(),
-                "ChatFrame{id}Resize{grip} is missing — the window has art where a handle should be"
-            );
-        }
+    // The one resize grip `FCF_SetLocked` shows and hides (`FloatingChatFrame.lua:950-959`).
+    for id in [1, 2] {
+        assert!(
+            s.eval::<bool>(&format!(
+                "return ChatFrame{id}ResizeButton ~= nil and ChatFrame{id}.resizeButton == ChatFrame{id}ResizeButton"
+            ))
+            .unwrap(),
+            "ChatFrame{id}ResizeButton is missing — the window has no handle"
+        );
     }
 }
 
-/// The stock pass anchors its `ChatFrame2` row (`UIParent.lua:1582`), then `FCF_DockUpdate()`
-/// re-anchors every docked window onto `DEFAULT_CHAT_FRAME`.
+/// The stock pass skips `ChatFrame2` (`UIParent.lua:1301`) and ends in `FCF_DockUpdate()`
+/// (`:1944`), so a docked window stays on the dock.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_docked_chat_window_survives_the_managed_position_pass() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = benilla_ui::script::UiScript::new().expect("VM");
-    s.set_screen_size(1024.0, 768.0);
-    s.set_unit(
-        "player",
-        Some(benilla_ui::script::UnitState {
-            exists: true,
-            name: Some("Probefour".into()),
-            level: 60,
-            ..Default::default()
-        }),
+    let mut s = chat_vm();
+    assert!(
+        s.eval::<bool>("return ChatFrame2.isDocked == 1").unwrap(),
+        "the combat log ships docked"
     );
-    assert!(crate::ui_script::load_default_ui(&s).is_empty());
-    s.resolve();
-    // Dock the combat log the way the reference's own default layout does, then run the pass.
-    s.run("FCF_DockFrame(ChatFrame2, 2, nil) UIParent_ManageFramePositions()")
-        .unwrap();
+    s.run("UIParent_ManageFramePositions()").unwrap();
     s.resolve();
     let rect = |name: &str| {
         s.eval::<(f64, f64, f64, f64)>(&format!(
@@ -2308,11 +2279,18 @@ fn ding_lines(s: &mut benilla_ui::script::UiScript, args: [i64; 9]) -> Vec<Strin
         .collect()
 }
 
+/// Whether `ChatFrame1` draws a line reading `text`.
+fn rendered(s: &mut benilla_ui::script::UiScript, text: &str) -> bool {
+    s.resolve();
+    s.extract().iter().any(|q| {
+        matches!(&q.content, benilla_ui::script::QuadContent::Text { text: Some(t), .. } if t == text)
+    })
+}
+
 /// Stock `ChatFrame_OnEvent` prints the whole level-up block from `PLAYER_LEVEL_UP`
-/// (`ChatFrame.lua:1283-1323`), once; the app composes none of it. The singular
-/// `LEVEL_UP_CHAR_POINTS` is `GetText`'s plural pick.
+/// (`ChatFrame.lua:2562-2602`), once; the app composes none of it. `LEVEL_UP_CHAR_POINTS` reaches
+/// `AddMessage` with its `|4` plural escape, which the window resolves on the count.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_ding_block_is_printed_once() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_vm();
@@ -2322,16 +2300,19 @@ fn the_ding_block_is_printed_once() {
         [
             "Congratulations, you have reached level 10!",
             "You have gained 22 hit points and 15 mana.",
-            "You have gained 1 talent point.",
+            "You have gained 1 talent |4point:points;.",
             "Your Strength increases by 1.",
         ]
+    );
+    assert!(
+        rendered(&mut s, "You have gained 1 talent point."),
+        "the window draws the singular"
     );
 }
 
 /// A loss reaches stock signed, as the reference's `%d` fire passes it (`0x5e413e`): the health
-/// line prints it, and a lost stat prints no line (`if ( argN > 0 )`, `ChatFrame.lua:1302-1321`).
+/// line prints it, and a lost stat prints no line (`if ( argN > 0 )`, `ChatFrame.lua:2577-2601`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_negative_gain_prints_signed() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_vm();
@@ -2346,9 +2327,8 @@ fn a_negative_gain_prints_signed() {
 }
 
 /// On `CHARACTER_POINTS_CHANGED` with `arg2 > 0`, stock `ChatFrame_OnEvent` prints
-/// `LEVEL_UP_SKILL_POINTS` (`ChatFrame.lua:1324-1334`).
+/// `LEVEL_UP_SKILL_POINTS` (`ChatFrame.lua:2603-2613`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_free_professions_line_is_printed_once() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_vm();
@@ -2384,8 +2364,12 @@ fn the_free_professions_line_is_printed_once() {
     );
     assert_eq!(
         s.eval::<String>("return SkillLines[1]").unwrap(),
-        "You now have 2 free professions.",
-        "LEVEL_UP_SKILL_POINTS_P1, plural-picked by GetText on cp2"
+        "You now have 2 free |4profession:professions;.",
+        "LEVEL_UP_SKILL_POINTS, its `|4` escape intact"
+    );
+    assert!(
+        rendered(&mut s, "You now have 2 free professions."),
+        "the window draws the plural on cp2"
     );
 }
 
