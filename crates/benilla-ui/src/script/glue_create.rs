@@ -6,13 +6,15 @@
 //! The host seeds the tables ([`GlueCreateCatalog`]) from the DBCs; the character itself is the
 //! host's scene drive, which reads [`super::UiScript::glue_create_look`]. Indices are 1-based in Lua
 //! and 0-based inside. The dials are `[skin, face, hairStyle, hairColor, facialHair]`, the order
-//! `CycleCharCustomization`'s index names them in.
+//! `CycleCharCustomization`'s index names them in, each a `CharSections` index
+//! ([`super::glue_customize`]).
 
 use std::collections::HashMap;
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{number_arg, string_arg};
+use super::glue_customize::{Customizer, GlueCustomizeGrid};
 use super::ScriptValue;
 
 /// `g_scriptSexIndex`: Lua's sex numbers for male, female and none, as `GetCharacterInfo` answers.
@@ -67,8 +69,8 @@ pub struct GlueCreateCatalog {
     pub classes: Vec<GlueCreateClass>,
     /// `CharBaseInfo.dbc`'s (race, class) pairs, row order.
     pub base_info: Vec<(u8, u8)>,
-    /// The dial counts per (race, sex); a (race, sex) without counts has no body to build.
-    pub ranges: HashMap<(u8, u8), [u8; 5]>,
+    /// The `CharSections` grid per (race, sex); a (race, sex) without one has no body to build.
+    pub customize: HashMap<(u8, u8), GlueCustomizeGrid>,
     /// A race's hair token and its [male, female] facial-hair tokens.
     pub hair: HashMap<u8, (String, [String; 2])>,
     /// `NameGen.dbc`'s (name, race, sex), table order.
@@ -159,6 +161,8 @@ pub(crate) struct GlueCreate {
     preferences: HashMap<(u8, u8), [u8; 5]>,
     /// `m_charFacing`, radians.
     facing: f32,
+    /// `m_prevSkinIndex`: the skin last drawn, built with or stepped to.
+    prev_skin: u8,
     /// The name generator's trigram dictionary for the race and sex (`0x4e6560`), sorted.
     dictionary: Vec<(String, u32)>,
     rng: u64,
@@ -177,23 +181,28 @@ impl Default for GlueCreate {
             character: None,
             preferences: HashMap::new(),
             facing: 0.0,
+            prev_skin: 0,
             dictionary: Vec::new(),
             rng: 0x9E37_79B9_7F4A_7C15,
         }
     }
 }
 
+/// `CRandom::dice_`'s role: a uniform draw in `0..n` (`n · r >> 32`).
+fn roll(rng: &mut u64, n: usize) -> usize {
+    // xorshift64*
+    let mut x = *rng;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    *rng = x;
+    let r = (x.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 32) as u32;
+    ((n as u64 * u64::from(r)) >> 32) as usize
+}
+
 impl GlueCreate {
-    /// `CRandom::uint32_`'s role: a uniform draw in `0..n` (`n · r >> 32`).
     fn roll(&mut self, n: usize) -> usize {
-        // xorshift64*
-        let mut x = self.rng;
-        x ^= x >> 12;
-        x ^= x << 25;
-        x ^= x >> 27;
-        self.rng = x;
-        let r = (x.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 32) as u32;
-        ((n as u64 * u64::from(r)) >> 32) as usize
+        roll(&mut self.rng, n)
     }
 
     /// `CCharacterCreation::Initialize` (`0x4e1c20`): the races not flagged `0x1`, Alliance's
@@ -248,39 +257,34 @@ impl GlueCreate {
         }
     }
 
-    fn ranges(&self, race: u8, sex: u8) -> Option<[u8; 5]> {
-        self.catalog.ranges.get(&(race, sex)).copied()
-    }
-
-    fn random_dials(&mut self, race: u8, sex: u8) -> [u8; 5] {
-        let counts = self.ranges(race, sex).unwrap_or([1; 5]);
-        let mut dials = [0; 5];
-        for (d, &n) in dials.iter_mut().zip(&counts) {
-            *d = self.roll(usize::from(n.max(1))) as u8;
-        }
-        dials
-    }
-
-    /// `ValidateComponentData`: each dial inside its count.
-    fn clamp(&self, race: u8, sex: u8, mut dials: [u8; 5]) -> [u8; 5] {
-        let counts = self.ranges(race, sex).unwrap_or([1; 5]);
-        for (d, &n) in dials.iter_mut().zip(&counts) {
-            *d = (*d).min(n.saturating_sub(1));
-        }
-        dials
-    }
-
-    /// `0x4e13a0`: a new character of the race and sex, its dials random or as given; a race and
-    /// sex with no model leave the old one.
-    fn init_character(&mut self, race: u8, sex: u8, dials: [u8; 5], randomize: bool) {
-        if self.ranges(race, sex).is_none() {
-            return;
-        }
-        let dials = if randomize {
-            self.random_dials(race, sex)
-        } else {
-            dials
+    /// `ValidateComponentData` (`0x4e9d50`) for the class.
+    fn validate(&self, race: u8, sex: u8, class: u8, dials: [u8; 5]) -> [u8; 5] {
+        let Some(grid) = self.catalog.customize.get(&(race, sex)) else {
+            return dials;
         };
+        let mut c = Customizer::new(grid, class, dials);
+        c.validate();
+        c.dials()
+    }
+
+    /// `0x4e13a0`: a new character of the race, sex and class, its dials as given or drawn skin,
+    /// hair colour, hair style, face, facial hair; a race and sex with no model leave the old one.
+    fn init_character(&mut self, race: u8, sex: u8, class: u8, dials: [u8; 5], randomize: bool) {
+        let Some(grid) = self.catalog.customize.get(&(race, sex)) else {
+            return;
+        };
+        let mut c = Customizer::new(grid, class, dials);
+        if randomize {
+            let rng = &mut self.rng;
+            let mut roll = |n: i32| roll(rng, n as usize) as i32;
+            c.random_skin(&mut roll);
+            c.random_hair_color(&mut roll);
+            c.random_hair_style(&mut roll);
+            c.random_face(&mut roll);
+            c.random_facial(&mut roll);
+        }
+        let dials = c.dials();
+        self.prev_skin = dials[0];
         self.character = Some(GlueCreateCharacter { race, sex, dials });
     }
 
@@ -301,8 +305,8 @@ impl GlueCreate {
         }
         self.class_id = class;
         if let Some(c) = self.character {
-            let dials = self.clamp(c.race, c.sex, c.dials);
-            self.init_character(c.race, c.sex, dials, false);
+            let dials = self.validate(c.race, c.sex, class, c.dials);
+            self.init_character(c.race, c.sex, class, dials, false);
         }
     }
 
@@ -316,18 +320,19 @@ impl GlueCreate {
         self.save_preferences();
         if let Some(e) = self.existing.and_then(|i| roster.get(i)) {
             if e.gender == sex && e.customize_flags & 0x1 != 0 {
-                self.init_character(e.race_id, e.gender, e.dials, false);
+                self.init_character(e.race_id, e.gender, e.class_id, e.dials, false);
                 self.load_names();
                 return;
             }
         }
         let race = self.selected_race().unwrap_or(c.race);
+        let class = self.class_id;
         match self.preferences.get(&(race, sex)).copied() {
             Some(saved) => {
-                let dials = self.clamp(c.race, sex, saved);
-                self.init_character(c.race, sex, dials, false);
+                let dials = self.validate(c.race, sex, class, saved);
+                self.init_character(c.race, sex, class, dials, false);
             }
-            None => self.init_character(c.race, sex, [0; 5], true),
+            None => self.init_character(c.race, sex, class, [0; 5], true),
         }
         self.load_names();
     }
@@ -344,28 +349,28 @@ impl GlueCreate {
         let existing = self.existing.and_then(|i| roster.get(i)).cloned();
         if let Some(e) = existing.filter(|e| e.race_id == race && e.customize_flags & 0x110000 != 0)
         {
-            self.init_character(e.race_id, e.gender, e.dials, false);
+            self.init_character(e.race_id, e.gender, e.class_id, e.dials, false);
             self.set_sex(e.gender, roster);
         } else if let Some(saved) = self.preferences.get(&(race, c.sex)).copied() {
             self.calc_classes(race);
             if !self.catalog.is_race_class_valid(race, self.class_id) {
                 self.class_id = self.random_class(expansion);
             }
-            let dials = self.clamp(race, c.sex, saved);
-            self.init_character(race, c.sex, dials, false);
+            let dials = self.validate(race, c.sex, self.class_id, saved);
+            self.init_character(race, c.sex, self.class_id, dials, false);
         } else {
             self.calc_classes(race);
             if !self.catalog.is_race_class_valid(race, self.class_id) {
                 let class = self.random_class(expansion);
                 self.set_class(class);
             }
-            self.init_character(race, c.sex, [0; 5], true);
+            self.init_character(race, c.sex, self.class_id, [0; 5], true);
         }
         self.load_names();
     }
 
     /// `0x4e1fd0`: a random race the account may play and a random sex, its classes, a random
-    /// character and a random class.
+    /// character drawn for no class, and a random class, which validates it.
     fn reset(&mut self, expansion: u8) {
         self.existing = None;
         if self.races.is_empty() {
@@ -385,7 +390,7 @@ impl GlueCreate {
             }
         }
         self.calc_classes(race);
-        self.init_character(race, sex, [0; 5], true);
+        self.init_character(race, sex, 0, [0; 5], true);
         let class = self.random_class(expansion);
         self.set_class(class);
         self.race_index = self.races.iter().position(|&r| r == race);
@@ -399,7 +404,7 @@ impl GlueCreate {
         };
         self.existing = Some(index);
         self.calc_classes(e.race_id);
-        self.init_character(e.race_id, e.gender, e.dials, false);
+        self.init_character(e.race_id, e.gender, e.class_id, e.dials, false);
         self.class_id = e.class_id;
         if let Some(i) = self.races.iter().position(|&r| r == e.race_id) {
             self.race_index = Some(i);
@@ -407,28 +412,59 @@ impl GlueCreate {
         self.load_names();
     }
 
-    /// `0x4e01f0`: one dial a step either way, wrapping.
+    /// `0x4e01f0`: one dial to the next or previous slot the class admits; a face steps from the
+    /// skin last picked (`m_prevSkinIndex`), which only a skin step moves.
     fn cycle(&mut self, dial: usize, delta: i32) {
-        let Some(mut c) = self.character else { return };
+        let Some(ch) = self.character else { return };
         if delta == 0 || dial >= 5 {
             return;
         }
-        let n = self.ranges(c.race, c.sex).map_or(1, |r| r[dial]).max(1);
-        let d = &mut c.dials[dial];
-        *d = if delta > 0 {
-            (*d + 1) % n
-        } else {
-            (*d + n - 1) % n
+        let Some(grid) = self.catalog.customize.get(&(ch.race, ch.sex)) else {
+            return;
         };
-        self.character = Some(c);
+        let step = delta.signum();
+        let mut c = Customizer::new(grid, self.class_id, ch.dials);
+        match dial {
+            0 => {
+                c.step_skin(step);
+                self.prev_skin = c.dials()[0];
+            }
+            1 => {
+                c.step_face(step, self.prev_skin.into());
+            }
+            2 => {
+                c.step_hair_style(step);
+            }
+            3 => {
+                c.step_hair_color(step);
+            }
+            _ => {
+                c.step_facial(step);
+            }
+        }
+        self.character = Some(GlueCreateCharacter {
+            dials: c.dials(),
+            ..ch
+        });
     }
 
-    /// `0x4e17f0`.
+    /// `0x4e17f0`: skin, face, hair colour, hair style, facial hair drawn in turn.
     fn randomize(&mut self) {
-        if let Some(c) = self.character {
-            let dials = self.random_dials(c.race, c.sex);
-            self.character = Some(GlueCreateCharacter { dials, ..c });
-        }
+        let Some(ch) = self.character else { return };
+        let Some(grid) = self.catalog.customize.get(&(ch.race, ch.sex)) else {
+            return;
+        };
+        let mut c = Customizer::new(grid, self.class_id, ch.dials);
+        let rng = &mut self.rng;
+        let mut roll = |n: i32| roll(rng, n as usize) as i32;
+        c.random_skin(&mut roll);
+        c.random_face(&mut roll);
+        c.random_hair_color(&mut roll);
+        c.random_hair_style(&mut roll);
+        c.random_facial(&mut roll);
+        let dials = c.dials();
+        self.prev_skin = dials[0];
+        self.character = Some(GlueCreateCharacter { dials, ..ch });
     }
 
     /// `CNameGen::LoadNames` (`0x4e6790`) and `CreateDictionary` (`0x4e6560`): every three-letter

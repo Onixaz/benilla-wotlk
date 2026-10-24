@@ -28,6 +28,22 @@ fn class(id: u8, file: &str, expansion: u8) -> GlueCreateClass {
     }
 }
 
+/// A grid whose every slot any class may take: `[skins, faces, hair styles, hair colours, facial
+/// hair]` wide, each face on each skin, each style in each colour, no facial-hair rows.
+fn full_grid(n: [usize; 5]) -> GlueCustomizeGrid {
+    let row = |w: usize| vec![Some(0x11); w];
+    GlueCustomizeGrid {
+        sections: [
+            vec![row(n[0])],
+            vec![row(n[0]); n[1]],
+            Vec::new(),
+            vec![row(n[3]); n[2]],
+            vec![row(n[0])],
+        ],
+        facial_hair_styles: n[4] as u32,
+    }
+}
+
 /// Human and Gnome for the Alliance, Orc and Blood Elf for the Horde, a flagged row the screen
 /// leaves out; Warrior, Mage, Death Knight.
 fn catalog() -> GlueCreateCatalog {
@@ -55,11 +71,11 @@ fn catalog() -> GlueCreateCatalog {
         (10, 6),
         (10, 8),
     ];
-    let mut ranges = HashMap::new();
+    let mut customize = HashMap::new();
     let mut hair = HashMap::new();
     for r in [1, 2, 7, 10] {
         for sex in [0, 1] {
-            ranges.insert((r, sex), [3, 2, 4, 5, 2]);
+            customize.insert((r, sex), full_grid([3, 2, 4, 5, 2]));
         }
         hair.insert(
             r,
@@ -77,7 +93,7 @@ fn catalog() -> GlueCreateCatalog {
         races,
         classes,
         base_info,
-        ranges,
+        customize,
         hair,
         names,
     }
@@ -369,4 +385,136 @@ fn the_background_skips_the_held_file() {
     assert_eq!(s.glue_scene().unwrap().instance, first.instance);
     s.run("SetCharCustomizeBackground('UI_Orc.m2')").unwrap();
     assert!(s.glue_scene().unwrap().instance > first.instance);
+}
+
+/// Human male's grid as the class selection (`0x4f39a0`) splits it: skins 0 and 1 for anyone, 2 an
+/// NPC's, 3 a Death Knight's with face 1 and a third face of its own, but not face 0; hair styles 0
+/// and 1 for anyone, 2 the
+/// barbershop's (`0x2` without `0x1`), and a third colour on style 0 for a Death Knight.
+fn class_grid() -> GlueCustomizeGrid {
+    let any = Some(0x11);
+    let dk = Some(0x5);
+    let skins = vec![any, any, Some(0x8), dk];
+    GlueCustomizeGrid {
+        sections: [
+            vec![skins.clone()],
+            vec![
+                vec![any, any],
+                vec![any, any, None, dk],
+                vec![None, None, None, dk],
+            ],
+            Vec::new(),
+            vec![
+                vec![any, any, dk],
+                vec![any, any],
+                vec![Some(0x12), Some(0x12)],
+            ],
+            vec![skins],
+        ],
+        facial_hair_styles: 3,
+    }
+}
+
+/// [`vm`] with Human male on [`class_grid`], a Wrath account, the class's row index selected.
+fn class_vm(class_row: u8) -> UiScript {
+    let mut s = UiScript::new_glue().unwrap();
+    s.set_account_expansion(2);
+    let mut c = catalog();
+    c.customize.insert((1, 0), class_grid());
+    s.set_glue_create_catalog(c);
+    s.run("CreateFrame('ModelFFX', 'CharacterCreate') SetCharCustomizeFrame('CharacterCreate')")
+        .unwrap();
+    s.run(&format!(
+        "ResetCharCustomize() SetSelectedRace(1) SetSelectedSex(3) SetSelectedSex(2) \
+         SetSelectedClass({class_row})"
+    ))
+    .unwrap();
+    let ch = s.glue_create_look().unwrap().character;
+    assert_eq!((ch.race, ch.sex), (1, 0));
+    s
+}
+
+/// Every value a dial reads over `presses` forward steps.
+fn reached(s: &UiScript, dial: usize, presses: usize) -> Vec<u8> {
+    let mut seen = Vec::new();
+    for _ in 0..presses {
+        s.run(&format!("CycleCharCustomization({}, 1)", dial + 1))
+            .unwrap();
+        seen.push(s.glue_create_look().unwrap().character.dials[dial]);
+    }
+    seen.sort_unstable();
+    seen.dedup();
+    seen
+}
+
+/// Steps a dial forward until it reads `want`.
+fn cycle_to(s: &UiScript, dial: usize, want: u8) {
+    for _ in 0..16 {
+        if s.glue_create_look().unwrap().character.dials[dial] == want {
+            return;
+        }
+        s.run(&format!("CycleCharCustomization({}, 1)", dial + 1))
+            .unwrap();
+    }
+    panic!("dial {dial} never reads {want}");
+}
+
+/// A Warrior steps over the NPC's and the Death Knight's skins, the Death Knight's face and the
+/// barbershop's hair style; a Death Knight reaches its own skin, face and hair colour.
+#[test]
+fn the_dials_offer_the_rows_the_class_may_take() {
+    let s = class_vm(1);
+    assert_eq!(reached(&s, 0, 6), [0, 1], "a Warrior's skins");
+    assert_eq!(reached(&s, 1, 6), [0, 1], "a Warrior's faces");
+    assert_eq!(reached(&s, 2, 6), [0, 1], "a Warrior's hair styles");
+    cycle_to(&s, 2, 0);
+    assert_eq!(reached(&s, 3, 6), [0, 1], "a Warrior's hair colours");
+    let s = class_vm(2);
+    cycle_to(&s, 1, 1);
+    assert_eq!(reached(&s, 0, 6), [0, 1, 3], "a Death Knight's skins");
+    assert_eq!(reached(&s, 1, 6), [0, 1, 2], "a Death Knight's faces");
+    cycle_to(&s, 2, 0);
+    assert_eq!(
+        reached(&s, 3, 6),
+        [0, 1, 2],
+        "a Death Knight's hair colours"
+    );
+    assert_eq!(
+        reached(&s, 2, 6),
+        [0, 1],
+        "no barbershop style for a Death Knight"
+    );
+}
+
+/// A face the skin lacks moves the skin to one the face has, scanning up from the skin last picked
+/// (`m_prevSkinIndex`), so stepping on through the faces brings that skin back.
+#[test]
+fn a_face_step_moves_the_skin_and_remembers_the_one_picked() {
+    let s = class_vm(2);
+    cycle_to(&s, 1, 1);
+    cycle_to(&s, 0, 3);
+    let mut seen = Vec::new();
+    for _ in 0..4 {
+        s.run("CycleCharCustomization(2, 1)").unwrap();
+        let d = s.glue_create_look().unwrap().character.dials;
+        seen.push((d[0], d[1]));
+    }
+    assert_eq!(seen, [(3, 2), (1, 0), (1, 1), (3, 2)]);
+}
+
+/// A class change validates the dials (`0x4e9d50`): a Death Knight's skin, face and hair colour
+/// become the Warrior's at the same index modulo the Warrior's counts.
+#[test]
+fn a_class_change_trades_rows_the_class_may_not_take() {
+    let s = class_vm(2);
+    cycle_to(&s, 1, 1);
+    cycle_to(&s, 0, 3);
+    cycle_to(&s, 1, 2);
+    cycle_to(&s, 2, 0);
+    cycle_to(&s, 3, 2);
+    let d = s.glue_create_look().unwrap().character.dials;
+    assert_eq!(&d[..4], [3, 2, 0, 2]);
+    s.run("SetSelectedClass(1)").unwrap();
+    let d = s.glue_create_look().unwrap().character.dials;
+    assert_eq!(&d[..4], [1, 0, 0, 0]);
 }

@@ -126,6 +126,10 @@ fn drive_charcreate_probe(
             };
             match super::glue_press::press_body(s, &probe.req, race_file, class_file) {
                 Ok(()) => {
+                    info!(
+                        "probe-charcreate: dials pressed to {:?}",
+                        s.glue_create_look().map(|l| l.character.dials)
+                    );
                     super::glue_press::press_okay(s, &probe.req.name);
                     probe.state = ProbeState::Creating;
                 }

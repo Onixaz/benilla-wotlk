@@ -1,9 +1,6 @@
-//! Character-creation source data from ChrRaces, CharBaseInfo and CharStartOutfit, and the five
-//! appearance-dial ranges per (race, sex), counted from the DBCs: skin colour, face and hair colour
-//! off the CharSections rows the client groups into its grid (`0x476020`), hair and facial-hair
-//! styles off CharHairGeosets and CharacterFacialHairStyles. Every tuple in a (race, sex)'s ranges
-//! passes vmangos's `Player::ValidateAppearance`, since the shipped grids are complete over each
-//! coupled pair.
+//! Character-creation source data from ChrRaces, CharBaseInfo and CharStartOutfit, and per (race,
+//! sex) the CharSections grid the appearance dials walk (`0x4f3dd0`) with its count of
+//! CharacterFacialHairStyles rows (`0x4f41b0`).
 
 use std::collections::{HashMap, HashSet};
 
@@ -20,18 +17,12 @@ const CHAR_BASE_INFO: &str = "DBFilesClient\\CharBaseInfo.dbc";
 const CHAR_START_OUTFIT: &str = "DBFilesClient\\CharStartOutfit.dbc";
 /// `CharBaseInfo.dbc`'s columns and row bytes: race and class, one byte each.
 pub(crate) const CHAR_BASE_INFO_WIDTH: (usize, usize) = (2, 2);
-const CHAR_HAIR_GEOSETS: &str = "DBFilesClient\\CharHairGeosets.dbc";
 const CHAR_FACIAL_HAIR_STYLES: &str = "DBFilesClient\\CharacterFacialHairStyles.dbc";
 const CHAR_SECTIONS: &str = "DBFilesClient\\CharSections.dbc";
 const NAME_GEN: &str = "DBFilesClient\\NameGen.dbc";
 
-// CharSections `SectionType` values the dial ranges read (hair is 3 at `0x4784c0`).
-const SECTION_SKIN: u8 = 0;
-const SECTION_FACE: u8 = 1;
-const SECTION_HAIR: u8 = 3;
-
-/// A CharSections availability key: `(race, sex, sectionType, variation, color)`.
-type SectionKey = (u8, u8, u8, u8, u8);
+/// CharSections `BaseSection` values the grid keeps, skin through underwear.
+const SECTION_GRID_TYPES: usize = 5;
 
 /// The `ChrRaces` ids a player can create, ascending: the eight original races, Blood Elf and
 /// Draenei; the shipped `CharBaseInfo` lists exactly these.
@@ -62,14 +53,14 @@ pub struct StartOutfitItem {
     pub inv_type: u8,
 }
 
-/// The five appearance-dial counts for one (race, sex); each dial cycles index `0..count-1`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DialRanges {
-    pub skin: u8,
-    pub face: u8,
-    pub hair_style: u8,
-    pub hair_color: u8,
-    pub facial_hair: u8,
+/// One (race, sex)'s CharSections grid as `BuildComponentArray` (`0x4f3dd0`) lays it out: per base
+/// section, skin, face, facial hair, hair, underwear, `[variation][color]`, each slot the `Flags` of
+/// the last row at it or `None`; a variation's width is its widest colour plus one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CharSectionGrid {
+    pub sections: [Vec<Vec<Option<u32>>>; SECTION_GRID_TYPES],
+    /// `CharacterFacialHairStyles.dbc`'s rows for the race and sex (`CountFacialFeatures`).
+    pub facial_hair_styles: u32,
 }
 
 /// One `ChrRaces.dbc` row as the create screen reads it, every row in table order.
@@ -111,7 +102,7 @@ pub struct CharCreateCatalog {
     /// race → ([male, female] facial-hair token, hair token).
     custom_tokens: HashMap<u8, ([String; 2], String)>,
     combos: HashSet<(u8, u8)>,
-    ranges: HashMap<(u8, u8), DialRanges>,
+    grids: HashMap<(u8, u8), CharSectionGrid>,
     /// (race, class, sex) → the worn starting-outfit items.
     start_outfits: HashMap<(u8, u8, u8), Vec<StartOutfitItem>>,
     /// Every `ChrRaces.dbc` row, table order.
@@ -194,9 +185,9 @@ impl CharCreateCatalog {
         &self.name_gen
     }
 
-    /// The five appearance-dial counts for a (race, sex).
-    pub fn ranges(&self, race: u8, sex: u8) -> Option<DialRanges> {
-        self.ranges.get(&(race, sex)).copied()
+    /// The CharSections grid the appearance dials of a (race, sex) walk.
+    pub fn section_grid(&self, race: u8, sex: u8) -> Option<&CharSectionGrid> {
+        self.grids.get(&(race, sex))
     }
 
     /// The worn level-1 gear the create preview dresses a (race, class, sex) in.
@@ -213,18 +204,9 @@ impl CharCreateCatalog {
         let combos: HashSet<(u8, u8)> = base_info.iter().copied().collect();
         let name_gen = load_name_gen(chain).unwrap_or_default();
         let start_outfits = load_start_outfits(chain)?;
-        let avail = load_available_sections(chain)?;
-        let hair_geo = load_hair_geosets(chain)?;
-        let facial = load_facial_hair_styles(chain)?;
-
-        let mut ranges = HashMap::new();
-        for &race in &PLAYABLE_RACES {
-            for sex in [0u8, 1] {
-                ranges.insert(
-                    (race, sex),
-                    derive_ranges(race, sex, &avail, &hair_geo, &facial),
-                );
-            }
+        let mut grids = load_section_grids(chain)?;
+        for (key, count) in load_facial_hair_counts(chain)? {
+            grids.entry(key).or_default().facial_hair_styles = count;
         }
 
         let catalog = Self {
@@ -233,7 +215,7 @@ impl CharCreateCatalog {
             names,
             custom_tokens,
             combos,
-            ranges,
+            grids,
             start_outfits,
             race_rows,
             base_info,
@@ -277,16 +259,15 @@ impl CharCreateCatalog {
                 {
                     bail!("ChrRaces: race {race} has no customization tokens");
                 }
-                let r = self
-                    .ranges(race, sex)
-                    .with_context(|| format!("no ranges for race {race} sex {sex}"))?;
-                if r.skin == 0
-                    || r.face == 0
-                    || r.hair_style == 0
-                    || r.hair_color == 0
-                    || r.facial_hair == 0
+                let g = self
+                    .section_grid(race, sex)
+                    .with_context(|| format!("no CharSections grid for race {race} sex {sex}"))?;
+                if g.sections[0].is_empty()
+                    || g.sections[1].is_empty()
+                    || g.sections[3].is_empty()
+                    || g.facial_hair_styles == 0
                 {
-                    bail!("customization ranges: race {race} sex {sex} has a zero dial ({r:?})");
+                    bail!("CharSections: race {race} sex {sex} lacks skins, faces, hair or beards");
                 }
             }
         }
@@ -490,9 +471,9 @@ fn load_start_outfits(chain: &mut Chain) -> Result<HashMap<(u8, u8, u8), Vec<Sta
     Ok(map)
 }
 
-/// CharSections → the selectable keys, the rows the layout's flags offer
-/// ([`crate::dbc_layout::CharSections::offered`]).
-fn load_available_sections(chain: &mut Chain) -> Result<HashSet<SectionKey>> {
+/// CharSections → per (race, sex) the grid `BuildComponentArray` (`0x4f3dd0`) builds: rows of
+/// base section 5 and up are skipped, and a later row at a slot replaces an earlier one.
+fn load_section_grids(chain: &mut Chain) -> Result<HashMap<(u8, u8), CharSectionGrid>> {
     let bytes = chain
         .read_file(CHAR_SECTIONS)
         .with_context(|| format!("reading {CHAR_SECTIONS}"))?;
@@ -504,47 +485,37 @@ fn load_available_sections(chain: &mut Chain) -> Result<HashSet<SectionKey>> {
         super::sections::char_sections_schema(l),
         "CharSections",
     )?;
-    let mut avail = HashSet::new();
+    let mut grids: HashMap<(u8, u8), CharSectionGrid> = HashMap::new();
     for r in rs.records() {
-        if let (Some(race), Some(sex), Some(ty), Some(var), Some(color), Some(flags)) = (
+        let (Some(race), Some(sex), Some(ty), Some(var), Some(color), Some(flags)) = (
             u32_at(r, 1),
             u32_at(r, 2),
             u32_at(r, 3),
             u32_at(r, l.variation),
             u32_at(r, l.color),
             u32_at(r, l.flags),
-        ) {
-            if l.offered(flags) {
-                avail.insert((race as u8, sex as u8, ty as u8, var as u8, color as u8));
-            }
+        ) else {
+            continue;
+        };
+        if ty as usize >= SECTION_GRID_TYPES {
+            continue;
         }
+        let grid = &mut grids.entry((race as u8, sex as u8)).or_default().sections[ty as usize];
+        let (var, color) = (var as usize, color as usize);
+        if grid.len() <= var {
+            grid.resize(var + 1, Vec::new());
+        }
+        let colors = &mut grid[var];
+        if colors.len() <= color {
+            colors.resize(color + 1, None);
+        }
+        colors[color] = Some(flags);
     }
-    Ok(avail)
+    Ok(grids)
 }
 
-/// CharHairGeosets → (race, sex) → hair-style variations, keyed on cols 1/2/3 as `0x478540` does.
-fn load_hair_geosets(chain: &mut Chain) -> Result<HashMap<(u8, u8), HashSet<u8>>> {
-    let bytes = chain
-        .read_file(CHAR_HAIR_GEOSETS)
-        .with_context(|| format!("reading {CHAR_HAIR_GEOSETS}"))?;
-    let rs = parse(
-        &bytes,
-        super::geosets::char_hair_geosets_schema(),
-        "CharHairGeosets",
-    )?;
-    let mut map: HashMap<(u8, u8), HashSet<u8>> = HashMap::new();
-    for r in rs.records() {
-        if let (Some(race), Some(sex), Some(var)) = (u32_at(r, 1), u32_at(r, 2), u32_at(r, 3)) {
-            map.entry((race as u8, sex as u8))
-                .or_default()
-                .insert(var as u8);
-        }
-    }
-    Ok(map)
-}
-
-/// CharacterFacialHairStyles → (race, sex) → variations, keyed on cols 0/1/2 as `0x478740` does.
-fn load_facial_hair_styles(chain: &mut Chain) -> Result<HashMap<(u8, u8), HashSet<u8>>> {
+/// CharacterFacialHairStyles → (race, sex) → its row count, keyed on cols 0/1 (`0x4f41b0`).
+fn load_facial_hair_counts(chain: &mut Chain) -> Result<HashMap<(u8, u8), u32>> {
     let bytes = chain
         .read_file(CHAR_FACIAL_HAIR_STYLES)
         .with_context(|| format!("reading {CHAR_FACIAL_HAIR_STYLES}"))?;
@@ -555,51 +526,13 @@ fn load_facial_hair_styles(chain: &mut Chain) -> Result<HashMap<(u8, u8), HashSe
         ),
         "CharacterFacialHairStyles",
     )?;
-    let mut map: HashMap<(u8, u8), HashSet<u8>> = HashMap::new();
+    let mut map: HashMap<(u8, u8), u32> = HashMap::new();
     for r in rs.records() {
-        if let (Some(race), Some(sex), Some(var)) = (u32_at(r, 0), u32_at(r, 1), u32_at(r, 2)) {
-            map.entry((race as u8, sex as u8))
-                .or_default()
-                .insert(var as u8);
+        if let (Some(race), Some(sex)) = (u32_at(r, 0), u32_at(r, 1)) {
+            *map.entry((race as u8, sex as u8)).or_default() += 1;
         }
     }
     Ok(map)
-}
-
-/// Count distinct values on one axis of a (race, sex, sectionType) group in `avail`.
-fn section_axis_count(
-    avail: &HashSet<SectionKey>,
-    race: u8,
-    sex: u8,
-    ty: u8,
-    variation_axis: bool,
-) -> u8 {
-    avail
-        .iter()
-        .filter(|&&(r, s, t, _, _)| r == race && s == sex && t == ty)
-        .map(|&(_, _, _, v, c)| if variation_axis { v } else { c })
-        .collect::<HashSet<u8>>()
-        .len() as u8
-}
-
-fn derive_ranges(
-    race: u8,
-    sex: u8,
-    avail: &HashSet<SectionKey>,
-    hair_geo: &HashMap<(u8, u8), HashSet<u8>>,
-    facial: &HashMap<(u8, u8), HashSet<u8>>,
-) -> DialRanges {
-    DialRanges {
-        skin: section_axis_count(avail, race, sex, SECTION_SKIN, false),
-        face: section_axis_count(avail, race, sex, SECTION_FACE, true),
-        // Hair styles are CharHairGeosets variations, at least 1 (bald), not CharSections HAIR
-        // variations: Orc female has one HAIR variation with no geoset.
-        hair_style: hair_geo
-            .get(&(race, sex))
-            .map_or(1, |v| v.len().max(1) as u8),
-        hair_color: section_axis_count(avail, race, sex, SECTION_HAIR, false),
-        facial_hair: facial.get(&(race, sex)).map_or(0, |v| v.len() as u8),
-    }
 }
 
 #[cfg(test)]
@@ -674,42 +607,6 @@ mod tests {
         );
         let warrior = classes.names().iter().find(|n| n.id == 1).expect("Warrior");
         assert_eq!(warrior.required_expansion, 0);
-    }
-
-    /// CharSections `SECTION_TYPE_FACIAL_HAIR`, needed only by the transcribed check.
-    const SECTION_FACIAL_HAIR: u8 = 2;
-
-    /// vmangos's `Player::ValidateAppearance` (`Player.cpp:326`), run on `CMSG_CHAR_CREATE`;
-    /// `avail` already excludes the `0x1`-flagged rows, and face is keyed by skin colour.
-    fn validate_appearance(
-        avail: &HashSet<SectionKey>,
-        facial: &HashMap<(u8, u8), HashSet<u8>>,
-        race: u8,
-        sex: u8,
-        skin: u8,
-        face: u8,
-        hair: u8,
-        hair_color: u8,
-        facial_hair: u8,
-    ) -> bool {
-        let has = |ty, var, color| avail.contains(&(race, sex, ty, var, color));
-        if !has(SECTION_SKIN, 0, skin) {
-            return false;
-        }
-        if !has(SECTION_FACE, face, skin) {
-            return false;
-        }
-        if !has(SECTION_HAIR, hair, hair_color) {
-            return false;
-        }
-        // Tauren and all females but Night Elf (4) and Undead (5) have no FACIAL_HAIR sections.
-        let excluded = race == 6 || (sex == 1 && race != 4 && race != 5);
-        if !excluded && !has(SECTION_FACIAL_HAIR, facial_hair, hair_color) {
-            return false;
-        }
-        facial
-            .get(&(race, sex))
-            .is_some_and(|vs| vs.contains(&facial_hair))
     }
 
     #[test]
@@ -838,32 +735,66 @@ mod tests {
                 .any(|it| it.inv_type == 20 && it.display_id == 12647),
             "Human Mage male should wear a robe (inv 20, disp 12647): {mage:?}"
         );
+    }
 
-        // Every tuple in the dial ranges passes ValidateAppearance.
-        let avail = load_available_sections(&mut chain).expect("sections");
-        let facial = load_facial_hair_styles(&mut chain).expect("facial hair");
-        for &race in &PLAYABLE_RACES {
+    /// Each CharSections row of base section 0..4 sits at its (race, sex, section, variation,
+    /// color) slot with the last such row's flags, every filled slot is a row's, and the shipped
+    /// grids carry the rows the class selection tells apart: Death Knight skins (`0x4`) and hair
+    /// the create screen does not offer (no `0x1`).
+    #[test]
+    fn the_section_grid_is_the_char_sections_rows() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let cat = CharCreateCatalog::load(&mut chain).expect("load char-create catalog");
+        let bytes = chain.read_file(CHAR_SECTIONS).expect("CharSections");
+        let l = &crate::dbc_layout::LAYOUTS.char_sections;
+        let rs = parse(
+            &bytes,
+            super::super::sections::char_sections_schema(l),
+            "CS",
+        )
+        .unwrap();
+        let mut last = HashMap::new();
+        for r in rs.records() {
+            let col = |i| u32_at(r, i).unwrap() as usize;
+            if col(3) < SECTION_GRID_TYPES {
+                let key = (col(1), col(2), col(3), col(l.variation), col(l.color));
+                last.insert(key, col(l.flags) as u32);
+            }
+        }
+        for (&(race, sex, ty, var, color), &flags) in &last {
+            let g = cat.section_grid(race as u8, sex as u8).expect("grid");
+            assert_eq!(
+                g.sections[ty][var][color],
+                Some(flags),
+                "{race} {sex} {ty} {var} {color}"
+            );
+        }
+        let mut filled = 0;
+        for race in 0..=u8::MAX {
             for sex in [0u8, 1] {
-                let r = cat.ranges(race, sex).expect("ranges");
-                for sk in 0..r.skin {
-                    for fa in 0..r.face {
-                        for hs in 0..r.hair_style {
-                            for hc in 0..r.hair_color {
-                                for fh in 0..r.facial_hair {
-                                    assert!(
-                                        validate_appearance(
-                                            &avail, &facial, race, sex, sk, fa, hs, hc, fh
-                                        ),
-                                        "race {race} sex {sex} tuple \
-                                         skin={sk} face={fa} hair={hs} hairColor={hc} facial={fh} \
-                                         fails ValidateAppearance"
-                                    );
-                                }
-                            }
-                        }
-                    }
+                if let Some(g) = cat.section_grid(race, sex) {
+                    filled += g.sections.iter().flatten().flatten().flatten().count();
                 }
             }
         }
+        assert_eq!(filled, last.len(), "no slot without a row");
+        let flags_of = |race, sex, ty: usize| {
+            let g = cat.section_grid(race, sex).expect("grid");
+            g.sections[ty]
+                .iter()
+                .flatten()
+                .flatten()
+                .copied()
+                .collect::<Vec<u32>>()
+        };
+        assert!(
+            flags_of(1, 0, 0).iter().any(|f| f & 0x4 != 0),
+            "a Death Knight skin"
+        );
+        assert!(
+            flags_of(1, 0, 3).iter().any(|f| f & 0x1 == 0),
+            "hair off the create screen"
+        );
     }
 }

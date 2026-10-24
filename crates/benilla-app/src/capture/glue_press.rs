@@ -86,8 +86,9 @@ fn list_index(s: &UiScript, verb: &str, file: &str) -> Option<u32> {
 
 /// Put `req`'s body up on the create screen: its race button's click (`CharacterRace_OnClick`,
 /// whose button is checked first, as the click would), its sex (`SetCharacterGender`), its class
-/// button's click (`CharacterClass_OnClick`), then each customization's arrow pressed once per
-/// step to `req`'s value. `race_file` and `class_file` are the race's and class's file strings.
+/// button's click (`CharacterClass_OnClick`), then each customization's arrow pressed toward
+/// `req`'s value until the dial reads it or comes back round. `race_file` and `class_file` are the
+/// race's and class's file strings.
 /// Returns why it could not: a race or class the screen does not list.
 pub(super) fn press_body(
     s: &UiScript,
@@ -122,9 +123,6 @@ pub(super) fn press_body(
         return Err(format!("{race_file} cannot be a {class_file}"));
     }
     press(s, &format!("CharacterClass_OnClick({class})"));
-    let look = s
-        .glue_create_look()
-        .ok_or("the create screen built no character")?;
     let want = [
         req.skin,
         req.face,
@@ -132,19 +130,24 @@ pub(super) fn press_body(
         req.hair_color,
         req.facial_hair,
     ];
-    let mut chunk = String::new();
-    for (i, (&have, &want)) in look.character.dials.iter().zip(&want).enumerate() {
-        let delta = i32::from(want) - i32::from(have);
-        for _ in 0..delta.unsigned_abs() {
-            chunk.push_str(&format!(
-                "CycleCharCustomization({}, {}) ",
-                i + 1,
-                delta.signum()
-            ));
+    let dials = || s.glue_create_look().map(|l| l.character.dials);
+    dials().ok_or("the create screen built no character")?;
+    // A dial skips the slots the class does not admit, so press until it reads the value or
+    // comes back round.
+    for (i, &want) in want.iter().enumerate() {
+        let Some(start) = dials() else { break };
+        let step = if want >= start[i] { 1 } else { -1 };
+        let mut have = start[i];
+        for _ in 0..=u8::MAX {
+            if have == want {
+                break;
+            }
+            press(s, &format!("CycleCharCustomization({}, {step})", i + 1));
+            have = dials().map_or(want, |d| d[i]);
+            if have == start[i] {
+                break;
+            }
         }
-    }
-    if !chunk.is_empty() {
-        press(s, &chunk);
     }
     Ok(())
 }

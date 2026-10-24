@@ -136,6 +136,7 @@ mod glue;
 mod glue_addons;
 mod glue_core;
 mod glue_create;
+mod glue_customize;
 mod glue_realm;
 mod glue_select;
 mod glue_system;
@@ -148,6 +149,7 @@ pub use glue_create::{
     validate_character_name, GlueCharCreate, GlueCreateCatalog, GlueCreateCharacter,
     GlueCreateClass, GlueCreateLook, GlueCreateRace,
 };
+pub use glue_customize::GlueCustomizeGrid;
 pub use glue_realm::{
     realm_load_classify, realm_load_stats, GlueRealm, GlueRealmCategory, GlueRealmCells,
     GlueRealmType, RealmSortKey,

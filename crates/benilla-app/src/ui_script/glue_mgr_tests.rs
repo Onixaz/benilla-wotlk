@@ -2041,3 +2041,83 @@ fn a_refused_character_login_holds_its_okay_until_pressed() {
         "past 8, the default"
     );
 }
+
+/// On the install's own grid the create screen offers Human male a Warrior's hair styles alone,
+/// leaving out the styles whose rows are the barbershop's, and its Death Knight skins to a Death
+/// Knight only (`0x4f39a0`).
+#[test]
+fn the_create_dials_walk_the_install_grid_by_class() {
+    let data = benilla_formats::wow_data_or_skip!();
+    let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+    let create = benilla_formats::CharCreateCatalog::load(&mut chain).expect("ChrRaces");
+    let classes = benilla_formats::load_chr_classes(&mut chain).expect("ChrClasses");
+    let factions = benilla_formats::load_faction_catalog(&mut chain).expect("FactionTemplate");
+    let grid = create.section_grid(1, 0).expect("Human male").clone();
+    let row = |id: u32| 1 + classes.names().iter().position(|c| c.id == id).unwrap();
+    let vm = |class_row: usize| {
+        let mut s = UiScript::new_glue().unwrap();
+        s.set_account_expansion(2);
+        s.set_glue_create_catalog(glue_create_catalog(&create, &classes, &factions));
+        s.run(
+            "CreateFrame('ModelFFX', 'CharacterCreate') SetCharCustomizeFrame('CharacterCreate') \
+             ResetCharCustomize()",
+        )
+        .unwrap();
+        let human = s
+            .eval::<f64>(
+                "local t = {GetAvailableRaces()} for i = 2, #t, 3 do \
+                 if t[i] == 'Human' then return (i + 1) / 3 end end",
+            )
+            .unwrap();
+        s.run(&format!(
+            "SetSelectedRace({human}) SetSelectedSex(3) SetSelectedSex(2) \
+             SetSelectedClass({class_row})"
+        ))
+        .unwrap();
+        s
+    };
+    let dial = |s: &UiScript, i: usize| s.glue_create_look().unwrap().character.dials[i];
+    let walk = |s: &UiScript, i: usize, presses: usize| {
+        let mut seen = std::collections::BTreeSet::new();
+        for _ in 0..presses {
+            s.run(&format!("CycleCharCustomization({}, 1)", i + 1))
+                .unwrap();
+            seen.insert(dial(s, i));
+        }
+        seen
+    };
+    let to_face_0 = |s: &UiScript| {
+        for _ in 0..grid.sections[1].len() {
+            if dial(s, 1) == 0 {
+                return;
+            }
+            s.run("CycleCharCustomization(2, 1)").unwrap();
+        }
+        assert_eq!(dial(s, 1), 0, "face 0 reached");
+    };
+    let skin_flags = |skin: u8| grid.sections[0][0][usize::from(skin)].unwrap();
+    let creatable = |f: u32| f & 0x1 != 0 && f & 0xC == 0;
+    let offered_styles: std::collections::BTreeSet<u8> = (0..grid.sections[3].len())
+        .filter(|&v| grid.sections[3][v].iter().flatten().any(|&f| creatable(f)))
+        .map(|v| v as u8)
+        .collect();
+    assert!(
+        offered_styles.len() < grid.sections[3].len(),
+        "the barbershop's styles exist"
+    );
+
+    let warrior = vm(row(1));
+    assert_eq!(
+        walk(&warrior, 2, grid.sections[3].len() * 2),
+        offered_styles
+    );
+    to_face_0(&warrior);
+    let skins = walk(&warrior, 0, grid.sections[0][0].len() * 2);
+    assert!(skins.iter().all(|&s| creatable(skin_flags(s))), "{skins:?}");
+
+    let dk = vm(row(6));
+    to_face_0(&dk);
+    let skins = walk(&dk, 0, grid.sections[0][0].len() * 2);
+    assert!(skins.iter().any(|&s| skin_flags(s) & 0x4 != 0), "{skins:?}");
+    assert!(skins.iter().all(|&s| skin_flags(s) & 0x8 == 0), "{skins:?}");
+}

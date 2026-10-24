@@ -1793,13 +1793,15 @@ struct CreateTables<'a> {
 
 /// The create screen's tables: every `ChrRaces` row with its faction group's names (the race's
 /// `FactionTemplate` group mask, then `FactionGroup.dbc`), every `ChrClasses` row, `CharBaseInfo`,
-/// the dial counts and tokens per race, and `NameGen.dbc`.
+/// the `CharSections` grid per (race, sex) with a body, the hair tokens per race, and `NameGen.dbc`.
 fn glue_create_catalog(
     create: &benilla_formats::CharCreateCatalog,
     classes: &benilla_formats::ChrClasses,
     factions: &benilla_formats::FactionCatalog,
 ) -> benilla_ui::script::GlueCreateCatalog {
-    use benilla_ui::script::{GlueCreateCatalog, GlueCreateClass, GlueCreateRace};
+    use benilla_ui::script::{
+        GlueCreateCatalog, GlueCreateClass, GlueCreateRace, GlueCustomizeGrid,
+    };
     let races = create
         .race_rows()
         .iter()
@@ -1823,14 +1825,20 @@ fn glue_create_catalog(
             }
         })
         .collect::<Vec<_>>();
-    let mut ranges = std::collections::HashMap::new();
+    let mut customize = std::collections::HashMap::new();
     let mut hair = std::collections::HashMap::new();
     for r in &races {
         for sex in [0u8, 1] {
-            if let (Some(d), Some(_)) = (create.ranges(r.id, sex), create.body_display(r.id, sex)) {
-                ranges.insert(
+            if let (Some(g), Some(_)) = (
+                create.section_grid(r.id, sex),
+                create.body_display(r.id, sex),
+            ) {
+                customize.insert(
                     (r.id, sex),
-                    [d.skin, d.face, d.hair_style, d.hair_color, d.facial_hair],
+                    GlueCustomizeGrid {
+                        sections: g.sections.clone(),
+                        facial_hair_styles: g.facial_hair_styles,
+                    },
                 );
             }
         }
@@ -1859,7 +1867,7 @@ fn glue_create_catalog(
             })
             .collect(),
         base_info: create.base_info().to_vec(),
-        ranges,
+        customize,
         hair,
         names: create
             .name_gen()

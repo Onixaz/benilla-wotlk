@@ -14,7 +14,7 @@ mod sections;
 mod shipped;
 
 pub use customization::{
-    CharCreateCatalog, CreateRaceRow, DialRanges, NameGenRow, StartOutfitItem,
+    CharCreateCatalog, CharSectionGrid, CreateRaceRow, NameGenRow, StartOutfitItem,
 };
 pub use geosets::{CharacterGeosets, EquipGeosets, VisibleGeosets};
 pub use sections::{
