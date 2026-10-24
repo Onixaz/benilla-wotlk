@@ -162,19 +162,16 @@ impl BlizzardRandomizer {
     }
 }
 
-/// The reference's `frillDensity` default (`CVar::Register` at `0x68862e`, record `[0xc7f2f4]`):
-/// cells visited per chunk, drawn with repeats, so clutter is patchy. `SetWorldDetail`
-/// (`0x488dd0`) writes 16, 32 or 48 per slider stop, hence the scatter's multiplier.
+/// The cells per chunk the scatter's `density_scale` multiplies: `groundEffectDensity`'s registered
+/// 16 (`CWorldParam::Initialize 0x78e400`), cells visited with repeats, so clutter is patchy.
 pub const FRILL_DENSITY: u32 = 16;
 
-/// The top of the reference's `frillDensity` range: its change callback (`0x688de0`) clamps to
-/// `[1, 256]`, though the renderer saturates at 128 (`0x6b1d4b` caps `frillDensity << 6` at
-/// `0x2000` instances). The scatter's clamp and `benilla-world`'s `set_frill_density` share it.
+/// The top of `groundEffectDensity`'s range, its change callback's (`0x78dab0`).
 pub const FRILL_DENSITY_MAX: u32 = 256;
 
 /// Scatter ground clutter over one terrain chunk, a port of the reference's
 /// `CMapChunk::CreateDetailDoodads` (`0x6bfc10`): one RNG stream per chunk, seeded by the global
-/// chunk coords `(globalChunkY << 16) | globalChunkX`; pass 1 picks `frillDensity` cells
+/// chunk coords `(globalChunkY << 16) | globalChunkX`; pass 1 picks `groundEffectDensity` cells
 /// `(rng & 7, rng & 7)` with repeats, and pass 2 spawns `density` doodads in each, slot
 /// `(n + listIndex) & 3`, from the layer [`ChunkMesh::pred_tex`] names, never MCAL alpha.
 /// `density_scale` multiplies [`FRILL_DENSITY`].

@@ -59,6 +59,27 @@ pub use queries::{
 const SPAWN_BUDGET: Duration = Duration::from_millis(4);
 
 /// The streamer's residency state: the loaded tiles and the entity each spawned as.
+/// The Effects page's two terrain switches, read by the shared light blob's row 19 every frame, so
+/// a write shows on the next frame where the reference applies them at the next map load.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct TerrainOptions {
+    /// `specular`, Terrain Highlights: the `_s` layers' sun sheen.
+    pub specular: bool,
+    /// `shadowLevel` at 1, Terrain Texture Low: every chunk's alpha and shadow maps at half size
+    /// (`CMapChunk::RenderPrep 0x7d3fe0` sets flag `0x10` from `CWorld::shadowMipLevel`).
+    pub low_mip: bool,
+}
+
+impl Default for TerrainOptions {
+    /// The registered `shadowLevel` "1" and the hardware row's `specular` "1".
+    fn default() -> Self {
+        Self {
+            specular: true,
+            low_mip: true,
+        }
+    }
+}
+
 #[derive(Resource, Default)]
 pub struct TerrainStreamer {
     /// Loaded tiles by `(tile_x, tile_y)`; each handle keeps its asset resident.
@@ -1070,8 +1091,9 @@ fn despawn_tile_owned(commands: &mut Commands, t: &TileState) {
     }
 }
 
-/// Re-scatter the loaded tiles when `WorldDetail` changes, as the reference's setter tail-calls
-/// the chunk rebuild (`0x6725a0` → `0x6b1d20`). It watches the density value, since
+/// Re-scatter the loaded tiles when `groundEffectDensity` changes, as the reference's setter
+/// dirties the detail-doodad pools (`World::SetDetailDoodadDensity 0x780710`). It watches the
+/// density value, since
 /// `ClutterConfig` also holds the detail-doodad cutout; the first sight only arms.
 fn rescatter_clutter(
     mut commands: Commands,

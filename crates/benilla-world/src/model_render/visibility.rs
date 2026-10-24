@@ -45,6 +45,9 @@ pub(super) fn apply_model_visibility(
     // Billboard card owners (a model root or a rig joint): a card is a world root, so nothing
     // else carries its owner's hide to it.
     card_owners: Query<&InheritedVisibility>,
+    // `projectedTextures`, and the effect roots that draw their projected batches regardless.
+    projected: Res<crate::view::ProjectedTextures>,
+    forced_roots: Query<(), With<super::ForcedProjection>>,
     mut q: Query<(
         Entity,
         &ModelPart,
@@ -59,6 +62,7 @@ pub(super) fn apply_model_visibility(
         Has<crate::exterior_cull::ExteriorScene>,
         Option<Ref<super::FarSideOfWater>>,
         Option<&crate::billboard::BillboardCard>,
+        (Option<&super::M2BatchSort>, Option<&ChildOf>),
     )>,
     // A building's MLIQ surfaces: a `WmoGroupVis` but no `ModelPart`, so none of the submesh
     // rules. A query here rather than a second writer, so a culled room's water goes with it.
@@ -87,6 +91,7 @@ pub(super) fn apply_model_visibility(
         && !windows.is_changed()
         && !claim.is_changed()
         && !far_twins.is_changed()
+        && !projected.is_changed()
         && new_portals.is_empty()
         && owner_flips.is_empty();
     let cam_pos = cam_t.map(|t| t.translation());
@@ -115,6 +120,7 @@ pub(super) fn apply_model_visibility(
             exterior,
             far_side,
             card,
+            (batch_sort, parent),
         )| {
             if scene_still
                 && !unmarked.contains(&entity)
@@ -152,13 +158,11 @@ pub(super) fn apply_model_visibility(
                 }
             };
 
-            // The size-bucketed distance fade (reference `0x683f80`), measured to the bounding
-            // sphere's centre in the horizontal plane (`0x6952a0`, `0x683f80`).
+            // The size-levelled distance fade ([`crate::model_fade`]), measured to the placed
+            // box's centre.
             let fade_alpha = match (fade, cam_pos) {
                 (Some(f), Some(c)) => {
-                    let center = xf.transform_point(f.local_center);
-                    let (dx, dz) = (center.x - c.x, center.z - c.z);
-                    doodad_fade_alpha(f.radius, (dx * dx + dz * dz).sqrt())
+                    doodad_fade_alpha(f.size, xf.transform_point(f.local_center).distance(c))
                 }
                 _ => 1.0,
             };
@@ -198,8 +202,16 @@ pub(super) fn apply_model_visibility(
                     .and_then(crate::billboard::BillboardCard::follows)
                     .is_some_and(|o| matches!(card_owners.get(o), Ok(v) if !v.get()));
 
+            // A projected batch draws only under `projectedTextures` or a forcing model
+            // (`World::ProjectTextureCallback 0x77f500`).
+            let projection_off = !projected.0
+                && batch_sort.is_some_and(|s| s.key.projected)
+                && part.kind != ModelKind::GameObject
+                && !parent.is_some_and(|p| forced_roots.contains(p.parent()));
+
             // `Inherited`, not `Visible`, so a hidden parent root still hides its children.
             let desired = if toggled_on
+                && !projection_off
                 && in_range
                 && fade_alpha > 0.0
                 && mat_factor > 0.0
@@ -407,6 +419,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<DebugState>()
             .init_resource::<ViewDistance>()
+            .init_resource::<crate::view::ProjectedTextures>()
             .init_resource::<crate::wmo_portal::ExteriorWindows>()
             .init_resource::<crate::wmo_portal::CameraInteriorClaim>()
             .init_resource::<super::super::FarSideTwins>()
@@ -472,6 +485,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<DebugState>()
             .init_resource::<ViewDistance>()
+            .init_resource::<crate::view::ProjectedTextures>()
             .init_resource::<crate::wmo_portal::ExteriorWindows>()
             .init_resource::<crate::wmo_portal::CameraInteriorClaim>()
             .init_resource::<super::super::FarSideTwins>()

@@ -1,213 +1,272 @@
-//! The process texture-filter policy: `trilinear` and `anisotropic` resolved into one filter mode,
-//! as the reference holds it in two globals.
+//! The process texture policy: `textureFilteringMode` resolved into a filter and an anisotropy,
+//! and `baseMip`, the first mip a world texture samples.
 //!
-//! `TextureCreate` (`0x449d90`) hands `0x449ae0` an `applyGlobal` flag; when it is 1, the filter
-//! bits 0-2 are overwritten from `[0x835250]` (static 3) and the aniso bits 9-13 from
-//! `(mode == 5 ? [0x835254] : 1)`, globals set only from the CVar callbacks (`0x449ac0`,
-//! `0x449ad0`). Terrain (`0x6c4c77`), WMO (the same wrapper `0x6c4c20`), M2 (`0x71da72`) and the
-//! liquid sheets (`0x68abab`) pass 1. Six subsystems pass 0 and keep their own mode: weather
-//! sprites (a hard-coded mode 4), the minimap, glue and loading screens, Lua texture widgets, the
-//! sky and footprint decals (`0x699bd0`).
-//!
-//! Mode 3 is `GL_LINEAR_MIPMAP_NEAREST`, 4 `GL_LINEAR_MIPMAP_LINEAR`, 5 trilinear with anisotropy
-//! N (applied at `0x59f170`). `trilinear` (`0x688608`, registered `"0"`) sets 4; `anisotropic`
-//! (`0x6887d0`, registered `"1"`) above 1 sets 5 and outranks it.
-//!
-//! A fresh install renders at mode 4: `hwDetect` (`0x641260`, `0x639a60`) sets sixteen video CVars
-//! from `VideoHardware.dbc`, and any current GPU takes the fallback scan (`0x641610`, its tier from
-//! `0x58bc90`), whose rows 169 and 170 set `trilinear` 1 at both CPU tiers. `anisotropic` is not
-//! one of the sixteen (`0xc7f2e4` is absent from `[0x639a60, 0x639b80)`), so anisotropy stays off.
+//! `InitializeEngineCallback` (`0x4047e0`) reads `textureFilteringMode` once and hands the engine
+//! `s_textureFilterModes[mode]` (`0xab6128`: LinearMipNearest, LinearMipLinear, then Anisotropic
+//! four times) and `s_textureMaxAnisotropy[mode]` (`0xab6140`: 1, 1, 2, 4, 8, 16), so the stock
+//! slider's six stops are bilinear, trilinear and anisotropic 2x to 16x, and its tooltip says
+//! "enabled upon restart". The world's terrain, WMO, M2 and liquid textures take the policy; the
+//! interface's keep their own filter.
 //!
 //! A process global because a sampler is baked into the [`Image`] at load, by an async loader
-//! ([`crate::blp`]) and by systems ([`crate::world_assets`]) that share no resource. Latched at
-//! boot like `gxMultisample`: a baked sampler cannot change without a rebuild, which is why the
-//! reference's UI says "enabled upon restart".
+//! ([`crate::blp`]) and by systems ([`crate::world_assets`]) that share no resource. A change
+//! applies live ([`TexPolicyPlugin`]): every image built by [`policy_sampler`] takes the new
+//! sampler in place and the world's materials rebuild their bind groups, where the reference
+//! reloads its textures (`TextureNotifyGxRestart`, from the `baseMip` callback `0x78df00`).
 
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::RwLock;
 
-use bevy::image::ImageFilterMode;
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
+use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::FilterMode;
+use bevy::render::renderer::RenderDevice;
+use bevy::render::texture::GpuImage;
+use bevy::render::{Extract, ExtractSchedule, RenderApp};
 
-/// The reference's `anisotropic` range: its callback parses 1-16, then clamps to the device cap
-/// (`0x689110`).
-pub const ANISO_RANGE: std::ops::RangeInclusive<u32> = 1..=16;
+/// `textureFilteringMode`'s range, its change callback's (`0x4023c0`: "Texture filtering mode must
+/// be in range 0 to 6.", which refuses 6).
+pub const TEXTURE_FILTERING_RANGE: std::ops::RangeInclusive<u8> = 0..=5;
 
-/// `trilinear` and `anisotropic` resolved into the policy every sampler takes. Aniso outranks
-/// trilinear in either callback order: `anisotropic >= 2` writes mode 5 (`0x68919f`), and
-/// `trilinear` writes mode 4 (`0x688d0f`) only while the aniso bit is clear (`0x688d0d`).
+/// The anisotropy per mode, `s_textureMaxAnisotropy` (`0xab6140`).
+const MAX_ANISOTROPY: [u16; 6] = [1, 1, 2, 4, 8, 16];
+
+/// The highest anisotropy a mode asks for, which `GetVideoCaps` reports as the device's.
+pub const MAX_ANISOTROPY_CAP: u32 = 16;
+
+/// The policy every world sampler takes.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct TexFilterSetting {
-    /// `trilinear`: mode 4 when set and aniso is off.
-    pub trilinear: bool,
-    /// `anisotropic`: 1 is off; 2 and up is mode 5 at that level.
-    pub aniso: u32,
+    /// `textureFilteringMode`, 0 to 5.
+    pub mode: u8,
+    /// `baseMip`, 0 or 1: a 1 samples from the second mip, half the texture's size, as the
+    /// reference's device skips the first level of every texture (`TextureCalcGxTexSize
+    /// 0x4b6300`).
+    pub base_mip: u8,
 }
 
 impl Default for TexFilterSetting {
-    /// A fresh install: `trilinear` on, as `hwDetect` sets it, and `anisotropic` off.
-    /// `$WOW_TRILINEAR` and `$WOW_ANISO` override for the session only, like `$WOW_MSAA`, so an A/B
-    /// never sticks in `config.toml`.
+    /// A fresh install: trilinear, every mip. `$WOW_TEXTURE_FILTERING` (0 to 5) overrides the mode
+    /// for the session only, like `$WOW_MSAA`, so an A/B never sticks in `config.toml`.
     fn default() -> Self {
-        let env_flag = |k: &str| {
-            std::env::var(k)
-                .ok()
-                .map(|v| !matches!(v.as_str(), "" | "0" | "off"))
-        };
         Self {
-            trilinear: env_flag("WOW_TRILINEAR").unwrap_or(true),
-            aniso: std::env::var("WOW_ANISO")
+            mode: std::env::var("WOW_TEXTURE_FILTERING")
                 .ok()
-                .and_then(|v| v.parse::<u32>().ok())
-                .map_or(1, |v| v.clamp(*ANISO_RANGE.start(), *ANISO_RANGE.end())),
+                .and_then(|v| v.parse::<u8>().ok())
+                .filter(|m| TEXTURE_FILTERING_RANGE.contains(m))
+                .unwrap_or(1),
+            base_mip: 0,
         }
     }
 }
 
 impl TexFilterSetting {
-    /// The reference's filter mode (`[0x835250]`); the two CVars reach only 3, 4 and 5.
-    pub fn mode(self) -> u8 {
-        if self.aniso >= 2 {
-            5
-        } else if self.trilinear {
-            4
-        } else {
-            3
-        }
-    }
-
-    /// Mode 3 selects the nearer mip; 4 and 5 blend the two.
+    /// Mode 0 selects the nearer mip; every other blends the two.
     pub fn mipmap_filter(self) -> ImageFilterMode {
-        match self.mode() {
-            3 => ImageFilterMode::Nearest,
+        match self.mode {
+            0 => ImageFilterMode::Nearest,
             _ => ImageFilterMode::Linear,
         }
     }
 
     /// The same, for a lane that builds a raw wgpu `SamplerDescriptor`.
     pub fn gpu_mipmap_filter(self) -> FilterMode {
-        match self.mode() {
-            3 => FilterMode::Nearest,
+        match self.mode {
+            0 => FilterMode::Nearest,
             _ => FilterMode::Linear,
         }
     }
 
-    /// The max anisotropy, `(mode == 5 ? [0x835254] : 1)` (`0x449afc`). wgpu takes a clamp above 1
-    /// only with every filter `Linear`, which mode 5 always has.
+    /// The max anisotropy of the mode. wgpu takes a clamp above 1 only with every filter
+    /// `Linear`, which modes 2 to 5 always have.
     pub fn anisotropy_clamp(self) -> u16 {
-        if self.mode() == 5 {
-            self.aniso.clamp(*ANISO_RANGE.start(), *ANISO_RANGE.end()) as u16
-        } else {
-            1
-        }
+        MAX_ANISOTROPY[usize::from(self.mode.min(5))]
+    }
+
+    /// The lowest mip level the sampler may read, `baseMip`.
+    pub fn lod_min_clamp(self) -> f32 {
+        f32::from(self.base_mip.min(1))
     }
 }
 
-static POLICY: OnceLock<TexFilterSetting> = OnceLock::new();
+static POLICY: RwLock<Option<TexFilterSetting>> = RwLock::new(None);
 
-/// Publish the resolved policy once, from the CVar load (`benilla_app::cvars::load_config`, the
-/// `CvarLoad` set): after `config.toml` is folded in, before any system can request a texture.
+/// Bumped on each publish that moves the policy.
+static GENERATION: AtomicU32 = AtomicU32::new(0);
+
+/// Publish the resolved policy: first from the CVar load (`benilla_app::cvars::load_config`, the
+/// `CvarLoad` set), before any system can request a texture, then on each change.
 pub fn publish_tex_filter(setting: TexFilterSetting) {
-    let _ = POLICY.set(setting);
+    let mut policy = POLICY
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if *policy != Some(setting) {
+        let first = policy.is_none();
+        *policy = Some(setting);
+        if !first {
+            GENERATION.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 }
 
 /// The policy every sampler takes; unpublished (the world viewer, a headless test), it is
 /// [`TexFilterSetting::default`], a fresh install's value.
 pub fn tex_filter() -> TexFilterSetting {
-    *POLICY.get_or_init(TexFilterSetting::default)
+    let policy = *POLICY
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    policy.unwrap_or_default()
+}
+
+/// How many times the published policy has moved since the first publish.
+pub fn tex_filter_generation() -> u32 {
+    GENERATION.load(Ordering::Relaxed)
+}
+
+/// The label a policy sampler carries, by which [`TexPolicyPlugin`] finds the images to re-sample.
+pub const POLICY_SAMPLER_LABEL: &str = "benilla:world-texture-policy";
+
+/// A world texture's sampler: linear magnify and minify, the given address modes, and the live
+/// policy's mip filter, anisotropy and base mip.
+pub fn policy_sampler(u: ImageAddressMode, v: ImageAddressMode) -> ImageSamplerDescriptor {
+    let filter = tex_filter();
+    ImageSamplerDescriptor {
+        label: Some(POLICY_SAMPLER_LABEL.to_string()),
+        address_mode_u: u,
+        address_mode_v: v,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: filter.mipmap_filter(),
+        anisotropy_clamp: filter.anisotropy_clamp(),
+        lod_min_clamp: filter.lod_min_clamp(),
+        ..Default::default()
+    }
+}
+
+/// Carries a policy change to the images already uploaded: their samplers are rebuilt in the
+/// render world at the next extract, and the world's materials are marked changed so their bind
+/// groups take the new samplers.
+pub struct TexPolicyPlugin;
+
+impl Plugin for TexPolicyPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(PostUpdate, refresh_policy_materials);
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(ExtractSchedule, swap_policy_samplers);
+        }
+    }
+}
+
+/// Re-prepare every world material once per policy move.
+fn refresh_policy_materials(
+    mut seen: Local<Option<u32>>,
+    models: Option<ResMut<Assets<crate::materials::WowModelMaterial>>>,
+    terrain: Option<ResMut<Assets<crate::materials::TerrainMaterial>>>,
+    liquid: Option<ResMut<Assets<crate::materials::LiquidMaterial>>>,
+) {
+    let generation = tex_filter_generation();
+    if std::mem::replace(&mut *seen, Some(generation)).is_none_or(|g| g == generation) {
+        return;
+    }
+    let mut n = 0usize;
+    if let Some(mut m) = models {
+        n += m.iter_mut().count();
+    }
+    if let Some(mut m) = terrain {
+        n += m.iter_mut().count();
+    }
+    if let Some(mut m) = liquid {
+        n += m.iter_mut().count();
+    }
+    info!("texture filter: policy moved; {n} world material(s) rebinding");
+}
+
+/// Rebuild the render-world sampler of every image a [`policy_sampler`] built, once per policy
+/// move, keeping each image's own address modes.
+fn swap_policy_samplers(
+    images: Extract<Res<Assets<Image>>>,
+    mut gpu: ResMut<RenderAssets<GpuImage>>,
+    device: Res<RenderDevice>,
+    mut seen: Local<Option<u32>>,
+) {
+    let generation = tex_filter_generation();
+    if std::mem::replace(&mut *seen, Some(generation)).is_none_or(|g| g == generation) {
+        return;
+    }
+    let mut n = 0usize;
+    for (id, image) in images.iter() {
+        let ImageSampler::Descriptor(old) = &image.sampler else {
+            continue;
+        };
+        if old.label.as_deref() != Some(POLICY_SAMPLER_LABEL) {
+            continue;
+        }
+        let Some(gpu_image) = gpu.get_mut(id) else {
+            continue;
+        };
+        let fresh = ImageSamplerDescriptor {
+            address_mode_w: old.address_mode_w,
+            ..policy_sampler(old.address_mode_u, old.address_mode_v)
+        };
+        gpu_image.sampler = device.create_sampler(&fresh.as_wgpu());
+        n += 1;
+    }
+    info!("texture filter: {n} world texture sampler(s) rebuilt");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// `hwDetect`'s row-170 outcome, mode 4. `Default` is also the unpublished fallback; it reads
-    /// the env, so a set lever skips the test.
+    /// The registered "1", trilinear with no anisotropy; `Default` reads the env, so a set lever
+    /// skips the test.
     #[test]
     fn what_ships_is_trilinear_with_anisotropy_off() {
-        if std::env::var_os("WOW_TRILINEAR").is_some() || std::env::var_os("WOW_ANISO").is_some() {
-            return; // an A/B session owns the value; the levers are tested below on literals
+        if std::env::var_os("WOW_TEXTURE_FILTERING").is_some() {
+            return;
         }
         let shipped = TexFilterSetting::default();
-        assert!(
-            shipped.trilinear,
-            "hwDetect sets trilinear on rows 169 and 170"
-        );
-        assert_eq!(
-            shipped.aniso, 1,
-            "anisotropic is not one of hwDetect's sixteen"
-        );
-        assert_eq!(shipped.mode(), 4);
+        assert_eq!(shipped.mode, 1);
         assert_eq!(shipped.mipmap_filter(), ImageFilterMode::Linear);
         assert_eq!(shipped.anisotropy_clamp(), 1);
+        assert_eq!(shipped.lod_min_clamp(), 0.0);
     }
 
-    /// The registered strings alone, mode 3, reached when `config.toml` or `$WOW_TRILINEAR` says 0.
+    /// The six stops, from the two tables at `0xab6128` and `0xab6140`.
     #[test]
-    fn the_registrars_own_string_is_still_mode_three() {
-        let registrar = TexFilterSetting {
-            trilinear: false,
-            aniso: 1,
-        };
-        assert_eq!(registrar.mode(), 3);
-        assert_eq!(registrar.mipmap_filter(), ImageFilterMode::Nearest);
-        assert_eq!(registrar.gpu_mipmap_filter(), FilterMode::Nearest);
-        assert_eq!(registrar.anisotropy_clamp(), 1);
-    }
-
-    #[test]
-    fn trilinear_alone_is_mode_four() {
-        let s = TexFilterSetting {
-            trilinear: true,
-            aniso: 1,
-        };
-        assert_eq!(s.mode(), 4);
-        assert_eq!(s.mipmap_filter(), ImageFilterMode::Linear);
-        assert_eq!(s.anisotropy_clamp(), 1);
-    }
-
-    #[test]
-    fn aniso_outranks_trilinear_in_both_directions() {
-        for trilinear in [false, true] {
-            let s = TexFilterSetting {
-                trilinear,
-                aniso: 8,
-            };
-            assert_eq!(s.mode(), 5, "aniso 8 is mode 5 with trilinear={trilinear}");
-            assert_eq!(s.mipmap_filter(), ImageFilterMode::Linear);
-            assert_eq!(s.anisotropy_clamp(), 8);
+    fn each_mode_is_the_references_filter_and_anisotropy() {
+        for (mode, mip, aniso) in [
+            (0, FilterMode::Nearest, 1),
+            (1, FilterMode::Linear, 1),
+            (2, FilterMode::Linear, 2),
+            (3, FilterMode::Linear, 4),
+            (4, FilterMode::Linear, 8),
+            (5, FilterMode::Linear, 16),
+        ] {
+            let s = TexFilterSetting { mode, base_mip: 0 };
+            assert_eq!(s.gpu_mipmap_filter(), mip, "mode {mode}");
+            assert_eq!(s.anisotropy_clamp(), aniso, "mode {mode}");
         }
     }
 
-    #[test]
-    fn aniso_one_is_off() {
-        let s = TexFilterSetting {
-            trilinear: false,
-            aniso: 1,
-        };
-        assert_eq!(s.mode(), 3);
-    }
-
+    /// wgpu refuses an anisotropy clamp above 1 with a nearest mip filter.
     #[test]
     fn a_clamp_above_one_only_ever_rides_all_linear_filters() {
-        for s in [
-            TexFilterSetting {
-                trilinear: false,
-                aniso: 1,
-            },
-            TexFilterSetting {
-                trilinear: true,
-                aniso: 1,
-            },
-            TexFilterSetting {
-                trilinear: true,
-                aniso: 16,
-            },
-        ] {
+        for mode in TEXTURE_FILTERING_RANGE {
+            let s = TexFilterSetting { mode, base_mip: 0 };
             if s.anisotropy_clamp() > 1 {
-                assert_eq!(s.mipmap_filter(), ImageFilterMode::Linear);
                 assert_eq!(s.gpu_mipmap_filter(), FilterMode::Linear);
             }
         }
+    }
+
+    #[test]
+    fn base_mip_one_skips_the_first_level() {
+        let s = TexFilterSetting {
+            mode: 1,
+            base_mip: 1,
+        };
+        assert_eq!(s.lod_min_clamp(), 1.0);
     }
 }

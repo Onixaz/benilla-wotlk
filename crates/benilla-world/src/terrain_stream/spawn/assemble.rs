@@ -250,11 +250,13 @@ pub fn spawn_model_entities(
                 || sub.uv_anim.is_some()
                 || sub.rgb_anim.is_some()
                 // The merged lanes draw one stage on the first UV set.
-                || sub.geometry.combiner.is_some(),
+                || sub.geometry.combiner.is_some()
+                // A projected batch stays an entity, for the `projectedTextures` gate.
+                || sub.geometry.sort.is_some_and(|s| s.projected),
             interior_prop: interior_probe,
             order_free: matches!(sub.blend, ModelBlend::Opaque | ModelBlend::AlphaTest)
                 && !sub.additive,
-            never_fade: fade.radius > crate::model_fade::NEVER_FADE_RADIUS,
+            never_fade: !fade.size.is_finite(),
         };
         // A merged fader stays in the reference's fading state, the blend twin with per-vertex
         // alpha, which at fade 1.0 matches the cutout pixel for pixel. A steady interior prop
@@ -317,7 +319,7 @@ pub fn spawn_model_entities(
                         let fade_seed = (!class.never_fade
                             && !crate::static_gx::fade_lane_disabled())
                         .then(|| crate::static_gx::GxFadeSeed {
-                            radius: fade.radius,
+                            size: fade.size,
                             local_center,
                             stat_mesh: stat_mesh.clone(),
                             aabb: *stat_aabb,
@@ -661,7 +663,7 @@ pub fn spawn_model_entities(
         // `DoodadFade` lets the fade system drive the tag; a steady interior prop never fades.
         if !steady_interior_prop {
             commands.entity(entity).insert(DoodadFade {
-                radius: fade.radius,
+                size: fade.size,
                 local_center: fade_center,
                 cutout,
                 blend,

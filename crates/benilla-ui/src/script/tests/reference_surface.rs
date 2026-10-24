@@ -21,7 +21,6 @@ const BEYOND_REFERENCE: &[&str] = &[
     "CheckReadyCheckTime",
     "ConfirmPetUnlearn",
     "FollowByName",
-    "GetDoodadAnim",
     "GetGuildRecruitmentMode",
     "GetLookingForGroup",
     "GetMeetingStoneStatusText",
@@ -32,7 +31,6 @@ const BEYOND_REFERENCE: &[&str] = &[
     "GetPlayerBuffDispelType",
     "GetPlayerBuffTexture",
     "GetPlayerBuffTimeLeft",
-    "GetWorldDetail",
     "GuildDemoteByName",
     "GuildInviteByName",
     "GuildPromoteByName",
@@ -43,12 +41,9 @@ const BEYOND_REFERENCE: &[&str] = &[
     "IsTrainerServiceLearnSpell",
     "IsTrainerServiceTradeSkill",
     "PlayerHasSpells",
-    "RestoreVideoDefaults",
-    "SetDoodadAnim",
     "SetGuildRecruitmentMode",
     "SetInventoryPortaitTexture",
     "SetLookingForGroup",
-    "SetWorldDetail",
     "TargetByName",
     "ToggleMouseMove",
     "TutorialsEnabled",
@@ -1474,147 +1469,6 @@ fn every_installed_region_method_lands_in_a_leaf() {
     assert!(
         orphans.is_empty(),
         "installed on the region table but in NO leaf list, so no region can call them: {orphans:?}"
-    );
-}
-
-/// The Environment Detail pair, `SetWorldDetail 0x488dd0`/`GetWorldDetail 0x488d70`.
-#[test]
-fn set_world_detail_writes_the_stop_table_and_validates_like_the_reference() {
-    let s = script();
-    s.register_cvars([
-        (crate::script::CVAR_WORLD_DETAIL, "1"),
-        (crate::script::CVAR_FRILL_DENSITY, "32"),
-        (crate::script::CVAR_SMALL_CULL, "0.04"),
-    ]);
-    let frill = |s: &crate::script::UiScript| s.cvar(crate::script::CVAR_FRILL_DENSITY);
-    let stop = |s: &crate::script::UiScript| s.cvar(crate::script::CVAR_WORLD_DETAIL);
-
-    // The preset tables at `0x804518` and `0x804524`, verbatim: {16, 32, 48} and `smallCull`'s
-    // f32 {0.07, 0.04, 0.01} printed "%f".
-    for (n, want, cull) in [
-        (0, "16", "0.070000"),
-        (1, "32", "0.040000"),
-        (2, "48", "0.010000"),
-    ] {
-        s.run(&format!("SetWorldDetail({n})")).unwrap();
-        assert_eq!(
-            frill(&s).as_deref(),
-            Some(want),
-            "stop {n} writes frillDensity"
-        );
-        assert_eq!(
-            s.cvar(crate::script::CVAR_SMALL_CULL).as_deref(),
-            Some(cull),
-            "stop {n} writes smallCull"
-        );
-        assert_eq!(
-            s.eval::<i64>("return GetWorldDetail()").unwrap(),
-            n,
-            "and the getter reads that stop back in the SAME tick — the host has not drained yet"
-        );
-    }
-    assert_eq!(
-        crate::script::WORLD_DETAIL_STOPS,
-        [16, 32, 48],
-        "the table is the reference's, not a transcription that can drift"
-    );
-
-    // Truncation is toward zero (`0x40a2b0` sets RC = chop), so -0.5 is stop 0 and accepted.
-    s.run("SetWorldDetail(2.9)").unwrap();
-    assert_eq!(frill(&s).as_deref(), Some("48"));
-    s.run("SetWorldDetail(-0.5)").unwrap();
-    assert_eq!(
-        frill(&s).as_deref(),
-        Some("16"),
-        "-0.5 truncates to 0, which is in range: only <= -1 raises"
-    );
-
-    // `lua_isnumber` accepts a numeric string.
-    s.run(r#"SetWorldDetail("2")"#).unwrap();
-    assert_eq!(frill(&s).as_deref(), Some("48"));
-
-    for bad in [
-        "SetWorldDetail(3)",
-        "SetWorldDetail(-1)",
-        "SetWorldDetail(99)",
-    ] {
-        let e = s.run(bad).unwrap_err().to_string();
-        assert!(
-            e.contains("value must be in the range 0, 2"),
-            "{bad} must raise 0x8423b8 verbatim, got: {e}"
-        );
-    }
-    for bad in [
-        "SetWorldDetail()",
-        "SetWorldDetail(nil)",
-        r#"SetWorldDetail("x")"#,
-        "SetWorldDetail({})",
-    ] {
-        let e = s.run(bad).unwrap_err().to_string();
-        assert!(
-            e.contains("Usage: SetWorldDetail(value)"),
-            "{bad} must raise 0x8423e8 verbatim, got: {e}"
-        );
-    }
-
-    s.run("SetWorldDetail(1)").unwrap();
-    assert_eq!(
-        s.arity("SetWorldDetail(1)").unwrap(),
-        0,
-        "every `ret` in 0x488dd0 leaves eax = 0"
-    );
-    assert_eq!(s.arity("GetWorldDetail()").unwrap(), 1);
-    assert_eq!(
-        s.eval::<String>("return type(GetWorldDetail())").unwrap(),
-        "number"
-    );
-    // The getter ignores an argument; pfUI's hook passes one.
-    assert_eq!(s.eval::<i64>("return GetWorldDetail(7)").unwrap(), 1);
-    assert_eq!(stop(&s).as_deref(), Some("1"));
-}
-
-/// pfUI's `hdgraphic` module (`modules/hdgraphic.lua:4-39`), which hooks both verbs to drive
-/// `frillDensity` past the top stop, run against the bindings.
-#[test]
-fn the_pfui_hdgraphic_extended_arm_runs() {
-    let s = script();
-    s.register_cvars([
-        (crate::script::CVAR_WORLD_DETAIL, "1"),
-        (crate::script::CVAR_FRILL_DENSITY, "32"),
-    ]);
-    s.run(
-        r#"
-        local HookSetWorldDetail = SetWorldDetail
-        function SetWorldDetail(arg)
-          HookSetWorldDetail((arg > 2 and 2 or arg))
-          if arg > 2 then ConsoleExec("frillDensity " .. (arg+1)*16)
-          else ConsoleExec("frillDensity 24") end
-        end
-        local HookGetWorldDetail = GetWorldDetail
-        function GetWorldDetail(arg)
-          local frill = tonumber(GetCVar("frillDensity"))
-          return frill > 48 and frill/16-1 or HookGetWorldDetail()
-        end
-    "#,
-    )
-    .unwrap();
-
-    assert_eq!(
-        s.eval::<i64>("SetWorldDetail(9); return GetWorldDetail()")
-            .unwrap(),
-        9,
-        "the extended stop round-trips through frillDensity, which is the module's whole point"
-    );
-    assert_eq!(
-        s.cvar(crate::script::CVAR_FRILL_DENSITY).as_deref(),
-        Some("160"),
-        "(9+1)*16 — inside the reference's own [1, 256], which is why its range is wider than its slider"
-    );
-    // The low arm falls through to the stock getter.
-    assert_eq!(
-        s.eval::<i64>("SetWorldDetail(2); return GetWorldDetail()")
-            .unwrap(),
-        2
     );
 }
 

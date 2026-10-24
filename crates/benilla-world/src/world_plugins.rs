@@ -150,12 +150,14 @@ impl Plugin for WorldFoundation {
             .insert_resource(Gravity(Vec3::NEG_Y * 19.291_105))
             // The view distance (`farclip`), one source for the far wall and the per-object cull.
             .init_resource::<crate::view::ViewDistance>()
-            // `gxMultisample`, read once at the camera's spawn, as the reference latches it.
+            .init_resource::<crate::terrain_stream::TerrainOptions>()
+            // `gxMultisample`, committed to the world camera at each `RestartGx`.
             .init_resource::<crate::view::MsaaSetting>()
             .init_resource::<crate::view::MsaaFormats>()
-            // The texture filter (`trilinear`, `anisotropic`), read once at the CVar load: the
-            // reference applies it on restart.
+            // The texture policy (`textureFilteringMode`, `baseMip`), published at the CVar load
+            // and re-applied to the uploaded world textures on each change.
             .init_resource::<benilla_assets::TexFilterSetting>()
+            .add_plugins(benilla_assets::TexPolicyPlugin)
             // Its clamp to what this GPU accepts, in `finish()`, between the adapter and `Startup`.
             .add_plugins(crate::view::MsaaSupportPlugin)
             // The viewer's body, empty in a program with no avatar.

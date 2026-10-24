@@ -61,22 +61,41 @@ impl Viewer {
     }
 }
 
-/// View distance in yards. `farclip`, the `farclip` CVar, is the one view distance: the detailed
-/// world's far wall and the reach of terrain residency; its default, 350, is the reference's
-/// registered one.
+/// View distance in yards. `farclip` is the one view distance: the detailed world's far wall and the
+/// reach of terrain residency, the `farclip` CVar ([`ViewDistance::setting`]) as the current map
+/// admits it ([`validate_farclip`]).
 /// `nearclip` shares the resource because `0x511bc0` stamps both onto the camera every frame, the
 /// `nearclip` record's float to `[cam+0x38]` (`0x511bd4`) and the `farclip` one's to `[cam+0x3c]`.
 #[derive(Resource, Clone, Copy)]
 pub struct ViewDistance {
+    /// The far wall in use, [`Self::setting`] validated for the current map.
     pub farclip: f32,
+    /// The `farclip` CVar as written.
+    pub setting: f32,
     /// The camera near plane in yards, the `nearclip` CVar ([`stamp_near_clip`]).
     pub nearclip: f32,
 }
 
-/// The settable range of [`ViewDistance::farclip`]: the reference's `farclip` clamp,
-/// `[0x81021c]` = 177 to `[0x80fed8]` = 777 in its validate callback `0x688d40`; shared by the
-/// CVar apply, the options row and `$WOW_FARCLIP`.
-pub const FARCLIP_RANGE: std::ops::RangeInclusive<f32> = 177.0..=777.0;
+/// The `farclip` range the stock slider offers, `GetCVarMin`/`GetCVarMax` (`0x514d40`,
+/// `0x514e30`); shared by `$WOW_FARCLIP`.
+pub const FARCLIP_RANGE: std::ops::RangeInclusive<f32> = 177.0..=1277.0;
+
+/// `World::ValidateFarClip` (`0x780770`): the far clip a map admits, floored at 550/3 yd and capped
+/// at 4750/3, or 2375/3 on the old continents and instances (map ids below 530, and 543 and 575,
+/// while `farClipOverride` is off, which benilla does not register). The memory test beside it
+/// (at most 1 GiB of RAM) passes on every machine benilla runs on.
+pub fn validate_farclip(setting: f32, map_id: u32) -> f32 {
+    let cap = if map_id < 530 || map_id == 575 || map_id == 543 {
+        2375.0 / 3.0
+    } else {
+        4750.0 / 3.0
+    };
+    if setting.is_nan() || setting < 550.0 / 3.0 {
+        550.0 / 3.0
+    } else {
+        setting.min(cap)
+    }
+}
 
 /// The settable range of [`ViewDistance::nearclip`]: the bounds in the reference's `nearclip`
 /// change callback `0x688d90`, `[0x8029d0]` = 0.01 and `[0x808300]` = 0.33.
@@ -90,8 +109,8 @@ pub const NEARCLIP_RANGE: std::ops::RangeInclusive<f32> = 0.01..=0.33;
 /// default, 1, is the reference's: `CVar::Register` (`0x63a950`) takes it from the
 /// `VideoHardware.dbc` row `DetectHardware` (`0x641260`) matched, and every fallback row holds 1.
 ///
-/// Latched, as the reference registers it ("set pending gxRestart"): a change persists, but the
-/// camera keeps its `Msaa` until the next launch (swapping it live would freeze our post passes).
+/// Latched, as the reference registers it ("set pending gxRestart"): a write moves this at the
+/// `RestartGx` commit, and `benilla-app`'s `video` hands it to the world camera then.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct MsaaSetting {
     /// The requested sample count; 1 is none.
@@ -246,6 +265,12 @@ impl Plugin for MsaaSupportPlugin {
 pub const CAM_FAR: f32 = 3000.0;
 
 impl ViewDistance {
+    /// Take a `farclip` write and re-derive the wall for `map_id` (`World::SetFarClip 0x780800`).
+    pub fn set_farclip(&mut self, setting: f32, map_id: u32) {
+        self.setting = setting;
+        self.farclip = validate_farclip(setting, map_id);
+    }
+
     /// Set the near plane from a `nearclip` write, clamped to [`NEARCLIP_RANGE`].
     pub fn set_nearclip(&mut self, v: f32) {
         self.nearclip = v.clamp(*NEARCLIP_RANGE.start(), *NEARCLIP_RANGE.end());
@@ -253,17 +278,19 @@ impl ViewDistance {
 }
 
 impl Default for ViewDistance {
-    /// `$WOW_FARCLIP` (yd, clamped to [`FARCLIP_RANGE`]) overrides the 350 default, read once at
-    /// startup, so a headless capture can reproduce a player's view distance.
+    /// `$WOW_FARCLIP` (yd, clamped to [`FARCLIP_RANGE`]) overrides the 777 default, read once at
+    /// startup, so a headless capture can reproduce a player's view distance. Map 0's cap applies
+    /// until [`revalidate_farclip`] sees the real map.
     fn default() -> Self {
-        let farclip = std::env::var("WOW_FARCLIP")
+        let setting = std::env::var("WOW_FARCLIP")
             .ok()
             .and_then(|v| v.parse::<f32>().ok())
-            .map_or(350.0, |v| {
+            .map_or(FARCLIP_DEFAULT, |v| {
                 v.clamp(*FARCLIP_RANGE.start(), *FARCLIP_RANGE.end())
             });
         Self {
-            farclip,
+            farclip: validate_farclip(setting, 0),
+            setting,
             nearclip: NEARCLIP_DEFAULT,
         }
     }
@@ -367,11 +394,53 @@ impl Plugin for ViewPlugin {
     }
 }
 
+/// `projectedTextures`: an M2's projected batches (batch flag `0x4`) draw, else only a model the
+/// reference forces them on for (a GameObject, or a spell effect whose spell sets attribute ExE
+/// `0x40000000`, `CM2Model` flag `0x4`) does (`World::ProjectTextureCallback 0x77f500`).
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ProjectedTextures(pub bool);
+
+impl Default for ProjectedTextures {
+    /// A fresh install's "1" (`CWorldParam::SetDefaultProjectedTextures 0x78ddf0`).
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// `benilla-app`'s `farclip` default: the first-run pass's value on a modern GPU's hardware row.
+pub const FARCLIP_DEFAULT: f32 = 777.0;
+
+/// Re-derive the far wall when the map changes, as `CWorld::LoadMap` (`0x781430`) validates the
+/// `farclip` record against the new map id.
+pub fn revalidate_farclip(
+    map: Option<Res<crate::world_map::CurrentMap>>,
+    mut view: ResMut<ViewDistance>,
+) {
+    let Some(map) = map.filter(|m| m.is_changed()) else {
+        return;
+    };
+    let want = validate_farclip(view.setting, map.0);
+    if view.farclip != want {
+        view.farclip = want;
+    }
+}
+
 pub(crate) fn plugin(app: &mut App) {
     // In `Update`, so this frame's `nearclip` write reaches this frame's projection, as `0x511bc0`
     // runs inside the world-frame driver; initialized here too for a harness with only this plugin.
     app.init_resource::<ViewDistance>()
-        .add_systems(Update, stamp_near_clip);
+        .init_resource::<ProjectedTextures>()
+        .add_systems(
+            Update,
+            (
+                // After the stream into entities names the map, before anything reads the clip.
+                revalidate_farclip
+                    .after(crate::schedule::WorldStage::Net)
+                    .before(crate::schedule::WorldStage::Input),
+                stamp_near_clip,
+            )
+                .chain(),
+        );
     app.add_systems(
         Update,
         publish_camera_pose
@@ -404,6 +473,7 @@ mod tests {
         // A `nearclip 0.3` write, from a player or an addon's `ConsoleExec`.
         app.insert_resource(ViewDistance {
             farclip: 350.0,
+            setting: 350.0,
             nearclip: 0.3,
         });
         app.update();

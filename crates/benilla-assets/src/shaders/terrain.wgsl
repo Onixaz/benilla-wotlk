@@ -42,7 +42,10 @@ struct WowLight {
     sh_c16: vec4<f32>,        // row 12: xyz = the models' c16 quad band; w free.
     _water: array<vec4<f32>, 4>, // rows 13-16: liquid swatches, unread by terrain.
     grade: vec4<f32>,         // row 17: reserved, layout only.
-    _wmo_fog: array<vec4<f32>, 2>, // rows 18-19: interior fog, unread by terrain.
+    _wmo_fog: vec4<f32>,      // row 18: interior fog, unread by terrain.
+    // Row 19: xy interior fog, unread here; z = `specular` (Terrain Highlights) on; w = 1 at
+    // Terrain Texture Low, the half-size alpha and shadow maps (`global_light::build_light_data`).
+    terrain_opts: vec4<f32>,
     // The dynamic point-light table (`global_light::build_light_data`): row 20 `.x` = live count,
     // then two rows per light, `[pos.xyz, range]` and `[rgb, 0]`.
     point_count: vec4<f32>,
@@ -71,6 +74,29 @@ struct TerrainVsOut {
 // This takes the flat `w` everywhere, so steep chunks gather slightly narrower than the reference;
 // the lights that differ are 33 yd out or more, where att ≈ 0.02.
 const TERRAIN_REACH: f32 = 33.570166;
+
+// Terrain Texture Low: a chunk's 64² alpha or shadow map as the reference's half-size copy, which
+// keeps every second texel of every second row, the last column from texel 63
+// (`CMapRenderChunk::UnpackAlphaBitsFixed8888Mip1 0x7b8c70` and its siblings), sampled bilinearly
+// at the full map's coordinates. Level 0 is the arrays' only mip.
+fn half_map(tex: texture_2d_array<f32>, uv: vec2<f32>, layer: i32) -> vec4<f32> {
+    let p = uv * 32.0 - 0.5;
+    let base = floor(p);
+    let f = p - base;
+    let i0 = clamp(vec2<i32>(base), vec2<i32>(0), vec2<i32>(31));
+    let i1 = clamp(i0 + vec2<i32>(1), vec2<i32>(0), vec2<i32>(31));
+    let src = vec4<i32>(
+        select(i0.x * 2, 63, i0.x == 31),
+        select(i1.x * 2, 63, i1.x == 31),
+        i0.y * 2,
+        i1.y * 2,
+    );
+    let t00 = textureLoad(tex, vec2<i32>(src.x, src.z), layer, 0);
+    let t10 = textureLoad(tex, vec2<i32>(src.y, src.z), layer, 0);
+    let t01 = textureLoad(tex, vec2<i32>(src.x, src.w), layer, 0);
+    let t11 = textureLoad(tex, vec2<i32>(src.y, src.w), layer, 0);
+    return mix(mix(t00, t10, f.x), mix(t01, t11, f.x), f.y);
+}
 
 // The dynamic point-light term. The reference commits at most three point lights per draw, the
 // nearest by squared distance to the receiving unit, into GL slots 1-3; terrain's unit is the MCNK
@@ -211,17 +237,24 @@ fn fragment(in: TerrainVsOut) -> @location(0) vec4<f32> {
     // layers take it.
     // A negative base index names a reflection cube (`-1 - index`). Both are sampled, since the
     // choice varies per vertex and implicit-derivative sampling must stay in uniform control flow.
-    let flat0 = textureSampleBias(layer_array, splat_samp, tiled, max(li.x, 0), view.mip_bias);
+    let layer_bias = view.mip_bias;
+    let flat0 = textureSampleBias(layer_array, splat_samp, tiled, max(li.x, 0), layer_bias);
     let env0 =
         textureSampleBias(env_cubes, splat_samp, in.env_dir, max(-li.x - 1, 0), view.mip_bias);
     let s0 = select(flat0, env0, li.x < 0);
-    let s1 = textureSampleBias(layer_array, splat_samp, tiled, li.y, view.mip_bias);
-    let s2 = textureSampleBias(layer_array, splat_samp, tiled, li.z, view.mip_bias);
-    let s3 = textureSampleBias(layer_array, splat_samp, tiled, li.w, view.mip_bias);
+    let s1 = textureSampleBias(layer_array, splat_samp, tiled, li.y, layer_bias);
+    let s2 = textureSampleBias(layer_array, splat_samp, tiled, li.z, layer_bias);
+    let s3 = textureSampleBias(layer_array, splat_samp, tiled, li.w, layer_bias);
     // The alpha and shadow maps (one untiled 64² grid per chunk) share the layers' repeat sampler,
     // so a linear footprint at a chunk edge would wrap to the far edge; a half-texel inset clamps.
     let auv = clamp(in.uv, vec2<f32>(0.5 / 64.0), vec2<f32>(1.0 - 0.5 / 64.0));
-    let a = textureSample(alpha_array, splat_samp, auv, ai);
+    let low = wow_light.terrain_opts.w > 0.5;
+    var a: vec4<f32>;
+    if (low) {
+        a = half_map(alpha_array, auv, ai);
+    } else {
+        a = textureSampleLevel(alpha_array, splat_samp, auv, ai, 0.0);
+    }
 
     // The splat. On a big-alpha map the layers are a weighted sum: the base pass scales layer 0 by
     // `1 − saturate(a.r + a.g + a.b)` and each later pass adds its layer times its own weight
@@ -247,7 +280,12 @@ fn fragment(in: TerrainVsOut) -> @location(0) vec4<f32> {
     var shadow_lit = 1.0;
     let si = in.uv_b.y;
     if (si >= 0.0) {
-        let mcsh = textureSample(shadow_array, splat_samp, auv, i32(round(si))).r;
+        var mcsh: f32;
+        if (low) {
+            mcsh = half_map(shadow_array, auv, i32(round(si))).r;
+        } else {
+            mcsh = textureSampleLevel(shadow_array, splat_samp, auv, i32(round(si)), 0.0).r;
+        }
         shadow_lit = 1.0 - mcsh;
     }
 
@@ -255,7 +293,8 @@ fn fragment(in: TerrainVsOut) -> @location(0) vec4<f32> {
     //   diffuse  = tex · primary · (0.3·shadow + 0.7)   (a flat −30% in shadow, no tint)
     //   specular = sheen · mask · shadow                 (none in shadow)
     let diffuse_term = color * primary * (0.3 * shadow_lit + 0.7);
-    let spec_term = in.specular * specmask * shadow_lit;
+    // Terrain Highlights off draws no sheen (`CMap::enableSpecular`, `0x7bd8a0`).
+    let spec_term = in.specular * specmask * shadow_lit * wow_light.terrain_opts.z;
     var tuned = clamp(diffuse_term + spec_term, vec3<f32>(0.0), vec3<f32>(1.0));
 
     // Gamma-space GL_LINEAR fog on planar eye-Z, as the reference computes `fogcoord`, not radial

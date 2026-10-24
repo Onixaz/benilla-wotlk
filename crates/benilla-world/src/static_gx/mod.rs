@@ -170,10 +170,10 @@ struct GxFader {
     /// Carried onto the exiled entities, so the pick names the same placement in either lane.
     object: Arc<crate::interact::WorldObject>,
     transform: Transform,
-    radius: f32,
+    /// The placed box's largest side, which picks the fade level.
+    size: f32,
     local_center: Vec3,
-    /// World fade-sphere centre, which the scan measures horizontal distance to: the reference's
-    /// transformed centre (`0x6952a0`).
+    /// World box centre, which the scan measures the camera's distance to.
     center: Vec3,
     /// Band edges from [`crate::model_fade::fade_band`], for the cell ring test only.
     near: f32,
@@ -231,14 +231,33 @@ struct GxCell {
     faders: bevy::platform::collections::HashMap<u32, GxFader>,
     /// The published kill bitmap no longer matches the fader states; the scan rebuilds it.
     bits_stale: bool,
-    /// XZ bounds of the faders' centres, for the scan's ring test.
-    fader_bounds: Option<(Vec2, Vec2)>,
+    /// Bounds of the faders' centres, for the scan's ring test.
+    fader_bounds: Option<(Vec3, Vec3)>,
     /// `(min near, max far)` over the cell's faders: the ring test's band union.
     ring: (f32, f32),
     /// The scan's last wholesale verdict (all steady or all gone); `None` walks every frame.
     settled: Option<bool>,
     /// A prop region's distinct referrer sets, indexed by [`GxItemProp::set`].
     sets: Vec<Arc<[u16]>>,
+}
+
+impl GxCell {
+    /// Re-derive the ring from the faders' bands and drop the wholesale verdict.
+    fn refresh_ring(&mut self) {
+        self.ring = self
+            .faders
+            .values()
+            .fold((f32::MAX, 0.0), |(n, x), f| (n.min(f.near), x.max(f.far)));
+        self.settled = None;
+    }
+
+    /// Re-derive every fader's band at the live `environmentDetail`, then the ring.
+    fn refresh_bands(&mut self) {
+        for f in self.faders.values_mut() {
+            (f.near, f.far) = crate::model_fade::fade_band(f.size).unwrap_or((f32::MAX, f32::MAX));
+        }
+        self.refresh_ring();
+    }
 }
 
 /// The main-world collector and its published draw set.
@@ -267,6 +286,9 @@ pub struct StaticGx {
     pending_despawn: Vec<Entity>,
     /// Lifetime exile events for the census: spawns, re-admits, gone-despawns.
     fade_events: [u32; 3],
+    /// The `environmentDetail` generation the faders' bands were derived at
+    /// ([`crate::model_fade::fade_generation`]).
+    fade_generation: u32,
     /// [`StaticGx::flush_now`]'s request, cleared by the next flush.
     flush_now: bool,
 }
@@ -309,8 +331,8 @@ pub struct GxPropBatch {
 
 /// The fader half of [`GxBatch`]: the fade sphere and the bundle the exile respawns.
 pub struct GxFadeSeed {
-    /// Bounding-sphere radius in yards, placement-scaled; selects the fade band.
-    pub radius: f32,
+    /// The placed box's largest side in yards; selects the fade level.
+    pub size: f32,
     /// Model-local bbox centre; the fade distance is measured to its world image.
     pub local_center: Vec3,
     pub stat_mesh: Handle<Mesh>,
@@ -488,9 +510,9 @@ impl StaticGx {
         // bitmap rebuild, so one streaming in past its band never draws retained.
         let fader_uid = b.fade.as_ref().map(|_| b.object.id);
         if let Some(seed) = b.fade {
-            // Only faders carry a seed; a band-less radius reads as always steady.
+            // Only faders carry a seed; a band-less size reads as always steady.
             let (near, far) =
-                crate::model_fade::fade_band(seed.radius).unwrap_or((f32::MAX, f32::MAX));
+                crate::model_fade::fade_band(seed.size).unwrap_or((f32::MAX, f32::MAX));
             let uid = b.object.id;
             let is_new = !entry.faders.contains_key(&uid);
             let fader = entry.faders.entry(uid).or_insert_with(|| GxFader {
@@ -498,7 +520,7 @@ impl StaticGx {
                 uid,
                 object: b.object.clone(),
                 transform: b.transform,
-                radius: seed.radius,
+                size: seed.size,
                 local_center: seed.local_center,
                 center: b.transform.transform_point(seed.local_center),
                 near,
@@ -517,7 +539,7 @@ impl StaticGx {
             });
             if is_new {
                 // A placement's later batches share its sphere: the caches move only on a new one.
-                let c = Vec2::new(fader.center.x, fader.center.z);
+                let c = fader.center;
                 entry.fader_bounds = Some(match entry.fader_bounds {
                     Some((mn, mx)) => (mn.min(c), mx.max(c)),
                     None => (c, c),
@@ -597,18 +619,13 @@ impl StaticGx {
                 false
             });
             if cell.faders.len() != faders_before {
-                cell.fader_bounds = cell
-                    .faders
-                    .values()
-                    .map(|f| Vec2::new(f.center.x, f.center.z))
-                    .fold(None, |acc: Option<(Vec2, Vec2)>, c| {
+                cell.fader_bounds = cell.faders.values().map(|f| f.center).fold(
+                    None,
+                    |acc: Option<(Vec3, Vec3)>, c| {
                         Some(acc.map_or((c, c), |(mn, mx)| (mn.min(c), mx.max(c))))
-                    });
-                cell.ring = cell
-                    .faders
-                    .values()
-                    .fold((f32::MAX, 0.0), |(n, x), f| (n.min(f.near), x.max(f.far)));
-                cell.settled = None;
+                    },
+                );
+                cell.refresh_ring();
                 cell.bits_stale = true;
             }
         }
@@ -794,7 +811,7 @@ mod tests {
         let mut gx = StaticGx::default();
         let g = tri([0.0; 3]);
         let mk_seed = || GxFadeSeed {
-            radius: 0.4,
+            size: 0.8,
             local_center: Vec3::ZERO,
             stat_mesh: Handle::default(),
             aabb: None,
@@ -831,8 +848,8 @@ mod tests {
         assert_eq!(cell.faders.len(), 1, "one placement, one exile unit");
         let f = &cell.faders[&77];
         assert_eq!(f.batches.len(), 2);
-        // Radius 0.4 takes the fade table's 40.4..50.4 band.
-        assert!((f.near - 40.4).abs() < 1e-4 && (f.far - 50.4).abs() < 1e-4);
+        // A 0.8 yd placement is fade level 0, the 25..30 yd band.
+        assert!((f.near - 25.0).abs() < 1e-4 && (f.far - 30.0).abs() < 1e-4);
         assert!(matches!(f.state, FaderState::Steady));
         assert_eq!(cell.ring, (f.near, f.far));
         assert_eq!(
@@ -892,7 +909,7 @@ mod tests {
         let mut a = batch_of(&doomed, &g, Vec3::ZERO, None, ModelBlend::Opaque);
         a.owner = (1, 1);
         a.fade = Some(GxFadeSeed {
-            radius: 0.4,
+            size: 0.8,
             local_center: Vec3::ZERO,
             stat_mesh: Handle::default(),
             aabb: None,

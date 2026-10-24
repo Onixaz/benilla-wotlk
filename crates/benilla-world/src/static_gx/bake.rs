@@ -475,7 +475,7 @@ mod tests {
         let mut gx = StaticGx::default();
         let g = tri([0.0; 3]);
         let seed = || super::super::GxFadeSeed {
-            radius: 0.4,
+            size: 0.8,
             local_center: Vec3::ZERO,
             stat_mesh: Handle::default(),
             aabb: None,

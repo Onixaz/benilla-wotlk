@@ -1059,6 +1059,18 @@ pub enum ModelKind {
     GameObject,
 }
 
+/// A model root whose projected batches draw whatever `projectedTextures` says: the reference's
+/// `CM2Model` flag `0x4`, set on a spell effect, missile or dynamic object whose spell carries
+/// attribute ExE `0x40000000` (`CGDynamicObject_C::ModelLoaded`, `CGMissile_C`, `CEffect`).
+/// GameObject models carry it always (`CGGameObject_C`), here by their [`ModelKind`].
+#[derive(Component)]
+// Sparse: a few effect roots carry it, and a column would split their tables.
+#[component(storage = "SparseSet")]
+pub struct ForcedProjection;
+
+/// The spell attribute (`AttributesEx5`) that forces an effect's projected batches on.
+pub const SPELL_ATTR_EX5_FORCE_PROJECTION: u32 = 0x4000_0000;
+
 /// A spawned model submesh's subsystem and blend layer, which the panel toggles on.
 #[derive(Component, Clone, Copy)]
 pub struct ModelPart {
@@ -1100,6 +1112,10 @@ mod tests {
             (
                 "EntityPathWhy",
                 <super::EntityPathWhy as Component>::STORAGE_TYPE,
+            ),
+            (
+                "ForcedProjection",
+                <super::ForcedProjection as Component>::STORAGE_TYPE,
             ),
         ] {
             assert_eq!(storage, StorageType::SparseSet, "{name}");

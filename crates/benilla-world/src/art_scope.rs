@@ -17,13 +17,19 @@ use benilla_formats::TILE_SIZE;
 /// Real-clock seconds between sweeps (housekeeping, not world time); also the stamp's resolution.
 const SWEEP_SECS: f32 = 1.0;
 
-/// Five ADT tiles (2667 yd), the smallest round tile multiple clear of [`radius_floor`].
+/// Five ADT tiles (2667 yd), the smallest round tile multiple clear of the residency window at the
+/// default view distance; a wider live `farclip` raises the sweep with it ([`live_floor`]).
 const DEFAULT_RADIUS_YD: f32 = 5.0 * TILE_SIZE;
 
-/// The far corner of the widest tile block the residency window keeps (at the `farclip` clamp's
-/// maximum), plus a tile: a stamp is where the viewer stood, so no smaller radius is safe.
+/// The far corner of the tile block the residency window keeps at `farclip`, plus a tile: a stamp
+/// is where the viewer stood, so no smaller radius is safe.
+fn live_floor(farclip: f32) -> f32 {
+    crate::terrain_stream::window::max_resident_reach_yd(farclip)
+}
+
+/// [`live_floor`] at the widest view distance any map admits.
 fn radius_floor() -> f32 {
-    crate::terrain_stream::window::max_resident_reach_yd(*crate::view::FARCLIP_RANGE.end())
+    live_floor(crate::view::validate_farclip(f32::MAX, u32::MAX))
 }
 
 /// `$WOW_ART_RADIUS` in yards (`0` or less turns eviction off); a value under [`radius_floor`] is
@@ -43,7 +49,7 @@ fn radius_from_env() -> f32 {
             floor
         }
         Some(r) => r,
-        None => DEFAULT_RADIUS_YD.max(floor),
+        None => DEFAULT_RADIUS_YD,
     }
 }
 
@@ -123,6 +129,8 @@ impl ArtCensus {
 pub struct ArtScopeState {
     /// Eviction radius in yards, `0` for none; zero until [`configure_art_scope`] runs.
     radius: f32,
+    /// The residency window's reach at the live `farclip`, which the sweep never cuts inside.
+    floor: f32,
     /// The view focus in WoW coords; `None` (no avatar, no camera) suspends stamping and sweeping.
     focus: Option<[f32; 3]>,
     /// Set on the one frame per [`SWEEP_SECS`] that sweeps.
@@ -151,9 +159,11 @@ impl ArtScope<'_> {
     /// Sweeps one cache on sweep frames and records its residency.
     pub fn apply<K: Eq + Hash, V>(&mut self, cache: &mut SpatialCache<K, V>, slot: ArtSlot) {
         let dropped = match self.state.focus {
-            Some(focus) if self.state.due && self.state.radius > 0.0 => {
-                cache.scope(focus, self.state.radius, self.state.now)
-            }
+            Some(focus) if self.state.due && self.state.radius > 0.0 => cache.scope(
+                focus,
+                self.state.radius.max(self.state.floor),
+                self.state.now,
+            ),
             _ => 0,
         };
         let i = slot.idx();
@@ -186,6 +196,7 @@ fn configure_art_scope(mut state: ResMut<ArtScopeState>) {
 /// at most one sweep stale, and reading `due` a frame early only moves the sweep a frame.
 fn track_art_scope(
     mut state: ResMut<ArtScopeState>,
+    view: Option<Res<crate::view::ViewDistance>>,
     time: Res<Time<Real>>,
     focus: Res<crate::terrain_stream::ViewFocus>,
     camera: Query<&Transform, With<crate::view::WorldCamera>>,
@@ -197,6 +208,7 @@ fn track_art_scope(
     state.due = now - state.last_sweep >= SWEEP_SECS;
     if state.due {
         state.last_sweep = now;
+        state.floor = view.map_or(0.0, |v| live_floor(v.farclip));
     }
 }
 
@@ -218,18 +230,20 @@ mod tests {
 
     #[test]
     fn the_radius_clears_the_streamers_own_reach() {
+        let at_default = live_floor(crate::view::FARCLIP_DEFAULT);
         assert!(
-            DEFAULT_RADIUS_YD > radius_floor(),
-            "default {DEFAULT_RADIUS_YD} must clear the floor {}",
-            radius_floor()
+            DEFAULT_RADIUS_YD > at_default,
+            "default {DEFAULT_RADIUS_YD} must clear the floor {at_default}"
         );
         // (26 + 1 + 16) chunks each way at farclip 777, to the corner, plus a tile: ~2560 yd.
-        assert!((radius_floor() - 2560.0).abs() < 1.0, "{}", radius_floor());
+        assert!((at_default - 2560.0).abs() < 1.0, "{at_default}");
+        // (50 + 1 + 16) at the 1583 yd cap of the newer continents: ~3692 yd.
+        assert!((radius_floor() - 3692.0).abs() < 1.0, "{}", radius_floor());
     }
 
     /// `$WOW_ART_RADIUS` is unset in the test binary, as in every ordinary run.
     #[test]
     fn an_unconfigured_run_still_bounds_itself() {
-        assert_eq!(radius_from_env(), DEFAULT_RADIUS_YD.max(radius_floor()));
+        assert_eq!(radius_from_env(), DEFAULT_RADIUS_YD);
     }
 }

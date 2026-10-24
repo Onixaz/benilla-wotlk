@@ -577,6 +577,7 @@ pub fn parse_m2_render_submeshes(
                 },
                 material_layer: batch.material_layer,
                 index: batch_index,
+                projected: batch.flags & 4 != 0,
             });
             if reads_t2 {
                 sub.uvs2 = globals

@@ -1,6 +1,7 @@
 //! Ground clutter (`GroundEffect*.dbc`): the terrain streamer scatters each chunk's tufts at tile
-//! load, and a chunk's meshes exist only inside the 70 yd detail-doodad horizon (`[0x867958]`),
-//! the reference's per-chunk `CDetailDoodadInst` build and unlink.
+//! load, and a chunk's meshes exist only inside the detail-doodad horizon, `groundEffectDist`
+//! (`CWorld::detailDoodadDist`, read by `CMapChunk::RenderPrep 0x7d3fe0`), the reference's
+//! per-chunk `CDetailDoodadInst` build and unlink.
 
 use std::collections::HashMap;
 
@@ -25,7 +26,7 @@ pub(crate) struct ClutterPlugin;
 impl Plugin for ClutterPlugin {
     fn build(&self, app: &mut App) {
         // Inserted at build, not in `setup_clutter`: `benilla-app`'s Startup CVar loader applies a
-        // saved `WorldDetail` onto it.
+        // saved `groundEffectDensity` onto it.
         app.init_resource::<ClutterConfig>()
             .add_systems(Startup, setup_clutter.after(AssetSet::Open))
             .add_systems(
@@ -118,13 +119,21 @@ pub(crate) struct GroundClutter {
 /// The detail-doodad alpha-test ref, `detailDoodadAlpha` = 128/255, lower than the model key.
 pub(crate) const DETAIL_DOODAD_ALPHA_REF: f32 = 128.0 / 255.0;
 
-/// The reference's hardcoded detail-doodad draw distance, 70 yd (`[0x867958]`); clutter fades out
-/// over its last quarter.
+/// `groundEffectDist`'s registered 70 yd (`CWorld::detailDoodadDist`'s static `70.0`); clutter
+/// fades out over its last quarter.
 pub(crate) const DETAIL_DOODAD_FADE_FAR: f32 = 70.0;
 
-/// Ground-clutter tunables. `density` scales the reference's 16 cells per chunk (`frillDensity`),
-/// and a change re-scatters loaded tiles, as the 1.12 setter rebuilds its chunks. Seeded from
-/// `$WOW_CLUTTER_DENSITY`, `$WOW_CLUTTER_ALPHA` and `$WOW_CLUTTER_FADE`; density 0 is no clutter.
+/// `groundEffectDist`'s range, the change callback's (`0x78db10`): a write outside is refused.
+pub const GROUND_EFFECT_DIST_RANGE: std::ops::RangeInclusive<f32> = 0.0..=140.0;
+
+/// `groundEffectDensity`'s range, the change callback's (`0x78dab0`): a write outside is refused.
+pub const GROUND_EFFECT_DENSITY_RANGE: std::ops::RangeInclusive<f32> = 16.0..=256.0;
+
+/// Ground-clutter tunables. `density` scales the scatter's 16 cells per chunk, so
+/// `groundEffectDensity` is `density × 16`, and a change re-scatters loaded tiles, as the
+/// reference's setter dirties its pools (`World::SetDetailDoodadDensity 0x780710`). `fade_far` is
+/// `groundEffectDist`. Seeded from `$WOW_CLUTTER_DENSITY` (a multiple of 16 cells),
+/// `$WOW_CLUTTER_ALPHA` and `$WOW_CLUTTER_FADE`; density 0 is no clutter.
 #[derive(Resource, Clone, Copy)]
 pub struct ClutterConfig {
     pub density: f32,
@@ -133,17 +142,14 @@ pub struct ClutterConfig {
 }
 
 impl ClutterConfig {
-    /// The ground cover as the reference's `frillDensity`, cells visited per chunk; the
-    /// `WorldDetail` slider stops are 16/32/48 (`SetWorldDetail`, `0x488dd0`).
-    pub fn frill_density(&self) -> f32 {
+    /// The ground cover as `groundEffectDensity`, cells visited per chunk.
+    pub fn cells(&self) -> f32 {
         self.density * benilla_formats::FRILL_DENSITY as f32
     }
 
-    /// Set the ground cover from a `frillDensity`, clamped to `[1, 256]` as the reference's change
-    /// callback `0x688de0` does, so zero is unreachable here.
-    pub fn set_frill_density(&mut self, frill: f32) {
-        self.density = frill.clamp(1.0, benilla_formats::FRILL_DENSITY_MAX as f32)
-            / benilla_formats::FRILL_DENSITY as f32;
+    /// Set the ground cover from a `groundEffectDensity` the caller has range-checked.
+    pub fn set_cells(&mut self, cells: f32) {
+        self.density = cells / benilla_formats::FRILL_DENSITY as f32;
     }
 }
 
@@ -151,10 +157,9 @@ impl Default for ClutterConfig {
     fn default() -> Self {
         let env = |k: &str| std::env::var(k).ok().and_then(|s| s.parse::<f32>().ok());
         Self {
-            // Deviation: ×2, `frillDensity` 32 (the panel's Medium), because a fresh install's
-            // `hwDetect` value (24 from `VideoHardware.dbc`, 8 on the weakest parts) is on no panel
-            // stop, and Medium is the nearest stop no sparser.
-            density: env("WOW_CLUTTER_DENSITY").unwrap_or(2.0).max(0.0),
+            // 24 cells, the first-run pass's value on a modern GPU's hardware row (the
+            // `groundEffectDensity` row in `benilla-app`'s CVar table).
+            density: env("WOW_CLUTTER_DENSITY").unwrap_or(1.5).max(0.0),
             alpha_ref: env("WOW_CLUTTER_ALPHA")
                 .unwrap_or(DETAIL_DOODAD_ALPHA_REF)
                 .clamp(0.0, 1.0),

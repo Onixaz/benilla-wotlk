@@ -1,12 +1,12 @@
-//! The 1.12 world-doodad distance fade (`0x683f80`, run every frame from the world render
-//! `0x681070`). `d` is the horizontal camera distance to the bounding-sphere centre
-//! (`rec+0x5c/0x60`) minus the radius (`rec+0x68`), and the radius alone picks the band: a candle
-//! fades at 40 to 50 yd, a fence (0.75 to 4.97 yd) or haystack at 100 to 125 or 150 to 200, a tree
-//! never (`cargo run -p benilla-formats --example fade_bucket -- <name>` measures a model). The
-//! alpha reaches the fragment's `diffuse.a` (`CM2Model+0x180` → `+0x19c`), where the 224/255 alpha
-//! test erodes a cutout edge-first; a fading doodad draws blended. Constants: radius cutoffs
-//! `0x810188`/`0x81018c`/`0x810190`, band ends (start + range) `0x8101a0`/`a4`/`a8`, ranges
-//! `0x810194`/`98`/`9c`, `1.0` at `0x7ff9d8`.
+//! The world-doodad distance fade, `CWorldScene::AddDoodadDefModelToModelScene` (`0x791cb0`): a
+//! doodad's fade level is the first of `s_fadeSizeDefault` (`0xadf350`: 1, 4, 15, 100 yd) its
+//! world box's largest side does not exceed (`CMapDoodadDef::UpdateBounds 0x7bdb10`), else 4, and
+//! it fades out over `s_fadeRangeDefault[level]` (`0xadf38c`) up to `s_fadeDist[level]`, measured
+//! from the camera to the box centre in three dimensions. `environmentDetail` scales levels 1 to 3
+//! of `s_fadeDistDefault` (`0xadf364`: 30, 100, 200, 750, 1250 yd) through
+//! `CWorldScene::ScaleFadeDist` (`0x78f570`). An alpha over 0.99 draws opaque and one at 0.01 or
+//! below is culled. The alpha reaches the fragment's `diffuse.a`, where the alpha test erodes a
+//! cutout edge-first; a fading doodad draws blended.
 
 use benilla_assets::materials::WowModelMaterial;
 use bevy::mesh::MeshTag;
@@ -16,9 +16,9 @@ use bevy::prelude::*;
 /// `MeshTag` and draws `blend` while `0 < fade < 1`, `cutout` otherwise.
 #[derive(Component, Clone)]
 pub struct DoodadFade {
-    /// The scaled bounding-sphere radius (yd), the reference's `rec+0x68` (`0x6952a0`).
-    pub(crate) radius: f32,
-    /// The model-local bounding-box centre the fade measures to (`0x6952a0`), not the origin.
+    /// The largest side of the placed world box (yd), which picks the fade level ([`fade_level`]).
+    pub(crate) size: f32,
+    /// The model-local bounding-box centre the fade measures to, not the origin.
     pub(crate) local_center: Vec3,
     /// The steady material, in the submesh's authored blend mode.
     pub(crate) cutout: Handle<WowModelMaterial>,
@@ -26,44 +26,113 @@ pub struct DoodadFade {
     pub(crate) blend: Handle<WowModelMaterial>,
 }
 
-/// Above this bounding radius (yd) a doodad never distance-fades; only the far clip drops it.
-pub const NEVER_FADE_RADIUS: f32 = 7.0;
+/// `s_fadeSizeDefault`'s four bounds (`0xadf350`); a larger doodad is level 4.
+const FADE_SIZE: [f32; 4] = [1.0, 4.0, 15.0, 100.0];
 
-/// `(max_radius, band_start, band_range)` in yd; a doodad takes the first row it does not exceed.
-const BUCKETS: [(f32, f32, f32); 3] = [
-    (0.5, 40.0, 10.0),
-    (2.5, 100.0, 25.0),
-    (NEVER_FADE_RADIUS, 150.0, 50.0),
-];
+/// `s_fadeDistDefault` (`0xadf364`), the far end of each level's fade.
+const FADE_DIST: [f32; 5] = [30.0, 100.0, 200.0, 750.0, 1250.0];
 
-/// The distance-fade alpha of a doodad of `radius` yd (placement scale applied) whose centre is
-/// `horiz_dist` yd away in the horizontal plane (the reference ignores height). `0.0` means cull.
-pub fn doodad_fade_alpha(radius: f32, horiz_dist: f32) -> f32 {
-    if radius > NEVER_FADE_RADIUS {
-        return 1.0;
+/// `s_fadeRangeDefault` (`0xadf38c`), each level's fade width.
+const FADE_RANGE: [f32; 5] = [5.0, 10.0, 15.0, 20.0, 50.0];
+
+/// `environmentDetail`'s clamp in its change callback (`0x78dc60`).
+pub const ENVIRONMENT_DETAIL_RANGE: std::ops::RangeInclusive<f32> = 0.5..=1.5;
+
+/// The live `environmentDetail` as f32 bits, a process global like the texture policy because the
+/// law runs in the entity path, the retained pass and the particle gate alike.
+static FADE_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
+
+/// Bumped on each [`set_fade_scale`] that moves the scale, so a cached band can tell it is stale.
+static FADE_GENERATION: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// `CWorldScene::ScaleFadeDist`: take an `environmentDetail` write, clamped as the callback does.
+pub fn set_fade_scale(scale: f32) {
+    use std::sync::atomic::Ordering;
+    let scale = scale.clamp(
+        *ENVIRONMENT_DETAIL_RANGE.start(),
+        *ENVIRONMENT_DETAIL_RANGE.end(),
+    );
+    if FADE_SCALE.swap(scale.to_bits(), Ordering::Relaxed) != scale.to_bits() {
+        FADE_GENERATION.fetch_add(1, Ordering::Relaxed);
     }
-    let d = horiz_dist - radius;
-    let (_, start, range) = BUCKETS
-        .iter()
-        .copied()
-        .find(|(max_r, _, _)| radius <= *max_r)
-        // Unreached: the last row's bound is `NEVER_FADE_RADIUS`.
-        .unwrap_or((NEVER_FADE_RADIUS, 150.0, 50.0));
-    (1.0 - (d - start) / range).clamp(0.0, 1.0)
 }
 
-/// The `(near, far)` centre distances between which [`doodad_fade_alpha`] feathers, from the same
-/// `BUCKETS` rows, so the retained static pass that rings its cells on them cannot disagree.
-pub fn fade_band(radius: f32) -> Option<(f32, f32)> {
-    if radius > NEVER_FADE_RADIUS {
+/// The live fade-distance scale, 1.0 until `environmentDetail` moves it.
+pub fn fade_scale() -> f32 {
+    f32::from_bits(FADE_SCALE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// How many times the scale has moved; a band cached at another generation is stale.
+pub fn fade_generation() -> u32 {
+    FADE_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The fade level of a doodad whose world box's largest side is `size` yd (`0x7bdb10`).
+pub fn fade_level(size: f32) -> usize {
+    FADE_SIZE
+        .iter()
+        .position(|&bound| size <= bound)
+        .unwrap_or(FADE_SIZE.len())
+}
+
+/// The `(near, far)` distances between which a doodad of `size` feathers at `scale`, or `None`
+/// for a placement with no fade (WMO group geometry, an infinite size).
+pub fn fade_band_at(size: f32, scale: f32) -> Option<(f32, f32)> {
+    if !size.is_finite() {
         return None;
     }
-    let (_, start, range) = BUCKETS
-        .iter()
-        .copied()
-        .find(|(max_r, _, _)| radius <= *max_r)
-        .unwrap_or((NEVER_FADE_RADIUS, 150.0, 50.0));
-    Some((start + radius, start + radius + range))
+    let level = fade_level(size);
+    let far = if (1..=3).contains(&level) {
+        FADE_DIST[level] * scale
+    } else {
+        FADE_DIST[level]
+    };
+    Some((far - FADE_RANGE[level], far))
+}
+
+/// [`fade_band_at`] at the live scale.
+pub fn fade_band(size: f32) -> Option<(f32, f32)> {
+    fade_band_at(size, fade_scale())
+}
+
+/// The distance-fade alpha of a doodad of `size` whose box centre is `dist` yd from the camera, at
+/// `scale`. `0.0` means cull.
+pub fn doodad_fade_alpha_at(size: f32, dist: f32, scale: f32) -> f32 {
+    let Some((near, far)) = fade_band_at(size, scale) else {
+        return 1.0;
+    };
+    if dist > far {
+        return 0.0;
+    }
+    if dist <= near {
+        return 1.0;
+    }
+    let alpha = 1.0 - (dist - near) / (far - near);
+    if alpha > 0.99 {
+        1.0
+    } else if alpha <= 0.01 {
+        0.0
+    } else {
+        alpha
+    }
+}
+
+/// [`doodad_fade_alpha_at`] at the live scale.
+pub fn doodad_fade_alpha(size: f32, dist: f32) -> f32 {
+    doodad_fade_alpha_at(size, dist, fade_scale())
+}
+
+/// The largest side of a model box `(min, max)` placed by `transform`: the rotated box's world
+/// extents, as `CMapDoodadDef`'s `m_bbox` is the placed model box.
+pub fn placed_box_size(min: Vec3, max: Vec3, transform: &Transform) -> f32 {
+    let half = (max - min) * 0.5 * transform.scale;
+    let rot = Mat3::from_quat(transform.rotation);
+    let world_half = Vec3::new(
+        rot.row(0).abs().dot(half),
+        rot.row(1).abs().dot(half),
+        rot.row(2).abs().dot(half),
+    );
+    (world_half * 2.0).max_element()
 }
 
 /// A render-alpha ramp on one part's `MeshTag`, drawn on the blend twin while `α < 1`
@@ -1116,69 +1185,92 @@ mod tests {
         assert_eq!(*no_twin.material_for(Some(&lit), true), blend);
     }
 
+    /// `s_fadeSizeDefault`'s bounds pick the level, inclusive above.
     #[test]
-    fn trees_and_buildings_never_fade() {
-        assert_eq!(doodad_fade_alpha(7.01, 0.0), 1.0);
-        assert_eq!(doodad_fade_alpha(20.0, 500.0), 1.0);
-        assert_eq!(doodad_fade_alpha(7.0001, 195.0), 1.0);
+    fn the_fade_level_is_the_first_bound_the_box_fits() {
+        assert_eq!(fade_level(0.5), 0);
+        assert_eq!(fade_level(1.0), 0);
+        assert_eq!(fade_level(1.01), 1);
+        assert_eq!(fade_level(4.0), 1);
+        assert_eq!(fade_level(15.0), 2);
+        assert_eq!(fade_level(100.0), 3);
+        assert_eq!(fade_level(100.5), 4);
+    }
+
+    /// Each level's band at `environmentDetail` 1, levels 1 to 3 scaled and 0 and 4 not.
+    #[test]
+    fn each_level_fades_over_its_range_to_its_distance() {
+        for (size, near, far) in [
+            (0.5, 25.0, 30.0),
+            (2.0, 90.0, 100.0),
+            (10.0, 185.0, 200.0),
+            (50.0, 730.0, 750.0),
+            (500.0, 1200.0, 1250.0),
+        ] {
+            assert_eq!(fade_band_at(size, 1.0), Some((near, far)), "size {size}");
+        }
+        assert_eq!(fade_band_at(2.0, 1.5), Some((140.0, 150.0)));
+        assert_eq!(
+            fade_band_at(0.5, 1.5),
+            Some((25.0, 30.0)),
+            "level 0 is not scaled"
+        );
+        assert_eq!(
+            fade_band_at(500.0, 0.5),
+            Some((1200.0, 1250.0)),
+            "nor is level 4"
+        );
+        assert_eq!(
+            fade_band_at(f32::INFINITY, 1.0),
+            None,
+            "WMO group geometry never fades"
+        );
+    }
+
+    /// Opaque over 0.99, culled at 0.01, linear between.
+    #[test]
+    fn the_alpha_snaps_at_its_ends() {
+        let a = |d| doodad_fade_alpha_at(2.0, d, 1.0);
+        assert_eq!(a(90.0), 1.0);
+        assert!((a(95.0) - 0.5).abs() < 1e-6);
+        assert_eq!(a(90.05), 1.0, "0.995 is over 0.99");
+        assert_eq!(a(99.95), 0.0, "0.005 is at or below 0.01");
+        assert_eq!(a(100.0), 0.0);
+        assert_eq!(a(150.0), 0.0);
     }
 
     /// A yard past each edge (the retained pass's hysteresis) the alpha is exactly 1 or 0.
     #[test]
     fn fade_band_edges_agree_with_the_alpha_they_summarize() {
-        for radius in [0.0, 0.3, 0.5, 1.7, 2.5, 4.0, 7.0] {
-            let (near, far) = fade_band(radius).expect("faders carry a band");
-            assert_eq!(doodad_fade_alpha(radius, near - 1.0), 1.0, "r={radius}");
-            assert_eq!(doodad_fade_alpha(radius, far + 1.0), 0.0, "r={radius}");
-            let mid = doodad_fade_alpha(radius, (near + far) / 2.0);
-            assert!(mid > 0.0 && mid < 1.0, "r={radius} mid={mid}");
+        for size in [0.3, 1.0, 3.0, 12.0, 60.0, 300.0] {
+            let (near, far) = fade_band_at(size, 1.0).expect("a finite size has a band");
+            assert_eq!(doodad_fade_alpha_at(size, near - 1.0, 1.0), 1.0, "s={size}");
+            assert_eq!(doodad_fade_alpha_at(size, far + 1.0, 1.0), 0.0, "s={size}");
+            let mid = doodad_fade_alpha_at(size, (near + far) / 2.0, 1.0);
+            assert!(mid > 0.0 && mid < 1.0, "s={size} mid={mid}");
         }
-        assert_eq!(fade_band(7.01), None, "never-faders have no band");
-    }
-
-    #[test]
-    fn small_props_fade_40_to_50() {
-        // Radius 0, so `d` is the centre distance.
-        let r = 0.0;
-        assert_eq!(doodad_fade_alpha(r, 39.0), 1.0);
-        assert_eq!(doodad_fade_alpha(r, 40.0), 1.0);
-        assert!((doodad_fade_alpha(r, 45.0) - 0.5).abs() < 1e-6);
-        assert_eq!(doodad_fade_alpha(r, 50.0), 0.0);
-        assert_eq!(doodad_fade_alpha(r, 60.0), 0.0);
-    }
-
-    #[test]
-    fn radius_offsets_the_band() {
-        // A 0.5-yd prop reaches the band start (`d` = 40) at centre distance 40.5.
-        assert_eq!(doodad_fade_alpha(0.5, 40.5), 1.0);
-        assert!((doodad_fade_alpha(0.5, 45.5) - 0.5).abs() < 1e-6);
-        assert_eq!(doodad_fade_alpha(0.5, 50.5), 0.0);
-    }
-
-    #[test]
-    fn mid_bucket_100_to_125() {
-        let r = 2.5;
-        assert_eq!(doodad_fade_alpha(r, 100.0 + r), 1.0);
-        assert!((doodad_fade_alpha(r, 112.5 + r) - 0.5).abs() < 1e-6);
-        assert_eq!(doodad_fade_alpha(r, 125.0 + r), 0.0);
-    }
-
-    #[test]
-    fn large_bucket_150_to_200() {
-        let r = 5.0;
-        assert_eq!(doodad_fade_alpha(r, 150.0 + r), 1.0);
-        assert!((doodad_fade_alpha(r, 175.0 + r) - 0.5).abs() < 1e-6);
-        assert_eq!(doodad_fade_alpha(r, 200.0 + r), 0.0);
     }
 
     #[test]
     fn monotonic_bigger_fades_farther() {
-        // At 120 yd the small band (40 to 50) is long past and the large (150 to 200) not reached.
-        let small = doodad_fade_alpha(0.3, 120.0);
-        let large = doodad_fade_alpha(6.0, 120.0);
-        assert_eq!(small, 0.0);
-        assert_eq!(large, 1.0);
-        assert!(large >= small);
+        // At 120 yd level 0 (to 30) is long past and level 2 (185 to 200) not reached.
+        assert_eq!(doodad_fade_alpha_at(0.6, 120.0, 1.0), 0.0);
+        assert_eq!(doodad_fade_alpha_at(10.0, 120.0, 1.0), 1.0);
+    }
+
+    /// The largest side of the placed box: a rotated box widens, scale multiplies.
+    #[test]
+    fn the_placed_box_size_is_its_largest_world_side() {
+        let (lo, hi) = (Vec3::new(-1.0, 0.0, -0.5), Vec3::new(1.0, 4.0, 0.5));
+        assert_eq!(placed_box_size(lo, hi, &Transform::IDENTITY), 4.0);
+        let scaled = Transform::from_scale(Vec3::splat(2.0));
+        assert_eq!(placed_box_size(lo, hi, &scaled), 8.0);
+        let turned = Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_4));
+        let diag = placed_box_size(lo, hi.with_y(0.1), &turned);
+        assert!(
+            (diag - 2.0 * std::f32::consts::SQRT_2 * 0.75).abs() < 1e-4,
+            "{diag}"
+        );
     }
 
     #[test]

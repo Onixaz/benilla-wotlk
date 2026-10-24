@@ -49,6 +49,11 @@ impl<K: Eq + Hash, V> SpatialCache<K, V> {
         self.map.is_empty()
     }
 
+    /// Every entry, without counting a use.
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
+        self.map.iter().map(|(k, (v, _))| (k, v))
+    }
+
     /// Drop everything: the map-change teardown.
     pub fn clear(&mut self) {
         self.map.clear();

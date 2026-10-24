@@ -246,6 +246,7 @@ mod tests {
             push: 0,
             material_layer: 0,
             index: 3,
+            projected: false,
         };
         let mut main = MainWorld::default();
         let shown = main

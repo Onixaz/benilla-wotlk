@@ -445,7 +445,7 @@ pub(crate) struct Model {
     pub(crate) multisample_formats: Vec<super::cvars::MultisampleFormat>,
 
     /// This display's resolutions, ascending, behind `GetScreenResolutions`; empty until pushed.
-    pub(crate) screen_resolutions: Vec<super::cvars::ScreenResolution>,
+    pub(crate) screen_modes: Vec<super::cvars::ScreenMode>,
     /// The live size's index in that list, which the host always includes; `None` while the list
     /// is empty. `GetCurrentResolution` answers it 1-based.
     pub(crate) current_resolution: Option<usize>,
@@ -1315,7 +1315,7 @@ impl Model {
             cvars_warned: HashSet::new(),
             cvars_read_only: HashSet::new(),
             multisample_formats: Vec::new(),
-            screen_resolutions: Vec::new(),
+            screen_modes: Vec::new(),
             current_resolution: None,
             video_caps: super::cvars::VideoCaps::default(),
             restart_gx_asks: 0,

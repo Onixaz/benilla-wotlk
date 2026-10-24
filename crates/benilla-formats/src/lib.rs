@@ -519,6 +519,15 @@ pub struct BlpMipChain {
 }
 
 impl BlpMipChain {
+    /// Drop leading levels until level 0 is at most `side` on both axes, keeping one level.
+    pub fn trim_to(&mut self, side: u32) {
+        while self.mips.len() > 1 && (self.width > side || self.height > side) {
+            self.mips.remove(0);
+            self.width = (self.width >> 1).max(1);
+            self.height = (self.height >> 1).max(1);
+        }
+    }
+
     /// Level `i`'s size, at least 1×1.
     pub fn mip_size(&self, i: u32) -> (u32, u32) {
         ((self.width >> i).max(1), (self.height >> i).max(1))

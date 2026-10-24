@@ -1,11 +1,9 @@
-//! The Video options getter/setter pairs beside `GetWorldDetail` and `GetGamma` in the main table
-//! `0x83de68` (records `0x83df10`..`0x83df68`): water detail, far clip, terrain mip, doodad
-//! animation, texture LOD bias and base mip. Each getter ignores its arguments and pushes one
-//! number; each setter takes `lua_isnumber(1)` (`0x6f34d0`) or raises its `Usage:` string, writes
-//! one CVar through `CVar::Set` (`0x63df50`) and returns zero values.
+//! The Video options getter/setter pairs: water detail, far clip, terrain mip, texture LOD bias and
+//! base mip. Each getter ignores its arguments and pushes one number; each setter takes
+//! `lua_isnumber(1)` or raises its `Usage:` string, writes one CVar and returns zero values.
 //!
-//! The stock window reaches only `Get/SetTerrainMip` and `Get/SetBaseMip` (`OptionsFrame.lua:28-29`,
-//! `func` spelled as the verb); its far-clip row composes `Getfarclip`, which must stay nil.
+//! The stock Effects panel reaches only `Get/SetTerrainMip` (`VideoOptionsPanels.xml`, its
+//! TerrainDetail slider); its Texture Detail slider writes `BaseMip` through `SetCVar`.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -14,13 +12,7 @@ use super::Model;
 
 /// The CVars these pairs read and write, which the host must register: a missing row would make a
 /// setter warn and store nothing.
-pub const VIDEO_PAIR_CVARS: [&str; 5] = [
-    "farclip",
-    "shadowLevel",
-    "doodadAnim",
-    "texLodBias",
-    "baseMip",
-];
+pub const VIDEO_PAIR_CVARS: [&str; 4] = ["farclip", "shadowLevel", "texLodBias", "baseMip"];
 
 /// How a getter answers, from the CVar record it looks up by name (`0x63de30`).
 #[derive(Clone, Copy)]
@@ -59,7 +51,7 @@ struct Pair {
     default: &'static str,
 }
 
-const PAIRS: [Pair; 6] = [
+const PAIRS: [Pair; 5] = [
     // `0x488ec0`/`0x488ed0`, usage `0x842408`: no CVar behind either.
     Pair {
         get: "GetWaterDetail",
@@ -86,15 +78,6 @@ const PAIRS: [Pair; 6] = [
         usage: "Usage: SetTerrainMip(value)",
         read: Read::OneMinusInt("shadowLevel"),
         write: Write::OneMinusTrunc("shadowLevel"),
-        default: "1",
-    },
-    // `0x489060`/`0x489090` over `doodadAnim` (`0x842474`), usage `0x842480`.
-    Pair {
-        get: "GetDoodadAnim",
-        set: "SetDoodadAnim",
-        usage: "Usage: SetDoodadAnim(value)",
-        read: Read::Float("doodadAnim"),
-        write: Write::Float("doodadAnim"),
         default: "1",
     },
     // `0x489110`/`0x489140` over `texLodBias` (`0x84249c`), usage `0x8424a8`.
@@ -196,13 +179,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use crate::script::UiScript;
 
-    /// A VM with the host's five rows at their reference defaults.
+    /// A VM with the host's four rows at their reference defaults.
     fn script() -> UiScript {
         let s = UiScript::new().unwrap();
         s.register_cvars([
             ("farclip", "350"),
             ("shadowLevel", "1"),
-            ("doodadAnim", "1"),
             ("texLodBias", "0.0"),
             ("baseMip", "0"),
         ]);
@@ -216,7 +198,6 @@ mod tests {
             "GetWaterDetail",
             "GetFarclip",
             "GetTerrainMip",
-            "GetDoodadAnim",
             "GetTexLodBias",
             "GetBaseMip",
         ] {
@@ -232,7 +213,6 @@ mod tests {
             ("SetWaterDetail", "Usage: SetWaterDetail(value)"),
             ("SetFarclip", "Usage: SetFarclip(value)"),
             ("SetTerrainMip", "Usage: SetTerrainMip(value)"),
-            ("SetDoodadAnim", "Usage: SetDoodadAnim(value)"),
             ("SetTexLodBias", "Usage: SetTexLodBias(value)"),
             ("SetBaseMip", "Usage: SetBaseMip(value)"),
         ] {
@@ -258,7 +238,6 @@ mod tests {
         // `shadowLevel` "1" → `1 − 1`; `baseMip` "0" → `1 − 0`: both sliders at High.
         assert_eq!(get("GetTerrainMip"), 0.0);
         assert_eq!(get("GetBaseMip"), 1.0);
-        assert_eq!(get("GetDoodadAnim"), 1.0);
         assert_eq!(get("GetTexLodBias"), 0.0);
         // A bare VM without the rows answers the registered defaults.
         let bare = UiScript::new().unwrap();
@@ -276,7 +255,6 @@ mod tests {
         // "%f" of the number, as `SetGamma` writes.
         assert_eq!(set("SetFarclip(500)", "farclip"), "500.000000");
         assert_eq!(s.eval::<f64>("return GetFarclip()").unwrap(), 500.0);
-        assert_eq!(set("SetDoodadAnim(0)", "doodadAnim"), "0.000000");
         assert_eq!(set("SetTexLodBias(-0.5)", "texLodBias"), "-0.500000");
         assert_eq!(s.eval::<f64>("return GetTexLodBias()").unwrap(), -0.5);
         // `SetTerrainMip`: truncate, then `1 − n`.

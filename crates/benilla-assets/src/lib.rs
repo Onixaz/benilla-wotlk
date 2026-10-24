@@ -46,7 +46,10 @@ pub use blp::{BlpImageLoader, BlpLoaderSettings, BlpVariant};
 mod gpu_blp;
 pub use gpu_blp::{bc_supported, for_upload, publish_bc_support, BlpGpuSupportPlugin, UploadChain};
 mod tex_filter;
-pub use tex_filter::{publish_tex_filter, tex_filter, TexFilterSetting, ANISO_RANGE};
+pub use tex_filter::{
+    policy_sampler, publish_tex_filter, tex_filter, tex_filter_generation, TexFilterSetting,
+    TexPolicyPlugin, MAX_ANISOTROPY_CAP, POLICY_SAMPLER_LABEL, TEXTURE_FILTERING_RANGE,
+};
 mod m2;
 pub use m2::{
     EmitterBillboard, M2Model, M2ModelLoader, M2SequenceInfo, ModelEmitter, ModelLight,

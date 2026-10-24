@@ -53,7 +53,7 @@ pub fn reset() {
 /// One batch's merge class, built once by the assembler for both the census and the merge.
 /// `excluded`: any animation (anim host, billboard, alpha, uv or rgb anim, per-sequence material);
 /// `order_free`: `Opaque|AlphaTest`, not additive, since only transparent-pass batches carry draw
-/// order; `never_fade`: `radius > NEVER_FADE_RADIUS`, as WMO group geometry's infinite radius is.
+/// order; `never_fade`: an infinite fade size, WMO group geometry's, which no fade level holds.
 pub struct BatchClass {
     pub excluded: bool,
     pub interior_prop: bool,

@@ -124,18 +124,12 @@ fn world_art_image(upload: UploadChain, wrap: (bool, bool)) -> Image {
             ImageAddressMode::ClampToEdge
         }
     };
-    // The reference's terrain, WMO and M2 textures take the mip filter and anisotropy from the
-    // process policy (`0x449ae0`, `crate::tex_filter`).
-    let filter = crate::tex_filter::tex_filter();
-    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: mode(wrap.0),
-        address_mode_v: mode(wrap.1),
-        mag_filter: ImageFilterMode::Linear,
-        min_filter: ImageFilterMode::Linear,
-        mipmap_filter: filter.mipmap_filter(),
-        anisotropy_clamp: filter.anisotropy_clamp(),
-        ..Default::default()
-    });
+    // The reference's terrain, WMO and M2 textures take the mip filter, anisotropy and base mip
+    // from the process policy (`crate::tex_filter`).
+    image.sampler = ImageSampler::Descriptor(crate::tex_filter::policy_sampler(
+        mode(wrap.0),
+        mode(wrap.1),
+    ));
     image
 }
 

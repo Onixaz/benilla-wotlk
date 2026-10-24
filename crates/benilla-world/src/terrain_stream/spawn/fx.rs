@@ -107,10 +107,10 @@ pub(super) fn spawn_wmo_lights_for(
 }
 
 /// A placed model's one draw-set gate, shared by its mesh, emitters, ribbons, lights and anim host.
-/// `fade` is `(radius, model-space centre)`; `None` or empty `groups` means no room gate.
+/// `fade` is `(radius, size, model-space centre)`; `None` or empty `groups` means no room gate.
 pub(super) fn emitter_fade(
     transform: Transform,
-    fade: (f32, Vec3),
+    fade: (f32, f32, Vec3),
     instance: Option<Entity>,
     groups: Option<&std::sync::Arc<[u16]>>,
 ) -> particles::EmitterFade {
@@ -121,7 +121,8 @@ pub(super) fn emitter_fade(
             instance,
             groups: groups.clone(),
         }),
-        ..particles::EmitterFade::sphere(fade.0, transform.transform_point(fade.1))
+        size: fade.1,
+        ..particles::EmitterFade::sphere(fade.0, transform.transform_point(fade.2))
     }
 }
 

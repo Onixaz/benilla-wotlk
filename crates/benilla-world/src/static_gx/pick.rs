@@ -147,7 +147,7 @@ mod tests {
         let (fence, g) = (object(77), tri([0.0; 3]));
         let mut b = batch_of(&fence, &g, Vec3::ZERO, None, ModelBlend::Opaque);
         b.fade = Some(GxFadeSeed {
-            radius: 0.4,
+            size: 0.8,
             local_center: Vec3::ZERO,
             stat_mesh: Handle::default(),
             aabb: None,

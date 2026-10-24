@@ -28,13 +28,13 @@ impl GxFader {
     }
 }
 
-/// Where a fader at horizontal distance `d` moves from `current`, by the entity path's own
+/// Where a fader at distance `d` moves from `current`, by the entity path's own
 /// [`crate::model_fade::doodad_fade_alpha`]; the exits shift the sample by [`FADE_HYST`].
-fn fade_step(radius: f32, d: f32, current: FadeClass) -> FadeClass {
+fn fade_step(size: f32, d: f32, current: FadeClass) -> FadeClass {
     use crate::model_fade::doodad_fade_alpha as alpha;
     match current {
         FadeClass::Steady => {
-            let a = alpha(radius, d);
+            let a = alpha(size, d);
             if a >= 1.0 {
                 FadeClass::Steady
             } else if a > 0.0 {
@@ -44,18 +44,18 @@ fn fade_step(radius: f32, d: f32, current: FadeClass) -> FadeClass {
             }
         }
         FadeClass::Feather => {
-            if alpha(radius, d + FADE_HYST) >= 1.0 {
+            if alpha(size, d + FADE_HYST) >= 1.0 {
                 FadeClass::Steady
-            } else if alpha(radius, d - FADE_HYST) <= 0.0 {
+            } else if alpha(size, d - FADE_HYST) <= 0.0 {
                 FadeClass::Gone
             } else {
                 FadeClass::Feather
             }
         }
         FadeClass::Gone => {
-            if alpha(radius, d + FADE_HYST) >= 1.0 {
+            if alpha(size, d + FADE_HYST) >= 1.0 {
                 FadeClass::Steady
-            } else if alpha(radius, d) > 0.0 {
+            } else if alpha(size, d) > 0.0 {
                 FadeClass::Feather
             } else {
                 FadeClass::Gone
@@ -102,7 +102,7 @@ fn spawn_exile(commands: &mut Commands, f: &GxFader, alpha: f32, admitted: bool)
             crate::interact::PickMesh(b.geometry.clone()),
             bevy::mesh::MeshTag(crate::mesh_tag::alpha_bits(alpha)),
             crate::model_fade::DoodadFade {
-                radius: f.radius,
+                size: f.size,
                 local_center: f.local_center,
                 cutout: b.cutout.clone(),
                 blend: b.blend.clone(),
@@ -162,6 +162,7 @@ pub(super) fn cull_cells(
         props,
         world,
         fade_events,
+        fade_generation,
         ..
     } = &mut *gx;
     // Reap regions whose instance died with its placement; a WMO placement never changes owner
@@ -183,7 +184,14 @@ pub(super) fn cull_cells(
         m.kind_visible[crate::model_render::kind_index(crate::model_render::ModelKind::Doodad)];
 
     // ---- The fader exile scan ----
-    let cam_xz = Vec2::new(cam_pos.x, cam_pos.z);
+    // An `environmentDetail` write moved every band: re-derive them before the scan reads them.
+    let generation = crate::model_fade::fade_generation();
+    if *fade_generation != generation {
+        *fade_generation = generation;
+        for cell in cells.values_mut() {
+            cell.refresh_bands();
+        }
+    }
     for (&key, cell) in cells.iter_mut() {
         if cell.faders.is_empty() {
             continue;
@@ -193,20 +201,20 @@ pub(super) fn cull_cells(
         };
         // The camera's distance range to the fader centres against the band union, with the
         // hysteresis margin, so a wholesale verdict holds for every placement.
-        let dmin = cam_xz.distance(cam_xz.clamp(mn, mx));
-        let corner = Vec2::new(
-            if (cam_xz.x - mn.x).abs() > (cam_xz.x - mx.x).abs() {
-                mn.x
+        let dmin = cam_pos.distance(cam_pos.clamp(mn, mx));
+        let far = |c: f32, lo: f32, hi: f32| {
+            if (c - lo).abs() > (c - hi).abs() {
+                lo
             } else {
-                mx.x
-            },
-            if (cam_xz.y - mn.y).abs() > (cam_xz.y - mx.y).abs() {
-                mn.y
-            } else {
-                mx.y
-            },
+                hi
+            }
+        };
+        let corner = Vec3::new(
+            far(cam_pos.x, mn.x, mx.x),
+            far(cam_pos.y, mn.y, mx.y),
+            far(cam_pos.z, mn.z, mx.z),
         );
-        let dmax = cam_xz.distance(corner);
+        let dmax = cam_pos.distance(corner);
         let (near_min, far_max) = cell.ring;
         let verdict = if dmax < near_min - FADE_HYST {
             Some(true) // every placement steady, with margin
@@ -233,9 +241,9 @@ pub(super) fn cull_cells(
                     bits_changed = true;
                 }
             }
-            let d = Vec2::new(f.center.x, f.center.z).distance(cam_xz);
+            let d = f.center.distance(cam_pos);
             let old = f.class();
-            let new = fade_step(f.radius, d, old);
+            let new = fade_step(f.size, d, old);
             if new == old {
                 continue;
             }
@@ -261,7 +269,7 @@ pub(super) fn cull_cells(
                 }
                 FadeClass::Feather => {
                     fade_events[0] += 1;
-                    let alpha = crate::model_fade::doodad_fade_alpha(f.radius, d);
+                    let alpha = crate::model_fade::doodad_fade_alpha(f.size, d);
                     // Unarmed until the entities draw, unless it was Gone and is already killed.
                     let armed = old == FadeClass::Gone;
                     unarmed_left |= !armed;
@@ -281,7 +289,7 @@ pub(super) fn cull_cells(
             if fade_trace() {
                 println!(
                     "GX_FADE cell=({},{}) uid={} {:?}->{:?} d={:.1} r={:.2}",
-                    key.0, key.1, f.uid, old, new, d, f.radius
+                    key.0, key.1, f.uid, old, new, d, f.size
                 );
             }
         }
@@ -573,21 +581,21 @@ mod tests {
 
     #[test]
     fn the_exile_step_enters_exact_and_exits_sticky() {
-        // Radius 0 is the 40..50 yd band, `model_fade`'s small-prop bucket.
-        let r = 0.0;
-        assert_eq!(fade_step(r, 39.0, FadeClass::Steady), FadeClass::Steady);
-        assert_eq!(fade_step(r, 40.0, FadeClass::Steady), FadeClass::Steady);
-        assert_eq!(fade_step(r, 40.5, FadeClass::Steady), FadeClass::Feather);
+        // A 0.5 yd prop is fade level 0, the 25..30 yd band at any `environmentDetail`.
+        let r = 0.5;
+        assert_eq!(fade_step(r, 24.0, FadeClass::Steady), FadeClass::Steady);
+        assert_eq!(fade_step(r, 25.0, FadeClass::Steady), FadeClass::Steady);
+        assert_eq!(fade_step(r, 25.5, FadeClass::Steady), FadeClass::Feather);
         // A teleport past the band end goes straight to Gone.
-        assert_eq!(fade_step(r, 60.0, FadeClass::Steady), FadeClass::Gone);
-        // Exits need the 1 yd margin: at 40.5 the probe at 41.5 still feathers.
-        assert_eq!(fade_step(r, 40.5, FadeClass::Feather), FadeClass::Feather);
-        assert_eq!(fade_step(r, 39.0, FadeClass::Feather), FadeClass::Steady);
-        assert_eq!(fade_step(r, 50.5, FadeClass::Feather), FadeClass::Feather);
-        assert_eq!(fade_step(r, 51.5, FadeClass::Feather), FadeClass::Gone);
+        assert_eq!(fade_step(r, 35.0, FadeClass::Steady), FadeClass::Gone);
+        // Exits need the 1 yd margin: at 25.5 the probe at 26.5 still feathers.
+        assert_eq!(fade_step(r, 25.5, FadeClass::Feather), FadeClass::Feather);
+        assert_eq!(fade_step(r, 24.0, FadeClass::Feather), FadeClass::Steady);
+        assert_eq!(fade_step(r, 29.5, FadeClass::Feather), FadeClass::Feather);
+        assert_eq!(fade_step(r, 31.0, FadeClass::Feather), FadeClass::Gone);
         // Gone feathers again as soon as alpha is nonzero, and needs the margin for Steady.
-        assert_eq!(fade_step(r, 49.9, FadeClass::Gone), FadeClass::Feather);
-        assert_eq!(fade_step(r, 50.0, FadeClass::Gone), FadeClass::Gone);
-        assert_eq!(fade_step(r, 38.9, FadeClass::Gone), FadeClass::Steady);
+        assert_eq!(fade_step(r, 29.9, FadeClass::Gone), FadeClass::Feather);
+        assert_eq!(fade_step(r, 30.0, FadeClass::Gone), FadeClass::Gone);
+        assert_eq!(fade_step(r, 23.9, FadeClass::Gone), FadeClass::Steady);
     }
 }

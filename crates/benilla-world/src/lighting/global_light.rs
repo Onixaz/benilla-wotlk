@@ -194,6 +194,7 @@ fn build_light_data(
     light: Res<WowLighting>,
     debug: Res<DebugState>,
     view: Res<ViewDistance>,
+    terrain: Option<Res<crate::terrain_stream::TerrainOptions>>,
     cam: Query<&GlobalTransform, With<WorldCamera>>,
     lights_q: Query<(&WorldPointLight, &GlobalTransform, Option<&LightRooms>)>,
     // The per-frame portal PVS, for the rooms term.
@@ -204,6 +205,7 @@ fn build_light_data(
     mut last_rows_dump: Local<f64>,
 ) {
     let l = &*light;
+    let terrain = terrain.map_or_else(Default::default, |t| *t);
     let fog_enable = if debug.lighting.disable_fog { 0.0 } else { 1.0 };
     let farclip = view.farclip;
     // River and lake share the non-ocean swatch.
@@ -223,14 +225,19 @@ fn build_light_data(
     rows[16] = [od[0], od[1], od[2], oda]; // 16 water ocean deep
     rows[17][0] = l.sidn_night;
     // Row 17 `.x` is the SIDN night fraction and `.yzw` the core packer's; 18/19 are the interior
-    // fog triple, and 19.zw and 12.w are free.
+    // fog triple, 19.zw the terrain options, and 12.w is free.
     rows[18] = [
         l.wmo_fog_color[0],
         l.wmo_fog_color[1],
         l.wmo_fog_color[2],
         fog_enable,
     ];
-    rows[19] = [l.wmo_fog_start, l.wmo_fog_end, 0.0, 0.0];
+    rows[19] = [
+        l.wmo_fog_start,
+        l.wmo_fog_end,
+        if terrain.specular { 1.0 } else { 0.0 }, // 19.z Terrain Highlights
+        if terrain.low_mip { 1.0 } else { 0.0 },  // 19.w Terrain Texture Low's half-size maps
+    ];
     // Rows 0-2, 6-12.xyz and 17.yzw: the model-light core.
     pack_model_core_rows(rows, l.ambient, l.diffuse, l.sun_dir);
     // The point table: lights within [`POINT_PACK_RADIUS`], nearest first past capacity. Dividing

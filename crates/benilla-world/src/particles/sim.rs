@@ -217,7 +217,8 @@ pub(crate) struct SceneGates<'w, 's> {
 }
 
 impl SceneGates<'_, '_> {
-    /// Any input of a draw-set verdict moved this frame.
+    /// Any input of a draw-set verdict moved this frame; an `environmentDetail` write marks the
+    /// view distance changed, as it moves every owner's fade band.
     pub(crate) fn changed(&self) -> bool {
         self.view.is_changed()
             || self.exterior_windows.is_changed()
@@ -466,7 +467,8 @@ pub(super) fn simulate_particles(
         && !gates.changed()
         && !interleave.surfaces_changed();
     let cam_pos = cam_tf.translation();
-    let density = tuning.density.clamp(0.25, 1.0);
+    // The emission scalar, unfloored: `EmitNewParticles 0x97d8c0` multiplies it straight in.
+    let density = tuning.density;
     let snap_filter = crate::collision::WorldCollision::body_filter();
     let (_, cam_rot, _) = cam_tf.to_scale_rotation_translation();
     let cam_right = cam_rot * Vec3::X;
@@ -530,7 +532,7 @@ pub(super) fn simulate_particles(
             // frame's worklist, by frustum sphere and distance-fade cutoff (`0x683f80`; the sphere is
             // `[rec+0x68]`). Outside it pool and age freeze (`[obj+0x88]` accumulates nothing) and
             // resume with one frame's dt. The far-clip term is needed: our projection's far plane is
-            // past `farclip`, and owners over `NEVER_FADE_RADIUS` never fade.
+            // past `farclip`, and a level-4 owner fades only past 1200 yd.
             if let Some(f) = fade.as_ref() {
                 if emitter.gated && gate_inputs_still && !f.is_changed() {
                     return;

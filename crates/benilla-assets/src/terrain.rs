@@ -6,7 +6,7 @@
 
 use benilla_formats::{BlpMipChain, BlpTexels};
 use bevy::asset::RenderAssetUsages;
-use bevy::image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::image::{Image, ImageAddressMode, ImageSampler};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     Extent3d, TextureDataOrder, TextureDimension, TextureFormat, TextureViewDescriptor,
@@ -255,18 +255,12 @@ pub(crate) fn layer_array_image(size: u32, layer_count: u32, packed: PackedLayer
     image.data = Some(data);
     image.texture_descriptor.mip_level_count = mip_count;
     image.data_order = TextureDataOrder::LayerMajor;
-    // As in the reference, ground filtering comes from the process globals (`crate::tex_filter`):
-    // trilinear with anisotropy off on a fresh install (`hwDetect`).
-    let filter = crate::tex_filter::tex_filter();
-    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: ImageAddressMode::Repeat,
-        address_mode_v: ImageAddressMode::Repeat,
-        mag_filter: ImageFilterMode::Linear,
-        min_filter: ImageFilterMode::Linear,
-        mipmap_filter: filter.mipmap_filter(),
-        anisotropy_clamp: filter.anisotropy_clamp(),
-        ..default()
-    });
+    // As in the reference, ground filtering and the base mip come from the process policy
+    // (`crate::tex_filter`).
+    image.sampler = ImageSampler::Descriptor(crate::tex_filter::policy_sampler(
+        ImageAddressMode::Repeat,
+        ImageAddressMode::Repeat,
+    ));
     image
 }
 

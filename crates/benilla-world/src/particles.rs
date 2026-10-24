@@ -34,9 +34,8 @@ pub struct ViewThrottled;
 /// A backstop cap on one emitter's live particles; a campfire's steady state is about 30 + 24.
 const MAX_PARTICLES: usize = 1024;
 
-/// The emission scalar `[0x87d5fc]`, which the `particleDensity` handler (`0x688fb0`) and the
-/// `spellEffectLevel` handler (`0x689510`) both write through `0x7adfb0`, the last write winning.
-/// benilla registers only `spellEffectLevel`.
+/// The emission scalar, `ParticleSystemManager`'s `s_scaler`, which only the `particleDensity`
+/// callback (`0x78d860`) writes, through `SetScaler 0x980f70`.
 #[derive(Resource)]
 pub struct ParticleTuning {
     /// It scales emission rate only (its getter's two callers are the spawn-count `fmul`s), never
@@ -51,7 +50,7 @@ impl Default for ParticleTuning {
 }
 
 impl ParticleTuning {
-    /// `0x7adfb0`: clamp to [0.0, 1.0] and store.
+    /// `SetScaler 0x980f70`: clamp to [0.0, 1.0] and store.
     pub fn set_density(&mut self, density: f32) {
         self.density = density.clamp(0.0, 1.0);
     }
@@ -469,8 +468,11 @@ impl ParticleEmitter {
 /// Entity-owned emitters carry none: server visibility bounds them.
 #[derive(Component, Clone)]
 pub struct EmitterFade {
-    /// The owner doodad's world bounding-sphere radius, which picks the fade band.
+    /// The owner doodad's world bounding-sphere radius, for the far-clip and window tests.
     pub radius: f32,
+    /// The owner's placed box's largest side, which picks the fade level
+    /// ([`crate::model_fade::fade_level`]).
+    pub size: f32,
     /// The owner's world bbox centre, which the fade measures to, not the emitter's position.
     pub center: Vec3,
     /// The WMO placement whose doodad set holds the owner (`None` for an ADT doodad), for the
@@ -489,22 +491,23 @@ impl EmitterFade {
     pub(crate) fn sphere(radius: f32, center: Vec3) -> Self {
         Self {
             radius,
+            // The sphere's own box, until the caller knows the placed one.
+            size: radius * 2.0,
             center,
             instance: None,
             room: None,
         }
     }
 
-    /// The owner's distance-fade alpha, which multiplies its particles as it does its batches
-    /// (`0x683f80` → `+0x180` → `+0x19c` → `emitter+0x1a8`); the draw set ends at its zero.
+    /// The owner's distance-fade alpha, which multiplies its particles as it does its batches;
+    /// the draw set ends at its zero.
     pub fn distance_alpha(&self, cam_pos: Vec3) -> f32 {
-        let (dx, dz) = (self.center.x - cam_pos.x, self.center.z - cam_pos.z);
-        crate::model_fade::doodad_fade_alpha(self.radius, (dx * dx + dz * dz).sqrt())
+        crate::model_fade::doodad_fade_alpha(self.size, self.center.distance(cam_pos))
     }
 
     /// Whether the owner is in the frame's scene worklist, so its emitters tick and draw. The
     /// first four terms test the owner's fade sphere (`[rec+0x68]`):
-    /// 1. the size-banded distance fade is above zero (`0x683f80`),
+    /// 1. the size-levelled distance fade is above zero ([`crate::model_fade`]),
     /// 2. the sphere is inside the far-clip wall ([`crate::view::within_farclip`]), since term 1
     ///    admits a never-fading owner (a brazier) at any distance,
     /// 3. `lateral_in_frustum`, the side and near planes,
@@ -520,9 +523,7 @@ impl EmitterFade {
         exterior_admitted: bool,
         room_admitted: bool,
     ) -> bool {
-        let (dx, dz) = (self.center.x - cam_pos.x, self.center.z - cam_pos.z);
-        let horiz = (dx * dx + dz * dz).sqrt();
-        crate::model_fade::doodad_fade_alpha(self.radius, horiz) > 0.0
+        crate::model_fade::doodad_fade_alpha(self.size, self.center.distance(cam_pos)) > 0.0
             && crate::view::within_farclip(farclip, cam_pos, cam_fwd, self.center, self.radius)
             && lateral_in_frustum
             && exterior_admitted
@@ -899,10 +900,12 @@ pub(crate) mod tests {
         );
     }
 
-    /// The camera at the origin looking down −Z, the owner sphere `depth` yd straight ahead.
-    fn gate(radius: f32, depth: f32, farclip: f32) -> bool {
+    /// The camera at the origin looking down −Z, the owner `depth` yd straight ahead, its box
+    /// `size` yd on its largest side and its sphere `size / 2`.
+    fn gate(size: f32, depth: f32, farclip: f32) -> bool {
         EmitterFade {
-            radius,
+            radius: size / 2.0,
+            size,
             center: Vec3::new(0.0, 0.0, -depth),
             instance: None,
             room: None,
@@ -926,8 +929,12 @@ pub(crate) mod tests {
 
     #[test]
     fn a_never_fading_owner_is_still_bounded_by_the_wall() {
-        let big = crate::model_fade::NEVER_FADE_RADIUS + 5.0;
-        assert_eq!(crate::model_fade::doodad_fade_alpha(big, 5000.0), 1.0);
+        // Level 4 fades only past 1200 yd, so inside 1200 the wall alone bounds it.
+        let big = 150.0;
+        assert_eq!(
+            crate::model_fade::doodad_fade_alpha_at(big, 1000.0, 1.0),
+            1.0
+        );
         assert!(gate(big, 500.0, 777.0), "inside the wall: draws");
         assert!(!gate(big, 1000.0, 777.0), "past the wall: must NOT draw");
         // The live farclip, not a constant: out at the minimum view distance, in at the maximum.
@@ -937,10 +944,10 @@ pub(crate) mod tests {
 
     #[test]
     fn the_wall_does_not_replace_the_size_fade() {
-        assert!(gate(0.3, 45.0, 777.0), "mid-band: still drawing");
+        assert!(gate(0.6, 27.0, 777.0), "level 0 mid-band: still drawing");
         assert!(
-            !gate(0.3, 60.0, 777.0),
-            "past the 50-yd band end, nowhere near the wall"
+            !gate(0.6, 31.0, 777.0),
+            "past level 0's 30-yd end, nowhere near the wall"
         );
     }
 
@@ -948,6 +955,7 @@ pub(crate) mod tests {
     fn the_lateral_frustum_term_is_anded() {
         let f = EmitterFade {
             radius: 2.0,
+            size: 4.0,
             center: Vec3::new(0.0, 0.0, -60.0),
             instance: None,
             room: None,
@@ -969,6 +977,7 @@ pub(crate) mod tests {
         let sealed = ExteriorGate::Windows(Vec::new());
         let fade = |instance| EmitterFade {
             radius: 2.0,
+            size: 4.0,
             center: Vec3::new(0.0, 0.0, -60.0),
             instance,
             room: None,
@@ -1009,6 +1018,7 @@ pub(crate) mod tests {
         };
         let fade = |groups: Option<&[u16]>| EmitterFade {
             radius: 2.0,
+            size: 4.0,
             center: Vec3::new(0.0, 0.0, -60.0),
             instance: None,
             room: groups.map(|g| WmoGroupVis {
@@ -1033,23 +1043,25 @@ pub(crate) mod tests {
         );
     }
 
-    /// Owners above `NEVER_FADE_RADIUS` only: there the fade term is a constant 1, so the gate is
-    /// the wall alone; below it the mesh keeps drawing while the fade feathers it out.
+    /// Level-4 owners inside their 1200 yd band only: there the fade term is a constant 1, so the
+    /// gate is the wall alone; nearer levels keep the mesh drawing while the fade feathers it out.
     #[test]
     fn the_emitter_gate_agrees_with_the_owner_meshs_cull() {
         let (cam, fwd) = (Vec3::ZERO, Vec3::NEG_Z);
         for farclip in [177.0f32, 777.0, 1200.0] {
-            for depth in [100.0f32, 700.0, 776.0, 777.0, 778.0, 900.0, 2000.0] {
-                for radius in [crate::model_fade::NEVER_FADE_RADIUS + 0.01, 12.0, 40.0] {
+            for depth in [100.0f32, 700.0, 776.0, 777.0, 778.0, 900.0, 1150.0] {
+                for radius in [50.01f32, 60.0, 80.0] {
                     let center = Vec3::new(0.0, 0.0, -depth);
+                    let size = radius * 2.0;
                     assert_eq!(
-                        crate::model_fade::doodad_fade_alpha(radius, depth),
+                        crate::model_fade::doodad_fade_alpha_at(size, depth, 1.0),
                         1.0,
-                        "precondition: this owner never size-fades"
+                        "precondition: this owner does not size-fade here"
                     );
                     let mesh_drawn = crate::view::within_farclip(farclip, cam, fwd, center, radius);
                     let emitter_drawn = EmitterFade {
                         radius,
+                        size,
                         center,
                         instance: None,
                         room: None,

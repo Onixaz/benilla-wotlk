@@ -385,6 +385,9 @@ pub struct BatchSort {
     pub material_layer: u16,
     /// The skin batch index, the last key.
     pub index: u16,
+    /// Batch flag `0x4`, a projected batch: drawn through the scene's projection callback, which
+    /// `projectedTextures` gates (element type 1 in `CM2Scene::Animate 0x821a20`).
+    pub projected: bool,
 }
 
 /// A 3.3.5a M2 batch's pixel shader, `CM2Shared::GetEffect` (`0x836600`, `0x836c90`): each texture

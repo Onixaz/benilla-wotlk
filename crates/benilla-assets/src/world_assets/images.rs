@@ -47,17 +47,11 @@ pub fn repeat_texture_authored(upload: crate::gpu_blp::UploadChain, wrap: (bool,
             ImageAddressMode::ClampToEdge
         }
     };
-    // M2, WMO and character textures take the process filter policy (`0x449ae0`, applyGlobal 1).
-    let filter = crate::tex_filter::tex_filter();
-    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: mode(wrap.0),
-        address_mode_v: mode(wrap.1),
-        mag_filter: ImageFilterMode::Linear,
-        min_filter: ImageFilterMode::Linear,
-        mipmap_filter: filter.mipmap_filter(),
-        anisotropy_clamp: filter.anisotropy_clamp(),
-        ..default()
-    });
+    // M2, WMO and character textures take the process texture policy (`crate::tex_filter`).
+    image.sampler = ImageSampler::Descriptor(crate::tex_filter::policy_sampler(
+        mode(wrap.0),
+        mode(wrap.1),
+    ));
     image
 }
 
@@ -192,17 +186,11 @@ pub fn liquid_frame_array(frames: Vec<BlpMipChain>, normalize_dc: bool) -> Image
         dimension: Some(TextureViewDimension::D2Array),
         ..default()
     });
-    // The liquid sheets take the process filter policy (`0x68abab`, applyGlobal 1), as ground does.
-    let filter = crate::tex_filter::tex_filter();
-    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: ImageAddressMode::Repeat,
-        address_mode_v: ImageAddressMode::Repeat,
-        mag_filter: ImageFilterMode::Linear,
-        min_filter: ImageFilterMode::Linear,
-        mipmap_filter: filter.mipmap_filter(),
-        anisotropy_clamp: filter.anisotropy_clamp(),
-        ..default()
-    });
+    // The liquid sheets take the process texture policy, as ground does.
+    image.sampler = ImageSampler::Descriptor(crate::tex_filter::policy_sampler(
+        ImageAddressMode::Repeat,
+        ImageAddressMode::Repeat,
+    ));
     image
 }
 

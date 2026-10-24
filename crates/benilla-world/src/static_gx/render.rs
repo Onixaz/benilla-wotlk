@@ -170,6 +170,8 @@ struct GxPipelines {
     cell_layout: BindGroupLayoutDescriptor,
     sampler: Sampler,
     sampler_clamp: Sampler,
+    /// The texture-policy generation the samplers were built at.
+    policy_generation: u32,
     /// Keyed `(cutout, two_sided)`, re-specialized if the world view's (samples, format) changes.
     pipelines: HashMap<(bool, bool), CachedRenderPipelineId>,
     specialized_for: Option<(u32, TextureFormat)>,
@@ -201,11 +203,23 @@ fn init_pipelines(mut commands: Commands, render_device: Res<RenderDevice>) {
             ),
         ),
     );
-    // Repeat and clamp samplers, picked by the vertex word's wrap bits since a shared array has no
-    // per-layer address mode. Mip filter and anisotropy come from `benilla_assets::tex_filter`,
-    // the policy the reference applies to every texture from `[0x835250]`/`[0x835254]`. A
-    // mixed-wrap batch takes the repeat sampler and the shader clamps its clamped axis a half
-    // texel in; the reference clamps that axis in the sampler.
+    let (sampler, sampler_clamp) = policy_samplers(&render_device);
+    commands.insert_resource(GxPipelines {
+        view_layout,
+        cell_layout,
+        sampler,
+        sampler_clamp,
+        policy_generation: benilla_assets::tex_filter_generation(),
+        pipelines: HashMap::default(),
+        specialized_for: None,
+    });
+}
+
+/// Repeat and clamp samplers, picked by the vertex word's wrap bits since a shared array has no
+/// per-layer address mode, under the live texture policy (`benilla_assets::tex_filter`). A
+/// mixed-wrap batch takes the repeat sampler and the shader clamps its clamped axis a half texel
+/// in; the reference clamps that axis in the sampler.
+fn policy_samplers(render_device: &RenderDevice) -> (Sampler, Sampler) {
     let filter = benilla_assets::tex_filter();
     let make = |label: &'static str, mode: AddressMode| {
         render_device.create_sampler(&SamplerDescriptor {
@@ -216,17 +230,14 @@ fn init_pipelines(mut commands: Commands, render_device: Res<RenderDevice>) {
             address_mode_u: mode,
             address_mode_v: mode,
             anisotropy_clamp: filter.anisotropy_clamp(),
+            lod_min_clamp: filter.lod_min_clamp(),
             ..Default::default()
         })
     };
-    commands.insert_resource(GxPipelines {
-        view_layout,
-        cell_layout,
-        sampler: make("static_gx_repeat", AddressMode::Repeat),
-        sampler_clamp: make("static_gx_clamp", AddressMode::ClampToEdge),
-        pipelines: HashMap::default(),
-        specialized_for: None,
-    });
+    (
+        make("static_gx_repeat", AddressMode::Repeat),
+        make("static_gx_clamp", AddressMode::ClampToEdge),
+    )
 }
 
 /// The world view's pipeline-key inputs.
@@ -293,6 +304,16 @@ fn prepare_static_gx(
     views: Query<GxViewKey>,
 ) {
     let _t = super::gx_perf_guard(3);
+    // A texture-policy move: new samplers, and every cached region rebuilds its bind groups on
+    // demand as it is next drawn.
+    let generation = benilla_assets::tex_filter_generation();
+    if pipes.policy_generation != generation {
+        pipes.policy_generation = generation;
+        (pipes.sampler, pipes.sampler_clamp) = policy_samplers(&render_device);
+        cache.cells.clear();
+        cache.wmos.clear();
+        cache.props.clear();
+    }
     let Some((view, msaa, _, _)) = views.iter().next() else {
         return;
     };

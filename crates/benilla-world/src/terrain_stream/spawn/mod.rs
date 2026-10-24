@@ -180,10 +180,10 @@ pub(super) fn spawn_loaded_placements(
                             // fallback into a straddling tree whose tile lands a frame later.
                             ShadeResolve::Pending => continue,
                         };
-                    let (radius, center) = m2_fade(&m.bounds, p.transform.scale.x);
+                    let (radius, size, center) = m2_fade(&m.bounds, &p.transform);
                     let anim_bound = m2_anim_bound(&m.bounds);
                     // The placement's one draw-set gate; a map doodad has no instance or rooms.
-                    let fade = emitter_fade(p.transform, (radius, center), None, None);
+                    let fade = emitter_fade(p.transform, (radius, size, center), None, None);
                     // The pick identity, carried by whichever lane takes a batch.
                     let object = Arc::new(WorldObject {
                         kind: ModelKind::Doodad,
@@ -307,7 +307,12 @@ pub(super) fn spawn_loaded_placements(
                     }
                     let has_portals = !m.portal_refs.is_empty() && !m.portal_infos.is_empty();
                     // No authored bounds, so a WMO never size-fades; the far clip bounds it.
-                    let fade = emitter_fade(p.transform, (f32::INFINITY, Vec3::ZERO), None, None);
+                    let fade = emitter_fade(
+                        p.transform,
+                        (f32::INFINITY, f32::INFINITY, Vec3::ZERO),
+                        None,
+                        None,
+                    );
                     let object = Arc::new(WorldObject {
                         kind: ModelKind::Wmo,
                         label: handle_label(h),
@@ -579,13 +584,13 @@ pub(super) fn spawn_loaded_placements(
                     ShadeResolve::Pending => continue,
                 }
             };
-            let (radius, center) = m2_fade(&m.bounds, d.transform.scale.x);
+            let (radius, size, center) = m2_fade(&m.bounds, &d.transform);
             let anim_bound = m2_anim_bound(&m.bounds);
             // The prop's one gate, with its building's window exemption and rooms: a particles-only
             // prop's host has no other way to know it is furniture, not exterior scene.
             let fade = emitter_fade(
                 d.transform,
-                (radius, center),
+                (radius, size, center),
                 portal_instance,
                 Some(&d.groups),
             );
@@ -908,8 +913,10 @@ pub fn m2_anim_bound(bounds: &Option<M2Bounds>) -> Option<Aabb> {
     (hi.cmpgt(lo).any()).then(|| Aabb::from_min_max(lo, hi))
 }
 
-/// An M2's fade sphere: authored sphere radius × scale, centred on the authored box (model-local).
-pub fn m2_fade(bounds: &Option<M2Bounds>, scale: f32) -> (f32, Vec3) {
+/// An M2's fade inputs `(radius, size, centre)`: the authored sphere radius × scale, the placed
+/// box's largest side ([`crate::model_fade::placed_box_size`], which picks the fade level), and the
+/// authored box centre (model-local). No bounds is an infinite placement that never fades.
+pub fn m2_fade(bounds: &Option<M2Bounds>, transform: &Transform) -> (f32, f32, Vec3) {
     match bounds {
         Some(b) => {
             let c = [
@@ -917,9 +924,11 @@ pub fn m2_fade(bounds: &Option<M2Bounds>, scale: f32) -> (f32, Vec3) {
                 (b.bbox_min[1] + b.bbox_max[1]) * 0.5,
                 (b.bbox_min[2] + b.bbox_max[2]) * 0.5,
             ];
-            (b.sphere_radius * scale, wow_to_bevy(c))
+            let (lo, hi) = (wow_to_bevy(b.bbox_min), wow_to_bevy(b.bbox_max));
+            let size = crate::model_fade::placed_box_size(lo.min(hi), lo.max(hi), transform);
+            (b.sphere_radius * transform.scale.x, size, wow_to_bevy(c))
         }
-        None => (f32::INFINITY, Vec3::ZERO),
+        None => (f32::INFINITY, f32::INFINITY, Vec3::ZERO),
     }
 }
 
