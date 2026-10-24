@@ -88,6 +88,8 @@ pub struct CreateRaceRow {
     pub name_male: String,
     /// `clientFileString`.
     pub file: String,
+    /// `ClientPrefix`, which names a helm's per-race model (`0x4e7800`).
+    pub client_prefix: String,
 }
 
 /// One `NameGen.dbc` row: a name the random-name generator learns for a race and sex.
@@ -297,6 +299,7 @@ impl CharCreateCatalog {
 pub(crate) fn chr_races_schema(l: &crate::dbc_layout::ChrRaces) -> Schema {
     let facial = l.facial_hair_customization;
     let strings = [
+        l.client_prefix,
         l.client_file,
         l.name,
         l.name_female,
@@ -353,6 +356,7 @@ fn load_races(
             name_female: text(l.name_female),
             name_male: text(l.name_male),
             file: text(l.client_file),
+            client_prefix: text(l.client_prefix),
         });
         if !PLAYABLE_RACES.contains(&race) {
             continue;
@@ -601,6 +605,42 @@ fn derive_ranges(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every playable race and sex has a file for the Death Knight hood under its own
+    /// `ClientPrefix` (`0x4e7800`), the expansion races included.
+    #[test]
+    fn every_playable_race_has_its_helm_file_by_client_prefix() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let c = CharCreateCatalog::load(&mut chain).expect("catalog");
+        let displays = crate::load_item_display_catalog(&mut chain).expect("item displays");
+        let hood = c
+            .start_outfit(1, 6, 0)
+            .iter()
+            .find(|i| i.inv_type == 1)
+            .and_then(|i| displays.get(i.display_id))
+            .and_then(|d| d.model[0].clone())
+            .expect("the Death Knight outfit's helm model");
+        let stem = hood.rsplit_once('.').map_or(hood.as_str(), |(s, _)| s);
+        for row in c
+            .race_rows()
+            .iter()
+            .filter(|r| PLAYABLE_RACES.contains(&r.id))
+        {
+            assert!(
+                !row.client_prefix.is_empty(),
+                "race {} has a prefix",
+                row.id
+            );
+            for letter in ['M', 'F'] {
+                let path = format!(
+                    "Item\\ObjectComponents\\Head\\{stem}_{}{letter}.m2",
+                    row.client_prefix
+                );
+                assert!(chain.read_file(&path).is_ok(), "{path} is in the archive");
+            }
+        }
+    }
 
     /// The create screen's columns off the install: the expansion races and the class gate read
     /// at their own fields, and `NameGen.dbc` loaded.

@@ -60,6 +60,8 @@ pub(crate) struct ItemDisplays {
     pub(crate) catalog: ItemDisplayCatalog,
     /// Keyed by model kind too: a helm display has a file per race and sex, a shoulder a pair.
     pub(super) models: HashMap<(u32, ItemModelKind), DisplayModel>,
+    /// ChrRaces' `ClientPrefix` by race id, the helm model's race suffix (`0x4e7800`).
+    pub(crate) helm_prefixes: HashMap<u8, String>,
 }
 
 #[cfg(test)]
@@ -68,6 +70,7 @@ impl ItemDisplays {
         ItemDisplays {
             catalog,
             models: HashMap::new(),
+            helm_prefixes: HashMap::new(),
         }
     }
 }
@@ -271,15 +274,13 @@ pub(in crate::entities) fn ensure_item_model(
     };
     let dir = format!("Item\\ObjectComponents\\{dir_name}");
     let dm = match held.catalog.get(display) {
-        Some(d) if d.model[col].is_some() => {
+        Some(d) if d.model[col].is_some() => 'model: {
             let mut model = d.model[col].clone().unwrap();
             if let ItemModelKind::Helm { race, sex } = kind {
-                // Race 1-8 is Hu Or Dw Ni Sc Ta Gn Tr, sex M or F.
-                const RACE_PREFIX: [&str; 8] = ["Hu", "Or", "Dw", "Ni", "Sc", "Ta", "Gn", "Tr"];
-                let prefix = RACE_PREFIX[(race.clamp(1, 8) - 1) as usize];
-                let letter = if sex == 1 { 'F' } else { 'M' };
-                let stem = model.strip_suffix(".m2").unwrap_or(&model).to_string();
-                model = format!("{stem}_{prefix}{letter}.m2");
+                match helm_file(&held.helm_prefixes, &model, race, sex) {
+                    Some(m) => model = m,
+                    None => break 'model super::empty_display(),
+                }
             }
             let disp_id = display;
             debug!(
@@ -300,12 +301,33 @@ pub(in crate::entities) fn ensure_item_model(
     held.models.insert((display, kind), dm);
 }
 
+/// A helm's per-race file, `<model>_<ClientPrefix><M|F>` (`0x4e7800`, decorations `[0xac46a0]`);
+/// `None` for a race with no ChrRaces row, which wears none (`0x4eefa0`).
+fn helm_file(prefixes: &HashMap<u8, String>, model: &str, race: u8, sex: u8) -> Option<String> {
+    let prefix = prefixes.get(&race)?;
+    let letter = if sex == 1 { 'F' } else { 'M' };
+    let stem = model.strip_suffix(".m2").unwrap_or(model);
+    Some(format!("{stem}_{prefix}{letter}.m2"))
+}
+
 #[cfg(test)]
 mod item_display_tests {
     use bevy::prelude::*;
 
     use super::super::display::empty_display;
-    use super::{ensure_item_model_mut, ItemDisplays, ItemModelKind};
+    use super::{ensure_item_model_mut, helm_file, ItemDisplays, ItemModelKind};
+
+    /// The helm's race suffix is the race's ChrRaces prefix, so a Blood Elf wears its own file
+    /// rather than the eighth race's; a race without a row wears none.
+    #[test]
+    fn a_helm_file_takes_the_races_client_prefix() {
+        let prefixes = std::collections::HashMap::from([(10, "Be".to_string())]);
+        assert_eq!(
+            helm_file(&prefixes, "Helm_A.m2", 10, 1).as_deref(),
+            Some("Helm_A_BeF.m2")
+        );
+        assert_eq!(helm_file(&prefixes, "Helm_A.m2", 11, 0), None);
+    }
 
     /// What each frame's resolver saw of the resource's change flag.
     #[derive(Resource, Default)]

@@ -84,6 +84,8 @@ pub struct Map {
 #[derive(Debug)]
 pub struct ChrRaces {
     pub fields: usize,
+    /// `ClientPrefix`, the helm model's race suffix (record `+0x18`, read by `0x4e7894`).
+    pub client_prefix: usize,
     /// `clientFileString` (`"Human"`, `"Scourge"`).
     pub client_file: usize,
     /// The enUS slot of `Name_Lang`, the race name (`"Night Elf"`).
@@ -198,6 +200,7 @@ pub const LAYOUTS: DbcLayouts = DbcLayouts {
     // The name is localized three times (male, female, neutral) over sixteen locales.
     chr_races: ChrRaces {
         fields: 69,
+        client_prefix: 6,
         client_file: 11,
         name: 14,
         facial_hair_customization: 65,
@@ -309,6 +312,7 @@ mod tests {
         let r = &l.chr_races;
         assert!(
             r.client_file
+                .max(r.client_prefix)
                 .max(r.facial_hair_customization + 1)
                 .max(r.hair_customization)
                 < r.fields

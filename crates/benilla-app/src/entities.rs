@@ -868,8 +868,17 @@ fn setup_entities(
         }
         Err(e) => warn!("char sections unavailable, player bodies stay untextured: {e:#}"),
     }
+    let mut helm_prefixes = HashMap::new();
     match CharCreateCatalog::load(&mut chain) {
-        Ok(catalog) => commands.insert_resource(CharCreate(catalog)),
+        Ok(catalog) => {
+            helm_prefixes = catalog
+                .race_rows()
+                .iter()
+                .filter(|r| !r.client_prefix.is_empty())
+                .map(|r| (r.id, r.client_prefix.clone()))
+                .collect();
+            commands.insert_resource(CharCreate(catalog));
+        }
         Err(e) => warn!("char-create catalog unavailable, the create screen is disabled: {e:#}"),
     }
     match load_item_display_catalog(&mut chain) {
@@ -878,6 +887,7 @@ fn setup_entities(
             commands.insert_resource(ItemDisplays {
                 catalog,
                 models: HashMap::new(),
+                helm_prefixes,
             });
         }
         Err(e) => warn!("item displays unavailable, units hold nothing: {e:#}"),
