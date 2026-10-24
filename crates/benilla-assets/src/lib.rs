@@ -118,9 +118,18 @@ const SAMPLER_MARKER: char = '@';
 
 /// The `mpq://` URL of a model texture at a sampler address mode. Bevy keys the sampler to the
 /// `Image` and the `Image` to its path, so a mode other than repeat/repeat marks the path before
-/// the extension (`…/leaves01@cc.blp`), which must stay `.blp` to pick the loader.
+/// the extension (`…/leaves01@cc.blp`), which must stay `.blp` to pick the loader. An authoring
+/// path's drive (`Z:\…`, the quiver models' type-2 name) is dropped: Bevy refuses a drive path,
+/// and the bare name misses in the archive as the reference's `TextureCreate` open does.
 pub fn texture_url(internal: &str, wrap: (bool, bool)) -> String {
-    let path = internal.replace('\\', "/").to_ascii_lowercase();
+    let internal = match internal.split_once(':') {
+        Some((drive, rest)) if drive.len() == 1 => rest,
+        _ => internal,
+    };
+    let path = internal
+        .replace('\\', "/")
+        .trim_start_matches('/')
+        .to_ascii_lowercase();
     if wrap == (true, true) {
         return format!("mpq://{path}");
     }
@@ -259,6 +268,11 @@ mod tests {
                 Some("world/khazmodan/ironforge/passivedoodads/trees/ironforgeleaves01.blp"),
             );
         }
+        // An authoring path's drive goes, so Bevy reads it as an archive name that misses.
+        assert_eq!(
+            texture_url("Z:\\Proj\\Item\\Quiver\\QuiverSkin.tga", (true, true)),
+            "mpq://proj/item/quiver/quiverskin.tga"
+        );
         // A bare path has nothing to strip, and an unrelated `@` is not a marker.
         assert_eq!(strip_sampler_marker("world/foo.blp"), None);
         assert_eq!(strip_sampler_marker("world/foo@bar.blp"), None);
