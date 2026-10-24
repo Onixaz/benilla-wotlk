@@ -166,7 +166,7 @@ fn refresh_policy_materials(
     liquid: Option<ResMut<Assets<crate::materials::LiquidMaterial>>>,
 ) {
     let generation = tex_filter_generation();
-    if std::mem::replace(&mut *seen, Some(generation)).is_none_or(|g| g == generation) {
+    if seen.replace(generation).is_none_or(|g| g == generation) {
         return;
     }
     let mut n = 0usize;
@@ -191,7 +191,7 @@ fn swap_policy_samplers(
     mut seen: Local<Option<u32>>,
 ) {
     let generation = tex_filter_generation();
-    if std::mem::replace(&mut *seen, Some(generation)).is_none_or(|g| g == generation) {
+    if seen.replace(generation).is_none_or(|g| g == generation) {
         return;
     }
     let mut n = 0usize;
