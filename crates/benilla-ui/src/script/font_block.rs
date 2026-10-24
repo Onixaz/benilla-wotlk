@@ -11,8 +11,7 @@
 //! four justify methods. Its shims (`0x797090` on) leave `eax` alone, so each returns what the
 //! shared implementation pushes, and act on `[this+0x324]`, the box's implicit FontString
 //! ([`EditBoxState::text_region`](crate::widget::EditBoxState::text_region)). The justify four are
-//! installed by `script::editbox::methods`. `SetSpacing`/`GetSpacing` (`0x79fb40`/`0x79fbe0`) are
-//! not installed: no line spacing is modelled, so a call raises.
+//! installed by `script::editbox::methods`; the spacing pair by [`install_spacing`].
 
 use mlua::{Lua, Table, Value};
 
@@ -316,4 +315,57 @@ pub(super) fn install(
     )?;
 
     Ok(())
+}
+
+/// Install `SetSpacing`/`GetSpacing` onto a text widget's table: the EditBox (`0x9756d0`),
+/// MessageFrame (`0x974140`) and ScrollingMessageFrame (`0x972c20`) shims over the font's own
+/// pair (`0x4a3f90`/`0x4a4040`). A FontString's pair is its own (`region::text`).
+pub(super) fn install_spacing(
+    lua: &Lua,
+    m: &Table,
+    resolve: ResolveRegion,
+    on_font_change: Option<FontChanged>,
+) -> mlua::Result<()> {
+    // SetSpacing(spacing): a number, else `Usage: <name>:SetSpacing(spacing)` with the widget's
+    // name; stored unclamped, it clears the inherit bit (`0x10`) and notifies the widget.
+    m.set(
+        "SetSpacing",
+        lua.create_function(move |lua, (this, sp): (Table, Value)| {
+            let Some(sp) = lua.coerce_number(sp)? else {
+                let who: Option<String> =
+                    this.get::<mlua::Function>("GetName")?.call(this.clone())?;
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:SetSpacing(spacing)",
+                    who.as_deref()
+                        .unwrap_or(super::object::anchor_args::UNNAMED)
+                )));
+            };
+            let rh = resolve(lua, &this)?;
+            {
+                let mut model = crate::script::model_mut_of(lua);
+                let d = model.region_data.entry(rh).or_default();
+                d.font_spacing = sp as f32;
+                d.font_explicit.spacing = true;
+                model.touch_measure(rh);
+                model.touch_layout_region(rh);
+            }
+            if let Some(changed) = on_font_change {
+                changed(lua, &this)?;
+            }
+            Ok(())
+        })?,
+    )?;
+    // GetSpacing() → the font's spacing, 0 when never set.
+    m.set(
+        "GetSpacing",
+        lua.create_function(move |lua, this: Table| {
+            let rh = resolve(lua, &this)?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
+            Ok(f64::from(
+                model.region_data.get(&rh).map_or(0.0, |d| d.font_spacing),
+            ))
+        })?,
+    )
 }

@@ -248,15 +248,16 @@ pub(crate) fn ellipsize_to_fit(
     display
 }
 
-/// The EditBox overlays' line origin (x0 under `justifyH`, where caret offsets start) and one-line
-/// cell top and height, by [`super::layout_text_quads`]'s own step law and snap. Single-line only.
+/// The EditBox overlays' line origin (x0 under `justifyH`, where caret offsets start), one-line
+/// cell top and height, by [`super::layout_text_quads`]'s own step law and snap, and the row pitch,
+/// height plus spacing (`UpdateHighlightArea 0x964db0`).
 pub(crate) fn line_origin(
     e: &mut TextEngine,
     drawn: &str,
     rect: Rect,
     justify: Justify,
     font: FontSpec,
-) -> (f32, f32, f32) {
+) -> (f32, f32, f32, f32) {
     let r = resolve(e, &font);
     e.ensure_metrics(r.face, r.ppem, drawn);
     let e = &*e;
@@ -282,7 +283,7 @@ pub(crate) fn line_origin(
     } else {
         rect.min.y
     };
-    (x0, top, r.size)
+    (x0, top, r.size, r.size + font.spacing)
 }
 
 /// The EditBox advance table ([`benilla_ui::script::UiScript::set_editbox_advances`]): the drawn
@@ -328,8 +329,8 @@ pub(crate) fn line_advances(e: &mut TextEngine, text: &str, font: FontSpec) -> V
 }
 
 /// The multiline EditBox row table: the raw byte where each wrapped row of `text` starts at
-/// `wrap_width`, by the render's own [`wrap_line`] pass, and the row pitch (the font em). Never
-/// empty (`[0]` for empty text).
+/// `wrap_width`, by the render's own [`wrap_line`] pass, and the row pitch, the font em plus its
+/// spacing. Never empty (`[0]` for empty text).
 pub(crate) fn line_rows(
     e: &mut TextEngine,
     text: &str,
@@ -357,7 +358,7 @@ pub(crate) fn line_rows(
     if rows.is_empty() {
         rows.push(0);
     }
-    (rows, r.size)
+    (rows, r.size + font.spacing)
 }
 
 /// [`line_rows`]'s walk for one `\n` segment at `base`: each row starts past the previous row's

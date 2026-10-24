@@ -156,17 +156,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // The ten font verbs are on this class's own table (`GetShadowColor` `0x794810`), as on
     // FontString, Font, EditBox, ScrollingMessageFrame and SimpleHTML; Button's (`0x879d00`) has
     // none.
-    crate::script::font_block::install(
-        lua,
-        &m,
-        |lua, this| {
-            let h = frame_handle_of(lua, this)?;
-            super::ensure_font_region(lua, h)
-                .ok_or_else(|| mlua::Error::runtime("not a MessageFrame"))
-        },
-        "MessageFrame",
-        None,
-    )?;
+    let resolve: crate::script::font_block::ResolveRegion = |lua, this| {
+        let h = frame_handle_of(lua, this)?;
+        super::ensure_font_region(lua, h).ok_or_else(|| mlua::Error::runtime("not a MessageFrame"))
+    };
+    crate::script::font_block::install(lua, &m, resolve, "MessageFrame", None)?;
+    crate::script::font_block::install_spacing(lua, &m, resolve, None)?;
 
     lua.set_named_registry_value(REG_MESSAGEFRAME_METHODS, m)?;
     Ok(())

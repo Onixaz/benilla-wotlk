@@ -146,6 +146,8 @@ pub(super) struct MessageFont {
     /// The child's `justifyH`, which centres `UIErrorsFrame`'s lines and keeps chat flush left;
     /// LEFT without a declared FontString, not the FontString default of CENTER.
     pub(super) justify_h: JustifyH,
+    /// The font's line gap (`SetSpacing`): lines step `height + spacing` (`UpdateRect 0x968790`).
+    pub(super) spacing: f32,
 }
 
 /// The FontString region holding a message frame's font, made on the first font-block call when
@@ -205,6 +207,7 @@ impl UiScript {
                         shadow: d.font_shadow,
                         outline: d.outline,
                         justify_h: d.justify.paint_h(),
+                        spacing: d.font_spacing,
                     })
             })
             .unwrap_or(MessageFont {
@@ -213,16 +216,16 @@ impl UiScript {
                 shadow: None,
                 outline: Outline::default(),
                 justify_h: JustifyH::Left,
+                spacing: 0.0,
             })
     }
 
-    /// How many rows frame `fh`'s resolved rect holds at its font's pitch, the client's
-    /// `numLinesDisplayed`: the scrolling class's page size and the plain class's capacity.
+    /// How many rows frame `fh`'s resolved rect holds at its font's pitch, height plus spacing
+    /// (`0x968790`), the client's `numLinesDisplayed`: the scrolling class's page size and the plain
+    /// class's capacity.
     pub(super) fn message_viewport_rows(model: &Model, fh: FrameHandle) -> usize {
-        let pitch = Self::message_frame_font(model, fh)
-            .height
-            .unwrap_or(14.0)
-            .max(1.0);
+        let font = Self::message_frame_font(model, fh);
+        let pitch = (font.height.unwrap_or(14.0) + font.spacing).max(1.0);
         model.resolved.get(&fh).map_or(0, |r| {
             ((r.top - r.bottom) / pitch).floor().max(0.0) as usize
         })
@@ -346,11 +349,12 @@ impl UiScript {
         }
     }
 
-    /// Push one [`QuadContent::Text`] per visible message of either class, each `rows × pitch`
-    /// tall. The pitch is the font height, the client's line step (`LayoutLines` `0x5cdc20`: size
-    /// plus a spacing of 0); the message frame's own relayout (`0x788750`, `0x788c00`) is not fully
-    /// traced. A scrolling frame stacks up from the bottom, `scroll_offset` choosing the bottom
-    /// message. A MessageFrame does too for `insertMode` BOTTOM, and for TOP hangs the newest off
+    /// Push one [`QuadContent::Text`] per visible message of either class, its `rows` lines a block
+    /// of `rows × height + (rows − 1) × spacing`, one spacing from the next: a MessageFrame steps
+    /// `height + spacing` (`UpdateRect 0x968790`), a scrolling frame anchors each message's string
+    /// one spacing past the last and the string inherits the gap (`ScrollMessages 0x969fa0`). A
+    /// scrolling frame stacks up from the bottom, `scroll_offset` choosing the bottom message. A
+    /// MessageFrame does too for `insertMode` BOTTOM, and for TOP hangs the newest off
     /// the top edge (`UIErrorsFrame.xml:4`); the reference's anchor per mode is untraced, and this
     /// reading reproduces both stock uses. A message that partly fits draws clipped; a faded
     /// scrolling line keeps its rows, as the reference never re-packs chat.
@@ -392,6 +396,7 @@ impl UiScript {
         };
         // The resolved rect is scaled and the font height is frame-local, so the pitch scales.
         let pitch = font.height.unwrap_or(14.0) * paint.scale;
+        let gap = font.spacing * paint.scale;
         if pitch <= 0.0 || fr.top <= fr.bottom {
             return;
         }
@@ -406,13 +411,14 @@ impl UiScript {
                 break; // the next band starts outside the frame
             }
             let line = &lines[idx];
-            let band_h = f32::from(line.rows.max(1)) * pitch;
+            let rows = f32::from(line.rows.max(1));
+            let band_h = rows * pitch + (rows - 1.0) * gap;
             let (bottom, top) = if from_top {
                 (fr.top - used - band_h, fr.top - used)
             } else {
                 (fr.bottom + used, fr.bottom + used + band_h)
             };
-            used += band_h;
+            used += band_h + gap;
             if line.alpha <= 0.0 {
                 continue; // faded: holds its rows, draws nothing
             }
@@ -442,7 +448,7 @@ impl UiScript {
                     shadow: font.shadow,
                     font_height: font.height,
                     text_height: None, // message lines have no SetTextHeight
-                    spacing: 0.0,
+                    spacing: font.spacing,
                     outline: font.outline,
                     alpha_gradient: None,
                     world_seat: false, // interface, not world

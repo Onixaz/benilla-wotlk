@@ -56,7 +56,7 @@ pub(crate) fn editbox_advances(
         height: super::drawn_px(req.height, None, seam * req.scale),
         outline: req.outline,
         alpha_gradient: None, // alpha never changes metrics
-        spacing: 0.0,
+        spacing: req.spacing * seam * req.scale,
     };
     let cum = super::line_advances(e, &req.text, spec)
         .iter()

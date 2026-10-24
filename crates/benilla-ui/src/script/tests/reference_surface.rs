@@ -598,8 +598,8 @@ fn non_space_wrap_defaults_on_and_answers_one_or_nil() {
 
 /// EditBox's registrar table (`.data 0x87bb68`, 48 entries, `mov edx,0x30` at `0x799ab5`) opens
 /// with the font block each text-bearing type re-declares over the shared impl `0x79f210`: its
-/// fourteen font verbs answer, its `SetSpacing`/`GetSpacing` (#10, #11) are not installed as
-/// nothing models line spacing, and other tables' names do not leak onto it.
+/// sixteen font verbs answer, `SetSpacing`/`GetSpacing` (#10, #11, 3.3.5a `0x9756d0`) among them,
+/// and other tables' names do not leak onto it.
 #[test]
 fn editbox_carries_the_font_block_its_registrar_table_declares() {
     let s = crate::script::UiScript::new().unwrap();
@@ -620,6 +620,8 @@ fn editbox_carries_the_font_block_its_registrar_table_declares() {
         "GetJustifyH",
         "SetJustifyV",
         "GetJustifyV",
+        "SetSpacing",
+        "GetSpacing",
     ] {
         assert_eq!(
             s.eval::<String>(&format!("return type(EBFont.{name})"))
@@ -630,9 +632,6 @@ fn editbox_carries_the_font_block_its_registrar_table_declares() {
     }
 
     for name in [
-        // On EditBox's table, not installed: nothing models line spacing.
-        "SetSpacing",
-        "GetSpacing",
         // Not on EditBox's table.
         "CopyFontObject",
         "SetNonSpaceWrap",

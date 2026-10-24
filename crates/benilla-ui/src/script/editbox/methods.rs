@@ -335,27 +335,24 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
 
 /// The font block, entries #0-#15 of the EditBox's own 48-entry method table (`0x87bb68`, count
 /// at `0x799ab5`); 1.12 has no `FontInstance` class, so each text-bearing kind declares it. Ten
-/// come from [`super::super::font_block`]. `SetSpacing`/`GetSpacing` (#10-#11) are not installed:
-/// nothing renders line spacing, and a missing method raises by name. The justify four (#12-#15)
-/// act on the box's own [`EditBoxState::justify`] word, not its text region.
+/// come from [`super::super::font_block`], `SetSpacing`/`GetSpacing` (#10-#11) from its
+/// `install_spacing`. The justify four (#12-#15) act on the box's own [`EditBoxState::justify`]
+/// word, not its text region.
 fn install_font_block(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // Every font method acts on the box's implicit FontString (`[this+0x324]`, our
     // `text_region`), created on demand.
-    crate::script::font_block::install(
-        lua,
-        m,
-        |lua, this| {
-            let h = frame_handle_of(lua, this)?;
-            super::ensure_text_region(lua, h).ok_or_else(|| mlua::Error::runtime("not an EditBox"))
-        },
-        "EditBox",
-        // The box listens on its font (vtable `0x81c8dc` slot 0, `0x77e2a0`): a change of face or
-        // spacing (mask `0x11`) re-seats its text region (`0x77e2b5` → `0x77b8c0`).
-        Some(|lua, this| {
-            reseat_text_region(lua, frame_handle_of(lua, this)?);
-            Ok(())
-        }),
-    )?;
+    let resolve: crate::script::font_block::ResolveRegion = |lua, this| {
+        let h = frame_handle_of(lua, this)?;
+        super::ensure_text_region(lua, h).ok_or_else(|| mlua::Error::runtime("not an EditBox"))
+    };
+    // The box listens on its font (vtable `0x81c8dc` slot 0, `0x77e2a0`): a change of face or
+    // spacing (mask `0x11`) re-seats its text region (`0x77e2b5` → `0x77b8c0`).
+    let changed: crate::script::font_block::FontChanged = |lua, this| {
+        reseat_text_region(lua, frame_handle_of(lua, this)?);
+        Ok(())
+    };
+    crate::script::font_block::install(lua, m, resolve, "EditBox", Some(changed))?;
+    crate::script::font_block::install_spacing(lua, m, resolve, Some(changed))?;
 
     // SetJustifyH/SetJustifyV return nothing. An unknown token raises `Usage:` (`0x87c77c`); a
     // token of the other axis parses and masks to nothing, so `SetJustifyH("TOP")` clears justifyH

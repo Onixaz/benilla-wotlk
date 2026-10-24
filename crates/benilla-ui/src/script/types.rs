@@ -531,6 +531,8 @@ pub struct EditBoxAdvanceRequest {
     pub height: Option<f32>,
     /// A THICK outline adds 1 px to every glyph step (`GlyphStepBase 0x5ca2b0`).
     pub outline: Outline,
+    /// The font's line gap: a row steps `height + spacing` (`UpdateVisibleCursor 0x964a90`).
+    pub spacing: f32,
     /// The box's `effective_scale`. The host measures at `height × scale × seam` but divides by
     /// the seam alone, so advances come back in screen UI units, like the mouse feed and the
     /// box's rect; a [`MeasureRequest`] answer is frame-local instead.

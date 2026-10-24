@@ -165,6 +165,7 @@ fn stale_advances(
     let font = d.and_then(|d| d.font_path.clone());
     let height = d.and_then(|d| d.font_height);
     let outline = d.map(|d| d.outline).unwrap_or_default();
+    let spacing = d.map_or(0.0, |d| d.font_spacing);
     // The host measures at the drawn raster size, so the advances land on the drawn glyphs.
     let scale = model
         .arena
@@ -188,6 +189,7 @@ fn stale_advances(
     height.map(f32::to_bits).hash(&mut hasher);
     (outline as u8).hash(&mut hasher);
     wrap_width.map(f32::to_bits).hash(&mut hasher);
+    spacing.to_bits().hash(&mut hasher);
     scale.to_bits().hash(&mut hasher);
     let key = hasher.finish();
     let id = model.frame_id(h);
@@ -207,6 +209,7 @@ fn stale_advances(
         font,
         height,
         outline,
+        spacing,
         scale,
         text: display,
         wrap_width,

@@ -107,9 +107,9 @@ pub(super) fn emit(
     let mut ebox_geom = None;
     if let Some(ui) = ebox {
         let drawn = &text[ui.display_from.min(text.len())..];
-        let (x0, top, cell_h) =
+        let (x0, top, cell_h, pitch) =
             crate::ui_text::line_origin(&mut atlas.lock(), drawn, host.rect, draw_justify, spec);
-        ebox_geom = Some((x0, top, cell_h));
+        ebox_geom = Some((x0, top, cell_h, pitch));
         // A single-line box shows only what fits its text region (`0x77d858` sets the window's
         // substring), so the whole string drawn here is cut at the region. A multi-line region is
         // only as tall as its text, and the reference clips neither it nor the caret texture
@@ -129,7 +129,7 @@ pub(super) fn emit(
         for &(row, sx0, sx1) in &ui.selection {
             let hc = ui.highlight_color;
             #[allow(clippy::cast_precision_loss)]
-            let ry = top + row as f32 * cell_h;
+            let ry = top + row as f32 * pitch;
             // The engine's selection x-span is in UI units.
             out.push(UiQuad {
                 rect: Rect::new(
@@ -311,10 +311,10 @@ pub(super) fn emit(
     // The caret: a 1 px bar in the constructor's white (`0xffffffff`), one line cell tall at the
     // engine's x, pushed after the glyphs to draw on top. The reference's is 4 UI units wide
     // (`0x77b8c0`) and takes the edit box's text colour on a font change (`0x77e2a0`).
-    if let (Some(ui), Some((x0, top, cell_h))) = (ebox, ebox_geom) {
+    if let (Some(ui), Some((x0, top, cell_h, pitch))) = (ebox, ebox_geom) {
         if host.caret_pinned || ui.caret_on {
             #[allow(clippy::cast_precision_loss)]
-            let top = top + ui.caret_row as f32 * cell_h;
+            let top = top + ui.caret_row as f32 * pitch;
             // `caret_x` is in engine UI units.
             let cx = x0 + ui.caret_x * host.scale;
             out.push(UiQuad {
