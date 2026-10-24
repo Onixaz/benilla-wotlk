@@ -17,7 +17,7 @@ fn a_font_string_stores_the_picked_form() {
     let s = script();
     s.run(
         r#"F = CreateFrame("Frame", "F")
-           FS = F:CreateFontString("FS", "ARTWORK")
+           FS = F:CreateFontString("FS", "ARTWORK") FS:SetFont('Fonts/FRIZQT__.TTF', 12)
            FS:SetText("12 |4hat:hats; left")"#,
     )
     .unwrap();

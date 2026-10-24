@@ -799,6 +799,7 @@ fn load_target_menu_335(s: &mut UiScript) -> Vec<String> {
     for entry in super::test_ui::production_order(&[&[
         r"Interface\FrameXML\GlobalStrings.lua",
         r"Interface\FrameXML\Fonts.xml",
+        r"Interface\FrameXML\FontStyles.xml",
         r"Interface\FrameXML\BasicControls.xml",
         r"Interface\FrameXML\UIParent.xml",
         r"Interface\FrameXML\MoneyFrame.lua",

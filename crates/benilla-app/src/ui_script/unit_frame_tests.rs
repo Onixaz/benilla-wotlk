@@ -2063,6 +2063,7 @@ fn the_3_3_5a_target_focus_and_boss_frames_hide_until_their_unit_exists() {
     for entry in super::test_ui::production_order(&[&[
         r"Interface\FrameXML\GlobalStrings.lua",
         r"Interface\FrameXML\Fonts.xml",
+        r"Interface\FrameXML\FontStyles.xml",
         r"Interface\FrameXML\BasicControls.xml",
         r"Interface\FrameXML\UIParent.xml",
         r"Interface\FrameXML\SecureTemplates.lua",

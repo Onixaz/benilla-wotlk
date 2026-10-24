@@ -98,6 +98,15 @@ fn load_entry(s: &UiScript, entry: &str, strict_templates: bool, no_warnings: bo
         report.errors
     );
     let leaf = path.rsplit('/').next().unwrap_or("");
+    // `FrameXML.toc` loads `FontStyles.xml`, the `GameFont*` objects, right after `Fonts.xml`.
+    if leaf.eq_ignore_ascii_case("Fonts.xml") && super::reference_ui::is_chain_entry(&path) {
+        load_entry(
+            s,
+            r"Interface\FrameXML\FontStyles.xml",
+            strict_templates,
+            no_warnings,
+        );
+    }
     if leaf.eq_ignore_ascii_case("MainMenuBarMicroButtons.xml") {
         s.run(MICRO_BUTTON_STAND_INS)
             .expect("the micro-button stand-ins");

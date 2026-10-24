@@ -7,20 +7,96 @@ use crate::justify;
 
 use super::region_handle_of;
 
-/// The string `SetText` (`0x483910`) stores, after its grammar pass ([`crate::language`]).
-fn set_text(lua: &Lua, this: &Table, text: Option<String>) -> mlua::Result<()> {
+/// Whether FontString `rh` holds a font handle (`[fs+0xe8]`), which `CSimpleFontString::SetFont`
+/// makes only from a face and a non-zero height. A Button's label also counts its button's state
+/// fonts and `Button:SetFont`, which extract paints it with.
+fn has_font(model: &crate::script::Model, rh: crate::widget::RegionHandle) -> bool {
+    let own = model
+        .region_data
+        .get(&rh)
+        .is_some_and(|d| d.font_path.is_some() && d.font_height.is_some_and(|h| h != 0.0));
+    own || model
+        .arena
+        .region(rh)
+        .and_then(|r| model.arena.frame(r.owner))
+        .is_some_and(|f| match &f.kind_state {
+            crate::widget::KindState::Button(bs) if bs.text == Some(rh) => {
+                bs.font.is_some()
+                    || [&bs.normal_font, &bs.highlight_font, &bs.disabled_font]
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|n| model.font_object(n))
+                        .any(|fo| fo.font.is_some())
+            }
+            _ => false,
+        })
+}
+
+/// `<verb>(): Font not set`, raised by `SetText` (`0x48d7ae`) and `SetFormattedText` (`0x48d838`)
+/// before storing anything when the FontString has no font handle.
+fn font_not_set(this: &Table, verb: &str) -> mlua::Error {
+    let who = this
+        .get::<mlua::Function>("GetName")
+        .and_then(|f| f.call::<Option<String>>(this.clone()));
+    match who {
+        Ok(who) => mlua::Error::runtime(format!(
+            "{}:{verb}(): Font not set",
+            who.as_deref()
+                .unwrap_or(super::super::object::anchor_args::UNNAMED)
+        )),
+        Err(e) => e,
+    }
+}
+
+/// [`font_not_set`] unless the FontString has a font, for `SetFormattedText`, which checks before
+/// it formats.
+fn require_font(lua: &Lua, this: &Table, verb: &str) -> mlua::Result<()> {
+    let rh = region_handle_of(lua, this)?;
+    let set = {
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data set");
+        has_font(&model, rh)
+    };
+    if set {
+        Ok(())
+    } else {
+        Err(font_not_set(this, verb))
+    }
+}
+
+/// The XML `text=` store: the loader calls `CSimpleFontString::SetText` (`0x483910`) itself, not
+/// the binding, so no font check applies.
+pub(crate) fn store_text(lua: &Lua, this: &Table, text: Option<String>) -> mlua::Result<()> {
+    set_text(lua, this, text, None)
+}
+
+/// The string `SetText` (`0x483910`) stores, after its grammar pass ([`crate::language`]), with the
+/// binding's font check under `check`'s verb, in the same model read.
+fn set_text(
+    lua: &Lua,
+    this: &Table,
+    text: Option<String>,
+    check: Option<&str>,
+) -> mlua::Result<()> {
     let rh = region_handle_of(lua, this)?;
     let text = text.map(crate::language::process_owned);
     // The string it holds, or empty over empty, returns untouched (`SStrCmp` at `0x483969`, the
     // empty arm before it): no `ClearString`, so an armed gradient stays, and no model write.
-    {
+    let (missing, same) = {
         let model = lua
             .app_data_ref::<crate::script::ModelCell>()
             .expect("model app_data set");
+        let missing = check.filter(|_| !has_font(&model, rh));
         let held = model.region_data.get(&rh).and_then(|d| d.text.as_deref());
-        if held.filter(|t| !t.is_empty()) == text.as_deref().filter(|t| !t.is_empty()) {
-            return Ok(());
-        }
+        let same = held.filter(|t| !t.is_empty()) == text.as_deref().filter(|t| !t.is_empty());
+        (missing, same)
+    };
+    if let Some(verb) = missing {
+        return Err(font_not_set(this, verb));
+    }
+    if same {
+        return Ok(());
     }
     let mut model = crate::script::model_mut_of(lua);
     // The layout is touched only when the string empties or refills: a new string's extent has
@@ -31,15 +107,15 @@ fn set_text(lua: &Lua, this: &Table, text: Option<String>) -> mlua::Result<()> {
     Ok(())
 }
 
-/// 3.3.5a's `FontString:SetFormattedText(fmt, ...)` (`0x48d800`) into the FontString `leaf`, when
-/// the target client has it: the formatted text through `SetText`'s own store (`0x483910`), so
-/// never nil.
+/// `FontString:SetFormattedText(fmt, ...)` (`0x48d800`) into the FontString `leaf`: the font check,
+/// then the formatted text through `SetText`'s own store (`0x483910`), so never nil.
 pub(super) fn install_formatted(lua: &Lua, leaf: &Table) -> mlua::Result<()> {
     leaf.set(
         "SetFormattedText",
         lua.create_function(|lua, (this, args): (Table, mlua::MultiValue)| {
+            require_font(lua, &this, "SetFormattedText")?;
             let text = crate::script::formatted_text::format(lua, &args)?;
-            set_text(lua, &this, Some(text))
+            set_text(lua, &this, Some(text), None)
         })?,
     )
 }
@@ -49,20 +125,17 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "SetText",
         lua.create_function(|lua, (this, text): (Table, Option<mlua::Value>)| {
-            // `lua_tolstring` (`0x48d780`): a string or number, anything else clears the text.
+            // `lua_tolstring` (`0x48d7dd`): a string or number, anything else clears the text.
             let text = text
                 .as_ref()
                 .and_then(|v| crate::script::binding_abi::optional_string(lua, v));
-            set_text(lua, &this, text)
+            set_text(lua, &this, text, Some("SetText"))
         })?,
     )?;
 
-    // No `SetFormattedText` here: not a 1.12 verb; 1.12 writes `SetText(format(fmt, ...))`.
-
-    // GetText answers nil for "" (`0x79d690`, its first-byte test at `0x79d73b`), though `SetText`
-    // (`0x771d80`) keeps a non-NULL empty buffer (`0x771e7e`). The rule is per binding, not per
-    // family: `Button:GetText` (`0x780e10`, `0x780ec5`) does the same, `EditBox:GetText`
-    // (`0x7985c0`, `0x79867b`) does not, and stock `MailFrame.lua:521` compares that one with "".
+    // GetText (`0x48d730`) answers nil for a NULL or "" string (its first-byte test at
+    // `0x48d765`). The rule is per binding: `EditBox:GetText` keeps "", and stock
+    // `MailFrame.lua:521` compares that one with "".
     m.set(
         "GetText",
         lua.create_function(|lua, this: Table| {
@@ -84,10 +157,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetStringWidth (`0x79e510`): the natural, unwrapped width of the current text, 0 until
-    // measured. Never the declared width, which `PanelTemplates_TabResize` sets from this; on an
-    // axis sized 0, `GetWidth` reads the same cell (`[fs+0xfc]`, `0x772890`). 1.12 has no
-    // `GetStringHeight`; `GetHeight` (`0x7a2030`) serves.
+    // GetStringWidth (`0x48de90` → `0x483e80`): the natural, unwrapped width of the current text,
+    // measured on demand. Never the declared width, which `PanelTemplates_TabResize` sets from
+    // this; on an axis sized 0, `GetWidth` (`0x483f30`) reads the same width.
     fn natural_w(lua: &Lua, this: &Table) -> mlua::Result<f32> {
         let rh = region_handle_of(lua, this)?;
         // Measure now when a host font engine is installed, as the reference measures inline, so

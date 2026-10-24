@@ -329,6 +329,7 @@ fn the_3_3_5a_readout_draws_a_battleground_row() {
     for entry in super::test_ui::production_order(&[&[
         r"Interface\FrameXML\GlobalStrings.lua",
         r"Interface\FrameXML\Fonts.xml",
+        r"Interface\FrameXML\FontStyles.xml",
         r"Interface\FrameXML\BasicControls.xml",
         r"Interface\FrameXML\UIParent.xml",
         r"Interface\FrameXML\GameTooltip.xml",

@@ -413,7 +413,7 @@ fn the_plates_texts_carry_the_world_seat_and_its_textures_do_not() {
     // A FontString on an ordinary frame stays on the grid.
     s.run(
         r#"local f = CreateFrame("Frame", "Chrome", UIParent) f:SetAllPoints()
-           local t = f:CreateFontString("ChromeText") t:SetAllPoints() t:SetText("Chrome")"#,
+           local t = f:CreateFontString("ChromeText") t:SetFont('Fonts/FRIZQT__.TTF', 12) t:SetAllPoints() t:SetText("Chrome")"#,
     )
     .unwrap();
     s.resolve();
@@ -425,7 +425,7 @@ fn the_plates_texts_carry_the_world_seat_and_its_textures_do_not() {
     // An addon's own string on the plate, as pfUI draws its text, gets the same seat.
     s.run(
         r#"local plate = WorldFrame:GetChildren()
-           local t = plate:CreateFontString() t:SetAllPoints() t:SetText("pfName")"#,
+           local t = plate:CreateFontString() t:SetFont('Fonts/FRIZQT__.TTF', 12) t:SetAllPoints() t:SetText("pfName")"#,
     )
     .unwrap();
     s.resolve();

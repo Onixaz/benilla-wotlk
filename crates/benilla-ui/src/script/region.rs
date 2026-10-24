@@ -213,6 +213,8 @@ mod layout;
 mod paint;
 mod text;
 
+pub(crate) use text::store_text;
+
 fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
 

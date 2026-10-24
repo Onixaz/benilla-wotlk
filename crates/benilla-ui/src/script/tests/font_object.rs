@@ -232,11 +232,11 @@ fn set_font_object_takes_the_object_or_the_name() {
         f = CreateFrame("Frame", "TwoWays")
         f:SetWidth(200); f:SetHeight(40); f:SetPoint("CENTER", 0, 0)
         byObject = f:CreateFontString(nil, "ARTWORK")
-        byObject:SetText("obj")
         byObject:SetFontObject(GameFontHighlightSmall)
+        byObject:SetText("obj")
         byName = f:CreateFontString(nil, "ARTWORK")
-        byName:SetText("str")
         byName:SetFontObject("GameFontHighlightSmall")
+        byName:SetText("str")
     "#,
     )
     .unwrap();
@@ -293,8 +293,8 @@ fn dewdrop_recolors_a_row_from_its_own_font_object() {
         f = CreateFrame("Frame", "DdRow")
         f:SetWidth(120); f:SetHeight(16); f:SetPoint("CENTER", 0, 0)
         button = { text = f:CreateFontString(nil, "ARTWORK") }
-        button.text:SetText("row")
         button.text:SetFontObject(GameFontHighlightSmall)
+        button.text:SetText("row")
         button.text:SetTextColor(button.text:GetFontObject():GetTextColor())
     "#,
     )
@@ -328,10 +328,10 @@ fn mutating_a_font_object_repaints_everything_that_inherits_it() {
         r#"
         f = CreateFrame("Frame", "ThemeHost")
         f:SetWidth(200); f:SetHeight(60); f:SetPoint("CENTER", 0, 0)
-        a = f:CreateFontString(nil, "ARTWORK"); a:SetText("inherited")
-        a:SetFontObject(ThemeFont)
-        b = f:CreateFontString(nil, "ARTWORK"); b:SetText("overridden")
-        b:SetFontObject(ThemeFont)
+        a = f:CreateFontString(nil, "ARTWORK"); a:SetFontObject(ThemeFont)
+        a:SetText("inherited")
+        b = f:CreateFontString(nil, "ARTWORK"); b:SetFontObject(ThemeFont)
+        b:SetText("overridden")
         b:SetTextColor(1, 0, 0)
     "#,
     )
@@ -403,8 +403,8 @@ fn propagation_is_scoped_to_the_object_that_changed() {
         r#"
         f = CreateFrame("Frame", "ScopeHost")
         f:SetWidth(200); f:SetHeight(60); f:SetPoint("CENTER", 0, 0)
-        one = f:CreateFontString(nil, "ARTWORK"); one:SetText("one"); one:SetFontObject(FontOne)
-        two = f:CreateFontString(nil, "ARTWORK"); two:SetText("two"); two:SetFontObject(FontTwo)
+        one = f:CreateFontString(nil, "ARTWORK"); one:SetFontObject(FontOne); one:SetText("one")
+        two = f:CreateFontString(nil, "ARTWORK"); two:SetFontObject(FontTwo); two:SetText("two")
         FontOne:SetFont("Fonts\\CHANGED.TTF", 30)
     "#,
     )
@@ -432,8 +432,8 @@ fn create_font_mints_publishes_and_paints() {
         f = CreateFrame("Frame", "PlateHost")
         f:SetWidth(120); f:SetHeight(20); f:SetPoint("CENTER", 0, 0)
         Name = f:CreateFontString(nil, "ARTWORK")
-        Name:SetText("plate")
         Name:SetFontObject(Nameplate.Font)
+        Name:SetText("plate")
     "#,
     )
     .expect("_Nameplates' font setup must not raise");
@@ -603,8 +603,8 @@ fn an_empty_font_object_copies_nothing_onto_a_fontstring() {
         f = CreateFrame("Frame", "EmptyFontHost")
         f:SetWidth(120); f:SetHeight(20); f:SetPoint("CENTER", 0, 0)
         fs = f:CreateFontString(nil, "ARTWORK")
-        fs:SetText("keep")
         fs:SetFontObject(DressedFont)
+        fs:SetText("keep")
         blank = CreateFont("ABlankFont")
         fs:SetFontObject(blank)
     "#,
@@ -767,6 +767,7 @@ fn a_cross_axis_token_erases_the_axis_but_still_draws_centred() {
         "f = CreateFrame('Frame', 'ClearAxisFrame')\n\
          f:SetWidth(200) f:SetHeight(40) f:SetPoint('CENTER', 0, 0)\n\
          fs = f:CreateFontString()\n\
+         fs:SetFont('Fonts/FRIZQT__.TTF', 12)\n\
          fs:SetAllPoints(f)\n\
          fs:SetText('erased')",
     )
@@ -1087,4 +1088,190 @@ fn spacing_inherits_from_the_font_object_until_set() {
         .find(|r| r.text == "b")
         .map(|r| r.spacing);
     assert_eq!(asked, Some(4.0));
+}
+
+/// `FontString:SetText`/`SetFormattedText` raise `<name>:<verb>(): Font not set` on a string with no
+/// font handle (`0x48d7ae`, `0x48d838`) and store nothing; a font object, a template, `SetFont` or a
+/// button's state font gives it one, and XML `text=` is the loader's store, unchecked.
+#[test]
+fn set_text_raises_font_not_set_on_a_fontless_string() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.register_font_object(
+        "GameFontNormal",
+        FontObject {
+            font: Some("Fonts\\FRIZQT__.TTF".into()),
+            height: Some(12.0),
+            ..FontObject::default()
+        },
+    );
+    load(
+        &s,
+        r#"<Ui><Frame name="NoFontHost"><Size x="100" y="100"/><Anchors><Anchor point="CENTER"/></Anchors>
+             <Layers><Layer><FontString name="XmlNoFont" text="from xml"/></Layer></Layers>
+           </Frame></Ui>"#,
+    );
+    s.run(
+        r#"
+        named = NoFontHost:CreateFontString("NamedNoFont")
+        unnamed = NoFontHost:CreateFontString()
+        "#,
+    )
+    .unwrap();
+    for (call, want) in [
+        ("named:SetText('x')", "NamedNoFont:SetText(): Font not set"),
+        (
+            "named:SetFormattedText('%d', 1)",
+            "NamedNoFont:SetFormattedText(): Font not set",
+        ),
+        ("unnamed:SetText('x')", "<unnamed>:SetText(): Font not set"),
+        // A face with no height makes no handle either.
+        (
+            "named:SetFont('Fonts\\\\FRIZQT__.TTF', 0); named:SetText('x')",
+            "NamedNoFont:SetText(): Font not set",
+        ),
+    ] {
+        let err = s.run(call).unwrap_err().to_string();
+        assert!(err.contains(want), "{call}: {err}");
+    }
+    s.run(
+        r#"
+        assert(named:GetText() == nil, "a raise stores nothing")
+        assert(XmlNoFont:GetText() == "from xml", "the loader's text= is unchecked")
+        named:SetFont("Fonts\\FRIZQT__.TTF", 12); named:SetText("set font")
+        assert(named:GetText() == "set font")
+        unnamed:SetFontObject(GameFontNormal); unnamed:SetFormattedText("%s", "object")
+        assert(unnamed:GetText() == "object")
+        local t = NoFontHost:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        t:SetText("template")
+        b = CreateFrame("Button", "FontedButton", NoFontHost)
+        b:SetNormalFontObject(GameFontNormal)
+        b:SetText("label")
+        b:GetFontString():SetText("label again")
+        bare = CreateFrame("Button", "BareButton", NoFontHost)
+        bare:SetText("button text never raises")
+        "#,
+    )
+    .unwrap();
+}
+
+/// A font engine whose glyphs are each 6 wide and 12 tall.
+struct SixWide;
+
+impl crate::script::TextMeasure for SixWide {
+    fn measure(&mut self, req: &crate::script::MeasureRequest) -> (f32, f32, f32) {
+        let w = req.text.chars().count() as f32 * 6.0;
+        (w, 12.0, w)
+    }
+}
+
+/// `Button:GetTextWidth` (`0x9780d0`) is the label's `GetWidth` (`0x483f30`): the declared width
+/// when the label has one, else the measured string's; 0 with no label.
+#[test]
+fn button_text_width_is_the_labels_width() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.set_text_measurer(Box::new(SixWide));
+    s.register_font_object(
+        "GameFontNormal",
+        FontObject {
+            font: Some("Fonts\\FRIZQT__.TTF".into()),
+            height: Some(12.0),
+            ..FontObject::default()
+        },
+    );
+    s.run(
+        r#"
+        local b = CreateFrame("Button", "WidthButton", UIParent)
+        assert(b:GetTextWidth() == 0, "no label")
+        b:SetNormalFontObject(GameFontNormal)
+        b:SetText("Randomize")
+        assert(b:GetTextWidth() == 54, "nine glyphs: " .. b:GetTextWidth())
+        b:GetFontString():SetWidth(80)
+        assert(b:GetTextWidth() == 80, "the declared width")
+        "#,
+    )
+    .unwrap();
+}
+
+/// The text widgets' `SetSpacing`/`GetSpacing` (EditBox `0x9756d0`, MessageFrame `0x974140`,
+/// ScrollingMessageFrame `0x972c20`) set their font's gap, unclamped, with the widget's Usage.
+#[test]
+fn text_widgets_set_and_get_their_fonts_spacing() {
+    let s = script();
+    s.run(
+        r#"
+        for _, kind in ipairs({"EditBox", "MessageFrame", "ScrollingMessageFrame"}) do
+            local f = CreateFrame(kind, "Gap" .. kind)
+            assert(f:GetSpacing() == 0, kind .. " starts at 0")
+            f:SetSpacing(3)
+            assert(f:GetSpacing() == 3, kind .. " holds its gap")
+            f:SetSpacing("-1")
+            assert(f:GetSpacing() == -1, kind .. " is not clamped")
+        end
+        "#,
+    )
+    .unwrap();
+    for (call, want) in [
+        (
+            "GapEditBox:SetSpacing()",
+            "Usage: GapEditBox:SetSpacing(spacing)",
+        ),
+        (
+            "GapScrollingMessageFrame:SetSpacing({})",
+            "Usage: GapScrollingMessageFrame:SetSpacing(spacing)",
+        ),
+        (
+            "CreateFrame('MessageFrame'):SetSpacing()",
+            "Usage: <unnamed>:SetSpacing(spacing)",
+        ),
+    ] {
+        let err = s.run(call).unwrap_err().to_string();
+        assert!(err.contains(want), "{call}: {err}");
+    }
+}
+
+/// A scrolling frame's messages step `height + spacing`: each one is a block one spacing from the
+/// next (`ScrollMessages 0x969fa0`), and its wrapped lines draw at the same gap.
+#[test]
+fn message_lines_step_the_font_height_plus_spacing() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        local f = CreateFrame("ScrollingMessageFrame", "GapChat", UIParent)
+        f:SetWidth(200); f:SetHeight(100); f:SetPoint("CENTER", 0, 0)
+        f:SetFont("Fonts\\FRIZQT__.TTF", 10)
+        f:SetSpacing(4)
+        f:AddMessage("older")
+        f:AddMessage("newer")
+        "#,
+    )
+    .unwrap();
+    s.resolve();
+    let rects: Vec<(String, f32, f32, f32)> = s
+        .extract()
+        .into_iter()
+        .filter_map(|q| match q.content {
+            QuadContent::Text {
+                text: Some(ref t),
+                spacing,
+                ..
+            } if t == "older" || t == "newer" => {
+                let r = q.rect.expect("a message band has a rect");
+                Some((t.clone(), r.bottom, r.top, spacing))
+            }
+            _ => None,
+        })
+        .collect();
+    let band = |name: &str| {
+        rects
+            .iter()
+            .find(|r| r.0 == name)
+            .unwrap_or_else(|| panic!("no {name} band in {rects:?}"))
+    };
+    let (newer, older) = (band("newer"), band("older"));
+    assert_eq!(newer.2 - newer.1, 10.0, "one row is the font height");
+    assert_eq!(older.1 - newer.2, 4.0, "one spacing between messages");
+    assert_eq!(newer.3, 4.0, "wrapped rows draw at the gap");
 }

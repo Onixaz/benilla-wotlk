@@ -526,7 +526,7 @@ mod patch_tests {
              C:SetAllPoints(P)
              T = P:CreateTexture(nil, 'ARTWORK') T:SetAllPoints(P) T:SetTexture(1, 0, 0, 1)
              U = C:CreateTexture(nil, 'OVERLAY') U:SetAllPoints(C) U:SetTexture('Interface\\Buttons\\White8x8')
-             S = C:CreateFontString(nil, 'OVERLAY') S:SetPoint('CENTER') S:SetText('hi')",
+             S = C:CreateFontString(nil, 'OVERLAY') S:SetFont('Fonts/FRIZQT__.TTF', 12) S:SetPoint('CENTER') S:SetText('hi')",
         )
         .unwrap();
         ui.resolve();

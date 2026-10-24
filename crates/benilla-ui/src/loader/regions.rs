@@ -289,7 +289,11 @@ impl Loader<'_> {
             if let Some(text) = region.attr("text") {
                 // A global-string key, not a literal (`0x703bf0`).
                 let text = self.resolve_text(text, dbg);
-                self.call_region(region_wrapper, "SetText", Some(text), dbg);
+                if let Err(e) = crate::script::store_text(self.lua, region_wrapper, Some(text)) {
+                    self.report
+                        .errors
+                        .push(format!("{dbg}: region SetText: {e}"));
+                }
             }
             if let Some(c) = color {
                 self.call_region(

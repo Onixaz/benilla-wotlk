@@ -430,7 +430,7 @@ mod tests {
         let s = UiScript::new().unwrap();
         s.eval::<()>(
             r#"local f = CreateFrame("Frame", "Holder")
-               Label = f:CreateFontString("Label", "ARTWORK")
+               Label = f:CreateFontString("Label", "ARTWORK") Label:SetFont('Fonts/FRIZQT__.TTF', 12)
                Btn = CreateFrame("Button", "Btn", f)
                Check = CreateFrame("CheckButton", "Check", f)"#,
         )
