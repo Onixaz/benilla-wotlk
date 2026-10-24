@@ -272,6 +272,21 @@ fn feed_spellbook(
             slot.cooldown = cooldowns.with_rune_leg(slot.spell_id, d, slot.cooldown, &leg, now_ms);
         }
     }
+    // The known tracking spells (`0x542030` → `0x7fdf60`), in the book's display order.
+    let tracking = fresh
+        .named()
+        .filter_map(|slot| {
+            let d = spells.catalog.get(slot.spell_id)?;
+            d.tracking_aura()
+                .then(|| benilla_ui::script::TrackingSpell {
+                    spell_id: slot.spell_id,
+                    name: d.name.clone(),
+                    icon: d.icon.clone(),
+                    active_icon: d.active_icon.clone(),
+                })
+        })
+        .collect();
+    script.set_tracking_spells(tracking, class);
     if fresh != memory.pushed {
         gate.audit("feed_spellbook", "the spellbook snapshot");
         // A checked-ring move fires `CURRENT_SPELL_CAST_CHANGED`, a book change `SPELLS_CHANGED`.

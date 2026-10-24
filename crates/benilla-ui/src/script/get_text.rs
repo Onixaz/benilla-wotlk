@@ -41,6 +41,13 @@ fn get_text(lua: &Lua, token: &str, ordinal: i64, gender: i64) -> mlua::Result<m
     .map_or_else(|| lua.create_string(""), Ok)
 }
 
+/// `FrameScript_GetText(token, -1, 0)` for a binding holding `&Lua`.
+pub(super) fn global_text(lua: &Lua, token: &str) -> String {
+    get_text(lua, token, -1, 0)
+        .map(|s| s.to_string_lossy())
+        .unwrap_or_default()
+}
+
 impl super::UiScript {
     /// `FrameScript_GetText(token, -1, 0)`, the lookup the engine makes for a line it prints
     /// itself: `token_P1` first, then the bare token, else "".

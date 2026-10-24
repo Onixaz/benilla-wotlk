@@ -205,17 +205,35 @@ impl Plugin for UiQuestPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
         lines::register(app);
-        app.init_resource::<QuestGiver>().add_systems(
-            Update,
-            (
-                // Range-close before the feed so the close fires the same frame; the feed before
-                // the input pass and the drain after it, so a click goes out the same frame.
-                close_npc_session_out_of_range::<QuestGiver>.before(feed_quest),
-                feed_quest.in_set(UiFeed),
-                drain_quest.after(UiInput),
-            ),
-        );
+        app.init_resource::<QuestGiver>()
+            .init_resource::<TrivialQuestTracking>()
+            .add_systems(
+                Update,
+                (
+                    // Range-close before the feed so the close fires the same frame; the feed
+                    // before the input pass and the drain after it, so a click goes out the same
+                    // frame.
+                    close_npc_session_out_of_range::<QuestGiver>.before(feed_quest),
+                    feed_quest.in_set(UiFeed),
+                    drain_quest.after(UiInput),
+                    read_trivial_tracking.after(UiInput),
+                ),
+            );
     }
+}
+
+/// Whether the minimap tracks low-level quests (`IsTrackingTrivialQuests 0x57bf30`), which shows
+/// the low-level quest markers over their givers.
+#[derive(Resource, Default, PartialEq)]
+pub(crate) struct TrivialQuestTracking(pub(crate) bool);
+
+/// Read the tracking choice a `SetTracking` in the tick made.
+pub(crate) fn read_trivial_tracking(
+    script: Option<NonSend<UiScript>>,
+    mut tracking: ResMut<TrivialQuestTracking>,
+) {
+    let on = script.is_some_and(|s| s.tracking_trivial_quests());
+    tracking.set_if_neq(TrivialQuestTracking(on));
 }
 
 impl NpcSession for QuestGiver {

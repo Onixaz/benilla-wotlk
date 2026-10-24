@@ -240,8 +240,10 @@ mod tooltip_item;
 mod tooltip_spell;
 mod tooltip_unit;
 mod totem;
+mod tracking;
 mod ui_errors;
 pub use tooltip_unit::TooltipTint;
+pub use tracking::{TownKind, TownType, TrackingSpell, TOWN_TYPES};
 mod trade;
 mod tradeskill;
 mod trainer;
@@ -266,7 +268,7 @@ pub use auction::{
     AuctionBid, AuctionCategory, AuctionHighBidder, AuctionItemRow, AuctionListState, AuctionQuery,
     AuctionStartRequest, AuctionState, AuctionSubCategory, BIDDER, LIST, OWNER, SORT_COLUMNS,
 };
-pub use aura::{AuraState, TrackingState};
+pub use aura::AuraState;
 pub use backdrop::{inset_atlas_bleed, pieces, Backdrop, BackdropPiece, Insets};
 pub use bank::BankState;
 pub use battlefield_positions::{BattlefieldFlagView, BattlefieldPositionView};
@@ -1009,6 +1011,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     glyph::install(lua)?;
     spell_info::install(lua)?;
     totem::install(lua)?;
+    tracking::install(lua)?;
     multicast::install(lua)?;
     pet::install(lua)?;
     gossip::install(lua)?;

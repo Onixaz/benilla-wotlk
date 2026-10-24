@@ -158,7 +158,7 @@ impl super::UiScript {
             .iter()
             .chain(model.unit_auras.values().flatten())
             .map(|a| a.spell_id);
-        let tracking = model.tracking.iter().map(|t| t.spell_id);
+        let tracking = std::iter::once(model.minimap_tracking.spell);
         let glyphs = super::glyph::glyph_spells(&model);
         rewards
             .chain(recipes)
@@ -788,43 +788,48 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             })?,
         )?;
     }
-    // GameTooltip:SetTrackingSpell(): the tracking icon's hover, the name gold over the white
-    // aura description, as the reference shows "Find Minerals" and as the aura builder's gold
-    // wrapper `0x530380` writes it; `0x532c50` itself is untraced. No tracking clears and hides.
+    // GameTooltip:SetTracking() (`0x625940`), the tracking button's hover: the town type's name
+    // gold, else the tracking spell's aura tooltip (name gold, aura description white), else
+    // `MINIMAP_TRACKING_TOOLTIP_NONE` gold.
     m.set(
-        "SetTrackingSpell",
+        "SetTracking",
         lua.create_function(|lua, this: Table| {
-            let hit = {
+            let (town, spell) = {
                 let model = crate::script::model_mut_of(lua);
-                model
-                    .tracking
-                    .as_ref()
-                    .map(|t| (t.spell_id, t.name.clone()))
+                let t = &model.minimap_tracking;
+                let spell = t
+                    .spells
+                    .iter()
+                    .find(|s| s.spell_id == t.spell && t.spell != 0)
+                    .map(|s| (s.spell_id, s.name.clone()));
+                (t.town.map(|i| super::TOWN_TYPES[i].token), spell)
             };
-            let (spell_id, fallback_name) = hit.unwrap_or((0, None));
             let h = frame_handle_of(lua, &this)?;
             {
                 let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
-            match spell_view_of(lua, spell_id, false) {
-                Some(v) => {
-                    append_line(lua, &this, (v.name.clone(), GOLD), None, false)?;
-                    let desc = if !v.aura_description.is_empty() {
-                        &v.aura_description
-                    } else {
-                        &v.description
-                    };
-                    if !desc.is_empty() {
-                        append_line(lua, &this, (desc.clone(), WHITE), None, true)?;
+            match (town, spell) {
+                (None, Some((spell_id, name))) => match spell_view_of(lua, spell_id, false) {
+                    Some(v) => {
+                        append_line(lua, &this, (v.name.clone(), GOLD), None, false)?;
+                        let desc = if !v.aura_description.is_empty() {
+                            &v.aura_description
+                        } else {
+                            &v.description
+                        };
+                        if !desc.is_empty() {
+                            append_line(lua, &this, (desc.clone(), WHITE), None, true)?;
+                        }
                     }
-                }
-                None => {
                     // No view yet: the name alone, gold.
-                    if let Some(name) = fallback_name {
-                        append_line(lua, &this, (name, GOLD), None, false)?;
-                    }
+                    None => append_line(lua, &this, (name, GOLD), None, false)?,
+                },
+                (town, _) => {
+                    let token = town.unwrap_or("MINIMAP_TRACKING_TOOLTIP_NONE");
+                    let text = super::get_text::global_text(lua, token);
+                    append_line(lua, &this, (text, GOLD), None, false)?;
                 }
             }
             super::tooltip::show_or_hide_empty(lua, h);

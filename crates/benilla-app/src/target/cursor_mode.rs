@@ -449,6 +449,19 @@ fn highlightable_flags(
     true
 }
 
+/// `GAMEOBJECT_DYNFLAG` `0x4`, which `CanUse` refuses.
+const GO_DYNFLAG_NO_USE: u32 = 0x4;
+
+/// The shared `CanUse` (`0x7112a0`) of an ordinary GameObject type: a reaction toward us above
+/// hostile (an unresolved one passes), not in use or uninteractable, and an interact-condition
+/// object only while activated for us. The trap arm and the creator-only rule are not applied.
+pub(crate) fn go_can_use(flags: u32, dyn_flags: u32, reaction: Option<u8>) -> bool {
+    reaction.is_none_or(|r| r > 1)
+        && dyn_flags & GO_DYNFLAG_NO_USE == 0
+        && flags & GO_FLAG_IN_USE_OR_NO_INTERACT == 0
+        && (flags & GO_FLAG_INTERACT_COND == 0 || dyn_flags & GO_DYNFLAG_ACTIVATE != 0)
+}
+
 /// `GAMEOBJECT_TYPE_TRAP` (6), the one type whose faction term is inverted.
 const GO_TYPE_TRAP: i32 = 6;
 

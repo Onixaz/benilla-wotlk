@@ -71,50 +71,6 @@ fn minimap_zoom_buttons_resync_when_switching_inside_and_outside() {
     assert!(enabled(&s, "MinimapZoomOut"));
 }
 
-/// Stock `MiniMapTrackingFrame` (`Minimap.xml:109-174`) follows `GetTrackingTexture()` on
-/// `PLAYER_AURAS_CHANGED`, which the aura feed fires beside `UNIT_AURA`.
-#[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn tracking_frame_follows_get_tracking_texture_across_player_auras_changed() {
-    let _data = benilla_formats::wow_data_or_skip!();
-    use benilla_ui::script::TrackingState;
-
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    s.run("function GetMinimapZoneText() return '' end")
-        .unwrap();
-    s.run("function PlaySound() end").unwrap();
-    load_xml(&s, "Interface\\FrameXML\\Fonts.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\GameTooltip.xml");
-    load_xml(&s, "Interface\\FrameXML\\UIDropDownMenu.xml");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    load_xml(&s, "Interface\\FrameXML\\BattlefieldFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\Minimap.xml");
-
-    let vis = |s: &UiScript| {
-        s.eval::<bool>("return MiniMapTrackingFrame:IsVisible()")
-            .unwrap()
-    };
-    assert!(!vis(&s), "no tracking at load — the frame starts hidden");
-
-    // A tracking aura: Find Minerals, spell 2580.
-    s.set_tracking(Some(TrackingState {
-        spell_id: 2580,
-        name: Some("Find Minerals".into()),
-        icon: Some("Interface\\Icons\\Trade_Mining".into()),
-        cancelable: true,
-    }));
-    s.fire_event("PLAYER_AURAS_CHANGED", vec![]);
-    assert!(vis(&s), "a live tracking texture shows the icon");
-
-    s.set_tracking(None);
-    s.fire_event("PLAYER_AURAS_CHANGED", vec![]);
-    assert!(!vis(&s), "no tracking texture hides the frame again");
-}
-
 /// The cluster and the stock `GameTime.xml`, the clock at `hour:minute` as the app pushes it.
 fn game_time_session(hour: u32, minute: u32) -> UiScript {
     let mut s = UiScript::new().unwrap();

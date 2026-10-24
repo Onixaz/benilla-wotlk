@@ -31,14 +31,23 @@ pub(super) fn read_initial_spells(r: &mut impl Read) -> io::Result<(Vec<u32>, Ve
     }
     let m = read_u16_le(r)?;
     let mut cooldowns = Vec::with_capacity(capacity_hint(m, 1024));
-    for _ in 0..m {
-        cooldowns.push(SpellCooldown {
+    // The book is filled before the cooldowns (`0x6df050`), so a count past the body's end, as
+    // AzerothCore sends when it skips an unsent cooldown, keeps every spell and the whole entries.
+    let entry = |r: &mut _| -> io::Result<SpellCooldown> {
+        Ok(SpellCooldown {
             spell_id: read_u32_le(r)?,
             item_id: read_u16_le(r)?,
             category: read_u16_le(r)?,
             spell_cd_ms: read_u32_le(r)?,
             category_cd_ms: read_u32_le(r)?,
-        });
+        })
+    };
+    for _ in 0..m {
+        match entry(r) {
+            Ok(cd) => cooldowns.push(cd),
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(e),
+        }
     }
     Ok((spells, cooldowns))
 }
@@ -154,6 +163,25 @@ mod tests {
                 category_cd_ms: 25_000,
             }]
         );
+    }
+
+    /// AzerothCore counts every cooldown but writes only the sendable ones: the book survives.
+    #[test]
+    fn a_cooldown_count_past_the_body_keeps_the_book_and_the_whole_entries() {
+        let mut body = vec![0u8];
+        body.extend(1u16.to_le_bytes());
+        body.extend(668u32.to_le_bytes());
+        body.extend(0u16.to_le_bytes());
+        body.extend(3u16.to_le_bytes()); // three counted, one written
+        body.extend(5225u32.to_le_bytes());
+        body.extend(0u16.to_le_bytes());
+        body.extend(0u16.to_le_bytes());
+        body.extend(1_500u32.to_le_bytes());
+        body.extend(0u32.to_le_bytes());
+        let (spells, cooldowns) = read_initial_spells(&mut &body[..]).unwrap();
+        assert_eq!(spells, vec![668]);
+        assert_eq!(cooldowns.len(), 1);
+        assert_eq!(cooldowns[0].spell_id, 5225);
     }
 
     #[test]

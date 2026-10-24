@@ -281,6 +281,11 @@ impl GroupState {
             .take(4)
     }
 
+    /// Whether `guid` is listed in the group, party or raid.
+    pub(crate) fn is_member(&self, guid: u64) -> bool {
+        self.members.iter().any(|m| m.guid == guid)
+    }
+
     /// `SMSG_GROUP_INVITE` (`0x6df1a0`): the inviter line, and the popup only when we can accept.
     pub fn apply_invited(&mut self, can_accept: bool, inviter: &str) -> Vec<UiError> {
         if !can_accept {

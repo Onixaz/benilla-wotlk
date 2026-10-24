@@ -1,4 +1,4 @@
-use crate::script::{AuraState, SpellTooltipView, TrackingState, UiScript, UnitGuids};
+use crate::script::{AuraState, SpellTooltipView, UiScript, UnitGuids};
 
 const ME: u64 = 0x10;
 const TARGET: u64 = 0xF130_0000_0000_0001;
@@ -279,42 +279,6 @@ fn cancel_unit_buff_queues_the_players_cancelable_aura() {
     s.run(r#"CancelUnitBuff("player", 9)"#).unwrap();
     assert!(s.take_cancel_aura_requests().is_empty());
     assert_eq!(s.arity(r#"CancelUnitBuff("player", 2)"#).unwrap(), 0);
-}
-
-#[test]
-fn tracking_bindings_read_the_pushed_state_and_cancel_by_spell_id() {
-    let mut s = script();
-    assert!(s
-        .eval::<bool>("return GetTrackingTexture() == nil")
-        .unwrap());
-    s.eval::<()>("CancelTrackingBuff()").unwrap();
-    assert!(s.take_cancel_aura_requests().is_empty());
-
-    s.set_tracking(Some(TrackingState {
-        spell_id: 2580,
-        name: Some("Find Minerals".into()),
-        icon: Some("Interface\\Icons\\Trade_Mining".into()),
-        cancelable: true,
-    }));
-    assert_eq!(
-        s.eval::<String>("return GetTrackingTexture()").unwrap(),
-        "Interface\\Icons\\Trade_Mining"
-    );
-    s.eval::<()>("CancelTrackingBuff()").unwrap();
-    assert_eq!(s.take_cancel_aura_requests(), vec![2580]);
-
-    s.set_tracking(Some(TrackingState {
-        spell_id: 2580,
-        cancelable: false,
-        ..Default::default()
-    }));
-    s.eval::<()>("CancelTrackingBuff()").unwrap();
-    assert!(s.take_cancel_aura_requests().is_empty());
-
-    s.set_tracking(None);
-    assert!(s
-        .eval::<bool>("return GetTrackingTexture() == nil")
-        .unwrap());
 }
 
 #[test]

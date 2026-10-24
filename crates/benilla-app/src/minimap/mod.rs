@@ -222,8 +222,10 @@ struct MinimapAssets {
     /// (`Rotating-MinimapArrow.mdx`) shows exactly one of these layers per blip source's looping
     /// sequence, so one flat sprite each draws the same ([`blips::RimArrow`]).
     rim_arrows: blips::RimArrowArt,
-    /// The unit-blip atlas (`Interface\Minimap\ObjectIcons`, five 32-px dot cells).
+    /// The object-blip atlas (`Interface\Minimap\ObjectIcons`, 8×2 cells of 32 px).
     object_icons: Option<Handle<Image>>,
+    /// The party blips' class atlas (`Interface\Minimap\PartyRaidBlips`, 8×4 cells).
+    party_blips: Option<Handle<Image>>,
     /// `SpellShapeshiftForm.dbc`, the tracking dots' creature-type override (a cat-form druid is a
     /// Beast).
     forms: Option<HashMap<u32, benilla_formats::ShapeshiftForm>>,
@@ -264,6 +266,8 @@ fn setup_minimap(
             }
             let object_icons =
                 assets.sprite_texture("Interface\\Minimap\\ObjectIcons", &mut images);
+            let party_blips =
+                assets.sprite_texture("Interface\\Minimap\\PartyRaidBlips", &mut images);
             if mask.is_none() {
                 warn!("minimap: MinimapMask.blp missing — the map will draw square");
             }
@@ -284,6 +288,7 @@ fn setup_minimap(
                 poi,
                 rim_arrows,
                 object_icons,
+                party_blips,
                 forms,
             });
         }
@@ -359,19 +364,19 @@ fn emit_minimap(
         group,
         tracked,
         self_store,
-        names,
-        go_templates,
-        locks,
+        (names, go_templates, locks, factions, reputations),
         poi_marker,
         pois,
         mut ping,
-        script,
+        mut script,
     ) = blip_inputs;
     // Hover resets every frame; the blip pass re-establishes it while the map draws.
     *blip_hover = blips::MinimapBlipHover::None;
     // Drain the `Minimap:PingLocation` click before any early return: it is spent in the frame it
     // was made, and a click on a frame the map does not draw is not a ping.
-    let click = script.and_then(|mut s| s.take_minimap_ping_request());
+    let click = script.as_mut().and_then(|s| s.take_minimap_ping_request());
+    // The town tracking type the blips filter by.
+    let town = script.as_ref().and_then(|s| s.minimap_town_tracking());
     let (Some(slot), Some(assets), Some(map), Some(catalog)) =
         (widget.0.as_ref(), assets, map, catalog)
     else {
@@ -598,7 +603,7 @@ fn emit_minimap(
     // order).
     // Our own descriptor's tracking state (private fields, only on the self entity).
     let me = self_store.iter().next();
-    // Our own guid: our own pet and minions never take a dot (`0x4eac0d`).
+    // Our own guid: our own pet and charm take the blank blip.
     let self_guid = me.map(|(_, g)| g.0);
     let tracking = me
         .map(|(s, _)| blips::SelfTracking {
@@ -611,7 +616,7 @@ fn emit_minimap(
         static BLIP_PROBE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *BLIP_PROBE.get_or_init(|| std::env::var_os("WOW_MM_BLIP_PROBE").is_some()) {
             eprintln!(
-                "BLIP-PROBE: arrow_art={} pois={} map={} wx={wx:.0} wy={wy:.0} px_per_yd={blip_px_per_yd:.3} track_c={:#x} track_r={:#x} track_s={}",
+                "BLIP-PROBE: arrow_art={} pois={} map={} wx={wx:.0} wy={wy:.0} px_per_yd={blip_px_per_yd:.3} track_c={:#x} track_r={:#x} track_s={} town={:?}",
                 blips::RimArrow::ALL
                     .iter()
                     .filter(|k| assets.rim_arrows.get(**k).is_some())
@@ -621,6 +626,7 @@ fn emit_minimap(
                 tracking.creatures,
                 tracking.resources,
                 tracking.stealthed,
+                town.map(|t| t.token),
             );
         }
         let win = window.iter().next();
@@ -639,7 +645,6 @@ fn emit_minimap(
             alpha: slot.alpha,
             wx: (wx / q).round() * q,
             wy: (wy / q).round() * q,
-            wz: wow[2],
             cursor,
             // The cursor in UI space (y-up, ÷ the seam scale): the tooltip anchor resolves in
             // 768-virtual units, not window px.
@@ -701,40 +706,62 @@ fn emit_minimap(
         });
     }
 
-    // The object dots draw last, above the player arrow (`0x4ed7b7`): tracking dots (cells 0/1),
-    // then quest (3) and party (4) dots.
+    // The party and object blips draw last, above the player arrow, in `0x581e80`'s order.
     if let Some(ctx) = &blip_ctx {
+        if let Some(party) = &assets.party_blips {
+            let class_of = |g: u64| {
+                let e = *guids.0.get(&g)?;
+                tracked.get(e).ok()?.3?.0.unit_class()
+            };
+            blips::emit_party_dots(
+                ctx, &group, &guids, &unit_pos, class_of, &names, party, &mut quads,
+            );
+        }
         if let Some(icons) = &assets.object_icons {
-            blips::emit_tracking_dots(
-                ctx,
+            let blip_world = blips::BlipWorld {
+                me: me.map(|(s, _)| s),
+                self_guid,
                 tracking,
-                &tracked,
-                quest.statuses(),
-                self_guid,
-                &names,
-                &go_templates,
-                locks.as_deref().map(|l| &l.0),
-                assets.forms.as_ref(),
-                icons,
-                player_indoors,
-                |feet| world.indoors_at(feet),
-                &mut quads,
-                &mut hover,
-            );
-            blips::emit_quest_dots(
+                town,
+                statuses: quest.statuses(),
+                names: &names,
+                templates: &go_templates,
+                locks: locks.as_deref().map(|l| &l.0),
+                forms: assets.forms.as_ref(),
+                factions: factions.as_deref(),
+                reputations: &reputations,
+                group: &group,
+            };
+            let mut hits = Vec::new();
+            let counts = blips::emit_object_blips(
                 ctx,
-                quest.statuses(),
+                &blip_world,
                 &tracked,
-                self_guid,
                 icons,
                 player_indoors,
-                // A dot NPC's own containment, the faces-only down-ray the entity lights use.
+                // An object's own containment, the faces-only down-ray the entity lights use.
                 |feet| world.indoors_at(feet),
                 &mut quads,
-                &mut hover,
+                &mut hits,
             );
-            // The in-range party dots (blue cell 4, 1.3×), last.
-            blips::emit_party_dots(ctx, &group, &guids, &unit_pos, icons, &mut quads);
+            // `WOW_MM_BLIP_PROBE`: the drawn blips per atlas cell, on each change.
+            static LAST: std::sync::Mutex<[u16; 16]> = std::sync::Mutex::new([0; 16]);
+            static COUNTS_PROBE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            if *COUNTS_PROBE.get_or_init(|| std::env::var_os("WOW_MM_BLIP_PROBE").is_some()) {
+                let mut last = LAST
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if *last != counts {
+                    *last = counts;
+                    eprintln!(
+                        "BLIP-COUNTS: by cell {counts:?} town={:?}",
+                        town.map(|t| t.token)
+                    );
+                }
+            }
+            if let (false, Some(ui)) = (hits.is_empty(), ctx.cursor_ui) {
+                hover = blips::MinimapBlipHover::Objects(hits, ui);
+            }
         }
     }
     *blip_hover = hover;

@@ -968,6 +968,9 @@ mod death_tests;
 mod duel_tests;
 
 #[cfg(test)]
+mod tracking_tests;
+
+#[cfg(test)]
 mod enchant_confirm_tests;
 
 /// The `toplevel`, mouse and `id` flags of the whole loaded tree against the reference.

@@ -164,6 +164,9 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // (`0x5e65b0`) reads once the first quest log is built and `SaveTrackedQuests` (`0x5e0240`)
     // writes; per character like the achievements.
     same("trackedQuests", "").per_character(),
+    // `0x51f3a9`, "" with flags 0x20: the minimap's town tracking type, which `LoadTrackingInfo`
+    // (`0x57e070`) writes and `LoadTrackedState` (`0x57ea60`) restores.
+    same("minimapTrackedInfo", "").per_character(),
     // `0x51e0d0` "0" and `0x51e0f3` "7", flags 0x20: the objective tracker's sort and its filter
     // bits (achievements 1, completed quests 2, remote zones 4), read on `VARIABLES_LOADED`
     // (`WatchFrame.lua:279-280`).

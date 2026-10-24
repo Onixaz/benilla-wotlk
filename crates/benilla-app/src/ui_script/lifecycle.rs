@@ -447,6 +447,11 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
     {
         script.set_unit("player", Some(seat));
     }
+    // The class the tracking restore filters by, from the same char-enum row.
+    let class_id = world
+        .get_resource::<crate::char_select::Roster>()
+        .and_then(|r| r.pending_row().map(|row| row.class))
+        .unwrap_or(0);
     // The addon version gate, read from the persisted base the fold above just made current, so a
     // character-screen "Load out of date AddOns" click counts. A bare test world is check on.
     let version_check = world
@@ -499,8 +504,12 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
         finish_ui_load_with(
             script,
             // Before `VARIABLES_LOADED`, whose `UIParent_OnEvent` arm runs the first
-            // `UpdateNameplates()` (`UIParent.lua:231-234`).
-            |script| crate::vplates::seat_legacy_settings(script, &legacy_plates),
+            // `UpdateNameplates()` (`UIParent.lua:231-234`); the minimap's town type restores
+            // there too (`LoadTrackedState 0x5128d0`).
+            |script| {
+                crate::vplates::seat_legacy_settings(script, &legacy_plates);
+                script.load_tracked_state(class_id);
+            },
             |script| {
                 crate::ui_chat::restore_chat_looks(world, script);
             },

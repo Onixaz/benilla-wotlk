@@ -132,9 +132,15 @@ impl Plugin for UiShapeshiftPlugin {
                 .in_set(UnitFeed)
                 .before(crate::ui_action::CooldownEvents)
                 .before(crate::ui_aura::AuraEvents),
-        );
+        )
+        .init_resource::<SeenForm>();
     }
 }
+
+/// The player's form byte as last seen, kept across VMs so a reload is no form change; `None`
+/// until the first sight.
+#[derive(Resource, Default)]
+pub(crate) struct SeenForm(Option<u8>);
 
 /// Build the bar from the known spells and the catalog (module doc), and diff-push it.
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
@@ -154,11 +160,13 @@ fn feed_shapeshift_bar(
     items: Res<Items>,
     commands: Res<NetCommands>,
     clock: Res<crate::ui_script::UiClock>,
-    // One tuple for Bevy's 16-param ceiling: the spell mods and the rune table and costs.
-    (spell_mods, runes, rune_costs): (
+    // One tuple for Bevy's 16-param ceiling: the spell mods, the rune table and costs, and the
+    // form byte the auto-tracking edge reads.
+    (spell_mods, runes, rune_costs, mut seen_form): (
         Res<crate::spell::SpellModifiers>,
         Option<Res<crate::ui_rune::Runes>>,
         Option<Res<crate::ui_rune::RuneCosts>>,
+        ResMut<SeenForm>,
     ),
     mut memory: Local<crate::ui_script::VmMemo<StanceMemory>>,
 ) {
@@ -172,9 +180,25 @@ fn feed_shapeshift_bar(
         memory.form_byte = form_byte;
         script.set_shapeshift_form_byte(form_byte);
     }
+    let entered_form = store.is_some()
+        && seen_form
+            .0
+            .replace(form_byte)
+            .is_some_and(|was| was != form_byte)
+        && form_byte != 0;
     let Some(spells) = spells else {
         return;
     };
+    if entered_form {
+        // `UsableInShapeshift`: bit `form − 1` of the 64-bit `Stances` mask (`0x7fe850`).
+        let bit = u64::from(form_byte) - 1;
+        script.track_in_form(|id| {
+            spells.catalog.get(id).is_some_and(|d| {
+                let mask = u64::from(d.stances) | (u64::from(d.stances_high) << 32);
+                bit < 64 && mask & (1 << bit) != 0
+            })
+        });
+    }
     let now = Instant::now();
     // The frame's clock pair: a local `Instant::now()` would wobble the derived start.
     let (anchor, ui_now) = (clock.anchor, clock.ui_now);

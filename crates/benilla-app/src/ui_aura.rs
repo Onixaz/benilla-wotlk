@@ -9,7 +9,7 @@ use bevy::prelude::*;
 
 use benilla_formats::{SpellCatalog, SpellDurationCatalog};
 use benilla_protocol::messages::{RecordAura, AURA_UPDATE_FLAG_HARMFUL};
-use benilla_ui::script::{AuraState, ScriptValue, TrackingState, UiScript};
+use benilla_ui::script::{AuraState, ScriptValue, UiScript};
 
 use crate::char_select::ClientState;
 use crate::net::{
@@ -26,7 +26,7 @@ use crate::unit_auras::{UnitAura, UnitAuras};
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct AuraEvents;
 
-/// Adds the aura feed and the `CancelPlayerBuff`/`CancelTrackingBuff` drain.
+/// Adds the aura feed and the `CancelUnitBuff`/`SetTracking` cancel drain.
 pub(crate) struct UiAuraPlugin;
 
 impl Plugin for UiAuraPlugin {
@@ -55,8 +55,6 @@ struct AuraFeedMemo {
     present: bool,
     /// The player's list inputs as last pushed: a refresh moves an expiry, an apply a spell.
     last: Vec<AuraInput>,
-    /// The tracking spell: a tracking switch changes no list, but the minimap needs the event.
-    tracking_last: Option<u32>,
     /// Every other unit's list, by guid, the resolver's inputs and their pushes.
     units: units::UnitAuras,
 }
@@ -281,7 +279,7 @@ fn until_cancelled(
 /// index rebuild admits a slot (`0x72c510`): an id with no `Spell.dbc` row is never indexed
 /// (`0x72c73d`-`0x72c75f`), so a server-only spell takes no `UnitAura` index; then
 /// `CanShowAura 0x53d580`, whose never-display attributes are modelled here, not its area-aura,
-/// caster or aura-vision arms. Tracking spells go to the tracking feed instead. With no catalog
+/// caster or aura-vision arms; tracking spells carry `AttributesEx & 0x10000000`. With no catalog
 /// at all every aura stays listed.
 fn shown_in_aura_ui(catalog: Option<&SpellCatalog>, spell_id: u32) -> bool {
     let Some(catalog) = catalog else {
@@ -289,24 +287,7 @@ fn shown_in_aura_ui(catalog: Option<&SpellCatalog>, spell_id: u32) -> bool {
     };
     catalog
         .get(spell_id)
-        .is_some_and(|d| !d.hidden_from_aura_bar() && !d.tracking_aura())
-}
-
-/// The player's tracking aura, the reference's global `0xbc6378`: the rebuild's walk overwrites
-/// it per tracking aura, so the last wins (`0x4e4302`), after the attribute test; a catalog miss
-/// cannot be told apart and goes to the bar. Read by `GetTrackingTexture`, `CancelTrackingBuff`
-/// and `GameTooltip:SetTrackingSpell` ([`UiScript::set_tracking`]).
-fn tracking_state_of(catalog: Option<&SpellCatalog>, auras: &[&UnitAura]) -> Option<TrackingState> {
-    let catalog = catalog?;
-    auras.iter().rev().find_map(|a| {
-        let d = catalog.get(a.spell_id)?;
-        (!d.hidden_from_aura_bar() && d.tracking_aura()).then(|| TrackingState {
-            spell_id: a.spell_id,
-            name: Some(d.name.clone()),
-            icon: d.icon.clone(),
-            cancelable: a.is_cancelable(),
-        })
-    })
+        .is_some_and(|d| !d.hidden_from_aura_bar())
 }
 
 /// The units the resolver's guid globals name, from `UnitTokens`' own sources.
@@ -358,9 +339,16 @@ fn feed_auras(
     let inputs: Vec<AuraInput> = table_inputs(self_table, catalog, true).collect();
     let list = aura_list(ctx, &inputs);
 
-    // Before the memory update, so a tracking change joins the edge key.
-    let tracking = tracking_state_of(catalog, &self_table.listed().collect::<Vec<_>>());
-    let tracking_spell = tracking.as_ref().map(|t| t.spell_id);
+    // The minimap's tracking spell follows a known tracking spell's aura on and off the player
+    // (`0x727760` add, `0x722090` removal).
+    let tracking_spell = self_table
+        .listed()
+        .filter(|a| script.is_tracking_spell(a.spell_id))
+        .last()
+        .map_or(0, |a| a.spell_id);
+    if tracking_spell != script.tracking_spell() {
+        script.set_tracking_spell(tracking_spell);
+    }
 
     if let Some(period) = trace_period() {
         if bevy_now - mem.traced_at >= period {
@@ -372,10 +360,9 @@ fn feed_auras(
     // This VM's keys: a `/reload`'s new VM starts empty, so every edge re-fires.
     let memo = mem.vm.get(&script);
 
-    // Fire on a discrete change, never on the countdown; a refresh and a tracking switch count.
-    let changed = !memo.present || inputs != memo.last || tracking_spell != memo.tracking_last;
+    // Fire on a discrete change, never on the countdown; a refresh counts.
+    let changed = !memo.present || inputs != memo.last;
     memo.last = inputs;
-    memo.tracking_last = tracking_spell;
     memo.present = true;
 
     if changed && std::env::var_os("BENILLA_AURA_DUMP").is_some() {
@@ -466,7 +453,6 @@ fn feed_auras(
     }
 
     script.set_player_auras(list);
-    script.set_tracking(tracking);
     if changed {
         script.fire_event("UNIT_AURA", vec![ScriptValue::Str("player".into())]);
         // The 1.12.1 buff bar's own event, with no arguments; `MiniMapTrackingFrame` registers it.
@@ -486,12 +472,12 @@ fn end_session_aura_state(script: Option<NonSendMut<UiScript>>) {
     if let Some(mut script) = script {
         script.clear_auras();
         script.set_unit_guids(&Default::default());
-        script.set_tracking(None);
+        script.clear_tracking();
     }
     // No `AuraFeedMemory` reset: its edge keys die with the VM.
 }
 
-/// A `CMSG_CANCEL_AURA` per queued `CancelPlayerBuff` or `CancelTrackingBuff`, naming the spell,
+/// A `CMSG_CANCEL_AURA` per queued `CancelUnitBuff` or `SetTracking`, naming the spell,
 /// not the slot (`0x6e7040`).
 fn drain_aura_cancels(script: Option<NonSendMut<UiScript>>, net: Res<NetCommands>) {
     let Some(mut script) = script else {

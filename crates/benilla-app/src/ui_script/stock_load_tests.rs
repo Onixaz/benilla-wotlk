@@ -4,10 +4,7 @@
 use crate::local_state::test_env::ENV_LOCK;
 
 /// The raises whose frame waits on a port of its own, each by the frame that raises and its issue.
-pub(super) const UNPORTED: [(&str, &str); 2] = [
-    ("MiniMapTrackingDropDown: OnLoad", "#424, minimap tracking"),
-    ("ChannelFrame: OnLoad", "#470, the channel pane"),
-];
+pub(super) const UNPORTED: [(&str, &str); 1] = [("ChannelFrame: OnLoad", "#470, the channel pane")];
 
 /// The core alone, a level 60 human warrior seated as the in-game load always has one.
 #[test]

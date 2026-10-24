@@ -8,22 +8,19 @@
 //! - Out of range within 694.444 yd: the first 3 by (`Importance` signed ascending, distance),
 //!   on the 0.8 rim, each rotated to point at its POI in its source's art ([`RimArrow`]).
 //!
-//! Dots come from the ObjectIcons classifier `0x4eaa90`. A unit or player must first be alive, not
-//! our own charm or summon, and trackable ([`dots`]'s `unit_dot_eligible`). Then quest status 7
-//! draws the gold cell 3 (status 6 draws nothing; green cell 2 is never used in 1.12), and every
-//! other object falls through to tracking: a GameObject passing `0x5ed2b0` draws gold cell 0, a
-//! unit passing `0x5ed210` red cell 1, against the `PLAYER_TRACK_CREATURES`/`RESOURCES` masks.
-//! Party members are blue cell 4. Dots cull at the view radius in 3-D distance and draw last.
+//! The object blips are [`dots`]': the town tracking type, quest status, an unlearned flight
+//! master and the tracking masks each give a cell of `ObjectIcons.blp`, culled at 0.8 of the view
+//! radius and drawn last.
 //!
-//! Blip sizes are frozen once by the CGMinimapFrame ctor (`0x4edbc0`) against a 140.8-px basis.
+//! Blip sizes are frozen once by the CGMinimapFrame ctor against a 140.8-px basis.
 //!
 //! Not built: the landmark `WorldStateID` gate (`0x6d9b27`); the per-source rim-arrow z-order
 //! (bottom to top landmark, party, quest, gossip, corpse, from `+0x48` as a frame-level offset),
 //! which conflicts with `0x4ed7b7` drawing the dots last and is unsettled; and static blip slot 0,
 //! `SelectQuestLogEntry()`'s gold guide arrow at the quest's POI (`0x4def70`).
 //!
-//! Deviation: dots re-project every frame, where the reference draws coordinates about 1 s
-//! stale, because that staleness is a throttle quirk.
+//! Deviation: blips re-project every frame, where the reference rebuilds them about once a second
+//! (`0x581e80`), because that staleness is a throttle quirk.
 //!
 //! The cross-interior grey (`0xffb0b0b0`) comes from an indoor-containment mismatch; the
 //! reference's compare (`0x670540`) is untraced. The tooltip sits at the cursor; its exact seat
@@ -31,7 +28,7 @@
 
 mod dots;
 
-pub(super) use dots::{emit_party_dots, emit_quest_dots, emit_tracking_dots, SelfTracking};
+pub(super) use dots::{emit_object_blips, emit_party_dots, BlipWorld, SelfTracking};
 
 use bevy::ecs::system::NonSendMut;
 use bevy::math::Rect;
@@ -141,11 +138,23 @@ pub(crate) enum MinimapBlipHover {
     None,
     /// A landmark's name and the cursor's UI-space point, the tooltip's seat.
     Landmark(String, Vec2),
-    /// A unit dot's guid, resolved through the name cache, the cursor point, and whether the dot
-    /// drew grey; the tooltip line greys the same way (`|cffb0b0b0`).
-    Npc(u64, Vec2, bool),
-    /// A tracked GameObject dot: its template name, the cursor point and the grey flag.
-    TrackedGo(String, Vec2, bool),
+    /// The object blips under the cursor in draw order, and the cursor point (`0x57c720`).
+    Objects(Vec<ObjectHover>, Vec2),
+}
+
+/// One hovered object blip: its name, whether it drew grey, and a tracked trainer's title.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ObjectHover {
+    pub(crate) name: HoverName,
+    pub(crate) grey: bool,
+    pub(crate) title: Option<String>,
+}
+
+/// How a hovered blip names itself: a unit through the name cache, a GameObject by its template.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum HoverName {
+    Guid(u64),
+    Known(String),
 }
 
 /// The blip layer's system inputs, tupled to keep `emit_minimap` under Bevy's 16-parameter cap.
@@ -159,9 +168,13 @@ pub(super) type BlipInputs<'w, 's> = (
     Res<'w, crate::ui_party::GroupState>,
     TrackedCandidates<'w, 's>,
     Query<'w, 's, (&'static ObjectStore, &'static Guid), With<SelfPlayer>>,
-    Res<'w, NameCache>,
-    Res<'w, GameObjectTemplates>,
-    Option<Res<'w, crate::go_templates::Locks>>,
+    (
+        Res<'w, NameCache>,
+        Res<'w, GameObjectTemplates>,
+        Option<Res<'w, crate::go_templates::Locks>>,
+        Option<Res<'w, crate::target::Factions>>,
+        Res<'w, crate::net::Reputations>,
+    ),
     Res<'w, crate::poi_marker::PoiMarker>,
     Option<Res<'w, crate::area_poi::AreaPoiRes>>,
     ResMut<'w, super::MinimapPing>,
@@ -177,11 +190,12 @@ pub(super) type TrackedCandidates<'w, 's> = Query<
         &'static NetEntity,
         &'static GlobalTransform,
         Option<&'static ObjectStore>,
+        Option<&'static crate::ui_taxi::FlightMasterStatus>,
     ),
     Without<Embodied>,
 >;
 
-/// The frame geometry the blip emitters draw in; `wx`, `wy`, `wz` are the player's position.
+/// The frame geometry the blip emitters draw in; `wx`, `wy` are the player's position.
 pub(super) struct BlipCtx {
     pub(super) center: Vec2,
     pub(super) side: f32,
@@ -192,7 +206,6 @@ pub(super) struct BlipCtx {
     pub(super) alpha: f32,
     pub(super) wx: f32,
     pub(super) wy: f32,
-    pub(super) wz: f32,
     /// The cursor in the quads' y-down logical px.
     pub(super) cursor: Option<Vec2>,
     /// The cursor in y-up UI space; the reference seats the blip tooltip at the cursor, its exact
@@ -415,10 +428,8 @@ pub(super) fn drive_blip_tooltip(
     let show = match &*hover {
         MinimapBlipHover::None => None,
         MinimapBlipHover::Landmark(name, at) => Some((name.clone(), *at, false)),
-        MinimapBlipHover::Npc(npc, at, grey) => names
-            .resolve(*npc, &commands)
-            .map(|n| (n.to_string(), *at, *grey)),
-        MinimapBlipHover::TrackedGo(name, at, grey) => Some((name.clone(), *at, *grey)),
+        MinimapBlipHover::Objects(hits, at) => object_tooltip_text(hits, &names, &commands)
+            .map(|t| (t, *at, hits.iter().all(|h| h.grey))),
     };
     match (&show, &*last) {
         // Same blip: the reference's blip tooltip follows the cursor.
@@ -438,6 +449,30 @@ pub(super) fn drive_blip_tooltip(
         }
         (None, None) => {}
     }
+}
+
+/// The object blips' tooltip text (`0x57c720`): one name a line, a tracked trainer's title on
+/// the next as ` <title>`; a name not yet cached is skipped.
+fn object_tooltip_text(
+    hits: &[ObjectHover],
+    names: &NameCache,
+    commands: &NetCommands,
+) -> Option<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for h in hits {
+        let name = match &h.name {
+            HoverName::Known(n) => n.clone(),
+            HoverName::Guid(g) => match names.resolve(*g, commands) {
+                Some(n) => n.to_string(),
+                None => continue,
+            },
+        };
+        lines.push(name);
+        if let Some(t) = &h.title {
+            lines.push(format!(" <{t}>"));
+        }
+    }
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
 #[cfg(test)]

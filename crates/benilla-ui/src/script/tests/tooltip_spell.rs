@@ -121,18 +121,14 @@ fn a_pet_book_hover_reads_the_pets_book_not_the_players() {
     assert!(s.take_errors().is_empty());
 }
 
-/// `SetTrackingSpell`, as the reference draws it: a gold name over the white aura description,
-/// with no cost, cast time or remaining line.
+/// `SetTracking` with a tracking spell active, the aura tooltip (`0x625940` → `SetBuff`): a gold
+/// name over the white aura description, with no cost, cast time or remaining line.
 #[test]
 fn tracking_hover_renders_gold_name_over_white_description() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
-    s.set_tracking(Some(TrackingState {
-        spell_id: 2580,
-        name: Some("Find Minerals".into()),
-        icon: Some("Interface\\Icons\\Trade_Mining".into()),
-        cancelable: true,
-    }));
+    s.set_tracking_spells(vec![find_minerals()], 1);
+    s.set_tracking_spell(2580);
     s.set_spell_tooltip(
         2580,
         SpellTooltipView {
@@ -149,8 +145,8 @@ fn tracking_hover_renders_gold_name_over_white_description() {
         local f = CreateFrame("Frame", "TRK"); f:SetPoint("CENTER", 0, 0); f:SetWidth(10); f:SetHeight(10)
         local tt = CreateFrame("GameTooltip", "TT")
         tt:SetOwner(f, "ANCHOR_BOTTOMLEFT")
-        tt:SetTrackingSpell()
-        assert(tt:IsShown(), "SetTrackingSpell shows")
+        tt:SetTracking()
+        assert(tt:IsShown(), "SetTracking shows")
         assert(tt:NumLines() == 2, "name + description only, got " .. tt:NumLines())
         assert(TTTextLeft1:GetText() == "Find Minerals")
         assert(TTTextLeft2:GetText() == "Finding Minerals.")
@@ -1142,12 +1138,8 @@ fn the_spell_subjects_are_what_the_setters_read_from_the_vm() {
     s.set_unit_auras(0xF140_0000_0000_0077, Some(vec![aura(172)]));
     s.set_unit_auras(0x21, Some(vec![aura(589)]));
     s.set_unit_auras(0x22, Some(vec![aura(8921)]));
-    s.set_tracking(Some(TrackingState {
-        spell_id: 2580,
-        name: Some("Find Minerals".into()),
-        icon: None,
-        cancelable: true,
-    }));
+    s.set_tracking_spells(vec![find_minerals()], 1);
+    s.set_tracking_spell(2580);
 
     let mut subjects = s.spell_tooltip_subjects();
     subjects.sort_unstable();
@@ -1491,4 +1483,14 @@ fn a_wait_replaced_by_an_earlier_re_render_is_not_replayed() {
         "Firebolt"
     );
     assert!(s.take_errors().is_empty());
+}
+
+/// Find Minerals as the book feeds it.
+fn find_minerals() -> TrackingSpell {
+    TrackingSpell {
+        spell_id: 2580,
+        name: "Find Minerals".into(),
+        icon: Some(r"Interface\Icons\Spell_Nature_Earthquake".into()),
+        active_icon: None,
+    }
 }

@@ -176,7 +176,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // CancelPlayerBuff(buffIndex) (`0x4e49a0`): no return values on any path. It queues the spell
     // id, the one `u32` of `CMSG_CANCEL_AURA` (0x136, `Spell_C::CancelAura` `0x6e7040`), on the
-    // queue `CancelTrackingBuff` uses; a refused or absent aura is a silent no-op.
+    // queue `SetTracking` uses; a refused or absent aura is a silent no-op.
     g.set(
         "CancelPlayerBuff",
         lua.create_function(|lua, index: Value| {

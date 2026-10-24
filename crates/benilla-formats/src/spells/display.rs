@@ -663,8 +663,8 @@ impl SpellDisplay {
         mask
     }
 
-    /// A tracking spell (`EffectApplyAuraName` 44, 45 or 151): never in an aura display
-    /// (`0x519860`); the player's last one feeds `GetTrackingTexture`, the minimap icon.
+    /// A tracking spell (`EffectApplyAuraName` 44, 45 or 151, `SpellIsTrackingAura 0x7fdf60`):
+    /// a known one is listed in the minimap's tracking menu.
     pub fn tracking_aura(&self) -> bool {
         self.effect_apply_aura
             .iter()

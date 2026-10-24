@@ -259,11 +259,11 @@ pub(crate) struct Model {
     pub(crate) unit_guids: super::UnitGuids,
     /// Each unit's running cast and channel, for `UnitCastingInfo` and `UnitChannelInfo`.
     pub(crate) unit_casts: super::unit_cast::UnitCasts,
-    /// Spell ids the cancel verbs queued (`CancelPlayerBuff`, `CancelTrackingBuff`, …), one
+    /// Spell ids the cancel verbs queued (`CancelUnitBuff`, `SetTracking`, …), one
     /// `CMSG_CANCEL_AURA` each.
     pub(crate) cancel_aura_requests: Vec<u32>,
-    /// The player's active tracking aura, behind `GetTrackingTexture`.
-    pub(crate) tracking: Option<super::aura::TrackingState>,
+    /// The minimap's tracking spell and town type, behind the tracking verbs.
+    pub(crate) minimap_tracking: super::tracking::TrackingModel,
     /// The calls that touch the selection, the cast or the targeting cursor, in call order.
     pub(crate) script_calls: Vec<super::calls::ScriptCall>,
     /// The binding functions' queue, gate depth and mouselook state.
@@ -1229,7 +1229,7 @@ impl Model {
             unit_guids: Default::default(),
             unit_casts: Default::default(),
             cancel_aura_requests: Vec::new(),
-            tracking: None,
+            minimap_tracking: Default::default(),
             script_calls: Vec::new(),
             input: Default::default(),
             drop_item_on_unit: Vec::new(),

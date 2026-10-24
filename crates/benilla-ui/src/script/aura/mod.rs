@@ -60,21 +60,6 @@ pub struct AuraState {
     pub consolidate: bool,
 }
 
-/// The player's active tracking aura, the reference's tracking global (`0xbc6378`): the cache
-/// rebuild records a spell with a tracking effect (`0x2c`, `0x2d`, `0x97`) there instead of in
-/// the display cache, and `GetTrackingTexture` (`0x4e4a20`) reads it.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct TrackingState {
-    /// `Spell.dbc` id, the `CMSG_CANCEL_AURA` payload of `CancelTrackingBuff`.
-    pub spell_id: u32,
-    /// The spell's name; `None` when the catalog lacks the id.
-    pub name: Option<String>,
-    /// The icon's extensionless MPQ path, `GetTrackingTexture`'s return.
-    pub icon: Option<String>,
-    /// The wire's `AFLAG_CANCELABLE` on the aura's slot, `CancelTrackingBuff`'s gate.
-    pub cancelable: bool,
-}
-
 /// The cancel gate of `CancelPlayerBuff` (`0x4e49a0`, `0x4e49fb`-`0x4e4a14`):
 /// a helpful aura with `AFLAG_CANCELABLE` (vmangos: unless `SPELL_ATTR_NO_AURA_CANCEL`), or any
 /// aura of a channeled spell, the only negative aura that cancels (breaking a channel on you).
@@ -388,11 +373,6 @@ impl super::UiScript {
         self.model_ref().unit_guids.tokens_naming(guid)
     }
 
-    /// Push or clear the player's active [`TrackingState`].
-    pub fn set_tracking(&mut self, tracking: Option<TrackingState>) {
-        set_field!(self, tracking, tracking);
-    }
-
     /// The spell ids of the buffs (`helpful`) or debuffs of the unit `token` names, in the order
     /// `UnitBuff`/`UnitDebuff` enumerate them with no filter string; empty for nobody.
     pub fn aura_spell_ids(&self, token: &str, helpful: bool) -> Vec<u32> {
@@ -472,32 +452,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     player_buff::install(lua)?;
-
-    // GetTrackingTexture() (`0x4e4a20`): the tracking spell's icon or nil, which shows or hides
-    // the stock `MiniMapTrackingFrame` (`Minimap.xml:150-159`).
-    g.set(
-        "GetTrackingTexture",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.tracking.as_ref().and_then(|t| t.icon.clone()))
-        })?,
-    )?;
-
-    // CancelTrackingBuff() (`0x4e4a80`), the tracking frame's right-click: queues the tracking
-    // spell's id behind its `AFLAG_CANCELABLE`; with no tracking it is a no-op.
-    g.set(
-        "CancelTrackingBuff",
-        lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            if let Some(t) = model.tracking.as_ref().filter(|t| t.cancelable) {
-                let id = t.spell_id;
-                model.cancel_aura_requests.push(id);
-            }
-            Ok(())
-        })?,
-    )?;
 
     Ok(())
 }

@@ -16,7 +16,6 @@ const BEYOND_REFERENCE: &[&str] = &[
     "AssistByName",
     "CancelMeetingStoneRequest",
     "CancelPlayerBuff",
-    "CancelTrackingBuff",
     "ChannelModerate",
     "CheckPetUntrainerDist",
     "CheckReadyCheckTime",

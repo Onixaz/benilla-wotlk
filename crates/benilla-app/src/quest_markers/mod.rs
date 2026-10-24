@@ -59,11 +59,13 @@ fn seq_loop(info: &BillboardInfo, anim_id: u16) -> Option<BoneScaleAnim> {
 /// The marker M2 per dialog status: 12340 maps the status to a row through `0xa34f5c` and the row
 /// to a file through `0xadaca0` (12-byte rows of handle, scale and path), loading the `.mdx` names
 /// as `.m2`. The low-level statuses 2-4 draw only under the minimap's low-level quest tracking
-/// (`0x745dd7`, `0x57bf30`), which benilla does not model, so they draw nothing; NONE 0 draws
-/// nothing either.
-fn marker_model(status: u32) -> Option<&'static str> {
+/// (`UpdateInteractIcon` reads `IsTrackingTrivialQuests 0x57bf30`); NONE 0 draws nothing.
+fn marker_model(status: u32, trivial: bool) -> Option<&'static str> {
     use benilla_protocol::messages::dialog_status::*;
     match status {
+        LOW_LEVEL_AVAILABLE if trivial => Some("Interface\\Buttons\\TalkToMe.m2"),
+        LOW_LEVEL_REWARD_REP if trivial => Some("Interface\\Buttons\\TalkToMeQuestion_LTBlue.m2"),
+        LOW_LEVEL_AVAILABLE_REP if trivial => Some("Interface\\Buttons\\TalkToMeBlue.m2"),
         UNAVAILABLE => Some("Interface\\Buttons\\TalkToMeGrey.m2"),
         INCOMPLETE => Some("Interface\\Buttons\\TalkToMeQuestion_Grey.m2"),
         REWARD_REP => Some("Interface\\Buttons\\TalkToMeQuestion_LTBlue.m2"),
@@ -138,10 +140,12 @@ fn sync_markers(
     anchors: Query<&BoneAttach>,
     mounts: Query<(), With<crate::entities::mount::MountChild>>,
     mut live: Local<HashMap<u64, MarkerInst>>,
+    trivial: Option<Res<crate::ui_quest::TrivialQuestTracking>>,
 ) {
     if assets.is_none() {
         return; // no client data: nothing could build
     }
+    let trivial = trivial.is_some_and(|t| t.0);
     // Rebuild the whole instance, never part of it (that duplicates the root's cards), when the
     // seat is gone with a rebuilt visual or the slot moved on a mount or dismount, which keeps the
     // seat. The reference re-runs the attach from the mount watch (`0x5ffa50` calls `0x6074c0`).
@@ -167,7 +171,7 @@ fn sync_markers(
     let mut desired_by_npc: HashMap<u64, &'static str> = HashMap::new();
     for (&npc, &status) in quest.statuses() {
         if index.0.contains_key(&npc) {
-            if let Some(path) = marker_model(status) {
+            if let Some(path) = marker_model(status, trivial) {
                 desired_by_npc.insert(npc, path);
             }
         }
@@ -522,7 +526,7 @@ impl Plugin for QuestMarkersPlugin {
             Update,
             (
                 query_statuses,
-                sync_markers,
+                sync_markers.after(crate::ui_quest::read_trivial_tracking),
                 build_markers,
                 pose_markers,
                 bake_seat_scale,
@@ -555,6 +559,28 @@ mod tests {
 
     /// A mount keeps the rider's visual and so the seat, so only this comparison sees the slot
     /// move between 18 and 29.
+    /// `s_questStatusIcons` (`0xa34f5c`) maps the low-level statuses to rows 1-3 of the file
+    /// table (`0xadaca0`), shown only while the low-level quest type is tracked.
+    #[test]
+    fn low_level_markers_show_only_under_trivial_quest_tracking() {
+        for status in 2..=4 {
+            assert_eq!(marker_model(status, false), None, "status {status}");
+        }
+        assert_eq!(
+            marker_model(2, true),
+            Some("Interface\\Buttons\\TalkToMe.m2")
+        );
+        assert_eq!(
+            marker_model(3, true),
+            Some("Interface\\Buttons\\TalkToMeQuestion_LTBlue.m2")
+        );
+        assert_eq!(
+            marker_model(4, true),
+            Some("Interface\\Buttons\\TalkToMeBlue.m2")
+        );
+        assert_eq!(marker_model(8, false), marker_model(8, true));
+    }
+
     #[test]
     fn a_seat_goes_stale_when_its_slot_moves_but_never_on_a_reading_it_could_not_take() {
         let built_at_18 = root(
