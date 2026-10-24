@@ -243,6 +243,137 @@ impl LayoutScope {
         self.staged.clear();
     }
 
+    /// Grow the per-id arrays to hold `id`, for a node adopted between derivations.
+    fn hold(&mut self, id: u32) {
+        let n = id as usize + 1;
+        if self.node_of.len() < n {
+            self.now.resize(n, NO_NODE);
+            self.node_of.resize(n, u32::MAX);
+            self.dep_head.resize(n, u32::MAX);
+            self.dirty.resize(n, false);
+        }
+        if self.last.len() < n {
+            self.last.resize(n, NO_NODE);
+        }
+    }
+
+    /// Adopt a frame minted since the graph was built: a roster row and its anchor edges, as the
+    /// full derivation (`derive_layout_graph`) gives every live frame, so a precise touch names it.
+    pub(crate) fn adopt_frame(&mut self, h: FrameHandle, id: u32, input: &LayoutInput) {
+        self.hold(id);
+        if self.node_of[id as usize] != u32::MAX {
+            return;
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        let i = self.plan.len() as u32;
+        self.plan.push((h, id, None));
+        self.node_of[id as usize] = i;
+        for a in &input.anchors {
+            self.hold(a.relative_to);
+            self.edge(id, a.relative_to);
+        }
+    }
+
+    /// Adopt a region that became anchored since the graph was built: a roster row, its anchor
+    /// edges and its owner edge, as the derivation gives every live, anchored region.
+    pub(crate) fn adopt_region(
+        &mut self,
+        rh: RegionHandle,
+        id: u32,
+        owner: (FrameHandle, Option<u32>),
+        is_fontstring: bool,
+        anchors: &[Anchor],
+    ) {
+        self.hold(id);
+        if self.node_of[id as usize] != u32::MAX {
+            return;
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        let idx = self.regions.len() as u32 | REGION_TAG;
+        self.regions.push(RegionRow {
+            rh,
+            id,
+            owner: owner.0,
+            is_fontstring,
+        });
+        self.node_of[id as usize] = idx;
+        for a in anchors {
+            self.hold(a.relative_to);
+            self.edge(id, a.relative_to);
+        }
+        if let Some(o) = owner.1 {
+            self.hold(o);
+            self.edge(id, o);
+        }
+    }
+
+    /// Point frame node `id`'s edges at a ScrollFrame override, or back at its own `anchors` with
+    /// `None`, as the derivation does for a live ScrollFrame's live child. `false`: no frame node.
+    pub(crate) fn set_override(
+        &mut self,
+        id: u32,
+        over: Option<Anchor>,
+        anchors: &[Anchor],
+    ) -> bool {
+        let Some(&n) = self.node_of.get(id as usize) else {
+            return false;
+        };
+        if n == u32::MAX || n & REGION_TAG != 0 {
+            return false;
+        }
+        match self.plan[n as usize].2 {
+            Some(old) => self.unlink_edge(old.relative_to, id),
+            None => {
+                for a in anchors {
+                    self.unlink_edge(a.relative_to, id);
+                }
+            }
+        }
+        match over {
+            Some(a) => {
+                self.hold(a.relative_to);
+                self.edge(id, a.relative_to);
+            }
+            None => {
+                for a in anchors {
+                    self.hold(a.relative_to);
+                    self.edge(id, a.relative_to);
+                }
+            }
+        }
+        self.plan[n as usize].2 = over;
+        true
+    }
+
+    /// Retire node `id`, whose widget died, when nothing in the graph reads its rect: unlink its
+    /// edges to `targets` (its anchor targets and owner) and forget its hash, so the graph is the
+    /// derivation's without it. `false` leaves it for a full derivation: a dependent would re-solve.
+    pub(crate) fn retire(&mut self, id: u32, targets: &[u32]) -> bool {
+        let Some(&n) = self.node_of.get(id as usize) else {
+            return self
+                .dep_head
+                .get(id as usize)
+                .is_none_or(|&h| h == u32::MAX);
+        };
+        if self.dep_head[id as usize] != u32::MAX {
+            return false;
+        }
+        if n == u32::MAX {
+            return true; // no node: nothing reads it and nothing to unlink
+        }
+        for &t in targets {
+            self.unlink_edge(t, id);
+        }
+        self.node_of[id as usize] = u32::MAX;
+        if let Some(last) = self.last.get_mut(id as usize) {
+            if *last != NO_NODE {
+                self.last_count -= 1;
+            }
+            *last = NO_NODE;
+        }
+        true
+    }
+
     /// Whether `id` is a node of the cached graph, the only kind a precise touch may name.
     pub(crate) fn has_node(&self, id: u32) -> bool {
         self.node_of
@@ -356,11 +487,15 @@ impl LayoutScope {
         self.last_screen = Some(screen);
     }
 
-    /// [`Self::commit`] for an incremental pass: only the re-hashed slots. `last_count` and
-    /// `last_screen` stay, since a structural change always takes the full path.
+    /// [`Self::commit`] for an incremental pass: only the re-hashed slots. An adopted node's first
+    /// hash counts it into `last_count`; `last_screen` stays, as a screen move takes the full path.
     fn commit_incremental(&mut self) {
         for &(id, h) in &self.staged {
-            self.last[id as usize] = h;
+            let slot = &mut self.last[id as usize];
+            if *slot == NO_NODE && h != NO_NODE {
+                self.last_count += 1;
+            }
+            *slot = h;
         }
         self.staged.clear();
     }

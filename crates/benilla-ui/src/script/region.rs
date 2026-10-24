@@ -486,15 +486,32 @@ pub(super) fn region_type_name(model: &Model, rh: RegionHandle) -> &'static str 
 /// wrapper raises as stale; the reference frees too, as `CSimpleButton::SetFontString 0x96f7b0`
 /// deletes the label it replaces.
 pub(crate) fn free_region(model: &mut Model, rh: RegionHandle) {
+    // The edges the cached graph holds for it: its anchor targets and its owner.
+    let mut targets: Vec<u32> = model
+        .region_data
+        .get(&rh)
+        .map(|d| d.anchors.iter().map(|a| a.relative_to).collect())
+        .unwrap_or_default();
+    if let Some(owner) = model.arena.region(rh).map(|r| r.owner) {
+        targets.extend(model.frame_to_id.get(&owner).copied());
+    }
     model.region_data.remove(&rh);
     model.region_resolved.remove(&rh);
-    if let Some(id) = model.region_to_id.remove(&rh) {
+    let id = model.region_to_id.remove(&rh);
+    if let Some(id) = id {
         model.id_to_region.remove(&id);
         model.region_names.retain(|_, v| *v != id);
     }
     model.arena.destroy_region(rh);
-    // A removed node takes its edges with it: a structural change, so the full touch.
-    model.touch_layout();
+    // A node nothing reads retires from the cached graph in place; one that others anchor to
+    // moves their rects too, a structural change, so the full touch.
+    match id {
+        Some(id) if model.layout_touched.is_some() && model.layout_scope.retire(id, &targets) => {
+            model.bump_layout_epoch();
+        }
+        Some(_) => model.touch_layout(),
+        None => {}
+    }
 }
 
 pub(super) fn region_owner_id(model: &mut Model, rh: RegionHandle) -> u32 {
@@ -533,7 +550,7 @@ pub(crate) fn implicit_creation_anchor(model: &mut Model, rh: RegionHandle) {
         }
         RegionKind::Title => return,
     }
-    model.touch_layout();
+    anchored_from_none(model, rh);
 }
 
 /// The middle-row point a justify word selects, as the FontString post-step (`0x4836d0`) and the
@@ -562,7 +579,18 @@ pub(crate) fn anchor_unanchored_at(
         return;
     }
     data.anchors = vec![Anchor::new(point, owner_id, point, 0.0, 0.0)];
-    model.touch_layout();
+    anchored_from_none(model, rh);
+}
+
+/// Name a region whose first anchors were just written, so the cached graph adopts it.
+fn anchored_from_none(model: &mut Model, rh: RegionHandle) {
+    model.region_id(rh);
+    let targets: Vec<u32> = model
+        .region_data
+        .get(&rh)
+        .map(|d| d.anchors.iter().map(|a| a.relative_to).collect())
+        .unwrap_or_default();
+    model.touch_layout_retarget_region(rh, &[], &targets);
 }
 
 /// [`implicit_creation_anchor`] for the loader, which holds region wrappers.

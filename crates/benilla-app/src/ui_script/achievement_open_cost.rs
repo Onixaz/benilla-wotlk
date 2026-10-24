@@ -3,7 +3,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use benilla_ui::script::{AchievementBook, AchievementDb, AchievementUpdate, CriteriaWire, WowDate};
+use benilla_ui::script::{
+    AchievementBook, AchievementDb, AchievementUpdate, CriteriaWire, WowDate,
+};
 
 #[test]
 #[ignore = "measurement"]
@@ -105,9 +107,26 @@ fn achievement_first_open_cost() {
         eprintln!("{label}: {:.2} ms", at.elapsed().as_secs_f64() * 1000.0);
         *at = Instant::now();
     };
+    let meters = |s: &benilla_ui::script::UiScript| {
+        (
+            s.layout_derivations(),
+            s.layout_solves(),
+            s.layout_rounds(),
+            s.layout_gate_walks(),
+        )
+    };
+    let m0 = meters(&s);
     let mut at = Instant::now();
     s.run("LoadAddOn('Blizzard_AchievementUI')").unwrap();
     lap("LoadAddOn", &mut at);
+    let m1 = meters(&s);
+    eprintln!(
+        "LoadAddOn layout: {} derivations, {} solves, {} rounds, {} gate walks",
+        m1.0 - m0.0,
+        m1.1 - m0.1,
+        m1.2 - m0.2,
+        m1.3 - m0.3
+    );
     let load_report: String = s
         .eval(
             r#"local t = {}

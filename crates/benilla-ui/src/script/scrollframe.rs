@@ -145,15 +145,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 }
             };
             // Any call marks the ranges dirty, the same child included (`0x96b3a0`).
-            let changed = with_scroll(lua, &this, |s| {
-                let changed = s.child != new_child;
+            let (changed, old) = with_scroll(lua, &this, |s| {
+                let old = s.child;
                 s.child = new_child;
                 s.range_dirty = true;
-                changed
+                (old != new_child, old)
             })?;
             if changed {
-                // The child is an input of the layout resolve, so a real change dirties it.
-                crate::script::model_mut_of(lua).touch_layout();
+                // The child is an input of the layout resolve: its edges move to the override.
+                let h = frame_handle_of(lua, &this)?;
+                crate::script::model_mut_of(lua).touch_scroll_child(h, old);
             }
             Ok(())
         })?,
@@ -190,7 +191,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if !changed {
                 return Ok(());
             }
-            crate::script::model_mut_of(lua).touch_layout();
+            let h = frame_handle_of(lua, &this)?;
+            crate::script::model_mut_of(lua).touch_scroll_child(h, None);
             fire_scroll(lua, &this, "OnVerticalScroll", px)
         })?,
     )?;
@@ -224,7 +226,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if !changed {
                 return Ok(());
             }
-            crate::script::model_mut_of(lua).touch_layout();
+            let h = frame_handle_of(lua, &this)?;
+            crate::script::model_mut_of(lua).touch_scroll_child(h, None);
             fire_scroll(lua, &this, "OnHorizontalScroll", px)
         })?,
     )?;

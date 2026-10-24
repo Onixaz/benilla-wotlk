@@ -255,7 +255,8 @@ fn ensure_slot(lua: &Lua, this: &Table, slot: Slot) -> mlua::Result<u32> {
                     ..Default::default()
                 },
             );
-            model.touch_layout(); // a region entered the layout gate's read set
+            // Unanchored, it is no layout node yet: its anchor below adopts it.
+            model.region_id(rh);
             if let Some(frame) = model.arena.frame_mut(h) {
                 if let KindState::Button(bs) = &mut frame.kind_state {
                     slot.set(bs, Some(rh));
@@ -290,7 +291,8 @@ fn swap_slot(
     };
     let outgoing = slot.get(bs).filter(|old| Some(*old) != rh);
     slot.set(bs, rh);
-    model.touch_layout();
+    // Which slot holds a region is no layout input; freeing the outgoing one is the structural
+    // change, and `free_region` touches for it.
     Ok(outgoing)
 }
 
@@ -542,6 +544,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let owner = frame_handle_of(lua, &this)?;
             with_button(lua, &this, |bs| bs.text = Some(rh))?;
             let mut model = crate::script::model_mut_of(lua);
+            // A node of the cached graph that dies or changes owner moves the graph's shape; a
+            // label that was none is adopted by its anchor below.
+            let is_node = |model: &Model, rh: RegionHandle| {
+                model
+                    .region_to_id
+                    .get(&rh)
+                    .is_some_and(|&id| model.layout_scope.has_node(id))
+            };
+            let reshaped = is_node(&model, rh) || old.is_some_and(|dead| is_node(&model, dead));
             if let Some(dead) = old {
                 // Destroyed, not orphaned (`0x778d3c`).
                 super::region::free_region(&mut model, dead);
@@ -551,8 +562,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 r.draw_layer = DrawLayer::Artwork;
             }
             adopt_label(&mut model, owner, rh);
-            // The layout's read set moved, and `GetTextWidth` reads the new label's extents.
-            model.touch_layout();
+            if reshaped {
+                model.touch_layout();
+            }
+            // `GetTextWidth` reads the new label's extents.
             model.touch_measure(rh);
             Ok(())
         })?,

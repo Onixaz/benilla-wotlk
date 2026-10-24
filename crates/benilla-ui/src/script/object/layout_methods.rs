@@ -163,9 +163,10 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     .zip(&pair)
                     .all(|(a, b)| anchor_bits_eq(a, b));
             if !same {
+                let old: Vec<u32> = input.anchors.iter().map(|a| a.relative_to).collect();
                 input.anchors.clear();
                 input.anchors.extend_from_slice(&pair);
-                model.touch_layout();
+                model.touch_layout_retarget_frame(h, &old, &[rel_id, rel_id]);
             }
             Ok(())
         },

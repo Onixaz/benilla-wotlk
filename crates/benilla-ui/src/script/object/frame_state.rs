@@ -441,7 +441,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let changed = model.arena.frame(h).is_some_and(|f| f.scale != scale);
             model.arena.set_scale(h, scale);
             if changed {
-                model.touch_layout();
+                // Only the subtree's effective scale moves, as for a reparent.
+                model.touch_layout_reparent(h);
                 // The owner's effective scale is in every descendant FontString's measure key.
                 model.touch_measure_all();
             }
@@ -727,7 +728,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let changed = model.arena.is_clamped_to_screen(h) != clamp;
             model.arena.set_clamped_to_screen(h, clamp);
             if changed {
-                model.touch_layout();
+                model.sync_layout_input(h);
+                model.touch_layout_frame(h);
             }
             Ok(())
         })?,
@@ -798,7 +800,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 let insets = [l as f32, r as f32, t as f32, b as f32];
                 if model.arena.clamp_rect_insets(h) != insets {
                     model.arena.set_clamp_rect_insets(h, insets);
-                    model.touch_layout();
+                    model.sync_layout_input(h);
+                    model.touch_layout_frame(h);
                 }
                 Ok(())
             },

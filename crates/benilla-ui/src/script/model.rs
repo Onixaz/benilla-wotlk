@@ -1610,8 +1610,8 @@ impl Model {
         self.next_id += 1;
         self.frame_to_id.insert(h, id);
         self.id_to_frame.insert(id, h);
-        // Every creation path mints here, so a new frame always opens the layout gate.
-        self.touch_layout();
+        // Every creation path mints here: the cached graph adopts the frame, and the gate opens.
+        self.touch_layout_node(id);
         id
     }
 
@@ -1624,8 +1624,8 @@ impl Model {
         self.next_id += 1;
         self.region_to_id.insert(h, id);
         self.id_to_region.insert(id, h);
-        // A new region can join the resolve's external set, so it opens the gate too.
-        self.touch_layout();
+        // A new region joins the cached graph once anchored ([`Self::touch_layout_node`]).
+        self.touch_layout_node(id);
         id
     }
 
@@ -1665,16 +1665,10 @@ impl Model {
                 subtree.extend(f.children.iter().copied());
             }
         }
-        // Write the new scale here: only a full derivation syncs it, and a named node skips that.
-        let Model {
-            arena,
-            layout_inputs,
-            ..
-        } = self;
+        // Sync the new scale here, and the clamp insets it multiplies: only a full derivation
+        // syncs them, and a named node skips that.
         for &h in &subtree {
-            if let Some(f) = arena.frame(h) {
-                layout_inputs.entry(h).or_default().scale = f.effective_scale;
-            }
+            self.sync_layout_input(h);
         }
         for h in subtree {
             self.touch_layout_frame(h);
@@ -1685,6 +1679,10 @@ impl Model {
     /// the cached edges are re-pointed. Falls back to `touch_layout` when the scope refuses.
     pub(crate) fn touch_layout_retarget_frame(&mut self, h: FrameHandle, old: &[u32], new: &[u32]) {
         match self.frame_to_id.get(&h).copied() {
+            // Not in the graph yet: adopting it takes its current anchors' edges whole.
+            Some(id) if self.layout_touched.is_some() && !self.layout_scope.has_node(id) => {
+                self.touch_layout_node(id);
+            }
             // Already conservative: the next resolve rebuilds every edge, so patching is wasted.
             Some(id)
                 if self.layout_touched.is_some() && self.layout_scope.retarget(id, old, new) =>
@@ -1703,6 +1701,9 @@ impl Model {
         new: &[u32],
     ) {
         match self.region_to_id.get(&rh).copied() {
+            Some(id) if self.layout_touched.is_some() && !self.layout_scope.has_node(id) => {
+                self.touch_layout_node(id);
+            }
             Some(id)
                 if self.layout_touched.is_some() && self.layout_scope.retarget(id, old, new) =>
             {
@@ -1737,16 +1738,130 @@ impl Model {
         self.measure_dirty = None;
     }
 
-    /// Names `id` as what this write moved, if the cached graph has it and naming is still on.
+    /// Names `id` as what this write moved, while naming is still on. A node the cached graph
+    /// lacks is adopted as the full derivation would hold it; one it cannot place gives up naming.
     fn touch_layout_node(&mut self, id: u32) {
-        let in_graph = self.layout_scope.has_node(id);
-        match &mut self.layout_touched {
-            // Already conservative: a precise touch cannot un-say an imprecise one.
-            None => {}
-            Some(_) if !in_graph => self.give_up_naming(),
-            Some(list) => list.push(id),
+        if self.layout_touched.is_some() {
+            match self.adopt_layout_node(id) {
+                Adopt::Node => {
+                    if let Some(list) = &mut self.layout_touched {
+                        list.push(id);
+                    }
+                }
+                // An unanchored region is no node of either path: there is nothing to name.
+                Adopt::NotANode => {}
+                Adopt::Refused => self.give_up_naming(),
+            }
         }
         self.bump_layout_epoch();
+    }
+
+    /// A ScrollFrame's child or offsets changed: the derivation anchors a live ScrollFrame's live
+    /// child TOPLEFT to its TOPLEFT at `(horizontal, vertical)` in place of its own anchors. `old`
+    /// returns to its anchors and the current child takes the override at the current offsets, each
+    /// named; anything the cached graph cannot re-point gives up naming.
+    pub(crate) fn touch_scroll_child(&mut self, scroll: FrameHandle, old: Option<FrameHandle>) {
+        if self.layout_touched.is_none() {
+            self.bump_layout_epoch();
+            return;
+        }
+        let state = match self.arena.frame(scroll).map(|f| &f.kind_state) {
+            Some(crate::widget::KindState::Scroll(s)) => (s.child, s.horizontal, s.vertical),
+            _ => return self.touch_layout(),
+        };
+        let (child, horizontal, vertical) = state;
+        let live = |m: &Self, h: Option<FrameHandle>| h.filter(|&h| m.arena.frame(h).is_some());
+        let scroll_id = self.frame_id(scroll);
+        let mut named = Vec::new();
+        let mut ok = true;
+        if let Some(oc) = live(self, old).filter(|&h| Some(h) != child) {
+            let id = self.frame_id(oc);
+            let anchors = self.layout_inputs.entry(oc).or_default().anchors.clone();
+            ok &= self.layout_scope.set_override(id, None, &anchors);
+            named.push(id);
+        }
+        if let Some(nc) = live(self, child) {
+            let id = self.frame_id(nc);
+            let anchors = self.layout_inputs.entry(nc).or_default().anchors.clone();
+            let over = crate::layout::Anchor::new(
+                crate::layout::Point::TopLeft,
+                scroll_id,
+                crate::layout::Point::TopLeft,
+                horizontal,
+                vertical,
+            );
+            ok &= self.layout_scope.set_override(id, Some(over), &anchors);
+            named.push(id);
+        }
+        if !ok {
+            return self.touch_layout();
+        }
+        for id in named {
+            self.touch_layout_node(id);
+        }
+        self.bump_layout_epoch();
+    }
+
+    /// Sync frame `h`'s layout input from the arena as the full derivation does: its effective
+    /// scale, clamp-to-screen with its insets, and the window extent a clamped frame keeps inside.
+    pub(crate) fn sync_layout_input(&mut self, h: FrameHandle) {
+        let Some(f) = self.arena.frame(h) else {
+            return;
+        };
+        let (scale, clamp, insets) = (f.effective_scale, f.clamped_to_screen, f.clamp_rect_insets);
+        let screen = self.screen;
+        let input = self.layout_inputs.entry(h).or_default();
+        input.scale = scale;
+        input.clamp = clamp;
+        input.clamp_insets = insets.map(|v| v * scale);
+        if clamp {
+            input.extent_x = screen.right;
+            input.extent_y = screen.top;
+        }
+    }
+
+    /// Put `id` in the cached graph if it is not there: every live frame, with its anchor edges
+    /// and its layout input synced from the arena as the derivation syncs it, and every live,
+    /// anchored region, with its anchor and owner edges. A ScrollFrame's scroll child is refused,
+    /// as its edge comes from the override, not its anchors.
+    fn adopt_layout_node(&mut self, id: u32) -> Adopt {
+        if self.layout_scope.has_node(id) {
+            return Adopt::Node;
+        }
+        if let Some(&h) = self.id_to_frame.get(&id) {
+            let Some(f) = self.arena.frame(h) else {
+                return Adopt::Refused;
+            };
+            let scroll_child = f.parent.and_then(|p| self.arena.frame(p)).is_some_and(
+                |p| matches!(&p.kind_state, crate::widget::KindState::Scroll(s) if s.child == Some(h)),
+            );
+            if scroll_child {
+                return Adopt::Refused;
+            }
+            self.sync_layout_input(h);
+            let Model {
+                layout_inputs,
+                layout_scope,
+                ..
+            } = self;
+            layout_scope.adopt_frame(h, id, layout_inputs.entry(h).or_default());
+            return Adopt::Node;
+        }
+        if let Some(&rh) = self.id_to_region.get(&id) {
+            let Some(r) = self.arena.region(rh) else {
+                return Adopt::Refused;
+            };
+            let anchors = match self.region_data.get(&rh) {
+                Some(d) if !d.anchors.is_empty() => d.anchors.clone(),
+                _ => return Adopt::NotANode,
+            };
+            let owner = (r.owner, self.frame_to_id.get(&r.owner).copied());
+            let is_fontstring = matches!(r.kind, crate::widget::RegionKind::FontString);
+            self.layout_scope
+                .adopt_region(rh, id, owner, is_fontstring, &anchors);
+            return Adopt::Node;
+        }
+        Adopt::Refused
     }
 
     /// Every write that gives up naming comes through here, so the next resolve derives in full.
@@ -1762,7 +1877,7 @@ impl Model {
     }
 
     /// Bumps tier 1's counter, reopening the gate; `layout_touched` decides how much it derives.
-    fn bump_layout_epoch(&mut self) {
+    pub(crate) fn bump_layout_epoch(&mut self) {
         self.layout_epoch = self.layout_epoch.wrapping_add(1);
         // `WOW_LAYOUT_TOUCH_TRACE=<secs>:<n>`: backtraces the first `n` touches after `secs`.
         use std::sync::atomic::{AtomicU32, Ordering};
@@ -1791,6 +1906,16 @@ impl Model {
             }
         }
     }
+}
+
+/// What [`Model::adopt_layout_node`] made of an id.
+enum Adopt {
+    /// In the cached graph, now or already.
+    Node,
+    /// A live region with no anchors, which neither the derivation nor the ledger holds.
+    NotANode,
+    /// Not placeable here: naming gives up and the next resolve derives in full.
+    Refused,
 }
 
 /// `WOW_LAYOUT_DERIVE_TRACE=<secs>:<n>`: armed after `secs`, past the UI load, then `n` prints.

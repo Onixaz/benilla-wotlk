@@ -544,3 +544,58 @@ fn a_retargeted_anchor_follows_its_new_target() {
         "the plate must not follow its OLD target any more (310), got {plate_now}"
     );
 }
+
+/// Widgets created after a resolve join the cached layout graph in place, so reading a size
+/// between creations derives nothing: a HybridScrollFrame builds its rows that way, a
+/// `CreateFrame` and a `GetHeight` at a time, under a scroll child and with state textures that
+/// replace each other. Every rect still matches a full derivation (`WOW_LAYOUT_VERIFY`).
+#[test]
+fn widgets_created_after_a_resolve_derive_nothing() {
+    let mut s = script();
+    s.run(
+        r#"Host = CreateFrame("Frame", "Host", UIParent)
+        Host:SetPoint("CENTER") Host:SetWidth(200) Host:SetHeight(400)"#,
+    )
+    .unwrap();
+    s.resolve();
+    let before = s.layout_derivations();
+    s.run(
+        r#"local scroll = CreateFrame("ScrollFrame", "Scroll", Host)
+        scroll:SetAllPoints(Host)
+        local child = CreateFrame("Frame", "Child", scroll)
+        child:SetWidth(200) child:SetHeight(1)
+        scroll:SetScrollChild(child)
+        local prev
+        Heights = 0
+        for i = 1, 8 do
+            local b = CreateFrame("Button", "Row"..i, child)
+            b:SetHeight(20) b:SetWidth(180)
+            if prev then
+                b:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", 0, -2)
+            else
+                b:SetPoint("TOPLEFT", child, "TOPLEFT")
+            end
+            b:CreateTexture(nil, "BACKGROUND"):SetAllPoints(b)
+            b:CreateFontString(nil, "ARTWORK"):SetPoint("LEFT", b, "LEFT", 4, 0)
+            b:SetNormalTexture("Interface\Buttons\UI-Panel-Button-Up")
+            b:SetNormalTexture("Interface\Buttons\UI-Panel-Button-Down")
+            Heights = Heights + b:GetHeight()
+            prev = b
+        end
+        scroll:SetVerticalScroll(10)"#,
+    )
+    .unwrap();
+    s.resolve();
+    assert_eq!(
+        s.layout_derivations(),
+        before,
+        "a created frame, region or scroll child must join the cached graph, not derive it whole"
+    );
+    assert_eq!(s.eval::<f32>("return Heights").unwrap(), 160.0);
+    let (host_top, row_top): (f32, f32) = s.eval("return Host:GetTop(), Row1:GetTop()").unwrap();
+    assert_eq!(
+        row_top - host_top,
+        10.0,
+        "the scroll offset lifts the child"
+    );
+}

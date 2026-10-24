@@ -269,7 +269,7 @@ fn a_region_moving_every_frame_costs_one_gate_walk_on_the_shipped_ui() {
 /// Those walks cost zero derivations of the layout graph: a moving region names its node, so the
 /// resolve re-hashes one node, not the roster; a derivation per frame means a write site fell back
 /// to the conservative `touch_layout`. The VM ticks, so the shipped handlers are held to it too,
-/// and a birth must derive, which proves the counter moves.
+/// and re-owning a region must derive, which proves the counter moves.
 #[test]
 fn a_region_moving_every_frame_costs_no_graph_derivation_on_the_shipped_ui() {
     benilla_formats::wow_data_or_skip!();
@@ -291,17 +291,23 @@ fn a_region_moving_every_frame_costs_no_graph_derivation_on_the_shipped_ui() {
     )
     .unwrap();
 
-    // Positive control: a birth moves the roster, so it must derive.
-    let born_at = s.layout_derivations();
+    // The births above join the cached graph in place; settle them.
     for _ in 0..6 {
         s.run("bench_spark2_frame()").unwrap();
         app_frame_ticked(&mut s, 1.0 / 144.0);
     }
+    // Positive control: re-owning a region moves its owner edge, which the per-node ledger does
+    // not re-point, so it must derive.
+    let reowned_at = s.layout_derivations();
+    for owner in ["UIParent", "BenchBar2"] {
+        s.run(&format!("BenchSpark2:SetParent({owner})")).unwrap();
+        app_frame_ticked(&mut s, 1.0 / 144.0);
+    }
     assert!(
-        s.layout_derivations() > born_at,
-        "creating a frame and a texture must derive the graph — a birth moves the roster, which \
-         is the one thing the per-node ledger cannot describe. Reading zero here means \
-         `layout_derivations` never moves and the assertion below is vacuous."
+        s.layout_derivations() > reowned_at,
+        "re-owning a region must derive the graph — its owner edge moves, which the per-node \
+         ledger does not re-point. Reading zero here means `layout_derivations` never moves and \
+         the assertion below is vacuous."
     );
 
     let derives_before = s.layout_derivations();

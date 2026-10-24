@@ -78,7 +78,7 @@ fn ensure_bar(lua: &Lua, this: &Table, layer: Option<DrawLayer>) -> mlua::Result
                 )
                 .ok_or_else(|| mlua::Error::runtime("stale frame handle"))?;
             model.region_data.insert(rh, RegionData::default());
-            model.touch_layout(); // a region entered the layout gate's read set
+            model.region_id(rh); // unanchored, no layout node until something anchors it
             if let Some(frame) = model.arena.frame_mut(h) {
                 if let KindState::StatusBar(sb) = &mut frame.kind_state {
                     sb.bar = Some(rh);
