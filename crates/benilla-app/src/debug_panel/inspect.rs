@@ -115,7 +115,7 @@ pub(super) struct InspectStores<'w, 's> {
     reputations: Res<'w, crate::net::Reputations>,
     /// This frame's rendered plate verdict, not a re-derivation, so the card matches the screen.
     plates: Res<'w, crate::vplates::VPlates>,
-    /// The two master bits, so a `plate ✗` can say whether the category gate refused it.
+    /// The two plate CVars, so a `plate ✗` can say whether the category gate refused it.
     plate_mode: Res<'w, crate::vplates::VPlateMode>,
     /// The GO template cache: a TEXT object's page and the tooltip ladder's highlight column
     /// and name.

@@ -190,7 +190,7 @@ mod messageframe;
 mod minimap;
 pub mod nameplate;
 mod quest_poi_frame;
-pub use nameplate::{PlateBitWrites, PlateGeometry, PlateState, PLATE_BIT_ENEMY, PLATE_BIT_FRIEND};
+pub use nameplate::{PlateGeometry, PlateState};
 mod macro_options;
 
 mod model;
@@ -980,7 +980,6 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     combat_log::install(lua)?;
     battle_net::install(lua)?;
     autocomplete::install(lua)?;
-    nameplate::install_verbs(lua)?;
     saved::install(lua)?;
     keybind::install(lua)?;
     modified_click::install(lua)?;

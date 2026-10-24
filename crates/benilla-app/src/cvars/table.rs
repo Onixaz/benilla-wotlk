@@ -299,15 +299,16 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("showNewbieTips", "1"),
     same("showItemLevel", "0"),
     same("showTutorials", "1"),
+    // The V keys' two switches, read by `vplates`.
+    same("nameplateShowEnemies", "0").per_character(),
     same("nameplateShowEnemyPets", "1").per_character(),
     same("nameplateShowEnemyGuardians", "1").per_character(),
     same("nameplateShowEnemyTotems", "1").per_character(),
+    same("nameplateShowFriends", "0").per_character(),
     same("nameplateShowFriendlyPets", "1").per_character(),
     same("nameplateShowFriendlyGuardians", "1").per_character(),
     same("nameplateShowFriendlyTotems", "1").per_character(),
     same("nameplateAllowOverlap", "1").per_character(),
-    // `nameplateShowEnemies`/`nameplateShowFriends` (`0x51ebbe`/`0x51ec4c`) stay out until the
-    // plates follow them: `vplates` still keeps the two script bits FrameXML saves.
     same("PushToTalkSound", "0"),
     same("timeMgrAlarmEnabled", "0"),
     same("threatShowNumeric", "0"),

@@ -220,22 +220,6 @@ impl Cvars {
         self.last_change = Some(Instant::now());
     }
 
-    /// Remove a `config.toml` entry no row claims, a setting retired from the table, and return
-    /// its value; the next save writes the file without it.
-    pub(crate) fn retire_file_entry(&mut self, name: &str) -> Option<String> {
-        if self.index.contains_key(&name.to_ascii_lowercase()) {
-            return None;
-        }
-        let key = self
-            .file
-            .keys()
-            .find(|k| k.eq_ignore_ascii_case(name))?
-            .clone();
-        let value = self.file.remove(&key);
-        self.touch();
-        value
-    }
-
     /// A write from either side of the VM boundary. A `from_vm` write is not echoed back, but a
     /// refusal is, because the mirror already stored the refused value.
     fn write(&mut self, name: &str, value: &str, from_vm: bool) -> SetOutcome {
@@ -509,15 +493,6 @@ impl Cvars {
             }
         }
         out
-    }
-
-    /// A registry already holding one stored value, as if `config.toml` said so.
-    #[cfg(test)]
-    pub(crate) fn with_value(name: &str, value: &str) -> Self {
-        let mut cvars = Self::default();
-        cvars.load_file(BTreeMap::from([(name.to_string(), value.to_string())]));
-        cvars.events.clear();
-        cvars
     }
 }
 

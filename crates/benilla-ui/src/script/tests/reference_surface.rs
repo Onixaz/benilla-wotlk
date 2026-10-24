@@ -38,8 +38,6 @@ const BEYOND_REFERENCE: &[&str] = &[
     "GuildPromoteByName",
     "GuildSetLeaderByName",
     "GuildUninviteByName",
-    "HideFriendNameplates",
-    "HideNameplates",
     "IsInMeetingStoneQueue",
     "IsTalentTrainer",
     "IsTrainerServiceLearnSpell",
@@ -51,8 +49,6 @@ const BEYOND_REFERENCE: &[&str] = &[
     "SetInventoryPortaitTexture",
     "SetLookingForGroup",
     "SetWorldDetail",
-    "ShowFriendNameplates",
-    "ShowNameplates",
     "TargetByName",
     "ToggleMouseMove",
     "TutorialsEnabled",
@@ -1622,68 +1618,21 @@ fn the_pfui_hdgraphic_extended_arm_runs() {
     );
 }
 
-/// `ShowNameplates 0x489450`, `HideNameplates 0x489460`, `ShowFriendNameplates 0x489470` and
-/// `HideFriendNameplates 0x489480` read no argument and return nothing: four 10-byte bodies over
-/// two setters, differing only in an `or`/`and` mask. They write bits `0x1` and `0x8` of the
-/// runtime dword `[0xc4da34]` and no CVar: 1.12 registers none (no `0x63db90` site names a plate).
+/// 12340 has no nameplate verb: the plates are the CVars `nameplateShowEnemies` and
+/// `nameplateShowFriends` (`0x51ebbe`, `0x51ec4c`), which the stock V bodies set.
 #[test]
-fn the_nameplate_verbs_write_two_runtime_bits_and_no_cvar() {
-    use crate::script::{PLATE_BIT_ENEMY as ENEMY, PLATE_BIT_FRIEND as FRIEND};
-    let mut s = script();
-
-    s.run("ShowNameplates()").unwrap();
-    assert_eq!(s.take_nameplate_bit_writes().apply(0), ENEMY);
-    assert!(
-        s.take_nameplate_bit_writes().is_empty(),
-        "a drain empties the queue"
-    );
-
-    s.run("HideNameplates()").unwrap();
-    assert_eq!(
-        s.take_nameplate_bit_writes().apply(ENEMY | FRIEND),
-        FRIEND,
-        "the friendly bit is a separate setter — hiding enemies must not touch it"
-    );
-    s.run("ShowFriendNameplates()").unwrap();
-    assert_eq!(
-        s.take_nameplate_bit_writes().apply(0),
-        FRIEND,
-        "...and back the other way"
-    );
-    s.run("HideFriendNameplates()").unwrap();
-    assert_eq!(s.take_nameplate_bit_writes().apply(FRIEND), 0);
-
-    // In call order, the last write per bit standing, as the setters `or`/`and` the live dword.
-    s.run("ShowFriendNameplates() HideFriendNameplates() HideNameplates() ShowNameplates()")
-        .unwrap();
-    assert_eq!(s.take_nameplate_bit_writes().apply(FRIEND), ENEMY);
-    // The frame loop's latches, bits `0x2` and `0x4`, are no verb's to touch.
-    s.run("HideNameplates() HideFriendNameplates()").unwrap();
-    assert_eq!(s.take_nameplate_bit_writes().apply(0xff), !(ENEMY | FRIEND));
-
-    s.run("ShowNameplates(false)").unwrap();
-    assert_eq!(
-        s.take_nameplate_bit_writes().apply(0),
-        ENEMY,
-        "the verb IS the value — a falsy argument does not invert it"
-    );
-    for call in ["HideNameplates(1, 2, 3)", "ShowFriendNameplates({})"] {
-        s.run(call)
-            .unwrap_or_else(|e| panic!("{call} must not raise: {e}"));
-    }
-    let _ = s.take_nameplate_bit_writes();
-
-    assert_eq!(
-        s.arity("ShowNameplates()").unwrap(),
-        0,
-        "zero values — observably different from nil for a caller that counts"
-    );
-    assert!(
-        s.take_cvar_changes().is_empty(),
-        "no CVar written: the dword is not a setting"
-    );
-    for name in ["nameplateShowEnemies", "nameplateShowFriends"] {
-        assert_eq!(s.cvar(name), None, "{name}: no plate CVar is registered");
+fn there_is_no_nameplate_verb() {
+    let s = script();
+    for name in [
+        "ShowNameplates",
+        "HideNameplates",
+        "ShowFriendNameplates",
+        "HideFriendNameplates",
+    ] {
+        assert!(
+            s.eval::<bool>(&format!("return {name} == nil")).unwrap(),
+            "{name} is still a global"
+        );
     }
 }
 
