@@ -9,9 +9,8 @@ pub(crate) struct Registered {
     pub(crate) name: &'static str,
     /// What a fresh `benilla-config` runs at, and what `GetCVar` answers until the player moves it.
     pub(crate) default: &'static str,
-    /// Where `default` stands against the reference's. Read only by the tests: it records the
-    /// reference, never a value this client acts on.
-    #[allow(dead_code)]
+    /// Where `default` stands against the reference's; the archive compares against the
+    /// reference's string ([`Registered::reference_default`]).
     pub(crate) reference: Reference,
     /// Registered with flag bit1 (`rec+0x1c & 0x2`, `flags` 2 or 3 at the register site): a write
     /// is staged in [`super::Row::pending`] until [`super::Cvars::commit_latched`].
@@ -37,6 +36,17 @@ pub(crate) enum Scope {
 }
 
 impl Registered {
+    /// The string 12340 registers, which its archive compares a value against: benilla's own
+    /// default where the reference has no such setting.
+    pub(crate) const fn reference_default(&self) -> &'static str {
+        match self.reference {
+            Reference::Same(d) => d,
+            Reference::Overridden { registered, .. } => registered,
+            Reference::Deviates { value, .. } => value,
+            Reference::Ours(_) => self.default,
+        }
+    }
+
     /// Mark the row latched.
     pub(crate) const fn latched(self) -> Self {
         Self {
@@ -657,7 +667,7 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // same. The factor is MAX_FOLLOW_DIST (`UIOptionsFrame.lua:90`), registered "1.0" (`0x82e92c`)
     // with no validator: the slider's 1 to 2 is the slider's, not the CVar's.
     same("cameraDistanceMax", "15.0").per_account(),
-    same("cameraDistanceMaxFactor", "1").per_account(),
+    same("cameraDistanceMaxFactor", "1.0").per_account(),
     // `cameraSmoothStyle` (`0x50ba92`, default `[0x84f4f4]` "1"), the auto-return behind the
     // character. The engine's enum is 0 Never, 1 Smart, 2 Always, as the stock dropdown writes it
     // (`UIOptionsFrame.lua:525,536,547`); 3, the Never entry's position, is the validator's upper

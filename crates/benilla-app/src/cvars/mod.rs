@@ -79,6 +79,9 @@ pub(crate) struct Row {
     /// The registered spelling.
     pub(crate) name: String,
     pub(crate) default: String,
+    /// The reference's registered string, what the archive compares against
+    /// ([`table::Registered::reference_default`]), so a file means to 12340 what it means here.
+    pub(crate) archive_default: String,
     /// The applied value: what `GetCVar` answers and what the file is composed from.
     pub(crate) value: String,
     /// A latched row's staged value (`rec+0x38`), applied by [`Cvars::commit_latched`].
@@ -100,14 +103,15 @@ impl Row {
         self.default.trim().parse::<f32>().is_ok()
     }
 
-    /// What the archive writes for the row, or `None` at its default (`0x767030`: the latched
-    /// value first, compared case-blind with `SStrCmpI`); an addon's row is never archived.
+    /// What the archive writes for the row, or `None` at the reference's default (`0x767030`:
+    /// the latched value first, compared case-blind with `SStrCmpI`); an addon's row is never
+    /// archived.
     fn archived(&self) -> Option<&str> {
         if self.addon {
             return None;
         }
         let value = self.pending.as_deref().unwrap_or(&self.value);
-        (!value.eq_ignore_ascii_case(&self.default)).then_some(value)
+        (!value.eq_ignore_ascii_case(&self.archive_default)).then_some(value)
     }
 }
 
@@ -135,6 +139,9 @@ pub(crate) struct Cvars {
     /// `Config.wtf`'s entries in file order and their own spelling, the merge base of every save:
     /// a name no row claims is written back from here.
     file: Vec<(String, String)>,
+    /// A `config-cache.wtf`'s names no row claims, by scope: 12340 registers every one of them
+    /// with its scope, so each goes back to the file it came from.
+    scoped_orphans: Vec<(Scope, String, String)>,
     /// Lowercased names the session owns rather than the player: the env levers, and `gxApi`, the
     /// render backend. Never saved; the file's entry is left as found.
     session_owned: HashSet<String>,
@@ -153,6 +160,7 @@ impl Default for Cvars {
             rows: Vec::with_capacity(REGISTERED.len()),
             index: HashMap::with_capacity(REGISTERED.len()),
             file: Vec::new(),
+            scoped_orphans: Vec::new(),
             session_owned: HashSet::new(),
             events: Vec::new(),
             outbox: Vec::new(),
@@ -162,6 +170,7 @@ impl Default for Cvars {
             cvars.insert_row(Row {
                 name: r.name.to_string(),
                 default: r.default.to_string(),
+                archive_default: r.reference_default().to_string(),
                 value: r.default.to_string(),
                 pending: None,
                 latched: r.latched,
@@ -398,6 +407,7 @@ impl Cvars {
         self.insert_row(Row {
             name: name.to_string(),
             default: default.to_string(),
+            archive_default: default.to_string(),
             value: saved.unwrap_or_else(|| default.to_string()),
             pending: None,
             latched: false,
@@ -455,12 +465,12 @@ impl Cvars {
             row.value = row.default.clone();
             row.pending = None;
         }
+        self.scoped_orphans.retain(|(s, _, _)| *s != scope);
     }
 
     /// A slot's `config-cache.wtf` run in, its `SET`s in order: a row takes the value and fires;
-    /// a name no row claims becomes a `Config.wtf` placeholder, as the reference's `SET` makes one
-    /// (`0x768307`).
-    pub(crate) fn load_scope(&mut self, text: &str) {
+    /// a name no row claims is kept for the same file, where 12340's registered row would save it.
+    pub(crate) fn load_scope(&mut self, scope: Scope, text: &str) {
         for (name, value) in wtf::parse(text) {
             match self.slot(&name) {
                 Some(i) if self.rows[i].numeric() && value.trim().parse::<f32>().is_err() => {
@@ -482,9 +492,13 @@ impl Cvars {
                     });
                 }
                 None => {
-                    if !self.file.iter().any(|(k, _)| k.eq_ignore_ascii_case(&name)) {
-                        self.file.push((name, value));
-                        self.touch();
+                    let kept = self
+                        .scoped_orphans
+                        .iter_mut()
+                        .find(|(s, k, _)| *s == scope && k.eq_ignore_ascii_case(&name));
+                    match kept {
+                        Some((_, _, v)) => *v = value,
+                        None => self.scoped_orphans.push((scope, name, value)),
                     }
                 }
             }
@@ -492,7 +506,7 @@ impl Cvars {
     }
 
     /// A scoped file's body (`SaveGameCVarsCallback` `0x512890`): the scope's rows off their
-    /// default, in creation order.
+    /// default, in creation order, then the names it held that no row claims.
     pub(crate) fn compose_scope(&self, scope: Scope) -> String {
         wtf::compose(
             self.rows
@@ -500,7 +514,13 @@ impl Cvars {
                 .filter(|r| {
                     r.scope == scope && !self.session_owned.contains(&r.name.to_ascii_lowercase())
                 })
-                .filter_map(|r| r.archived().map(|v| (r.name.as_str(), v))),
+                .filter_map(|r| r.archived().map(|v| (r.name.as_str(), v)))
+                .chain(
+                    self.scoped_orphans
+                        .iter()
+                        .filter(|(s, _, _)| *s == scope)
+                        .map(|(_, k, v)| (k.as_str(), v.as_str())),
+                ),
         )
     }
 
@@ -1687,11 +1707,13 @@ mod tests {
                 ("FutureKnob".to_string(), "3".to_string()), // a newer build's key: preserved
                 ("uiScale".to_string(), "0.8".to_string()),  // the file's own, kept as found
                 ("farclip".to_string(), "400".to_string()),  // will return to default
+                ("Sound_MusicVolume".to_string(), "0.3".to_string()),
             ]
             .into(),
         );
         cvars.set("Sound_MusicVolume", "0.7"); // moved: written
-        cvars.set("farclip", "777"); // back to default: removed
+        cvars.set("Sound_AmbienceVolume", "0.6"); // set at its default: removed
+        cvars.set("farclip", "777"); // back to ours, which 12340 boots into over its "350"
         let out: BTreeMap<String, String> = cvars.compose().into_iter().collect();
         assert_eq!(
             out.get("Sound_MusicVolume").map(String::as_str),
@@ -1702,7 +1724,12 @@ mod tests {
             "at default: absent"
         );
         assert_eq!(out.get("uiScale").map(String::as_str), Some("0.8"));
-        assert!(!out.contains_key("farclip"));
+        assert!(!out.contains_key("Sound_AmbienceVolume"));
+        assert_eq!(
+            out.get("farclip").map(String::as_str),
+            Some("777"),
+            "compared with 12340's registered string, as its own file keeps the boot's value"
+        );
         assert_eq!(out.get("FutureKnob").map(String::as_str), Some("3"));
     }
 
@@ -1766,6 +1793,7 @@ mod tests {
         cvars.reset_scope(Scope::Character);
         assert_eq!(cvars.get("playerStatLeftDropdown"), Some(""));
         cvars.load_scope(
+            Scope::Character,
             "SET playerStatLeftDropdown \"PLAYERSTAT_MELEE_COMBAT\"\nSET newKnob \"4\"\n",
         );
         assert_eq!(
@@ -1775,6 +1803,12 @@ mod tests {
         );
         assert!(
             cvars
+                .compose_scope(Scope::Character)
+                .contains("SET newKnob \"4\""),
+            "a name no row claims goes back to the file it came from"
+        );
+        assert!(
+            !cvars
                 .compose()
                 .iter()
                 .any(|(n, v)| n == "newKnob" && v == "4"),
@@ -1866,7 +1900,15 @@ mod tests {
         let text = std::fs::read_to_string(tmp.join("WTF/Config.wtf")).unwrap();
         assert!(text.contains("SET Sound_MusicVolume \"0.75\""), "{text}");
         assert!(!text.contains("MasterVolume"), "defaults stay out:\n{text}");
-        assert_eq!(wtf::parse(&text).len(), 1, "a diff, not a dump: {text}");
+        // A diff, not a dump: past the moved value, only the rows whose default is not the string
+        // 12340 registers, which its own file carries the same way.
+        for (name, _) in wtf::parse(&text) {
+            let row = app.world().resource::<Cvars>().row(&name).cloned().unwrap();
+            assert!(
+                name == "Sound_MusicVolume" || row.default != row.archive_default,
+                "{name} written at the reference's default: {text}"
+            );
+        }
         std::fs::remove_dir_all(&tmp).ok();
     }
 
@@ -2116,7 +2158,7 @@ mod tests {
         // The character's file says the outdoor map was zoomed right in.
         let events = {
             let mut cvars = app.world_mut().resource_mut::<Cvars>();
-            cvars.load_scope("SET minimapZoom \"5\"\n");
+            cvars.load_scope(Scope::Character, "SET minimapZoom \"5\"\n");
             cvars.take_events()
         };
         for e in events {

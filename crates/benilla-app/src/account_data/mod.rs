@@ -151,22 +151,25 @@ pub(crate) fn ready_for_ui(world: &World) -> bool {
 /// `LoadAccountVariables` (`0x518c80`): the account's rows from slot 0, the character's from slot
 /// 1, then the camera from its two rows (`0x5ff3e0`). A slot not ready loads nothing.
 pub(crate) fn load_config_slots(world: &mut World) {
-    let texts: Vec<String> = {
+    let texts: Vec<(Scope, String)> = {
         let Some(data) = world.get_resource::<AccountData>() else {
             return;
         };
-        [store::CONFIG_ACCOUNT, store::CONFIG_CHARACTER]
-            .into_iter()
-            .filter_map(|slot| data.read(slot))
-            .map(|b| String::from_utf8_lossy(&b).into_owned())
-            .collect()
+        [
+            (store::CONFIG_ACCOUNT, Scope::Account),
+            (store::CONFIG_CHARACTER, Scope::Character),
+        ]
+        .into_iter()
+        .filter_map(|(slot, scope)| Some((scope, data.read(slot)?)))
+        .map(|(scope, b)| (scope, String::from_utf8_lossy(&b).into_owned()))
+        .collect::<Vec<_>>()
     };
     let events = {
         let Some(mut cvars) = world.get_resource_mut::<Cvars>() else {
             return;
         };
-        for text in &texts {
-            cvars.load_scope(text);
+        for (scope, text) in &texts {
+            cvars.load_scope(*scope, text);
         }
         cvars.take_events()
     };
