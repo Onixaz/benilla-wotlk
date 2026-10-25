@@ -48,7 +48,8 @@ before="$(mktemp "${TMPDIR:-/tmp}/benilla-smoke-before.XXXXXX")"
 # One EXIT trap, so an early `fail` strands no temp file; WOW_SMOKE_KEEP spares the log.
 trap 'rm -f "$stamp" "$before"; [ -n "${WOW_SMOKE_KEEP:-}" ] || rm -f "$log"' EXIT
 
-# The install is read-only: the run must add, remove and modify nothing in it. The sorted file
+# The install is read-only to every build smoke runs (only the standalone drop-in writes it): the
+# run must add, remove and modify nothing in it. The sorted file
 # list catches additions and removals, `-newer` against the stamp catches edits in place; plain
 # POSIX `find` because `stat`'s format flag differs between BSD (-f) and GNU (-c).
 install_root=""

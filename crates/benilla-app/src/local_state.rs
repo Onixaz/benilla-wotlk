@@ -1,11 +1,19 @@
-//! Where benilla keeps local state: one folder, `benilla-config/`, never inside the install, and
-//! this module is the only place that computes a path into it; each path fn's doc says what it
-//! holds. The 1.12 client is portable the same way, its `WTF/` and `Cache/` in its own folder.
+//! Where benilla keeps local state, and the only place that computes a path into it; each path
+//! fn's doc says what it holds.
 //!
-//! Resolution, in order, the same shape as [`benilla_formats::wow_data`]:
+//! What the reference writes, benilla writes in the reference's format at the reference's path
+//! (`WTF\`, `Cache\WDB\`, `Logs\`, `Screenshots\`, addons read from `Interface\AddOns\`), under
+//! one of two roots ([`client_root`]):
+//! - **the install**, for a drop-in `Wow.exe` (the `standalone` launcher, [`drop_in_install`]),
+//!   so the reference client and benilla take turns on one folder;
+//! - **`benilla-config/`** ([`home`]) in every other build, which never writes into the install.
+//!
+//! What the reference has no file for (benilla's diagnostics, the probe leases) lives in
+//! [`home`] itself, `<install>/benilla-config/` for the drop-in. [`home`] resolves, in order, the
+//! same shape as [`benilla_formats::wow_data`]:
 //! 1. `$BENILLA_HOME`.
-//! 2. `<project folder>/benilla-config/`, dev builds only ([`benilla_formats::project_folder`], the
-//!    launcher's): a shipped binary must not carry the build machine's source tree.
+//! 2. `<project folder>/benilla-config/`, dev builds only ([`benilla_formats::project_folder`],
+//!    the launcher's): a shipped binary must not carry the build machine's source tree.
 //! 3. `<exe dir>/benilla-config/`.
 //!
 //! With `$WOW_CAPTURE` set every path resolves to `None`: a capture neither reads nor writes
@@ -32,6 +40,25 @@ pub(crate) fn home() -> Option<PathBuf> {
         return None; // a unit test reaches no real state folder unless it pins `$BENILLA_HOME`
     }
     resident_home()
+}
+
+/// The install a drop-in `Wow.exe` replaces the reference in, which it writes into as the reference
+/// does; `None` in every other build, whatever folder it runs from, and on a capture run. A unit
+/// test names one with `$BENILLA_TEST_DROP_IN`.
+pub(crate) fn drop_in_install() -> Option<PathBuf> {
+    if std::env::var_os("WOW_CAPTURE").is_some() {
+        return None;
+    }
+    if cfg!(test) {
+        return std::env::var_os("BENILLA_TEST_DROP_IN").map(PathBuf::from);
+    }
+    benilla_formats::drop_in_install().map(Path::to_path_buf)
+}
+
+/// The root the reference's own files hang off: a drop-in's install, else [`home`]. `None` when
+/// persistence is off.
+pub(crate) fn client_root() -> Option<PathBuf> {
+    drop_in_install().or_else(home)
 }
 
 /// Steps 2 and 3 of [`home`]: the folder the build itself lives in.
@@ -192,9 +219,9 @@ pub(crate) fn item_cache_path(realm: &str) -> Option<PathBuf> {
     )
 }
 
-/// `benilla-config/Logs/`: `WoWChatLog.txt` and `WoWCombatLog.txt`, the reference's names.
+/// `Logs\` (`0x9fa4e4`, `0xa02ef8`): `WoWChatLog.txt`, `WoWCombatLog.txt` and `FrameXML.log`.
 pub(crate) fn logs_dir() -> Option<PathBuf> {
-    home().map(|h| h.join("Logs"))
+    client_root().map(|r| r.join("Logs"))
 }
 
 /// `benilla-config/shots.txt`: the framing instrument's camera poses (`/shot`, dev builds).
@@ -202,13 +229,15 @@ pub(crate) fn shots_path() -> Option<PathBuf> {
     home().map(|h| h.join("shots.txt"))
 }
 
-/// `benilla-config/Screenshots/`: where the print-screen key writes, each image once, not through
-/// [`write_atomic`].
-///
-/// Deviation: the reference writes `Screenshots\\` inside the install, which benilla never writes
-/// to; the folder keeps the reference's name.
+/// `Screenshots\` (`CaptureScreen` `0x4a85c1`): where the print-screen key writes, each image once,
+/// not through [`write_atomic`].
 pub(crate) fn screenshots_dir() -> Option<PathBuf> {
-    home().map(|h| h.join("Screenshots"))
+    client_root().map(|r| r.join("Screenshots"))
+}
+
+/// `Interface\AddOns\`: where third-party addons are read from, with their art and fonts.
+pub(crate) fn addons_dir() -> Option<PathBuf> {
+    client_root().map(|r| r.join("Interface").join("AddOns"))
 }
 
 /// `benilla-config/Diagnostics/`: the stuck-thread sampler's profiles ([`crate::perf::stall`]) and
@@ -408,6 +437,51 @@ mod tests {
             "a capture reads no player's window layout"
         );
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// One layout, two roots: the drop-in writes the reference's folders inside its install, every
+    /// other build the same folders in `benilla-config/`, and a capture neither.
+    #[test]
+    fn only_the_drop_in_writes_into_the_install() {
+        let _l = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tmp = std::env::temp_dir().join(format!("benilla-dropin-{}", std::process::id()));
+        let state = tmp.join(STATE_DIR);
+        let install = tmp.join("wow");
+        let _c = EnvGuard::unset("WOW_CAPTURE");
+        let _h = EnvGuard::set("BENILLA_HOME", state.to_str().unwrap());
+
+        let _d = EnvGuard::unset("BENILLA_TEST_DROP_IN");
+        assert_eq!(drop_in_install(), None);
+        assert_eq!(
+            benilla_formats::drop_in_install(),
+            None,
+            "only a standalone launcher records an install to write"
+        );
+        assert_eq!(client_root(), Some(state.clone()));
+        assert_eq!(logs_dir(), Some(state.join("Logs")));
+        assert_eq!(screenshots_dir(), Some(state.join("Screenshots")));
+        assert_eq!(addons_dir(), Some(state.join("Interface").join("AddOns")));
+
+        let _d2 = EnvGuard::set("BENILLA_TEST_DROP_IN", install.to_str().unwrap());
+        assert_eq!(drop_in_install(), Some(install.clone()));
+        assert_eq!(client_root(), Some(install.clone()));
+        assert_eq!(logs_dir(), Some(install.join("Logs")));
+        assert_eq!(screenshots_dir(), Some(install.join("Screenshots")));
+        assert_eq!(addons_dir(), Some(install.join("Interface").join("AddOns")));
+        assert_eq!(
+            home(),
+            Some(state.clone()),
+            "what the reference has no file for stays in benilla's folder"
+        );
+
+        let _c2 = EnvGuard::set("WOW_CAPTURE", "ui-options");
+        assert_eq!(drop_in_install(), None, "a capture writes no install");
+        assert_eq!(client_root(), None);
+        assert_eq!(logs_dir(), None);
+        assert_eq!(screenshots_dir(), None);
+        assert_eq!(addons_dir(), None);
     }
 
     /// A unit test that does not pin `$BENILLA_HOME` resolves no state folder, so no test can write

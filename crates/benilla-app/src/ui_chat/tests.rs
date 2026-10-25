@@ -2387,7 +2387,7 @@ fn the_chat_cache_restore_is_finished_before_player_login() {
     let tmp = std::env::temp_dir().join(format!("benilla-chat-order-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let home = tmp.join("benilla-config");
-    let probe = home.join("AddOns").join("ChatOrderProbe");
+    let probe = home.join("Interface/AddOns").join("ChatOrderProbe");
     std::fs::create_dir_all(&probe).expect("hermetic home + probe addon dir");
     std::fs::write(
         probe.join("ChatOrderProbe.toc"),

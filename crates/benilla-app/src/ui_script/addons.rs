@@ -15,9 +15,6 @@ use benilla_ui::toc::Toc;
 
 use super::content;
 
-/// The addon folder's name, the reference's own spelling.
-const ADDONS_DIR: &str = "AddOns";
-
 /// The VM instruction bound for one addon's load, shared with the addon harness: about 50x the
 /// corpus's heaviest (4M), so an addon that crosses it is in a runaway loop and fails alone.
 pub(crate) const LOAD_INSTRUCTION_BUDGET: u64 = 200_000_000;
@@ -280,17 +277,11 @@ fn under_addons(req: &str) -> Option<&str> {
 /// A `Dir` addon's base before its folder name ([`Addon::prefix`]), `/`-separated as `join_ref` is.
 const ADDONS_PREFIX: &str = "Interface/AddOns/";
 
-/// The addon folder, `<benilla-config>/AddOns/`, or `None` (always under `$WOW_CAPTURE`); addon
-/// textures and fonts resolve onto it too. Deviation: the reference reads the install's
-/// `Interface\AddOns\`; benilla reads an install and does not live in one, so its addons live in
-/// its own state folder, and only there.
+/// The addon folder ([`crate::local_state::addons_dir`]): `<benilla-config>/AddOns/`, or a drop-in
+/// `Wow.exe`'s `Interface\AddOns\`, as the reference reads; `None` under `$WOW_CAPTURE`. Addon
+/// textures and fonts resolve onto it too.
 pub(crate) fn root() -> Option<PathBuf> {
-    root_from(crate::local_state::home())
-}
-
-/// [`root`] with its one environment fact passed in, so a test need not set the environment.
-fn root_from(home: Option<PathBuf>) -> Option<PathBuf> {
-    home.map(|h| h.join(ADDONS_DIR))
+    crate::local_state::addons_dir()
 }
 
 /// The 23 `Blizzard_*` addons a 3.3.5a chain carries (`Interface\AddOns\Blizzard_*\*.toc`, all
@@ -1525,16 +1516,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// `local_state::home()` is `None` under `$WOW_CAPTURE`, so `None` here is the capture case.
-    #[test]
-    fn there_is_one_addon_root_and_it_is_ours() {
-        assert_eq!(
-            root_from(Some(PathBuf::from("/state"))),
-            Some(PathBuf::from("/state/AddOns"))
-        );
-        assert_eq!(root_from(None), None, "a capture run has no addon root");
-    }
-
     #[test]
     fn lua_entries_are_told_apart_from_framexml() {
         assert!(is_lua("Core.lua"));
@@ -1685,7 +1666,7 @@ mod tests {
             std::env::temp_dir().join(format!("benilla-addon-order-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let home = tmp.join("benilla-config");
-        let dir = home.join("AddOns").join("EventProbe");
+        let dir = home.join("Interface/AddOns").join("EventProbe");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("EventProbe.toc"),
@@ -1732,7 +1713,7 @@ mod tests {
             std::env::temp_dir().join(format!("benilla-addon-api-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let home = tmp.join("benilla-config");
-        std::fs::create_dir_all(home.join("AddOns")).unwrap();
+        std::fs::create_dir_all(home.join("Interface/AddOns")).unwrap();
         let guard =
             crate::local_state::test_env::EnvGuard::set("BENILLA_HOME", home.to_str().unwrap());
         (home, guard)
@@ -1813,7 +1794,7 @@ mod tests {
     }
 
     fn write_addon(home: &Path, name: &str, toc: &str, files: &[(&str, &str)]) {
-        let dir = home.join("AddOns").join(name);
+        let dir = home.join("Interface/AddOns").join(name);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(format!("{name}.toc")), toc).unwrap();
         for (f, body) in files {
@@ -1823,7 +1804,7 @@ mod tests {
 
     /// [`write_addon`] with raw bytes, for files that are not UTF-8.
     fn write_addon_bytes(home: &Path, name: &str, toc: &[u8], files: &[(&str, &[u8])]) {
-        let dir = home.join("AddOns").join(name);
+        let dir = home.join("Interface/AddOns").join(name);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(format!("{name}.toc")), toc).unwrap();
         for (f, body) in files {

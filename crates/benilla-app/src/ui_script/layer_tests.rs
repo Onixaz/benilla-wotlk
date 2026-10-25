@@ -65,7 +65,7 @@ pub(super) fn production_load_seeded(
     let tmp = std::env::temp_dir().join(format!("benilla-layer-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let home = tmp.join("benilla-config");
-    let root = home.join("AddOns");
+    let root = home.join("Interface/AddOns");
     std::fs::create_dir_all(&root).unwrap();
     addons(&root);
     let _c = EnvGuard::unset("WOW_CAPTURE");

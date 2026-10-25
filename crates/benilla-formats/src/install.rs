@@ -6,6 +6,9 @@
 //! 2. `<project folder>/WoW/Data`, `dev` builds only ([`project_folder`]).
 //! 3. `<exe dir>/Data`, then `<exe dir>/WoW/Data`, the release layouts.
 //!
+//! A drop-in `Wow.exe` (the `standalone` launcher, [`set_drop_in_install`]) has one candidate,
+//! `<install>/Data`, and never reads `$WOW_DATA` or a `WoW` link: it is the install's own client.
+//!
 //! `dev` is a default feature here, so every dependent declares `default-features = false` and
 //! re-exports it; otherwise feature unification puts the source-tree path in a player build.
 //! `scripts/gates.sh`'s player build and `tests::a_player_build_carries_no_source_tree_path`
@@ -16,6 +19,21 @@ use std::sync::OnceLock;
 
 /// The launcher's project folder, handed in by its entry point ([`set_project_folder`]).
 static LAUNCHER_FOLDER: OnceLock<PathBuf> = OnceLock::new();
+
+/// The install a drop-in `Wow.exe` sits in, handed in by its entry point ([`set_drop_in_install`]).
+static DROP_IN_INSTALL: OnceLock<PathBuf> = OnceLock::new();
+
+/// Record the install root a `standalone` launcher replaces `Wow.exe` in, its own folder: from
+/// here [`wow_data`] answers `<install>/Data` or nothing. The entry point calls this once, before
+/// anything resolves, and a later call changes nothing.
+pub fn set_drop_in_install(root: &Path) {
+    let _ = DROP_IN_INSTALL.set(root.to_path_buf());
+}
+
+/// The install root a drop-in `Wow.exe` sits in, or `None` in every other build.
+pub fn drop_in_install() -> Option<&'static Path> {
+    DROP_IN_INSTALL.get().map(PathBuf::as_path)
+}
 
 /// Record the launcher's project folder, as its build stamp names it (`BuildId::project_dir`); an
 /// empty stamp, a player build's, records nothing. The entry point calls this once, before
@@ -59,6 +77,9 @@ pub fn wow_data() -> Option<PathBuf> {
 
 /// Every place [`wow_data`] looks, in order, whether or not it exists, for a "looked in" message.
 pub fn candidates() -> Vec<PathBuf> {
+    if let Some(root) = drop_in_install() {
+        return drop_in_candidates(root);
+    }
     candidates_from(
         std::env::var_os("WOW_DATA").map(PathBuf::from),
         project_folder(),
@@ -66,6 +87,11 @@ pub fn candidates() -> Vec<PathBuf> {
             .ok()
             .and_then(|e| e.parent().map(Path::to_path_buf)),
     )
+}
+
+/// A drop-in's one place: the `Data` folder beside it, whatever the environment says.
+fn drop_in_candidates(root: &Path) -> Vec<PathBuf> {
+    vec![root.join("Data")]
 }
 
 /// [`candidates`] with the environment passed in: a test that set `$WOW_DATA` would change the
@@ -260,6 +286,15 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// A drop-in reads its own install's `Data` and nothing else: no override, no `WoW` link.
+    #[test]
+    fn a_drop_in_has_one_candidate_its_own_data() {
+        assert_eq!(
+            drop_in_candidates(Path::new("/games/wotlk")),
+            vec![PathBuf::from("/games/wotlk/Data")]
+        );
     }
 
     #[test]

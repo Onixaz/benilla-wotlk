@@ -7,7 +7,7 @@
 //! ```
 //!
 //! The banner reads `benilla build … · extended`, and the plugin logs one line at `Startup`: the
-//! `AddOns/` folder in [`benilla_app::config_dir`], where an addon the crate ships is written.
+//! addon folder, [`benilla_app::addons_dir`], where an addon the crate ships is written.
 //!
 //! A crate of its own copies the `benilla` launcher (`crates/benilla`): a build script that stamps
 //! its commit, a `main` like this one that reads the stamp back as `crates/benilla/src/main.rs`
@@ -85,7 +85,7 @@ struct HelloPlugin;
 impl Plugin for HelloPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, || {
-            let addons = benilla_app::config_dir().map(|dir| dir.join("AddOns"));
+            let addons = benilla_app::addons_dir();
             info!("a plugin on top of benilla is running; its addons go in {addons:?}");
         });
     }

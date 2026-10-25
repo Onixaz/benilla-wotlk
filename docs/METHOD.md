@@ -41,11 +41,17 @@ crate of its own or a fork, and benilla opens a piece of itself to such a crate 
   read at runtime from a gitignored path, and everyone provides their own. Interface code is no
   exception: FrameXML and GlueXML run off the player's own patch chain, and `assets/ui` holds
   only benilla's own files.
-- **The install is read-only.** benilla never writes into the WoW folder: no screenshot, log,
-  cache or scratch file. `scripts/smoke.sh` fails a run that leaves the install changed.
-- **Local state lives in one folder**, `benilla-config/`, at the repo root in a dev build and
-  beside the binary in the player build; every path to it resolves through `crate::local_state`.
-  Player settings are CVars persisted as a diff in `benilla-config/config.toml`.
+- **The install is read-only, but for the drop-in.** No build writes into the WoW folder (no
+  screenshot, log, cache or scratch file; `scripts/smoke.sh` fails a run that leaves it changed)
+  except the `standalone` build, which replaces `Wow.exe` in the install root and keeps its
+  state there as 3.3.5a does, so the two clients take turns on one folder. Only that build flag
+  opens the install for writing, never the folder a binary runs from.
+- **Local state is the reference's own files.** What 3.3.5a writes, benilla writes in its
+  format at its path (`WTF\`, `Cache\WDB\`, `Logs\`, `Screenshots\`, addons in
+  `Interface\AddOns\`), under one root: the install for the drop-in, `benilla-config/` for every
+  other build (at the repo root in a dev build, beside the binary in the player build). What
+  3.3.5a has no file for stays in `benilla-config/` itself. Every path resolves through
+  `crate::local_state`. Player settings are CVars, saved where 3.3.5a saves them.
 - **The core UI is the stock UI; benilla's own is one layer on top.** The core loads the stock
   3.3.5a FrameXML off the player's own chain, byte for byte, and builds the engine verbs those
   files call, never stubbing one to make a file load. benilla's own interface (its options
@@ -77,7 +83,8 @@ crate of its own or a fork, and benilla opens a piece of itself to such a crate 
   they share one set of artifacts. `release` is built, never tested: `cargo ship` to ship and to
   measure frame time, which the dev build never does. `cargo play` (without `dev`) runs `play`,
   `release` with thin LTO, to play on, with the PGO profile each machine records with
-  `scripts/pgo-train.sh` when there is one (`release`, with `BENILLA_PGO_LTO=fat`).
+  `scripts/pgo-train.sh` when there is one (`release`, with `BENILLA_PGO_LTO=fat`). The drop-in
+  is the player build with `--features standalone`, which a `dev` build refuses.
 - **The check**: `scripts/check.sh`, per round and before our own pull requests, on the whole
   workspace: `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, the
   doc-link and render-pass lints, then `cargo test`, the player build without the `dev` feature

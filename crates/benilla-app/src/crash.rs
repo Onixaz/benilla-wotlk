@@ -141,6 +141,7 @@ mod tests {
         date: "2026-09-16",
         profile: "debug",
         project_dir: "",
+        standalone: false,
         extended: false,
     };
 

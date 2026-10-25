@@ -12,6 +12,11 @@ workspace = true
 # The dev/player seam: `cargo build -p benilla --no-default-features` is the player build.
 default = ["dev"]
 dev = ["benilla-app/dev"]
+# The drop-in `Wow.exe`: `cargo build --release -p benilla --no-default-features --features
+# standalone`. The binary goes in the install root and treats that folder as its own: it reads
+# `<exe dir>/Data` only and writes the reference's `WTF/`, `Cache/`, `Logs/` and `Screenshots/`.
+# Exclusive with `dev`.
+standalone = []
 # Profiling switches, forwarded so `cargo run -p benilla --features tracy` works.
 tracy = ["benilla-app/tracy"]
 trace_chrome = ["benilla-app/trace_chrome"]

@@ -43,7 +43,7 @@ A feature 3.3.5a does not have lives in a crate of its own that adds its Bevy pl
 fork. A client started through `run_with` says `extended` in its build line, so its reports read
 apart from stock benilla's. The crate keeps its own settings, never rows in benilla's CVar table,
 which every addon reads, and its files go under `benilla_app::config_dir()`, its own
-`benilla-config/`: an addon it ships is written into that folder's `AddOns/` and loads as any
+`benilla-config/`: an addon it ships is written into `benilla_app::addons_dir()` and loads as any
 addon does.
 
 Past `run_with` and that folder, benilla opens a piece of itself to such a crate only when its own
@@ -84,7 +84,9 @@ out of scope is closed with the reason.
   of the gates.
 - **A 3.3.5a install of your own.** `WOW_DATA=<its Data folder>`, or a `WoW` link at the repo
   root, which only a dev build sees: the player build looks for `Data/` or `WoW/Data/` beside
-  the binary. benilla reads the install and never writes into it. `WOW_DATA=` (set, empty)
+  the binary. benilla reads the install and never writes into it, but as the drop-in: the
+  `standalone` build (`cargo build --release -p benilla --no-default-features --features
+  standalone`) replaces `Wow.exe` in the install root and writes what 3.3.5a writes there. `WOW_DATA=` (set, empty)
   means "no install", which is how the no-install boot is tested on a machine that has one.
 - **Without the install, green is hollow.** Well over a thousand tests read the install and skip
   when it is absent, and a few dozen more read a corpus of addons

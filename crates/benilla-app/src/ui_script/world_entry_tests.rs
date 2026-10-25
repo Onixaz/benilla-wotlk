@@ -73,7 +73,7 @@ fn hermetic_addon(
         std::env::temp_dir().join(format!("benilla-world-entry-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let home = tmp.join("benilla-config");
-    let dir = home.join("AddOns").join(name);
+    let dir = home.join("Interface/AddOns").join(name);
     std::fs::create_dir_all(&dir).expect("probe addon dir");
     std::fs::write(dir.join(format!("{name}.toc")), toc).expect("probe toc");
     std::fs::write(dir.join(format!("{name}.lua")), lua).expect("probe lua");

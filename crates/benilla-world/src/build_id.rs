@@ -27,6 +27,9 @@ pub struct BuildId {
     /// The launcher's project folder in a dev build, where its `WoW` link, `benilla-config/` and
     /// `.probe-identity` live; empty in a player build, which carries no source path.
     pub project_dir: &'static str,
+    /// A `standalone` launcher's: the binary replaces `Wow.exe` in an install and treats that
+    /// folder as its own, reading `<exe dir>/Data` and writing what the reference writes there.
+    pub standalone: bool,
     /// Whether a crate on top of benilla added plugins through `benilla_app::run_with`. The entry
     /// point sets it, so a launcher leaves it to `..Default::default()`.
     pub extended: bool,
@@ -43,8 +46,9 @@ impl BuildId {
         }
     }
 
-    /// The one-line build id: release, short sha, commit date and profile, then `extended` when a
-    /// crate on top added plugins, so a report from that client reads apart from stock.
+    /// The one-line build id: release, short sha, commit date and profile, then `standalone` for a
+    /// drop-in `Wow.exe` and `extended` when a crate on top added plugins, so a report from that
+    /// client reads apart from stock.
     pub fn summary(&self) -> String {
         let stamp = if self.short.is_empty() {
             format!(
@@ -60,6 +64,11 @@ impl BuildId {
                 self.date,
                 self.profile
             )
+        };
+        let stamp = if self.standalone {
+            stamp + " · standalone"
+        } else {
+            stamp
         };
         if self.extended {
             stamp + " · extended"
@@ -97,6 +106,7 @@ mod tests {
             date: "2026-09-27",
             profile: "release",
             project_dir: "",
+            standalone: false,
             extended: false,
         }
     }
@@ -163,6 +173,14 @@ mod tests {
             }
             .summary(),
             "0.2.0 · unknown commit (built without a git checkout) · release · extended"
+        );
+        assert_eq!(
+            BuildId {
+                standalone: true,
+                ..stock
+            }
+            .summary(),
+            "0.2.0+12 · b17be27 · 2026-09-27 · release · standalone"
         );
     }
 }
