@@ -761,6 +761,9 @@ fn close_ui_session(world: &mut World) {
     if ui_never_loaded {
         crate::cvars::drop_character_cvars(world);
     } else {
+        // `CGGameUI::Shutdown`'s order (`0x528f00`): macros, bindings, then the CVar slots.
+        crate::ui_macro::save_to_account_data(world);
+        crate::bindings::save_to_account_data(world);
         crate::account_data::shutdown(world);
     }
     // The chat cache folds here, not in its own `OnExit(InWorld)` system, which a `/reload` skips.

@@ -31,13 +31,9 @@ impl SlotDef {
 
 pub(crate) const CONFIG_ACCOUNT: usize = 0;
 pub(crate) const CONFIG_CHARACTER: usize = 1;
-#[cfg(test)]
 pub(crate) const BINDINGS_ACCOUNT: usize = 2;
-#[cfg(test)]
 pub(crate) const BINDINGS_CHARACTER: usize = 3;
-#[cfg(test)]
 pub(crate) const MACROS_ACCOUNT: usize = 4;
-#[cfg(test)]
 pub(crate) const MACROS_CHARACTER: usize = 5;
 #[cfg(test)]
 pub(crate) const LAYOUT: usize = 6;

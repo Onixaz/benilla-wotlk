@@ -405,6 +405,17 @@ impl super::UiScript {
         self.model_mut().keybinds.current_set
     }
 
+    /// Stored set 1 (account) or 2 (character), what its `bindings-cache.wtf` holds; `None` for a
+    /// character with no set of its own.
+    pub fn stored_binding_set(&self, set: u32) -> Option<Vec<KeyBinding>> {
+        let model = self.model_ref();
+        match set {
+            1 => model.keybinds.stored[0].clone(),
+            2 => model.keybinds.stored[1].clone(),
+            _ => None,
+        }
+    }
+
     /// Whether a character-specific stored set exists (the window's checkbox).
     pub fn character_bindings_exist(&self) -> bool {
         self.model_mut().keybinds.stored[1].is_some()

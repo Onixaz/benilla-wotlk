@@ -173,6 +173,23 @@ pub(crate) fn load_config_slots(world: &mut World) {
     crate::player::restore_camera_from_cvars(world);
 }
 
+/// `SaveAccountData` (`0x6b9be0`) for each `(slot, bytes)`: written now, uploaded per the gate.
+pub(crate) fn save_slots(world: &mut World, slots: &[(usize, Vec<u8>)]) {
+    let Some(cvars) = world.get_resource::<Cvars>() else {
+        return;
+    };
+    let allowed: Vec<bool> = slots
+        .iter()
+        .map(|(slot, _)| gate(cvars)(&store::SLOTS[*slot]))
+        .collect();
+    let Some(mut data) = world.get_resource_mut::<AccountData>() else {
+        return;
+    };
+    for ((slot, bytes), allow) in slots.iter().zip(allowed) {
+        data.save(*slot, bytes, &move |_: &SlotDef| allow);
+    }
+}
+
 /// The CVar half of `CGGameUI::Shutdown` (`0x5290a0`-`0x5290bb`): the camera into its rows, the
 /// account's and the character's `config-cache.wtf`, `Config.wtf`, the character's rows dropped,
 /// and every pending upload sent now (`AccountDataFlush` `0x6b9b90`).

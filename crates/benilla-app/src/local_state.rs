@@ -155,31 +155,6 @@ pub(crate) fn character_dir(account: &str, realm: &str, character: &str) -> Opti
     )
 }
 
-/// `benilla-config/macros/account.txt`: the account-wide macro tab (indices 1..=18).
-pub(crate) fn macros_account_path() -> Option<PathBuf> {
-    home().map(|h| h.join("macros/account.txt"))
-}
-
-/// `benilla-config/macros/<realm>-<character>.txt`: the per-character macro tab (19..=36), the
-/// reference's `WTF/Account/<ACC>/<REALM>/<CHAR>/macros-cache.txt` flattened into one folder.
-pub(crate) fn macros_character_path(realm: &str, character: &str) -> Option<PathBuf> {
-    let key = format!("{}-{}", file_token(realm), file_token(character));
-    home().map(|h| h.join("macros").join(format!("{key}.txt")))
-}
-
-/// `benilla-config/bindings/account.txt`: the account-wide key bindings (the `bindings-cache.wtf`
-/// analog), a diff against the defaults.
-pub(crate) fn bindings_account_path() -> Option<PathBuf> {
-    home().map(|h| h.join("bindings/account.txt"))
-}
-
-/// `benilla-config/bindings/<realm>-<character>.txt`: the character-specific binding set. Its
-/// existence is the "character specific key bindings" state; going back to general deletes it.
-pub(crate) fn bindings_character_path(realm: &str, character: &str) -> Option<PathBuf> {
-    let key = format!("{}-{}", file_token(realm), file_token(character));
-    home().map(|h| h.join("bindings").join(format!("{key}.txt")))
-}
-
 /// `benilla-config/saved-variables.lua`: the flat channel our FrameXML saves through
 /// `RegisterForSave` (the `SavedVariables.lua` analog), written whole at logout, run at UI load.
 pub(crate) fn saved_variables_path() -> Option<PathBuf> {
@@ -419,21 +394,8 @@ mod tests {
             "no name can leave the folder"
         );
         assert_eq!(
-            macros_account_path(),
-            Some(tmp.join("benilla-config/macros/account.txt"))
-        );
-        assert_eq!(
             saved_variables_path(),
             Some(tmp.join("benilla-config/saved-variables.lua"))
-        );
-        assert_eq!(
-            macros_character_path("Hydraxian Waterlords", "Probeone"),
-            Some(tmp.join("benilla-config/macros/Hydraxian_Waterlords-Probeone.txt"))
-        );
-        assert_eq!(
-            macros_character_path("../evil", "a/b"),
-            Some(tmp.join("benilla-config/macros/___evil-a_b.txt")),
-            "no name can escape the folder"
         );
         assert_eq!(
             chat_character_path("Hydraxian Waterlords", "Probeone"),

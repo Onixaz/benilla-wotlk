@@ -37,7 +37,7 @@ use crate::ui_script::{PlayerUiHover, PointerOverUiPanel, UiKeyboardCapture};
 pub(crate) mod chord;
 mod layout;
 mod script_input;
-mod store;
+mod wtf;
 
 use chord::{BindKey, Chord};
 pub(crate) use layout::LayoutNames;
@@ -158,8 +158,8 @@ impl BindingsState {
 /// save.
 #[derive(Resource, Default)]
 struct BindingFiles {
-    account: Option<std::path::PathBuf>,
-    character: Option<std::path::PathBuf>,
+    /// `SaveBindings` since the load: bit 1 the account set, bit 2 the character's (`0x55f3d0`).
+    dirty: u8,
 }
 
 /// This module's systems inside [`crate::ui_script::UiInput`]. The UI key feed runs before it, so
@@ -195,95 +195,98 @@ impl Plugin for BindingsPlugin {
 }
 
 /// Seed the key sets at the VM's birth, before any interface file runs: the defaults off the
-/// player's chain (`WTF\DefaultBindings.wtf`), the account set, and the character's set if it has
-/// one. The keys are their own table, so a command a later file declares finds its keys there,
-/// and stock `ActionButton_OnLoad` paints its hotkey corner from `GetBindingKey` at load.
-///
-/// The reference reads the defaults later in `UI_Init` (`0x4b62b0` at `0x4900c7`); here they are
-/// read first because the stored sets are diffs against them ([`store`]'s deviation), and nothing
-/// reads set 0 before `LoadBindings(0)`.
+/// player's chain (`WTF\DefaultBindings.wtf`), the account set from its `bindings-cache.wtf`
+/// (account-data slot 2), and the character's from slot 3, which makes it the active set when it
+/// holds anything (`FinishLoadBindings` `0x562d60`). The keys are their own table, so a command a
+/// later file declares finds its keys there, and stock `ActionButton_OnLoad` paints its hotkey
+/// corner from `GetBindingKey` at load.
 pub(crate) fn seed_bindings_for_vm(world: &mut World, script: &mut UiScript) {
+    use crate::account_data::store::{BINDINGS_ACCOUNT, BINDINGS_CHARACTER};
     let defaults = crate::ui_script::default_bindings();
     script.set_default_bindings(defaults);
     let defaults = script.default_bindings();
-    let account = crate::local_state::bindings_account_path();
-    let account_text = read_diff(&account);
-    let overrides = account_text
-        .as_deref()
-        .map(store::from_diff)
-        .unwrap_or_default();
-    script.seed_binding_set(1, Some(store::resolve(&overrides, &defaults)));
-    script.seed_modified_click_set(1, account_text.as_deref().map(store::clicks_from_diff));
-    script.load_binding_set(1);
+    let read = |slot| {
+        world
+            .get_resource::<crate::account_data::AccountData>()
+            .and_then(|d| d.read(slot))
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default()
+    };
+    let (account, character) = (read(BINDINGS_ACCOUNT), read(BINDINGS_CHARACTER));
 
-    // The character's own set: its file existing makes it the active set, the reference's rule.
-    // No roster identity (a rigged or capture run) leaves set 2 unseeded.
-    let id = world
-        .get_resource::<crate::char_select::Roster>()
-        .and_then(crate::ui_macro::identity);
-    let character = id
-        .as_ref()
-        .and_then(|(realm, name)| crate::local_state::bindings_character_path(realm, name));
-    match read_diff(&character) {
-        Some(text) => {
-            let overrides = store::from_diff(&text);
-            script.seed_binding_set(2, Some(store::resolve(&overrides, &defaults)));
-            script.seed_modified_click_set(2, Some(store::clicks_from_diff(&text)));
-            script.load_binding_set(2);
-            info!("bindings: character-specific set loaded");
-        }
-        None => {
-            script.seed_binding_set(2, None);
-            script.seed_modified_click_set(2, None);
-            script.load_binding_set(1);
-        }
+    let (keys, clicks) = wtf::decode(&account, &defaults);
+    script.seed_binding_set(1, Some(keys));
+    script.seed_modified_click_set(1, Some(clicks));
+    script.load_binding_set(1);
+    if character.is_empty() {
+        script.seed_binding_set(2, None);
+        script.seed_modified_click_set(2, None);
+    } else {
+        let (keys, clicks) = wtf::decode(&character, &defaults);
+        script.seed_binding_set(2, Some(keys));
+        script.seed_modified_click_set(2, Some(clicks));
+        script.load_binding_set(2);
+        info!("bindings: character-specific set loaded");
     }
     if let Some(mut files) = world.get_resource_mut::<BindingFiles>() {
-        files.account = account;
-        files.character = character;
+        files.dirty = 0;
     }
 }
 
-/// Read one diff file; `None` (the defaults) when absent or unreadable.
-fn read_diff(path: &Option<std::path::PathBuf>) -> Option<String> {
-    let path = path.as_ref()?;
-    match std::fs::read_to_string(path) {
-        Ok(text) => Some(text),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => {
-            warn!("bindings: reading {}: {e}", path.display());
-            None
-        }
-    }
-}
-
-/// Drain the VM's binding requests: `SaveBindings` writes the set's diff; saving the account set
-/// deletes the character file.
-fn drain_binding_requests(script: Option<NonSendMut<UiScript>>, files: Res<BindingFiles>) {
+/// Drain the VM's binding requests: `SaveBindings` copies the live table into its set in the VM
+/// and owes the files at the UI shutdown.
+fn drain_binding_requests(script: Option<NonSendMut<UiScript>>, mut files: ResMut<BindingFiles>) {
     let Some(mut script) = script else { return };
     for req in script.take_keybind_requests() {
         let KeybindRequest::Save(which) = req;
-        let text = store::to_diff(&script.keybind_snapshot(), &script.default_bindings())
-            + &store::clicks_to_diff(&script.modified_click_overrides());
-        let path = match which {
-            1 => &files.account,
-            2 => &files.character,
-            _ => continue,
+        files.dirty |= match which {
+            1 => 1,
+            2 => 2,
+            _ => 0,
         };
-        if let Some(path) = path {
-            if let Err(e) = crate::local_state::write_atomic(path, &text) {
-                warn!("bindings: saving {}: {e}", path.display());
+    }
+}
+
+/// `CGUIBindings::SaveBindings` (`0x55f3d0`) at the UI shutdown: the account set saved writes both
+/// files, the character's empty unless it keeps a set of its own; the character set alone writes
+/// its file.
+pub(crate) fn save_to_account_data(world: &mut World) {
+    use crate::account_data::store::{BINDINGS_ACCOUNT, BINDINGS_CHARACTER};
+    if let Some(mut script) = world.get_non_send_resource_mut::<UiScript>() {
+        let requests = script.take_keybind_requests();
+        if let Some(mut files) = world.get_resource_mut::<BindingFiles>() {
+            for KeybindRequest::Save(which) in requests {
+                files.dirty |= if which == 1 { 1 } else { 2 };
             }
         }
-        if which == 1 {
-            if let Some(chr) = &files.character {
-                match std::fs::remove_file(chr) {
-                    Ok(()) => info!("bindings: character-specific set deleted"),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => warn!("bindings: deleting {}: {e}", chr.display()),
-                }
-            }
+    }
+    let dirty = world.get_resource::<BindingFiles>().map_or(0, |f| f.dirty);
+    if dirty == 0 {
+        return;
+    }
+    let Some(script) = world.get_non_send_resource::<UiScript>() else {
+        return;
+    };
+    let defaults = script.default_bindings();
+    let file = |set: u32| -> Vec<u8> {
+        match script.stored_binding_set(set) {
+            Some(keys) => wtf::encode(
+                &keys,
+                &defaults,
+                &script.stored_modified_click_set(set).unwrap_or_default(),
+            )
+            .into_bytes(),
+            None => Vec::new(),
         }
+    };
+    let mut slots = Vec::new();
+    if dirty & 1 != 0 {
+        slots.push((BINDINGS_ACCOUNT, file(1)));
+    }
+    slots.push((BINDINGS_CHARACTER, file(2)));
+    crate::account_data::save_slots(world, &slots);
+    if let Some(mut files) = world.get_resource_mut::<BindingFiles>() {
+        files.dirty = 0;
     }
 }
 

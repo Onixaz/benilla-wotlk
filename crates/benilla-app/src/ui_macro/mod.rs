@@ -1,6 +1,7 @@
-//! The app half of `benilla_ui::script::macros`: the icon chooser's catalog, the files under
-//! `benilla-config/macros/`, the runner, and the bound spell the action bar reads. 1.12 macros are
-//! client state only: no opcode carries them, and the reference saves them to `macros-cache.txt`.
+//! The app half of `benilla_ui::script::macros`: the icon chooser's catalog, the two
+//! `macros-cache.txt` files (account-data slots 4 and 5, [`crate::account_data`]), the runner, and
+//! the bound spell the action bar reads. The files load with the in-game UI and are written at its
+//! shutdown when a macro was created, edited or deleted (`CGUIMacros::SaveMacros` `0x566a30`).
 
 use bevy::prelude::*;
 
@@ -14,15 +15,13 @@ mod store;
 #[cfg(test)]
 mod tests;
 
-/// The files this session's macros live in, the per-character one keyed by realm and name as the
-/// reference's folders are. `None` is session-only (a capture, or no install): nothing is written.
+/// The macro files' state: whether this VM has loaded them, and whether a save is owed
+/// (`m_saveMacros`).
 #[derive(Resource, Default)]
 pub(crate) struct MacroFiles {
-    account: Option<std::path::PathBuf>,
-    character: Option<std::path::PathBuf>,
-    /// The `(realm, character)` the files were loaded for, per VM: a relog meets a fresh VM with an
-    /// empty macro table, even as the same character.
-    identity: crate::ui_script::VmMemo<Option<(String, String)>>,
+    /// Loaded into this VM: a relog meets a fresh VM with an empty macro table.
+    loaded: crate::ui_script::VmMemo<bool>,
+    dirty: bool,
 }
 
 /// Macro index to its bound spell, the reference's `[rec+0x564]` (read by `0x4e5ba0`), which an
@@ -65,9 +64,8 @@ impl Plugin for UiMacroPlugin {
                     load_macros
                         .in_set(crate::ui_script::UiFeed)
                         .in_set(InWorldGated),
-                    // Every frame, in or out of world, so a `/logout` never strands an edit; after
-                    // the script tick that dirtied the table.
-                    save_dirty_macros.after(crate::ui_script::UiInput),
+                    // After the script tick that dirtied the table.
+                    note_dirty_macros.after(crate::ui_script::UiInput),
                 ),
             );
     }
@@ -145,40 +143,30 @@ pub(crate) fn identity(roster: &crate::char_select::Roster) -> Option<(String, S
     Some((realm, name))
 }
 
-/// Seed the engine's macro table from disk, once per character per VM.
+/// Seed the engine's macro table from the two slots once per VM, when both have heard from the
+/// server (`LoadMacrosCallback` `0x567c10` runs from the deferred load).
 fn load_macros(
     script: Option<NonSendMut<UiScript>>,
-    roster: Res<crate::char_select::Roster>,
+    data: Res<crate::account_data::AccountData>,
     mut files: ResMut<MacroFiles>,
 ) {
+    use crate::account_data::store::{MACROS_ACCOUNT, MACROS_CHARACTER};
     let Some(mut script) = script else { return };
-    let Some(id) = identity(&roster) else { return };
-    if files.identity.get(&script).as_ref() == Some(&id) {
-        return; // already loaded into this VM
+    if *files.loaded.get(&script) {
+        return;
     }
-    let (realm, character) = (&id.0, &id.1);
-    files.account = crate::local_state::macros_account_path();
-    files.character = crate::local_state::macros_character_path(realm, character);
-    *files.identity.get(&script) = Some(id.clone());
-
-    let read = |path: &Option<std::path::PathBuf>| -> Vec<benilla_ui::script::MacroView> {
-        let Some(path) = path else { return Vec::new() };
-        match std::fs::read_to_string(path) {
-            Ok(text) => store::parse(&text),
-            // Absent is the first run, not a failure.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(e) => {
-                warn!("ui_macro: reading {}: {e}", path.display());
-                Vec::new()
-            }
-        }
+    let (Some(account), Some(character)) = (data.read(MACROS_ACCOUNT), data.read(MACROS_CHARACTER))
+    else {
+        return; // waiting for the server's times
     };
+    *files.loaded.get(&script) = true;
+    files.dirty = false;
     let state = MacroState {
-        account: read(&files.account),
-        character: read(&files.character),
+        account: store::parse(&String::from_utf8_lossy(&account), 0),
+        character: store::parse(&String::from_utf8_lossy(&character), store::CHARACTER_BASE),
     };
     info!(
-        "ui_macro: {} account + {} character macros for {character} on {realm}",
+        "ui_macro: {} account + {} character macros",
         state.account.len(),
         state.character.len()
     );
@@ -187,23 +175,40 @@ fn load_macros(
     script.fire_event("UPDATE_MACROS", vec![]);
 }
 
-/// Persist on the engine's dirty edge, and fire `UPDATE_MACROS`.
-fn save_dirty_macros(script: Option<NonSendMut<UiScript>>, files: Res<MacroFiles>) {
+/// An edit fires `UPDATE_MACROS` and owes the shutdown's save.
+fn note_dirty_macros(script: Option<NonSendMut<UiScript>>, mut files: ResMut<MacroFiles>) {
     let Some(mut script) = script else { return };
     if !script.take_macros_dirty() {
         return;
     }
-    let state = script.macros();
-    // Fire first: the redraw must not depend on the write landing.
+    files.dirty = true;
     script.fire_event("UPDATE_MACROS", vec![]);
-    for (path, macros) in [
-        (&files.account, &state.account),
-        (&files.character, &state.character),
-    ] {
-        let Some(path) = path else { continue };
-        if let Err(e) = crate::local_state::write_atomic(path, &store::write(macros)) {
-            warn!("ui_macro: saving {}: {e}", path.display());
-        }
+}
+
+/// `CGUIMacros::SaveMacros` (`0x566a30`) at the UI shutdown: both files, if anything moved.
+pub(crate) fn save_to_account_data(world: &mut World) {
+    use crate::account_data::store::{MACROS_ACCOUNT, MACROS_CHARACTER};
+    let dirty = world.get_resource::<MacroFiles>().is_some_and(|f| f.dirty)
+        || world
+            .get_non_send_resource_mut::<UiScript>()
+            .is_some_and(|mut s| s.take_macros_dirty());
+    if !dirty {
+        return;
+    }
+    let Some(state) = world.get_non_send_resource::<UiScript>().map(UiScript::macros) else {
+        return;
+    };
+    let account = store::write(&state.account, 0);
+    let character = store::write(&state.character, store::CHARACTER_BASE);
+    crate::account_data::save_slots(
+        world,
+        &[
+            (MACROS_ACCOUNT, account.into_bytes()),
+            (MACROS_CHARACTER, character.into_bytes()),
+        ],
+    );
+    if let Some(mut files) = world.get_resource_mut::<MacroFiles>() {
+        files.dirty = false;
     }
 }
 

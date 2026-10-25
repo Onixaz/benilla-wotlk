@@ -1,9 +1,8 @@
-//! The macro wiring: persistence under `benilla-config/macros/`, the runner's route through the
+//! The macro wiring: persistence through the account data, the runner's route through the
 //! stock chat frame, and the seed and dirty contract the plugin's systems rely on.
 
 use benilla_ui::script::{MacroState, MacroView, UiScript};
 
-use crate::local_state::test_env::{EnvGuard, ENV_LOCK};
 
 fn macro_view(name: &str, body: &str) -> MacroView {
     MacroView {
@@ -14,51 +13,54 @@ fn macro_view(name: &str, body: &str) -> MacroView {
     }
 }
 
-/// A save writes the reference's format under `benilla-config/macros/`, and a load reads it back.
+/// The shutdown's save writes both `macros-cache.txt` through the account data in the reference's
+/// grammar, the character set's ids on their base, and the files read back as the table.
 #[test]
-fn a_saved_macro_table_round_trips_through_benilla_macros() {
-    let _l = ENV_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+fn a_saved_macro_table_round_trips_through_the_account_data() {
+    use crate::account_data::AccountData;
     let tmp = std::env::temp_dir().join(format!("benilla-macros-{}", std::process::id()));
     std::fs::remove_dir_all(&tmp).ok();
-    let _c = EnvGuard::unset("WOW_CAPTURE");
-    let _h = EnvGuard::set("BENILLA_HOME", tmp.to_str().unwrap());
-
-    let account = crate::local_state::macros_account_path().unwrap();
-    let character = crate::local_state::macros_character_path("Test Realm", "Probeone").unwrap();
+    let (account_dir, character_dir) = (tmp.join("ACC"), tmp.join("ACC/Realm/Probeone"));
+    let mut data = AccountData::default();
+    data.initialize(true, Some(account_dir.clone()));
+    data.initialize(false, Some(character_dir.clone()));
+    let times = benilla_protocol::messages::AccountDataTimes {
+        server_time: 1,
+        flag: 1,
+        mask: 0xff,
+        times: [Some(0); 8],
+    };
+    data.on_times(&times, &|_: &crate::account_data::SlotDef| false);
 
     let state = MacroState {
         account: vec![macro_view("Ambush", "/cast Ambush\n/say pew")],
         character: vec![macro_view("Charge", "/cast Charge")],
     };
-    crate::local_state::write_atomic(&account, &super::store::write(&state.account)).unwrap();
-    crate::local_state::write_atomic(&character, &super::store::write(&state.character)).unwrap();
+    let mut world = bevy::prelude::World::new();
+    world.insert_resource(crate::cvars::Cvars::default());
+    world.insert_resource(data);
+    world.insert_resource(super::MacroFiles {
+        dirty: true,
+        ..Default::default()
+    });
+    let mut script = UiScript::new().unwrap();
+    script.set_macros(state.clone());
+    world.insert_non_send_resource(script);
+    super::save_to_account_data(&mut world);
 
-    // The reference's format, with `\n` line ends.
+    let account = std::fs::read_to_string(account_dir.join("macros-cache.txt")).unwrap();
     assert_eq!(
-        std::fs::read_to_string(&account).unwrap(),
-        "MACRO 1 \"Ambush\" Ability_Ambush\n/cast Ambush\n/say pew\nEND\n"
+        account,
+        "MACRO 1 \"Ambush\" Ability_Ambush\r\n/cast Ambush\r\n/say pew\r\nEND\r\n"
     );
-
+    let character = std::fs::read_to_string(character_dir.join("macros-cache.txt")).unwrap();
+    assert!(character.starts_with("MACRO 16777217 \"Charge\""), "{character}");
     let back = MacroState {
-        account: super::store::parse(&std::fs::read_to_string(&account).unwrap()),
-        character: super::store::parse(&std::fs::read_to_string(&character).unwrap()),
+        account: super::store::parse(&account, 0),
+        character: super::store::parse(&character, super::store::CHARACTER_BASE),
     };
     assert_eq!(back, state);
     std::fs::remove_dir_all(&tmp).ok();
-}
-
-/// A capture resolves both paths to `None`, so its macros are session-only.
-#[test]
-fn a_capture_run_persists_nothing() {
-    let _l = ENV_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let _h = EnvGuard::set("BENILLA_HOME", "/tmp/benilla-should-not-exist");
-    let _c = EnvGuard::set("WOW_CAPTURE", "ui-macro");
-    assert_eq!(crate::local_state::macros_account_path(), None);
-    assert_eq!(crate::local_state::macros_character_path("R", "C"), None);
 }
 
 /// The real UI, so the whole route is under test: `run_macro` fires `EXECUTE_CHAT_LINE`, and the

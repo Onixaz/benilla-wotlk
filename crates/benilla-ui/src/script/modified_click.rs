@@ -257,6 +257,16 @@ impl ModifiedClicks {
         }
     }
 
+    /// Stored set 1 or 2's rows as `(action, binding)`, the `modifiedclick` lines its file holds.
+    fn stored_set(&self, set: u32) -> Option<Vec<(String, String)>> {
+        let list = match set {
+            1 => self.stored[0].as_ref(),
+            2 => self.stored[1].as_ref(),
+            _ => None,
+        }?;
+        Some(list.iter().map(|(a, b)| (a.clone(), b.canonical())).collect())
+    }
+
     /// The live explicit rows as `(action, binding)`, the lines a save writes (`0x55f1b0`).
     fn overrides(&self) -> Vec<(String, String)> {
         self.rows
@@ -288,6 +298,11 @@ impl super::UiScript {
     /// save writes.
     pub fn modified_click_overrides(&self) -> Vec<(String, String)> {
         self.model_ref().keybinds.clicks.overrides()
+    }
+
+    /// Stored set 1 or 2's explicitly bound rows, `(action, binding)`.
+    pub fn stored_modified_click_set(&self, set: u32) -> Option<Vec<(String, String)>> {
+        self.model_ref().keybinds.clicks.stored_set(set)
     }
 }
 
