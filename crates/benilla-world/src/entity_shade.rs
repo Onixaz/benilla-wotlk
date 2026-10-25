@@ -247,7 +247,7 @@ pub(crate) fn update_ground_shade(
     >,
     // Cards are world roots the walk cannot reach; each resolves up from its owner instead.
     mut cards: Query<(
-        &crate::billboard::BillboardCard,
+        Ref<crate::billboard::BillboardCard>,
         &mut MeshTag,
         Option<&InteriorLit>,
         Has<InteriorProbePayload>,
@@ -265,7 +265,28 @@ pub(crate) fn update_ground_shade(
     };
     let step = SHADE_RAMP_PER_SEC * time.delta_secs();
     let ambient_step = AMBIENT_RAMP_PER_SEC * time.delta_secs();
+    // A root's byte moved (or first landed) this frame: every card re-resolves.
+    let mut bytes_moved = false;
     for (root, gt, shade, is_self, root_vis) in &mut roots {
+        // Settled in place, both chases on target and its byte asserted (or hidden, unasserted):
+        // nothing below would change, so the row is left unmarked (a city holds ~750 roots).
+        {
+            let s = &*shade;
+            let hidden = root_vis.is_some_and(|v| *v == Visibility::Hidden);
+            if s.sampled
+                && gt.translation().distance_squared(s.last_pos) < RESAMPLE_DIST_SQ
+                && s.t == s.effective_target()
+                && s.ambient == s.ambient_target
+                && if hidden {
+                    s.asserted.is_none()
+                } else {
+                    s.asserted == Some(shade_byte(s.t)) && !dirty_roots.0.contains(&root)
+                }
+                && !(is_self.is_some() && interior_log_enabled())
+            {
+                continue;
+            }
+        }
         // `WOW_INTERIOR_LOG=1`: the viewer's own node state every 3 s.
         if is_self.is_some() && time.elapsed_secs() - *self_log > 3.0 && interior_log_enabled() {
             let p = gt.translation();
@@ -327,9 +348,10 @@ pub(crate) fn update_ground_shade(
             ramp_toward(a.y, at.y, ambient_step),
             ramp_toward(a.z, at.z, ambient_step),
         );
-        let byte = (shade.t * 255.0).round().clamp(0.0, 255.0) as u8;
+        let byte = shade_byte(shade.t);
         // Before the hidden skip: a hidden body's card must still find its root here.
         if root_shade.get(&root) != Some(&byte) {
+            bytes_moved = true;
             root_shade.insert(root, byte);
         }
         // A hidden root skips the walk; its ramps kept stepping, and the cleared `asserted` makes
@@ -365,6 +387,10 @@ pub(crate) fn update_ground_shade(
     // The cards: the reference shades every batch of an object through one node, so a card takes
     // the nearest shaded root above its owner (on a mounted unit, the mount's).
     for (card, mut tag, lit, own_probe, own_def) in &mut cards {
+        // With no root byte moved, only a card re-placed or re-tagged since can be off its byte.
+        if !bytes_moved && !card.is_changed() && !tag.is_changed() {
+            continue;
+        }
         // As in the walk: walking up, a prop's card would reach a host that does not light it.
         if own_def {
             continue;
@@ -379,6 +405,11 @@ pub(crate) fn update_ground_shade(
             tag.0 = with_shade(tag.0, byte, ext);
         }
     }
+}
+
+/// A chase's tag byte.
+fn shade_byte(t: f32) -> u8 {
+    (t * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
 /// The byte of the nearest shaded root at or above `follows`, the owner itself first.
@@ -449,6 +480,70 @@ mod tests {
             dirty(&app),
             (true, false),
             "a foreign write flags its own root and nobody else's"
+        );
+    }
+
+    /// A settled root and its card are left unwritten on idle frames; a moved byte still reaches
+    /// the card.
+    #[test]
+    fn a_settled_root_and_its_card_are_skipped_until_the_byte_moves() {
+        let mut world = World::new();
+        world.init_resource::<Time>();
+        world.init_resource::<TerrainStreamer>();
+        world.init_resource::<Assets<AdtTile>>();
+        world.init_resource::<ShadeDirtyRoots>();
+        let root = world
+            .spawn((
+                GlobalTransform::default(),
+                GroundShade {
+                    sampled: true,
+                    ..GroundShade::default()
+                },
+            ))
+            .id();
+        let card = world
+            .spawn((
+                crate::billboard::BillboardCard::frame_following(
+                    benilla_formats::BillboardKind::Spherical,
+                    Vec3::ZERO,
+                    root,
+                ),
+                MeshTag(0),
+            ))
+            .id();
+        let mut sys = IntoSystem::into_system(update_ground_shade);
+        sys.initialize(&mut world);
+        let ext = exterior_payload(false, false).unwrap();
+        sys.run((), &mut world).unwrap();
+        let lit = shade_byte(LIT_T);
+        assert_eq!(shade_of(world.get::<MeshTag>(card).unwrap().0, ext), lit);
+        sys.run((), &mut world).unwrap();
+        let ticks = |w: &World| {
+            (
+                w.entity(root)
+                    .get_ref::<GroundShade>()
+                    .unwrap()
+                    .last_changed(),
+                w.entity(card).get_ref::<MeshTag>().unwrap().last_changed(),
+            )
+        };
+        let settled = ticks(&world);
+        sys.run((), &mut world).unwrap();
+        assert_eq!(
+            ticks(&world),
+            settled,
+            "an idle frame wrote the root or its card"
+        );
+        {
+            let mut shade = world.get_mut::<GroundShade>(root).unwrap();
+            shade.target = 1.0;
+            shade.t = 1.0;
+        }
+        sys.run((), &mut world).unwrap();
+        assert_eq!(
+            shade_of(world.get::<MeshTag>(card).unwrap().0, ext),
+            255,
+            "the moved byte reaches the card"
         );
     }
 
