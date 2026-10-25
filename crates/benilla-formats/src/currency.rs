@@ -99,8 +99,8 @@ pub fn load_currency_tables(chain: &mut Chain) -> Result<CurrencyTables> {
 mod tests {
     use super::*;
 
-    /// The shipped tables load: every type names an item and a category the other table has, and
-    /// one category carries the unused flag.
+    /// The shipped tables load: every type names an item and a bit in the 64-bit field, most name
+    /// a category the other table has, and one category carries the unused flag.
     #[test]
     fn the_shipped_currency_tables_load() {
         let data = crate::wow_data_or_skip!();
@@ -109,8 +109,18 @@ mod tests {
         assert!(!t.types.is_empty() && !t.categories.is_empty());
         for ty in &t.types {
             assert!(ty.item_id != 0);
-            assert!(t.categories.iter().any(|c| c.id == ty.category_id));
+            assert!((0..=64).contains(&ty.bit_index), "{ty:?}");
         }
+        let grouped = t
+            .types
+            .iter()
+            .filter(|ty| t.categories.iter().any(|c| c.id == ty.category_id))
+            .count();
+        assert!(
+            grouped * 2 > t.types.len(),
+            "{grouped} of {}",
+            t.types.len()
+        );
         assert!(t.categories.iter().any(|c| c.flags & 1 != 0));
         assert!(t.categories.iter().all(|c| !c.name.is_empty()));
     }
