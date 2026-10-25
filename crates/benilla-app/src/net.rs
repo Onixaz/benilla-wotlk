@@ -490,6 +490,8 @@ pub(crate) enum CharRequest {
     AccountDataReady,
     /// An account-data request or upload from the character screen ([`crate::account_data`]).
     AccountData(crate::account_data::Wire),
+    /// A barrier: answered once every request before it is on the wire.
+    Flush(crossbeam_channel::Sender<()>),
 }
 
 /// Whether the screen asks for its roster (the stock glue screens' `GetCharacterListUpdate`)
@@ -1926,8 +1928,13 @@ pub(crate) enum ClientCommand {
     },
     /// `/played` (`CMSG_PLAYED_TIME`).
     PlayedTime,
-    /// An account-data request or upload in the world ([`crate::account_data`]).
+    /// An account-data request or upload in the world ([`crate::account_data`]). With the world
+    /// stream over and the link parked, as after the logout an Exit Game makes, it goes out on the
+    /// parked session, where 12340's UI shutdown sends it (`AccountDataFlush` `0x6b9b90`).
     AccountData(crate::account_data::Wire),
+    /// A barrier: answered once every command before it is on the wire, the parked session's
+    /// included.
+    Flush(crossbeam_channel::Sender<()>),
     /// `OpeningCinematic()`: `CMSG_OPENING_CINEMATIC`, empty.
     OpeningCinematic,
     /// `CMSG_COMPLETE_CINEMATIC`, at the end or skip, or at once for an unresolvable trigger.

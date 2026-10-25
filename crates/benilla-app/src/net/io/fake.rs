@@ -597,7 +597,7 @@ fn spawn_cycles_for(screen_asks_roster: bool) -> Cycles {
     let (events_tx, events) = crossbeam_channel::unbounded();
     let (commands, cmd_rx) = crossbeam_channel::unbounded::<ClientCommand>();
     let (writer_tx, writer_rx) = crossbeam_channel::unbounded::<WriterSwap>();
-    thread::spawn(move || writer_loop(&cmd_rx, writer_rx, &Mutex::new(PingClock::default())));
+    thread::spawn(move || writer_loop(&cmd_rx, writer_rx, &Mutex::new(PingClock::default()), None));
     let (login, login_rx) = crossbeam_channel::unbounded();
     let (park_tx, park_rx) = crossbeam_channel::unbounded::<ParkRequest>();
     let abandon = Arc::new(AtomicU64::new(0));

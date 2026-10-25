@@ -785,7 +785,7 @@ fn a_command_ready_with_an_install_goes_out_on_the_new_writer() {
     let (swap_tx, swap_rx) = crossbeam_channel::unbounded::<WriterSwap>();
     let clock = std::sync::Arc::new(Mutex::new(PingClock::default()));
     let thread_clock = std::sync::Arc::clone(&clock);
-    thread::spawn(move || writer_loop(&cmd_rx, swap_rx, &thread_clock));
+    thread::spawn(move || writer_loop(&cmd_rx, swap_rx, &thread_clock, None));
 
     let played_in = |session: usize| {
         world
@@ -866,4 +866,52 @@ fn a_refused_login_under_the_stock_screens_waits_for_the_screens_ask() {
     assert_eq!(world.enumerations_in(0), 1);
     assert_eq!(world.authentications(), 1, "no second CMSG_AUTH_SESSION");
     assert_eq!(realmd.logons(), 1, "no realmd logon");
+}
+
+/// With no world writer, as after the logout an Exit Game makes, account data and the exit's
+/// barrier go to the parked session in order, where every other command is still dropped.
+#[test]
+fn account_data_without_a_world_writer_goes_to_the_park() {
+    use super::{writer_loop, WriterSwap};
+    use crate::account_data::Wire;
+    use crate::net::ClientCommand;
+    let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<ClientCommand>();
+    let (_swap_tx, swap_rx) = crossbeam_channel::unbounded::<WriterSwap>();
+    let (park_tx, park_rx) = crossbeam_channel::unbounded::<ParkRequest>();
+    thread::spawn(move || {
+        writer_loop(
+            &cmd_rx,
+            swap_rx,
+            &Mutex::new(PingClock::default()),
+            Some(&park_tx),
+        )
+    });
+
+    let (done, _written) = crossbeam_channel::bounded(1);
+    cmd_tx.send(ClientCommand::PlayedTime).unwrap();
+    cmd_tx
+        .send(ClientCommand::AccountData(Wire::Upload {
+            slot: 7,
+            time: 5,
+            bytes: b"VERSION 5\n".to_vec(),
+        }))
+        .unwrap();
+    cmd_tx.send(ClientCommand::Flush(done)).unwrap();
+    match park_rx.recv_timeout(WAIT).unwrap() {
+        ParkRequest::Char(CharRequest::AccountData(Wire::Upload { slot, time, bytes })) => {
+            assert_eq!((slot, time, bytes.as_slice()), (7, 5, &b"VERSION 5\n"[..]));
+        }
+        _ => panic!("the upload first"),
+    }
+    assert!(
+        matches!(
+            park_rx.recv_timeout(WAIT).unwrap(),
+            ParkRequest::Char(CharRequest::Flush(_))
+        ),
+        "then the barrier, behind it"
+    );
+    assert!(
+        park_rx.try_recv().is_err(),
+        "the played-time ask was dropped, not parked"
+    );
 }

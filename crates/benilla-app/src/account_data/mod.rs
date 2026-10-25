@@ -253,11 +253,25 @@ fn save_on_exit(world: &mut World) {
     }
     crate::cvars::fold_dying_vm_cvars(world);
     save_ui(world);
-    // The uploads the flush queued go out before the writer stops.
+    // The uploads the flush queued go out before the process ends: its threads are not joined, so
+    // the exit waits on a barrier behind them, bounded for a link that is gone.
     let wires = world.resource_mut::<AccountData>().take_outbox();
-    if let Some(net) = world.get_resource::<crate::net::NetCommands>() {
-        for wire in wires {
-            let _ = net.0.send(crate::net::ClientCommand::AccountData(wire));
-        }
+    if wires.is_empty() {
+        return;
+    }
+    let Some(net) = world.get_resource::<crate::net::NetCommands>() else {
+        return;
+    };
+    for wire in wires {
+        let _ = net.0.send(crate::net::ClientCommand::AccountData(wire));
+    }
+    let (done, written) = crossbeam_channel::bounded(1);
+    if net.0.send(crate::net::ClientCommand::Flush(done)).is_ok()
+        && written.recv_timeout(EXIT_FLUSH_WAIT).is_err()
+    {
+        warn!("account data: the exit's uploads were not confirmed written");
     }
 }
+
+/// How long the exit waits for its uploads to reach the socket.
+const EXIT_FLUSH_WAIT: std::time::Duration = std::time::Duration::from_secs(1);

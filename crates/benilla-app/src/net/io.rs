@@ -273,6 +273,7 @@ pub(super) fn spawn_net(connect: bool) -> NetHandles {
         // `SMSG_PONG` is timed on the read thread, where it lands ([`PingClock`]).
         let read_clock = Arc::clone(&ping_clock);
         let abandon = Arc::clone(&login_abandon);
+        let writer_park = park_tx.clone();
         thread::Builder::new()
             .name("wow-net-write".into())
             .spawn(move || {
@@ -280,7 +281,7 @@ pub(super) fn spawn_net(connect: bool) -> NetHandles {
                 benilla_world::thread_qos::promote_current_thread(
                     benilla_world::thread_qos::QosClass::UserInitiated,
                 );
-                writer_loop(&cmd_rx, writer_rx, &clock)
+                writer_loop(&cmd_rx, writer_rx, &clock, Some(&writer_park))
             })
             .expect("spawn wow-net-write thread");
         thread::Builder::new()
@@ -833,9 +834,18 @@ fn world(
                                     session.request_account_data(slot)?
                                 }
                                 crate::account_data::Wire::Upload { slot, time, bytes } => {
+                                    bevy::log::info!(
+                                        "net: account data slot {slot} up from the park ({} \
+                                         bytes, time {time})",
+                                        bytes.len()
+                                    );
                                     session.update_account_data(slot, time, &bytes)?
                                 }
                             }
+                            Parked::StayPut
+                        }
+                        Ok(ParkRequest::Char(CharRequest::Flush(done))) => {
+                            let _ = done.send(());
                             Parked::StayPut
                         }
                         Ok(ParkRequest::Char(CharRequest::Enumerate)) => match session.char_enum() {
@@ -1229,6 +1239,7 @@ pub(super) fn writer_loop(
     cmd_rx: &Receiver<ClientCommand>,
     mut writer_rx: Receiver<WriterSwap>,
     ping_clock: &Mutex<PingClock>,
+    park: Option<&Sender<ParkRequest>>,
 ) {
     let mut writer: Option<WorldWriter> = None;
     let mut warned = 0u32;
@@ -1278,7 +1289,20 @@ pub(super) fn writer_loop(
                     apply_swap(swap, &mut writer, &mut warned, &mut ping_tick, ping_clock);
                 }
                 let Some(w) = writer.as_mut() else {
-                    // No live writer: the command is dropped, and both lines name it.
+                    // No world writer: account data and the barrier go to the parked session,
+                    // which reads them once the read thread reaches its park.
+                    let cmd = match (cmd, park) {
+                        (ClientCommand::AccountData(wire), Some(park)) => {
+                            let _ = park.send(ParkRequest::Char(CharRequest::AccountData(wire)));
+                            continue;
+                        }
+                        (ClientCommand::Flush(done), Some(park)) => {
+                            let _ = park.send(ParkRequest::Char(CharRequest::Flush(done)));
+                            continue;
+                        }
+                        (cmd, _) => cmd,
+                    };
+                    // Any other command is dropped, and both lines name it.
                     if benilla_assets::trace::enabled() {
                         benilla_assets::trace::line(
                             "wire",
@@ -1420,6 +1444,11 @@ pub(super) fn writer_loop(
                     ClientCommand::ChannelAnnouncements { name } => w.channel_announcements(&name),
                     ClientCommand::ChannelModerate { name } => w.channel_moderate(&name),
                     ClientCommand::PlayedTime => w.played_time(),
+                    // Commands are written in order, so everything before it is out.
+                    ClientCommand::Flush(done) => {
+                        let _ = done.send(());
+                        Ok(())
+                    }
                     ClientCommand::AccountData(crate::account_data::Wire::Request { slot }) => {
                         w.request_account_data(slot)
                     }
@@ -1427,7 +1456,13 @@ pub(super) fn writer_loop(
                         slot,
                         time,
                         bytes,
-                    }) => w.update_account_data(slot, time, &bytes),
+                    }) => {
+                        bevy::log::info!(
+                            "net: account data slot {slot} up ({} bytes, time {time})",
+                            bytes.len()
+                        );
+                        w.update_account_data(slot, time, &bytes)
+                    }
                     ClientCommand::NameQuery { guid } => w.name_query(guid),
                     ClientCommand::CreatureQuery { entry, guid } => w.creature_query(entry, guid),
                     ClientCommand::PetNameQuery { pet_number, guid } => {
