@@ -3,8 +3,9 @@
 
 use crate::local_state::test_env::ENV_LOCK;
 
-/// The raises whose frame waits on a port of its own, each by the frame that raises and its issue.
-pub(super) const UNPORTED: [(&str, &str); 1] = [("ChannelFrame: OnLoad", "#470, the channel pane")];
+/// The raises whose frame waits on a port of its own, each by the file that raises and its issue:
+/// at load, and from the frame's handlers after it (`test_ui::errors_but_unported`).
+pub(super) const UNPORTED: [(&str, &str); 1] = [("ChannelFrame.lua", "#470, the channel pane")];
 
 /// The core alone, a level 60 human warrior seated as the in-game load always has one.
 #[test]

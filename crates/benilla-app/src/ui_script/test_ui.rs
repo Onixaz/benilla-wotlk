@@ -56,6 +56,26 @@ pub(super) fn cooldown_play(s: &UiScript, owner: &str) -> Option<(u16, u32)> {
     })
 }
 
+/// The sweep the shown `Cooldown` frame `owner` paints, as the renderer gets it; `None` when the
+/// frame is hidden or unarmed.
+pub(super) fn cooldown_sweep(
+    s: &mut UiScript,
+    owner: &str,
+) -> Option<benilla_ui::widget::CooldownPaint> {
+    s.resolve();
+    s.extract().into_iter().find_map(|q| match q.content {
+        QuadContent::Cooldown(p) if s.quad_owner_name(q.target).as_deref() == Some(owner) => {
+            Some(p)
+        }
+        _ => None,
+    })
+}
+
+/// The forward sweep's dark wedge with `fraction` of the cooldown run.
+pub(super) fn swept(fraction: f32) -> Vec<[f32; 2]> {
+    benilla_ui::widget::swipe_rim(fraction, false)
+}
+
 /// [`load_ui`], and a missing template fails too: the loader only warns, and the art is lost.
 pub(super) fn load_ui_strict(s: &UiScript, entry: &str) -> usize {
     load_entry(s, entry, true, false)
@@ -696,6 +716,9 @@ pub(super) fn load_stock_ui(s: &mut UiScript) {
                 race_file: Some("Human".into()),
                 class: Some("Warrior".into()),
                 class_file: Some("WARRIOR".into()),
+                // A human's side, as the app reads it off `FactionGroup.dbc`.
+                faction_group: Some("Alliance".into()),
+                faction_group_localized: Some("Alliance".into()),
                 ..Default::default()
             }),
         );
@@ -716,12 +739,32 @@ pub(super) fn load_stock_ui(s: &mut UiScript) {
     assert!(failures.is_empty(), "stock load raised: {failures:#?}");
 }
 
-/// [`load_stock_ui`] on a 1600×900 screen, then the chat windows' login replay: the chat stack the
+/// The VM's script errors but the raises of the frames still waiting on a port of their own
+/// (`stock_load_tests::UNPORTED`), which a stock event such as `PLAYER_ENTERING_WORLD` reaches.
+pub(crate) fn errors_but_unported(s: &UiScript) -> Vec<String> {
+    s.errors()
+        .into_iter()
+        .filter(|e| {
+            !super::stock_load_tests::UNPORTED
+                .iter()
+                .any(|(at, _)| e.contains(at))
+        })
+        .collect()
+}
+
+/// A fresh VM with [`load_stock_ui`] on a `width`×`height` screen, resolved.
+pub(crate) fn stock_ui(width: f32, height: f32) -> UiScript {
+    let mut s = UiScript::new().unwrap();
+    s.set_screen_size(width, height);
+    load_stock_ui(&mut s);
+    s.resolve();
+    s
+}
+
+/// [`stock_ui`] on a 1600×900 screen, then the chat windows' login replay: the chat stack the
 /// app runs, for the chat tests.
 pub(crate) fn chat_ui() -> UiScript {
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1600.0, 900.0);
-    load_stock_ui(&mut s);
+    let mut s = stock_ui(1600.0, 900.0);
     super::fire_chat_login(&mut s);
     s.resolve();
     s
