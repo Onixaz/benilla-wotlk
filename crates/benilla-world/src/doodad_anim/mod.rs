@@ -589,6 +589,38 @@ mod tests {
         );
     }
 
+    /// A constant sample leaves the instance unmarked: the Visibility authority re-walks every
+    /// marked batch, and a city holds thousands of animated materials.
+    #[test]
+    fn a_constant_mat_anim_is_written_once() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_systems(Update, sample_mat_anim);
+        let part = app
+            .world_mut()
+            .spawn(MatAnim::new(two_seq_alpha(), 0.0, false))
+            .id();
+        app.update();
+        let stamped = app
+            .world()
+            .entity(part)
+            .get_ref::<MatAnim>()
+            .unwrap()
+            .last_changed();
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(
+            app.world()
+                .entity(part)
+                .get_ref::<MatAnim>()
+                .unwrap()
+                .last_changed(),
+            stamped,
+            "a constant sample re-marked the instance"
+        );
+    }
+
     /// With no player yet, slot 0 at t = 0, so the batch does not flash visible for a frame.
     #[test]
     fn hosted_mat_anim_without_a_player_reads_the_first_sequence() {
