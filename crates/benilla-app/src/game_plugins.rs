@@ -46,6 +46,7 @@ use crate::ui_calendar::UiCalendarPlugin;
 use crate::ui_cast::UiCastPlugin;
 use crate::ui_char::UiCharPlugin;
 use crate::ui_chat::UiChatPlugin;
+use crate::ui_currency::UiCurrencyPlugin;
 use crate::ui_dialog_verbs::UiDialogVerbsPlugin;
 use crate::ui_duel::UiDuelPlugin;
 use crate::ui_focus::UiFocusPlugin;
@@ -90,6 +91,7 @@ use crate::ui_talent::UiTalentPlugin;
 use crate::ui_talent_wipe::UiTalentWipePlugin;
 use crate::ui_taxi::UiTaxiPlugin;
 use crate::ui_text::UiTextPlugin;
+use crate::ui_title::UiTitlePlugin;
 use crate::ui_tooltip::UiTooltipPlugin;
 use crate::ui_totem::UiTotemPlugin;
 use crate::ui_trade::UiTradePlugin;
@@ -220,6 +222,8 @@ impl PluginGroup for GamePlugins {
             // After UiActionPlugin, whose `Spells` catalog it shares.
             .add(UiTalentPlugin)
             .add(UiGlyphPlugin)
+            .add(UiTitlePlugin)
+            .add(UiCurrencyPlugin)
             .add(UiSpellInfoPlugin)
             .add(UiAchievementPlugin)
             .add(UiTalentWipePlugin)

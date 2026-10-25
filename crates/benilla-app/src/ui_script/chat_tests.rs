@@ -314,6 +314,8 @@ fn chat_click_dismisses_a_stuck_spell_but_not_an_item() {
     slots.insert(
         1,
         ContainerSlot {
+            guid: 0,
+            gems: [0; 3],
             quest_item: false,
             start_quest: 0,
             duration_ms: None,

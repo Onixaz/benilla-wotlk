@@ -147,7 +147,15 @@ pub enum Field {
     PlayerBankBagSlots,
     PlayerVendorBuybackSlots,
     PlayerKeyringSlots,
+    /// 3.3.5a's 32 currency-token slots (player slots 118..149), item guids.
+    PlayerCurrencyTokenSlots,
     PlayerFarsight,
+    /// 3.3.5a's chosen title, a `CharTitles.dbc` mask id, 0 for none.
+    PlayerChosenTitle,
+    /// 3.3.5a's known-titles bitmask, 192 bits indexed by mask id.
+    PlayerKnownTitles,
+    /// 3.3.5a's known-currencies bitmask, 64 bits indexed by `CurrencyTypes.dbc` bit index - 1.
+    PlayerKnownCurrencies,
     PlayerComboTarget,
     PlayerXp,
     PlayerNextLevelXp,
@@ -338,7 +346,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         item: 48,
         container: 122,
         unit: 188,
-        player: 1586,
+        player: 1659,
         gameobject: 26,
         dynamicobject: 16,
         corpse: 38,
@@ -471,6 +479,11 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         // 3.3.5a's 28 bank slots and 7 bank bags, which outgrew 1.12.1's 24 and 6.
         run(F::PlayerBankSlots, Player, 1516, 56),
         run(F::PlayerBankBagSlots, Player, 1572, 14),
+        // 3.3.5a's title and currency fields.
+        one(F::PlayerChosenTitle, Player, 1586),
+        run(F::PlayerKnownTitles, Player, 1587, 6),
+        run(F::PlayerKnownCurrencies, Player, 1593, 2),
+        run(F::PlayerCurrencyTokenSlots, Player, 1595, 64),
         // 19 slots of 12: creator guid, entry, 7 enchants, properties, pad.
         strided(F::PlayerVisibleItemEntry, Player, 260, 19, 12),
         strided(F::PlayerVisibleItemEnchants, Player, 261, 19, 12),
@@ -676,7 +689,15 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         run(F::PlayerBankBagSlots, Player, 458, 14),
         run(F::PlayerVendorBuybackSlots, Player, 472, 24),
         run(F::PlayerKeyringSlots, Player, 496, 64),
+        // `UNIT_END + 0x19c`, player slots 118..149 (`GetCurrencyListInfo` `0x5b0680`).
+        run(F::PlayerCurrencyTokenSlots, Player, 560, 64),
         run(F::PlayerFarsight, Player, 624, 2),
+        // `UNIT_END + 0xad`, player block `+0x2b4` (`GetCurrentTitle` `0x51b3b0`).
+        one(F::PlayerChosenTitle, Player, 321),
+        // `UNIT_END + 0x1de`, `+0x778` as three u64 (`IsTitleKnown` `0x51b410`).
+        run(F::PlayerKnownTitles, Player, 626, 6),
+        // `UNIT_END + 0x1e4`, `+0x790` as one u64 (`0x6e5401`).
+        run(F::PlayerKnownCurrencies, Player, 632, 2),
         one(F::PlayerXp, Player, 634),
         one(F::PlayerNextLevelXp, Player, 635),
         run(F::PlayerSkillInfo, Player, 636, 384),

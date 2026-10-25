@@ -1523,6 +1523,21 @@ pub(crate) enum ClientCommand {
     RemoveGlyph {
         socket: u32,
     },
+    /// `CMSG_EQUIPMENT_SET_SAVE`: a set's guid (0 new), id, name, icon and 19 item guids.
+    EquipmentSetSave(benilla_protocol::messages::EquipmentSet),
+    /// `CMSG_EQUIPMENT_SET_DELETE`: a saved set's guid.
+    EquipmentSetDelete {
+        guid: u64,
+    },
+    /// `CMSG_EQUIPMENT_SET_USE`: per slot the item and where it is.
+    EquipmentSetUse {
+        slots: [benilla_protocol::messages::EquipmentSetUseSlot;
+            benilla_protocol::messages::EQUIPMENT_SET_SLOTS],
+    },
+    /// `CMSG_SET_TITLE`: show a known title by mask id, -1 for none.
+    SetTitle {
+        mask_id: i32,
+    },
     /// `CMSG_LEARN_PREVIEW_TALENTS`: the preview mode's Learn, each `(talentId, rank)` whose
     /// preview rank passes its learned one.
     LearnPreviewTalents {

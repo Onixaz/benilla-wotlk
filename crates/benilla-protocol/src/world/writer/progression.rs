@@ -34,6 +34,46 @@ impl WorldWriter {
         )
     }
 
+    /// `CMSG_SET_TITLE`: show a known title by mask id, -1 for none.
+    pub fn set_title(&mut self, mask_id: i32) -> Result<()> {
+        self.send(opcode::CMSG_SET_TITLE, &messages::set_title(mask_id))
+    }
+
+    /// `CMSG_EQUIPMENT_SET_SAVE`: save a set; a new one (guid 0) is answered with
+    /// `SMSG_EQUIPMENT_SET_SAVED`.
+    pub fn equipment_set_save(
+        &mut self,
+        guid: u64,
+        id: u32,
+        name: &str,
+        icon: &str,
+        items: &[u64; messages::EQUIPMENT_SET_SLOTS],
+    ) -> Result<()> {
+        self.send(
+            opcode::CMSG_EQUIPMENT_SET_SAVE,
+            &messages::equipment_set_save(guid, id, name, icon, items),
+        )
+    }
+
+    /// `CMSG_EQUIPMENT_SET_DELETE`: drop a saved set by its guid.
+    pub fn equipment_set_delete(&mut self, guid: u64) -> Result<()> {
+        self.send(
+            opcode::CMSG_EQUIPMENT_SET_DELETE,
+            &messages::equipment_set_delete(guid),
+        )
+    }
+
+    /// `CMSG_EQUIPMENT_SET_USE`: wear a set; answered with `SMSG_EQUIPMENT_SET_USE_RESULT`.
+    pub fn equipment_set_use(
+        &mut self,
+        slots: &[messages::EquipmentSetUseSlot; messages::EQUIPMENT_SET_SLOTS],
+    ) -> Result<()> {
+        self.send(
+            opcode::CMSG_EQUIPMENT_SET_USE,
+            &messages::equipment_set_use(slots),
+        )
+    }
+
     /// `CMSG_REMOVE_GLYPH`: empty a glyph socket, 0-based.
     pub fn remove_glyph(&mut self, socket: u32) -> Result<()> {
         self.send(opcode::CMSG_REMOVE_GLYPH, &messages::remove_glyph(socket))

@@ -450,6 +450,13 @@ mod tests {
             (Field::PlayerGlyphSlots, FIELD_PLAYER_GLYPH_SLOTS_1),
             (Field::PlayerGlyphs, FIELD_PLAYER_GLYPHS_1),
             (Field::PlayerGlyphsEnabled, FIELD_PLAYER_GLYPHS_ENABLED),
+            (Field::PlayerChosenTitle, FIELD_PLAYER_CHOSEN_TITLE),
+            (Field::PlayerKnownTitles, FIELD_PLAYER_KNOWN_TITLES),
+            (Field::PlayerKnownCurrencies, FIELD_PLAYER_KNOWN_CURRENCIES),
+            (
+                Field::PlayerCurrencyTokenSlots,
+                FIELD_PLAYER_CURRENCY_TOKEN_SLOT_1,
+            ),
             (Field::UnitLevel, FIELD_UNIT_LEVEL),
             (Field::UnitFactionTemplate, FIELD_UNIT_FACTIONTEMPLATE),
             (Field::UnitBytes0, FIELD_UNIT_BYTES_0),

@@ -36,6 +36,8 @@ pub enum CursorPayload {
     Spell(CursorSpell),
     Action(CursorAction),
     Macro(CursorMacro),
+    /// Mode 13, a saved equipment set (`SetCursorEquipmentSet` `0x520dc0`), placeable on a bar.
+    EquipmentSet(CursorEquipmentSet),
     PetAction(CursorPetAction),
     /// Mode 5, a vendor row. Not an `Item`: `CursorHasItem` (`0x4895d0`) is true for modes 1 and 9
     /// only, so all thirteen stock `CursorHasItem()` gates stay shut while one is held.
@@ -161,6 +163,13 @@ pub struct CursorPetAction {
     pub packed: u32,
     /// `Attributes & 0x40` of a spell word, tested at the drop, not the pickup (`0x4bc9f8`).
     pub passive: bool,
+    pub texture: Option<String>,
+}
+
+/// A set on the cursor: its id and full icon path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CursorEquipmentSet {
+    pub id: u32,
     pub texture: Option<String>,
 }
 
@@ -316,6 +325,7 @@ pub(crate) fn world_drop_click(model: &mut Model) -> bool {
                 CursorPayload::Spell(_)
                 | CursorPayload::Action(_)
                 | CursorPayload::Macro(_)
+                | CursorPayload::EquipmentSet(_)
                 | CursorPayload::PetAction(_),
             ),
             WorldPick::Terrain | WorldPick::Nothing,
@@ -516,6 +526,11 @@ fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
         }
         Some(CursorPayload::Merchant(m)) => vec![str("merchant")?, int(m.row + 1)],
         Some(CursorPayload::Macro(m)) => vec![str("macro")?, int(m.index)],
+        // Mode 13 (`0x515200`): the set's name, nothing once the set is gone.
+        Some(CursorPayload::EquipmentSet(e)) => match model.equipment_sets.get(&e.id) {
+            Some(name) => vec![str("equipmentset")?, str(name)?],
+            None => Vec::new(),
+        },
         Some(CursorPayload::Action(a)) => match a.kind & 0xf0 {
             super::action::ACTION_KIND_ITEM => match model.item_templates.get(&a.action) {
                 Some(t) => vec![
@@ -624,6 +639,8 @@ mod tests {
         slots.insert(
             1,
             crate::script::container::ContainerSlot {
+                guid: 0,
+                gems: [0; 3],
                 quest_item: false,
                 start_quest: 0,
                 duration_ms: None,

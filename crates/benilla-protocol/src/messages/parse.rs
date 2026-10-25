@@ -527,6 +527,18 @@ fn parse_server_body(
         opcode::SMSG_EQUIPMENT_SET_LIST => {
             ServerPacket::EquipmentSetList(equipment_set::read_equipment_set_list(&mut r)?)
         }
+        opcode::SMSG_EQUIPMENT_SET_SAVED => {
+            let (id, guid) = equipment_set::read_equipment_set_saved(&mut r)?;
+            ServerPacket::EquipmentSetSaved { id, guid }
+        }
+        opcode::SMSG_EQUIPMENT_SET_USE_RESULT => ServerPacket::EquipmentSetUseResult {
+            result: crate::wire::read_u8(&mut r)?,
+        },
+        opcode::SMSG_TITLE_EARNED => {
+            let mask_id = crate::wire::read_u32_le(&mut r)?;
+            let earned = crate::wire::read_u32_le(&mut r)? != 0;
+            ServerPacket::TitleEarned { mask_id, earned }
+        }
         opcode::SMSG_TOTEM_CREATED => {
             ServerPacket::TotemCreated(totem::read_totem_created(&mut r)?)
         }
@@ -1077,10 +1089,6 @@ fn parse_server_body(
                 caster,
                 remaining_ms,
             }
-        }
-        opcode::SMSG_UPDATE_AURA_DURATION => {
-            let (slot, remaining_ms) = spells::read_update_aura_duration(&mut r)?;
-            ServerPacket::UpdateAuraDuration { slot, remaining_ms }
         }
         opcode::SMSG_AURA_UPDATE_ALL | opcode::SMSG_AURA_UPDATE => ServerPacket::AuraUpdate(
             aura::read_aura_update(&mut r, opcode == opcode::SMSG_AURA_UPDATE_ALL)?,

@@ -18,7 +18,6 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{number_arg, string_arg};
-use super::unit::is_civilian_kill;
 
 /// The local player's honor snapshot, decoded by the app from the private 3.3.5a honor fields.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -256,8 +255,7 @@ pub struct RankTitle {
 
 /// The same title gendered, `0x612bf0`: it passes 2 (male) or 3 (female) to `0x703bf0`, which
 /// asks FrameXML's `GetText` to append `_FEMALE` for 3 (the engine never builds that key), and
-/// retries ungendered on a miss (`0x612c2d`). The credit line's lookup; `UnitPVPName` and the
-/// overhead name reach the same keys through [`decorated_name`].
+/// retries ungendered on a miss (`0x612c2d`). The credit line's lookup.
 fn rank_title_gendered(lua: &Lua, title: RankTitle) -> Option<String> {
     rank_title(&|key| global_string(lua, key), title)
 }
@@ -276,7 +274,7 @@ fn rank_title(lookup: &impl Fn(&str) -> Option<String>, title: RankTitle) -> Opt
 /// `%%` is a literal `%` and any other specifier passes through. Deviation: a third `%s` gets an
 /// empty string, because the reference pushes two varargs (`0x6093f2 add esp,0x14`) and would
 /// read uninitialised stack.
-fn format_two_strings(fmt: &str, a: &str, b: &str) -> String {
+pub(super) fn format_two_strings(fmt: &str, a: &str, b: &str) -> String {
     let mut out = String::with_capacity(fmt.len() + a.len() + b.len());
     let mut args = [a, b].into_iter();
     let mut chars = fmt.chars();
@@ -298,74 +296,29 @@ fn format_two_strings(fmt: &str, a: &str, b: &str) -> String {
     out
 }
 
-/// The install keys a name-line rank prefix can resolve: `UNIT_PVP_NAME` and every
-/// `PVP_RANK_<rank>_<team>[_FEMALE]` for ranks 1..=19 and both team digits. The range reaches 19
-/// because the builder is range-unchecked and the install's `PVP_RANK_19_*` names the racial
-/// "Leader", past the player rank byte's 0..=18. The world-text pass, which runs without the VM,
-/// reads them off each VM once; `UnitPVPName` looks them up live.
+/// The install keys the overhead name's title slot can resolve beside `CharTitles.dbc`: the
+/// `PVP_MEDAL<n>` line under a chosen title, for every value of `PLAYER_BYTES_3` byte 2
+/// (`0x72a35d`). The world-text pass, which runs without the VM, reads them off each VM once.
 pub fn pvp_name_global_keys() -> Vec<String> {
-    let mut keys = Vec::with_capacity(1 + 19 * 2 * 2);
-    keys.push("UNIT_PVP_NAME".to_string());
-    for rank in 1..=19 {
-        for team in 0..=1 {
-            keys.push(format!("PVP_RANK_{rank}_{team}"));
-            keys.push(format!("PVP_RANK_{rank}_{team}_FEMALE"));
-        }
-    }
-    keys
+    (1..=u8::MAX).map(|n| format!("PVP_MEDAL{n}")).collect()
 }
 
-/// `0x609370`'s ranked-player leg over a string lookup: `UNIT_PVP_NAME` filled rank first, the
-/// same builder [`pvp_name`] runs for `UnitPVPName`. `None` for rank 0, or a title or template
-/// the lookup lacks, where the callers keep the plain name: the reference prints a missing title
-/// as `""` (`" " + name`), which a playable race's 0..=18 rank never reaches in the stock strings.
-pub fn decorated_name(
-    lookup: impl Fn(&str) -> Option<String>,
-    key: RankTitle,
-    name: &str,
-) -> Option<String> {
-    if key.rank == 0 {
-        return None;
-    }
-    let title = rank_title(&lookup, key)?;
-    let template = lookup("UNIT_PVP_NAME")?;
-    Some(format_two_strings(&template, &title, name))
-}
-
-/// `0x609370`, the name builder behind `UnitPVPName` (its legs are at the binding) and the unit
-/// tooltip's title (`0x52a1ab`), both with the decoration flag `1`; `name` is the plain `UnitName`.
-pub(super) fn pvp_name(lua: &Lua, u: &super::UnitState, name: &str, player_level: u32) -> String {
-    // Leg A: a ranked player; the title is gendered by this unit and range-unchecked.
-    if u.is_player && u.pvp_rank != 0 {
-        let decorated = decorated_name(
-            |key| global_string(lua, key),
-            RankTitle {
-                rank: u.pvp_rank,
-                team: u.pvp_team,
-                female: u.sex == 3,
-            },
-            name,
-        );
-        if let Some(mut out) = decorated {
-            // Leg A′: the city-protector medal, on its own line, ungendered (`0x60941d push 0`).
-            if u.pvp_medal != 0 {
-                if let Some(medal) = global_string(lua, &format!("PVP_MEDAL{}", u.pvp_medal)) {
-                    out.push('\n');
-                    out.push_str(&medal);
-                }
-            }
-            return out;
-        }
+/// `GetUnitChosenTitle` (`0x72a290`) with titles on, the name `UnitPVPName` and the unit tooltip's
+/// first line (`0x6219a0`) show: a player's chosen title filled with `name`, else `name`.
+pub(super) fn pvp_name(lua: &Lua, u: &super::UnitState, name: &str) -> String {
+    if !u.is_player {
         return name.to_owned();
     }
-    // Leg B: the dishonorable-kill warning, on the same predicate the tooltip's CIVILIAN line uses.
-    if is_civilian_kill(u, player_level) {
-        if let Some(civilian) = global_string(lua, "PVP_RANK_CIVILIAN") {
-            return format!("{civilian} {name}");
-        }
-    }
-    // Leg C.
-    name.to_owned()
+    let model = read(lua);
+    super::title::chosen_title_name(
+        &model.title_rows,
+        u.chosen_title,
+        u.sex == 3,
+        u.pvp_medal,
+        name,
+        |key| global_string(lua, key),
+    )
+    .unwrap_or_else(|| name.to_owned())
 }
 
 /// Register the PvP + honor globals.
@@ -524,32 +477,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnitPVPName(unit) → the name decorated by rank, `0x5172b0` into the builder `0x609370`:
-    //   A  a ranked player: `UNIT_PVP_NAME` filled title first, then name; the title is gendered
-    //      by this unit (`0x5efe60`, `0x612bf0`) with no range check, so rank 19 renders "Leader".
-    //   A′ and, if `PLAYER_BYTES_3` byte 2 (the city-protector title) is set, a second line with
-    //      `PVP_MEDAL<n>`, ungendered.
-    //   B  else a unit passing the civilian predicate (`0x612550`): `PVP_RANK_CIVILIAN`, a space
-    //      and the name. Only creatures reach it.
-    //   C  else the plain name.
-    // No snapshot or an unresolved name answers nil, and so does a token resolving to guid 0,
-    // where the reference returns one value it never pushed (`0x517343`).
-    //
-    // Deviation: with `UNIT_PVP_NAME` or the title missing from `_G` (no install) this answers
-    // the plain name, where the reference would format an empty string, because the decoration
-    // is install data.
+    // UnitPVPName(unit) (`0x60e9a0`): `GetUnitChosenTitle` with titles on (`0x72a290`), a
+    // player's chosen title around the name and a medal line, else the plain name. No snapshot or
+    // an unresolved name answers nil.
     g.set(
         "UnitPVPName",
         lua.create_function(|lua, token: Value| {
             let token = Some(string_arg(lua, token, "Usage: UnitPVPName(\"unit\")")?);
-            let (unit, player_level) = {
+            let unit = {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                (
-                    token.as_ref().and_then(|t| model.unit(t)).cloned(),
-                    model.player_req.level,
-                )
+                token.as_ref().and_then(|t| model.unit(t)).cloned()
             };
             let Some(u) = unit else {
                 return Ok(Value::Nil);
@@ -557,7 +496,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(name) = u.name.clone() else {
                 return Ok(Value::Nil);
             };
-            let decorated = pvp_name(lua, &u, &name, player_level);
+            let decorated = pvp_name(lua, &u, &name);
             Ok(Value::String(lua.create_string(&decorated)?))
         })?,
     )?;

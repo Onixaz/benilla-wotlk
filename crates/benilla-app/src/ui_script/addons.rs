@@ -312,16 +312,16 @@ const BLIZZARD_ADDONS: [&str; 23] = [
     "Blizzard_TrainerUI",
 ];
 
-/// The Blizzard addons the chain carries as LoadOnDemand registry rows, for `UIParentLoadAddOn`.
-/// Deviation: `Blizzard_TokenUI` carries no `## LoadOnDemand`, so the reference's startup walk
-/// loads it; this walk does not read the chain, so it is not a row yet.
+/// The Blizzard addons the chain carries as registry rows: the LoadOnDemand ones for
+/// `UIParentLoadAddOn`, and `Blizzard_TokenUI`, which has no `## LoadOnDemand`, so the startup
+/// walk loads it (`AddOn_LoadAllEnabled` `0x5f7ff0`).
 fn chain_addons() -> Vec<Addon> {
     BLIZZARD_ADDONS
         .iter()
         .filter_map(|name| {
             let bytes = super::reference_ui::read(&format!("Interface/AddOns/{name}/{name}.toc"))?;
             let toc = Toc::parse(&benilla_ui::source::decode(&bytes));
-            toc.load_on_demand().then(|| Addon {
+            Some(Addon {
                 name: (*name).to_string(),
                 toc,
                 source: Source::Chain,
@@ -1110,18 +1110,25 @@ mod tests {
         assert_eq!(secure, BLIZZARD_ADDONS);
     }
 
-    /// Every 3.3.5a Blizzard addon but `Blizzard_TokenUI` is a LoadOnDemand, chain-sourced row at
-    /// 30300, and the core, the chain's `FrameXML.toc`, lists none.
+    /// Every 3.3.5a Blizzard addon is a chain-sourced row at 30300, LoadOnDemand but for
+    /// `Blizzard_TokenUI`, and the core, the chain's `FrameXML.toc`, lists none.
     #[test]
-    fn the_chain_carries_blizzards_load_on_demand_addons_as_registry_rows() {
+    fn the_chain_carries_blizzards_addons_as_registry_rows() {
         let _data = benilla_formats::wow_data_or_skip!();
         let rows = chain_addons();
         let names: Vec<&str> = rows.iter().map(|a| a.name.as_str()).collect();
-        let want: Vec<&str> = BLIZZARD_ADDONS
-            .into_iter()
-            .filter(|n| *n != "Blizzard_TokenUI")
-            .collect();
-        assert_eq!(names, want, "every LoadOnDemand addon is on the chain");
+        assert_eq!(
+            names, BLIZZARD_ADDONS,
+            "every Blizzard addon is on the chain"
+        );
+        for a in &rows {
+            assert_eq!(
+                a.toc.load_on_demand(),
+                a.name != "Blizzard_TokenUI",
+                "{} loads on demand",
+                a.name
+            );
+        }
         for a in &rows {
             assert_eq!(
                 a.toc.interface_version(),
@@ -1152,6 +1159,21 @@ mod tests {
     }
 
     use super::*;
+
+    /// [`load_third_party`] on a VM with no FrameXML: the chain's one startup addon,
+    /// `Blizzard_TokenUI`, needs the stock UI, so these walks read it as absent.
+    fn load_bare(
+        script: &mut UiScript,
+        identity: Option<&(String, String)>,
+        roster: &[String],
+        version_check: bool,
+    ) -> Vec<String> {
+        let _hidden = super::super::reference_ui::fixture::lay(&[(
+            "Interface/AddOns/Blizzard_TokenUI/Blizzard_TokenUI.toc",
+            None,
+        )]);
+        load_third_party(script, identity, roster, version_check)
+    }
 
     /// Build an addon over a temp AddOns root, so the walk can be tested without an install.
     fn dir_addon(root: &Path, name: &str, toc: &str) -> Addon {
@@ -1706,7 +1728,7 @@ mod tests {
         let mut script = UiScript::new().unwrap();
         script.set_screen_size(1024.0, 768.0);
         script.run("EventLog = {}").unwrap();
-        let failures = load_third_party(&mut script, None, &[], true);
+        let failures = load_bare(&mut script, None, &[], true);
         assert!(failures.is_empty(), "load errors: {failures:?}");
         crate::ui_script::finish_ui_load(&mut script);
 
@@ -1773,7 +1795,7 @@ mod tests {
         );
 
         let mut script = UiScript::new().unwrap();
-        let failures = load_third_party(&mut script, None, &[], true);
+        let failures = load_bare(&mut script, None, &[], true);
         assert!(
             failures.iter().any(|f| f.contains("NeedsOld")),
             "the gated dependency is the dependent's failure: {failures:?}"
@@ -1797,7 +1819,7 @@ mod tests {
 
         // Force-load: the same folder, with the checkbox's other state.
         let mut open = UiScript::new().unwrap();
-        let failures = load_third_party(&mut open, None, &[], false);
+        let failures = load_bare(&mut open, None, &[], false);
         assert!(failures.is_empty(), "force-load load errors: {failures:?}");
         assert_eq!(
             open.eval::<bool>("return OldRan == true and NeedsOldRan == true")
@@ -1858,7 +1880,7 @@ mod tests {
         );
 
         let mut script = UiScript::new().unwrap();
-        let failures = load_third_party(&mut script, None, &[], true);
+        let failures = load_bare(&mut script, None, &[], true);
         assert!(failures.is_empty(), "load errors: {failures:?}");
 
         // Discovery found it. One, not 23: `SMSG_ADDON_INFO` answers status 2 for the
@@ -1946,7 +1968,7 @@ mod tests {
             &[],
         );
         let mut script = UiScript::new().unwrap();
-        let _ = load_third_party(&mut script, None, &[], true);
+        let _ = load_bare(&mut script, None, &[], true);
 
         // One, not 23: the chain's 22 secure rows are hidden by the reply.
         seat_stock_addon_reply(&mut script);
@@ -2039,7 +2061,7 @@ mod tests {
 
         let mut script = UiScript::new().unwrap();
         let id = ("Realm".to_string(), "Char".to_string());
-        let failures = load_third_party(&mut script, Some(&id), &[], true);
+        let failures = load_bare(&mut script, Some(&id), &[], true);
 
         assert!(
             failures.is_empty(),
@@ -2091,7 +2113,7 @@ mod tests {
         );
         let mut script = UiScript::new().unwrap();
         script.set_screen_size(1024.0, 768.0);
-        let _ = load_third_party(&mut script, None, &[], true);
+        let _ = load_bare(&mut script, None, &[], true);
 
         // Discovered and described, not run; one row, the chain's 22 hidden by the reply.
         seat_stock_addon_reply(&mut script);
@@ -2167,7 +2189,7 @@ mod tests {
         );
         let mut script = UiScript::new().unwrap();
         script.set_screen_size(1024.0, 768.0);
-        let _ = load_third_party(&mut script, None, &[], true);
+        let _ = load_bare(&mut script, None, &[], true);
         seat_stock_addon_reply(&mut script);
         assert!(script.take_load_log_writes().is_empty());
         script.run("LoadAddOn('Demand')").unwrap();
@@ -2217,7 +2239,7 @@ mod tests {
         );
         let mut script = UiScript::new().unwrap();
         script.set_screen_size(1024.0, 768.0);
-        let _ = load_third_party(&mut script, None, &[], true);
+        let _ = load_bare(&mut script, None, &[], true);
 
         assert_eq!(
             script
@@ -2265,7 +2287,7 @@ mod tests {
         );
         let mut script = UiScript::new().unwrap();
         script.set_screen_size(1024.0, 768.0);
-        let _ = load_third_party(&mut script, None, &[], true);
+        let _ = load_bare(&mut script, None, &[], true);
 
         assert_eq!(
             script
@@ -2325,7 +2347,7 @@ mod tests {
 
         let mut script = UiScript::new().unwrap();
         let id = ("Realm".to_string(), "Char".to_string());
-        let _ = load_third_party(&mut script, Some(&id), &[], true);
+        let _ = load_bare(&mut script, Some(&id), &[], true);
 
         for (call, want) in [
             ("LoadAddOn('NoSuchAddon')", "MISSING"),
@@ -2386,7 +2408,7 @@ mod tests {
             "the premise: a newly created character has written nothing"
         );
         let mut script = UiScript::new().unwrap();
-        let _ = load_third_party(&mut script, Some(&fresh), &roster, true);
+        let _ = load_bare(&mut script, Some(&fresh), &roster, true);
 
         assert_eq!(
             script.eval::<bool>("return ShunnedRan == nil").ok(),
@@ -2462,7 +2484,7 @@ mod tests {
         let id = ("Realm".to_string(), "Char".to_string());
 
         let mut script = UiScript::new().unwrap();
-        let _ = load_third_party(&mut script, Some(&id), &[], true);
+        let _ = load_bare(&mut script, Some(&id), &[], true);
         script.run("DisableAddOn('Drop')").unwrap();
         save_enable_state(&script, Some(&id));
 
@@ -2476,7 +2498,7 @@ mod tests {
         );
 
         let mut next = UiScript::new().unwrap();
-        let _ = load_third_party(&mut next, Some(&id), &[], true);
+        let _ = load_bare(&mut next, Some(&id), &[], true);
         assert_eq!(
             next.eval::<bool>("return DropRan == nil").ok(),
             Some(true),
@@ -2500,7 +2522,7 @@ mod tests {
         write_addon(&home, "Off", "## Interface: 30300\n", &[]);
         let fresh = ("Realm".to_string(), "Fresh".to_string());
         let mut script = UiScript::new().unwrap();
-        let _ = load_third_party(&mut script, Some(&fresh), &[], true);
+        let _ = load_bare(&mut script, Some(&fresh), &[], true);
         crate::ui_script::shutdown_ui_state(&mut script, Some(&fresh), true);
         assert!(
             !enable_state_path(Some(&fresh)).unwrap().exists(),
@@ -2520,7 +2542,7 @@ mod tests {
             ),
         ] {
             let mut script = UiScript::new().unwrap();
-            let _ = load_third_party(&mut script, Some(&id), &[], true);
+            let _ = load_bare(&mut script, Some(&id), &[], true);
             script.run(lua).unwrap();
             crate::ui_script::shutdown_ui_state(&mut script, Some(&id), true);
             assert_eq!(
@@ -2553,7 +2575,7 @@ mod tests {
             let id = ("Realm".to_string(), who.to_string());
             let mut script = UiScript::new().unwrap();
             script.set_screen_size(1024.0, 768.0);
-            let _ = load_third_party(&mut script, Some(&id), roster, true);
+            let _ = load_bare(&mut script, Some(&id), roster, true);
             let ran = script.eval::<bool>("return SharedRan == true").unwrap();
             script.run(lua).unwrap();
             crate::ui_script::shutdown_ui_state(&mut script, Some(&id), true);
@@ -2607,7 +2629,7 @@ mod tests {
         // ── session one: defaults, then the addon changes them ──
         let mut script = UiScript::new().unwrap();
         script.set_screen_size(1024.0, 768.0);
-        let failures = load_third_party(&mut script, Some(&id), &[], true);
+        let failures = load_bare(&mut script, Some(&id), &[], true);
         assert!(failures.is_empty(), "{failures:?}");
         assert_eq!(
             script.eval::<i64>("return KeeperSawAtEvent").ok(),
@@ -2622,7 +2644,7 @@ mod tests {
         // ── session two: a fresh VM reads them back ──
         let mut next = UiScript::new().unwrap();
         next.set_screen_size(1024.0, 768.0);
-        let failures = load_third_party(&mut next, Some(&id), &[], true);
+        let failures = load_bare(&mut next, Some(&id), &[], true);
         assert!(failures.is_empty(), "{failures:?}");
         assert_eq!(
             next.eval::<i64>("return KeeperDB.count").ok(),
@@ -2666,7 +2688,7 @@ mod tests {
         );
         let id = ("Realm".to_string(), "Char".to_string());
         let mut script = UiScript::new().unwrap();
-        let _ = load_third_party(&mut script, Some(&id), &[], true);
+        let _ = load_bare(&mut script, Some(&id), &[], true);
         script
             .run("GramDB = { ['on'] = true, ['n'] = 2, ['s'] = 'a\\\"b', ['t'] = { 1 } } GramChar = 5")
             .unwrap();
@@ -2723,7 +2745,7 @@ mod tests {
         let id = ("Realm".to_string(), "Char".to_string());
         let mut script = UiScript::new().unwrap();
         script.set_screen_size(1024.0, 768.0);
-        let _ = load_third_party(&mut script, Some(&id), &[], true);
+        let _ = load_bare(&mut script, Some(&id), &[], true);
         crate::ui_script::shutdown_ui_state(&mut script, Some(&id), true);
 
         let written =
@@ -2766,7 +2788,7 @@ mod tests {
         }
         let id = ("Realm".to_string(), "Char".to_string());
         let mut script = UiScript::new().unwrap();
-        let _ = load_third_party(&mut script, Some(&id), &[], true);
+        let _ = load_bare(&mut script, Some(&id), &[], true);
         crate::ui_script::shutdown_ui_state(&mut script, Some(&id), true);
 
         for f in &stale {
@@ -2800,7 +2822,7 @@ mod tests {
 
         let id = ("Realm".to_string(), "Char".to_string());
         let mut script = UiScript::new().unwrap();
-        let _ = load_third_party(&mut script, Some(&id), &[], true);
+        let _ = load_bare(&mut script, Some(&id), &[], true);
         assert_eq!(
             script.eval::<bool>("return OffRan == nil").ok(),
             Some(true),
@@ -2850,7 +2872,7 @@ mod tests {
 
         let mut script = UiScript::new().unwrap();
         script.set_screen_size(1024.0, 768.0);
-        let _ = load_third_party(&mut script, Some(&id), &[], true);
+        let _ = load_bare(&mut script, Some(&id), &[], true);
         script.eval::<()>("DisableAddOn('MyAddon')").unwrap();
         save_enable_state(&script, Some(&id));
 
@@ -2919,7 +2941,7 @@ mod tests {
                  AddonOrder = AddonOrder .. arg1 .. ',' end)",
             )
             .unwrap();
-        let _ = load_third_party(&mut script, None, &[], true);
+        let _ = load_bare(&mut script, None, &[], true);
 
         // Neither ran at startup: the walk skips LoadOnDemand.
         assert_eq!(

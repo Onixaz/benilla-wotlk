@@ -83,6 +83,12 @@ pub(crate) fn place_action(model: &mut Model, id: u32) -> bool {
         // under the macro tag. Pet actions (4), coins (2), stabled pets (10) and vendor rows (5)
         // are refused and stay held.
         CursorPayload::Macro(m) => Some((ACTION_KIND_MACRO, m.index, m.texture.clone())),
+        // Mode 13, a set, packs its id under the set tag.
+        CursorPayload::EquipmentSet(e) => Some((
+            crate::script::action::ACTION_KIND_EQUIPMENT_SET,
+            e.id,
+            e.texture.clone(),
+        )),
         CursorPayload::PetAction(_) => None,
         CursorPayload::StablePet(_) => None,
         CursorPayload::Money(_) => None,
@@ -129,6 +135,7 @@ pub(crate) fn use_action_places(model: &mut Model, id: u32, in_binding: bool) ->
             CursorPayload::Spell(_)
                 | CursorPayload::Item(_)
                 | CursorPayload::Macro(_)
+                | CursorPayload::EquipmentSet(_)
                 | CursorPayload::Action(_)
         )
     );

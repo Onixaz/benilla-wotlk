@@ -50,7 +50,6 @@ pub(crate) use benilla_protocol::messages::QUEST_LOG_SLOT_FIELDS;
 pub(crate) const QUESTLOG_ID: u32 = 7;
 
 mod attack;
-mod aura;
 mod charge;
 mod death;
 mod equip_pack_slot;
@@ -74,7 +73,6 @@ mod vendor;
 mod worldstate;
 
 pub(crate) use attack::Attack;
-pub(crate) use aura::Aura;
 pub(crate) use charge::Charge;
 pub(crate) use death::Death;
 pub(crate) use equip_pack_slot::EquipPackSlot;

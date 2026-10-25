@@ -949,6 +949,8 @@ pub(crate) fn snapshot(
         pvp_team: store.0.unit_race().map_or(-1, race_pvp_team),
         // `PLAYER_BYTES_3` byte 2, the city-protector title (`PVP_MEDAL<n>`), unset by vmangos.
         pvp_medal: store.0.player_pvp_medal().unwrap_or(0),
+        // `PLAYER_CHOSEN_TITLE`, public, the title `UnitPVPName` shows (`0x72a290`).
+        chosen_title: store.0.player_chosen_title(),
         // `is_player` and the creature-record fields come from [`enrich_unit`].
         ..Default::default()
     }
@@ -1196,7 +1198,11 @@ pub(crate) fn fire_transitions(
             script.fire_event(&format!("UNIT_MAX{suffix}"), vec![tok()]);
         }
     }
-    if prev.is_none_or(|p| p.name != cur.name) {
+    // The chosen title and the medal byte have their own name watches (`OnUpdatePVPTitle`
+    // `0x6cdd80` → `CGGameUI::UnitNameUpdate`).
+    if prev.is_none_or(|p| {
+        (&p.name, p.chosen_title, p.pvp_medal) != (&cur.name, cur.chosen_title, cur.pvp_medal)
+    }) {
         script.fire_event("UNIT_NAME_UPDATE", vec![tok()]);
     }
     // `UNIT_CLASSIFICATION_CHANGED`, the target frame's border repaint, on a change of the gated

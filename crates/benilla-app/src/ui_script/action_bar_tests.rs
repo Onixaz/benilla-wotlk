@@ -1007,6 +1007,8 @@ fn shipped_bag_frame_drives_end_to_end() {
     slots.insert(
         1,
         ContainerSlot {
+            guid: 0,
+            gems: [0; 3],
             quest_item: false,
             start_quest: 0,
             duration_ms: None,

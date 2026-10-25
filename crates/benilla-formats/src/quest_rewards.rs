@@ -5,7 +5,8 @@
 //! - `QuestFactionReward.dbc` (`ID` 1 gains, 2 losses, `Difficulty[10]`): the reputation a value
 //!   id names (`0x58d050` picks row `(valueId < 0) + 1` and column `|valueId|`).
 //! - `CharTitles.dbc` (`ID`, `Condition_ID`, `Name`, `Name1`, `Mask_ID`, the names loc-strings):
-//!   a title reward's text, `Name1` the female form (`0x5e4c10`).
+//!   a title reward's text, `Name1` the female form (`0x5e4c10`), and the rows in file order the
+//!   title verbs walk by mask id (`GetTitleName` `0x51b4e0`).
 //! - `TeamContributionPoints.dbc` (`ID`, `Data`): the honor a multiplier scales, one row per level
 //!   (`0x7554f0` reads row `level - 1`).
 
@@ -17,12 +18,23 @@ use benilla_dbc::{FieldType, Schema, SchemaField};
 use crate::dbc::{f32_at, i32_at, parse, str_at, u32_at};
 use crate::Chain;
 
+/// One `CharTitles.dbc` row, the fields 12340's record keeps: `name` `+0x8`, `name1` `+0xc` (the
+/// female form), `mask_id` `+0x10`, the known-titles bit.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CharTitle {
+    pub id: u32,
+    pub name: String,
+    pub name1: String,
+    pub mask_id: u32,
+}
+
 /// The four quest reward tables.
 #[derive(Debug, Default)]
 pub struct QuestRewardTables {
     xp: HashMap<u32, [u32; 10]>,
     reputation: HashMap<u32, [i32; 10]>,
     titles: HashMap<u32, (String, String)>,
+    char_titles: Vec<CharTitle>,
     honor_per_level: HashMap<u32, f32>,
 }
 
@@ -48,6 +60,11 @@ impl QuestRewardTables {
         self.titles.get(&id).map(|(m, f)| (m.as_str(), f.as_str()))
     }
 
+    /// Every `CharTitles.dbc` row in file order.
+    pub fn char_titles(&self) -> &[CharTitle] {
+        &self.char_titles
+    }
+
     /// `TeamContributionPoints.dbc`'s value for `level`.
     pub fn honor_at_level(&self, level: u32) -> Option<f32> {
         self.honor_per_level.get(&level).copied()
@@ -64,8 +81,15 @@ impl QuestRewardTables {
             xp,
             reputation,
             titles,
+            char_titles: Vec::new(),
             honor_per_level,
         }
+    }
+
+    /// The same with `CharTitles.dbc` rows in file order, for fixtures.
+    pub fn with_char_titles(mut self, rows: Vec<CharTitle>) -> Self {
+        self.char_titles = rows;
+        self
     }
 }
 
@@ -156,6 +180,12 @@ pub fn load_quest_reward_tables(chain: &mut Chain) -> Result<QuestRewardTables> 
         if let Some(id) = u32_at(r, 0) {
             let male = str_at(&rs, r, 2).unwrap_or_default();
             let female = str_at(&rs, r, 19).unwrap_or_default();
+            out.char_titles.push(CharTitle {
+                id,
+                name: male.clone(),
+                name1: female.clone(),
+                mask_id: u32_at(r, 36).unwrap_or(0),
+            });
             out.titles.insert(id, (male, female));
         }
     }
@@ -188,6 +218,11 @@ mod tests {
         assert!(t.reputation(1).is_some_and(|r| r > 0));
         assert!(t.reputation(-1).is_some_and(|r| r < 0));
         assert!(t.titles.values().any(|(m, _)| !m.is_empty()));
+        // Mask ids are the known-titles bits: nonzero but for at most one row, and unique.
+        let masks: std::collections::HashSet<u32> =
+            t.char_titles().iter().map(|r| r.mask_id).collect();
+        assert_eq!(masks.len(), t.char_titles().len());
+        assert!(masks.iter().all(|&m| m < 192));
         assert!(t.honor_at_level(1).is_some_and(|h| h > 0.0));
     }
 

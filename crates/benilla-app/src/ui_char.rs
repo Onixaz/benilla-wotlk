@@ -704,6 +704,8 @@ fn slot_view(
         .and_then(|d| d.icon.clone());
     Some(InvSlotView {
         item_id: entry,
+        guid,
+        gems: crate::items::gems(obj, rolls.enchants),
         icon,
         count,
         contents_count,
@@ -786,6 +788,8 @@ fn inventory_slots(
             .and_then(|i| i.catalog.get(display))
             .and_then(|d| d.icon.clone());
         inv[0] = Some(InvSlotView {
+            guid: 0,
+            gems: [0; 3],
             durability: None,
             flags: 0,
             // Ammo has no item object, only its template, so there is no bind to read.

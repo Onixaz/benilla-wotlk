@@ -199,8 +199,10 @@ pub struct UnitState {
     /// [`HonorState`](super::HonorState); [`super::pvp`] converts to the `-4..=14` visual scale.
     pub pvp_rank: u8,
     /// The city-protector title, `PLAYER_BYTES_3` byte 2 (0 none): `UnitPVPName` appends the
-    /// `PVP_MEDAL<n>` line for a non-zero one (`0x6093ef`).
+    /// `PVP_MEDAL<n>` line under a chosen title for a non-zero one (`0x72a35d`).
     pub pvp_medal: u8,
+    /// A player's `PLAYER_CHOSEN_TITLE`, a `CharTitles.dbc` mask id, 0 for none.
+    pub chosen_title: i32,
     /// `UnitFactionGroup`'s first return, `"Alliance"` or `"Horde"`: `FactionGroup.dbc`'s English
     /// `InternalName` for the side bit of the faction template's group mask, which stock builds
     /// texture paths from (`PlayerFrame.lua:68`). `None` for a template with no side.

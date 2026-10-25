@@ -106,6 +106,7 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
             other @ (CursorPayload::Spell(_)
             | CursorPayload::Action(_)
             | CursorPayload::Macro(_)
+            | CursorPayload::EquipmentSet(_)
             | CursorPayload::PetAction(_)
             // Mode 10: a stabled pet stays held for the stable window.
             | CursorPayload::StablePet(_)
@@ -255,6 +256,8 @@ mod tests {
     fn doll_slots() -> crate::script::InventorySlots {
         let mut slots: crate::script::InventorySlots = Default::default();
         slots[1] = Some(InvSlotView {
+            guid: 0,
+            gems: [0; 3],
             duration_ms: None,
             already_bound: false,
             bar_placeable: true,
@@ -273,6 +276,8 @@ mod tests {
             enchants: Vec::new(),
         });
         slots[11] = Some(InvSlotView {
+            guid: 0,
+            gems: [0; 3],
             duration_ms: None,
             already_bound: false,
             bar_placeable: true,
@@ -291,6 +296,8 @@ mod tests {
             enchants: Vec::new(),
         });
         slots[19] = Some(InvSlotView {
+            guid: 0,
+            gems: [0; 3],
             duration_ms: None,
             already_bound: false,
             bar_placeable: true,
@@ -316,6 +323,8 @@ mod tests {
         slots.insert(
             1,
             ContainerSlot {
+                guid: 0,
+                gems: [0; 3],
                 quest_item: false,
                 start_quest: 0,
                 duration_ms: None,
@@ -463,6 +472,8 @@ mod tests {
         });
         // An equipped bag in Bag0Slot (id 20): its equip_slots is the four bag slots.
         slots[20] = Some(InvSlotView {
+            guid: 0,
+            gems: [0; 3],
             duration_ms: None,
             already_bound: false,
             bar_placeable: true,
@@ -500,6 +511,8 @@ mod tests {
         slots.insert(
             3,
             ContainerSlot {
+                guid: 0,
+                gems: [0; 3],
                 quest_item: false,
                 start_quest: 0,
                 duration_ms: None,

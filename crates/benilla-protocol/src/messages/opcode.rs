@@ -251,7 +251,8 @@ pub const MSG_CHANNEL_UPDATE: u16 = 0x013A; // 314
 
 /// Our own aura's remaining time: `u8 slot`, `u32 remaining_ms`; never for others' or permanent
 /// auras (`SpellAuras.cpp:7511-7523`). It arrives before the `UNIT_FIELD_AURA` delta for the slot.
-pub const SMSG_UPDATE_AURA_DURATION: u16 = 0x0137; // 311
+/// 3.3.5a only: a saved set's server guid, `u32 id` and a packed guid (`0x5af6c0`).
+pub const SMSG_EQUIPMENT_SET_SAVED: u16 = 0x0137; // 311
 /// 3.3.5a only: a unit's whole aura array; slots it does not name are emptied (`0x7300a0`).
 pub const SMSG_AURA_UPDATE_ALL: u16 = 0x0495;
 /// 3.3.5a only: some of a unit's aura slots, the same body as `SMSG_AURA_UPDATE_ALL`.
@@ -730,6 +731,18 @@ pub const SMSG_ALL_ACHIEVEMENT_DATA: u16 = 0x047D;
 pub const SMSG_TALENTS_INFO: u16 = 0x04C0;
 /// 3.3.5a only: the player's saved equipment sets (`0x5af490`).
 pub const SMSG_EQUIPMENT_SET_LIST: u16 = 0x04BC;
+/// 3.3.5a only: a set swap's verdict, one `u8` (`0x5af710`).
+pub const SMSG_EQUIPMENT_SET_USE_RESULT: u16 = 0x04D6;
+/// 3.3.5a only: save a set (`CGEquipmentManager::SaveSet` `0x5ade50`).
+pub const CMSG_EQUIPMENT_SET_SAVE: u16 = 0x04BD;
+/// 3.3.5a only: delete a set by its guid (`0x5ae260`).
+pub const CMSG_EQUIPMENT_SET_DELETE: u16 = 0x013E;
+/// 3.3.5a only: wear a set, 19 slots of where each item is (`0x5ada20`).
+pub const CMSG_EQUIPMENT_SET_USE: u16 = 0x04D5;
+/// 3.3.5a only: a title mask id gained or lost, `u32 mask`, `u32 earned` (`0x50c520`).
+pub const SMSG_TITLE_EARNED: u16 = 0x0373;
+/// 3.3.5a only: show a title, `u32` mask id (`SetCurrentTitle` `0x522e30`).
+pub const CMSG_SET_TITLE: u16 = 0x0374;
 /// 3.3.5a only: a totem took a slot (`0x526530` arm `0x413`).
 pub const SMSG_TOTEM_CREATED: u16 = 0x0413;
 /// 3.3.5a only: one rune changed kind, `u8 rune`, `u8 kind` (`0x6e2e90` arm `0x486`).

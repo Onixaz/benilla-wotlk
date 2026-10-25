@@ -1146,6 +1146,8 @@ mod bank_ui_tests;
 #[cfg(test)]
 mod calendar_ui_tests;
 #[cfg(test)]
+mod character_sheet_tests;
+#[cfg(test)]
 mod glyph_ui_tests;
 #[cfg(test)]
 mod gossip_ui_tests;

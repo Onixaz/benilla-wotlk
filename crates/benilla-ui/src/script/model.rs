@@ -468,6 +468,16 @@ pub(crate) struct Model {
     pub(crate) actions: HashMap<u32, ActionSlot>,
     /// The saved equipment sets by id, their names, which a set slot answers.
     pub(crate) equipment_sets: HashMap<u32, String>,
+    /// `CurrencyTypes.dbc` and `CurrencyCategory.dbc`.
+    pub(crate) currency_catalog: super::currency::CurrencyCatalogView,
+    /// The player's currencies, `None` with no player.
+    pub(crate) currency_holdings: Option<super::currency::CurrencyHoldings>,
+    /// Categories closed by `ExpandCurrencyList`; every one starts open (`0x5afd90`).
+    pub(crate) currency_collapsed: HashMap<u32, bool>,
+    /// The saved sets and the swap state (`CGEquipmentManager`).
+    pub(crate) equipment_manager: super::equipment_manager::EquipmentManager,
+    /// Equipment set sends, for the app.
+    pub(crate) equipment_set_requests: Vec<super::equipment_manager::EquipmentSetRequest>,
     /// Per action, its usable, range, current and cooldown state; an absent one reads cold.
     pub(crate) action_states: HashMap<u32, super::action::StoredActionState>,
     pub(crate) bonus_bar_offset: u8,
@@ -593,6 +603,13 @@ pub(crate) struct Model {
     pub(crate) glyph_targeting: Option<super::glyph::GlyphTargeting>,
     /// `RemoveGlyphFromSocket` sends, 0-based sockets, for the app to send.
     pub(crate) glyph_removes: Vec<u32>,
+    /// `CharTitles.dbc`'s rows in file order.
+    pub(crate) title_rows: Vec<super::title::TitleRow>,
+    /// The active player's title fields, `None` with no player.
+    pub(crate) player_titles: Option<super::title::PlayerTitles>,
+    /// `SetCurrentTitle` sends, `CMSG_SET_TITLE` bodies, for the app to send.
+    pub(crate) title_sets: Vec<i32>,
+    pub(crate) title_throttle: super::title::TitleThrottle,
     /// What `GetSpellInfo` asks; absent before the app installs it.
     pub(crate) spell_info: Option<std::rc::Rc<dyn super::spell_info::SpellInfoSource>>,
     /// The four totem slots and their tools.
@@ -1330,6 +1347,11 @@ impl Model {
             keybinds: super::keybind::KeybindState::default(),
             actions: HashMap::new(),
             equipment_sets: HashMap::new(),
+            currency_catalog: Default::default(),
+            currency_holdings: None,
+            currency_collapsed: HashMap::new(),
+            equipment_manager: Default::default(),
+            equipment_set_requests: Vec::new(),
             action_states: HashMap::new(),
             bonus_bar_offset: 0,
             action_bar_page: 0,
@@ -1391,6 +1413,10 @@ impl Model {
             glyph_sockets: Default::default(),
             glyph_targeting: None,
             glyph_removes: Vec::new(),
+            title_rows: Vec::new(),
+            player_titles: None,
+            title_sets: Vec::new(),
+            title_throttle: Default::default(),
             spell_info: None,
             totems: Default::default(),
             totem_destroys: Vec::new(),

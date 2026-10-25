@@ -266,6 +266,20 @@ pub enum ServerPacket {
     },
     /// `SMSG_EQUIPMENT_SET_LIST`: the saved equipment sets, whole.
     EquipmentSetList(Vec<super::EquipmentSet>),
+    /// `SMSG_EQUIPMENT_SET_SAVED`: the guid the server gave a set id, or 0 for a refused one.
+    EquipmentSetSaved {
+        id: u32,
+        guid: u64,
+    },
+    /// `SMSG_EQUIPMENT_SET_USE_RESULT`: 0 swapped, else failed (4 bags full).
+    EquipmentSetUseResult {
+        result: u8,
+    },
+    /// `SMSG_TITLE_EARNED`: a title mask id gained or lost.
+    TitleEarned {
+        mask_id: u32,
+        earned: bool,
+    },
     /// `SMSG_ACHIEVEMENT_EARNED`: a unit earned an achievement.
     AchievementEarned(super::AchievementEarned),
     /// `SMSG_CRITERIA_UPDATE`: one criterion's progress.
@@ -721,12 +735,6 @@ pub enum ServerPacket {
     /// interrupt.
     ChannelUpdate {
         caster: u64,
-        remaining_ms: u32,
-    },
-    /// `SMSG_UPDATE_AURA_DURATION` (self-only, never for a permanent aura): one aura slot's time
-    /// left. It arrives before the delta naming the slot's spell, so buffer it by slot.
-    UpdateAuraDuration {
-        slot: u8,
         remaining_ms: u32,
     },
     /// `SMSG_AURA_UPDATE_ALL` / `SMSG_AURA_UPDATE`: a unit's aura slots.
@@ -1440,6 +1448,9 @@ impl ServerPacket {
             ServerPacket::ResyncRunes(_) => "SMSG_RESYNC_RUNES".into(),
             ServerPacket::AddRunePower { .. } => "SMSG_ADD_RUNE_POWER".into(),
             ServerPacket::EquipmentSetList(_) => "SMSG_EQUIPMENT_SET_LIST".into(),
+            ServerPacket::EquipmentSetSaved { .. } => "SMSG_EQUIPMENT_SET_SAVED".into(),
+            ServerPacket::EquipmentSetUseResult { .. } => "SMSG_EQUIPMENT_SET_USE_RESULT".into(),
+            ServerPacket::TitleEarned { .. } => "SMSG_TITLE_EARNED".into(),
             ServerPacket::AchievementEarned(_) => "SMSG_ACHIEVEMENT_EARNED".into(),
             ServerPacket::CriteriaUpdate(_) => "SMSG_CRITERIA_UPDATE".into(),
             ServerPacket::InspectAchievements(_) => "SMSG_RESPOND_INSPECT_ACHIEVEMENTS".into(),
@@ -1573,7 +1584,6 @@ impl ServerPacket {
             ServerPacket::CooldownCheat { .. } => "SMSG_COOLDOWN_CHEAT".into(),
             ServerPacket::ChannelStart { .. } => "MSG_CHANNEL_START".into(),
             ServerPacket::ChannelUpdate { .. } => "MSG_CHANNEL_UPDATE".into(),
-            ServerPacket::UpdateAuraDuration { .. } => "SMSG_UPDATE_AURA_DURATION".into(),
             ServerPacket::AuraUpdate(u) if u.all => "SMSG_AURA_UPDATE_ALL".into(),
             ServerPacket::AuraUpdate(_) => "SMSG_AURA_UPDATE".into(),
             ServerPacket::PlaySpellVisual { .. } => "SMSG_PLAY_SPELL_VISUAL".into(),

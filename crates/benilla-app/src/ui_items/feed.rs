@@ -697,6 +697,9 @@ fn resolve_slot(
     let enchant_ms: [Option<u64>; crate::items::ENCHANT_SLOTS] =
         std::array::from_fn(|s| countdowns.and_then(|c| c.enchant_remaining_display_ms(s as u32)));
     let duration_ms = countdowns.and_then(|c| c.lifetime_remaining_display_ms());
+    let gems = objects
+        .object(guid)
+        .map_or([0; 3], |f| crate::items::gems(f, rolls.enchants));
     let (entry, count, durability, readable, creator, flags, already_bound, roll, enchant_lines) =
         match objects.object(guid) {
             Some(fields) => (
@@ -737,15 +740,25 @@ fn resolve_slot(
                 ),
             ),
             // A guid whose create has not landed: occupied, unresolved.
-            None => return Some(ContainerSlot::default()),
+            None => {
+                return Some(ContainerSlot {
+                    guid,
+                    ..Default::default()
+                })
+            }
         };
     if entry == 0 {
-        return Some(ContainerSlot::default());
+        return Some(ContainerSlot {
+            guid,
+            ..Default::default()
+        });
     }
     let template: Option<ItemInfo> = items.template(entry, guid, commands).cloned();
     let Some(t) = template else {
         // Asked (or a cached negative); show the slot occupied while the answer is in flight.
         return Some(ContainerSlot {
+            guid,
+            gems,
             durability: None,
             item_id: entry,
             count,
@@ -759,6 +772,8 @@ fn resolve_slot(
         });
     };
     Some(ContainerSlot {
+        guid,
+        gems,
         // `GetContainerItemQuestInfo`: bonding 4 is the quest-item border, `StartQuest` the bang.
         quest_item: t.bonding == 4,
         start_quest: t.start_quest,

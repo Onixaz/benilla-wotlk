@@ -26,10 +26,9 @@ fn errors(s: &mut UiScript) -> Vec<String> {
         .collect()
 }
 
-/// `ToggleCharacter(tab)` under `pcall`: `CharacterFrame_ShowSubFrame` raises at `TokenFrame`,
-/// past the page it shows, until `Blizzard_TokenUI` loads (#281).
+/// `ToggleCharacter(tab)`.
 fn toggle(s: &mut UiScript, tab: &str) {
-    s.run(&format!("pcall(ToggleCharacter, '{tab}')")).unwrap();
+    s.run(&format!("ToggleCharacter('{tab}')")).unwrap();
     s.resolve();
 }
 

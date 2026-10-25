@@ -1417,6 +1417,8 @@ fn seed_cooldown_filmstrip(
         slots.insert(
             slot,
             benilla_ui::script::ContainerSlot {
+                guid: 0,
+                gems: [0; 3],
                 quest_item: false,
                 start_quest: 0,
                 petition: None,
@@ -1472,6 +1474,8 @@ fn seed_bag_window(
     };
     let slot = |disp: u32, count: u32, id: u32, name: &str, quality: u32| {
         benilla_ui::script::ContainerSlot {
+            guid: 0,
+            gems: [0; 3],
             quest_item: false,
             start_quest: 0,
             petition: None,
@@ -1561,6 +1565,8 @@ fn seed_equipped_bags(
     };
     let slot =
         |disp: u32, count: u32, name: &str, quality: u32| benilla_ui::script::ContainerSlot {
+            guid: 0,
+            gems: [0; 3],
             quest_item: false,
             start_quest: 0,
             petition: None,

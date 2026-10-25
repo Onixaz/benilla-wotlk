@@ -355,7 +355,6 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         }],
         // 12340's 0x137 is no aura duration: its handler (`0x5af6c0`) reads a `u32` and a packed
         // guid into `0x5ae760`. Durations ride `SMSG_AURA_UPDATE`.
-        ServerPacket::UpdateAuraDuration { .. } => Vec::new(),
         ServerPacket::AuraUpdate(u) => vec![SessionEvent::AuraUpdate(u)],
         ServerPacket::PlaySpellVisual { unit, kit_id } => {
             vec![SessionEvent::PlaySpellVisual { unit, kit_id }]
@@ -897,6 +896,15 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::ResyncRunes(r) => vec![SessionEvent::ResyncRunes(r)],
         ServerPacket::AddRunePower { mask } => vec![SessionEvent::AddRunePower { mask }],
         ServerPacket::EquipmentSetList(sets) => vec![SessionEvent::EquipmentSetList(sets)],
+        ServerPacket::EquipmentSetSaved { id, guid } => {
+            vec![SessionEvent::EquipmentSetSaved { id, guid }]
+        }
+        ServerPacket::EquipmentSetUseResult { result } => {
+            vec![SessionEvent::EquipmentSetUseResult { result }]
+        }
+        ServerPacket::TitleEarned { mask_id, earned } => {
+            vec![SessionEvent::TitleEarned { mask_id, earned }]
+        }
         ServerPacket::AchievementEarned(e) => vec![SessionEvent::AchievementEarned(e)],
         ServerPacket::CriteriaUpdate(c) => vec![SessionEvent::CriteriaUpdate(c)],
         ServerPacket::InspectAchievements(i) => vec![SessionEvent::InspectAchievements(i)],

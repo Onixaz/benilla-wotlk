@@ -46,7 +46,6 @@ pub(crate) struct DeathArc {
 pub(crate) struct World {
     pub(crate) self_guid: u64,
     pub(crate) self_name: String,
-    pub(crate) self_level: u8,
     pub(crate) self_map: u32,
     /// The `SMSG_CHAR_ENUM` spawn pose, used until our own create streams.
     pub(crate) spawn_pos: [f32; 3],
@@ -89,7 +88,6 @@ impl World {
         World {
             self_guid: character.guid,
             self_name: character.name.clone(),
-            self_level: character.level,
             self_map: character.map,
             spawn_pos: [
                 character.position.x,

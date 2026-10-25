@@ -577,15 +577,6 @@ pub(super) fn read_set_spell_modifier(r: &mut impl Read) -> io::Result<(u8, u8, 
     Ok((mask_bit, op, value))
 }
 
-/// Read `SMSG_UPDATE_AURA_DURATION` (vmangos `SpellAuras.cpp:7511-7523`): an aura slot and its ms
-/// left. Sent only to the aura's target and never for a permanent aura, so an occupied slot with
-/// no duration lasts until cancelled.
-pub(super) fn read_update_aura_duration(r: &mut impl Read) -> io::Result<(u8, u32)> {
-    let slot = read_u8(r)?;
-    let remaining_ms = read_u32_le(r)?;
-    Ok((slot, remaining_ms))
-}
-
 /// Read `SMSG_PLAY_SPELL_VISUAL` (vmangos `Packets/Spell.cpp:54-58`): raw `u64` unit, `u32` kit
 /// id. The client (`0x6e98d0`) checks the kit against `SpellVisualKit.dbc` and plays it at stage 0.
 pub(super) fn read_play_spell_visual(r: &mut impl Read) -> io::Result<(u64, u32)> {
@@ -961,15 +952,6 @@ mod tests {
     fn aura_bodies_golden() {
         // CMSG_CANCEL_AURA: 1126 (Mark of the Wild) = 0x0000_0466.
         assert_eq!(cancel_aura(1126), [0x66, 0x04, 0x00, 0x00]);
-
-        // SMSG_UPDATE_AURA_DURATION: u8 slot, then u32 ms LE. Slot 3, 12_000 ms = 0x0000_2EE0.
-        let body = [0x03, 0xE0, 0x2E, 0x00, 0x00];
-        let mut r = &body[..];
-        assert_eq!(read_update_aura_duration(&mut r).unwrap(), (3, 12_000));
-        assert!(
-            r.is_empty(),
-            "the body is exactly 5 bytes — slot is a byte, not a dword"
-        );
     }
 
     #[test]

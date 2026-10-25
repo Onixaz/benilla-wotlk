@@ -4,13 +4,11 @@
 
 use benilla_ui::script::{ScriptValue, UiScript, UnitCombatStats, UnitState};
 
-/// Errors from the sheet's own code; the production load carries unrelated 3.3.5a gaps, and the
-/// title picker's (`PlayerTitleFrame_*`, #160) runs after the panes fill.
+/// Errors from the sheet's own code; the production load carries unrelated 3.3.5a gaps.
 fn sheet_errors(errors: impl IntoIterator<Item = String>) -> Vec<String> {
     errors
         .into_iter()
         .filter(|e| e.contains("PaperDoll") || e.contains("UIDropDownMenu"))
-        .filter(|e| !e.contains("PlayerTitleFrame"))
         .collect()
 }
 
@@ -115,10 +113,7 @@ fn the_stock_stat_panes_fill_every_row_for_each_dropdown_choice() {
         "PLAYERSTAT_SPELL_COMBAT"
     );
 
-    // `CharacterFrame_ShowSubFrame` raises on the unloaded `TokenFrame` (#281) after it has shown
-    // the paper doll, so the open goes through `pcall`.
-    s.run(r#"pcall(ToggleCharacter, "PaperDollFrame")"#)
-        .unwrap();
+    s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
     assert!(s.eval::<bool>("return PaperDollFrame:IsShown()").unwrap());
     let errors = sheet_errors(s.take_errors());
     assert!(errors.is_empty(), "sheet errors on open: {errors:#?}");

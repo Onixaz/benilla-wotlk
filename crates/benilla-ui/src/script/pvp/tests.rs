@@ -306,88 +306,6 @@ fn the_rust_side_title_lookup_is_gendered_where_the_binding_is_not() {
     );
 }
 
-/// The lookup-generic builder the world-text pass runs ([`decorated_name`]): the same key
-/// construction and `_FEMALE` fallback, and a plain `None` where the builder declines.
-#[test]
-fn the_lookup_generic_builder_resolves_the_same_keys() {
-    let strings: std::collections::HashMap<&str, &str> = [
-        ("UNIT_PVP_NAME", "%s %s"),
-        ("PVP_RANK_9_1", "Sergeant Major"),
-        ("PVP_RANK_9_1_FEMALE", "Sergeant Major (f)"),
-        ("PVP_RANK_9_0", "Senior Sergeant"),
-    ]
-    .into();
-    let lookup = |key: &str| strings.get(key).map(|value| (*value).to_string());
-    assert_eq!(
-        decorated_name(
-            lookup,
-            RankTitle {
-                rank: 9,
-                team: 1,
-                female: false,
-            },
-            "Bob",
-        )
-        .as_deref(),
-        Some("Sergeant Major Bob"),
-        "rank first, name second"
-    );
-    assert_eq!(
-        decorated_name(
-            lookup,
-            RankTitle {
-                rank: 9,
-                team: 1,
-                female: true,
-            },
-            "Bob",
-        )
-        .as_deref(),
-        Some("Sergeant Major (f) Bob"),
-        "the female twin wins"
-    );
-    assert_eq!(
-        decorated_name(
-            lookup,
-            RankTitle {
-                rank: 9,
-                team: 0,
-                female: false,
-            },
-            "Bob",
-        )
-        .as_deref(),
-        Some("Senior Sergeant Bob"),
-        "team 0 keys the Horde list"
-    );
-    assert_eq!(
-        decorated_name(
-            lookup,
-            RankTitle {
-                rank: 0,
-                team: 1,
-                female: false,
-            },
-            "Bob",
-        ),
-        None,
-        "unranked"
-    );
-    assert_eq!(
-        decorated_name(
-            lookup,
-            RankTitle {
-                rank: 6,
-                team: 1,
-                female: false,
-            },
-            "Bob",
-        ),
-        None,
-        "a key the install lacks declines"
-    );
-}
-
 /// The panes' `if not rankName` fallback needs a nil, not an empty string or a raise.
 #[test]
 fn a_missing_rank_global_reads_nil_not_empty() {
@@ -436,11 +354,6 @@ fn a_sideless_player_still_has_a_team_digit_because_his_race_has_one() {
         s.eval::<String>("return (GetPVPRankInfo(18))").unwrap(),
         "Grand Marshal",
         "the sideless template must not reach the key"
-    );
-    assert_eq!(
-        s.eval::<String>(r#"return UnitPVPName("player")"#).unwrap(),
-        "Grand Marshal Benilla",
-        "and the name decoration reads the same digit"
     );
     // The control: a unit whose race has no side is -1, and -1 misses.
     s.set_unit(
@@ -687,43 +600,50 @@ fn unit_pvp_rank_answers_for_a_foreign_unit() {
     assert!(s.eval::<i64>("return UnitPVPRank({})").is_err());
 }
 
-/// `UnitPVPName`'s three legs (`0x609370`); the title fills `UNIT_PVP_NAME` rank first and is
-/// gendered by this unit, unlike the pane's.
+fn seat_titles(s: &mut UiScript) {
+    s.set_title_rows(vec![
+        crate::script::TitleRow {
+            mask_id: 2,
+            name: "Corporal %s".into(),
+            name1: String::new(),
+        },
+        crate::script::TitleRow {
+            mask_id: 46,
+            name: "%s the Explorer".into(),
+            name1: "%s the Exploress".into(),
+        },
+    ]);
+}
+
+/// `UnitPVPName` (`0x60e9a0` → `GetUnitChosenTitle` `0x72a290`): a player's chosen title,
+/// gendered by this unit, with the medal line under it; no title, a creature or a mask no row has
+/// is the plain name; the rank byte decorates nothing.
 #[test]
-fn unit_pvp_name_decorates_a_ranked_player_and_falls_back_three_ways() {
+fn unit_pvp_name_shows_the_chosen_title() {
     let mut s = seated();
-    seat_rank_globals(&s);
     seat_name_globals(&s);
+    seat_titles(&mut s);
 
-    // Leg A: the seated player is a female Alliance rank 9, so the `_FEMALE` twin wins.
+    // The seated player is a female rank 9 with no chosen title.
     assert_eq!(
         s.eval::<String>(r#"return UnitPVPName("player")"#).unwrap(),
-        "Sergeant Major (f) Benilla"
+        "Benilla"
     );
-    s.set_unit("player", Some(UnitState { sex: 2, ..player() }));
-    assert_eq!(
-        s.eval::<String>(r#"return UnitPVPName("player")"#).unwrap(),
-        "Sergeant Major Benilla"
-    );
-
     s.set_unit(
         "player",
         Some(UnitState {
-            sex: 2,
-            pvp_rank: 19,
+            chosen_title: 46,
             ..player()
         }),
     );
     assert_eq!(
         s.eval::<String>(r#"return UnitPVPName("player")"#).unwrap(),
-        "Leader Benilla",
-        "rank 19 names here and is refused by GetPVPRankInfo"
+        "Benilla the Exploress"
     );
-
-    // Leg A′: the city-protector medal, on its own line.
     s.set_unit(
         "player",
         Some(UnitState {
+            chosen_title: 2,
             sex: 2,
             pvp_medal: 1,
             ..player()
@@ -731,14 +651,15 @@ fn unit_pvp_name_decorates_a_ranked_player_and_falls_back_three_ways() {
     );
     assert_eq!(
         s.eval::<String>(r#"return UnitPVPName("player")"#).unwrap(),
-        "Sergeant Major Benilla\nGuardian of Stormwind"
+        "Corporal Benilla
+Guardian of Stormwind",
+        "a female asking a row with no female form takes the male one; the medal rides the title"
     );
-
-    // Leg C: an unranked player is just a name, and so is a plain creature.
     s.set_unit(
         "player",
         Some(UnitState {
-            pvp_rank: 0,
+            chosen_title: 7,
+            pvp_medal: 1,
             ..player()
         }),
     );
@@ -752,45 +673,13 @@ fn unit_pvp_name_decorates_a_ranked_player_and_falls_back_three_ways() {
             exists: true,
             name: Some("Timber Wolf".into()),
             level: 5,
+            chosen_title: 46,
             ..Default::default()
         }),
     );
     assert_eq!(
         s.eval::<String>(r#"return UnitPVPName("target")"#).unwrap(),
         "Timber Wolf"
-    );
-
-    // Leg B: the civilian prefix, on the tooltip's `0x612550` gate: PvP-flagged, hostile and grey
-    // to the player.
-    s.set_player_req_state(crate::script::PlayerReqState {
-        level: 30,
-        ..Default::default()
-    });
-    let civilian = |reaction: u8, pvp: bool| UnitState {
-        exists: true,
-        name: Some("Innkeeper Renee".into()),
-        level: 5,
-        civilian: true,
-        pvp,
-        reaction,
-        ..Default::default()
-    };
-    s.set_unit("target", Some(civilian(2, true)));
-    assert_eq!(
-        s.eval::<String>(r#"return UnitPVPName("target")"#).unwrap(),
-        "Civilian Innkeeper Renee"
-    );
-    s.set_unit("target", Some(civilian(5, true)));
-    assert_eq!(
-        s.eval::<String>(r#"return UnitPVPName("target")"#).unwrap(),
-        "Innkeeper Renee",
-        "a FRIENDLY civilian is not a dishonorable kill"
-    );
-    s.set_unit("target", Some(civilian(2, false)));
-    assert_eq!(
-        s.eval::<String>(r#"return UnitPVPName("target")"#).unwrap(),
-        "Innkeeper Renee",
-        "…nor an unflagged one"
     );
 
     assert!(s
@@ -812,25 +701,6 @@ fn unit_pvp_name_decorates_a_ranked_player_and_falls_back_three_ways() {
     assert!(s.eval::<String>("return UnitPVPName()").is_err());
 }
 
-/// No install: the plain name, where the reference would format an empty string.
-#[test]
-fn unit_pvp_name_without_the_globalstrings_answers_the_plain_name() {
-    let s = seated(); // nothing seated on _G
-    assert_eq!(
-        s.eval::<String>(r#"return UnitPVPName("player")"#).unwrap(),
-        "Benilla"
-    );
-    // The template alone is not enough: the title has to resolve too.
-    s.lua()
-        .globals()
-        .set("UNIT_PVP_NAME", "%s %s")
-        .expect("global");
-    assert_eq!(
-        s.eval::<String>(r#"return UnitPVPName("player")"#).unwrap(),
-        "Benilla"
-    );
-}
-
 /// Two varargs is the engine's limit (`add esp,0x14`), so a third `%s` has nothing to consume.
 #[test]
 fn the_two_string_template_is_substituted_not_hardcoded() {
@@ -845,18 +715,6 @@ fn the_two_string_template_is_substituted_not_hardcoded() {
     assert_eq!(format_two_strings("%s %s %s", "R", "N"), "R N ");
     assert_eq!(format_two_strings("%d %s %s", "R", "N"), "%d R N");
     assert_eq!(format_two_strings("trailing %", "R", "N"), "trailing %");
-
-    let s = seated();
-    seat_rank_globals(&s);
-    seat_name_globals(&s);
-    s.lua()
-        .globals()
-        .set("UNIT_PVP_NAME", "<%s> %s")
-        .expect("global");
-    assert_eq!(
-        s.eval::<String>(r#"return UnitPVPName("player")"#).unwrap(),
-        "<Sergeant Major (f)> Benilla"
-    );
 }
 
 #[test]

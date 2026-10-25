@@ -13,24 +13,22 @@
 //!   rescue; the current target (`[0xb4e2d8]`, the selection) regardless of CVars; a dead creature
 //!   only through that rescue; others by `UnitNamePlayer` or `UnitNameNPC`.
 //! - Lines (`0x608f50`): an NPC's name and `<Subname>`; a player's `<AFK>`/`<DND>`/`<GM>`
-//!   prefixes, the a4 rank prefix (`UnitNamePlayerPVPTitle`, bit `0x20`) and name, and `<Guild>`.
+//!   prefixes, the a4 title slot (`UnitNamePlayerPVPTitle`, bit `0x20`) and name, and `<Guild>`.
 //!   The guild (a5) and subname (a6) slots share the format `"\n<%s>"` (`0x860f9c`) and are never
 //!   both reached; a5 alone is CVar-gated (`0x609085`).
-//! - The a4 slot is `0x609370`'s ranked-player leg (A, `0x6093a5`): `UNIT_PVP_NAME` filled rank
-//!   first, `PVP_RANK_<rank>_<team>` off the unit's public `PLAYER_BYTES_3` byte 3 and its race's
-//!   team digit, and never a creature's.
+//! - The a4 slot is 12340's `GetUnitChosenTitle` (`0x72a290`): a player's `PLAYER_CHOSEN_TITLE`
+//!   row from `CharTitles.dbc` with the name in its `%s`, gendered, and the `PVP_MEDAL<n>` line
+//!   under it for a set `PLAYER_BYTES_3` byte 2; never a creature's.
 //!
-//! Not built: `0x609370`'s civilian leg (`0x609449`, `PVP_RANK_CIVILIAN` and a space before a
-//! hostile PvP-flagged civilian NPC's name) and its city-protector line (`0x6093ef`, `"\n"` and
-//! `PVP_MEDAL<n>` for a set `PLAYER_BYTES_3` byte 2, which vmangos's `.character citytitle` sets);
-//! a7 and a8 have no cross-realm wire here.
+//! Not built: 12340's own name CVars and gates (`PlayerNameRegisterCVars` `0x7e6150`, thirteen
+//! `UnitName*` bits); a7 and a8 have no cross-realm wire here.
 
 use std::collections::HashMap;
 
 use bevy::prelude::*;
 
 use benilla_protocol::EntityKind;
-use benilla_ui::script::{JustifyH, JustifyV, Outline};
+use benilla_ui::script::{JustifyH, JustifyV, Outline, TitleRow};
 
 use crate::entities::{overhead_anchor, BoneAttach, OverheadFallback};
 use crate::names::NameCache;
@@ -55,8 +53,8 @@ pub(crate) struct NameConfig {
     /// `UnitNamePlayerGuild`, mask bit `0x10`, registered `"1"`: gates the a5 guild line
     /// (`0x609085`), not a whole name.
     pub(crate) player_guild: bool,
-    /// `UnitNamePlayerPVPTitle` (`0x86c668`, registered `"1"`), mask bit `0x20`: gates the a4 rank
-    /// prefix on the main name line (`0x609370`).
+    /// `UnitNamePlayerPVPTitle` (registered `"1"`, `0x7e6150`), mask bit `0x20`: gates the a4
+    /// title slot on the main name line.
     pub(crate) player_pvp_title: bool,
 }
 
@@ -88,16 +86,17 @@ fn flag_prefix(player_flags: u32) -> String {
         .collect()
 }
 
-/// The strings the a4 rank prefix resolves (`UNIT_PVP_NAME` and the `PVP_RANK_*` titles), which
-/// the honor feed reads off each VM once ([`crate::ui_honor`]), where `0x609370` reads them live
-/// at every rebuild: the world-text pass runs without the VM.
+/// What the a4 title slot resolves: `CharTitles.dbc`'s rows and the `PVP_MEDAL<n>` strings, which
+/// the honor feed reads off each VM once ([`crate::ui_honor`]): the world-text pass runs without
+/// the VM.
 #[derive(Resource, Default)]
 pub(crate) struct PvpNameStrings {
     /// The VM session the strings were read from; `None` before the first VM.
     session: Option<u64>,
-    /// Moves when a read changes the strings, so a line built from the old ones rebuilds.
+    /// Moves when the strings or the rows change, so a line built from the old ones rebuilds.
     generation: u64,
     strings: HashMap<String, String>,
+    rows: Vec<TitleRow>,
 }
 
 impl PvpNameStrings {
@@ -116,37 +115,44 @@ impl PvpNameStrings {
         }
     }
 
+    /// `CharTitles.dbc`'s rows in file order.
+    pub(crate) fn set_rows(&mut self, rows: Vec<TitleRow>) {
+        if rows != self.rows {
+            self.rows = rows;
+            self.generation += 1;
+        }
+    }
+
     /// One held string, for the feed's tests.
     #[cfg(test)]
     pub(crate) fn get(&self, key: &str) -> Option<&str> {
         self.strings.get(key).map(String::as_str)
     }
 
-    /// Whether the snapshot holds the template: no install strings, no prefix, as `UnitPVPName`
-    /// answers the plain name with `_G` missing.
-    fn ready(&self) -> bool {
-        self.strings.contains_key("UNIT_PVP_NAME")
-    }
-
-    /// `0x609370`'s ranked-player leg for `key`; `None` where the builder declines.
+    /// The chosen-title name for `key`; `None` for no title, where the plain name shows.
     fn decorated(&self, key: TitleKey, name: &str) -> Option<String> {
-        benilla_ui::script::decorated_name(
-            |global| self.strings.get(global).cloned(),
-            key.title,
+        benilla_ui::script::chosen_title_name(
+            &self.rows,
+            key.chosen,
+            key.female,
+            key.medal,
             name,
+            |global| self.strings.get(global).cloned(),
         )
     }
 }
 
-/// The a4 rank-prefix inputs a live line was built with: the steady frame compares these fields,
-/// so a rank change, a CVar flip or a new VM's different strings rebuild without reading the
-/// strings again.
+/// The a4 inputs a live line was built with: the steady frame compares these fields, so a title
+/// change, a CVar flip or new strings rebuild without reading the strings again.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct TitleKey {
-    /// The rank, team and gender the title lookup keyed on
-    /// ([`benilla_ui::script::RankTitle`]).
-    title: benilla_ui::script::RankTitle,
-    /// The a4 bit (`0x20`) was set and the strings held the template when the line was built.
+    /// `PLAYER_CHOSEN_TITLE`, a mask id.
+    chosen: i32,
+    /// `UNIT_FIELD_BYTES_0` byte 2 is 1 (`0x72a2f6`).
+    female: bool,
+    /// `PLAYER_BYTES_3` byte 2.
+    medal: u8,
+    /// The a4 bit (`0x20`) was set when the line was built.
     on: bool,
     /// The [`PvpNameStrings`] generation the line was built from.
     strings: u64,
@@ -162,21 +168,16 @@ fn title_key(
 ) -> Option<TitleKey> {
     let store = store?;
     (net.kind == EntityKind::Player).then(|| TitleKey {
-        title: benilla_ui::script::RankTitle {
-            rank: store.0.player_pvp_rank().unwrap_or(0),
-            team: store
-                .0
-                .unit_race()
-                .map_or(-1, crate::ui_unit::race_pvp_team),
-            female: store.0.unit_gender() == Some(1),
-        },
-        on: cfg.player_pvp_title && strings.ready(),
+        chosen: store.0.player_chosen_title(),
+        female: store.0.unit_gender() == Some(1),
+        medal: store.0.player_pvp_medal().unwrap_or(0),
+        on: cfg.player_pvp_title,
         strings: strings.generation,
     })
 }
 
 /// `0x608f50`'s main name line: the a1-a3 flag tags glued on with no separator, then the a4 slot,
-/// `0x609370`'s ranked-player leg where `key` is on and the builder resolves, else the plain name.
+/// the chosen-title name where `key` is on and resolves, else the plain name.
 fn name_line(flags: u32, key: Option<TitleKey>, strings: &PvpNameStrings, name: &str) -> String {
     let decorated = key
         .filter(|key| key.on)
@@ -378,7 +379,7 @@ pub(crate) fn drive_nameplates(
         Res<crate::ui_party::GroupState>,
         // The UnitName* CVar mask.
         Res<NameConfig>,
-        // The rank strings, read off the current VM ([`PvpNameStrings`]).
+        // The title rows and medal strings ([`PvpNameStrings`]).
         Res<PvpNameStrings>,
     ),
     names: Res<NameCache>,
@@ -854,10 +855,15 @@ mod tests {
 
     const RED: Color = Color::linear_rgb(1.0, 0.0, 0.0);
 
-    /// The rank strings a VM defining `pairs` hands over, as the honor feed sets them.
+    /// The strings a VM defining `pairs` hands over, as the honor feed sets them, and two rows.
     fn strings_of(session: u64, pairs: &[(&str, &str)]) -> PvpNameStrings {
         let mut strings = PvpNameStrings::default();
         strings.set(session, set_of(pairs));
+        strings.set_rows(vec![TitleRow {
+            mask_id: 46,
+            name: "%s the Explorer".into(),
+            name1: "%s the Exploress".into(),
+        }]);
         strings
     }
 
@@ -867,9 +873,6 @@ mod tests {
             .map(|&(k, v)| (k.to_string(), v.to_string()))
             .collect()
     }
-
-    const TEMPLATE: (&str, &str) = ("UNIT_PVP_NAME", "%s %s");
-    const SERGEANT: (&str, &str) = ("PVP_RANK_7_1", "Sergeant");
 
     /// A streamed unit's kind and descriptor.
     fn unit(kind: EntityKind, fields: &[(u16, u32)]) -> (NetEntity, ObjectStore) {
@@ -886,48 +889,40 @@ mod tests {
 
     /// `UNIT_FIELD_BYTES_0` (36): race human, class warrior, male.
     const HUMAN_MALE: (u16, u32) = (36, 0x0101);
-    /// `PLAYER_BYTES_3` (195) byte 3: the current honor rank, internal 7.
-    const RANK_7: (u16, u32) = (195, 7 << 24);
+    /// `PLAYER_CHOSEN_TITLE`: mask 46.
+    const EXPLORER: (u16, u32) = (benilla_protocol::field::FIELD_PLAYER_CHOSEN_TITLE, 46);
 
-    /// The a4 inputs off the descriptor: the public rank byte, the race's team digit, the sex and
-    /// the CVar's strings-ready bit; a creature has no a4 leg.
+    /// The a4 inputs off the descriptor: the chosen title, the sex, the medal byte and the CVar; a
+    /// creature has no a4 leg.
     #[test]
-    fn title_key_reads_the_rank_byte_the_race_and_the_cvar() {
+    fn title_key_reads_the_chosen_title_the_sex_and_the_cvar() {
         let cfg = NameConfig::default();
-        let ready = strings_of(1, &[TEMPLATE]);
-        let bare = PvpNameStrings::default();
-        // Human (race 1 → team 1), rank 7.
-        let (net, human) = unit(EntityKind::Player, &[HUMAN_MALE, RANK_7]);
-        let key = title_key(&cfg, &ready, &net, Some(&human)).unwrap();
+        let strings = strings_of(1, &[]);
+        let (net, human) = unit(EntityKind::Player, &[HUMAN_MALE, EXPLORER, (195, 2 << 16)]);
+        let key = title_key(&cfg, &strings, &net, Some(&human)).unwrap();
         assert_eq!(
-            (key.title.rank, key.title.team, key.title.female, key.on),
-            (7, 1, false, true)
+            (key.chosen, key.female, key.medal, key.on),
+            (46, false, 2, true)
         );
-        // Orc (race 2 → team 0), female; the CVar off, and the strings unloaded, each drop the bit.
-        let (_, orc) = unit(EntityKind::Player, &[(36, 0x010102), RANK_7]);
-        let orc = title_key(&cfg, &ready, &net, Some(&orc)).unwrap();
-        assert_eq!((orc.title.team, orc.title.female), (0, true));
+        let (_, orc) = unit(EntityKind::Player, &[(36, 0x010102), EXPLORER]);
+        assert!(title_key(&cfg, &strings, &net, Some(&orc)).unwrap().female);
         let off = NameConfig {
             player_pvp_title: false,
             ..cfg
         };
-        assert!(!title_key(&off, &ready, &net, Some(&human)).unwrap().on);
-        assert!(!title_key(&cfg, &bare, &net, Some(&human)).unwrap().on);
+        assert!(!title_key(&off, &strings, &net, Some(&human)).unwrap().on);
         let (creature, _) = unit(EntityKind::Unit, &[]);
         assert!(
-            title_key(&cfg, &ready, &creature, Some(&human)).is_none(),
+            title_key(&cfg, &strings, &creature, Some(&human)).is_none(),
             "a creature has no a4"
         );
     }
 
-    /// The composed main line, from the descriptor up: `0x608f50` glues the a1-a3 tags onto
-    /// `0x609370`'s a4 with no separator; the CVar off, rank 0 or a creature keep the plain name.
+    /// The composed main line, from the descriptor up: `0x608f50` glues the a1-a3 tags onto the
+    /// a4 title slot with no separator; the CVar off, no title or a creature keep the plain name.
     #[test]
-    fn the_name_line_glues_the_flag_tags_onto_the_ranked_name() {
-        let strings = strings_of(
-            1,
-            &[TEMPLATE, SERGEANT, ("PVP_RANK_7_1_FEMALE", "Sergeant (f)")],
-        );
+    fn the_name_line_glues_the_flag_tags_onto_the_titled_name() {
+        let strings = strings_of(1, &[("PVP_MEDAL1", "Guardian")]);
         let line = |cfg: &NameConfig, (net, store): &(NetEntity, ObjectStore), flags, name| {
             name_line(
                 flags,
@@ -938,93 +933,53 @@ mod tests {
         };
         const AFK: u32 = 0x2;
         let cfg = NameConfig::default();
-        let sergeant = unit(EntityKind::Player, &[HUMAN_MALE, RANK_7]);
-        assert_eq!(line(&cfg, &sergeant, AFK, "Bob"), "<AFK>Sergeant Bob");
+        let explorer = unit(EntityKind::Player, &[HUMAN_MALE, EXPLORER]);
+        assert_eq!(line(&cfg, &explorer, AFK, "Bob"), "<AFK>Bob the Explorer");
         let off = NameConfig {
             player_pvp_title: false,
             ..cfg
         };
         assert_eq!(
-            line(&off, &sergeant, AFK, "Bob"),
+            line(&off, &explorer, AFK, "Bob"),
             "<AFK>Bob",
             "the CVar off"
         );
-        let unranked = unit(EntityKind::Player, &[HUMAN_MALE]);
-        assert_eq!(line(&cfg, &unranked, 0, "Bob"), "Bob", "rank 0");
-        // The same bytes on a creature: the kind gates the leg, not the descriptor.
-        let wolf = unit(EntityKind::Unit, &[HUMAN_MALE, RANK_7]);
+        let plain = unit(EntityKind::Player, &[HUMAN_MALE]);
+        assert_eq!(line(&cfg, &plain, 0, "Bob"), "Bob", "no title");
+        let wolf = unit(EntityKind::Unit, &[HUMAN_MALE, EXPLORER]);
         assert_eq!(line(&cfg, &wolf, 0, "Young Wolf"), "Young Wolf");
-        // `UNIT_FIELD_BYTES_0` byte 2 = 1: the `_FEMALE` twin.
-        let female = unit(EntityKind::Player, &[(36, 0x01_0101), RANK_7]);
-        assert_eq!(line(&cfg, &female, 0, "Alice"), "Sergeant (f) Alice");
-    }
-
-    /// The decoration is `0x609370`'s: title first, `None` off rank 0 or a key the install lacks.
-    #[test]
-    fn the_snapshot_decorates_a_ranked_name() {
-        let strings = strings_of(1, &[TEMPLATE, SERGEANT]);
-        let key = TitleKey {
-            title: benilla_ui::script::RankTitle {
-                rank: 7,
-                team: 1,
-                female: false,
-            },
-            on: true,
-            strings: strings.generation,
-        };
-        assert_eq!(
-            strings.decorated(key, "Bob").as_deref(),
-            Some("Sergeant Bob"),
-            "the rank rides in front of the name"
+        let female = unit(
+            EntityKind::Player,
+            &[(36, 0x01_0101), EXPLORER, (195, 1 << 16)],
         );
         assert_eq!(
-            strings.decorated(
-                TitleKey {
-                    title: benilla_ui::script::RankTitle {
-                        rank: 0,
-                        ..key.title
-                    },
-                    ..key
-                },
-                "Bob"
-            ),
-            None,
-            "unranked: no a4 line"
-        );
-        assert_eq!(
-            strings.decorated(
-                TitleKey {
-                    title: benilla_ui::script::RankTitle {
-                        team: 0,
-                        ..key.title
-                    },
-                    ..key
-                },
-                "Bob"
-            ),
-            None,
-            "the Horde key is not the Alliance one"
+            line(&cfg, &female, 0, "Alice"),
+            "Alice the Exploress\nGuardian"
         );
     }
 
-    /// A VM's strings move the key the plate cache compares only when they differ: the same
-    /// strings from a new VM rebuild nothing, and a renamed title reaches the line.
+    /// The strings and rows move the key the plate cache compares only when they differ: the
+    /// same strings from a new VM rebuild nothing, and a renamed title reaches the line.
     #[test]
-    fn a_changed_string_set_moves_the_key_and_reaches_the_line() {
-        let (net, store) = unit(EntityKind::Player, &[HUMAN_MALE, RANK_7]);
+    fn a_changed_title_set_moves_the_key_and_reaches_the_line() {
+        let (net, store) = unit(EntityKind::Player, &[HUMAN_MALE, EXPLORER]);
         let cfg = NameConfig::default();
         let built = |strings: &PvpNameStrings| {
             let key = title_key(&cfg, strings, &net, Some(&store));
             (key, name_line(0, key, strings, "Bob"))
         };
-        let mut strings = strings_of(1, &[TEMPLATE, SERGEANT]);
+        let mut strings = strings_of(1, &[]);
         let (boot_key, boot_line) = built(&strings);
-        assert_eq!(boot_line, "Sergeant Bob");
-        strings.set(2, set_of(&[TEMPLATE, SERGEANT]));
+        assert_eq!(boot_line, "Bob the Explorer");
+        strings.set(2, set_of(&[]));
         assert!(built(&strings).0 == boot_key, "a new VM, the same strings");
-        strings.set(3, set_of(&[TEMPLATE, ("PVP_RANK_7_1", "Feldwebel")]));
+        strings.set_rows(vec![TitleRow {
+            mask_id: 46,
+            name: "%s der Entdecker".into(),
+            name1: String::new(),
+        }]);
         let (key, line) = built(&strings);
-        assert_eq!(line, "Feldwebel Bob", "the new VM's title reaches the line");
+        assert_eq!(line, "Bob der Entdecker", "the new row reaches the line");
         assert!(
             key != boot_key,
             "the cached key moves, so the live plate rebuilds"

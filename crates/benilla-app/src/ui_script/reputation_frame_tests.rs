@@ -131,12 +131,10 @@ fn loaded(tag: &str, st: ReputationState) -> UiScript {
     s
 }
 
-/// [`loaded`], with the window open on the Reputation tab. `CharacterFrame_ShowSubFrame` raises on
-/// the unloaded `TokenFrame` (#281) after it has shown the page, so the open goes through `pcall`.
+/// [`loaded`], with the window open on the Reputation tab.
 fn shown_page(tag: &str, st: ReputationState) -> UiScript {
     let mut s = loaded(tag, st);
-    s.run(r#"pcall(ToggleCharacter, "ReputationFrame")"#)
-        .unwrap();
+    s.run(r#"ToggleCharacter("ReputationFrame")"#).unwrap();
     s.resolve();
     s
 }

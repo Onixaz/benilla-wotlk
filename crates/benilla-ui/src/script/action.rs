@@ -339,6 +339,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if super::cursor::use_action_places(&mut model, action, in_binding) {
                 return Ok(());
             }
+            // A set slot wears the set (`0x5abdcc` → `CGEquipmentManager::EquipSet` `0x5ae660`).
+            if let Some(set) = model
+                .actions
+                .get(&action)
+                .filter(|a| a.kind == ACTION_KIND_EQUIPMENT_SET)
+                .map(|a| a.action)
+            {
+                drop(model);
+                super::equipment_manager::wear_set(lua, set);
+                return Ok(());
+            }
             model
                 .script_calls
                 .push(super::ScriptCall::UseAction(ActionUse { action, at }));

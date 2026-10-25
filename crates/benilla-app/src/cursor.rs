@@ -23,6 +23,7 @@ fn payload_icon(script: &benilla_ui::script::UiScript, covered: bool) -> Option<
         CursorPayload::Spell(s) => s.texture,
         CursorPayload::Action(a) => a.texture,
         CursorPayload::Macro(m) => m.texture,
+        CursorPayload::EquipmentSet(e) => e.texture,
         CursorPayload::PetAction(p) => p.texture,
         // Mode 10: the stabled pet's family icon; a non-empty path gates the grab.
         CursorPayload::StablePet(p) => Some(p.texture),

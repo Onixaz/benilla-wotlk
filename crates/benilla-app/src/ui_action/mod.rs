@@ -16,6 +16,7 @@ use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 
 pub(crate) mod cast_fail;
 mod drain;
+mod equipment_sets;
 // A `UseAction` press, applied in call order by `crate::script_calls`.
 pub(crate) use drain::{attack_nearest_probe, use_action, ActionPress, AttackPress, UseOutcome};
 #[cfg(test)]
@@ -69,6 +70,8 @@ pub(crate) struct PlayerActions {
     pub spells: BTreeSet<u32>,
     /// The saved equipment sets (`SMSG_EQUIPMENT_SET_LIST`), which a set slot names by id.
     pub equipment_sets: Vec<benilla_protocol::messages::EquipmentSet>,
+    /// A list has arrived this session, empty or not: a new VM starts loaded from it.
+    pub equipment_sets_listed: bool,
     /// Set by every book or bar change, cleared once the feed re-resolves slot identity, which a
     /// landed item template ([`crate::items::Items::template_epoch`]) also triggers. Item counts
     /// refresh every frame regardless.
@@ -362,6 +365,7 @@ pub(crate) struct UiActionPlugin;
 impl Plugin for UiActionPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
+        equipment_sets::register(app);
         app.init_resource::<PlayerActions>()
             .init_resource::<LearnedAbilities>()
             .init_resource::<CastErrors>()
@@ -388,6 +392,7 @@ impl Plugin for UiActionPlugin {
                         .in_set(CooldownEvents)
                         .after(feed::feed_actions),
                     drain::drain_action_sets.after(UiInput),
+                    equipment_sets::drain_equipment_sets.after(UiInput),
                     // The target chain queues the openers earlier in the frame.
                     drain::drain_go_openers.after(UiInput),
                     // The latches must be current before the target chain's cursor reads them.

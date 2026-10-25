@@ -412,6 +412,12 @@ pub enum SessionEvent {
     },
     /// The saved equipment sets, whole (`SMSG_EQUIPMENT_SET_LIST`).
     EquipmentSetList(Vec<crate::messages::EquipmentSet>),
+    /// A saved set's server guid, 0 for a refused save (`SMSG_EQUIPMENT_SET_SAVED`).
+    EquipmentSetSaved { id: u32, guid: u64 },
+    /// A set swap's verdict, 0 done (`SMSG_EQUIPMENT_SET_USE_RESULT`).
+    EquipmentSetUseResult { result: u8 },
+    /// A title gained or lost (`SMSG_TITLE_EARNED`).
+    TitleEarned { mask_id: u32, earned: bool },
     /// A unit earned an achievement (`SMSG_ACHIEVEMENT_EARNED`).
     AchievementEarned(crate::messages::AchievementEarned),
     /// One criterion's progress (`SMSG_CRITERIA_UPDATE`).

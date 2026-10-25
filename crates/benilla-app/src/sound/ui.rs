@@ -185,6 +185,7 @@ fn play_item_gesture_sounds(
         CursorPayload::Spell(_)
         | CursorPayload::Action(_)
         | CursorPayload::Macro(_)
+        | CursorPayload::EquipmentSet(_)
         | CursorPayload::PetAction(_)
         // Mode 10: the stabled-pet grab `0x495010` calls the same generic path.
         | CursorPayload::StablePet(_)

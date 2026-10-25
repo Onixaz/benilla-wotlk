@@ -340,6 +340,42 @@ impl ObjectFields {
             .flatten()
             .unwrap_or(0)
     }
+    /// 3.3.5a `PLAYER_CHOSEN_TITLE` (public): the shown title's `CharTitles.dbc` mask id, 0 for
+    /// none; read signed, as `GetUnitChosenTitle` (`0x72a290`) shows none at or below 0.
+    pub fn player_chosen_title(&self) -> i32 {
+        self.get_i32(FIELD_PLAYER_CHOSEN_TITLE).unwrap_or(0)
+    }
+    /// 3.3.5a `PLAYER__FIELD_KNOWN_TITLES` (private): whether mask id `bit` is set
+    /// (`IsTitleKnown` `0x51b410`); bits past the 192 answer false.
+    pub fn player_knows_title(&self, bit: u32) -> bool {
+        if bit >= PLAYER_KNOWN_TITLE_BITS {
+            return false;
+        }
+        let word = self
+            .get_u32(FIELD_PLAYER_KNOWN_TITLES + (bit / 32) as u16)
+            .unwrap_or(0);
+        word & (1 << (bit % 32)) != 0
+    }
+    /// The six known-titles words, for an edge test.
+    pub fn player_known_titles(&self) -> [u32; 6] {
+        std::array::from_fn(|i| {
+            self.get_u32(FIELD_PLAYER_KNOWN_TITLES + i as u16)
+                .unwrap_or(0)
+        })
+    }
+    /// 3.3.5a `PLAYER_FIELD_KNOWN_CURRENCIES` (private): bit `i` for `CurrencyTypes.dbc` bit index
+    /// `i + 1`.
+    pub fn player_known_currencies(&self) -> u64 {
+        let lo = self.get_u32(FIELD_PLAYER_KNOWN_CURRENCIES).unwrap_or(0);
+        let hi = self.get_u32(FIELD_PLAYER_KNOWN_CURRENCIES + 1).unwrap_or(0);
+        u64::from(lo) | u64::from(hi) << 32
+    }
+    /// 3.3.5a `PLAYER_FIELD_CURRENCYTOKEN_SLOT_1 + 2i`: the item guid in currency slot `i`
+    /// (player slot `118 + i`), `Some(0)` when empty.
+    pub fn player_currency_token_slot(&self, i: u8) -> Option<u64> {
+        (i < CURRENCY_TOKEN_SLOTS)
+            .then(|| self.get_guid(FIELD_PLAYER_CURRENCY_TOKEN_SLOT_1 + 2 * u16::from(i)))?
+    }
     /// 3.3.5a `PLAYER_GLYPHS_ENABLED` (private): bit `i` set while socket `i` is unlocked.
     pub fn player_glyphs_enabled(&self) -> u32 {
         self.get_u32(FIELD_PLAYER_GLYPHS_ENABLED).unwrap_or(0)
@@ -430,6 +466,11 @@ impl ObjectFields {
     /// drained 1:1 while kills pay double (`GetXPRestBonus`), so the bar's rested span is twice it.
     pub fn player_rest_state_experience(&self) -> Option<u32> {
         self.get_u32(FIELD_PLAYER_REST_STATE_EXPERIENCE)
+    }
+    /// `PLAYER_BYTES_3` byte 0: the player's own gender copy, 1 female, which 12340's title verbs
+    /// read for the active player (`0x51b546`).
+    pub fn player_gender_byte(&self) -> Option<u8> {
+        self.get_u32(FIELD_PLAYER_BYTES_3).map(|v| v as u8)
     }
     /// `PLAYER_BYTES_3` byte 1: drunkenness, the high byte of `drunk & 0xFFFE` in the low half
     /// (`SetDrunkValue`); the reference clamps it to 100 and scales by 0.01 (`0x5e2a90`).

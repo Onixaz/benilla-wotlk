@@ -1147,6 +1147,7 @@ pub(super) fn paint_script(
             CursorPayload::Spell(s) => s.texture,
             CursorPayload::Action(a) => a.texture,
             CursorPayload::Macro(m) => m.texture,
+            CursorPayload::EquipmentSet(e) => e.texture,
             CursorPayload::PetAction(p) => p.texture,
             CursorPayload::StablePet(p) => Some(p.texture),
             CursorPayload::Merchant(m) => m.texture,

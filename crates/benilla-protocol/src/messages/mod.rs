@@ -152,7 +152,10 @@ pub use duel::{
     duel_accepted, duel_cancelled, read_duel_complete, read_duel_countdown, read_duel_requested,
     read_duel_winner, DuelRequested, DuelWinner,
 };
-pub use equipment_set::{EquipmentSet, EQUIPMENT_SET_SLOTS, MAX_EQUIPMENT_SETS};
+pub use equipment_set::{
+    equipment_set_delete, equipment_set_save, equipment_set_use, set_title, EquipmentSet,
+    EquipmentSetUseSlot, EQUIPMENT_SET_SLOTS, MAX_EQUIPMENT_SETS,
+};
 pub use gameobject::{gameobj_use, gameobject_query, GameObjectQueryInfo};
 pub use gm_ticket::{
     gm_ticket_create, gm_ticket_updatetext, GmResponse, GmTicket, GMTICKET_QUEUE_ENABLED,
@@ -321,10 +324,10 @@ pub use update_object::field;
 pub use update_object::{
     power_display_scale, quest_slot_state, CorpseLook, CreateSpline, MovementBlock, MoverState,
     Object, ObjectFields, ObjectType, OwnerFallback, PlayerSkillSlot, QuestLogSlot, UnitAuraSlot,
-    AURA_FLAG_CANCELABLE, AURA_FLAG_EFF_INDEX_MASK, FIELD_PLAYER_SKILL_INFO_1_1,
-    PLAYER_COMBAT_RATINGS, PLAYER_EXPLORED_ZONES_SLOTS, PLAYER_GLYPH_SOCKETS,
-    PLAYER_QUEST_LOG_SLOTS, PLAYER_SKILL_SLOTS, QUEST_LOG_SLOT_FIELDS, UNIT_AURA_POSITIVE_SLOTS,
-    UNIT_AURA_SLOTS,
+    AURA_FLAG_CANCELABLE, AURA_FLAG_EFF_INDEX_MASK, CURRENCY_TOKEN_SLOTS,
+    FIELD_PLAYER_SKILL_INFO_1_1, PLAYER_COMBAT_RATINGS, PLAYER_EXPLORED_ZONES_SLOTS,
+    PLAYER_GLYPH_SOCKETS, PLAYER_KNOWN_TITLE_BITS, PLAYER_QUEST_LOG_SLOTS, PLAYER_SKILL_SLOTS,
+    QUEST_LOG_SLOT_FIELDS, UNIT_AURA_POSITIVE_SLOTS, UNIT_AURA_SLOTS,
 };
 pub use vendor::{
     buy_item, buy_item_in_slot, buy_result, buyback_item, list_inventory, repair_item, sell_item,

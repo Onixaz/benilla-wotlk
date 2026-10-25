@@ -230,6 +230,17 @@ pub(crate) fn already_bound(fields: &ObjectFields, cat: Option<&Enchants>) -> bo
         || (0..7).any(|slot| live_enchant(fields, slot, cat).is_some_and(|id| binds(id, cat)))
 }
 
+/// The gem item in each socket enchant slot, 2..4, 0 for none (`GetInventoryItemGems`
+/// `0x5ea4f0`, `GetContainerItemGems` `0x5d9300`).
+pub(crate) fn gems(fields: &ObjectFields, cat: Option<&Enchants>) -> [u32; 3] {
+    std::array::from_fn(|i| {
+        u32::try_from(fields.item_enchant(2 + i as u8).unwrap_or(0))
+            .ok()
+            .and_then(|id| cat.and_then(|c| c.0.gem_item(id)))
+            .unwrap_or(0)
+    })
+}
+
 /// One enchant slot as the bind checks read it (`0x495eec`): the raw id must be positive (`jl` at
 /// `0x495ef4`, `0x5da306`) and name a row, where the tooltip line uses `abs(id)`.
 pub(crate) fn live_enchant(fields: &ObjectFields, slot: u8, cat: Option<&Enchants>) -> Option<u32> {

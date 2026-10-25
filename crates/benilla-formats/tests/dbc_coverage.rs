@@ -28,8 +28,6 @@ const NOT_READ: &[(&str, &str)] = &[
         "#245 realm type rules: GetRealmInfo; realm_select hardcodes its rows",
     ),
     ("CreatureMovementInfo", "#243 creature movement"),
-    ("CurrencyCategory", "#239 the currency tab"),
-    ("CurrencyTypes", "#239 the currency tab"),
     ("DanceMoves", "#243 dance studio emotes"),
     ("DeclinedWord", "#242 Russian name declension"),
     ("DeclinedWordCases", "#242 Russian name declension"),

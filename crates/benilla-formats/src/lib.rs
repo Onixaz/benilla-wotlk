@@ -111,7 +111,9 @@ pub use durability::{load_durability_tables, DurabilityTables};
 mod exhaustion;
 pub use exhaustion::{load_exhaustion, ExhaustionRow};
 mod bank_bag_slot_prices;
+mod currency;
 pub use bank_bag_slot_prices::{load_bank_bag_slot_prices, BankBagSlotPrices};
+pub use currency::{load_currency_tables, CurrencyCategory, CurrencyTables, CurrencyType};
 mod item_extended_cost;
 pub use item_extended_cost::{
     load_item_extended_costs, ExtendedCostRow, ItemExtendedCosts, EXTENDED_COST_ITEMS,
@@ -175,7 +177,7 @@ pub use quest_headers::{load_quest_header_names, QuestHeaderNames};
 mod quest_info;
 pub use quest_info::{load_quest_tag_names, QuestTagNames};
 mod quest_rewards;
-pub use quest_rewards::{load_quest_reward_tables, QuestRewardTables};
+pub use quest_rewards::{load_quest_reward_tables, CharTitle, QuestRewardTables};
 mod area_trigger;
 pub use area_trigger::{load_area_trigger_catalog, AreaTriggerCatalog, AreaTriggerRow};
 mod area_sound;

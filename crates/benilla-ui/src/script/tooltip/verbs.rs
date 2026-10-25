@@ -426,6 +426,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     crate::script::tooltip_spell::install_methods(lua, &m)?;
     crate::script::talent::install_tooltip_method(lua, &m)?;
     crate::script::glyph::install_tooltip_method(lua, &m)?;
+    crate::script::equipment_manager::install_tooltip_method(lua, &m)?;
+    crate::script::currency::install_tooltip_methods(lua, &m)?;
     crate::script::tooltip_unit::install_methods(lua, &m)?;
     crate::script::tooltip_item::wrap_setters(lua, &m)?;
 

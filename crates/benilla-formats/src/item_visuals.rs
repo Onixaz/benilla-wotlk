@@ -57,6 +57,8 @@ pub struct EnchantCatalog {
     names: HashMap<u32, String>,
     /// `Flags` for every row, 0 included, so its keys are the reference's `enchantTable[id] != 0`.
     flags: HashMap<u32, u32>,
+    /// `SrcItemID`, the gem a socket enchant came from, for the rows that name one.
+    gem_items: HashMap<u32, u32>,
 }
 
 /// `Flags & 0x1`: applying the enchant binds the item. It is the only gate on the bind confirm,
@@ -100,6 +102,11 @@ impl EnchantCatalog {
         self.flags.contains_key(&enchant_id)
     }
 
+    /// The gem item a socket enchant names (`SrcItemID`, `GetInventoryItemGems` `0x5ea4f0`).
+    pub fn gem_item(&self, enchant_id: u32) -> Option<u32> {
+        self.gem_items.get(&enchant_id).copied()
+    }
+
     /// Build from explicit maps, for tests; `flags` is also the row set [`Self::has_row`] reads.
     pub fn from_rows(
         visuals: HashMap<u32, i32>,
@@ -110,6 +117,7 @@ impl EnchantCatalog {
             visuals,
             names,
             flags,
+            gem_items: HashMap::new(),
         }
     }
 
@@ -181,10 +189,11 @@ pub(crate) fn spell_item_enchantment_schema() -> Schema {
     s
 }
 
-/// `SpellItemEnchantment` columns benilla reads: the enUS name, the visual and `Flags`.
+/// `SpellItemEnchantment` columns benilla reads: the enUS name, the visual, `Flags` and the gem.
 const ENCHANT_NAME: usize = 14;
 const ENCHANT_VISUAL: usize = 31;
 const ENCHANT_FLAGS: usize = 32;
+const ENCHANT_SRC_ITEM: usize = 33;
 
 /// Load and join `ItemVisuals.dbc` and `ItemVisualEffects.dbc`, applying the reference's skips.
 pub fn load_item_visual_catalog(chain: &mut Chain) -> Result<ItemVisualCatalog> {
@@ -232,10 +241,15 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
     let mut visuals = HashMap::new();
     let mut names = HashMap::new();
     let mut flags = HashMap::with_capacity(rs.records().len());
+    let mut gem_items = HashMap::new();
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
         // Every row, `Flags == 0` included: the keys are the row set.
         flags.insert(id, u32_at(r, ENCHANT_FLAGS).unwrap_or(0));
+        let gem = u32_at(r, ENCHANT_SRC_ITEM).unwrap_or(0);
+        if gem != 0 {
+            gem_items.insert(id, gem);
+        }
         let visual = u32_at(r, ENCHANT_VISUAL).unwrap_or(0) as i32;
         if visual != 0 {
             visuals.insert(id, visual);
@@ -249,6 +263,7 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
         visuals,
         names,
         flags,
+        gem_items,
     })
 }
 

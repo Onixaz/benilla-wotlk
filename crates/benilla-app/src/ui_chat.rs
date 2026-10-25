@@ -11,7 +11,7 @@ use crate::ui_script::{UiFeed, UiInput};
 mod ace_gate_tests;
 /// `/afk` and `/dnd`: the optimistic AFK mirror `[0xb6e5cc]` and the implicit clear that every
 /// other chat send and every movement press carries.
-mod away;
+pub(crate) mod away;
 /// The world broadcasts: `SMSG_ZONE_UNDER_ATTACK`/`_DEFENSE_MESSAGE`/`_SERVER_MESSAGE`.
 mod broadcast;
 mod channels;

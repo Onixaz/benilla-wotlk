@@ -23,6 +23,10 @@ pub struct PetitionSlotView {
 /// One occupied bag slot, resolved by the app from the item object and its template.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ContainerSlot {
+    /// The item object's guid, which an equipment set records.
+    pub guid: u64,
+    /// The gem item in each socket enchant (slots 2..4), 0 for none.
+    pub gems: [u32; 3],
     /// Icon texture path (`Interface\Icons\…`); `None` while the template answer is in flight.
     pub texture: Option<String>,
     pub count: u32,
@@ -404,6 +408,7 @@ fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u32) {
             // Mode 12, bank money, stays held for the bag button's `WithdrawGuildBankMoney`.
             | CursorPayload::GuildBankMoney(_)
             | CursorPayload::Macro(_)
+            | CursorPayload::EquipmentSet(_)
             | CursorPayload::PetAction(_)
             // Mode 10, a stabled pet, stays held for the stable window.
             | CursorPayload::StablePet(_)
@@ -872,6 +877,8 @@ mod tests {
         slots.insert(
             1,
             ContainerSlot {
+                guid: 0,
+                gems: [0; 3],
                 quest_item: false,
                 start_quest: 0,
                 duration_ms: None,
@@ -1114,6 +1121,8 @@ mod tests {
         state.slots.insert(
             5,
             ContainerSlot {
+                guid: 0,
+                gems: [0; 3],
                 quest_item: false,
                 start_quest: 0,
                 duration_ms: None,

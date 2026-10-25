@@ -12,6 +12,8 @@ fn one_item_backpack() -> ContainerState {
     slots.insert(
         1,
         ContainerSlot {
+            guid: 0,
+            gems: [0; 3],
             quest_item: false,
             start_quest: 0,
             duration_ms: None,
@@ -207,6 +209,8 @@ fn escape_closes_an_open_stack_split_frame() {
     slots.insert(
         1,
         ContainerSlot {
+            guid: 0,
+            gems: [0; 3],
             quest_item: false,
             start_quest: 0,
             duration_ms: None,

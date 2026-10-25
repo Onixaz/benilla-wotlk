@@ -497,21 +497,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     install_cvar_verbs(lua)?;
     super::glue_system::install_cvar_ranges(lua)?;
-    // `CanUseEquipmentSets()` (`0x5ad880`): the number 1 while `equipmentManager` reads non-zero,
-    // else 0.
-    lua.globals().set(
-        "CanUseEquipmentSets",
-        lua.create_function(|lua, _: mlua::MultiValue| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let on = model
-                .cvars
-                .get("equipmentmanager")
-                .is_some_and(|s| sstr_to_int(&s.value) != 0);
-            Ok(if on { 1.0 } else { 0.0 })
-        })?,
-    )?;
     // `RestoreVideoResolutionDefaults` (`0x510dc0`) and `RestoreVideoEffectsDefaults` (`0x510dd0`),
     // `ConsoleDeviceDefaults(page)` (`0x76a130`) for pages 0 and 1: page 0 rewrites the device
     // format's `gx*` rows and restarts the device at once (`CCGxRestart`), then each page runs its

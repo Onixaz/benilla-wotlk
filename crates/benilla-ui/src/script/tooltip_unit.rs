@@ -118,13 +118,11 @@ fn render_unit(lua: &Lua, this: &Table, token: &str) -> mlua::Result<bool> {
         show_or_hide_empty(lua, h);
         return Ok(false);
     };
-    // The name: `CGUnit_C::GetUnitName` `0x609210` (`0x52a187`), whose every miss falls to
-    // `UNKNOWNOBJECT`, as `UnitName`'s does, then decorated by `0x609370` with the flag a literal
-    // `1` (`0x52a19b`), as `UnitPVPName` does, so no CVar gates it: a ranked player's rank and
-    // medal line, a civilian kill's prefix. A token with no object never reaches the builder
-    // (`0x468460`): no plate, and `SetUnit` answers nil.
+    // The name, every miss falling to `UNKNOWNOBJECT` as `UnitName`'s does, then the chosen title
+    // with titles on, as `UnitPVPName` (`GetUnitChosenTitle` `0x72a290`), so no CVar gates it. A
+    // token with no object never reaches the builder: no plate, and `SetUnit` answers nil.
     let title = match &u.name {
-        Some(name) => super::pvp::pvp_name(lua, &u, name, player_level),
+        Some(name) => super::pvp::pvp_name(lua, &u, name),
         None => unknownobject(lua)?.to_str()?.to_string(),
     };
     append_line(lua, this, (title, GOLD), None, false)?;

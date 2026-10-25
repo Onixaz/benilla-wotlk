@@ -204,6 +204,8 @@ pub(crate) mod object;
 mod unit_cast;
 pub use object::frame_kind_from_tag;
 mod achievement;
+mod currency;
+mod equipment_manager;
 mod glyph;
 mod multicast;
 mod party;
@@ -237,6 +239,7 @@ mod summon;
 mod talent;
 mod taxi;
 mod tick;
+mod title;
 mod tooltip;
 mod tooltip_item;
 mod tooltip_spell;
@@ -308,9 +311,9 @@ pub use container::{
 };
 pub use cursor::money::coin_icon;
 pub use cursor::{
-    CursorAction, CursorGuildBankItem, CursorItem, CursorMacro, CursorMerchantItem, CursorMoney,
-    CursorPayload, CursorPetAction, CursorSpell, CursorStablePet, EnchantConfirm, WorldPick,
-    EQUIPMENT_BAG,
+    CursorAction, CursorEquipmentSet, CursorGuildBankItem, CursorItem, CursorMacro,
+    CursorMerchantItem, CursorMoney, CursorPayload, CursorPetAction, CursorSpell, CursorStablePet,
+    EnchantConfirm, WorldPick, EQUIPMENT_BAG,
 };
 pub use cvars::sstr_to_int;
 pub use cvars::{
@@ -360,6 +363,10 @@ pub use calendar::{
     WowTime,
 };
 pub use companion::{CompanionIntent, CompanionState, CompanionType, CompanionView};
+pub use currency::{CurrencyCatalogView, CurrencyCategoryView, CurrencyHoldings, CurrencyTypeView};
+pub use equipment_manager::{
+    EquipmentSetRequest, EquipmentSetView, EQUIPMENT_SET_SLOTS, IGNORED_SLOT, MAX_EQUIPMENT_SETS,
+};
 pub use glyph::{
     GlyphCatalogView, GlyphPlacement, GlyphSlotView, GlyphSockets, GlyphTargeting, GlyphView,
     GLYPH_FAILED_INVALID, GLYPH_FAILED_LOCKED, GLYPH_FAILED_UNIQUE, NUM_GLYPH_SOCKETS,
@@ -392,8 +399,8 @@ pub use multicast::MultiCastView;
 pub use party::{PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo};
 pub use pet::{PetActionView, PetStats, PossessView};
 pub use pvp::{
-    decorated_name, pvp_name_global_keys, HonorState, InspectArenaTeamView, InspectHonorData,
-    RankTitle, PLAYER_FLAGS_PVP_TIMER,
+    pvp_name_global_keys, HonorState, InspectArenaTeamView, InspectHonorData, RankTitle,
+    PLAYER_FLAGS_PVP_TIMER,
 };
 pub use quest::{
     QuestAction, QuestItemView, QuestPanel, QuestRewardExtras, QuestRewardSpell, QuestSelect,
@@ -423,6 +430,7 @@ pub use talent::{
     TalentGroupView, TalentPrereqView, TalentRankView, TalentTabView, TalentUiState, TalentView,
 };
 pub use taxi::{TaxiNodeType, TaxiUiNode, TaxiUiState};
+pub use title::{chosen_title_name, title_row, PlayerTitles, TitleRow};
 pub use tooltip_spell::SpellTooltipView;
 pub use totem::{TotemSlots, TotemView, MAX_TOTEM_SLOTS};
 pub use trade::{TradeSideState, TradeSlotItem, TradeState, TRADE_SLOTS};
@@ -1019,6 +1027,9 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     shapeshift::install(lua)?;
     rune::install(lua)?;
     glyph::install(lua)?;
+    title::install(lua)?;
+    equipment_manager::install(lua)?;
+    currency::install(lua)?;
     spell_info::install(lua)?;
     totem::install(lua)?;
     tracking::install(lua)?;

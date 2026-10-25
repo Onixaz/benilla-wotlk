@@ -71,6 +71,8 @@ tables! {
         "CreatureModelData" => creatures::creature_model_data_schema(&LAYOUTS.creature_model_data),
         "CreatureSoundData" => creature_sound::csd_schema(),
         "CreatureType" => creature_types::creature_type_schema(),
+        "CurrencyCategory" => currency::categories_schema(),
+        "CurrencyTypes" => currency::types_schema(),
         "DeathThudLookups" => death_thud::death_thud_lookups_schema(),
         "DungeonEncounter" => dungeon_encounter::schema(),
         "DungeonMap" => dungeon_map::schema(),

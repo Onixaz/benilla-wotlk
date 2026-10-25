@@ -426,6 +426,13 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("autoDismountFlying", "0").per_account(),
     same("lootUnderMouse", "1").per_account(),
     same("equipmentManager", "0").per_character(),
+    // The currency tab's marks and the backpack's token bar (`0x51f01a`-`0x51f0d4`).
+    same("currencyTokensUnused1", "0").per_character(),
+    same("currencyTokensUnused2", "0").per_character(),
+    same("currencyTokensBackpack1", "0").per_character(),
+    same("currencyTokensBackpack2", "0").per_character(),
+    same("showTokenFrame", "0").per_character(),
+    same("showTokenFrameHonor", "0").per_character(),
     same("autoRangedCombat", "1").per_account(),
     // The camera's pitch follow speed, which the Mouse panel's Save writes beside the yaw one.
     same("cameraPitchSmoothSpeed", "45").per_account(),

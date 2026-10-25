@@ -23,9 +23,9 @@ use benilla_protocol::{decode, EntityKind, WorldSession, WORLD_PORT};
 use clap::Parser;
 
 use probes::{
-    Attack, Aura, Charge, Ctx, Death, EquipPackSlot, GiverStatus, GroundFx, Loot, MountTele,
-    OpenItem, Probe, QueryNames, Quest, QuestItem, QuestLog, QuestTimer, SelfRes, Speed, Spells,
-    Spirit, SwapPackSlots, UsePackSlot, Vendor, WorldState,
+    Attack, Charge, Ctx, Death, EquipPackSlot, GiverStatus, GroundFx, Loot, MountTele, OpenItem,
+    Probe, QueryNames, Quest, QuestItem, QuestLog, QuestTimer, SelfRes, Speed, Spells, Spirit,
+    SwapPackSlots, UsePackSlot, Vendor, WorldState,
 };
 use world::{DeathArc, Tracked, World};
 
@@ -132,13 +132,6 @@ struct Cli {
     /// `HandleMoveWorldportAckOpcode`. Needs GM; pair with `--seconds 30`.
     #[arg(long)]
     mount_tele: bool,
-
-    /// Live-verify auras: `.aura` Mark of the Wild (1126) and Shadow Word: Pain (589), requiring
-    /// each in `UNIT_FIELD_AURA` (buffs 0–31, debuffs 32–47) with the cancelable flag on the buff
-    /// only, our level, a stack of 1 (wire `count - 1`), and its `SMSG_UPDATE_AURA_DURATION`
-    /// before the descriptor delta. Needs GM.
-    #[arg(long)]
-    aura: bool,
 
     /// Live-verify `SMSG_QUESTGIVER_STATUS` for Marshal McBride after `.quest remove 7`, so an
     /// unaccepted quest 7 reads AVAILABLE (5). Needs GM.
@@ -308,9 +301,6 @@ fn main() -> Result<()> {
     }
     if cli.quest {
         probes.push(Box::new(Quest));
-    }
-    if cli.aura {
-        probes.push(Box::new(Aura));
     }
     if cli.giverstatus {
         probes.push(Box::new(GiverStatus));

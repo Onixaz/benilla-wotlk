@@ -151,7 +151,7 @@ fn feed_pvp_timer(
     script.set_pvp_toggle_timer(timer.toggle_timer(now));
 }
 
-/// The overhead name's rank strings ([`crate::nameplates::PvpNameStrings`]), read off a VM the
+/// The overhead name's medal strings ([`crate::nameplates::PvpNameStrings`]), read off a VM the
 /// first frame it is in the world. Every VM is installed whole, outside `Update` (the boot VM with
 /// `GlobalStrings.lua` run, a world VM after its FrameXML and addon load), so the read sees what
 /// the load defined; any other frame pays one compare.
@@ -390,23 +390,21 @@ mod tests {
         script
     }
 
-    /// The read takes the overhead name's keys a VM defines, `_FEMALE` twins included, and
-    /// nothing else.
+    /// The read takes the overhead name's medal keys a VM defines, and nothing else.
     #[test]
-    fn the_rank_strings_read_takes_only_the_title_keys() {
-        let strings = pvp_name_strings(&vm(r#"UNIT_PVP_NAME = "%s %s"
-               PVP_RANK_7_1 = "Sergeant"
-               PVP_RANK_7_1_FEMALE = "Sergeant (f)"
+    fn the_name_strings_read_takes_only_the_medal_keys() {
+        let strings = pvp_name_strings(&vm(r#"PVP_MEDAL1 = "Guardian"
+               UNIT_PVP_NAME = "%s %s"
                GARBAGE_KEY = "x""#));
         assert_eq!(
-            strings.get("UNIT_PVP_NAME").map(String::as_str),
-            Some("%s %s")
+            strings.get("PVP_MEDAL1").map(String::as_str),
+            Some("Guardian")
         );
-        assert_eq!(
-            strings.get("PVP_RANK_7_1_FEMALE").map(String::as_str),
-            Some("Sergeant (f)")
+        assert!(
+            !strings.contains_key("UNIT_PVP_NAME"),
+            "only the medal keys"
         );
-        assert!(!strings.contains_key("GARBAGE_KEY"), "only the title keys");
+        assert!(!strings.contains_key("GARBAGE_KEY"));
     }
 
     /// Each VM is read once, the first frame it is in the world, so a world VM whose addon renames
@@ -424,31 +422,30 @@ mod tests {
             None,
             "no VM, no read"
         );
-        let stock = r#"UNIT_PVP_NAME = "%s %s"
-                       PVP_RANK_7_1 = "Sergeant""#;
+        let stock = r#"PVP_MEDAL1 = "Guardian""#;
         let boot = vm(stock);
         let boot_session = boot.session();
         world.insert_non_send_resource(boot);
         world.run_system_once(feed_pvp_name_strings).unwrap();
         let held = world.resource::<crate::nameplates::PvpNameStrings>();
         assert_eq!(held.session(), Some(boot_session));
-        assert_eq!(held.get("PVP_RANK_7_1"), Some("Sergeant"));
+        assert_eq!(held.get("PVP_MEDAL1"), Some("Guardian"));
 
         // The same VM is not read again: a global it sets later stays out.
         world
             .non_send_resource::<UiScript>()
-            .run(r#"PVP_RANK_7_1 = "Later""#)
+            .run(r#"PVP_MEDAL1 = "Later""#)
             .expect("global set");
         world.run_system_once(feed_pvp_name_strings).unwrap();
         let held = world.resource::<crate::nameplates::PvpNameStrings>();
-        assert_eq!(held.get("PVP_RANK_7_1"), Some("Sergeant"));
+        assert_eq!(held.get("PVP_MEDAL1"), Some("Guardian"));
 
-        let world_vm = vm(&format!("{stock}\nPVP_RANK_7_1 = \"Feldwebel\""));
+        let world_vm = vm(&format!("{stock}\nPVP_MEDAL1 = \"Hüter\""));
         let world_session = world_vm.session();
         world.insert_non_send_resource(world_vm);
         world.run_system_once(feed_pvp_name_strings).unwrap();
         let held = world.resource::<crate::nameplates::PvpNameStrings>();
         assert_eq!(held.session(), Some(world_session));
-        assert_eq!(held.get("PVP_RANK_7_1"), Some("Feldwebel"));
+        assert_eq!(held.get("PVP_MEDAL1"), Some("Hüter"));
     }
 }

@@ -228,6 +228,10 @@ impl Default for UnitCombatStats {
 pub struct InvSlotView {
     /// The item's template entry, the id inside `GetInventoryItemLink`'s link.
     pub item_id: u32,
+    /// The item object's guid, which an equipment set records; 0 for an inspected unit's.
+    pub guid: u64,
+    /// The gem item in each socket enchant (slots 2..4), 0 for none.
+    pub gems: [u32; 3],
     /// Whether the item may go on an action bar, by the same filter as a bag slot's.
     pub bar_placeable: bool,
     /// Icon texture path (`Interface\Icons\…`); `None` while the template answer is in flight.
@@ -277,6 +281,41 @@ pub type BankBagSlots = [Option<InvSlotView>; BANK_BAG_SLOT_COUNT];
 
 /// `PaperDollItemFrame.dbc`'s 36 rows as `(SlotName, SlotID, art suffix)`. The texture column
 /// shares strings between rows, so `BackSlot` shows the Chest art and `AmmoSlot` the Ranged.
+/// A `SLOT_INFO` slot id by its button name, case-insensitive (`0x5e9617`).
+pub(super) fn slot_id_by_name(name: &str) -> Option<i64> {
+    SLOT_INFO
+        .iter()
+        .find(|(n, _, _)| n.eq_ignore_ascii_case(name))
+        .map(|&(_, id, _)| id)
+}
+
+/// The GlobalStrings key naming equipment slot `slot0` (0..18), the button name upper-cased
+/// (`GetInventorySlotToken`, `0x622dd0`'s missing lines).
+pub(super) fn slot_token(slot0: usize) -> Option<&'static str> {
+    const TOKENS: [&str; 19] = [
+        "HEADSLOT",
+        "NECKSLOT",
+        "SHOULDERSLOT",
+        "SHIRTSLOT",
+        "CHESTSLOT",
+        "WAISTSLOT",
+        "LEGSSLOT",
+        "FEETSLOT",
+        "WRISTSLOT",
+        "HANDSSLOT",
+        "FINGER0SLOT",
+        "FINGER1SLOT",
+        "TRINKET0SLOT",
+        "TRINKET1SLOT",
+        "BACKSLOT",
+        "MAINHANDSLOT",
+        "SECONDARYHANDSLOT",
+        "RANGEDSLOT",
+        "TABARDSLOT",
+    ];
+    TOKENS.get(slot0).copied()
+}
+
 const SLOT_INFO: [(&str, i64, &str); 36] = [
     ("AmmoSlot", 0, "Ranged"),
     ("HeadSlot", 1, "Head"),
@@ -469,7 +508,7 @@ fn cgunit_skill(model: &Model, token: &str) -> i64 {
 /// `token`'s inventory slot, unit-keyed as in the reference so the inspect doll reuses these
 /// bindings: `"player"` reads our own items, the inspected unit its public
 /// `PLAYER_VISIBLE_ITEM_*` entries, which carry no counts or durability.
-fn player_inv_slot(lua: &Lua, token: &Option<String>, slot: i64) -> Option<InvSlotView> {
+pub(super) fn player_inv_slot(lua: &Lua, token: &Option<String>, slot: i64) -> Option<InvSlotView> {
     let token = token.as_deref()?;
     let idx = usize::try_from(slot).ok()?;
     let model = lua
@@ -574,6 +613,8 @@ impl InvSlotView {
     fn from_container_slot(slot: &super::container::ContainerSlot) -> Self {
         InvSlotView {
             item_id: slot.item_id,
+            guid: slot.guid,
+            gems: slot.gems,
             bar_placeable: slot.bar_placeable,
             icon: slot.texture.clone(),
             count: slot.count,
