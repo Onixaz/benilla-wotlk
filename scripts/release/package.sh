@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Packages the player build `cargo ship` left in `target/release/` into the release archive:
+# Packages the player build the release workflow left in `target/<target>/release/` (fat LTO, PGO,
+# as `BENILLA_PGO_LTO=fat cargo play` builds it) into the release archive:
 # `dist/benilla-v<version>-<target>.zip` on Windows, `.tar.gz` elsewhere, holding the binary,
 # benilla's two licenses and THIRD-PARTY-LICENSES, the notices the MIT, BSD, Zlib, MPL-2.0, OFL and
 # Lua licenses of the code inside the binary require beside it. Needs `cargo-about` (`cargo install
@@ -19,14 +20,15 @@ case $target in
     *windows*) exe=benilla.exe ;;
     *) exe=benilla ;;
 esac
-[[ -f target/release/$exe ]] || { echo "target/release/$exe missing: run cargo ship first" >&2; exit 1; }
+bin=target/$target/release/$exe
+[[ -f $bin ]] || { echo "$bin missing: build it first" >&2; exit 1; }
 
 name=benilla-v$version-$target
 stage=dist/$name
 rm -rf "$stage"
 mkdir -p "$stage"
 
-cp "target/release/$exe" LICENSE-MIT LICENSE-APACHE README.md "$stage/"
+cp "$bin" LICENSE-MIT LICENSE-APACHE README.md "$stage/"
 
 # The player build's graph, build dependencies included: `lua-src` is one, and compiles Lua into
 # the binary.

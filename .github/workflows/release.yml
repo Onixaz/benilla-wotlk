@@ -1,8 +1,14 @@
-# The release, `cargo ship`: when a version bump (`scripts/release/bump.sh`) lands on main, and on
-# demand. Each run builds the player binary for Windows and Linux, which catches what only fat LTO
-# can break, the link; release is built, never tested, as the gates test the same code in `dev`.
-# When main's workspace version has no GitHub release yet, the run publishes one, `v<version>`,
-# creating the tag on the commit it built, with each platform's archive (`scripts/release/package.sh`).
+# The release: when a version bump (`scripts/release/bump.sh`) lands on main, and on demand. Each
+# run builds the player binary for Windows and Linux as `BENILLA_PGO_LTO=fat cargo play` builds it,
+# fat LTO and PGO, which catches what only fat LTO can break, the link; release is built, never
+# tested, as the gates test the same code in `dev`. When main's workspace version has no GitHub
+# release yet, the run publishes one, `v<version>`, creating the tag on the commit it built, with
+# each platform's archive (`scripts/release/package.sh`).
+#
+# The PGO profiles are recorded on a player's machine (`scripts/pgo-train.sh`) and uploaded to the
+# `pgo-profile` pre-release (`scripts/release/upload-profile.sh`), one per target and toolchain. A
+# profile applies across machines: its function names are crate-hashed symbols, never paths.
+# Publishing needs each target's; a build-only run without one builds without PGO.
 name: Release
 
 on:
@@ -81,6 +87,23 @@ jobs:
       - name: Toolchain
         run: rustup toolchain install && rustc -V
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: PGO profile
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH: ${{ needs.version.outputs.publish }}
+        run: |
+          asset=benilla-fat-${{ matrix.target }}-rustc$(rustc -vV | sed -n 's/^release: //p').profdata
+          if gh release download pgo-profile --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir pgo; then
+            label=$(gh release view pgo-profile --repo "$GITHUB_REPOSITORY" --json assets \
+              --jq ".assets[] | select(.name == \"$asset\") | .label")
+            echo "PGO: $asset, $label"
+            echo "BENILLA_PGO_PROFILE=$GITHUB_WORKSPACE/pgo/$asset" >>"$GITHUB_ENV"
+          elif [[ $PUBLISH == true ]]; then
+            echo "::error::no $asset on the pgo-profile release: record it on ${{ matrix.target }} with BENILLA_PGO_LTO=fat scripts/pgo-train.sh, upload it with scripts/release/upload-profile.sh, and run this workflow again"
+            exit 1
+          else
+            echo "::warning::no $asset on the pgo-profile release: building without PGO"
+          fi
       - name: cargo-about
         run: cargo install --locked cargo-about --version 0.9.2 --features cli
       # The build stamp's `git describe` names the release the binary is: the tag is local here,
@@ -88,8 +111,12 @@ jobs:
       - name: Tag
         if: needs.version.outputs.publish == 'true'
         run: git tag "v${{ needs.version.outputs.version }}"
-      - name: ship
-        run: cargo ship
+      # `BENILLA_PGO_LTO=fat cargo play`'s build, which the profile was recorded on: `release`, no
+      # `dev`, the explicit target that keeps the flag off build scripts and proc macros.
+      - name: Build
+        run: >-
+          CARGO_ENCODED_RUSTFLAGS="${BENILLA_PGO_PROFILE:+-Cprofile-use=$BENILLA_PGO_PROFILE}"
+          cargo build --profile release -p benilla --no-default-features --target ${{ matrix.target }}
       - name: Package
         run: scripts/release/package.sh ${{ matrix.target }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -113,6 +140,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: v${{ needs.version.outputs.version }}
-        run: >-
-          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
-          --title "benilla $TAG" --generate-notes
+        # The notes run from the last version's release, past the `pgo-profile` pre-release.
+        run: |
+          previous=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-pre-releases --exclude-drafts \
+            --limit 1 --json tagName --jq '.[0].tagName // empty')
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "benilla $TAG" --generate-notes ${previous:+--notes-start-tag "$previous"}

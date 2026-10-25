@@ -89,22 +89,34 @@ ln -s /path/to/WoW target/release/WoW
 
 ### Releases
 
-[GitHub Releases](../../releases) carry the `cargo ship` binary for Windows and Linux, each in an
-archive with the licenses and `THIRD-PARTY-LICENSES.txt`, the notices of the open-source code
-inside it. To cut one, bump the version on a branch and land it:
+[GitHub Releases](../../releases) carry the player binary for Windows and Linux, built with fat
+LTO and PGO as `BENILLA_PGO_LTO=fat cargo play` builds it (see below), each in an archive with the
+licenses and `THIRD-PARTY-LICENSES.txt`, the notices of the open-source code inside it.
+
+The release build uses a fat-LTO profile per platform, recorded on a machine with the game and
+uploaded to the `pgo-profile` pre-release. Record and upload one on Windows and on Linux, and again
+after a Rust toolchain update or when the code has moved on a lot:
+
+```sh
+BENILLA_PGO_LTO=fat scripts/pgo-train.sh
+scripts/release/upload-profile.sh   # needs gh, logged in
+```
+
+To cut a release, bump the version on a branch and land it:
 
 ```sh
 scripts/release/bump.sh minor   # or major, patch, X.Y.Z; commits "Release vX.Y.Z"
 ```
 
-When the new version reaches `main`, `.github/workflows/release.yml` builds both platforms and
-publishes release `vX.Y.Z`, creating the tag on that commit.
+When the new version reaches `main`, `.github/workflows/release.yml` builds both platforms with
+their profiles and publishes release `vX.Y.Z`, creating the tag on that commit. Without a profile
+for a platform and the current toolchain it publishes nothing and says which to upload.
 
 ### Faster with a profile
 
 `cargo play` reads a profile of how the game runs on your machine when you have recorded one, and
 builds with profile-guided optimization (PGO): about 20% more frames per second. The repository
-does not ship a profile; record one once:
+does not ship a profile for `cargo play`; record one once:
 
 ```sh
 rustup component add llvm-tools

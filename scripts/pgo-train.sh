@@ -62,4 +62,6 @@ profiles=("$raw"/*.profraw)
 }
 "$profdata" merge --sparse -o "$file.tmp" "${profiles[@]}"
 mv "$file.tmp" "$file"
+# The commit the profile measured, which `scripts/release/upload-profile.sh` labels it with.
+git rev-parse --short HEAD >"$file.commit"
 echo "pgo-train: $file — cargo play builds with it"
