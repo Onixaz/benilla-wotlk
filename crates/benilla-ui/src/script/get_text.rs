@@ -24,7 +24,12 @@ fn string_global(lua: &Lua, name: &str) -> Option<mlua::String> {
 
 /// `FrameScript_GetText`: token, plural and gender suffixes, then token and plural, token and
 /// gender, the bare token, and "" when none is a string.
-fn get_text(lua: &Lua, token: &str, ordinal: i64, gender: i64) -> mlua::Result<mlua::String> {
+pub(super) fn get_text(
+    lua: &Lua,
+    token: &str,
+    ordinal: i64,
+    gender: i64,
+) -> mlua::Result<mlua::String> {
     let plural = match plural_index(ordinal) {
         p @ 1..=9 => format!("_P{p}"),
         _ => String::new(),
