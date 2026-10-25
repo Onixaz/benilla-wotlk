@@ -111,12 +111,14 @@ jobs:
       - name: Tag
         if: needs.version.outputs.publish == 'true'
         run: git tag "v${{ needs.version.outputs.version }}"
-      # `BENILLA_PGO_LTO=fat cargo play`'s build, which the profile was recorded on: `release`, no
-      # `dev`, the explicit target that keeps the flag off build scripts and proc macros.
+      # `cargo ship`'s drop-in on `BENILLA_PGO_LTO=fat cargo play`'s build, which the profile was
+      # recorded on: `release`, no `dev`, the explicit target that keeps the flag off build scripts
+      # and proc macros; `standalone` changes only the launcher.
       - name: Build
         run: >-
           CARGO_ENCODED_RUSTFLAGS="${BENILLA_PGO_PROFILE:+-Cprofile-use=$BENILLA_PGO_PROFILE}"
-          cargo build --profile release -p benilla --no-default-features --target ${{ matrix.target }}
+          cargo build --profile release -p benilla --no-default-features --features standalone
+          --target ${{ matrix.target }}
       - name: Package
         run: scripts/release/package.sh ${{ matrix.target }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

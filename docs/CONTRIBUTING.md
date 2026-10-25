@@ -85,8 +85,8 @@ out of scope is closed with the reason.
 - **A 3.3.5a install of your own.** `WOW_DATA=<its Data folder>`, or a `WoW` link at the repo
   root, which only a dev build sees: the player build looks for `Data/` or `WoW/Data/` beside
   the binary. benilla reads the install and never writes into it, but as the drop-in: the
-  `standalone` build (`cargo build --release -p benilla --no-default-features --features
-  standalone`) replaces `Wow.exe` in the install root and writes what 3.3.5a writes there. `WOW_DATA=` (set, empty)
+  `standalone` build `cargo ship` makes goes beside `Wow.exe` in the install root and writes what
+  3.3.5a writes there. `WOW_DATA=` (set, empty)
   means "no install", which is how the no-install boot is tested on a machine that has one.
 - **Without the install, green is hollow.** Well over a thousand tests read the install and skip
   when it is absent, and a few dozen more read a corpus of addons
@@ -150,7 +150,8 @@ out of scope is closed with the reason.
   probe, every test and both scripts below build the same, so nothing compiles twice. Its debug
   assertions make it no place to read frame time. `release` is the shipped and measured profile,
   fat LTO over one codegen unit, so `cargo ship` builds it for a frame-time number or for a
-  release, not per round; `cargo play` builds `play`, the same with thin LTO.
+  release, not per round. It is the drop-in, so a frame-time run starts it from an install root.
+  `cargo play` builds `play`, the same with thin LTO.
   `cargo play` adds profile-guided optimization when `scripts/pgo-train.sh` has recorded a profile,
   a few minutes of play on the instrumented player build (`rustup component add llvm-tools`
   first); the profile is not in the repository, and is recorded again after a toolchain bump.

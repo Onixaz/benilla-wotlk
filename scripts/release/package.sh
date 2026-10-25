@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Packages the player build the release workflow left in `target/<target>/release/` (fat LTO, PGO,
-# as `BENILLA_PGO_LTO=fat cargo play` builds it) into the release archive:
+# Packages the drop-in the release workflow left in `target/<target>/release/` (`cargo ship`'s
+# build, with fat LTO and PGO as `BENILLA_PGO_LTO=fat cargo play` builds it) into the release archive:
 # `dist/benilla-v<version>-<target>.zip` on Windows, `.tar.gz` elsewhere, holding the binary,
 # benilla's two licenses and THIRD-PARTY-LICENSES, the notices the MIT, BSD, Zlib, MPL-2.0, OFL and
 # Lua licenses of the code inside the binary require beside it. Needs `cargo-about` (`cargo install
@@ -33,7 +33,8 @@ cp "$bin" LICENSE-MIT LICENSE-APACHE README.md "$stage/"
 # The player build's graph, build dependencies included: `lua-src` is one, and compiles Lua into
 # the binary.
 cargo about generate --locked -c scripts/release/about.toml -m crates/benilla/Cargo.toml \
-    --no-default-features scripts/release/about.hbs -o "$stage/THIRD-PARTY-LICENSES.txt"
+    --no-default-features --features standalone scripts/release/about.hbs \
+    -o "$stage/THIRD-PARTY-LICENSES.txt"
 
 # Lua's own notice, which `lua-src`'s license file (its crate author's) does not carry; upstream
 # keeps it at the end of `lua.h`.

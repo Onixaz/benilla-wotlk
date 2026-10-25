@@ -76,22 +76,29 @@ WOW_DATA=/path/to/WoW/Data cargo play
 ```
 
 `cargo ship` builds the release binary, with fat link-time optimization and without a profile,
-into `target/release/` without starting it. The binary is self-contained and can be copied anywhere. Instead of setting `WOW_DATA`, you can put a `WoW` link
-beside the binary that points to the installation directory:
+into `target/release/` without starting it. It is a drop-in replacement for `Wow.exe`: copy
+`benilla.exe` into the installation directory, beside `Data/`, and start it there. It reads that
+installation and keeps its settings, caches, saved variables, logs and screenshots in the same
+files `Wow.exe` uses, so the two can take turns on one installation. It refuses to start
+anywhere else.
+
+The binary `cargo play` builds runs from `target/play/` instead. Instead of setting `WOW_DATA`, you
+can put a `WoW` link beside it that points to the installation directory:
 
 ```powershell
-New-Item -ItemType Junction -Path target\release\WoW -Target "C:\Games\World of Warcraft 3.3.5a"
+New-Item -ItemType Junction -Path target\play\WoW -Target "C:\Games\World of Warcraft 3.3.5a"
 ```
 
 ```sh
-ln -s /path/to/WoW target/release/WoW
+ln -s /path/to/WoW target/play/WoW
 ```
 
 ### Releases
 
-[GitHub Releases](../../releases) carry the player binary for Windows and Linux, built with fat
-LTO and PGO as `BENILLA_PGO_LTO=fat cargo play` builds it (see below), each in an archive with the
-licenses and `THIRD-PARTY-LICENSES.txt`, the notices of the open-source code inside it.
+[GitHub Releases](../../releases) carry the drop-in binary for Windows and Linux, `cargo ship`'s
+build with fat LTO and PGO as `BENILLA_PGO_LTO=fat cargo play` builds it (see below), each in an
+archive with the licenses and `THIRD-PARTY-LICENSES.txt`, the notices of the open-source code inside
+it.
 
 The release build uses a fat-LTO profile per platform, recorded on a machine with the game and
 uploaded to the `pgo-profile` pre-release. Record and upload one on Windows and on Linux, and again
@@ -157,10 +164,11 @@ not the one to play on. It also finds a `WoW` link at the repository root. See
 | `WOW_USER` and `WOW_PASS` | Optional credentials for automatic login. Set both or use the login screen. |
 | `WOW_CHAR` | Optional character name for automatic selection. |
 
-Player settings, screenshots, logs, and addons live under `benilla-config/` beside the binary
-(`target/play/benilla-config/` for `cargo play` and the training run,
-`target/release/benilla-config/` for `cargo ship`), or at the repository root for `cargo dev`.
-Place addons in `benilla-config/AddOns/`.
+Settings, caches, saved variables, logs and screenshots are written where `Wow.exe` writes them
+(`WTF/`, `Cache/`, `Logs/`, `Screenshots/`), and addons are read from `Interface/AddOns/`: in the
+installation directory for the `cargo ship` drop-in, and otherwise in `benilla-config/` beside
+the binary (`target/play/benilla-config/` for `cargo play` and the training run), or at the
+repository root for `cargo dev`.
 
 ## Documentation
 

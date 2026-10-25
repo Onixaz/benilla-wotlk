@@ -80,11 +80,11 @@ crate of its own or a fork, and benilla opens a piece of itself to such a crate 
 
 - **Two builds.** `dev` (`cargo dev`) is optimized, incremental, with debug assertions and
   overflow checks on benilla's own crates. Every scripted run, probe, test and gate builds it, so
-  they share one set of artifacts. `release` is built, never tested: `cargo ship` to ship and to
-  measure frame time, which the dev build never does. `cargo play` (without `dev`) runs `play`,
+  they share one set of artifacts. `release` is built, never tested: `cargo ship` builds the
+  shipped drop-in, the player build with `standalone`, to ship and to measure frame time from an
+  install root, which the dev build never does. `cargo play` (without `dev`) runs `play`,
   `release` with thin LTO, to play on, with the PGO profile each machine records with
-  `scripts/pgo-train.sh` when there is one (`release`, with `BENILLA_PGO_LTO=fat`). The drop-in
-  is the player build with `--features standalone`, which a `dev` build refuses.
+  `scripts/pgo-train.sh` when there is one (`release`, with `BENILLA_PGO_LTO=fat`).
 - **The check**: `scripts/check.sh`, per round and before our own pull requests, on the whole
   workspace: `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, the
   doc-link and render-pass lints, then `cargo test`, the player build without the `dev` feature
