@@ -80,6 +80,13 @@ pub(crate) struct GameObjectTemplates {
     templates: QueryCache<u32, GoTemplate>,
 }
 
+/// `gameobjectcache.wdb`.
+impl crate::wdb::Persisted for GameObjectTemplates {
+    fn drop_persisted(&mut self) {
+        self.templates.clear();
+    }
+}
+
 impl crate::query_cache::AskOnce for GameObjectTemplates {
     fn clear_pending(&mut self) {
         self.templates.clear_pending();

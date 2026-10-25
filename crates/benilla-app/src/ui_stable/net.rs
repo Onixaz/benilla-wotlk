@@ -63,7 +63,8 @@ fn list_stabled_pets(
     );
     // Seed the pet-name cache from the rows, the pair `SMSG_PET_NAME_QUERY_RESPONSE` would carry:
     // stock `PetStable.lua:163` hands `UnitName("pet")` to a tooltip whose `SetText` raises on nil
-    // (`0x531b90`), and unlike the reference's `petnamecache.wdb` this cache starts empty.
+    // (`0x531b90`), and this cache starts each world session empty, as 12340's pet-name cache does
+    // (persistence off, cleared at world entry, `0x52b7c4`).
     for pet in &pets {
         if !pet.name.is_empty() {
             names.insert_pet(pet.pet_number, pet.name.clone());

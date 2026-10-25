@@ -6,6 +6,7 @@ use benilla_srp::wotlk_header::WotlkHeaderCrypto;
 use benilla_srp::{NormalizedString, SESSION_KEY_LENGTH};
 
 use crate::messages::{self, opcode, Character, MoveMode, ServerPacket};
+use crate::SessionEvent;
 
 use super::cipher::Crypto;
 use super::movement::{client_uptime_ms, movement_info, MOVEMENT_FLAG_FORWARD};
@@ -56,6 +57,11 @@ impl std::fmt::Display for WardenRequired {
 
 impl std::error::Error for WardenRequired {}
 
+/// The packets the glue acts on that can arrive on the link before the world stream starts: the
+/// server's cache version (sent after the authentication), which the `.wdb` files are checked
+/// against.
+const GLUE_KEPT: [u16; 1] = [opcode::SMSG_CLIENTCACHE_VERSION];
+
 /// An authenticated world-server session with header encryption active.
 pub struct WorldSession {
     stream: TcpStream,
@@ -66,6 +72,9 @@ pub struct WorldSession {
     chat_language: u32,
     /// `SMSG_TUTORIAL_FLAGS` when it lands during the handshake rather than in the world stream.
     tutorial_flags: Option<Vec<u8>>,
+    /// What the glue acts on that arrived on the link outside the world stream ([`GLUE_KEPT`]),
+    /// decoded, for [`Self::take_glue_events`].
+    glue_events: Vec<SessionEvent>,
     /// The `castCount` each `CMSG_CAST_SPELL` carries, handed on to the split writer.
     cast_counter: messages::CastCounter,
     /// The unit our movement packets name: the last `CMSG_SET_ACTIVE_MOVER`, handed on to the
@@ -185,6 +194,7 @@ impl WorldSession {
             link: LinkFacts::default(),
             chat_language: messages::LANGUAGE_COMMON,
             tutorial_flags: None,
+            glue_events: Vec::new(),
             cast_counter: Default::default(),
             mover: 0,
         };
@@ -260,6 +270,18 @@ impl WorldSession {
         self.tutorial_flags.take()
     }
 
+    /// The [`GLUE_KEPT`] packets read since the last take, in arrival order.
+    pub fn take_glue_events(&mut self) -> Vec<SessionEvent> {
+        std::mem::take(&mut self.glue_events)
+    }
+
+    /// Keep a [`GLUE_KEPT`] packet a glue-time read loop would otherwise skip.
+    fn keep_glue(&mut self, packet: &ServerPacket) {
+        if let ServerPacket::ClientCacheVersion { version } = packet {
+            self.glue_events.push(SessionEvent::ClientCacheVersion { version: *version });
+        }
+    }
+
     /// Set the socket's read timeout; `None` makes reads block.
     pub fn set_read_timeout(&self, timeout: Option<std::time::Duration>) -> Result<()> {
         self.stream
@@ -285,6 +307,12 @@ impl WorldSession {
                 }
                 Ok(ServerPacket::Other { opcode })
             }
+            opcode if GLUE_KEPT.contains(&opcode) => {
+                if let Ok(packet) = messages::parse_server(opcode, &body) {
+                    self.keep_glue(&packet);
+                }
+                Ok(ServerPacket::Other { opcode })
+            }
             _ => Ok(ServerPacket::Other { opcode }),
         }
     }
@@ -292,6 +320,7 @@ impl WorldSession {
     /// Read + decrypt + parse one server packet.
     pub fn recv(&mut self) -> Result<ServerPacket> {
         let packet = recv_packet(&mut self.stream, Some(&mut self.crypto.decrypter))?;
+        self.keep_glue(&packet);
         // `SMSG_ADDON_INFO` can reach any of the handshake's read loops, so it is caught here.
         if let ServerPacket::AddonInfo { statuses } = &packet {
             self.link.addon_info = Some(statuses.clone());
@@ -938,6 +967,7 @@ impl WorldSession {
             link,
             chat_language: writer.chat_language,
             tutorial_flags: None,
+            glue_events: Vec::new(),
             cast_counter: writer.cast_counter,
             mover: writer.mover,
         };

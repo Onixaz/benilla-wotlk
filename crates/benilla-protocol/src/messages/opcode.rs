@@ -707,6 +707,9 @@ pub const CMSG_QUERY_INSPECT_ACHIEVEMENTS: u16 = 0x046B;
 pub const SMSG_RESPOND_INSPECT_ACHIEVEMENTS: u16 = 0x046C;
 /// 3.3.5a only: drop one criterion's progress (`0x5b36f0`).
 pub const SMSG_CRITERIA_DELETED: u16 = 0x049E;
+/// 3.3.5a only: the server's cache version, one u32 sent after the auth (handler `0x464730`); a
+/// value other than the one the `Cache\WDB\` files carry drops their records (`0x66f940`).
+pub const SMSG_CLIENTCACHE_VERSION: u16 = 0x04AB;
 /// 3.3.5a only: drop one completed achievement (`0x5b3610`).
 pub const SMSG_ACHIEVEMENT_DELETED: u16 = 0x049F;
 /// 3.3.5a only: the player's completed achievements and criteria at login (`0x5b32f0`).

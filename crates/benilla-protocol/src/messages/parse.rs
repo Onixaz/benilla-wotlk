@@ -717,14 +717,15 @@ fn parse_server_body(
             ServerPacket::Emote { guid, emote_id }
         }
         opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE => {
-            let body = r.to_vec();
             let (entry, info) = items::read_item_query_response_wotlk(&mut r)?;
             ServerPacket::ItemQueryResponse {
                 entry,
                 info: info.map(Box::new),
-                body,
             }
         }
+        opcode::SMSG_CLIENTCACHE_VERSION => ServerPacket::ClientCacheVersion {
+            version: read_u32_le(&mut r)?,
+        },
         opcode::SMSG_MESSAGECHAT => {
             ServerPacket::MessageChat(chat::read_message_chat_wotlk(&mut r, false)?)
         }

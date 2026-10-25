@@ -761,6 +761,10 @@ fn world(
             return Ok(WorldEnd::Cycle(Cycle::Exit));
         }
 
+        if forward_glue(&mut session, events_tx).is_err() {
+            return Ok(WorldEnd::Cycle(Cycle::Exit));
+        }
+
         // The link: the character park, the world, and back to the park on the same link after a
         // logout or a refused character login (`0x5aaeb0`, `0x5aad70`: `0x401ee0` tears the world
         // down and closes nothing). Its first world entry starts the connection's ping block.
@@ -835,6 +839,9 @@ fn world(
                     },
                     recv(login_rx) -> msg => msg.map_or(Parked::Exit, Parked::Login),
                 };
+                if forward_glue(&mut session, events_tx).is_err() {
+                    return Ok(WorldEnd::Cycle(Cycle::Exit));
+                }
                 let (action, code) = match answer {
                     Parked::Exit => return Ok(WorldEnd::Cycle(Cycle::Exit)),
                     Parked::Repark => return Ok(WorldEnd::Cycle(Cycle::Repark)),
@@ -934,6 +941,9 @@ fn world(
                     "net: no SMSG_ADDON_INFO — GetNumAddOns() stays 0, as the reference's would"
                 ),
             }
+            if forward_glue(&mut session, events_tx).is_err() {
+                return Ok(WorldEnd::Cycle(Cycle::Exit));
+            }
             let (mut reader, writer) = session.into_split()?;
             // Installed before the entry is announced, so the app's first command finds it.
             let install = WriterSwap::Install {
@@ -1006,6 +1016,18 @@ fn world(
             }
         }
     } // 'realm
+}
+
+/// The packets a glue-time read kept ([`benilla_protocol::world::WorldSession::take_glue_events`]),
+/// on to the app in arrival order; `Err` once the app is gone.
+fn forward_glue(
+    session: &mut WorldSession,
+    events_tx: &Sender<SessionEvent>,
+) -> Result<(), crossbeam_channel::SendError<SessionEvent>> {
+    for ev in session.take_glue_events() {
+        events_tx.send(ev)?;
+    }
+    Ok(())
 }
 
 /// How the world stream ended, short of a socket failure.

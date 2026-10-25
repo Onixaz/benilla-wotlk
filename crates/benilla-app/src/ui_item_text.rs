@@ -33,6 +33,13 @@ pub(crate) struct PageTexts {
     pages: QueryCache<u32, PageText>,
 }
 
+/// `pagetextcache.wdb`.
+impl crate::wdb::Persisted for PageTexts {
+    fn drop_persisted(&mut self) {
+        self.pages.clear();
+    }
+}
+
 impl crate::query_cache::AskOnce for PageTexts {
     fn clear_pending(&mut self) {
         self.pages.clear_pending();
@@ -59,6 +66,13 @@ impl PageTexts {
 #[derive(Resource, Default)]
 pub(crate) struct LetterTexts {
     texts: QueryCache<u64, String>,
+}
+
+/// `itemtextcache.wdb`.
+impl crate::wdb::Persisted for LetterTexts {
+    fn drop_persisted(&mut self) {
+        self.texts.clear();
+    }
 }
 
 impl crate::query_cache::AskOnce for LetterTexts {

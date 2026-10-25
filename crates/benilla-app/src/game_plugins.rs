@@ -23,9 +23,7 @@ use crate::cursor::CursorPlugin;
 use crate::entities::EntitiesPlugin;
 use crate::fishing_line::FishingLinePlugin;
 use crate::footprints::FootprintsPlugin;
-use crate::item_persist::ItemPersistPlugin;
 use crate::loading_screen::LoadingScreenPlugin;
-use crate::name_persist::NamePersistPlugin;
 use crate::net::NetPlugin;
 use crate::player::PlayerPlugin;
 use crate::portrait::PortraitPlugin;
@@ -259,8 +257,7 @@ impl PluginGroup for GamePlugins {
             .add(UiTradePlugin)
             .add(UiItemTextPlugin)
             .add(UiSavedPlugin)
-            .add(NamePersistPlugin)
-            .add(ItemPersistPlugin)
+            .add(crate::wdb::WdbPlugin)
             .add(UiStablePlugin)
             .add(TabardUiPlugin)
             .add(UiTrainerPlugin)

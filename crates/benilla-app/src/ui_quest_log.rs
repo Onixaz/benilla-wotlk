@@ -50,6 +50,13 @@ pub(crate) struct QuestLog {
     header_keys: Vec<Option<String>>,
 }
 
+/// `questcache.wdb`.
+impl crate::wdb::Persisted for QuestLog {
+    fn drop_persisted(&mut self) {
+        self.templates.clear();
+    }
+}
+
 impl crate::query_cache::AskOnce for QuestLog {
     fn clear_pending(&mut self) {
         self.templates.clear_pending();

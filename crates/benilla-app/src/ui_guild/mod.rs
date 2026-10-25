@@ -680,9 +680,9 @@ pub(crate) mod net {
         }
     }
 
-    /// Reset at session end: the next login may be another character. Deviation: the identity
-    /// cache goes too, where the reference keeps it in `guildcache.wdb`, because a renamed guild
-    /// would otherwise show its old name.
+    /// Reset at session end: the next login may be another character. The identity cache goes
+    /// too, as 12340 builds `guildcache` with persistence off and clears it at world entry
+    /// (`DBCache_ClearTemporaryCaches`, `0x52b7c4`).
     fn on_session_end(In(_): In<SessionEvent>, mut guild: ResMut<GuildState>) {
         *guild = GuildState::default();
     }

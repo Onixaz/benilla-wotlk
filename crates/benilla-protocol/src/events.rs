@@ -619,9 +619,12 @@ pub enum SessionEvent {
     ItemTemplate {
         entry: u32,
         info: Option<Box<ItemInfo>>,
-        /// The response body, for the item cache.
-        body: Vec<u8>,
     },
+    /// A query answer as it came off the wire, ahead of its decoded events: the response of a
+    /// cache the reference keeps on disk ([`PERSISTED_RESPONSES`]), for the `Cache\WDB\` files.
+    QueryAnswer { opcode: u16, body: Vec<u8> },
+    /// `SMSG_CLIENTCACHE_VERSION`: the server's cache version, against the `.wdb` files'.
+    ClientCacheVersion { version: u32 },
     /// One chat line (`SMSG_MESSAGECHAT`); system lines (type `0x0A`) carry GM command feedback.
     Chat(crate::messages::ChatMessage),
     /// A channel notice (`SMSG_CHANNEL_NOTIFY`); `notice` selects the `tail` payload.
@@ -1305,6 +1308,19 @@ impl SessionEventKind {
         <Self as strum::IntoEnumIterator>::iter()
     }
 }
+
+/// The responses whose answers the reference keeps across sessions, its nine `DBCache`s built with
+/// persistence on (`+0x45`, `0x9cb680`..`0x9cb920`) less the Warden modules and the item names,
+/// which have no query here: the reader hands each one's body on as a [`SessionEvent::QueryAnswer`].
+pub const PERSISTED_RESPONSES: [u16; 7] = [
+    crate::messages::opcode::SMSG_CREATURE_QUERY_RESPONSE,
+    crate::messages::opcode::SMSG_GAMEOBJECT_QUERY_RESPONSE,
+    crate::messages::opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE,
+    crate::messages::opcode::SMSG_NPC_TEXT_UPDATE,
+    crate::messages::opcode::SMSG_QUEST_QUERY_RESPONSE,
+    crate::messages::opcode::SMSG_PAGE_TEXT_QUERY_RESPONSE,
+    crate::messages::opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE,
+];
 
 /// The result of polling the reader for the next packet's events.
 pub enum Poll {

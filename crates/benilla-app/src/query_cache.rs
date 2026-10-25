@@ -124,10 +124,6 @@ impl<K: Copy + Eq + Hash, V> QueryCache<K, V> {
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&K, &Option<V>)> {
         self.answered.iter()
     }
-
-    pub(crate) fn len(&self) -> usize {
-        self.answered.len()
-    }
 }
 
 /// A resource that owns one or more [`QueryCache`]s: what to forget on world entry.

@@ -58,10 +58,7 @@ impl Plugin for CharSelectPlugin {
                 Update,
                 publish_world_live.before(benilla_world::schedule::WorldStage::Net),
             )
-            .add_systems(
-                Update,
-                debug_logout_smoke.after(crate::item_persist::ItemCacheIo),
-            )
+            .add_systems(Update, debug_logout_smoke)
             .add_systems(
                 Update,
                 session_edges().after(benilla_world::schedule::WorldStage::Net),

@@ -10,7 +10,7 @@ pub mod world;
 pub use auth::{AuthReject, LogonReply};
 pub use events::{
     decode, CharAction, EntityKind, LoginRefusal, LoginStage, MoveSpeeds, Poll, RosterCause,
-    SessionEnd, SessionEvent, SessionEventKind,
+    SessionEnd, SessionEvent, SessionEventKind, PERSISTED_RESPONSES,
 };
 pub use messages::field;
 pub use messages::{

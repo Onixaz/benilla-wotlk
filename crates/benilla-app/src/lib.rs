@@ -100,8 +100,6 @@ mod script_calls;
 mod shaders;
 
 mod game_tip;
-mod item_persist;
-mod name_persist;
 mod opaque2d;
 /// Where "the client is going down" is observed, in `Last`; every system that persists state on the
 /// way out registers through it.
@@ -202,6 +200,7 @@ mod ui_world_map;
 mod unit_auras;
 mod video;
 mod vplates;
+mod wdb;
 mod weapon_trail;
 mod world_backdrop;
 mod world_state;

@@ -33,11 +33,18 @@ impl WorldReader {
             return Err(anyhow!("world stream closed: {e}"));
         }
         match messages::parse_server_with_tail(opcode, &body) {
-            Ok((packet, tail)) => Ok(crate::Poll::Events {
-                opcode,
-                events: crate::decode(packet),
-                tail,
-            }),
+            Ok((packet, tail)) => {
+                let mut events = crate::decode(packet);
+                // The answer as received, ahead of what it decoded to, for the client's caches.
+                if crate::PERSISTED_RESPONSES.contains(&opcode) {
+                    events.insert(0, crate::SessionEvent::QueryAnswer { opcode, body });
+                }
+                Ok(crate::Poll::Events {
+                    opcode,
+                    events,
+                    tail,
+                })
+            }
             Err(e) => Ok(crate::Poll::Skipped {
                 opcode,
                 reason: format!(

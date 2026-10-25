@@ -197,26 +197,10 @@ pub(crate) fn layout_character_path(realm: &str, character: &str) -> Option<Path
     )))
 }
 
-/// `benilla-config/cache/<realm>.tsv`: the player, creature and pet names the server has answered,
-/// one file for the reference's `WDB/namecache.wdb`, `creaturecache.wdb` and `petnamecache.wdb`.
-///
-/// Realm-scoped, where the reference's is not: guids, creature entries and pet numbers are
-/// realm-local, so one shared file would serve a realm another realm's names.
-pub(crate) fn name_cache_path(realm: &str) -> Option<PathBuf> {
-    Some(
-        home()?
-            .join("cache")
-            .join(format!("{}.tsv", file_token(realm))),
-    )
-}
-
-/// `benilla-config/cache/<realm>-items.tsv`: [`crate::item_persist`]'s `itemcache.wdb`.
-pub(crate) fn item_cache_path(realm: &str) -> Option<PathBuf> {
-    Some(
-        home()?
-            .join("cache")
-            .join(format!("{}-items.tsv", file_token(realm))),
-    )
+/// `Cache\WDB\<locale>\` (`GetCacheDirectory` `0x667ef0`): the query caches' `.wdb` files
+/// ([`crate::wdb`]), one set per install as the reference keeps them.
+pub(crate) fn wdb_dir(locale: &str) -> Option<PathBuf> {
+    client_root().map(|r| r.join("Cache").join("WDB").join(file_token(locale)))
 }
 
 /// `Logs\` (`0x9fa4e4`, `0xa02ef8`): `WoWChatLog.txt`, `WoWCombatLog.txt` and `FrameXML.log`.

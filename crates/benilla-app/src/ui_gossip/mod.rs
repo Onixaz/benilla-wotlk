@@ -33,6 +33,13 @@ pub(crate) struct GossipState {
     records: HashMap<u32, Vec<NpcTextBlock>>,
 }
 
+/// `npccache.wdb`: the NPC-text records.
+impl crate::wdb::Persisted for GossipState {
+    fn drop_persisted(&mut self) {
+        self.records.clear();
+    }
+}
+
 impl GossipState {
     pub(crate) fn cached_record(&self, text_id: u32) -> Option<&[NpcTextBlock]> {
         self.records.get(&text_id).map(Vec::as_slice)

@@ -171,10 +171,10 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
             &mut sc.field_changes,
             &mut sc.items,
         ),
-        SessionEvent::ItemTemplate { entry, info, body } => {
+        SessionEvent::ItemTemplate { entry, info } => {
             let info = info.map(|b| *b);
             debug!("net: item template {entry} → {info:?}");
-            sc.items.insert_answer(entry, info, body);
+            sc.items.insert_template(entry, info);
         }
         // `0x5e4f30`'s two arms share the item lookup (`0x468460`, `TYPEMASK_ITEM`) and differ on
         // a miss.
