@@ -1156,3 +1156,106 @@ fn set_anchor_type_re_places_an_owned_plate_only() {
         "{err}"
     );
 }
+
+/// `AddTexture` (`0x61d810` → `0x61c8b0`), as the spell crit tooltip runs it: six icon rows under a
+/// header take slots 1..6, each TOPRIGHT to its line's TOPLEFT; the first row indents by the
+/// slot's room, the rows under it share that indent, the line after the run is pulled back, and
+/// the plate widens by the room. A third number needs all four, an eleventh slot is nothing, and
+/// a clear hides the slots and puts the lines back.
+#[test]
+fn add_texture_hangs_a_shared_indent_icon_run_and_a_clear_resets_it() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        local owner = CreateFrame("Button", "AtSlot")
+        owner:SetPoint("TOPLEFT", 100, -100); owner:SetWidth(40); owner:SetHeight(40)
+        Tip = CreateFrame("GameTooltip", "AtTip")
+        for i = 1, 10 do
+            local t = Tip:CreateTexture("AtTipTexture" .. i, "ARTWORK")
+            t:SetWidth(12); t:SetHeight(12); t:Hide()
+        end
+        Tip:SetOwner(owner, "ANCHOR_RIGHT")
+        Tip:AddLine("Crit")
+        Tip:AddTexture("Interface\\Icons\\Header")
+        for i = 2, 7 do
+            Tip:AddDoubleLine("School" .. i, "5%", 1, 1, 1, 1, 1, 1)
+            Tip:AddTexture("Interface\\PaperDollInfoFrame\\SpellSchoolIcon" .. i)
+        end
+        Tip:Show()
+        "#,
+    )
+    .unwrap();
+    // One line is too few: the header's call took no slot.
+    assert_eq!(s.eval::<i64>("return Tip:NumLines()").unwrap(), 7);
+    for i in 1..=10 {
+        let shown = s
+            .eval::<bool>(&format!(
+                "return AtTipTexture{i}:IsShown() and true or false"
+            ))
+            .unwrap();
+        assert_eq!(shown, i <= 6, "slot {i}");
+    }
+    let (point, rel, rel_point, x, y): (String, String, String, f32, f32) = s
+        .eval(
+            "local p, r, rp, x, y = AtTipTexture3:GetPoint() \
+             return p, r:GetName(), rp, x, y",
+        )
+        .unwrap();
+    assert_eq!(
+        (point.as_str(), rel.as_str(), rel_point.as_str(), y),
+        ("TOPRIGHT", "AtTipTextLeft4", "TOPLEFT", 0.0)
+    );
+    assert!((x + crate::widget::TOOLTIP_TEXTURE_GAP).abs() < 1e-4, "{x}");
+    let room = 12.0 + crate::widget::TOOLTIP_TEXTURE_GAP;
+    let indent = |s: &mut UiScript, line: usize| {
+        s.eval::<f32>(&format!(
+            "local _, _, _, x = AtTipTextLeft{line}:GetPoint() return x"
+        ))
+        .unwrap()
+    };
+    assert!((indent(&mut s, 2) - room).abs() < 1e-4);
+    for line in 3..=7 {
+        assert_eq!(indent(&mut s, line), 0.0, "line {line} shares the indent");
+    }
+    assert!(
+        (indent(&mut s, 8) + room).abs() < 1e-4,
+        "the line after is pulled back"
+    );
+
+    s.resolve();
+    let mut sizes = vec![("Crit", 30.0, 14.0), ("5%", 20.0, 12.0)];
+    let names: Vec<String> = (2..=7).map(|i| format!("School{i}")).collect();
+    sizes.extend(names.iter().map(|n| (n.as_str(), 50.0, 12.0)));
+    measure_all(&mut s, &sizes);
+    // maxw = room + 50 + 40 + 20 on each icon row.
+    let width = s.eval::<f32>("return Tip:GetWidth()").unwrap();
+    assert!((width - (room + 110.0 + 20.0)).abs() < 1e-3, "{width}");
+
+    let err = s
+        .run(r#"Tip:AddTexture("x", 0, 1)"#)
+        .expect_err("three numbers")
+        .to_string();
+    assert!(err.contains("AtTip:AddTexture("), "{err}");
+
+    s.run(
+        r#"
+        for i = 8, 12 do Tip:AddLine("More" .. i); Tip:AddTexture("Interface\\Icons\\More") end
+        assert(AtTipTexture10:IsShown(), "the tenth slot fills")
+        local _, rel = AtTipTexture10:GetPoint()
+        assert(rel == AtTipTextLeft11, "the tenth slot sits on line 11; line 12's call took none")
+        "#,
+    )
+    .unwrap();
+    s.run("Tip:ClearLines()").unwrap();
+    for i in 1..=10 {
+        assert!(!s
+            .eval::<bool>(&format!(
+                "return AtTipTexture{i}:IsShown() and true or false"
+            ))
+            .unwrap());
+    }
+    for line in 2..=12 {
+        assert_eq!(indent(&mut s, line), 0.0, "line {line} back at the column");
+    }
+}

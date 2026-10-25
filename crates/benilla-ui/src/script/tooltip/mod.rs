@@ -265,13 +265,124 @@ pub(super) fn write_cell(
     d.hidden = false;
 }
 
+/// Texture slot `i` (0-based), the template's `$parentTexture<i+1>` owned by this tooltip; `None`
+/// for an unnamed tooltip or a template without it, where `AddTexture` does nothing (`0x61c8c5`).
+fn texture_slot(model: &Model, h: FrameHandle, i: usize) -> Option<crate::widget::RegionHandle> {
+    let name = model.arena.frame(h)?.name.as_deref()?;
+    let id = *model.region_names.get(&format!("{name}Texture{}", i + 1))?;
+    let rh = *model.id_to_region.get(&id)?;
+    (model.arena.region(rh)?.owner == h).then_some(rh)
+}
+
+/// A line's first anchor's x offset, the indent `AddTexture` writes; touched only on a change.
+fn set_line_indent(model: &mut Model, rh: crate::widget::RegionHandle, x: f32) {
+    let Some(a) = model
+        .region_data
+        .get_mut(&rh)
+        .and_then(|d| d.anchors.first_mut())
+    else {
+        return;
+    };
+    if a.x_off.to_bits() != x.to_bits() {
+        a.x_off = x;
+        model.touch_layout_region(rh);
+    }
+}
+
+/// A shown slot's width plus the text gap, the room it takes on its line (`0x61ca00`).
+fn texture_room(model: &Model, slot: crate::widget::RegionHandle) -> f32 {
+    let w = model
+        .region_data
+        .get(&slot)
+        .and_then(|d| d.size)
+        .map_or(0.0, |(w, _)| w);
+    w + crate::widget::TOOLTIP_TEXTURE_GAP
+}
+
+/// `CGTooltip::AddTexture` (`0x61c8b0`): the next free slot goes on the last line, TOPRIGHT to its
+/// TOPLEFT less the gap, the line indents by the slot's room, or by none under a slot on the line
+/// above, and the line after it is pulled back by the same room. Nothing with no slot left or
+/// fewer than 2 lines.
+pub(super) fn add_texture(
+    lua: &Lua,
+    this: &Table,
+    texture: Option<String>,
+    coords: Option<super::TexCoords>,
+) -> mlua::Result<()> {
+    let h = frame_handle_of(lua, this)?;
+    let (index, lines) = with_tip(lua, this, |t| (t.texture_lines.len(), t.num_lines))?;
+    if index >= crate::widget::TOOLTIP_TEXTURE_SLOTS || lines < 2 {
+        return Ok(());
+    }
+    let Some(slot) = texture_slot(&crate::script::model_mut_of(lua), h, index) else {
+        return Ok(());
+    };
+    // The reference's pool holds the next line already; this one grows on demand.
+    ensure_lines(lua, this, lines + 1)?;
+    let mut model = crate::script::model_mut_of(lua);
+    let line = lines - 1;
+    let (left, next, shares_indent) = match model.arena.frame(h).map(|f| &f.kind_state) {
+        Some(KindState::Tooltip(t)) => (
+            t.left_lines[line],
+            t.left_lines.get(line + 1).copied(),
+            t.texture_lines.last() == Some(&(line - 1)),
+        ),
+        _ => return Err(mlua::Error::runtime("not a GameTooltip")),
+    };
+    let room = texture_room(&model, slot);
+    set_line_indent(&mut model, left, if shares_indent { 0.0 } else { room });
+    if let Some(next) = next {
+        set_line_indent(&mut model, next, -room);
+    }
+    let left_id = model.region_id(left);
+    let anchor = Anchor::new(
+        Point::TopRight,
+        left_id,
+        Point::TopLeft,
+        -crate::widget::TOOLTIP_TEXTURE_GAP,
+        0.0,
+    );
+    let d = model.region_data.entry(slot).or_default();
+    let old: Vec<u32> = d.anchors.iter().map(|a| a.relative_to).collect();
+    d.anchors = vec![anchor];
+    d.texture = texture;
+    d.fill = None;
+    d.tex_coords = coords;
+    d.vertex_color = Some([1.0, 1.0, 1.0, 1.0]);
+    let shown = std::mem::replace(&mut d.hidden, false);
+    if shown {
+        model.arena.note_visibility_change();
+    }
+    model.touch_layout_retarget_region(slot, &old, &[left_id]);
+    tip_mut(&mut model, h)?.texture_lines.push(line);
+    Ok(())
+}
+
 /// Hides and blanks every line cell and resets the counters; the caller fires `OnTooltipCleared`
 /// outside the model borrow.
 pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
-    let (lefts, rights) = match model.arena.frame(h).map(|f| &f.kind_state) {
-        Some(KindState::Tooltip(t)) => (t.left_lines.clone(), t.right_lines.clone()),
+    let (lefts, rights, texture_lines) = match model.arena.frame(h).map(|f| &f.kind_state) {
+        Some(KindState::Tooltip(t)) => (
+            t.left_lines.clone(),
+            t.right_lines.clone(),
+            t.texture_lines.clone(),
+        ),
         _ => return,
     };
+    // Each texture's line and the one after it go back to the column and the slot hides
+    // (`0x61c6f0`). The reference re-seats the line after at a 0 gap (`0x61c772`), so it rides 2
+    // units high from then on; that quirk is not kept.
+    for (i, &line) in texture_lines.iter().enumerate() {
+        for rh in lefts.iter().skip(line).take(2) {
+            set_line_indent(model, *rh, 0.0);
+        }
+        if let Some(slot) = texture_slot(model, h, i) {
+            let d = model.region_data.entry(slot).or_default();
+            if !std::mem::replace(&mut d.hidden, true) {
+                model.arena.note_visibility_change();
+            }
+        }
+    }
     for rh in lefts.into_iter().chain(rights) {
         let Some(d) = model.region_data.get_mut(&rh) else {
             continue;
@@ -286,6 +397,7 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
     }
     if let Ok(t) = tip_mut(model, h) {
         t.num_lines = 0;
+        t.texture_lines.clear();
         t.min_width = 0.0;
         t.min_width_forced = false;
         // Clear drops the subject and unregisters its health watcher (`0x5300ad`, `0x53007c`).
@@ -713,24 +825,33 @@ pub(super) fn layout_tooltips(model: &mut Model) {
             cursor_anchor(model, h);
         }
         // The line gate first: this runs at every resolve, and an empty tooltip clones nothing.
-        let (num, lefts, rights, min_w, pad_w) = match model.arena.frame(h).map(|f| &f.kind_state) {
-            Some(KindState::Tooltip(t)) if t.num_lines > 0 => (
-                t.num_lines,
-                t.left_lines.clone(),
-                t.right_lines.clone(),
-                t.min_width,
-                t.padding,
-            ),
-            _ => continue,
-        };
+        let (num, lefts, rights, min_w, pad_w, texture_lines) =
+            match model.arena.frame(h).map(|f| &f.kind_state) {
+                Some(KindState::Tooltip(t)) if t.num_lines > 0 => (
+                    t.num_lines,
+                    t.left_lines.clone(),
+                    t.right_lines.clone(),
+                    t.min_width,
+                    t.padding,
+                    t.texture_lines.clone(),
+                ),
+                _ => continue,
+            };
         let n = num.min(lefts.len()).min(rights.len());
+        // An `AddTexture` row is wider by its slot's room (`0x61cba0`).
+        let mut rooms = vec![0.0f32; n];
+        for (i, &line) in texture_lines.iter().enumerate() {
+            if let (Some(room), Some(slot)) = (rooms.get_mut(line), texture_slot(model, h, i)) {
+                *room = texture_room(model, slot);
+            }
+        }
         let rows: Vec<(Cell, Cell)> = (0..n)
             .map(|i| (cell(model, lefts[i]), cell(model, rights[i])))
             .collect();
         let mut maxw: f32 = 0.0;
         let mut totalh: f32 = 0.0;
         let mut counted = 0usize;
-        for (l, r) in &rows {
+        for ((l, r), room) in rows.iter().zip(&rooms) {
             if l.is_none() && r.is_none() {
                 continue;
             }
@@ -741,7 +862,7 @@ pub(super) fn layout_tooltips(model: &mut Model) {
             }
             totalh += lh.max(rh_h);
             counted += 1;
-            maxw = maxw.max(lw + rw);
+            maxw = maxw.max(lw + rw + room);
         }
         if counted == 0 {
             continue; // nothing measured yet: the declared size holds
@@ -759,12 +880,13 @@ pub(super) fn layout_tooltips(model: &mut Model) {
             input.height = height;
             model.touch_layout_frame(h);
         }
-        // Right-flush each double line: left.right + (maxw - left.width) is the text inset.
+        // Right-flush each double line: left.right + (maxw - left.width) is the text inset, less
+        // an indented row's room (`0x61cc3c`).
         for (i, (l, r)) in rows.iter().enumerate() {
             if r.is_none() {
                 continue;
             }
-            let x_off = maxw - l.map_or(0.0, |(w, _)| w);
+            let x_off = maxw - l.map_or(0.0, |(w, _)| w) - rooms[i];
             let mut moved = false;
             if let Some(a) = model
                 .region_data

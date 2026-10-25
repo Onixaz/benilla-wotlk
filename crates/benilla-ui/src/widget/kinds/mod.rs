@@ -275,7 +275,16 @@ pub struct TooltipState {
     pub padding: f32,
     /// Line 1 came from XML (`ShoppingTooltipTemplate`), so later lines clone the previous fonts.
     pub xml_declared_lines: bool,
+    /// `AddTexture`'s slots in use (`+0x324`), each the 0-based line it sits on (`+0x2fc`); slot
+    /// `i` is the template's `$parentTexture<i+1>`.
+    pub texture_lines: Vec<usize>,
 }
+
+/// `AddTexture`'s slot count, the template's `$parentTexture1..10` (`0x61c8bd`, `cmp 0xa`).
+pub const TOOLTIP_TEXTURE_SLOTS: usize = 10;
+/// The gap between an `AddTexture` icon and its line's text (`[0xa246fc]`, 0.005 of the 1024-unit
+/// width).
+pub const TOOLTIP_TEXTURE_GAP: f32 = 0.005 * 1024.0;
 
 /// The plate's text inset: the stock template seats `TextLeft1` at TOPLEFT (10, −10).
 pub const TOOLTIP_PAD: f32 = 10.0;
