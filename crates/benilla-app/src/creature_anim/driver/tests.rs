@@ -4674,3 +4674,118 @@ fn the_emote_player_skips_an_id_already_armed_but_plays_a_different_one() {
     play(&mut app, 67, true);
     assert_eq!(swing(&app), Some(67));
 }
+
+/// Each unit rolls from its own stream: its variation picks are the same whichever unit
+/// the parallel pass reaches first, and whether or not another unit draws beside it.
+#[test]
+fn a_units_variation_rolls_are_independent_of_the_unit_order() {
+    #[derive(Component)]
+    struct Reordered;
+    /// The unit order a system walks, recorded beside the driver.
+    #[derive(Resource, Default)]
+    struct Walk(Vec<Entity>);
+    #[derive(Clone, Copy, PartialEq)]
+    enum World {
+        Both,
+        Swapped,
+        Alone,
+    }
+    // EmoteTalk 60 and EmoteBow 66, two even-weighted variations each.
+    let model = || {
+        let mut clips = vec![clip(0, 1, true)];
+        for (id, node) in [(60, 2), (60, 3), (66, 4), (66, 5)] {
+            let mut c = clip(id, node, false);
+            c.frequency = 16_384;
+            clips.push(c);
+        }
+        ModelAnimations {
+            graph: Handle::default(),
+            clips,
+            hand_close: [None, None],
+            playable_animation_lookup: Vec::new(),
+            animation_lookup: Vec::new(),
+            global_bones: Vec::new(),
+            first_seq: None,
+            pose: Default::default(),
+        }
+    };
+    let run = |world: World| {
+        let mut app = app();
+        app.init_resource::<Walk>().add_systems(
+            Update,
+            (|q: Query<Entity, With<AnimDriver>>, mut walk: ResMut<Walk>| {
+                walk.0 = q.iter().collect();
+            })
+            .before(drive_animations),
+        );
+        let unit = |app: &mut App| {
+            app.world_mut()
+                .spawn((
+                    model(),
+                    AnimationPlayer::default(),
+                    AnimationTransitions::new(),
+                    AnimDriver::default(),
+                ))
+                .id()
+        };
+        let x = unit(&mut app);
+        let y = if world == World::Alone {
+            app.world_mut().spawn_empty().id() // holds the second unit's entity slot
+        } else {
+            unit(&mut app)
+        };
+        if world == World::Swapped {
+            // Moved into a new table second unit first, which takes its first row.
+            app.world_mut().entity_mut(y).insert(Reordered);
+            app.world_mut().entity_mut(x).insert(Reordered);
+        }
+        app.update(); // settle on Stand
+        let walk = app.world().resource::<Walk>().0.clone();
+        let expect = match world {
+            World::Swapped => vec![y, x],
+            World::Both => vec![x, y],
+            World::Alone => vec![x],
+        };
+        assert_eq!(walk, expect, "the unit order a system walks");
+        let main = |app: &App, e: Entity| {
+            app.world()
+                .entity(e)
+                .get::<AnimationTransitions>()
+                .and_then(|t| t.get_main_animation())
+        };
+        let (mut xs, mut ys) = (Vec::new(), Vec::new());
+        for frame in 0..24u64 {
+            let anim_id = if frame % 2 == 0 { 60 } else { 66 };
+            for (i, e) in [x, y].into_iter().enumerate() {
+                app.world_mut().write_message(EmoteAnim {
+                    entity: e,
+                    anim_id,
+                    seq: frame * 2 + i as u64,
+                    via_player: false,
+                });
+            }
+            app.update();
+            xs.push(main(&app, x));
+            ys.push(main(&app, y));
+        }
+        (xs, ys)
+    };
+    let (x_both, y_both) = run(World::Both);
+    let (x_swapped, y_swapped) = run(World::Swapped);
+    let (x_alone, _) = run(World::Alone);
+    assert!(
+        [2, 3]
+            .iter()
+            .all(|&n| x_both.contains(&Some(AnimationNodeIndex::new(n)))),
+        "both EmoteTalk variations were rolled: {x_both:?}"
+    );
+    assert_eq!(x_both, x_swapped, "the first unit's rolls ignore the order");
+    assert_eq!(
+        y_both, y_swapped,
+        "the second unit's rolls ignore the order"
+    );
+    assert_eq!(
+        x_both, x_alone,
+        "the first unit's rolls ignore the other's draws"
+    );
+}

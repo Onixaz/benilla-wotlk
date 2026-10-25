@@ -297,7 +297,7 @@ pub(super) fn advance_sheath_ceremony(
     wielded: Option<&Wielded>,
     cur: u8,
     catalog: Option<&AnimDataCatalog>,
-    swaps: &mut MessageWriter<SheathSwapMessage>,
+    swaps: &mut Vec<SheathSwapMessage>,
 ) {
     let Some(mut swap) = drv.sheath_swap.take() else {
         return;
@@ -316,7 +316,7 @@ pub(super) fn advance_sheath_ceremony(
 
         if crossed && !leg.crossed {
             leg.crossed = true;
-            swaps.write(SheathSwapMessage {
+            swaps.push(SheathSwapMessage {
                 entity,
                 slot: leg.slot,
                 drawing: leg.drawing,

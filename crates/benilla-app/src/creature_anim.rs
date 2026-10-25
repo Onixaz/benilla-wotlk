@@ -559,9 +559,26 @@ pub(crate) use spell_visual::{
     SpellKitShake, SpellKitSound, SpellVisuals,
 };
 
+/// The unit's own variation stream ([`benilla_assets::AnimRng::stream`]), cut on its first frame
+/// from the session seed and the entity, so the driver's rolls do not depend on the unit order.
+#[derive(Component, Default)]
+pub(crate) struct UnitAnimRng(Option<benilla_assets::AnimRng>);
+
+impl UnitAnimRng {
+    /// The stream, cut from `session` for `entity` on first use.
+    fn stream(
+        &mut self,
+        session: &benilla_assets::AnimRng,
+        entity: Entity,
+    ) -> &mut benilla_assets::AnimRng {
+        self.0
+            .get_or_insert_with(|| session.stream(entity.to_bits()))
+    }
+}
+
 /// The per-unit animation state machine; `Transform` is required, its scale divides the rate.
 #[derive(Component)]
-#[require(Transform)]
+#[require(Transform, UnitAnimRng)]
 pub(crate) struct AnimDriver {
     mode: Mode,
     /// The targeted gait id, to cross-fade only on a change; `None` forces a fresh pick.

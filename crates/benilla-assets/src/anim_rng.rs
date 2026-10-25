@@ -1,8 +1,14 @@
-//! The client's one `rand()` stream, the MSVC CRT LCG at `0x7400e5`, in this leaf crate because
-//! the engine's placed doodads and the game's creature, GameObject and portrait-booth arms all
-//! draw from it. The reference keeps one cell per thread (`[ptd+0x14]`) and runs every arm on the
-//! main thread (the frame loop `0x420c00`); that interleaving de-syncs a stand of identical props,
-//! so it must stay one stream.
+//! The client's `rand()` stream, the MSVC CRT LCG (`vc_rand`, `0x88b867`), in this leaf crate
+//! because the engine's placed doodads and the game's creature, GameObject and portrait-booth arms
+//! all draw from it. The reference keeps one cell per thread (`[ptd+0x14]`) and draws every arm's
+//! roll on the main thread; its threaded M2 half (`CM2Model::AnimateMT`, `0x82f0f0`) never draws.
+//! The shared interleaving de-syncs a stand of identical props, so the doodads, GameObjects and
+//! booth keep one stream.
+//!
+//! Deviation: each unit's animation driver draws its own stream ([`AnimRng::stream`]), seeded from
+//! the session seed and a per-unit key, so the units animate in parallel with the same rolls in
+//! any order. Distinct seeds still de-sync identical units, and the shared stream's exact
+//! sequence was never observable.
 //!
 //! The reference seeds it with `srand(GetTickCount())` in CRT static init (`0x5d1c70`, the call
 //! at `0x5d1c8b`), so each run rolls differently. Its exact sequence is out of reach: every other
@@ -10,21 +16,36 @@
 
 use bevy::prelude::Resource;
 
-/// The shared `rand()` state, seeded once per session by [`Self::seed_for_session`].
-#[derive(Resource)]
-pub struct AnimRng(u32);
+/// The shared `rand()` state, seeded once per session by [`Self::seed_for_session`], which also
+/// keeps the seed that [`Self::stream`] derives each unit's stream from.
+#[derive(Resource, Clone, Debug, PartialEq, Eq)]
+pub struct AnimRng {
+    state: u32,
+    seed: u32,
+}
 
 impl Default for AnimRng {
     fn default() -> Self {
-        Self(1) // `_initptd 0x40aca8`: the CRT's per-thread default, before `srand` runs
+        // `_initptd 0x40aca8`: the CRT's per-thread default, before `srand` runs
+        Self { state: 1, seed: 1 }
     }
 }
 
 impl AnimRng {
-    /// One `rand()` draw, in `[0, 32767]` (`0x7400ed`-`0x740101`).
+    /// One `rand()` draw, in `[0, 32767]` (`0x88b86f`-`0x88b883`).
     pub fn draw(&mut self) -> u16 {
-        self.0 = self.0.wrapping_mul(214_013).wrapping_add(2_531_011);
-        ((self.0 >> 16) & 0x7fff) as u16
+        self.state = self.state.wrapping_mul(214_013).wrapping_add(2_531_011);
+        ((self.state >> 16) & 0x7fff) as u16
+    }
+
+    /// An own stream for `key`, a function of the session seed and the key alone, never of how
+    /// far this stream has drawn; the seed is a SplitMix64 finalizer of the pair.
+    pub fn stream(&self, key: u64) -> Self {
+        let mut z = (u64::from(self.seed) << 32 ^ key).wrapping_add(0x9e37_79b9_7f4a_7c15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        let state = (z ^ (z >> 31)) as u32;
+        Self { state, seed: state }
     }
 
     /// The play window's replay count `R`, as in the reference's `windowHi = now + span·R`
@@ -43,9 +64,10 @@ impl AnimRng {
             return;
         }
         // `GetTickCount` counts milliseconds since boot; wall-clock milliseconds stand in for it.
-        self.0 = std::time::SystemTime::now()
+        self.state = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(1, |d| d.as_millis() as u32);
+        self.seed = self.state;
     }
 }
 
@@ -98,9 +120,24 @@ mod tests {
         let mut live = AnimRng::default();
         live.seed_for_session(false);
         assert_ne!(
-            live.0,
-            AnimRng::default().0,
+            live.state,
+            AnimRng::default().state,
             "a live session seeds off the wall clock"
         );
+    }
+
+    /// A unit's stream depends on the seed and its key, not on draws made before it was cut.
+    #[test]
+    fn a_stream_is_the_seed_and_key_alone() {
+        let fresh = AnimRng::default();
+        let mut drawn = AnimRng::default();
+        for _ in 0..5 {
+            drawn.draw();
+        }
+        assert_eq!(fresh.stream(7), drawn.stream(7));
+        let (mut a, mut b) = (fresh.stream(7), fresh.stream(8));
+        let a: Vec<u16> = (0..4).map(|_| a.draw()).collect();
+        let b: Vec<u16> = (0..4).map(|_| b.draw()).collect();
+        assert_ne!(a, b, "two keys draw two sequences");
     }
 }
