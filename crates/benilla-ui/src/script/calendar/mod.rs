@@ -600,6 +600,10 @@ impl super::UiScript {
 
     /// Push the ignore and friend lists; an ignore change rebuilds the day lists.
     pub fn set_calendar_social(&mut self, ignored: HashSet<u64>, friends: HashSet<u64>) {
+        // Read first: the feed pushes every frame, and a `&mut` borrow alone moves the count.
+        if self.model_ref().calendar.social_is(&ignored, &friends) {
+            return;
+        }
         let moved = self.model_mut().calendar.set_social(ignored, friends);
         if moved {
             self.calendar_run(|c, ctx| c.ignores_changed(ctx));

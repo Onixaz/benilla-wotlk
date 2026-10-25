@@ -438,6 +438,11 @@ impl CalendarModel {
         self.region = region;
     }
 
+    /// The ignore and friend lists already stand as given.
+    pub(crate) fn social_is(&self, ignored: &HashSet<u64>, friends: &HashSet<u64>) -> bool {
+        self.ignored == *ignored && self.friends == *friends
+    }
+
     pub(crate) fn set_social(&mut self, ignored: HashSet<u64>, friends: HashSet<u64>) -> bool {
         let moved = self.ignored != ignored;
         self.ignored = ignored;

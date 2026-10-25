@@ -282,4 +282,12 @@ fn an_idle_frame_leaves_the_mutation_count_standing() {
         settled,
         "an equal party and an empty quest-POI queue"
     );
+    s.set_calendar_social(Default::default(), Default::default());
+    s.set_calendar_player(None);
+    s.set_calendar_raid_members(Default::default());
+    assert_eq!(
+        s.visual_epoch(),
+        settled,
+        "the calendar feed's equal social, player and raid pushes"
+    );
 }
