@@ -38,7 +38,7 @@ regex = "1"
 # thread's realtime policy on macOS.
 libc = "0.2"
 # PNG encoding only: the macOS cursor's NSImage data and screenshots.
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tga"] }
 # Thread-to-ECS channels: crossbeam's `Receiver` is `Sync`, so it is a resource without a mutex.
 crossbeam-channel = "0.5"
 benilla-assets = { path = "../benilla-assets", default-features = false }

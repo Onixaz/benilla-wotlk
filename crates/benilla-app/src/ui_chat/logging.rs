@@ -1,9 +1,8 @@
 //! The `LoggingChat`/`LoggingCombat` files, `WoWChatLog.txt` and `WoWCombatLog.txt`: the stock
 //! `/chatlog` and `/combatlog` flip the VM's flag and print the notice (`ChatFrame.lua:675-695`);
-//! this appends each line as the window shows it, stamped `M/D HH:MM:SS.mmm` in local time.
-//! Deviation: the files live in `benilla-config/Logs/`, not the install's `Logs`, because the
-//! install is read-only. A file that fails to open leaves the flag set: Lua already printed
-//! "enabled".
+//! this appends each line as the window shows it to `Logs\`, as an SLog line: stamped
+//! `M/D HH:MM:SS.mmm` in local time, two spaces, the text, CRLF. A file that fails to open leaves
+//! the flag set: Lua already printed "enabled".
 
 use std::io::Write as _;
 
@@ -27,7 +26,7 @@ impl ChatLogFiles {
             &mut self.chat
         };
         if let Some(file) = slot.as_mut() {
-            if writeln!(file, "{}  {line}", stamp()).is_err() {
+            if write!(file, "{}  {line}\r\n", stamp()).is_err() {
                 *slot = None;
             }
         }
@@ -71,17 +70,34 @@ impl ChatLogFiles {
     }
 }
 
+/// A local wall-clock reading, the fields of the reference's `GetLocalTime`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LocalTime {
+    pub(crate) year: u32,
+    /// 1–12.
+    pub(crate) month: u32,
+    /// 1–31.
+    pub(crate) day: u32,
+    pub(crate) hour: u32,
+    pub(crate) min: u32,
+    pub(crate) sec: u32,
+    pub(crate) milli: u32,
+}
+
 /// `M/D HH:MM:SS.mmm` of now, local time: the reference's log-line stamp
 /// (`"%u/%u %02u:%02u:%02u.%03u  "`, `0x866aa0`, from `GetLocalTime` at `0x65a871`), which
 /// `crate::ui_script::load_log` shares.
 pub(crate) fn stamp() -> String {
-    let [month, day, hour, min, sec, milli] = local_now();
-    format!("{month}/{day} {hour:02}:{min:02}:{sec:02}.{milli:03}")
+    let t = local_now();
+    format!(
+        "{}/{} {:02}:{:02}:{:02}.{:03}",
+        t.month, t.day, t.hour, t.min, t.sec, t.milli
+    )
 }
 
-/// `[month, day, hour, minute, second, millisecond]` of now, from the reference's `GetLocalTime`.
+/// Now, from the reference's `GetLocalTime`.
 #[cfg(windows)]
-fn local_now() -> [u32; 6] {
+pub(crate) fn local_now() -> LocalTime {
     use windows_sys::Win32::{Foundation::SYSTEMTIME, System::SystemInformation::GetLocalTime};
     // SAFETY: `GetLocalTime` fully writes the out-param and reads nothing from it; zeroed is
     // valid for a struct of plain integers.
@@ -90,40 +106,58 @@ fn local_now() -> [u32; 6] {
         GetLocalTime(&mut t);
         t
     };
-    [
-        t.wMonth,
-        t.wDay,
-        t.wHour,
-        t.wMinute,
-        t.wSecond,
-        t.wMilliseconds,
-    ]
-    .map(u32::from)
+    LocalTime {
+        year: t.wYear.into(),
+        month: t.wMonth.into(),
+        day: t.wDay.into(),
+        hour: t.wHour.into(),
+        min: t.wMinute.into(),
+        sec: t.wSecond.into(),
+        milli: t.wMilliseconds.into(),
+    }
 }
 
-/// `[month, day, hour, minute, second, millisecond]` of now, in the process's time zone.
+/// Now, in the process's time zone.
 #[cfg(unix)]
-fn local_now() -> [u32; 6] {
+pub(crate) fn local_now() -> LocalTime {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
-    let [month, day, hour, min, sec] = local_fields(now.as_secs() as i64);
-    [month, day, hour, min, sec, now.subsec_millis()]
+    LocalTime {
+        milli: now.subsec_millis(),
+        ..local_fields(now.as_secs() as i64)
+    }
 }
 
-/// `[month, day, hour, minute, second]` of an epoch second, through `localtime_r`; UTC when that
-/// fails, which POSIX allows only on `EOVERFLOW`, a year past `int`.
+/// An epoch second's local fields, through `localtime_r`; UTC when that fails, which POSIX allows
+/// only on `EOVERFLOW`, a year past `int`.
 #[cfg(unix)]
-fn local_fields(secs: i64) -> [u32; 5] {
+fn local_fields(secs: i64) -> LocalTime {
     let time = secs as libc::time_t;
     // SAFETY: `localtime_r` fully writes the out-param and reads nothing from it; zeroed is valid
     // for its integers and its nullable zone-name pointer.
     let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
     if unsafe { libc::localtime_r(&time, &mut tm) }.is_null() {
         let c = benilla_ui::civil::from_unix(secs);
-        return [c.month, c.day, c.hour, c.min, c.sec];
+        return LocalTime {
+            year: c.year as u32,
+            month: c.month,
+            day: c.day,
+            hour: c.hour,
+            min: c.min,
+            sec: c.sec,
+            milli: 0,
+        };
     }
-    [tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec].map(|v| v as u32)
+    LocalTime {
+        year: (tm.tm_year + 1900) as u32,
+        month: (tm.tm_mon + 1) as u32,
+        day: tm.tm_mday as u32,
+        hour: tm.tm_hour as u32,
+        min: tm.tm_min as u32,
+        sec: tm.tm_sec as u32,
+        milli: 0,
+    }
 }
 
 /// The VM's two flags → the two files, on the frame either flag moves.
@@ -165,9 +199,10 @@ mod tests {
         let tz = EnvGuard::set("TZ", "NPT-05:45");
         // SAFETY: `tzset` rereads `TZ`; the lock keeps other env tests out.
         unsafe { tzset() };
-        let fields = [super::local_fields(0), super::local_fields(72_000)];
+        let fields = [super::local_fields(0), super::local_fields(72_000)]
+            .map(|t| [t.year, t.month, t.day, t.hour, t.min, t.sec]);
         drop(tz);
         unsafe { tzset() };
-        assert_eq!(fields, [[1, 1, 5, 45, 0], [1, 2, 1, 45, 0]]);
+        assert_eq!(fields, [[1970, 1, 1, 5, 45, 0], [1970, 1, 2, 1, 45, 0]]);
     }
 }

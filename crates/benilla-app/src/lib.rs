@@ -287,7 +287,8 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
             .and_then(|e| e.parent().map(std::path::Path::to_path_buf));
         let Some(root) = root.filter(|r| r.join("Data").is_dir()) else {
             eprintln!(
-                "benilla: this is the standalone build, which replaces Wow.exe: put it in the WoW                  folder, beside Data/ (no Data/ next to {:?})",
+                "benilla: this is the standalone build, which replaces Wow.exe: put it in the WoW \
+                 folder, beside Data/ (no Data/ next to {:?})",
                 std::env::current_exe().ok()
             );
             return AppExit::error();

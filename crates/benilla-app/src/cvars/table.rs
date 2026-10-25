@@ -952,4 +952,9 @@ pub(crate) const REGISTERED: &[Registered] = &[
     same("readEULA", "0"),
     same("readScanning", "0"),
     same("readContest", "0"),
+    // The screenshot writer's (`ClientRegisterConsoleCommands`, `0x401ee4` "jpeg", `0x401f0c` "3",
+    // flags 1): `tga` in any case writes a Targa, anything else a JPEG, at quality 1..10
+    // ([`crate::screenshot`]).
+    same("screenshotFormat", "jpeg"),
+    same("screenshotQuality", "3"),
 ];

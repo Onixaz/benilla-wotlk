@@ -2166,7 +2166,7 @@ mod tests {
 
     /// The string-valued rows, a closed list, each default checked on its own terms: `realmName`
     /// (the reference's registered `""`, `0x882748`) and `gxApi` are empty until the session writes
-    /// them; `gxResolution` and `realmList` pass their observers' parsers
+    /// them; `screenshotFormat` is `jpeg`; `gxResolution` and `realmList` pass their observers' parsers
     /// ([`crate::video::parse_resolution`], [`crate::realmlist::normalize`]).
     #[test]
     fn the_string_valued_cvars_are_the_realm_and_the_windowed_size() {
@@ -2178,7 +2178,13 @@ mod tests {
         strings.sort_unstable(); // the list is the claim, not where the rows sit in the table
         assert_eq!(
             strings,
-            vec!["gxApi", "gxResolution", "realmList", "realmName"]
+            vec![
+                "gxApi",
+                "gxResolution",
+                "realmList",
+                "realmName",
+                "screenshotFormat"
+            ]
         );
         let default_of = |name: &str| {
             REGISTERED
@@ -2189,6 +2195,11 @@ mod tests {
         };
         assert_eq!(default_of("realmName"), "");
         assert_eq!(default_of("gxApi"), "");
+        assert_eq!(
+            default_of("screenshotFormat"),
+            "jpeg",
+            "anything but tga is a JPEG"
+        );
         assert_eq!(
             default_of("gxResolution"),
             "",
