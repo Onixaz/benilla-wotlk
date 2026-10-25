@@ -307,6 +307,37 @@ fn app_with_tint_channel() -> App {
     app
 }
 
+/// A rig with nothing moving leaves the tint table unwritten after its first frame (a city holds
+/// thousands of rigs).
+#[test]
+fn an_idle_rig_leaves_the_tint_table_unwritten() {
+    let mut app = app_with_tint_channel();
+    let skin = benilla_world::rig_palette::RigSkin::allocate_bones(
+        app.world_mut()
+            .resource_mut::<benilla_world::rig_palette::RigPalettes>()
+            .as_mut(),
+        8,
+        Handle::default(),
+    )
+    .expect("a fresh palette has room");
+    app.world_mut().spawn(skin);
+    app.update();
+    let written = |app: &App| {
+        app.world()
+            .resource_ref::<benilla_world::instance_tint::InstanceTints>()
+            .last_changed()
+    };
+    let settled = written(&app);
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(
+        written(&app),
+        settled,
+        "an idle frame rewrote the tint table"
+    );
+}
+
 /// Stealth's proc-only state kit (no effect models) still installs its proc-14 node.
 #[test]
 fn a_proc_only_state_kit_arms_stealth_translucency() {

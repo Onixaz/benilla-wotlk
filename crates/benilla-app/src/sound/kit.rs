@@ -638,6 +638,13 @@ pub(super) fn source_playing(out: &SoundOutput, source: Entity) -> bool {
 
 /// Is `source` playing kit `kit_id`? The creature body loop's not-already-playing gate (`0x623800`
 /// latches its own channel); kit-scoped so a greeting or spell hold never masks it.
+impl ActiveChannel {
+    /// The entity this channel belongs to, if any.
+    pub(super) fn source(&self) -> Option<Entity> {
+        self.source
+    }
+}
+
 pub(super) fn source_kit_playing(out: &SoundOutput, source: Entity, kit_id: u32) -> bool {
     out.channels
         .iter()

@@ -131,19 +131,36 @@ impl AuraNodes {
 
 /// Publish every rig's head tint to [`benilla_world::instance_tint`], keyed on its rig slot. The
 /// reference writes the tint as it changes, with none of the alpha's ramp (`unit+0xd04` →
-/// `0x710cf0`). Every `RigSkin` is rewritten each frame so a recycled slot never keeps a colour.
+/// `0x710cf0`). A frame with no aura node, chain link or rig slot moved writes nothing.
+#[allow(clippy::type_complexity)] // one Bevy system's full input set
 pub(crate) fn apply_aura_tint(
-    rigs: Query<(Entity, &benilla_world::rig_palette::RigSkin)>,
+    rigs: Query<(Entity, Ref<benilla_world::rig_palette::RigSkin>)>,
     chain: Query<(
         Option<&AuraNodes>,
         Option<&benilla_world::model_fade::ParentModel>,
     )>,
+    // A word moves only with its rig's slot, an aura node or a chain link; else every slot holds.
+    nodes_moved: Query<
+        (),
+        Or<(
+            Changed<AuraNodes>,
+            Changed<benilla_world::model_fade::ParentModel>,
+        )>,
+    >,
+    mut nodes_gone: RemovedComponents<AuraNodes>,
+    mut links_gone: RemovedComponents<benilla_world::model_fade::ParentModel>,
     mut tints: ResMut<benilla_world::instance_tint::InstanceTints>,
     mut probe_logged: Local<bool>,
 ) {
     let probe = tint_probe();
+    let gone = nodes_gone.read().count() + links_gone.read().count();
+    let all = probe.is_some() || gone > 0 || !nodes_moved.is_empty();
     let mut painted = 0usize;
     for (root, rig) in &rigs {
+        // A new or recycled slot is a changed `RigSkin`, so it is never left with a stale colour.
+        if !all && !rig.is_changed() {
+            continue;
+        }
         let word = probe.or_else(|| chained_tint(&chain, root)).map_or(
             benilla_world::instance_tint::IDENTITY,
             benilla_world::instance_tint::pack,

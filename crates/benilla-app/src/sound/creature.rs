@@ -20,9 +20,9 @@ use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 use benilla_world::schedule::WorldStage;
 
 use super::kit::{
-    bark_chance_pass, object_sound_playing, play_kit, play_kit_ext, source_kit_playing,
-    stop_source_kit, stop_unit_voice, unit_voice_state, KitRef, Latch, PlayExtras, SoundCategory,
-    SoundKits, STAND_CHANCE, STAND_COOLDOWN,
+    bark_chance_pass, object_sound_playing, play_kit, play_kit_ext, stop_source_kit,
+    stop_unit_voice, unit_voice_state, KitRef, Latch, PlayExtras, SoundCategory, SoundKits,
+    STAND_CHANCE, STAND_COOLDOWN,
 };
 use super::{AudioListener, SoundConfig, SoundOutput};
 
@@ -374,6 +374,13 @@ fn creature_body_loops(
         return;
     };
     let listener = listener.pos;
+    // What plays now, once: each unit asks about itself alone, and its own stop and play below
+    // touch no other unit's answer (a per-unit channel scan was units × channels).
+    let playing: bevy::platform::collections::HashSet<(Entity, u32)> = out
+        .channels
+        .iter()
+        .filter_map(|c| c.source().map(|s| (s, c.kit)))
+        .collect();
     for (entity, net, store, transform, mount_child) in &units {
         if !matches!(net.kind, EntityKind::Unit | EntityKind::Player) {
             continue;
@@ -395,7 +402,7 @@ fn creature_body_loops(
         let desired = if alive { kit } else { 0 };
         // Stop a superseded loop: death, or a mount swap that changed the row.
         if let Some(&prev) = armed.get(&entity) {
-            if prev != desired && source_kit_playing(&out, entity, prev) {
+            if prev != desired && playing.contains(&(entity, prev)) {
                 stop_source_kit(&mut out, entity, prev);
             }
         }
@@ -404,7 +411,7 @@ fn creature_body_loops(
             continue;
         }
         armed.insert(entity, desired);
-        if !source_kit_playing(&out, entity, desired) {
+        if !playing.contains(&(entity, desired)) {
             // Out of range this allocates nothing, and the next frame retries.
             if let Err(e) = play_kit_ext(
                 &mut kits,

@@ -979,6 +979,11 @@ pub(in crate::net) fn mark_swimming_creatures(
         &units
     {
         if !ground_derived(net.kind, splined, clamped, embodied, relayed) {
+            // A kind no input can admit (a GameObject) is stamped once, so the gate drops it; a
+            // player can join the set standing still, and stays unstamped.
+            if !evaluated && !matches!(net.kind, EntityKind::Unit | EntityKind::Player) {
+                commands.entity(e).insert(SwimEvaluated);
+            }
             continue; // GameObjects don't swim; a relayed player's flag arrives on the wire
         }
         // The unit's own room decides whose liquid answers (an interior's, not the ADT water over
@@ -1785,6 +1790,16 @@ mod server_moved_players {
             crate::player::may_swim(0x8),
             "PLAYER_CONTROLLED alone admits a player to the depth decision (0x60310b bit 3)"
         );
+    }
+
+    /// A GameObject is stamped on its first visit, so the mark's gate stops walking it each frame.
+    #[test]
+    fn a_gameobject_leaves_the_swim_mark_after_one_visit() {
+        let (mut app, go) = hollow(EntityKind::GameObject);
+        app.world_mut()
+            .run_system_once(super::mark_swimming_creatures)
+            .expect("run the swim mark");
+        assert!(app.world().get::<super::SwimEvaluated>(go).is_some());
     }
 
     /// The subject rule as a table, with a GameObject and the ways a Player leaves the set.
