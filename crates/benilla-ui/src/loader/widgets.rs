@@ -143,6 +143,9 @@ impl Loader<'_> {
             }
             self.call(wrapper, "SetText", label, dbg);
             if let Ok(region) = wrapper.call_method::<Table>("GetFontString", ()) {
+                // Its font, as a `<FontString>`'s: the title picker's label is
+                // `inherits="GameFontHighlightSmallLeft"` (PaperDollFrame.xml:112).
+                self.apply_fontstring_font(bt, &region, dbg);
                 // `parentKey` binds the label like any region: stock 3.3.5a reads a quest row's
                 // `.normalText` (`QuestLogFrame.xml:86`, `QuestLogFrame.lua:187`).
                 self.bind_parent_key(bt, wrapper, &region);
