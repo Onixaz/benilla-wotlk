@@ -65,6 +65,7 @@ fn retire_failed_placements(placements: &mut Placements, asset_server: &AssetSer
     let Placements {
         by_id,
         pending_spawns,
+        spawn_epoch,
         ..
     } = placements;
     let failed = |id: bevy::asset::UntypedAssetId| {
@@ -84,6 +85,7 @@ fn retire_failed_placements(placements: &mut Placements, asset_server: &AssetSer
                 warn!("placement model {path} failed to load: nothing spawned");
                 p.spawned = true;
                 *pending_spawns -= 1;
+                *spawn_epoch += 1;
             }
         }
         for d in p.doodads.iter_mut().filter(|d| !d.spawned) {
@@ -143,6 +145,7 @@ pub(super) fn spawn_loaded_placements(
         by_id,
         materials: mat_cache,
         pending_spawns,
+        spawn_epoch,
     } = placements;
 
     // At most `SPAWN_BUDGET` per frame, resumed next frame through the `spawned` flags; the check
@@ -541,6 +544,7 @@ pub(super) fn spawn_loaded_placements(
                 }
             };
             p.spawned = true;
+            *spawn_epoch += 1;
             p.entities = entities;
             // The model landed; a WMO's just-resolved props join the pending count.
             *pending_spawns += p.doodads.iter().filter(|d| !d.spawned).count();
