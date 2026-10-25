@@ -303,6 +303,7 @@ fn gate_doodad_anim(
         Has<crate::rig_palette::RigSkin>,
         Option<&mut AnimationPlayer>,
         Option<&mut GlobalSeqDrive>,
+        Has<AnimParked>,
     )>,
     vis: Query<&Visibility>,
     cam: Query<
@@ -353,7 +354,7 @@ fn gate_doodad_anim(
             false,
         )
     };
-    for (entity, mut host, lazy, pose, has_rig, player, drive) in &mut hosts {
+    for (entity, mut host, lazy, pose, has_rig, player, drive, parked) in &mut hosts {
         // A host born this frame has no verdict to reuse (`active` starts false).
         let drawn = if verdicts_still && !host.is_added() {
             host.active
@@ -400,7 +401,9 @@ fn gate_doodad_anim(
                 );
             }
         }
-        if drawn == host.active {
+        // An undrawn host that never was drawn still parks: born out of view, its global
+        // sequences would otherwise tick and re-pose it every frame (~2,300 at Dalaran).
+        if drawn == host.active && (drawn || parked) {
             continue;
         }
         host.active = drawn;
@@ -1184,7 +1187,7 @@ mod tests {
             frustum,
             projection,
         ));
-        let mut meshed = |center: Vec3| {
+        let mut meshed = |center: Vec3, active: bool| {
             let mesh = app.world_mut().spawn(Visibility::Inherited).id();
             app.world_mut()
                 .spawn(DoodadAnimHost {
@@ -1194,18 +1197,24 @@ mod tests {
                     armed_at: 0.0,
                     window_hi: f32::INFINITY,
                     anim_id: Some(0),
-                    active: true,
+                    active,
                     parked_at: 0.0,
                 })
                 .id()
         };
-        let behind = meshed(Vec3::new(0.0, 0.0, 30.0));
-        let ahead = meshed(Vec3::new(0.0, 0.0, -30.0));
+        let behind = meshed(Vec3::new(0.0, 0.0, 30.0), true);
+        let ahead = meshed(Vec3::new(0.0, 0.0, -30.0), true);
+        // Never drawn: its first verdict is already "not drawn", and it must park all the same.
+        let born_behind = meshed(Vec3::new(0.0, 0.0, 30.0), false);
         app.update();
         let world = app.world();
         assert!(
             world.entity(behind).contains::<AnimParked>(),
             "behind the camera ⇒ outside the frustum ⇒ parked, whatever its part's Visibility"
+        );
+        assert!(
+            world.entity(born_behind).contains::<AnimParked>(),
+            "a host born out of view parks without ever having been drawn"
         );
         assert!(
             !world.entity(ahead).contains::<AnimParked>(),
