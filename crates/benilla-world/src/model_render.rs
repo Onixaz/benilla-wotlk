@@ -830,7 +830,9 @@ impl CardMoves<'_, '_> {
 fn classify_part(
     interleave: &crate::particles::WaterInterleave,
     clips: &crate::straddle::WaterClips,
-    twins: &mut FarSideTwins,
+    // The `ResMut` itself: a read through `&mut FarSideTwins` would mark it changed, and the
+    // Visibility authority re-walks every part on that mark.
+    twins: &mut ResMut<FarSideTwins>,
     materials: &mut Assets<WowModelMaterial>,
     commands: &mut Commands,
     used: Option<&mut std::collections::HashSet<AssetId<WowModelMaterial>>>,
@@ -931,7 +933,7 @@ fn classify_part(
 
 /// The far twin of `near`, built on first ask; `near` must be live, as `qualifies` proved.
 fn far_twin(
-    twins: &mut FarSideTwins,
+    twins: &mut ResMut<FarSideTwins>,
     materials: &mut Assets<WowModelMaterial>,
     near: &Handle<WowModelMaterial>,
 ) -> Handle<WowModelMaterial> {
@@ -1203,6 +1205,50 @@ mod tests {
         const {
             assert!(crate::sky_order::WMO_SKYBOX_BIAS > 10.0 * crate::sky_order::FAR_SIDE_BIAS);
         }
+    }
+
+    /// A reclassify that only reads leaves the twin map unmarked: the Visibility authority re-walks
+    /// every part (~28k in Dalaran) on its mark.
+    #[test]
+    fn a_dry_reclassify_leaves_the_twin_map_unmarked() {
+        use bevy::asset::AssetPlugin;
+        use bevy::prelude::*;
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<super::WowModelMaterial>()
+            .init_resource::<super::FarSideTwins>()
+            .init_resource::<crate::liquid::WaterIndex>()
+            .init_resource::<crate::liquid::Underwater>()
+            .init_resource::<crate::straddle::WaterClips>()
+            .add_systems(Update, super::classify_water_side);
+        let handle = app
+            .world()
+            .resource::<Assets<super::WowModelMaterial>>()
+            .reserve_handle();
+        let part = app
+            .world_mut()
+            .spawn((GlobalTransform::default(), MeshMaterial3d(handle)))
+            .id();
+        app.update();
+        let settled = app
+            .world()
+            .resource_ref::<super::FarSideTwins>()
+            .last_changed();
+        for _ in 0..3 {
+            // The part moves every frame, so the reactive walk classifies it.
+            app.world_mut()
+                .get_mut::<GlobalTransform>(part)
+                .unwrap()
+                .set_changed();
+            app.update();
+        }
+        assert_eq!(
+            app.world()
+                .resource_ref::<super::FarSideTwins>()
+                .last_changed(),
+            settled,
+            "a read-only classify marked the twin map changed"
+        );
     }
 
     #[test]
