@@ -24,30 +24,44 @@ const PARK_AFTER_FRAMES: u16 = 30;
 #[component(storage = "SparseSet")]
 pub struct ParkedMesh(pub Handle<Mesh>);
 
-/// Consecutive frames this part has been hidden (its own or an ancestor's verdict).
-#[derive(Component, Default)]
-pub struct HiddenFrames(pub u16);
+/// The run on which this part last went hidden (its own or an ancestor's verdict).
+#[derive(Component)]
+pub struct HiddenSince(pub u32);
 
-/// Counts hidden frames, parks the long-hidden and unparks the shown, by last `PostUpdate`'s
-/// propagated `InheritedVisibility`.
+/// Parks the long-hidden and unparks the shown, by last `PostUpdate`'s propagated
+/// `InheritedVisibility`. Only flips are read (a city holds ~25k parts): a hide stamps its run
+/// and queues the deadline, which parks the part if it is still hidden under that stamp.
 #[allow(clippy::type_complexity)]
 pub(super) fn park_hidden_parts(
     mut commands: Commands,
-    mut parts: Query<
-        (
-            Entity,
-            &InheritedVisibility,
-            Option<&mut HiddenFrames>,
-            Option<&Mesh3d>,
-            Option<&ParkedMesh>,
-        ),
-        (
-            With<ModelPart>,
-            Without<bevy::camera::visibility::RenderLayers>,
-        ),
-    >,
+    mut run: Local<u32>,
+    mut due: Local<std::collections::VecDeque<(Entity, u32)>>,
+    mut parts: ParamSet<(
+        Query<
+            (
+                Entity,
+                &InheritedVisibility,
+                Option<&mut HiddenSince>,
+                Option<&ParkedMesh>,
+            ),
+            (
+                With<ModelPart>,
+                Without<bevy::camera::visibility::RenderLayers>,
+                Or<(Changed<InheritedVisibility>, Added<ModelPart>)>,
+            ),
+        >,
+        Query<
+            (&InheritedVisibility, &HiddenSince, Option<&Mesh3d>),
+            (
+                With<ModelPart>,
+                Without<bevy::camera::visibility::RenderLayers>,
+            ),
+        >,
+    )>,
 ) {
-    for (entity, inherited, frames, mesh, parked) in &mut parts {
+    *run += 1;
+    let now = *run;
+    for (entity, inherited, since, parked) in &mut parts.p0() {
         if inherited.get() {
             if let Some(parked) = parked {
                 commands
@@ -59,25 +73,34 @@ pub(super) fn park_hidden_parts(
                     // draw the part once more; dedup after the hook has run.
                     .queue(dedup_visibility_class);
             }
-            if let Some(mut f) = frames {
-                if f.0 != 0 {
-                    f.0 = 0;
-                }
-            }
             continue;
         }
-        let Some(mut frames) = frames else {
-            commands.entity(entity).insert(HiddenFrames(1));
-            continue;
-        };
-        frames.0 = frames.0.saturating_add(1);
-        if frames.0 == PARK_AFTER_FRAMES {
-            if let Some(mesh) = mesh {
-                commands
-                    .entity(entity)
-                    .insert(ParkedMesh(mesh.0.clone()))
-                    .remove::<Mesh3d>();
+        // In place where it exists, so a stale deadline below already reads the new stamp.
+        match since {
+            Some(mut s) => s.0 = now,
+            None => {
+                commands.entity(entity).insert(HiddenSince(now));
             }
+        }
+        due.push_back((entity, now + u32::from(PARK_AFTER_FRAMES) - 1));
+    }
+    let waiting = parts.p1();
+    while let Some(&(entity, at)) = due.front() {
+        if at > now {
+            break;
+        }
+        due.pop_front();
+        let Ok((inherited, since, mesh)) = waiting.get(entity) else {
+            continue; // despawned
+        };
+        if inherited.get() || since.0 + u32::from(PARK_AFTER_FRAMES) - 1 != at {
+            continue; // shown since, or re-hidden under a later stamp
+        }
+        if let Some(mesh) = mesh {
+            commands
+                .entity(entity)
+                .insert(ParkedMesh(mesh.0.clone()))
+                .remove::<Mesh3d>();
         }
     }
 }
@@ -121,31 +144,57 @@ mod tests {
         (w, e)
     }
 
-    fn run(w: &mut World, n: usize) {
-        let mut sys = IntoSystem::into_system(park_hidden_parts);
-        sys.initialize(w);
-        for _ in 0..n {
-            sys.run((), w).unwrap();
-            sys.apply_deferred(w);
+    /// One system across a test's runs: its counter and deadline queue are `Local`s.
+    struct Parker(Box<dyn System<In = (), Out = ()>>);
+
+    impl Parker {
+        fn new(w: &mut World) -> Self {
+            let mut sys: Box<dyn System<In = (), Out = ()>> =
+                Box::new(IntoSystem::into_system(park_hidden_parts));
+            sys.initialize(w);
+            Self(sys)
+        }
+
+        fn run(&mut self, w: &mut World, n: usize) {
+            for _ in 0..n {
+                self.0.run((), w).unwrap();
+                self.0.apply_deferred(w);
+            }
         }
     }
 
     #[test]
     fn a_part_parks_after_the_hysteresis_and_unparks_when_shown() {
         let (mut w, e) = world();
-        run(&mut w, PARK_AFTER_FRAMES as usize - 1);
+        let mut p = Parker::new(&mut w);
+        p.run(&mut w, PARK_AFTER_FRAMES as usize - 1);
         assert!(w.entity(e).contains::<Mesh3d>(), "not yet");
-        run(&mut w, 1);
+        p.run(&mut w, 1);
         assert!(!w.entity(e).contains::<Mesh3d>(), "parked");
         assert!(w.entity(e).contains::<ParkedMesh>());
         w.entity_mut(e).insert(InheritedVisibility::VISIBLE);
-        run(&mut w, 1);
+        p.run(&mut w, 1);
         assert!(
             w.entity(e).contains::<Mesh3d>(),
             "unparked on the shown frame"
         );
         assert!(!w.entity(e).contains::<ParkedMesh>());
-        assert_eq!(w.entity(e).get::<HiddenFrames>().unwrap().0, 0);
+    }
+
+    /// Only flips are written: a part hidden for good is stamped once, however long it stays.
+    #[test]
+    fn a_still_hidden_part_is_written_once() {
+        let (mut w, e) = world();
+        let mut p = Parker::new(&mut w);
+        p.run(&mut w, 1);
+        let stamped = w.entity(e).get_ref::<HiddenSince>().unwrap().last_changed();
+        p.run(&mut w, PARK_AFTER_FRAMES as usize * 2);
+        assert!(w.entity(e).contains::<ParkedMesh>(), "parked");
+        assert_eq!(
+            w.entity(e).get_ref::<HiddenSince>().unwrap().last_changed(),
+            stamped,
+            "a still hidden part was rewritten"
+        );
     }
 
     /// The world registers the `Mesh3d` hook and required component as Bevy's plugin does.
@@ -166,10 +215,11 @@ mod tests {
             ))
             .id();
         assert_eq!(w.entity(e).get::<VisibilityClass>().unwrap().len(), 1);
-        run(&mut w, PARK_AFTER_FRAMES as usize);
+        let mut p = Parker::new(&mut w);
+        p.run(&mut w, PARK_AFTER_FRAMES as usize);
         assert!(!w.entity(e).contains::<Mesh3d>(), "parked");
         w.entity_mut(e).insert(InheritedVisibility::VISIBLE);
-        run(&mut w, 1);
+        p.run(&mut w, 1);
         assert!(w.entity(e).contains::<Mesh3d>(), "unparked");
         assert_eq!(
             w.entity(e).get::<VisibilityClass>().unwrap().len(),
@@ -181,11 +231,12 @@ mod tests {
     #[test]
     fn a_glance_never_parks() {
         let (mut w, e) = world();
-        run(&mut w, 10);
+        let mut p = Parker::new(&mut w);
+        p.run(&mut w, 10);
         w.entity_mut(e).insert(InheritedVisibility::VISIBLE);
-        run(&mut w, 1);
+        p.run(&mut w, 1);
         w.entity_mut(e).insert(InheritedVisibility::HIDDEN);
-        run(&mut w, 10);
+        p.run(&mut w, 10);
         assert!(w.entity(e).contains::<Mesh3d>(), "the count restarted");
     }
 }

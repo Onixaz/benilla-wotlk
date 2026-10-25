@@ -173,10 +173,17 @@ pub fn pending_len() -> usize {
     with_pending(|p| p.len())
 }
 
+/// The rows [`realize_bound`] revisits: a parked handle is always a fresh binding, and
+/// `ViewVisibility` marks only a hidden-visible flip, so a still binding was settled already.
+type BoundMoved = Or<(
+    Changed<MeshMaterial3d<WowModelMaterial>>,
+    Changed<ViewVisibility>,
+)>;
+
 /// Top of `PostUpdate`, before `AssetEventSystems` and `VisibilityPropagate`: realizes the
 /// material of every bound entity visible last frame and purges every handle reported unused.
 pub(super) fn realize_bound(
-    bound: Query<(&MeshMaterial3d<WowModelMaterial>, Option<&ViewVisibility>)>,
+    bound: Query<(&MeshMaterial3d<WowModelMaterial>, Option<&ViewVisibility>), BoundMoved>,
     mut materials: ResMut<Assets<WowModelMaterial>>,
     mut unused: MessageReader<AssetEvent<WowModelMaterial>>,
 ) {
@@ -330,6 +337,51 @@ mod tests {
             vec![1],
             "the sweep's own frame must carry the `Added`"
         );
+    }
+
+    /// The sweep revisits a binding only when it is rebound or its visibility flips; a still
+    /// frame visits no row (a city holds ~25k bindings).
+    #[test]
+    fn the_sweep_visits_only_moved_bindings() {
+        #[derive(Resource, Default)]
+        struct Visited(usize);
+        use bevy::camera::visibility::SetViewVisibility;
+        fn count(
+            q: Query<(), (With<MeshMaterial3d<WowModelMaterial>>, BoundMoved)>,
+            mut n: ResMut<Visited>,
+        ) {
+            n.0 = q.iter().count();
+        }
+        let mut world = World::new();
+        world.init_resource::<Visited>();
+        let mut schedule = Schedule::default();
+        schedule.add_systems(count);
+        let mut run = |world: &mut World| {
+            world.clear_trackers();
+            schedule.run(world);
+            world.resource::<Visited>().0
+        };
+        let store = Assets::<WowModelMaterial>::default();
+        let a = world
+            .spawn((
+                MeshMaterial3d(store.reserve_handle()),
+                ViewVisibility::HIDDEN,
+            ))
+            .id();
+        world.spawn((
+            MeshMaterial3d(store.reserve_handle()),
+            ViewVisibility::HIDDEN,
+        ));
+        assert_eq!(run(&mut world), 2, "a fresh binding is visited");
+        assert_eq!(run(&mut world), 0, "a still frame visits nothing");
+        world.get_mut::<ViewVisibility>(a).unwrap().set_visible();
+        assert_eq!(run(&mut world), 1, "a flip to visible is visited");
+        world
+            .get_mut::<MeshMaterial3d<WowModelMaterial>>(a)
+            .unwrap()
+            .0 = store.reserve_handle();
+        assert_eq!(run(&mut world), 1, "a rebinding is visited");
+        assert_eq!(run(&mut world), 0);
     }
 
     #[test]
