@@ -118,18 +118,18 @@ fn sync_shadows(
         ),
     >,
     shadows: Query<(Entity, &BlobShadow)>,
-    // The answer changes only when a model or a mount arrives or leaves; any other frame is
-    // skipped.
-    grew: Query<(), Added<ModelAnimations>>,
+    // The answer changes only when a unit's model or a mount arrives or leaves; any other frame
+    // is skipped. A doodad host's model (thousands in a city, waking as they come into view) is no
+    // unit's, and a model leaving matters only to a shadow's owner.
+    grew: Query<(), (Added<ModelAnimations>, With<NetEntity>)>,
     mut shrank: RemovedComponents<ModelAnimations>,
     mounted: Query<(), Added<crate::entities::mount::MountBody>>,
     mut unmounted: RemovedComponents<crate::entities::mount::MountBody>,
 ) {
-    if grew.is_empty()
-        && mounted.is_empty()
-        && shrank.read().next().is_none()
-        && unmounted.read().next().is_none()
-    {
+    let removed: EntityHashSet = shrank.read().collect();
+    let lost_owner = !removed.is_empty() && shadows.iter().any(|(_, s)| removed.contains(&s.owner));
+    let unmounts = unmounted.read().count();
+    if grew.is_empty() && mounted.is_empty() && !lost_owner && unmounts == 0 {
         return;
     }
     let mut shadowed = EntityHashSet::default();
@@ -480,6 +480,51 @@ mod tests {
         // Out-of-range clamps, never negative.
         assert_eq!(shadow_ramp(-1.0), 0.0);
         assert_eq!(shadow_ramp(2.0), 0.0);
+    }
+
+    fn bare_model() -> ModelAnimations {
+        ModelAnimations {
+            graph: Handle::default(),
+            clips: Vec::new(),
+            hand_close: [None, None],
+            playable_animation_lookup: Vec::new(),
+            animation_lookup: Vec::new(),
+            global_bones: Vec::new(),
+            first_seq: None,
+            pose: Default::default(),
+        }
+    }
+
+    /// A unit's model raises its shadow and the model leaving drops it; a doodad host's model (no
+    /// `NetEntity`) raises none.
+    #[test]
+    fn shadows_follow_unit_models_only() {
+        let mut app = App::new();
+        app.add_systems(Update, sync_shadows);
+        let unit = app
+            .world_mut()
+            .spawn((
+                NetEntity {
+                    kind: EntityKind::Unit,
+                    display_id: None,
+                    scale: 1.0,
+                },
+                bare_model(),
+            ))
+            .id();
+        app.world_mut().spawn(bare_model());
+        app.update();
+        let owners = |app: &mut App| {
+            let w = app.world_mut();
+            w.query::<&BlobShadow>()
+                .iter(w)
+                .map(|s| s.owner)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(owners(&mut app), vec![unit]);
+        app.world_mut().entity_mut(unit).remove::<ModelAnimations>();
+        app.update();
+        assert!(owners(&mut app).is_empty(), "the unit's model left");
     }
 
     /// The ±5 clamp is a pre-scale cap, not a floor.
