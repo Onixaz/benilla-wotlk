@@ -1,11 +1,14 @@
-# The release build, `cargo ship`, on every release tag and on demand. Release is built, never
-# tested: the gates test the same code in `dev`, and this catches what only fat LTO can break, the
-# link.
-name: Release build
+# The release, `cargo ship`: when a version bump (`scripts/release/bump.sh`) lands on main, and on
+# demand. Each run builds the player binary for Windows and Linux, which catches what only fat LTO
+# can break, the link; release is built, never tested, as the gates test the same code in `dev`.
+# When main's workspace version has no GitHub release yet, the run publishes one, `v<version>`,
+# creating the tag on the commit it built, with each platform's archive (`scripts/release/package.sh`).
+name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths: [Cargo.toml]
   workflow_dispatch:
 
 permissions:
@@ -13,31 +16,103 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  # A publish half done is worse than a duplicate build.
+  cancel-in-progress: false
 
 jobs:
-  ship:
+  version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          if [[ $GITHUB_REF == refs/heads/main ]] && ! gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "publish=true" >>"$GITHUB_OUTPUT"
+            echo "v$version has no release: publishing it"
+          else
+            echo "publish=false" >>"$GITHUB_OUTPUT"
+            echo "v$version: build only"
+          fi
+
+  ship:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
     # A cold fat-LTO build takes 33 min on 12 threads; the runner has two cores.
     timeout-minutes: 300
+    defaults:
+      run:
+        shell: bash
     env:
       CARGO_TERM_COLOR: always
-      # Two jobs and swap, as ci.yml: the fat-LTO link holds the whole program in memory.
+      # Two jobs, and swap on Linux, as ci.yml: the fat-LTO link holds the whole program in memory.
       CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Free disk space
+        if: runner.os == 'Linux'
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
       - name: Swap
+        if: runner.os == 'Linux'
         run: >-
           sudo fallocate -l 16G /mnt/swapfile && sudo chmod 600 /mnt/swapfile && sudo mkswap /mnt/swapfile
           && sudo swapon /mnt/swapfile
       - name: System libraries
+        if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq pkg-config libasound2-dev libudev-dev
       - name: Toolchain
         run: rustup toolchain install && rustc -V
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: cargo-about
+        run: cargo install --locked cargo-about --version 0.9.2 --features cli
+      # The build stamp's `git describe` names the release the binary is: the tag is local here,
+      # and the publish job creates it on GitHub.
+      - name: Tag
+        if: needs.version.outputs.publish == 'true'
+        run: git tag "v${{ needs.version.outputs.version }}"
       - name: ship
         run: cargo ship
+      - name: Package
+        run: scripts/release/package.sh ${{ matrix.target }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: benilla-${{ matrix.target }}
+          path: dist/benilla-v*.*
+          if-no-files-found: error
+
+  publish:
+    needs: [version, ship]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.version.outputs.version }}
+        run: >-
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
+          --title "benilla $TAG" --generate-notes

@@ -43,3 +43,6 @@ __pycache__/
 # beside `WoW`, or `BENILLA_ADDON_CORPUS`.
 /wow-addons-vanilla
 .mcp.json
+
+# Release archives `scripts/release/package.sh` stages.
+/dist/

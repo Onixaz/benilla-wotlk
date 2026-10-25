@@ -1,0 +1,18 @@
+Third-party software in benilla
+
+benilla is MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE). This binary also contains the crates
+below, each under the license named with it. The MPL-2.0 crates' source is at the repository each
+names, and on crates.io.
+
+{{#each licenses}}
+================================================================================
+{{name}} ({{id}})
+
+Used by:
+{{#each used_by}}
+  {{crate.name}} {{crate.version}}{{#if crate.repository}} <{{crate.repository}}>{{/if}}
+{{/each}}
+
+{{text}}
+
+{{/each}}

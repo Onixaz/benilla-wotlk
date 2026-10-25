@@ -87,6 +87,19 @@ New-Item -ItemType Junction -Path target\release\WoW -Target "C:\Games\World of 
 ln -s /path/to/WoW target/release/WoW
 ```
 
+### Releases
+
+[GitHub Releases](../../releases) carry the `cargo ship` binary for Windows and Linux, each in an
+archive with the licenses and `THIRD-PARTY-LICENSES.txt`, the notices of the open-source code
+inside it. To cut one, bump the version on a branch and land it:
+
+```sh
+scripts/release/bump.sh minor   # or major, patch, X.Y.Z; commits "Release vX.Y.Z"
+```
+
+When the new version reaches `main`, `.github/workflows/release.yml` builds both platforms and
+publishes release `vX.Y.Z`, creating the tag on that commit.
+
 ### Faster with a profile
 
 `cargo play` reads a profile of how the game runs on your machine when you have recorded one, and
