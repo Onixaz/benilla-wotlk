@@ -549,8 +549,6 @@ pub(super) fn deliver(
     if notice == Some(channel_notice::YOU_JOINED) {
         // A confirmed join sets the `ZONECHANNELS` bit (`0x49bbaf`), its only runtime growth.
         channels.note_zone_channel_joined(&event.channel);
-        // A custom channel's confirmed join enters the chat cache's re-join list.
-        channels.note_custom_channel_joined(&event.channel);
         // A slot the walk renamed is numbered already, but its state must return to `Joined`.
         channels.confirm_slot(&event.channel);
     }
@@ -572,6 +570,10 @@ pub(super) fn deliver(
                 super::edit::MAX_CHANNELS
             ),
         }
+    }
+    // A custom channel's confirmed join enters the chat cache's re-join list, under its number.
+    if notice == Some(channel_notice::YOU_JOINED) {
+        channels.note_custom_channel_joined(&event.channel);
     }
     // The wire name, kept before `stamp_channel` decorates arg4 with the slot number.
     let leaving = (notice == Some(channel_notice::YOU_LEFT)).then(|| event.channel.clone());

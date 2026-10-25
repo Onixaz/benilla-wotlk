@@ -564,9 +564,9 @@ fn region_getters_answer_in_the_owners_units_under_scale() {
     assert!((cx - (fl + fr) * 0.5).abs() < 1e-3);
 }
 
-/// The layout cache writes a frame only when it is user-placed (`0x490e8e`) and movable or
-/// resizable (`0x490e97`): the drag start (`0x7652b0` at `0x7652e5`) and the cache's own apply
-/// set the bit past `SetUserPlaced`'s guard (`0x776adb`), so clearing the flags stops the save.
+/// `SavePlacedFrames` writes a frame only when it is user-placed (`0x1000`) and movable or
+/// resizable (`0x300`): the drag start (`0x7652b0` at `0x7652e5`) and the restore set the bit past
+/// `SetUserPlaced`'s guard (`0x776adb`), so clearing the flags stops the save.
 #[test]
 fn the_write_filter_is_user_placed_and_movable_or_resizable() {
     let mut s = script();
@@ -579,13 +579,13 @@ fn the_write_filter_is_user_placed_and_movable_or_resizable() {
         "#,
     )
     .unwrap();
-    let names = |s: &UiScript| {
-        s.user_placed_layouts()
+    let names = |s: &mut UiScript| {
+        s.placed_frames()
             .into_iter()
             .map(|l| l.name)
             .collect::<Vec<_>>()
     };
-    assert_eq!(names(&s), ["CachePanel"], "stamped and resizable — written");
+    assert_eq!(names(&mut s), ["CachePanel"], "stamped and resizable — written");
 
     s.run("CachePanel:SetResizable(false)").unwrap();
     assert!(
@@ -593,33 +593,30 @@ fn the_write_filter_is_user_placed_and_movable_or_resizable() {
         "the stamp itself survives the flag going away — nothing clears it"
     );
     assert!(
-        names(&s).is_empty(),
+        names(&mut s).is_empty(),
         "but the row does not: the fourth conjunct is gone"
     );
 
     s.run("CachePanel:SetMovable(true)").unwrap();
-    assert_eq!(names(&s), ["CachePanel"], "either flag satisfies it");
+    assert_eq!(names(&mut s), ["CachePanel"], "either flag satisfies it");
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The cache's apply seats position only when movable (`0x490600`) and size only when resizable
-/// (`0x490689`), and each arm that runs sets userPlaced (`0x49067e`, `0x490706`); a frame with
-/// neither flag is left alone.
+/// `LoadPlacedFrames` seats the position only on a movable frame and the size only on a
+/// resizable one, each arm stamping userPlaced; a frame with neither flag is left alone. The
+/// snapshot names the point nearest the screen's same point, so it reads back where it was.
 #[test]
-fn the_apply_seats_position_behind_movable_and_size_behind_resizable() {
-    use crate::script::{FrameLayout, LayoutPoint};
+fn the_restore_seats_position_behind_movable_and_size_behind_resizable() {
+    use crate::script::PlacedFrame;
 
-    let row = |name: &str| FrameLayout {
+    let row = |name: &str| PlacedFrame {
         name: name.to_owned(),
-        width: 200.0,
-        height: 80.0,
-        points: vec![LayoutPoint {
-            point: "BOTTOMLEFT".into(),
-            relative_to: None,
-            relative_point: "BOTTOMLEFT".into(),
-            x: 300.0,
-            y: 200.0,
-        }],
+        level: -1,
+        anchor: "BOTTOMLEFT".into(),
+        x: 300,
+        y: 200,
+        w: 200,
+        h: 80,
     };
     // Three frames, one per flag state, all authored identically.
     let mut s = script();
@@ -635,7 +632,7 @@ fn the_apply_seats_position_behind_movable_and_size_behind_resizable() {
                {flags}"#
         ))
         .unwrap();
-        s.restore_user_placed_layouts([row(name)]);
+        s.place_frames([row(name)]);
     }
     s.resolve();
     let read = |s: &UiScript, n: &str| {
@@ -660,14 +657,21 @@ fn the_apply_seats_position_behind_movable_and_size_behind_resizable() {
         (10.0, 200.0, 80.0, true),
         "resizable: given the saved size, left on its authored anchors"
     );
+    let saved = s.placed_frames();
     assert_eq!(
-        s.user_placed_layouts()
-            .into_iter()
-            .map(|l| l.name)
-            .collect::<Vec<_>>(),
+        saved.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(),
         ["Movable", "Sizable"],
         "and only the two that took an arm are written back"
     );
+    assert_eq!(
+        (saved[0].anchor.as_str(), saved[0].x, saved[0].y),
+        ("CENTER", -75, -75),
+        "the centre lies nearest its screen point: (325, 225) against (400, 300)"
+    );
+    // Seated back from that row, the frame stands where it stood.
+    s.place_frames(saved.clone());
+    s.resolve();
+    assert_eq!(read(&s, "Movable"), (300.0, 50.0, 50.0, true));
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 

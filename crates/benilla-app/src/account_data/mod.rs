@@ -190,6 +190,16 @@ pub(crate) fn save_slots(world: &mut World, slots: &[(usize, Vec<u8>)]) {
     }
 }
 
+/// `CGGameUI::Shutdown`'s writes (`0x528f00`), in its order: the chat cache, the macros, the
+/// bindings, the placed frames, then the CVar slots, `Config.wtf` and the flush ([`shutdown`]).
+pub(crate) fn save_ui(world: &mut World) {
+    crate::ui_chat::settings::save_to_account_data(world);
+    crate::ui_macro::save_to_account_data(world);
+    crate::bindings::save_to_account_data(world);
+    crate::ui_layout::save_to_account_data(world);
+    shutdown(world);
+}
+
 /// The CVar half of `CGGameUI::Shutdown` (`0x5290a0`-`0x5290bb`): the camera into its rows, the
 /// account's and the character's `config-cache.wtf`, `Config.wtf`, the character's rows dropped,
 /// and every pending upload sent now (`AccountDataFlush` `0x6b9b90`).
@@ -236,7 +246,7 @@ fn save_on_exit(world: &mut World) {
         return;
     }
     crate::cvars::fold_dying_vm_cvars(world);
-    shutdown(world);
+    save_ui(world);
     // The uploads the flush queued go out before the writer stops.
     let wires = world.resource_mut::<AccountData>().take_outbox();
     if let Some(net) = world.get_resource::<crate::net::NetCommands>() {

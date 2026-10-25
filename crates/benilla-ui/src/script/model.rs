@@ -363,8 +363,6 @@ pub(crate) struct Model {
     pub(crate) logging_chat: bool,
     pub(crate) logging_combat: bool,
     pub(crate) logging_changed: bool,
-    /// A user-placed frame moved or resized, or `SetUserPlaced` ran: the layout cache's save cue.
-    pub(crate) user_placed_changed: bool,
     /// The default chat language; `None` is no player, so `GetDefaultLanguage()` returns nothing.
     pub(crate) default_language: Option<String>,
     /// `AcceptDuel`, `CancelDuel` and `StartDuel` calls; Lua sees duels only through events.
@@ -1288,7 +1286,6 @@ impl Model {
             logging_chat: false,
             logging_combat: false,
             logging_changed: false,
-            user_placed_changed: false,
             default_language: None,
             duel_requests: Vec::new(),
             mirror_timers: Default::default(),

@@ -709,7 +709,6 @@ pub(crate) fn shutdown_ui_state(
         script.fire_event("PLAYER_LEAVING_WORLD", vec![]);
     }
     script.fire_event("PLAYER_LOGOUT", vec![]);
-    crate::ui_layout::save_now(script, identity);
     crate::ui_saved::save(script);
     addons::save_addon_variables(script, identity);
     addons::save_enable_state(script, identity);
@@ -761,13 +760,8 @@ fn close_ui_session(world: &mut World) {
     if ui_never_loaded {
         crate::cvars::drop_character_cvars(world);
     } else {
-        // `CGGameUI::Shutdown`'s order (`0x528f00`): macros, bindings, then the CVar slots.
-        crate::ui_macro::save_to_account_data(world);
-        crate::bindings::save_to_account_data(world);
-        crate::account_data::shutdown(world);
+        crate::account_data::save_ui(world);
     }
-    // The chat cache folds here, not in its own `OnExit(InWorld)` system, which a `/reload` skips.
-    crate::ui_chat::settings::fold_dying_vm_chat_cache(world);
     world.insert_resource(AddOnIdentity(None));
 
     // Host values taken from the dying frame tree go with it (a `VmMemo` resets on its own): the

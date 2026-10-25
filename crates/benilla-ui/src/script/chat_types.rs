@@ -79,11 +79,13 @@ const DEFAULTS: [(&str, [u8; 3]); FIXED_CHAT_TYPES] = [
 /// The 1-based index of `CHANNEL`, the extras' colour source at seed and reset (`0xb74c34`).
 const CHANNEL_INDEX: usize = 18;
 
-/// One registry entry: the type's name and its live colour bytes.
+/// One registry entry: the type's name, its live colour bytes, and whether speakers' names take
+/// their class colour (the chat cache's `Y`/`N`, `+0x48`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatTypeColor {
     pub name: String,
     pub rgb: [u8; 3],
+    pub by_class: bool,
 }
 
 /// A fixed type's shipped colour, matched as `GetChatTypeIndex` matches; `None` for a name the
@@ -102,6 +104,7 @@ pub(super) fn seed() -> Vec<ChatTypeColor> {
         .map(|(name, rgb)| ChatTypeColor {
             name: (*name).to_string(),
             rgb: *rgb,
+            by_class: false,
         })
         .collect();
     let channel = table[CHANNEL_INDEX - 1].rgb;
@@ -109,6 +112,7 @@ pub(super) fn seed() -> Vec<ChatTypeColor> {
         table.push(ChatTypeColor {
             name: format!("CHANNEL{n}"),
             rgb: channel,
+            by_class: false,
         });
     }
     table
@@ -148,11 +152,12 @@ fn from_byte(b: u8) -> f64 {
 impl super::UiScript {
     /// Apply the `COLORS` block of `chat-cache.txt` as the loader does: matched entries
     /// overwritten in place, unknown names ignored.
-    pub fn set_chat_colors(&mut self, colors: impl IntoIterator<Item = (String, [u8; 3])>) {
+    pub fn set_chat_colors(&mut self, colors: impl IntoIterator<Item = (String, [u8; 3], bool)>) {
         let mut model = self.model_mut();
-        for (name, rgb) in colors {
+        for (name, rgb, by_class) in colors {
             if let Some(i) = position(&model.chat_colors, &name) {
                 model.chat_colors[i].rgb = rgb;
+                model.chat_colors[i].by_class = by_class;
             }
         }
     }
@@ -302,9 +307,9 @@ mod tests {
     fn the_cache_block_overwrites_in_place_and_reset_restores_the_seed() {
         let mut s = UiScript::new().unwrap();
         s.set_chat_colors([
-            ("system".to_string(), [1, 2, 3]),
-            ("CHANNEL".to_string(), [9, 9, 9]),
-            ("BOGUS".to_string(), [7, 7, 7]),
+            ("system".to_string(), [1, 2, 3], false),
+            ("CHANNEL".to_string(), [9, 9, 9], false),
+            ("BOGUS".to_string(), [7, 7, 7], true),
         ]);
         let table = s.chat_colors();
         assert_eq!(table.len(), FIXED_CHAT_TYPES + EXTRA_CHAT_TYPES);

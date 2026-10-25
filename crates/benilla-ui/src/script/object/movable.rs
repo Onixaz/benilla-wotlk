@@ -155,11 +155,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 return Err(not_flagged(&model, h, "movable or resizable"));
             }
             if let Some(f) = model.arena.frame_mut(h) {
-                if f.user_placed != flag {
-                    f.user_placed = flag;
-                    // Either transition owes the layout cache a rewrite: a row added or removed.
-                    model.user_placed_changed = true;
-                }
+                f.user_placed = flag;
             }
             Ok(())
         })?,
@@ -328,21 +324,10 @@ pub(crate) fn start_title_move(model: &mut Model, h: FrameHandle) -> bool {
     true
 }
 
-/// Set userPlaced as the drag entry `0x7652b0` does; the layout cache is dirtied only on the
-/// transition, since every title-region click runs this.
+/// Set userPlaced as the drag entry `0x7652b0` does.
 fn set_user_placed(model: &mut Model, h: FrameHandle) {
     if let Some(f) = model.arena.frame_mut(h) {
-        if !f.user_placed {
-            f.user_placed = true;
-            model.user_placed_changed = true;
-        }
-    }
-}
-
-/// A drag moved the frame: if it is user-placed, the layout cache owes its file a rewrite.
-fn mark_user_placed_change(model: &mut Model, h: FrameHandle) {
-    if model.arena.frame(h).is_some_and(|f| f.user_placed) {
-        model.user_placed_changed = true;
+        f.user_placed = true;
     }
 }
 
@@ -442,7 +427,6 @@ pub(crate) fn advance_size(model: &mut Model, pos: (f32, f32)) {
     if moved {
         // No anchor is retargeted, so only this node is touched.
         model.touch_layout_frame(sz.frame);
-        mark_user_placed_change(model, sz.frame);
     }
     model.sizing = Some(FrameSizing { sample: pos, ..sz });
 }
@@ -472,7 +456,6 @@ pub(crate) fn advance_move(model: &mut Model, pos: (f32, f32)) {
             }
             // No target moves, so only this node is touched; a zero delta already returned above.
             model.touch_layout_frame(mv.frame);
-            mark_user_placed_change(model, mv.frame);
         }
     }
     model.moving = Some(FrameMove { sample: pos, ..mv });

@@ -35,9 +35,7 @@ pub(crate) const BINDINGS_ACCOUNT: usize = 2;
 pub(crate) const BINDINGS_CHARACTER: usize = 3;
 pub(crate) const MACROS_ACCOUNT: usize = 4;
 pub(crate) const MACROS_CHARACTER: usize = 5;
-#[cfg(test)]
 pub(crate) const LAYOUT: usize = 6;
-#[cfg(test)]
 pub(crate) const CHAT: usize = 7;
 
 const fn synced(global: bool, cache: &'static str, old: &'static str, gate: &'static str) -> SlotDef {
@@ -262,9 +260,9 @@ impl AccountData {
         self.slots[slot].active && !self.slots[slot].downloading
     }
 
-    /// Every live slot of the scope is ready.
+    /// No live slot of the scope still waits for the server; a scope never opened waits for nothing.
     pub(crate) fn scope_ready(&self, global: bool) -> bool {
-        Self::scope(global).all(|s| self.ready(s))
+        Self::scope(global).all(|s| !self.slots[s].active || !self.slots[s].downloading)
     }
 
     /// The slot's file, once ready; empty when there is none.

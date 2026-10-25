@@ -367,7 +367,7 @@ pub use glyph::{
 pub use inspect::{InspectView, UnitReach};
 pub use item_stats::{item_usable, ItemSetView, ItemTemplateView, PlayerReqState};
 pub use item_text::ItemTextState;
-pub use layout_cache::{FrameLayout, LayoutPoint};
+pub use layout_cache::PlacedFrame;
 pub use lfg::{
     EncounterView, LfgBootView, LfgCatalogView, LfgCompletionRewardView, LfgDungeonRewardView,
     LfgDungeonView, LfgExpansionView, LfgGroupView, LfgLine, LfgMemberLocksView, LfgName,

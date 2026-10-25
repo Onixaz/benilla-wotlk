@@ -358,7 +358,7 @@ fn the_geometry_round_trips_through_the_save_file() {
     assert_ne!(want.0, 430.0, "the resize happened");
     assert_ne!(want.2, 32.0, "the move happened");
 
-    let saved = s.user_placed_layouts();
+    let saved = s.placed_frames();
     assert_eq!(saved.len(), 1, "one window was placed: {saved:?}");
     assert_eq!(saved[0].name, "ChatFrame1");
     let text = crate::ui_layout::render(&saved);
@@ -371,7 +371,7 @@ fn the_geometry_round_trips_through_the_save_file() {
     // A fresh VM is the relog: every window starts on its authored anchors.
     let mut fresh = chat_ui();
     assert_eq!(width(&mut fresh), 430.0);
-    fresh.restore_user_placed_layouts(read_back);
+    fresh.place_frames(read_back);
     fresh.resolve();
     assert_eq!(
         (

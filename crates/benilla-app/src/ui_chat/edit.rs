@@ -105,7 +105,16 @@ pub(crate) struct ChannelState {
     /// cleared before the flush, so the list is kept here: seated from the file, grown by a
     /// confirmed custom join, shrunk by an explicit leave. A channel whose re-join is refused, or
     /// that kicks the player, stays listed until a `/leave`, where the reference's file drops it.
-    pub custom: Vec<String>,
+    pub custom: Vec<SavedChannel>,
+}
+
+/// A channel the chat cache re-joins at login: its header line `<name> <voice> <number>`
+/// (`0x4fd455`), the slot's name, voice flag (`+0xa4`) and number.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SavedChannel {
+    pub(crate) name: String,
+    pub(crate) voice: bool,
+    pub(crate) number: u32,
 }
 
 /// One slot, the reference's `[0xb4fe04] + n*0xa0` record, in the fields this client uses.
@@ -205,19 +214,31 @@ impl ChannelState {
         }
     }
 
-    /// A confirmed join of a channel with no `ChatChannels.dbc` id enters [`Self::custom`].
+    /// A confirmed join of a channel with no `ChatChannels.dbc` id enters [`Self::custom`] under
+    /// the number it holds, or moves an entry already there to it.
     pub(crate) fn note_custom_channel_joined(&mut self, name: &str) {
-        if self.channels.zone_channel_id(name) != 0
-            || self.custom.iter().any(|c| c.eq_ignore_ascii_case(name))
-        {
+        if self.channels.zone_channel_id(name) != 0 {
             return;
         }
-        self.custom.push(name.to_string());
+        let number = self.number_of(name).unwrap_or(0);
+        match self
+            .custom
+            .iter_mut()
+            .find(|c| c.name.eq_ignore_ascii_case(name))
+        {
+            Some(c) => c.number = number,
+            None => self.custom.push(SavedChannel {
+                name: name.to_string(),
+                // The stock `/join` enables voice (`JoinPermanentChannel(…, 1)`).
+                voice: true,
+                number,
+            }),
+        }
     }
 
     /// An explicit leave drops a custom channel, case-insensitively as the server's names are.
     pub(crate) fn note_custom_channel_left(&mut self, name: &str) {
-        self.custom.retain(|c| !c.eq_ignore_ascii_case(name));
+        self.custom.retain(|c| !c.name.eq_ignore_ascii_case(name));
     }
 
     /// Whether the mask carries `id`'s bit, the walk's live predicate `0x49a494`.

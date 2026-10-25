@@ -182,27 +182,6 @@ pub(crate) fn addon_saved_character_dir(realm: &str, character: &str) -> Option<
     home().map(|h| h.join("saved").join(key))
 }
 
-/// `benilla-config/chat/<realm>-<character>.txt`: the chat windows' tint, alpha, font size and
-/// lock, the four the reference keeps in its per-character `chat-cache.txt`.
-pub(crate) fn chat_character_path(realm: &str, character: &str) -> Option<PathBuf> {
-    Some(home()?.join("chat").join(format!(
-        "{}-{}.txt",
-        file_token(realm),
-        file_token(character)
-    )))
-}
-
-/// `benilla-config/layout/<realm>-<character>.txt`: the layout cache, the geometry of every
-/// user-placed frame, as the reference's per-character `layout-cache.txt`; [`crate::ui_layout`]
-/// owns the shape.
-pub(crate) fn layout_character_path(realm: &str, character: &str) -> Option<PathBuf> {
-    Some(home()?.join("layout").join(format!(
-        "{}-{}.txt",
-        file_token(realm),
-        file_token(character)
-    )))
-}
-
 /// `Cache\WDB\<locale>\` (`GetCacheDirectory` `0x667ef0`): the query caches' `.wdb` files
 /// ([`crate::wdb`]), one set per install as the reference keeps them.
 pub(crate) fn wdb_dir(locale: &str) -> Option<PathBuf> {
@@ -397,14 +376,6 @@ mod tests {
             saved_variables_path(),
             Some(tmp.join("benilla-config/saved-variables.lua"))
         );
-        assert_eq!(
-            chat_character_path("Hydraxian Waterlords", "Probeone"),
-            Some(tmp.join("benilla-config/chat/Hydraxian_Waterlords-Probeone.txt"))
-        );
-        assert_eq!(
-            layout_character_path("Hydraxian Waterlords", "Probeone"),
-            Some(tmp.join("benilla-config/layout/Hydraxian_Waterlords-Probeone.txt"))
-        );
 
         assert_eq!(shots_path(), Some(tmp.join("benilla-config/shots.txt")));
         assert_eq!(
@@ -420,16 +391,6 @@ mod tests {
             screenshots_dir(),
             None,
             "a capture writes no player screenshots"
-        );
-        assert_eq!(
-            chat_character_path("Hydraxian Waterlords", "Probeone"),
-            None,
-            "a capture reads no player's chat look"
-        );
-        assert_eq!(
-            layout_character_path("Hydraxian Waterlords", "Probeone"),
-            None,
-            "a capture reads no player's window layout"
         );
         std::fs::remove_dir_all(&tmp).ok();
     }

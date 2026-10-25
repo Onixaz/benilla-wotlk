@@ -141,8 +141,12 @@ pub struct ChatWindowLook {
     pub shown: bool,
     /// `+0x80`: the enabled message-group names, the `MESSAGES … END` block.
     pub messages: Vec<String>,
-    /// `+0xb0`/`+0xc0`: `(name, zone channel id)` pairs, the `CHANNELS … END` block.
+    /// `+0xb0`/`+0xc0`: `(name, zone channel id)` pairs.
     pub channels: Vec<(String, u32)>,
+    /// `+0xb4`/`+0xb8`: the names the window lists by name, its `CHANNELS … END` block.
+    pub named: Vec<String>,
+    /// `+0xc8`: the zone channel ids the window carries, its `ZONECHANNELS` bits.
+    pub zone_ids: Vec<u32>,
     /// `+0xe4`, `UNINTERACTABLE`, off at boot.
     pub uninteractable: bool,
     /// `+0xe8`: the saved anchor's `FRAMEPOINT`, 6 (`BOTTOMLEFT`) at boot.
@@ -177,6 +181,8 @@ impl ChatWindowLook {
         shown: false,
         messages: Vec::new(),
         channels: Vec::new(),
+        named: Vec::new(),
+        zone_ids: Vec::new(),
         uninteractable: false,
         point: 6,
         offset: (0.0, 0.0),
@@ -290,6 +296,11 @@ impl super::Model {
         {
             return false;
         }
+        if id == 0 {
+            look.named.push(name.clone());
+        } else if !look.zone_ids.contains(&id) {
+            look.zone_ids.push(id);
+        }
         look.channels.push((name, id));
         self.chat_window_changes.insert(window);
         true
@@ -306,7 +317,9 @@ impl super::Model {
                 .iter()
                 .position(|(c, _)| c.eq_ignore_ascii_case(key))
             {
-                look.channels.remove(at);
+                let (_, id) = look.channels.remove(at);
+                look.named.retain(|c| !c.eq_ignore_ascii_case(key));
+                look.zone_ids.retain(|z| *z != id || id == 0);
                 self.chat_window_changes.insert(i);
                 stripped = true;
             }
@@ -681,6 +694,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .iter()
                     .any(|(c, _)| c.eq_ignore_ascii_case(&name))
                 {
+                    if !look.named.iter().any(|c| c.eq_ignore_ascii_case(&name)) {
+                        look.named.push(name.clone());
+                    }
+                    if zone_id != 0 && !look.zone_ids.contains(&zone_id) {
+                        look.zone_ids.push(zone_id);
+                    }
                     look.channels.push((name, zone_id));
                 }
             })?;
@@ -727,7 +746,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 }
             };
             with_look(lua, id, |look| {
+                let gone: Vec<u32> = look
+                    .channels
+                    .iter()
+                    .filter(|(c, id)| *id != 0 && c.eq_ignore_ascii_case(&key))
+                    .map(|(_, id)| *id)
+                    .collect();
                 look.channels.retain(|(c, _)| !c.eq_ignore_ascii_case(&key));
+                look.named.retain(|c| !c.eq_ignore_ascii_case(&key));
+                look.zone_ids.retain(|z| !gone.contains(z));
             })
         })?,
     )?;

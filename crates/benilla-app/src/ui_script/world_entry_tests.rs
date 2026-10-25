@@ -86,6 +86,9 @@ fn hermetic_addon(
 /// install.
 fn booted_world() -> World {
     let mut world = World::new();
+    world.init_resource::<crate::cvars::Cvars>();
+    world.init_resource::<crate::account_data::AccountData>();
+    world.init_resource::<crate::ui_layout::LayoutFile>();
     world.init_resource::<super::AddOnIdentity>();
     world.init_resource::<crate::minimap::MinimapZoom>();
     world.init_resource::<super::ReloadUiPending>();
@@ -101,10 +104,33 @@ fn reload(world: &mut World, state: crate::char_select::ClientState) {
     super::run_pending_reload(world);
 }
 
-/// One login as the app drives it: the roster carries the pick, then the world-entry edge runs.
+/// The test account the harness logs in on.
+const ACCOUNT: &str = "TESTACCT";
+
+/// One login as the app drives it: the roster carries the pick, the account data opens and hears
+/// the server's times (sync off), the world-entry edge runs, and the placed frames are restored.
 fn log_in_as(world: &mut World, name: &str, guid: u64) {
+    use bevy::ecs::system::RunSystemOnce;
     world.insert_resource(roster_named(name, guid));
+    {
+        let mut data = world.resource_mut::<crate::account_data::AccountData>();
+        data.initialize(true, crate::local_state::account_dir(ACCOUNT));
+        data.initialize(
+            false,
+            crate::local_state::character_dir(ACCOUNT, "Realm", name),
+        );
+        let times = benilla_protocol::messages::AccountDataTimes {
+            server_time: 1,
+            flag: 1,
+            mask: 0xff,
+            times: [Some(0); 8],
+        };
+        data.on_times(&times, &|_: &crate::account_data::SlotDef| false);
+    }
     super::load_ingame_ui_on_world_entry(world);
+    world
+        .run_system_once(crate::ui_layout::load_layout)
+        .expect("the layout loader ran");
 }
 
 /// What the probe addon captured at file scope this session.
@@ -1039,19 +1065,21 @@ fn place_a_window(world: &mut World) {
         .expect("place the probe window");
 }
 
-/// The layout cache the shutdown left for this character.
+/// The `layout-local.txt` the shutdown left for this character.
 fn layout_cache(character: &str) -> Option<String> {
-    let path = crate::local_state::layout_character_path("Realm", character)?;
-    std::fs::read_to_string(path).ok()
+    let dir = crate::local_state::character_dir(ACCOUNT, "Realm", character)?;
+    std::fs::read_to_string(dir.join("layout-local.txt")).ok()
 }
 
 /// What a saved window's row has to say for the player to get it back.
 fn assert_probe_row(text: &str) {
     for want in [
         "Frame: LayoutProbe",
+        "Anchor: BOTTOMLEFT",
+        "X: 61",
+        "Y: 29",
         "W: 413",
         "H: 147",
-        "Point: BOTTOMLEFT - BOTTOMLEFT 61 29",
     ] {
         assert!(
             text.contains(want),
@@ -1071,7 +1099,7 @@ fn a_placed_window_is_written_at_logout() {
     log_in_as(&mut world, "Onehunter", 1);
     place_a_window(&mut world);
     assert!(
-        layout_cache("Onehunter").is_none(),
+        layout_cache("Onehunter").is_none_or(|t| !t.contains("LayoutProbe")),
         "nothing is written while the session is running"
     );
 
