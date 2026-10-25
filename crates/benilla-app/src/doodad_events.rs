@@ -51,9 +51,7 @@ fn fire_doodad_anim_events(
         // The worklist gate: `active` is `gate_doodad_anim`'s animate-set verdict, written in
         // `PostUpdate`, so it is one frame old here.
         if !host.active {
-            // A resume re-arms rather than replaying what the park skipped.
-            last.remove(&entity);
-            continue;
+            continue; // its track memory is dropped below, so a resume re-arms
         }
         let Some((node, cur)) = host.arm_clock(now) else {
             continue; // a gseq-only host with no sound arm
@@ -71,8 +69,10 @@ fn fire_doodad_anim_events(
             scan_events(clip, entity, prev, cur, &frame, &mut out);
         }
     }
-    // Reap despawned hosts: placements stream in and out by the tens of thousands.
-    last.retain(|e, _| hosts.contains(*e));
+    // Keep only the live, active hosts' tracks: a resume re-arms rather than replaying what the
+    // park skipped, and placements stream in and out by the tens of thousands. The memory holds
+    // the active few, so this costs far less than a removal per inactive host.
+    last.retain(|e, _| hosts.get(*e).is_ok_and(|(_, host, ..)| host.active));
 }
 
 pub(crate) fn plugin(app: &mut App) {
