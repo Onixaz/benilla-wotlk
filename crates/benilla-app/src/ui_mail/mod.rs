@@ -416,8 +416,17 @@ impl MailLookups<'_, '_> {
         row: &MailRow,
         macros: &crate::npc_text::MacroContext,
         get_text: &dyn Fn(&str) -> Option<String>,
+        military: bool,
     ) -> MailInboxRow {
         let e = &row.entry;
+        let sender_guid = row.sender_guid();
+        let sender = self.sender_name(
+            e.sender_entry,
+            u32::from(e.message_type),
+            sender_guid,
+            e.stationery,
+            get_text,
+        );
         let is_gm = e.stationery == STATIONERY_GM;
         let attachments: Vec<Option<MailAttachmentView>> = row
             .slots
@@ -497,9 +506,33 @@ impl MailLookups<'_, '_> {
                 mail_message_type::AUCTION => None,
                 // The profanity filter is not modelled.
                 mail_message_type::NORMAL => Some(e.body.clone()),
-                // The calendar notice's date line (`0x570cd0`) is not modelled; the wire's body
-                // stands.
-                mail_message_type::CALENDAR => Some(e.body.clone()),
+                // The notice's sentence: who, which event and when (`0x570cd0`); a name still in
+                // flight prints as MSVC's `%s` of a null pointer.
+                mail_message_type::CALENDAR => {
+                    let text = |k: &str| get_text(k).unwrap_or_default();
+                    let when = benilla_ui::script::date_time_text(
+                        leading_u64(&e.body) as u32,
+                        military,
+                        &text,
+                    );
+                    let key = if e.flags & mail_flags::CALENDAR_INVITE_REMOVED != 0 {
+                        "CALENDAR_INVITE_REMOVED_MAIL_BODY"
+                    } else {
+                        "CALENDAR_EVENT_REMOVED_MAIL_BODY"
+                    };
+                    let title = e.subject.split_once(':').map_or("", |(_, t)| t);
+                    let who = sender.as_deref().unwrap_or("(null)");
+                    Some(get_text(key).map_or_else(String::new, |t| {
+                        benilla_ui::strings::fill(
+                            &t,
+                            &[
+                                benilla_ui::strings::Arg::S(who),
+                                benilla_ui::strings::Arg::S(title),
+                                benilla_ui::strings::Arg::S(&when),
+                            ],
+                        )
+                    }))
+                }
                 _ => Some(crate::npc_text::substitute(&e.body, macros)),
             }
         };
@@ -533,7 +566,6 @@ impl MailLookups<'_, '_> {
             });
 
         let me = self.self_q.iter().next().map(|(_, g)| g.0);
-        let sender_guid = row.sender_guid();
         // `CanComplain` (`0x56fa70`): a player's unreturned, non-GM mail from neither the player
         // nor a friend.
         let can_complain = me.is_some()
@@ -555,13 +587,7 @@ impl MailLookups<'_, '_> {
             delete_pending: row.delete_pending,
             package_icon,
             stationery_icon,
-            sender: self.sender_name(
-                e.sender_entry,
-                u32::from(e.message_type),
-                sender_guid,
-                e.stationery,
-                get_text,
-            ),
+            sender,
             subject,
             attachments,
             body,
@@ -689,11 +715,14 @@ fn feed_mail(
     };
     let snapshot = |script: &UiScript, mail: &MailOpen| {
         let get_text = |key: &str| script.lua().globals().get::<String>(key).ok();
+        let military = script
+            .cvar("timeMgrUseMilitaryTime")
+            .is_some_and(|v| benilla_ui::script::sstr_to_int(&v) != 0);
         MailState {
             inbox: mail
                 .rows
                 .iter()
-                .map(|r| look.resolve_row(r, &macros, &get_text))
+                .map(|r| look.resolve_row(r, &macros, &get_text, military))
                 .collect(),
             total: mail.total,
         }

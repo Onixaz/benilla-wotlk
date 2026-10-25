@@ -138,6 +138,39 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         )?,
     )?;
 
+    // SetCursorPosition(position) (`0x9769a0` → `0x963350`): a number or raise, truncated, a
+    // negative to 0 and past the end to the length, raising the caret dirty bit.
+    m.set(
+        "SetCursorPosition",
+        lua.create_function(|lua, (this, position): (Table, Value)| {
+            let Some(n) = lua.coerce_number(position)? else {
+                return Err(mlua::Error::runtime(
+                    "Usage: <unnamed>:SetCursorPosition(position)",
+                ));
+            };
+            with_editbox(lua, &this, |eb| {
+                eb.cursor = (n as i64).clamp(0, eb.text.len() as i64) as usize;
+                eb.dirty |= EditBoxState::DIRTY_CURSOR;
+            })
+        })?,
+    )?;
+    // GetCursorPosition() (`0x976a20`): the caret's byte offset.
+    m.set(
+        "GetCursorPosition",
+        lua.create_function(|lua, this: Table| with_editbox(lua, &this, |eb| eb.cursor as i64))?,
+    )?;
+    // GetUTF8CursorPosition() (`0x976a70`): the characters before the caret (`SStrLenUTF8`).
+    m.set(
+        "GetUTF8CursorPosition",
+        lua.create_function(|lua, this: Table| {
+            with_editbox(lua, &this, |eb| {
+                String::from_utf8_lossy(&eb.text.as_bytes()[..eb.cursor.min(eb.text.len())])
+                    .chars()
+                    .count() as i64
+            })
+        })?,
+    )?;
+
     m.set(
         // `GetMaxLetters` (`0x79929f`) reads the field `SetMaxLetters` writes.
         "GetMaxLetters",

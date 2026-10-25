@@ -47,12 +47,6 @@ const NOT_READ: &[(&str, &str)] = &[
         "#234 barber shop prices: GetBarberShopStyleInfo",
     ),
     ("gtNPCManaCostScaler", "#233 NPC spell costs"),
-    ("HolidayDescriptions", "#241 the calendar's holidays"),
-    ("HolidayNames", "#241 the calendar's holidays"),
-    (
-        "Holidays",
-        "#241 the calendar's holidays: CalendarGetHolidayInfo",
-    ),
     (
         "Item",
         "#239 item class, display and sheath by id: GetItemIcon, PickupItem",

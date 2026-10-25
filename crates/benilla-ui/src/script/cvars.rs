@@ -186,7 +186,7 @@ impl super::UiScript {
 
     /// Read one CVar's live value (host side).
     pub fn cvar(&self, name: &str) -> Option<String> {
-        self.model_mut()
+        self.model_ref()
             .cvars
             .get(&name.to_ascii_lowercase())
             .map(|s| s.value.clone())
@@ -349,7 +349,9 @@ pub(super) fn write_cvar(model: &mut Model, name: &str, value: String) -> bool {
         warn_unknown(model, name);
         return false;
     }
-    store(model, &key, value);
+    if store(model, &key, value).is_some() {
+        super::calendar::filter_cvar_written(model, &key);
+    }
     true
 }
 

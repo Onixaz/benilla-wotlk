@@ -93,6 +93,7 @@ pub use unit_menu::{DifficultyState, ReferAFriendState};
 mod worldmap_arrow;
 // `camera_view`: the five camera views and `FlipCameraYaw`, the reference's `UIUtil\Camera.cpp`.
 mod button;
+mod calendar;
 mod calls;
 mod camera_view;
 mod channel;
@@ -120,7 +121,6 @@ pub(crate) mod addon;
 mod addon_enable;
 pub mod addon_gate;
 pub(crate) mod anim;
-mod calendar_clock;
 mod client;
 mod clock;
 mod cvars;
@@ -350,6 +350,14 @@ pub use worldmap_arrow::ARROW_MODEL;
 pub use achievement::{
     achievement_hyperlink, AchievementBook, AchievementCategoryRow, AchievementCriteriaRow,
     AchievementDb, AchievementRow, AchievementUpdate, CriteriaWire, WowDate,
+};
+pub use calendar::{
+    date_time_text, CalendarCatalogView, CalendarCommandResultView, CalendarEventRowView,
+    CalendarEventUpdateView, CalendarEventView, CalendarHolidayRowView, CalendarHolidayView,
+    CalendarInviteAddedView, CalendarInviteAlertView, CalendarInviteRefView, CalendarInviteeView,
+    CalendarLockoutView, CalendarModel, CalendarName, CalendarNewInviteView, CalendarPlayerView,
+    CalendarRequest, CalendarResetView, CalendarSnapshotView, CalendarStatusView, CalendarWire,
+    WowTime,
 };
 pub use companion::{CompanionIntent, CompanionState, CompanionType, CompanionView};
 pub use glyph::{
@@ -970,7 +978,6 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     gm_ticket::install(lua)?;
     duel::install(lua)?;
     mirror_timer::install(lua)?;
-    calendar_clock::install(lua)?;
     follow::install(lua)?;
     camera_view::install(lua)?;
     input_verbs::install(lua)?;
@@ -1033,6 +1040,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     tabard::install(lua)?;
     tradeskill::install(lua)?;
     lfg::install(lua)?;
+    calendar::install(lua)?;
     reputation::install(lua)?;
     skills::install(lua)?;
     item_stats::install(lua)?;

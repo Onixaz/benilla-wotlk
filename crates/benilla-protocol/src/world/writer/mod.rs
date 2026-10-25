@@ -16,6 +16,7 @@ mod auction;
 mod bank;
 mod battlefield;
 mod binder;
+mod calendar;
 mod channel;
 mod chat;
 mod death;

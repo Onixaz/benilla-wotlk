@@ -46,13 +46,13 @@ struct WhoNames<'a> {
 
 /// What the feed last announced, so the list events fire on edges.
 #[derive(Default)]
-pub(super) struct FedSocial {
+pub(crate) struct FedSocial {
     /// Whether the VM has had a snapshot; the first push fires the list events regardless.
     seeded: bool,
 }
 
 /// Push the display snapshot to the VM, fire the list events, and print the owed result lines.
-pub(super) fn feed_social(
+pub(crate) fn feed_social(
     script: Option<NonSendMut<UiScript>>,
     mut social: ResMut<SocialState>,
     names: Res<NameCache>,

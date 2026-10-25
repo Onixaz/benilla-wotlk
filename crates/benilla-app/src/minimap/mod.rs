@@ -871,8 +871,8 @@ fn feed_minimap_player_facing(
 }
 
 /// Push the game clock `GetGameTime()` answers when the minute ticks, the API's own resolution,
-/// and the date `CalendarGetDate()` answers with it. Before the first `SMSG_LOGIN_SETTIMESPEED`
-/// they read 0:00 and the cleared date.
+/// and the calendar's clock with it (`CalendarGetDate()`, an event's alarm). Before the first
+/// `SMSG_LOGIN_SETTIMESPEED` they read 0:00 and the unset date.
 fn feed_game_time(
     script: Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
     time: Res<crate::net::ServerTime>,
@@ -887,8 +887,7 @@ fn feed_game_time(
     }
     *last = Some(minute);
     script.set_game_time(minute / 60, minute % 60);
-    let date = gt.calendar_date();
-    script.set_calendar_date(date.weekday, date.month_day, date.month, date.year);
+    script.set_calendar_clock(gt.calendar_now());
 }
 
 /// The app half of the `<Minimap>` widget. The zone label feed is `crate::area`'s: the reference

@@ -168,7 +168,7 @@ fn cmp_upper(c: u32) -> u32 {
 }
 
 /// `SStrCmpUTF8I` (`0x76ea40`), the name arm: folded code points in order, a shorter string first.
-fn cmp_utf8i(a: &str, b: &str) -> Ordering {
+pub(crate) fn cmp_utf8i(a: &str, b: &str) -> Ordering {
     let fold = |s: &str| s.chars().map(|c| cmp_upper(code(c))).collect::<Vec<_>>();
     fold(a).cmp(&fold(b))
 }
@@ -230,7 +230,7 @@ fn sort_chars_match(
 
 /// `SStrSortUTF8I` (`0x76ec80`), the guild, class, race and zone arms: by base letter, and two
 /// strings equal so far by the first differing raw code point.
-fn sort_utf8i(a: &str, b: &str) -> Ordering {
+pub(crate) fn sort_utf8i(a: &str, b: &str) -> Ordering {
     let (mut s1, mut s2) = (a.chars().peekable(), b.chars().peekable());
     let mut tie = Ordering::Equal;
     loop {

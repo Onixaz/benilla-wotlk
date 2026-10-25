@@ -304,14 +304,15 @@ fn on_clock(In(ev): In<SessionEvent>, mut b: Bridge) {
             hours,
             minutes,
             day_serial,
-            date,
             timescale,
+            packed,
+            zone,
         } => time_speed(
             hours,
             minutes,
             day_serial,
-            date,
             timescale,
+            (packed, zone),
             &mut b.server_time,
         ),
         SessionEvent::ServerUnixTime { unix_time } => {
@@ -655,19 +656,19 @@ fn worldport(
     });
 }
 
-/// `SMSG_LOGIN_SETTIMESPEED`: the game clock that drives day/night lighting.
+/// `SMSG_LOGIN_SETTIMESPEED`: the game clock that drives day/night lighting and the calendar.
 fn time_speed(
     hours: u8,
     minutes: u8,
     day_serial: u32,
-    date: benilla_protocol::messages::GameDate,
     timescale: f32,
+    (packed, zone): (u32, i32),
     server_time: &mut ServerTime,
 ) {
     if server_time.0.is_none() {
         info!("net: server game-time {hours:02}:{minutes:02} (drives lighting)");
     }
-    server_time.0 = Some(GameTime::new(hours, minutes, day_serial, date, timescale));
+    server_time.0 = Some(GameTime::new(hours, minutes, day_serial, timescale).dated(packed, zone));
 }
 
 /// `SMSG_QUERY_TIME_RESPONSE`: the server wall clock that absolute descriptor stamps (the

@@ -144,8 +144,11 @@ pub(super) struct GroupList {
     pub lfg_restricted: bool,
     pub lfg_status: u8,
     pub lfg_slot: u32,
+    pub battleground: bool,
 }
 
+/// 3.3.5a's group-type battleground bit (`0x6d8870` tests `& 1`).
+const GROUP_TYPE_BATTLEGROUND: u8 = 0x01;
 /// 3.3.5a's group-type raid bit (`0x6d8870` tests `& 2`); `& 1` is a battleground group.
 const GROUP_TYPE_RAID: u8 = 0x02;
 /// 3.3.5a's group-type LFG-restricted bit, `SetLfgRestricted`'s argument (`0x6d8da2`).
@@ -229,6 +232,7 @@ pub(super) fn read_group_list(r: &mut &[u8]) -> io::Result<GroupList> {
         lfg_restricted: raw_type & GROUP_TYPE_LFG_RESTRICTED != 0,
         lfg_status,
         lfg_slot,
+        battleground: raw_type & GROUP_TYPE_BATTLEGROUND != 0,
     })
 }
 

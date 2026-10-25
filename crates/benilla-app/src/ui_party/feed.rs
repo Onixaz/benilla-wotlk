@@ -307,6 +307,8 @@ pub(super) fn feed_party(
         loot_method,
         master_looter,
         loot_threshold,
+        real_party_members: group.real_party_members,
+        real_raid_members: group.real_raid_members,
     };
     if fed.pushed_party.as_ref() != Some(&fresh) {
         gate.audit("feed_party", "the roster snapshot");

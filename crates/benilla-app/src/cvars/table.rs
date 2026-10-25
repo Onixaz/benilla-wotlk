@@ -346,6 +346,15 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("nameplateAllowOverlap", "1").per_character(),
     same("PushToTalkSound", "0"),
     same("timeMgrAlarmEnabled", "0"),
+    // `0x51ef47`: "0" in enUS, koKR and esMX, "1" elsewhere; the calendar's clock text reads it.
+    same("timeMgrUseMilitaryTime", "0"),
+    // `0x51eaf1`-`0x51eb92`, flags 0x20: the calendar's five filters (`SetCalendarFilterCVarCallback`
+    // `0x5127a0`).
+    same("calendarShowWeeklyHolidays", "1").per_character(),
+    same("calendarShowDarkmoon", "1").per_character(),
+    same("calendarShowBattlegrounds", "0").per_character(),
+    same("calendarShowLockouts", "1").per_character(),
+    same("calendarShowResets", "0").per_character(),
     same("threatShowNumeric", "0"),
     same("threatPlaySounds", "1"),
     same("ShowClassColorInNameplate", "0").per_character(),

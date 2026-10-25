@@ -41,20 +41,15 @@ fn simple_server_bodies_parse() {
             hours,
             minutes,
             day_serial,
-            date,
             timescale,
+            packed,
+            ..
         } => {
             assert_eq!((hours, minutes), (14, 30));
             assert_eq!(day_serial, 26 * 372 + 6 * 31 + 17);
-            assert_eq!(
-                date,
-                messages::GameDate {
-                    weekday: 3,
-                    month_day: 17,
-                    month: 6,
-                    year: 26
-                }
-            );
+            // The weekday, day, month and year ride the packed word whole.
+            assert_eq!((packed >> 11) & 0x7, 3);
+            assert_eq!((packed >> 14) & 0x3f, 17);
             assert_eq!(timescale, 0.0166_6667);
         }
         _ => panic!("settimespeed"),
@@ -66,7 +61,9 @@ fn simple_server_bodies_parse() {
     )
     .unwrap()
     {
-        ServerPacket::CalendarNumPending { count } => assert_eq!(count, 2),
+        ServerPacket::Calendar(messages::CalendarPacket::NumPending(count)) => {
+            assert_eq!(count, 2)
+        }
         _ => panic!("calendar num pending"),
     }
 }

@@ -49,6 +49,11 @@ impl MapCatalog {
         self.names.get(&map_id).map(String::as_str)
     }
 
+    /// Every named map, `(id, name)`.
+    pub fn names(&self) -> impl Iterator<Item = (u32, &str)> + '_ {
+        self.names.iter().map(|(&id, n)| (id, n.as_str()))
+    }
+
     /// `LoadingScreenID` for `map_id`, to resolve against [`crate::LoadingScreenCatalog`].
     pub fn loading_screen_id(&self, map_id: u32) -> Option<u32> {
         self.loading_screens.get(&map_id).copied()

@@ -13,6 +13,7 @@ mod bank;
 mod battlefield;
 mod binder;
 mod broadcast;
+mod calendar;
 mod channel;
 mod chat;
 mod client;
@@ -106,6 +107,12 @@ pub use battlefield::{
     PvpLogData, PvpLogRow, PvpLogTeam, BATTLEFIELD_POSITIONS_MAX,
 };
 pub use binder::{binder_activate, PlayerBound};
+pub use calendar::{
+    CalendarCommand, CalendarCommandResult, CalendarEventDetail, CalendarEventFields,
+    CalendarEventRow, CalendarEventUpdate, CalendarHolidayRow, CalendarInviteAdded,
+    CalendarInviteAlert, CalendarInviteRef, CalendarInvitee, CalendarLockout, CalendarNewInvite,
+    CalendarPacket, CalendarReset, CalendarSnapshot, CalendarStatusUpdate,
+};
 pub use channel::{channel_notice, ChannelNoticeTail, ChannelNotify};
 pub use chat::{
     chat_tag, ChatMessage, CHAT_MSG_ACHIEVEMENT, CHAT_MSG_AFK, CHAT_MSG_BATTLEGROUND,
@@ -219,7 +226,7 @@ pub use movement::{
     CLASSIC_ASCENDING, CLASSIC_CAN_FLY, CLASSIC_DESCENDING, CLASSIC_FLYING,
 };
 pub use opcode_names::opcode_name;
-pub use packet::{CreatureQueryInfo, GameDate, MonsterMoveFacing, ServerPacket};
+pub use packet::{CreatureQueryInfo, MonsterMoveFacing, ServerPacket};
 pub use page_text::page_text_query;
 pub use parse::{parse_auth_response_wotlk, parse_server, parse_server_with_tail};
 pub use pet::{

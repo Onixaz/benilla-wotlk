@@ -334,6 +334,8 @@ mod lfg_dungeons;
 pub use lfg_dungeons::{
     load_lfg_catalog, LfgCatalog, LfgDungeon, LfgDungeonExpansion, LfgDungeonGroup,
 };
+mod holidays;
+pub use holidays::{load_holidays, Holiday};
 mod map_difficulty;
 pub use map_difficulty::{find_map_difficulty, load_map_difficulties, MapDifficulty};
 mod world_map_continent;

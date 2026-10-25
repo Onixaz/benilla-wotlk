@@ -97,6 +97,10 @@ pub struct PartyState {
     pub master_looter: Option<u32>,
     /// `GetLootThreshold`'s item quality, `2..=4` once grouped.
     pub loot_threshold: u32,
+    /// `CGPartyInfo::m_realNumMembers` and `CGRaidInfo::m_realNumMembers`: the group outside a
+    /// battleground, which a battleground's list leaves as it was (`0x6d8d42`-`0x6d8d84`).
+    pub real_party_members: u32,
+    pub real_raid_members: u32,
 }
 
 /// Outbound party and raid intents, drained by the app ([`UiScript::take_party_requests`]) into
@@ -316,6 +320,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             Ok(model.party.raid.len() as i64)
+        })?,
+    )?;
+
+    // GetRealNumPartyMembers() (`0x52c190`) and GetRealNumRaidMembers() (`0x572b80`).
+    g.set(
+        "GetRealNumPartyMembers",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(f64::from(model.party.real_party_members))
+        })?,
+    )?;
+    g.set(
+        "GetRealNumRaidMembers",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(f64::from(model.party.real_raid_members))
         })?,
     )?;
 
@@ -898,6 +922,8 @@ mod tests {
             loot_method: "group".into(),
             master_looter: None,
             loot_threshold: 2,
+            real_party_members: 0,
+            real_raid_members: 0,
         }
     }
 
@@ -1592,6 +1618,8 @@ mod tests {
             loot_method: "group".into(),
             master_looter: None,
             loot_threshold: 2,
+            real_party_members: 0,
+            real_raid_members: 0,
         }
     }
 

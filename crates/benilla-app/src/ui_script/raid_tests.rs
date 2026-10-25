@@ -70,6 +70,8 @@ fn push_raid(s: &mut UiScript, raid: Vec<RaidMemberInfo>) {
         loot_method: "group".into(),
         master_looter: None,
         loot_threshold: 2,
+        real_party_members: 0,
+        real_raid_members: 0,
     });
     s.fire_event("RAID_ROSTER_UPDATE", Vec::new());
 }

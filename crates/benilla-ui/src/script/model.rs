@@ -4,13 +4,13 @@ use crate::layout::{LayoutInput, LayoutSolver, Rect};
 use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
-    auction, backdrop, bank, bind_confirm, camera_view, char_stats, chat_window, colorselect,
-    combat_log, container, cursor, death, duel, follow, gossip, guild, inspect, item_text, lfg,
-    loot, loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp,
-    quest, quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable,
-    taxi, trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
-    ItemTemplateView, MusicRequest, PlayerReqState, RegionData, ScriptValue, SoundRequest,
-    UnitState, UnitTokenParse,
+    auction, backdrop, bank, bind_confirm, calendar, camera_view, char_stats, chat_window,
+    colorselect, combat_log, container, cursor, death, duel, follow, gossip, guild, inspect,
+    item_text, lfg, loot, loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party,
+    petition, pvp, quest, quest_log, reputation, session, simplehtml, skills, slider, social,
+    spellbook, stable, taxi, trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot,
+    AuraState, FontObject, ItemTemplateView, MusicRequest, PlayerReqState, RegionData, ScriptValue,
+    SoundRequest, UnitState, UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -371,10 +371,6 @@ pub(crate) struct Model {
     pub(crate) duel_requests: Vec<duel::DuelRequest>,
     /// The three mirror-timer records (`0xbd0b80`); `None` is an empty one.
     pub(crate) mirror_timers: [Option<mirror_timer::MirrorTimer>; 3],
-    /// Today's game date, 0-based: weekday, day of the month, month, years since 2000.
-    pub(crate) calendar_date: (u8, u8, u8, u8),
-    /// The server's pending calendar invite count.
-    pub(crate) calendar_pending_invites: u32,
     /// `FollowUnit` and `FollowByName` calls; Lua sees following only as `AUTOFOLLOW_*` events.
     pub(crate) follow_requests: Vec<follow::FollowRequest>,
     /// `SetView`, `SaveView`, `ResetView`, `NextView`, `PrevView` and `FlipCameraYaw` calls; the
@@ -746,6 +742,9 @@ pub(crate) struct Model {
 
     /// The dungeon finder (`CGLookingForGroup`).
     pub(crate) lfg: lfg::LfgModel,
+
+    /// The calendar (`CGCalendar`).
+    pub(crate) calendar: calendar::CalendarModel,
 
     /// `EquipPendingItem`/`CancelPendingEquip` answers in order, and `ConfirmBindOnUse()` calls.
     pub(crate) pending_equip_answers: Vec<bind_confirm::PendingEquipAnswer>,
@@ -1293,8 +1292,6 @@ impl Model {
             default_language: None,
             duel_requests: Vec::new(),
             mirror_timers: Default::default(),
-            calendar_date: (0, 0, 0, 0),
-            calendar_pending_invites: 0,
             follow_requests: Vec::new(),
             camera_view_requests: Vec::new(),
             session_requests: Vec::new(),
@@ -1465,6 +1462,7 @@ impl Model {
             taxi_riding: false,
             trade_skill: Default::default(),
             lfg: Default::default(),
+            calendar: Default::default(),
             loot: None,
             pending_equip_answers: Vec::new(),
             bind_on_use_confirms: 0,

@@ -134,6 +134,7 @@ fn catalog_of(
                 difficulty: d.difficulty,
                 flags: d.flags,
                 type_id: d.type_id,
+                faction: d.faction,
                 texture: d.texture,
                 expansion_level: d.expansion_level,
                 order_index: d.order_index,

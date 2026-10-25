@@ -13,7 +13,7 @@ mod engine;
 mod tests;
 
 pub(super) use api::install;
-pub(crate) use engine::LfgModel;
+pub(crate) use engine::{Catalog, LfgModel};
 
 use super::ScriptValue;
 
@@ -31,6 +31,8 @@ pub struct LfgDungeonView {
     pub difficulty: i32,
     pub flags: i32,
     pub type_id: i32,
+    /// The side that sees the row, 0 Horde, 1 Alliance, -1 both.
+    pub faction: i32,
     pub texture: String,
     pub expansion_level: i32,
     pub order_index: i32,

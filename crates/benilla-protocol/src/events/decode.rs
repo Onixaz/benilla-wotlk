@@ -165,6 +165,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             vec![SessionEvent::ZoneUnderAttack { area_id }]
         }
         ServerPacket::Lfg(packet) => vec![SessionEvent::Lfg(packet)],
+        ServerPacket::Calendar(packet) => vec![SessionEvent::Calendar(packet)],
         ServerPacket::InstanceDifficulty {
             difficulty,
             dynamic,
@@ -601,6 +602,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             lfg_restricted,
             lfg_status,
             lfg_slot,
+            battleground,
         } => vec![SessionEvent::GroupList {
             group_type,
             own_flags,
@@ -612,6 +614,16 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             lfg_restricted,
             lfg_status,
             lfg_slot,
+            battleground,
+        }],
+        ServerPacket::RealGroupUpdate {
+            flags,
+            count,
+            leader,
+        } => vec![SessionEvent::RealGroupUpdate {
+            flags,
+            count,
+            leader,
         }],
         ServerPacket::PartyCommandResult {
             operation,
@@ -823,18 +835,17 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             hours,
             minutes,
             day_serial,
-            date,
             timescale,
+            packed,
+            zone,
         } => vec![SessionEvent::TimeSpeed {
             hours,
             minutes,
             day_serial,
-            date,
             timescale,
+            packed,
+            zone,
         }],
-        ServerPacket::CalendarNumPending { count } => {
-            vec![SessionEvent::CalendarNumPending { count }]
-        }
         ServerPacket::QueryTimeResponse { unix_time } => {
             vec![SessionEvent::ServerUnixTime { unix_time }]
         }

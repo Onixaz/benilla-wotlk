@@ -788,6 +788,10 @@ pub(crate) fn run_pending_reload(world: &mut World) {
     let combat_log = world
         .get_non_send_resource_mut::<UiScript>()
         .map(|mut s| s.take_combat_log());
+    // So does the calendar (`CGCalendar`'s statics, `0xc207e8`-`0xc20f90`).
+    let calendar = world
+        .get_non_send_resource_mut::<UiScript>()
+        .map(|mut s| s.take_calendar());
     // A boot VM, never the glue's: the reload builds no glue, and the load replaces this VM at
     // once.
     close_ui_session(world);
@@ -797,6 +801,11 @@ pub(crate) fn run_pending_reload(world: &mut World) {
         (combat_log, world.get_non_send_resource_mut::<UiScript>())
     {
         script.restore_combat_log(store);
+    }
+    if let (Some(calendar), Some(mut script)) =
+        (calendar, world.get_non_send_resource_mut::<UiScript>())
+    {
+        script.restore_calendar(calendar);
     }
     // `UI_Init` ends by re-entering the world-enter cascade (`0x490168`), its sends included, but
     // only with the active player set (`0x490166 je`): our own player's entity exists. Not

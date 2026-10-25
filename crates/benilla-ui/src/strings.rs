@@ -1,7 +1,7 @@
 //! Fills the `%` holes of a `GlobalStrings.lua` or `GlueStrings.lua` template read at runtime, as
 //! the client's `SStrPrintf` does: `%s`, `%d`, `%c`, `%f` and `%g` take the next argument left to
 //! right, `%N$s` takes argument N without moving that cursor (`DUEL_WINNER_RETREAT` reorders its
-//! two names), `%%` is `%`, and the precision is the template's. A hole with no argument, or one
+//! two names), `%%` is `%`, and the width, `-`/`0` flags and precision are the template's. A hole with no argument, or one
 //! this does not know, is copied through literally so a mis-modelled template shows. Reals round
 //! as the MSVC CRT behind `SStrPrintf` does: half up on the decimal digits ([`crt_digits`]).
 
@@ -207,6 +207,12 @@ struct Spec {
     positional: Option<usize>,
     /// `.N`.
     precision: Option<usize>,
+    /// The minimum width, padded with spaces, or zeros under `0` for a number (`TIME_TWELVEHOURAM`'s
+    /// `%02d`).
+    width: usize,
+    /// `-`: pad on the right.
+    left: bool,
+    zero: bool,
     conv: char,
     /// Index just past the conversion letter.
     end: usize,
@@ -231,10 +237,13 @@ fn parse_spec(chars: &[char], after_percent: usize) -> Option<Spec> {
         positional = n.parse::<usize>().ok();
         i = probe + 1;
     }
-    while matches!(chars.get(i), Some('-' | '+' | ' ' | '#' | '0')) {
+    let (mut left, mut zero) = (false, false);
+    while let Some(c @ ('-' | '+' | ' ' | '#' | '0')) = chars.get(i) {
+        left |= *c == '-';
+        zero |= *c == '0';
         i += 1;
     }
-    let _width = digits(&mut i);
+    let width = digits(&mut i).parse::<usize>().unwrap_or(0);
     let precision = (chars.get(i) == Some(&'.')).then(|| {
         i += 1;
         digits(&mut i).parse::<usize>().unwrap_or(0)
@@ -243,6 +252,9 @@ fn parse_spec(chars: &[char], after_percent: usize) -> Option<Spec> {
     matches!(conv, 's' | 'd' | 'c' | 'f' | 'g').then_some(Spec {
         positional,
         precision,
+        width,
+        left,
+        zero,
         conv,
         end: i + 1,
     })
@@ -276,6 +288,28 @@ pub fn plural(
     get(token).filter(|s| !s.is_empty())
 }
 
+/// Append `piece` padded to the specifier's width: zeros go after a number's sign.
+fn pad(out: &mut String, piece: &str, spec: &Spec) {
+    let short = spec.width.saturating_sub(piece.chars().count());
+    if short == 0 {
+        out.push_str(piece);
+    } else if spec.left {
+        out.push_str(piece);
+        out.extend(std::iter::repeat_n(' ', short));
+    } else if spec.zero && matches!(spec.conv, 'd' | 'f' | 'g') {
+        let (sign, digits) = match piece.strip_prefix('-') {
+            Some(rest) => ("-", rest),
+            None => ("", piece),
+        };
+        out.push_str(sign);
+        out.extend(std::iter::repeat_n('0', short));
+        out.push_str(digits);
+    } else {
+        out.extend(std::iter::repeat_n(' ', short));
+        out.push_str(piece);
+    }
+}
+
 /// Fill a reference template, by the rules in the module doc.
 pub fn fill(template: &str, args: &[Arg<'_>]) -> String {
     let mut out = String::with_capacity(template.len() + 16);
@@ -306,12 +340,14 @@ pub fn fill(template: &str, args: &[Arg<'_>]) -> String {
         };
         match idx.and_then(|k| args.get(k)) {
             Some(a) => {
+                let mut piece = String::new();
                 match spec.conv {
-                    's' | 'c' => a.as_s(&mut out),
-                    'd' => a.as_d(&mut out),
-                    'f' => a.as_f(spec.precision, &mut out),
-                    _ => a.as_g(spec.precision, &mut out),
+                    's' | 'c' => a.as_s(&mut piece),
+                    'd' => a.as_d(&mut piece),
+                    'f' => a.as_f(spec.precision, &mut piece),
+                    _ => a.as_g(spec.precision, &mut piece),
                 }
+                pad(&mut out, &piece, &spec);
                 if spec.positional.is_none() {
                     next += 1;
                 }
@@ -337,6 +373,17 @@ mod tests {
         assert_eq!(fill("%s: %d/%d", &[Arg::S("MC"), Arg::D(2)]), "MC: 2/%d");
         assert_eq!(fill("100%% sure", &[]), "100% sure");
         assert_eq!(fill("no fills", &[Arg::D(7)]), "no fills");
+    }
+
+    /// A width pads with spaces, or zeros under `0`, on the left unless `-` (`TIME_TWELVEHOURAM`).
+    #[test]
+    fn widths_pad_as_the_crt_does() {
+        assert_eq!(fill("%d:%02d AM", &[Arg::D(9), Arg::D(5)]), "9:05 AM");
+        assert_eq!(fill("%02d", &[Arg::D(-5)]), "-5");
+        assert_eq!(fill("%03d", &[Arg::D(-5)]), "-05");
+        assert_eq!(fill("[%4s]", &[Arg::S("ab")]), "[  ab]");
+        assert_eq!(fill("[%-4s]", &[Arg::S("ab")]), "[ab  ]");
+        assert_eq!(fill("%02d", &[Arg::D(123)]), "123");
     }
 
     #[test]
@@ -477,7 +524,7 @@ mod tests {
 
     #[test]
     fn widths_and_flags_do_not_derail_the_scan() {
-        assert_eq!(fill("%5d|%-3s", &[Arg::D(7), Arg::S("x")]), "7|x");
+        assert_eq!(fill("%5d|%-3s", &[Arg::D(7), Arg::S("x")]), "    7|x  ");
         assert_eq!(fill("%.1f and %.1f", &[Arg::F(1.0)]), "1.0 and %.1f");
         // `%1 ` never reaches a conversion letter, so the `%` stays literal.
         assert_eq!(fill("100%1 of it", &[Arg::D(3)]), "100%1 of it");

@@ -65,16 +65,6 @@ pub struct CreatureQueryInfo {
     pub power_modifier: f32,
 }
 
-/// A packed date's fields, 0-based as `WowTime::WowDecodeTime` (`0x76c970`) leaves them: the
-/// weekday (0 Sunday), the day of the month, the month and the years since 2000.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct GameDate {
-    pub weekday: u8,
-    pub month_day: u8,
-    pub month: u8,
-    pub year: u8,
-}
-
 /// A decoded server packet; an unmodelled opcode is [`Self::Other`].
 pub enum ServerPacket {
     AuthChallenge {
@@ -198,13 +188,10 @@ pub enum ServerPacket {
         minutes: u8,
         /// Day count from the packed date, `year·372 + month·31 + day`; drives the moon phase.
         day_serial: u32,
-        /// The packed date's own fields.
-        date: GameDate,
         timescale: f32,
-    },
-    /// `SMSG_CALENDAR_SEND_NUM_PENDING`: how many calendar invites wait on an answer.
-    CalendarNumPending {
-        count: u32,
+        /// The packed `WowTime` word whole, the calendar's date.
+        packed: u32,
+        zone: i32,
     },
     /// `SMSG_QUERY_TIME_RESPONSE`: wall-clock unix seconds, the base of absolute descriptor stamps.
     QueryTimeResponse {
@@ -526,6 +513,8 @@ pub enum ServerPacket {
     },
     /// The dungeon finder's server messages.
     Lfg(crate::messages::LfgPacket),
+    /// Every calendar message (`PH_CALENDAR_GROUP` `0x5c3fe0`, the command result `0x6cd380`).
+    Calendar(crate::messages::CalendarPacket),
     /// `SMSG_INSTANCE_DIFFICULTY`: the entered map's difficulty and its dynamic difficulty.
     InstanceDifficulty {
         difficulty: u32,
@@ -1063,6 +1052,14 @@ pub enum ServerPacket {
         lfg_status: u8,
         /// Group-type bit `0x08`'s dungeon slot, `CGPartyInfo::m_lfgSlot`; 0 otherwise.
         lfg_slot: u32,
+        /// Group-type bit `0x01`: a battleground's group, which leaves the real group's counts.
+        battleground: bool,
+    },
+    /// `SMSG_REAL_GROUP_UPDATE`: the group outside the battleground, while in one.
+    RealGroupUpdate {
+        flags: u8,
+        count: u32,
+        leader: u64,
     },
     /// `SMSG_PARTY_COMMAND_RESULT`: `operation` a [`super::group::party_operation`], `result` a
     /// [`super::group::party_result`].
@@ -1415,7 +1412,6 @@ impl ServerPacket {
             ServerPacket::TransferAborted { .. } => "SMSG_TRANSFER_ABORTED".into(),
             ServerPacket::LoginVerifyWorld { .. } => "SMSG_LOGIN_VERIFY_WORLD".into(),
             ServerPacket::TimeSpeed { .. } => "SMSG_LOGIN_SETTIMESPEED".into(),
-            ServerPacket::CalendarNumPending { .. } => "SMSG_CALENDAR_SEND_NUM_PENDING".into(),
             ServerPacket::QueryTimeResponse { .. } => "SMSG_QUERY_TIME_RESPONSE".into(),
             ServerPacket::BindPoint { .. } => "SMSG_BINDPOINTUPDATE".into(),
             ServerPacket::GmTicketAnswer { .. } => "SMSG_GMTICKET_GETTICKET".into(),
@@ -1512,6 +1508,7 @@ impl ServerPacket {
             ServerPacket::ZoneUnderAttack { .. } => "SMSG_ZONE_UNDER_ATTACK".into(),
             ServerPacket::DefenseMessage { .. } => "SMSG_DEFENSE_MESSAGE".into(),
             ServerPacket::Lfg(p) => p.name().into(),
+            ServerPacket::Calendar(p) => p.name().into(),
             ServerPacket::InstanceDifficulty { .. } => "SMSG_INSTANCE_DIFFICULTY".into(),
             ServerPacket::ChatRestricted => "SMSG_CHAT_RESTRICTED".into(),
             ServerPacket::PlayedTime { .. } => "SMSG_PLAYED_TIME".into(),
@@ -1687,6 +1684,7 @@ impl ServerPacket {
             ServerPacket::GroupLeaderChanged { .. } => "SMSG_GROUP_SET_LEADER".into(),
             ServerPacket::GroupDestroyed => "SMSG_GROUP_DESTROYED".into(),
             ServerPacket::GroupList { .. } => "SMSG_GROUP_LIST".into(),
+            ServerPacket::RealGroupUpdate { .. } => "SMSG_REAL_GROUP_UPDATE".into(),
             ServerPacket::PartyCommandResult { .. } => "SMSG_PARTY_COMMAND_RESULT".into(),
             ServerPacket::PartyMemberStats { full: true, .. } => {
                 "SMSG_PARTY_MEMBER_STATS_FULL".into()

@@ -347,12 +347,12 @@ pub enum SessionEvent {
         minutes: u8,
         /// `year·372 + month·31 + day` of the packed server date; the moon phase's input.
         day_serial: u32,
-        /// The packed date's own fields, `CalendarGetDate`'s source.
-        date: crate::messages::GameDate,
         timescale: f32,
+        /// The packed `WowTime` word whole, the calendar's date.
+        packed: u32,
+        /// The server's zone offset in hours.
+        zone: i32,
     },
-    /// `SMSG_CALENDAR_SEND_NUM_PENDING`: the pending calendar invite count.
-    CalendarNumPending { count: u32 },
     /// The server's wall clock in unix seconds (`SMSG_QUERY_TIME_RESPONSE`), the base of absolute
     /// descriptor stamps: a timed quest's deadline is `time(nullptr) + limitTime`.
     ServerUnixTime { unix_time: u32 },
@@ -653,6 +653,8 @@ pub enum SessionEvent {
     DefenseMessage { zone_id: u32, text: String },
     /// A dungeon finder message, applied by the app's `CGLookingForGroup` port.
     Lfg(crate::messages::LfgPacket),
+    /// A calendar message, applied by the VM's `CGCalendar` port.
+    Calendar(crate::messages::CalendarPacket),
     /// `SMSG_INSTANCE_DIFFICULTY`: the entered map's difficulty, 0-based, and the dynamic one.
     InstanceDifficulty { difficulty: u32, dynamic: u32 },
     /// A trial account's whisper cap (`SMSG_CHAT_RESTRICTED`, empty body): `DisplayError(0x1c3)`.
@@ -1073,7 +1075,11 @@ pub enum SessionEvent {
         lfg_status: u8,
         /// Group-type bit `0x08`'s dungeon slot, `CGPartyInfo::m_lfgSlot`; 0 otherwise.
         lfg_slot: u32,
+        /// Group-type bit `0x01`: a battleground's group.
+        battleground: bool,
     },
+    /// The group outside the battleground (`SMSG_REAL_GROUP_UPDATE`): `0x2` in `flags` a raid.
+    RealGroupUpdate { flags: u8, count: u32, leader: u64 },
     /// A group command's verdict (`SMSG_PARTY_COMMAND_RESULT`): a
     /// [`crate::messages::party_operation`] and a [`crate::messages::party_result`] code.
     PartyCommandResult {

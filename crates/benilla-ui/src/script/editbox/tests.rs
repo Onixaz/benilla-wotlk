@@ -353,6 +353,26 @@ fn max_letters_trims_from_the_end() {
     assert_eq!(s.eval::<i64>("return E:GetNumLetters()").unwrap(), 3);
 }
 
+#[test]
+fn set_cursor_position_clamps_and_inserts_there() {
+    let mut s = script();
+    s.run(r#"E = CreateFrame("EditBox", "E") E:SetText("aéc")"#)
+        .unwrap();
+    let at = |s: &mut UiScript, lua: &str| -> (i64, i64) {
+        s.eval(&format!(
+            "{lua} return E:GetCursorPosition(), E:GetUTF8CursorPosition()"
+        ))
+        .unwrap()
+    };
+    assert_eq!(at(&mut s, "E:SetCursorPosition(-3)"), (0, 0));
+    assert_eq!(at(&mut s, "E:SetCursorPosition('3.9')"), (3, 2));
+    assert_eq!(at(&mut s, "E:SetCursorPosition(99)"), (4, 3));
+    let err = s.run("E:SetCursorPosition()").unwrap_err().to_string();
+    assert!(err.contains("SetCursorPosition(position)"), "{err}");
+    s.run("E:SetCursorPosition(1) E:Insert('X')").unwrap();
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "aXéc");
+}
+
 // ── selection / highlight / keys ────────────────────────────────────────────────────────────
 
 #[test]

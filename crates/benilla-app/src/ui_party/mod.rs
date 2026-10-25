@@ -103,6 +103,10 @@ pub struct GroupState {
     pub lfg_restricted: bool,
     /// Each list that set the LFG bit, one `PARTY_LFG_RESTRICTED` apiece.
     pub lfg_signals: u32,
+    /// `CGPartyInfo::m_realNumMembers` and `CGRaidInfo::m_realNumMembers`: the group outside a
+    /// battleground (`0x52bd60`, `0x572530`), kept across groups like the difficulties.
+    pub real_party_members: u32,
+    pub real_raid_members: u32,
 }
 
 /// What one `SMSG_GROUP_LIST` shows: its lines, and whether it plays `igPlayerInviteAccept`
@@ -262,6 +266,34 @@ impl GroupState {
     /// Count one `SMSG_GROUP_LIST`, which the feed answers with one `PARTY_MEMBERS_CHANGED`. The
     /// `/partytest` sandbox calls it for each group intent whose echo the server would send as a
     /// list.
+    /// A list outside a battleground sets the real counts (`0x6d8d42`-`0x6d8d84`): the raid's
+    /// rows and the player, or none, and the party slots seated.
+    pub(super) fn set_real_counts(&mut self, raid: bool, rows: usize) {
+        self.real_raid_members = if raid && rows != 0 {
+            (rows as u32 + 1).min(40)
+        } else {
+            0
+        };
+        self.real_party_members = self.party_slots().count().min(4) as u32;
+    }
+
+    /// `SMSG_REAL_GROUP_UPDATE` (`0x6cc300`): a raid's count and the player, or a party's count
+    /// with the raid's cleared; `PARTY_MEMBERS_CHANGED` follows.
+    pub(super) fn apply_real_group_update(&mut self, flags: u8, count: u32) {
+        if flags & 0x2 != 0 {
+            let raid = if count != 0 { count + 1 } else { 0 };
+            if raid <= 40 {
+                self.real_raid_members = raid;
+            }
+        } else {
+            self.real_raid_members = 0;
+            if count <= 4 {
+                self.real_party_members = count;
+            }
+        }
+        self.count_list();
+    }
+
     pub(super) fn count_list(&mut self) {
         self.lists_applied = self.lists_applied.wrapping_add(1);
     }
@@ -508,6 +540,8 @@ impl GroupState {
             difficulties: _,
             lfg_restricted: _,
             lfg_signals: _,
+            real_party_members: _,
+            real_raid_members: _,
         } = self;
         *in_group = false;
         *group_type = 0;

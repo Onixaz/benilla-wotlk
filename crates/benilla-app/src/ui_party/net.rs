@@ -29,6 +29,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::GroupLeaderChanged, on_leader_changed)
         .net_handler(K::GroupDestroyed, on_destroyed)
         .net_handler(K::GroupList, on_list)
+        .net_handler(K::RealGroupUpdate, on_real_group_update)
         .net_handler(K::PartyCommandResult, on_command_result)
         .net_handler(K::PartyMemberStats, on_member_stats)
         .net_handler(K::RaidTargetSet, on_raid_target)
@@ -180,11 +181,13 @@ fn on_list(
         loot,
         difficulties,
         lfg_restricted,
+        battleground,
         ..
     } = ev
     {
         group.own_roles = own_roles;
         group.apply_list_tail(difficulties, lfg_restricted);
+        let rows = members.len();
         list(
             &mut group,
             &mut errors,
@@ -200,6 +203,15 @@ fn on_list(
             &index,
             &commands,
         );
+        if !battleground {
+            group.set_real_counts(group_type == GROUPTYPE_RAID, rows);
+        }
+    }
+}
+
+fn on_real_group_update(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>) {
+    if let SessionEvent::RealGroupUpdate { flags, count, .. } = ev {
+        group.apply_real_group_update(flags, count);
     }
 }
 

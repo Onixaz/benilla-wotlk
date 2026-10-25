@@ -16,6 +16,7 @@ use crate::ui_script::{UiFeed, UiInput};
 mod feed;
 mod query;
 
+pub(crate) use feed::feed_social;
 pub(crate) use query::parse as who_query;
 
 /// The social session mirror: filled by the social handlers, read by the feed, cleared on
@@ -64,6 +65,16 @@ impl SocialState {
     /// chat and text emotes drop silently (`0x49dbe0`), and their duel is declined (`0x4d4a33`).
     pub(crate) fn is_ignored(&self, guid: u64) -> bool {
         guid != 0 && self.ignores.contains(&guid)
+    }
+
+    /// The ignore list as a set, the calendar's filter (`0x5c0104`).
+    pub(crate) fn ignored_set(&self) -> std::collections::HashSet<u64> {
+        self.ignores.iter().copied().collect()
+    }
+
+    /// The friend list's guids, which the calendar's complaint gate excludes (`0x5bca34`).
+    pub(crate) fn friend_set(&self) -> std::collections::HashSet<u64> {
+        self.friends.iter().map(|f| f.guid).collect()
     }
 
     /// Is `guid` on the friend list? The reference's `FindFriendSlot` (`0x5ae810`), which keeps the

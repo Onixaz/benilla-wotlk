@@ -9,13 +9,13 @@ use crate::wire::{
 
 use super::{
     achievement, action_bar, area_trigger, arena_team, attack, auction, aura, bank, battlefield,
-    binder, broadcast, channel, chat, combat_log, death, duel, equipment_set, gameobject,
+    binder, broadcast, calendar, channel, chat, combat_log, death, duel, equipment_set, gameobject,
     gm_ticket, gossip, group, guild, guild_bank, instance, items, lfg, loot, mail, meeting_stone,
     mirror_timer, monster_move, movement, opcode, page_text, pet, petition, pose, progression, pvp,
     quest, rune, social, spellbook, spells, stable, summon, tabard, talents, taxi, totem, trade,
-    trainer, tutorial, update_object, vendor, world_state, AttackSwingError, Character,
-    CreatureQueryInfo, DifficultySet, JumpInfo, LfgPacket, MoveMode, ServerPacket, SpeedKind,
-    SplineMode,
+    trainer, tutorial, update_object, vendor, world_state, AttackSwingError, CalendarPacket,
+    Character, CreatureQueryInfo, DifficultySet, JumpInfo, LfgPacket, MoveMode, ServerPacket,
+    SpeedKind, SplineMode,
 };
 
 /// Read a `SMSG_FORCE_*_SPEED_CHANGE` body: `[packed guid][u32 counter][f32 speed]`, with a `u8`
@@ -439,8 +439,8 @@ fn parse_server_body(
             // day serial assumes 31-day months and 372-day years, monotonic but not calendar-true.
             let datetime = read_u32_le(&mut r)?;
             let timescale = read_f32_le(&mut r)?;
-            // A trailing `u32`, always 0 from AzerothCore (`Player::SendInitialPacketsAfterAddToMap`).
-            let _ = read_u32_le(&mut r)?;
+            // The server's zone offset in hours, `m_tzHours` (`0x7e28e0`); AzerothCore sends 0.
+            let zone = read_u32_le(&mut r)?;
             let (day, month, year) = (
                 (datetime >> 14) & 0x3F,
                 (datetime >> 20) & 0x0F,
@@ -450,18 +450,11 @@ fn parse_server_body(
                 hours: ((datetime >> 6) & 0x1F) as u8,
                 minutes: (datetime & 0x3F) as u8,
                 day_serial: year * 372 + month * 31 + day,
-                date: super::GameDate {
-                    weekday: ((datetime >> 11) & 0x07) as u8,
-                    month_day: day as u8,
-                    month: month as u8,
-                    year: year as u8,
-                },
                 timescale,
+                packed: datetime,
+                zone: zone as i32,
             }
         }
-        opcode::SMSG_CALENDAR_SEND_NUM_PENDING => ServerPacket::CalendarNumPending {
-            count: read_u32_le(&mut r)?,
-        },
         // Wall-clock unix seconds (`QueryHandler.cpp:418-423`), not the game clock above.
         opcode::SMSG_QUERY_TIME_RESPONSE => ServerPacket::QueryTimeResponse {
             unix_time: read_u32_le(&mut r)?,
@@ -812,6 +805,70 @@ fn parse_server_body(
         }
         opcode::SMSG_OPEN_LFG_DUNGEON_FINDER => {
             ServerPacket::Lfg(LfgPacket::OpenFromGossip(read_u32_le(&mut r)?))
+        }
+        opcode::SMSG_CALENDAR_SEND_CALENDAR => ServerPacket::Calendar(
+            CalendarPacket::SendCalendar(Box::new(calendar::read_send_calendar(&mut r)?)),
+        ),
+        opcode::SMSG_CALENDAR_SEND_EVENT => ServerPacket::Calendar(CalendarPacket::SendEvent(
+            Box::new(calendar::read_send_event(&mut r)?),
+        )),
+        opcode::SMSG_CALENDAR_FILTER_GUILD | opcode::SMSG_CALENDAR_ARENA_TEAM => {
+            ServerPacket::Calendar(CalendarPacket::InitialInvites(
+                calendar::read_initial_invites(&mut r)?,
+            ))
+        }
+        opcode::SMSG_CALENDAR_EVENT_INVITE => {
+            ServerPacket::Calendar(CalendarPacket::Invite(calendar::read_invite(&mut r)?))
+        }
+        opcode::SMSG_CALENDAR_EVENT_INVITE_REMOVED => {
+            ServerPacket::Calendar(calendar::read_invite_removed(&mut r)?)
+        }
+        opcode::SMSG_CALENDAR_EVENT_STATUS => {
+            ServerPacket::Calendar(CalendarPacket::Status(calendar::read_status(&mut r)?))
+        }
+        opcode::SMSG_CALENDAR_COMMAND_RESULT => ServerPacket::Calendar(
+            CalendarPacket::CommandResult(calendar::read_command_result(&mut r)?),
+        ),
+        opcode::SMSG_CALENDAR_RAID_LOCKOUT_ADDED => {
+            ServerPacket::Calendar(calendar::read_lockout_added(&mut r)?)
+        }
+        opcode::SMSG_CALENDAR_RAID_LOCKOUT_REMOVED => {
+            ServerPacket::Calendar(calendar::read_lockout_removed(&mut r)?)
+        }
+        opcode::SMSG_CALENDAR_RAID_LOCKOUT_UPDATED => {
+            ServerPacket::Calendar(calendar::read_lockout_updated(&mut r)?)
+        }
+        opcode::SMSG_CALENDAR_EVENT_INVITE_ALERT => ServerPacket::Calendar(
+            CalendarPacket::InviteAlert(calendar::read_invite_alert(&mut r)?),
+        ),
+        opcode::SMSG_CALENDAR_EVENT_INVITE_REMOVED_ALERT => {
+            ServerPacket::Calendar(calendar::read_invite_removed_alert(&mut r)?)
+        }
+        opcode::SMSG_CALENDAR_EVENT_INVITE_STATUS_ALERT => {
+            ServerPacket::Calendar(calendar::read_invite_status_alert(&mut r)?)
+        }
+        opcode::SMSG_CALENDAR_EVENT_REMOVED_ALERT => {
+            ServerPacket::Calendar(calendar::read_event_removed_alert(&mut r)?)
+        }
+        opcode::SMSG_CALENDAR_EVENT_UPDATED_ALERT => {
+            ServerPacket::Calendar(CalendarPacket::EventUpdatedAlert(Box::new(
+                calendar::read_event_updated_alert(&mut r)?,
+            )))
+        }
+        opcode::SMSG_CALENDAR_EVENT_MODERATOR_STATUS_ALERT => {
+            ServerPacket::Calendar(calendar::read_moderator_status_alert(&mut r)?)
+        }
+        opcode::SMSG_CALENDAR_SEND_NUM_PENDING => {
+            ServerPacket::Calendar(CalendarPacket::NumPending(read_u32_le(&mut r)?))
+        }
+        opcode::SMSG_CALENDAR_EVENT_INVITE_NOTES => {
+            ServerPacket::Calendar(calendar::read_invite_notes(&mut r)?)
+        }
+        opcode::SMSG_CALENDAR_EVENT_INVITE_NOTES_ALERT => {
+            ServerPacket::Calendar(calendar::read_invite_notes_alert(&mut r)?)
+        }
+        opcode::SMSG_CALENDAR_CLEAR_PENDING_ACTION => {
+            ServerPacket::Calendar(CalendarPacket::ClearPendingAction)
         }
         opcode::SMSG_CHAT_RESTRICTED => ServerPacket::ChatRestricted,
         opcode::SMSG_PLAYED_TIME => {
@@ -1549,8 +1606,15 @@ fn parse_server_body(
                 lfg_restricted: list.lfg_restricted,
                 lfg_status: list.lfg_status,
                 lfg_slot: list.lfg_slot,
+                battleground: list.battleground,
             }
         }
+        // `u8` flags (`0x2` a raid), `u32` count, `u64` leader (`0x6cc300`).
+        opcode::SMSG_REAL_GROUP_UPDATE => ServerPacket::RealGroupUpdate {
+            flags: read_u8(&mut r)?,
+            count: read_u32_le(&mut r)?,
+            leader: read_u64_le(&mut r)?,
+        },
         opcode::SMSG_PARTY_COMMAND_RESULT => {
             let (operation, member, result) = group::read_party_command_result(&mut r)?;
             ServerPacket::PartyCommandResult {

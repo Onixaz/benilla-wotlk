@@ -286,8 +286,10 @@ fn group_list_party_two_members_master_loot() {
             lfg_restricted,
             lfg_status,
             lfg_slot,
+            battleground,
         } => {
             assert_eq!(*group_type, 0);
+            assert!(!battleground);
             assert!(!lfg_restricted);
             assert_eq!(
                 (*lfg_status, *lfg_slot),
@@ -386,6 +388,7 @@ fn group_list_raid_with_assistant_flag() {
             lfg_restricted,
             lfg_status,
             lfg_slot,
+            ..
         } => {
             assert_eq!(*group_type, 1);
             assert!(lfg_restricted, "type bit 0x04");

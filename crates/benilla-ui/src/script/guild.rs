@@ -658,6 +658,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
 
+    // CanEditGuildEvent() (`0x5cc360`): the rank's calendar right, bit 20; 1 or nil.
+    g.set(
+        "CanEditGuildEvent",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(binding_abi::flag(
+                model.guild.in_guild
+                    && model.guild.rights & super::calendar::RIGHT_EDIT_GUILD_EVENT != 0,
+            ))
+        })?,
+    )?;
+
     // ── The rank-control popup ───────────────────────────────────────────────────────────────
     // GuildControlGetNumRanks() (`0x4d1e60`): the guild's rank count.
     g.set(
