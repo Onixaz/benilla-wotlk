@@ -38,7 +38,12 @@ pub(crate) const MACROS_CHARACTER: usize = 5;
 pub(crate) const LAYOUT: usize = 6;
 pub(crate) const CHAT: usize = 7;
 
-const fn synced(global: bool, cache: &'static str, old: &'static str, gate: &'static str) -> SlotDef {
+const fn synced(
+    global: bool,
+    cache: &'static str,
+    old: &'static str,
+    gate: &'static str,
+) -> SlotDef {
     SlotDef {
         global,
         cache: Some(cache),
@@ -51,12 +56,42 @@ const fn synced(global: bool, cache: &'static str, old: &'static str, gate: &'st
 /// The table, dumped from the binary (`0xad94e0`, stride `0x40`): the global mask is `0x15`, the
 /// character mask `0xea`.
 pub(crate) const SLOTS: [SlotDef; 8] = [
-    synced(true, "config-cache.wtf", "config-cache.old", "synchronizeConfig"),
-    synced(false, "config-cache.wtf", "config-cache.old", "synchronizeConfig"),
-    synced(true, "bindings-cache.wtf", "bindings-cache.old", "synchronizeBindings"),
-    synced(false, "bindings-cache.wtf", "bindings-cache.old", "synchronizeBindings"),
-    synced(true, "macros-cache.txt", "macros-cache.old", "synchronizeMacros"),
-    synced(false, "macros-cache.txt", "macros-cache.old", "synchronizeMacros"),
+    synced(
+        true,
+        "config-cache.wtf",
+        "config-cache.old",
+        "synchronizeConfig",
+    ),
+    synced(
+        false,
+        "config-cache.wtf",
+        "config-cache.old",
+        "synchronizeConfig",
+    ),
+    synced(
+        true,
+        "bindings-cache.wtf",
+        "bindings-cache.old",
+        "synchronizeBindings",
+    ),
+    synced(
+        false,
+        "bindings-cache.wtf",
+        "bindings-cache.old",
+        "synchronizeBindings",
+    ),
+    synced(
+        true,
+        "macros-cache.txt",
+        "macros-cache.old",
+        "synchronizeMacros",
+    ),
+    synced(
+        false,
+        "macros-cache.txt",
+        "macros-cache.old",
+        "synchronizeMacros",
+    ),
     SlotDef {
         global: false,
         cache: None,
@@ -101,7 +136,11 @@ pub(crate) enum Wire {
     /// `CMSG_REQUEST_ACCOUNT_DATA`.
     Request { slot: u32 },
     /// `CMSG_UPDATE_ACCOUNT_DATA`, the file's exact bytes.
-    Upload { slot: u32, time: u32, bytes: Vec<u8> },
+    Upload {
+        slot: u32,
+        time: u32,
+        bytes: Vec<u8>,
+    },
 }
 
 /// Which slots may sync now: `synchronizeSettings` and the slot's gate CVar (`0x6b9440`, `0x6b94c0`).
@@ -207,7 +246,10 @@ impl AccountData {
         } else {
             &self.character_dir
         };
-        let Some(bytes) = dir.as_ref().and_then(|d| std::fs::read(d.join(CHECKSUMS)).ok()) else {
+        let Some(bytes) = dir
+            .as_ref()
+            .and_then(|d| std::fs::read(d.join(CHECKSUMS)).ok())
+        else {
             return Vec::new();
         };
         if bytes.len() != 20 * count {
@@ -462,7 +504,10 @@ mod tests {
         let mut ad = AccountData::default();
         ad.initialize(true, Some(dir.clone()));
         assert!(!ad.ready(CONFIG_ACCOUNT));
-        assert!(!ad.save(CONFIG_ACCOUNT, b"SET a \"1\"\n", &always), "no save while waiting");
+        assert!(
+            !ad.save(CONFIG_ACCOUNT, b"SET a \"1\"\n", &always),
+            "no save while waiting"
+        );
         ad.on_times(&times(1000, 0x15, &[(0, 0), (2, 0), (4, 0)]), &always);
         assert!(ad.scope_ready(true));
         assert!(!ad.has_outbox(), "equal times move nothing");
@@ -501,7 +546,10 @@ mod tests {
         assert!(!ad.has_outbox());
         assert!(ad.save(CONFIG_ACCOUNT, b"SET a \"2\"\n", &always));
         ad.flush();
-        assert!(matches!(&ad.take_outbox()[..], [Wire::Upload { time: 5001, .. }]));
+        assert!(matches!(
+            &ad.take_outbox()[..],
+            [Wire::Upload { time: 5001, .. }]
+        ));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -517,17 +565,21 @@ mod tests {
         let sent = ad.take_outbox();
         assert!(sent.contains(&Wire::Request { slot: 0 }), "{sent:?}");
         assert!(
-            sent.iter().any(|w| matches!(w, Wire::Upload { slot: 4, .. })),
+            sent.iter()
+                .any(|w| matches!(w, Wire::Upload { slot: 4, .. })),
             "{sent:?}"
         );
-        assert!(!ad.ready(CONFIG_ACCOUNT), "a download in flight keeps the slot waiting");
+        assert!(
+            !ad.ready(CONFIG_ACCOUNT),
+            "a download in flight keeps the slot waiting"
+        );
 
         // The server's bytes land over the file.
         let body = benilla_protocol::messages::update_account_data(0, 3, b"SET b \"7\"\n");
         let mut wire = 0u64.to_le_bytes().to_vec();
         wire.extend_from_slice(&body);
-        let update = benilla_protocol::messages::read_update_account_data(&mut wire.as_slice())
-            .unwrap();
+        let update =
+            benilla_protocol::messages::read_update_account_data(&mut wire.as_slice()).unwrap();
         ad.on_update(&update, 0);
         assert!(ad.ready(CONFIG_ACCOUNT));
         assert_eq!(ad.read(CONFIG_ACCOUNT).unwrap(), b"SET b \"7\"\n");
@@ -557,7 +609,10 @@ mod tests {
         assert!(ad.save(BINDINGS_ACCOUNT, b"bind A NONE\r\n", &off));
         ad.flush();
         assert!(!ad.has_outbox());
-        assert_eq!(std::fs::read(dir.join("bindings-cache.wtf")).unwrap(), b"bind A NONE\r\n");
+        assert_eq!(
+            std::fs::read(dir.join("bindings-cache.wtf")).unwrap(),
+            b"bind A NONE\r\n"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -568,7 +623,10 @@ mod tests {
         std::fs::write(dir.join("config-cache.wtf"), b"SET a \"1\"\n").unwrap();
         let mut ad = AccountData::default();
         ad.initialize(true, Some(dir.clone()));
-        assert_eq!(std::fs::read(dir.join("config-cache.old")).unwrap(), b"SET a \"1\"\n");
+        assert_eq!(
+            std::fs::read(dir.join("config-cache.old")).unwrap(),
+            b"SET a \"1\"\n"
+        );
         std::fs::write(dir.join("config-cache.wtf"), b"SET a \"2\"\n").unwrap();
         ad.initialize(true, Some(dir.clone()));
         assert_eq!(

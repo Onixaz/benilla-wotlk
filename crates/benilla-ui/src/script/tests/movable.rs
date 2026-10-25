@@ -585,7 +585,11 @@ fn the_write_filter_is_user_placed_and_movable_or_resizable() {
             .map(|l| l.name)
             .collect::<Vec<_>>()
     };
-    assert_eq!(names(&mut s), ["CachePanel"], "stamped and resizable — written");
+    assert_eq!(
+        names(&mut s),
+        ["CachePanel"],
+        "stamped and resizable — written"
+    );
 
     s.run("CachePanel:SetResizable(false)").unwrap();
     assert!(

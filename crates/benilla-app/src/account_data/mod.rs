@@ -16,8 +16,8 @@
 
 pub(crate) mod store;
 
-use bevy::prelude::*;
 use benilla_protocol::{SessionEvent, SessionEventKind};
+use bevy::prelude::*;
 
 use crate::cvars::{Cvars, Scope};
 use crate::net::NetHandlerApp;
@@ -73,9 +73,10 @@ fn open_account_scope(
     if !matches!(ev, SessionEvent::WorldAuthenticated { .. }) {
         return;
     }
-    let dir = intent
-        .account()
-        .and_then(|a| crate::local_state::account_dir(&a.to_uppercase()));
+    if let Some(account) = intent.account() {
+        crate::local_state::set_account(account);
+    }
+    let dir = crate::local_state::account().and_then(|a| crate::local_state::account_dir(&a));
     data.initialize(true, dir);
     cvars.reset_scope(Scope::Account);
 }
@@ -83,7 +84,6 @@ fn open_account_scope(
 /// The world entry: the character's scope opens, under its realm and name.
 fn open_character_scope(
     In(ev): In<SessionEvent>,
-    intent: Res<crate::login::LoginIntent>,
     roster: Res<crate::char_select::Roster>,
     mut active: ResMut<ActiveCharacter>,
     mut data: ResMut<AccountData>,
@@ -96,9 +96,8 @@ fn open_character_scope(
     };
     active.0 = self_guid;
     let realm = roster.realm.as_ref().map(|r| r.name.as_str()).unwrap_or("");
-    let dir = intent
-        .account()
-        .and_then(|a| crate::local_state::character_dir(&a.to_uppercase(), realm, &name));
+    let dir = crate::local_state::account()
+        .and_then(|a| crate::local_state::character_dir(&a, realm, &name));
     data.initialize(false, dir);
 }
 
@@ -108,7 +107,11 @@ fn on_times(In(ev): In<SessionEvent>, cvars: Res<Cvars>, mut data: ResMut<Accoun
     }
 }
 
-fn on_update(In(ev): In<SessionEvent>, active: Res<ActiveCharacter>, mut data: ResMut<AccountData>) {
+fn on_update(
+    In(ev): In<SessionEvent>,
+    active: Res<ActiveCharacter>,
+    mut data: ResMut<AccountData>,
+) {
     if let SessionEvent::AccountDataUpdate(update) = ev {
         data.on_update(&update, active.0);
     }

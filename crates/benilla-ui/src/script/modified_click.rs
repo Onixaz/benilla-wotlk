@@ -264,7 +264,11 @@ impl ModifiedClicks {
             2 => self.stored[1].as_ref(),
             _ => None,
         }?;
-        Some(list.iter().map(|(a, b)| (a.clone(), b.canonical())).collect())
+        Some(
+            list.iter()
+                .map(|(a, b)| (a.clone(), b.canonical()))
+                .collect(),
+        )
     }
 
     /// The live explicit rows as `(action, binding)`, the lines a save writes (`0x55f1b0`).

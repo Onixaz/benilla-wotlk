@@ -20,8 +20,8 @@
 //! the Mac enqueues the key with Command held and skips only its text (`0x8a519`), and Windows
 //! hands `VK_LWIN`/`VK_RWIN` to the layout arm (`0x42da39`) like any key.
 //!
-//! Persistence: `benilla-config/bindings/account.txt` and `<Realm>-<Char>.txt` ([`store`]); the
-//! character file's existence is the character-set state, as in the reference.
+//! Persistence: `bindings-cache.wtf` in account-data slots 2 and 3 ([`wtf`]); a character slot
+//! that holds anything is the character-set state, as in the reference.
 
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};

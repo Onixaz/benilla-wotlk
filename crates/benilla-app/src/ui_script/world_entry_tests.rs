@@ -105,7 +105,7 @@ fn reload(world: &mut World, state: crate::char_select::ClientState) {
 }
 
 /// The test account the harness logs in on.
-const ACCOUNT: &str = "TESTACCT";
+const ACCOUNT: &str = crate::local_state::TEST_ACCOUNT;
 
 /// One login as the app drives it: the roster carries the pick, the account data opens and hears
 /// the server's times (sync off), the world-entry edge runs, and the placed frames are restored.

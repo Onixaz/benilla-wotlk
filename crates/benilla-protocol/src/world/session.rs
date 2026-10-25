@@ -287,10 +287,12 @@ impl WorldSession {
                     .push(SessionEvent::ClientCacheVersion { version: *version });
             }
             ServerPacket::AccountDataTimes(t) => {
-                self.glue_events.push(SessionEvent::AccountDataTimes(t.clone()));
+                self.glue_events
+                    .push(SessionEvent::AccountDataTimes(t.clone()));
             }
             ServerPacket::AccountDataUpdate(u) => {
-                self.glue_events.push(SessionEvent::AccountDataUpdate(u.clone()));
+                self.glue_events
+                    .push(SessionEvent::AccountDataUpdate(u.clone()));
             }
             _ => {}
         }

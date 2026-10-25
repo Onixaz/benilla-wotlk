@@ -156,7 +156,11 @@ mod tests {
     #[test]
     fn the_writer_is_the_references_shape() {
         let m = vec![
-            view("f", Some("Ability_Ambush"), ".cheat fly on\n\n.modify aspeed 10"),
+            view(
+                "f",
+                Some("Ability_Ambush"),
+                ".cheat fly on\n\n.modify aspeed 10",
+            ),
             view("bare", None, ""),
         ];
         assert_eq!(
@@ -166,7 +170,10 @@ mod tests {
         );
         assert!(write(&m, CHARACTER_BASE).starts_with("MACRO 16777217 \"f\""));
         let back = parse(&write(&m, CHARACTER_BASE), CHARACTER_BASE);
-        assert_eq!(back[0].body, ".cheat fly on\n.modify aspeed 10", "empty lines dropped");
+        assert_eq!(
+            back[0].body, ".cheat fly on\n.modify aspeed 10",
+            "empty lines dropped"
+        );
         assert_eq!(back[1], m[1]);
     }
 

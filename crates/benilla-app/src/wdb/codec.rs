@@ -116,7 +116,10 @@ pub(crate) const KINDS: [Kind; 9] = [
 /// The header's locale: the mounted four-letter code packed big-endian (`0x406381`), so `enUS`
 /// reads `SUne` on disk.
 pub(crate) fn locale_code(locale: &str) -> u32 {
-    locale.bytes().take(4).fold(0u32, |acc, c| (acc << 8) | u32::from(c))
+    locale
+        .bytes()
+        .take(4)
+        .fold(0u32, |acc, c| (acc << 8) | u32::from(c))
 }
 
 /// Why a file loaded nothing.
@@ -150,7 +153,9 @@ impl WdbFile {
 
     /// The records, in file order.
     pub(crate) fn entries(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
-        self.entries.iter().map(|(k, b)| (k.as_slice(), b.as_slice()))
+        self.entries
+            .iter()
+            .map(|(k, b)| (k.as_slice(), b.as_slice()))
     }
 
     #[cfg(test)]
@@ -211,7 +216,13 @@ impl WdbFile {
             return Err(Refused::Header);
         };
         if [sig, build, loc, size, version]
-            != [kind.signature, BUILD, locale, kind.record_size, kind.version]
+            != [
+                kind.signature,
+                BUILD,
+                locale,
+                kind.record_size,
+                kind.version,
+            ]
         {
             return Err(Refused::Header);
         }
@@ -293,7 +304,9 @@ fn pack<'a>(kind: &Kind, body: &'a [u8]) -> std::borrow::Cow<'a, [u8]> {
 /// What an answer stores, from the response as it came off the wire: the key and the body `Pack`
 /// rebuilds, or `None` for a refusal the reference never caches.
 pub(crate) fn record_of(response: u16, wire: &[u8]) -> Option<(Kind, Vec<u8>, Vec<u8>)> {
-    let kind = *KINDS.iter().find(|k| k.response == response && k.response != 0)?;
+    let kind = *KINDS
+        .iter()
+        .find(|k| k.response == response && k.response != 0)?;
     match response {
         // The whole response, id included; an empty title is refused (`0x635230`). The title is the
         // first string, after the fixed head of 65 u32.
@@ -304,8 +317,7 @@ pub(crate) fn record_of(response: u16, wire: &[u8]) -> Option<(Kind, Vec<u8>, Ve
         // `u8 result, u64 item guid, text`: only a found text is cached, under the guid.
         opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE => {
             let (&result, rest) = wire.split_first()?;
-            (result == 0 && rest.len() >= 8)
-                .then(|| (kind, rest[..8].to_vec(), rest[8..].to_vec()))
+            (result == 0 && rest.len() >= 8).then(|| (kind, rest[..8].to_vec(), rest[8..].to_vec()))
         }
         // The entry, then the body; an entry with the high bit is the server's "unknown"
         // (`0x67b884`), which deletes the pending node and is never written.
@@ -420,7 +432,10 @@ mod tests {
     #[test]
     fn wide_keys_frame_as_the_reference_writes_them() {
         let mut f = WdbFile::default();
-        f.insert(0x1122_3344_5566_7788u64.to_le_bytes().to_vec(), b"hi\0".to_vec());
+        f.insert(
+            0x1122_3344_5566_7788u64.to_le_bytes().to_vec(),
+            b"hi\0".to_vec(),
+        );
         let bytes = f.encode(&ITEM_TEXT, locale_code(EN_US));
         assert_eq!(bytes.len(), 24 + (8 + 4 + 3) + (8 + 4));
         assert_eq!(
@@ -451,8 +466,7 @@ mod tests {
     fn refusals_are_never_cached_and_answers_rebuild_their_wire() {
         let mut creature = 69u32.to_le_bytes().to_vec();
         creature.extend_from_slice(b"Wolf\0");
-        let (kind, key, body) =
-            record_of(opcode::SMSG_CREATURE_QUERY_RESPONSE, &creature).unwrap();
+        let (kind, key, body) = record_of(opcode::SMSG_CREATURE_QUERY_RESPONSE, &creature).unwrap();
         assert_eq!(kind, CREATURE);
         assert_eq!(body, b"Wolf\0");
         assert_eq!(wire_of(&kind, &key, &body), creature);
@@ -471,19 +485,29 @@ mod tests {
         assert_eq!(key, 42u64.to_le_bytes());
         assert_eq!(wire_of(&kind, &key, &body), text);
         text[0] = 1;
-        assert_eq!(record_of(opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE, &text), None);
+        assert_eq!(
+            record_of(opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE, &text),
+            None
+        );
 
         let mut quest = vec![0u8; 65 * 4];
         quest[..4].copy_from_slice(&7u32.to_le_bytes());
         assert_eq!(
-            record_of(opcode::SMSG_QUEST_QUERY_RESPONSE, &[&quest[..], b"\0"].concat()),
+            record_of(
+                opcode::SMSG_QUEST_QUERY_RESPONSE,
+                &[&quest[..], b"\0"].concat()
+            ),
             None,
             "an empty title is refused"
         );
         let titled = [&quest[..], b"Kobold Camp Cleanup\0"].concat();
         let (kind, key, body) = record_of(opcode::SMSG_QUEST_QUERY_RESPONSE, &titled).unwrap();
         assert_eq!(key, 7u32.to_le_bytes());
-        assert_eq!(wire_of(&kind, &key, &body), titled, "the id stays in the body");
+        assert_eq!(
+            wire_of(&kind, &key, &body),
+            titled,
+            "the id stays in the body"
+        );
     }
 
     #[test]

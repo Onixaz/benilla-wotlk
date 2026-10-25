@@ -879,16 +879,13 @@ impl super::UiScript {
         }
     }
 
-    /// `(name, account names, per-character names)` to write at shutdown, for each loaded addon
-    /// that declares any: the reference gates the write on the loaded byte (`0x51f711`).
+    /// `(name, account names, per-character names)` for each loaded addon, what the shutdown
+    /// writes or deletes: the reference gates both on the loaded byte (`0x5f56e4`).
     pub fn addon_saved_variable_sets(&self) -> Vec<(String, Vec<String>, Vec<String>)> {
         self.model_ref()
             .addons
             .iter()
             .filter(|a| a.loaded)
-            .filter(|a| {
-                !a.saved_variables.is_empty() || !a.saved_variables_per_character.is_empty()
-            })
             .map(|a| {
                 (
                     a.name.clone(),

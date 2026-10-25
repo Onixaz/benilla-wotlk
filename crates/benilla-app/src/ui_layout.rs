@@ -186,7 +186,11 @@ mod tests {
              Y: -118\nW: 1\nH: 1\nFrame: ChatFrame1\n"
         ));
         assert_eq!(parse(&text), frames);
-        assert_eq!(render(&[]), "Version: 1\n", "nothing placed: the 11-byte file");
+        assert_eq!(
+            render(&[]),
+            "Version: 1\n",
+            "nothing placed: the 11-byte file"
+        );
     }
 
     #[test]

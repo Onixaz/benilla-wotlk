@@ -175,7 +175,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "QuestPOIGetQuestIDByIndex",
     "QuestPOIUpdateTexture",
     "ReadFile",
-    "RegisterForSavePerCharacter",
     "RenameEquipmentSet",
     "ReportBug",
     "ReportSuggestion",

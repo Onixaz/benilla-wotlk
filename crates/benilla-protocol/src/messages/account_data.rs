@@ -145,6 +145,10 @@ mod tests {
         let update = read_update_account_data(&mut echo.as_slice()).unwrap();
         assert_eq!((update.guid, update.slot, update.time), (0x42, 1, 77));
         assert_eq!(update.inflate().as_deref(), Some(&file[..]));
-        assert_eq!(update_account_data(4, 1, b"").len(), 12, "an empty slot has no stream");
+        assert_eq!(
+            update_account_data(4, 1, b"").len(),
+            12,
+            "an empty slot has no stream"
+        );
     }
 }

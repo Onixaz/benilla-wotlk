@@ -155,31 +155,80 @@ pub(crate) fn character_dir(account: &str, realm: &str, character: &str) -> Opti
     )
 }
 
-/// `benilla-config/saved-variables.lua`: the flat channel our FrameXML saves through
-/// `RegisterForSave` (the `SavedVariables.lua` analog), written whole at logout, run at UI load.
+/// The logged-in account, upper-cased as the reference keeps it (`CGlueMgr::LoginServerLogin`
+/// `0x4d8a30` upper-cases `m_accountName` before the logon; `s_addOnAccountName` `0xc24418`): the
+/// `<ACCOUNT>` of every `WTF\Account` path the UI's files take.
+static ACCOUNT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Name the logged-in account, at the world server's accept.
+pub(crate) fn set_account(name: &str) {
+    *ACCOUNT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(name.to_ascii_uppercase());
+}
+
+/// The account the test harness logs in on, which every test's `WTF\Account` paths are under.
+#[cfg(test)]
+pub(crate) const TEST_ACCOUNT: &str = "TESTACCT";
+
+/// The logged-in account's folder name, `None` before any login.
+#[cfg(not(test))]
+pub(crate) fn account() -> Option<String> {
+    ACCOUNT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// Tests share one process, so every one runs on [`TEST_ACCOUNT`].
+#[cfg(test)]
+pub(crate) fn account() -> Option<String> {
+    Some(TEST_ACCOUNT.into())
+}
+
+/// `WTF\Account\<ACCOUNT>\SavedVariables.lua` (`0x9ff08c`): FrameXML's `RegisterForSave` globals.
 pub(crate) fn saved_variables_path() -> Option<PathBuf> {
-    home().map(|h| h.join("saved-variables.lua"))
+    Some(account_dir(&account()?)?.join("SavedVariables.lua"))
 }
 
-/// `benilla-config/addons/<Realm>-<Character>.txt`: the AddOn enable state, per character in the
-/// reference's `AddOns.txt` format (`<AddOnName>: enabled|disabled`), which it writes at the tail
-/// of its UI shutdown (`0x490bd0`). An addon absent from the file is enabled.
+/// `WTF\Account\<ACCOUNT>\<Realm>\<Character>\SavedVariables.lua` (`0x9f6270`): FrameXML's
+/// `RegisterForSavePerCharacter` globals.
+pub(crate) fn saved_variables_character_path(realm: &str, character: &str) -> Option<PathBuf> {
+    Some(character_dir(&account()?, realm, character)?.join("SavedVariables.lua"))
+}
+
+/// `WTF\Account\<ACCOUNT>\<Realm>\<Character>\AddOns.txt` (`0xa1da48`): the character's AddOn
+/// enable state, `<AddOnName>: enabled|disabled` a line, written at the UI shutdown (`0x5f76a0`).
 pub(crate) fn addons_state_path(realm: &str, character: &str) -> Option<PathBuf> {
-    let key = format!("{}-{}", file_token(realm), file_token(character));
-    home().map(|h| h.join("addons").join(format!("{key}.txt")))
+    Some(character_dir(&account()?, realm, character)?.join("AddOns.txt"))
 }
 
-/// `benilla-config/saved/`: per-addon saved variables, account scope, one `<Addon>.lua` per addon
-/// declaring `## SavedVariables` (the reference's `WTF/Account/<ACC>/SavedVariables/<Addon>.lua`).
+/// `WTF\Account\<ACCOUNT>\AddOns.txt` (`0xa1da2c`): the account-wide enable state, read only
+/// for a character with no file of its own; 12340 never writes it.
+pub(crate) fn addons_state_account_path() -> Option<PathBuf> {
+    Some(account_dir(&account()?)?.join("AddOns.txt"))
+}
+
+/// `WTF\Account\<ACCOUNT>\SavedVariables\` (`0xa1d83c`): an addon's `## SavedVariables`, one
+/// `<AddOn>.lua` each.
 pub(crate) fn addon_saved_account_dir() -> Option<PathBuf> {
-    home().map(|h| h.join("saved"))
+    Some(account_dir(&account()?)?.join("SavedVariables"))
 }
 
-/// `benilla-config/saved/<Realm>-<Character>/`: per-addon saved variables, character scope
-/// (`## SavedVariablesPerCharacter`), loaded after the account file so it wins.
+/// `WTF\Account\<ACCOUNT>\<Realm>\<Character>\SavedVariables\` (`0xa1d810`): an addon's
+/// `## SavedVariablesPerCharacter`, loaded after the account file so it wins.
 pub(crate) fn addon_saved_character_dir(realm: &str, character: &str) -> Option<PathBuf> {
-    let key = format!("{}-{}", file_token(realm), file_token(character));
-    home().map(|h| h.join("saved").join(key))
+    Some(character_dir(&account()?, realm, character)?.join("SavedVariables"))
+}
+
+/// `WTF\Account\<ACCOUNT>\<Character>\SavedVariables\` (`0xa1d7e8`), the realm-less folder of
+/// older clients: 12340 only deletes from it.
+pub(crate) fn addon_saved_legacy_dir(character: &str) -> Option<PathBuf> {
+    Some(
+        account_dir(&account()?)?
+            .join(wtf_component(character))
+            .join("SavedVariables"),
+    )
 }
 
 /// `Cache\WDB\<locale>\` (`GetCacheDirectory` `0x667ef0`): the query caches' `.wdb` files
@@ -291,6 +340,28 @@ pub(crate) fn write_atomic_bytes(path: &Path, contents: &[u8]) -> std::io::Resul
     std::fs::rename(&tmp, path)
 }
 
+/// A path under [`client_root`] as the reference prints it: root-relative, `\`-separated.
+pub(crate) fn client_relative(path: &Path) -> String {
+    let rel = client_root()
+        .and_then(|r| path.strip_prefix(r).ok().map(Path::to_path_buf))
+        .unwrap_or_else(|| path.to_path_buf());
+    rel.to_string_lossy().replace('/', "\\")
+}
+
+/// Write a saved-variables file as 12340 does (`CGGameUI::SaveSavedVariables` `0x5271da`,
+/// `UnloadAddOns` `0x5f5721`): an existing file first moves to `<path>.bak` through `MoveFileA`,
+/// which fails once a `.bak` exists, so the backup is the first file ever replaced and is never
+/// refreshed; then the file is written whole.
+pub(crate) fn write_saved_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let mut bak = path.as_os_str().to_owned();
+    bak.push(".bak");
+    let bak = PathBuf::from(bak);
+    if path.exists() && !bak.exists() {
+        let _ = std::fs::rename(path, &bak);
+    }
+    write_atomic_bytes(path, contents)
+}
+
 /// Test plumbing for the persistence env vars: `set_var` is process-global, so every such test
 /// takes [`ENV_LOCK`] and scopes its overrides in [`EnvGuard`]s.
 #[cfg(test)]
@@ -374,7 +445,11 @@ mod tests {
         );
         assert_eq!(
             saved_variables_path(),
-            Some(tmp.join("benilla-config/saved-variables.lua"))
+            Some(tmp.join("benilla-config/WTF/Account/TESTACCT/SavedVariables.lua"))
+        );
+        assert_eq!(
+            addon_saved_legacy_dir("Probeone"),
+            Some(tmp.join("benilla-config/WTF/Account/TESTACCT/Probeone/SavedVariables"))
         );
 
         assert_eq!(shots_path(), Some(tmp.join("benilla-config/shots.txt")));

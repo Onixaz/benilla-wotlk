@@ -103,7 +103,13 @@ impl super::UiScript {
             };
             let mut placed = false;
             if let (true, Some(point)) = (movable, point) {
-                input.anchors = vec![Anchor::new(point, SCREEN, point, row.x as f32, row.y as f32)];
+                input.anchors = vec![Anchor::new(
+                    point,
+                    SCREEN,
+                    point,
+                    row.x as f32,
+                    row.y as f32,
+                )];
                 placed = true;
             }
             if resizable && (row.w != 0 || row.h != 0) {

@@ -130,6 +130,9 @@ mod tests {
     fn raw_bytes_in_a_value_survive_both_ways() {
         let tutorials = "v##M##\u{1}##%";
         let text = line("flaggedTutorials", tutorials);
-        assert_eq!(pairs(&text), [("flaggedTutorials".into(), tutorials.into())]);
+        assert_eq!(
+            pairs(&text),
+            [("flaggedTutorials".into(), tutorials.into())]
+        );
     }
 }

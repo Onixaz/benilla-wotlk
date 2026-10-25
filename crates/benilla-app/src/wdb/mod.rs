@@ -12,8 +12,8 @@
 
 pub(crate) mod codec;
 
-use bevy::prelude::*;
 use benilla_protocol::{SessionEvent, SessionEventKind};
+use bevy::prelude::*;
 
 use crate::net::NetHandlerApp;
 use codec::{Kind, Refused, WdbFile, KINDS};
@@ -77,7 +77,10 @@ fn load() -> WdbCaches {
                 path.display()
             ),
             Err(Refused::Corrupt) => {
-                warn!("wdb: {} is cut short; nothing loaded from it", path.display())
+                warn!(
+                    "wdb: {} is cut short; nothing loaded from it",
+                    path.display()
+                )
             }
         }
     }

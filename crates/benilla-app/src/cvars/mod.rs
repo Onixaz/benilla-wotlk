@@ -497,7 +497,9 @@ impl Cvars {
         wtf::compose(
             self.rows
                 .iter()
-                .filter(|r| r.scope == scope && !self.session_owned.contains(&r.name.to_ascii_lowercase()))
+                .filter(|r| {
+                    r.scope == scope && !self.session_owned.contains(&r.name.to_ascii_lowercase())
+                })
                 .filter_map(|r| r.archived().map(|v| (r.name.as_str(), v))),
         )
     }
@@ -573,7 +575,9 @@ impl Cvars {
         }
         for row in &self.rows {
             let key = row.name.to_ascii_lowercase();
-            if row.scope != Scope::Config || seen.contains(&key) || self.session_owned.contains(&key)
+            if row.scope != Scope::Config
+                || seen.contains(&key)
+                || self.session_owned.contains(&key)
             {
                 continue;
             }
@@ -614,7 +618,10 @@ impl Plugin for CvarPlugin {
             // Enter World's save (`CGlueMgr::EnterWorld` `0x4d9ed8`), in `Last`, after every
             // `Update` writer of the registry.
             .add_message::<SaveConfig>()
-            .add_systems(Last, save_config_on_request.before(crate::shutdown::OnAppExit));
+            .add_systems(
+                Last,
+                save_config_on_request.before(crate::shutdown::OnAppExit),
+            );
         // The exit flush runs on the exit edge: the close button's `AppExit` is written in
         // `PostUpdate`, so an `Update` save never sees it.
         crate::shutdown::on_app_exit(app, save_config_on_exit.into_configs());
@@ -724,7 +731,11 @@ fn load_config(world: &mut World) {
                 if !cvars.is_session_owned(&name) {
                     cvars.set(&name, &value);
                 }
-            } else if !cvars.file.iter().any(|(k, _)| k.eq_ignore_ascii_case(&name)) {
+            } else if !cvars
+                .file
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case(&name))
+            {
                 cvars.file.push((name, value));
                 cvars.touch();
             }
@@ -1711,7 +1722,13 @@ mod tests {
         cvars.set("gxWindow", "1");
         let names: Vec<String> = cvars.compose().into_iter().map(|(n, _)| n).collect();
         assert_eq!(names[..2], ["Zeta", "Sound_MusicVolume"]);
-        assert_eq!(names.iter().filter(|n| n.eq_ignore_ascii_case("zeta")).count(), 1);
+        assert_eq!(
+            names
+                .iter()
+                .filter(|n| n.eq_ignore_ascii_case("zeta"))
+                .count(),
+            1
+        );
         assert!(names.contains(&"farclip".to_string()));
         let gx = cvars.compose().into_iter().find(|(n, _)| n == "gxWindow");
         assert!(gx.is_none() || gx.unwrap().1 == "1");
@@ -1734,22 +1751,33 @@ mod tests {
         assert_eq!(cvars.get("playerStatRightDropdown"), Some(""), "not read");
         cvars.set("playerStatLeftDropdown", "PLAYERSTAT_SPELL_COMBAT");
         let out: BTreeMap<String, String> = cvars.compose().into_iter().collect();
-        assert!(!out.contains_key("playerStatLeftDropdown"), "not in Config.wtf");
-        assert!(!out.contains_key("playerStatRightDropdown"), "nor the stale entry");
+        assert!(
+            !out.contains_key("playerStatLeftDropdown"),
+            "not in Config.wtf"
+        );
+        assert!(
+            !out.contains_key("playerStatRightDropdown"),
+            "nor the stale entry"
+        );
         assert_eq!(
             cvars.compose_scope(Scope::Character),
             "SET playerStatLeftDropdown \"PLAYERSTAT_SPELL_COMBAT\"\n"
         );
         cvars.reset_scope(Scope::Character);
         assert_eq!(cvars.get("playerStatLeftDropdown"), Some(""));
-        cvars.load_scope("SET playerStatLeftDropdown \"PLAYERSTAT_MELEE_COMBAT\"\nSET newKnob \"4\"\n");
+        cvars.load_scope(
+            "SET playerStatLeftDropdown \"PLAYERSTAT_MELEE_COMBAT\"\nSET newKnob \"4\"\n",
+        );
         assert_eq!(
             cvars.get("playerStatLeftDropdown"),
             Some("PLAYERSTAT_MELEE_COMBAT"),
             "the next login reads it back"
         );
         assert!(
-            cvars.compose().iter().any(|(n, v)| n == "newKnob" && v == "4"),
+            cvars
+                .compose()
+                .iter()
+                .any(|(n, v)| n == "newKnob" && v == "4"),
             "an unclaimed name in a scope file becomes a Config.wtf placeholder (0x768307)"
         );
     }
@@ -1778,7 +1806,10 @@ mod tests {
             .unwrap();
         app.update();
         app.update();
-        assert!(!tmp.join("WTF/Config.wtf").exists(), "nothing between save points");
+        assert!(
+            !tmp.join("WTF/Config.wtf").exists(),
+            "nothing between save points"
+        );
         app.world_mut().write_message(SaveConfig);
         app.update();
         let text = std::fs::read_to_string(tmp.join("WTF/Config.wtf")).unwrap();
@@ -2112,7 +2143,9 @@ mod tests {
         assert_eq!(app.world().resource::<MinimapZoom>().outdoor, 3);
         let cvars = app.world().resource::<Cvars>();
         assert!(
-            !cvars.compose_scope(Scope::Character).contains("minimapZoom"),
+            !cvars
+                .compose_scope(Scope::Character)
+                .contains("minimapZoom"),
             "back at the registered default 3, so it leaves the file"
         );
         app.world_mut()
@@ -2124,7 +2157,10 @@ mod tests {
         assert!(cvars
             .compose_scope(Scope::Character)
             .contains("SET minimapZoom \"1\""));
-        assert!(!composed(cvars).contains_key("minimapZoom"), "never in Config.wtf");
+        assert!(
+            !composed(cvars).contains_key("minimapZoom"),
+            "never in Config.wtf"
+        );
         assert_eq!(app.world().resource::<MinimapZoom>().outdoor, 1);
     }
 

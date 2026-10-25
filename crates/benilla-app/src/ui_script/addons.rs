@@ -467,32 +467,29 @@ pub(crate) fn info_from_toc(name: &str, toc: &Toc) -> benilla_ui::script::AddOnI
     }
 }
 
-/// Parse `AddOns.txt`, the reference's format: one `<AddOnName>: enabled|disabled` per line. Only
-/// `disabled` disables, so a malformed line leaves the addon enabled.
+/// Parse `AddOns.txt` as `LoadAddOnEnableState` (`0x5f91e0`) does: tokens split on `\r`, `\n` and
+/// `"`, each `<AddOnName>: <value>` at its first `:`, spaces skipped; `disabled` in any case
+/// disables, any other value enables, and a token with no name or no value is skipped.
 fn parse_enable_state(text: &str) -> Vec<(String, bool)> {
-    text.lines()
+    text.split(['\r', '\n', '"'])
         .filter_map(|line| {
             let (name, state) = line.split_once(':')?;
-            let name = name.trim();
-            (!name.is_empty()).then(|| {
-                (
-                    name.to_string(),
-                    !state.trim().eq_ignore_ascii_case("disabled"),
-                )
-            })
+            let (name, state) = (name.trim(), state.trim());
+            (!name.is_empty() && !state.is_empty())
+                .then(|| (name.to_string(), !state.eq_ignore_ascii_case("disabled")))
         })
         .collect()
 }
 
-/// Render the enable state back out in the reference's format.
+/// The file as `SaveAddOnEnableState` (`0x5f76a0`) writes it, `"%s: %s\r\n"` a row (`0xa1d8e8`).
 fn render_enable_state(states: &[(String, bool)]) -> String {
     let mut out = String::new();
     for (name, enabled) in states {
         out.push_str(name);
         out.push_str(if *enabled {
-            ": enabled\n"
+            ": enabled\r\n"
         } else {
-            ": disabled\n"
+            ": disabled\r\n"
         });
     }
     out
@@ -519,18 +516,26 @@ pub(crate) struct EnableStore {
 }
 
 impl EnableStore {
-    /// A node per character, each from its own `AddOns.txt`
-    /// (`benilla-config/addons/<Realm>-<Char>.txt`); a character with no file still gets one.
+    /// A node per character, each from its own `AddOns.txt`; a character with none reads the
+    /// account-wide file instead and is dirty (`0x5f9382`), so its first save writes its own; a
+    /// character with neither still gets an empty node.
     pub(crate) fn load(realm: &str, characters: &[String]) -> Self {
+        let read = |path: Option<PathBuf>| {
+            path.and_then(|p| std::fs::read(p).ok())
+                .map(|b| parse_enable_state(&benilla_ui::source::decode(&b)))
+        };
         let nodes = characters
             .iter()
             .map(|character| {
                 let id = (realm.to_string(), character.clone());
-                let rows = enable_state_path(Some(&id))
-                    .and_then(|p| std::fs::read(p).ok())
-                    .map(|b| parse_enable_state(&benilla_ui::source::decode(&b)))
-                    .unwrap_or_default();
-                (character.clone(), EnableHash::from_rows(rows))
+                let hash = match read(enable_state_path(Some(&id))) {
+                    Some(rows) => EnableHash::from_rows(rows),
+                    None => match read(crate::local_state::addons_state_account_path()) {
+                        Some(rows) => EnableHash::from_account_rows(rows),
+                        None => EnableHash::default(),
+                    },
+                };
+                (character.clone(), hash)
             })
             .collect();
         Self {
@@ -642,20 +647,37 @@ pub(super) fn save_enable_state(script: &UiScript, identity: Option<&(String, St
     }
 }
 
-/// Write every loaded addon's declared saved variables at shutdown (`0x490c83`, after the flat
-/// file, before `AddOns.txt`). No autosave and no dirty bit, as in the reference, whose write gate
-/// is the record's loaded byte: an addon that never loaded is not written. An addon declaring
-/// nothing is left alone, where the reference deletes its file.
+/// Write every loaded addon's saved variables at shutdown, as `UnloadAddOns` (`0x5f5620`) does
+/// after the flat files and before `AddOns.txt`: both `SavedVariables` folders are made, then each
+/// loaded addon's declared set is written, with the one-time `.bak`, or its file deleted when it
+/// declares none, the per-character one from the realm-less folder too (`0xa1d7e8`). An addon that
+/// never loaded keeps its files. A name with a byte outside `[0-9A-Za-z_]` below `0x80` is not
+/// written (`0x5f57e1`).
 pub(super) fn save_addon_variables(script: &mut UiScript, identity: Option<&(String, String)>) {
     let account = crate::local_state::addon_saved_account_dir();
     let character = identity.and_then(|(r, c)| crate::local_state::addon_saved_character_dir(r, c));
+    let legacy = identity.and_then(|(_, c)| crate::local_state::addon_saved_legacy_dir(c));
+    for dir in [&account, &character].into_iter().flatten() {
+        let _ = std::fs::create_dir_all(dir);
+    }
     for (name, account_names, character_names) in script.addon_saved_variable_sets() {
-        for (dir, names) in [(&account, &account_names), (&character, &character_names)] {
-            if names.is_empty() {
-                continue;
-            }
+        let scopes = [
+            (&account, &account_names, None),
+            (&character, &character_names, legacy.as_ref()),
+        ];
+        for (dir, names, old_dir) in scopes {
             let Some(dir) = dir else { continue };
             let path = dir.join(format!("{name}.lua"));
+            if names.is_empty() {
+                for stale in
+                    std::iter::once(path).chain(old_dir.map(|d| d.join(format!("{name}.lua"))))
+                {
+                    if stale.is_file() && std::fs::remove_file(&stale).is_ok() {
+                        info!("ui_script: deleted {}", stale.display());
+                    }
+                }
+                continue;
+            }
             if script.saved_file_held(&path) {
                 // It failed to load this session, so its globals are the addon's defaults, and
                 // writing them would replace the player's file.
@@ -665,25 +687,22 @@ pub(super) fn save_addon_variables(script: &mut UiScript, identity: Option<&(Str
                 );
                 continue;
             }
-            let mut body = SAVED_HEADER.as_bytes().to_vec();
-            body.extend(script.saved_variables_bytes_for(names));
-            match crate::local_state::write_atomic_bytes(&path, &body) {
+            let names: Vec<String> = names
+                .iter()
+                .filter(|n| {
+                    n.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80)
+                })
+                .cloned()
+                .collect();
+            let body = script.saved_variables_bytes_for(&names);
+            match crate::local_state::write_saved_file(&path, &body) {
                 Ok(()) => info!("ui_script: wrote {}", path.display()),
                 Err(e) => warn!("ui_script: cannot write {}: {e}", path.display()),
             }
         }
     }
-    for w in script.take_warnings() {
-        warn!("ui_script: saved variables: {w}");
-    }
 }
-
-/// The per-addon file's header. Deviation: the reference writes none (its file opens with a blank
-/// line); ours names the file, because players open this folder.
-const SAVED_HEADER: &str = "\
--- benilla per-addon saved variables.
--- Written at logout/exit from the live globals; executed as a Lua chunk at addon load.
-";
 
 /// Seat the glue VM's AddOn registry: every discovered addon, its enable bit what the realm's
 /// characters agree on (no character is logged in), and the array the server's
@@ -2011,8 +2030,12 @@ mod tests {
             &[("ran.lua", "OnRan = true")],
         );
         // "On" is absent from the file.
-        std::fs::create_dir_all(home.join("addons")).unwrap();
-        std::fs::write(home.join("addons/Realm-Char.txt"), "Off: disabled\n").unwrap();
+        std::fs::create_dir_all(home.join("WTF/Account/TESTACCT/Realm/Char")).unwrap();
+        std::fs::write(
+            home.join("WTF/Account/TESTACCT/Realm/Char/AddOns.txt"),
+            "Off: disabled\r\n",
+        )
+        .unwrap();
 
         let mut script = UiScript::new().unwrap();
         let id = ("Realm".to_string(), "Char".to_string());
@@ -2293,8 +2316,12 @@ mod tests {
             "## Interface: 30300\n## LoadOnDemand: 1\n",
             &[],
         );
-        std::fs::create_dir_all(home.join("addons")).unwrap();
-        std::fs::write(home.join("addons/Realm-Char.txt"), "Off: disabled\n").unwrap();
+        std::fs::create_dir_all(home.join("WTF/Account/TESTACCT/Realm/Char")).unwrap();
+        std::fs::write(
+            home.join("WTF/Account/TESTACCT/Realm/Char/AddOns.txt"),
+            "Off: disabled\r\n",
+        )
+        .unwrap();
 
         let mut script = UiScript::new().unwrap();
         let id = ("Realm".to_string(), "Char".to_string());
@@ -2439,9 +2466,11 @@ mod tests {
         script.run("DisableAddOn('Drop')").unwrap();
         save_enable_state(&script, Some(&id));
 
-        let written = std::fs::read_to_string(home.join("addons/Realm-Char.txt")).unwrap();
+        let written =
+            std::fs::read_to_string(home.join("WTF/Account/TESTACCT/Realm/Char/AddOns.txt"))
+                .unwrap();
         assert_eq!(
-            written, "Drop: disabled\n",
+            written, "Drop: disabled\r\n",
             "one line per hash entry (`0x51f006`), and the hash holds only the toggled addon: no \
              `Keep`, no `Blizzard_*` row"
         );
@@ -2618,10 +2647,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(home.parent().unwrap());
     }
 
-    /// The reference writer's grammar: `NAME = value`, bracketed keys, TAB indent, a trailing comma
-    /// on every entry, the run from `[1]` as list items (`1, -- [1]`, as 3.3.5a's own
-    /// `SavedVariables` files write it), and the file split by scope. Asserted as bytes, not by
-    /// reloading.
+    /// The reference writer's grammar (`0x8183a0`) in the addon's two files, split by scope: CRLF,
+    /// bracketed keys, TAB indent, a trailing comma on every entry, the array part as list items.
+    /// Asserted as bytes, not by reloading; the hash part's lines in any order.
     #[test]
     fn the_saved_file_bytes_match_the_recorded_grammar() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -2644,27 +2672,27 @@ mod tests {
             .unwrap();
         crate::ui_script::shutdown_ui_state(&mut script, Some(&id), true);
 
-        let account = std::fs::read_to_string(home.join("saved/Gram.lua")).unwrap();
-        let body = account.lines().skip(2).collect::<Vec<_>>().join("\n");
-        assert_eq!(
-            body,
-            "GramDB = {\n\
-             \t[\"n\"] = 2,\n\
-             \t[\"on\"] = true,\n\
-             \t[\"s\"] = \"a\\\"b\",\n\
-             \t[\"t\"] = {\n\
-             \t\t1, -- [1]\n\
-             \t},\n\
-             }",
-            "keys bracketed and quoted, list items unbracketed, TAB indent per level, trailing comma on every \
-             entry, `\\\"` escaped — the recorded grammar\nGOT:\n{account}"
-        );
-        assert!(!account.contains("GramChar"), "account file: {account}");
-        let per_char = std::fs::read_to_string(home.join("saved/Realm-Char/Gram.lua")).unwrap();
+        let account =
+            std::fs::read_to_string(home.join("WTF/Account/TESTACCT/SavedVariables/Gram.lua"))
+                .unwrap();
         assert!(
-            per_char.ends_with("GramChar = 5\n"),
-            "per-char file: {per_char}"
+            account.starts_with("\r\nGramDB = {\r\n") && account.ends_with("\r\n}\r\n"),
+            "{account:?}"
         );
+        for line in [
+            "\t[\"n\"] = 2,\r\n",
+            "\t[\"on\"] = true,\r\n",
+            "\t[\"s\"] = \"a\\\"b\",\r\n",
+            "\t[\"t\"] = {\r\n\t\t1, -- [1]\r\n\t},\r\n",
+        ] {
+            assert!(account.contains(line), "{line:?} in {account:?}");
+        }
+        assert!(!account.contains("GramChar"), "account file: {account}");
+        let per_char = std::fs::read_to_string(
+            home.join("WTF/Account/TESTACCT/Realm/Char/SavedVariables/Gram.lua"),
+        )
+        .unwrap();
+        assert_eq!(per_char, "\r\nGramChar = 5\r\n");
         let _ = std::fs::remove_dir_all(home.parent().unwrap());
     }
 
@@ -2698,13 +2726,106 @@ mod tests {
         let _ = load_third_party(&mut script, Some(&id), &[], true);
         crate::ui_script::shutdown_ui_state(&mut script, Some(&id), true);
 
-        let written = std::fs::read_to_string(home.join("saved/Last.lua")).unwrap();
+        let written =
+            std::fs::read_to_string(home.join("WTF/Account/TESTACCT/SavedVariables/Last.lua"))
+                .unwrap();
         assert!(
             written.contains("LastDB = \"written at logout\""),
             "the value the PLAYER_LOGOUT handler set must reach the file — if the write ran \
              first this reads 'unset':\n{written}"
         );
         let _ = std::fs::remove_dir_all(home.parent().unwrap());
+    }
+
+    /// A loaded addon that declares no saved variables has its old files deleted, the realm-less
+    /// per-character one too (`0x5f5a55`); an addon that did not load keeps its files.
+    #[test]
+    fn a_loaded_addon_declaring_nothing_loses_its_old_files() {
+        let _l = crate::local_state::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _c = crate::local_state::test_env::EnvGuard::unset("WOW_CAPTURE");
+        let (home, _h) = hermetic_root("undeclared");
+        write_addon(&home, "Bare", "## Interface: 30300\n", &[]);
+        write_addon(
+            &home,
+            "Later",
+            "## Interface: 30300\n## LoadOnDemand: 1\n",
+            &[],
+        );
+        let acc = home.join("WTF/Account/TESTACCT");
+        let stale = [
+            acc.join("SavedVariables/Bare.lua"),
+            acc.join("Realm/Char/SavedVariables/Bare.lua"),
+            acc.join("Char/SavedVariables/Bare.lua"),
+        ];
+        let kept = acc.join("SavedVariables/Later.lua");
+        for f in stale.iter().chain([&kept]) {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, "\r\nOLD = 1\r\n").unwrap();
+        }
+        let id = ("Realm".to_string(), "Char".to_string());
+        let mut script = UiScript::new().unwrap();
+        let _ = load_third_party(&mut script, Some(&id), &[], true);
+        crate::ui_script::shutdown_ui_state(&mut script, Some(&id), true);
+
+        for f in &stale {
+            assert!(!f.exists(), "{} deleted", f.display());
+        }
+        assert!(
+            kept.exists(),
+            "a load-on-demand addon that never loaded keeps its file"
+        );
+        let _ = std::fs::remove_dir_all(home.parent().unwrap());
+    }
+
+    /// A character with no `AddOns.txt` reads the account-wide one and saves it as its own at the
+    /// next shutdown, toggled or not (`0x5f9382`); the account-wide file is never written.
+    #[test]
+    fn the_account_wide_enable_file_seeds_a_character_without_one() {
+        let _l = crate::local_state::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _c = crate::local_state::test_env::EnvGuard::unset("WOW_CAPTURE");
+        let (home, _h) = hermetic_root("account-wide");
+        write_addon(
+            &home,
+            "Off",
+            "## Interface: 30300\nran.lua\n",
+            &[("ran.lua", "OffRan = true")],
+        );
+        let wide = home.join("WTF/Account/TESTACCT/AddOns.txt");
+        std::fs::create_dir_all(wide.parent().unwrap()).unwrap();
+        std::fs::write(&wide, "Off: disabled\r\n").unwrap();
+
+        let id = ("Realm".to_string(), "Char".to_string());
+        let mut script = UiScript::new().unwrap();
+        let _ = load_third_party(&mut script, Some(&id), &[], true);
+        assert_eq!(
+            script.eval::<bool>("return OffRan == nil").ok(),
+            Some(true),
+            "the account-wide row disabled it"
+        );
+        save_enable_state(&script, Some(&id));
+        assert_eq!(
+            std::fs::read_to_string(home.join("WTF/Account/TESTACCT/Realm/Char/AddOns.txt"))
+                .unwrap(),
+            "Off: disabled\r\n"
+        );
+        assert_eq!(std::fs::read_to_string(&wide).unwrap(), "Off: disabled\r\n");
+        let _ = std::fs::remove_dir_all(home.parent().unwrap());
+    }
+
+    #[test]
+    fn the_enable_file_reads_as_the_reference_tokenises_it() {
+        assert_eq!(
+            parse_enable_state("A: enabled\r\nB : DISABLED\nC:\nD: yes\n:x\n"),
+            [
+                ("A".to_string(), true),
+                ("B".to_string(), false),
+                ("D".to_string(), true),
+            ]
+        );
     }
 
     /// The writer `0x51ef20` emits the enable hash the reader `0x51ebe0` built from the file, an
@@ -2725,7 +2846,7 @@ mod tests {
         let id = ("Realm".to_string(), "Char".to_string());
         let p = crate::local_state::addons_state_path("Realm", "Char").unwrap();
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(&p, "Uninstalled: disabled\nmyaddon: enabled\n").unwrap();
+        std::fs::write(&p, "Uninstalled: disabled\r\nmyaddon: enabled\r\n").unwrap();
 
         let mut script = UiScript::new().unwrap();
         script.set_screen_size(1024.0, 768.0);

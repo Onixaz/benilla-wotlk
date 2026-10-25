@@ -195,7 +195,10 @@ pub(crate) fn save_to_account_data(world: &mut World) {
     if !dirty {
         return;
     }
-    let Some(state) = world.get_non_send_resource::<UiScript>().map(UiScript::macros) else {
+    let Some(state) = world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::macros)
+    else {
         return;
     };
     let account = store::write(&state.account, 0);

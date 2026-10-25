@@ -59,7 +59,10 @@ pub(crate) fn encode(
 }
 
 /// A file back into its set over the defaults, and its modified clicks as `(action, binding)`.
-pub(crate) fn decode(text: &str, defaults: &[KeyBinding]) -> (Vec<KeyBinding>, Vec<(String, String)>) {
+pub(crate) fn decode(
+    text: &str,
+    defaults: &[KeyBinding],
+) -> (Vec<KeyBinding>, Vec<(String, String)>) {
     let mut set = defaults.to_vec();
     let mut clicks = Vec::new();
     let mut mode = 0u32;
@@ -93,7 +96,8 @@ pub(crate) fn decode(text: &str, defaults: &[KeyBinding]) -> (Vec<KeyBinding>, V
 
 fn strip_ci<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
     let head = line.get(..prefix.len())?;
-    head.eq_ignore_ascii_case(prefix).then(|| &line[prefix.len()..])
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &line[prefix.len()..])
 }
 
 /// A space-ended token of at most [`KEY_MAX`] bytes, then the rest of the line, both non-empty.
@@ -122,8 +126,16 @@ mod tests {
 
     #[test]
     fn a_rebind_and_an_unbind_round_trip_in_the_references_lines() {
-        let d = kb(&[("W", "MOVEFORWARD"), ("SPACE", "JUMP"), ("Z", "TOGGLESHEATH")]);
-        let set = kb(&[("W", "MOVEFORWARD"), ("F", "JUMP"), ("SPACE", "TOGGLEAUTORUN")]);
+        let d = kb(&[
+            ("W", "MOVEFORWARD"),
+            ("SPACE", "JUMP"),
+            ("Z", "TOGGLESHEATH"),
+        ]);
+        let set = kb(&[
+            ("W", "MOVEFORWARD"),
+            ("F", "JUMP"),
+            ("SPACE", "TOGGLEAUTORUN"),
+        ]);
         let clicks = vec![("SELFCAST".to_string(), "CTRL".to_string())];
         let text = encode(&set, &d, &clicks);
         assert_eq!(
@@ -143,13 +155,23 @@ mod tests {
     #[test]
     fn the_reader_takes_what_the_reference_takes() {
         let d = kb(&[("SPACE", "JUMP")]);
-        let text = "  bind F JUMP\r\nBINDINGMODE 9\r\njunk\r\nbind TOOLONGKEYNAMEXXXXXXXXXXXXXXXXXX X\r\n\
+        let text =
+            "  bind F JUMP\r\nBINDINGMODE 9\r\njunk\r\nbind TOOLONGKEYNAMEXXXXXXXXXXXXXXXXXX X\r\n\
                     BINDINGMODE 1\r\nbind G MOVEBACKWARD\r\nbindingmode 0\r\nBIND H SITORSTAND\r\n";
         let (set, _) = decode(text, &d);
         assert!(set.contains(&("F".into(), "JUMP".into())));
-        assert!(set.contains(&("H".into(), "SITORSTAND".into())), "case-blind keywords");
+        assert!(
+            set.contains(&("H".into(), "SITORSTAND".into())),
+            "case-blind keywords"
+        );
         assert!(!set.iter().any(|(k, _)| k == "G"), "mode 1 is not ours");
-        assert!(!set.iter().any(|(_, c)| c == "X"), "a key past 31 bytes is refused");
-        assert!(set.contains(&("SPACE".into(), "JUMP".into())), "the defaults stand");
+        assert!(
+            !set.iter().any(|(_, c)| c == "X"),
+            "a key past 31 bytes is refused"
+        );
+        assert!(
+            set.contains(&("SPACE".into(), "JUMP".into())),
+            "the defaults stand"
+        );
     }
 }

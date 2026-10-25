@@ -32,6 +32,14 @@ impl EnableHash {
         hash
     }
 
+    /// The account-wide file's rows standing in for a character with no file of its own: dirty, so
+    /// the next save writes them as the character's (`LoadAddOnEnableState` `0x5f9382`).
+    pub fn from_account_rows(rows: impl IntoIterator<Item = (String, bool)>) -> Self {
+        let mut hash = Self::from_rows(rows);
+        hash.dirty = true;
+        hash
+    }
+
     /// The row for `name`, if this character has one.
     pub fn get(&self, name: &str) -> Option<bool> {
         self.index

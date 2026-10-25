@@ -219,7 +219,9 @@ fn parse(text: &str, rows: &[(u32, String)]) -> Parsed {
                     block = Block::Top;
                 } else {
                     // `<name> <voice> <number>` (`0x4fd455`); the reader takes `atol`s.
-                    let voice = it.next().is_some_and(|v| v.parse::<i32>().unwrap_or(0) != 0);
+                    let voice = it
+                        .next()
+                        .is_some_and(|v| v.parse::<i32>().unwrap_or(0) != 0);
                     let number = it.next().and_then(|n| n.parse().ok()).unwrap_or(0);
                     out.joined.push(super::edit::SavedChannel {
                         name: head.to_string(),
@@ -583,13 +585,20 @@ mod tests {
     /// `channels` with the window's two lists as a join fills them: a custom name by name, a zone
     /// channel by id.
     fn joined(mut l: ChatWindowLook, channels: Vec<(&str, u32)>) -> ChatWindowLook {
-        l.channels = channels.iter().map(|(n, id)| (n.to_string(), *id)).collect();
+        l.channels = channels
+            .iter()
+            .map(|(n, id)| (n.to_string(), *id))
+            .collect();
         l.named = channels
             .iter()
             .filter(|(_, id)| *id == 0)
             .map(|(n, _)| n.to_string())
             .collect();
-        l.zone_ids = channels.iter().map(|(_, id)| *id).filter(|id| *id != 0).collect();
+        l.zone_ids = channels
+            .iter()
+            .map(|(_, id)| *id)
+            .filter(|id| *id != 0)
+            .collect();
         l
     }
 
@@ -1144,8 +1153,18 @@ POSITION "
             .into_iter()
             .flatten()
             .flatten()
-            .flat_map(|acc| std::fs::read_dir(acc.path()).into_iter().flatten().flatten())
-            .flat_map(|realm| std::fs::read_dir(realm.path()).into_iter().flatten().flatten())
+            .flat_map(|acc| {
+                std::fs::read_dir(acc.path())
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+            })
+            .flat_map(|realm| {
+                std::fs::read_dir(realm.path())
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+            })
             .map(|c| c.path().join("chat-cache.txt"))
             .filter(|p| p.is_file())
             .collect();

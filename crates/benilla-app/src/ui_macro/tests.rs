@@ -3,7 +3,6 @@
 
 use benilla_ui::script::{MacroState, MacroView, UiScript};
 
-
 fn macro_view(name: &str, body: &str) -> MacroView {
     MacroView {
         name: name.into(),
@@ -54,7 +53,10 @@ fn a_saved_macro_table_round_trips_through_the_account_data() {
         "MACRO 1 \"Ambush\" Ability_Ambush\r\n/cast Ambush\r\n/say pew\r\nEND\r\n"
     );
     let character = std::fs::read_to_string(character_dir.join("macros-cache.txt")).unwrap();
-    assert!(character.starts_with("MACRO 16777217 \"Charge\""), "{character}");
+    assert!(
+        character.starts_with("MACRO 16777217 \"Charge\""),
+        "{character}"
+    );
     let back = MacroState {
         account: super::store::parse(&account, 0),
         character: super::store::parse(&character, super::store::CHARACTER_BASE),

@@ -456,6 +456,8 @@ pub(crate) struct Model {
 
     /// Globals `RegisterForSave` declared, in order: written at logout and re-run at load.
     pub(crate) saved_names: Vec<String>,
+    /// Globals `RegisterForSavePerCharacter` declared, in order: the character's file.
+    pub(crate) saved_names_per_character: Vec<String>,
     /// Saved-variables files that failed to load; the shutdown write leaves them untouched.
     pub(crate) held_saved_files: Vec<std::path::PathBuf>,
 
@@ -1323,6 +1325,7 @@ impl Model {
             video_caps: super::cvars::VideoCaps::default(),
             restart_gx_asks: 0,
             saved_names: Vec::new(),
+            saved_names_per_character: Vec::new(),
             held_saved_files: Vec::new(),
             keybinds: super::keybind::KeybindState::default(),
             actions: HashMap::new(),
