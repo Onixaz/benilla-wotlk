@@ -19,6 +19,14 @@ pub(crate) fn process_cpu_secs() -> Option<f64> {
     #[cfg(windows)]
     {
         use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+        use windows_sys::Win32::System::WindowsProgramming::QueryProcessCycleTime;
+        if let Some(hz) = cycle_hz() {
+            let mut cycles = 0u64;
+            // SAFETY: writes one `u64`; the pseudo-handle is never closed.
+            if unsafe { QueryProcessCycleTime(GetCurrentProcess(), &mut cycles) } != 0 {
+                return Some(cycles as f64 / hz);
+            }
+        }
         // SAFETY: `GetProcessTimes` fully writes four plain-integer `FILETIME`s and reads none;
         // the `GetCurrentProcess` pseudo-handle is never closed.
         unsafe {
@@ -43,6 +51,31 @@ pub(crate) fn process_cpu_secs() -> Option<f64> {
     {
         None
     }
+}
+
+/// The rate `Query{Thread,Process}CycleTime` count at: they read the invariant TSC at each
+/// context switch, so they charge exactly the cycles run, where `Get{Thread,Process}Times` charge a
+/// whole 15.6 ms tick to whichever thread the timer interrupt finds (a frame-paced thread that
+/// blocks before each tick reads near zero). Calibrated once against the monotonic clock; `None`
+/// off x86-64, where the times APIs stand in.
+#[cfg(windows)]
+fn cycle_hz() -> Option<f64> {
+    static HZ: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
+    *HZ.get_or_init(|| {
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SAFETY: `_rdtsc` reads the time-stamp counter, present on every x86-64 CPU.
+            let tsc = || unsafe { core::arch::x86_64::_rdtsc() };
+            let (t0, c0) = (std::time::Instant::now(), tsc());
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            let (dt, dc) = (t0.elapsed().as_secs_f64(), tsc().wrapping_sub(c0));
+            (dt > 0.0 && dc > 0).then(|| dc as f64 / dt)
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            None
+        }
+    })
 }
 
 /// A `FILETIME` as an integer of 100-nanosecond ticks.
@@ -96,6 +129,14 @@ pub(crate) fn main_thread_cpu_secs() -> Option<f64> {
     #[cfg(windows)]
     {
         use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+        use windows_sys::Win32::System::WindowsProgramming::QueryThreadCycleTime;
+        if let Some(hz) = cycle_hz() {
+            let mut cycles = 0u64;
+            // SAFETY: writes one `u64`; the pseudo-handle is valid on the calling thread.
+            if unsafe { QueryThreadCycleTime(GetCurrentThread(), &mut cycles) } != 0 {
+                return Some(cycles as f64 / hz);
+            }
+        }
         // SAFETY: as in `process_cpu_secs`; `GetCurrentThread` is a pseudo-handle valid on the
         // thread that asked for it.
         unsafe {
@@ -247,5 +288,36 @@ pub(crate) fn thread_cpu_table() -> Option<Vec<(usize, String, f64, f64)>> {
     #[cfg(not(target_os = "macos"))]
     {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// The thread clock moves with work, never past the wall, and not while asleep.
+    #[test]
+    fn the_thread_clock_counts_run_time_only() {
+        let Some(c0) = main_thread_cpu_secs() else {
+            return; // no thread clock on this platform
+        };
+        let t0 = Instant::now();
+        let mut c1 = c0;
+        while c1 - c0 < 0.02 && t0.elapsed() < Duration::from_secs(2) {
+            std::hint::black_box((0..1000u64).sum::<u64>());
+            c1 = main_thread_cpu_secs().unwrap();
+        }
+        let wall = t0.elapsed().as_secs_f64();
+        assert!(c1 - c0 >= 0.02, "20 ms of spinning never registered");
+        assert!(
+            c1 - c0 <= wall + 0.001,
+            "{:.1} ms of CPU in {:.1} ms of wall: a tick-sampled clock",
+            (c1 - c0) * 1e3,
+            wall * 1e3
+        );
+        std::thread::sleep(Duration::from_millis(30));
+        let slept = main_thread_cpu_secs().unwrap() - c1;
+        assert!(slept < 0.003, "{:.1} ms charged to a sleep", slept * 1e3);
     }
 }
