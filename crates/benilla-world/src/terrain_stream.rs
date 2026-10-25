@@ -1140,9 +1140,13 @@ fn rescatter_clutter(
     }
 }
 
-/// Mirror the spawned WMO placements into [`WmoResidency`] each frame, so the interior classifier
-/// re-tests when a building streams in or out; rebuilt whole, as few WMOs are resident.
+/// Mirror the spawned WMO placements into [`WmoResidency`], so the interior classifier re-tests
+/// when a building streams in or out; rebuilt whole on a `Placements` write, the set's one input
+/// (a city holds thousands of placements, so a still frame skips the walk).
 fn sync_interior_volumes(placements: Res<Placements>, mut vols: ResMut<WmoResidency>) {
+    if !placements.is_changed() {
+        return;
+    }
     vols.update(
         placements
             .by_id
@@ -1330,6 +1334,37 @@ mod focus_tests {
         assert_eq!(
             ViewFocus::camera().resolve(None),
             [SPAWN_XY.0, SPAWN_XY.1, 0.0]
+        );
+    }
+}
+
+#[cfg(test)]
+mod residency_tests {
+    use super::*;
+
+    /// A frame with `Placements` untouched leaves the residency unwritten.
+    #[test]
+    fn untouched_placements_skip_the_residency_rebuild() {
+        let mut world = World::new();
+        world.init_resource::<Placements>();
+        world.init_resource::<WmoResidency>();
+        let mut sys = IntoSystem::into_system(sync_interior_volumes);
+        sys.initialize(&mut world);
+        sys.run((), &mut world).unwrap();
+        let settled = world.resource_ref::<WmoResidency>().last_changed();
+        world.clear_trackers();
+        sys.run((), &mut world).unwrap();
+        assert_eq!(
+            world.resource_ref::<WmoResidency>().last_changed(),
+            settled,
+            "a still frame rewrote the residency"
+        );
+        world.resource_mut::<Placements>().pending_spawns += 1;
+        sys.run((), &mut world).unwrap();
+        assert_ne!(
+            world.resource_ref::<WmoResidency>().last_changed(),
+            settled,
+            "a placements write rebuilds it"
         );
     }
 }
