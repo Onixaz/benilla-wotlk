@@ -32,7 +32,7 @@ fn simple_server_bodies_parse() {
     // SMSG_LOGIN_SETTIMESPEED: packed date (LSB up: minute:6, hour:5, weekday:3, day:6, month:4,
     // year:5), f32 timescale, then a `u32` 0. The day serial counts 31-day months:
     // year·372 + month·31 + day.
-    let datetime: u32 = (26 << 24) | (6 << 20) | (17 << 14) | (14 << 6) | 30;
+    let datetime: u32 = (26 << 24) | (6 << 20) | (17 << 14) | (3 << 11) | (14 << 6) | 30;
     let mut ts = datetime.to_le_bytes().to_vec();
     ts.extend_from_slice(&0.0166_6667f32.to_le_bytes());
     ts.extend_from_slice(&0u32.to_le_bytes());
@@ -41,13 +41,33 @@ fn simple_server_bodies_parse() {
             hours,
             minutes,
             day_serial,
+            date,
             timescale,
         } => {
             assert_eq!((hours, minutes), (14, 30));
             assert_eq!(day_serial, 26 * 372 + 6 * 31 + 17);
+            assert_eq!(
+                date,
+                messages::GameDate {
+                    weekday: 3,
+                    month_day: 17,
+                    month: 6,
+                    year: 26
+                }
+            );
             assert_eq!(timescale, 0.0166_6667);
         }
         _ => panic!("settimespeed"),
+    }
+    // SMSG_CALENDAR_SEND_NUM_PENDING: one u32.
+    match messages::parse_server(
+        messages::opcode::SMSG_CALENDAR_SEND_NUM_PENDING,
+        &2u32.to_le_bytes(),
+    )
+    .unwrap()
+    {
+        ServerPacket::CalendarNumPending { count } => assert_eq!(count, 2),
+        _ => panic!("calendar num pending"),
     }
 }
 

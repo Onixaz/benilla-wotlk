@@ -450,9 +450,18 @@ fn parse_server_body(
                 hours: ((datetime >> 6) & 0x1F) as u8,
                 minutes: (datetime & 0x3F) as u8,
                 day_serial: year * 372 + month * 31 + day,
+                date: super::GameDate {
+                    weekday: ((datetime >> 11) & 0x07) as u8,
+                    month_day: day as u8,
+                    month: month as u8,
+                    year: year as u8,
+                },
                 timescale,
             }
         }
+        opcode::SMSG_CALENDAR_SEND_NUM_PENDING => ServerPacket::CalendarNumPending {
+            count: read_u32_le(&mut r)?,
+        },
         // Wall-clock unix seconds (`QueryHandler.cpp:418-423`), not the game clock above.
         opcode::SMSG_QUERY_TIME_RESPONSE => ServerPacket::QueryTimeResponse {
             unix_time: read_u32_le(&mut r)?,

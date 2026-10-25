@@ -347,8 +347,12 @@ pub enum SessionEvent {
         minutes: u8,
         /// `year·372 + month·31 + day` of the packed server date; the moon phase's input.
         day_serial: u32,
+        /// The packed date's own fields, `CalendarGetDate`'s source.
+        date: crate::messages::GameDate,
         timescale: f32,
     },
+    /// `SMSG_CALENDAR_SEND_NUM_PENDING`: the pending calendar invite count.
+    CalendarNumPending { count: u32 },
     /// The server's wall clock in unix seconds (`SMSG_QUERY_TIME_RESPONSE`), the base of absolute
     /// descriptor stamps: a timed quest's deadline is `time(nullptr) + limitTime`.
     ServerUnixTime { unix_time: u32 },

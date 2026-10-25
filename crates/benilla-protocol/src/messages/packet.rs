@@ -65,6 +65,16 @@ pub struct CreatureQueryInfo {
     pub power_modifier: f32,
 }
 
+/// A packed date's fields, 0-based as `WowTime::WowDecodeTime` (`0x76c970`) leaves them: the
+/// weekday (0 Sunday), the day of the month, the month and the years since 2000.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GameDate {
+    pub weekday: u8,
+    pub month_day: u8,
+    pub month: u8,
+    pub year: u8,
+}
+
 /// A decoded server packet; an unmodelled opcode is [`Self::Other`].
 pub enum ServerPacket {
     AuthChallenge {
@@ -188,7 +198,13 @@ pub enum ServerPacket {
         minutes: u8,
         /// Day count from the packed date, `year·372 + month·31 + day`; drives the moon phase.
         day_serial: u32,
+        /// The packed date's own fields.
+        date: GameDate,
         timescale: f32,
+    },
+    /// `SMSG_CALENDAR_SEND_NUM_PENDING`: how many calendar invites wait on an answer.
+    CalendarNumPending {
+        count: u32,
     },
     /// `SMSG_QUERY_TIME_RESPONSE`: wall-clock unix seconds, the base of absolute descriptor stamps.
     QueryTimeResponse {
@@ -1399,6 +1415,7 @@ impl ServerPacket {
             ServerPacket::TransferAborted { .. } => "SMSG_TRANSFER_ABORTED".into(),
             ServerPacket::LoginVerifyWorld { .. } => "SMSG_LOGIN_VERIFY_WORLD".into(),
             ServerPacket::TimeSpeed { .. } => "SMSG_LOGIN_SETTIMESPEED".into(),
+            ServerPacket::CalendarNumPending { .. } => "SMSG_CALENDAR_SEND_NUM_PENDING".into(),
             ServerPacket::QueryTimeResponse { .. } => "SMSG_QUERY_TIME_RESPONSE".into(),
             ServerPacket::BindPoint { .. } => "SMSG_BINDPOINTUPDATE".into(),
             ServerPacket::GmTicketAnswer { .. } => "SMSG_GMTICKET_GETTICKET".into(),

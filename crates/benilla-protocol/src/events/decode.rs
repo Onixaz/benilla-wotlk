@@ -823,13 +823,18 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             hours,
             minutes,
             day_serial,
+            date,
             timescale,
         } => vec![SessionEvent::TimeSpeed {
             hours,
             minutes,
             day_serial,
+            date,
             timescale,
         }],
+        ServerPacket::CalendarNumPending { count } => {
+            vec![SessionEvent::CalendarNumPending { count }]
+        }
         ServerPacket::QueryTimeResponse { unix_time } => {
             vec![SessionEvent::ServerUnixTime { unix_time }]
         }

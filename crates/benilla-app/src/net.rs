@@ -734,18 +734,35 @@ pub(crate) struct GameTime {
     base_minute: u32,
     /// Day serial of the packed date, `year*372 + month*31 + day`; only differences matter.
     base_day: u32,
+    /// The packed date at `received`.
+    base_date: benilla_protocol::messages::GameDate,
     timescale: f32,
     received: Instant,
 }
 
 impl GameTime {
-    pub(crate) fn new(hours: u8, minutes: u8, day_serial: u32, timescale: f32) -> Self {
+    pub(crate) fn new(
+        hours: u8,
+        minutes: u8,
+        day_serial: u32,
+        date: benilla_protocol::messages::GameDate,
+        timescale: f32,
+    ) -> Self {
         Self {
             base_minute: hours as u32 * 60 + minutes as u32,
             base_day: day_serial,
+            base_date: date,
             timescale,
             received: Instant::now(),
         }
+    }
+
+    /// Today's date on the real calendar: the packed date moved on by the midnights the clock has
+    /// crossed, as the client's minute tick moves its own (`WowTime::AddMinutes`, `0x76c3f0`).
+    pub(crate) fn calendar_date(&self) -> benilla_protocol::messages::GameDate {
+        let elapsed = self.received.elapsed().as_secs_f64() * self.timescale as f64;
+        let days = ((self.base_minute as f64 + elapsed) / 1440.0).floor() as i64;
+        add_days(self.base_date, days)
     }
 
     /// Current minute of the game day (`0..1440`).
@@ -771,6 +788,45 @@ impl GameTime {
     pub(crate) fn day_continuous(&self) -> f64 {
         let elapsed = self.received.elapsed().as_secs_f64() * self.timescale as f64;
         self.base_day as f64 + (self.base_minute as f64 + elapsed) / 1440.0
+    }
+}
+
+/// `date` moved `days` on the proleptic Gregorian calendar, the weekday with it.
+fn add_days(
+    date: benilla_protocol::messages::GameDate,
+    days: i64,
+) -> benilla_protocol::messages::GameDate {
+    // Days since 1970-01-01 of a civil date, and back (Howard Hinnant's algorithms).
+    fn to_days(y: i64, m: i64, d: i64) -> i64 {
+        let y = if m <= 2 { y - 1 } else { y };
+        let era = y.div_euclid(400);
+        let yoe = y - era * 400;
+        let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        era * 146_097 + doe - 719_468
+    }
+    fn from_days(z: i64) -> (i64, i64, i64) {
+        let z = z + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        (yoe + era * 400 + i64::from(m <= 2), m, d)
+    }
+    let z = to_days(
+        2000 + i64::from(date.year),
+        i64::from(date.month) + 1,
+        i64::from(date.month_day) + 1,
+    ) + days;
+    let (y, m, d) = from_days(z);
+    benilla_protocol::messages::GameDate {
+        weekday: ((i64::from(date.weekday) + days).rem_euclid(7)) as u8,
+        month_day: (d - 1) as u8,
+        month: (m - 1) as u8,
+        year: (y - 2000).clamp(0, 255) as u8,
     }
 }
 
@@ -2547,6 +2603,26 @@ pub(crate) struct PetDismissSoundMessage {
 
 #[cfg(test)]
 mod tests {
+    /// The day rollover follows the real calendar: a 30-day month, a leap day, the year's end.
+    #[test]
+    fn the_calendar_date_rolls_over_month_leap_day_and_year() {
+        use benilla_protocol::messages::GameDate;
+        let d = |weekday, month_day, month, year| GameDate {
+            weekday,
+            month_day,
+            month,
+            year,
+        };
+        // 2026-09-30, a Wednesday, plus one: Thursday 2026-10-01.
+        assert_eq!(super::add_days(d(3, 29, 8, 26), 1), d(4, 0, 9, 26));
+        // 2028-02-28 (Monday) plus one is the leap day, plus two is March 1.
+        assert_eq!(super::add_days(d(1, 27, 1, 28), 1), d(2, 28, 1, 28));
+        assert_eq!(super::add_days(d(1, 27, 1, 28), 2), d(3, 0, 2, 28));
+        // 2026-12-31 (Thursday) plus one: Friday 2027-01-01.
+        assert_eq!(super::add_days(d(4, 30, 11, 26), 1), d(5, 0, 0, 27));
+        assert_eq!(super::add_days(d(4, 30, 11, 26), 0), d(4, 30, 11, 26));
+    }
+
     use super::*;
 
     /// A re-create of a live object notifies like a delta.

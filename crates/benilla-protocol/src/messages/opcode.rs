@@ -31,6 +31,8 @@ pub const SMSG_NEW_WORLD: u16 = 0x003E;
 pub const SMSG_TRANSFER_PENDING: u16 = 0x003F;
 pub const SMSG_TRANSFER_ABORTED: u16 = 0x0040;
 pub const SMSG_LOGIN_SETTIMESPEED: u16 = 0x0042;
+/// The pending calendar invite count, one `u32` (`CGCalendar::UpdatePendingInvites`, `0x5b7ce0`).
+pub const SMSG_CALENDAR_SEND_NUM_PENDING: u16 = 0x0448; // 1096
 pub const SMSG_BINDPOINTUPDATE: u16 = 0x0155;
 /// The proficiency mask for one item class (vmangos `Skill.h`).
 pub const SMSG_SET_PROFICIENCY: u16 = 0x0127;

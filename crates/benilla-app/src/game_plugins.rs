@@ -44,6 +44,7 @@ use crate::ui_battlefield::BattlefieldPlugin;
 use crate::ui_battlefield_positions::BattlefieldPositionsPlugin;
 use crate::ui_battlefield_score::BattlefieldScorePlugin;
 use crate::ui_binder::UiBinderPlugin;
+use crate::ui_calendar::UiCalendarPlugin;
 use crate::ui_cast::UiCastPlugin;
 use crate::ui_char::UiCharPlugin;
 use crate::ui_chat::UiChatPlugin;
@@ -242,6 +243,7 @@ impl PluginGroup for GamePlugins {
             .add(UiNetPlugin)
             .add(UiCastPlugin)
             .add(UiMirrorPlugin)
+            .add(UiCalendarPlugin)
             .add(crate::combat_text::CombatTextPlugin)
             .add(crate::nameplates::NameplatesPlugin)
             .add(crate::raid_marks::RaidMarksPlugin)

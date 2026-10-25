@@ -120,6 +120,7 @@ pub(crate) mod addon;
 mod addon_enable;
 pub mod addon_gate;
 pub(crate) mod anim;
+mod calendar_clock;
 mod client;
 mod clock;
 mod cvars;
@@ -969,6 +970,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     gm_ticket::install(lua)?;
     duel::install(lua)?;
     mirror_timer::install(lua)?;
+    calendar_clock::install(lua)?;
     follow::install(lua)?;
     camera_view::install(lua)?;
     input_verbs::install(lua)?;

@@ -304,8 +304,16 @@ fn on_clock(In(ev): In<SessionEvent>, mut b: Bridge) {
             hours,
             minutes,
             day_serial,
+            date,
             timescale,
-        } => time_speed(hours, minutes, day_serial, timescale, &mut b.server_time),
+        } => time_speed(
+            hours,
+            minutes,
+            day_serial,
+            date,
+            timescale,
+            &mut b.server_time,
+        ),
         SessionEvent::ServerUnixTime { unix_time } => {
             server_unix_time(unix_time, &mut b.wall_clock)
         }
@@ -652,13 +660,14 @@ fn time_speed(
     hours: u8,
     minutes: u8,
     day_serial: u32,
+    date: benilla_protocol::messages::GameDate,
     timescale: f32,
     server_time: &mut ServerTime,
 ) {
     if server_time.0.is_none() {
         info!("net: server game-time {hours:02}:{minutes:02} (drives lighting)");
     }
-    server_time.0 = Some(GameTime::new(hours, minutes, day_serial, timescale));
+    server_time.0 = Some(GameTime::new(hours, minutes, day_serial, date, timescale));
 }
 
 /// `SMSG_QUERY_TIME_RESPONSE`: the server wall clock that absolute descriptor stamps (the

@@ -219,7 +219,7 @@ pub use movement::{
     CLASSIC_ASCENDING, CLASSIC_CAN_FLY, CLASSIC_DESCENDING, CLASSIC_FLYING,
 };
 pub use opcode_names::opcode_name;
-pub use packet::{CreatureQueryInfo, MonsterMoveFacing, ServerPacket};
+pub use packet::{CreatureQueryInfo, GameDate, MonsterMoveFacing, ServerPacket};
 pub use page_text::page_text_query;
 pub use parse::{parse_auth_response_wotlk, parse_server, parse_server_with_tail};
 pub use pet::{

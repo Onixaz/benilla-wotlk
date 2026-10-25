@@ -870,8 +870,9 @@ fn feed_minimap_player_facing(
     script.set_minimap_player_facing(player.facing().rem_euclid(std::f32::consts::TAU));
 }
 
-/// Push the game clock `GetGameTime()` answers when the minute ticks, the API's own resolution.
-/// Before the first `SMSG_LOGIN_SETTIMESPEED` it reads 0:00.
+/// Push the game clock `GetGameTime()` answers when the minute ticks, the API's own resolution,
+/// and the date `CalendarGetDate()` answers with it. Before the first `SMSG_LOGIN_SETTIMESPEED`
+/// they read 0:00 and the cleared date.
 fn feed_game_time(
     script: Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
     time: Res<crate::net::ServerTime>,
@@ -886,6 +887,8 @@ fn feed_game_time(
     }
     *last = Some(minute);
     script.set_game_time(minute / 60, minute % 60);
+    let date = gt.calendar_date();
+    script.set_calendar_date(date.weekday, date.month_day, date.month, date.year);
 }
 
 /// The app half of the `<Minimap>` widget. The zone label feed is `crate::area`'s: the reference
@@ -933,8 +936,11 @@ impl Plugin for MinimapPlugin {
                         .after(feed_minimap_inside)
                         .in_set(crate::ui_script::UiFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
-                    // Before the script tick, so GameTimeFrame reads this frame's minute.
-                    feed_game_time.in_set(crate::ui_script::UiFeed),
+                    // Before the script tick, so GameTimeFrame reads this frame's minute, and the
+                    // world-entry fire, whose `GameTimeFrame_SetDate` reads the date.
+                    feed_game_time
+                        .in_set(crate::ui_script::UiFeed)
+                        .before(crate::ui_unit::EnterWorldFeed),
                     // After the world-mouseover drive (UnitFeed): a same-frame world-hover→blip
                     // transition must end with the blip tooltip shown, not the fade.
                     blips::drive_blip_tooltip

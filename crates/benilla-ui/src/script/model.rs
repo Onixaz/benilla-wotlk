@@ -371,6 +371,10 @@ pub(crate) struct Model {
     pub(crate) duel_requests: Vec<duel::DuelRequest>,
     /// The three mirror-timer records (`0xbd0b80`); `None` is an empty one.
     pub(crate) mirror_timers: [Option<mirror_timer::MirrorTimer>; 3],
+    /// Today's game date, 0-based: weekday, day of the month, month, years since 2000.
+    pub(crate) calendar_date: (u8, u8, u8, u8),
+    /// The server's pending calendar invite count.
+    pub(crate) calendar_pending_invites: u32,
     /// `FollowUnit` and `FollowByName` calls; Lua sees following only as `AUTOFOLLOW_*` events.
     pub(crate) follow_requests: Vec<follow::FollowRequest>,
     /// `SetView`, `SaveView`, `ResetView`, `NextView`, `PrevView` and `FlipCameraYaw` calls; the
@@ -1289,6 +1293,8 @@ impl Model {
             default_language: None,
             duel_requests: Vec::new(),
             mirror_timers: Default::default(),
+            calendar_date: (0, 0, 0, 0),
+            calendar_pending_invites: 0,
             follow_requests: Vec::new(),
             camera_view_requests: Vec::new(),
             session_requests: Vec::new(),
