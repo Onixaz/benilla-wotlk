@@ -16,10 +16,24 @@ pub(crate) struct Registered {
     /// Registered with flag bit1 (`rec+0x1c & 0x2`, `flags` 2 or 3 at the register site): a write
     /// is staged in [`super::Row::pending`] until [`super::Cvars::commit_latched`].
     pub(crate) latched: bool,
-    /// Registered in the per-character archive, `(flags & 0x30) == 0x20`: never in `Config.wtf`
-    /// (`CVar::SaveAll` writes category 0 only, `0x767100`) and dropped at logout
+    /// The archive the row is saved into, its register site's `flags & 0x30`.
+    pub(crate) scope: Scope,
+    /// Registered with `0x40`: Lua's `GetCVar`, `SetCVar` and `GetCVarInfo` treat it as unknown
+    /// (`0x510083`, `0x514c5f`), and it is still archived.
+    pub(crate) hidden: bool,
+}
+
+/// Which file a row is archived in (`CVar::IterateForArchive` `0x767030` walks one at a time).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Scope {
+    /// `Config.wtf` (`CVar::SaveAll` `0x767100`).
+    Config,
+    /// `0x10`: the account's `config-cache.wtf`, account-data slot 0; reset at each account login
+    /// (`CVar::DeleteAccountCVars` `0x7673a0`).
+    Account,
+    /// `0x20`: the character's `config-cache.wtf`, slot 1; dropped at every UI shutdown
     /// (`CVar::DeleteCharacterCVars` `0x767350`).
-    pub(crate) per_character: bool,
+    Character,
 }
 
 impl Registered {
@@ -31,10 +45,26 @@ impl Registered {
         }
     }
 
-    /// Mark the row per-character.
+    /// Mark the row per-character (`0x20`).
     pub(crate) const fn per_character(self) -> Self {
         Self {
-            per_character: true,
+            scope: Scope::Character,
+            ..self
+        }
+    }
+
+    /// Mark the row per-account (`0x10`).
+    pub(crate) const fn per_account(self) -> Self {
+        Self {
+            scope: Scope::Account,
+            ..self
+        }
+    }
+
+    /// Mark the row hidden from Lua (`0x40`).
+    pub(crate) const fn hidden(self) -> Self {
+        Self {
+            hidden: true,
             ..self
         }
     }
@@ -73,7 +103,8 @@ const fn same(name: &'static str, default: &'static str) -> Registered {
         default,
         reference: Reference::Same(default),
         latched: false,
-        per_character: false,
+        scope: Scope::Config,
+        hidden: false,
     }
 }
 
@@ -89,7 +120,8 @@ const fn overridden(
         default,
         reference: Reference::Overridden { registered, why },
         latched: false,
-        per_character: false,
+        scope: Scope::Config,
+        hidden: false,
     }
 }
 
@@ -105,7 +137,8 @@ const fn deviates(
         default,
         reference: Reference::Deviates { value, why },
         latched: false,
-        per_character: false,
+        scope: Scope::Config,
+        hidden: false,
     }
 }
 
@@ -116,7 +149,8 @@ const fn ours(name: &'static str, default: &'static str, why: &'static str) -> R
         default,
         reference: Reference::Ours(why),
         latched: false,
-        per_character: false,
+        scope: Scope::Config,
+        hidden: false,
     }
 }
 
@@ -135,23 +169,22 @@ pub(crate) fn registered_rows() -> impl Iterator<Item = &'static Registered> {
 pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // "The style of Edit Boxes for the ChatFrame" (`0x51e2d8`, "im"); `ChatFrame.lua` hides the
     // edit box between lines in "im" and keeps it in "classic".
-    same("chatStyle", "im"),
+    same("chatStyle", "im").per_account(),
     // `0x51e2fb`, "1": a click on the window focuses the edit box, in "im" style only.
-    same("wholeChatWindowClickable", "1"),
+    same("wholeChatWindowClickable", "1").per_account(),
     // `0x51e31b`, "popout": where a new Real ID conversation opens.
-    same("conversationMode", "popout"),
+    same("conversationMode", "popout").per_account(),
     // `0x51e35e`, "1": the mouse wheel scrolls a chat window (`FloatingChatFrame.lua`).
-    same("chatMouseScroll", "1"),
+    same("chatMouseScroll", "1").per_account(),
     // `0x51f2d2`, "": the GM a reload should reopen the GM chat window for; UIParent's
     // `VARIABLES_LOADED` arm loads `Blizzard_GMChatUI` when it is not "".
-    same("lastTalkedToGM", ""),
+    same("lastTalkedToGM", "").per_account(),
     // `0x51f147`, "3": when `IsThreatWarningEnabled` answers 1 (0 off, 1 in dungeons, 2 in a
     // group, 3 always), which the stock unit frames' threat glow reads.
-    same("threatWarning", "3"),
+    same("threatWarning", "3").per_character(),
     // `0x51ee61` and `0x51ee84`, "" with flags 0x20: the panes the character sheet's two stat
     // dropdowns show; `PaperDollFrame.lua`'s `VARIABLES_LOADED` arm writes the class default
-    // when either is "". The reference keeps them per character in its account data; benilla,
-    // with no account data store (#279), keeps them for the session only.
+    // when either is "". Kept in the character's `config-cache.wtf`, account-data slot 1.
     same("playerStatLeftDropdown", "").per_character(),
     same("playerStatRightDropdown", "").per_character(),
     // `0x51ee19`, "0" with flags 0x20: the keyring button, which the stock bar's first-key
@@ -265,75 +298,75 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("Sound_ListenerAtCharacter", "1"),
     // The Interface panels' rows (`0x51dc20`-`0x51f239`); flags 0x20 are per character.
     same("stopAutoAttackOnTargetChange", "0").per_character(),
-    same("showTargetOfTarget", "0"),
-    same("targetOfTargetMode", "5"),
-    same("showTargetCastbar", "1"),
-    same("showVKeyCastbar", "1"),
-    same("rotateMinimap", "0"),
-    same("scriptErrors", "0"),
-    same("screenEdgeFlash", "1"),
-    same("displayFreeBagSlots", "0"),
-    same("displayWorldPVPObjectives", "1"),
-    same("showClock", "1"),
-    same("colorblindMode", "0"),
-    same("questFadingDisable", "1"),
-    same("autoQuestWatch", "1"),
-    same("autoQuestProgress", "1"),
+    same("showTargetOfTarget", "0").per_account(),
+    same("targetOfTargetMode", "5").per_account(),
+    same("showTargetCastbar", "1").per_account(),
+    same("showVKeyCastbar", "1").per_account(),
+    same("rotateMinimap", "0").per_account(),
+    same("scriptErrors", "0").per_account(),
+    same("screenEdgeFlash", "1").per_account(),
+    same("displayFreeBagSlots", "0").per_account(),
+    same("displayWorldPVPObjectives", "1").per_account(),
+    same("showClock", "1").per_account(),
+    same("colorblindMode", "0").per_account(),
+    same("questFadingDisable", "1").per_account(),
+    same("autoQuestWatch", "1").per_account(),
+    same("autoQuestProgress", "1").per_account(),
     same("mapQuestDifficulty", "0").per_character(),
     same("advancedWorldMap", "0").per_character(),
     same("watchFrameWidth", "0"),
-    same("removeChatDelay", "0"),
-    same("guildRecruitmentChannel", "1"),
-    same("showTimestamps", "none"),
-    same("lockActionBars", "1"),
-    same("alwaysShowActionBars", "0"),
-    same("secureAbilityToggle", "1"),
-    same("CombatHealing", "1"),
-    same("enableCombatText", "1"),
-    same("combatTextFloatMode", "1"),
-    same("fctCombatState", "0"),
-    same("fctDodgeParryMiss", "0"),
-    same("fctDamageReduction", "0"),
-    same("fctRepChanges", "0"),
-    same("fctReactives", "0"),
-    same("fctFriendlyHealers", "0"),
-    same("fctComboPoints", "0"),
-    same("fctLowManaHealth", "1"),
-    same("fctEnergyGains", "0"),
-    same("fctPeriodicEnergyGains", "0"),
-    same("fctHonorGains", "0"),
-    same("fctAuras", "0"),
-    same("fctSpellMechanics", "0"),
-    same("fctSpellMechanicsOther", "0"),
-    same("xpBarText", "0"),
-    same("playerStatusText", "0"),
-    same("petStatusText", "0"),
-    same("partyStatusText", "0"),
-    same("targetStatusText", "0"),
-    same("statusTextPercentage", "0"),
-    same("showPartyBackground", "0"),
-    same("hidePartyInRaid", "0"),
+    same("removeChatDelay", "0").per_account(),
+    same("guildRecruitmentChannel", "1").per_account(),
+    same("showTimestamps", "none").per_account(),
+    same("lockActionBars", "1").per_account(),
+    same("alwaysShowActionBars", "0").per_account(),
+    same("secureAbilityToggle", "1").per_account(),
+    same("CombatHealing", "1").per_account(),
+    same("enableCombatText", "1").per_account(),
+    same("combatTextFloatMode", "1").per_account(),
+    same("fctCombatState", "0").per_account(),
+    same("fctDodgeParryMiss", "0").per_account(),
+    same("fctDamageReduction", "0").per_account(),
+    same("fctRepChanges", "0").per_account(),
+    same("fctReactives", "0").per_account(),
+    same("fctFriendlyHealers", "0").per_account(),
+    same("fctComboPoints", "0").per_account(),
+    same("fctLowManaHealth", "1").per_account(),
+    same("fctEnergyGains", "0").per_account(),
+    same("fctPeriodicEnergyGains", "0").per_account(),
+    same("fctHonorGains", "0").per_account(),
+    same("fctAuras", "0").per_account(),
+    same("fctSpellMechanics", "0").per_account(),
+    same("fctSpellMechanicsOther", "0").per_account(),
+    same("xpBarText", "0").per_account(),
+    same("playerStatusText", "0").per_account(),
+    same("petStatusText", "0").per_account(),
+    same("partyStatusText", "0").per_account(),
+    same("targetStatusText", "0").per_account(),
+    same("statusTextPercentage", "0").per_account(),
+    same("showPartyBackground", "0").per_account(),
+    same("hidePartyInRaid", "0").per_account(),
     same("showPartyPets", "1").per_character(),
     same("showRaidRange", "0").per_character(),
     same("showArenaEnemyFrames", "1").per_character(),
     same("showArenaEnemyCastbar", "1").per_character(),
     same("showArenaEnemyPets", "1").per_character(),
     same("fullSizeFocusFrame", "0").per_character(),
-    same("buffDurations", "1"),
+    same("buffDurations", "1").per_account(),
     same("showDispelDebuffs", "0").per_character(),
     same("showCastableBuffs", "0").per_character(),
     same("consolidateBuffs", "0").per_character(),
     same("showCastableDebuffs", "0").per_character(),
-    same("showToastOnline", "1"),
-    same("showToastOffline", "1"),
-    same("showToastBroadcast", "1"),
-    same("showToastFriendRequest", "1"),
-    same("showToastConversation", "1"),
-    same("showToastWindow", "1"),
-    same("toastDuration", "4"),
-    same("showNewbieTips", "1"),
-    same("showItemLevel", "0"),
-    same("showTutorials", "1"),
+    same("showToastOnline", "1").per_account(),
+    same("showToastOffline", "1").per_account(),
+    same("showToastBroadcast", "1").per_account(),
+    same("showToastFriendRequest", "1").per_account(),
+    same("showToastConversation", "1").per_account(),
+    same("showToastWindow", "1").per_account(),
+    same("toastDuration", "4").per_account(),
+    same("showNewbieTips", "1").per_account(),
+    same("showItemLevel", "0").per_account(),
+    same("showTutorials", "1").per_account(),
     // The V keys' two switches, read by `vplates`.
     same("nameplateShowEnemies", "0").per_character(),
     same("nameplateShowEnemyPets", "1").per_character(),
@@ -344,10 +377,10 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("nameplateShowFriendlyGuardians", "1").per_character(),
     same("nameplateShowFriendlyTotems", "1").per_character(),
     same("nameplateAllowOverlap", "1").per_character(),
-    same("PushToTalkSound", "0"),
-    same("timeMgrAlarmEnabled", "0"),
+    same("PushToTalkSound", "0").per_account(),
+    same("timeMgrAlarmEnabled", "0").per_account(),
     // `0x51ef47`: "0" in enUS, koKR and esMX, "1" elsewhere; the calendar's clock text reads it.
-    same("timeMgrUseMilitaryTime", "0"),
+    same("timeMgrUseMilitaryTime", "0").per_account(),
     // `0x51eaf1`-`0x51eb92`, flags 0x20: the calendar's five filters (`SetCalendarFilterCVarCallback`
     // `0x5127a0`).
     same("calendarShowWeeklyHolidays", "1").per_character(),
@@ -355,8 +388,8 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("calendarShowBattlegrounds", "0").per_character(),
     same("calendarShowLockouts", "1").per_character(),
     same("calendarShowResets", "0").per_character(),
-    same("threatShowNumeric", "0"),
-    same("threatPlaySounds", "1"),
+    same("threatShowNumeric", "0").per_account(),
+    same("threatPlaySounds", "1").per_account(),
     same("ShowClassColorInNameplate", "0").per_character(),
     same("previewTalents", "0").per_character(),
     // Voice chat (`0x4d10f4`-`0x4d12e7`): with no voice, these hold the panel's state only.
@@ -370,22 +403,22 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("Sound_VoiceChatInputDriverIndex", "0"),
     same("Sound_VoiceChatOutputDriverIndex", "0"),
     // The Names panel's unit-name rows (`0x7e61f1`-`0x7e630f`).
-    same("UnitNameEnemyPlayerName", "1"),
-    same("UnitNameEnemyPetName", "1"),
-    same("UnitNameEnemyGuardianName", "0"),
-    same("UnitNameEnemyTotemName", "0"),
-    same("UnitNameFriendlyPlayerName", "1"),
-    same("UnitNameFriendlyPetName", "1"),
-    same("UnitNameFriendlyGuardianName", "0"),
-    same("UnitNameFriendlyTotemName", "0"),
-    same("UnitNameNonCombatCreatureName", "0"),
+    same("UnitNameEnemyPlayerName", "1").per_account(),
+    same("UnitNameEnemyPetName", "1").per_account(),
+    same("UnitNameEnemyGuardianName", "0").per_account(),
+    same("UnitNameEnemyTotemName", "0").per_account(),
+    same("UnitNameFriendlyPlayerName", "1").per_account(),
+    same("UnitNameFriendlyPetName", "1").per_account(),
+    same("UnitNameFriendlyGuardianName", "0").per_account(),
+    same("UnitNameFriendlyTotemName", "0").per_account(),
+    same("UnitNameNonCombatCreatureName", "0").per_account(),
     // The Controls and Combat panels' rows (`0x51da81`-`0x51dbd3`).
-    same("autoDismountFlying", "0"),
-    same("lootUnderMouse", "1"),
+    same("autoDismountFlying", "0").per_account(),
+    same("lootUnderMouse", "1").per_account(),
     same("equipmentManager", "0").per_character(),
-    same("autoRangedCombat", "1"),
+    same("autoRangedCombat", "1").per_account(),
     // The camera's pitch follow speed, which the Mouse panel's Save writes beside the yaw one.
-    same("cameraPitchSmoothSpeed", "45"),
+    same("cameraPitchSmoothSpeed", "45").per_account(),
     // The WowMouse switch (`0x5fd355`).
     same("enableWowMouse", "0"),
     // `locale` (`0x4068c6`): the boot writes the install's locale over the registered "****";
@@ -398,6 +431,19 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
          reads enUS alone",
     ),
     same("useEnglishAudio", "0"),
+    // The account data's sync switches: `synchronizeSettings` for all of it (`0x6b991b`), then
+    // one per slot pair (`0x6b9997`, registered by every `AccountDataInitialize`), all "1".
+    same("synchronizeSettings", "1"),
+    same("synchronizeConfig", "1"),
+    same("synchronizeBindings", "1"),
+    same("synchronizeMacros", "1"),
+    // The camera's pose, per character (`CameraRegisterCVars` `0x5fd942`, `0x5fd99a`): written at
+    // the UI shutdown by `CGCamera::SaveCameraSettings` (`0x5ff320`), read back by `0x5ff3e0`.
+    same("cameraSavedDistance", "5.55").per_character(),
+    same("cameraSavedPitch", "10.0").per_character(),
+    // The login screen's remembered account (`0x401ba7`, flags 0x40): hidden from Lua, which
+    // reaches it through `GetSavedAccountName`/`SetSavedAccountName`.
+    same("accountName", "").hidden(),
 ];
 
 /// The host-backed CVars, one row per knob that has a reader: a host knob, or a Lua consumer
@@ -426,7 +472,7 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // `0x5eb84b`) gates five implicit AFK clears: any chat send but type `0x14`, Jump,
     // forward/back, strafe and turn (`0x513d36`/`0x514e23`/`0x514f0b`/`0x514fca`). Off, the clear
     // does nothing at all: no echo, no mirror write, no packet.
-    same("autoClearAFK", "1"),
+    same("autoClearAFK", "1").per_account(),
     // `0x4d18c1`, "0": the reference mutes on losing focus. The knob is
     // `SoundConfig::background_sound`.
     same("Sound_EnableSoundWhenGameIsInBG", "0"),
@@ -473,19 +519,19 @@ pub(crate) const REGISTERED: &[Registered] = &[
     same("nearclip", "0.1"),
     // `deselectOnClick` and `mouseInvertPitch` are 1.12's own (`UIOptionsFrame.lua:8,4`);
     // `autoLootDefault` is the later-era name, 1.12 having only the shift gesture.
-    same("deselectOnClick", "1"),
+    same("deselectOnClick", "1").per_account(),
     // `AutoInteract` (`0x603390`, record `[0xc4d9a4]`), Click-to-Move (`UIOptionsFrame.lua:7`):
     // "1" on koKR alone (`0x603368`). The knob is [`crate::player::Approach`].
-    same("AutoInteract", "0"),
+    same("AutoInteract", "0").per_account(),
     // `BlockTrades` (`0x842fbc`), `UIOptionsFrame.lua:11`: the refusal leg `0x4bf7bc` fires only
     // when it is set. The knob is [`crate::ui_trade::BlockTrades`].
-    same("BlockTrades", "0"),
+    same("BlockTrades", "0").per_character(),
     // `autoSelfCast` (register site `0x51dbee`, name `0xa025e4`, default `0x9e1464` "1"): a
     // friendly cast that binds nothing falls back to the caster. `TOGGLEAUTOSELFCAST` toggles it.
-    same("autoSelfCast", "1"),
+    same("autoSelfCast", "1").per_character(),
     // `ShowAllSpellRanks` (register site `0x51f1e6`, name `0x9ffea0`, default `0x9e1464` "1"):
     // `SpellBook_GetTabInfo` pages the full book while set, the highest-rank view while clear.
-    same("ShowAllSpellRanks", "1"),
+    same("ShowAllSpellRanks", "1").per_account(),
     // `autoFilledMultiCastSlots` (`0x51f38b`, default `0x9e14a0` "0"): elements the bar seeded.
     same(crate::spell::multicast::CVAR_AUTO_FILLED, "0"),
     // The five saved camera views and the live index, at the reference's names and default strings;
@@ -554,39 +600,39 @@ pub(crate) const REGISTERED: &[Registered] = &[
         crate::player::camera_view::VIEW_CVARS[4][2],
         crate::player::camera_view::VIEW_DEFAULTS[4][2],
     ),
-    same("mouseInvertPitch", "0"),
+    same("mouseInvertPitch", "0").per_account(),
     // `autoLootDefault` (`0x51db43`, "0"): a loot opens without the auto-loot modifier's sweep.
-    same("autoLootDefault", "0"),
+    same("autoLootDefault", "0").per_account(),
     // The overhead-name gates, registered at `0x6c7470` into mask `0xce8720`: `UnitNamePlayer`
     // (`0x86c694`) "1" (`0x82e748`), `UnitNameNPC` (`0x86c6a4`) and `UnitNameOwn` (`0x86c6b0`) "0"
     // (`0x82e570`).
     same("UnitNamePlayer", "1"),
-    same("UnitNameNPC", "0"),
-    same("UnitNameOwn", "0"),
+    same("UnitNameNPC", "0").per_account(),
+    same("UnitNameOwn", "0").per_account(),
     // `UnitNamePlayerGuild` (`0x86c680`, "1", mask bit `0x10`) is not a show gate: `ShouldShowName`
     // (`0x6070a0`) reads bits `0x1/0x2/0x4`, and this gates the `"\n<%s>"` guild line at
     // `0x609085`.
-    same("UnitNamePlayerGuild", "1"),
+    same("UnitNamePlayerGuild", "1").per_account(),
     // `UnitNamePlayerPVPTitle` (`0x86c668`, "1", mask bit `0x20`): the a4 rank prefix on the main
     // name line (`0x609370`), `PVP_RANK_%d_%d` through `0x5efe60`.
-    same("UnitNamePlayerPVPTitle", "1"),
+    same("UnitNamePlayerPVPTitle", "1").per_account(),
     // ── Floating combat text ─────────────────────────────────────────────────────────────────────
     //
     // `CombatDamage` (`0x51e3ee`, `[0xbd0980]`) is the master: the word and number emitters
     // (`0x71f990`, `0x722340`) return at "0", so nothing floats. The `Pet*` rows gate only the
     // owned-by-you branch.
-    same("CombatDamage", "1"),
-    same("PetMeleeDamage", "1"),
-    same("PetSpellDamage", "1"),
+    same("CombatDamage", "1").per_account(),
+    same("PetMeleeDamage", "1").per_account(),
+    same("PetSpellDamage", "1").per_account(),
     // `CombatLogPeriodicSpells` (`0x51e411`, `[0xbd0984]`): a periodic tick's floating word or
     // number.
-    same("CombatLogPeriodicSpells", "1"),
+    same("CombatLogPeriodicSpells", "1").per_account(),
     // `combatLogRetentionTime` (`0x51efed`): seconds the combat log keeps an entry (`0x750400`).
     same(benilla_ui::script::RETENTION_CVAR, "300"),
     // `assistAttack` (`0x48fc50`, record `[0xb4d8f8]`): `/assist` also starts the swing. The "3"
     // beside it is the next registration's, `minimapZoom`: stock `/assist` selects without
     // swinging.
-    same("assistAttack", "0"),
+    same("assistAttack", "0").per_character(),
     // ── Mouse-look speed, per axis ───────────────────────────────────────────────────────────────
     //
     // `cameraYawMoveSpeed` is the MOUSE_LOOK_SPEED slider (`UIOptionsFrame.lua:89`); a nil there
@@ -596,8 +642,8 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // `camera::LOOK_YAW_PER_SPEED` and these defaults stay the reference's. The validator
     // `0x50c000` → `0x50b330` rejects values outside [0.1, 360] rather than clamping, and
     // `player::camera::on_cvar` does the same.
-    same("cameraYawMoveSpeed", "180"),
-    same("cameraPitchMoveSpeed", "90"),
+    same("cameraYawMoveSpeed", "180").per_account(),
+    same("cameraPitchMoveSpeed", "90").per_account(),
     // MOUSE_SENSITIVITY (`UIOptionsFrame.lua:87`): FrameXML's spelling of the binary's `mouseSpeed`
     // (`0x402c7b`); lookups are case-insensitive (`CVar::Lookup 0x63de30`), here as there. The
     // reference's default is `SPI_GETMOUSESPEED × 0.1`, "1.0" on stock Windows, and its record
@@ -610,44 +656,44 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // validator `0x50b310` refuses a value outside [0, 50], and `player::camera::on_cvar` does the
     // same. The factor is MAX_FOLLOW_DIST (`UIOptionsFrame.lua:90`), registered "1.0" (`0x82e92c`)
     // with no validator: the slider's 1 to 2 is the slider's, not the CVar's.
-    same("cameraDistanceMax", "15.0"),
-    same("cameraDistanceMaxFactor", "1"),
+    same("cameraDistanceMax", "15.0").per_account(),
+    same("cameraDistanceMaxFactor", "1").per_account(),
     // `cameraSmoothStyle` (`0x50ba92`, default `[0x84f4f4]` "1"), the auto-return behind the
     // character. The engine's enum is 0 Never, 1 Smart, 2 Always, as the stock dropdown writes it
     // (`UIOptionsFrame.lua:525,536,547`); 3, the Never entry's position, is the validator's upper
     // bound (`0x50b330(v, 0, 3)`). See `FollowStyle`.
-    same("cameraSmoothStyle", "1"),
+    same("cameraSmoothStyle", "1").per_account(),
     // Read instead of `cameraSmoothStyle` while the state mask holds Track or Fear; no panel row.
-    same("cameraSmoothTrackingStyle", "1"),
+    same("cameraSmoothTrackingStyle", "1").per_account(),
     // AUTO_FOLLOW_SPEED (`UIOptionsFrame.lua:88`), deg/s, registered "180.0" (`[0xbe1070]`): it
     // sets the transition's duration (`|dyaw| / rate * factor`), an average rate, not a slew. The
     // knob clamps it to `FOLLOW_SPEED_RANGE`. The stock Save also writes `cameraPitchSmoothSpeed`
     // at a quarter (`:353`), unregistered here: `FollowRig` has one rate.
-    same("cameraYawSmoothSpeed", "180"),
+    same("cameraYawSmoothSpeed", "180").per_account(),
     // `cameraPivot` `[0xbe10a4]` "1" (`0x50bda3`), smart pivot: gate `0x510690`, routing
     // `0x50fee0`, release `0x5107f0`; ours is `player::camera_dynamics::SmartPivot`.
-    same("cameraPivot", "1"),
+    same("cameraPivot", "1").per_account(),
     // Read by the routing (`0x50fff5`/`0x510004`) in radians of camera rotation, so they carry to
     // benilla's raw-device units unchanged.
-    same("cameraPivotDXMax", "0.05"),
-    same("cameraPivotDYMin", "0"),
+    same("cameraPivotDXMax", "0.05").per_account(),
+    same("cameraPivotDYMin", "0").per_account(),
     // The pitch bias's ease-back once the pivot lets go, deg/s (`[0xbe0fc8]`; `0x512a50` divides
     // |Δ| by rate · π/180 for the duration); no panel row.
-    same("cameraTargetSmoothSpeed", "90"),
+    same("cameraTargetSmoothSpeed", "90").per_account(),
     // `cameraWaterCollision` `[0xbe1088]` "1" (`0x50bd63`, `0x82e748`): one register, two consumers
     // that must ship together. `0x50e5ec` builds it; its `0xf0000` nibble joins the trace mask of
     // all three `0x50e570` queries (reaching `0x69cc13`), and `0x50e629` tests it to lift the sweep
     // origin to `surface + 2/9`. Ours: `benilla_world::collision::camera_filter` and
     // `player::camera_water`.
-    same("cameraWaterCollision", "1"),
+    same("cameraWaterCollision", "1").per_account(),
     // `cameraTerrainTilt` `[0xbe0fd4]` "0" (`0x50bcfd`), Follow Terrain: probe and staircase
     // `0x50d900`, arm `0x50dbc0`; ours is `player::camera_dynamics::TerrainTilt`.
-    same("cameraTerrainTilt", "0"),
+    same("cameraTerrainTilt", "0").per_account(),
     // Rate in deg/s (`[0xbe0fc0]`), duration bounds in seconds (`[0xbe1050]`/`[0xbe1054]`). The 3 s
     // floor always binds (20° at 7.5°/s is 2.67 s), so the camera leans rather than tracks.
-    same("cameraGroundSmoothSpeed", "7.5"),
-    same("cameraTerrainTiltTimeMin", "3"),
-    same("cameraTerrainTiltTimeMax", "10"),
+    same("cameraGroundSmoothSpeed", "7.5").per_account(),
+    same("cameraTerrainTiltTimeMin", "3").per_account(),
+    same("cameraTerrainTiltTimeMax", "10").per_account(),
     // `cameraBobbing` `[0xbe10c0]` "0" (`0x50b76d`), head bob: kernel `0x511920`, gate `0x5105e0`;
     // ours is `player::camera_dynamics::HeadBob`.
     same("cameraBobbing", "0"),
@@ -657,23 +703,23 @@ pub(crate) const REGISTERED: &[Registered] = &[
     same("cameraBobbingLRAmplitude", "2"),
     same("cameraBobbingUDAmplitude", "2"),
     same("cameraBobbingFrequency", "0.8"),
-    same("cameraBobbingSmoothSpeed", "0.8"),
+    same("cameraBobbingSmoothSpeed", "0.8").per_account(),
     // `statusBarText` (`0x48fc34`, record `[0xb4d904]`, no engine reader), read by
     // `TextStatusBar.lua:47,97`: "0" shows the numbers on hover only.
     same("statusBarText", "0"),
     // Enhanced Tooltips (`UIOptionsFrame.lua:15`), registered "1" at `0x48fddd` (`0x82e748`); read
     // only by the stock interface.
-    same("UberTooltips", "1"),
+    same("UberTooltips", "1").per_account(),
     // `chatBubbles` (`0x51e16a`) and `chatBubblesParty` (`0x51e192`), both "1".
-    same("ChatBubbles", "1"),
-    same("ChatBubblesParty", "1"),
+    same("ChatBubbles", "1").per_account(),
+    same("ChatBubblesParty", "1").per_account(),
     // Registered "1" (`0x82e748`), category 4. `profanityFilter` (`0x402e68`, name `0x82e7f4`,
     // callback `0x403570`) masks `ChatProfanity.dbc` spans inside the shared masker `0x4a1a66`,
     // covering all thirteen call sites; `spamFilter` (`0x402e8e`, name `0x82e7d4`, callback
     // `0x4035b0`) silently drops a line matching `SpamMessages.dbc`. The knob is
     // [`crate::text_filter::TextFilterSwitches`].
-    same("profanityFilter", "1"),
-    same("spamFilter", "1"),
+    same("profanityFilter", "1").per_account(),
+    same("spamFilter", "1").per_account(),
     // Registered by `CGlueMgr::EnterWorld` (`0x46b633` `gameTip` "0", `0x46b658` `showGameTips`
     // "1"), category 5. `gameTip` is the cursor and holds the next tip, not the one on screen;
     // `crate::game_tip` advances it.
@@ -682,15 +728,15 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // `showLootSpam` (`0x48fd1c`, name `0x8430a0`, "1" `0x82e748`, record `0xb4e2bc`): off, group
     // loot-roll lines are hidden and only the winner shows. Its three readers are the roll-line
     // composers; the knob is [`crate::ui_loot::LootConfig::show_loot_spam`].
-    same("showLootSpam", "1"),
+    same("showLootSpam", "1").per_account(),
     // `guildMemberNotify` (`0x5e24c7`, "0" `0x82e570`, record `0xc4d3c4`): guildmate log on/off
     // lines, read only in `SMSG_GUILD_EVENT`'s handler. The knob is
     // [`crate::ui_guild::GuildMemberNotify`].
-    same("guildMemberNotify", "0"),
+    same("guildMemberNotify", "0").per_account(),
     // Both registered "3" (`0x48fc6c`, `0x48fc88`); the minimap's +/- buttons write them through
     // `Minimap:SetZoom`. The knob is [`crate::minimap::MinimapZoom`].
-    same("minimapZoom", "3"),
-    same("minimapInsideZoom", "3"),
+    same("minimapZoom", "3").per_character(),
+    same("minimapInsideZoom", "3").per_character(),
     // Load out of date AddOns, inverted (`0x402c3b`): "1" enforces the check. Read by the load walk
     // ([`Cvars::addon_version_check`]) and live by the VM's gate.
     same("checkAddonVersion", "1"),

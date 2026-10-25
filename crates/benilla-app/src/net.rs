@@ -485,6 +485,11 @@ pub(crate) enum CharRequest {
     /// Fetch the roster again (`CMSG_CHAR_ENUM`) on the parked session, then stay parked with
     /// the fresh roster: `GetCharacterListUpdate`, which the stock screen calls whenever it shows.
     Enumerate,
+    /// `ReadyForAccountDataTimes` (`0x4de390`): ask for the account's account-data times, which
+    /// the park reads and hands on.
+    AccountDataReady,
+    /// An account-data request or upload from the character screen ([`crate::account_data`]).
+    AccountData(crate::account_data::Wire),
 }
 
 /// Whether the screen asks for its roster (the stock glue screens' `GetCharacterListUpdate`)
@@ -1921,6 +1926,8 @@ pub(crate) enum ClientCommand {
     },
     /// `/played` (`CMSG_PLAYED_TIME`).
     PlayedTime,
+    /// An account-data request or upload in the world ([`crate::account_data`]).
+    AccountData(crate::account_data::Wire),
     /// `OpeningCinematic()`: `CMSG_OPENING_CINEMATIC`, empty.
     OpeningCinematic,
     /// `CMSG_COMPLETE_CINEMATIC`, at the end or skip, or at once for an unresolvable trigger.

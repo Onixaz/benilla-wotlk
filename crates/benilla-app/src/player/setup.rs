@@ -55,7 +55,7 @@ pub(super) fn setup_player(
     mut commands: Commands,
     config: Option<Res<RenderConfig>>,
     world_assets: Option<Res<WorldAssets>>,
-    // `gxMultisample` with `config.toml` folded in: this runs after [`crate::cvars::CvarLoad`].
+    // `gxMultisample` with `Config.wtf` folded in: this runs after [`crate::cvars::CvarLoad`].
     msaa: Res<benilla_world::view::MsaaSetting>,
 ) {
     let env_speed = std::env::var("WOW_MOVE_SPEED")

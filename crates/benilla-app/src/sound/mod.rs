@@ -107,7 +107,7 @@ pub(crate) struct SoundConfig {
     /// music pump idles while it is set (`0x460040`).
     /// Ambience is untouched: the cinematic never writes its flag (`[0x836424]`).
     ///
-    /// Kept apart from [`Self::music_enabled`]: the CVar persists to `config.toml`, so asserting
+    /// Kept apart from [`Self::music_enabled`]: the CVar persists to `Config.wtf`, so asserting
     /// it would save music off for a player who quits mid-cinematic. So the reference's restore
     /// latch (`[0xb4e278]`), needed there because its flag is the CVar itself, is not carried.
     pub music_suppressed: bool,

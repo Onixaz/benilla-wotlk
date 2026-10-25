@@ -710,6 +710,18 @@ pub const SMSG_CRITERIA_DELETED: u16 = 0x049E;
 /// 3.3.5a only: the server's cache version, one u32 sent after the auth (handler `0x464730`); a
 /// value other than the one the `Cache\WDB\` files carry drops their records (`0x66f940`).
 pub const SMSG_CLIENTCACHE_VERSION: u16 = 0x04AB;
+/// The server's time per account-data slot (`0x6b94c0`); 1.12's `SMSG_ACCOUNT_DATA_MD5` number.
+pub const SMSG_ACCOUNT_DATA_TIMES: u16 = 0x0209;
+/// Ask for one account-data slot's bytes (`DownloadAccountData` `0x6b92c0`).
+pub const CMSG_REQUEST_ACCOUNT_DATA: u16 = 0x020A;
+/// One account-data slot's bytes up (`UploadAccountData` `0x6b9100`).
+pub const CMSG_UPDATE_ACCOUNT_DATA: u16 = 0x020B;
+/// One account-data slot's bytes down (`0x6b9730`).
+pub const SMSG_UPDATE_ACCOUNT_DATA: u16 = 0x020C;
+/// The server stored an upload: slot and result, read and ignored (`0x6b8fc0`).
+pub const SMSG_UPDATE_ACCOUNT_DATA_COMPLETE: u16 = 0x0463;
+/// The character screen is up: send the account's times (`ReadyForAccountDataTimes` `0x4de390`).
+pub const CMSG_READY_FOR_ACCOUNT_DATA_TIMES: u16 = 0x04FF;
 /// 3.3.5a only: drop one completed achievement (`0x5b3610`).
 pub const SMSG_ACHIEVEMENT_DELETED: u16 = 0x049F;
 /// 3.3.5a only: the player's completed achievements and criteria at login (`0x5b32f0`).

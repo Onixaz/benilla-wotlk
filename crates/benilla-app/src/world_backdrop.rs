@@ -41,7 +41,7 @@ pub(crate) const RENDER_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.25..=4.0;
 const MAX_RENDER_AXIS: u32 = 8192;
 
 impl Default for RenderScale {
-    /// `$WOW_RENDER_SCALE` overrides the default for the session only, never into `config.toml`.
+    /// `$WOW_RENDER_SCALE` overrides the default for the session only, never into `Config.wtf`.
     fn default() -> Self {
         let scale = std::env::var("WOW_RENDER_SCALE")
             .ok()

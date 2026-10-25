@@ -34,8 +34,8 @@ char="$PROBE_CHAR"
 
 work="$(mktemp -d)"
 cfg="$work/cfg"
-mkdir -p "$cfg"
-printf '[cvars]\nMasterVolume = "0"\n' > "$cfg/config.toml"
+mkdir -p "$cfg/WTF"
+printf 'SET Sound_MasterVolume "0"\n' > "$cfg/WTF/Config.wtf"
 log="$work/run.log"
 trace="$work/move.trace"
 

@@ -180,7 +180,7 @@ fn set_cvar(world: &mut World, name: &str, value: &str) -> Vec<String> {
 }
 
 /// `set <name> <value>` (`0x63d500`). Deviation: the reference registers an unknown name as a new
-/// category-5 record; this refuses it, because nothing would read the row and `config.toml`
+/// category-5 record; this refuses it, because nothing would read the row and `Config.wtf`
 /// keeps an unknown key anyway.
 fn set(world: &mut World, args: &str) -> Vec<String> {
     let (name, value) = args

@@ -45,9 +45,8 @@ benilla-assets = { path = "../benilla-assets", default-features = false }
 benilla-formats = { path = "../benilla-formats", default-features = false }
 benilla-protocol = { path = "../benilla-protocol" }
 benilla-world = { path = "../benilla-world", default-features = false }
-# The CVar diff persisted in `benilla-config/config.toml`.
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+# `cache.md5`, the account data's per-slot checksums (`MD5AccountFile` `0x6b8ca0`).
+md-5 = "0.10"
 # Collision for our kinematic character controller; 0.6 targets Bevy 0.18, 0.7 moves to 0.19.
 avian3d = "0.6"
 # Shapes and rasterizes `FontString` text standalone (`ui_text`), at bevy_text's own 0.16.

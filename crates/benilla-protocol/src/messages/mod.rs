@@ -1,6 +1,7 @@
 //! World (`mangosd`) packet bodies: server packets decode into [`ServerPacket`] via
 //! [`parse_server`], client bodies are built here; the header framing lives in [`crate::world`].
 
+mod account_data;
 mod achievement;
 mod action_bar;
 pub mod addons;
@@ -66,6 +67,10 @@ mod tutorial;
 mod update_object;
 mod vendor;
 mod world_state;
+pub use account_data::{
+    read_account_data_times, read_update_account_data, request_account_data, update_account_data,
+    AccountDataTimes, AccountDataUpdate,
+};
 pub use achievement::{
     query_inspect_achievements, AchievementEarned, AllAchievementData, CriteriaProgress,
     InspectAchievements,

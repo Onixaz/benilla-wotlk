@@ -138,6 +138,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::ClientCacheVersion { version } => {
             vec![SessionEvent::ClientCacheVersion { version }]
         }
+        ServerPacket::AccountDataTimes(t) => vec![SessionEvent::AccountDataTimes(t)],
+        ServerPacket::AccountDataUpdate(u) => vec![SessionEvent::AccountDataUpdate(u)],
         ServerPacket::MessageChat(m) => vec![SessionEvent::Chat(m)],
         ServerPacket::ChannelNotify(n) => vec![SessionEvent::ChannelNotify {
             notice: n.notice,

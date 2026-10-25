@@ -625,6 +625,10 @@ pub enum SessionEvent {
     QueryAnswer { opcode: u16, body: Vec<u8> },
     /// `SMSG_CLIENTCACHE_VERSION`: the server's cache version, against the `.wdb` files'.
     ClientCacheVersion { version: u32 },
+    /// `SMSG_ACCOUNT_DATA_TIMES`: the server's time per account-data slot.
+    AccountDataTimes(crate::messages::AccountDataTimes),
+    /// `SMSG_UPDATE_ACCOUNT_DATA`: one account-data slot's bytes, still compressed.
+    AccountDataUpdate(crate::messages::AccountDataUpdate),
     /// One chat line (`SMSG_MESSAGECHAT`); system lines (type `0x0A`) carry GM command feedback.
     Chat(crate::messages::ChatMessage),
     /// A channel notice (`SMSG_CHANNEL_NOTIFY`); `notice` selects the `tail` payload.

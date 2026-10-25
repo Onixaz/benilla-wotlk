@@ -8,6 +8,7 @@ use anyhow::Result;
 
 use super::send_packet;
 
+mod account_data;
 mod action_bar;
 mod area_trigger;
 mod arena_team;

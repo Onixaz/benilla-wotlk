@@ -1,9 +1,9 @@
 //! The realmlist: the `host[:port]` benilla dials for the logon handshake.
 //!
-//! The reference registers the CVar `realmList` (help "Address of realm list server", at
-//! `0x5ab6a6`) and loads it from `realmlist.wtf` beside the executable, with no UI. benilla keeps
-//! the name, the shape and the help string. Deviation: the value lives in `config.toml` with every
-//! other CVar, because local state is one folder and one config file.
+//! The reference registers the CVar `realmList` (`ClientServices::InitLoginServerCVars`
+//! `0x6b0d6b`) and runs `Data\<locale>\realmlist.wtf`, then the root's `realmlist.wtf`, as `SET`
+//! lines after `Config.wtf` (`0x6b0bf0`); a value they move is saved into `Config.wtf`, as
+//! [`crate::cvars`] does.
 //!
 //! `$WOW_HOST` wins for the session, is never written to the file, and is taken verbatim, not
 //! through [`normalize`].

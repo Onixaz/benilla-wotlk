@@ -22,7 +22,7 @@ use bevy::window::{
     WindowMode, WindowResolution,
 };
 
-/// `$WOW_NOVSYNC=1`: uncap for this session only; it never reaches `config.toml` (the
+/// `$WOW_NOVSYNC=1`: uncap for this session only; it never reaches `Config.wtf` (the
 /// `session_owned` set in [`crate::cvars`]).
 pub(crate) fn novsync_env() -> bool {
     std::env::var("WOW_NOVSYNC").as_deref() == Ok("1")
@@ -167,7 +167,7 @@ pub(crate) fn frame_latency(vsync: bool, triple_buffer: bool) -> Option<std::num
     (vsync && triple_buffer).then(|| std::num::NonZero::new(3).expect("non-zero"))
 }
 
-/// [`frame_latency`] for the primary window's birth, read off `config.toml` as
+/// [`frame_latency`] for the primary window's birth, read off `Config.wtf` as
 /// [`boot_window_mode`] is.
 pub(crate) fn boot_frame_latency() -> Option<std::num::NonZero<u32>> {
     let flag = |name| crate::cvars::boot_cvar(name).and_then(|v| v.parse::<f32>().ok());

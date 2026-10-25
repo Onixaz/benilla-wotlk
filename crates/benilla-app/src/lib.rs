@@ -27,6 +27,7 @@ static ALLOC: assert_no_alloc::AllocDisabler = assert_no_alloc::AllocDisabler;
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+mod account_data;
 pub mod addon_harness;
 mod area;
 mod area_poi;
@@ -385,7 +386,7 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
 
     app.add_plugins(benilla_world::boot::tuned_default_plugins(Window {
         title: "benilla".into(),
-        // Born in the player's display mode (`gxWindow` read straight off `config.toml`) rather
+        // Born in the player's display mode (`gxWindow` read straight off `Config.wtf`) rather
         // than flipped into it at `Startup`, which would flash on every launch and, under
         // gamescope, spend the first second in the input state fullscreen is meant to end.
         // Instrumented runs stay windowed (`video::windowed_env`).

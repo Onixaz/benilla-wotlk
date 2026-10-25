@@ -769,12 +769,12 @@ impl GlueMgr {
     /// Take `s` as the glue VM: state 0, the login cells cleared, and the slots that outlive a glue
     /// state seeded into it (the saved account, the realm and select cells, the select screen's
     /// fallback stage). The scripted pick is read with the first VM.
-    fn seat(&mut self, s: &mut UiScript, tables: CreateTables) {
+    fn seat(&mut self, s: &mut UiScript, tables: CreateTables, saved_account: &str) {
         self.vm = Some(s.session());
         self.state = ScreenState::Idle;
         self.cells = LoginCells::default();
         self.auth_final = false;
-        s.set_glue_saved_account(&crate::login::load_saved_account());
+        s.set_glue_saved_account(saved_account);
         s.set_glue_realm_cells(self.realm_cells);
         s.set_glue_select_cells(self.select_cells);
         if !self.scripted_read {
@@ -1407,6 +1407,9 @@ pub(crate) struct GlueAsks<'w> {
     abandon: Option<Res<'w, crate::net::LoginAbandon>>,
     /// The roster whose pending pick names the entering character to the in-world files.
     roster: Option<ResMut<'w, crate::char_select::Roster>>,
+    /// `accountName`, the remembered login, and Enter World's `Config.wtf` save.
+    cvars: Option<ResMut<'w, crate::cvars::Cvars>>,
+    save_config: Option<ResMut<'w, Messages<crate::cvars::SaveConfig>>>,
 }
 
 /// The scripted run's pick on the stock screen, once its roster has loaded: the named row's
@@ -1513,7 +1516,13 @@ pub(crate) fn drive_glue_mgr(
     let mut fresh_vm = false;
     if let Some(s) = script.as_deref_mut() {
         if mgr.vm != Some(s.session()) {
-            mgr.seat(s, tables);
+            let saved = asks
+                .cvars
+                .as_deref()
+                .and_then(|c| c.get(crate::login::CVAR_ACCOUNT_NAME))
+                .unwrap_or_default()
+                .to_string();
+            mgr.seat(s, tables, &saved);
             fresh_vm = true;
         }
         mgr.stage(s, tables);
@@ -1558,7 +1567,12 @@ pub(crate) fn drive_glue_mgr(
             match request {
                 GlueRequest::Login(c) => mgr.login(c.account, c.password, &mut logins),
                 GlueRequest::StatusDialogClick => mgr.status_dialog_click(&mut logins),
-                GlueRequest::SetSavedAccountName(name) => crate::login::save_account(&name),
+                // `Config.wtf`'s `accountName` (`0x401ba7`), which `SetSavedAccountName` writes.
+                GlueRequest::SetSavedAccountName(name) => {
+                    if let Some(cvars) = asks.cvars.as_deref_mut() {
+                        cvars.set(crate::login::CVAR_ACCOUNT_NAME, &name);
+                    }
+                }
                 GlueRequest::Accept(notice) => {
                     let n = mgr.notices.get_or_insert([NoticeState::default(); 5]);
                     n[notice as usize] = NoticeState {
@@ -1605,6 +1619,10 @@ pub(crate) fn drive_glue_mgr(
                             vec![benilla_ui::script::ScriptValue::Str(text.to_string())],
                         ),
                         EnterWorld::Picked(guid) => {
+                            // `CGlueMgr::EnterWorld` saves `Config.wtf` (`0x4d9ed8`).
+                            if let Some(m) = asks.save_config.as_deref_mut() {
+                                m.write(crate::cvars::SaveConfig);
+                            }
                             if let Some(roster) = asks.roster.as_deref_mut() {
                                 roster.pending_pick = Some(guid);
                             }
@@ -1631,9 +1649,14 @@ pub(crate) fn drive_glue_mgr(
                 }
                 // The sound effects and the credits music have no glue player yet.
                 GlueRequest::StopAllSfx(_) | GlueRequest::PlayCreditsMusic(_) => {}
-                GlueRequest::Screenshot
-                | GlueRequest::ReadyForAccountDataTimes
-                | GlueRequest::RealmSplit(_) => {}
+                // `0x4de390`: a bare `CMSG_READY_FOR_ACCOUNT_DATA_TIMES` on the world link.
+                GlueRequest::ReadyForAccountDataTimes => {
+                    if mgr.connected {
+                        mgr.park_out
+                            .push(crate::net::CharRequest::AccountDataReady.into());
+                    }
+                }
+                GlueRequest::Screenshot | GlueRequest::RealmSplit(_) => {}
             }
         }
         mgr.realm_cells = s.glue_realm_cells();
@@ -2016,7 +2039,11 @@ pub(super) fn seat_glue_vm(world: &mut World, script: &mut UiScript) {
             .get_resource::<crate::target::ring::Factions>()
             .map(|f| f.catalog()),
     };
-    mgr.seat(script, tables);
+    let saved = world
+        .get_resource::<crate::cvars::Cvars>()
+        .and_then(|c| c.get(crate::login::CVAR_ACCOUNT_NAME).map(str::to_string))
+        .unwrap_or_default();
+    mgr.seat(script, tables, &saved);
     if let Some(r) = world.get_resource::<crate::realm_select::Realms>() {
         let (categories, types) = r.glue_setup();
         script.set_glue_realm_setup(categories, types);

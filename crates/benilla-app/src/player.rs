@@ -71,6 +71,9 @@ mod wire_in;
 // The last writer of a self body part's render alpha: `entities::apply_unit_mat_alpha` orders
 // itself before it.
 pub(crate) use camera::apply_self_model_fade;
+pub(crate) use camera_saved::{
+    restore_from_cvars as restore_camera_from_cvars, save_to_cvars as save_camera_to_cvars,
+};
 use controller::control;
 // The private camera and `state` items are re-imported for the modules beside this one, which
 // name them `super::X`.
@@ -216,7 +219,6 @@ impl Plugin for PlayerPlugin {
         net::register(app);
         follow::plugin(app);
         approach::plugin(app);
-        camera_saved::plugin(app);
         camera_view::plugin(app);
         // The stream focus is published after `control`'s teleport snap and before the stream
         // stage, and the post-snap hold released after it. Both edges are needed: without

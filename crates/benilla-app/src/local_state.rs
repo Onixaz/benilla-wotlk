@@ -106,9 +106,53 @@ fn shared_root(here: &Path) -> PathBuf {
     here.to_path_buf()
 }
 
-/// `benilla-config/config.toml`: the CVar overrides, the `Config.wtf` analog.
+/// `WTF\Config.wtf`: the CVars archived outside any account (`CVar::SaveAll` `0x767100`).
 pub(crate) fn config_path() -> Option<PathBuf> {
-    home().map(|h| h.join("config.toml"))
+    client_root().map(|r| r.join("WTF").join("Config.wtf"))
+}
+
+/// `WTF\RunOnce*.wtf`, names sorted case-blind (`ForEveryRunOnceWTF` `0x406740`): run once after
+/// `Config.wtf` at startup, deleted at exit.
+pub(crate) fn run_once_files() -> Vec<PathBuf> {
+    let Some(dir) = client_root().map(|r| r.join("WTF")) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.is_file()
+                && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                    let n = n.to_ascii_lowercase();
+                    n.starts_with("runonce") && n.ends_with(".wtf")
+                })
+        })
+        .collect();
+    files.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
+    files
+}
+
+/// `WTF\Account\<ACCOUNT>\` (`OpenAccountFile` `0x6b8b90`): the account's account-data files
+/// ([`crate::account_data`]) and saved variables. `account` is the upper-cased login name.
+pub(crate) fn account_dir(account: &str) -> Option<PathBuf> {
+    Some(
+        client_root()?
+            .join("WTF")
+            .join("Account")
+            .join(wtf_component(account)),
+    )
+}
+
+/// `WTF\Account\<ACCOUNT>\<Realm>\<Character>\`, the character's (`0x9f6270`), its realm and name
+/// raw as the reference's folders are.
+pub(crate) fn character_dir(account: &str, realm: &str, character: &str) -> Option<PathBuf> {
+    Some(
+        account_dir(account)?
+            .join(wtf_component(realm))
+            .join(wtf_component(character)),
+    )
 }
 
 /// `benilla-config/macros/account.txt`: the account-wide macro tab (indices 1..=18).
@@ -161,19 +205,6 @@ pub(crate) fn addon_saved_account_dir() -> Option<PathBuf> {
 pub(crate) fn addon_saved_character_dir(realm: &str, character: &str) -> Option<PathBuf> {
     let key = format!("{}-{}", file_token(realm), file_token(character));
     home().map(|h| h.join("saved").join(key))
-}
-
-/// `benilla-config/camera/<realm>-<character>.txt`: the third-person camera pose (the
-/// `<Char>/camera-settings.txt` analog), two lines in the reference's keys and order.
-pub(crate) fn camera_character_path(realm: &str, character: &str) -> Option<PathBuf> {
-    let key = format!("{}-{}", file_token(realm), file_token(character));
-    home().map(|h| h.join("camera").join(format!("{key}.txt")))
-}
-
-/// `benilla-config/account`: the account name the login screen remembers
-/// (`GetSavedAccountName`/`SetSavedAccountName`; the reference's is `Config.wtf`'s `accountName`).
-pub(crate) fn saved_account_path() -> Option<PathBuf> {
-    home().map(|h| h.join("account"))
 }
 
 /// `benilla-config/chat/<realm>-<character>.txt`: the chat windows' tint, alpha, font size and
@@ -268,6 +299,24 @@ fn file_token(s: &str) -> String {
     }
 }
 
+/// A name as the one path component the reference makes of it, kept as typed but for what no
+/// folder name can hold: a path separator, a reserved Windows character or a control byte.
+fn wtf_component(s: &str) -> String {
+    let t: String = s
+        .chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    if t.trim_matches(['.', ' ']).is_empty() {
+        "unknown".into()
+    } else {
+        t
+    }
+}
+
 /// Write a state file atomically, through `<path>.tmp` and a rename, so a crash leaves the old
 /// file intact.
 pub(crate) fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
@@ -355,7 +404,20 @@ mod tests {
         let _c = EnvGuard::unset("WOW_CAPTURE");
         let _h = EnvGuard::set("BENILLA_HOME", tmp.join(STATE_DIR).to_str().unwrap());
         assert_eq!(home(), Some(tmp.join(STATE_DIR)));
-        assert_eq!(config_path(), Some(tmp.join("benilla-config/config.toml")));
+        assert_eq!(
+            config_path(),
+            Some(tmp.join("benilla-config").join("WTF").join("Config.wtf"))
+        );
+        assert_eq!(
+            character_dir("PROBE1", "Hydraxian Waterlords", "Probeone"),
+            Some(tmp.join("benilla-config/WTF/Account/PROBE1/Hydraxian Waterlords/Probeone")),
+            "the realm's and the character's raw names, as the reference's folders"
+        );
+        assert_eq!(
+            account_dir("../X"),
+            Some(tmp.join("benilla-config/WTF/Account/.._X")),
+            "no name can leave the folder"
+        );
         assert_eq!(
             macros_account_path(),
             Some(tmp.join("benilla-config/macros/account.txt"))
@@ -374,10 +436,6 @@ mod tests {
             "no name can escape the folder"
         );
         assert_eq!(
-            camera_character_path("Hydraxian Waterlords", "Probeone"),
-            Some(tmp.join("benilla-config/camera/Hydraxian_Waterlords-Probeone.txt"))
-        );
-        assert_eq!(
             chat_character_path("Hydraxian Waterlords", "Probeone"),
             Some(tmp.join("benilla-config/chat/Hydraxian_Waterlords-Probeone.txt"))
         );
@@ -386,10 +444,6 @@ mod tests {
             Some(tmp.join("benilla-config/layout/Hydraxian_Waterlords-Probeone.txt"))
         );
 
-        assert_eq!(
-            saved_account_path(),
-            Some(tmp.join("benilla-config/account"))
-        );
         assert_eq!(shots_path(), Some(tmp.join("benilla-config/shots.txt")));
         assert_eq!(
             screenshots_dir(),
@@ -399,11 +453,6 @@ mod tests {
         // 0 · a capture run resolves nothing, even with an override set.
         let _c2 = EnvGuard::set("WOW_CAPTURE", "ui-options");
         assert_eq!(home(), None);
-        assert_eq!(
-            saved_account_path(),
-            None,
-            "a capture reads no saved account"
-        );
         assert_eq!(shots_path(), None);
         assert_eq!(
             screenshots_dir(),

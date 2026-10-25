@@ -821,6 +821,23 @@ fn world(
                         // `GetCharacterListUpdate` (`0x4723d0` → `0x46b880` → `0x5aabb0` → `0x5b4690`):
                         // the reference asks the world server again whenever the glue screen wants
                         // the list. A Warden refusal is the server's answer, as at the park entry.
+                        // The account's account-data times, and a slot's request or upload: the
+                        // answers are kept by the next read and handed on below.
+                        Ok(ParkRequest::Char(CharRequest::AccountDataReady)) => {
+                            session.ready_for_account_data_times()?;
+                            Parked::StayPut
+                        }
+                        Ok(ParkRequest::Char(CharRequest::AccountData(wire))) => {
+                            match wire {
+                                crate::account_data::Wire::Request { slot } => {
+                                    session.request_account_data(slot)?
+                                }
+                                crate::account_data::Wire::Upload { slot, time, bytes } => {
+                                    session.update_account_data(slot, time, &bytes)?
+                                }
+                            }
+                            Parked::StayPut
+                        }
                         Ok(ParkRequest::Char(CharRequest::Enumerate)) => match session.char_enum() {
                             Ok(c) => {
                                 characters = c;
@@ -1406,6 +1423,14 @@ pub(super) fn writer_loop(
                     ClientCommand::ChannelAnnouncements { name } => w.channel_announcements(&name),
                     ClientCommand::ChannelModerate { name } => w.channel_moderate(&name),
                     ClientCommand::PlayedTime => w.played_time(),
+                    ClientCommand::AccountData(crate::account_data::Wire::Request { slot }) => {
+                        w.request_account_data(slot)
+                    }
+                    ClientCommand::AccountData(crate::account_data::Wire::Upload {
+                        slot,
+                        time,
+                        bytes,
+                    }) => w.update_account_data(slot, time, &bytes),
                     ClientCommand::NameQuery { guid } => w.name_query(guid),
                     ClientCommand::CreatureQuery { entry, guid } => w.creature_query(entry, guid),
                     ClientCommand::PetNameQuery { pet_number, guid } => {

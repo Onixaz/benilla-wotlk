@@ -238,6 +238,13 @@ fn ui_wanted(world: &World) -> bool {
 #[derive(Resource, Default)]
 pub(crate) struct PendingEntryUiLoad;
 
+/// How long the entry load waits for the account data before it loads the local files.
+const ACCOUNT_DATA_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// When the entry load began waiting for the account data.
+#[derive(Resource, Clone, Copy)]
+struct AccountDataWait(std::time::Instant);
+
 /// The boot VM, parked between the world-entry edge and the deferred load, out of every feed's
 /// reach: each feed takes the VM as an `Option` and returns on `None`.
 pub(crate) struct ParkedBootVm(UiScript);
@@ -317,6 +324,18 @@ pub(crate) fn run_pending_entry_load(world: &mut World) {
     {
         return;
     }
+    // The account data first: the loads wait for the server's times and any download.
+    // Deviation: past `ACCOUNT_DATA_WAIT` the UI loads on the local files, where the reference
+    // waits for good and never fires `VARIABLES_LOADED`, so a silent server costs no UI.
+    if !crate::account_data::ready_for_ui(world) {
+        let since = *world
+            .get_resource_or_insert_with(|| AccountDataWait(std::time::Instant::now()));
+        if since.0.elapsed() < ACCOUNT_DATA_WAIT {
+            return;
+        }
+        warn!("ui_script: no account data times from the server — the UI loads the local files");
+    }
+    world.remove_resource::<AccountDataWait>();
     world.remove_resource::<PendingEntryUiLoad>();
     let start = std::time::Instant::now();
     load_ingame_ui_on_world_entry(world);
@@ -376,6 +395,9 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
         return;
     }
     mint_entry_vm(world);
+    // The account's and the character's `config-cache.wtf` before the UI reads a CVar
+    // (`LoadAccountVariables` `0x518c80` in `InitializeFrameXML`).
+    crate::account_data::load_config_slots(world);
     let Some(mut script) = world.remove_non_send_resource::<UiScript>() else {
         warn!("ui_script: entering the world with no VM — the in-game UI will not load");
         return;
@@ -701,6 +723,7 @@ pub(crate) fn shutdown_ui_state(
 /// ([`install_glue_side_vm`]).
 pub(crate) fn end_ui_session(world: &mut World) {
     close_ui_session(world);
+    crate::account_data::release_character(world);
     // `0x401ee0`'s glue leg: `"charselect"` after a logout, `"login"` after a disconnect
     // (`0x402084`); the state this exit enters says which.
     let screen = match world
@@ -733,7 +756,13 @@ fn close_ui_session(world: &mut World) {
     // After the shutdown events (a `PLAYER_LOGOUT` handler may `SetCVar`, which in the reference
     // lands in an engine-side store that survives) and before the VM is replaced.
     crate::cvars::fold_dying_vm_cvars(world);
-    crate::cvars::drop_character_cvars(world);
+    // The scoped CVar files, `Config.wtf`, the character's rows dropped, the uploads: a UI that
+    // never loaded saves no slot, which would write its defaults over the files.
+    if ui_never_loaded {
+        crate::cvars::drop_character_cvars(world);
+    } else {
+        crate::account_data::shutdown(world);
+    }
     // The chat cache folds here, not in its own `OnExit(InWorld)` system, which a `/reload` skips.
     crate::ui_chat::settings::fold_dying_vm_chat_cache(world);
     world.insert_resource(AddOnIdentity(None));

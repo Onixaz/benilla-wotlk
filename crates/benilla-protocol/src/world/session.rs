@@ -59,8 +59,12 @@ impl std::error::Error for WardenRequired {}
 
 /// The packets the glue acts on that can arrive on the link before the world stream starts: the
 /// server's cache version (sent after the authentication), which the `.wdb` files are checked
-/// against.
-const GLUE_KEPT: [u16; 1] = [opcode::SMSG_CLIENTCACHE_VERSION];
+/// against, and the account's account-data times and bytes, which the character screen asks for.
+const GLUE_KEPT: [u16; 3] = [
+    opcode::SMSG_CLIENTCACHE_VERSION,
+    opcode::SMSG_ACCOUNT_DATA_TIMES,
+    opcode::SMSG_UPDATE_ACCOUNT_DATA,
+];
 
 /// An authenticated world-server session with header encryption active.
 pub struct WorldSession {
@@ -277,9 +281,41 @@ impl WorldSession {
 
     /// Keep a [`GLUE_KEPT`] packet a glue-time read loop would otherwise skip.
     fn keep_glue(&mut self, packet: &ServerPacket) {
-        if let ServerPacket::ClientCacheVersion { version } = packet {
-            self.glue_events.push(SessionEvent::ClientCacheVersion { version: *version });
+        match packet {
+            ServerPacket::ClientCacheVersion { version } => {
+                self.glue_events
+                    .push(SessionEvent::ClientCacheVersion { version: *version });
+            }
+            ServerPacket::AccountDataTimes(t) => {
+                self.glue_events.push(SessionEvent::AccountDataTimes(t.clone()));
+            }
+            ServerPacket::AccountDataUpdate(u) => {
+                self.glue_events.push(SessionEvent::AccountDataUpdate(u.clone()));
+            }
+            _ => {}
         }
+    }
+
+    /// `CMSG_READY_FOR_ACCOUNT_DATA_TIMES`; the times it answers are kept by whichever read meets
+    /// them next ([`Self::take_glue_events`]), as nothing here waits on a reply.
+    pub fn ready_for_account_data_times(&mut self) -> Result<()> {
+        self.send(opcode::CMSG_READY_FOR_ACCOUNT_DATA_TIMES, &[])
+    }
+
+    /// `CMSG_REQUEST_ACCOUNT_DATA`; the slot's bytes are kept as the times are.
+    pub fn request_account_data(&mut self, slot: u32) -> Result<()> {
+        self.send(
+            opcode::CMSG_REQUEST_ACCOUNT_DATA,
+            &messages::request_account_data(slot),
+        )
+    }
+
+    /// `CMSG_UPDATE_ACCOUNT_DATA`; the server's receipt is read past later.
+    pub fn update_account_data(&mut self, slot: u32, time: u32, bytes: &[u8]) -> Result<()> {
+        self.send(
+            opcode::CMSG_UPDATE_ACCOUNT_DATA,
+            &messages::update_account_data(slot, time, bytes),
+        )
     }
 
     /// Set the socket's read timeout; `None` makes reads block.

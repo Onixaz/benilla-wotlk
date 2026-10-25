@@ -270,7 +270,7 @@ fn drain_view_requests(
         }
     }
 
-    // Mirror into the registry so the change reaches `config.toml`.
+    // Mirror into the registry so the change reaches `Config.wtf`.
     for view in write_slots {
         // A reset writes the default string verbatim, so the diff-shaped file drops the key.
         let reset_to_default = targets.views.pose(view) == ViewPose::shipped(view);
