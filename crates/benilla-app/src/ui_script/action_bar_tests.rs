@@ -7,53 +7,47 @@ fn action_ids(s: &mut UiScript) -> Vec<u32> {
 
 /// The stock main bar without Bevy: a stance's bonus page, its icons, a click and a key.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_action_bar_drives_end_to_end() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    // The three stock bar files, counted as they load; `ExhaustionTick_Update` reads
-    // `ReputationWatchBar`, which ReputationFrame.xml declares.
-    const BAR: [&str; 3] = [
-        "Interface\\FrameXML\\MainMenuBar.xml",
-        "Interface\\FrameXML\\ActionBarFrame.xml",
-        "Interface\\FrameXML\\BonusActionBarFrame.xml",
-    ];
-    let mut frames = 0;
-    for file in [
-        "Interface\\FrameXML\\GlobalStrings.lua",
-        "Interface\\FrameXML\\Fonts.xml",
-        r"Interface\FrameXML\UIParent.xml",
-        r"Interface\FrameXML\MoneyFrame.lua",
-        r"Interface\FrameXML\MoneyFrame.xml",
-        "Interface\\FrameXML\\GameTooltip.xml",
-        r"Interface\FrameXML\UIPanelTemplates.lua",
-        r"Interface\FrameXML\UIPanelTemplates.xml",
-        r"Interface\FrameXML\OptionsFrameTemplates.xml",
-        "Interface\\FrameXML\\TextStatusBar.lua",
-        "Interface\\FrameXML\\TextStatusBar.xml",
-        BAR[0],
-        "Interface\\FrameXML\\Cooldown.xml",
-        "Interface\\FrameXML\\ActionButtonTemplate.xml",
-        BAR[1],
-        r"Interface\FrameXML\ReputationFrame.xml",
-        BAR[2],
+    load_action_bar(&mut s);
+    // What the three stock bar files declare (MainMenuBar.xml, ActionBarFrame.xml,
+    // BonusActionBarFrame.xml), each action, bonus, shapeshift and possess button with the
+    // template's `$parentCooldown` (ActionButtonTemplate.xml:63).
+    let mut named: Vec<String> = [
+        "MainMenuBar",
+        "MainMenuExpBar",
+        "MainMenuBarOverlayFrame",
+        "MainMenuBarMaxLevelBar",
+        "MainMenuBarArtFrame",
+        "MainMenuBarVehicleLeaveButton",
+        "ExhaustionTick",
+        "ActionBarUpButton",
+        "ActionBarDownButton",
+        "BonusActionBarFrame",
+        "ShapeshiftBarFrame",
+        "PossessBarFrame",
+    ]
+    .map(String::from)
+    .to_vec();
+    for (button, n) in [
+        ("ActionButton", 12),
+        ("BonusActionButton", 12),
+        ("ShapeshiftButton", 10),
+        ("PossessButton", 2),
     ] {
-        let built = super::test_ui::load_ui(&s, file);
-        if BAR.contains(&file) {
-            frames += built;
+        for i in 1..=n {
+            named.push(format!("{button}{i}"));
+            named.push(format!("{button}{i}Cooldown"));
         }
     }
-    assert_eq!(
-        frames, 80,
-        "what the three stock files declare: MainMenuBar.xml's 8 — the bar, the XP StatusBar, \
-         the overlay frame, the max-level rail, the art frame, the performance bar and its button, \
-         the exhaustion tick; ActionBarFrame.xml's 14 — 12 ActionButtons and the 2 page arrows; \
-         BonusActionBarFrame.xml's 24 — the bonus frame with its 12 buttons and the shapeshift frame \
-         with its 10; plus one $parentCooldown per action, bonus and shapeshift button (12 + 12 + 10). \
-         Ours built 59 for the same seats: no shapeshift bar in the file (StanceBar.xml's), no \
-         overlay frame, no performance-bar button"
-    );
+    for name in &named {
+        assert!(
+            s.eval::<bool>(&format!("return {name} ~= nil")).unwrap(),
+            "{name} is built"
+        );
+    }
 
     // A warrior in Battle Stance: bonus offset 1, actions 73..84.
     s.set_bonus_bar_offset(1);
@@ -84,7 +78,11 @@ fn shipped_action_bar_drives_end_to_end() {
     s.fire_event("UPDATE_BONUS_ACTIONBAR", vec![]);
     s.tick(10.0);
     s.tick(0.2);
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 
     // The stance page is painted by `BonusActionButton1/2`. The 1024-wide bar's left edge is 0;
     // the 43-high bonus frame's TOPLEFT lands at the bar's BOTTOMLEFT + (4, 43), and button 1 at
@@ -101,25 +99,23 @@ fn shipped_action_bar_drives_end_to_end() {
     assert_eq!((r.left, r.bottom, r.right, r.top), (9.0, 4.0, 45.0, 40.0));
     let r2 = icon("Interface\\Icons\\Ability_Rogue_Ambush").expect("bonus button 2 icon");
     assert_eq!(r2.left, 9.0 + 42.0); // bonus button 2 left = 51
-    let rings = quads
-        .iter()
-        .filter(|q| {
-            matches!(&q.content, QuadContent::Texture { path: Some(p), .. }
-                    if p.contains("UI-Quickslot2"))
-        })
-        .count();
+                                     // The main and bonus bars' own quads: other frames of the interface draw the same files.
+    let on_bars = |pred: &dyn Fn(&str) -> bool| -> Vec<String> {
+        quads
+            .iter()
+            .filter(|q| matches!(&q.content, QuadContent::Texture { path: Some(p), .. } if pred(p)))
+            .filter_map(|q| s.quad_owner_name(q.target))
+            .filter(|o| o.starts_with("ActionButton") || o.starts_with("BonusActionButton"))
+            .collect()
+    };
+    let rings = on_bars(&|p| p.contains("UI-Quickslot2"));
     assert_eq!(
-        rings, 2,
-        "the two occupied bonus buttons; every empty main and bonus slot is hidden"
+        rings.len(),
+        2,
+        "the two occupied bonus buttons; every empty main and bonus slot is hidden: {rings:?}"
     );
-    let icons = quads
-        .iter()
-        .filter(|q| {
-            matches!(&q.content, QuadContent::Texture { path: Some(p), .. }
-                    if p.contains("Icons"))
-        })
-        .count();
-    assert_eq!(icons, 2, "empty slots draw no icon quad");
+    let icons = on_bars(&|p| p.contains("Icons"));
+    assert_eq!(icons.len(), 2, "empty slots draw no icon quad: {icons:?}");
 
     // A click at (26, 22) lands on `BonusActionButton1` and queues its paged id, 73.
     s.mouse_button(26.0, 22.0, "LeftButton", true);
@@ -168,50 +164,27 @@ fn shipped_action_bar_drives_end_to_end() {
         })
         .count();
     assert_eq!(icons_after, 0, "re-page to an empty page clears the icons");
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
-fn load_action_bar(s: &UiScript) {
-    super::test_ui::load_ui(s, "Interface\\FrameXML\\GlobalStrings.lua");
-    super::test_ui::load_ui(s, "Interface\\FrameXML\\Fonts.xml");
-    super::test_ui::load_ui(s, r"Interface\FrameXML\BasicControls.xml"); // `TEXT`
-    super::test_ui::load_ui(s, r"Interface\FrameXML\LocaleProperties.lua"); // `GetText`
-    super::test_ui::load_ui(s, r"Interface\FrameXML\UIParent.xml");
-    super::test_ui::load_ui(s, r"Interface\FrameXML\MoneyFrame.lua");
-    super::test_ui::load_ui(s, r"Interface\FrameXML\MoneyFrame.xml");
-    super::test_ui::load_ui(s, "Interface\\FrameXML\\GameTooltip.xml");
-    super::test_ui::load_ui(s, "Interface\\FrameXML\\UIDropDownMenu.xml");
-    super::test_ui::load_ui(s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    super::test_ui::load_ui(s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    super::test_ui::load_ui(s, r"Interface\FrameXML\OptionsFrameTemplates.xml");
-    // `UIOptionsFrame_Init` declares `LOCK_ACTIONBAR` and `ALWAYS_SHOW_MULTIBARS`
-    // (UIOptionsFrame.lua:93-107), before our window, whose rows take their defaults from them.
-    super::test_ui::load_ui(s, r"Interface\FrameXML\OptionsFrame.lua");
-    super::test_ui::load_ui(s, r"Interface\FrameXML\UIOptionsFrame.xml");
-    // StaticPopup.xml: the keybindings page adds its two confirm dialogs to `StaticPopupDialogs`.
-    super::test_ui::load_ui(s, r"Interface\FrameXML\StaticPopup.xml");
-    super::test_ui::load_ui(s, "Interface\\FrameXML\\TextStatusBar.lua");
-    super::test_ui::load_ui(s, "Interface\\FrameXML\\TextStatusBar.xml");
-    super::test_ui::load_ui(s, "Interface\\FrameXML\\MainMenuBar.xml");
-    super::test_ui::load_ui(s, "Interface\\FrameXML\\Cooldown.xml");
-    super::test_ui::load_ui(s, "Interface\\FrameXML\\ActionButtonTemplate.xml");
-    super::test_ui::load_ui(s, "Interface\\FrameXML\\ActionBarFrame.xml");
-    // `ExhaustionTick_Update` reads `ReputationWatchBar`, which ReputationFrame.xml declares.
-    super::test_ui::load_ui(s, r"Interface\FrameXML\ReputationFrame.xml");
-    super::test_ui::load_ui(s, "Interface\\FrameXML\\BonusActionBarFrame.xml");
-    super::test_ui::load_ui(s, "ScrollTemplates.xml");
+/// The whole production interface, the stock bars among it.
+fn load_action_bar(s: &mut UiScript) {
+    super::test_ui::load_stock_ui(s);
 }
 
 /// The state events through the stock bar: the cooldown, the checked ring and the usable tint.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn state_feedback_drives_cooldown_checked_and_usable_through_the_xml() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ActionState;
 
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s);
+    load_action_bar(&mut s);
     s.set_action(
         1,
         Some(ActionSlot {
@@ -237,15 +210,13 @@ fn state_feedback_drives_cooldown_checked_and_usable_through_the_xml() {
     );
     s.fire_event("ACTIONBAR_UPDATE_COOLDOWN", vec![]);
     // `CooldownFrame_SetTimer` arms sequence 0; the next paint's `OnUpdateModel` scrubs it.
-    super::test_ui::cooldown_facts(&mut s);
     s.tick(0.0);
-    s.resolve();
-    let play = super::test_ui::cooldown_play(&s, "ActionButton1Cooldown")
-        .expect("the button's cooldown pane is showing, sequence 0 armed");
+    let sweep = super::test_ui::cooldown_sweep(&mut s, "ActionButton1Cooldown")
+        .expect("the button's cooldown is showing and armed");
     assert_eq!(
-        play,
-        (0, 400),
-        "6 s of 10 s left ⇒ the sweep sits at 40 %: sequence 0 at 400 ms"
+        sweep.swipe,
+        super::test_ui::swept(0.4),
+        "4 s of 10 s run ⇒ the wedge sits at 40 %"
     );
 
     // The checked ring on the current action (`ActionButton_UpdateState`).
@@ -320,20 +291,23 @@ fn state_feedback_drives_cooldown_checked_and_usable_through_the_xml() {
         "the ref's unusable grey — the icon a player sees on food in combat"
     );
 
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
-/// `CooldownFrame_SetTimer` hides the pane unless `start > 0 and duration > 0 and enable > 0`
-/// (Cooldown.lua:3): a running cooldown whose start predates a restarted `GetTime` never draws.
+/// `CooldownFrame_SetTimer` hides the frame unless `start > 0 and duration > 0 and enable > 0`
+/// (Cooldown.lua:2): a running cooldown whose start predates a restarted `GetTime` never draws.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_start_behind_the_clocks_epoch_hides_the_stock_sweep() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ActionState;
 
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s);
+    load_action_bar(&mut s);
     s.set_action(
         1,
         Some(ActionSlot {
@@ -358,13 +332,11 @@ fn a_start_behind_the_clocks_epoch_hides_the_stock_sweep() {
         }),
     );
     s.fire_event("ACTIONBAR_UPDATE_COOLDOWN", vec![]);
-    super::test_ui::cooldown_facts(&mut s);
     s.tick(0.0);
-    s.resolve();
     assert_eq!(
-        super::test_ui::cooldown_play(&s, "ActionButton1Cooldown"),
+        super::test_ui::cooldown_sweep(&mut s, "ActionButton1Cooldown"),
         None,
-        "the stock `start > 0` guard hides the pane outright — 9.5 minutes still to run and the \
+        "the stock `start > 0` guard hides the frame outright — 9.5 minutes still to run and the \
          button shows nothing"
     );
 
@@ -379,29 +351,30 @@ fn a_start_behind_the_clocks_epoch_hides_the_stock_sweep() {
         }),
     );
     s.fire_event("ACTIONBAR_UPDATE_COOLDOWN", vec![]);
-    super::test_ui::cooldown_facts(&mut s);
     s.tick(0.0);
-    s.resolve();
     assert_eq!(
-        super::test_ui::cooldown_play(&s, "ActionButton1Cooldown"),
-        Some((0, 50)),
-        "30 s of 600 s elapsed ⇒ sequence 0 scrubbed to 5 %: 50 ms of the 1000 ms sweep"
+        super::test_ui::cooldown_sweep(&mut s, "ActionButton1Cooldown").map(|p| p.swipe),
+        Some(super::test_ui::swept(0.05)),
+        "30 s of 600 s run ⇒ the wedge sits at 5 %"
     );
 
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
 /// The cooldown child sits at its button's level + 1 and frame level outranks draw layer, so the
 /// sweep paints over the button's icon and ring.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_cooldown_sweep_paints_over_the_buttons_icon_and_ring() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ActionState;
 
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s);
+    load_action_bar(&mut s);
     s.set_action(
         1,
         Some(ActionSlot {
@@ -436,11 +409,13 @@ fn the_cooldown_sweep_paints_over_the_buttons_icon_and_ring() {
         &|c| matches!(c, QuadContent::Texture { path: Some(p), .. } if p.contains("UI-Quickslot2")),
     )
     .expect("the NormalTexture ring quad");
-    let sweep = pos(&|c| {
-        matches!(c, QuadContent::ModelPane { model: Some(m), .. }
-            if m.eq_ignore_ascii_case(super::test_ui::COOLDOWN_MODEL))
-    })
-    .expect("the sweep pane's quad");
+    let sweep = quads
+        .iter()
+        .position(|q| {
+            matches!(q.content, QuadContent::Cooldown(_))
+                && s.quad_owner_name(q.target).as_deref() == Some("ActionButton1Cooldown")
+        })
+        .expect("the sweep's quad");
     assert!(
         icon < sweep,
         "the sweep (index {sweep}) must paint over the icon (index {icon})"
@@ -453,14 +428,13 @@ fn the_cooldown_sweep_paints_over_the_buttons_icon_and_ring() {
 
 /// A cooldown-count addon's wrap of `CooldownFrame_SetTimer` leaves the sweep as it was.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_cooldown_count_addons_hook_leaves_the_sweep_running() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ActionState;
 
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s);
+    load_action_bar(&mut s);
     // Addons load after FrameXML, so the hook captures the stock global.
     s.run(COOLDOWN_COUNT_HOOK)
         .expect("the addon's hook installs");
@@ -487,9 +461,7 @@ fn a_cooldown_count_addons_hook_leaves_the_sweep_running() {
         }),
     );
     s.fire_event("ACTIONBAR_UPDATE_COOLDOWN", vec![]);
-    super::test_ui::cooldown_facts(&mut s);
     s.tick(0.0);
-    s.resolve();
 
     assert!(
         s.eval::<i64>("return seen").unwrap() > 0,
@@ -501,9 +473,9 @@ fn a_cooldown_count_addons_hook_leaves_the_sweep_running() {
         "the addon hangs its countdown off the cooldown widget — a field the widget must accept"
     );
     assert_eq!(
-        super::test_ui::cooldown_play(&s, "ActionButton1Cooldown"),
-        Some((0, 400)),
-        "the wrap calls through, so the pane is on the paint list with sequence 0 at 40 %"
+        super::test_ui::cooldown_sweep(&mut s, "ActionButton1Cooldown").map(|p| p.swipe),
+        Some(super::test_ui::swept(0.4)),
+        "the wrap calls through, so the sweep paints at 40 %"
     );
     s.set_action_state(
         1,
@@ -514,13 +486,16 @@ fn a_cooldown_count_addons_hook_leaves_the_sweep_running() {
     );
     s.fire_event("ACTIONBAR_UPDATE_COOLDOWN", vec![]);
     s.tick(0.0);
-    s.resolve();
     assert_eq!(
-        super::test_ui::cooldown_play(&s, "ActionButton1Cooldown"),
+        super::test_ui::cooldown_sweep(&mut s, "ActionButton1Cooldown"),
         None,
-        "an elapsed cooldown hides the pane through the wrap exactly as it does without it"
+        "an elapsed cooldown hides the frame through the wrap exactly as it does without it"
     );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
 /// `!OmniCC` 6.8.30's hook in shape: it wraps `CooldownFrame_SetTimer` and hangs its countdown
@@ -559,88 +534,38 @@ const COOLDOWN_COUNT_HOOK: &str = r#"
 "#;
 
 /// `BonusActionButtonTemplate`'s OnLoad raises the button by 2, then its cooldown by 2
-/// (BonusActionBarFrame.xml:13-15); a script level change carries no children (`0x774560`), so
-/// the cooldown sits one level over its button, under the countdown.
+/// (BonusActionBarFrame.xml:13-15). A script level change carries the frame's same-strata
+/// children by the same step (`Method_SetFrameLevel` `0x49e9d0` passes 1 to
+/// `CSimpleFrame::SetFrameLevel` `0x4910a0`), so the cooldown ends three levels over its button.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn a_cooldown_count_draws_over_the_bonus_bars_sweep() {
+fn the_bonus_buttons_cooldown_sits_three_levels_over_it() {
     benilla_formats::wow_data_or_skip!();
-    use benilla_ui::script::ActionState;
-
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s);
-    s.run(COOLDOWN_COUNT_HOOK)
-        .expect("the addon's hook installs");
+    load_action_bar(&mut s);
     let level = |s: &UiScript, frame: &str| {
         s.eval::<i64>(&format!("return {frame}:GetFrameLevel()"))
             .unwrap()
     };
-    assert_eq!(
-        level(&s, "BonusActionButton1Cooldown"),
-        level(&s, "BonusActionButton1") + 1,
-        "the template's two hand raises leave the sweep ONE level over its button"
-    );
-
-    // Bonus page 1 (a warrior's Battle Stance): button 1 is action 73.
-    s.set_action(
-        73,
-        Some(ActionSlot {
-            texture: Some("Interface\\Icons\\Ability_Racial_BloodRage".into()),
-            kind: 0x00,
-            action: 2687,
-            count: 0,
-            consumable: false,
-            stackable: false,
-        }),
-    );
-    s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
-    s.run("BonusActionBarFrame:Show()").unwrap();
-    s.tick(10.0);
-    s.set_action_state(
-        73,
-        Some(ActionState {
-            usable: true,
-            cooldown: Some((6_000, 60_000, true)),
-            ..Default::default()
-        }),
-    );
-    s.fire_event("ACTIONBAR_UPDATE_COOLDOWN", vec![]);
-    super::test_ui::cooldown_facts(&mut s);
-    // The real addon writes its digits from OnUpdate; this shape's OnUpdate is empty.
-    s.run(r#"BonusActionButton1Cooldown.textFrame.text:SetText("27")"#)
-        .expect("the hook hung its countdown off the bonus button");
-    s.tick(0.0);
-    s.resolve();
-
-    let quads = s.extract();
-    let sweep = quads
-        .iter()
-        .position(|q| {
-            matches!(q.content, QuadContent::ModelPane { .. })
-                && s.quad_owner_name(q.target).as_deref() == Some("BonusActionButton1Cooldown")
-        })
-        .expect("the bonus button's sweep is on the paint list");
-    let count = quads
-        .iter()
-        .position(|q| matches!(&q.content, QuadContent::Text { text: Some(t), .. } if t == "27"))
-        .expect("the countdown is on the paint list");
-    assert!(
-        sweep < count,
-        "the countdown (index {count}) must paint over the bonus button's sweep (index {sweep})"
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    for i in 1..=12 {
+        assert_eq!(
+            level(&s, &format!("BonusActionButton{i}Cooldown")),
+            level(&s, &format!("BonusActionButton{i}")) + 3,
+            "BonusActionButton{i}: the carried +2 and the cooldown's own +2 over its +1"
+        );
+    }
 }
 
-/// `ActionButton_OnLoad` registers left and right clicks (ActionButton.lua:109) over a button's
-/// default of left only, and the OnClick reads no `arg1`: a right-click uses the action too.
+/// `ActionButton_OnLoad` registers every button's release (`RegisterForClicks("AnyUp")`,
+/// ActionButton.lua:90), and the secure click's `type` attribute is `"action"` whatever the
+/// button (`SecureActionButton_OnClick`, SecureTemplates.lua:478-530): a right or middle click
+/// uses the action too, a modifier included.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn a_right_click_on_an_action_button_uses_the_action() {
+fn every_mouse_button_uses_the_action() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s);
+    load_action_bar(&mut s);
 
     s.set_action(
         1,
@@ -656,43 +581,38 @@ fn a_right_click_on_an_action_button_uses_the_action() {
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
     s.resolve();
 
-    s.mouse_button(26.0, 22.0, "RightButton", true);
-    s.mouse_button(26.0, 22.0, "RightButton", false);
-    assert_eq!(
-        action_ids(&mut s),
-        vec![1],
-        "right-click queues the same UseAction a left-click does"
-    );
-
-    // The middle button is not registered, so the click gate is still in force.
-    s.mouse_button(26.0, 22.0, "MiddleButton", true);
-    s.mouse_button(26.0, 22.0, "MiddleButton", false);
-    assert!(
-        s.take_action_uses().is_empty(),
-        "an unregistered button still reaches nothing"
-    );
-
-    // Shift+right-click picks up like shift+left: the OnClick fork ignores the button.
+    for button in ["RightButton", "MiddleButton"] {
+        s.mouse_button(26.0, 22.0, button, true);
+        s.mouse_button(26.0, 22.0, button, false);
+        assert_eq!(
+            action_ids(&mut s),
+            vec![1],
+            "{button} queues the same UseAction a left-click does"
+        );
+    }
+    // A shift+right-click is a click too: no pickup on the click path.
     s.set_modifiers(true, false, false);
     s.mouse_button(26.0, 22.0, "RightButton", true);
     s.mouse_button(26.0, 22.0, "RightButton", false);
     s.set_modifiers(false, false, false);
-    assert!(s.take_action_uses().is_empty());
+    assert_eq!(action_ids(&mut s), vec![1]);
+    assert!(s.cursor_payload().is_none(), "nothing picked up");
     assert!(
-        s.cursor_payload().is_some(),
-        "shift+right-click carries the action, like shift+left"
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
     );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// Shift-click runs `PickupAction`, a plain click `UseAction` (ActionBarFrame.xml:12-22).
+/// The click path never picks up: a shift-click uses the action like any click, and with a payload
+/// held the same `UseAction` places it (`CGActionBar::UseAction`, `0x5abbc0`, which reads the
+/// cursor and no modifier). Picking up is the drag's (ActionBarFrame.xml:18-24).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn shift_click_picks_up_not_uses() {
+fn a_shift_click_uses_and_a_held_payload_places() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s);
+    load_action_bar(&mut s);
 
     s.set_action(
         1,
@@ -712,46 +632,44 @@ fn shift_click_picks_up_not_uses() {
     s.mouse_button(26.0, 22.0, "LeftButton", true);
     s.mouse_button(26.0, 22.0, "LeftButton", false);
     s.set_modifiers(false, false, false);
+    assert_eq!(action_ids(&mut s), vec![1], "shift-click uses");
+    assert!(s.cursor_payload().is_none(), "and picks nothing up");
 
-    assert!(
-        s.take_action_uses().is_empty(),
-        "shift-click PICKS UP, never queues a use"
-    );
+    // Picked up by the drag script (the bars ship locked, so with the PICKUPACTION modifier).
+    s.set_modifiers(true, false, false);
+    s.run("ActionButton1:GetScript(\"OnDragStart\")(ActionButton1)")
+        .unwrap();
+    s.set_modifiers(false, false, false);
     assert!(s.cursor_payload().is_some(), "action 1 is on the cursor");
-    assert!(
-        !s.eval::<bool>("return HasAction(1)").unwrap(),
-        "slot cleared"
-    );
     assert_eq!(
         s.take_action_sets(),
         vec![(1, 0)],
-        "picking up queues the clear-the-slot send"
+        "the clear-the-slot send"
     );
 
-    // A plain click while holding places (`UseAction(id, 1)`, ActionBarFrame.xml:19).
+    // A plain click while holding places through `UseAction`.
     s.mouse_button(26.0, 22.0, "LeftButton", true);
     s.mouse_button(26.0, 22.0, "LeftButton", false);
-    assert!(s.take_action_uses().is_empty(), "routed to place, not use");
     assert!(s.cursor_payload().is_none(), "empty destination clears");
     assert!(s.eval::<bool>("return HasAction(1)").unwrap());
     assert_eq!(s.take_action_sets(), vec![(1, 111)]);
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
-/// `LOCK_ACTIONBAR` guards both drag ends (ActionBarFrame.xml:23-38) but not the shift-click
-/// pickup in OnClick (l.12-22), so a locked bar still yields to shift-click.
+/// The bars ship locked: the `lockActionBars` CVar defaults to `"1"`, which the Action Bars panel
+/// copies into `LOCK_ACTIONBAR` at world entry (InterfaceOptionsPanels.lua:1144). The lock
+/// guards the drag's start alone, which the `PICKUPACTION` modifier overrides
+/// (ActionBarFrame.xml:18-24); the drop takes no lock (l.25-29).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn the_action_bar_lock_stops_the_drag_and_leaves_shift_click_alone() {
+fn the_action_bar_lock_stops_a_plain_drag_and_yields_to_the_pickup_modifier() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s);
-    assert_eq!(
-        s.eval::<String>("return LOCK_ACTIONBAR").unwrap(),
-        "0",
-        "the bar ships unlocked, the reference's own default"
-    );
+    load_action_bar(&mut s);
 
     s.set_action(
         1,
@@ -766,59 +684,61 @@ fn the_action_bar_lock_stops_the_drag_and_leaves_shift_click_alone() {
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
     s.resolve();
+    assert_eq!(
+        s.eval::<String>("return LOCK_ACTIONBAR").unwrap(),
+        "1",
+        "the bar ships locked, the reference's own default"
+    );
 
-    s.run(r#"LOCK_ACTIONBAR = "1""#).unwrap();
-    s.run("this = ActionButton1 ActionButton1:GetScript(\"OnDragStart\")()")
-        .unwrap();
+    let drag_start = |s: &mut UiScript| {
+        s.run("ActionButton1:GetScript(\"OnDragStart\")(ActionButton1)")
+            .unwrap()
+    };
+    drag_start(&mut s);
     assert!(
         s.cursor_payload().is_none(),
-        "a locked bar does not give the action up to a drag"
+        "a locked bar does not give the action up to a plain drag"
     );
     assert!(
         s.eval::<bool>("return HasAction(1)").unwrap(),
         "slot intact"
     );
-    assert!(
-        s.take_action_sets().is_empty(),
-        "and nothing is sent to the server"
-    );
+    assert!(s.take_action_sets().is_empty(), "and nothing is sent");
 
     s.set_modifiers(true, false, false);
-    s.mouse_button(26.0, 22.0, "LeftButton", true);
-    s.mouse_button(26.0, 22.0, "LeftButton", false);
+    drag_start(&mut s);
     s.set_modifiers(false, false, false);
     assert!(
         s.cursor_payload().is_some(),
-        "shift-click is not what the lock stops"
+        "the PICKUPACTION modifier (shift) overrides the lock"
     );
 
-    s.run("this = ActionButton1 ActionButton1:GetScript(\"OnReceiveDrag\")()")
+    s.run("ActionButton1:GetScript(\"OnReceiveDrag\")(ActionButton1)")
         .unwrap();
     assert!(
-        s.cursor_payload().is_some(),
-        "a locked slot refuses the drop"
+        s.cursor_payload().is_none(),
+        "a locked slot still takes the drop"
     );
-    s.run(r#"LOCK_ACTIONBAR = "0""#).unwrap();
-    s.run("this = ActionButton1 ActionButton1:GetScript(\"OnReceiveDrag\")()")
-        .unwrap();
-    assert!(s.cursor_payload().is_none(), "unlocked, the drop lands");
     assert_eq!(
         s.take_action_sets(),
         vec![(1, 0), (1, 111)],
-        "the shift-pickup's clear and the unlocked drop's set — and nothing from the two \
-         refused gestures between them"
+        "the pickup's clear and the drop's set — nothing from the refused drag"
     );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
-/// A drag onto an occupied button puts the displaced action on the cursor, in two sends.
+/// A drag onto an occupied button puts the displaced action on the cursor, in two sends; the bars
+/// ship locked, so the drag starts with the `PICKUPACTION` modifier held.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn drag_drop_onto_another_button_hops_the_displaced_action() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s);
+    load_action_bar(&mut s);
 
     s.set_action(
         1,
@@ -845,8 +765,10 @@ fn drag_drop_onto_another_button_hops_the_displaced_action() {
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
     s.resolve();
 
+    s.set_modifiers(true, false, false);
     s.mouse_button(26.0, 22.0, "LeftButton", true);
     s.mouse_move(40.0, 22.0); // past the 4px drag-start threshold
+    s.set_modifiers(false, false, false);
     let consumed = s.mouse_button(68.0, 22.0, "LeftButton", false);
     assert!(consumed, "OnReceiveDrag consumed the release");
 
@@ -868,19 +790,22 @@ fn drag_drop_onto_another_button_hops_the_displaced_action() {
 
     // Two independent sends across the one gesture: the pickup's clear, then the place's write.
     assert_eq!(s.take_action_sets(), vec![(1, 0), (2, 111)]);
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
 /// The count shows only for `IsConsumableAction` (ActionButton.lua:285-292), false for a mount's
 /// item: zero charges, `InventoryType` 0 (`0x4e5250`). The flag rides the slot, not the state
 /// map: `ACTIONBAR_SLOT_CHANGED` repaints before the state feed writes.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn count_fontstring_follows_is_consumable_action_not_the_bag_count() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s);
+    load_action_bar(&mut s);
 
     // Multi-digit counts: a single digit could match a button's one-character HotKey label.
     s.set_action(
@@ -966,20 +891,23 @@ fn count_fontstring_follows_is_consumable_action_not_the_bag_count() {
         "0",
         "a spent consumable reads 0, it does not go blank"
     );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
 /// `ActionButton_Update` writes `GetActionText` into the `$parentName` line unconditionally
 /// (ActionButton.lua:236-238): a macro slot shows its name, a spell slot or an emptied one none.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn macro_name_line_follows_get_action_text_through_the_xml() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::{MacroState, MacroView};
 
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s);
+    load_action_bar(&mut s);
     s.set_macros(MacroState {
         account: vec![MacroView {
             name: "spawn".into(),
@@ -1036,46 +964,43 @@ fn macro_name_line_follows_get_action_text_through_the_xml() {
     s.fire_event("ACTIONBAR_SLOT_CHANGED", vec![ScriptValue::Int(1)]);
     s.resolve();
     assert_eq!(name_of(&s, 1), "", "an emptied slot loses the name");
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
 /// The stock bag bar (`MainMenuBarBagButtons.xml`), which seats on `MainMenuBarArtFrame`: its
 /// toggle opens the backpack, the stack paints in its slot, and the slot's clicks queue intents.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_bag_frame_drives_end_to_end() {
     let _data = benilla_formats::wow_data_or_skip!();
-    use super::test_ui::{bag_open, bag_slot_button, centre_of, load_ui, BAG_UI};
+    use super::test_ui::{bag_open, bag_slot_button, centre_of};
     use benilla_ui::script::{ContainerSlot, ContainerState};
 
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    // `ContainerFrameItemButton_OnClick` reads `StackSplitFrame` and `MerchantFrame`
-    // (ContainerFrame.lua:581, 586), which the bag kit leaves to its caller.
-    let mut bar_frames = 0;
-    for file in super::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\StackSplitFrame.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-        ],
-    ]) {
-        let frames = load_ui(&s, file);
-        if file == "Interface\\FrameXML\\MainMenuBarBagButtons.xml" {
-            bar_frames = frames;
-        }
+    load_action_bar(&mut s);
+    // The bag bar is six CheckButtons, each with its `$parentItemAnim` Model; the four bag slots
+    // inherit `ItemButtonTemplate` through `BagSlotButtonTemplate`, which carries no cooldown
+    // (MainMenuBarBagButtons.xml:17-20, :77-157).
+    for button in [
+        "MainMenuBarBackpackButton",
+        "CharacterBag0Slot",
+        "CharacterBag1Slot",
+        "CharacterBag2Slot",
+        "CharacterBag3Slot",
+        "KeyRingButton",
+    ] {
+        assert!(
+            s.eval::<bool>(&format!(
+                "return {button} ~= nil and {button}ItemAnim ~= nil and {button}Cooldown == nil"
+            ))
+            .unwrap(),
+            "{button}: built, with its item anim and no cooldown"
+        );
     }
-
-    assert_eq!(
-        bar_frames, 16,
-        "the bag bar is six CheckButtons — MainMenuBarBackpackButton, CharacterBag0..3Slot, \
-         KeyRingButton — each carrying one $parentItemAnim Model (6 + 6), plus a $parentCooldown \
-         Model on each of the four slots that inherit PaperDollItemSlotButtonTemplate (+4). The \
-         deleted BagFrame.xml built 12: it mirrored the six buttons and their push cards but had \
-         no cooldown on a bag-bar slot at all, which is the reference's own and is what the swap \
-         to Interface\\FrameXML\\MainMenuBarBagButtons.xml brought with it"
-    );
 
     // The app's feed: a backpack with Tough Jerky ×5 in slot 1.
     let mut slots = std::collections::HashMap::new();
@@ -1113,7 +1038,11 @@ fn shipped_bag_frame_drives_end_to_end() {
         }),
     );
     s.fire_event("BAG_UPDATE", vec![ScriptValue::Int(0)]);
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 
     s.resolve();
     let jerky_visible = |quads: &[benilla_ui::script::ExtractedQuad]| {
@@ -1130,7 +1059,11 @@ fn shipped_bag_frame_drives_end_to_end() {
     s.mouse_button(999.0, 20.0, "LeftButton", true);
     s.mouse_button(999.0, 20.0, "LeftButton", false);
     s.resolve();
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
     assert!(bag_open(&s, 0), "the bar's toggle opened the backpack");
     let quads = s.extract();
     let icon = quads
@@ -1195,20 +1128,23 @@ fn shipped_bag_frame_drives_end_to_end() {
     s.resolve();
     assert!(!bag_open(&s, 0), "toggle closes the window");
     assert!(!jerky_visible(&s.extract()), "…and its slots with it");
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
 /// `ActionButton_Update` registers the state events only while the button has an action
 /// (ActionButton.lua:175-212), so an empty well's texture-less icon never takes a tint.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn state_events_leave_empty_wells_untinted() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ActionState;
 
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s);
+    load_action_bar(&mut s);
     // One occupied slot; 2..12 empty.
     s.set_action(
         1,
@@ -1261,20 +1197,23 @@ fn state_events_leave_empty_wells_untinted() {
         Some([0.5, 0.5, 1.0, 1.0]),
         "the occupied button still tints OOM blue"
     );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
 /// A slot going empty draws no plate: the empty arm hides the icon (ActionButton.lua:168), and a
 /// texture-less region never draws, whatever its tint (`0x7706e0` gates on `+0xcc`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_occupied_slot_going_empty_leaves_no_white_plate() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ActionState;
 
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s);
+    load_action_bar(&mut s);
     s.set_action(
         3,
         Some(ActionSlot {
@@ -1326,18 +1265,21 @@ fn an_occupied_slot_going_empty_leaves_no_white_plate() {
             _ => {}
         }
     }
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
 /// `BonusActionBarFrame` is declared hidden (BonusActionBarFrame.xml:54); addons lay out its
 /// buttons before it ever shows (`CT_BarModOptions.lua:154`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bonus_action_bar_exists_hidden_and_takes_layout_calls() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_action_bar(&s);
+    load_action_bar(&mut s);
 
     assert!(
         s.eval::<bool>("return BonusActionBarFrame ~= nil").unwrap(),
@@ -1382,16 +1324,19 @@ fn the_bonus_action_bar_exists_hidden_and_takes_layout_calls() {
         s.eval::<bool>("return ActionButton1:IsShown()").unwrap(),
         "the main bar is untouched"
     );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
-/// ActionButton.lua:1-9's constants are globals (`zBar.lua:40` loops to `NUM_ACTIONBAR_BUTTONS`).
+/// ActionButton.lua:1-13's constants are globals (`zBar.lua:40` loops to `NUM_ACTIONBAR_BUTTONS`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_reference_action_bar_constants_are_defined() {
     benilla_formats::wow_data_or_skip!();
-    let s = UiScript::new().unwrap();
-    load_action_bar(&s);
+    let mut s = UiScript::new().unwrap();
+    load_action_bar(&mut s);
 
     for (name, want) in [
         ("NUM_ACTIONBAR_PAGES", 6),
@@ -1416,13 +1361,20 @@ fn the_reference_action_bar_constants_are_defined() {
         "zBar.lua:40's numeric for must have a limit"
     );
 
-    // `CURRENT_ACTIONBAR_PAGE` is live state that `ActionButton_GetPagedID` reads, so it must move.
+    // `CURRENT_ACTIONBAR_PAGE` is declared (ActionButton.lua:1) and never written: the page is the
+    // engine's, `GetActionBarPage`, which the paging functions read and move.
     assert_eq!(s.eval::<i64>("return CURRENT_ACTIONBAR_PAGE").unwrap(), 1);
+    assert_eq!(s.eval::<i64>("return GetActionBarPage()").unwrap(), 1);
     s.run("ActionBar_PageUp()").unwrap();
     assert_eq!(
-        s.eval::<i64>("return CURRENT_ACTIONBAR_PAGE").unwrap(),
+        s.eval::<i64>("return GetActionBarPage()").unwrap(),
         2,
-        "a frozen 1 would still be a lie — this one has to move"
+        "the engine's page moves"
+    );
+    assert_eq!(
+        s.eval::<i64>("return CURRENT_ACTIONBAR_PAGE").unwrap(),
+        1,
+        "and the stock global stays its declared 1"
     );
     s.run("ActionBar_PageDown()").unwrap();
 }
@@ -1430,11 +1382,10 @@ fn the_reference_action_bar_constants_are_defined() {
 /// `ActionButtonTemplate` is regions only (ActionButtonTemplate.xml:3); `ActionBarButtonTemplate`
 /// adds the handlers (ActionBarFrame.xml:4), and `zBar.xml:7` inherits it.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn both_reference_action_button_templates_are_inheritable() {
     benilla_formats::wow_data_or_skip!();
-    let s = UiScript::new().unwrap();
-    load_action_bar(&s);
+    let mut s = UiScript::new().unwrap();
+    load_action_bar(&mut s);
 
     // zBar's exact shape: inherit the bar template, supply your own OnLoad.
     let doc = benilla_ui::framexml::parse(
@@ -1499,49 +1450,16 @@ fn both_reference_action_button_templates_are_inheritable() {
     );
 }
 
-/// Main-bar paging (ActionButton.lua:63-101): page-up past the last viewable page wraps to 1,
+/// Main-bar paging (ActionButton.lua:45-78): page-up past the last viewable page wraps to 1,
 /// page-down below 1 rescans for the last viewable one.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_main_bar_pages_and_a_bonus_page_still_outranks_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for file in [
-        "Interface\\FrameXML\\GlobalStrings.lua",
-        // Fonts first: the reputation pane's check boxes read `RED_FONT_COLOR` in their OnLoad.
-        "Interface\\FrameXML\\Fonts.xml",
-        "Interface\\FrameXML\\BasicControls.xml",
-        "Interface\\FrameXML\\LocaleProperties.lua",
-        r"Interface\FrameXML\UIParent.xml",
-        r"Interface\FrameXML\MoneyFrame.lua",
-        r"Interface\FrameXML\MoneyFrame.xml",
-        "Interface\\FrameXML\\GameTooltip.xml",
-        "Interface\\FrameXML\\UIDropDownMenu.xml",
-        r"Interface\FrameXML\UIPanelTemplates.lua",
-        r"Interface\FrameXML\UIPanelTemplates.xml",
-        r"Interface\FrameXML\OptionsFrameTemplates.xml",
-        // `UIOptionsFrame_Init`'s uvars and `UIOptionsFrameCheckButtons`, which
-        // `MultiActionBarFrame_OnLoad` writes (MultiActionBars.lua:8-22), so ahead of the bars.
-        r"Interface\FrameXML\OptionsFrame.lua",
-        r"Interface\FrameXML\UIOptionsFrame.xml",
-        "Interface\\FrameXML\\StaticPopup.xml",
-        "Interface\\FrameXML\\TextStatusBar.lua",
-        "Interface\\FrameXML\\TextStatusBar.xml",
-        "Interface\\FrameXML\\MainMenuBar.xml",
-        "Interface\\FrameXML\\Cooldown.xml",
-        "Interface\\FrameXML\\ActionButtonTemplate.xml",
-        "Interface\\FrameXML\\ActionBarFrame.xml",
-        "Interface\\FrameXML\\MultiActionBars.xml",
-        // `ExhaustionTick_Update` reads `ReputationWatchBar`, which ReputationFrame.xml declares.
-        r"Interface\FrameXML\ReputationFrame.xml",
-        "Interface\\FrameXML\\BonusActionBarFrame.xml",
-        "ScrollTemplates.xml",
-    ] {
-        super::test_ui::load_ui(&s, file);
-    }
+    load_action_bar(&mut s);
 
-    assert_eq!(s.eval::<i64>("return CURRENT_ACTIONBAR_PAGE").unwrap(), 1);
+    assert_eq!(s.eval::<i64>("return GetActionBarPage()").unwrap(), 1);
     assert_eq!(
         s.eval::<i64>("return ActionButton_GetPagedID(ActionButton1)")
             .unwrap(),
@@ -1557,8 +1475,8 @@ fn the_main_bar_pages_and_a_bonus_page_still_outranks_it() {
         .unwrap(),
         "all six pages are viewable at rest — every extra bar ships off"
     );
-    // The page numeral: `ActionBarUpButton` writes it at load and on `ACTIONBAR_PAGE_CHANGED`
-    // (ActionBarFrame.xml:175, 180).
+    // The page numeral: `MainMenuBar` writes it at load and on `ACTIONBAR_PAGE_CHANGED`
+    // (MainMenuBar.lua:185, 192).
     let page_text = |s: &UiScript| {
         s.eval::<String>("return MainMenuBarPageNumber:GetText()")
             .unwrap()
@@ -1571,7 +1489,7 @@ fn the_main_bar_pages_and_a_bonus_page_still_outranks_it() {
 
     // Page up walks to 2, so button 1 shows action 13.
     s.run("ActionBar_PageUp()").unwrap();
-    assert_eq!(s.eval::<i64>("return CURRENT_ACTIONBAR_PAGE").unwrap(), 2);
+    assert_eq!(s.eval::<i64>("return GetActionBarPage()").unwrap(), 2);
     assert_eq!(page_text(&s), "2", "the numeral follows the page up");
     assert_eq!(
         s.eval::<i64>("return ActionButton_GetPagedID(ActionButton1)")
@@ -1586,10 +1504,10 @@ fn the_main_bar_pages_and_a_bonus_page_still_outranks_it() {
 
     // Down again; below page 1 it rescans for the last viewable page.
     s.run("ActionBar_PageDown()").unwrap();
-    assert_eq!(s.eval::<i64>("return CURRENT_ACTIONBAR_PAGE").unwrap(), 1);
+    assert_eq!(s.eval::<i64>("return GetActionBarPage()").unwrap(), 1);
     s.run("ActionBar_PageDown()").unwrap();
     assert_eq!(
-        s.eval::<i64>("return CURRENT_ACTIONBAR_PAGE").unwrap(),
+        s.eval::<i64>("return GetActionBarPage()").unwrap(),
         4,
         "page-down off the bottom rescans for the last VIEWABLE page — 4, not 6, because the \
          two raised bottom multibars own pages 5 and 6"
@@ -1610,33 +1528,32 @@ fn the_main_bar_pages_and_a_bonus_page_still_outranks_it() {
             "return VIEWABLE_ACTION_BAR_PAGES[5] == nil and VIEWABLE_ACTION_BAR_PAGES[6] == nil"
         )
         .unwrap());
-    s.run("CURRENT_ACTIONBAR_PAGE = 4 ActionBar_PageUp()")
-        .unwrap();
+    s.run("ChangeActionBarPage(4) ActionBar_PageUp()").unwrap();
     assert_eq!(
-        s.eval::<i64>("return CURRENT_ACTIONBAR_PAGE").unwrap(),
+        s.eval::<i64>("return GetActionBarPage()").unwrap(),
         1,
         "walking up from the last viewable page skips 5 and 6 and wraps to the LITERAL 1 — the \
          reference's own asymmetry with page-down, which rescans instead"
     );
 
-    // The bonus branch needs `isBonus` and page 1 (ActionButton.lua:447); a main-bar button has
+    // The bonus branch needs `isBonus` and page 1 (ActionButton.lua:137-142); a main-bar button has
     // no `isBonus`, so slot 1 on page 3 is action 25 whatever the offset.
-    s.run("CURRENT_ACTIONBAR_PAGE = 3").unwrap();
+    s.run("ChangeActionBarPage(3)").unwrap();
     s.set_bonus_bar_offset(1);
     assert_eq!(
         s.eval::<i64>("return ActionButton_GetPagedID(ActionButton1)")
             .unwrap(),
         25,
-        "a main-bar button follows its page, never the bonus offset (ActionButton.lua:447-456)"
+        "a main-bar button follows its page, never the bonus offset (ActionButton.lua:131-152)"
     );
-    s.run("CURRENT_ACTIONBAR_PAGE = 1").unwrap();
+    s.run("ChangeActionBarPage(1)").unwrap();
     assert_eq!(
         s.eval::<i64>("return ActionButton_GetPagedID(BonusActionButton1)")
             .unwrap(),
         73,
         "the bonus frame's own button, on page 1 with offset 1, is 72 + 1"
     );
-    s.run("CURRENT_ACTIONBAR_PAGE = 3").unwrap();
+    s.run("ChangeActionBarPage(3)").unwrap();
     assert_eq!(
         s.eval::<i64>("return ActionButton_GetPagedID(BonusActionButton1)")
             .unwrap(),
@@ -1655,29 +1572,11 @@ fn the_main_bar_pages_and_a_bonus_page_still_outranks_it() {
 /// The form swap (BonusActionBarFrame.lua:1-98): the bonus frame slides up and sounds on landing,
 /// stays while the form holds, and slides down silently with the old page.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bonus_bar_slides_up_with_sound_and_down_without() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\GlobalStrings.lua");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\Fonts.xml");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\UIParent.xml");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\GameTooltip.xml");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\OptionsFrameTemplates.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\TextStatusBar.lua");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\TextStatusBar.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\MainMenuBar.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\Cooldown.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\ActionButtonTemplate.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\ActionBarFrame.xml");
-    // `ExhaustionTick_Update` reads `ReputationWatchBar`, which ReputationFrame.xml declares.
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\ReputationFrame.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\BonusActionBarFrame.xml");
+    load_action_bar(&mut s);
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
     s.tick(10.0); // a nonzero clock epoch
     let _ = s.take_sounds();
@@ -1690,7 +1589,11 @@ fn bonus_bar_slides_up_with_sound_and_down_without() {
     // ── Enter a form: offset 0 to 1, fired on the app's offset edge ──
     s.set_bonus_bar_offset(1);
     s.fire_event("UPDATE_BONUS_ACTIONBAR", vec![]);
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
     assert!(s
         .eval::<bool>("return BonusActionBarFrame:IsShown()")
         .unwrap());
@@ -1721,29 +1624,26 @@ fn bonus_bar_slides_up_with_sound_and_down_without() {
         "a key pressed mid-slide already drives the bonus page"
     );
 
-    // …and the self-cast bindings, which differ only in `ActionButtonUp(n, 1)`
-    // (Bindings.xml:205-211).
-    s.run("ActionButtonDown(1) ActionButtonUp(1, 1)").unwrap();
-    assert_eq!(
+    // Self-cast is the SELFCAST modifier on the key's secure click, read through the button's
+    // `checkselfcast` (ActionButton.lua:83, SecureTemplates.lua:207): the same on either branch.
+    let uses = |s: &mut UiScript| {
         s.take_action_uses()
             .into_iter()
-            .map(|u| (u.action, u.at == benilla_ui::script::CastAt::Player))
-            .collect::<Vec<_>>(),
-        vec![(73, false)],
-        "the BONUS branch of stock ActionButtonUp passes a literal 0 for onSelf (ActionButton.lua:38) \
-         — in a stance, ALT-1 drives the bonus page without self-cast; the reference's own rule, \
-         not the (73, true) a self-cast would give"
-    );
-    s.run("BonusActionBarFrame:Hide() ActionButtonDown(1) ActionButtonUp(1, 1)")
+            .map(|u| {
+                (
+                    u.action,
+                    matches!(&u.at, benilla_ui::script::CastAt::Unit(t) if t == "player"),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    s.set_modifiers(false, false, true); // ALT, the SELFCAST default
+    s.run("ActionButtonDown(1) ActionButtonUp(1)").unwrap();
+    assert_eq!(uses(&mut s), vec![(73, true)], "the bonus page, self-cast");
+    s.run("BonusActionBarFrame:Hide() ActionButtonDown(1) ActionButtonUp(1)")
         .unwrap();
-    assert_eq!(
-        s.take_action_uses()
-            .into_iter()
-            .map(|u| (u.action, u.at == benilla_ui::script::CastAt::Player))
-            .collect::<Vec<_>>(),
-        vec![(1, true)],
-        "on the main-bar branch onSelf reaches UseAction's third argument (ActionButton.lua:51)"
-    );
+    assert_eq!(uses(&mut s), vec![(1, true)], "the main bar, self-cast");
+    s.set_modifiers(false, false, false);
     s.run("BonusActionBarFrame:Show()").unwrap();
 
     // `BonusActionBar_OnUpdate` paints, then advances (BonusActionBarFrame.lua:37-52): top 0, then
@@ -1860,35 +1760,21 @@ fn bonus_bar_slides_up_with_sound_and_down_without() {
         s.take_sounds().is_empty(),
         "the down-slide is silent — the ref plays only on open"
     );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
 /// A form dropped mid-rise: `HideBonusActionBar` keeps the running timer
 /// (BonusActionBarFrame.lua:90-92), and the hide arm paints `(1 - timer / 0.15) * 43` (l.48).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn bonus_bar_turnaround_continues_from_position() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\GlobalStrings.lua");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\Fonts.xml");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\UIParent.xml");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\GameTooltip.xml");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\OptionsFrameTemplates.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\TextStatusBar.lua");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\TextStatusBar.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\MainMenuBar.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\Cooldown.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\ActionButtonTemplate.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\ActionBarFrame.xml");
-    // `ExhaustionTick_Update` reads `ReputationWatchBar`, which ReputationFrame.xml declares.
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\ReputationFrame.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\BonusActionBarFrame.xml");
+    load_action_bar(&mut s);
     s.tick(10.0);
     let _ = s.take_sounds();
 
@@ -1929,39 +1815,22 @@ fn bonus_bar_turnaround_continues_from_position() {
         s.take_sounds().is_empty(),
         "an aborted rise never lands, so it never sounds"
     );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }
 
 /// The page arrows are 32x32 squares 20 px apart, overlapping by 12 px; their `<HitRectInsets>`
 /// (6 each side, 7 top and bottom, ActionBarFrame.xml:170-172) shrink each hit rect to 20x18,
 /// which separates them.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_page_arrows_do_not_steal_each_other_s_clicks() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\GlobalStrings.lua");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\Fonts.xml");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\UIParent.xml");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\GameTooltip.xml");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\OptionsFrameTemplates.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\TextStatusBar.lua");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\TextStatusBar.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\MainMenuBar.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\Cooldown.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\ActionButtonTemplate.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\ActionBarFrame.xml");
-    // `ExhaustionTick_Update` reads `ReputationWatchBar`, which ReputationFrame.xml declares.
-    super::test_ui::load_ui(&s, r"Interface\FrameXML\ReputationFrame.xml");
-    super::test_ui::load_ui(&s, "Interface\\FrameXML\\BonusActionBarFrame.xml");
-    // The rested marker is declared shown in DIALOG strata over the arrows (MainMenuBar.xml:415);
-    // `ExhaustionTick_Update` hides it on PLAYER_ENTERING_WORLD when `GetXPExhaustion()` is nil
-    // (MainMenuBar.lua:29-31), or it eats every click.
+    load_action_bar(&mut s);
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
     s.resolve();
 
@@ -1994,5 +1863,9 @@ fn the_page_arrows_do_not_steal_each_other_s_clicks() {
         Some("ActionBarUpButton"),
         "the lower third of the visible UP arrow must page up, not down"
     );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
 }

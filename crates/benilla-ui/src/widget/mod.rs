@@ -121,15 +121,16 @@ mod kinds;
 pub use handle_hash::{HandleHasher, HandleMap, HandleSet};
 pub use kinds::{
     click_mask_of, model_key, mouse_button_bit, slider_fraction, slider_grab, slider_set_value,
-    ArmedSequence, ButtonFont, ButtonState, ButtonVisualState, ColorSelectState, CooldownFlash,
-    CooldownPaint, CooldownState, CooldownStep, EditAction, EditBoxState, EditOutcome, EditUnit,
-    FrameKind, InsertMode, KindState, MessageFrameState, MessageLine, MinimapState, ModelFileFacts,
-    ModelFog, ModelLight, ModelPlayHead, ModelState, QuestPoiState, RegionKind, ScrollFrameState,
-    ScrollingMessageState, SequenceFacts, SliderState, StatusBarState, TooltipAnchor, TooltipState,
-    CLICK_LEFT_UP, COOLDOWN_FLASH_MS, COOLDOWN_FLASH_RGB, COOLDOWN_SWIPE_ALPHA,
-    MINIMAP_DEFAULT_ARROW_MODEL, MINIMAP_DEFAULT_MASK, MINIMAP_DEFAULT_PLAYER_MODEL,
-    MINIMAP_DEFAULT_ZOOM, MINIMAP_ENGINE_CHILDREN, MINIMAP_ZOOM_LEVELS, TOOLTIP_DOUBLE_GAP,
-    TOOLTIP_FADE_SECS, TOOLTIP_LINE_GAP, TOOLTIP_PAD, TOOLTIP_WRAP_WIDTH,
+    swipe_rim, ArmedSequence, ButtonFont, ButtonState, ButtonVisualState, ColorSelectState,
+    CooldownFlash, CooldownPaint, CooldownState, CooldownStep, EditAction, EditBoxState,
+    EditOutcome, EditUnit, FrameKind, InsertMode, KindState, MessageFrameState, MessageLine,
+    MinimapState, ModelFileFacts, ModelFog, ModelLight, ModelPlayHead, ModelState, QuestPoiState,
+    RegionKind, ScrollFrameState, ScrollingMessageState, SequenceFacts, SliderState,
+    StatusBarState, TooltipAnchor, TooltipState, CLICK_LEFT_UP, COOLDOWN_FLASH_MS,
+    COOLDOWN_FLASH_RGB, COOLDOWN_SWIPE_ALPHA, MINIMAP_DEFAULT_ARROW_MODEL, MINIMAP_DEFAULT_MASK,
+    MINIMAP_DEFAULT_PLAYER_MODEL, MINIMAP_DEFAULT_ZOOM, MINIMAP_ENGINE_CHILDREN,
+    MINIMAP_ZOOM_LEVELS, TOOLTIP_DOUBLE_GAP, TOOLTIP_FADE_SECS, TOOLTIP_LINE_GAP, TOOLTIP_PAD,
+    TOOLTIP_WRAP_WIDTH,
 };
 
 // ── Frame and Region nodes ───────────────────────────────────────────────────────────────────
