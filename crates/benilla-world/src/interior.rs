@@ -368,11 +368,12 @@ pub fn classify_entity_interior(
         let had_state = state.is_some();
         // A settled anchor skips the ray. On the Bake law it refolds from the cached products while
         // its ramps chase, so a unit that stops in a warm room does not freeze mid-ramp.
-        if let Some(state) = state.as_deref_mut() {
-            let settled = state.generation == residency.generation
-                && pos.distance_squared(state.last_pos) < RESAMPLE_DIST_SQ;
+        // Read through `&`: a settled anchor's record is rewritten only when its fog flips.
+        if let Some(settled_state) = state.as_deref() {
+            let settled = settled_state.generation == residency.generation
+                && pos.distance_squared(settled_state.last_pos) < RESAMPLE_DIST_SQ;
             if settled {
-                if let AppliedLaw::Bake(slot) = state.law {
+                if let AppliedLaw::Bake(slot) = settled_state.law {
                     if let (Ok(node), Ok(bake)) = (nodes.get(anchor), bake_states.get(anchor)) {
                         if !node.ramps_settled() {
                             let words = (
@@ -401,10 +402,13 @@ pub fn classify_entity_interior(
                 }
                 // The fog is not settled: its gate is the camera's chain, so a still unit leaves
                 // and rejoins its building's MFOG as the camera walks between rooms.
-                let fog = anchor_room_fogged(state.room, &instances);
-                if state.fog != fog {
-                    state.fog = fog;
-                    n_written += write_anchor_parts(state.law, fog, lit_parts, &mut parts);
+                let fog = anchor_room_fogged(settled_state.room, &instances);
+                if settled_state.fog != fog {
+                    let law = settled_state.law;
+                    if let Some(mut state) = state {
+                        state.fog = fog;
+                    }
+                    n_written += write_anchor_parts(law, fog, lit_parts, &mut parts);
                 }
                 continue;
             }
@@ -1058,6 +1062,17 @@ mod tests {
             world.get::<MeshTag>(part).unwrap().0 & crate::mesh_tag::INTERIOR_FOG_BIT != 0
         };
         assert!(fog_of(&world, part), "gate on ⇒ the room's fog");
+        // Nothing moved: the settled record is read, not rewritten.
+        let record = |world: &World| {
+            world
+                .entity(anchor)
+                .get_ref::<InteriorAnchor>()
+                .unwrap()
+                .last_changed()
+        };
+        let settled = record(&world);
+        world.run_system_once(classify_entity_interior).unwrap();
+        assert_eq!(record(&world), settled, "a still frame rewrote the anchor");
 
         // The camera moves out of the chain; the anchor does not move at all.
         world
