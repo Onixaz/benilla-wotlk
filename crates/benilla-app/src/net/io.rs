@@ -761,7 +761,7 @@ fn world(
             return Ok(WorldEnd::Cycle(Cycle::Exit));
         }
 
-        if forward_glue(&mut session, events_tx).is_err() {
+        if !forward_glue(&mut session, events_tx) {
             return Ok(WorldEnd::Cycle(Cycle::Exit));
         }
 
@@ -856,7 +856,7 @@ fn world(
                     },
                     recv(login_rx) -> msg => msg.map_or(Parked::Exit, Parked::Login),
                 };
-                if forward_glue(&mut session, events_tx).is_err() {
+                if !forward_glue(&mut session, events_tx) {
                     return Ok(WorldEnd::Cycle(Cycle::Exit));
                 }
                 let (action, code) = match answer {
@@ -958,7 +958,7 @@ fn world(
                     "net: no SMSG_ADDON_INFO — GetNumAddOns() stays 0, as the reference's would"
                 ),
             }
-            if forward_glue(&mut session, events_tx).is_err() {
+            if !forward_glue(&mut session, events_tx) {
                 return Ok(WorldEnd::Cycle(Cycle::Exit));
             }
             let (mut reader, writer) = session.into_split()?;
@@ -1036,15 +1036,12 @@ fn world(
 }
 
 /// The packets a glue-time read kept ([`benilla_protocol::world::WorldSession::take_glue_events`]),
-/// on to the app in arrival order; `Err` once the app is gone.
-fn forward_glue(
-    session: &mut WorldSession,
-    events_tx: &Sender<SessionEvent>,
-) -> Result<(), crossbeam_channel::SendError<SessionEvent>> {
-    for ev in session.take_glue_events() {
-        events_tx.send(ev)?;
-    }
-    Ok(())
+/// on to the app in arrival order; `false` once the app is gone.
+fn forward_glue(session: &mut WorldSession, events_tx: &Sender<SessionEvent>) -> bool {
+    session
+        .take_glue_events()
+        .into_iter()
+        .all(|ev| events_tx.send(ev).is_ok())
 }
 
 /// How the world stream ended, short of a socket failure.

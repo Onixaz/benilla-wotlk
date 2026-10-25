@@ -116,3 +116,5 @@ windows-sys = { version = "0.59", features = [
 benilla-srp = { path = "../benilla-srp" }
 num-bigint = "0.4.6"
 sha1.workspace = true
+# `tests/launcher_shape.rs` reads the launcher's manifest.
+toml = "0.8"

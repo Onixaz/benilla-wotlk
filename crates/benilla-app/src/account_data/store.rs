@@ -256,7 +256,9 @@ impl AccountData {
             return Vec::new();
         }
         bytes
-            .chunks_exact(20)
+            .as_chunks::<20>()
+            .0
+            .iter()
             .map(|r| {
                 let mut md5 = [0; 16];
                 md5.copy_from_slice(&r[..16]);

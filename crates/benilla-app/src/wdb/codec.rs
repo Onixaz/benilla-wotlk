@@ -290,7 +290,9 @@ fn pack<'a>(kind: &Kind, body: &'a [u8]) -> std::borrow::Cow<'a, [u8]> {
     for (start, pairs) in [(QUEST_REWARDS_AT, 4), (QUEST_REWARDS_AT + 4 * 8, 6)] {
         let span = &body[start..start + pairs * 8];
         let mut packed: Vec<u8> = span
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .filter(|pair| pair[..4] != [0; 4])
             .flatten()
             .copied()
