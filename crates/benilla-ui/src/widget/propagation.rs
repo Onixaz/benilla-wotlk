@@ -111,37 +111,51 @@ impl WidgetArena {
         }
     }
 
-    /// Level compaction (`0x764eb0`), run by `CSimpleTop::Raise` (`0x7650f0`) before it sets the
-    /// raised frame's level to the returned count: renumber the occupied levels of `strata` in
-    /// order, hidden frames included (the scan tests only strata and level, `0x764f18`/`0x764f20`),
-    /// without propagating (`0x764faf`). `level` is written directly, so `insertion_seq` survives
-    /// where the reference re-levels through `0x76a4f0` (`0x764fb6`) and relinks visible frames.
-    ///
-    /// Deviation: levels pack contiguously, because the reference's resuming cursor
-    /// (`0x764fd3`/`0x764fd8`) leaves a hole past a wide gap ({0, 4, 6} at count 7 gives {0, 1, 3}
-    /// at count 4) that no draw or hit order can see.
-    pub fn compact_levels(&mut self, strata: Strata) -> u16 {
-        let mut occupied: Vec<u16> = self
+    /// `CSimpleTop::CompressStrata` (`0x495060`), run by the raise before it lifts the frame to the
+    /// returned bound: below the stratum's bound, a level is in use when any frame of the stratum
+    /// sits there, hidden ones included. At each used level past a run of empty ones, every frame
+    /// from there up to the bound drops by the run's length through the non-propagating level
+    /// setter, which relinks a visible one, a level at a time in creation order. The scan resumes
+    /// at the used level, so a second run inside the dropped span stays: `{0, 4, 6}` under a bound
+    /// of 7 becomes `{0, 1, 3}` under 4. A frame at or past the bound keeps its level.
+    pub fn compress_strata(&mut self, strata: Strata) -> u16 {
+        let mut top = self.top_level(strata);
+        let mut members: Vec<(u16, u32, FrameHandle)> = self
             .iter_frames()
-            .filter(|(_, f)| f.strata == strata)
-            .map(|(_, f)| f.level)
+            .filter(|(_, f)| f.strata == strata && f.level < top)
+            .map(|(h, f)| (f.level, f.created_seq, h))
             .collect();
-        occupied.sort_unstable();
-        occupied.dedup();
-        let renumber: Vec<(FrameHandle, u16)> = self
-            .iter_frames()
-            .filter(|(_, f)| f.strata == strata)
-            .filter_map(|(h, f)| {
-                let idx = occupied.binary_search(&f.level).ok()? as u16;
-                (idx != f.level).then_some((h, idx))
-            })
-            .collect();
-        for (h, level) in renumber {
-            if let Some(f) = self.frame_mut(h) {
-                f.level = level;
-            }
+        members.sort_unstable_by_key(|&(level, created, _)| (level, created));
+        let mut at_level: Vec<Vec<FrameHandle>> = vec![Vec::new(); usize::from(top)];
+        for (level, _, h) in members {
+            at_level[usize::from(level)].push(h);
         }
-        occupied.len() as u16
+        let mut empty: Option<u16> = None;
+        let mut level = 0u16;
+        while level < top {
+            if at_level[usize::from(level)].is_empty() {
+                empty.get_or_insert(level);
+                level += 1;
+                continue;
+            }
+            let Some(first_empty) = empty.take() else {
+                level += 1;
+                continue;
+            };
+            let gap = level - first_empty;
+            for from in level..top {
+                for h in std::mem::take(&mut at_level[usize::from(from)]) {
+                    self.set_frame_level(h, from - gap, false);
+                    at_level[usize::from(from - gap)].push(h);
+                }
+            }
+            top -= gap;
+        }
+        if let Some(first_empty) = empty {
+            top = first_empty;
+        }
+        self.top_level[usize::from(strata.index())] = top;
+        top
     }
 
     // ── Toplevel ─────────────────────────────────────────────────────────────────────────────────

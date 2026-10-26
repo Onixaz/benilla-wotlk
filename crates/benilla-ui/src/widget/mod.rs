@@ -227,6 +227,9 @@ pub struct Frame {
     /// The link position in the `(strata, level)` bucket, re-stamped at the tail on each relink.
     /// Drawing puts the later-linked frame on top; the hit test probes the earlier-linked first.
     pub insertion_seq: u32,
+    /// The creation stamp: the order of the client's frame registry, which each frame joins at its
+    /// tail when constructed (`CSimpleTop::RegisterFrame` `0x494f90`) and level compaction walks.
+    pub created_seq: u32,
     pub kind_state: KindState,
     next_decl: u32,
 }
@@ -260,6 +263,10 @@ pub struct WidgetArena {
     /// [`Self::names`] holds only the first.
     shared_names: std::collections::HashSet<String>,
     next_insertion: u32,
+    next_created: u32,
+    /// Each stratum's level bound (`CFrameStrata::m_topLevel`), indexed by [`Strata::index`]: one
+    /// past the highest level a frame linked into since the last compaction, which alone lowers it.
+    top_level: [u16; Strata::ALL.len()],
     /// The draw list's fingerprint cache ([`crate::order::traversal`]).
     pub(crate) order_cache: crate::order::OrderCache,
     /// Minimap frames ever created, so the state feed notices a new one without a walk.
@@ -318,6 +325,8 @@ impl WidgetArena {
             names: HashMap::new(),
             shared_names: Default::default(),
             next_insertion: 0,
+            next_created: 0,
+            top_level: [0; Strata::ALL.len()],
             minimap_created: 0,
             order_cache: Default::default(),
             ticked_kinds: Vec::new(),
@@ -415,9 +424,13 @@ impl WidgetArena {
             .map(|(index, generation, f)| (FrameHandle { index, generation }, f))
     }
 
-    /// Move `h` to its bucket's tail, as the client's level-list add does: show `0x76ae10` on
-    /// becoming visible, and strata `0x76a470` or level `0x76a4f0` on a visible frame.
+    /// Move `h` to its bucket's tail and grow its stratum's level bound, as the client's level-list
+    /// add does (`CFrameStrata::AddFrame` `0x495de0`): show on becoming visible, and strata or
+    /// level on a visible frame.
     pub(crate) fn resequence_to_tail(&mut self, h: FrameHandle) {
+        if let Some(f) = self.frame(h) {
+            self.grow_top_level(f.strata, f.level);
+        }
         // The stamp is `INSERTION_BITS` wide in the packed `ZKey`: at the cap, renumber every
         // frame in its current order, which changes no draw order.
         if self.next_insertion >= (1 << crate::order::INSERTION_BITS) {
@@ -436,6 +449,17 @@ impl WidgetArena {
             f.insertion_seq = seq;
             self.next_insertion += 1;
         }
+    }
+
+    /// A stratum's level bound ([`Self::compress_strata`]).
+    pub fn top_level(&self, strata: Strata) -> u16 {
+        self.top_level[usize::from(strata.index())]
+    }
+
+    /// A link at `level` lifts the bound past it (`0x495de0`).
+    fn grow_top_level(&mut self, strata: Strata, level: u16) {
+        let top = &mut self.top_level[usize::from(strata.index())];
+        *top = (*top).max(level.saturating_add(1));
     }
 
     /// The first frame created with `name`; a later duplicate never takes it over (`0x701bd0`).
@@ -479,6 +503,8 @@ impl WidgetArena {
 
         let insertion_seq = self.next_insertion;
         self.next_insertion += 1;
+        let created_seq = self.next_created;
+        self.next_created += 1;
 
         let shown = true;
         let scale = 1.0f32;
@@ -530,6 +556,7 @@ impl WidgetArena {
             ignore_parent_scale: false,
             wow_id: 0,
             insertion_seq,
+            created_seq,
             kind_state: match kind {
                 FrameKind::StatusBar => KindState::StatusBar(StatusBarState::default()),
                 // `CSimpleCheckbox` extends `CSimpleButton` by one field, `ButtonState::checked`.
@@ -572,6 +599,9 @@ impl WidgetArena {
                 | FrameKind::Cooldown
         );
         let visible = frame.effective_visible;
+        if visible {
+            self.grow_top_level(frame.strata, frame.level);
+        }
         let (index, generation) = self.frames.insert(frame);
         let handle = FrameHandle { index, generation };
         let glance = Glance {

@@ -129,8 +129,8 @@ fn a_non_toplevel_frame_does_not_move_when_shown() {
     );
 }
 
-/// A toplevel frame raises on show (`0x76ae10` at `0x76aee0`): compaction (`0x764eb0`) renumbers
-/// the occupied levels `{0, 5}` to `[0, 2)`, then the raise writes `level := bucket->count`, 2.
+/// A toplevel frame raises on show (`0x4918f0`): compression (`0x495060`) drops Board from 5 to
+/// 1 under a bound of 2, then the raise writes the bound, 2, as the dialog's level (`0x4951a0`).
 #[test]
 fn a_raise_is_top_occupied_level_plus_one_after_compaction() {
     let mut s = board_and_dialog();
@@ -140,12 +140,12 @@ fn a_raise_is_top_occupied_level_plus_one_after_compaction() {
     assert_eq!(
         level(&mut s, "Board"),
         1,
-        "compaction renumbered the stratum's occupied levels into [0, count)"
+        "compression closed the gap under the bound"
     );
     assert_eq!(
         level(&mut s, "Dialog"),
         2,
-        "the raise is bucket->count, read AFTER the compaction"
+        "the raise is the bound, read AFTER the compression"
     );
     assert_eq!(
         painted(&mut s),
@@ -311,9 +311,9 @@ fn a_raise_can_never_lift_a_frame_out_of_its_stratum() {
 
 // ── Propagation and compaction ──
 
-/// The raise's `propagate = 1` shifts same-strata children by its delta (`0x76a4f0` at
-/// `0x76a58a`) and skips the others (`0x76a582`). Levels `{0, 1, 2, 5}` compact to `{0, 1, 2, 3}`,
-/// so Dialog goes to 4 and Kid and Grandkid move by the same +4.
+/// The raise's level setter shifts same-strata children by its delta and skips the others
+/// (`0x4910a0`). Levels `{0, 1, 2, 5}` compress to `{0, 1, 2, 3}` under a bound of 4, so Dialog
+/// goes to 4 and Kid and Grandkid move by the same +4.
 #[test]
 fn the_raised_subtree_shifts_by_one_delta_and_keeps_its_internal_order() {
     let mut s = board_and_dialog();
@@ -330,7 +330,7 @@ fn the_raised_subtree_shifts_by_one_delta_and_keeps_its_internal_order() {
     .unwrap();
 
     assert_eq!(level(&mut s, "Board"), 3, "compacted 5 -> 3");
-    assert_eq!(level(&mut s, "Dialog"), 4, "raised to bucket->count");
+    assert_eq!(level(&mut s, "Dialog"), 4, "raised to the bound");
     assert_eq!(level(&mut s, "Kid"), 5, "same delta (+4) as its parent");
     assert_eq!(level(&mut s, "Grandkid"), 6, "and so does the grandchild");
     assert_eq!(
@@ -344,7 +344,49 @@ fn the_raised_subtree_shifts_by_one_delta_and_keeps_its_internal_order() {
     );
 }
 
-/// Compaction (`0x764eb0`) keeps `level := top + 1` from climbing: twenty alternating raises stay
+/// Compression moves each frame through the level setter, which relinks a visible one at its new
+/// level's tail in creation order (`0x495060` → `0x4910a0`), so draw order follows creation again:
+/// `Older`, relinked over `Newer` by a hide and show, drops back under it when a raise compresses.
+#[test]
+fn compression_restores_creation_order_in_the_paint() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        local function quad(name, level, x)
+            local f = CreateFrame("Frame", name)
+            f:SetPoint("BOTTOMLEFT", x, 100)
+            f:SetWidth(200); f:SetHeight(200)
+            f:SetFrameLevel(level)
+            f:CreateTexture(nil, "ARTWORK"):SetTexture(name .. ".blp")
+            return f
+        end
+        Older = quad("Older", 4, 100)
+        Newer = quad("Newer", 4, 150)
+        Older:Hide(); Older:Show()
+        Dialog = quad("Dialog", 0, 120)
+        Dialog:SetToplevel(true)
+        Dialog:Hide()
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        painted(&mut s),
+        vec!["Newer.blp", "Older.blp"],
+        "the relink put Older on top"
+    );
+    s.run("Dialog:Show()").unwrap();
+    assert_eq!(level(&mut s, "Older"), 1);
+    assert_eq!(level(&mut s, "Newer"), 1);
+    assert_eq!(
+        painted(&mut s),
+        vec!["Older.blp", "Newer.blp", "Dialog.blp"],
+        "the compression relinked level 4 in creation order"
+    );
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
+/// Compression (`0x495060`) keeps `level := bound` from climbing: twenty alternating raises stay
 /// within a two-level band.
 #[test]
 fn compaction_bounds_the_raise_across_repeated_shows() {

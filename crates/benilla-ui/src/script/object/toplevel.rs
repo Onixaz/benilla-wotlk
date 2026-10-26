@@ -6,8 +6,9 @@
 //! 1. Walks up `+0x9c` to the nearest toplevel self-or-ancestor; with none it does nothing.
 //! 2. With `force`, resolves the frame's layout and tests whether it is overlapped: a visible frame
 //!    of its stratum at its level or above, neither itself nor a descendant, meets its rect.
-//! 3. Only then compacts the stratum's levels, hidden frames included (`0x764eb0`), and sets its
-//!    level to the top plus one, moving same-stratum children by the same delta (`0x76a4f0`).
+//! 3. Only then compresses the stratum's levels below its bound, hidden frames included
+//!    (`0x495060`), and sets its level to the new bound, moving same-stratum children by the same
+//!    delta (`0x4910a0`).
 //!
 //! The stratum never changes. The overlapped bit is recomputed per raise, never stored: only the
 //! `force = 0` trigger (`0x764a4c`) reads a stored bit, and it is not wired, so neither is the
@@ -78,12 +79,12 @@ pub(in crate::script) fn raise(model: &mut Model, frame: FrameHandle) -> bool {
     if !overlapped(model, t) {
         return true;
     }
-    // 3. The raise: compact the stratum's occupied levels, then land one above the top.
+    // 3. The raise (`0x4951a0`): compress the stratum, then land on its new bound.
     let Some(strata) = model.arena.frame(t).map(|f| f.strata) else {
         return true;
     };
-    let count = model.arena.compact_levels(strata);
-    model.arena.set_frame_level(t, count, true);
+    let top = model.arena.compress_strata(strata);
+    model.arena.set_frame_level(t, top, true);
     true
 }
 
