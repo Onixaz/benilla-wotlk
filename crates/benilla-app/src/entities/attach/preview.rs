@@ -1135,7 +1135,6 @@ mod tests {
     /// `01 00 00 00  0e 00 00 00  ff ff ff ff  ff ff ff ff  fd b9 0c 4b  00 00 00 3f`, and it fills
     /// one effect slot, at Base (`0x13`); `0x472780` rejects the other eight `-1`s.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_ghost_kit_decodes_to_the_verified_row() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open the install's MPQ chain");

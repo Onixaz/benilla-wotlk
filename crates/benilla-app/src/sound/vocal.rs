@@ -407,7 +407,6 @@ mod tests {
     /// The shipped DBCs: Human male line 0 is `HumanMale_InventoryFull`, no annoyed kit resolves,
     /// and a rebuild for another race replaces the table.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_real_table_builds_per_race_and_replaces_on_change() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

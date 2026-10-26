@@ -4,7 +4,6 @@
 use benilla_formats::{parse_m2_portrait_camera, Chain};
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn character_and_creature_portrait_cameras_parse_sane() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");
@@ -60,7 +59,6 @@ fn character_and_creature_portrait_cameras_parse_sane() {
 /// A `<PlayerModel>` pane renders through raw `cameras[1]`: the chooser `0x505890`, from
 /// `0x505b30`, takes index 1, not `cameraLookup`. Every record's clips are 8/36 and 1000/36.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn pane_cameras_match_the_authored_records() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");

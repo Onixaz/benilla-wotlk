@@ -19,7 +19,6 @@ fn geom_center(s: &RenderSubmesh) -> [f32; 3] {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn candelabra_glow_cards_split_per_bone() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

@@ -756,7 +756,6 @@ mod tests {
     /// `TaurenMale.m2`'s type-8 fur, opaque core and alpha-cut two-sided fringe alike, surfaces as
     /// [`CharSkinSlot::SkinExtra`]; unmapped, it draws flat white.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn tauren_fur_batches_carry_the_skin_extra_slot() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -826,7 +825,6 @@ mod tests {
     /// `LShoulder_Plate_PVPAlliance_A_01.m2`'s spikes ride billboard bones through 50/50 seam rings
     /// that sit in the body's batch, so only a model-wide test sees the weld.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_welded_billboard_spike_is_never_split_into_a_card() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -858,7 +856,6 @@ mod tests {
 
     /// `Sword_2H_PVPAlliance_A_01.m2`'s hilt glows are 4-vertex quads wholly on their own bones.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_detached_glow_card_is_still_split_out() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -884,7 +881,6 @@ mod tests {
     /// The questgiver `?` bobs z 0.000 → −0.089 in anim 0 and +0.517 → +0.427 in anim 190, the
     /// raised bob the client arms under an overhead name (`0x6076c0`).
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn questionmark_marker_batch_carries_both_bob_loops() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

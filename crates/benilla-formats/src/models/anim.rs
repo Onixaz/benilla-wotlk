@@ -589,7 +589,6 @@ mod tests {
     /// `UI_Human` parks a constant −16.5° yaw on its stage bone to face its off-axis camera; stage
     /// scales are 0.97 on `UI_Human`, 1.04 and 0.7324 (pet) on `UI_Tauren`.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_glue_stage_bones_carry_the_scenes_authored_rotation_and_scale() {
         let data = crate::wow_data_or_skip!();
         let chain = crate::open_chain(&data).expect("open chain");
@@ -744,7 +743,6 @@ mod tests {
     /// `Zombie.m2`'s root translation steps from `(0,0,0)` (3333 ms) to `(0.0047,0,0)` (30000 ms);
     /// Walk's empty band `[26667, 27333]` sits nearer the second, but `ranges` holds key 0.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn empty_band_takes_the_window_key_not_a_later_one() {
         let data = crate::wow_data_or_skip!();
         let chain = crate::open_chain(&data).expect("open chain");
@@ -796,7 +794,6 @@ mod tests {
 
     /// A key window's far bracket can sit 14–64 s away (`Bear`) and must not enter the clip.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn no_clip_carries_a_key_from_another_sequences_band() {
         let data = crate::wow_data_or_skip!();
         let chain = crate::open_chain(&data).expect("open chain");
@@ -832,7 +829,6 @@ mod tests {
     /// `LShoulder_Mail_PVPAlliance_C_01.m2`: two sparkle emitters on bones 2 and 3 under billboard
     /// bone 1, each at its own pivot ~0.24 yd from the host's; the held torch is bone 10 under 2.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_pvp_shoulder_emitters_ride_a_billboard_bone() {
         let data = crate::wow_data_or_skip!();
         let chain = crate::open_chain(&data).expect("open chain");
@@ -906,7 +902,6 @@ mod tests {
     /// `Sparkle_A.m2` (`ItemVisuals` 28) is one spherical-billboard bone and no emitters or
     /// ribbons: a preview keeping only emitters draws nothing for it.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_real_item_glow_model_is_pure_billboard_geometry_with_no_emitters() {
         let data = crate::wow_data_or_skip!();
         let chain = crate::open_chain(&data).expect("open chain");
@@ -939,7 +934,6 @@ mod doodad_sound_tests {
     /// `KalidarStreetLamp01.m2`: one looping Stand keying no bone, so no rig, and one `$DSL` at
     /// t = 0 (SoundEntries 3378): the event track must not follow the rig gate.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_lamps_hum_is_one_rest_posed_looping_dsl_key() {
         let data = crate::wow_data_or_skip!();
         let chain = crate::open_chain(&data).expect("open chain");
@@ -970,7 +964,6 @@ mod doodad_sound_tests {
     /// but a doodad holds one registration (`[CMapDoodadDef+0x168]`) and a marker with another id
     /// releases it first (`0x69521d` → `0x461f80`), so the pair alternates (`sound::anim_events`).
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_dsl_pair_on_one_cycle_alternates_through_one_slot() {
         let data = crate::wow_data_or_skip!();
         let chain = crate::open_chain(&data).expect("open chain");

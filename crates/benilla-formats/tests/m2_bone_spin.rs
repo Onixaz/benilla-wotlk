@@ -84,7 +84,6 @@ fn the_slerp_takes_the_short_way_round() {
 /// `CavernsOfTimeSky.m2` spins three bones, the asteroid belts, over one 66.667 s loop (25°, 90°,
 /// 360°); bone 0, which carries the other 17 batches, has no track.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_caverns_of_time_sky_spins_exactly_its_three_belt_bones() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = Chain::open(&data).expect("open vanilla patch chain");

@@ -507,7 +507,6 @@ mod tests {
 
     /// On the real chain: a firearm's muzzle blast is authored only on BowRelease(161).
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_firearms_muzzle_blast_is_authored_only_on_bowrelease() {
         let data = benilla_formats::wow_data_or_skip!();
         let chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -555,7 +554,6 @@ mod tests {
     /// Bows and crossbows author both flex clips and a melee weapon neither, which pins the
     /// attach's `flexes` gate to data.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn only_ranged_weapon_models_author_the_flex_clips() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

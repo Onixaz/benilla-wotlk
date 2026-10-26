@@ -866,7 +866,6 @@ fn a_settled_buff_button_rewrites_alpha_and_duration_as_the_reference_does() {
 /// The aura tooltip's duration line over the install's own `GlobalStrings.lua`, formatted by
 /// `tooltip::duration_text` on the reference's ladder (`0x52fa50`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_duration_line_reads_the_real_global_strings() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");

@@ -346,7 +346,6 @@ mod tests {
     /// `G_FrostTrap.m2`: four low ribbons light 534 ms into Spawn and stay lit through Closed;
     /// twelve upper ones are dark at rest and light 200 ms into `Custom0`, when the trap springs.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_frost_trap_upper_streamers_light_only_inside_the_trigger() {
         let data = crate::wow_data_or_skip!();
         let chain = crate::open_chain(&data).expect("open chain");

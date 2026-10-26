@@ -4,7 +4,6 @@
 use benilla_formats::{open_chain, parse_m2_animations};
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn creature_anim_events_parse_within_sequences() {
     let data = benilla_formats::wow_data_or_skip!();
     let chain = open_chain(&data).expect("open chain");
@@ -49,7 +48,6 @@ fn creature_anim_events_parse_within_sequences() {
 /// kernel `0x719370` snapshots `placementMatrix · (boneMatrix[event.bone] · event.position)` into
 /// the callback record. Every player model authors six `$CSD` records, one per emote clip.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_fired_key_carries_its_own_records_bone_and_point() {
     let data = benilla_formats::wow_data_or_skip!();
     let chain = open_chain(&data).expect("open chain");

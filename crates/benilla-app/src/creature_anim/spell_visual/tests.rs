@@ -1435,7 +1435,6 @@ fn asked_entries(app: &App) -> Vec<u32> {
 /// Auto Shot's GO with a bow equipped reaches the body as AttackBow (46): slot 17's template →
 /// display 8106 → `ItemDisplayInfo` col 10 (visual 5) → the merge → cast kit 164 → anim 46.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_real_bow_shooters_auto_shot_go_plays_attackbow() {
     let Some((mut app, unit)) = real_shooter(&WORN_SHORTBOW) else {
         return;
@@ -1457,7 +1456,6 @@ fn a_real_bow_shooters_auto_shot_go_plays_attackbow() {
 
 /// A gun and a crossbow take the same road to AttackRifle (49), through visuals 224 and 743.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_real_gun_or_crossbow_shooters_auto_shot_go_plays_attackrifle() {
     for weapon in [&OLD_BLUNDERBUSS, &BLACKCROW] {
         let Some((mut app, unit)) = real_shooter(weapon) else {
@@ -1478,7 +1476,6 @@ fn a_real_gun_or_crossbow_shooters_auto_shot_go_plays_attackrifle() {
 /// Auto Shot's START, once per auto-repeat activation, arms the LoadBow (105) pull as the cast
 /// hold, with [`RangedHold`] and the ranged sheath snap; the GO releases it and fires.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_real_bow_shooters_auto_shot_start_arms_the_loadbow_hold() {
     let Some((mut app, unit)) = real_shooter(&WORN_SHORTBOW) else {
         return;
@@ -1521,7 +1518,6 @@ fn a_real_bow_shooters_auto_shot_start_arms_the_loadbow_hold() {
 
 /// The control: with the ranged slot empty Auto Shot resolves no clip, having no visual of its own.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_shooter_with_no_ranged_weapon_resolves_no_clip_at_all() {
     let Some((mut app, unit)) = real_shooter(&WORN_SHORTBOW) else {
         return;

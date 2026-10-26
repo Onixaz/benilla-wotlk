@@ -441,7 +441,6 @@ fn ability_req_met_tracks_known_spells_not_the_service_category() {
 /// On real data the prerequisite reads as the client's `"%s (%s)"`: 78 is Heroic Strike Rank 1.
 /// Skips without client data.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn ability_req_shows_the_required_rank_on_real_data() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");

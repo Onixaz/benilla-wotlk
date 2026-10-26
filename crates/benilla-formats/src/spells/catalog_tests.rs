@@ -123,7 +123,6 @@ fn real_spell_catalog_hides_stances_from_the_aura_bar() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_rank_and_passive() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -146,7 +145,6 @@ fn real_spell_catalog_reads_rank_and_passive() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_gates_the_spellbook() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -268,7 +266,6 @@ fn real_spell_catalog_reads_open_lock_types() {
 /// The two `Effect[0]` values the client latches at learn time (`0x4b25e0` into `[0xb700e4]` and
 /// `[0xb700e8]`); the cursor's skin leg shows the knife only when one of them is in the book.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_pins_the_skin_latch_effects() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -301,7 +298,6 @@ fn real_spell_catalog_pins_the_skin_latch_effects() {
 /// term (`0x5ea690`). Its columns (27, 28, 64, 67, 70, 73, 76) are pinned by result, against
 /// values known from the game; the below-cap rows are the ones a caster-level term would miss.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_computes_the_lock_skill_an_opener_provides() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -552,7 +548,6 @@ fn real_spell_catalog_reads_usable_walk_columns() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_tooltip_columns() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -777,7 +772,6 @@ fn real_spell_catalog_classifies_combat_initiation() {
 /// (`SPELL_EFFECT_CREATE_ITEM` 24, `SPELL_EFFECT_ENCHANT_ITEM` 53) or `modalNextSpell` chain may
 /// carry predicate `0x6e5200`. No item's use spell does either (vmangos `item_template`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_keeps_the_attack_pick_to_spell_presses() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -873,7 +867,6 @@ fn real_spell_catalog_reads_modal_next_spell() {
 
 /// `EffectItemType` (columns 103-105) and `RequiresSpellFocus` (15); values from vmangos.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_crafting_columns_read_created_item_and_focus() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1332,7 +1325,6 @@ fn the_language_declaring_spells_cover_twelve_of_seventeen_languages() {
 /// [`SpellDisplay::is_harmful`], the client's `0x6ea280 == 2`: an enemy implicit target in slot A
 /// (6), or only in slot B as Frost Nova's (A 22, the caster's spot; B 15, a source-area enemy).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_is_harmful_pins() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");

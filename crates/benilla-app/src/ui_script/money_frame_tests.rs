@@ -58,7 +58,6 @@ fn shown(s: &UiScript, frame: &str) -> (bool, bool, bool) {
 
 /// Both `MoneyFrame_OnLoad` and `SmallMoneyFrame_OnLoad` end in `MoneyFrame_SetType("PLAYER")`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_money_frame_loads_as_the_player_purse_and_splits_the_denominations() {
     benilla_formats::wow_data_or_skip!();
     let s = harness(12_345); // 1g 23s 45c
@@ -193,7 +192,6 @@ fn update_paints_a_static_frame_by_name_and_resizes_it() {
 
 /// `this.small` unset picks `MONEY_ICON_WIDTH` (19) and `MONEY_BUTTON_SPACING` (-4).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_large_template_measures_with_the_nineteen_pixel_icon() {
     benilla_formats::wow_data_or_skip!();
     let s = harness(20_304);

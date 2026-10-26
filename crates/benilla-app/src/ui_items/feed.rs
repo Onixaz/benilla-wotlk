@@ -2019,7 +2019,6 @@ mod tests {
     /// On the real Spell.dbc, an undescribed spell such as a key's `Opening` builds no trigger
     /// line (`0x52da29`-`0x52da31`), and a described one does.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn an_undescribed_spell_prints_no_trigger_line_on_real_data() {
         let Some(spells) = real_spells() else { return };
 

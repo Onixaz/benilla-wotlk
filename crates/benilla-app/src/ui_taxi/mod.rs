@@ -357,7 +357,6 @@ mod tests {
     /// Ironforge, 50 + 110, shows 136 and sends 160. With the flight master unresolved the fares
     /// show 0 (`0x4dc423`).
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_map_shows_discounted_fares_and_the_express_sends_the_raw_sum() {
         use benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE;
         use bevy::ecs::system::RunSystemOnce;

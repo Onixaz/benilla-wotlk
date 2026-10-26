@@ -504,7 +504,6 @@ mod tests {
     /// `GetCastTime` applies op 10 after resolving the DBC row; an instant modifier lifts the
     /// moving-cast refusal for Frostbolt, while another class's spell keeps its cast time.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn cast_time_uses_the_live_modifier() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

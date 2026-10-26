@@ -5,7 +5,6 @@ use super::*;
 
 /// Line ids as vmangos `SharedDefines.h`'s `SkillType` has them (Frost 6, Fire 8).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_skill_line_catalog_resolves_known_spells() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -95,7 +94,6 @@ fn real_spell_tab_collapses_general_by_race_and_class() {
 
 /// `flags & 0x402` silences the lines 1.12 shows silent; expected flags read off the raw file.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_skill_up_announce_gate_matches_the_archives() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -151,7 +149,6 @@ fn real_skill_up_announce_gate_matches_the_archives() {
 
 /// Expected values read off the raw file's rows.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_skill_line_ability_reads_requirement_and_trivial_ranks() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -190,7 +187,6 @@ fn real_skill_line_ability_reads_requirement_and_trivial_ranks() {
 
 /// Expected values read off the raw `SkillLineCategory.dbc`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_skill_categories_name_and_order_the_pane_groups() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -220,7 +216,6 @@ fn real_skill_categories_name_and_order_the_pane_groups() {
 /// For a human warrior (race 1, class 1), primary professions are abandonable; secondary skills
 /// and class, weapon and language lines are not.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_abandonable_split_professions_yes_weapons_no() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -264,7 +259,6 @@ fn real_mono_value_split_class_lines_yes_weapons_no() {
 
 /// `flags & 0x2` and the `reqLevel` column for a night-elf hunter (race 4, class 3).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_hidden_lines_are_the_ones_the_reference_client_never_lists() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");

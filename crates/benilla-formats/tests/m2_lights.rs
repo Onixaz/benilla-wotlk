@@ -3,7 +3,6 @@
 use benilla_formats::{parse_m2_lights, Chain};
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn elwynn_campfire_has_one_warm_point_light() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");
@@ -32,7 +31,6 @@ fn elwynn_campfire_has_one_warm_point_light() {
 /// The torch an NPC carries (`ItemDisplayInfo` 12236, item 1906 "Monster - Torch"): a point light
 /// on bone 9 up the shaft, at intensity 3, whose visibility track's first key is nonzero: it casts.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn held_torch_casts_one_warm_point_light_up_the_shaft() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");
@@ -62,7 +60,6 @@ fn held_torch_casts_one_warm_point_light_up_the_shaft() {
 /// A point light whose visibility track is a static `0` key never casts (`0x716413`): 11 of the
 /// corpus's 85, mostly spell impacts.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_static_zero_visibility_key_reads_as_dark() {
     let data = benilla_formats::wow_data_or_skip!();
     let reader = Chain::open(&data).expect("open vanilla patch chain");

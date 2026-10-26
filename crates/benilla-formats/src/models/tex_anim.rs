@@ -201,7 +201,6 @@ mod tests {
     /// The cooldown indicator's transform 0 turns 0 to −90° over sequence 0's first 250 ms (`z`
     /// from 0 to `−√½`) and holds; sequence 1's keys at 1167 and 2167 ms are both the identity.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_cooldown_indicators_rotation_bakes_per_sequence() {
         let data = crate::wow_data_or_skip!();
         let chain = crate::open_chain(&data).expect("open chain");
@@ -287,7 +286,6 @@ mod tests {
 
     /// The Elwynn waterfall's two batches scroll V by −1.0 and −2.0 per loop (the foam layer).
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn elwynn_waterfall_bakes_two_v_scroll_loops() {
         let data = crate::wow_data_or_skip!();
         let chain = crate::open_chain(&data).expect("open chain");

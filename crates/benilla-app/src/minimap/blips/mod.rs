@@ -482,7 +482,6 @@ mod tests {
 
     /// The call site gives only the sequence id; the model says what it draws.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn each_rim_arrow_sequence_lights_exactly_its_own_layer() {
         let data = benilla_formats::wow_data_or_skip!();
         let chain = benilla_formats::Chain::open(&data).expect("the patch chain");

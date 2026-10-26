@@ -2567,7 +2567,6 @@ mod tests {
     /// A new VM is seeded with the shipped `Languages.dbc`, so each race's own tongue resolves by
     /// name to the id vmangos keys `KnowsLanguage` on (`SharedDefines.h:253-269`).
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_new_vm_resolves_every_racial_language_by_name() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -3358,7 +3357,6 @@ mod tests {
     /// The entry gate `0x612610` passes with no record; the record's `HIDE_FACTION_TOOLTIP`
     /// (`0x10`) can then take the line away, as in the reference.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_faction_line_does_not_wait_for_the_creature_query() {
         use benilla_protocol::messages::ObjectFields;
 
