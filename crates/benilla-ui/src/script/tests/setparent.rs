@@ -92,8 +92,9 @@ fn reparent_to_nil_resets_strata_and_level() {
     assert_eq!(s.eval::<i64>("return F:GetFrameLevel()").unwrap(), 0);
 }
 
-/// A visible frame's reparent fires `OnHide` under the old parent, then `OnShow` down the subtree,
-/// where AtlasLoot's `SetFrameLevel(GetParent():GetFrameLevel()+1)` lifts a child back up.
+/// A visible frame's reparent fires `OnHide` under the old parent, then `OnShow` up the subtree,
+/// the child's first (`0x4918f0`), where AtlasLoot's `SetFrameLevel(GetParent():GetFrameLevel()+1)`
+/// lifts a child back up.
 #[test]
 fn a_visible_reparent_refires_onhide_then_onshow() {
     let s = script();
@@ -122,7 +123,7 @@ fn a_visible_reparent_refires_onhide_then_onshow() {
     let log: Vec<String> = s.eval("return log").unwrap();
     assert_eq!(
         log,
-        vec!["hide:RTOld", "show:RTNew", "kidshow"],
+        vec!["hide:RTOld", "kidshow", "show:RTNew"],
         "OnHide observes the OLD parent, OnShow the new, and the refire walks the subtree"
     );
     assert_eq!(

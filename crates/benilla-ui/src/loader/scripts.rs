@@ -152,6 +152,23 @@ impl Loader<'_> {
         }
     }
 
+    /// `PostLoadXML` (`0x490410`) runs `OnShow` after `OnLoad` for a frame visible at the end of
+    /// its load, whose shows during the load were silent (`0x4902d0`).
+    pub(super) fn fire_onshow_after_load(&mut self, h: crate::widget::FrameHandle, dbg: &str) {
+        let id = {
+            let mut model = self.model();
+            if !model.arena.is_visible(h) {
+                return;
+            }
+            model.frame_id(h)
+        };
+        if let Err(e) =
+            crate::script::event::fire_widget_handler(self.lua(), id, "OnShow", Vec::new())
+        {
+            self.report.errors.push(format!("{dbg}: OnShow: {e}"));
+        }
+    }
+
     /// Call a frame-wrapper method, recording (not propagating) any error.
     pub(super) fn call(
         &mut self,

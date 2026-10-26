@@ -114,7 +114,7 @@ impl UpdateSweep {
 
 /// Fire a handler that carries no `event` name (`OnEnter`, `OnClick`, `OnValueChanged`, ...), with
 /// `extra` as its `arg1..argN`; a no-op when the frame has no such script.
-pub(super) fn fire_widget_handler(
+pub(crate) fn fire_widget_handler(
     lua: &Lua,
     id: u32,
     script: &str,
@@ -141,10 +141,162 @@ pub(super) fn fire_size_changes(lua: &Lua) {
     }
 }
 
-/// Fire `OnShow`/`OnHide` for the frames whose effective visibility just changed, recording
-/// errors in [`Model::errors`]. A shown `toplevel` frame raises here, after the subtree has
-/// propagated and before its `OnShow` (`0x76ae10` at `0x76aee0`), so a show that does not come
-/// through Lua `Show` raises too.
+/// `Show`/`Hide` (`0x48f660`/`0x48f620`): set the frame's own flag, then run the visibility
+/// cascade live from it ([`show_this`], [`hide_this`]), whose step is a virtual call, so a kind's
+/// override runs even when the flag already held.
+pub(super) fn set_shown(lua: &Lua, h: FrameHandle, shown: bool) {
+    {
+        let mut model = crate::script::model_mut_of(lua);
+        let quiet = model.epoch();
+        match model.arena.frame_mut(h) {
+            Some(f) if f.shown != shown => f.shown = shown,
+            Some(_) => model.set_epoch(quiet),
+            None => {
+                model.set_epoch(quiet);
+                return;
+            }
+        }
+    }
+    if shown {
+        show_this(lua, h);
+    } else {
+        hide_this(lua, h);
+    }
+}
+
+/// `ShowThis` (`0x4918f0`), live: the frame's own step under its gate, then each child's, then the
+/// raise of a toplevel frame (`0x4951a0`) and its `OnShow`, so a frame hears of its show after its
+/// whole subtree has. Each step re-reads the gate, so a frame an earlier handler hid, or whose
+/// parent it hid, is not shown.
+pub(super) fn show_this(lua: &Lua, h: FrameHandle) {
+    if is_tooltip(lua, h) && !super::tooltip::show_this_override(lua, h) {
+        return;
+    }
+    let children = {
+        let mut model = crate::script::model_mut_of(lua);
+        let quiet = model.epoch();
+        if !model.arena.show_this(h) {
+            model.set_epoch(quiet);
+            return;
+        }
+        // A show re-runs the hover walk at the saved cursor.
+        model.hover_repick = true;
+        model
+            .arena
+            .frame(h)
+            .map(|f| f.children.clone())
+            .unwrap_or_default()
+    };
+    for c in children {
+        show_this(lua, c);
+    }
+    {
+        let mut model = crate::script::model_mut_of(lua);
+        super::object::toplevel::raise_on_show(&mut model, h);
+    }
+    notify_visibility(lua, h, true);
+}
+
+/// `HideThis` (`0x491830`), live: the frame's own step, in which the hovered frame loses the hover
+/// and hears `OnLeave` (`CSimpleTop::UnregisterForEvent` `0x495900`), then each child's, then its
+/// `OnHide`.
+pub(super) fn hide_this(lua: &Lua, h: FrameHandle) {
+    hide_step(lua, h, true);
+}
+
+/// `Hide` on `h` without its kind's `HideThis` override; its descendants still take theirs.
+pub(super) fn hide_without_override(lua: &Lua, h: FrameHandle) {
+    {
+        let mut model = crate::script::model_mut_of(lua);
+        let quiet = model.epoch();
+        match model.arena.frame_mut(h) {
+            Some(f) if f.shown => f.shown = false,
+            _ => model.set_epoch(quiet),
+        }
+    }
+    hide_step(lua, h, false);
+}
+
+fn hide_step(lua: &Lua, h: FrameHandle, kind_override: bool) {
+    if kind_override && is_tooltip(lua, h) {
+        super::tooltip::hide_this_override(lua, h);
+    }
+    let (children, left) = {
+        let mut model = crate::script::model_mut_of(lua);
+        let quiet = model.epoch();
+        if !model.arena.hide_this(h) {
+            model.set_epoch(quiet);
+            return;
+        }
+        let hovered = (model.mouseover == Some(h)).then_some(h);
+        // The leave is a virtual call: a disabled Button's own skips its `OnLeave`, while the
+        // hover and the drag-arm still clear.
+        let notified = super::button::hover_notify_runs(&model, hovered);
+        if hovered.is_some() {
+            model.mouseover = None;
+            if model.drag.as_ref().is_some_and(|d| d.source == h) {
+                model.drag = None;
+            }
+            model.hover_repick = true;
+        }
+        let left = hovered.filter(|_| notified).map(|m| model.frame_id(m));
+        let children = model
+            .arena
+            .frame(h)
+            .map(|f| f.children.clone())
+            .unwrap_or_default();
+        (children, left)
+    };
+    if let Some(id) = left {
+        if let Err(e) = fire_widget_handler(lua, id, "OnLeave", vec![Value::Boolean(true)]) {
+            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        }
+    }
+    for c in children {
+        hide_this(lua, c);
+    }
+    notify_visibility(lua, h, false);
+}
+
+/// Whether `h` is a live GameTooltip, whose `ShowThis`/`HideThis` overrides run before the base.
+fn is_tooltip(lua: &Lua, h: FrameHandle) -> bool {
+    lua.app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data")
+        .arena
+        .glance(h)
+        .is_some_and(|g| g.kind == crate::widget::FrameKind::GameTooltip)
+}
+
+/// A frame's own show or hide notify (`OnLayerShow` `0x4902d0`, `OnLayerHide` `0x490300`): its
+/// `OnShow` or `OnHide` unless it is in its XML load, and the kind overrides around it.
+fn notify_visibility(lua: &Lua, h: FrameHandle, visible: bool) {
+    let id = {
+        let mut model = crate::script::model_mut_of(lua);
+        if model.arena.frame(h).is_none() {
+            return;
+        }
+        if !visible {
+            // `CSimpleButton`'s hide notify un-presses it, unless disabled or locked, before the
+            // base notify, so a button hidden while held comes back unpushed.
+            super::button::edge(&mut model, h, ButtonState::on_hide);
+        }
+        (!model.xml_loading.contains(&h)).then(|| model.frame_id(h))
+    };
+    if let Some(id) = id {
+        let name = if visible { "OnShow" } else { "OnHide" };
+        if let Err(e) = fire(lua, id, name, None, Vec::new()) {
+            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        }
+    }
+    // The EditBox show/hide overrides call the base notify first, so this runs after the `fire`:
+    // an `autoFocus` box takes a free focus, a hidden box releases its own.
+    super::editbox::visibility_focus(lua, h, visible);
+}
+
+/// Fire `OnShow`/`OnHide` for the frames an engine-side cascade changed, in its order (each frame
+/// after its descendants), recording errors in [`Model::errors`]; a verb with handlers to run
+/// between the steps uses [`set_shown`] instead. A shown `toplevel` frame raises before its
+/// `OnShow` (`0x4918f0`), so a show that does not come through Lua `Show` raises too.
 pub(super) fn fire_visibility_changes(lua: &Lua, changed: Vec<FrameHandle>) {
     if changed.is_empty() {
         return; // nothing to fire, and no borrow to count as a change

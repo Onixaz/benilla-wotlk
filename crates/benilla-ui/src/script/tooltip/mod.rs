@@ -431,8 +431,12 @@ pub(super) fn fire_cleared(lua: &Lua, h: FrameHandle) {
     }
 }
 
-/// A content `Set*`'s tail: shown with lines, hidden without. It hides without [`hide_tooltip`] to
-/// keep the owner, which the hover loop's `IsOwned` needs.
+/// A content `Set*`'s tail: `Show` with lines, hidden without.
+///
+/// Deviation: an empty render hides without the `HideThis` override (`0x61eb20`), keeping the
+/// owner, where the reference's `Hide` clears it. benilla answers some content lazily, so a
+/// render the reference fills at once can come up empty and replay when answered, under the same
+/// owner, which the hover loop's `IsOwned` also reads.
 pub(super) fn show_or_hide_empty(lua: &Lua, h: FrameHandle) {
     let lines = {
         let mut model = crate::script::model_mut_of(lua);
@@ -441,7 +445,11 @@ pub(super) fn show_or_hide_empty(lua: &Lua, h: FrameHandle) {
             Err(_) => 0,
         }
     };
-    set_shown(lua, h, lines > 0);
+    if lines > 0 {
+        set_shown(lua, h, true);
+    } else {
+        event::hide_without_override(lua, h);
+    }
 }
 
 /// New content cancels a running fade at full alpha; with no fade running, an alpha the addon set
@@ -468,13 +476,9 @@ fn now(lua: &Lua) -> f64 {
     crate::script::clock::now(lua)
 }
 
-/// Shows or hides through the arena and fires the visibility events.
+/// Shows or hides through the live visibility cascade ([`event::set_shown`]).
 pub(super) fn set_shown(lua: &Lua, h: FrameHandle, shown: bool) {
-    let changed = {
-        let mut model = crate::script::model_mut_of(lua);
-        model.arena.set_shown(h, shown)
-    };
-    event::fire_visibility_changes(lua, changed);
+    event::set_shown(lua, h, shown);
 }
 
 /// The default line colour, gold `0xffffd200` (stored at `0xc0d3e8` by `0x528e50`). The zone
@@ -636,12 +640,34 @@ pub(super) fn append_line(
 mod verbs;
 pub(super) use verbs::install;
 
-/// The full hide, `HideThis` (`0x61eb20`): the `SetOwner` core with no owner, then the frame hide,
-/// whose OnHide fires only for a shown tooltip (`0x491833`). `Hide`, `SetOwner`'s first step, a
-/// `Show` with no owner or no lines (`0x61d028`) and the end of a fade all take it.
+/// `Hide` (`0x48f620`), whose `HideThis` is the override below. `SetOwner`'s first step, a `Show`
+/// with no owner or no lines and the end of a fade all take it.
 pub(super) fn hide_tooltip(lua: &Lua, h: FrameHandle) {
-    set_owner_core(lua, h, None, TooltipAnchor::Left, (0.0, 0.0));
     set_shown(lua, h, false);
+}
+
+/// `CGTooltip::HideThis` (`0x61eb20`), before the base step on every hide that reaches the
+/// tooltip, its own or an ancestor's: the `SetOwner` core with no owner.
+pub(in crate::script) fn hide_this_override(lua: &Lua, h: FrameHandle) {
+    set_owner_core(lua, h, None, TooltipAnchor::Left, (0.0, 0.0));
+}
+
+/// `CGTooltip::ShowThis` (`0x61cff0`), before the base step on every show that reaches the
+/// tooltip: with no owner or no lines it takes `Hide` instead and answers false; otherwise full
+/// alpha with the fade disarmed, and true.
+pub(in crate::script) fn show_this_override(lua: &Lua, h: FrameHandle) -> bool {
+    let live = {
+        let mut model = crate::script::model_mut_of(lua);
+        tip_mut(&mut model, h)
+            .map(|t| t.owner.is_some() && t.num_lines > 0)
+            .unwrap_or(false)
+    };
+    if !live {
+        hide_tooltip(lua, h);
+        return false;
+    }
+    full_alpha(&mut crate::script::model_mut_of(lua), h);
+    true
 }
 
 /// `SetOwner`'s skip gate (`0x61ea47`): an offset this close to the stored one is unchanged.
@@ -905,49 +931,29 @@ pub(super) fn layout_tooltips(model: &mut Model) {
     }
 }
 
-/// Advances every fading tooltip: alpha ramps from 1 to 0 over [`TOOLTIP_FADE_SECS`], then the
-/// full hide.
-pub(super) fn tick_fades(lua: &Lua) {
+/// The fade step of `CGTooltip::OnLayerUpdate` (`0x61b2e0`), in the tooltip's walk slot: alpha
+/// ramps from 1 to 0 over [`TOOLTIP_FADE_SECS`], then the full hide.
+pub(super) fn update(lua: &Lua, h: FrameHandle) {
     let t = now(lua);
-    let mut ramping: Vec<(FrameHandle, f32)> = Vec::new();
-    let mut finished: Vec<FrameHandle> = Vec::new();
-    {
+    let step = {
         let model = lua
             .app_data_ref::<crate::script::ModelCell>()
             .expect("model app_data");
         // Roster-gated as in `layout_tooltips`, since `hide_tooltip` below writes layout.
-        for &h in model.arena.tooltip_kinds() {
-            if !model.frame_to_id.contains_key(&h) {
-                continue;
-            }
-            let Some(frame) = model.arena.frame(h) else {
-                continue;
-            };
-            let KindState::Tooltip(tip) = &frame.kind_state else {
-                continue;
-            };
-            let Some(start) = tip.fade_start else {
-                continue;
-            };
-            if !frame.shown {
-                finished.push(h); // hidden mid-fade by other means: just tidy the state
-                continue;
-            }
-            let a = 1.0 - ((t - start) / TOOLTIP_FADE_SECS) as f32;
-            if a <= 0.0 {
-                finished.push(h);
-            } else {
-                ramping.push((h, a));
-            }
+        if !model.frame_to_id.contains_key(&h) {
+            return;
         }
-    }
-    {
-        let mut model = crate::script::model_mut_of(lua);
-        for (h, a) in ramping {
-            model.arena.set_alpha(h, a);
-        }
-    }
-    for h in finished {
+        let Some(KindState::Tooltip(tip)) = model.arena.frame(h).map(|f| &f.kind_state) else {
+            return;
+        };
+        let Some(start) = tip.fade_start else {
+            return;
+        };
+        1.0 - ((t - start) / TOOLTIP_FADE_SECS) as f32
+    };
+    if step <= 0.0 {
         hide_tooltip(lua, h);
+    } else {
+        crate::script::model_mut_of(lua).arena.set_alpha(h, step);
     }
 }

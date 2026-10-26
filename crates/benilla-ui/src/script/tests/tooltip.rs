@@ -903,8 +903,9 @@ fn get_owner_answers_the_owner_frame_or_nil() {
     .unwrap();
 }
 
-/// A Lua `SetOwner` runs the tooltip's hide first (`0x61eb76` → `0x61eb20`): its clear fires
-/// OnTooltipCleared with the old owner still set, then OnHide fires for a shown plate only. The
+/// A Lua `SetOwner` runs the tooltip's `Hide` first, which clears the shown flag before the
+/// `HideThis` override (`0x48f620` → `0x61eb20`): its clear fires OnTooltipCleared with the old
+/// owner still set and `IsShown` already false, then OnHide fires for a shown plate only. The
 /// core's own clear then fires OnTooltipCleared before the new owner is stored (`0x61ea06` before
 /// `0x61ea7e`).
 #[test]
@@ -935,7 +936,7 @@ fn set_owner_hides_then_clears_before_the_owner_is_stored() {
     .unwrap();
     assert_eq!(
         s.eval::<String>("return first").unwrap(),
-        "cleared:SeqA:shown hide cleared:nil:hidden"
+        "cleared:SeqA:hidden hide cleared:nil:hidden"
     );
     assert_eq!(
         s.eval::<String>("return second").unwrap(),

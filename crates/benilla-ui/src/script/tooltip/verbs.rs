@@ -9,9 +9,9 @@ use crate::script::region::region_handle_of;
 use crate::widget::{KindState, TooltipAnchor, TOOLTIP_LINE_GAP, TOOLTIP_PAD};
 
 use super::{
-    append_line, bool_arg, clear_content, display_name, fire_cleared, full_alpha, hide_tooltip,
-    now, parse_line_color, parse_line_tail, reset_position, set_owner_core, set_shown, text_of,
-    tip_mut, with_tip, write_cell, REG_TOOLTIP_METHODS,
+    append_line, bool_arg, clear_content, display_name, fire_cleared, hide_tooltip, now,
+    parse_line_color, parse_line_tail, reset_position, set_owner_core, set_shown, text_of, tip_mut,
+    with_tip, write_cell, REG_TOOLTIP_METHODS,
 };
 
 pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
@@ -391,35 +391,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             })
         })?,
     )?;
-    // Show and Hide shadow the shared pair. Show (`ShowThis`, `0x61cff0`) shows only a plate with
-    // an owner and at least one line, at full alpha with the fade disarmed (`0x61d005`), checked
-    // at Show time only; otherwise it takes the full hide (`0x61d028`). Hide is the full hide.
-    m.set(
-        "Show",
-        lua.create_function(|lua, this: Table| {
-            let h = frame_handle_of(lua, &this)?;
-            let live = {
-                let mut model = crate::script::model_mut_of(lua);
-                full_alpha(&mut model, h);
-                tip_mut(&mut model, h)
-                    .map(|t| t.owner.is_some() && t.num_lines > 0)
-                    .unwrap_or(false)
-            };
-            match live {
-                true => set_shown(lua, h, true),
-                false => hide_tooltip(lua, h),
-            }
-            Ok(())
-        })?,
-    )?;
-    m.set(
-        "Hide",
-        lua.create_function(|lua, this: Table| {
-            let h = frame_handle_of(lua, &this)?;
-            hide_tooltip(lua, h);
-            Ok(())
-        })?,
-    )?;
+    // Show and Hide are the shared pair: the visibility cascade runs the tooltip's overrides
+    // (`ShowThis` `0x61cff0`, `HideThis` `0x61eb20`).
 
     // The content methods: items, spells and auras, talents, units.
     crate::script::tooltip_item::install_methods(lua, &m)?;

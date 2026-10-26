@@ -760,6 +760,10 @@ impl Loader<'_> {
         if let Some(func) = onload {
             self.fire_onload(wrapper, &func, dbg_name);
         }
+        // 9 · its `OnShow`, if it ends its load visible.
+        if let Some(h) = loading {
+            self.fire_onshow_after_load(h, dbg_name);
+        }
     }
 
     /// `<Attributes><Attribute name type value/></Attributes>` (`0x492f70`): `type` defaults to

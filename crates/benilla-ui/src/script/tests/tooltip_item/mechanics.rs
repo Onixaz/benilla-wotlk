@@ -280,6 +280,8 @@ fn item_render_hides_the_unit_health_bar() {
         r#"
         local a = CreateFrame("Button", "Slot6"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         local tt = CreateFrame("GameTooltip", "GameTooltip"); tt:Hide()
+        -- The stock default anchor's owner, which the world hover's show needs (`0x61cff0`).
+        tt:SetScript("OnTooltipSetDefaultAnchor", function(self) self:SetOwner(Slot6, "ANCHOR_NONE") end)
         local bar = CreateFrame("StatusBar", "GameTooltipStatusBar", tt)
         bar:SetPoint("TOPLEFT", tt, "BOTTOMLEFT", 2, -1); bar:SetWidth(100); bar:SetHeight(8)
     "#,

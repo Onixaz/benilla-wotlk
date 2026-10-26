@@ -5,7 +5,7 @@ use mlua::Lua;
 
 use crate::widget::FrameHandle;
 
-use super::{editbox, event, tooltip, ScriptValue, UiScript};
+use super::{event, ScriptValue, UiScript};
 
 impl UiScript {
     /// Queue an event for the start of the next tick, behind everything queued earlier and before
@@ -81,79 +81,24 @@ pub(crate) fn fire_event_into(lua: &Lua, event: &str, args: Vec<ScriptValue>) {
 }
 
 impl super::UiScript {
-    /// Advance a frame: the `GetTime()` clock and queued events, then the walk (`0x765650`),
-    /// each shown frame's update in turn: its `OnUpdate(self, elapsed)` (`0x704f10`), and for an
-    /// EditBox its flush and caret blink after it; then the engine's own fades, model panes and
-    /// hover.
+    /// Advance a frame as the reference's pump does (`CSimpleTop::OnLayerUpdate` `0x495320`): the
+    /// `GetTime()` clock and queued events, the layout drained (`CLayoutFrame::ResizePending`), the
+    /// update walk ([`Self::update_walk`]), the layout drained again, then the hover re-pick; then
+    /// the model panes' paint callbacks.
     pub fn tick(&mut self, elapsed: f32) {
         // The clock is no extract input and a drained queue is no change: the mutation count
         // stands ([`ModelCell`]); the events fired below bump it through their verbs.
         let quiet = self.visual_epoch();
         let quiet_at_entry = quiet;
         self.model_mut().now += f64::from(elapsed);
-        // Events queued since the last tick fire before this tick's OnUpdate.
+        // Events queued since the last tick fire before this tick's walk.
         let pending = drain_field!(self, pending_events);
         self.restore_epoch(quiet);
         for (event, args) in pending {
             self.fire_event(&event, args);
         }
         self.expire_quest_watches();
-        // Each entry: the frame's id, whether it has an `OnUpdate`, and the box if an EditBox.
-        // The roster compaction below is bookkeeping: the count stands.
-        let quiet = self.visual_epoch();
-        let walk: Vec<(u32, bool, Option<FrameHandle>)> = {
-            let mut model = self.model_mut();
-            // `SetScript` keeps the OnUpdate list; a destroyed frame's handle compacts out here.
-            // Both reads go through the arena's glance table, never a frame node.
-            if model
-                .on_update_frames
-                .iter()
-                .any(|&(h, _)| model.arena.glance(h).is_none())
-            {
-                let arena = &model.arena;
-                let live: Vec<(FrameHandle, u32)> = model
-                    .on_update_frames
-                    .iter()
-                    .copied()
-                    .filter(|&(h, _)| arena.glance(h).is_some())
-                    .collect();
-                model.on_update_frames = live;
-            }
-            let mut walk: Vec<(u32, bool, Option<FrameHandle>)> = model
-                .on_update_frames
-                .iter()
-                .filter(|&&(h, _)| model.arena.is_visible(h))
-                .map(|&(_, id)| (id, true, None))
-                .collect();
-            // The walk reaches every shown frame, not only those with a script, and an EditBox's
-            // update (`0x77a790`, vtable `+0x38`) flushes it whether or not it has an `OnUpdate`.
-            let boxes: Vec<FrameHandle> = model
-                .arena
-                .editbox_kinds()
-                .iter()
-                .copied()
-                .filter(|&h| model.arena.is_visible(h))
-                .collect();
-            for h in boxes {
-                let id = model.frame_id(h);
-                walk.push((id, false, Some(h)));
-            }
-            // Creation order, by frame id: getters settle on demand, so a handler sees what an
-            // earlier one did this sweep, and the order must be stable. The reference walks each
-            // strata level's list of shown frames (`0x765650`). A box with an `OnUpdate` is
-            // listed twice, and the two entries merge.
-            walk.sort_unstable_by_key(|&(id, ..)| id);
-            walk.dedup_by(|later, earlier| {
-                let same = later.0 == earlier.0;
-                if same {
-                    earlier.1 |= later.1;
-                    earlier.2 = earlier.2.or(later.2);
-                }
-                same
-            });
-            walk
-        };
-        self.restore_epoch(quiet);
+        self.resolve();
         let tracing = super::epoch_trace::enabled();
         if tracing {
             let _ = self.lua.set_hook(
@@ -168,7 +113,6 @@ impl super::UiScript {
                 },
             );
         }
-        let mut in_handlers = 0u64;
         let sweep = match event::UpdateSweep::new(&self.lua) {
             Ok(sweep) => Some(sweep),
             Err(e) => {
@@ -176,36 +120,10 @@ impl super::UiScript {
                 None
             }
         };
-        for (id, on_update, editbox) in walk {
-            if let (true, Some(sweep)) = (on_update, &sweep) {
-                let before = tracing.then(|| self.visual_epoch());
-                if let Err(e) = sweep.fire(&self.lua, id, elapsed) {
-                    self.push_error(e);
-                }
-                if let Some(before) = before {
-                    let moved = self.visual_epoch().wrapping_sub(before);
-                    in_handlers += moved;
-                    super::epoch_trace::note_handler(id, moved);
-                }
-            }
-            // The box's own update runs its flush after its `OnUpdate` (`0x77a79a`, then
-            // `0x77a7a1`), so the events an edit raised fire in the box's place in the walk.
-            if let Some(h) = editbox {
-                let before = tracing.then(|| self.visual_epoch());
-                editbox::update(&self.lua, h, elapsed);
-                if let Some(before) = before {
-                    super::epoch_trace::note_leg(
-                        "editbox",
-                        self.visual_epoch().wrapping_sub(before),
-                    );
-                }
-            }
-        }
+        let in_handlers = self.update_walk(elapsed, sweep.as_ref());
         if tracing {
             self.lua.remove_hook();
         }
-        // Each shown frame's animation groups, after its `OnUpdate` in the layer update (`0x490770`).
-        super::anim::run::tick(&self.lua, elapsed);
         let mut leg_at = tracing.then(|| self.visual_epoch());
         let mut leg = |me: &Self, name: &'static str| {
             if let Some(at) = leg_at.as_mut() {
@@ -214,64 +132,12 @@ impl super::UiScript {
                 *at = now;
             }
         };
-        self.tick_model_panes(elapsed);
-        leg(self, "model panes");
-        super::cooldown_widget::tick(&self.lua);
-        leg(self, "cooldowns");
-        // The engine's line fades, apart from any OnUpdate script: ScrollingMessageFrame's
-        // (`0x788460`) and MessageFrame's (`0x786200`), which also keeps only the lines that fit
-        // its height, so its rows are read from the resolved rect before the mutable walk.
-        // A fade tick that moved no line's alpha and freed no line changed nothing drawn.
-        let quiet = self.visual_epoch();
-        let mut faded = false;
-        let mut model = self.model_mut();
-        let ticked: Vec<FrameHandle> = model.arena.ticked_kinds().to_vec();
-        let message_frames: Vec<(FrameHandle, usize)> = ticked
-            .iter()
-            .copied()
-            .filter(|&h| {
-                model
-                    .arena
-                    .glance(h)
-                    .is_some_and(|g| g.kind == crate::widget::FrameKind::MessageFrame)
-            })
-            .map(|h| (h, Self::message_viewport_rows(&model, h)))
-            .collect();
-        for (h, viewport_rows) in message_frames {
-            if let Some(crate::widget::KindState::Message(mf)) =
-                model.arena.frame_mut(h).map(|f| &mut f.kind_state)
-            {
-                faded |= mf.tick(elapsed);
-                faded |= mf.trim_to_viewport(viewport_rows);
-            }
-        }
-        for &h in &ticked {
-            let smf_kind = model
-                .arena
-                .glance(h)
-                .is_some_and(|g| g.kind == crate::widget::FrameKind::ScrollingMessageFrame);
-            if !smf_kind {
-                continue;
-            }
-            let Some(frame) = model.arena.frame_mut(h) else {
-                continue;
-            };
-            if let crate::widget::KindState::ScrollingMessage(smf) = &mut frame.kind_state {
-                faded |= smf.tick(elapsed);
-            }
-        }
-        drop(model);
-        if !faded {
-            self.restore_epoch(quiet);
-        }
-        leg(self, "message fades");
-        // Tooltip fades: `FadeOut`'s ramp and the hide at its end.
-        tooltip::tick_fades(&self.lua);
-        leg(self, "tooltip fades");
+        self.resolve();
+        leg(self, "layout drain");
         let quiet = self.visual_epoch();
         // A frame hid or showed under a still cursor: re-run the hover walk at the saved position,
-        // as the reference's pump tail does (`0x765650` → `0x7660d0`). The hidden frame's OnLeave
-        // already fired, so only the new winner's `OnEnter` fires.
+        // as the pump's tail does (`m_checkFocus`). The hidden frame's OnLeave already fired, so
+        // only the new winner's `OnEnter` fires.
         let repick = {
             let mut model = self.model_mut();
             let due = model.hover_repick;
@@ -285,6 +151,8 @@ impl super::UiScript {
             self.mouse_move(x, y);
         }
         leg(self, "hover repick");
+        self.paint_model_panes();
+        leg(self, "model panes");
         // `WOW_UI_HANDLERS=<secs>`: last, so its report covers everything this tick fired.
         self.report_handler_profile(elapsed);
         leg(self, "handler profile");
@@ -306,30 +174,15 @@ impl super::UiScript {
 }
 
 impl UiScript {
-    /// The model panes' per-frame pass, for visible panes, in the reference's order: the pane's
-    /// `OnUpdate` (`0x76d7f0`) advances its clock by `trunc(elapsed · 1000)` ms, the paint
-    /// (`0x76d1a0`) fires `OnUpdateModel`, and the animate fires `OnAnimFinished` (`0x76cdc0`) once
-    /// per arm when the armed sequence completes naturally, a loop's first pass included
-    /// (`0x719370`). A hidden pane's clock stands still. Completion is read after `OnUpdateModel`,
-    /// whose handler may re-arm.
-    fn tick_model_panes(&mut self, elapsed: f32) {
-        let dt_ms = (elapsed * 1000.0).trunc().max(0.0) as u64;
-        // The pane clocks and the roster compaction are no extract input: the count stands.
+    /// The model panes' paint (`CSimpleModel::RenderModel` `0x95fc30`), in draw order: a pane with
+    /// a model, a resolved rect and a screen-clamped viewport with area fires `OnUpdateModel`
+    /// (`0x95fba0`), then its scene animates, which fires `OnAnimFinished` (`0x95f370`) once per
+    /// arm when the armed sequence completes naturally, a loop's first pass included.
+    fn paint_model_panes(&mut self) {
+        // The roster compaction is bookkeeping: the count stands.
         let quiet = self.visual_epoch();
-        let update_ids: Vec<u32> = {
+        let panes: Vec<(FrameHandle, u32, bool)> = {
             let mut model = self.model_mut();
-            let ticked: Vec<FrameHandle> = model.arena.ticked_kinds().to_vec();
-            for h in ticked {
-                if !shown_pane(&model.arena, h) {
-                    continue;
-                }
-                let Some(f) = model.arena.frame_mut(h) else {
-                    continue;
-                };
-                if let crate::widget::KindState::Model(m) = &mut f.kind_state {
-                    m.clock_ms += dt_ms;
-                }
-            }
             // Kept by `SetScript`; a destroyed frame's handle compacts out on its first miss.
             if model
                 .on_update_model_frames
@@ -345,80 +198,78 @@ impl UiScript {
                     .collect();
                 model.on_update_model_frames = live;
             }
-            // Only visible Model panes with a file set, resident or streaming: the paint that fires
-            // the handler (`0x76d1bc`) is gated on `[widget+0x318] ≠ 0` (`0x76d24c`). On any other
-            // kind the script is inert.
-            let frames: Vec<FrameHandle> = model
-                .on_update_model_frames
+            let screen = model.screen;
+            let mut panes: Vec<((crate::order::Strata, u16, u32), FrameHandle, bool)> = model
+                .arena
+                .ticked_kinds()
                 .iter()
                 .copied()
-                .filter(|&h| {
-                    shown_pane(&model.arena, h)
-                        && model.arena.frame(h).is_some_and(|f| {
-                            matches!(&f.kind_state, crate::widget::KindState::Model(m) if m.path.is_some())
-                        })
+                .filter_map(|h| {
+                    let g = model.arena.glance(h)?;
+                    if !(g.visible && g.kind.is_model()) {
+                        return None;
+                    }
+                    let crate::widget::KindState::Model(m) = &model.arena.frame(h)?.kind_state
+                    else {
+                        return None;
+                    };
+                    m.path.as_ref()?;
+                    let rect = model.resolved.get(&h)?;
+                    let view = super::clip::intersect_rect(*rect, screen);
+                    if view.width() <= 0.0 || view.height() <= 0.0 {
+                        return None;
+                    }
+                    Some((g.walk_key(), h, model.on_update_model_frames.contains(&h)))
                 })
                 .collect();
-            let mut ids: Vec<u32> = frames.into_iter().map(|h| model.frame_id(h)).collect();
-            ids.sort_unstable(); // creation order, as in the OnUpdate sweep
-            ids
+            panes.sort_unstable_by_key(|&(key, ..)| key);
+            panes
+                .into_iter()
+                .map(|(_, h, handler)| (h, model.frame_id(h), handler))
+                .collect()
         };
         self.restore_epoch(quiet);
-        for id in update_ids {
-            if let Err(e) = event::fire_widget_handler(&self.lua, id, "OnUpdateModel", Vec::new()) {
-                self.push_error(e);
-            }
-        }
-        let finished_ids: Vec<u32> = {
-            let mut model = self.model_mut();
-            let ticked: Vec<FrameHandle> = model.arena.ticked_kinds().to_vec();
-            let mut due: Vec<FrameHandle> = Vec::new();
-            for h in ticked {
-                if !shown_pane(&model.arena, h) {
-                    continue;
+        for (h, id, handler) in panes {
+            if handler {
+                if let Err(e) =
+                    event::fire_widget_handler(&self.lua, id, "OnUpdateModel", Vec::new())
+                {
+                    self.push_error(e);
                 }
-                let Some(f) = model.arena.frame(h) else {
-                    continue;
-                };
-                let crate::widget::KindState::Model(m) = &f.kind_state else {
+            }
+            // Completion is read after `OnUpdateModel`, whose handler may re-arm.
+            let finished = {
+                let model = self.model_ref();
+                let Some(crate::widget::KindState::Model(m)) =
+                    model.arena.frame(h).map(|f| &f.kind_state)
+                else {
                     continue;
                 };
                 let Some(path) = m.path.as_deref() else {
                     continue;
                 };
-                let Some(facts) = model.model_facts.get(&crate::widget::model_key(path)) else {
-                    continue;
-                };
-                if m.completion_due(facts) {
-                    due.push(h);
+                model
+                    .model_facts
+                    .get(&crate::widget::model_key(path))
+                    .is_some_and(|facts| m.completion_due(facts))
+            };
+            if !finished {
+                continue;
+            }
+            if let Some(crate::widget::KindState::Model(m)) = self
+                .model_mut()
+                .arena
+                .frame_mut(h)
+                .map(|f| &mut f.kind_state)
+            {
+                if let Some(a) = &mut m.armed {
+                    a.finished = true;
                 }
             }
-            let mut ids = Vec::with_capacity(due.len());
-            for h in due {
-                if let Some(crate::widget::KindState::Model(m)) =
-                    model.arena.frame_mut(h).map(|f| &mut f.kind_state)
-                {
-                    if let Some(a) = &mut m.armed {
-                        a.finished = true;
-                    }
-                }
-                ids.push(model.frame_id(h));
-            }
-            ids.sort_unstable();
-            ids
-        };
-        for id in finished_ids {
             if let Err(e) = event::fire_widget_handler(&self.lua, id, "OnAnimFinished", Vec::new())
             {
                 self.push_error(e);
             }
         }
     }
-}
-
-/// Whether `h` is a live, effectively visible model pane, off the arena's glance table.
-fn shown_pane(arena: &crate::widget::WidgetArena, h: FrameHandle) -> bool {
-    arena
-        .glance(h)
-        .is_some_and(|g| g.visible && g.kind.is_model())
 }

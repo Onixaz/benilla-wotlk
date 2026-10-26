@@ -422,7 +422,7 @@ impl super::UiScript {
     /// [`Self::world_tooltip_move`] follows the pointer, and hover loss arms
     /// [`Self::world_tooltip_fade`].
     pub fn minimap_tooltip(&mut self, text: &str, ui_x: f32, ui_y: f32, grey: bool) -> bool {
-        let (h, id, root_id) = {
+        let (h, id, root, root_id) = {
             let mut model = self.model_mut();
             let Some(h) = model.arena.lookup("GameTooltip") else {
                 return false;
@@ -431,7 +431,7 @@ impl super::UiScript {
                 return false;
             };
             let (id, root_id) = (model.frame_id(h), model.frame_id(root));
-            (h, id, root_id)
+            (h, id, root, root_id)
         };
         let wrapper = match super::object::frame_wrapper(&self.lua, id) {
             Ok(w) => w,
@@ -443,6 +443,12 @@ impl super::UiScript {
         {
             let mut model = self.model_mut();
             clear_content(&mut model, h);
+            // The owner, the Minimap's `SetOwner(this, ANCHOR_CURSOR)`: without one the show
+            // override (`0x61cff0`) hides the plate.
+            let owner = model.arena.lookup("Minimap").unwrap_or(root);
+            if let Ok(t) = tip_mut(&mut model, h) {
+                t.owner = Some(owner);
+            }
             let input = model.layout_inputs.entry(h).or_default();
             // Anchor only: the frame's own clamp flag (`Frame::clamped_to_screen`, G flags bit 4)
             // slides a plate near the window edge back on screen.

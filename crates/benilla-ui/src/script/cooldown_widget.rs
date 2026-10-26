@@ -59,8 +59,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             with_cooldown(lua, &this, |c| c.set(start, duration))?;
             let h = frame_handle_of(lua, &this)?;
-            let changed = crate::script::model_mut_of(lua).arena.set_shown(h, true);
-            event::fire_visibility_changes(lua, changed);
+            event::set_shown(lua, h, true);
             Ok(())
         })?,
     )?;
@@ -95,51 +94,32 @@ fn truthy(v: &Value) -> bool {
     !matches!(v, Value::Nil | Value::Boolean(false))
 }
 
-/// The shown cooldowns' per-frame update (`0x5ec8f0`), after the tick's `OnUpdate` walk: each
-/// advances its clock, and one whose flash ended hides, firing its visibility events. A hidden
-/// cooldown's clock stands still until it shows again, as only shown frames are updated.
-pub(super) fn tick(lua: &Lua) {
-    // A sweep that moved nothing drawn (every shown box unarmed) leaves the mutation count
-    // where it stood (`ModelCell`).
-    let mut swept = false;
-    let hide: Vec<FrameHandle> = {
+/// `CGCooldown::OnLayerUpdate` (`0x5ec8f0`), in the cooldown's walk slot after the base update: the
+/// clock advances, and a cooldown whose flash ended hides, firing its visibility events. A hidden
+/// cooldown's clock stands still until it shows again, as the walk reaches only shown frames.
+pub(super) fn update(lua: &Lua, h: FrameHandle) {
+    // A step that moved nothing drawn (an unarmed box) leaves the mutation count where it stood
+    // (`ModelCell`).
+    let hide = {
         let mut model = crate::script::model_mut_of(lua);
         let quiet = model.epoch();
         let now = now_ms(&model);
-        let ticked: Vec<FrameHandle> = model.arena.ticked_kinds().to_vec();
-        let hide: Vec<FrameHandle> = ticked
-            .into_iter()
-            .filter(|&h| {
-                let shown_cooldown = model
-                    .arena
-                    .glance(h)
-                    .is_some_and(|g| g.visible && g.kind == crate::widget::FrameKind::Cooldown);
-                if !shown_cooldown {
-                    return false;
-                }
-                let Some(f) = model.arena.frame_mut(h) else {
-                    return false;
-                };
-                match &mut f.kind_state {
-                    // Unarmed too: a shown `CreateFrame("Cooldown")` runs an empty flash and hides
-                    // itself; only the paint waits for `SetCooldown`.
-                    KindState::Cooldown(c) => {
-                        let before = c.sweep_key();
-                        let step = c.update(now);
-                        swept |= c.sweep_key() != before;
-                        step == CooldownStep::Hide
-                    }
-                    _ => false,
-                }
-            })
-            .collect();
-        if !swept {
+        let step = match model.arena.frame_mut(h).map(|f| &mut f.kind_state) {
+            // Unarmed too: a shown `CreateFrame("Cooldown")` runs an empty flash and hides itself;
+            // only the paint waits for `SetCooldown`.
+            Some(KindState::Cooldown(c)) => {
+                let before = c.sweep_key();
+                let step = c.update(now);
+                Some((step, c.sweep_key() != before))
+            }
+            _ => None,
+        };
+        if !step.is_some_and(|(_, swept)| swept) {
             model.set_epoch(quiet);
         }
-        hide
+        step.is_some_and(|(step, _)| step == CooldownStep::Hide)
     };
-    for h in hide {
-        let changed = crate::script::model_mut_of(lua).arena.set_shown(h, false);
-        event::fire_visibility_changes(lua, changed);
+    if hide {
+        event::set_shown(lua, h, false);
     }
 }

@@ -248,6 +248,7 @@ mod tooltip_unit;
 mod totem;
 mod tracking;
 mod ui_errors;
+mod update_walk;
 pub use tooltip_unit::TooltipTint;
 pub use tracking::{TownKind, TownType, TrackingSpell, TOWN_TYPES};
 mod trade;

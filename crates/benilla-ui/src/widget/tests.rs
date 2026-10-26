@@ -54,6 +54,52 @@ fn the_glance_table_follows_visibility_destroy_and_slot_reuse() {
     }
 }
 
+/// Every node's visibility and walk key, as its glance mirrors them.
+fn assert_glances_agree(a: &WidgetArena) {
+    for (h, f) in a.iter_frames() {
+        let g = a.glance(h).expect("a live frame has a glance");
+        assert_eq!(
+            (g.visible, g.walk_key()),
+            (f.effective_visible, (f.strata, f.level, f.insertion_seq)),
+            "glance of {h:?}"
+        );
+    }
+}
+
+#[test]
+fn the_glance_mirrors_the_walk_key_through_every_mutator() {
+    let mut a = arena();
+    let root = a.create(FrameKind::Frame, None, None);
+    let child = a.create(FrameKind::Frame, None, Some(root));
+    let grand = a.create(FrameKind::Frame, None, Some(child));
+    let other = a.create(FrameKind::Frame, None, None);
+    assert_glances_agree(&a);
+    a.set_frame_level(root, 5, true);
+    assert_glances_agree(&a);
+    a.set_frame_strata(child, Strata::Dialog);
+    assert_glances_agree(&a);
+    a.set_shown(root, false);
+    a.set_shown(root, true);
+    assert_glances_agree(&a);
+    a.set_parent(grand, Some(other));
+    assert_glances_agree(&a);
+    a.compress_strata(Strata::Medium);
+    assert_glances_agree(&a);
+    let epoch = a.link_epoch();
+    a.set_shown(other, false);
+    assert!(a.link_epoch() > epoch, "an unlink moves the link epoch");
+    let epoch = a.link_epoch();
+    a.set_frame_level(other, 9, false);
+    assert_eq!(
+        a.link_epoch(),
+        epoch,
+        "a hidden frame's level change links nothing"
+    );
+    a.set_shown(other, true);
+    assert!(a.link_epoch() > epoch, "a show links");
+    assert_glances_agree(&a);
+}
+
 #[test]
 fn mid_tree_hide_blocks_a_shown_grandchild() {
     let mut a = arena();
@@ -63,7 +109,11 @@ fn mid_tree_hide_blocks_a_shown_grandchild() {
     assert!(a.frame(grand).unwrap().effective_visible);
 
     let changed = a.set_shown(child, false);
-    assert_eq!(changed, vec![child, grand]); // pre-order
+    assert_eq!(
+        changed,
+        vec![grand, child],
+        "each frame after its descendants"
+    );
     assert!(a.frame(root).unwrap().effective_visible);
     assert!(!a.frame(child).unwrap().effective_visible);
     assert!(!a.frame(grand).unwrap().effective_visible);
@@ -73,7 +123,7 @@ fn mid_tree_hide_blocks_a_shown_grandchild() {
     );
 
     let changed = a.set_shown(child, true);
-    assert_eq!(changed, vec![child, grand]);
+    assert_eq!(changed, vec![grand, child]);
     assert!(a.frame(grand).unwrap().effective_visible);
 }
 
@@ -87,10 +137,10 @@ fn hidden_grandchild_stays_hidden_when_ancestor_reshows() {
     a.set_shown(grand, false);
     let changed = a.set_shown(root, false);
     // grand is already invisible, so the hide does not report it.
-    assert_eq!(changed, vec![root, child]);
+    assert_eq!(changed, vec![child, root]);
 
     let changed = a.set_shown(root, true);
-    assert_eq!(changed, vec![root, child]);
+    assert_eq!(changed, vec![child, root]);
     assert!(a.frame(child).unwrap().effective_visible);
     assert!(!a.frame(grand).unwrap().effective_visible);
 }

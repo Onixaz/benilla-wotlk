@@ -180,8 +180,11 @@ pub(crate) struct Model {
 
     /// Which handlers each frame has; the closures themselves live in Lua's `REG_SCRIPTS` table.
     pub(crate) scripts: HashMap<FrameHandle, HashSet<&'static str>>,
-    /// Frames with an `OnUpdate` script and their ids, kept by `SetScript`; the tick sorts by id.
+    /// Frames with an `OnUpdate` script and their ids, kept by `SetScript`.
     pub(crate) on_update_frames: Vec<(FrameHandle, u32)>,
+    /// Bumped when a frame gains or loses an `OnUpdate` or an animation group starts: the update
+    /// walk compares it to notice that a later frame's slot changed under a handler.
+    pub(crate) walk_roster: u64,
     /// Frames with an `OnSizeChanged` script, kept by `SetScript`, for the resolve's size snapshot.
     pub(crate) on_size_changed_frames: Vec<FrameHandle>,
     /// Frames with an `OnUpdateModel` script, fired as a visible model pane paints (`0x76d1a0`).
@@ -1223,6 +1226,7 @@ impl Model {
             region_name_by_id: HashMap::new(),
             scripts: HashMap::new(),
             on_update_frames: Vec::new(),
+            walk_roster: 0,
             on_size_changed_frames: Vec::new(),
             on_update_model_frames: Vec::new(),
             xml_loading: HashSet::new(),

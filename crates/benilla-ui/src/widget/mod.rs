@@ -142,6 +142,18 @@ pub struct Glance {
     live: bool,
     pub visible: bool,
     pub kind: FrameKind,
+    pub strata: Strata,
+    pub level: u16,
+    /// [`Frame::insertion_seq`].
+    pub seq: u32,
+}
+
+impl Glance {
+    /// The frame's place in the strata walk: stratum, level, then link order, oldest first.
+    #[inline]
+    pub fn walk_key(&self) -> (Strata, u16, u32) {
+        (self.strata, self.level, self.seq)
+    }
 }
 
 /// A frame node, the modelled subset of `CSimpleFrame`. The `effective_*` fields and the tree
@@ -286,6 +298,8 @@ pub struct WidgetArena {
     /// Each frame slot's generation, kind and effective visibility, beside the arena: the per-tick
     /// walks filter hundreds of rostered frames on these alone, without touching a frame node.
     glances: Vec<Glance>,
+    /// Bumped by every link into a level list and every unlink from one ([`Self::link_epoch`]).
+    link_epoch: u64,
     /// Bumped by every show or hide that changed what is visible, a frame's or a region's: a
     /// scroll child's span moves with it (`NotifyScrollParent` `0x48fea0`).
     visibility_epoch: u64,
@@ -335,6 +349,7 @@ impl WidgetArena {
             editbox_kinds: Vec::new(),
             scroll_kinds: Vec::new(),
             glances: Vec::new(),
+            link_epoch: 0,
             visibility_epoch: 0,
         }
     }
@@ -378,6 +393,24 @@ impl WidgetArena {
     #[inline]
     pub fn is_visible(&self, h: FrameHandle) -> bool {
         self.glance(h).is_some_and(|g| g.visible)
+    }
+
+    /// How many times a frame has linked into or unlinked from a level list: a walk over the lists
+    /// compares it to notice a handler's show, hide, raise, strata or level change.
+    pub fn link_epoch(&self) -> u64 {
+        self.link_epoch
+    }
+
+    /// Copy `h`'s visibility and walk key from its node into its glance.
+    fn sync_glance(&mut self, h: FrameHandle) {
+        let Some(f) = self.frames.get(h.index, h.generation) else {
+            return;
+        };
+        let g = &mut self.glances[h.index as usize];
+        g.visible = f.effective_visible;
+        g.strata = f.strata;
+        g.level = f.level;
+        g.seq = f.insertion_seq;
     }
 
     /// How many shows and hides have changed what is visible ([`Self::note_visibility_change`]).
@@ -441,6 +474,7 @@ impl WidgetArena {
                 if let Some(f) = self.frame_mut(*fh) {
                     f.insertion_seq = i as u32;
                 }
+                self.sync_glance(*fh);
             }
             self.next_insertion = order.len() as u32;
         }
@@ -449,6 +483,8 @@ impl WidgetArena {
             f.insertion_seq = seq;
             self.next_insertion += 1;
         }
+        self.sync_glance(h);
+        self.link_epoch = self.link_epoch.wrapping_add(1);
     }
 
     /// A stratum's level bound ([`Self::compress_strata`]).
@@ -601,7 +637,9 @@ impl WidgetArena {
         let visible = frame.effective_visible;
         if visible {
             self.grow_top_level(frame.strata, frame.level);
+            self.link_epoch = self.link_epoch.wrapping_add(1);
         }
+        let glance_order = (frame.strata, frame.level, frame.insertion_seq);
         let (index, generation) = self.frames.insert(frame);
         let handle = FrameHandle { index, generation };
         let glance = Glance {
@@ -609,6 +647,9 @@ impl WidgetArena {
             live: true,
             visible,
             kind,
+            strata: glance_order.0,
+            level: glance_order.1,
+            seq: glance_order.2,
         };
         match self.glances.get_mut(index as usize) {
             Some(g) => *g = glance,
@@ -717,8 +758,11 @@ impl WidgetArena {
                 self.names.remove(&n);
             }
         }
-        if self.frames.remove(h.index, h.generation).is_some() {
+        if let Some(f) = self.frames.remove(h.index, h.generation) {
             self.glances[h.index as usize].live = false;
+            if f.effective_visible {
+                self.link_epoch = self.link_epoch.wrapping_add(1);
+            }
         }
     }
 

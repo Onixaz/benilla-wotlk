@@ -438,7 +438,8 @@ fn ts_recipe(spell_id: u32, name: &str, group: (u32, u32, &str)) -> TradeSkillRe
 fn set_trade_skill_item_indexes_display_entries_not_raw_recipes() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
-    s.run(r#"local tt = CreateFrame("GameTooltip", "TT")"#)
+    // An owner, as a tooltip without one hides at its `Show` (`0x61cff0`).
+    s.run(r#"local tt = CreateFrame("GameTooltip", "TT") tt:SetOwner(CreateFrame("Frame"), "ANCHOR_NONE")"#)
         .unwrap();
 
     // Two groups, two recipes each. Display order: [1] "Bolts" header, [2] Alpha Bolt,
@@ -605,8 +606,9 @@ fn set_merchant_compare_item_answers_one_or_nil_per_candidate_slot() {
 
     s.run(
         r#"
-        CreateFrame("GameTooltip", "ShoppingTooltip1"):Hide()
-        CreateFrame("GameTooltip", "ShoppingTooltip2"):Hide()
+        local owner = CreateFrame("Frame", "CompareOwner")
+        CreateFrame("GameTooltip", "ShoppingTooltip1"):SetOwner(owner, "ANCHOR_NONE")
+        CreateFrame("GameTooltip", "ShoppingTooltip2"):SetOwner(owner, "ANCHOR_NONE")
     "#,
     )
     .unwrap();

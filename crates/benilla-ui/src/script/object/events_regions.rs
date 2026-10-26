@@ -250,6 +250,7 @@ fn set_script(lua: &Lua, this: &Table, name: &str, func: Option<Function>) -> ml
                     "OnUpdate" => {
                         let id = model.frame_id(h);
                         model.on_update_frames.push((h, id));
+                        model.walk_roster = model.walk_roster.wrapping_add(1);
                     }
                     "OnSizeChanged" => model.on_size_changed_frames.push(h),
                     "OnUpdateModel" => model.on_update_model_frames.push(h),
@@ -263,7 +264,10 @@ fn set_script(lua: &Lua, this: &Table, name: &str, func: Option<Function>) -> ml
             if let Some(set) = model.scripts.get_mut(&h) {
                 if set.remove(&kind) {
                     match kind {
-                        "OnUpdate" => model.on_update_frames.retain(|&(x, _)| x != h),
+                        "OnUpdate" => {
+                            model.on_update_frames.retain(|&(x, _)| x != h);
+                            model.walk_roster = model.walk_roster.wrapping_add(1);
+                        }
                         "OnSizeChanged" => {
                             model.on_size_changed_frames.retain(|&x| x != h);
                         }

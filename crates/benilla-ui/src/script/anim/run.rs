@@ -9,6 +9,7 @@ use super::{
     NONE, OVERRUN, PAUSED, PENDING_FINISH, REVERSE, STOPPING,
 };
 use crate::script::Model;
+use crate::widget::FrameHandle;
 
 fn with<R>(lua: &Lua, f: impl FnOnce(&mut Model) -> R) -> R {
     let mut model = crate::script::model_mut_of(lua);
@@ -78,6 +79,7 @@ pub(crate) fn group_play(lua: &Lua, g: u32) -> bool {
     if already {
         return true;
     }
+    with(lua, |m| m.walk_roster = m.walk_roster.wrapping_add(1));
     let played = !list.is_empty();
     for a in list {
         anim_play(lua, a);
@@ -681,44 +683,54 @@ pub(crate) fn stop_animating(lua: &Lua, owner: Owner) {
     }
 }
 
-/// The animation pass of every shown owner's layer update (`0x490770`): each owner's alpha restored
-/// to its saved byte (`PreOnAnimUpdate` `0x48eba0`), then its groups ticked. Translations rebuild
-/// from zero each pass.
-pub(crate) fn tick(lua: &Lua, elapsed: f32) {
-    // Nothing playing and no offset to clear: the pass would write nothing, so it takes no
-    // mutable borrow, which would move the mutation count.
+/// The start of a walk's animation steps: the translations clear, as each pass rebuilds them from
+/// zero. Nothing playing and no offset to clear writes nothing and takes no mutable borrow, which
+/// would move the mutation count.
+pub(crate) fn begin_pass(lua: &Lua) {
     {
         let m = lua
             .app_data_ref::<crate::script::ModelCell>()
             .expect("model app_data");
-        if m.anims.offsets.is_empty() && m.anims.active_owners().is_empty() {
+        if m.anims.offsets.is_empty() {
             return;
         }
     }
-    let owners = with(lua, |m| {
-        m.anims.offsets.clear();
-        let mut owners: Vec<((u32, u32), Owner)> = m
-            .anims
-            .active_owners()
-            .into_iter()
-            .filter_map(|o| {
-                let (frame, sub) = match o {
-                    Owner::Frame(h) => (h, 0),
-                    Owner::Region(r) => {
-                        let reg = m.arena.region(r)?;
-                        (reg.owner, reg.decl_seq + 1)
-                    }
-                };
-                m.arena
-                    .frame(frame)
-                    .is_some_and(|f| f.effective_visible)
-                    .then(|| ((m.frame_id(frame), sub), o))
-            })
-            .collect();
-        owners.sort_by_key(|(k, _)| *k);
-        owners
-    });
-    for (_, owner) in owners {
+    with(lua, |m| m.anims.offsets.clear());
+}
+
+/// The frames whose layer update animates: each owner with a playing or paused group, a region's
+/// owner frame standing for the region.
+pub(crate) fn animated_frames(m: &Model) -> Vec<FrameHandle> {
+    m.anims
+        .active_owners()
+        .into_iter()
+        .filter_map(|o| match o {
+            Owner::Frame(h) => Some(h),
+            Owner::Region(r) => m.arena.region(r).map(|reg| reg.owner),
+        })
+        .collect()
+}
+
+/// A frame's animation step in its layer update (`0x490770`): `PreOnAnimUpdate` on the frame, then
+/// on each region in link order, restoring an alpha-animated owner's saved byte (`0x48eba0`), then
+/// `OnAnimUpdate` the same way, each owner's groups in creation order.
+pub(crate) fn update_frame(lua: &Lua, h: FrameHandle, elapsed: f32) {
+    let owners: Vec<Owner> = {
+        let m = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
+        let Some(f) = m.arena.frame(h) else {
+            return;
+        };
+        std::iter::once(Owner::Frame(h))
+            .chain(f.regions.iter().map(|&r| Owner::Region(r)))
+            .filter(|o| m.anims.owners.contains_key(o))
+            .collect()
+    };
+    if owners.is_empty() {
+        return;
+    }
+    for &owner in &owners {
         with(lua, |m| {
             let restore = m
                 .anims
@@ -730,6 +742,8 @@ pub(crate) fn tick(lua: &Lua, elapsed: f32) {
                 set_alpha_byte(m, owner, saved);
             }
         });
+    }
+    for owner in owners {
         let groups = with_store(lua, |s| s.groups_of(owner));
         for g in groups {
             group_on_update(lua, g, elapsed);

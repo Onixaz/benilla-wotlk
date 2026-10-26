@@ -236,6 +236,7 @@ fn the_cooldown_machine_runs_on_the_two_handlers() {
             end
         end
         cd = CreateFrame("Model", "CD", UIParent)
+        cd:SetPoint("CENTER") cd:SetWidth(64) cd:SetHeight(64) -- a rect to paint in
         cd:SetModel("{}")
         cd:SetScript("OnUpdateModel", CooldownFrame_OnUpdateModel)
         cd:SetScript("OnAnimFinished", CooldownFrame_OnAnimFinished)
@@ -291,6 +292,7 @@ fn on_update_model_fires_per_visible_paint_with_this() {
         r#"
         seen = {{}}
         m = CreateFrame("Model", "M", UIParent)
+        m:SetPoint("CENTER") m:SetWidth(64) m:SetHeight(64) -- a rect to paint in
         m:SetModel("{}")
         m:SetScript("OnUpdateModel", function() table.insert(seen, this:GetName()) end)
         m:SetScript("OnAnimFinished", function() error("must not fire") end)
@@ -333,6 +335,7 @@ fn a_loop_completes_once_and_a_fileless_pane_paints_nothing() {
         r#"
         done = 0 painted = 0
         p = CreateFrame("Model", "Loop", UIParent)
+        p:SetPoint("CENTER") p:SetWidth(64) p:SetHeight(64) -- a rect to paint in
         p:SetScript("OnAnimFinished", function() done = done + 1 end)
         p:SetScript("OnUpdateModel", function() painted = painted + 1 end)
     "#,
