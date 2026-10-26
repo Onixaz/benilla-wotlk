@@ -201,6 +201,24 @@ impl UiQuad {
     }
 }
 
+impl UiQuad {
+    /// The screen-space move taking `base` to `self` when that is all that changed: every other
+    /// field equal and the rect translated exactly, its size bit-equal. A clipped or cornered
+    /// quad never qualifies, as its geometry depends on where it is.
+    pub(crate) fn moved_from(&self, base: &Self) -> Option<Vec2> {
+        let moved = UiQuad {
+            rect: base.rect,
+            ..self.clone()
+        };
+        let d = self.rect.min - base.rect.min;
+        (moved == *base
+            && self.clip.is_none()
+            && self.corners.is_none()
+            && self.rect.max - base.rect.max == d)
+            .then_some(d)
+    }
+}
+
 /// The append lane's z bands, far below the scripted UI's keys (a [`benilla_ui::order::ZKey`]
 /// region sets `1 << 20`), so the whole lane paints under the player UI.
 pub(crate) mod overlay_z {
@@ -654,6 +672,14 @@ struct BatchPools {
     /// Base-lane quad index to its slot and first vertex, from the last rebuild; `None` for a quad
     /// clipped to nothing.
     quad_map: Vec<Option<(u32, u32)>>,
+    /// Per slot: the rect of the one append-lane quad its mesh was last written from, when that
+    /// quad is the whole run; the overlay pan measures a move from it.
+    slot_base: Vec<Option<Rect>>,
+    /// The append lane as of the last rebuild, and per entry its slot when it is a run alone.
+    overlay_base: Vec<UiQuad>,
+    overlay_slot: Vec<Option<u32>>,
+    /// The window size the last rebuild mapped to world space with.
+    window: Vec2,
 }
 
 /// One pooled slot's full identity: the mesh bytes and what the entity was last written with
@@ -741,6 +767,57 @@ fn retire_batches(pools: &mut BatchPools, commands: &mut Commands) {
     pools.offsets.clear();
     pools.src_colors.clear();
     pools.quad_map.clear();
+    pools.slot_base.clear();
+    pools.overlay_base.clear();
+    pools.overlay_slot.clear();
+}
+
+/// The overlay pan: when the append lane differs from the last rebuild's only by quads that each
+/// fill a run alone and moved (a walking unit's minimap blip), move their batches on the entity's
+/// `Transform`, which the rebuild's own pan gate would conclude after re-deriving every quad.
+/// `false` leaves everything to the rebuild.
+fn pan_overlays(
+    pools: &mut BatchPools,
+    overlays: &[UiQuad],
+    window: Option<Vec2>,
+    commands: &mut Commands,
+) -> bool {
+    if window != Some(pools.window) || overlays.len() != pools.overlay_base.len() {
+        return false;
+    }
+    let mut pans: Vec<(usize, Vec2)> = Vec::new();
+    for (i, (now, then)) in overlays.iter().zip(&pools.overlay_base).enumerate() {
+        if now == then {
+            continue;
+        }
+        if now.moved_from(then).is_none() {
+            return false;
+        }
+        let Some(slot) = pools.overlay_slot.get(i).copied().flatten() else {
+            return false;
+        };
+        let Some(base) = pools.slot_base.get(slot as usize).copied().flatten() else {
+            return false;
+        };
+        if now.rect.size() != base.size() {
+            return false;
+        }
+        // Screen y-down to world y-up.
+        let d = now.rect.min - base.min;
+        pans.push((slot as usize, Vec2::new(d.x, -d.y)));
+    }
+    for (slot, d) in pans {
+        if pools.offsets[slot] != d {
+            pools.offsets[slot] = d;
+            if let Some(&entity) = pools.entities.get(slot) {
+                let z = f32::from_bits(pools.stored[slot].z_bits);
+                commands
+                    .entity(entity)
+                    .insert(Transform::from_xyz(d.x, d.y, z));
+            }
+        }
+    }
+    true
 }
 
 /// Write a colour-only change into the pooled runs, no rebuild: each patched quad's four vertex
@@ -892,7 +969,17 @@ fn rebuild_ui_mesh(
     };
     let (meshes, materials) = (&mut stores.0, &mut stores.1);
     let q = quads.as_mut();
-    if !q.dirty && q.overlays == q.last_overlays {
+    let window_size = windows
+        .single()
+        .ok()
+        .map(|w| Vec2::new(w.width(), w.height()));
+    if !q.dirty
+        && (q.overlays == q.last_overlays
+            || pan_overlays(&mut pools, &q.overlays, window_size, &mut commands))
+    {
+        if q.overlays != q.last_overlays {
+            q.last_overlays.clone_from(&q.overlays);
+        }
         if !q.colour_patch.is_empty() {
             let patch = std::mem::take(&mut q.colour_patch);
             apply_colour_patch(&mut pools, meshes, &mut commands, &patch);
@@ -964,6 +1051,16 @@ fn rebuild_ui_mesh(
         .chain(q.overlays.iter().map(|q| (None, q)))
         .collect();
     sorted.sort_by_key(|(_, q)| q.z_key);
+    // An overlay's index in its lane, by address: the lane's entries are distinct elements.
+    let overlay_at = |p: &UiQuad| {
+        let at = std::ptr::from_ref(p);
+        q.overlays
+            .as_ptr_range()
+            .contains(&at)
+            .then(|| (at as usize - q.overlays.as_ptr() as usize) / std::mem::size_of::<UiQuad>())
+    };
+    // Per run: its quad count, and the one overlay when that is the whole run.
+    let mut run_members: Vec<(u32, Option<usize>)> = Vec::new();
     // Base quad → (run, first vertex), turned into slots once the empty runs are dropped.
     let mut placed: Vec<Option<(u32, u32)>> = vec![None; q.quads.len()];
     let n_sorted = sorted.len();
@@ -1027,6 +1124,11 @@ fn rebuild_ui_mesh(
         });
         if !same_run {
             runs.push(Run::new(texture, q));
+            run_members.push((0, None));
+        }
+        if let Some(m) = run_members.last_mut() {
+            m.0 += 1;
+            m.1 = if m.0 == 1 { overlay_at(q) } else { None };
         }
         if let Some(i) = base_index {
             placed[i] = Some((
@@ -1066,6 +1168,7 @@ fn rebuild_ui_mesh(
     let mut used = 0usize;
     let mut n_rewrites = 0usize;
     let mut run_slot: Vec<Option<u32>> = vec![None; runs.len()];
+    let mut overlay_slots: Vec<Option<u32>> = vec![None; q.overlays.len()];
     for (i, run) in runs.into_iter().enumerate() {
         if run.indices.is_empty() {
             continue;
@@ -1159,7 +1262,21 @@ fn rebuild_ui_mesh(
             .stored
             .get(used)
             .and_then(|prev| prev.translation_from(&stored).map(|d| (d, prev.z_bits)));
+        while pools.slot_base.len() <= used {
+            pools.slot_base.push(None);
+        }
+        let sole = run_members
+            .get(i)
+            .and_then(|&(_, o)| o)
+            .and_then(|o| q.overlays.get(o).map(|quad| (o, quad.rect)));
+        if let Some((o, _)) = sole {
+            overlay_slots[o] = Some(used as u32);
+        }
         if let Some((d, z_bits)) = pan {
+            // Panned: the mesh, and the base its lone overlay was written at, stand.
+            if sole.is_none() {
+                pools.slot_base[used] = None;
+            }
             if pools.bound[used] != Some(material_handle.id()) {
                 pools.bound[used] = Some(material_handle.id());
                 if let Some(&entity) = pools.entities.get(used) {
@@ -1188,6 +1305,7 @@ fn rebuild_ui_mesh(
             continue;
         }
         n_rewrites += 1;
+        pools.slot_base[used] = sole.map(|(_, rect)| rect);
         // `WOW_UI_DIFF=1`, at most 3 lines a second: the check that sent this slot to a rewrite.
         if *UI_DIFF {
             use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -1283,6 +1401,10 @@ fn rebuild_ui_mesh(
     pools.stored.truncate(used);
     pools.offsets.truncate(used);
     pools.src_colors.truncate(used);
+    pools.slot_base.truncate(used);
+    pools.overlay_slot = overlay_slots;
+    pools.overlay_base.clone_from(&q.overlays);
+    pools.window = Vec2::new(window.width(), window.height());
     pools.quad_map = placed
         .into_iter()
         .map(|p| p.and_then(|(run, vertex)| run_slot[run as usize].map(|slot| (slot, vertex))))
@@ -1646,6 +1768,75 @@ mod tests {
             !(255 | 128 << 16 | 255 << 24),
             "clamped to [0, 1] first, as the Lua binding clamps"
         );
+    }
+
+    /// A walking unit's blip moves one overlay quad alone in its run: its batch pans on the
+    /// entity's `Transform` without a rebuild, to where a full rebuild puts it, and any other
+    /// overlay change still rebuilds.
+    #[test]
+    fn a_lone_moving_overlay_pans_without_a_rebuild() {
+        let mut app = rebuild_app();
+        app.world_mut()
+            .resource_mut::<crate::ui_script::UiCostWanted>()
+            .0 = true;
+        let blip = UiQuad {
+            rect: Rect::new(100.0, 100.0, 108.0, 108.0),
+            additive: true, // its own run, apart from the white base quad
+            z_key: 1,
+            ..default()
+        };
+        app.world_mut()
+            .resource_mut::<UiQuads>()
+            .overlays
+            .push(blip.clone());
+        app.update();
+        assert_eq!(batches(&mut app), 2);
+        let pan_of = |app: &mut App| -> Vec<Vec3> {
+            let mut v: Vec<Vec3> = app
+                .world_mut()
+                .query_filtered::<&Transform, With<UiQuadBatch>>()
+                .iter(app.world())
+                .map(|t| t.translation)
+                .collect();
+            v.sort_by(|a, b| a.z.total_cmp(&b.z));
+            v
+        };
+        let moved = |dx: f32, dy: f32| UiQuad {
+            rect: Rect::from_corners(
+                blip.rect.min + Vec2::new(dx, dy),
+                blip.rect.max + Vec2::new(dx, dy),
+            ),
+            ..blip.clone()
+        };
+        app.world_mut().resource_mut::<UiQuads>().overlays = vec![moved(3.0, 2.0)];
+        app.update();
+        assert!(
+            !app.world().resource::<UiMeshCost>().rebuilt,
+            "a pan, no rebuild"
+        );
+        let panned = pan_of(&mut app);
+        assert_eq!(
+            (panned[1].x, panned[1].y),
+            (3.0, -2.0),
+            "screen y-down, world y-up"
+        );
+
+        // A full rebuild of the same lanes lands the batch at the same place.
+        app.world_mut().resource_mut::<UiQuads>().dirty = true;
+        app.update();
+        assert!(app.world().resource::<UiMeshCost>().rebuilt);
+        assert_eq!(
+            pan_of(&mut app),
+            panned,
+            "the rebuild's own pan gate agrees"
+        );
+
+        // A recoloured overlay is no move: it rebuilds.
+        let mut red = moved(3.0, 2.0);
+        red.color = [1.0, 0.0, 0.0, 1.0];
+        app.world_mut().resource_mut::<UiQuads>().overlays = vec![red];
+        app.update();
+        assert!(app.world().resource::<UiMeshCost>().rebuilt);
     }
 
     /// A colour pulse (the stock PlayerFrame status glow, every frame at rest) must leave the
