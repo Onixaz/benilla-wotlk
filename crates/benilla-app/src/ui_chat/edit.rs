@@ -320,11 +320,30 @@ impl ChannelState {
             .map(|s| s.state)
     }
 
-    /// The names for the VM's mirror, holes kept so `/N` addresses the right channel.
+    /// The slots' names, holes kept so `/N` addresses the right channel.
+    #[cfg(test)]
     pub(crate) fn names(&self) -> Vec<Option<String>> {
         self.joined
             .iter()
             .map(|s| s.as_ref().map(|s| s.name.clone()))
+            .collect()
+    }
+
+    /// The slots for the VM's mirror and channel pane, holes kept: a zone channel carries its
+    /// row's Shortcut, which the pane lists it by (`0x4fdfa5`), and a suspended slot lists grey.
+    pub(crate) fn ui_slots(&self) -> Vec<Option<benilla_ui::script::ChannelSlotInfo>> {
+        self.joined
+            .iter()
+            .map(|s| {
+                s.as_ref().map(|s| benilla_ui::script::ChannelSlotInfo {
+                    name: s.name.clone(),
+                    shortcut: self
+                        .channels
+                        .row_for_name(&s.name)
+                        .map(|r| r.shortcut.clone()),
+                    active: s.state != SlotState::Suspended,
+                })
+            })
             .collect()
     }
 

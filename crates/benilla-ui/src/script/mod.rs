@@ -97,6 +97,7 @@ mod calendar;
 mod calls;
 mod camera_view;
 mod channel;
+mod channel_pane;
 mod char_sheet;
 mod char_stats;
 mod chat_misc;
@@ -289,6 +290,7 @@ pub use bind_confirm::PendingEquipAnswer;
 pub use calls::{CastAt, NearestMode, ScriptCall};
 pub use camera_view::{CameraViewRequest, CAMERA_VIEW_COUNT};
 pub use channel::{ChannelCommand, ZoneChannelRow};
+pub use channel_pane::ChannelSlotInfo;
 pub use char_stats::{
     weapon_subclass_skill, BankBagSlots, InvSlotView, InventorySlots, UnitCombatStats,
     BANK_BAG_SLOT_COUNT, INVENTORY_SLOT_COUNT, SKILL_DEFENSE, SKILL_UNARMED,
@@ -967,6 +969,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     chat_types::install(lua)?;
     chat_misc::install(lua)?;
     channel::install(lua)?;
+    channel_pane::install(lua)?;
     chat_window::install(lua)?;
     client::install(lua)?;
     screenshot::install(lua)?;

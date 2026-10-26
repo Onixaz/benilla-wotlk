@@ -1415,6 +1415,8 @@ pub(super) fn writer_loop(
                         w.leave_channel(&name, channel_id)
                     }
                     ClientCommand::ChannelList { name } => w.channel_list(&name),
+                    ClientCommand::SetChannelWatch { name } => w.set_channel_watch(&name),
+                    ClientCommand::ChannelDisplayList { name } => w.channel_display_list(&name),
                     ClientCommand::RandomRoll { min, max } => w.random_roll(min, max),
                     ClientCommand::ChannelOwner { name } => w.channel_owner(&name),
                     ClientCommand::ChannelSetOwner { name, player } => {

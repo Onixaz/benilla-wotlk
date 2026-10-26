@@ -235,6 +235,24 @@ pub(super) fn install_voice(lua: &Lua) -> mlua::Result<()> {
         "GetNumVoiceSessions",
         lua.create_function(|_, _: mlua::MultiValue| Ok(0))?,
     )?;
+    // `GetVoiceSessionInfo(id)` (`0x7db0b0`): one nil, for a non-number and for an id no session
+    // holds.
+    g.set(
+        "GetVoiceSessionInfo",
+        lua.create_function(|_, _: mlua::MultiValue| Ok(Value::Nil))?,
+    )?;
+    // `GetNumVoiceSessionMembersBySessionID(id)` (`0x7db370`) and
+    // `GetVoiceSessionMemberInfoBySessionID(id, member)` (`0x7deef0`): zero values for an id no
+    // session holds.
+    for name in [
+        "GetNumVoiceSessionMembersBySessionID",
+        "GetVoiceSessionMemberInfoBySessionID",
+    ] {
+        g.set(
+            name,
+            lua.create_function(|_, _: mlua::MultiValue| Ok(mlua::MultiValue::new()))?,
+        )?;
+    }
     // `GetActiveVoiceChannel` (`0x4fbd40`) and `GetVoiceCurrentSessionID` (`0x7db1f0`): nil while
     // no channel carries voice and no session is current.
     for name in ["GetActiveVoiceChannel", "GetVoiceCurrentSessionID"] {
@@ -344,6 +362,26 @@ mod tests {
     fn no_voice_session_lists_nothing() {
         let s = UiScript::new().unwrap();
         assert_eq!(s.eval::<i64>("return GetNumVoiceSessions()").unwrap(), 0);
+        for call in ["GetVoiceSessionInfo(1)", "GetVoiceSessionInfo()"] {
+            assert_eq!(s.arity(call).unwrap(), 1, "{call}: one nil (`0x7db0b0`)");
+            assert!(s
+                .eval::<Option<String>>(&format!("return {call}"))
+                .unwrap()
+                .is_none());
+        }
+        for call in [
+            "GetNumVoiceSessionMembersBySessionID(1)",
+            "GetNumVoiceSessionMembersBySessionID(nil)",
+            "GetVoiceSessionMemberInfoBySessionID(1, 1)",
+        ] {
+            assert_eq!(s.arity(call).unwrap(), 0, "{call}: zero values");
+        }
+        // The stock pull-out roster's read (`ChannelFrame.lua:1020`).
+        assert_eq!(
+            s.eval::<i64>("return GetNumVoiceSessionMembersBySessionID(nil) or 0")
+                .unwrap(),
+            0
+        );
         for verb in ["GetActiveVoiceChannel", "GetVoiceCurrentSessionID"] {
             assert_eq!(s.arity(&format!("{verb}()")).unwrap(), 1, "{verb}");
             assert!(s

@@ -42,12 +42,60 @@ fn on_chat(
     }
 }
 
-fn on_channel_list(In(ev): In<SessionEvent>, mut chat_log: ResMut<ChatLog>) {
-    if let SessionEvent::ChannelList {
-        channel, members, ..
+/// `SMSG_CHANNEL_LIST` (`0x505dc0`): a display reply goes to the channel pane (`0x503990`) with
+/// the names the cache holds, the rest asked; any other prints the `/chatlist` roster.
+fn on_channel_list(
+    In(ev): In<SessionEvent>,
+    mut chat_log: ResMut<ChatLog>,
+    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    names: Option<Res<crate::names::NameCache>>,
+    commands: Option<Res<NetCommands>>,
+) {
+    let SessionEvent::ChannelList {
+        display,
+        channel,
+        flags,
+        members,
     } = ev
-    {
+    else {
+        return;
+    };
+    if !display {
         channel_list(channel, &members, &mut chat_log);
+        return;
+    }
+    debug!(
+        "chat: display list {channel:?} ({} members, flags {flags:#04x})",
+        members.len()
+    );
+    let Some(mut script) = script else {
+        return;
+    };
+    script.display_channel_list(&channel, flags, &members, |guid| {
+        let (Some(names), Some(commands)) = (names.as_deref(), commands.as_deref()) else {
+            return None;
+        };
+        names
+            .answer(crate::names::NameKey::Player(guid), guid, commands)
+            .map(|name| name.map(str::to_string))
+    });
+}
+
+/// The channel pane's roster waits on the name cache (`0x4ffe30`): each answer that has landed is
+/// handed over, and the last one fires the roster's events.
+pub(super) fn feed_channel_roster_names(
+    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    names: Option<Res<crate::names::NameCache>>,
+    commands: Option<Res<NetCommands>>,
+) {
+    let (Some(mut script), Some(names), Some(commands)) = (script, names, commands) else {
+        return;
+    };
+    for guid in script.channel_roster_unnamed() {
+        if let Some(answer) = names.answer(crate::names::NameKey::Player(guid), guid, &commands) {
+            let answer = answer.map(str::to_string);
+            script.channel_roster_named(guid, answer);
+        }
     }
 }
 

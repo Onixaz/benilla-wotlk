@@ -1882,6 +1882,14 @@ pub(crate) enum ClientCommand {
     ChannelList {
         name: String,
     },
+    /// The channel pane's selection: `CMSG_SET_CHANNEL_WATCH`.
+    SetChannelWatch {
+        name: String,
+    },
+    /// The channel pane's roster ask: `CMSG_CHANNEL_DISPLAY_LIST`.
+    ChannelDisplayList {
+        name: String,
+    },
     /// `/random [min] [max]` (`MSG_RANDOM_ROLL`).
     RandomRoll {
         min: u32,

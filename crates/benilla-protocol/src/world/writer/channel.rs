@@ -32,6 +32,23 @@ impl WorldWriter {
         self.send(opcode::CMSG_CHANNEL_LIST, &messages::channel_list(name))
     }
 
+    /// Watch the channel the pane shows (`CMSG_SET_CHANNEL_WATCH`, `0x504490`).
+    pub fn set_channel_watch(&mut self, name: &str) -> Result<()> {
+        self.send(
+            opcode::CMSG_SET_CHANNEL_WATCH,
+            &messages::channel_list(name),
+        )
+    }
+
+    /// Ask the pane's roster (`CMSG_CHANNEL_DISPLAY_LIST`, `0x4fe530`), answered by a display
+    /// `SMSG_CHANNEL_LIST`.
+    pub fn channel_display_list(&mut self, name: &str) -> Result<()> {
+        self.send(
+            opcode::CMSG_CHANNEL_DISPLAY_LIST,
+            &messages::channel_list(name),
+        )
+    }
+
     /// Set a channel's password (`CMSG_CHANNEL_PASSWORD`); owner only.
     pub fn channel_password(&mut self, name: &str, password: &str) -> Result<()> {
         self.send(

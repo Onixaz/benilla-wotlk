@@ -273,6 +273,8 @@ pub(crate) struct Model {
 
     /// Channels the server confirmed, in join order: the numbers `GetChannelName` answers.
     pub(crate) joined_channels: Vec<Option<String>>,
+    /// The channel pane's display list, selection and roster.
+    pub(crate) channel_pane: super::channel_pane::ChannelPane,
     /// The party or raid roster the app pushes; the default is not in a group.
     pub(crate) party: party::PartyState,
     /// The instance difficulties the app pushes, `GetDungeonDifficulty`'s and `GetRaidDifficulty`'s.
@@ -1256,6 +1258,7 @@ impl Model {
             input: Default::default(),
             drop_item_on_unit: Vec::new(),
             joined_channels: Vec::new(),
+            channel_pane: Default::default(),
             party: party::PartyState::default(),
             difficulty: Default::default(),
             lfg_restricted: false,

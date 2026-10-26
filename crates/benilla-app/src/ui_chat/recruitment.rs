@@ -151,7 +151,7 @@ pub(super) fn guild_recruitment_cascade(
             match channels.claim_slot(&name) {
                 Some(n) => {
                     debug!("chat: {name:?} registered as slot {n}");
-                    script.set_joined_channels(channels.names());
+                    script.set_channel_slots(channels.ui_slots());
                 }
                 None => warn!(
                     "chat: no free slot for {name:?} — all {} are taken",

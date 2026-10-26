@@ -761,8 +761,9 @@ fn parse_server_body(
             ServerPacket::ChannelNotify(channel::read_channel_notify_wotlk(&mut r)?)
         }
         opcode::SMSG_CHANNEL_LIST => {
-            let (name, flags, members) = channel::read_channel_list(&mut r)?;
+            let (display, name, flags, members) = channel::read_channel_list(&mut r)?;
             ServerPacket::ChannelList {
+                display,
                 channel: name,
                 flags,
                 members,

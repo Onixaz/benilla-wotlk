@@ -147,10 +147,12 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             tail: n.tail,
         }],
         ServerPacket::ChannelList {
+            display,
             channel,
             flags,
             members,
         } => vec![SessionEvent::ChannelList {
+            display,
             channel,
             flags,
             members,

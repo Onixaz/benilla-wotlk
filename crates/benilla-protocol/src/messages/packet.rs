@@ -495,8 +495,10 @@ pub enum ServerPacket {
     MessageChat(ChatMessage),
     /// `SMSG_CHANNEL_NOTIFY`: a channel join, leave, error or moderation notice.
     ChannelNotify(ChannelNotify),
-    /// `SMSG_CHANNEL_LIST`: a channel's roster, `(guid, memberFlags)` per member.
+    /// `SMSG_CHANNEL_LIST`: a channel's roster, `(guid, memberFlags)` per member; `display` is the
+    /// channel pane's reply, else the `/chatlist` one.
     ChannelList {
+        display: bool,
         channel: String,
         flags: u8,
         members: Vec<(u64, u8)>,

@@ -643,8 +643,10 @@ pub enum SessionEvent {
         channel: String,
         tail: ChannelNoticeTail,
     },
-    /// A channel roster (`SMSG_CHANNEL_LIST`), member flags per vmangos `Chat/Channel.h:119-130`.
+    /// A channel roster (`SMSG_CHANNEL_LIST`), `(guid, memberFlags)` per member; `display` is the
+    /// channel pane's reply (`0x503990`), else the `/chatlist` one.
     ChannelList {
+        display: bool,
         channel: String,
         flags: u8,
         members: Vec<(u64, u8)>,

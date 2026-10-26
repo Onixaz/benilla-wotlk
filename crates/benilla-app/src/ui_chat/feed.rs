@@ -559,7 +559,6 @@ pub(super) fn deliver(
                     "chat: server confirms channel {:?} joined (slot {slot})",
                     event.channel
                 );
-                script.set_joined_channels(channels.names());
             }
             // All ten slots taken: no number, as in the reference, whose slot allocator also
             // prints `ERR_TOO_MANY_CHAT_CHANNELS` (`0x199` at `0x49b9c5`); here it is only logged.
@@ -574,6 +573,8 @@ pub(super) fn deliver(
     // A custom channel's confirmed join enters the chat cache's re-join list, under its number.
     if notice == Some(channel_notice::YOU_JOINED) {
         channels.note_custom_channel_joined(&event.channel);
+        // Every confirmed join relists the channel pane before the notice prints (`0x507880`).
+        script.set_channel_slots(channels.ui_slots());
     }
     // The wire name, kept before `stamp_channel` decorates arg4 with the slot number.
     let leaving = (notice == Some(channel_notice::YOU_LEFT)).then(|| event.channel.clone());
@@ -596,13 +597,14 @@ pub(super) fn deliver(
             // Cleared in place, never compacted: slot 3 stays 3 when slot 2 empties.
             let freed = channels.free_slot(&name);
             debug!("chat: server confirms channel {name:?} left (slot {freed:?} now free)");
-            script.set_joined_channels(channels.names());
         }
+        // Either leg relists the channel pane (`0x507900`).
+        script.set_channel_slots(channels.ui_slots());
     }
     if let Some(name) = refused {
         let freed = channels.free_slot(&name);
         debug!("chat: server refused channel {name:?} (slot {freed:?} now free)");
-        script.set_joined_channels(channels.names());
+        script.set_channel_slots(channels.ui_slots());
     }
 }
 

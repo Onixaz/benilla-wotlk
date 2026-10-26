@@ -182,10 +182,12 @@ pub(super) fn read_channel_notify_wotlk(r: &mut &[u8]) -> io::Result<ChannelNoti
     })
 }
 
-/// `SMSG_CHANNEL_LIST` (`Chat/Channel.cpp:513-556`): `(channel, flags, members)`, each member a
-/// guid and its `ChannelMemberFlags` (`Chat/Channel.h:119-130`).
+/// `SMSG_CHANNEL_LIST` (handler `0x505dc0`): `(display, channel, flags, members)`, each member a
+/// guid and its `ChannelMemberFlags`. A non-zero display byte routes the body to the channel pane
+/// (`0x505de5` → `0x503990`), zero to the `/chatlist` print.
 #[allow(clippy::type_complexity)]
-pub(super) fn read_channel_list(r: &mut &[u8]) -> io::Result<(String, u8, Vec<(u64, u8)>)> {
+pub(super) fn read_channel_list(r: &mut &[u8]) -> io::Result<(bool, String, u8, Vec<(u64, u8)>)> {
+    let display = read_u8(r)? != 0;
     let channel = read_cstring(r)?;
     let flags = read_u8(r)?;
     let count = read_u32_le(r)?;
@@ -196,5 +198,5 @@ pub(super) fn read_channel_list(r: &mut &[u8]) -> io::Result<(String, u8, Vec<(u
         let member_flags = read_u8(r)?;
         members.push((guid, member_flags));
     }
-    Ok((channel, flags, members))
+    Ok((display, channel, flags, members))
 }

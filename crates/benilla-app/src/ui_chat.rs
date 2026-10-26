@@ -135,6 +135,8 @@ impl Plugin for UiChatPlugin {
             )
             // `RequestTimePlayed()` -> `CMSG_PLAYED_TIME`; `SMSG_PLAYED_TIME` -> `TIME_PLAYED_MSG`.
             .add_systems(Update, feed::played_time_bridge.in_set(UiFeed))
+            // The channel pane's roster names, as the name cache answers them.
+            .add_systems(Update, net::feed_channel_roster_names.in_set(UiFeed))
             .add_systems(
                 Update,
                 (

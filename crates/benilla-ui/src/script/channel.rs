@@ -93,6 +93,14 @@ pub enum ChannelCommand {
     ToggleAnnouncements {
         name: String,
     },
+    /// The channel pane's new selection (`0x504490`): `CMSG_SET_CHANNEL_WATCH`.
+    Watch {
+        name: String,
+    },
+    /// The channel pane's roster ask (`0x4fe530`): `CMSG_CHANNEL_DISPLAY_LIST`.
+    DisplayList {
+        name: String,
+    },
 }
 
 impl super::UiScript {
@@ -507,10 +515,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 }
 
 impl super::UiScript {
-    /// Mirror the app's confirmed-joined channels in join order, `None` for a freed slot;
-    /// `ui_chat::feed` pushes it on each `YOU_JOINED` and `YOU_LEFT`.
+    /// Mirror the joined channels in join order by name alone, `None` for a freed slot, each a
+    /// live custom channel to the channel pane; the app pushes [`Self::set_channel_slots`].
     pub fn set_joined_channels(&mut self, joined: Vec<Option<String>>) {
-        set_field!(self, joined_channels, joined);
+        self.set_channel_slots(
+            joined
+                .into_iter()
+                .map(|name| {
+                    name.map(|name| super::ChannelSlotInfo {
+                        name,
+                        shortcut: None,
+                        active: true,
+                    })
+                })
+                .collect(),
+        );
     }
 }
 

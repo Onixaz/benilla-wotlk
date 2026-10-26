@@ -370,6 +370,11 @@ pub const CMSG_CHANNEL_BAN: u16 = 0x00A5; // 165
 pub const CMSG_CHANNEL_UNBAN: u16 = 0x00A6; // 166
 pub const CMSG_CHANNEL_ANNOUNCEMENTS: u16 = 0x00A7; // 167
 pub const CMSG_CHANNEL_MODERATE: u16 = 0x00A8; // 168
+/// 3.3.5a only: the channel pane's roster ask (`0x504ee2`), `cstring channelName`, answered by an
+/// `SMSG_CHANNEL_LIST` whose display byte is set.
+pub const CMSG_CHANNEL_DISPLAY_LIST: u16 = 0x03D2; // 978
+/// 3.3.5a only: the channel the pane now shows (`0x504555`), `cstring channelName`.
+pub const CMSG_SET_CHANNEL_WATCH: u16 = 0x03EF; // 1007
 
 /// The ignore notice ("Name is now ignoring you"): a raw `u64` guid (`Misc.cpp:127-130`).
 pub const CMSG_CHAT_IGNORED: u16 = 0x0225; // 549

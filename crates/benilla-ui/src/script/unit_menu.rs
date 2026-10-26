@@ -302,10 +302,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "IsMuted",
         lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
     )?;
-    // IsDisplayChannelOwner/Moderator (`0x4ffa70`/`0x4ffae0`): the channel pane selects none.
-    for name in ["IsDisplayChannelOwner", "IsDisplayChannelModerator"] {
-        g.set(name, lua.create_function(|_, ()| Ok(Value::Nil))?)?;
-    }
 
     // CanGrantLevel(unit) (`0x51d230`): 1 when the player check answers 0, else nil.
     g.set(

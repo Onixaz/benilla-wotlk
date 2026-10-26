@@ -70,7 +70,7 @@ fn end_channel_session(
     cascade.clear_session();
     channels.joined.clear();
     if let Some(script) = script {
-        script.set_joined_channels(Vec::new());
+        script.set_channel_slots(Vec::new());
     }
 }
 
@@ -85,7 +85,7 @@ pub(super) fn seed_channels(
         return;
     };
     if seeded.claim(&script) {
-        script.set_joined_channels(channels.names());
+        script.set_channel_slots(channels.ui_slots());
     }
 }
 
@@ -439,7 +439,7 @@ pub(super) fn auto_join_zone_channels(
     if apply_walk(&steps, &mut channels, &commands) {
         if let Some(script) = script.as_mut() {
             // `GetChannelName(n)` answers the new name from this frame on, as in the reference.
-            script.set_joined_channels(channels.names());
+            script.set_channel_slots(channels.ui_slots());
         }
     }
     walk.at = Some(zone_id);

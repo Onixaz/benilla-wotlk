@@ -58,17 +58,19 @@ fn text_emote_and_emote_decode() {
     ));
 }
 
-/// `SMSG_CHANNEL_LIST` (vmangos `Chat/Channel.cpp:513-556`): cstring channel, `u8` flags, `u32`
-/// count, then `(u64 guid, u8 memberFlags)` rows.
+/// `SMSG_CHANNEL_LIST` (`0x505dc0`): `u8` display, cstring channel, `u8` flags, `u32` count, then
+/// `(u64 guid, u8 memberFlags)` rows.
 #[test]
 fn channel_list_decodes_roster() {
-    let body = hx("47656e6572616c001802000000011000000000000001021000000000000000");
+    let body = hx("0147656e6572616c001802000000011000000000000001021000000000000000");
     match messages::parse_server(messages::opcode::SMSG_CHANNEL_LIST, &body).unwrap() {
         ServerPacket::ChannelList {
+            display,
             channel,
             flags,
             members,
         } => {
+            assert!(display, "a non-zero first byte is the channel pane's reply");
             assert_eq!(channel, "General");
             assert_eq!(flags, 0x18);
             assert_eq!(members, vec![(0x1001, 0x01), (0x1002, 0x00)]);
