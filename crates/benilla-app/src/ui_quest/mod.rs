@@ -154,6 +154,12 @@ impl QuestGiver {
         self.messages.push(msg);
     }
 
+    /// Whether a refusal waits for [`Self::take_messages`]: read first, so an idle frame leaves the
+    /// giver unmarked for the readers gated on it (the minimap's blip classes among them).
+    pub(crate) fn has_messages(&self) -> bool {
+        !self.messages.is_empty()
+    }
+
     pub(crate) fn take_messages(&mut self) -> Vec<UiError> {
         std::mem::take(&mut self.messages)
     }
@@ -436,18 +442,22 @@ pub(crate) fn feed_quest(
     let last = last.get(&script);
     let last_name = last_name.get(&script);
     let last_npc = last_npc.get(&script);
-    if giver.take_completed_fanfare() {
+    // Each take reads first: a `Mut` take on an idle frame would mark the giver changed.
+    if giver.completed_fanfare && giver.take_completed_fanfare() {
         script.queue_sound_kit("QUESTCOMPLETED");
     }
     // Before the snapshot's early-out, so a refusal that closes the panel still prints.
-    let lines: Vec<Shown> = giver
-        .take_messages()
-        .into_iter()
-        .filter_map(|msg| {
-            let get = |key: &str| script.lua().globals().get::<String>(key).ok();
-            ui_error_text(&msg, &get).map(|text| Shown::keyed(msg.key, text))
-        })
-        .collect();
+    let lines: Vec<Shown> = if giver.has_messages() {
+        giver.take_messages()
+    } else {
+        Vec::new()
+    }
+    .into_iter()
+    .filter_map(|msg| {
+        let get = |key: &str| script.lua().globals().get::<String>(key).ok();
+        ui_error_text(&msg, &get).map(|text| Shown::keyed(msg.key, text))
+    })
+    .collect();
     show_messages(&mut script, &mut sink, "ui_quest", lines);
     let player = crate::npc_text::player_identity(&self_q, &names, &commands);
     let fresh = snapshot(

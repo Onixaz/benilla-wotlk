@@ -1742,15 +1742,27 @@ mod tests {
             ))
             .id();
         app.insert_non_send_resource(UiScript::new().unwrap());
-        app.init_resource::<crate::spell::SpellModifiers>();
-        // The item-stats feed shares the item cache it is gated on: idle, it must not mark it.
+        app.init_resource::<crate::spell::SpellModifiers>()
+            .init_resource::<crate::ui_quest::QuestGiver>()
+            .init_resource::<crate::go_templates::GameObjectTemplates>();
+        // The item-stats and quest feeds share caches others are gated on: idle, they must not
+        // mark them.
         app.add_systems(
             Update,
-            (crate::ui_items::feed::feed_item_stats, feed_quest_log).chain(),
+            (
+                crate::ui_items::feed::feed_item_stats,
+                crate::ui_quest::feed_quest,
+                feed_quest_log,
+            )
+                .chain(),
         );
         app.update();
         app.update();
         let items_marked = app.world().resource_ref::<Items>().last_changed();
+        let giver_marked = app
+            .world()
+            .resource_ref::<crate::ui_quest::QuestGiver>()
+            .last_changed();
         let marked = |app: &App| app.world().resource_ref::<QuestLog>().last_changed();
         let settled = marked(&app);
         app.update();
@@ -1760,6 +1772,13 @@ mod tests {
             app.world().resource_ref::<Items>().last_changed(),
             items_marked,
             "an idle item feed leaves the cache unmarked"
+        );
+        assert_eq!(
+            app.world()
+                .resource_ref::<crate::ui_quest::QuestGiver>()
+                .last_changed(),
+            giver_marked,
+            "an idle quest feed leaves the giver unmarked"
         );
 
         app.world_mut()
