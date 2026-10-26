@@ -677,12 +677,16 @@ pub(super) fn feed_spell_tooltips(
     // each equipment slot and the disarm flag, the level, cost bases and ranged attack time, the
     // block, dodge, parry and crit percentages, and the two units the melee range cell reads.
     let self_auras = self_auras.single().ok();
+    // This feed only reads the item cache and asks it for a missing template, which books a query
+    // and changes nothing a reader shows; the template's landing marks it. Through `Mut`, every
+    // frame's borrow would mark the cache changed for every feed gated on it.
+    let items: &mut Items = items.bypass_change_detection();
     let seen = Seen::of(
         self_store,
         home_area.as_deref(),
         RangeSeen::of(&caster_unit, attack_target.as_ref()),
         &objects,
-        &items,
+        items,
         self_auras,
     );
     let mut changes = memory
@@ -714,7 +718,7 @@ pub(super) fn feed_spell_tooltips(
         .map(|&entry| {
             (
                 entry,
-                reagent_state(entry, self_store, &objects, &mut items, &commands),
+                reagent_state(entry, self_store, &objects, items, &commands),
             )
         })
         .collect();
@@ -754,7 +758,7 @@ pub(super) fn feed_spell_tooltips(
             range_caster: caster_unit,
             attack_target,
             objects: &objects,
-            items: &mut items,
+            items: &mut *items,
             commands: &commands,
             sub_classes: sub_classes.as_deref().map(|c| &c.0),
             skill_lines: skill_lines.as_deref().map(|s| &*s.catalog),

@@ -1742,14 +1742,25 @@ mod tests {
             ))
             .id();
         app.insert_non_send_resource(UiScript::new().unwrap());
-        app.add_systems(Update, feed_quest_log);
+        app.init_resource::<crate::spell::SpellModifiers>();
+        // The item-stats feed shares the item cache it is gated on: idle, it must not mark it.
+        app.add_systems(
+            Update,
+            (crate::ui_items::feed::feed_item_stats, feed_quest_log).chain(),
+        );
         app.update();
         app.update();
+        let items_marked = app.world().resource_ref::<Items>().last_changed();
         let marked = |app: &App| app.world().resource_ref::<QuestLog>().last_changed();
         let settled = marked(&app);
         app.update();
         app.update();
         assert_eq!(marked(&app), settled, "nothing moved: no rebuild");
+        assert_eq!(
+            app.world().resource_ref::<Items>().last_changed(),
+            items_marked,
+            "an idle item feed leaves the cache unmarked"
+        );
 
         app.world_mut()
             .get_mut::<ObjectStore>(player)

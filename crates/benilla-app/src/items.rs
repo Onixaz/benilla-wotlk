@@ -466,6 +466,12 @@ impl Items {
             .collect()
     }
 
+    /// Whether a template landed since the last [`Self::take_fresh`]: read first, so an idle frame
+    /// leaves the cache unmarked for every reader gated on it.
+    pub(crate) fn has_fresh(&self) -> bool {
+        !self.fresh.is_empty()
+    }
+
     /// Drain the entries whose template landed since the last drain.
     pub(crate) fn take_fresh(&mut self) -> Vec<u32> {
         std::mem::take(&mut self.fresh)

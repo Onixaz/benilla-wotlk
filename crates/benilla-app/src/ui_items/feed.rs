@@ -432,7 +432,7 @@ pub(super) fn feed_random_properties(
 /// The item-tooltip feed: every template that lands is pushed unprompted, so the first hover never
 /// misses, as the reference reads one item cache synchronously; a read of an unresolved id records
 /// a miss, which queries it here.
-pub(super) fn feed_item_stats(
+pub(crate) fn feed_item_stats(
     script: Option<NonSendMut<UiScript>>,
     mut items: ResMut<Items>,
     commands: Res<NetCommands>,
@@ -484,7 +484,9 @@ pub(super) fn feed_item_stats(
         pending.extend(items.cached_template_ids());
     }
 
-    pending.extend(items.take_fresh());
+    if items.has_fresh() {
+        pending.extend(items.take_fresh());
+    }
     pending.extend(script.take_item_stat_asks());
     if spell_mods.is_changed() || reads_changed || caster_sources.changed() {
         pending.extend(mod_sensitive.iter().copied());
