@@ -465,10 +465,10 @@ fn prepare_static_gx(
     // The kill-bit sync: on a new bitmap revision, rewrite the kill column, re-upload and rebuild
     // the runs. A cell that changed out of view syncs on re-entry.
     for vis in &gx.visible {
-        let GxDoodadVis::Cell(cell) = vis else {
-            continue; // prop regions carry no faders
-        };
-        let (Some(gpu), Some(draw)) = (cache.cells.get_mut(cell), gx.cells.get(cell)) else {
+        let (Some(gpu), Some(draw)) = (match vis {
+            GxDoodadVis::Cell(cell) => (cache.cells.get_mut(cell), gx.cells.get(cell)),
+            GxDoodadVis::Prop(entity, _) => (cache.props.get_mut(entity), gx.props.get(entity)),
+        }) else {
             continue;
         };
         if gpu.killed_applied == draw.killed_rev {

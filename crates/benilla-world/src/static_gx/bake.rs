@@ -133,6 +133,7 @@ pub(super) fn flush_static_gx(mut gx: ResMut<StaticGx>, mut meshes: ResMut<Asset
                 i.prop.as_ref().map_or(0, |p| p.set),
             )
         });
+        remap_fader_items(state);
         let mut baked = bake_cell(&state.items, &mut meshes);
         baked.sets = state.sets.clone();
         debug!(
@@ -618,6 +619,7 @@ mod tests {
             instance,
             groups: Arc::clone(groups),
             slot,
+            key: 0,
         };
         // Set B arrives first, so the dedup gives B index 0 and A index 1.
         let mut b = batch(&g, Vec3::new(1.0, 0.0, 1.0), None, ModelBlend::Opaque);

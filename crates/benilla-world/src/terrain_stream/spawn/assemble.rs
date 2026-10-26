@@ -355,8 +355,22 @@ pub fn spawn_model_entities(
                         instance,
                         groups,
                         slot,
+                        key,
                     } if !is_wmo && class.merges() => {
-                        if steady_interior_prop || class.never_fade {
+                        // An exterior fader prop enters with its seed, as a doodad does, and
+                        // returns as an entity inside its fade band.
+                        let fade_seed = (!steady_interior_prop
+                            && !class.never_fade
+                            && !crate::static_gx::fade_lane_disabled())
+                        .then(|| crate::static_gx::GxFadeSeed {
+                            size: fade.size,
+                            local_center,
+                            stat_mesh: stat_mesh.clone(),
+                            aabb: *stat_aabb,
+                            cutout: cutout.clone(),
+                            blend: blend.clone(),
+                        });
+                        if steady_interior_prop || class.never_fade || fade_seed.is_some() {
                             Some((
                                 (0, 0), // prop items release by instance death too
                                 None,
@@ -364,11 +378,12 @@ pub fn spawn_model_entities(
                                     instance: *instance,
                                     groups: std::sync::Arc::clone(groups),
                                     slot: *slot,
+                                    key: *key,
                                 }),
-                                None,
+                                fade_seed,
                             ))
                         } else {
-                            gx.tally_prop_declined(false); // an exterior fader prop
+                            gx.tally_prop_declined(false); // an exterior fader, fade lane off
                             None
                         }
                     }

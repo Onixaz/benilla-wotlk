@@ -6,7 +6,8 @@
 //!
 //! Declined batches fall through to the merge or entity path, counted in a census: env-mapped
 //! (`texture_unit_lookup > 2`, view-generated UVs), depth-flagged, the `ShadeSel::Rig` family,
-//! exterior fader props, and props of a placement without a portal instance.
+//! exterior fader props under `WOW_STATIC_GX_FADE=0`, and props of a placement without a portal
+//! instance.
 
 use bevy::camera::primitives::Aabb;
 use bevy::mesh::MeshVertexAttribute;
@@ -178,6 +179,8 @@ struct GxFader {
     /// Band edges from [`crate::model_fade::fade_band`], for the cell ring test only.
     near: f32,
     far: f32,
+    /// A WMO prop's building and naming rooms, which its exiled entities are culled by.
+    room: Option<(Entity, Arc<[u16]>)>,
     batches: Vec<GxFaderBatch>,
     /// This placement's item indices in the current bake, refreshed by every flush.
     items: Vec<u16>,
@@ -249,6 +252,15 @@ impl GxCell {
             .values()
             .fold((f32::MAX, 0.0), |(n, x), f| (n.min(f.near), x.max(f.far)));
         self.settled = None;
+    }
+
+    /// Hand every exile's entities to `pending`: the region is going, and they are its own.
+    pub(super) fn queue_exiles(&mut self, pending: &mut Vec<Entity>) {
+        for f in self.faders.values_mut() {
+            if let FaderState::Exiled { ents, .. } = &mut f.state {
+                pending.append(ents);
+            }
+        }
     }
 
     /// Re-derive every fader's band at the live `environmentDetail`, then the ring.
@@ -333,6 +345,9 @@ pub struct GxPropBatch {
     pub instance: Entity,
     pub groups: Arc<[u16]>,
     pub slot: Option<u16>,
+    /// The prop's index in its building's doodad list, its fader key: a building's props all
+    /// carry the placement's object id.
+    pub key: u32,
 }
 
 /// The fader half of [`GxBatch`]: the fade sphere and the bundle the exile respawns.
@@ -359,6 +374,8 @@ pub enum GxSite<'a> {
         instance: Entity,
         groups: &'a Arc<[u16]>,
         slot: Option<u16>,
+        /// [`GxPropBatch::key`].
+        key: u32,
     },
 }
 
@@ -494,6 +511,12 @@ impl StaticGx {
                 self.cells.entry(cell).or_default()
             }
         };
+        // A prop fader keys on its index in the building and carries its rooms for the exile.
+        let fader_uid = b
+            .fade
+            .as_ref()
+            .map(|_| b.prop.as_ref().map_or(b.object.id, |p| p.key));
+        let room = b.prop.as_ref().map(|p| (p.instance, Arc::clone(&p.groups)));
         // Props named by the same rooms share one set index, so the cull tests each set once.
         let prop = b.prop.map(|p| {
             let set = match entry
@@ -514,12 +537,10 @@ impl StaticGx {
         });
         // A new fader is Steady until the scan classifies it the frame its cell bakes, before the
         // bitmap rebuild, so one streaming in past its band never draws retained.
-        let fader_uid = b.fade.as_ref().map(|_| b.object.id);
-        if let Some(seed) = b.fade {
+        if let (Some(seed), Some(uid)) = (b.fade, fader_uid) {
             // Only faders carry a seed; a band-less size reads as always steady.
             let (near, far) =
                 crate::model_fade::fade_band(seed.size).unwrap_or((f32::MAX, f32::MAX));
-            let uid = b.object.id;
             let is_new = !entry.faders.contains_key(&uid);
             let fader = entry.faders.entry(uid).or_insert_with(|| GxFader {
                 owner: b.owner,
@@ -531,6 +552,7 @@ impl StaticGx {
                 center: b.transform.transform_point(seed.local_center),
                 near,
                 far,
+                room,
                 batches: Vec::new(),
                 items: Vec::new(),
                 state: FaderState::Steady,
@@ -587,8 +609,8 @@ impl StaticGx {
         true
     }
 
-    /// Count a prop the divert never sees: an exterior fader prop (the exile protocol has no prop
-    /// shape), or a prop of a placement without an instance entity.
+    /// Count a prop the divert never sees: an exterior fader prop with the fade lane off, or a
+    /// prop of a placement without an instance entity.
     pub fn tally_prop_declined(&mut self, no_instance: bool) {
         self.declined[if no_instance { 4 } else { 3 }] += 1;
     }
@@ -641,15 +663,12 @@ impl StaticGx {
     pub fn clear(&mut self) {
         let Self {
             cells,
+            props,
             pending_despawn,
             ..
         } = self;
-        for cell in cells.values_mut() {
-            for f in cell.faders.values_mut() {
-                if let FaderState::Exiled { ents, .. } = &mut f.state {
-                    pending_despawn.append(ents);
-                }
-            }
+        for cell in cells.values_mut().chain(props.values_mut()) {
+            cell.queue_exiles(pending_despawn);
         }
         self.cells.clear();
         self.wmos.clear();
@@ -899,6 +918,7 @@ mod tests {
             instance,
             groups: Arc::clone(groups),
             slot,
+            key: 0,
         };
         let mut b = batch(&g, Vec3::ZERO, None, ModelBlend::Opaque);
         b.shade = ShadeSel::Matte;
@@ -927,6 +947,88 @@ mod tests {
         assert!(!region.items[2].matte, "Shaded stays the 0.5 family");
         gx.clear();
         assert!(gx.props.is_empty() && gx.world.props.is_empty());
+    }
+
+    fn seed() -> GxFadeSeed {
+        GxFadeSeed {
+            size: 0.8,
+            local_center: Vec3::ZERO,
+            stat_mesh: Handle::default(),
+            aabb: None,
+            cutout: Handle::default(),
+            blend: Handle::default(),
+        }
+    }
+
+    /// A building's props share its object id, so a prop fader keys on its index in the building
+    /// and keeps the rooms its exile is culled by.
+    #[test]
+    fn a_prop_fader_keys_on_its_index_and_carries_its_rooms() {
+        let mut gx = StaticGx::default();
+        let g = tri([0.0; 3]);
+        let building = object(500);
+        let instance = Entity::PLACEHOLDER;
+        let rooms: Arc<[u16]> = Arc::from([2u16].as_slice());
+        for key in [4u32, 9] {
+            let mut b = batch_of(&building, &g, Vec3::ZERO, None, ModelBlend::Opaque);
+            b.shade = ShadeSel::Matte;
+            b.prop = Some(GxPropBatch {
+                instance,
+                groups: Arc::clone(&rooms),
+                slot: None,
+                key,
+            });
+            b.fade = Some(seed());
+            assert!(gx.divert(b));
+        }
+        let region = &gx.props[&instance];
+        assert_eq!(
+            region.faders.len(),
+            2,
+            "one exile unit per prop, not per building"
+        );
+        let f = &region.faders[&9];
+        assert_eq!(
+            f.room.as_ref().map(|(e, r)| (*e, r.as_ref())),
+            Some((instance, &[2u16][..]))
+        );
+        assert_eq!(
+            region.items.iter().filter(|i| i.fader == Some(4)).count(),
+            1
+        );
+        assert_eq!(
+            gx.declined[3], 0,
+            "an exterior fader prop is no longer declined"
+        );
+    }
+
+    #[test]
+    fn a_map_clear_queues_prop_exiles() {
+        let mut gx = StaticGx::default();
+        let g = tri([0.0; 3]);
+        let mut b = batch(&g, Vec3::ZERO, None, ModelBlend::Opaque);
+        b.shade = ShadeSel::Matte;
+        b.prop = Some(GxPropBatch {
+            instance: Entity::PLACEHOLDER,
+            groups: Arc::from([0u16].as_slice()),
+            slot: None,
+            key: 1,
+        });
+        b.fade = Some(seed());
+        assert!(gx.divert(b));
+        let ghost = Entity::from_raw_u32(42).unwrap();
+        gx.props
+            .get_mut(&Entity::PLACEHOLDER)
+            .unwrap()
+            .faders
+            .get_mut(&1)
+            .unwrap()
+            .state = FaderState::Exiled {
+            ents: vec![ghost],
+            armed: true,
+        };
+        gx.clear();
+        assert_eq!(gx.pending_despawn, vec![ghost]);
     }
 
     #[test]

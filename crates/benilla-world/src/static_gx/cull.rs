@@ -79,8 +79,9 @@ fn fade_trace() -> bool {
     *ON.get_or_init(|| std::env::var_os("WOW_GX_FADE_TRACE").is_some())
 }
 
-/// Spawn an exiled placement as `assemble.rs`'s own doodad bundle, seeded with the blend material
-/// and live fade alpha that the fade authority owns from the next `Update`.
+/// Spawn an exiled placement as `assemble.rs`'s own doodad bundle (a prop's with its rooms),
+/// seeded with the blend material and live fade alpha the fade authority owns from the next
+/// `Update`.
 fn spawn_exile(commands: &mut Commands, f: &GxFader, alpha: f32, admitted: bool) -> Vec<Entity> {
     let mut ents = Vec::with_capacity(f.batches.len());
     for b in &f.batches {
@@ -122,12 +123,152 @@ fn spawn_exile(commands: &mut Commands, f: &GxFader, alpha: f32, admitted: bool)
         if let Some(aabb) = b.aabb {
             e.insert((aabb, bevy::camera::visibility::NoAutoAabb));
         }
+        // A prop rides its rooms, as at its spawn site: the model-visibility authority culls it.
+        if let Some((instance, groups)) = &f.room {
+            e.insert(crate::wmo_portal::WmoGroupVis {
+                instance: *instance,
+                groups: std::sync::Arc::clone(groups),
+            });
+        }
         ents.push(e.id());
     }
     if fade_trace() {
         println!("GX_FADE_SPAWN uid={} ents={ents:?}", f.uid);
     }
     ents
+}
+
+/// One region's exile scan: arm last frame's spawns, step each fader across its band, and rebuild
+/// the kill bitmap of `draw` from the states. `admitted` is an exile's spawn-frame verdict; the
+/// entity path's own test runs from the next `Update`. Returns whether an exile waits to arm.
+fn scan_faders(
+    commands: &mut Commands,
+    cell: &mut super::GxCell,
+    draw: Option<&mut std::sync::Arc<super::render::GxCellDraw>>,
+    cam_pos: Vec3,
+    fade_events: &mut [u32; 3],
+    label: &dyn std::fmt::Display,
+    admitted: impl Fn(&GxFader) -> bool,
+) -> bool {
+    let Some((mn, mx)) = cell.fader_bounds else {
+        return false;
+    };
+    // The camera's distance range to the fader centres against the band union, with the
+    // hysteresis margin, so a wholesale verdict holds for every placement.
+    let dmin = cam_pos.distance(cam_pos.clamp(mn, mx));
+    let far = |c: f32, lo: f32, hi: f32| {
+        if (c - lo).abs() > (c - hi).abs() {
+            lo
+        } else {
+            hi
+        }
+    };
+    let corner = Vec3::new(
+        far(cam_pos.x, mn.x, mx.x),
+        far(cam_pos.y, mn.y, mx.y),
+        far(cam_pos.z, mn.z, mx.z),
+    );
+    let dmax = cam_pos.distance(corner);
+    let (near_min, far_max) = cell.ring;
+    let verdict = if dmax < near_min - FADE_HYST {
+        Some(true) // every placement steady, with margin
+    } else if dmin > far_max + FADE_HYST {
+        Some(false) // every placement gone, with margin
+    } else {
+        None // the ring straddles the cell: walk it
+    };
+    if verdict.is_some() && verdict == cell.settled && !cell.bits_stale {
+        return false;
+    }
+    let mut bits_changed = cell.bits_stale;
+    let mut unarmed_left = false;
+    for f in cell.faders.values_mut() {
+        // Last frame's exile spawns draw from this frame: arm their kill bits now.
+        if let FaderState::Exiled { armed, .. } = &mut f.state {
+            if !*armed {
+                *armed = true;
+                bits_changed = true;
+            }
+        }
+        let d = f.center.distance(cam_pos);
+        let old = f.class();
+        let new = fade_step(f.size, d, old);
+        if new == old {
+            continue;
+        }
+        let was_killed = matches!(
+            f.state,
+            FaderState::Exiled { armed: true, .. } | FaderState::Gone
+        );
+        if let FaderState::Exiled { ents, .. } = std::mem::replace(&mut f.state, FaderState::Steady)
+        {
+            for e in ents {
+                commands.entity(e).try_despawn();
+            }
+        }
+        f.state = match new {
+            FadeClass::Steady => {
+                fade_events[1] += 1;
+                FaderState::Steady
+            }
+            FadeClass::Gone => {
+                fade_events[2] += 1;
+                FaderState::Gone
+            }
+            FadeClass::Feather => {
+                fade_events[0] += 1;
+                let alpha = crate::model_fade::doodad_fade_alpha(f.size, d);
+                // Unarmed until the entities draw, unless it was Gone and is already killed.
+                let armed = old == FadeClass::Gone;
+                unarmed_left |= !armed;
+                FaderState::Exiled {
+                    ents: spawn_exile(commands, f, alpha, admitted(f)),
+                    armed,
+                }
+            }
+        };
+        let now_killed = matches!(
+            f.state,
+            FaderState::Exiled { armed: true, .. } | FaderState::Gone
+        );
+        if was_killed != now_killed {
+            bits_changed = true;
+        }
+        if fade_trace() {
+            println!(
+                "GX_FADE {label} uid={} {:?}->{:?} d={:.1} r={:.2}",
+                f.uid, old, new, d, f.size
+            );
+        }
+    }
+    // An unarmed exile must be revisited next frame whatever the ring says.
+    cell.settled = if unarmed_left { None } else { verdict };
+    if bits_changed {
+        if let Some(draw) = draw {
+            // Copy-on-write: the region is shared with the render world's extracted clone.
+            let draw = std::sync::Arc::make_mut(draw);
+            // Rebuilt whole from the states, so a re-bake's new indices cannot drift.
+            draw.killed.iter_mut().for_each(|w| *w = 0);
+            for f in cell.faders.values() {
+                let killed = match f.state {
+                    FaderState::Steady | FaderState::Exiled { armed: false, .. } => false,
+                    FaderState::Exiled { armed: true, .. } | FaderState::Gone => true,
+                };
+                if !killed {
+                    continue;
+                }
+                for &i in &f.items {
+                    let i = usize::from(i);
+                    if let Some(w) = draw.killed.get_mut(i / 64) {
+                        *w |= 1u64 << (i % 64);
+                    }
+                }
+            }
+            draw.killed_rev = draw.killed_rev.wrapping_add(1);
+        }
+        cell.bits_stale = false;
+    }
+    unarmed_left
 }
 
 /// Whether the last full cull's lists still answer: it read this draw epoch and fade generation,
@@ -206,7 +347,18 @@ pub(super) fn cull_cells(
     // tile (the straddler handoff is M2-only).
     wmos.retain(|e, _| instances.contains(*e));
     world.wmos.retain(|e, _| instances.contains(*e));
-    props.retain(|e, _| instances.contains(*e));
+    // A dead building's prop exiles are this lane's own: they go with it.
+    props.retain(|e, region| {
+        let live = instances.contains(*e);
+        if !live {
+            let mut ents = Vec::new();
+            region.queue_exiles(&mut ents);
+            for e in ents {
+                commands.entity(e).try_despawn();
+            }
+        }
+        live
+    });
     world.props.retain(|e, _| instances.contains(*e));
     world.visible.clear();
     world.visible_wmos.clear();
@@ -226,7 +378,7 @@ pub(super) fn cull_cells(
     let generation = crate::model_fade::fade_generation();
     if *fade_generation != generation {
         *fade_generation = generation;
-        for cell in cells.values_mut() {
+        for cell in cells.values_mut().chain(props.values_mut()) {
             cell.refresh_bands();
         }
     }
@@ -234,131 +386,41 @@ pub(super) fn cull_cells(
         if cell.faders.is_empty() {
             continue;
         }
-        let Some((mn, mx)) = cell.fader_bounds else {
-            continue;
-        };
-        // The camera's distance range to the fader centres against the band union, with the
-        // hysteresis margin, so a wholesale verdict holds for every placement.
-        let dmin = cam_pos.distance(cam_pos.clamp(mn, mx));
-        let far = |c: f32, lo: f32, hi: f32| {
-            if (c - lo).abs() > (c - hi).abs() {
-                lo
-            } else {
-                hi
-            }
-        };
-        let corner = Vec3::new(
-            far(cam_pos.x, mn.x, mx.x),
-            far(cam_pos.y, mn.y, mx.y),
-            far(cam_pos.z, mn.z, mx.z),
-        );
-        let dmax = cam_pos.distance(corner);
-        let (near_min, far_max) = cell.ring;
-        let verdict = if dmax < near_min - FADE_HYST {
-            Some(true) // every placement steady, with margin
-        } else if dmin > far_max + FADE_HYST {
-            Some(false) // every placement gone, with margin
-        } else {
-            None // the ring straddles the cell: walk it
-        };
-        if verdict.is_some() && verdict == cell.settled && !cell.bits_stale {
-            continue;
-        }
         // Cell-grain admission for the spawn frame; the entity path's own test runs next Update.
         let admitted = doodads_on
             && world.cells.get(&key).is_none_or(|d| {
                 gate.admits(&GlobalTransform::from_translation(d.origin), Some(&d.aabb))
             });
-        let mut bits_changed = cell.bits_stale;
-        let mut unarmed_left = false;
-        for f in cell.faders.values_mut() {
-            // Last frame's exile spawns draw from this frame: arm their kill bits now.
-            if let FaderState::Exiled { armed, .. } = &mut f.state {
-                if !*armed {
-                    *armed = true;
-                    bits_changed = true;
-                }
-            }
-            let d = f.center.distance(cam_pos);
-            let old = f.class();
-            let new = fade_step(f.size, d, old);
-            if new == old {
-                continue;
-            }
-            let was_killed = matches!(
-                f.state,
-                FaderState::Exiled { armed: true, .. } | FaderState::Gone
-            );
-            if let FaderState::Exiled { ents, .. } =
-                std::mem::replace(&mut f.state, FaderState::Steady)
-            {
-                for e in ents {
-                    commands.entity(e).try_despawn();
-                }
-            }
-            f.state = match new {
-                FadeClass::Steady => {
-                    fade_events[1] += 1;
-                    FaderState::Steady
-                }
-                FadeClass::Gone => {
-                    fade_events[2] += 1;
-                    FaderState::Gone
-                }
-                FadeClass::Feather => {
-                    fade_events[0] += 1;
-                    let alpha = crate::model_fade::doodad_fade_alpha(f.size, d);
-                    // Unarmed until the entities draw, unless it was Gone and is already killed.
-                    let armed = old == FadeClass::Gone;
-                    unarmed_left |= !armed;
-                    FaderState::Exiled {
-                        ents: spawn_exile(&mut commands, f, alpha, admitted),
-                        armed,
-                    }
-                }
-            };
-            let now_killed = matches!(
-                f.state,
-                FaderState::Exiled { armed: true, .. } | FaderState::Gone
-            );
-            if was_killed != now_killed {
-                bits_changed = true;
-            }
-            if fade_trace() {
-                println!(
-                    "GX_FADE cell=({},{}) uid={} {:?}->{:?} d={:.1} r={:.2}",
-                    key.0, key.1, f.uid, old, new, d, f.size
-                );
-            }
+        revisit |= scan_faders(
+            &mut commands,
+            cell,
+            world.cells.get_mut(&key),
+            cam_pos,
+            fade_events,
+            &format_args!("cell=({},{})", key.0, key.1),
+            |_| admitted,
+        );
+    }
+    // Prop regions by the same law, a fader admitted on the spawn frame by its rooms' PVS.
+    for (&entity, cell) in props.iter_mut() {
+        if cell.faders.is_empty() {
+            continue;
         }
-        // An unarmed exile must be revisited next frame whatever the ring says.
-        cell.settled = if unarmed_left { None } else { verdict };
-        revisit |= unarmed_left;
-        if bits_changed {
-            if let Some(draw) = world.cells.get_mut(&key) {
-                // Copy-on-write: the region is shared with the render world's extracted clone.
-                let draw = std::sync::Arc::make_mut(draw);
-                // Rebuilt whole from the states, so a re-bake's new indices cannot drift.
-                draw.killed.iter_mut().for_each(|w| *w = 0);
-                for f in cell.faders.values() {
-                    let killed = match f.state {
-                        FaderState::Steady | FaderState::Exiled { armed: false, .. } => false,
-                        FaderState::Exiled { armed: true, .. } | FaderState::Gone => true,
-                    };
-                    if !killed {
-                        continue;
-                    }
-                    for &i in &f.items {
-                        let i = usize::from(i);
-                        if let Some(w) = draw.killed.get_mut(i / 64) {
-                            *w |= 1u64 << (i % 64);
-                        }
-                    }
-                }
-                draw.killed_rev = draw.killed_rev.wrapping_add(1);
-            }
-            cell.bits_stale = false;
-        }
+        let inst = instances.get(entity).ok();
+        revisit |= scan_faders(
+            &mut commands,
+            cell,
+            world.props.get_mut(&entity),
+            cam_pos,
+            fade_events,
+            &format_args!("props={entity}"),
+            |f| {
+                doodads_on
+                    && f.room.as_ref().is_none_or(|(_, rooms)| {
+                        inst.is_none_or(|i| set_admitted(&i.visible, rooms))
+                    })
+            },
+        );
     }
 
     // The building the camera is in is not exterior to itself, for WMO groups and prop sets.
@@ -634,6 +696,99 @@ mod tests {
         assert!(!set_admitted(&vis, &[0, 2]));
         assert!(set_admitted(&vis, &[7]), "a missing bit fails open");
         assert!(set_admitted(&vis, &[]), "an unnamed prop is never culled");
+    }
+
+    /// A prop fader past its band near edge exiles as an entity on its rooms, its retained item
+    /// killed once the exile has drawn a frame, and comes back when the camera returns.
+    #[test]
+    fn a_prop_fader_exiles_with_its_rooms_and_returns() {
+        use super::super::testkit::{batch_of, object, tri};
+        use super::super::{GxFadeSeed, GxPropBatch};
+        use bevy::ecs::system::RunSystemOnce;
+        use std::sync::Arc;
+        let mut world = World::new();
+        world.init_resource::<Assets<Mesh>>();
+        let instance = world.spawn_empty().id();
+        let mut gx = StaticGx::default();
+        let g = tri([0.0; 3]);
+        let building = object(500);
+        let mut b = batch_of(
+            &building,
+            &g,
+            Vec3::ZERO,
+            None,
+            benilla_formats::ModelBlend::Opaque,
+        );
+        b.shade = crate::model_render::ShadeSel::Matte;
+        b.prop = Some(GxPropBatch {
+            instance,
+            groups: Arc::from([3u16].as_slice()),
+            slot: None,
+            key: 7,
+        });
+        b.fade = Some(GxFadeSeed {
+            size: 0.5, // fade level 0: the 25..30 yd band
+            local_center: Vec3::ZERO,
+            stat_mesh: Handle::default(),
+            aabb: None,
+            cutout: Handle::default(),
+            blend: Handle::default(),
+        });
+        assert!(gx.divert(b));
+        gx.flush_now = true;
+        world.insert_resource(gx);
+        world
+            .run_system_once(super::super::bake::flush_static_gx)
+            .unwrap();
+        let scan = move |cam: Vec3| {
+            move |mut commands: Commands, mut gx: ResMut<StaticGx>| {
+                let StaticGx {
+                    props,
+                    world,
+                    fade_events,
+                    ..
+                } = &mut *gx;
+                scan_faders(
+                    &mut commands,
+                    props.get_mut(&instance).unwrap(),
+                    world.props.get_mut(&instance),
+                    cam,
+                    fade_events,
+                    &"test",
+                    |_| true,
+                )
+            }
+        };
+        let killed =
+            |world: &World| world.resource::<StaticGx>().world.props[&instance].killed[0] & 1;
+        let band = Vec3::new(27.0, 0.0, 0.0);
+        assert!(
+            world.run_system_once(scan(band)).unwrap(),
+            "an exile waits to arm"
+        );
+        let mut exiles = world.query_filtered::<&crate::wmo_portal::WmoGroupVis, With<crate::model_render::ModelPart>>();
+        let rooms: Vec<Vec<u16>> = exiles.iter(&world).map(|v| v.groups.to_vec()).collect();
+        assert_eq!(
+            rooms,
+            vec![vec![3u16]],
+            "one exile, culled by the prop's rooms"
+        );
+        assert_eq!(
+            killed(&world),
+            0,
+            "the retained item draws until the exile has"
+        );
+        assert!(!world.run_system_once(scan(band)).unwrap());
+        assert_eq!(killed(&world), 1, "armed: the retained item is killed");
+
+        assert!(!world.run_system_once(scan(Vec3::ZERO)).unwrap());
+        world.flush();
+        assert_eq!(
+            exiles.iter(&world).count(),
+            0,
+            "back in: the exile despawned"
+        );
+        assert_eq!(killed(&world), 0, "and the retained item draws again");
     }
 
     #[test]

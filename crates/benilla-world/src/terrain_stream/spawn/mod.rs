@@ -559,7 +559,7 @@ pub(super) fn spawn_loaded_placements(
 
         // 2. Each WMO doodad prop as its M2 lands; its entities join `p.entities`.
         let portal_instance = p.portal_instance;
-        for d in &mut p.doodads {
+        for (prop_index, d) in p.doodads.iter_mut().enumerate() {
             if d.spawned {
                 continue;
             }
@@ -678,6 +678,7 @@ pub(super) fn spawn_loaded_placements(
                             instance,
                             groups: &d.groups,
                             slot: interior_slot,
+                            key: u32::try_from(prop_index).unwrap_or(u32::MAX),
                         },
                     )),
                     (None, Some(gx)) => {
