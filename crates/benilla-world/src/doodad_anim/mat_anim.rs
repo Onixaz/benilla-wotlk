@@ -687,7 +687,11 @@ pub(super) fn tick_anim_materials(
             &MeshMaterial3d<benilla_assets::materials::WowModelMaterial>,
             &Visibility,
         ),
-        With<AnimMatPart>,
+        // A parked part is long hidden, so never drawn.
+        (
+            With<AnimMatPart>,
+            Without<crate::model_render::park::ParkedMesh>,
+        ),
     >,
     twins: Res<crate::model_render::FarSideTwins>,
     hosts: SeqHosts,

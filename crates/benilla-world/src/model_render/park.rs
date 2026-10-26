@@ -19,9 +19,10 @@ use super::ModelPart;
 const PARK_AFTER_FRAMES: u16 = 30;
 
 /// The mesh a parked part put down, restored verbatim on unpark.
+/// A table column on purpose: the parked parts (most of a city's, ~18k at Dalaran) sit in tables
+/// of their own, so a per-part pass that has no business with them filters them out per table, not
+/// per row. The 30-frame hysteresis keeps the table moves rare.
 #[derive(Component)]
-// Sparse: parking toggles it, so it splits no table.
-#[component(storage = "SparseSet")]
 pub struct ParkedMesh(pub Handle<Mesh>);
 
 /// The run on which this part last went hidden (its own or an ancestor's verdict).

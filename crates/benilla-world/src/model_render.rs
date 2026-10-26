@@ -627,6 +627,7 @@ pub(crate) fn classify_water_side(
             (
                 With<GlobalTransform>,
                 Changed<MeshMaterial3d<WowModelMaterial>>,
+                Without<park::ParkedMesh>,
             ),
         >,
         Query<
@@ -649,6 +650,8 @@ pub(crate) fn classify_water_side(
         (
             With<MeshMaterial3d<WowModelMaterial>>,
             Without<crate::billboard::BillboardCard>,
+            // A parked part is undrawn; its unpark re-classifies it below.
+            Without<park::ParkedMesh>,
             Or<(
                 Changed<GlobalTransform>,
                 Changed<bevy::camera::visibility::RenderLayers>,
@@ -661,7 +664,11 @@ pub(crate) fn classify_water_side(
     rebanded: Query<Entity, Changed<crate::straddle::ModelWaterBand>>,
     clips: Res<crate::straddle::WaterClips>,
     children: Query<&Children>,
-    mut removed: RemovedComponents<MeshMaterial3d<WowModelMaterial>>,
+    // A batch losing its material (the twin GC's trigger), and a part unparked this frame.
+    (mut removed, mut unparked): (
+        RemovedComponents<MeshMaterial3d<WowModelMaterial>>,
+        RemovedComponents<park::ParkedMesh>,
+    ),
     time: Res<bevy::time::Time>,
     mut eye_was_submerged: Local<Option<bool>>,
     mut gc_due: Local<Option<f32>>,
@@ -730,7 +737,7 @@ pub(crate) fn classify_water_side(
         }
     } else {
         // Only the changed set; an entity dirty on two legs classifies twice, the second a no-op.
-        let handle_dirty: Vec<Entity> = set.p0().iter().collect();
+        let handle_dirty: Vec<Entity> = set.p0().iter().chain(unparked.read()).collect();
         let moved_cards: Vec<Entity> = cards.moved();
         let mut parts = set.p1();
         for e in moved.iter().chain(moved_cards).chain(handle_dirty) {
@@ -795,6 +802,7 @@ pub(crate) struct CardMoves<'w, 's> {
         (Entity, &'static crate::billboard::BillboardCard),
         (
             With<MeshMaterial3d<WowModelMaterial>>,
+            Without<park::ParkedMesh>,
             Or<(
                 Changed<crate::billboard::BillboardCard>,
                 Changed<GlobalTransform>,
@@ -1090,6 +1098,17 @@ pub struct ModelVisSet;
 
 #[cfg(test)]
 mod tests {
+    /// The parked parts sit apart in tables of their own, so the per-part passes that skip them
+    /// filter whole tables (`Without<ParkedMesh>`).
+    #[test]
+    fn parked_parts_are_tabled_apart() {
+        use bevy::ecs::component::{Component, StorageType};
+        assert!(matches!(
+            <super::park::ParkedMesh as Component>::STORAGE_TYPE,
+            StorageType::Table
+        ));
+    }
+
     /// The markers toggled at runtime, or read only by the census, live outside the tables: as
     /// table columns each would split its family's tables, and every query pays per table.
     #[test]
@@ -1103,10 +1122,6 @@ mod tests {
             (
                 "RigStarved",
                 <crate::rig_palette::RigStarved as Component>::STORAGE_TYPE,
-            ),
-            (
-                "ParkedMesh",
-                <super::park::ParkedMesh as Component>::STORAGE_TYPE,
             ),
             (
                 "EntityPathWhy",

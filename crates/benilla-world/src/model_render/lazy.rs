@@ -175,10 +175,14 @@ pub fn pending_len() -> usize {
 
 /// The rows [`realize_bound`] revisits: a parked handle is always a fresh binding, and
 /// `ViewVisibility` marks only a hidden-visible flip, so a still binding was settled already.
-type BoundMoved = Or<(
-    Changed<MeshMaterial3d<WowModelMaterial>>,
-    Changed<ViewVisibility>,
-)>;
+/// A parked part is never visible; its unpark flips `ViewVisibility` and brings it back here.
+type BoundMoved = (
+    Or<(
+        Changed<MeshMaterial3d<WowModelMaterial>>,
+        Changed<ViewVisibility>,
+    )>,
+    Without<super::park::ParkedMesh>,
+);
 
 /// Top of `PostUpdate`, before `AssetEventSystems` and `VisibilityPropagate`: realizes the
 /// material of every bound entity visible last frame and purges every handle reported unused.

@@ -136,13 +136,22 @@ pub(crate) struct ShadeDirtyRoots(bevy::ecs::entity::EntityHashSet);
 /// Flag the root above every part whose `MeshTag` changed; its own system, since the walk holds
 /// `&mut MeshTag`. The walk's own writes echo back for one frame, which then writes nothing.
 pub(crate) fn detect_shade_reclaims(
-    changed_parts: Query<Entity, (Changed<MeshTag>, Without<crate::billboard::BillboardCard>)>,
+    changed_parts: Query<
+        Entity,
+        (
+            Changed<MeshTag>,
+            Without<crate::billboard::BillboardCard>,
+            Without<crate::model_render::park::ParkedMesh>,
+        ),
+    >,
+    // A part unparked this frame may have taken another lane's tag while parked.
+    mut unparked: RemovedComponents<crate::model_render::park::ParkedMesh>,
     shade_roots: Query<(), With<GroundShade>>,
     child_of: Query<&ChildOf>,
     mut dirty: ResMut<ShadeDirtyRoots>,
 ) {
     dirty.0.clear();
-    for part in &changed_parts {
+    for part in changed_parts.iter().chain(unparked.read()) {
         let mut node = part;
         loop {
             if shade_roots.contains(node) {
@@ -246,13 +255,18 @@ pub(crate) fn update_ground_shade(
         Without<crate::billboard::BillboardCard>,
     >,
     // Cards are world roots the walk cannot reach; each resolves up from its owner instead.
-    mut cards: Query<(
-        Ref<crate::billboard::BillboardCard>,
-        &mut MeshTag,
-        Option<&InteriorLit>,
-        Has<InteriorProbePayload>,
-        Has<DoodadDefLit>,
-    )>,
+    mut cards: Query<
+        (
+            Entity,
+            Ref<crate::billboard::BillboardCard>,
+            &mut MeshTag,
+            Option<&InteriorLit>,
+            Has<InteriorProbePayload>,
+            Has<DoodadDefLit>,
+        ),
+        Without<crate::model_render::park::ParkedMesh>,
+    >,
+    mut unparked_cards: RemovedComponents<crate::model_render::park::ParkedMesh>,
     // Each shaded root's byte, kept across frames (entity ids are generational).
     mut root_shade: Local<bevy::ecs::entity::EntityHashMap<u8>>,
     // The card pass's up-walk: a card can follow a deep joint, which is not a shade root.
@@ -386,9 +400,11 @@ pub(crate) fn update_ground_shade(
     }
     // The cards: the reference shades every batch of an object through one node, so a card takes
     // the nearest shaded root above its owner (on a mounted unit, the mount's).
-    for (card, mut tag, lit, own_probe, own_def) in &mut cards {
-        // With no root byte moved, only a card re-placed or re-tagged since can be off its byte.
-        if !bytes_moved && !card.is_changed() && !tag.is_changed() {
+    let woke: bevy::ecs::entity::EntityHashSet = unparked_cards.read().collect();
+    for (entity, card, mut tag, lit, own_probe, own_def) in &mut cards {
+        // With no root byte moved, only a card re-placed, re-tagged or unparked since can be off
+        // its byte.
+        if !bytes_moved && !card.is_changed() && !tag.is_changed() && !woke.contains(&entity) {
             continue;
         }
         // As in the walk: walking up, a prop's card would reach a host that does not light it.
@@ -544,6 +560,76 @@ mod tests {
             shade_of(world.get::<MeshTag>(card).unwrap().0, ext),
             255,
             "the moved byte reaches the card"
+        );
+    }
+
+    /// A parked part's tag write is not watched, and its unpark flags its root all the same.
+    #[test]
+    fn a_parked_parts_unpark_flags_its_root() {
+        use crate::model_render::park::ParkedMesh;
+        let mut app = App::new();
+        app.init_resource::<ShadeDirtyRoots>()
+            .add_systems(Update, detect_shade_reclaims);
+        let root = app.world_mut().spawn(GroundShade::default()).id();
+        let part = app
+            .world_mut()
+            .spawn((MeshTag(7), ChildOf(root), ParkedMesh(Handle::default())))
+            .id();
+        app.update();
+        let dirty = |app: &App| app.world().resource::<ShadeDirtyRoots>().0.contains(&root);
+        assert!(!dirty(&app), "a parked part is not watched");
+        app.world_mut().get_mut::<MeshTag>(part).unwrap().0 = 42;
+        app.update();
+        assert!(!dirty(&app), "nor its tag writes while parked");
+        app.world_mut().entity_mut(part).remove::<ParkedMesh>();
+        app.update();
+        assert!(dirty(&app), "its unpark flags the root");
+    }
+
+    /// A parked card is left alone, and its unpark re-resolves it against a byte that moved.
+    #[test]
+    fn a_parked_card_takes_the_moved_byte_on_unpark() {
+        use crate::model_render::park::ParkedMesh;
+        let mut world = World::new();
+        world.init_resource::<Time>();
+        world.init_resource::<TerrainStreamer>();
+        world.init_resource::<Assets<AdtTile>>();
+        world.init_resource::<ShadeDirtyRoots>();
+        let root = world
+            .spawn((
+                GlobalTransform::default(),
+                GroundShade {
+                    sampled: true,
+                    ..GroundShade::default()
+                },
+            ))
+            .id();
+        let card = world
+            .spawn((
+                crate::billboard::BillboardCard::frame_following(
+                    benilla_formats::BillboardKind::Spherical,
+                    Vec3::ZERO,
+                    root,
+                ),
+                MeshTag(0),
+                ParkedMesh(Handle::default()),
+            ))
+            .id();
+        let mut sys = IntoSystem::into_system(update_ground_shade);
+        sys.initialize(&mut world);
+        let ext = exterior_payload(false, false).unwrap();
+        sys.run((), &mut world).unwrap();
+        assert_eq!(
+            world.get::<MeshTag>(card).unwrap().0,
+            0,
+            "parked: untouched"
+        );
+        world.entity_mut(card).remove::<ParkedMesh>();
+        sys.run((), &mut world).unwrap();
+        assert_eq!(
+            shade_of(world.get::<MeshTag>(card).unwrap().0, ext),
+            shade_byte(LIT_T),
+            "unparked: the root's byte"
         );
     }
 

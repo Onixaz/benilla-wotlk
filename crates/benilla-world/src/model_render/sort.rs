@@ -90,7 +90,13 @@ struct M2Sorts(HashMap<MainEntity, ExtractedM2Sort>);
 
 fn extract_m2_sort(
     mut sorts: ResMut<M2Sorts>,
-    parts: Extract<Query<(Entity, &ViewVisibility, &M2BatchSort, &GlobalTransform)>>,
+    // A parked part is never visible, so its tables are skipped whole.
+    parts: Extract<
+        Query<
+            (Entity, &ViewVisibility, &M2BatchSort, &GlobalTransform),
+            Without<super::park::ParkedMesh>,
+        >,
+    >,
     anchors: Extract<Query<&GlobalTransform>>,
 ) {
     sorts.0.clear();

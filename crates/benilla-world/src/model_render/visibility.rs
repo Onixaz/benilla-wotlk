@@ -17,6 +17,27 @@ use benilla_assets::materials::WowModelMaterial;
 /// Shows or hides each model submesh. A doodad or WMO part is culled once its bound lies wholly
 /// past the far-clip wall ([`crate::view::within_farclip`]), so a straddler dissolves through the
 /// per-pixel wall. Writes only on a flip.
+/// One part's row for [`apply_model_visibility`], the unparked and the parked query alike.
+type PartRow = (
+    Entity,
+    &'static ModelPart,
+    Ref<'static, GlobalTransform>,
+    &'static mut Visibility,
+    Option<&'static DoodadFade>,
+    Option<&'static mut MeshTag>,
+    Option<&'static mut MeshMaterial3d<WowModelMaterial>>,
+    Option<&'static Aabb>,
+    Option<Ref<'static, WmoGroupVis>>,
+    Option<Ref<'static, crate::doodad_anim::MatAnim>>,
+    Has<crate::exterior_cull::ExteriorScene>,
+    Option<Ref<'static, super::FarSideOfWater>>,
+    Option<&'static crate::billboard::BillboardCard>,
+    (
+        Option<&'static super::M2BatchSort>,
+        Option<&'static ChildOf>,
+    ),
+);
+
 #[allow(clippy::type_complexity)]
 pub(super) fn apply_model_visibility(
     debug: Res<DebugState>,
@@ -50,22 +71,26 @@ pub(super) fn apply_model_visibility(
     // `projectedTextures`, and the effect roots that draw their projected batches regardless.
     projected: Res<crate::view::ProjectedTextures>,
     forced_roots: Query<(), With<super::ForcedProjection>>,
-    mut q: Query<(
-        Entity,
-        &ModelPart,
-        Ref<GlobalTransform>,
-        &mut Visibility,
-        Option<&DoodadFade>,
-        Option<&mut MeshTag>,
-        Option<&mut MeshMaterial3d<WowModelMaterial>>,
-        Option<&Aabb>,
-        Option<Ref<WmoGroupVis>>,
-        Option<Ref<crate::doodad_anim::MatAnim>>,
-        Has<crate::exterior_cull::ExteriorScene>,
-        Option<Ref<super::FarSideOfWater>>,
-        Option<&crate::billboard::BillboardCard>,
-        (Option<&super::M2BatchSort>, Option<&ChildOf>),
-    )>,
+    // The parts, split at parking: the unparked walk in parallel every frame; the parked (most of
+    // a city's, in tables of their own) only when a scene input moved, else only the rows whose
+    // own input moved, which a tick scan finds without fetching a row.
+    (mut active, mut parked, parked_moved): (
+        Query<PartRow, Without<super::park::ParkedMesh>>,
+        Query<PartRow, With<super::park::ParkedMesh>>,
+        Query<
+            Entity,
+            (
+                With<ModelPart>,
+                With<super::park::ParkedMesh>,
+                Or<(
+                    Changed<GlobalTransform>,
+                    Changed<WmoGroupVis>,
+                    Changed<crate::doodad_anim::MatAnim>,
+                    Changed<super::FarSideOfWater>,
+                )>,
+            ),
+        >,
+    ),
     // A building's MLIQ surfaces: a `WmoGroupVis` but no `ModelPart`, so none of the submesh
     // rules. A query here rather than a second writer, so a culled room's water goes with it.
     mut group_only: Query<
@@ -104,172 +129,182 @@ pub(super) fn apply_model_visibility(
     );
     // The placement the camera stands in, exempt from its own window gate.
     let own_instance = claim.0.map(|c| c.room.instance);
-    // Parallel over every resident model submesh (~100k in a city); every write is change-gated.
+    // Parallel over the resident model submeshes (~29k in a city); every write is change-gated.
     let unmarked: bevy::platform::collections::HashSet<Entity> = unmarked.read().collect();
     let unmarked = &unmarked;
-    q.par_iter_mut().for_each(
-        |(
-            entity,
-            part,
-            xf,
-            mut vis,
-            fade,
-            tag,
-            mat,
-            aabb,
-            group_vis,
-            mat_anim,
-            exterior,
-            far_side,
-            card,
-            (batch_sort, parent),
-        )| {
-            if scene_still
-                && (unmarked.is_empty() || !unmarked.contains(&entity))
-                && !xf.is_changed()
-                && !group_vis.as_ref().is_some_and(|g| g.is_changed())
-                && !mat_anim.as_ref().is_some_and(|a| a.is_changed())
-                && !far_side.as_ref().is_some_and(|f| f.is_changed())
-            {
-                return;
+    let judge = |(
+        entity,
+        part,
+        xf,
+        mut vis,
+        fade,
+        tag,
+        mat,
+        aabb,
+        group_vis,
+        mat_anim,
+        exterior,
+        far_side,
+        card,
+        (batch_sort, parent),
+    ): bevy::ecs::query::QueryItem<'_, '_, PartRow>| {
+        if scene_still
+            && (unmarked.is_empty() || !unmarked.contains(&entity))
+            && !xf.is_changed()
+            && !group_vis.as_ref().is_some_and(|g| g.is_changed())
+            && !mat_anim.as_ref().is_some_and(|a| a.is_changed())
+            && !far_side.as_ref().is_some_and(|f| f.is_changed())
+        {
+            return;
+        }
+        let far_side = far_side.is_some();
+        let (group_vis, mat_anim) = (group_vis.as_deref(), mat_anim.as_deref());
+        let toggled_on =
+            m.kind_visible[kind_index(part.kind)] && m.blend_visible[blend_index(part.blend)];
+        // `farclip` culls doodads and WMOs only: units and GameObjects come range-limited from
+        // the server's visibility stream.
+        let distance_culled = matches!(part.kind, ModelKind::Doodad | ModelKind::Wmo);
+        let pos = xf.translation();
+        // By the bounding sphere's nearest point, so a straddler stays drawn for the per-pixel
+        // wall to dissolve. No `Aabb` for a frame after spawn: the origin stands in.
+        let in_range = match (distance_culled, cam_pos, cam_fwd) {
+            (false, _, _) | (_, None, _) | (_, _, None) => true,
+            (true, Some(c), Some(fwd)) => {
+                let (center, radius) = match aabb {
+                    Some(a) => (
+                        xf.transform_point(Vec3::from(a.center)),
+                        Vec3::from(a.half_extents).length() * xf.affine().matrix3.x_axis.length(),
+                    ),
+                    None => (pos, 0.0),
+                };
+                // The particle draw-set gate reads the same rule, so no emitter outlives its
+                // doodad past the wall.
+                crate::view::within_farclip(view.farclip, c, fwd, center, radius)
             }
-            let far_side = far_side.is_some();
-            let (group_vis, mat_anim) = (group_vis.as_deref(), mat_anim.as_deref());
-            let toggled_on =
-                m.kind_visible[kind_index(part.kind)] && m.blend_visible[blend_index(part.blend)];
-            // `farclip` culls doodads and WMOs only: units and GameObjects come range-limited from
-            // the server's visibility stream.
-            let distance_culled = matches!(part.kind, ModelKind::Doodad | ModelKind::Wmo);
-            let pos = xf.translation();
-            // By the bounding sphere's nearest point, so a straddler stays drawn for the per-pixel
-            // wall to dissolve. No `Aabb` for a frame after spawn: the origin stands in.
-            let in_range = match (distance_culled, cam_pos, cam_fwd) {
-                (false, _, _) | (_, None, _) | (_, _, None) => true,
-                (true, Some(c), Some(fwd)) => {
-                    let (center, radius) = match aabb {
-                        Some(a) => (
-                            xf.transform_point(Vec3::from(a.center)),
-                            Vec3::from(a.half_extents).length()
-                                * xf.affine().matrix3.x_axis.length(),
-                        ),
-                        None => (pos, 0.0),
-                    };
-                    // The particle draw-set gate reads the same rule, so no emitter outlives its
-                    // doodad past the wall.
-                    crate::view::within_farclip(view.farclip, c, fwd, center, radius)
-                }
-            };
+        };
 
-            // The size-levelled distance fade ([`crate::model_fade`]), measured to the placed
-            // box's centre.
-            let fade_alpha = match (fade, cam_pos) {
-                (Some(f), Some(c)) => {
-                    doodad_fade_alpha(f.size, xf.transform_point(f.local_center).distance(c))
-                }
-                _ => 1.0,
-            };
+        // The size-levelled distance fade ([`crate::model_fade`]), measured to the placed
+        // box's centre.
+        let fade_alpha = match (fade, cam_pos) {
+            (Some(f), Some(c)) => {
+                doodad_fade_alpha(f.size, xf.transform_point(f.local_center).distance(c))
+            }
+            _ => 1.0,
+        };
 
-            // A WMO group no portal reaches is hidden; a part with no `WmoGroupVis` never is.
-            let portal_visible = !m.portal_cull
-                || group_vis.is_none_or(|gv| {
-                    instances
-                        .get(gv.instance)
-                        .ok()
-                        .is_none_or(|inst| gv.drawn_by(inst))
-                });
-
-            // The same flood picks the fog: the group drawer `0x6b5190` and the group-doodad drawer
-            // `0x6b62e0` push the interior triple only under the per-group `[0xca7f00]`. `None`
-            // off-WMO leaves the bit to the entity classifier.
-            let room_fog = group_vis.map(|gv| {
+        // A WMO group no portal reaches is hidden; a part with no `WmoGroupVis` never is.
+        let portal_visible = !m.portal_cull
+            || group_vis.is_none_or(|gv| {
                 instances
                     .get(gv.instance)
-                    .is_ok_and(|inst| gv.interior_fogged_by(inst))
+                    .ok()
+                    .is_none_or(|inst| gv.drawn_by(inst))
             });
 
-            // The animated colour-alpha × transparency-weight factor, into the tag below and the
-            // cull here: the reference skips a batch whose alpha is ≤ 0 (`0x707b3a`).
-            let mat_factor = mat_anim.map_or(1.0, |m| m.current);
+        // The same flood picks the fog: the group drawer `0x6b5190` and the group-doodad drawer
+        // `0x6b62e0` push the interior triple only under the per-group `[0xca7f00]`. `None`
+        // off-WMO leaves the bit to the entity classifier.
+        let room_fog = group_vis.map(|gv| {
+            instances
+                .get(gv.instance)
+                .is_ok_and(|inst| gv.interior_fogged_by(inst))
+        });
 
-            // Inside a WMO, exterior content draws only through a portal window; untagged content
-            // (units, GameObjects) and the camera's own building are exempt.
-            let own_building = group_vis.is_some_and(|gv| Some(gv.instance) == own_instance);
-            let exterior_ok = !exterior || own_building || gate.admits(&xf, aabb);
+        // The animated colour-alpha × transparency-weight factor, into the tag below and the
+        // cull here: the reference skips a batch whose alpha is ≤ 0 (`0x707b3a`).
+        let mat_factor = mat_anim.map_or(1.0, |m| m.current);
 
-            // A billboard card draws only while its model does, by the owner's last-frame verdict.
-            // Entity-lane cards only: a placement's card is `ExteriorScene` and gated above. An
-            // unreadable owner fails open, as that is `face_billboards`' despawn case.
-            let owner_hidden = !exterior
-                && card
-                    .and_then(crate::billboard::BillboardCard::follows)
-                    .is_some_and(|o| matches!(card_owners.get(o), Ok(v) if !v.get()));
+        // Inside a WMO, exterior content draws only through a portal window; untagged content
+        // (units, GameObjects) and the camera's own building are exempt.
+        let own_building = group_vis.is_some_and(|gv| Some(gv.instance) == own_instance);
+        let exterior_ok = !exterior || own_building || gate.admits(&xf, aabb);
 
-            // A projected batch draws only under `projectedTextures` or a forcing model
-            // (`World::ProjectTextureCallback 0x77f500`).
-            let projection_off = !projected.0
-                && batch_sort.is_some_and(|s| s.key.projected)
-                && part.kind != ModelKind::GameObject
-                && !parent.is_some_and(|p| forced_roots.contains(p.parent()));
+        // A billboard card draws only while its model does, by the owner's last-frame verdict.
+        // Entity-lane cards only: a placement's card is `ExteriorScene` and gated above. An
+        // unreadable owner fails open, as that is `face_billboards`' despawn case.
+        let owner_hidden = !exterior
+            && card
+                .and_then(crate::billboard::BillboardCard::follows)
+                .is_some_and(|o| matches!(card_owners.get(o), Ok(v) if !v.get()));
 
-            // `Inherited`, not `Visible`, so a hidden parent root still hides its children.
-            let desired = if toggled_on
-                && !projection_off
-                && in_range
-                && fade_alpha > 0.0
-                && mat_factor > 0.0
-                && portal_visible
-                && exterior_ok
-                && !owner_hidden
-            {
-                Visibility::Inherited
-            } else {
-                Visibility::Hidden
-            };
-            if *vis != desired {
-                *vis = desired;
+        // A projected batch draws only under `projectedTextures` or a forcing model
+        // (`World::ProjectTextureCallback 0x77f500`).
+        let projection_off = !projected.0
+            && batch_sort.is_some_and(|s| s.key.projected)
+            && part.kind != ModelKind::GameObject
+            && !parent.is_some_and(|p| forced_roots.contains(p.parent()));
+
+        // `Inherited`, not `Visible`, so a hidden parent root still hides its children.
+        let desired = if toggled_on
+            && !projection_off
+            && in_range
+            && fade_alpha > 0.0
+            && mat_factor > 0.0
+            && portal_visible
+            && exterior_ok
+            && !owner_hidden
+        {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *vis != desired {
+            *vis = desired;
+        }
+
+        // The two tag fields this system owns, in one read-modify-write: the alpha (fade ×
+        // material factor) for `DoodadFade` holders and every non-unit `MatAnim`, lit interior
+        // props included (their probe payload keeps bits 0..=15 as alpha), and the room's
+        // interior-fog bit. The unit lane's alpha is `entities::apply_unit_mat_alpha`'s.
+        if let Some(mut tag) = tag {
+            let mut bits = tag.0;
+            if fade.is_some() || mat_anim.is_some_and(|m| !m.composes_unit_tag()) {
+                let alpha = fade_alpha * mat_factor;
+                // `with_alpha` keeps a visible card dimmed to 0 off the `MeshTag == 0` opaque
+                // sentinel.
+                bits = crate::mesh_tag::with_alpha(bits, alpha);
             }
-
-            // The two tag fields this system owns, in one read-modify-write: the alpha (fade ×
-            // material factor) for `DoodadFade` holders and every non-unit `MatAnim`, lit interior
-            // props included (their probe payload keeps bits 0..=15 as alpha), and the room's
-            // interior-fog bit. The unit lane's alpha is `entities::apply_unit_mat_alpha`'s.
-            if let Some(mut tag) = tag {
-                let mut bits = tag.0;
-                if fade.is_some() || mat_anim.is_some_and(|m| !m.composes_unit_tag()) {
-                    let alpha = fade_alpha * mat_factor;
-                    // `with_alpha` keeps a visible card dimmed to 0 off the `MeshTag == 0` opaque
-                    // sentinel.
-                    bits = crate::mesh_tag::with_alpha(bits, alpha);
-                }
-                if let Some(on) = room_fog {
-                    bits = crate::mesh_tag::with_interior_fog(bits, on);
-                }
-                if tag.0 != bits {
-                    tag.0 = bits;
+            if let Some(on) = room_fog {
+                bits = crate::mesh_tag::with_interior_fog(bits, on);
+            }
+            if tag.0 != bits {
+                tag.0 = bits;
+            }
+        }
+        if let Some(f) = fade {
+            if let Some(mut mat) = mat {
+                let base = if fade_alpha < 1.0 {
+                    &f.blend
+                } else {
+                    &f.cutout
+                };
+                // A feathering doodad beyond the water plane takes its pick's far twin
+                // (`sky_order::FAR_SIDE_BIAS`); an opaque draw settles by depth. A twin not
+                // built yet keeps the base until next frame.
+                let want = if far_side && fade_alpha < 1.0 {
+                    far_twins.far_of(base).unwrap_or(base)
+                } else {
+                    base
+                };
+                if mat.0 != *want {
+                    mat.0 = want.clone();
                 }
             }
-            if let Some(f) = fade {
-                if let Some(mut mat) = mat {
-                    let base = if fade_alpha < 1.0 {
-                        &f.blend
-                    } else {
-                        &f.cutout
-                    };
-                    // A feathering doodad beyond the water plane takes its pick's far twin
-                    // (`sky_order::FAR_SIDE_BIAS`); an opaque draw settles by depth. A twin not
-                    // built yet keeps the base until next frame.
-                    let want = if far_side && fade_alpha < 1.0 {
-                        far_twins.far_of(base).unwrap_or(base)
-                    } else {
-                        base
-                    };
-                    if mat.0 != *want {
-                        mat.0 = want.clone();
-                    }
-                }
-            }
-        },
-    );
+        }
+    };
+    active.par_iter_mut().for_each(judge);
+    if scene_still {
+        // The few parked rows whose own input moved (a hidden unit's step, a hidden part's
+        // animated alpha), judged in parallel like the rest.
+        let moved: bevy::ecs::entity::EntityHashSet = parked_moved
+            .iter()
+            .chain(unmarked.iter().copied().filter(|e| parked.contains(*e)))
+            .collect();
+        let moved: bevy::ecs::entity::UniqueEntityVec = moved.into_iter().collect();
+        parked.par_iter_many_unique_mut(moved).for_each(judge);
+    } else {
+        parked.par_iter_mut().for_each(judge);
+    }
 
     // A building's MLIQ surfaces, gated by the ever-visited latch, not this frame's PVS: a group's
     // liquid draws from its first visit for the rest of the placement's residency. An index past
