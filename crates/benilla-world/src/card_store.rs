@@ -203,13 +203,15 @@ pub fn admit_stored_cards(
     }
 }
 
-/// Registers the admission pass ahead of the model-visibility authority, so a card spawned this
-/// frame takes its fade alpha and verdict before it can draw.
+/// Registers the admission pass on this frame's camera pose and ahead of the model-visibility
+/// authority, so a card spawned this frame takes its fade alpha and verdict before it can draw.
 pub(crate) fn plugin(app: &mut App) {
     if enabled() {
         app.add_systems(
             Update,
-            admit_stored_cards.before(crate::model_render::ModelVisSet),
+            admit_stored_cards
+                .after(crate::view::publish_camera_pose)
+                .before(crate::model_render::ModelVisSet),
         );
     }
 }
