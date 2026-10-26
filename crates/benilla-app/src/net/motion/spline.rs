@@ -678,14 +678,15 @@ fn clamp_unit(
     };
     // The cast gate: same XZ, same collider epoch, same modes, and our own answer still the Y
     // standing here, so the ray cannot answer differently. Testing the standing Y rather than
-    // the seat also re-grounds a re-sent identical wire pose. A miss never caches.
+    // the seat also re-grounds a re-sent identical wire pose. A miss holds too, as every collider
+    // attach moves the epoch; the epoch-blind legacy gate holds only a hit.
     if let Some(c) = clamped.as_deref() {
         let same_question = if legacy {
             c.y_written == t.translation.y
         } else {
             c.y_written == t.translation.y && c.epoch == epoch && c.modes == granted
         };
-        if c.hit && c.xz == xz && same_question {
+        if (c.hit || !legacy) && c.xz == xz && same_question {
             s.held += 1;
             return None;
         }
@@ -921,7 +922,7 @@ pub(crate) struct GroundClamped {
     pub(crate) seat_y: f32,
     /// The Y standing after that cast; a different Y here is an external write, which re-seats.
     pub(crate) y_written: f32,
-    /// Only a hit caches; a miss keeps casting until the collider streams in.
+    /// Whether the cast found a floor; a miss holds until the epoch moves under it.
     pub(crate) hit: bool,
     /// The collider-set stamp the answer was computed against.
     epoch: u64,
@@ -1128,6 +1129,41 @@ mod under_floor {
             FLOOR_Y,
             "the floor arrived under an NPC that never moved; it belongs on it"
         );
+    }
+
+    #[test]
+    fn a_miss_holds_until_a_collider_attach_moves_the_epoch() {
+        let (mut app, npc) = half_arrived_world();
+        // Off the terrain quad: nothing under it.
+        app.world_mut()
+            .get_mut::<Transform>(npc)
+            .unwrap()
+            .translation
+            .x = 50.0;
+        clamp(&mut app);
+        assert_eq!(y_of(&app, npc), WIRE_Y, "a miss holds the server's pose");
+        assert!(!app.world().get::<GroundClamped>(npc).unwrap().hit);
+
+        // A floor with no epoch move is no new question: the miss stands, uncast.
+        let verts = vec![
+            Vec3::new(45.0, TERRAIN_Y, -5.0),
+            Vec3::new(55.0, TERRAIN_Y, -5.0),
+            Vec3::new(55.0, TERRAIN_Y, 5.0),
+            Vec3::new(45.0, TERRAIN_Y, 5.0),
+        ];
+        app.world_mut().spawn((
+            RigidBody::Static,
+            Collider::trimesh(verts, vec![[0u32, 2, 1], [0, 3, 2]]),
+            Transform::default(),
+        ));
+        app.update();
+        clamp(&mut app);
+        assert_eq!(y_of(&app, npc), WIRE_Y, "the held miss was not re-cast");
+
+        // The attach's bump re-asks.
+        app.world_mut().resource_mut::<ColliderEpoch>().bump();
+        clamp(&mut app);
+        assert_eq!(y_of(&app, npc), TERRAIN_Y, "the new floor is found");
     }
 
     /// A hovering unit rests a yard over its floor and never climbs: the reference ends at
