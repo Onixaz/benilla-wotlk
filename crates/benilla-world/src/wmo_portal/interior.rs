@@ -33,7 +33,9 @@ pub(super) fn load_wmo_areas(
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
 use benilla_assets::{AdtTile, WmoModel};
 
-use super::seed::{area_down_ray, down_ray_claim, down_ray_seeds, up_ray_claim, DownRayClaim};
+use super::seed::{
+    area_down_ray, down_ray_claim, down_ray_seeds, link_down_ray, up_ray_claim, DownRayClaim,
+};
 use super::{WmoPortalInstance, WmoRoom, WorldCamera, EXTERIOR, EXTERIOR_LIT};
 use crate::terrain_stream::{terrain_height_under, PropLobeLight, TerrainStreamer};
 
@@ -292,7 +294,8 @@ fn room_at(
         .or_else(|| room_cast(wmos, instances, streamer, adt_tiles, feet_world, reach))
 }
 
-/// One faces-only room cast from `feet_world + rise`.
+/// One faces-only room cast from `feet_world + rise`, linking as the reference links a world
+/// object (`0x7c2a70`): an interior group must hold the body's own point, its feet lifted.
 fn room_cast(
     wmos: &Assets<WmoModel>,
     instances: &Query<(Entity, &WmoPortalInstance)>,
@@ -302,6 +305,7 @@ fn room_cast(
     rise: f32,
 ) -> Option<WmoRoom> {
     let probe_world = feet_world + Vec3::Y * (POSITION_PROBE_LIFT + rise);
+    let mid_world = feet_world + Vec3::Y * POSITION_PROBE_LIFT;
     let terrain = terrain_height_under(streamer, adt_tiles, probe_world);
     for (entity, inst) in instances {
         let Some(model) = wmos.get(&inst.handle) else {
@@ -316,14 +320,14 @@ fn room_cast(
             continue; // no face of this building can own the probe column
         }
         let terrain_local = terrain.map(|z| terrain_z_local(&local_from_world, probe_world, z));
-        if let Some(gi) = area_down_ray(
+        if let Some(gi) = link_down_ray(
             &model.group_collision_tris,
             &model.group_collision_bounds,
             &model.group_collision_grids,
             &model.group_nav,
             probe_local,
+            bevy_to_wow(local_from_world.transform_point3(mid_world)),
             terrain_local,
-            EXTERIOR,
         ) {
             return Some(WmoRoom {
                 instance: entity,

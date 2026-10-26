@@ -233,6 +233,42 @@ pub(crate) fn area_down_ray(
         .and_then(|c| (!c.outdoor).then_some(c.group))
 }
 
+/// [`area_down_ray`] for linking a world object to a group (`CMap::LinkIntersectMapObjDef`
+/// `0x7c25d0`): an interior group takes part only when the object's own point `mid` lies in its
+/// authored box, so a cast through a hole in an exterior floor cannot claim a room beneath it.
+pub(crate) fn link_down_ray(
+    tris: &[Vec<[[f32; 3]; 3]>],
+    bounds: &[Option<([f32; 3], [f32; 3])>],
+    grids: &[Option<ColumnGrid>],
+    nav: &[WmoGroupNav],
+    eye: [f32; 3],
+    mid: [f32; 3],
+    terrain_z: Option<f32>,
+) -> Option<usize> {
+    ray_claim(
+        tris,
+        bounds,
+        grids,
+        nav,
+        eye,
+        terrain_z,
+        EXTERIOR,
+        false,
+        Some(mid),
+    )
+    .and_then(|c| (!c.outdoor).then_some(c.group))
+}
+
+/// Whether a group can take a link from an object at `mid`: an exterior one always, an interior
+/// one only when its MOGI box contains the point (`0x7c26a1` → `CAaBox::ContainsPoint`, no slack).
+/// A missing row admits.
+fn admits_link(nav: Option<&WmoGroupNav>, mid: [f32; 3]) -> bool {
+    nav.is_none_or(|g| {
+        g.flags & EXTERIOR != 0
+            || (0..3).all(|i| mid[i] >= g.bbox_min[i] && mid[i] <= g.bbox_max[i])
+    })
+}
+
 /// A position-cast ray's claim on one placement before the outdoor collapse: the winning face's
 /// group, its depth, and its outdoor class under the caller's mask.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -265,6 +301,7 @@ pub(crate) fn down_ray_claim(
         terrain_z,
         outdoor_mask,
         false,
+        None,
     )
 }
 
@@ -282,7 +319,17 @@ pub(crate) fn up_ray_claim(
     eye: [f32; 3],
     outdoor_mask: u32,
 ) -> Option<DownRayClaim> {
-    ray_claim(tris, bounds, grids, nav, eye, None, outdoor_mask, true)
+    ray_claim(
+        tris,
+        bounds,
+        grids,
+        nav,
+        eye,
+        None,
+        outdoor_mask,
+        true,
+        None,
+    )
 }
 
 /// The shared body: `up` flips which side of the probe a face must lie on; the nearest in the
@@ -296,6 +343,8 @@ fn ray_claim(
     terrain_z: Option<f32>,
     outdoor_mask: u32,
     up: bool,
+    // An object link's own point ([`link_down_ray`]); `None` for the position casts.
+    link_mid: Option<[f32; 3]>,
 ) -> Option<DownRayClaim> {
     // Candidates are per face: the client's query has no bbox, portals or camera (`0x6a8a20`).
     // The broad phase is the AABB of the faces themselves (`group_collision_bounds`), never a
@@ -316,7 +365,7 @@ fn ray_claim(
     let mut best_z = if up { f32::INFINITY } else { f32::NEG_INFINITY };
     let mut best: Option<usize> = None;
     for (gi, group_tris) in tris.iter().enumerate() {
-        if !column_owned(gi) {
+        if !column_owned(gi) || link_mid.is_some_and(|m| !admits_link(nav.get(gi), m)) {
             continue;
         }
         // Narrow phase: the column index, else every face. The index keeps ascending order, so an
@@ -808,6 +857,41 @@ mod tests {
         assert_eq!(area_ray(&tris, &navs, [2.5, 0.0, 5.0], None), None);
         // Over a group but below its faces.
         assert_eq!(area_ray(&tris, &navs, [10.0, 0.0, 1.0], None), None);
+    }
+
+    #[test]
+    fn a_link_cast_through_a_floor_hole_skips_the_room_below() {
+        // Dalaran's fountain: the plaza (exterior) has a hole under the basin, so the cast from
+        // the fountain's origin (z 40.1) meets only the sewer ceiling (z 5) of a room whose box
+        // tops out at 10. The position cast claims the sewer; the link leaves the object outdoors.
+        let plaza = nav(EXTERIOR, [-30.0, -30.0, 39.0], [30.0, 30.0, 60.0], 0, 0);
+        let sewer = nav(0, [-30.0, -30.0, 0.0], [30.0, 30.0, 10.0], 0, 0);
+        let hole = [[-30.0, 2.0, 40.0], [30.0, 2.0, 40.0], [30.0, 30.0, 40.0]];
+        let tris = [vec![hole], quad(5.0, 30.0)];
+        let navs = [plaza, sewer];
+        let (bounds, _) = benilla_assets::collision_tri_bounds(&tris);
+        let feet = [0.0, 0.0, 40.1];
+        assert_eq!(
+            area_down_ray(&tris, &bounds, &[], &navs, feet, None, EXTERIOR),
+            Some(1),
+            "the position cast falls through to the sewer"
+        );
+        assert_eq!(
+            link_down_ray(&tris, &bounds, &[], &navs, feet, feet, None),
+            None
+        );
+        // A candle in the sewer stands inside its box and links to it.
+        let candle = [0.0, 0.0, 5.1];
+        assert_eq!(
+            link_down_ray(&tris, &bounds, &[], &navs, candle, candle, None),
+            Some(1)
+        );
+        // On the plaza's own face the exterior group wins, box or no box.
+        let street = [0.0, 10.0, 40.1];
+        assert_eq!(
+            link_down_ray(&tris, &bounds, &[], &navs, street, street, None),
+            None
+        );
     }
 
     #[test]
