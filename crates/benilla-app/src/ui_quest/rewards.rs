@@ -45,11 +45,20 @@ pub(crate) struct RewardInputs<'w, 's> {
     tables: Option<Res<'w, QuestRewardTablesRes>>,
     factions: Option<Res<'w, crate::target::Factions>>,
     reputations: Option<Res<'w, crate::net::Reputations>>,
-    auras: Query<'w, 's, &'static UnitAuras, With<SelfPlayer>>,
+    auras: Query<'w, 's, Ref<'static, UnitAuras>, With<SelfPlayer>>,
     roster: Option<Res<'w, crate::char_select::Roster>>,
 }
 
 impl RewardInputs<'_, '_> {
+    /// Whether any reward input moved since the reading system last ran.
+    pub(crate) fn changed(&self) -> bool {
+        self.tables.as_ref().is_some_and(|r| r.is_changed())
+            || self.factions.as_ref().is_some_and(|r| r.is_changed())
+            || self.reputations.as_ref().is_some_and(|r| r.is_changed())
+            || self.roster.as_ref().is_some_and(|r| r.is_changed())
+            || self.auras.iter().any(|a| a.is_changed())
+    }
+
     /// A faction's raw standing, as `CGReputationInfo::GetFactionStanding` (`0x5d05b0`) reads it:
     /// the wire slot plus the race/class base, 0 without a slot.
     fn standing(&self, store: &ObjectFields, faction: u32) -> i32 {

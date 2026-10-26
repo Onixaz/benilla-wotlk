@@ -511,8 +511,9 @@ fn order_groups(rows: &[GroupRow]) -> Vec<(i32, String, Vec<usize>)> {
     groups
 }
 
-/// Reads the player's `PLAYER_QUEST_LOG` slots each frame and pushes a [`QuestLogState`] on a
-/// change; also refreshes `row_slots` for the abandon drain.
+/// Reads the player's `PLAYER_QUEST_LOG` slots and pushes a [`QuestLogState`] on a change; also
+/// refreshes `row_slots` for the abandon drain. A frame on which no input moved rebuilds nothing.
+#[allow(clippy::type_complexity)] // one Bevy system's full input set
 pub(crate) fn feed_quest_log(
     script: Option<NonSendMut<UiScript>>,
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
@@ -523,9 +524,12 @@ pub(crate) fn feed_quest_log(
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
     commands: Res<NetCommands>,
-    (header_names, tag_names): (
+    // The player's store, and the item and container stores the bag walk reads, moving.
+    (header_names, tag_names, stirred_self, stirred_items): (
         Option<Res<QuestHeaderNamesRes>>,
         Option<Res<QuestTagNamesRes>>,
+        Query<(), (With<SelfPlayer>, Changed<ObjectStore>)>,
+        Query<(), (Changed<ObjectStore>, Without<crate::net::NetEntity>)>,
     ),
     states: Res<crate::world_state::WorldStates>,
     // The XP, honor, title and reputation extras each row's detail carries.
@@ -541,11 +545,28 @@ pub(crate) fn feed_quest_log(
     let Some(mut script) = script else {
         return;
     };
-    let last = last.get(&script);
+    let (last, fresh) = last.get_reset(&script);
     let prior_slots = prior_slots.get(&script);
     let Some((store, _)) = self_q.iter().next() else {
         return;
     };
+    // Every row reads only these, so an unmoved set rebuilds the state the diff below would drop;
+    // a fresh VM takes its first push whatever moved.
+    let stirred = fresh
+        || !stirred_self.is_empty()
+        || !stirred_items.is_empty()
+        || quest_log.is_changed()
+        || names.is_changed()
+        || items.is_changed()
+        || icons.as_ref().is_some_and(|r| r.is_changed())
+        || header_names.as_ref().is_some_and(|r| r.is_changed())
+        || tag_names.as_ref().is_some_and(|r| r.is_changed())
+        || states.is_changed()
+        || spells.as_ref().is_some_and(|r| r.is_changed())
+        || rewards.changed();
+    if !stirred {
+        return;
+    }
 
     let mut rows = Vec::new();
     let mut slots = Vec::with_capacity(usize::from(PLAYER_QUEST_LOG_SLOTS));
@@ -1692,6 +1713,50 @@ mod tests {
                 .is_empty(),
             "the sound is the accept row's, played with its line"
         );
+    }
+
+    /// An idle frame rebuilds nothing: the log resource, which the rebuild rewrites, stays
+    /// unmarked until an input moves.
+    #[test]
+    fn an_idle_frame_leaves_the_quest_log_unwritten() {
+        use crate::ui_quest::QuestLines;
+        use benilla_protocol::messages::field::FIELD_PLAYER_QUEST_LOG_1_1;
+
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.insert_resource(NetCommands(tx));
+        app.init_resource::<crate::net::GuidIndex>()
+            .init_resource::<NameCache>()
+            .init_resource::<Items>()
+            .init_resource::<crate::world_state::WorldStates>()
+            .init_resource::<crate::ui_chat::ChatLog>()
+            .init_resource::<crate::sound::MessageSounds>()
+            .init_resource::<QuestLines>()
+            .init_resource::<QuestLog>();
+        let player = app
+            .world_mut()
+            .spawn((
+                ObjectStore(ObjectFields::from_pairs(&[(FIELD_PLAYER_QUEST_LOG_1_1, 7)])),
+                Guid(0x2A),
+                SelfPlayer,
+            ))
+            .id();
+        app.insert_non_send_resource(UiScript::new().unwrap());
+        app.add_systems(Update, feed_quest_log);
+        app.update();
+        app.update();
+        let marked = |app: &App| app.world().resource_ref::<QuestLog>().last_changed();
+        let settled = marked(&app);
+        app.update();
+        app.update();
+        assert_eq!(marked(&app), settled, "nothing moved: no rebuild");
+
+        app.world_mut()
+            .get_mut::<ObjectStore>(player)
+            .unwrap()
+            .set_changed();
+        app.update();
+        assert_ne!(marked(&app), settled, "the player's store moved: rebuilt");
     }
 
     // ── quests_with_progressed_objectives ───────────────────────────────────────────────────────
