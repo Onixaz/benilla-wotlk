@@ -270,3 +270,54 @@ fn an_error_handler_that_errors_does_not_recurse() {
         "nothing recurses: the queue drained and the handler failure did not re-enter it"
     );
 }
+
+/// `debuglocals` (`0x819a60`) answers nothing outside the handler dispatch, and inside it packs
+/// the frame's locals, then its upvalues, as `FrameScript_PackVariable` (`0x819300`) words them.
+#[test]
+fn debuglocals_answers_inside_the_handler_dispatch_alone() {
+    let mut s = crate::script::UiScript::new().unwrap();
+    s.set_screen_size(1024.0, 768.0);
+    assert_eq!(
+        s.eval::<i64>("return select('#', debuglocals(1))").unwrap(),
+        0,
+        "no handler dispatch, no result"
+    );
+    s.run(
+        r#"local up = "held"
+        seterrorhandler(function(msg)
+            local probe, word, flag = 42, "x", true
+            local frame = CreateFrame("Frame", "LocalsProbe")
+            SEEN = debuglocals(0) .. "|" .. tostring(up)
+        end)
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("ERROR_PROBE")
+        f:SetScript("OnEvent", function() error("locals boom") end)"#,
+    )
+    .unwrap();
+    s.fire_event("ERROR_PROBE", vec![]);
+    s.dispatch_script_errors_to_handler();
+    let seen = s.eval::<String>("return SEEN").unwrap();
+    let errors = s.take_errors();
+    assert!(
+        errors.iter().all(|e| !e.contains("handler itself failed")),
+        "{errors:?}"
+    );
+    // A level below 1 reads the caller, the handler itself: its locals in order, then `up`.
+    let at = |needle: &str| {
+        seen.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} missing from {seen:?}"))
+    };
+    assert!(seen.starts_with("msg = \""), "{seen:?}");
+    assert!(at("\nprobe = 42\n") < at("\nword = \"x\"\n"));
+    assert!(at("\nword = \"x\"\n") < at("\nflag = true\n"));
+    // A frame is named by its object and lists its own entries one space in, `[0]` among them.
+    assert!(at("\nframe = LocalsProbe {\n") > at("\nflag = true\n"));
+    assert!(at("\n 0 = <userdata>\n") > at("\nframe = LocalsProbe {\n"));
+    assert!(at("\nup = \"held\"\n") > at("\n}\n"));
+    assert!(seen.ends_with("|held"), "{seen:?}");
+    assert_eq!(
+        s.eval::<i64>("return select('#', debuglocals(1))").unwrap(),
+        0,
+        "the gate closes after the dispatch"
+    );
+}

@@ -170,6 +170,7 @@ fn error_with_traceback(lua: &Lua, e: Value) -> mlua::Result<Value> {
 /// Install the stdlib layer: the bare globals, `time`/`date` and the positional `format`.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     install_error_handler(lua)?;
+    install_debuglocals(lua)?;
     install_time(lua)?;
     install_profile(lua)?;
     lua.load(WOW_STDLIB)
@@ -234,6 +235,186 @@ fn install_error_handler(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| Ok(error_handler(lua)))?,
     )?;
     Ok(())
+}
+
+/// The registry flag `FrameScript_HandleError` (`0x819730`) holds around its call of the handler,
+/// `s_inErrorHandler` (`[0xd3f79c]`), here around [`super::UiScript::dispatch_script_errors_to_handler`].
+pub(super) const REG_IN_ERROR_HANDLER: &str = "benilla.in_error_handler";
+
+/// `debuglocals([level])` (`0x819a60`): nothing outside the handler dispatch. Inside it, one string
+/// of the frame `level` up's locals, then its function's upvalues, packed by
+/// [`pack_variable`] into at most 4 KiB; `""` when there is no such frame. A level below 1 is 1,
+/// the caller. The dispatch is deferred here, so the frames are the dispatch's own, not the
+/// raising one's.
+fn install_debuglocals(lua: &Lua) -> mlua::Result<()> {
+    lua.globals().set(
+        "debuglocals",
+        lua.create_function(|lua, level: Value| {
+            if !lua
+                .named_registry_value::<bool>(REG_IN_ERROR_HANDLER)
+                .unwrap_or(false)
+            {
+                return Ok(mlua::MultiValue::new());
+            }
+            // `lua_tonumber` and a C `int` cast: a numeric string counts, anything else is 0.
+            let level = match &level {
+                Value::Integer(i) => *i as i32,
+                Value::Number(n) => *n as i32,
+                Value::String(s) => s
+                    .to_str()
+                    .ok()
+                    .and_then(|s| s.trim().parse::<f64>().ok())
+                    .map_or(0, |n| n as i32),
+                _ => 0,
+            }
+            .max(1);
+            let named = frame_variables(lua, level)?;
+            let mut buffer = Vec::new();
+            for [name, value] in named.as_chunks::<2>().0 {
+                if let Value::String(name) = name {
+                    pack_variable(lua, &name.as_bytes(), value, 0, &mut buffer);
+                }
+            }
+            Ok(mlua::MultiValue::from_vec(vec![Value::String(
+                lua.create_string(buffer)?,
+            )]))
+        })?,
+    )
+}
+
+/// The locals of the frame `level` above the caller, then its function's upvalues, as
+/// name/value pairs (`lua_getstack`, `lua_getlocal`, `lua_getinfo("f")`, `lua_getupvalue`).
+fn frame_variables(lua: &Lua, level: i32) -> mlua::Result<Vec<Value>> {
+    use mlua::ffi;
+    // SAFETY: the closure only reads the stack through the debug API and leaves the pairs it
+    // pushes as the call's results; `exec_raw` restores the stack around it.
+    let pairs: mlua::MultiValue = unsafe {
+        lua.exec_raw((), |state| {
+            // Level 0 is `exec_raw`'s own C frame and 1 this function's, so the caller is 2.
+            let mut ar: ffi::lua_Debug = std::mem::zeroed();
+            if ffi::lua_getstack(state, level + 1, &mut ar) == 0 {
+                return;
+            }
+            let mut n = 1;
+            while ffi::lua_checkstack(state, 2) != 0 {
+                let name = ffi::lua_getlocal(state, &ar, n);
+                if name.is_null() {
+                    break;
+                }
+                ffi::lua_pushstring(state, name);
+                ffi::lua_insert(state, -2);
+                n += 1;
+            }
+            if ffi::lua_checkstack(state, 3) == 0 {
+                return;
+            }
+            ffi::lua_getinfo(state, c"f".as_ptr(), &mut ar);
+            let func = ffi::lua_gettop(state);
+            let mut n = 1;
+            while ffi::lua_checkstack(state, 2) != 0 {
+                let name = ffi::lua_getupvalue(state, func, n);
+                if name.is_null() {
+                    break;
+                }
+                ffi::lua_pushstring(state, name);
+                ffi::lua_insert(state, -2);
+                n += 1;
+            }
+            ffi::lua_remove(state, func);
+        })?
+    };
+    Ok(pairs.into_vec())
+}
+
+/// `debuglocals`' buffer size (`0x819a60`), the terminator included.
+const LOCALS_BUFFER: usize = 4096;
+
+/// `FrameScript_PackVariable` (`0x819300`): one `name = value` line per variable, appended to
+/// `buffer` up to [`LOCALS_BUFFER`]. A table lists its entries one level deep, each indented one
+/// space; a frame or region table is named by its object.
+fn pack_variable(lua: &Lua, name: &[u8], value: &Value, depth: usize, buffer: &mut Vec<u8>) {
+    let indent: &[u8] = if depth > 0 { b" " } else { b"" };
+    let mut line = indent.to_vec();
+    line.extend_from_slice(name);
+    line.extend_from_slice(b" = ");
+    match value {
+        Value::Nil => line.extend_from_slice(b"nil"),
+        Value::Boolean(b) => line.extend_from_slice(if *b { b"true" } else { b"false" }),
+        Value::LightUserData(_) | Value::UserData(_) => line.extend_from_slice(b"<userdata>"),
+        Value::Integer(_) | Value::Number(_) => {
+            if let Ok(Some(s)) = lua.coerce_string(value.clone()) {
+                line.extend_from_slice(&s.as_bytes());
+            }
+        }
+        Value::String(s) => {
+            line.push(b'"');
+            line.extend_from_slice(c_str(&s.as_bytes()));
+            line.push(b'"');
+        }
+        Value::Table(t) => {
+            line.extend_from_slice(object_display_name(t).as_bytes());
+            line.extend_from_slice(b" {");
+            push_line(buffer, line);
+            if depth == 0 {
+                for (key, entry) in t.clone().pairs::<Value, Value>().flatten() {
+                    // `lua_isnumber` keys print as `%d`; any other `lua_tostring`, NULL as MSVC's.
+                    let key_text = match &key {
+                        Value::Integer(i) => i.to_string().into_bytes(),
+                        Value::Number(n) => (*n as i32).to_string().into_bytes(),
+                        Value::String(s) => {
+                            match s.to_str().ok().and_then(|s| s.trim().parse::<f64>().ok()) {
+                                Some(n) => (n as i32).to_string().into_bytes(),
+                                None => c_str(&s.as_bytes()).to_vec(),
+                            }
+                        }
+                        _ => b"(null)".to_vec(),
+                    };
+                    pack_variable(lua, &key_text, &entry, 1, buffer);
+                }
+            }
+            let mut close = indent.to_vec();
+            close.push(b'}');
+            push_line(buffer, close);
+            return;
+        }
+        Value::Function(f) => {
+            // `lua_getinfo(">nS")` on a value: no call record, so never a name.
+            let info = f.info();
+            let source = info.source.as_deref().unwrap_or("?").to_string();
+            let defined = info.line_defined.map_or(-1, |l| l as i64);
+            line.extend_from_slice(format!("<function> defined {source}:{defined}").as_bytes());
+        }
+        Value::Thread(_) => line.extend_from_slice(b"<thread>"),
+        other => line.extend_from_slice(format!("<{}>", other.type_name()).as_bytes()),
+    }
+    push_line(buffer, line);
+}
+
+/// A table's display: its object's name, `<unnamed>` without one (`GetDisplayName` `0x482aa0`),
+/// or `<table>` when `[0]` holds no object.
+fn object_display_name(t: &mlua::Table) -> String {
+    if !matches!(t.raw_get::<Value>(0), Ok(Value::LightUserData(_))) {
+        return "<table>".into();
+    }
+    t.get::<mlua::Function>("GetName")
+        .and_then(|f| f.call::<Option<String>>(t.clone()))
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "<unnamed>".into())
+}
+
+/// `%s` stops at a NUL.
+fn c_str(bytes: &[u8]) -> &[u8] {
+    bytes.split(|b| *b == 0).next().unwrap_or(&[])
+}
+
+/// The line and its `\n`, `SStrPrintf`'d into 1 KiB, then `SStrPack`'d into the buffer, each
+/// truncating short of its terminator.
+fn push_line(buffer: &mut Vec<u8>, mut line: Vec<u8>) {
+    line.push(b'\n');
+    line.truncate(1023);
+    let room = (LOCALS_BUFFER - 1).saturating_sub(buffer.len());
+    buffer.extend_from_slice(&line[..line.len().min(room)]);
 }
 
 /// The stdlib layer in Lua, run once at construction.

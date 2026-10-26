@@ -1761,7 +1761,8 @@ impl UiScript {
     /// dialog (`BasicControls.xml:16`). With none installed the error stays on the host channel,
     /// [`UiScript::errors`], alone; a handler that raises is recorded there only and stops the
     /// batch, so the path cannot recurse. The call is [`stdlib::protected_call`]'s, so a raising
-    /// handler costs no `_G` search.
+    /// handler costs no `_G` search. `debuglocals` answers only inside it, as `s_inErrorHandler`
+    /// (`0x819730`) gates it.
     pub fn dispatch_script_errors_to_handler(&mut self) {
         if self.model_ref().pending_error_dispatch.is_empty() {
             return;
@@ -1781,7 +1782,14 @@ impl UiScript {
                     break;
                 }
             };
-            if let Err(e) = stdlib::protected_call(&self.lua, &handler, arg) {
+            let in_handler = |on: bool| {
+                self.lua
+                    .set_named_registry_value(stdlib::REG_IN_ERROR_HANDLER, on)
+            };
+            let called =
+                in_handler(true).and_then(|()| stdlib::protected_call(&self.lua, &handler, arg));
+            let _ = in_handler(false);
+            if let Err(e) = called {
                 self.model_mut()
                     .errors
                     .push(format!("error handler itself failed: {e}"));
