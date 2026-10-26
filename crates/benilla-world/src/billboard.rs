@@ -413,7 +413,7 @@ pub struct BillboardPlace;
 /// not ordered before visibility propagation, and [`crate::model_render::visibility`] owns it.
 #[allow(clippy::type_complexity)] // the card tuple, commented inline
 pub(crate) fn face_billboards(
-    mut commands: Commands,
+    commands: ParallelCommands,
     time: Res<Time>,
     cam: Query<(Ref<GlobalTransform>, Option<Ref<Transform>>), With<WorldCamera>>,
     owners: Query<Ref<GlobalTransform>, (Without<WorldCamera>, Without<BillboardCard>)>,
@@ -438,95 +438,101 @@ pub(crate) fn face_billboards(
     let cam_moved = cam_tf.is_changed() || cam_local.as_ref().is_some_and(|l| l.is_changed());
     let (fwd, right, up) = (*cam_tf.forward(), *cam_tf.right(), *cam_tf.up());
     let elapsed_ms = time.elapsed().as_millis() as u32;
-    for (entity, mut card, mut tf, mut global, tag, vis) in &mut cards {
-        // A track-less card is a pure function of the camera and its owner, so it is skipped
-        // when neither moved, unless it has never been placed (no attach stamp yet).
-        let tracked = card.scale_anim.is_some()
-            || card.seq_translation.is_some()
-            || card.gseq_attach_ms.is_none();
-        if let Some(owner) = card.follow {
-            match owners.get(owner) {
-                Ok(gt) => {
-                    // Hidden, as below, the seat moving or not: a doodad card's own verdict reads
-                    // its place, which lags only its bone's sway while hidden, and a unit or
-                    // GameObject card's verdict never reads it.
-                    let hidden = *vis == Visibility::Hidden && card.gseq_attach_ms.is_some();
-                    if (hidden && !vis.is_changed())
-                        || (!tracked && !cam_moved && !gt.is_changed() && !vis.is_changed())
-                    {
-                        continue;
+    // Each card writes only itself and reads its owner's frame, so the ~7,700 of a city run on the
+    // compute pool; an orphan's despawn goes through the parallel command queue.
+    cards
+        .par_iter_mut()
+        .for_each(|(entity, mut card, mut tf, mut global, tag, vis)| {
+            // A track-less card is a pure function of the camera and its owner, so it is skipped
+            // when neither moved, unless it has never been placed (no attach stamp yet).
+            let tracked = card.scale_anim.is_some()
+                || card.seq_translation.is_some()
+                || card.gseq_attach_ms.is_none();
+            if let Some(owner) = card.follow {
+                match owners.get(owner) {
+                    Ok(gt) => {
+                        // Hidden, as below, the seat moving or not: a doodad card's own verdict reads
+                        // its place, which lags only its bone's sway while hidden, and a unit or
+                        // GameObject card's verdict never reads it.
+                        let hidden = *vis == Visibility::Hidden && card.gseq_attach_ms.is_some();
+                        if (hidden && !vis.is_changed())
+                            || (!tracked && !cam_moved && !gt.is_changed() && !vis.is_changed())
+                        {
+                            return;
+                        }
+                        let pivot = card.local_pivot;
+                        let placement = gt.compute_transform();
+                        if !card.is_placed_at(placement, pivot) {
+                            card.re_place(placement, pivot);
+                        }
+                        // The `card` trace (`WOW_MOVE_TRACE`, ~2 Hz): each following card's place,
+                        // scale and alpha, the three causes of an invisible card. `enabled_for`, so
+                        // `WOW_MOVE_TRACE_TAGS` drops this busiest tag cheaply.
+                        if benilla_assets::trace::enabled_for("card") && elapsed_ms % 512 < 20 {
+                            benilla_assets::trace::line(
+                                "card",
+                                &format!(
+                                    "card={entity} owner={owner} scale={:.3?} a={:.2} pivot={:.2?}",
+                                    card.scale,
+                                    tag.map_or(-1.0, |t| crate::mesh_tag::alpha_of(t.0)),
+                                    card.world_pivot
+                                ),
+                            );
+                        }
                     }
-                    let pivot = card.local_pivot;
-                    let placement = gt.compute_transform();
-                    if !card.is_placed_at(placement, pivot) {
-                        card.re_place(placement, pivot);
-                    }
-                    // The `card` trace (`WOW_MOVE_TRACE`, ~2 Hz): each following card's place,
-                    // scale and alpha, the three causes of an invisible card. `enabled_for`, so
-                    // `WOW_MOVE_TRACE_TAGS` drops this busiest tag cheaply.
-                    if benilla_assets::trace::enabled_for("card") && elapsed_ms % 512 < 20 {
-                        benilla_assets::trace::line(
-                            "card",
-                            &format!(
-                                "card={entity} owner={owner} scale={:.3?} a={:.2} pivot={:.2?}",
-                                card.scale,
-                                tag.map_or(-1.0, |t| crate::mesh_tag::alpha_of(t.0)),
-                                card.world_pivot
-                            ),
-                        );
+                    Err(_) => {
+                        commands.command_scope(|mut c| {
+                            c.entity(entity).despawn();
+                        });
+                        return;
                     }
                 }
-                Err(_) => {
-                    commands.entity(entity).despawn();
-                    continue;
+            } else {
+                // A hidden fixed card is not drawn, and the reference animates only the frame's
+                // worklist: its pose waits, and is placed on the frame its `Visibility` flips. Its
+                // first pass still runs, which stamps the attach anchor below.
+                let hidden = *vis == Visibility::Hidden && card.gseq_attach_ms.is_some();
+                if hidden || (!tracked && !cam_moved && !vis.is_changed()) {
+                    return;
                 }
             }
-        } else {
-            // A hidden fixed card is not drawn, and the reference animates only the frame's
-            // worklist: its pose waits, and is placed on the frame its `Visibility` flips. Its
-            // first pass still runs, which stamps the attach anchor below.
-            let hidden = *vis == Visibility::Hidden && card.gseq_attach_ms.is_some();
-            if hidden || (!tracked && !cam_moved && !vis.is_changed()) {
-                continue;
+            // The gseq attach anchor, stamped on the first placement pass (`CM2Model+0x68`). Written
+            // once: a `get_or_insert` through the `Mut` would mark the card changed every frame.
+            let attach_ms = match card.gseq_attach_ms {
+                Some(ms) => ms,
+                None => {
+                    card.gseq_attach_ms = Some(elapsed_ms);
+                    elapsed_ms
+                }
+            };
+            let card = &*card;
+            let rotation = billboard_basis(card.kind, card.placement_rot, fwd, right, up);
+            // The global-sequence scale pulse on the instance's anchored cursor, `sceneNow − attach`.
+            let pulse = card.scale_anim.as_ref().map_or(Vec3::ONE, |a| {
+                Vec3::from_array(a.sample(elapsed_ms.wrapping_sub(attach_ms)))
+            });
+            // The armed bob on the arm cursor `elapsed − arm_ms`, turned and sized by the placement.
+            let bob = card.seq_translation.as_ref().map_or(Vec3::ZERO, |a| {
+                card.placement_rot
+                    * (Vec3::from_array(a.sample(elapsed_ms.wrapping_add(card.arm_neg_ms)))
+                        * card.scale)
+            });
+            let placed = Transform {
+                translation: card.world_pivot + bob,
+                rotation,
+                scale: card.scale * pulse,
+            };
+            // The local takes no change mark: the direct global write below is the pose, and a marked
+            // local would only send next frame's propagation to re-copy it.
+            if *tf != placed {
+                *tf.bypass_change_detection() = placed;
             }
-        }
-        // The gseq attach anchor, stamped on the first placement pass (`CM2Model+0x68`). Written
-        // once: a `get_or_insert` through the `Mut` would mark the card changed every frame.
-        let attach_ms = match card.gseq_attach_ms {
-            Some(ms) => ms,
-            None => {
-                card.gseq_attach_ms = Some(elapsed_ms);
-                elapsed_ms
+            // Propagation already ran this frame: the direct global write is what renders.
+            let placed_global = GlobalTransform::from(placed);
+            if *global != placed_global {
+                *global = placed_global;
             }
-        };
-        let card = &*card;
-        let rotation = billboard_basis(card.kind, card.placement_rot, fwd, right, up);
-        // The global-sequence scale pulse on the instance's anchored cursor, `sceneNow − attach`.
-        let pulse = card.scale_anim.as_ref().map_or(Vec3::ONE, |a| {
-            Vec3::from_array(a.sample(elapsed_ms.wrapping_sub(attach_ms)))
         });
-        // The armed bob on the arm cursor `elapsed − arm_ms`, turned and sized by the placement.
-        let bob = card.seq_translation.as_ref().map_or(Vec3::ZERO, |a| {
-            card.placement_rot
-                * (Vec3::from_array(a.sample(elapsed_ms.wrapping_add(card.arm_neg_ms)))
-                    * card.scale)
-        });
-        let placed = Transform {
-            translation: card.world_pivot + bob,
-            rotation,
-            scale: card.scale * pulse,
-        };
-        // The local takes no change mark: the direct global write below is the pose, and a marked
-        // local would only send next frame's propagation to re-copy it.
-        if *tf != placed {
-            *tf.bypass_change_detection() = placed;
-        }
-        // Propagation already ran this frame: the direct global write is what renders.
-        let placed_global = GlobalTransform::from(placed);
-        if *global != placed_global {
-            *global = placed_global;
-        }
-    }
 }
 
 /// Registers the [`BillboardPlace`] pass; the model spawn sites spawn cards, in Update.
