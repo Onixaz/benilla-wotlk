@@ -41,6 +41,15 @@ impl PlacementHost {
     }
 }
 
+/// What [`spawn_model_entities`] spawns: everything; only the diverts of a dormant placement, its
+/// entity batches noted for its wake; or only the noted entity batches, the wake itself.
+#[derive(Clone, Copy)]
+pub enum SpawnMode<'a> {
+    Full,
+    DivertOnly,
+    Entities(&'a [bool]),
+}
+
 /// What [`spawn_model_entities`] spawned.
 pub struct SpawnedModel {
     /// The despawn list: anim host, parts and world-root cards (a following card despawns itself).
@@ -50,6 +59,9 @@ pub struct SpawnedModel {
     pub by_batch: Vec<Option<Entity>>,
     /// The anim host, when the model animates.
     pub host: Option<PlacementHost>,
+    /// Index-parallel with `submeshes`: the batches the entity phase spawns (cards included),
+    /// whether or not this call spawned them.
+    pub entity_batches: Vec<bool>,
 }
 
 /// Spawns a model's submeshes at `transform`. A transport's props pass a doodad-local `transform`
@@ -100,6 +112,7 @@ pub fn spawn_model_entities(
         &mut crate::static_gx::StaticGx,
         crate::static_gx::GxSite<'_>,
     )>,
+    mode: SpawnMode<'_>,
 ) -> SpawnedModel {
     // The caller's gate, else the bare sphere; every radius or centre read below goes through it.
     let fade = match fade {
@@ -124,6 +137,7 @@ pub fn spawn_model_entities(
                 || !m.emitters.is_empty()
                 || !m.ribbons.is_empty()
         })
+        .filter(|_| !matches!(mode, SpawnMode::DivertOnly))
         .and_then(|(m, _)| crate::doodad_anim::spawn_anim_host(commands, m, transform));
     // Captures freeze material-alpha clocks at 0, for deterministic frames.
     let mat_frozen = crate::dev_state::deterministic_run();
@@ -137,6 +151,7 @@ pub fn spawn_model_entities(
     let mut lazy_parts: Vec<Entity> = Vec::new();
     // Every `continue` below leaves its batch's `None` in place.
     let mut by_batch: Vec<Option<Entity>> = vec![None; submeshes.len()];
+    let mut entity_batches = vec![false; submeshes.len()];
     // The fixed, fading cards that wait in the store rather than spawn (`crate::card_store`).
     let mut stored: Vec<crate::card_store::StoredCard> = Vec::new();
     // Coplanar siblings ride one lane: two batches naming one skin section draw the same
@@ -154,6 +169,12 @@ pub fn spawn_model_entities(
         let Some((stat_mesh, stat_aabb)) = forms.stat.get(batch_idx) else {
             continue;
         };
+        // A wake spawns only what the first spawn left to the entity phase.
+        if let SpawnMode::Entities(mask) = mode {
+            if !mask.get(batch_idx).copied().unwrap_or(false) {
+                continue;
+            }
+        }
         // The authored order biases the transparent sort, so coplanar layers draw in file order;
         // a WMO batch also takes it into the clip-z nudge, as the reference draws MOBA batches in
         // strict file order (`0x6b4f10`/`0x6b5190`).
@@ -442,6 +463,11 @@ pub fn spawn_model_entities(
             {
                 continue;
             }
+        }
+        // Past the diverts: the entity phase's batch, which a dormant placement only notes.
+        entity_batches[batch_idx] = true;
+        if matches!(mode, SpawnMode::DivertOnly) {
+            continue;
         }
         // Register both materials for the UV scroll (idempotent per material). A per-sequence set
         // replaces the shared loop when there is a host to read; a period-0 loop is a constant the
@@ -791,6 +817,7 @@ pub fn spawn_model_entities(
         entities: out,
         by_batch,
         host: placement_host,
+        entity_batches,
     }
 }
 

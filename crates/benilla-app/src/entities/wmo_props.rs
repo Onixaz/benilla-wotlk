@@ -296,6 +296,7 @@ pub(super) fn spawn_wmo_gameobject_props(
                 // Never diverted: every divert lane bakes world transforms.
                 None,
                 None,
+                benilla_world::terrain_stream::SpawnMode::Full,
             );
             commands.entity(entity).add_children(&ents);
             // The slot's component hook returns it to the table whoever despawns the prop.

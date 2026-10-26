@@ -214,6 +214,7 @@ mod tests {
             portal_instance: None,
             refs: 1,
             owner: (0, 0),
+            sleeper: None,
         }
     }
 

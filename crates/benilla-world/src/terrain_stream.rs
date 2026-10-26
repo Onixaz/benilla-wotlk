@@ -46,7 +46,9 @@ pub use window::StreamWindow;
 pub use spawn::prop_light::{fold_interior_probe, hex_word, interior_light_up, PropLobeLight};
 // The placed-model assembler and off-thread collider build, shared with WMO gameobject props.
 pub use collider::{build_collider_task, placement_collider_data, PendingCollider};
-pub use spawn::{m2_anim_bound, m2_fade, point_light, spawn_model_entities, SpawnedModel};
+pub use spawn::{
+    m2_anim_bound, m2_fade, point_light, spawn_model_entities, SpawnMode, SpawnedModel,
+};
 // The position queries and the area authority.
 use queries::update_current_area;
 pub use queries::{
@@ -190,6 +192,8 @@ struct Placement {
     /// The tile owning an M2 doodad's hull weld and merged blobs, first the registering tile;
     /// WMOs never read it.
     owner: (i32, i32),
+    /// An M2 doodad's wake record when it can sleep ([`spawn::Sleeper`]).
+    sleeper: Option<spawn::Sleeper>,
 }
 
 /// How much of the world wanted around the view focus is there, read by the loading bar and by
@@ -959,6 +963,7 @@ fn register_doodad(
             portal_instance: None,
             refs: 1,
             owner: tile,
+            sleeper: None,
         },
     );
     placements.pending_spawns += 1;
@@ -988,6 +993,7 @@ fn register_wmo(placements: &mut Placements, asset_server: &AssetServer, w: &Wmo
             portal_instance: None,
             refs: 1,
             owner: (0, 0), // unread for WMOs: their prop hulls weld per placement
+            sleeper: None,
         },
     );
     placements.pending_spawns += 1;
@@ -1240,6 +1246,8 @@ fn handoff_straddlers(
             for e in p.entities.drain(..) {
                 commands.entity(e).try_despawn();
             }
+            // The respawn under the new owner records its own.
+            p.sleeper = None;
             p.spawned = false;
             placements.pending_spawns += 1;
             placements.spawn_epoch += 1;
@@ -1413,6 +1421,7 @@ mod straddler_tests {
             portal_instance: None,
             refs: 1,
             owner,
+            sleeper: None,
         }
     }
 

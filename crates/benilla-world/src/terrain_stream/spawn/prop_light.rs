@@ -15,6 +15,8 @@ pub(crate) struct WmoDoodadInst {
     pub(crate) groups: Arc<[u16]>,
     pub(crate) light: PropLight,
     pub(crate) spawned: bool,
+    /// The prop's wake record when it can sleep ([`super::Sleeper`]).
+    pub(crate) sleeper: Option<super::Sleeper>,
 }
 
 /// A WMO prop's lighting, its MOLR lights already in world space for the spawn-time fold.
